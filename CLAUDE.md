@@ -47,3 +47,17 @@ When bumping the SHA in `.upstream`, review `CHANGES.md`, close the matching `up
 ## Creating a new (non-Matt) skill
 
 Use `/write-a-skill`. Mark it in `CHANGES.md` as `status: added` with `upstream: —` to make clear it's original to reddb.io.
+
+## Agent skills
+
+### Issue tracker
+
+GitHub Issues on `reddb-io/red-skills`. See `.red/agents/issue-tracker.md`.
+
+### Triage labels
+
+Canonical kebab-case / `prefix:value` vocab — labels match their canonical role names. See `.red/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context — `.red/CONTEXT.md` + `.red/adr/` at the repo root. See `.red/agents/domain.md`.
