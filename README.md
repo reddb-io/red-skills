@@ -6,11 +6,10 @@
 A reddb.io adaptation of [`mattpocock/skills`](https://github.com/mattpocock/skills) — same DNA, sharper edges, an autonomous loop layered on top. Massive thanks to [@mattpocock](https://github.com/mattpocock); the original lives at [aihero.dev](https://www.aihero.dev/s/skills-newsletter). We pin upstream via `.upstream` and a daily workflow (`red-upstream-watch.yml`) opens an issue when it advances, so we cherry-pick what's worth taking.
 
 ```
-              ┌──────────────────────────────────────────┐
-              │      idea  ──▶  PRD  ──▶  issues  ──▶  ⚡ /afk  ──▶  merged
-              └──────────────────────────────────────────┘
-                  /start    /to-prd     /to-issues
-                                        /triage
+   /start   ─▶   /to-prd   ─▶   /to-issues   ─▶   /triage   ─▶   ⚡ /afk
+   refine        publish        slice into        write the      drain →
+   the plan      a PRD          vertical          AGENT-BRIEF    test, merge,
+                                slices                           close, repeat
 ```
 
 ---
