@@ -157,21 +157,79 @@ Pages are typed (`entity`, `concept`, `source`, `synthesis`) with YAML frontmatt
 
 ---
 
-## Setup
+## Install
+
+### 1. Clone and link (one-time, global)
 
 ```bash
-git clone git@github.com:reddb-io/red-skills.git
-cd red-skills
-./scripts/link-skills.sh    # symlinks each SKILL.md into ~/.claude/skills
+git clone git@github.com:reddb-io/red-skills.git ~/code/red-skills
+cd ~/code/red-skills
+./scripts/link-skills.sh
 ```
 
-In a target repo, run once:
+`link-skills.sh` symlinks every `SKILL.md` directory into `~/.claude/skills/`. Re-run any time the repo updates — it overwrites symlinks in place.
 
 ```bash
-/setup-red-skills           # writes .red/agents/, .gitignore, .github/workflows/red-*.yml
+$ ./scripts/link-skills.sh
+linked afk -> ~/code/red-skills/skills/engineering/afk
+linked diagnose -> ~/code/red-skills/skills/engineering/diagnose
+linked wiki -> ~/code/red-skills/skills/knowledge/wiki
+…
 ```
 
-That installs the auto-triage workflow, seeds the label vocabulary, and registers the skills under `## Agent skills` in `CLAUDE.md`/`AGENTS.md`.
+Verify:
+
+```bash
+ls ~/.claude/skills/afk          # should be a symlink into the clone
+cat ~/.claude/skills/afk/SKILL.md | head -5
+```
+
+### 2. Pick your agent
+
+| Agent | Invocation | Notes |
+|-------|------------|-------|
+| **Claude Code** | `/afk`, `/wiki`, `/triage`, … | Native slash commands. The plugin loader auto-discovers everything under `~/.claude/skills/`. |
+| **Codex CLI** | `$afk`, `$wiki`, `$triage`, … | The `$` is a convention: when the agent sees `$<name>`, it finds `~/.claude/skills/<name>/SKILL.md` on disk and follows the instructions (typically `bash <skill>/scripts/<n>.sh`). Add the snippet below to `~/.codex/AGENTS.md` once, and every skill becomes invokable. |
+| **Gemini CLI / others** | `$afk`, etc. | Same `$<name>` convention. Works with any agent that can read files under `~/.claude/skills/` and run bash. |
+
+Teach Codex (or any non-Claude-Code agent) the convention by appending to `~/.codex/AGENTS.md` (or the equivalent global agent doc):
+
+```markdown
+## RedSkills
+
+When the user types `$<name>` (e.g. `$afk`, `$wiki`, `$triage`), look up
+`~/.claude/skills/<name>/SKILL.md` and follow it — usually that means running
+`bash ~/.claude/skills/<name>/scripts/<entrypoint>.sh` with the documented flags.
+Each SKILL.md is self-documenting; read it before invoking.
+```
+
+### 3. Update later
+
+```bash
+cd ~/code/red-skills && git pull && ./scripts/link-skills.sh
+```
+
+Symlinks point at the working tree, so a `git pull` updates every agent that consumes the skills.
+
+---
+
+## Bootstrap a repo
+
+Run this once per target repo (from inside the repo):
+
+```
+/setup-red-skills
+```
+
+It walks you through five short decisions:
+
+1. **Issue tracker.** GitHub Issues only — confirms `git remote -v` shows the right repo.
+2. **Triage labels.** Maps the five canonical roles (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`) to actual label strings.
+3. **Domain docs.** Single-context (`.red/CONTEXT.md` + `.red/adr/`) or multi-context (`.red/CONTEXT-MAP.md` for monorepos).
+4. **Workflows.** Installs `red-issues-needs-triage.yml` (auto-applies `needs-triage` so nothing slips past `/afk`).
+5. **Token efficiency.** Strong recommendation to install [RTK](https://github.com/rtk-ai/rtk) before running `/afk` (details below).
+
+Output: `.red/agents/*.md`, an `## Agent skills` block in `CLAUDE.md`/`AGENTS.md`, and `.github/workflows/red-*.yml`. All git-tracked. Re-run only to reconfigure from scratch.
 
 ### ⛽ Before a long /afk run — install RTK
 
