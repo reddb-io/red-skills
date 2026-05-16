@@ -1,0 +1,79 @@
+name: red-upstream-watch
+
+on:
+  schedule:
+    - cron: '0 12 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Load pinned upstream
+        id: pin
+        run: |
+          . ./.upstream
+          echo "repo=$repo" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha"  >> "$GITHUB_OUTPUT"
+
+      - name: Fetch upstream HEAD
+        id: head
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          head=$(gh api "repos/${{ steps.pin.outputs.repo }}/commits/HEAD" --jq .sha)
+          echo "sha=$head" >> "$GITHUB_OUTPUT"
+
+      - name: Compare
+        id: diff
+        if: steps.head.outputs.sha != steps.pin.outputs.sha
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ steps.pin.outputs.repo }}
+          OLD: ${{ steps.pin.outputs.sha }}
+          NEW: ${{ steps.head.outputs.sha }}
+        run: |
+          gh api "repos/$REPO/compare/$OLD...$NEW" \
+            --jq '"## Commits\n" + ([.commits[] | "- `\(.sha[0:7])` \(.commit.message | split("\n")[0])"] | join("\n")) + "\n\n## Files\n" + ([.files[] | "- \(.status): `\(.filename)`"] | join("\n"))' \
+            > diff.md
+          {
+            echo "old=$OLD"
+            echo "new=$NEW"
+            echo 'body<<EOF'
+            cat diff.md
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Open or update issue
+        if: steps.head.outputs.sha != steps.pin.outputs.sha
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ steps.pin.outputs.repo }}
+          NEW: ${{ steps.head.outputs.sha }}
+        run: |
+          title="upstream: $REPO advanced to ${NEW:0:7}"
+          existing=$(gh issue list --search "upstream: $REPO in:title" --state open --json number --jq '.[0].number')
+          body=$(cat <<EOF
+          Upstream \`$REPO\` moved past pinned SHA.
+
+          - pinned: \`${{ steps.pin.outputs.sha }}\`
+          - upstream HEAD: \`$NEW\`
+          - compare: https://github.com/$REPO/compare/${{ steps.pin.outputs.sha }}...$NEW
+
+          ${{ steps.diff.outputs.body }}
+
+          ---
+          Review changes, cherry-pick relevant skills, then bump \`sha=\` in \`.upstream\`.
+          EOF
+          )
+          if [ -n "$existing" ]; then
+            gh issue edit "$existing" --title "$title" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body" --label upstream-drift
+          fi

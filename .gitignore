@@ -1,0 +1,12 @@
+# Claude Code local state
+.claude/
+
+# Per-repo agent ephemera (never committed)
+.red/tmp/
+.red/wiki/
+
+# Node
+node_modules/
+
+# OS
+.DS_Store
