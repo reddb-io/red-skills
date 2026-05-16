@@ -177,7 +177,7 @@ Point it at your `ready-for-agent` backlog and walk away. For each issue, `/afk`
 | **Verify** | `pnpm test && typecheck && lint && build` | Three retries before flagging blocker |
 | **Merge** | `git merge --no-ff` back into `main`, push over SSH | Auto-snapshot if primary is dirty; never `stash`/`reset`/`force` |
 | **Close** | Validation comment, `gh issue close`, drop worktree | Per-issue summary; clean filesystem afterwards |
-| **Tick** | Updates `.red/tmp/afk-state.json`, picks next | Live dashboard sees the transition instantly |
+| **Tick** | Updates `.red/tmp/afk-{slot}.state.json`, picks next | Live dashboard sees the transition instantly |
 | **Survive** | Hits a rate limit? Swaps runner mid-issue. Both out? Releases claim, exits 75 | You resume tomorrow, no lost work |
 
 ### Invocation modes
@@ -189,12 +189,13 @@ Point it at your `ready-for-agent` backlog and walk away. For each issue, `/afk`
 /afk --runner codex             # pin a backend (default: alternates each issue)
 /afk -n 5                       # cap at five issues
 /afk --once                     # supervised single iteration (debug mode)
-/afk monitor                    # readonly live status board, second terminal
+/afk --slot 2                   # parallel worker (slot 1 is the default; each slot has its own log/pid/state)
+/afk monitor                    # readonly live status board, aggregates every slot, second terminal
 ```
 
 ### Live monitor
 
-`/afk` writes atomic state to `.red/tmp/afk-state.json`. Open a second terminal:
+`/afk` writes atomic state to `.red/tmp/afk-{slot}.state.json` and streams logs to `.red/tmp/afk-{slot}.log`. Open a second terminal:
 
 ```
 ┌─ /afk monitor ─────────────────────────────────────────────┐
