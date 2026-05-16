@@ -48,6 +48,17 @@ When bumping the SHA in `.upstream`, review `CHANGES.md`, close the matching `up
 
 Use `/write-a-skill`. Mark it in `CHANGES.md` as `status: added` with `upstream: —` to make clear it's original to reddb.io.
 
+## SKILL.md body convention
+
+RedSkills `SKILL.md` files use two XML-style sections to separate **what the agent must do** from **reference material**. When you invoke any RedSkills skill, treat the sections like this:
+
+- **`<what-to-do>`** — the **primary directive**. Imperative, non-negotiable. Execute the loop / steps / rules inside it literally. Do not paraphrase, do not skip steps, do not substitute "what feels right" for the explicit rules. If the section contains DOs / DON'Ts (✅ / ❌), they are hard constraints.
+- **`<supporting-info>`** — **reference material, consulted on demand**. Formats, file layouts, trigger conditions, examples. Read these *when the primary directive points you here*, not as additional tasks to complete in parallel.
+
+If a skill has only one of the two sections, the whole body is the primary directive. Skills without either tag are short enough that the entire body is the directive.
+
+Never reorder priorities so that documentation/side-effect work in `<supporting-info>` competes with the interview / implementation / review loop defined in `<what-to-do>`.
+
 ## Agent skills
 
 ### Issue tracker
