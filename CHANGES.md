@@ -132,6 +132,7 @@ Upstream base: `mattpocock/skills@e74f0061bb67222181640effa98c675bdb2fdaa7` (see
   - directory `skills/engineering/grill-with-docs` → `start`
   - `name:` frontmatter → `start`
   - refs in `plugin.json`, `README.md`, `skills/engineering/README.md`, `improve-codebase-architecture/SKILL.md`, `triage/SKILL.md`, `setup-redskills/domain.md`, etc.
+  - body rewrite (tags kept as `<what-to-do>` / `<supporting-info>`): frontloaded an explicit loop, hard DO/DON'T list, and a question-format template so the interview behaviour dominates over the documentation side-effects. CONTEXT/ADR rules demoted to "trigger" subsections instead of equal-weight tasks (model was drifting into docs mode instead of grilling).
 
 ## global: GitHub Issues as the only supported tracker
 
