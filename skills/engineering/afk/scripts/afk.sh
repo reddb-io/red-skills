@@ -152,7 +152,8 @@ select_issues() {
 
 gh_repo() {
   git -C "$PROJECT_ROOT" remote get-url origin \
-    | sed -E 's#.*[:/]([^/]+/[^/]+?)(\.git)?$#\1#'
+    | sed -E 's#.*[:/]([^/]+/[^/]+?)(\.git)?$#\1#' \
+    | sed -E 's#\.git$##'
 }
 
 # ---------- heartbeat ----------
