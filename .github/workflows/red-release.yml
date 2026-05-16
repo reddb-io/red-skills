@@ -1,0 +1,74 @@
+name: red-release
+
+# Auto-tag a patch release on every push to main, then create a GitHub Release
+# with auto-generated notes from the commits since the previous tag.
+#
+# Semver scheme: vMAJOR.MINOR.PATCH. This workflow only bumps PATCH.
+# To cut a minor or major bump, create the tag manually
+# (e.g. `git tag v1.0.0 && git push origin v1.0.0`) — the next push to main
+# will pick up from there and continue bumping the patch.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: red-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    if: "!contains(github.event.head_commit.message, '[skip release]')"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Compute next patch version
+        id: version
+        run: |
+          set -euo pipefail
+          latest=$(git tag --list 'v*.*.*' --sort=-v:refname | head -n1)
+          if [ -z "$latest" ]; then
+            next="v0.0.1"
+          else
+            IFS='.' read -r major minor patch <<<"${latest#v}"
+            next="v${major}.${minor}.$((patch + 1))"
+          fi
+          echo "previous=$latest" >> "$GITHUB_OUTPUT"
+          echo "next=$next" >> "$GITHUB_OUTPUT"
+          echo "Releasing $next (previous: ${latest:-none})"
+
+      - name: Create tag
+        env:
+          NEXT: ${{ steps.version.outputs.next }}
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git tag -a "$NEXT" -m "Release $NEXT"
+          git push origin "$NEXT"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NEXT: ${{ steps.version.outputs.next }}
+          PREVIOUS: ${{ steps.version.outputs.previous }}
+        run: |
+          set -euo pipefail
+          if [ -n "$PREVIOUS" ]; then
+            gh release create "$NEXT" \
+              --title "$NEXT" \
+              --generate-notes \
+              --notes-start-tag "$PREVIOUS"
+          else
+            gh release create "$NEXT" \
+              --title "$NEXT" \
+              --generate-notes
+          fi
