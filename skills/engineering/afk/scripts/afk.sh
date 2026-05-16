@@ -37,9 +37,10 @@ WORKSPACES="$(cd "$PROJECT_ROOT/.." && pwd)/.workspaces"
 STATE_FILE="$PROJECT_ROOT/.red/tmp/afk-state.json"
 TMP_DIR="$PROJECT_ROOT/.red/tmp"
 
+EXPLICIT_RUNNER=$RUNNER
 [[ -z "$RUNNER" ]] && RUNNER="${AFK_RUNNER:-claude}"
 ALTERNATE=1
-[[ -n "${AFK_RUNNER_PINNED:-}" ]] && ALTERNATE=0
+[[ -n "${AFK_RUNNER_PINNED:-}" || -n "$EXPLICIT_RUNNER" ]] && ALTERNATE=0
 # explicit --runner pins the runner
 [[ "$RUNNER" == "claude" || "$RUNNER" == "codex" ]] || { echo "bad runner: $RUNNER" >&2; exit 2; }
 
