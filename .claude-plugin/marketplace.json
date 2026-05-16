@@ -1,0 +1,14 @@
+{
+  "name": "red-skills",
+  "owner": {
+    "name": "reddb.io",
+    "url": "https://github.com/reddb-io"
+  },
+  "plugins": [
+    {
+      "name": "red-skills",
+      "source": "./",
+      "description": "reddb.io internal engineering skills for code agents"
+    }
+  ]
+}

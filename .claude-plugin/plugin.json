@@ -1,5 +1,6 @@
 {
-  "name": "redskills",
+  "name": "red-skills",
+  "description": "reddb.io internal engineering skills for code agents",
   "skills": [
     "./skills/engineering/afk",
     "./skills/engineering/diagnose",
