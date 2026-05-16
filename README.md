@@ -364,7 +364,6 @@ Composable. Boring on purpose where boring is enough. Sharp where it matters.
 
 ## House conventions
 
-- 🇬🇧 **All repo content is English.** No exceptions. User chat may stay Portuguese.
 - 🏷 **Labels are kebab-case or `prefix:value`.** `needs-triage`, `ready-for-agent`, `running`, `priority:high`, `slice:afk`, `prd:42`. No uppercase, no spaces.
 - 🤖 **Workflows shipped by RedSkills start with `red-`.** `red-issues-needs-triage.yml`, `red-upstream-watch.yml`.
 - 🐙 **Issues and PRDs live on GitHub.** No local-markdown tracker, no GitLab/Jira/Linear fallback.
