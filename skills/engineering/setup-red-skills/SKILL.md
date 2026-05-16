@@ -148,6 +148,22 @@ Then write the three docs files using the seed templates in this skill folder as
 
 If the user accepted Section D, copy each `workflows/red-*.yml` template from this skill folder into `.github/workflows/` of the consumer repo. Don't overwrite existing files with the same name — diff and ask first. Then ensure the `needs-triage` label exists via `gh label create` if missing.
 
-### 5. Done
+### 5. Sweep existing issues
+
+If the repo already has open issues, the new label vocabulary won't apply itself. Help the user backfill so `/triage` and `/afk` see a coherent state.
+
+Run `gh issue list --state open --limit 200 --json number,title,labels` and group:
+
+- **Unlabelled / missing triage role** — candidates for `needs-triage`
+- **Labelled with legacy names** — map to the canonical vocabulary from Section B
+- **Already correct** — skip
+
+Skip the sweep entirely if `gh issue list` returns 0 open issues.
+
+Present the grouping to the user as a compact table (number, title, current labels, proposed labels) and ask for batch approval. Don't apply per-issue — one confirmation, then loop `gh issue edit <n> --add-label ... --remove-label ...`. If the list is large (>30), offer to do only the first N and stop.
+
+Never close, reassign, or edit issue bodies in this step — labels only.
+
+### 6. Done
 
 Tell the user the setup is complete and which engineering skills will now read from these files. Mention they can edit `.red/agents/*.md` directly later — re-running this skill is only necessary if they want to switch issue trackers or restart from scratch.
