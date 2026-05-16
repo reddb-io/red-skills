@@ -1,10 +1,10 @@
 # RedSkills — Agent Instructions
 
-Private reddb.io repository containing the internal skills (slash commands) used with Claude Code, Codex, and similar agents.
+Public reddb.io repository containing the engineering skills (slash commands) used with Claude Code, Codex, Gemini CLI, and similar agents.
 
 ## Origin
 
-Adapted from [`mattpocock/skills`](https://github.com/mattpocock/skills) (MIT). Not a git fork — we copied the structure because we need to keep the repo private. The upstream SHA we based on is in `.upstream`. The `.github/workflows/red-upstream-watch.yml` workflow opens an issue when upstream advances.
+Adapted from [`mattpocock/skills`](https://github.com/mattpocock/skills) (MIT). Not a git fork — we copied the structure so we can diverge freely. The upstream SHA we based on is in `.upstream`. The `.github/workflows/red-upstream-watch.yml` workflow opens an issue when upstream advances.
 
 ## Structure
 

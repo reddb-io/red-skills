@@ -1,9 +1,9 @@
 # RedSkills
 
 > **Issues in. Merged PRs out.**
-> Reddb.io's private slash-command library for Claude Code, Codex, and friends. Ship while you sleep.
+> Reddb.io's open-source slash-command library for Claude Code, Codex, and friends. Ship while you sleep.
 
-A private adaptation of [`mattpocock/skills`](https://github.com/mattpocock/skills) — same DNA, sharper edges, kept private. Massive thanks to [@mattpocock](https://github.com/mattpocock); the original lives at [aihero.dev](https://www.aihero.dev/s/skills-newsletter). We pin upstream via `.upstream` and a daily workflow (`red-upstream-watch.yml`) opens an issue when it advances, so we cherry-pick what's worth taking.
+A reddb.io adaptation of [`mattpocock/skills`](https://github.com/mattpocock/skills) — same DNA, sharper edges, an autonomous loop layered on top. Massive thanks to [@mattpocock](https://github.com/mattpocock); the original lives at [aihero.dev](https://www.aihero.dev/s/skills-newsletter). We pin upstream via `.upstream` and a daily workflow (`red-upstream-watch.yml`) opens an issue when it advances, so we cherry-pick what's worth taking.
 
 ```
               ┌──────────────────────────────────────────┐
@@ -159,7 +159,19 @@ Pages are typed (`entity`, `concept`, `source`, `synthesis`) with YAML frontmatt
 
 ## Install
 
-### 1. Clone and link (one-time, global)
+### 1. Quickstart (30 seconds)
+
+```bash
+npx skills@latest add reddb-io/red-skills
+```
+
+[skills.sh](https://skills.sh/reddb-io/red-skills) walks you through which skills to install and which coding agents to install them on. It writes the right files to the right places and you're ready to go. Same installer Matt uses for his upstream repo — credit to [@mattpocock](https://github.com/mattpocock).
+
+After it finishes, jump to [step 3](#3-bootstrap-a-repo).
+
+### 2. Manual install (alternative)
+
+Prefer the source-of-truth checkout? Clone and run our `link-skills.sh`:
 
 ```bash
 git clone git@github.com:reddb-io/red-skills.git ~/code/red-skills
@@ -184,7 +196,15 @@ ls ~/.claude/skills/afk          # should be a symlink into the clone
 cat ~/.claude/skills/afk/SKILL.md | head -5
 ```
 
-### 2. Pick your agent
+Update later:
+
+```bash
+cd ~/code/red-skills && git pull && ./scripts/link-skills.sh
+```
+
+Symlinks point at the working tree, so a `git pull` updates every agent that consumes the skills.
+
+### Pick your agent
 
 | Agent | Invocation | Notes |
 |-------|------------|-------|
@@ -203,17 +223,9 @@ When the user types `$<name>` (e.g. `$afk`, `$wiki`, `$triage`), look up
 Each SKILL.md is self-documenting; read it before invoking.
 ```
 
-### 3. Update later
-
-```bash
-cd ~/code/red-skills && git pull && ./scripts/link-skills.sh
-```
-
-Symlinks point at the working tree, so a `git pull` updates every agent that consumes the skills.
-
 ---
 
-## Bootstrap a repo
+### 3. Bootstrap a repo
 
 Run this once per target repo (from inside the repo):
 
