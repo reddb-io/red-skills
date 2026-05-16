@@ -1,9 +1,20 @@
-# RedSkills
+<div align="center">
 
-> **Issues in. Merged PRs out.**
-> Reddb.io's open-source slash-command library for Claude Code, Codex, and friends. Ship while you sleep.
+```
+   ██████╗ ███████╗██████╗     ███████╗██╗  ██╗██╗██╗     ██╗     ███████╗
+   ██╔══██╗██╔════╝██╔══██╗    ██╔════╝██║ ██╔╝██║██║     ██║     ██╔════╝
+   ██████╔╝█████╗  ██║  ██║    ███████╗█████╔╝ ██║██║     ██║     ███████╗
+   ██╔══██╗██╔══╝  ██║  ██║    ╚════██║██╔═██╗ ██║██║     ██║     ╚════██║
+   ██║  ██║███████╗██████╔╝    ███████║██║  ██╗██║███████╗███████╗███████║
+   ╚═╝  ╚═╝╚══════╝╚═════╝     ╚══════╝╚═╝  ╚═╝╚═╝╚══════╝╚══════╝╚══════╝
+```
 
-A reddb.io adaptation of [`mattpocock/skills`](https://github.com/mattpocock/skills) — same DNA, sharper edges, an autonomous loop layered on top. Massive thanks to [@mattpocock](https://github.com/mattpocock); the original lives at [aihero.dev](https://www.aihero.dev/s/skills-newsletter). We pin upstream via `.upstream` and a daily workflow (`red-upstream-watch.yml`) opens an issue when it advances, so we cherry-pick what's worth taking.
+### **Issues in. Merged PRs out.**
+
+reddb.io's slash-command library for Claude Code, Codex, and friends.
+**Ship while you sleep.**
+
+[Install](#install) · [`/afk`](#-afk--autonomous-issue-execution) · [Pipeline](#-the-pipeline-that-feeds-it) · [Wiki](#-knowledge--your-private-llm-wiki) · [Reference](#reference)
 
 ```
    /start   ─▶   /to-prd   ─▶   /to-issues   ─▶   /triage   ─▶   ⚡ /afk
@@ -11,6 +22,113 @@ A reddb.io adaptation of [`mattpocock/skills`](https://github.com/mattpocock/ski
    the plan      a PRD          vertical          AGENT-BRIEF    test, merge,
                                 slices                           close, repeat
 ```
+
+</div>
+
+> A reddb.io adaptation of [`mattpocock/skills`](https://github.com/mattpocock/skills) — same DNA, sharper edges, an autonomous loop layered on top. Massive thanks to [@mattpocock](https://github.com/mattpocock); the original lives at [aihero.dev](https://www.aihero.dev/s/skills-newsletter). We pin upstream via `.upstream` and a daily workflow (`red-upstream-watch.yml`) opens an issue when it advances, so we cherry-pick what's worth taking.
+
+---
+
+## Install
+
+The fastest path — and the only one that auto-updates. RedSkills ships as a Claude Code **plugin marketplace**: add the marketplace once, install the plugin, and Claude Code pulls new commits at startup automatically.
+
+### 1. Marketplace (recommended — auto-updates)
+
+Inside Claude Code:
+
+```
+/plugin marketplace add reddb-io/red-skills
+/plugin install red-skills@red-skills
+```
+
+That's it. From now on Claude Code checks `reddb-io/red-skills` at every session start and pulls new skills/fixes silently. Toggle the behaviour with `/plugin` → **Marketplaces** → select `red-skills` → **Enable auto-update** (default on for this marketplace).
+
+To force a refresh without restarting:
+
+```
+/plugin marketplace update red-skills
+```
+
+To remove:
+
+```
+/plugin uninstall red-skills@red-skills
+/plugin marketplace remove red-skills
+```
+
+### 2. `npx skills` (alternative — Matt's installer)
+
+```bash
+npx skills@latest add reddb-io/red-skills
+```
+
+[skills.sh](https://skills.sh/reddb-io/red-skills) walks you through which skills to install and which coding agents to install them on. No auto-update — re-run the command to pull new versions. Same installer Matt uses for his upstream repo — credit to [@mattpocock](https://github.com/mattpocock).
+
+### 3. Manual clone + symlinks (hack-friendly)
+
+For local edits or `$<name>` access from Codex / Gemini CLI:
+
+```bash
+git clone git@github.com:reddb-io/red-skills.git ~/code/red-skills
+cd ~/code/red-skills
+./scripts/link-skills.sh         # symlinks every SKILL.md into ~/.claude/skills/
+```
+
+Update later with `git pull && ./scripts/link-skills.sh`. Symlinks point at the working tree, so a `git pull` updates every agent at once.
+
+### Pick your agent
+
+| Agent | Invocation | Notes |
+|-------|------------|-------|
+| **Claude Code** | `/afk`, `/wiki`, `/triage`, … | Native slash commands. Marketplace install (option 1) handles everything. |
+| **Codex CLI** | `$afk`, `$wiki`, `$triage`, … | The `$` is a convention: when the agent sees `$<name>`, it finds `~/.claude/skills/<name>/SKILL.md` on disk and follows the instructions. Add the snippet below to `~/.codex/AGENTS.md` once. Requires manual install (option 3). |
+| **Gemini CLI / others** | `$afk`, etc. | Same `$<name>` convention. Works with any agent that can read files under `~/.claude/skills/` and run bash. |
+
+Teach Codex (or any non-Claude-Code agent) the convention by appending to `~/.codex/AGENTS.md`:
+
+```markdown
+## RedSkills
+
+When the user types `$<name>` (e.g. `$afk`, `$wiki`, `$triage`), look up
+`~/.claude/skills/<name>/SKILL.md` and follow it — usually that means running
+`bash ~/.claude/skills/<name>/scripts/<entrypoint>.sh` with the documented flags.
+Each SKILL.md is self-documenting; read it before invoking.
+```
+
+### Bootstrap a repo
+
+Run once per target repo (from inside the repo):
+
+```
+/setup-red-skills
+```
+
+It walks you through five short decisions:
+
+1. **Issue tracker.** GitHub Issues only — confirms `git remote -v` shows the right repo.
+2. **Triage labels.** Maps the five canonical roles (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`) to actual label strings.
+3. **Domain docs.** Single-context (`.red/CONTEXT.md` + `.red/adr/`) or multi-context (`.red/CONTEXT-MAP.md` for monorepos).
+4. **Workflows.** Installs `red-issues-needs-triage.yml` (auto-applies `needs-triage` so nothing slips past `/afk`).
+5. **Token efficiency.** Strong recommendation to install [RTK](https://github.com/rtk-ai/rtk) before running `/afk` (details below).
+
+Output: `.red/agents/*.md`, an `## Agent skills` block in `CLAUDE.md`/`AGENTS.md`, and `.github/workflows/red-*.yml`. All git-tracked. Re-run only to reconfigure from scratch.
+
+### Before a long /afk run — install RTK
+
+A multi-hour `/afk` session can burn a surprising fraction of its budget on **CLI chatter** — `pnpm install` progress lines, verbose `git status`, `gh` JSON dumps. [**RTK (Rust Token Killer)**](https://github.com/rtk-ai/rtk) is a transparent CLI proxy that rewrites those calls at the hook layer and returns only what the agent needs.
+
+> **60–90% savings** on routine dev operations, with zero changes to how skills are written. Claude and Codex don't even see the rewrite.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/rtk-ai/rtk/main/install.sh | sh
+rtk --version          # sanity-check the install
+rtk gain               # token savings analytics; run after a day to see ROI
+```
+
+Strongly recommended before draining a non-trivial backlog with `/afk`. **Pays for itself in the first hour.**
+
+> ⚠ **Name collision.** Another tool called `rtk` ([Rust Type Kit](https://github.com/reachingforthejack/rtk)) sometimes lands first on `PATH`. If `rtk gain` errors out, fix `PATH` so `rtk-ai/rtk` wins.
 
 ---
 
@@ -156,109 +274,6 @@ Pages are typed (`entity`, `concept`, `source`, `synthesis`) with YAML frontmatt
 
 ---
 
-## Install
-
-### 1. Quickstart (30 seconds)
-
-```bash
-npx skills@latest add reddb-io/red-skills
-```
-
-[skills.sh](https://skills.sh/reddb-io/red-skills) walks you through which skills to install and which coding agents to install them on. It writes the right files to the right places and you're ready to go. Same installer Matt uses for his upstream repo — credit to [@mattpocock](https://github.com/mattpocock).
-
-After it finishes, jump to [step 3](#3-bootstrap-a-repo).
-
-### 2. Manual install (alternative)
-
-Prefer the source-of-truth checkout? Clone and run our `link-skills.sh`:
-
-```bash
-git clone git@github.com:reddb-io/red-skills.git ~/code/red-skills
-cd ~/code/red-skills
-./scripts/link-skills.sh
-```
-
-`link-skills.sh` symlinks every `SKILL.md` directory into `~/.claude/skills/`. Re-run any time the repo updates — it overwrites symlinks in place.
-
-```bash
-$ ./scripts/link-skills.sh
-linked afk -> ~/code/red-skills/skills/engineering/afk
-linked diagnose -> ~/code/red-skills/skills/engineering/diagnose
-linked wiki -> ~/code/red-skills/skills/knowledge/wiki
-…
-```
-
-Verify:
-
-```bash
-ls ~/.claude/skills/afk          # should be a symlink into the clone
-cat ~/.claude/skills/afk/SKILL.md | head -5
-```
-
-Update later:
-
-```bash
-cd ~/code/red-skills && git pull && ./scripts/link-skills.sh
-```
-
-Symlinks point at the working tree, so a `git pull` updates every agent that consumes the skills.
-
-### Pick your agent
-
-| Agent | Invocation | Notes |
-|-------|------------|-------|
-| **Claude Code** | `/afk`, `/wiki`, `/triage`, … | Native slash commands. The plugin loader auto-discovers everything under `~/.claude/skills/`. |
-| **Codex CLI** | `$afk`, `$wiki`, `$triage`, … | The `$` is a convention: when the agent sees `$<name>`, it finds `~/.claude/skills/<name>/SKILL.md` on disk and follows the instructions (typically `bash <skill>/scripts/<n>.sh`). Add the snippet below to `~/.codex/AGENTS.md` once, and every skill becomes invokable. |
-| **Gemini CLI / others** | `$afk`, etc. | Same `$<name>` convention. Works with any agent that can read files under `~/.claude/skills/` and run bash. |
-
-Teach Codex (or any non-Claude-Code agent) the convention by appending to `~/.codex/AGENTS.md` (or the equivalent global agent doc):
-
-```markdown
-## RedSkills
-
-When the user types `$<name>` (e.g. `$afk`, `$wiki`, `$triage`), look up
-`~/.claude/skills/<name>/SKILL.md` and follow it — usually that means running
-`bash ~/.claude/skills/<name>/scripts/<entrypoint>.sh` with the documented flags.
-Each SKILL.md is self-documenting; read it before invoking.
-```
-
----
-
-### 3. Bootstrap a repo
-
-Run this once per target repo (from inside the repo):
-
-```
-/setup-red-skills
-```
-
-It walks you through five short decisions:
-
-1. **Issue tracker.** GitHub Issues only — confirms `git remote -v` shows the right repo.
-2. **Triage labels.** Maps the five canonical roles (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`) to actual label strings.
-3. **Domain docs.** Single-context (`.red/CONTEXT.md` + `.red/adr/`) or multi-context (`.red/CONTEXT-MAP.md` for monorepos).
-4. **Workflows.** Installs `red-issues-needs-triage.yml` (auto-applies `needs-triage` so nothing slips past `/afk`).
-5. **Token efficiency.** Strong recommendation to install [RTK](https://github.com/rtk-ai/rtk) before running `/afk` (details below).
-
-Output: `.red/agents/*.md`, an `## Agent skills` block in `CLAUDE.md`/`AGENTS.md`, and `.github/workflows/red-*.yml`. All git-tracked. Re-run only to reconfigure from scratch.
-
-### ⛽ Before a long /afk run — install RTK
-
-A multi-hour `/afk` session can burn a surprising fraction of its budget on **CLI chatter** — `pnpm install` progress lines, verbose `git status`, `gh` JSON dumps. [**RTK (Rust Token Killer)**](https://github.com/rtk-ai/rtk) is a transparent CLI proxy that rewrites those calls at the hook layer and returns only what the agent needs.
-
-> **60–90% savings** on routine dev operations, with zero changes to how skills are written. Claude and Codex don't even see the rewrite.
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/rtk-ai/rtk/main/install.sh | sh
-rtk --version          # sanity-check the install
-rtk gain               # token savings analytics; run after a day to see ROI
-```
-
-Strongly recommended before draining a non-trivial backlog with `/afk`. **Pays for itself in the first hour.**
-
-> ⚠ **Name collision.** Another tool called `rtk` ([Rust Type Kit](https://github.com/reachingforthejack/rtk)) sometimes lands first on `PATH`. If `rtk gain` errors out, fix `PATH` so `rtk-ai/rtk` wins.
-
----
 
 ## Philosophy
 
