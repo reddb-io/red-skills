@@ -262,7 +262,7 @@ run_claude() {
   local tmp; tmp="$(mktemp)"
   (
     cd "$worktree"
-    claude --model opus --effort medium --permission-mode acceptEdits \
+    claude --model opus --effort medium --permission-mode bypassPermissions \
            --output-format stream-json --verbose --print "$prompt" 2>&1 \
       | grep --line-buffered '^{' \
       | tee "$tmp" \
