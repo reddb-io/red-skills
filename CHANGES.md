@@ -6,6 +6,17 @@ Upstream base: `mattpocock/skills@e74f0061bb67222181640effa98c675bdb2fdaa7` (see
 
 ---
 
+## triage, tdd, diagnose, to-issues (engineering) — body restructured with `<what-to-do>` / `<supporting-info>`
+
+- **status**: modified
+- **upstream**: `e74f006`
+- **why**: companion to the [/start](#start-engineering--renamed-from-grill-with-docs) rewrite and the new SKILL.md body convention in `CLAUDE.md`. These four skills are long-bodied and prone to model drift (skipping repro, horizontal slicing, publishing without quizzing, hypothesising without a feedback loop). Frontloading the imperative directive and demoting reference/templates makes the core loop dominate.
+- **what changed** (in each):
+  - body wrapped in `<what-to-do>` (primary imperative) + `<supporting-info>` (reference, formats, templates)
+  - explicit numbered steps with mandatory-gate language ("do not proceed until…")
+  - hard DO/DON'T list using ✅/❌ — anti-patterns called out by name (horizontal slicing in tdd, skipping repro for bugs in triage, hypothesising without a loop in diagnose, publishing without user approval in to-issues)
+  - reference docs, role tables, templates, and prose explainers moved to `<supporting-info>`
+
 ## setup-red-skills + README: RTK as recommended companion
 
 - **status**: modified
