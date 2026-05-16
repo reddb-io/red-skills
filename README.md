@@ -312,7 +312,6 @@ Composable. Boring on purpose where boring is enough. Sharp where it matters.
 
 | Skill | What it does |
 |-------|--------------|
-| **[caveman](./skills/productivity/caveman/SKILL.md)** | Ultra-compressed mode. ~75% fewer tokens, same technical accuracy. |
 | **[reflect](./skills/productivity/reflect/SKILL.md)** | Interviews you until every branch of the decision tree is resolved. |
 | **[handoff](./skills/productivity/handoff/SKILL.md)** | Compacts the current conversation into a handoff doc for the next agent. |
 | **[write-a-skill](./skills/productivity/write-a-skill/SKILL.md)** | Scaffolds new skills with proper structure and progressive disclosure. |

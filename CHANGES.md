@@ -16,6 +16,15 @@ Upstream base: `mattpocock/skills@e74f0061bb67222181640effa98c675bdb2fdaa7` (see
   - `README.md`: new "Before a long /afk run — install RTK" callout under Setup, with install one-liner and the same name-collision warning
   - skill overview list now mentions "Token efficiency" as a setup dimension
 
+## caveman (productivity)
+
+- **status**: removed
+- **upstream**: `e74f006`
+- **why**: maintainer preference — caveman mode adds noise to the maintainer's chat; the user prefers full sentences. The skill is available globally via the `caveman` plugin if anyone wants it.
+- **what changed**:
+  - removed `skills/productivity/caveman/`
+  - de-registered from `.claude-plugin/plugin.json`, root `README.md` reference table, `skills/productivity/README.md`
+
 ## global: repo content fully translated to English
 
 - **status**: modified (cross-cutting policy)
