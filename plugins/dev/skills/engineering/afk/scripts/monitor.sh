@@ -20,6 +20,43 @@ PROJECT_ROOT="${1:-$(pwd)}"
 TMP_DIR="$PROJECT_ROOT/.red/tmp"
 HISTORY_FILE="$PROJECT_ROOT/.red/state/afk-history.jsonl"
 
+# ANSI colours. Respect NO_COLOR (https://no-color.org). Otherwise emit
+# unconditionally — Claude Code / Codex agent transcripts render ANSI.
+if [[ -z "${NO_COLOR:-}" ]]; then
+  C_RESET=$'\033[0m'
+  C_BOLD=$'\033[1m'
+  C_DIM=$'\033[2m'
+  C_RED=$'\033[31m'
+  C_GREEN=$'\033[32m'
+  C_YELLOW=$'\033[33m'
+  C_BLUE=$'\033[34m'
+  C_MAGENTA=$'\033[35m'
+  C_CYAN=$'\033[36m'
+  C_GRAY=$'\033[90m'
+else
+  C_RESET="" C_BOLD="" C_DIM="" C_RED="" C_GREEN="" C_YELLOW=""
+  C_BLUE="" C_MAGENTA="" C_CYAN="" C_GRAY=""
+fi
+
+# Colour a progress percentage by stage of completion.
+color_pct() {
+  local p="$1"
+  if   (( p >= 100 )); then printf '%s' "$C_GREEN"
+  elif (( p >=  66 )); then printf '%s' "$C_CYAN"
+  elif (( p >=  33 )); then printf '%s' "$C_YELLOW"
+  else                      printf '%s' "$C_RED"
+  fi
+}
+
+color_status() {
+  case "$1" in
+    live)  printf '%s' "$C_GREEN" ;;
+    stale) printf '%s' "$C_YELLOW" ;;
+    dead)  printf '%s' "$C_RED" ;;
+    *)     printf '%s' "$C_GRAY" ;;
+  esac
+}
+
 fmt_dur() {
   local s=$1
   printf '%02d:%02d:%02d' $((s/3600)) $(((s%3600)/60)) $((s%60))
@@ -76,7 +113,22 @@ render_sparkline() {
     bar+="${glyphs[$idx]}"
   done
 
-  printf '48h: %s  (%d closed, peak %d/h, all workers)\n' "$bar" "$total" "$max"
+  printf '%s48h:%s %s%s%s  %s(%s%s%d closed%s%s, peak %s%s%d/h%s%s, all workers)%s\n' \
+    "$C_BOLD"  "$C_RESET" \
+    "$C_CYAN"  "$bar"   "$C_RESET" \
+    "$C_DIM"   "$C_RESET" "$C_BOLD" "$total" "$C_RESET" "$C_DIM" \
+    "$C_RESET" "$C_BOLD" "$max"   "$C_RESET" "$C_DIM" \
+    "$C_RESET"
+}
+
+# Colour a "+N -M" diff string: + in green, - in red.
+colorize_diff() {
+  local raw="$1"
+  [[ -z "$raw" ]] && return 0
+  local ins del
+  ins="${raw#+}"; ins="${ins%% *}"
+  del="${raw##*-}"
+  printf '%s+%s%s %s-%s%s' "$C_GREEN" "$ins" "$C_RESET" "$C_RED" "$del" "$C_RESET"
 }
 
 # Compact one-line worker summary for non-TTY / inline-agent output.
@@ -114,28 +166,36 @@ render_worker_compact() {
   [[ $total -gt 0 ]] && pct=$(( done * 100 / total ))
   local status_tag="$alive"
   [[ "$alive" == "dead" ]] && status_tag="stale"
+  local s_col; s_col="$(color_status "$status_tag")"
+  local p_col; p_col="$(color_pct "$pct")"
+
   local flags=""
-  [[ $blocked -gt 0 ]] && flags+=" blk:$blocked"
-  [[ $failed  -gt 0 ]] && flags+=" fail:$failed"
+  [[ $blocked -gt 0 ]] && flags+=" ${C_RED}${C_BOLD}blk:${blocked}${C_RESET}"
+  [[ $failed  -gt 0 ]] && flags+=" ${C_RED}${C_BOLD}fail:${failed}${C_RESET}"
 
   local diff_stat=""
   if [[ -n "$current_worktree" && "$current_worktree" != "null" ]]; then
     local wt_abs="$current_worktree"
     [[ "$wt_abs" != /* ]] && wt_abs="$PROJECT_ROOT/$current_worktree"
     local ds; ds="$(worktree_diff_stats "$wt_abs")"
-    [[ -n "$ds" ]] && diff_stat="  $ds"
+    [[ -n "$ds" ]] && diff_stat="  $(colorize_diff "$ds")"
   fi
 
   local cur=""
   if [[ "$current_n" != "-" && "$current_n" != "null" ]]; then
     local title_trim="${current_title:0:48}"
-    cur="  #${current_n} ${title_trim}  stage:${current_stage}  $(fmt_dur $elapsed)${diff_stat}"
+    cur="  ${C_BOLD}#${current_n}${C_RESET} ${title_trim}  ${C_MAGENTA}stage:${current_stage}${C_RESET}  ${C_DIM}$(fmt_dur $elapsed)${C_RESET}${diff_stat}"
   else
-    cur="  idle"
+    cur="  ${C_DIM}idle${C_RESET}"
   fi
 
-  printf '%s [%s] %s  %d/%d (%d%%)%s%s\n' \
-    "$worker_id" "$status_tag" "$runner" "$done" "$total" "$pct" "$flags" "$cur"
+  printf '%s%s%s %s[%s]%s %s%s%s  %s%d%s/%d (%s%d%%%s)%s%s\n' \
+    "$C_CYAN${C_BOLD}" "$worker_id" "$C_RESET" \
+    "$s_col" "$status_tag" "$C_RESET" \
+    "$C_DIM" "$runner" "$C_RESET" \
+    "$p_col" "$done" "$C_RESET" "$total" \
+    "$p_col" "$pct" "$C_RESET" \
+    "$flags" "$cur"
 }
 
 render_worker() {
@@ -178,28 +238,37 @@ render_worker() {
 
   local status_tag="$alive"
   [[ "$alive" == "dead" ]] && status_tag="stale"
+  local s_col; s_col="$(color_status "$status_tag")"
+  local p_col; p_col="$(color_pct "$pct")"
+  local b="$C_GRAY"  # box borders
+  local r="$C_RESET"
 
-  printf '┌─ worker %s [%s] ────────────────────────────────────┐\n' "$worker_id" "$status_tag"
-  printf '│ runner: %-10s elapsed: %s   eta: ~%s │\n' \
-    "$runner" "$(fmt_dur $elapsed)" "$(fmt_dur $remaining_eta)"
-  printf '│ done: %-3d / %-3d (%-3d%%)   blocked: %-3d   failed: %-3d         │\n' \
-    "$done" "$total" "$pct" "$blocked" "$failed"
-  printf '│\n'
+  local blk_col="$C_GREEN"; [[ $blocked -gt 0 ]] && blk_col="$C_RED$C_BOLD"
+  local fail_col="$C_GREEN"; [[ $failed  -gt 0 ]] && fail_col="$C_RED$C_BOLD"
+
+  printf '%s┌─%s worker %s%s%s %s[%s%s%s]%s %s────────────────────────────────────┐%s\n' \
+    "$b" "$r" "$C_CYAN$C_BOLD" "$worker_id" "$r" "$b" "$r" "$s_col$status_tag" "$r" "$b" "$b" "$r"
+  printf '%s│%s runner: %s%-10s%s elapsed: %s%s%s   eta: ~%s%s%s %s│%s\n' \
+    "$b" "$r" "$C_DIM" "$runner" "$r" "$C_DIM" "$(fmt_dur $elapsed)" "$r" "$C_DIM" "$(fmt_dur $remaining_eta)" "$r" "$b" "$r"
+  printf '%s│%s done: %s%-3d%s / %-3d (%s%-3d%%%s)   blocked: %s%-3d%s   failed: %s%-3d%s     %s│%s\n' \
+    "$b" "$r" "$p_col" "$done" "$r" "$total" "$p_col" "$pct" "$r" "$blk_col" "$blocked" "$r" "$fail_col" "$failed" "$r" "$b" "$r"
+  printf '%s│%s\n' "$b" "$r"
   if [[ "$current_n" != "-" && "$current_n" != "null" ]]; then
-    printf '│ ▶ #%s %s\n' "$current_n" "${current_title:0:50}"
-    printf '│   worktree: %s\n' "${current_worktree:0:55}"
-    printf '│   stage: %-12s heartbeat: %s\n' "$current_stage" "$current_glyph"
+    printf '%s│%s %s▶ #%s%s %s\n' "$b" "$r" "$C_BOLD" "$current_n" "$r" "${current_title:0:50}"
+    printf '%s│%s   worktree: %s%s%s\n' "$b" "$r" "$C_DIM" "${current_worktree:0:55}" "$r"
+    printf '%s│%s   stage: %s%-12s%s heartbeat: %s\n' "$b" "$r" "$C_MAGENTA" "$current_stage" "$r" "$current_glyph"
     local wt_abs="$current_worktree"
     [[ -n "$wt_abs" && "$wt_abs" != "null" && "$wt_abs" != /* ]] && wt_abs="$PROJECT_ROOT/$current_worktree"
     local diff_stat=""
     [[ -n "$wt_abs" && "$wt_abs" != "null" ]] && diff_stat="$(worktree_diff_stats "$wt_abs")"
-    [[ -n "$diff_stat" ]] && printf '│   diff: %s (vs main, committed + uncommitted)\n' "$diff_stat"
+    [[ -n "$diff_stat" ]] && printf '%s│%s   diff: %s %s(vs main, committed + uncommitted)%s\n' \
+      "$b" "$r" "$(colorize_diff "$diff_stat")" "$C_DIM" "$r"
     [[ -n "$current_last" && "$current_last" != "null" ]] && \
-      printf '│   last: %s\n' "${current_last:0:55}"
+      printf '%s│%s   last: %s%s%s\n' "$b" "$r" "$C_DIM" "${current_last:0:55}" "$r"
   else
-    printf '│ (no issue in progress)\n'
+    printf '%s│%s %s(no issue in progress)%s\n' "$b" "$r" "$C_DIM" "$r"
   fi
-  printf '└────────────────────────────────────────────────────────────┘\n'
+  printf '%s└────────────────────────────────────────────────────────────┘%s\n' "$b" "$r"
 }
 
 render_full() {
