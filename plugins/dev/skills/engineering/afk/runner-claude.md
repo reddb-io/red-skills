@@ -8,7 +8,7 @@ How `/afk` invokes Claude as the inner agent for one issue.
 claude \
   --model opus \
   --effort medium \
-  --permission-mode acceptEdits \
+  --permission-mode bypassPermissions \
   --output-format stream-json \
   --verbose \
   --print \
@@ -18,8 +18,7 @@ claude \
 `$full_prompt` is built by the orchestrator as:
 
 ```
-Handoff file:
-<contents of ../handoff.md (i.e. .red/tmp/work-{id}-i{N}/handoff.md, sibling of the worktree)>
+Handoff file: <absolute path to .red/tmp/work-{id}-i{N}/handoff.md>
 
 Recent commits on main:
 <git log -n 5 --format="%H%n%ad%n%B---" --date=short>
@@ -61,8 +60,8 @@ Claude is invoked with the worktree as `cwd`. It has filesystem access only insi
 
 ## Handoff File Contract
 
-Claude reads `../handoff.md` (relative to the worktree, i.e. `.red/tmp/work-{id}-i{N}/handoff.md`) at the start of its session. The orchestrator does not pass file contents in the prompt itself — only the relative path and the instruction to read it. Keeps the context window lean.
+Claude reads the handoff file path passed in the prompt at the start of its session. The file lives one level above the worktree, at `.red/tmp/work-{id}-i{N}/handoff.md`, so it survives runner retries.
 
 ## Notes On Permissions
 
-`acceptEdits` lets Claude edit files without prompting but still requires confirmation for shell commands the policy considers risky. That's intentional — the safety policy is a backstop even when the inner agent is "trusted".
+`bypassPermissions` is required because `/afk` runs unattended. The safety policy is enforced by worktree isolation, the forbidden git command list in `AGENT-PROMPT.md`, and orchestrator validation before merge.

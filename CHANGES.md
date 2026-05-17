@@ -6,6 +6,32 @@ Upstream base: `mattpocock/skills@e74f0061bb67222181640effa98c675bdb2fdaa7` (see
 
 ---
 
+## global: Codex marketplace metadata + runner doctor
+
+- **status**: modified
+- **upstream**: —
+- **why**: RedSkills already ran well in Claude Code, but Codex CLI installs could drift because the repo only shipped Claude marketplace metadata and the manual linker only targeted `~/.claude/skills`.
+- **what changed**:
+  - Added `.agents/plugins/marketplace.json` and `plugins/dev/.codex-plugin/plugin.json` so Codex can load the same `plugins/dev/skills/` tree natively.
+  - Updated `scripts/link-skills.sh` to link stable skills into `~/.claude/skills`, `~/.agents/skills`, and `~/.codex/skills`.
+  - Added `scripts/validate-install-metadata.sh` and wired it into `red-release` to catch drift between published skill directories and install manifests.
+  - Added `scripts/doctor-runners.sh` to verify Claude/Codex runner flags, Codex marketplace registration, and manual symlink installs without calling a model.
+  - Updated `red-release` to keep the Claude and Codex plugin versions in sync.
+  - Registered the stable `misc/` skills in `plugins/dev/.claude-plugin/plugin.json`, matching the repo rules and README reference table.
+
+---
+
+## afk (engineering) — Claude/Codex runner compatibility
+
+- **status**: modified
+- **upstream**: —
+- **why**: the shell runner already used unattended Claude permissions, but the runner documentation still described the older `acceptEdits` mode and the inner-agent prompt used Claude-style `/skill` phrasing in places that Codex also reads.
+- **what changed**:
+  - `runner-claude.md` now documents the actual `--permission-mode bypassPermissions` invocation and handoff path contract.
+  - `AGENT-PROMPT.md` now tells inner agents to use the runner-native skill invocation style (`/skill` for Claude Code, `$skill` or installed skill lookup for Codex).
+
+---
+
 ## red-release workflow — conventional-commit-driven semver + plugin.json sync
 
 - **status**: modified
@@ -176,6 +202,7 @@ Upstream base: `mattpocock/skills@e74f0061bb67222181640effa98c675bdb2fdaa7` (see
   - `skills/knowledge/wiki/` — operations (SKILL.md, REFERENCES.md with Karpathy/Memex/Tolkien Gateway/qmd/Obsidian Dataview/Web Clipper/Zettelkasten)
   - policies: layout `.red/wiki/{raw,pages,index.md,log.md}` + schema at `.red/agents/wiki.md`; kebab-case names; frontmatter `title/type/tags/created/updated/sources`; `.red/wiki/` 100% gitignored; isolated from CONTEXT/ADR; search via index+grep with future migration to qmd
   - registered in `.claude-plugin/plugin.json`, root `README.md`, and `CLAUDE.md`
+  - **C4 diagram (complexity-gated)**: optional `.red/wiki/C4.md` holds the system's C4 model (Context / Container / Component, level 4 omitted). Wiki proposes creation when ≥3 services or non-trivial integration appears during ingest or query. Ingest workflow adds step 6 "C4 awareness" — check whether the new source introduces architectural surface not yet on the diagram, update if so and bump `updated:`. Lint gains check #7 "C4 staleness" — flag when sources newer than the diagram's `updated:` touch named containers/components. Mermaid blocks use plain `flowchart` (universally rendered) instead of experimental `C4Context`/`C4Container`/`C4Component`. The content around each diagram (actors, containers, components, relationships, tech choices) is the substance — the diagram is just the index — and every named element must already exist in `.red/CONTEXT.md`; new terms surface a glossary update before going into C4.md.
 
 ## reflect (productivity) — renamed from grill-me
 

@@ -33,6 +33,9 @@ jobs:
           fetch-tags: true
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Validate install metadata
+        run: scripts/validate-install-metadata.sh
+
       - name: Decide bump kind
         id: bump
         run: |
@@ -84,23 +87,28 @@ jobs:
           echo "next=$next" >> "$GITHUB_OUTPUT"
           echo "Releasing $next"
 
-      - name: Sync plugin.json version
+      - name: Sync plugin manifest versions
         if: steps.bump.outputs.kind != 'none'
         env:
           NEXT: ${{ steps.version.outputs.next }}
         run: |
           set -euo pipefail
-          manifest=plugins/dev/.claude-plugin/plugin.json
+          manifests=(
+            plugins/dev/.claude-plugin/plugin.json
+            plugins/dev/.codex-plugin/plugin.json
+          )
           new="${NEXT#v}"
-          tmp=$(mktemp)
-          jq --arg v "$new" '.version = $v' "$manifest" > "$tmp"
-          mv "$tmp" "$manifest"
+          for manifest in "${manifests[@]}"; do
+            tmp=$(mktemp)
+            jq --arg v "$new" '.version = $v' "$manifest" > "$tmp"
+            mv "$tmp" "$manifest"
+          done
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          if git diff --quiet -- "$manifest"; then
-            echo "plugin.json already at $new"
+          if git diff --quiet -- "${manifests[@]}"; then
+            echo "plugin manifests already at $new"
           else
-            git add "$manifest"
+            git add "${manifests[@]}"
             git commit -m "chore(release): $NEXT [skip release]"
             git push origin HEAD:main
           fi

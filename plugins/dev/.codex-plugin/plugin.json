@@ -1,0 +1,41 @@
+{
+  "name": "dev",
+  "version": "1.4.1",
+  "description": "reddb.io dev plugin - engineering skills for code agents (autonomous /afk loop, triage, tdd, diagnose, wiki, ...)",
+  "author": {
+    "name": "reddb.io",
+    "url": "https://github.com/reddb-io"
+  },
+  "homepage": "https://github.com/reddb-io/red-skills",
+  "repository": "https://github.com/reddb-io/red-skills",
+  "license": "MIT",
+  "keywords": [
+    "codex",
+    "claude-code",
+    "skills",
+    "agents",
+    "github-issues",
+    "tdd"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "RedSkills Dev",
+    "shortDescription": "Engineering workflow skills for code agents.",
+    "longDescription": "RedSkills Dev provides small, composable engineering skills for planning, triage, TDD, diagnosis, local knowledge wikis, and autonomous GitHub issue execution through /afk.",
+    "developerName": "reddb.io",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write",
+      "Shell"
+    ],
+    "websiteURL": "https://github.com/reddb-io/red-skills",
+    "defaultPrompt": [
+      "Run $setup-red-skills for this repo.",
+      "Use $triage on open issues.",
+      "Drain ready issues with $afk."
+    ],
+    "brandColor": "#D92D20"
+  }
+}

@@ -26,9 +26,9 @@ If a script doesn't exist in `package.json`, skip it silently. Don't invent test
 
 ## Workflow
 
-1. **Read.** Handoff file. Recent commits. The files referenced by `## Refs`. The codebase area you are about to touch. If `## Suggested Skills` is present, load those skills before planning.
+1. **Read.** Handoff file. Recent commits. The files referenced by `## Refs`. The codebase area you are about to touch. If `## Suggested Skills` is present, load those skills before planning. Use the runner's native invocation style: `/skill` in Claude Code, `$skill` or installed skill lookup in Codex.
 2. **Plan.** State your assumptions and the slice you'll implement. If the brief is internally inconsistent or contradicts code you can see, append a `## Notes` entry to the handoff file and emit `<promise>BLOCKED</promise>`. Do not guess.
-3. **Implement using `/tdd`.** Failing test first, then minimal code to pass, then refactor. Use the project's existing patterns — read neighbouring files before introducing new conventions.
+3. **Implement using the TDD skill.** Failing test first, then minimal code to pass, then refactor. Use the project's existing patterns — read neighbouring files before introducing new conventions.
 4. **Feedback loops.** Run `pnpm test`, `pnpm typecheck`, `pnpm lint`, `pnpm build`. Fix failures. Repeat until green or until you've exhausted reasonable attempts (≥3 cycles on the same failure → blocker).
 5. **Commit.** One or more atomic commits. Commit message body must include:
    - Issue reference: `Refs #N` (not `Closes`, the orchestrator closes the issue).
@@ -75,7 +75,7 @@ Surgical precision. If you find an unrelated bug, mention it in Notes — don't 
 
 ## Wiki Awareness
 
-If a `.red/wiki/` directory exists in this worktree, treat it as **gitignored knowledge cache**. You may read it for context. You may **not** `git add` it. If your task involves wiki updates, follow the `/wiki` skill — it never commits wiki files.
+If a `.red/wiki/` directory exists in this worktree, treat it as **gitignored knowledge cache**. You may read it for context. You may **not** `git add` it. If your task involves wiki updates, follow the wiki skill — it never commits wiki files.
 
 ## Output Discipline
 

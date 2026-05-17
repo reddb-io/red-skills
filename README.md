@@ -37,9 +37,9 @@ reddb.io's slash-command library for Claude Code, Codex, and friends.
 
 ## Install
 
-### Recommended — marketplace install with auto-updates
+### Claude Code — marketplace install
 
-RedSkills ships as a Claude Code **plugin marketplace**. Add it once, install the plugin, and Claude Code pulls new commits at every startup. **This is the only path that auto-updates** — pick this one unless you have a specific reason not to.
+RedSkills ships as a Claude Code **plugin marketplace**. Add the marketplace once, install the `dev` plugin, and Claude Code pulls new commits at startup when marketplace auto-update is enabled.
 
 Inside Claude Code:
 
@@ -48,7 +48,15 @@ Inside Claude Code:
 /plugin install dev@red-skills
 ```
 
-That's it. From now on Claude Code checks `reddb-io/red-skills` at every session start and pulls new skills / fixes silently. Toggle the behaviour with `/plugin` → **Marketplaces** → select `red-skills` → **Enable auto-update** (default on for this marketplace).
+Use the skills as native slash commands:
+
+```text
+/setup-red-skills
+/triage
+/afk --once
+```
+
+From now on Claude Code checks `reddb-io/red-skills` at session start. Toggle the behaviour with `/plugin` → **Marketplaces** → select `red-skills` → **Enable auto-update**.
 
 Force a refresh without restarting:
 
@@ -65,10 +73,54 @@ Remove:
 
 > ℹ️ Every push to `main` cuts a patch release on GitHub. New commits land on auto-update users at their next session — no action needed from them.
 
+### Codex CLI — marketplace install
+
+RedSkills also ships Codex plugin metadata. Codex reads `.agents/plugins/marketplace.json`, then loads the same `plugins/dev/skills/` tree through `plugins/dev/.codex-plugin/plugin.json`.
+
+```bash
+codex plugin marketplace add reddb-io/red-skills
+```
+
+Use the skills by name in Codex prompts. The convention is `$<skill>`:
+
+```text
+$setup-red-skills
+$triage
+$afk --once
+```
+
+Refresh later:
+
+```bash
+codex plugin marketplace upgrade red-skills
+```
+
+Remove:
+
+```bash
+codex plugin marketplace remove red-skills
+```
+
+For Codex installs pinned to a local checkout, pass the local repo root instead:
+
+```bash
+codex plugin marketplace add ~/code/red-skills
+```
+
+### Verify Claude + Codex compatibility
+
+Run this before a release or after upgrading either CLI:
+
+```bash
+./scripts/doctor-runners.sh
+```
+
+It validates the install metadata, checks shell syntax, verifies the Claude and Codex runner flags that `/afk` depends on, tests Codex marketplace registration in a temporary home directory, and checks manual symlink installs for all local agent skill directories.
+
 <details>
 <summary><strong>Alternatives — no auto-update</strong></summary>
 
-Pick one of these only if the marketplace path doesn't fit (Codex/Gemini users, local hacking, no Claude Code).
+Pick one of these only if the marketplace path doesn't fit (Gemini users, local hacking, or older agents without plugin marketplace support).
 
 #### `npx skills` (Matt's installer)
 
@@ -85,10 +137,10 @@ For local edits or `$<name>` access from Codex / Gemini CLI:
 ```bash
 git clone git@github.com:reddb-io/red-skills.git ~/code/red-skills
 cd ~/code/red-skills
-./scripts/link-skills.sh         # symlinks every SKILL.md into ~/.claude/skills/
+./scripts/link-skills.sh         # symlinks every stable SKILL.md into local agent skill dirs
 ```
 
-**No auto-update.** Update later with `git pull && ./scripts/link-skills.sh`. Symlinks point at the working tree, so a `git pull` updates every agent at once.
+The script links into `~/.claude/skills`, `~/.agents/skills`, and `~/.codex/skills` so Claude Code, current Codex installs, and simple `$<name>` agents see the same working tree. **No auto-update.** Update later with `git pull && ./scripts/link-skills.sh`.
 
 </details>
 
@@ -96,9 +148,9 @@ cd ~/code/red-skills
 
 | Agent | Invocation | Notes |
 |-------|------------|-------|
-| **Claude Code** | `/afk`, `/wiki`, `/triage`, … | Native slash commands. The marketplace install above handles everything — auto-updates included. |
-| **Codex CLI** | `$afk`, `$wiki`, `$triage`, … | The `$` is a convention: when the agent sees `$<name>`, it finds `~/.claude/skills/<name>/SKILL.md` on disk and follows the instructions. Add the snippet below to `~/.codex/AGENTS.md` once. Requires the manual-clone install. |
-| **Gemini CLI / others** | `$afk`, etc. | Same `$<name>` convention. Works with any agent that can read files under `~/.claude/skills/` and run bash. |
+| **Claude Code** | `/afk`, `/wiki`, `/triage`, … | Native slash commands after `/plugin install dev@red-skills`. |
+| **Codex CLI** | `$afk`, `$wiki`, `$triage`, … | Skill-name convention after `codex plugin marketplace add reddb-io/red-skills`. |
+| **Gemini CLI / others** | `$afk`, etc. | Same `$<name>` convention. Works with any agent that can read local `SKILL.md` files and run bash. |
 
 Teach Codex (or any non-Claude-Code agent) the convention by appending to `~/.codex/AGENTS.md`:
 
@@ -106,8 +158,9 @@ Teach Codex (or any non-Claude-Code agent) the convention by appending to `~/.co
 ## RedSkills
 
 When the user types `$<name>` (e.g. `$afk`, `$wiki`, `$triage`), look up
+`~/.agents/skills/<name>/SKILL.md`, `~/.codex/skills/<name>/SKILL.md`, or
 `~/.claude/skills/<name>/SKILL.md` and follow it — usually that means running
-`bash ~/.claude/skills/<name>/scripts/<entrypoint>.sh` with the documented flags.
+`bash <skill-dir>/scripts/<entrypoint>.sh` with the documented flags.
 Each SKILL.md is self-documenting; read it before invoking.
 ```
 
