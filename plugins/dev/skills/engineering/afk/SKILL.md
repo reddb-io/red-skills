@@ -40,7 +40,7 @@ Per-issue files live under `.red/tmp/work-{id}-i{N}/` in the primary checkout. E
 | `.red/tmp/work-{id}-i{N}/afk.state.json` | State snapshot for this iteration. Schema in *State File* below. |
 | `.red/tmp/work-{id}-i{N}/handoff.md` | Handoff file (AGENT-BRIEF) the inner agent reads. Template in *Handoff File Template* below. |
 
-Two workers cannot claim the same issue because the GitHub label transition (`ready-for-agent` → `running`) is atomic — the second `gh issue edit` fails and that worker skips to the next candidate. No extra coordination needed.
+Two workers cannot claim the same issue thanks to a local `mkdir` lock at `.red/tmp/claims/{N}/` plus a `gh issue view` pre-check before the edit. The gh edit itself is not atomic (see *Issue Lifecycle* below for the full three-layer scheme). The race surface is the brief window between two separate checkouts on the same host — acceptable for the intended scale.
 
 ## Hard Preconditions
 
@@ -291,11 +291,22 @@ Atomic write: write to `afk.state.json.tmp` inside the iteration directory, `mv`
 
 ## Monitor
 
-`/afk monitor` is the readonly aggregated view across all live workers. It:
+`/afk monitor` is the readonly aggregated view across all live workers. **Implementation is `scripts/monitor.sh` — invoke it directly, do not reinvent the rendering in inline bash.** The script:
 
 1. Globs `.red/tmp/work-*/afk.state.json` and renders one section per active iteration.
 2. Verifies liveness via the sibling `afk.pid` — iterations whose PID is dead are flagged `stale` and not counted as running.
 3. Optionally tails the sibling `afk.log` for the most recent line under each worker's header.
+4. Renders the 48h sparkline header (next subsection) on every refresh.
+
+To invoke, from the project root:
+
+```bash
+bash plugins/dev/skills/engineering/afk/scripts/monitor.sh
+# or, from an installed plugin cache:
+bash ~/.claude/plugins/cache/red-skills/dev/<version>/skills/engineering/afk/scripts/monitor.sh
+```
+
+The script refreshes every 3 s. Ctrl-C to exit.
 
 Single-worker operation shows one section. Multi-worker adds one section per live worker, sorted by `started_at`, plus an aggregate `done / total` summary across all of them.
 
