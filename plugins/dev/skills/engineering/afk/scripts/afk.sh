@@ -501,6 +501,7 @@ EOF
 run_claude() {
   local worktree="$1" prompt="$2"
   local tmp; tmp="$(mktemp)"
+  local log_target="${ITER_LOG:-/dev/null}"
   (
     cd "$worktree"
     claude --model opus --effort medium --permission-mode bypassPermissions \
@@ -508,7 +509,9 @@ run_claude() {
       | grep --line-buffered '^{' \
       | tee "$tmp" \
       | jq --unbuffered -rj 'select(.type == "assistant").message.content[]? | select(.type == "text").text // empty | . + "\n"' \
-        2>/dev/null || true
+        2>/dev/null \
+      | tee -a "$log_target" \
+      || true
   )
   jq -r 'select(.type == "result").result // empty' "$tmp" 2>/dev/null || echo ""
   rm -f "$tmp"
@@ -517,13 +520,16 @@ run_claude() {
 run_codex() {
   local worktree="$1" prompt="$2"
   local last; last="$(mktemp)"
+  local log_target="${ITER_LOG:-/dev/null}"
   codex exec --json -C "$worktree" \
     --sandbox danger-full-access \
     --dangerously-bypass-approvals-and-sandbox \
     --output-last-message "$last" \
     "$prompt" </dev/null 2>&1 \
     | jq --unbuffered -rj 'select(.type == "item.completed") | .item.text // empty | . + "\n"' \
-      2>/dev/null || true
+      2>/dev/null \
+    | tee -a "$log_target" \
+    || true
   cat "$last" 2>/dev/null || echo ""
   rm -f "$last"
 }

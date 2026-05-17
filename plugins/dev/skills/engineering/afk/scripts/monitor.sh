@@ -222,6 +222,14 @@ render_worker() {
   current_glyph="$(jq -r '.current.heartbeat_glyph // ""' <<<"$state")"
   current_worktree="$(jq -r '.current.worktree // "-"' <<<"$state")"
   current_last="$(jq -r '.current.last_stream_line // ""' <<<"$state")"
+# Prefer the live tail of afk.log over the state field (which the
+# orchestrator does not currently maintain). Falls back to state if
+# the log is empty/missing.
+if [[ -f "$iter_dir/afk.log" ]]; then
+  local log_tail
+  log_tail="$(tail -n 1 "$iter_dir/afk.log" 2>/dev/null | tr -d '\r' | sed 's/[[:space:]]*$//')"
+  [[ -n "$log_tail" ]] && current_last="$log_tail"
+fi
 
   local elapsed=0
   if [[ -n "$started" ]]; then
