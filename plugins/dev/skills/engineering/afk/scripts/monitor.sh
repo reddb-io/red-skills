@@ -25,6 +25,21 @@ fmt_dur() {
   printf '%02d:%02d:%02d' $((s/3600)) $(((s%3600)/60)) $((s%60))
 }
 
+# Diff stats for a worktree branch vs main. Captures committed + uncommitted
+# changes so the number reflects "live progress" of the in-flight issue.
+# Output: "+ADD -DEL" or "" on any failure (worktree missing, not a repo, etc).
+worktree_diff_stats() {
+  local worktree="$1"
+  [[ -d "$worktree/.git" || -f "$worktree/.git" ]] || return 0
+  local stat
+  stat="$(git -C "$worktree" diff --shortstat main 2>/dev/null)" || return 0
+  [[ -z "$stat" ]] && { printf '+0 -0'; return; }
+  local ins del
+  ins="$(grep -oE '[0-9]+ insertion' <<<"$stat" | grep -oE '[0-9]+' || echo 0)"
+  del="$(grep -oE '[0-9]+ deletion'  <<<"$stat" | grep -oE '[0-9]+' || echo 0)"
+  printf '+%s -%s' "${ins:-0}" "${del:-0}"
+}
+
 # 48h sparkline of `done` events per hour. 48 buckets, scaled to peak.
 render_sparkline() {
   [[ -f "$HISTORY_FILE" ]] || { echo "history: (none yet — first /afk run will start it)"; return; }
@@ -72,7 +87,7 @@ render_worker_compact() {
   local state; state="$(cat "$state_file" 2>/dev/null || echo '{}')"
 
   local worker_id pid alive runner total done blocked failed
-  local current_n current_title current_stage started elapsed
+  local current_n current_title current_stage current_worktree started elapsed
   worker_id="$(jq -r '.worker_id // "?"' <<<"$state")"
   pid="$(cat "$pid_file" 2>/dev/null || echo '')"
   alive="dead"
@@ -85,6 +100,7 @@ render_worker_compact() {
   current_n="$(jq -r '.current.number // "-"' <<<"$state")"
   current_title="$(jq -r '.current.title // "-"' <<<"$state")"
   current_stage="$(jq -r '.current.stage // "-"' <<<"$state")"
+  current_worktree="$(jq -r '.current.worktree // ""' <<<"$state")"
   started="$(jq -r '.started_at // ""' <<<"$state")"
 
   elapsed=0
@@ -102,10 +118,18 @@ render_worker_compact() {
   [[ $blocked -gt 0 ]] && flags+=" blk:$blocked"
   [[ $failed  -gt 0 ]] && flags+=" fail:$failed"
 
+  local diff_stat=""
+  if [[ -n "$current_worktree" && "$current_worktree" != "null" ]]; then
+    local wt_abs="$current_worktree"
+    [[ "$wt_abs" != /* ]] && wt_abs="$PROJECT_ROOT/$current_worktree"
+    local ds; ds="$(worktree_diff_stats "$wt_abs")"
+    [[ -n "$ds" ]] && diff_stat="  $ds"
+  fi
+
   local cur=""
   if [[ "$current_n" != "-" && "$current_n" != "null" ]]; then
     local title_trim="${current_title:0:48}"
-    cur="  #${current_n} ${title_trim}  stage:${current_stage}  $(fmt_dur $elapsed)"
+    cur="  #${current_n} ${title_trim}  stage:${current_stage}  $(fmt_dur $elapsed)${diff_stat}"
   else
     cur="  idle"
   fi
@@ -165,6 +189,11 @@ render_worker() {
     printf '│ ▶ #%s %s\n' "$current_n" "${current_title:0:50}"
     printf '│   worktree: %s\n' "${current_worktree:0:55}"
     printf '│   stage: %-12s heartbeat: %s\n' "$current_stage" "$current_glyph"
+    local wt_abs="$current_worktree"
+    [[ -n "$wt_abs" && "$wt_abs" != "null" && "$wt_abs" != /* ]] && wt_abs="$PROJECT_ROOT/$current_worktree"
+    local diff_stat=""
+    [[ -n "$wt_abs" && "$wt_abs" != "null" ]] && diff_stat="$(worktree_diff_stats "$wt_abs")"
+    [[ -n "$diff_stat" ]] && printf '│   diff: %s (vs main, committed + uncommitted)\n' "$diff_stat"
     [[ -n "$current_last" && "$current_last" != "null" ]] && \
       printf '│   last: %s\n' "${current_last:0:55}"
   else
