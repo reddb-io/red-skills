@@ -102,9 +102,12 @@ Avoid specific file paths or code snippets — they go stale fast. **Exception**
 
 ## Blocked by
 
-- A reference to the blocking ticket (if any)
+- [ ] #123
+- [ ] #456
 
-Or "None - can start immediately" if no blockers.
+Format: one GitHub task list entry per blocker, `- [ ] #N`. GitHub renders this as a native dependency widget ("Tracked by 0/N"), checkboxes auto-mark when the referenced issue closes. The `/afk` boot sweep parses this exact section to auto-promote issues whose blockers have all closed — keep the heading literal (`## Blocked by`, capitalised, no extra punctuation) and the format strict.
+
+Omit the section entirely (do not write "None") if the slice has no blockers.
 
 </issue-template>
 

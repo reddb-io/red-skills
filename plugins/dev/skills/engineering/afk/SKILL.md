@@ -79,6 +79,19 @@ Right after bootstrap and before *Straggler Check*, `/afk` sweeps `.red/tmp/work
 
 This removes the manual "remember to clean `.red/tmp/`" discipline. Blocker dirs persist exactly as long as the issue stays `ready-for-human`; everything else self-collects on the next `/afk` run.
 
+## Unblock Sweep (boot-time)
+
+After *Orphan Cleanup* and before *Straggler Check*, `/afk` scans every open issue labelled `ready-for-human` and checks whether its declared blockers have all closed. If yes, the issue is auto-promoted back to `ready-for-agent` for this run.
+
+How the sweep works:
+
+1. `gh issue list --label ready-for-human --state open --json number,body`.
+2. For each candidate, extract refs (`#N`) under the literal `## Blocked by` heading in the body. Format is the GitHub task list emitted by `/to-issues`: `- [ ] #N` (one per line).
+3. For each ref, `gh issue view <N> --json state`. Auto-promote only when **every** ref resolves to `state == CLOSED`. Checkbox state in the body is human UX — the lookup is the source of truth.
+4. On promotion: `gh issue edit --remove-label ready-for-human --add-label ready-for-agent`, post an audit comment (`🤖 /afk promoted to ready-for-agent: all blockers closed (#X, #Y).`), and log a single orchestrator line `unblocked N issue(s): #A #B`.
+
+Trade-off accepted: an issue may have hit `ready-for-human` for a reason unrelated to the listed blockers (test failure, spec ambiguity). Auto-promotion will then bounce it back to `ready-for-human` on the next attempt — cheap, and the fresh BLOCKED Notes the agent writes are more informative than stale ones.
+
 ## Straggler Check
 
 Before issue selection, `/afk` counts open issues in states it cannot consume:

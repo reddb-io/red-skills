@@ -238,6 +238,63 @@ prune_orphans() {
   history_trim
 }
 
+# ---------- unblock sweep ----------
+# Boot-time: scan every issue currently labelled `ready-for-human` and check
+# whether all blockers listed under "## Blocked by" in its body have closed.
+# If yes, auto-promote the issue back to `ready-for-agent`.
+#
+# Format expected in body (set by /to-issues):
+#
+#     ## Blocked by
+#
+#     - [ ] #123
+#     - [x] #456
+#
+# The checkbox state is human UX only; we always look up the referenced
+# issue's actual state via `gh issue view`. Trade-off accepted: an issue
+# may have hit ready-for-human for an unrelated reason (test failure, spec
+# ambiguity) and not because of these blockers — auto-promotion will then
+# bounce back to ready-for-human on the next attempt. That's cheap and the
+# fresh BLOCKED Notes are more informative than stale ones.
+sweep_unblocked() {
+  local repo; repo="$(gh_repo)"
+  local list
+  list="$(gh -R "$repo" issue list --label ready-for-human --state open \
+            --json number,body --limit 100 2>/dev/null || echo '[]')"
+  local n_candidates
+  n_candidates="$(echo "$list" | jq 'length')"
+  [[ "$n_candidates" -eq 0 ]] && return 0
+
+  local promoted=()
+  local entry n body refs ref r_state all_closed
+  while IFS= read -r entry; do
+    n="$(jq -r '.number' <<<"$entry")"
+    body="$(jq -r '.body // ""' <<<"$entry")"
+    # extract refs under `## Blocked by` (stop at next `## ` heading).
+    refs="$(awk '/^## Blocked by[[:space:]]*$/{flag=1; next} /^## /{flag=0} flag' <<<"$body" \
+            | grep -oE '#[0-9]+' | sort -u)"
+    [[ -z "$refs" ]] && continue
+    all_closed=1
+    for ref in $refs; do
+      r_state="$(gh -R "$repo" issue view "${ref#\#}" --json state --jq .state 2>/dev/null)"
+      if [[ "$r_state" != "CLOSED" ]]; then
+        all_closed=0
+        break
+      fi
+    done
+    if [[ $all_closed -eq 1 ]]; then
+      if gh -R "$repo" issue edit "$n" \
+            --remove-label ready-for-human --add-label ready-for-agent >/dev/null 2>&1; then
+        gh -R "$repo" issue comment "$n" \
+          --body "🤖 /afk promoted to ready-for-agent: all blockers closed ($(echo "$refs" | paste -sd' ' -))." >/dev/null 2>&1 || true
+        promoted+=("$n")
+      fi
+    fi
+  done < <(echo "$list" | jq -c '.[]')
+
+  [[ ${#promoted[@]} -gt 0 ]] && log "unblocked ${#promoted[@]} issue(s): #${promoted[*]}"
+}
+
 # Cross-iteration in-memory aggregates (state file is per-iteration; these survive between issues).
 AGG_STARTED="$(date -Iseconds)"
 AGG_TOTAL=0 AGG_DONE=0 AGG_BLOCKED=0 AGG_FAILED=0
@@ -777,6 +834,7 @@ trap cleanup INT TERM
 precheck
 bootstrap
 prune_orphans
+sweep_unblocked
 
 # --- straggler check: warn about issues that never made it to ready-for-agent
 straggler_check() {
