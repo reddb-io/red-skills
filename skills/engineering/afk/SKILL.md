@@ -1,7 +1,7 @@
 ---
 name: afk
 description: Autonomous loop that drains the `ready-for-agent` queue on the issue tracker. Each iteration claims an issue, runs it in an isolated worktree, executes with claude or codex, merges back to main, and closes the issue. Use when the user wants to run AFK execution, drain a PRD, hammer specific issues, or otherwise let agents grind through the backlog.
-argument-hint: "[--prd N | --issues N,N,N] [--runner claude|codex] [-n N] [--once] [--slot N]"
+argument-hint: "[--prd N | --issues N,N,N] [--runner claude|codex] [-n N] [--once]"
 ---
 
 # /afk
@@ -16,31 +16,30 @@ Drain the agent-ready backlog. Single skill that owns issue selection, worktree 
 - `/afk --runner codex` — pin a backend instead of alternating on exhaustion.
 - `/afk -n 5` — cap at five issues (default: drain until empty).
 - `/afk --once` — single supervised iteration. Same as `scripts/once.sh`. Use for debugging the prompt.
-- `/afk --slot 2` — run a second parallel worker (slot `1` is the default). Each slot owns its own log, pid, state file, and worktree path prefix.
-- `/afk monitor` — readonly status board, aggregates every `.red/tmp/afk-*.state.json` so you see all live slots from another terminal.
+- `/afk monitor` — readonly status board, aggregates every `.red/tmp/afk-*.state.json` so you see all live workers from another terminal.
 
-## Slot & Parallelization
+## Parallelization
 
-`/afk` is single-instance **per slot**. Slot defaults to `1`. To run N workers in parallel, launch each in its own terminal/tmux pane with a distinct `--slot`:
+`/afk` is **trivially parallel** — just open another terminal and run `/afk` again. No flag, no coordination, no slot to manage.
 
 ```bash
-/afk --slot 1            # terminal A
-/afk --slot 2            # terminal B
-/afk --slot 3            # terminal C
+/afk            # terminal A → spawns worker "k7m2"
+/afk            # terminal B → spawns worker "9rqp"
+/afk            # terminal C → spawns worker "x4nb"
 ```
 
-Each slot writes its own files under `.red/tmp/`:
+Each invocation generates its own **worker ID** — a random 4-char alphanumeric string (`[a-z0-9]`, ~1.6M possible IDs) — and uses it as the prefix for every per-run file. The ID is printed on the first line of the run so you can tail or kill it later.
 
-| Per-slot file | Purpose |
+Per-worker files in primary's `.red/tmp/`:
+
+| File | Purpose |
 |---|---|
-| `afk-{slot}.pid` | PID lockfile. Refuse to start a second `/afk --slot N` while this is live; treat as stale if the PID no longer exists. |
-| `afk-{slot}.log` | Append-only run log. `/afk monitor` and `tail -F` read it. |
-| `afk-{slot}.state.json` | The state schema described in *State File* below. |
-| `../.workspaces/{repo}-s{slot}-{N}` | Per-issue worktree. Slot in the path so two slots working different issues never collide on filesystem. |
+| `afk-{id}.pid` | PID file. Used by `/afk monitor` to flag dead workers as `stale`. No lock semantics — random IDs are collision-free in practice. |
+| `afk-{id}.log` | Append-only run log. `/afk monitor` tails it; you can `tail -F` it directly. |
+| `afk-{id}.state.json` | The state schema described in *State File* below. |
+| `../.workspaces/{repo}-{id}-{N}` | Per-issue worktree. The worker ID in the path keeps parallel workers from colliding on filesystem. |
 
-Two slots cannot claim the same issue because the GitHub label transition (`ready-for-agent` → `running`) is atomic — the second `gh issue edit` fails and that slot skips to the next candidate. No extra coordination needed.
-
-Single-slot use (no `--slot` flag) is unchanged: everything still lands at `afk-1.*`.
+Two workers cannot claim the same issue because the GitHub label transition (`ready-for-agent` → `running`) is atomic — the second `gh issue edit` fails and that worker skips to the next candidate. No extra coordination needed.
 
 ## Hard Preconditions
 
@@ -58,13 +57,13 @@ Run before the first iteration:
 
 1. Ensure `.red/tmp/` exists. Create it.
 2. Ensure `.red/tmp/` is in `.gitignore` of the primary checkout. Append if missing.
-3. Resolve the slot. Order: `--slot` flag > env `AFK_SLOT` > `1`. Slot is a positive integer; reject anything else. All per-run file paths below interpolate `{slot}`.
-4. **Acquire the PID lock.** If `.red/tmp/afk-{slot}.pid` exists, read the PID. If `kill -0 $pid` succeeds (process alive), refuse to start — print "slot {slot} is already running (pid $pid). Use --slot N for a parallel worker." and exit 1. If the process is gone, treat the file as stale, log "reclaiming stale pid file for slot {slot}", and continue. Write the current `$$` to `afk-{slot}.pid` atomically.
-5. **Open the log.** All orchestrator output (header excluded) tees into `.red/tmp/afk-{slot}.log`. Append-only, never truncate. Rotation is the user's job.
-6. Initialise `.red/tmp/afk-{slot}.state.json` with the schema in *State File* below. Atomic write.
+3. **Generate the worker ID.** 4 random characters from `[a-z0-9]` (e.g. `k7m2`). On the astronomically unlikely chance the chosen ID already has a live `.red/tmp/afk-{id}.pid`, regenerate. Print the ID on the first line of the run: `worker: {id}`. All per-run file paths below interpolate `{id}`.
+4. **Write the PID file.** `.red/tmp/afk-{id}.pid` containing the current `$$`. Atomic write. No lock semantics — this file exists so `/afk monitor` can tell live workers from stale ones via `kill -0`.
+5. **Open the log.** All orchestrator output (header excluded) tees into `.red/tmp/afk-{id}.log`. Append-only, never truncate. Rotation is the user's job.
+6. Initialise `.red/tmp/afk-{id}.state.json` with the schema in *State File* below. Atomic write.
 7. Resolve the runner. Order: `--runner` flag > env `AFK_RUNNER` > `claude`. Load [`runner-claude.md`](runner-claude.md) or [`runner-codex.md`](runner-codex.md) so the spawn command is ready.
 8. Read [`SAFETY.md`](SAFETY.md). It is binding for every shell action the loop takes.
-9. Install signal handlers — SIGINT, SIGTERM, and normal exit all remove `.red/tmp/afk-{slot}.pid` and release any in-flight issue claim before terminating.
+9. Install signal handlers — SIGINT, SIGTERM, and normal exit all remove `.red/tmp/afk-{id}.pid` and release any in-flight issue claim before terminating.
 
 ## Straggler Check
 
@@ -147,7 +146,7 @@ Label transitions are atomic via `gh issue edit --remove-label A --add-label B`.
 For each issue `N`:
 
 1. **Claim.** `gh issue edit N --remove-label ready-for-agent --add-label running`. Comment a start line: ISO timestamp, runner identity, worktree path. If labelling fails because someone else already claimed it, skip to the next issue.
-2. **Worktree.** `git -C primary fetch origin main` then `git worktree add ../.workspaces/{repo}-s{slot}-{N} -b afk/s{slot}/{N}-{slug} origin/main` from the primary checkout. The branch is local-only until push. The `{slot}` segment keeps two parallel slots from colliding on filesystem.
+2. **Worktree.** `git -C primary fetch origin main` then `git worktree add ../.workspaces/{repo}-{id}-{N} -b afk/{id}/{N}-{slug} origin/main` from the primary checkout. The branch is local-only until push. The `{id}` segment keeps two parallel workers from colliding on filesystem.
 3. **Drop file.** Materialise the AGENT-BRIEF into `{worktree}/.red/tmp/drop-{N}-{slug}.md` using the template below. Create `.red/tmp/` and append it to the worktree's `.gitignore` first if needed.
 4. **Heartbeat.** Spawn a background sub-shell that posts `:one:`, `:two:`, `:three:`, `:four:` every 10 min (reset after `:four:`). Track PID in the state file so cleanup can kill it.
 5. **Inner agent.** Invoke claude/codex per [`runner-*.md`](runner-claude.md) with [`AGENT-PROMPT.md`](AGENT-PROMPT.md) + the drop file + last 5 commits of `main`. Stream stdout into the loop's header tail. Detect stages by grep on the stream — see *Stage Detection* below.
@@ -163,7 +162,7 @@ For each issue `N`:
    - Conflict? Try a one-shot self-resolve: re-enter the inner agent with the conflict diff and `git status` as context, instructing it to fix conflicts in primary, then `git commit`. On still-conflicting: abort with `git merge --abort`, comment the diff on the issue, re-label `ready-for-human`, move on.
 9. **Push.** `git -C primary push origin main` over SSH. Failure → comment, re-label `ready-for-human`, move on. Do not retry-loop indefinitely.
 10. **Close.** Validation comment on the issue: tests pass/fail, lint, typecheck, build, commits added, files touched. Then `gh issue close N --reason completed`. Remove `running` label.
-11. **Cleanup.** `git worktree remove ../.workspaces/{repo}-s{slot}-{N}` and `git branch -D afk/s{slot}/{N}-{slug}` (the branch is already merged into main).
+11. **Cleanup.** `git worktree remove ../.workspaces/{repo}-{id}-{N}` and `git branch -D afk/{id}/{N}-{slug}` (the branch is already merged into main).
 12. **Tick.** Update state file. Recompute ETA from rolling average of last 3 issue durations. Print one summary line: `finished {done}/{total} ({pct}%) — next: #{next}`.
 
 ## Runner Fallback
@@ -231,14 +230,14 @@ If stdout is not a TTY (CI, piped log), skip header rendering and print one JSON
 
 ## State File
 
-Path: `.red/tmp/afk-{slot}.state.json` (default slot `1` → `afk-1.state.json`). Schema:
+Path: `.red/tmp/afk-{id}.state.json` where `{id}` is the worker ID from bootstrap. Schema:
 
 ```json
 {
   "version": 1,
-  "slot": 1,
+  "worker_id": "k7m2",
   "pid": 12340,
-  "log": ".red/tmp/afk-1.log",
+  "log": ".red/tmp/afk-k7m2.log",
   "started_at": "2026-05-16T12:00:00-03:00",
   "runner": "codex",
   "filter": { "kind": "prd|issues|all", "value": "42" },
@@ -252,7 +251,7 @@ Path: `.red/tmp/afk-{slot}.state.json` (default slot `1` → `afk-1.state.json`)
     "number": 142,
     "title": "wire OAuth callback",
     "slug": "wire-oauth-callback",
-    "worktree": "../.workspaces/red-skills-s1-142",
+    "worktree": "../.workspaces/red-skills-k7m2-142",
     "drop": ".red/tmp/drop-142-wire-oauth-callback.md",
     "started_at": "2026-05-16T12:14:00-03:00",
     "stage": "impl",
@@ -266,17 +265,17 @@ Path: `.red/tmp/afk-{slot}.state.json` (default slot `1` → `afk-1.state.json`)
 }
 ```
 
-Atomic write: write to `afk-{slot}.state.json.tmp`, `mv` over the original. `/afk monitor` and any other reader open it read-only.
+Atomic write: write to `afk-{id}.state.json.tmp`, `mv` over the original. `/afk monitor` and any other reader open it read-only.
 
 ## Monitor
 
-`/afk monitor` is the readonly aggregated view across all slots. It:
+`/afk monitor` is the readonly aggregated view across all live workers. It:
 
-1. Globs `.red/tmp/afk-*.state.json` and renders one section per live slot.
-2. Verifies liveness via the matching `afk-{slot}.pid` — files whose PID is dead are flagged `stale` and not counted as running.
-3. Optionally tails `.red/tmp/afk-{slot}.log` for the most recent line under each slot's header.
+1. Globs `.red/tmp/afk-*.state.json` and renders one section per worker.
+2. Verifies liveness via the matching `afk-{id}.pid` — files whose PID is dead are flagged `stale` and not counted as running.
+3. Optionally tails `.red/tmp/afk-{id}.log` for the most recent line under each worker's header.
 
-Single-slot operation looks identical to the previous behaviour (one section, one heartbeat). Multi-slot adds one section per active worker, in slot order, plus an aggregate `done / total` summary across all slots.
+Single-worker operation shows one section. Multi-worker adds one section per live worker, sorted by `started_at`, plus an aggregate `done / total` summary across all of them.
 
 ## Drop File Template
 
