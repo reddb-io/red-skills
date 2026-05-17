@@ -55,6 +55,7 @@ For each approved slice, publish a new issue. Use the issue template in `<suppor
 
 - Publish in **dependency order** (blockers first) so you can reference real issue identifiers in each "Blocked by" field
 - Tag with the canonical `ready-for-agent` triage label (mapped string from `/setup-red-skills`) unless the user said otherwise
+- If the parent is a PRD (carries `type:prd` + `needs-slicing`), tag every child with `prd:{N}` referencing the parent and, **after** all slices are published, remove `needs-slicing` from the parent PRD. Never remove `type:prd` — it is a permanent type marker. Never apply `ready-for-agent` to the parent PRD itself.
 
 ### Hard rules — do not break these
 

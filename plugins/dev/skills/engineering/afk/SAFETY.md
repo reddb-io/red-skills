@@ -5,7 +5,7 @@ Binding for both the orchestrator (the shell loop) and the inner agent (claude/c
 ## Repository Layout Invariants
 
 - The **primary checkout** stays on `main` at all times. Never `git checkout`, `git switch`, or `git branch -m` inside it.
-- All work happens in **worktrees** under `../.workspaces/{repo}-{N}/` on a branch named `afk/{N}-{slug}`.
+- All work happens in **worktrees** under `.red/tmp/work-{id}-i{N}/worktree/` (inside the primary checkout but gitignored) on a branch named `afk/{id}/{N}-{slug}`.
 - The worktree branch is **local-only** until the final push of `main`. The orchestrator pushes `main`, not the worktree branch.
 
 ## Git Operations
@@ -70,7 +70,7 @@ One self-resolve attempt: re-enter the inner agent with the conflict diff in the
 ## Heartbeat and State Files
 
 - Heartbeat PID is tracked in state. On any abort path (success, blocker, error, signal), the orchestrator kills it.
-- State file writes are atomic: write to `.red/tmp/afk-state.json.tmp`, `mv` over the real path. Never partial writes.
+- State file writes are atomic: write to `.red/tmp/work-{id}-i{N}/afk.state.json.tmp`, `mv` over the real path. Never partial writes.
 - The monitor never writes. Only the orchestrator writes state.
 
 ## Signals and Shutdown

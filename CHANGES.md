@@ -6,6 +6,20 @@ Upstream base: `mattpocock/skills@e74f0061bb67222181640effa98c675bdb2fdaa7` (see
 
 ---
 
+## afk + to-prd + to-issues + triage-labels — PRD guard + worktree relocation
+
+- **status**: modified
+- **upstream**: —
+- **why**: two recurring failure modes in the AFK loop. (1) PRDs were being labelled `ready-for-agent` and picked up by `/afk`, which cannot implement them. (2) Each agent placed its worktree somewhere different — some used `../.workspaces/…` (sibling to repo), some inlined under the repo — causing confusion and stale directories outside the project tree.
+- **what changed**:
+  - **PRD guard**: new permanent label `type:prd` (applied by `/to-prd`, never removed) and new state label `needs-slicing` (applied by `/to-prd`, removed by `/to-issues` once children exist). `/to-prd` no longer applies `ready-for-agent` — that was the bug. `/afk` hard-filters `type:prd` from its candidate list and warns when one is found. `/to-issues` removes `needs-slicing` from the parent after publishing slices. Straggler check counts `needs-slicing`.
+  - **Worktree relocation**: per-iteration directory now lives at `.red/tmp/work-{id}-i{N}/` inside the primary checkout (gitignored). It contains `worktree/`, `afk.pid`, `afk.log`, `afk.state.json`, `drop.md` — one self-contained unit per (worker, issue). Removed on success, preserved on blocker. Replaces the prior `../.workspaces/{repo}-{id}-{N}` sibling layout that drifted between agents.
+  - `scripts/afk.sh`: worker ID generation in bootstrap, per-iteration `iter_open`/`iter_close_*` helpers, cross-iteration aggregates kept in shell vars and re-snapshotted into each per-iteration state file.
+  - `scripts/monitor.sh`: globs `.red/tmp/work-*/afk.state.json` and renders one section per live iteration, marking dead `afk.pid` as `stale`.
+  - `SKILL.md`, `SAFETY.md`, `AGENT-PROMPT.md`, `runner-claude.md`, `runner-codex.md`: drop file path is now `../drop.md` relative to the worktree (i.e. one level up inside the iteration directory).
+
+---
+
 ## repo layout — marketplace + `dev` plugin
 
 - **status**: modified (repo-wide restructure)

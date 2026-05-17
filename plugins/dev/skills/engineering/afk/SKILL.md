@@ -16,7 +16,7 @@ Drain the agent-ready backlog. Single skill that owns issue selection, worktree 
 - `/afk --runner codex` — pin a backend instead of alternating on exhaustion.
 - `/afk -n 5` — cap at five issues (default: drain until empty).
 - `/afk --once` — single supervised iteration. Same as `scripts/once.sh`. Use for debugging the prompt.
-- `/afk monitor` — readonly status board, aggregates every `.red/tmp/afk-*.state.json` so you see all live workers from another terminal.
+- `/afk monitor` — readonly status board, aggregates every `.red/tmp/work-*/afk.state.json` so you see all live workers from another terminal.
 
 ## Parallelization
 
@@ -30,14 +30,15 @@ Drain the agent-ready backlog. Single skill that owns issue selection, worktree 
 
 Each invocation generates its own **worker ID** — a random 4-char alphanumeric string (`[a-z0-9]`, ~1.6M possible IDs) — and uses it as the prefix for every per-run file. The ID is printed on the first line of the run so you can tail or kill it later.
 
-Per-worker files in primary's `.red/tmp/`:
+Per-issue files live under `.red/tmp/work-{id}-i{N}/` in the primary checkout. Everything for one (worker, issue) iteration is in one directory — when the iteration ends successfully the whole directory is removed; when it blocks the whole directory is preserved.
 
-| File | Purpose |
+| Path | Purpose |
 |---|---|
-| `afk-{id}.pid` | PID file. Used by `/afk monitor` to flag dead workers as `stale`. No lock semantics — random IDs are collision-free in practice. |
-| `afk-{id}.log` | Append-only run log. `/afk monitor` tails it; you can `tail -F` it directly. |
-| `afk-{id}.state.json` | The state schema described in *State File* below. |
-| `../.workspaces/{repo}-{id}-{N}` | Per-issue worktree. The worker ID in the path keeps parallel workers from colliding on filesystem. |
+| `.red/tmp/work-{id}-i{N}/worktree/` | Git worktree for issue `N`. Lives inside the gitignored `.red/tmp/` so it never pollutes sibling directories. |
+| `.red/tmp/work-{id}-i{N}/afk.pid` | PID of the orchestrator. Used by `/afk monitor` to flag dead workers as `stale` via `kill -0`. Re-written on each iteration. |
+| `.red/tmp/work-{id}-i{N}/afk.log` | Append-only log for this iteration. Per-issue scope — each issue gets a fresh log. |
+| `.red/tmp/work-{id}-i{N}/afk.state.json` | State snapshot for this iteration. Schema in *State File* below. |
+| `.red/tmp/work-{id}-i{N}/drop.md` | Drop file (AGENT-BRIEF) the inner agent reads. Template in *Drop File Template* below. |
 
 Two workers cannot claim the same issue because the GitHub label transition (`ready-for-agent` → `running`) is atomic — the second `gh issue edit` fails and that worker skips to the next candidate. No extra coordination needed.
 
@@ -57,13 +58,12 @@ Run before the first iteration:
 
 1. Ensure `.red/tmp/` exists. Create it.
 2. Ensure `.red/tmp/` is in `.gitignore` of the primary checkout. Append if missing.
-3. **Generate the worker ID.** 4 random characters from `[a-z0-9]` (e.g. `k7m2`). On the astronomically unlikely chance the chosen ID already has a live `.red/tmp/afk-{id}.pid`, regenerate. Print the ID on the first line of the run: `worker: {id}`. All per-run file paths below interpolate `{id}`.
-4. **Write the PID file.** `.red/tmp/afk-{id}.pid` containing the current `$$`. Atomic write. No lock semantics — this file exists so `/afk monitor` can tell live workers from stale ones via `kill -0`.
-5. **Open the log.** All orchestrator output (header excluded) tees into `.red/tmp/afk-{id}.log`. Append-only, never truncate. Rotation is the user's job.
-6. Initialise `.red/tmp/afk-{id}.state.json` with the schema in *State File* below. Atomic write.
-7. Resolve the runner. Order: `--runner` flag > env `AFK_RUNNER` > `claude`. Load [`runner-claude.md`](runner-claude.md) or [`runner-codex.md`](runner-codex.md) so the spawn command is ready.
-8. Read [`SAFETY.md`](SAFETY.md). It is binding for every shell action the loop takes.
-9. Install signal handlers — SIGINT, SIGTERM, and normal exit all remove `.red/tmp/afk-{id}.pid` and release any in-flight issue claim before terminating.
+3. **Generate the worker ID.** 4 random characters from `[a-z0-9]` (e.g. `k7m2`). On the astronomically unlikely chance the chosen ID already maps to a live `.red/tmp/work-{id}-*/afk.pid`, regenerate. Print the ID on the first line of the run: `worker: {id}`. All per-iteration paths interpolate `{id}` and the issue number `{N}`.
+4. Resolve the runner. Order: `--runner` flag > env `AFK_RUNNER` > `claude`. Load [`runner-claude.md`](runner-claude.md) or [`runner-codex.md`](runner-codex.md) so the spawn command is ready.
+5. Read [`SAFETY.md`](SAFETY.md). It is binding for every shell action the loop takes.
+6. Install signal handlers — SIGINT, SIGTERM, and normal exit all release any in-flight issue claim and preserve the active `work-{id}-i{N}/` directory before terminating.
+
+The per-iteration `work-{id}-i{N}/` directory (pid, log, state, drop, worktree) is created in *Per-Issue Loop* step 1 below, not here — the worker has no files until it claims an issue.
 
 ## Straggler Check
 
@@ -81,11 +81,13 @@ The systemic fix is the `red-issues-needs-triage.yml` workflow installed by `/se
 
 Pull the candidate list with `gh issue list --label ready-for-agent --state open --json number,title,labels,body --limit 100`.
 
+**PRD exclusion (hard).** Drop every issue carrying the `type:prd` label before any other filter. PRDs describe *what* to build, not an implementable slice — they must be split by `/to-issues` first. If a PRD is found in `ready-for-agent` (usually because someone labelled it manually), log a warning naming the issue numbers and the fix (`/to-issues N`), and continue with the remaining candidates. This defence is in addition to `/to-prd` never applying `ready-for-agent` in the first place.
+
 Apply filters in this order:
 
-1. If `--issues` was passed: keep only those numbers, in argument order. Error if any are missing or not labelled `ready-for-agent`.
-2. Else if `--prd` was passed: keep issues with `prd: #N` in the body, a parent link to issue N, or a `prd:N` label.
-3. Else: keep all `ready-for-agent` issues. Sort by triage priority — `priority:high` before `priority:low` (and unlabelled), then by issue number ascending.
+1. If `--issues` was passed: keep only those numbers, in argument order. Error if any are missing or not labelled `ready-for-agent`. PRDs in the explicit list are still rejected — the user is told to slice them first.
+2. Else if `--prd` was passed: keep issues with `prd: #N` in the body, a parent link to issue N, or a `prd:N` label. The PRD itself (#N) is excluded by the `type:prd` filter above.
+3. Else: keep all remaining `ready-for-agent` issues. Sort by triage priority — `priority:high` before `priority:low` (and unlabelled), then by issue number ascending.
 
 If the list is empty, print `<promise>NO MORE TASKS</promise>` and exit 0.
 
@@ -145,9 +147,9 @@ Label transitions are atomic via `gh issue edit --remove-label A --add-label B`.
 
 For each issue `N`:
 
-1. **Claim.** `gh issue edit N --remove-label ready-for-agent --add-label running`. Comment a start line: ISO timestamp, runner identity, worktree path. If labelling fails because someone else already claimed it, skip to the next issue.
-2. **Worktree.** `git -C primary fetch origin main` then `git worktree add ../.workspaces/{repo}-{id}-{N} -b afk/{id}/{N}-{slug} origin/main` from the primary checkout. The branch is local-only until push. The `{id}` segment keeps two parallel workers from colliding on filesystem.
-3. **Drop file.** Materialise the AGENT-BRIEF into `{worktree}/.red/tmp/drop-{N}-{slug}.md` using the template below. Create `.red/tmp/` and append it to the worktree's `.gitignore` first if needed.
+1. **Claim.** `gh issue edit N --remove-label ready-for-agent --add-label running`. Then create the iteration directory `.red/tmp/work-{id}-i{N}/` and write `afk.pid` (current `$$`), open `afk.log` (tee target for orchestrator output), and initialise `afk.state.json` per *State File* below. Comment a start line on the issue: ISO timestamp, runner identity, worktree path. If labelling fails because someone else already claimed it, abandon the iteration directory and skip to the next issue.
+2. **Worktree.** `git -C primary fetch origin main` then `git worktree add .red/tmp/work-{id}-i{N}/worktree -b afk/{id}/{N}-{slug} origin/main` from the primary checkout. The branch is local-only until push. The worktree lives inside the gitignored `.red/tmp/` tree so it never appears in `git status` for `main`.
+3. **Drop file.** Materialise the AGENT-BRIEF into `.red/tmp/work-{id}-i{N}/drop.md` using the template below. The drop file lives one level above the worktree so the inner agent reads it via `../drop.md` from inside the worktree, and so it survives a worktree wipe on retry.
 4. **Heartbeat.** Spawn a background sub-shell that posts `:one:`, `:two:`, `:three:`, `:four:` every 10 min (reset after `:four:`). Track PID in the state file so cleanup can kill it.
 5. **Inner agent.** Invoke claude/codex per [`runner-*.md`](runner-claude.md) with [`AGENT-PROMPT.md`](AGENT-PROMPT.md) + the drop file + last 5 commits of `main`. Stream stdout into the loop's header tail. Detect stages by grep on the stream — see *Stage Detection* below.
 6. **Inner result.**
@@ -162,7 +164,7 @@ For each issue `N`:
    - Conflict? Try a one-shot self-resolve: re-enter the inner agent with the conflict diff and `git status` as context, instructing it to fix conflicts in primary, then `git commit`. On still-conflicting: abort with `git merge --abort`, comment the diff on the issue, re-label `ready-for-human`, move on.
 9. **Push.** `git -C primary push origin main` over SSH. Failure → comment, re-label `ready-for-human`, move on. Do not retry-loop indefinitely.
 10. **Close.** Validation comment on the issue: tests pass/fail, lint, typecheck, build, commits added, files touched. Then `gh issue close N --reason completed`. Remove `running` label.
-11. **Cleanup.** `git worktree remove ../.workspaces/{repo}-{id}-{N}` and `git branch -D afk/{id}/{N}-{slug}` (the branch is already merged into main).
+11. **Cleanup.** `git worktree remove .red/tmp/work-{id}-i{N}/worktree`, `git branch -D afk/{id}/{N}-{slug}` (the branch is already merged into main), then `rm -rf .red/tmp/work-{id}-i{N}/` so the iteration leaves no trace. On blocker paths the directory is preserved for human inspection.
 12. **Tick.** Update state file. Recompute ETA from rolling average of last 3 issue durations. Print one summary line: `finished {done}/{total} ({pct}%) — next: #{next}`.
 
 ## Runner Fallback
@@ -218,7 +220,7 @@ Redraw every 3 s on the controlling TTY, top of the scroll buffer. Use `tput sc;
 │ done: 3 / 12 (25%)     blocked: 0          merged: 3      │
 │                                                            │
 │ ▶ #142 wire OAuth callback                                 │
-│   worktree: ../.workspaces/red-skills-142                  │
+│   worktree: .red/tmp/work-k7m2-i142/worktree               │
 │   stage: impl              heartbeat: :two:                │
 │   last: writing tests for callback handler                 │
 │                                                            │
@@ -230,14 +232,14 @@ If stdout is not a TTY (CI, piped log), skip header rendering and print one JSON
 
 ## State File
 
-Path: `.red/tmp/afk-{id}.state.json` where `{id}` is the worker ID from bootstrap. Schema:
+Path: `.red/tmp/work-{id}-i{N}/afk.state.json` — one snapshot per (worker, issue) iteration. Schema:
 
 ```json
 {
   "version": 1,
   "worker_id": "k7m2",
   "pid": 12340,
-  "log": ".red/tmp/afk-k7m2.log",
+  "log": ".red/tmp/work-k7m2-i142/afk.log",
   "started_at": "2026-05-16T12:00:00-03:00",
   "runner": "codex",
   "filter": { "kind": "prd|issues|all", "value": "42" },
@@ -251,8 +253,8 @@ Path: `.red/tmp/afk-{id}.state.json` where `{id}` is the worker ID from bootstra
     "number": 142,
     "title": "wire OAuth callback",
     "slug": "wire-oauth-callback",
-    "worktree": "../.workspaces/red-skills-k7m2-142",
-    "drop": ".red/tmp/drop-142-wire-oauth-callback.md",
+    "worktree": ".red/tmp/work-k7m2-i142/worktree",
+    "drop": ".red/tmp/work-k7m2-i142/drop.md",
     "started_at": "2026-05-16T12:14:00-03:00",
     "stage": "impl",
     "heartbeat_glyph": ":two:",
@@ -265,21 +267,21 @@ Path: `.red/tmp/afk-{id}.state.json` where `{id}` is the worker ID from bootstra
 }
 ```
 
-Atomic write: write to `afk-{id}.state.json.tmp`, `mv` over the original. `/afk monitor` and any other reader open it read-only.
+Atomic write: write to `afk.state.json.tmp` inside the iteration directory, `mv` over the original. `/afk monitor` and any other reader open it read-only. Between issues the worker has no live state file — monitor renders that as "idle".
 
 ## Monitor
 
 `/afk monitor` is the readonly aggregated view across all live workers. It:
 
-1. Globs `.red/tmp/afk-*.state.json` and renders one section per worker.
-2. Verifies liveness via the matching `afk-{id}.pid` — files whose PID is dead are flagged `stale` and not counted as running.
-3. Optionally tails `.red/tmp/afk-{id}.log` for the most recent line under each worker's header.
+1. Globs `.red/tmp/work-*/afk.state.json` and renders one section per active iteration.
+2. Verifies liveness via the sibling `afk.pid` — iterations whose PID is dead are flagged `stale` and not counted as running.
+3. Optionally tails the sibling `afk.log` for the most recent line under each worker's header.
 
 Single-worker operation shows one section. Multi-worker adds one section per live worker, sorted by `started_at`, plus an aggregate `done / total` summary across all of them.
 
 ## Drop File Template
 
-`.red/tmp/drop-{N}-{slug}.md`:
+`.red/tmp/work-{id}-i{N}/drop.md`:
 
 ```markdown
 # Issue #{N} — {title} [AFK]

@@ -4,7 +4,7 @@ You are an AFK agent invoked by `/afk`. You are running inside an isolated git w
 
 ## Inputs You Will Receive
 
-- **Drop file** at `.red/tmp/drop-{N}-{slug}.md` — the contract. Read it first.
+- **Drop file** at `../drop.md` (relative to the worktree; the file lives in the parent iteration directory `.red/tmp/work-{id}-i{N}/`) — the contract. Read it first.
 - **Recent commits** of `main` (last 5).
 - This prompt.
 

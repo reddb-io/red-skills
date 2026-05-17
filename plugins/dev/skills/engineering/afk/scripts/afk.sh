@@ -33,9 +33,21 @@ done
 PROJECT_ROOT="${PROJECT_ROOT:-$(pwd)}"
 PROJECT_ROOT="$(cd "$PROJECT_ROOT" && pwd)"
 REPO_NAME="$(basename "$PROJECT_ROOT")"
-WORKSPACES="$(cd "$PROJECT_ROOT/.." && pwd)/.workspaces"
-STATE_FILE="$PROJECT_ROOT/.red/tmp/afk-state.json"
 TMP_DIR="$PROJECT_ROOT/.red/tmp"
+
+# Worker ID — 4 chars from [a-z0-9]. Regenerated until no live .red/tmp/work-{id}-i*/afk.pid exists.
+gen_worker_id() {
+  local id
+  while :; do
+    id="$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom | head -c 4)"
+    [[ -z "$(ls -d "$TMP_DIR"/work-"$id"-i* 2>/dev/null)" ]] && { echo "$id"; return; }
+  done
+}
+WORKER_ID=""        # set in bootstrap
+ITER_DIR=""         # set per-iteration: $TMP_DIR/work-$WORKER_ID-i$N
+STATE_FILE=""       # set per-iteration: $ITER_DIR/afk.state.json
+ITER_LOG=""         # set per-iteration: $ITER_DIR/afk.log
+ITER_PID_FILE=""    # set per-iteration: $ITER_DIR/afk.pid
 
 EXPLICIT_RUNNER=$RUNNER
 [[ -z "$RUNNER" ]] && RUNNER="${AFK_RUNNER:-claude}"
@@ -76,18 +88,51 @@ precheck() {
 
 # ---------- bootstrap ----------
 bootstrap() {
-  mkdir -p "$TMP_DIR" "$WORKSPACES"
+  mkdir -p "$TMP_DIR"
   local gi="$PROJECT_ROOT/.gitignore"
   if ! grep -qxF '.red/tmp/' "$gi" 2>/dev/null; then
     echo '.red/tmp/' >> "$gi"
     log "added .red/tmp/ to .gitignore"
   fi
-  state_init
+  WORKER_ID="$(gen_worker_id)"
+  log "worker: $WORKER_ID"
+}
+
+# Cross-iteration in-memory aggregates (state file is per-iteration; these survive between issues).
+AGG_STARTED="$(date -Iseconds)"
+AGG_TOTAL=0 AGG_DONE=0 AGG_BLOCKED=0 AGG_FAILED=0
+AGG_COMPLETED='[]'
+AGG_QUEUE='[]'
+AGG_DURATIONS='[]'
+
+# ---------- per-iteration directory ----------
+iter_open() {
+  local n="$1"
+  ITER_DIR="$TMP_DIR/work-${WORKER_ID}-i${n}"
+  STATE_FILE="$ITER_DIR/afk.state.json"
+  ITER_LOG="$ITER_DIR/afk.log"
+  ITER_PID_FILE="$ITER_DIR/afk.pid"
+  mkdir -p "$ITER_DIR"
+  printf '%s' "$$" > "$ITER_PID_FILE"
+  : >> "$ITER_LOG"
+  state_init "$n"
+}
+
+iter_close_success() {
+  [[ -n "$ITER_DIR" && -d "$ITER_DIR" ]] && rm -rf "$ITER_DIR"
+  ITER_DIR="" STATE_FILE="" ITER_LOG="" ITER_PID_FILE=""
+}
+
+iter_close_preserve() {
+  # blocker / interrupt — keep dir for human, only drop the pid so monitor flags as inactive.
+  [[ -n "$ITER_PID_FILE" && -f "$ITER_PID_FILE" ]] && rm -f "$ITER_PID_FILE"
+  ITER_DIR="" STATE_FILE="" ITER_LOG="" ITER_PID_FILE=""
 }
 
 # ---------- state file ----------
 state_write() {
   local data="$1"
+  [[ -z "$STATE_FILE" ]] && return 0
   local tmp="${STATE_FILE}.tmp"
   printf '%s' "$data" > "$tmp"
   mv "$tmp" "$STATE_FILE"
@@ -96,20 +141,33 @@ state_write() {
 state_read() { cat "$STATE_FILE" 2>/dev/null || echo '{}'; }
 
 state_init() {
+  local n="$1"
   state_write "$(jq -n \
-    --arg started "$(date -Iseconds)" \
+    --arg started "$AGG_STARTED" \
     --arg runner "$RUNNER" \
     --arg fk "$FILTER_KIND" \
     --arg fv "$FILTER_VALUE" \
-    '{version:1, started_at:$started, runner:$runner,
+    --arg wid "$WORKER_ID" \
+    --arg log "$ITER_LOG" \
+    --argjson pid "$$" \
+    --argjson total "$AGG_TOTAL" \
+    --argjson done "$AGG_DONE" \
+    --argjson failed "$AGG_FAILED" \
+    --argjson blocked "$AGG_BLOCKED" \
+    --argjson completed "$AGG_COMPLETED" \
+    --argjson queue "$AGG_QUEUE" \
+    --argjson durs "$AGG_DURATIONS" \
+    '{version:1, worker_id:$wid, pid:$pid, log:$log,
+      started_at:$started, runner:$runner,
       filter:{kind:$fk, value:$fv},
-      total:0, done:0, failed:0, blocked:0,
-      completed:[], queue:[], current:null,
-      durations_seconds:[]}')"
+      total:$total, done:$done, failed:$failed, blocked:$blocked,
+      completed:$completed, queue:$queue, current:null,
+      durations_seconds:$durs}')"
 }
 
 state_set() {
   # state_set <jq filter>
+  [[ -z "$STATE_FILE" ]] && return 0
   local new
   new="$(state_read | jq -c "$1")"
   state_write "$new"
@@ -126,6 +184,16 @@ select_issues() {
   local raw
   raw="$(gh -R "$(gh_repo)" issue list --label ready-for-agent --state open \
         --json number,title,labels,body --limit 100)"
+
+  # Hard exclude PRDs even if accidentally tagged ready-for-agent.
+  # PRDs are not implementable units; /to-issues must split them first.
+  local rejected_prds
+  rejected_prds="$(echo "$raw" | jq -c '[ .[] | select((.labels | map(.name)) | index("type:prd")) | .number ]')"
+  if [[ "$(echo "$rejected_prds" | jq 'length')" -gt 0 ]]; then
+    log "⚠ excluding PRDs from queue (type:prd cannot be implemented directly): $(echo "$rejected_prds" | jq -r 'join(", #") | "#" + .')"
+    log "  run /to-issues on each PRD to generate implementable slices, then remove ready-for-agent from the PRD itself."
+  fi
+  raw="$(echo "$raw" | jq '[ .[] | select(((.labels | map(.name)) | index("type:prd")) | not) ]')"
 
   case "$FILTER_KIND" in
     issues)
@@ -182,11 +250,8 @@ heartbeat_stop() {
 # ---------- drop file ----------
 write_drop() {
   local n="$1" title="$2" slug="$3" body="$4" worktree="$5" runner="$6" attempt="$7"
-  local drop="$worktree/.red/tmp/drop-${n}-${slug}.md"
-  mkdir -p "$worktree/.red/tmp"
-  if ! grep -qxF '.red/tmp/' "$worktree/.gitignore" 2>/dev/null; then
-    echo '.red/tmp/' >> "$worktree/.gitignore"
-  fi
+  # Drop file lives in the iteration directory (one level above the worktree).
+  local drop="$ITER_DIR/drop.md"
 
   # Try to pull an AGENT-BRIEF comment from triage; fall back to issue body.
   local brief
@@ -330,8 +395,7 @@ do_merge() {
 process_issue() {
   local n="$1" title="$2" body="$3"
   local slug; slug="$(slugify "$title")"
-  local worktree="$WORKSPACES/${REPO_NAME}-${n}"
-  local branch="afk/${n}-${slug}"
+  local branch="afk/${WORKER_ID}/${n}-${slug}"
   local started_at; started_at="$(date -Iseconds)"
   local started_epoch; started_epoch="$(date +%s)"
 
@@ -343,8 +407,13 @@ process_issue() {
     log "could not claim #$n (already taken?) — skipping"
     return 0
   fi
+
+  iter_open "$n"
+  local worktree="$ITER_DIR/worktree"
+  local worktree_rel=".red/tmp/work-${WORKER_ID}-i${n}/worktree"
+
   gh -R "$(gh_repo)" issue comment "$n" \
-    --body "🤖 /afk started at \`$started_at\` on runner \`$RUNNER\`. worktree: \`$worktree\`" >/dev/null
+    --body "🤖 /afk started at \`$started_at\` on runner \`$RUNNER\` (worker \`$WORKER_ID\`). worktree: \`$worktree_rel\`" >/dev/null
 
   # worktree
   git -C "$PROJECT_ROOT" fetch origin main --quiet
@@ -353,8 +422,8 @@ process_issue() {
   state_set "
     .current = {
       number: $n, title: \"$(printf %s "$title" | jq -Rs '.' | sed 's/^\"//;s/\"$//')\",
-      slug: \"$slug\", worktree: \"$worktree\",
-      drop: \".red/tmp/drop-${n}-${slug}.md\",
+      slug: \"$slug\", worktree: \"$worktree_rel\",
+      drop: \".red/tmp/work-${WORKER_ID}-i${n}/drop.md\",
       started_at: \"$started_at\", stage: \"setup\",
       heartbeat_glyph: \"\", heartbeat_pid: null,
       runner: \"$RUNNER\", retries: 0, last_stream_line: \"\"
@@ -383,13 +452,15 @@ process_issue() {
       result="$(run_inner "$worktree" "$drop" "$RUNNER")"
       if [[ $RUNNER_EXHAUSTED -eq 1 ]]; then
         heartbeat_stop
-        gh -R "$(gh_repo)" issue comment "$n" --body "Both runners exhausted. Worktree preserved at \`$worktree\`." >/dev/null
+        gh -R "$(gh_repo)" issue comment "$n" --body "Both runners exhausted. Iteration preserved at \`$ITER_DIR\`." >/dev/null
         gh -R "$(gh_repo)" issue edit "$n" --remove-label running --add-label ready-for-agent >/dev/null
+        iter_close_preserve
         exit 75
       fi
     else
       gh -R "$(gh_repo)" issue comment "$n" --body "Runner \`$RUNNER\` exhausted; rerun /afk when quota resets." >/dev/null
       gh -R "$(gh_repo)" issue edit "$n" --remove-label running --add-label ready-for-agent >/dev/null
+      iter_close_preserve
       exit 75
     fi
   fi
@@ -401,17 +472,21 @@ process_issue() {
     log "✗ #$n blocked by inner agent"
     local notes
     notes="$(awk '/^## Notes$/,0' "$drop")"
-    gh -R "$(gh_repo)" issue comment "$n" --body "$(printf 'BLOCKED by inner agent.\n\n%s\n\nWorktree preserved at `%s`.' "$notes" "$worktree")" >/dev/null
+    gh -R "$(gh_repo)" issue comment "$n" --body "$(printf 'BLOCKED by inner agent.\n\n%s\n\nIteration preserved at `%s`.' "$notes" "$ITER_DIR")" >/dev/null
     gh -R "$(gh_repo)" issue edit "$n" --remove-label running --add-label ready-for-human >/dev/null
-    state_set ".blocked += 1 | .current = null"
+    AGG_BLOCKED=$((AGG_BLOCKED+1))
+    state_set ".blocked = $AGG_BLOCKED | .current = null"
+    iter_close_preserve
     return 0
   fi
 
   if ! echo "$result" | grep -q '<promise>DONE</promise>'; then
     log "✗ #$n inner agent ended without DONE sentinel — treating as blocker"
-    gh -R "$(gh_repo)" issue comment "$n" --body "Inner agent exited without a sentinel. Manual review needed. Worktree at \`$worktree\`." >/dev/null
+    gh -R "$(gh_repo)" issue comment "$n" --body "Inner agent exited without a sentinel. Manual review needed. Iteration at \`$ITER_DIR\`." >/dev/null
     gh -R "$(gh_repo)" issue edit "$n" --remove-label running --add-label ready-for-human >/dev/null
-    state_set ".blocked += 1 | .current = null"
+    AGG_BLOCKED=$((AGG_BLOCKED+1))
+    state_set ".blocked = $AGG_BLOCKED | .current = null"
+    iter_close_preserve
     return 0
   fi
 
@@ -426,9 +501,11 @@ process_issue() {
     log "✗ #$n merge conflict (no inner self-resolve yet)"
     local diff
     diff="$(cat /tmp/afk-merge.log 2>/dev/null | tail -50)"
-    gh -R "$(gh_repo)" issue comment "$n" --body "$(printf 'Merge conflict on \`main\`. Aborted. Worktree preserved at `%s`.\n\n```\n%s\n```' "$worktree" "$diff")" >/dev/null
+    gh -R "$(gh_repo)" issue comment "$n" --body "$(printf 'Merge conflict on \`main\`. Aborted. Iteration preserved at `%s`.\n\n```\n%s\n```' "$ITER_DIR" "$diff")" >/dev/null
     gh -R "$(gh_repo)" issue edit "$n" --remove-label running --add-label ready-for-human >/dev/null
-    state_set ".blocked += 1 | .current = null"
+    AGG_BLOCKED=$((AGG_BLOCKED+1))
+    state_set ".blocked = $AGG_BLOCKED | .current = null"
+    iter_close_preserve
     return 0
   fi
 
@@ -446,13 +523,17 @@ process_issue() {
   git -C "$PROJECT_ROOT" worktree remove "$worktree" --force 2>/dev/null || log "could not remove worktree $worktree"
   git -C "$PROJECT_ROOT" branch -d "$branch" 2>/dev/null || true
 
-  # state
+  # aggregate state (in-memory; persists across iterations via next iter_open).
+  AGG_DONE=$((AGG_DONE+1))
+  AGG_COMPLETED="$(jq -c --argjson n "$n" '. + [$n]' <<<"$AGG_COMPLETED")"
+  AGG_DURATIONS="$(jq -c --argjson d "$dur" '. + [$d]' <<<"$AGG_DURATIONS")"
   state_set "
-    .completed += [$n]
-    | .done += 1
-    | .durations_seconds += [$dur]
+    .completed = $AGG_COMPLETED
+    | .done = $AGG_DONE
+    | .durations_seconds = $AGG_DURATIONS
     | .current = null
   "
+  iter_close_success
 
   log "✓ #$n done in ${dur}s — merge $merge_sha — $fb"
 
@@ -472,9 +553,10 @@ cleanup() {
     gh -R "$(gh_repo)" issue edit "$current_n" \
       --remove-label running --add-label ready-for-agent >/dev/null 2>&1 || true
     gh -R "$(gh_repo)" issue comment "$current_n" \
-      --body "🤖 /afk interrupted. claim released; worktree preserved." >/dev/null 2>&1 || true
+      --body "🤖 /afk interrupted. claim released; iteration preserved at \`$ITER_DIR\`." >/dev/null 2>&1 || true
   fi
-  log "interrupted — state preserved at $STATE_FILE"
+  log "interrupted — iteration preserved at ${ITER_DIR:-<none>}"
+  iter_close_preserve
   exit 130
 }
 trap cleanup INT TERM
@@ -486,14 +568,15 @@ bootstrap
 # --- straggler check: warn about issues that never made it to ready-for-agent
 straggler_check() {
   local repo; repo="$(gh_repo)"
-  local unlabeled needs_triage needs_info
+  local unlabeled needs_triage needs_info needs_slicing
   unlabeled="$(gh -R "$repo" issue list --state open --search 'no:label' --json number --jq 'length' 2>/dev/null || echo 0)"
   needs_triage="$(gh -R "$repo" issue list --state open --label needs-triage --json number --jq 'length' 2>/dev/null || echo 0)"
   needs_info="$(gh -R "$repo" issue list --state open --label needs-info --json number --jq 'length' 2>/dev/null || echo 0)"
+  needs_slicing="$(gh -R "$repo" issue list --state open --label needs-slicing --json number --jq 'length' 2>/dev/null || echo 0)"
 
-  if [[ "$unlabeled" -gt 0 || "$needs_triage" -gt 0 || "$needs_info" -gt 0 ]]; then
-    log "⚠ stragglers detected: $unlabeled unlabeled, $needs_triage needs-triage, $needs_info needs-info"
-    log "  these are invisible to /afk. consider running /triage before draining."
+  if [[ "$unlabeled" -gt 0 || "$needs_triage" -gt 0 || "$needs_info" -gt 0 || "$needs_slicing" -gt 0 ]]; then
+    log "⚠ stragglers detected: $unlabeled unlabeled, $needs_triage needs-triage, $needs_info needs-info, $needs_slicing needs-slicing"
+    log "  needs-slicing → run /to-issues on those PRDs. others → run /triage."
     if [[ -t 0 && $ONCE -eq 0 ]]; then
       read -r -p "[afk] proceed anyway? [y/N] " ans
       [[ "$ans" =~ ^[yY]$ ]] || { log "aborted by user"; exit 0; }
@@ -509,9 +592,10 @@ TOTAL="$(echo "$ISSUES_JSON" | jq 'length')"
 NUMBERS=()
 while IFS= read -r n; do NUMBERS+=("$n"); done < <(echo "$ISSUES_JSON" | jq '.[].number')
 
-state_set ".total = $TOTAL | .queue = $(echo "$ISSUES_JSON" | jq '[.[].number]')"
+AGG_TOTAL=$TOTAL
+AGG_QUEUE="$(echo "$ISSUES_JSON" | jq -c '[.[].number]')"
 
-log "/afk: $TOTAL issue(s) queued (filter=$FILTER_KIND${FILTER_VALUE:+:$FILTER_VALUE}, runner=$RUNNER, cap=$ITER_CAP)"
+log "/afk: $TOTAL issue(s) queued (filter=$FILTER_KIND${FILTER_VALUE:+:$FILTER_VALUE}, runner=$RUNNER, cap=$ITER_CAP, worker=$WORKER_ID)"
 
 I=0
 for n in "${NUMBERS[@]}"; do
@@ -531,5 +615,5 @@ for n in "${NUMBERS[@]}"; do
 done
 
 hr
-log "/afk done. state: $STATE_FILE"
+log "/afk done. worker: $WORKER_ID, processed: $AGG_DONE done, $AGG_BLOCKED blocked"
 echo "<promise>NO MORE TASKS</promise>"

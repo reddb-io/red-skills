@@ -43,7 +43,7 @@ On any of those, the orchestrator emits `RUNNER_EXHAUSTED`, kills heartbeat, pre
 
 ## Working Directory
 
-`-C $WORKTREE` pins Codex to the worktree. The drop file lives at `./.red/tmp/drop-{N}-{slug}.md` inside that dir.
+`-C $WORKTREE` pins Codex to the worktree. The drop file lives at `../drop.md` (one level above the worktree, inside the iteration directory `.red/tmp/work-{id}-i{N}/`).
 
 ## Notes On The Bypass Flags
 

@@ -19,7 +19,7 @@ claude \
 
 ```
 Drop file:
-<contents of .red/tmp/drop-N-slug.md>
+<contents of ../drop.md (i.e. .red/tmp/work-{id}-i{N}/drop.md, sibling of the worktree)>
 
 Recent commits on main:
 <git log -n 5 --format="%H%n%ad%n%B---" --date=short>
@@ -61,7 +61,7 @@ Claude is invoked with the worktree as `cwd`. It has filesystem access only insi
 
 ## Drop File Contract
 
-Claude reads `./.red/tmp/drop-{N}-{slug}.md` at the start of its session. The orchestrator does not pass file contents in the prompt itself — only the relative path and the instruction to read it. Keeps the context window lean.
+Claude reads `../drop.md` (relative to the worktree, i.e. `.red/tmp/work-{id}-i{N}/drop.md`) at the start of its session. The orchestrator does not pass file contents in the prompt itself — only the relative path and the instruction to read it. Keeps the context window lean.
 
 ## Notes On Permissions
 
