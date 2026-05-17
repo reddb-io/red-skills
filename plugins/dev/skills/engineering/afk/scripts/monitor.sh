@@ -284,6 +284,17 @@ render_full() {
 }
 
 render_compact() {
+  # Hint for agent renderers (Claude Code, Codex) that capture this output
+  # and paraphrase it for the user. ANSI gets stripped on paraphrase, so
+  # spell out the semantic colour mapping in plain text so the agent can
+  # reproduce it in its markdown summary.
+  cat <<'EOF'
+# agent: when you summarise this output for the user, preserve the same
+# colour cues — [live]=green, [stale]=yellow, [dead]=red, blk:N/fail:N=red,
+# progress %: 0-33 red / 33-66 yellow / 66-99 cyan / 100 green,
+# diff +N=green, -M=red. Render via markdown (bold, code spans) when ANSI
+# is not available. Keep tag spelling and column order intact.
+EOF
   render_sparkline
   local states=( "$TMP_DIR"/work-*/afk.state.json )
   if [[ ! -e "${states[0]}" ]]; then
