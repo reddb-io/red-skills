@@ -1,11 +1,20 @@
 #!/usr/bin/env bash
 # /afk monitor — readonly status board. Globs .red/tmp/work-*/afk.state.json
-# (one file per live iteration) and renders one section per worker. Safe to run
-# in a second terminal while afk.sh runs.
+# (one file per live iteration) and renders one section per worker.
 #
-# Usage: monitor.sh [project_root]
+# Two modes, auto-selected by stdout type:
+#   - TTY (real terminal): full box-drawing layout, refreshes every 3 s. Ctrl-C exits.
+#   - Non-TTY (piped, captured by an agent, redirected): one-shot compact dashboard,
+#     one line per worker, then exit 0. Force this with --once or MONITOR_COMPACT=1.
+#
+# Usage: monitor.sh [--once] [project_root]
 
 set -eo pipefail
+
+ONCE=0
+[[ "${1:-}" == "--once" ]] && { ONCE=1; shift; }
+[[ "${MONITOR_COMPACT:-0}" == "1" ]] && ONCE=1
+[[ -t 1 ]] || ONCE=1   # not a TTY → one-shot compact
 
 PROJECT_ROOT="${1:-$(pwd)}"
 TMP_DIR="$PROJECT_ROOT/.red/tmp"
@@ -52,7 +61,57 @@ render_sparkline() {
     bar+="${glyphs[$idx]}"
   done
 
-  printf '48h: %s  (%d closed, peak %d/h)\n' "$bar" "$total" "$max"
+  printf '48h: %s  (%d closed, peak %d/h, all workers)\n' "$bar" "$total" "$max"
+}
+
+# Compact one-line worker summary for non-TTY / inline-agent output.
+render_worker_compact() {
+  local state_file="$1"
+  local iter_dir; iter_dir="$(dirname "$state_file")"
+  local pid_file="$iter_dir/afk.pid"
+  local state; state="$(cat "$state_file" 2>/dev/null || echo '{}')"
+
+  local worker_id pid alive runner total done blocked failed
+  local current_n current_title current_stage started elapsed
+  worker_id="$(jq -r '.worker_id // "?"' <<<"$state")"
+  pid="$(cat "$pid_file" 2>/dev/null || echo '')"
+  alive="dead"
+  [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null && alive="live"
+  runner="$(jq -r '.runner // "-"' <<<"$state")"
+  total="$(jq -r '.total // 0' <<<"$state")"
+  done="$(jq -r '.done // 0' <<<"$state")"
+  blocked="$(jq -r '.blocked // 0' <<<"$state")"
+  failed="$(jq -r '.failed // 0' <<<"$state")"
+  current_n="$(jq -r '.current.number // "-"' <<<"$state")"
+  current_title="$(jq -r '.current.title // "-"' <<<"$state")"
+  current_stage="$(jq -r '.current.stage // "-"' <<<"$state")"
+  started="$(jq -r '.started_at // ""' <<<"$state")"
+
+  elapsed=0
+  if [[ -n "$started" ]]; then
+    local s_epoch n_epoch
+    s_epoch="$(date -d "$started" +%s 2>/dev/null || echo 0)"
+    n_epoch="$(date +%s)"
+    elapsed=$(( n_epoch - s_epoch ))
+  fi
+  local pct=0
+  [[ $total -gt 0 ]] && pct=$(( done * 100 / total ))
+  local status_tag="$alive"
+  [[ "$alive" == "dead" ]] && status_tag="stale"
+  local flags=""
+  [[ $blocked -gt 0 ]] && flags+=" blk:$blocked"
+  [[ $failed  -gt 0 ]] && flags+=" fail:$failed"
+
+  local cur=""
+  if [[ "$current_n" != "-" && "$current_n" != "null" ]]; then
+    local title_trim="${current_title:0:48}"
+    cur="  #${current_n} ${title_trim}  stage:${current_stage}  $(fmt_dur $elapsed)"
+  else
+    cur="  idle"
+  fi
+
+  printf '%s [%s] %s  %d/%d (%d%%)%s%s\n' \
+    "$worker_id" "$status_tag" "$runner" "$done" "$total" "$pct" "$flags" "$cur"
 }
 
 render_worker() {
@@ -114,8 +173,7 @@ render_worker() {
   printf '└────────────────────────────────────────────────────────────┘\n'
 }
 
-render() {
-  command -v jq >/dev/null || { echo "jq required" >&2; exit 2; }
+render_full() {
   clear
   render_sparkline
   echo
@@ -127,7 +185,24 @@ render() {
   for sf in "${states[@]}"; do render_worker "$sf"; done
 }
 
+render_compact() {
+  render_sparkline
+  local states=( "$TMP_DIR"/work-*/afk.state.json )
+  if [[ ! -e "${states[0]}" ]]; then
+    echo "workers: (none — /afk not running here)"
+    return
+  fi
+  for sf in "${states[@]}"; do render_worker_compact "$sf"; done
+}
+
+command -v jq >/dev/null || { echo "jq required" >&2; exit 2; }
+
+if [[ $ONCE -eq 1 ]]; then
+  render_compact
+  exit 0
+fi
+
 while true; do
-  render
+  render_full
   sleep 3
 done

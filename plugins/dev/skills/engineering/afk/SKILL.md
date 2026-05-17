@@ -306,9 +306,22 @@ bash plugins/dev/skills/engineering/afk/scripts/monitor.sh
 bash ~/.claude/plugins/cache/red-skills/dev/<version>/skills/engineering/afk/scripts/monitor.sh
 ```
 
-The script refreshes every 3 s. Ctrl-C to exit.
+The script has **two modes**, auto-selected by stdout type:
 
-Single-worker operation shows one section. Multi-worker adds one section per live worker, sorted by `started_at`, plus an aggregate `done / total` summary across all of them.
+- **TTY (real terminal)**: full box-drawing layout, refreshes every 3 s, `clear` between frames. Ctrl-C to exit.
+- **Non-TTY (piped, captured by an agent, redirected)**: one-shot **compact dashboard** — one sparkline header + one line per worker, then exit 0. Force this with `--once` or `MONITOR_COMPACT=1` even from a TTY.
+
+Compact output shape (≈3 lines total for 2 workers — fits inline without truncation in an agent transcript):
+
+```
+48h: ···············································█  (4 closed, peak 4/h, all workers)
+evxa [live] claude  4/5 (80%)  #150 [blog/D] Agent SDK on RedDB  stage:impl  00:23:01
+9ni1 [stale] codex  0/16 (0%)  #521 Blockchain Collection Kind   stage:impl  02:00:01
+```
+
+When invoking from inside another agent session (Claude Code, Codex), prefer `--once` even if stdin is a pipe — explicit beats inference. Don't use the full TTY mode in agent transcripts; the 3 s refresh loop floods the captured stream and gets truncated to garbage.
+
+Single-worker operation shows one section/line. Multi-worker adds one section/line per live worker, sorted by `started_at`. The sparkline aggregates **all workers** in this checkout's `.red/state/afk-history.jsonl` — not fractured per-worker.
 
 The header of every render shows a **48h sparkline** of issues closed, one glyph per hour, scaled to the peak hour:
 
