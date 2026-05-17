@@ -1,6 +1,7 @@
 ---
 name: start
 description: Grilling session that challenges your plan against the existing domain model, sharpens terminology, and updates documentation (.red/CONTEXT.md, ADRs) inline as decisions crystallise. Use when user wants to stress-test a plan against their project's language and documented decisions.
+argument-hint: "[plan to grill: prose, URL, path, or empty]"
 ---
 
 <what-to-do>
@@ -15,26 +16,71 @@ Interview the user **relentlessly** about every aspect of their plan until you r
 4. When their answer changes the tree, re-evaluate before asking the next question.
 5. Stop when the user says stop, or when every reachable branch is resolved.
 
+**Boot behavior (turn 1):**
+
+The argument is optional. Treat it as the plan or context to grill.
+
+- **External reference** (URL or file path) → eager ingest via `/wiki ingest <ref>`. If `.red/wiki/` is not initialised, ask **once**: `Initialise /wiki to cache fetches across sessions? (y/N)`. On `y`, run `/wiki-init` then proceed. On `n`, fall back to plain `WebFetch`/`Read` into context and note in the receipt that the material is **not cached**.
+- **Inline document** (text pasted in the argument) → already in context, no fetch.
+- **Prose** (short description) → no fetch, the prose is the plan.
+- **Empty argument** → open with `Q01: What plan are we grilling? Paste it, link a URL, point to a file, or describe it.`
+
+After successful ingestion, emit a **single-line receipt** then proceed to `Q01`:
+
+| Source | Receipt |
+|---|---|
+| URL | `Fetched <url> → wiki/raw/<slug>.md (<N> words).` |
+| File (md/txt) | `Read <path> → wiki/raw/<slug>.md.` |
+| File (PDF) | `Read <path> → wiki/raw/<slug>.txt (<N> pages).` |
+| Inline doc | `Got <N> words inline.` |
+| Prose | _(no receipt — proceed to Q01 immediately)_ |
+
+When wiki is **not cached** (user declined `/wiki-init`), append ` (not cached)` to the receipt.
+
+On ingestion **failure**, do not start `Q01`. Ask for an alternative:
+
+```
+Couldn't read <ref>: <reason>.
+Paste the content, point to another path, or say "skip" and we'll grill on what you describe.
+```
+
 **Hard rules — do not break these:**
 
 - ❌ Do **not** implement, write code, or run commands beyond read-only codebase exploration.
 - ❌ Do **not** summarise the user's answers back at them. They know what they said.
 - ❌ Do **not** propose a final plan, design doc, or PRD. This skill ends in shared understanding, not artefacts.
 - ❌ Do **not** ask more than one question per turn.
+- ❌ Do **not** fetch URLs the user only **mentions** in passing. A ref becomes a fetch only when the user explicitly asks ("look at this", "ingest X") or the next question requires its content.
 - ✅ **Do** explore the codebase when a question can be answered by reading code instead of asking.
 - ✅ **Do** challenge contradictions immediately — between user statements, between user and code, between user and `.red/CONTEXT.md`.
 - ✅ **Do** update `.red/CONTEXT.md` inline the moment a term is resolved (one term → one edit → next question). This is a side effect of the interview, not a separate phase.
 - ✅ **Do** offer an ADR only when the three-condition test in `<supporting-info>` passes.
+- ✅ **Do** treat mid-grilling refs symmetrically to boot refs: when the user introduces a URL or file path at any turn, ingest via `/wiki ingest`, emit the same receipt line, then continue with the next question.
 
 **Question format template:**
 
-> **Q:** [the question]
+> **Q##:** [the question]
 > **Recommend:** [your answer], because [one-sentence reason].
 > *(answer, redirect, or push back — I'll wait)*
+
+Number every question `Q01`, `Q02`, … `Q10`, … zero-padded to 2 digits. Counter is **session-scoped** — reset on each `/start` invocation, never on user redirects.
 
 </what-to-do>
 
 <supporting-info>
+
+## Wiki integration
+
+External references (URL, PDF, md/txt) flow through the `/wiki` skill so every fetched source is cached at `.red/wiki/raw/<slug>.md` and reusable across sessions and other skills (`/diagnose`, `/afk`, `/tdd`).
+
+Behaviour summary (full contract in [`../../knowledge/wiki/SKILL.md`](../../knowledge/wiki/SKILL.md)):
+
+- URL → `WebFetch` → `.red/wiki/raw/<slug>.md` with YAML header (`url`, `fetched`, `title`).
+- Local PDF → `pdftotext` → `.red/wiki/raw/<slug>.txt`, original kept alongside.
+- Local md/txt → copied to `.red/wiki/raw/<slug>.md` if not already there.
+- Every ingest is logged at `.red/wiki/log.md`.
+
+When `.red/wiki/` is missing, `/start` prompts once to run `/wiki-init`. Decline path: plain `WebFetch`/`Read` into context, no caching, receipt marked `(not cached)`.
 
 ## Domain awareness
 
@@ -75,6 +121,10 @@ Create files lazily — only when you have something to write. If no `.red/CONTE
 ## Side-effect triggers during the interview
 
 These fire **as a consequence of grilling**. They never replace the interview loop — finish writing, then ask the next question.
+
+### Trigger: user introduces an external reference
+
+URL or file path appears in the user's message **with intent to ingest** ("look at this", "olha esse", "ingest …", or the next question clearly needs it). Hand off to `/wiki ingest <ref>`, emit the standard receipt line as a brief acknowledgement, then proceed to the next `Q##:`. Mid-grilling refs follow the same rules as boot refs — no extra opt-in once `/wiki` is initialised.
 
 ### Trigger: term conflicts with the glossary
 

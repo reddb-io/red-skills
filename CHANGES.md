@@ -183,6 +183,9 @@ Upstream base: `mattpocock/skills@e74f0061bb67222181640effa98c675bdb2fdaa7` (see
   - `name:` frontmatter → `start`
   - refs in `plugin.json`, `README.md`, `skills/engineering/README.md`, `improve-codebase-architecture/SKILL.md`, `triage/SKILL.md`, `setup-redskills/domain.md`, etc.
   - body rewrite (tags kept as `<what-to-do>` / `<supporting-info>`): frontloaded an explicit loop, hard DO/DON'T list, and a question-format template so the interview behaviour dominates over the documentation side-effects. CONTEXT/ADR rules demoted to "trigger" subsections instead of equal-weight tasks (model was drifting into docs mode instead of grilling).
+  - **input contract**: added `argument-hint: "[plan to grill: prose, URL, path, or empty]"` so users see in autocomplete that the skill accepts a plan/context payload. Empty arg opens with `Q01: what plan are we grilling?`.
+  - **eager wiki ingest**: external refs (URL / file path) in the boot argument *or* mid-grilling delegate to `/wiki ingest <ref>`. Receipt line on turn 1 (`Fetched … → wiki/raw/<slug>.md`) gives the user visibility that the material was actually read. When `/wiki` is not initialised, prompts once for `/wiki-init`; on decline, falls back to plain `WebFetch`/`Read` with receipt marked `(not cached)`.
+  - **question numbering**: every question is prefixed `Q##:` (zero-padded, session-scoped, reset on each `/start`). Gives the user a sense of grilling depth and a stable handle for later reference.
 
 ## global: GitHub Issues as the only supported tracker
 
