@@ -17,7 +17,7 @@ reddb.io's slash-command library for Claude Code, Codex, and friends.
 **One-line install — auto-updates on every Claude Code startup:**
 
 ```
-/plugin marketplace add reddb-io/red-skills && /plugin install red-skills@red-skills
+/plugin marketplace add reddb-io/red-skills && /plugin install dev@red-skills
 ```
 
 [Install details](#install) · [`/afk`](#-afk--autonomous-issue-execution) · [Pipeline](#-the-pipeline-that-feeds-it) · [Wiki](#-knowledge--your-private-llm-wiki) · [Reference](#reference)
@@ -45,7 +45,7 @@ Inside Claude Code:
 
 ```
 /plugin marketplace add reddb-io/red-skills
-/plugin install red-skills@red-skills
+/plugin install dev@red-skills
 ```
 
 That's it. From now on Claude Code checks `reddb-io/red-skills` at every session start and pulls new skills / fixes silently. Toggle the behaviour with `/plugin` → **Marketplaces** → select `red-skills` → **Enable auto-update** (default on for this marketplace).
@@ -59,7 +59,7 @@ Force a refresh without restarting:
 Remove:
 
 ```
-/plugin uninstall red-skills@red-skills
+/plugin uninstall dev@red-skills
 /plugin marketplace remove red-skills
 ```
 
@@ -219,7 +219,7 @@ Designed for terminals you leave open while you do something else. Or sleep.
 
 `/afk` enforces a strict allowlist on git: **no `reset`, no `rebase`, no `clean`, no `stash`, no `--force`, no HTTPS remotes**. Dirty primary checkouts get auto-snapshotted before merge. Merge conflicts that can't be auto-resolved release the worktree and flag the issue `ready-for-human` with the diff attached. SIGINT releases the claim and re-applies `ready-for-agent`, so a Ctrl-C never leaves an issue stranded.
 
-→ [`afk/SAFETY.md`](./skills/engineering/afk/SAFETY.md) is binding for the orchestrator *and* the inner agent.
+→ [`afk/SAFETY.md`](./plugins/dev/skills/engineering/afk/SAFETY.md) is binding for the orchestrator *and* the inner agent.
 
 ---
 
@@ -257,7 +257,7 @@ Designed for terminals you leave open while you do something else. Or sleep.
 - Single feature, not a whole PRD? `/start` → `/to-issues` → `/afk` works fine.
 - Bug report came in? `/triage` → (AGENT-BRIEF) → `/afk --issues N`.
 
-The full issue lifecycle (`needs-triage` → `ready-for-agent` → `running` → `closed`, with `ready-for-human` and `needs-info` as branches) — including the ASCII state machine, the heartbeat protocol, and every label transition — lives in [`setup-red-skills/triage-labels.md`](./skills/engineering/setup-red-skills/triage-labels.md).
+The full issue lifecycle (`needs-triage` → `ready-for-agent` → `running` → `closed`, with `ready-for-human` and `needs-info` as branches) — including the ASCII state machine, the heartbeat protocol, and every label transition — lives in [`setup-red-skills/triage-labels.md`](./plugins/dev/skills/engineering/setup-red-skills/triage-labels.md).
 
 ### Nothing leaks
 
@@ -277,8 +277,8 @@ $ /wiki ingest https://example.com/important-paper.pdf
 
 Inspired by Karpathy's [LLM Wiki gist](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f). Instead of RAG re-deriving knowledge on every query, the agent **maintains** an incremental markdown wiki at `.red/wiki/` (gitignored — your private knowledge cache, never leaves the machine).
 
-- **[`/wiki-init`](./skills/knowledge/wiki-init/SKILL.md)** — one-time bootstrap. Three questions (domain, source types, solo vs team) and you have a schema, layout, and `## Agent skills` registration.
-- **[`/wiki`](./skills/knowledge/wiki/SKILL.md)** routes by verb:
+- **[`/wiki-init`](./plugins/dev/skills/knowledge/wiki-init/SKILL.md)** — one-time bootstrap. Three questions (domain, source types, solo vs team) and you have a schema, layout, and `## Agent skills` registration.
+- **[`/wiki`](./plugins/dev/skills/knowledge/wiki/SKILL.md)** routes by verb:
 
 | Verb | What it does |
 |------|--------------|
@@ -288,7 +288,7 @@ Inspired by Karpathy's [LLM Wiki gist](https://gist.github.com/karpathy/442a6bf5
 
 Pages are typed (`entity`, `concept`, `source`, `synthesis`) with YAML frontmatter, standard markdown links (no Obsidian wikilinks — GitHub-portable), and an append-only `log.md` so every operation is auditable.
 
-→ Walkthroughs: [research wiki](./skills/knowledge/wiki-init/examples/research.md) · [book-reading wiki](./skills/knowledge/wiki-init/examples/book-reading.md)
+→ Walkthroughs: [research wiki](./plugins/dev/skills/knowledge/wiki-init/examples/research.md) · [book-reading wiki](./plugins/dev/skills/knowledge/wiki-init/examples/book-reading.md)
 
 ---
 
@@ -299,11 +299,11 @@ Small, sharp skills. They work with any model. Each one targets a specific failu
 
 | Failure mode | Use |
 |--------------|-----|
-| Agent didn't do what I want | [`/reflect`](./skills/productivity/reflect/SKILL.md), [`/start`](./skills/engineering/start/SKILL.md) |
-| Agent is verbose, no shared vocabulary | `.red/CONTEXT.md` + [`/start`](./skills/engineering/start/SKILL.md) |
-| Code doesn't work | [`/tdd`](./skills/engineering/tdd/SKILL.md), [`/diagnose`](./skills/engineering/diagnose/SKILL.md) |
-| Codebase turned into a mud ball | [`/to-prd`](./skills/engineering/to-prd/SKILL.md), [`/zoom-out`](./skills/engineering/zoom-out/SKILL.md), [`/improve-codebase-architecture`](./skills/engineering/improve-codebase-architecture/SKILL.md) |
-| I want it to run while I sleep | [`/afk`](./skills/engineering/afk/SKILL.md) |
+| Agent didn't do what I want | [`/reflect`](./plugins/dev/skills/productivity/reflect/SKILL.md), [`/start`](./plugins/dev/skills/engineering/start/SKILL.md) |
+| Agent is verbose, no shared vocabulary | `.red/CONTEXT.md` + [`/start`](./plugins/dev/skills/engineering/start/SKILL.md) |
+| Code doesn't work | [`/tdd`](./plugins/dev/skills/engineering/tdd/SKILL.md), [`/diagnose`](./plugins/dev/skills/engineering/diagnose/SKILL.md) |
+| Codebase turned into a mud ball | [`/to-prd`](./plugins/dev/skills/engineering/to-prd/SKILL.md), [`/zoom-out`](./plugins/dev/skills/engineering/zoom-out/SKILL.md), [`/improve-codebase-architecture`](./plugins/dev/skills/engineering/improve-codebase-architecture/SKILL.md) |
+| I want it to run while I sleep | [`/afk`](./plugins/dev/skills/engineering/afk/SKILL.md) |
 
 Composable. Boring on purpose where boring is enough. Sharp where it matters.
 
@@ -316,17 +316,17 @@ Composable. Boring on purpose where boring is enough. Sharp where it matters.
 
 | Skill | What it does |
 |-------|--------------|
-| **[afk](./skills/engineering/afk/SKILL.md)** | Drains `ready-for-agent` issues in isolated worktrees. Claude/Codex alternating. Live heartbeat + monitor + completion %. |
-| **[diagnose](./skills/engineering/diagnose/SKILL.md)** | Disciplined diagnosis: reproduce → minimise → hypothesise → instrument → fix → regression-test. |
-| **[start](./skills/engineering/start/SKILL.md)** | Grilling session that challenges your plan against the domain model; updates `.red/CONTEXT.md` and ADRs inline. |
-| **[triage](./skills/engineering/triage/SKILL.md)** | Moves issues through the triage state machine; writes the AGENT-BRIEF that `/afk` will consume. |
-| **[improve-codebase-architecture](./skills/engineering/improve-codebase-architecture/SKILL.md)** | Finds deepening opportunities in the codebase, informed by `.red/CONTEXT.md` and `.red/adr/`. |
-| **[tdd](./skills/engineering/tdd/SKILL.md)** | Red-green-refactor loop; one vertical slice at a time. |
-| **[to-issues](./skills/engineering/to-issues/SKILL.md)** | Breaks a plan, spec, or PRD into independently-grabbable issues via vertical slices. |
-| **[to-prd](./skills/engineering/to-prd/SKILL.md)** | Turns the current conversation into a PRD; publishes as a GitHub issue. |
-| **[zoom-out](./skills/engineering/zoom-out/SKILL.md)** | Broader / systemic view of unfamiliar code. |
-| **[prototype](./skills/engineering/prototype/SKILL.md)** | Throwaway prototype — terminal app for state/logic, or UI variations toggleable from one route. |
-| **[setup-red-skills](./skills/engineering/setup-red-skills/SKILL.md)** | Per-repo config: issue tracker, triage label vocab, domain doc layout, RedSkills workflows, RTK. |
+| **[afk](./plugins/dev/skills/engineering/afk/SKILL.md)** | Drains `ready-for-agent` issues in isolated worktrees. Claude/Codex alternating. Live heartbeat + monitor + completion %. |
+| **[diagnose](./plugins/dev/skills/engineering/diagnose/SKILL.md)** | Disciplined diagnosis: reproduce → minimise → hypothesise → instrument → fix → regression-test. |
+| **[start](./plugins/dev/skills/engineering/start/SKILL.md)** | Grilling session that challenges your plan against the domain model; updates `.red/CONTEXT.md` and ADRs inline. |
+| **[triage](./plugins/dev/skills/engineering/triage/SKILL.md)** | Moves issues through the triage state machine; writes the AGENT-BRIEF that `/afk` will consume. |
+| **[improve-codebase-architecture](./plugins/dev/skills/engineering/improve-codebase-architecture/SKILL.md)** | Finds deepening opportunities in the codebase, informed by `.red/CONTEXT.md` and `.red/adr/`. |
+| **[tdd](./plugins/dev/skills/engineering/tdd/SKILL.md)** | Red-green-refactor loop; one vertical slice at a time. |
+| **[to-issues](./plugins/dev/skills/engineering/to-issues/SKILL.md)** | Breaks a plan, spec, or PRD into independently-grabbable issues via vertical slices. |
+| **[to-prd](./plugins/dev/skills/engineering/to-prd/SKILL.md)** | Turns the current conversation into a PRD; publishes as a GitHub issue. |
+| **[zoom-out](./plugins/dev/skills/engineering/zoom-out/SKILL.md)** | Broader / systemic view of unfamiliar code. |
+| **[prototype](./plugins/dev/skills/engineering/prototype/SKILL.md)** | Throwaway prototype — terminal app for state/logic, or UI variations toggleable from one route. |
+| **[setup-red-skills](./plugins/dev/skills/engineering/setup-red-skills/SKILL.md)** | Per-repo config: issue tracker, triage label vocab, domain doc layout, RedSkills workflows, RTK. |
 
 </details>
 
@@ -335,8 +335,8 @@ Composable. Boring on purpose where boring is enough. Sharp where it matters.
 
 | Skill | What it does |
 |-------|--------------|
-| **[wiki-init](./skills/knowledge/wiki-init/SKILL.md)** | Bootstrap `.red/wiki/`, write the schema, gitignore artefacts, register under `## Agent skills`. |
-| **[wiki](./skills/knowledge/wiki/SKILL.md)** | `ingest` / `query` / `lint` — operate on the wiki. |
+| **[wiki-init](./plugins/dev/skills/knowledge/wiki-init/SKILL.md)** | Bootstrap `.red/wiki/`, write the schema, gitignore artefacts, register under `## Agent skills`. |
+| **[wiki](./plugins/dev/skills/knowledge/wiki/SKILL.md)** | `ingest` / `query` / `lint` — operate on the wiki. |
 
 </details>
 
@@ -345,9 +345,9 @@ Composable. Boring on purpose where boring is enough. Sharp where it matters.
 
 | Skill | What it does |
 |-------|--------------|
-| **[reflect](./skills/productivity/reflect/SKILL.md)** | Interviews you until every branch of the decision tree is resolved. |
-| **[handoff](./skills/productivity/handoff/SKILL.md)** | Compacts the current conversation into a handoff doc for the next agent. |
-| **[write-a-skill](./skills/productivity/write-a-skill/SKILL.md)** | Scaffolds new skills with proper structure and progressive disclosure. |
+| **[reflect](./plugins/dev/skills/productivity/reflect/SKILL.md)** | Interviews you until every branch of the decision tree is resolved. |
+| **[handoff](./plugins/dev/skills/productivity/handoff/SKILL.md)** | Compacts the current conversation into a handoff doc for the next agent. |
+| **[write-a-skill](./plugins/dev/skills/productivity/write-a-skill/SKILL.md)** | Scaffolds new skills with proper structure and progressive disclosure. |
 
 </details>
 
@@ -356,10 +356,10 @@ Composable. Boring on purpose where boring is enough. Sharp where it matters.
 
 | Skill | What it does |
 |-------|--------------|
-| **[git-guardrails-claude-code](./skills/misc/git-guardrails-claude-code/SKILL.md)** | Claude Code hooks that block destructive git commands. |
-| **[migrate-to-shoehorn](./skills/misc/migrate-to-shoehorn/SKILL.md)** | Migrates test files from `as` type assertions to `@total-typescript/shoehorn`. |
-| **[scaffold-exercises](./skills/misc/scaffold-exercises/SKILL.md)** | Creates exercise scaffolds with sections, problems, solutions. |
-| **[setup-pre-commit](./skills/misc/setup-pre-commit/SKILL.md)** | Configures Husky pre-commit with lint-staged, Prettier, type-check, tests. |
+| **[git-guardrails-claude-code](./plugins/dev/skills/misc/git-guardrails-claude-code/SKILL.md)** | Claude Code hooks that block destructive git commands. |
+| **[migrate-to-shoehorn](./plugins/dev/skills/misc/migrate-to-shoehorn/SKILL.md)** | Migrates test files from `as` type assertions to `@total-typescript/shoehorn`. |
+| **[scaffold-exercises](./plugins/dev/skills/misc/scaffold-exercises/SKILL.md)** | Creates exercise scaffolds with sections, problems, solutions. |
+| **[setup-pre-commit](./plugins/dev/skills/misc/setup-pre-commit/SKILL.md)** | Configures Husky pre-commit with lint-staged, Prettier, type-check, tests. |
 
 </details>
 

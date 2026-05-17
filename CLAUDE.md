@@ -8,19 +8,30 @@ Adapted from [`mattpocock/skills`](https://github.com/mattpocock/skills) (MIT). 
 
 ## Structure
 
-Skills live in `skills/`, grouped by bucket:
+The repo is a Claude Code **plugin marketplace** that hosts one or more plugins. Layout:
 
-- `engineering/` — day-to-day code work
-- `knowledge/` — knowledge accumulation and curation (LLM Wiki pattern)
-- `productivity/` — general workflow, not code-specific
-- `misc/` — kept but rarely used
-- `in-progress/` — drafts, do not publish yet
+```
+red-skills/                         ← repo root + marketplace
+├── .claude-plugin/
+│   └── marketplace.json            ← marketplace manifest, lists every plugin
+└── plugins/
+    └── dev/                        ← the `dev` plugin (current)
+        ├── .claude-plugin/plugin.json
+        └── skills/
+            ├── engineering/        ← day-to-day code work
+            ├── knowledge/          ← knowledge accumulation and curation (LLM Wiki pattern)
+            ├── productivity/       ← general workflow, not code-specific
+            ├── misc/               ← kept but rarely used
+            └── in-progress/        ← drafts, do not publish yet
+```
+
+Future plugins (e.g. `data`, `ops`) live as siblings under `plugins/` with their own `.claude-plugin/plugin.json` and their own `skills/` tree. Each plugin appears as a separate entry in `marketplace.json`.
 
 `personal/` and `deprecated/` were removed from upstream and **must not be recreated**.
 
 ## Rules
 
-1. Every skill in `engineering/`, `knowledge/`, `productivity/`, or `misc/` must be listed in the root `README.md` **and** in `.claude-plugin/plugin.json`. Skills in `in-progress/` appear in neither.
+1. Every skill in `engineering/`, `knowledge/`, `productivity/`, or `misc/` must be listed in the root `README.md` **and** in the owning plugin's `.claude-plugin/plugin.json` (e.g. `plugins/dev/.claude-plugin/plugin.json`). Skills in `in-progress/` appear in neither.
 2. Each entry in `README.md` links the skill name to its `SKILL.md`.
 3. Each bucket has its own `README.md` listing the bucket's skills with a one-line description.
 4. `LICENSE` is MIT inherited from Matt — **do not change copyright attribution**.

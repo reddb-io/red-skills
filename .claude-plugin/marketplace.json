@@ -6,9 +6,9 @@
   },
   "plugins": [
     {
-      "name": "red-skills",
-      "source": "./",
-      "description": "reddb.io internal engineering skills for code agents"
+      "name": "dev",
+      "source": "./plugins/dev",
+      "description": "reddb.io dev plugin — engineering skills for code agents (autonomous /afk loop, triage, tdd, diagnose, wiki, …)"
     }
   ]
 }

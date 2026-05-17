@@ -6,6 +6,20 @@ Upstream base: `mattpocock/skills@e74f0061bb67222181640effa98c675bdb2fdaa7` (see
 
 ---
 
+## repo layout — marketplace + `dev` plugin
+
+- **status**: modified (repo-wide restructure)
+- **upstream**: —
+- **why**: rebrand the single plugin from `red-skills` → `dev` so the marketplace can host additional sibling plugins later (`data`, `ops`, …) under the same `reddb-io/red-skills` repo
+- **what changed**:
+  - `skills/` → `plugins/dev/skills/` (`git mv`, history preserved)
+  - `.claude-plugin/plugin.json` → `plugins/dev/.claude-plugin/plugin.json`; plugin `name` is now `dev`
+  - root `.claude-plugin/marketplace.json` plugin entry now points `source: "./plugins/dev"` with name `dev`
+  - install command becomes `/plugin install dev@red-skills` (was `red-skills@red-skills`) — **breaking for already-installed users; reinstall required**
+  - README links, CLAUDE.md structure section, `scripts/link-skills.sh` updated for the new path
+
+---
+
 ## triage, tdd, diagnose, to-issues (engineering) — body restructured with `<what-to-do>` / `<supporting-info>`
 
 - **status**: modified

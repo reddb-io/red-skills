@@ -1,6 +1,6 @@
 {
-  "name": "red-skills",
-  "description": "reddb.io internal engineering skills for code agents",
+  "name": "dev",
+  "description": "reddb.io dev plugin — engineering skills for code agents (autonomous /afk loop, triage, tdd, diagnose, wiki, …)",
   "skills": [
     "./skills/engineering/afk",
     "./skills/engineering/diagnose",
