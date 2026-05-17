@@ -17,6 +17,20 @@ Upstream base: `mattpocock/skills@e74f0061bb67222181640effa98c675bdb2fdaa7` (see
 
 ---
 
+## afk (engineering) — claim race fix
+
+- **status**: modified
+- **upstream**: —
+- **why**: `gh issue edit --remove-label A --add-label B` is not atomic — gh resolves the new label set client-side and submits the union, so a removed-but-no-longer-present label is a silent no-op and exit code stays 0. SKILL.md previously claimed atomicity, which was false: two parallel `/afk` runners could both think they owned an issue.
+- **what changed**:
+  - New `claim_lock_acquire` / `claim_lock_release` helpers backed by `mkdir .red/tmp/claims/{N}/` (POSIX-atomic on a single checkout). `iter_close_success` / `iter_close_preserve` release automatically, so every terminal path (success, blocker, exhausted, SIGINT) cleans up.
+  - `process_issue` now: (1) acquires the local lock, (2) pre-checks via `gh issue view --json labels` that `ready-for-agent` is present and `running` is absent, then (3) runs the existing edit. Either gate failing → release lock and skip.
+  - `prune_orphans` sweeps stale claim locks at boot: any `.red/tmp/claims/{N}/pid` whose pid is dead gets reclaimed automatically.
+  - Rejected the reporter-suggested post-verify (sleep + re-view): two racers both pass it because the final label state is idempotent. False confidence is worse than no check.
+  - SKILL.md atomicity paragraph rewritten to document the three-layer scheme and the residual multi-clone / multi-host gap.
+
+---
+
 ## afk + to-prd + to-issues + triage-labels — PRD guard + worktree relocation
 
 - **status**: modified

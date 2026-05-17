@@ -220,6 +220,21 @@ prune_orphans() {
 
   [[ $pruned -gt 0 ]] && log "pruned $pruned orphan iteration dir(s)"
   [[ ${#restored[@]} -gt 0 ]] && log "restored ready-for-agent on: #${restored[*]}"
+
+  # Stale claim-lock sweep: rmdir any .red/tmp/claims/{N}/ whose pid is dead.
+  local stale_claims=0 c
+  shopt -s nullglob
+  for c in "$TMP_DIR"/claims/*/; do
+    [[ -d "$c" ]] || continue
+    local cp; cp="$(cat "$c/pid" 2>/dev/null)"
+    if [[ -z "$cp" ]] || ! kill -0 "$cp" 2>/dev/null; then
+      rm -rf "$c"
+      stale_claims=$((stale_claims+1))
+    fi
+  done
+  shopt -u nullglob
+  [[ $stale_claims -gt 0 ]] && log "released $stale_claims stale claim lock(s)"
+
   history_trim
 }
 
@@ -246,12 +261,47 @@ iter_open() {
 iter_close_success() {
   [[ -n "$ITER_DIR" && -d "$ITER_DIR" ]] && rm -rf "$ITER_DIR"
   ITER_DIR="" STATE_FILE="" ITER_LOG="" ITER_PID_FILE=""
+  claim_lock_release
 }
 
 iter_close_preserve() {
   # blocker / interrupt — keep dir for human, only drop the pid so monitor flags as inactive.
   [[ -n "$ITER_PID_FILE" && -f "$ITER_PID_FILE" ]] && rm -f "$ITER_PID_FILE"
   ITER_DIR="" STATE_FILE="" ITER_LOG="" ITER_PID_FILE=""
+  claim_lock_release
+}
+
+# ---------- claim lock ----------
+# `gh issue edit --remove-label X --add-label Y` is NOT atomic: gh resolves
+# the new label set client-side and submits the union, so two parallel
+# workers can both think they claimed the same issue. Fix layers:
+#   1. mkdir-based local lock at .red/tmp/claims/{N}/ (POSIX atomic on the
+#      same checkout — covers the typical "two terminals, one repo" case).
+#   2. Pre-check the label state via `gh issue view` before the edit. Cuts
+#      the race window down to ~1 round-trip; doesn't close it entirely,
+#      but combined with (1) covers all single-checkout races.
+#   3. Stale-lock sweep at boot (in prune_orphans) reaps locks whose pid
+#      is dead, so a crashed orchestrator doesn't poison the lock forever.
+# Residual gap: two clones of the same repo on the same host don't share
+# .red/tmp/, so each holds its own mkdir lock and the gh edit race is back.
+# Multi-host has the same property. Acceptable for the intended scale.
+
+CLAIMED_ISSUE=""
+
+claim_lock_acquire() {
+  local n="$1"
+  mkdir -p "$TMP_DIR/claims" 2>/dev/null
+  mkdir "$TMP_DIR/claims/$n" 2>/dev/null || return 1
+  printf '%s' "$$" > "$TMP_DIR/claims/$n/pid" 2>/dev/null
+  CLAIMED_ISSUE="$n"
+  return 0
+}
+
+claim_lock_release() {
+  local n="${1:-$CLAIMED_ISSUE}"
+  [[ -z "$n" ]] && return 0
+  rm -rf "$TMP_DIR/claims/$n" 2>/dev/null || true
+  [[ "$n" == "$CLAIMED_ISSUE" ]] && CLAIMED_ISSUE=""
 }
 
 # ---------- state file ----------
@@ -526,10 +576,35 @@ process_issue() {
 
   hr; log "▶ #$n $title (runner=$RUNNER)"
 
-  # claim
-  if ! gh -R "$(gh_repo)" issue edit "$n" \
+  # claim — three layers (see claim_lock_acquire comment for the why):
+  # 1. local mkdir lock so two workers on this checkout can't both pass.
+  if ! claim_lock_acquire "$n"; then
+    log "local claim lock held for #$n (another worker on this checkout) — skipping"
+    return 0
+  fi
+
+  # 2. pre-check: ready-for-agent must still be present. Skip if another
+  #    worker (or human) raced us between issue selection and now.
+  local repo; repo="$(gh_repo)"
+  local cur_labels
+  cur_labels=",$(gh -R "$repo" issue view "$n" --json labels --jq '[.labels[].name] | join(",")' 2>/dev/null || true),"
+  if [[ "$cur_labels" != *",ready-for-agent,"* ]]; then
+    log "#$n is no longer ready-for-agent (raced) — skipping"
+    claim_lock_release "$n"
+    return 0
+  fi
+  if [[ "$cur_labels" == *",running,"* ]]; then
+    log "#$n already labelled running (claimed by another worker) — skipping"
+    claim_lock_release "$n"
+    return 0
+  fi
+
+  # 3. the actual edit. Still not atomic on the gh side, but the local
+  #    lock + pre-check eliminate the realistic race surface.
+  if ! gh -R "$repo" issue edit "$n" \
         --remove-label ready-for-agent --add-label running >/dev/null 2>&1; then
-    log "could not claim #$n (already taken?) — skipping"
+    log "could not claim #$n (gh edit failed) — skipping"
+    claim_lock_release "$n"
     return 0
   fi
 
