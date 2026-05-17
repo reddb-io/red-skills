@@ -60,8 +60,14 @@ Paste the content, point to another path, or say "skip" and we'll grill on what 
 **Question format template:**
 
 > **Q##:** [the question]
-> **Recommend:** [your answer], because [one-sentence reason].
+> **Branches:** _(omit only when the question is genuinely open-ended)_
+> (a) [answer option A]
+> (b) [answer option B]
+> [if more options, add more branches]
+> **Recommend:** (a), because [one-sentence reason].
 > *(answer, redirect, or push back — I'll wait)*
+
+Prefer enumerated branches whenever the decision space is finite — they give the user a stable handle ("ok (b) but with X tweak") and force the skill to make the choice space explicit instead of hand-waving. `Recommend:` references a branch letter when branches are listed, prose otherwise.
 
 Number every question `Q01`, `Q02`, … `Q10`, … zero-padded to 2 digits. Counter is **session-scoped** — reset on each `/start` invocation, never on user redirects.
 
