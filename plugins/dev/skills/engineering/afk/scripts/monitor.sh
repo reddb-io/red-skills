@@ -294,14 +294,20 @@ render_full() {
 render_compact() {
   # Hint for agent renderers (Claude Code, Codex) that capture this output
   # and paraphrase it for the user. ANSI gets stripped on paraphrase, so
-  # spell out the semantic colour mapping in plain text so the agent can
-  # reproduce it in its markdown summary.
+  # spell out the semantic colour mapping AND the mandatory layout so the
+  # agent reproduces both in its markdown summary.
   cat <<'EOF'
-# agent: when you summarise this output for the user, preserve the same
-# colour cues — [live]=green, [stale]=yellow, [dead]=red, blk:N/fail:N=red,
-# progress %: 0-33 red / 33-66 yellow / 66-99 cyan / 100 green,
-# diff +N=green, -M=red. Render via markdown (bold, code spans) when ANSI
-# is not available. Keep tag spelling and column order intact.
+# agent: when you summarise this output for the user:
+#   1. ALWAYS include the "48h: …" sparkline line verbatim as the first
+#      line of your summary — it is the at-a-glance throughput signal and
+#      must not be dropped, even when worker activity is more salient.
+#   2. ALWAYS include every worker line, one per worker, in the original
+#      order. Do not collapse or omit workers.
+#   3. Preserve the colour cues — [live]=green, [stale]=yellow,
+#      [dead]=red, blk:N/fail:N=red, progress %: 0-33 red / 33-66 yellow /
+#      66-99 cyan / 100 green, diff +N=green, -M=red. Render via markdown
+#      (bold, code spans) when ANSI is not available. Keep tag spelling
+#      and column order intact.
 EOF
   render_sparkline
   local states=( "$TMP_DIR"/work-*/afk.state.json )
