@@ -6,6 +6,17 @@ Upstream base: `mattpocock/skills@e74f0061bb67222181640effa98c675bdb2fdaa7` (see
 
 ---
 
+## red-release workflow — conventional-commit-driven semver + plugin.json sync
+
+- **status**: modified
+- **upstream**: —
+- **why**: prior workflow always bumped patch and never touched `plugins/dev/.claude-plugin/plugin.json`, so the manifest `version` field drifted from the git tags and consumers had no semver signal.
+- **what changed**:
+  - Parses commits since the last tag for `feat!:` / `fix!:` / `BREAKING CHANGE` (major), `feat:` (minor), `fix:` (patch). No matching commits → skip release entirely.
+  - Writes the new version into `plugin.json`, commits it back to `main` with `[skip release]` to avoid recursion, then tags and creates the GitHub Release.
+
+---
+
 ## afk + to-prd + to-issues + triage-labels — PRD guard + worktree relocation
 
 - **status**: modified

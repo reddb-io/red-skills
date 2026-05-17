@@ -1,12 +1,14 @@
 name: red-release
 
-# Auto-tag a patch release on every push to main, then create a GitHub Release
-# with auto-generated notes from the commits since the previous tag.
-#
-# Semver scheme: vMAJOR.MINOR.PATCH. This workflow only bumps PATCH.
-# To cut a minor or major bump, create the tag manually
-# (e.g. `git tag v1.0.0 && git push origin v1.0.0`) — the next push to main
-# will pick up from there and continue bumping the patch.
+# Auto-release on push to main:
+#   1. Parse conventional commits since the last vX.Y.Z tag.
+#      - BREAKING CHANGE / `feat!:` / `fix!:` → major bump
+#      - `feat:`                              → minor bump
+#      - anything else (`fix:`, `chore:`, …) → patch bump
+#      - no `feat`/`fix`/`!` commits          → skip (no release)
+#   2. Sync plugins/dev/.claude-plugin/plugin.json `version` field.
+#   3. Commit the bump back to main (marker `[skip release]` to avoid loop).
+#   4. Create the git tag and a GitHub Release with auto-generated notes.
 
 on:
   push:
@@ -29,39 +31,90 @@ jobs:
         with:
           fetch-depth: 0
           fetch-tags: true
+          token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Compute next patch version
-        id: version
+      - name: Decide bump kind
+        id: bump
         run: |
           set -euo pipefail
           latest=$(git tag --list 'v*.*.*' --sort=-v:refname | head -n1)
           if [ -z "$latest" ]; then
-            next="v0.0.1"
+            range="HEAD"
           else
-            IFS='.' read -r major minor patch <<<"${latest#v}"
-            next="v${major}.${minor}.$((patch + 1))"
+            range="${latest}..HEAD"
           fi
-          echo "previous=$latest" >> "$GITHUB_OUTPUT"
-          echo "next=$next" >> "$GITHUB_OUTPUT"
-          echo "Releasing $next (previous: ${latest:-none})"
+          subjects=$(git log "$range" --format='%s%n%b' || true)
 
-      - name: Create tag
+          kind="none"
+          if grep -qE '(^|\n)(feat|fix)!:|BREAKING CHANGE' <<<"$subjects"; then
+            kind="major"
+          elif grep -qE '(^|\n)feat(\([^)]*\))?:' <<<"$subjects"; then
+            kind="minor"
+          elif grep -qE '(^|\n)fix(\([^)]*\))?:' <<<"$subjects"; then
+            kind="patch"
+          fi
+
+          echo "previous=$latest" >> "$GITHUB_OUTPUT"
+          echo "kind=$kind" >> "$GITHUB_OUTPUT"
+          echo "Bump kind: $kind (previous tag: ${latest:-none})"
+
+      - name: Skip if no releasable commits
+        if: steps.bump.outputs.kind == 'none'
+        run: |
+          echo "No feat/fix commits since ${{ steps.bump.outputs.previous }} — nothing to release."
+
+      - name: Compute next version
+        id: version
+        if: steps.bump.outputs.kind != 'none'
+        env:
+          KIND: ${{ steps.bump.outputs.kind }}
+          PREVIOUS: ${{ steps.bump.outputs.previous }}
+        run: |
+          set -euo pipefail
+          if [ -z "$PREVIOUS" ]; then
+            next="v0.1.0"
+          else
+            IFS='.' read -r major minor patch <<<"${PREVIOUS#v}"
+            case "$KIND" in
+              major) next="v$((major + 1)).0.0" ;;
+              minor) next="v${major}.$((minor + 1)).0" ;;
+              patch) next="v${major}.${minor}.$((patch + 1))" ;;
+            esac
+          fi
+          echo "next=$next" >> "$GITHUB_OUTPUT"
+          echo "Releasing $next"
+
+      - name: Sync plugin.json version
+        if: steps.bump.outputs.kind != 'none'
         env:
           NEXT: ${{ steps.version.outputs.next }}
         run: |
           set -euo pipefail
+          manifest=plugins/dev/.claude-plugin/plugin.json
+          new="${NEXT#v}"
+          tmp=$(mktemp)
+          jq --arg v "$new" '.version = $v' "$manifest" > "$tmp"
+          mv "$tmp" "$manifest"
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git tag -a "$NEXT" -m "Release $NEXT"
-          git push origin "$NEXT"
+          if git diff --quiet -- "$manifest"; then
+            echo "plugin.json already at $new"
+          else
+            git add "$manifest"
+            git commit -m "chore(release): $NEXT [skip release]"
+            git push origin HEAD:main
+          fi
 
-      - name: Create GitHub Release
+      - name: Tag + GitHub Release
+        if: steps.bump.outputs.kind != 'none'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NEXT: ${{ steps.version.outputs.next }}
-          PREVIOUS: ${{ steps.version.outputs.previous }}
+          PREVIOUS: ${{ steps.bump.outputs.previous }}
         run: |
           set -euo pipefail
+          git tag -a "$NEXT" -m "Release $NEXT"
+          git push origin "$NEXT"
           if [ -n "$PREVIOUS" ]; then
             gh release create "$NEXT" \
               --title "$NEXT" \
