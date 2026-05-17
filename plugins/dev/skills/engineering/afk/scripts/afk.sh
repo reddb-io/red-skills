@@ -34,6 +34,9 @@ PROJECT_ROOT="${PROJECT_ROOT:-$(pwd)}"
 PROJECT_ROOT="$(cd "$PROJECT_ROOT" && pwd)"
 REPO_NAME="$(basename "$PROJECT_ROOT")"
 TMP_DIR="$PROJECT_ROOT/.red/tmp"
+STATE_DIR="$PROJECT_ROOT/.red/state"
+HISTORY_FILE="$STATE_DIR/afk-history.jsonl"
+HISTORY_MAX_LINES=10000
 
 # Worker ID — 4 chars from [a-z0-9]. Regenerated until no live .red/tmp/work-{id}-i*/afk.pid exists.
 gen_worker_id() {
@@ -88,14 +91,136 @@ precheck() {
 
 # ---------- bootstrap ----------
 bootstrap() {
-  mkdir -p "$TMP_DIR"
+  mkdir -p "$TMP_DIR" "$STATE_DIR"
   local gi="$PROJECT_ROOT/.gitignore"
-  if ! grep -qxF '.red/tmp/' "$gi" 2>/dev/null; then
-    echo '.red/tmp/' >> "$gi"
-    log "added .red/tmp/ to .gitignore"
-  fi
+  grep -qxF '.red/tmp/'   "$gi" 2>/dev/null || { echo '.red/tmp/'   >> "$gi"; log "added .red/tmp/ to .gitignore"; }
+  grep -qxF '.red/state/' "$gi" 2>/dev/null || { echo '.red/state/' >> "$gi"; log "added .red/state/ to .gitignore"; }
   WORKER_ID="$(gen_worker_id)"
   log "worker: $WORKER_ID"
+}
+
+# ---------- event log ----------
+# Append-only JSONL, one line per terminal event (done|blocked|exhausted).
+# Survives reboots and worktree wipes. Read by monitor.sh for the 48h sparkline.
+# Concurrent workers serialise via flock.
+history_append() {
+  # history_append <event> <issue#> <runner> [duration_s] [merge_sha] [reason]
+  local event="$1" issue="$2" runner="$3" dur="${4:-0}" sha="${5:-}" reason="${6:-}"
+  mkdir -p "$STATE_DIR"
+  local line
+  line="$(jq -cn \
+    --arg ts "$(date -Iseconds)" \
+    --argjson epoch "$(date +%s)" \
+    --arg worker "$WORKER_ID" \
+    --argjson issue "$issue" \
+    --arg event "$event" \
+    --argjson duration_s "$dur" \
+    --arg runner "$runner" \
+    --arg merge_sha "$sha" \
+    --arg reason "$reason" \
+    '{ts:$ts, epoch:$epoch, worker:$worker, issue:$issue, event:$event,
+      duration_s:$duration_s, runner:$runner}
+     + (if $merge_sha != "" then {merge_sha:$merge_sha} else {} end)
+     + (if $reason    != "" then {reason:$reason}       else {} end)')"
+  ( flock 9; printf '%s\n' "$line" >&9 ) 9>>"$HISTORY_FILE"
+}
+
+# Trim oldest lines if file exceeds cap. Called from prune_orphans.
+history_trim() {
+  [[ -f "$HISTORY_FILE" ]] || return 0
+  local n; n="$(wc -l < "$HISTORY_FILE" 2>/dev/null || echo 0)"
+  (( n > HISTORY_MAX_LINES )) || return 0
+  local tmp; tmp="$(mktemp)"
+  tail -n "$HISTORY_MAX_LINES" "$HISTORY_FILE" > "$tmp"
+  ( flock 9; cat "$tmp" > "$HISTORY_FILE" ) 9>>"$HISTORY_FILE"
+  rm -f "$tmp"
+  log "trimmed history to last $HISTORY_MAX_LINES lines"
+}
+
+# ---------- orphan iteration cleanup ----------
+# Sweeps $TMP_DIR/work-*/ at boot. An iteration dir is orphaned when its
+# orchestrator pid is dead. For each orphan:
+#   - kill zombie heartbeat sub-shell (if state file records its pid)
+#   - if the issue is closed OR no longer carries ready-for-human → rm -rf
+#   - if the issue is still labelled running (orchestrator crashed mid-issue)
+#     → restore ready-for-agent, comment, then rm -rf
+#   - if the issue is ready-for-human → keep (human still needs the dir)
+#   - if gh API check fails → fall back to mtime > 7d TTL
+# Iter dirs without a state file (truly broken) → TTL of 1d, then rm -rf.
+TTL_LONG=$((7*86400))
+TTL_SHORT=$((1*86400))
+
+prune_orphans() {
+  local repo; repo="$(gh_repo)"
+  local pruned=0 d
+  local restored=()
+  local now_s; now_s="$(date +%s)"
+
+  shopt -s nullglob
+  for d in "$TMP_DIR"/work-*/; do
+    [[ -d "$d" ]] || continue
+    local pid_file="$d/afk.pid"
+    local state_file="$d/afk.state.json"
+
+    # active worker → skip
+    if [[ -f "$pid_file" ]]; then
+      local p; p="$(cat "$pid_file" 2>/dev/null)"
+      if [[ -n "$p" ]] && kill -0 "$p" 2>/dev/null; then
+        continue
+      fi
+    fi
+
+    # zombie heartbeat → kill
+    if [[ -f "$state_file" ]]; then
+      local hb; hb="$(jq -r '.current.heartbeat_pid // empty' "$state_file" 2>/dev/null)"
+      [[ -n "$hb" && "$hb" != "null" ]] && kill "$hb" 2>/dev/null || true
+    fi
+
+    local mtime_s; mtime_s="$(stat -c %Y "$d" 2>/dev/null || echo 0)"
+    local safe=0
+    local issue_n=""
+    [[ -f "$state_file" ]] && issue_n="$(jq -r '.current.number // empty' "$state_file" 2>/dev/null)"
+
+    if [[ -z "$issue_n" || "$issue_n" == "null" ]]; then
+      # no state → garbage if old enough
+      (( now_s - mtime_s > TTL_SHORT )) && safe=1
+    else
+      local view
+      if view="$(gh -R "$repo" issue view "$issue_n" --json labels,state 2>/dev/null)"; then
+        local labels state
+        labels=",$(echo "$view" | jq -r '[.labels[].name] | join(",")'),"
+        state="$(echo "$view" | jq -r '.state')"
+
+        if [[ "$state" == "CLOSED" ]]; then
+          safe=1
+        elif [[ "$labels" == *",ready-for-human,"* ]]; then
+          safe=0
+        elif [[ "$labels" == *",running,"* ]]; then
+          gh -R "$repo" issue edit "$issue_n" \
+            --remove-label running --add-label ready-for-agent >/dev/null 2>&1 || true
+          gh -R "$repo" issue comment "$issue_n" \
+            --body "🤖 /afk orchestrator died mid-issue; restoring ready-for-agent." >/dev/null 2>&1 || true
+          restored+=("$issue_n")
+          safe=1
+        else
+          safe=1
+        fi
+      else
+        # gh failed → TTL fallback
+        (( now_s - mtime_s > TTL_LONG )) && safe=1
+      fi
+    fi
+
+    if [[ $safe -eq 1 ]]; then
+      rm -rf "$d"
+      pruned=$((pruned+1))
+    fi
+  done
+  shopt -u nullglob
+
+  [[ $pruned -gt 0 ]] && log "pruned $pruned orphan iteration dir(s)"
+  [[ ${#restored[@]} -gt 0 ]] && log "restored ready-for-agent on: #${restored[*]}"
+  history_trim
 }
 
 # Cross-iteration in-memory aggregates (state file is per-iteration; these survive between issues).
@@ -247,11 +372,11 @@ heartbeat_stop() {
   HEARTBEAT_PID=""
 }
 
-# ---------- drop file ----------
-write_drop() {
+# ---------- handoff file ----------
+write_handoff() {
   local n="$1" title="$2" slug="$3" body="$4" worktree="$5" runner="$6" attempt="$7"
-  # Drop file lives in the iteration directory (one level above the worktree).
-  local drop="$ITER_DIR/drop.md"
+  # Handoff file lives in the iteration directory (one level above the worktree).
+  local handoff="$ITER_DIR/handoff.md"
 
   # Try to pull an AGENT-BRIEF comment from triage; fall back to issue body.
   local brief
@@ -277,16 +402,16 @@ write_drop() {
     echo
     echo "## Notes"
     echo "<!-- inner agent appends progress/blockers here across attempts -->"
-  } > "$drop"
+  } > "$handoff"
 
-  echo "$drop"
+  echo "$handoff"
 }
 
 # ---------- runner invocation ----------
 RUNNER_EXHAUSTED=0
 
 run_inner() {
-  local worktree="$1" drop="$2" runner="$3"
+  local worktree="$1" handoff="$2" runner="$3"
   RUNNER_EXHAUSTED=0
 
   local commits
@@ -297,7 +422,7 @@ run_inner() {
 
   local full_prompt
   full_prompt="$(cat <<EOF
-Drop file: $drop  (read this first)
+Handoff file: $handoff  (read this first)
 
 Recent commits on main:
 $commits
@@ -423,7 +548,7 @@ process_issue() {
     .current = {
       number: $n, title: \"$(printf %s "$title" | jq -Rs '.' | sed 's/^\"//;s/\"$//')\",
       slug: \"$slug\", worktree: \"$worktree_rel\",
-      drop: \".red/tmp/work-${WORKER_ID}-i${n}/drop.md\",
+      handoff: \".red/tmp/work-${WORKER_ID}-i${n}/handoff.md\",
       started_at: \"$started_at\", stage: \"setup\",
       heartbeat_glyph: \"\", heartbeat_pid: null,
       runner: \"$RUNNER\", retries: 0, last_stream_line: \"\"
@@ -431,14 +556,14 @@ process_issue() {
   "
 
   local attempt=1
-  local drop
-  drop="$(write_drop "$n" "$title" "$slug" "$body" "$worktree" "$RUNNER" "$attempt")"
+  local handoff
+  handoff="$(write_handoff "$n" "$title" "$slug" "$body" "$worktree" "$RUNNER" "$attempt")"
 
   heartbeat_start "$n"
   state_set ".current.stage = \"impl\""
 
   local result
-  result="$(run_inner "$worktree" "$drop" "$RUNNER")"
+  result="$(run_inner "$worktree" "$handoff" "$RUNNER")"
 
   if [[ $RUNNER_EXHAUSTED -eq 1 ]]; then
     heartbeat_stop
@@ -447,19 +572,21 @@ process_issue() {
       log "runner $RUNNER exhausted — swapping to $other and retrying #$n"
       RUNNER="$other"
       attempt=$((attempt+1))
-      drop="$(write_drop "$n" "$title" "$slug" "$body" "$worktree" "$RUNNER" "$attempt")"
+      handoff="$(write_handoff "$n" "$title" "$slug" "$body" "$worktree" "$RUNNER" "$attempt")"
       heartbeat_start "$n"
-      result="$(run_inner "$worktree" "$drop" "$RUNNER")"
+      result="$(run_inner "$worktree" "$handoff" "$RUNNER")"
       if [[ $RUNNER_EXHAUSTED -eq 1 ]]; then
         heartbeat_stop
         gh -R "$(gh_repo)" issue comment "$n" --body "Both runners exhausted. Iteration preserved at \`$ITER_DIR\`." >/dev/null
         gh -R "$(gh_repo)" issue edit "$n" --remove-label running --add-label ready-for-agent >/dev/null
+        history_append "exhausted" "$n" "$RUNNER" 0 "" "both-runners"
         iter_close_preserve
         exit 75
       fi
     else
       gh -R "$(gh_repo)" issue comment "$n" --body "Runner \`$RUNNER\` exhausted; rerun /afk when quota resets." >/dev/null
       gh -R "$(gh_repo)" issue edit "$n" --remove-label running --add-label ready-for-agent >/dev/null
+      history_append "exhausted" "$n" "$RUNNER" 0 "" "$RUNNER"
       iter_close_preserve
       exit 75
     fi
@@ -471,11 +598,12 @@ process_issue() {
   if echo "$result" | grep -q '<promise>BLOCKED</promise>'; then
     log "✗ #$n blocked by inner agent"
     local notes
-    notes="$(awk '/^## Notes$/,0' "$drop")"
+    notes="$(awk '/^## Notes$/,0' "$handoff")"
     gh -R "$(gh_repo)" issue comment "$n" --body "$(printf 'BLOCKED by inner agent.\n\n%s\n\nIteration preserved at `%s`.' "$notes" "$ITER_DIR")" >/dev/null
     gh -R "$(gh_repo)" issue edit "$n" --remove-label running --add-label ready-for-human >/dev/null
     AGG_BLOCKED=$((AGG_BLOCKED+1))
     state_set ".blocked = $AGG_BLOCKED | .current = null"
+    history_append "blocked" "$n" "$RUNNER" "$(( $(date +%s) - started_epoch ))" "" "inner-agent"
     iter_close_preserve
     return 0
   fi
@@ -486,6 +614,7 @@ process_issue() {
     gh -R "$(gh_repo)" issue edit "$n" --remove-label running --add-label ready-for-human >/dev/null
     AGG_BLOCKED=$((AGG_BLOCKED+1))
     state_set ".blocked = $AGG_BLOCKED | .current = null"
+    history_append "blocked" "$n" "$RUNNER" "$(( $(date +%s) - started_epoch ))" "" "no-sentinel"
     iter_close_preserve
     return 0
   fi
@@ -505,6 +634,7 @@ process_issue() {
     gh -R "$(gh_repo)" issue edit "$n" --remove-label running --add-label ready-for-human >/dev/null
     AGG_BLOCKED=$((AGG_BLOCKED+1))
     state_set ".blocked = $AGG_BLOCKED | .current = null"
+    history_append "blocked" "$n" "$RUNNER" "$(( $(date +%s) - started_epoch ))" "" "merge-conflict"
     iter_close_preserve
     return 0
   fi
@@ -533,6 +663,7 @@ process_issue() {
     | .durations_seconds = $AGG_DURATIONS
     | .current = null
   "
+  history_append "done" "$n" "$RUNNER" "$dur" "$merge_sha" ""
   iter_close_success
 
   log "✓ #$n done in ${dur}s — merge $merge_sha — $fb"
@@ -564,6 +695,7 @@ trap cleanup INT TERM
 # ---------- main ----------
 precheck
 bootstrap
+prune_orphans
 
 # --- straggler check: warn about issues that never made it to ready-for-agent
 straggler_check() {

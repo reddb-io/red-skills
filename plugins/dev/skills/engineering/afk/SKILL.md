@@ -38,7 +38,7 @@ Per-issue files live under `.red/tmp/work-{id}-i{N}/` in the primary checkout. E
 | `.red/tmp/work-{id}-i{N}/afk.pid` | PID of the orchestrator. Used by `/afk monitor` to flag dead workers as `stale` via `kill -0`. Re-written on each iteration. |
 | `.red/tmp/work-{id}-i{N}/afk.log` | Append-only log for this iteration. Per-issue scope — each issue gets a fresh log. |
 | `.red/tmp/work-{id}-i{N}/afk.state.json` | State snapshot for this iteration. Schema in *State File* below. |
-| `.red/tmp/work-{id}-i{N}/drop.md` | Drop file (AGENT-BRIEF) the inner agent reads. Template in *Drop File Template* below. |
+| `.red/tmp/work-{id}-i{N}/handoff.md` | Handoff file (AGENT-BRIEF) the inner agent reads. Template in *Handoff File Template* below. |
 
 Two workers cannot claim the same issue because the GitHub label transition (`ready-for-agent` → `running`) is atomic — the second `gh issue edit` fails and that worker skips to the next candidate. No extra coordination needed.
 
@@ -63,7 +63,21 @@ Run before the first iteration:
 5. Read [`SAFETY.md`](SAFETY.md). It is binding for every shell action the loop takes.
 6. Install signal handlers — SIGINT, SIGTERM, and normal exit all release any in-flight issue claim and preserve the active `work-{id}-i{N}/` directory before terminating.
 
-The per-iteration `work-{id}-i{N}/` directory (pid, log, state, drop, worktree) is created in *Per-Issue Loop* step 1 below, not here — the worker has no files until it claims an issue.
+The per-iteration `work-{id}-i{N}/` directory (pid, log, state, handoff, worktree) is created in *Per-Issue Loop* step 1 below, not here — the worker has no files until it claims an issue.
+
+## Orphan Cleanup (boot-time)
+
+Right after bootstrap and before *Straggler Check*, `/afk` sweeps `.red/tmp/work-*/` for orphaned iteration dirs (orchestrator pid dead). For each:
+
+1. **Kill zombie heartbeat.** If the state file recorded `heartbeat_pid` and that sub-shell is still alive, `kill` it. Otherwise it would keep posting `:one: :two:` on the issue forever, consuming `gh` quota.
+2. **Decide fate from issue state.** `gh issue view N --json labels,state`:
+   - `state == CLOSED` → `rm -rf`. Work landed; nothing to inspect.
+   - label `ready-for-human` → **keep**. The human still needs the dir.
+   - label `running` (orchestrator crashed mid-issue) → restore `ready-for-agent`, post a recovery comment, then `rm -rf`. Leaving the issue eternally `running` is worse than losing the dir.
+   - any other state → `rm -rf`.
+3. **Fallback on gh failure.** Network / rate-limit error → fall back to mtime TTL: 7 days for dirs with a state file, 1 day for dirs without one. Conservative enough to survive transient outages without losing artefacts the human wanted.
+
+This removes the manual "remember to clean `.red/tmp/`" discipline. Blocker dirs persist exactly as long as the issue stays `ready-for-human`; everything else self-collects on the next `/afk` run.
 
 ## Straggler Check
 
@@ -149,15 +163,15 @@ For each issue `N`:
 
 1. **Claim.** `gh issue edit N --remove-label ready-for-agent --add-label running`. Then create the iteration directory `.red/tmp/work-{id}-i{N}/` and write `afk.pid` (current `$$`), open `afk.log` (tee target for orchestrator output), and initialise `afk.state.json` per *State File* below. Comment a start line on the issue: ISO timestamp, runner identity, worktree path. If labelling fails because someone else already claimed it, abandon the iteration directory and skip to the next issue.
 2. **Worktree.** `git -C primary fetch origin main` then `git worktree add .red/tmp/work-{id}-i{N}/worktree -b afk/{id}/{N}-{slug} origin/main` from the primary checkout. The branch is local-only until push. The worktree lives inside the gitignored `.red/tmp/` tree so it never appears in `git status` for `main`.
-3. **Drop file.** Materialise the AGENT-BRIEF into `.red/tmp/work-{id}-i{N}/drop.md` using the template below. The drop file lives one level above the worktree so the inner agent reads it via `../drop.md` from inside the worktree, and so it survives a worktree wipe on retry.
+3. **Handoff file.** Materialise the AGENT-BRIEF into `.red/tmp/work-{id}-i{N}/handoff.md` using the template below. The handoff file lives one level above the worktree so the inner agent reads it via `../handoff.md` from inside the worktree, and so it survives a worktree wipe on retry.
 4. **Heartbeat.** Spawn a background sub-shell that posts `:one:`, `:two:`, `:three:`, `:four:` every 10 min (reset after `:four:`). Track PID in the state file so cleanup can kill it.
-5. **Inner agent.** Invoke claude/codex per [`runner-*.md`](runner-claude.md) with [`AGENT-PROMPT.md`](AGENT-PROMPT.md) + the drop file + last 5 commits of `main`. Stream stdout into the loop's header tail. Detect stages by grep on the stream — see *Stage Detection* below.
+5. **Inner agent.** Invoke claude/codex per [`runner-*.md`](runner-claude.md) with [`AGENT-PROMPT.md`](AGENT-PROMPT.md) + the handoff file + last 5 commits of `main`. Stream stdout into the loop's header tail. Detect stages by grep on the stream — see *Stage Detection* below.
 6. **Inner result.**
    - Inner committed and emits `<promise>DONE</promise>` → continue to feedback loops.
-   - Inner emits `<promise>BLOCKED</promise>` plus notes appended to the drop file → comment the blocker on the issue, re-label `ready-for-human`, kill heartbeat, drop the worktree, go to next issue.
+   - Inner emits `<promise>BLOCKED</promise>` plus notes appended to the handoff file → comment the blocker on the issue, re-label `ready-for-human`, kill heartbeat, drop the worktree, go to next issue.
    - Inner emits `<promise>NO MORE TASKS</promise>` from inside one iteration → ignored. That sentinel is for the outer loop.
    - Runner-exhausted signal (rate limit / quota error string per runner) → kill heartbeat, keep the worktree, swap runner, retry the same issue once. If both runners exhaust, exit 75 (`EX_TEMPFAIL`).
-7. **Feedback loops.** In the worktree: `pnpm test && pnpm typecheck && pnpm lint && pnpm build`. Any missing script: skip it and note in the validation comment. Any failure: re-enter the inner agent with the failure output appended to the drop file's Notes. Cap at 2 retries before marking blocked.
+7. **Feedback loops.** In the worktree: `pnpm test && pnpm typecheck && pnpm lint && pnpm build`. Any missing script: skip it and note in the validation comment. Any failure: re-enter the inner agent with the failure output appended to the handoff file's Notes. Cap at 2 retries before marking blocked.
 8. **Merge.**
    - Primary dirty? Auto-stage and commit `chore(afk): pre-merge snapshot for #N` in primary. Never `git stash`. Never `git checkout -- .`.
    - `git -C primary merge --no-ff afk/{N}-{slug} -m "merge: #{N} {title}"`.
@@ -173,7 +187,7 @@ Default behaviour is to alternate runners between issues (claude first, codex se
 
 Exhaustion detection lives in [`runner-claude.md`](runner-claude.md) and [`runner-codex.md`](runner-codex.md) — they own the per-runner error strings. The orchestrator only sees `RUNNER_EXHAUSTED` as a structured signal.
 
-When swap happens mid-issue, the same worktree and drop file are reused; the new runner sees the previous agent's Notes appended.
+When swap happens mid-issue, the same worktree and handoff file are reused; the new runner sees the previous agent's Notes appended.
 
 ## Heartbeat Protocol
 
@@ -254,7 +268,7 @@ Path: `.red/tmp/work-{id}-i{N}/afk.state.json` — one snapshot per (worker, iss
     "title": "wire OAuth callback",
     "slug": "wire-oauth-callback",
     "worktree": ".red/tmp/work-k7m2-i142/worktree",
-    "drop": ".red/tmp/work-k7m2-i142/drop.md",
+    "handoff": ".red/tmp/work-k7m2-i142/handoff.md",
     "started_at": "2026-05-16T12:14:00-03:00",
     "stage": "impl",
     "heartbeat_glyph": ":two:",
@@ -279,9 +293,27 @@ Atomic write: write to `afk.state.json.tmp` inside the iteration directory, `mv`
 
 Single-worker operation shows one section. Multi-worker adds one section per live worker, sorted by `started_at`, plus an aggregate `done / total` summary across all of them.
 
-## Drop File Template
+The header of every render shows a **48h sparkline** of issues closed, one glyph per hour, scaled to the peak hour:
 
-`.red/tmp/work-{id}-i{N}/drop.md`:
+```
+48h: ·▁··▁·▁·▁··█▁▁··▁·▁···▁·▁·▆▁▁··▁···▁▆·▁··▁▃▁·▃▁·  (35 closed, peak 5/h)
+```
+
+Source data: `.red/state/afk-history.jsonl`, an append-only event log written by the orchestrator on every terminal event:
+
+```jsonl
+{"ts":"2026-05-17T12:14:00-03:00","epoch":1747494840,"worker":"sci2","issue":571,"event":"done","duration_s":816,"runner":"codex","merge_sha":"0936ba54"}
+{"ts":"...","epoch":...,"worker":"sci2","issue":569,"event":"blocked","duration_s":120,"runner":"codex","reason":"merge-conflict"}
+{"ts":"...","epoch":...,"worker":"sci2","issue":568,"event":"exhausted","duration_s":0,"runner":"claude","reason":"both-runners"}
+```
+
+`.red/state/` is gitignored. The orchestrator creates it during bootstrap, parallel workers serialise appends via `flock`, and `prune_orphans` truncates the file to the last 10000 lines if it grows past that cap.
+
+The sparkline only counts `event == "done"`. Blockers and exhausted runs are recorded for forensics but excluded from the throughput view.
+
+## Handoff File Template
+
+`.red/tmp/work-{id}-i{N}/handoff.md`:
 
 ```markdown
 # Issue #{N} — {title} [AFK]
@@ -303,11 +335,14 @@ attempt: {1..}
 - Wiki: {pages from brief, if any}
 - PRD: {path or URL}
 
+## Suggested Skills
+{ordered list of skills the inner agent should consider, e.g. `/tdd`, `/diagnose`, `/wiki`. Omit if none beyond the default workflow.}
+
 ## Notes
 {inner agent appends progress, blockers, decisions here across attempts}
 ```
 
-The drop file follows the same minimalism as the `handoff` skill — reference artifacts by path, do not duplicate their content.
+The handoff file follows the same minimalism as the `/handoff` skill — reference artifacts by path, do not duplicate their content.
 
 ## Stop Conditions
 

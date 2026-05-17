@@ -9,10 +9,50 @@ set -eo pipefail
 
 PROJECT_ROOT="${1:-$(pwd)}"
 TMP_DIR="$PROJECT_ROOT/.red/tmp"
+HISTORY_FILE="$PROJECT_ROOT/.red/state/afk-history.jsonl"
 
 fmt_dur() {
   local s=$1
   printf '%02d:%02d:%02d' $((s/3600)) $(((s%3600)/60)) $((s%60))
+}
+
+# 48h sparkline of `done` events per hour. 48 buckets, scaled to peak.
+render_sparkline() {
+  [[ -f "$HISTORY_FILE" ]] || { echo "history: (none yet — first /afk run will start it)"; return; }
+
+  local now_s; now_s="$(date +%s)"
+  local floor_h=$(( now_s / 3600 ))
+  local from_h=$(( floor_h - 47 ))
+  local from_s=$(( from_h * 3600 ))
+
+  # bucket counts via jq — single pass.
+  # output: 48 space-separated integers (oldest → newest).
+  local counts_line
+  counts_line="$(jq -rs --argjson from "$from_h" '
+    map(select(.event == "done"))
+    | map((.epoch / 3600 | floor) - $from)
+    | map(select(. >= 0 and . < 48))
+    | reduce .[] as $b ([range(48) | 0]; .[$b] += 1)
+    | join(" ")
+  ' "$HISTORY_FILE" 2>/dev/null || echo "")"
+  [[ -z "$counts_line" ]] && { echo "history: (parse error)"; return; }
+
+  local counts=( $counts_line )
+  local max=0 v total=0
+  for v in "${counts[@]}"; do
+    (( v > max )) && max=$v
+    total=$((total+v))
+  done
+  (( max == 0 )) && max=1
+
+  local glyphs=('·' '▁' '▂' '▃' '▄' '▅' '▆' '▇' '█')
+  local bar="" idx
+  for v in "${counts[@]}"; do
+    idx=$(( v * 8 / max ))
+    bar+="${glyphs[$idx]}"
+  done
+
+  printf '48h: %s  (%d closed, peak %d/h)\n' "$bar" "$total" "$max"
 }
 
 render_worker() {
@@ -77,6 +117,8 @@ render_worker() {
 render() {
   command -v jq >/dev/null || { echo "jq required" >&2; exit 2; }
   clear
+  render_sparkline
+  echo
   local states=( "$TMP_DIR"/work-*/afk.state.json )
   if [[ ! -e "${states[0]}" ]]; then
     echo "no live iterations under $TMP_DIR/work-*/ — /afk not running here?"

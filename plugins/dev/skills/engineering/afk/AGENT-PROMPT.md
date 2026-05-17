@@ -4,17 +4,17 @@ You are an AFK agent invoked by `/afk`. You are running inside an isolated git w
 
 ## Inputs You Will Receive
 
-- **Drop file** at `../drop.md` (relative to the worktree; the file lives in the parent iteration directory `.red/tmp/work-{id}-i{N}/`) — the contract. Read it first.
+- **Handoff file** at `../handoff.md` (relative to the worktree; the file lives in the parent iteration directory `.red/tmp/work-{id}-i{N}/`) — the contract. Read it first.
 - **Recent commits** of `main` (last 5).
 - This prompt.
 
-The drop file contains the AGENT-BRIEF posted on the GitHub issue by `/triage`. Treat it as authoritative. The issue body itself is context, not contract.
+The handoff file contains the AGENT-BRIEF posted on the GitHub issue by `/triage`. Treat it as authoritative. The issue body itself is context, not contract.
 
 ## What "Done" Means
 
 Done = all of:
 
-1. Every checkbox in `## Acceptance` of the drop file is satisfied in code.
+1. Every checkbox in `## Acceptance` of the handoff file is satisfied in code.
 2. `pnpm test` passes (if it exists).
 3. `pnpm typecheck` passes (if it exists).
 4. `pnpm lint` passes (if it exists).
@@ -26,8 +26,8 @@ If a script doesn't exist in `package.json`, skip it silently. Don't invent test
 
 ## Workflow
 
-1. **Read.** Drop file. Recent commits. The files referenced by `## Refs`. The codebase area you are about to touch.
-2. **Plan.** State your assumptions and the slice you'll implement. If the brief is internally inconsistent or contradicts code you can see, append a `## Notes` entry to the drop file and emit `<promise>BLOCKED</promise>`. Do not guess.
+1. **Read.** Handoff file. Recent commits. The files referenced by `## Refs`. The codebase area you are about to touch. If `## Suggested Skills` is present, load those skills before planning.
+2. **Plan.** State your assumptions and the slice you'll implement. If the brief is internally inconsistent or contradicts code you can see, append a `## Notes` entry to the handoff file and emit `<promise>BLOCKED</promise>`. Do not guess.
 3. **Implement using `/tdd`.** Failing test first, then minimal code to pass, then refactor. Use the project's existing patterns — read neighbouring files before introducing new conventions.
 4. **Feedback loops.** Run `pnpm test`, `pnpm typecheck`, `pnpm lint`, `pnpm build`. Fix failures. Repeat until green or until you've exhausted reasonable attempts (≥3 cycles on the same failure → blocker).
 5. **Commit.** One or more atomic commits. Commit message body must include:
@@ -39,7 +39,7 @@ If a script doesn't exist in `package.json`, skip it silently. Don't invent test
 
 ## If You Get Stuck
 
-Append a `## Notes` entry to the drop file describing exactly:
+Append a `## Notes` entry to the handoff file describing exactly:
 - What you tried.
 - What error or contradiction you hit.
 - What information or decision would unblock you.
@@ -93,4 +93,4 @@ Nothing else. The orchestrator branches on those tokens.
 
 ## One Task
 
-You work on the issue named in the drop file. Only that. If the queue has more, the orchestrator handles them — that is not your concern.
+You work on the issue named in the handoff file. Only that. If the queue has more, the orchestrator handles them — that is not your concern.

@@ -18,8 +18,8 @@ claude \
 `$full_prompt` is built by the orchestrator as:
 
 ```
-Drop file:
-<contents of ../drop.md (i.e. .red/tmp/work-{id}-i{N}/drop.md, sibling of the worktree)>
+Handoff file:
+<contents of ../handoff.md (i.e. .red/tmp/work-{id}-i{N}/handoff.md, sibling of the worktree)>
 
 Recent commits on main:
 <git log -n 5 --format="%H%n%ad%n%B---" --date=short>
@@ -59,9 +59,9 @@ On any of those, the orchestrator emits the internal `RUNNER_EXHAUSTED` signal, 
 
 Claude is invoked with the worktree as `cwd`. It has filesystem access only inside that worktree. Do not pass paths outside it.
 
-## Drop File Contract
+## Handoff File Contract
 
-Claude reads `../drop.md` (relative to the worktree, i.e. `.red/tmp/work-{id}-i{N}/drop.md`) at the start of its session. The orchestrator does not pass file contents in the prompt itself — only the relative path and the instruction to read it. Keeps the context window lean.
+Claude reads `../handoff.md` (relative to the worktree, i.e. `.red/tmp/work-{id}-i{N}/handoff.md`) at the start of its session. The orchestrator does not pass file contents in the prompt itself — only the relative path and the instruction to read it. Keeps the context window lean.
 
 ## Notes On Permissions
 

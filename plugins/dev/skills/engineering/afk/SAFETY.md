@@ -47,7 +47,7 @@ Never `git stash`, `git restore`, or discard the dirty state.
 
 ## Merge Conflicts
 
-One self-resolve attempt: re-enter the inner agent with the conflict diff in the drop file Notes. If the inner can't resolve cleanly:
+One self-resolve attempt: re-enter the inner agent with the conflict diff in the handoff file Notes. If the inner can't resolve cleanly:
 
 1. `git -C primary merge --abort`.
 2. Comment the conflict diff on the issue.
@@ -63,7 +63,7 @@ One self-resolve attempt: re-enter the inner agent with the conflict diff in the
 
 ## `.red/` Discipline
 
-- `.red/tmp/` is gitignored. The orchestrator guarantees this in the worktree before writing drop files.
+- `.red/tmp/` is gitignored. The orchestrator guarantees this in the worktree before writing handoff files.
 - `.red/wiki/` is gitignored if the project uses the LLM-wiki pattern. The inner agent must never `git add` it.
 - `.red/agents/`, `.red/CONTEXT.md`, and other tracked `.red/` content are normal source. Treat them like any other file.
 
@@ -82,7 +82,7 @@ One self-resolve attempt: re-enter the inner agent with the conflict diff in the
 ## What "Blocker" Means
 
 A blocker is recorded by:
-1. Appending Notes to the drop file (the inner does this).
+1. Appending Notes to the handoff file (the inner does this).
 2. Posting the Notes as a comment on the GitHub issue (the orchestrator does this).
 3. Removing `running`, adding `ready-for-human`.
 4. Worktree is preserved at the moment of blocker — the human investigates in place.

@@ -15,7 +15,7 @@ codex exec \
   </dev/null
 ```
 
-`$full_prompt` matches the Claude runner — drop file path + recent commits + AGENT-PROMPT.md body. `$last_msg_file` is a temp file the orchestrator reads after the process exits.
+`$full_prompt` matches the Claude runner — handoff file path + recent commits + AGENT-PROMPT.md body. `$last_msg_file` is a temp file the orchestrator reads after the process exits.
 
 The bypass flags are required because the inner agent must run unattended; the policy enforcement comes from [`SAFETY.md`](SAFETY.md), not from Codex's interactive approvals.
 
@@ -43,7 +43,7 @@ On any of those, the orchestrator emits `RUNNER_EXHAUSTED`, kills heartbeat, pre
 
 ## Working Directory
 
-`-C $WORKTREE` pins Codex to the worktree. The drop file lives at `../drop.md` (one level above the worktree, inside the iteration directory `.red/tmp/work-{id}-i{N}/`).
+`-C $WORKTREE` pins Codex to the worktree. The handoff file lives at `../handoff.md` (one level above the worktree, inside the iteration directory `.red/tmp/work-{id}-i{N}/`).
 
 ## Notes On The Bypass Flags
 
