@@ -6,6 +6,19 @@ Upstream base: `mattpocock/skills@e74f0061bb67222181640effa98c675bdb2fdaa7` (see
 
 ---
 
+## afk (engineering) — extract `lib/state.sh` accessor module + migrate `afk.sh`
+
+- **status**: modified
+- **upstream**: —
+- **why**: `afk.sh` was the most demanding consumer of `.red/tmp/work-*/afk.state.json` — both reader and writer — and inlined `jq` filters at every callsite. Adding a field (e.g. `current.diff_added`) meant grepping for every reader and writer and patching defaults on each. Issue #26 closes that gap by extracting a schema-owning accessor module that the rest of the AFK toolchain (`monitor.sh`, `supervisor.sh`, `statusline.sh`) can migrate onto in later slices.
+- **what changed**:
+  - `plugins/dev/skills/engineering/afk/scripts/lib/state.sh`: new — exposes `state_read_into`, `state_write`, `state_init`, `state_is_live`. `state_read_into PREFIX path` does a single `jq` invocation, emits `<flat_key>=<@sh-quoted-value>` lines, and sets `${PREFIX}_<key>` shell vars (nested fields like `.current.number` flatten to `current_number`). Defaults are encoded inside the read filter — adding a v1 field is a one-line change. Missing files yield defaults silently; malformed JSON logs a warning to stderr and yields defaults (never aborts the caller). `state_write path key=value key2:=jsonliteral …` composes a single jq filter, writes via `mktemp -p <dir> path.tmp.XXXXXX`, then `mv`s atomically — `:=` flags raw JSON, `=` treats the value as string. `state_init path …` resets to a fresh v1 doc (`version:=1`, `envelope:={posted:false}`). `state_is_live path` returns 0 iff `.pid` is alive via `kill -0` (treats `0` / missing / null as dead).
+  - `plugins/dev/skills/engineering/afk/scripts/afk.sh`: migrated. The local `state_write` / `state_read` / `state_init` / `state_set` functions are gone (~45 LOC removed); `afk.sh` now sources `lib/state.sh` and routes every state-file access through it. Every `state_set "<jq filter>"` callsite became `state_write "$STATE_FILE" field=value …`. The direct `jq -r '.current.number // empty' "$state_file"` and `jq -r '.envelope.posted // false' "$state_file"` lookups in `prune_orphans` and `cleanup` became `state_read_into _orphan "$state_file"` / `_cleanup_current_number` reads. No `jq` invocation that touches a state file remains in `afk.sh`.
+  - `plugins/dev/skills/engineering/afk/scripts/tests/state-accessor.test.sh`: new — 57 assertions across two families. Family 1 (fixture reads) covers `v1-full`, `v1-missing-current`, `v1-legacy-no-diff-fields`, and `v1-malformed` (asserts the stderr warning and default-fallback). Family 2 (round-trip writes) covers `state_init` defaults, nested dotted writes (`current.stage=impl`, `envelope.posted:=true`), JSON-literal writes (arrays / `current:=null`), `state_is_live` against live/dead/zero pids, and an atomic-write probe that runs two concurrent writers against one file and asserts the final document parses as JSON with no `.tmp.*` shrapnel left on disk.
+  - `plugins/dev/skills/engineering/afk/scripts/tests/fixtures/state/{v1-full,v1-missing-current,v1-legacy-no-diff-fields,v1-malformed}.json`: new fixtures consumed by the test above.
+
+---
+
 ## setup-red-skills (engineering) — scaffold `.red/config.yaml` commented template
 
 - **status**: modified

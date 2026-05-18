@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "worker_id": "wLEGY",
+  "pid": 9999,
+  "log": "/tmp/legacy.log",
+  "started_at": "2026-04-01T10:00:00-03:00",
+  "runner": "codex",
+  "total": 1,
+  "done": 0,
+  "failed": 0,
+  "blocked": 0,
+  "completed": [],
+  "queue": [],
+  "durations_seconds": [],
+  "envelope": { "posted": false },
+  "current": {
+    "number": 7,
+    "title": "legacy iteration",
+    "slug": "legacy-iteration",
+    "worktree": ".red/tmp/work-wLEGY-i7/worktree",
+    "handoff": ".red/tmp/work-wLEGY-i7/handoff.md",
+    "started_at": "2026-04-01T10:01:00-03:00",
+    "stage": "impl",
+    "heartbeat_glyph": null,
+    "heartbeat_pid": null,
+    "runner": "codex",
+    "retries": 0,
+    "last_stream_line": ""
+  }
+}
