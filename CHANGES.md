@@ -6,6 +6,19 @@ Upstream base: `mattpocock/skills@e74f0061bb67222181640effa98c675bdb2fdaa7` (see
 
 ---
 
+## afk (engineering) — fleet passive stall detector + monitor `⏸️ stalled` status
+
+- **status**: modified
+- **upstream**: —
+- **why**: workers stuck on silent resource contention (cargo lock, shared port, deadlocked external service) used to look identical to a healthy `🟢 live` slot in the monitor — operators only noticed when throughput dropped. Issue #23 (parent #16) adds a passive supervisor-side detector that surfaces the condition without taking any action; the operator still owns the decision to investigate / restart.
+- **what changed**:
+  - `plugins/dev/skills/engineering/afk/scripts/supervisor.sh`: added the stall detector. New env knobs `STALL_THRESHOLD_SECONDS` (default `600`) and `STALL_POLL_S` (default `30`). New functions `find_slot_iter_log`, `compute_stalled` (pure predicate for unit tests), `poll_stall_detector`, and `write_supervisor_state` (replaces `write_circuit_state`, additive schema — `{"parked":[…], "stalled":[…]}`, legacy readers consuming `.parked[]?` keep working). The detector samples each non-parked slot's per-iteration `afk.log` mtime on the supervisor's main loop tick; sets `stalled:true` when both `(now − spawn_epoch) ≥ STALL_THRESHOLD_SECONDS` and `(now − log_mtime) ≥ STALL_THRESHOLD_SECONDS`; clears the flag automatically when the log advances. No `kill -TERM` / `SIGKILL` is ever sent for a stalled worker. Added a `BASH_SOURCE` guard so test harnesses can source the file without taking the singleton lock.
+  - `plugins/dev/skills/engineering/afk/scripts/monitor.sh`: new `render_stalled_slots` reads `.stalled[]?` from the supervisor state file and prints one row per stalled slot: `slot-N [⏸️ stalled]  stalled for 14m  (check .red/hooks/ — possibly waiting on a shared resource)`. New `fmt_dur_human` helper (`Ns` / `Nm` / `NhMm`). `color_status` gains a `stalled` branch (magenta bold) so the status is visually distinct from `live` (green) / `stale` (yellow) / `parked` (red bold). Agent rendering contract updated with rule #7 covering the new row.
+  - `SKILL.md`: Fleet Mode intro now lists the passive stall detector alongside circuit breaker and per-slot build isolation.
+  - `scripts/tests/stall-detector.test.sh`: new test (16 assertions) — covers the `compute_stalled` predicate across fresh/recent/silent/no-log/spawn=0/custom-threshold branches, then drives `find_slot_iter_log` + `poll_stall_detector` against a fixture iteration directory to lock the flag/clear cycle and the JSON shape (`stalled[0].slot`, `duration_s`, `parked[]` preserved).
+
+---
+
 ## afk (engineering) — Slice D: remove heartbeat-glyph comments from issue threads
 
 - **status**: modified
