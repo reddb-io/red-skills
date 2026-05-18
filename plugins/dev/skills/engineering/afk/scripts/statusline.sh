@@ -167,23 +167,21 @@ if [[ -d .red/tmp ]]; then
       ( refresh_cache >/dev/null 2>&1 ) &
     fi
 
-    # Colour each field by its semantics
-    w_part="${GREEN}🤖${total_workers}${RESET}"
-    q_part="📋${queue}"
-    h_part=$([ "$human" -gt 0 ] && printf '%s🙋%s%s' "$YELLOW" "$human" "$RESET" || printf '🙋%s' "$human")
-    blk_part=$([ "$total_blocked" -gt 0 ] && printf '%s🚧%s%s' "$RED" "$total_blocked" "$RESET" || printf '🚧%s' "$total_blocked")
-    add_part="${GREEN}+${total_added}${RESET}"
-    rem_part="${RED}-${total_removed}${RESET}"
+    # Build only the non-zero fields. Each emoji+number is one token.
+    afk_tokens=()
+    (( total_workers > 0 )) && afk_tokens+=("${GREEN}🤖${total_workers}${RESET}")
+    (( queue > 0 ))         && afk_tokens+=("📋${queue}")
+    (( human > 0 ))         && afk_tokens+=("${YELLOW}🙋${human}${RESET}")
+    (( total_blocked > 0 )) && afk_tokens+=("${RED}🚧${total_blocked}${RESET}")
+    (( total_added > 0 ))   && afk_tokens+=("${GREEN}+${total_added}${RESET}")
+    (( total_removed > 0 )) && afk_tokens+=("${RED}-${total_removed}${RESET}")
+    for n in "${current_issues[@]}"; do
+      afk_tokens+=("${CYAN}${n}${RESET}")
+    done
 
-    afk_part="${w_part} ${q_part} ${h_part} ${blk_part} ${add_part} ${rem_part}"
-    if (( ${#current_issues[@]} > 0 )); then
-      coloured_issues=()
-      for n in "${current_issues[@]}"; do
-        coloured_issues+=("${CYAN}${n}${RESET}")
-      done
-      afk_part="${afk_part} ${coloured_issues[*]}"
+    if (( ${#afk_tokens[@]} > 0 )); then
+      sections+=("${afk_tokens[*]}")
     fi
-    sections+=("$afk_part")
   fi
 fi
 
