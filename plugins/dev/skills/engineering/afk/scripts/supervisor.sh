@@ -50,6 +50,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AFK_SH="$SCRIPT_DIR/afk.sh"
 [[ -x "$AFK_SH" ]] || { echo "[supervisor] ERROR: afk.sh not found or not executable at $AFK_SH" >&2; exit 2; }
 
+# shellcheck source=./config.sh
+source "$SCRIPT_DIR/config.sh"
+
 PROJECT_ROOT="${1:-$(pwd)}"
 PROJECT_ROOT="$(cd "$PROJECT_ROOT" && pwd)"
 TMP_DIR="$PROJECT_ROOT/.red/tmp"

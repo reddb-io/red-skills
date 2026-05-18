@@ -6,6 +6,20 @@ Upstream base: `mattpocock/skills@e74f0061bb67222181640effa98c675bdb2fdaa7` (see
 
 ---
 
+## afk (engineering) — `.red/config.yaml` loader with typed defaults
+
+- **status**: modified
+- **upstream**: —
+- **why**: PRD #16 needs a single point of truth for per-project plugin settings. Issue #17 carves out the foundational slice: a loader that reads `.red/config.yaml` from the current checkout, merges it over documented defaults, and exposes a typed accessor that downstream modules (runner-detection cascade, fleet supervisor, hook orchestrator) can call without each one re-implementing YAML parsing. Forward-compatibility matters — unknown keys must be silently ignored so older agents tolerate newer configs.
+- **what changed**:
+  - `plugins/dev/skills/engineering/afk/scripts/config.sh`: new — sources cleanly from both `afk.sh` and `supervisor.sh` via an idempotent `_AFK_CONFIG_SH_LOADED` guard. Exposes `config_load [path]` (populates the global `CONFIG_VALUES` assoc-array; missing file → all defaults; malformed YAML → one warning line on stderr, fall back to all defaults) and `config_get KEY` (dotted lookup, e.g. `config_get afk.fleet.target`). Documented v1 defaults: `afk.default_runner=claude`, `afk.fleet.target=2`, `afk.hooks.defaults.cargo=true`, `afk.hooks.defaults.gradle=true`. Parser is a tiny pure-shell scanner — no `yq` dependency — accepting `key: [value]` lines with 2-space indentation, comments (`#`), and single/double quoted scalars. Unknown keys parse fine (stored but unread) for forward compatibility. Malformed detection covers odd-indent and unclosed quotes.
+  - `plugins/dev/skills/engineering/afk/scripts/afk.sh`: sources `config.sh` immediately after computing `SCRIPT_DIR` so every downstream function can call `config_get` without re-parsing.
+  - `plugins/dev/skills/engineering/afk/scripts/supervisor.sh`: same — sources `config.sh` right after the discovery block, ahead of any tunables that may later read from config.
+  - `plugins/dev/skills/engineering/afk/scripts/tests/config-loader.test.sh`: new — 33 assertions covering missing file (all defaults), partial override (only specified keys replaced), unknown top-level + nested keys (silently ignored, no warning), malformed YAML (unclosed quote and bad indent both fall back with exactly one warning line that names `config.yaml`), every documented v1 default present, nested overrides leaving siblings untouched, integer values round-tripping, comments + blanks ignored, and `afk.sh`/`supervisor.sh` both referencing `config.sh`.
+  - Tests: new config-loader suite (33/33) + existing afk suites still green (envelope-shape 37/37, handoff-builder 44/44, runner-detection 14/14, sentinel-detection 5/5, stall-detector 16/16). The pre-existing `statusline.test.sh` failure on `main` is unrelated and untouched.
+
+---
+
 ## triage + afk (engineering) — agent brief moves from accumulating comment to issue-body `## Agent brief` section
 
 - **status**: modified
