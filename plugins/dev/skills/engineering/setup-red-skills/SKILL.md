@@ -126,6 +126,12 @@ Decide whether to wire it up for this project:
 
 The script is no-op outside `/afk` sessions (it prints nothing when no live workers exist), so leaving the statusline wired up in non-AFK projects is harmless.
 
+**Section G — `.red/config.yaml` template (automatic).**
+
+> Explainer: `.red/config.yaml` is the per-project knob file that `/afk` and friends read at runtime. It holds the project's fallback runner, default fleet target, and per-detector opt-outs. The schema is documented by the loader shipped in PRD #16 and is forward-compatible (unknown keys are ignored). A fresh repo should land with a *commented* template of every v1 knob so the user discovers the available settings without reading docs — the file is a no-op until lines are uncommented.
+
+No user decision here — the skill scaffolds the template whenever the file is missing. If `.red/config.yaml` already exists, leave it alone (any prior edits are project state — never clobbered). See step 4 for the write rule.
+
 ### 3. Confirm and edit
 
 Show the user a draft of:
@@ -172,6 +178,12 @@ Then write the three docs files using the seed templates in this skill folder as
 - [domain.md](./domain.md) — domain doc consumer rules + layout
 
 If the user accepted Section D, copy each `workflows/red-*.yml` template from this skill folder into `.github/workflows/` of the consumer repo. Don't overwrite existing files with the same name — diff and ask first. Then ensure both `needs-triage` and `runner-error` labels exist via `gh label create` if missing (`gh label create runner-error --color B60205 --description "AFK supervisor circuit-tripped; runner was misconfigured"`).
+
+Scaffold `.red/config.yaml` (Section G, no user decision):
+
+1. If `.red/config.yaml` already exists at the repo root, leave it untouched and log a one-line notice (`.red/config.yaml already present — leaving as-is`). Do **not** diff, merge, or overwrite — any existing content is project state.
+2. Otherwise, ensure `.red/` exists and copy [config-template.yaml](./config-template.yaml) verbatim to `.red/config.yaml`. The template is a fully-commented snapshot of every v1 knob the loader in `plugins/dev/skills/engineering/afk/scripts/config.sh` documents, so the file is a no-op until the user uncomments a line.
+3. Do **not** `git add` or commit the file — the user controls when it lands in git.
 
 If the user accepted Section F, wire the statusline:
 

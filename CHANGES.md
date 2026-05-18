@@ -6,6 +6,18 @@ Upstream base: `mattpocock/skills@e74f0061bb67222181640effa98c675bdb2fdaa7` (see
 
 ---
 
+## setup-red-skills (engineering) — scaffold `.red/config.yaml` commented template
+
+- **status**: modified
+- **upstream**: —
+- **why**: PRD #16's hook system and the config loader landed in #17 give consumers a real `.red/config.yaml` schema, but a fresh repo still arrives with no file at all — meaning the user has to read the loader source (or a CHANGES entry) to discover that `afk.default_runner`, `afk.fleet.target`, and `afk.hooks.defaults.{cargo,gradle}` exist. Issue #22 closes that gap: when `/dev:setup-red-skills` runs on a repo missing the file, it drops a fully-commented snapshot of every v1 knob into `.red/config.yaml`. The file is a no-op until the user uncomments a line, but every available override is one ctrl-F away.
+- **what changed**:
+  - `plugins/dev/skills/engineering/setup-red-skills/config-template.yaml`: new — verbatim seed file the skill copies into the consumer repo. Header comment explains the file's purpose ("per-project plugin settings consumed by `/afk` and friends") and the override rule ("Uncomment any line to override the default"). Body lists every key the loader documents at v1 — `afk.default_runner=claude`, `afk.fleet.target=2`, `afk.hooks.defaults.cargo=true`, `afk.hooks.defaults.gradle=true` — each on its own commented line with the default value and an inline comment explaining the knob. When fully uncommented the YAML is syntactically valid and consumed verbatim by `config.sh`.
+  - `plugins/dev/skills/engineering/setup-red-skills/SKILL.md`: new **Section G — `.red/config.yaml` template (automatic)** explainer in step 2, no user decision (auto-scaffold). New write step in step 4 paired with Section G: log `.red/config.yaml already present — leaving as-is` and skip when the file exists; otherwise ensure `.red/` exists and copy `config-template.yaml` verbatim. The skill explicitly does **not** `git add` or commit the file — the user controls when it lands in git, matching the same idempotency / non-clobber rule already in place for `statusLine` (Section F).
+  - No script change required — the loader in `plugins/dev/skills/engineering/afk/scripts/config.sh` already handles "file present" vs "file missing" (missing = all defaults), so the scaffolded all-commented file behaves identically to no file at all until the user uncomments something. Existing afk test suites are unaffected (config-loader 33/33 still green); this slice is documentation + a seed file with no runtime code path.
+
+---
+
 ## afk (engineering) — generic hook orchestrator + env-file protocol
 
 - **status**: modified
