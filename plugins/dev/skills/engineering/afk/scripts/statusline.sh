@@ -44,19 +44,28 @@ if [[ -f .red/config.yaml ]]; then
   fi
 fi
 
+# ---- ANSI colour helpers (no-op when statusline is captured plain) -------
+BOLD=$'\e[1m'
+DIM=$'\e[2m'
+RED=$'\e[31m'
+GREEN=$'\e[32m'
+YELLOW=$'\e[33m'
+CYAN=$'\e[36m'
+RESET=$'\e[0m'
+
 sections=()
 
 # ---- Block 1: project basename -------------------------------------------
-sections+=("$(basename "$cwd")")
+sections+=("${BOLD}$(basename "$cwd")${RESET}")
 
 # ---- Block 2: model[·effort] ---------------------------------------------
 model=$(jq -r '.model.display_name // empty' <<<"$input" 2>/dev/null)
 effort=$(jq -r '.effort.level // empty' <<<"$input" 2>/dev/null)
 if [[ -n "$model" ]]; then
   if [[ -n "$effort" ]]; then
-    sections+=("${model}·${effort}")
+    sections+=("${DIM}${model}·${effort}${RESET}")
   else
-    sections+=("$model")
+    sections+=("${DIM}${model}${RESET}")
   fi
 fi
 
@@ -73,9 +82,17 @@ if [[ -n "$ctx_tokens" && "$ctx_tokens" != "0" ]]; then
   fi
   if [[ -n "$ctx_pct" ]]; then
     ctx_pct_int=$(printf '%.0f' "$ctx_pct" 2>/dev/null)
-    sections+=("${ctx_h} ${ctx_pct_int}%")
+    # Colour by usage: green < 50, yellow 50-80, red > 80
+    if (( ctx_pct_int >= 80 )); then
+      ctx_colour="$RED"
+    elif (( ctx_pct_int >= 50 )); then
+      ctx_colour="$YELLOW"
+    else
+      ctx_colour="$GREEN"
+    fi
+    sections+=("${DIM}${ctx_h}${RESET} ${ctx_colour}${ctx_pct_int}%${RESET}")
   else
-    sections+=("$ctx_h")
+    sections+=("${DIM}${ctx_h}${RESET}")
   fi
 fi
 
@@ -150,9 +167,21 @@ if [[ -d .red/tmp ]]; then
       ( refresh_cache >/dev/null 2>&1 ) &
     fi
 
-    afk_part="🤖${total_workers} 📋${queue} 🙋${human} 🚧${total_blocked} +${total_added} -${total_removed}"
+    # Colour each field by its semantics
+    w_part="${GREEN}🤖${total_workers}${RESET}"
+    q_part="📋${queue}"
+    h_part=$([ "$human" -gt 0 ] && printf '%s🙋%s%s' "$YELLOW" "$human" "$RESET" || printf '🙋%s' "$human")
+    blk_part=$([ "$total_blocked" -gt 0 ] && printf '%s🚧%s%s' "$RED" "$total_blocked" "$RESET" || printf '🚧%s' "$total_blocked")
+    add_part="${GREEN}+${total_added}${RESET}"
+    rem_part="${RED}-${total_removed}${RESET}"
+
+    afk_part="${w_part} ${q_part} ${h_part} ${blk_part} ${add_part} ${rem_part}"
     if (( ${#current_issues[@]} > 0 )); then
-      afk_part="${afk_part} ${current_issues[*]}"
+      coloured_issues=()
+      for n in "${current_issues[@]}"; do
+        coloured_issues+=("${CYAN}${n}${RESET}")
+      done
+      afk_part="${afk_part} ${coloured_issues[*]}"
     fi
     sections+=("$afk_part")
   fi
