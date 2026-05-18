@@ -6,6 +6,18 @@ Upstream base: `mattpocock/skills@e74f0061bb67222181640effa98c675bdb2fdaa7` (see
 
 ---
 
+## afk (engineering) — `afk.sh` per-iteration lifecycle hook integration
+
+- **status**: modified
+- **upstream**: —
+- **why**: Issue #18 landed the generic orchestrator (`hooks.sh::hooks_run`), but `afk.sh` was still sourcing it without calling it. Issue #20 wires the four per-iteration call sites the orchestrator was built for — pre-iteration, pre-merge, post-merge, post-iteration — into the per-issue loop with the documented env contract. After this slice, projects can drop `.red/hooks/<point>.sh` (or per-layer detectors) and have them run at the right moment without touching `afk.sh`. Claim semantics, worktree layout, and state-file shape are unchanged; the integration is purely additive.
+- **what changed**:
+  - `plugins/dev/skills/engineering/afk/scripts/afk.sh`: new `run_lifecycle_hook` helper exports the shared env contract (`AFK_SLOT`, `AFK_WORKER_ID`, `AFK_RUNNER`, `AFK_ISSUE`, `AFK_ITER_DIR`, `AFK_BRANCH`, `AFK_STATE_FILE`, `AFK_PLUGIN_DIR`) then calls `hooks_run`; trailing `KEY=VAL` args become per-call overrides/extras (used by pre-merge to add `AFK_MERGE_BASE`, post-merge to add `AFK_MERGE_SHA`, post-iteration to add `AFK_ITER_STATUS` and `AFK_DURATION_S`). `snapshot_iter_for_hook` + `fire_post_iteration` capture `ITER_DIR` / `STATE_FILE` just before `iter_close_*` zeroes the live cursors, so post-iteration hooks still see the brief-promised paths after cleanup. `process_issue` fires `pre-iteration` immediately after the `running` label edit succeeds and before `git worktree add`; a non-zero hook restores `ready-for-agent`, removes `ITER_DIR`, releases the claim lock, and returns. `do_merge` fires `pre-merge` (with `AFK_MERGE_BASE` from `git merge-base HEAD <branch>`) before `git merge --no-ff` — a non-zero exit funnels through the existing merge-conflict path — and fires `post-merge` (with `AFK_MERGE_SHA`) after `git push origin main`. Every terminal path in `process_issue` (BLOCKED sentinel, no-sentinel, merge-conflict, done, both exhausted-runner exits) now calls `fire_post_iteration` with the matching `AFK_ITER_STATUS` (`blocked` / `no-sentinel` / `merge-conflict` / `done` / `discarded`) and the iteration's wall-clock `AFK_DURATION_S`. Post-iteration hook failures are logged via the orchestrator and do not change the iteration's outcome.
+  - `plugins/dev/skills/engineering/afk/scripts/tests/lifecycle-hooks.test.sh`: new — 16 assertions. Sources `afk.sh` (with `set +e` to undo `afk.sh`'s inherited `set -e`) and stubs `hooks_run` to record every invocation's exported env vars. Covers: full env contract is exported for pre-iteration; pre-merge carries `AFK_MERGE_BASE`; post-merge carries `AFK_MERGE_SHA`; non-zero rc from the orchestrator propagates back to the caller (so pre-iteration / pre-merge can abort); `fire_post_iteration` replays the snapshotted `ITER_DIR` / `STATE_FILE` after cleanup, sets `AFK_ITER_STATUS` + `AFK_DURATION_S`, clears the per-iteration cursors, and swallows + logs hook failures instead of propagating them. Two structural greps assert `process_issue` covers all five documented terminal statuses and `do_merge` wires both merge hooks; one grep asserts the pre-iteration abort restores `ready-for-agent`.
+  - Tests: new lifecycle-hooks suite (16/16) + existing afk suites still green — config-loader 33/33, envelope-shape 37/37, handoff-builder 44/44, hooks-orchestrator 27/27, runner-detection 14/14, sentinel-detection 5/5, stall-detector 16/16, state-accessor 57/57, trip-sweep 39/39. The pre-existing `statusline.test.sh` failure on `main` is unrelated and untouched.
+
+---
+
 ## afk (engineering) — extract `lib/state.sh` accessor module + migrate `afk.sh`
 
 - **status**: modified

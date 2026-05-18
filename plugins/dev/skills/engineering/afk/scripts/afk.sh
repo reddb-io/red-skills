@@ -427,6 +427,71 @@ iter_close_preserve() {
   claim_lock_release
 }
 
+# ---------- lifecycle hooks ----------
+# Per-iteration call sites for the generic hook orchestrator (lib/hooks.sh).
+# Four points are wired into process_issue / do_merge:
+#   pre-iteration   — after claim, before `git worktree add`. Abort on non-zero.
+#   pre-merge       — before `git merge --no-ff`.            Abort on non-zero.
+#   post-merge      — after `git push origin main`.          Log on non-zero.
+#   post-iteration  — every terminal outcome (done|blocked|no-sentinel
+#                     |merge-conflict|discarded).            Log on non-zero.
+#
+# Env contract exported to every invocation (per the brief on issue #20):
+#   AFK_SLOT, AFK_WORKER_ID, AFK_RUNNER, AFK_ISSUE, AFK_ITER_DIR,
+#   AFK_BRANCH, AFK_STATE_FILE, AFK_PLUGIN_DIR
+#   pre-merge / post-merge add AFK_MERGE_BASE / AFK_MERGE_SHA.
+#   post-iteration adds AFK_ITER_STATUS + AFK_DURATION_S.
+# AFK_HOOK_ENV_FILE is set per-script by the orchestrator itself.
+#
+# Trailing KEY=VAL pairs become additional exports for this call only.
+run_lifecycle_hook() {
+  local point="$1"; shift
+  export AFK_SLOT="${AFK_SLOT:-}"
+  export AFK_WORKER_ID="${WORKER_ID:-}"
+  export AFK_RUNNER="${RUNNER:-}"
+  export AFK_ISSUE="${CURRENT_ISSUE:-}"
+  export AFK_ITER_DIR="${ITER_DIR:-}"
+  export AFK_BRANCH="${CURRENT_BRANCH:-}"
+  export AFK_STATE_FILE="${STATE_FILE:-}"
+  export AFK_PLUGIN_DIR="${SKILL_DIR:-}"
+  local kv
+  for kv in "$@"; do
+    export "$kv"
+  done
+  hooks_run "$point"
+}
+
+# Per-iteration cursor used by run_lifecycle_hook. Set/cleared in process_issue.
+CURRENT_ISSUE=""
+CURRENT_BRANCH=""
+
+# Snapshot of ITER_DIR / STATE_FILE captured by snapshot_iter_for_hook just
+# before iter_close_* zeroes the live cursors. fire_post_iteration replays
+# the snapshot into AFK_ITER_DIR / AFK_STATE_FILE so post-iteration hooks
+# still see the paths the brief promises.
+LAST_ITER_DIR=""
+LAST_STATE_FILE=""
+
+snapshot_iter_for_hook() {
+  LAST_ITER_DIR="$ITER_DIR"
+  LAST_STATE_FILE="$STATE_FILE"
+}
+
+# fire_post_iteration STATUS DURATION_S
+# Call AFTER iter_close_*. Hook failure is logged and ignored — the
+# iteration's outcome is already final by the time this fires.
+fire_post_iteration() {
+  local status="$1" duration="$2"
+  run_lifecycle_hook post-iteration \
+    "AFK_ITER_DIR=${LAST_ITER_DIR}" \
+    "AFK_STATE_FILE=${LAST_STATE_FILE}" \
+    "AFK_ITER_STATUS=${status}" \
+    "AFK_DURATION_S=${duration}" \
+    || log "post-iteration hook reported non-zero (status=${status}); continuing"
+  LAST_ITER_DIR="" LAST_STATE_FILE=""
+  CURRENT_ISSUE="" CURRENT_BRANCH=""
+}
+
 # ---------- claim lock ----------
 # `gh issue edit --remove-label X --add-label Y` is NOT atomic: gh resolves
 # the new label set client-side and submits the union, so two parallel
@@ -1149,13 +1214,32 @@ do_merge() {
   fi
 
   git -C "$PROJECT_ROOT" fetch origin main --quiet
+
+  # pre-merge hook — fires just before `git merge --no-ff`. AFK_MERGE_BASE is
+  # the merge base between primary main and the iteration branch. Non-zero
+  # abort funnels through the existing merge-conflict path in process_issue.
+  local merge_base
+  merge_base="$(git -C "$PROJECT_ROOT" merge-base HEAD "$branch" 2>/dev/null || true)"
+  if ! run_lifecycle_hook pre-merge "AFK_MERGE_BASE=${merge_base}"; then
+    local hook_rc=$?
+    log "✗ pre-merge hook failed (rc=$hook_rc) for #$n — aborting merge"
+    return 1
+  fi
+
   git -C "$PROJECT_ROOT" merge --no-ff "$branch" -m "merge: #${n} ${title}" 2>&1 | tee /tmp/afk-merge.log
   local rc=${PIPESTATUS[0]}
   if [[ $rc -ne 0 ]]; then
     git -C "$PROJECT_ROOT" merge --abort 2>/dev/null || true
     return 1
   fi
-  git -C "$PROJECT_ROOT" push origin main
+  git -C "$PROJECT_ROOT" push origin main || return 1
+
+  # post-merge hook — after the push to origin/main succeeds. AFK_MERGE_SHA
+  # is the short SHA of the merge commit on primary. Non-zero is logged by
+  # hooks.sh; we do not roll back the merge.
+  local merge_sha
+  merge_sha="$(git -C "$PROJECT_ROOT" rev-parse --short HEAD)"
+  run_lifecycle_hook post-merge "AFK_MERGE_SHA=${merge_sha}" || true
 }
 
 # ---------- per-issue processing ----------
@@ -1204,6 +1288,25 @@ process_issue() {
   local worktree="$ITER_DIR/worktree"
   local worktree_rel=".red/tmp/work-${WORKER_ID}-i${n}/worktree"
 
+  # Lifecycle cursor used by run_lifecycle_hook.
+  CURRENT_ISSUE="$n"
+  CURRENT_BRANCH="$branch"
+
+  # pre-iteration hook — after a successful claim, before any worktree setup.
+  # A non-zero exit aborts the iteration: the claim is released back to
+  # `ready-for-agent`, ITER_DIR is torn down, and we never create the worktree.
+  if ! run_lifecycle_hook pre-iteration; then
+    local hook_rc=$?
+    log "✗ pre-iteration hook failed (rc=$hook_rc) for #$n — aborting iteration, restoring ready-for-agent"
+    gh -R "$(gh_repo)" issue edit "$n" --remove-label running --add-label ready-for-agent >/dev/null 2>&1 || true
+    gh -R "$(gh_repo)" issue comment "$n" --body "🤖 /afk aborted before worktree setup: pre-iteration hook exited \`$hook_rc\`. Restored \`ready-for-agent\`." >/dev/null 2>&1 || true
+    [[ -n "$ITER_DIR" && -d "$ITER_DIR" ]] && rm -rf "$ITER_DIR"
+    ITER_DIR="" STATE_FILE="" ITER_LOG="" ITER_PID_FILE=""
+    claim_lock_release "$n"
+    CURRENT_ISSUE="" CURRENT_BRANCH=""
+    return 0
+  fi
+
   gh -R "$(gh_repo)" issue comment "$n" \
     --body "🤖 /afk started at \`$started_at\` on runner \`$RUNNER\` (worker \`$WORKER_ID\`). worktree: \`$worktree_rel\`" >/dev/null
 
@@ -1250,7 +1353,10 @@ process_issue() {
         gh -R "$(gh_repo)" issue comment "$n" --body "Both runners exhausted. Iteration preserved at \`$ITER_DIR\`." >/dev/null
         gh -R "$(gh_repo)" issue edit "$n" --remove-label running --add-label ready-for-agent >/dev/null
         history_append "exhausted" "$n" "$RUNNER" 0 "" "both-runners"
+        local dur_ex=$(( $(date +%s) - started_epoch ))
+        snapshot_iter_for_hook
         iter_close_preserve
+        fire_post_iteration "discarded" "$dur_ex"
         exit 75
       fi
     else
@@ -1258,7 +1364,10 @@ process_issue() {
       gh -R "$(gh_repo)" issue comment "$n" --body "Runner \`$RUNNER\` exhausted; rerun /afk when quota resets, or pass \`--fallback-runner\` to swap to the other runner on exhaustion." >/dev/null
       gh -R "$(gh_repo)" issue edit "$n" --remove-label running --add-label ready-for-agent >/dev/null
       history_append "exhausted" "$n" "$RUNNER" 0 "" "$RUNNER"
+      local dur_ex=$(( $(date +%s) - started_epoch ))
+      snapshot_iter_for_hook
       iter_close_preserve
+      fire_post_iteration "discarded" "$dur_ex"
       exit 75
     fi
   fi
@@ -1283,7 +1392,9 @@ process_issue() {
     AGG_BLOCKED=$((AGG_BLOCKED+1))
     state_write "$STATE_FILE" blocked:=$AGG_BLOCKED current:=null
     history_append "blocked" "$n" "$RUNNER" "$dur_blocked" "" "inner-agent"
+    snapshot_iter_for_hook
     iter_close_preserve
+    fire_post_iteration "blocked" "$dur_blocked"
     return 0
   fi
 
@@ -1307,7 +1418,9 @@ process_issue() {
     AGG_BLOCKED=$((AGG_BLOCKED+1))
     state_write "$STATE_FILE" blocked:=$AGG_BLOCKED current:=null
     history_append "blocked" "$n" "$RUNNER" "$dur_ns" "" "no-sentinel"
+    snapshot_iter_for_hook
     iter_close_preserve
+    fire_post_iteration "no-sentinel" "$dur_ns"
     return 0
   fi
 
@@ -1335,7 +1448,9 @@ process_issue() {
     AGG_BLOCKED=$((AGG_BLOCKED+1))
     state_write "$STATE_FILE" blocked:=$AGG_BLOCKED current:=null
     history_append "blocked" "$n" "$RUNNER" "$dur_mc" "" "merge-conflict"
+    snapshot_iter_for_hook
     iter_close_preserve
+    fire_post_iteration "merge-conflict" "$dur_mc"
     return 0
   fi
 
@@ -1361,7 +1476,9 @@ process_issue() {
     durations_seconds:="$AGG_DURATIONS" \
     current:=null
   history_append "done" "$n" "$RUNNER" "$dur" "$merge_sha" ""
+  snapshot_iter_for_hook
   iter_close_success
+  fire_post_iteration "done" "$dur"
 
   log "✓ #$n done in ${dur}s — merge $merge_sha — $fb"
 
