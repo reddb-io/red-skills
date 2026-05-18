@@ -274,8 +274,14 @@ sweep_unblocked() {
     n="$(jq -r '.number' <<<"$entry")"
     body="$(jq -r '.body // ""' <<<"$entry")"
     # extract refs under `## Blocked by` (stop at next `## ` heading).
+    # The grep is wrapped in a block with `|| true` so `set -o pipefail`
+    # does not propagate grep's exit=1 when the section is empty or says
+    # "None" — that propagation killed sweep_unblocked mid-loop before
+    # the `return 0` at the end could fire, and bypassed the v1.12.1
+    # final-line fix.
     refs="$(awk '/^## Blocked by[[:space:]]*$/{flag=1; next} /^## /{flag=0} flag' <<<"$body" \
-            | grep -oE '#[0-9]+' | sort -u)"
+            | { grep -oE '#[0-9]+' || true; } \
+            | sort -u)"
     [[ -z "$refs" ]] && continue
     all_closed=1
     for ref in $refs; do
