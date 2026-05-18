@@ -322,6 +322,25 @@ Path: `.red/tmp/work-{id}-i{N}/afk.state.json` — one snapshot per (worker, iss
 
 Atomic write: write to `afk.state.json.tmp` inside the iteration directory, `mv` over the original. `/afk monitor` and any other reader open it read-only. Between issues the worker has no live state file — monitor renders that as "idle".
 
+## Auto-Monitor Loop (Claude Code only — binding)
+
+When `/afk` is invoked **to spawn a worker** (i.e., not the `monitor` subcommand), the agent additionally schedules a recurring `/dev:afk monitor` cron inside the current Claude Code session so the user sees progress without re-typing. Death of every worker auto-cancels the cron.
+
+**Setup (runs immediately after `afk.sh` is launched in the background):**
+
+1. Fetch `CronCreate` and `CronList` via `ToolSearch` if not already loaded (they are deferred tools).
+2. `CronList` — if any existing job has `prompt == "/dev:afk monitor"`, **skip step 3** (don't double-schedule when the user runs a second parallel `/afk` in the same session).
+3. `CronCreate(cron="*/3 * * * *", prompt="/dev:afk monitor", recurring=true)`. The cron is session-only — it dies when the Claude Code session ends, so no risk of orphans across sessions. Auto-expires after 7 days regardless.
+4. Tell the user **one line**: `monitor loop scheduled (every 3 min) — auto-cancels when all workers exit.`
+
+The monitor invocation handles its own teardown — see *Self-Cancel* under the Monitor section below.
+
+**Skip the auto-loop when:**
+
+- The invocation is `/afk monitor` (not a worker spawn).
+- The invocation is `/afk --once` (single supervised iteration; user is already watching).
+- `CronCreate` is unavailable (not running under Claude Code — e.g. Codex). Print one line `monitor loop unavailable in this runner; tail .red/tmp/work-*/afk.log manually.` and continue.
+
 ## Monitor
 
 `/afk monitor` is the readonly aggregated view across all live workers. **Implementation is `scripts/monitor.sh` — invoke it directly, do not reinvent the rendering in inline bash.** The script:
@@ -373,6 +392,22 @@ Source data: `.red/state/afk-history.jsonl`, an append-only event log written by
 `.red/state/` is gitignored. The orchestrator creates it during bootstrap, parallel workers serialise appends via `flock`, and `prune_orphans` truncates the file to the last 10000 lines if it grows past that cap.
 
 The sparkline only counts `event == "done"`. Blockers and exhausted runs are recorded for forensics but excluded from the throughput view.
+
+### Self-Cancel (binding when invoked under Claude Code)
+
+Every `/afk monitor` run — whether typed by the user or fired by the auto-monitor cron — is responsible for tearing down the cron once there's nothing left to watch.
+
+After rendering the dashboard, the agent must:
+
+1. Count workers with status `[live]` in the rendered output (i.e., orchestrator pid alive, post-orphan-cleanup).
+2. If `live_workers == 0`:
+   - Fetch `CronList` and `CronDelete` via `ToolSearch` if not already loaded.
+   - `CronList` — find every job with `prompt == "/dev:afk monitor"`. There will normally be exactly one; multiples can appear if the user manually invoked `/loop 3m /dev:afk monitor` on top of the auto-loop.
+   - `CronDelete` each match.
+   - Append one line to the user-facing output: `🛑 no live workers — auto-cancelled monitor loop (cron <id>).`
+3. If `live_workers >= 1`: do nothing. The cron continues firing every 3 minutes.
+
+When `CronList` / `CronDelete` are unavailable (Codex runner, or `/afk monitor` invoked outside Claude Code), skip the teardown silently — the cron infrastructure isn't running there to begin with.
 
 ## Handoff File Template
 

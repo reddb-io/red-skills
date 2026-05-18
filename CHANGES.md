@@ -6,6 +6,18 @@ Upstream base: `mattpocock/skills@e74f0061bb67222181640effa98c675bdb2fdaa7` (see
 
 ---
 
+## afk (engineering) — auto-monitor loop + self-cancel
+
+- **status**: modified
+- **upstream**: —
+- **why**: drainers were manually invoking `/dev:afk monitor` every few minutes to check progress, or setting up `/loop 3m /dev:afk monitor` by hand. The agent already has session-scoped cron primitives (`CronCreate` / `CronList` / `CronDelete`) — the skill can drive them automatically and free the user from babysitting.
+- **what changed**:
+  - new "Auto-Monitor Loop (Claude Code only — binding)" section in `afk/SKILL.md`. When `/afk` spawns a worker, the agent now also runs `CronCreate(cron="*/3 * * * *", prompt="/dev:afk monitor", recurring=true)` so the dashboard surfaces every 3 minutes for the rest of the session. Dedupe via `CronList` so a second parallel `/afk` doesn't double-schedule. Skipped for `/afk monitor` (not a spawn) and `/afk --once` (single supervised iteration). Falls back gracefully when running under Codex (no Cron tools available).
+  - new "Self-Cancel" subsection in *Monitor*. Every monitor invocation — user-typed or cron-fired — counts `[live]` workers in its own rendered output. When zero live workers remain, the agent calls `CronList` / `CronDelete` to remove any `prompt == "/dev:afk monitor"` job, and appends `🛑 no live workers — auto-cancelled monitor loop` to the output. The cron is session-only, so worst case a stale cron dies with the session anyway.
+  - shell scripts unchanged — `afk.sh` and `monitor.sh` can't invoke session-level tools, so the entire lifecycle lives in the skill prose the LLM reads.
+
+---
+
 ## afk (engineering) — sentinel watchdog + polling discipline
 
 - **status**: modified
