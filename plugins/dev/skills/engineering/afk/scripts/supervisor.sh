@@ -47,6 +47,7 @@ set -eo pipefail
 
 # ---------- discovery ----------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PLUGIN_DIR="$(dirname "$SCRIPT_DIR")"
 AFK_SH="$SCRIPT_DIR/afk.sh"
 [[ -x "$AFK_SH" ]] || { echo "[supervisor] ERROR: afk.sh not found or not executable at $AFK_SH" >&2; exit 2; }
 
@@ -64,6 +65,10 @@ PID_FILE="$TMP_DIR/afk-supervisor.pid"
 LOG_FILE="$TMP_DIR/afk-supervisor.log"
 STOP_FILE="$TMP_DIR/afk-supervisor.stop"
 CIRCUIT_FILE="$TMP_DIR/afk-supervisor-circuit.json"
+# Most-recent applied-detector list, one space-separated line. Written by
+# `log_applied_detectors_boot_line` at boot and refreshed by each spawn;
+# read by monitor.sh to render the `defaults:` field in the fleet header.
+DEFAULTS_FILE="$TMP_DIR/afk-supervisor-defaults.txt"
 
 TARGET="${TARGET:-2}"
 STAGGER_S="${SUPERVISOR_STAGGER_S:-2}"
@@ -132,6 +137,8 @@ declare -a SLOT_SWEPT=()              # 1 when sweep_parked_slot has already fir
 declare -a SLOT_STALLED=()             # 1 when currently flagged stalled
 declare -a SLOT_STALL_SINCE_EPOCH=()   # epoch when the stall window opened
 declare -a SLOT_STALL_LOG=()           # iteration log path observed at stall time
+declare -a SLOT_WORKER_IDS=()           # per-slot AFK_WORKER_ID handed to pre-spawn hooks
+declare -a SLOT_APPLIED_DETECTORS=()    # most-recent applied detectors per slot (space-separated)
 LAST_STALL_POLL_EPOCH=0
 
 # Default runner name carried in the discard envelope. Real /afk fleet
@@ -155,23 +162,139 @@ build_slot_env_overrides() {
   done
 }
 
+# gen_supervisor_wid — fresh `wXXXX` worker ID handed to pre-spawn hooks via
+# AFK_WORKER_ID. Distinct from the runtime WORKER_ID afk.sh picks for itself —
+# this one only labels the spawn for detector / post-exit hook bookkeeping.
+gen_supervisor_wid() {
+  printf 'w%s' "$(LC_ALL=C tr -dc 'A-Z0-9' </dev/urandom | head -c 4)"
+}
+
+# write_defaults_file — atomically record the most-recent applied detector
+# list. Read by monitor.sh's render_fleet_header for the `defaults:` field.
+write_defaults_file() {
+  local applied="${1:-}"
+  local tmp="$DEFAULTS_FILE.tmp.$$"
+  printf '%s\n' "$applied" > "$tmp" && mv -f "$tmp" "$DEFAULTS_FILE"
+}
+
+# run_pre_spawn_hooks — fire the orchestrator's pre-spawn chain inside a
+# subshell, capturing (a) the applied detector basenames and (b) every env
+# var the detectors exported (computed as the diff between the subshell's
+# env after our own AFK_* exports and the env after hooks_run returns).
+#
+# Side-effects in the supervisor's own environment are intentionally zero:
+# detector exports stay scoped to the subshell, the caller reads back two
+# small files in $OUTDIR, and the supervisor re-applies that env to the
+# worker via `env KEY=value ...`.
+#
+# Args: slot, worker_id
+# Echo: $OUTDIR (a freshly-created mktemp directory) — caller is
+#       responsible for `rm -rf` after consuming `applied` + `env`.
+# Returns: hook chain rc (0 on success; non-zero aborts the spawn).
+run_pre_spawn_hooks() {
+  local slot="$1" worker_id="$2"
+  local outdir
+  outdir="$(mktemp -d -t afk-prespawn.XXXXXX)"
+  local rc=0
+  (
+    set +e
+    export AFK_SLOT="$slot"
+    export AFK_WORKER_ID="$worker_id"
+    export AFK_RUNNER="$SUPERVISOR_RUNNER"
+    export AFK_PLUGIN_DIR="$PLUGIN_DIR"
+    export PROJECT_ROOT="$PROJECT_ROOT"
+    env > "$outdir/baseline"
+    # shellcheck disable=SC1090
+    source "$SCRIPT_DIR/hooks.sh"
+    hooks_run pre-spawn
+    hrc=$?
+    if (( hrc != 0 )); then exit "$hrc"; fi
+    printf '%s\n' "${HOOKS_APPLIED_DETECTORS[*]}" > "$outdir/applied"
+    env > "$outdir/after"
+    comm -13 <(sort "$outdir/baseline") <(sort "$outdir/after") > "$outdir/env"
+    exit 0
+  )
+  rc=$?
+  rm -f "$outdir/baseline" "$outdir/after"
+  printf '%s' "$outdir"
+  return $rc
+}
+
+# run_post_exit_hooks — best-effort post-exit chain. Failures are logged
+# but never delay the respawn (post-* points have continue-on-error
+# semantics per hooks.sh).
+run_post_exit_hooks() {
+  local slot="$1" worker_id="$2" exit_code="$3" duration_s="$4"
+  local rc=0
+  (
+    set +e
+    export AFK_SLOT="$slot"
+    export AFK_WORKER_ID="$worker_id"
+    export AFK_RUNNER="$SUPERVISOR_RUNNER"
+    export AFK_PLUGIN_DIR="$PLUGIN_DIR"
+    export AFK_EXIT_CODE="$exit_code"
+    export AFK_DURATION_S="$duration_s"
+    export PROJECT_ROOT="$PROJECT_ROOT"
+    # shellcheck disable=SC1090
+    source "$SCRIPT_DIR/hooks.sh"
+    hooks_run post-exit
+  ) >/dev/null 2>&1
+  rc=$?
+  if (( rc != 0 )); then
+    log "slot $slot: post-exit hook returned non-zero (rc=$rc) — continuing"
+  fi
+  return 0
+}
+
 spawn_slot() {
   local slot="$1"
   local slot_log="$TMP_DIR/afk-supervisor-slot-${slot}.log"
+  local worker_id; worker_id="$(gen_supervisor_wid)"
+  local outdir rc=0
+  outdir="$(run_pre_spawn_hooks "$slot" "$worker_id")" || rc=$?
+  if (( rc != 0 )); then
+    log "slot $slot: pre-spawn hook failed (rc=$rc) wid=$worker_id — aborting spawn"
+    [[ -d "$outdir" ]] && rm -rf "$outdir"
+    return $rc
+  fi
+  local applied=""
+  if [[ -f "$outdir/applied" ]]; then
+    applied="$(<"$outdir/applied")"
+    applied="${applied%$'\n'}"
+  fi
   local -a env_args=()
   local line
+  if [[ -f "$outdir/env" ]]; then
+    while IFS= read -r line; do
+      [[ -z "$line" ]] && continue
+      env_args+=("$line")
+    done < "$outdir/env"
+  fi
+  rm -rf "$outdir"
+  # Legacy operator-set BUILD_ISOLATION_VARS (CARGO_TARGET_BASE,
+  # GRADLE_USER_HOME_BASE) win over detector defaults — they're appended
+  # last so `env` resolves them last.
   while IFS= read -r line; do
     [[ -z "$line" ]] && continue
     env_args+=("$line")
   done < <(build_slot_env_overrides "$slot")
+
   nohup env "${env_args[@]}" "$AFK_SH" "$PROJECT_ROOT" >>"$slot_log" 2>&1 </dev/null &
   local pid=$!
   SLOT_PIDS[$slot]=$pid
   SLOT_SPAWN_EPOCH[$slot]="$(date +%s)"
+  SLOT_WORKER_IDS[$slot]="$worker_id"
+  SLOT_APPLIED_DETECTORS[$slot]="$applied"
+  write_defaults_file "$applied"
   if (( ${#env_args[@]} > 0 )); then
-    log "slot $slot: spawned worker pid=$pid (log=$slot_log, env=${env_args[*]})"
+    log "slot $slot: spawned worker pid=$pid wid=$worker_id (log=$slot_log, env=${env_args[*]})"
   else
-    log "slot $slot: spawned worker pid=$pid (log=$slot_log)"
+    log "slot $slot: spawned worker pid=$pid wid=$worker_id (log=$slot_log)"
+  fi
+  if [[ -n "$applied" ]]; then
+    log "slot $slot: pre-spawn: applied detectors [${applied// /, }]"
+  else
+    log "slot $slot: pre-spawn: applied detectors []"
   fi
 }
 
@@ -452,10 +575,21 @@ sweep_parked_slot() {
 # ring naturally prunes anything older than the window on each pass.
 handle_dead_slot() {
   local slot="$1"
-  local now spawn_at lifetime
+  local now spawn_at lifetime exit_code=0
   now="$(date +%s)"
   spawn_at="${SLOT_SPAWN_EPOCH[$slot]:-0}"
   lifetime=$(( now - spawn_at ))
+
+  # Reap the worker zombie so we can pass a real exit code to post-exit.
+  # `wait` only succeeds on a process that was backgrounded by this shell;
+  # if it fails (already reaped, unknown pid, …) we keep the default 0.
+  local pid="${SLOT_PIDS[$slot]:-}"
+  if [[ -n "$pid" ]]; then
+    wait "$pid" 2>/dev/null && exit_code=0 || exit_code=$?
+  fi
+
+  # Fire post-exit best-effort — failure never delays the respawn.
+  run_post_exit_hooks "$slot" "${SLOT_WORKER_IDS[$slot]:-}" "$exit_code" "$lifetime"
 
   if (( spawn_at > 0 && lifetime < FAST_DEATH_THRESHOLD_S )); then
     local times="${SLOT_FAST_DEATHS[$slot]:-} $now"
@@ -501,31 +635,26 @@ cleanup() {
   terminate_all
   rm -f "$PID_FILE"
   rm -f "$CIRCUIT_FILE"
+  rm -f "$DEFAULTS_FILE"
   [[ -f "$STOP_FILE" ]] && rm -f "$STOP_FILE"
   log "supervisor exiting"
   exit 0
 }
-trap cleanup SIGTERM SIGINT
-
-# When sourced (e.g. from test harnesses) skip the main loop so unit
-# tests can exercise pure functions like compute_stalled without
-# spawning workers or grabbing the singleton lock.
-[[ "${BASH_SOURCE[0]}" != "$0" ]] && return 0 2>/dev/null
-
 # ---------- pre-spawn boot-log ----------
 # Run the generic hook orchestrator's `pre-spawn` chain once at boot to
 # announce which shipped detectors are applicable to this project. The
 # call is made in a subshell so detector env exports never leak into the
-# supervisor's own environment (per-slot env propagation is still owned
-# by BUILD_ISOLATION_VARS above — the detector framework here is purely
-# advisory in supervisor mode). Detectors that exited 1 (not applicable)
-# and detectors disabled via .red/config.yaml are omitted.
+# supervisor's own environment (per-slot env propagation is owned by
+# spawn_slot's pre-spawn hook integration). Detectors that exited 1
+# (not applicable) and detectors disabled via .red/config.yaml are
+# omitted from the log line. The applied list is also persisted to
+# DEFAULTS_FILE so monitor.sh can render the `defaults:` field correctly
+# from the first refresh — even before any slot has spawned.
 log_applied_detectors_boot_line() {
-  local plugin_dir applied
-  plugin_dir="$(dirname "$SCRIPT_DIR")"
+  local applied
   applied="$(
     AFK_SLOT=0 \
-    AFK_PLUGIN_DIR="$plugin_dir" \
+    AFK_PLUGIN_DIR="$PLUGIN_DIR" \
     PROJECT_ROOT="$PROJECT_ROOT" \
     bash -c "
       source '$SCRIPT_DIR/hooks.sh'
@@ -533,10 +662,20 @@ log_applied_detectors_boot_line() {
       printf '%s' \"\${HOOKS_APPLIED_DETECTORS[*]}\"
     " 2>/dev/null
   )"
+  write_defaults_file "$applied"
   if [[ -n "$applied" ]]; then
     log "pre-spawn: applied detectors [${applied// /, }]"
   fi
 }
+
+trap cleanup SIGTERM SIGINT
+
+# When sourced (e.g. from test harnesses) skip the main loop so unit
+# tests can exercise pure functions without spawning workers or grabbing
+# the singleton lock. Every function above this line is reachable from
+# `source supervisor.sh`.
+[[ "${BASH_SOURCE[0]}" != "$0" ]] && return 0 2>/dev/null
+
 log_applied_detectors_boot_line
 
 # ---------- main ----------
