@@ -432,28 +432,43 @@ select_issues() {
   fi
   raw="$(echo "$raw" | jq '[ .[] | select(((.labels | map(.name)) | index("type:prd")) | not) ]')"
 
+  # Split the candidate pool: urgents always jump the queue, regardless
+  # of --prd / --issues filter. Anything carrying `priority:urgent` lands
+  # first; the filter applies only to the remainder.
+  local urgent rest filtered
+  urgent="$(echo "$raw" | jq '[ .[] | select((.labels | map(.name)) | index("priority:urgent")) ]')"
+  rest="$(echo "$raw"   | jq '[ .[] | select(((.labels | map(.name)) | index("priority:urgent")) | not) ]')"
+
   case "$FILTER_KIND" in
     issues)
-      echo "$raw" | jq --arg list "$FILTER_VALUE" '
+      filtered="$(echo "$rest" | jq --arg list "$FILTER_VALUE" '
         ($list | split(",") | map(tonumber)) as $want
-        | map(select(.number as $n | $want | index($n))) '
+        | map(select(.number as $n | $want | index($n))) ')"
       ;;
     prd)
-      echo "$raw" | jq --arg prd "$FILTER_VALUE" '
+      filtered="$(echo "$rest" | jq --arg prd "$FILTER_VALUE" '
         map(select(
           (.body // "") | test("prd:\\s*#?" + $prd + "\\b")
           or ((.labels | map(.name)) | index("prd:" + $prd))
-        )) '
+        )) ')"
       ;;
     *)
-      echo "$raw" | jq '.'
+      filtered="$rest"
       ;;
-  esac \
-  | jq 'sort_by(
-      # priority:high → 0, priority:low or unlabelled → 1
-      ((.labels | map(.name) | map(select(. == "priority:high")) | length) | (if . > 0 then 0 else 1 end)),
-      .number
-    )'
+  esac
+
+  # Concat urgents (sorted by number asc — oldest fire first) ahead of
+  # the filtered list (sorted by priority:high then number asc).
+  # Dedupe by number while preserving order — urgents always win the slot.
+  jq -sc '
+    (.[0] | sort_by(.number)) as $urg
+    | (.[1] | sort_by(
+        ((.labels | map(.name) | map(select(. == "priority:high")) | length) | (if . > 0 then 0 else 1 end)),
+        .number
+      )) as $rest
+    | ($urg | map(.number)) as $urg_nums
+    | $urg + ($rest | map(select(.number as $n | $urg_nums | index($n) | not)))
+  ' <(echo "$urgent") <(echo "$filtered")
 }
 
 gh_repo() {

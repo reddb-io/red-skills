@@ -110,11 +110,15 @@ Pull the candidate list with `gh issue list --label ready-for-agent --state open
 
 **PRD exclusion (hard).** Drop every issue carrying the `type:prd` label before any other filter. PRDs describe *what* to build, not an implementable slice — they must be split by `/to-issues` first. If a PRD is found in `ready-for-agent` (usually because someone labelled it manually), log a warning naming the issue numbers and the fix (`/to-issues N`), and continue with the remaining candidates. This defence is in addition to `/to-prd` never applying `ready-for-agent` in the first place.
 
-Apply filters in this order:
+**Urgent prepend (hard, runs before any filter).** Issues carrying `priority:urgent` always jump the head of the queue, ahead of `--prd` and `--issues` filters. Source: the `/urgent` skill files an issue with `priority:urgent` + `ready-for-agent`; every `/afk` invocation prepends those to the candidate list regardless of which selection flags were passed. Among urgents, oldest issue number first.
+
+Apply filters to the **non-urgent remainder** in this order:
 
 1. If `--issues` was passed: keep only those numbers, in argument order. Error if any are missing or not labelled `ready-for-agent`. PRDs in the explicit list are still rejected — the user is told to slice them first.
 2. Else if `--prd` was passed: keep issues with `prd: #N` in the body, a parent link to issue N, or a `prd:N` label. The PRD itself (#N) is excluded by the `type:prd` filter above.
 3. Else: keep all remaining `ready-for-agent` issues. Sort by triage priority — `priority:high` before `priority:low` (and unlabelled), then by issue number ascending.
+
+The final queue is `[urgent…] + [filtered non-urgent…]`, deduped by number (so an urgent issue that also matched the filter only appears once, at the front).
 
 If the list is empty, print `<promise>NO MORE TASKS</promise>` and exit 0.
 

@@ -6,6 +6,19 @@ Upstream base: `mattpocock/skills@e74f0061bb67222181640effa98c675bdb2fdaa7` (see
 
 ---
 
+## urgent (engineering) + afk: urgent prepend in issue selection
+
+- **status**: added (skill) + modified (afk)
+- **upstream**: —
+- **why**: needed a "do this now" lane that does not depend on `/triage` or the standard priority labels. `priority:high` already saturates from time to time and an urgent fix shouldn't have to wait its turn behind other high-priority work. Adds a budget label users spend sparingly.
+- **what changed**:
+  - new `skills/engineering/urgent/SKILL.md` with a two-question interview (what's urgent / why now), pushback rule when "why now" is weak (suggest `/report-bug` or `/triage` instead), and `gh issue create --label priority:urgent --label ready-for-agent`. Skips `needs-triage` by design. Auto-creates the `priority:urgent` label if it does not exist (colour `B91C1C`).
+  - `scripts/engineering/afk/scripts/afk.sh` `select_issues`: splits the candidate pool into urgent / non-urgent, applies `--prd` / `--issues` only to the non-urgent remainder, then concats `[urgent (sorted by number asc)] + [filtered]` with a number-based dedupe so an urgent that also matched the filter does not appear twice.
+  - `afk/SKILL.md` Issue Selection rewritten to document the urgent prepend as a hard rule that runs before any filter.
+  - registered in `plugins/dev/.claude-plugin/plugin.json`, engineering bucket README, root README skill table.
+
+---
+
 ## report-bug (engineering)
 
 - **status**: added
