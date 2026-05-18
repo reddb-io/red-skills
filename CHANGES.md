@@ -6,6 +6,19 @@ Upstream base: `mattpocock/skills@e74f0061bb67222181640effa98c675bdb2fdaa7` (see
 
 ---
 
+## afk (engineering) — fleet supervisor with respawn
+
+- **status**: modified
+- **upstream**: —
+- **why**: foundational slice for PRD #1 (multi-worker `/afk` fleet on a single checkout). Until now, running N concurrent workers meant N manual `nohup afk.sh &` invocations and no respawn when one died. The supervisor lets a single process maintain `TARGET` workers, with a single-supervisor lock so accidental double-launches are refused.
+- **what changed**:
+  - new `plugins/dev/skills/engineering/afk/scripts/supervisor.sh`. Spawns `TARGET` (env, default `2`) `afk.sh` workers via `nohup`, redirects each to `.red/tmp/afk-supervisor-slot-N.log`, polls liveness every 15s with `kill -0`, respawns dead slots. Stagger between initial spawns is 2s.
+  - single-supervisor invariant via `.red/tmp/afk-supervisor.pid`. Second invocation against a live PID refuses with a clear error and non-zero exit. Stale PID (process gone) is cleared and the new supervisor proceeds.
+  - graceful shutdown on `SIGTERM` / `SIGINT` / touch of `.red/tmp/afk-supervisor.stop`: TERMs all workers, removes the stop-file if present, exits 0.
+  - `afk.sh` is discovered relative to `$BASH_SOURCE`, so plugin upgrades and worktree layouts don't break the script. Workers are unchanged — same claim-lock, same state files, same per-iteration contract; the supervisor only manages process lifecycle.
+
+---
+
 ## to-prd (engineering) — surface HITL decisions
 
 - **status**: modified
