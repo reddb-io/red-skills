@@ -52,6 +52,8 @@ AFK_SH="$SCRIPT_DIR/afk.sh"
 
 # shellcheck source=./config.sh
 source "$SCRIPT_DIR/config.sh"
+# shellcheck source=./hooks.sh
+source "$SCRIPT_DIR/hooks.sh"
 
 PROJECT_ROOT="${1:-$(pwd)}"
 PROJECT_ROOT="$(cd "$PROJECT_ROOT" && pwd)"

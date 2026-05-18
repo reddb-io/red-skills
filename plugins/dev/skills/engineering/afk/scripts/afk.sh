@@ -19,6 +19,8 @@ SKILL_DIR="$(dirname "$SCRIPT_DIR")"
 
 # shellcheck source=./config.sh
 source "$SCRIPT_DIR/config.sh"
+# shellcheck source=./hooks.sh
+source "$SCRIPT_DIR/hooks.sh"
 
 # ---------- arg parsing ----------
 RUNNER=""
