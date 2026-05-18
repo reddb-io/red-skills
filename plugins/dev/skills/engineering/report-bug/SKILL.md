@@ -40,7 +40,7 @@ The argument is optional.
 - ✅ **Do** number every question `Q##:` (zero-padded, session-scoped, same convention as `/start`).
 - ✅ **Do** use `gh` (not the GitHub web UI) — the user invoked a CLI skill, they want the issue handle in the terminal.
 - ✅ **Do** sanitise the body before filing: strip ANSI escapes, mask anything that looks like a secret (API keys, tokens) — when in doubt, ask the user to confirm.
-- ✅ **Do** route the user to `/triage` after creating the issue if they want priority and AGENT-BRIEF assigned. The reporter's job ends at "captured".
+- ✅ **Do** route the user to `/triage` after creating the issue if they want priority and an `## Agent brief` section written into the issue body. The reporter's job ends at "captured".
 
 **Question format template:**
 

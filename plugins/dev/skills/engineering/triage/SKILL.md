@@ -46,7 +46,7 @@ When the maintainer says "move #42 to ready-for-agent" or similar imperative:
 
 1. Confirm what you're about to do — list every change (role swap, comment text, close).
 2. Apply on confirmation. **Skip grilling and reproduction.**
-3. If moving to `ready-for-agent` and no AGENT-BRIEF exists on the issue, ask if they want one written before posting.
+3. If moving to `ready-for-agent` and no `## Agent brief` section exists in the issue body, ask if they want one written before applying the transition.
 
 ### Flow D — Resume
 
@@ -105,8 +105,8 @@ The maintainer can override at any time — flag transitions that look unusual a
 
 | Final state | Action |
 |---|---|
-| `ready-for-agent` | Post an agent brief comment per [AGENT-BRIEF.md](AGENT-BRIEF.md). |
-| `ready-for-human` | Same structure as an agent brief, but note **why** it can't be delegated (judgment call, external access, design decision, manual testing). |
+| `ready-for-agent` | Write or refresh the `## Agent brief` section in the issue body per [AGENT-BRIEF.md](AGENT-BRIEF.md). Do **not** post the brief as a comment. |
+| `ready-for-human` | Same structure as an agent brief, but note **why** it can't be delegated (judgment call, external access, design decision, manual testing). Lives in the issue body under `## Agent brief` just like the AFK variant. |
 | `needs-info` | Post triage notes (template below). |
 | `wontfix` (bug) | Polite explanation, then close. |
 | `wontfix` (enhancement) | Write to `.out-of-scope/`, link from a comment per [OUT-OF-SCOPE.md](OUT-OF-SCOPE.md), then close. |

@@ -6,6 +6,22 @@ Upstream base: `mattpocock/skills@e74f0061bb67222181640effa98c675bdb2fdaa7` (see
 
 ---
 
+## triage + afk (engineering) — agent brief moves from accumulating comment to issue-body `## Agent brief` section
+
+- **status**: modified
+- **upstream**: —
+- **why**: Before this change `/triage` posted the AGENT-BRIEF as a fresh GitHub comment on the issue every time it ran. Older briefs were never deleted, so the thread accumulated drift: the most recent comment won, but stale briefs sat indefinitely as silent noise that mis-led human readers (and any future parser tempted to walk the thread). Issue #11 (parent PRD #2) moves the brief to a `## Agent brief` section inside the **issue body**, which `/triage` rewrites in place. Slice C's handoff builder already pipes the issue body verbatim into the inner-agent contract, so the brief rides on the body — no `/afk` code change required.
+- **what changed**:
+  - `plugins/dev/skills/engineering/triage/AGENT-BRIEF.md`: reframed from "structured comment" to "structured `## Agent brief` body section". Added a *Where it lives in the body* section documenting the canonical body layout (`{arbitrary content} → ## Agent brief → ## Blocked by`, with the noted tolerance that `## Blocked by` may also precede `## Agent brief`). Added an *Editing the issue body* recipe: capture body via `gh issue view --json body`, splice in/replace the section at the next `## ` boundary, write back via `gh issue edit --body-file -`, then leave a one-line disclaimer comment so the thread shows triage touched the issue. Lowercased the section heading to `## Agent brief` across template + three examples to match the canonical key.
+  - `plugins/dev/skills/engineering/triage/SKILL.md`: Flow C check now looks for the `## Agent brief` body section instead of "an AGENT-BRIEF on the issue". Outcome table entry for `ready-for-agent` now reads "Write or refresh the `## Agent brief` section in the issue body … Do **not** post the brief as a comment." `ready-for-human` row clarifies the brief lives in the same body slot.
+  - `plugins/dev/skills/engineering/afk/SKILL.md`: handoff-file row, per-issue loop step 3, and the handoff template each replaced the "AGENT-BRIEF body" phrasing with "issue body verbatim — which carries the `## Agent brief` section written by `/triage`". No script change — `build_retry_handoff_body` already inlines the issue body under `## Brief`, and `sweep_unblocked`'s awk extractor for `## Blocked by` already tolerates either section order.
+  - `plugins/dev/skills/engineering/afk/AGENT-PROMPT.md`: inner-agent prompt's "Inputs" paragraph now points at the `## Agent brief` section inside the body's `## Brief` as the authoritative contract instead of the previous "AGENT-BRIEF posted on the issue" phrasing.
+  - `plugins/dev/skills/engineering/setup-red-skills/triage-labels.md` and `.red/agents/triage-labels.md`: `ready-for-agent` state definition rewritten ("issue body contains a complete `## Agent brief` section"); ASCII state-machine diagram updated from `(AGENT-BRIEF posted)` to `(## Agent brief in body)`.
+  - `plugins/dev/skills/engineering/report-bug/SKILL.md`: routing note tightened — "AGENT-BRIEF assigned" → "an `## Agent brief` section written into the issue body".
+  - Tests: no new tests required. Existing afk suites (envelope-shape 37/37, handoff-builder 44/44, runner-detection 14/14, sentinel-detection 5/5, stall-detector 16/16) still pass — the change is purely documentation/skill-prompt because the handoff pipeline already reads the body verbatim. Legacy `## AGENT-BRIEF` comments on existing issues are intentionally not migrated; they fall through Slice C's classifier into `## Human guidance` of the retry handoff (they look like human prose), and any new `/triage` run overrides by writing to the body.
+
+---
+
 ## afk (engineering) — runner detection cascade, opt-in alternate + fallback
 
 - **status**: modified
