@@ -1514,10 +1514,30 @@ trap cleanup INT TERM
 # expose every function for unit testing without invoking the real loop.
 [[ "${BASH_SOURCE[0]}" != "$0" ]] && return 0 2>/dev/null
 
+# ---------- pre-spawn boot-log ----------
+# Run the generic hook orchestrator's `pre-spawn` chain once at worker
+# boot. Detectors that apply write KEY=value lines into their per-call
+# env-file; hooks.sh sources those back into this shell, so exports
+# propagate to every issue spawned by this worker. We announce the
+# applied detector names (skipping not-applicable / config-disabled
+# ones) to the worker's stderr log, which the supervisor captures into
+# .red/tmp/afk-supervisor-slot-N.log when present.
+log_applied_detectors_boot_line() {
+  export AFK_SLOT="${AFK_SLOT:-0}"
+  export AFK_PLUGIN_DIR="${SKILL_DIR}"
+  export PROJECT_ROOT
+  hooks_run pre-spawn || true
+  if (( ${#HOOKS_APPLIED_DETECTORS[@]} > 0 )); then
+    local joined; joined="${HOOKS_APPLIED_DETECTORS[*]}"
+    log "pre-spawn: applied detectors [${joined// /, }]"
+  fi
+}
+
 # ---------- main ----------
 precheck
 bootstrap
 log "runner: $RUNNER (detected via $RUNNER_DETECTION_METHOD)"
+log_applied_detectors_boot_line
 prune_orphans
 sweep_unblocked
 

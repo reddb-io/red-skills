@@ -512,6 +512,33 @@ trap cleanup SIGTERM SIGINT
 # spawning workers or grabbing the singleton lock.
 [[ "${BASH_SOURCE[0]}" != "$0" ]] && return 0 2>/dev/null
 
+# ---------- pre-spawn boot-log ----------
+# Run the generic hook orchestrator's `pre-spawn` chain once at boot to
+# announce which shipped detectors are applicable to this project. The
+# call is made in a subshell so detector env exports never leak into the
+# supervisor's own environment (per-slot env propagation is still owned
+# by BUILD_ISOLATION_VARS above — the detector framework here is purely
+# advisory in supervisor mode). Detectors that exited 1 (not applicable)
+# and detectors disabled via .red/config.yaml are omitted.
+log_applied_detectors_boot_line() {
+  local plugin_dir applied
+  plugin_dir="$(dirname "$SCRIPT_DIR")"
+  applied="$(
+    AFK_SLOT=0 \
+    AFK_PLUGIN_DIR="$plugin_dir" \
+    PROJECT_ROOT="$PROJECT_ROOT" \
+    bash -c "
+      source '$SCRIPT_DIR/hooks.sh'
+      hooks_run pre-spawn >/dev/null 2>&1 || true
+      printf '%s' \"\${HOOKS_APPLIED_DETECTORS[*]}\"
+    " 2>/dev/null
+  )"
+  if [[ -n "$applied" ]]; then
+    log "pre-spawn: applied detectors [${applied// /, }]"
+  fi
+}
+log_applied_detectors_boot_line
+
 # ---------- main ----------
 acquire_lock
 
