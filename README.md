@@ -31,7 +31,7 @@ reddb.io's slash-command library for Claude Code, Codex, and friends.
 
 </div>
 
-> A reddb.io adaptation of [`mattpocock/skills`](https://github.com/mattpocock/skills) — same DNA, sharper edges, an autonomous loop layered on top. Massive thanks to [@mattpocock](https://github.com/mattpocock); the original lives at [aihero.dev](https://www.aihero.dev/s/skills-newsletter). We pin upstream via `.upstream` and a daily workflow (`red-upstream-watch.yml`) opens an issue when it advances, so we cherry-pick what's worth taking.
+> A reddb.io adaptation of [`mattpocock/skills`](https://github.com/mattpocock/skills) — same DNA, adapted for our reality, with an autonomous loop layered on top. Massive thanks to [@mattpocock](https://github.com/mattpocock); the original lives at [aihero.dev](https://www.aihero.dev/s/skills-newsletter). We pin upstream via `.upstream` and a daily workflow (`red-upstream-watch.yml`) opens an issue when it advances, so we cherry-pick what's worth taking.
 
 ---
 
