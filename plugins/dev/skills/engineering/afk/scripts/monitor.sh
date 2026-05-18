@@ -50,12 +50,22 @@ color_pct() {
 
 color_status() {
   case "$1" in
-    live)   printf '%s' "$C_GREEN" ;;
-    stale)  printf '%s' "$C_YELLOW" ;;
-    dead)   printf '%s' "$C_RED" ;;
-    parked) printf '%s' "$C_RED$C_BOLD" ;;
-    *)      printf '%s' "$C_GRAY" ;;
+    live)    printf '%s' "$C_GREEN" ;;
+    stale)   printf '%s' "$C_YELLOW" ;;
+    dead)    printf '%s' "$C_RED" ;;
+    parked)  printf '%s' "$C_RED$C_BOLD" ;;
+    stalled) printf '%s' "$C_MAGENTA$C_BOLD" ;;
+    *)       printf '%s' "$C_GRAY" ;;
   esac
+}
+
+# Compact "Nm" / "NhMm" / "Ns" formatter for stall-duration display.
+fmt_dur_human() {
+  local s="$1"
+  if   (( s < 60 ));    then printf '%ds' "$s"
+  elif (( s < 3600 ));  then printf '%dm' $(( s / 60 ))
+  else                       printf '%dh%dm' $(( s / 3600 )) $(( (s % 3600) / 60 ))
+  fi
 }
 
 # Render one row per parked slot from the supervisor's circuit state file.
@@ -76,6 +86,27 @@ render_parked_slots() {
       "$C_CYAN$C_BOLD" "$slot" "$C_RESET" \
       "$(color_status parked)" "$C_RESET" \
       "$C_DIM" "$count" "$last" "$C_RESET" \
+      "$C_DIM" "$C_RESET"
+  done <<<"$rows"
+}
+
+# Render one row per stalled slot from the supervisor's state file.
+# Emits nothing when the `stalled` array is absent or empty, so
+# pre-stall-detector fleets and healthy fleets are unaffected.
+render_stalled_slots() {
+  local circuit_file="$TMP_DIR/afk-supervisor-circuit.json"
+  [[ -f "$circuit_file" ]] || return 0
+  local rows; rows="$(jq -c '.stalled[]?' "$circuit_file" 2>/dev/null || true)"
+  [[ -z "$rows" ]] && return 0
+  local row slot dur
+  while IFS= read -r row; do
+    [[ -z "$row" ]] && continue
+    slot="$(jq -r '.slot' <<<"$row")"
+    dur="$(jq -r '.duration_s // 0' <<<"$row")"
+    printf '%sslot-%s%s %s[⏸️  stalled]%s  %sstalled for %s%s  %s(check .red/hooks/ — possibly waiting on a shared resource)%s\n' \
+      "$C_CYAN$C_BOLD" "$slot" "$C_RESET" \
+      "$(color_status stalled)" "$C_RESET" \
+      "$C_DIM" "$(fmt_dur_human "$dur")" "$C_RESET" \
       "$C_DIM" "$C_RESET"
   done <<<"$rows"
 }
@@ -386,6 +417,7 @@ render_full() {
     for sf in "${states[@]}"; do render_worker "$sf"; done
   fi
   render_parked_slots
+  render_stalled_slots
 }
 
 render_compact() {
@@ -404,6 +436,7 @@ When you summarise the lines below for the user, follow these rules verbatim. Tr
 4. When a worker line carries a `| <text>` suffix, it is the most recent line written to that worker's afk.log — surface it verbatim (truncated as the script already truncated it). It is the single most useful "is the inner agent alive" signal; do not drop it.
 5. When a worker line carries `⚠ stalled? log idle Ns`, repeat the warning verbatim and recommend the user run the bash-hang diagnostic from afk/SKILL.md (`pstree -p <orchestrator-pid>`, look for `until.*test result` cmdline). `⚠ no log` means the worker was spawned with v1.10.0 or earlier — recommend upgrading to v1.10.1+ for log tee, or v1.14.2+ for the full set of fixes.
 6. Lines beginning `slot-N [⛔ parked]` mean the fleet supervisor tripped its per-slot circuit breaker (≥5 fast worker deaths within 90s). Always surface them — they explain why the fleet shrank below target. Recommend `/dev:afk fleet stop` followed by a relaunch to clear the parked state, and tell the user to investigate the runner before relaunching.
+7. Lines beginning `slot-N [⏸️  stalled]` mean the supervisor's passive stall detector observed the worker silent for ≥ STALL_THRESHOLD_SECONDS (default 10 min). The worker is still live; surface the row verbatim along with the "check .red/hooks/" hint. Suggest the user inspect `.red/hooks/` for shared-resource contention (cargo lock, port collision, deadlocked external service). Do not recommend killing the worker — the stall flag clears automatically once it emits output again.
 
 === begin dashboard ===
 EOF
@@ -416,6 +449,7 @@ EOF
     for sf in "${states[@]}"; do render_worker_compact "$sf"; done
   fi
   render_parked_slots
+  render_stalled_slots
 }
 
 command -v jq >/dev/null || { echo "jq required" >&2; exit 2; }

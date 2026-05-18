@@ -385,7 +385,7 @@ The monitor invocation handles its own teardown — see *Self-Cancel* under the 
 
 ## Fleet Mode (Claude Code only — binding)
 
-`/dev:afk fleet [N]` and `/dev:afk fleet stop` are user-facing wrappers around [`scripts/supervisor.sh`](scripts/supervisor.sh). They let one terminal command spin up (or shut down) `N` concurrent `afk.sh` workers on the current checkout, with the supervisor handling respawn, the circuit breaker, and per-slot build isolation (see [`scripts/supervisor.sh`](scripts/supervisor.sh) header for the env contract).
+`/dev:afk fleet [N]` and `/dev:afk fleet stop` are user-facing wrappers around [`scripts/supervisor.sh`](scripts/supervisor.sh). They let one terminal command spin up (or shut down) `N` concurrent `afk.sh` workers on the current checkout, with the supervisor handling respawn, the circuit breaker, the **passive stall detector** (samples per-iteration `afk.log` mtimes every `STALL_POLL_S=30s`; flags any slot alive ≥ `STALL_THRESHOLD_SECONDS=600` whose log has been idle ≥ the same — surfaces as `⏸️ stalled` in `/dev:afk monitor` with no auto-action), and per-slot build isolation (see [`scripts/supervisor.sh`](scripts/supervisor.sh) header for the env contract).
 
 Fleet mode is **Claude-Code-only**: the stop side relies on `CronList`/`CronDelete` to tear down the auto-monitor cron from *Auto-Monitor Loop* above, and those primitives don't exist under Codex. When the active runner is Codex (or `CronCreate`/`CronList` is otherwise unavailable), refuse the launch with one line — `fleet mode is not supported under Codex; run /afk in N terminals instead.` — and exit without side effects. Do not touch the PID file, the stop file, or the cron registry.
 

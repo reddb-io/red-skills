@@ -19,6 +19,15 @@
 # deaths inside a CIRCUIT_WINDOW_S window parks the slot — no more
 # respawns until the supervisor is restarted. Other slots keep going.
 #
+# Passive stall detector: every STALL_POLL_S seconds the supervisor
+# inspects each live slot's per-iteration afk.log mtime. A slot whose
+# worker has been alive ≥ STALL_THRESHOLD_SECONDS *and* whose afk.log
+# hasn't been written to in ≥ STALL_THRESHOLD_SECONDS is flagged
+# `stalled:true` in the state file. The supervisor does NOT kill or
+# restart stalled workers — surfacing is the entire job. Monitor reads
+# the same file and renders stalled slots distinctly. The flag clears
+# automatically on the next sample once the log advances.
+#
 # Per-slot build isolation: build tools that serialize on a single cache
 # directory (cargo, Gradle, …) can stall the fleet. When the operator sets
 # a recognised `*_BASE` env var, the supervisor creates and exports a
@@ -59,6 +68,14 @@ POLL_S="${SUPERVISOR_POLL_S:-15}"
 FAST_DEATH_THRESHOLD_S="${SUPERVISOR_FAST_DEATH_S:-30}"
 CIRCUIT_K="${SUPERVISOR_CIRCUIT_K:-5}"
 CIRCUIT_WINDOW_S="${SUPERVISOR_CIRCUIT_WINDOW_S:-90}"
+
+# Stall detector tunables. STALL_THRESHOLD_SECONDS is the documented
+# operator knob (default 10 min); STALL_POLL_S is the supervisor's
+# sampling cadence (default 30 s). A slot stays unflagged when alive
+# for less than STALL_THRESHOLD_SECONDS, even if it has produced no
+# log output yet — that's normal startup, not a stall.
+STALL_THRESHOLD_SECONDS="${STALL_THRESHOLD_SECONDS:-600}"
+STALL_POLL_S="${STALL_POLL_S:-30}"
 
 # Per-slot build-isolation env vars. Each entry is "BASE_VAR:TARGET_VAR".
 # When BASE_VAR is set in the supervisor's env, every spawned worker on
@@ -106,6 +123,10 @@ declare -a SLOT_FAST_DEATHS=()       # space-separated death epochs, pruned to w
 declare -a SLOT_PARKED=()
 declare -a SLOT_TRIP_EPOCH=()
 declare -a SLOT_LAST_DEATH_EPOCH=()
+declare -a SLOT_STALLED=()             # 1 when currently flagged stalled
+declare -a SLOT_STALL_SINCE_EPOCH=()   # epoch when the stall window opened
+declare -a SLOT_STALL_LOG=()           # iteration log path observed at stall time
+LAST_STALL_POLL_EPOCH=0
 
 # Build the per-slot env overrides (e.g. CARGO_TARGET_DIR) for slot $1 as
 # `KEY=value` strings suitable for `env`. Creates each slot subdirectory
@@ -144,20 +165,112 @@ spawn_slot() {
   fi
 }
 
-# Write the parked-slot state file. Called whenever a slot trips.
-write_circuit_state() {
-  local entries=() i trip last count trip_iso last_iso
+# Write the supervisor state file (parked slots + stalled slots).
+# Schema is additive on top of #12: `parked[]` keeps its original shape
+# and `stalled[]` is appended. Readers that only consume `.parked[]?`
+# (older monitor builds) keep working unchanged.
+write_supervisor_state() {
+  local parked=() stalled=() i trip last count trip_iso last_iso
+  local since dur now log since_iso
+  now="$(date +%s)"
   for ((i=0; i<TARGET; i++)); do
-    [[ "${SLOT_PARKED[$i]:-0}" == "1" ]] || continue
-    trip="${SLOT_TRIP_EPOCH[$i]:-0}"
-    last="${SLOT_LAST_DEATH_EPOCH[$i]:-0}"
-    count="$(echo "${SLOT_FAST_DEATHS[$i]:-}" | wc -w | tr -d ' ')"
-    trip_iso="$(date -Iseconds -d "@$trip" 2>/dev/null || echo "")"
-    last_iso="$(date -Iseconds -d "@$last" 2>/dev/null || echo "")"
-    entries+=("{\"slot\":$i,\"trip_at_epoch\":$trip,\"trip_at\":\"$trip_iso\",\"last_death_at_epoch\":$last,\"last_death_at\":\"$last_iso\",\"fast_deaths\":$count}")
+    if [[ "${SLOT_PARKED[$i]:-0}" == "1" ]]; then
+      trip="${SLOT_TRIP_EPOCH[$i]:-0}"
+      last="${SLOT_LAST_DEATH_EPOCH[$i]:-0}"
+      count="$(echo "${SLOT_FAST_DEATHS[$i]:-}" | wc -w | tr -d ' ')"
+      trip_iso="$(date -Iseconds -d "@$trip" 2>/dev/null || echo "")"
+      last_iso="$(date -Iseconds -d "@$last" 2>/dev/null || echo "")"
+      parked+=("{\"slot\":$i,\"trip_at_epoch\":$trip,\"trip_at\":\"$trip_iso\",\"last_death_at_epoch\":$last,\"last_death_at\":\"$last_iso\",\"fast_deaths\":$count}")
+    fi
+    if [[ "${SLOT_STALLED[$i]:-0}" == "1" ]]; then
+      since="${SLOT_STALL_SINCE_EPOCH[$i]:-0}"
+      log="${SLOT_STALL_LOG[$i]:-}"
+      dur=$(( now - since ))
+      since_iso="$(date -Iseconds -d "@$since" 2>/dev/null || echo "")"
+      stalled+=("{\"slot\":$i,\"since_epoch\":$since,\"since\":\"$since_iso\",\"duration_s\":$dur,\"log_path\":\"$log\"}")
+    fi
   done
-  local joined; joined="$(IFS=,; echo "${entries[*]}")"
-  printf '{"parked":[%s]}\n' "$joined" > "$CIRCUIT_FILE"
+  local p_joined s_joined
+  p_joined="$(IFS=,; echo "${parked[*]}")"
+  s_joined="$(IFS=,; echo "${stalled[*]}")"
+  printf '{"parked":[%s],"stalled":[%s]}\n' "$p_joined" "$s_joined" > "$CIRCUIT_FILE"
+}
+
+# Back-compat alias — handle_dead_slot below still uses the old name.
+write_circuit_state() { write_supervisor_state; }
+
+# Locate the per-iteration afk.log path for a slot's current worker
+# process. Workers create $TMP_DIR/work-<wid>-i<n>/afk.pid containing
+# their PID for the lifetime of one iteration; we grep for the slot's
+# pid across those files to find the live iteration directory. Echoes
+# the absolute log path on success and nothing when the worker is
+# between iterations (legitimately silent).
+find_slot_iter_log() {
+  local slot="$1"
+  local pid="${SLOT_PIDS[$slot]:-}"
+  local pid_file dir
+  [[ -n "$pid" ]] || return 0
+  for pid_file in "$TMP_DIR"/work-*/afk.pid; do
+    [[ -f "$pid_file" ]] || continue
+    [[ "$(cat "$pid_file" 2>/dev/null)" == "$pid" ]] || continue
+    dir="$(dirname "$pid_file")"
+    printf '%s\n' "$dir/afk.log"
+    return 0
+  done
+}
+
+# Pure predicate for unit testing. Given the worker's spawn epoch,
+# the iteration log's last-modified epoch (0 = no log yet), the
+# current epoch, and the stall threshold, echo `yes` when the slot
+# meets every stall criterion and `no` otherwise.
+compute_stalled() {
+  local spawn="$1" log_mtime="$2" now="$3" threshold="$4"
+  (( spawn > 0 )) || { echo no; return; }
+  (( now - spawn >= threshold )) || { echo no; return; }
+  # If we never observed a log (worker still between iterations or hasn't
+  # opened one yet), don't flag — there's nothing to compare against.
+  (( log_mtime > 0 )) || { echo no; return; }
+  (( now - log_mtime >= threshold )) || { echo no; return; }
+  echo yes
+}
+
+# Sample every non-parked slot. Sets / clears SLOT_STALLED[slot] and
+# rewrites the state file when any slot's stall flag flipped. No-op
+# beyond bookkeeping — the supervisor must not act on stalled workers.
+poll_stall_detector() {
+  local now changed=0 i log mtime spawn flagged
+  now="$(date +%s)"
+  for ((i=0; i<TARGET; i++)); do
+    [[ "${SLOT_PARKED[$i]:-0}" == "1" ]] && continue
+    spawn="${SLOT_SPAWN_EPOCH[$i]:-0}"
+    log="$(find_slot_iter_log "$i")"
+    mtime=0
+    if [[ -n "$log" && -f "$log" ]]; then
+      mtime="$(stat -c %Y "$log" 2>/dev/null || echo 0)"
+    fi
+    flagged="$(compute_stalled "$spawn" "$mtime" "$now" "$STALL_THRESHOLD_SECONDS")"
+    if [[ "$flagged" == "yes" ]]; then
+      if [[ "${SLOT_STALLED[$i]:-0}" != "1" ]]; then
+        SLOT_STALLED[$i]=1
+        # Anchor the stall window to the last observed log activity so
+        # the duration the monitor renders matches "log idle for N".
+        SLOT_STALL_SINCE_EPOCH[$i]="$mtime"
+        SLOT_STALL_LOG[$i]="$log"
+        log "⏸️  slot $i flagged stalled (log idle for $(( now - mtime ))s: $log)"
+        changed=1
+      fi
+    else
+      if [[ "${SLOT_STALLED[$i]:-0}" == "1" ]]; then
+        SLOT_STALLED[$i]=0
+        SLOT_STALL_SINCE_EPOCH[$i]=0
+        SLOT_STALL_LOG[$i]=""
+        log "▶️  slot $i stall cleared (log advanced)"
+        changed=1
+      fi
+    fi
+  done
+  (( changed )) && write_supervisor_state
+  LAST_STALL_POLL_EPOCH="$now"
 }
 
 # Handle a slot whose worker has exited: decide park-or-respawn based on
@@ -222,6 +335,11 @@ cleanup() {
 }
 trap cleanup SIGTERM SIGINT
 
+# When sourced (e.g. from test harnesses) skip the main loop so unit
+# tests can exercise pure functions like compute_stalled without
+# spawning workers or grabbing the singleton lock.
+[[ "${BASH_SOURCE[0]}" != "$0" ]] && return 0 2>/dev/null
+
 # ---------- main ----------
 acquire_lock
 
@@ -246,4 +364,8 @@ while :; do
       handle_dead_slot "$i"
     fi
   done
+  now_epoch="$(date +%s)"
+  if (( now_epoch - LAST_STALL_POLL_EPOCH >= STALL_POLL_S )); then
+    poll_stall_detector
+  fi
 done
