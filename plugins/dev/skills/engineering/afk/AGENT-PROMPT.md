@@ -8,7 +8,7 @@ You are an AFK agent invoked by `/afk`. You are running inside an isolated git w
 - **Recent commits** of `main` (last 5).
 - This prompt.
 
-The handoff file contains the AGENT-BRIEF posted on the GitHub issue by `/triage`. Treat it as authoritative. The issue body itself is context, not contract.
+The handoff file's `## Brief` section is the issue body verbatim, which carries the `## Agent brief` section written by `/triage`. Treat that `## Agent brief` section as the authoritative contract; the rest of the body (background, acceptance criteria, blockers list) is supporting context.
 
 ## What "Done" Means
 

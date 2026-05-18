@@ -42,7 +42,7 @@ Per-issue files live under `.red/tmp/work-{id}-i{N}/` in the primary checkout. E
 | `.red/tmp/work-{id}-i{N}/afk.pid` | PID of the orchestrator. Used by `/afk monitor` to flag dead workers as `stale` via `kill -0`. Re-written on each iteration. |
 | `.red/tmp/work-{id}-i{N}/afk.log` | Append-only log for this iteration. Per-issue scope — each issue gets a fresh log. |
 | `.red/tmp/work-{id}-i{N}/afk.state.json` | State snapshot for this iteration. Schema in *State File* below. |
-| `.red/tmp/work-{id}-i{N}/handoff.md` | Handoff file (AGENT-BRIEF) the inner agent reads. Template in *Handoff File Template* below. |
+| `.red/tmp/work-{id}-i{N}/handoff.md` | Handoff file the inner agent reads — issue body verbatim (which carries the `## Agent brief` section) plus retry context. Template in *Handoff File Template* below. |
 
 Two workers cannot claim the same issue thanks to a local `mkdir` lock at `.red/tmp/claims/{N}/` plus a `gh issue view` pre-check before the edit. The gh edit itself is not atomic (see *Issue Lifecycle* below for the full three-layer scheme). The race surface is the brief window between two separate checkouts on the same host — acceptable for the intended scale.
 
@@ -195,7 +195,7 @@ For each issue `N`:
 
 1. **Claim.** `gh issue edit N --remove-label ready-for-agent --add-label running`. Then create the iteration directory `.red/tmp/work-{id}-i{N}/` and write `afk.pid` (current `$$`), open `afk.log` (tee target for orchestrator output), and initialise `afk.state.json` per *State File* below. Comment a start line on the issue: ISO timestamp, runner identity, worktree path. If labelling fails because someone else already claimed it, abandon the iteration directory and skip to the next issue.
 2. **Worktree.** `git -C primary fetch origin main` then `git worktree add .red/tmp/work-{id}-i{N}/worktree -b afk/{id}/{N}-{slug} origin/main` from the primary checkout. The branch is local-only until push. The worktree lives inside the gitignored `.red/tmp/` tree so it never appears in `git status` for `main`.
-3. **Handoff file.** Materialise the AGENT-BRIEF into `.red/tmp/work-{id}-i{N}/handoff.md` using the template below. The handoff file lives one level above the worktree so the inner agent reads it via `../handoff.md` from inside the worktree, and so it survives a worktree wipe on retry.
+3. **Handoff file.** Materialise the handoff into `.red/tmp/work-{id}-i{N}/handoff.md` using the template below — `## Brief` is the issue body verbatim (which carries the `## Agent brief` section written by `/triage`). The handoff file lives one level above the worktree so the inner agent reads it via `../handoff.md` from inside the worktree, and so it survives a worktree wipe on retry.
 4. **Local heartbeat marker.** Write one `[heartbeat] iteration started for #N` line to `afk.log`. Slice D retired the periodic GitHub-comment heartbeat (`:one: :two: :three: :four:`) — local liveness is now signalled by the inner-agent stdout stream tee'd into `afk.log` plus state-file mtime, both of which already exist.
 5. **Inner agent.** Invoke claude/codex per [`runner-*.md`](runner-claude.md) with [`AGENT-PROMPT.md`](AGENT-PROMPT.md) + the handoff file + last 5 commits of `main`. Stream stdout into the loop's header tail. Detect stages by grep on the stream — see *Stage Detection* below.
 6. **Inner result.**
@@ -527,10 +527,10 @@ started: {iso8601}
 attempt: {1..}
 
 ## Brief
-{AGENT-BRIEF body from triage, verbatim}
+{issue body verbatim — includes the `## Agent brief` section written by /triage}
 
 ## Acceptance
-- [ ] {extracted from AGENT-BRIEF}
+- [ ] {extracted from `## Acceptance criteria` / `## Agent brief` in the issue body}
 
 ## Refs
 - ADRs: {paths from brief, e.g. docs/adr/0007-foo.md}

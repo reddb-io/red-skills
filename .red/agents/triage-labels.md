@@ -53,8 +53,8 @@ Every issue moves through this state machine. Arrows show the transitions; the a
                               ▼                                   ▼
                   ┌──────────────────────┐         ┌──────────────────────┐
                   │   ready-for-agent    │         │   ready-for-human    │
-                  │   (AGENT-BRIEF       │         │   (needs judgment)   │
-                  │    posted)           │         └──────────────────────┘
+                  │   (## Agent brief    │         │   (needs judgment)   │
+                  │    in body)          │         └──────────────────────┘
                   └──────────┬───────────┘                     │
                              │                                 │
                        /afk claim:                       human picks up
@@ -89,7 +89,7 @@ Maintainer has not evaluated the issue yet. **Applied automatically** by `red-is
 The triage agent or maintainer needs more information from the reporter before a decision can be made. Removed by `/triage` once the reporter responds and the issue cycles back through `needs-triage`.
 
 ### `ready-for-agent`
-The issue has a complete AGENT-BRIEF posted as a comment (see `triage/AGENT-BRIEF.md`). Body and brief together form a contract sufficient for an AFK agent to implement without human context. **This is the only state `/afk` consumes.** Applied by `/triage` (after grilling) or `/to-issues` (on creation when the slice is AFK-safe).
+The issue body contains a complete `## Agent brief` section (see `triage/AGENT-BRIEF.md`) that forms a contract sufficient for an AFK agent to implement without human context. **This is the only state `/afk` consumes.** Applied by `/triage` (after grilling) or `/to-issues` (on creation when the slice is AFK-safe).
 
 ### `running`
 `/afk` has claimed the issue and is actively executing it. Applied atomically with the removal of `ready-for-agent` so two parallel `/afk` runs cannot race on the same issue. The orchestrator's heartbeat sub-shell posts `:one:` → `:four:` comments every 10 min while this label is present. Removed on close (success), on blocker (replaced with `ready-for-human`), or on graceful release (if the user interrupts the loop).
