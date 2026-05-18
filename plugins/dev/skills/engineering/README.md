@@ -6,6 +6,7 @@ Skills I use daily for code work.
 - **[diagnose](./diagnose/SKILL.md)** — Disciplined diagnosis loop for hard bugs and performance regressions: reproduce → minimise → hypothesise → instrument → fix → regression-test.
 - **[start](./start/SKILL.md)** — Grilling session that challenges your plan against the existing domain model, sharpens terminology, and updates `.red/CONTEXT.md` and ADRs inline.
 - **[triage](./triage/SKILL.md)** — Triage issues through a state machine of triage roles.
+- **[report-bug](./report-bug/SKILL.md)** — Interview the user about a bug they hit, then file a `type:bug needs-triage` issue on the project tracker. Seeds from conversation context when invoked with no argument.
 - **[improve-codebase-architecture](./improve-codebase-architecture/SKILL.md)** — Find deepening opportunities in a codebase, informed by the domain language in `.red/CONTEXT.md` and the decisions in `.red/adr/`.
 - **[setup-red-skills](./setup-red-skills/SKILL.md)** — Scaffold the per-repo config (issue tracker, triage label vocabulary, domain doc layout) that the other engineering skills consume.
 - **[tdd](./tdd/SKILL.md)** — Test-driven development with a red-green-refactor loop. Builds features or fixes bugs one vertical slice at a time.

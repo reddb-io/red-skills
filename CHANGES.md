@@ -6,6 +6,22 @@ Upstream base: `mattpocock/skills@e74f0061bb67222181640effa98c675bdb2fdaa7` (see
 
 ---
 
+## report-bug (engineering)
+
+- **status**: added
+- **upstream**: —
+- **why**: bug capture flow was bouncing between users opening rough GitHub issues by hand (no template, missing repro / expected behaviour) and going through full `/triage` which is too heavy for the "first hand off" step. Needed a lightweight reporter that interviews the user, normalises the body, applies `type:bug` + `needs-triage`, and stops — `/triage` handles the rest.
+- **what changed**:
+  - new `skills/engineering/report-bug/SKILL.md`
+  - frontmatter `argument-hint: "[symptom — leave empty to seed from conversation]"`
+  - boot behaviour: argument → seed for "What's happening"; empty → mine conversation transcript for error messages, stack traces, recent commands, "this is weird"/"why is it doing"/"I expected … but got" phrases.
+  - interview loop follows `Q##:` numbering + `Branches:` template established by `/start` and `/reflect`. Fills the issue template fields in order: what's happening, what should happen, reproduction, context (when/where/what i was doing/environment), severity.
+  - filing: `gh issue create --label type:bug --label needs-triage`. Refuses to set priority, slice, or `ready-for-agent` — that's `/triage`'s contract.
+  - hard rules: do not invent repro steps, do not file more than one issue per invocation, sanitise body for ANSI / secrets, route the user to `/triage` after creation but do not call it.
+  - registered in `plugins/dev/.claude-plugin/plugin.json`, `plugins/dev/skills/engineering/README.md`, root `README.md` engineering table.
+
+---
+
 ## global: Codex marketplace metadata + runner doctor
 
 - **status**: modified

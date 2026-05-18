@@ -7,6 +7,7 @@
     "./skills/engineering/diagnose",
     "./skills/engineering/start",
     "./skills/engineering/triage",
+    "./skills/engineering/report-bug",
     "./skills/engineering/improve-codebase-architecture",
     "./skills/engineering/setup-red-skills",
     "./skills/engineering/tdd",
