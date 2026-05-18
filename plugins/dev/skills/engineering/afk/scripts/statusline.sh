@@ -7,9 +7,21 @@
 
 set -u
 
-# Per-project opt-out via .red/config.yaml (best-effort, no yq dep)
-if [[ -f .red/config.yaml ]] && grep -qE '^[[:space:]]*statusline:[[:space:]]*false[[:space:]]*$' .red/config.yaml 2>/dev/null; then
-  exit 0
+# Per-project opt-out via .red/config.yaml (best-effort, no yq dep).
+# Honours either a top-level `statusline: false` or a nested `afk.statusline: false`.
+if [[ -f .red/config.yaml ]]; then
+  if grep -qE '^[[:space:]]*statusline:[[:space:]]*false[[:space:]]*$' .red/config.yaml 2>/dev/null; then
+    exit 0
+  fi
+  # Nested form: an `afk:` block containing a `statusline: false` line (indented).
+  if awk '
+    /^afk:[[:space:]]*$/ { in_afk = 1; next }
+    /^[^[:space:]]/      { in_afk = 0 }
+    in_afk && /^[[:space:]]+statusline:[[:space:]]*false[[:space:]]*$/ { found = 1; exit }
+    END { exit !found }
+  ' .red/config.yaml 2>/dev/null; then
+    exit 0
+  fi
 fi
 
 [[ -d .red/tmp ]] || exit 0

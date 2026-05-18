@@ -6,6 +6,18 @@ Upstream base: `mattpocock/skills@e74f0061bb67222181640effa98c675bdb2fdaa7` (see
 
 ---
 
+## afk (engineering) — statusline aggregator + `/setup-red-skills` wiring
+
+- **status**: modified
+- **upstream**: —
+- **why**: operators running `/afk` had to keep a side terminal open on `/dev:afk monitor` to know how many workers were live and what they were doing. Issue #25 (parent #16) surfaces that summary in the Claude Code statusline — `🤖 N · 📋 ready N · 🙋 human N · 🚧 blocked N · +A -B · #X #Y` — refreshed every few seconds with a cached GitHub round-trip so it stays under the ~100 ms render budget.
+- **what changed**:
+  - `plugins/dev/skills/engineering/afk/scripts/statusline.sh`: opt-out now honours the brief's nested `afk: { statusline: false }` form in `.red/config.yaml` in addition to the legacy top-level `statusline: false`. Aggregator behaviour (kill-0 liveness filter, summed diffstat from `current.diff_*` fields with `git diff --shortstat origin/main` fallback, 60 s cache of `gh issue list` counts in `.red/tmp/statusline-cache.json`, async refresh on stale cache) is unchanged.
+  - `plugins/dev/skills/engineering/setup-red-skills/SKILL.md`: new **Section F — `/afk` statusline** explainer + corresponding write step. The skill now (a) skips the wiring when `.red/config.yaml` declares `afk.statusline: false`, logging a one-line notice; (b) skips when `.claude/settings.json` already has a `statusLine` key, logging a one-line notice; (c) otherwise writes/merges the `statusLine` block pointing at `bash ${CLAUDE_PLUGIN_ROOT}/skills/engineering/afk/scripts/statusline.sh` with `refreshInterval: 5`.
+  - `plugins/dev/skills/engineering/afk/scripts/tests/statusline.test.sh`: new test (20 assertions) — covers no-`.red/tmp` empty stdout, the one-live-worker render, two-worker summed render, dead-pid filtering, and both opt-out paths. The test pre-seeds `statusline-cache.json` so it never shells out to `gh`. Existing test suites still pass (envelope-shape 27/27, sentinel-detection 5/5, stall-detector 16/16).
+
+---
+
 ## afk (engineering) — fleet passive stall detector + monitor `⏸️ stalled` status
 
 - **status**: modified
