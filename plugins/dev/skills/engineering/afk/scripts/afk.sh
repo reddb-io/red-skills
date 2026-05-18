@@ -448,7 +448,7 @@ select_issues() {
     prd)
       filtered="$(echo "$rest" | jq --arg prd "$FILTER_VALUE" '
         map(select(
-          (.body // "") | test("prd:\\s*#?" + $prd + "\\b")
+          ((.body // "") | test("prd:\\s*#?" + $prd + "\\b"))
           or ((.labels | map(.name)) | index("prd:" + $prd))
         )) ')"
       ;;
