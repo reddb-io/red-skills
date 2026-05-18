@@ -55,8 +55,23 @@ RESET=$'\e[0m'
 
 sections=()
 
-# ---- Block 1: project basename -------------------------------------------
-sections+=("${BOLD}$(basename "$cwd")${RESET}")
+# ---- Block 1: project basename [+ git branch] ---------------------------
+proj_block="${BOLD}$(basename "$cwd")${RESET}"
+if branch=$(git symbolic-ref --short HEAD 2>/dev/null); then
+  # Truncate long branches to keep statusline tight (e.g. afk/wFABQ/9-… )
+  if (( ${#branch} > 28 )); then
+    branch="${branch:0:27}…"
+  fi
+  # main/master in dim grey; feature branches in cyan to stand out
+  if [[ "$branch" == "main" || "$branch" == "master" ]]; then
+    proj_block="${proj_block} ${DIM}(${branch})${RESET}"
+  else
+    proj_block="${proj_block} ${CYAN}(${branch})${RESET}"
+  fi
+elif sha=$(git rev-parse --short HEAD 2>/dev/null); then
+  proj_block="${proj_block} ${DIM}(detached ${sha})${RESET}"
+fi
+sections+=("$proj_block")
 
 # ---- Block 2: model[·effort] ---------------------------------------------
 model=$(jq -r '.model.display_name // empty' <<<"$input" 2>/dev/null)
