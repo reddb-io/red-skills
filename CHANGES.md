@@ -6,6 +6,19 @@ Upstream base: `mattpocock/skills@e74f0061bb67222181640effa98c675bdb2fdaa7` (see
 
 ---
 
+## afk (engineering) — monitor renders supervisor header
+
+- **status**: modified
+- **upstream**: —
+- **why**: when the fleet supervisor is running, `monitor.sh` gave no indication that a fleet was up — operators had to `cat .red/tmp/afk-supervisor.pid` and `pgrep` by hand to verify. The new header surfaces supervisor state at a glance and distinguishes live from stale supervisor PID files.
+- **what changed**:
+  - new `render_fleet_header` function in `plugins/dev/skills/engineering/afk/scripts/monitor.sh`. Reads `.red/tmp/afk-supervisor.pid`; when the PID is alive, parses `target=N` from `afk-supervisor.log` and counts live workers by walking the latest `slot N: spawned worker pid=PID` entry per slot and probing `kill -0`. Emits `🛡️ supervisor pid=… target=N alive=M/N`.
+  - stale PID file (process gone) renders `⚠️ supervisor pid=… STALE — run /dev:afk fleet stop to clean up` instead.
+  - no PID file → nothing emitted; non-fleet usage is unchanged.
+  - header rendered in both TTY (`render_full`) and compact (`render_compact`) modes, immediately above the 48h sparkline.
+
+---
+
 ## afk (engineering) — fleet supervisor with respawn
 
 - **status**: modified

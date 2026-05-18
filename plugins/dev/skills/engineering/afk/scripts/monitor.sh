@@ -77,6 +77,42 @@ worktree_diff_stats() {
   printf '+%s -%s' "${ins:-0}" "${del:-0}"
 }
 
+# Fleet supervisor header — single line summarising supervisor state. Emits
+# nothing when no PID file exists (so non-fleet usage is unaffected).
+# Format (live):  🛡️ supervisor pid={pid} target={N} alive={M}/{N}
+# Format (stale): ⚠️ supervisor pid={pid} STALE — run /dev:afk fleet stop to clean up
+render_fleet_header() {
+  local pid_file="$TMP_DIR/afk-supervisor.pid"
+  [[ -f "$pid_file" ]] || return 0
+  local pid; pid="$(cat "$pid_file" 2>/dev/null || true)"
+  [[ -z "$pid" ]] && return 0
+  if ! kill -0 "$pid" 2>/dev/null; then
+    printf '%s⚠️  supervisor pid=%s STALE — run /dev:afk fleet stop to clean up%s\n' \
+      "$C_YELLOW$C_BOLD" "$pid" "$C_RESET"
+    return 0
+  fi
+  local log_file="$TMP_DIR/afk-supervisor.log"
+  local target=""
+  if [[ -f "$log_file" ]]; then
+    target="$(grep -oE 'target=[0-9]+' "$log_file" | tail -n 1 | cut -d= -f2)"
+  fi
+  [[ -z "$target" ]] && target="?"
+  # Count live workers by walking the latest "slot N: spawned worker pid=PID"
+  # entry per slot in the supervisor log and probing kill -0. Supervisor log
+  # is canonical: it records every (re)spawn, last entry per slot wins.
+  local alive=0
+  if [[ -f "$log_file" && "$target" != "?" ]]; then
+    local i slot_pid
+    for ((i=0; i<target; i++)); do
+      slot_pid="$(grep -oE "slot $i: spawned worker pid=[0-9]+" "$log_file" \
+                  | tail -n 1 | grep -oE '[0-9]+$' || true)"
+      [[ -n "$slot_pid" ]] && kill -0 "$slot_pid" 2>/dev/null && alive=$((alive+1))
+    done
+  fi
+  printf '%s🛡️  supervisor pid=%s target=%s alive=%s/%s%s\n' \
+    "$C_BOLD$C_GREEN" "$pid" "$target" "$alive" "$target" "$C_RESET"
+}
+
 # 48h sparkline of `done` events per hour. 48 buckets, scaled to peak.
 render_sparkline() {
   [[ -f "$HISTORY_FILE" ]] || { echo "history: (none yet — first /afk run will start it)"; return; }
@@ -318,6 +354,7 @@ fi
 
 render_full() {
   clear
+  render_fleet_header
   render_sparkline
   echo
   local states=( "$TMP_DIR"/work-*/afk.state.json )
@@ -346,6 +383,7 @@ When you summarise the lines below for the user, follow these rules verbatim. Tr
 
 === begin dashboard ===
 EOF
+  render_fleet_header
   render_sparkline
   local states=( "$TMP_DIR"/work-*/afk.state.json )
   if [[ ! -e "${states[0]}" ]]; then
