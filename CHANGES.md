@@ -6,6 +6,20 @@ Upstream base: `mattpocock/skills@e74f0061bb67222181640effa98c675bdb2fdaa7` (see
 
 ---
 
+## afk (engineering) — structured terminal-event envelope writer + split TTL
+
+- **status**: modified
+- **upstream**: —
+- **why**: every terminal event of an iteration (BLOCKED, no-sentinel, merge-conflict, DONE) now writes a deterministic `<details data-attempt-status="…">` envelope on the issue so the GitHub thread is the canonical ledger. Foundational write-side slice of issue #6 / parent #2; Slice C will parse these envelopes back.
+- **what changed**:
+  - `plugins/dev/skills/engineering/afk/scripts/afk.sh`: added `build_envelope`, `build_envelope_summary`, `emit_envelope`, `branch_diffstat`, `extract_handoff_notes`, `tail_iter_log`, `fmt_duration`; replaced the four free-form terminal comments with envelope calls; added `envelope.posted` to the per-iteration state file, set `true` after a successful POST, `false` on failure.
+  - `prune_orphans` now applies a **split TTL** to preserved `ready-for-human` dirs: 1 day when `envelope.posted == true`, 7 days when `false` or missing.
+  - Source-guard added so unit tests can `source` `afk.sh` without invoking the main loop.
+  - `SKILL.md`: new *Terminal-Event Envelope* section; *Orphan Cleanup* updated to describe the split TTL; state-file schema gains `envelope.posted`.
+  - `scripts/tests/envelope-shape.test.sh`: new test exercising summary/body shape across all four statuses + `fmt_duration` boundary cases.
+
+---
+
 ## afk (engineering) — Fleet Mode commands in SKILL.md
 
 - **status**: modified

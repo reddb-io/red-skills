@@ -197,7 +197,17 @@ prune_orphans() {
         if [[ "$state" == "CLOSED" ]]; then
           safe=1
         elif [[ "$labels" == *",ready-for-human,"* ]]; then
-          safe=0
+          # Preserved for human review. Apply split TTL based on whether the
+          # canonical record (envelope comment) made it to the issue:
+          #   posted=true  → 1d TTL (issue thread has the full envelope; the
+          #                  local dir is pure redundancy).
+          #   posted=false → 7d TTL (post failed — the local dir is the only
+          #                  copy of notes/log, keep the safety window).
+          local envelope_posted="false"
+          [[ -f "$state_file" ]] && envelope_posted="$(jq -r '.envelope.posted // false' "$state_file" 2>/dev/null)"
+          local ttl=$TTL_LONG
+          [[ "$envelope_posted" == "true" ]] && ttl=$TTL_SHORT
+          (( now_s - mtime_s > ttl )) && safe=1
         elif [[ "$labels" == *",running,"* ]]; then
           gh -R "$repo" issue edit "$issue_n" \
             --remove-label running --add-label ready-for-agent >/dev/null 2>&1 || true
@@ -405,7 +415,8 @@ state_init() {
       filter:{kind:$fk, value:$fv},
       total:$total, done:$done, failed:$failed, blocked:$blocked,
       completed:$completed, queue:$queue, current:null,
-      durations_seconds:$durs}')"
+      durations_seconds:$durs,
+      envelope:{posted:false}}')"
 }
 
 state_set() {
@@ -503,6 +514,136 @@ heartbeat_start() {
 heartbeat_stop() {
   [[ -n "$HEARTBEAT_PID" ]] && kill "$HEARTBEAT_PID" 2>/dev/null || true
   HEARTBEAT_PID=""
+}
+
+# ---------- terminal-event envelope ----------
+# Every terminal event of an iteration (BLOCKED, no-sentinel, merge-conflict,
+# DONE) posts exactly one structured comment on the issue. The envelope wraps
+# a deterministic `<details data-attempt-status="...">` block so a future
+# parser can reconstruct the iteration history from the thread alone.
+#
+# Schema (intentionally narrow — Slice C will parse it):
+#
+#   <details data-attempt-status="blocked|no-sentinel|merge-conflict|done">
+#   <summary>worker `wXXXX` · status: … · duration: NmSs · diff: +N -M | merged · attempt: K [· merge: <sha>]</summary>
+#
+#   <details data-section="notes"><summary>notes</summary>
+#
+#   …handoff `## Notes` body…
+#
+#   </details>
+#
+#   <details data-section="log"><summary>log (last 50 lines)</summary>
+#
+#   ```
+#   …
+#   ```
+#
+#   </details>
+#
+#   </details>
+#
+# DONE envelopes are lightweight: status=done, summary carries the merge-commit
+# link, and no `data-section="diff"` block is emitted (the merge commit on
+# `main` is the diff).
+
+fmt_duration() {
+  local s="${1:-0}"
+  printf '%dm%ds' $((s/60)) $((s%60))
+}
+
+# Diffstat for the iteration branch relative to its merge base with main.
+# Returns the literal "+N -M" so summary lines stay scannable. Falls back to
+# "+0 -0" when the branch has no commits or git fails.
+branch_diffstat() {
+  local branch="$1"
+  [[ -z "$branch" ]] && { echo "+0 -0"; return; }
+  local raw
+  raw="$(git -C "$PROJECT_ROOT" diff --shortstat "origin/main...$branch" 2>/dev/null || true)"
+  local ins del
+  ins="$(echo "$raw" | grep -oE '[0-9]+ insertion' | grep -oE '[0-9]+' || echo 0)"
+  del="$(echo "$raw" | grep -oE '[0-9]+ deletion'  | grep -oE '[0-9]+' || echo 0)"
+  printf '+%s -%s' "${ins:-0}" "${del:-0}"
+}
+
+# Extract the body of `## Notes` from the handoff file, dropping the heading
+# line and the boilerplate HTML comment. Empty string when nothing was
+# appended by the inner agent.
+extract_handoff_notes() {
+  local handoff="$1"
+  [[ -f "$handoff" ]] || { echo ""; return; }
+  awk '/^## Notes$/{flag=1; next} flag' "$handoff" \
+    | grep -v '^<!-- inner agent appends progress/blockers here across attempts -->$' \
+    | sed -e '/./,$!d' -e ':a' -e '/^\n*$/{$d;N;ba' -e '}'
+}
+
+# Read last N lines from the iteration log (the captured inner-agent stdout).
+tail_iter_log() {
+  local n="${1:-50}"
+  [[ -f "$ITER_LOG" ]] || { echo ""; return; }
+  tail -n "$n" "$ITER_LOG"
+}
+
+# build_envelope_summary <status> <duration_s> <diff_or_merged> <attempt> [merge_sha]
+# Emits the deterministic summary line — kept centralised so every callsite
+# (and the unit test) renders the same shape.
+build_envelope_summary() {
+  local status="$1" dur="$2" diff_or_merged="$3" attempt="$4" merge_sha="${5:-}"
+  local merge_part=""
+  [[ -n "$merge_sha" ]] && merge_part=" · merge: \`$merge_sha\`"
+  printf 'worker `%s` · status: %s · duration: %s · diff: %s · attempt: %d%s' \
+    "$WORKER_ID" "$status" "$(fmt_duration "$dur")" "$diff_or_merged" "$attempt" "$merge_part"
+}
+
+# build_envelope <status> <summary> [<section_name> <section_body_file>]...
+# Writes the full envelope body to stdout. Section bodies come from files so
+# we don't shell-escape multi-KB log tails through arguments. `log` sections
+# get wrapped in a fenced code block; everything else is rendered raw.
+build_envelope() {
+  local status="$1" summary="$2"
+  shift 2
+  printf '<details data-attempt-status="%s"><summary>%s</summary>\n\n' "$status" "$summary"
+  while [[ $# -ge 2 ]]; do
+    local section="$1" body_file="$2"
+    shift 2
+    printf '<details data-section="%s"><summary>%s</summary>\n\n' "$section" "$section"
+    if [[ "$section" == "log" ]]; then
+      printf '```\n'
+      cat "$body_file"
+      printf '\n```\n\n'
+    else
+      cat "$body_file"
+      printf '\n\n'
+    fi
+    printf '</details>\n\n'
+  done
+  printf '</details>\n'
+}
+
+# Compose + post in one shot. Sets `.envelope.posted` to true on any 2xx,
+# false on failure — boot-time prune_orphans reads this to choose TTL.
+# emit_envelope <status> <issue#> <duration_s> <branch> <attempt> <merge_sha> [<section> <body_file>]...
+emit_envelope() {
+  local status="$1" n="$2" dur="$3" branch="$4" attempt="$5" merge_sha="$6"
+  shift 6
+  local diff_or_merged
+  if [[ "$status" == "done" ]]; then
+    diff_or_merged="merged"
+  else
+    diff_or_merged="$(branch_diffstat "$branch")"
+  fi
+  local summary
+  summary="$(build_envelope_summary "$status" "$dur" "$diff_or_merged" "$attempt" "$merge_sha")"
+
+  local body; body="$(build_envelope "$status" "$summary" "$@")"
+
+  if gh -R "$(gh_repo)" issue comment "$n" --body "$body" >/dev/null 2>&1; then
+    state_set '.envelope = (.envelope // {}) | .envelope.posted = true'
+    return 0
+  fi
+  state_set '.envelope = (.envelope // {}) | .envelope.posted = false'
+  log "warn: failed to post envelope for #$n (status=$status)"
+  return 1
 }
 
 # ---------- handoff file ----------
@@ -832,24 +973,38 @@ process_issue() {
   # sentinel detection
   if echo "$result" | grep -q '<promise>BLOCKED</promise>'; then
     log "✗ #$n blocked by inner agent"
-    local notes
-    notes="$(awk '/^## Notes$/,0' "$handoff")"
-    gh -R "$(gh_repo)" issue comment "$n" --body "$(printf 'BLOCKED by inner agent.\n\n%s\n\nIteration preserved at `%s`.' "$notes" "$ITER_DIR")" >/dev/null
+    local dur_blocked=$(( $(date +%s) - started_epoch ))
+    local notes_file; notes_file="$(mktemp)"
+    extract_handoff_notes "$handoff" > "$notes_file"
+    [[ -s "$notes_file" ]] || printf '_(inner agent emitted BLOCKED without appending Notes — see iteration log at `%s`)_' "$ITER_DIR" > "$notes_file"
+    emit_envelope "blocked" "$n" "$dur_blocked" "$branch" "$attempt" "" \
+      "notes" "$notes_file" || true
+    rm -f "$notes_file"
     gh -R "$(gh_repo)" issue edit "$n" --remove-label running --add-label ready-for-human >/dev/null
     AGG_BLOCKED=$((AGG_BLOCKED+1))
     state_set ".blocked = $AGG_BLOCKED | .current = null"
-    history_append "blocked" "$n" "$RUNNER" "$(( $(date +%s) - started_epoch ))" "" "inner-agent"
+    history_append "blocked" "$n" "$RUNNER" "$dur_blocked" "" "inner-agent"
     iter_close_preserve
     return 0
   fi
 
   if ! echo "$result" | grep -q '<promise>DONE</promise>'; then
     log "✗ #$n inner agent ended without DONE sentinel — treating as blocker"
-    gh -R "$(gh_repo)" issue comment "$n" --body "Inner agent exited without a sentinel. Manual review needed. Iteration at \`$ITER_DIR\`." >/dev/null
+    local dur_ns=$(( $(date +%s) - started_epoch ))
+    local notes_file log_file
+    notes_file="$(mktemp)"; log_file="$(mktemp)"
+    extract_handoff_notes "$handoff" > "$notes_file"
+    [[ -s "$notes_file" ]] || printf '_(no Notes appended; inner agent exited without a sentinel)_' > "$notes_file"
+    tail_iter_log 50 > "$log_file"
+    [[ -s "$log_file" ]] || printf '(no captured stdout)' > "$log_file"
+    emit_envelope "no-sentinel" "$n" "$dur_ns" "$branch" "$attempt" "" \
+      "notes" "$notes_file" \
+      "log" "$log_file" || true
+    rm -f "$notes_file" "$log_file"
     gh -R "$(gh_repo)" issue edit "$n" --remove-label running --add-label ready-for-human >/dev/null
     AGG_BLOCKED=$((AGG_BLOCKED+1))
     state_set ".blocked = $AGG_BLOCKED | .current = null"
-    history_append "blocked" "$n" "$RUNNER" "$(( $(date +%s) - started_epoch ))" "" "no-sentinel"
+    history_append "blocked" "$n" "$RUNNER" "$dur_ns" "" "no-sentinel"
     iter_close_preserve
     return 0
   fi
@@ -863,13 +1018,17 @@ process_issue() {
   state_set ".current.stage = \"merge\""
   if ! do_merge "$branch" "$n" "$title"; then
     log "✗ #$n merge conflict (no inner self-resolve yet)"
-    local diff
-    diff="$(cat /tmp/afk-merge.log 2>/dev/null | tail -50)"
-    gh -R "$(gh_repo)" issue comment "$n" --body "$(printf 'Merge conflict on \`main\`. Aborted. Iteration preserved at `%s`.\n\n```\n%s\n```' "$ITER_DIR" "$diff")" >/dev/null
+    local dur_mc=$(( $(date +%s) - started_epoch ))
+    local log_file; log_file="$(mktemp)"
+    tail -n 50 /tmp/afk-merge.log 2>/dev/null > "$log_file" || true
+    [[ -s "$log_file" ]] || printf '(no merge log captured)' > "$log_file"
+    emit_envelope "merge-conflict" "$n" "$dur_mc" "$branch" "$attempt" "" \
+      "log" "$log_file" || true
+    rm -f "$log_file"
     gh -R "$(gh_repo)" issue edit "$n" --remove-label running --add-label ready-for-human >/dev/null
     AGG_BLOCKED=$((AGG_BLOCKED+1))
     state_set ".blocked = $AGG_BLOCKED | .current = null"
-    history_append "blocked" "$n" "$RUNNER" "$(( $(date +%s) - started_epoch ))" "" "merge-conflict"
+    history_append "blocked" "$n" "$RUNNER" "$dur_mc" "" "merge-conflict"
     iter_close_preserve
     return 0
   fi
@@ -878,9 +1037,7 @@ process_issue() {
   state_set ".current.stage = \"close\""
   local merge_sha; merge_sha="$(git -C "$PROJECT_ROOT" rev-parse --short HEAD)"
   local dur=$(( $(date +%s) - started_epoch ))
-  gh -R "$(gh_repo)" issue comment "$n" \
-    --body "$(printf '✓ /afk done in %dm%ds.\n\nfeedback: %s\nmerge: %s\nrunner: %s' \
-      $((dur/60)) $((dur%60)) "$fb" "$merge_sha" "$RUNNER")" >/dev/null
+  emit_envelope "done" "$n" "$dur" "$branch" "$attempt" "$merge_sha" || true
   gh -R "$(gh_repo)" issue close "$n" --reason completed >/dev/null
   gh -R "$(gh_repo)" issue edit "$n" --remove-label running >/dev/null 2>&1 || true
 
@@ -926,6 +1083,10 @@ cleanup() {
   exit 130
 }
 trap cleanup INT TERM
+
+# When sourced (e.g. from test harnesses), skip the orchestrator's main block —
+# expose every function for unit testing without invoking the real loop.
+[[ "${BASH_SOURCE[0]}" != "$0" ]] && return 0 2>/dev/null
 
 # ---------- main ----------
 precheck
