@@ -282,8 +282,7 @@ Summary line is always `worker `{id}` · status: {status} · duration: NmSs · d
 
 After a successful POST (any 2xx), the orchestrator sets `envelope.posted: true` in the iteration state file. The boot-time *Orphan Cleanup* reads that field to pick a TTL for preserved `ready-for-human` dirs: 1 day when the envelope made it to the issue (the thread carries the canonical record), 7 days when the POST failed (the local dir is the only copy of the notes/log). The field is initialised `false` at iteration start.
 
-What this envelope explicitly **does not** include (deferred to later slices):
-- Branch push to a remote `afk-attempts/` namespace — Slice B. Until then, the envelope's diffstat is computed against the local-only branch and the worktree path is implicit (recorded in state, not in the envelope).
+On any terminal **failure** (BLOCKED, no-sentinel, merge-conflict), the worker branch is pushed via SSH to `origin/afk-attempts/{worker_id}/{issue}-{slug}` before the envelope is posted. The envelope's `data-section="diff"` block then carries a `compare/main...afk-attempts/...` link plus a `+N -M files=K` diffstat. If the push fails (network, auth, anything non-2xx), the iteration still completes — the diff section embeds only the diffstat plus the local worktree path, and a `warn:` line is logged. DONE iterations do **not** push to `afk-attempts/` (the merge commit on `main` is the diff). Local branch cleanup (`git branch -d`) only deletes the local ref; the remote `afk-attempts/` ref stays alive for forensics, with no retention policy in this slice (branch sprawl is acknowledged and deferred — see PRD #2 Out of Scope).
 
 The Slice D heartbeat-glyph cleanup has landed — there is no periodic `:one: :two: …` traffic on the issue thread to defer or replace.
 

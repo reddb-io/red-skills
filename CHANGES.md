@@ -6,6 +6,18 @@ Upstream base: `mattpocock/skills@e74f0061bb67222181640effa98c675bdb2fdaa7` (see
 
 ---
 
+## afk (engineering) — push attempt branch to `afk-attempts/` on terminal failure
+
+- **status**: modified
+- **upstream**: —
+- **why**: when an iteration ends in BLOCKED, no-sentinel, or merge-conflict, the diff used to live only on the local worker branch — after `git worktree remove` and `git branch -d` it was gone, leaving the envelope comment with no recoverable code. Issue #9 (parent PRD #2) pushes the branch to `origin/afk-attempts/{wid}/{n}-{slug}` before posting the envelope so investigators can `gh pr checkout` or follow a `compare/main...afk-attempts/...` link from the issue thread.
+- **what changed**:
+  - `plugins/dev/skills/engineering/afk/scripts/afk.sh`: new `push_attempt_branch` (SSH push to `afk-attempts/{wid}/{n}-{slug}`, returns the remote ref name or empty on failure), new `branch_diffstat_full` (adds `files=K` to the existing `+N -M`), new `build_diff_section_body` (compare-link when the push succeeded, local-worktree fallback when it failed). Wired into the three terminal-failure paths in `process_issue`; DONE path is intentionally untouched. Push failure logs a `warn:` line but never aborts the iteration.
+  - `plugins/dev/skills/engineering/afk/scripts/tests/envelope-shape.test.sh`: stubs `gh_repo` + `branch_diffstat_full` so the diff-section body can be exercised hermetically. Covers both the pushed-link and push-failure-fallback shapes plus envelope-level composition under `data-section="diff"`.
+  - `plugins/dev/skills/engineering/afk/SKILL.md`: replaced the "deferred to Slice B" stub with the actual behaviour (when the push runs, what the diff section contains, why DONE is exempt, the no-retention caveat).
+
+---
+
 ## afk (engineering) — statusline aggregator + `/setup-red-skills` wiring
 
 - **status**: modified

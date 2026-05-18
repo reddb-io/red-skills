@@ -103,6 +103,33 @@ expect_not_contains "done/no diff section"   "$BODY_DONE" 'data-section="diff"'
 expect_not_contains "done/no notes section"  "$BODY_DONE" 'data-section="notes"'
 expect_not_contains "done/no log section"    "$BODY_DONE" 'data-section="log"'
 
+# ---------- diff section body (Slice B: afk-attempts push) ----------
+# build_diff_section_body uses gh_repo() which shells out to `git remote
+# get-url origin`. We don't want this test to touch the live repo, so stub it.
+gh_repo() { echo "reddb-io/red-skills"; }
+# branch_diffstat_full also shells out to git. Stub it to a deterministic value.
+branch_diffstat_full() { echo "+12 -3 files=2"; }
+
+DIFF_PUSHED="$(build_diff_section_body "afk/wTEST/9-foo" "afk-attempts/wTEST/9-foo" ".red/tmp/work-wTEST-i9/worktree")"
+expect_contains "diff/pushed has compare link" "$DIFF_PUSHED" 'https://github.com/reddb-io/red-skills/compare/main...afk-attempts/wTEST/9-foo'
+expect_contains "diff/pushed shows compare label" "$DIFF_PUSHED" 'compare/main...afk-attempts/wTEST/9-foo'
+expect_contains "diff/pushed includes diffstat" "$DIFF_PUSHED" '+12 -3 files=2'
+expect_not_contains "diff/pushed has no fallback line" "$DIFF_PUSHED" 'push to \`afk-attempts/\` failed'
+
+DIFF_FALLBACK="$(build_diff_section_body "afk/wTEST/9-foo" "" ".red/tmp/work-wTEST-i9/worktree")"
+expect_contains "diff/fallback names worktree" "$DIFF_FALLBACK" '.red/tmp/work-wTEST-i9/worktree'
+expect_contains "diff/fallback marks push failure" "$DIFF_FALLBACK" 'push to `afk-attempts/` failed'
+expect_contains "diff/fallback still includes diffstat" "$DIFF_FALLBACK" '+12 -3 files=2'
+expect_not_contains "diff/fallback has no compare link" "$DIFF_FALLBACK" 'compare/main...'
+
+# Diff section composes into the envelope under data-section="diff".
+diff_file="$(mktemp)"; printf '%s' "$DIFF_PUSHED" > "$diff_file"
+SUM_B="$(build_envelope_summary "blocked" 60 "+12 -3" 1)"
+BODY_B_DIFF="$(build_envelope "blocked" "$SUM_B" "diff" "$diff_file")"
+expect_contains "envelope/diff section tag" "$BODY_B_DIFF" '<details data-section="diff">'
+expect_contains "envelope/diff link rendered" "$BODY_B_DIFF" 'compare/main...afk-attempts/wTEST/9-foo'
+rm -f "$diff_file"
+
 # ---------- fmt_duration ----------
 [ "$(fmt_duration 0)"   = "0m0s"   ] || { echo "FAIL fmt_duration(0)";   fail=$((fail+1)); }
 [ "$(fmt_duration 65)"  = "1m5s"   ] || { echo "FAIL fmt_duration(65)";  fail=$((fail+1)); }

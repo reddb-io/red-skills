@@ -560,6 +560,53 @@ branch_diffstat() {
   printf '+%s -%s' "${ins:-0}" "${del:-0}"
 }
 
+# Extended diffstat with file count, for the envelope's `data-section="diff"`
+# body. Format: `+N -M files=K`. Falls back to zeroes on any failure.
+branch_diffstat_full() {
+  local branch="$1"
+  [[ -z "$branch" ]] && { echo "+0 -0 files=0"; return; }
+  local raw
+  raw="$(git -C "$PROJECT_ROOT" diff --shortstat "origin/main...$branch" 2>/dev/null || true)"
+  local ins del files
+  ins="$(echo "$raw"   | grep -oE '[0-9]+ insertion' | grep -oE '[0-9]+' || echo 0)"
+  del="$(echo "$raw"   | grep -oE '[0-9]+ deletion'  | grep -oE '[0-9]+' || echo 0)"
+  files="$(echo "$raw" | grep -oE '[0-9]+ file'      | grep -oE '[0-9]+' || echo 0)"
+  printf '+%s -%s files=%s' "${ins:-0}" "${del:-0}" "${files:-0}"
+}
+
+# Push the worker branch to the remote `afk-attempts/{wid}/{n}-{slug}` namespace
+# so forensic investigators have a stable ref after the worktree is cleaned up.
+# Echoes the remote branch name on success and returns 0; emits nothing and
+# returns non-zero on failure. Only called from terminal-failure paths
+# (BLOCKED, no-sentinel, merge-conflict) — DONE iterations merge to main and
+# the merge commit carries the diff.
+push_attempt_branch() {
+  local branch="$1" n="$2" slug="$3"
+  local remote_branch="afk-attempts/${WORKER_ID}/${n}-${slug}"
+  if git -C "$PROJECT_ROOT" push origin "${branch}:refs/heads/${remote_branch}" >/dev/null 2>&1; then
+    printf '%s' "$remote_branch"
+    return 0
+  fi
+  log "warn: failed to push attempt branch to origin/${remote_branch}"
+  return 1
+}
+
+# Body of the envelope's `data-section="diff"` block. When the attempt branch
+# was pushed, the primary content is a compare-link to the pushed ref; when
+# the push failed, we embed the local worktree path so a human can still find
+# the work. The diffstat line is always included so the section is scannable.
+build_diff_section_body() {
+  local branch="$1" remote_branch="$2" worktree_rel="$3"
+  local stat; stat="$(branch_diffstat_full "$branch")"
+  if [[ -n "$remote_branch" ]]; then
+    local repo; repo="$(gh_repo)"
+    local url="https://github.com/${repo}/compare/main...${remote_branch}"
+    printf '<a href="%s">compare/main...%s</a>\n\n%s\n' "$url" "$remote_branch" "$stat"
+  else
+    printf 'push to `afk-attempts/` failed — local worktree: `%s`\n\n%s\n' "$worktree_rel" "$stat"
+  fi
+}
+
 # Extract the body of `## Notes` from the handoff file, dropping the heading
 # line and the boilerplate HTML comment. Empty string when nothing was
 # appended by the inner agent.
@@ -968,12 +1015,16 @@ process_issue() {
   if echo "$result" | grep -q '<promise>BLOCKED</promise>'; then
     log "✗ #$n blocked by inner agent"
     local dur_blocked=$(( $(date +%s) - started_epoch ))
-    local notes_file; notes_file="$(mktemp)"
+    local notes_file diff_file remote_branch
+    notes_file="$(mktemp)"; diff_file="$(mktemp)"
     extract_handoff_notes "$handoff" > "$notes_file"
     [[ -s "$notes_file" ]] || printf '_(inner agent emitted BLOCKED without appending Notes — see iteration log at `%s`)_' "$ITER_DIR" > "$notes_file"
+    remote_branch="$(push_attempt_branch "$branch" "$n" "$slug" || true)"
+    build_diff_section_body "$branch" "$remote_branch" "$worktree_rel" > "$diff_file"
     emit_envelope "blocked" "$n" "$dur_blocked" "$branch" "$attempt" "" \
-      "notes" "$notes_file" || true
-    rm -f "$notes_file"
+      "notes" "$notes_file" \
+      "diff"  "$diff_file" || true
+    rm -f "$notes_file" "$diff_file"
     gh -R "$(gh_repo)" issue edit "$n" --remove-label running --add-label ready-for-human >/dev/null
     AGG_BLOCKED=$((AGG_BLOCKED+1))
     state_set ".blocked = $AGG_BLOCKED | .current = null"
@@ -985,16 +1036,19 @@ process_issue() {
   if ! echo "$result" | grep -q '<promise>DONE</promise>'; then
     log "✗ #$n inner agent ended without DONE sentinel — treating as blocker"
     local dur_ns=$(( $(date +%s) - started_epoch ))
-    local notes_file log_file
-    notes_file="$(mktemp)"; log_file="$(mktemp)"
+    local notes_file log_file diff_file remote_branch
+    notes_file="$(mktemp)"; log_file="$(mktemp)"; diff_file="$(mktemp)"
     extract_handoff_notes "$handoff" > "$notes_file"
     [[ -s "$notes_file" ]] || printf '_(no Notes appended; inner agent exited without a sentinel)_' > "$notes_file"
     tail_iter_log 50 > "$log_file"
     [[ -s "$log_file" ]] || printf '(no captured stdout)' > "$log_file"
+    remote_branch="$(push_attempt_branch "$branch" "$n" "$slug" || true)"
+    build_diff_section_body "$branch" "$remote_branch" "$worktree_rel" > "$diff_file"
     emit_envelope "no-sentinel" "$n" "$dur_ns" "$branch" "$attempt" "" \
       "notes" "$notes_file" \
-      "log" "$log_file" || true
-    rm -f "$notes_file" "$log_file"
+      "diff"  "$diff_file" \
+      "log"   "$log_file" || true
+    rm -f "$notes_file" "$log_file" "$diff_file"
     gh -R "$(gh_repo)" issue edit "$n" --remove-label running --add-label ready-for-human >/dev/null
     AGG_BLOCKED=$((AGG_BLOCKED+1))
     state_set ".blocked = $AGG_BLOCKED | .current = null"
@@ -1013,12 +1067,16 @@ process_issue() {
   if ! do_merge "$branch" "$n" "$title"; then
     log "✗ #$n merge conflict (no inner self-resolve yet)"
     local dur_mc=$(( $(date +%s) - started_epoch ))
-    local log_file; log_file="$(mktemp)"
+    local log_file diff_file remote_branch
+    log_file="$(mktemp)"; diff_file="$(mktemp)"
     tail -n 50 /tmp/afk-merge.log 2>/dev/null > "$log_file" || true
     [[ -s "$log_file" ]] || printf '(no merge log captured)' > "$log_file"
+    remote_branch="$(push_attempt_branch "$branch" "$n" "$slug" || true)"
+    build_diff_section_body "$branch" "$remote_branch" "$worktree_rel" > "$diff_file"
     emit_envelope "merge-conflict" "$n" "$dur_mc" "$branch" "$attempt" "" \
-      "log" "$log_file" || true
-    rm -f "$log_file"
+      "diff" "$diff_file" \
+      "log"  "$log_file" || true
+    rm -f "$log_file" "$diff_file"
     gh -R "$(gh_repo)" issue edit "$n" --remove-label running --add-label ready-for-human >/dev/null
     AGG_BLOCKED=$((AGG_BLOCKED+1))
     state_set ".blocked = $AGG_BLOCKED | .current = null"
