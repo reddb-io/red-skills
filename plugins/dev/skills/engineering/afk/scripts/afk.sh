@@ -1283,7 +1283,7 @@ process_issue() {
     local dur_blocked=$(( $(date +%s) - started_epoch ))
     local notes_file diff_file remote_branch
     notes_file="$(mktemp)"; diff_file="$(mktemp)"
-    extract_handoff_notes "$handoff" > "$notes_file"
+    extract_handoff_notes "$handoff" > "$notes_file" || true
     [[ -s "$notes_file" ]] || printf '_(inner agent emitted BLOCKED without appending Notes — see iteration log at `%s`)_' "$ITER_DIR" > "$notes_file"
     remote_branch="$(push_attempt_branch "$branch" "$n" "$slug" || true)"
     build_diff_section_body "$branch" "$remote_branch" "$worktree_rel" > "$diff_file"
@@ -1304,9 +1304,9 @@ process_issue() {
     local dur_ns=$(( $(date +%s) - started_epoch ))
     local notes_file log_file diff_file remote_branch
     notes_file="$(mktemp)"; log_file="$(mktemp)"; diff_file="$(mktemp)"
-    extract_handoff_notes "$handoff" > "$notes_file"
+    extract_handoff_notes "$handoff" > "$notes_file" || true
     [[ -s "$notes_file" ]] || printf '_(no Notes appended; inner agent exited without a sentinel)_' > "$notes_file"
-    tail_iter_log 50 > "$log_file"
+    tail_iter_log 50 > "$log_file" || true
     [[ -s "$log_file" ]] || printf '(no captured stdout)' > "$log_file"
     remote_branch="$(push_attempt_branch "$branch" "$n" "$slug" || true)"
     build_diff_section_body "$branch" "$remote_branch" "$worktree_rel" > "$diff_file"
