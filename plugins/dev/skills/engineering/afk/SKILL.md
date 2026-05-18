@@ -1,7 +1,7 @@
 ---
 name: afk
 description: Autonomous loop that drains the `ready-for-agent` queue on the issue tracker. Each iteration claims an issue, runs it in an isolated worktree, executes with claude or codex, merges back to main, and closes the issue. Use when the user wants to run AFK execution, drain a PRD, hammer specific issues, or otherwise let agents grind through the backlog.
-argument-hint: "[--prd N | --issues N,N,N] [--runner claude|codex] [-n N] [--once] | fleet [N] | fleet stop | monitor"
+argument-hint: "[--prd N | --issues N,N,N] [--runner claude|codex] [--alternate] [--fallback-runner] [-n N] [--once] | fleet [N] | fleet stop | monitor"
 ---
 
 # /afk
@@ -13,7 +13,9 @@ Drain the agent-ready backlog. Single skill that owns issue selection, worktree 
 - `/afk` — every issue currently labelled `ready-for-agent`.
 - `/afk --prd 42` — only issues that reference PRD #42 (by `prd: #42` line in body, parent link, or `prd:42` label).
 - `/afk --issues 356,359,362` — explicit list, in that order.
-- `/afk --runner codex` — pin a backend instead of alternating on exhaustion.
+- `/afk --runner codex` — pin a backend (disables detection cascade; mutually exclusive with `--alternate`).
+- `/afk --alternate` — opt in to round-robin runner rotation between issues (claude → codex → claude → …).
+- `/afk --fallback-runner` — opt in to swapping runners mid-issue when one returns `RUNNER_EXHAUSTED`. Without this flag, exhaustion exits with code 75.
 - `/afk -n 5` — cap at five issues (default: drain until empty).
 - `/afk --once` — single supervised iteration. Same as `scripts/once.sh`. Use for debugging the prompt.
 - `/afk monitor` — readonly status board, aggregates every `.red/tmp/work-*/afk.state.json` so you see all live workers from another terminal.
@@ -61,7 +63,12 @@ Run before the first iteration:
 1. Ensure `.red/tmp/` exists. Create it.
 2. Ensure `.red/tmp/` is in `.gitignore` of the primary checkout. Append if missing.
 3. **Generate the worker ID.** Literal `w` + 4 random characters from `[A-Z0-9]` (e.g. `wZ2R4`). On the astronomically unlikely chance the chosen ID already maps to a live `.red/tmp/work-{id}-*/afk.pid`, regenerate. Print the ID on the first line of the run: `worker: {id}`. All per-iteration paths interpolate `{id}` and the issue number `{N}`.
-4. Resolve the runner. Order: `--runner` flag > env `AFK_RUNNER` > `claude`. Load [`runner-claude.md`](runner-claude.md) or [`runner-codex.md`](runner-codex.md) so the spawn command is ready.
+4. Resolve the runner via the detection cascade:
+   1. `--runner X` flag (pin) — wins over everything, logged as `detected via --runner pin`.
+   2. **Env-var sniff** — `CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`, or `CLAUDE_CODE_SSE_PORT` → `claude`; `CODEX_HOME`, `CODEX_SANDBOX`, or `CODEX_SANDBOX_NETWORK_DISABLED` → `codex`. Logged as `detected via env-var`.
+   3. **`$BASH_SOURCE` path sniff** — script lives under `~/.claude/...` → `claude`; under `~/.codex/...` → `codex`. Logged as `detected via path`.
+   4. **Env fallback** — `${AFK_RUNNER:-claude}`. Logged as `detected via env-fallback`.
+   The boot log prints one line per invocation: `runner: <runner> (detected via <method>)`. Load [`runner-claude.md`](runner-claude.md) or [`runner-codex.md`](runner-codex.md) so the spawn command is ready.
 5. Read [`SAFETY.md`](SAFETY.md). It is binding for every shell action the loop takes.
 6. Install signal handlers — SIGINT, SIGTERM, and normal exit all release any in-flight issue claim and preserve the active `work-{id}-i{N}/` directory before terminating.
 
@@ -208,11 +215,14 @@ For each issue `N`:
 
 ## Runner Fallback
 
-Default behaviour is to alternate runners between issues (claude first, codex second, claude third, …) so the loop tolerates a single-runner outage without manual intervention. Override with `--runner` to pin one backend.
+Default behaviour is **no rotation and no fallback** — the runner resolved by the detection cascade (see *Bootstrap* step 4) is used for every issue in the run, and `RUNNER_EXHAUSTED` exits the loop with code 75 and a log line naming the dead runner. Both behaviours are opt-in:
+
+- `--alternate` re-enables round-robin rotation between consecutive issues (claude → codex → claude → …). Mutually exclusive with `--runner`.
+- `--fallback-runner` re-enables mid-issue swap when the active runner returns `RUNNER_EXHAUSTED`. Without it, exhaustion is terminal for the run.
 
 Exhaustion detection lives in [`runner-claude.md`](runner-claude.md) and [`runner-codex.md`](runner-codex.md) — they own the per-runner error strings. The orchestrator only sees `RUNNER_EXHAUSTED` as a structured signal.
 
-When swap happens mid-issue, the same worktree and handoff file are reused; the new runner sees the previous agent's Notes appended.
+When swap happens mid-issue (only with `--fallback-runner`), the same worktree and handoff file are reused; the new runner sees the previous agent's Notes appended.
 
 ## Sentinel Watchdog
 
