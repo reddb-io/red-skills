@@ -6,6 +6,16 @@ Upstream base: `mattpocock/skills@e74f0061bb67222181640effa98c675bdb2fdaa7` (see
 
 ---
 
+## afk (engineering) — supervisor per-slot build-isolation env vars
+
+- **status**: modified
+- **upstream**: —
+- **why**: build tools that serialize on a single cache directory (cargo's `.cargo-lock`, Gradle's daemon caches, etc.) force concurrent fleet workers into 20+ minute stalls or CPU/RAM starvation when they share `/opt/cargo-target`. Per-slot subdirectories let each worker compile in isolation. The operator opts in by setting a `*_BASE` env var; non-Rust / non-Gradle projects see zero filesystem side effects.
+- **what changed**:
+  - `plugins/dev/skills/engineering/afk/scripts/supervisor.sh`: new `BUILD_ISOLATION_VARS` table mapping `*_BASE` env vars to the per-worker var the supervisor exports (`CARGO_TARGET_BASE` → `CARGO_TARGET_DIR`, `GRADLE_USER_HOME_BASE` → `GRADLE_USER_HOME`). New `build_slot_env_overrides` helper computes `${BASE}/slot-{i}` for each set base var, `mkdir -p`s the directory, and emits `KEY=value` lines. `spawn_slot` collects them into an `env` argv and prefixes the worker invocation, so per-slot env never leaks into other slots or the supervisor itself. Slot indices are stable across respawns because `spawn_slot` is always called with the same slot number. Top-of-file comment documents the supported base vars and how to add a new tool.
+
+---
+
 ## afk (engineering) — supervisor circuit breaker + monitor parked rendering
 
 - **status**: modified
