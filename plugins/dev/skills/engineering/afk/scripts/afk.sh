@@ -296,6 +296,7 @@ sweep_unblocked() {
   done < <(echo "$list" | jq -c '.[]')
 
   [[ ${#promoted[@]} -gt 0 ]] && log "unblocked ${#promoted[@]} issue(s): #${promoted[*]}"
+  return 0
 }
 
 # Cross-iteration in-memory aggregates (state file is per-iteration; these survive between issues).
@@ -362,6 +363,7 @@ claim_lock_release() {
   [[ -z "$n" ]] && return 0
   rm -rf "$TMP_DIR/claims/$n" 2>/dev/null || true
   [[ "$n" == "$CLAIMED_ISSUE" ]] && CLAIMED_ISSUE=""
+  return 0
 }
 
 # ---------- state file ----------
