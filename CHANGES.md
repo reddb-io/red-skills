@@ -6,6 +6,18 @@ Upstream base: `mattpocock/skills@e74f0061bb67222181640effa98c675bdb2fdaa7` (see
 
 ---
 
+## to-prd (engineering) — surface HITL decisions
+
+- **status**: modified
+- **upstream**: —
+- **why**: PRDs blended human calls with agent synthesis under one `Implementation Decisions` heading. Once `/to-issues` slices a PRD and `/afk` picks up the children, the human's load-bearing choices become indistinguishable from agent inference — and they get lost.
+- **what changed**:
+  - new `## Human Decisions` section in the PRD template, sitting above `Implementation Decisions`. Each entry uses `Decision:` / `Why:` / `Alternatives considered:` (mirrors the `Why:` / `How to apply:` shape we already use in feedback memories and ADRs).
+  - step 2 reinforced: every HITL call from the conversation that produced the PRD must be captured explicitly in `Human Decisions`. Not optional, not a free-form chat artifact.
+  - `Implementation Decisions` remains for agent-side synthesis (module shapes, schemas, API contracts inferred from the codebase).
+
+---
+
 ## afk (engineering) — auto-monitor loop + self-cancel
 
 - **status**: modified

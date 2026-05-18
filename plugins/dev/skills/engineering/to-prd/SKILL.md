@@ -17,6 +17,8 @@ A deep module (as opposed to a shallow module) is one which encapsulates a lot o
 
 Check with the user that these modules match their expectations. Check with the user which modules they want tests written for.
 
+**Capture every HITL call** made during the conversation that led to this PRD — module shape choices, trade-offs the user took a side on, alternatives they rejected, constraints they imposed. These go into the `Human Decisions` section of the template. Do not silently fold them into `Implementation Decisions` — once `/to-issues` slices this PRD and `/afk` picks up the children, the human's calls become indistinguishable from agent inference unless they are flagged here.
+
 3. Write the PRD using the template below, then publish it to the project issue tracker.
 
    **Labels on publish:** apply `type:prd` and `needs-slicing`. **Never apply `ready-for-agent` to a PRD** — PRDs are not implementable units, they must be split into slices by `/to-issues` first. `/afk` hard-filters anything tagged `type:prd` so an accidental `ready-for-agent` will be ignored, but the right pre-condition is to not set it in the first place.
@@ -44,6 +46,16 @@ A LONG, numbered list of user stories. Each user story should be in the format o
 </user-story-example>
 
 This list of user stories should be extremely extensive and cover all aspects of the feature.
+
+## Human Decisions
+
+Calls the human made during the conversation that produced this PRD. These are load-bearing — they reflect judgement that the agent could not have inferred on its own and must survive into the slicing + implementation phases. One bullet per decision, in this shape:
+
+- **Decision:** what was decided
+- **Why:** the reason the human gave
+- **Alternatives considered:** options that were rejected and why (omit if not applicable)
+
+If a decision is genuinely just agent inference, it does not belong here — put it in `Implementation Decisions` instead.
 
 ## Implementation Decisions
 
