@@ -126,10 +126,15 @@ declare -a SLOT_FAST_DEATHS=()       # space-separated death epochs, pruned to w
 declare -a SLOT_PARKED=()
 declare -a SLOT_TRIP_EPOCH=()
 declare -a SLOT_LAST_DEATH_EPOCH=()
+declare -a SLOT_SWEPT=()              # 1 when sweep_parked_slot has already fired
 declare -a SLOT_STALLED=()             # 1 when currently flagged stalled
 declare -a SLOT_STALL_SINCE_EPOCH=()   # epoch when the stall window opened
 declare -a SLOT_STALL_LOG=()           # iteration log path observed at stall time
 LAST_STALL_POLL_EPOCH=0
+
+# Default runner name carried in the discard envelope. Real /afk fleet
+# launches inherit this from the operator's shell; tests override.
+SUPERVISOR_RUNNER="${AFK_RUNNER:-claude}"
 
 # Build the per-slot env overrides (e.g. CARGO_TARGET_DIR) for slot $1 as
 # `KEY=value` strings suitable for `env`. Creates each slot subdirectory
@@ -276,6 +281,167 @@ poll_stall_detector() {
   LAST_STALL_POLL_EPOCH="$now"
 }
 
+# ---------- circuit-trip sweep (issue #13) ----------
+# When a slot trips the circuit breaker, the supervisor — not a human —
+# cleans up after the burned workers. Three actions in order:
+#
+#   1. Sweep iter dirs whose worker IDs occupied the parked slot during
+#      the fast-death window. State files identify the affected issues.
+#   2. Post a `data-attempt-status="discarded"` envelope on each affected
+#      issue naming the runner and the trip cause.
+#   3. Swap `ready-for-human` (and any stale `running`) for
+#      `ready-for-agent` and tag the issue `runner-error` so the human
+#      can filter runner-broken issues out of the normal triage view.
+#
+# Idempotent within a supervisor lifetime via SLOT_SWEPT. Across
+# restarts a new trip yields fresh worker IDs / fresh iter dirs, so
+# re-tripping does not re-touch already-swept issues.
+
+# parse_worker_ids_from_log <slot_log_path>
+# Echo each unique worker ID (`wXXXX`) seen in the boot-stamp lines
+# afk.sh emits at the top of every spawn. Order preserves first-seen.
+# Pure function — only reads the given file path.
+parse_worker_ids_from_log() {
+  local path="$1"
+  [[ -f "$path" ]] || return 0
+  awk '
+    /^\[afk\] worker: w[A-Z0-9]+$/ {
+      wid = $3
+      if (!seen[wid]++) print wid
+    }
+  ' "$path"
+}
+
+# iter_dir_for_worker <worker_id>
+# Echo every `.red/tmp/work-{wid}-i*/` directory that exists for the
+# given worker ID. Multiple iter dirs per worker are possible when the
+# worker drained several issues before its slot got parked.
+iter_dirs_for_worker() {
+  local wid="$1" d
+  shopt -s nullglob
+  for d in "$TMP_DIR"/work-"${wid}"-i*/; do
+    [[ -d "$d" ]] && printf '%s\n' "${d%/}"
+  done
+  shopt -u nullglob
+}
+
+# iter_dir_issue_number <iter_dir>
+# Read .current.number from afk.state.json. Echoes the issue number or
+# nothing (worker died before claiming).
+iter_dir_issue_number() {
+  local d="$1" sf="$1/afk.state.json"
+  [[ -f "$sf" ]] || return 0
+  jq -r '.current.number // empty' "$sf" 2>/dev/null
+}
+
+# build_discard_envelope <runner> <slot> <wids_csv> <fast_deaths> <log_path>
+# Emits the full envelope body for the structured comment. Schema matches
+# afk.sh's build_envelope (data-attempt-status + data-section blocks) so
+# the envelope parser handles it without a new branch.
+build_discard_envelope() {
+  local runner="$1" slot="$2" wids="$3" deaths="$4" log_path="$5"
+  local summary="runner \`${runner}\` · status: discarded · cause: runner-broken, slot parked after ${deaths} fast deaths"
+  printf '<details data-attempt-status="discarded"><summary>%s</summary>\n\n' "$summary"
+  printf '<details data-section="summary"><summary>summary</summary>\n\n'
+  printf 'slot: %s\n' "$slot"
+  printf 'worker IDs: %s\n' "$wids"
+  printf 'fast deaths: %s\n' "$deaths"
+  printf 'supervisor log: %s\n' "$log_path"
+  printf '\n</details>\n\n'
+  printf '</details>\n'
+}
+
+# ensure_runner_error_label
+# Idempotently create the `runner-error` label in the live repo. Silent
+# success when the label already exists; loud warning when gh fails.
+ensure_runner_error_label() {
+  command -v gh >/dev/null 2>&1 || return 0
+  gh label create runner-error \
+    --color B60205 \
+    --description "AFK supervisor circuit-tripped; runner was misconfigured" \
+    >/dev/null 2>&1 || true
+}
+
+# sweep_parked_slot <slot>
+# Drive the three-step cleanup. Tolerant of missing gh, missing jq,
+# missing iter dirs — the supervisor must keep running other slots even
+# if the cleanup partially fails.
+sweep_parked_slot() {
+  local slot="$1"
+  [[ "${SLOT_SWEPT[$slot]:-0}" == "1" ]] && return 0
+  SLOT_SWEPT[$slot]=1
+
+  local slot_log="$TMP_DIR/afk-supervisor-slot-${slot}.log"
+  local sup_log_rel=".red/tmp/afk-supervisor.log"
+  local deaths; deaths="$(echo "${SLOT_FAST_DEATHS[$slot]:-}" | wc -w | tr -d ' ')"
+  local wids=() w
+  while IFS= read -r w; do
+    [[ -n "$w" ]] && wids+=("$w")
+  done < <(parse_worker_ids_from_log "$slot_log")
+
+  if (( ${#wids[@]} == 0 )); then
+    log "slot $slot sweep: no worker IDs observed in $slot_log — no iter dirs to sweep"
+    return 0
+  fi
+
+  local wids_csv; wids_csv="$(IFS=,; echo "${wids[*]}")"
+  log "slot $slot sweep: workers=${wids_csv}"
+
+  # Collect (iter_dir, issue_number) pairs across all observed workers.
+  local pairs=() dir issue
+  for w in "${wids[@]}"; do
+    while IFS= read -r dir; do
+      [[ -z "$dir" ]] && continue
+      issue="$(iter_dir_issue_number "$dir")"
+      pairs+=("${dir}|${issue}")
+    done < <(iter_dirs_for_worker "$w")
+  done
+
+  if (( ${#pairs[@]} == 0 )); then
+    log "slot $slot sweep: no iter dirs found for workers ${wids_csv} (no-op sweep, slot stays parked)"
+    return 0
+  fi
+
+  ensure_runner_error_label
+
+  local repo=""
+  if command -v gh >/dev/null 2>&1; then
+    repo="$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || true)"
+  fi
+
+  local pair body affected_issues=()
+  for pair in "${pairs[@]}"; do
+    dir="${pair%%|*}"
+    issue="${pair##*|}"
+    if [[ -n "$issue" && "$issue" != "null" && -n "$repo" ]]; then
+      body="$(build_discard_envelope "$SUPERVISOR_RUNNER" "$slot" "$wids_csv" "$deaths" "$sup_log_rel")"
+      if gh -R "$repo" issue comment "$issue" --body "$body" >/dev/null 2>&1; then
+        log "slot $slot sweep: posted discard envelope on #$issue"
+      else
+        log "slot $slot sweep: WARN failed to post envelope on #$issue"
+      fi
+      gh -R "$repo" issue edit "$issue" \
+        --add-label "ready-for-agent" \
+        --add-label "runner-error" \
+        --remove-label "ready-for-human" \
+        --remove-label "running" \
+        >/dev/null 2>&1 \
+        && log "slot $slot sweep: restored labels on #$issue (+ready-for-agent +runner-error)" \
+        || log "slot $slot sweep: WARN failed to edit labels on #$issue"
+      affected_issues+=("$issue")
+    fi
+    if [[ -d "$dir" ]]; then
+      rm -rf "$dir" \
+        && log "slot $slot sweep: removed iter dir $dir" \
+        || log "slot $slot sweep: WARN failed to rm $dir"
+    fi
+  done
+
+  if (( ${#affected_issues[@]} == 0 )); then
+    log "slot $slot sweep: iter dirs cleaned, no claimed issues to restore"
+  fi
+}
+
 # Handle a slot whose worker has exited: decide park-or-respawn based on
 # fast-death history. A "fast death" is a worker that exited within
 # < FAST_DEATH_THRESHOLD_S of being spawned. Hitting CIRCUIT_K such deaths
@@ -305,6 +471,7 @@ handle_dead_slot() {
       SLOT_TRIP_EPOCH[$slot]="$now"
       log "🔥 slot $slot parked after ${count} fast deaths in ${CIRCUIT_WINDOW_S}s — fix runner & restart"
       write_circuit_state
+      sweep_parked_slot "$slot"
       return
     fi
   fi
