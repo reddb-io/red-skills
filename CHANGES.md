@@ -6,6 +6,18 @@ Upstream base: `mattpocock/skills@e74f0061bb67222181640effa98c675bdb2fdaa7` (see
 
 ---
 
+## afk (engineering) — Fleet Mode commands in SKILL.md
+
+- **status**: modified
+- **upstream**: —
+- **why**: the supervisor existed but had no user-facing entry point in the skill — operators had to know to run `bash scripts/supervisor.sh` and touch `.red/tmp/afk-supervisor.stop` by hand, and the auto-monitor cron from `/afk` was never torn down explicitly. The new `/dev:afk fleet [N]` / `/dev:afk fleet stop` section documents the launch/stop contract, the single-supervisor refusal, the Codex unsupported message, and the cron teardown handshake. Closes #4.
+- **what changed**:
+  - `plugins/dev/skills/engineering/afk/SKILL.md`: new *Fleet Mode (Claude Code only — binding)* section before *Monitor* describing the two subcommands. Launch flow: runner check → PID-file pre-check → `nohup env TARGET=N bash scripts/supervisor.sh` → schedule auto-monitor cron (deduped against existing entry) → report PID, log path, stop command. Stop flow: runner check → liveness check (missing / stale / alive) → touch `.red/tmp/afk-supervisor.stop` → bounded 30s wait for PID file to disappear → `CronList`/`CronDelete` every `/dev:afk monitor` entry. Idempotency clarified — re-running stop after a clean exit is a no-op.
+  - `argument-hint` frontmatter extended with `fleet [N] | fleet stop | monitor`.
+  - *When To Use* gained two bullets for the new subcommands.
+
+---
+
 ## afk (engineering) — supervisor per-slot build-isolation env vars
 
 - **status**: modified

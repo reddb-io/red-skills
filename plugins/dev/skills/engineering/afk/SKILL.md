@@ -1,7 +1,7 @@
 ---
 name: afk
 description: Autonomous loop that drains the `ready-for-agent` queue on the issue tracker. Each iteration claims an issue, runs it in an isolated worktree, executes with claude or codex, merges back to main, and closes the issue. Use when the user wants to run AFK execution, drain a PRD, hammer specific issues, or otherwise let agents grind through the backlog.
-argument-hint: "[--prd N | --issues N,N,N] [--runner claude|codex] [-n N] [--once]"
+argument-hint: "[--prd N | --issues N,N,N] [--runner claude|codex] [-n N] [--once] | fleet [N] | fleet stop | monitor"
 ---
 
 # /afk
@@ -17,6 +17,8 @@ Drain the agent-ready backlog. Single skill that owns issue selection, worktree 
 - `/afk -n 5` — cap at five issues (default: drain until empty).
 - `/afk --once` — single supervised iteration. Same as `scripts/once.sh`. Use for debugging the prompt.
 - `/afk monitor` — readonly status board, aggregates every `.red/tmp/work-*/afk.state.json` so you see all live workers from another terminal.
+- `/afk fleet [N]` — launch the supervisor (Claude Code only) maintaining `N` concurrent workers (default `2`). See *Fleet Mode* below.
+- `/afk fleet stop` — gracefully shut down a running fleet supervisor and cancel its auto-monitor cron.
 
 ## Parallelization
 
@@ -340,6 +342,59 @@ The monitor invocation handles its own teardown — see *Self-Cancel* under the 
 - The invocation is `/afk monitor` (not a worker spawn).
 - The invocation is `/afk --once` (single supervised iteration; user is already watching).
 - `CronCreate` is unavailable (not running under Claude Code — e.g. Codex). Print one line `monitor loop unavailable in this runner; tail .red/tmp/work-*/afk.log manually.` and continue.
+
+## Fleet Mode (Claude Code only — binding)
+
+`/dev:afk fleet [N]` and `/dev:afk fleet stop` are user-facing wrappers around [`scripts/supervisor.sh`](scripts/supervisor.sh). They let one terminal command spin up (or shut down) `N` concurrent `afk.sh` workers on the current checkout, with the supervisor handling respawn, the circuit breaker, and per-slot build isolation (see [`scripts/supervisor.sh`](scripts/supervisor.sh) header for the env contract).
+
+Fleet mode is **Claude-Code-only**: the stop side relies on `CronList`/`CronDelete` to tear down the auto-monitor cron from *Auto-Monitor Loop* above, and those primitives don't exist under Codex. When the active runner is Codex (or `CronCreate`/`CronList` is otherwise unavailable), refuse the launch with one line — `fleet mode is not supported under Codex; run /afk in N terminals instead.` — and exit without side effects. Do not touch the PID file, the stop file, or the cron registry.
+
+### `/dev:afk fleet [N]` — launch
+
+`N` is optional and defaults to `2`. Parse it as a non-negative integer; reject anything else (including `stop`, which is the other subcommand and routes below). Steps the agent must perform, in order:
+
+1. **Runner check.** If running under Codex, print the "not supported under Codex" line and exit. Otherwise continue.
+2. **PID-file pre-check.** Read `.red/tmp/afk-supervisor.pid`. If it exists and `kill -0 <pid>` succeeds, refuse the launch:
+   ```
+   ✗ fleet already running (supervisor pid=<pid>, log .red/tmp/afk-supervisor.log).
+     to stop it: /dev:afk fleet stop
+   ```
+   Do **not** touch the file or attempt to recover. A stale PID file (file exists but `kill -0` fails) is left alone — `supervisor.sh` clears it itself on its own `acquire_lock`.
+3. **Spawn the supervisor.** From the project root:
+   ```bash
+   nohup env TARGET=<N> bash plugins/dev/skills/engineering/afk/scripts/supervisor.sh \
+     >> .red/tmp/afk-supervisor.log 2>&1 < /dev/null &
+   echo $!
+   ```
+   Capture the printed PID. Wait up to 3 s for `.red/tmp/afk-supervisor.pid` to exist and contain a live PID (read it back — the supervisor writes its own `$$`, which may differ from the shell-level `$!` if a wrapper is involved). If it never appears, treat as a launch failure: tail `.red/tmp/afk-supervisor.log` for the last error and report it; do not retry.
+4. **Schedule the auto-monitor cron.** Same flow as *Auto-Monitor Loop* — `CronList` first to deduplicate, then `CronCreate(cron="*/3 * * * *", prompt="/dev:afk monitor", recurring=true)`. Skip if a job with that prompt already exists.
+5. **Report back.** Print exactly:
+   ```
+   🚀 fleet launched (supervisor pid=<pid>, target=<N>)
+      log:   .red/tmp/afk-supervisor.log
+      stop:  /dev:afk fleet stop
+      monitor loop scheduled (every 3 min) — auto-cancels when all workers exit.
+   ```
+   If the monitor cron was skipped because it already existed, swap the last line for `monitor loop already running (existing cron <id>).`.
+
+### `/dev:afk fleet stop` — graceful shutdown
+
+Steps, in order:
+
+1. **Runner check.** If running under Codex, print `fleet mode is not supported under Codex; nothing to stop.` and exit. (Codex never launched a supervisor here, by definition.)
+2. **Liveness check.** Read `.red/tmp/afk-supervisor.pid`. The three cases:
+   - File missing → print `no fleet running.` and continue to step 4 (still try to clear any orphaned monitor cron).
+   - File present but `kill -0` fails → stale. Print `no fleet running (stale pid file at .red/tmp/afk-supervisor.pid — cleaning).`, `rm -f` it, and continue to step 4.
+   - File present and PID alive → continue to step 3.
+3. **Touch the stop file.** `touch .red/tmp/afk-supervisor.stop`. The supervisor's health-check cycle (default `SUPERVISOR_POLL_S=15s`) picks it up and runs `cleanup`, which SIGTERMs every worker, removes the PID file, removes the stop file, and exits. Wait up to **30 s** for the PID file to disappear (poll every 1 s, deadline-bounded — never bare `while`). If it's gone, print `🛑 fleet stopped (supervisor pid=<pid> exited).`. If the deadline trips, print one warning line naming the PID and the log path, and continue to step 4 anyway — the stop file is still there and the supervisor will pick it up eventually.
+4. **Cancel the auto-monitor cron.** `CronList` → find every job whose `prompt == "/dev:afk monitor"` (there will normally be one, possibly zero, occasionally more if the user manually `/loop`-ed). `CronDelete` each. Print one line: `auto-monitor cron cancelled (<count> entr{y,ies}).` (or `no auto-monitor cron to cancel.` when count is zero). Same teardown logic as *Self-Cancel* in the Monitor section — kept here so the user can force-stop without waiting for the next monitor tick.
+5. **Idempotency.** Re-running `/dev:afk fleet stop` after a successful stop just hits the "file missing" branch in step 2 and the "no entries" branch in step 4. Exit 0 either way.
+
+### Refs
+
+- [`scripts/supervisor.sh`](scripts/supervisor.sh) — the binary this section drives. Stop-file path, env contract, and circuit breaker live there.
+- *Auto-Monitor Loop* above — the cron lifecycle Fleet Mode hooks into.
+- *Self-Cancel* under Monitor — the dual teardown path (cron tears itself down when no workers remain; fleet stop tears it down immediately).
 
 ## Monitor
 
