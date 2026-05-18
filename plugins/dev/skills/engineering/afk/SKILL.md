@@ -23,12 +23,12 @@ Drain the agent-ready backlog. Single skill that owns issue selection, worktree 
 `/afk` is **trivially parallel** — just open another terminal and run `/afk` again. No flag, no coordination, no slot to manage.
 
 ```bash
-/afk            # terminal A → spawns worker "k7m2"
-/afk            # terminal B → spawns worker "9rqp"
-/afk            # terminal C → spawns worker "x4nb"
+/afk            # terminal A → spawns worker "wZ2R4"
+/afk            # terminal B → spawns worker "wK7M2"
+/afk            # terminal C → spawns worker "w9RQP"
 ```
 
-Each invocation generates its own **worker ID** — a random 4-char alphanumeric string (`[a-z0-9]`, ~1.6M possible IDs) — and uses it as the prefix for every per-run file. The ID is printed on the first line of the run so you can tail or kill it later.
+Each invocation generates its own **worker ID** — literal `w` plus 4 random characters from `[A-Z0-9]` (e.g. `wZ2R4`, ~1.7M possible IDs) — and uses it as the prefix for every per-run file. The leading `w` makes `work-w*-i*` an unambiguous glob for AFK iteration dirs. The ID is printed on the first line of the run so you can tail or kill it later.
 
 Per-issue files live under `.red/tmp/work-{id}-i{N}/` in the primary checkout. Everything for one (worker, issue) iteration is in one directory — when the iteration ends successfully the whole directory is removed; when it blocks the whole directory is preserved.
 
@@ -58,7 +58,7 @@ Run before the first iteration:
 
 1. Ensure `.red/tmp/` exists. Create it.
 2. Ensure `.red/tmp/` is in `.gitignore` of the primary checkout. Append if missing.
-3. **Generate the worker ID.** 4 random characters from `[a-z0-9]` (e.g. `k7m2`). On the astronomically unlikely chance the chosen ID already maps to a live `.red/tmp/work-{id}-*/afk.pid`, regenerate. Print the ID on the first line of the run: `worker: {id}`. All per-iteration paths interpolate `{id}` and the issue number `{N}`.
+3. **Generate the worker ID.** Literal `w` + 4 random characters from `[A-Z0-9]` (e.g. `wZ2R4`). On the astronomically unlikely chance the chosen ID already maps to a live `.red/tmp/work-{id}-*/afk.pid`, regenerate. Print the ID on the first line of the run: `worker: {id}`. All per-iteration paths interpolate `{id}` and the issue number `{N}`.
 4. Resolve the runner. Order: `--runner` flag > env `AFK_RUNNER` > `claude`. Load [`runner-claude.md`](runner-claude.md) or [`runner-codex.md`](runner-codex.md) so the spawn command is ready.
 5. Read [`SAFETY.md`](SAFETY.md). It is binding for every shell action the loop takes.
 6. Install signal handlers — SIGINT, SIGTERM, and normal exit all release any in-flight issue claim and preserve the active `work-{id}-i{N}/` directory before terminating.
@@ -253,7 +253,7 @@ Redraw every 3 s on the controlling TTY, top of the scroll buffer. Use `tput sc;
 │ done: 3 / 12 (25%)     blocked: 0          merged: 3      │
 │                                                            │
 │ ▶ #142 wire OAuth callback                                 │
-│   worktree: .red/tmp/work-k7m2-i142/worktree               │
+│   worktree: .red/tmp/work-wZ2R4-i142/worktree               │
 │   stage: impl              heartbeat: :two:                │
 │   last: writing tests for callback handler                 │
 │                                                            │
@@ -270,9 +270,9 @@ Path: `.red/tmp/work-{id}-i{N}/afk.state.json` — one snapshot per (worker, iss
 ```json
 {
   "version": 1,
-  "worker_id": "k7m2",
+  "worker_id": "wZ2R4",
   "pid": 12340,
-  "log": ".red/tmp/work-k7m2-i142/afk.log",
+  "log": ".red/tmp/work-wZ2R4-i142/afk.log",
   "started_at": "2026-05-16T12:00:00-03:00",
   "runner": "codex",
   "filter": { "kind": "prd|issues|all", "value": "42" },
@@ -286,8 +286,8 @@ Path: `.red/tmp/work-{id}-i{N}/afk.state.json` — one snapshot per (worker, iss
     "number": 142,
     "title": "wire OAuth callback",
     "slug": "wire-oauth-callback",
-    "worktree": ".red/tmp/work-k7m2-i142/worktree",
-    "handoff": ".red/tmp/work-k7m2-i142/handoff.md",
+    "worktree": ".red/tmp/work-wZ2R4-i142/worktree",
+    "handoff": ".red/tmp/work-wZ2R4-i142/handoff.md",
     "started_at": "2026-05-16T12:14:00-03:00",
     "stage": "impl",
     "heartbeat_glyph": ":two:",
@@ -328,8 +328,8 @@ Compact output shape (≈3 lines total for 2 workers — fits inline without tru
 
 ```
 48h: ···············································█  (4 closed, peak 4/h, all workers)
-evxa [live] claude  4/5 (80%)  #150 [blog/D] Agent SDK on RedDB  stage:impl  00:23:01
-9ni1 [stale] codex  0/16 (0%)  #521 Blockchain Collection Kind   stage:impl  02:00:01
+wZ2R4 [live] claude  4/5 (80%)  #150 [blog/D] Agent SDK on RedDB  stage:impl  00:23:01  +382 -45
+wK7M2 [stale] codex  0/16 (0%)  #521 Blockchain Collection Kind   stage:impl  02:00:01
 ```
 
 When invoking from inside another agent session (Claude Code, Codex), prefer `--once` even if stdin is a pipe — explicit beats inference. Don't use the full TTY mode in agent transcripts; the 3 s refresh loop floods the captured stream and gets truncated to garbage.
@@ -345,9 +345,9 @@ The header of every render shows a **48h sparkline** of issues closed, one glyph
 Source data: `.red/state/afk-history.jsonl`, an append-only event log written by the orchestrator on every terminal event:
 
 ```jsonl
-{"ts":"2026-05-17T12:14:00-03:00","epoch":1747494840,"worker":"sci2","issue":571,"event":"done","duration_s":816,"runner":"codex","merge_sha":"0936ba54"}
-{"ts":"...","epoch":...,"worker":"sci2","issue":569,"event":"blocked","duration_s":120,"runner":"codex","reason":"merge-conflict"}
-{"ts":"...","epoch":...,"worker":"sci2","issue":568,"event":"exhausted","duration_s":0,"runner":"claude","reason":"both-runners"}
+{"ts":"2026-05-17T12:14:00-03:00","epoch":1747494840,"worker":"wK7M2","issue":571,"event":"done","duration_s":816,"runner":"codex","merge_sha":"0936ba54"}
+{"ts":"...","epoch":...,"worker":"wK7M2","issue":569,"event":"blocked","duration_s":120,"runner":"codex","reason":"merge-conflict"}
+{"ts":"...","epoch":...,"worker":"wK7M2","issue":568,"event":"exhausted","duration_s":0,"runner":"claude","reason":"both-runners"}
 ```
 
 `.red/state/` is gitignored. The orchestrator creates it during bootstrap, parallel workers serialise appends via `flock`, and `prune_orphans` truncates the file to the last 10000 lines if it grows past that cap.

@@ -38,11 +38,14 @@ STATE_DIR="$PROJECT_ROOT/.red/state"
 HISTORY_FILE="$STATE_DIR/afk-history.jsonl"
 HISTORY_MAX_LINES=10000
 
-# Worker ID — 4 chars from [a-z0-9]. Regenerated until no live .red/tmp/work-{id}-i*/afk.pid exists.
+# Worker ID — literal "w" + 4 chars from [A-Z0-9] (e.g. wZ2R4).
+# Regenerated until no live .red/tmp/work-{id}-i*/afk.pid exists.
+# Format is distinct from arbitrary directory globs so `work-w*-i*` reliably
+# matches only AFK iteration dirs, and IDs stand out visually in logs.
 gen_worker_id() {
   local id
   while :; do
-    id="$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom | head -c 4)"
+    id="w$(LC_ALL=C tr -dc 'A-Z0-9' </dev/urandom | head -c 4)"
     [[ -z "$(ls -d "$TMP_DIR"/work-"$id"-i* 2>/dev/null)" ]] && { echo "$id"; return; }
   done
 }
