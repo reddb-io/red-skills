@@ -6,6 +6,17 @@ Upstream base: `mattpocock/skills@e74f0061bb67222181640effa98c675bdb2fdaa7` (see
 
 ---
 
+## afk (engineering) — supervisor circuit breaker + monitor parked rendering
+
+- **status**: modified
+- **upstream**: —
+- **why**: a misconfigured runner that fast-fails workers (auth broken, missing dependency, panic-on-startup) could burn cycles indefinitely — the supervisor respawned them blindly. The circuit breaker parks the slot after K=5 fast deaths inside a 90s window so other slots keep working while the operator fixes the broken runner. The monitor surfaces parked slots so the fleet shrinkage is visible.
+- **what changed**:
+  - `plugins/dev/skills/engineering/afk/scripts/supervisor.sh`: per-slot fast-death ring buffer (tunable via `SUPERVISOR_FAST_DEATH_S` / `SUPERVISOR_CIRCUIT_K` / `SUPERVISOR_CIRCUIT_WINDOW_S`, defaults `30s` / `5` / `90s`). Worker death within `< FAST_DEATH_THRESHOLD_S` of spawn counts as a fast death; entries older than the window are pruned on each pass; hitting K parks the slot, logs `🔥 slot N parked after K fast deaths in 90s — fix runner & restart`, and writes `.red/tmp/afk-supervisor-circuit.json`. Parked slots are skipped in the respawn loop until the supervisor restarts; the circuit file is cleared both on shutdown and on a fresh `acquire_lock`.
+  - `plugins/dev/skills/engineering/afk/scripts/monitor.sh`: new `render_parked_slots` reads the circuit JSON and emits one `slot-N [⛔ parked] fast_deaths=… last_death=…` row per parked slot in both TTY and compact modes. `[⛔ parked]` joins the existing `[live]` / `[stale]` / `[dead]` palette. Agent rendering contract updated to require surfacing parked rows verbatim with a `/dev:afk fleet stop` recommendation.
+
+---
+
 ## afk (engineering) — monitor renders supervisor header
 
 - **status**: modified

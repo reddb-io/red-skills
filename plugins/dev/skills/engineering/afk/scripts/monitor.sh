@@ -50,11 +50,34 @@ color_pct() {
 
 color_status() {
   case "$1" in
-    live)  printf '%s' "$C_GREEN" ;;
-    stale) printf '%s' "$C_YELLOW" ;;
-    dead)  printf '%s' "$C_RED" ;;
-    *)     printf '%s' "$C_GRAY" ;;
+    live)   printf '%s' "$C_GREEN" ;;
+    stale)  printf '%s' "$C_YELLOW" ;;
+    dead)   printf '%s' "$C_RED" ;;
+    parked) printf '%s' "$C_RED$C_BOLD" ;;
+    *)      printf '%s' "$C_GRAY" ;;
   esac
+}
+
+# Render one row per parked slot from the supervisor's circuit state file.
+# Emits nothing when the file is absent or has no parked entries — so
+# pre-#12 fleets and healthy fleets are unaffected.
+render_parked_slots() {
+  local circuit_file="$TMP_DIR/afk-supervisor-circuit.json"
+  [[ -f "$circuit_file" ]] || return 0
+  local rows; rows="$(jq -c '.parked[]?' "$circuit_file" 2>/dev/null || true)"
+  [[ -z "$rows" ]] && return 0
+  local row slot count last
+  while IFS= read -r row; do
+    [[ -z "$row" ]] && continue
+    slot="$(jq -r '.slot' <<<"$row")"
+    count="$(jq -r '.fast_deaths' <<<"$row")"
+    last="$(jq -r '.last_death_at // "?"' <<<"$row")"
+    printf '%sslot-%s%s %s[⛔ parked]%s  %sfast_deaths=%s last_death=%s%s  %srun /dev:afk fleet stop & relaunch to clear%s\n' \
+      "$C_CYAN$C_BOLD" "$slot" "$C_RESET" \
+      "$(color_status parked)" "$C_RESET" \
+      "$C_DIM" "$count" "$last" "$C_RESET" \
+      "$C_DIM" "$C_RESET"
+  done <<<"$rows"
 }
 
 fmt_dur() {
@@ -360,9 +383,10 @@ render_full() {
   local states=( "$TMP_DIR"/work-*/afk.state.json )
   if [[ ! -e "${states[0]}" ]]; then
     echo "no live iterations under $TMP_DIR/work-*/ — /afk not running here?"
-    return
+  else
+    for sf in "${states[@]}"; do render_worker "$sf"; done
   fi
-  for sf in "${states[@]}"; do render_worker "$sf"; done
+  render_parked_slots
 }
 
 render_compact() {
@@ -377,9 +401,10 @@ When you summarise the lines below for the user, follow these rules verbatim. Tr
 
 1. ALWAYS include the "48h: …" sparkline line as the first line of your summary. Reproduce the bar, "(N closed, peak M/h, all workers)" suffix included. It is the at-a-glance throughput signal and must not be dropped even when worker activity is more salient.
 2. ALWAYS include every worker line, one per worker, in the original order. Do not collapse, drop, or merge workers.
-3. Preserve the colour cues. Map: [live]=green, [stale]=yellow, [dead]=red, blk:N/fail:N=red bold, progress percent — 0-33 red / 33-66 yellow / 66-99 cyan / 100 green, diff +N=green / -M=red, worker id cyan+bold, stage:X magenta, elapsed dim, ⚠ stalled?/⚠ no log warnings yellow bold. Render via markdown (bold, code spans, emoji squares 🟢🟡🔴 if needed) when ANSI is unavailable. Keep tag spelling and column order intact.
+3. Preserve the colour cues. Map: [live]=green, [stale]=yellow, [dead]=red, [⛔ parked]=red bold, blk:N/fail:N=red bold, progress percent — 0-33 red / 33-66 yellow / 66-99 cyan / 100 green, diff +N=green / -M=red, worker id cyan+bold, stage:X magenta, elapsed dim, ⚠ stalled?/⚠ no log warnings yellow bold. Render via markdown (bold, code spans, emoji squares 🟢🟡🔴⛔ if needed) when ANSI is unavailable. Keep tag spelling and column order intact.
 4. When a worker line carries a `| <text>` suffix, it is the most recent line written to that worker's afk.log — surface it verbatim (truncated as the script already truncated it). It is the single most useful "is the inner agent alive" signal; do not drop it.
 5. When a worker line carries `⚠ stalled? log idle Ns`, repeat the warning verbatim and recommend the user run the bash-hang diagnostic from afk/SKILL.md (`pstree -p <orchestrator-pid>`, look for `until.*test result` cmdline). `⚠ no log` means the worker was spawned with v1.10.0 or earlier — recommend upgrading to v1.10.1+ for log tee, or v1.14.2+ for the full set of fixes.
+6. Lines beginning `slot-N [⛔ parked]` mean the fleet supervisor tripped its per-slot circuit breaker (≥5 fast worker deaths within 90s). Always surface them — they explain why the fleet shrank below target. Recommend `/dev:afk fleet stop` followed by a relaunch to clear the parked state, and tell the user to investigate the runner before relaunching.
 
 === begin dashboard ===
 EOF
@@ -388,9 +413,10 @@ EOF
   local states=( "$TMP_DIR"/work-*/afk.state.json )
   if [[ ! -e "${states[0]}" ]]; then
     echo "workers: (none — /afk not running here)"
-    return
+  else
+    for sf in "${states[@]}"; do render_worker_compact "$sf"; done
   fi
-  for sf in "${states[@]}"; do render_worker_compact "$sf"; done
+  render_parked_slots
 }
 
 command -v jq >/dev/null || { echo "jq required" >&2; exit 2; }

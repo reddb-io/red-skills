@@ -8,10 +8,16 @@
 #   TARGET — desired worker count (default 2)
 #
 # State (all under $PROJECT_ROOT/.red/tmp/, gitignored):
-#   afk-supervisor.pid          — supervisor PID (single-supervisor lock)
-#   afk-supervisor.log          — supervisor event log
-#   afk-supervisor.stop         — touch to request graceful shutdown
-#   afk-supervisor-slot-N.log   — per-slot worker stdout/stderr
+#   afk-supervisor.pid           — supervisor PID (single-supervisor lock)
+#   afk-supervisor.log           — supervisor event log
+#   afk-supervisor.stop          — touch to request graceful shutdown
+#   afk-supervisor-slot-N.log    — per-slot worker stdout/stderr
+#   afk-supervisor-circuit.json  — parked-slot circuit state (see below)
+#
+# Circuit breaker: each slot tracks fast deaths (worker exit within
+# < FAST_DEATH_THRESHOLD_S seconds of spawn). Hitting CIRCUIT_K such
+# deaths inside a CIRCUIT_WINDOW_S window parks the slot — no more
+# respawns until the supervisor is restarted. Other slots keep going.
 #
 # The supervisor only manages worker process lifecycle. Workers are normal
 # `afk.sh` invocations and own all claim-lock / state / queue semantics.
@@ -31,10 +37,16 @@ mkdir -p "$TMP_DIR"
 PID_FILE="$TMP_DIR/afk-supervisor.pid"
 LOG_FILE="$TMP_DIR/afk-supervisor.log"
 STOP_FILE="$TMP_DIR/afk-supervisor.stop"
+CIRCUIT_FILE="$TMP_DIR/afk-supervisor-circuit.json"
 
 TARGET="${TARGET:-2}"
 STAGGER_S="${SUPERVISOR_STAGGER_S:-2}"
 POLL_S="${SUPERVISOR_POLL_S:-15}"
+
+# Circuit breaker tunables (overridable for tests).
+FAST_DEATH_THRESHOLD_S="${SUPERVISOR_FAST_DEATH_S:-30}"
+CIRCUIT_K="${SUPERVISOR_CIRCUIT_K:-5}"
+CIRCUIT_WINDOW_S="${SUPERVISOR_CIRCUIT_WINDOW_S:-90}"
 
 # ---------- logging ----------
 log() {
@@ -58,11 +70,19 @@ acquire_lock() {
     rm -f "$PID_FILE"
   fi
   echo "$$" > "$PID_FILE"
+  # Clear stale circuit state from a previous (crashed) supervisor. Restart
+  # is the unparking mechanism — see acceptance criteria for #12.
+  rm -f "$CIRCUIT_FILE"
   log "acquired lock (pid=$$, target=$TARGET, project=$PROJECT_ROOT)"
 }
 
 # ---------- worker management ----------
 declare -a SLOT_PIDS=()
+declare -a SLOT_SPAWN_EPOCH=()
+declare -a SLOT_FAST_DEATHS=()       # space-separated death epochs, pruned to window
+declare -a SLOT_PARKED=()
+declare -a SLOT_TRIP_EPOCH=()
+declare -a SLOT_LAST_DEATH_EPOCH=()
 
 spawn_slot() {
   local slot="$1"
@@ -70,7 +90,60 @@ spawn_slot() {
   nohup "$AFK_SH" "$PROJECT_ROOT" >>"$slot_log" 2>&1 </dev/null &
   local pid=$!
   SLOT_PIDS[$slot]=$pid
+  SLOT_SPAWN_EPOCH[$slot]="$(date +%s)"
   log "slot $slot: spawned worker pid=$pid (log=$slot_log)"
+}
+
+# Write the parked-slot state file. Called whenever a slot trips.
+write_circuit_state() {
+  local entries=() i trip last count trip_iso last_iso
+  for ((i=0; i<TARGET; i++)); do
+    [[ "${SLOT_PARKED[$i]:-0}" == "1" ]] || continue
+    trip="${SLOT_TRIP_EPOCH[$i]:-0}"
+    last="${SLOT_LAST_DEATH_EPOCH[$i]:-0}"
+    count="$(echo "${SLOT_FAST_DEATHS[$i]:-}" | wc -w | tr -d ' ')"
+    trip_iso="$(date -Iseconds -d "@$trip" 2>/dev/null || echo "")"
+    last_iso="$(date -Iseconds -d "@$last" 2>/dev/null || echo "")"
+    entries+=("{\"slot\":$i,\"trip_at_epoch\":$trip,\"trip_at\":\"$trip_iso\",\"last_death_at_epoch\":$last,\"last_death_at\":\"$last_iso\",\"fast_deaths\":$count}")
+  done
+  local joined; joined="$(IFS=,; echo "${entries[*]}")"
+  printf '{"parked":[%s]}\n' "$joined" > "$CIRCUIT_FILE"
+}
+
+# Handle a slot whose worker has exited: decide park-or-respawn based on
+# fast-death history. A "fast death" is a worker that exited within
+# < FAST_DEATH_THRESHOLD_S of being spawned. Hitting CIRCUIT_K such deaths
+# inside CIRCUIT_WINDOW_S parks the slot — log a loud line, record state,
+# and stop spawning. Slow deaths reset nothing in particular: the death-time
+# ring naturally prunes anything older than the window on each pass.
+handle_dead_slot() {
+  local slot="$1"
+  local now spawn_at lifetime
+  now="$(date +%s)"
+  spawn_at="${SLOT_SPAWN_EPOCH[$slot]:-0}"
+  lifetime=$(( now - spawn_at ))
+
+  if (( spawn_at > 0 && lifetime < FAST_DEATH_THRESHOLD_S )); then
+    local times="${SLOT_FAST_DEATHS[$slot]:-} $now"
+    local pruned="" t
+    for t in $times; do
+      [[ -z "$t" ]] && continue
+      (( now - t <= CIRCUIT_WINDOW_S )) && pruned+=" $t"
+    done
+    SLOT_FAST_DEATHS[$slot]="${pruned# }"
+    SLOT_LAST_DEATH_EPOCH[$slot]="$now"
+    local count; count="$(echo "${SLOT_FAST_DEATHS[$slot]}" | wc -w | tr -d ' ')"
+    log "slot $slot: fast death (lifetime=${lifetime}s, ${count}/${CIRCUIT_K} in ${CIRCUIT_WINDOW_S}s window)"
+    if (( count >= CIRCUIT_K )); then
+      SLOT_PARKED[$slot]=1
+      SLOT_TRIP_EPOCH[$slot]="$now"
+      log "🔥 slot $slot parked after ${count} fast deaths in ${CIRCUIT_WINDOW_S}s — fix runner & restart"
+      write_circuit_state
+      return
+    fi
+  fi
+
+  spawn_slot "$slot"
 }
 
 terminate_all() {
@@ -92,6 +165,7 @@ cleanup() {
   log "shutdown requested; terminating workers"
   terminate_all
   rm -f "$PID_FILE"
+  rm -f "$CIRCUIT_FILE"
   [[ -f "$STOP_FILE" ]] && rm -f "$STOP_FILE"
   log "supervisor exiting"
   exit 0
@@ -115,10 +189,11 @@ while :; do
   sleep "$POLL_S" &
   wait $! 2>/dev/null || true
   for ((i=0; i<TARGET; i++)); do
+    [[ "${SLOT_PARKED[$i]:-0}" == "1" ]] && continue
     pid="${SLOT_PIDS[$i]:-}"
     if [[ -z "$pid" ]] || ! kill -0 "$pid" 2>/dev/null; then
-      log "slot $i: worker pid=${pid:-none} not alive; respawning"
-      spawn_slot "$i"
+      log "slot $i: worker pid=${pid:-none} not alive"
+      handle_dead_slot "$i"
     fi
   done
 done
