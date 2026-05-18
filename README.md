@@ -204,6 +204,9 @@ Strongly recommended before draining a non-trivial backlog with `/afk`. **Pays f
 
 ```
 $ /afk
+[afk] worker: wK7M2
+[afk] runner: claude (detected via pin)
+[afk] unblocked 2 issue(s): #143 #144
 [afk] 12 issue(s) queued (filter=all, runner=claude, cap=∞)
 [afk] ▶ #142 wire OAuth callback
 [afk] feedback: test:✓ typecheck:✓ lint:✓ build:✓
@@ -213,7 +216,7 @@ $ /afk
 [afk] ✓ #143 done in 9m 04s — merge 8e1d70c — 2/12 (17%) — next: #144
 …
 [afk] /afk done.
-[afk] runner    : codex (7 issues), claude (5 issues)
+[afk] runner    : claude (12 issues)
 [afk] duration  : 02:43:11
 [afk] processed : 12 closed, 0 blocked, 0 failed
 ```
@@ -222,15 +225,17 @@ Point it at your `ready-for-agent` backlog and walk away. For each issue, `/afk`
 
 | Step | What happens | Why it matters |
 |------|--------------|----------------|
-| **Claim** | `ready-for-agent` → `running` (atomic) | Two parallel `/afk` runs never race on the same issue |
-| **Isolate** | Spawns worktree in `../.workspaces/{repo}-{N}/` | Primary checkout stays clean on `main`, always |
+| **Claim** | `ready-for-agent` → `running` via 3-layer lock (mkdir + gh pre-check + stale sweep) | Two parallel `/afk` runs never race on the same issue, even cross-checkout |
+| **Isolate** | Spawns worktree in `.red/tmp/work-{worker}-i{N}/worktree/` | Primary checkout stays clean on `main`, always; gitignored so nothing leaks |
 | **Brief** | Hands the issue's AGENT-BRIEF to Claude or Codex | The inner agent works from a contract, not the raw issue body |
+| **Hooks** | Runs `pre-iteration` / `pre-merge` / `post-merge` / `post-iteration` per `.red/config.yaml` | Detectors (`cargo`, `gradle`) auto-set per-slot env to avoid build-lock contention |
 | **Implement** | Inner agent codes via TDD inside the worktree | Failing test first, then code, then green |
-| **Heartbeat** | Posts `:one:` → `:four:` on GitHub every 10 min | The issue is never silent during long runs |
-| **Verify** | `pnpm test && typecheck && lint && build` | Three retries before flagging blocker |
+| **Verify** | `pnpm test && typecheck && lint && build` | Two retries before flagging blocker |
 | **Merge** | `git merge --no-ff` back into `main`, push over SSH | Auto-snapshot if primary is dirty; never `stash`/`reset`/`force` |
-| **Close** | Validation comment, `gh issue close`, drop worktree | Per-issue summary; clean filesystem afterwards |
-| **Tick** | Updates `.red/tmp/afk-{id}.state.json`, picks next | Live dashboard sees the transition instantly |
+| **Envelope** | Posts a structured `<details data-attempt-status="…">` on the issue thread for every terminal event | Issue thread becomes the canonical ledger — retries on any machine see the full history |
+| **Branch push** | On non-DONE attempts, pushes the branch to `afk-attempts/{worker}/{N}-{slug}` | Forensic diff visible on GitHub's compare view, even when nothing landed on `main` |
+| **Close** | Validation comment, `gh issue close`, drop worktree | Per-issue summary; iter dir self-collects |
+| **Watchdog** | Kills the pipeline tree if the inner agent emits a sentinel but the stream stays open | Survives the "bash polling loop hung the agent" failure mode |
 | **Survive** | Hits a rate limit? Swaps runner mid-issue. Both out? Releases claim, exits 75 | You resume tomorrow, no lost work |
 
 ### Invocation modes
@@ -239,34 +244,81 @@ Point it at your `ready-for-agent` backlog and walk away. For each issue, `/afk`
 /afk                            # drain everything ready-for-agent
 /afk --prd 42                   # drain just the children of PRD #42
 /afk --issues 356,359,362       # explicit list, in argument order
-/afk --runner codex             # pin a backend (default: alternates each issue)
+/afk --runner claude            # pin a backend (default: claude first, codex fallback on exhaustion)
 /afk -n 5                       # cap at five issues
 /afk --once                     # supervised single iteration (debug mode)
 /afk                            # run it again in another terminal — auto-parallel, no flag needed
 /afk monitor                    # readonly live status board, aggregates every worker, second terminal
+/afk fleet [N]                  # spawn a supervisor that maintains N workers (default 2) — respawn + circuit breaker
+/afk fleet stop                 # graceful shutdown of the supervisor + auto-monitor cron
 ```
 
-Every `/afk` invocation gets its own random 4-char worker ID (e.g. `k7m2`), so opening N terminals = N parallel workers with zero coordination. Label transitions on GitHub are atomic, so two workers can never claim the same issue.
+Every `/afk` invocation gets its own 4-char worker ID (e.g. `wK7M2`), so opening N terminals = N parallel workers with zero coordination — or use `/afk fleet 4` for a single command that supervises four. Label transitions on GitHub are atomic, so two workers can never claim the same issue.
 
 ### Live monitor
 
-`/afk` writes atomic state to `.red/tmp/afk-{id}.state.json` and streams logs to `.red/tmp/afk-{id}.log`. Open a second terminal:
+Every iteration writes atomic state to `.red/tmp/work-{worker}-i{N}/afk.state.json` and tees the inner agent's stdout into `afk.log` alongside it. Open a second terminal:
 
 ```
+48h: ·▁··▁·▁·▁··█▁▁··▁·▁···▁·▁·▆▁▁··▁···▁▆·▁··▁▃▁·▃▁·  (35 closed, peak 5/h)
+
 ┌─ /afk monitor ─────────────────────────────────────────────┐
-│ runner: codex          elapsed: 00:14:23   eta: ~01:20:00 │
-│ done: 3 / 12 (25%)     blocked: 0          failed: 0      │
+│ runner: claude         elapsed: 00:14:23   eta: ~01:20:00 │
+│ done: 3 / 12 (25%)     blocked: 0          merged: 3      │
 │                                                            │
 │ ▶ #142 wire OAuth callback                                 │
-│   worktree: ../.workspaces/red-skills-142                  │
-│   stage: impl              heartbeat: :two:                │
+│   worktree: .red/tmp/work-wK7M2-i142/worktree              │
+│   stage: impl                                              │
 │   last: writing tests for callback handler                 │
 │                                                            │
 │ queue: #143 #144 #145 #146 ...                             │
 └────────────────────────────────────────────────────────────┘
 ```
 
-Designed for terminals you leave open while you do something else. Or sleep.
+The 48 h sparkline at the top aggregates `.red/state/afk-history.jsonl` across every worker — at-a-glance throughput. Compact one-line variant kicks in automatically when the monitor is piped, so it's safe to invoke inline from another agent.
+
+Designed for terminals you leave open while you do something else. Or sleep. Under Claude Code, every worker spawn also schedules an auto-monitor cron that re-renders every 3 min and self-cancels when all workers exit.
+
+### Statusline
+
+`/setup-red-skills` wires a project-aware statusline into Claude Code's bottom bar. One line, always-on:
+
+```
+red-skills (main) · Opus·high · 47k 24% · 🤖2 📋3 🙋1 +382 -45 #142
+```
+
+Project basename, git branch, model + effort, context tokens with a percent colour-coded by threshold, then a zero-suppressed AFK block — workers running, queue depth, ready-for-human count, diff against `main`, current issue numbers as OSC 8 hyperlinks to the GitHub thread. Opt out per-project with `statusline: false` in `.red/config.yaml`.
+
+### Hooks & detectors (`.red/config.yaml`)
+
+`/afk` runs four orchestrator phases (`pre-iteration`, `pre-merge`, `post-merge`, `post-iteration`) and two supervisor phases (`pre-spawn`, `post-exit`). Each phase fires three layers in order:
+
+1. **Shipped detectors** — `cargo`, `gradle` and friends ship with the skill. When `Cargo.toml` is present, `cargo` sets `CARGO_TARGET_DIR=/opt/cargo-target/slot-${AFK_SLOT}` so parallel workers don't deadlock on the same target directory.
+2. **Project hooks** — drop a script under `.red/hooks/` and it runs after the shipped detectors. Same env-file protocol: write `KEY=value` lines to `$AFK_HOOK_ENV_FILE` and the orchestrator inherits them for the next stage.
+3. **Main hook** — the actual git/test/merge action.
+
+Disable any of it with `.red/config.yaml`:
+
+```yaml
+afk:
+  hooks:
+    cargo: false           # disable the shipped cargo detector
+    gradle: true
+statusline: false           # quiet the bottom-bar AFK block
+```
+
+### Canonical ledger — the issue thread *is* the record
+
+Every terminal event of every attempt posts a single structured comment on the issue:
+
+```html
+<details data-attempt-status="blocked"><summary>worker `wK7M2` · status: blocked · duration: 2m5s · diff: +42 -10 · attempt: 1</summary>
+  <details data-section="notes">…handoff Notes…</details>
+  <details data-section="log">…last 50 lines of inner-agent stdout…</details>
+</details>
+```
+
+Four statuses (`done`, `blocked`, `no-sentinel`, `merge-conflict`) with deterministic schema. Non-DONE attempts also push the branch to `afk-attempts/{worker}/{N}-{slug}` so the diff is reviewable on GitHub even though it never landed on `main`. Next attempt — on this machine or another — re-reads the envelope chain and feeds it to the inner agent as retry context. Cross-machine continuity, no hidden state.
 
 ### Safe by construction, not by hope
 
@@ -370,7 +422,7 @@ Composable. Boring on purpose where boring is enough. Sharp where it matters.
 
 | Skill | What it does |
 |-------|--------------|
-| **[afk](./plugins/dev/skills/engineering/afk/SKILL.md)** | Drains `ready-for-agent` issues in isolated worktrees. Claude/Codex alternating. Live heartbeat + monitor + completion %. |
+| **[afk](./plugins/dev/skills/engineering/afk/SKILL.md)** | Drains `ready-for-agent` issues in isolated worktrees. Claude/Codex runner cascade, fleet mode (`/afk fleet N`), pluggable detectors via `.red/config.yaml`, canonical attempt envelopes on the issue thread, 48h sparkline monitor, statusline integration. |
 | **[diagnose](./plugins/dev/skills/engineering/diagnose/SKILL.md)** | Disciplined diagnosis: reproduce → minimise → hypothesise → instrument → fix → regression-test. |
 | **[start](./plugins/dev/skills/engineering/start/SKILL.md)** | Grilling session that challenges your plan against the domain model; updates `.red/CONTEXT.md` and ADRs inline. |
 | **[triage](./plugins/dev/skills/engineering/triage/SKILL.md)** | Moves issues through the triage state machine; writes the AGENT-BRIEF that `/afk` will consume. |
