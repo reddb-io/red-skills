@@ -39,7 +39,7 @@ Codex signals quota / rate limit exhaustion via:
 - Last-message file containing `usage limit`, `weekly cap`, `session exhausted`, or `try again later`.
 - Process exit code non-zero combined with a recognised error string on stderr.
 
-On any of those, the orchestrator emits `RUNNER_EXHAUSTED`, kills heartbeat, preserves the worktree, and swaps to Claude if alternation is enabled.
+On any of those, the orchestrator emits `RUNNER_EXHAUSTED`, preserves the worktree, and swaps to Claude if alternation is enabled. (Since Slice D there is no heartbeat sub-shell to reap.)
 
 ## Working Directory
 

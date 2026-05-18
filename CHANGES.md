@@ -6,6 +6,18 @@ Upstream base: `mattpocock/skills@e74f0061bb67222181640effa98c675bdb2fdaa7` (see
 
 ---
 
+## afk (engineering) — Slice D: remove heartbeat-glyph comments from issue threads
+
+- **status**: modified
+- **upstream**: —
+- **why**: periodic `:one:` / `:two:` / `:three:` / `:four:` glyph comments posted every 10 minutes from a background sub-shell were polluting issue threads and consuming `gh` quota. The thread is now timeline-only (boot stamp, attempt envelopes, human guidance, closing envelope) per the Slice D goal of issue #7 / parent #2.
+- **what changed**:
+  - `plugins/dev/skills/engineering/afk/scripts/afk.sh`: removed the heartbeat sub-shell entirely. `heartbeat_start` / `heartbeat_stop` are kept as call-site no-ops that write a single `[heartbeat] iteration started|stopped …` line to `afk.log` so forensic readers can still see iteration boundaries. Removed the `gh issue comment` heartbeat loop and the zombie-heartbeat reaper inside `prune_orphans` — there is no longer a sub-shell to kill. State init writes `heartbeat_glyph: null`, `heartbeat_pid: null` (vestigial fields, retained one release for compatibility).
+  - `plugins/dev/skills/engineering/afk/scripts/monitor.sh`: dropped the `heartbeat: <glyph>` field from the per-worker compact view; liveness still derives from PID + state-file mtime.
+  - `SKILL.md`: replaced the *Heartbeat Protocol* section with *Heartbeat (local-only, post-Slice-D)* describing the local-only signals; removed the heartbeat sub-shell branch from the Issue Lifecycle diagram and the *Live Header* example; reflected the change in *Per-Issue Loop* step 4, *Orphan Cleanup* step 1, *Terminal-Event Envelope* deferred-work bullets, the State File schema, and the orchestrator abort path. `SAFETY.md`, `runner-claude.md`, `runner-codex.md`: removed "kill heartbeat" language from the signal-handling, abort, and runner-exhaustion paths.
+
+---
+
 ## afk (engineering) — structured terminal-event envelope writer + split TTL
 
 - **status**: modified

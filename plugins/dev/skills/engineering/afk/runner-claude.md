@@ -52,7 +52,7 @@ Claude signals rate limit / quota exhaustion in any of these ways:
 - Final result string containing `Claude usage limit reached`, `weekly limit`, `session limit`, or `quota`.
 - Process exit code 429 or 503.
 
-On any of those, the orchestrator emits the internal `RUNNER_EXHAUSTED` signal, kills the heartbeat, preserves the worktree, and swaps to Codex if alternation is enabled.
+On any of those, the orchestrator emits the internal `RUNNER_EXHAUSTED` signal, preserves the worktree, and swaps to Codex if alternation is enabled. (Since Slice D there is no heartbeat sub-shell to reap.)
 
 ## Working Directory
 

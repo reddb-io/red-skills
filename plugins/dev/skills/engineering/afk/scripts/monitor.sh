@@ -315,7 +315,6 @@ render_worker() {
   current_n="$(jq -r '.current.number // "-"' <<<"$state")"
   current_title="$(jq -r '.current.title // "-"' <<<"$state")"
   current_stage="$(jq -r '.current.stage // "-"' <<<"$state")"
-  current_glyph="$(jq -r '.current.heartbeat_glyph // ""' <<<"$state")"
   current_worktree="$(jq -r '.current.worktree // "-"' <<<"$state")"
   current_last="$(jq -r '.current.last_stream_line // ""' <<<"$state")"
 # Prefer the live tail of afk.log over the state field (which the
@@ -360,7 +359,7 @@ fi
   if [[ "$current_n" != "-" && "$current_n" != "null" ]]; then
     printf '%s│%s %s▶ #%s%s %s\n' "$b" "$r" "$C_BOLD" "$current_n" "$r" "${current_title:0:50}"
     printf '%s│%s   worktree: %s%s%s\n' "$b" "$r" "$C_DIM" "${current_worktree:0:55}" "$r"
-    printf '%s│%s   stage: %s%-12s%s heartbeat: %s\n' "$b" "$r" "$C_MAGENTA" "$current_stage" "$r" "$current_glyph"
+    printf '%s│%s   stage: %s%-12s%s\n' "$b" "$r" "$C_MAGENTA" "$current_stage" "$r"
     local wt_abs="$current_worktree"
     [[ -n "$wt_abs" && "$wt_abs" != "null" && "$wt_abs" != /* ]] && wt_abs="$PROJECT_ROOT/$current_worktree"
     local diff_stat=""

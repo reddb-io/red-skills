@@ -143,7 +143,7 @@ history_trim() {
 # ---------- orphan iteration cleanup ----------
 # Sweeps $TMP_DIR/work-*/ at boot. An iteration dir is orphaned when its
 # orchestrator pid is dead. For each orphan:
-#   - kill zombie heartbeat sub-shell (if state file records its pid)
+#   - (heartbeat sub-shell retired — Slice D)
 #   - if the issue is closed OR no longer carries ready-for-human → rm -rf
 #   - if the issue is still labelled running (orchestrator crashed mid-issue)
 #     → restore ready-for-agent, comment, then rm -rf
@@ -173,11 +173,8 @@ prune_orphans() {
       fi
     fi
 
-    # zombie heartbeat → kill
-    if [[ -f "$state_file" ]]; then
-      local hb; hb="$(jq -r '.current.heartbeat_pid // empty' "$state_file" 2>/dev/null)"
-      [[ -n "$hb" && "$hb" != "null" ]] && kill "$hb" 2>/dev/null || true
-    fi
+    # Heartbeat sub-shell was retired in Slice D — nothing to reap here.
+    # heartbeat_pid in older state files is vestigial and ignored.
 
     local mtime_s; mtime_s="$(stat -c %Y "$d" 2>/dev/null || echo 0)"
     local safe=0
@@ -494,26 +491,23 @@ gh_repo() {
     | sed -E 's#\.git$##'
 }
 
-# ---------- heartbeat ----------
+# ---------- local heartbeat ----------
+# Issue-thread heartbeat glyphs (`:one:` … `:four:`) were retired in Slice D —
+# the heartbeat sub-shell that posted them no longer exists. Local liveness
+# signal is provided by:
+#   - the inner-agent stream tee'd into ITER_LOG (continuous forensic trail)
+#   - state file mtime, bumped on every state_set call (monitor uses this to
+#     compute the 🟢 live / 🟡 stale flag together with the orchestrator pid)
+# The `heartbeat_glyph` and `heartbeat_pid` state-file fields are kept as
+# vestigial nulls for one release window so old monitors don't error on read.
 HEARTBEAT_PID=""
 heartbeat_start() {
-  local issue="$1"
-  (
-    local glyphs=(':one:' ':two:' ':three:' ':four:')
-    local i=0
-    while sleep 600; do
-      gh -R "$(gh_repo)" issue comment "$issue" \
-        --body "${glyphs[$((i % 4))]}" >/dev/null 2>&1 || true
-      i=$((i+1))
-      state_set ".current.heartbeat_glyph = \"${glyphs[$(((i-1) % 4))]}\""
-    done
-  ) &
-  HEARTBEAT_PID=$!
-  state_set ".current.heartbeat_pid = $HEARTBEAT_PID"
+  [[ -n "$ITER_LOG" ]] && printf '[heartbeat] iteration started for #%s at %s\n' \
+    "$1" "$(date -Is)" >> "$ITER_LOG"
 }
 heartbeat_stop() {
-  [[ -n "$HEARTBEAT_PID" ]] && kill "$HEARTBEAT_PID" 2>/dev/null || true
-  HEARTBEAT_PID=""
+  [[ -n "$ITER_LOG" ]] && printf '[heartbeat] iteration stopped at %s\n' \
+    "$(date -Is)" >> "$ITER_LOG"
 }
 
 # ---------- terminal-event envelope ----------
@@ -926,7 +920,7 @@ process_issue() {
       slug: \"$slug\", worktree: \"$worktree_rel\",
       handoff: \".red/tmp/work-${WORKER_ID}-i${n}/handoff.md\",
       started_at: \"$started_at\", stage: \"setup\",
-      heartbeat_glyph: \"\", heartbeat_pid: null,
+      heartbeat_glyph: null, heartbeat_pid: null,
       runner: \"$RUNNER\", retries: 0, last_stream_line: \"\"
     }
   "

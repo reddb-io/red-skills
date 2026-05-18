@@ -71,7 +71,7 @@ The per-iteration `work-{id}-i{N}/` directory (pid, log, state, handoff, worktre
 
 Right after bootstrap and before *Straggler Check*, `/afk` sweeps `.red/tmp/work-*/` for orphaned iteration dirs (orchestrator pid dead). For each:
 
-1. **Kill zombie heartbeat.** If the state file recorded `heartbeat_pid` and that sub-shell is still alive, `kill` it. Otherwise it would keep posting `:one: :two:` on the issue forever, consuming `gh` quota.
+1. **(Slice D — heartbeat sub-shell retired.)** No zombie reap step is needed; older state files may still carry a `heartbeat_pid` but it's vestigial and ignored.
 2. **Decide fate from issue state.** `gh issue view N --json labels,state`:
    - `state == CLOSED` → `rm -rf`. Work landed; nothing to inspect.
    - label `ready-for-human` → **split TTL** based on `envelope.posted` in the iteration state file (see *Terminal-Event Envelope* below):
@@ -141,8 +141,6 @@ Canonical state machine lives in [`setup-red-skills/triage-labels.md`](../setup-
          ▼
       running
    ┌───┴───┐
-   │       │  heartbeat sub-shell posts :one: → :four: every 10 min
-   │       │
    │       │  inner agent works in worktree → emits DONE | BLOCKED
    │       │  orchestrator runs feedback loops, then merges to main
    │       │
@@ -191,13 +189,13 @@ For each issue `N`:
 1. **Claim.** `gh issue edit N --remove-label ready-for-agent --add-label running`. Then create the iteration directory `.red/tmp/work-{id}-i{N}/` and write `afk.pid` (current `$$`), open `afk.log` (tee target for orchestrator output), and initialise `afk.state.json` per *State File* below. Comment a start line on the issue: ISO timestamp, runner identity, worktree path. If labelling fails because someone else already claimed it, abandon the iteration directory and skip to the next issue.
 2. **Worktree.** `git -C primary fetch origin main` then `git worktree add .red/tmp/work-{id}-i{N}/worktree -b afk/{id}/{N}-{slug} origin/main` from the primary checkout. The branch is local-only until push. The worktree lives inside the gitignored `.red/tmp/` tree so it never appears in `git status` for `main`.
 3. **Handoff file.** Materialise the AGENT-BRIEF into `.red/tmp/work-{id}-i{N}/handoff.md` using the template below. The handoff file lives one level above the worktree so the inner agent reads it via `../handoff.md` from inside the worktree, and so it survives a worktree wipe on retry.
-4. **Heartbeat.** Spawn a background sub-shell that posts `:one:`, `:two:`, `:three:`, `:four:` every 10 min (reset after `:four:`). Track PID in the state file so cleanup can kill it.
+4. **Local heartbeat marker.** Write one `[heartbeat] iteration started for #N` line to `afk.log`. Slice D retired the periodic GitHub-comment heartbeat (`:one: :two: :three: :four:`) — local liveness is now signalled by the inner-agent stdout stream tee'd into `afk.log` plus state-file mtime, both of which already exist.
 5. **Inner agent.** Invoke claude/codex per [`runner-*.md`](runner-claude.md) with [`AGENT-PROMPT.md`](AGENT-PROMPT.md) + the handoff file + last 5 commits of `main`. Stream stdout into the loop's header tail. Detect stages by grep on the stream — see *Stage Detection* below.
 6. **Inner result.**
    - Inner committed and emits `<promise>DONE</promise>` → continue to feedback loops.
-   - Inner emits `<promise>BLOCKED</promise>` plus notes appended to the handoff file → comment the blocker on the issue, re-label `ready-for-human`, kill heartbeat, drop the worktree, go to next issue.
+   - Inner emits `<promise>BLOCKED</promise>` plus notes appended to the handoff file → comment the blocker on the issue, re-label `ready-for-human`, drop the worktree, go to next issue.
    - Inner emits `<promise>NO MORE TASKS</promise>` from inside one iteration → ignored. That sentinel is for the outer loop.
-   - Runner-exhausted signal (rate limit / quota error string per runner) → kill heartbeat, keep the worktree, swap runner, retry the same issue once. If both runners exhaust, exit 75 (`EX_TEMPFAIL`).
+   - Runner-exhausted signal (rate limit / quota error string per runner) → keep the worktree, swap runner, retry the same issue once. If both runners exhaust, exit 75 (`EX_TEMPFAIL`).
 7. **Feedback loops.** In the worktree: `pnpm test && pnpm typecheck && pnpm lint && pnpm build`. Any missing script: skip it and note in the validation comment. Any failure: re-enter the inner agent with the failure output appended to the handoff file's Notes. Cap at 2 retries before marking blocked.
 8. **Merge.**
    - Primary dirty? Auto-stage and commit `chore(afk): pre-merge snapshot for #N` in primary. Never `git stash`. Never `git checkout -- .`.
@@ -232,23 +230,19 @@ Override the grace via `WATCHDOG_GRACE_SECONDS` in the orchestrator's env. Setti
 
 Preventive counterpart lives in [`AGENT-PROMPT.md`](AGENT-PROMPT.md) under *Background Tasks and Polling* — inner agents are required to cap every polling loop with a deadline. The watchdog is the safety net; the prompt rule is the design.
 
-## Heartbeat Protocol
+## Heartbeat (local-only, post-Slice-D)
 
-Background sub-shell, per-issue lifetime. State machine:
+The issue-thread heartbeat (`:one:` / `:two:` / `:three:` / `:four:` cycling every 10 minutes via `gh issue comment`) was removed in Slice D. The issue thread is now timeline-only: boot stamp, attempt envelopes, human guidance, closing envelope. No periodic noise.
 
-```
-t=0   → claim comment
-t=10  → :one:
-t=20  → :two:
-t=30  → :three:
-t=40  → :four:
-t=50  → :one:   (reset)
-...
-```
+Local liveness is signalled by:
 
-Implementation: `(while sleep 600; do gh issue comment N --body "$(next_glyph)"; done) &`, PID saved to state. Killed on issue completion or blocker.
+- **Inner-agent stdout stream**, continuously tee'd into the iteration's `afk.log` by `run_inner` — forensic inspection of a running worker tails this file.
+- **State-file mtime**, bumped on every `state_set` call. The monitor combines orchestrator pid liveness with state-file freshness to render `🟢 live` vs `🟡 stale`.
+- **Iteration boundary markers** — `heartbeat_start` / `heartbeat_stop` now write a single `[heartbeat]` line each to `afk.log` so forensic readers can see when an iteration entered and left the inner-agent stage.
 
-The terminal header has its own independent heartbeat counter (3 s tick) — see *Live Header* below. Don't conflate the two.
+The terminal header has its own independent 3 s redraw tick — see *Live Header* below. It is unrelated to (and survives the removal of) the GitHub-thread heartbeat.
+
+**Deprecated state fields.** `current.heartbeat_glyph` and `current.heartbeat_pid` are kept as `null` for one release window so older monitors don't error on read; they are no longer written meaningfully and may be removed in a future release.
 
 ## Terminal-Event Envelope
 
@@ -289,8 +283,9 @@ Summary line is always `worker `{id}` · status: {status} · duration: NmSs · d
 After a successful POST (any 2xx), the orchestrator sets `envelope.posted: true` in the iteration state file. The boot-time *Orphan Cleanup* reads that field to pick a TTL for preserved `ready-for-human` dirs: 1 day when the envelope made it to the issue (the thread carries the canonical record), 7 days when the POST failed (the local dir is the only copy of the notes/log). The field is initialised `false` at iteration start.
 
 What this envelope explicitly **does not** include (deferred to later slices):
-- Heartbeat-glyph comments (`:one: :two: …`) — Slice D will replace those with a single, in-place edited heartbeat.
 - Branch push to a remote `afk-attempts/` namespace — Slice B. Until then, the envelope's diffstat is computed against the local-only branch and the worktree path is implicit (recorded in state, not in the envelope).
+
+The Slice D heartbeat-glyph cleanup has landed — there is no periodic `:one: :two: …` traffic on the issue thread to defer or replace.
 
 ## Stage Detection
 
@@ -320,7 +315,7 @@ Redraw every 3 s on the controlling TTY, top of the scroll buffer. Use `tput sc;
 │                                                            │
 │ ▶ #142 wire OAuth callback                                 │
 │   worktree: .red/tmp/work-wZ2R4-i142/worktree               │
-│   stage: impl              heartbeat: :two:                │
+│   stage: impl                                              │
 │   last: writing tests for callback handler                 │
 │                                                            │
 │ queue: #143 #144 #145 #146 ...                             │
@@ -356,8 +351,8 @@ Path: `.red/tmp/work-{id}-i{N}/afk.state.json` — one snapshot per (worker, iss
     "handoff": ".red/tmp/work-wZ2R4-i142/handoff.md",
     "started_at": "2026-05-16T12:14:00-03:00",
     "stage": "impl",
-    "heartbeat_glyph": ":two:",
-    "heartbeat_pid": 12345,
+    "heartbeat_glyph": null,
+    "heartbeat_pid": null,
     "runner": "codex",
     "retries": 0,
     "last_stream_line": "writing tests for callback handler"
@@ -547,7 +542,7 @@ The handoff file follows the same minimalism as the `/handoff` skill — referen
 - Queue drained → `<promise>NO MORE TASKS</promise>` → exit 0.
 - `-n N` reached → summary + exit 0.
 - Both runners exhausted → exit 75.
-- Uncaught error in orchestrator → kill heartbeat, leave worktree in place, exit 1, print recovery hint.
+- Uncaught error in orchestrator → leave worktree in place, exit 1, print recovery hint. (No heartbeat sub-shell to kill since Slice D.)
 
 ## Reporting
 

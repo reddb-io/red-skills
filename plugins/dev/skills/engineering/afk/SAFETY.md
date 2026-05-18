@@ -69,15 +69,17 @@ One self-resolve attempt: re-enter the inner agent with the conflict diff in the
 
 ## Heartbeat and State Files
 
-- Heartbeat PID is tracked in state. On any abort path (success, blocker, error, signal), the orchestrator kills it.
+- The periodic issue-thread heartbeat (`:one:` … `:four:` via `gh issue comment`) was retired in Slice D — there is no sub-shell to track or kill. `heartbeat_pid` in older state files is vestigial and ignored.
 - State file writes are atomic: write to `.red/tmp/work-{id}-i{N}/afk.state.json.tmp`, `mv` over the real path. Never partial writes.
 - The monitor never writes. Only the orchestrator writes state.
 
 ## Signals and Shutdown
 
-- `SIGINT` (Ctrl-C): kill heartbeat, finish the current `pnpm`/git command if mid-flight, write a "interrupted" comment on the active issue, leave the worktree in place, exit 130.
+- `SIGINT` (Ctrl-C): finish the current `pnpm`/git command if mid-flight, write a "interrupted" comment on the active issue, leave the worktree in place, exit 130.
 - `SIGTERM`: same as `SIGINT`.
 - Never trap `SIGKILL` — let the OS do its thing.
+
+There is no heartbeat sub-shell to reap on any of these paths since Slice D — the only cleanup work is releasing the in-flight claim and preserving the iteration directory.
 
 ## What "Blocker" Means
 
@@ -96,4 +98,4 @@ Only these:
 - Both runners exhausted on the same issue.
 - Uncaught error in the orchestrator shell (not from inner — those become blockers).
 
-On abort: kill heartbeat, write final state, print recovery instructions. Worktrees in progress are left alone.
+On abort: write final state, print recovery instructions. Worktrees in progress are left alone. (No heartbeat sub-shell to kill since Slice D.)
