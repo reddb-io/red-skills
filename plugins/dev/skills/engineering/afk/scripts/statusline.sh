@@ -100,6 +100,20 @@ fi
 if [[ -d .red/tmp ]]; then
   shopt -s nullglob
 
+  # Derive GitHub repo URL once for hyperlinking issue numbers (OSC 8).
+  repo_url=""
+  if remote=$(git remote get-url origin 2>/dev/null); then
+    if [[ "$remote" =~ ^git@github\.com:(.+)\.git$ ]]; then
+      repo_url="https://github.com/${BASH_REMATCH[1]}"
+    elif [[ "$remote" =~ ^git@github\.com:(.+)$ ]]; then
+      repo_url="https://github.com/${BASH_REMATCH[1]}"
+    elif [[ "$remote" =~ ^https://github\.com/(.+)\.git$ ]]; then
+      repo_url="https://github.com/${BASH_REMATCH[1]}"
+    elif [[ "$remote" =~ ^https://github\.com/(.+)$ ]]; then
+      repo_url="https://github.com/${BASH_REMATCH[1]}"
+    fi
+  fi
+
   total_workers=0
   total_blocked=0
   total_added=0
@@ -175,8 +189,15 @@ if [[ -d .red/tmp ]]; then
     (( total_blocked > 0 )) && afk_tokens+=("${RED}🚧${total_blocked}${RESET}")
     (( total_added > 0 ))   && afk_tokens+=("${GREEN}+${total_added}${RESET}")
     (( total_removed > 0 )) && afk_tokens+=("${RED}-${total_removed}${RESET}")
+    # OSC 8 hyperlink: \e]8;;URL\e\\TEXT\e]8;;\e\\
+    # Falls back to plain coloured text when repo_url couldn't be derived.
     for n in "${current_issues[@]}"; do
-      afk_tokens+=("${CYAN}${n}${RESET}")
+      if [[ -n "$repo_url" ]]; then
+        num="${n#\#}"
+        afk_tokens+=("$(printf '\e]8;;%s/issues/%s\e\\%s%s%s\e]8;;\e\\' "$repo_url" "$num" "$CYAN" "$n" "$RESET")")
+      else
+        afk_tokens+=("${CYAN}${n}${RESET}")
+      fi
     done
 
     if (( ${#afk_tokens[@]} > 0 )); then
