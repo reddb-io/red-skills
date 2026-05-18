@@ -596,15 +596,24 @@ kill_tree() {
   kill -"$sig" "$pid" 2>/dev/null || true
 }
 
-# Watchdog spawned alongside an inner-agent pipeline. Polls the raw
-# stream-json capture file for a DONE/BLOCKED sentinel; once seen, gives
+# Watchdog spawned alongside an inner-agent pipeline. Extracts assistant
+# text from the stream-json capture file via the runner-specific jq filter
+# and matches the DONE/BLOCKED sentinel **line-anchored** — the contract in
+# AGENT-PROMPT.md is "<promise>DONE</promise> on a line by itself, last".
+# Un-anchored matching false-positives on the agent quoting the sentinel
+# inside intermediate planning output (issues #4, #6, #7). Once seen, gives
 # the pipeline WATCHDOG_GRACE_SECONDS to close on its own, then kills the
 # whole subtree.
 WATCHDOG_GRACE_SECONDS="${WATCHDOG_GRACE_SECONDS:-30}"
+SENTINEL_LINE_REGEX='^<promise>(DONE|BLOCKED)</promise>$'
+CLAUDE_ASSISTANT_TEXT_JQ='select(.type == "assistant").message.content[]? | select(.type == "text").text // empty'
+CODEX_ASSISTANT_TEXT_JQ='select(.type == "item.completed") | .item.text // empty'
+
 run_sentinel_watchdog() {
-  local pipe_pid="$1" capture_file="$2"
+  local pipe_pid="$1" capture_file="$2" jq_filter="${3:-$CLAUDE_ASSISTANT_TEXT_JQ}"
   while kill -0 "$pipe_pid" 2>/dev/null; do
-    if grep -qE '<promise>(DONE|BLOCKED)</promise>' "$capture_file" 2>/dev/null; then
+    if jq -r "$jq_filter" "$capture_file" 2>/dev/null \
+        | grep -qE "$SENTINEL_LINE_REGEX"; then
       sleep "$WATCHDOG_GRACE_SECONDS"
       if kill -0 "$pipe_pid" 2>/dev/null; then
         printf '[afk] watchdog: inner emitted sentinel but pipeline still open after %ss — killing tree (likely bash-hang from polling without timeout)\n' \
@@ -668,7 +677,7 @@ run_codex() {
   ) &
   local pipe_pid=$!
 
-  run_sentinel_watchdog "$pipe_pid" "$raw" &
+  run_sentinel_watchdog "$pipe_pid" "$raw" "$CODEX_ASSISTANT_TEXT_JQ" &
   local wd_pid=$!
 
   wait "$pipe_pid" 2>/dev/null || true

@@ -1,0 +1,2 @@
+{"type":"assistant","message":{"content":[{"type":"text","text":"Plan: I will read the handoff, implement the slice, then emit the DONE sentinel."}]}}
+{"type":"assistant","message":{"content":[{"type":"text","text":"tests passing, committing\n<promise>DONE</promise>"}]}}
