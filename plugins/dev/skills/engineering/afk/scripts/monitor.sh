@@ -166,8 +166,18 @@ render_fleet_header() {
       [[ -n "$slot_pid" ]] && kill -0 "$slot_pid" 2>/dev/null && alive=$((alive+1))
     done
   fi
-  printf '%s🛡️  supervisor pid=%s target=%s alive=%s/%s%s\n' \
-    "$C_BOLD$C_GREEN" "$pid" "$target" "$alive" "$target" "$C_RESET"
+  # `defaults:` reflects the detectors that applied on the supervisor's
+  # most recent spawn (or boot-line, before any slot has spawned). Written
+  # by supervisor.sh's write_defaults_file; missing file → render `-`.
+  local defaults_file="$TMP_DIR/afk-supervisor-defaults.txt"
+  local defaults_str="-"
+  if [[ -f "$defaults_file" ]]; then
+    local raw; raw="$(<"$defaults_file")"
+    raw="${raw%$'\n'}"
+    [[ -n "$raw" ]] && defaults_str="${raw// /, }"
+  fi
+  printf '%s🛡️  supervisor pid=%s target=%s alive=%s/%s defaults: %s%s\n' \
+    "$C_BOLD$C_GREEN" "$pid" "$target" "$alive" "$target" "$defaults_str" "$C_RESET"
 }
 
 # 48h sparkline of `done` events per hour. 48 buckets, scaled to peak.
