@@ -6,6 +6,18 @@ Upstream base: `mattpocock/skills@e74f0061bb67222181640effa98c675bdb2fdaa7` (see
 
 ---
 
+## afk (engineering) — sentinel watchdog + polling discipline
+
+- **status**: modified
+- **upstream**: —
+- **why**: production wheel-spin observed across multiple `/afk` iterations. Inner agent emits `<promise>DONE</promise>`, but a background tool call (`run_in_background pnpm test` followed by `until grep "test result" $out; do sleep 5; done` polling without a timeout) keeps the stream-json pipe open. The bg task crashed silently, the loop runs forever, the inner agent can't terminate because the tool call is still active, the orchestrator hangs in `anon_pipe_read` for hours. Manual `kill <bash-pid>` resolves it.
+- **what changed**:
+  - **Watchdog (defensive)** in `scripts/afk.sh`. New `kill_tree` helper (recursive pgrep + SIGTERM, 5 s grace, SIGKILL). New `run_sentinel_watchdog` background process spawned alongside every inner-agent pipeline; tails the raw stream capture for `<promise>(DONE|BLOCKED)</promise>`, then gives `WATCHDOG_GRACE_SECONDS` (default 30) for the pipeline to close. If still alive, kills the whole tree. Both `run_claude` and `run_codex` rewired to launch the pipeline in background and wait for the watchdog-managed exit. `run_codex` gains a `$raw` capture tee so the watchdog has a json stream to scan (was previously only available for claude).
+  - **Polling discipline (preventive)** in `AGENT-PROMPT.md`. New binding section "Background Tasks and Polling" forbids the `until grep "test result"` pattern outright, prescribes foreground `timeout --kill-after=30 N cmd` as the default, and requires every fallback polling loop to carry a `$SECONDS`-based deadline plus a `<promise>BLOCKED</promise>` exit when the deadline trips.
+  - **Docs.** New "Sentinel Watchdog" section in `afk/SKILL.md` describing the failure mode, the watchdog's grace + kill order, the env override, and the cross-reference to the prompt-side rule.
+
+---
+
 ## urgent (engineering) + afk: urgent prepend in issue selection
 
 - **status**: added (skill) + modified (afk)

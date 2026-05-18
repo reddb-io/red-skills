@@ -73,6 +73,46 @@ Touch only the files the issue requires. Do not:
 
 Surgical precision. If you find an unrelated bug, mention it in Notes — don't fix it.
 
+## Background Tasks and Polling (binding)
+
+Several `/afk` iterations have been killed by inner agents writing untimed polling loops around `run_in_background` tasks — the bg task crashes silently or never writes the expected string, the polling loop runs forever, and even after you emit `<promise>DONE</promise>` the orchestrator's pipe stays open because your `until` loop is still alive. The orchestrator now has a watchdog (kills the inner pipeline 30 s after seeing the sentinel if it doesn't close on its own), but you are still responsible for not building the trap in the first place.
+
+**Forbidden — the wheel-spin pattern:**
+
+```bash
+until [ -s /tmp/.../bg-task-XXXX.output ] && grep -q "test result" /tmp/.../bg-task-XXXX.output; do
+  sleep 5
+done
+```
+
+No deadline, no escape. When the bg task crashes (or its output goes to stderr, or cargo panics, or the runner OOMs) this loop runs until the orchestrator watchdog reaps you.
+
+**Preferred — foreground with `timeout`:**
+
+```bash
+timeout --kill-after=30 600 pnpm test 2>&1 | tee /tmp/test.log
+```
+
+`pnpm test` runs in the foreground with a 10-minute hard cap. No polling. The exit code is meaningful (0 success, 124 timeout, other = test failure). This is the default.
+
+**If you must use `run_in_background`** (e.g. to do other work in parallel), every wait loop **must** carry a deadline and signal `BLOCKED` if the deadline trips:
+
+```bash
+deadline=$((SECONDS + 600))   # 10 min — tune per task class
+while [ "$SECONDS" -lt "$deadline" ]; do
+  if [ -s "$out" ] && grep -q "test result" "$out"; then
+    break
+  fi
+  sleep 5
+done
+if [ "$SECONDS" -ge "$deadline" ]; then
+  echo "background task timed out after 10 min; partial output in $out" >> "$NOTES"
+  # then emit <promise>BLOCKED</promise> as your final line
+fi
+```
+
+The rule: **no polling loop without a deadline**, ever. The orchestrator watchdog is the safety net, not the design.
+
 ## Wiki Awareness
 
 If a `.red/wiki/` directory exists in this worktree, treat it as **gitignored knowledge cache**. You may read it for context. You may **not** `git add` it. If your task involves wiki updates, follow the wiki skill — it never commits wiki files.

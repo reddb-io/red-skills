@@ -212,6 +212,22 @@ Exhaustion detection lives in [`runner-claude.md`](runner-claude.md) and [`runne
 
 When swap happens mid-issue, the same worktree and handoff file are reused; the new runner sees the previous agent's Notes appended.
 
+## Sentinel Watchdog
+
+Failure mode observed in production: the inner agent emits `<promise>DONE</promise>` (or `BLOCKED`) but the orchestrator's stream-json pipe stays open for hours. Cause: a tool call the inner agent left running — typically `run_in_background` followed by a `bash -c 'until grep "test result" $out; do sleep 5; done'` polling loop without a timeout. The bg task crashes silently, the loop runs forever, the inner agent can't terminate because the tool call is still active, and the pipeline hangs.
+
+The orchestrator now spawns a watchdog alongside every inner-agent pipeline (`run_sentinel_watchdog`). The watchdog tails the raw stream capture; once it sees `<promise>DONE</promise>` or `<promise>BLOCKED</promise>`, it gives the pipeline `WATCHDOG_GRACE_SECONDS` (default 30) to close cleanly. If the pipeline is still alive at the deadline:
+
+1. `kill_tree pid TERM` — recursively SIGTERM the pipeline pid and every descendant (claude / codex, jq, grep, tee, and any bash child stuck in a polling loop).
+2. 5 s grace.
+3. `kill_tree pid KILL` — SIGKILL anything still alive.
+
+The orchestrator logs `watchdog: inner emitted sentinel but pipeline still open after Ns — killing tree (likely bash-hang from polling without timeout)` and proceeds with the captured result. The issue is closed normally because the agent's commit work, sentinel, and result are all already on disk by the time the watchdog fires.
+
+Override the grace via `WATCHDOG_GRACE_SECONDS` in the orchestrator's env. Setting it lower than ~5 s risks killing healthy pipelines that just haven't flushed jq's buffer. 30 s is conservative.
+
+Preventive counterpart lives in [`AGENT-PROMPT.md`](AGENT-PROMPT.md) under *Background Tasks and Polling* — inner agents are required to cap every polling loop with a deadline. The watchdog is the safety net; the prompt rule is the design.
+
 ## Heartbeat Protocol
 
 Background sub-shell, per-issue lifetime. State machine:

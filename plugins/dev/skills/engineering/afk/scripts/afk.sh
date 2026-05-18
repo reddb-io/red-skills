@@ -575,10 +575,49 @@ EOF
   echo "$result"
 }
 
+# Recursively SIGTERM (then SIGKILL on grace) a pid and all its descendants.
+# Used by the inner-agent watchdog to kill claude / codex pipelines whose
+# child bash processes are stuck in a polling loop without a timeout — the
+# wheel-spin pattern where the inner agent emits <promise>DONE</promise>
+# but a pending tool call (typically `until grep "test result"`) keeps the
+# stream-json pipe open and the orchestrator stalls indefinitely.
+kill_tree() {
+  local pid="$1" sig="${2:-TERM}"
+  local k
+  for k in $(pgrep -P "$pid" 2>/dev/null); do
+    kill_tree "$k" "$sig"
+  done
+  kill -"$sig" "$pid" 2>/dev/null || true
+}
+
+# Watchdog spawned alongside an inner-agent pipeline. Polls the raw
+# stream-json capture file for a DONE/BLOCKED sentinel; once seen, gives
+# the pipeline WATCHDOG_GRACE_SECONDS to close on its own, then kills the
+# whole subtree.
+WATCHDOG_GRACE_SECONDS="${WATCHDOG_GRACE_SECONDS:-30}"
+run_sentinel_watchdog() {
+  local pipe_pid="$1" capture_file="$2"
+  while kill -0 "$pipe_pid" 2>/dev/null; do
+    if grep -qE '<promise>(DONE|BLOCKED)</promise>' "$capture_file" 2>/dev/null; then
+      sleep "$WATCHDOG_GRACE_SECONDS"
+      if kill -0 "$pipe_pid" 2>/dev/null; then
+        printf '[afk] watchdog: inner emitted sentinel but pipeline still open after %ss — killing tree (likely bash-hang from polling without timeout)\n' \
+          "$WATCHDOG_GRACE_SECONDS" >&2
+        kill_tree "$pipe_pid" TERM
+        sleep 5
+        kill -0 "$pipe_pid" 2>/dev/null && kill_tree "$pipe_pid" KILL
+      fi
+      return 0
+    fi
+    sleep 2
+  done
+}
+
 run_claude() {
   local worktree="$1" prompt="$2"
   local tmp; tmp="$(mktemp)"
   local log_target="${ITER_LOG:-/dev/null}"
+
   (
     cd "$worktree"
     claude --model opus --effort medium --permission-mode bypassPermissions \
@@ -589,7 +628,16 @@ run_claude() {
         2>/dev/null \
       | tee -a "$log_target" \
       || true
-  )
+  ) &
+  local pipe_pid=$!
+
+  run_sentinel_watchdog "$pipe_pid" "$tmp" &
+  local wd_pid=$!
+
+  wait "$pipe_pid" 2>/dev/null || true
+  kill "$wd_pid" 2>/dev/null || true
+  wait "$wd_pid" 2>/dev/null || true
+
   jq -r 'select(.type == "result").result // empty' "$tmp" 2>/dev/null || echo ""
   rm -f "$tmp"
 }
@@ -597,18 +645,32 @@ run_claude() {
 run_codex() {
   local worktree="$1" prompt="$2"
   local last; last="$(mktemp)"
+  local raw; raw="$(mktemp)"
   local log_target="${ITER_LOG:-/dev/null}"
-  codex exec --json -C "$worktree" \
-    --sandbox danger-full-access \
-    --dangerously-bypass-approvals-and-sandbox \
-    --output-last-message "$last" \
-    "$prompt" </dev/null 2>&1 \
-    | jq --unbuffered -rj 'select(.type == "item.completed") | .item.text // empty | . + "\n"' \
-      2>/dev/null \
-    | tee -a "$log_target" \
-    || true
+
+  (
+    codex exec --json -C "$worktree" \
+      --sandbox danger-full-access \
+      --dangerously-bypass-approvals-and-sandbox \
+      --output-last-message "$last" \
+      "$prompt" </dev/null 2>&1 \
+      | tee "$raw" \
+      | jq --unbuffered -rj 'select(.type == "item.completed") | .item.text // empty | . + "\n"' \
+        2>/dev/null \
+      | tee -a "$log_target" \
+      || true
+  ) &
+  local pipe_pid=$!
+
+  run_sentinel_watchdog "$pipe_pid" "$raw" &
+  local wd_pid=$!
+
+  wait "$pipe_pid" 2>/dev/null || true
+  kill "$wd_pid" 2>/dev/null || true
+  wait "$wd_pid" 2>/dev/null || true
+
   cat "$last" 2>/dev/null || echo ""
-  rm -f "$last"
+  rm -f "$last" "$raw"
 }
 
 # ---------- feedback loops ----------
