@@ -19,6 +19,18 @@
 # deaths inside a CIRCUIT_WINDOW_S window parks the slot — no more
 # respawns until the supervisor is restarted. Other slots keep going.
 #
+# Per-slot build isolation: build tools that serialize on a single cache
+# directory (cargo, Gradle, …) can stall the fleet. When the operator sets
+# a recognised `*_BASE` env var, the supervisor creates and exports a
+# slot-specific subdirectory (`${BASE}/slot-{i}`) for each worker so each
+# slot compiles in its own cache. Nothing is created or exported when the
+# base var is unset — non-Rust / non-Gradle projects pay zero cost.
+#
+# Supported per-slot build env vars (see BUILD_ISOLATION_VARS below):
+#   CARGO_TARGET_BASE      → exports CARGO_TARGET_DIR=${BASE}/slot-{i}
+#   GRADLE_USER_HOME_BASE  → exports GRADLE_USER_HOME=${BASE}/slot-{i}
+# Adding a new tool is a one-line append to BUILD_ISOLATION_VARS.
+#
 # The supervisor only manages worker process lifecycle. Workers are normal
 # `afk.sh` invocations and own all claim-lock / state / queue semantics.
 
@@ -47,6 +59,17 @@ POLL_S="${SUPERVISOR_POLL_S:-15}"
 FAST_DEATH_THRESHOLD_S="${SUPERVISOR_FAST_DEATH_S:-30}"
 CIRCUIT_K="${SUPERVISOR_CIRCUIT_K:-5}"
 CIRCUIT_WINDOW_S="${SUPERVISOR_CIRCUIT_WINDOW_S:-90}"
+
+# Per-slot build-isolation env vars. Each entry is "BASE_VAR:TARGET_VAR".
+# When BASE_VAR is set in the supervisor's env, every spawned worker on
+# slot i gets TARGET_VAR=${BASE_VAR}/slot-{i} exported and the directory
+# is `mkdir -p`'d before spawn. When BASE_VAR is unset, nothing happens
+# for that pair — projects that don't compile with the tool see no side
+# effects on their filesystem. Append a new line to support a new tool.
+BUILD_ISOLATION_VARS=(
+  "CARGO_TARGET_BASE:CARGO_TARGET_DIR"
+  "GRADLE_USER_HOME_BASE:GRADLE_USER_HOME"
+)
 
 # ---------- logging ----------
 log() {
@@ -84,14 +107,41 @@ declare -a SLOT_PARKED=()
 declare -a SLOT_TRIP_EPOCH=()
 declare -a SLOT_LAST_DEATH_EPOCH=()
 
+# Build the per-slot env overrides (e.g. CARGO_TARGET_DIR) for slot $1 as
+# `KEY=value` strings suitable for `env`. Creates each slot subdirectory
+# lazily. Echoes one assignment per line; emits nothing when no base env
+# var is set.
+build_slot_env_overrides() {
+  local slot="$1" entry base_name target_name base_val slot_dir
+  for entry in "${BUILD_ISOLATION_VARS[@]}"; do
+    base_name="${entry%%:*}"
+    target_name="${entry##*:}"
+    base_val="${!base_name:-}"
+    [[ -z "$base_val" ]] && continue
+    slot_dir="${base_val}/slot-${slot}"
+    mkdir -p "$slot_dir"
+    printf '%s=%s\n' "$target_name" "$slot_dir"
+  done
+}
+
 spawn_slot() {
   local slot="$1"
   local slot_log="$TMP_DIR/afk-supervisor-slot-${slot}.log"
-  nohup "$AFK_SH" "$PROJECT_ROOT" >>"$slot_log" 2>&1 </dev/null &
+  local -a env_args=()
+  local line
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    env_args+=("$line")
+  done < <(build_slot_env_overrides "$slot")
+  nohup env "${env_args[@]}" "$AFK_SH" "$PROJECT_ROOT" >>"$slot_log" 2>&1 </dev/null &
   local pid=$!
   SLOT_PIDS[$slot]=$pid
   SLOT_SPAWN_EPOCH[$slot]="$(date +%s)"
-  log "slot $slot: spawned worker pid=$pid (log=$slot_log)"
+  if (( ${#env_args[@]} > 0 )); then
+    log "slot $slot: spawned worker pid=$pid (log=$slot_log, env=${env_args[*]})"
+  else
+    log "slot $slot: spawned worker pid=$pid (log=$slot_log)"
+  fi
 }
 
 # Write the parked-slot state file. Called whenever a slot trips.
