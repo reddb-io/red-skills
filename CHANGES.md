@@ -6,6 +6,18 @@ Upstream base: `mattpocock/skills@e74f0061bb67222181640effa98c675bdb2fdaa7` (see
 
 ---
 
+## afk (engineering) — runner detection cascade, opt-in alternate + fallback
+
+- **status**: modified
+- **upstream**: —
+- **why**: `/afk` historically defaulted `ALTERNATE=1`, silently rotating between `claude` and `codex` on each issue and silently swapping on `RUNNER_EXHAUSTED`. Caller intent was indistinguishable from quota loss — a Claude Code user invoking `/afk` would suddenly find Codex picking up the next issue with no visible cue. Issue #8 (parent PRD #2) replaces the default with caller-aware detection (env-var sniff → path sniff → env fallback), flips alternation to opt-in `--alternate`, and gates exhaustion-swap behind opt-in `--fallback-runner`.
+- **what changed**:
+  - `plugins/dev/skills/engineering/afk/scripts/afk.sh`: new `detect_runner` function — pure, accepts an explicit pin + optional script path, echoes `"<runner>|<method>"` so the cascade is testable in isolation. Recognises `CLAUDECODE` / `CLAUDE_CODE_ENTRYPOINT` / `CLAUDE_CODE_SSE_PORT` (claude) and `CODEX_HOME` / `CODEX_SANDBOX` / `CODEX_SANDBOX_NETWORK_DISABLED` (codex); falls through to `*/.claude/*` vs `*/.codex/*` path sniff on `$SCRIPT_DIR`; finally `${AFK_RUNNER:-claude}`. Two new CLI flags — `--alternate` (round-robin on success) and `--fallback-runner` (swap on exhaustion) — both default off; `--alternate` is mutually exclusive with `--runner`. The exhaustion branch in `process_issue` now gates the swap on `FALLBACK_RUNNER`, not on `ALTERNATE`, so the two behaviours are decoupled. Boot log line `runner: <r> (detected via <method>)` fires once per invocation.
+  - `plugins/dev/skills/engineering/afk/scripts/tests/runner-detection.test.sh`: new — 14 assertions covering pin-beats-everything, every env-var branch (both runners), both path branches, env-fallback (default and `AFK_RUNNER`), and cascade precedence (env-var beats path).
+  - `plugins/dev/skills/engineering/afk/SKILL.md`: rewrote *Bootstrap* step 4 to document the cascade, added flag entries in *When To Use*, rewrote *Runner Fallback* so the new default (no rotation, no fallback) and the two opt-ins are explicit.
+
+---
+
 ## afk (engineering) — push attempt branch to `afk-attempts/` on terminal failure
 
 - **status**: modified

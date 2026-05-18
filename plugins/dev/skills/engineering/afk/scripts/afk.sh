@@ -2,7 +2,13 @@
 # /afk — autonomous loop that drains `ready-for-agent` issues.
 #
 # Usage:
-#   afk.sh [--prd N | --issues N,N,N] [--runner claude|codex] [-n N] [--once] [project_root]
+#   afk.sh [--prd N | --issues N,N,N] [--runner claude|codex]
+#          [--alternate] [--fallback-runner] [-n N] [--once] [project_root]
+#
+# Runner resolution cascade (when --runner is not set):
+#   1. env-var sniff (CLAUDECODE / CLAUDE_CODE_*, CODEX_HOME / CODEX_SANDBOX*)
+#   2. $BASH_SOURCE path sniff (~/.claude/... → claude, ~/.codex/... → codex)
+#   3. env fallback (${AFK_RUNNER:-claude})
 #
 # See ../SKILL.md for the full contract. SAFETY.md is binding.
 
@@ -17,18 +23,27 @@ ITER_CAP=999
 ONCE=0
 FILTER_KIND="all"
 FILTER_VALUE=""
+ALTERNATE_FLAG=0
+FALLBACK_RUNNER_FLAG=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --prd)     FILTER_KIND="prd";    FILTER_VALUE="$2"; shift 2 ;;
-    --issues)  FILTER_KIND="issues"; FILTER_VALUE="$2"; shift 2 ;;
-    --runner)  RUNNER="$2"; shift 2 ;;
-    -n)        ITER_CAP="$2"; shift 2 ;;
-    --once)    ONCE=1; ITER_CAP=1; shift ;;
-    -h|--help) sed -n '2,8p' "$0"; exit 0 ;;
-    *)         PROJECT_ROOT="$1"; shift ;;
+    --prd)              FILTER_KIND="prd";    FILTER_VALUE="$2"; shift 2 ;;
+    --issues)           FILTER_KIND="issues"; FILTER_VALUE="$2"; shift 2 ;;
+    --runner)           RUNNER="$2"; shift 2 ;;
+    --alternate)        ALTERNATE_FLAG=1; shift ;;
+    --fallback-runner)  FALLBACK_RUNNER_FLAG=1; shift ;;
+    -n)                 ITER_CAP="$2"; shift 2 ;;
+    --once)             ONCE=1; ITER_CAP=1; shift ;;
+    -h|--help)          sed -n '2,13p' "$0"; exit 0 ;;
+    *)                  PROJECT_ROOT="$1"; shift ;;
   esac
 done
+
+if [[ $ALTERNATE_FLAG -eq 1 && -n "$RUNNER" ]]; then
+  echo "[afk] ERROR: --alternate and --runner are mutually exclusive" >&2
+  exit 2
+fi
 
 PROJECT_ROOT="${PROJECT_ROOT:-$(pwd)}"
 PROJECT_ROOT="$(cd "$PROJECT_ROOT" && pwd)"
@@ -55,11 +70,48 @@ STATE_FILE=""       # set per-iteration: $ITER_DIR/afk.state.json
 ITER_LOG=""         # set per-iteration: $ITER_DIR/afk.log
 ITER_PID_FILE=""    # set per-iteration: $ITER_DIR/afk.pid
 
+# ---------- runner detection cascade ----------
+# detect_runner — resolve the default runner via a 3-step cascade.
+# Echoes "<runner>|<method>" so callers can log how the choice was made.
+#   $1 — explicit pin (the --runner flag value); when non-empty short-circuits to "<pin>|pin"
+#   $2 — script path to inspect (defaults to $SCRIPT_DIR); allows tests to override
+#
+# Cascade order:
+#   1. env-var sniff   — harness identifiers (CLAUDECODE / CLAUDE_CODE_*, CODEX_HOME / CODEX_SANDBOX*)
+#   2. path sniff      — script lives under a runner's plugin tree (~/.claude/... or ~/.codex/...)
+#   3. env fallback    — ${AFK_RUNNER:-claude}, the historical last-resort
+detect_runner() {
+  local pin="${1:-}"
+  local src_path="${2:-${SCRIPT_DIR:-${BASH_SOURCE[0]}}}"
+  if [[ -n "$pin" ]]; then
+    echo "${pin}|pin"
+    return 0
+  fi
+  if [[ -n "${CLAUDECODE:-}" || -n "${CLAUDE_CODE_ENTRYPOINT:-}" || -n "${CLAUDE_CODE_SSE_PORT:-}" ]]; then
+    echo "claude|env-var"; return 0
+  fi
+  if [[ -n "${CODEX_HOME:-}" || -n "${CODEX_SANDBOX:-}" || -n "${CODEX_SANDBOX_NETWORK_DISABLED:-}" ]]; then
+    echo "codex|env-var"; return 0
+  fi
+  if [[ "$src_path" == */.claude/* ]]; then
+    echo "claude|path"; return 0
+  fi
+  if [[ "$src_path" == */.codex/* ]]; then
+    echo "codex|path"; return 0
+  fi
+  echo "${AFK_RUNNER:-claude}|env-fallback"
+}
+
 EXPLICIT_RUNNER=$RUNNER
-[[ -z "$RUNNER" ]] && RUNNER="${AFK_RUNNER:-claude}"
-ALTERNATE=1
-[[ -n "${AFK_RUNNER_PINNED:-}" || -n "$EXPLICIT_RUNNER" ]] && ALTERNATE=0
-# explicit --runner pins the runner
+_detection="$(detect_runner "$EXPLICIT_RUNNER")"
+RUNNER="${_detection%%|*}"
+RUNNER_DETECTION_METHOD="${_detection##*|}"
+unset _detection
+
+# Alternation is now opt-in. Pin (--runner) is mutually exclusive with --alternate (enforced above).
+ALTERNATE=$ALTERNATE_FLAG
+FALLBACK_RUNNER=$FALLBACK_RUNNER_FLAG
+
 [[ "$RUNNER" == "claude" || "$RUNNER" == "codex" ]] || { echo "bad runner: $RUNNER" >&2; exit 2; }
 
 # ---------- logging ----------
@@ -1192,9 +1244,9 @@ process_issue() {
 
   if [[ $RUNNER_EXHAUSTED -eq 1 ]]; then
     heartbeat_stop
-    if [[ $ALTERNATE -eq 1 ]]; then
+    if [[ $FALLBACK_RUNNER -eq 1 ]]; then
       local other="claude"; [[ "$RUNNER" == "claude" ]] && other="codex"
-      log "runner $RUNNER exhausted — swapping to $other and retrying #$n"
+      log "runner $RUNNER exhausted — swapping to $other and retrying #$n (--fallback-runner)"
       RUNNER="$other"
       attempt=$((attempt+1))
       handoff="$(write_handoff "$n" "$title" "$slug" "$body" "$worktree" "$RUNNER" "$attempt")"
@@ -1209,7 +1261,8 @@ process_issue() {
         exit 75
       fi
     else
-      gh -R "$(gh_repo)" issue comment "$n" --body "Runner \`$RUNNER\` exhausted; rerun /afk when quota resets." >/dev/null
+      log "runner $RUNNER exhausted — exiting (no --fallback-runner; rerun /afk when quota resets, or pass --fallback-runner to swap)"
+      gh -R "$(gh_repo)" issue comment "$n" --body "Runner \`$RUNNER\` exhausted; rerun /afk when quota resets, or pass \`--fallback-runner\` to swap to the other runner on exhaustion." >/dev/null
       gh -R "$(gh_repo)" issue edit "$n" --remove-label running --add-label ready-for-agent >/dev/null
       history_append "exhausted" "$n" "$RUNNER" 0 "" "$RUNNER"
       iter_close_preserve
@@ -1351,6 +1404,7 @@ trap cleanup INT TERM
 # ---------- main ----------
 precheck
 bootstrap
+log "runner: $RUNNER (detected via $RUNNER_DETECTION_METHOD)"
 prune_orphans
 sweep_unblocked
 
