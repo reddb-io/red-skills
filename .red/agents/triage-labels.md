@@ -127,6 +127,9 @@ These exist for filtering and don't drive lifecycle transitions:
 | `prd:{N}`      | Issue belongs to PRD #N                         | `/to-issues` when splitting a PRD |
 | `slice:hitl`   | Slice that needs human-in-the-loop              | `/to-issues`                     |
 | `slice:afk`    | Slice that can run unattended                   | `/to-issues`                     |
+| `runner-error` | `/afk` fleet supervisor parked a slot after fast-death streak; affected issues were restored to `ready-for-agent` after the runner was discarded | `/afk` fleet supervisor on circuit trip |
+
+`runner-error` is the only auxiliary label `/afk` may create autonomously: the fleet supervisor calls `gh label create runner-error` when it trips the circuit breaker, so the cleanup never fails just because the label has not been provisioned.
 
 ## Naming Convention
 
