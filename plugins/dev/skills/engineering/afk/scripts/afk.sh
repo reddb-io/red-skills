@@ -17,6 +17,9 @@ set -eo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(dirname "$SCRIPT_DIR")"
 
+# shellcheck source=./config.sh
+source "$SCRIPT_DIR/config.sh"
+
 # ---------- arg parsing ----------
 RUNNER=""
 ITER_CAP=999
