@@ -281,34 +281,35 @@ Designed for terminals you leave open while you do something else. Or sleep.
 `/afk` is the last mile. The skills compose into the full loop:
 
 ```
-  vague idea
+  vague idea                       bug you hit                      something on fire
+       │                                │                                  │
+       │   /start                       │   /report-bug                    │   /urgent
+       ▼                                ▼                                  ▼
+   refined plan                  type:bug + needs-triage           priority:urgent +
+       │                                │                          ready-for-agent
+       │   /to-prd                      │   /triage                          │
+       ▼                                ▼                                    │
+   published PRD                  ready-for-agent  ◄──────────────── jumps queue
+       │                                │                            (next /afk picks it
+       │   /to-issues <PRD>             │                             first, ahead of
+       ▼                                │                             --prd / --issues)
+   children issues                      │
+       │                                │
+       │   /triage  (per child)         │
+       ▼                                │
+   ready-for-agent ─────────────────────┘
        │
-       │   /start                  Grilling session: challenge the plan
-       ▼                            against the existing domain model;
-   refined plan                     update .red/CONTEXT.md and ADRs inline.
-       │
-       │   /to-prd                 Crystallise the plan into a PRD;
-       ▼                            publish it as a GitHub issue.
-   published PRD
-       │
-       │   /to-issues <PRD>        Break the PRD into vertical-slice issues,
-       ▼                            each independently grabbable. Quiz the
-   children issues                  user on granularity, HITL vs AFK.
-       │
-       │   /triage                 Per child: post AGENT-BRIEF as a comment,
-       ▼                            move to ready-for-agent.
-   ready-for-agent
-       │
-       │   /afk --prd <N>          Drain. Inner agent implements, tests pass,
-       ▼                            merged, closed. Next.
-   shipped
+       │   /afk                    Drain. Inner agent implements, tests pass,
+       ▼                            merged, closed. Next iteration re-fetches
+   shipped                          queue — `priority:urgent` always wins.
 ```
 
 **Enter at any step.**
 - Spec already written? Jump to `/to-issues`.
 - Issues already triaged? Jump straight to `/afk`.
 - Single feature, not a whole PRD? `/start` → `/to-issues` → `/afk` works fine.
-- Bug report came in? `/triage` → (AGENT-BRIEF) → `/afk --issues N`.
+- Bug report? `/report-bug` interviews you, files `type:bug + needs-triage`, then `/triage` writes the AGENT-BRIEF.
+- Something on fire? `/urgent` skips triage entirely — `priority:urgent + ready-for-agent` direct, and `/afk` prepends urgents to its queue on every iteration so the next claim is yours.
 
 The full issue lifecycle (`needs-triage` → `ready-for-agent` → `running` → `closed`, with `ready-for-human` and `needs-info` as branches) — including the ASCII state machine, the heartbeat protocol, and every label transition — lives in [`setup-red-skills/triage-labels.md`](./plugins/dev/skills/engineering/setup-red-skills/triage-labels.md).
 
