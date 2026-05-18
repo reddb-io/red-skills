@@ -101,6 +101,30 @@ Two things to verify after install:
 
 `rtk discover` scans recent transcripts for missed savings opportunities — useful periodically to spot commands the hook should be rewriting but isn't yet.
 
+**Section F — `/afk` statusline (optional).**
+
+> Explainer: When `/afk` is draining the queue, the Claude Code statusline can surface live worker count, queue depth, and aggregated diffstat at a glance — so the user doesn't need to run `/dev:afk monitor` in a side terminal. The plugin ships a small `statusline.sh` script that reads each worker's `.red/tmp/work-*/afk.state.json`, filters by `kill -0` liveness, sums diffstats locally, and caches GitHub-derived counts for 60 s to stay under the ~100 ms refresh budget.
+
+Decide whether to wire it up for this project:
+
+- **Skip when** the per-project plugin config (`.red/config.yaml`) sets `afk.statusline: false`. Detect with `grep -qE '^[[:space:]]*statusline:[[:space:]]*false[[:space:]]*$'` on the `afk:` block (or use `yq` if available). When skipped, log a one-line notice (`afk.statusline: false in .red/config.yaml — skipping statusline wiring`) and move on.
+- **Skip when** a `statusLine` entry is already present in `.claude/settings.json`. Do **not** overwrite — log a one-line notice (`statusLine already configured in .claude/settings.json — leaving as-is`) so the user can decide. Idempotency rule: re-running `/dev:setup-red-skills` must never clobber a hand-edited statusline.
+- **Otherwise** write the entry into `.claude/settings.json` (create the file if missing, merge with existing keys via `jq` if present):
+
+  ```json
+  {
+    "statusLine": {
+      "type": "command",
+      "command": "bash ${CLAUDE_PLUGIN_ROOT}/skills/engineering/afk/scripts/statusline.sh",
+      "refreshInterval": 5
+    }
+  }
+  ```
+
+  `${CLAUDE_PLUGIN_ROOT}` is resolved by Claude Code at refresh time to the plugin install dir, so the path stays valid wherever the plugin is mounted.
+
+The script is no-op outside `/afk` sessions (it prints nothing when no live workers exist), so leaving the statusline wired up in non-AFK projects is harmless.
+
 ### 3. Confirm and edit
 
 Show the user a draft of:
@@ -147,6 +171,12 @@ Then write the three docs files using the seed templates in this skill folder as
 - [domain.md](./domain.md) — domain doc consumer rules + layout
 
 If the user accepted Section D, copy each `workflows/red-*.yml` template from this skill folder into `.github/workflows/` of the consumer repo. Don't overwrite existing files with the same name — diff and ask first. Then ensure the `needs-triage` label exists via `gh label create` if missing.
+
+If the user accepted Section F, wire the statusline:
+
+1. Check the opt-out: if `.red/config.yaml` exists and contains an `afk:` block with `statusline: false`, log `afk.statusline: false in .red/config.yaml — skipping statusline wiring` and skip the rest of this step.
+2. Check for an existing `statusLine` key in `.claude/settings.json`. If one is present, log `statusLine already configured in .claude/settings.json — leaving as-is` and skip the rest of this step.
+3. Otherwise, ensure `.claude/` exists and write/merge the `statusLine` block above into `.claude/settings.json`. Use `jq` for the merge when the file already has unrelated keys; create a fresh file containing only `statusLine` when missing.
 
 ### 5. Sweep existing issues
 
