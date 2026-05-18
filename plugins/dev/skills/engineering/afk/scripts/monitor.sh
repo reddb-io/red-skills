@@ -153,7 +153,11 @@ render_worker_compact() {
   current_title="$(jq -r '.current.title // "-"' <<<"$state")"
   current_stage="$(jq -r '.current.stage // "-"' <<<"$state")"
   current_worktree="$(jq -r '.current.worktree // ""' <<<"$state")"
-  started="$(jq -r '.started_at // ""' <<<"$state")"
+  # Per-iteration elapsed: prefer .current.started_at (set on each claim)
+  # over .started_at (worker-process start, cumulative across N issues).
+  # The worker-level field made elapsed look like 4h21m when the current
+  # iteration was actually 30 min old.
+  started="$(jq -r '.current.started_at // .started_at // ""' <<<"$state")"
 
   elapsed=0
   if [[ -n "$started" ]]; then
@@ -174,17 +178,49 @@ render_worker_compact() {
   [[ $failed  -gt 0 ]] && flags+=" ${C_RED}${C_BOLD}fail:${failed}${C_RESET}"
 
   local diff_stat=""
+  local diff_ins=0
   if [[ -n "$current_worktree" && "$current_worktree" != "null" ]]; then
     local wt_abs="$current_worktree"
     [[ "$wt_abs" != /* ]] && wt_abs="$PROJECT_ROOT/$current_worktree"
     local ds; ds="$(worktree_diff_stats "$wt_abs")"
-    [[ -n "$ds" ]] && diff_stat="  $(colorize_diff "$ds")"
+    if [[ -n "$ds" ]]; then
+      diff_stat="  $(colorize_diff "$ds")"
+      diff_ins="$(echo "$ds" | grep -oE '\+[0-9]+' | head -1 | tr -d +)"
+      diff_ins="${diff_ins:-0}"
+    fi
+  fi
+
+  # Stall heuristic: if the inner agent has been on this iteration for
+  # >20 min, has written nothing to afk.log in the last 5 min, AND has
+  # not added a single line in the worktree, surface a ⚠ stall marker.
+  # Mirrors the bash-hang detection the watchdog catches later; the goal
+  # here is *visibility* before the orchestrator kills it.
+  local stall_warn=""
+  local log_file="$iter_dir/afk.log"
+  if (( elapsed > 1200 )) && (( diff_ins == 0 )); then
+    local now_s log_mtime delta
+    now_s="$(date +%s)"
+    log_mtime=0
+    [[ -f "$log_file" ]] && log_mtime="$(stat -c %Y "$log_file" 2>/dev/null || echo 0)"
+    delta=$(( now_s - log_mtime ))
+    if (( log_mtime > 0 && delta > 300 )); then
+      stall_warn=" ${C_YELLOW}${C_BOLD}⚠ stalled?${C_RESET}${C_DIM} log idle ${delta}s${C_RESET}"
+    elif (( log_mtime == 0 )); then
+      stall_warn=" ${C_YELLOW}${C_BOLD}⚠ no log${C_RESET}${C_DIM} (upgrade to v1.10.1+)${C_RESET}"
+    fi
+  fi
+
+  # Tail of afk.log: most recent non-empty line, trimmed to 60 chars.
+  local log_tail=""
+  if [[ -f "$log_file" && -s "$log_file" ]]; then
+    log_tail="$(tail -n 1 "$log_file" 2>/dev/null | tr -d '\r' | sed 's/[[:space:]]*$//' | cut -c1-60)"
+    [[ -n "$log_tail" ]] && log_tail="  ${C_DIM}| ${log_tail}${C_RESET}"
   fi
 
   local cur=""
   if [[ "$current_n" != "-" && "$current_n" != "null" ]]; then
     local title_trim="${current_title:0:48}"
-    cur="  ${C_BOLD}#${current_n}${C_RESET} ${title_trim}  ${C_MAGENTA}stage:${current_stage}${C_RESET}  ${C_DIM}$(fmt_dur $elapsed)${C_RESET}${diff_stat}"
+    cur="  ${C_BOLD}#${current_n}${C_RESET} ${title_trim}  ${C_MAGENTA}stage:${current_stage}${C_RESET}  ${C_DIM}$(fmt_dur $elapsed)${C_RESET}${diff_stat}${stall_warn}${log_tail}"
   else
     cur="  ${C_DIM}idle${C_RESET}"
   fi
@@ -215,7 +251,8 @@ render_worker() {
   done="$(jq -r '.done // 0' <<<"$state")"
   blocked="$(jq -r '.blocked // 0' <<<"$state")"
   failed="$(jq -r '.failed // 0' <<<"$state")"
-  started="$(jq -r '.started_at // ""' <<<"$state")"
+  # Per-iteration elapsed; see render_worker_compact for the rationale.
+  started="$(jq -r '.current.started_at // .started_at // ""' <<<"$state")"
   current_n="$(jq -r '.current.number // "-"' <<<"$state")"
   current_title="$(jq -r '.current.title // "-"' <<<"$state")"
   current_stage="$(jq -r '.current.stage // "-"' <<<"$state")"
@@ -303,7 +340,9 @@ When you summarise the lines below for the user, follow these rules verbatim. Tr
 
 1. ALWAYS include the "48h: …" sparkline line as the first line of your summary. Reproduce the bar, "(N closed, peak M/h, all workers)" suffix included. It is the at-a-glance throughput signal and must not be dropped even when worker activity is more salient.
 2. ALWAYS include every worker line, one per worker, in the original order. Do not collapse, drop, or merge workers.
-3. Preserve the colour cues. Map: [live]=green, [stale]=yellow, [dead]=red, blk:N/fail:N=red bold, progress percent — 0-33 red / 33-66 yellow / 66-99 cyan / 100 green, diff +N=green / -M=red, worker id cyan+bold, stage:X magenta, elapsed dim. Render via markdown (bold, code spans, emoji squares 🟢🟡🔴 if needed) when ANSI is unavailable. Keep tag spelling and column order intact.
+3. Preserve the colour cues. Map: [live]=green, [stale]=yellow, [dead]=red, blk:N/fail:N=red bold, progress percent — 0-33 red / 33-66 yellow / 66-99 cyan / 100 green, diff +N=green / -M=red, worker id cyan+bold, stage:X magenta, elapsed dim, ⚠ stalled?/⚠ no log warnings yellow bold. Render via markdown (bold, code spans, emoji squares 🟢🟡🔴 if needed) when ANSI is unavailable. Keep tag spelling and column order intact.
+4. When a worker line carries a `| <text>` suffix, it is the most recent line written to that worker's afk.log — surface it verbatim (truncated as the script already truncated it). It is the single most useful "is the inner agent alive" signal; do not drop it.
+5. When a worker line carries `⚠ stalled? log idle Ns`, repeat the warning verbatim and recommend the user run the bash-hang diagnostic from afk/SKILL.md (`pstree -p <orchestrator-pid>`, look for `until.*test result` cmdline). `⚠ no log` means the worker was spawned with v1.10.0 or earlier — recommend upgrading to v1.10.1+ for log tee, or v1.14.2+ for the full set of fixes.
 
 === begin dashboard ===
 EOF
