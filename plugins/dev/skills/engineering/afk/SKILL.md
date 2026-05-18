@@ -74,12 +74,14 @@ Right after bootstrap and before *Straggler Check*, `/afk` sweeps `.red/tmp/work
 1. **Kill zombie heartbeat.** If the state file recorded `heartbeat_pid` and that sub-shell is still alive, `kill` it. Otherwise it would keep posting `:one: :two:` on the issue forever, consuming `gh` quota.
 2. **Decide fate from issue state.** `gh issue view N --json labels,state`:
    - `state == CLOSED` → `rm -rf`. Work landed; nothing to inspect.
-   - label `ready-for-human` → **keep**. The human still needs the dir.
+   - label `ready-for-human` → **split TTL** based on `envelope.posted` in the iteration state file (see *Terminal-Event Envelope* below):
+     - `envelope.posted == true` → 1-day TTL. The issue thread already carries the canonical record; the local dir is pure redundancy.
+     - `envelope.posted == false` or field missing → 7-day TTL. The envelope POST failed (or this dir predates the envelope writer), so the local notes/log are the only copy.
    - label `running` (orchestrator crashed mid-issue) → restore `ready-for-agent`, post a recovery comment, then `rm -rf`. Leaving the issue eternally `running` is worse than losing the dir.
    - any other state → `rm -rf`.
 3. **Fallback on gh failure.** Network / rate-limit error → fall back to mtime TTL: 7 days for dirs with a state file, 1 day for dirs without one. Conservative enough to survive transient outages without losing artefacts the human wanted.
 
-This removes the manual "remember to clean `.red/tmp/`" discipline. Blocker dirs persist exactly as long as the issue stays `ready-for-human`; everything else self-collects on the next `/afk` run.
+This removes the manual "remember to clean `.red/tmp/`" discipline. Blocker dirs persist until their TTL expires; everything else self-collects on the next `/afk` run.
 
 ## Unblock Sweep (boot-time)
 
@@ -248,6 +250,48 @@ Implementation: `(while sleep 600; do gh issue comment N --body "$(next_glyph)";
 
 The terminal header has its own independent heartbeat counter (3 s tick) — see *Live Header* below. Don't conflate the two.
 
+## Terminal-Event Envelope
+
+Every terminal event of an iteration posts **exactly one** structured comment on the issue. The comment is the canonical record of what the worker saw and did, and a future Slice C parser will reconstruct iteration history by walking these envelopes in a thread.
+
+Statuses (one per envelope, mutually exclusive):
+
+| `data-attempt-status` | trigger |
+|---|---|
+| `blocked` | inner agent emitted `<promise>BLOCKED</promise>` |
+| `no-sentinel` | inner agent exited without `DONE` or `BLOCKED` |
+| `merge-conflict` | orchestrator could not merge to `main` |
+| `done` | success — merged, closing envelope |
+
+Schema (deterministic — Slice C depends on this shape):
+
+```html
+<details data-attempt-status="blocked"><summary>worker `wZ2R4` · status: blocked · duration: 2m5s · diff: +42 -10 · attempt: 1</summary>
+
+<details data-section="notes"><summary>notes</summary>
+
+…handoff `## Notes` body…
+
+</details>
+
+</details>
+```
+
+Per-status body sections:
+
+- `blocked` → one `data-section="notes"` block carrying the handoff's `## Notes` (the inner agent's appended progress/blockers).
+- `no-sentinel` → both `data-section="notes"` (handoff Notes, may be empty placeholder) **and** `data-section="log"` (last 50 lines of the captured inner-agent stdout, fenced).
+- `merge-conflict` → one `data-section="log"` block carrying the merge-conflict diff tail (last 50 lines of `git merge` output), fenced. Mirrors the no-sentinel log shape.
+- `done` → no body sections. Summary carries `diff: merged` and `merge: ` `<sha>` (GitHub auto-links bare SHAs to the commit on `main`). The merge commit on `main` *is* the diff — no need to duplicate it inline.
+
+Summary line is always `worker `{id}` · status: {status} · duration: NmSs · diff: {diff} · attempt: K [· merge: {sha}]`, where `{diff}` is `+N -M` against `origin/main` for non-DONE statuses and the literal `merged` for DONE.
+
+After a successful POST (any 2xx), the orchestrator sets `envelope.posted: true` in the iteration state file. The boot-time *Orphan Cleanup* reads that field to pick a TTL for preserved `ready-for-human` dirs: 1 day when the envelope made it to the issue (the thread carries the canonical record), 7 days when the POST failed (the local dir is the only copy of the notes/log). The field is initialised `false` at iteration start.
+
+What this envelope explicitly **does not** include (deferred to later slices):
+- Heartbeat-glyph comments (`:one: :two: …`) — Slice D will replace those with a single, in-place edited heartbeat.
+- Branch push to a remote `afk-attempts/` namespace — Slice B. Until then, the envelope's diffstat is computed against the local-only branch and the worktree path is implicit (recorded in state, not in the envelope).
+
 ## Stage Detection
 
 Inner agent stages, detected from stdout stream of the runner:
@@ -318,7 +362,8 @@ Path: `.red/tmp/work-{id}-i{N}/afk.state.json` — one snapshot per (worker, iss
     "retries": 0,
     "last_stream_line": "writing tests for callback handler"
   },
-  "durations_seconds": [820, 940, 760]
+  "durations_seconds": [820, 940, 760],
+  "envelope": { "posted": false }
 }
 ```
 
