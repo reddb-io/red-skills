@@ -16,6 +16,9 @@
 
 set -u
 
+# shellcheck disable=SC1091
+source "$(dirname "${BASH_SOURCE[0]}")/lib/state.sh"
+
 # ---- Read Claude Code stdin payload --------------------------------------
 input='{}'
 if [[ ! -t 0 ]]; then
@@ -136,21 +139,18 @@ if [[ -d .red/tmp ]]; then
   current_issues=()
 
   for state in .red/tmp/work-*/afk.state.json; do
-    pid=$(jq -r '.pid // empty' "$state" 2>/dev/null) || continue
-    [[ -z "$pid" ]] && continue
-    kill -0 "$pid" 2>/dev/null || continue
+    state_is_live "$state" || continue
+    state_read_into st "$state"
 
     total_workers=$((total_workers + 1))
+    total_blocked=$((total_blocked + st_blocked))
 
-    blk=$(jq -r '.blocked // 0' "$state" 2>/dev/null)
-    total_blocked=$((total_blocked + blk))
-
-    added=$(jq -r '.current.diff_added // 0' "$state" 2>/dev/null)
-    removed=$(jq -r '.current.diff_removed // 0' "$state" 2>/dev/null)
+    added="$st_current_diff_added"
+    removed="$st_current_diff_removed"
 
     # Fallback: compute diffstat from worktree if state file fields absent
     if [[ "$added" == "0" && "$removed" == "0" ]]; then
-      worktree=$(jq -r '.current.worktree // empty' "$state" 2>/dev/null)
+      worktree="$st_current_worktree"
       if [[ -n "$worktree" && -d "$worktree" ]]; then
         stat=$(git -C "$worktree" diff --shortstat origin/main 2>/dev/null || true)
         a=$(echo "$stat" | grep -oE '[0-9]+ insertion' | grep -oE '[0-9]+')
@@ -162,8 +162,7 @@ if [[ -d .red/tmp ]]; then
     total_added=$((total_added + added))
     total_removed=$((total_removed + removed))
 
-    issue=$(jq -r '.current.number // empty' "$state" 2>/dev/null)
-    [[ -n "$issue" ]] && current_issues+=("#$issue")
+    [[ -n "$st_current_number" ]] && current_issues+=("#$st_current_number")
   done
 
   if (( total_workers > 0 )); then

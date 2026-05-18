@@ -11,6 +11,9 @@
 
 set -eo pipefail
 
+# shellcheck disable=SC1091
+source "$(dirname "${BASH_SOURCE[0]}")/lib/state.sh"
+
 ONCE=0
 [[ "${1:-}" == "--once" ]] && { ONCE=1; shift; }
 [[ "${MONITOR_COMPACT:-0}" == "1" ]] && ONCE=1
@@ -225,29 +228,28 @@ colorize_diff() {
 render_worker_compact() {
   local state_file="$1"
   local iter_dir; iter_dir="$(dirname "$state_file")"
-  local pid_file="$iter_dir/afk.pid"
-  local state; state="$(cat "$state_file" 2>/dev/null || echo '{}')"
+
+  state_read_into st "$state_file"
 
   local worker_id pid alive runner total done blocked failed
   local current_n current_title current_stage current_worktree started elapsed
-  worker_id="$(jq -r '.worker_id // "?"' <<<"$state")"
-  pid="$(cat "$pid_file" 2>/dev/null || echo '')"
+  worker_id="${st_worker_id:-?}"
   alive="dead"
-  [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null && alive="live"
-  runner="$(jq -r '.runner // "-"' <<<"$state")"
-  total="$(jq -r '.total // 0' <<<"$state")"
-  done="$(jq -r '.done // 0' <<<"$state")"
-  blocked="$(jq -r '.blocked // 0' <<<"$state")"
-  failed="$(jq -r '.failed // 0' <<<"$state")"
-  current_n="$(jq -r '.current.number // "-"' <<<"$state")"
-  current_title="$(jq -r '.current.title // "-"' <<<"$state")"
-  current_stage="$(jq -r '.current.stage // "-"' <<<"$state")"
-  current_worktree="$(jq -r '.current.worktree // ""' <<<"$state")"
+  state_is_live "$state_file" && alive="live"
+  runner="${st_runner:--}"
+  total="$st_total"
+  done="$st_done"
+  blocked="$st_blocked"
+  failed="$st_failed"
+  current_n="${st_current_number:--}"
+  current_title="${st_current_title:--}"
+  current_stage="${st_current_stage:--}"
+  current_worktree="${st_current_worktree}"
   # Per-iteration elapsed: prefer .current.started_at (set on each claim)
   # over .started_at (worker-process start, cumulative across N issues).
   # The worker-level field made elapsed look like 4h21m when the current
   # iteration was actually 30 min old.
-  started="$(jq -r '.current.started_at // .started_at // ""' <<<"$state")"
+  started="${st_current_started_at:-${st_started_at}}"
 
   elapsed=0
   if [[ -n "$started" ]]; then
@@ -327,27 +329,26 @@ render_worker_compact() {
 render_worker() {
   local state_file="$1"
   local iter_dir; iter_dir="$(dirname "$state_file")"
-  local pid_file="$iter_dir/afk.pid"
-  local state; state="$(cat "$state_file" 2>/dev/null || echo '{}')"
+
+  state_read_into st "$state_file"
 
   local worker_id pid alive runner total done blocked failed started
   local current_n current_title current_stage current_glyph current_worktree current_last
-  worker_id="$(jq -r '.worker_id // "?"' <<<"$state")"
-  pid="$(cat "$pid_file" 2>/dev/null || echo '')"
+  worker_id="${st_worker_id:-?}"
   alive="dead"
-  [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null && alive="live"
-  runner="$(jq -r '.runner // "-"' <<<"$state")"
-  total="$(jq -r '.total // 0' <<<"$state")"
-  done="$(jq -r '.done // 0' <<<"$state")"
-  blocked="$(jq -r '.blocked // 0' <<<"$state")"
-  failed="$(jq -r '.failed // 0' <<<"$state")"
+  state_is_live "$state_file" && alive="live"
+  runner="${st_runner:--}"
+  total="$st_total"
+  done="$st_done"
+  blocked="$st_blocked"
+  failed="$st_failed"
   # Per-iteration elapsed; see render_worker_compact for the rationale.
-  started="$(jq -r '.current.started_at // .started_at // ""' <<<"$state")"
-  current_n="$(jq -r '.current.number // "-"' <<<"$state")"
-  current_title="$(jq -r '.current.title // "-"' <<<"$state")"
-  current_stage="$(jq -r '.current.stage // "-"' <<<"$state")"
-  current_worktree="$(jq -r '.current.worktree // "-"' <<<"$state")"
-  current_last="$(jq -r '.current.last_stream_line // ""' <<<"$state")"
+  started="${st_current_started_at:-${st_started_at}}"
+  current_n="${st_current_number:--}"
+  current_title="${st_current_title:--}"
+  current_stage="${st_current_stage:--}"
+  current_worktree="${st_current_worktree:--}"
+  current_last="$st_current_last_stream_line"
 # Prefer the live tail of afk.log over the state field (which the
 # orchestrator does not currently maintain). Falls back to state if
 # the log is empty/missing.
@@ -367,7 +368,7 @@ fi
   local pct=0
   [[ $total -gt 0 ]] && pct=$(( done * 100 / total ))
   local avg_s remaining_eta=0
-  avg_s="$(jq -r '.durations_seconds | if length > 0 then (add / length | floor) else 0 end' <<<"$state")"
+  avg_s="$(jq -rn --argjson d "${st_durations_seconds:-[]}" 'if ($d|length) > 0 then ($d|add/length|floor) else 0 end')"
   [[ "$avg_s" -gt 0 ]] && remaining_eta=$(( (total - done) * avg_s ))
 
   local status_tag="$alive"

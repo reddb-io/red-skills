@@ -6,6 +6,19 @@ Upstream base: `mattpocock/skills@e74f0061bb67222181640effa98c675bdb2fdaa7` (see
 
 ---
 
+## afk (engineering) — migrate `monitor.sh` and `statusline.sh` to `lib/state.sh` accessor
+
+- **status**: modified
+- **upstream**: —
+- **why**: Issue #26 landed `lib/state.sh` as the schema-owning accessor for `.red/tmp/work-*/afk.state.json` and migrated `afk.sh` onto it. Issue #27 finishes the migration for the two remaining state-file consumers — `monitor.sh` and `statusline.sh` — so the v1 schema lives in exactly one place. Adding a state field is now a one-line change to `_STATE_JQ_FILTER` in `lib/state.sh`; no consumer needs to learn the JSON shape.
+- **what changed**:
+  - `plugins/dev/skills/engineering/afk/scripts/monitor.sh`: sources `lib/state.sh`. Both `render_worker_compact` and `render_worker` now call `state_read_into st "$state_file"` once per state file (replacing six-to-eight `jq -r` invocations per worker) and read the documented `$st_*` variables. The liveness check (previously `cat .../afk.pid` then `kill -0`) becomes `state_is_live "$state_file"` — afk.sh keeps the state-file `.pid` in sync with the pid file, so both checks resolve identically. The default-value contract is preserved verbatim by mapping the accessor's empty-string defaults back to the original `"-"` sentinels via `${st_field:--}` parameter expansion (compact: `current_n` / `current_title` / `current_stage`; full: same plus `current_worktree`). Per-iteration `elapsed` still prefers `.current.started_at` over `.started_at` via `${st_current_started_at:-${st_started_at}}`. The `avg_s` ETA computation no longer reads the state file directly: `jq -rn --argjson d "${st_durations_seconds:-[]}" '…'` consumes the JSON-encoded array the accessor exposes. No direct `jq` against `afk.state.json` remains. Out-of-scope `jq` calls against `afk-supervisor-circuit.json` (parked/stalled slot rendering) and `afk-history.jsonl` (sparkline) are untouched — those files belong to other modules.
+  - `plugins/dev/skills/engineering/afk/scripts/statusline.sh`: sources `lib/state.sh`. The per-worker loop replaces six `jq -r` reads (`pid`, `blocked`, `current.diff_added`, `current.diff_removed`, `current.worktree`, `current.number`) with one `state_read_into st "$state"` plus `state_is_live "$state"` for liveness. The worktree-diff fallback (when `diff_added` / `diff_removed` are both zero) is preserved, including the `git -C "$worktree" diff --shortstat origin/main` shell-out. Issue numbers continue to be filtered via `[[ -n "$st_current_number" ]]` — empty defaults from `state_read_into` are semantically equivalent to the original `// empty` filter. Warm-cache statusline timing on a 2-worker checkout measured 47 ms (was 55 ms before), so the accessor's single-parse-per-file approach is a slight win and well under the 100 ms SLO.
+  - Byte-identity verified with hand-rolled fixtures covering live + dead + missing-pid workers and full + partial + empty state files. `diff` of pre- and post-migration `monitor.sh --once` output and `statusline.sh` output is empty for every fixture exercised.
+  - Tests: no test files modified. All existing afk suites green — config-loader 33/33, envelope-shape 37/37, handoff-builder 44/44, hooks-orchestrator 27/27, lifecycle-hooks 16/16, runner-detection 14/14, sentinel-detection 5/5, stall-detector 16/16, state-accessor 57/57, trip-sweep 39/39. The pre-existing `statusline.test.sh` failure on `main` (case1 — script emits the project-basename block when `.red/tmp` is missing, test expects empty) is unrelated to this migration and untouched.
+
+---
+
 ## afk (engineering) — `afk.sh` per-iteration lifecycle hook integration
 
 - **status**: modified
