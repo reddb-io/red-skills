@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "worker_id": "wABCD",
+  "pid": 4242,
+  "log": "/tmp/iter.log",
+  "started_at": "2026-05-18T12:00:00-03:00",
+  "runner": "claude",
+  "total": 0,
+  "done": 0,
+  "failed": 0,
+  "blocked": 0,
+  "completed": [],
+  "queue": [],
+  "current": null,
+  "durations_seconds": [],
+  "envelope": { "posted": false }
+}

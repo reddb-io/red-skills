@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "worker_id": "wABCD",
+  "pid": 4242,
+  "log": "/tmp/iter.log",
+  "started_at": "2026-05-18T12:00:00-03:00",
+  "runner": "claude",
+  "filter": { "kind": "prd", "value": "16" },
+  "total": 3,
+  "done": 1,
+  "failed": 0,
+  "blocked": 0,
+  "completed": [21],
+  "queue": [22, 23, 24],
+  "durations_seconds": [180],
+  "envelope": { "posted": true },
+  "current": {
+    "number": 22,
+    "title": "extract state.sh",
+    "slug": "extract-state-sh",
+    "worktree": ".red/tmp/work-wABCD-i22/worktree",
+    "handoff": ".red/tmp/work-wABCD-i22/handoff.md",
+    "started_at": "2026-05-18T12:05:00-03:00",
+    "stage": "impl",
+    "heartbeat_glyph": "",
+    "heartbeat_pid": "",
+    "runner": "claude",
+    "retries": 0,
+    "diff_added": 47,
+    "diff_removed": 12,
+    "last_stream_line": "running pnpm test"
+  }
+}

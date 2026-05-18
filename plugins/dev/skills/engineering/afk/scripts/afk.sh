@@ -21,6 +21,8 @@ SKILL_DIR="$(dirname "$SCRIPT_DIR")"
 source "$SCRIPT_DIR/config.sh"
 # shellcheck source=./hooks.sh
 source "$SCRIPT_DIR/hooks.sh"
+# shellcheck source=./lib/state.sh
+source "$SCRIPT_DIR/lib/state.sh"
 
 # ---------- arg parsing ----------
 RUNNER=""
@@ -236,7 +238,11 @@ prune_orphans() {
     local mtime_s; mtime_s="$(stat -c %Y "$d" 2>/dev/null || echo 0)"
     local safe=0
     local issue_n=""
-    [[ -f "$state_file" ]] && issue_n="$(jq -r '.current.number // empty' "$state_file" 2>/dev/null)"
+    if [[ -f "$state_file" ]]; then
+      local _orphan_current_number=""
+      state_read_into _orphan "$state_file" 2>/dev/null
+      issue_n="$_orphan_current_number"
+    fi
 
     if [[ -z "$issue_n" || "$issue_n" == "null" ]]; then
       # no state → garbage if old enough
@@ -258,7 +264,11 @@ prune_orphans() {
           #   posted=false → 7d TTL (post failed — the local dir is the only
           #                  copy of notes/log, keep the safety window).
           local envelope_posted="false"
-          [[ -f "$state_file" ]] && envelope_posted="$(jq -r '.envelope.posted // false' "$state_file" 2>/dev/null)"
+          if [[ -f "$state_file" ]]; then
+            local _orphan_envelope_posted="false"
+            state_read_into _orphan "$state_file" 2>/dev/null
+            envelope_posted="$_orphan_envelope_posted"
+          fi
           local ttl=$TTL_LONG
           [[ "$envelope_posted" == "true" ]] && ttl=$TTL_SHORT
           (( now_s - mtime_s > ttl )) && safe=1
@@ -386,7 +396,22 @@ iter_open() {
   mkdir -p "$ITER_DIR"
   printf '%s' "$$" > "$ITER_PID_FILE"
   : >> "$ITER_LOG"
-  state_init "$n"
+  state_init "$STATE_FILE" \
+    worker_id="$WORKER_ID" \
+    pid:=$$ \
+    log="$ITER_LOG" \
+    started_at="$AGG_STARTED" \
+    runner="$RUNNER" \
+    filter.kind="$FILTER_KIND" \
+    filter.value="$FILTER_VALUE" \
+    total:=$AGG_TOTAL \
+    done:=$AGG_DONE \
+    failed:=$AGG_FAILED \
+    blocked:=$AGG_BLOCKED \
+    completed:="$AGG_COMPLETED" \
+    queue:="$AGG_QUEUE" \
+    current:=null \
+    durations_seconds:="$AGG_DURATIONS"
 }
 
 iter_close_success() {
@@ -437,49 +462,9 @@ claim_lock_release() {
 }
 
 # ---------- state file ----------
-state_write() {
-  local data="$1"
-  [[ -z "$STATE_FILE" ]] && return 0
-  local tmp="${STATE_FILE}.tmp"
-  printf '%s' "$data" > "$tmp"
-  mv "$tmp" "$STATE_FILE"
-}
-
-state_read() { cat "$STATE_FILE" 2>/dev/null || echo '{}'; }
-
-state_init() {
-  local n="$1"
-  state_write "$(jq -n \
-    --arg started "$AGG_STARTED" \
-    --arg runner "$RUNNER" \
-    --arg fk "$FILTER_KIND" \
-    --arg fv "$FILTER_VALUE" \
-    --arg wid "$WORKER_ID" \
-    --arg log "$ITER_LOG" \
-    --argjson pid "$$" \
-    --argjson total "$AGG_TOTAL" \
-    --argjson done "$AGG_DONE" \
-    --argjson failed "$AGG_FAILED" \
-    --argjson blocked "$AGG_BLOCKED" \
-    --argjson completed "$AGG_COMPLETED" \
-    --argjson queue "$AGG_QUEUE" \
-    --argjson durs "$AGG_DURATIONS" \
-    '{version:1, worker_id:$wid, pid:$pid, log:$log,
-      started_at:$started, runner:$runner,
-      filter:{kind:$fk, value:$fv},
-      total:$total, done:$done, failed:$failed, blocked:$blocked,
-      completed:$completed, queue:$queue, current:null,
-      durations_seconds:$durs,
-      envelope:{posted:false}}')"
-}
-
-state_set() {
-  # state_set <jq filter>
-  [[ -z "$STATE_FILE" ]] && return 0
-  local new
-  new="$(state_read | jq -c "$1")"
-  state_write "$new"
-}
+# state_init / state_read_into / state_write / state_is_live live in lib/state.sh
+# and own the v1 schema. Every state-file read or write in this file flows
+# through them — never raw jq on the state file.
 
 # ---------- issue selection ----------
 slugify() {
@@ -553,7 +538,7 @@ gh_repo() {
 # the heartbeat sub-shell that posted them no longer exists. Local liveness
 # signal is provided by:
 #   - the inner-agent stream tee'd into ITER_LOG (continuous forensic trail)
-#   - state file mtime, bumped on every state_set call (monitor uses this to
+#   - state file mtime, bumped on every state_write call (monitor uses this to
 #     compute the 🟢 live / 🟡 stale flag together with the orchestrator pid)
 # The `heartbeat_glyph` and `heartbeat_pid` state-file fields are kept as
 # vestigial nulls for one release window so old monitors don't error on read.
@@ -736,10 +721,10 @@ emit_envelope() {
   local body; body="$(build_envelope "$status" "$summary" "$@")"
 
   if gh -R "$(gh_repo)" issue comment "$n" --body "$body" >/dev/null 2>&1; then
-    state_set '.envelope = (.envelope // {}) | .envelope.posted = true'
+    state_write "$STATE_FILE" envelope.posted:=true
     return 0
   fi
-  state_set '.envelope = (.envelope // {}) | .envelope.posted = false'
+  state_write "$STATE_FILE" envelope.posted:=false
   log "warn: failed to post envelope for #$n (status=$status)"
   return 1
 }
@@ -1226,23 +1211,26 @@ process_issue() {
   git -C "$PROJECT_ROOT" fetch origin main --quiet
   git -C "$PROJECT_ROOT" worktree add "$worktree" -b "$branch" origin/main >/dev/null
 
-  state_set "
-    .current = {
-      number: $n, title: \"$(printf %s "$title" | jq -Rs '.' | sed 's/^\"//;s/\"$//')\",
-      slug: \"$slug\", worktree: \"$worktree_rel\",
-      handoff: \".red/tmp/work-${WORKER_ID}-i${n}/handoff.md\",
-      started_at: \"$started_at\", stage: \"setup\",
-      heartbeat_glyph: null, heartbeat_pid: null,
-      runner: \"$RUNNER\", retries: 0, last_stream_line: \"\"
-    }
-  "
+  state_write "$STATE_FILE" \
+    current.number:=$n \
+    current.title="$title" \
+    current.slug="$slug" \
+    current.worktree="$worktree_rel" \
+    current.handoff=".red/tmp/work-${WORKER_ID}-i${n}/handoff.md" \
+    current.started_at="$started_at" \
+    current.stage=setup \
+    current.heartbeat_glyph:=null \
+    current.heartbeat_pid:=null \
+    current.runner="$RUNNER" \
+    current.retries:=0 \
+    current.last_stream_line=""
 
   local attempt=1
   local handoff
   handoff="$(write_handoff "$n" "$title" "$slug" "$body" "$worktree" "$RUNNER" "$attempt")"
 
   heartbeat_start "$n"
-  state_set ".current.stage = \"impl\""
+  state_write "$STATE_FILE" current.stage=impl
 
   local result
   result="$(run_inner "$worktree" "$handoff" "$RUNNER")"
@@ -1293,7 +1281,7 @@ process_issue() {
     rm -f "$notes_file" "$diff_file"
     gh -R "$(gh_repo)" issue edit "$n" --remove-label running --add-label ready-for-human >/dev/null
     AGG_BLOCKED=$((AGG_BLOCKED+1))
-    state_set ".blocked = $AGG_BLOCKED | .current = null"
+    state_write "$STATE_FILE" blocked:=$AGG_BLOCKED current:=null
     history_append "blocked" "$n" "$RUNNER" "$dur_blocked" "" "inner-agent"
     iter_close_preserve
     return 0
@@ -1317,19 +1305,19 @@ process_issue() {
     rm -f "$notes_file" "$log_file" "$diff_file"
     gh -R "$(gh_repo)" issue edit "$n" --remove-label running --add-label ready-for-human >/dev/null
     AGG_BLOCKED=$((AGG_BLOCKED+1))
-    state_set ".blocked = $AGG_BLOCKED | .current = null"
+    state_write "$STATE_FILE" blocked:=$AGG_BLOCKED current:=null
     history_append "blocked" "$n" "$RUNNER" "$dur_ns" "" "no-sentinel"
     iter_close_preserve
     return 0
   fi
 
   # feedback loops
-  state_set ".current.stage = \"tests\""
+  state_write "$STATE_FILE" current.stage=tests
   local fb; fb="$(feedback "$worktree")"
   log "feedback: $fb"
 
   # merge
-  state_set ".current.stage = \"merge\""
+  state_write "$STATE_FILE" current.stage=merge
   if ! do_merge "$branch" "$n" "$title"; then
     log "✗ #$n merge conflict (no inner self-resolve yet)"
     local dur_mc=$(( $(date +%s) - started_epoch ))
@@ -1345,14 +1333,14 @@ process_issue() {
     rm -f "$log_file" "$diff_file"
     gh -R "$(gh_repo)" issue edit "$n" --remove-label running --add-label ready-for-human >/dev/null
     AGG_BLOCKED=$((AGG_BLOCKED+1))
-    state_set ".blocked = $AGG_BLOCKED | .current = null"
+    state_write "$STATE_FILE" blocked:=$AGG_BLOCKED current:=null
     history_append "blocked" "$n" "$RUNNER" "$dur_mc" "" "merge-conflict"
     iter_close_preserve
     return 0
   fi
 
   # close
-  state_set ".current.stage = \"close\""
+  state_write "$STATE_FILE" current.stage=close
   local merge_sha; merge_sha="$(git -C "$PROJECT_ROOT" rev-parse --short HEAD)"
   local dur=$(( $(date +%s) - started_epoch ))
   emit_envelope "done" "$n" "$dur" "$branch" "$attempt" "$merge_sha" || true
@@ -1367,12 +1355,11 @@ process_issue() {
   AGG_DONE=$((AGG_DONE+1))
   AGG_COMPLETED="$(jq -c --argjson n "$n" '. + [$n]' <<<"$AGG_COMPLETED")"
   AGG_DURATIONS="$(jq -c --argjson d "$dur" '. + [$d]' <<<"$AGG_DURATIONS")"
-  state_set "
-    .completed = $AGG_COMPLETED
-    | .done = $AGG_DONE
-    | .durations_seconds = $AGG_DURATIONS
-    | .current = null
-  "
+  state_write "$STATE_FILE" \
+    completed:="$AGG_COMPLETED" \
+    done:=$AGG_DONE \
+    durations_seconds:="$AGG_DURATIONS" \
+    current:=null
   history_append "done" "$n" "$RUNNER" "$dur" "$merge_sha" ""
   iter_close_success
 
@@ -1388,8 +1375,12 @@ process_issue() {
 cleanup() {
   heartbeat_stop
   # release any in-flight claim so the next /afk run can pick it up
-  local current_n
-  current_n="$(state_read | jq -r '.current.number // empty')"
+  local current_n=""
+  if [[ -n "$STATE_FILE" && -f "$STATE_FILE" ]]; then
+    local _cleanup_current_number=""
+    state_read_into _cleanup "$STATE_FILE" 2>/dev/null
+    current_n="$_cleanup_current_number"
+  fi
   if [[ -n "$current_n" ]]; then
     gh -R "$(gh_repo)" issue edit "$current_n" \
       --remove-label running --add-label ready-for-agent >/dev/null 2>&1 || true
