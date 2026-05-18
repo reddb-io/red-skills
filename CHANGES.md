@@ -6,6 +6,20 @@ Upstream base: `mattpocock/skills@e74f0061bb67222181640effa98c675bdb2fdaa7` (see
 
 ---
 
+## afk (engineering) — generic hook orchestrator + env-file protocol
+
+- **status**: modified
+- **upstream**: —
+- **why**: PRD #16 needs one place that drives every hook point in the `afk` skill so callers in `supervisor.sh` (pre-spawn / post-exit) and `afk.sh` (pre-iteration / post-iteration / pre-merge / post-merge) don't each re-implement layer chaining, env propagation, and failure semantics. Issue #18 builds that orchestrator: a three-layer chain (shipped detectors → project detectors → project main hook) with a per-invocation env-file protocol so hooks can export values back to the caller, distinct pre vs. post failure semantics (pre aborts; post logs and continues), and an "applied detectors" list other code can render in the boot log.
+- **what changed**:
+  - `plugins/dev/skills/engineering/afk/scripts/hooks.sh`: new — exposes `hooks_run HOOK_POINT` and the `HOOKS_APPLIED_DETECTORS` array. Each subprocess gets its own `mktemp`-allocated `AFK_HOOK_ENV_FILE`; on exit code 0 the file is sourced back into the caller via `set -a; source "$file"; set +a` and then deleted, so vars exported by hooks propagate while temp files never leak. Hook points are hard-coded at v1: pre-spawn / pre-iteration / pre-merge abort on the first non-zero (returning the script's rc); post-exit / post-iteration / post-merge log to stderr and continue. Detector exit code 1 = "not applicable" (never aborts, never applied); any other non-zero is a failure per the pre/post rule. Layers run in C-locale alphabetical order. Layer 1 (shipped) detectors are skipped when `afk.hooks.defaults.<name>` is literally `false` in `.red/config.yaml`; layer 2 (project) detectors are never config-gated. Idempotent via `_AFK_HOOKS_SH_LOADED` guard so both runners can source it.
+  - `plugins/dev/skills/engineering/afk/scripts/afk.sh`: sources `hooks.sh` right after `config.sh` so `hooks_run` is available for the per-iteration / per-merge call sites that will wire up in a later slice.
+  - `plugins/dev/skills/engineering/afk/scripts/supervisor.sh`: same — sources `hooks.sh` after `config.sh`, ready for pre-spawn / post-exit wiring.
+  - `plugins/dev/skills/engineering/afk/scripts/tests/hooks-orchestrator.test.sh`: new — 27 assertions across the acceptance criteria: empty layers no-op, shipped-detector export propagation, detector exit 1 is N/A (no abort, not applied), shipped exit 2 aborts on pre-spawn but logs-and-continues on post-merge, project detector overrides shipped env value, project main hook overrides both detector layers, alphabetical execution + applied-list ordering across layers, temp env-files cleaned up (counted via private TMPDIR), unknown hook point returns non-zero, main-hook rc propagation on pre-merge vs. swallowed on post-merge, config-driven shipped-detector disable (`cargo: false` in YAML), plus structural checks that both `afk.sh` and `supervisor.sh` source `hooks.sh`.
+  - Tests: new hooks-orchestrator suite (27/27) + existing afk suites still green (config-loader 33/33, envelope-shape 37/37, handoff-builder 44/44, runner-detection 14/14, sentinel-detection 5/5, stall-detector 16/16). The pre-existing `statusline.test.sh` failure on `main` is unrelated and untouched.
+
+---
+
 ## afk (engineering) — `.red/config.yaml` loader with typed defaults
 
 - **status**: modified
