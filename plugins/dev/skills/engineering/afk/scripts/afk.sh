@@ -687,37 +687,245 @@ emit_envelope() {
   return 1
 }
 
+# ---------- envelope parser (Slice C read side) ----------
+# The orchestrator's envelope writer (build_envelope) emits a deterministic
+# `<details data-attempt-status="…">` block per terminal attempt. These helpers
+# consume the same shape so the retry handoff builder can surface prior
+# attempts to the next inner agent. Pure functions, easy to unit-test by
+# sourcing afk.sh.
+
+# A well-formed envelope opens with `<details data-attempt-status="…">` and
+# closes with `</details>`. Anything else (legacy `<details>` without the
+# attribute, free text, etc.) is treated as a regular comment and falls into
+# `## Human guidance` per the acceptance criteria.
+envelope_is_envelope() {
+  local body="$1"
+  [[ "$body" == "<details data-attempt-status=\""* ]] && [[ "$body" == *"</details>"* ]]
+}
+
+# Orchestrator-authored audit lines. Excluded from `## Human guidance` so the
+# inner agent doesn't mistake them for human direction.
+comment_is_boot_stamp() {
+  [[ "$1" == "🤖 /afk started "* ]]
+}
+
+comment_is_promotion_audit() {
+  [[ "$1" == "🤖 /afk promoted to ready-for-agent"* ]]
+}
+
+# Heartbeat glyphs (`:one:` … `:six:`) were retired in Slice D but legacy ones
+# may still live on older issues.
+comment_is_heartbeat_glyph() {
+  local trimmed="${1//[[:space:]]/}"
+  [[ "$trimmed" =~ ^:(one|two|three|four|five|six):$ ]]
+}
+
+# Single composed predicate the builder consults per comment. A comment is
+# human guidance iff it is not blank, not an envelope, and not one of the
+# orchestrator's noise classes.
+comment_is_human_guidance() {
+  local body="$1"
+  [[ -z "${body//[[:space:]]/}" ]] && return 1
+  envelope_is_envelope "$body"      && return 1
+  comment_is_boot_stamp "$body"     && return 1
+  comment_is_promotion_audit "$body" && return 1
+  comment_is_heartbeat_glyph "$body" && return 1
+  return 0
+}
+
+# envelope_field <body> <name>  →  prints value to stdout.
+# Pulls a single field from the envelope opening / summary line. `status` is
+# the `data-attempt-status` attribute; `worker` and `duration` come from the
+# summary line that build_envelope_summary emits.
+envelope_field() {
+  local body="$1" name="$2"
+  case "$name" in
+    status)
+      sed -n 's/.*data-attempt-status="\([^"]*\)".*/\1/p' <<<"$body" | head -n1
+      ;;
+    worker)
+      sed -n 's/.*worker `\([^`]*\)`.*/\1/p' <<<"$body" | head -n1
+      ;;
+    duration)
+      # `duration: 2m5s · …` — capture up to the next ` ·` or end of line.
+      sed -n 's/.*duration: \([^ ]*\).*/\1/p' <<<"$body" | head -n1
+      ;;
+  esac
+}
+
+# envelope_section <body> <name>  →  raw section content to stdout.
+# Walks the envelope and captures the body of `<details data-section="name">`
+# up to the next `</details>` at the same depth (sections are siblings inside
+# the envelope, never nested in each other). For `log` sections the wrapping
+# ``` fences are stripped so the caller can re-fence if it wants. Exits 1 when
+# the section is absent.
+envelope_section() {
+  local body="$1" name="$2"
+  awk -v name="$name" '
+    BEGIN { capture=0; found=0; depth=0 }
+    {
+      if (capture) {
+        if ($0 ~ /^<\/details>[[:space:]]*$/) { capture=0; next }
+        # drop the summary line (e.g. "<summary>notes</summary>")
+        if ($0 ~ /^<summary>.*<\/summary>[[:space:]]*$/) next
+        print
+        next
+      }
+      idx = index($0, "<details data-section=\"" name "\">")
+      if (idx > 0) { capture=1; found=1; next }
+    }
+    END { if (!found) exit 1 }
+  ' <<<"$body" | _strip_log_fences_and_blanks
+}
+
+# Internal: remove leading/trailing blank lines and, if the content is wrapped
+# in a single ```…``` block, peel those fences. Keeps section output tidy.
+_strip_log_fences_and_blanks() {
+  awk '
+    { lines[NR] = $0 }
+    END {
+      # find first/last non-blank
+      first = 0; last = 0
+      for (i = 1; i <= NR; i++) {
+        if (lines[i] !~ /^[[:space:]]*$/) { if (!first) first = i; last = i }
+      }
+      if (!first) exit 0
+      # peel matching ``` fences
+      if (lines[first] ~ /^```/ && lines[last] ~ /^```[[:space:]]*$/ && last > first) {
+        first++; last--
+      }
+      for (i = first; i <= last; i++) print lines[i]
+    }
+  '
+}
+
+# build_previous_attempts <comments_json>
+# Reads a JSON array of comments on stdin (`{author, body, createdAt}` shape)
+# and emits a markdown block listing every envelope in chronological order.
+# Empty output when there are no envelopes.
+build_previous_attempts() {
+  local comments_json="$1"
+  local n
+  n="$(jq 'length' <<<"$comments_json")"
+  [[ "$n" -gt 0 ]] || return 0
+
+  local count=0 i body status worker duration notes drop log branch entry_idx=0
+  for ((i = 0; i < n; i++)); do
+    body="$(jq -r ".[$i].body" <<<"$comments_json")"
+    envelope_is_envelope "$body" || continue
+    count=$((count + 1))
+  done
+  [[ "$count" -gt 0 ]] || return 0
+
+  for ((i = 0; i < n; i++)); do
+    body="$(jq -r ".[$i].body" <<<"$comments_json")"
+    envelope_is_envelope "$body" || continue
+    entry_idx=$((entry_idx + 1))
+    status="$(envelope_field "$body" status)"
+    worker="$(envelope_field "$body" worker)"
+    duration="$(envelope_field "$body" duration)"
+    printf '### Attempt %d\n\n' "$entry_idx"
+    printf -- '- Status: %s\n' "${status:-unknown}"
+    [[ -n "$worker"   ]] && printf -- '- Worker: %s\n' "$worker"
+    [[ -n "$duration" ]] && printf -- '- Duration: %s\n' "$duration"
+    # Forward-compat with Slice B: surface a `Branch:` line when the envelope
+    # carries a `branch` section (typically a single `afk-attempts/…` ref).
+    branch="$(envelope_section "$body" branch 2>/dev/null || true)"
+    if [[ -n "$branch" ]]; then
+      printf -- '- Branch: %s\n' "$(printf '%s' "$branch" | head -n1)"
+    fi
+    printf '\n'
+    notes="$(envelope_section "$body" notes 2>/dev/null || true)"
+    if [[ -n "$notes" ]]; then
+      printf '**notes**\n\n%s\n\n' "$notes"
+    fi
+    drop="$(envelope_section "$body" drop 2>/dev/null || true)"
+    if [[ -n "$drop" ]]; then
+      printf '**drop**\n\n%s\n\n' "$drop"
+    fi
+    log="$(envelope_section "$body" log 2>/dev/null || true)"
+    if [[ -n "$log" ]]; then
+      printf '**log excerpt**\n\n```\n%s\n```\n\n' "$log"
+    fi
+  done
+}
+
+# build_human_guidance <comments_json>
+# Emits each human-authored comment (anything passing the predicate) as a
+# block separated by `---`, in chronological order. Empty output when none.
+build_human_guidance() {
+  local comments_json="$1"
+  local n; n="$(jq 'length' <<<"$comments_json")"
+  [[ "$n" -gt 0 ]] || return 0
+
+  local first=1 i body author created
+  for ((i = 0; i < n; i++)); do
+    body="$(jq -r ".[$i].body" <<<"$comments_json")"
+    comment_is_human_guidance "$body" || continue
+    author="$(jq -r ".[$i].author.login // \"unknown\"" <<<"$comments_json")"
+    created="$(jq -r ".[$i].createdAt // \"\"" <<<"$comments_json")"
+    if [[ $first -eq 1 ]]; then first=0; else printf '\n---\n\n'; fi
+    if [[ -n "$created" ]]; then
+      printf -- '_@%s · %s_\n\n%s\n' "$author" "$created" "$body"
+    else
+      printf -- '_@%s_\n\n%s\n' "$author" "$body"
+    fi
+  done
+}
+
+# build_retry_handoff_body <n> <title> <body> <runner> <attempt> <url> <comments_json>
+# Composes the full handoff markdown to stdout. Pure function — no network,
+# no filesystem writes. Sections that would be empty are omitted entirely.
+build_retry_handoff_body() {
+  local n="$1" title="$2" body="$3" runner="$4" attempt="$5" url="$6" comments_json="$7"
+  echo "# Issue #${n} — ${title} [AFK]"
+  echo
+  echo "source: ${url}"
+  [[ "$FILTER_KIND" == "prd" ]] && echo "prd: #${FILTER_VALUE}"
+  echo "runner: ${runner}"
+  echo "started: $(date -Iseconds)"
+  echo "attempt: ${attempt}"
+  echo
+  echo "## Brief"
+  echo "${body}"
+
+  local attempts_block guidance_block
+  attempts_block="$(build_previous_attempts "$comments_json")"
+  guidance_block="$(build_human_guidance "$comments_json")"
+
+  if [[ -n "$attempts_block" ]]; then
+    echo
+    echo "## Previous attempts"
+    echo
+    printf '%s\n' "$attempts_block"
+  fi
+
+  if [[ -n "$guidance_block" ]]; then
+    echo
+    echo "## Human guidance"
+    echo
+    printf '%s\n' "$guidance_block"
+  fi
+
+  echo
+  echo "## Notes"
+  echo "<!-- inner agent appends progress/blockers here across attempts -->"
+}
+
 # ---------- handoff file ----------
 write_handoff() {
   local n="$1" title="$2" slug="$3" body="$4" worktree="$5" runner="$6" attempt="$7"
   # Handoff file lives in the iteration directory (one level above the worktree).
   local handoff="$ITER_DIR/handoff.md"
 
-  # Try to pull an AGENT-BRIEF comment from triage; fall back to issue body.
-  local brief
-  brief="$(gh -R "$(gh_repo)" issue view "$n" --json comments \
-            --jq '.comments[] | select(.body | startswith("## AGENT-BRIEF")) | .body' \
-            2>/dev/null | tail -n1)"
-  [[ -z "$brief" ]] && brief="$body"
+  local url comments_json
+  url="$(gh -R "$(gh_repo)" issue view "$n" --json url --jq .url 2>/dev/null)"
+  comments_json="$(gh -R "$(gh_repo)" issue view "$n" --json comments \
+    --jq '.comments | map({author: {login: .author.login}, body: .body, createdAt: .createdAt})' \
+    2>/dev/null)"
+  [[ -z "$comments_json" ]] && comments_json='[]'
 
-  local url
-  url="$(gh -R "$(gh_repo)" issue view "$n" --json url --jq .url)"
-
-  {
-    echo "# Issue #${n} — ${title} [AFK]"
-    echo
-    echo "source: ${url}"
-    [[ "$FILTER_KIND" == "prd" ]] && echo "prd: #${FILTER_VALUE}"
-    echo "runner: ${runner}"
-    echo "started: $(date -Iseconds)"
-    echo "attempt: ${attempt}"
-    echo
-    echo "## Brief"
-    echo "${brief}"
-    echo
-    echo "## Notes"
-    echo "<!-- inner agent appends progress/blockers here across attempts -->"
-  } > "$handoff"
+  build_retry_handoff_body "$n" "$title" "$body" "$runner" "$attempt" "$url" "$comments_json" > "$handoff"
 
   echo "$handoff"
 }
