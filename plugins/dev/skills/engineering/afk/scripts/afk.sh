@@ -998,6 +998,79 @@ build_human_guidance() {
   done
 }
 
+# count_blocked_since_guidance <comments_json>  →  prints int
+# Per-issue BLOCKED cap counter for PRD #29 Track B. Walks the comments
+# array (`{author, body, createdAt}` shape, chronological order) backwards
+# and counts the trailing run of `data-attempt-status="blocked"` envelopes.
+#
+# Stop conditions while walking from newest to oldest:
+#   - directive_carrier comment (contains a well-formed
+#     `<details data-kind="directive">…</details>` marker after audit-noise
+#     filtering) → human has handed down a fresh directive; reset.
+#   - any envelope whose status is not "blocked" (done, no-sentinel,
+#     merge-conflict, discarded, …) → trailing-BLOCKED run is broken.
+#
+# Skip (do not count, do not stop):
+#   - audit_noise: boot stamp, promotion audit, heartbeat glyph, blank body.
+#   - thread_discussion: any other narrative comment with no directive marker.
+#
+# Pure: jq only, no `gh`, no filesystem. Empty / `[]` / `null` → 0.
+#
+# This is the load-bearing decision the per-issue cap rests on. Supervisor
+# integration lives in a follow-up slice; here we only ship the function
+# plus its dedicated unit test suite.
+count_blocked_since_guidance() {
+  local comments_json="$1"
+  local n count i body status
+  [[ -z "$comments_json" || "$comments_json" == "null" ]] && { echo 0; return 0; }
+  n="$(jq 'length' <<<"$comments_json" 2>/dev/null || echo 0)"
+  [[ "$n" -gt 0 ]] || { echo 0; return 0; }
+
+  count=0
+  for ((i = n - 1; i >= 0; i--)); do
+    body="$(jq -r ".[$i].body // \"\"" <<<"$comments_json")"
+    if envelope_is_envelope "$body"; then
+      status="$(envelope_field "$body" status)"
+      if [[ "$status" == "blocked" ]]; then
+        count=$((count + 1))
+        continue
+      fi
+      # Non-blocked envelope breaks the trailing-BLOCKED run.
+      break
+    fi
+    if _comment_is_directive_carrier "$body"; then
+      break
+    fi
+    # audit_noise or thread_discussion — skip without resetting.
+  done
+  echo "$count"
+}
+
+# _comment_is_directive_carrier <body>
+# True iff the comment body contains at least one well-formed
+# `<details data-kind="directive">…</details>` element. Body-shape filter:
+# audit-noise classes (boot stamp / promotion audit / heartbeat glyph /
+# blank) are rejected first so we never mistake a system audit for human
+# direction. Envelopes are also rejected — a `data-attempt-status` block
+# is not a directive carrier even if it happens to embed marker-like text.
+#
+# Private helper; consolidation into PRD #29 #30's `classify_comment`
+# happens in that slice. The detection here is intentionally narrow:
+# substring match for the opening tag plus a closing `</details>` after it,
+# which is enough for the count_blocked_since_guidance state machine.
+_comment_is_directive_carrier() {
+  local body="$1"
+  [[ -z "${body//[[:space:]]/}" ]]    && return 1
+  envelope_is_envelope "$body"        && return 1
+  comment_is_boot_stamp "$body"       && return 1
+  comment_is_promotion_audit "$body"  && return 1
+  comment_is_heartbeat_glyph "$body"  && return 1
+  local open='<details data-kind="directive">'
+  [[ "$body" == *"$open"* ]] || return 1
+  local after="${body#*$open}"
+  [[ "$after" == *"</details>"* ]]
+}
+
 # build_retry_handoff_body <n> <title> <body> <runner> <attempt> <url> <comments_json>
 # Composes the full handoff markdown to stdout. Pure function — no network,
 # no filesystem writes. Sections that would be empty are omitted entirely.
