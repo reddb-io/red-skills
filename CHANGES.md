@@ -6,6 +6,15 @@ Upstream base: `mattpocock/skills@e74f0061bb67222181640effa98c675bdb2fdaa7` (see
 
 ---
 
+## afk (engineering) — AGENT-PROMPT precedence ladder + thread-discussion tie-breaker
+
+- **status**: modified
+- **upstream**: —
+- **why**: PRD #29 Track A (directive redesign). The handoff now carries a fifth top-level element, `<thread-discussion>` — human-authored comments that did not contain a `<details data-kind="directive">` marker — and the inner agent needs an explicit precedence ladder plus a tie-breaker rule so advisory chatter never gets misread as authority. Without the ladder, two failure modes were observed in PRD #29 dry-runs: agents quoting thread-discussion to override the brief, and agents emitting BLOCKED when an old brief disagreed with newer human guidance (which is exactly the resolution, not a contradiction).
+- **what changed**: `AGENT-PROMPT.md` Handoff Anatomy grows from four to five top-level elements; `<thread-discussion>` is documented as advisory-only, lowest authority. New explicit four-rung precedence ladder (`<human-guidance>` > `<issue-body>` incl. HITL body edits > `<previous-attempts>` > `<thread-discussion>`). New tie-breaker rule for `<thread-discussion>` with the two-condition gate — agent may consult it only when (i) the brief is ambiguous AND (ii) no `<human-guidance>` resolves the ambiguity; never to override explicit brief; never to justify BLOCKED. New precedence example showing a `<human-guidance>` comment beating an older acceptance criterion. Existing "latest `<human-guidance>` overrides `<issue-body>`" bullet preserved verbatim. Refs #33.
+
+---
+
 ## afk (engineering) — per-issue BLOCKED cap counter (`count_blocked_since_guidance`)
 
 - **status**: modified

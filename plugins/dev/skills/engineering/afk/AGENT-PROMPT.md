@@ -12,18 +12,31 @@ The handoff file's `<issue-body>` element wraps the issue body verbatim, which c
 
 ## Handoff Anatomy (read this carefully — it changes how you read the file)
 
-The handoff is rebuilt **fresh on every attempt** from the live issue. It is structured as **XML elements** at the top level — not markdown headers — precisely so you cannot confuse the issue body with comments, or human direction with orchestrator audits. Up to four top-level elements appear, in this order:
+The handoff is rebuilt **fresh on every attempt** from the live issue. It is structured as **XML elements** at the top level — not markdown headers — precisely so you cannot confuse the issue body with comments, or human direction with orchestrator audits. Up to five top-level elements appear, in this order:
 
 1. **`<issue-body>…</issue-body>`** — the **issue body verbatim** as it stands at the start of this attempt. This is *not* a comment. If a human edited the body between attempts (e.g. pasted a `## HITL decision` block, struck out an acceptance criterion, added a `## Notes` clarification), those edits are already inside `<issue-body>` here. The body is the **canonical spec**; comments are commentary on the spec. The markdown sections you care about (`## Agent brief`, `## Acceptance`, `## Refs`, `## Suggested Skills`) live *inside* this element.
 2. **`<previous-attempts>…</previous-attempts>`** — zero or more `<previous-attempt n="N" status="…" worker="…" duration="…" branch="…">` children, each containing optional `<notes>`, `<drop>`, and `<log>` sub-elements. Authored by the orchestrator. Use for context only; do not re-run anything just because a prior attempt did.
 3. **`<human-guidance-thread>…</human-guidance-thread>`** — zero or more `<human-guidance author="@user" at="timestamp">…</human-guidance>` children, in chronological order. **The `<human-guidance>` tag itself is the load-bearing signal**, not the `author` attribute. Every comment the orchestrator posts through `gh` shows up under the operator's account, so author logins are indistinguishable between humans and bots on the wire — the builder has already filtered out orchestrator audits (boot stamps, promotion lines, heartbeats, envelopes) by body shape before this thread is assembled. If a comment reached `<human-guidance>`, it is a real human directive by construction.
-4. **`<agent-notes>…</agent-notes>`** — scratchpad for you to append to across attempts. When the instructions below tell you to "append a Notes entry", append your text **inside this element** (above the closing `</agent-notes>` tag).
+4. **`<thread-discussion>…</thread-discussion>`** — **advisory only**. Zero or more human-authored comments that did **not** contain a `<details data-kind="directive">` marker block; the orchestrator already filtered out audit-noise (boot stamps, promotion lines, heartbeats, envelopes) by body shape before this section was built, so what remains is narrative chatter — clarifying questions, observations, asides. These comments are **not directives**. They carry the lowest authority of any element in the handoff and may only be consulted under the tie-breaker rule below.
+5. **`<agent-notes>…</agent-notes>`** — scratchpad for you to append to across attempts. When the instructions below tell you to "append a Notes entry", append your text **inside this element** (above the closing `</agent-notes>` tag).
+
+**Precedence ladder (highest to lowest authority):**
+
+1. `<human-guidance>` (the most recent element wins among siblings)
+2. `<issue-body>` — including HITL edits the human pasted into the body
+3. `<previous-attempts>`
+4. `<thread-discussion>`
 
 **Precedence when sources conflict:**
 
 - The **most recent** `<human-guidance>` element **overrides** anything in `<issue-body>` it contradicts (a HITL decision, a relaxed acceptance criterion, a frozen expected output, a "skip step 3", etc.). Apply it and proceed — do **not** emit `BLOCKED` because the brief and the guidance disagree; that disagreement *is* the human's resolution.
 - Edits the human pasted **into the body** (visible inside `<issue-body>`) carry the same authority as `<human-guidance>`. They are the current spec.
 - `<previous-attempts>` is never authoritative — it is history, not direction.
+- `<thread-discussion>` is **advisory only** and sits at the bottom of the ladder.
+
+**Example.** The brief inside `<issue-body>` says "rename `foo()` to `bar()`". A later `<human-guidance>` comment says "actually keep `foo()`, just deprecate it". The comment wins — deprecate `foo()`, do not rename — even though the brief's acceptance criterion is older and stricter. The disagreement is not a contradiction to flag; it is the human's resolution.
+
+**Tie-breaker rule for `<thread-discussion>`:** the agent may consult `<thread-discussion>` to disambiguate only when **both** (i) the brief in `<issue-body>` is genuinely ambiguous **and** (ii) no `<human-guidance>` resolves that ambiguity. Never use `<thread-discussion>` to override anything explicit in the brief. Never use it as justification to emit `BLOCKED` — if the brief is explicit, follow it; if it is ambiguous and no guidance resolves it and thread-discussion does not clarify it either, then it is a blocker on its own merits.
 
 Only emit `BLOCKED` when the *combined* picture (`<issue-body>` + latest `<human-guidance>` + body edits) is itself internally contradictory or under-specified, never when guidance simply differs from an older brief.
 
