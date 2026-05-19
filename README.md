@@ -342,6 +342,49 @@ afk:
 statusline: false           # quiet the bottom-bar AFK block
 ```
 
+### Environment variables
+
+Every env var the skill reads or exports is prefixed `RED_AFK_*`. Operator knobs are set in your shell rc, CI, or the `/afk fleet` invocation; the hook/detector contract is exported into each worker subshell by the supervisor and read by detectors under `detectors/` and any project hooks under `.red/hooks/`.
+
+**Operator tunables** (set when invoking — `RED_AFK_TARGET=4 /afk fleet`):
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `RED_AFK_TARGET` | `2` | Worker count maintained by the fleet supervisor. |
+| `RED_AFK_RUNNER` | `claude` | Runner used when no `--runner` flag, env sniff, or path sniff resolves first (last step of the detection cascade). `claude` or `codex`. |
+| `RED_AFK_STAGGER_S` | `2` | Seconds between successive worker spawns at supervisor boot — avoids thundering-herd on git/gh. |
+| `RED_AFK_POLL_S` | `15` | Supervisor health-check tick (sec). Lower = faster respawn, more CPU. |
+| `RED_AFK_FAST_DEATH_S` | `30` | A slot dying in < N s counts toward the circuit breaker. |
+| `RED_AFK_CIRCUIT_K` | `5` | Fast deaths in the window before a slot is parked. |
+| `RED_AFK_CIRCUIT_WINDOW_S` | `90` | Sliding window for the circuit breaker (sec). |
+| `RED_AFK_STALL_THRESHOLD_S` | `600` | Inactivity (sec) after which a slot is flagged `stalled` in the monitor — alive but no log progress. 10 min default. |
+| `RED_AFK_STALL_POLL_S` | `30` | Supervisor's stall-detector sampling cadence (sec). |
+| `RED_AFK_WATCHDOG_GRACE_S` | `30` | Grace (sec) after the inner agent emits `<promise>DONE</promise>` before the orchestrator force-closes its stdout pipe (protects against runaway polling loops the inner agent forgot to bound). |
+| `RED_AFK_MONITOR_COMPACT` | `0` | `1` → `/afk monitor` emits one line per worker and exits 0 (same as `--once`). For scripts and statusline integrations. |
+| `RED_AFK_CARGO_TARGET_BASE` | `/opt/cargo-target` | Base path the shipped `cargo` detector shards under per slot — exports `CARGO_TARGET_DIR=${BASE}/slot-${RED_AFK_SLOT}`. |
+| `RED_AFK_GRADLE_USER_HOME_BASE` | *(unset = detector off)* | Opt-in. When set, the shipped `gradle` detector exports `GRADLE_USER_HOME=${BASE}/slot-${RED_AFK_SLOT}`. Unset = no-op (deliberate — never claim a path on the host without consent). |
+
+**Hook/detector contract** (exported into each worker subshell — read these from inside your `detectors/*.sh` or `.red/hooks/*.sh`):
+
+| Variable | When set | What it carries |
+|---|---|---|
+| `RED_AFK_SLOT` | always | Slot index (`0`..`RED_AFK_TARGET-1`). Use to shard per-slot resources. |
+| `RED_AFK_WORKER_ID` | always | `wXXXX` worker ID for this spawn. |
+| `RED_AFK_RUNNER` | always | `claude` or `codex` — the resolved runner for this worker. |
+| `RED_AFK_PLUGIN_DIR` | always | Absolute path to the installed afk skill dir (parent of `scripts/`). Use to source shipped helpers. |
+| `RED_AFK_HOOK_ENV_FILE` | `pre-*` phases | Write `KEY=value` lines here; the orchestrator inherits them for the next stage. The detector / hook env-export channel. |
+| `RED_AFK_ISSUE` | iteration phases | Issue number for the current iteration. |
+| `RED_AFK_BRANCH` | iteration phases | Branch the worktree is on (`afk/{worker}/{N}-{slug}`). |
+| `RED_AFK_ITER_DIR` | iteration phases | `.red/tmp/work-{id}-i{N}/` — the iteration directory. |
+| `RED_AFK_STATE_FILE` | iteration phases | Absolute path to this iteration's `afk.state.json`. |
+| `RED_AFK_ITER_STATUS` | `post-iteration` | Terminal status — `done` / `blocked` / `no-sentinel` / `merge-conflict`. |
+| `RED_AFK_MERGE_BASE` | `pre-merge` | The `main` SHA we're merging onto. |
+| `RED_AFK_MERGE_SHA` | `post-merge` | The merge commit SHA (DONE only). |
+| `RED_AFK_DURATION_S` | `post-exit` | Worker wall-time in seconds. |
+| `RED_AFK_EXIT_CODE` | `post-exit` | Worker exit code (0 = clean exit). |
+
+Internal-only shell vars (`PROJECT_ROOT`, `ITER_DIR`, `RUNNER`, `WORKER_ID`, …) never cross the process boundary and are not part of the contract — don't rely on them from outside scripts.
+
 ### Canonical ledger — the issue thread *is* the record
 
 Every terminal event of every attempt posts a single structured comment on the issue:
