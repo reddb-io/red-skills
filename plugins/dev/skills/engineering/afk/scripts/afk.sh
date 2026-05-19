@@ -714,13 +714,17 @@ build_diff_section_body() {
   fi
 }
 
-# Extract the body of `## Notes` from the handoff file, dropping the heading
-# line and the boilerplate HTML comment. Empty string when nothing was
-# appended by the inner agent.
+# Extract the body inside `<agent-notes>…</agent-notes>` from the handoff
+# file, dropping the placeholder HTML comment. Empty string when the inner
+# agent appended nothing.
 extract_handoff_notes() {
   local handoff="$1"
   [[ -f "$handoff" ]] || { echo ""; return; }
-  awk '/^## Notes$/{flag=1; next} flag' "$handoff" \
+  awk '
+    /^<agent-notes>[[:space:]]*$/ { flag=1; next }
+    /^<\/agent-notes>[[:space:]]*$/ { flag=0; next }
+    flag { print }
+  ' "$handoff" \
     | grep -v '^<!-- inner agent appends progress/blockers here across attempts -->$' \
     | sed -e '/./,$!d' -e ':a' -e '/^\n*$/{$d;N;ba' -e '}'
 }
@@ -908,8 +912,11 @@ _strip_log_fences_and_blanks() {
 
 # build_previous_attempts <comments_json>
 # Reads a JSON array of comments on stdin (`{author, body, createdAt}` shape)
-# and emits a markdown block listing every envelope in chronological order.
-# Empty output when there are no envelopes.
+# and emits an XML block listing every envelope in chronological order.
+# Each attempt is a `<previous-attempt>` element with status/worker/duration/
+# branch as attributes (when present) and `<notes>`/`<drop>`/`<log>` child
+# elements carrying free-text content. Empty output when there are no
+# envelopes — caller suppresses the wrapping `<previous-attempts>` tag.
 build_previous_attempts() {
   local comments_json="$1"
   local n
@@ -924,6 +931,7 @@ build_previous_attempts() {
   done
   [[ "$count" -gt 0 ]] || return 0
 
+  local first=1
   for ((i = 0; i < n; i++)); do
     body="$(jq -r ".[$i].body" <<<"$comments_json")"
     envelope_is_envelope "$body" || continue
@@ -931,35 +939,45 @@ build_previous_attempts() {
     status="$(envelope_field "$body" status)"
     worker="$(envelope_field "$body" worker)"
     duration="$(envelope_field "$body" duration)"
-    printf '### Attempt %d\n\n' "$entry_idx"
-    printf -- '- Status: %s\n' "${status:-unknown}"
-    [[ -n "$worker"   ]] && printf -- '- Worker: %s\n' "$worker"
-    [[ -n "$duration" ]] && printf -- '- Duration: %s\n' "$duration"
-    # Forward-compat with Slice B: surface a `Branch:` line when the envelope
-    # carries a `branch` section (typically a single `afk-attempts/…` ref).
     branch="$(envelope_section "$body" branch 2>/dev/null || true)"
-    if [[ -n "$branch" ]]; then
-      printf -- '- Branch: %s\n' "$(printf '%s' "$branch" | head -n1)"
-    fi
-    printf '\n'
+    [[ -n "$branch" ]] && branch="$(printf '%s' "$branch" | head -n1)"
+
+    if [[ $first -eq 1 ]]; then first=0; else printf '\n'; fi
+    printf '<previous-attempt n="%d" status="%s"' "$entry_idx" "${status:-unknown}"
+    [[ -n "$worker"   ]] && printf ' worker="%s"' "$worker"
+    [[ -n "$duration" ]] && printf ' duration="%s"' "$duration"
+    [[ -n "$branch"   ]] && printf ' branch="%s"' "$branch"
+    printf '>\n'
+
     notes="$(envelope_section "$body" notes 2>/dev/null || true)"
     if [[ -n "$notes" ]]; then
-      printf '**notes**\n\n%s\n\n' "$notes"
+      printf '<notes>\n%s\n</notes>\n' "$notes"
     fi
     drop="$(envelope_section "$body" drop 2>/dev/null || true)"
     if [[ -n "$drop" ]]; then
-      printf '**drop**\n\n%s\n\n' "$drop"
+      printf '<drop>\n%s\n</drop>\n' "$drop"
     fi
     log="$(envelope_section "$body" log 2>/dev/null || true)"
     if [[ -n "$log" ]]; then
-      printf '**log excerpt**\n\n```\n%s\n```\n\n' "$log"
+      printf '<log>\n%s\n</log>\n' "$log"
     fi
+    printf '</previous-attempt>\n'
   done
 }
 
 # build_human_guidance <comments_json>
 # Emits each human-authored comment (anything passing the predicate) as a
-# block separated by `---`, in chronological order. Empty output when none.
+# `<human-guidance>` element in chronological order. Empty output when none —
+# caller suppresses the wrapping `<human-guidance-thread>` tag.
+#
+# Every comment in the output is — by construction — human direction: the
+# `comment_is_human_guidance` predicate strips orchestrator audits (boot
+# stamps, promotion lines, heartbeats, envelopes) by body shape *before* this
+# builder runs. The XML tag is the load-bearing signal to the agent, because
+# the `author.login` field cannot be trusted: every comment the orchestrator
+# posts via `gh issue comment` from the operator's host carries the
+# operator's GitHub login, indistinguishable on the wire from a real human
+# reply. If a comment reached this builder, it is human direction — full stop.
 build_human_guidance() {
   local comments_json="$1"
   local n; n="$(jq 'length' <<<"$comments_json")"
@@ -971,11 +989,11 @@ build_human_guidance() {
     comment_is_human_guidance "$body" || continue
     author="$(jq -r ".[$i].author.login // \"unknown\"" <<<"$comments_json")"
     created="$(jq -r ".[$i].createdAt // \"\"" <<<"$comments_json")"
-    if [[ $first -eq 1 ]]; then first=0; else printf '\n---\n\n'; fi
+    if [[ $first -eq 1 ]]; then first=0; else printf '\n'; fi
     if [[ -n "$created" ]]; then
-      printf -- '_@%s · %s_\n\n%s\n' "$author" "$created" "$body"
+      printf '<human-guidance author="@%s" at="%s">\n%s\n</human-guidance>\n' "$author" "$created" "$body"
     else
-      printf -- '_@%s_\n\n%s\n' "$author" "$body"
+      printf '<human-guidance author="@%s">\n%s\n</human-guidance>\n' "$author" "$body"
     fi
   done
 }
@@ -993,8 +1011,9 @@ build_retry_handoff_body() {
   echo "started: $(date -Iseconds)"
   echo "attempt: ${attempt}"
   echo
-  echo "## Brief"
+  echo "<issue-body>"
   echo "${body}"
+  echo "</issue-body>"
 
   local attempts_block guidance_block
   attempts_block="$(build_previous_attempts "$comments_json")"
@@ -1002,21 +1021,22 @@ build_retry_handoff_body() {
 
   if [[ -n "$attempts_block" ]]; then
     echo
-    echo "## Previous attempts"
-    echo
+    echo "<previous-attempts>"
     printf '%s\n' "$attempts_block"
+    echo "</previous-attempts>"
   fi
 
   if [[ -n "$guidance_block" ]]; then
     echo
-    echo "## Human guidance"
-    echo
+    echo "<human-guidance-thread>"
     printf '%s\n' "$guidance_block"
+    echo "</human-guidance-thread>"
   fi
 
   echo
-  echo "## Notes"
+  echo "<agent-notes>"
   echo "<!-- inner agent appends progress/blockers here across attempts -->"
+  echo "</agent-notes>"
 }
 
 # ---------- handoff file ----------

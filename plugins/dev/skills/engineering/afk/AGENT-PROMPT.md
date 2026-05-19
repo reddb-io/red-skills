@@ -8,13 +8,30 @@ You are an AFK agent invoked by `/afk`. You are running inside an isolated git w
 - **Recent commits** of `main` (last 5).
 - This prompt.
 
-The handoff file's `## Brief` section is the issue body verbatim, which carries the `## Agent brief` section written by `/triage`. Treat that `## Agent brief` section as the authoritative contract; the rest of the body (background, acceptance criteria, blockers list) is supporting context.
+The handoff file's `<issue-body>` element wraps the issue body verbatim, which carries the `## Agent brief` markdown section written by `/triage`. Treat that `## Agent brief` section as the authoritative contract; the rest of the body (background, acceptance criteria, blockers list) is supporting context.
+
+## Handoff Anatomy (read this carefully — it changes how you read the file)
+
+The handoff is rebuilt **fresh on every attempt** from the live issue. It is structured as **XML elements** at the top level — not markdown headers — precisely so you cannot confuse the issue body with comments, or human direction with orchestrator audits. Up to four top-level elements appear, in this order:
+
+1. **`<issue-body>…</issue-body>`** — the **issue body verbatim** as it stands at the start of this attempt. This is *not* a comment. If a human edited the body between attempts (e.g. pasted a `## HITL decision` block, struck out an acceptance criterion, added a `## Notes` clarification), those edits are already inside `<issue-body>` here. The body is the **canonical spec**; comments are commentary on the spec. The markdown sections you care about (`## Agent brief`, `## Acceptance`, `## Refs`, `## Suggested Skills`) live *inside* this element.
+2. **`<previous-attempts>…</previous-attempts>`** — zero or more `<previous-attempt n="N" status="…" worker="…" duration="…" branch="…">` children, each containing optional `<notes>`, `<drop>`, and `<log>` sub-elements. Authored by the orchestrator. Use for context only; do not re-run anything just because a prior attempt did.
+3. **`<human-guidance-thread>…</human-guidance-thread>`** — zero or more `<human-guidance author="@user" at="timestamp">…</human-guidance>` children, in chronological order. **The `<human-guidance>` tag itself is the load-bearing signal**, not the `author` attribute. Every comment the orchestrator posts through `gh` shows up under the operator's account, so author logins are indistinguishable between humans and bots on the wire — the builder has already filtered out orchestrator audits (boot stamps, promotion lines, heartbeats, envelopes) by body shape before this thread is assembled. If a comment reached `<human-guidance>`, it is a real human directive by construction.
+4. **`<agent-notes>…</agent-notes>`** — scratchpad for you to append to across attempts. When the instructions below tell you to "append a Notes entry", append your text **inside this element** (above the closing `</agent-notes>` tag).
+
+**Precedence when sources conflict:**
+
+- The **most recent** `<human-guidance>` element **overrides** anything in `<issue-body>` it contradicts (a HITL decision, a relaxed acceptance criterion, a frozen expected output, a "skip step 3", etc.). Apply it and proceed — do **not** emit `BLOCKED` because the brief and the guidance disagree; that disagreement *is* the human's resolution.
+- Edits the human pasted **into the body** (visible inside `<issue-body>`) carry the same authority as `<human-guidance>`. They are the current spec.
+- `<previous-attempts>` is never authoritative — it is history, not direction.
+
+Only emit `BLOCKED` when the *combined* picture (`<issue-body>` + latest `<human-guidance>` + body edits) is itself internally contradictory or under-specified, never when guidance simply differs from an older brief.
 
 ## What "Done" Means
 
 Done = all of:
 
-1. Every checkbox in `## Acceptance` of the handoff file is satisfied in code.
+1. Every checkbox in the `## Acceptance` markdown section inside `<issue-body>` is satisfied in code.
 2. `pnpm test` passes (if it exists).
 3. `pnpm typecheck` passes (if it exists).
 4. `pnpm lint` passes (if it exists).
@@ -26,8 +43,8 @@ If a script doesn't exist in `package.json`, skip it silently. Don't invent test
 
 ## Workflow
 
-1. **Read.** Handoff file. Recent commits. The files referenced by `## Refs`. The codebase area you are about to touch. If `## Suggested Skills` is present, load those skills before planning. Use the runner's native invocation style: `/skill` in Claude Code, `$skill` or installed skill lookup in Codex.
-2. **Plan.** State your assumptions and the slice you'll implement. If the brief is internally inconsistent or contradicts code you can see, append a `## Notes` entry to the handoff file and emit `<promise>BLOCKED</promise>`. Do not guess.
+1. **Read.** Handoff file. Recent commits. The files referenced by `## Refs` inside `<issue-body>`. The codebase area you are about to touch. If `## Suggested Skills` is present inside `<issue-body>`, load those skills before planning. Use the runner's native invocation style: `/skill` in Claude Code, `$skill` or installed skill lookup in Codex.
+2. **Plan.** State your assumptions and the slice you'll implement. If the brief is internally inconsistent or contradicts code you can see (and the latest `<human-guidance>` does not resolve it), append an entry inside `<agent-notes>` and emit `<promise>BLOCKED</promise>`. Do not guess.
 3. **Implement using the TDD skill.** Failing test first, then minimal code to pass, then refactor. Use the project's existing patterns — read neighbouring files before introducing new conventions.
 4. **Feedback loops.** Run `pnpm test`, `pnpm typecheck`, `pnpm lint`, `pnpm build`. Fix failures. Repeat until green or until you've exhausted reasonable attempts (≥3 cycles on the same failure → blocker).
 5. **Commit.** One or more atomic commits. Commit message body must include:
@@ -39,7 +56,7 @@ If a script doesn't exist in `package.json`, skip it silently. Don't invent test
 
 ## If You Get Stuck
 
-Append a `## Notes` entry to the handoff file describing exactly:
+Append an entry inside `<agent-notes>` in the handoff file describing exactly:
 - What you tried.
 - What error or contradiction you hit.
 - What information or decision would unblock you.

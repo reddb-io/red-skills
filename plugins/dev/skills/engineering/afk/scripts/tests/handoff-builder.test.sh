@@ -136,18 +136,23 @@ COMMENTS_1="$(comments_array \
   "alice|2026-05-18T10:30:00Z|the parser needs to handle empty bodies")"
 
 OUT_1="$(build_retry_handoff_body 42 "Test issue" "Issue body here" "claude" 2 "https://github.com/x/y/issues/42" "$COMMENTS_1")"
-expect_contains "case1/has Brief"               "$OUT_1" "## Brief"
+expect_contains "case1/has issue-body open"     "$OUT_1" "<issue-body>"
+expect_contains "case1/has issue-body close"    "$OUT_1" "</issue-body>"
 expect_contains "case1/Brief carries body"      "$OUT_1" "Issue body here"
-expect_contains "case1/has Previous attempts"   "$OUT_1" "## Previous attempts"
-expect_contains "case1/attempt header"          "$OUT_1" "### Attempt 1"
-expect_contains "case1/attempt status"          "$OUT_1" "Status: blocked"
+expect_contains "case1/has previous-attempts"   "$OUT_1" "<previous-attempts>"
+expect_contains "case1/attempt element"         "$OUT_1" '<previous-attempt n="1"'
+expect_contains "case1/attempt status attr"     "$OUT_1" 'status="blocked"'
 expect_contains "case1/attempt notes"           "$OUT_1" "first attempt halted on parser"
-expect_contains "case1/has Human guidance"      "$OUT_1" "## Human guidance"
+expect_contains "case1/has guidance thread"     "$OUT_1" "<human-guidance-thread>"
+expect_contains "case1/human element open"      "$OUT_1" '<human-guidance author="@alice"'
+expect_contains "case1/human element close"     "$OUT_1" "</human-guidance>"
 expect_contains "case1/human content"           "$OUT_1" "the parser needs to handle empty bodies"
-expect_contains "case1/human author"            "$OUT_1" "@alice"
-expect_contains "case1/Notes placeholder"       "$OUT_1" "## Notes"
+expect_contains "case1/agent-notes open"        "$OUT_1" "<agent-notes>"
+expect_contains "case1/agent-notes close"       "$OUT_1" "</agent-notes>"
+expect_not_contains "case1/no legacy Brief"     "$OUT_1" "## Brief"
+expect_not_contains "case1/no legacy Notes hdr" "$OUT_1" "## Notes"
 # Exactly one attempt entry.
-attempts_count="$(grep -c '^### Attempt ' <<<"$OUT_1")"
+attempts_count="$(grep -c '^<previous-attempt ' <<<"$OUT_1")"
 expect_eq "case1/attempts count" "$attempts_count" "1"
 
 # Case 2: three BLOCKED envelopes interspersed with two human replies.
@@ -161,8 +166,8 @@ COMMENTS_2="$(comments_array \
   "bob|2026-05-18T10:30:00Z|hint number two" \
   "agent|2026-05-18T10:40:00Z|$ENV_B3")"
 OUT_2="$(build_retry_handoff_body 7 "Multi" "body" "claude" 4 "url" "$COMMENTS_2")"
-attempts_count_2="$(grep -c '^### Attempt ' <<<"$OUT_2")"
-human_count_2="$(grep -cE '^_@bob' <<<"$OUT_2" || true)"
+attempts_count_2="$(grep -c '^<previous-attempt ' <<<"$OUT_2")"
+human_count_2="$(grep -cE '^<human-guidance author="@bob"' <<<"$OUT_2" || true)"
 expect_eq "case2/attempts count" "$attempts_count_2" "3"
 expect_eq "case2/human count"    "$human_count_2"    "2"
 # Chronological: Attempt 3's body must appear after Attempt 1's body.
@@ -188,10 +193,10 @@ expect_not_contains "case3/drops heartbeat"   "$OUT_3" ":two:"
 # Case 4: zero comments → no Previous attempts, no Human guidance sections.
 COMMENTS_4="[]"
 OUT_4="$(build_retry_handoff_body 1 "Empty" "body" "claude" 1 "url" "$COMMENTS_4")"
-expect_contains "case4/has Brief"              "$OUT_4" "## Brief"
-expect_not_contains "case4/no Previous"        "$OUT_4" "## Previous attempts"
-expect_not_contains "case4/no Human"           "$OUT_4" "## Human guidance"
-expect_contains "case4/has Notes"              "$OUT_4" "## Notes"
+expect_contains "case4/has issue-body"         "$OUT_4" "<issue-body>"
+expect_not_contains "case4/no Previous"        "$OUT_4" "<previous-attempts>"
+expect_not_contains "case4/no Human"           "$OUT_4" "<human-guidance-thread>"
+expect_contains "case4/has agent-notes"        "$OUT_4" "<agent-notes>"
 
 # Case 5: malformed envelope falls into Human guidance (acceptance: parser
 # does not abort, and the comment surfaces verbatim instead).
@@ -199,10 +204,31 @@ COMMENTS_5="$(comments_array \
   "agent|2026-05-18T08:00:00Z|$ENV_NOSTATUS" \
   "alice|2026-05-18T08:05:00Z|please retry")"
 OUT_5="$(build_retry_handoff_body 1 "Mal" "body" "claude" 1 "url" "$COMMENTS_5")"
-expect_not_contains "case5/no Previous attempts"  "$OUT_5" "## Previous attempts"
-expect_contains    "case5/has Human guidance"     "$OUT_5" "## Human guidance"
+expect_not_contains "case5/no Previous attempts"  "$OUT_5" "<previous-attempts>"
+expect_contains    "case5/has guidance thread"    "$OUT_5" "<human-guidance-thread>"
 expect_contains    "case5/malformed surfaces"     "$OUT_5" "boring"
 expect_contains    "case5/keeps real human"       "$OUT_5" "please retry"
+
+# Case 6: extract_handoff_notes round-trips an inner-agent appended block
+# from a real on-disk handoff using the new <agent-notes> XML wrapper.
+handoff_tmp="$(mktemp)"
+COMMENTS_6="[]"
+build_retry_handoff_body 7 "Notes RT" "body text" "claude" 1 "url" "$COMMENTS_6" > "$handoff_tmp"
+# Simulate the inner agent appending notes inside <agent-notes>.
+python3 - "$handoff_tmp" <<'PY'
+import sys, pathlib
+p = pathlib.Path(sys.argv[1])
+txt = p.read_text()
+appended = "tried X, hit Y, need Z to proceed"
+txt = txt.replace("</agent-notes>", appended + "\n</agent-notes>")
+p.write_text(txt)
+PY
+NOTES_OUT="$(extract_handoff_notes "$handoff_tmp")"
+expect_contains "case6/extracts appended notes"   "$NOTES_OUT" "tried X, hit Y"
+expect_not_contains "case6/drops placeholder"     "$NOTES_OUT" "inner agent appends"
+expect_not_contains "case6/drops open tag"        "$NOTES_OUT" "<agent-notes>"
+expect_not_contains "case6/drops close tag"       "$NOTES_OUT" "</agent-notes>"
+rm -f "$handoff_tmp"
 
 echo
 echo "summary: $pass passed, $fail failed"

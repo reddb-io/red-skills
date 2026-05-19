@@ -42,7 +42,7 @@ Per-issue files live under `.red/tmp/work-{id}-i{N}/` in the primary checkout. E
 | `.red/tmp/work-{id}-i{N}/afk.pid` | PID of the orchestrator. Used by `/afk monitor` to flag dead workers as `stale` via `kill -0`. Re-written on each iteration. |
 | `.red/tmp/work-{id}-i{N}/afk.log` | Append-only log for this iteration. Per-issue scope — each issue gets a fresh log. |
 | `.red/tmp/work-{id}-i{N}/afk.state.json` | State snapshot for this iteration. Schema in *State File* below. |
-| `.red/tmp/work-{id}-i{N}/handoff.md` | Handoff file the inner agent reads — issue body verbatim (which carries the `## Agent brief` section) plus retry context. Template in *Handoff File Template* below. |
+| `.red/tmp/work-{id}-i{N}/handoff.md` | Handoff file the inner agent reads — `<issue-body>` (issue body verbatim, including the `## Agent brief` markdown section), `<previous-attempts>`, `<human-guidance-thread>`, `<agent-notes>`. Top-level XML wrappers make body/comments/notes unambiguous. Template in *Handoff File Template* below. |
 
 Two workers cannot claim the same issue thanks to a local `mkdir` lock at `.red/tmp/claims/{N}/` plus a `gh issue view` pre-check before the edit. The gh edit itself is not atomic (see *Issue Lifecycle* below for the full three-layer scheme). The race surface is the brief window between two separate checkouts on the same host — acceptable for the intended scale.
 
@@ -195,7 +195,7 @@ For each issue `N`:
 
 1. **Claim.** `gh issue edit N --remove-label ready-for-agent --add-label running`. Then create the iteration directory `.red/tmp/work-{id}-i{N}/` and write `afk.pid` (current `$$`), open `afk.log` (tee target for orchestrator output), and initialise `afk.state.json` per *State File* below. Comment a start line on the issue: ISO timestamp, runner identity, worktree path. If labelling fails because someone else already claimed it, abandon the iteration directory and skip to the next issue.
 2. **Worktree.** `git -C primary fetch origin main` then `git worktree add .red/tmp/work-{id}-i{N}/worktree -b afk/{id}/{N}-{slug} origin/main` from the primary checkout. The branch is local-only until push. The worktree lives inside the gitignored `.red/tmp/` tree so it never appears in `git status` for `main`.
-3. **Handoff file.** Materialise the handoff into `.red/tmp/work-{id}-i{N}/handoff.md` using the template below — `## Brief` is the issue body verbatim (which carries the `## Agent brief` section written by `/triage`). The handoff file lives one level above the worktree so the inner agent reads it via `../handoff.md` from inside the worktree, and so it survives a worktree wipe on retry.
+3. **Handoff file.** Materialise the handoff into `.red/tmp/work-{id}-i{N}/handoff.md` using the template below — top-level XML wrappers (`<issue-body>`, `<previous-attempts>`, `<human-guidance-thread>`, `<agent-notes>`) keep the issue body, orchestrator-authored prior attempts, human comments, and the inner-agent scratchpad unambiguous. `<issue-body>` carries the issue body verbatim (including the `## Agent brief` section written by `/triage`). The handoff file lives one level above the worktree so the inner agent reads it via `../handoff.md` from inside the worktree, and so it survives a worktree wipe on retry.
 4. **Local heartbeat marker.** Write one `[heartbeat] iteration started for #N` line to `afk.log`. Slice D retired the periodic GitHub-comment heartbeat (`:one: :two: :three: :four:`) — local liveness is now signalled by the inner-agent stdout stream tee'd into `afk.log` plus state-file mtime, both of which already exist.
 5. **Inner agent.** Invoke claude/codex per [`runner-*.md`](runner-claude.md) with [`AGENT-PROMPT.md`](AGENT-PROMPT.md) + the handoff file + last 5 commits of `main`. Stream stdout into the loop's header tail. Detect stages by grep on the stream — see *Stage Detection* below.
 6. **Inner result.**
@@ -274,7 +274,7 @@ Schema (deterministic — Slice C depends on this shape):
 
 <details data-section="notes"><summary>notes</summary>
 
-…handoff `## Notes` body…
+…handoff `<agent-notes>` body…
 
 </details>
 
@@ -283,8 +283,8 @@ Schema (deterministic — Slice C depends on this shape):
 
 Per-status body sections:
 
-- `blocked` → one `data-section="notes"` block carrying the handoff's `## Notes` (the inner agent's appended progress/blockers).
-- `no-sentinel` → both `data-section="notes"` (handoff Notes, may be empty placeholder) **and** `data-section="log"` (last 50 lines of the captured inner-agent stdout, fenced).
+- `blocked` → one `data-section="notes"` block carrying the handoff's `<agent-notes>` body (the inner agent's appended progress/blockers).
+- `no-sentinel` → both `data-section="notes"` (handoff `<agent-notes>`, may be empty placeholder) **and** `data-section="log"` (last 50 lines of the captured inner-agent stdout, fenced).
 - `merge-conflict` → one `data-section="log"` block carrying the merge-conflict diff tail (last 50 lines of `git merge` output), fenced. Mirrors the no-sentinel log shape.
 - `done` → no body sections. Summary carries `diff: merged` and `merge: ` `<sha>` (GitHub auto-links bare SHAs to the commit on `main`). The merge commit on `main` *is* the diff — no need to duplicate it inline.
 
@@ -529,6 +529,12 @@ When `CronList` / `CronDelete` are unavailable (Codex runner, or `/afk monitor` 
 
 `.red/tmp/work-{id}-i{N}/handoff.md`:
 
+Top-level content is XML elements (not markdown headers) so the inner agent
+cannot confuse the issue body with comments, or human direction with
+orchestrator audits. Markdown sections like `## Agent brief`, `## Acceptance`,
+`## Refs`, and `## Suggested Skills` live *inside* the `<issue-body>` element
+(they are part of the issue body verbatim).
+
 ```markdown
 # Issue #{N} — {title} [AFK]
 
@@ -538,22 +544,31 @@ runner: {claude|codex}
 started: {iso8601}
 attempt: {1..}
 
-## Brief
-{issue body verbatim — includes the `## Agent brief` section written by /triage}
+<issue-body>
+{issue body verbatim — includes the `## Agent brief`, `## Acceptance`, `## Refs`,
+and `## Suggested Skills` markdown sections written by /triage}
+</issue-body>
 
-## Acceptance
-- [ ] {extracted from `## Acceptance criteria` / `## Agent brief` in the issue body}
+<previous-attempts>                                    <!-- omitted when empty -->
+<previous-attempt n="1" status="blocked" worker="wXXXX" duration="0m50s" branch="afk-attempts/wXXXX/N-slug">
+<notes>
+{inner agent's appended notes from prior attempt}
+</notes>
+<log>
+{tail of prior attempt's stdout, if captured}
+</log>
+</previous-attempt>
+</previous-attempts>
 
-## Refs
-- ADRs: {paths from brief, e.g. docs/adr/0007-foo.md}
-- Wiki: {pages from brief, if any}
-- PRD: {path or URL}
+<human-guidance-thread>                                <!-- omitted when empty -->
+<human-guidance author="@alice" at="{iso8601}">
+{human comment body verbatim — orchestrator audits already filtered out by body shape}
+</human-guidance>
+</human-guidance-thread>
 
-## Suggested Skills
-{ordered list of skills the inner agent should consider, e.g. `/tdd`, `/diagnose`, `/wiki`. Omit if none beyond the default workflow.}
-
-## Notes
-{inner agent appends progress, blockers, decisions here across attempts}
+<agent-notes>
+<!-- inner agent appends progress/blockers here across attempts -->
+</agent-notes>
 ```
 
 The handoff file follows the same minimalism as the `/handoff` skill — reference artifacts by path, do not duplicate their content.
