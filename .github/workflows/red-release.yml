@@ -1,14 +1,17 @@
 name: red-release
 
 # Auto-release on push to main:
-#   1. Parse conventional commits since the last vX.Y.Z tag.
+#   1. Defer if any open issue carries the `running` label (a /afk fleet is
+#      mid-iteration — auto-pushing a release commit would yank origin/main
+#      out from under in-flight workers, causing merge-conflict cascades).
+#   2. Parse conventional commits since the last vX.Y.Z tag.
 #      - BREAKING CHANGE / `feat!:` / `fix!:` → major bump
 #      - `feat:`                              → minor bump
 #      - anything else (`fix:`, `chore:`, …) → patch bump
 #      - no `feat`/`fix`/`!` commits          → skip (no release)
-#   2. Sync plugins/dev/.claude-plugin/plugin.json `version` field.
-#   3. Commit the bump back to main (marker `[skip release]` to avoid loop).
-#   4. Create the git tag and a GitHub Release with auto-generated notes.
+#   3. Sync plugins/dev/.claude-plugin/plugin.json `version` field.
+#   4. Commit the bump back to main (marker `[skip release]` to avoid loop).
+#   5. Create the git tag and a GitHub Release with auto-generated notes.
 
 on:
   push:
@@ -33,11 +36,27 @@ jobs:
           fetch-tags: true
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Defer if /afk fleet is active
+        id: fleet
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          running=$(gh issue list --label running --state open --json number --jq 'length' 2>/dev/null || echo "0")
+          echo "running=$running" >> "$GITHUB_OUTPUT"
+          if [ "$running" -gt 0 ]; then
+            echo "::notice::🛑 fleet active — $running issue(s) carry the 'running' label. Release deferred; the fleet's next push to main after the running issues drain will retry."
+          else
+            echo "no running issues — proceeding"
+          fi
+
       - name: Validate install metadata
+        if: steps.fleet.outputs.running == '0'
         run: scripts/validate-install-metadata.sh
 
       - name: Decide bump kind
         id: bump
+        if: steps.fleet.outputs.running == '0'
         run: |
           set -euo pipefail
           latest=$(git tag --list 'v*.*.*' --sort=-v:refname | head -n1)
@@ -62,13 +81,13 @@ jobs:
           echo "Bump kind: $kind (previous tag: ${latest:-none})"
 
       - name: Skip if no releasable commits
-        if: steps.bump.outputs.kind == 'none'
+        if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind == 'none'
         run: |
           echo "No feat/fix commits since ${{ steps.bump.outputs.previous }} — nothing to release."
 
       - name: Compute next version
         id: version
-        if: steps.bump.outputs.kind != 'none'
+        if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
         env:
           KIND: ${{ steps.bump.outputs.kind }}
           PREVIOUS: ${{ steps.bump.outputs.previous }}
@@ -88,7 +107,7 @@ jobs:
           echo "Releasing $next"
 
       - name: Sync plugin manifest versions
-        if: steps.bump.outputs.kind != 'none'
+        if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
         env:
           NEXT: ${{ steps.version.outputs.next }}
         run: |
@@ -114,7 +133,7 @@ jobs:
           fi
 
       - name: Tag + GitHub Release
-        if: steps.bump.outputs.kind != 'none'
+        if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NEXT: ${{ steps.version.outputs.next }}
