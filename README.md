@@ -20,7 +20,7 @@ reddb.io's slash-command library for Claude Code, Codex, and friends.
 /plugin marketplace add reddb-io/red-skills && /plugin install dev@red-skills
 ```
 
-[Install details](#install) · [`/afk`](#-afk--autonomous-issue-execution) · [Pipeline](#-the-pipeline-that-feeds-it) · [Wiki](#-knowledge--your-private-llm-wiki) · [Reference](#reference)
+[Install details](#install) · [`/afk`](#-afk--autonomous-issue-execution) · [Fleet mode](#fleet-mode--one-command-n-workers) · [Pipeline](#-the-pipeline-that-feeds-it) · [Wiki](#-knowledge--your-private-llm-wiki) · [Reference](#reference)
 
 ```
    /start   ─▶   /to-prd   ─▶   /to-issues   ─▶   /triage   ─▶   ⚡ /afk
@@ -28,6 +28,12 @@ reddb.io's slash-command library for Claude Code, Codex, and friends.
    the plan      a PRD          vertical          AGENT-BRIEF    test, merge,
                                 slices                           close, repeat
 ```
+
+**Highlights**
+
+🚀 Fleet mode · 🤖 Claude + Codex runner cascade · 🪝 `.red/config.yaml` hooks & detectors (`cargo`, `gradle`)
+📒 Canonical envelopes — the issue thread *is* the source of truth · 📊 Live monitor with 48 h sparkline
+🎨 Project-aware statusline · 🔒 Safe-by-construction git (no `reset` / `stash` / `--force`)
 
 </div>
 
@@ -278,6 +284,35 @@ Every iteration writes atomic state to `.red/tmp/work-{worker}-i{N}/afk.state.js
 The 48 h sparkline at the top aggregates `.red/state/afk-history.jsonl` across every worker — at-a-glance throughput. Compact one-line variant kicks in automatically when the monitor is piped, so it's safe to invoke inline from another agent.
 
 Designed for terminals you leave open while you do something else. Or sleep. Under Claude Code, every worker spawn also schedules an auto-monitor cron that re-renders every 3 min and self-cancels when all workers exit.
+
+### Fleet mode — one command, N workers
+
+`/afk` is trivially parallel — open N terminals and you get N workers, no flag needed. **Fleet mode** is the lazy version: one supervisor maintains a target worker count, respawns crashes, and trips a per-slot circuit breaker when a slot dies too fast.
+
+```
+                  ┌──────────────────────────────────────────┐
+                  │  supervisor.sh    target=4    PID=98221   │
+                  │  poll=15s   stall-threshold=10min         │
+                  └────────┬──────────┬──────────┬──────────┬─┘
+                           │          │          │          │
+                       slot-1     slot-2     slot-3     slot-4
+                        wK7M2      wQ3LP      w9RNX     ⛔ parked
+                       claude     claude     claude    (5 deaths/90s)
+                          │          │          │
+                       #142       #143       #144
+                       impl       tests      merge
+```
+
+```bash
+/afk fleet 4               # spawn supervisor maintaining 4 workers
+/afk fleet                 # default: 2
+/afk fleet stop            # graceful: SIGTERM every worker, drop the pid file, cancel the auto-monitor cron
+```
+
+- **Respawn.** A worker that exits cleanly because the queue drained is *not* respawned (no busy-loop on empty). A worker that crashes is respawned with backoff.
+- **Circuit breaker.** ≥ 5 crashes within 90 s on the same slot ⇒ the slot is parked. Other slots keep working. Fleet stop clears parked state.
+- **Trip sweep.** When a slot trips, the supervisor walks the iter dirs that worker owned, posts a `discarded` envelope on each open issue, and restores `ready-for-agent` so another worker picks them up.
+- **Per-slot isolation.** Each slot exports `AFK_SLOT=N` so detectors (cargo, gradle, …) can shard build directories per slot.
 
 ### Statusline
 
