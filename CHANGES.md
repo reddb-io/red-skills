@@ -6,6 +6,15 @@ Upstream base: `mattpocock/skills@e74f0061bb67222181640effa98c675bdb2fdaa7` (see
 
 ---
 
+## afk (engineering) — per-issue BLOCKED cap counter (`count_blocked_since_guidance`)
+
+- **status**: modified
+- **upstream**: —
+- **why**: PRD #29 Track B needs a deterministic per-issue cap so a single stuck issue can't soak the `ready-for-agent` queue with repeated BLOCKED attempts. The cap state is implicit in the comments thread (envelopes + human directives) and must reset cleanly whenever a human hands down fresh guidance.
+- **what changed**: new pure function `count_blocked_since_guidance(comments_json) → int` in `afk.sh`. Walks the comments array backwards, counts the trailing run of `data-attempt-status="blocked"` envelopes, and stops on either a `directive_carrier` comment (well-formed `<details data-kind="directive">…</details>` after the audit-noise filter) or a non-blocked envelope (DONE / no-sentinel / merge-conflict / discarded) breaking the trailing-BLOCKED run. `thread_discussion` (narrative) and `audit_noise` (boot stamp / promotion audit / heartbeat / blank) comments are skipped without resetting. Pure: jq only, no `gh`, no filesystem. Private helper `_comment_is_directive_carrier` ships alongside; full classifier consolidation lives in #30 (which downstream slices will use to replace these inline checks). New test suite `per-issue-cap.test.sh` (14 cases) covers all acceptance criteria in isolation. Refs #32.
+
+---
+
 ## afk (engineering) — env var rename to `RED_AFK_*` (BREAKING)
 
 - **status**: modified
