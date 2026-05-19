@@ -73,13 +73,13 @@ mkdir -p "$proj_rust"
 touch "$proj_rust/Cargo.toml"
 cargo_base="$TMP_ROOT/cargo-target"
 
-outdir="$(PROJECT_ROOT="$proj_rust" CARGO_TARGET_BASE="$cargo_base" \
+outdir="$(PROJECT_ROOT="$proj_rust" RED_AFK_CARGO_TARGET_BASE="$cargo_base" \
   run_pre_spawn_hooks 2 wRUST)"
 rc=$?
 expect_eq "pre-spawn (Rust): rc"      "$rc" "0"
 expect_eq "pre-spawn (Rust): applied" "$(<"$outdir/applied")" "cargo"
 # Env diff isolates *only* detector exports. The detector emits
-# CARGO_TARGET_DIR=${CARGO_TARGET_BASE}/slot-${AFK_SLOT}.
+# CARGO_TARGET_DIR=${RED_AFK_CARGO_TARGET_BASE}/slot-${RED_AFK_SLOT}.
 expect_eq "pre-spawn (Rust): env content" \
   "$(<"$outdir/env")" "CARGO_TARGET_DIR=${cargo_base}/slot-2"
 [[ -d "$cargo_base/slot-2" ]] && ok "pre-spawn (Rust): slot dir created" \
@@ -88,14 +88,14 @@ rm -rf "$outdir"
 
 # ---------- 5. run_pre_spawn_hooks: AFK_* not part of env diff -------------
 # Sanity check the diff doesn't leak our own AFK_* exports back to the caller.
-outdir="$(PROJECT_ROOT="$proj_rust" CARGO_TARGET_BASE="$cargo_base" \
+outdir="$(PROJECT_ROOT="$proj_rust" RED_AFK_CARGO_TARGET_BASE="$cargo_base" \
   run_pre_spawn_hooks 0 wAFK)"
-grep -q '^AFK_SLOT=' "$outdir/env" \
-  && bad "pre-spawn: env diff leaks AFK_SLOT" \
-  || ok "pre-spawn: env diff excludes AFK_SLOT"
-grep -q '^AFK_WORKER_ID=' "$outdir/env" \
-  && bad "pre-spawn: env diff leaks AFK_WORKER_ID" \
-  || ok "pre-spawn: env diff excludes AFK_WORKER_ID"
+grep -q '^RED_AFK_SLOT=' "$outdir/env" \
+  && bad "pre-spawn: env diff leaks RED_AFK_SLOT" \
+  || ok "pre-spawn: env diff excludes RED_AFK_SLOT"
+grep -q '^RED_AFK_WORKER_ID=' "$outdir/env" \
+  && bad "pre-spawn: env diff leaks RED_AFK_WORKER_ID" \
+  || ok "pre-spawn: env diff excludes RED_AFK_WORKER_ID"
 rm -rf "$outdir"
 
 # ---------- 6. run_pre_spawn_hooks: hook failure aborts (returns rc) -------
@@ -117,7 +117,7 @@ rm -rf "$outdir"
 
 # ---------- 7. run_post_exit_hooks is best-effort --------------------------
 # Plant a project-local main hook for post-exit that asserts the env
-# contract (AFK_EXIT_CODE / AFK_DURATION_S / AFK_SLOT / AFK_WORKER_ID) and
+# contract (RED_AFK_EXIT_CODE / RED_AFK_DURATION_S / RED_AFK_SLOT / RED_AFK_WORKER_ID) and
 # records what it saw. Layer 3 main hook fires unconditionally.
 proj_post="$TMP_ROOT/proj-post"
 mkdir -p "$proj_post/.red/hooks"
@@ -125,7 +125,7 @@ record="$TMP_ROOT/post-exit.record"
 : > "$record"
 cat > "$proj_post/.red/hooks/post-exit.sh" <<EOS
 #!/usr/bin/env bash
-printf '%s|%s|%s|%s\n' "\$AFK_SLOT" "\$AFK_WORKER_ID" "\$AFK_EXIT_CODE" "\$AFK_DURATION_S" >> "$record"
+printf '%s|%s|%s|%s\n' "\$RED_AFK_SLOT" "\$RED_AFK_WORKER_ID" "\$RED_AFK_EXIT_CODE" "\$RED_AFK_DURATION_S" >> "$record"
 exit 0
 EOS
 chmod +x "$proj_post/.red/hooks/post-exit.sh"
@@ -149,11 +149,11 @@ expect_eq "post-exit: wrapper swallows non-zero" "$rc" "0"
 # On a Rust project the boot line writes `cargo` to DEFAULTS_FILE; on a
 # bare project it writes an empty line so monitor.sh can still render `-`.
 rm -f "$DEFAULTS_FILE"
-export CARGO_TARGET_BASE="$cargo_base"
+export RED_AFK_CARGO_TARGET_BASE="$cargo_base"
 PROJECT_ROOT="$proj_rust" log_applied_detectors_boot_line >/dev/null 2>&1
 expect_eq "boot-line: writes applied list" \
   "$(<"$DEFAULTS_FILE")" "cargo"
-unset CARGO_TARGET_BASE
+unset RED_AFK_CARGO_TARGET_BASE
 rm -f "$DEFAULTS_FILE"
 PROJECT_ROOT="$proj_none" log_applied_detectors_boot_line >/dev/null 2>&1
 expect_eq "boot-line: writes empty line on bare project" \
@@ -203,11 +203,11 @@ grep -q 'run_post_exit_hooks "$slot"' "$SUP_SH" \
   && ok "handle_dead_slot calls run_post_exit_hooks" \
   || bad "handle_dead_slot does not call run_post_exit_hooks"
 grep -q 'wait "$pid"' "$SUP_SH" \
-  && ok "handle_dead_slot reaps zombie for AFK_EXIT_CODE" \
+  && ok "handle_dead_slot reaps zombie for RED_AFK_EXIT_CODE" \
   || bad "handle_dead_slot does not reap zombie"
-grep -q 'AFK_PLUGIN_DIR="$PLUGIN_DIR"' "$SUP_SH" \
-  && ok "hooks invoked with AFK_PLUGIN_DIR" \
-  || bad "hooks missing AFK_PLUGIN_DIR export"
+grep -q 'RED_AFK_PLUGIN_DIR="$PLUGIN_DIR"' "$SUP_SH" \
+  && ok "hooks invoked with RED_AFK_PLUGIN_DIR" \
+  || bad "hooks missing RED_AFK_PLUGIN_DIR export"
 
 echo
 echo "summary: $pass passed, $fail failed"

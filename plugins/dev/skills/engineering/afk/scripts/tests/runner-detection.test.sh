@@ -34,7 +34,7 @@ expect_eq() {
 # robust against the harness inheriting one from the user's shell.
 unset CLAUDECODE CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_SSE_PORT
 unset CODEX_HOME CODEX_SANDBOX CODEX_SANDBOX_NETWORK_DISABLED
-unset AFK_RUNNER
+unset RED_AFK_RUNNER
 
 # 1) Explicit pin wins over everything.
 CLAUDECODE=1 expect_eq "pin beats env-var (claude)" "$(detect_runner claude /tmp/whatever)" "claude|pin"
@@ -57,7 +57,7 @@ expect_eq "path under ~/.codex/  → codex|path"    "$(detect_runner '' /home/u/
 
 # 5) Env fallback. Absent env, neutral path.
 expect_eq "no signal → claude (default fallback)" "$(detect_runner '' /opt/random/path)" "claude|env-fallback"
-expect_eq "AFK_RUNNER=codex respected"            "$(AFK_RUNNER=codex detect_runner '' /opt/random/path)" "codex|env-fallback"
+expect_eq "RED_AFK_RUNNER=codex respected"            "$(RED_AFK_RUNNER=codex detect_runner '' /opt/random/path)" "codex|env-fallback"
 
 # 6) Env-var dominates path (cascade order).
 expect_eq "env-var beats path"                    "$(CLAUDECODE=1 detect_runner '' /home/u/.codex/x)" "claude|env-var"

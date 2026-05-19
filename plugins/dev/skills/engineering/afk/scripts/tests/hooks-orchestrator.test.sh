@@ -57,7 +57,7 @@ make_detector() {
 EOF
   if [[ -n "$env_line" ]]; then
     cat >> "$path" <<EOF
-printf '%s\n' '$env_line' >> "\$AFK_HOOK_ENV_FILE"
+printf '%s\n' '$env_line' >> "\$RED_AFK_HOOK_ENV_FILE"
 EOF
   fi
   cat >> "$path" <<EOF
@@ -74,7 +74,7 @@ reset_env() {
 # ---------- 1. empty layers on pre-spawn → 0, no env mutation ----------
 root="$(mktmp_root)"
 reset_env
-AFK_PLUGIN_DIR="$root/plugin" PROJECT_ROOT="$root/project" hooks_run pre-spawn
+RED_AFK_PLUGIN_DIR="$root/plugin" PROJECT_ROOT="$root/project" hooks_run pre-spawn
 rc=$?
 expect_eq "empty layers: rc=0"        "$rc" "0"
 expect_eq "empty layers: FOO unset"   "${FOO:-}" ""
@@ -85,7 +85,7 @@ rm -rf "$root"
 root="$(mktmp_root)"
 reset_env
 make_detector "$root/plugin/detectors/foo.sh" 0 "FOO=bar"
-AFK_PLUGIN_DIR="$root/plugin" PROJECT_ROOT="$root/project" hooks_run pre-spawn
+RED_AFK_PLUGIN_DIR="$root/plugin" PROJECT_ROOT="$root/project" hooks_run pre-spawn
 rc=$?
 expect_eq "shipped exports: rc=0" "$rc" "0"
 expect_eq "shipped exports: FOO"  "${FOO:-}" "bar"
@@ -98,7 +98,7 @@ root="$(mktmp_root)"
 reset_env
 make_detector "$root/plugin/detectors/skipme.sh" 1
 make_detector "$root/plugin/detectors/ok.sh" 0
-AFK_PLUGIN_DIR="$root/plugin" PROJECT_ROOT="$root/project" hooks_run pre-spawn
+RED_AFK_PLUGIN_DIR="$root/plugin" PROJECT_ROOT="$root/project" hooks_run pre-spawn
 rc=$?
 expect_eq "exit-1: rc=0 (not aborted)" "$rc" "0"
 expect_eq "exit-1: not in applied"     "${HOOKS_APPLIED_DETECTORS[*]}" "ok"
@@ -109,7 +109,7 @@ root="$(mktmp_root)"
 reset_env
 make_detector "$root/plugin/detectors/boom.sh" 2
 log="$(mktemp)"
-AFK_PLUGIN_DIR="$root/plugin" PROJECT_ROOT="$root/project" hooks_run pre-spawn 2> "$log"
+RED_AFK_PLUGIN_DIR="$root/plugin" PROJECT_ROOT="$root/project" hooks_run pre-spawn 2> "$log"
 rc=$?
 [[ $rc -ne 0 ]] && r=1 || r=0
 expect_true "exit-2 pre-spawn: non-zero rc" "$r"
@@ -122,7 +122,7 @@ root="$(mktmp_root)"
 reset_env
 make_detector "$root/plugin/detectors/boom.sh" 2
 log="$(mktemp)"
-AFK_PLUGIN_DIR="$root/plugin" PROJECT_ROOT="$root/project" hooks_run post-merge 2> "$log"
+RED_AFK_PLUGIN_DIR="$root/plugin" PROJECT_ROOT="$root/project" hooks_run post-merge 2> "$log"
 rc=$?
 expect_eq "exit-2 post-merge: rc=0" "$rc" "0"
 if grep -q "boom" "$log"; then r=1; else r=0; fi
@@ -134,7 +134,7 @@ root="$(mktmp_root)"
 reset_env
 make_detector "$root/plugin/detectors/aa.sh"               0 "FOO=ship"
 make_detector "$root/project/.red/hooks/detectors/aa.sh"   0 "FOO=proj"
-AFK_PLUGIN_DIR="$root/plugin" PROJECT_ROOT="$root/project" hooks_run pre-spawn
+RED_AFK_PLUGIN_DIR="$root/plugin" PROJECT_ROOT="$root/project" hooks_run pre-spawn
 expect_eq "layer-override: project wins over shipped" "${FOO:-}" "proj"
 rm -rf "$root"
 unset FOO
@@ -146,10 +146,10 @@ make_detector "$root/plugin/detectors/aa.sh"             0 "FOO=ship"
 make_detector "$root/project/.red/hooks/detectors/aa.sh" 0 "FOO=proj"
 cat > "$root/project/.red/hooks/pre-spawn.sh" <<'EOF'
 #!/usr/bin/env bash
-echo "FOO=main" >> "$AFK_HOOK_ENV_FILE"
+echo "FOO=main" >> "$RED_AFK_HOOK_ENV_FILE"
 EOF
 chmod +x "$root/project/.red/hooks/pre-spawn.sh"
-AFK_PLUGIN_DIR="$root/plugin" PROJECT_ROOT="$root/project" hooks_run pre-spawn
+RED_AFK_PLUGIN_DIR="$root/plugin" PROJECT_ROOT="$root/project" hooks_run pre-spawn
 expect_eq "main-override: main hook wins" "${FOO:-}" "main"
 rm -rf "$root"
 unset FOO
@@ -166,7 +166,7 @@ exit 0
 EOF
   chmod +x "$root/plugin/detectors/$n.sh"
 done
-AFK_PLUGIN_DIR="$root/plugin" PROJECT_ROOT="$root/project" hooks_run pre-spawn
+RED_AFK_PLUGIN_DIR="$root/plugin" PROJECT_ROOT="$root/project" hooks_run pre-spawn
 expect_eq "alphabetical: order = a,b,c" "$(tr '\n' ',' < "$order_file")" "a,b,c,"
 expect_eq "alphabetical: applied list"  "${HOOKS_APPLIED_DETECTORS[*]}" "a b c"
 rm -rf "$root" "$order_file"
@@ -177,7 +177,7 @@ reset_env
 make_detector "$root/plugin/detectors/foo.sh" 0 "BAR=baz"
 # Use a private TMPDIR to count predictably.
 private_tmp="$(mktemp -d)"
-TMPDIR="$private_tmp" AFK_PLUGIN_DIR="$root/plugin" PROJECT_ROOT="$root/project" hooks_run pre-spawn
+TMPDIR="$private_tmp" RED_AFK_PLUGIN_DIR="$root/plugin" PROJECT_ROOT="$root/project" hooks_run pre-spawn
 leftover="$(find "$private_tmp" -name 'afk-hook-env.*' -type f 2>/dev/null | wc -l | tr -d ' ')"
 expect_eq "cleanup: no leftover env files" "$leftover" "0"
 rm -rf "$root" "$private_tmp"
@@ -189,7 +189,7 @@ reset_env
 make_detector "$root/plugin/detectors/ship-a.sh"             0
 make_detector "$root/plugin/detectors/ship-na.sh"            1
 make_detector "$root/project/.red/hooks/detectors/proj-x.sh" 0
-AFK_PLUGIN_DIR="$root/plugin" PROJECT_ROOT="$root/project" hooks_run pre-spawn
+RED_AFK_PLUGIN_DIR="$root/plugin" PROJECT_ROOT="$root/project" hooks_run pre-spawn
 expect_eq "applied: shipped-first then project, N/A excluded" \
   "${HOOKS_APPLIED_DETECTORS[*]}" "ship-a proj-x"
 rm -rf "$root"
@@ -197,7 +197,7 @@ rm -rf "$root"
 # ---------- 11. unknown hook point → non-zero ----------
 root="$(mktmp_root)"
 reset_env
-AFK_PLUGIN_DIR="$root/plugin" PROJECT_ROOT="$root/project" hooks_run not-a-real-point 2>/dev/null
+RED_AFK_PLUGIN_DIR="$root/plugin" PROJECT_ROOT="$root/project" hooks_run not-a-real-point 2>/dev/null
 rc=$?
 [[ $rc -ne 0 ]] && r=1 || r=0
 expect_true "unknown point: non-zero rc" "$r"
@@ -211,7 +211,7 @@ cat > "$root/project/.red/hooks/pre-merge.sh" <<'EOF'
 exit 7
 EOF
 chmod +x "$root/project/.red/hooks/pre-merge.sh"
-AFK_PLUGIN_DIR="$root/plugin" PROJECT_ROOT="$root/project" hooks_run pre-merge 2>/dev/null
+RED_AFK_PLUGIN_DIR="$root/plugin" PROJECT_ROOT="$root/project" hooks_run pre-merge 2>/dev/null
 rc=$?
 expect_eq "main hook pre-merge fail: propagates rc" "$rc" "7"
 rm -rf "$root"
@@ -225,7 +225,7 @@ exit 7
 EOF
 chmod +x "$root/project/.red/hooks/post-merge.sh"
 log="$(mktemp)"
-AFK_PLUGIN_DIR="$root/plugin" PROJECT_ROOT="$root/project" hooks_run post-merge 2> "$log"
+RED_AFK_PLUGIN_DIR="$root/plugin" PROJECT_ROOT="$root/project" hooks_run post-merge 2> "$log"
 rc=$?
 expect_eq "main hook post-merge fail: rc=0" "$rc" "0"
 if grep -q "post-merge" "$log"; then r=1; else r=0; fi
@@ -246,7 +246,7 @@ make_detector "$root/plugin/detectors/cargo.sh"  0 "CARGO_RAN=1"
 make_detector "$root/plugin/detectors/gradle.sh" 0 "GRADLE_RAN=1"
 # Re-load config from the project dir.
 config_load "$root/project/.red/config.yaml"
-AFK_PLUGIN_DIR="$root/plugin" PROJECT_ROOT="$root/project" hooks_run pre-spawn
+RED_AFK_PLUGIN_DIR="$root/plugin" PROJECT_ROOT="$root/project" hooks_run pre-spawn
 expect_eq "config disable: cargo skipped"   "${CARGO_RAN:-unset}"  "unset"
 expect_eq "config disable: gradle ran"      "${GRADLE_RAN:-unset}" "1"
 expect_eq "config disable: applied excludes cargo" \

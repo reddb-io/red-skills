@@ -46,7 +46,7 @@ expect_file_exists "detectors README exists" "$DETECTORS_DIR/README.md"
 tmp="$(mktemp -d)"
 envfile="$(mktemp)"
 rc=0
-PROJECT_ROOT="$tmp" AFK_HOOK_ENV_FILE="$envfile" "$CARGO_SH" || rc=$?
+PROJECT_ROOT="$tmp" RED_AFK_HOOK_ENV_FILE="$envfile" "$CARGO_SH" || rc=$?
 expect_eq "cargo: no Cargo.toml → exit 1" "$rc" "1"
 expect_eq "cargo: env-file untouched"      "$(wc -c < "$envfile" | tr -d ' ')" "0"
 rm -rf "$tmp" "$envfile"
@@ -58,20 +58,20 @@ envfile="$(mktemp)"
 touch "$tmp/Cargo.toml"
 base="$tmp/base"
 rc=0
-PROJECT_ROOT="$tmp" AFK_SLOT=0 CARGO_TARGET_BASE="$base" AFK_HOOK_ENV_FILE="$envfile" "$CARGO_SH" || rc=$?
+PROJECT_ROOT="$tmp" RED_AFK_SLOT=0 RED_AFK_CARGO_TARGET_BASE="$base" RED_AFK_HOOK_ENV_FILE="$envfile" "$CARGO_SH" || rc=$?
 expect_eq "cargo: applies → exit 0" "$rc" "0"
 expect_eq "cargo: env-file content" "$(cat "$envfile")" "CARGO_TARGET_DIR=${base}/slot-0"
 expect_file_exists "cargo: target dir created" "${base}/slot-0"
 rm -rf "$tmp" "$envfile"
 
-# ---------- 4. cargo.sh honours CARGO_TARGET_BASE -----------------------------
+# ---------- 4. cargo.sh honours RED_AFK_CARGO_TARGET_BASE -----------------------------
 tmp="$(mktemp -d)"
 envfile="$(mktemp)"
 : > "$envfile"
 touch "$tmp/Cargo.toml"
 custom_base="$tmp/custom"
 rc=0
-PROJECT_ROOT="$tmp" AFK_SLOT=3 CARGO_TARGET_BASE="$custom_base" AFK_HOOK_ENV_FILE="$envfile" "$CARGO_SH" || rc=$?
+PROJECT_ROOT="$tmp" RED_AFK_SLOT=3 RED_AFK_CARGO_TARGET_BASE="$custom_base" RED_AFK_HOOK_ENV_FILE="$envfile" "$CARGO_SH" || rc=$?
 expect_eq "cargo: custom base rc"           "$rc" "0"
 expect_eq "cargo: custom base env content"  "$(cat "$envfile")" "CARGO_TARGET_DIR=${custom_base}/slot-3"
 expect_file_exists "cargo: custom base dir" "${custom_base}/slot-3"
@@ -81,18 +81,18 @@ rm -rf "$tmp" "$envfile"
 tmp="$(mktemp -d)"
 envfile="$(mktemp)"
 rc=0
-PROJECT_ROOT="$tmp" AFK_HOOK_ENV_FILE="$envfile" GRADLE_USER_HOME_BASE="$tmp/base" "$GRADLE_SH" || rc=$?
+PROJECT_ROOT="$tmp" RED_AFK_HOOK_ENV_FILE="$envfile" RED_AFK_GRADLE_USER_HOME_BASE="$tmp/base" "$GRADLE_SH" || rc=$?
 expect_eq "gradle: no build.gradle → exit 1" "$rc" "1"
 expect_eq "gradle: env-file untouched"        "$(wc -c < "$envfile" | tr -d ' ')" "0"
 rm -rf "$tmp" "$envfile"
 
-# ---------- 6. gradle.sh — present but GRADLE_USER_HOME_BASE unset → exit 1 --
+# ---------- 6. gradle.sh — present but RED_AFK_GRADLE_USER_HOME_BASE unset → exit 1 --
 tmp="$(mktemp -d)"
 envfile="$(mktemp)"
 touch "$tmp/build.gradle"
 rc=0
-( unset GRADLE_USER_HOME_BASE
-  PROJECT_ROOT="$tmp" AFK_HOOK_ENV_FILE="$envfile" "$GRADLE_SH" ) || rc=$?
+( unset RED_AFK_GRADLE_USER_HOME_BASE
+  PROJECT_ROOT="$tmp" RED_AFK_HOOK_ENV_FILE="$envfile" "$GRADLE_SH" ) || rc=$?
 expect_eq "gradle: base unset → exit 1" "$rc" "1"
 rm -rf "$tmp" "$envfile"
 
@@ -103,7 +103,7 @@ envfile="$(mktemp)"
 touch "$tmp/build.gradle.kts"
 base="$tmp/gradle-home"
 rc=0
-PROJECT_ROOT="$tmp" AFK_SLOT=1 GRADLE_USER_HOME_BASE="$base" AFK_HOOK_ENV_FILE="$envfile" "$GRADLE_SH" || rc=$?
+PROJECT_ROOT="$tmp" RED_AFK_SLOT=1 RED_AFK_GRADLE_USER_HOME_BASE="$base" RED_AFK_HOOK_ENV_FILE="$envfile" "$GRADLE_SH" || rc=$?
 expect_eq "gradle: applies → exit 0"        "$rc" "0"
 expect_eq "gradle: env-file content"        "$(cat "$envfile")" "GRADLE_USER_HOME=${base}/slot-1"
 expect_file_exists "gradle: home dir created" "${base}/slot-1"
@@ -121,8 +121,8 @@ run_pre_spawn_capture() {
   # into this test process; echo the space-joined applied list to stdout.
   local proj="$1"
   ( config_load "$proj/.red/config.yaml" >/dev/null 2>&1 || true
-    AFK_SLOT=0 \
-    AFK_PLUGIN_DIR="$PLUGIN_DIR" \
+    RED_AFK_SLOT=0 \
+    RED_AFK_PLUGIN_DIR="$PLUGIN_DIR" \
     PROJECT_ROOT="$proj" \
     hooks_run pre-spawn >/dev/null 2>&1 || true
     printf '%s' "${HOOKS_APPLIED_DETECTORS[*]}"
@@ -131,7 +131,7 @@ run_pre_spawn_capture() {
 
 tmp="$(mktemp -d)"
 touch "$tmp/Cargo.toml"
-CARGO_TARGET_BASE="$tmp/cargo-base" applied="$(CARGO_TARGET_BASE="$tmp/cargo-base" run_pre_spawn_capture "$tmp")"
+RED_AFK_CARGO_TARGET_BASE="$tmp/cargo-base" applied="$(RED_AFK_CARGO_TARGET_BASE="$tmp/cargo-base" run_pre_spawn_capture "$tmp")"
 expect_eq "pre-spawn: cargo-only project" "$applied" "cargo"
 rm -rf "$tmp"
 
@@ -145,7 +145,7 @@ afk:
     defaults:
       cargo: false
 YAML
-applied="$(CARGO_TARGET_BASE="$tmp/cargo-base" run_pre_spawn_capture "$tmp")"
+applied="$(RED_AFK_CARGO_TARGET_BASE="$tmp/cargo-base" run_pre_spawn_capture "$tmp")"
 expect_eq "pre-spawn: cargo disabled via config" "$applied" ""
 rm -rf "$tmp"
 config_load "/nonexistent/.red/config.yaml" >/dev/null 2>&1 || true

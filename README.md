@@ -312,7 +312,7 @@ Designed for terminals you leave open while you do something else. Or sleep. Und
 - **Respawn.** A worker that exits cleanly because the queue drained is *not* respawned (no busy-loop on empty). A worker that crashes is respawned with backoff.
 - **Circuit breaker.** ≥ 5 crashes within 90 s on the same slot ⇒ the slot is parked. Other slots keep working. Fleet stop clears parked state.
 - **Trip sweep.** When a slot trips, the supervisor walks the iter dirs that worker owned, posts a `discarded` envelope on each open issue, and restores `ready-for-agent` so another worker picks them up.
-- **Per-slot isolation.** Each slot exports `AFK_SLOT=N` so detectors (cargo, gradle, …) can shard build directories per slot.
+- **Per-slot isolation.** Each slot exports `RED_AFK_SLOT=N` so detectors (cargo, gradle, …) can shard build directories per slot.
 
 ### Statusline
 
@@ -328,8 +328,8 @@ Project basename, git branch, model + effort, context tokens with a percent colo
 
 `/afk` runs four orchestrator phases (`pre-iteration`, `pre-merge`, `post-merge`, `post-iteration`) and two supervisor phases (`pre-spawn`, `post-exit`). Each phase fires three layers in order:
 
-1. **Shipped detectors** — `cargo`, `gradle` and friends ship with the skill. When `Cargo.toml` is present, `cargo` sets `CARGO_TARGET_DIR=/opt/cargo-target/slot-${AFK_SLOT}` so parallel workers don't deadlock on the same target directory.
-2. **Project hooks** — drop a script under `.red/hooks/` and it runs after the shipped detectors. Same env-file protocol: write `KEY=value` lines to `$AFK_HOOK_ENV_FILE` and the orchestrator inherits them for the next stage.
+1. **Shipped detectors** — `cargo`, `gradle` and friends ship with the skill. When `Cargo.toml` is present, `cargo` sets `CARGO_TARGET_DIR=/opt/cargo-target/slot-${RED_AFK_SLOT}` so parallel workers don't deadlock on the same target directory.
+2. **Project hooks** — drop a script under `.red/hooks/` and it runs after the shipped detectors. Same env-file protocol: write `KEY=value` lines to `$RED_AFK_HOOK_ENV_FILE` and the orchestrator inherits them for the next stage.
 3. **Main hook** — the actual git/test/merge action.
 
 Disable any of it with `.red/config.yaml`:

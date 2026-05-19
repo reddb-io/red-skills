@@ -5,7 +5,7 @@
 # Two modes, auto-selected by stdout type:
 #   - TTY (real terminal): full box-drawing layout, refreshes every 3 s. Ctrl-C exits.
 #   - Non-TTY (piped, captured by an agent, redirected): one-shot compact dashboard,
-#     one line per worker, then exit 0. Force this with --once or MONITOR_COMPACT=1.
+#     one line per worker, then exit 0. Force this with --once or RED_AFK_MONITOR_COMPACT=1.
 #
 # Usage: monitor.sh [--once] [project_root]
 
@@ -16,7 +16,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/state.sh"
 
 ONCE=0
 [[ "${1:-}" == "--once" ]] && { ONCE=1; shift; }
-[[ "${MONITOR_COMPACT:-0}" == "1" ]] && ONCE=1
+[[ "${RED_AFK_MONITOR_COMPACT:-0}" == "1" ]] && ONCE=1
 [[ -t 1 ]] || ONCE=1   # not a TTY → one-shot compact
 
 PROJECT_ROOT="${1:-$(pwd)}"
@@ -447,7 +447,7 @@ When you summarise the lines below for the user, follow these rules verbatim. Tr
 4. When a worker line carries a `| <text>` suffix, it is the most recent line written to that worker's afk.log — surface it verbatim (truncated as the script already truncated it). It is the single most useful "is the inner agent alive" signal; do not drop it.
 5. When a worker line carries `⚠ stalled? log idle Ns`, repeat the warning verbatim and recommend the user run the bash-hang diagnostic from afk/SKILL.md (`pstree -p <orchestrator-pid>`, look for `until.*test result` cmdline). `⚠ no log` means the worker was spawned with v1.10.0 or earlier — recommend upgrading to v1.10.1+ for log tee, or v1.14.2+ for the full set of fixes.
 6. Lines beginning `slot-N [⛔ parked]` mean the fleet supervisor tripped its per-slot circuit breaker (≥5 fast worker deaths within 90s). Always surface them — they explain why the fleet shrank below target. Recommend `/dev:afk fleet stop` followed by a relaunch to clear the parked state, and tell the user to investigate the runner before relaunching.
-7. Lines beginning `slot-N [⏸️  stalled]` mean the supervisor's passive stall detector observed the worker silent for ≥ STALL_THRESHOLD_SECONDS (default 10 min). The worker is still live; surface the row verbatim along with the "check .red/hooks/" hint. Suggest the user inspect `.red/hooks/` for shared-resource contention (cargo lock, port collision, deadlocked external service). Do not recommend killing the worker — the stall flag clears automatically once it emits output again.
+7. Lines beginning `slot-N [⏸️  stalled]` mean the supervisor's passive stall detector observed the worker silent for ≥ RED_AFK_STALL_THRESHOLD_S (default 10 min). The worker is still live; surface the row verbatim along with the "check .red/hooks/" hint. Suggest the user inspect `.red/hooks/` for shared-resource contention (cargo lock, port collision, deadlocked external service). Do not recommend killing the worker — the stall flag clears automatically once it emits output again.
 
 === begin dashboard ===
 EOF

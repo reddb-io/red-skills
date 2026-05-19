@@ -4,11 +4,11 @@
 # Public surface:
 #   hooks_run HOOK_POINT
 #     Execute the three-layer chain for HOOK_POINT:
-#       1. shipped detectors  ($AFK_PLUGIN_DIR/detectors/*.sh)
+#       1. shipped detectors  ($RED_AFK_PLUGIN_DIR/detectors/*.sh)
 #       2. project detectors  ($PROJECT_ROOT/.red/hooks/detectors/*.sh)
 #       3. project main hook  ($PROJECT_ROOT/.red/hooks/<point>.sh)
 #     Files within each layer run in alphabetical (C-locale) order.
-#     Each invocation receives its own $AFK_HOOK_ENV_FILE; on a 0 exit
+#     Each invocation receives its own $RED_AFK_HOOK_ENV_FILE; on a 0 exit
 #     the file is sourced back into the caller's environment with
 #     `set -a` so exports propagate. Temp files are always deleted.
 #
@@ -72,7 +72,7 @@ _hooks_invoke() {
   envfile="$(mktemp -t afk-hook-env.XXXXXX)"
   : > "$envfile"
 
-  AFK_HOOK_ENV_FILE="$envfile" "$path" || rc=$?
+  RED_AFK_HOOK_ENV_FILE="$envfile" "$path" || rc=$?
 
   if [[ $rc -eq 0 && -s "$envfile" ]]; then
     set -a
@@ -114,7 +114,7 @@ hooks_run() {
     return 2
   fi
 
-  local plugin_dir="${AFK_PLUGIN_DIR:-${SKILL_DIR:-$(dirname "$_HOOKS_SCRIPT_DIR")}}"
+  local plugin_dir="${RED_AFK_PLUGIN_DIR:-${SKILL_DIR:-$(dirname "$_HOOKS_SCRIPT_DIR")}}"
   local proj="${PROJECT_ROOT:-$PWD}"
 
   local -a shipped proj_det

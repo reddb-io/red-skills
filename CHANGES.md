@@ -6,6 +6,22 @@ Upstream base: `mattpocock/skills@e74f0061bb67222181640effa98c675bdb2fdaa7` (see
 
 ---
 
+## afk (engineering) — env var rename to `RED_AFK_*` (BREAKING)
+
+- **status**: modified
+- **upstream**: —
+- **why**: Every env var the skill defined was using ad-hoc prefixes — `TARGET`, `SUPERVISOR_*`, `STALL_*`, `WATCHDOG_*`, `MONITOR_*`, `CARGO_TARGET_BASE`, `GRADLE_USER_HOME_BASE` (operator knobs) and `AFK_*` (hook/detector contract). Two problems: (1) generic names like `TARGET` and `MONITOR_COMPACT` collide with environment vars set by unrelated tools or the operator's shell config; (2) the mix of prefixes made it impossible to grep `env | grep RED_AFK_` to see "everything red-skills/afk is currently seeing." Project-wide convention: all RedSkills env vars start with `RED_*`.
+- **what changed**: every env var the afk skill reads or exports is now prefixed `RED_AFK_*`. Hard break — no compat shim, no deprecation warning, no fallback to the old names. Rename map (old → new):
+  - Operator tunables: `TARGET` → `RED_AFK_TARGET`, `SUPERVISOR_STAGGER_S` → `RED_AFK_STAGGER_S`, `SUPERVISOR_POLL_S` → `RED_AFK_POLL_S`, `SUPERVISOR_FAST_DEATH_S` → `RED_AFK_FAST_DEATH_S`, `SUPERVISOR_CIRCUIT_K` → `RED_AFK_CIRCUIT_K`, `SUPERVISOR_CIRCUIT_WINDOW_S` → `RED_AFK_CIRCUIT_WINDOW_S`, `STALL_THRESHOLD_SECONDS` → `RED_AFK_STALL_THRESHOLD_S`, `STALL_POLL_S` → `RED_AFK_STALL_POLL_S`, `WATCHDOG_GRACE_SECONDS` → `RED_AFK_WATCHDOG_GRACE_S`, `MONITOR_COMPACT` → `RED_AFK_MONITOR_COMPACT`, `CARGO_TARGET_BASE` → `RED_AFK_CARGO_TARGET_BASE`, `GRADLE_USER_HOME_BASE` → `RED_AFK_GRADLE_USER_HOME_BASE`.
+  - Hook/detector contract (exported into each worker's subshell, read by `.red/hooks/*.sh` and shipped detectors): `AFK_SLOT` → `RED_AFK_SLOT`, `AFK_WORKER_ID` → `RED_AFK_WORKER_ID`, `AFK_RUNNER` → `RED_AFK_RUNNER`, `AFK_ISSUE` → `RED_AFK_ISSUE`, `AFK_BRANCH` → `RED_AFK_BRANCH`, `AFK_ITER_DIR` → `RED_AFK_ITER_DIR`, `AFK_ITER_STATUS` → `RED_AFK_ITER_STATUS`, `AFK_MERGE_SHA` → `RED_AFK_MERGE_SHA`, `AFK_MERGE_BASE` → `RED_AFK_MERGE_BASE`, `AFK_DURATION_S` → `RED_AFK_DURATION_S`, `AFK_EXIT_CODE` → `RED_AFK_EXIT_CODE`, `AFK_STATE_FILE` → `RED_AFK_STATE_FILE`, `AFK_PLUGIN_DIR` → `RED_AFK_PLUGIN_DIR`, `AFK_HOOK_ENV_FILE` → `RED_AFK_HOOK_ENV_FILE`.
+  - Internal-only shell vars (`PROJECT_ROOT`, `ITER_DIR`, `ITER_LOG`, `STATE_FILE`, `RUNNER`, `WORKER_ID`, `CURRENT_ISSUE`, `CURRENT_BRANCH`, `SKILL_DIR`, `SCRIPT_DIR`) are untouched — they never cross the process boundary so they don't need the prefix.
+  - On-disk filenames (`afk-supervisor.log`, `afk-supervisor-defaults.txt`, `afk.pid`, `afk.log`, `afk.state.json`, `afk-attempts/…` branch namespace) are untouched — they are paths, not env vars.
+  - Applied across all in-scope files via word-boundary `sed -E "s/\bOLD\b/NEW/g"` (so `TARGET` inside `CARGO_TARGET_BASE` is naturally safe — `_` is a word char, `\b` doesn't fire between letters and `_`): 8 production scripts (`afk.sh`, `supervisor.sh`, `monitor.sh`, `hooks.sh`, `once.sh`, `statusline.sh`, `config.sh`, `lib/state.sh`), 2 shipped detectors (`cargo.sh`, `gradle.sh`), 6 skill-level docs (`SKILL.md`, `SAFETY.md`, `AGENT-PROMPT.md`, `runner-claude.md`, `runner-codex.md`, `detectors/README.md`), root `README.md`, and 13 test suites under `scripts/tests/`. Historical entries in `CHANGES.md` are left alone — they describe past state at the time of the change and should not be revisionist.
+- **Migration**: anyone who exported the old names in their shell rc, CI pipeline, project `.env`, or wrapper scripts must rename them. `env | grep -E '\b(TARGET|SUPERVISOR_|STALL_|WATCHDOG_|MONITOR_COMPACT|CARGO_TARGET_BASE|GRADLE_USER_HOME_BASE|AFK_)' | grep -v RED_AFK_` to find leftover settings on the host.
+- **Tests**: all 13 afk suites green post-rename — config-loader 33/33, detectors 26/26, envelope-shape 37/37, handoff-builder 53/53, hooks-orchestrator 27/27, lifecycle-hooks 16/16, runner-detection 14/14, sentinel-detection 5/5, stall-detector 16/16, state-accessor 57/57, supervisor-hooks 27/27, trip-sweep 39/39. Pre-existing `statusline.test.sh` case1 failure on `main` unrelated and unchanged.
+
+---
+
 ## afk (engineering) — handoff as top-level XML elements (`<issue-body>` / `<previous-attempts>` / `<human-guidance-thread>` / `<agent-notes>`)
 
 - **status**: modified

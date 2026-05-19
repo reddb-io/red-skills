@@ -62,7 +62,7 @@ assert_eq "no log yet → no"            "no"  "$(compute_stalled $((NOW-3600)) 
 # Spawn epoch of zero (uninitialised slot) → no.
 assert_eq "spawn=0 → no"               "no"  "$(compute_stalled 0             $((NOW-9999))  "$NOW" "$THRESH")"
 
-# Custom threshold (acceptance: STALL_THRESHOLD_SECONDS=30 trips at 30s).
+# Custom threshold (acceptance: RED_AFK_STALL_THRESHOLD_S=30 trips at 30s).
 assert_eq "custom threshold 30s → yes" "yes" "$(compute_stalled $((NOW-31))   $((NOW-31))    "$NOW" 30)"
 assert_eq "custom threshold 30s → no"  "no"  "$(compute_stalled $((NOW-29))   $((NOW-29))    "$NOW" 30)"
 
@@ -72,8 +72,8 @@ assert_eq "custom threshold 30s → no"  "no"  "$(compute_stalled $((NOW-29))   
 # pid. The fake pid is the test's own PID (always alive while the test
 # is running) so kill -0 passes if anyone checks — though this codepath
 # only reads files.
-TARGET=1
-STALL_THRESHOLD_SECONDS=30
+RED_AFK_TARGET=1
+RED_AFK_STALL_THRESHOLD_S=30
 ITER_DIR="$TMP_ROOT/.red/tmp/work-wTEST-i1"
 mkdir -p "$ITER_DIR"
 echo "$$" > "$ITER_DIR/afk.pid"

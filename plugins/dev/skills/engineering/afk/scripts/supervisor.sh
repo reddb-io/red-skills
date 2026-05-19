@@ -2,10 +2,10 @@
 # /afk supervisor — maintains N concurrent /afk workers on a single checkout.
 #
 # Usage:
-#   TARGET=2 bash supervisor.sh [project_root]
+#   RED_AFK_TARGET=2 bash supervisor.sh [project_root]
 #
 # Env:
-#   TARGET — desired worker count (default 2)
+#   RED_AFK_TARGET — desired worker count (default 2)
 #
 # State (all under $PROJECT_ROOT/.red/tmp/, gitignored):
 #   afk-supervisor.pid           — supervisor PID (single-supervisor lock)
@@ -19,10 +19,10 @@
 # deaths inside a CIRCUIT_WINDOW_S window parks the slot — no more
 # respawns until the supervisor is restarted. Other slots keep going.
 #
-# Passive stall detector: every STALL_POLL_S seconds the supervisor
+# Passive stall detector: every RED_AFK_STALL_POLL_S seconds the supervisor
 # inspects each live slot's per-iteration afk.log mtime. A slot whose
-# worker has been alive ≥ STALL_THRESHOLD_SECONDS *and* whose afk.log
-# hasn't been written to in ≥ STALL_THRESHOLD_SECONDS is flagged
+# worker has been alive ≥ RED_AFK_STALL_THRESHOLD_S *and* whose afk.log
+# hasn't been written to in ≥ RED_AFK_STALL_THRESHOLD_S is flagged
 # `stalled:true` in the state file. The supervisor does NOT kill or
 # restart stalled workers — surfacing is the entire job. Monitor reads
 # the same file and renders stalled slots distinctly. The flag clears
@@ -36,8 +36,8 @@
 # base var is unset — non-Rust / non-Gradle projects pay zero cost.
 #
 # Supported per-slot build env vars (see BUILD_ISOLATION_VARS below):
-#   CARGO_TARGET_BASE      → exports CARGO_TARGET_DIR=${BASE}/slot-{i}
-#   GRADLE_USER_HOME_BASE  → exports GRADLE_USER_HOME=${BASE}/slot-{i}
+#   RED_AFK_CARGO_TARGET_BASE      → exports CARGO_TARGET_DIR=${BASE}/slot-{i}
+#   RED_AFK_GRADLE_USER_HOME_BASE  → exports GRADLE_USER_HOME=${BASE}/slot-{i}
 # Adding a new tool is a one-line append to BUILD_ISOLATION_VARS.
 #
 # The supervisor only manages worker process lifecycle. Workers are normal
@@ -70,22 +70,22 @@ CIRCUIT_FILE="$TMP_DIR/afk-supervisor-circuit.json"
 # read by monitor.sh to render the `defaults:` field in the fleet header.
 DEFAULTS_FILE="$TMP_DIR/afk-supervisor-defaults.txt"
 
-TARGET="${TARGET:-2}"
-STAGGER_S="${SUPERVISOR_STAGGER_S:-2}"
-POLL_S="${SUPERVISOR_POLL_S:-15}"
+RED_AFK_TARGET="${RED_AFK_TARGET:-2}"
+STAGGER_S="${RED_AFK_STAGGER_S:-2}"
+POLL_S="${RED_AFK_POLL_S:-15}"
 
 # Circuit breaker tunables (overridable for tests).
-FAST_DEATH_THRESHOLD_S="${SUPERVISOR_FAST_DEATH_S:-30}"
-CIRCUIT_K="${SUPERVISOR_CIRCUIT_K:-5}"
-CIRCUIT_WINDOW_S="${SUPERVISOR_CIRCUIT_WINDOW_S:-90}"
+FAST_DEATH_THRESHOLD_S="${RED_AFK_FAST_DEATH_S:-30}"
+CIRCUIT_K="${RED_AFK_CIRCUIT_K:-5}"
+CIRCUIT_WINDOW_S="${RED_AFK_CIRCUIT_WINDOW_S:-90}"
 
-# Stall detector tunables. STALL_THRESHOLD_SECONDS is the documented
-# operator knob (default 10 min); STALL_POLL_S is the supervisor's
+# Stall detector tunables. RED_AFK_STALL_THRESHOLD_S is the documented
+# operator knob (default 10 min); RED_AFK_STALL_POLL_S is the supervisor's
 # sampling cadence (default 30 s). A slot stays unflagged when alive
-# for less than STALL_THRESHOLD_SECONDS, even if it has produced no
+# for less than RED_AFK_STALL_THRESHOLD_S, even if it has produced no
 # log output yet — that's normal startup, not a stall.
-STALL_THRESHOLD_SECONDS="${STALL_THRESHOLD_SECONDS:-600}"
-STALL_POLL_S="${STALL_POLL_S:-30}"
+RED_AFK_STALL_THRESHOLD_S="${RED_AFK_STALL_THRESHOLD_S:-600}"
+RED_AFK_STALL_POLL_S="${RED_AFK_STALL_POLL_S:-30}"
 
 # Per-slot build-isolation env vars. Each entry is "BASE_VAR:TARGET_VAR".
 # When BASE_VAR is set in the supervisor's env, every spawned worker on
@@ -94,8 +94,8 @@ STALL_POLL_S="${STALL_POLL_S:-30}"
 # for that pair — projects that don't compile with the tool see no side
 # effects on their filesystem. Append a new line to support a new tool.
 BUILD_ISOLATION_VARS=(
-  "CARGO_TARGET_BASE:CARGO_TARGET_DIR"
-  "GRADLE_USER_HOME_BASE:GRADLE_USER_HOME"
+  "RED_AFK_CARGO_TARGET_BASE:CARGO_TARGET_DIR"
+  "RED_AFK_GRADLE_USER_HOME_BASE:GRADLE_USER_HOME"
 )
 
 # ---------- logging ----------
@@ -123,7 +123,7 @@ acquire_lock() {
   # Clear stale circuit state from a previous (crashed) supervisor. Restart
   # is the unparking mechanism — see acceptance criteria for #12.
   rm -f "$CIRCUIT_FILE"
-  log "acquired lock (pid=$$, target=$TARGET, project=$PROJECT_ROOT)"
+  log "acquired lock (pid=$$, target=$RED_AFK_TARGET, project=$PROJECT_ROOT)"
 }
 
 # ---------- worker management ----------
@@ -137,13 +137,13 @@ declare -a SLOT_SWEPT=()              # 1 when sweep_parked_slot has already fir
 declare -a SLOT_STALLED=()             # 1 when currently flagged stalled
 declare -a SLOT_STALL_SINCE_EPOCH=()   # epoch when the stall window opened
 declare -a SLOT_STALL_LOG=()           # iteration log path observed at stall time
-declare -a SLOT_WORKER_IDS=()           # per-slot AFK_WORKER_ID handed to pre-spawn hooks
+declare -a SLOT_WORKER_IDS=()           # per-slot RED_AFK_WORKER_ID handed to pre-spawn hooks
 declare -a SLOT_APPLIED_DETECTORS=()    # most-recent applied detectors per slot (space-separated)
 LAST_STALL_POLL_EPOCH=0
 
 # Default runner name carried in the discard envelope. Real /afk fleet
 # launches inherit this from the operator's shell; tests override.
-SUPERVISOR_RUNNER="${AFK_RUNNER:-claude}"
+SUPERVISOR_RUNNER="${RED_AFK_RUNNER:-claude}"
 
 # Build the per-slot env overrides (e.g. CARGO_TARGET_DIR) for slot $1 as
 # `KEY=value` strings suitable for `env`. Creates each slot subdirectory
@@ -163,7 +163,7 @@ build_slot_env_overrides() {
 }
 
 # gen_supervisor_wid — fresh `wXXXX` worker ID handed to pre-spawn hooks via
-# AFK_WORKER_ID. Distinct from the runtime WORKER_ID afk.sh picks for itself —
+# RED_AFK_WORKER_ID. Distinct from the runtime WORKER_ID afk.sh picks for itself —
 # this one only labels the spawn for detector / post-exit hook bookkeeping.
 gen_supervisor_wid() {
   printf 'w%s' "$(LC_ALL=C tr -dc 'A-Z0-9' </dev/urandom | head -c 4)"
@@ -198,10 +198,10 @@ run_pre_spawn_hooks() {
   local rc=0
   (
     set +e
-    export AFK_SLOT="$slot"
-    export AFK_WORKER_ID="$worker_id"
-    export AFK_RUNNER="$SUPERVISOR_RUNNER"
-    export AFK_PLUGIN_DIR="$PLUGIN_DIR"
+    export RED_AFK_SLOT="$slot"
+    export RED_AFK_WORKER_ID="$worker_id"
+    export RED_AFK_RUNNER="$SUPERVISOR_RUNNER"
+    export RED_AFK_PLUGIN_DIR="$PLUGIN_DIR"
     export PROJECT_ROOT="$PROJECT_ROOT"
     env > "$outdir/baseline"
     # shellcheck disable=SC1090
@@ -228,12 +228,12 @@ run_post_exit_hooks() {
   local rc=0
   (
     set +e
-    export AFK_SLOT="$slot"
-    export AFK_WORKER_ID="$worker_id"
-    export AFK_RUNNER="$SUPERVISOR_RUNNER"
-    export AFK_PLUGIN_DIR="$PLUGIN_DIR"
-    export AFK_EXIT_CODE="$exit_code"
-    export AFK_DURATION_S="$duration_s"
+    export RED_AFK_SLOT="$slot"
+    export RED_AFK_WORKER_ID="$worker_id"
+    export RED_AFK_RUNNER="$SUPERVISOR_RUNNER"
+    export RED_AFK_PLUGIN_DIR="$PLUGIN_DIR"
+    export RED_AFK_EXIT_CODE="$exit_code"
+    export RED_AFK_DURATION_S="$duration_s"
     export PROJECT_ROOT="$PROJECT_ROOT"
     # shellcheck disable=SC1090
     source "$SCRIPT_DIR/hooks.sh"
@@ -271,8 +271,8 @@ spawn_slot() {
     done < "$outdir/env"
   fi
   rm -rf "$outdir"
-  # Legacy operator-set BUILD_ISOLATION_VARS (CARGO_TARGET_BASE,
-  # GRADLE_USER_HOME_BASE) win over detector defaults — they're appended
+  # Legacy operator-set BUILD_ISOLATION_VARS (RED_AFK_CARGO_TARGET_BASE,
+  # RED_AFK_GRADLE_USER_HOME_BASE) win over detector defaults — they're appended
   # last so `env` resolves them last.
   while IFS= read -r line; do
     [[ -z "$line" ]] && continue
@@ -306,7 +306,7 @@ write_supervisor_state() {
   local parked=() stalled=() i trip last count trip_iso last_iso
   local since dur now log since_iso
   now="$(date +%s)"
-  for ((i=0; i<TARGET; i++)); do
+  for ((i=0; i<RED_AFK_TARGET; i++)); do
     if [[ "${SLOT_PARKED[$i]:-0}" == "1" ]]; then
       trip="${SLOT_TRIP_EPOCH[$i]:-0}"
       last="${SLOT_LAST_DEATH_EPOCH[$i]:-0}"
@@ -373,7 +373,7 @@ compute_stalled() {
 poll_stall_detector() {
   local now changed=0 i log mtime spawn flagged
   now="$(date +%s)"
-  for ((i=0; i<TARGET; i++)); do
+  for ((i=0; i<RED_AFK_TARGET; i++)); do
     [[ "${SLOT_PARKED[$i]:-0}" == "1" ]] && continue
     spawn="${SLOT_SPAWN_EPOCH[$i]:-0}"
     log="$(find_slot_iter_log "$i")"
@@ -381,7 +381,7 @@ poll_stall_detector() {
     if [[ -n "$log" && -f "$log" ]]; then
       mtime="$(stat -c %Y "$log" 2>/dev/null || echo 0)"
     fi
-    flagged="$(compute_stalled "$spawn" "$mtime" "$now" "$STALL_THRESHOLD_SECONDS")"
+    flagged="$(compute_stalled "$spawn" "$mtime" "$now" "$RED_AFK_STALL_THRESHOLD_S")"
     if [[ "$flagged" == "yes" ]]; then
       if [[ "${SLOT_STALLED[$i]:-0}" != "1" ]]; then
         SLOT_STALLED[$i]=1
@@ -653,8 +653,8 @@ cleanup() {
 log_applied_detectors_boot_line() {
   local applied
   applied="$(
-    AFK_SLOT=0 \
-    AFK_PLUGIN_DIR="$PLUGIN_DIR" \
+    RED_AFK_SLOT=0 \
+    RED_AFK_PLUGIN_DIR="$PLUGIN_DIR" \
     PROJECT_ROOT="$PROJECT_ROOT" \
     bash -c "
       source '$SCRIPT_DIR/hooks.sh'
@@ -681,9 +681,9 @@ log_applied_detectors_boot_line
 # ---------- main ----------
 acquire_lock
 
-for ((i=0; i<TARGET; i++)); do
+for ((i=0; i<RED_AFK_TARGET; i++)); do
   spawn_slot "$i"
-  (( i < TARGET-1 )) && sleep "$STAGGER_S"
+  (( i < RED_AFK_TARGET-1 )) && sleep "$STAGGER_S"
 done
 
 # Health-check loop: respawn dead slots, honour stop-file.
@@ -694,7 +694,7 @@ while :; do
   fi
   sleep "$POLL_S" &
   wait $! 2>/dev/null || true
-  for ((i=0; i<TARGET; i++)); do
+  for ((i=0; i<RED_AFK_TARGET; i++)); do
     [[ "${SLOT_PARKED[$i]:-0}" == "1" ]] && continue
     pid="${SLOT_PIDS[$i]:-}"
     if [[ -z "$pid" ]] || ! kill -0 "$pid" 2>/dev/null; then
@@ -703,7 +703,7 @@ while :; do
     fi
   done
   now_epoch="$(date +%s)"
-  if (( now_epoch - LAST_STALL_POLL_EPOCH >= STALL_POLL_S )); then
+  if (( now_epoch - LAST_STALL_POLL_EPOCH >= RED_AFK_STALL_POLL_S )); then
     poll_stall_detector
   fi
 done

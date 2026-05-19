@@ -131,7 +131,7 @@ gh() {
 export -f gh
 
 # Stage the slot's bookkeeping so sweep_parked_slot can run.
-TARGET=1
+RED_AFK_TARGET=1
 SLOT_SWEPT=(0)
 SLOT_FAST_DEATHS=("100 110 120 130 140")  # 5 deaths → matches CIRCUIT_K
 SUPERVISOR_RUNNER="claude"

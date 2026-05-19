@@ -8,7 +8,7 @@
 # Runner resolution cascade (when --runner is not set):
 #   1. env-var sniff (CLAUDECODE / CLAUDE_CODE_*, CODEX_HOME / CODEX_SANDBOX*)
 #   2. $BASH_SOURCE path sniff (~/.claude/... → claude, ~/.codex/... → codex)
-#   3. env fallback (${AFK_RUNNER:-claude})
+#   3. env fallback (${RED_AFK_RUNNER:-claude})
 #
 # See ../SKILL.md for the full contract. SAFETY.md is binding.
 
@@ -86,7 +86,7 @@ ITER_PID_FILE=""    # set per-iteration: $ITER_DIR/afk.pid
 # Cascade order:
 #   1. env-var sniff   — harness identifiers (CLAUDECODE / CLAUDE_CODE_*, CODEX_HOME / CODEX_SANDBOX*)
 #   2. path sniff      — script lives under a runner's plugin tree (~/.claude/... or ~/.codex/...)
-#   3. env fallback    — ${AFK_RUNNER:-claude}, the historical last-resort
+#   3. env fallback    — ${RED_AFK_RUNNER:-claude}, the historical last-resort
 detect_runner() {
   local pin="${1:-}"
   local src_path="${2:-${SCRIPT_DIR:-${BASH_SOURCE[0]}}}"
@@ -106,7 +106,7 @@ detect_runner() {
   if [[ "$src_path" == */.codex/* ]]; then
     echo "codex|path"; return 0
   fi
-  echo "${AFK_RUNNER:-claude}|env-fallback"
+  echo "${RED_AFK_RUNNER:-claude}|env-fallback"
 }
 
 EXPLICIT_RUNNER=$RUNNER
@@ -437,23 +437,23 @@ iter_close_preserve() {
 #                     |merge-conflict|discarded).            Log on non-zero.
 #
 # Env contract exported to every invocation (per the brief on issue #20):
-#   AFK_SLOT, AFK_WORKER_ID, AFK_RUNNER, AFK_ISSUE, AFK_ITER_DIR,
-#   AFK_BRANCH, AFK_STATE_FILE, AFK_PLUGIN_DIR
-#   pre-merge / post-merge add AFK_MERGE_BASE / AFK_MERGE_SHA.
-#   post-iteration adds AFK_ITER_STATUS + AFK_DURATION_S.
-# AFK_HOOK_ENV_FILE is set per-script by the orchestrator itself.
+#   RED_AFK_SLOT, RED_AFK_WORKER_ID, RED_AFK_RUNNER, RED_AFK_ISSUE, RED_AFK_ITER_DIR,
+#   RED_AFK_BRANCH, RED_AFK_STATE_FILE, RED_AFK_PLUGIN_DIR
+#   pre-merge / post-merge add RED_AFK_MERGE_BASE / RED_AFK_MERGE_SHA.
+#   post-iteration adds RED_AFK_ITER_STATUS + RED_AFK_DURATION_S.
+# RED_AFK_HOOK_ENV_FILE is set per-script by the orchestrator itself.
 #
 # Trailing KEY=VAL pairs become additional exports for this call only.
 run_lifecycle_hook() {
   local point="$1"; shift
-  export AFK_SLOT="${AFK_SLOT:-}"
-  export AFK_WORKER_ID="${WORKER_ID:-}"
-  export AFK_RUNNER="${RUNNER:-}"
-  export AFK_ISSUE="${CURRENT_ISSUE:-}"
-  export AFK_ITER_DIR="${ITER_DIR:-}"
-  export AFK_BRANCH="${CURRENT_BRANCH:-}"
-  export AFK_STATE_FILE="${STATE_FILE:-}"
-  export AFK_PLUGIN_DIR="${SKILL_DIR:-}"
+  export RED_AFK_SLOT="${RED_AFK_SLOT:-}"
+  export RED_AFK_WORKER_ID="${WORKER_ID:-}"
+  export RED_AFK_RUNNER="${RUNNER:-}"
+  export RED_AFK_ISSUE="${CURRENT_ISSUE:-}"
+  export RED_AFK_ITER_DIR="${ITER_DIR:-}"
+  export RED_AFK_BRANCH="${CURRENT_BRANCH:-}"
+  export RED_AFK_STATE_FILE="${STATE_FILE:-}"
+  export RED_AFK_PLUGIN_DIR="${SKILL_DIR:-}"
   local kv
   for kv in "$@"; do
     export "$kv"
@@ -467,7 +467,7 @@ CURRENT_BRANCH=""
 
 # Snapshot of ITER_DIR / STATE_FILE captured by snapshot_iter_for_hook just
 # before iter_close_* zeroes the live cursors. fire_post_iteration replays
-# the snapshot into AFK_ITER_DIR / AFK_STATE_FILE so post-iteration hooks
+# the snapshot into RED_AFK_ITER_DIR / RED_AFK_STATE_FILE so post-iteration hooks
 # still see the paths the brief promises.
 LAST_ITER_DIR=""
 LAST_STATE_FILE=""
@@ -483,10 +483,10 @@ snapshot_iter_for_hook() {
 fire_post_iteration() {
   local status="$1" duration="$2"
   run_lifecycle_hook post-iteration \
-    "AFK_ITER_DIR=${LAST_ITER_DIR}" \
-    "AFK_STATE_FILE=${LAST_STATE_FILE}" \
-    "AFK_ITER_STATUS=${status}" \
-    "AFK_DURATION_S=${duration}" \
+    "RED_AFK_ITER_DIR=${LAST_ITER_DIR}" \
+    "RED_AFK_STATE_FILE=${LAST_STATE_FILE}" \
+    "RED_AFK_ITER_STATUS=${status}" \
+    "RED_AFK_DURATION_S=${duration}" \
     || log "post-iteration hook reported non-zero (status=${status}); continuing"
   LAST_ITER_DIR="" LAST_STATE_FILE=""
   CURRENT_ISSUE="" CURRENT_BRANCH=""
@@ -1119,9 +1119,9 @@ kill_tree() {
 # AGENT-PROMPT.md is "<promise>DONE</promise> on a line by itself, last".
 # Un-anchored matching false-positives on the agent quoting the sentinel
 # inside intermediate planning output (issues #4, #6, #7). Once seen, gives
-# the pipeline WATCHDOG_GRACE_SECONDS to close on its own, then kills the
+# the pipeline RED_AFK_WATCHDOG_GRACE_S to close on its own, then kills the
 # whole subtree.
-WATCHDOG_GRACE_SECONDS="${WATCHDOG_GRACE_SECONDS:-30}"
+RED_AFK_WATCHDOG_GRACE_S="${RED_AFK_WATCHDOG_GRACE_S:-30}"
 SENTINEL_LINE_REGEX='^<promise>(DONE|BLOCKED)</promise>$'
 CLAUDE_ASSISTANT_TEXT_JQ='select(.type == "assistant").message.content[]? | select(.type == "text").text // empty'
 CODEX_ASSISTANT_TEXT_JQ='select(.type == "item.completed") | .item.text // empty'
@@ -1131,10 +1131,10 @@ run_sentinel_watchdog() {
   while kill -0 "$pipe_pid" 2>/dev/null; do
     if jq -r "$jq_filter" "$capture_file" 2>/dev/null \
         | grep -qE "$SENTINEL_LINE_REGEX"; then
-      sleep "$WATCHDOG_GRACE_SECONDS"
+      sleep "$RED_AFK_WATCHDOG_GRACE_S"
       if kill -0 "$pipe_pid" 2>/dev/null; then
         printf '[afk] watchdog: inner emitted sentinel but pipeline still open after %ss — killing tree (likely bash-hang from polling without timeout)\n' \
-          "$WATCHDOG_GRACE_SECONDS" >&2
+          "$RED_AFK_WATCHDOG_GRACE_S" >&2
         kill_tree "$pipe_pid" TERM
         sleep 5
         kill -0 "$pipe_pid" 2>/dev/null && kill_tree "$pipe_pid" KILL
@@ -1235,12 +1235,12 @@ do_merge() {
 
   git -C "$PROJECT_ROOT" fetch origin main --quiet
 
-  # pre-merge hook — fires just before `git merge --no-ff`. AFK_MERGE_BASE is
+  # pre-merge hook — fires just before `git merge --no-ff`. RED_AFK_MERGE_BASE is
   # the merge base between primary main and the iteration branch. Non-zero
   # abort funnels through the existing merge-conflict path in process_issue.
   local merge_base
   merge_base="$(git -C "$PROJECT_ROOT" merge-base HEAD "$branch" 2>/dev/null || true)"
-  if ! run_lifecycle_hook pre-merge "AFK_MERGE_BASE=${merge_base}"; then
+  if ! run_lifecycle_hook pre-merge "RED_AFK_MERGE_BASE=${merge_base}"; then
     local hook_rc=$?
     log "✗ pre-merge hook failed (rc=$hook_rc) for #$n — aborting merge"
     return 1
@@ -1254,12 +1254,12 @@ do_merge() {
   fi
   git -C "$PROJECT_ROOT" push origin main || return 1
 
-  # post-merge hook — after the push to origin/main succeeds. AFK_MERGE_SHA
+  # post-merge hook — after the push to origin/main succeeds. RED_AFK_MERGE_SHA
   # is the short SHA of the merge commit on primary. Non-zero is logged by
   # hooks.sh; we do not roll back the merge.
   local merge_sha
   merge_sha="$(git -C "$PROJECT_ROOT" rev-parse --short HEAD)"
-  run_lifecycle_hook post-merge "AFK_MERGE_SHA=${merge_sha}" || true
+  run_lifecycle_hook post-merge "RED_AFK_MERGE_SHA=${merge_sha}" || true
 }
 
 # ---------- per-issue processing ----------
@@ -1543,8 +1543,8 @@ trap cleanup INT TERM
 # ones) to the worker's stderr log, which the supervisor captures into
 # .red/tmp/afk-supervisor-slot-N.log when present.
 log_applied_detectors_boot_line() {
-  export AFK_SLOT="${AFK_SLOT:-0}"
-  export AFK_PLUGIN_DIR="${SKILL_DIR}"
+  export RED_AFK_SLOT="${RED_AFK_SLOT:-0}"
+  export RED_AFK_PLUGIN_DIR="${SKILL_DIR}"
   export PROJECT_ROOT
   hooks_run pre-spawn || true
   if (( ${#HOOKS_APPLIED_DETECTORS[@]} > 0 )); then

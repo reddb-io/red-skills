@@ -40,11 +40,11 @@ hooks_run() {
   local point="$1"
   printf '%s|slot=%s|worker=%s|runner=%s|issue=%s|iter_dir=%s|branch=%s|state_file=%s|plugin_dir=%s|status=%s|duration=%s|merge_base=%s|merge_sha=%s\n' \
     "$point" \
-    "${AFK_SLOT:-}" "${AFK_WORKER_ID:-}" "${AFK_RUNNER:-}" "${AFK_ISSUE:-}" \
-    "${AFK_ITER_DIR:-}" "${AFK_BRANCH:-}" "${AFK_STATE_FILE:-}" \
-    "${AFK_PLUGIN_DIR:-}" \
-    "${AFK_ITER_STATUS:-}" "${AFK_DURATION_S:-}" \
-    "${AFK_MERGE_BASE:-}" "${AFK_MERGE_SHA:-}" \
+    "${RED_AFK_SLOT:-}" "${RED_AFK_WORKER_ID:-}" "${RED_AFK_RUNNER:-}" "${RED_AFK_ISSUE:-}" \
+    "${RED_AFK_ITER_DIR:-}" "${RED_AFK_BRANCH:-}" "${RED_AFK_STATE_FILE:-}" \
+    "${RED_AFK_PLUGIN_DIR:-}" \
+    "${RED_AFK_ITER_STATUS:-}" "${RED_AFK_DURATION_S:-}" \
+    "${RED_AFK_MERGE_BASE:-}" "${RED_AFK_MERGE_SHA:-}" \
     >> "$HOOKS_CALLS_FILE"
   return "$HOOKS_NEXT_RC"
 }
@@ -53,13 +53,13 @@ reset_recorder() {
   HOOKS_CALLS_FILE="$(mktemp -t afk-lifecycle.XXXXXX)"
   HOOKS_NEXT_RC=0
   # Clear extras between cases so we don't leak across tests.
-  unset AFK_MERGE_BASE AFK_MERGE_SHA AFK_ITER_STATUS AFK_DURATION_S
+  unset RED_AFK_MERGE_BASE RED_AFK_MERGE_SHA RED_AFK_ITER_STATUS RED_AFK_DURATION_S
 }
 
 # ---- 1. run_lifecycle_hook exports the full contract -----------------------
 reset_recorder
 WORKER_ID=wTEST RUNNER=claude CURRENT_ISSUE=42 CURRENT_BRANCH="afk/wTEST/42-x" \
-ITER_DIR=/tmp/iter STATE_FILE=/tmp/iter/state.json SKILL_DIR=/opt/skill AFK_SLOT=3 \
+ITER_DIR=/tmp/iter STATE_FILE=/tmp/iter/state.json SKILL_DIR=/opt/skill RED_AFK_SLOT=3 \
   run_lifecycle_hook pre-iteration
 rc=$?
 expect_eq "pre-iteration: rc passthrough"        "$rc" "0"
@@ -68,24 +68,24 @@ expect_eq "pre-iteration: full env contract" \
   "pre-iteration|slot=3|worker=wTEST|runner=claude|issue=42|iter_dir=/tmp/iter|branch=afk/wTEST/42-x|state_file=/tmp/iter/state.json|plugin_dir=/opt/skill|status=|duration=|merge_base=|merge_sha="
 rm -f "$HOOKS_CALLS_FILE"
 
-# ---- 2. extras override defaults (pre-merge adds AFK_MERGE_BASE) -----------
+# ---- 2. extras override defaults (pre-merge adds RED_AFK_MERGE_BASE) -----------
 reset_recorder
 WORKER_ID=wTEST RUNNER=claude CURRENT_ISSUE=42 CURRENT_BRANCH="afk/wTEST/42-x" \
-ITER_DIR=/tmp/iter STATE_FILE=/tmp/iter/state.json SKILL_DIR=/opt/skill AFK_SLOT=3 \
-  run_lifecycle_hook pre-merge "AFK_MERGE_BASE=deadbee"
+ITER_DIR=/tmp/iter STATE_FILE=/tmp/iter/state.json SKILL_DIR=/opt/skill RED_AFK_SLOT=3 \
+  run_lifecycle_hook pre-merge "RED_AFK_MERGE_BASE=deadbee"
 rc=$?
 expect_eq "pre-merge: rc=0" "$rc" "0"
 got="$(awk -F'|' '{print $1, $12}' "$HOOKS_CALLS_FILE")"
-expect_eq "pre-merge: carries AFK_MERGE_BASE" "$got" "pre-merge merge_base=deadbee"
+expect_eq "pre-merge: carries RED_AFK_MERGE_BASE" "$got" "pre-merge merge_base=deadbee"
 rm -f "$HOOKS_CALLS_FILE"
 
-# ---- 3. post-merge adds AFK_MERGE_SHA --------------------------------------
+# ---- 3. post-merge adds RED_AFK_MERGE_SHA --------------------------------------
 reset_recorder
 WORKER_ID=wTEST RUNNER=claude CURRENT_ISSUE=42 CURRENT_BRANCH="afk/wTEST/42-x" \
 ITER_DIR=/tmp/iter STATE_FILE=/tmp/iter/state.json SKILL_DIR=/opt/skill \
-  run_lifecycle_hook post-merge "AFK_MERGE_SHA=cafef00d"
+  run_lifecycle_hook post-merge "RED_AFK_MERGE_SHA=cafef00d"
 got="$(awk -F'|' '{print $1, $13}' "$HOOKS_CALLS_FILE")"
-expect_eq "post-merge: carries AFK_MERGE_SHA" "$got" "post-merge merge_sha=cafef00d"
+expect_eq "post-merge: carries RED_AFK_MERGE_SHA" "$got" "post-merge merge_sha=cafef00d"
 rm -f "$HOOKS_CALLS_FILE"
 
 # ---- 4. non-zero hook rc propagates ---------------------------------------
@@ -100,7 +100,7 @@ rm -f "$HOOKS_CALLS_FILE"
 # ---- 5. fire_post_iteration replays snapshot after iter_close ------------
 reset_recorder
 WORKER_ID=wTEST RUNNER=codex CURRENT_ISSUE=99 CURRENT_BRANCH="afk/wTEST/99-y" \
-  SKILL_DIR=/opt/skill AFK_SLOT=1
+  SKILL_DIR=/opt/skill RED_AFK_SLOT=1
 ITER_DIR="/tmp/iter99"
 STATE_FILE="/tmp/iter99/state.json"
 snapshot_iter_for_hook
@@ -144,18 +144,18 @@ expect_eq "process_issue covers all five documented terminal statuses" \
   "$got_statuses" "blocked,discarded,done,merge-conflict,no-sentinel"
 
 # ---- 8. do_merge wires pre-merge + post-merge ---------------------------
-if grep -qE 'run_lifecycle_hook pre-merge "AFK_MERGE_BASE=' "$afk_sh"; then
-  echo "PASS  do_merge: pre-merge call carries AFK_MERGE_BASE"
+if grep -qE 'run_lifecycle_hook pre-merge "RED_AFK_MERGE_BASE=' "$afk_sh"; then
+  echo "PASS  do_merge: pre-merge call carries RED_AFK_MERGE_BASE"
   pass=$((pass + 1))
 else
-  echo "FAIL  do_merge: pre-merge call missing AFK_MERGE_BASE export"
+  echo "FAIL  do_merge: pre-merge call missing RED_AFK_MERGE_BASE export"
   fail=$((fail + 1))
 fi
-if grep -qE 'run_lifecycle_hook post-merge "AFK_MERGE_SHA=' "$afk_sh"; then
-  echo "PASS  do_merge: post-merge call carries AFK_MERGE_SHA"
+if grep -qE 'run_lifecycle_hook post-merge "RED_AFK_MERGE_SHA=' "$afk_sh"; then
+  echo "PASS  do_merge: post-merge call carries RED_AFK_MERGE_SHA"
   pass=$((pass + 1))
 else
-  echo "FAIL  do_merge: post-merge call missing AFK_MERGE_SHA export"
+  echo "FAIL  do_merge: post-merge call missing RED_AFK_MERGE_SHA export"
   fail=$((fail + 1))
 fi
 

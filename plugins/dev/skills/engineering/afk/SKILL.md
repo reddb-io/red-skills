@@ -67,7 +67,7 @@ Run before the first iteration:
    1. `--runner X` flag (pin) — wins over everything, logged as `detected via --runner pin`.
    2. **Env-var sniff** — `CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`, or `CLAUDE_CODE_SSE_PORT` → `claude`; `CODEX_HOME`, `CODEX_SANDBOX`, or `CODEX_SANDBOX_NETWORK_DISABLED` → `codex`. Logged as `detected via env-var`.
    3. **`$BASH_SOURCE` path sniff** — script lives under `~/.claude/...` → `claude`; under `~/.codex/...` → `codex`. Logged as `detected via path`.
-   4. **Env fallback** — `${AFK_RUNNER:-claude}`. Logged as `detected via env-fallback`.
+   4. **Env fallback** — `${RED_AFK_RUNNER:-claude}`. Logged as `detected via env-fallback`.
    The boot log prints one line per invocation: `runner: <runner> (detected via <method>)`. Load [`runner-claude.md`](runner-claude.md) or [`runner-codex.md`](runner-codex.md) so the spawn command is ready.
 5. Read [`SAFETY.md`](SAFETY.md). It is binding for every shell action the loop takes.
 6. Install signal handlers — SIGINT, SIGTERM, and normal exit all release any in-flight issue claim and preserve the active `work-{id}-i{N}/` directory before terminating.
@@ -228,7 +228,7 @@ When swap happens mid-issue (only with `--fallback-runner`), the same worktree a
 
 Failure mode observed in production: the inner agent emits `<promise>DONE</promise>` (or `BLOCKED`) but the orchestrator's stream-json pipe stays open for hours. Cause: a tool call the inner agent left running — typically `run_in_background` followed by a `bash -c 'until grep "test result" $out; do sleep 5; done'` polling loop without a timeout. The bg task crashes silently, the loop runs forever, the inner agent can't terminate because the tool call is still active, and the pipeline hangs.
 
-The orchestrator now spawns a watchdog alongside every inner-agent pipeline (`run_sentinel_watchdog`). The watchdog tails the raw stream capture; once it sees `<promise>DONE</promise>` or `<promise>BLOCKED</promise>`, it gives the pipeline `WATCHDOG_GRACE_SECONDS` (default 30) to close cleanly. If the pipeline is still alive at the deadline:
+The orchestrator now spawns a watchdog alongside every inner-agent pipeline (`run_sentinel_watchdog`). The watchdog tails the raw stream capture; once it sees `<promise>DONE</promise>` or `<promise>BLOCKED</promise>`, it gives the pipeline `RED_AFK_WATCHDOG_GRACE_S` (default 30) to close cleanly. If the pipeline is still alive at the deadline:
 
 1. `kill_tree pid TERM` — recursively SIGTERM the pipeline pid and every descendant (claude / codex, jq, grep, tee, and any bash child stuck in a polling loop).
 2. 5 s grace.
@@ -236,7 +236,7 @@ The orchestrator now spawns a watchdog alongside every inner-agent pipeline (`ru
 
 The orchestrator logs `watchdog: inner emitted sentinel but pipeline still open after Ns — killing tree (likely bash-hang from polling without timeout)` and proceeds with the captured result. The issue is closed normally because the agent's commit work, sentinel, and result are all already on disk by the time the watchdog fires.
 
-Override the grace via `WATCHDOG_GRACE_SECONDS` in the orchestrator's env. Setting it lower than ~5 s risks killing healthy pipelines that just haven't flushed jq's buffer. 30 s is conservative.
+Override the grace via `RED_AFK_WATCHDOG_GRACE_S` in the orchestrator's env. Setting it lower than ~5 s risks killing healthy pipelines that just haven't flushed jq's buffer. 30 s is conservative.
 
 Preventive counterpart lives in [`AGENT-PROMPT.md`](AGENT-PROMPT.md) under *Background Tasks and Polling* — inner agents are required to cap every polling loop with a deadline. The watchdog is the safety net; the prompt rule is the design.
 
@@ -394,7 +394,7 @@ The monitor invocation handles its own teardown — see *Self-Cancel* under the 
 
 ## Fleet Mode (Claude Code only — binding)
 
-`/dev:afk fleet [N]` and `/dev:afk fleet stop` are user-facing wrappers around [`scripts/supervisor.sh`](scripts/supervisor.sh). They let one terminal command spin up (or shut down) `N` concurrent `afk.sh` workers on the current checkout, with the supervisor handling respawn, the circuit breaker, the **passive stall detector** (samples per-iteration `afk.log` mtimes every `STALL_POLL_S=30s`; flags any slot alive ≥ `STALL_THRESHOLD_SECONDS=600` whose log has been idle ≥ the same — surfaces as `⏸️ stalled` in `/dev:afk monitor` with no auto-action), and per-slot build isolation (see [`scripts/supervisor.sh`](scripts/supervisor.sh) header for the env contract).
+`/dev:afk fleet [N]` and `/dev:afk fleet stop` are user-facing wrappers around [`scripts/supervisor.sh`](scripts/supervisor.sh). They let one terminal command spin up (or shut down) `N` concurrent `afk.sh` workers on the current checkout, with the supervisor handling respawn, the circuit breaker, the **passive stall detector** (samples per-iteration `afk.log` mtimes every `RED_AFK_STALL_POLL_S=30s`; flags any slot alive ≥ `RED_AFK_STALL_THRESHOLD_S=600` whose log has been idle ≥ the same — surfaces as `⏸️ stalled` in `/dev:afk monitor` with no auto-action), and per-slot build isolation (see [`scripts/supervisor.sh`](scripts/supervisor.sh) header for the env contract).
 
 Fleet mode is **Claude-Code-only**: the stop side relies on `CronList`/`CronDelete` to tear down the auto-monitor cron from *Auto-Monitor Loop* above, and those primitives don't exist under Codex. When the active runner is Codex (or `CronCreate`/`CronList` is otherwise unavailable), refuse the launch with one line — `fleet mode is not supported under Codex; run /afk in N terminals instead.` — and exit without side effects. Do not touch the PID file, the stop file, or the cron registry.
 
@@ -411,7 +411,7 @@ Fleet mode is **Claude-Code-only**: the stop side relies on `CronList`/`CronDele
    Do **not** touch the file or attempt to recover. A stale PID file (file exists but `kill -0` fails) is left alone — `supervisor.sh` clears it itself on its own `acquire_lock`.
 3. **Spawn the supervisor.** From the project root:
    ```bash
-   nohup env TARGET=<N> bash plugins/dev/skills/engineering/afk/scripts/supervisor.sh \
+   nohup env RED_AFK_TARGET=<N> bash plugins/dev/skills/engineering/afk/scripts/supervisor.sh \
      >> .red/tmp/afk-supervisor.log 2>&1 < /dev/null &
    echo $!
    ```
@@ -435,7 +435,7 @@ Steps, in order:
    - File missing → print `no fleet running.` and continue to step 4 (still try to clear any orphaned monitor cron).
    - File present but `kill -0` fails → stale. Print `no fleet running (stale pid file at .red/tmp/afk-supervisor.pid — cleaning).`, `rm -f` it, and continue to step 4.
    - File present and PID alive → continue to step 3.
-3. **Touch the stop file.** `touch .red/tmp/afk-supervisor.stop`. The supervisor's health-check cycle (default `SUPERVISOR_POLL_S=15s`) picks it up and runs `cleanup`, which SIGTERMs every worker, removes the PID file, removes the stop file, and exits. Wait up to **30 s** for the PID file to disappear (poll every 1 s, deadline-bounded — never bare `while`). If it's gone, print `🛑 fleet stopped (supervisor pid=<pid> exited).`. If the deadline trips, print one warning line naming the PID and the log path, and continue to step 4 anyway — the stop file is still there and the supervisor will pick it up eventually.
+3. **Touch the stop file.** `touch .red/tmp/afk-supervisor.stop`. The supervisor's health-check cycle (default `RED_AFK_POLL_S=15s`) picks it up and runs `cleanup`, which SIGTERMs every worker, removes the PID file, removes the stop file, and exits. Wait up to **30 s** for the PID file to disappear (poll every 1 s, deadline-bounded — never bare `while`). If it's gone, print `🛑 fleet stopped (supervisor pid=<pid> exited).`. If the deadline trips, print one warning line naming the PID and the log path, and continue to step 4 anyway — the stop file is still there and the supervisor will pick it up eventually.
 4. **Cancel the auto-monitor cron.** `CronList` → find every job whose `prompt == "/dev:afk monitor"` (there will normally be one, possibly zero, occasionally more if the user manually `/loop`-ed). `CronDelete` each. Print one line: `auto-monitor cron cancelled (<count> entr{y,ies}).` (or `no auto-monitor cron to cancel.` when count is zero). Same teardown logic as *Self-Cancel* in the Monitor section — kept here so the user can force-stop without waiting for the next monitor tick.
 5. **Idempotency.** Re-running `/dev:afk fleet stop` after a successful stop just hits the "file missing" branch in step 2 and the "no entries" branch in step 4. Exit 0 either way.
 
@@ -477,7 +477,7 @@ bash ~/.claude/plugins/cache/red-skills/dev/<version>/skills/engineering/afk/scr
 The script has **two modes**, auto-selected by stdout type:
 
 - **TTY (real terminal)**: full box-drawing layout, refreshes every 3 s, `clear` between frames. Ctrl-C to exit.
-- **Non-TTY (piped, captured by an agent, redirected)**: one-shot **compact dashboard** — one sparkline header + one line per worker, then exit 0. Force this with `--once` or `MONITOR_COMPACT=1` even from a TTY.
+- **Non-TTY (piped, captured by an agent, redirected)**: one-shot **compact dashboard** — one sparkline header + one line per worker, then exit 0. Force this with `--once` or `RED_AFK_MONITOR_COMPACT=1` even from a TTY.
 
 Compact output shape (≈3 lines total for 2 workers — fits inline without truncation in an agent transcript):
 
