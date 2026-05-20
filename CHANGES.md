@@ -6,6 +6,15 @@ Upstream base: `mattpocock/skills@e74f0061bb67222181640effa98c675bdb2fdaa7` (see
 
 ---
 
+## afk (engineering) — comment classifier + directive extractor (deep modules)
+
+- **status**: modified
+- **upstream**: —
+- **why**: PRD #29 #30. Both downstream tracks (A1 directive routing, B1 cap state machine) need a single source of truth for "what kind of comment is this" and "what directives does it carry". Today the predicates are scattered (`envelope_is_envelope`, `comment_is_boot_stamp`, `comment_is_promotion_audit`, `comment_is_heartbeat_glyph`) and directive detection is a private substring peek.
+- **what changed**: `afk.sh` gains two pure functions — `classify_comment(body)` returning `envelope` | `directive_carrier` | `thread_discussion` | `audit_noise` (composes the legacy predicates, adds the `directive_carrier` arm, deferring well-formedness to `extract_directives` so the two can never disagree), and `extract_directives(body)` emitting the verbatim content of every well-formed `<details data-kind="directive">…</details>` element NUL-separated in document order (line-oriented parser handling nesting, fenced-code-block `</details>`, attributed/unterminated malformed closes, and CRLF). The legacy predicates stay in place this slice; A1/B1 migrate callers later. New `comment-classifier.test.sh` (26 assertions, no stubs — proving purity). Refs #30.
+
+---
+
 ## afk (engineering) — per-issue cap trip handler + supervisor claim-time gate
 
 - **status**: modified
