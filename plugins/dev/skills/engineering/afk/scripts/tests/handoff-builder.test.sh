@@ -129,11 +129,28 @@ comments_array() {
   echo "$out"
 }
 
-# Case 1: one BLOCKED envelope + one human reply.
+# Directive marker helper — mirrors the GitHub-rendered <details> syntax the
+# operator pastes (own-line tags, as extract_directives requires).
+directive_marker() {
+  printf '<details data-kind="directive">\n<summary>directive</summary>\n%s\n</details>' "$1"
+}
+
+# ---------- classify_comment routing (PRD #29 #30) ----------
+expect_eq "classify/envelope"     "$(classify_comment "$ENV_OK")"                    "envelope"
+expect_eq "classify/boot"         "$(classify_comment "$BOOT")"                      "audit_noise"
+expect_eq "classify/heart"        "$(classify_comment "$HEART")"                     "audit_noise"
+expect_eq "classify/blank"        "$(classify_comment "$BLANK")"                     "audit_noise"
+expect_eq "classify/narrative"    "$(classify_comment "$HUMAN")"                     "thread_discussion"
+expect_eq "classify/directive"    "$(classify_comment "$(directive_marker x)")"      "directive_carrier"
+
+# Case 1 (AC#1): one marked directive + one narrative-only comment. Marked
+# content routes to <human-guidance>; narrative routes to <thread-discussion>.
 ENV_A="$(make_envelope blocked 1 'first attempt halted on parser')"
+DIR_1="$(directive_marker 'keep foo, just deprecate it')"
 COMMENTS_1="$(comments_array \
   "agent|2026-05-18T10:00:00Z|$ENV_A" \
-  "alice|2026-05-18T10:30:00Z|the parser needs to handle empty bodies")"
+  "alice|2026-05-18T10:30:00Z|$DIR_1" \
+  "bob|2026-05-18T10:35:00Z|the parser needs to handle empty bodies")"
 
 OUT_1="$(build_retry_handoff_body 42 "Test issue" "Issue body here" "claude" 2 "https://github.com/x/y/issues/42" "$COMMENTS_1")"
 expect_contains "case1/has issue-body open"     "$OUT_1" "<issue-body>"
@@ -146,68 +163,86 @@ expect_contains "case1/attempt notes"           "$OUT_1" "first attempt halted o
 expect_contains "case1/has guidance thread"     "$OUT_1" "<human-guidance-thread>"
 expect_contains "case1/human element open"      "$OUT_1" '<human-guidance author="@alice"'
 expect_contains "case1/human element close"     "$OUT_1" "</human-guidance>"
-expect_contains "case1/human content"           "$OUT_1" "the parser needs to handle empty bodies"
+expect_contains "case1/directive content"       "$OUT_1" "keep foo, just deprecate it"
+# Narrative comment is NOT human-guidance — it degrades to thread-discussion.
+expect_contains "case1/has thread-discussion"   "$OUT_1" "<thread-discussion>"
+expect_contains "case1/thread entry open"       "$OUT_1" '<thread-discussion-entry author="@bob"'
+expect_contains "case1/narrative in discussion" "$OUT_1" "the parser needs to handle empty bodies"
 expect_contains "case1/agent-notes open"        "$OUT_1" "<agent-notes>"
 expect_contains "case1/agent-notes close"       "$OUT_1" "</agent-notes>"
 expect_not_contains "case1/no legacy Brief"     "$OUT_1" "## Brief"
 expect_not_contains "case1/no legacy Notes hdr" "$OUT_1" "## Notes"
-# Exactly one attempt entry.
-attempts_count="$(grep -c '^<previous-attempt ' <<<"$OUT_1")"
-expect_eq "case1/attempts count" "$attempts_count" "1"
+# Exactly one human-guidance element (one directive) and one thread entry.
+expect_eq "case1/human count"  "$(grep -cE '^<human-guidance author=' <<<"$OUT_1")"        "1"
+expect_eq "case1/thread count" "$(grep -cE '^<thread-discussion-entry author=' <<<"$OUT_1")" "1"
+# thread-discussion sits after human-guidance-thread, before agent-notes.
+pos_hg=$(grep -n '<human-guidance-thread>' <<<"$OUT_1" | head -n1 | cut -d: -f1)
+pos_td=$(grep -n '<thread-discussion>' <<<"$OUT_1" | head -n1 | cut -d: -f1)
+pos_an=$(grep -n '<agent-notes>' <<<"$OUT_1" | head -n1 | cut -d: -f1)
+{ [[ "$pos_td" -gt "$pos_hg" && "$pos_an" -gt "$pos_td" ]] && echo "PASS  case1/element order"; pass=$((pass+1)); } || { echo "FAIL  case1/element order hg=$pos_hg td=$pos_td an=$pos_an"; fail=$((fail+1)); }
 
-# Case 2: three BLOCKED envelopes interspersed with two human replies.
-ENV_B1="$(make_envelope blocked 1 'try 1 halt')"
-ENV_B2="$(make_envelope blocked 2 'try 2 halt')"
-ENV_B3="$(make_envelope blocked 3 'try 3 halt')"
+# Case 2 (AC#2): one comment carrying two directive markers → two sibling
+# <human-guidance> elements with identical author/at attributes.
+DIR_2=$'<details data-kind="directive">\n<summary>directive</summary>\nfirst directive\n</details>\n\nsome chatter between markers\n\n<details data-kind="directive">\n<summary>directive</summary>\nsecond directive\n</details>'
 COMMENTS_2="$(comments_array \
-  "agent|2026-05-18T10:00:00Z|$ENV_B1" \
-  "bob|2026-05-18T10:10:00Z|hint number one" \
-  "agent|2026-05-18T10:20:00Z|$ENV_B2" \
-  "bob|2026-05-18T10:30:00Z|hint number two" \
-  "agent|2026-05-18T10:40:00Z|$ENV_B3")"
-OUT_2="$(build_retry_handoff_body 7 "Multi" "body" "claude" 4 "url" "$COMMENTS_2")"
-attempts_count_2="$(grep -c '^<previous-attempt ' <<<"$OUT_2")"
-human_count_2="$(grep -cE '^<human-guidance author="@bob"' <<<"$OUT_2" || true)"
-expect_eq "case2/attempts count" "$attempts_count_2" "3"
-expect_eq "case2/human count"    "$human_count_2"    "2"
-# Chronological: Attempt 3's body must appear after Attempt 1's body.
-pos1=$(grep -n 'try 1 halt' <<<"$OUT_2" | head -n1 | cut -d: -f1)
-pos3=$(grep -n 'try 3 halt' <<<"$OUT_2" | head -n1 | cut -d: -f1)
-[[ "$pos3" -gt "$pos1" ]] && { echo "PASS  case2/chronological"; pass=$((pass+1)); } || { echo "FAIL  case2/chronological pos1=$pos1 pos3=$pos3"; fail=$((fail+1)); }
-hint_pos_1=$(grep -n 'hint number one' <<<"$OUT_2" | head -n1 | cut -d: -f1)
-hint_pos_2=$(grep -n 'hint number two' <<<"$OUT_2" | head -n1 | cut -d: -f1)
-[[ "$hint_pos_2" -gt "$hint_pos_1" ]] && { echo "PASS  case2/human chronological"; pass=$((pass+1)); } || { echo "FAIL  case2/human chronological"; fail=$((fail+1)); }
+  "carol|2026-05-18T11:00:00Z|$DIR_2")"
+OUT_2="$(build_retry_handoff_body 7 "Two markers" "body" "claude" 2 "url" "$COMMENTS_2")"
+expect_eq "case2/two siblings" "$(grep -cE '^<human-guidance author=' <<<"$OUT_2")" "2"
+expect_eq "case2/same author/at" "$(grep -cF '<human-guidance author="@carol" at="2026-05-18T11:00:00Z">' <<<"$OUT_2")" "2"
+expect_contains "case2/first directive"  "$OUT_2" "first directive"
+expect_contains "case2/second directive" "$OUT_2" "second directive"
+# The inter-marker chatter is not its own element (the comment is a single
+# directive_carrier; its non-directive prose does not surface).
+expect_not_contains "case2/no thread-discussion" "$OUT_2" "<thread-discussion>"
+# Document order preserved: first before second.
+p1=$(grep -n 'first directive' <<<"$OUT_2" | head -n1 | cut -d: -f1)
+p2=$(grep -n 'second directive' <<<"$OUT_2" | head -n1 | cut -d: -f1)
+{ [[ "$p2" -gt "$p1" ]] && echo "PASS  case2/document order"; pass=$((pass+1)); } || { echo "FAIL  case2/document order p1=$p1 p2=$p2"; fail=$((fail+1)); }
 
-# Case 3: noise comments are filtered.
+# Case 3 (AC#3): audit-noise only → neither wrapper appears.
 COMMENTS_3="$(comments_array \
   "github-actions|2026-05-18T09:00:00Z|$BOOT" \
   "github-actions|2026-05-18T09:01:00Z|$PROMO" \
-  "github-actions|2026-05-18T09:02:00Z|$HEART" \
-  "alice|2026-05-18T09:05:00Z|real human guidance content")"
+  "github-actions|2026-05-18T09:02:00Z|$HEART")"
 OUT_3="$(build_retry_handoff_body 1 "Noise" "body" "claude" 1 "url" "$COMMENTS_3")"
-expect_contains "case3/keeps human"           "$OUT_3" "real human guidance content"
-expect_not_contains "case3/drops boot"        "$OUT_3" "/afk started"
-expect_not_contains "case3/drops promotion"   "$OUT_3" "promoted to ready-for-agent"
-expect_not_contains "case3/drops heartbeat"   "$OUT_3" ":two:"
+expect_not_contains "case3/no human-guidance-thread" "$OUT_3" "<human-guidance-thread>"
+expect_not_contains "case3/no thread-discussion"     "$OUT_3" "<thread-discussion>"
+expect_not_contains "case3/drops boot"               "$OUT_3" "/afk started"
+expect_not_contains "case3/drops promotion"          "$OUT_3" "promoted to ready-for-agent"
+expect_not_contains "case3/drops heartbeat"          "$OUT_3" ":two:"
 
-# Case 4: zero comments → no Previous attempts, no Human guidance sections.
+# Case 3b: noise + a real directive → human-guidance present, noise dropped,
+# no thread-discussion (no narrative comments).
+COMMENTS_3B="$(comments_array \
+  "github-actions|2026-05-18T09:00:00Z|$BOOT" \
+  "alice|2026-05-18T09:05:00Z|$(directive_marker 'real authoritative guidance')")"
+OUT_3B="$(build_retry_handoff_body 1 "Noise+dir" "body" "claude" 1 "url" "$COMMENTS_3B")"
+expect_contains     "case3b/keeps directive"       "$OUT_3B" "real authoritative guidance"
+expect_contains     "case3b/has guidance thread"   "$OUT_3B" "<human-guidance-thread>"
+expect_not_contains "case3b/no thread-discussion"  "$OUT_3B" "<thread-discussion>"
+expect_not_contains "case3b/drops boot"            "$OUT_3B" "/afk started"
+
+# Case 4: zero comments → no Previous attempts, no Human guidance, no discussion.
 COMMENTS_4="[]"
 OUT_4="$(build_retry_handoff_body 1 "Empty" "body" "claude" 1 "url" "$COMMENTS_4")"
-expect_contains "case4/has issue-body"         "$OUT_4" "<issue-body>"
-expect_not_contains "case4/no Previous"        "$OUT_4" "<previous-attempts>"
-expect_not_contains "case4/no Human"           "$OUT_4" "<human-guidance-thread>"
-expect_contains "case4/has agent-notes"        "$OUT_4" "<agent-notes>"
+expect_contains "case4/has issue-body"            "$OUT_4" "<issue-body>"
+expect_not_contains "case4/no Previous"           "$OUT_4" "<previous-attempts>"
+expect_not_contains "case4/no Human"              "$OUT_4" "<human-guidance-thread>"
+expect_not_contains "case4/no thread-discussion"  "$OUT_4" "<thread-discussion>"
+expect_contains "case4/has agent-notes"           "$OUT_4" "<agent-notes>"
 
-# Case 5: malformed envelope falls into Human guidance (acceptance: parser
-# does not abort, and the comment surfaces verbatim instead).
+# Case 5: malformed envelope (no data-attempt-status) is not a real attempt and
+# carries no directive marker → it degrades to thread-discussion verbatim; the
+# parser does not abort.
 COMMENTS_5="$(comments_array \
   "agent|2026-05-18T08:00:00Z|$ENV_NOSTATUS" \
-  "alice|2026-05-18T08:05:00Z|please retry")"
+  "alice|2026-05-18T08:05:00Z|please retry when you can")"
 OUT_5="$(build_retry_handoff_body 1 "Mal" "body" "claude" 1 "url" "$COMMENTS_5")"
 expect_not_contains "case5/no Previous attempts"  "$OUT_5" "<previous-attempts>"
-expect_contains    "case5/has guidance thread"    "$OUT_5" "<human-guidance-thread>"
+expect_not_contains "case5/no human-guidance"     "$OUT_5" "<human-guidance-thread>"
+expect_contains    "case5/has thread-discussion"  "$OUT_5" "<thread-discussion>"
 expect_contains    "case5/malformed surfaces"     "$OUT_5" "boring"
-expect_contains    "case5/keeps real human"       "$OUT_5" "please retry"
+expect_contains    "case5/narrative surfaces"     "$OUT_5" "please retry when you can"
 
 # Case 6: extract_handoff_notes round-trips an inner-agent appended block
 # from a real on-disk handoff using the new <agent-notes> XML wrapper.
