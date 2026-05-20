@@ -42,7 +42,7 @@ Per-issue files live under `.red/tmp/work-{id}-i{N}/` in the primary checkout. E
 | `.red/tmp/work-{id}-i{N}/afk.pid` | PID of the orchestrator. Used by `/afk monitor` to flag dead workers as `stale` via `kill -0`. Re-written on each iteration. |
 | `.red/tmp/work-{id}-i{N}/afk.log` | Append-only log for this iteration. Per-issue scope — each issue gets a fresh log. |
 | `.red/tmp/work-{id}-i{N}/afk.state.json` | State snapshot for this iteration. Schema in *State File* below. |
-| `.red/tmp/work-{id}-i{N}/handoff.md` | Handoff file the inner agent reads — `<issue-body>` (issue body verbatim, including the `## Agent brief` markdown section), `<previous-attempts>`, `<human-guidance-thread>`, `<agent-notes>`. Top-level XML wrappers make body/comments/notes unambiguous. Template in *Handoff File Template* below. |
+| `.red/tmp/work-{id}-i{N}/handoff.md` | Handoff file the inner agent reads — `<issue-body>` (issue body verbatim, including the `## Agent brief` markdown section), `<previous-attempts>`, `<human-guidance-thread>` (one `<human-guidance>` per extracted directive), `<thread-discussion>` (advisory comments with no directive marker), `<agent-notes>`. Top-level XML wrappers make body/comments/notes unambiguous. Template in *Handoff File Template* below. |
 
 Two workers cannot claim the same issue thanks to a local `mkdir` lock at `.red/tmp/claims/{N}/` plus a `gh issue view` pre-check before the edit. The gh edit itself is not atomic (see *Issue Lifecycle* below for the full three-layer scheme). The race surface is the brief window between two separate checkouts on the same host — acceptable for the intended scale.
 
@@ -562,9 +562,18 @@ and `## Suggested Skills` markdown sections written by /triage}
 
 <human-guidance-thread>                                <!-- omitted when empty -->
 <human-guidance author="@alice" at="{iso8601}">
-{human comment body verbatim — orchestrator audits already filtered out by body shape}
+{verbatim content of one extracted <details data-kind="directive"> marker — one
+<human-guidance> element per directive, so a single comment carrying two markers
+emits two siblings with identical author/at}
 </human-guidance>
 </human-guidance-thread>
+
+<thread-discussion>                                    <!-- omitted when empty -->
+<thread-discussion-entry author="@alice" at="{iso8601}">
+{human comment body verbatim that carried no directive marker — advisory only,
+lowest authority; orchestrator audits already filtered out by body shape}
+</thread-discussion-entry>
+</thread-discussion>
 
 <agent-notes>
 <!-- inner agent appends progress/blockers here across attempts -->
