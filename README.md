@@ -399,6 +399,28 @@ Every terminal event of every attempt posts a single structured comment on the i
 
 Four statuses (`done`, `blocked`, `no-sentinel`, `merge-conflict`) with deterministic schema. Non-DONE attempts also push the branch to `afk-attempts/{worker}/{N}-{slug}` so the diff is reviewable on GitHub even though it never landed on `main`. Next attempt — on this machine or another — re-reads the envelope chain and feeds it to the inner agent as retry context. Cross-machine continuity, no hidden state.
 
+### Steering a worker mid-flight — directive markers
+
+Comments you post on the issue thread reach the inner agent on its **next attempt**, but only a marked comment carries *authority*. Wrap the part you want treated as a binding instruction in a `<details data-kind="directive">` block:
+
+```html
+<details data-kind="directive">
+Keep `foo()` — don't rename it. Just deprecate it with a `@deprecated` JSDoc tag
+and leave the body untouched.
+</details>
+```
+
+The agent extracts the **verbatim content** of every such block and routes it to the authoritative `<human-guidance>` channel — one element per marker, so a single comment with two markers becomes two directives. Anything outside a marker (clarifying questions, observations, asides) lands in the advisory `<thread-discussion>` channel: visible to the agent but never authoritative, and never a reason to abort. Marker, not your GitHub login, is the authority gate — every orchestrator audit comment posts under the operator account too, so the wire can't tell humans from bots by author alone.
+
+When sources disagree, the agent resolves by this precedence ladder (highest to lowest):
+
+1. **`<human-guidance>`** — your marked directives (most recent wins among them)
+2. **`<issue-body>`** — the brief, including HITL edits you paste into the body
+3. **`<previous-attempts>`** — history, never authoritative
+4. **`<thread-discussion>`** — advisory chatter, lowest authority
+
+So a fresh directive that says "actually keep `foo()`" overrides an older acceptance criterion in the brief that said "rename `foo()`" — the disagreement *is* your resolution, not a contradiction the agent should flag.
+
 ### Safe by construction, not by hope
 
 `/afk` enforces a strict allowlist on git: **no `reset`, no `rebase`, no `clean`, no `stash`, no `--force`, no HTTPS remotes**. Dirty primary checkouts get auto-snapshotted before merge. Merge conflicts that can't be auto-resolved release the worktree and flag the issue `ready-for-human` with the diff attached. SIGINT releases the claim and re-applies `ready-for-agent`, so a Ctrl-C never leaves an issue stranded.

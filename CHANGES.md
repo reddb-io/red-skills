@@ -6,6 +6,15 @@ Upstream base: `mattpocock/skills@e74f0061bb67222181640effa98c675bdb2fdaa7` (see
 
 ---
 
+## afk (engineering) — SKILL.md handoff template + README directive-writing docs
+
+- **status**: modified
+- **upstream**: —
+- **why**: PRD #29 Track A. The two-channel handoff builder (#31) and precedence ladder (#33) shipped, but the operator-facing docs still described the four-element handoff and the old `<human-guidance>` semantics. Operators had no documented way to learn the `<details data-kind="directive">` marker syntax or the authority hierarchy.
+- **what changed**: `SKILL.md` *Handoff File Template* now shows the `<thread-discussion>` element in correct position (between `<human-guidance-thread>` and `<agent-notes>`, with `<thread-discussion-entry>` children) and documents the new `<human-guidance>` semantics (one element per extracted directive; two markers in one comment → two siblings). The file-table `handoff.md` row enumerates all five wrappers. Root `README.md` gains a new *Steering a worker mid-flight — directive markers* subsection under `/afk` with a copy-pasteable `<details data-kind="directive">` example, the marker-is-the-authority-gate explanation, and the four-rung precedence ladder summary (`<human-guidance>` > `<issue-body>` > `<previous-attempts>` > `<thread-discussion>`). Docs-only — no script or test change. Refs #34.
+
+---
+
 ## afk (engineering) — comment classifier + directive extractor (deep modules)
 
 - **status**: modified
