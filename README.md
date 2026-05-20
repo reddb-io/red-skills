@@ -358,6 +358,7 @@ Every env var the skill reads or exports is prefixed `RED_AFK_*`. Operator knobs
 | `RED_AFK_CIRCUIT_K` | `5` | Fast deaths in the window before a slot is parked. |
 | `RED_AFK_CIRCUIT_WINDOW_S` | `90` | Sliding window for the circuit breaker (sec). |
 | `RED_AFK_STALL_THRESHOLD_S` | `600` | Inactivity (sec) after which a slot is flagged `stalled` in the monitor — alive but no log progress. 10 min default. |
+| `RED_AFK_PER_ISSUE_CAP` | `3` | Consecutive BLOCKED attempts (since the last human directive) before an issue is flipped `ready-for-agent` → `ready-for-human` and skipped at claim time. `0` or non-numeric falls back to `3`. Recover by adding a directive and manually relabelling back. |
 | `RED_AFK_STALL_POLL_S` | `30` | Supervisor's stall-detector sampling cadence (sec). |
 | `RED_AFK_WATCHDOG_GRACE_S` | `30` | Grace (sec) after the inner agent emits `<promise>DONE</promise>` before the orchestrator force-closes its stdout pipe (protects against runaway polling loops the inner agent forgot to bound). |
 | `RED_AFK_MONITOR_COMPACT` | `0` | `1` → `/afk monitor` emits one line per worker and exits 0 (same as `--once`). For scripts and statusline integrations. |

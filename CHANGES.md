@@ -6,6 +6,15 @@ Upstream base: `mattpocock/skills@e74f0061bb67222181640effa98c675bdb2fdaa7` (see
 
 ---
 
+## afk (engineering) — per-issue cap trip handler + supervisor claim-time gate
+
+- **status**: modified
+- **upstream**: —
+- **why**: PRD #29 Track B (per-issue cap). #32 shipped the `count_blocked_since_guidance` counter; this slice wires it end-to-end so an issue that keeps coming back BLOCKED with no fresh human directive is flipped to `ready-for-human` and skipped instead of burning worker after worker on the same dead loop.
+- **what changed**: `afk.sh` gains `per_issue_cap` (reads `RED_AFK_PER_ISSUE_CAP`, default 3, defensive — `0`/non-numeric/negative falls back to 3), `_thread_lacks_directive_marker` (true when the thread has no `<details data-kind="directive">` carrier, so the trip comment teaches the syntax), and `trip_per_issue_cap` (flips `ready-for-agent` → `ready-for-human`, posts a trip comment, appends a copy-pasteable directive-marker self-teaching block when no directive exists; gh failures warn but never crash). `process_issue` gains a claim-time gate: before claiming it fetches comments, counts the trailing BLOCKED run, and on `count ≥ cap` trips and skips the issue without recording a worker spawn. `README.md` operator-tunables table gains a `RED_AFK_PER_ISSUE_CAP` row. `per-issue-cap.test.sh` gains defensive-parsing, marker-detection, and 5 gh-stubbed integration fixtures. Refs #35.
+
+---
+
 ## afk (engineering) — AGENT-PROMPT precedence ladder + thread-discussion tie-breaker
 
 - **status**: modified

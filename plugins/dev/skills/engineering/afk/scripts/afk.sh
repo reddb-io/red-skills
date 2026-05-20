@@ -1071,6 +1071,70 @@ _comment_is_directive_carrier() {
   [[ "$after" == *"</details>"* ]]
 }
 
+# ---------- per-issue BLOCKED cap (PRD #29 Track B) ----------
+
+# per_issue_cap  →  prints the resolved cap K
+# Reads RED_AFK_PER_ISSUE_CAP (default 3). Defensive: a non-numeric value,
+# zero, or a negative number falls back to the default — an operator typo
+# must never disable the cap or trip it on the first attempt.
+per_issue_cap() {
+  local v="${RED_AFK_PER_ISSUE_CAP:-3}"
+  if [[ "$v" =~ ^[0-9]+$ ]] && (( v > 0 )); then
+    echo "$v"
+  else
+    echo 3
+  fi
+}
+
+# _thread_lacks_directive_marker <comments_json>  →  prints "true" | "false"
+# "true" when the thread contains no directive_carrier comment at all — the
+# operator has never used the `<details data-kind="directive">` marker, so the
+# trip comment teaches the syntax. "false" when at least one directive_carrier
+# is present (the operator already knows the marker), so the self-teaching
+# block is redundant and omitted.
+_thread_lacks_directive_marker() {
+  local comments_json="$1"
+  local n i body
+  [[ -z "$comments_json" || "$comments_json" == "null" ]] && { echo true; return 0; }
+  n="$(jq 'length' <<<"$comments_json" 2>/dev/null || echo 0)"
+  for ((i = 0; i < n; i++)); do
+    body="$(jq -r ".[$i].body // \"\"" <<<"$comments_json")"
+    if _comment_is_directive_carrier "$body"; then
+      echo false
+      return 0
+    fi
+  done
+  echo true
+}
+
+# trip_per_issue_cap <issue_n> <count> <latest_lacks_marker_bool>
+# Flips `ready-for-agent` → `ready-for-human` and posts a trip comment naming
+# the consecutive-BLOCKED count. When latest_lacks_marker_bool is "true" the
+# comment also carries a copy-pasteable `<details data-kind="directive">`
+# example so the operator learns how to hand down authoritative guidance.
+#
+# Defensive: a gh failure on either the label flip or the comment post logs a
+# warning but never aborts — the cap exists to make a stuck loop better, never
+# worse. Recovery is the operator manually relabelling ready-for-human →
+# ready-for-agent (no auto-relabel, no cooldown — out of scope per PRD #29).
+trip_per_issue_cap() {
+  local n="$1" count="$2" lacks_marker="$3"
+  local repo; repo="$(gh_repo)"
+  local comment
+  comment="🤖 /afk per-issue cap tripped: ${count} consecutive BLOCKED attempts without human directive."
+  if [[ "$lacks_marker" == "true" ]]; then
+    comment+=$'\n\n'"To unblock, add your authoritative guidance to this issue using a directive marker, then relabel \`ready-for-human\` → \`ready-for-agent\`:"
+    comment+=$'\n\n```\n<details data-kind="directive">\n…your authoritative guidance here…\n</details>\n```'
+  fi
+  if ! gh -R "$repo" issue edit "$n" \
+        --remove-label ready-for-agent --add-label ready-for-human >/dev/null 2>&1; then
+    log "⚠ per-issue cap: failed to flip labels on #$n (gh edit) — continuing"
+  fi
+  if ! gh -R "$repo" issue comment "$n" --body "$comment" >/dev/null 2>&1; then
+    log "⚠ per-issue cap: failed to post trip comment on #$n (gh comment) — continuing"
+  fi
+}
+
 # build_retry_handoff_body <n> <title> <body> <runner> <attempt> <url> <comments_json>
 # Composes the full handoff markdown to stdout. Pure function — no network,
 # no filesystem writes. Sections that would be empty are omitted entirely.
@@ -1344,6 +1408,24 @@ process_issue() {
   local started_epoch; started_epoch="$(date +%s)"
 
   hr; log "▶ #$n $title (runner=$RUNNER)"
+
+  # per-issue BLOCKED cap gate (PRD #29 Track B) — checked *before* claiming.
+  # Count the trailing run of BLOCKED attempts since the last human directive;
+  # at or above the cap, flip the issue to ready-for-human and skip it without
+  # recording a worker spawn. Never claim an issue that keeps coming back
+  # BLOCKED with no fresh guidance to break the loop.
+  local cap; cap="$(per_issue_cap)"
+  local cap_comments
+  cap_comments="$(gh -R "$(gh_repo)" issue view "$n" --json comments \
+    --jq '.comments | map({author: {login: .author.login}, body: .body, createdAt: .createdAt})' 2>/dev/null)"
+  [[ -z "$cap_comments" ]] && cap_comments='[]'
+  local blocked_count; blocked_count="$(count_blocked_since_guidance "$cap_comments")"
+  if (( blocked_count >= cap )); then
+    local lacks_marker; lacks_marker="$(_thread_lacks_directive_marker "$cap_comments")"
+    log "⛔ #$n hit per-issue cap (${blocked_count} ≥ ${cap} consecutive BLOCKED) — flipping to ready-for-human, skipping"
+    trip_per_issue_cap "$n" "$blocked_count" "$lacks_marker"
+    return 0
+  fi
 
   # claim — three layers (see claim_lock_acquire comment for the why):
   # 1. local mkdir lock so two workers on this checkout can't both pass.
