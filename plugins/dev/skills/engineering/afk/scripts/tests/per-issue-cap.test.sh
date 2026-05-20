@@ -153,6 +153,125 @@ expect_eq "single done envelope → 0" 0 "$(count_blocked_since_guidance "$J")"
 J="$(build_comments_json "$(audit_boot_stamp)" "$(audit_heartbeat)")"
 expect_eq "only audit_noise → 0" 0 "$(count_blocked_since_guidance "$J")"
 
+# ---------- per_issue_cap (defensive parsing) ----------
+
+expect_eq "cap: unset → default 3"      3 "$(unset RED_AFK_PER_ISSUE_CAP; per_issue_cap)"
+expect_eq "cap: override 5"             5 "$(RED_AFK_PER_ISSUE_CAP=5 per_issue_cap)"
+expect_eq "cap: override 2"             2 "$(RED_AFK_PER_ISSUE_CAP=2 per_issue_cap)"
+expect_eq "cap: 0 → default 3"          3 "$(RED_AFK_PER_ISSUE_CAP=0 per_issue_cap)"
+expect_eq "cap: non-numeric → default" 3 "$(RED_AFK_PER_ISSUE_CAP=abc per_issue_cap)"
+expect_eq "cap: negative → default 3"   3 "$(RED_AFK_PER_ISSUE_CAP=-1 per_issue_cap)"
+
+# ---------- _thread_lacks_directive_marker ----------
+
+J="$(build_comments_json "$(envelope_blocked w1 1)" "$(envelope_blocked w2 2)")"
+expect_eq "lacks_marker: no directive ever → true" true "$(_thread_lacks_directive_marker "$J")"
+
+J="$(build_comments_json "$(directive_carrier_body)" "$(envelope_blocked w1 1)")"
+expect_eq "lacks_marker: directive present → false" false "$(_thread_lacks_directive_marker "$J")"
+
+J="$(build_comments_json "$(thread_discussion_body)" "$(audit_boot_stamp)")"
+expect_eq "lacks_marker: only narrative/audit → true" true "$(_thread_lacks_directive_marker "$J")"
+
+expect_eq "lacks_marker: empty → true" true "$(_thread_lacks_directive_marker '[]')"
+
+# ---------- integration: gate decision + trip_per_issue_cap (gh stubbed) ----------
+# These five fixtures mirror the supervisor claim-time gate: count the
+# trailing BLOCKED run, compare to the resolved cap, and on trip flip the
+# label + post the comment. gh is shimmed to a call recorder so no network
+# is touched; gh_repo is stubbed so no git remote is needed.
+
+GH_CALLS="$(mktemp)"
+gh() { printf '%s\n' "$*" >>"$GH_CALLS"; return 0; }
+gh_repo() { echo "reddb-io/red-skills"; }
+
+# run_gate <cap> <comments_json>  →  echoes "trip" or "skip" and, on trip,
+# drives the real trip_per_issue_cap with gh recording into $GH_CALLS.
+run_gate() {
+  local cap="$1" json="$2" count lacks
+  : >"$GH_CALLS"
+  count="$(RED_AFK_PER_ISSUE_CAP="$cap" per_issue_cap)"
+  local blocked; blocked="$(count_blocked_since_guidance "$json")"
+  if (( blocked >= count )); then
+    lacks="$(_thread_lacks_directive_marker "$json")"
+    trip_per_issue_cap 42 "$blocked" "$lacks"
+    echo "trip"
+  else
+    echo "notrip"
+  fi
+}
+
+assert_calls_contain() {
+  local label="$1" needle="$2"
+  if grep -qF -- "$needle" "$GH_CALLS"; then
+    echo "PASS  $label"; pass=$((pass + 1))
+  else
+    echo "FAIL  $label — calls missing: $needle"; fail=$((fail + 1))
+  fi
+}
+
+assert_calls_lack() {
+  local label="$1" needle="$2"
+  if grep -qF -- "$needle" "$GH_CALLS"; then
+    echo "FAIL  $label — calls unexpectedly contain: $needle"; fail=$((fail + 1))
+  else
+    echo "PASS  $label"; pass=$((pass + 1))
+  fi
+}
+
+# Fixture 1: K=3 trailing BLOCKEDs, cap=3 → trip, label flip + comment +
+# self-teaching block (no directive ever).
+J="$(build_comments_json \
+  "$(envelope_blocked w1 1)" \
+  "$(envelope_blocked w2 2)" \
+  "$(envelope_blocked w3 3)" \
+)"
+expect_eq "fixture1: 3 blocked, cap 3 → trip" trip "$(run_gate 3 "$J")"
+assert_calls_contain "fixture1: removes ready-for-agent" "--remove-label ready-for-agent"
+assert_calls_contain "fixture1: adds ready-for-human"    "--add-label ready-for-human"
+assert_calls_contain "fixture1: posts trip comment"      "issue comment 42"
+assert_calls_contain "fixture1: comment names count" "3 consecutive BLOCKED"
+assert_calls_contain "fixture1: self-teaching marker block" '<details data-kind="directive">'
+
+# Fixture 2: K=2 BLOCKEDs with a trailing directive_carrier, cap=3 → the
+# directive resets the count to 0 → no trip, claim proceeds.
+J="$(build_comments_json \
+  "$(envelope_blocked w1 1)" \
+  "$(envelope_blocked w2 2)" \
+  "$(directive_carrier_body)" \
+)"
+expect_eq "fixture2: directive resets, cap 3 → no trip" notrip "$(run_gate 3 "$J")"
+assert_calls_lack "fixture2: no label edit on no-trip" "issue edit"
+assert_calls_lack "fixture2: no comment on no-trip"    "issue comment"
+
+# Fixture 3: K=5 trailing BLOCKEDs with cap=5 → trip.
+args=()
+for i in 1 2 3 4 5; do args+=("$(envelope_blocked "w$i" "$i")"); done
+J="$(build_comments_json "${args[@]}")"
+expect_eq "fixture3: 5 blocked, cap 5 → trip" trip "$(run_gate 5 "$J")"
+assert_calls_contain "fixture3: adds ready-for-human" "--add-label ready-for-human"
+assert_calls_contain "fixture3: comment names count"  "5 consecutive BLOCKED"
+
+# Fixture 4: K=2 trailing BLOCKEDs with cap=2 → trip.
+J="$(build_comments_json "$(envelope_blocked w1 1)" "$(envelope_blocked w2 2)")"
+expect_eq "fixture4: 2 blocked, cap 2 → trip" trip "$(run_gate 2 "$J")"
+assert_calls_contain "fixture4: adds ready-for-human" "--add-label ready-for-human"
+
+# Fixture 5: directive_carrier immediately before the trailing BLOCKEDs
+# (operator already gave guidance), cap=2 → trip, but lacks_marker is false
+# so the self-teaching block is omitted.
+J="$(build_comments_json \
+  "$(directive_carrier_body)" \
+  "$(envelope_blocked w1 1)" \
+  "$(envelope_blocked w2 2)" \
+)"
+expect_eq "fixture5: directive before blockeds, cap 2 → trip" trip "$(run_gate 2 "$J")"
+assert_calls_contain "fixture5: still flips label" "--add-label ready-for-human"
+assert_calls_contain "fixture5: still posts comment" "issue comment 42"
+assert_calls_lack    "fixture5: omits self-teaching block" '<details data-kind="directive">'
+
+rm -f "$GH_CALLS"
+
 echo
 echo "summary: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
