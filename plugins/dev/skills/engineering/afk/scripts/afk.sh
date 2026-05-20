@@ -1072,18 +1072,27 @@ build_previous_attempts() {
 }
 
 # build_human_guidance <comments_json>
-# Emits each human-authored comment (anything passing the predicate) as a
-# `<human-guidance>` element in chronological order. Empty output when none —
-# caller suppresses the wrapping `<human-guidance-thread>` tag.
+# Emits one `<human-guidance>` element per *extracted directive*, in document
+# order within each comment and chronological order across comments. Empty
+# output when no comment carries a directive — caller suppresses the wrapping
+# `<human-guidance-thread>` tag.
 #
-# Every comment in the output is — by construction — human direction: the
-# `comment_is_human_guidance` predicate strips orchestrator audits (boot
-# stamps, promotion lines, heartbeats, envelopes) by body shape *before* this
-# builder runs. The XML tag is the load-bearing signal to the agent, because
-# the `author.login` field cannot be trusted: every comment the orchestrator
-# posts via `gh issue comment` from the operator's host carries the
-# operator's GitHub login, indistinguishable on the wire from a real human
-# reply. If a comment reached this builder, it is human direction — full stop.
+# Two-channel split (PRD #29 Track A): the directive marker, not the comment's
+# human-ness, is now the gate. A comment is routed by `classify_comment` (#30):
+# only `directive_carrier` comments reach this builder; their authoritative
+# content is the verbatim text of each `<details data-kind="directive">…</details>`
+# element pulled by `extract_directives` (#30), *not* the whole comment body.
+# A comment with two markers therefore produces two sibling `<human-guidance>`
+# elements with identical author/at attributes; a comment with no marker
+# produces zero elements and falls through to `<thread-discussion>`.
+#
+# The XML tag is the load-bearing signal to the agent, because the
+# `author.login` field cannot be trusted: every comment the orchestrator posts
+# via `gh issue comment` from the operator's host carries the operator's GitHub
+# login, indistinguishable on the wire from a real human reply. The directive
+# marker is what makes the content authoritative, and `classify_comment` strips
+# orchestrator audits (boot stamps, promotion lines, heartbeats, envelopes) by
+# body shape before any routing decision.
 build_human_guidance() {
   local comments_json="$1"
   local n; n="$(jq 'length' <<<"$comments_json")"
@@ -1092,14 +1101,51 @@ build_human_guidance() {
   local first=1 i body author created
   for ((i = 0; i < n; i++)); do
     body="$(jq -r ".[$i].body" <<<"$comments_json")"
-    comment_is_human_guidance "$body" || continue
+    [[ "$(classify_comment "$body")" == directive_carrier ]] || continue
+    author="$(jq -r ".[$i].author.login // \"unknown\"" <<<"$comments_json")"
+    created="$(jq -r ".[$i].createdAt // \"\"" <<<"$comments_json")"
+    local -a dirs=()
+    mapfile -t -d '' dirs < <(extract_directives "$body")
+    local d
+    for d in "${dirs[@]}"; do
+      if [[ $first -eq 1 ]]; then first=0; else printf '\n'; fi
+      if [[ -n "$created" ]]; then
+        printf '<human-guidance author="@%s" at="%s">\n%s\n</human-guidance>\n' "$author" "$created" "$d"
+      else
+        printf '<human-guidance author="@%s">\n%s\n</human-guidance>\n' "$author" "$d"
+      fi
+    done
+  done
+}
+
+# build_thread_discussion <comments_json>
+# Sibling shape of build_human_guidance for the *advisory* channel. Emits one
+# `<thread-discussion-entry>` element per comment classified `thread_discussion`
+# by `classify_comment` (#30) — narrative comments that carry no directive
+# marker and are not audit-noise — wrapping the verbatim body in chronological
+# order. Empty output when none; caller suppresses the wrapping
+# `<thread-discussion>` container.
+#
+# These entries are the lowest authority in the precedence ladder: the inner
+# agent may consult them only as a tie-breaker when the brief is genuinely
+# ambiguous and no `<human-guidance>` resolves it (see ADR 0002). The whole
+# body surfaces verbatim — there is no marker to extract from, by definition.
+build_thread_discussion() {
+  local comments_json="$1"
+  local n; n="$(jq 'length' <<<"$comments_json")"
+  [[ "$n" -gt 0 ]] || return 0
+
+  local first=1 i body author created
+  for ((i = 0; i < n; i++)); do
+    body="$(jq -r ".[$i].body" <<<"$comments_json")"
+    [[ "$(classify_comment "$body")" == thread_discussion ]] || continue
     author="$(jq -r ".[$i].author.login // \"unknown\"" <<<"$comments_json")"
     created="$(jq -r ".[$i].createdAt // \"\"" <<<"$comments_json")"
     if [[ $first -eq 1 ]]; then first=0; else printf '\n'; fi
     if [[ -n "$created" ]]; then
-      printf '<human-guidance author="@%s" at="%s">\n%s\n</human-guidance>\n' "$author" "$created" "$body"
+      printf '<thread-discussion-entry author="@%s" at="%s">\n%s\n</thread-discussion-entry>\n' "$author" "$created" "$body"
     else
-      printf '<human-guidance author="@%s">\n%s\n</human-guidance>\n' "$author" "$body"
+      printf '<thread-discussion-entry author="@%s">\n%s\n</thread-discussion-entry>\n' "$author" "$body"
     fi
   done
 }
@@ -1258,9 +1304,10 @@ build_retry_handoff_body() {
   echo "${body}"
   echo "</issue-body>"
 
-  local attempts_block guidance_block
+  local attempts_block guidance_block discussion_block
   attempts_block="$(build_previous_attempts "$comments_json")"
   guidance_block="$(build_human_guidance "$comments_json")"
+  discussion_block="$(build_thread_discussion "$comments_json")"
 
   if [[ -n "$attempts_block" ]]; then
     echo
@@ -1274,6 +1321,13 @@ build_retry_handoff_body() {
     echo "<human-guidance-thread>"
     printf '%s\n' "$guidance_block"
     echo "</human-guidance-thread>"
+  fi
+
+  if [[ -n "$discussion_block" ]]; then
+    echo
+    echo "<thread-discussion>"
+    printf '%s\n' "$discussion_block"
+    echo "</thread-discussion>"
   fi
 
   echo
