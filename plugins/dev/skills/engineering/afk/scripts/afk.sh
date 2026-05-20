@@ -844,6 +844,112 @@ comment_is_human_guidance() {
   return 0
 }
 
+# ---------- comment classifier (PRD #29 #30) ----------
+# Two pure functions — no I/O, no `gh`, no global mutation — that become the
+# single source of truth both downstream tracks (A1 directive routing, B1 cap
+# state machine) read from. The legacy predicates above stay in place during
+# this slice; `classify_comment` composes them so the consolidation is
+# transparent at the seam, and A1/B1 migrate their callers later.
+
+# classify_comment <body>  →  prints one of:
+#   envelope | directive_carrier | thread_discussion | audit_noise
+#
+# Precedence (first match wins), so the noise classes can never be mistaken
+# for human direction:
+#   1. blank body                                   → audit_noise
+#   2. `<details data-attempt-status="…">` envelope → envelope
+#   3. boot stamp / promotion audit / heartbeat     → audit_noise
+#   4. ≥1 well-formed `<details data-kind="directive">…</details>` element
+#      (well-formedness == extract_directives can pull it out)  → directive_carrier
+#   5. anything else (plain narrative, malformed marker)        → thread_discussion
+#
+# Note the directive arm defers to `extract_directives` for well-formedness
+# rather than a substring peek, so classify_comment and extract_directives can
+# never disagree about whether a comment carries a directive.
+classify_comment() {
+  local body="$1"
+  [[ -z "${body//[[:space:]]/}" ]]   && { echo audit_noise; return 0; }
+  envelope_is_envelope "$body"        && { echo envelope; return 0; }
+  comment_is_boot_stamp "$body"       && { echo audit_noise; return 0; }
+  comment_is_promotion_audit "$body"  && { echo audit_noise; return 0; }
+  comment_is_heartbeat_glyph "$body"  && { echo audit_noise; return 0; }
+  local ndir
+  ndir="$(extract_directives "$body" | tr -dc '\0' | wc -c)"
+  if (( ndir > 0 )); then
+    echo directive_carrier
+  else
+    echo thread_discussion
+  fi
+}
+
+# extract_directives <body>  →  NUL-separated list to stdout
+# Prints the verbatim text content of every well-formed
+# `<details data-kind="directive">…</details>` element in `body`, in document
+# order, each terminated by a NUL byte. Downstream reads it back with
+#   mapfile -d '' arr < <(extract_directives "$body")
+# Prints nothing (empty list) when no marker is present or only malformed
+# markers exist.
+#
+# Parsing contract (line-oriented; markers live on their own lines, as GitHub
+# renders `<details>` markdown):
+#   - The opening tag is recognised only as a whole trimmed line equal to
+#     `<details data-kind="directive">`.
+#   - Content is every line strictly between that open and its *matching*
+#     `</details>`, joined with `\n`, verbatim — including any nested
+#     `<details>` block an operator pasted in.
+#   - Nesting: a trimmed line starting `<details` raises depth, a trimmed line
+#     exactly `</details>` lowers it; the directive ends only when depth
+#     returns to 0. A closing tag carrying attributes (`</details foo>`) is not
+#     a valid close.
+#   - Code fences: a line whose trimmed text starts with ``` toggles a fence;
+#     while inside a fence, tag detection is suspended, so a literal
+#     `</details>` inside a fenced code block never terminates the parse early.
+#   - CRLF: a trailing `\r` is stripped from every line before matching.
+#   - Malformed (opened but never closed, or closed only with an attributed
+#     tag) yields no output for that element.
+#
+# Pure: reads only its argument via a here-string. No filesystem, no network.
+extract_directives() {
+  local body="$1"
+  local line trimmed depth=0 fence=0 content=""
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%$'\r'}"
+    # trim leading/trailing whitespace for tag matching (content uses $line raw)
+    trimmed="${line#"${line%%[![:space:]]*}"}"
+    trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
+
+    if [[ "$trimmed" == '```'* ]]; then
+      (( depth > 0 )) && content+=$'\n'"$line"
+      fence=$(( fence ^ 1 ))
+      continue
+    fi
+    if (( fence )); then
+      (( depth > 0 )) && content+=$'\n'"$line"
+      continue
+    fi
+
+    if (( depth == 0 )); then
+      [[ "$trimmed" == '<details data-kind="directive">' ]] && { depth=1; content=""; }
+      continue
+    fi
+
+    if [[ "$trimmed" == '<details'* ]]; then
+      depth=$(( depth + 1 )); content+=$'\n'"$line"; continue
+    fi
+    if [[ "$trimmed" == '</details>' ]]; then
+      depth=$(( depth - 1 ))
+      if (( depth == 0 )); then
+        printf '%s\0' "${content#$'\n'}"
+        content=""
+      else
+        content+=$'\n'"$line"
+      fi
+      continue
+    fi
+    content+=$'\n'"$line"
+  done <<<"$body"
+}
+
 # envelope_field <body> <name>  →  prints value to stdout.
 # Pulls a single field from the envelope opening / summary line. `status` is
 # the `data-attempt-status` attribute; `worker` and `duration` come from the
