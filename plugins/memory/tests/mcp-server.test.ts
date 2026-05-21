@@ -80,6 +80,7 @@ describe("MCP server over stdio", () => {
       expect(names).toEqual(
         [
           "memory_ask",
+          "memory_doctor",
           "memory_export",
           "memory_neighbors",
           "memory_path",

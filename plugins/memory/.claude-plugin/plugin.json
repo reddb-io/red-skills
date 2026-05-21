@@ -9,6 +9,8 @@
     "./skills/core/init",
     "./skills/core/store",
     "./skills/core/recall",
-    "./skills/core/ingest"
+    "./skills/core/ingest",
+    "./skills/core/doctor",
+    "./skills/core/export"
   ]
 }

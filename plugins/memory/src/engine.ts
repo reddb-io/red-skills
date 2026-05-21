@@ -163,6 +163,14 @@ export async function recall(
   }
 
   nodes.sort((a, b) => b.score - a.score || a.rid - b.rid);
+
+  // Decay bookkeeping: a recalled node is a used node. Bump its access overlay
+  // (count + last-accessed) so `memory:doctor` can tell what's still earning its
+  // keep from what's gone cold. Best-effort — never let it fail a read.
+  if (nodes.length > 0) {
+    await store.recordAccess(nodes.map((n) => n.rid)).catch(() => {});
+  }
+
   return { query, nodes, context_md: renderContext(query, nodes) };
 }
 

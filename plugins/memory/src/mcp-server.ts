@@ -24,7 +24,9 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { readConfig, resolveStoreUri } from "./config.js";
+import { diagnose } from "./doctor.js";
 import { ask, neighbors, path, recall, search, traverse } from "./engine.js";
+import { exportGraph } from "./export.js";
 import { MemoryStore, factToNode } from "./graph-store.js";
 import type { EdgeLabel, NodeType } from "./schema.js";
 import { slugify } from "./store.js";
@@ -105,7 +107,14 @@ const SupersedeInput = z.object({
   reason: z.string().optional(),
 });
 
-const ExportInput = z.object({});
+const ExportInput = z.object({
+  /** When set, also writes graph.json + graph.html + audit.md into this dir. */
+  out_dir: z.string().optional(),
+});
+
+const DoctorInput = z.object({
+  stale_days: z.number().int().min(1).default(90),
+});
 
 // ---------- server ----------
 
@@ -205,13 +214,28 @@ async function main(): Promise<void> {
         });
       }
       case "memory_export": {
-        ExportInput.parse(args);
+        const input = ExportInput.parse(args);
+        if (input.out_dir) {
+          const result = await exportGraph(store, input.out_dir);
+          return text(JSON.stringify(result, null, 2), {
+            nodes: result.nodes,
+            edges: result.edges,
+          });
+        }
         const [nodes, edges, stats] = await Promise.all([
           store.listNodes(),
           store.listEdges(),
           store.stats(),
         ]);
         return text(JSON.stringify({ nodes, edges, stats }, null, 2), stats);
+      }
+      case "memory_doctor": {
+        const input = DoctorInput.parse(args);
+        const report = await diagnose(store, { staleDays: input.stale_days });
+        return text(JSON.stringify(report, null, 2), {
+          total: report.totalNodes,
+          stale: report.stale.length,
+        });
       }
       case "memory_stats": {
         const stats = await store.stats();
@@ -317,8 +341,15 @@ const TOOLS = [
   },
   {
     name: "memory_export",
-    description: "Dump the whole graph (nodes, edges, stats) as JSON.",
-    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    description:
+      "Dump the whole graph (nodes, edges, stats) as JSON. Pass `out_dir` to also write a navigable graph.html + graph.json + audit.md bundle there.",
+    inputSchema: zodToSchema(ExportInput),
+  },
+  {
+    name: "memory_doctor",
+    description:
+      "Inspect graph health: list stale nodes (unaccessed `stale_days`+ days AND never recalled; pinned nodes exempt). Read-only — pruning is a confirmed CLI operation.",
+    inputSchema: zodToSchema(DoctorInput),
   },
   {
     name: "memory_stats",
