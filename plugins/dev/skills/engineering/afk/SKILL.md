@@ -550,6 +550,8 @@ The pure diff logic lives in [`scripts/lib/mirror.sh`](scripts/lib/mirror.sh). A
 
 An empty plan means nothing changed since the last tick — apply no calls. Because the plan is keyed by `worker_id:issue`, an idempotent re-run with no stage advance emits zero descriptors.
 
+**Re-hydration on session reopen.** A native task dies with the Claude Code session; the `nohup` AFK worker does not. When a session opens with workers still running, `TaskList` (step 2) returns no mirror-owned tasks, so the tracked set is **empty** and `mirror_plan` reconciles cold — emitting a `TaskCreate` for every live worker. The status bar recovers the per-worker tasks with no operator action. This is the same path as steady-state, not a new one: only workers whose `afk.pid` is alive re-hydrate (dead workers are untracked-terminal on a cold tick → no ghost task), and the next tick is idempotent because the freshly-created tasks now form the tracked set.
+
 When `TaskCreate` / `TaskUpdate` are unavailable (Codex runner, or invoked outside Claude Code), **skip the mirror silently** — the native task surface only exists under Claude Code. The textual dashboard from `monitor.sh` is the fallback view there.
 
 ## Handoff File Template

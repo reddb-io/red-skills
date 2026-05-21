@@ -184,6 +184,38 @@ mirror_plan "$ROOT" "$tracked_all" >/dev/null
 after="$(cat "$ROOT/.red/tmp/work-wAAAA-i22/afk.state.json")"
 expect_eq "plan: state file untouched (read-only invariant)" "$before" "$after"
 
+# ----------------------------------------------------------------------
+# Family 4 — re-hydration on session reopen (issue #44)
+# ----------------------------------------------------------------------
+#
+# A native task dies with the Claude Code session; the nohup worker does not.
+# On reopen, TaskList returns no mirror-owned tasks, so the first monitor tick
+# runs mirror_plan with an EMPTY tracked set — re-hydration is the reconciler
+# running cold. No new code path: this family verifies that contract over the
+# live fixtures (wAAAA + wBBBB live, wCCCC dead/gone, wDDDD idle, wEEEE no state).
+
+# Criterion 1 — reopen rebuilds the per-worker tasks with no operator action:
+# an empty tracked set yields a TaskCreate for every live worker.
+rehydrate="$(mirror_plan "$ROOT" "")"
+rehydrate_creates="$(printf '%s\n' "$rehydrate" | jq -r 'select(.call=="TaskCreate") | .key' | sort)"
+expect_eq "rehydrate: reopen recreates each live worker task" \
+  "wAAAA:22
+wBBBB:30" "$rehydrate_creates"
+
+# Criterion 2 — only live-pid workers re-hydrate; the dead worker (wCCCC, pid
+# 999999) is untracked on a cold tick, so its terminal status emits no call:
+# no ghost task.
+rehydrate_ghost="$(printf '%s\n' "$rehydrate" | jq -c 'select(.key=="wCCCC:31")')"
+expect_eq "rehydrate: dead worker produces no ghost task" "" "$rehydrate_ghost"
+
+# Criterion 3 — idempotent. Build the tracked set from what reopen created
+# (key + stage), then run the next tick: no worker advanced, so zero ops — no
+# duplicate tasks for the same (worker, issue).
+tracked_after_reopen="$(printf '%s\n' "$rehydrate" \
+  | jq -c 'select(.call=="TaskCreate") | {key, stage: (.description | sub("^stage: "; ""))}')"
+second_tick="$(mirror_plan "$ROOT" "$tracked_after_reopen")"
+expect_eq "rehydrate: second tick is idempotent (no duplicates)" "" "$second_tick"
+
 echo
 echo "summary: $pass passed, $fail failed"
 [[ "$fail" -eq 0 ]]

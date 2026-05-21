@@ -15,6 +15,15 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 
 ---
 
+## afk (engineering) — Task mirror re-hydrates native tasks on session reopen
+
+- **status**: modified
+- **upstream**: —
+- **why**: Issue #44 (PRD #42, ADR `0003`). A native task dies with the Claude Code session but the `nohup` AFK worker does not, so a reopened session showed no per-worker tasks until the operator acted. The status bar must recover them automatically.
+- **what changed**: No new code path — re-hydration *is* `mirror_plan` (from #43) running cold: on reopen `TaskList` returns no mirror-owned tasks, so the tracked set is empty and the reconciler emits an all-`create` plan over the live state files. Added a *Re-hydration on session reopen* note to the SKILL.md Task Mirror subsection making the contract binding (only `afk.pid`-alive workers re-hydrate; dead workers are untracked-terminal on a cold tick → no ghost task; the next tick is idempotent). Added a 3-assertion re-hydration family to `scripts/tests/mirror.test.sh` (30 total) verifying: reopen recreates each live worker task, dead worker yields no ghost, second tick produces no duplicates. No change to `mirror.sh`, `afk.sh`, or `monitor.sh`. Refs #44.
+
+---
+
 ## afk (engineering) — native Task mirror surfaces live workers as background tasks
 
 - **status**: modified
