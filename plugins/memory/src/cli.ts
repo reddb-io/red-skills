@@ -1,14 +1,21 @@
 #!/usr/bin/env node
 import { isAbsolute, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
+import { readFile } from "node:fs/promises";
 import { readConfig, resolveNotesDir, resolveStoreUri } from "./config.js";
 import { diagnose, prune } from "./doctor.js";
 import { neighbors, path as shortestPath, search, traverse } from "./engine.js";
 import { exportGraph } from "./export.js";
+import {
+  extractConversation,
+  factsToGraph,
+  resolveProvider,
+} from "./extract-conversation.js";
 import { graphRecall } from "./graph-recall.js";
 import { MemoryStore, factToNode } from "./graph-store.js";
 import { ingestProject } from "./ingest.js";
 import { initGraph, initMarkdownOnly } from "./init.js";
+import { applyProviderEnv, redDbProviderClient } from "./provider-client.js";
 import { recall } from "./recall.js";
 import { slugify, storeNote } from "./store.js";
 
@@ -19,6 +26,7 @@ Usage:
   memory store <fact...>            [--root <dir>]
   memory recall <query...>          [--root <dir>] [--limit N]
   memory ingest <path>              [--root <dir>] [--max-files N]
+  memory extract [<transcript-file>] [--root <dir>]   (reads stdin if no file)
 
   Graph-mode read verbs (require \`memory init --mode graph\`):
   memory search <query...>          [--root <dir>] [--limit N]
@@ -197,6 +205,73 @@ async function runIngest(args: ParsedArgs): Promise<void> {
     console.log(`memory: ingested ${cwd}`);
     console.log(
       `  ${report.files} file(s) → ${report.nodes} node(s), ${report.edges} edge(s), ${report.docs} doc(s) in ${report.durationMs}ms`,
+    );
+  } finally {
+    await store.close();
+  }
+}
+
+async function readStdin(): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+/**
+ * LLM conversation extraction (the `INFERRED` write path). Reads a transcript
+ * from a file or stdin, routes it through the configured RedDB AI provider, and
+ * upserts the inferred facts into the graph. Requires graph mode and a
+ * configured `provider`. This is an explicit write verb — the Stop hook and
+ * `/memory:store` invoke it; recall/search never do.
+ */
+async function runExtract(args: ParsedArgs): Promise<void> {
+  const rootDir = rootOf(args.flags);
+  const config = await requireConfig(rootDir);
+
+  if (config.mode !== "graph") {
+    throw new Error(
+      `extract needs graph mode — this project is "${config.mode}". Re-run \`memory init --mode graph\` first`,
+    );
+  }
+  if (!config.provider) {
+    throw new Error(
+      "extract needs an AI provider configured — set `provider` in .red/memory/config.json",
+    );
+  }
+
+  const file = args.positional[0];
+  const transcript = file
+    ? await readFile(isAbsolute(file) ? file : resolve(rootDir, file), "utf8")
+    : await readStdin();
+  if (!transcript.trim()) {
+    console.log("memory: empty transcript — nothing to extract");
+    return;
+  }
+
+  const resolved = resolveProvider(config.provider);
+  applyProviderEnv(resolved, config.provider.apiKeyEnv);
+
+  const store = await MemoryStore.open({ uri: resolveStoreUri(rootDir, config) });
+  try {
+    const facts = await extractConversation(transcript, redDbProviderClient(store));
+    if (facts.length === 0) {
+      console.log("memory: no facts extracted");
+      return;
+    }
+    const { nodes, edges } = factsToGraph(facts);
+    const labelToRid = new Map<string, number>();
+    for (const node of nodes) labelToRid.set(node.label, await store.upsertNode(node));
+    let edgeCount = 0;
+    for (const e of edges) {
+      const from = labelToRid.get(e.fromLabel);
+      const to = labelToRid.get(e.toLabel);
+      if (from != null && to != null) {
+        await store.upsertEdge({ from_rid: from, to_rid: to, label: e.label });
+        edgeCount += 1;
+      }
+    }
+    console.log(
+      `memory: extracted ${nodes.length} INFERRED fact(s), ${edgeCount} edge(s) via ${resolved.mode} (${resolved.egress})`,
     );
   } finally {
     await store.close();
@@ -385,6 +460,8 @@ async function main(): Promise<void> {
       return runRecall(args);
     case "ingest":
       return runIngest(args);
+    case "extract":
+      return runExtract(args);
     case "search":
       return runSearch(args);
     case "neighbors":

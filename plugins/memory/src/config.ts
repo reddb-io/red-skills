@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
+import type { AiProviderConfig } from "./extract-conversation.js";
 
 /**
  * Storage backends the `memory init` wizard can configure. This slice only
@@ -35,6 +36,14 @@ export interface MemoryConfig {
   mcp: boolean;
   /** Whether a RedDB engine is required. False in markdown-only mode. */
   reddb: boolean;
+  /**
+   * AI provider for LLM conversation extraction (the `INFERRED` path). Absent
+   * until the user configures one; when absent, only the deterministic
+   * `EXTRACTED` paths run. Selects a RedDB engine-side provider mode
+   * (`openai-compat` for a local Ollama / OpenAI-compatible endpoint,
+   * `openai-native`, `anthropic-native`).
+   */
+  provider?: AiProviderConfig;
 }
 
 export const CONFIG_VERSION = 1;
