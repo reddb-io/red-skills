@@ -23,6 +23,8 @@ source "$SCRIPT_DIR/config.sh"
 source "$SCRIPT_DIR/hooks.sh"
 # shellcheck source=./lib/state.sh
 source "$SCRIPT_DIR/lib/state.sh"
+# shellcheck source=./lib/merge.sh
+source "$SCRIPT_DIR/lib/merge.sh"
 
 # ---------- arg parsing ----------
 RUNNER=""
@@ -1532,6 +1534,15 @@ do_merge() {
 
   git -C "$PROJECT_ROOT" fetch origin main --quiet
 
+  # Integrate the freshly-fetched origin/main into local main BEFORE merging.
+  # `git fetch` only moves the origin/main ref; without this the worker branch
+  # would merge onto the stale boot-time HEAD and the eventual push would be
+  # rejected non-fast-forward whenever origin moved mid-run (issue #37).
+  if ! merge_integrate_origin "$PROJECT_ROOT" origin main; then
+    log "✗ #$n could not integrate origin/main before merge (diverged/conflict) — aborting merge"
+    return 1
+  fi
+
   # pre-merge hook — fires just before `git merge --no-ff`. RED_AFK_MERGE_BASE is
   # the merge base between primary main and the iteration branch. Non-zero
   # abort funnels through the existing merge-conflict path in process_issue.
@@ -1543,13 +1554,31 @@ do_merge() {
     return 1
   fi
 
+  # Capture the integrated tip so a rejected push can be rolled back to it,
+  # leaving no orphan merge commit on local main.
+  local pre_merge_sha
+  pre_merge_sha="$(git -C "$PROJECT_ROOT" rev-parse HEAD)"
+
   git -C "$PROJECT_ROOT" merge --no-ff "$branch" -m "merge: #${n} ${title}" 2>&1 | tee /tmp/afk-merge.log
   local rc=${PIPESTATUS[0]}
   if [[ $rc -ne 0 ]]; then
-    git -C "$PROJECT_ROOT" merge --abort 2>/dev/null || true
+    # Conflict → one-shot inner-agent resolver (SKILL.md per-issue loop step 8)
+    # before giving up. On resolver success the merge is committed; fall
+    # through to push. On failure, abort cleanly.
+    if ! merge_resolve_conflict "$branch" "$n" "$title"; then
+      git -C "$PROJECT_ROOT" merge --abort 2>/dev/null || true
+      return 1
+    fi
+  fi
+
+  if ! git -C "$PROJECT_ROOT" push origin main; then
+    # Push rejected (origin moved again, or hook). Roll the merge commit back to
+    # the integrated tip so local main carries no orphan merge commit before the
+    # issue is flipped to ready-for-human.
+    log "✗ #$n push to origin/main rejected — rolling back merge commit to keep local main clean"
+    merge_rollback "$PROJECT_ROOT" "$pre_merge_sha"
     return 1
   fi
-  git -C "$PROJECT_ROOT" push origin main || return 1
 
   # post-merge hook — after the push to origin/main succeeds. RED_AFK_MERGE_SHA
   # is the short SHA of the merge commit on primary. Non-zero is logged by
@@ -1557,6 +1586,61 @@ do_merge() {
   local merge_sha
   merge_sha="$(git -C "$PROJECT_ROOT" rev-parse --short HEAD)"
   run_lifecycle_hook post-merge "RED_AFK_MERGE_SHA=${merge_sha}" || true
+}
+
+# merge_resolve_conflict <branch> <n> <title>
+# One-shot inner-agent conflict resolver (SKILL.md per-issue loop step 8).
+# A `git merge --no-ff <branch>` into main has left conflicts in the primary
+# checkout. Re-enter the configured runner *in the primary checkout* with the
+# conflict diff + `git status` as context, instructing it to resolve the
+# conflicts and commit the merge. Returns 0 iff the merge is resolved and
+# committed (no unmerged paths, no MERGE_HEAD left behind), else 1.
+merge_resolve_conflict() {
+  local branch="$1" n="$2" title="$3"
+  log "↻ #$n merge conflict — dispatching one-shot inner-agent resolver"
+
+  local status diff
+  status="$(git -C "$PROJECT_ROOT" status 2>&1 || true)"
+  diff="$(git -C "$PROJECT_ROOT" diff 2>&1 | head -n 400 || true)"
+
+  local prompt
+  prompt="$(cat <<EOF
+You are an AFK merge-conflict resolver. A \`git merge --no-ff $branch\` into \`main\` for issue #$n ("$title") hit conflicts in THIS checkout. Resolve every conflict, then commit the merge.
+
+Rules:
+- Work only in this checkout. Do NOT switch branches, \`git merge --abort\`, \`git reset\`, \`git rebase\`, or push.
+- Resolve each conflicted file by hand, honouring both sides' intent, then \`git add\` it.
+- When all conflicts are staged, run \`git commit --no-edit\` to complete the merge. Do not change the merge message or introduce unrelated edits.
+- When the merge is committed (or you have determined you cannot resolve it), emit \`<promise>DONE</promise>\` on a line by itself as your final output.
+
+\`git status\`:
+$status
+
+\`git diff\` (truncated to 400 lines):
+$diff
+EOF
+)"
+
+  if [[ "$RUNNER" == "claude" ]]; then
+    run_claude "$PROJECT_ROOT" "$prompt" >/dev/null 2>&1 || true
+  else
+    run_codex "$PROJECT_ROOT" "$prompt" >/dev/null 2>&1 || true
+  fi
+
+  # Resolved iff no unmerged paths remain AND the merge was committed
+  # (MERGE_HEAD cleared). Either condition failing → fall back to abort.
+  local unmerged
+  unmerged="$(git -C "$PROJECT_ROOT" diff --name-only --diff-filter=U 2>/dev/null)"
+  if [[ -n "$unmerged" ]]; then
+    log "✗ #$n resolver left unmerged paths — falling back to merge --abort"
+    return 1
+  fi
+  if git -C "$PROJECT_ROOT" rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1; then
+    log "✗ #$n resolver did not commit the merge — falling back to merge --abort"
+    return 1
+  fi
+  log "✓ #$n resolver completed the merge"
+  return 0
 }
 
 # ---------- per-issue processing ----------
@@ -1767,7 +1851,7 @@ process_issue() {
   # merge
   state_write "$STATE_FILE" current.stage=merge
   if ! do_merge "$branch" "$n" "$title"; then
-    log "✗ #$n merge conflict (no inner self-resolve yet)"
+    log "✗ #$n merge failed (resolver exhausted or push rejected) — flipping to ready-for-human"
     local dur_mc=$(( $(date +%s) - started_epoch ))
     local log_file diff_file remote_branch
     log_file="$(mktemp)"; diff_file="$(mktemp)"
