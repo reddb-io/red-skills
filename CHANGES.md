@@ -15,6 +15,15 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 
 ---
 
+## afk (engineering) — extract lib/envelope.sh as a deep Module
+
+- **status**: modified
+- **upstream**: —
+- **why**: Issue #47 (PRD #46). The `<details data-attempt-status="…">` Envelope schema lived twice — `afk.sh`'s `build_envelope` family and `supervisor.sh`'s hand-rolled `build_discard_envelope` — and the orchestrator carried three near-identical failure-emit blocks (push attempt branch → build diff section → post). Two definitions of one wire shape is exactly the drift a deep Module prevents.
+- **what changed**: Added `scripts/lib/envelope.sh` following the pure / explicit-args contract of `lib/state.sh` and `lib/merge.sh` — reads no orchestrator globals, posts via an **injected poster callback** (no hard-wired `gh`), and never writes `envelope.posted`. The `data-attempt-status` schema is now defined exactly once in `envelope_build_body`. Two entry points: `envelope_emit_attempt` (failure family `blocked`/`no-sentinel`/`merge-conflict` **and** the supervisor's `discarded` Envelope — builds per-status sections, pushes the `afk-attempts/{worker}/{issue}-{slug}` branch on the failure path before composing the diff section, posts) and `envelope_emit_done` (section-less success Envelope, no push). `afk.sh`'s `fmt_duration`/`build_envelope_summary`/`build_envelope`/`build_diff_section_body`/`extract_handoff_notes`/`push_attempt_branch` became thin back-compat wrappers; its three failure-emit blocks collapse to one `emit_envelope` call each, and `emit_envelope` is now a Module adapter that keeps ownership of writing `envelope.posted` after a successful post. `supervisor.sh`'s `build_discard_envelope` composes through `envelope_build_body`, and its sweep posts through `envelope_emit_attempt` (second adapter on the same builder). Emitted bytes are identical to pre-extraction for every status (asserted in tests). New `scripts/tests/envelope-module.test.sh` (45 assertions: per-status section ordering, push-success/fail diff bodies, discarded + done shapes, byte-for-byte equality vs `envelope_build_body`, poster-rc propagation) with the post stubbed to a capturing no-op. Existing `envelope-shape.test.sh` (37) and `trip-sweep.test.sh` (39) stay green unchanged. Refs #47.
+
+---
+
 ## afk (engineering) — Task mirror Codex sink (native primitive or monitor.sh fallback)
 
 - **status**: modified

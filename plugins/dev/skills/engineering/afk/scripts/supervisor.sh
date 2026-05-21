@@ -55,6 +55,8 @@ AFK_SH="$SCRIPT_DIR/afk.sh"
 source "$SCRIPT_DIR/config.sh"
 # shellcheck source=./hooks.sh
 source "$SCRIPT_DIR/hooks.sh"
+# shellcheck source=./lib/envelope.sh
+source "$SCRIPT_DIR/lib/envelope.sh"
 
 PROJECT_ROOT="${1:-$(pwd)}"
 PROJECT_ROOT="$(cd "$PROJECT_ROOT" && pwd)"
@@ -459,21 +461,35 @@ iter_dir_issue_number() {
   jq -r '.current.number // empty' "$sf" 2>/dev/null
 }
 
+# discard_summary_line <runner> <fast_deaths>
+# The discarded Envelope's summary line. Distinct shape from the worker
+# summary (runner + trip cause, no duration/diff/attempt).
+discard_summary_line() {
+  local runner="$1" deaths="$2"
+  printf 'runner `%s` · status: discarded · cause: runner-broken, slot parked after %s fast deaths' \
+    "$runner" "$deaths"
+}
+
+# discard_section_body <slot> <wids_csv> <fast_deaths> <log_path>
+# Body of the discarded Envelope's `data-section="summary"` block. No trailing
+# newline — envelope_build_body appends the section's blank-line padding.
+discard_section_body() {
+  local slot="$1" wids="$2" deaths="$3" log_path="$4"
+  printf 'slot: %s\nworker IDs: %s\nfast deaths: %s\nsupervisor log: %s' \
+    "$slot" "$wids" "$deaths" "$log_path"
+}
+
 # build_discard_envelope <runner> <slot> <wids_csv> <fast_deaths> <log_path>
-# Emits the full envelope body for the structured comment. Schema matches
-# afk.sh's build_envelope (data-attempt-status + data-section blocks) so
-# the envelope parser handles it without a new branch.
+# Emits the full envelope body for the structured comment. Composes through the
+# Envelope Module's envelope_build_body — the single `data-attempt-status` +
+# `data-section` schema definition — so the envelope parser handles it without
+# a new branch and the discard variant cannot drift from the worker variant.
 build_discard_envelope() {
   local runner="$1" slot="$2" wids="$3" deaths="$4" log_path="$5"
-  local summary="runner \`${runner}\` · status: discarded · cause: runner-broken, slot parked after ${deaths} fast deaths"
-  printf '<details data-attempt-status="discarded"><summary>%s</summary>\n\n' "$summary"
-  printf '<details data-section="summary"><summary>summary</summary>\n\n'
-  printf 'slot: %s\n' "$slot"
-  printf 'worker IDs: %s\n' "$wids"
-  printf 'fast deaths: %s\n' "$deaths"
-  printf 'supervisor log: %s\n' "$log_path"
-  printf '\n</details>\n\n'
-  printf '</details>\n'
+  local sumfile; sumfile="$(mktemp)"
+  discard_section_body "$slot" "$wids" "$deaths" "$log_path" > "$sumfile"
+  envelope_build_body "discarded" "$(discard_summary_line "$runner" "$deaths")" summary "$sumfile"
+  rm -f "$sumfile"
 }
 
 # ensure_runner_error_label
@@ -534,17 +550,30 @@ sweep_parked_slot() {
     repo="$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || true)"
   fi
 
-  local pair body affected_issues=()
+  # Injected poster: routes the discard Envelope's post through the same
+  # callback contract afk.sh uses. Captured `repo` keeps the Module gh-free.
+  _sup_envelope_poster() {  # <issue> <body>
+    gh -R "$repo" issue comment "$1" --body "$2" >/dev/null 2>&1
+  }
+
+  local pair affected_issues=() sumfile
   for pair in "${pairs[@]}"; do
     dir="${pair%%|*}"
     issue="${pair##*|}"
     if [[ -n "$issue" && "$issue" != "null" && -n "$repo" ]]; then
-      body="$(build_discard_envelope "$SUPERVISOR_RUNNER" "$slot" "$wids_csv" "$deaths" "$sup_log_rel")"
-      if gh -R "$repo" issue comment "$issue" --body "$body" >/dev/null 2>&1; then
+      # Post the discarded Envelope through the shared Module entry point —
+      # the supervisor is the second adapter on envelope_emit_attempt.
+      sumfile="$(mktemp)"
+      discard_section_body "$slot" "$wids_csv" "$deaths" "$sup_log_rel" > "$sumfile"
+      if envelope_emit_attempt \
+           poster=_sup_envelope_poster status=discarded "issue=$issue" \
+           "summary=$(discard_summary_line "$SUPERVISOR_RUNNER" "$deaths")" \
+           "section_file=$sumfile"; then
         log "slot $slot sweep: posted discard envelope on #$issue"
       else
         log "slot $slot sweep: WARN failed to post envelope on #$issue"
       fi
+      rm -f "$sumfile"
       gh -R "$repo" issue edit "$issue" \
         --add-label "ready-for-agent" \
         --add-label "runner-error" \

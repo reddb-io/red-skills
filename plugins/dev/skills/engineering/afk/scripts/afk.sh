@@ -25,6 +25,8 @@ source "$SCRIPT_DIR/hooks.sh"
 source "$SCRIPT_DIR/lib/state.sh"
 # shellcheck source=./lib/merge.sh
 source "$SCRIPT_DIR/lib/merge.sh"
+# shellcheck source=./lib/envelope.sh
+source "$SCRIPT_DIR/lib/envelope.sh"
 
 # ---------- arg parsing ----------
 RUNNER=""
@@ -650,10 +652,9 @@ heartbeat_stop() {
 # link, and no `data-section="diff"` block is emitted (the merge commit on
 # `main` is the diff).
 
-fmt_duration() {
-  local s="${1:-0}"
-  printf '%dm%ds' $((s/60)) $((s%60))
-}
+# Thin wrapper over lib/envelope.sh — kept for back-compat with callers/tests
+# that use the orchestrator-local name.
+fmt_duration() { envelope_fmt_duration "$@"; }
 
 # Diffstat for the iteration branch relative to its merge base with main.
 # Returns the literal "+N -M" so summary lines stay scannable. Falls back to
@@ -689,47 +690,26 @@ branch_diffstat_full() {
 # returns non-zero on failure. Only called from terminal-failure paths
 # (BLOCKED, no-sentinel, merge-conflict) — DONE iterations merge to main and
 # the merge commit carries the diff.
+# Back-compat wrapper: derive the afk-attempts/{wid}/{n}-{slug} ref name and
+# delegate the push to the Module. Kept for any direct caller; the failure-emit
+# path now pushes inside envelope_emit_attempt.
 push_attempt_branch() {
   local branch="$1" n="$2" slug="$3"
   local remote_branch="afk-attempts/${WORKER_ID}/${n}-${slug}"
-  if git -C "$PROJECT_ROOT" push origin "${branch}:refs/heads/${remote_branch}" >/dev/null 2>&1; then
-    printf '%s' "$remote_branch"
-    return 0
-  fi
-  log "warn: failed to push attempt branch to origin/${remote_branch}"
-  return 1
+  envelope_push_attempt "$PROJECT_ROOT" "$branch" "$remote_branch" \
+    || { log "warn: failed to push attempt branch to origin/${remote_branch}"; return 1; }
 }
 
-# Body of the envelope's `data-section="diff"` block. When the attempt branch
-# was pushed, the primary content is a compare-link to the pushed ref; when
-# the push failed, we embed the local worktree path so a human can still find
-# the work. The diffstat line is always included so the section is scannable.
+# Back-compat wrapper over envelope_build_diff_section — resolves the repo and
+# diffstat from orchestrator state, keeping the (branch, remote_branch,
+# worktree_rel) signature its existing callers/tests expect.
 build_diff_section_body() {
   local branch="$1" remote_branch="$2" worktree_rel="$3"
-  local stat; stat="$(branch_diffstat_full "$branch")"
-  if [[ -n "$remote_branch" ]]; then
-    local repo; repo="$(gh_repo)"
-    local url="https://github.com/${repo}/compare/main...${remote_branch}"
-    printf '<a href="%s">compare/main...%s</a>\n\n%s\n' "$url" "$remote_branch" "$stat"
-  else
-    printf 'push to `afk-attempts/` failed — local worktree: `%s`\n\n%s\n' "$worktree_rel" "$stat"
-  fi
+  envelope_build_diff_section "$(gh_repo)" "$remote_branch" "$worktree_rel" "$(branch_diffstat_full "$branch")"
 }
 
-# Extract the body inside `<agent-notes>…</agent-notes>` from the handoff
-# file, dropping the placeholder HTML comment. Empty string when the inner
-# agent appended nothing.
-extract_handoff_notes() {
-  local handoff="$1"
-  [[ -f "$handoff" ]] || { echo ""; return; }
-  awk '
-    /^<agent-notes>[[:space:]]*$/ { flag=1; next }
-    /^<\/agent-notes>[[:space:]]*$/ { flag=0; next }
-    flag { print }
-  ' "$handoff" \
-    | grep -v '^<!-- inner agent appends progress/blockers here across attempts -->$' \
-    | sed -e '/./,$!d' -e ':a' -e '/^\n*$/{$d;N;ba' -e '}'
-}
+# Back-compat wrapper over envelope_extract_notes.
+extract_handoff_notes() { envelope_extract_notes "$@"; }
 
 # Read last N lines from the iteration log (the captured inner-agent stdout).
 tail_iter_log() {
@@ -738,48 +718,30 @@ tail_iter_log() {
   tail -n "$n" "$ITER_LOG"
 }
 
-# build_envelope_summary <status> <duration_s> <diff_or_merged> <attempt> [merge_sha]
-# Emits the deterministic summary line — kept centralised so every callsite
-# (and the unit test) renders the same shape.
+# Back-compat wrapper over envelope_build_summary — binds the orchestrator's
+# WORKER_ID so callers/tests keep the (status, dur, diff, attempt, [sha]) shape.
 build_envelope_summary() {
-  local status="$1" dur="$2" diff_or_merged="$3" attempt="$4" merge_sha="${5:-}"
-  local merge_part=""
-  [[ -n "$merge_sha" ]] && merge_part=" · merge: \`$merge_sha\`"
-  printf 'worker `%s` · status: %s · duration: %s · diff: %s · attempt: %d%s' \
-    "$WORKER_ID" "$status" "$(fmt_duration "$dur")" "$diff_or_merged" "$attempt" "$merge_part"
+  envelope_build_summary "$WORKER_ID" "$@"
 }
 
-# build_envelope <status> <summary> [<section_name> <section_body_file>]...
-# Writes the full envelope body to stdout. Section bodies come from files so
-# we don't shell-escape multi-KB log tails through arguments. `log` sections
-# get wrapped in a fenced code block; everything else is rendered raw.
-build_envelope() {
-  local status="$1" summary="$2"
-  shift 2
-  printf '<details data-attempt-status="%s"><summary>%s</summary>\n\n' "$status" "$summary"
-  while [[ $# -ge 2 ]]; do
-    local section="$1" body_file="$2"
-    shift 2
-    printf '<details data-section="%s"><summary>%s</summary>\n\n' "$section" "$section"
-    if [[ "$section" == "log" ]]; then
-      printf '```\n'
-      cat "$body_file"
-      printf '\n```\n\n'
-    else
-      cat "$body_file"
-      printf '\n\n'
-    fi
-    printf '</details>\n\n'
-  done
-  printf '</details>\n'
+# Back-compat wrapper over envelope_build_body (the single schema definition).
+build_envelope() { envelope_build_body "$@"; }
+
+# Injected poster: the Module calls this with <issue> <body>. Hard-wires the
+# `gh issue comment` side effect the Module deliberately does not own.
+_afk_envelope_poster() {
+  gh -R "$(gh_repo)" issue comment "$1" --body "$2" >/dev/null 2>&1
 }
 
-# Compose + post in one shot. Sets `.envelope.posted` to true on any 2xx,
-# false on failure — boot-time prune_orphans reads this to choose TTL.
-# emit_envelope <status> <issue#> <duration_s> <branch> <attempt> <merge_sha> [<section> <body_file>]...
+# Orchestrator adapter over the Envelope Module. Computes the summary from
+# iteration state, delegates body composition + the afk-attempts push + post to
+# the Module, then writes `.envelope.posted` (the orphan-cleanup TTL signal) —
+# which the Module never touches. The diff section is built inside the Module
+# from the push result; callers pass only the notes/log section files.
+# emit_envelope <status> <issue#> <duration_s> <branch> <attempt> <merge_sha> <slug> <worktree_rel> [<section> <body_file>]...
 emit_envelope() {
-  local status="$1" n="$2" dur="$3" branch="$4" attempt="$5" merge_sha="$6"
-  shift 6
+  local status="$1" n="$2" dur="$3" branch="$4" attempt="$5" merge_sha="$6" slug="$7" worktree_rel="$8"
+  shift 8
   local diff_or_merged
   if [[ "$status" == "done" ]]; then
     diff_or_merged="merged"
@@ -789,9 +751,31 @@ emit_envelope() {
   local summary
   summary="$(build_envelope_summary "$status" "$dur" "$diff_or_merged" "$attempt" "$merge_sha")"
 
-  local body; body="$(build_envelope "$status" "$summary" "$@")"
+  local rc
+  if [[ "$status" == "done" ]]; then
+    envelope_emit_done poster=_afk_envelope_poster "issue=$n" "summary=$summary"
+    rc=$?
+  else
+    # Collect the notes/log section files the caller passed; the Module adds the
+    # diff section itself after pushing.
+    local notes_file="" log_file=""
+    while [[ $# -ge 2 ]]; do
+      case "$1" in
+        notes) notes_file="$2" ;;
+        log)   log_file="$2" ;;
+      esac
+      shift 2
+    done
+    envelope_emit_attempt \
+      poster=_afk_envelope_poster "status=$status" "issue=$n" "summary=$summary" \
+      "repo=$(gh_repo)" "repo_dir=$PROJECT_ROOT" "branch=$branch" \
+      "remote_name=afk-attempts/${WORKER_ID}/${n}-${slug}" \
+      "worktree_rel=$worktree_rel" "diffstat=$(branch_diffstat_full "$branch")" \
+      "notes_file=$notes_file" "log_file=$log_file"
+    rc=$?
+  fi
 
-  if gh -R "$(gh_repo)" issue comment "$n" --body "$body" >/dev/null 2>&1; then
+  if [[ "$rc" -eq 0 ]]; then
     state_write "$STATE_FILE" envelope.posted:=true
     return 0
   fi
@@ -1797,16 +1781,13 @@ process_issue() {
   if echo "$result" | grep -q '<promise>BLOCKED</promise>'; then
     log "✗ #$n blocked by inner agent"
     local dur_blocked=$(( $(date +%s) - started_epoch ))
-    local notes_file diff_file remote_branch
-    notes_file="$(mktemp)"; diff_file="$(mktemp)"
+    local notes_file
+    notes_file="$(mktemp)"
     extract_handoff_notes "$handoff" > "$notes_file" || true
     [[ -s "$notes_file" ]] || printf '_(inner agent emitted BLOCKED without appending Notes — see iteration log at `%s`)_' "$ITER_DIR" > "$notes_file"
-    remote_branch="$(push_attempt_branch "$branch" "$n" "$slug" || true)"
-    build_diff_section_body "$branch" "$remote_branch" "$worktree_rel" > "$diff_file"
-    emit_envelope "blocked" "$n" "$dur_blocked" "$branch" "$attempt" "" \
-      "notes" "$notes_file" \
-      "diff"  "$diff_file" || true
-    rm -f "$notes_file" "$diff_file"
+    emit_envelope "blocked" "$n" "$dur_blocked" "$branch" "$attempt" "" "$slug" "$worktree_rel" \
+      "notes" "$notes_file" || true
+    rm -f "$notes_file"
     gh -R "$(gh_repo)" issue edit "$n" --remove-label running --add-label ready-for-human >/dev/null
     AGG_BLOCKED=$((AGG_BLOCKED+1))
     state_write "$STATE_FILE" blocked:=$AGG_BLOCKED current:=null
@@ -1820,19 +1801,16 @@ process_issue() {
   if ! echo "$result" | grep -q '<promise>DONE</promise>'; then
     log "✗ #$n inner agent ended without DONE sentinel — treating as blocker"
     local dur_ns=$(( $(date +%s) - started_epoch ))
-    local notes_file log_file diff_file remote_branch
-    notes_file="$(mktemp)"; log_file="$(mktemp)"; diff_file="$(mktemp)"
+    local notes_file log_file
+    notes_file="$(mktemp)"; log_file="$(mktemp)"
     extract_handoff_notes "$handoff" > "$notes_file" || true
     [[ -s "$notes_file" ]] || printf '_(no Notes appended; inner agent exited without a sentinel)_' > "$notes_file"
     tail_iter_log 50 > "$log_file" || true
     [[ -s "$log_file" ]] || printf '(no captured stdout)' > "$log_file"
-    remote_branch="$(push_attempt_branch "$branch" "$n" "$slug" || true)"
-    build_diff_section_body "$branch" "$remote_branch" "$worktree_rel" > "$diff_file"
-    emit_envelope "no-sentinel" "$n" "$dur_ns" "$branch" "$attempt" "" \
+    emit_envelope "no-sentinel" "$n" "$dur_ns" "$branch" "$attempt" "" "$slug" "$worktree_rel" \
       "notes" "$notes_file" \
-      "diff"  "$diff_file" \
       "log"   "$log_file" || true
-    rm -f "$notes_file" "$log_file" "$diff_file"
+    rm -f "$notes_file" "$log_file"
     gh -R "$(gh_repo)" issue edit "$n" --remove-label running --add-label ready-for-human >/dev/null
     AGG_BLOCKED=$((AGG_BLOCKED+1))
     state_write "$STATE_FILE" blocked:=$AGG_BLOCKED current:=null
@@ -1853,16 +1831,13 @@ process_issue() {
   if ! do_merge "$branch" "$n" "$title"; then
     log "✗ #$n merge failed (resolver exhausted or push rejected) — flipping to ready-for-human"
     local dur_mc=$(( $(date +%s) - started_epoch ))
-    local log_file diff_file remote_branch
-    log_file="$(mktemp)"; diff_file="$(mktemp)"
+    local log_file
+    log_file="$(mktemp)"
     tail -n 50 /tmp/afk-merge.log 2>/dev/null > "$log_file" || true
     [[ -s "$log_file" ]] || printf '(no merge log captured)' > "$log_file"
-    remote_branch="$(push_attempt_branch "$branch" "$n" "$slug" || true)"
-    build_diff_section_body "$branch" "$remote_branch" "$worktree_rel" > "$diff_file"
-    emit_envelope "merge-conflict" "$n" "$dur_mc" "$branch" "$attempt" "" \
-      "diff" "$diff_file" \
+    emit_envelope "merge-conflict" "$n" "$dur_mc" "$branch" "$attempt" "" "$slug" "$worktree_rel" \
       "log"  "$log_file" || true
-    rm -f "$log_file" "$diff_file"
+    rm -f "$log_file"
     gh -R "$(gh_repo)" issue edit "$n" --remove-label running --add-label ready-for-human >/dev/null
     AGG_BLOCKED=$((AGG_BLOCKED+1))
     state_write "$STATE_FILE" blocked:=$AGG_BLOCKED current:=null
@@ -1877,7 +1852,7 @@ process_issue() {
   state_write "$STATE_FILE" current.stage=close
   local merge_sha; merge_sha="$(git -C "$PROJECT_ROOT" rev-parse --short HEAD)"
   local dur=$(( $(date +%s) - started_epoch ))
-  emit_envelope "done" "$n" "$dur" "$branch" "$attempt" "$merge_sha" || true
+  emit_envelope "done" "$n" "$dur" "$branch" "$attempt" "$merge_sha" "$slug" "$worktree_rel" || true
   gh -R "$(gh_repo)" issue close "$n" --reason completed >/dev/null
   gh -R "$(gh_repo)" issue edit "$n" --remove-label running >/dev/null 2>&1 || true
 
