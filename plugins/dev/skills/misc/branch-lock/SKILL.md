@@ -107,7 +107,8 @@ branch-lock/
         ├── lock-store.test.sh
         ├── scope-resolver.test.sh
         ├── git-command-classifier.test.sh
-        └── session-start.test.sh
+        ├── session-start.test.sh
+        └── branch-lock-cli.test.sh    ← /branch-lock set: atomic relock-then-switch
 ```
 
 ## What the hook blocks vs allows
