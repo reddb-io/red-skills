@@ -1,19 +1,23 @@
 #!/usr/bin/env node
 import { createInterface } from "node:readline/promises";
-import { readConfig, resolveNotesDir } from "./config.js";
-import { initMarkdownOnly } from "./init.js";
+import { readConfig, resolveNotesDir, resolveStoreUri } from "./config.js";
+import { graphRecall } from "./graph-recall.js";
+import { MemoryStore, factToNode } from "./graph-store.js";
+import { initGraph, initMarkdownOnly } from "./init.js";
 import { recall } from "./recall.js";
-import { storeNote } from "./store.js";
+import { slugify, storeNote } from "./store.js";
 
-const USAGE = `memory — persistent markdown memory for code agents
+const USAGE = `memory — persistent memory for code agents
 
 Usage:
-  memory init [--mode markdown-only] [--root <dir>] [--yes]
+  memory init [--mode markdown-only|graph] [--root <dir>] [--yes]
   memory store <fact...>            [--root <dir>]
   memory recall <query...>          [--root <dir>] [--limit N]
 
-This build ships the markdown-only path. Run \`memory init\` once, then use
-/memory:store and /memory:recall (or the CLI verbs) to round-trip facts.`;
+Two storage modes: markdown-only (plain notes, no engine) and graph (a typed
+knowledge graph over a per-project RedDB store). Run \`memory init\` once to pick
+one, then use /memory:store and /memory:recall (or the CLI verbs) — they route
+to whichever mode init configured.`;
 
 interface ParsedArgs {
   command: string | undefined;
@@ -64,7 +68,7 @@ async function runInit(args: ParsedArgs): Promise<void> {
     const rl = createInterface({ input: process.stdin, output: process.stdout });
     const answer = (
       await rl.question(
-        "What do you want to use? [markdown-only] (graph/hybrid land in later releases): ",
+        "What do you want to use? [markdown-only] / graph (hybrid lands in a later release): ",
       )
     ).trim();
     rl.close();
@@ -72,17 +76,27 @@ async function runInit(args: ParsedArgs): Promise<void> {
   }
   mode = mode ?? "markdown-only";
 
-  if (mode !== "markdown-only") {
-    throw new Error(
-      `mode "${mode}" is not available yet — this build only supports markdown-only`,
-    );
+  if (mode === "markdown-only") {
+    const result = await initMarkdownOnly(rootDir);
+    console.log(`memory: initialized markdown-only mode`);
+    console.log(`  config: ${result.configPath}`);
+    console.log(`  notes:  ${result.notesDir}`);
+    console.log(`  hooks:  off    mcp: off    reddb: not required`);
+    return;
   }
 
-  const result = await initMarkdownOnly(rootDir);
-  console.log(`memory: initialized markdown-only mode`);
-  console.log(`  config: ${result.configPath}`);
-  console.log(`  notes:  ${result.notesDir}`);
-  console.log(`  hooks:  off    mcp: off    reddb: not required`);
+  if (mode === "graph") {
+    const result = await initGraph(rootDir);
+    console.log(`memory: initialized graph mode`);
+    console.log(`  config: ${result.configPath}`);
+    console.log(`  store:  ${result.storeUri}`);
+    console.log(`  hooks:  off    mcp: off    reddb: required`);
+    return;
+  }
+
+  throw new Error(
+    `mode "${mode}" is not available yet — this build supports markdown-only and graph`,
+  );
 }
 
 async function runStore(args: ParsedArgs): Promise<void> {
@@ -90,6 +104,18 @@ async function runStore(args: ParsedArgs): Promise<void> {
   const fact = args.positional.join(" ").trim();
   if (!fact) throw new Error("nothing to store — pass a fact: memory store <fact>");
   const config = await requireConfig(rootDir);
+
+  if (config.mode === "graph") {
+    const store = await MemoryStore.open({ uri: resolveStoreUri(rootDir, config) });
+    try {
+      const rid = await store.upsertNode(factToNode(fact, slugify));
+      console.log(`memory: stored node ${rid}`);
+    } finally {
+      await store.close();
+    }
+    return;
+  }
+
   const note = await storeNote(resolveNotesDir(rootDir, config), fact);
   console.log(`memory: stored ${note.id}`);
   console.log(`  ${note.path}`);
@@ -101,6 +127,26 @@ async function runRecall(args: ParsedArgs): Promise<void> {
   if (!query) throw new Error("nothing to recall — pass a query: memory recall <query>");
   const config = await requireConfig(rootDir);
   const limit = typeof args.flags.limit === "string" ? Number(args.flags.limit) : 10;
+
+  if (config.mode === "graph") {
+    const store = await MemoryStore.open({ uri: resolveStoreUri(rootDir, config) });
+    try {
+      const hits = await graphRecall(store, query, limit);
+      if (hits.length === 0) {
+        console.log(`memory: no matches for "${query}"`);
+        return;
+      }
+      console.log(`memory: ${hits.length} match(es) for "${query}"`);
+      for (const hit of hits) {
+        console.log(`  [${hit.score}] ${hit.id} (${hit.node_type}) ${hit.label}`);
+        console.log(`        ${hit.excerpt}`);
+      }
+    } finally {
+      await store.close();
+    }
+    return;
+  }
+
   const hits = await recall(resolveNotesDir(rootDir, config), query, limit);
   if (hits.length === 0) {
     console.log(`memory: no matches for "${query}"`);

@@ -6,6 +6,13 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 
 ---
 
+## memory plugin — graph mode: core graph-store over RedDB (core)
+
+- **status**: added
+- **upstream**: —
+- **why**: Issue #52 (PRD #49). Second slice of the `memory` plugin: the RedDB-backed graph storage and the `memory init` path that builds + provisions it locally, so `/memory:store` and `/memory:recall` can run against a typed knowledge graph instead of only flat markdown. Vendors the proven `MemoryStore` from `../red-memory/packages/core` (commit `483034e`) rather than reinventing it.
+- **what changed**: Ported `schema.ts` (collections, node/edge taxonomy) and `hash.ts` (content dedupe hash) into `plugins/memory/src/`. New `graph-store.ts` — a `MemoryStore` facade over `@reddb-io/sdk` connecting to a per-project `file://` store: idempotent collection bootstrap, `upsertNode`/`upsertEdge` with KV-backed dedupe, `supersede` (creates a `SUPERSEDED_BY` edge + head-of-chain KV marker), and read paths (`listNodes`, `getNode`, `neighborhood`, `stats`). Writes go through multi-model DML (`INSERT … NODE/EDGE`) and dedupe lives in KV per **ADR 0007** — graph collections reject table inserts and `WHERE`-filter only on `label`/`node_type`, so reads that need rid/content scan client-side. New `graph-recall.ts` — term-scan seeding (FTS over graph properties is unavailable in this engine build) + one-hop neighborhood expansion, dropping superseded nodes. `config.ts` gains `storePath` + `resolveStoreUri`; `init.ts` gains `graphConfig`/`initGraph` (writes config, provisions the store, `reddb: true`, hooks/MCP still off); `cli.ts` routes `init --mode graph` and mode-aware `store`/`recall`. `@reddb-io/sdk` added as a dependency with `pnpm.onlyBuiltDependencies` so the postinstall fetches the bundled `red` binary; no committed `dist/`/`node_modules/`. 7 new vitest assertions against a real `file://` RedDB (CRUD, node + edge dedupe, supersede head-of-chain, init-graph config, store→recall round-trip) — 21 total green; typecheck + build clean; CLI verified end-to-end (init graph → store ×2 dedupes → recall ranks the right node). Out of slice: hybrid mode, MCP server, auto-firing hooks, and the `/afk` · `/triage` · `/diagnose` integrations.
+
 ## memory plugin — markdown-only init/store/recall (core)
 
 - **status**: added
