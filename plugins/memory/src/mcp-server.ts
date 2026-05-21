@@ -1,0 +1,370 @@
+#!/usr/bin/env node
+/**
+ * memory MCP server.
+ *
+ * Speaks MCP over stdio and exposes the recall/graph surface to agents. Wraps a
+ * per-project embedded RedDB connection and the recall engine; recall/search/
+ * traverse/path/neighbors are the zero-token read paths, `ask` is the one
+ * LLM-backed verb.
+ *
+ * Store resolution (first match wins):
+ *   RED_MEMORY_URI       — explicit RedDB URI (used by tests and advanced setups)
+ *   MEMORY_ROOT / cwd    — read `.red/memory/config.json`; requires graph mode
+ *
+ *   RED_MEMORY_PROJECT   — project tag stamped on stored nodes (defaults to the
+ *                          config's project or the root dir name)
+ */
+
+import { basename } from "node:path";
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import {
+  CallToolRequestSchema,
+  ListToolsRequestSchema,
+} from "@modelcontextprotocol/sdk/types.js";
+import { z } from "zod";
+import { readConfig, resolveStoreUri } from "./config.js";
+import { ask, neighbors, path, recall, search, traverse } from "./engine.js";
+import { MemoryStore, factToNode } from "./graph-store.js";
+import type { EdgeLabel, NodeType } from "./schema.js";
+import { slugify } from "./store.js";
+
+// ---------- tool input schemas ----------
+
+const NODE_TYPES = [
+  "file",
+  "symbol",
+  "concept",
+  "decision",
+  "problem",
+  "solution",
+  "fix",
+  "workflow",
+  "person",
+  "why_note",
+  "session",
+  "task",
+  "goal",
+] as const;
+
+const RecallInput = z.object({
+  query: z.string().min(1),
+  k: z.number().int().min(1).max(50).default(8),
+  depth: z.number().int().min(0).max(3).default(1),
+  types: z.array(z.string()).optional(),
+});
+
+const StoreInput = z.object({
+  type: z.enum(NODE_TYPES).default("concept"),
+  title: z.string().min(1),
+  summary: z.string().optional(),
+  content: z.string().optional(),
+  tags: z.array(z.string()).default([]),
+  importance: z.number().min(0).max(1).default(0.5),
+  source: z.string().optional(),
+  relations: z
+    .array(
+      z.object({
+        label: z.string(),
+        target_label: z.string(),
+        target_type: z.string().optional(),
+      }),
+    )
+    .default([]),
+});
+
+const SearchInput = z.object({
+  query: z.string().min(1),
+  limit: z.number().int().min(1).max(100).default(20),
+});
+
+const TraverseInput = z.object({
+  start: z.string().min(1),
+  depth: z.number().int().min(1).max(5).default(2),
+  strategy: z.enum(["bfs", "dfs"]).default("bfs"),
+  direction: z.enum(["outgoing", "incoming", "both"]).default("both"),
+});
+
+const NeighborsInput = z.object({
+  label: z.string().min(1),
+  depth: z.number().int().min(1).max(5).default(1),
+  direction: z.enum(["outgoing", "incoming", "both"]).default("both"),
+});
+
+const PathInput = z.object({
+  from: z.string().min(1),
+  to: z.string().min(1),
+  algorithm: z.enum(["bfs", "dijkstra"]).default("bfs"),
+});
+
+const AskInput = z.object({ question: z.string().min(1) });
+
+const SupersedeInput = z.object({
+  old_rid: z.number().int(),
+  new_rid: z.number().int(),
+  reason: z.string().optional(),
+});
+
+const ExportInput = z.object({});
+
+// ---------- server ----------
+
+async function main(): Promise<void> {
+  const { uri, project } = await resolveStore();
+  const store = await MemoryStore.open({ uri, project });
+
+  const server = new Server(
+    { name: "memory", version: "0.1.0" },
+    { capabilities: { tools: {} } },
+  );
+
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
+
+  server.setRequestHandler(CallToolRequestSchema, async (req) => {
+    const name = req.params.name;
+    const args = req.params.arguments ?? {};
+
+    switch (name) {
+      case "memory_recall": {
+        const input = RecallInput.parse(args);
+        const result = await recall(store, input.query, {
+          k: input.k,
+          depth: input.depth,
+          types: input.types,
+        });
+        return text(result.context_md, {
+          nodes: result.nodes.map((n) => ({
+            rid: n.rid,
+            label: n.label,
+            node_type: n.node_type,
+            score: n.score,
+            depth: n.depth,
+            excerpt: n.excerpt,
+          })),
+        });
+      }
+      case "memory_store": {
+        const input = StoreInput.parse(args);
+        const node = factToNode(input.title, slugify);
+        node.node_type = input.type as NodeType;
+        node.properties = {
+          ...node.properties,
+          title: input.title,
+          summary: input.summary,
+          content: input.content ?? input.summary ?? input.title,
+          tags: input.tags,
+          importance: input.importance,
+          source: input.source ?? "mcp",
+          confidence: "INFERRED",
+        };
+        const rid = await store.upsertNode(node);
+        const edges: number[] = [];
+        for (const rel of input.relations) {
+          const target = await store.findNodeByLabel(rel.target_label);
+          if (target == null) continue;
+          edges.push(
+            await store.upsertEdge({
+              from_rid: rid,
+              to_rid: target,
+              label: rel.label as EdgeLabel,
+            }),
+          );
+        }
+        return text(`stored rid=${rid}, edges=${edges.length}`, { rid, edges });
+      }
+      case "memory_search": {
+        const input = SearchInput.parse(args);
+        const hits = await search(store, input.query, input.limit);
+        return text(JSON.stringify(hits, null, 2), { count: hits.length });
+      }
+      case "memory_traverse": {
+        const input = TraverseInput.parse(args);
+        const rows = await traverse(store, input.start, {
+          depth: input.depth,
+          strategy: input.strategy,
+          direction: input.direction,
+        });
+        return text(JSON.stringify(rows, null, 2), { count: rows.length });
+      }
+      case "memory_neighbors": {
+        const input = NeighborsInput.parse(args);
+        const rows = await neighbors(store, input.label, input.depth, input.direction);
+        return text(JSON.stringify(rows, null, 2), { count: rows.length });
+      }
+      case "memory_path": {
+        const input = PathInput.parse(args);
+        const result = await path(store, input.from, input.to, input.algorithm);
+        return text(JSON.stringify(result, null, 2), { reachable: result?.reachable ?? false });
+      }
+      case "memory_ask": {
+        const input = AskInput.parse(args);
+        const result = await ask(store, input.question);
+        return text(JSON.stringify(result, null, 2), {
+          available: result.available,
+          citations: result.citations.length,
+        });
+      }
+      case "memory_export": {
+        ExportInput.parse(args);
+        const [nodes, edges, stats] = await Promise.all([
+          store.listNodes(),
+          store.listEdges(),
+          store.stats(),
+        ]);
+        return text(JSON.stringify({ nodes, edges, stats }, null, 2), stats);
+      }
+      case "memory_stats": {
+        const stats = await store.stats();
+        return text(JSON.stringify(stats, null, 2), stats);
+      }
+      case "memory_supersede": {
+        const input = SupersedeInput.parse(args);
+        const edgeRid = await store.supersede(input.old_rid, input.new_rid, input.reason);
+        return text(`superseded ${input.old_rid} -> ${input.new_rid}`, {
+          edge_rid: edgeRid,
+        });
+      }
+      default:
+        throw new Error(`unknown tool: ${name}`);
+    }
+  });
+
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+
+  const shutdown = async () => {
+    try {
+      await store.close();
+    } finally {
+      process.exit(0);
+    }
+  };
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
+}
+
+/** Resolve which RedDB store the server speaks to, and the project tag. */
+async function resolveStore(): Promise<{ uri: string; project: string }> {
+  if (process.env.RED_MEMORY_URI) {
+    return {
+      uri: process.env.RED_MEMORY_URI,
+      project: process.env.RED_MEMORY_PROJECT ?? basename(process.cwd()),
+    };
+  }
+  const root = process.env.MEMORY_ROOT ?? process.cwd();
+  const config = await readConfig(root);
+  if (!config) {
+    throw new Error(
+      `memory is not initialized at ${root} — run \`memory init --mode graph\` first (or set RED_MEMORY_URI)`,
+    );
+  }
+  if (config.mode !== "graph") {
+    throw new Error(
+      `the MCP server needs graph mode — ${root} is "${config.mode}". Re-run \`memory init --mode graph\``,
+    );
+  }
+  return {
+    uri: resolveStoreUri(root, config),
+    project: process.env.RED_MEMORY_PROJECT ?? basename(root),
+  };
+}
+
+function text(body: string, structured?: Record<string, unknown>) {
+  return {
+    content: [{ type: "text" as const, text: body }],
+    ...(structured ? { structuredContent: structured } : {}),
+  };
+}
+
+const TOOLS = [
+  {
+    name: "memory_recall",
+    description:
+      "Hybrid recall: full-text seeds + graph-neighborhood expansion. Returns a markdown context block ready to inject, plus ranked nodes. Call BEFORE answering when a question depends on prior project knowledge. Zero-token (no LLM).",
+    inputSchema: zodToSchema(RecallInput),
+  },
+  {
+    name: "memory_store",
+    description:
+      "Persist a durable fact (decision, problem, solution, why-note, ...) with optional typed relations to existing nodes. Idempotent by content hash.",
+    inputSchema: zodToSchema(StoreInput),
+  },
+  {
+    name: "memory_search",
+    description: "Direct full-text search over node titles and content.",
+    inputSchema: zodToSchema(SearchInput),
+  },
+  {
+    name: "memory_traverse",
+    description: "BFS/DFS graph traversal from a node label.",
+    inputSchema: zodToSchema(TraverseInput),
+  },
+  {
+    name: "memory_neighbors",
+    description: "Immediate (or N-hop) neighbors of a node label.",
+    inputSchema: zodToSchema(NeighborsInput),
+  },
+  {
+    name: "memory_path",
+    description: "Shortest path between two nodes by label (bfs or dijkstra).",
+    inputSchema: zodToSchema(PathInput),
+  },
+  {
+    name: "memory_ask",
+    description:
+      "Grounded ASK over the memory document collection (RedDB ASK with citations). Requires an LLM key on the engine; degrades gracefully when absent.",
+    inputSchema: zodToSchema(AskInput),
+  },
+  {
+    name: "memory_export",
+    description: "Dump the whole graph (nodes, edges, stats) as JSON.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  },
+  {
+    name: "memory_stats",
+    description: "Counts of nodes/edges and basic store health.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  },
+  {
+    name: "memory_supersede",
+    description:
+      "Mark a node as superseded by a newer one. Recall hides the old node behind its successor by default.",
+    inputSchema: zodToSchema(SupersedeInput),
+  },
+];
+
+function zodToSchema(schema: z.ZodTypeAny): Record<string, unknown> {
+  // Minimal conversion — MCP only requires shape hints, not a full JSON Schema.
+  const shape = (
+    schema as unknown as { _def: { shape?: () => Record<string, z.ZodTypeAny> } }
+  )._def.shape?.();
+  if (!shape) return { type: "object", additionalProperties: true };
+  const properties: Record<string, unknown> = {};
+  const required: string[] = [];
+  for (const [key, value] of Object.entries(shape)) {
+    properties[key] = describe(value);
+    if (!value.isOptional()) required.push(key);
+  }
+  return { type: "object", properties, required, additionalProperties: false };
+}
+
+function describe(v: z.ZodTypeAny): Record<string, unknown> {
+  const def = (v as unknown as { _def: { typeName?: string; innerType?: z.ZodTypeAny } })
+    ._def;
+  if (def.typeName === "ZodOptional" || def.typeName === "ZodDefault") {
+    if (def.innerType) return describe(def.innerType);
+  }
+  if (def.typeName === "ZodString") return { type: "string" };
+  if (def.typeName === "ZodNumber") return { type: "number" };
+  if (def.typeName === "ZodBoolean") return { type: "boolean" };
+  if (def.typeName === "ZodArray") return { type: "array" };
+  if (def.typeName === "ZodEnum") {
+    return { type: "string", enum: (v as unknown as { options: string[] }).options };
+  }
+  return {};
+}
+
+main().catch((err) => {
+  console.error("[memory-mcp] fatal:", err);
+  process.exit(1);
+});

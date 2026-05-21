@@ -6,7 +6,8 @@
   "license": "Apache-2.0",
   "type": "module",
   "bin": {
-    "memory": "dist/cli.js"
+    "memory": "dist/cli.js",
+    "memory-mcp": "dist/mcp-server.js"
   },
   "files": [
     "dist"
@@ -18,9 +19,11 @@
     "dev": "node --import tsx src/cli.ts"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
     "@reddb-io/sdk": "^1.2.5",
     "fast-glob": "^3.3.2",
-    "gray-matter": "^4.0.3"
+    "gray-matter": "^4.0.3",
+    "zod": "^3.23.8"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

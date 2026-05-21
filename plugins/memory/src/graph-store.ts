@@ -20,6 +20,49 @@ export interface MemoryStoreOptions {
 /** A node row read back from the graph, with its engine-assigned id. */
 export type StoredNode = MemoryNode & { rid: number };
 
+/** A node reached by a graph walk (neighborhood/traverse), with its hop depth.
+ *  Graph walks return only the engine `node_id` + `label` + `depth`; the full
+ *  node (real `node_type`, `properties`) is resolved against `listNodes` by the
+ *  recall engine. */
+export interface GraphRow {
+  rid: number;
+  label: string;
+  depth: number;
+}
+
+/** A full-text search hit: an engine node id and its relevance score. */
+export interface SearchRow {
+  rid: number;
+  score: number;
+}
+
+/** Result of a shortest-path query. `reachable` is false when the engine found
+ *  no path (`hop_count` comes back null). */
+export interface ShortestPathResult {
+  source: number;
+  target: number;
+  reachable: boolean;
+  hopCount: number | null;
+  totalWeight: number | null;
+  nodesVisited: number;
+}
+
+type TraverseStrategy = "bfs" | "dfs";
+type GraphDirection = "outgoing" | "incoming" | "both";
+type PathAlgorithm = "bfs" | "dijkstra";
+
+const STRATEGIES: readonly TraverseStrategy[] = ["bfs", "dfs"];
+const DIRECTIONS: readonly GraphDirection[] = ["outgoing", "incoming", "both"];
+const ALGORITHMS: readonly PathAlgorithm[] = ["bfs", "dijkstra"];
+
+/** Reject anything not in the allowlist — these tokens are interpolated raw
+ *  into the graph DSL (they cannot be bound as `$1` params), so they must never
+ *  carry caller-supplied text. */
+function guard<T extends string>(value: string, allowed: readonly T[], kind: string): T {
+  if ((allowed as readonly string[]).includes(value)) return value as T;
+  throw new Error(`invalid ${kind}: ${value}`);
+}
+
 /**
  * MemoryStore — thin facade over the embedded RedDB SDK.
  *
@@ -277,16 +320,112 @@ export class MemoryStore {
   // Read paths
   // -------------------------------------------------------------------
 
-  /** Graph neighborhood expansion around a node label. */
+  /**
+   * Graph neighborhood expansion around a node label. Returns lightweight
+   * `{ rid, label, depth }` rows — graph walks in this engine surface only the
+   * `node_id`/`label`/`depth`, not the node's properties or real `node_type`,
+   * so the recall engine resolves each rid against `listNodes`.
+   */
   async neighborhood(
     label: string,
     depth = 1,
-    direction: "outgoing" | "incoming" | "both" = "both",
-  ): Promise<StoredNode[]> {
+    direction: GraphDirection = "both",
+  ): Promise<GraphRow[]> {
+    const dir = guard(direction, DIRECTIONS, "direction");
     const r = await this.db.query(
-      `GRAPH NEIGHBORHOOD '${escapeLabel(label)}' DIRECTION ${direction} DEPTH ${depth}`,
+      `GRAPH NEIGHBORHOOD '${escapeLabel(label)}' DIRECTION ${dir} DEPTH ${clampDepth(depth)}`,
     );
-    return r.rows.map(rowToNode).filter((n) => Number.isFinite(n.rid));
+    return r.rows.map(rowToGraphRow).filter((g) => Number.isFinite(g.rid));
+  }
+
+  /**
+   * BFS/DFS traversal from a node label. Like `neighborhood`, returns
+   * `{ rid, label, depth }` rows ordered by the engine's walk.
+   */
+  async traverse(
+    label: string,
+    opts: { depth?: number; strategy?: TraverseStrategy; direction?: GraphDirection } = {},
+  ): Promise<GraphRow[]> {
+    const strategy = guard(opts.strategy ?? "bfs", STRATEGIES, "strategy");
+    const direction = guard(opts.direction ?? "outgoing", DIRECTIONS, "direction");
+    const r = await this.db.query(
+      `GRAPH TRAVERSE FROM '${escapeLabel(label)}' STRATEGY ${strategy} DIRECTION ${direction} MAX_DEPTH ${clampDepth(opts.depth ?? 3)}`,
+    );
+    return r.rows.map(rowToGraphRow).filter((g) => Number.isFinite(g.rid));
+  }
+
+  /**
+   * Shortest path between two node labels. The engine returns path metadata
+   * (hop count, total weight) rather than the node sequence; `reachable` is
+   * false when no path exists (`hop_count` is null).
+   */
+  async shortestPath(
+    from: string,
+    to: string,
+    algorithm: PathAlgorithm = "bfs",
+  ): Promise<ShortestPathResult | null> {
+    const algo = guard(algorithm, ALGORITHMS, "algorithm");
+    const r = await this.db.query(
+      `GRAPH SHORTEST_PATH FROM '${escapeLabel(from)}' TO '${escapeLabel(to)}' ALGORITHM ${algo}`,
+    );
+    const row = r.rows[0];
+    if (row == null) return null;
+    const hopCount = row.hop_count == null ? null : Number(row.hop_count);
+    return {
+      source: Number(row.source),
+      target: Number(row.target),
+      reachable: hopCount != null,
+      hopCount,
+      totalWeight: row.total_weight == null ? null : Number(row.total_weight),
+      nodesVisited: Number(row.nodes_visited ?? 0),
+    };
+  }
+
+  /**
+   * Full-text search over node titles + content via the engine's `SEARCH TEXT`.
+   * Returns `{ rid, score }` hits; the query is interpolated as a string literal
+   * (the engine rejects `$1` binding here). Returns `[]` if the engine build has
+   * no FTS index, so the recall engine can fall back to a client-side term scan.
+   */
+  async searchText(query: string, limit = 20): Promise<SearchRow[]> {
+    try {
+      const r = await this.db.query(
+        `SEARCH TEXT '${escapeLabel(query)}' COLLECTION ${COLLECTIONS.nodes} LIMIT ${clampLimit(limit)}`,
+      );
+      return r.rows
+        .map((row) => ({
+          rid: Number(row.entity_id ?? row.rid ?? row.red_entity_id),
+          score: Number(row.score ?? 1),
+        }))
+        .filter((h) => Number.isFinite(h.rid));
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Grounded ASK over the memory document collection (RedDB `ASK` with
+   * citations). This is the one read path that calls an LLM — it needs an API
+   * key configured on the engine and is therefore *not* part of the zero-token
+   * recall guarantee. Callers handle the thrown error when no key is set.
+   */
+  async ask(
+    question: string,
+  ): Promise<{ answer: string; citations: { marker: number; urn: string }[] }> {
+    const r = await this.db.query(
+      `ASK '${escapeLabel(question)}' COLLECTION ${COLLECTIONS.docs}`,
+    );
+    return { answer: r.answer, citations: r.citations };
+  }
+
+  /** Every edge in the graph, for export/inspection. */
+  async listEdges(): Promise<Record<string, unknown>[]> {
+    try {
+      const r = await this.db.query(`SELECT * FROM ${COLLECTIONS.edges}`);
+      return r.rows;
+    } catch {
+      return [];
+    }
   }
 
   async stats(): Promise<{ nodes: number; edges: number }> {
@@ -341,8 +480,31 @@ export function factToNode(fact: string, slugify: (t: string) => string): Memory
   };
 }
 
+/**
+ * Normalize a graph-walk row (NEIGHBORHOOD/TRAVERSE) into a `GraphRow`. These
+ * rows carry `node_id` (the rid as a string) and a synthetic `node_type` like
+ * `label_64` — the real type lives on the node read back via `listNodes`.
+ */
+export function rowToGraphRow(row: Record<string, unknown>): GraphRow {
+  return {
+    rid: Number(row.node_id ?? row.rid ?? row.red_entity_id),
+    label: String(row.label ?? ""),
+    depth: Number(row.depth ?? 0),
+  };
+}
+
 function escapeLabel(label: string): string {
   return label.replace(/'/g, "''");
+}
+
+/** Clamp a depth to a sane non-negative integer for the graph DSL. */
+function clampDepth(depth: number): number {
+  return Math.max(0, Math.floor(Number.isFinite(depth) ? depth : 0));
+}
+
+/** Clamp a limit to a positive integer for the search DSL. */
+function clampLimit(limit: number): number {
+  return Math.max(1, Math.floor(Number.isFinite(limit) ? limit : 1));
 }
 
 /** KV key for the node dedupe index (hash → rid). */

@@ -7,9 +7,12 @@ description: Search the project's persistent memory and return matching notes, r
 
 Searches the project's memory for facts stored by `/memory:store`, ranked by how
 strongly they match the query — the zero-token read path, no LLM extraction. In
-**markdown-only** mode it full-text-searches the notes; in **graph** mode it
-scans the graph, drops superseded nodes (returns the head of a `SUPERSEDED_BY`
-chain), and expands the top matches one hop. Routing follows `memory init`.
+**markdown-only** mode it full-text-searches the notes; in **graph** mode it runs
+the hybrid recall engine — full-text seeds expanded through the graph
+neighborhood, ranked, dropping superseded nodes (returns the head of a
+`SUPERSEDED_BY` chain). Routing follows `memory init`. Graph mode also exposes
+`search`/`neighbors`/`traverse`/`path`/`stats` read verbs and an MCP server
+(`memory-mcp`); see the plugin README.
 
 <what-to-do>
 
