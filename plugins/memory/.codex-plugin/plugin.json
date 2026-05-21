@@ -21,6 +21,7 @@
     "knowledge"
   ],
   "skills": "./skills/",
+  "hooks": "./hooks/codex.hooks.json",
   "interface": {
     "displayName": "RedSkills Memory",
     "shortDescription": "Persistent memory for code agents.",

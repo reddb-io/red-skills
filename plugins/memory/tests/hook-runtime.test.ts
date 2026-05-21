@@ -1,0 +1,195 @@
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, test } from "vitest";
+import { readConfig, resolveStoreUri } from "../src/config.js";
+import { MemoryStore } from "../src/graph-store.js";
+import { parseClaudeInput, parseCodexInput, formatOutput } from "../src/hook-adapters.js";
+import {
+  dispatch,
+  heuristicExtractor,
+  type NormalizedInput,
+} from "../src/hook-runtime.js";
+import { initGraph, initMarkdownOnly } from "../src/init.js";
+
+// RedDB connects by spawning the bundled `red` binary; give each test room.
+const TIMEOUT = 30_000;
+
+const roots: string[] = [];
+async function tempRoot(): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), "memory-hook-"));
+  roots.push(dir);
+  return dir;
+}
+afterEach(async () => {
+  await Promise.all(roots.splice(0).map((d) => rm(d, { recursive: true, force: true })));
+});
+
+function input(event: NormalizedInput["event"], over: Partial<NormalizedInput> = {}): NormalizedInput {
+  return { event, runner: "claude", changedFiles: [], ...over };
+}
+
+describe("dispatch gating (AC3)", () => {
+  test("no-ops when memory is not initialized", async () => {
+    const root = await tempRoot();
+    const r = await dispatch(input("SessionStart", { goal: "anything" }), root);
+    expect(r.noop).toBe(true);
+    expect(r.reason).toMatch(/not initialized/);
+  });
+
+  test("no-ops in markdown-only mode (hooks always off)", async () => {
+    const root = await tempRoot();
+    await initMarkdownOnly(root);
+    const r = await dispatch(input("Stop", { transcriptText: "We decided to use X." }), root);
+    expect(r.noop).toBe(true);
+  });
+
+  test(
+    "no-ops in graph mode when the hook flag is off",
+    async () => {
+      const root = await tempRoot();
+      await initGraph(root); // hooks default off
+      const r = await dispatch(input("SessionStart", { goal: "x" }), root);
+      expect(r.noop).toBe(true);
+      expect(r.reason).toMatch(/disabled/);
+    },
+    TIMEOUT,
+  );
+});
+
+describe("PreCompact flush → SessionStart recall across /clear (AC1, AC2)", () => {
+  test(
+    "PreCompact persists a decision the next session recalls",
+    async () => {
+      const root = await tempRoot();
+      await initGraph(root, { hooks: true });
+
+      const flush = await dispatch(
+        input("PreCompact", {
+          transcriptText:
+            "We decided to adopt the zigzag caching strategy for the planner because it halves lookups.",
+        }),
+        root,
+      );
+      expect(flush.noop).toBe(false);
+      expect(flush.stored).toBeGreaterThanOrEqual(1);
+
+      // A fresh dispatch — the next session — recalls it from the store.
+      const recall = await dispatch(input("SessionStart", { goal: "zigzag caching" }), root);
+      expect(recall.noop).toBe(false);
+      expect(recall.inject).toMatch(/zigzag caching/i);
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "SessionStart no-ops when nothing relevant is stored",
+    async () => {
+      const root = await tempRoot();
+      await initGraph(root, { hooks: true });
+      const r = await dispatch(input("SessionStart", { goal: "wholly unrelated topic" }), root);
+      expect(r.noop).toBe(true);
+    },
+    TIMEOUT,
+  );
+});
+
+describe("PostToolUse incremental re-index", () => {
+  test(
+    "re-indexes a changed source file into the graph",
+    async () => {
+      const root = await tempRoot();
+      await initGraph(root, { hooks: true });
+      const file = join(root, "widget.ts");
+      await writeFile(file, "export function renderWidget() { return 42; }\n", "utf8");
+
+      const r = await dispatch(input("PostToolUse", { changedFiles: [file] }), root);
+      expect(r.noop).toBe(false);
+      expect(r.indexed).toBe(1);
+
+      // The symbol is now queryable from the store.
+      const config = await readConfig(root);
+      if (!config) throw new Error("config missing after init");
+      const store = await MemoryStore.open({ uri: resolveStoreUri(root, config) });
+      try {
+        const nodes = await store.listNodes();
+        expect(nodes.some((n) => n.label.includes("renderWidget"))).toBe(true);
+      } finally {
+        await store.close();
+      }
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "no-ops when the changed file is not indexable",
+    async () => {
+      const root = await tempRoot();
+      await initGraph(root, { hooks: true });
+      const file = join(root, "pnpm-lock.yaml");
+      await writeFile(file, "lockfileVersion: 9\n", "utf8");
+      const r = await dispatch(input("PostToolUse", { changedFiles: [file] }), root);
+      expect(r.noop).toBe(true);
+    },
+    TIMEOUT,
+  );
+});
+
+describe("heuristicExtractor", () => {
+  test("keeps decision and why-note sentences, drops chatter", async () => {
+    const out = await heuristicExtractor(
+      "Hello there. We decided to use a queue. It rained today. We picked SQLite because it is embedded.",
+    );
+    const types = out.map((m) => m.node_type);
+    expect(types).toContain("decision");
+    expect(types).toContain("why_note");
+    expect(out.every((m) => m.title.length > 0)).toBe(true);
+  });
+
+  test("returns nothing for chatter with no cues", async () => {
+    expect(await heuristicExtractor("Hi. How are you. The sky is blue.")).toEqual([]);
+  });
+});
+
+describe("runner adapters", () => {
+  test("parseClaudeInput flattens Edit tool_input to a changed file", async () => {
+    const ni = await parseClaudeInput("PostToolUse", {
+      cwd: "/repo",
+      tool_input: { file_path: "src/a.ts" },
+    });
+    expect(ni.runner).toBe("claude");
+    expect(ni.changedFiles).toEqual(["/repo/src/a.ts"]);
+  });
+
+  test("parseCodexInput has no branch/goal and reads cwd", async () => {
+    const ni = await parseCodexInput("SessionStart", {
+      cwd: "/repo",
+      session_id: "abc",
+    });
+    expect(ni.runner).toBe("codex");
+    expect(ni.branch).toBeUndefined();
+    expect(ni.goal).toBeUndefined();
+    expect(ni.cwd).toBe("/repo");
+  });
+
+  test("parseCodexInput pulls apply_patch paths", async () => {
+    const ni = await parseCodexInput("PostToolUse", {
+      cwd: "/repo",
+      tool_input: { changes: { "src/x.ts": {}, "src/y.ts": {} } },
+    });
+    expect(ni.changedFiles.sort()).toEqual(["/repo/src/x.ts", "/repo/src/y.ts"]);
+  });
+
+  test("formatOutput renders each runner's injection shape; no-op is empty", () => {
+    expect(formatOutput("claude", "SessionStart", { noop: true })).toBe("{}");
+    const claude = JSON.parse(
+      formatOutput("claude", "SessionStart", { noop: false, inject: "ctx" }),
+    );
+    expect(claude.hookSpecificOutput.additionalContext).toBe("ctx");
+    expect(claude.hookSpecificOutput.hookEventName).toBe("SessionStart");
+    const codex = JSON.parse(
+      formatOutput("codex", "SessionStart", { noop: false, inject: "ctx" }),
+    );
+    expect(codex.systemMessage).toBe("ctx");
+  });
+});

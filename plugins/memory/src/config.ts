@@ -56,6 +56,38 @@ export const HOOKS_OFF: HookConfig = {
   preCompact: false,
 };
 
+/** Every hook enabled — the all-in opt-in for an engine-backed mode. */
+export const HOOKS_ALL_ON: HookConfig = {
+  sessionStart: true,
+  postToolUse: true,
+  stop: true,
+  preCompact: true,
+};
+
+/**
+ * What the init wizard offers for the "turn hooks on?" question: a blanket
+ * boolean (`true` = all on, `false`/absent = all off) or a partial set to
+ * enable a subset. Markdown-only is not negotiable — it never gets hooks.
+ */
+export type HookChoice = boolean | Partial<HookConfig> | undefined;
+
+/**
+ * Resolve the active hook set from the chosen storage mode and the user's
+ * opt-in. The single source of truth for hook gating, shared by the init
+ * wizard and its gating test:
+ *
+ * - `markdown-only` → always {@link HOOKS_OFF}; there is no engine to recall
+ *   from or index into, so nothing can fire (AC3).
+ * - `graph` / `hybrid` → honor the choice: `true`/all-on, `false`/absent/off,
+ *   or a partial set merged over {@link HOOKS_OFF}.
+ */
+export function resolveHooks(mode: StorageMode, choice: HookChoice): HookConfig {
+  if (mode === "markdown-only") return { ...HOOKS_OFF };
+  if (choice === true) return { ...HOOKS_ALL_ON };
+  if (!choice) return { ...HOOKS_OFF };
+  return { ...HOOKS_OFF, ...choice };
+}
+
 /** Default location for markdown notes, under the single global `.red/`. */
 export const DEFAULT_NOTES_DIR = ".red/memory/notes";
 

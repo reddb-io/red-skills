@@ -21,8 +21,45 @@ It **lives on top of the `dev` plugin** and is meant to improve dev's processes
   SDK's bundled binary — no service to manage. Graph writes use multi-model DML
   and KV-backed dedupe; see [ADR 0007](../../.red/adr/0007-reddb-graph-writes-via-multi-model-dml.md).
 
-Both keep **all hooks off** — nothing auto-fires. The auto-firing hooks and the
-`/afk` · `/triage` · `/diagnose` integrations land in later slices.
+**markdown-only keeps all hooks off** — nothing can auto-fire, there is no
+engine to recall from or index into. **graph mode** can opt into the four
+auto-firing hooks below; they default off and are turned on at `memory init`.
+The `/afk` · `/triage` · `/diagnose` integrations land in later slices.
+
+## Auto-firing hooks (graph mode, opt-in)
+
+When enabled at init, four hooks let memory work without anyone typing a
+command. Each is **gated on the config**: if memory is not initialized, is in
+markdown-only mode, or the matching hook flag is off, the hook reads the config
+and exits silently — a dormant hook never touches the engine or the turn.
+
+| Hook | Fires on | Does |
+|------|----------|------|
+| **SessionStart** | session start / resume / `/clear` | recalls memory relevant to the focus (goal/branch/cwd) and injects it as context |
+| **PostToolUse** | a file edit (`Edit`/`Write`, or Codex `apply_patch`) | incrementally re-indexes the changed file into the graph |
+| **Stop** | end of an assistant turn | extracts decisions / why-notes from the turn and stores them |
+| **PreCompact** | before a context compaction / `/clear` | flushes ephemeral session knowledge to memory — the anti-goldfish save |
+
+Extraction (Stop / PreCompact) runs through a **bounded-LLM extractor** in
+production; with no LLM key configured it falls back to a deterministic
+heuristic so the hooks still capture cued decision / why-note sentences. Recall
+and re-indexing are always zero-token.
+
+### Both runners — and the Codex `PreCompact` gap
+
+The hooks ship for **both runtimes**. `hooks/claude.hooks.json` (wired from
+`.claude-plugin/plugin.json`) uses Claude's event names and the `Edit|Write`
+matcher; `hooks/codex.hooks.json` (wired from `.codex-plugin/plugin.json`) uses
+Codex's event names and the `apply_patch` matcher. On Codex the hooks system is
+gated behind `[features].plugin_hooks = true` (off by default — `memory init`
+tells Codex users to enable it). The single `memory hook <event> --runner <r>`
+CLI entrypoint dispatches both runners, mapping each one's payload and output
+shape internally.
+
+**Known difference: Codex has no `PreCompact` equivalent** — no compaction /
+context-trim event exists, so the anti-goldfish flush-before-context-death
+safety net is absent there. On Codex the flush leans on `Stop` (extract every
+substantive turn) plus `SessionStart`-on-`/clear` recall instead.
 
 ## Graph read verbs (graph mode)
 

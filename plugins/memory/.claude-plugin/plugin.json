@@ -5,6 +5,7 @@
   "dependencies": [
     "dev"
   ],
+  "hooks": "./hooks/claude.hooks.json",
   "skills": [
     "./skills/core/init",
     "./skills/core/store",
