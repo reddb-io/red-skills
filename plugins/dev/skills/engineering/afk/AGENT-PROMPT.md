@@ -56,7 +56,7 @@ If a script doesn't exist in `package.json`, skip it silently. Don't invent test
 
 ## Workflow
 
-1. **Read.** Handoff file. Recent commits. The files referenced by `## Refs` inside `<issue-body>`. The codebase area you are about to touch. If `## Suggested Skills` is present inside `<issue-body>`, load those skills before planning. Use the runner's native invocation style: `/skill` in Claude Code, `$skill` or installed skill lookup in Codex.
+1. **Read.** Handoff file. Recent commits. The files referenced by `## Refs` inside `<issue-body>`. The codebase area you are about to touch. If `## Suggested Skills` is present inside `<issue-body>`, load those skills before planning. Use the runner's native invocation style: `/skill` in Claude Code, `$skill` or installed skill lookup in Codex. **Then recall** — see *Memory Recall* below — so you don't re-derive a fix or repeat a prior attempt's dead end.
 2. **Plan.** State your assumptions and the slice you'll implement. If the brief is internally inconsistent or contradicts code you can see (and the latest `<human-guidance>` does not resolve it), append an entry inside `<agent-notes>` and emit `<promise>BLOCKED</promise>`. Do not guess.
 3. **Implement using the TDD skill.** Failing test first, then minimal code to pass, then refactor. Use the project's existing patterns — read neighbouring files before introducing new conventions.
 4. **Feedback loops.** Run `pnpm test`, `pnpm typecheck`, `pnpm lint`, `pnpm build`. Fix failures. Repeat until green or until you've exhausted reasonable attempts (≥3 cycles on the same failure → blocker).
@@ -66,6 +66,27 @@ If a script doesn't exist in `package.json`, skip it silently. Don't invent test
    - Files changed (let git list them, don't repeat exhaustively).
    - Any blockers or follow-ups for the next iteration.
 6. **Signal.** `<promise>DONE</promise>` on a line by itself, last.
+
+## Memory Recall (optional — only if the `memory` plugin is installed)
+
+The `memory` plugin, when present, holds prior decisions, gotchas, and known fixes from earlier work on this repo. Recalling before you plan stops you re-deriving a fix the project already found or walking into a dead end a prior attempt already mapped. **This is best-effort context, never a gate** — if memory is not installed, skip this silently and proceed exactly as you would otherwise.
+
+Detect and recall in one step from inside the worktree:
+
+```bash
+# repo root is the worktree you are in
+if [ -f .red/memory/config.json ]; then
+  _bridge="${CLAUDE_PLUGIN_ROOT:-}/scripts/memory-bridge.sh"
+  [ -f "$_bridge" ] || _bridge="$(git rev-parse --show-toplevel 2>/dev/null)/plugins/dev/scripts/memory-bridge.sh"
+  [ -f "$_bridge" ] && source "$_bridge" \
+    && MEMORY_REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" \
+       memory_recall . "<2–6 keywords from the issue title / Agent brief>"
+fi
+```
+
+`memory_recall` prints a ranked context block or nothing, and **always exits 0** — a missing, uninitialized, or erroring memory never fails your read step. If it returns hits, treat each as a *claim made at store time*: fold relevant ones into your plan and verify they still hold before relying on them. An empty result means "nothing stored", not "nothing true" — do not infer anything from silence.
+
+Do **not** write to memory from here; the inner agent only reads. (Storing the root cause of a fix is `/diagnose`'s job, post-mortem.)
 
 ## If You Get Stuck
 

@@ -52,7 +52,7 @@ An isolated `git worktree` that `/afk` creates per issue under `.red/tmp/work-*/
 _Avoid_: afk clone, sandbox checkout
 
 **Memory plugin**:
-The second plugin in this marketplace (sibling to `dev` under `plugins/`), giving agents a persistent, queryable memory that survives `/clear` and crosses sessions. Hard-depends on `dev` and exists to improve dev's processes (`/afk` recall, `/triage` dedup, `/diagnose` history), never as a standalone. Configured per-project by `memory init`; surfaced as `/memory:store` and `/memory:recall`. See PRD #49.
+The second plugin in this marketplace (sibling to `dev` under `plugins/`), giving agents a persistent, queryable memory that survives `/clear` and crosses sessions. Hard-depends on `dev` and exists to improve dev's processes (`/afk` recall, `/triage` dedup, `/diagnose` history), never as a standalone. The dependency is **one-directional**: `dev` only *soft-uses* `memory` — those three skills query it through `plugins/dev/scripts/memory-bridge.sh` when it's installed and behave exactly as before when it isn't; `dev`'s `plugin.json` never lists `memory` (see ADR 0009). Configured per-project by `memory init`; surfaced as `/memory:store` and `/memory:recall`. See PRD #49.
 _Avoid_: memory skill (it is a whole plugin, not one skill); `~/.claude/memory/` (that is the harness's global per-user note store, unrelated; the Memory plugin is per-project)
 
 **Markdown-only mode**:

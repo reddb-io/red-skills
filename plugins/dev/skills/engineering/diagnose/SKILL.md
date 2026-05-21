@@ -39,7 +39,9 @@ Run the loop. Watch the bug appear. Confirm all three:
 
 ### Phase 3 — Hypothesise
 
-Generate **3–5 ranked hypotheses** before testing any of them. Single-hypothesis generation anchors on the first plausible idea.
+**First, recall past root causes** (optional — only if the `memory` plugin is installed; see *Memory recall* in `<supporting-info>`). A symptom you're seeing now may have a documented root cause from a previous diagnosis — recalling it pre-seeds the hypothesis list with battle-tested candidates instead of starting cold. Best-effort: if `memory` is absent, skip silently and hypothesise as usual.
+
+Generate **3–5 ranked hypotheses** before testing any of them. Single-hypothesis generation anchors on the first plausible idea. Fold any recalled root cause in as a candidate — but still verify it against *this* repro; a past cause is a lead, not a verdict.
 
 Each hypothesis **must be falsifiable**:
 
@@ -86,6 +88,7 @@ Required before declaring done — every box:
 - [ ] All `[DEBUG-...]` instrumentation removed (`grep` the prefix)
 - [ ] Throwaway prototypes deleted (or moved to a clearly-marked debug location)
 - [ ] The hypothesis that turned out correct is stated in the commit / PR message — so the next debugger learns
+- [ ] **If `memory` is installed**, store the root cause + fix so the *next* diagnosis recalls it in Phase 3: `/memory:store <symptom → root cause → fix>` (optional — skip silently if the plugin is absent)
 
 **Then ask: what would have prevented this bug?** If the answer involves architectural change (no good test seam, tangled callers, hidden coupling), hand off to `/improve-codebase-architecture` with the specifics. Make the recommendation **after** the fix is in, not before — you have more information now than when you started.
 
@@ -132,5 +135,21 @@ Stop and say so explicitly. List what you tried. Ask the user for one of:
 - (c) Permission to add temporary production instrumentation
 
 Do **not** proceed to hypothesise without a loop.
+
+## Memory recall (optional — only if the `memory` plugin is installed)
+
+`memory` is a sibling plugin that, when present, holds root causes from past diagnoses. Recalling at the top of Phase 3 means a recurring or related bug arrives with its previously-found cause already on the table — the single biggest accelerator for "we've seen this before". **Best-effort, never a gate**: if `memory` is not installed, skip it and diagnose exactly as today.
+
+```bash
+if [ -f .red/memory/config.json ]; then
+  _bridge="${CLAUDE_PLUGIN_ROOT:-}/scripts/memory-bridge.sh"
+  [ -f "$_bridge" ] || _bridge="$(git rev-parse --show-toplevel 2>/dev/null)/plugins/dev/scripts/memory-bridge.sh"
+  [ -f "$_bridge" ] && source "$_bridge" \
+    && MEMORY_REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" \
+       memory_recall . "<2–6 keywords from the symptom / error / module>"
+fi
+```
+
+`memory_recall` prints a ranked block or nothing and **always exits 0** — a missing or erroring memory never derails the diagnosis. Each hit is a claim made at store time: verify it against the current repro before promoting it up your hypothesis ranking. An empty result means "nothing stored", not "novel bug". Close the loop in Phase 6 by storing this diagnosis's root cause so the next one recalls it.
 
 </supporting-info>
