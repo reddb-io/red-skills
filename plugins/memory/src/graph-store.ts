@@ -2,12 +2,14 @@ import { type QueryParam, type RedDB, connect } from "@reddb-io/sdk";
 import { contentHash } from "./hash.js";
 import {
   COLLECTIONS,
+  DEFAULT_EPHEMERAL_TTL_MS,
   DEFAULT_IMPORTANCE,
   type EdgeLabel,
   type MemoryDoc,
   type MemoryEdge,
   type MemoryNode,
   type NodeType,
+  defaultTier,
 } from "./schema.js";
 
 export interface MemoryStoreOptions {
@@ -15,6 +17,8 @@ export interface MemoryStoreOptions {
   uri: string;
   /** Project tag stamped on every node. Used for multi-project hosts. */
   project?: string;
+  /** TTL horizon for `ephemeral` nodes, in ms (default 24h). */
+  ephemeralTtlMs?: number;
 }
 
 /** A node row read back from the graph, with its engine-assigned id. */
@@ -75,12 +79,14 @@ function guard<T extends string>(value: string, allowed: readonly T[], kind: str
 export class MemoryStore {
   private db!: RedDB;
   private readonly project: string;
+  private readonly ephemeralTtlMs: number;
 
   private constructor(
     private readonly opts: MemoryStoreOptions,
     project: string,
   ) {
     this.project = project;
+    this.ephemeralTtlMs = opts.ephemeralTtlMs ?? DEFAULT_EPHEMERAL_TTL_MS;
   }
 
   static async open(opts: MemoryStoreOptions): Promise<MemoryStore> {
@@ -127,15 +133,26 @@ export class MemoryStore {
     const existing = await this.findNodeByHash(hash);
     if (existing != null) return existing;
 
+    // Tier defaults by node_type unless the caller pinned one (issue #68).
+    // Only `ephemeral` nodes get a TTL horizon; `durable`/`reasoning` persist.
+    const tier = props.tier ?? defaultTier(node.node_type);
+    const createdAt = props.created_at ?? now;
+    const expiresAt =
+      tier === "ephemeral"
+        ? (props.expires_at ?? createdAt + this.ephemeralTtlMs)
+        : undefined;
+
     const properties = {
       ...props,
       hash,
       project: props.project ?? this.project,
       importance: props.importance ?? DEFAULT_IMPORTANCE,
-      created_at: props.created_at ?? now,
+      tier,
+      created_at: createdAt,
       updated_at: now,
       accessed_at: now,
       access_count: props.access_count ?? 0,
+      ...(expiresAt != null ? { expires_at: expiresAt } : {}),
     };
     // Graph collections reject table-style `db.insert`; the engine requires the
     // explicit `NODE` keyword (ADR 0007). `hash` is promoted to a top-level
@@ -153,6 +170,13 @@ export class MemoryStore {
     // Dedupe index: SELECT/WHERE over arbitrary node columns does not filter on
     // graph collections (only label/node_type), so the hash→rid map lives in KV.
     await this.kv().put(nodeHashKey(hash), rid);
+    // Ephemeral nodes also get a KV expiry marker carrying the engine TTL. The
+    // observable expiry is enforced client-side by `listNodes` (the embedded
+    // engine does not sweep KV TTL promptly — see ADR 0010); the marker is the
+    // forward-compatible signal so a TTL-capable transport reaps the row too.
+    if (expiresAt != null) {
+      await this.kv().put(nodeExpiryKey(rid), expiresAt, { expireMs: expiresAt - now });
+    }
     return rid;
   }
 
@@ -193,11 +217,17 @@ export class MemoryStore {
     return nodes.find((n) => n.rid === rid) ?? null;
   }
 
-  /** Every node in the graph. The reliable read path for recall — SEARCH/FTS
-   *  over graph node properties is not available in this engine build. */
-  async listNodes(): Promise<StoredNode[]> {
+  /**
+   * Every *live* node in the graph — the reliable read path for recall and
+   * doctor (SEARCH/FTS over graph node properties is not available in this
+   * engine build). Expired `ephemeral` nodes (`now >= expires_at`) are dropped
+   * here, the single read choke point, so they vanish from every consumer at
+   * once (PRD #66 / issue #68). `durable`/`reasoning` nodes have no `expires_at`
+   * and always survive. `now` is injectable for tests.
+   */
+  async listNodes(now: number = Date.now()): Promise<StoredNode[]> {
     const r = await this.db.query(`SELECT * FROM ${COLLECTIONS.nodes}`);
-    return r.rows.map(rowToNode);
+    return r.rows.map(rowToNode).filter((n) => !isExpired(n, now));
   }
 
   // -------------------------------------------------------------------
@@ -322,6 +352,7 @@ export class MemoryStore {
     if (typeof hash === "string") await this.kv().delete(nodeHashKey(hash));
     await this.kv().delete(accessKey(node.rid));
     await this.kv().delete(supersededKey(node.rid));
+    await this.kv().delete(nodeExpiryKey(node.rid));
   }
 
   // -------------------------------------------------------------------
@@ -582,6 +613,21 @@ function edgeKey(from: number, to: number, label: string): string {
 /** KV key marking a node as superseded (oldRid → newRid). */
 function supersededKey(rid: number): string {
   return `node:superseded:${rid}`;
+}
+
+/** KV key carrying an ephemeral node's TTL horizon (forward-compat reaping). */
+function nodeExpiryKey(rid: number): string {
+  return `node:expiry:${rid}`;
+}
+
+/**
+ * Whether an `ephemeral` node has passed its TTL horizon. Only `ephemeral`
+ * nodes carry `expires_at`; `durable`/`reasoning` nodes never expire.
+ */
+export function isExpired(node: StoredNode, now: number = Date.now()): boolean {
+  if (node.properties.tier !== "ephemeral") return false;
+  const expiresAt = node.properties.expires_at;
+  return typeof expiresAt === "number" && now >= expiresAt;
 }
 
 /** KV key for a node's access overlay (recall count + last-accessed time). */
