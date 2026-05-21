@@ -35,6 +35,18 @@ _Avoid_: report, attempt log, audit comment
 A read-only reflection of `afk.state.json` onto the host harness's native background-task surface (the Claude Code status-bar task list via `TaskCreate`/`TaskUpdate`, or the Codex equivalent). Agent-driven, runner-specific, re-hydrated on session reopen from live worker dirs. A presentation consumer of worker state, never a source of truth — the same role the `monitor.sh` dashboard plays on a `tput` surface. See ADR 0003.
 _Avoid_: native agent, subagent (the mirror is not an execution unit; AFK workers stay OS processes)
 
+**Branch lock**:
+A local, opt-in pin of the agent to one branch in the **Primary checkout**, recorded as `./.red/tmp/branch-lock.yaml` (content: the branch name). While present, a Claude Code `PreToolUse(Bash)` hook blocks the agent — and only the agent — from switching away from that branch (see ADR 0006). Absence of the file means unlocked. Lives under gitignored `.red/tmp/` so each checkout/machine locks independently. Set/changed/cleared with `/branch-lock`. Distinct from the PRD/issue **branch pin** (a separate, autonomous-side concern read by `/afk`).
+_Avoid_: branch pin (that is the PRD/issue declaration consumed by `/afk`, a different concern)
+
+**Primary checkout**:
+The developer's main working clone of the repo — where an interactive session runs and where a **Branch lock** file lives and is enforced. Contrasted with a **Worktree**.
+_Avoid_: main repo, root checkout
+
+**Worktree**:
+An isolated `git worktree` that `/afk` creates per issue under `.red/tmp/work-*/`. Always **exempt** from a **Branch lock**, by toplevel location (not by branch name or an env flag), so the autonomous loop is never strangled by an interactive session's lock.
+_Avoid_: afk clone, sandbox checkout
+
 ## Relationships
 
 - An **Issue tracker** holds many **Issues**

@@ -6,6 +6,15 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 
 ---
 
+## branch-lock (misc) — lock the agent to a branch, block switching away
+
+- **status**: added
+- **upstream**: —
+- **why**: Issue #60 (PRD #59), tracer-bullet slice. First end-to-end protection of the branch-lock PRD: pin the agent to one branch in the primary checkout and stop it from quietly switching away. Original to reddb.io; extends the `git-guardrails-claude-code` hook pattern without depending on it.
+- **what changed**: New skill `plugins/dev/skills/misc/branch-lock/`. Three pure shell modules following the afk `lib/` explicit-args contract — `lock-store.sh` (atomic read/write/clear of gitignored `.red/tmp/branch-lock.yaml`; absent = unlocked), `scope-resolver.sh` (enforce in the primary checkout, exempt `.red/tmp/work-*/` worktrees by toplevel location), `git-command-classifier.sh` (minimal: `git checkout`/`git switch` to a non-lock branch → block; switching back, `git checkout -- <path>`, and `git worktree add` → allow) — each with a `*.test.sh` mirroring the afk harness (lock-store 17, scope-resolver 8, classifier 19 assertions, all green). Self-contained `branch-lock-hook.sh` PreToolUse(Bash) composes the three into an allow/exit-2-block verdict with a clear message. `branch-lock.sh` CLI backs `/branch-lock set|clear|status` (atomic relock-then-switch, lock-store stays the single writer). Added ADR 0006 (agent-only enforcement) and CONTEXT.md glossary terms (Branch lock, Primary checkout, Worktree). Out of slice (later PRD #59 work): SessionStart prompt, `git stash`/`clean`/`reset --hard` blocks, PRD/issue branch pin, git-guardrails lock-awareness.
+
+---
+
 ## code-nav (mcp) — LSP-backed code navigation server
 
 - **status**: added
