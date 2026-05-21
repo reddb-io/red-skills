@@ -265,6 +265,29 @@ export class MemoryStore {
     return rid != null ? Number(rid) : null;
   }
 
+  /**
+   * Store a reasoning trace and link it to the entities it affected with
+   * `TOUCHED` audit edges (issue #72). The trace defaults to a `why_note` (→
+   * `reasoning` tier) so recall can replay past reasoning and rank it below
+   * durable decisions. Each `touched` rid gets one `trace → entity` edge;
+   * dedupe means re-recording the same trace is idempotent. Returns the trace
+   * rid and the rids of the `TOUCHED` edges created.
+   */
+  async recordReasoning(
+    trace: Omit<MemoryNode, "node_type"> & { node_type?: NodeType },
+    touched: number[],
+  ): Promise<{ rid: number; edges: number[] }> {
+    const node: MemoryNode = { ...trace, node_type: trace.node_type ?? "why_note" };
+    const rid = await this.upsertNode(node);
+    const edges: number[] = [];
+    for (const to of touched) {
+      edges.push(
+        await this.upsertEdge({ label: "TOUCHED", from_rid: rid, to_rid: to }),
+      );
+    }
+    return { rid, edges };
+  }
+
   // -------------------------------------------------------------------
   // Supersede
   // -------------------------------------------------------------------
@@ -272,8 +295,14 @@ export class MemoryStore {
   /**
    * Mark `oldRid` as superseded by `newRid`: create a `SUPERSEDED_BY` edge
    * old → new and record the head of the chain in KV. Recall returns the head
-   * of a `SUPERSEDED_BY` chain by default (PRD #49); `isSuperseded` reads the
-   * marker without scanning edges.
+   * of a `SUPERSEDED_BY` chain by default (PRD #49).
+   *
+   * The head-of-chain markers live in a single aggregate KV map (oldRid →
+   * newRid), not one key per node: recall checks the marker for every candidate,
+   * and a get-per-candidate fanned the read path out to N engine round-trips —
+   * the recall latency bottleneck, made worse because this engine build's
+   * `getMany` is not actually batched (issue #72). One read serves a whole
+   * recall instead.
    */
   async supersede(oldRid: number, newRid: number, reason?: string): Promise<number> {
     const edgeRid = await this.upsertEdge({
@@ -282,14 +311,41 @@ export class MemoryStore {
       to_rid: newRid,
       properties: reason ? { reason } : undefined,
     });
-    await this.kv().put(supersededKey(oldRid), newRid);
+    const map = await this.readSupersededMap();
+    map[oldRid] = newRid;
+    await this.kv().put(SUPERSEDED_KEY, map);
     return edgeRid;
   }
 
   /** The rid that superseded `rid`, or null if `rid` is still current. */
   async supersededBy(rid: number): Promise<number | null> {
-    const v = await this.kv().get(supersededKey(rid));
+    const v = (await this.readSupersededMap())[rid];
     return v != null ? Number(v) : null;
+  }
+
+  /**
+   * Batch form of `supersededBy`: resolve many rids from the one aggregate map
+   * in a single KV read. Recall checks the head-of-chain marker for every
+   * candidate, so reading per-rid was the recall latency bottleneck (issue #72).
+   * Returns only the rids that *are* superseded (rid → successor); current rids
+   * are absent from the map.
+   */
+  async supersededByMany(rids: number[]): Promise<Map<number, number>> {
+    const out = new Map<number, number>();
+    if (rids.length === 0) return out;
+    const map = await this.readSupersededMap();
+    for (const rid of rids) {
+      const v = map[rid];
+      if (v != null) out.set(rid, Number(v));
+    }
+    return out;
+  }
+
+  /** The aggregate head-of-chain map. KV may hand objects back as JSON strings. */
+  private async readSupersededMap(): Promise<Record<string, number>> {
+    const raw = await this.kv().get(SUPERSEDED_KEY);
+    if (raw == null) return {};
+    return (typeof raw === "string" ? JSON.parse(raw) : raw) as Record<string, number>;
   }
 
   // -------------------------------------------------------------------
@@ -301,33 +357,51 @@ export class MemoryStore {
    * stamp `accessed_at = now`. Kept in a KV overlay rather than mutating the
    * node row — graph collections in this engine reject `UPDATE` by rid (ADR
    * 0007, same constraint as the dedupe index), and a node re-`INSERT` would
-   * fork the dedupe hash. `accessRecord` reads the overlay back; `doctor` and
-   * recall ranking layer it over the node's write-time `created_at`.
+   * fork the dedupe hash.
+   *
+   * The overlay is a single aggregate map (rid → {count, accessed_at}) under one
+   * KV key, not one key per node: each recall touches a handful of nodes, and a
+   * key-per-node write fanned the recall read path out to 2×N engine
+   * round-trips — the dominant cost in recall latency (issue #72). One
+   * read-modify-write keeps recall well inside its <100ms p50 budget. Access
+   * counts are advisory (decay bookkeeping for `doctor`), so the read-modify-
+   * write race between concurrent recalls is acceptable.
    */
   async recordAccess(rids: number[]): Promise<void> {
+    if (rids.length === 0) return;
     const now = Date.now();
-    await Promise.all(
-      rids.map(async (rid) => {
-        const prev = await this.accessRecord(rid);
-        await this.kv().put(accessKey(rid), {
-          count: (prev?.count ?? 0) + 1,
-          accessed_at: now,
-        });
-      }),
-    );
+    const map = await this.readAccessMap();
+    for (const rid of rids) {
+      const prev = map[rid];
+      map[rid] = { count: (prev?.count ?? 0) + 1, accessed_at: now };
+    }
+    await this.kv().put(ACCESS_KEY, map);
+  }
+
+  /** The full access overlay as a map — the read path `doctor` uses so it reads
+   *  the aggregate key once rather than once per node. */
+  async accessRecords(): Promise<Map<number, { count: number; accessed_at: number }>> {
+    const map = await this.readAccessMap();
+    const out = new Map<number, { count: number; accessed_at: number }>();
+    for (const [rid, v] of Object.entries(map)) {
+      out.set(Number(rid), { count: Number(v.count ?? 0), accessed_at: Number(v.accessed_at ?? 0) });
+    }
+    return out;
   }
 
   /** Read the access overlay for `rid`: how many times it was recalled and when
-   *  last, or null if it has never been recalled since it was written. KV hands
-   *  object values back as a JSON string, so parse before reading. */
+   *  last, or null if it has never been recalled since it was written. */
   async accessRecord(rid: number): Promise<{ count: number; accessed_at: number } | null> {
-    const raw = await this.kv().get(accessKey(rid));
-    if (raw == null) return null;
-    const v = (typeof raw === "string" ? JSON.parse(raw) : raw) as {
-      count?: unknown;
-      accessed_at?: unknown;
-    };
-    return { count: Number(v.count ?? 0), accessed_at: Number(v.accessed_at ?? 0) };
+    const v = (await this.readAccessMap())[rid];
+    return v ? { count: Number(v.count ?? 0), accessed_at: Number(v.accessed_at ?? 0) } : null;
+  }
+
+  /** The aggregate access overlay map. KV hands object values back as a JSON
+   *  string, so parse before reading. */
+  private async readAccessMap(): Promise<AccessOverlayMap> {
+    const raw = await this.kv().get(ACCESS_KEY);
+    if (raw == null) return {};
+    return (typeof raw === "string" ? JSON.parse(raw) : raw) as AccessOverlayMap;
   }
 
   // -------------------------------------------------------------------
@@ -350,8 +424,16 @@ export class MemoryStore {
     );
     const hash = node.properties.hash;
     if (typeof hash === "string") await this.kv().delete(nodeHashKey(hash));
-    await this.kv().delete(accessKey(node.rid));
-    await this.kv().delete(supersededKey(node.rid));
+    const map = await this.readAccessMap();
+    if (map[node.rid] != null) {
+      delete map[node.rid];
+      await this.kv().put(ACCESS_KEY, map);
+    }
+    const sup = await this.readSupersededMap();
+    if (sup[node.rid] != null) {
+      delete sup[node.rid];
+      await this.kv().put(SUPERSEDED_KEY, sup);
+    }
     await this.kv().delete(nodeExpiryKey(node.rid));
   }
 
@@ -610,10 +692,9 @@ function edgeKey(from: number, to: number, label: string): string {
   return `edge:${from}:${to}:${label}`;
 }
 
-/** KV key marking a node as superseded (oldRid → newRid). */
-function supersededKey(rid: number): string {
-  return `node:superseded:${rid}`;
-}
+/** Aggregate head-of-chain map: oldRid → newRid. One KV key for the whole
+ *  graph, not one per node — see `supersede`. */
+const SUPERSEDED_KEY = "node:superseded:all";
 
 /** KV key carrying an ephemeral node's TTL horizon (forward-compat reaping). */
 function nodeExpiryKey(rid: number): string {
@@ -630,7 +711,7 @@ export function isExpired(node: StoredNode, now: number = Date.now()): boolean {
   return typeof expiresAt === "number" && now >= expiresAt;
 }
 
-/** KV key for a node's access overlay (recall count + last-accessed time). */
-function accessKey(rid: number): string {
-  return `node:access:${rid}`;
-}
+/** Aggregate access overlay: rid → {recall count, last-accessed time}. One KV
+ *  key for the whole graph, not one per node — see `recordAccess`. */
+type AccessOverlayMap = Record<string, { count: number; accessed_at: number }>;
+const ACCESS_KEY = "node:access:all";

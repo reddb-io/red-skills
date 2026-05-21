@@ -1,6 +1,6 @@
-import type { GraphRow, MemoryStore, ShortestPathResult, StoredNode } from "./graph-store.js";
+import type { GraphRow, MemoryStore, SearchRow, ShortestPathResult, StoredNode } from "./graph-store.js";
 import { tokenize } from "./recall.js";
-import type { MemoryNodeProps, NodeType } from "./schema.js";
+import { DEFAULT_IMPORTANCE, type MemoryNodeProps, type NodeType, type Tier } from "./schema.js";
 
 /**
  * Recall engine — the zero-token read path over the memory graph.
@@ -43,6 +43,74 @@ export interface RecallOptions {
   depth?: number;
   /** Restrict results to these node types. */
   types?: string[];
+  /**
+   * Return the full `SUPERSEDED_BY` chain instead of just its head. Default
+   * `false`: a superseded node is hidden behind its successor (issue #72 /
+   * PRD #49).
+   */
+  includeSuperseded?: boolean;
+  /** Injectable clock for deterministic recency scoring in tests. */
+  now?: number;
+}
+
+/**
+ * The structural slice of `MemoryStore` the recall engine reads. Typing recall
+ * against this (rather than the concrete store) lets unit tests drive ranking
+ * with an in-memory mock; the real `MemoryStore` satisfies it.
+ */
+export interface RecallStore {
+  listNodes(now?: number): Promise<StoredNode[]>;
+  searchText(query: string, limit?: number): Promise<SearchRow[]>;
+  neighborhood(
+    label: string,
+    depth?: number,
+    direction?: "outgoing" | "incoming" | "both",
+  ): Promise<GraphRow[]>;
+  supersededByMany(rids: number[]): Promise<Map<number, number>>;
+  recordAccess(rids: number[]): Promise<void>;
+  listEdges(): Promise<Record<string, unknown>[]>;
+}
+
+/**
+ * Tier-weight multiplier for recall ranking (issue #72). Durable decisions
+ * outrank reasoning traces, which outrank ephemeral session noise — so for two
+ * otherwise-comparable nodes the more durable one surfaces first.
+ */
+export const TIER_WEIGHT: Record<Tier, number> = {
+  durable: 1.0,
+  reasoning: 0.7,
+  ephemeral: 0.4,
+};
+
+/** Recency half-life: a node's recency factor halves every 30 days of age. */
+export const RECENCY_HALF_LIFE_MS = 30 * 86_400_000;
+
+/** Inputs to the composite recall score, one per candidate node. */
+export interface RankInputs {
+  /** Base query-match signal (term overlap, neighbor-decayed). */
+  relevance: number;
+  /** Node importance in [0, 1]. */
+  importance: number;
+  tier: Tier;
+  /** Age in ms of the node's most recent timestamp; clamped to ≥ 0. */
+  ageMs: number;
+  /** Incident edge count of the node. */
+  degree: number;
+  /** Max incident edge count across the graph (normalizes centrality). */
+  maxDegree: number;
+}
+
+/**
+ * Composite recall score: `relevance × importance × recency × centrality ×
+ * tier-weight` (issue #72). Relevance keeps a direct text match ahead of a
+ * graph-only neighbor; the remaining factors order *comparable* nodes — newer,
+ * more central, more durable nodes float up. Every factor is in (0, 1] except
+ * relevance, so it stays the dominant signal.
+ */
+export function rankScore(i: RankInputs): number {
+  const recency = 0.5 ** (Math.max(0, i.ageMs) / RECENCY_HALF_LIFE_MS);
+  const centrality = (i.degree + 1) / (i.maxDegree + 1);
+  return i.relevance * i.importance * recency * centrality * TIER_WEIGHT[i.tier];
 }
 
 export interface AskResult {
@@ -83,10 +151,38 @@ function toRecalled(node: StoredNode, score: number, depth?: number): RecalledNo
 
 /** Load every node once into an rid→node map; the read paths share it so they
  *  resolve graph-walk rids and FTS hits without rescanning. */
-async function loadIndex(store: MemoryStore): Promise<Map<number, StoredNode>> {
+async function loadIndex(store: RecallStore): Promise<Map<number, StoredNode>> {
   const index = new Map<number, StoredNode>();
   for (const node of await store.listNodes()) index.set(node.rid, node);
   return index;
+}
+
+/** Most recent timestamp recorded on a node, for recency scoring. */
+function latestTimestamp(node: StoredNode): number {
+  const p = node.properties;
+  return Math.max(p.accessed_at ?? 0, p.updated_at ?? 0, p.created_at ?? 0);
+}
+
+/**
+ * Degree map keyed by rid, built from one `listEdges` scan. Each edge bumps the
+ * degree of both endpoints (centrality is undirected here). Column names vary
+ * by engine build — mirror `export.ts`'s edge normalizer.
+ */
+function degreeIndex(edges: Record<string, unknown>[]): {
+  degree: Map<number, number>;
+  maxDegree: number;
+} {
+  const degree = new Map<number, number>();
+  const bump = (rid: number) => {
+    if (Number.isFinite(rid)) degree.set(rid, (degree.get(rid) ?? 0) + 1);
+  };
+  for (const e of edges) {
+    bump(Number(e.from ?? e.from_id ?? e.source ?? e.FROM ?? Number.NaN));
+    bump(Number(e.to ?? e.to_id ?? e.target ?? e.TO ?? Number.NaN));
+  }
+  let maxDegree = 0;
+  for (const d of degree.values()) if (d > maxDegree) maxDegree = d;
+  return { degree, maxDegree };
 }
 
 /** Token-overlap score: how many distinct query terms appear in the node. */
@@ -108,11 +204,11 @@ function termScore(node: StoredNode, terms: string[]): number {
  * successor. Returns the full ranked set (seeds + neighbors); callers cap it.
  */
 export async function recall(
-  store: MemoryStore,
+  store: RecallStore,
   query: string,
   opts: RecallOptions = {},
 ): Promise<RecallResult> {
-  const { k = 8, depth = 1, types } = opts;
+  const { k = 8, depth = 1, types, includeSuperseded = false, now = Date.now() } = opts;
   const terms = tokenize(query);
   const index = await loadIndex(store);
   if (terms.length === 0) return { query, nodes: [], context_md: renderContext(query, []) };
@@ -152,13 +248,31 @@ export async function recall(
     }
   }
 
+  // Centrality needs the whole edge set once; degree normalizes per-graph.
+  const { degree, maxDegree } = degreeIndex(await store.listEdges());
+  // Head-of-chain markers for every candidate in one round-trip (issue #72).
+  const supersededMap = includeSuperseded
+    ? new Map<number, number>()
+    : await store.supersededByMany([...scored.keys()]);
+
   const nodes: RecalledNode[] = [];
-  for (const [rid, score] of scored) {
-    // Head-of-chain default: a superseded node is hidden behind its successor.
-    if ((await store.supersededBy(rid)) != null) continue;
+  for (const [rid, relevance] of scored) {
+    // Head-of-chain default: a superseded node is hidden behind its successor
+    // unless the caller asked for the full chain (`--include-superseded`).
+    if (!includeSuperseded && supersededMap.get(rid) != null) continue;
     const node = index.get(rid);
     if (!node) continue;
     if (types && types.length > 0 && !types.includes(node.node_type)) continue;
+    // Tier-aware composite score: relevance keeps the strongest text match on
+    // top; importance/recency/centrality/tier-weight order comparable nodes.
+    const score = rankScore({
+      relevance,
+      importance: node.properties.importance ?? DEFAULT_IMPORTANCE,
+      tier: node.properties.tier ?? "durable",
+      ageMs: now - latestTimestamp(node),
+      degree: degree.get(rid) ?? 0,
+      maxDegree,
+    });
     nodes.push(toRecalled(node, score, depthOf.get(rid)));
   }
 
