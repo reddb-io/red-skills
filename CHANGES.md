@@ -6,6 +6,15 @@ Upstream base: `mattpocock/skills@e74f0061bb67222181640effa98c675bdb2fdaa7` (see
 
 ---
 
+## afk (engineering) — merge stage integrates moved origin/main, rolls back rejected pushes, dispatches conflict resolver
+
+- **status**: modified
+- **upstream**: —
+- **why**: Issue #37. `do_merge` fetched `origin/main` but never integrated it, so worker branches merged onto the stale boot-time HEAD and every push was rejected non-fast-forward once origin moved mid-run; the rejected push left an orphan merge commit on local main; and the documented one-shot conflict resolver (SKILL.md per-issue loop step 8) was never implemented (`"no inner self-resolve yet"`).
+- **what changed**: New `lib/merge.sh` with two pure git primitives — `merge_integrate_origin` (fast-forward local main onto a moved `origin/main`, or rebase a divergent local snapshot onto it) and `merge_rollback` (reset the checked-out branch to the captured pre-merge tip). `afk.sh` `do_merge` now integrates before merging, captures `pre_merge_sha`, rolls back on push rejection, and on conflict dispatches `merge_resolve_conflict` — a one-shot inner-agent resolver re-entered in the primary checkout with the conflict diff + `git status`, resolving iff no unmerged paths and no `MERGE_HEAD` remain, else falling back to `git merge --abort`. SKILL.md step 8/9 rewritten to match. New `scripts/tests/merge-integrate.test.sh` (19 assertions over temp git repos with a local bare origin: fast-forward integration, divergent rebase, push-rejection rollback, in-sync no-op, missing-ref failure). Out of scope per the issue: supervisor-level fleet coordination. Refs #37.
+
+---
+
 ## afk (engineering) — SKILL.md handoff template + README directive-writing docs
 
 - **status**: modified
