@@ -1,0 +1,9 @@
+{"ts":"t","epoch":3600000,"worker":"wAAAA","issue":1,"event":"done","duration_s":100,"runner":"claude","merge_sha":"aaa1111"}
+{"ts":"t","epoch":3600100,"worker":"wAAAA","issue":2,"event":"done","duration_s":120,"runner":"claude","merge_sha":"bbb2222"}
+{"ts":"t","epoch":3601800,"worker":"wBBBB","issue":3,"event":"done","duration_s":90,"runner":"codex","merge_sha":"ccc3333"}
+{"ts":"t","epoch":3618000,"worker":"wBBBB","issue":4,"event":"done","duration_s":80,"runner":"codex","merge_sha":"ddd4444"}
+{"ts":"t","epoch":3769200,"worker":"wCCCC","issue":5,"event":"done","duration_s":70,"runner":"claude","merge_sha":"eee5555"}
+{"ts":"t","epoch":3772800,"worker":"wCCCC","issue":6,"event":"done","duration_s":60,"runner":"claude","merge_sha":"fff6666"}
+{"ts":"t","epoch":3596400,"worker":"wDDDD","issue":7,"event":"done","duration_s":50,"runner":"codex","merge_sha":"ggg7777"}
+{"ts":"t","epoch":3610800,"worker":"wEEEE","issue":8,"event":"blocked","duration_s":40,"runner":"claude","reason":"inner-agent"}
+{"ts":"t","epoch":3636000,"worker":"wFFFF","issue":9,"event":"exhausted","duration_s":0,"runner":"codex","reason":"both-runners"}
