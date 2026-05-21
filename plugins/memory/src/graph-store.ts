@@ -4,6 +4,7 @@ import {
   COLLECTIONS,
   DEFAULT_IMPORTANCE,
   type EdgeLabel,
+  type MemoryDoc,
   type MemoryEdge,
   type MemoryNode,
   type NodeType,
@@ -119,6 +120,27 @@ export class MemoryStore {
   }
 
   /**
+   * Resolve a node by its `label` (optionally narrowed by `node_type`). Unlike
+   * arbitrary columns, `label`/`node_type` *are* filterable on graph collections
+   * (ADR 0007), so this is a real `WHERE` query — the path the ingest indexer
+   * uses to resolve markdown wiki-link targets to rids.
+   */
+  async findNodeByLabel(label: string, type?: NodeType): Promise<number | null> {
+    const r = type
+      ? await this.db.query(
+          `SELECT rid FROM ${COLLECTIONS.nodes} WHERE label = $1 AND node_type = $2 LIMIT 1`,
+          label,
+          type,
+        )
+      : await this.db.query(
+          `SELECT rid FROM ${COLLECTIONS.nodes} WHERE label = $1 LIMIT 1`,
+          label,
+        );
+    const row = r.rows[0];
+    return row ? Number(row.rid ?? row.red_entity_id) : null;
+  }
+
+  /**
    * Read a single node back by rid, or null if it does not exist. `WHERE rid`
    * does not filter on graph collections (ADR 0007 — only label/node_type), so
    * this scans and matches client-side.
@@ -195,6 +217,47 @@ export class MemoryStore {
   async supersededBy(rid: number): Promise<number | null> {
     const v = await this.kv().get(supersededKey(rid));
     return v != null ? Number(v) : null;
+  }
+
+  // -------------------------------------------------------------------
+  // Docs
+  // -------------------------------------------------------------------
+
+  /**
+   * Upsert a document chunk (markdown body + frontmatter), deduped by hash. The
+   * `memory_docs` document collection is auto-created by the SDK on first
+   * insert — no explicit DDL, unlike graph collections. Stores the full body so
+   * later FTS/ASK work has the source text; recall over nodes does not depend on
+   * it.
+   */
+  async upsertDoc(doc: MemoryDoc): Promise<number> {
+    const existing = await this.findDocByHash(doc.hash);
+    if (existing != null) return existing;
+    const result = await this.db.documents.insert(COLLECTIONS.docs, {
+      path: doc.path,
+      title: doc.title ?? null,
+      body: doc.body,
+      frontmatter: doc.frontmatter ?? {},
+      hash: doc.hash,
+      // `updated_at` is a reserved system field on documents in this engine
+      // build; store the source mtime under a user-namespaced key instead.
+      source_updated_at: doc.updated_at,
+    });
+    return Number((result as { rid: string | number }).rid);
+  }
+
+  private async findDocByHash(hash: string): Promise<number | null> {
+    try {
+      const { items } = await this.db.documents.list(COLLECTIONS.docs, {
+        filter: `hash = '${hash.replace(/'/g, "''")}'`,
+        limit: 1,
+      });
+      const row = items[0];
+      return row ? Number(row.rid) : null;
+    } catch {
+      // Collection does not yet exist — no doc to find.
+      return null;
+    }
   }
 
   // -------------------------------------------------------------------

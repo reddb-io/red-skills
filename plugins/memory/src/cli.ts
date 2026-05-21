@@ -1,8 +1,10 @@
 #!/usr/bin/env node
+import { isAbsolute, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { readConfig, resolveNotesDir, resolveStoreUri } from "./config.js";
 import { graphRecall } from "./graph-recall.js";
 import { MemoryStore, factToNode } from "./graph-store.js";
+import { ingestProject } from "./ingest.js";
 import { initGraph, initMarkdownOnly } from "./init.js";
 import { recall } from "./recall.js";
 import { slugify, storeNote } from "./store.js";
@@ -13,6 +15,7 @@ Usage:
   memory init [--mode markdown-only|graph] [--root <dir>] [--yes]
   memory store <fact...>            [--root <dir>]
   memory recall <query...>          [--root <dir>] [--limit N]
+  memory ingest <path>              [--root <dir>] [--max-files N]
 
 Two storage modes: markdown-only (plain notes, no engine) and graph (a typed
 knowledge graph over a per-project RedDB store). Run \`memory init\` once to pick
@@ -159,6 +162,35 @@ async function runRecall(args: ParsedArgs): Promise<void> {
   }
 }
 
+async function runIngest(args: ParsedArgs): Promise<void> {
+  const rootDir = rootOf(args.flags);
+  const target = args.positional[0] ?? ".";
+  const config = await requireConfig(rootDir);
+
+  if (config.mode !== "graph") {
+    throw new Error(
+      `ingest needs graph mode — this project is "${config.mode}". Re-run \`memory init --mode graph\` first`,
+    );
+  }
+
+  const cwd = isAbsolute(target) ? target : resolve(rootDir, target);
+  const maxFiles =
+    typeof args.flags["max-files"] === "string"
+      ? Number(args.flags["max-files"])
+      : undefined;
+
+  const store = await MemoryStore.open({ uri: resolveStoreUri(rootDir, config) });
+  try {
+    const report = await ingestProject(store, { cwd, maxFiles });
+    console.log(`memory: ingested ${cwd}`);
+    console.log(
+      `  ${report.files} file(s) → ${report.nodes} node(s), ${report.edges} edge(s), ${report.docs} doc(s) in ${report.durationMs}ms`,
+    );
+  } finally {
+    await store.close();
+  }
+}
+
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   switch (args.command) {
@@ -168,6 +200,8 @@ async function main(): Promise<void> {
       return runStore(args);
     case "recall":
       return runRecall(args);
+    case "ingest":
+      return runIngest(args);
     case undefined:
     case "help":
     case "--help":
