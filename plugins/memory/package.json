@@ -18,7 +18,9 @@
     "dev": "node --import tsx src/cli.ts"
   },
   "dependencies": {
-    "@reddb-io/sdk": "^1.2.5"
+    "@reddb-io/sdk": "^1.2.5",
+    "fast-glob": "^3.3.2",
+    "gray-matter": "^4.0.3"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

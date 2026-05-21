@@ -588,6 +588,7 @@ alongside `dev`, then run `memory init`.
 | **[init](./plugins/memory/skills/core/init/SKILL.md)** | Setup wizard. markdown-only writes `.red/memory/config.json` + `.red/memory/notes/`; graph also builds locally and provisions a per-project RedDB store at `.red/memory/graph.rdb`. Hooks off, MCP off. |
 | **[store](./plugins/memory/skills/core/store/SKILL.md)** | `/memory:store <fact>` — save a fact (markdown note, or a deduped graph node). |
 | **[recall](./plugins/memory/skills/core/recall/SKILL.md)** | `/memory:recall <query>` — ranked search over stored memory (notes, or the graph with supersede-aware, neighborhood-expanded results). |
+| **[ingest](./plugins/memory/skills/core/ingest/SKILL.md)** | `/memory:ingest <path>` — walk a repo into the graph: code symbols + markdown structure with their edges (graph mode). |
 
 See [plugins/memory/README.md](./plugins/memory/README.md) and, for the RedDB
 graph-write constraints, [ADR 0007](./.red/adr/0007-reddb-graph-writes-via-multi-model-dml.md).

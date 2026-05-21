@@ -31,6 +31,7 @@ integrations land in later slices.
 | **[init](./skills/core/init/SKILL.md)** | Setup wizard — markdown-only or graph. |
 | **[store](./skills/core/store/SKILL.md)** | Save a fact (markdown note or graph node). |
 | **[recall](./skills/core/recall/SKILL.md)** | Ranked search over stored memory. |
+| **[ingest](./skills/core/ingest/SKILL.md)** | Walk a repo into the graph — code symbols + markdown structure (graph mode). |
 
 ## Build
 

@@ -8,6 +8,7 @@
   "skills": [
     "./skills/core/init",
     "./skills/core/store",
-    "./skills/core/recall"
+    "./skills/core/recall",
+    "./skills/core/ingest"
   ]
 }
