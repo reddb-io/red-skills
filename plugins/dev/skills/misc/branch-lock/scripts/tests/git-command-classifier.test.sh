@@ -60,6 +60,36 @@ expect_verdict "allow/commit"                "$LOCK" "git commit -m wip"        
 expect_verdict "allow/slash lock back"  "feature/x" "git switch feature/x"  "allow"
 expect_verdict "block/slash other"      "feature/x" "git switch feature/y"  "block"
 
+# ===========================================================================
+# BLOCK — the work-loss family (issue #61)
+# ===========================================================================
+expect_verdict "block/stash bare"            "$LOCK" "git stash"                   "block"
+expect_verdict "block/stash push"            "$LOCK" "git stash push"              "block"
+expect_verdict "block/stash push paths"      "$LOCK" "git stash push -m x src/"    "block"
+expect_verdict "block/stash save"            "$LOCK" "git stash save wip"          "block"
+expect_verdict "block/clean -f"              "$LOCK" "git clean -f"                "block"
+expect_verdict "block/clean -fd"             "$LOCK" "git clean -fd"               "block"
+expect_verdict "block/clean -xfd"            "$LOCK" "git clean -xfd"              "block"
+expect_verdict "block/clean --force"         "$LOCK" "git clean --force"           "block"
+expect_verdict "block/reset --hard"          "$LOCK" "git reset --hard"            "block"
+expect_verdict "block/reset --hard HEAD~1"   "$LOCK" "git reset --hard HEAD~1"     "block"
+expect_verdict "block/checkout dot"          "$LOCK" "git checkout ."              "block"
+expect_verdict "block/restore dot"           "$LOCK" "git restore ."              "block"
+expect_verdict "block/checkout dashdash dot"  "$LOCK" "git checkout -- ."          "block"
+expect_verdict "block/family compound"       "$LOCK" "cd repo && git reset --hard" "block"
+
+# ===========================================================================
+# ALLOW — non-destructive members of the same command families
+# ===========================================================================
+expect_verdict "allow/stash list"            "$LOCK" "git stash list"              "allow"
+expect_verdict "allow/stash show"            "$LOCK" "git stash show"              "allow"
+expect_verdict "allow/clean dry-run"         "$LOCK" "git clean -n"                "allow"
+expect_verdict "allow/clean --dry-run"       "$LOCK" "git clean --dry-run"         "allow"
+expect_verdict "allow/reset soft"            "$LOCK" "git reset --soft HEAD~1"     "allow"
+expect_verdict "allow/reset mixed default"   "$LOCK" "git reset HEAD file.txt"     "allow"
+expect_verdict "allow/restore staged"        "$LOCK" "git restore --staged f.txt"  "allow"
+expect_verdict "allow/restore single file"   "$LOCK" "git restore src/app.ts"       "allow"
+
 echo
 echo "summary: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
