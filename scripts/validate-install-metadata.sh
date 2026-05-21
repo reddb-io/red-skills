@@ -14,34 +14,57 @@ command -v jq >/dev/null || fail "jq is required"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
-find plugins/dev/skills -name SKILL.md \
-  -not -path '*/node_modules/*' \
-  -not -path '*/deprecated/*' \
-  -not -path '*/in-progress/*' \
-  -print \
-  | sed 's#/SKILL.md$##' \
-  | sed 's#^plugins/dev/#./#' \
-  | sort > "$tmp/published-skills"
+# Validate one plugin's install metadata: Claude skill list matches the SKILL.md
+# tree on disk, Claude/Codex versions agree, and the Codex plugin exposes the
+# whole skills/ tree under the right name.
+validate_plugin() {
+  local plugin="$1"
+  local dir="plugins/$plugin"
 
-jq -r '.skills[]' plugins/dev/.claude-plugin/plugin.json \
-  | sort > "$tmp/claude-skills"
+  find "$dir/skills" -name SKILL.md \
+    -not -path '*/node_modules/*' \
+    -not -path '*/deprecated/*' \
+    -not -path '*/in-progress/*' \
+    -print \
+    | sed 's#/SKILL.md$##' \
+    | sed "s#^$dir/#./#" \
+    | sort > "$tmp/published-skills"
 
-diff -u "$tmp/published-skills" "$tmp/claude-skills" \
-  || fail "Claude plugin skill list is out of sync"
+  jq -r '.skills[]' "$dir/.claude-plugin/plugin.json" \
+    | sort > "$tmp/claude-skills"
 
-jq -e --slurp '.[0].version == .[1].version' \
-  plugins/dev/.claude-plugin/plugin.json \
-  plugins/dev/.codex-plugin/plugin.json >/dev/null \
-  || fail "Claude and Codex plugin versions must match"
+  diff -u "$tmp/published-skills" "$tmp/claude-skills" \
+    || fail "$plugin: Claude plugin skill list is out of sync"
 
-jq -e '.name == "dev"' plugins/dev/.codex-plugin/plugin.json >/dev/null \
-  || fail "Codex plugin name must be dev"
+  jq -e --slurp '.[0].version == .[1].version' \
+    "$dir/.claude-plugin/plugin.json" \
+    "$dir/.codex-plugin/plugin.json" >/dev/null \
+    || fail "$plugin: Claude and Codex plugin versions must match"
 
-jq -e '.skills == "./skills/"' plugins/dev/.codex-plugin/plugin.json >/dev/null \
-  || fail "Codex plugin must expose ./skills/"
+  jq -e --arg n "$plugin" '.name == $n' "$dir/.codex-plugin/plugin.json" >/dev/null \
+    || fail "$plugin: Codex plugin name must be $plugin"
 
-jq -e '.plugins[] | select(.name == "dev" and .source.path == "./plugins/dev")' \
-  .agents/plugins/marketplace.json >/dev/null \
-  || fail "Codex marketplace must expose ./plugins/dev"
+  jq -e '.skills == "./skills/"' "$dir/.codex-plugin/plugin.json" >/dev/null \
+    || fail "$plugin: Codex plugin must expose ./skills/"
+
+  jq -e --arg p "./$dir" '.plugins[] | select(.source.path == $p)' \
+    .agents/plugins/marketplace.json >/dev/null \
+    || fail "$plugin: Codex marketplace must expose ./$dir"
+
+  jq -e --arg p "./$dir" '.plugins[] | select(.source == $p)' \
+    .claude-plugin/marketplace.json >/dev/null \
+    || fail "$plugin: Claude marketplace must expose ./$dir"
+}
+
+validate_plugin dev
+validate_plugin memory
+
+# memory hard-depends on dev, in both plugin manifests and both marketplaces.
+for f in \
+  plugins/memory/.claude-plugin/plugin.json \
+  plugins/memory/.codex-plugin/plugin.json; do
+  jq -e '.dependencies | index("dev")' "$f" >/dev/null \
+    || fail "memory: $f must declare a dependency on dev"
+done
 
 echo "install metadata ok"

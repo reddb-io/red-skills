@@ -1,0 +1,44 @@
+{
+  "name": "memory",
+  "version": "1.48.0",
+  "description": "reddb.io memory plugin - persistent, queryable memory for code agents that lives on top of dev. Markdown-only slice: memory init, /memory:store, /memory:recall over plain markdown notes. Requires the dev plugin.",
+  "author": {
+    "name": "reddb.io",
+    "url": "https://github.com/reddb-io"
+  },
+  "homepage": "https://github.com/reddb-io/red-skills",
+  "repository": "https://github.com/reddb-io/red-skills",
+  "license": "Apache-2.0",
+  "dependencies": [
+    "dev"
+  ],
+  "keywords": [
+    "codex",
+    "claude-code",
+    "skills",
+    "agents",
+    "memory",
+    "knowledge"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "RedSkills Memory",
+    "shortDescription": "Persistent memory for code agents.",
+    "longDescription": "RedSkills Memory gives code agents a persistent, queryable memory that survives /clear and crosses sessions. This release ships the markdown-only path — a single init wizard plus /memory:store and /memory:recall over plain markdown notes, with no engine dependency. Builds on the dev plugin's processes.",
+    "developerName": "reddb.io",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write",
+      "Shell"
+    ],
+    "websiteURL": "https://github.com/reddb-io/red-skills",
+    "defaultPrompt": [
+      "Run $init to set up markdown-only memory.",
+      "Capture a decision with $store.",
+      "Look up what we know with $recall."
+    ],
+    "brandColor": "#D92D20"
+  }
+}

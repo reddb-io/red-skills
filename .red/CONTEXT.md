@@ -47,6 +47,18 @@ _Avoid_: main repo, root checkout
 An isolated `git worktree` that `/afk` creates per issue under `.red/tmp/work-*/`. Always **exempt** from a **Branch lock**, by toplevel location (not by branch name or an env flag), so the autonomous loop is never strangled by an interactive session's lock.
 _Avoid_: afk clone, sandbox checkout
 
+**Memory plugin**:
+The second plugin in this marketplace (sibling to `dev` under `plugins/`), giving agents a persistent, queryable memory that survives `/clear` and crosses sessions. Hard-depends on `dev` and exists to improve dev's processes (`/afk` recall, `/triage` dedup, `/diagnose` history), never as a standalone. Configured per-project by `memory init`; surfaced as `/memory:store` and `/memory:recall`. See PRD #49.
+_Avoid_: memory skill (it is a whole plugin, not one skill); `~/.claude/memory/` (that is the harness's global per-user note store, unrelated; the Memory plugin is per-project)
+
+**Markdown-only mode**:
+The lightest **Memory plugin** storage mode, selected at `memory init`: facts are plain markdown **Memory notes** under `.red/memory/notes/`, recall is full-text search over them, and **all hooks are off, the MCP server does not run, and RedDB is not required**. The low-risk path with zero engine dependency. Contrasted with the later `graph` and `hybrid` modes (RedDB-backed, typed graph).
+_Avoid_: lite mode, no-engine mode
+
+**Memory note**:
+A single fact stored by `/memory:store` as one markdown file (`<timestamp>-<slug>.md`, YAML frontmatter + the fact as body) under the configured `notesDir`. In **Markdown-only mode** the note is the canonical store — human-readable and committable, not a rendered view of a graph.
+_Avoid_: memory record, entry
+
 ## Relationships
 
 - An **Issue tracker** holds many **Issues**

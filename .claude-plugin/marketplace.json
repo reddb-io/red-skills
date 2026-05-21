@@ -9,6 +9,14 @@
       "name": "dev",
       "source": "./plugins/dev",
       "description": "reddb.io dev plugin — engineering skills for code agents (autonomous /afk loop, triage, tdd, diagnose, wiki, …)"
+    },
+    {
+      "name": "memory",
+      "source": "./plugins/memory",
+      "description": "reddb.io memory plugin — persistent, queryable memory for code agents. Markdown-only slice: `memory init`, `/memory:store`, `/memory:recall`. Requires the `dev` plugin.",
+      "dependencies": [
+        "dev"
+      ]
     }
   ]
 }
