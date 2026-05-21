@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "code-nav": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/mcp/code-nav/dist/index.js"]
+    }
+  }
+}

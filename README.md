@@ -572,6 +572,15 @@ Composable. Boring on purpose where boring is enough. Sharp where it matters.
 
 </details>
 
+<details>
+<summary><strong>MCP servers — bundled tools</strong></summary>
+
+| Server | What it does |
+|--------|--------------|
+| **[code-nav](./plugins/dev/mcp/code-nav/README.md)** | LSP-backed semantic navigation. Spawns the language server for each file type and exposes `workspace_symbols`, `goto_definition`, `find_references`, `document_symbols`, `hover` as MCP tools — IDE-grade symbol navigation on top of the agent's default search. Presets for TS/Go/Rust/Python; extend via `CODE_NAV_SERVERS`. Loads automatically with the `dev` plugin. |
+
+</details>
+
 ---
 
 ## House conventions

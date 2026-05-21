@@ -12,10 +12,12 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json",
+    "bundle": "esbuild src/index.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/index.js --banner:js=\"import{createRequire}from'node:module';const require=createRequire(import.meta.url);\"",
+    "build": "pnpm run typecheck && pnpm run bundle",
     "dev": "tsx src/index.ts",
     "start": "node dist/index.js",
-    "prepare": "tsc -p tsconfig.json"
+    "prepare": "pnpm run bundle"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
@@ -25,6 +27,7 @@
   },
   "devDependencies": {
     "@types/node": "^25.9.1",
+    "esbuild": "^0.28.0",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0"
   }

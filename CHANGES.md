@@ -6,6 +6,15 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 
 ---
 
+## code-nav (mcp) — LSP-backed code navigation server
+
+- **status**: added
+- **upstream**: —
+- **why**: Acting on [*How Claude Code works in large codebases*](https://claude.com/blog/how-claude-code-works-in-large-codebases-best-practices-and-where-to-start), which calls LSP integration the high-value addition for large codebases — symbol-level navigation on top of the default agentic search, so the agent stops grepping a name and guessing which match is real.
+- **what changed**: First non-skill artifact in the `dev` plugin — an MCP server under `plugins/dev/mcp/code-nav/`. A thin LSP client (`vscode-languageserver-protocol` over stdio) spawns the language server for a file's extension, runs the `initialize` handshake, opens documents lazily, and forwards five MCP tools to LSP requests: `workspace_symbols` (find by name), `goto_definition`, `find_references`, `document_symbols`, `hover`. Config-driven extension→server registry (TS/Go/Rust/Python presets, override via `CODE_NAV_SERVERS`); one server process per language, reused across calls; a missing server binary is skipped without crashing the others. Wired into the plugin via `plugins/dev/.mcp.json` (`mcpServers: "./.mcp.json"` in `plugin.json`, `${CLAUDE_PLUGIN_ROOT}` path). Shipped as a pre-bundled self-contained `dist/index.js` (esbuild) so it runs with zero install; `node_modules` is gitignored. Verified end-to-end against `rust-analyzer` on a fixture crate: all five tools returned correct semantic results (definition at the exact line, both references, full hover signature + doc comment).
+
+---
+
 ## handoff (productivity) — redaction guidance
 
 - **status**: modified
