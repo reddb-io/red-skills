@@ -33,34 +33,40 @@ expect_eq() {
 # Clean slate — wipe every var the cascade inspects so this test file is
 # robust against the harness inheriting one from the user's shell.
 unset CLAUDECODE CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_SSE_PORT
-unset CODEX_HOME CODEX_SANDBOX CODEX_SANDBOX_NETWORK_DISABLED
+unset CODEX_HOME CODEX_SANDBOX CODEX_SANDBOX_NETWORK_DISABLED CODEX_MANAGED_BY_NPM
 unset RED_AFK_RUNNER
 
 # 1) Explicit pin wins over everything.
-CLAUDECODE=1 expect_eq "pin beats env-var (claude)" "$(detect_runner claude /tmp/whatever)" "claude|pin"
-CODEX_HOME=/tmp expect_eq "pin beats env-var (codex)" "$(detect_runner codex /tmp/whatever)" "codex|pin"
-expect_eq "pin with neutral state"             "$(detect_runner claude /tmp/whatever)" "claude|pin"
+CLAUDECODE=1 expect_eq "pin beats env-var (claude)" "$(detect_runner claude /tmp/whatever '')" "claude|pin"
+CODEX_HOME=/tmp expect_eq "pin beats env-var (codex)" "$(detect_runner codex /tmp/whatever '')" "codex|pin"
+expect_eq "pin with neutral state"             "$(detect_runner claude /tmp/whatever '')" "claude|pin"
 
 # 2) Env-var sniff (claude family).
-expect_eq "CLAUDECODE → claude|env-var"           "$(CLAUDECODE=1 detect_runner '' /tmp/whatever)"             "claude|env-var"
-expect_eq "CLAUDE_CODE_ENTRYPOINT → claude"       "$(CLAUDE_CODE_ENTRYPOINT=cli detect_runner '' /tmp/whatever)" "claude|env-var"
-expect_eq "CLAUDE_CODE_SSE_PORT → claude"         "$(CLAUDE_CODE_SSE_PORT=4000 detect_runner '' /tmp/whatever)" "claude|env-var"
+expect_eq "CLAUDECODE → claude|env-var"           "$(CLAUDECODE=1 detect_runner '' /tmp/whatever '')"             "claude|env-var"
+expect_eq "CLAUDE_CODE_ENTRYPOINT → claude"       "$(CLAUDE_CODE_ENTRYPOINT=cli detect_runner '' /tmp/whatever '')" "claude|env-var"
+expect_eq "CLAUDE_CODE_SSE_PORT → claude"         "$(CLAUDE_CODE_SSE_PORT=4000 detect_runner '' /tmp/whatever '')" "claude|env-var"
 
 # 3) Env-var sniff (codex family).
-expect_eq "CODEX_HOME → codex|env-var"            "$(CODEX_HOME=/x detect_runner '' /tmp/whatever)"            "codex|env-var"
-expect_eq "CODEX_SANDBOX → codex|env-var"         "$(CODEX_SANDBOX=1 detect_runner '' /tmp/whatever)"          "codex|env-var"
-expect_eq "CODEX_SANDBOX_NETWORK_DISABLED → codex" "$(CODEX_SANDBOX_NETWORK_DISABLED=1 detect_runner '' /tmp/whatever)" "codex|env-var"
+expect_eq "CODEX_HOME → codex|env-var"            "$(CODEX_HOME=/x detect_runner '' /tmp/whatever '')"            "codex|env-var"
+expect_eq "CODEX_SANDBOX → codex|env-var"         "$(CODEX_SANDBOX=1 detect_runner '' /tmp/whatever '')"          "codex|env-var"
+expect_eq "CODEX_SANDBOX_NETWORK_DISABLED → codex" "$(CODEX_SANDBOX_NETWORK_DISABLED=1 detect_runner '' /tmp/whatever '')" "codex|env-var"
+expect_eq "CODEX_MANAGED_BY_NPM → codex"          "$(CODEX_MANAGED_BY_NPM=1 detect_runner '' /tmp/whatever '')" "codex|env-var"
 
-# 4) Path sniff. Env vars absent.
-expect_eq "path under ~/.claude/ → claude|path"   "$(detect_runner '' /home/u/.claude/plugins/dev/skills/engineering/afk/scripts)" "claude|path"
-expect_eq "path under ~/.codex/  → codex|path"    "$(detect_runner '' /home/u/.codex/plugins/dev/skills/engineering/afk/scripts)"  "codex|path"
+# 4) Process-tree sniff. This catches repo-local skill copies where the path is neutral.
+expect_eq "process tree codex → codex|process"    "$(detect_runner '' /opt/random/path '3259985 codex /home/u/.asdf/bin/codex')" "codex|process"
+expect_eq "process tree claude → claude|process"  "$(detect_runner '' /opt/random/path '9988 claude /home/u/.local/bin/claude')" "claude|process"
 
-# 5) Env fallback. Absent env, neutral path.
-expect_eq "no signal → claude (default fallback)" "$(detect_runner '' /opt/random/path)" "claude|env-fallback"
-expect_eq "RED_AFK_RUNNER=codex respected"            "$(RED_AFK_RUNNER=codex detect_runner '' /opt/random/path)" "codex|env-fallback"
+# 5) Path sniff. Env vars and process snapshot absent.
+expect_eq "path under ~/.claude/ → claude|path"   "$(detect_runner '' /home/u/.claude/plugins/dev/skills/engineering/afk/scripts '')" "claude|path"
+expect_eq "path under ~/.codex/  → codex|path"    "$(detect_runner '' /home/u/.codex/plugins/dev/skills/engineering/afk/scripts '')"  "codex|path"
 
-# 6) Env-var dominates path (cascade order).
-expect_eq "env-var beats path"                    "$(CLAUDECODE=1 detect_runner '' /home/u/.codex/x)" "claude|env-var"
+# 6) Env fallback. Absent env, neutral path, neutral process snapshot.
+expect_eq "no signal → claude (default fallback)" "$(detect_runner '' /opt/random/path '')" "claude|env-fallback"
+expect_eq "RED_AFK_RUNNER=codex respected"        "$(RED_AFK_RUNNER=codex detect_runner '' /opt/random/path '')" "codex|env-fallback"
+
+# 7) Earlier stages dominate later stages (cascade order).
+expect_eq "env-var beats process/path"            "$(CLAUDECODE=1 detect_runner '' /home/u/.codex/x '3259985 codex /bin/codex')" "claude|env-var"
+expect_eq "process beats path"                    "$(detect_runner '' /home/u/.claude/x '3259985 codex /bin/codex')" "codex|process"
 
 # ---------- summary ----------
 echo

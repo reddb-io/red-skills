@@ -6,9 +6,10 @@
 #          [--alternate] [--fallback-runner] [-n N] [--once] [project_root]
 #
 # Runner resolution cascade (when --runner is not set):
-#   1. env-var sniff (CLAUDECODE / CLAUDE_CODE_*, CODEX_HOME / CODEX_SANDBOX*)
-#   2. $BASH_SOURCE path sniff (~/.claude/... → claude, ~/.codex/... → codex)
-#   3. env fallback (${RED_AFK_RUNNER:-claude})
+#   1. env-var sniff (CLAUDECODE / CLAUDE_CODE_*, CODEX_*)
+#   2. process-tree sniff (caller is claude/codex)
+#   3. $BASH_SOURCE path sniff (~/.claude/... → claude, ~/.codex/... → codex)
+#   4. env fallback (${RED_AFK_RUNNER:-claude})
 #
 # See ../SKILL.md for the full contract. SAFETY.md is binding.
 
@@ -86,18 +87,49 @@ ITER_LOG=""         # set per-iteration: $ITER_DIR/afk.log
 ITER_PID_FILE=""    # set per-iteration: $ITER_DIR/afk.pid
 
 # ---------- runner detection cascade ----------
-# detect_runner — resolve the default runner via a 3-step cascade.
+detect_runner_from_process_text() {
+  local text="$1"
+  if grep -qiE '(^|[/[:space:]])codex([[:space:]/-]|$)|@openai/codex|codex-linux' <<<"$text"; then
+    echo "codex"
+    return 0
+  fi
+  if grep -qiE '(^|[/[:space:]])claude([[:space:]/-]|$)|claude-code|claude_code' <<<"$text"; then
+    echo "claude"
+    return 0
+  fi
+  return 1
+}
+
+detect_runner_from_process_tree() {
+  local p="${1:-$PPID}" depth=0 line next
+  while [[ -n "$p" && "$p" != "0" && $depth -lt 12 ]]; do
+    line="$(ps -o comm= -o args= -p "$p" 2>/dev/null || true)"
+    if [[ -n "$line" ]]; then
+      detect_runner_from_process_text "$line" && return 0
+    fi
+    next="$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ' || true)"
+    [[ -z "$next" || "$next" == "$p" ]] && break
+    p="$next"
+    depth=$((depth + 1))
+  done
+  return 1
+}
+
+# detect_runner — resolve the default runner via a 4-step cascade.
 # Echoes "<runner>|<method>" so callers can log how the choice was made.
 #   $1 — explicit pin (the --runner flag value); when non-empty short-circuits to "<pin>|pin"
 #   $2 — script path to inspect (defaults to $SCRIPT_DIR); allows tests to override
+#   $3 — optional process tree text fixture for tests; if present, real ps sniffing is skipped
 #
 # Cascade order:
-#   1. env-var sniff   — harness identifiers (CLAUDECODE / CLAUDE_CODE_*, CODEX_HOME / CODEX_SANDBOX*)
-#   2. path sniff      — script lives under a runner's plugin tree (~/.claude/... or ~/.codex/...)
-#   3. env fallback    — ${RED_AFK_RUNNER:-claude}, the historical last-resort
+#   1. env-var sniff     — harness identifiers (CLAUDECODE / CLAUDE_CODE_*, CODEX_*)
+#   2. process-tree sniff — the actual caller process is claude/codex
+#   3. path sniff        — script lives under a runner's plugin tree (~/.claude/... or ~/.codex/...)
+#   4. env fallback      — ${RED_AFK_RUNNER:-claude}, the historical last-resort
 detect_runner() {
   local pin="${1:-}"
   local src_path="${2:-${SCRIPT_DIR:-${BASH_SOURCE[0]}}}"
+  local process_runner=""
   if [[ -n "$pin" ]]; then
     echo "${pin}|pin"
     return 0
@@ -105,8 +137,16 @@ detect_runner() {
   if [[ -n "${CLAUDECODE:-}" || -n "${CLAUDE_CODE_ENTRYPOINT:-}" || -n "${CLAUDE_CODE_SSE_PORT:-}" ]]; then
     echo "claude|env-var"; return 0
   fi
-  if [[ -n "${CODEX_HOME:-}" || -n "${CODEX_SANDBOX:-}" || -n "${CODEX_SANDBOX_NETWORK_DISABLED:-}" ]]; then
+  if [[ -n "${CODEX_HOME:-}" || -n "${CODEX_SANDBOX:-}" || -n "${CODEX_SANDBOX_NETWORK_DISABLED:-}" || -n "${CODEX_MANAGED_BY_NPM:-}" ]]; then
     echo "codex|env-var"; return 0
+  fi
+  if [[ ${3+x} ]]; then
+    process_runner="$(detect_runner_from_process_text "$3" || true)"
+  else
+    process_runner="$(detect_runner_from_process_tree || true)"
+  fi
+  if [[ -n "$process_runner" ]]; then
+    echo "${process_runner}|process"; return 0
   fi
   if [[ "$src_path" == */.claude/* ]]; then
     echo "claude|path"; return 0
@@ -1394,6 +1434,7 @@ kill_tree() {
 # whole subtree.
 RED_AFK_WATCHDOG_GRACE_S="${RED_AFK_WATCHDOG_GRACE_S:-30}"
 SENTINEL_LINE_REGEX='^<promise>(DONE|BLOCKED)</promise>$'
+JSON_EVENT_LINE_REGEX='^[[:space:]]*\{'
 CLAUDE_ASSISTANT_TEXT_JQ='select(.type == "assistant").message.content[]? | select(.type == "text").text // empty'
 CODEX_ASSISTANT_TEXT_JQ='select(.type == "item.completed") | .item.text // empty'
 
@@ -1449,6 +1490,7 @@ run_codex() {
   local worktree="$1" prompt="$2"
   local last; last="$(mktemp)"
   local raw; raw="$(mktemp)"
+  local json; json="$(mktemp)"
   local log_target="${ITER_LOG:-/dev/null}"
 
   (
@@ -1458,6 +1500,8 @@ run_codex() {
       --output-last-message "$last" \
       "$prompt" </dev/null 2>&1 \
       | tee "$raw" \
+      | grep --line-buffered -E "$JSON_EVENT_LINE_REGEX" \
+      | tee "$json" \
       | jq --unbuffered -rj 'select(.type == "item.completed") | .item.text // empty | . + "\n"' \
         2>/dev/null \
       | tee -a "$log_target" \
@@ -1465,7 +1509,7 @@ run_codex() {
   ) &
   local pipe_pid=$!
 
-  run_sentinel_watchdog "$pipe_pid" "$raw" "$CODEX_ASSISTANT_TEXT_JQ" &
+  run_sentinel_watchdog "$pipe_pid" "$json" "$CODEX_ASSISTANT_TEXT_JQ" &
   local wd_pid=$!
 
   wait "$pipe_pid" 2>/dev/null || true
@@ -1473,7 +1517,7 @@ run_codex() {
   wait "$wd_pid" 2>/dev/null || true
 
   cat "$last" 2>/dev/null || echo ""
-  rm -f "$last" "$raw"
+  rm -f "$last" "$raw" "$json"
 }
 
 # ---------- feedback loops ----------

@@ -20,12 +20,13 @@ FIXTURES="$HERE/fixtures"
 
 # Predicate values mirror afk.sh — kept in sync manually.
 SENTINEL_LINE_REGEX='^<promise>(DONE|BLOCKED)</promise>$'
+JSON_EVENT_LINE_REGEX='^[[:space:]]*\{'
 CLAUDE_ASSISTANT_TEXT_JQ='select(.type == "assistant").message.content[]? | select(.type == "text").text // empty'
 CODEX_ASSISTANT_TEXT_JQ='select(.type == "item.completed") | .item.text // empty'
 
 # Sanity-check the constants in afk.sh haven't drifted from this test.
 afk_sh="$HERE/../afk.sh"
-for needle in "$SENTINEL_LINE_REGEX" "$CLAUDE_ASSISTANT_TEXT_JQ" "$CODEX_ASSISTANT_TEXT_JQ"; do
+for needle in "$SENTINEL_LINE_REGEX" "$JSON_EVENT_LINE_REGEX" "$CLAUDE_ASSISTANT_TEXT_JQ" "$CODEX_ASSISTANT_TEXT_JQ"; do
   if ! grep -qF "$needle" "$afk_sh"; then
     echo "FAIL  afk.sh missing expected predicate constant: $needle" >&2
     exit 1
@@ -55,6 +56,20 @@ check "claude/final DONE matches"              match   "$FIXTURES/claude-final-d
 check "claude/final BLOCKED matches"           match   "$FIXTURES/claude-final-blocked.jsonl" "$CLAUDE_ASSISTANT_TEXT_JQ"
 check "codex/mention-only does not match"      nomatch "$FIXTURES/codex-mention-only.jsonl"   "$CODEX_ASSISTANT_TEXT_JQ"
 check "codex/final DONE matches"               match   "$FIXTURES/codex-final-done.jsonl"     "$CODEX_ASSISTANT_TEXT_JQ"
+
+got="match"
+if ! grep -E "$JSON_EVENT_LINE_REGEX" "$FIXTURES/codex-banner-final-done.jsonl" \
+    | jq -r "$CODEX_ASSISTANT_TEXT_JQ" 2>/dev/null \
+    | grep -qE "$SENTINEL_LINE_REGEX"; then
+  got="nomatch"
+fi
+if [ "$got" = "match" ]; then
+  echo "PASS  codex/non-json banner is ignored  (expect=match)"
+  pass=$((pass + 1))
+else
+  echo "FAIL  codex/non-json banner is ignored  (expect=match got=$got)"
+  fail=$((fail + 1))
+fi
 
 echo
 echo "summary: $pass passed, $fail failed"

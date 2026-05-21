@@ -65,9 +65,10 @@ Run before the first iteration:
 3. **Generate the worker ID.** Literal `w` + 4 random characters from `[A-Z0-9]` (e.g. `wZ2R4`). On the astronomically unlikely chance the chosen ID already maps to a live `.red/tmp/work-{id}-*/afk.pid`, regenerate. Print the ID on the first line of the run: `worker: {id}`. All per-iteration paths interpolate `{id}` and the issue number `{N}`.
 4. Resolve the runner via the detection cascade:
    1. `--runner X` flag (pin) — wins over everything, logged as `detected via --runner pin`.
-   2. **Env-var sniff** — `CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`, or `CLAUDE_CODE_SSE_PORT` → `claude`; `CODEX_HOME`, `CODEX_SANDBOX`, or `CODEX_SANDBOX_NETWORK_DISABLED` → `codex`. Logged as `detected via env-var`.
-   3. **`$BASH_SOURCE` path sniff** — script lives under `~/.claude/...` → `claude`; under `~/.codex/...` → `codex`. Logged as `detected via path`.
-   4. **Env fallback** — `${RED_AFK_RUNNER:-claude}`. Logged as `detected via env-fallback`.
+   2. **Env-var sniff** — `CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`, or `CLAUDE_CODE_SSE_PORT` → `claude`; `CODEX_HOME`, `CODEX_SANDBOX`, `CODEX_SANDBOX_NETWORK_DISABLED`, or `CODEX_MANAGED_BY_NPM` → `codex`. Logged as `detected via env-var`.
+   3. **Process-tree sniff** — if the invoking process tree contains Claude Code, use `claude`; if it contains Codex, use `codex`. Logged as `detected via process`. This is the normal path for repo-local skill copies whose filesystem path is neutral.
+   4. **`$BASH_SOURCE` path sniff** — script lives under `~/.claude/...` → `claude`; under `~/.codex/...` → `codex`. Logged as `detected via path`.
+   5. **Env fallback** — `${RED_AFK_RUNNER:-claude}`. Logged as `detected via env-fallback`.
    The boot log prints one line per invocation: `runner: <runner> (detected via <method>)`. Load [`runner-claude.md`](runner-claude.md) or [`runner-codex.md`](runner-codex.md) so the spawn command is ready.
 5. Read [`SAFETY.md`](SAFETY.md). It is binding for every shell action the loop takes.
 6. Install signal handlers — SIGINT, SIGTERM, and normal exit all release any in-flight issue claim and preserve the active `work-{id}-i{N}/` directory before terminating.

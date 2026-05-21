@@ -21,7 +21,10 @@ The bypass flags are required because the inner agent must run unattended; the p
 
 ## Stdout Parsing
 
-Codex `--json` emits structured events. The relevant one:
+Codex `--json` is expected to emit structured events, but some builds print a
+non-JSON banner/status line before the JSONL stream. The orchestrator first
+keeps the raw stream for forensics, then filters to lines beginning with `{`
+before handing events to `jq`. The relevant JSON event is:
 
 ```jq
 # Live stream for header and stage detection:
