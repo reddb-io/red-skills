@@ -61,9 +61,9 @@ Paste the content, point to another path, or say "skip" and we'll grill on what 
 
 > **Q##:** [the question]
 > **Branches:** _(omit only when the question is genuinely open-ended)_
-> (a) [answer option A]
-> (b) [answer option B]
-> [if more options, add more branches]
+>  (a) [answer option A]
+>  (b) [answer option B]
+>  [if more options, add more branches]
 > **Recommend:** (a), because [one-sentence reason].
 > *(answer, redirect, or push back — I'll wait)*
 
