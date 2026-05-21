@@ -45,6 +45,24 @@ On any of those, the orchestrator emits `RUNNER_EXHAUSTED`, preserves the worktr
 
 `-C $WORKTREE` pins Codex to the worktree. The handoff file lives at `../handoff.md` (one level above the worktree, inside the iteration directory `.red/tmp/work-{id}-i{N}/`).
 
+## Task Mirror Sink
+
+The native Task mirror (ADR 0003, SKILL.md *Task Mirror*) is runner-specific: the
+`state-reader` and `mirror-reconciler` in [`scripts/lib/mirror.sh`](scripts/lib/mirror.sh)
+are shared with Claude unchanged; only the sink differs. The Codex sink is
+[`mirror_sink_codex`](scripts/lib/mirror.sh):
+
+- It branches on `codex_native_task_available`, the single mockable capability
+  probe. Codex ships no native background-task / progress surface today, so the
+  probe returns non-zero and the sink **falls back to the `monitor.sh` dashboard
+  plus a one-line notice** — no crash, no half-rendered state.
+- If a future Codex grows a native surface, override `codex_native_task_available`
+  to return 0; the sink then emits the same `mirror_plan` call descriptors the
+  Claude sink applies, to be driven against the Codex primitive.
+
+This is an explicit per-runner adapter, not a cross-runner abstraction (rejected
+in ADR 0003).
+
 ## Notes On The Bypass Flags
 
 `--dangerously-bypass-approvals-and-sandbox` is dangerous *only* if the rest of the pipeline isn't enforcing safety. `/afk` enforces:
