@@ -34,7 +34,7 @@ Show counts and one line per issue. Let the maintainer pick. **Stop after presen
 
 Execute these steps **in order**. Do not skip.
 
-1. **Gather context.** Read the issue body, all comments, labels, reporter, dates. Parse any prior triage notes — never re-ask resolved questions. Explore the codebase using the domain glossary and respect ADRs in the area. Read `.out-of-scope/*.md` and surface any prior rejection that resembles this issue.
+1. **Gather context.** Read the issue body, all comments, labels, reporter, dates. Parse any prior triage notes — never re-ask resolved questions. Explore the codebase using the domain glossary and respect ADRs in the area. Read `.out-of-scope/*.md` and surface any prior rejection that resembles this issue. **Then dedupe against memory** (see *Memory dedup* in `<supporting-info>`, optional): if the `memory` plugin is installed, recall the issue's key terms and surface any known problem, prior decision, or already-shipped fix that this report duplicates — a strong signal toward `wontfix`, `needs-info`, or a quick close.
 2. **Recommend.** Tell the maintainer your category role + state role recommendation with one-sentence reasoning, plus a brief codebase summary relevant to the issue. **Wait for direction.**
 3. **Reproduce (bugs only — mandatory).** Before any grilling, attempt reproduction: read steps, trace code, run tests. Report `repro confirmed` with code path, `repro failed`, or `insufficient detail` (strong `needs-info` signal). **Do not skip this for bugs.** A confirmed repro makes a much stronger agent brief.
 4. **Grill (only if needed).** If the issue needs fleshing out before it can move to a final state, run a `/start` session.
@@ -72,6 +72,24 @@ If prior triage notes exist on the issue: read them, check whether the reporter 
 
 - [AGENT-BRIEF.md](AGENT-BRIEF.md) — how to write durable agent briefs
 - [OUT-OF-SCOPE.md](OUT-OF-SCOPE.md) — how the `.out-of-scope/` knowledge base works
+
+## Memory dedup (optional — only if the `memory` plugin is installed)
+
+`memory` is a sibling plugin that, when present, holds the project's accumulated decisions, gotchas, and resolved problems. Triage is exactly where that pays off: a freshly-filed issue is often something the project already decided, already fixed, or already rejected. Recalling against it turns "is this a duplicate?" from memory-of-the-maintainer into a query.
+
+This is **best-effort and never a gate** — if `memory` is not installed, skip it silently; triage proceeds exactly as today (the `.out-of-scope/*.md` scan remains the always-on dedup path).
+
+```bash
+if [ -f .red/memory/config.json ]; then
+  _bridge="${CLAUDE_PLUGIN_ROOT:-}/scripts/memory-bridge.sh"
+  [ -f "$_bridge" ] || _bridge="$(git rev-parse --show-toplevel 2>/dev/null)/plugins/dev/scripts/memory-bridge.sh"
+  [ -f "$_bridge" ] && source "$_bridge" \
+    && MEMORY_REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" \
+       memory_recall . "<2–6 keywords from the issue title / symptom>"
+fi
+```
+
+`memory_recall` prints a ranked block or nothing and **always exits 0**. Fold any genuine match into your Recommend step (step 2), citing the recalled decision — don't just dump the list. Treat each hit as a claim made at store time: confirm it still holds before recommending `wontfix`/close on its strength. An empty result means "nothing stored", not "not a duplicate".
 
 ## Roles
 

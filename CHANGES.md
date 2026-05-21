@@ -6,6 +6,13 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 
 ---
 
+## afk, triage, diagnose (engineering) — soft-use the `memory` plugin (modified)
+
+- **status**: modified
+- **upstream**: afk `—`; triage `e74f006`; diagnose `e74f006`
+- **why**: Issue #57 (PRD #49). The `memory` plugin lives on top of `dev` to improve its processes — `/afk` recalling prior attempts/known fixes, `/triage` deduping against known problems, `/diagnose` surfacing past root causes. The integrations had to be wired without making `dev` depend on `memory`: the dependency stays one-directional (`memory` hard-requires `dev`; `dev` only soft-uses `memory`), and all three skills must behave exactly as today when `memory` is absent.
+- **what changed**: New shared bridge `plugins/dev/scripts/memory-bridge.sh` — `memory_available <root>` (two gates: `.red/memory/config.json` opt-in **and** a resolvable CLI via `$RED_MEMORY_CLI` → `memory` on PATH → sibling-plugin `dist/cli.js` → in-repo `$MEMORY_REPO_ROOT`) and `memory_recall <root> <query…>` (prints a ranked context block or nothing, **always exits 0** — a missing/uninitialized/erroring memory is an absent optimization, never a failure of the calling dev process). `/afk` AGENT-PROMPT.md Workflow step 1 (Read) recalls before planning; `/triage` Flow B step 1 (Gather context) dedupes recalled known-problems into the Recommend step; `/diagnose` recalls past root causes at the top of Phase 3 (Hypothesise) and stores the new root cause in Phase 6 — each gated, best-effort, silent when `memory` is absent. `dev`'s `plugin.json` deliberately does **not** list `memory` (one-directional guarantee enforced by absence). New `plugins/dev/scripts/tests/memory-bridge.test.sh` (17 assertions: resolution cascade, both detection gates, graceful no-op when absent/uninitialized/erroring, query passthrough) — green. ADR 0009 records the soft-use contract; CONTEXT.md notes the direction on the **Memory plugin** term. Refs #57.
+
 ## git-guardrails-claude-code (misc) — make the hook branch-lock aware (modified)
 
 - **status**: modified
