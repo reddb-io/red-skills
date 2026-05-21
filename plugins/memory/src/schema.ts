@@ -18,6 +18,18 @@ export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];
 
 export type Confidence = "EXTRACTED" | "INFERRED" | "AMBIGUOUS";
 
+/**
+ * Memory tier (PRD #66, issue #68). Resolves the contradiction between RedDB's
+ * auto-expiring TTL and the project's "no automatic deletion" guarantee:
+ *
+ * - `ephemeral` — transient session memory. Carries a TTL horizon
+ *   (`expires_at`) and stops surfacing once that horizon passes.
+ * - `durable` — stored facts and decisions. No TTL; persists indefinitely.
+ *   `memory:doctor` may *flag* a durable node as stale but never auto-deletes it.
+ * - `reasoning` — trace / why-note nodes. Like `durable`, no TTL.
+ */
+export type Tier = "ephemeral" | "durable" | "reasoning";
+
 export type NodeType =
   | "file"
   | "symbol"
@@ -81,10 +93,18 @@ export interface MemoryNodeProps {
   source?: string;
   language?: string;
   project?: string;
+  /** Memory tier; defaults on write per `defaultTier(node_type)`. */
+  tier?: Tier;
   created_at?: number;
   updated_at?: number;
   accessed_at?: number;
   access_count?: number;
+  /**
+   * TTL horizon (epoch ms) for `ephemeral` nodes only. Once `now >= expires_at`
+   * the node stops surfacing in any read path. Absent on `durable`/`reasoning`
+   * nodes, which persist indefinitely.
+   */
+  expires_at?: number;
   supersedes_rid?: number;
   /** dedupe hash (stable per source+content) */
   hash?: string;
@@ -135,3 +155,22 @@ export interface RecallResult {
 
 export const DEFAULT_IMPORTANCE = 0.5;
 export const PINNED_IMPORTANCE = 0.9;
+
+/** Default TTL horizon for `ephemeral` nodes: 24 hours of session lifetime. */
+export const DEFAULT_EPHEMERAL_TTL_MS = 86_400_000;
+
+/**
+ * Default tier for a node written without an explicit `tier` (issue #68):
+ * `session` nodes are transient → `ephemeral`; `why_note` trace nodes →
+ * `reasoning`; everything else (facts, decisions, code, …) → `durable`.
+ */
+export function defaultTier(node_type: NodeType): Tier {
+  switch (node_type) {
+    case "session":
+      return "ephemeral";
+    case "why_note":
+      return "reasoning";
+    default:
+      return "durable";
+  }
+}

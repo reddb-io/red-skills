@@ -67,6 +67,10 @@ _Avoid_: db mode, sql mode; confusing the `.rdb` store with a **Memory note** (g
 A single fact stored by `/memory:store` as one markdown file (`<timestamp>-<slug>.md`, YAML frontmatter + the fact as body) under the configured `notesDir`. In **Markdown-only mode** the note is the canonical store — human-readable and committable, not a rendered view of a graph. In **Graph mode** the equivalent unit is a graph node, not a note.
 _Avoid_: memory record, entry
 
+**Memory tier**:
+A property on every **Memory node** — `ephemeral | durable | reasoning` — that resolves the tension between RedDB's auto-expiring TTL and the project's "no automatic deletion" guarantee. `ephemeral` nodes (default for `session` types) carry a TTL horizon (`expires_at`) and stop surfacing once it passes; `durable` (the default for stored facts/decisions) and `reasoning` (`why_note` traces) carry no TTL and persist indefinitely. Defaulted on write per `defaultTier(node_type)`, overridable per node. `memory:doctor` flags stale `durable` nodes but never auto-deletes and never touches `ephemeral` ones (TTL owns them). Expiry is enforced client-side at the `listNodes` choke point because the embedded engine does not sweep KV TTL promptly — see ADR 0010. Introduced by issue #68 under PRD #66.
+_Avoid_: ttl class, expiry level, retention policy
+
 ## Relationships
 
 - An **Issue tracker** holds many **Issues**

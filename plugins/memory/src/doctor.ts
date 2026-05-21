@@ -60,7 +60,8 @@ function lastAccess(node: StoredNode, overlayAt: number | null): number {
 
 /**
  * Flag stale nodes: unaccessed for `staleDays`+ AND never recalled. Pinned
- * nodes (importance ≥ 0.8) are exempt. Read-only — no deletion.
+ * nodes (importance ≥ 0.8) and `ephemeral` nodes (which expire on their own TTL,
+ * issue #68) are exempt. Read-only — no deletion.
  */
 export async function diagnose(
   store: MemoryStore,
@@ -74,6 +75,10 @@ export async function diagnose(
   const stale: StaleNode[] = [];
 
   for (const node of nodes) {
+    // Ephemeral nodes expire on their own TTL horizon (issue #68); doctor only
+    // flags stale *durable*/`reasoning` knowledge, never the transient tier.
+    if (node.properties.tier === "ephemeral") continue;
+
     const importance = Number(node.properties.importance ?? 0);
     if (importance >= PINNED_IMPORTANCE_THRESHOLD) continue;
 
