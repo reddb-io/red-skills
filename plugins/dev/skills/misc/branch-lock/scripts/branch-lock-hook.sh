@@ -45,10 +45,12 @@ LOCK_BRANCH="$(lock_store_read "$LOCKFILE")" || exit 0   # absent => unlocked
 if [[ "$(classify_git_command "$LOCK_BRANCH" "$COMMAND")" == "block" ]]; then
   cat >&2 <<EOF
 BLOCKED by branch lock: this session is locked to '$LOCK_BRANCH'.
-The command '$COMMAND' would switch the agent away from the locked branch.
+The command '$COMMAND' would switch the agent away from the locked branch or
+discard working-tree changes (stash, clean -f, reset --hard, whole-tree restore).
 
-Allowed while locked: switching back to '$LOCK_BRANCH', 'git checkout -- <path>'
-(file restore), and 'git worktree add'. To change or release the lock, ask the
+Allowed while locked: switching back to '$LOCK_BRANCH', targeted file restore
+('git checkout -- <path>', 'git restore <path>'), read-only stash, dry-run clean,
+soft/mixed reset, and 'git worktree add'. To change or release the lock, ask the
 user — they drive it with '/branch-lock <branch>' or '/branch-lock clear'.
 EOF
   exit 2

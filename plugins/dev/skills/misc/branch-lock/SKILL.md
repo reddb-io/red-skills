@@ -85,7 +85,7 @@ branch-lock/
     ├── lib/
     │   ├── lock-store.sh          ← read/write/clear branch-lock.yaml
     │   ├── scope-resolver.sh      ← primary enforces, .red/tmp/work-*/ exempt
-    │   └── git-command-classifier.sh ← checkout/switch-other = block
+    │   └── git-command-classifier.sh ← branch-switch + work-loss family = block
     └── tests/
         ├── lock-store.test.sh
         ├── scope-resolver.test.sh
@@ -99,13 +99,20 @@ Locked to `<branch>`, in the primary checkout, the hook blocks:
 - `git checkout <other>` / `git switch <other>` — switching to any other branch
 - `git checkout -b <new>` / `git switch -c <new>` — leaving via a new branch
 - `git switch -` — switching to the previous branch
+- `git stash` / `git stash push` / `git stash save` — shelving away the working tree
+- `git clean -f` (any force flag: `-fd`, `-xfd`, `--force`) — deleting untracked files
+- `git reset --hard` — discarding the working tree
+- `git checkout .` / `git checkout -- .` / `git restore .` — whole-tree restore
 
 It allows (exit 0, silent):
 
 - `git checkout <branch>` / `git switch <branch>` — switching back to the lock target
-- `git checkout -- <path>` — file-level restore
+- `git checkout -- <path>` / `git restore <path>` — targeted file-level restore
+- `git stash list` / `git stash show` — read-only stash
+- `git clean -n` / `--dry-run` — non-destructive clean
+- `git reset --soft` / mixed reset, `git restore --staged <path>` — no working-tree loss
 - `git worktree add …` — worktrees are how `/afk` works
-- any non-checkout/non-switch command
+- any other command
 
 ## Tests
 
@@ -119,10 +126,10 @@ Each prints `summary: N passed, 0 failed` and exits non-zero on any failure.
 
 ## Scope of this slice
 
-This is the first end-to-end slice of PRD #59. It ships the lock-store,
-scope-resolver, classifier, hook, and `/branch-lock` command. Not yet included
-(later slices): the SessionStart prompt that offers to lock at session start,
-the additional work-losing blocks (`git stash` / `git clean` / `git reset --hard`),
-the PRD/issue branch pin read by `/afk`, and making `git-guardrails` lock-aware.
+Part of PRD #59. The lock-store, scope-resolver, classifier (branch-switch +
+work-loss family), hook, and `/branch-lock` command are shipped. Not yet
+included (later slices): the SessionStart prompt that offers to lock at session
+start, the PRD/issue branch pin read by `/afk`, and making `git-guardrails`
+lock-aware.
 
 </supporting-info>
