@@ -15,6 +15,15 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 
 ---
 
+## afk (engineering) — Task mirror Codex sink (native primitive or monitor.sh fallback)
+
+- **status**: modified
+- **upstream**: —
+- **why**: Issue #45 (PRD #42, ADR `0003`). The native Task mirror is runner-specific, mirroring the `runner-claude.md` / `runner-codex.md` split. #43 shipped the Claude sink (agent-driven `TaskCreate`/`TaskUpdate` consuming `mirror_plan`); a Codex session had no mirror at all and silently fell through. ADR 0003 requires an explicit per-runner adapter — no cross-runner abstraction.
+- **what changed**: Added the Codex sink to `scripts/lib/mirror.sh` — `mirror_sink_codex <root> [tracked]` plus its single mockable capability probe `codex_native_task_available` (returns non-zero today; Codex ships no native task surface). Native-available route emits the **same `mirror_plan` call descriptors** the Claude sink applies (reader + reconciler reused unchanged, not reimplemented); no-primitive route falls back to the `monitor.sh` dashboard and prints one notice line, swallowing a `monitor.sh` hiccup so the tick never crashes and emitting zero native calls (no half-state). Always returns 0 (clean degrade). SKILL.md *Task Mirror* gains a binding *Codex sink* paragraph (bare-terminal still skips silently; Codex now falls back rather than skipping); `runner-codex.md` gains a *Task Mirror Sink* section. New `scripts/tests/mirror-codex-sink.test.sh` (11 assertions: default no-primitive, fallback exits 0 + one notice + no half-state, native-mock emits a TaskCreate per live worker and matches `mirror_plan` byte-for-byte, empty-root fallback). No change to `afk.sh`, `monitor.sh`, or the reader/reconciler. Refs #45.
+
+---
+
 ## afk (engineering) — Task mirror re-hydrates native tasks on session reopen
 
 - **status**: modified

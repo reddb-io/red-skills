@@ -552,7 +552,14 @@ An empty plan means nothing changed since the last tick — apply no calls. Beca
 
 **Re-hydration on session reopen.** A native task dies with the Claude Code session; the `nohup` AFK worker does not. When a session opens with workers still running, `TaskList` (step 2) returns no mirror-owned tasks, so the tracked set is **empty** and `mirror_plan` reconciles cold — emitting a `TaskCreate` for every live worker. The status bar recovers the per-worker tasks with no operator action. This is the same path as steady-state, not a new one: only workers whose `afk.pid` is alive re-hydrate (dead workers are untracked-terminal on a cold tick → no ghost task), and the next tick is idempotent because the freshly-created tasks now form the tracked set.
 
-When `TaskCreate` / `TaskUpdate` are unavailable (Codex runner, or invoked outside Claude Code), **skip the mirror silently** — the native task surface only exists under Claude Code. The textual dashboard from `monitor.sh` is the fallback view there.
+When `TaskCreate` / `TaskUpdate` are unavailable because the session is **outside any runner** (a bare terminal), **skip the mirror silently** — there is no native surface to drive, and `monitor.sh` is already the canonical view.
+
+**Codex sink (runner-specific — binding).** The mirror is per-runner, mirroring the `runner-claude.md` / `runner-codex.md` split (ADR 0003). Under Codex the `state-reader` and `mirror-reconciler` are reused unchanged — only the sink differs. After rendering the dashboard, the Codex agent calls [`mirror_sink_codex "$PWD" "$tracked_jsonl"`](scripts/lib/mirror.sh) instead of the Claude `TaskCreate`/`TaskUpdate` loop:
+
+- If Codex grows a native background-task surface, override `codex_native_task_available` to return 0 and the sink emits the **same `mirror_plan` call descriptors** the Claude sink applies — apply them against the Codex primitive.
+- Otherwise (today's reality), the sink falls back to the `monitor.sh` dashboard and emits a one-line notice. No native calls are emitted, so there is no half-rendered state, and a `monitor.sh` hiccup is swallowed so the tick never crashes.
+
+Do **not** invent a cross-runner task abstraction (rejected in ADR 0003) — keep the adapter explicitly per-runner.
 
 ## Handoff File Template
 

@@ -170,3 +170,52 @@ mirror_plan() {
     else empty end
   '
 }
+
+# ----------------------------------------------------------------------
+# Codex sink (issue #45)
+# ----------------------------------------------------------------------
+#
+# The sink is the only runner-specific layer (ADR 0003): mirror_read_workers and
+# mirror_reconcile — and the mirror_plan that ties them together — are reused
+# unchanged. The Claude Code sink lives in SKILL.md and applies the mirror_plan
+# descriptors via the TaskCreate/TaskUpdate harness tools. The Codex sink below
+# is its sibling. There is deliberately NO cross-runner abstraction (rejected in
+# ADR 0003): each runner gets an explicit adapter.
+
+# codex_native_task_available
+# Single mockable boundary the Codex sink branches on: does this Codex expose a
+# native background-task / progress surface the mirror can drive? Codex ships no
+# such primitive today, so the honest default is "no" (returns non-zero). A future
+# Codex that grows one — or a test — overrides this function to return 0.
+codex_native_task_available() {
+  return 1
+}
+
+# mirror_sink_codex <project_root> [tracked_jsonl]
+# Codex half of the runner-specific Task-mirror sink. Two routes:
+#
+#   native surface available → print the call plan (mirror_plan) for the Codex
+#     agent to apply against its primitive — the same descriptors the Claude sink
+#     consumes, so the reader + reconciler are reused, never reimplemented.
+#   no native surface (today) → fall back to the monitor.sh dashboard rendering
+#     and emit a single notice line. No native call descriptors are emitted, so
+#     there is no half-rendered state; a monitor.sh hiccup is swallowed so the
+#     fallback never crashes the monitor tick.
+#
+# Always returns 0: the fallback is a clean degrade, not an error.
+mirror_sink_codex() {
+  local root="${1:-$(pwd)}" tracked="${2:-}"
+
+  if codex_native_task_available; then
+    mirror_plan "$root" "$tracked"
+    return 0
+  fi
+
+  local monitor
+  monitor="$(dirname "${BASH_SOURCE[0]}")/../monitor.sh"
+  if [[ -f "$monitor" ]]; then
+    RED_AFK_MONITOR_COMPACT=1 bash "$monitor" --once "$root" 2>/dev/null || true
+  fi
+  printf 'afk: Codex has no native task surface — mirroring via the monitor.sh dashboard instead.\n'
+  return 0
+}
