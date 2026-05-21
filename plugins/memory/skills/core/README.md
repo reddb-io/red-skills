@@ -8,3 +8,5 @@ The minimal memory surface: set it up, write a fact, read it back.
 | **[store](./store/SKILL.md)** | Save a fact as a plain markdown note under `.red/memory/notes/`. |
 | **[recall](./recall/SKILL.md)** | Full-text search over the stored notes, ranked by relevance. |
 | **[ingest](./ingest/SKILL.md)** | Walk a repo and populate the graph from code symbols + markdown structure (graph mode). |
+| **[doctor](./doctor/SKILL.md)** | List stale nodes (long-unaccessed, never recalled) and prune them after confirmation (graph mode). |
+| **[export](./export/SKILL.md)** | Export the graph to a navigable graph.html + graph.json + audit.md (graph mode). |

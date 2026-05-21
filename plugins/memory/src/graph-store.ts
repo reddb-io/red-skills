@@ -263,6 +263,68 @@ export class MemoryStore {
   }
 
   // -------------------------------------------------------------------
+  // Access tracking (decay)
+  // -------------------------------------------------------------------
+
+  /**
+   * Record that `rids` were just recalled: bump each node's access count and
+   * stamp `accessed_at = now`. Kept in a KV overlay rather than mutating the
+   * node row — graph collections in this engine reject `UPDATE` by rid (ADR
+   * 0007, same constraint as the dedupe index), and a node re-`INSERT` would
+   * fork the dedupe hash. `accessRecord` reads the overlay back; `doctor` and
+   * recall ranking layer it over the node's write-time `created_at`.
+   */
+  async recordAccess(rids: number[]): Promise<void> {
+    const now = Date.now();
+    await Promise.all(
+      rids.map(async (rid) => {
+        const prev = await this.accessRecord(rid);
+        await this.kv().put(accessKey(rid), {
+          count: (prev?.count ?? 0) + 1,
+          accessed_at: now,
+        });
+      }),
+    );
+  }
+
+  /** Read the access overlay for `rid`: how many times it was recalled and when
+   *  last, or null if it has never been recalled since it was written. KV hands
+   *  object values back as a JSON string, so parse before reading. */
+  async accessRecord(rid: number): Promise<{ count: number; accessed_at: number } | null> {
+    const raw = await this.kv().get(accessKey(rid));
+    if (raw == null) return null;
+    const v = (typeof raw === "string" ? JSON.parse(raw) : raw) as {
+      count?: unknown;
+      accessed_at?: unknown;
+    };
+    return { count: Number(v.count ?? 0), accessed_at: Number(v.accessed_at ?? 0) };
+  }
+
+  // -------------------------------------------------------------------
+  // Delete (prune)
+  // -------------------------------------------------------------------
+
+  /**
+   * Delete a node and its KV markers. `DELETE … WHERE rid` is a no-op on graph
+   * collections (ADR 0007 — only `label`/`node_type` filter), so we delete by
+   * the (label, node_type) pair, which is unique per stored fact in this graph.
+   * Edges pointing at the node are left as dangling rows; recall/traversal drop
+   * any rid that no longer resolves against `listNodes`, so they never surface.
+   * Used only by `memory:doctor` after explicit confirmation — never automatic.
+   */
+  async deleteNode(node: StoredNode): Promise<void> {
+    await this.db.query(
+      `DELETE FROM ${COLLECTIONS.nodes} WHERE label = $1 AND node_type = $2`,
+      node.label,
+      node.node_type,
+    );
+    const hash = node.properties.hash;
+    if (typeof hash === "string") await this.kv().delete(nodeHashKey(hash));
+    await this.kv().delete(accessKey(node.rid));
+    await this.kv().delete(supersededKey(node.rid));
+  }
+
+  // -------------------------------------------------------------------
   // Docs
   // -------------------------------------------------------------------
 
@@ -520,4 +582,9 @@ function edgeKey(from: number, to: number, label: string): string {
 /** KV key marking a node as superseded (oldRid → newRid). */
 function supersededKey(rid: number): string {
   return `node:superseded:${rid}`;
+}
+
+/** KV key for a node's access overlay (recall count + last-accessed time). */
+function accessKey(rid: number): string {
+  return `node:access:${rid}`;
 }

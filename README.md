@@ -589,6 +589,8 @@ alongside `dev`, then run `memory init`.
 | **[store](./plugins/memory/skills/core/store/SKILL.md)** | `/memory:store <fact>` — save a fact (markdown note, or a deduped graph node). |
 | **[recall](./plugins/memory/skills/core/recall/SKILL.md)** | `/memory:recall <query>` — ranked search over stored memory (notes, or the graph with supersede-aware, neighborhood-expanded results). |
 | **[ingest](./plugins/memory/skills/core/ingest/SKILL.md)** | `/memory:ingest <path>` — walk a repo into the graph: code symbols + markdown structure with their edges (graph mode). |
+| **[doctor](./plugins/memory/skills/core/doctor/SKILL.md)** | `/memory:doctor` — flag stale nodes (long-unaccessed, never recalled) and prune them after confirmation (graph mode). |
+| **[export](./plugins/memory/skills/core/export/SKILL.md)** | `/memory:export` — export the graph to a navigable graph.html + graph.json + audit.md (graph mode). |
 
 See [plugins/memory/README.md](./plugins/memory/README.md) and, for the RedDB
 graph-write constraints, [ADR 0007](./.red/adr/0007-reddb-graph-writes-via-multi-model-dml.md).

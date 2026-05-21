@@ -37,12 +37,28 @@ node plugins/memory/dist/cli.js path <from> <to>        # shortest path
 node plugins/memory/dist/cli.js stats                   # node/edge counts
 ```
 
+## Maintenance & export (graph mode)
+
+```bash
+node plugins/memory/dist/cli.js doctor                  # list stale nodes
+node plugins/memory/dist/cli.js doctor --prune          # prune (confirms first)
+node plugins/memory/dist/cli.js export [<out-dir>]      # graph.json + graph.html + audit.md
+```
+
+`doctor` flags nodes unaccessed for 90+ days (`--stale-days N` to change) that
+have never been recalled, and prunes them **only after explicit confirmation** —
+never automatically. Pinned nodes (`importance >= 0.8`) are exempt. Recall bumps
+each hit's access counter, so frequently-recalled nodes stay fresh.
+
+`export` writes a self-contained, navigable `graph.html` (data inlined, opens
+from disk — no server) alongside `graph.json` and a health-summary `audit.md`.
+
 ## MCP server
 
 `memory-mcp` speaks MCP over stdio and exposes the same surface to agents:
 `memory_recall`, `memory_store`, `memory_search`, `memory_traverse`,
 `memory_neighbors`, `memory_path`, `memory_ask`, `memory_export`,
-`memory_stats`, `memory_supersede`. `memory_recall` returns a ready-to-inject
+`memory_doctor`, `memory_stats`, `memory_supersede`. `memory_recall` returns a ready-to-inject
 markdown context block plus ranked nodes; `memory_ask` is the one LLM-backed
 verb (it needs an engine API key and degrades gracefully without one).
 
@@ -64,6 +80,8 @@ RED_MEMORY_URI=file:///abs/graph.rdb \
 | **[store](./skills/core/store/SKILL.md)** | Save a fact (markdown note or graph node). |
 | **[recall](./skills/core/recall/SKILL.md)** | Ranked search over stored memory. |
 | **[ingest](./skills/core/ingest/SKILL.md)** | Walk a repo into the graph — code symbols + markdown structure (graph mode). |
+| **[doctor](./skills/core/doctor/SKILL.md)** | Flag stale nodes and prune them after confirmation (graph mode). |
+| **[export](./skills/core/export/SKILL.md)** | Export the graph to a navigable graph.html + graph.json + audit.md (graph mode). |
 
 ## Build
 

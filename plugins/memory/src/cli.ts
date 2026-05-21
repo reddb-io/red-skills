@@ -2,7 +2,9 @@
 import { isAbsolute, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { readConfig, resolveNotesDir, resolveStoreUri } from "./config.js";
+import { diagnose, prune } from "./doctor.js";
 import { neighbors, path as shortestPath, search, traverse } from "./engine.js";
+import { exportGraph } from "./export.js";
 import { graphRecall } from "./graph-recall.js";
 import { MemoryStore, factToNode } from "./graph-store.js";
 import { ingestProject } from "./ingest.js";
@@ -24,6 +26,8 @@ Usage:
   memory traverse <label>           [--root <dir>] [--depth N] [--strategy bfs|dfs] [--direction ...]
   memory path <from> <to>           [--root <dir>] [--algorithm bfs|dijkstra]
   memory stats                      [--root <dir>]
+  memory doctor                     [--root <dir>] [--stale-days N] [--prune] [--yes]
+  memory export [<out-dir>]         [--root <dir>]
 
 Two storage modes: markdown-only (plain notes, no engine) and graph (a typed
 knowledge graph over a per-project RedDB store). Run \`memory init\` once to pick
@@ -303,6 +307,73 @@ async function runStats(args: ParsedArgs): Promise<void> {
   }
 }
 
+async function runDoctor(args: ParsedArgs): Promise<void> {
+  const { store } = await openGraphStore(args);
+  try {
+    const staleDays = intFlag(args.flags, "stale-days") ?? 90;
+    const report = await diagnose(store, { staleDays });
+    if (report.stale.length === 0) {
+      console.log(
+        `memory: healthy — 0 of ${report.totalNodes} node(s) stale (unaccessed ${staleDays}+ days, never recalled)`,
+      );
+      return;
+    }
+    console.log(
+      `memory: ${report.stale.length} of ${report.totalNodes} node(s) stale (unaccessed ${staleDays}+ days, never recalled):`,
+    );
+    for (const s of report.stale) {
+      console.log(`  ${s.rid} (${s.node_type}) ${s.title} — ${s.ageDays}d idle`);
+    }
+
+    if (args.flags.prune !== true) {
+      console.log(`\nRe-run with --prune to delete these (asks for confirmation first).`);
+      return;
+    }
+
+    // Prune only after explicit confirmation. --yes skips the prompt for
+    // non-interactive use; otherwise require a typed "yes" — never auto-delete.
+    let confirmed = args.flags.yes === true;
+    if (!confirmed) {
+      if (!process.stdin.isTTY) {
+        console.log(
+          `\nrefusing to prune without confirmation — re-run with --yes in a non-interactive shell`,
+        );
+        return;
+      }
+      const rl = createInterface({ input: process.stdin, output: process.stdout });
+      const answer = (
+        await rl.question(`\nDelete ${report.stale.length} stale node(s)? Type "yes" to confirm: `)
+      ).trim();
+      rl.close();
+      confirmed = answer === "yes";
+    }
+    if (!confirmed) {
+      console.log("memory: aborted — nothing deleted");
+      return;
+    }
+    const { pruned } = await prune(store, report.stale);
+    console.log(`memory: pruned ${pruned} stale node(s)`);
+  } finally {
+    await store.close();
+  }
+}
+
+async function runExport(args: ParsedArgs): Promise<void> {
+  const rootDir = rootOf(args.flags);
+  const target = args.positional[0] ?? ".red/memory/export";
+  const outDir = isAbsolute(target) ? target : resolve(rootDir, target);
+  const { store } = await openGraphStore(args);
+  try {
+    const result = await exportGraph(store, outDir);
+    console.log(`memory: exported ${result.nodes} node(s), ${result.edges} edge(s)`);
+    console.log(`  graph:  ${result.htmlPath}`);
+    console.log(`  json:   ${result.jsonPath}`);
+    console.log(`  audit:  ${result.auditPath}`);
+  } finally {
+    await store.close();
+  }
+}
+
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   switch (args.command) {
@@ -324,6 +395,10 @@ async function main(): Promise<void> {
       return runPath(args);
     case "stats":
       return runStats(args);
+    case "doctor":
+      return runDoctor(args);
+    case "export":
+      return runExport(args);
     case undefined:
     case "help":
     case "--help":
