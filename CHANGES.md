@@ -6,6 +6,13 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 
 ---
 
+## afk (engineering) — honour a PRD/issue pinned branch for base + merge (modified)
+
+- **status**: modified
+- **upstream**: —
+- **why**: Issue #64 (PRD #59). `/afk` always based worktrees on `origin/main` and merged back into `main`. Work items that target a long-lived feature branch had no way to declare it, so every slice landed on `main` and a human had to move it.
+- **what changed**: New pure module `scripts/lib/pin-reader.sh` — `pin_parse_branch` (canonical `branch:` line, list-marker/backtick/quote tolerant, prose-safe), `pin_parse_parent_prd` (`PRD #N` from the `## Parent` convention), and `pin_resolve` (inheritance chain: issue's own pin → parent PRD's pin → `main`). `afk.sh` sources it and adds `resolve_pinned_branch`, the only side effect (fetches the parent PRD body over `gh` only when the issue carries no pin). `process_issue` resolves the pinned branch and bases the worktree on `origin/{pinned}`; `do_merge` gains a `target` param and, when the target is not `main`, switches the primary checkout onto it for the merge/push and **restores `main` on every exit path** (success, conflict-abort, push-reject, hook-abort) so the startup precheck invariant holds. `merge_resolve_conflict` takes the target so its prompt names the right branch. No-pin resolves to `main`, so default behaviour is unchanged. New `scripts/tests/pin-reader.test.sh` (18 assertions: parse + reject-prose, PRD→issue inheritance with override, default-main). Full afk suite green except the pre-existing-RED `statusline.test.sh` (unrelated terminal-escape artifact). ADR 0008 records the merge-to-pinned decision; CONTEXT.md gains the **Pinned branch** term. Refs #64.
+
 ## memory plugin — graph mode: core graph-store over RedDB (core)
 
 - **status**: added
