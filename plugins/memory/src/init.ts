@@ -5,7 +5,9 @@ import {
   DEFAULT_NOTES_DIR,
   DEFAULT_STORE_PATH,
   HOOKS_OFF,
+  type HookChoice,
   type MemoryConfig,
+  resolveHooks,
   resolveNotesDir,
   resolveStoreUri,
   writeConfig,
@@ -59,12 +61,19 @@ export interface GraphOptions {
   storePath?: string;
   /** Project tag stamped on every node. Defaults to the repo dir name. */
   project?: string;
+  /**
+   * The wizard's "turn hooks on?" answer. `true` enables all four auto-firing
+   * hooks; a partial set enables a subset; `false`/absent leaves them all off.
+   * Resolved through {@link resolveHooks} so the gating is centralized.
+   */
+  hooks?: HookChoice;
 }
 
 /**
  * Build the config object for graph mode: a per-project RedDB store, RedDB
- * required. Hooks and MCP stay off in this slice (later PRD #49 work). Pure —
- * no filesystem side effects, so tests can assert the gating directly.
+ * required. Hooks default off and are turned on only by an explicit `hooks`
+ * opt-in. Pure — no filesystem side effects, so tests can assert the gating
+ * directly.
  */
 export function graphConfig(opts: GraphOptions = {}): MemoryConfig {
   return {
@@ -72,7 +81,7 @@ export function graphConfig(opts: GraphOptions = {}): MemoryConfig {
     mode: "graph",
     notesDir: DEFAULT_NOTES_DIR,
     storePath: opts.storePath ?? DEFAULT_STORE_PATH,
-    hooks: { ...HOOKS_OFF },
+    hooks: resolveHooks("graph", opts.hooks),
     mcp: false,
     reddb: true,
   };

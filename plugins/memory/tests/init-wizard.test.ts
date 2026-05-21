@@ -3,8 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { rm } from "node:fs/promises";
-import { configPath, readConfig } from "../src/config.js";
-import { initMarkdownOnly, markdownOnlyConfig } from "../src/init.js";
+import { configPath, HOOKS_ALL_ON, HOOKS_OFF, readConfig, resolveHooks } from "../src/config.js";
+import { graphConfig, initMarkdownOnly, markdownOnlyConfig } from "../src/init.js";
 
 const roots: string[] = [];
 async function tempRoot(): Promise<string> {
@@ -55,5 +55,32 @@ describe("markdown-only init", () => {
   test("readConfig returns null before init", async () => {
     const root = await tempRoot();
     expect(await readConfig(root)).toBeNull();
+  });
+});
+
+describe("hook gating — enable/disable choices produce the right active set", () => {
+  test("markdown-only never gets hooks, whatever the choice", () => {
+    expect(resolveHooks("markdown-only", true)).toEqual(HOOKS_OFF);
+    expect(resolveHooks("markdown-only", { sessionStart: true })).toEqual(HOOKS_OFF);
+    expect(markdownOnlyConfig().hooks).toEqual(HOOKS_OFF);
+  });
+
+  test("graph mode honors the opt-in: all on, all off, or a subset", () => {
+    expect(resolveHooks("graph", true)).toEqual(HOOKS_ALL_ON);
+    expect(resolveHooks("graph", false)).toEqual(HOOKS_OFF);
+    expect(resolveHooks("graph", undefined)).toEqual(HOOKS_OFF);
+    expect(resolveHooks("graph", { sessionStart: true, stop: true })).toEqual({
+      sessionStart: true,
+      postToolUse: false,
+      stop: true,
+      preCompact: false,
+    });
+  });
+
+  test("graphConfig defaults hooks off but enables them on opt-in", () => {
+    expect(graphConfig().hooks).toEqual(HOOKS_OFF);
+    expect(graphConfig({ hooks: true }).hooks).toEqual(HOOKS_ALL_ON);
+    expect(graphConfig({ hooks: { preCompact: true } }).hooks.preCompact).toBe(true);
+    expect(graphConfig({ hooks: { preCompact: true } }).hooks.stop).toBe(false);
   });
 });

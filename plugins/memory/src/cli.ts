@@ -5,6 +5,8 @@ import { readConfig, resolveNotesDir, resolveStoreUri } from "./config.js";
 import { diagnose, prune } from "./doctor.js";
 import { neighbors, path as shortestPath, search, traverse } from "./engine.js";
 import { exportGraph } from "./export.js";
+import { formatOutput, parseInput, type RawPayload } from "./hook-adapters.js";
+import { dispatch, type HookEvent, type Runner } from "./hook-runtime.js";
 import { graphRecall } from "./graph-recall.js";
 import { MemoryStore, factToNode } from "./graph-store.js";
 import { ingestProject } from "./ingest.js";
@@ -15,7 +17,7 @@ import { slugify, storeNote } from "./store.js";
 const USAGE = `memory — persistent memory for code agents
 
 Usage:
-  memory init [--mode markdown-only|graph] [--root <dir>] [--yes]
+  memory init [--mode markdown-only|graph] [--hooks] [--root <dir>] [--yes]
   memory store <fact...>            [--root <dir>]
   memory recall <query...>          [--root <dir>] [--limit N]
   memory ingest <path>              [--root <dir>] [--max-files N]
@@ -28,6 +30,9 @@ Usage:
   memory stats                      [--root <dir>]
   memory doctor                     [--root <dir>] [--stale-days N] [--prune] [--yes]
   memory export [<out-dir>]         [--root <dir>]
+
+  Auto-firing hooks (invoked by the plugin manifest, reads payload on stdin):
+  memory hook <event> --runner <claude|codex>   [--root <dir>]
 
 Two storage modes: markdown-only (plain notes, no engine) and graph (a typed
 knowledge graph over a per-project RedDB store). Run \`memory init\` once to pick
@@ -101,11 +106,15 @@ async function runInit(args: ParsedArgs): Promise<void> {
   }
 
   if (mode === "graph") {
-    const result = await initGraph(rootDir);
+    // Hooks are opt-in: `--hooks` (or `--hooks all`) turns all four on; absent
+    // leaves them off. markdown-only never gets hooks regardless.
+    const hooks = args.flags.hooks === true || args.flags.hooks === "all";
+    const result = await initGraph(rootDir, { hooks });
+    const on = Object.values(result.config.hooks).some(Boolean);
     console.log(`memory: initialized graph mode`);
     console.log(`  config: ${result.configPath}`);
     console.log(`  store:  ${result.storeUri}`);
-    console.log(`  hooks:  off    mcp: off    reddb: required`);
+    console.log(`  hooks:  ${on ? "on" : "off"}    mcp: off    reddb: required`);
     return;
   }
 
@@ -374,6 +383,48 @@ async function runExport(args: ParsedArgs): Promise<void> {
   }
 }
 
+/** Read all of stdin (the runner's hook payload) into a string. */
+async function readStdin(): Promise<string> {
+  if (process.stdin.isTTY) return "";
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+const HOOK_EVENTS: readonly HookEvent[] = ["SessionStart", "PostToolUse", "Stop", "PreCompact"];
+
+/**
+ * The hook entrypoint the plugin manifests wire to. Reads the runner's JSON
+ * payload from stdin, dispatches the gated handler, and prints the runner's
+ * output shape. Designed to never break a turn: any failure (bad JSON, store
+ * error, unknown event) prints `{}` and exits 0, so a misconfigured or
+ * uninitialized repo is silent.
+ */
+async function runHook(args: ParsedArgs): Promise<void> {
+  const event = args.positional[0] as HookEvent | undefined;
+  const runner: Runner = args.flags.runner === "codex" ? "codex" : "claude";
+  if (!event || !HOOK_EVENTS.includes(event)) {
+    process.stdout.write("{}");
+    return;
+  }
+  try {
+    const raw = await readStdin();
+    const payload = (raw.trim() ? JSON.parse(raw) : {}) as RawPayload;
+    const rootDir =
+      rootOf(args.flags) !== process.cwd()
+        ? rootOf(args.flags)
+        : typeof payload.cwd === "string"
+          ? payload.cwd
+          : process.cwd();
+    const input = await parseInput(runner, event, payload);
+    const result = await dispatch(input, rootDir);
+    process.stdout.write(formatOutput(runner, event, result));
+  } catch {
+    // A hook must never abort the agent's turn — fail open, silently.
+    process.stdout.write("{}");
+  }
+}
+
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   switch (args.command) {
@@ -399,6 +450,8 @@ async function main(): Promise<void> {
       return runDoctor(args);
     case "export":
       return runExport(args);
+    case "hook":
+      return runHook(args);
     case undefined:
     case "help":
     case "--help":
