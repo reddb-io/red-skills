@@ -29,6 +29,8 @@ source "$SCRIPT_DIR/lib/merge.sh"
 source "$SCRIPT_DIR/lib/envelope.sh"
 # shellcheck source=./lib/history.sh
 source "$SCRIPT_DIR/lib/history.sh"
+# shellcheck source=./lib/pin-reader.sh
+source "$SCRIPT_DIR/lib/pin-reader.sh"
 
 # ---------- arg parsing ----------
 RUNNER=""
@@ -1488,22 +1490,40 @@ feedback() {
 
 # ---------- merge & push ----------
 do_merge() {
-  local branch="$1" n="$2" title="$3"
+  local branch="$1" n="$2" title="$3" target="${4:-main}"
 
-  # dirty primary → snapshot commit
+  # dirty primary → snapshot commit (on whatever branch is checked out — main).
   if [[ -n "$(git -C "$PROJECT_ROOT" status --porcelain)" ]]; then
     git -C "$PROJECT_ROOT" add -A
     git -C "$PROJECT_ROOT" commit -m "chore(afk): pre-merge snapshot for #${n}"
   fi
 
-  git -C "$PROJECT_ROOT" fetch origin main --quiet
+  git -C "$PROJECT_ROOT" fetch origin "$target" --quiet
 
-  # Integrate the freshly-fetched origin/main into local main BEFORE merging.
-  # `git fetch` only moves the origin/main ref; without this the worker branch
-  # would merge onto the stale boot-time HEAD and the eventual push would be
-  # rejected non-fast-forward whenever origin moved mid-run (issue #37).
-  if ! merge_integrate_origin "$PROJECT_ROOT" origin main; then
-    log "✗ #$n could not integrate origin/main before merge (diverged/conflict) — aborting merge"
+  # The merge happens on the checked-out branch in the primary checkout, which
+  # the precheck pins to `main`. When the work item is pinned to another branch
+  # (issue #64) we switch the primary checkout onto the pinned target for the
+  # merge, then restore it to `main` before returning, so the invariant holds.
+  local restore_branch=""
+  local cur; cur="$(git -C "$PROJECT_ROOT" branch --show-current)"
+  if [[ "$cur" != "$target" ]]; then
+    if git -C "$PROJECT_ROOT" show-ref --verify --quiet "refs/heads/$target"; then
+      git -C "$PROJECT_ROOT" switch "$target" >/dev/null 2>&1 \
+        || { log "✗ #$n could not switch primary checkout to '$target' — aborting merge"; return 1; }
+    else
+      git -C "$PROJECT_ROOT" switch -c "$target" --track "origin/$target" >/dev/null 2>&1 \
+        || { log "✗ #$n could not create local '$target' from origin/$target — aborting merge"; return 1; }
+    fi
+    restore_branch="$cur"
+  fi
+
+  # Integrate the freshly-fetched origin/<target> into local <target> BEFORE
+  # merging. `git fetch` only moves the origin ref; without this the worker
+  # branch would merge onto the stale boot-time HEAD and the eventual push would
+  # be rejected non-fast-forward whenever origin moved mid-run (issue #37).
+  if ! merge_integrate_origin "$PROJECT_ROOT" origin "$target"; then
+    log "✗ #$n could not integrate origin/$target before merge (diverged/conflict) — aborting merge"
+    [[ -n "$restore_branch" ]] && git -C "$PROJECT_ROOT" switch "$restore_branch" >/dev/null 2>&1 || true
     return 1
   fi
 
@@ -1515,11 +1535,12 @@ do_merge() {
   if ! run_lifecycle_hook pre-merge "RED_AFK_MERGE_BASE=${merge_base}"; then
     local hook_rc=$?
     log "✗ pre-merge hook failed (rc=$hook_rc) for #$n — aborting merge"
+    [[ -n "$restore_branch" ]] && git -C "$PROJECT_ROOT" switch "$restore_branch" >/dev/null 2>&1 || true
     return 1
   fi
 
   # Capture the integrated tip so a rejected push can be rolled back to it,
-  # leaving no orphan merge commit on local main.
+  # leaving no orphan merge commit on the target branch.
   local pre_merge_sha
   pre_merge_sha="$(git -C "$PROJECT_ROOT" rev-parse HEAD)"
 
@@ -1529,38 +1550,44 @@ do_merge() {
     # Conflict → one-shot inner-agent resolver (SKILL.md per-issue loop step 8)
     # before giving up. On resolver success the merge is committed; fall
     # through to push. On failure, abort cleanly.
-    if ! merge_resolve_conflict "$branch" "$n" "$title"; then
+    if ! merge_resolve_conflict "$branch" "$n" "$title" "$target"; then
       git -C "$PROJECT_ROOT" merge --abort 2>/dev/null || true
+      [[ -n "$restore_branch" ]] && git -C "$PROJECT_ROOT" switch "$restore_branch" >/dev/null 2>&1 || true
       return 1
     fi
   fi
 
-  if ! git -C "$PROJECT_ROOT" push origin main; then
+  if ! git -C "$PROJECT_ROOT" push origin "$target"; then
     # Push rejected (origin moved again, or hook). Roll the merge commit back to
-    # the integrated tip so local main carries no orphan merge commit before the
-    # issue is flipped to ready-for-human.
-    log "✗ #$n push to origin/main rejected — rolling back merge commit to keep local main clean"
+    # the integrated tip so the target branch carries no orphan merge commit
+    # before the issue is flipped to ready-for-human.
+    log "✗ #$n push to origin/$target rejected — rolling back merge commit to keep local $target clean"
     merge_rollback "$PROJECT_ROOT" "$pre_merge_sha"
+    [[ -n "$restore_branch" ]] && git -C "$PROJECT_ROOT" switch "$restore_branch" >/dev/null 2>&1 || true
     return 1
   fi
 
-  # post-merge hook — after the push to origin/main succeeds. RED_AFK_MERGE_SHA
+  # post-merge hook — after the push to origin/<target> succeeds. RED_AFK_MERGE_SHA
   # is the short SHA of the merge commit on primary. Non-zero is logged by
   # hooks.sh; we do not roll back the merge.
   local merge_sha
   merge_sha="$(git -C "$PROJECT_ROOT" rev-parse --short HEAD)"
   run_lifecycle_hook post-merge "RED_AFK_MERGE_SHA=${merge_sha}" || true
+
+  # Restore the primary checkout to its original branch (main), keeping the
+  # precheck invariant intact for the next iteration.
+  [[ -n "$restore_branch" ]] && git -C "$PROJECT_ROOT" switch "$restore_branch" >/dev/null 2>&1 || true
 }
 
-# merge_resolve_conflict <branch> <n> <title>
+# merge_resolve_conflict <branch> <n> <title> [<target>]
 # One-shot inner-agent conflict resolver (SKILL.md per-issue loop step 8).
-# A `git merge --no-ff <branch>` into main has left conflicts in the primary
+# A `git merge --no-ff <branch>` into <target> (default main) has left conflicts in the primary
 # checkout. Re-enter the configured runner *in the primary checkout* with the
 # conflict diff + `git status` as context, instructing it to resolve the
 # conflicts and commit the merge. Returns 0 iff the merge is resolved and
 # committed (no unmerged paths, no MERGE_HEAD left behind), else 1.
 merge_resolve_conflict() {
-  local branch="$1" n="$2" title="$3"
+  local branch="$1" n="$2" title="$3" target="${4:-main}"
   log "↻ #$n merge conflict — dispatching one-shot inner-agent resolver"
 
   local status diff
@@ -1569,7 +1596,7 @@ merge_resolve_conflict() {
 
   local prompt
   prompt="$(cat <<EOF
-You are an AFK merge-conflict resolver. A \`git merge --no-ff $branch\` into \`main\` for issue #$n ("$title") hit conflicts in THIS checkout. Resolve every conflict, then commit the merge.
+You are an AFK merge-conflict resolver. A \`git merge --no-ff $branch\` into \`$target\` for issue #$n ("$title") hit conflicts in THIS checkout. Resolve every conflict, then commit the merge.
 
 Rules:
 - Work only in this checkout. Do NOT switch branches, \`git merge --abort\`, \`git reset\`, \`git rebase\`, or push.
@@ -1605,6 +1632,23 @@ EOF
   fi
   log "✓ #$n resolver completed the merge"
   return 0
+}
+
+# ---------- pinned branch (issue #64) ----------
+# Resolve the branch this work item is pinned to: the issue's own `branch:`
+# line, else its parent PRD's, else `main`. Parsing is pure (lib/pin-reader.sh);
+# this wrapper owns the one side effect — fetching the parent PRD body over `gh`
+# only when the issue itself carries no pin.
+resolve_pinned_branch() {
+  local issue_body="$1"
+  local prd_body="" prd_num
+  if [[ -z "$(pin_parse_branch "$issue_body")" ]]; then
+    prd_num="$(pin_parse_parent_prd "$issue_body" || true)"
+    if [[ -n "$prd_num" ]]; then
+      prd_body="$(gh -R "$(gh_repo)" issue view "$prd_num" --json body --jq .body 2>/dev/null || true)"
+    fi
+  fi
+  pin_resolve "$issue_body" "$prd_body"
 }
 
 # ---------- per-issue processing ----------
@@ -1693,9 +1737,14 @@ process_issue() {
   gh -R "$(gh_repo)" issue comment "$n" \
     --body "🤖 /afk started at \`$started_at\` on runner \`$RUNNER\` (worker \`$WORKER_ID\`). worktree: \`$worktree_rel\`" >/dev/null
 
-  # worktree
-  git -C "$PROJECT_ROOT" fetch origin main --quiet
-  git -C "$PROJECT_ROOT" worktree add "$worktree" -b "$branch" origin/main >/dev/null
+  # Branch this issue is pinned to — base the worktree on it and merge back into
+  # it. No pin anywhere → `main` (today's behaviour). Resolved after the claim so
+  # capped/raced issues never trigger the parent-PRD `gh` lookup.
+  local pinned; pinned="$(resolve_pinned_branch "$body")"
+
+  # worktree — based on the pinned branch (defaults to main when unpinned).
+  git -C "$PROJECT_ROOT" fetch origin "$pinned" --quiet
+  git -C "$PROJECT_ROOT" worktree add "$worktree" -b "$branch" "origin/$pinned" >/dev/null
 
   state_write "$STATE_FILE" \
     current.number:=$n \
@@ -1808,7 +1857,7 @@ process_issue() {
 
   # merge
   state_write "$STATE_FILE" current.stage=merge
-  if ! do_merge "$branch" "$n" "$title"; then
+  if ! do_merge "$branch" "$n" "$title" "$pinned"; then
     log "✗ #$n merge failed (resolver exhausted or push rejected) — flipping to ready-for-human"
     local dur_mc=$(( $(date +%s) - started_epoch ))
     local log_file

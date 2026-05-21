@@ -36,8 +36,12 @@ A read-only reflection of `afk.state.json` onto the host harness's native backgr
 _Avoid_: native agent, subagent (the mirror is not an execution unit; AFK workers stay OS processes)
 
 **Branch lock**:
-A local, opt-in pin of the agent to one branch in the **Primary checkout**, recorded as `./.red/tmp/branch-lock.yaml` (content: the branch name). While present, a Claude Code `PreToolUse(Bash)` hook blocks the agent — and only the agent — from switching away from that branch (see ADR 0006). Absence of the file means unlocked. Lives under gitignored `.red/tmp/` so each checkout/machine locks independently. Set/changed/cleared with `/branch-lock`. Distinct from the PRD/issue **branch pin** (a separate, autonomous-side concern read by `/afk`).
-_Avoid_: branch pin (that is the PRD/issue declaration consumed by `/afk`, a different concern)
+A local, opt-in pin of the agent to one branch in the **Primary checkout**, recorded as `./.red/tmp/branch-lock.yaml` (content: the branch name). While present, a Claude Code `PreToolUse(Bash)` hook blocks the agent — and only the agent — from switching away from that branch (see ADR 0006). Absence of the file means unlocked. Lives under gitignored `.red/tmp/` so each checkout/machine locks independently. Set/changed/cleared with `/branch-lock`. Distinct from the **Pinned branch** (a separate, autonomous-side concern read by `/afk`).
+_Avoid_: pinned branch (that is the PRD/issue declaration consumed by `/afk`, a different concern)
+
+**Pinned branch**:
+The branch a PRD or **Issue** declares — via a canonical `branch:` line in its body — that `/afk` must base its **Worktree** on and merge the finished work back into. Resolution is a small inheritance chain (see ADR 0008): the issue's own `branch:` line wins; else its parent PRD's; else `main` (today's default). Parsed by the pure `pin-reader` module; `/afk` fetches the parent PRD body only when the issue carries no line. Independent of the **Branch lock** (which constrains the interactive **Primary checkout**); a **Worktree** stays exempt from any lock regardless of the branch it is pinned to.
+_Avoid_: branch lock (that is the interactive-side, opt-in agent block — a different concern); merge target (the pinned branch *is* the merge target, but the term names the declaration, not the git step)
 
 **Primary checkout**:
 The developer's main working clone of the repo — where an interactive session runs and where a **Branch lock** file lives and is enforced. Contrasted with a **Worktree**.
