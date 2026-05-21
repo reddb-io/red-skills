@@ -526,6 +526,32 @@ After rendering the dashboard, the agent must:
 
 When `CronList` / `CronDelete` are unavailable (Codex runner, or `/afk monitor` invoked outside Claude Code), skip the teardown silently — the cron infrastructure isn't running there to begin with.
 
+### Task Mirror (Claude Code only — binding)
+
+Every `/dev:afk monitor` run also **mirrors each live worker onto the runner's native task list**, so a `/afk` session surfaces one background task per worker — advancing through stages on its own, with no extra typing. This is a **read-only reflection of `afk.state.json`**; the mirror never writes state and never touches `afk.sh` orchestration.
+
+The pure diff logic lives in [`scripts/lib/mirror.sh`](scripts/lib/mirror.sh). After rendering the dashboard, the agent (under Claude Code only) must:
+
+1. Fetch `TaskCreate`, `TaskUpdate`, and `TaskList` via `ToolSearch` if not already loaded (deferred tools).
+2. **Build the tracked set.** `TaskList` → keep the mirror-owned tasks (those whose title matches `#<n> w<id> — …`). For each, emit one JSONL line `{"key":"<worker_id>:<issue>","stage":"<last stage>"}`, reading the key from the title and the stage from the description (`stage: <x>`). Keep a key→task_id map for step 4.
+3. **Compute the plan.** From the project root:
+   ```bash
+   bash plugins/dev/skills/engineering/afk/scripts/lib/mirror.sh  # sourced, not run
+   ```
+   Call `mirror_plan "$PWD" "$tracked_jsonl"`, where `$tracked_jsonl` is the newline-joined output of step 2. It globs the state files, reconciles against the tracked set (keyed by `worker_id:issue`, so parallel workers each get exactly one task and re-runs never duplicate), and prints a JSONL **call plan** — one descriptor per harness call:
+   ```jsonl
+   {"call":"TaskCreate","key":"wAAAA:22","title":"#22 wAAAA — extract state.sh","description":"stage: impl","state":"in_progress"}
+   {"call":"TaskUpdate","key":"wAAAA:22","description":"stage: tests","state":"in_progress"}
+   {"call":"TaskUpdate","key":"wAAAA:22","state":"completed"}
+   ```
+4. **Apply the plan.** For each descriptor in order:
+   - `TaskCreate` → create the task; record `key → task_id`.
+   - `TaskUpdate` → resolve `key` to its `task_id` via the map and update. A `state` of `completed`/`failed` marks the worker's terminal event (`done`/`blocked`); the task drops off the active list and the mirror self-cleans. A descriptor whose `key` has no known `task_id` (e.g. a complete for a task that was never created in this session) is skipped.
+
+An empty plan means nothing changed since the last tick — apply no calls. Because the plan is keyed by `worker_id:issue`, an idempotent re-run with no stage advance emits zero descriptors.
+
+When `TaskCreate` / `TaskUpdate` are unavailable (Codex runner, or invoked outside Claude Code), **skip the mirror silently** — the native task surface only exists under Claude Code. The textual dashboard from `monitor.sh` is the fallback view there.
+
 ## Handoff File Template
 
 `.red/tmp/work-{id}-i{N}/handoff.md`:

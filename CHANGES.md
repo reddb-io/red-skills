@@ -15,6 +15,15 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 
 ---
 
+## afk (engineering) — native Task mirror surfaces live workers as background tasks
+
+- **status**: modified
+- **upstream**: —
+- **why**: Issue #43 (PRD #42). A `/afk` session under Claude Code had only the textual `monitor.sh` dashboard; live workers weren't reflected onto the runner's native task surface, so the user had to keep typing `monitor` to see progress.
+- **what changed**: New pure module `scripts/lib/mirror.sh` with three layers — `mirror_read_workers` (state-reader: globs `.red/tmp/work-*/afk.state.json`, verifies liveness via the sibling `afk.pid` with `kill -0`, emits one normalized JSONL record per worker that maps to a task, marking dead-but-named iterations `gone`); `mirror_reconcile` (pure diff keyed by `worker_id:issue` → `create`/`update`/`complete` ops, idempotent across ticks); and `mirror_plan` (maps ops to `TaskCreate`/`TaskUpdate` harness-call descriptors at a single mockable boundary). SKILL.md gains a *Task Mirror (Claude Code only — binding)* subsection under Monitor wiring the sink onto the existing every-3-min `/dev:afk monitor` tick (Codex skips silently). New `scripts/tests/mirror.test.sh` (27 assertions: reader live/dead/idle/partial-state/multi-worker; reconciler cold/advance/idempotent/terminal/drop; plan title+stage mapping and read-only invariant). No change to `afk.sh` orchestration or `monitor.sh`. Refs #43.
+
+---
+
 ## afk (engineering) — merge stage integrates moved origin/main, rolls back rejected pushes, dispatches conflict resolver
 
 - **status**: modified
