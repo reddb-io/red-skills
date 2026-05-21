@@ -37,16 +37,20 @@ first, so the switch to that branch is itself "return to the lock target" and
 the hook never blocks the very change the user asked for. Never hand-edit
 `branch-lock.yaml` — go through the CLI so `lock-store` stays the single writer.
 
-## Install the hook (first time only)
+## Install the hooks (first time only)
 
-If the hook is not yet wired in this repo, install it before relying on the lock:
+If the hooks are not yet wired in this repo, install them before relying on the lock:
 
-1. Copy [scripts/branch-lock-hook.sh](scripts/branch-lock-hook.sh) **and its
-   `scripts/lib/` directory** to `.claude/hooks/branch-lock/` (the hook sources
-   the three modules from `lib/` relative to itself — keep them together).
-2. `chmod +x` the hook.
-3. Register it in `.claude/settings.json` under `hooks.PreToolUse`, matcher
-   `Bash` (merge into any existing array — don't overwrite other hooks):
+1. Copy [scripts/branch-lock-hook.sh](scripts/branch-lock-hook.sh),
+   [scripts/branch-lock-session-start.sh](scripts/branch-lock-session-start.sh),
+   **and the `scripts/lib/` directory** to `.claude/hooks/branch-lock/` (both
+   hooks source the modules from `lib/` relative to themselves — keep them
+   together).
+2. `chmod +x` both hooks.
+3. Register them in `.claude/settings.json` (merge into any existing arrays —
+   don't overwrite other hooks). `branch-lock-hook.sh` enforces the lock under
+   `PreToolUse`/matcher `Bash`; `branch-lock-session-start.sh` offers the lock
+   under `SessionStart`:
 
    ```json
    {
@@ -58,10 +62,22 @@ If the hook is not yet wired in this repo, install it before relying on the lock
              { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/branch-lock/branch-lock-hook.sh" }
            ]
          }
+       ],
+       "SessionStart": [
+         {
+           "hooks": [
+             { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/branch-lock/branch-lock-session-start.sh" }
+           ]
+         }
        ]
      }
    }
    ```
+
+   The SessionStart hook only injects an instruction asking whether to lock — it
+   never writes the lock itself. On a `yes` the agent runs `branch-lock.sh set`;
+   a `no` leaves the repo unlocked. It stays silent inside `/afk` worktrees, when
+   a lock is already present, and on a detached HEAD.
 
 ## DOs / DON'Ts
 
@@ -82,6 +98,7 @@ branch-lock/
 └── scripts/
     ├── branch-lock.sh            ← /branch-lock CLI (set | clear | status)
     ├── branch-lock-hook.sh       ← PreToolUse(Bash) hook (composes the 3 modules)
+    ├── branch-lock-session-start.sh ← SessionStart hook (offers to lock at start)
     ├── lib/
     │   ├── lock-store.sh          ← read/write/clear branch-lock.yaml
     │   ├── scope-resolver.sh      ← primary enforces, .red/tmp/work-*/ exempt
@@ -89,7 +106,8 @@ branch-lock/
     └── tests/
         ├── lock-store.test.sh
         ├── scope-resolver.test.sh
-        └── git-command-classifier.test.sh
+        ├── git-command-classifier.test.sh
+        └── session-start.test.sh
 ```
 
 ## What the hook blocks vs allows
@@ -127,9 +145,9 @@ Each prints `summary: N passed, 0 failed` and exits non-zero on any failure.
 ## Scope of this slice
 
 Part of PRD #59. The lock-store, scope-resolver, classifier (branch-switch +
-work-loss family), hook, and `/branch-lock` command are shipped. Not yet
-included (later slices): the SessionStart prompt that offers to lock at session
-start, the PRD/issue branch pin read by `/afk`, and making `git-guardrails`
-lock-aware.
+work-loss family), PreToolUse hook, the SessionStart hook that offers to lock at
+session start, and the `/branch-lock` command are shipped. Not yet included
+(later slices): the PRD/issue branch pin read by `/afk`, and making
+`git-guardrails` lock-aware.
 
 </supporting-info>
