@@ -13,6 +13,8 @@ set -eo pipefail
 
 # shellcheck disable=SC1091
 source "$(dirname "${BASH_SOURCE[0]}")/lib/state.sh"
+# shellcheck disable=SC1091
+source "$(dirname "${BASH_SOURCE[0]}")/lib/history.sh"
 
 ONCE=0
 [[ "${1:-}" == "--once" ]] && { ONCE=1; shift; }
@@ -187,18 +189,11 @@ render_sparkline() {
   local now_s; now_s="$(date +%s)"
   local floor_h=$(( now_s / 3600 ))
   local from_h=$(( floor_h - 47 ))
-  local from_s=$(( from_h * 3600 ))
 
-  # bucket counts via jq — single pass.
-  # output: 48 space-separated integers (oldest → newest).
+  # 48 per-hour `done` counts (oldest → newest) from the History Module — the
+  # read schema lives in lib/history.sh, not re-derived inline here.
   local counts_line
-  counts_line="$(jq -rs --argjson from "$from_h" '
-    map(select(.event == "done"))
-    | map((.epoch / 3600 | floor) - $from)
-    | map(select(. >= 0 and . < 48))
-    | reduce .[] as $b ([range(48) | 0]; .[$b] += 1)
-    | join(" ")
-  ' "$HISTORY_FILE" 2>/dev/null || echo "")"
+  counts_line="$(history_read_done_buckets "$HISTORY_FILE" "$from_h" 48 || echo "")"
   [[ -z "$counts_line" ]] && { echo "history: (parse error)"; return; }
 
   local counts=( $counts_line )

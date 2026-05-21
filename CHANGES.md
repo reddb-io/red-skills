@@ -15,6 +15,15 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 
 ---
 
+## afk (engineering) — extract lib/history.sh as a deep Module
+
+- **status**: modified
+- **upstream**: —
+- **why**: Issue #48 (PRD #46). The History ledger (`afk-history.jsonl`, the throughput record the monitor sparkline reads) had its `flock`-serialised append/trim defined in `afk.sh` while `monitor.sh` re-derived the JSONL read schema inline in its own `jq` filter. The wire shape lived in two places — exactly the drift a deep Module prevents.
+- **what changed**: Added `scripts/lib/history.sh` following the pure / explicit-args contract of `lib/state.sh` and `lib/merge.sh` — reads no orchestrator globals; the ledger path is a parameter on every call. Three entry points: `history_append <path> <event> [KEY=VALUE]...` (variadic `worker`/`issue`/`runner`/`duration_s`/`merge_sha`/`reason` mirroring `state_write`, optional fields omitted from the record when empty, `flock`-serialised one-record append, JSONL schema defined exactly once in `_HISTORY_APPEND_FILTER`), `history_trim <path> [max_lines]` (`flock`-serialised cap; echoes the cap count when a trim happens so the caller can log it, silent no-op otherwise), and `history_read_done_buckets <path> <from_hour> [buckets]` (the per-hour `done` counts the 48h sparkline needs). `afk.sh`'s inline `history_append`/`history_trim` were removed; a thin `emit_history` adapter wires the Module to the orchestrator's `WORKER_ID`/`HISTORY_FILE` globals, and the six callsites now route through it. `monitor.sh`'s `render_sparkline` sources the Module and consumes `history_read_done_buckets` instead of its hand-rolled `jq` (no second copy of the read schema remains). Emitted ledger bytes are identical to pre-extraction for every event (asserted). New `scripts/tests/history-module.test.sh` (38 assertions: bucketing against a fixture ledger including ignored non-`done` events and dropped out-of-window indices, custom width, missing-file contract; append optional-field presence + numeric `issue`/`duration_s` types + round-trip through the reader; trim cap/echo/no-op) with a `tests/fixtures/history/buckets.jsonl` fixture. All existing afk suites stay green except the pre-existing-RED `statusline.test.sh` (unrelated terminal-escape artifact, `d983094`). Refs #48.
+
+---
+
 ## afk (engineering) — extract lib/envelope.sh as a deep Module
 
 - **status**: modified

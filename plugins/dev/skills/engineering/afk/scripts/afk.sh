@@ -27,6 +27,8 @@ source "$SCRIPT_DIR/lib/state.sh"
 source "$SCRIPT_DIR/lib/merge.sh"
 # shellcheck source=./lib/envelope.sh
 source "$SCRIPT_DIR/lib/envelope.sh"
+# shellcheck source=./lib/history.sh
+source "$SCRIPT_DIR/lib/history.sh"
 
 # ---------- arg parsing ----------
 RUNNER=""
@@ -166,41 +168,18 @@ bootstrap() {
 }
 
 # ---------- event log ----------
-# Append-only JSONL, one line per terminal event (done|blocked|exhausted).
-# Survives reboots and worktree wipes. Read by monitor.sh for the 48h sparkline.
-# Concurrent workers serialise via flock.
-history_append() {
-  # history_append <event> <issue#> <runner> [duration_s] [merge_sha] [reason]
+# The History ledger (afk-history.jsonl) — its flock-serialised append, trim,
+# and JSONL schema — lives in lib/history.sh. The orchestrator appends one
+# record per terminal event and trims the ledger at boot; the monitor reads it
+# for the 48h sparkline. emit_history wires the Module's history_append to the
+# orchestrator's per-iteration globals (worker id, ledger path).
+#
+# emit_history <event> <issue#> <runner> [duration_s] [merge_sha] [reason]
+emit_history() {
   local event="$1" issue="$2" runner="$3" dur="${4:-0}" sha="${5:-}" reason="${6:-}"
-  mkdir -p "$STATE_DIR"
-  local line
-  line="$(jq -cn \
-    --arg ts "$(date -Iseconds)" \
-    --argjson epoch "$(date +%s)" \
-    --arg worker "$WORKER_ID" \
-    --argjson issue "$issue" \
-    --arg event "$event" \
-    --argjson duration_s "$dur" \
-    --arg runner "$runner" \
-    --arg merge_sha "$sha" \
-    --arg reason "$reason" \
-    '{ts:$ts, epoch:$epoch, worker:$worker, issue:$issue, event:$event,
-      duration_s:$duration_s, runner:$runner}
-     + (if $merge_sha != "" then {merge_sha:$merge_sha} else {} end)
-     + (if $reason    != "" then {reason:$reason}       else {} end)')"
-  ( flock 9; printf '%s\n' "$line" >&9 ) 9>>"$HISTORY_FILE"
-}
-
-# Trim oldest lines if file exceeds cap. Called from prune_orphans.
-history_trim() {
-  [[ -f "$HISTORY_FILE" ]] || return 0
-  local n; n="$(wc -l < "$HISTORY_FILE" 2>/dev/null || echo 0)"
-  (( n > HISTORY_MAX_LINES )) || return 0
-  local tmp; tmp="$(mktemp)"
-  tail -n "$HISTORY_MAX_LINES" "$HISTORY_FILE" > "$tmp"
-  ( flock 9; cat "$tmp" > "$HISTORY_FILE" ) 9>>"$HISTORY_FILE"
-  rm -f "$tmp"
-  log "trimmed history to last $HISTORY_MAX_LINES lines"
+  history_append "$HISTORY_FILE" "$event" \
+    "worker=$WORKER_ID" "issue=$issue" "runner=$runner" "duration_s=$dur" \
+    "merge_sha=$sha" "reason=$reason"
 }
 
 # ---------- orphan iteration cleanup ----------
@@ -316,7 +295,8 @@ prune_orphans() {
   shopt -u nullglob
   [[ $stale_claims -gt 0 ]] && log "released $stale_claims stale claim lock(s)"
 
-  history_trim
+  local _trimmed; _trimmed="$(history_trim "$HISTORY_FILE" "$HISTORY_MAX_LINES")"
+  [[ -n "$_trimmed" ]] && log "trimmed history to last $_trimmed lines"
 }
 
 # ---------- unblock sweep ----------
@@ -1755,7 +1735,7 @@ process_issue() {
         heartbeat_stop
         gh -R "$(gh_repo)" issue comment "$n" --body "Both runners exhausted. Iteration preserved at \`$ITER_DIR\`." >/dev/null
         gh -R "$(gh_repo)" issue edit "$n" --remove-label running --add-label ready-for-agent >/dev/null
-        history_append "exhausted" "$n" "$RUNNER" 0 "" "both-runners"
+        emit_history "exhausted" "$n" "$RUNNER" 0 "" "both-runners"
         local dur_ex=$(( $(date +%s) - started_epoch ))
         snapshot_iter_for_hook
         iter_close_preserve
@@ -1766,7 +1746,7 @@ process_issue() {
       log "runner $RUNNER exhausted — exiting (no --fallback-runner; rerun /afk when quota resets, or pass --fallback-runner to swap)"
       gh -R "$(gh_repo)" issue comment "$n" --body "Runner \`$RUNNER\` exhausted; rerun /afk when quota resets, or pass \`--fallback-runner\` to swap to the other runner on exhaustion." >/dev/null
       gh -R "$(gh_repo)" issue edit "$n" --remove-label running --add-label ready-for-agent >/dev/null
-      history_append "exhausted" "$n" "$RUNNER" 0 "" "$RUNNER"
+      emit_history "exhausted" "$n" "$RUNNER" 0 "" "$RUNNER"
       local dur_ex=$(( $(date +%s) - started_epoch ))
       snapshot_iter_for_hook
       iter_close_preserve
@@ -1791,7 +1771,7 @@ process_issue() {
     gh -R "$(gh_repo)" issue edit "$n" --remove-label running --add-label ready-for-human >/dev/null
     AGG_BLOCKED=$((AGG_BLOCKED+1))
     state_write "$STATE_FILE" blocked:=$AGG_BLOCKED current:=null
-    history_append "blocked" "$n" "$RUNNER" "$dur_blocked" "" "inner-agent"
+    emit_history "blocked" "$n" "$RUNNER" "$dur_blocked" "" "inner-agent"
     snapshot_iter_for_hook
     iter_close_preserve
     fire_post_iteration "blocked" "$dur_blocked"
@@ -1814,7 +1794,7 @@ process_issue() {
     gh -R "$(gh_repo)" issue edit "$n" --remove-label running --add-label ready-for-human >/dev/null
     AGG_BLOCKED=$((AGG_BLOCKED+1))
     state_write "$STATE_FILE" blocked:=$AGG_BLOCKED current:=null
-    history_append "blocked" "$n" "$RUNNER" "$dur_ns" "" "no-sentinel"
+    emit_history "blocked" "$n" "$RUNNER" "$dur_ns" "" "no-sentinel"
     snapshot_iter_for_hook
     iter_close_preserve
     fire_post_iteration "no-sentinel" "$dur_ns"
@@ -1841,7 +1821,7 @@ process_issue() {
     gh -R "$(gh_repo)" issue edit "$n" --remove-label running --add-label ready-for-human >/dev/null
     AGG_BLOCKED=$((AGG_BLOCKED+1))
     state_write "$STATE_FILE" blocked:=$AGG_BLOCKED current:=null
-    history_append "blocked" "$n" "$RUNNER" "$dur_mc" "" "merge-conflict"
+    emit_history "blocked" "$n" "$RUNNER" "$dur_mc" "" "merge-conflict"
     snapshot_iter_for_hook
     iter_close_preserve
     fire_post_iteration "merge-conflict" "$dur_mc"
@@ -1869,7 +1849,7 @@ process_issue() {
     done:=$AGG_DONE \
     durations_seconds:="$AGG_DURATIONS" \
     current:=null
-  history_append "done" "$n" "$RUNNER" "$dur" "$merge_sha" ""
+  emit_history "done" "$n" "$RUNNER" "$dur" "$merge_sha" ""
   snapshot_iter_for_hook
   iter_close_success
   fire_post_iteration "done" "$dur"
