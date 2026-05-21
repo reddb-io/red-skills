@@ -32,12 +32,25 @@ export class LspSession {
             stdio: ["pipe", "pipe", "pipe"],
         });
         this.proc = proc;
-        proc.on("error", (err) => {
-            process.stderr.write(`code-nav: failed to spawn '${this.spec.command}': ${String(err)}\n`);
+        // Wait until the process is actually running before we write to its stdin.
+        // A missing binary emits 'error' (ENOENT); rejecting here lets callers
+        // (e.g. workspace_symbols fanning out to every server) skip it cleanly
+        // instead of crashing on a write to a destroyed stream.
+        await new Promise((resolveSpawn, rejectSpawn) => {
+            proc.once("spawn", () => resolveSpawn());
+            proc.once("error", (err) => rejectSpawn(new Error(`failed to spawn '${this.spec.command}': ${err.message}`)));
         });
         // Surface server logs without polluting the MCP stdio channel.
         proc.stderr.on("data", (chunk) => {
             process.stderr.write(`[${this.spec.command}] ${chunk.toString()}`);
+        });
+        proc.once("exit", () => {
+            try {
+                this.conn?.dispose();
+            }
+            catch {
+                /* ignore */
+            }
         });
         const conn = createProtocolConnection(new StreamMessageReader(proc.stdout), new StreamMessageWriter(proc.stdin));
         this.conn = conn;
