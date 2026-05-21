@@ -2,7 +2,16 @@
 
 Records every change made to skills inherited from [`mattpocock/skills`](https://github.com/mattpocock/skills), plus new skills created by reddb.io. See the rules in [CLAUDE.md](./CLAUDE.md).
 
-Upstream base: `mattpocock/skills@e74f0061bb67222181640effa98c675bdb2fdaa7` (see `.upstream`).
+Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see `.upstream`).
+
+---
+
+## handoff (productivity) — redaction guidance
+
+- **status**: modified
+- **upstream**: `b8be62f`
+- **why**: Issue #36 (upstream drift `67bce91...b8be62f`). Upstream added a redaction instruction to the handoff skill so secrets/PII don't leak into the handoff document.
+- **what changed**: Ported only the redaction sentence ("Redact any sensitive information — API keys, passwords, tokens, or PII") into our `/handoff` SKILL.md. Skipped the upstream temp-dir wording (our skill already saves via `mktemp`, i.e. the OS temp dir), the `improve-codebase-architecture` HTML-report rewrite (large, opinionated — defer to a dedicated decision), and the `grill-with-docs/CONTEXT-FORMAT.md` cosmetic tweaks (our `/start` has diverged). Bumped `.upstream` to `b8be62f`.
 
 ---
 
