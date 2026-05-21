@@ -6,6 +6,13 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 
 ---
 
+## git-guardrails-claude-code (misc) — make the hook branch-lock aware (modified)
+
+- **status**: modified
+- **upstream**: `b8be62f`
+- **why**: Issue #65 (PRD #59). The lock was only enforced by the `branch-lock` skill's own hook. A repo running `git-guardrails-claude-code` alone (a common setup) got no lock protection, and ADR 0006 anticipated making git-guardrails lock-aware so either skill enforces the lock. The two had to stay independent — neither importing the other — with an idempotent overlap when both are installed.
+- **what changed**: `scripts/block-dangerous-git.sh` gains a second, self-contained layer after the always-on dangerous-pattern block. When an opt-in `./.red/tmp/branch-lock.yaml` is present in the primary checkout, the hook also blocks the branch-leaving / work-loss family — `git switch`/`checkout` to another branch, `switch -`, `checkout -b <new>`, and bare `git stash` — while allowing a switch back to the lock target, targeted file restore (`git checkout -- <path>`), and `git worktree add`. It reads the lock file, resolves scope, and classifies the command **inline** (token-stream scan, compound-command aware), reaching the same verdicts as the branch-lock classifier but **without sourcing or requiring** the `branch-lock` skill (AC3 — no dependency). `/afk` worktrees under `.red/tmp/work-*/` are scope-exempt, mirroring the branch-lock hook so the autonomous loop is never strangled. Absent lock file = silent (opt-in). With both hooks installed the overlap is idempotent: both deny the same commands, neither conflicts (AC2). New `scripts/tests/block-dangerous-git.test.sh` (24 assertions: unchanged dangerous patterns, lock-active branch-leaving/work-loss blocks, same-branch allows, worktree scope exemption, and a no-dependency guard) — green; full branch-lock suite still green (cli 12, classifier 41, lock-store 17, scope-resolver 8, session-start 14). SKILL.md documents the new layer and the no-dependency contract. Refs #65.
+
 ## afk (engineering) — honour a PRD/issue pinned branch for base + merge (modified)
 
 - **status**: modified
