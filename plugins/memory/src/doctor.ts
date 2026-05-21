@@ -72,6 +72,8 @@ export async function diagnose(
   const cutoff = staleDays * MS_PER_DAY;
 
   const nodes = await store.listNodes();
+  // One read of the aggregate access overlay, not one per node (issue #72).
+  const overlays = await store.accessRecords();
   const stale: StaleNode[] = [];
 
   for (const node of nodes) {
@@ -82,7 +84,7 @@ export async function diagnose(
     const importance = Number(node.properties.importance ?? 0);
     if (importance >= PINNED_IMPORTANCE_THRESHOLD) continue;
 
-    const overlay = await store.accessRecord(node.rid);
+    const overlay = overlays.get(node.rid) ?? null;
     const accessCount = overlay?.count ?? Number(node.properties.access_count ?? 0);
     if (accessCount > 0) continue;
 

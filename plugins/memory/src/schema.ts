@@ -81,7 +81,9 @@ export type EdgeLabel =
   // Quality
   | "TESTED_BY"
   | "REVIEWED_BY"
-  | "OWNED_BY";
+  | "OWNED_BY"
+  // Audit — a reasoning trace (why_note) → the entities it affected (issue #72).
+  | "TOUCHED";
 
 export interface MemoryNodeProps {
   title: string;

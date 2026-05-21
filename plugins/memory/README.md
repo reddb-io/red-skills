@@ -16,8 +16,11 @@ It **lives on top of the `dev` plugin** and is meant to improve dev's processes
 - **graph** — a typed knowledge graph over a per-project embedded RedDB store at
   `.red/memory/graph.rdb`. `/memory:store` upserts a deduped `concept` node;
   `/memory:recall` runs the **hybrid recall engine** — full-text seeds expanded
-  through the graph neighborhood, ranked, with the head of any `SUPERSEDED_BY`
-  chain returned in place of superseded nodes. RedDB runs out-of-process from the
+  through the graph neighborhood, then ranked by `importance × recency ×
+  graph-centrality × tier-weight` (durable decisions outrank reasoning traces
+  outrank ephemeral session noise), with the head of any `SUPERSEDED_BY` chain
+  returned in place of superseded nodes (`--include-superseded` returns the full
+  chain). RedDB runs out-of-process from the
   SDK's bundled binary — no service to manage. Graph writes use multi-model DML
   and KV-backed dedupe; see [ADR 0007](../../.red/adr/0007-reddb-graph-writes-via-multi-model-dml.md).
 

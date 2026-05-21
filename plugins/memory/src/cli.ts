@@ -26,7 +26,7 @@ const USAGE = `memory — persistent memory for code agents
 Usage:
   memory init [--mode markdown-only|graph] [--hooks] [--root <dir>] [--yes]
   memory store <fact...>            [--root <dir>]
-  memory recall <query...>          [--root <dir>] [--limit N]
+  memory recall <query...>          [--root <dir>] [--limit N] [--include-superseded]
   memory ingest <path>              [--root <dir>] [--max-files N]
   memory extract [<transcript-file>] [--root <dir>]   (reads stdin if no file)
 
@@ -163,7 +163,9 @@ async function runRecall(args: ParsedArgs): Promise<void> {
   if (config.mode === "graph") {
     const store = await MemoryStore.open({ uri: resolveStoreUri(rootDir, config) });
     try {
-      const hits = await graphRecall(store, query, limit);
+      const hits = await graphRecall(store, query, limit, {
+        includeSuperseded: args.flags["include-superseded"] === true,
+      });
       if (hits.length === 0) {
         console.log(`memory: no matches for "${query}"`);
         return;

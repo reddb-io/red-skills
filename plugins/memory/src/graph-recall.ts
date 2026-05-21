@@ -21,8 +21,13 @@ export async function graphRecall(
   store: MemoryStore,
   query: string,
   limit = 10,
+  opts: { includeSuperseded?: boolean } = {},
 ): Promise<GraphRecallHit[]> {
-  const { nodes } = await recall(store, query, { k: limit, depth: 1 });
+  const { nodes } = await recall(store, query, {
+    k: limit,
+    depth: 1,
+    includeSuperseded: opts.includeSuperseded,
+  });
   return nodes.slice(0, limit).map((n) => ({
     id: String(n.rid),
     rid: n.rid,

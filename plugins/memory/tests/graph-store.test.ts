@@ -125,6 +125,57 @@ describe("MemoryStore over a file:// RedDB", () => {
     },
     TIMEOUT,
   );
+
+  test(
+    "supersede: --include-superseded returns the full chain",
+    async () => {
+      const store = await openStore(await tempRoot());
+      const old = await store.upsertNode(factToNode("we deploy on fridays", slugify));
+      const current = await store.upsertNode(
+        factToNode("we deploy on fridays — superseded: deploys are now tuesdays", slugify),
+      );
+      await store.supersede(old, current, "policy changed");
+
+      const hits = await graphRecall(store, "deploy fridays tuesdays", 10, {
+        includeSuperseded: true,
+      });
+      const rids = hits.map((h) => h.rid);
+      expect(rids).toContain(current);
+      expect(rids).toContain(old);
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "recordReasoning: a trace links to the entities it TOUCHED",
+    async () => {
+      const store = await openStore(await tempRoot());
+      const auth = await store.upsertNode(factToNode("the auth service issues jwt tokens", slugify));
+      const cache = await store.upsertNode(factToNode("redis cache ttl is 300 seconds", slugify));
+
+      const { rid, edges } = await store.recordReasoning(
+        {
+          label: "why-shorten-ttl",
+          properties: { title: "why we shortened the ttl", content: "auth churn forced it" },
+        },
+        [auth, cache],
+      );
+
+      // The trace defaults to the reasoning tier (why_note → reasoning, #68).
+      const trace = await store.getNode(rid);
+      expect(trace?.node_type).toBe("why_note");
+      expect(trace?.properties.tier).toBe("reasoning");
+      expect(edges).toHaveLength(2);
+
+      // TOUCHED edges connect the trace to both affected entities.
+      const neighbors = (await store.neighborhood("why-shorten-ttl", 1, "outgoing")).map(
+        (n) => n.rid,
+      );
+      expect(neighbors).toContain(auth);
+      expect(neighbors).toContain(cache);
+    },
+    TIMEOUT,
+  );
 });
 
 describe("init graph mode + round-trip", () => {
