@@ -574,22 +574,25 @@ Composable. Boring on purpose where boring is enough. Sharp where it matters.
 </details>
 
 <details>
-<summary><strong>Memory plugin — persistent memory (markdown-only)</strong></summary>
+<summary><strong>Memory plugin — persistent memory (markdown-only · graph)</strong></summary>
 
 The separate **`memory`** plugin gives agents a persistent, queryable memory that
 survives `/clear` and crosses sessions. It lives on top of `dev` (requires it).
-This release ships the **markdown-only** path — zero engine dependency, nothing
-auto-fires. Install `memory` alongside `dev`, then run `memory init`.
+Two storage modes ship today — **markdown-only** (plain notes, zero engine
+dependency) and **graph** (a typed knowledge graph over a per-project RedDB
+store). Both keep hooks and MCP off — nothing auto-fires. Install `memory`
+alongside `dev`, then run `memory init`.
 
 | Skill | What it does |
 |-------|--------------|
-| **[init](./plugins/memory/skills/core/init/SKILL.md)** | Setup wizard. Markdown-only mode writes `.red/memory/config.json` (hooks off, MCP off, no RedDB) and creates `.red/memory/notes/`. |
-| **[store](./plugins/memory/skills/core/store/SKILL.md)** | `/memory:store <fact>` — save a fact as a plain markdown note. |
-| **[recall](./plugins/memory/skills/core/recall/SKILL.md)** | `/memory:recall <query>` — full-text search over stored notes, ranked. |
+| **[init](./plugins/memory/skills/core/init/SKILL.md)** | Setup wizard. markdown-only writes `.red/memory/config.json` + `.red/memory/notes/`; graph also builds locally and provisions a per-project RedDB store at `.red/memory/graph.rdb`. Hooks off, MCP off. |
+| **[store](./plugins/memory/skills/core/store/SKILL.md)** | `/memory:store <fact>` — save a fact (markdown note, or a deduped graph node). |
+| **[recall](./plugins/memory/skills/core/recall/SKILL.md)** | `/memory:recall <query>` — ranked search over stored memory (notes, or the graph with supersede-aware, neighborhood-expanded results). |
 
-See [plugins/memory/README.md](./plugins/memory/README.md). Graph/hybrid storage,
-the MCP server, the auto-firing hooks, and the `/afk` · `/triage` · `/diagnose`
-integrations land in later slices.
+See [plugins/memory/README.md](./plugins/memory/README.md) and, for the RedDB
+graph-write constraints, [ADR 0007](./.red/adr/0007-reddb-graph-writes-via-multi-model-dml.md).
+Hybrid storage, the MCP server, the auto-firing hooks, and the `/afk` · `/triage`
+· `/diagnose` integrations land in later slices.
 
 </details>
 

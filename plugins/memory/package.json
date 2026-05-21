@@ -17,6 +17,14 @@
     "test": "vitest run",
     "dev": "node --import tsx src/cli.ts"
   },
+  "dependencies": {
+    "@reddb-io/sdk": "^1.2.5"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@reddb-io/sdk"
+    ]
+  },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "tsx": "^4.19.0",

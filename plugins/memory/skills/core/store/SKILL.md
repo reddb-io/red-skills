@@ -5,9 +5,12 @@ description: Save a fact to the project's persistent memory as a plain markdown 
 
 # memory store
 
-Writes one fact as a markdown note under `.red/memory/notes/`. In markdown-only
-mode the note **is** the canonical store — human-readable, committable, and
-recallable later with `/memory:recall`. Nothing else fires.
+Saves one fact to the project's memory and routes to whatever `memory init`
+configured. In **markdown-only** mode it writes a markdown note under
+`.red/memory/notes/` — the note **is** the canonical store, human-readable and
+committable. In **graph** mode it writes a deduped `concept` node to the RedDB
+store (storing the same fact twice returns the same node). Either way the fact
+is recallable later with `/memory:recall`. Nothing else fires.
 
 <what-to-do>
 

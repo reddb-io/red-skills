@@ -1,14 +1,22 @@
 ---
 name: init
-description: One-time setup wizard for the memory plugin. Asks what storage to use and writes the per-project memory config. This build ships the markdown-only path — memory backed by plain markdown notes, with hooks and MCP off and no RedDB required. Use when the user installs the memory plugin and wants to turn memory on, or says "memory init", "set up memory", "initialize memory".
+description: One-time setup wizard for the memory plugin. Asks what storage to use and writes the per-project memory config. Two modes ship today — markdown-only (plain notes, no engine) and graph (a typed knowledge graph over a per-project RedDB store). Hooks and MCP stay off in both. Use when the user installs the memory plugin and wants to turn memory on, or says "memory init", "set up memory", "initialize memory".
 ---
 
 # memory init
 
-Bootstraps the `memory` plugin for the current repo. Markdown-only mode gives
-the agent a persistent, queryable memory with **zero engine dependency**: notes
-are plain markdown under `.red/memory/notes/`, no hooks fire, no MCP server runs,
-and RedDB is not required. Graph and hybrid modes arrive in later releases.
+Bootstraps the `memory` plugin for the current repo. Pick a storage mode:
+
+- **markdown-only** — persistent, queryable memory with **zero engine
+  dependency**: notes are plain markdown under `.red/memory/notes/`, no hooks
+  fire, no MCP server runs, RedDB is not required.
+- **graph** — a typed knowledge graph (nodes + edges) over a per-project RedDB
+  store at `.red/memory/graph.rdb`. `/memory:store` writes nodes (deduped by
+  content); `/memory:recall` scans and expands the graph. RedDB is required, but
+  it runs out-of-process from the bundled binary — no service to manage.
+
+Hybrid mode arrives in a later release. Hooks and MCP stay off in both modes
+this slice.
 
 The `memory` plugin requires the `dev` plugin (it builds on dev's processes —
 `/afk`, `/triage`, `/diagnose`). Install `dev` first.
@@ -28,25 +36,35 @@ pnpm --dir "${CLAUDE_PLUGIN_ROOT}" build
 
 ## 2. Run the wizard
 
-Run from the repo you want memory in (`--root` defaults to the current dir):
+Run from the repo you want memory in (`--root` defaults to the current dir).
+Pass the mode the user picked:
 
 ```bash
+# markdown-only — no engine, nothing auto-fires
 node "${CLAUDE_PLUGIN_ROOT}/dist/cli.js" init --mode markdown-only
+
+# graph — typed knowledge graph over a per-project RedDB store
+node "${CLAUDE_PLUGIN_ROOT}/dist/cli.js" init --mode graph
 ```
 
-This writes `.red/memory/config.json` (mode `markdown-only`, all hooks off, MCP
-off, RedDB not required) and creates `.red/memory/notes/`.
+markdown-only writes `.red/memory/config.json` (all hooks off, MCP off, RedDB
+not required) and creates `.red/memory/notes/`. graph writes the same config
+shape with `mode: "graph"`, `reddb: true`, a `storePath`, and provisions the
+RedDB store at `.red/memory/graph.rdb` (graph mode needs step 1's build to have
+run — the SDK and its bundled binary come from `node_modules/`).
 
 ## 3. Confirm
 
-Tell the user memory is on in markdown-only mode, that nothing auto-fires, and
-that they can now use `/memory:store <fact>` and `/memory:recall <query>`.
+Tell the user memory is on, which mode, that nothing auto-fires (hooks/MCP off),
+and that they can now use `/memory:store <fact>` and `/memory:recall <query>` —
+which route to the configured mode automatically.
 
 ## DOs / DON'Ts
 
-- ✅ Build the CLI before running it if `dist/` is absent.
-- ✅ Keep markdown-only mode hooks-off — do not wire any SessionStart/Stop/PreCompact hook in this mode.
+- ✅ Build the CLI before running it if `dist/` is absent (graph mode needs `@reddb-io/sdk` installed).
+- ✅ Keep hooks off in both modes — do not wire any SessionStart/Stop/PreCompact hook in this slice.
 - ❌ Don't require, install, or connect to RedDB in markdown-only mode.
+- ❌ Don't commit `.red/memory/graph.rdb*` — the store is per-project local state, like `node_modules/`.
 - ❌ Don't hand-write `.red/memory/config.json` — go through the CLI so the schema stays valid.
 
 </what-to-do>
@@ -54,6 +72,8 @@ that they can now use `/memory:store <fact>` and `/memory:recall <query>`.
 <supporting-info>
 
 ## Config shape
+
+markdown-only:
 
 ```json
 {
@@ -66,12 +86,35 @@ that they can now use `/memory:store <fact>` and `/memory:recall <query>`.
 }
 ```
 
+graph:
+
+```json
+{
+  "version": 1,
+  "mode": "graph",
+  "notesDir": ".red/memory/notes",
+  "storePath": ".red/memory/graph.rdb",
+  "hooks": { "sessionStart": false, "postToolUse": false, "stop": false, "preCompact": false },
+  "mcp": false,
+  "reddb": true
+}
+```
+
+## Graph storage internals
+
+Graph writes go through RedDB's multi-model DML (`INSERT … NODE/EDGE`), not
+table inserts, and dedupe lives in a KV index — see ADR 0007 for the engine
+constraints. The store is the embedded `file://` RedDB; the SDK spawns the
+bundled `red` binary out-of-process, so there is no service to run.
+
 ## Scope of this slice
 
-First end-to-end slice of PRD #49. Ships the markdown-only path of the init
-wizard plus `/memory:store` and `/memory:recall`. Not yet included (later
-slices): graph and hybrid storage over RedDB, the MCP server, the auto-firing
-hooks (SessionStart recall, PostToolUse index, Stop extract, PreCompact flush),
-and the `/afk`, `/triage`, `/diagnose` integrations.
+Builds on the markdown-only tracer (PRD #49, #51) by adding graph mode: the
+core `MemoryStore` over RedDB (node/edge write + dedupe + supersede), the
+`memory init --mode graph` build/provision path, and mode-routed
+`/memory:store` / `/memory:recall`. Not yet included (later slices): hybrid
+storage, the MCP server, the auto-firing hooks (SessionStart recall, PostToolUse
+index, Stop extract, PreCompact flush), and the `/afk`, `/triage`, `/diagnose`
+integrations.
 
 </supporting-info>

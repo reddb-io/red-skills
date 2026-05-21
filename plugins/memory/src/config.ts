@@ -25,10 +25,15 @@ export interface MemoryConfig {
   mode: StorageMode;
   /** Where markdown notes live, relative to the repo root. */
   notesDir: string;
+  /**
+   * Repo-relative path to the per-project RedDB graph store. Set in `graph`
+   * (and later `hybrid`) mode; absent in markdown-only mode.
+   */
+  storePath?: string;
   hooks: HookConfig;
   /** Whether the stdio MCP server is wired up. Off in markdown-only mode. */
   mcp: boolean;
-  /** Whether a RedDB engine is required. Always false in markdown-only mode. */
+  /** Whether a RedDB engine is required. False in markdown-only mode. */
   reddb: boolean;
 }
 
@@ -45,6 +50,9 @@ export const HOOKS_OFF: HookConfig = {
 /** Default location for markdown notes, under the single global `.red/`. */
 export const DEFAULT_NOTES_DIR = ".red/memory/notes";
 
+/** Default location for the per-project RedDB graph store, under `.red/`. */
+export const DEFAULT_STORE_PATH = ".red/memory/graph.rdb";
+
 /** Absolute path to the memory config file for a given repo root. */
 export function configPath(rootDir: string): string {
   return resolve(rootDir, ".red/memory/config.json");
@@ -55,6 +63,13 @@ export function resolveNotesDir(rootDir: string, config: MemoryConfig): string {
   return isAbsolute(config.notesDir)
     ? config.notesDir
     : join(resolve(rootDir), config.notesDir);
+}
+
+/** Resolve the graph store path to an absolute `file://` URI for the SDK. */
+export function resolveStoreUri(rootDir: string, config: MemoryConfig): string {
+  const storePath = config.storePath ?? DEFAULT_STORE_PATH;
+  const abs = isAbsolute(storePath) ? storePath : join(resolve(rootDir), storePath);
+  return `file://${abs}`;
 }
 
 /** Write the config to `<root>/.red/memory/config.json`, creating parents. */

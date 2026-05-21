@@ -6,27 +6,31 @@ It **lives on top of the `dev` plugin** and is meant to improve dev's processes
 (`/afk` recall, `/triage` dedup, `/diagnose` root-cause history). Installing
 `memory` requires `dev`.
 
-## This release: markdown-only
+## Storage modes
 
-This is the first end-to-end slice (PRD #49). It ships the **markdown-only**
-path — memory with zero engine dependency:
+`memory init` picks one storage mode. Two ship today:
 
-- `memory init` (markdown-only) writes `.red/memory/config.json` with **all
-  hooks off, MCP off, and RedDB not required**, and creates `.red/memory/notes/`.
-- `/memory:store <fact>` writes a plain markdown note.
-- `/memory:recall <query>` returns matching notes via full-text search, ranked.
+- **markdown-only** — zero engine dependency. Writes `.red/memory/config.json`
+  and `.red/memory/notes/`; `/memory:store` writes a plain markdown note,
+  `/memory:recall` full-text-searches the notes.
+- **graph** — a typed knowledge graph over a per-project embedded RedDB store at
+  `.red/memory/graph.rdb`. `/memory:store` upserts a deduped `concept` node;
+  `/memory:recall` scans the graph, expands the top matches one hop, and returns
+  the head of any `SUPERSEDED_BY` chain. RedDB runs out-of-process from the SDK's
+  bundled binary — no service to manage. Graph writes use multi-model DML and
+  KV-backed dedupe; see [ADR 0007](../../.red/adr/0007-reddb-graph-writes-via-multi-model-dml.md).
 
-Nothing auto-fires. The graph/hybrid storage modes, the MCP server, the
-auto-firing hooks, and the `/afk` · `/triage` · `/diagnose` integrations land in
-later slices.
+Both keep **all hooks off and MCP off** — nothing auto-fires. Hybrid mode, the
+MCP server, the auto-firing hooks, and the `/afk` · `/triage` · `/diagnose`
+integrations land in later slices.
 
 ## Skills
 
 | Skill | What it does |
 |-------|--------------|
-| **[init](./skills/core/init/SKILL.md)** | Setup wizard — markdown-only path. |
-| **[store](./skills/core/store/SKILL.md)** | Save a fact as a markdown note. |
-| **[recall](./skills/core/recall/SKILL.md)** | Full-text search over stored notes. |
+| **[init](./skills/core/init/SKILL.md)** | Setup wizard — markdown-only or graph. |
+| **[store](./skills/core/store/SKILL.md)** | Save a fact (markdown note or graph node). |
+| **[recall](./skills/core/recall/SKILL.md)** | Ranked search over stored memory. |
 
 ## Build
 
@@ -38,13 +42,16 @@ pnpm --dir plugins/memory install
 pnpm --dir plugins/memory build
 ```
 
-Then drive it directly if you like:
+Then drive it directly if you like (swap `--mode graph` for the graph store):
 
 ```bash
 node plugins/memory/dist/cli.js init --mode markdown-only
 node plugins/memory/dist/cli.js store the cache TTL is 300 seconds
 node plugins/memory/dist/cli.js recall cache TTL
 ```
+
+`graph` mode needs the install step above (it pulls `@reddb-io/sdk` and its
+bundled `red` binary); markdown-only needs only node.
 
 ## Develop
 

@@ -52,11 +52,15 @@ The second plugin in this marketplace (sibling to `dev` under `plugins/`), givin
 _Avoid_: memory skill (it is a whole plugin, not one skill); `~/.claude/memory/` (that is the harness's global per-user note store, unrelated; the Memory plugin is per-project)
 
 **Markdown-only mode**:
-The lightest **Memory plugin** storage mode, selected at `memory init`: facts are plain markdown **Memory notes** under `.red/memory/notes/`, recall is full-text search over them, and **all hooks are off, the MCP server does not run, and RedDB is not required**. The low-risk path with zero engine dependency. Contrasted with the later `graph` and `hybrid` modes (RedDB-backed, typed graph).
+The lightest **Memory plugin** storage mode, selected at `memory init`: facts are plain markdown **Memory notes** under `.red/memory/notes/`, recall is full-text search over them, and **all hooks are off, the MCP server does not run, and RedDB is not required**. The low-risk path with zero engine dependency. Contrasted with **Graph mode** (RedDB-backed, typed graph) and the later `hybrid` mode.
 _Avoid_: lite mode, no-engine mode
 
+**Graph mode**:
+The RedDB-backed **Memory plugin** storage mode, selected at `memory init`: facts become typed **Memory nodes** (and edges) in a per-project embedded RedDB store at `.red/memory/graph.rdb`, written through the `MemoryStore` facade. `/memory:store` upserts a deduped node; `/memory:recall` scans + expands the graph one hop and returns the head of any `SUPERSEDED_BY` chain. `reddb: true` in config, but the engine runs out-of-process from the SDK's bundled binary; hooks and MCP still off this slice. Writes use multi-model DML and KV-backed dedupe — see ADR 0007. Per-project store files (`graph.rdb*`) are local state, never committed.
+_Avoid_: db mode, sql mode; confusing the `.rdb` store with a **Memory note** (graph mode does not write notes)
+
 **Memory note**:
-A single fact stored by `/memory:store` as one markdown file (`<timestamp>-<slug>.md`, YAML frontmatter + the fact as body) under the configured `notesDir`. In **Markdown-only mode** the note is the canonical store — human-readable and committable, not a rendered view of a graph.
+A single fact stored by `/memory:store` as one markdown file (`<timestamp>-<slug>.md`, YAML frontmatter + the fact as body) under the configured `notesDir`. In **Markdown-only mode** the note is the canonical store — human-readable and committable, not a rendered view of a graph. In **Graph mode** the equivalent unit is a graph node, not a note.
 _Avoid_: memory record, entry
 
 ## Relationships

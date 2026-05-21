@@ -5,9 +5,11 @@ description: Search the project's persistent memory and return matching notes, r
 
 # memory recall
 
-Full-text search over the markdown notes stored by `/memory:store`. Returns the
-matching notes ranked by how strongly they match the query — the zero-token read
-path, no LLM extraction.
+Searches the project's memory for facts stored by `/memory:store`, ranked by how
+strongly they match the query — the zero-token read path, no LLM extraction. In
+**markdown-only** mode it full-text-searches the notes; in **graph** mode it
+scans the graph, drops superseded nodes (returns the head of a `SUPERSEDED_BY`
+chain), and expands the top matches one hop. Routing follows `memory init`.
 
 <what-to-do>
 
