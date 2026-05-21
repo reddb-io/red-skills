@@ -31,6 +31,10 @@ _Avoid_: HITL comment (overloaded with broader HITL workflows)
 Structured `<details data-attempt-status="...">` block the orchestrator posts on an **Issue** after each attempt (statuses: `done`, `blocked`, `no-sentinel`, `merge-conflict`). The canonical ledger entry for that attempt; consumed on retry as `<previous-attempt>` in the handoff.
 _Avoid_: report, attempt log, audit comment
 
+**Task mirror**:
+A read-only reflection of `afk.state.json` onto the host harness's native background-task surface (the Claude Code status-bar task list via `TaskCreate`/`TaskUpdate`, or the Codex equivalent). Agent-driven, runner-specific, re-hydrated on session reopen from live worker dirs. A presentation consumer of worker state, never a source of truth — the same role the `monitor.sh` dashboard plays on a `tput` surface. See ADR 0003.
+_Avoid_: native agent, subagent (the mirror is not an execution unit; AFK workers stay OS processes)
+
 ## Relationships
 
 - An **Issue tracker** holds many **Issues**
