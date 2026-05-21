@@ -565,6 +565,7 @@ Composable. Boring on purpose where boring is enough. Sharp where it matters.
 
 | Skill | What it does |
 |-------|--------------|
+| **[branch-lock](./plugins/dev/skills/misc/branch-lock/SKILL.md)** | Locks the agent to a branch and blocks it from switching away (agent-only PreToolUse hook). |
 | **[git-guardrails-claude-code](./plugins/dev/skills/misc/git-guardrails-claude-code/SKILL.md)** | Claude Code hooks that block destructive git commands. |
 | **[migrate-to-shoehorn](./plugins/dev/skills/misc/migrate-to-shoehorn/SKILL.md)** | Migrates test files from `as` type assertions to `@total-typescript/shoehorn`. |
 | **[scaffold-exercises](./plugins/dev/skills/misc/scaffold-exercises/SKILL.md)** | Creates exercise scaffolds with sections, problems, solutions. |
