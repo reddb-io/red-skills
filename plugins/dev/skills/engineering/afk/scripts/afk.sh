@@ -298,7 +298,13 @@ prune_orphans() {
   [[ $stale_claims -gt 0 ]] && log "released $stale_claims stale claim lock(s)"
 
   local _trimmed; _trimmed="$(history_trim "$HISTORY_FILE" "$HISTORY_MAX_LINES")"
-  [[ -n "$_trimmed" ]] && log "trimmed history to last $_trimmed lines"
+  # Must be an `if` block, not `[[ ]] && log`: this is the last statement in the
+  # function, so a false guard would make prune_orphans return 1 and abort the
+  # whole orchestrator under `set -e` (history_trim returns empty when it trims
+  # nothing — the common case). Regression guard for the lib/history.sh extraction.
+  if [[ -n "$_trimmed" ]]; then
+    log "trimmed history to last $_trimmed lines"
+  fi
 }
 
 # ---------- unblock sweep ----------
