@@ -17,6 +17,23 @@ Sets up a PreToolUse hook that intercepts and blocks dangerous git commands befo
 
 When blocked, Claude sees a message telling it that it does not have authority to access these commands.
 
+## Branch-lock awareness
+
+If a branch lock is active — an opt-in `./.red/tmp/branch-lock.yaml` whose content
+is the locked branch name — this hook **also** blocks the branch-leaving /
+work-loss family in the primary checkout: `git switch`/`git checkout` to another
+branch, `git switch -`, `git checkout -b <new>`, and bare `git stash`. Switching
+back to the locked branch, targeted file restore (`git checkout -- <path>`), and
+`git worktree add` stay allowed; `/afk` worktrees under `.red/tmp/work-*/` are
+exempt.
+
+This is **self-contained**: the hook reads the lock and classifies the command on
+its own and does **not** source or require the [`branch-lock`](../branch-lock/SKILL.md)
+skill. The two skills are independent — install either one and the lock is
+enforced. With both installed they reach the same verdict and stack idempotently
+(both deny, neither conflicts). Absence of the lock file means unlocked, so this
+layer is silent unless the user has opted in.
+
 ## Steps
 
 ### 1. Ask scope
@@ -93,3 +110,8 @@ echo '{"tool_input":{"command":"git push origin main"}}' | <path-to-script>
 ```
 
 Should exit with code 2 and print a BLOCKED message to stderr.
+
+The full behaviour (dangerous patterns + branch-lock awareness + worktree
+scope + the no-dependency contract) is pinned by
+[scripts/tests/block-dangerous-git.test.sh](scripts/tests/block-dangerous-git.test.sh),
+run directly with `bash`.
