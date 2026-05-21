@@ -1,0 +1,7 @@
+# Self-contained workspace nested under plugins/memory/.
+# This tracer-bullet slice keeps everything in the root package (src/); future
+# slices add sibling packages (core, extractor, recall, mcp-server, …) under
+# packages/* without touching the red-skills root, which stays build-free.
+packages:
+  - "."
+  - "packages/*"

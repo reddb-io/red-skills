@@ -574,6 +574,26 @@ Composable. Boring on purpose where boring is enough. Sharp where it matters.
 </details>
 
 <details>
+<summary><strong>Memory plugin — persistent memory (markdown-only)</strong></summary>
+
+The separate **`memory`** plugin gives agents a persistent, queryable memory that
+survives `/clear` and crosses sessions. It lives on top of `dev` (requires it).
+This release ships the **markdown-only** path — zero engine dependency, nothing
+auto-fires. Install `memory` alongside `dev`, then run `memory init`.
+
+| Skill | What it does |
+|-------|--------------|
+| **[init](./plugins/memory/skills/core/init/SKILL.md)** | Setup wizard. Markdown-only mode writes `.red/memory/config.json` (hooks off, MCP off, no RedDB) and creates `.red/memory/notes/`. |
+| **[store](./plugins/memory/skills/core/store/SKILL.md)** | `/memory:store <fact>` — save a fact as a plain markdown note. |
+| **[recall](./plugins/memory/skills/core/recall/SKILL.md)** | `/memory:recall <query>` — full-text search over stored notes, ranked. |
+
+See [plugins/memory/README.md](./plugins/memory/README.md). Graph/hybrid storage,
+the MCP server, the auto-firing hooks, and the `/afk` · `/triage` · `/diagnose`
+integrations land in later slices.
+
+</details>
+
+<details>
 <summary><strong>MCP servers — bundled tools</strong></summary>
 
 | Server | What it does |

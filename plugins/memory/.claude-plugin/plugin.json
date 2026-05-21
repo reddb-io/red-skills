@@ -1,0 +1,13 @@
+{
+  "name": "memory",
+  "version": "1.48.0",
+  "description": "reddb.io memory plugin — persistent, queryable memory for code agents that lives on top of `dev`. This slice ships the markdown-only path: `memory init`, `/memory:store`, and `/memory:recall` over plain markdown notes (no RedDB, no graph, no hooks). Requires the `dev` plugin.",
+  "dependencies": [
+    "dev"
+  ],
+  "skills": [
+    "./skills/core/init",
+    "./skills/core/store",
+    "./skills/core/recall"
+  ]
+}

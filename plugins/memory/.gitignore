@@ -1,0 +1,4 @@
+# Built at `memory init` time on the user's machine — never committed.
+dist/
+node_modules/
+*.tsbuildinfo
