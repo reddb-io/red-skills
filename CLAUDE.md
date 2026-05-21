@@ -37,7 +37,7 @@ Future plugins (e.g. `data`, `ops`) live as siblings under `plugins/` with their
 1. Every skill in `engineering/`, `knowledge/`, `productivity/`, or `misc/` must be listed in the root `README.md` **and** in the owning plugin's `.claude-plugin/plugin.json` (e.g. `plugins/dev/.claude-plugin/plugin.json`). The owning plugin's `.codex-plugin/plugin.json` must expose the same `skills/` tree. Skills in `in-progress/` appear in neither.
 2. Each entry in `README.md` links the skill name to its `SKILL.md`.
 3. Each bucket has its own `README.md` listing the bucket's skills with a one-line description.
-4. `LICENSE` is MIT inherited from Matt — **do not change copyright attribution**.
+4. `LICENSE` is Apache-2.0. The `NOTICE` file preserves Matt Pocock's original MIT copyright for the upstream-derived skills under `plugins/dev/skills/` — **do not remove or alter that attribution**. See ADR 0004.
 5. `.red/CONTEXT.md` is a domain glossary, not a spec or changelog.
 6. **All repo content is in English.** No Portuguese (or any other language) in committed files — SKILL.md, README, CHANGES, ADRs, comments, frontmatter descriptions. Chat with the user can stay Portuguese; the repo cannot.
 
