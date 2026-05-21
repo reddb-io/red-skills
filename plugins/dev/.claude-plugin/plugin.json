@@ -1,6 +1,6 @@
 {
   "name": "dev",
-  "version": "1.48.0",
+  "version": "1.49.0",
   "description": "reddb.io dev plugin — engineering skills for code agents (autonomous /afk loop, triage, tdd, diagnose, wiki, …)",
   "mcpServers": "./.mcp.json",
   "skills": [
