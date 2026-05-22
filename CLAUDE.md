@@ -75,6 +75,10 @@ Never reorder priorities so that documentation/side-effect work in `<supporting-
 
 ## Agent skills
 
+### Wiki
+
+Incremental LLM Wiki for accumulating knowledge about `RedSkills, agents, skills, memory instrumentation, and engineering automation patterns`. Schema at `.red/agents/wiki.md`. Use `/wiki` for ingest, query, and lint.
+
 ### Issue tracker
 
 GitHub Issues on `reddb-io/red-skills`. See `.red/agents/issue-tracker.md`.

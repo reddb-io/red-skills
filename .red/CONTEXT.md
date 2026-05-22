@@ -52,7 +52,7 @@ An isolated `git worktree` that `/afk` creates per issue under `.red/tmp/work-*/
 _Avoid_: afk clone, sandbox checkout
 
 **Memory plugin**:
-The second plugin in this marketplace (sibling to `dev` under `plugins/`), giving agents a persistent, queryable memory that survives `/clear` and crosses sessions. Hard-depends on `dev` and exists to improve dev's processes (`/afk` recall, `/triage` dedup, `/diagnose` history), never as a standalone. The dependency is **one-directional**: `dev` only *soft-uses* `memory` — those three skills query it through `plugins/dev/scripts/memory-bridge.sh` when it's installed and behave exactly as before when it isn't; `dev`'s `plugin.json` never lists `memory` (see ADR 0009). Configured per-project by `memory init`; surfaced as `/memory:store` and `/memory:recall`. See PRD #49.
+The second plugin in this marketplace (sibling to `dev` under `plugins/`), giving agents a persistent, queryable memory that survives `/clear` and crosses sessions. Hard-depends on `dev` and exists to improve dev's processes (`/afk` recall, `/triage` dedup, `/diagnose` history), never as a standalone. The dependency is **one-directional**: `dev` only *soft-uses* `memory` — those three skills query it through `plugins/dev/scripts/memory-bridge.sh` when it's installed and behave exactly as before when it isn't; `dev`'s `plugin.json` never lists `memory` (see ADR 0009). It is the only plugin that knows about RedDB persistence; `dev` talks to its high-level memory interface, never to RedDB directly. Configured per-project by `memory init`; surfaced as `/memory:store` and `/memory:recall`. See PRD #49.
 _Avoid_: memory skill (it is a whole plugin, not one skill); `~/.claude/memory/` (that is the harness's global per-user note store, unrelated; the Memory plugin is per-project)
 
 **Markdown-only mode**:
@@ -71,11 +71,52 @@ _Avoid_: memory record, entry
 A property on every **Memory node** — `ephemeral | durable | reasoning` — that resolves the tension between RedDB's auto-expiring TTL and the project's "no automatic deletion" guarantee. `ephemeral` nodes (default for `session` types) carry a TTL horizon (`expires_at`) and stop surfacing once it passes; `durable` (the default for stored facts/decisions) and `reasoning` (`why_note` traces) carry no TTL and persist indefinitely. Defaulted on write per `defaultTier(node_type)`, overridable per node. `memory:doctor` flags stale `durable` nodes but never auto-deletes and never touches `ephemeral` ones (TTL owns them). Expiry is enforced client-side at the `listNodes` choke point because the embedded engine does not sweep KV TTL promptly — see ADR 0010. Introduced by issue #68 under PRD #66.
 _Avoid_: ttl class, expiry level, retention policy
 
+**RedDB Statistics**:
+The RedDB analytical surface for aggregate counts, rankings, and rollups derived from project data without replacing the graph as the relationship substrate.
+_Avoid_: stats (too vague outside code identifiers), metrics store
+
+**Skill**:
+An agent-loadable behavior package exposed by RedSkills or a local/personal marketplace, usually rooted at a `SKILL.md` plus optional supporting files.
+_Avoid_: command (a skill may be triggered without a slash command), plugin (a plugin can contain many skills)
+
+**Skill telemetry**:
+Observed lifecycle and interaction events for a **Skill** — available only in **Graph mode**, stored as a runner-neutral canonical event set (`viewed`, `used`, `result`, `changed`, `state_changed`), and exposed as curator-friendly rollups such as use count, view count, patch count, last activity, success/failure, archive, and consolidation. Skill events carry enough identity for both Claude Code and Codex (`name`, `source_kind`, `path`, `runner`, session/turn identifiers, timestamp, event id); `result` stores only safe operational outcome such as `succeeded`, `failed`, `abandoned`, `blocked`, or `unknown`, plus optional duration or classified error.
+_Avoid_: skill metrics (too numeric-only), usage counters (too narrow)
+
+**Curatable skill**:
+A **Skill** whose files may be modified, consolidated, or archived by a future curator because it is user-owned or agent-created rather than bundled as read-only plugin/hub content.
+_Avoid_: stale skill (staleness is a state, not ownership), editable skill
+
+**Skill curator**:
+A Memory-backed reviewer of **Skill telemetry** that separates lightweight signal collection from heavier report-only review: every N user turns it may process new skill events into rollups, while recommendations about **Curatable skills** run explicitly or on an interval/idle gate; any skill mutation remains a separate workflow outside the **Memory plugin**.
+_Avoid_: curator (too broad), memory cleaner
+
+**Codebase understanding surface**:
+A `dev` plugin workflow surface for explaining a repository's architecture, skill/module interdependencies, and change impact by reading from graph-backed project knowledge owned by the **Memory plugin**. The surface belongs in `dev` because it is an engineering workflow; the graph storage, traversal, recall, export, and community detection remain `memory` responsibilities. This prevents a second graph store from competing with **Graph mode** while still allowing higher-level repo-understanding skills to exist. The surface may use graph-mode verbs directly (`neighbors`, `path`, `stats`, export-derived reads) when available, but must degrade through `memory recall` or ordinary code exploration when the Memory plugin is absent or not in graph mode. It is read-only with respect to the graph: if indexing is missing or stale, it tells the user to run `/memory:ingest` instead of reindexing implicitly.
+_Avoid_: wiki graph (too narrow), understand plugin (confuses the workflow surface with plugin ownership), `/understand` (too close to Understand Anything's naming)
+
+**Zoom-out answer**:
+The fixed answer shape for the `zoom-out` part of the **Codebase understanding surface**. It is map-first: start with the relevant modules/layers, then the main relationships, critical paths, and risks/gaps. It may include graph evidence when useful, but raw nodes/edges never lead the answer. Direct question answering belongs to the **Ask surface**.
+_Avoid_: graph dump, architecture chat
+
+**Ask surface**:
+A candidate future `dev` plugin skill surface for natural-language questions over project knowledge, backed by the **Memory plugin** when available and falling back to ordinary codebase exploration when it is not. It is intentionally deferred until the graph-backed `zoom-out` flow proves useful. It is different from **Memory recall**: recall returns stored context; ask uses that context plus fresh repo reads to answer an engineering question. It is also different from **Wiki query**, which operates on `.red/wiki/` research notes.
+_Avoid_: understand, codebase chat
+
 ## Relationships
 
 - An **Issue tracker** holds many **Issues**
 - An **Issue** carries one **Triage role** at a time
 - An **Issue** accumulates many **Envelopes** (one per attempt) and many comments; comments split into **Directive blocks** (extracted as **Human guidance**) and **Thread discussion**
+- **Skill telemetry** uses **Graph mode** for event relationships and **RedDB Statistics** for aggregate rollups, but only the **Memory plugin** knows those persistence details; `dev` remains a soft-using workflow plugin.
+- `dev` and skill runtimes may emit **Skill telemetry** through a high-level Memory CLI event contract; the **Memory plugin** owns how that event becomes graph data or statistical rollups.
+- **Skill telemetry** may observe every **Skill**, but curator mutations are limited to **Curatable skills**.
+- **Skill telemetry** treats a **Skill** as `viewed` when its instructions are actually read or loaded into context, not merely listed during discovery.
+- **Skill telemetry** uses runner-specific adapters for Claude Code and Codex that translate different hook/loading mechanics into one logical Memory event contract.
+- **Skill telemetry** adapters are installed or enabled by `memory init` as an explicit per-project opt-in.
+- When **Skill telemetry** is unavailable because the project is not in **Graph mode**, normal skill use is silent no-op, while telemetry/curator status commands explain the missing prerequisite.
+- A **Skill curator** belongs to the **Memory plugin** for evidence and dry-run recommendations, but does not mutate skills itself.
+- A **Skill curator** uses a two-level cadence: lightweight telemetry checks follow user-turn counts and only process new skill events, while report-only curator reviews follow interval/idle gates.
 
 ## Flagged ambiguities
 
