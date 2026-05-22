@@ -37,6 +37,13 @@ export interface MemoryConfig {
   /** Whether a RedDB engine is required. False in markdown-only mode. */
   reddb: boolean;
   /**
+   * Whether Skill telemetry ingest is enabled for this project. An explicit
+   * per-project opt-in, honored only in graph mode — markdown-only has no
+   * engine to persist events into, so the field is left absent there. Absent
+   * (legacy graph configs) reads as off via {@link skillTelemetryEnabled}.
+   */
+  skillTelemetry?: boolean;
+  /**
    * AI provider for LLM conversation extraction (the `INFERRED` path). Absent
    * until the user configures one; when absent, only the deterministic
    * `EXTRACTED` paths run. Selects a RedDB engine-side provider mode
@@ -86,6 +93,17 @@ export function resolveHooks(mode: StorageMode, choice: HookChoice): HookConfig 
   if (choice === true) return { ...HOOKS_ALL_ON };
   if (!choice) return { ...HOOKS_OFF };
   return { ...HOOKS_OFF, ...choice };
+}
+
+/**
+ * Whether Skill telemetry ingest is active for a project. True only when the
+ * project is in graph mode and the explicit opt-in is set — the single source
+ * of truth shared by the CLI event verb and adapters/status. A missing field
+ * (legacy graph config) reads as off, so telemetry never fires unless a project
+ * opted in at init time.
+ */
+export function skillTelemetryEnabled(config: MemoryConfig): boolean {
+  return config.mode === "graph" && config.skillTelemetry === true;
 }
 
 /** Default location for markdown notes, under the single global `.red/`. */
