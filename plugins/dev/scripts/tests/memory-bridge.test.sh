@@ -65,6 +65,10 @@ INIT_ROOT="$TMP/init-repo"
 mkdir -p "$INIT_ROOT/.red/memory"
 echo '{"version":1,"mode":"markdown-only"}' > "$INIT_ROOT/.red/memory/config.json"
 
+GRAPH_ROOT="$TMP/graph-repo"
+mkdir -p "$GRAPH_ROOT/.red/memory"
+echo '{"version":1,"mode":"graph","storePath":".red/memory/graph.rdb"}' > "$GRAPH_ROOT/.red/memory/config.json"
+
 # A repo that never ran memory init (no config).
 BARE_ROOT="$TMP/bare-repo"
 mkdir -p "$BARE_ROOT"
@@ -74,10 +78,20 @@ FAKE_BIN="$TMP/bin"
 mkdir -p "$FAKE_BIN"
 cat > "$FAKE_BIN/memory" <<'EOF'
 #!/usr/bin/env bash
-# args: recall <query…>
-shift   # drop the "recall" verb
-echo "memory: 1 match for \"$*\""
-echo "  [1.0] note-1"
+case "$1" in
+  recall)
+    shift   # drop the "recall" verb
+    echo "memory: 1 match for \"$*\""
+    echo "  [1.0] note-1"
+    ;;
+  stats)
+    echo "memory: 17 node(s), 3 edge(s)"
+    ;;
+  *)
+    echo "unexpected command: $*" >&2
+    exit 1
+    ;;
+esac
 EOF
 chmod +x "$FAKE_BIN/memory"
 
@@ -139,6 +153,64 @@ expect_fail "available: config present but no CLI -> unavailable" \
 clear_env
 expect_ok "available: config present AND CLI on PATH -> available" \
   bash -c 'source "'"$LIB"'"; PATH="'"$FAKE_BIN"':$PATH" memory_available "'"$INIT_ROOT"'"'
+
+# ---------- Memory mode + graph readiness ----------
+
+clear_env
+expect_eq "mode: absent config -> unavailable" "unavailable" \
+  "$(PATH=/usr/bin:/bin bash -c 'source "'"$LIB"'"; memory_mode "'"$BARE_ROOT"'"')"
+
+clear_env
+expect_eq "mode: markdown-only config -> markdown-only" "markdown-only" \
+  "$(PATH=/usr/bin:/bin bash -c 'source "'"$LIB"'"; memory_mode "'"$INIT_ROOT"'"')"
+
+clear_env
+expect_eq "mode: graph config -> graph" "graph" \
+  "$(PATH=/usr/bin:/bin bash -c 'source "'"$LIB"'"; memory_mode "'"$GRAPH_ROOT"'"')"
+
+clear_env
+expect_ok "graph-ready: graph config + stats with nodes -> ready" \
+  bash -c 'source "'"$LIB"'"; PATH="'"$FAKE_BIN"':$PATH" memory_graph_ready "'"$GRAPH_ROOT"'"'
+
+clear_env
+expect_fail "graph-ready: absent config -> not ready" \
+  bash -c 'source "'"$LIB"'"; PATH="'"$FAKE_BIN"':$PATH" memory_graph_ready "'"$BARE_ROOT"'"'
+
+clear_env
+expect_fail "graph-ready: markdown-only config -> not ready" \
+  bash -c 'source "'"$LIB"'"; PATH="'"$FAKE_BIN"':$PATH" memory_graph_ready "'"$INIT_ROOT"'"'
+
+clear_env
+EMPTYBIN="$TMP/emptybin"
+mkdir -p "$EMPTYBIN"
+cat > "$EMPTYBIN/memory" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$1" == "stats" ]]; then
+  echo "memory: 0 node(s), 0 edge(s)"
+else
+  exit 1
+fi
+EOF
+chmod +x "$EMPTYBIN/memory"
+expect_fail "graph-ready: graph stats with zero nodes -> not ready" \
+  bash -c 'source "'"$LIB"'"; PATH="'"$EMPTYBIN"':/usr/bin:/bin" memory_graph_ready "'"$GRAPH_ROOT"'"'
+
+clear_env
+STATERRBIN="$TMP/staterrbin"
+mkdir -p "$STATERRBIN"
+cat > "$STATERRBIN/memory" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$1" == "stats" ]]; then
+  echo "stats boom" >&2
+  exit 1
+fi
+exit 1
+EOF
+chmod +x "$STATERRBIN/memory"
+out="$(PATH="$STATERRBIN:/usr/bin:/bin" bash -c 'source "'"$LIB"'"; memory_graph_ready "'"$GRAPH_ROOT"'"' 2>/dev/null)"
+expect_eq "graph-ready: failing stats command -> no stdout" "" "$out"
+expect_fail "graph-ready: failing stats command -> not ready" \
+  bash -c 'source "'"$LIB"'"; PATH="'"$STATERRBIN"':/usr/bin:/bin" memory_graph_ready "'"$GRAPH_ROOT"'"'
 
 # ---------- memory_recall (graceful, query passthrough) ----------
 
