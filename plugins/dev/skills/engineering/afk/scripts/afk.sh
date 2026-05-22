@@ -781,7 +781,14 @@ emit_envelope() {
 
   local rc
   if [[ "$status" == "done" ]]; then
-    envelope_emit_done poster=_afk_envelope_poster "issue=$n" "summary=$summary"
+    local validation_file=""
+    while [[ $# -ge 2 ]]; do
+      case "$1" in
+        validation) validation_file="$2" ;;
+      esac
+      shift 2
+    done
+    envelope_emit_done poster=_afk_envelope_poster "issue=$n" "summary=$summary" "validation_file=$validation_file"
     rc=$?
   else
     # Collect the notes/log section files the caller passed; the Module adds the
@@ -1521,21 +1528,127 @@ run_codex() {
 }
 
 # ---------- feedback loops ----------
-feedback() {
-  local worktree="$1"
-  local report=""
-  for script in test typecheck lint build; do
-    if (cd "$worktree" && jq -e ".scripts.\"$script\"" package.json >/dev/null 2>&1); then
-      if (cd "$worktree" && pnpm "$script" >/tmp/afk-$script.log 2>&1); then
-        report+="$script:✓ "
-      else
-        report+="$script:✗ "
-      fi
+feedback_changed_files() {
+  local worktree="$1" base_ref="${2:-origin/main}"
+  if [[ -n "$base_ref" ]] && git -C "$worktree" rev-parse --verify "$base_ref" >/dev/null 2>&1; then
+    git -C "$worktree" diff --name-only "$base_ref"...HEAD
+    return 0
+  fi
+  if git -C "$worktree" rev-parse --verify origin/main >/dev/null 2>&1; then
+    git -C "$worktree" diff --name-only origin/main...HEAD
+    return 0
+  fi
+  git -C "$worktree" diff --name-only HEAD~1..HEAD 2>/dev/null || git -C "$worktree" ls-files
+}
+
+feedback_nearest_package_scope() {
+  local worktree="$1" file="$2" dir
+  [[ -n "$file" ]] || return 0
+  file="${file#./}"
+  if [[ "$file" == */* ]]; then
+    dir="${file%/*}"
+  else
+    dir="."
+  fi
+
+  while [[ -n "$dir" && "$dir" != "." && "$dir" != "/" ]]; do
+    if [[ -f "$worktree/$dir/package.json" ]]; then
+      printf '%s\n' "$dir"
+      return 0
+    fi
+    if [[ "$dir" == */* ]]; then
+      dir="${dir%/*}"
     else
-      report+="$script:- "
+      dir="."
+    fi
+  done
+
+  [[ -f "$worktree/package.json" ]] && printf '.\n'
+}
+
+feedback_relevant_scopes() {
+  local worktree="$1" base_ref="${2:-origin/main}" file scope
+  declare -A seen=()
+  while IFS= read -r file; do
+    scope="$(feedback_nearest_package_scope "$worktree" "$file")"
+    [[ -n "$scope" ]] && seen["$scope"]=1
+  done < <(feedback_changed_files "$worktree" "$base_ref")
+
+  if [[ ${#seen[@]} -eq 0 && -f "$worktree/package.json" ]]; then
+    seen["."]=1
+  fi
+
+  for scope in "${!seen[@]}"; do
+    printf '%s\n' "$scope"
+  done | LC_ALL=C sort
+}
+
+feedback_scope_label() {
+  [[ "$1" == "." ]] && printf 'root' || printf '%s' "$1"
+}
+
+feedback_scope_dir() {
+  local worktree="$1" scope="$2"
+  [[ "$scope" == "." ]] && printf '%s' "$worktree" || printf '%s/%s' "$worktree" "$scope"
+}
+
+feedback_scope_has_script() {
+  local worktree="$1" scope="$2" script="$3" pkg
+  pkg="$(feedback_scope_dir "$worktree" "$scope")/package.json"
+  jq -e ".scripts.\"$script\"" "$pkg" >/dev/null 2>&1
+}
+
+feedback_join_parts() {
+  local first=1 part
+  printf '{'
+  for part in "$@"; do
+    [[ $first -eq 1 ]] || printf ','
+    first=0
+    printf '%s' "$part"
+  done
+  printf '}'
+}
+
+feedback() {
+  local worktree="$1" base_ref="${2:-origin/main}"
+  local -a scopes=()
+  local scope
+  while IFS= read -r scope; do
+    [[ -n "$scope" ]] && scopes+=("$scope")
+  done < <(feedback_relevant_scopes "$worktree" "$base_ref")
+
+  local report="" failed=0 script
+  for script in test typecheck lint build; do
+    local -a parts=()
+    if [[ ${#scopes[@]} -eq 0 ]]; then
+      parts+=("no-package:skip")
+    else
+      for scope in "${scopes[@]}"; do
+        local label dir safe_label
+        label="$(feedback_scope_label "$scope")"
+        if feedback_scope_has_script "$worktree" "$scope" "$script"; then
+          dir="$(feedback_scope_dir "$worktree" "$scope")"
+          safe_label="${label//\//_}"
+          if pnpm -C "$dir" "$script" >"/tmp/afk-${script}-${safe_label}.log" 2>&1; then
+            parts+=("$label:✓")
+          else
+            parts+=("$label:✗")
+            failed=1
+          fi
+        else
+          parts+=("$label:skip")
+        fi
+      done
+    fi
+
+    if [[ ${#parts[@]} -eq 1 ]]; then
+      report+="$script:${parts[0]} "
+    else
+      report+="$script:$(feedback_join_parts "${parts[@]}") "
     fi
   done
   echo "$report"
+  return "$failed"
 }
 
 # ---------- merge & push ----------
@@ -1902,8 +2015,33 @@ process_issue() {
 
   # feedback loops
   state_write "$STATE_FILE" current.stage=tests
-  local fb; fb="$(feedback "$worktree")"
+  local fb feedback_rc=0
+  fb="$(feedback "$worktree" "origin/$pinned")" || feedback_rc=$?
   log "feedback: $fb"
+  if [[ "$feedback_rc" -ne 0 ]]; then
+    log "✗ #$n feedback validation failed — flipping to ready-for-human"
+    local dur_fb=$(( $(date +%s) - started_epoch ))
+    local notes_file
+    notes_file="$(mktemp)"
+    {
+      echo "Feedback validation failed after the inner agent emitted DONE."
+      echo
+      echo "Report: $fb"
+      echo
+      echo "The worker branch was not merged."
+    } > "$notes_file"
+    emit_envelope "blocked" "$n" "$dur_fb" "$branch" "$attempt" "" "$slug" "$worktree_rel" \
+      "notes" "$notes_file" || true
+    rm -f "$notes_file"
+    gh -R "$(gh_repo)" issue edit "$n" --remove-label running --add-label ready-for-human >/dev/null
+    AGG_BLOCKED=$((AGG_BLOCKED+1))
+    state_write "$STATE_FILE" blocked:=$AGG_BLOCKED current:=null
+    emit_history "blocked" "$n" "$RUNNER" "$dur_fb" "" "feedback"
+    snapshot_iter_for_hook
+    iter_close_preserve
+    fire_post_iteration "blocked" "$dur_fb"
+    return 0
+  fi
 
   # merge
   state_write "$STATE_FILE" current.stage=merge
@@ -1931,7 +2069,12 @@ process_issue() {
   state_write "$STATE_FILE" current.stage=close
   local merge_sha; merge_sha="$(git -C "$PROJECT_ROOT" rev-parse --short HEAD)"
   local dur=$(( $(date +%s) - started_epoch ))
-  emit_envelope "done" "$n" "$dur" "$branch" "$attempt" "$merge_sha" "$slug" "$worktree_rel" || true
+  local validation_file
+  validation_file="$(mktemp)"
+  printf '%s\n' "$fb" > "$validation_file"
+  emit_envelope "done" "$n" "$dur" "$branch" "$attempt" "$merge_sha" "$slug" "$worktree_rel" \
+    "validation" "$validation_file" || true
+  rm -f "$validation_file"
   gh -R "$(gh_repo)" issue close "$n" --reason completed >/dev/null
   gh -R "$(gh_repo)" issue edit "$n" --remove-label running >/dev/null 2>&1 || true
 
