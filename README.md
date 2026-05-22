@@ -20,7 +20,7 @@ reddb.io's slash-command library for Claude Code, Codex, and friends.
 /plugin marketplace add reddb-io/red-skills && /plugin install dev@red-skills
 ```
 
-[Install details](#install) · [`/afk`](#-afk--autonomous-issue-execution) · [Fleet mode](#fleet-mode--one-command-n-workers) · [Pipeline](#-the-pipeline-that-feeds-it) · [Wiki](#-knowledge--your-private-llm-wiki) · [Reference](#reference)
+[Install details](#install) · [`/afk`](#-afk--autonomous-issue-execution) · [Fleet mode](#fleet-mode--one-command-n-workers) · [Pipeline](#-the-pipeline-that-feeds-it) · [Codebase understanding](#-codebase-understanding-surface) · [Wiki](#-knowledge--your-private-llm-wiki) · [Reference](#reference)
 
 ```
    /start   ─▶   /to-prd   ─▶   /to-issues   ─▶   /triage   ─▶   ⚡ /afk
@@ -472,6 +472,25 @@ The full issue lifecycle (`needs-triage` → `ready-for-agent` → `running` →
 
 ---
 
+## 🗺 Codebase understanding surface
+
+`/zoom-out` is the first Codebase understanding surface in the `dev` plugin. It is map-first: answers start with modules/layers, then relationships, critical paths, and risks/gaps, so you get orientation before raw detail.
+
+When the optional `memory` plugin is initialized in Memory Graph mode and the graph has indexed content, `/zoom-out` is graph-aware. It may read graph neighbors and paths through the `dev` Memory bridge, interpret them into the map, and verify the explanation against current files. If Memory is absent, uninitialized, markdown-only, stale, empty, or failing, `/zoom-out` degrades to ordinary codebase exploration and still answers from the repo.
+
+`/zoom-out` is read-only. It does not run `/memory:ingest`, reindex files, or write graph state. If graph indexing is absent or stale enough to matter, the answer can recommend that you explicitly run `/memory:ingest <path>` before a later zoom-out.
+
+Boundaries:
+
+| Surface | Use it for |
+|---------|------------|
+| `/zoom-out` | Map-first orientation over unfamiliar code; graph-aware when Memory Graph mode is ready. |
+| `/memory:recall` | Search stored Memory notes or graph memory for relevant prior facts. |
+| `/wiki query` | Ask over the private `.red/wiki/` knowledge cache and optionally save a synthesis page. |
+| Future Ask surface | Direct question-first answers over project knowledge. This remains out of scope here. |
+
+---
+
 ## 📚 Knowledge — your private LLM Wiki
 
 ```
@@ -533,7 +552,7 @@ Composable. Boring on purpose where boring is enough. Sharp where it matters.
 | **[tdd](./plugins/dev/skills/engineering/tdd/SKILL.md)** | Red-green-refactor loop; one vertical slice at a time. |
 | **[to-issues](./plugins/dev/skills/engineering/to-issues/SKILL.md)** | Breaks a plan, spec, or PRD into independently-grabbable issues via vertical slices. |
 | **[to-prd](./plugins/dev/skills/engineering/to-prd/SKILL.md)** | Turns the current conversation into a PRD; publishes as a GitHub issue. |
-| **[zoom-out](./plugins/dev/skills/engineering/zoom-out/SKILL.md)** | Broader / systemic view of unfamiliar code. |
+| **[zoom-out](./plugins/dev/skills/engineering/zoom-out/SKILL.md)** | Map-first Codebase understanding; graph-aware when Memory Graph mode is ready, read-only when it is not. |
 | **[prototype](./plugins/dev/skills/engineering/prototype/SKILL.md)** | Throwaway prototype — terminal app for state/logic, or UI variations toggleable from one route. |
 | **[setup-red-skills](./plugins/dev/skills/engineering/setup-red-skills/SKILL.md)** | Per-repo config: issue tracker, triage label vocab, domain doc layout, RedSkills workflows, RTK. |
 
