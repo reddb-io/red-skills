@@ -199,20 +199,23 @@ envelope_emit_attempt() {
   "$poster" "$issue" "$body"
 }
 
-# envelope_emit_done poster=FN issue=N summary=STR
+# envelope_emit_done poster=FN issue=N summary=STR [validation_file=PATH]
 envelope_emit_done() {
-  local poster="" issue="" summary=""
+  local poster="" issue="" summary="" validation_file=""
   local arg key val
   for arg in "$@"; do
     key="${arg%%=*}"
     val="${arg#*=}"
     case "$key" in
-      poster)  poster="$val" ;;
-      issue)   issue="$val" ;;
-      summary) summary="$val" ;;
+      poster)          poster="$val" ;;
+      issue)           issue="$val" ;;
+      summary)         summary="$val" ;;
+      validation_file) validation_file="$val" ;;
       *) printf '[envelope] envelope_emit_done: unknown arg %q\n' "$arg" >&2 ;;
     esac
   done
-  local body; body="$(envelope_build_body "done" "$summary")"
+  local -a sections=()
+  [[ -n "$validation_file" ]] && sections=( validation "$validation_file" )
+  local body; body="$(envelope_build_body "done" "$summary" "${sections[@]}")"
   "$poster" "$issue" "$body"
 }

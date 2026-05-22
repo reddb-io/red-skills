@@ -196,6 +196,14 @@ expect_not_contains "done/no log section"   "$CAPTURED_BODY" 'data-section="log"
 EXPECT_DONE="$(envelope_build_body "done" "$SUM_DONE")"
 expect_eq "done/byte-for-byte == build_body" "$CAPTURED_BODY" "$EXPECT_DONE"
 
+validation_file="$(mktemp)"
+printf 'test:plugins/memory:✓ typecheck:plugins/memory:skip\n' > "$validation_file"
+envelope_emit_done poster=capturing_poster issue=20 "summary=$SUM_DONE" "validation_file=$validation_file"
+rc=$?
+expect_eq "done/validation returns poster rc 0" "$rc" "0"
+expect_contains "done/validation section tag" "$CAPTURED_BODY" '<details data-section="validation">'
+expect_contains "done/validation carries report" "$CAPTURED_BODY" 'test:plugins/memory:✓'
+
 # ===========================================================================
 # poster failure propagates as non-zero return
 # ===========================================================================
@@ -208,7 +216,7 @@ expect_eq "fmt_duration(0)"    "$(envelope_fmt_duration 0)"    "0m0s"
 expect_eq "fmt_duration(65)"   "$(envelope_fmt_duration 65)"   "1m5s"
 expect_eq "fmt_duration(3599)" "$(envelope_fmt_duration 3599)" "59m59s"
 
-rm -f "$notes_file" "$log_file"
+rm -f "$notes_file" "$log_file" "$validation_file"
 
 echo
 echo "summary: $pass passed, $fail failed"
