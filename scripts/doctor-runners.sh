@@ -28,11 +28,13 @@ tmp_root="$(mktemp -d)"
 trap 'rm -rf "$tmp_root"' EXIT
 
 "$REPO/scripts/validate-install-metadata.sh"
+"$REPO/scripts/validate-zoom-out-contract.sh"
 
 bash -n \
   scripts/link-skills.sh \
   scripts/list-skills.sh \
   scripts/validate-install-metadata.sh \
+  scripts/validate-zoom-out-contract.sh \
   scripts/doctor-runners.sh \
   plugins/dev/skills/engineering/afk/scripts/afk.sh \
   plugins/dev/skills/engineering/afk/scripts/once.sh \
