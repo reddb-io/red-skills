@@ -44,7 +44,21 @@ function toEdge(row: Record<string, unknown>): ExportEdge {
   };
 }
 
-export async function exportGraph(store: MemoryStore, outDir: string): Promise<ExportResult> {
+export interface ExportOptions {
+  /**
+   * Colour nodes by community. Runs RedDB's native Louvain
+   * (`MemoryStore.communities()`) and threads a `community` id onto every node
+   * in both `graph.json` and the `graph.html` view. No external dependency —
+   * the engine computes the partition (PRD #66 / #70).
+   */
+  communities?: boolean;
+}
+
+export async function exportGraph(
+  store: MemoryStore,
+  outDir: string,
+  opts: ExportOptions = {},
+): Promise<ExportResult> {
   const dir = resolve(outDir);
   await mkdir(dir, { recursive: true });
 
@@ -55,6 +69,12 @@ export async function exportGraph(store: MemoryStore, outDir: string): Promise<E
   ]);
   const edges = rawEdges.map(toEdge);
 
+  // Native community detection is opt-in: only run it (and only attach the
+  // `community` field) when asked, so the default export stays byte-identical.
+  const communities = opts.communities ? await store.communities() : new Map<number, string>();
+  const withCommunity = (rid: number) =>
+    opts.communities ? { community: communities.get(rid) ?? null } : {};
+
   const json = {
     generated_at: new Date().toISOString(),
     stats,
@@ -62,6 +82,7 @@ export async function exportGraph(store: MemoryStore, outDir: string): Promise<E
       rid: n.rid,
       label: n.label,
       node_type: n.node_type,
+      ...withCommunity(n.rid),
       properties: n.properties,
     })),
     edges,
@@ -73,7 +94,7 @@ export async function exportGraph(store: MemoryStore, outDir: string): Promise<E
 
   await Promise.all([
     writeFile(jsonPath, `${JSON.stringify(json, null, 2)}\n`, "utf8"),
-    writeFile(htmlPath, renderHtml(nodes, edges, stats), "utf8"),
+    writeFile(htmlPath, renderHtml(nodes, edges, stats, communities), "utf8"),
     writeFile(auditPath, renderAudit(nodes, edges, stats), "utf8"),
   ]);
 
@@ -182,11 +203,26 @@ function inlineJson(data: unknown): string {
   return JSON.stringify(data).replace(/</g, "\\u003c");
 }
 
+/**
+ * Deterministic colour per community id (golden-angle hue spread). Stable for a
+ * given set of ids so the same export always paints the same clusters.
+ */
+function communityPalette(ids: string[]): Record<string, string> {
+  const palette: Record<string, string> = {};
+  ids.forEach((id, i) => {
+    const hue = Math.round((i * 137.508) % 360);
+    palette[id] = `hsl(${hue}, 65%, 60%)`;
+  });
+  return palette;
+}
+
 function renderHtml(
   nodes: StoredNode[],
   edges: ExportEdge[],
   stats: { nodes: number; edges: number },
+  communities: Map<number, string> = new Map(),
 ): string {
+  const palette = communityPalette([...new Set(communities.values())].sort());
   const data = {
     nodes: nodes.map((n) => ({
       rid: n.rid,
@@ -194,8 +230,10 @@ function renderHtml(
       type: n.node_type,
       title: n.properties.title ?? n.label,
       excerpt: String(n.properties.summary ?? n.properties.content ?? "").slice(0, 280),
+      community: communities.get(n.rid) ?? null,
     })),
     edges: edges.map((e) => ({ from: e.from, to: e.to, label: e.label })),
+    palette,
   };
 
   // Self-contained: a tiny canvas force layout + a filterable sidebar. No CDN,
@@ -308,7 +346,8 @@ function draw() {
   for (const n of nodes) {
     const on = selected === n.rid;
     ctx.beginPath(); ctx.arc(n.x, n.y, on ? 8 : 5, 0, Math.PI * 2);
-    ctx.fillStyle = on ? "#ffb454" : "#5b9dd9"; ctx.fill();
+    const clusterColor = (n.community && DATA.palette) ? DATA.palette[n.community] : null;
+    ctx.fillStyle = on ? "#ffb454" : (clusterColor || "#5b9dd9"); ctx.fill();
     if (on) {
       ctx.fillStyle = "#e6e6e6"; ctx.font = "12px system-ui";
       ctx.fillText(n.title, n.x + 10, n.y + 4);

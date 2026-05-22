@@ -24,11 +24,18 @@ initialized or is markdown-only, say so and stop.
 ## 2. Export
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/dist/cli.js" export [<out-dir>]
+node "${CLAUDE_PLUGIN_ROOT}/dist/cli.js" export [<out-dir>] [--communities]
 ```
 
 `<out-dir>` defaults to `.red/memory/export`. The command prints the three file
-paths.
+paths. `graph` is an alias of `export`.
+
+Pass `--communities` to colour the graph by **thematic cluster**: it runs
+RedDB's native Louvain (`GRAPH COMMUNITY … RETURN ASSIGNMENTS`) and paints each
+node by the community it belongs to, with a `community` id threaded into both
+`graph.json` and `graph.html`. No external graph-algorithms dependency — the
+engine computes the partition (the competitive point vs Neo4j, which needs a
+separate plugin). Requires engine ≥ 1.3.1.
 
 ## 3. Point the user at the output
 

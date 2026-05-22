@@ -37,7 +37,8 @@ Usage:
   memory path <from> <to>           [--root <dir>] [--algorithm bfs|dijkstra]
   memory stats                      [--root <dir>]
   memory doctor                     [--root <dir>] [--stale-days N] [--prune] [--yes]
-  memory export [<out-dir>]         [--root <dir>]
+  memory export [<out-dir>]         [--root <dir>] [--communities]
+  memory graph  [<out-dir>]         [--root <dir>] [--communities]   (alias of export)
 
   Auto-firing hooks (invoked by the plugin manifest, reads payload on stdin):
   memory hook <event> --runner <claude|codex>   [--root <dir>]
@@ -442,10 +443,12 @@ async function runExport(args: ParsedArgs): Promise<void> {
   const rootDir = rootOf(args.flags);
   const target = args.positional[0] ?? ".red/memory/export";
   const outDir = isAbsolute(target) ? target : resolve(rootDir, target);
+  const communities = args.flags.communities === true;
   const { store } = await openGraphStore(args);
   try {
-    const result = await exportGraph(store, outDir);
+    const result = await exportGraph(store, outDir, { communities });
     console.log(`memory: exported ${result.nodes} node(s), ${result.edges} edge(s)`);
+    if (communities) console.log(`  communities: coloured via native Louvain`);
     console.log(`  graph:  ${result.htmlPath}`);
     console.log(`  json:   ${result.jsonPath}`);
     console.log(`  audit:  ${result.auditPath}`);
@@ -522,6 +525,7 @@ async function main(): Promise<void> {
     case "doctor":
       return runDoctor(args);
     case "export":
+    case "graph":
       return runExport(args);
     case "hook":
       return runHook(args);
