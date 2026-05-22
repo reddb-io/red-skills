@@ -4,6 +4,7 @@
 # The bridge is dev's SOFT, one-directional hook into the memory plugin. The
 # acceptance criteria it must satisfy:
 #   - memory installed + initialized  → recall runs and its output is returned;
+#   - graph memory with neighbors      → focused graph reads are returned;
 #   - memory absent / uninitialized   → behaves exactly as before: silent no-op,
 #                                        exit 0, no output, no error;
 #   - detection has two gates (config opt-in AND a resolvable CLI), and the CLI
@@ -86,6 +87,12 @@ case "$1" in
     ;;
   stats)
     echo "memory: 17 node(s), 3 edge(s)"
+    ;;
+  neighbors)
+    label="$2"
+    echo "memory: 2 neighbor(s) of \"$label\""
+    echo "  d1 node-auth (module) auth-service"
+    echo "  d1 node-cache (concept) cache-ttl"
     ;;
   *)
     echo "unexpected command: $*" >&2
@@ -211,6 +218,73 @@ out="$(PATH="$STATERRBIN:/usr/bin:/bin" bash -c 'source "'"$LIB"'"; memory_graph
 expect_eq "graph-ready: failing stats command -> no stdout" "" "$out"
 expect_fail "graph-ready: failing stats command -> not ready" \
   bash -c 'source "'"$LIB"'"; PATH="'"$STATERRBIN"':/usr/bin:/bin" memory_graph_ready "'"$GRAPH_ROOT"'"'
+
+# ---------- memory_neighbors (graph-only, graceful) ----------
+
+clear_env
+out="$(PATH="$FAKE_BIN:$PATH" bash -c 'source "'"$LIB"'"; memory_neighbors "'"$GRAPH_ROOT"'" zoom-out 1 both')"
+expect_eq "neighbors: graph ready -> returns CLI output" \
+  $'memory: 2 neighbor(s) of "zoom-out"\n  d1 node-auth (module) auth-service\n  d1 node-cache (concept) cache-ttl' "$out"
+clear_env
+expect_ok "neighbors: graph ready -> exit 0" \
+  bash -c 'source "'"$LIB"'"; PATH="'"$FAKE_BIN"':$PATH" memory_neighbors "'"$GRAPH_ROOT"'" zoom-out 1 both'
+
+clear_env
+out="$(PATH=/usr/bin:/bin bash -c 'source "'"$LIB"'"; memory_neighbors "'"$GRAPH_ROOT"'" zoom-out 1 both')"
+expect_eq "neighbors: graph config but no CLI -> no output" "" "$out"
+clear_env
+expect_ok "neighbors: graph config but no CLI -> exit 0" \
+  bash -c 'source "'"$LIB"'"; PATH=/usr/bin:/bin memory_neighbors "'"$GRAPH_ROOT"'" zoom-out 1 both'
+
+clear_env
+out="$(PATH="$FAKE_BIN:$PATH" bash -c 'source "'"$LIB"'"; memory_neighbors "'"$INIT_ROOT"'" zoom-out 1 both')"
+expect_eq "neighbors: markdown-only config -> no output" "" "$out"
+
+clear_env
+ZERONEIGHBORBIN="$TMP/zeroneighborbin"
+mkdir -p "$ZERONEIGHBORBIN"
+cat > "$ZERONEIGHBORBIN/memory" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in
+  stats)
+    echo "memory: 17 node(s), 3 edge(s)"
+    ;;
+  neighbors)
+    echo "memory: 0 neighbor(s) of \"$2\""
+    ;;
+  *)
+    exit 1
+    ;;
+esac
+EOF
+chmod +x "$ZERONEIGHBORBIN/memory"
+out="$(PATH="$ZERONEIGHBORBIN:/usr/bin:/bin" bash -c 'source "'"$LIB"'"; memory_neighbors "'"$GRAPH_ROOT"'" zoom-out 1 both')"
+expect_eq "neighbors: zero neighbors -> no output" "" "$out"
+
+clear_env
+NEIGHBORERRBIN="$TMP/neighborerrbin"
+mkdir -p "$NEIGHBORERRBIN"
+cat > "$NEIGHBORERRBIN/memory" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in
+  stats)
+    echo "memory: 17 node(s), 3 edge(s)"
+    ;;
+  neighbors)
+    echo "neighbors boom" >&2
+    exit 1
+    ;;
+  *)
+    exit 1
+    ;;
+esac
+EOF
+chmod +x "$NEIGHBORERRBIN/memory"
+out="$(PATH="$NEIGHBORERRBIN:/usr/bin:/bin" bash -c 'source "'"$LIB"'"; memory_neighbors "'"$GRAPH_ROOT"'" zoom-out 1 both' 2>/dev/null)"
+expect_eq "neighbors: failing command -> swallowed, no stdout" "" "$out"
+clear_env
+expect_ok "neighbors: failing command -> still exit 0" \
+  bash -c 'source "'"$LIB"'"; PATH="'"$NEIGHBORERRBIN"':/usr/bin:/bin" memory_neighbors "'"$GRAPH_ROOT"'" zoom-out 1 both'
 
 # ---------- memory_recall (graceful, query passthrough) ----------
 
