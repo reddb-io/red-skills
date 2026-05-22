@@ -19,6 +19,7 @@ import { ingestProject } from "./ingest.js";
 import { initGraph, initMarkdownOnly } from "./init.js";
 import { applyProviderEnv, redDbProviderClient } from "./provider-client.js";
 import { recall } from "./recall.js";
+import { ingestSkillEvents, parseSkillEvent, parseSkillEventInput } from "./skill-events.js";
 import { slugify, storeNote } from "./store.js";
 
 const USAGE = `memory — persistent memory for code agents
@@ -29,6 +30,7 @@ Usage:
   memory recall <query...>          [--root <dir>] [--limit N] [--include-superseded]
   memory ingest <path>              [--root <dir>] [--max-files N]
   memory extract [<transcript-file>] [--root <dir>]   (reads stdin if no file)
+  memory event skill                [--root <dir>] [--event-type ...] ... (or JSON/JSONL on stdin)
 
   Graph-mode read verbs (require \`memory init --mode graph\`):
   memory search <query...>          [--root <dir>] [--limit N]
@@ -221,6 +223,70 @@ async function runIngest(args: ParsedArgs): Promise<void> {
   } finally {
     await store.close();
   }
+}
+
+async function runSkillEvent(args: ParsedArgs): Promise<void> {
+  const kind = args.positional[0];
+  if (kind !== "skill") {
+    throw new Error("event needs a kind — supported: memory event skill");
+  }
+
+  const rootDir = rootOf(args.flags);
+  const config = await readConfig(rootDir);
+  if (!config) {
+    console.log("memory: skill event ignored — memory is not initialized here");
+    return;
+  }
+  if (config.mode !== "graph") {
+    console.log(
+      `memory: skill event ignored — needs graph mode, this project is "${config.mode}"`,
+    );
+    return;
+  }
+
+  const raw = await readStdin();
+  const events = raw.trim()
+    ? parseSkillEventInput(raw)
+    : [parseSkillEvent(skillEventFromFlags(args.flags))];
+
+  const store = await MemoryStore.open({ uri: resolveStoreUri(rootDir, config) });
+  try {
+    const report = await ingestSkillEvents(store, events);
+    console.log(`memory: ingested ${report.events} ${plural(report.events, "skill event")}`);
+  } finally {
+    await store.close();
+  }
+}
+
+function skillEventFromFlags(flags: Record<string, string | boolean>): Record<string, unknown> {
+  const event: Record<string, unknown> = {
+    event_type: flags["event-type"],
+    event_id: flags["event-id"],
+    timestamp: flags.timestamp,
+    session_id: flags["session-id"],
+    turn_id: flags["turn-id"],
+    name: flags.name,
+    source_kind: flags["source-kind"],
+    path: flags.path,
+    runner: flags.runner,
+  };
+
+  const resultKeys = ["status", "duration-ms", "error-class", "error-code", "error-stage"];
+  if (resultKeys.some((key) => flags[key] !== undefined)) {
+    event.result = {
+      status: flags.status,
+      duration_ms:
+        typeof flags["duration-ms"] === "string" ? Number(flags["duration-ms"]) : undefined,
+      error_class: flags["error-class"],
+      error_code: flags["error-code"],
+      error_stage: flags["error-stage"],
+    };
+  }
+  return event;
+}
+
+function plural(count: number, singular: string): string {
+  return count === 1 ? singular : `${singular}s`;
 }
 
 /**
@@ -510,6 +576,8 @@ async function main(): Promise<void> {
       return runRecall(args);
     case "ingest":
       return runIngest(args);
+    case "event":
+      return runSkillEvent(args);
     case "extract":
       return runExtract(args);
     case "search":
