@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'hook=\"${CODEX_PLUGIN_ROOT}/hooks/branch-lock-codex.sh\"; if [ -x \"$hook\" ]; then \"$hook\"; else printf \"{}\"; fi'"
+          }
+        ]
+      }
+    ]
+  }
+}

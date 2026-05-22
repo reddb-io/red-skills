@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+# Unit test for the Codex plugin PreToolUse branch-lock hook.
+
+set -uo pipefail
+
+HERE="$(cd "$(dirname "$0")" && pwd)"
+PLUGIN_ROOT="$(cd "$HERE/../../../../.." && pwd)"
+HOOK="$PLUGIN_ROOT/hooks/branch-lock-codex.sh"
+MANIFEST="$PLUGIN_ROOT/hooks/codex.hooks.json"
+
+pass=0
+fail=0
+
+ok()  { echo "PASS  $1"; pass=$((pass + 1)); }
+bad() { echo "FAIL  $1"; fail=$((fail + 1)); }
+
+expect_eq() {
+  local label="$1" expected="$2" actual="$3"
+  if [[ "$expected" == "$actual" ]]; then
+    ok "$label"
+  else
+    bad "$label"
+    printf '  expected: %q\n  actual:   %q\n' "$expected" "$actual"
+  fi
+}
+
+expect_contains() {
+  local label="$1" needle="$2" haystack="$3"
+  if [[ "$haystack" == *"$needle"* ]]; then
+    ok "$label"
+  else
+    bad "$label"
+    printf '  missing: %q\n  in:      %q\n' "$needle" "$haystack"
+  fi
+}
+
+tmp="$(mktemp -d -t branch-lock-codex.XXXXXX)"
+trap 'rm -rf "$tmp"' EXIT
+
+primary="$tmp/red-skills"
+mkdir -p "$primary/.red/tmp"
+printf 'main\n' > "$primary/.red/tmp/branch-lock.yaml"
+
+run_hook() {
+  local root="$1" payload="$2" out err rc
+  out="$tmp/out"
+  err="$tmp/err"
+  CODEX_PLUGIN_ROOT="$PLUGIN_ROOT" "$HOOK" >"$out" 2>"$err" <<<"$payload"
+  rc=$?
+  printf '%s\n---stdout---\n%s\n---stderr---\n%s\n' "$rc" "$(<"$out")" "$(<"$err")"
+}
+
+payload() {
+  local root="$1" cmd="$2"
+  jq -nc --arg cwd "$root" --arg cmd "$cmd" \
+    '{hook_event_name:"PreToolUse", cwd:$cwd, tool_input:{cmd:$cmd}}'
+}
+
+manifest_hook="$(jq -r '.hooks.PreToolUse[0].hooks[0].command' "$MANIFEST")"
+expect_contains "manifest: wires branch-lock-codex.sh" "branch-lock-codex.sh" "$manifest_hook"
+
+out="$tmp/manifest-out"
+err="$tmp/manifest-err"
+CODEX_PLUGIN_ROOT="$PLUGIN_ROOT" bash -lc "$manifest_hook" >"$out" 2>"$err" \
+  <<<"$(payload "$primary" "git switch main")"
+rc=$?
+expect_eq "manifest: command executes through shell" "0" "$rc"
+expect_eq "manifest: command prints empty JSON" "{}" "$(<"$out")"
+
+result="$(run_hook "$primary" "$(payload "$primary" "git switch feature")")"
+rc="$(sed -n '1p' <<<"$result")"
+stderr="$(sed -n '/---stderr---/,$p' <<<"$result")"
+expect_eq "locked: switch away is blocked" "2" "$rc"
+expect_contains "locked: error names branch lock" "BLOCKED by branch lock" "$stderr"
+
+result="$(run_hook "$primary" "$(payload "$primary" "git switch main")")"
+rc="$(sed -n '1p' <<<"$result")"
+stdout="$(sed -n '/---stdout---/,/---stderr---/p' <<<"$result" | sed '1d;$d')"
+expect_eq "locked: switch back is allowed" "0" "$rc"
+expect_eq "locked: allowed prints empty JSON" "{}" "$stdout"
+
+rm -f "$primary/.red/tmp/branch-lock.yaml"
+result="$(run_hook "$primary" "$(payload "$primary" "git switch feature")")"
+rc="$(sed -n '1p' <<<"$result")"
+expect_eq "unlocked: switch is allowed" "0" "$rc"
+
+worktree="$primary/.red/tmp/work-wAAAA-i1/worktree"
+mkdir -p "$worktree" "$primary/.red/tmp"
+printf 'main\n' > "$primary/.red/tmp/branch-lock.yaml"
+result="$(run_hook "$worktree" "$(payload "$worktree" "git switch feature")")"
+rc="$(sed -n '1p' <<<"$result")"
+expect_eq "worktree: branch lock is exempt" "0" "$rc"
+
+result="$(run_hook "$primary" "$(jq -nc --arg cwd "$primary" '{hook_event_name:"PreToolUse", cwd:$cwd, tool_input:{file:"x"}}')")"
+rc="$(sed -n '1p' <<<"$result")"
+expect_eq "non-shell payload: no-op allowed" "0" "$rc"
+
+echo
+echo "summary: $pass passed, $fail failed"
+[[ "$fail" -eq 0 ]]

@@ -36,7 +36,7 @@ A read-only reflection of `afk.state.json` onto the host harness's native backgr
 _Avoid_: native agent, subagent (the mirror is not an execution unit; AFK workers stay OS processes)
 
 **Branch lock**:
-A local, opt-in pin of the agent to one branch in the **Primary checkout**, recorded as `./.red/tmp/branch-lock.yaml` (content: the branch name). While present, a Claude Code `PreToolUse(Bash)` hook blocks the agent — and only the agent — from switching away from that branch (see ADR 0006). Absence of the file means unlocked. Lives under gitignored `.red/tmp/` so each checkout/machine locks independently. Set/changed/cleared with `/branch-lock`. Distinct from the **Pinned branch** (a separate, autonomous-side concern read by `/afk`).
+A local, opt-in pin of the agent to one branch in the **Primary checkout**, recorded as `./.red/tmp/branch-lock.yaml` (content: the branch name). While present, runner-native pre-tool hooks (Claude Code `PreToolUse(Bash)`, Codex plugin `PreToolUse`) block the agent — and only the agent — from switching away from that branch (see ADR 0006). Absence of the file means unlocked. Lives under gitignored `.red/tmp/` so each checkout/machine locks independently. Set/changed/cleared with `/branch-lock`. Distinct from the **Pinned branch** (a separate, autonomous-side concern read by `/afk`).
 _Avoid_: pinned branch (that is the PRD/issue declaration consumed by `/afk`, a different concern)
 
 **Pinned branch**:
@@ -50,6 +50,18 @@ _Avoid_: main repo, root checkout
 **Worktree**:
 An isolated `git worktree` that `/afk` creates per issue under `.red/tmp/work-*/`. Always **exempt** from a **Branch lock**, by toplevel location (not by branch name or an env flag), so the autonomous loop is never strangled by an interactive session's lock.
 _Avoid_: afk clone, sandbox checkout
+
+**Fleet supervisor**:
+The portable OS-process manager behind `/afk fleet`: `supervisor.sh` maintains a target number of independent `/afk` workers, records PID/stop/circuit/stall state under `.red/tmp/`, and delegates all issue claiming and merging to normal workers. It is runner-neutral bash process orchestration and does not require a native task surface, cron primitive, or Claude Code session. Observability surfaces such as the **Auto-monitor loop**, **Task mirror**, and `monitor.sh` read its state but do not define whether the supervisor can run.
+_Avoid_: Claude fleet (fleet is not Claude-only), task mirror (presentation only), auto-monitor loop (observability only)
+
+**Auto-monitor loop**:
+An optional session-level observability loop that periodically renders `/afk monitor` and, where the runner supports it, mirrors live workers onto native task UI. Claude Code implements it with session cron tools; Codex may degrade to manual `monitor.sh`/log inspection until it has an equivalent primitive. Its absence must not block the **Fleet supervisor** from launching or stopping.
+_Avoid_: fleet supervisor, fleet mode, worker scheduler
+
+**Codex monitor agent**:
+A Codex TUI sub-agent used only as a read-only presentation surface for AFK state. It may be spawned automatically when Codex launches a **Fleet supervisor**, periodically render `monitor.sh --once`, and auto-close when no supervisor or live workers remain; the user may also close it manually at any time. It is not an AFK worker and does not claim issues, edit files, run validation, or control merges.
+_Avoid_: AFK worker, task mirror, supervisor slot
 
 **Memory plugin**:
 The second plugin in this marketplace (sibling to `dev` under `plugins/`), giving agents a persistent, queryable memory that survives `/clear` and crosses sessions. Hard-depends on `dev` and exists to improve dev's processes (`/afk` recall, `/triage` dedup, `/diagnose` history), never as a standalone. The dependency is **one-directional**: `dev` only *soft-uses* `memory` — those three skills query it through `plugins/dev/scripts/memory-bridge.sh` when it's installed and behave exactly as before when it isn't; `dev`'s `plugin.json` never lists `memory` (see ADR 0009). It is the only plugin that knows about RedDB persistence; `dev` talks to its high-level memory interface, never to RedDB directly. Configured per-project by `memory init`; surfaced as `/memory:store` and `/memory:recall`. See PRD #49.
@@ -108,6 +120,7 @@ _Avoid_: understand, codebase chat
 - An **Issue tracker** holds many **Issues**
 - An **Issue** carries one **Triage role** at a time
 - An **Issue** accumulates many **Envelopes** (one per attempt) and many comments; comments split into **Directive blocks** (extracted as **Human guidance**) and **Thread discussion**
+- A **Fleet supervisor** maintains independent AFK workers; **Auto-monitor loop**, **Task mirror**, **Codex monitor agent**, and `monitor.sh` are read-only observability consumers of worker/supervisor state.
 - **Skill telemetry** uses **Graph mode** for event relationships and **RedDB Statistics** for aggregate rollups, but only the **Memory plugin** knows those persistence details; `dev` remains a soft-using workflow plugin.
 - `dev` and skill runtimes may emit **Skill telemetry** through a high-level Memory CLI event contract; the **Memory plugin** owns how that event becomes graph data or statistical rollups.
 - **Skill telemetry** may observe every **Skill**, but curator mutations are limited to **Curatable skills**.

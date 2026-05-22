@@ -77,6 +77,35 @@ function guard<T extends string>(value: string, allowed: readonly T[], kind: str
   throw new Error(`invalid ${kind}: ${value}`);
 }
 
+/** Marker appended to a doc body whose tail was dropped to fit the engine's
+ *  per-value byte cap. */
+const TRUNCATION_MARKER = "\n\n[…truncated to fit memory store…]";
+
+/**
+ * Per-document-record byte budget. The SDK packs an inserted document into a
+ * single JSON value (one `body` column), and the engine hard-rejects any value
+ * over its per-value cap — `PAGE_SIZE / 4`, i.e. 1 KB on the 4 KB-page builds
+ * (ADR 0007). Crucially, that rejection is **not recoverable on the same
+ * connection**: a failed oversized insert desyncs the embedded engine's stdio
+ * RPC stream, after which every later query comes back as a bogus parser error.
+ * So a doc must be sized to fit *before* it is sent, never trimmed-and-retried.
+ * We target a value below the cap, leaving headroom for the engine's framing.
+ */
+const DOC_RECORD_MAX_BYTES = 1000;
+
+/** Truncate `text` so its UTF-8 byte length stays within `budget` bytes,
+ *  reserving room for the truncation marker and never splitting a multi-byte
+ *  codepoint. `budget` is the absolute byte ceiling for the returned string. */
+function truncateBytes(text: string, budget: number): string {
+  const buf = Buffer.from(text, "utf8");
+  if (buf.length <= budget) return text;
+  const markerBytes = Buffer.byteLength(TRUNCATION_MARKER, "utf8");
+  let end = Math.max(0, budget - markerBytes);
+  // Back off to a codepoint boundary: UTF-8 continuation bytes are 0b10xxxxxx.
+  while (end > 0 && (buf[end] & 0xc0) === 0x80) end--;
+  return buf.subarray(0, end).toString("utf8") + TRUNCATION_MARKER;
+}
+
 /**
  * MemoryStore — thin facade over the embedded RedDB SDK.
  *
@@ -475,24 +504,63 @@ export class MemoryStore {
   /**
    * Upsert a document chunk (markdown body + frontmatter), deduped by hash. The
    * `memory_docs` document collection is auto-created by the SDK on first
-   * insert — no explicit DDL, unlike graph collections. Stores the full body so
-   * later FTS/ASK work has the source text; recall over nodes does not depend on
-   * it.
+   * insert — no explicit DDL, unlike graph collections. Stores the body so later
+   * FTS/ASK work has the source text; recall over nodes does not depend on it.
+   *
+   * The record is sized to fit the engine's per-value cap *before* it is sent
+   * (see {@link DOC_RECORD_MAX_BYTES}): an oversized insert can't be caught and
+   * retried, because the failure poisons the connection. A body that doesn't fit
+   * is truncated (its head stays searchable); the concept node already carries
+   * the title/tags, so recall is unaffected.
    */
   async upsertDoc(doc: MemoryDoc): Promise<number> {
     const existing = await this.findDocByHash(doc.hash);
     if (existing != null) return existing;
-    const result = await this.db.documents.insert(COLLECTIONS.docs, {
+    const result = await this.db.documents.insert(COLLECTIONS.docs, this.fitDocRecord(doc));
+    return Number((result as { rid: string | number }).rid);
+  }
+
+  /**
+   * Build a doc record whose JSON serialization fits {@link DOC_RECORD_MAX_BYTES}.
+   * Returns the full record untouched when it already fits; otherwise drops the
+   * (non-essential) frontmatter and truncates the body, re-measuring until the
+   * serialized value is within budget — JSON escaping can expand a string, so a
+   * single byte-budget pass is not enough.
+   */
+  private fitDocRecord(doc: MemoryDoc): Record<string, unknown> {
+    const build = (body: string, frontmatter: Record<string, unknown>) => ({
       path: doc.path,
       title: doc.title ?? null,
-      body: doc.body,
-      frontmatter: doc.frontmatter ?? {},
+      body,
+      frontmatter,
       hash: doc.hash,
       // `updated_at` is a reserved system field on documents in this engine
       // build; store the source mtime under a user-namespaced key instead.
       source_updated_at: doc.updated_at,
     });
-    return Number((result as { rid: string | number }).rid);
+    const jsonBytes = (rec: unknown) => Buffer.byteLength(JSON.stringify(rec), "utf8");
+
+    // The SDK inlines the document as a single-quoted SQL literal and the engine
+    // then collapses one level of backslash escapes before JSON-parsing the
+    // value, so a backslash followed by a non-JSON-escape char (e.g. a `jq`
+    // `\(` snippet) round-trips into an "invalid escape sequence" parse error.
+    // The body is only kept for not-yet-enabled FTS/ASK — recall reads nodes —
+    // so neutralise backslashes rather than risk a failed insert.
+    const safeBody = doc.body.replace(/\\/g, " ");
+
+    const full = build(safeBody, doc.frontmatter ?? {});
+    if (jsonBytes(full) <= DOC_RECORD_MAX_BYTES) return full;
+
+    // Too big: drop frontmatter and size the body against the remaining budget.
+    const overhead = jsonBytes(build("", {}));
+    let body = truncateBytes(safeBody, Math.max(0, DOC_RECORD_MAX_BYTES - overhead));
+    let rec = build(body, {});
+    // Tighten if JSON escaping pushed it back over the cap.
+    while (body.length > 0 && jsonBytes(rec) > DOC_RECORD_MAX_BYTES) {
+      body = truncateBytes(body, Math.floor(Buffer.byteLength(body, "utf8") * 0.8));
+      rec = build(body, {});
+    }
+    return rec;
   }
 
   private async findDocByHash(hash: string): Promise<number | null> {

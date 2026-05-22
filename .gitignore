@@ -5,6 +5,9 @@
 .red/tmp/
 .red/wiki/
 
+# Memory plugin — per-project graph store (local state, like node_modules)
+.red/memory/graph.rdb*
+
 # Node
 node_modules/
 

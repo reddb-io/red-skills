@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "mode": "graph",
+  "notesDir": ".red/memory/notes",
+  "storePath": ".red/memory/graph.rdb",
+  "hooks": {
+    "sessionStart": true,
+    "postToolUse": true,
+    "stop": true,
+    "preCompact": true
+  },
+  "mcp": false,
+  "reddb": true
+}

@@ -66,6 +66,28 @@ are shared with Claude unchanged; only the sink differs. The Codex sink is
 This is an explicit per-runner adapter, not a cross-runner abstraction (rejected
 in ADR 0003).
 
+## Fleet Monitor Agent
+
+Codex does expose a native sub-agent UI, but that is not the same as Claude
+Code's `TaskCreate` / `TaskUpdate` task surface. `/afk fleet` therefore keeps
+the actual workers as supervised OS processes and uses one optional Codex
+monitor agent only for presentation.
+
+When a Codex session launches `/dev:afk fleet N`:
+
+- pass `RED_AFK_RUNNER=codex` to `supervisor.sh` so detached workers stay on the
+  Codex runner deterministically;
+- spawn at most one read-only monitor agent for the newly-started supervisor
+  when the sub-agent primitive is available;
+- have that monitor agent periodically run
+  `bash plugins/dev/skills/engineering/afk/scripts/monitor.sh --once`, report
+  concise progress, and exit once no supervisor or live workers remain;
+- never let the monitor agent edit files, claim issues, stop workers, run
+  validation, merge, or push.
+
+If the sub-agent primitive is unavailable, launch the supervisor anyway and
+tell the user to run `/dev:afk monitor` or tail `.red/tmp/afk-supervisor.log`.
+
 ## Notes On The Bypass Flags
 
 `--dangerously-bypass-approvals-and-sandbox` is dangerous *only* if the rest of the pipeline isn't enforcing safety. `/afk` enforces:

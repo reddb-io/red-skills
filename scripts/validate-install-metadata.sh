@@ -47,6 +47,35 @@ validate_plugin() {
   jq -e '.skills == "./skills/"' "$dir/.codex-plugin/plugin.json" >/dev/null \
     || fail "$plugin: Codex plugin must expose ./skills/"
 
+  local claude_mcp_path codex_mcp_path
+  claude_mcp_path="$(jq -r '.mcpServers // empty' "$dir/.claude-plugin/plugin.json")"
+  codex_mcp_path="$(jq -r '.mcpServers // empty' "$dir/.codex-plugin/plugin.json")"
+  if [[ -n "$claude_mcp_path" ]]; then
+    [[ -n "$codex_mcp_path" ]] \
+      || fail "$plugin: Codex plugin must expose mcpServers when Claude does"
+    [[ "$claude_mcp_path" == ./* && "$codex_mcp_path" == ./* ]] \
+      || fail "$plugin: MCP manifest paths must be relative"
+    [[ -f "$dir/${claude_mcp_path#./}" ]] \
+      || fail "$plugin: Claude MCP manifest not found: $claude_mcp_path"
+    [[ -f "$dir/${codex_mcp_path#./}" ]] \
+      || fail "$plugin: Codex MCP manifest not found: $codex_mcp_path"
+    jq -e '.mcpServers | type == "object"' "$dir/${claude_mcp_path#./}" >/dev/null \
+      || fail "$plugin: Claude MCP manifest must contain an mcpServers object"
+    jq -e '.mcpServers | type == "object"' "$dir/${codex_mcp_path#./}" >/dev/null \
+      || fail "$plugin: Codex MCP manifest must contain an mcpServers object"
+  fi
+
+  local hooks_path
+  hooks_path="$(jq -r '.hooks // empty' "$dir/.codex-plugin/plugin.json")"
+  if [[ -n "$hooks_path" ]]; then
+    [[ "$hooks_path" == ./* ]] \
+      || fail "$plugin: Codex hooks path must be relative"
+    [[ -f "$dir/${hooks_path#./}" ]] \
+      || fail "$plugin: Codex hooks manifest not found: $hooks_path"
+    jq -e '.hooks | type == "object"' "$dir/${hooks_path#./}" >/dev/null \
+      || fail "$plugin: Codex hooks manifest must contain a hooks object"
+  fi
+
   jq -e --arg p "./$dir" '.plugins[] | select(.source.path == $p)' \
     .agents/plugins/marketplace.json >/dev/null \
     || fail "$plugin: Codex marketplace must expose ./$dir"

@@ -1,8 +1,11 @@
 {
   "mcpServers": {
     "code-nav": {
-      "command": "node",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/mcp/code-nav/dist/index.js"]
+      "command": "sh",
+      "args": [
+        "-c",
+        "root=\"${CODEX_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}\"; if [ -z \"$root\" ]; then for candidate in \"$PWD/plugins/dev\" \"$HOME/.codex/.tmp/marketplaces/red-skills/plugins/dev\" \"$HOME/.codex/plugins/cache/red-skills/dev\"/*; do if [ -f \"$candidate/mcp/code-nav/dist/index.js\" ]; then root=\"$candidate\"; break; fi; done; fi; if [ -z \"$root\" ]; then printf 'code-nav: could not locate RedSkills dev plugin root\\n' >&2; exit 1; fi; exec node \"$root/mcp/code-nav/dist/index.js\""
+      ]
     }
   }
 }

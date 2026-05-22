@@ -101,6 +101,18 @@ Refresh later:
 codex plugin marketplace upgrade red-skills
 ```
 
+That upgrade refreshes the installed Codex plugin metadata, the skills tree, the
+bundled hook manifests, and supporting files such as MCP/app definitions. On
+the first Codex boot after installing or upgrading a marketplace that ships
+hooks, Codex will ask you to revisit the plugin hooks before they run. Current
+Codex builds list `plugin_hooks` as stable and enabled; older builds may require
+this in `~/.codex/config.toml`:
+
+```toml
+[features]
+plugin_hooks = true
+```
+
 Remove:
 
 ```bash
@@ -283,11 +295,11 @@ Every iteration writes atomic state to `.red/tmp/work-{worker}-i{N}/afk.state.js
 
 The 48 h sparkline at the top aggregates `.red/state/afk-history.jsonl` across every worker — at-a-glance throughput. Compact one-line variant kicks in automatically when the monitor is piped, so it's safe to invoke inline from another agent.
 
-Designed for terminals you leave open while you do something else. Or sleep. Under Claude Code, every worker spawn also schedules an auto-monitor cron that re-renders every 3 min and self-cancels when all workers exit.
+Designed for terminals you leave open while you do something else. Or sleep. Under Claude Code, every worker spawn also schedules an auto-monitor cron that re-renders every 3 min and self-cancels when all workers exit. Under Codex, fleet launches the same supervisor and uses a read-only monitor agent when the Codex sub-agent UI is available; otherwise run `/afk monitor` or tail `.red/tmp/afk-supervisor.log`.
 
 ### Fleet mode — one command, N workers
 
-`/afk` is trivially parallel — open N terminals and you get N workers, no flag needed. **Fleet mode** is the lazy version: one supervisor maintains a target worker count, respawns crashes, and trips a per-slot circuit breaker when a slot dies too fast.
+`/afk` is trivially parallel — open N terminals and you get N workers, no flag needed. **Fleet mode** is the lazy version: one runner-portable supervisor maintains a target worker count, respawns crashes, and trips a per-slot circuit breaker when a slot dies too fast. Claude Code and Codex differ only in the monitor surface: Claude can schedule an auto-monitor cron, while Codex can show a read-only monitor agent or fall back to `/afk monitor` and logs.
 
 ```
                   ┌──────────────────────────────────────────┐
@@ -306,7 +318,7 @@ Designed for terminals you leave open while you do something else. Or sleep. Und
 ```bash
 /afk fleet 4               # spawn supervisor maintaining 4 workers
 /afk fleet                 # default: 2
-/afk fleet stop            # graceful: SIGTERM every worker, drop the pid file, cancel the auto-monitor cron
+/afk fleet stop            # graceful: SIGTERM every worker, drop the pid file, tear down runner-specific monitor surface
 ```
 
 - **Respawn.** A worker that exits cleanly because the queue drained is *not* respawned (no busy-loop on empty). A worker that crashes is respawned with backoff.
@@ -584,7 +596,7 @@ Composable. Boring on purpose where boring is enough. Sharp where it matters.
 
 | Skill | What it does |
 |-------|--------------|
-| **[branch-lock](./plugins/dev/skills/misc/branch-lock/SKILL.md)** | Locks the agent to a branch and blocks it from switching away (agent-only PreToolUse hook). |
+| **[branch-lock](./plugins/dev/skills/misc/branch-lock/SKILL.md)** | Locks the agent to a branch and blocks it from switching away (agent-only pre-tool hook for Claude Code and Codex). |
 | **[git-guardrails-claude-code](./plugins/dev/skills/misc/git-guardrails-claude-code/SKILL.md)** | Claude Code hooks that block destructive git commands. |
 | **[migrate-to-shoehorn](./plugins/dev/skills/misc/migrate-to-shoehorn/SKILL.md)** | Migrates test files from `as` type assertions to `@total-typescript/shoehorn`. |
 | **[scaffold-exercises](./plugins/dev/skills/misc/scaffold-exercises/SKILL.md)** | Creates exercise scaffolds with sections, problems, solutions. |

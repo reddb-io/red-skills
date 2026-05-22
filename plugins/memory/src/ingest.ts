@@ -83,8 +83,16 @@ export async function indexFile(store: MemoryStore, path: string): Promise<FileI
   const ext = extname(path).toLowerCase();
   if (ext === ".md") {
     const m = await extractMarkdown(path);
-    await store.upsertDoc(m.doc);
-    report.docs += 1;
+    // The doc body is best-effort (it only feeds not-yet-enabled FTS/ASK; recall
+    // reads nodes). `upsertDoc` already sizes the record to dodge the one engine
+    // error that poisons the connection, so any remaining insert failure is safe
+    // to swallow — skip the body, keep the file's nodes, never abort the ingest.
+    try {
+      await store.upsertDoc(m.doc);
+      report.docs += 1;
+    } catch {
+      // Body rejected by the engine; the concept nodes below still index.
+    }
     // The first node is the file's root concept; wiki-link edges hang off it.
     const labelToRid = new Map<string, number>();
     for (const node of m.nodes) {
