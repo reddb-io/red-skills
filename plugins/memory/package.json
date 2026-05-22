@@ -16,6 +16,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "build": "tsc -p tsconfig.build.json",
     "test": "vitest run",
+    "baseline:competitive": "tsx src/competitive-baseline.ts",
     "dev": "node --import tsx src/cli.ts"
   },
   "dependencies": {
