@@ -133,7 +133,7 @@ describe("memory event skill CLI", () => {
     "ingests one skill event from flags in graph mode",
     async () => {
       const root = await tempRoot();
-      await initGraph(root);
+      await initGraph(root, { skillTelemetry: true });
 
       const result = runMemory([
         "event",
@@ -173,7 +173,7 @@ describe("memory event skill CLI", () => {
     "ingests a JSONL skill event batch from stdin",
     async () => {
       const root = await tempRoot();
-      await initGraph(root);
+      await initGraph(root, { skillTelemetry: true });
       const second = { ...EVENT, event_id: "evt-2", event_type: "used", result: undefined };
       const input = `${JSON.stringify(EVENT)}\n${JSON.stringify(second)}\n`;
 
@@ -192,7 +192,7 @@ describe("memory event skill CLI", () => {
     "reports invalid explicit payloads without writing",
     async () => {
       const root = await tempRoot();
-      await initGraph(root);
+      await initGraph(root, { skillTelemetry: true });
 
       const result = runMemory(
         ["event", "skill", "--root", root],
@@ -222,6 +222,15 @@ describe("memory event skill CLI", () => {
       );
       expect(markdownResult.status).toBe(0);
       expect(markdownResult.stdout).toContain("needs graph mode");
+
+      const optedOut = await tempRoot();
+      await initGraph(optedOut);
+      const optedOutResult = runMemory(
+        ["event", "skill", "--root", optedOut],
+        JSON.stringify(EVENT),
+      );
+      expect(optedOutResult.status).toBe(0);
+      expect(optedOutResult.stdout).toContain("skill telemetry is not enabled");
     },
     TIMEOUT,
   );

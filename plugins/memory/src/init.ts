@@ -67,6 +67,12 @@ export interface GraphOptions {
    * Resolved through {@link resolveHooks} so the gating is centralized.
    */
   hooks?: HookChoice;
+  /**
+   * Explicit per-project Skill telemetry opt-in. `true` records that the
+   * project wants Skill telemetry ingest; `false`/absent leaves it off.
+   * Honored only in graph mode (markdown-only never gets it).
+   */
+  skillTelemetry?: boolean;
 }
 
 /**
@@ -84,6 +90,7 @@ export function graphConfig(opts: GraphOptions = {}): MemoryConfig {
     hooks: resolveHooks("graph", opts.hooks),
     mcp: false,
     reddb: true,
+    skillTelemetry: opts.skillTelemetry === true,
   };
 }
 

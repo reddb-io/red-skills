@@ -3,7 +3,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { rm } from "node:fs/promises";
-import { configPath, HOOKS_ALL_ON, HOOKS_OFF, readConfig, resolveHooks } from "../src/config.js";
+import {
+  configPath,
+  HOOKS_ALL_ON,
+  HOOKS_OFF,
+  readConfig,
+  resolveHooks,
+  skillTelemetryEnabled,
+} from "../src/config.js";
 import { graphConfig, initMarkdownOnly, markdownOnlyConfig } from "../src/init.js";
 
 const roots: string[] = [];
@@ -82,5 +89,35 @@ describe("hook gating — enable/disable choices produce the right active set", 
     expect(graphConfig({ hooks: true }).hooks).toEqual(HOOKS_ALL_ON);
     expect(graphConfig({ hooks: { preCompact: true } }).hooks.preCompact).toBe(true);
     expect(graphConfig({ hooks: { preCompact: true } }).hooks.stop).toBe(false);
+  });
+});
+
+describe("skill telemetry opt-in — graph-mode explicit flag", () => {
+  test("graph defaults skill telemetry off (existing default behavior)", () => {
+    const config = graphConfig();
+    expect(config.skillTelemetry).toBe(false);
+    expect(skillTelemetryEnabled(config)).toBe(false);
+  });
+
+  test("graph can enable skill telemetry explicitly", () => {
+    const config = graphConfig({ skillTelemetry: true });
+    expect(config.skillTelemetry).toBe(true);
+    expect(skillTelemetryEnabled(config)).toBe(true);
+  });
+
+  test("markdown-only never carries skill telemetry — it is unsupported", () => {
+    const config = markdownOnlyConfig();
+    expect(config.skillTelemetry).toBeUndefined();
+    expect(skillTelemetryEnabled(config)).toBe(false);
+  });
+
+  test("skillTelemetryEnabled requires graph mode even if the flag is set", () => {
+    expect(skillTelemetryEnabled({ ...markdownOnlyConfig(), skillTelemetry: true })).toBe(false);
+  });
+
+  test("legacy graph config without the field reads as telemetry off", () => {
+    const { skillTelemetry, ...legacy } = graphConfig();
+    expect(skillTelemetry).toBe(false);
+    expect(skillTelemetryEnabled(legacy)).toBe(false);
   });
 });

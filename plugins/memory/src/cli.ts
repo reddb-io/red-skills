@@ -2,7 +2,12 @@
 import { isAbsolute, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { readFile } from "node:fs/promises";
-import { readConfig, resolveNotesDir, resolveStoreUri } from "./config.js";
+import {
+  readConfig,
+  resolveNotesDir,
+  resolveStoreUri,
+  skillTelemetryEnabled,
+} from "./config.js";
 import { diagnose, prune } from "./doctor.js";
 import { neighbors, path as shortestPath, search, traverse } from "./engine.js";
 import { exportGraph } from "./export.js";
@@ -25,7 +30,7 @@ import { slugify, storeNote } from "./store.js";
 const USAGE = `memory — persistent memory for code agents
 
 Usage:
-  memory init [--mode markdown-only|graph] [--hooks] [--root <dir>] [--yes]
+  memory init [--mode markdown-only|graph] [--hooks] [--skill-telemetry] [--root <dir>] [--yes]
   memory store <fact...>            [--root <dir>]
   memory recall <query...>          [--root <dir>] [--limit N] [--include-superseded]
   memory ingest <path>              [--root <dir>] [--max-files N]
@@ -106,6 +111,7 @@ async function runInit(args: ParsedArgs): Promise<void> {
     mode = answer || "markdown-only";
   }
   mode = mode ?? "markdown-only";
+  const skillTelemetry = args.flags["skill-telemetry"] === true;
 
   if (mode === "markdown-only") {
     const result = await initMarkdownOnly(rootDir);
@@ -113,6 +119,11 @@ async function runInit(args: ParsedArgs): Promise<void> {
     console.log(`  config: ${result.configPath}`);
     console.log(`  notes:  ${result.notesDir}`);
     console.log(`  hooks:  off    mcp: off    reddb: not required`);
+    if (skillTelemetry) {
+      console.log(
+        `  note:   skill telemetry is unsupported in markdown-only mode — re-run \`memory init --mode graph --skill-telemetry\` to enable it`,
+      );
+    }
     return;
   }
 
@@ -120,12 +131,14 @@ async function runInit(args: ParsedArgs): Promise<void> {
     // Hooks are opt-in: `--hooks` (or `--hooks all`) turns all four on; absent
     // leaves them off. markdown-only never gets hooks regardless.
     const hooks = args.flags.hooks === true || args.flags.hooks === "all";
-    const result = await initGraph(rootDir, { hooks });
+    // Skill telemetry is a separate explicit opt-in, graph-mode only.
+    const result = await initGraph(rootDir, { hooks, skillTelemetry });
     const on = Object.values(result.config.hooks).some(Boolean);
     console.log(`memory: initialized graph mode`);
     console.log(`  config: ${result.configPath}`);
     console.log(`  store:  ${result.storeUri}`);
     console.log(`  hooks:  ${on ? "on" : "off"}    mcp: off    reddb: required`);
+    console.log(`  skill telemetry: ${result.config.skillTelemetry ? "on" : "off"}`);
     return;
   }
 
@@ -240,6 +253,12 @@ async function runSkillEvent(args: ParsedArgs): Promise<void> {
   if (config.mode !== "graph") {
     console.log(
       `memory: skill event ignored — needs graph mode, this project is "${config.mode}"`,
+    );
+    return;
+  }
+  if (!skillTelemetryEnabled(config)) {
+    console.log(
+      "memory: skill event ignored — skill telemetry is not enabled, re-run `memory init --mode graph --skill-telemetry`",
     );
     return;
   }
