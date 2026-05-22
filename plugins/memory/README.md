@@ -77,6 +77,32 @@ node plugins/memory/dist/cli.js path <from> <to>        # shortest path
 node plugins/memory/dist/cli.js stats                   # node/edge counts
 ```
 
+## Competitive baseline
+
+`memory` carries a checked-in competitive harness so the README comparison is
+backed by executable assertions instead of marketing copy:
+
+```bash
+pnpm --dir plugins/memory baseline:competitive
+pnpm --dir plugins/memory test -- competitive-baseline
+```
+
+The fixture summary comes from the existing `reddb-benchmark/graphify-out`
+run: 551 nodes, 1329 edges, 34 detected communities, 491 inferred edges, and
+zero reported input/output tokens. The harness encodes measurable "better than"
+claims for embedded footprint, session lifecycle integration, and the repo's
+recall-latency budget. It deliberately does **not** claim an apples-to-apples
+latency win over `neo4j-labs/agent-memory`; that comparison needs a live Neo4j
+baseline.
+
+| Axis | `memory` | `graphify` | `agent-memory` | Framing |
+|------|----------|------------|----------------|---------|
+| Zero-ops / embedded footprint | Embedded RedDB file store; no daemon to administer. | Python CLI plus checked-in `graphify-out`; no database daemon, but a separate toolchain. | Neo4j-backed SDK/MCP; needs a Neo4j instance or hosted service. | Advantage: embedded RedDB store, no Python or Neo4j service. |
+| Session lifecycle integration | Native SessionStart, PostToolUse, Stop, and PreCompact hooks in graph mode. | Assistant instructions and optional search nudges; not a memory lifecycle. | SDK/MCP integration; no RedSkills hook lifecycle. | Advantage: memory is built into the agent session lifecycle. |
+| Engine feature breadth | TTL, KV/cache overlays, native Louvain, ASK; geospatial is not exposed by memory yet. | Static graph export with query/path/explain and 34 detected communities in the fixture. | Neo4j graph, vector/text search, geospatial, MCP tools, eval harness, and framework adapters. | Parity/mixed: both graph competitors have useful breadth; memory wins embedded RedDB primitives, agent-memory wins Neo4j ecosystem breadth. |
+| Recall latency on agent-scale graph | Repo gate targets <100 ms p50 on a ~1k-node graph. | graphify-out fixture: 551 nodes / 1329 edges / 34 communities; path p50 841 ms. | Not asserted here; apples-to-apples latency requires a live Neo4j baseline. | Advantage over checked graphify-out path latency only; no latency claim against agent-memory in this harness. |
+| NER extraction quality | Deterministic extractors plus optional LLM provider for inferred facts. | 491 inferred fixture edges; strong static-code graph output. | spaCy / GLiNER / GLiREL / LLM extraction pipeline. | Conceded gap: Python ML stack is ahead for turnkey NER. |
+
 ## Maintenance & export (graph mode)
 
 ```bash
