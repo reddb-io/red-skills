@@ -65,6 +65,42 @@ memory_available() {
   return 0
 }
 
+# memory_mode <root> — print the configured storage mode, or "unavailable" when
+# memory has not been initialized or the config cannot be read. This is a local
+# config read only; it does not require the memory CLI.
+memory_mode() {
+  local root="${1:-$PWD}"
+  local config="$root/.red/memory/config.json"
+  [[ -f "$config" ]] || {
+    printf 'unavailable\n'
+    return 0
+  }
+
+  local mode
+  mode="$(sed -nE 's/.*"mode"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' "$config" 2>/dev/null | head -n 1)"
+  if [[ -n "$mode" ]]; then
+    printf '%s\n' "$mode"
+  else
+    printf 'unavailable\n'
+  fi
+  return 0
+}
+
+# memory_graph_ready <root> — 0 iff memory is configured for graph mode, a CLI
+# resolves, and the graph read surface reports at least one node. Never prints
+# anything; failures/errors are an absent optimization for dev callers.
+memory_graph_ready() {
+  local root="${1:-$PWD}"
+  [[ "$(memory_mode "$root")" == "graph" ]] || return 1
+  _memory_resolve_cli || return 1
+
+  local out nodes
+  out="$("${MEMORY_CLI[@]}" stats --root "$root" 2>/dev/null)" || return 1
+  nodes="$(printf '%s\n' "$out" | sed -nE 's/^[^0-9]*([0-9]+)[[:space:]]+node\(s\).*/\1/p' | head -n 1)"
+  [[ -n "$nodes" && "$nodes" -gt 0 ]] || return 1
+  return 0
+}
+
 # memory_recall <root> <query…> — print a recall context block for the query,
 # or nothing. ALWAYS returns 0: a missing/uninitialized/erroring memory is not a
 # failure of the calling dev process, just an absent optimization.
