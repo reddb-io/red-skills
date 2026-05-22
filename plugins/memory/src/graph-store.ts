@@ -1,4 +1,4 @@
-import { type QueryParam, type RedDB, connect } from "@reddb-io/sdk";
+import { type AskCitation, type QueryParam, type RedDB, connect } from "@reddb-io/sdk";
 import { contentHash } from "./hash.js";
 import {
   COLLECTIONS,
@@ -38,6 +38,16 @@ export interface GraphRow {
 export interface SearchRow {
   rid: number;
   score: number;
+}
+
+/** Provider usage and billing metadata reported by RedDB ASK. */
+export interface AskCost {
+  cost_usd: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  model: string;
+  provider: string;
+  cache_hit: boolean;
 }
 
 /** Result of a shortest-path query. `reachable` is false when the engine found
@@ -607,11 +617,22 @@ export class MemoryStore {
    */
   async ask(
     question: string,
-  ): Promise<{ answer: string; citations: { marker: number; urn: string }[] }> {
+  ): Promise<{ answer: string; citations: AskCitation[]; cost: AskCost }> {
     const r = await this.db.query(
-      `ASK '${escapeLabel(question)}' COLLECTION ${COLLECTIONS.docs}`,
+      `ASK '${escapeLabel(question)}' COLLECTION ${COLLECTIONS.docs}` as `ASK ${string}`,
     );
-    return { answer: r.answer, citations: r.citations };
+    return {
+      answer: r.answer,
+      citations: r.citations,
+      cost: {
+        cost_usd: r.cost_usd,
+        prompt_tokens: r.prompt_tokens,
+        completion_tokens: r.completion_tokens,
+        model: r.model,
+        provider: r.provider,
+        cache_hit: r.cache_hit,
+      },
+    };
   }
 
   /** Every edge in the graph, for export/inspection. */

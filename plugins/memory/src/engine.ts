@@ -1,4 +1,11 @@
-import type { GraphRow, MemoryStore, SearchRow, ShortestPathResult, StoredNode } from "./graph-store.js";
+import type {
+  AskCost,
+  GraphRow,
+  MemoryStore,
+  SearchRow,
+  ShortestPathResult,
+  StoredNode,
+} from "./graph-store.js";
 import { tokenize } from "./recall.js";
 import { DEFAULT_IMPORTANCE, type MemoryNodeProps, type NodeType, type Tier } from "./schema.js";
 
@@ -118,6 +125,8 @@ export interface AskResult {
   /** Grounded answer, when an LLM key is configured; null otherwise. */
   answer: string | null;
   citations: { marker: number; urn: string }[];
+  /** Per-call usage and billing metadata; null when ASK is unavailable. */
+  cost: AskCost | null;
   /** False when the engine has no LLM key — recall stays zero-token regardless. */
   available: boolean;
   error?: string;
@@ -374,13 +383,14 @@ export async function path(
  *  engine has no LLM key — the rest of the engine stays zero-token. */
 export async function ask(store: MemoryStore, question: string): Promise<AskResult> {
   try {
-    const { answer, citations } = await store.ask(question);
-    return { question, answer, citations, available: true };
+    const { answer, citations, cost } = await store.ask(question);
+    return { question, answer, citations, cost, available: true };
   } catch (err) {
     return {
       question,
       answer: null,
       citations: [],
+      cost: null,
       available: false,
       error: err instanceof Error ? err.message : String(err),
     };
