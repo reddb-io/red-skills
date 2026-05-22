@@ -230,6 +230,27 @@ export class MemoryStore {
     return r.rows.map(rowToNode).filter((n) => !isExpired(n, now));
   }
 
+  /**
+   * Native community detection. Returns a node-rid → community-id map computed
+   * by RedDB's own Louvain pass via `GRAPH COMMUNITY ALGORITHM louvain RETURN
+   * ASSIGNMENTS` (engine ≥ 1.3.1, reddb-io/reddb#660). No external
+   * graph-algorithms dependency — the engine owns the partition; we only read
+   * the per-node assignment it returns (`{community_id, node_id}` rows, node_id
+   * carried as a string). The competitive point of PRD #66 / issue #70.
+   */
+  async communities(): Promise<Map<number, string>> {
+    const r = await this.db.query(
+      `GRAPH COMMUNITY ALGORITHM louvain RETURN ASSIGNMENTS`,
+    );
+    const map = new Map<number, string>();
+    for (const row of r.rows) {
+      const rid = Number(row.node_id ?? row.NODE_ID);
+      const cid = String(row.community_id ?? row.COMMUNITY_ID ?? "");
+      if (Number.isFinite(rid) && cid) map.set(rid, cid);
+    }
+    return map;
+  }
+
   // -------------------------------------------------------------------
   // Edges
   // -------------------------------------------------------------------

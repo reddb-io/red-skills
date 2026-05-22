@@ -65,3 +65,14 @@ node-draw path. The `[extra: string]: unknown` escape hatch on
   unaffected.
 - No consumer code ships for #70 now — avoids a client-side community
   implementation we would have to rip out once the engine exposes assignments.
+
+## Resolved (2026-05-22)
+
+reddb-io/reddb#660 shipped in **`@reddb-io/sdk@1.3.1`**: `GRAPH COMMUNITY
+ALGORITHM louvain RETURN ASSIGNMENTS` now returns `{community_id, node_id}` rows
+(node_id as a string rid), verified against the bundled binary. #70 implemented
+on the consumer side exactly as predicted above — `MemoryStore.communities()`
+(rid→community map), an opt-in `community` field threaded through `export.ts`
+(json + html), a deterministic golden-angle colour palette in `graph.html`, and
+a `--communities` flag on `memory export` (alias `memory graph`). The SDK pin
+moved `^1.2.5` → `^1.3.1`. Default export stays community-free (byte-identical).

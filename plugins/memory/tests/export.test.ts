@@ -69,6 +69,50 @@ describe("export", () => {
   );
 
   test(
+    "--communities colours nodes by native Louvain cluster",
+    async () => {
+      const { store, dir } = await openStore();
+      // Two triangles joined by a single bridge edge → two communities.
+      const mk = (l: string) =>
+        store.upsertNode({ label: l, node_type: "concept", properties: { title: l, content: l } });
+      const [a, b, c, x, y, z] = await Promise.all(["a", "b", "c", "x", "y", "z"].map(mk));
+      const e = (from: number, to: number) =>
+        store.upsertEdge({ label: "REFERENCES", from_rid: from, to_rid: to });
+      await e(a, b); await e(b, c); await e(c, a);
+      await e(x, y); await e(y, z); await e(z, x);
+      await e(c, x); // bridge
+
+      const result = await exportGraph(store, join(dir, "export"), { communities: true });
+
+      const json = JSON.parse(await readFile(result.jsonPath, "utf8"));
+      const byRid: Record<number, string | null> = Object.fromEntries(
+        json.nodes.map((n: { rid: number; community: string | null }) => [n.rid, n.community]),
+      );
+      // Every node carries a community id, and exactly two distinct clusters formed.
+      for (const rid of [a, b, c, x, y, z]) expect(byRid[rid]).toBeTypeOf("string");
+      const distinct = new Set(Object.values(byRid));
+      expect(distinct.size).toBe(2);
+      // The triangles split: a/b/c agree, x/y/z agree, and the two differ.
+      expect(byRid[a]).toBe(byRid[b]);
+      expect(byRid[b]).toBe(byRid[c]);
+      expect(byRid[x]).toBe(byRid[y]);
+      expect(byRid[y]).toBe(byRid[z]);
+      expect(byRid[a]).not.toBe(byRid[x]);
+
+      // graph.html carries a colour palette keyed by community id.
+      const html = await readFile(result.htmlPath, "utf8");
+      expect(html).toContain('"palette"');
+      expect(html).toContain("hsl(");
+
+      // Default export (no flag) stays community-free.
+      const plain = await exportGraph(store, join(dir, "plain"));
+      const plainJson = JSON.parse(await readFile(plain.jsonPath, "utf8"));
+      expect(plainJson.nodes[0]).not.toHaveProperty("community");
+    },
+    TIMEOUT,
+  );
+
+  test(
     "audit reports orphan nodes",
     async () => {
       const { store, dir } = await openStore();
