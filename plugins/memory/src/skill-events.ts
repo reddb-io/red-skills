@@ -74,6 +74,25 @@ export type SkillEvent = z.infer<typeof eventSchema>;
 export interface SkillEventIngestReport {
   events: number;
   nodes: number;
+  edges: number;
+}
+
+export interface SkillRollup {
+  name: string;
+  source_kind: string;
+  path: string;
+  first_seen: string;
+  last_activity: string;
+  event_count: number;
+  view_count: number;
+  use_count: number;
+  patch_count: number;
+  change_count: number;
+  result_count: number;
+  outcome_counts: Partial<Record<SkillResultStatus, number>>;
+  curatable_status: "active";
+  archive_signal: boolean;
+  consolidation_signal: boolean;
 }
 
 export function parseSkillEventInput(input: string): SkillEvent[] {
@@ -105,12 +124,30 @@ export async function ingestSkillEvents(
   store: MemoryStore,
   events: readonly SkillEvent[],
 ): Promise<SkillEventIngestReport> {
-  let nodes = 0;
+  const seen = await readSeenEventIds(store);
+  const rollups = await readSkillRollupMap(store);
+  const touchedNodes = new Set<number>();
+  const touchedEdges = new Set<number>();
+
   for (const event of events) {
-    await store.upsertNode(skillEventToNode(event));
-    nodes += 1;
+    const graph = await upsertSkillEventGraph(store, event);
+    for (const rid of graph.nodes) touchedNodes.add(rid);
+    for (const rid of graph.edges) touchedEdges.add(rid);
+
+    if (seen[event.event_id] !== true) {
+      updateSkillRollup(rollups, event);
+      seen[event.event_id] = true;
+    }
   }
-  return { events: events.length, nodes };
+
+  await store.kvPut(SKILL_EVENT_SEEN_KEY, seen);
+  await store.kvPut(SKILL_ROLLUPS_KEY, rollups);
+  return { events: events.length, nodes: touchedNodes.size, edges: touchedEdges.size };
+}
+
+export async function readSkillRollups(store: MemoryStore): Promise<SkillRollup[]> {
+  const rollups = await readSkillRollupMap(store);
+  return Object.values(rollups).sort((a, b) => a.name.localeCompare(b.name));
 }
 
 export function skillEventToNode(event: SkillEvent): MemoryNode {
@@ -136,6 +173,188 @@ export function skillEventToNode(event: SkillEvent): MemoryNode {
     },
   };
 }
+
+function skillToNode(event: SkillEvent): MemoryNode {
+  return {
+    label: `skill:${event.name}`,
+    node_type: "workflow",
+    properties: {
+      title: event.name,
+      summary: `${event.source_kind} skill at ${event.path}`,
+      content: `${event.name} (${event.source_kind}) ${event.path}`,
+      tags: ["skill-telemetry", "skill", `source:${event.source_kind}`],
+      confidence: "EXTRACTED",
+      source: "skill-telemetry",
+      hash: contentHash("skill", event.name, event.source_kind, event.path),
+      skill: {
+        name: event.name,
+        source_kind: event.source_kind,
+        path: event.path,
+      },
+    },
+  };
+}
+
+function sessionToNode(event: SkillEvent): MemoryNode {
+  return {
+    label: `skill-session:${event.session_id}`,
+    node_type: "session",
+    properties: {
+      title: `skill session ${event.session_id}`,
+      summary: `${event.runner} skill telemetry session`,
+      content: `${event.runner} session ${event.session_id}`,
+      tags: ["skill-telemetry", `runner:${event.runner}`],
+      confidence: "EXTRACTED",
+      source: "skill-telemetry",
+      tier: "durable",
+      hash: contentHash("skill-session", event.session_id, event.runner),
+      skill_session: {
+        session_id: event.session_id,
+        runner: event.runner,
+      },
+    },
+  };
+}
+
+function turnToNode(event: SkillEvent): MemoryNode {
+  return {
+    label: `skill-turn:${event.turn_id}`,
+    node_type: "task",
+    properties: {
+      title: `skill turn ${event.turn_id}`,
+      summary: `${event.runner} turn ${event.turn_id}`,
+      content: `${event.runner} session ${event.session_id} turn ${event.turn_id}`,
+      tags: ["skill-telemetry", `runner:${event.runner}`],
+      confidence: "EXTRACTED",
+      source: "skill-telemetry",
+      hash: contentHash("skill-turn", event.session_id, event.turn_id, event.runner),
+      skill_turn: {
+        session_id: event.session_id,
+        turn_id: event.turn_id,
+        runner: event.runner,
+      },
+    },
+  };
+}
+
+async function upsertSkillEventGraph(
+  store: MemoryStore,
+  event: SkillEvent,
+): Promise<{ nodes: number[]; edges: number[] }> {
+  const skillRid = await store.upsertNode(skillToNode(event));
+  const sessionRid = await store.upsertNode(sessionToNode(event));
+  const turnRid = await store.upsertNode(turnToNode(event));
+  const eventRid = await store.upsertNode(skillEventToNode(event));
+
+  const edges = [
+    await store.upsertEdge({
+      label: "CONTAINS",
+      from_rid: skillRid,
+      to_rid: eventRid,
+      properties: { source: "skill-telemetry", reason: "skill observed event" },
+    }),
+    await store.upsertEdge({
+      label: "CONTAINS",
+      from_rid: sessionRid,
+      to_rid: turnRid,
+      properties: { source: "skill-telemetry", reason: "session contains turn" },
+    }),
+    await store.upsertEdge({
+      label: "CONTAINS",
+      from_rid: turnRid,
+      to_rid: eventRid,
+      properties: { source: "skill-telemetry", reason: "turn contains event" },
+    }),
+    await store.upsertEdge({
+      label: "REFERENCES",
+      from_rid: eventRid,
+      to_rid: skillRid,
+      properties: { source: "skill-telemetry", reason: "event references skill" },
+    }),
+  ];
+
+  return { nodes: [skillRid, sessionRid, turnRid, eventRid], edges };
+}
+
+async function readSeenEventIds(store: MemoryStore): Promise<Record<string, true>> {
+  return parseKvObject(await store.kvGet<Record<string, true> | string>(SKILL_EVENT_SEEN_KEY));
+}
+
+async function readSkillRollupMap(store: MemoryStore): Promise<Record<string, SkillRollup>> {
+  return parseKvObject(
+    await store.kvGet<Record<string, SkillRollup> | string>(SKILL_ROLLUPS_KEY),
+  );
+}
+
+function parseKvObject<T extends Record<string, unknown>>(raw: T | string | null): T {
+  if (raw == null) return {} as T;
+  return (typeof raw === "string" ? JSON.parse(raw) : raw) as T;
+}
+
+function updateSkillRollup(rollups: Record<string, SkillRollup>, event: SkillEvent): void {
+  const key = skillRollupKey(event);
+  const current =
+    rollups[key] ??
+    ({
+      name: event.name,
+      source_kind: event.source_kind,
+      path: event.path,
+      first_seen: event.timestamp,
+      last_activity: event.timestamp,
+      event_count: 0,
+      view_count: 0,
+      use_count: 0,
+      patch_count: 0,
+      change_count: 0,
+      result_count: 0,
+      outcome_counts: {},
+      curatable_status: "active",
+      archive_signal: false,
+      consolidation_signal: false,
+    } satisfies SkillRollup);
+
+  current.event_count += 1;
+  current.first_seen = earlierTimestamp(current.first_seen, event.timestamp);
+  current.last_activity = laterTimestamp(current.last_activity, event.timestamp);
+
+  switch (event.event_type) {
+    case "viewed":
+      current.view_count += 1;
+      break;
+    case "used":
+      current.use_count += 1;
+      break;
+    case "patched":
+      current.patch_count += 1;
+      break;
+    case "changed":
+      current.change_count += 1;
+      break;
+    case "result": {
+      current.result_count += 1;
+      const status = event.result?.status ?? "unknown";
+      current.outcome_counts[status] = (current.outcome_counts[status] ?? 0) + 1;
+      break;
+    }
+  }
+
+  rollups[key] = current;
+}
+
+function skillRollupKey(event: SkillEvent): string {
+  return `${event.source_kind}:${event.name}:${event.path}`;
+}
+
+function earlierTimestamp(a: string, b: string): string {
+  return Date.parse(a) <= Date.parse(b) ? a : b;
+}
+
+function laterTimestamp(a: string, b: string): string {
+  return Date.parse(a) >= Date.parse(b) ? a : b;
+}
+
+const SKILL_EVENT_SEEN_KEY = "skill-events:seen";
+const SKILL_ROLLUPS_KEY = "skill-rollups:all";
 
 function parseJsonOrJsonl(input: string): unknown {
   try {

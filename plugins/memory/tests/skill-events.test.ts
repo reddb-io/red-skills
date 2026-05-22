@@ -1,11 +1,17 @@
 import { spawnSync } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, test } from "vitest";
 import { initGraph, initMarkdownOnly } from "../src/init.js";
-import { parseSkillEventInput } from "../src/skill-events.js";
+import { MemoryStore } from "../src/graph-store.js";
+import {
+  ingestSkillEvents,
+  parseSkillEventInput,
+  readSkillRollups,
+  type SkillEvent,
+} from "../src/skill-events.js";
 
 const EVENT = {
   event_type: "result",
@@ -22,12 +28,13 @@ const EVENT = {
     duration_ms: 1200,
     error_class: "none",
   },
-};
+} satisfies SkillEvent;
 
 const TIMEOUT = 30_000;
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = join(HERE, "..");
 const roots: string[] = [];
+const stores: MemoryStore[] = [];
 
 async function tempRoot(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "memory-skill-event-"));
@@ -36,8 +43,18 @@ async function tempRoot(): Promise<string> {
 }
 
 afterEach(async () => {
+  await Promise.all(stores.splice(0).map((s) => s.close().catch(() => {})));
   await Promise.all(roots.splice(0).map((d) => rm(d, { recursive: true, force: true })));
 });
+
+async function openStore(root: string): Promise<MemoryStore> {
+  const store = await MemoryStore.open({
+    uri: `file://${join(root, ".red/memory/graph.rdb")}`,
+    project: "test",
+  });
+  stores.push(store);
+  return store;
+}
 
 function runMemory(args: string[], input?: string) {
   return spawnSync(process.execPath, ["--import", "tsx", "src/cli.ts", ...args], {
@@ -46,6 +63,21 @@ function runMemory(args: string[], input?: string) {
     input,
     timeout: TIMEOUT,
   });
+}
+
+async function packageJsonFiles(dir: string): Promise<string[]> {
+  const entries = await readdir(dir, { withFileTypes: true });
+  const files: string[] = [];
+  for (const entry of entries) {
+    if (entry.name === "node_modules") continue;
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...(await packageJsonFiles(path)));
+    } else if (entry.name === "package.json") {
+      files.push(path);
+    }
+  }
+  return files;
 }
 
 describe("Skill telemetry event contract", () => {
@@ -132,7 +164,7 @@ describe("memory event skill CLI", () => {
       expect(result.stdout).toContain("memory: ingested 1 skill event");
 
       const stats = runMemory(["stats", "--root", root]);
-      expect(stats.stdout).toContain("memory: 1 node(s)");
+      expect(stats.stdout).toContain("memory: 4 node(s)");
     },
     TIMEOUT,
   );
@@ -151,7 +183,7 @@ describe("memory event skill CLI", () => {
       expect(result.stdout).toContain("memory: ingested 2 skill events");
 
       const stats = runMemory(["stats", "--root", root]);
-      expect(stats.stdout).toContain("memory: 2 node(s)");
+      expect(stats.stdout).toContain("memory: 5 node(s)");
     },
     TIMEOUT,
   );
@@ -193,4 +225,128 @@ describe("memory event skill CLI", () => {
     },
     TIMEOUT,
   );
+});
+
+describe("skill telemetry graph persistence", () => {
+  test(
+    "replaying a skill result event preserves one evidence graph and one rollup count",
+    async () => {
+      const root = await tempRoot();
+      await initGraph(root);
+      const store = await openStore(root);
+
+      await ingestSkillEvents(store, [EVENT, EVENT]);
+
+      const nodes = await store.listNodes();
+      expect(nodes.map((node) => node.label).sort()).toEqual([
+        "skill-event:evt-1",
+        "skill-session:session-1",
+        "skill-turn:turn-1",
+        "skill:dev:tdd",
+      ]);
+
+      const edges = await store.listEdges();
+      expect(edges).toHaveLength(4);
+
+      const rollups = await readSkillRollups(store);
+      expect(rollups).toEqual([
+        expect.objectContaining({
+          name: "dev:tdd",
+          source_kind: "plugin",
+          path: "/plugins/dev/skills/engineering/tdd/SKILL.md",
+          view_count: 0,
+          use_count: 0,
+          patch_count: 0,
+          change_count: 0,
+          result_count: 1,
+          last_activity: "2026-05-22T16:00:00.000Z",
+          outcome_counts: { succeeded: 1 },
+          curatable_status: "active",
+        }),
+      ]);
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "rollups aggregate skill activity counts across event types",
+    async () => {
+      const root = await tempRoot();
+      await initGraph(root);
+      const store = await openStore(root);
+      const events: SkillEvent[] = [
+        { ...EVENT, event_id: "evt-viewed", event_type: "viewed", result: undefined },
+        {
+          ...EVENT,
+          event_id: "evt-used",
+          event_type: "used",
+          timestamp: "2026-05-22T16:01:00.000Z",
+          result: undefined,
+        },
+        {
+          ...EVENT,
+          event_id: "evt-changed",
+          event_type: "changed",
+          timestamp: "2026-05-22T16:02:00.000Z",
+          result: undefined,
+        },
+        {
+          ...EVENT,
+          event_id: "evt-patched",
+          event_type: "patched",
+          timestamp: "2026-05-22T16:03:00.000Z",
+          result: undefined,
+        },
+        {
+          ...EVENT,
+          event_id: "evt-result",
+          event_type: "result",
+          timestamp: "2026-05-22T16:04:00.000Z",
+          result: { status: "failed", error_class: "runtime" },
+        },
+      ];
+
+      await ingestSkillEvents(store, events);
+
+      expect(await readSkillRollups(store)).toEqual([
+        expect.objectContaining({
+          event_count: 5,
+          view_count: 1,
+          use_count: 1,
+          change_count: 1,
+          patch_count: 1,
+          result_count: 1,
+          first_seen: "2026-05-22T16:00:00.000Z",
+          last_activity: "2026-05-22T16:04:00.000Z",
+          outcome_counts: { failed: 1 },
+          archive_signal: false,
+          consolidation_signal: false,
+        }),
+      ]);
+    },
+    TIMEOUT,
+  );
+});
+
+describe("plugin dependency boundaries", () => {
+  test("dev plugin package manifests do not depend directly on RedDB", async () => {
+    const manifests = await packageJsonFiles(join(PLUGIN_ROOT, "..", "dev"));
+    expect(manifests.length).toBeGreaterThan(0);
+
+    for (const manifest of manifests) {
+      const pkg = JSON.parse(await readFile(manifest, "utf8")) as {
+        dependencies?: Record<string, string>;
+        devDependencies?: Record<string, string>;
+        optionalDependencies?: Record<string, string>;
+        peerDependencies?: Record<string, string>;
+      };
+      const directDeps = {
+        ...pkg.dependencies,
+        ...pkg.devDependencies,
+        ...pkg.optionalDependencies,
+        ...pkg.peerDependencies,
+      };
+      expect(directDeps).not.toHaveProperty("@reddb-io/sdk");
+    }
+  });
 });
