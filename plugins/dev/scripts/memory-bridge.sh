@@ -15,8 +15,9 @@
 #      sibling-plugin dist build, or an in-repo checkout.
 #
 # Source it, then call `memory_available <root>` to gate, `memory_neighbors
-# <root> <label>` for focused graph context, or `memory_recall <root>
-# <query…>` to fetch a ready-to-fold context block (or nothing).
+# <root> <label>` for focused graph context, `memory_path <root> <from> <to>`
+# for relationship paths, or `memory_recall <root> <query…>` to fetch a
+# ready-to-fold context block (or nothing).
 
 # Resolve the memory CLI invocation into the global MEMORY_CLI array.
 # Returns 0 and populates MEMORY_CLI on success; returns 1 (MEMORY_CLI empty)
@@ -118,6 +119,26 @@ memory_neighbors() {
   out="$("${MEMORY_CLI[@]}" neighbors "$label" --root "$root" --depth "$depth" --direction "$direction" 2>/dev/null)" || return 0
   [[ -n "$out" ]] || return 0
   printf '%s\n' "$out" | grep -Eq '^memory: 0 neighbor\(s\)' && return 0
+  printf '%s\n' "$out"
+  return 0
+}
+
+# memory_path <root> <from> <to> [algorithm] — print a graph path between two
+# focused labels, or nothing. ALWAYS returns 0: absent, markdown-only, no-path,
+# empty, or erroring graph reads are an optimization miss, not a failure of the
+# calling dev process.
+memory_path() {
+  local root="${1:-$PWD}"
+  local from="${2:-}"
+  local to="${3:-}"
+  local algorithm="${4:-bfs}"
+  [[ -n "$from" && -n "$to" ]] || return 0
+  memory_graph_ready "$root" || return 0
+
+  local out
+  out="$("${MEMORY_CLI[@]}" path "$from" "$to" --root "$root" --algorithm "$algorithm" 2>/dev/null)" || return 0
+  [[ -n "$out" ]] || return 0
+  printf '%s\n' "$out" | grep -Eq '^memory: no path from ' && return 0
   printf '%s\n' "$out"
   return 0
 }

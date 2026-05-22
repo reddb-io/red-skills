@@ -4,7 +4,7 @@
 # The bridge is dev's SOFT, one-directional hook into the memory plugin. The
 # acceptance criteria it must satisfy:
 #   - memory installed + initialized  → recall runs and its output is returned;
-#   - graph memory with neighbors      → focused graph reads are returned;
+#   - graph memory with neighbors/path → focused graph reads are returned;
 #   - memory absent / uninitialized   → behaves exactly as before: silent no-op,
 #                                        exit 0, no output, no error;
 #   - detection has two gates (config opt-in AND a resolvable CLI), and the CLI
@@ -93,6 +93,11 @@ case "$1" in
     echo "memory: 2 neighbor(s) of \"$label\""
     echo "  d1 node-auth (module) auth-service"
     echo "  d1 node-cache (concept) cache-ttl"
+    ;;
+  path)
+    from="$2"
+    to="$3"
+    echo "memory: path \"$from\" -> \"$to\": 2 hop(s), weight 2"
     ;;
   *)
     echo "unexpected command: $*" >&2
@@ -285,6 +290,98 @@ expect_eq "neighbors: failing command -> swallowed, no stdout" "" "$out"
 clear_env
 expect_ok "neighbors: failing command -> still exit 0" \
   bash -c 'source "'"$LIB"'"; PATH="'"$NEIGHBORERRBIN"':/usr/bin:/bin" memory_neighbors "'"$GRAPH_ROOT"'" zoom-out 1 both'
+
+# ---------- memory_path (graph-only, graceful) ----------
+
+clear_env
+out="$(PATH="$FAKE_BIN:$PATH" bash -c 'source "'"$LIB"'"; memory_path "'"$GRAPH_ROOT"'" zoom-out memory-bridge bfs')"
+expect_eq "path: graph ready -> returns CLI output" \
+  'memory: path "zoom-out" -> "memory-bridge": 2 hop(s), weight 2' "$out"
+clear_env
+expect_ok "path: graph ready -> exit 0" \
+  bash -c 'source "'"$LIB"'"; PATH="'"$FAKE_BIN"':$PATH" memory_path "'"$GRAPH_ROOT"'" zoom-out memory-bridge bfs'
+
+clear_env
+out="$(PATH=/usr/bin:/bin bash -c 'source "'"$LIB"'"; memory_path "'"$GRAPH_ROOT"'" zoom-out memory-bridge bfs')"
+expect_eq "path: graph config but no CLI -> no output" "" "$out"
+clear_env
+expect_ok "path: graph config but no CLI -> exit 0" \
+  bash -c 'source "'"$LIB"'"; PATH=/usr/bin:/bin memory_path "'"$GRAPH_ROOT"'" zoom-out memory-bridge bfs'
+
+clear_env
+out="$(PATH="$FAKE_BIN:$PATH" bash -c 'source "'"$LIB"'"; memory_path "'"$INIT_ROOT"'" zoom-out memory-bridge bfs')"
+expect_eq "path: markdown-only config -> no output" "" "$out"
+
+clear_env
+out="$(PATH="$FAKE_BIN:$PATH" bash -c 'source "'"$LIB"'"; memory_path "'"$GRAPH_ROOT"'" zoom-out')"
+expect_eq "path: missing destination label -> no output" "" "$out"
+
+clear_env
+NOPATHBIN="$TMP/nopathbin"
+mkdir -p "$NOPATHBIN"
+cat > "$NOPATHBIN/memory" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in
+  stats)
+    echo "memory: 17 node(s), 3 edge(s)"
+    ;;
+  path)
+    echo "memory: no path from \"$2\" to \"$3\""
+    ;;
+  *)
+    exit 1
+    ;;
+esac
+EOF
+chmod +x "$NOPATHBIN/memory"
+out="$(PATH="$NOPATHBIN:/usr/bin:/bin" bash -c 'source "'"$LIB"'"; memory_path "'"$GRAPH_ROOT"'" zoom-out memory-bridge bfs')"
+expect_eq "path: no path result -> no output" "" "$out"
+
+clear_env
+EMPTYPATHBIN="$TMP/emptypathbin"
+mkdir -p "$EMPTYPATHBIN"
+cat > "$EMPTYPATHBIN/memory" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in
+  stats)
+    echo "memory: 17 node(s), 3 edge(s)"
+    ;;
+  path)
+    exit 0
+    ;;
+  *)
+    exit 1
+    ;;
+esac
+EOF
+chmod +x "$EMPTYPATHBIN/memory"
+out="$(PATH="$EMPTYPATHBIN:/usr/bin:/bin" bash -c 'source "'"$LIB"'"; memory_path "'"$GRAPH_ROOT"'" zoom-out memory-bridge bfs')"
+expect_eq "path: empty command output -> no output" "" "$out"
+
+clear_env
+PATHERRBIN="$TMP/patherrbin"
+mkdir -p "$PATHERRBIN"
+cat > "$PATHERRBIN/memory" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in
+  stats)
+    echo "memory: 17 node(s), 3 edge(s)"
+    ;;
+  path)
+    echo "path boom" >&2
+    exit 1
+    ;;
+  *)
+    exit 1
+    ;;
+esac
+EOF
+chmod +x "$PATHERRBIN/memory"
+out="$(PATH="$PATHERRBIN:/usr/bin:/bin" bash -c 'source "'"$LIB"'"; memory_path "'"$GRAPH_ROOT"'" zoom-out memory-bridge bfs' 2>/dev/null)"
+expect_eq "path: failing command -> swallowed, no stdout" "" "$out"
+clear_env
+expect_ok "path: failing command -> still exit 0" \
+  bash -c 'source "'"$LIB"'"; PATH="'"$PATHERRBIN"':/usr/bin:/bin" memory_path "'"$GRAPH_ROOT"'" zoom-out memory-bridge bfs'
 
 # ---------- memory_recall (graceful, query passthrough) ----------
 
