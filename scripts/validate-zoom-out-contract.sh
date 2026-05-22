@@ -3,6 +3,11 @@ set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 SKILL="$REPO/plugins/dev/skills/engineering/zoom-out/SKILL.md"
+README="$REPO/README.md"
+ENGINEERING_INDEX="$REPO/plugins/dev/skills/engineering/README.md"
+CLAUDE_PLUGIN="$REPO/plugins/dev/.claude-plugin/plugin.json"
+CODEX_PLUGIN="$REPO/plugins/dev/.codex-plugin/plugin.json"
+CLAUDE_MARKETPLACE="$REPO/.claude-plugin/marketplace.json"
 
 fail() {
   printf 'error: %s\n' "$*" >&2
@@ -12,6 +17,11 @@ fail() {
 need_regex() {
   local regex="$1" label="$2"
   grep -Eiq -- "$regex" "$SKILL" || fail "zoom-out contract missing $label"
+}
+
+need_file_regex() {
+  local file="$1" regex="$2" label="$3"
+  grep -Eiq -- "$regex" "$file" || fail "$label missing expected text"
 }
 
 need_regex 'map-first|map first' 'map-first answer shape'
@@ -36,5 +46,21 @@ need_regex '/memory:ingest' 'explicit Memory ingest recommendation'
 need_regex 'Do not run `/memory:ingest`|never runs? ingest|read-only' 'read-only ingest guardrail'
 need_regex 'do not (paste|show|lead with).*(neighbor|node|edge)|interpret.*neighbor' 'raw neighbor output guardrail'
 need_regex 'do not (paste|show|lead with).*(path|hop|weight)|interpret.*path' 'raw path output guardrail'
+
+need_file_regex "$README" 'Codebase understanding surface' 'README Codebase understanding docs'
+need_file_regex "$README" 'zoom-out.*map-first|map-first.*zoom-out' 'README map-first zoom-out docs'
+need_file_regex "$README" 'zoom-out.*Memory Graph|Memory Graph.*zoom-out' 'README graph-aware zoom-out docs'
+need_file_regex "$README" 'read-only|does not run `/memory:ingest`|never runs? ingest' 'README read-only graph docs'
+need_file_regex "$README" '/memory:ingest' 'README explicit ingest docs'
+need_file_regex "$README" 'Memory recall|memory:recall' 'README Memory recall distinction'
+need_file_regex "$README" 'Wiki query|wiki query|/wiki query' 'README Wiki query distinction'
+need_file_regex "$README" 'future Ask|future `/ask`|Ask surface' 'README future Ask boundary'
+
+need_file_regex "$ENGINEERING_INDEX" 'zoom-out.*map-first|map-first.*zoom-out' 'engineering skill index map-first zoom-out listing'
+need_file_regex "$ENGINEERING_INDEX" 'Memory Graph|graph-aware|graph aware' 'engineering skill index graph-aware zoom-out listing'
+
+need_file_regex "$CLAUDE_PLUGIN" 'codebase understanding|graph-aware|graph aware' 'Claude dev plugin metadata'
+need_file_regex "$CODEX_PLUGIN" 'codebase understanding|graph-aware|graph aware' 'Codex dev plugin metadata'
+need_file_regex "$CLAUDE_MARKETPLACE" 'codebase understanding|graph-aware|graph aware' 'Claude marketplace metadata'
 
 echo "zoom-out contract ok"
