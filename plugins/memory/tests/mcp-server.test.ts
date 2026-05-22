@@ -147,4 +147,25 @@ describe("MCP server over stdio", () => {
     },
     TIMEOUT,
   );
+
+  test(
+    "memory_ask reports citations and cost metadata",
+    async () => {
+      const client = await connect(await seedStore());
+      const result = (await client.callTool({
+        name: "memory_ask",
+        arguments: { question: "how often do jwt tokens rotate?" },
+      })) as ToolResult;
+
+      const answer = JSON.parse(result.content[0]?.text ?? "{}") as {
+        citations: unknown[];
+        cost: unknown;
+      };
+      expect(Array.isArray(answer.citations)).toBe(true);
+      expect(answer).toHaveProperty("cost");
+      expect(result.structuredContent).toHaveProperty("citations");
+      expect(result.structuredContent).toHaveProperty("cost_usd");
+    },
+    TIMEOUT,
+  );
 });

@@ -211,6 +211,7 @@ async function main(): Promise<void> {
         return text(JSON.stringify(result, null, 2), {
           available: result.available,
           citations: result.citations.length,
+          cost_usd: result.cost?.cost_usd ?? null,
         });
       }
       case "memory_export": {
@@ -336,7 +337,7 @@ const TOOLS = [
   {
     name: "memory_ask",
     description:
-      "Grounded ASK over the memory document collection (RedDB ASK with citations). Requires an LLM key on the engine; degrades gracefully when absent.",
+      "Grounded ASK over the memory document collection (RedDB ASK with citations and per-call cost). Requires an LLM key on the engine; degrades gracefully when absent.",
     inputSchema: zodToSchema(AskInput),
   },
   {

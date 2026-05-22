@@ -229,6 +229,39 @@ describe("path", () => {
 });
 
 describe("ask", () => {
+  test("returns grounded answer citations and per-call cost", async () => {
+    const store = {
+      ask: async () => ({
+        answer: "JWT tokens rotate every 90 days [1].",
+        citations: [{ marker: 1, urn: "memory_docs:jwt-rotation" }],
+        cost: {
+          cost_usd: 0.00042,
+          prompt_tokens: 120,
+          completion_tokens: 16,
+          model: "gpt-4o-mini",
+          provider: "openai",
+          cache_hit: false,
+        },
+      }),
+    } as unknown as MemoryStore;
+
+    const result = await ask(store, "how often do jwt tokens rotate?");
+
+    expect(result).toMatchObject({
+      available: true,
+      answer: "JWT tokens rotate every 90 days [1].",
+      citations: [{ marker: 1, urn: "memory_docs:jwt-rotation" }],
+      cost: {
+        cost_usd: 0.00042,
+        prompt_tokens: 120,
+        completion_tokens: 16,
+        model: "gpt-4o-mini",
+        provider: "openai",
+        cache_hit: false,
+      },
+    });
+  });
+
   test(
     "degrades gracefully without an LLM key",
     async () => {
@@ -239,6 +272,7 @@ describe("ask", () => {
       // No LLM key in CI → not available, but the call must not throw.
       expect(result).toHaveProperty("available");
       expect(Array.isArray(result.citations)).toBe(true);
+      expect(result.cost).toBeNull();
     },
     TIMEOUT,
   );
