@@ -14,8 +14,9 @@
 #   2. a memory CLI resolves  — via $RED_MEMORY_CLI, a `memory` bin on PATH, a
 #      sibling-plugin dist build, or an in-repo checkout.
 #
-# Source it, then call `memory_available <root>` to gate, or `memory_recall
-# <root> <query…>` to fetch a ready-to-fold context block (or nothing).
+# Source it, then call `memory_available <root>` to gate, `memory_neighbors
+# <root> <label>` for focused graph context, or `memory_recall <root>
+# <query…>` to fetch a ready-to-fold context block (or nothing).
 
 # Resolve the memory CLI invocation into the global MEMORY_CLI array.
 # Returns 0 and populates MEMORY_CLI on success; returns 1 (MEMORY_CLI empty)
@@ -98,6 +99,26 @@ memory_graph_ready() {
   out="$("${MEMORY_CLI[@]}" stats --root "$root" 2>/dev/null)" || return 1
   nodes="$(printf '%s\n' "$out" | sed -nE 's/^[^0-9]*([0-9]+)[[:space:]]+node\(s\).*/\1/p' | head -n 1)"
   [[ -n "$nodes" && "$nodes" -gt 0 ]] || return 1
+  return 0
+}
+
+# memory_neighbors <root> <label> [depth] [direction] — print the graph
+# neighborhood for a focused label, or nothing. ALWAYS returns 0: absent,
+# markdown-only, empty, or erroring graph reads are an optimization miss, not a
+# failure of the calling dev process.
+memory_neighbors() {
+  local root="${1:-$PWD}"
+  local label="${2:-}"
+  local depth="${3:-1}"
+  local direction="${4:-both}"
+  [[ -n "$label" ]] || return 0
+  memory_graph_ready "$root" || return 0
+
+  local out
+  out="$("${MEMORY_CLI[@]}" neighbors "$label" --root "$root" --depth "$depth" --direction "$direction" 2>/dev/null)" || return 0
+  [[ -n "$out" ]] || return 0
+  printf '%s\n' "$out" | grep -Eq '^memory: 0 neighbor\(s\)' && return 0
+  printf '%s\n' "$out"
   return 0
 }
 
