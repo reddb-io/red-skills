@@ -24,7 +24,13 @@ import { ingestProject } from "./ingest.js";
 import { initGraph, initMarkdownOnly } from "./init.js";
 import { applyProviderEnv, redDbProviderClient } from "./provider-client.js";
 import { recall } from "./recall.js";
-import { ingestSkillEvents, parseSkillEvent, parseSkillEventInput } from "./skill-events.js";
+import {
+  ingestSkillEvents,
+  parseSkillEvent,
+  parseSkillEventInput,
+  readSkillRollups,
+} from "./skill-events.js";
+import { curateSkills, rollupsToCuratorInput } from "./skill-curator.js";
 import { slugify, storeNote } from "./store.js";
 
 const USAGE = `memory — persistent memory for code agents
@@ -36,6 +42,7 @@ Usage:
   memory ingest <path>              [--root <dir>] [--max-files N]
   memory extract [<transcript-file>] [--root <dir>]   (reads stdin if no file)
   memory event skill                [--root <dir>] [--event-type ...] ... (or JSON/JSONL on stdin)
+  memory curate skills              [--root <dir>] [--stale-days N] [--json]   (report-only)
 
   Graph-mode read verbs (require \`memory init --mode graph\`):
   memory search <query...>          [--root <dir>] [--limit N]
@@ -275,6 +282,71 @@ async function runSkillEvent(args: ParsedArgs): Promise<void> {
   } finally {
     await store.close();
   }
+}
+
+/**
+ * memory curate skills — the report-only Skill curator surface. It reads
+ * Memory-owned Skill telemetry rollups and prints evidence-based curation
+ * recommendations. It NEVER mutates a skill file, the graph, or anything else:
+ * it only reads rollups and runs the pure {@link curateSkills} over them. Heavy
+ * / model-based review is intentionally absent — this is deterministic and runs
+ * only when explicitly invoked.
+ */
+async function runCurate(args: ParsedArgs): Promise<void> {
+  const kind = args.positional[0];
+  if (kind !== "skills") {
+    throw new Error("curate needs a kind — supported: memory curate skills");
+  }
+
+  const rootDir = rootOf(args.flags);
+  const config = await readConfig(rootDir);
+  if (!config) {
+    console.log("memory: curate ignored — memory is not initialized here");
+    return;
+  }
+  if (config.mode !== "graph") {
+    console.log(`memory: curate ignored — needs graph mode, this project is "${config.mode}"`);
+    return;
+  }
+  if (!skillTelemetryEnabled(config)) {
+    console.log(
+      "memory: curate ignored — skill telemetry is not enabled, re-run `memory init --mode graph --skill-telemetry`",
+    );
+    return;
+  }
+
+  const store = await MemoryStore.open({ uri: resolveStoreUri(rootDir, config) });
+  let report;
+  try {
+    const rollups = await readSkillRollups(store);
+    report = curateSkills(rollupsToCuratorInput(rollups), {
+      staleDays: intFlag(args.flags, "stale-days"),
+    });
+  } finally {
+    await store.close();
+  }
+
+  if (args.flags.json === true) {
+    console.log(JSON.stringify(report, null, 2));
+    return;
+  }
+
+  console.log(
+    `memory: skill curator (report-only) — ${report.totalSkills} skill(s), ` +
+      `${report.curatableSkills} curatable, ${report.readOnlySkills} read-only`,
+  );
+  if (report.recommendations.length === 0) {
+    console.log("  no curation recommendations — evidence supports no action");
+    return;
+  }
+  console.log(
+    `  ${report.recommendations.length} recommendation(s) (stale threshold ${report.staleDays}d):`,
+  );
+  for (const rec of report.recommendations) {
+    const tag = rec.curatable ? "curatable" : "read-only";
+    console.log(`  [${rec.category}] ${rec.name} (${tag}) — ${rec.reason}`);
+  }
+  console.log("\nReport-only: no skill files were read, patched, archived, or deleted.");
 }
 
 function skillEventFromFlags(flags: Record<string, string | boolean>): Record<string, unknown> {
@@ -597,6 +669,8 @@ async function main(): Promise<void> {
       return runIngest(args);
     case "event":
       return runSkillEvent(args);
+    case "curate":
+      return runCurate(args);
     case "extract":
       return runExtract(args);
     case "search":
