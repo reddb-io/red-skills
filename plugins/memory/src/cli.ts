@@ -28,9 +28,12 @@ import {
   ingestSkillEvents,
   parseSkillEvent,
   parseSkillEventInput,
+  readRecentSkillEvents,
   readSkillRollups,
+  type SkillEventSummary,
+  type SkillRollup,
 } from "./skill-events.js";
-import { curateSkills, rollupsToCuratorInput } from "./skill-curator.js";
+import { curateSkills, isCuratable, rollupsToCuratorInput } from "./skill-curator.js";
 import { slugify, storeNote } from "./store.js";
 
 const USAGE = `memory — persistent memory for code agents
@@ -43,6 +46,7 @@ Usage:
   memory extract [<transcript-file>] [--root <dir>]   (reads stdin if no file)
   memory event skill                [--root <dir>] [--event-type ...] ... (or JSON/JSONL on stdin)
   memory curate skills              [--root <dir>] [--stale-days N] [--json]   (report-only)
+  memory status skills              [--root <dir>] [--all] [--limit N] [--json]   (diagnostic, read-only)
 
   Graph-mode read verbs (require \`memory init --mode graph\`):
   memory search <query...>          [--root <dir>] [--limit N]
@@ -347,6 +351,151 @@ async function runCurate(args: ParsedArgs): Promise<void> {
     console.log(`  [${rec.category}] ${rec.name} (${tag}) — ${rec.reason}`);
   }
   console.log("\nReport-only: no skill files were read, patched, archived, or deleted.");
+}
+
+/**
+ * memory status skills — the dedicated Skill telemetry status surface. Unlike
+ * the auto-firing hooks and the `event`/`curate` no-ops (which stay silent
+ * during normal use), this is an explicitly-invoked *diagnostic*: it always
+ * explains the telemetry state — `uninitialized`, `no-op` (missing graph mode),
+ * `unavailable` (graph mode but telemetry never enabled), or `enabled` — and
+ * never errors out (exit 0 in every state). When enabled it reads the persisted
+ * rollups and recent events; it is strictly read-only and opens the store only
+ * in the `enabled` state. Default output focuses on Curatable skills; `--all`
+ * includes bundled plugin/hub skills.
+ */
+async function runStatus(args: ParsedArgs): Promise<void> {
+  const kind = args.positional[0];
+  if (kind !== "skills") {
+    throw new Error("status needs a kind — supported: memory status skills");
+  }
+
+  const rootDir = rootOf(args.flags);
+  const json = args.flags.json === true;
+  const config = await readConfig(rootDir);
+
+  // Non-enabled states: explain the diagnostic outcome, never open the store.
+  if (!config) {
+    return reportStatusState(json, "uninitialized", "memory is not initialized here", {
+      hint: "run `memory init --mode graph --skill-telemetry`",
+    });
+  }
+  if (config.mode !== "graph") {
+    return reportStatusState(
+      json,
+      "no-op",
+      `skill telemetry needs graph mode, this project is "${config.mode}"`,
+      { hint: "re-run `memory init --mode graph --skill-telemetry`" },
+    );
+  }
+  if (!skillTelemetryEnabled(config)) {
+    return reportStatusState(json, "unavailable", "skill telemetry is not enabled here", {
+      hint: "re-run `memory init --mode graph --skill-telemetry`",
+    });
+  }
+
+  const all = args.flags.all === true;
+  const limit = intFlag(args.flags, "limit") ?? 10;
+
+  const store = await MemoryStore.open({ uri: resolveStoreUri(rootDir, config) });
+  let rollups: SkillRollup[];
+  let recent: SkillEventSummary[];
+  try {
+    rollups = await readSkillRollups(store);
+    recent = await readRecentSkillEvents(store, limit);
+  } finally {
+    await store.close();
+  }
+
+  const curatableCount = rollups.filter((r) => isCuratable(r.source_kind)).length;
+  const shownRollups = all ? rollups : rollups.filter((r) => isCuratable(r.source_kind));
+  const shownEvents = all ? recent : recent.filter((e) => isCuratable(e.source_kind));
+
+  if (json) {
+    console.log(
+      JSON.stringify(
+        {
+          state: "enabled",
+          scope: all ? "all" : "curatable",
+          totalSkills: rollups.length,
+          curatableSkills: curatableCount,
+          readOnlySkills: rollups.length - curatableCount,
+          skills: shownRollups,
+          recentEvents: shownEvents,
+        },
+        null,
+        2,
+      ),
+    );
+    return;
+  }
+
+  console.log("memory: skill telemetry status — enabled (graph mode)");
+  console.log(
+    `  ${rollups.length} ${plural(rollups.length, "skill")} observed ` +
+      `(${curatableCount} curatable, ${rollups.length - curatableCount} read-only)`,
+  );
+  if (rollups.length === 0) {
+    console.log("  no skills observed yet — telemetry is enabled but nothing has been recorded");
+    console.log(
+      "\nDiagnostic command: normal-use ingestion stays silent; this surface only reads.",
+    );
+    return;
+  }
+
+  console.log(
+    all
+      ? "  scope: all observed skills (including bundled plugin/hub skills)"
+      : "  scope: curatable skills (use --all to include bundled plugin/hub skills)",
+  );
+
+  if (shownRollups.length === 0) {
+    console.log("  no curatable skills observed — re-run with --all to see bundled skills");
+  } else {
+    console.log("\n  skill / kind / events (v·u·p·c·r) / outcomes / last-activity:");
+    for (const r of shownRollups) {
+      const outcomes = formatOutcomes(r.outcome_counts);
+      console.log(
+        `  ${r.name} (${r.source_kind}) — ${r.event_count} event(s) ` +
+          `(v${r.view_count}·u${r.use_count}·p${r.patch_count}·c${r.change_count}·r${r.result_count})` +
+          `${outcomes ? ` ${outcomes}` : ""} — ${r.last_activity}`,
+      );
+    }
+  }
+
+  if (shownEvents.length > 0) {
+    console.log(`\n  recent events (newest first, up to ${limit}):`);
+    for (const e of shownEvents) {
+      const status = e.status ? ` [${e.status}]` : "";
+      console.log(`  ${e.timestamp}  ${e.event_type}${status}  ${e.name} (${e.source_kind}) <${e.runner}>`);
+    }
+  }
+
+  console.log("\nDiagnostic command: normal-use ingestion stays silent; this surface only reads.");
+}
+
+/** Print a non-enabled status state in either JSON or human-readable form. */
+function reportStatusState(
+  json: boolean,
+  state: "uninitialized" | "no-op" | "unavailable",
+  reason: string,
+  opts: { hint?: string } = {},
+): void {
+  if (json) {
+    console.log(JSON.stringify({ state, reason, hint: opts.hint }, null, 2));
+    return;
+  }
+  console.log(`memory: skill telemetry status — ${state}`);
+  console.log(`  ${reason}`);
+  if (opts.hint) console.log(`  ${opts.hint}`);
+}
+
+/** Compact `succeeded=3 failed=1` summary of a rollup's outcome counts. */
+function formatOutcomes(counts: SkillRollup["outcome_counts"]): string {
+  return Object.entries(counts)
+    .filter(([, n]) => typeof n === "number" && n > 0)
+    .map(([status, n]) => `${status}=${n}`)
+    .join(" ");
 }
 
 function skillEventFromFlags(flags: Record<string, string | boolean>): Record<string, unknown> {
@@ -671,6 +820,8 @@ async function main(): Promise<void> {
       return runSkillEvent(args);
     case "curate":
       return runCurate(args);
+    case "status":
+      return runStatus(args);
     case "extract":
       return runExtract(args);
     case "search":

@@ -150,6 +150,45 @@ export async function readSkillRollups(store: MemoryStore): Promise<SkillRollup[
   return Object.values(rollups).sort((a, b) => a.name.localeCompare(b.name));
 }
 
+/** A flattened, read-only view of a stored skill-event node for status output. */
+export interface SkillEventSummary {
+  event_type: SkillEventType;
+  name: string;
+  source_kind: string;
+  runner: string;
+  timestamp: string;
+  status?: SkillResultStatus;
+}
+
+/**
+ * The most recent skill-event nodes, newest first. Reads the persisted
+ * `skill_event` payload off graph nodes (validated again on the way out, so a
+ * malformed node is skipped rather than throwing) and returns at most `limit`.
+ * Read-only — it never mutates the store.
+ */
+export async function readRecentSkillEvents(
+  store: MemoryStore,
+  limit = 10,
+): Promise<SkillEventSummary[]> {
+  const nodes = await store.listNodes();
+  const events: SkillEvent[] = [];
+  for (const node of nodes) {
+    if (!node.label.startsWith("skill-event:")) continue;
+    const raw = (node.properties as Record<string, unknown> | undefined)?.skill_event;
+    const parsed = eventSchema.safeParse(raw);
+    if (parsed.success) events.push(parsed.data);
+  }
+  events.sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp));
+  return events.slice(0, Math.max(0, limit)).map((e) => ({
+    event_type: e.event_type,
+    name: e.name,
+    source_kind: e.source_kind,
+    runner: e.runner,
+    timestamp: e.timestamp,
+    status: e.result?.status,
+  }));
+}
+
 export function skillEventToNode(event: SkillEvent): MemoryNode {
   const result = event.result;
   const resultSummary = result
