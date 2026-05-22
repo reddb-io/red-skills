@@ -1,6 +1,6 @@
 {
   "name": "@reddb/memory",
-  "version": "1.48.0",
+  "version": "1.48.1",
   "private": true,
   "description": "reddb.io memory plugin — persistent, queryable memory for code agents. This tracer-bullet slice ships the markdown-only path: a single `memory init` wizard, plus `/memory:store` and `/memory:recall` over plain markdown notes (no RedDB, no graph, no hooks).",
   "license": "Apache-2.0",

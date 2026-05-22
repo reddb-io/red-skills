@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CODEX_PLUGIN_ROOT}/dist/cli.js\" hook SessionStart --runner codex"
+            "command": "sh -c 'cli=\"${CODEX_PLUGIN_ROOT}/dist/cli.js\"; if [ -f \"$cli\" ]; then node \"$cli\" hook SessionStart --runner codex || printf \"{}\"; else printf \"{}\"; fi'"
           }
         ]
       }
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CODEX_PLUGIN_ROOT}/dist/cli.js\" hook PostToolUse --runner codex"
+            "command": "sh -c 'cli=\"${CODEX_PLUGIN_ROOT}/dist/cli.js\"; if [ -f \"$cli\" ]; then node \"$cli\" hook PostToolUse --runner codex || printf \"{}\"; else printf \"{}\"; fi'"
           }
         ]
       }
@@ -26,7 +26,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CODEX_PLUGIN_ROOT}/dist/cli.js\" hook Stop --runner codex"
+            "command": "sh -c 'cli=\"${CODEX_PLUGIN_ROOT}/dist/cli.js\"; if [ -f \"$cli\" ]; then node \"$cli\" hook Stop --runner codex || printf \"{}\"; else printf \"{}\"; fi'"
           }
         ]
       }

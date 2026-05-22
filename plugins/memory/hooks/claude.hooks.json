@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/cli.js\" hook SessionStart --runner claude"
+            "command": "sh -c 'cli=\"${CLAUDE_PLUGIN_ROOT}/dist/cli.js\"; if [ -f \"$cli\" ]; then node \"$cli\" hook SessionStart --runner claude || printf \"{}\"; else printf \"{}\"; fi'"
           }
         ]
       }
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/cli.js\" hook PostToolUse --runner claude"
+            "command": "sh -c 'cli=\"${CLAUDE_PLUGIN_ROOT}/dist/cli.js\"; if [ -f \"$cli\" ]; then node \"$cli\" hook PostToolUse --runner claude || printf \"{}\"; else printf \"{}\"; fi'"
           }
         ]
       }
@@ -26,7 +26,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/cli.js\" hook Stop --runner claude"
+            "command": "sh -c 'cli=\"${CLAUDE_PLUGIN_ROOT}/dist/cli.js\"; if [ -f \"$cli\" ]; then node \"$cli\" hook Stop --runner claude || printf \"{}\"; else printf \"{}\"; fi'"
           }
         ]
       }
@@ -36,7 +36,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/cli.js\" hook PreCompact --runner claude"
+            "command": "sh -c 'cli=\"${CLAUDE_PLUGIN_ROOT}/dist/cli.js\"; if [ -f \"$cli\" ]; then node \"$cli\" hook PreCompact --runner claude || printf \"{}\"; else printf \"{}\"; fi'"
           }
         ]
       }
