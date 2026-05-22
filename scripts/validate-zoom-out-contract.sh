@@ -23,13 +23,18 @@ need_regex 'project glossary|glossary vocabulary|domain glossary' 'project gloss
 need_regex 'raw graph|graph dump|nodes/edges' 'raw graph output guardrail'
 need_regex 'memory_recall' 'Memory recall invocation'
 need_regex 'memory_neighbors' 'Memory graph neighbor invocation'
+need_regex 'memory_path' 'Memory graph path invocation'
 need_regex 'memory_graph_ready' 'Memory graph readiness check'
 need_regex 'memory-bridge\.sh' 'Memory bridge soft-use path'
 need_regex 'neighbor.*relationships?|relationships?.*neighbor' 'neighbor evidence strengthens relationships'
+need_regex 'path.*critical paths?|critical paths?.*path' 'path evidence strengthens critical paths'
+need_regex 'two explicit|explicitly named|from.*to' 'explicit two-element path trigger'
 need_regex 'absent|unavailable|uninitialized|no context|no relevant memory|returns no context|returns no result' 'Memory fallback condition'
+need_regex 'no path|cannot find.*path|path.*prints nothing|path.*fails' 'path fallback condition'
 need_regex 'ordinary codebase exploration|repo exploration|codebase exploration|read the codebase' 'ordinary exploration fallback'
 need_regex '/memory:ingest' 'explicit Memory ingest recommendation'
 need_regex 'Do not run `/memory:ingest`|never runs? ingest|read-only' 'read-only ingest guardrail'
 need_regex 'do not (paste|show|lead with).*(neighbor|node|edge)|interpret.*neighbor' 'raw neighbor output guardrail'
+need_regex 'do not (paste|show|lead with).*(path|hop|weight)|interpret.*path' 'raw path output guardrail'
 
 echo "zoom-out contract ok"
