@@ -150,6 +150,8 @@ async function runInit(args: ParsedArgs): Promise<void> {
     console.log(`  store:  ${result.storeUri}`);
     console.log(`  hooks:  ${on ? "on" : "off"}    mcp: off    reddb: required`);
     console.log(`  skill telemetry: ${result.config.skillTelemetry ? "on" : "off"}`);
+    console.log(`  vcs versioned: ${result.versioning.versioned.join(", ")}`);
+    console.log(`  vcs skipped:   ${result.versioning.skipped.join(", ")}`);
     return;
   }
 

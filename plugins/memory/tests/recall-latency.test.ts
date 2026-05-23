@@ -9,7 +9,7 @@ import { MemoryStore } from "../src/graph-store.js";
 // give it generous room. The latency assertion itself targets <100ms p50.
 const TIMEOUT = 180_000;
 const GRAPH_SIZE = 1_000;
-const P50_TARGET_MS = 100;
+const P50_TARGET_MS = Number(process.env.RED_MEMORY_RECALL_P50_TARGET_MS ?? 100);
 
 const roots: string[] = [];
 const stores: MemoryStore[] = [];
