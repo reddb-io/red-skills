@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,6 +12,7 @@ const TIMEOUT = 30_000;
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXTURE_REPO = join(HERE, "fixtures/repo");
+const IMPORT_FIXTURE_REPO = join(HERE, "fixtures/imports");
 
 const roots: string[] = [];
 const stores: MemoryStore[] = [];
@@ -89,6 +90,87 @@ describe("ingestProject over a TS+MD fixture repo", () => {
 
       expect(after.nodes).toBe(before.nodes);
       expect(after.nodes).toBe(first.nodes);
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "ingests IMPORTS edges and does not duplicate them on re-ingest",
+    async () => {
+      const store = await openStore();
+      await ingestProject(store, { cwd: IMPORT_FIXTURE_REPO });
+
+      const nodes = await store.listNodes();
+      const file = nodes.find((n) => n.label.endsWith("/src/app.ts") && n.node_type === "file");
+      const imports = nodes.filter((n) => n.node_type === "import");
+
+      expect(imports.map((n) => n.properties.title).sort()).toEqual(["./local.js", "node:path"]);
+      expect(
+        imports.find((n) => n.properties.title === "./local.js")?.properties.resolved_path,
+      ).toBe(join(IMPORT_FIXTURE_REPO, "src/local.js"));
+      expect(imports.find((n) => n.properties.title === "node:path")?.properties.import_kind).toBe(
+        "bare",
+      );
+
+      expect(file).toBeDefined();
+      for (const imp of imports) {
+        await expect(store.findEdge(file!.rid, imp.rid, "IMPORTS")).resolves.toBeTypeOf(
+          "number",
+        );
+      }
+
+      const before = await store.stats();
+      await ingestProject(store, { cwd: IMPORT_FIXTURE_REPO });
+      const after = await store.stats();
+      expect(after.edges).toBe(before.edges);
+      expect(after.nodes).toBe(before.nodes);
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "recall finds an ingested import specifier",
+    async () => {
+      const store = await openStore();
+      await ingestProject(store, { cwd: IMPORT_FIXTURE_REPO });
+
+      const hits = await graphRecall(store, "node:path");
+      expect(hits.some((h) => h.label.includes("import:") && h.label.includes("node:path"))).toBe(
+        true,
+      );
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "a malformed TS import does not block extraction from other files",
+    async () => {
+      const fixture = await mkdtemp(join(tmpdir(), "memory-import-failure-"));
+      roots.push(fixture);
+      await mkdir(join(fixture, "src"), { recursive: true });
+      await writeFile(
+        join(fixture, "src/good.ts"),
+        `import value from "react";\nexport function render(): string {\n  return value;\n}\n`,
+        "utf8",
+      );
+      await writeFile(
+        join(fixture, "src/bad.ts"),
+        `import { broken from "./missing";\nexport function stillIndexed(): boolean {\n  return true;\n}\n`,
+        "utf8",
+      );
+
+      const store = await openStore();
+      await ingestProject(store, { cwd: fixture });
+
+      const nodes = await store.listNodes();
+      expect(nodes.some((n) => n.properties.title === "render")).toBe(true);
+      expect(nodes.some((n) => n.properties.title === "stillIndexed")).toBe(true);
+      expect(nodes.some((n) => n.node_type === "import" && n.properties.title === "./missing")).toBe(
+        false,
+      );
+      expect(nodes.some((n) => n.node_type === "import" && n.properties.title === "react")).toBe(
+        true,
+      );
     },
     TIMEOUT,
   );

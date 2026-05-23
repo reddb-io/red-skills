@@ -5,6 +5,7 @@ import { extractCode } from "../src/extract-code.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const TS_FIXTURE = join(HERE, "fixtures/repo/src/auth.ts");
+const IMPORT_FIXTURE = join(HERE, "fixtures/imports/src/app.ts");
 
 describe("extractCode", () => {
   test("extracts a file node plus one symbol per top-level declaration", async () => {
@@ -37,6 +38,29 @@ describe("extractCode", () => {
     for (const e of edges) {
       expect(e.label).toBe("DEFINED_IN");
       expect(e.toLabel).toBe(fileNode?.label);
+    }
+  });
+
+  test("emits IMPORTS edges from the file node to import specifier nodes", async () => {
+    const { nodes, edges } = await extractCode(IMPORT_FIXTURE);
+    const fileNode = nodes.find((n) => n.node_type === "file");
+    const imports = nodes.filter((n) => n.node_type === "import");
+
+    expect(imports.map((n) => n.properties.title)).toEqual(["node:path", "./local.js"]);
+    expect(imports.find((n) => n.properties.title === "node:path")?.properties.import_kind).toBe(
+      "bare",
+    );
+    expect(
+      imports.find((n) => n.properties.title === "./local.js")?.properties.resolved_path,
+    ).toBe(
+      join(HERE, "fixtures/imports/src/local.js"),
+    );
+
+    const importEdges = edges.filter((e) => e.label === "IMPORTS");
+    expect(importEdges).toHaveLength(2);
+    for (const edge of importEdges) {
+      expect(edge.fromLabel).toBe(fileNode?.label);
+      expect(imports.some((n) => n.label === edge.toLabel)).toBe(true);
     }
   });
 

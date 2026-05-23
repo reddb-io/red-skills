@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { extname } from "node:path";
 import { contentHash } from "./hash.js";
+import { extractImportsForFile } from "./import-extractors.js";
 import type { EdgeLabel, MemoryNode } from "./schema.js";
 
 /** A code file's extracted graph fragment: nodes plus label-keyed edges. */
@@ -66,13 +67,35 @@ export async function extractCode(path: string): Promise<CodeExtraction> {
     },
   }));
 
+  const imports = extractImportsForFile(path, null, source).map<MemoryNode>((imp) => ({
+    label: `import:${path}#${imp.specifier}`,
+    node_type: "import",
+    properties: {
+      title: imp.specifier,
+      summary: imp.kind === "relative" ? imp.resolvedPath : undefined,
+      source: path,
+      language: lang,
+      confidence: "EXTRACTED",
+      hash: contentHash(path, "import", imp.specifier),
+      import_kind: imp.kind,
+      ...(imp.resolvedPath ? { resolved_path: imp.resolvedPath } : {}),
+    },
+  }));
+
   const edges: CodeExtraction["edges"] = symbols.map((s) => ({
     fromLabel: s.label,
     toLabel: fileNode.label,
     label: "DEFINED_IN",
   }));
+  edges.push(
+    ...imports.map((imp) => ({
+      fromLabel: fileNode.label,
+      toLabel: imp.label,
+      label: "IMPORTS" as const,
+    })),
+  );
 
-  return { nodes: [fileNode, ...symbols], edges };
+  return { nodes: [fileNode, ...symbols, ...imports], edges };
 }
 
 interface SymbolHit {

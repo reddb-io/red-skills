@@ -32,6 +32,7 @@ export type Tier = "ephemeral" | "durable" | "reasoning";
 
 export type NodeType =
   | "file"
+  | "import"
   | "symbol"
   | "concept"
   | "decision"
