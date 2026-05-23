@@ -6,6 +6,13 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 
 ---
 
+## zoom-out (engineering) — optional structural Impact section in the Answer Contract (modified)
+
+- **status**: modified
+- **upstream**: —
+- **why**: Issue #97 (parent #95). When the user's focused area is a file, symbol, module, skill, or concept that may change, the Zoom-out answer should surface a **structural impact surface** — what depends on the target and what the target depends on — without breaking the map-first read-only contract or introducing a new skill.
+- **what changed**: `plugins/dev/skills/engineering/zoom-out/SKILL.md` — Answer Contract gains an optional **Impact** section between **Relationships** and **Critical Paths**, defined in terms of imports, calls, containment, type-use, docs links, and graph neighbors/paths, with every claim verified against the current worktree. The section requires graph and recall evidence to be interpreted into project terms (no raw nodes/edges/paths/recall dumps), is **read-only** (no ingest, reindex, graph writes, or memory writes), and explicitly does not introduce a new `/impact` skill or `memory_impact` primitive — it rides on the existing read primitives (`memory_neighbors`, `memory_path`, `memory_recall`) plus ordinary code reads. A trailing paragraph restates the read-only rule for the whole answer. New `plugins/dev/skills/engineering/zoom-out/scripts/tests/contract.test.sh` (18 assertions: section ordering, optional Impact marker, structural-impact vocabulary, worktree-verification requirement, interpret-don't-dump rule, read-only and no-write/no-ingest/no-reindex rules, and explicit prohibitions on a new `/impact` skill or `memory_impact` primitive) — green. Refs #97.
+
 ## curate (engineering) — `--background` non-interactive issue filer (modified)
 
 - **status**: modified
