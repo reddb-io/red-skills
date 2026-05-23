@@ -1,21 +1,32 @@
 /**
  * candidate-reader — pure adapter from the report-only `memory curate skills
- * --json` envelope to the `archive`-category candidates the `/curate` skill
- * acts on. Defensive on top of Memory's own filtering: even if a future
- * report leaks a `plugin`/`hub` skill into the archive list, this reader
- * drops it before consent.
+ * --json` envelope to the candidates the `/curate` skill acts on. Returns
+ * candidates across every category in {@link CURATE_CATEGORIES} (`stale`,
+ * `abandoned`, `frequently-failing`, `archive`), each tagged with the
+ * surfacing category and the category's evidence in `reason`. Defensive on
+ * top of Memory's own filtering: a future report leaking a `plugin`/`hub`
+ * recommendation or a non-curatable item is dropped before consent.
  */
 import {
+  CURATE_CATEGORIES,
   READ_ONLY_SOURCE_KINDS,
+  isCurateCategory,
   type ArchiveCandidate,
+  type CurateCategory,
   type CuratorReportEnvelope,
   type CuratorReportRecommendation,
 } from "./types.js";
 
 export interface ReadResult {
+  /** Flat list, ordered by `CURATE_CATEGORIES` then by skill name. */
   candidates: ArchiveCandidate[];
-  /** Items present in the report but filtered out (read-only or non-curatable). */
-  filtered: { name: string; reason: string }[];
+  /**
+   * Same candidates indexed by category. Categories with zero candidates are
+   * omitted entirely (no empty headers in the UI).
+   */
+  byCategory: Partial<Record<CurateCategory, ArchiveCandidate[]>>;
+  /** Items present in the report but filtered out (read-only / non-curatable / pinned). */
+  filtered: { name: string; category: string; reason: string }[];
 }
 
 export interface ReadOptions {
@@ -29,20 +40,28 @@ export function readArchiveCandidates(
 ): ReadResult {
   const pinned = opts.pinned ?? new Set<string>();
   const candidates: ArchiveCandidate[] = [];
-  const filtered: { name: string; reason: string }[] = [];
+  const filtered: ReadResult["filtered"] = [];
 
   for (const rec of envelope.recommendations) {
-    if (rec.category !== "archive") continue;
+    if (!isCurateCategory(rec.category)) continue;
     if (READ_ONLY_SOURCE_KINDS.has(rec.source_kind)) {
-      filtered.push({ name: rec.name, reason: `source_kind=${rec.source_kind} is read-only` });
+      filtered.push({
+        name: rec.name,
+        category: rec.category,
+        reason: `source_kind=${rec.source_kind} is read-only`,
+      });
       continue;
     }
     if (!rec.curatable) {
-      filtered.push({ name: rec.name, reason: "not curatable per report" });
+      filtered.push({
+        name: rec.name,
+        category: rec.category,
+        reason: "not curatable per report",
+      });
       continue;
     }
     if (pinned.has(rec.name)) {
-      filtered.push({ name: rec.name, reason: "pinned" });
+      filtered.push({ name: rec.name, category: rec.category, reason: "pinned" });
       continue;
     }
     candidates.push({
@@ -50,10 +69,25 @@ export function readArchiveCandidates(
       source_kind: rec.source_kind,
       path: rec.path,
       reason: rec.reason,
+      category: rec.category,
       pinned: false,
     });
   }
-  return { candidates, filtered };
+
+  const order = new Map(CURATE_CATEGORIES.map((c, i) => [c, i] as const));
+  candidates.sort(
+    (a, b) =>
+      (order.get(a.category) ?? 0) - (order.get(b.category) ?? 0) || a.name.localeCompare(b.name),
+  );
+
+  const byCategory: ReadResult["byCategory"] = {};
+  for (const cand of candidates) {
+    const bucket = byCategory[cand.category] ?? [];
+    bucket.push(cand);
+    byCategory[cand.category] = bucket;
+  }
+
+  return { candidates, byCategory, filtered };
 }
 
 /** Parse a raw JSON string into an envelope. Throws on malformed JSON. */

@@ -15,6 +15,23 @@
 export const READ_ONLY_SOURCE_KINDS = new Set(["plugin", "hub"]);
 
 /**
+ * Curator categories the interactive /curate workflow can act on. The full
+ * curator emits more (consolidation, restore) but those land in later slices;
+ * here we cover every category the brief lists as in-scope.
+ */
+export const CURATE_CATEGORIES = [
+  "stale",
+  "abandoned",
+  "frequently-failing",
+  "archive",
+] as const;
+export type CurateCategory = (typeof CURATE_CATEGORIES)[number];
+
+export function isCurateCategory(value: string): value is CurateCategory {
+  return (CURATE_CATEGORIES as readonly string[]).includes(value);
+}
+
+/**
  * Shape returned by `memory curate skills --json` for each recommendation. We
  * accept the full report and pick the ones in the `archive` category whose
  * `curatable` flag is true.
@@ -44,6 +61,13 @@ export interface ArchiveCandidate {
   /** Absolute path to the skill's SKILL.md file (rollup-provided). */
   path: string;
   reason: string;
+  /**
+   * The curator category that surfaced this candidate. The interactive
+   * workflow groups candidates by category for display and threads the
+   * approving category through to the archive manifest as the recorded
+   * archive reason.
+   */
+  category: CurateCategory;
   /** True only when the orchestrator has flagged this skill as pinned. */
   pinned?: boolean;
 }
@@ -85,6 +109,14 @@ export interface ArchiveManifest {
   skillFileRelative: string;
   source_kind: string;
   archivedAt: string;
+  /**
+   * The curator category that justified the archive (`stale`, `abandoned`,
+   * `frequently-failing`, `archive`). Optional for backward compatibility
+   * with manifests written by the tracer slice before per-category curation
+   * landed.
+   */
+  category?: CurateCategory;
+  /** Free-form evidence string copied from the curator report. */
   reason: string;
   files: ArchivedFileRecord[];
 }

@@ -184,6 +184,7 @@ export async function executeArchive(
     skillFileRelative,
     source_kind: candidate.source_kind,
     archivedAt: now().toISOString(),
+    category: candidate.category,
     reason: candidate.reason,
     files,
   };

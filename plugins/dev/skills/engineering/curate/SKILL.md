@@ -1,7 +1,7 @@
 ---
 name: curate
-description: Interactive, archive-only Skill curator. Reads `memory curate skills --json` for `archive` candidates, asks for explicit approval, performs a recoverable archive of approved Curatable skills, and reverses it with `/curate --restore <name>`. Tracer slice — only the `archive` category is wired; stale / abandoned / frequently-failing land in later slices.
-argument-hint: "[--restore <skill-name>] (no arg = interactive archive flow)"
+description: Interactive Skill curator. Reads `memory curate skills --json`, groups Curatable-skill candidates by category (`stale`, `abandoned`, `frequently-failing`, `archive`), asks for explicit approval, archives the approved set recoverably with the approving category recorded in the manifest, and reverses any archive with `/curate --restore <name>`.
+argument-hint: "[--restore <skill-name>] (no arg = interactive curation flow)"
 ---
 
 <what-to-do>
@@ -25,32 +25,44 @@ If the argument starts with `--restore`:
 
 If the user passes `--restore` with no name, ask for one and re-issue.
 
-### Archive mode — default (interactive)
+### Curation mode — default (interactive)
 
 1. **List candidates.** Run `red-curate-skill list`. It emits JSON of the form:
    ```json
-   { "candidates": [...], "filtered": [...], "totals": {...} }
+   {
+     "candidates": [...],
+     "byCategory": { "stale": [...], "abandoned": [...], "frequently-failing": [...], "archive": [...] },
+     "filtered": [...],
+     "totals": {...}
+   }
    ```
-   `candidates[]` is the **archive** category, already restricted to Curatable skills. `filtered[]` records anything the engine defensively dropped (bundled `plugin`/`hub` source kinds, pinned skills).
+   `candidates[]` is the flat list across every in-scope category; each entry carries `category` and the curator's `reason` for that category. `byCategory` is the same data indexed by category — **categories with zero candidates are absent**, never present as empty arrays. `filtered[]` records anything the engine defensively dropped (bundled `plugin`/`hub` source kinds, pinned skills, non-curatable items).
 
-2. **Empty case.** If `candidates` is `[]`, print `no archive candidates — nothing to curate` and **stop**. Do not invoke `archive`. Do not write any file.
+2. **Empty case.** If `candidates` is `[]` (equivalently, `byCategory` is `{}`), print `no curate candidates — nothing to curate` and **stop**. Do not invoke `archive`. Do not write any file.
 
-3. **Show the user.** For each candidate, print one block with: name, `source_kind`, evidence (the `reason` field from the curator), and the original path. Use the canonical glossary terms — "Curatable skill", "Skill telemetry", "archive" — verbatim.
+3. **Show the user, grouped by category.** For each category present in `byCategory`, in the order `stale`, `abandoned`, `frequently-failing`, `archive`, print a header naming the category and one block per candidate beneath it. Each block must show:
+   - the skill `name`,
+   - `source_kind`,
+   - the original `path`,
+   - the category-specific evidence carried in `reason` (e.g. "no skill activity for 90d (threshold 60d)" for `stale`, "loaded 5× but never invoked" for `abandoned`, "3/6 results failed (50%)" for `frequently-failing`, the archive signal text for `archive`).
 
-4. **Ask for explicit approval.** Prompt: `Archive which skills? Reply with comma-separated names, "all", or "none".` Treat anything that isn't a known candidate name (or `all`) as `none`. **No approval = no mutation.** This is the load-bearing safety surface; do not infer consent from silence, conversation history, or default.
+   **Do not** render a header for a category that is not present in `byCategory`. Use the canonical glossary terms — "Curatable skill", "Skill telemetry", and the four category names — verbatim.
 
-5. **Archive each approved Curatable skill.** For every approved name, invoke `red-curate-skill archive --candidate <json>` where `<json>` is the matching candidate object from step 1 emitted via single-quoted JSON. The engine:
+4. **Ask for explicit approval.** Prompt: `Archive which skills? Reply with comma-separated names, "all", or "none".` Approval is by skill name; if the same skill appears in more than one category, ask the user which category to record before archiving and archive once. Treat anything that isn't a known candidate name (or `all`) as `none`. **No approval = no mutation.** This is the load-bearing safety surface; do not infer consent from silence, conversation history, or default.
+
+5. **Archive each approved Curatable skill.** For every approved name, invoke `red-curate-skill archive --candidate <json>` where `<json>` is the matching candidate object from step 1 (including its `category`) emitted via single-quoted JSON. The engine:
    - Re-validates `source_kind` and `pinned` (refuses bundled / pinned inputs with a structured rejection — no I/O).
    - Computes SHA-256 + byte length for every file under the skill's directory.
    - Moves the skill into `.red/memory/skill-archive/<name>/payload/` via atomic `rename` (no `unlink`/`rm`).
-   - Writes a manifest at `.red/memory/skill-archive/<name>/manifest.json` recording the original root, archive timestamp, reason, and file hashes.
+   - Writes a manifest at `.red/memory/skill-archive/<name>/manifest.json` recording the original root, archive timestamp, **the approving category**, the evidence reason, and per-file hashes.
 
 6. **Print the receipt.** For each archived skill, echo the engine's one-line output. Then print: `Restore any of them with /curate --restore <name>.`
 
 ### Invariants you must not violate
 
 - ✅ Empty / declined approval → zero filesystem mutations.
-- ✅ Bundled (`source_kind` `plugin` / `hub`) and pinned skills are filtered defensively and never archived, even if a future Memory build leaks one into the report.
+- ✅ Bundled (`source_kind` `plugin` / `hub`) and pinned skills are filtered defensively in every category and never archived, even if a future Memory build leaks one into the report.
+- ✅ Categories with zero candidates are omitted from the listing — never shown as empty headers.
 - ✅ Every archive is recoverable through `/curate --restore <name>` — the engine refuses to clobber an existing archive directory and refuses to overwrite a live skill on restore.
 - ❌ Never call `rm`, `unlink`, `git rm`, or any shell that deletes files in this flow. The engine uses `rename` only; you must follow the same discipline.
 
@@ -64,11 +76,11 @@ If the user passes `--restore` with no name, ask for one and re-issue.
 # Boot check (always first)
 red-curate-skill check
 
-# List archive candidates as JSON
+# List candidates grouped by category as JSON
 red-curate-skill list
 
-# Archive one approved candidate
-red-curate-skill archive --candidate '{"name":"foo","source_kind":"project","path":"/abs/.../SKILL.md","reason":"stale ..."}'
+# Archive one approved candidate (category flows into the manifest)
+red-curate-skill archive --candidate '{"name":"foo","source_kind":"project","path":"/abs/.../SKILL.md","reason":"no skill activity for 90d (threshold 60d)","category":"stale"}'
 
 # Restore one archived skill
 red-curate-skill restore foo
@@ -81,7 +93,7 @@ The CLI ships as part of `@reddb/memory` (see `plugins/memory/src/curate-skill/c
 ```
 .red/memory/skill-archive/
 └── <skill-name>/
-    ├── manifest.json   # {name, originalRoot, archivedAt, reason, files:[{relativePath, sha256, byteLength}]}
+    ├── manifest.json   # {name, originalRoot, archivedAt, category, reason, files:[{relativePath, sha256, byteLength}]}
     └── payload/        # the renamed-in original skill directory
         ├── SKILL.md
         └── ...
@@ -93,10 +105,13 @@ After a restore, the `payload/` directory is renamed back to its original path a
 
 - **Curatable skill** — a Skill whose files may be modified, consolidated, or archived because it is user-owned or agent-created. Bundled `plugin` / `hub` skills are not Curatable.
 - **Skill telemetry** — lifecycle and interaction events for a Skill, available only in **Graph mode** with the `--skill-telemetry` opt-in.
+- **stale** — a Skill that has had no activity for at least the configured stale threshold (default 60 days).
+- **abandoned** — a Skill that has been viewed (loaded) but never used, or whose `abandoned` outcomes outweigh `succeeded` ones.
+- **frequently-failing** — a Skill whose share of `failed` result outcomes is at or above the failure-ratio threshold over a minimum number of result events.
 - **archive** — the recoverable move of an approved Curatable skill into `.red/memory/skill-archive/`, reversible via `/curate --restore`.
 
 ### Scope (this slice)
 
-This is the tracer slice for the mutating curator. Only the `archive` recommendation category is wired. The `stale`, `abandoned`, `frequently-failing`, `consolidation`, and `restore` categories surface in the underlying Memory report but are **not** acted on by this version of `/curate`. Extending coverage to them is a follow-up slice.
+This slice extends the tracer's archive-only flow to the four in-scope curator categories: `stale`, `abandoned`, `frequently-failing`, and `archive`. The remaining curator categories (`consolidation`, `restore`) surface in the Memory report but are **not** acted on by this version of `/curate`; their mutating workflows are later slices.
 
 </supporting-info>
