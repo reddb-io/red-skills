@@ -1,5 +1,7 @@
 # A single global `.red/` shared by all plugins
 
+Status: superseded by [ADR 0021](0021-multi-context-plugin-glossaries.md)
+
 red-skills is a plugin marketplace: today one plugin (`dev`), soon a second
 (`memory`, absorbed from red-memory). The absorbed project arrived with its own
 domain documentation — `SPEC.md`, `.red/prd/`, and `.red/adr/` (including a

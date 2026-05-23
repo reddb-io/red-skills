@@ -1,0 +1,112 @@
+# RedSkills Dev
+
+The `dev` context names the engineering workflow language for RedSkills:
+triage, AFK execution, handoffs, branch safety, codebase explanation, and
+operator-controlled mutations.
+
+## Language
+
+**Issue tracker**:
+The repo's GitHub Issues; RedSkills policy is GitHub, never a local tracker or alternate provider.
+_Avoid_: backlog manager, backlog backend, issue host, local-markdown tracker
+
+**Issue**:
+A single tracked unit of work inside the **Issue tracker**: bug, task, PRD, or implementation slice.
+_Avoid_: ticket, except when quoting external systems
+
+**Triage role**:
+A canonical state-machine label applied to an **Issue** during triage.
+_Avoid_: status label, workflow stage
+
+**Directive block**:
+A `<details data-kind="directive">...</details>` element written by a human in an issue body or comment.
+_Avoid_: instruction, directive comment
+
+**Human guidance**:
+The authoritative handoff channel populated from **Directive blocks**; latest guidance wins on conflict.
+_Avoid_: HITL comment
+
+**Thread discussion**:
+Issue comments that are human-authored, contain no **Directive block**, and are advisory only.
+_Avoid_: chatter, background comment
+
+**Envelope**:
+A structured `<details data-attempt-status="...">` issue-thread ledger entry posted after an AFK attempt.
+_Avoid_: report, attempt log, audit comment
+
+**Task mirror**:
+A read-only reflection of AFK worker state onto a runner-native background-task surface.
+_Avoid_: native agent, subagent
+
+**Branch lock**:
+A local opt-in pin that blocks the interactive agent from switching away from one branch in the **Primary checkout**.
+_Avoid_: pinned branch
+
+**Pinned branch**:
+The branch an **Issue** or PRD declares that AFK must base work on and merge back into.
+_Avoid_: branch lock
+
+**Primary checkout**:
+The developer's main working clone of the repo, contrasted with an AFK **Worktree**.
+_Avoid_: main repo, root checkout
+
+**Worktree**:
+An isolated `git worktree` created by AFK per issue under `.red/tmp/work-*/`.
+_Avoid_: afk clone, sandbox checkout
+
+**Fleet supervisor**:
+The OS-process manager behind `/afk fleet`, maintaining a target number of independent AFK workers.
+_Avoid_: Claude fleet, task mirror, auto-monitor loop
+
+**Auto-monitor loop**:
+An optional session-level observability loop that periodically renders AFK monitor state.
+_Avoid_: fleet supervisor, worker scheduler
+
+**Codex monitor agent**:
+A Codex TUI sub-agent used only as a read-only AFK state presentation surface.
+_Avoid_: AFK worker, supervisor slot
+
+**Skill**:
+An agent-loadable behavior package rooted at a `SKILL.md` plus optional support files.
+_Avoid_: command, plugin
+
+**Codebase understanding surface**:
+A `dev` workflow surface for explaining repository architecture and change impact from graph-backed project knowledge.
+_Avoid_: wiki graph, understand plugin
+
+**Zoom-out answer**:
+The map-first answer shape for `zoom-out`: modules, relationships, critical paths, and risks before raw evidence.
+_Avoid_: graph dump, architecture chat
+
+**Impact-aware zoom-out**:
+The `zoom-out` deepening that explains structural and observed change impact for a focused file, symbol, module, skill, or concept.
+_Avoid_: impact skill, PR dashboard, graph-only impact
+
+**Ask surface**:
+A deferred `dev` skill surface for natural-language engineering questions over project knowledge.
+_Avoid_: understand, codebase chat
+
+**Skill curator**:
+The `dev` mutating curator workflow that consumes Memory recommendations and archives approved curatable skills.
+_Avoid_: memory cleaner, silent curator
+
+## Relationships
+
+- An **Issue tracker** holds many **Issues**.
+- An **Issue** carries one **Triage role** at a time.
+- An **Issue** accumulates **Envelopes**, **Directive blocks**, **Human guidance**, and **Thread discussion**.
+- A **Fleet supervisor** maintains AFK workers; **Auto-monitor loop**, **Task mirror**, **Codex monitor agent**, and `monitor.sh` only observe.
+- A **Branch lock** constrains the **Primary checkout**; AFK **Worktrees** remain exempt.
+- A **Pinned branch** constrains AFK base and merge target; it is independent of **Branch lock**.
+- The **Codebase understanding surface** may read Memory graph evidence, but it does not own graph storage or ingest.
+- The mutating **Skill curator** belongs to `dev`; telemetry evidence and reports belong to the Memory context.
+
+## Example dialogue
+
+> **Dev:** "This **Issue** is `ready-for-agent`; should AFK pick it up?"
+> **Domain expert:** "Yes, unless a newer **Directive block** changes the brief. The worker should create a **Worktree**, post an **Envelope**, and merge back to the **Pinned branch**."
+
+## Flagged ambiguities
+
+- "backlog" previously meant both the issue-hosting tool and the body of work; resolved: use **Issue tracker** for the tool and avoid "backlog" as a domain term.
+- "branch lock" and "pinned branch" were previously conflated; resolved: **Branch lock** is interactive-agent enforcement, while **Pinned branch** is AFK base/merge declaration.
