@@ -38,6 +38,20 @@ export type ReasoningAttemptStatus =
   | "no-sentinel"
   | "merge-conflict";
 
+/** One structured AFK validation sidecar record. */
+export interface ValidationSidecarRecord {
+  /** Stable check name, e.g. `test:plugins/memory`. */
+  name: string;
+  /** Command/check invocation, when the runner knows it. */
+  command?: string;
+  /** Check result, e.g. `passed`, `failed`, or `skipped`. */
+  status: string;
+  /** Wall-clock duration in milliseconds, when the command executed. */
+  durationMs?: number;
+  /** Short relevant output/error summary. */
+  summary?: string;
+}
+
 /**
  * Structured payload for one terminal AFK attempt. The identity fields
  * (`repository`, `issueNumber`, `attemptNumber`, optional `envelopeHash`) drive
@@ -88,6 +102,8 @@ export interface ReasoningAttemptPayload {
   errorClass?: string;
   /** Aggregate validation summary (e.g. "tests pass, typecheck pass"). */
   validationSummary?: string;
+  /** Structured validation sidecar records; never parsed from free-form text. */
+  validationRecords?: ValidationSidecarRecord[];
   /** Short why/outcome summary; one or two sentences. */
   summary?: string;
 }
@@ -106,6 +122,10 @@ export interface ReasoningAttemptReceipt {
   fileRids: number[];
   /** `TOUCHED` edges, one per file, in the same order as `fileRids`. */
   touchedEdges: number[];
+  /** Validation nodes written from structured sidecar records. */
+  validationRids: number[];
+  /** `TESTED_BY` edges, one per validation node. */
+  testedByEdges: number[];
   /** `CONTAINS` edge from issue → attempt. */
   containsEdge: number;
   /**
@@ -262,6 +282,52 @@ export async function recordReasoningAttempt(
     );
   }
 
+  const validations = normaliseValidationRecords(payload.validationRecords);
+  const validationRids: number[] = [];
+  const testedByEdges: number[] = [];
+  for (const record of validations) {
+    const validationNode: MemoryNode = {
+      label: validationNodeLabel(
+        payload.repository,
+        payload.issueNumber,
+        payload.attemptNumber,
+        record.name,
+      ),
+      node_type: "validation",
+      properties: {
+        title: record.name,
+        repository: payload.repository,
+        issue_number: payload.issueNumber,
+        attempt_number: payload.attemptNumber,
+        worker_id: payload.workerId,
+        name: record.name,
+        command: record.command,
+        status: record.status,
+        duration_ms: record.durationMs,
+        summary: record.summary,
+        source: "afk-validation-sidecar",
+        hash: contentHash(
+          "validation",
+          payload.repository,
+          String(payload.issueNumber),
+          String(payload.attemptNumber),
+          payload.workerId ?? "",
+          payload.envelopeHash ?? "",
+          record.name,
+        ),
+      },
+    };
+    const validationRid = await store.upsertNode(validationNode);
+    validationRids.push(validationRid);
+    testedByEdges.push(
+      await store.upsertEdge({
+        label: "TESTED_BY",
+        from_rid: attemptRid,
+        to_rid: validationRid,
+      }),
+    );
+  }
+
   // Retry history (AC #5). Build the full PRECEDES chain across every
   // attempt currently known for this (repository, issueNumber), sorted by
   // attempt_number. Edge dedupe keeps re-recording idempotent (AC #6); the
@@ -281,6 +347,8 @@ export async function recordReasoningAttempt(
     prdContainsIssueEdge,
     fileRids,
     touchedEdges,
+    validationRids,
+    testedByEdges,
     containsEdge,
     precedesEdges,
     touchedFiles: touched,
@@ -383,6 +451,16 @@ export function fileNodeLabel(path: string): string {
   return `file:${path}`;
 }
 
+/** Stable label for a validation check node. */
+export function validationNodeLabel(
+  repository: string,
+  issueNumber: number,
+  attemptNumber: number,
+  name: string,
+): string {
+  return `validation:${repository}#${issueNumber}/${attemptNumber}/${name}`;
+}
+
 /** Drop empty entries and duplicates while preserving first-seen order. */
 function dedupeTouchedFiles(paths: string[] | undefined): string[] {
   if (!paths || paths.length === 0) return [];
@@ -394,6 +472,34 @@ function dedupeTouchedFiles(paths: string[] | undefined): string[] {
     if (trimmed.length === 0 || seen.has(trimmed)) continue;
     seen.add(trimmed);
     out.push(trimmed);
+  }
+  return out;
+}
+
+function normaliseValidationRecords(
+  records: ValidationSidecarRecord[] | undefined,
+): ValidationSidecarRecord[] {
+  if (!Array.isArray(records)) return [];
+  const out: ValidationSidecarRecord[] = [];
+  for (const record of records) {
+    if (record == null || typeof record !== "object") continue;
+    const raw = record as unknown as Record<string, unknown>;
+    const name = typeof raw.name === "string" ? raw.name.trim() : "";
+    const status = typeof raw.status === "string" ? raw.status.trim() : "";
+    if (!name || !status) continue;
+    const command = typeof raw.command === "string" ? raw.command.trim() : undefined;
+    const summary = typeof raw.summary === "string" ? raw.summary.trim() : undefined;
+    const durationMs =
+      typeof raw.durationMs === "number" && Number.isFinite(raw.durationMs)
+        ? raw.durationMs
+        : undefined;
+    out.push({
+      name,
+      status,
+      ...(command ? { command } : {}),
+      ...(durationMs != null ? { durationMs } : {}),
+      ...(summary ? { summary: summary.slice(0, 1000) } : {}),
+    });
   }
   return out;
 }

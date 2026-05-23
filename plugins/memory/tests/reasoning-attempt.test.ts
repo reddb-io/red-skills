@@ -13,6 +13,7 @@ import {
   parseParentPrdFromBody,
   prdNodeLabel,
   recordReasoningAttempt,
+  validationNodeLabel,
   type ReasoningAttemptPayload,
 } from "../src/reasoning/attempt-writer.js";
 import { defaultTier } from "../src/schema.js";
@@ -116,10 +117,11 @@ describe("parseParentPrdFromBody", () => {
 });
 
 describe("schema: engineering-graph node types (PRD #95)", () => {
-  test("attempt defaults to the reasoning tier; issue/prd default to durable", () => {
+  test("attempt defaults to the reasoning tier; issue/prd/validation default to durable", () => {
     expect(defaultTier("attempt")).toBe("reasoning");
     expect(defaultTier("issue")).toBe("durable");
     expect(defaultTier("prd")).toBe("durable");
+    expect(defaultTier("validation")).toBe("durable");
   });
 });
 
@@ -160,6 +162,127 @@ describe("recordReasoningAttempt", () => {
       expect(props.validation_summary).toBe(samplePayload.validationSummary);
       expect(props.summary).toBe(samplePayload.summary);
       expect(props.touched_files).toEqual(samplePayload.touchedFiles);
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "creates durable validation nodes from structured sidecar records and links them with TESTED_BY",
+    async () => {
+      const store = await openStore();
+      const r = await recordReasoningAttempt(store, {
+        ...samplePayload,
+        validationRecords: [
+          {
+            name: "test:plugins/memory",
+            command: "pnpm -C plugins/memory test",
+            status: "passed",
+            durationMs: 1234,
+            summary: "vitest run completed",
+          },
+          {
+            name: "typecheck:plugins/memory",
+            command: "pnpm -C plugins/memory typecheck",
+            status: "failed",
+            durationMs: 456,
+            summary: "TS2322 in attempt-writer.ts",
+          },
+        ],
+      });
+
+      expect(r.validationRids).toHaveLength(2);
+      expect(r.testedByEdges).toHaveLength(2);
+
+      const first = await store.getNode(r.validationRids[0]);
+      expect(first?.node_type).toBe("validation");
+      expect(first?.label).toBe(
+        validationNodeLabel("reddb-io/red-skills", 96, 1, "test:plugins/memory"),
+      );
+      expect(first?.properties.tier).toBe("durable");
+      expect(first?.properties.name).toBe("test:plugins/memory");
+      expect(first?.properties.command).toBe("pnpm -C plugins/memory test");
+      expect(first?.properties.status).toBe("passed");
+      expect(first?.properties.duration_ms).toBe(1234);
+      expect(first?.properties.summary).toBe("vitest run completed");
+
+      const edge = await store.findEdge(r.attemptRid, r.validationRids[0], "TESTED_BY");
+      expect(edge).toBe(r.testedByEdges[0]);
+
+      const attempt = await store.getNode(r.attemptRid);
+      expect(attempt?.properties.validation_summary).toBe(samplePayload.validationSummary);
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "re-recording the same structured validations is idempotent",
+    async () => {
+      const store = await openStore();
+      const payload: ReasoningAttemptPayload = {
+        ...samplePayload,
+        validationRecords: [
+          {
+            name: "test:plugins/memory",
+            command: "pnpm -C plugins/memory test",
+            status: "passed",
+          },
+        ],
+      };
+
+      const first = await recordReasoningAttempt(store, payload);
+      const second = await recordReasoningAttempt(store, {
+        ...payload,
+        validationRecords: [
+          {
+            name: "test:plugins/memory",
+            command: "pnpm -C plugins/memory test",
+            status: "failed",
+            summary: "refined failure summary",
+          },
+        ],
+      });
+
+      expect(second.validationRids).toEqual(first.validationRids);
+      expect(second.testedByEdges).toEqual(first.testedByEdges);
+
+      const { nodes, edges } = await store.stats();
+      // 1 issue + 1 attempt + 2 files + 1 validation.
+      expect(nodes).toBe(5);
+      // 1 CONTAINS + 2 TOUCHED + 1 TESTED_BY.
+      expect(edges).toBe(4);
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "missing or malformed validation records create no validation graph data",
+    async () => {
+      const store = await openStore();
+      const missing = await recordReasoningAttempt(store, {
+        ...samplePayload,
+        touchedFiles: [],
+        validationRecords: undefined,
+      });
+      const malformed = await recordReasoningAttempt(store, {
+        ...samplePayload,
+        attemptNumber: 2,
+        envelopeHash: "envh-malformed",
+        touchedFiles: [],
+        validationRecords: [
+          null,
+          "not an object",
+          { name: "", status: "passed" },
+          { name: "test:plugins/memory" },
+        ] as unknown as ReasoningAttemptPayload["validationRecords"],
+      });
+
+      expect(missing.validationRids).toEqual([]);
+      expect(missing.testedByEdges).toEqual([]);
+      expect(malformed.validationRids).toEqual([]);
+      expect(malformed.testedByEdges).toEqual([]);
+
+      const nodes = await store.listNodes();
+      expect(nodes.filter((n) => n.node_type === "validation")).toEqual([]);
     },
     TIMEOUT,
   );
