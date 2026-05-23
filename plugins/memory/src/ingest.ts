@@ -1,8 +1,11 @@
-import { extname } from "node:path";
+import { readFile } from "node:fs/promises";
+import { extname, isAbsolute, resolve } from "node:path";
 import fg from "fast-glob";
 import { extractCode } from "./extract-code.js";
 import { extractMarkdown } from "./extract-markdown.js";
+import { contentHash } from "./hash.js";
 import type { MemoryStore } from "./graph-store.js";
+import type { EdgeLabel, MemoryDoc, MemoryNode } from "./schema.js";
 
 export interface IngestOptions {
   /** Root directory to walk. */
@@ -18,6 +21,10 @@ export interface IngestReport {
   nodes: number;
   edges: number;
   docs: number;
+  added: number;
+  updated: number;
+  skipped: number;
+  stale: number;
   durationMs: number;
 }
 
@@ -62,7 +69,15 @@ export async function ingestProject(
     totals.docs += r.docs;
   }
 
-  return { files: slice.length, ...totals, durationMs: Date.now() - start };
+  return {
+    files: slice.length,
+    ...totals,
+    added: 0,
+    updated: 0,
+    skipped: 0,
+    stale: 0,
+    durationMs: Date.now() - start,
+  };
 }
 
 /** Per-file node/edge/doc counts from a single {@link indexFile} pass. */
@@ -70,6 +85,17 @@ export interface FileIndexReport {
   nodes: number;
   edges: number;
   docs: number;
+  elements: string[];
+}
+
+interface FileExtraction {
+  doc?: MemoryDoc;
+  nodes: MemoryNode[];
+  edges: Array<
+    | { fromLabel: string; toLabel: string; label: EdgeLabel }
+    | { fromHash: string; toLabel: string; label: EdgeLabel }
+  >;
+  elements: string[];
 }
 
 /**
@@ -79,29 +105,65 @@ export interface FileIndexReport {
  * every node/edge/doc dedupes by content hash.
  */
 export async function indexFile(store: MemoryStore, path: string): Promise<FileIndexReport> {
-  const report: FileIndexReport = { nodes: 0, edges: 0, docs: 0 };
+  const extraction = await extractFile(path);
+  return writeExtraction(store, extraction);
+}
+
+async function extractFile(path: string): Promise<FileExtraction> {
   const ext = extname(path).toLowerCase();
   if (ext === ".md") {
     const m = await extractMarkdown(path);
+    return {
+      doc: m.doc,
+      nodes: m.nodes,
+      edges: m.edges,
+      elements: graphElements(path, m.nodes, true),
+    };
+  }
+
+  const c = await extractCode(path);
+  return {
+    nodes: c.nodes,
+    edges: c.edges,
+    elements: graphElements(path, c.nodes, false),
+  };
+}
+
+function graphElements(path: string, nodes: MemoryNode[], hasDoc: boolean): string[] {
+  return [
+    ...new Set([
+      ...(hasDoc ? [`doc:${path}`] : []),
+      ...nodes.map((node) => `${node.node_type}:${node.label}`),
+    ]),
+  ];
+}
+
+async function writeExtraction(
+  store: MemoryStore,
+  extraction: FileExtraction,
+): Promise<FileIndexReport> {
+  const report: FileIndexReport = { nodes: 0, edges: 0, docs: 0, elements: extraction.elements };
+  if (extraction.doc) {
     // The doc body is best-effort (it only feeds not-yet-enabled FTS/ASK; recall
     // reads nodes). `upsertDoc` already sizes the record to dodge the one engine
     // error that poisons the connection, so any remaining insert failure is safe
     // to swallow — skip the body, keep the file's nodes, never abort the ingest.
     try {
-      await store.upsertDoc(m.doc);
+      await store.upsertDoc(extraction.doc);
       report.docs += 1;
     } catch {
       // Body rejected by the engine; the concept nodes below still index.
     }
     // The first node is the file's root concept; wiki-link edges hang off it.
     const labelToRid = new Map<string, number>();
-    for (const node of m.nodes) {
+    for (const node of extraction.nodes) {
       const rid = await store.upsertNode(node);
       labelToRid.set(node.label, rid);
       report.nodes += 1;
     }
     const rootRid = [...labelToRid.values()][0];
-    for (const e of m.edges) {
+    for (const e of extraction.edges) {
+      if (!("toLabel" in e)) continue;
       const toRid = await store.findNodeByLabel(e.toLabel);
       if (rootRid != null && toRid != null) {
         await store.upsertEdge({ from_rid: rootRid, to_rid: toRid, label: e.label });
@@ -109,14 +171,14 @@ export async function indexFile(store: MemoryStore, path: string): Promise<FileI
       }
     }
   } else {
-    const c = await extractCode(path);
     const labelToRid = new Map<string, number>();
-    for (const node of c.nodes) {
+    for (const node of extraction.nodes) {
       const rid = await store.upsertNode(node);
       labelToRid.set(node.label, rid);
       report.nodes += 1;
     }
-    for (const e of c.edges) {
+    for (const e of extraction.edges) {
+      if (!("fromLabel" in e)) continue;
       const fromRid = labelToRid.get(e.fromLabel);
       const toRid = labelToRid.get(e.toLabel);
       if (fromRid != null && toRid != null) {
@@ -126,6 +188,92 @@ export async function indexFile(store: MemoryStore, path: string): Promise<FileI
     }
   }
   return report;
+}
+
+export interface RefreshOptions {
+  /** Base directory for resolving relative changed paths. */
+  rootDir?: string;
+}
+
+interface FileManifestEntry {
+  hash: string;
+  elements: string[];
+}
+
+type FileManifest = Record<string, FileManifestEntry>;
+
+const FILE_MANIFEST_KEY = "ingest:file-manifest:v1";
+
+/**
+ * Incrementally refresh a specific set of changed files. It keeps a small
+ * content-hash manifest in KV so unchanged files skip extraction entirely; when
+ * a changed file no longer emits a previously-seen node/doc label, that label is
+ * reported as stale but not deleted automatically.
+ */
+export async function refreshFiles(
+  store: MemoryStore,
+  paths: string[],
+  opts: RefreshOptions = {},
+): Promise<IngestReport> {
+  const start = Date.now();
+  const rootDir = opts.rootDir ?? process.cwd();
+  const manifest = await readFileManifest(store);
+  const totals = {
+    files: 0,
+    nodes: 0,
+    edges: 0,
+    docs: 0,
+    added: 0,
+    updated: 0,
+    skipped: 0,
+    stale: 0,
+  };
+
+  for (const rawPath of [...new Set(paths)]) {
+    const path = isAbsolute(rawPath) ? rawPath : resolve(rootDir, rawPath);
+    if (!INDEXABLE_EXT.has(extname(path).toLowerCase())) continue;
+    const previous = manifest[path];
+    let source: string;
+    try {
+      source = await readFile(path, "utf8");
+    } catch {
+      if (previous) {
+        totals.stale += previous.elements.length;
+        delete manifest[path];
+      }
+      continue;
+    }
+
+    const hash = contentHash(path, source);
+    if (previous?.hash === hash) {
+      totals.skipped += previous.elements.length;
+      continue;
+    }
+
+    let report: FileIndexReport;
+    try {
+      const extraction = await extractFile(path);
+      report = await writeExtraction(store, extraction);
+    } catch {
+      // A single transient/extractor/store failure must not abort a hook refresh.
+      continue;
+    }
+    totals.files += 1;
+    totals.nodes += report.nodes;
+    totals.edges += report.edges;
+    totals.docs += report.docs;
+    const currentElements = new Set(report.elements);
+    totals.stale += previous?.elements.filter((element) => !currentElements.has(element)).length ?? 0;
+    if (previous) {
+      totals.updated += report.elements.length;
+    } else {
+      totals.added += report.elements.length;
+    }
+    manifest[path] = { hash, elements: report.elements };
+  }
+
+  await writeFileManifest(store, manifest);
+  return { ...totals, durationMs: Date.now() - start };
 }
 
 /**
@@ -139,21 +287,7 @@ export async function reindexFiles(
   store: MemoryStore,
   paths: string[],
 ): Promise<IngestReport> {
-  const start = Date.now();
-  const indexable = paths.filter((p) => INDEXABLE_EXT.has(extname(p).toLowerCase()));
-  const totals = { files: 0, nodes: 0, edges: 0, docs: 0 };
-  for (const path of indexable) {
-    try {
-      const r = await indexFile(store, path);
-      totals.files += 1;
-      totals.nodes += r.nodes;
-      totals.edges += r.edges;
-      totals.docs += r.docs;
-    } catch {
-      // A single unreadable/transient file must not abort the re-index.
-    }
-  }
-  return { ...totals, durationMs: Date.now() - start };
+  return refreshFiles(store, paths);
 }
 
 /** Extensions {@link reindexFiles} will index — the leaves of DEFAULT_PATTERNS. */
@@ -169,3 +303,13 @@ const INDEXABLE_EXT = new Set([
   ".rs",
   ".md",
 ]);
+
+async function readFileManifest(store: MemoryStore): Promise<FileManifest> {
+  const raw = await store.kvGet<FileManifest | string>(FILE_MANIFEST_KEY);
+  if (raw == null) return {};
+  return typeof raw === "string" ? (JSON.parse(raw) as FileManifest) : raw;
+}
+
+async function writeFileManifest(store: MemoryStore, manifest: FileManifest): Promise<void> {
+  await store.kvPut(FILE_MANIFEST_KEY, manifest);
+}

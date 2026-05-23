@@ -50,6 +50,31 @@ production; with no LLM key configured it falls back to a deterministic
 heuristic so the hooks still capture cued decision / why-note sentences. Recall
 and re-indexing are always zero-token.
 
+### Incremental freshness
+
+For local-first graph freshness without a long-running daemon, graph mode also
+ships an explicit incremental refresh command:
+
+```bash
+node plugins/memory/dist/cli.js refresh src/auth.ts docs/guide.md --root .
+node plugins/memory/dist/cli.js refresh --changed --root .      # git diff HEAD
+node plugins/memory/dist/cli.js refresh --staged --root .       # pre-commit friendly
+git diff --cached --name-only -z | node plugins/memory/dist/cli.js refresh --stdin --root .
+```
+
+`refresh` stores a stable per-file content hash in the graph store's KV layer.
+Replays of unchanged files skip extraction entirely; changed files are indexed
+through the same deterministic code/markdown extractors as `ingest`. Its report
+summarizes added, updated, skipped, and stale graph elements. Stale elements are
+reported when a changed or deleted file no longer emits graph labels that a
+previous refresh saw; they are not pruned automatically.
+
+There is intentionally no filesystem watcher in this first implementation. The
+supported freshness paths are hook-only: PostToolUse hooks, explicit
+`memory refresh`, and git-hook-compatible `--staged`/`--stdin` invocations. That
+keeps the embedded RedDB workflow zero-ops and avoids flaky real-time watcher
+behavior in tests and local shells.
+
 ### Both runners — and the Codex `PreCompact` gap
 
 The hooks ship for **both runtimes**. `hooks/claude.hooks.json` (wired from

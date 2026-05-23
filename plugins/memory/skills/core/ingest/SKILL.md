@@ -14,6 +14,11 @@ heading) with `REFERENCES` edges for every `[[wiki-link]]`, plus a stored doc
 chunk for later search. Everything dedupes by content hash, so re-ingesting an
 unchanged tree is a no-op.
 
+For changed-file freshness, use `memory refresh`: it stores a per-file content
+hash manifest, skips unchanged files, reports added / updated / skipped / stale
+graph elements, and supports hook-friendly `--staged` and `--stdin` modes. The
+first freshness implementation is hook-only; there is no filesystem watcher.
+
 This is the `EXTRACTED` (deterministic) ingest path only. Conversation/git
 (`INFERRED`) ingestion is not part of this surface.
 
@@ -35,15 +40,28 @@ node "${CLAUDE_PLUGIN_ROOT}/dist/cli.js" ingest <path>
 the pass on a large monorepo. `node_modules/`, `dist/`, `.git/`, `.red/`, and
 build/coverage output are ignored by default.
 
-## 3. Report
+## 3. Refresh Changed Files
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/dist/cli.js" refresh <file...> --root .
+node "${CLAUDE_PLUGIN_ROOT}/dist/cli.js" refresh --staged --root .
+git diff --cached --name-only -z | node "${CLAUDE_PLUGIN_ROOT}/dist/cli.js" refresh --stdin --root .
+```
+
+Use `refresh` after small edits or from git hooks. It is graph-mode only and
+does not require a daemon.
+
+## 4. Report
 
 The CLI prints the file / node / edge / doc counts. Relay them so the user knows
-what was indexed, then use `/memory:recall` to read the graph back.
+what was indexed. For refresh, also relay added / updated / skipped / stale
+graph element counts. Then use `/memory:recall` to read the graph back.
 
 ## DOs / DON'Ts
 
 - ✅ Ingest after `memory init --mode graph` so recall has structure to search.
 - ✅ Re-run ingest after large refactors — dedupe makes it cheap and keeps the graph current.
+- ✅ Use `memory refresh --staged` or `--stdin` from git hooks for daemon-free freshness.
 - ❌ Don't run ingest in markdown-only mode — there is no graph to populate.
 - ❌ Don't expect call/type graphs yet — this slice extracts symbols, TS/JS imports, and markdown structure only.
 

@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, test } from "vitest";
 import { graphRecall } from "../src/graph-recall.js";
 import { MemoryStore } from "../src/graph-store.js";
-import { ingestProject } from "../src/ingest.js";
+import { ingestProject, refreshFiles } from "../src/ingest.js";
 
 // RedDB connects by spawning the bundled `red` binary; give each test room.
 const TIMEOUT = 30_000;
@@ -93,6 +93,41 @@ describe("ingestProject over a TS+MD fixture repo", () => {
 
       expect(after.nodes).toBe(before.nodes);
       expect(after.nodes).toBe(first.nodes);
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "incremental refresh skips unchanged files by content identity and reports stale elements",
+    async () => {
+      const fixture = await mkdtemp(join(tmpdir(), "memory-refresh-"));
+      roots.push(fixture);
+      const file = join(fixture, "src/auth.ts");
+      await mkdir(dirname(file), { recursive: true });
+      await writeFile(file, "export function issueToken() { return 'v1'; }\n", "utf8");
+
+      const store = await openStore();
+      const first = await refreshFiles(store, [file], { rootDir: fixture });
+      expect(first.files).toBe(1);
+      expect(first.added).toBeGreaterThanOrEqual(2);
+      expect(first.updated).toBe(0);
+      expect(first.skipped).toBe(0);
+      expect(first.stale).toBe(0);
+
+      const unchanged = await refreshFiles(store, [file], { rootDir: fixture });
+      expect(unchanged.files).toBe(0);
+      expect(unchanged.skipped).toBe(first.added);
+      expect(unchanged.added).toBe(0);
+      expect(unchanged.updated).toBe(0);
+      expect(unchanged.stale).toBe(0);
+
+      await writeFile(file, "export function refreshToken() { return 'v2'; }\n", "utf8");
+      const changed = await refreshFiles(store, [file], { rootDir: fixture });
+      expect(changed.files).toBe(1);
+      expect(changed.added).toBe(0);
+      expect(changed.updated).toBeGreaterThanOrEqual(2);
+      expect(changed.skipped).toBe(0);
+      expect(changed.stale).toBe(1);
     },
     TIMEOUT,
   );

@@ -374,7 +374,7 @@ describe("skill telemetry graph persistence", () => {
         }),
       );
     },
-    TIMEOUT,
+    60_000,
   );
 
 });

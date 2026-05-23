@@ -1,8 +1,10 @@
 #!/usr/bin/env node
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { access, mkdir, readdir, readFile, rename, stat, writeFile } from "node:fs/promises";
+import { promisify } from "node:util";
 import {
   readConfig,
   resolveNotesDir,
@@ -21,7 +23,7 @@ import { formatOutput, parseInput, type RawPayload } from "./hook-adapters.js";
 import { dispatch, type HookEvent, type Runner } from "./hook-runtime.js";
 import { graphRecall } from "./graph-recall.js";
 import { MemoryStore, factToNode } from "./graph-store.js";
-import { ingestProject } from "./ingest.js";
+import { ingestProject, refreshFiles } from "./ingest.js";
 import { initGraph, initMarkdownOnly } from "./init.js";
 import { applyProviderEnv, redDbProviderClient } from "./provider-client.js";
 import { computeProposalPriority, sortProposalSummaries } from "./proposal-priority.js";
@@ -54,6 +56,7 @@ Usage:
   memory store <fact...>            [--root <dir>]
   memory recall <query...>          [--root <dir>] [--limit N] [--include-superseded]
   memory ingest <path>              [--root <dir>] [--max-files N]
+  memory refresh [<path...>]         [--root <dir>] [--stdin] [--changed|--staged] [--json]
   memory extract [<transcript-file>] [--root <dir>]   (reads stdin if no file)
   memory event skill                [--root <dir>] [--event-type ...] ... (or JSON/JSONL on stdin)
   memory curate skills              [--root <dir>] [--stale-days N] [--json]   (report-only)
@@ -91,6 +94,8 @@ interface ParsedArgs {
   positional: string[];
   flags: Record<string, string | boolean>;
 }
+
+const execFileAsync = promisify(execFile);
 
 function parseArgs(argv: string[]): ParsedArgs {
   const [command, ...rest] = argv;
@@ -269,6 +274,79 @@ async function runIngest(args: ParsedArgs): Promise<void> {
   } finally {
     await store.close();
   }
+}
+
+async function runRefresh(args: ParsedArgs): Promise<void> {
+  const rootDir = rootOf(args.flags);
+  const config = await requireConfig(rootDir);
+  if (config.mode !== "graph") {
+    throw new Error(
+      `refresh needs graph mode — this project is "${config.mode}". Re-run \`memory init --mode graph\` first`,
+    );
+  }
+
+  const paths = await refreshPaths(rootDir, args);
+  const store = await MemoryStore.open({ uri: resolveStoreUri(rootDir, config) });
+  let report;
+  try {
+    report = await refreshFiles(store, paths, { rootDir });
+  } finally {
+    await store.close();
+  }
+
+  if (args.flags.json === true) {
+    console.log(JSON.stringify(report, null, 2));
+    return;
+  }
+
+  console.log(`memory: refreshed ${report.files} changed file(s)`);
+  console.log(
+    `  ${report.added} added, ${report.updated} updated, ${report.skipped} skipped, ${report.stale} stale graph element(s) in ${report.durationMs}ms`,
+  );
+}
+
+async function refreshPaths(rootDir: string, args: ParsedArgs): Promise<string[]> {
+  const paths = [...args.positional];
+  const hasRefreshSource =
+    paths.length > 0 ||
+    args.flags.stdin === true ||
+    args.flags.staged === true ||
+    args.flags.changed === true;
+  if (args.flags.stdin === true) {
+    paths.push(...splitPathList(await readStdin()));
+  }
+  if (args.flags.staged === true) {
+    paths.push(...(await gitDiffPaths(rootDir, "staged")));
+  }
+  if (args.flags.changed === true) {
+    paths.push(...(await gitDiffPaths(rootDir, "changed")));
+  }
+  if (!hasRefreshSource) {
+    throw new Error(
+      "refresh needs changed files — pass paths, --stdin, --staged, or --changed",
+    );
+  }
+  return [...new Set(paths)];
+}
+
+function splitPathList(input: string): string[] {
+  return input
+    .split(/\0|\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+async function gitDiffPaths(rootDir: string, mode: "changed" | "staged"): Promise<string[]> {
+  const diffArgs = [
+    "-C",
+    rootDir,
+    "diff",
+    "--name-only",
+    "--diff-filter=ACMRTUXBD",
+    ...(mode === "staged" ? ["--cached"] : ["HEAD"]),
+  ];
+  const { stdout } = await execFileAsync("git", diffArgs, { encoding: "utf8" });
+  return splitPathList(stdout);
 }
 
 async function runSkillEvent(args: ParsedArgs): Promise<void> {
@@ -2003,6 +2081,8 @@ async function main(): Promise<void> {
       return runRecall(args);
     case "ingest":
       return runIngest(args);
+    case "refresh":
+      return runRefresh(args);
     case "event":
       return runSkillEvent(args);
     case "curate":
