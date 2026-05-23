@@ -45,6 +45,7 @@ import {
   type ContradictionSummary,
   type TopicTimeline,
 } from "./supersession.js";
+import { classifyCandidateMemory } from "./store-classifier.js";
 import {
   recordReasoningAttempt,
   type ReasoningAttemptPayload,
@@ -67,6 +68,7 @@ const USAGE = `memory — persistent memory for code agents
 Usage:
   memory init [--mode markdown-only|graph] [--hooks] [--skill-telemetry] [--root <dir>] [--yes]
   memory store <fact...>            [--root <dir>] [--scope project|repo|branch|worktree|session|agent-run|user] [--scope-id ID]
+  memory classify <candidate...>    [--root <dir>] [--json]
   memory recall <query...>          [--root <dir>] [--limit N] [--include-superseded] [--scope ...] [--scope-id ID] [--include-narrower-scopes]
   memory ask <question...>          [--root <dir>] [--json]
   memory ingest <path>              [--root <dir>] [--max-files N]
@@ -257,6 +259,22 @@ async function runStore(args: ParsedArgs): Promise<void> {
   const note = await storeNote(resolveNotesDir(rootDir, config), fact);
   console.log(`memory: stored ${note.id}`);
   console.log(`  ${note.path}`);
+}
+
+async function runClassify(args: ParsedArgs): Promise<void> {
+  const candidate = args.positional.join(" ").trim();
+  const result = classifyCandidateMemory(candidate);
+  if (args.flags.json === true) {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+  console.log(`memory classify: ${result.kind}`);
+  console.log(`  tier: ${result.recommendedTier}`);
+  console.log(`  scope: ${result.recommendedScope}`);
+  if (result.safetyWarnings.length > 0) {
+    console.log(`  warnings: ${result.safetyWarnings.join("; ")}`);
+  }
+  console.log(`  ${result.explanation}`);
 }
 
 async function runRecall(args: ParsedArgs): Promise<void> {
@@ -2389,6 +2407,8 @@ async function main(): Promise<void> {
       return runInit(args);
     case "store":
       return runStore(args);
+    case "classify":
+      return runClassify(args);
     case "recall":
       return runRecall(args);
     case "ask":
