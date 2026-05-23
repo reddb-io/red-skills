@@ -58,7 +58,7 @@ payload() {
 
 manifest_hook="$(jq -r '.hooks.PreToolUse[0].hooks[0].command' "$MANIFEST")"
 expect_contains "manifest: wires branch-lock-codex.sh" "branch-lock-codex.sh" "$manifest_hook"
-expect_contains "manifest: missing-hook fallback drains stdin" "cat >/dev/null" "$manifest_hook"
+expect_contains "manifest: wrapper drains stdin before hook" 'cat >"$tmp"' "$manifest_hook"
 
 out="$tmp/manifest-out"
 err="$tmp/manifest-err"
@@ -75,6 +75,22 @@ CODEX_PLUGIN_ROOT="$missing_root" bash -lc "$manifest_hook" >"$out" 2>"$err" \
 rc=$?
 expect_eq "manifest: missing hook fails open" "0" "$rc"
 expect_eq "manifest: missing hook prints empty JSON" "{}" "$(<"$out")"
+
+early_root="$tmp/early-plugin-root"
+mkdir -p "$early_root/hooks"
+cat > "$early_root/hooks/branch-lock-codex.sh" <<'EOF'
+#!/usr/bin/env sh
+printf '{}'
+exit 0
+EOF
+chmod +x "$early_root/hooks/branch-lock-codex.sh"
+set -o pipefail
+(head -c 1048576 /dev/zero | tr '\0' x) \
+  | CODEX_PLUGIN_ROOT="$early_root" bash -lc "$manifest_hook" >"$out" 2>"$err"
+rc=$?
+set +o pipefail
+expect_eq "manifest: early hook still drains Codex stdin" "0" "$rc"
+expect_eq "manifest: early hook prints empty JSON" "{}" "$(<"$out")"
 
 CODEX_PLUGIN_ROOT="$missing_root" "$HOOK" >"$out" 2>"$err" \
   <<<"$(payload "$primary" "git switch main")"

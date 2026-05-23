@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -44,7 +44,7 @@ describe("hook manifests", () => {
     const manifest = await loadManifest("hooks/codex.hooks.json");
 
     for (const command of commands(manifest)) {
-      expect(command).toContain("cat >/dev/null");
+      expect(command).toContain('cat >"$tmp"');
       const result = spawnSync(command, {
         shell: true,
         cwd: process.cwd(),
@@ -52,6 +52,30 @@ describe("hook manifests", () => {
         encoding: "utf8",
         env: { ...process.env, CODEX_PLUGIN_ROOT: root },
       });
+
+      expect(result.status).toBe(0);
+      expect(result.stdout).toBe("{}");
+    }
+  });
+
+  test("Codex hooks drain stdin before invoking an existing CLI", async () => {
+    const root = await tempRoot();
+    const manifest = await loadManifest("hooks/codex.hooks.json");
+    await mkdir(join(root, "dist"), { recursive: true });
+    const cli = join(root, "dist", "cli.js");
+    await writeFile(cli, "#!/usr/bin/env node\nprocess.stdout.write('{}');\nprocess.exit(0);\n");
+    await chmod(cli, 0o755);
+
+    for (const command of commands(manifest)) {
+      const result = spawnSync(
+        "bash",
+        ["-lc", `set -o pipefail; head -c 1048576 /dev/zero | tr '\\0' x | ${command}`],
+        {
+          cwd: process.cwd(),
+          encoding: "utf8",
+          env: { ...process.env, CODEX_PLUGIN_ROOT: root },
+        },
+      );
 
       expect(result.status).toBe(0);
       expect(result.stdout).toBe("{}");

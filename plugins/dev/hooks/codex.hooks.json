@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh -c 'hook=\"${CODEX_PLUGIN_ROOT}/hooks/branch-lock-codex.sh\"; if [ -x \"$hook\" ]; then \"$hook\"; else cat >/dev/null 2>&1 || true; printf \"{}\"; fi'"
+            "command": "sh -c 'tmp=\"$(mktemp)\"; trap \"rm -f \\\"$tmp\\\"\" EXIT; cat >\"$tmp\" 2>/dev/null || true; hook=\"${CODEX_PLUGIN_ROOT}/hooks/branch-lock-codex.sh\"; if [ -x \"$hook\" ]; then \"$hook\" <\"$tmp\"; else printf \"{}\"; fi'"
           }
         ]
       }
