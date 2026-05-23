@@ -14,6 +14,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXTURE_REPO = join(HERE, "fixtures/repo");
 const IMPORT_FIXTURE_REPO = join(HERE, "fixtures/imports");
 const RUST_IMPORT_FIXTURE_REPO = join(HERE, "fixtures/rust-imports");
+const PYTHON_IMPORT_FIXTURE_REPO = join(HERE, "fixtures/python-imports");
 
 const roots: string[] = [];
 const stores: MemoryStore[] = [];
@@ -200,6 +201,59 @@ describe("ingestProject over a TS+MD fixture repo", () => {
   );
 
   test(
+    "ingests Python IMPORTS edges and does not duplicate them on re-ingest",
+    async () => {
+      const store = await openStore();
+      await ingestProject(store, { cwd: PYTHON_IMPORT_FIXTURE_REPO });
+
+      const nodes = await store.listNodes();
+      const file = nodes.find(
+        (n) => n.label.endsWith("/src/pkg/service.py") && n.node_type === "file",
+      );
+      const imports = nodes.filter((n) => n.node_type === "import");
+
+      expect(imports.map((n) => n.properties.title).sort()).toEqual([
+        "..parent.util",
+        ".local.Thing",
+        ".sibling",
+        "collections.Counter",
+        "os",
+        "package.submodule",
+        "pkg.*",
+        "pkg.alpha",
+        "pkg.beta",
+        "requests",
+      ]);
+      expect(imports.find((n) => n.properties.title === "requests")?.properties.import_kind).toBe(
+        "bare",
+      );
+      expect(
+        imports.find((n) => n.properties.title === ".sibling")?.properties.resolved_path,
+      ).toBe(join(PYTHON_IMPORT_FIXTURE_REPO, "src/pkg/sibling"));
+      expect(
+        imports.find((n) => n.properties.title === ".local.Thing")?.properties.resolved_path,
+      ).toBe(join(PYTHON_IMPORT_FIXTURE_REPO, "src/pkg/local/Thing"));
+      expect(
+        imports.find((n) => n.properties.title === "..parent.util")?.properties.resolved_path,
+      ).toBe(join(PYTHON_IMPORT_FIXTURE_REPO, "src/parent/util"));
+
+      expect(file).toBeDefined();
+      for (const imp of imports) {
+        await expect(store.findEdge(file!.rid, imp.rid, "IMPORTS")).resolves.toBeTypeOf(
+          "number",
+        );
+      }
+
+      const before = await store.stats();
+      await ingestProject(store, { cwd: PYTHON_IMPORT_FIXTURE_REPO });
+      const after = await store.stats();
+      expect(after.edges).toBe(before.edges);
+      expect(after.nodes).toBe(before.nodes);
+    },
+    TIMEOUT,
+  );
+
+  test(
     "a malformed TS import does not block extraction from other files",
     async () => {
       const fixture = await mkdtemp(join(tmpdir(), "memory-import-failure-"));
@@ -261,6 +315,39 @@ describe("ingestProject over a TS+MD fixture repo", () => {
       expect(
         nodes.some((n) => n.node_type === "import" && n.properties.title === "std::fmt::Debug"),
       ).toBe(true);
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "a malformed Python import does not block extraction from other files",
+    async () => {
+      const fixture = await mkdtemp(join(tmpdir(), "memory-python-import-failure-"));
+      roots.push(fixture);
+      await mkdir(join(fixture, "src"), { recursive: true });
+      await writeFile(
+        join(fixture, "src/good.py"),
+        `import json\n\ndef render():\n    return json.dumps({})\n`,
+        "utf8",
+      );
+      await writeFile(
+        join(fixture, "src/bad.py"),
+        `from broken import (\n\ndef still_indexed():\n    return True\n`,
+        "utf8",
+      );
+
+      const store = await openStore();
+      await ingestProject(store, { cwd: fixture });
+
+      const nodes = await store.listNodes();
+      expect(nodes.some((n) => n.properties.title === "render")).toBe(true);
+      expect(nodes.some((n) => n.properties.title === "still_indexed")).toBe(true);
+      expect(nodes.some((n) => n.node_type === "import" && n.properties.title === "broken.")).toBe(
+        false,
+      );
+      expect(nodes.some((n) => n.node_type === "import" && n.properties.title === "json")).toBe(
+        true,
+      );
     },
     TIMEOUT,
   );

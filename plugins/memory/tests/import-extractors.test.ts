@@ -4,12 +4,14 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vitest";
 import {
   extractImportsForFile,
+  pythonImportExtractor,
   rustImportExtractor,
   typescriptJavascriptImportExtractor,
 } from "../src/import-extractors.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const RUST_IMPORT_FIXTURE = join(HERE, "fixtures/rust-imports/src/features/session.rs");
+const PYTHON_IMPORT_FIXTURE = join(HERE, "fixtures/python-imports/src/pkg/service.py");
 
 describe("typescriptJavascriptImportExtractor", () => {
   test("extracts relative and bare import specifiers", () => {
@@ -114,6 +116,39 @@ describe("extractImportsForFile", () => {
       { specifier: "std::fmt::Debug", kind: "bare" },
     ]);
   });
+
+  test("dispatches the Python extractor and resolves relative imports against the package directory", () => {
+    const sourcePath = join("/repo", "src", "pkg", "service.py");
+    const imports = extractImportsForFile(
+      sourcePath,
+      null,
+      `
+        import requests
+        from . import sibling
+        from .local import Thing
+        from ..parent import util
+      `,
+    );
+
+    expect(imports).toEqual([
+      { specifier: "requests", kind: "bare" },
+      {
+        specifier: ".sibling",
+        kind: "relative",
+        resolvedPath: join("/repo", "src", "pkg", "sibling"),
+      },
+      {
+        specifier: ".local.Thing",
+        kind: "relative",
+        resolvedPath: join("/repo", "src", "pkg", "local", "Thing"),
+      },
+      {
+        specifier: "..parent.util",
+        kind: "relative",
+        resolvedPath: join("/repo", "src", "parent", "util"),
+      },
+    ]);
+  });
 });
 
 describe("rustImportExtractor", () => {
@@ -156,6 +191,25 @@ describe("rustImportExtractor", () => {
       { specifier: "super::prelude::*", kind: "relative" },
       { specifier: "anyhow::Result", kind: "bare" },
       { specifier: "serde_json", kind: "bare" },
+    ]);
+  });
+});
+
+describe("pythonImportExtractor", () => {
+  test("extracts simple, dotted, aliased, from, grouped, relative, and glob forms", async () => {
+    const source = await readFile(PYTHON_IMPORT_FIXTURE, "utf8");
+
+    expect(pythonImportExtractor(null, source)).toEqual([
+      { specifier: "os", kind: "bare" },
+      { specifier: "package.submodule", kind: "bare" },
+      { specifier: "requests", kind: "bare" },
+      { specifier: "collections.Counter", kind: "bare" },
+      { specifier: "pkg.alpha", kind: "bare" },
+      { specifier: "pkg.beta", kind: "bare" },
+      { specifier: ".sibling", kind: "relative" },
+      { specifier: ".local.Thing", kind: "relative" },
+      { specifier: "..parent.util", kind: "relative" },
+      { specifier: "pkg.*", kind: "bare" },
     ]);
   });
 });

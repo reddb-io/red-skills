@@ -10,6 +10,7 @@ export type ImportExtractor = (parseTree: unknown, sourceText: string) => Import
 
 const TS_JS_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx"]);
 const RUST_EXTENSIONS = new Set([".rs"]);
+const PYTHON_EXTENSIONS = new Set([".py"]);
 
 /**
  * Extract ES module specifiers from TypeScript/JavaScript source text.
@@ -64,12 +65,53 @@ export const rustImportExtractor: ImportExtractor = (_parseTree, sourceText) => 
   return imports;
 };
 
+/**
+ * Extract Python import statements into concrete module/member specifiers.
+ * Malformed multiline import clauses throw so the dispatcher can fail closed
+ * for that file's imports.
+ */
+export const pythonImportExtractor: ImportExtractor = (_parseTree, sourceText) => {
+  const imports: Import[] = [];
+
+  for (const declaration of pythonImportDeclarations(sourceText)) {
+    assertBalancedParens(declaration, "malformed Python import clause");
+    const trimmed = declaration.trim();
+
+    if (trimmed.startsWith("import ")) {
+      const importList = trimmed.replace(/^import\s+/, "");
+      for (const item of splitTopLevel(importList, ",")) {
+        const specifier = stripPythonAlias(item);
+        if (specifier) imports.push({ specifier, kind: "bare" });
+      }
+      continue;
+    }
+
+    const fromMatch = /^from\s+([.\w]+)\s+import\s+([\s\S]+)$/.exec(trimmed);
+    if (!fromMatch) continue;
+
+    const [, moduleName, importedNames] = fromMatch;
+    if (!moduleName || !importedNames) continue;
+
+    for (const name of pythonImportedNames(importedNames)) {
+      imports.push({
+        specifier: `${moduleName}${moduleName.endsWith(".") ? "" : "."}${name}`,
+        kind: moduleName.startsWith(".") ? "relative" : "bare",
+      });
+    }
+  }
+
+  return imports;
+};
+
 const EXTRACTORS_BY_EXT = new Map<string, ImportExtractor>();
 for (const ext of TS_JS_EXTENSIONS) {
   EXTRACTORS_BY_EXT.set(ext, typescriptJavascriptImportExtractor);
 }
 for (const ext of RUST_EXTENSIONS) {
   EXTRACTORS_BY_EXT.set(ext, rustImportExtractor);
+}
+for (const ext of PYTHON_EXTENSIONS) {
+  EXTRACTORS_BY_EXT.set(ext, pythonImportExtractor);
 }
 
 export function extractImportsForFile(
@@ -89,6 +131,8 @@ export function extractImportsForFile(
             resolvedPath:
               ext === ".rs"
                 ? resolveRustRelativeImport(sourcePath, imp.specifier)
+                : ext === ".py"
+                  ? resolvePythonRelativeImport(sourcePath, imp.specifier)
                 : join(dirname(sourcePath), imp.specifier),
           }
         : imp,
@@ -137,6 +181,61 @@ function assertBalancedBraces(text: string): void {
     if (braceDepth < 0) throw new Error("malformed Rust use clause");
   }
   if (braceDepth !== 0) throw new Error("malformed Rust use clause");
+}
+
+function assertBalancedParens(text: string, message: string): void {
+  let parenDepth = 0;
+  for (const char of text) {
+    if (char === "(") parenDepth += 1;
+    if (char === ")") parenDepth -= 1;
+    if (parenDepth < 0) throw new Error(message);
+  }
+  if (parenDepth !== 0) throw new Error(message);
+}
+
+function pythonImportDeclarations(sourceText: string): string[] {
+  const declarations: string[] = [];
+  const lines = sourceText.split(/\r?\n/);
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = stripPythonComment(lines[index] ?? "").trimEnd();
+    if (!/^\s*(?:import|from)\s+/.test(line)) continue;
+
+    const parts = [line];
+    let parenDepth = pythonParenDelta(line);
+    while (parenDepth > 0 && index + 1 < lines.length) {
+      index += 1;
+      const continuation = stripPythonComment(lines[index] ?? "").trimEnd();
+      parts.push(continuation);
+      parenDepth += pythonParenDelta(continuation);
+    }
+    declarations.push(parts.join("\n"));
+  }
+  return declarations;
+}
+
+function stripPythonComment(line: string): string {
+  const index = line.indexOf("#");
+  return index >= 0 ? line.slice(0, index) : line;
+}
+
+function pythonParenDelta(line: string): number {
+  let delta = 0;
+  for (const char of line) {
+    if (char === "(") delta += 1;
+    if (char === ")") delta -= 1;
+  }
+  return delta;
+}
+
+function pythonImportedNames(importedNames: string): string[] {
+  const body = importedNames.trim().replace(/^\(\s*/, "").replace(/\s*\)$/, "");
+  return splitTopLevel(body, ",")
+    .map((item) => stripPythonAlias(item))
+    .filter(Boolean);
+}
+
+function stripPythonAlias(importPath: string): string {
+  return importPath.replace(/\s+as\s+[A-Za-z_]\w*\s*$/, "").trim();
 }
 
 function expandRustUseTree(useTree: string, prefix: string[] = []): string[] {
@@ -235,6 +334,18 @@ function resolveRustRelativeImport(sourcePath: string, specifier: string): strin
     return join(base, ...segments.slice(index));
   }
   return join(dirname(sourcePath), ...segments);
+}
+
+function resolvePythonRelativeImport(sourcePath: string, specifier: string): string {
+  const match = /^(\.+)(.*)$/.exec(specifier);
+  if (!match) return join(dirname(sourcePath), ...specifier.split(".").filter(Boolean));
+
+  const [, dots, rest] = match;
+  let base = dirname(sourcePath);
+  for (let level = 1; level < dots.length; level += 1) {
+    base = dirname(base);
+  }
+  return join(base, ...rest.split(".").filter(Boolean));
 }
 
 function rustCrateModuleRoot(sourcePath: string): string {
