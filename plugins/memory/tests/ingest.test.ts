@@ -14,6 +14,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXTURE_REPO = join(HERE, "fixtures/repo");
 const IMPORT_FIXTURE_REPO = join(HERE, "fixtures/imports");
 const RUST_IMPORT_FIXTURE_REPO = join(HERE, "fixtures/rust-imports");
+const GO_IMPORT_FIXTURE_REPO = join(HERE, "fixtures/go-imports");
 
 const roots: string[] = [];
 const stores: MemoryStore[] = [];
@@ -200,6 +201,47 @@ describe("ingestProject over a TS+MD fixture repo", () => {
   );
 
   test(
+    "ingests Go IMPORTS edges and does not duplicate them on re-ingest",
+    async () => {
+      const store = await openStore();
+      await ingestProject(store, { cwd: GO_IMPORT_FIXTURE_REPO });
+
+      const nodes = await store.listNodes();
+      const file = nodes.find((n) => n.label.endsWith("/src/server.go") && n.node_type === "file");
+      const imports = nodes.filter((n) => n.node_type === "import");
+
+      expect(imports.map((n) => n.properties.title).sort()).toEqual([
+        "encoding/json",
+        "example.com/alias",
+        "example.com/blank",
+        "example.com/dot",
+        "example.com/group-blank",
+        "example.com/group-dot",
+        "fmt",
+        "net/http",
+      ]);
+      for (const imp of imports) {
+        expect(imp.properties.import_kind).toBe("bare");
+        expect(imp.properties.resolved_path).toBeUndefined();
+      }
+
+      expect(file).toBeDefined();
+      for (const imp of imports) {
+        await expect(store.findEdge(file!.rid, imp.rid, "IMPORTS")).resolves.toBeTypeOf(
+          "number",
+        );
+      }
+
+      const before = await store.stats();
+      await ingestProject(store, { cwd: GO_IMPORT_FIXTURE_REPO });
+      const after = await store.stats();
+      expect(after.edges).toBe(before.edges);
+      expect(after.nodes).toBe(before.nodes);
+    },
+    TIMEOUT,
+  );
+
+  test(
     "a malformed TS import does not block extraction from other files",
     async () => {
       const fixture = await mkdtemp(join(tmpdir(), "memory-import-failure-"));
@@ -261,6 +303,39 @@ describe("ingestProject over a TS+MD fixture repo", () => {
       expect(
         nodes.some((n) => n.node_type === "import" && n.properties.title === "std::fmt::Debug"),
       ).toBe(true);
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "a malformed Go import does not block extraction from other files",
+    async () => {
+      const fixture = await mkdtemp(join(tmpdir(), "memory-go-import-failure-"));
+      roots.push(fixture);
+      await mkdir(join(fixture, "src"), { recursive: true });
+      await writeFile(
+        join(fixture, "src/good.go"),
+        `package main\n\nimport "fmt"\n\nfunc Render() string { return fmt.Sprint("ok") }\n`,
+        "utf8",
+      );
+      await writeFile(
+        join(fixture, "src/bad.go"),
+        `package main\n\nimport (\n  "broken"\n\nfunc StillIndexed() bool { return true }\n`,
+        "utf8",
+      );
+
+      const store = await openStore();
+      await ingestProject(store, { cwd: fixture });
+
+      const nodes = await store.listNodes();
+      expect(nodes.some((n) => n.properties.title === "Render")).toBe(true);
+      expect(nodes.some((n) => n.properties.title === "StillIndexed")).toBe(true);
+      expect(nodes.some((n) => n.node_type === "import" && n.properties.title === "broken")).toBe(
+        false,
+      );
+      expect(nodes.some((n) => n.node_type === "import" && n.properties.title === "fmt")).toBe(
+        true,
+      );
     },
     TIMEOUT,
   );

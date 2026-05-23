@@ -10,6 +10,7 @@ export type ImportExtractor = (parseTree: unknown, sourceText: string) => Import
 
 const TS_JS_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx"]);
 const RUST_EXTENSIONS = new Set([".rs"]);
+const GO_EXTENSIONS = new Set([".go"]);
 
 /**
  * Extract ES module specifiers from TypeScript/JavaScript source text.
@@ -64,12 +65,43 @@ export const rustImportExtractor: ImportExtractor = (_parseTree, sourceText) => 
   return imports;
 };
 
+/**
+ * Extract Go import package paths. Go import paths are module/package strings,
+ * so they are always indexed as bare specifiers in this deterministic pass.
+ */
+export const goImportExtractor: ImportExtractor = (_parseTree, sourceText) => {
+  assertGoImportClausesParse(sourceText);
+
+  const imports: Import[] = [];
+  const declarationRe =
+    /\bimport\s*(?:\(([\s\S]*?)\)|(?:(?:[A-Za-z_]\w*|[._])\s+)?["`]([^"`]+)["`])/g;
+
+  for (const match of sourceText.matchAll(declarationRe)) {
+    const group = match[1];
+    const single = match[2];
+    if (single) {
+      imports.push({ specifier: single, kind: "bare" });
+      continue;
+    }
+
+    if (group == null) continue;
+    for (const specifier of goImportSpecifiers(group)) {
+      imports.push({ specifier, kind: "bare" });
+    }
+  }
+
+  return imports;
+};
+
 const EXTRACTORS_BY_EXT = new Map<string, ImportExtractor>();
 for (const ext of TS_JS_EXTENSIONS) {
   EXTRACTORS_BY_EXT.set(ext, typescriptJavascriptImportExtractor);
 }
 for (const ext of RUST_EXTENSIONS) {
   EXTRACTORS_BY_EXT.set(ext, rustImportExtractor);
+}
+for (const ext of GO_EXTENSIONS) {
+  EXTRACTORS_BY_EXT.set(ext, goImportExtractor);
 }
 
 export function extractImportsForFile(
@@ -121,6 +153,32 @@ function assertImportClausesParse(sourceText: string): void {
     }
     if (braceDepth !== 0) throw new Error("malformed import/export clause");
   }
+}
+
+function assertGoImportClausesParse(sourceText: string): void {
+  const groupedImportRe = /\bimport\s*\(/g;
+  for (const match of sourceText.matchAll(groupedImportRe)) {
+    const start = (match.index ?? 0) + match[0].length;
+    const end = sourceText.indexOf(")", start);
+    if (end < 0) throw new Error("malformed Go import clause");
+    assertGoImportGroupParse(sourceText.slice(start, end));
+  }
+}
+
+function assertGoImportGroupParse(group: string): void {
+  for (const statement of group.split(/[;\n]/)) {
+    const trimmed = statement.replace(/\/\/.*$/, "").trim();
+    if (!trimmed) continue;
+    if (!/^(?:(?:[A-Za-z_]\w*|[._])\s+)?["`][^"`]+["`]$/.test(trimmed)) {
+      throw new Error("malformed Go import clause");
+    }
+  }
+}
+
+function goImportSpecifiers(group: string): string[] {
+  return [...group.matchAll(/(?:^|[\s;])(?:(?:[A-Za-z_]\w*|[._])\s+)?["`]([^"`]+)["`]/g)]
+    .map((match) => match[1])
+    .filter((specifier): specifier is string => Boolean(specifier));
 }
 
 function rustUseDeclarations(sourceText: string): string[] {

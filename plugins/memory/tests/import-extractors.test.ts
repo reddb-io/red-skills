@@ -4,12 +4,14 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vitest";
 import {
   extractImportsForFile,
+  goImportExtractor,
   rustImportExtractor,
   typescriptJavascriptImportExtractor,
 } from "../src/import-extractors.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const RUST_IMPORT_FIXTURE = join(HERE, "fixtures/rust-imports/src/features/session.rs");
+const GO_IMPORT_FIXTURE = join(HERE, "fixtures/go-imports/src/server.go");
 
 describe("typescriptJavascriptImportExtractor", () => {
   test("extracts relative and bare import specifiers", () => {
@@ -114,6 +116,25 @@ describe("extractImportsForFile", () => {
       { specifier: "std::fmt::Debug", kind: "bare" },
     ]);
   });
+
+  test("dispatches the Go extractor and records imports as bare package paths", () => {
+    const sourcePath = join("/repo", "src", "server.go");
+    const imports = extractImportsForFile(
+      sourcePath,
+      null,
+      `
+        package main
+
+        import "fmt"
+        import alias "example.com/alias"
+      `,
+    );
+
+    expect(imports).toEqual([
+      { specifier: "fmt", kind: "bare" },
+      { specifier: "example.com/alias", kind: "bare" },
+    ]);
+  });
 });
 
 describe("rustImportExtractor", () => {
@@ -156,6 +177,54 @@ describe("rustImportExtractor", () => {
       { specifier: "super::prelude::*", kind: "relative" },
       { specifier: "anyhow::Result", kind: "bare" },
       { specifier: "serde_json", kind: "bare" },
+    ]);
+  });
+});
+
+describe("goImportExtractor", () => {
+  test("extracts single, grouped, aliased, dot, and blank import forms", () => {
+    const imports = goImportExtractor(
+      null,
+      `
+        package main
+
+        import "fmt"
+        import alias "example.com/alias"
+        import . "example.com/dot"
+        import _ "example.com/blank"
+        import (
+          "net/http"
+          json "encoding/json"
+          . "example.com/group-dot"
+          _ "example.com/group-blank"
+        )
+      `,
+    );
+
+    expect(imports).toEqual([
+      { specifier: "fmt", kind: "bare" },
+      { specifier: "example.com/alias", kind: "bare" },
+      { specifier: "example.com/dot", kind: "bare" },
+      { specifier: "example.com/blank", kind: "bare" },
+      { specifier: "net/http", kind: "bare" },
+      { specifier: "encoding/json", kind: "bare" },
+      { specifier: "example.com/group-dot", kind: "bare" },
+      { specifier: "example.com/group-blank", kind: "bare" },
+    ]);
+  });
+
+  test("extracts the Go fixture imports as Import values", async () => {
+    const source = await readFile(GO_IMPORT_FIXTURE, "utf8");
+
+    expect(goImportExtractor(null, source)).toEqual([
+      { specifier: "fmt", kind: "bare" },
+      { specifier: "example.com/alias", kind: "bare" },
+      { specifier: "example.com/dot", kind: "bare" },
+      { specifier: "example.com/blank", kind: "bare" },
+      { specifier: "net/http", kind: "bare" },
+      { specifier: "encoding/json", kind: "bare" },
+      { specifier: "example.com/group-dot", kind: "bare" },
+      { specifier: "example.com/group-blank", kind: "bare" },
     ]);
   });
 });
