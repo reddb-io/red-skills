@@ -6,6 +6,15 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 
 ---
 
+## improve-skills-json-evidence-summary (memory/core)
+
+- **status**: added
+- **upstream**: —
+- **why**: Make Memory self-improvement proposal output easier for agents and CI to route automatically.
+- **what changed**:
+  - Proposal JSON summaries now include `recentFailures`, `dominantErrorStage`, `dominantErrorClass`, and `patchDrafted`.
+  - Added regression coverage for machine-readable evidence summary fields.
+
 ## improve-skills-evidence-aware-patches (memory/core)
 
 - **status**: added

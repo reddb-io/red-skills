@@ -41,7 +41,7 @@ The command writes proposals under:
 - `no-op` — Memory is initialized without graph mode; Skill telemetry cannot persist rollups here.
 - `unavailable` — graph mode exists but Skill telemetry is not enabled.
 - `no-candidates` — telemetry does not currently support a proposal.
-- `proposal-ready` — dry-run found proposal candidates but wrote no files.
+- `proposal-ready` — dry-run found proposal candidates but wrote no files. JSON summaries include `recentFailures`, `dominantErrorStage`, `dominantErrorClass`, and `patchDrafted` for machine-readable routing.
 - `proposal-written` — proposal files were written for review, including recent failure evidence and a draft structured patch block when the skill file has a safe unique insertion anchor.
 - `applied` — an explicitly approved structured patch was applied.
 

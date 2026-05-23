@@ -519,6 +519,10 @@ interface SkillImprovementProposalSummary {
   category: string;
   reason: string;
   skillPath: string;
+  recentFailures: number;
+  dominantErrorStage: string | null;
+  dominantErrorClass: string | null;
+  patchDrafted: boolean;
   path: string | null;
   written: boolean;
 }
@@ -537,6 +541,7 @@ async function buildSkillImprovementProposals(
   for (const rec of candidates) {
     const evidence = recentFailureEvidence(rec.name, recentEvents);
     const body = await renderSkillImprovementProposal(rootDir, rec, evidence);
+    const patchDrafted = body.includes("```json memory-skill-patch");
     let proposalPath: string | null = null;
     if (writeProposal) {
       const file = `skill-improvement-${slugify(rec.name)}-${new Date().toISOString().replace(/[:.]/g, "-")}.md`;
@@ -548,6 +553,10 @@ async function buildSkillImprovementProposals(
       category: rec.category,
       reason: rec.reason,
       skillPath: rec.path,
+      recentFailures: evidence.length,
+      dominantErrorStage: topValues(evidence.map((event) => event.error_stage))[0] ?? null,
+      dominantErrorClass: topValues(evidence.map((event) => event.error_class))[0] ?? null,
+      patchDrafted,
       path: proposalPath,
       written: writeProposal,
     });

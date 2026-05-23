@@ -94,6 +94,10 @@ describe("memory improve skills CLI", () => {
       expect(body.state).toBe("proposal-written");
       expect(body.proposals).toHaveLength(1);
       expect(body.proposals[0].skill).toBe("flaky-skill");
+      expect(body.proposals[0].recentFailures).toBe(4);
+      expect(body.proposals[0].dominantErrorStage).toBe("verify");
+      expect(body.proposals[0].dominantErrorClass).toBe("ValidationError");
+      expect(body.proposals[0].patchDrafted).toBe(true);
       expect(body.proposals[0].path).toContain(".red/memory/proposals/");
 
       const files = await readdir(join(root, ".red", "memory", "proposals"));
