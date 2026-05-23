@@ -8,6 +8,7 @@ import {
   type MemoryDoc,
   type MemoryEdge,
   type MemoryNode,
+  type MemoryScope,
   type NodeType,
   defaultTier,
 } from "./schema.js";
@@ -38,6 +39,11 @@ export interface GraphRow {
 export interface SearchRow {
   rid: number;
   score: number;
+}
+
+export interface NodeScopeInput {
+  scope?: MemoryScope;
+  scopeId?: string;
 }
 
 /** Provider usage and billing metadata reported by RedDB ASK. */
@@ -170,8 +176,11 @@ export class MemoryStore {
   async upsertNode(node: MemoryNode): Promise<number> {
     const props = node.properties;
     const now = Date.now();
+    const scope = props.scope ?? "project";
+    const scopeId = props.scope_id ?? defaultScopeId(scope, props.project, this.opts.project);
     const hash =
-      props.hash ?? contentHash(node.label, node.node_type, props.title, props.content);
+      props.hash ??
+      contentHash(node.label, node.node_type, props.title, props.content, scope, scopeId);
 
     const existing = await this.findNodeByHash(hash);
     if (existing != null) return existing;
@@ -189,6 +198,8 @@ export class MemoryStore {
       ...props,
       hash,
       project: props.project ?? this.project,
+      scope,
+      ...(scopeId ? { scope_id: scopeId } : {}),
       importance: props.importance ?? DEFAULT_IMPORTANCE,
       tier,
       created_at: createdAt,
@@ -778,14 +789,33 @@ export function rowToNode(row: Record<string, unknown>): StoredNode {
  * a `concept` whose label is the slugified first line, full text in `content`.
  * Mirrors the markdown-only note shape so the two modes capture the same thing.
  */
-export function factToNode(fact: string, slugify: (t: string) => string): MemoryNode {
+export function factToNode(
+  fact: string,
+  slugify: (t: string) => string,
+  scopeInput: NodeScopeInput = {},
+): MemoryNode {
   const trimmed = fact.trim();
   const title = trimmed.split("\n")[0]?.slice(0, 120) ?? trimmed;
   return {
     label: slugify(title),
     node_type: "concept",
-    properties: { title, content: trimmed, source: "manual" },
+    properties: {
+      title,
+      content: trimmed,
+      source: "manual",
+      ...(scopeInput.scope ? { scope: scopeInput.scope } : {}),
+      ...(scopeInput.scopeId ? { scope_id: scopeInput.scopeId } : {}),
+    },
   };
+}
+
+function defaultScopeId(
+  scope: MemoryScope,
+  nodeProject: string | undefined,
+  storeProject: string | undefined,
+): string | undefined {
+  if (scope !== "project") return undefined;
+  return nodeProject ?? storeProject;
 }
 
 /**

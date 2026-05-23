@@ -87,6 +87,38 @@ describe("MemoryStore over a file:// RedDB", () => {
   );
 
   test(
+    "stored nodes carry explicit project scope metadata by default",
+    async () => {
+      const store = await openStore(await tempRoot());
+      const rid = await store.upsertNode(factToNode("scoped project memory", slugify));
+
+      const back = await store.getNode(rid);
+      expect(back?.properties.scope).toBe("project");
+      expect(back?.properties.scope_id).toBe("test");
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "dedupe keeps identical facts separate across scope identifiers",
+    async () => {
+      const store = await openStore(await tempRoot());
+      const main = await store.upsertNode(
+        factToNode("same scoped memory", slugify, { scope: "branch", scopeId: "main" }),
+      );
+      const feature = await store.upsertNode(
+        factToNode("same scoped memory", slugify, { scope: "branch", scopeId: "feature" }),
+      );
+
+      expect(feature).not.toBe(main);
+      const nodes = await store.listNodes();
+      expect(nodes.find((n) => n.rid === main)?.properties.scope_id).toBe("main");
+      expect(nodes.find((n) => n.rid === feature)?.properties.scope_id).toBe("feature");
+    },
+    TIMEOUT,
+  );
+
+  test(
     "listNodes reuses the node snapshot until writes invalidate it",
     async () => {
       const store = await openStore(await tempRoot());

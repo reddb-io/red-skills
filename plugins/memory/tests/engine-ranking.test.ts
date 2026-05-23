@@ -7,7 +7,7 @@ import {
   recall,
 } from "../src/engine.js";
 import type { GraphRow, SearchRow, StoredNode } from "../src/graph-store.js";
-import type { Tier } from "../src/schema.js";
+import type { MemoryScope, Tier } from "../src/schema.js";
 
 /**
  * In-memory `RecallStore` for ranking unit tests — no RedDB, no `red` binary.
@@ -46,7 +46,12 @@ class MockStore implements RecallStore {
 
 const NOW = 1_700_000_000_000;
 
-function node(rid: number, tier: Tier, extra: Record<string, unknown> = {}): StoredNode {
+function node(
+  rid: number,
+  tier: Tier,
+  extra: Record<string, unknown> = {},
+  scope?: MemoryScope,
+): StoredNode {
   return {
     rid,
     label: `n${rid}`,
@@ -57,6 +62,7 @@ function node(rid: number, tier: Tier, extra: Record<string, unknown> = {}): Sto
       tier,
       importance: 0.5,
       created_at: NOW,
+      ...(scope ? { scope } : {}),
       ...extra,
     },
   };
@@ -138,5 +144,73 @@ describe("recall ranking with a mock store (#72)", () => {
     const { nodes } = await recall(store, "needle", { depth: 1, now: NOW });
     const neighbor = nodes.find((n) => n.rid === 2);
     expect(neighbor?.depth).toBe(1);
+  });
+
+  test("project recall hides narrower branch/session/agent-run facts by default", async () => {
+    const store = new MockStore([
+      node(1, "durable", { content: "alpha project" }, "project"),
+      node(2, "durable", { content: "alpha branch" }, "branch"),
+      node(3, "durable", { content: "alpha session" }, "session"),
+      node(4, "durable", { content: "alpha agent run" }, "agent-run"),
+    ]);
+
+    const { nodes, context_md } = await recall(store, "alpha", { depth: 0, now: NOW });
+
+    expect(nodes.map((n) => n.rid)).toEqual([1]);
+    expect(context_md).toContain("alpha project");
+    expect(context_md).not.toContain("alpha branch");
+    expect(context_md).not.toContain("alpha session");
+    expect(context_md).not.toContain("alpha agent run");
+  });
+
+  test("explicit narrower scope selection recalls only that scope identifier", async () => {
+    const store = new MockStore([
+      node(1, "durable", { content: "alpha session one", scope_id: "s1" }, "session"),
+      node(2, "durable", { content: "alpha session two", scope_id: "s2" }, "session"),
+      node(3, "durable", { content: "alpha branch", scope_id: "main" }, "branch"),
+    ]);
+
+    const { nodes } = await recall(store, "alpha", {
+      depth: 0,
+      now: NOW,
+      scope: { level: "session", id: "s1" },
+    });
+
+    expect(nodes.map((n) => n.rid)).toEqual([1]);
+  });
+
+  test("explicit broad scope can include project, repo, branch, worktree, session, and agent-run facts", async () => {
+    const store = new MockStore([
+      node(1, "durable", { content: "alpha project" }, "project"),
+      node(2, "durable", { content: "alpha repo" }, "repo"),
+      node(3, "durable", { content: "alpha branch" }, "branch"),
+      node(4, "durable", { content: "alpha worktree" }, "worktree"),
+      node(5, "durable", { content: "alpha session" }, "session"),
+      node(6, "durable", { content: "alpha agent run" }, "agent-run"),
+    ]);
+
+    const { nodes } = await recall(store, "alpha", {
+      depth: 0,
+      now: NOW,
+      scope: { level: "project", includeNarrower: true },
+    });
+
+    expect(nodes.map((n) => n.rid).sort((a, b) => a - b)).toEqual([1, 2, 3, 4, 5, 6]);
+  });
+
+  test("explicit broad scope identifier can still opt into narrower facts", async () => {
+    const store = new MockStore([
+      node(1, "durable", { content: "alpha selected project", scope_id: "p1" }, "project"),
+      node(2, "durable", { content: "alpha other project", scope_id: "p2" }, "project"),
+      node(3, "durable", { content: "alpha branch" }, "branch"),
+    ]);
+
+    const { nodes } = await recall(store, "alpha", {
+      depth: 0,
+      now: NOW,
+      scope: { level: "project", id: "p1", includeNarrower: true },
+    });
+
+    expect(nodes.map((n) => n.rid).sort((a, b) => a - b)).toEqual([1, 3]);
   });
 });

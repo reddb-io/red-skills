@@ -7,7 +7,13 @@ import type {
   StoredNode,
 } from "./graph-store.js";
 import { tokenize } from "./recall.js";
-import { DEFAULT_IMPORTANCE, type MemoryNodeProps, type NodeType, type Tier } from "./schema.js";
+import {
+  DEFAULT_IMPORTANCE,
+  type MemoryNodeProps,
+  type MemoryScope,
+  type NodeType,
+  type Tier,
+} from "./schema.js";
 
 /**
  * Recall engine — the zero-token read path over the memory graph.
@@ -56,8 +62,23 @@ export interface RecallOptions {
    * PRD #49).
    */
   includeSuperseded?: boolean;
+  /**
+   * Safe scope filter. Defaults to broad project recall, which includes
+   * user/project/unscoped facts and hides narrower repo/branch/worktree/session
+   * and agent-run facts unless the caller requests a matching scope.
+   */
+  scope?: RecallScope;
   /** Injectable clock for deterministic recency scoring in tests. */
   now?: number;
+}
+
+export interface RecallScope {
+  /** Broadest scope the caller considers applicable for this query. */
+  level: MemoryScope;
+  /** Optional exact identifier for the selected scope. */
+  id?: string;
+  /** Include narrower scope classes too; opt-in for broad project/repo recalls. */
+  includeNarrower?: boolean;
 }
 
 /**
@@ -133,6 +154,16 @@ export interface AskResult {
 }
 
 const SEED_NEIGHBOR_DECAY = 0.5;
+const DEFAULT_RECALL_SCOPE: RecallScope = { level: "project" };
+const SCOPE_RANK: Record<MemoryScope, number> = {
+  user: 0,
+  project: 1,
+  repo: 2,
+  branch: 3,
+  worktree: 4,
+  session: 5,
+  "agent-run": 6,
+};
 
 /** The text fields of a node that recall scores against. */
 function nodeText(node: StoredNode): string {
@@ -158,11 +189,35 @@ function toRecalled(node: StoredNode, score: number, depth?: number): RecalledNo
   };
 }
 
+function nodeScope(node: StoredNode): MemoryScope {
+  return node.properties.scope ?? "project";
+}
+
+function nodeMatchesScope(node: StoredNode, scope: RecallScope): boolean {
+  const memoryScope = nodeScope(node);
+  const memoryRank = SCOPE_RANK[memoryScope];
+  const queryRank = SCOPE_RANK[scope.level];
+  if (scope.id) {
+    if (memoryScope === scope.level) return node.properties.scope_id === scope.id;
+    return scope.includeNarrower === true && memoryRank > queryRank;
+  }
+  const isAncestorOrSelf = memoryRank <= queryRank;
+  const isExplicitNarrower = scope.includeNarrower === true && memoryRank > queryRank;
+  if (!isAncestorOrSelf && !isExplicitNarrower) return false;
+
+  return true;
+}
+
 /** Load every node once into an rid→node map; the read paths share it so they
  *  resolve graph-walk rids and FTS hits without rescanning. */
-async function loadIndex(store: RecallStore): Promise<Map<number, StoredNode>> {
+async function loadIndex(
+  store: RecallStore,
+  scope: RecallScope = DEFAULT_RECALL_SCOPE,
+): Promise<Map<number, StoredNode>> {
   const index = new Map<number, StoredNode>();
-  for (const node of await store.listNodes()) index.set(node.rid, node);
+  for (const node of await store.listNodes()) {
+    if (nodeMatchesScope(node, scope)) index.set(node.rid, node);
+  }
   return index;
 }
 
@@ -261,9 +316,16 @@ export async function recall(
   query: string,
   opts: RecallOptions = {},
 ): Promise<RecallResult> {
-  const { k = 8, depth = 1, types, includeSuperseded = false, now = Date.now() } = opts;
+  const {
+    k = 8,
+    depth = 1,
+    types,
+    includeSuperseded = false,
+    scope = DEFAULT_RECALL_SCOPE,
+    now = Date.now(),
+  } = opts;
   const terms = tokenize(query);
-  const index = await loadIndex(store);
+  const index = await loadIndex(store, scope);
   if (terms.length === 0) return { query, nodes: [], context_md: renderContext(query, []) };
 
   // Seed scores from a client-side term scan — deterministic and covers every
@@ -353,8 +415,9 @@ export async function search(
   store: MemoryStore,
   query: string,
   limit = 20,
+  scope: RecallScope = DEFAULT_RECALL_SCOPE,
 ): Promise<RecalledNode[]> {
-  const index = await loadIndex(store);
+  const index = await loadIndex(store, scope);
   const terms = tokenize(query);
   const scored = new Map<number, number>();
 
@@ -396,7 +459,7 @@ export async function neighbors(
   depth = 1,
   direction: "outgoing" | "incoming" | "both" = "both",
 ): Promise<RecalledNode[]> {
-  const index = await loadIndex(store);
+  const index = await loadIndex(store, { level: "project", includeNarrower: true });
   return resolveWalk(await store.neighborhood(label, depth, direction), index);
 }
 
@@ -410,7 +473,7 @@ export async function traverse(
     direction?: "outgoing" | "incoming" | "both";
   } = {},
 ): Promise<RecalledNode[]> {
-  const index = await loadIndex(store);
+  const index = await loadIndex(store, { level: "project", includeNarrower: true });
   return resolveWalk(await store.traverse(start, opts), index);
 }
 
