@@ -6,6 +6,13 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 
 ---
 
+## curate (engineering) — interactive, archive-only Skill curator (added)
+
+- **status**: added
+- **upstream**: —
+- **why**: Issue #92 (PRD #91). Tracer slice for the **mutating** Skill curator. Memory's report-only `memory curate skills` surfaces archive recommendations; `/curate` is the user-facing workflow that turns approved Curatable-skill `archive` recommendations into recoverable filesystem moves.
+- **what changed**: New skill `plugins/dev/skills/engineering/curate/SKILL.md` — boots with `red-curate-skill check` (fails fast with the exact `memory init --mode graph --skill-telemetry` command when Skill telemetry is off), lists `archive` candidates via the workflow CLI, requires explicit per-name approval, and archives approved Curatable skills via atomic `rename` + per-file SHA-256 manifest. `--restore <name>` reverses the move and hash-verifies every restored file. Three pure modules (`candidate-reader`, `archive-engine`, `consent-gate`) plus the workflow CLI live under `plugins/memory/src/curate-skill/` to share the Memory plugin's tsx / vitest toolchain — the **workflow** itself (and the only entry point that performs the mutation) is the dev-plugin skill, so CONTEXT.md's "skill mutation is a workflow outside the Memory plugin" rule is honoured at the workflow level; the `memory` CLI never invokes archive or restore. The archive engine has a non-destructive `ArchiveFs` interface (no `unlink`/`rm`/`rmdir` member) and is gated by `validateCandidate` so `source_kind` `plugin`/`hub` and `pinned` candidates are refused with a structured rejection *before* any I/O. New bin `red-curate-skill` (`plugins/memory/package.json`). Tests in `plugins/memory/tests/curate-skill.test.ts` cover all three pure modules, the validation gate (no-I/O proof via probing the archive base), a round-trip archive → restore with hash verification, a trip-wire facade proving the engine never reads a destructive fs method, and CLI precondition / empty-approval no-mutation cases. Registered in `plugins/dev/.claude-plugin/plugin.json` (`./skills/engineering/curate`), root `README.md`, and `plugins/dev/skills/engineering/README.md`. Codex's `plugins/dev/.codex-plugin/plugin.json` auto-includes the new directory via `"skills": "./skills/"`. Refs #92.
+
 ## afk, triage, diagnose (engineering) — soft-use the `memory` plugin (modified)
 
 - **status**: modified
