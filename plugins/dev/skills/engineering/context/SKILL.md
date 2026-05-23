@@ -80,7 +80,20 @@ node "${CLAUDE_PLUGIN_ROOT}/../memory/dist/cli.js" store "<decision, gotcha, or 
 
 Store durable facts, decisions, root causes, and gotchas. Do not store secrets, transient progress, issue numbers, PR numbers, commit SHAs, or "task done" logs that will be stale in a week. If the learning is procedural and reusable, update or create a skill instead of storing it as memory.
 
-### 7. Check self-improvement signals
+### 7. Use token-efficient terminal surfaces
+
+For noisy development commands, prefer RTK when it is installed and exact raw output is not required:
+
+```bash
+rtk git status
+rtk git diff
+rtk vitest run <test-file>
+rtk tsc -p tsconfig.json --noEmit
+```
+
+Use raw commands when exact stdout/stderr is the behavior under test, when a filter may hide debugging evidence, or when resolving low-level git conflicts. If an assistant hook already rewrites commands to RTK, let it; otherwise call `rtk` explicitly.
+
+### 8. Check self-improvement signals
 
 When Skill telemetry is enabled, inspect it before curating:
 
@@ -91,7 +104,7 @@ node "${CLAUDE_PLUGIN_ROOT}/../memory/dist/cli.js" curate skills --root .
 
 `memory curate skills` is report-only. Mutating workflow stays in `/curate`, which archives only Curatable skills after explicit approval and can restore them. Never auto-delete skills.
 
-### 8. Report the context posture
+### 9. Report the context posture
 
 Before moving into implementation, summarize:
 
@@ -100,6 +113,7 @@ Before moving into implementation, summarize:
 - Wiki posture: absent / queried / updated.
 - Codebase map: key modules and edges relevant to the task.
 - Self-improvement posture: no action / store facts / update skill / run curator.
+- Token posture: RTK/hook active / RTK unavailable / raw output required.
 
 Keep this summary concise. The goal is to prove the agent is grounded, not to dump every artifact.
 
@@ -110,6 +124,7 @@ Keep this summary concise. The goal is to prove the agent is grounded, not to du
 - Do not write Memory/Wiki/Skill state from a read-only analysis unless the user asked for that side effect.
 - Do not commit `.red/wiki/`, `.red/memory/graph.rdb*`, generated graph exports, or private memory notes unless the project explicitly made them committable.
 - Prefer one focused context refresh over repeated broad searches.
+- Prefer RTK-wrapped terminal commands for noisy dev operations unless exact raw output is required.
 
 </what-to-do>
 

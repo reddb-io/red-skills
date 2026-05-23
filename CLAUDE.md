@@ -41,6 +41,16 @@ Future plugins (e.g. `data`, `ops`) live as siblings under `plugins/` with their
 5. `.red/CONTEXT.md` is a domain glossary, not a spec or changelog.
 6. **All repo content is in English.** No Portuguese (or any other language) in committed files — SKILL.md, README, CHANGES, ADRs, comments, frontmatter descriptions. Chat with the user can stay Portuguese; the repo cannot.
 
+## Token-efficient terminal work
+
+RTK is the preferred compression layer for noisy development commands in this repo. If `rtk --version` succeeds, prefer RTK-wrapped commands when summarized output is enough:
+
+- `rtk git status`, `rtk git diff`, `rtk gh ...`
+- `rtk vitest ...`, `rtk tsc ...`, `rtk pnpm ...`
+- `rtk test <cmd>`, `rtk err <cmd>`, `rtk summary <cmd>` for broad or noisy runs
+
+Use raw commands instead when exact stdout/stderr is part of the behavior under test, when an RTK filter hides evidence needed for debugging, or when applying low-level git conflict resolution where full output matters. If a Claude/Codex hook is available, let the hook rewrite routine commands; otherwise call `rtk` explicitly.
+
 ## Change report vs upstream
 
 **Whenever you modify, add, or remove a skill that came from `mattpocock/skills`, record it in `CHANGES.md`**.

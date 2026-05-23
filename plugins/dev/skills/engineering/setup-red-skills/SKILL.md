@@ -81,8 +81,7 @@ Future RedSkills workflows will land in this same step. Filename prefix `red-` i
 
 Strong recommendation: install before running `/afk` for any non-trivial backlog. A long `/afk` run on a busy repo can blow through a session's quota on `pnpm`/`git`/`gh` chatter alone. RTK pays for itself in the first hour.
 
-Walk the user through the install:
-
+Walk the user through the install and agent integration:
 ```bash
 # install
 curl -fsSL https://raw.githubusercontent.com/rtk-ai/rtk/main/install.sh | sh
@@ -90,15 +89,21 @@ curl -fsSL https://raw.githubusercontent.com/rtk-ai/rtk/main/install.sh | sh
 # verify (should print a version, NOT "command not found")
 rtk --version
 
+# install hook/instructions for the current assistant family when supported
+rtk init --show
+rtk init --hook-only --auto-patch        # Claude Code local hook only
+rtk init --codex                         # Codex/AGENTS.md + RTK.md integration
+
 # baseline analytics — run after a day of usage to see savings
 rtk gain
 rtk gain --history
 ```
 
-Two things to verify after install:
+Three things to verify after install:
 
 1. **No name collision.** Another tool called `rtk` (Rust Type Kit, `reachingforthejack/rtk`) sometimes lands first on `PATH`. If `rtk gain` says "command not found" or prints unrelated output, fix `PATH` so `rtk-ai/rtk` wins.
-2. **Hook is active.** The Claude Code hook auto-rewrites commands like `git status` into `rtk git status`. Confirm by running `git status` once and checking `rtk gain --history` shows the call.
+2. **Hook or instructions are active.** `rtk init --show` should report a configured hook/RTK.md for the active assistant. For Claude Code, confirm the hook by running `git status` once and checking `rtk gain --history` shows the call.
+3. **Fallback explicit mode works.** If the active agent cannot use RTK hooks, teach it to call `rtk git status`, `rtk vitest`, `rtk tsc`, `rtk pnpm`, `rtk test`, and `rtk err` directly for noisy commands.
 
 `rtk discover` scans recent transcripts for missed savings opportunities — useful periodically to spot commands the hook should be rewriting but isn't yet.
 

@@ -6,6 +6,26 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 
 ---
 
+## rtk-workflow-integration (repo)
+
+- **status**: added
+- **upstream**: —
+- **why**: Make RTK a first-class token-efficiency layer for RedSkills agent work instead of passive setup documentation.
+- **what changed**:
+  - Added repo agent instructions to prefer RTK-wrapped noisy dev commands when exact raw output is not required.
+  - Updated `/context` to report token posture and prefer RTK during context-heavy work.
+  - Expanded `/setup-red-skills` RTK setup with hook/instruction installation checks plus explicit fallback usage for agents without hook support.
+
+## improve-skills-structured-patch-draft (memory/core)
+
+- **status**: added
+- **upstream**: —
+- **why**: Move proposal generation from generic advice toward concrete, reviewable self-improvement patches.
+- **what changed**:
+  - `memory improve skills --write-proposal` now includes a draft fenced `json memory-skill-patch` block when the target skill can be read and has a safe unique anchor.
+  - The generated block stays approval-gated and is still applied only by `memory improve apply <proposal> --yes`.
+  - Added regression coverage proving generated proposals include an apply-ready structured patch block without mutating the skill.
+
 ## improve-apply (memory/core)
 
 - **status**: added

@@ -526,7 +526,7 @@ async function buildSkillImprovementProposals(
   if (writeProposal && candidates.length > 0) await mkdir(proposalDir, { recursive: true });
 
   for (const rec of candidates) {
-    const body = renderSkillImprovementProposal(rootDir, rec);
+    const body = await renderSkillImprovementProposal(rootDir, rec);
     let proposalPath: string | null = null;
     if (writeProposal) {
       const file = `skill-improvement-${slugify(rec.name)}-${new Date().toISOString().replace(/[:.]/g, "-")}.md`;
@@ -545,11 +545,12 @@ async function buildSkillImprovementProposals(
   return proposals;
 }
 
-function renderSkillImprovementProposal(
+async function renderSkillImprovementProposal(
   rootDir: string,
   rec: { name: string; category: string; reason: string; path: string },
-): string {
+): Promise<string> {
   const relSkillPath = isAbsolute(rec.path) ? toPosix(relative(rootDir, rec.path)) : rec.path;
+  const patchBlock = await renderDraftSkillPatchBlock(rootDir, rec, relSkillPath);
   return `# Skill Improvement Proposal: ${rec.name}
 
 Status: approval-gated
@@ -576,7 +577,7 @@ Suggested patch targets:
 2. Add a troubleshooting note for the observed failure mode.
 3. Add an explicit verification command or expected output.
 4. Add a pitfall warning if the failure is caused by a common misuse.
-
+${patchBlock}
 ## Validation Plan
 
 1. Re-run the task or fixture that produced the failure.
@@ -588,6 +589,45 @@ Suggested patch targets:
 
 This proposal is intentionally approval-gated. The Memory plugin wrote this proposal file only; it did not patch, archive, delete, or rewrite the Skill.
 `;
+}
+
+async function renderDraftSkillPatchBlock(
+  rootDir: string,
+  rec: { name: string; category: string; reason: string; path: string },
+  relSkillPath: string,
+): Promise<string> {
+  const targetPath = isAbsolute(rec.path) ? rec.path : resolve(rootDir, rec.path);
+  try {
+    assertInsideRoot(rootDir, targetPath, "patch target");
+    const current = await readFile(targetPath, "utf8");
+    const oldString = uniqueTailAnchor(current);
+    if (!oldString) {
+      return "\nNo structured patch block was generated because the skill file did not have a safe unique insertion anchor. Add a `json memory-skill-patch` block manually after review.\n";
+    }
+    const note = `\n\n## Telemetry troubleshooting note\n\n- Failure signal: ${rec.reason}.\n- Review this proposal, then replace this generic note with the smallest concrete prerequisite, pitfall, or verification guidance that prevents the repeated failure.\n`;
+    const patch = {
+      path: relSkillPath,
+      oldString,
+      newString: `${oldString}${note}`,
+    };
+    return `\nDraft structured patch block. Edit before applying if the generic note is not precise enough:\n\n\`\`\`json memory-skill-patch\n${JSON.stringify(patch, null, 2)}\n\`\`\`\n`;
+  } catch (err) {
+    return `\nNo structured patch block was generated because the skill file could not be read safely: ${err instanceof Error ? err.message : String(err)}. Add a \`json memory-skill-patch\` block manually after review.\n`;
+  }
+}
+
+function uniqueTailAnchor(text: string): string | null {
+  const trimmed = text.replace(/\s+$/u, "");
+  if (trimmed.length === 0) return null;
+  const maxAnchorChars = 1200;
+  const lines = trimmed.split("\n");
+  for (let lineCount = 1; lineCount <= Math.min(lines.length, 40); lineCount++) {
+    const candidate = lines.slice(-lineCount).join("\n");
+    if (candidate.length > maxAnchorChars) break;
+    if (countOccurrences(text, candidate) === 1) return candidate;
+  }
+  const tail = trimmed.slice(-maxAnchorChars);
+  return countOccurrences(text, tail) === 1 ? tail : null;
 }
 
 function reportImproveState(

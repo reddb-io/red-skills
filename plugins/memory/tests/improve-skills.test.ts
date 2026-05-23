@@ -103,6 +103,8 @@ describe("memory improve skills CLI", () => {
       expect(proposal).toContain("frequently-failing");
       expect(proposal).toContain("4/5 results failed (80%)");
       expect(proposal).toContain("## Proposed Patch");
+      expect(proposal).toContain("```json memory-skill-patch");
+      expect(proposal).toContain("Telemetry troubleshooting note");
       expect(proposal).toContain("approval-gated");
 
       expect(await readFile(skillFile, "utf8")).toBe(skillBody);
