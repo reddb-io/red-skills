@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-import { isAbsolute, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
-import { readFile } from "node:fs/promises";
+import { access, readdir, readFile, stat } from "node:fs/promises";
 import {
   readConfig,
   resolveNotesDir,
@@ -47,6 +47,7 @@ Usage:
   memory event skill                [--root <dir>] [--event-type ...] ... (or JSON/JSONL on stdin)
   memory curate skills              [--root <dir>] [--stale-days N] [--json]   (report-only)
   memory status skills              [--root <dir>] [--all] [--limit N] [--json]   (diagnostic, read-only)
+  memory status context             [--root <dir>] [--json]   (context stack healthcheck, read-only)
 
   Graph-mode read verbs (require \`memory init --mode graph\`):
   memory search <query...>          [--root <dir>] [--limit N]
@@ -366,8 +367,9 @@ async function runCurate(args: ParsedArgs): Promise<void> {
  */
 async function runStatus(args: ParsedArgs): Promise<void> {
   const kind = args.positional[0];
+  if (kind === "context") return runContextStatus(args);
   if (kind !== "skills") {
-    throw new Error("status needs a kind — supported: memory status skills");
+    throw new Error("status needs a kind — supported: memory status skills|context");
   }
 
   const rootDir = rootOf(args.flags);
@@ -472,6 +474,224 @@ async function runStatus(args: ParsedArgs): Promise<void> {
   }
 
   console.log("\nDiagnostic command: normal-use ingestion stays silent; this surface only reads.");
+}
+
+
+type CheckName =
+  | "agent-rules"
+  | "domain-glossary"
+  | "memory-initialized"
+  | "memory-graph"
+  | "skill-telemetry"
+  | "wiki-ready"
+  | "adr-context";
+
+interface ContextCheck {
+  name: CheckName;
+  ok: boolean;
+  reason: string;
+}
+
+async function runContextStatus(args: ParsedArgs): Promise<void> {
+  const rootDir = resolve(rootOf(args.flags));
+  const json = args.flags.json === true;
+  const report = await contextStatusReport(rootDir);
+
+  if (json) {
+    console.log(JSON.stringify(report, null, 2));
+    return;
+  }
+
+  console.log(`memory: context stack status — ${report.state}`);
+  console.log(`  score: ${report.score.value}/${report.score.max}`);
+  console.log(`  agent rules: ${report.committedContext.agentRules ?? "absent"}`);
+  console.log(
+    `  domain: glossary=${yesNo(report.committedContext.domainGlossary)} ` +
+      `ADRs=${report.committedContext.adrCount} map=${yesNo(report.committedContext.contextMap)}`,
+  );
+  console.log(
+    `  memory: ${report.memory.mode}` +
+      (report.memory.mode === "graph"
+        ? ` store=${yesNo(report.memory.graphStoreExists)} telemetry=${yesNo(report.memory.skillTelemetry)}`
+        : ""),
+  );
+  console.log(`  wiki: ${report.wiki.state}`);
+  if (report.recommendations.length > 0) {
+    console.log("\n  recommendations:");
+    for (const item of report.recommendations) console.log(`  - ${item}`);
+  }
+  console.log("\nRead-only healthcheck: no memory, wiki, graph, or skill files were mutated.");
+}
+
+async function contextStatusReport(rootDir: string) {
+  const config = await readConfig(rootDir);
+  const agentRules = (await exists(join(rootDir, "CLAUDE.md")))
+    ? "CLAUDE.md"
+    : (await exists(join(rootDir, "AGENTS.md")))
+      ? "AGENTS.md"
+      : null;
+  const domainGlossary = await exists(join(rootDir, ".red", "CONTEXT.md"));
+  const contextMap = await exists(join(rootDir, ".red", "CONTEXT-MAP.md"));
+  const adrCount = await countMarkdownFiles(join(rootDir, ".red", "adr"));
+  const wikiSpec = await exists(join(rootDir, ".red", "agents", "wiki.md"));
+  const wikiDir = await exists(join(rootDir, ".red", "wiki"));
+  const graphStorePath = config?.storePath ?? ".red/memory/graph.rdb";
+  const graphStoreExists = config?.mode === "graph" ? await storeExists(rootDir, graphStorePath) : false;
+  const hooksEnabled = config ? enabledHookNames(config.hooks) : [];
+
+  const memory = config
+    ? {
+        mode: config.mode,
+        skillTelemetry: skillTelemetryEnabled(config),
+        hooksEnabled,
+        graphStorePath: config.mode === "graph" ? graphStorePath : null,
+        graphStoreExists,
+      }
+    : {
+        mode: "uninitialized" as const,
+        skillTelemetry: false,
+        hooksEnabled: [] as string[],
+        graphStorePath: null,
+        graphStoreExists: false,
+      };
+
+  const wiki = {
+    state: wikiSpec && wikiDir ? "ready" : wikiSpec || wikiDir ? "partial" : "absent",
+    agentSpec: wikiSpec,
+    wikiDir,
+  };
+
+  const checks: ContextCheck[] = [
+    {
+      name: "agent-rules",
+      ok: agentRules !== null,
+      reason: agentRules ? `${agentRules} present` : "CLAUDE.md or AGENTS.md missing",
+    },
+    {
+      name: "domain-glossary",
+      ok: domainGlossary,
+      reason: domainGlossary ? ".red/CONTEXT.md present" : ".red/CONTEXT.md missing",
+    },
+    {
+      name: "adr-context",
+      ok: adrCount > 0,
+      reason: adrCount > 0 ? `${adrCount} ADR file(s) present` : "no ADR files found under .red/adr/",
+    },
+    {
+      name: "memory-initialized",
+      ok: config !== null,
+      reason: config ? `memory initialized in ${config.mode} mode` : "memory config missing",
+    },
+    {
+      name: "memory-graph",
+      ok: config?.mode === "graph" && graphStoreExists,
+      reason:
+        config?.mode === "graph"
+          ? graphStoreExists
+            ? "graph mode with store present"
+            : "graph mode configured but graph store is missing"
+          : "graph mode not enabled",
+    },
+    {
+      name: "skill-telemetry",
+      ok: config !== null && skillTelemetryEnabled(config),
+      reason: config !== null && skillTelemetryEnabled(config) ? "Skill telemetry enabled" : "Skill telemetry unavailable",
+    },
+    {
+      name: "wiki-ready",
+      ok: wiki.state === "ready",
+      reason: wiki.state === "ready" ? "LLM Wiki initialized" : "LLM Wiki absent or partial",
+    },
+  ];
+
+  const recommendations = contextRecommendations({ agentRules, domainGlossary, config, wikiState: wiki.state });
+  const value = checks.filter((check) => check.ok).length;
+
+  return {
+    state: value === checks.length ? "ready" : "incomplete",
+    root: rootDir,
+    committedContext: {
+      agentRules,
+      domainGlossary,
+      contextMap,
+      adrCount,
+    },
+    memory,
+    wiki,
+    score: {
+      value,
+      max: checks.length,
+      checks,
+    },
+    recommendations,
+  };
+}
+
+function contextRecommendations(input: {
+  agentRules: string | null;
+  domainGlossary: boolean;
+  config: Awaited<ReturnType<typeof readConfig>>;
+  wikiState: string;
+}): string[] {
+  const items: string[] = [];
+  if (!input.agentRules) items.push("add CLAUDE.md or AGENTS.md with agent rules");
+  if (!input.domainGlossary) items.push("add .red/CONTEXT.md for the project glossary");
+  if (!input.config) {
+    items.push("run `memory init --mode graph --skill-telemetry` when persistent graph recall is useful");
+  } else if (input.config.mode !== "graph") {
+    items.push("switch to graph mode when you need graph recall, ingest, telemetry, or curator evidence");
+  } else if (!skillTelemetryEnabled(input.config)) {
+    items.push("enable Skill telemetry when you want self-improvement evidence for `/curate`");
+  }
+  if (input.wikiState === "absent") items.push("run `/wiki-init` if the project needs a durable research/wiki layer");
+  if (input.wikiState === "partial") items.push("repair the LLM Wiki setup so both .red/agents/wiki.md and .red/wiki/ exist");
+  return items;
+}
+
+async function exists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw err;
+  }
+}
+
+async function countMarkdownFiles(dir: string): Promise<number> {
+  try {
+    const entries = await readdir(dir, { withFileTypes: true });
+    return entries.filter((entry) => entry.isFile() && entry.name.endsWith(".md")).length;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return 0;
+    throw err;
+  }
+}
+
+async function storeExists(rootDir: string, storePath: string): Promise<boolean> {
+  const abs = isAbsolute(storePath) ? storePath : join(rootDir, storePath);
+  try {
+    const info = await stat(abs);
+    return info.isFile() || info.isDirectory();
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw err;
+  }
+}
+
+function enabledHookNames(hooks: {
+  sessionStart: boolean;
+  postToolUse: boolean;
+  stop: boolean;
+  preCompact: boolean;
+}): string[] {
+  return Object.entries(hooks)
+    .filter(([, enabled]) => enabled)
+    .map(([name]) => name);
+}
+
+function yesNo(value: boolean): string {
+  return value ? "yes" : "no";
 }
 
 /** Print a non-enabled status state in either JSON or human-readable form. */

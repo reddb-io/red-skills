@@ -13,6 +13,7 @@
     "./skills/core/ingest",
     "./skills/core/extract",
     "./skills/core/skills-status",
+    "./skills/core/context-status",
     "./skills/core/doctor",
     "./skills/core/export"
   ]
