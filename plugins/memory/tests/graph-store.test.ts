@@ -87,6 +87,33 @@ describe("MemoryStore over a file:// RedDB", () => {
   );
 
   test(
+    "listNodes reuses the node snapshot until writes invalidate it",
+    async () => {
+      const store = await openStore(await tempRoot());
+      await store.upsertNode(factToNode("first cached node", slugify));
+
+      const raw = store.raw as unknown as {
+        query: (sql: string, ...params: unknown[]) => Promise<{ rows: Record<string, unknown>[] }>;
+      };
+      const query = raw.query.bind(raw);
+      let nodeScans = 0;
+      raw.query = async (sql: string, ...params: unknown[]) => {
+        if (sql === "SELECT * FROM memory_nodes") nodeScans += 1;
+        return query(sql, ...params);
+      };
+
+      expect(await store.listNodes()).toHaveLength(1);
+      expect(await store.listNodes()).toHaveLength(1);
+      expect(nodeScans).toBe(1);
+
+      await store.upsertNode(factToNode("second cached node", slugify));
+      expect(await store.listNodes()).toHaveLength(2);
+      expect(nodeScans).toBe(2);
+    },
+    TIMEOUT,
+  );
+
+  test(
     "edge dedupe: re-storing the same (from,to,label) returns the same rid",
     async () => {
       const store = await openStore(await tempRoot());
@@ -99,6 +126,35 @@ describe("MemoryStore over a file:// RedDB", () => {
 
       const { edges } = await store.stats();
       expect(edges).toBe(1);
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "listEdges reuses the edge snapshot until writes invalidate it",
+    async () => {
+      const store = await openStore(await tempRoot());
+      const a = await store.upsertNode(factToNode("edge cache node a", slugify));
+      const b = await store.upsertNode(factToNode("edge cache node b", slugify));
+      await store.upsertEdge({ label: "REFERENCES", from_rid: a, to_rid: b });
+
+      const raw = store.raw as unknown as {
+        query: (sql: string, ...params: unknown[]) => Promise<{ rows: Record<string, unknown>[] }>;
+      };
+      const query = raw.query.bind(raw);
+      let edgeScans = 0;
+      raw.query = async (sql: string, ...params: unknown[]) => {
+        if (sql === "SELECT * FROM memory_edges") edgeScans += 1;
+        return query(sql, ...params);
+      };
+
+      expect(await store.listEdges()).toHaveLength(1);
+      expect(await store.listEdges()).toHaveLength(1);
+      expect(edgeScans).toBe(1);
+
+      await store.upsertEdge({ label: "MENTIONS", from_rid: a, to_rid: b });
+      expect(await store.listEdges()).toHaveLength(2);
+      expect(edgeScans).toBe(2);
     },
     TIMEOUT,
   );

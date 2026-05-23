@@ -12,8 +12,8 @@ import type { Tier } from "../src/schema.js";
 /**
  * In-memory `RecallStore` for ranking unit tests — no RedDB, no `red` binary.
  * Holds a flat node list, an optional superseded map, and an optional edge
- * list; FTS and neighborhood are no-ops so the term-scan seed path drives
- * scoring deterministically.
+ * list; FTS is a no-op so the term-scan seed path drives scoring
+ * deterministically.
  */
 class MockStore implements RecallStore {
   constructor(
@@ -28,7 +28,7 @@ class MockStore implements RecallStore {
     return [];
   }
   async neighborhood(): Promise<GraphRow[]> {
-    return [];
+    throw new Error("recall should expand from listEdges, not per-seed graph walks");
   }
   async supersededByMany(rids: number[]): Promise<Map<number, number>> {
     const out = new Map<number, number>();
@@ -123,5 +123,20 @@ describe("recall ranking with a mock store (#72)", () => {
     const rids = nodes.map((n) => n.rid);
     expect(rids).toContain(1);
     expect(rids).toContain(2);
+  });
+
+  test("expands graph neighbors from the edge snapshot", async () => {
+    const store = new MockStore(
+      [
+        node(1, "durable", { content: "needle" }),
+        node(2, "durable", { content: "plain neighbor" }),
+      ],
+      new Map(),
+      [{ from: 1, to: 2 }],
+    );
+
+    const { nodes } = await recall(store, "needle", { depth: 1, now: NOW });
+    const neighbor = nodes.find((n) => n.rid === 2);
+    expect(neighbor?.depth).toBe(1);
   });
 });
