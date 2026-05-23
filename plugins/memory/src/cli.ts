@@ -25,6 +25,11 @@ import { initGraph, initMarkdownOnly } from "./init.js";
 import { applyProviderEnv, redDbProviderClient } from "./provider-client.js";
 import { recall } from "./recall.js";
 import {
+  structuralImpactReader,
+  type StructuralImpact,
+  type StructuralImpactTarget,
+} from "./structural-impact-reader.js";
+import {
   ingestSkillEvents,
   parseSkillEvent,
   parseSkillEventInput,
@@ -56,6 +61,7 @@ Usage:
   memory neighbors <label>          [--root <dir>] [--depth N] [--direction outgoing|incoming|both]
   memory traverse <label>           [--root <dir>] [--depth N] [--strategy bfs|dfs] [--direction ...]
   memory path <from> <to>           [--root <dir>] [--algorithm bfs|dijkstra]
+  memory structural-impact          [--root <dir>] [--file <path>] [--symbol <name>]
   memory stats                      [--root <dir>]
   memory doctor                     [--root <dir>] [--stale-days N] [--prune] [--yes]
   memory export [<out-dir>]         [--root <dir>] [--communities]
@@ -1276,6 +1282,50 @@ async function runPath(args: ParsedArgs): Promise<void> {
   }
 }
 
+async function runStructuralImpact(args: ParsedArgs): Promise<void> {
+  const target: StructuralImpactTarget = {
+    file: typeof args.flags.file === "string" ? args.flags.file : undefined,
+    symbol: typeof args.flags.symbol === "string" ? args.flags.symbol : undefined,
+  };
+  if (!target.file && !target.symbol) {
+    throw new Error("pass --file <path>, --symbol <name>, or both");
+  }
+  const { store } = await openGraphStore(args);
+  try {
+    const impact = await structuralImpactReader(store)(target);
+    printStructuralImpact(target, impact);
+  } finally {
+    await store.close();
+  }
+}
+
+function printStructuralImpact(target: StructuralImpactTarget, impact: StructuralImpact): void {
+  const label = [target.file ? `file ${target.file}` : "", target.symbol ? `symbol ${target.symbol}` : ""]
+    .filter(Boolean)
+    .join(", ");
+  const lines: string[] = [];
+
+  for (const edge of impact.imports) {
+    lines.push(`${edge.from.properties.title} imports ${edge.to.properties.title ?? edge.to.label}`);
+  }
+  for (const edge of impact.importedBy) {
+    lines.push(`${edge.from.properties.title} imports this target through ${edge.to.properties.title ?? edge.to.label}`);
+  }
+  for (const node of impact.defines) {
+    lines.push(`${impact.definedIn?.properties.title ?? target.file ?? "target file"} defines ${node.properties.title}`);
+  }
+  if (impact.definedIn && target.symbol) {
+    lines.push(`${target.symbol} is defined in ${impact.definedIn.properties.title}`);
+  }
+
+  if (lines.length === 0) {
+    console.log(`memory: no structural impact for ${label}`);
+    return;
+  }
+  console.log(`memory: structural impact for ${label}`);
+  for (const line of lines) console.log(`  ${line}`);
+}
+
 async function runStats(args: ParsedArgs): Promise<void> {
   const { store } = await openGraphStore(args);
   try {
@@ -1426,6 +1476,8 @@ async function main(): Promise<void> {
       return runTraverse(args);
     case "path":
       return runPath(args);
+    case "structural-impact":
+      return runStructuralImpact(args);
     case "stats":
       return runStats(args);
     case "doctor":

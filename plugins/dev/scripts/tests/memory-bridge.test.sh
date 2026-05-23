@@ -99,6 +99,16 @@ case "$1" in
     to="$3"
     echo "memory: path \"$from\" -> \"$to\": 2 hop(s), weight 2"
     ;;
+  structural-impact)
+    file=""
+    while [ "$#" -gt 0 ]; do
+      if [ "$1" = "--file" ]; then file="$2"; fi
+      shift || true
+    done
+    echo "memory: structural impact for file $file"
+    echo "  /repo/src/app.ts imports node:path"
+    echo "  /repo/src/consumer.ts imports this target through ./app.js"
+    ;;
   *)
     echo "unexpected command: $*" >&2
     exit 1
@@ -290,6 +300,68 @@ expect_eq "neighbors: failing command -> swallowed, no stdout" "" "$out"
 clear_env
 expect_ok "neighbors: failing command -> still exit 0" \
   bash -c 'source "'"$LIB"'"; PATH="'"$NEIGHBORERRBIN"':/usr/bin:/bin" memory_neighbors "'"$GRAPH_ROOT"'" zoom-out 1 both'
+
+# ---------- memory_structural_impact (graph-only, graceful) ----------
+
+clear_env
+out="$(PATH="$FAKE_BIN:$PATH" bash -c 'source "'"$LIB"'"; memory_structural_impact "'"$GRAPH_ROOT"'" /repo/src/app.ts render')"
+expect_eq "structural-impact: graph ready -> returns CLI output" \
+  $'memory: structural impact for file /repo/src/app.ts\n  /repo/src/app.ts imports node:path\n  /repo/src/consumer.ts imports this target through ./app.js' "$out"
+
+clear_env
+out="$(PATH="$FAKE_BIN:$PATH" bash -c 'source "'"$LIB"'"; memory_structural_impact "'"$INIT_ROOT"'" /repo/src/app.ts render')"
+expect_eq "structural-impact: markdown-only config -> no output" "" "$out"
+
+clear_env
+NOIMPACTBIN="$TMP/noimpactbin"
+mkdir -p "$NOIMPACTBIN"
+cat > "$NOIMPACTBIN/memory" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in
+  stats)
+    echo "memory: 17 node(s), 3 edge(s)"
+    ;;
+  structural-impact)
+    file=""
+    while [ "$#" -gt 0 ]; do
+      if [ "$1" = "--file" ]; then file="$2"; fi
+      shift || true
+    done
+    echo "memory: no structural impact for file $file"
+    ;;
+  *)
+    exit 1
+    ;;
+esac
+EOF
+chmod +x "$NOIMPACTBIN/memory"
+out="$(PATH="$NOIMPACTBIN:/usr/bin:/bin" bash -c 'source "'"$LIB"'"; memory_structural_impact "'"$GRAPH_ROOT"'" /repo/src/missing.ts missing')"
+expect_eq "structural-impact: no graph data -> no output" "" "$out"
+
+clear_env
+IMPACTERRBIN="$TMP/impacterrbin"
+mkdir -p "$IMPACTERRBIN"
+cat > "$IMPACTERRBIN/memory" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in
+  stats)
+    echo "memory: 17 node(s), 3 edge(s)"
+    ;;
+  structural-impact)
+    echo "impact boom" >&2
+    exit 1
+    ;;
+  *)
+    exit 1
+    ;;
+esac
+EOF
+chmod +x "$IMPACTERRBIN/memory"
+out="$(PATH="$IMPACTERRBIN:/usr/bin:/bin" bash -c 'source "'"$LIB"'"; memory_structural_impact "'"$GRAPH_ROOT"'" /repo/src/app.ts render' 2>/dev/null)"
+expect_eq "structural-impact: failing command -> swallowed, no stdout" "" "$out"
+clear_env
+expect_ok "structural-impact: failing command -> still exit 0" \
+  bash -c 'source "'"$LIB"'"; PATH="'"$IMPACTERRBIN"':/usr/bin:/bin" memory_structural_impact "'"$GRAPH_ROOT"'" /repo/src/app.ts render'
 
 # ---------- memory_path (graph-only, graceful) ----------
 

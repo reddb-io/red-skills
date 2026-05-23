@@ -15,8 +15,9 @@
 #      sibling-plugin dist build, or an in-repo checkout.
 #
 # Source it, then call `memory_available <root>` to gate, `memory_neighbors
-# <root> <label>` for focused graph context, `memory_path <root> <from> <to>`
-# for relationship paths, or `memory_recall <root> <query…>` to fetch a
+# <root> <label>` for focused graph context, `memory_structural_impact <root>
+# <file> <symbol>` for graph-derived change impact, `memory_path <root> <from>
+# <to>` for relationship paths, or `memory_recall <root> <query…>` to fetch a
 # ready-to-fold context block (or nothing).
 
 # Resolve the memory CLI invocation into the global MEMORY_CLI array.
@@ -139,6 +140,29 @@ memory_path() {
   out="$("${MEMORY_CLI[@]}" path "$from" "$to" --root "$root" --algorithm "$algorithm" 2>/dev/null)" || return 0
   [[ -n "$out" ]] || return 0
   printf '%s\n' "$out" | grep -Eq '^memory: no path from ' && return 0
+  printf '%s\n' "$out"
+  return 0
+}
+
+# memory_structural_impact <root> <file> <symbol> — print graph-derived
+# structural impact evidence for a focused file/symbol, or nothing. ALWAYS
+# returns 0: absent, markdown-only, empty graph, unknown target, or errors are
+# an optimization miss, not a failure of the calling dev process.
+memory_structural_impact() {
+  local root="${1:-$PWD}"
+  local file="${2:-}"
+  local symbol="${3:-}"
+  [[ -n "$file" || -n "$symbol" ]] || return 0
+  memory_graph_ready "$root" || return 0
+
+  local args=()
+  [[ -n "$file" ]] && args+=(--file "$file")
+  [[ -n "$symbol" ]] && args+=(--symbol "$symbol")
+
+  local out
+  out="$("${MEMORY_CLI[@]}" structural-impact --root "$root" "${args[@]}" 2>/dev/null)" || return 0
+  [[ -n "$out" ]] || return 0
+  printf '%s\n' "$out" | grep -Eq '^memory: no structural impact for ' && return 0
   printf '%s\n' "$out"
   return 0
 }
