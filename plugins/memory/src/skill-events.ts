@@ -158,6 +158,9 @@ export interface SkillEventSummary {
   runner: string;
   timestamp: string;
   status?: SkillResultStatus;
+  error_class?: string;
+  error_code?: string;
+  error_stage?: string;
 }
 
 /**
@@ -186,6 +189,9 @@ export async function readRecentSkillEvents(
     runner: e.runner,
     timestamp: e.timestamp,
     status: e.result?.status,
+    error_class: e.result?.error_class,
+    error_code: e.result?.error_code,
+    error_stage: e.result?.error_stage,
   }));
 }
 

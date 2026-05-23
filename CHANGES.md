@@ -6,6 +6,16 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 
 ---
 
+## improve-skills-evidence-aware-patches (memory/core)
+
+- **status**: added
+- **upstream**: —
+- **why**: Make Memory self-improvement proposals more useful by grounding draft patches in concrete failure evidence.
+- **what changed**:
+  - Proposal generation now reads recent Skill result events and includes failed-event evidence (`error_stage`, `error_class`, `error_code` when present).
+  - Draft `memory-skill-patch` blocks now include a targeted troubleshooting note based on the dominant failure stage/class.
+  - Added regression coverage proving proposals include evidence and stage-specific guidance without mutating the Skill.
+
 ## rtk-workflow-integration (repo)
 
 - **status**: added

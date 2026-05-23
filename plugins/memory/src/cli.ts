@@ -395,8 +395,10 @@ async function runImprove(args: ParsedArgs): Promise<void> {
 
   const store = await MemoryStore.open({ uri: resolveStoreUri(rootDir, config) });
   let report;
+  let recent: SkillEventSummary[];
   try {
     const rollups = await readSkillRollups(store);
+    recent = await readRecentSkillEvents(store, 50);
     report = curateSkills(rollupsToCuratorInput(rollups), {
       staleDays: intFlag(args.flags, "stale-days"),
     });
@@ -404,7 +406,7 @@ async function runImprove(args: ParsedArgs): Promise<void> {
     await store.close();
   }
 
-  const proposals = await buildSkillImprovementProposals(rootDir, report.recommendations, writeProposal);
+  const proposals = await buildSkillImprovementProposals(rootDir, report.recommendations, recent, writeProposal);
   const state = proposals.length === 0 ? "no-candidates" : writeProposal ? "proposal-written" : "proposal-ready";
 
   if (json) {
@@ -518,6 +520,7 @@ interface SkillImprovementProposalSummary {
 async function buildSkillImprovementProposals(
   rootDir: string,
   recommendations: readonly { name: string; category: string; reason: string; path: string; curatable: boolean }[],
+  recentEvents: readonly SkillEventSummary[],
   writeProposal: boolean,
 ): Promise<SkillImprovementProposalSummary[]> {
   const candidates = recommendations.filter((rec) => rec.curatable && rec.category === "frequently-failing");
@@ -526,7 +529,8 @@ async function buildSkillImprovementProposals(
   if (writeProposal && candidates.length > 0) await mkdir(proposalDir, { recursive: true });
 
   for (const rec of candidates) {
-    const body = await renderSkillImprovementProposal(rootDir, rec);
+    const evidence = recentFailureEvidence(rec.name, recentEvents);
+    const body = await renderSkillImprovementProposal(rootDir, rec, evidence);
     let proposalPath: string | null = null;
     if (writeProposal) {
       const file = `skill-improvement-${slugify(rec.name)}-${new Date().toISOString().replace(/[:.]/g, "-")}.md`;
@@ -548,9 +552,11 @@ async function buildSkillImprovementProposals(
 async function renderSkillImprovementProposal(
   rootDir: string,
   rec: { name: string; category: string; reason: string; path: string },
+  evidence: SkillEventSummary[],
 ): Promise<string> {
   const relSkillPath = isAbsolute(rec.path) ? toPosix(relative(rootDir, rec.path)) : rec.path;
-  const patchBlock = await renderDraftSkillPatchBlock(rootDir, rec, relSkillPath);
+  const evidenceBlock = renderRecentFailureEvidence(evidence);
+  const patchBlock = await renderDraftSkillPatchBlock(rootDir, rec, relSkillPath, evidence);
   return `# Skill Improvement Proposal: ${rec.name}
 
 Status: approval-gated
@@ -566,7 +572,7 @@ Generated: ${new Date().toISOString()}
 ## Hypothesis
 
 Telemetry indicates this skill is repeatedly failing. The most likely root cause is missing prerequisite checks, ambiguous execution steps, incomplete verification guidance, or outdated tool instructions.
-
+${evidenceBlock}
 ## Proposed Patch
 
 Do not apply blindly. Review ${relSkillPath} and patch the smallest section that addresses the observed failure pattern.
@@ -591,10 +597,52 @@ This proposal is intentionally approval-gated. The Memory plugin wrote this prop
 `;
 }
 
+
+function recentFailureEvidence(skillName: string, events: readonly SkillEventSummary[]): SkillEventSummary[] {
+  return events
+    .filter((event) => event.name === skillName && event.event_type === "result" && event.status === "failed")
+    .slice(0, 5);
+}
+
+function renderRecentFailureEvidence(evidence: readonly SkillEventSummary[]): string {
+  if (evidence.length === 0) return "";
+  const lines = evidence.map((event) => {
+    const details = [
+      event.error_stage ? `error_stage=${event.error_stage}` : null,
+      event.error_class ? `error_class=${event.error_class}` : null,
+      event.error_code ? `error_code=${event.error_code}` : null,
+    ].filter(Boolean);
+    return `- ${event.timestamp} runner=${event.runner}${details.length > 0 ? ` ${details.join(" ")}` : ""}`;
+  });
+  return `\n## Recent Failure Evidence\n\n${lines.join("\n")}\n`;
+}
+
+function semanticTroubleshootingNote(reason: string, evidence: readonly SkillEventSummary[]): string {
+  const stages = topValues(evidence.map((event) => event.error_stage));
+  const classes = topValues(evidence.map((event) => event.error_class));
+  const stage = stages[0];
+  const klass = classes[0];
+  const guidance = stage
+    ? `Add verification guidance for the \`${stage}\` stage, including the expected signal and the recovery step when it fails.`
+    : "Add the smallest concrete prerequisite, pitfall, or verification guidance that prevents the repeated failure.";
+  const klassLine = klass ? `\n- Dominant error class: ${klass}.` : "";
+  return `\n\n## Telemetry troubleshooting note\n\n- Failure signal: ${reason}.${klassLine}\n- ${guidance}\n`;
+}
+
+function topValues(values: readonly (string | undefined)[]): string[] {
+  const counts = new Map<string, number>();
+  for (const value of values) {
+    if (!value) continue;
+    counts.set(value, (counts.get(value) ?? 0) + 1);
+  }
+  return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([value]) => value);
+}
+
 async function renderDraftSkillPatchBlock(
   rootDir: string,
   rec: { name: string; category: string; reason: string; path: string },
   relSkillPath: string,
+  evidence: readonly SkillEventSummary[],
 ): Promise<string> {
   const targetPath = isAbsolute(rec.path) ? rec.path : resolve(rootDir, rec.path);
   try {
@@ -604,7 +652,7 @@ async function renderDraftSkillPatchBlock(
     if (!oldString) {
       return "\nNo structured patch block was generated because the skill file did not have a safe unique insertion anchor. Add a `json memory-skill-patch` block manually after review.\n";
     }
-    const note = `\n\n## Telemetry troubleshooting note\n\n- Failure signal: ${rec.reason}.\n- Review this proposal, then replace this generic note with the smallest concrete prerequisite, pitfall, or verification guidance that prevents the repeated failure.\n`;
+    const note = semanticTroubleshootingNote(rec.reason, evidence);
     const patch = {
       path: relSkillPath,
       oldString,
