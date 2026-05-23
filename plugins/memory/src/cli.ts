@@ -27,6 +27,11 @@ import { ingestProject, refreshFiles } from "./ingest.js";
 import { initGraph, initMarkdownOnly } from "./init.js";
 import { applyProviderEnv, redDbProviderClient } from "./provider-client.js";
 import { computeProposalPriority, sortProposalSummaries } from "./proposal-priority.js";
+import {
+  buildPrePrMemoryReview,
+  type PrePrMemoryReview,
+  type PrePrReviewSection,
+} from "./pre-pr-review.js";
 import { recall } from "./recall.js";
 import {
   structuralImpactReader,
@@ -89,6 +94,7 @@ Usage:
   memory resolve-conflict <active-rid> <superseded-rid> [--root <dir>] [--reason <text>]
   memory timeline <topic|rid>       [--root <dir>] [--include-audit] [--json]
   memory structural-impact          [--root <dir>] [--file <path>] [--symbol <name>]
+  memory pre-pr-review              [--root <dir>] [--range <git-range>] [--json]
   memory stats                      [--root <dir>]
   memory doctor                     [--root <dir>] [--stale-days N] [--prune] [--yes]
   memory export [<out-dir>]         [--root <dir>] [--communities]
@@ -1900,6 +1906,10 @@ function intFlag(flags: Record<string, string | boolean>, key: string): number |
   return typeof flags[key] === "string" ? Number(flags[key]) : undefined;
 }
 
+function stringFlag(flags: Record<string, string | boolean>, key: string): string | undefined {
+  return typeof flags[key] === "string" ? flags[key] : undefined;
+}
+
 function strFlag<T extends string>(
   flags: Record<string, string | boolean>,
   key: string,
@@ -2112,6 +2122,29 @@ async function runStructuralImpact(args: ParsedArgs): Promise<void> {
   }
 }
 
+async function runPrePrReview(args: ParsedArgs): Promise<void> {
+  const rootDir = rootOf(args.flags);
+  const config = await requireConfig(rootDir);
+  if (config.mode !== "graph") {
+    throw new Error(
+      `pre-pr-review needs graph mode — this project is "${config.mode}". Re-run \`memory init --mode graph\` first`,
+    );
+  }
+  const comparison = stringFlag(args.flags, "range") ?? stringFlag(args.flags, "comparison");
+  const changedFiles = await readChangedFiles(rootDir, comparison);
+  const store = await MemoryStore.open({ uri: resolveStoreUri(rootDir, config) });
+  try {
+    const review = await buildPrePrMemoryReview(store, { changedFiles, comparison });
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(review, null, 2));
+      return;
+    }
+    printPrePrReview(review);
+  } finally {
+    await store.close();
+  }
+}
+
 function printStructuralImpact(target: StructuralImpactTarget, impact: StructuralImpact): void {
   const label = [target.file ? `file ${target.file}` : "", target.symbol ? `symbol ${target.symbol}` : ""]
     .filter(Boolean)
@@ -2137,6 +2170,74 @@ function printStructuralImpact(target: StructuralImpactTarget, impact: Structura
   }
   console.log(`memory: structural impact for ${label}`);
   for (const line of lines) console.log(`  ${line}`);
+}
+
+async function readChangedFiles(rootDir: string, comparison?: string): Promise<string[]> {
+  const args = comparison
+    ? ["diff", "--name-only", "--diff-filter=ACMRTUXB", comparison, "--"]
+    : ["diff", "--name-only", "--diff-filter=ACMRTUXB", "HEAD", "--"];
+  try {
+    const { stdout } = await execFileAsync("git", args, { cwd: rootDir });
+    return parseChangedFiles(stdout);
+  } catch (err) {
+    if (comparison) throw err;
+    const { stdout } = await execFileAsync(
+      "git",
+      ["diff", "--name-only", "--diff-filter=ACMRTUXB", "--"],
+      { cwd: rootDir },
+    );
+    return parseChangedFiles(stdout);
+  }
+}
+
+function parseChangedFiles(stdout: string): string[] {
+  return stdout
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function printPrePrReview(review: PrePrMemoryReview): void {
+  const scope = review.comparison ? ` for ${review.comparison}` : "";
+  console.log(`memory: pre-PR review${scope}`);
+  if (review.changedFiles.length === 0) {
+    console.log("changed files: no diff evidence");
+  } else {
+    console.log(`changed files: ${review.changedFiles.length}`);
+    for (const file of review.changedFiles) console.log(`  ${file}`);
+  }
+
+  printPrePrSection("impacted concepts", review.impactedConcepts);
+  printPrePrSection("related decisions", review.relatedDecisions);
+  printPrePrSection("known failures", review.knownFailures);
+  printPrePrSection("suggested validations", review.suggestedValidations);
+  printPrePrSection("risks", review.risks);
+
+  if (review.missingEvidence.length > 0) {
+    console.log(`missing evidence: ${review.missingEvidence.join(", ")}`);
+  }
+  if (review.evidence.length > 0) {
+    console.log("evidence:");
+    for (const item of review.evidence) {
+      const source = item.source ? ` source=${item.source}` : "";
+      console.log(
+        `  ${item.marker} ${item.urn} ${item.title} (${item.nodeType}, ${item.confidence}${source})`,
+      );
+    }
+  }
+}
+
+function printPrePrSection(title: string, section: PrePrReviewSection): void {
+  console.log(`${title}:`);
+  if (section.items.length === 0) {
+    console.log("  missing evidence");
+    return;
+  }
+  for (const item of section.items) {
+    const citations = item.evidence.map((e) => e.marker).join(" ");
+    console.log(`  - ${item.title} ${citations}`);
+    console.log(`    ${item.summary}`);
+  }
 }
 
 async function runStats(args: ParsedArgs): Promise<void> {
@@ -2328,6 +2429,8 @@ async function main(): Promise<void> {
       return runTimeline(args);
     case "structural-impact":
       return runStructuralImpact(args);
+    case "pre-pr-review":
+      return runPrePrReview(args);
     case "stats":
       return runStats(args);
     case "doctor":
