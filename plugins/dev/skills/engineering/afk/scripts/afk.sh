@@ -780,18 +780,19 @@ sha256_text() {
 
 afk_memory_record_terminal_attempt() {
   local status="$1" n="$2" dur="$3" branch="$4" attempt="$5" merge_sha="$6" summary="$7" diffstat="$8"
-  local envelope_body="$9" notes_file="${10:-}" log_file="${11:-}" validation_file="${12:-}"
+  local envelope_body="$9" notes_file="${10:-}" log_file="${11:-}" validation_file="${12:-}" validation_sidecar_file="${13:-}"
 
   declare -F memory_record_attempt >/dev/null 2>&1 || return 0
   command -v jq >/dev/null 2>&1 || return 0
   [[ -n "$envelope_body" ]] || return 0
 
-  local tmpdir payload issue_body_file notes_tmp validation_tmp
+  local tmpdir payload issue_body_file notes_tmp validation_tmp validation_records_tmp
   tmpdir="$(mktemp -d)"
   payload="$tmpdir/attempt.json"
   issue_body_file="$tmpdir/issue-body.md"
   notes_tmp="$tmpdir/notes.txt"
   validation_tmp="$tmpdir/validation.txt"
+  validation_records_tmp="$tmpdir/validation-records.json"
   printf '%s' "${CURRENT_ISSUE_BODY:-}" > "$issue_body_file"
   : > "$notes_tmp"
   : > "$validation_tmp"
@@ -803,6 +804,7 @@ afk_memory_record_terminal_attempt() {
   if [[ -n "$validation_file" && -f "$validation_file" ]]; then
     cat "$validation_file" > "$validation_tmp"
   fi
+  afk_validation_sidecar_records_json "$validation_sidecar_file" > "$validation_records_tmp"
 
   local repo issue_url envelope_hash envelope_ref touched_json failure_branch error_class
   repo="$(gh_repo)"
@@ -837,6 +839,7 @@ afk_memory_record_terminal_attempt() {
     --rawfile notes "$notes_tmp" \
     --arg errorClass "$error_class" \
     --rawfile validationSummary "$validation_tmp" \
+    --slurpfile validationRecords "$validation_records_tmp" \
     --arg summary "$summary" \
     'def trim_final_newline: sub("\n$"; "");
     {
@@ -860,7 +863,9 @@ afk_memory_record_terminal_attempt() {
       errorClass: $errorClass,
       validationSummary: ($validationSummary | trim_final_newline),
       summary: $summary
-    } | with_entries(select(.value != "" and .value != null))' > "$payload" \
+    }
+    + (if (($validationRecords[0] // []) | length) > 0 then {validationRecords: $validationRecords[0]} else {} end)
+    | with_entries(select(.value != "" and .value != null))' > "$payload" \
     || { rm -rf "$tmpdir"; return 0; }
 
   memory_record_attempt "$PROJECT_ROOT" "$payload" >/dev/null 2>&1 || true
@@ -894,11 +899,12 @@ emit_envelope() {
   summary="$(build_envelope_summary "$status" "$dur" "$diff_or_merged" "$attempt" "$merge_sha")"
 
   local rc
-  local notes_file="" log_file="" validation_file=""
+  local notes_file="" log_file="" validation_file="" validation_sidecar_file=""
   if [[ "$status" == "done" ]]; then
     while [[ $# -ge 2 ]]; do
       case "$1" in
         validation) validation_file="$2" ;;
+        validation-sidecar) validation_sidecar_file="$2" ;;
       esac
       shift 2
     done
@@ -911,6 +917,8 @@ emit_envelope() {
       case "$1" in
         notes) notes_file="$2" ;;
         log)   log_file="$2" ;;
+        validation) validation_file="$2" ;;
+        validation-sidecar) validation_sidecar_file="$2" ;;
       esac
       shift 2
     done
@@ -927,7 +935,7 @@ emit_envelope() {
     state_write "$STATE_FILE" envelope.posted:=true
     afk_memory_record_terminal_attempt \
       "$status" "$n" "$dur" "$branch" "$attempt" "$merge_sha" "$summary" "$full_diffstat" \
-      "${ENVELOPE_LAST_BODY:-}" "$notes_file" "$log_file" "$validation_file" || true
+      "${ENVELOPE_LAST_BODY:-}" "$notes_file" "$log_file" "$validation_file" "$validation_sidecar_file" || true
     return 0
   fi
   state_write "$STATE_FILE" envelope.posted:=false
@@ -1725,8 +1733,88 @@ feedback_join_parts() {
   printf '}'
 }
 
+afk_now_ms() {
+  local now
+  now="$(date +%s%3N 2>/dev/null || true)"
+  if [[ "$now" =~ ^[0-9]+$ ]]; then
+    printf '%s\n' "$now"
+  else
+    printf '%s000\n' "$(date +%s)"
+  fi
+}
+
+afk_validation_output_summary() {
+  local status="$1" log_file="$2"
+  if [[ "$status" == "passed" ]]; then
+    printf 'command exited 0'
+    return 0
+  fi
+  if [[ -f "$log_file" && -s "$log_file" ]]; then
+    tail -n 20 "$log_file" 2>/dev/null | tr '\n' ' ' | cut -c 1-1000
+  else
+    printf 'command exited non-zero'
+  fi
+}
+
+afk_validation_sidecar_append() {
+  local name="$1" command_text="$2" status="$3" duration_ms="${4:-}" summary="${5:-}"
+  local sidecar="${AFK_VALIDATION_SIDECAR:-}"
+  [[ -n "$sidecar" ]] || return 0
+  command -v jq >/dev/null 2>&1 || return 0
+  mkdir -p "$(dirname "$sidecar")" 2>/dev/null || true
+
+  jq -cn \
+    --arg schema "red.afk.validation.v1" \
+    --arg name "$name" \
+    --arg command "$command_text" \
+    --arg status "$status" \
+    --arg durationMs "$duration_ms" \
+    --arg summary "$summary" \
+    '{
+      schema: $schema,
+      name: $name,
+      status: $status
+    }
+    + (if $command != "" then {command: $command} else {} end)
+    + (if $durationMs != "" then {durationMs: ($durationMs | tonumber)} else {} end)
+    + (if $summary != "" then {summary: $summary} else {} end)' >> "$sidecar" 2>/dev/null || true
+}
+
+afk_validation_sidecar_records_json() {
+  local sidecar="$1"
+  if [[ -z "$sidecar" || ! -f "$sidecar" ]]; then
+    printf '[]\n'
+    return 0
+  fi
+  command -v jq >/dev/null 2>&1 || { printf '[]\n'; return 0; }
+  jq -cs '
+    if all(.[]; type == "object") then
+      [
+        .[]
+        | select(.schema == "red.afk.validation.v1")
+        | select((.name | type) == "string" and (.name | length) > 0)
+        | select((.status | type) == "string" and (.status | length) > 0)
+        | {
+            name: .name,
+            status: .status,
+            command: (if (.command | type) == "string" then .command else null end),
+            durationMs: (if (.durationMs | type) == "number" then .durationMs else null end),
+            summary: (if (.summary | type) == "string" then .summary else null end)
+          }
+        | with_entries(select(.value != null))
+      ]
+    else
+      []
+    end
+  ' "$sidecar" 2>/dev/null || printf '[]\n'
+}
+
 feedback() {
   local worktree="$1" base_ref="${2:-origin/main}"
+  if [[ -n "${AFK_VALIDATION_SIDECAR:-}" ]]; then
+    mkdir -p "$(dirname "$AFK_VALIDATION_SIDECAR")" 2>/dev/null || true
+    : > "$AFK_VALIDATION_SIDECAR" 2>/dev/null || true
+  fi
   local -a scopes=()
   local scope
   while IFS= read -r scope; do
@@ -1738,21 +1826,34 @@ feedback() {
     local -a parts=()
     if [[ ${#scopes[@]} -eq 0 ]]; then
       parts+=("no-package:skip")
+      afk_validation_sidecar_append "$script:no-package" "" "skipped" "" "no package.json"
     else
       for scope in "${scopes[@]}"; do
         local label dir safe_label
         label="$(feedback_scope_label "$scope")"
+        local check_name="$script:$label"
         if feedback_scope_has_script "$worktree" "$scope" "$script"; then
           dir="$(feedback_scope_dir "$worktree" "$scope")"
           safe_label="${label//\//_}"
-          if pnpm -C "$dir" "$script" >"/tmp/afk-${script}-${safe_label}.log" 2>&1; then
+          local log_file="/tmp/afk-${script}-${safe_label}.log"
+          local start_ms end_ms duration_ms command_text status summary
+          command_text="pnpm -C $dir $script"
+          start_ms="$(afk_now_ms)"
+          if pnpm -C "$dir" "$script" >"$log_file" 2>&1; then
             parts+=("$label:✓")
+            status="passed"
           else
             parts+=("$label:✗")
             failed=1
+            status="failed"
           fi
+          end_ms="$(afk_now_ms)"
+          duration_ms="$((end_ms - start_ms))"
+          summary="$(afk_validation_output_summary "$status" "$log_file")"
+          afk_validation_sidecar_append "$check_name" "$command_text" "$status" "$duration_ms" "$summary"
         else
           parts+=("$label:skip")
+          afk_validation_sidecar_append "$check_name" "" "skipped" "" "script missing"
         fi
       done
     fi
@@ -2133,8 +2234,9 @@ process_issue() {
 
   # feedback loops
   state_write "$STATE_FILE" current.stage=tests
-  local fb feedback_rc=0
-  fb="$(feedback "$worktree" "origin/$pinned")" || feedback_rc=$?
+  local fb feedback_rc=0 validation_sidecar_file
+  validation_sidecar_file="$ITER_DIR/validation.jsonl"
+  fb="$(AFK_VALIDATION_SIDECAR="$validation_sidecar_file" feedback "$worktree" "origin/$pinned")" || feedback_rc=$?
   log "feedback: $fb"
   if [[ "$feedback_rc" -ne 0 ]]; then
     log "✗ #$n feedback validation failed — flipping to ready-for-human"
@@ -2148,9 +2250,14 @@ process_issue() {
       echo
       echo "The worker branch was not merged."
     } > "$notes_file"
+    local validation_file
+    validation_file="$(mktemp)"
+    printf '%s\n' "$fb" > "$validation_file"
     emit_envelope "blocked" "$n" "$dur_fb" "$branch" "$attempt" "" "$slug" "$worktree_rel" \
-      "notes" "$notes_file" || true
-    rm -f "$notes_file"
+      "notes" "$notes_file" \
+      "validation" "$validation_file" \
+      "validation-sidecar" "$validation_sidecar_file" || true
+    rm -f "$notes_file" "$validation_file"
     gh -R "$(gh_repo)" issue edit "$n" --remove-label running --add-label ready-for-human >/dev/null
     AGG_BLOCKED=$((AGG_BLOCKED+1))
     state_write "$STATE_FILE" blocked:=$AGG_BLOCKED current:=null
@@ -2191,7 +2298,8 @@ process_issue() {
   validation_file="$(mktemp)"
   printf '%s\n' "$fb" > "$validation_file"
   emit_envelope "done" "$n" "$dur" "$branch" "$attempt" "$merge_sha" "$slug" "$worktree_rel" \
-    "validation" "$validation_file" || true
+    "validation" "$validation_file" \
+    "validation-sidecar" "$validation_sidecar_file" || true
   rm -f "$validation_file"
   gh -R "$(gh_repo)" issue close "$n" --reason completed >/dev/null
   gh -R "$(gh_repo)" issue edit "$n" --remove-label running >/dev/null 2>&1 || true

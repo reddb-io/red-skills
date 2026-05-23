@@ -48,7 +48,8 @@ export type NodeType =
   // Engineering semantic graph (PRD #95): AFK execution history.
   | "attempt"
   | "issue"
-  | "prd";
+  | "prd"
+  | "validation";
 
 export type EdgeLabel =
   // Causal

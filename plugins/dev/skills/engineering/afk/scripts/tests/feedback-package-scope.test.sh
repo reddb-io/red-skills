@@ -109,7 +109,8 @@ printf 'export const value = 2;\n' > "$repo/plugins/memory/src/index.ts"
 commit_all "$repo" "touch nested package"
 
 calls="$tmp/nested.calls"
-out="$(FEEDBACK_REPO="$repo" PNPM_CALLS="$calls" PATH="$stub:$PATH" feedback "$repo" origin/main)"
+sidecar="$tmp/nested.validation.jsonl"
+out="$(FEEDBACK_REPO="$repo" PNPM_CALLS="$calls" AFK_VALIDATION_SIDECAR="$sidecar" PATH="$stub:$PATH" feedback "$repo" origin/main)"
 rc=$?
 
 expect_eq "nested feedback succeeds" "0" "$rc"
@@ -120,6 +121,10 @@ expect_contains "nested build ran package" "$out" "build:plugins/memory:✓"
 nested_calls="$(cat "$calls" 2>/dev/null || true)"
 expect_contains "nested pnpm called test in package" "$nested_calls" "plugins/memory|test"
 expect_not_contains "nested pnpm did not run root" "$nested_calls" ".|test"
+expect_eq "nested validation sidecar has one record per check" "4" "$(jq -s 'length' "$sidecar")"
+expect_eq "nested validation sidecar records check name" "test:plugins/memory" "$(jq -sr '.[0].name' "$sidecar")"
+expect_eq "nested validation sidecar records passed status" "passed" "$(jq -sr '.[0].status' "$sidecar")"
+expect_eq "nested validation sidecar records skipped lint" "skipped" "$(jq -sr '.[] | select(.name == "lint:plugins/memory") | .status' "$sidecar")"
 
 # ---------- root-only repo keeps root validation ----------
 repo="$tmp/root-only"

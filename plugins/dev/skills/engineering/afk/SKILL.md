@@ -291,6 +291,31 @@ Per-status body sections:
 - `merge-conflict` → one `data-section="log"` block carrying the merge-conflict diff tail (last 50 lines of `git merge` output), fenced. Mirrors the no-sentinel log shape.
 - `done` → one `data-section="validation"` block carrying the package-aware feedback report. Summary carries `diff: merged` and `merge: ` `<sha>` (GitHub auto-links bare SHAs to the commit on `main`). The merge commit on `main` *is* the diff — no need to duplicate it inline.
 
+### Validation Sidecar
+
+During feedback validation, AFK also writes a structured JSONL sidecar at
+`$ITER_DIR/validation.jsonl`. It is not rendered into the issue comment; it is
+the machine-readable source used by the optional Memory bridge.
+
+Each line is one command/check execution:
+
+```json
+{"schema":"red.afk.validation.v1","name":"test:plugins/memory","command":"pnpm -C /repo/plugins/memory test","status":"passed","durationMs":1234,"summary":"command exited 0"}
+```
+
+Fields:
+
+- `schema`: literal `red.afk.validation.v1`.
+- `name`: stable check name, usually `{script}:{scope}` such as `typecheck:root` or `lint:plugins/memory`.
+- `command`: command string when a command ran; omitted for skipped checks.
+- `status`: `passed`, `failed`, or `skipped`.
+- `durationMs`: command duration when a command ran.
+- `summary`: short relevant output/error summary, or a skip reason.
+
+The Memory attempt writer only consumes this structured sidecar after parsing it
+as JSON. It must not derive validation graph nodes by parsing free-form stdout,
+Envelope notes, validation-summary prose, or `<agent-notes>`.
+
 Summary line is always `worker `{id}` · status: {status} · duration: NmSs · diff: {diff} · attempt: K [· merge: {sha}]`, where `{diff}` is `+N -M` against `origin/main` for non-DONE statuses and the literal `merged` for DONE.
 
 After a successful POST (any 2xx), the orchestrator sets `envelope.posted: true` in the iteration state file. The boot-time *Orphan Cleanup* reads that field to pick a TTL for preserved `ready-for-human` dirs: 1 day when the envelope made it to the issue (the thread carries the canonical record), 7 days when the POST failed (the local dir is the only copy of the notes/log). The field is initialised `false` at iteration start.

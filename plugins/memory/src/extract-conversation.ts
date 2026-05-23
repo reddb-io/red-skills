@@ -103,6 +103,10 @@ export const NODE_TYPES: readonly NodeType[] = [
   "session",
   "task",
   "goal",
+  "attempt",
+  "issue",
+  "prd",
+  "validation",
 ];
 
 /** Runtime allowlist of edge labels (mirrors `EdgeLabel` in schema.ts). */
