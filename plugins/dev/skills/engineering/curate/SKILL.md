@@ -1,7 +1,7 @@
 ---
 name: curate
-description: Interactive Skill curator. Reads `memory curate skills --json`, groups Curatable-skill candidates by category (`stale`, `abandoned`, `frequently-failing`, `archive`), asks for explicit approval, archives the approved set recoverably with the approving category recorded in the manifest, and reverses any archive with `/curate --restore <name>`.
-argument-hint: "[--restore <skill-name>] (no arg = interactive curation flow)"
+description: Interactive Skill curator. Reads `memory curate skills --json`, groups Curatable-skill candidates by category (`stale`, `abandoned`, `frequently-failing`, `archive`), asks for explicit approval, archives the approved set recoverably with the approving category recorded in the manifest, and reverses any archive with `/curate --restore <name>`. With `--background`, files a single `ready-for-human` Issue listing candidates and never mutates a Skill file.
+argument-hint: "[--restore <skill-name>] [--background] (no arg = interactive curation flow)"
 ---
 
 <what-to-do>
@@ -13,6 +13,18 @@ This skill **mutates skills on disk**. Run the loop below verbatim. Every mutati
 Run `red-curate-skill check`. If it exits non-zero, print its stderr verbatim and **stop**. The error already names the exact `memory init --mode graph --skill-telemetry` command the user needs.
 
 > **Why this exists:** the curator runs on Skill telemetry rollups (Curatable-skill activity counts, archive signals). Without **Graph mode** + the `--skill-telemetry` opt-in, there is no evidence to curate — failing fast is the only safe answer.
+
+### Background mode — `--background`
+
+If the argument is `--background`:
+
+1. Run `red-curate-skill background`. The engine runs the same boot precondition (graph mode + Skill telemetry); if the precondition fails it prints the **same prerequisite message** the interactive path uses and exits non-zero. Print its stderr verbatim and stop.
+2. The engine reads `memory curate skills --json`, applies the same Curatable / pinned / category filtering as the interactive view, and:
+   - if the candidate list is **empty**, exits with no side effect (no issue is filed, no comment, no noise);
+   - otherwise files **exactly one** Issue on the project's Issue tracker labelled `ready-for-human` whose body lists candidates grouped by category (`stale` → `abandoned` → `frequently-failing` → `archive`) with the same glossary vocabulary and evidence the interactive view shows.
+3. Print the engine's one-line receipt verbatim. Stop.
+
+`--background` performs **zero filesystem mutations of any Skill file** under any input — it never invokes `archive` or `restore`. The loop closes when a human (or `/afk` against the filed issue) runs interactive `/curate` and names the skills to archive; that path keeps the tracer-slice atomic-rename + hash-manifest guarantees.
 
 ### Restore mode — `--restore <name>`
 
@@ -78,6 +90,9 @@ red-curate-skill check
 
 # List candidates grouped by category as JSON
 red-curate-skill list
+
+# Non-interactive: file a single ready-for-human Issue (never mutates a Skill file)
+red-curate-skill background
 
 # Archive one approved candidate (category flows into the manifest)
 red-curate-skill archive --candidate '{"name":"foo","source_kind":"project","path":"/abs/.../SKILL.md","reason":"no skill activity for 90d (threshold 60d)","category":"stale"}'

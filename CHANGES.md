@@ -6,6 +6,13 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 
 ---
 
+## curate (engineering) — `--background` non-interactive issue filer (modified)
+
+- **status**: modified
+- **upstream**: —
+- **why**: Issue #94 (PRD #91). Phase 2 of the consent contract: a non-interactive entry point that **never mutates a Skill file** and instead surfaces the same Curatable-skill candidates as a `ready-for-human` Issue. The interactive `/curate` path (or `/afk` against the filed issue) closes the loop later via the existing archive-engine — no new mutation surface is introduced.
+- **what changed**: New thin module `plugins/memory/src/curate-skill/issue-filer.ts` — `renderIssueTitle`, `renderIssueBody`, and `fileBackgroundIssue` (the only side effect: shells out to `gh issue create --label ready-for-human --body-file`). Per the slice brief, no dedicated unit test; matches the project's treatment of other `gh`-boundary modules. New `background` subcommand in `plugins/memory/src/curate-skill/cli.ts` — runs the same `precheck` as `list` (so the telemetry-not-enabled prerequisite message is identical to the interactive path), reads `memory curate skills --json`, applies the same `candidate-reader` filtering, and: (a) if the candidate list is empty, exits 0 with **zero outward action** (no issue filed, no comment, no noise), (b) otherwise files **exactly one** Issue grouping candidates by category in the same `stale` → `abandoned` → `frequently-failing` → `archive` order as the interactive view, reusing the glossary vocabulary and per-category evidence string verbatim. `--background` performs zero filesystem mutations of any Skill file under any input — it never invokes `archive` or `restore`. The slice does not introduce a new label vocabulary; it reuses `ready-for-human` as defined by `/setup-red-skills`. SKILL.md gains the `--background` mode section + invocation example; the argument hint advertises the flag. Refs #94.
+
 ## curate (engineering) — interactive, archive-only Skill curator (added)
 
 - **status**: added
