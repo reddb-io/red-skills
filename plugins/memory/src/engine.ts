@@ -293,6 +293,21 @@ function expandSeedFromEdges(
   }
 }
 
+function resolveSupersessionHead(
+  rid: number,
+  supersededMap: Map<number, number>,
+  index: Map<number, StoredNode>,
+): number {
+  const seen = new Set<number>([rid]);
+  let current = rid;
+  while (true) {
+    const next = supersededMap.get(current);
+    if (next == null || seen.has(next) || !index.has(next)) return current;
+    seen.add(next);
+    current = next;
+  }
+}
+
 /** Token-overlap score: how many distinct query terms appear in the node. */
 function termScore(node: StoredNode, terms: string[]): number {
   let score = 0;
@@ -367,9 +382,8 @@ export async function recall(
   // Centrality normalizes per-graph.
   const { degree, maxDegree } = graph;
   // Head-of-chain markers for every candidate in one round-trip (issue #72).
-  const supersededMap = includeSuperseded
-    ? new Map<number, number>()
-    : await store.supersededByMany([...scored.keys()]);
+  const supersededMap = await store.supersededByMany([...index.keys()]);
+  promoteSupersessionHeads(scored, depthOf, index, supersededMap);
 
   const nodes: RecalledNode[] = [];
   for (const [rid, relevance] of scored) {
@@ -402,6 +416,26 @@ export async function recall(
   }
 
   return { query, nodes, context_md: renderContext(query, nodes) };
+}
+
+function promoteSupersessionHeads(
+  scored: Map<number, number>,
+  depthOf: Map<number, number>,
+  index: Map<number, StoredNode>,
+  supersededMap: Map<number, number>,
+): void {
+  const original = [...scored.entries()];
+  if (original.length === 0 || supersededMap.size === 0) return;
+
+  for (const [rid, score] of original) {
+    const head = resolveSupersessionHead(rid, supersededMap, index);
+    if (head === rid || !index.has(head)) continue;
+    const existingScore = scored.get(head) ?? 0;
+    scored.set(head, Math.max(existingScore, score));
+    const oldDepth = depthOf.get(rid) ?? 0;
+    const existingDepth = depthOf.get(head);
+    depthOf.set(head, existingDepth == null ? oldDepth : Math.min(existingDepth, oldDepth));
+  }
 }
 
 /**

@@ -101,8 +101,18 @@ node plugins/memory/dist/cli.js search <query>          # full-text node search
 node plugins/memory/dist/cli.js neighbors <label>       # 1-hop neighborhood
 node plugins/memory/dist/cli.js traverse <label>        # BFS/DFS walk
 node plugins/memory/dist/cli.js path <from> <to>        # shortest path
+node plugins/memory/dist/cli.js conflicts               # unresolved CONTRADICTS edges
+node plugins/memory/dist/cli.js supersede <old> <new> --reason "policy changed"
+node plugins/memory/dist/cli.js resolve-conflict <active> <superseded>
+node plugins/memory/dist/cli.js timeline <topic> --include-audit
 node plugins/memory/dist/cli.js stats                   # node/edge counts
 ```
+
+Contradiction and supersession commands never delete old guidance. `supersede`
+and `resolve-conflict` add `SUPERSEDED_BY` audit edges with an optional reason;
+normal recall promotes the active head of the chain, while `recall
+--include-superseded`, `conflicts --include-resolved`, and `timeline
+--include-audit` preserve the full audit history.
 
 ## Competitive baseline
 
@@ -170,7 +180,8 @@ counts only actionable pending proposals while retaining audit history.
 `memory-mcp` speaks MCP over stdio and exposes the same surface to agents:
 `memory_recall`, `memory_store`, `memory_search`, `memory_traverse`,
 `memory_neighbors`, `memory_path`, `memory_ask`, `memory_export`,
-`memory_doctor`, `memory_stats`, `memory_supersede`. `memory_recall` returns a ready-to-inject
+`memory_doctor`, `memory_stats`, `memory_conflicts`, `memory_timeline`,
+`memory_supersede`. `memory_recall` returns a ready-to-inject
 markdown context block plus ranked nodes; `memory_ask` is the one LLM-backed
 verb (it needs an engine API key and degrades gracefully without one).
 

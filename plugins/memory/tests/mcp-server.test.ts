@@ -52,6 +52,34 @@ async function seedStore(): Promise<string> {
   return uri;
 }
 
+async function seedConflictStore(): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), "memory-mcp-conflict-"));
+  roots.push(dir);
+  const uri = `file://${join(dir, "graph.rdb")}`;
+  const store = await MemoryStore.open({ uri, project: "test" });
+  try {
+    const oldRid = await store.upsertNode({
+      label: "deploy-friday",
+      node_type: "decision",
+      properties: { title: "deploy friday", content: "deploys happen friday" },
+    });
+    const newRid = await store.upsertNode({
+      label: "deploy-tuesday",
+      node_type: "decision",
+      properties: { title: "deploy tuesday", content: "deploys happen tuesday" },
+    });
+    await store.upsertEdge({
+      label: "CONTRADICTS",
+      from_rid: oldRid,
+      to_rid: newRid,
+      properties: { reason: "date changed" },
+    });
+  } finally {
+    await store.close();
+  }
+  return uri;
+}
+
 async function connect(uri: string): Promise<Client> {
   const transport = new StdioClientTransport({
     command: tsx,
@@ -80,6 +108,7 @@ describe("MCP server over stdio", () => {
       expect(names).toEqual(
         [
           "memory_ask",
+          "memory_conflicts",
           "memory_doctor",
           "memory_export",
           "memory_neighbors",
@@ -89,6 +118,7 @@ describe("MCP server over stdio", () => {
           "memory_stats",
           "memory_store",
           "memory_supersede",
+          "memory_timeline",
           "memory_traverse",
         ].sort(),
       );
@@ -144,6 +174,39 @@ describe("MCP server over stdio", () => {
       };
       expect(path.reachable).toBe(true);
       expect(path.hopCount).toBe(2);
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "memory_conflicts and memory_timeline expose read-only supersession audit views",
+    async () => {
+      const client = await connect(await seedConflictStore());
+
+      const conflictsRes = (await client.callTool({
+        name: "memory_conflicts",
+        arguments: {},
+      })) as ToolResult;
+      const conflicts = JSON.parse(conflictsRes.content[0]?.text ?? "[]") as Array<{
+        from: { label: string };
+        to: { label: string };
+      }>;
+      expect(conflicts).toHaveLength(1);
+      expect(conflicts[0].from.label).toBe("deploy-friday");
+      expect(conflicts[0].to.label).toBe("deploy-tuesday");
+      expect(conflictsRes.structuredContent?.count).toBe(1);
+
+      const timelineRes = (await client.callTool({
+        name: "memory_timeline",
+        arguments: { topic: "deploy" },
+      })) as ToolResult;
+      const timeline = JSON.parse(timelineRes.content[0]?.text ?? "{}") as {
+        entries: Array<{ label: string; status: string }>;
+        auditLinks: Array<{ label: string }>;
+      };
+      expect(timeline.entries.some((entry) => entry.label === "deploy-friday")).toBe(true);
+      expect(timeline.auditLinks.some((edge) => edge.label === "CONTRADICTS")).toBe(true);
+      expect(timelineRes.structuredContent?.audit_links).toBeGreaterThanOrEqual(1);
     },
     TIMEOUT,
   );

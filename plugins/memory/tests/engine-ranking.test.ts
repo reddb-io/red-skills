@@ -116,6 +116,19 @@ describe("recall ranking with a mock store (#72)", () => {
     expect(rids).not.toContain(1);
   });
 
+  test("promotes the active head when only obsolete guidance matches the query", async () => {
+    const store = new MockStore(
+      [
+        node(1, "durable", { content: "legacy deploy window was friday" }),
+        node(2, "durable", { content: "current deploy window is tuesday" }),
+      ],
+      new Map([[1, 2]]),
+    );
+
+    const { nodes } = await recall(store, "legacy friday", { depth: 0, now: NOW });
+    expect(nodes.map((n) => n.rid)).toEqual([2]);
+  });
+
   test("--include-superseded returns the full chain", async () => {
     const store = new MockStore(
       [node(1, "durable"), node(2, "durable")],

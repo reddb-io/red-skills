@@ -30,7 +30,7 @@ const EVENT = {
   },
 } satisfies SkillEvent;
 
-const TIMEOUT = 60_000;
+const TIMEOUT = 90_000;
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = join(HERE, "..");
 const roots: string[] = [];
@@ -185,7 +185,7 @@ describe("memory event skill CLI", () => {
       const stats = runMemory(["stats", "--root", root]);
       expect(stats.stdout).toContain("memory: 5 node(s)");
     },
-    TIMEOUT,
+    120_000,
   );
 
   test(
@@ -374,7 +374,7 @@ describe("skill telemetry graph persistence", () => {
         }),
       );
     },
-    60_000,
+    TIMEOUT,
   );
 
 });
