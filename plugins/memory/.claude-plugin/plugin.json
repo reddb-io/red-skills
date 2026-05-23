@@ -15,6 +15,7 @@
     "./skills/core/skills-status",
     "./skills/core/context-status",
     "./skills/core/improve-skills",
+    "./skills/core/health",
     "./skills/core/doctor",
     "./skills/core/export"
   ]

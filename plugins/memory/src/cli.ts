@@ -58,6 +58,7 @@ Usage:
   memory curate skills              [--root <dir>] [--stale-days N] [--json]   (report-only)
   memory improve skills             [--root <dir>] [--write-proposal] [--json]   (proposal-gated)
   memory improve apply <proposal>    [--root <dir>] --yes [--json]   (explicit patch apply)
+  memory health                    [--root <dir>] [--json]   (operational healthcheck, read-only)
   memory status skills              [--root <dir>] [--all] [--limit N] [--json]   (diagnostic, read-only)
   memory status context             [--root <dir>] [--json]   (context stack healthcheck, read-only)
   memory attempt record             [--root <dir>]             (reads AFK attempt JSON from stdin)
@@ -851,6 +852,171 @@ async function runStatus(args: ParsedArgs): Promise<void> {
 }
 
 
+/**
+ * memory health — a compact operational panel for the Memory plugin. Unlike
+ * `status context` (broad repository context posture) and `status skills`
+ * (telemetry detail), health combines the Memory readiness signals that an
+ * agent/CI needs before running self-improvement: graph mode/freshness,
+ * telemetry rollups, proposal candidates, high-priority work, pending proposal
+ * files, and concrete next actions. It is strictly read-only.
+ */
+async function runHealth(args: ParsedArgs): Promise<void> {
+  const rootDir = resolve(rootOf(args.flags));
+  const json = args.flags.json === true;
+  const report = await healthReport(rootDir);
+
+  if (json) {
+    console.log(JSON.stringify(report, null, 2));
+    return;
+  }
+
+  console.log(`memory: health — ${report.state}`);
+  console.log(
+    `  initialized=${yesNo(report.initialized)} graph=${yesNo(report.graphMode)} ` +
+      `telemetry=${report.skillTelemetry} freshness=${report.graphFreshness.state}`,
+  );
+  console.log(
+    `  rollups=${report.rollups} proposal-candidates=${report.proposalCandidates} ` +
+      `high-priority=${report.highPriorityProposals} pending-files=${report.pendingProposalFiles}`,
+  );
+  if (report.topProposals.length > 0) {
+    console.log("\n  top proposals:");
+    for (const proposal of report.topProposals) {
+      console.log(
+        `  - ${proposal.priority} ${proposal.score.toFixed(2)} ${proposal.skill}: ${proposal.reason}`,
+      );
+    }
+  }
+  if (report.recommendedNextActions.length > 0) {
+    console.log("\n  recommended next actions:");
+    for (const item of report.recommendedNextActions) console.log(`  - ${item}`);
+  }
+  console.log("\nRead-only healthcheck: no memory, graph, proposal, or skill files were mutated.");
+}
+
+async function healthReport(rootDir: string) {
+  const context = await contextStatusReport(rootDir);
+  const config = await readConfig(rootDir);
+  const initialized = config !== null;
+  const graphMode = config?.mode === "graph" && context.memory.graphStoreExists;
+  const telemetryEnabled = config !== null && graphMode && skillTelemetryEnabled(config);
+  const pendingProposalFiles = await countProposalFiles(join(rootDir, ".red", "memory", "proposals"));
+  let rollups: SkillRollup[] = [];
+  let topProposals: SkillImprovementProposalSummary[] = [];
+
+  if (telemetryEnabled) {
+    const store = await MemoryStore.open({ uri: resolveStoreUri(rootDir, config) });
+    try {
+      rollups = await readSkillRollups(store);
+      const recent = await readRecentSkillEvents(store, 50);
+      const curated = curateSkills(rollupsToCuratorInput(rollups));
+      topProposals = await buildSkillImprovementProposals(
+        rootDir,
+        curated.recommendations,
+        recent,
+        false,
+      );
+    } finally {
+      await store.close();
+    }
+  }
+
+  const highPriorityProposals = topProposals.filter((proposal) => proposal.priority === "high").length;
+  const recommendedNextActions = healthRecommendations({
+    initialized,
+    graphMode,
+    telemetryEnabled,
+    graphFreshnessState: context.memory.graphFreshness.state,
+    highPriorityProposals,
+    proposalCandidates: topProposals.length,
+    pendingProposalFiles,
+  });
+
+  return {
+    state: healthState({
+      initialized,
+      graphMode,
+      telemetryEnabled,
+      graphFreshnessState: context.memory.graphFreshness.state,
+      highPriorityProposals,
+      pendingProposalFiles,
+    }),
+    root: rootDir,
+    initialized,
+    graphMode,
+    skillTelemetry: telemetryEnabled ? "enabled" : "unavailable",
+    hooksEnabled: context.memory.hooksEnabled,
+    graphFreshness: context.memory.graphFreshness,
+    rollups: rollups.length,
+    proposalCandidates: topProposals.length,
+    highPriorityProposals,
+    pendingProposalFiles,
+    topProposals: topProposals.slice(0, 5),
+    recommendedNextActions,
+  };
+}
+
+function healthState(input: {
+  initialized: boolean;
+  graphMode: boolean;
+  telemetryEnabled: boolean;
+  graphFreshnessState: string;
+  highPriorityProposals: number;
+  pendingProposalFiles: number;
+}): "missing" | "degraded" | "ready" | "attention" {
+  if (!input.initialized) return "missing";
+  if (!input.graphMode || !input.telemetryEnabled || input.graphFreshnessState === "stale") return "degraded";
+  if (input.highPriorityProposals > 0 || input.pendingProposalFiles > 0) return "attention";
+  return "ready";
+}
+
+function healthRecommendations(input: {
+  initialized: boolean;
+  graphMode: boolean;
+  telemetryEnabled: boolean;
+  graphFreshnessState: string;
+  highPriorityProposals: number;
+  proposalCandidates: number;
+  pendingProposalFiles: number;
+}): string[] {
+  const items: string[] = [];
+  if (!input.initialized) {
+    items.push("run `memory init --mode graph --skill-telemetry` to enable graph recall and self-improvement telemetry");
+    return items;
+  }
+  if (!input.graphMode) {
+    items.push("switch to graph mode before relying on graph recall, telemetry, or proposal ranking");
+    return items;
+  }
+  if (input.graphFreshnessState === "stale") {
+    items.push("run `memory ingest . --root .` before relying on graph recall");
+  }
+  if (!input.telemetryEnabled) {
+    items.push("enable Skill telemetry before expecting self-improvement evidence");
+  }
+  if (input.highPriorityProposals > 0) {
+    items.push("review and apply the top high-priority Skill improvement proposal");
+  } else if (input.proposalCandidates > 0) {
+    items.push("review ranked Skill improvement proposal candidates");
+  }
+  if (input.pendingProposalFiles > 0) {
+    items.push("review pending files under .red/memory/proposals");
+  }
+  if (items.length === 0) items.push("memory is healthy; continue collecting telemetry");
+  return items;
+}
+
+async function countProposalFiles(dir: string): Promise<number> {
+  try {
+    const entries = await readdir(dir, { withFileTypes: true });
+    return entries.filter((entry) => entry.isFile() && entry.name.endsWith(".md")).length;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return 0;
+    throw err;
+  }
+}
+
+
 type CheckName =
   | "agent-rules"
   | "domain-glossary"
@@ -1603,6 +1769,8 @@ async function main(): Promise<void> {
       return runCurate(args);
     case "improve":
       return runImprove(args);
+    case "health":
+      return runHealth(args);
     case "status":
       return runStatus(args);
     case "attempt":

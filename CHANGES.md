@@ -6,6 +6,16 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 
 ---
 
+## health (memory/core)
+
+- **status**: added
+- **upstream**: —
+- **why**: Give agents and CI one read-only operational panel before running Memory self-improvement.
+- **what changed**:
+  - Added `memory health --json` with initialization, graph mode, graph freshness, Skill telemetry, rollup, proposal candidate, high-priority proposal, and pending proposal counters.
+  - Included deterministic top proposal summaries and recommended next actions.
+  - Added a `health` Skill and registered it in the Memory plugin manifest and README indexes.
+
 ## skill-telemetry-partitioned-rollups (memory/core)
 
 - **status**: added

@@ -11,6 +11,7 @@ The minimal memory surface: set it up, write a fact, read it back.
 | **[extract](./extract/SKILL.md)** | Extract durable `INFERRED` facts from a transcript into the graph through the configured AI provider. |
 | **[skills-status](./skills-status/SKILL.md)** | Diagnose Skill telemetry and recent Skill usage events before self-improvement/curation. |
 | **[improve-skills](./improve-skills/SKILL.md)** | Generate approval-gated Skill improvement proposals from Skill telemetry, then explicitly apply reviewed structured patches with `memory improve apply ... --yes`. |
+| **[health](./health/SKILL.md)** | Report operational Memory health: graph readiness, freshness, telemetry rollups, ranked candidates, pending proposals, and next actions. |
 | **[context-status](./context-status/SKILL.md)** | Report context stack readiness: agent rules, domain docs, ADRs, Memory mode/graph/freshness/telemetry, Wiki state, score, and recommendations. |
 | **[doctor](./doctor/SKILL.md)** | List stale nodes (long-unaccessed, never recalled) and prune them after confirmation (graph mode). |
 | **[export](./export/SKILL.md)** | Export the graph to a navigable graph.html + graph.json + audit.md (graph mode). |
