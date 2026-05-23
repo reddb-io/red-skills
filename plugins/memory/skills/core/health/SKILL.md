@@ -35,7 +35,7 @@ Read these JSON fields before deciding the next action:
 - `rollups` — number of observed Skill telemetry rollups.
 - `proposalCandidates` — number of ranked improvement candidates.
 - `highPriorityProposals` — candidates that should be reviewed first.
-- `pendingProposalFiles` — files already waiting under `.red/memory/proposals/`.
+- `pendingProposalFiles` — pending `.md` files directly under `.red/memory/proposals/`; archived files are excluded.
 - `topProposals` — top ranked proposals, already sorted by deterministic score.
 - `recommendedNextActions` — concrete next steps for the agent or CI.
 
@@ -44,6 +44,7 @@ Read these JSON fields before deciding the next action:
 - ✅ Run this before `memory improve skills --write-proposal` in automated workflows.
 - ✅ Treat `attention` as actionable, not as failure.
 - ✅ Use `recommendedNextActions` rather than inventing recovery steps.
+- ✅ When `pendingProposalFiles > 0`, inspect them with `memory improve proposals list/show --json` before generating duplicates.
 - ❌ Do not mutate graph, proposal, or Skill files from this healthcheck.
 - ❌ Do not parse human text when `--json` is available.
 

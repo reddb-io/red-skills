@@ -6,6 +6,17 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 
 ---
 
+
+## memory proposal lifecycle (core)
+
+- **status**: added
+- **upstream**: —
+- **why**: Keep Memory self-improvement proposals reviewable without accumulating stale pending files.
+- **what changed**:
+  - Added `memory improve proposals list/show/archive` for pending proposal lifecycle management.
+  - Archived proposals move under `.red/memory/proposals/archive/<reason>/` with explicit `--yes` and `--reason applied|rejected|stale`.
+  - Updated `memory health` to count only pending proposal files, excluding archived history.
+
 ## health (memory/core)
 
 - **status**: added

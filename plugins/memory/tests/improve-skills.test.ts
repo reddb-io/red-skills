@@ -20,6 +20,7 @@ async function tempRoot(): Promise<string> {
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((d) => rm(d, { recursive: true, force: true })));
+
 });
 
 function runMemory(args: string[], input?: string) {
@@ -207,4 +208,68 @@ describe("memory improve skills CLI", () => {
     },
     TIMEOUT,
   );
+
+  test(
+    "lists, shows, and archives pending proposal files",
+    async () => {
+      const root = await tempRoot();
+      const proposalDir = join(root, ".red", "memory", "proposals");
+      await mkdir(proposalDir, { recursive: true });
+      const proposalFile = join(proposalDir, "skill-improvement-flaky.md");
+      await writeFile(
+        proposalFile,
+        [
+          "# Skill Improvement Proposal: flaky-skill",
+          "",
+          "Status: approval-gated",
+          "Generated: 2026-05-22T16:00:00.000Z",
+          "",
+          "## Evidence",
+          "",
+          "- Skill: flaky-skill",
+          "- Category: frequently-failing",
+          "- Reason: 4/5 results failed (80%)",
+          "- Skill path: skills/flaky-skill/SKILL.md",
+          "",
+        ].join("\n"),
+        "utf8",
+      );
+
+      const listed = runMemory(["improve", "proposals", "list", "--root", root, "--json"]);
+      expect(listed.status).toBe(0);
+      const listBody = JSON.parse(listed.stdout);
+      expect(listBody.state).toBe("pending");
+      expect(listBody.proposals).toHaveLength(1);
+      expect(listBody.proposals[0]).toMatchObject({
+        file: "skill-improvement-flaky.md",
+        status: "pending",
+        skill: "flaky-skill",
+        category: "frequently-failing",
+        reason: "4/5 results failed (80%)",
+        skillPath: "skills/flaky-skill/SKILL.md",
+      });
+
+      const shown = runMemory(["improve", "proposals", "show", proposalFile, "--root", root, "--json"]);
+      expect(shown.status).toBe(0);
+      const showBody = JSON.parse(shown.stdout);
+      expect(showBody.proposal.skill).toBe("flaky-skill");
+      expect(showBody.body).toContain("# Skill Improvement Proposal: flaky-skill");
+
+      const blocked = runMemory(["improve", "proposals", "archive", proposalFile, "--reason", "rejected", "--root", root, "--json"]);
+      expect(blocked.status).not.toBe(0);
+
+      const archived = runMemory(["improve", "proposals", "archive", proposalFile, "--reason", "rejected", "--root", root, "--yes", "--json"]);
+      expect(archived.status).toBe(0);
+      const archiveBody = JSON.parse(archived.stdout);
+      expect(archiveBody.state).toBe("archived");
+      expect(archiveBody.reason).toBe("rejected");
+      expect(archiveBody.archivePath).toContain(".red/memory/proposals/archive/rejected/skill-improvement-flaky.md");
+
+      const after = runMemory(["improve", "proposals", "list", "--root", root, "--json"]);
+      expect(after.status).toBe(0);
+      expect(JSON.parse(after.stdout).proposals).toHaveLength(0);
+    },
+    TIMEOUT,
+  );
+
 });

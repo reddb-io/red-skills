@@ -121,6 +121,25 @@ each hit's access counter, so frequently-recalled nodes stay fresh.
 `export` writes a self-contained, navigable `graph.html` (data inlined, opens
 from disk — no server) alongside `graph.json` and a health-summary `audit.md`.
 
+
+## Self-improvement loop
+
+Skill telemetry can drive a reviewable improvement workflow without letting the
+agent silently rewrite its own instructions:
+
+```bash
+node plugins/memory/dist/cli.js health --json
+node plugins/memory/dist/cli.js improve skills --write-proposal --json
+node plugins/memory/dist/cli.js improve proposals list --json
+node plugins/memory/dist/cli.js improve proposals show .red/memory/proposals/<proposal>.md --json
+node plugins/memory/dist/cli.js improve apply .red/memory/proposals/<proposal>.md --yes --json
+node plugins/memory/dist/cli.js improve proposals archive .red/memory/proposals/<proposal>.md --reason applied --yes --json
+```
+
+Proposals live under `.red/memory/proposals/`. Archiving moves reviewed files to
+`.red/memory/proposals/archive/<applied|rejected|stale>/`, so `memory health`
+counts only actionable pending proposals while retaining audit history.
+
 ## MCP server
 
 `memory-mcp` speaks MCP over stdio and exposes the same surface to agents:

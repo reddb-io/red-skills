@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { createInterface } from "node:readline/promises";
-import { access, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { access, mkdir, readdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import {
   readConfig,
   resolveNotesDir,
@@ -57,6 +57,9 @@ Usage:
   memory event skill                [--root <dir>] [--event-type ...] ... (or JSON/JSONL on stdin)
   memory curate skills              [--root <dir>] [--stale-days N] [--json]   (report-only)
   memory improve skills             [--root <dir>] [--write-proposal] [--json]   (proposal-gated)
+  memory improve proposals list      [--root <dir>] [--json]
+  memory improve proposals show <proposal> [--root <dir>] [--json]
+  memory improve proposals archive <proposal> --reason applied|rejected|stale --yes [--root <dir>] [--json]
   memory improve apply <proposal>    [--root <dir>] --yes [--json]   (explicit patch apply)
   memory health                    [--root <dir>] [--json]   (operational healthcheck, read-only)
   memory status skills              [--root <dir>] [--all] [--limit N] [--json]   (diagnostic, read-only)
@@ -383,8 +386,9 @@ async function runCurate(args: ParsedArgs): Promise<void> {
 async function runImprove(args: ParsedArgs): Promise<void> {
   const kind = args.positional[0];
   if (kind === "apply") return runImproveApply(args);
+  if (kind === "proposals") return runImproveProposals(args);
   if (kind !== "skills") {
-    throw new Error("improve needs a kind — supported: memory improve skills|apply");
+    throw new Error("improve needs a kind — supported: memory improve skills|proposals|apply");
   }
 
   const rootDir = rootOf(args.flags);
@@ -439,6 +443,158 @@ async function runImprove(args: ParsedArgs): Promise<void> {
   console.log("\nProposal-gated: skill files were not patched. Review and apply manually.");
 }
 
+
+
+interface ProposalFileSummary {
+  file: string;
+  path: string;
+  status: "pending" | "archived";
+  skill: string | null;
+  category: string | null;
+  reason: string | null;
+  skillPath: string | null;
+  generated: string | null;
+  bytes: number;
+  mtimeMs: number;
+}
+
+async function runImproveProposals(args: ParsedArgs): Promise<void> {
+  const action = args.positional[1] ?? "list";
+  switch (action) {
+    case "list":
+      return runImproveProposalsList(args);
+    case "show":
+      return runImproveProposalsShow(args);
+    case "archive":
+      return runImproveProposalsArchive(args);
+    default:
+      throw new Error("memory improve proposals supports: list|show|archive");
+  }
+}
+
+async function runImproveProposalsList(args: ParsedArgs): Promise<void> {
+  const rootDir = rootOf(args.flags);
+  const json = args.flags.json === true;
+  const proposals = await listPendingProposalFiles(rootDir);
+  const result = {
+    state: proposals.length > 0 ? "pending" : "empty",
+    proposals,
+  };
+  if (json) {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+  console.log(`memory: ${proposals.length} pending proposal ${plural(proposals.length, "file")}`);
+  for (const proposal of proposals) {
+    console.log(`  ${proposal.file}${proposal.skill ? ` — ${proposal.skill}` : ""}`);
+  }
+}
+
+async function runImproveProposalsShow(args: ParsedArgs): Promise<void> {
+  const proposalArg = args.positional[2];
+  if (!proposalArg) throw new Error("memory improve proposals show needs a proposal file");
+  const rootDir = rootOf(args.flags);
+  const json = args.flags.json === true;
+  const proposalPath = resolve(rootDir, proposalArg);
+  assertInsideRoot(rootDir, proposalPath, "proposal file");
+  assertInsideProposalTree(rootDir, proposalPath);
+  const body = await readFile(proposalPath, "utf8");
+  const proposal = await summarizeProposalFile(rootDir, proposalPath, body);
+  if (json) {
+    console.log(JSON.stringify({ state: "shown", proposal, body }, null, 2));
+    return;
+  }
+  console.log(body);
+}
+
+async function runImproveProposalsArchive(args: ParsedArgs): Promise<void> {
+  const proposalArg = args.positional[2];
+  if (!proposalArg) throw new Error("memory improve proposals archive needs a proposal file");
+  if (args.flags.yes !== true) {
+    throw new Error("memory improve proposals archive requires explicit --yes approval");
+  }
+  const reason = typeof args.flags.reason === "string" ? args.flags.reason : "";
+  if (!isArchiveReason(reason)) {
+    throw new Error("memory improve proposals archive requires --reason applied|rejected|stale");
+  }
+  const rootDir = rootOf(args.flags);
+  const json = args.flags.json === true;
+  const proposalPath = resolve(rootDir, proposalArg);
+  assertInsideRoot(rootDir, proposalPath, "proposal file");
+  assertInsideProposalTree(rootDir, proposalPath);
+  const archiveDir = join(proposalRoot(rootDir), "archive", reason);
+  await mkdir(archiveDir, { recursive: true });
+  const destination = join(archiveDir, proposalPath.split(sep).pop() ?? "proposal.md");
+  assertInsideRoot(rootDir, destination, "archive target");
+  await rename(proposalPath, destination);
+  const result = {
+    state: "archived",
+    reason,
+    proposal: toPosix(relative(rootDir, proposalPath)),
+    archivePath: toPosix(relative(rootDir, destination)),
+  };
+  if (json) {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+  console.log(`memory: archived proposal ${result.proposal}`);
+  console.log(`  reason: ${reason}`);
+  console.log(`  archive: ${result.archivePath}`);
+}
+
+async function listPendingProposalFiles(rootDir: string): Promise<ProposalFileSummary[]> {
+  const dir = proposalRoot(rootDir);
+  let entries;
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const summaries: ProposalFileSummary[] = [];
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
+    const filePath = join(dir, entry.name);
+    const body = await readFile(filePath, "utf8");
+    summaries.push(await summarizeProposalFile(rootDir, filePath, body));
+  }
+  return summaries.sort((a, b) => b.mtimeMs - a.mtimeMs || a.file.localeCompare(b.file));
+}
+
+async function summarizeProposalFile(rootDir: string, proposalPath: string, body: string): Promise<ProposalFileSummary> {
+  const info = await stat(proposalPath);
+  return {
+    file: proposalPath.split(sep).pop() ?? toPosix(relative(rootDir, proposalPath)),
+    path: toPosix(relative(rootDir, proposalPath)),
+    status: toPosix(relative(proposalRoot(rootDir), proposalPath)).startsWith("archive/") ? "archived" : "pending",
+    skill: firstProposalField(body, /^# Skill Improvement Proposal:\s*(.+)$/m) ?? firstProposalField(body, /^- Skill:\s*(.+)$/m),
+    category: firstProposalField(body, /^- Category:\s*(.+)$/m),
+    reason: firstProposalField(body, /^- Reason:\s*(.+)$/m),
+    skillPath: firstProposalField(body, /^- Skill path:\s*(.+)$/m),
+    generated: firstProposalField(body, /^Generated:\s*(.+)$/m),
+    bytes: info.size,
+    mtimeMs: info.mtimeMs,
+  };
+}
+
+function firstProposalField(body: string, pattern: RegExp): string | null {
+  const match = body.match(pattern);
+  return match ? match[1].trim() : null;
+}
+
+function proposalRoot(rootDir: string): string {
+  return join(rootDir, ".red", "memory", "proposals");
+}
+
+function assertInsideProposalTree(rootDir: string, filePath: string): void {
+  const rel = relative(proposalRoot(rootDir), filePath);
+  if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
+    throw new Error("proposal file must stay inside .red/memory/proposals");
+  }
+}
+
+function isArchiveReason(reason: string): reason is "applied" | "rejected" | "stale" {
+  return reason === "applied" || reason === "rejected" || reason === "stale";
+}
 
 interface SkillPatchBlock {
   path: string;
@@ -900,7 +1056,7 @@ async function healthReport(rootDir: string) {
   const initialized = config !== null;
   const graphMode = config?.mode === "graph" && context.memory.graphStoreExists;
   const telemetryEnabled = config !== null && graphMode && skillTelemetryEnabled(config);
-  const pendingProposalFiles = await countProposalFiles(join(rootDir, ".red", "memory", "proposals"));
+  const pendingProposalFiles = (await listPendingProposalFiles(rootDir)).length;
   let rollups: SkillRollup[] = [];
   let topProposals: SkillImprovementProposalSummary[] = [];
 
@@ -1004,16 +1160,6 @@ function healthRecommendations(input: {
   }
   if (items.length === 0) items.push("memory is healthy; continue collecting telemetry");
   return items;
-}
-
-async function countProposalFiles(dir: string): Promise<number> {
-  try {
-    const entries = await readdir(dir, { withFileTypes: true });
-    return entries.filter((entry) => entry.isFile() && entry.name.endsWith(".md")).length;
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return 0;
-    throw err;
-  }
 }
 
 
