@@ -83,6 +83,14 @@ _Avoid_: memory record, entry
 A property on every **Memory node** — `ephemeral | durable | reasoning` — that resolves the tension between RedDB's auto-expiring TTL and the project's "no automatic deletion" guarantee. `ephemeral` nodes (default for `session` types) carry a TTL horizon (`expires_at`) and stop surfacing once it passes; `durable` (the default for stored facts/decisions) and `reasoning` (`why_note` traces) carry no TTL and persist indefinitely. Defaulted on write per `defaultTier(node_type)`, overridable per node. `memory:doctor` flags stale `durable` nodes but never auto-deletes and never touches `ephemeral` ones (TTL owns them). Expiry is enforced client-side at the `listNodes` choke point because the embedded engine does not sweep KV TTL promptly — see ADR 0010. Introduced by issue #68 under PRD #66.
 _Avoid_: ttl class, expiry level, retention policy
 
+**Reasoning memory**:
+The first capability slice of **Neo4j Agent Memory parity**: durable graph records of agent reasoning evidence — task, tools used, files/entities touched, decision labels, outcomes, error classes, timestamps, and a short human-readable "why" summary — plus audit relationships that explain why an agent acted and make similar past work retrievable. It is a **Graph mode** concern, normally stored under the `reasoning` **Memory tier**, and is more central to RedSkills' engineering workflows than generic chat-session recall. It stores audit summaries, not raw chain-of-thought or full transcripts.
+_Avoid_: chain-of-thought dump, transcript memory, short-term history
+
+**Reasoning attempt**:
+The primary graph unit for **Reasoning memory**: one concrete agent attempt against a task or issue, with tools, files/entities touched, decisions, outcomes, errors, and a short "why" summary attached as evidence. Its first source of truth is the AFK **Envelope** plus the corresponding handoff material: AFK already provides the structured attempt boundary, status, issue, branch, notes, diff, and retry history. The primary writer is the AFK orchestrator immediately after it posts a terminal Envelope, because it has structured attempt metadata without transcript inference. It is related to, but not identical with, an Envelope: an Envelope is the issue-thread ledger entry for an AFK terminal event, while a Reasoning attempt is the graph-backed memory object that can connect across issues, files, symbols, decisions, and future recall.
+_Avoid_: transcript, raw attempt log, envelope clone
+
 **RedDB Statistics**:
 The RedDB analytical surface for aggregate counts, rankings, and rollups derived from project data without replacing the graph as the relationship substrate.
 _Avoid_: stats (too vague outside code identifiers), metrics store
@@ -107,6 +115,10 @@ _Avoid_: curator (too broad), memory cleaner
 A `dev` plugin workflow surface for explaining a repository's architecture, skill/module interdependencies, and change impact by reading from graph-backed project knowledge owned by the **Memory plugin**. The surface belongs in `dev` because it is an engineering workflow; the graph storage, traversal, recall, export, and community detection remain `memory` responsibilities. This prevents a second graph store from competing with **Graph mode** while still allowing higher-level repo-understanding skills to exist. The surface may use graph-mode verbs directly (`neighbors`, `path`, `stats`, export-derived reads) when available, but must degrade through `memory recall` or ordinary code exploration when the Memory plugin is absent or not in graph mode. It is read-only with respect to the graph: if indexing is missing or stale, it tells the user to run `/memory:ingest` instead of reindexing implicitly.
 _Avoid_: wiki graph (too narrow), understand plugin (confuses the workflow surface with plugin ownership), `/understand` (too close to Understand Anything's naming)
 
+**Neo4j Agent Memory parity**:
+The Memory plugin goal of covering the same capability classes as Neo4j Agent Memory — short-term memory, long-term memory, reasoning memory, extraction, deduplication, consolidation, auditability, retrieval, and tool/MCP surfaces — using RedSkills APIs, RedDB storage, and project-local **Graph mode** semantics rather than copying Neo4j's API contracts, Cypher-centric interface, or external database runtime.
+_Avoid_: Neo4j clone, API parity, Cypher parity
+
 **Zoom-out answer**:
 The fixed answer shape for the `zoom-out` part of the **Codebase understanding surface**. It is map-first: start with the relevant modules/layers, then the main relationships, critical paths, and risks/gaps. It may include graph evidence when useful, but raw nodes/edges never lead the answer. Direct question answering belongs to the **Ask surface**.
 _Avoid_: graph dump, architecture chat
@@ -130,6 +142,7 @@ _Avoid_: understand, codebase chat
 - When **Skill telemetry** is unavailable because the project is not in **Graph mode**, normal skill use is silent no-op, while telemetry/curator status commands explain the missing prerequisite.
 - A **Skill curator** belongs to the **Memory plugin** for evidence and dry-run recommendations, but does not mutate skills itself.
 - A **Skill curator** uses a two-level cadence: lightweight telemetry checks follow user-turn counts and only process new skill events, while report-only curator reviews follow interval/idle gates.
+- The **report-only Skill curator** lives in the **Memory plugin**; the *mutating* curator lives in `dev` (the `/curate` skill), consumes Memory's report (`memory curate skills --json`), and is **archive-only (never delete)** on **Curatable skills** with explicit consent — interactive when invoked, or detect-then-`ready-for-human`-**Issue** in the background, never silent (ADR 0016).
 
 ## Flagged ambiguities
 
