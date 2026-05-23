@@ -194,6 +194,7 @@ envelope_emit_attempt() {
   fi
 
   local body; body="$(envelope_build_body "$status" "$summary" "${sections[@]}")"
+  ENVELOPE_LAST_BODY="$body"
   [[ -n "$diff_tmp" ]] && rm -f "$diff_tmp"
 
   "$poster" "$issue" "$body"
@@ -217,5 +218,6 @@ envelope_emit_done() {
   local -a sections=()
   [[ -n "$validation_file" ]] && sections=( validation "$validation_file" )
   local body; body="$(envelope_build_body "done" "$summary" "${sections[@]}")"
+  ENVELOPE_LAST_BODY="$body"
   "$poster" "$issue" "$body"
 }

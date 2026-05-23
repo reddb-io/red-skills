@@ -33,6 +33,12 @@ source "$SCRIPT_DIR/lib/history.sh"
 # shellcheck source=./lib/pin-reader.sh
 source "$SCRIPT_DIR/lib/pin-reader.sh"
 
+MEMORY_BRIDGE_SH="$SKILL_DIR/../../../scripts/memory-bridge.sh"
+if [[ -f "$MEMORY_BRIDGE_SH" ]]; then
+  # shellcheck source=../../../scripts/memory-bridge.sh
+  source "$MEMORY_BRIDGE_SH" || true
+fi
+
 # ---------- arg parsing ----------
 RUNNER=""
 ITER_CAP=999
@@ -496,6 +502,8 @@ run_lifecycle_hook() {
 # Per-iteration cursor used by run_lifecycle_hook. Set/cleared in process_issue.
 CURRENT_ISSUE=""
 CURRENT_BRANCH=""
+CURRENT_ISSUE_TITLE=""
+CURRENT_ISSUE_BODY=""
 
 # Snapshot of ITER_DIR / STATE_FILE captured by snapshot_iter_for_hook just
 # before iter_close_* zeroes the live cursors. fire_post_iteration replays
@@ -521,7 +529,7 @@ fire_post_iteration() {
     "RED_AFK_DURATION_S=${duration}" \
     || log "post-iteration hook reported non-zero (status=${status}); continuing"
   LAST_ITER_DIR="" LAST_STATE_FILE=""
-  CURRENT_ISSUE="" CURRENT_BRANCH=""
+  CURRENT_ISSUE="" CURRENT_BRANCH="" CURRENT_ISSUE_TITLE="" CURRENT_ISSUE_BODY=""
 }
 
 # ---------- claim lock ----------
@@ -755,6 +763,111 @@ build_envelope_summary() {
 # Back-compat wrapper over envelope_build_body (the single schema definition).
 build_envelope() { envelope_build_body "$@"; }
 
+branch_touched_files_json() {
+  local branch="$1"
+  git -C "$PROJECT_ROOT" diff --name-only "origin/main...$branch" 2>/dev/null \
+    | jq -Rsc 'split("\n") | map(select(length > 0))' 2>/dev/null \
+    || printf '[]'
+}
+
+sha256_text() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum | awk '{print $1}'
+  else
+    shasum -a 256 | awk '{print $1}'
+  fi
+}
+
+afk_memory_record_terminal_attempt() {
+  local status="$1" n="$2" dur="$3" branch="$4" attempt="$5" merge_sha="$6" summary="$7" diffstat="$8"
+  local envelope_body="$9" notes_file="${10:-}" log_file="${11:-}" validation_file="${12:-}"
+
+  declare -F memory_record_attempt >/dev/null 2>&1 || return 0
+  command -v jq >/dev/null 2>&1 || return 0
+  [[ -n "$envelope_body" ]] || return 0
+
+  local tmpdir payload issue_body_file notes_tmp validation_tmp
+  tmpdir="$(mktemp -d)"
+  payload="$tmpdir/attempt.json"
+  issue_body_file="$tmpdir/issue-body.md"
+  notes_tmp="$tmpdir/notes.txt"
+  validation_tmp="$tmpdir/validation.txt"
+  printf '%s' "${CURRENT_ISSUE_BODY:-}" > "$issue_body_file"
+  : > "$notes_tmp"
+  : > "$validation_tmp"
+  if [[ -n "$notes_file" && -f "$notes_file" ]]; then
+    cat "$notes_file" > "$notes_tmp"
+  elif [[ -n "$log_file" && -f "$log_file" ]]; then
+    cat "$log_file" > "$notes_tmp"
+  fi
+  if [[ -n "$validation_file" && -f "$validation_file" ]]; then
+    cat "$validation_file" > "$validation_tmp"
+  fi
+
+  local repo issue_url envelope_hash envelope_ref touched_json failure_branch error_class
+  repo="$(gh_repo)"
+  issue_url="https://github.com/${repo}/issues/${n}"
+  envelope_hash="$(printf '%s' "$envelope_body" | sha256_text)"
+  envelope_ref="${issue_url}#afk-envelope-${envelope_hash}"
+  touched_json="$(branch_touched_files_json "$branch")"
+  failure_branch=""
+  error_class=""
+  if [[ "$status" != "done" ]]; then
+    failure_branch="$branch"
+    error_class="$status"
+  fi
+
+  jq -n \
+    --arg repository "$repo" \
+    --argjson issueNumber "$n" \
+    --argjson attemptNumber "$attempt" \
+    --arg status "$status" \
+    --arg issueTitle "${CURRENT_ISSUE_TITLE:-}" \
+    --arg issueUrl "$issue_url" \
+    --rawfile issueBody "$issue_body_file" \
+    --arg workerId "$WORKER_ID" \
+    --arg branch "$branch" \
+    --argjson durationMs "$((dur * 1000))" \
+    --arg diffstat "$diffstat" \
+    --arg envelopeRef "$envelope_ref" \
+    --arg envelopeHash "$envelope_hash" \
+    --arg mergeCommit "$merge_sha" \
+    --arg failureBranch "$failure_branch" \
+    --argjson touchedFiles "$touched_json" \
+    --rawfile notes "$notes_tmp" \
+    --arg errorClass "$error_class" \
+    --rawfile validationSummary "$validation_tmp" \
+    --arg summary "$summary" \
+    'def trim_final_newline: sub("\n$"; "");
+    {
+      repository: $repository,
+      issueNumber: $issueNumber,
+      attemptNumber: $attemptNumber,
+      status: $status,
+      issueTitle: $issueTitle,
+      issueUrl: $issueUrl,
+      issueBody: $issueBody,
+      workerId: $workerId,
+      branch: $branch,
+      durationMs: $durationMs,
+      diffstat: $diffstat,
+      envelopeRef: $envelopeRef,
+      envelopeHash: $envelopeHash,
+      mergeCommit: $mergeCommit,
+      failureBranch: $failureBranch,
+      touchedFiles: $touchedFiles,
+      notes: ($notes | trim_final_newline),
+      errorClass: $errorClass,
+      validationSummary: ($validationSummary | trim_final_newline),
+      summary: $summary
+    } | with_entries(select(.value != "" and .value != null))' > "$payload" \
+    || { rm -rf "$tmpdir"; return 0; }
+
+  memory_record_attempt "$PROJECT_ROOT" "$payload" >/dev/null 2>&1 || true
+  rm -rf "$tmpdir"
+  return 0
+}
+
 # Injected poster: the Module calls this with <issue> <body>. Hard-wires the
 # `gh issue comment` side effect the Module deliberately does not own.
 _afk_envelope_poster() {
@@ -770,18 +883,19 @@ _afk_envelope_poster() {
 emit_envelope() {
   local status="$1" n="$2" dur="$3" branch="$4" attempt="$5" merge_sha="$6" slug="$7" worktree_rel="$8"
   shift 8
-  local diff_or_merged
+  local diff_or_merged full_diffstat
   if [[ "$status" == "done" ]]; then
     diff_or_merged="merged"
   else
     diff_or_merged="$(branch_diffstat "$branch")"
   fi
+  full_diffstat="$(branch_diffstat_full "$branch")"
   local summary
   summary="$(build_envelope_summary "$status" "$dur" "$diff_or_merged" "$attempt" "$merge_sha")"
 
   local rc
+  local notes_file="" log_file="" validation_file=""
   if [[ "$status" == "done" ]]; then
-    local validation_file=""
     while [[ $# -ge 2 ]]; do
       case "$1" in
         validation) validation_file="$2" ;;
@@ -793,7 +907,6 @@ emit_envelope() {
   else
     # Collect the notes/log section files the caller passed; the Module adds the
     # diff section itself after pushing.
-    local notes_file="" log_file=""
     while [[ $# -ge 2 ]]; do
       case "$1" in
         notes) notes_file="$2" ;;
@@ -805,13 +918,16 @@ emit_envelope() {
       poster=_afk_envelope_poster "status=$status" "issue=$n" "summary=$summary" \
       "repo=$(gh_repo)" "repo_dir=$PROJECT_ROOT" "branch=$branch" \
       "remote_name=afk-attempts/${WORKER_ID}/${n}-${slug}" \
-      "worktree_rel=$worktree_rel" "diffstat=$(branch_diffstat_full "$branch")" \
+      "worktree_rel=$worktree_rel" "diffstat=$full_diffstat" \
       "notes_file=$notes_file" "log_file=$log_file"
     rc=$?
   fi
 
   if [[ "$rc" -eq 0 ]]; then
     state_write "$STATE_FILE" envelope.posted:=true
+    afk_memory_record_terminal_attempt \
+      "$status" "$n" "$dur" "$branch" "$attempt" "$merge_sha" "$summary" "$full_diffstat" \
+      "${ENVELOPE_LAST_BODY:-}" "$notes_file" "$log_file" "$validation_file" || true
     return 0
   fi
   state_write "$STATE_FILE" envelope.posted:=false
@@ -1881,6 +1997,8 @@ process_issue() {
   # Lifecycle cursor used by run_lifecycle_hook.
   CURRENT_ISSUE="$n"
   CURRENT_BRANCH="$branch"
+  CURRENT_ISSUE_TITLE="$title"
+  CURRENT_ISSUE_BODY="$body"
 
   # pre-iteration hook — after a successful claim, before any worktree setup.
   # A non-zero exit aborts the iteration: the claim is released back to

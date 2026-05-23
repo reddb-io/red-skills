@@ -1,8 +1,11 @@
 import { mkdtemp, rm } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, test } from "vitest";
 import { MemoryStore } from "../src/graph-store.js";
+import { initGraph, initMarkdownOnly } from "../src/init.js";
 import {
   attemptNodeLabel,
   fileNodeLabel,
@@ -16,6 +19,8 @@ import { defaultTier } from "../src/schema.js";
 
 // RedDB connects by spawning the bundled `red` binary; give each test room.
 const TIMEOUT = 30_000;
+const HERE = dirname(fileURLToPath(import.meta.url));
+const PLUGIN_ROOT = join(HERE, "..");
 
 const roots: string[] = [];
 const stores: MemoryStore[] = [];
@@ -29,6 +34,15 @@ async function openStore(): Promise<MemoryStore> {
   });
   stores.push(store);
   return store;
+}
+
+function runMemory(args: string[], input?: string) {
+  return spawnSync(process.execPath, ["--import", "tsx", "src/cli.ts", ...args], {
+    cwd: PLUGIN_ROOT,
+    encoding: "utf8",
+    input,
+    timeout: TIMEOUT,
+  });
 }
 
 afterEach(async () => {
@@ -473,6 +487,44 @@ describe("recordReasoningAttempt", () => {
       });
       expect(r.touchedFiles).toEqual(["a.ts", "b.ts"]);
       expect(r.fileRids).toHaveLength(2);
+    },
+    TIMEOUT,
+  );
+});
+
+describe("CLI attempt record", () => {
+  test(
+    "records one attempt into a graph-mode project from stdin",
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), "memory-attempt-cli-"));
+      roots.push(root);
+      await initGraph(root);
+
+      const result = runMemory(
+        ["attempt", "record", "--root", root],
+        JSON.stringify(samplePayload),
+      );
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain("memory: recorded attempt");
+      expect(result.stdout).toContain("reddb-io/red-skills#96/1");
+      expect(result.stderr).toBe("");
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "rejects the write outside graph mode",
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), "memory-attempt-cli-markdown-"));
+      roots.push(root);
+      await initMarkdownOnly(root);
+
+      const result = runMemory(
+        ["attempt", "record", "--root", root],
+        JSON.stringify(samplePayload),
+      );
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("this verb needs graph mode");
     },
     TIMEOUT,
   );
