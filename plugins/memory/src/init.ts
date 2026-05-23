@@ -13,6 +13,10 @@ import {
   writeConfig,
 } from "./config.js";
 import { MemoryStore } from "./graph-store.js";
+import {
+  applyTierVersioning,
+  type TierVersioningReport,
+} from "./vcs-versioned-collections.js";
 
 export interface MarkdownOnlyOptions {
   /** Repo-relative notes directory. Defaults to `.red/memory/notes`. */
@@ -98,6 +102,7 @@ export interface GraphInitResult {
   config: MemoryConfig;
   configPath: string;
   storeUri: string;
+  versioning: TierVersioningReport;
 }
 
 /**
@@ -116,6 +121,10 @@ export async function initGraph(
   await mkdir(dirname(storeUri.replace(/^file:\/\//, "")), { recursive: true });
   const configPath = await writeConfig(rootDir, config);
   const store = await MemoryStore.open({ uri: storeUri, project: opts.project });
-  await store.close();
-  return { config, configPath, storeUri };
+  try {
+    const versioning = await applyTierVersioning(store);
+    return { config, configPath, storeUri, versioning };
+  } finally {
+    await store.close();
+  }
 }

@@ -16,7 +16,7 @@
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "build": "tsc -p tsconfig.build.json",
-    "test": "vitest run",
+    "test": "RED_MEMORY_RECALL_P50_TARGET_MS=250 vitest run tests/recall-latency.test.ts && vitest run --exclude tests/recall-latency.test.ts",
     "baseline:competitive": "tsx src/competitive-baseline.ts",
     "dev": "node --import tsx src/cli.ts"
   },

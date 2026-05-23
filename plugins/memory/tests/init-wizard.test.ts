@@ -1,6 +1,8 @@
+import { spawnSync } from "node:child_process";
 import { mkdtemp, readFile, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, test } from "vitest";
 import { rm } from "node:fs/promises";
 import {
@@ -12,13 +14,26 @@ import {
   skillTelemetryEnabled,
 } from "../src/config.js";
 import { graphConfig, initMarkdownOnly, markdownOnlyConfig } from "../src/init.js";
+import { MEMORY_COLLECTION_VERSIONING } from "../src/vcs-versioned-collections.js";
 
+const TIMEOUT = 30_000;
+const HERE = dirname(fileURLToPath(import.meta.url));
+const PLUGIN_ROOT = join(HERE, "..");
 const roots: string[] = [];
 async function tempRoot(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "memory-init-"));
   roots.push(dir);
   return dir;
 }
+
+function runMemory(args: string[]) {
+  return spawnSync(process.execPath, ["--import", "tsx", "src/cli.ts", ...args], {
+    cwd: PLUGIN_ROOT,
+    encoding: "utf8",
+    timeout: TIMEOUT,
+  });
+}
+
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((d) => rm(d, { recursive: true, force: true })));
 });
@@ -120,4 +135,26 @@ describe("skill telemetry opt-in — graph-mode explicit flag", () => {
     expect(skillTelemetry).toBe(false);
     expect(skillTelemetryEnabled(legacy)).toBe(false);
   });
+});
+
+describe("graph init VCS opt-in", () => {
+  test(
+    "reports the versioned and skipped Memory collection boundary",
+    async () => {
+      const root = await tempRoot();
+      const result = runMemory(["init", "--mode", "graph", "--root", root, "--yes"]);
+
+      const expectedVersioned = MEMORY_COLLECTION_VERSIONING.filter((c) =>
+        c.tiers.some((tier) => tier === "durable" || tier === "reasoning"),
+      ).map((c) => c.name);
+      const expectedSkipped = MEMORY_COLLECTION_VERSIONING.filter((c) =>
+        c.tiers.every((tier) => tier === "ephemeral"),
+      ).map((c) => c.name);
+
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain(`vcs versioned: ${expectedVersioned.join(", ")}`);
+      expect(result.stdout).toContain(`vcs skipped:   ${expectedSkipped.join(", ")}`);
+    },
+    TIMEOUT,
+  );
 });
