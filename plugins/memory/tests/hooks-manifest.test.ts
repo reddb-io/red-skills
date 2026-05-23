@@ -44,10 +44,11 @@ describe("hook manifests", () => {
     const manifest = await loadManifest("hooks/codex.hooks.json");
 
     for (const command of commands(manifest)) {
+      expect(command).toContain("cat >/dev/null");
       const result = spawnSync(command, {
         shell: true,
         cwd: process.cwd(),
-        input: "{}",
+        input: `${"x".repeat(1024 * 64)}\n`,
         encoding: "utf8",
         env: { ...process.env, CODEX_PLUGIN_ROOT: root },
       });

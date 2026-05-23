@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh -c 'hook=\"${CODEX_PLUGIN_ROOT}/hooks/branch-lock-codex.sh\"; if [ -x \"$hook\" ]; then \"$hook\"; else printf \"{}\"; fi'"
+            "command": "sh -c 'hook=\"${CODEX_PLUGIN_ROOT}/hooks/branch-lock-codex.sh\"; if [ -x \"$hook\" ]; then \"$hook\"; else cat >/dev/null 2>&1 || true; printf \"{}\"; fi'"
           }
         ]
       }

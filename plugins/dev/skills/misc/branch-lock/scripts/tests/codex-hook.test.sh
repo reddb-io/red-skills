@@ -58,6 +58,7 @@ payload() {
 
 manifest_hook="$(jq -r '.hooks.PreToolUse[0].hooks[0].command' "$MANIFEST")"
 expect_contains "manifest: wires branch-lock-codex.sh" "branch-lock-codex.sh" "$manifest_hook"
+expect_contains "manifest: missing-hook fallback drains stdin" "cat >/dev/null" "$manifest_hook"
 
 out="$tmp/manifest-out"
 err="$tmp/manifest-err"
@@ -66,6 +67,20 @@ CODEX_PLUGIN_ROOT="$PLUGIN_ROOT" bash -lc "$manifest_hook" >"$out" 2>"$err" \
 rc=$?
 expect_eq "manifest: command executes through shell" "0" "$rc"
 expect_eq "manifest: command prints empty JSON" "{}" "$(<"$out")"
+
+missing_root="$tmp/missing-plugin-root"
+mkdir -p "$missing_root"
+CODEX_PLUGIN_ROOT="$missing_root" bash -lc "$manifest_hook" >"$out" 2>"$err" \
+  <<<"$(payload "$primary" "git switch main")"
+rc=$?
+expect_eq "manifest: missing hook fails open" "0" "$rc"
+expect_eq "manifest: missing hook prints empty JSON" "{}" "$(<"$out")"
+
+CODEX_PLUGIN_ROOT="$missing_root" "$HOOK" >"$out" 2>"$err" \
+  <<<"$(payload "$primary" "git switch main")"
+rc=$?
+expect_eq "hook: incomplete plugin root fails open" "0" "$rc"
+expect_eq "hook: incomplete plugin root prints empty JSON" "{}" "$(<"$out")"
 
 result="$(run_hook "$primary" "$(payload "$primary" "git switch feature")")"
 rc="$(sed -n '1p' <<<"$result")"

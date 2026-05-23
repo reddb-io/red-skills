@@ -9,6 +9,8 @@ if [[ -z "$PLUGIN_ROOT" ]]; then
   PLUGIN_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 fi
 
+INPUT="$(cat 2>/dev/null || true)"
+
 BRANCH_LOCK_DIR="$PLUGIN_ROOT/skills/misc/branch-lock/scripts"
 [[ -d "$BRANCH_LOCK_DIR/lib" ]] || { printf '{}'; exit 0; }
 
@@ -19,7 +21,6 @@ source "$BRANCH_LOCK_DIR/lib/scope-resolver.sh"
 # shellcheck source=../skills/misc/branch-lock/scripts/lib/git-command-classifier.sh
 source "$BRANCH_LOCK_DIR/lib/git-command-classifier.sh"
 
-INPUT="$(cat)"
 COMMAND="$(
   jq -r '
     .tool_input.command // .tool_input.cmd //
