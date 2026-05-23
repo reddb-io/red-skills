@@ -1,7 +1,9 @@
 import { describe, expect, test } from "vitest";
 import {
+  evaluateCompetitiveEval,
   evaluateCompetitiveBaseline,
   graphifyOutSummary,
+  renderCompetitiveEvalHuman,
   renderComparisonTable,
 } from "../src/competitive-baseline.js";
 
@@ -41,5 +43,29 @@ describe("competitive baseline harness (#73)", () => {
     expect(table).toContain("Parity/mixed: both graph competitors have useful breadth");
     expect(table).toContain("Conceded gap: Python ML stack is ahead for turnkey NER");
     expect(table).toContain("graphify-out fixture: 551 nodes / 1329 edges / 34 communities");
+  });
+
+  test("evaluates checked-in Memory moat fixtures without live services", async () => {
+    const report = await evaluateCompetitiveEval({ now: 1_700_000_000_000 });
+
+    expect(report.fixture.source).toBe("checked-in");
+    expect(report.recall.queryCount).toBeGreaterThanOrEqual(2);
+    expect(report.recall.meanRecallAtK).toBeGreaterThanOrEqual(0.75);
+    expect(report.recall.meanPrecisionAtK).toBeGreaterThan(0);
+    expect(report.recall.latency.p50Ms).toBeGreaterThanOrEqual(0);
+    expect(report.contextPacks.packCount).toBeGreaterThanOrEqual(1);
+    expect(report.contextPacks.meanReductionRatio).toBeGreaterThan(0);
+    expect(report.policy.totalCandidates).toBeGreaterThanOrEqual(4);
+    expect(report.policy.classificationAccuracy).toBe(1);
+    expect(report.policy.lintFindings).toEqual(
+      expect.arrayContaining(["imperative-memory", "likely-secret", "stale-progress-fact"]),
+    );
+    expect(report.claimGuards.unsupportedLiveCompetitorClaims).toEqual([]);
+
+    const human = renderCompetitiveEvalHuman(report);
+    expect(human).toContain("Recall quality");
+    expect(human).toContain("Context-pack size");
+    expect(human).toContain("Policy / extraction");
+    expect(human).toContain("No live competitor claims were asserted");
   });
 });

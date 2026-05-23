@@ -38,7 +38,7 @@ export interface LintReport {
   warnings: string[];
 }
 
-interface LintMemory {
+export interface LintMemoryRecord {
   id: string;
   location: string;
   title: string;
@@ -69,7 +69,7 @@ export async function lintMemory(rootDir: string, opts: LintOptions = {}): Promi
 
   const warnings: string[] = [];
   const memories = await collectMemories(rootDir, config, warnings);
-  const findings = findPolicyProblems(memories, opts);
+  const findings = lintMemoryRecords(memories, opts);
   return {
     status: warnings.length > 0 ? "degraded" : "ok",
     mode: config.mode,
@@ -80,11 +80,18 @@ export async function lintMemory(rootDir: string, opts: LintOptions = {}): Promi
   };
 }
 
+export function lintMemoryRecords(
+  memories: LintMemoryRecord[],
+  opts: LintOptions = {},
+): LintFinding[] {
+  return findPolicyProblems(memories, opts);
+}
+
 async function collectMemories(
   rootDir: string,
   config: MemoryConfig,
   warnings: string[],
-): Promise<LintMemory[]> {
+): Promise<LintMemoryRecord[]> {
   if (config.mode === "markdown-only") {
     return collectMarkdownMemories(resolveNotesDir(rootDir, config), warnings);
   }
@@ -109,7 +116,7 @@ async function collectMemories(
 async function collectMarkdownMemories(
   notesDir: string,
   warnings: string[],
-): Promise<LintMemory[]> {
+): Promise<LintMemoryRecord[]> {
   let entries: string[];
   try {
     entries = (await readdir(notesDir)).filter((file) => file.endsWith(".md")).sort();
@@ -119,7 +126,7 @@ async function collectMarkdownMemories(
     return [];
   }
 
-  const memories: LintMemory[] = [];
+  const memories: LintMemoryRecord[] = [];
   for (const file of entries) {
     const path = join(notesDir, file);
     try {
@@ -145,7 +152,7 @@ async function collectMarkdownMemories(
   return memories;
 }
 
-function graphNodeToMemory(node: StoredNode): LintMemory {
+function graphNodeToMemory(node: StoredNode): LintMemoryRecord {
   const props = node.properties;
   const body = String(props.content ?? props.summary ?? props.title ?? node.label);
   return {
@@ -160,7 +167,7 @@ function graphNodeToMemory(node: StoredNode): LintMemory {
   };
 }
 
-function findPolicyProblems(memories: LintMemory[], opts: LintOptions): LintFinding[] {
+function findPolicyProblems(memories: LintMemoryRecord[], opts: LintOptions): LintFinding[] {
   const now = opts.now ?? Date.now();
   const staleProgressDays = opts.staleProgressDays ?? DEFAULT_STALE_PROGRESS_DAYS;
   const findings: LintFinding[] = [];
@@ -195,7 +202,7 @@ function findPolicyProblems(memories: LintMemory[], opts: LintOptions): LintFind
 
 function finding(
   code: LintFindingCode,
-  memory: LintMemory,
+  memory: LintMemoryRecord,
   message: string,
   severity: LintFinding["severity"] = "warning",
 ): LintFinding {
@@ -209,7 +216,7 @@ function finding(
   };
 }
 
-function isStaleProgress(memory: LintMemory, now: number, staleProgressDays: number): boolean {
+function isStaleProgress(memory: LintMemoryRecord, now: number, staleProgressDays: number): boolean {
   const text = `${memory.title}\n${memory.body}`.toLowerCase();
   const looksLikeProgress =
     /\b(current progress|progress update|status update|halfway through|tests? (are )?running|working on|todo|next step)\b/.test(
@@ -222,12 +229,12 @@ function isStaleProgress(memory: LintMemory, now: number, staleProgressDays: num
   return now - stamp >= staleProgressDays * MS_PER_DAY || memory.tier === "durable";
 }
 
-function isImperativeMemory(memory: LintMemory): boolean {
+function isImperativeMemory(memory: LintMemoryRecord): boolean {
   const text = `${memory.title}\n${memory.body}`.trim().toLowerCase();
   return /^(remember to|always|never|do not|don't|run|use|make sure)\b/.test(text);
 }
 
-function hasSecretLikeContent(memory: LintMemory): boolean {
+function hasSecretLikeContent(memory: LintMemoryRecord): boolean {
   const text = `${memory.title}\n${memory.body}`;
   return (
     /\b(aws_secret_access_key|api[_-]?key|secret[_-]?key|private[_-]?key|access[_-]?token|auth[_-]?token|password)\b\s*[:=]/i.test(
@@ -237,8 +244,10 @@ function hasSecretLikeContent(memory: LintMemory): boolean {
   );
 }
 
-function duplicatePairs(memories: LintMemory[]): Array<{ memory: LintMemory; related: LintMemory }> {
-  const pairs: Array<{ memory: LintMemory; related: LintMemory }> = [];
+function duplicatePairs(
+  memories: LintMemoryRecord[],
+): Array<{ memory: LintMemoryRecord; related: LintMemoryRecord }> {
+  const pairs: Array<{ memory: LintMemoryRecord; related: LintMemoryRecord }> = [];
   const signatures = memories.map((memory) => ({
     memory,
     tokens: new Set(normalizedTokens(`${memory.title}\n${memory.body}`)),

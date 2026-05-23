@@ -116,13 +116,25 @@ normal recall promotes the active head of the chain, while `recall
 
 ## Competitive baseline
 
-`memory` carries a checked-in competitive harness so the README comparison is
-backed by executable assertions instead of marketing copy:
+`memory` carries a checked-in competitive eval harness so the README comparison
+is backed by executable assertions instead of marketing copy:
 
 ```bash
+pnpm --dir plugins/memory eval:competitive
 pnpm --dir plugins/memory baseline:competitive
 pnpm --dir plugins/memory test -- competitive-baseline
 ```
+
+`eval:competitive` runs entirely against checked-in fixtures and emits JSON plus
+a human-readable report. The fixture currently measures recall quality/latency,
+context-pack size reduction, candidate-memory classification, lint policy
+findings, and claim guards for live-service competitors. A representative local
+run reports recall@k `1`, p50 recall latency under `2 ms`, context-pack size
+reduction around `0.59`, classification accuracy `1`, policy findings for
+imperative memories / likely secrets / stale progress, and no unsupported live
+competitor claims. Latency is machine-local, so CI should compare the JSON
+shape and thresholds rather than treating the exact milliseconds as a public
+benchmark.
 
 The fixture summary comes from the existing `reddb-benchmark/graphify-out`
 run: 551 nodes, 1329 edges, 34 detected communities, 491 inferred edges, and
@@ -130,7 +142,7 @@ zero reported input/output tokens. The harness encodes measurable "better than"
 claims for embedded footprint, session lifecycle integration, and the repo's
 recall-latency budget. It deliberately does **not** claim an apples-to-apples
 latency win over `neo4j-labs/agent-memory`; that comparison needs a live Neo4j
-baseline.
+baseline and is reported as unmeasured by the claim guard.
 
 | Axis | `memory` | `graphify` | `agent-memory` | Framing |
 |------|----------|------------|----------------|---------|
