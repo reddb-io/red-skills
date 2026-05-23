@@ -90,6 +90,16 @@ present "Impact mentions graph neighbors/paths" "**graph neighbors/paths**"
 
 present_re "Impact requires worktree verification" "verified against the current worktree"
 
+# --- Graph-backed structural impact reader -----------------------------
+
+present "Gather Context names target file variable" "_zoom_out_target_file"
+present "Gather Context names target symbol variable" "_zoom_out_target_symbol"
+present "Gather Context calls structural-impact helper" "memory_structural_impact"
+present "Gather Context names structural-impact-reader" "structural-impact-reader"
+present_re "Structural Impact consults graph before fallback" "before falling back to ordinary codebase exploration"
+present_re "Structural Impact includes graph-derived import evidence when available" "imports, importers, definitions, and containing files"
+present_re "Structural Impact degrades cleanly when graph evidence is empty" "behave identically to today's ad-hoc file-reading path"
+
 # --- Interpret graph evidence, no raw dumps ----------------------------
 
 present_re "Impact requires interpretation over raw graph output" "Interpret graph or recall evidence into project terms"
