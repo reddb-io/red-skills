@@ -28,7 +28,7 @@ import { diagnose } from "./doctor.js";
 import { ask, neighbors, path, recall, search, traverse } from "./engine.js";
 import { exportGraph } from "./export.js";
 import { MemoryStore, factToNode } from "./graph-store.js";
-import type { EdgeLabel, NodeType } from "./schema.js";
+import type { EdgeLabel, MemoryScope, NodeType } from "./schema.js";
 import { slugify } from "./store.js";
 
 // ---------- tool input schemas ----------
@@ -49,11 +49,24 @@ const NODE_TYPES = [
   "goal",
 ] as const;
 
+const MEMORY_SCOPES = [
+  "user",
+  "project",
+  "repo",
+  "branch",
+  "worktree",
+  "session",
+  "agent-run",
+] as const satisfies readonly MemoryScope[];
+
 const RecallInput = z.object({
   query: z.string().min(1),
   k: z.number().int().min(1).max(50).default(8),
   depth: z.number().int().min(0).max(3).default(1),
   types: z.array(z.string()).optional(),
+  scope: z.enum(MEMORY_SCOPES).optional(),
+  scope_id: z.string().optional(),
+  include_narrower_scopes: z.boolean().default(false),
 });
 
 const StoreInput = z.object({
@@ -64,6 +77,8 @@ const StoreInput = z.object({
   tags: z.array(z.string()).default([]),
   importance: z.number().min(0).max(1).default(0.5),
   source: z.string().optional(),
+  scope: z.enum(MEMORY_SCOPES).optional(),
+  scope_id: z.string().optional(),
   relations: z
     .array(
       z.object({
@@ -140,6 +155,13 @@ async function main(): Promise<void> {
           k: input.k,
           depth: input.depth,
           types: input.types,
+          scope: input.scope
+            ? {
+                level: input.scope,
+                id: input.scope_id,
+                includeNarrower: input.include_narrower_scopes,
+              }
+            : undefined,
         });
         return text(result.context_md, {
           nodes: result.nodes.map((n) => ({
@@ -164,6 +186,8 @@ async function main(): Promise<void> {
           tags: input.tags,
           importance: input.importance,
           source: input.source ?? "mcp",
+          scope: input.scope,
+          scope_id: input.scope_id,
           confidence: "INFERRED",
         };
         const rid = await store.upsertNode(node);

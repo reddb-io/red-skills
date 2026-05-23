@@ -47,14 +47,15 @@ import {
   type SkillRollup,
 } from "./skill-events.js";
 import { curateSkills, isCuratable, rollupsToCuratorInput } from "./skill-curator.js";
+import type { MemoryScope } from "./schema.js";
 import { slugify, storeNote } from "./store.js";
 
 const USAGE = `memory — persistent memory for code agents
 
 Usage:
   memory init [--mode markdown-only|graph] [--hooks] [--skill-telemetry] [--root <dir>] [--yes]
-  memory store <fact...>            [--root <dir>]
-  memory recall <query...>          [--root <dir>] [--limit N] [--include-superseded]
+  memory store <fact...>            [--root <dir>] [--scope project|repo|branch|worktree|session|agent-run|user] [--scope-id ID]
+  memory recall <query...>          [--root <dir>] [--limit N] [--include-superseded] [--scope ...] [--scope-id ID] [--include-narrower-scopes]
   memory ingest <path>              [--root <dir>] [--max-files N]
   memory refresh [<path...>]         [--root <dir>] [--stdin] [--changed|--staged] [--json]
   memory extract [<transcript-file>] [--root <dir>]   (reads stdin if no file)
@@ -121,6 +122,33 @@ function parseArgs(argv: string[]): ParsedArgs {
 
 function rootOf(flags: Record<string, string | boolean>): string {
   return typeof flags.root === "string" ? flags.root : process.cwd();
+}
+
+const MEMORY_SCOPES: readonly MemoryScope[] = [
+  "user",
+  "project",
+  "repo",
+  "branch",
+  "worktree",
+  "session",
+  "agent-run",
+];
+
+function parseMemoryScope(value: string | boolean | undefined): MemoryScope | undefined {
+  if (value == null || value === false) return undefined;
+  if (value === true) throw new Error("--scope requires a value");
+  if ((MEMORY_SCOPES as readonly string[]).includes(value)) return value as MemoryScope;
+  throw new Error(`invalid memory scope "${value}"`);
+}
+
+function scopeFlags(flags: Record<string, string | boolean>) {
+  const level = parseMemoryScope(flags.scope);
+  if (!level) return undefined;
+  return {
+    level,
+    id: typeof flags["scope-id"] === "string" ? flags["scope-id"] : undefined,
+    includeNarrower: flags["include-narrower-scopes"] === true,
+  };
 }
 
 async function requireConfig(rootDir: string) {
@@ -194,7 +222,13 @@ async function runStore(args: ParsedArgs): Promise<void> {
   if (config.mode === "graph") {
     const store = await MemoryStore.open({ uri: resolveStoreUri(rootDir, config) });
     try {
-      const rid = await store.upsertNode(factToNode(fact, slugify));
+      const explicitScope = parseMemoryScope(args.flags.scope);
+      const rid = await store.upsertNode(
+        factToNode(fact, slugify, {
+          scope: explicitScope,
+          scopeId: typeof args.flags["scope-id"] === "string" ? args.flags["scope-id"] : undefined,
+        }),
+      );
       console.log(`memory: stored node ${rid}`);
     } finally {
       await store.close();
@@ -219,6 +253,7 @@ async function runRecall(args: ParsedArgs): Promise<void> {
     try {
       const hits = await graphRecall(store, query, limit, {
         includeSuperseded: args.flags["include-superseded"] === true,
+        scope: scopeFlags(args.flags),
       });
       if (hits.length === 0) {
         console.log(`memory: no matches for "${query}"`);

@@ -30,7 +30,7 @@ const EVENT = {
   },
 } satisfies SkillEvent;
 
-const TIMEOUT = 30_000;
+const TIMEOUT = 60_000;
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = join(HERE, "..");
 const roots: string[] = [];

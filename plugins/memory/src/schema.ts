@@ -30,6 +30,20 @@ export type Confidence = "EXTRACTED" | "INFERRED" | "AMBIGUOUS";
  */
 export type Tier = "ephemeral" | "durable" | "reasoning";
 
+/**
+ * Applicability boundary for a memory fact (issue #116). Broader scopes are
+ * safe to recall in more places; narrower scopes require matching context or
+ * an explicit request before they surface.
+ */
+export type MemoryScope =
+  | "user"
+  | "project"
+  | "repo"
+  | "branch"
+  | "worktree"
+  | "session"
+  | "agent-run";
+
 export type NodeType =
   | "file"
   | "import"
@@ -101,6 +115,10 @@ export interface MemoryNodeProps {
   source?: string;
   language?: string;
   project?: string;
+  /** Scope classification for safe recall filtering; defaults to `project`. */
+  scope?: MemoryScope;
+  /** Identifier for the scope when one is available (project name, branch, etc.). */
+  scope_id?: string;
   /** Memory tier; defaults on write per `defaultTier(node_type)`. */
   tier?: Tier;
   created_at?: number;
