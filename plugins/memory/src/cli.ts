@@ -34,6 +34,13 @@ import {
   type StructuralImpactTarget,
 } from "./structural-impact-reader.js";
 import {
+  listContradictions,
+  resolveConflict,
+  supersessionTimeline,
+  type ContradictionSummary,
+  type TopicTimeline,
+} from "./supersession.js";
+import {
   recordReasoningAttempt,
   type ReasoningAttemptPayload,
 } from "./reasoning/attempt-writer.js";
@@ -76,6 +83,10 @@ Usage:
   memory neighbors <label>          [--root <dir>] [--depth N] [--direction outgoing|incoming|both]
   memory traverse <label>           [--root <dir>] [--depth N] [--strategy bfs|dfs] [--direction ...]
   memory path <from> <to>           [--root <dir>] [--algorithm bfs|dijkstra]
+  memory conflicts                  [--root <dir>] [--include-resolved] [--json]
+  memory supersede <old-rid> <new-rid> [--root <dir>] [--reason <text>]
+  memory resolve-conflict <active-rid> <superseded-rid> [--root <dir>] [--reason <text>]
+  memory timeline <topic|rid>       [--root <dir>] [--include-audit] [--json]
   memory structural-impact          [--root <dir>] [--file <path>] [--symbol <name>]
   memory stats                      [--root <dir>]
   memory doctor                     [--root <dir>] [--stale-days N] [--prune] [--yes]
@@ -1919,6 +1930,123 @@ async function runPath(args: ParsedArgs): Promise<void> {
   }
 }
 
+async function runConflicts(args: ParsedArgs): Promise<void> {
+  const { store } = await openGraphStore(args);
+  try {
+    const conflicts = await listContradictions(store, {
+      includeResolved: args.flags["include-resolved"] === true,
+    });
+    if (args.flags.json === true) {
+      console.log(JSON.stringify({ conflicts }, null, 2));
+      return;
+    }
+    printConflicts(conflicts);
+  } finally {
+    await store.close();
+  }
+}
+
+async function runSupersede(args: ParsedArgs): Promise<void> {
+  const [oldArg, newArg] = args.positional;
+  if (!oldArg || !newArg) {
+    throw new Error("pass two node rids: memory supersede <old-rid> <new-rid>");
+  }
+  const oldRid = parseRid(oldArg, "old-rid");
+  const newRid = parseRid(newArg, "new-rid");
+  const reason = typeof args.flags.reason === "string" ? args.flags.reason : undefined;
+  const { store } = await openGraphStore(args);
+  try {
+    await resolveConflict(store, { activeRid: newRid, supersededRid: oldRid, reason });
+    console.log(`memory: superseded ${oldRid} -> ${newRid}`);
+    if (reason) console.log(`  reason: ${reason}`);
+  } finally {
+    await store.close();
+  }
+}
+
+async function runResolveConflict(args: ParsedArgs): Promise<void> {
+  const activeArg = typeof args.flags.active === "string" ? args.flags.active : args.positional[0];
+  const supersededArg =
+    typeof args.flags.superseded === "string" ? args.flags.superseded : args.positional[1];
+  if (!activeArg || !supersededArg) {
+    throw new Error(
+      "pass active and superseded rids: memory resolve-conflict <active-rid> <superseded-rid>",
+    );
+  }
+  const activeRid = parseRid(activeArg, "active-rid");
+  const supersededRid = parseRid(supersededArg, "superseded-rid");
+  const reason = typeof args.flags.reason === "string" ? args.flags.reason : undefined;
+  const { store } = await openGraphStore(args);
+  try {
+    await resolveConflict(store, { activeRid, supersededRid, reason });
+    console.log(`memory: resolved conflict with active ${activeRid}; superseded ${supersededRid}`);
+    if (reason) console.log(`  reason: ${reason}`);
+  } finally {
+    await store.close();
+  }
+}
+
+async function runTimeline(args: ParsedArgs): Promise<void> {
+  const topic = args.positional.join(" ").trim();
+  if (!topic) throw new Error("pass a topic or rid: memory timeline <topic|rid>");
+  const { store } = await openGraphStore(args);
+  try {
+    const timeline = await supersessionTimeline(store, topic);
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(timeline, null, 2));
+      return;
+    }
+    printTimeline(timeline, { includeAudit: args.flags["include-audit"] === true });
+  } finally {
+    await store.close();
+  }
+}
+
+function parseRid(value: string, name: string): number {
+  const rid = Number(value);
+  if (!Number.isInteger(rid) || rid <= 0) throw new Error(`${name} must be a positive integer`);
+  return rid;
+}
+
+function printConflicts(conflicts: ContradictionSummary[]): void {
+  if (conflicts.length === 0) {
+    console.log("memory: no unresolved contradictions");
+    return;
+  }
+  console.log(`memory: ${conflicts.length} likely contradiction(s)`);
+  for (const conflict of conflicts) {
+    const status = conflict.resolved ? `resolved -> ${conflict.activeRid}` : "unresolved";
+    console.log(
+      `  [${status}] ${conflict.from.rid} ${conflict.from.label} <-> ${conflict.to.rid} ${conflict.to.label}`,
+    );
+    if (conflict.reason) console.log(`        ${conflict.reason}`);
+  }
+}
+
+function printTimeline(timeline: TopicTimeline, opts: { includeAudit: boolean }): void {
+  if (timeline.entries.length === 0) {
+    console.log(`memory: no timeline entries for "${timeline.topic}"`);
+    return;
+  }
+  console.log(`memory: timeline for "${timeline.topic}"`);
+  for (const entry of timeline.entries) {
+    const marker = entry.status === "active" ? "active" : `superseded -> ${entry.activeRid}`;
+    console.log(`  [${marker}] ${entry.rid} (${entry.nodeType}) ${entry.label}`);
+    if (entry.content) console.log(`        ${entry.content.slice(0, 200)}`);
+  }
+  if (opts.includeAudit) {
+    if (timeline.auditLinks.length === 0) {
+      console.log("  audit: no contradiction or supersession links");
+      return;
+    }
+    console.log("  audit:");
+    for (const edge of timeline.auditLinks) {
+      const reason = edge.reason ? ` - ${edge.reason}` : "";
+      console.log(`    ${edge.label} ${edge.fromRid} -> ${edge.toRid}${reason}`);
+    }
+  }
+}
+
 async function runStructuralImpact(args: ParsedArgs): Promise<void> {
   const target: StructuralImpactTarget = {
     file: typeof args.flags.file === "string" ? args.flags.file : undefined,
@@ -2140,6 +2268,14 @@ async function main(): Promise<void> {
       return runTraverse(args);
     case "path":
       return runPath(args);
+    case "conflicts":
+      return runConflicts(args);
+    case "supersede":
+      return runSupersede(args);
+    case "resolve-conflict":
+      return runResolveConflict(args);
+    case "timeline":
+      return runTimeline(args);
     case "structural-impact":
       return runStructuralImpact(args);
     case "stats":

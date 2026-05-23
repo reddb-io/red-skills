@@ -30,6 +30,7 @@ import { exportGraph } from "./export.js";
 import { MemoryStore, factToNode } from "./graph-store.js";
 import type { EdgeLabel, MemoryScope, NodeType } from "./schema.js";
 import { slugify } from "./store.js";
+import { listContradictions, supersessionTimeline } from "./supersession.js";
 
 // ---------- tool input schemas ----------
 
@@ -120,6 +121,14 @@ const SupersedeInput = z.object({
   old_rid: z.number().int(),
   new_rid: z.number().int(),
   reason: z.string().optional(),
+});
+
+const ConflictsInput = z.object({
+  include_resolved: z.boolean().default(false),
+});
+
+const TimelineInput = z.object({
+  topic: z.string().min(1),
 });
 
 const ExportInput = z.object({
@@ -266,6 +275,21 @@ async function main(): Promise<void> {
         const stats = await store.stats();
         return text(JSON.stringify(stats, null, 2), stats);
       }
+      case "memory_conflicts": {
+        const input = ConflictsInput.parse(args);
+        const conflicts = await listContradictions(store, {
+          includeResolved: input.include_resolved,
+        });
+        return text(JSON.stringify(conflicts, null, 2), { count: conflicts.length });
+      }
+      case "memory_timeline": {
+        const input = TimelineInput.parse(args);
+        const timeline = await supersessionTimeline(store, input.topic);
+        return text(JSON.stringify(timeline, null, 2), {
+          entries: timeline.entries.length,
+          audit_links: timeline.auditLinks.length,
+        });
+      }
       case "memory_supersede": {
         const input = SupersedeInput.parse(args);
         const edgeRid = await store.supersede(input.old_rid, input.new_rid, input.reason);
@@ -380,6 +404,18 @@ const TOOLS = [
     name: "memory_stats",
     description: "Counts of nodes/edges and basic store health.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  },
+  {
+    name: "memory_conflicts",
+    description:
+      "Read-only contradiction inspection. Lists CONTRADICTS edges that have not converged on the same active supersession head; pass include_resolved to audit resolved conflicts too.",
+    inputSchema: zodToSchema(ConflictsInput),
+  },
+  {
+    name: "memory_timeline",
+    description:
+      "Read-only topic timeline. Shows active and superseded guidance plus contradiction/supersession audit links for matching memory nodes.",
+    inputSchema: zodToSchema(TimelineInput),
   },
   {
     name: "memory_supersede",

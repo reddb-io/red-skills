@@ -145,6 +145,31 @@ describe("recall", () => {
     },
     TIMEOUT,
   );
+
+  test(
+    "redirects an old-only match to the active supersession head",
+    async () => {
+      const store = await openStore();
+      const old = await store.upsertNode({
+        label: "deploy-fridays",
+        node_type: "decision",
+        properties: { title: "deploy fridays", content: "we deploy on fridays" },
+      });
+      const current = await store.upsertNode({
+        label: "deploy-tuesdays",
+        node_type: "decision",
+        properties: { title: "deploy tuesdays", content: "ship windows moved to tuesdays" },
+      });
+      await store.supersede(old, current, "policy changed");
+
+      const { nodes, context_md } = await recall(store, "fridays", { depth: 0 });
+      const rids = nodes.map((n) => n.rid);
+      expect(rids).toContain(current);
+      expect(rids).not.toContain(old);
+      expect(context_md).toContain("deploy tuesdays");
+    },
+    TIMEOUT,
+  );
 });
 
 describe("search", () => {
