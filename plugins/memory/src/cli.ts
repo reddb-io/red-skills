@@ -11,6 +11,7 @@ import {
   resolveStoreUri,
   skillTelemetryEnabled,
 } from "./config.js";
+import { buildContextPack } from "./context-pack.js";
 import { diagnose, prune } from "./doctor.js";
 import { ask, neighbors, path as shortestPath, search, traverse } from "./engine.js";
 import { exportGraph } from "./export.js";
@@ -70,6 +71,7 @@ Usage:
   memory store <fact...>            [--root <dir>] [--scope project|repo|branch|worktree|session|agent-run|user] [--scope-id ID]
   memory classify <candidate...>    [--root <dir>] [--json]
   memory recall <query...>          [--root <dir>] [--limit N] [--include-superseded] [--scope ...] [--scope-id ID] [--include-narrower-scopes]
+  memory context-pack <goal...>     [--root <dir>] [--budget N] [--limit N] [--json] [--scope ...] [--scope-id ID] [--include-narrower-scopes]
   memory ask <question...>          [--root <dir>] [--json]
   memory ingest <path>              [--root <dir>] [--max-files N]
   memory refresh [<path...>]         [--root <dir>] [--stdin] [--changed|--staged] [--json]
@@ -315,6 +317,37 @@ async function runRecall(args: ParsedArgs): Promise<void> {
   for (const hit of hits) {
     console.log(`  [${hit.score}] ${hit.id}`);
     console.log(`        ${hit.excerpt}`);
+  }
+}
+
+async function runContextPack(args: ParsedArgs): Promise<void> {
+  const rootDir = rootOf(args.flags);
+  const goal = args.positional.join(" ").trim();
+  if (!goal) throw new Error("nothing to pack — pass a goal: memory context-pack <goal>");
+  const config = await requireConfig(rootDir);
+  if (config.mode !== "graph") {
+    throw new Error(
+      `context-pack needs graph mode — this project is "${config.mode}". Re-run \`memory init --mode graph\` first`,
+    );
+  }
+
+  const budgetChars =
+    typeof args.flags.budget === "string" ? Number(args.flags.budget) : undefined;
+  const limit = typeof args.flags.limit === "string" ? Number(args.flags.limit) : undefined;
+  const store = await MemoryStore.open({ uri: resolveStoreUri(rootDir, config) });
+  try {
+    const pack = await buildContextPack(store, goal, {
+      budgetChars,
+      limit,
+      scope: scopeFlags(args.flags),
+    });
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(pack, null, 2));
+      return;
+    }
+    process.stdout.write(pack.markdown);
+  } finally {
+    await store.close();
   }
 }
 
@@ -2411,6 +2444,8 @@ async function main(): Promise<void> {
       return runClassify(args);
     case "recall":
       return runRecall(args);
+    case "context-pack":
+      return runContextPack(args);
     case "ask":
       return runAsk(args);
     case "ingest":
