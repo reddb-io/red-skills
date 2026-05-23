@@ -41,7 +41,7 @@ The command writes proposals under:
 - `no-op` — Memory is initialized without graph mode; Skill telemetry cannot persist rollups here.
 - `unavailable` — graph mode exists but Skill telemetry is not enabled.
 - `no-candidates` — telemetry does not currently support a proposal.
-- `proposal-ready` — dry-run found proposal candidates but wrote no files. JSON summaries include `recentFailures`, `dominantErrorStage`, `dominantErrorClass`, and `patchDrafted` for machine-readable routing.
+- `proposal-ready` — dry-run found proposal candidates but wrote no files. JSON summaries include `recentFailures`, `dominantErrorStage`, `dominantErrorClass`, `patchDrafted`, `score`, `priority`, and `scoreReasons` for machine-readable routing.
 - `proposal-written` — proposal files were written for review, including recent failure evidence and a draft structured patch block when the skill file has a safe unique insertion anchor.
 - `applied` — an explicitly approved structured patch was applied.
 
@@ -83,6 +83,7 @@ Patch block format:
 - ✅ Apply the smallest skill patch that addresses the observed failure mode.
 - ✅ Run repo metadata/skill validation after applying a proposal.
 - ✅ Include recent failed result evidence in proposals so reviewers see the stage/class/code that triggered the recommendation.
+- ✅ Rank proposal candidates by deterministic priority score so agents fix the highest-impact failure loops first.
 - ✅ Generate a draft `json memory-skill-patch` block only when the target skill is readable and has a safe unique anchor.
 - ✅ Require `--yes` and an exact `oldString` match before applying a proposal.
 - ❌ Do not let Memory patch anything unless the proposal has a structured apply block.

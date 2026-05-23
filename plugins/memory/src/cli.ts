@@ -23,6 +23,7 @@ import { MemoryStore, factToNode } from "./graph-store.js";
 import { ingestProject } from "./ingest.js";
 import { initGraph, initMarkdownOnly } from "./init.js";
 import { applyProviderEnv, redDbProviderClient } from "./provider-client.js";
+import { computeProposalPriority, sortProposalSummaries } from "./proposal-priority.js";
 import { recall } from "./recall.js";
 import {
   structuralImpactReader,
@@ -523,6 +524,9 @@ interface SkillImprovementProposalSummary {
   dominantErrorStage: string | null;
   dominantErrorClass: string | null;
   patchDrafted: boolean;
+  score: number;
+  priority: "high" | "medium" | "low";
+  scoreReasons: string[];
   path: string | null;
   written: boolean;
 }
@@ -542,6 +546,15 @@ async function buildSkillImprovementProposals(
     const evidence = recentFailureEvidence(rec.name, recentEvents);
     const body = await renderSkillImprovementProposal(rootDir, rec, evidence);
     const patchDrafted = body.includes("```json memory-skill-patch");
+    const dominantErrorStage = topValues(evidence.map((event) => event.error_stage))[0] ?? null;
+    const dominantErrorClass = topValues(evidence.map((event) => event.error_class))[0] ?? null;
+    const priority = computeProposalPriority({
+      reason: rec.reason,
+      recentFailures: evidence.length,
+      dominantErrorStage,
+      dominantErrorClass,
+      patchDrafted,
+    });
     let proposalPath: string | null = null;
     if (writeProposal) {
       const file = `skill-improvement-${slugify(rec.name)}-${new Date().toISOString().replace(/[:.]/g, "-")}.md`;
@@ -554,14 +567,17 @@ async function buildSkillImprovementProposals(
       reason: rec.reason,
       skillPath: rec.path,
       recentFailures: evidence.length,
-      dominantErrorStage: topValues(evidence.map((event) => event.error_stage))[0] ?? null,
-      dominantErrorClass: topValues(evidence.map((event) => event.error_class))[0] ?? null,
+      dominantErrorStage,
+      dominantErrorClass,
       patchDrafted,
+      score: priority.score,
+      priority: priority.priority,
+      scoreReasons: priority.reasons,
       path: proposalPath,
       written: writeProposal,
     });
   }
-  return proposals;
+  return sortProposalSummaries(proposals);
 }
 
 async function renderSkillImprovementProposal(

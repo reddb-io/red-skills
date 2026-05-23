@@ -6,6 +6,17 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 
 ---
 
+## improve-skills-priority-score (memory/core)
+
+- **status**: added
+- **upstream**: —
+- **why**: Help agents and CI choose the highest-impact Memory self-improvement proposal first.
+- **what changed**:
+  - Proposal JSON summaries now include deterministic `score`, `priority`, and `scoreReasons` fields.
+  - Scores combine failure ratio, recent failures, repeated error stage/class, and structured patch availability.
+  - Proposal summaries are sorted by score descending, then skill name for deterministic tie-breaking.
+  - Added unit coverage for priority scoring and ranking plus CLI coverage for JSON priority fields.
+
 ## improve-skills-json-evidence-summary (memory/core)
 
 - **status**: added

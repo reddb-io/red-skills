@@ -31,21 +31,28 @@ function runMemory(args: string[], input?: string) {
   });
 }
 
-function skillResultEvent(i: number, skillFile: string, status: "failed" | "succeeded") {
+function skillResultEvent(
+  i: number,
+  skillFile: string,
+  status: "failed" | "succeeded",
+  name = "flaky-skill",
+  errorStage = "verify",
+  errorClass = "ValidationError",
+) {
   return {
     event_type: "result",
-    event_id: `evt-${i}`,
-    timestamp: `2026-05-22T16:0${i}:00.000Z`,
+    event_id: `${name}-evt-${i}`,
+    timestamp: `2026-05-22T16:${String(i).padStart(2, "0")}:00.000Z`,
     session_id: "s1",
-    turn_id: `t${i}`,
-    name: "flaky-skill",
+    turn_id: `${name}-t${i}`,
+    name,
     source_kind: "project",
     path: skillFile,
     runner: "claude",
     result: {
       status,
-      error_class: status === "failed" ? "ValidationError" : undefined,
-      error_stage: status === "failed" ? "verify" : undefined,
+      error_class: status === "failed" ? errorClass : undefined,
+      error_stage: status === "failed" ? errorStage : undefined,
     },
   };
 }
@@ -98,6 +105,12 @@ describe("memory improve skills CLI", () => {
       expect(body.proposals[0].dominantErrorStage).toBe("verify");
       expect(body.proposals[0].dominantErrorClass).toBe("ValidationError");
       expect(body.proposals[0].patchDrafted).toBe(true);
+      expect(body.proposals[0].priority).toBe("high");
+      expect(body.proposals[0].score).toBeGreaterThanOrEqual(0.8);
+      expect(body.proposals[0].scoreReasons).toContain("failure ratio 80%");
+      expect(body.proposals[0].scoreReasons).toContain("4 recent failure(s)");
+      expect(body.proposals[0].scoreReasons).toContain("same error_stage repeated: verify");
+      expect(body.proposals[0].scoreReasons).toContain("structured patch draft generated");
       expect(body.proposals[0].path).toContain(".red/memory/proposals/");
 
       const files = await readdir(join(root, ".red", "memory", "proposals"));
