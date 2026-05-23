@@ -7,10 +7,12 @@ description: Walk a repo (or a subtree) and populate the memory graph from its c
 
 Indexes a project tree into the **graph** store with the deterministic
 extractors — no LLM calls. Code files (`.ts/.tsx/.js/.jsx/.py/.go/.rs`) become
-`file` + `symbol` nodes with `DEFINED_IN` edges; markdown files become `concept`
-nodes (one per file, one per h1–h3 heading) with `REFERENCES` edges for every
-`[[wiki-link]]`, plus a stored doc chunk for later search. Everything dedupes by
-content hash, so re-ingesting an unchanged tree is a no-op.
+`file` + `symbol` nodes with `DEFINED_IN` edges; TypeScript/JavaScript files
+also become `import` nodes with `IMPORTS` edges for static import and re-export
+specifiers. Markdown files become `concept` nodes (one per file, one per h1–h3
+heading) with `REFERENCES` edges for every `[[wiki-link]]`, plus a stored doc
+chunk for later search. Everything dedupes by content hash, so re-ingesting an
+unchanged tree is a no-op.
 
 This is the `EXTRACTED` (deterministic) ingest path only. Conversation/git
 (`INFERRED`) ingestion is not part of this surface.
@@ -43,6 +45,6 @@ what was indexed, then use `/memory:recall` to read the graph back.
 - ✅ Ingest after `memory init --mode graph` so recall has structure to search.
 - ✅ Re-run ingest after large refactors — dedupe makes it cheap and keeps the graph current.
 - ❌ Don't run ingest in markdown-only mode — there is no graph to populate.
-- ❌ Don't expect call/import/type graphs yet — this slice extracts symbols and markdown structure only.
+- ❌ Don't expect call/type graphs yet — this slice extracts symbols, TS/JS imports, and markdown structure only.
 
 </what-to-do>
