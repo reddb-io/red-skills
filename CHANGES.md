@@ -6,6 +6,22 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 
 ---
 
+## context (engineering) — RedSkills context stack orchestration (added)
+
+- **status**: added
+- **upstream**: —
+- **why**: Fold the current best practices from Hermes Agent, Understand-Anything, graphify, and Neo4j Agent Memory into a first-class RedSkills workflow for context management and self-improvement.
+- **what changed**: New `plugins/dev/skills/engineering/context/SKILL.md` defines the context stack loop: committed project context (`CLAUDE.md`/`AGENTS.md`, `.red/CONTEXT.md`, ADRs), Memory recall/graph ingest, graph-aware `/zoom-out`, LLM Wiki query/ingest, durable learning capture, and Skill telemetry/curator diagnostics. Registered in the dev plugin manifest, root README, and engineering README.
+
+## memory core skills — expose extract and Skill telemetry diagnostics (added)
+
+- **status**: added
+- **upstream**: —
+- **why**: The Memory plugin already had the CLI surfaces for transcript extraction and Skill telemetry status, but they were not exposed as documented skills; self-improvement workflows needed first-class command guidance.
+- **what changed**: New `plugins/memory/skills/core/extract/SKILL.md` for graph-mode `INFERRED` transcript extraction and new `plugins/memory/skills/core/skills-status/SKILL.md` for read-only Skill telemetry diagnostics. Registered in the memory plugin manifest and README tables. Refreshed stale memory plugin descriptions that still described the markdown-only tracer slice.
+
+---
+
 ## zoom-out (engineering) — Impact section splits structural vs observed impact from Reasoning attempts (modified)
 
 - **status**: modified

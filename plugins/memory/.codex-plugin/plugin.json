@@ -1,7 +1,7 @@
 {
   "name": "memory",
   "version": "1.48.1",
-  "description": "reddb.io memory plugin - persistent, queryable memory for code agents that lives on top of dev. Markdown-only slice: memory init, /memory:store, /memory:recall over plain markdown notes. Requires the dev plugin.",
+  "description": "reddb.io memory plugin - persistent, queryable memory for code agents that lives on top of dev. Supports markdown notes, RedDB graph memory, graph ingest/recall/export, optional lifecycle hooks, MCP, and Skill telemetry for self-improvement.",
   "author": {
     "name": "reddb.io",
     "url": "https://github.com/reddb-io"
@@ -25,7 +25,7 @@
   "interface": {
     "displayName": "RedSkills Memory",
     "shortDescription": "Persistent memory for code agents.",
-    "longDescription": "RedSkills Memory gives code agents a persistent, queryable memory that survives /clear and crosses sessions. This release ships the markdown-only path — a single init wizard plus /memory:store and /memory:recall over plain markdown notes, with no engine dependency. Builds on the dev plugin's processes.",
+    "longDescription": "RedSkills Memory gives code agents a persistent, queryable memory that survives /clear and crosses sessions. It supports markdown-only notes and a RedDB-backed graph mode with repo ingest, hybrid graph recall, graph export, optional lifecycle hooks, MCP access, and Skill telemetry used by report-only curator diagnostics. Builds on the dev plugin processes.",
     "developerName": "reddb.io",
     "category": "Developer Tools",
     "capabilities": [
@@ -36,9 +36,9 @@
     ],
     "websiteURL": "https://github.com/reddb-io/red-skills",
     "defaultPrompt": [
-      "Run $init to set up markdown-only memory.",
-      "Capture a decision with $store.",
-      "Look up what we know with $recall."
+      "Run $init to set up markdown-only or graph memory.",
+      "Capture a decision with $store, or extract durable facts with $extract.",
+      "Look up what we know with $recall, then inspect self-improvement telemetry with $skills-status."
     ],
     "brandColor": "#D92D20"
   }

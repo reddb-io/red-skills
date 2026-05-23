@@ -6,6 +6,7 @@
   "skills": [
     "./skills/engineering/afk",
     "./skills/engineering/curate",
+    "./skills/engineering/context",
     "./skills/engineering/diagnose",
     "./skills/engineering/start",
     "./skills/engineering/triage",

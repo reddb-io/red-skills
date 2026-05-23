@@ -27,7 +27,9 @@ It **lives on top of the `dev` plugin** and is meant to improve dev's processes
 **markdown-only keeps all hooks off** — nothing can auto-fire, there is no
 engine to recall from or index into. **graph mode** can opt into the four
 auto-firing hooks below; they default off and are turned on at `memory init`.
-The `/afk` · `/triage` · `/diagnose` integrations land in later slices.
+The `dev` plugin soft-uses Memory for `/afk`, `/triage`, `/diagnose`, and
+`/zoom-out` when it is initialized; absence or failure degrades to the original
+workflow instead of becoming a hard dependency.
 
 ## Auto-firing hooks (graph mode, opt-in)
 
@@ -146,6 +148,8 @@ RED_MEMORY_URI=file:///abs/graph.rdb \
 | **[store](./skills/core/store/SKILL.md)** | Save a fact (markdown note or graph node). |
 | **[recall](./skills/core/recall/SKILL.md)** | Ranked search over stored memory. |
 | **[ingest](./skills/core/ingest/SKILL.md)** | Walk a repo into the graph — code symbols + markdown structure (graph mode). |
+| **[extract](./skills/core/extract/SKILL.md)** | Extract durable `INFERRED` facts from a transcript using the configured provider (graph mode). |
+| **[skills-status](./skills/core/skills-status/SKILL.md)** | Diagnose Skill telemetry and recent Skill usage before curation/self-improvement. |
 | **[doctor](./skills/core/doctor/SKILL.md)** | Flag stale nodes and prune them after confirmation (graph mode). |
 | **[export](./skills/core/export/SKILL.md)** | Export the graph to a navigable graph.html + graph.json + audit.md (graph mode). |
 

@@ -556,6 +556,7 @@ Composable. Boring on purpose where boring is enough. Sharp where it matters.
 |-------|--------------|
 | **[afk](./plugins/dev/skills/engineering/afk/SKILL.md)** | Drains `ready-for-agent` issues in isolated worktrees. Claude/Codex runner cascade, fleet mode (`/afk fleet N`), pluggable detectors via `.red/config.yaml`, canonical attempt envelopes on the issue thread, 48h sparkline monitor, statusline integration. |
 | **[curate](./plugins/dev/skills/engineering/curate/SKILL.md)** | Interactive, archive-only Skill curator. Lists `archive` candidates from `memory curate skills --json`, requires explicit approval, performs a recoverable archive of Curatable skills (atomic `rename` + SHA-256 manifest), and reverses it with `/curate --restore <name>`. Tracer slice — only the `archive` category is wired. |
+| **[context](./plugins/dev/skills/engineering/context/SKILL.md)** | Compose the RedSkills context stack before non-trivial work: domain docs, ADRs, LLM Wiki, Memory graph/recall, graph-aware zoom-out, durable learning capture, and self-improvement telemetry. |
 | **[diagnose](./plugins/dev/skills/engineering/diagnose/SKILL.md)** | Disciplined diagnosis: reproduce → minimise → hypothesise → instrument → fix → regression-test. |
 | **[start](./plugins/dev/skills/engineering/start/SKILL.md)** | Grilling session that challenges your plan against the domain model; updates `.red/CONTEXT.md` and ADRs inline. |
 | **[triage](./plugins/dev/skills/engineering/triage/SKILL.md)** | Moves issues through the triage state machine; writes the AGENT-BRIEF that `/afk` will consume. |
@@ -612,8 +613,9 @@ The separate **`memory`** plugin gives agents a persistent, queryable memory tha
 survives `/clear` and crosses sessions. It lives on top of `dev` (requires it).
 Two storage modes ship today — **markdown-only** (plain notes, zero engine
 dependency) and **graph** (a typed knowledge graph over a per-project RedDB
-store). Both keep hooks and MCP off — nothing auto-fires. Install `memory`
-alongside `dev`, then run `memory init`.
+store). Graph mode can opt into lifecycle hooks, Skill telemetry, MCP access,
+and graph export; markdown-only remains explicit-only with no engine. Install
+`memory` alongside `dev`, then run `memory init`.
 
 | Skill | What it does |
 |-------|--------------|
@@ -621,13 +623,15 @@ alongside `dev`, then run `memory init`.
 | **[store](./plugins/memory/skills/core/store/SKILL.md)** | `/memory:store <fact>` — save a fact (markdown note, or a deduped graph node). |
 | **[recall](./plugins/memory/skills/core/recall/SKILL.md)** | `/memory:recall <query>` — ranked search over stored memory (notes, or the graph with supersede-aware, neighborhood-expanded results). |
 | **[ingest](./plugins/memory/skills/core/ingest/SKILL.md)** | `/memory:ingest <path>` — walk a repo into the graph: code symbols + markdown structure with their edges (graph mode). |
+| **[extract](./plugins/memory/skills/core/extract/SKILL.md)** | `/memory:extract <transcript>` — extract durable `INFERRED` facts from a transcript using the configured provider (graph mode). |
+| **[skills-status](./plugins/memory/skills/core/skills-status/SKILL.md)** | `/memory:skills-status` — diagnose Skill telemetry and recent usage before curation/self-improvement. |
 | **[doctor](./plugins/memory/skills/core/doctor/SKILL.md)** | `/memory:doctor` — flag stale nodes (long-unaccessed, never recalled) and prune them after confirmation (graph mode). |
 | **[export](./plugins/memory/skills/core/export/SKILL.md)** | `/memory:export` — export the graph to a navigable graph.html + graph.json + audit.md (graph mode). |
 
 See [plugins/memory/README.md](./plugins/memory/README.md) and, for the RedDB
 graph-write constraints, [ADR 0007](./.red/adr/0007-reddb-graph-writes-via-multi-model-dml.md).
-Hybrid storage, the MCP server, the auto-firing hooks, and the `/afk` · `/triage`
-· `/diagnose` integrations land in later slices.
+Hybrid storage remains future work; graph mode already provides the lifecycle
+hooks, MCP server, Skill telemetry, and soft integrations used by `dev`.
 
 </details>
 
