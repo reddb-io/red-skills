@@ -26,6 +26,7 @@ import { graphRecall } from "./graph-recall.js";
 import { MemoryStore, factToNode } from "./graph-store.js";
 import { ingestProject, refreshFiles } from "./ingest.js";
 import { initGraph, initMarkdownOnly } from "./init.js";
+import { lintMemory, type LintReport } from "./lint.js";
 import { applyProviderEnv, redDbProviderClient } from "./provider-client.js";
 import { computeProposalPriority, sortProposalSummaries } from "./proposal-priority.js";
 import {
@@ -84,6 +85,7 @@ Usage:
   memory improve proposals archive <proposal> --reason applied|rejected|stale --yes [--root <dir>] [--json]
   memory improve apply <proposal>    [--root <dir>] --yes [--json]   (explicit patch apply)
   memory health                    [--root <dir>] [--json]   (operational healthcheck, read-only)
+  memory lint                      [--root <dir>] [--json]   (policy hygiene report, read-only)
   memory status skills              [--root <dir>] [--all] [--limit N] [--json]   (diagnostic, read-only)
   memory status context             [--root <dir>] [--json]   (context stack healthcheck, read-only)
   memory attempt record             [--root <dir>]             (reads AFK attempt JSON from stdin)
@@ -1373,6 +1375,41 @@ async function runHealth(args: ParsedArgs): Promise<void> {
   console.log("\nRead-only healthcheck: no memory, graph, proposal, or skill files were mutated.");
 }
 
+async function runLint(args: ParsedArgs): Promise<void> {
+  const rootDir = resolve(rootOf(args.flags));
+  const report = await lintMemory(rootDir);
+
+  if (args.flags.json === true) {
+    console.log(JSON.stringify(report, null, 2));
+    return;
+  }
+
+  printLintReport(report);
+}
+
+function printLintReport(report: LintReport): void {
+  console.log(
+    `memory: lint — ${report.status} (${report.mode}, ${report.totalMemories} ${plural(
+      report.totalMemories,
+      "memory",
+    )})`,
+  );
+  for (const warning of report.warnings) {
+    console.log(`  warning: ${warning}`);
+  }
+  if (report.findings.length === 0) {
+    console.log("  no policy hygiene findings");
+  } else {
+    for (const item of report.findings) {
+      const related = item.relatedMemoryId ? ` related=${item.relatedMemoryId}` : "";
+      console.log(`  [${item.severity}] ${item.code} ${item.memoryId}${related}`);
+      console.log(`        ${item.message}`);
+      if (item.excerpt) console.log(`        ${item.excerpt}`);
+    }
+  }
+  console.log("\nRead-only lint: no memory, graph, or note files were mutated.");
+}
+
 async function healthReport(rootDir: string) {
   const context = await contextStatusReport(rootDir);
   const config = await readConfig(rootDir);
@@ -2460,6 +2497,8 @@ async function main(): Promise<void> {
       return runImprove(args);
     case "health":
       return runHealth(args);
+    case "lint":
+      return runLint(args);
     case "status":
       return runStatus(args);
     case "attempt":
