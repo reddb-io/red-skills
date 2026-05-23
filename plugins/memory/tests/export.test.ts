@@ -128,4 +128,103 @@ describe("export", () => {
     },
     TIMEOUT,
   );
+
+  test(
+    "dashboard export exposes health, evidence status, conflicts, and context preview",
+    async () => {
+      const { store, dir } = await openStore();
+      const now = Date.now();
+      const active = await store.upsertNode({
+        label: "current-guidance",
+        node_type: "decision",
+        properties: {
+          title: "current deploy guidance",
+          content: "Deploys happen on Tuesday.",
+          confidence: "EXTRACTED",
+        },
+      });
+      const superseded = await store.upsertNode({
+        label: "old-guidance",
+        node_type: "decision",
+        properties: {
+          title: "old deploy guidance",
+          content: "Deploys happen on Friday.",
+          confidence: "INFERRED",
+        },
+      });
+      const stale = await store.upsertNode({
+        label: "stale-guidance",
+        node_type: "concept",
+        properties: {
+          title: "stale reminder",
+          content: "This reminder has not been recalled.",
+          confidence: "EXTRACTED",
+        },
+      });
+      const ambiguous = await store.upsertNode({
+        label: "unclear-guidance",
+        node_type: "concept",
+        properties: {
+          title: "unclear rollout window",
+          content: "The rollout window may be Wednesday.",
+          confidence: "AMBIGUOUS",
+        },
+      });
+      await store.supersede(superseded, active, "Tuesday replaced Friday");
+      await store.upsertEdge({
+        label: "CONTRADICTS",
+        from_rid: active,
+        to_rid: ambiguous,
+        properties: { reason: "different rollout window" },
+      });
+      await store.recordAccess([active, superseded, ambiguous]);
+
+      const result = await exportGraph(store, join(dir, "export"), {
+        now: now + 91 * 24 * 60 * 60 * 1000,
+      });
+
+      const json = JSON.parse(await readFile(result.jsonPath, "utf8"));
+      expect(json.health).toMatchObject({
+        state: "needs-attention",
+        total_nodes: 4,
+        total_edges: 2,
+        stale_nodes: 1,
+        superseded_nodes: 1,
+        unresolved_contradictions: 1,
+        ambiguous_nodes: 1,
+      });
+      expect(json.evidence.active.map((n: { rid: number }) => n.rid)).toContain(active);
+      expect(json.evidence.superseded).toEqual([
+        expect.objectContaining({ rid: superseded, active_rid: active }),
+      ]);
+      expect(json.evidence.stale).toEqual([expect.objectContaining({ rid: stale })]);
+      expect(json.evidence.ambiguous).toEqual([expect.objectContaining({ rid: ambiguous })]);
+      expect(json.contradictions).toEqual([
+        expect.objectContaining({
+          from_rid: active,
+          to_rid: ambiguous,
+          reason: "different rollout window",
+          resolved: false,
+        }),
+      ]);
+      expect(json.context_pack_preview).toMatchObject({
+        representative_goal: "Preview active Memory evidence from this export",
+      });
+      expect(json.context_pack_preview.context_md).toContain("current deploy guidance");
+
+      const html = await readFile(result.htmlPath, "utf8");
+      expect(html).toContain("Memory health");
+      expect(html).toContain("needs-attention");
+      expect(html).toContain("Contradictions");
+      expect(html).toContain("Tuesday replaced Friday");
+      expect(html).toContain("Context pack preview");
+      expect(html).toContain("stale reminder");
+
+      const audit = await readFile(result.auditPath, "utf8");
+      expect(audit).toContain("Memory health");
+      expect(audit).toContain("Unresolved contradictions:** 1");
+      expect(audit).toContain("Context pack preview");
+    },
+    TIMEOUT,
+  );
 });
