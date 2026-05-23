@@ -23,6 +23,12 @@ To write proposal files:
 node "${CLAUDE_PLUGIN_ROOT}/dist/cli.js" improve skills --write-proposal --json
 ```
 
+To apply a reviewed proposal that contains a structured patch block:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/dist/cli.js" improve apply .red/memory/proposals/<proposal>.md --yes --json
+```
+
 The command writes proposals under:
 
 ```text
@@ -37,6 +43,7 @@ The command writes proposals under:
 - `no-candidates` — telemetry does not currently support a proposal.
 - `proposal-ready` — dry-run found proposal candidates but wrote no files.
 - `proposal-written` — proposal files were written for review.
+- `applied` — an explicitly approved structured patch was applied.
 
 ## 3. Review before applying
 
@@ -50,13 +57,34 @@ For each proposal, inspect:
 
 Only patch the skill after explicit human approval or an equivalent review gate.
 
+`memory improve apply` refuses to run unless all of these are true:
+
+- the command includes `--yes`;
+- the proposal contains a fenced ````json memory-skill-patch` block;
+- the proposal file and patch target remain inside `--root`;
+- `oldString` appears exactly once in the target file.
+
+Patch block format:
+
+````markdown
+```json memory-skill-patch
+{
+  "path": "plugins/dev/skills/example/SKILL.md",
+  "oldString": "text to replace",
+  "newString": "replacement text"
+}
+```
+````
+
 ## 4. Preserve the safety boundary
 
 - ✅ Write proposals when telemetry shows repeated failure evidence.
 - ✅ Treat proposal files as review artifacts, not source of truth.
 - ✅ Apply the smallest skill patch that addresses the observed failure mode.
 - ✅ Run repo metadata/skill validation after applying a proposal.
-- ❌ Do not let Memory directly patch, archive, delete, or rewrite Skill files.
+- ✅ Require `--yes` and an exact `oldString` match before applying a proposal.
+- ❌ Do not let Memory patch anything unless the proposal has a structured apply block.
+- ❌ Do not let Memory archive, delete, or rewrite Skill files outside the reviewed patch target.
 - ❌ Do not generate proposals from one-off failures without enough evidence.
 - ❌ Do not store secrets or raw transcript dumps in proposals.
 
@@ -66,6 +94,6 @@ Only patch the skill after explicit human approval or an equivalent review gate.
 
 `memory improve skills` currently proposes fixes for curatable skills flagged as `frequently-failing` by Skill telemetry rollups. It is deliberately proposal-gated: the Memory plugin may write `.red/memory/proposals/*.md`, but applying a patch remains an explicit review step handled outside this command.
 
-This is the first mutating stage in the self-improvement loop. The mutation is limited to proposal artifacts under `.red/memory/proposals/`; skill source files remain untouched.
+This is the first mutating stage in the self-improvement loop. Proposal generation mutates only `.red/memory/proposals/`; proposal application can patch a target skill only when a reviewed structured block plus `--yes` are both present.
 
 </supporting-info>

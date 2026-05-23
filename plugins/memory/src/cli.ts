@@ -47,6 +47,7 @@ Usage:
   memory event skill                [--root <dir>] [--event-type ...] ... (or JSON/JSONL on stdin)
   memory curate skills              [--root <dir>] [--stale-days N] [--json]   (report-only)
   memory improve skills             [--root <dir>] [--write-proposal] [--json]   (proposal-gated)
+  memory improve apply <proposal>    [--root <dir>] --yes [--json]   (explicit patch apply)
   memory status skills              [--root <dir>] [--all] [--limit N] [--json]   (diagnostic, read-only)
   memory status context             [--root <dir>] [--json]   (context stack healthcheck, read-only)
 
@@ -368,8 +369,9 @@ async function runCurate(args: ParsedArgs): Promise<void> {
  */
 async function runImprove(args: ParsedArgs): Promise<void> {
   const kind = args.positional[0];
+  if (kind === "apply") return runImproveApply(args);
   if (kind !== "skills") {
-    throw new Error("improve needs a kind — supported: memory improve skills");
+    throw new Error("improve needs a kind — supported: memory improve skills|apply");
   }
 
   const rootDir = rootOf(args.flags);
@@ -420,6 +422,88 @@ async function runImprove(args: ParsedArgs): Promise<void> {
     if (proposal.path) console.log(`    proposal: ${proposal.path}`);
   }
   console.log("\nProposal-gated: skill files were not patched. Review and apply manually.");
+}
+
+
+interface SkillPatchBlock {
+  path: string;
+  oldString: string;
+  newString: string;
+}
+
+async function runImproveApply(args: ParsedArgs): Promise<void> {
+  const proposalArg = args.positional[1];
+  if (!proposalArg) throw new Error("memory improve apply needs a proposal file");
+  if (args.flags.yes !== true) {
+    throw new Error("memory improve apply requires explicit --yes approval");
+  }
+
+  const rootDir = rootOf(args.flags);
+  const json = args.flags.json === true;
+  const proposalPath = resolve(rootDir, proposalArg);
+  assertInsideRoot(rootDir, proposalPath, "proposal file");
+  const proposal = await readFile(proposalPath, "utf8");
+  const patchBlock = parseSkillPatchBlock(proposal);
+  const targetPath = resolve(rootDir, patchBlock.path);
+  assertInsideRoot(rootDir, targetPath, "patch target");
+
+  const current = await readFile(targetPath, "utf8");
+  const occurrences = countOccurrences(current, patchBlock.oldString);
+  if (occurrences !== 1) {
+    throw new Error(`patch target must contain oldString exactly once, found ${occurrences}`);
+  }
+  await writeFile(targetPath, current.replace(patchBlock.oldString, patchBlock.newString), "utf8");
+
+  const result = {
+    state: "applied",
+    proposal: toPosix(relative(rootDir, proposalPath)),
+    target: toPosix(relative(rootDir, targetPath)),
+  };
+  if (json) {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+  console.log(`memory: applied proposal ${result.proposal}`);
+  console.log(`  target: ${result.target}`);
+}
+
+function parseSkillPatchBlock(proposal: string): SkillPatchBlock {
+  const match = proposal.match(/```json memory-skill-patch\s*([\s\S]*?)```/);
+  if (!match) throw new Error("proposal needs a structured memory-skill-patch block");
+  let raw: unknown;
+  try {
+    raw = JSON.parse(match[1]);
+  } catch (err) {
+    throw new Error(`invalid memory-skill-patch JSON: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error("memory-skill-patch must be a JSON object");
+  }
+  const obj = raw as Record<string, unknown>;
+  const path = obj.path;
+  const oldString = obj.oldString;
+  const newString = obj.newString;
+  if (typeof path !== "string" || path.trim() === "") throw new Error("memory-skill-patch.path is required");
+  if (typeof oldString !== "string" || oldString === "") throw new Error("memory-skill-patch.oldString is required");
+  if (typeof newString !== "string") throw new Error("memory-skill-patch.newString is required");
+  return { path, oldString, newString };
+}
+
+function assertInsideRoot(rootDir: string, filePath: string, label: string): void {
+  const rel = relative(rootDir, filePath);
+  if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
+    throw new Error(`${label} must stay inside --root`);
+  }
+}
+
+function countOccurrences(text: string, needle: string): number {
+  let count = 0;
+  let index = 0;
+  while ((index = text.indexOf(needle, index)) !== -1) {
+    count++;
+    index += needle.length;
+  }
+  return count;
 }
 
 interface SkillImprovementProposalSummary {

@@ -6,6 +6,16 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 
 ---
 
+## improve-apply (memory/core)
+
+- **status**: added
+- **upstream**: —
+- **why**: Complete the proposal-gated self-improvement loop with an explicit apply step.
+- **what changed**:
+  - Added `memory improve apply <proposal-file> --yes` for reviewed structured Skill patches.
+  - Added guardrails: proposal and target must stay inside `--root`, proposals need a fenced `json memory-skill-patch` block, and `oldString` must match exactly once.
+  - Added tests proving apply is blocked without `--yes` and refuses unstructured proposals.
+
 ## improve-skills (memory/core)
 
 - **status**: added
