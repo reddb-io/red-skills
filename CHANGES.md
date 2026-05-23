@@ -6,6 +6,16 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 
 ---
 
+## improve-skills (memory/core)
+
+- **status**: added
+- **upstream**: —
+- **why**: Add the first proposal-gated self-improvement write path for Skill telemetry evidence.
+- **what changed**:
+  - Added `memory improve skills` with dry-run JSON output and explicit `--write-proposal` artifact creation under `.red/memory/proposals/`.
+  - Added `/memory:improve-skills` documentation and manifest registration.
+  - Added regression tests proving proposal files can be written without mutating Skill source files.
+
 ## context-status (memory/core) — read-only context stack healthcheck (added)
 
 - **status**: added

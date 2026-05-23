@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { createInterface } from "node:readline/promises";
-import { access, readdir, readFile, stat } from "node:fs/promises";
+import { access, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import {
   readConfig,
   resolveNotesDir,
@@ -46,6 +46,7 @@ Usage:
   memory extract [<transcript-file>] [--root <dir>]   (reads stdin if no file)
   memory event skill                [--root <dir>] [--event-type ...] ... (or JSON/JSONL on stdin)
   memory curate skills              [--root <dir>] [--stale-days N] [--json]   (report-only)
+  memory improve skills             [--root <dir>] [--write-proposal] [--json]   (proposal-gated)
   memory status skills              [--root <dir>] [--all] [--limit N] [--json]   (diagnostic, read-only)
   memory status context             [--root <dir>] [--json]   (context stack healthcheck, read-only)
 
@@ -354,6 +355,169 @@ async function runCurate(args: ParsedArgs): Promise<void> {
     console.log(`  [${rec.category}] ${rec.name} (${tag}) — ${rec.reason}`);
   }
   console.log("\nReport-only: no skill files were read, patched, archived, or deleted.");
+}
+
+/**
+ * memory improve skills — proposal-gated self-improvement surface.
+ *
+ * This is the first non-read-only step in the Skill self-improvement loop. It
+ * still NEVER edits a skill directly. It reads Skill telemetry, turns supported
+ * recommendations into concrete Markdown proposals, and writes those proposals
+ * only when explicitly asked with --write-proposal. Applying a proposal remains a
+ * separate human-reviewed action.
+ */
+async function runImprove(args: ParsedArgs): Promise<void> {
+  const kind = args.positional[0];
+  if (kind !== "skills") {
+    throw new Error("improve needs a kind — supported: memory improve skills");
+  }
+
+  const rootDir = rootOf(args.flags);
+  const json = args.flags.json === true;
+  const writeProposal = args.flags["write-proposal"] === true;
+  const config = await readConfig(rootDir);
+  if (!config) {
+    return reportImproveState(json, "uninitialized", "memory is not initialized here", []);
+  }
+  if (config.mode !== "graph") {
+    return reportImproveState(json, "no-op", `needs graph mode, this project is "${config.mode}"`, []);
+  }
+  if (!skillTelemetryEnabled(config)) {
+    return reportImproveState(
+      json,
+      "unavailable",
+      "skill telemetry is not enabled, re-run `memory init --mode graph --skill-telemetry`",
+      [],
+    );
+  }
+
+  const store = await MemoryStore.open({ uri: resolveStoreUri(rootDir, config) });
+  let report;
+  try {
+    const rollups = await readSkillRollups(store);
+    report = curateSkills(rollupsToCuratorInput(rollups), {
+      staleDays: intFlag(args.flags, "stale-days"),
+    });
+  } finally {
+    await store.close();
+  }
+
+  const proposals = await buildSkillImprovementProposals(rootDir, report.recommendations, writeProposal);
+  const state = proposals.length === 0 ? "no-candidates" : writeProposal ? "proposal-written" : "proposal-ready";
+
+  if (json) {
+    console.log(JSON.stringify({ state, proposals }, null, 2));
+    return;
+  }
+
+  console.log(`memory: skill improvement — ${state}`);
+  if (proposals.length === 0) {
+    console.log("  no proposal candidates found from current telemetry evidence");
+    return;
+  }
+  for (const proposal of proposals) {
+    console.log(`  ${proposal.skill}: ${proposal.category} — ${proposal.reason}`);
+    if (proposal.path) console.log(`    proposal: ${proposal.path}`);
+  }
+  console.log("\nProposal-gated: skill files were not patched. Review and apply manually.");
+}
+
+interface SkillImprovementProposalSummary {
+  skill: string;
+  category: string;
+  reason: string;
+  skillPath: string;
+  path: string | null;
+  written: boolean;
+}
+
+async function buildSkillImprovementProposals(
+  rootDir: string,
+  recommendations: readonly { name: string; category: string; reason: string; path: string; curatable: boolean }[],
+  writeProposal: boolean,
+): Promise<SkillImprovementProposalSummary[]> {
+  const candidates = recommendations.filter((rec) => rec.curatable && rec.category === "frequently-failing");
+  const proposals: SkillImprovementProposalSummary[] = [];
+  const proposalDir = join(rootDir, ".red", "memory", "proposals");
+  if (writeProposal && candidates.length > 0) await mkdir(proposalDir, { recursive: true });
+
+  for (const rec of candidates) {
+    const body = renderSkillImprovementProposal(rootDir, rec);
+    let proposalPath: string | null = null;
+    if (writeProposal) {
+      const file = `skill-improvement-${slugify(rec.name)}-${new Date().toISOString().replace(/[:.]/g, "-")}.md`;
+      proposalPath = join(proposalDir, file);
+      await writeFile(proposalPath, body, "utf8");
+    }
+    proposals.push({
+      skill: rec.name,
+      category: rec.category,
+      reason: rec.reason,
+      skillPath: rec.path,
+      path: proposalPath,
+      written: writeProposal,
+    });
+  }
+  return proposals;
+}
+
+function renderSkillImprovementProposal(
+  rootDir: string,
+  rec: { name: string; category: string; reason: string; path: string },
+): string {
+  const relSkillPath = isAbsolute(rec.path) ? toPosix(relative(rootDir, rec.path)) : rec.path;
+  return `# Skill Improvement Proposal: ${rec.name}
+
+Status: approval-gated
+Generated: ${new Date().toISOString()}
+
+## Evidence
+
+- Skill: ${rec.name}
+- Category: ${rec.category}
+- Reason: ${rec.reason}
+- Skill path: ${relSkillPath}
+
+## Hypothesis
+
+Telemetry indicates this skill is repeatedly failing. The most likely root cause is missing prerequisite checks, ambiguous execution steps, incomplete verification guidance, or outdated tool instructions.
+
+## Proposed Patch
+
+Do not apply blindly. Review ${relSkillPath} and patch the smallest section that addresses the observed failure pattern.
+
+Suggested patch targets:
+
+1. Add or tighten prerequisite checks before the failure stage.
+2. Add a troubleshooting note for the observed failure mode.
+3. Add an explicit verification command or expected output.
+4. Add a pitfall warning if the failure is caused by a common misuse.
+
+## Validation Plan
+
+1. Re-run the task or fixture that produced the failure.
+2. Run any repo-specific metadata and skill validators.
+3. Record a new Skill result event after validation.
+4. Keep this proposal with the review notes, or delete it if rejected.
+
+## Apply Policy
+
+This proposal is intentionally approval-gated. The Memory plugin wrote this proposal file only; it did not patch, archive, delete, or rewrite the Skill.
+`;
+}
+
+function reportImproveState(
+  json: boolean,
+  state: "uninitialized" | "no-op" | "unavailable",
+  reason: string,
+  proposals: SkillImprovementProposalSummary[],
+): void {
+  if (json) {
+    console.log(JSON.stringify({ state, reason, proposals }, null, 2));
+    return;
+  }
+  console.log(`memory: skill improvement — ${state}`);
+  console.log(`  ${reason}`);
 }
 
 /**
@@ -1164,6 +1328,8 @@ async function main(): Promise<void> {
       return runSkillEvent(args);
     case "curate":
       return runCurate(args);
+    case "improve":
+      return runImprove(args);
     case "status":
       return runStatus(args);
     case "extract":
