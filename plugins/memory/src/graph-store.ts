@@ -119,6 +119,8 @@ export class MemoryStore {
   private db!: RedDB;
   private readonly project: string;
   private readonly ephemeralTtlMs: number;
+  private nodeCache: StoredNode[] | null = null;
+  private edgeCache: Record<string, unknown>[] | null = null;
 
   private constructor(
     private readonly opts: MemoryStoreOptions,
@@ -146,6 +148,8 @@ export class MemoryStore {
   }
 
   async close(): Promise<void> {
+    this.nodeCache = null;
+    this.edgeCache = null;
     await this.db.close();
   }
 
@@ -206,6 +210,7 @@ export class MemoryStore {
     const row = r.rows[0];
     if (row == null) throw new Error("INSERT NODE returned no row");
     const rid = Number(row.red_entity_id ?? row.rid);
+    this.invalidateNodeCache();
     // Dedupe index: SELECT/WHERE over arbitrary node columns does not filter on
     // graph collections (only label/node_type), so the hash→rid map lives in KV.
     await this.kv().put(nodeHashKey(hash), rid);
@@ -265,8 +270,15 @@ export class MemoryStore {
    * and always survive. `now` is injectable for tests.
    */
   async listNodes(now: number = Date.now()): Promise<StoredNode[]> {
-    const r = await this.db.query(`SELECT * FROM ${COLLECTIONS.nodes}`);
-    return r.rows.map(rowToNode).filter((n) => !isExpired(n, now));
+    if (this.nodeCache == null) {
+      const r = await this.db.query(`SELECT * FROM ${COLLECTIONS.nodes}`);
+      this.nodeCache = r.rows.map(rowToNode);
+    }
+    return this.nodeCache.filter((n) => !isExpired(n, now));
+  }
+
+  private invalidateNodeCache(): void {
+    this.nodeCache = null;
   }
 
   /**
@@ -316,6 +328,7 @@ export class MemoryStore {
     if (row == null) throw new Error("INSERT EDGE returned no row");
     const rid = Number(row.red_entity_id ?? row.rid);
     await this.kv().put(edgeKey(edge.from_rid, edge.to_rid, edge.label), rid);
+    this.invalidateEdgeCache();
     return rid;
   }
 
@@ -477,24 +490,28 @@ export class MemoryStore {
    * Used only by `memory:doctor` after explicit confirmation — never automatic.
    */
   async deleteNode(node: StoredNode): Promise<void> {
-    await this.db.query(
-      `DELETE FROM ${COLLECTIONS.nodes} WHERE label = $1 AND node_type = $2`,
-      node.label,
-      node.node_type,
-    );
-    const hash = node.properties.hash;
-    if (typeof hash === "string") await this.kv().delete(nodeHashKey(hash));
-    const map = await this.readAccessMap();
-    if (map[node.rid] != null) {
-      delete map[node.rid];
-      await this.kv().put(ACCESS_KEY, map);
+    try {
+      await this.db.query(
+        `DELETE FROM ${COLLECTIONS.nodes} WHERE label = $1 AND node_type = $2`,
+        node.label,
+        node.node_type,
+      );
+      const hash = node.properties.hash;
+      if (typeof hash === "string") await this.kv().delete(nodeHashKey(hash));
+      const map = await this.readAccessMap();
+      if (map[node.rid] != null) {
+        delete map[node.rid];
+        await this.kv().put(ACCESS_KEY, map);
+      }
+      const sup = await this.readSupersededMap();
+      if (sup[node.rid] != null) {
+        delete sup[node.rid];
+        await this.kv().put(SUPERSEDED_KEY, sup);
+      }
+      await this.kv().delete(nodeExpiryKey(node.rid));
+    } finally {
+      this.invalidateNodeCache();
     }
-    const sup = await this.readSupersededMap();
-    if (sup[node.rid] != null) {
-      delete sup[node.rid];
-      await this.kv().put(SUPERSEDED_KEY, sup);
-    }
-    await this.kv().delete(nodeExpiryKey(node.rid));
   }
 
   // -------------------------------------------------------------------
@@ -706,11 +723,17 @@ export class MemoryStore {
   /** Every edge in the graph, for export/inspection. */
   async listEdges(): Promise<Record<string, unknown>[]> {
     try {
+      if (this.edgeCache != null) return this.edgeCache;
       const r = await this.db.query(`SELECT * FROM ${COLLECTIONS.edges}`);
-      return r.rows;
+      this.edgeCache = r.rows;
+      return this.edgeCache;
     } catch {
       return [];
     }
+  }
+
+  private invalidateEdgeCache(): void {
+    this.edgeCache = null;
   }
 
   async stats(): Promise<{ nodes: number; edges: number }> {

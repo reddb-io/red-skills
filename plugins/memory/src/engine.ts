@@ -172,26 +172,70 @@ function latestTimestamp(node: StoredNode): number {
   return Math.max(p.accessed_at ?? 0, p.updated_at ?? 0, p.created_at ?? 0);
 }
 
-/**
- * Degree map keyed by rid, built from one `listEdges` scan. Each edge bumps the
- * degree of both endpoints (centrality is undirected here). Column names vary
- * by engine build — mirror `export.ts`'s edge normalizer.
- */
-function degreeIndex(edges: Record<string, unknown>[]): {
+interface GraphIndex {
   degree: Map<number, number>;
   maxDegree: number;
-} {
+  neighbors: Map<number, number[]>;
+}
+
+/**
+ * In-memory graph snapshot keyed by rid, built from one `listEdges` scan. Each
+ * edge contributes both centrality and undirected recall expansion, avoiding a
+ * graph-walk query per seed on the recall hot path.
+ */
+function graphIndex(edges: Record<string, unknown>[]): GraphIndex {
   const degree = new Map<number, number>();
+  const neighbors = new Map<number, number[]>();
   const bump = (rid: number) => {
     if (Number.isFinite(rid)) degree.set(rid, (degree.get(rid) ?? 0) + 1);
   };
+  const link = (from: number, to: number) => {
+    if (!Number.isFinite(from) || !Number.isFinite(to)) return;
+    const list = neighbors.get(from) ?? [];
+    list.push(to);
+    neighbors.set(from, list);
+  };
   for (const e of edges) {
-    bump(Number(e.from ?? e.from_id ?? e.source ?? e.FROM ?? Number.NaN));
-    bump(Number(e.to ?? e.to_id ?? e.target ?? e.TO ?? Number.NaN));
+    const from = Number(
+      e.from ?? e.from_id ?? e.from_rid ?? e.source ?? e.FROM ?? Number.NaN,
+    );
+    const to = Number(e.to ?? e.to_id ?? e.to_rid ?? e.target ?? e.TO ?? Number.NaN);
+    bump(from);
+    bump(to);
+    link(from, to);
+    link(to, from);
   }
   let maxDegree = 0;
   for (const d of degree.values()) if (d > maxDegree) maxDegree = d;
-  return { degree, maxDegree };
+  return { degree, maxDegree, neighbors };
+}
+
+function expandSeedFromEdges(
+  seedRid: number,
+  seedScore: number,
+  depth: number,
+  graph: GraphIndex,
+  index: Map<number, StoredNode>,
+  scored: Map<number, number>,
+  depthOf: Map<number, number>,
+): void {
+  const seen = new Set<number>([seedRid]);
+  let frontier = [seedRid];
+  for (let hop = 1; hop <= depth && frontier.length > 0; hop++) {
+    const next: number[] = [];
+    for (const rid of frontier) {
+      for (const neighborRid of graph.neighbors.get(rid) ?? []) {
+        if (seen.has(neighborRid) || !index.has(neighborRid)) continue;
+        seen.add(neighborRid);
+        next.push(neighborRid);
+        if (!scored.has(neighborRid)) {
+          scored.set(neighborRid, seedScore * SEED_NEIGHBOR_DECAY);
+          depthOf.set(neighborRid, hop);
+        }
+      }
+    }
+    frontier = next;
+  }
 }
 
 /** Token-overlap score: how many distinct query terms appear in the node. */
@@ -231,10 +275,12 @@ export async function recall(
     if (s > 0) scored.set(node.rid, s);
   }
 
-  // Engine FTS widens the seed set. An FTS-only hit (no term-scan score) gets a
-  // weak base score so direct term matches always outrank it.
-  for (const hit of await store.searchText(query, k * 4)) {
-    if (index.has(hit.rid) && !scored.has(hit.rid)) scored.set(hit.rid, SEED_NEIGHBOR_DECAY);
+  // Engine FTS widens sparse seed sets. When the deterministic scan already
+  // found enough seeds to expand, skip the extra engine query on the hot path.
+  if (scored.size < k) {
+    for (const hit of await store.searchText(query, k * 4)) {
+      if (index.has(hit.rid) && !scored.has(hit.rid)) scored.set(hit.rid, SEED_NEIGHBOR_DECAY);
+    }
   }
 
   // Expand the top-k seeds by `depth` hops. A neighbor inherits a decayed share
@@ -245,20 +291,19 @@ export async function recall(
   const depthOf = new Map<number, number>();
   for (const [rid] of seeds) depthOf.set(rid, 0);
 
+  // One edge scan serves both neighborhood expansion and centrality. The engine
+  // graph-walk primitive remains exposed via `neighbors`/`traverse`, but recall
+  // avoids N seed-level round-trips on the hot path.
+  const graph = graphIndex(await store.listEdges());
+
   if (depth > 0) {
     for (const [rid, score] of seeds) {
-      const seed = index.get(rid);
-      if (!seed) continue;
-      for (const neighbor of await store.neighborhood(seed.label, depth, "both")) {
-        if (!index.has(neighbor.rid) || scored.has(neighbor.rid)) continue;
-        scored.set(neighbor.rid, score * SEED_NEIGHBOR_DECAY);
-        depthOf.set(neighbor.rid, neighbor.depth);
-      }
+      if (index.has(rid)) expandSeedFromEdges(rid, score, depth, graph, index, scored, depthOf);
     }
   }
 
-  // Centrality needs the whole edge set once; degree normalizes per-graph.
-  const { degree, maxDegree } = degreeIndex(await store.listEdges());
+  // Centrality normalizes per-graph.
+  const { degree, maxDegree } = graph;
   // Head-of-chain markers for every candidate in one round-trip (issue #72).
   const supersededMap = includeSuperseded
     ? new Map<number, number>()
