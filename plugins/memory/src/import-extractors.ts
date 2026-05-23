@@ -1,4 +1,4 @@
-import { dirname, join } from "node:path";
+import { dirname, join, sep } from "node:path";
 
 export interface Import {
   specifier: string;
@@ -9,6 +9,7 @@ export interface Import {
 export type ImportExtractor = (parseTree: unknown, sourceText: string) => Import[];
 
 const TS_JS_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx"]);
+const RUST_EXTENSIONS = new Set([".rs"]);
 
 /**
  * Extract ES module specifiers from TypeScript/JavaScript source text.
@@ -34,9 +35,41 @@ export const typescriptJavascriptImportExtractor: ImportExtractor = (
   return imports;
 };
 
+/**
+ * Expand Rust `use` trees into concrete path specifiers. This scanner keeps the
+ * extraction deterministic and intentionally narrow: malformed use groups throw
+ * so the dispatcher can fail closed for that file's imports.
+ */
+export const rustImportExtractor: ImportExtractor = (_parseTree, sourceText) => {
+  const imports: Import[] = [];
+
+  for (const declaration of rustUseDeclarations(sourceText)) {
+    assertBalancedBraces(declaration);
+    const useClause = declaration
+      .replace(/^\s*(?:pub(?:\([^)]*\))?\s+)?use\s+/, "")
+      .replace(/;\s*$/, "");
+    for (const specifier of expandRustUseTree(useClause)) {
+      imports.push({ specifier, kind: isRustRelative(specifier) ? "relative" : "bare" });
+    }
+  }
+
+  const externCrateRe =
+    /\b(?:pub(?:\([^)]*\))?\s+)?extern\s+crate\s+([A-Za-z_]\w*)(?:\s+as\s+[A-Za-z_]\w*)?\s*;/g;
+  for (const match of sourceText.matchAll(externCrateRe)) {
+    const specifier = match[1];
+    if (!specifier) continue;
+    imports.push({ specifier, kind: "bare" });
+  }
+
+  return imports;
+};
+
 const EXTRACTORS_BY_EXT = new Map<string, ImportExtractor>();
 for (const ext of TS_JS_EXTENSIONS) {
   EXTRACTORS_BY_EXT.set(ext, typescriptJavascriptImportExtractor);
+}
+for (const ext of RUST_EXTENSIONS) {
+  EXTRACTORS_BY_EXT.set(ext, rustImportExtractor);
 }
 
 export function extractImportsForFile(
@@ -51,7 +84,13 @@ export function extractImportsForFile(
   try {
     return extractor(parseTree, sourceText).map((imp) =>
       imp.kind === "relative"
-        ? { ...imp, resolvedPath: join(dirname(sourcePath), imp.specifier) }
+        ? {
+            ...imp,
+            resolvedPath:
+              ext === ".rs"
+                ? resolveRustRelativeImport(sourcePath, imp.specifier)
+                : join(dirname(sourcePath), imp.specifier),
+          }
         : imp,
     );
   } catch {
@@ -61,6 +100,10 @@ export function extractImportsForFile(
 
 function isRelative(specifier: string): boolean {
   return specifier.startsWith("./") || specifier.startsWith("../");
+}
+
+function isRustRelative(specifier: string): boolean {
+  return /^(?:crate|self|super)(?:::|$)/.test(specifier);
 }
 
 function assertImportClausesParse(sourceText: string): void {
@@ -78,4 +121,125 @@ function assertImportClausesParse(sourceText: string): void {
     }
     if (braceDepth !== 0) throw new Error("malformed import/export clause");
   }
+}
+
+function rustUseDeclarations(sourceText: string): string[] {
+  return [...sourceText.matchAll(/\b(?:pub(?:\([^)]*\))?\s+)?use\s+[\s\S]*?(?:;|$)/g)].map(
+    (m) => m[0] ?? "",
+  );
+}
+
+function assertBalancedBraces(text: string): void {
+  let braceDepth = 0;
+  for (const char of text) {
+    if (char === "{") braceDepth += 1;
+    if (char === "}") braceDepth -= 1;
+    if (braceDepth < 0) throw new Error("malformed Rust use clause");
+  }
+  if (braceDepth !== 0) throw new Error("malformed Rust use clause");
+}
+
+function expandRustUseTree(useTree: string, prefix: string[] = []): string[] {
+  const imports: string[] = [];
+  for (const item of splitTopLevel(useTree, ",")) {
+    const trimmed = item.trim();
+    if (!trimmed) continue;
+
+    const groupStart = indexOfTopLevel(trimmed, "{");
+    if (groupStart >= 0) {
+      const groupEnd = matchingBraceIndex(trimmed, groupStart);
+      if (groupEnd == null) throw new Error("malformed Rust use clause");
+
+      const pathPrefix = trimmed.slice(0, groupStart).replace(/::\s*$/, "");
+      const group = trimmed.slice(groupStart + 1, groupEnd);
+      imports.push(...expandRustUseTree(group, [...prefix, ...rustPathSegments(pathPrefix)]));
+      continue;
+    }
+
+    const segments = rustPathSegments(stripTopLevelAlias(trimmed));
+    if (segments.length === 1 && segments[0] === "self" && prefix.length > 0) {
+      imports.push(prefix.join("::"));
+      continue;
+    }
+    if (segments.length > 0) imports.push([...prefix, ...segments].join("::"));
+  }
+  return imports;
+}
+
+function splitTopLevel(text: string, separator: string): string[] {
+  const parts: string[] = [];
+  let braceDepth = 0;
+  let start = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (char === "{") braceDepth += 1;
+    if (char === "}") braceDepth -= 1;
+    if (char === separator && braceDepth === 0) {
+      parts.push(text.slice(start, index));
+      start = index + 1;
+    }
+  }
+  parts.push(text.slice(start));
+  return parts;
+}
+
+function indexOfTopLevel(text: string, needle: string): number {
+  let braceDepth = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (char === needle && braceDepth === 0) return index;
+    if (char === "{") braceDepth += 1;
+    if (char === "}") braceDepth -= 1;
+  }
+  return -1;
+}
+
+function matchingBraceIndex(text: string, openIndex: number): number | null {
+  let braceDepth = 0;
+  for (let index = openIndex; index < text.length; index += 1) {
+    const char = text[index];
+    if (char === "{") braceDepth += 1;
+    if (char === "}") {
+      braceDepth -= 1;
+      if (braceDepth === 0) return index;
+    }
+  }
+  return null;
+}
+
+function stripTopLevelAlias(path: string): string {
+  return path.replace(/\s+as\s+[A-Za-z_]\w*\s*$/, "").trim();
+}
+
+function rustPathSegments(path: string): string[] {
+  return path
+    .split("::")
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+}
+
+function resolveRustRelativeImport(sourcePath: string, specifier: string): string {
+  const segments = rustPathSegments(specifier);
+  if (segments.length === 0) return dirname(sourcePath);
+
+  const [head, ...tail] = segments;
+  if (head === "crate") return join(rustCrateModuleRoot(sourcePath), ...tail);
+  if (head === "self") return join(dirname(sourcePath), ...tail);
+  if (head === "super") {
+    let base = dirname(sourcePath);
+    let index = 0;
+    while (segments[index] === "super") {
+      base = dirname(base);
+      index += 1;
+    }
+    return join(base, ...segments.slice(index));
+  }
+  return join(dirname(sourcePath), ...segments);
+}
+
+function rustCrateModuleRoot(sourcePath: string): string {
+  const marker = `${sep}src${sep}`;
+  const index = sourcePath.lastIndexOf(marker);
+  if (index >= 0) return sourcePath.slice(0, index + marker.length - 1);
+  return dirname(sourcePath);
 }

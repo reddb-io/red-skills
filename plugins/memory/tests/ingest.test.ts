@@ -13,6 +13,7 @@ const TIMEOUT = 30_000;
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXTURE_REPO = join(HERE, "fixtures/repo");
 const IMPORT_FIXTURE_REPO = join(HERE, "fixtures/imports");
+const RUST_IMPORT_FIXTURE_REPO = join(HERE, "fixtures/rust-imports");
 
 const roots: string[] = [];
 const stores: MemoryStore[] = [];
@@ -143,6 +144,62 @@ describe("ingestProject over a TS+MD fixture repo", () => {
   );
 
   test(
+    "ingests Rust IMPORTS edges and does not duplicate them on re-ingest",
+    async () => {
+      const store = await openStore();
+      await ingestProject(store, { cwd: RUST_IMPORT_FIXTURE_REPO });
+
+      const nodes = await store.listNodes();
+      const file = nodes.find(
+        (n) => n.label.endsWith("/src/features/session.rs") && n.node_type === "file",
+      );
+      const imports = nodes.filter((n) => n.node_type === "import");
+
+      expect(imports.map((n) => n.properties.title).sort()).toEqual([
+        "anyhow::Result",
+        "crate::auth::Session",
+        "crate::auth::TokenStore",
+        "self::models::User",
+        "self::models::profile::Avatar",
+        "self::models::profile::Bio",
+        "serde_json",
+        "std::collections::HashMap",
+        "super::prelude::*",
+      ]);
+      expect(
+        imports.find((n) => n.properties.title === "std::collections::HashMap")?.properties
+          .import_kind,
+      ).toBe("bare");
+      expect(
+        imports.find((n) => n.properties.title === "crate::auth::Session")?.properties
+          .resolved_path,
+      ).toBe(join(RUST_IMPORT_FIXTURE_REPO, "src/auth/Session"));
+      expect(
+        imports.find((n) => n.properties.title === "self::models::User")?.properties
+          .resolved_path,
+      ).toBe(join(RUST_IMPORT_FIXTURE_REPO, "src/features/models/User"));
+      expect(
+        imports.find((n) => n.properties.title === "super::prelude::*")?.properties
+          .resolved_path,
+      ).toBe(join(RUST_IMPORT_FIXTURE_REPO, "src/prelude/*"));
+
+      expect(file).toBeDefined();
+      for (const imp of imports) {
+        await expect(store.findEdge(file!.rid, imp.rid, "IMPORTS")).resolves.toBeTypeOf(
+          "number",
+        );
+      }
+
+      const before = await store.stats();
+      await ingestProject(store, { cwd: RUST_IMPORT_FIXTURE_REPO });
+      const after = await store.stats();
+      expect(after.edges).toBe(before.edges);
+      expect(after.nodes).toBe(before.nodes);
+    },
+    TIMEOUT,
+  );
+
+  test(
     "a malformed TS import does not block extraction from other files",
     async () => {
       const fixture = await mkdtemp(join(tmpdir(), "memory-import-failure-"));
@@ -171,6 +228,39 @@ describe("ingestProject over a TS+MD fixture repo", () => {
       expect(nodes.some((n) => n.node_type === "import" && n.properties.title === "react")).toBe(
         true,
       );
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "a malformed Rust use does not block extraction from other files",
+    async () => {
+      const fixture = await mkdtemp(join(tmpdir(), "memory-rust-import-failure-"));
+      roots.push(fixture);
+      await mkdir(join(fixture, "src"), { recursive: true });
+      await writeFile(
+        join(fixture, "src/good.rs"),
+        `use std::fmt::Debug;\npub fn render() {}\n`,
+        "utf8",
+      );
+      await writeFile(
+        join(fixture, "src/bad.rs"),
+        `use crate::{broken;\npub fn still_indexed() {}\n`,
+        "utf8",
+      );
+
+      const store = await openStore();
+      await ingestProject(store, { cwd: fixture });
+
+      const nodes = await store.listNodes();
+      expect(nodes.some((n) => n.properties.title === "render")).toBe(true);
+      expect(nodes.some((n) => n.properties.title === "still_indexed")).toBe(true);
+      expect(
+        nodes.some((n) => n.node_type === "import" && n.properties.title === "crate::broken"),
+      ).toBe(false);
+      expect(
+        nodes.some((n) => n.node_type === "import" && n.properties.title === "std::fmt::Debug"),
+      ).toBe(true);
     },
     TIMEOUT,
   );
