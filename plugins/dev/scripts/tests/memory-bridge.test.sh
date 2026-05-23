@@ -109,6 +109,14 @@ case "$1" in
     echo "  /repo/src/app.ts imports node:path"
     echo "  /repo/src/consumer.ts imports this target through ./app.js"
     ;;
+  attempt)
+    if [[ "$2" != "record" ]]; then
+      echo "unexpected attempt command: $*" >&2
+      exit 1
+    fi
+    cat > "${FAKE_ATTEMPT_OUT:?}"
+    echo "memory: recorded attempt"
+    ;;
   *)
     echo "unexpected command: $*" >&2
     exit 1
@@ -499,6 +507,47 @@ expect_eq "recall: erroring CLI -> swallowed, no stdout" "" "$out"
 clear_env
 expect_ok "recall: erroring CLI -> still exit 0" \
   bash -c 'source "'"$LIB"'"; PATH="'"$ERRBIN"':/usr/bin:/bin" memory_recall "'"$INIT_ROOT"'" q'
+
+# ---------- memory_record_attempt (graph-only write, graceful) ----------
+
+payload="$TMP/attempt-payload.json"
+cat > "$payload" <<'EOF'
+{"repository":"reddb-io/red-skills","issueNumber":99,"attemptNumber":1,"status":"done"}
+EOF
+
+clear_env
+FAKE_ATTEMPT_OUT="$TMP/attempt-out.json"
+out="$(FAKE_ATTEMPT_OUT="$FAKE_ATTEMPT_OUT" PATH="$FAKE_BIN:$PATH" bash -c 'source "'"$LIB"'"; memory_record_attempt "'"$GRAPH_ROOT"'" "'"$payload"'"')"
+expect_eq "record-attempt: graph ready -> no stdout" "" "$out"
+expect_eq "record-attempt: graph ready -> forwards JSON payload" \
+  "$(cat "$payload")" "$(cat "$FAKE_ATTEMPT_OUT")"
+clear_env
+expect_ok "record-attempt: graph ready -> exit 0" \
+  bash -c 'source "'"$LIB"'"; FAKE_ATTEMPT_OUT="'"$TMP/attempt-ok.json"'" PATH="'"$FAKE_BIN"':$PATH" memory_record_attempt "'"$GRAPH_ROOT"'" "'"$payload"'"'
+
+clear_env
+rm -f "$TMP/attempt-markdown.json"
+out="$(FAKE_ATTEMPT_OUT="$TMP/attempt-markdown.json" PATH="$FAKE_BIN:$PATH" bash -c 'source "'"$LIB"'"; memory_record_attempt "'"$INIT_ROOT"'" "'"$payload"'"')"
+expect_eq "record-attempt: markdown-only -> no output" "" "$out"
+if [[ ! -e "$TMP/attempt-markdown.json" ]]; then
+  echo "PASS  record-attempt: markdown-only -> does not call CLI"; pass=$((pass + 1))
+else
+  echo "FAIL  record-attempt: markdown-only -> unexpectedly called CLI"; fail=$((fail + 1))
+fi
+
+clear_env
+out="$(PATH=/usr/bin:/bin bash -c 'source "'"$LIB"'"; memory_record_attempt "'"$GRAPH_ROOT"'" "'"$payload"'"')"
+expect_eq "record-attempt: graph config but no CLI -> no output" "" "$out"
+clear_env
+expect_ok "record-attempt: graph config but no CLI -> exit 0" \
+  bash -c 'source "'"$LIB"'"; PATH=/usr/bin:/bin memory_record_attempt "'"$GRAPH_ROOT"'" "'"$payload"'"'
+
+clear_env
+out="$(PATH="$ERRBIN:/usr/bin:/bin" bash -c 'source "'"$LIB"'"; memory_record_attempt "'"$GRAPH_ROOT"'" "'"$payload"'"' 2>/dev/null)"
+expect_eq "record-attempt: erroring CLI -> swallowed, no stdout" "" "$out"
+clear_env
+expect_ok "record-attempt: erroring CLI -> still exit 0" \
+  bash -c 'source "'"$LIB"'"; PATH="'"$ERRBIN"':/usr/bin:/bin" memory_record_attempt "'"$GRAPH_ROOT"'" "'"$payload"'"'
 
 # ---------- summary ----------
 echo

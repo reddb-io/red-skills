@@ -17,8 +17,9 @@
 # Source it, then call `memory_available <root>` to gate, `memory_neighbors
 # <root> <label>` for focused graph context, `memory_structural_impact <root>
 # <file> <symbol>` for graph-derived change impact, `memory_path <root> <from>
-# <to>` for relationship paths, or `memory_recall <root> <query…>` to fetch a
-# ready-to-fold context block (or nothing).
+# <to>` for relationship paths, `memory_recall <root> <query…>` to fetch a
+# ready-to-fold context block (or nothing), or `memory_record_attempt <root>
+# <payload-json-file>` to best-effort write an AFK terminal attempt.
 
 # Resolve the memory CLI invocation into the global MEMORY_CLI array.
 # Returns 0 and populates MEMORY_CLI on success; returns 1 (MEMORY_CLI empty)
@@ -178,5 +179,26 @@ memory_recall() {
   local out
   out="$("${MEMORY_CLI[@]}" recall "$@" 2>/dev/null)" || return 0
   [[ -n "$out" ]] && printf '%s\n' "$out"
+  return 0
+}
+
+# memory_record_attempt <root> <payload-json-file> — best-effort write of one
+# AFK terminal attempt into graph Memory. ALWAYS returns 0: absent,
+# uninitialized, markdown-only, CLI-missing, invalid payload, or write-failing
+# Memory must not affect the dev caller's terminal outcome.
+memory_record_attempt() {
+  local root="${1:-$PWD}"
+  local payload_file="${2:-}"
+  [[ -f "$payload_file" ]] || return 0
+  [[ "$(memory_mode "$root")" == "graph" ]] || return 0
+  _memory_resolve_cli || return 0
+
+  if command -v timeout >/dev/null 2>&1; then
+    timeout --kill-after=5s 30s "${MEMORY_CLI[@]}" attempt record --root "$root" \
+      < "$payload_file" >/dev/null 2>&1 || true
+  else
+    "${MEMORY_CLI[@]}" attempt record --root "$root" \
+      < "$payload_file" >/dev/null 2>&1 || true
+  fi
   return 0
 }

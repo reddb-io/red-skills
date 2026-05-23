@@ -31,6 +31,10 @@ import {
   type StructuralImpactTarget,
 } from "./structural-impact-reader.js";
 import {
+  recordReasoningAttempt,
+  type ReasoningAttemptPayload,
+} from "./reasoning/attempt-writer.js";
+import {
   ingestSkillEvents,
   parseSkillEvent,
   parseSkillEventInput,
@@ -56,6 +60,7 @@ Usage:
   memory improve apply <proposal>    [--root <dir>] --yes [--json]   (explicit patch apply)
   memory status skills              [--root <dir>] [--all] [--limit N] [--json]   (diagnostic, read-only)
   memory status context             [--root <dir>] [--json]   (context stack healthcheck, read-only)
+  memory attempt record             [--root <dir>]             (reads AFK attempt JSON from stdin)
 
   Graph-mode read verbs (require \`memory init --mode graph\`):
   memory search <query...>          [--root <dir>] [--limit N]
@@ -1560,6 +1565,27 @@ async function runHook(args: ParsedArgs): Promise<void> {
   }
 }
 
+async function runAttempt(args: ParsedArgs): Promise<void> {
+  const subcommand = args.positional[0];
+  if (subcommand !== "record") {
+    throw new Error("unknown attempt command — expected: memory attempt record");
+  }
+
+  const raw = await readStdin();
+  if (!raw.trim()) throw new Error("attempt record needs a JSON payload on stdin");
+  const payload = JSON.parse(raw) as ReasoningAttemptPayload;
+
+  const { store } = await openGraphStore(args);
+  try {
+    const receipt = await recordReasoningAttempt(store, payload);
+    console.log(
+      `memory: recorded attempt ${payload.repository}#${payload.issueNumber}/${payload.attemptNumber} (rid ${receipt.attemptRid})`,
+    );
+  } finally {
+    await store.close();
+  }
+}
+
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   switch (args.command) {
@@ -1579,6 +1605,8 @@ async function main(): Promise<void> {
       return runImprove(args);
     case "status":
       return runStatus(args);
+    case "attempt":
+      return runAttempt(args);
     case "extract":
       return runExtract(args);
     case "search":
