@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { createHash } from "node:crypto";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { access, mkdir, readdir, readFile, rename, stat, writeFile } from "node:fs/promises";
@@ -454,6 +455,7 @@ interface ProposalFileSummary {
   reason: string | null;
   skillPath: string | null;
   generated: string | null;
+  fingerprint: string | null;
   bytes: number;
   mtimeMs: number;
 }
@@ -571,6 +573,7 @@ async function summarizeProposalFile(rootDir: string, proposalPath: string, body
     reason: firstProposalField(body, /^- Reason:\s*(.+)$/m),
     skillPath: firstProposalField(body, /^- Skill path:\s*(.+)$/m),
     generated: firstProposalField(body, /^Generated:\s*(.+)$/m),
+    fingerprint: firstProposalField(body, /^Fingerprint:\s*(.+)$/m),
     bytes: info.size,
     mtimeMs: info.mtimeMs,
   };
@@ -689,6 +692,8 @@ interface SkillImprovementProposalSummary {
   score: number;
   priority: "high" | "medium" | "low";
   scoreReasons: string[];
+  fingerprint: string;
+  reusedExisting: boolean;
   path: string | null;
   written: boolean;
 }
@@ -704,12 +709,22 @@ async function buildSkillImprovementProposals(
   const proposalDir = join(rootDir, ".red", "memory", "proposals");
   if (writeProposal && candidates.length > 0) await mkdir(proposalDir, { recursive: true });
 
+  const pendingProposals = writeProposal ? await listPendingProposalFiles(rootDir) : [];
+
   for (const rec of candidates) {
     const evidence = recentFailureEvidence(rec.name, recentEvents);
-    const body = await renderSkillImprovementProposal(rootDir, rec, evidence);
-    const patchDrafted = body.includes("```json memory-skill-patch");
     const dominantErrorStage = topValues(evidence.map((event) => event.error_stage))[0] ?? null;
     const dominantErrorClass = topValues(evidence.map((event) => event.error_class))[0] ?? null;
+    const relSkillPath = isAbsolute(rec.path) ? toPosix(relative(rootDir, rec.path)) : rec.path;
+    const fingerprint = proposalFingerprint({
+      skill: rec.name,
+      category: rec.category,
+      skillPath: relSkillPath,
+      dominantErrorStage,
+      dominantErrorClass,
+    });
+    const body = await renderSkillImprovementProposal(rootDir, rec, evidence, fingerprint);
+    const patchDrafted = body.includes("```json memory-skill-patch");
     const priority = computeProposalPriority({
       reason: rec.reason,
       recentFailures: evidence.length,
@@ -718,9 +733,16 @@ async function buildSkillImprovementProposals(
       patchDrafted,
     });
     let proposalPath: string | null = null;
+    let reusedExisting = false;
     if (writeProposal) {
-      const file = `skill-improvement-${slugify(rec.name)}-${new Date().toISOString().replace(/[:.]/g, "-")}.md`;
-      proposalPath = join(proposalDir, file);
+      const existing = pendingProposals.find((proposal) => proposal.fingerprint === fingerprint);
+      if (existing) {
+        proposalPath = resolve(rootDir, existing.path);
+        reusedExisting = true;
+      } else {
+        const file = `skill-improvement-${slugify(rec.name)}-${fingerprint.slice("sha256:".length, "sha256:".length + 12)}.md`;
+        proposalPath = join(proposalDir, file);
+      }
       await writeFile(proposalPath, body, "utf8");
     }
     proposals.push({
@@ -735,6 +757,8 @@ async function buildSkillImprovementProposals(
       score: priority.score,
       priority: priority.priority,
       scoreReasons: priority.reasons,
+      fingerprint,
+      reusedExisting,
       path: proposalPath,
       written: writeProposal,
     });
@@ -742,10 +766,29 @@ async function buildSkillImprovementProposals(
   return sortProposalSummaries(proposals);
 }
 
+
+function proposalFingerprint(input: {
+  skill: string;
+  category: string;
+  skillPath: string;
+  dominantErrorStage: string | null;
+  dominantErrorClass: string | null;
+}): string {
+  const payload = JSON.stringify({
+    skill: input.skill,
+    category: input.category,
+    skillPath: input.skillPath,
+    dominantErrorStage: input.dominantErrorStage ?? "",
+    dominantErrorClass: input.dominantErrorClass ?? "",
+  });
+  return `sha256:${createHash("sha256").update(payload).digest("hex")}`;
+}
+
 async function renderSkillImprovementProposal(
   rootDir: string,
   rec: { name: string; category: string; reason: string; path: string },
   evidence: SkillEventSummary[],
+  fingerprint: string,
 ): Promise<string> {
   const relSkillPath = isAbsolute(rec.path) ? toPosix(relative(rootDir, rec.path)) : rec.path;
   const evidenceBlock = renderRecentFailureEvidence(evidence);
@@ -754,6 +797,7 @@ async function renderSkillImprovementProposal(
 
 Status: approval-gated
 Generated: ${new Date().toISOString()}
+Fingerprint: ${fingerprint}
 
 ## Evidence
 

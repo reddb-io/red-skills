@@ -272,4 +272,50 @@ describe("memory improve skills CLI", () => {
     TIMEOUT,
   );
 
+
+  test(
+    "deduplicates pending proposals by deterministic fingerprint",
+    async () => {
+      const root = await tempRoot();
+      await initGraph(root, { skillTelemetry: true });
+      const skillFile = join(root, "skills", "flaky-skill", "SKILL.md");
+      await mkdir(dirname(skillFile), { recursive: true });
+      await writeFile(skillFile, "---\nname: flaky-skill\ndescription: fixture\n---\n\n# flaky-skill\n\nOriginal content.\n", "utf8");
+      const events = [
+        skillResultEvent(1, skillFile, "failed"),
+        skillResultEvent(2, skillFile, "failed"),
+        skillResultEvent(3, skillFile, "failed"),
+        skillResultEvent(4, skillFile, "failed"),
+        skillResultEvent(5, skillFile, "succeeded"),
+      ];
+      const ingest = runMemory(["event", "skill", "--root", root], events.map((event) => JSON.stringify(event)).join("\n"));
+      expect(ingest.status).toBe(0);
+
+      const first = runMemory(["improve", "skills", "--root", root, "--write-proposal", "--json"]);
+      expect(first.status).toBe(0);
+      const firstBody = JSON.parse(first.stdout);
+      expect(firstBody.proposals[0].fingerprint).toMatch(/^sha256:/);
+      expect(firstBody.proposals[0].reusedExisting).toBe(false);
+      const firstPath = firstBody.proposals[0].path;
+
+      const second = runMemory(["improve", "skills", "--root", root, "--write-proposal", "--json"]);
+      expect(second.status).toBe(0);
+      const secondBody = JSON.parse(second.stdout);
+      expect(secondBody.proposals[0].fingerprint).toBe(firstBody.proposals[0].fingerprint);
+      expect(secondBody.proposals[0].path).toBe(firstPath);
+      expect(secondBody.proposals[0].reusedExisting).toBe(true);
+
+      const files = await readdir(join(root, ".red", "memory", "proposals"));
+      expect(files.filter((file) => file.endsWith(".md"))).toHaveLength(1);
+      const proposal = await readFile(firstPath, "utf8");
+      expect(proposal).toContain(`Fingerprint: ${firstBody.proposals[0].fingerprint}`);
+
+      const listed = runMemory(["improve", "proposals", "list", "--root", root, "--json"]);
+      expect(listed.status).toBe(0);
+      const listedBody = JSON.parse(listed.stdout);
+      expect(listedBody.proposals[0].fingerprint).toBe(firstBody.proposals[0].fingerprint);
+    },
+    TIMEOUT,
+  );
+
 });

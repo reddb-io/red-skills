@@ -136,7 +136,7 @@ node plugins/memory/dist/cli.js improve apply .red/memory/proposals/<proposal>.m
 node plugins/memory/dist/cli.js improve proposals archive .red/memory/proposals/<proposal>.md --reason applied --yes --json
 ```
 
-Proposals live under `.red/memory/proposals/`. Archiving moves reviewed files to
+Proposals live under `.red/memory/proposals/`. Each proposal has a deterministic fingerprint, and repeated generation refreshes the matching pending proposal instead of creating duplicate files. Archiving moves reviewed files to
 `.red/memory/proposals/archive/<applied|rejected|stale>/`, so `memory health`
 counts only actionable pending proposals while retaining audit history.
 

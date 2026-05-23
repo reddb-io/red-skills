@@ -55,7 +55,7 @@ The command writes proposals under:
 - `unavailable` — graph mode exists but Skill telemetry is not enabled.
 - `no-candidates` — telemetry does not currently support a proposal.
 - `proposal-ready` — dry-run found proposal candidates but wrote no files. JSON summaries include `recentFailures`, `dominantErrorStage`, `dominantErrorClass`, `patchDrafted`, `score`, `priority`, and `scoreReasons` for machine-readable routing.
-- `proposal-written` — proposal files were written for review, including recent failure evidence and a draft structured patch block when the skill file has a safe unique insertion anchor.
+- `proposal-written` — proposal files were written or refreshed for review, including recent failure evidence, a deterministic `Fingerprint`, and a draft structured patch block when the skill file has a safe unique insertion anchor.
 - `applied` — an explicitly approved structured patch was applied.
 - `pending` — proposal lifecycle listing found pending proposal files.
 - `shown` — a specific proposal file was returned for review.
@@ -97,6 +97,7 @@ Patch block format:
 - ✅ Write proposals when telemetry shows repeated failure evidence.
 - ✅ Treat proposal files as review artifacts, not source of truth.
 - ✅ Use `memory improve proposals list/show/archive` to keep the pending queue clean and auditable.
+- ✅ Expect repeated runs to reuse a pending proposal with the same fingerprint instead of creating duplicates.
 - ✅ Apply the smallest skill patch that addresses the observed failure mode.
 - ✅ Run repo metadata/skill validation after applying a proposal.
 - ✅ Include recent failed result evidence in proposals so reviewers see the stage/class/code that triggered the recommendation.
@@ -113,7 +114,7 @@ Patch block format:
 
 <supporting-info>
 
-`memory improve skills` currently proposes fixes for curatable skills flagged as `frequently-failing` by partitioned Skill telemetry rollups. It is deliberately proposal-gated: the Memory plugin may write `.red/memory/proposals/*.md`, but applying a patch remains an explicit review step handled outside this command.
+`memory improve skills` currently proposes fixes for curatable skills flagged as `frequently-failing` by partitioned Skill telemetry rollups. Each proposal gets a deterministic fingerprint from skill name, category, target path, dominant error stage, and dominant error class; pending proposals with the same fingerprint are refreshed in place. It is deliberately proposal-gated: the Memory plugin may write `.red/memory/proposals/*.md`, but applying a patch remains an explicit review step handled outside this command.
 
 This is the first mutating stage in the self-improvement loop. Proposal generation mutates only `.red/memory/proposals/`; proposal application can patch a target skill only when a reviewed structured block plus `--yes` are both present.
 

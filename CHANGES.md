@@ -7,6 +7,17 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 ---
 
 
+
+## memory proposal dedupe (core)
+
+- **status**: added
+- **upstream**: —
+- **why**: Prevent repeated self-improvement runs from spamming duplicate proposal files for the same failure loop.
+- **what changed**:
+  - Added deterministic proposal fingerprints based on skill, category, target path, dominant error stage, and dominant error class.
+  - `memory improve skills --write-proposal` now refreshes an existing pending proposal with the same fingerprint instead of creating a duplicate.
+  - Proposal lifecycle summaries expose `fingerprint`, and write summaries expose `reusedExisting` for automation.
+
 ## memory proposal lifecycle (core)
 
 - **status**: added
