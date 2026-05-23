@@ -885,7 +885,7 @@ async function renderDraftSkillPatchBlock(
   try {
     assertInsideRoot(rootDir, targetPath, "patch target");
     const current = await readFile(targetPath, "utf8");
-    const oldString = uniqueTailAnchor(current);
+    const oldString = semanticSectionAnchor(current, evidence) ?? uniqueTailAnchor(current);
     if (!oldString) {
       return "\nNo structured patch block was generated because the skill file did not have a safe unique insertion anchor. Add a `json memory-skill-patch` block manually after review.\n";
     }
@@ -899,6 +899,56 @@ async function renderDraftSkillPatchBlock(
   } catch (err) {
     return `\nNo structured patch block was generated because the skill file could not be read safely: ${err instanceof Error ? err.message : String(err)}. Add a \`json memory-skill-patch\` block manually after review.\n`;
   }
+}
+
+
+function semanticSectionAnchor(text: string, evidence: readonly SkillEventSummary[]): string | null {
+  const stage = topValues(evidence.map((event) => event.error_stage))[0];
+  const klass = topValues(evidence.map((event) => event.error_class))[0];
+  const headings = semanticHeadingCandidates(stage, klass);
+  for (const heading of headings) {
+    const section = markdownSectionByHeading(text, heading);
+    if (section && countOccurrences(text, section) === 1) return section;
+  }
+  return null;
+}
+
+function semanticHeadingCandidates(stage: string | undefined, klass: string | undefined): RegExp[] {
+  const candidates: RegExp[] = [];
+  const s = (stage ?? "").toLowerCase();
+  const k = (klass ?? "").toLowerCase();
+  if (s.includes("setup") || s.includes("prereq") || s.includes("init") || s.includes("install")) {
+    candidates.push(/^(prerequisites?|setup|installation|initialization)$/i);
+  }
+  if (s.includes("verify") || s.includes("validat") || s.includes("test") || s.includes("check")) {
+    candidates.push(/^(verification|validation|testing|tests?|quality gates?)$/i);
+  }
+  if (s.includes("execute") || s.includes("run") || s.includes("tool") || s.includes("command")) {
+    candidates.push(/^(what-to-do|execution|usage|commands?|workflow|steps?)$/i);
+  }
+  if (s.includes("cleanup") || s.includes("rollback") || s.includes("recover")) {
+    candidates.push(/^(cleanup|rollback|recovery|recovering)$/i);
+  }
+  if (k.includes("timeout") || k.includes("rate") || k.includes("lock") || k.includes("permission")) {
+    candidates.push(/^(common pitfalls|pitfalls|troubleshooting|known issues|failure modes?)$/i);
+  }
+  candidates.push(/^(common pitfalls|pitfalls|troubleshooting)$/i);
+  return candidates;
+}
+
+function markdownSectionByHeading(text: string, headingPattern: RegExp): string | null {
+  const lineMatches = [...text.matchAll(/^#{2,6}\s+(.+?)\s*$/gm)];
+  for (let i = 0; i < lineMatches.length; i++) {
+    const match = lineMatches[i];
+    const title = match[1]?.trim();
+    if (!title || !headingPattern.test(title)) continue;
+    const start = match.index ?? 0;
+    const next = lineMatches[i + 1];
+    const end = next?.index ?? text.replace(/\s+$/u, "").length;
+    const section = text.slice(start, end).replace(/\s+$/u, "");
+    return section.length > 0 ? section : null;
+  }
+  return null;
 }
 
 function uniqueTailAnchor(text: string): string | null {

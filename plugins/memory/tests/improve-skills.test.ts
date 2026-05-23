@@ -318,4 +318,66 @@ describe("memory improve skills CLI", () => {
     TIMEOUT,
   );
 
+
+  test(
+    "anchors draft patches to the section matching the dominant failure stage",
+    async () => {
+      const root = await tempRoot();
+      await initGraph(root, { skillTelemetry: true });
+      const skillFile = join(root, "skills", "verify-skill", "SKILL.md");
+      await mkdir(dirname(skillFile), { recursive: true });
+      await writeFile(
+        skillFile,
+        [
+          "---",
+          "name: verify-skill",
+          "description: fixture",
+          "---",
+          "",
+          "# verify-skill",
+          "",
+          "## Setup",
+          "",
+          "Install dependencies.",
+          "",
+          "## Execution",
+          "",
+          "Run the command.",
+          "",
+          "## Verification",
+          "",
+          "Run tests.",
+          "",
+          "## Common Pitfalls",
+          "",
+          "Avoid stale caches.",
+          "",
+        ].join("\n"),
+        "utf8",
+      );
+      const events = [
+        skillResultEvent(1, skillFile, "failed", "verify-skill", "verify", "TimeoutError"),
+        skillResultEvent(2, skillFile, "failed", "verify-skill", "verify", "TimeoutError"),
+        skillResultEvent(3, skillFile, "failed", "verify-skill", "verify", "TimeoutError"),
+        skillResultEvent(4, skillFile, "failed", "verify-skill", "verify", "TimeoutError"),
+        skillResultEvent(5, skillFile, "succeeded", "verify-skill"),
+      ];
+      const ingest = runMemory(["event", "skill", "--root", root], events.map((event) => JSON.stringify(event)).join("\n"));
+      expect(ingest.status).toBe(0);
+
+      const result = runMemory(["improve", "skills", "--root", root, "--write-proposal", "--json"]);
+      expect(result.status).toBe(0);
+      const body = JSON.parse(result.stdout);
+      const proposal = await readFile(body.proposals[0].path, "utf8");
+      const block = proposal.match(/```json memory-skill-patch\s*([\s\S]*?)```/);
+      expect(block).not.toBeNull();
+      const patch = JSON.parse(block![1]);
+      expect(patch.oldString).toContain("## Verification\n\nRun tests.");
+      expect(patch.oldString).not.toContain("## Common Pitfalls");
+      expect(patch.newString).toContain("Dominant error class: TimeoutError");
+      expect(patch.newString).toContain("verification guidance for the `verify` stage");
+    },
+    TIMEOUT,
+  );
+
 });

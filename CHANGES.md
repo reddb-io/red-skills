@@ -8,6 +8,17 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 
 
 
+
+## memory semantic patch anchoring (core)
+
+- **status**: added
+- **upstream**: —
+- **why**: Make self-improvement proposals more precise by targeting the skill section most related to the observed failure mode.
+- **what changed**:
+  - Draft `memory-skill-patch` blocks now prefer semantic Markdown sections based on dominant `error_stage` and `error_class`.
+  - `verify` failures target Verification/Validation-style sections when present instead of appending to the file tail.
+  - Timeout/lock/rate-limit style error classes can target Troubleshooting/Common Pitfalls sections as a fallback.
+
 ## memory proposal dedupe (core)
 
 - **status**: added
