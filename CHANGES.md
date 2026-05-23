@@ -6,6 +6,17 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 
 ---
 
+## skill-telemetry-partitioned-rollups (memory/core)
+
+- **status**: added
+- **upstream**: —
+- **why**: Prevent Skill telemetry from exceeding the RedDB KV value limit as more skills/events are observed.
+- **what changed**:
+  - Store each Skill rollup under its own hashed KV key instead of rewriting one aggregate `skill-rollups:all` blob.
+  - Store seen event markers per event ID instead of growing one `skill-events:seen` map.
+  - Keep read compatibility with legacy aggregate rollup/seen keys.
+  - Added regression coverage for multi-skill telemetry batches that previously failed with `memory_kv` value-too-large errors.
+
 ## improve-skills-priority-score (memory/core)
 
 - **status**: added

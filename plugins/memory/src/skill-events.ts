@@ -124,8 +124,6 @@ export async function ingestSkillEvents(
   store: MemoryStore,
   events: readonly SkillEvent[],
 ): Promise<SkillEventIngestReport> {
-  const seen = await readSeenEventIds(store);
-  const rollups = await readSkillRollupMap(store);
   const touchedNodes = new Set<number>();
   const touchedEdges = new Set<number>();
 
@@ -134,14 +132,14 @@ export async function ingestSkillEvents(
     for (const rid of graph.nodes) touchedNodes.add(rid);
     for (const rid of graph.edges) touchedEdges.add(rid);
 
-    if (seen[event.event_id] !== true) {
-      updateSkillRollup(rollups, event);
-      seen[event.event_id] = true;
+    if (!(await hasSeenEventId(store, event.event_id))) {
+      const rollup = await readSkillRollup(store, event);
+      updateSkillRollup(rollup, event);
+      await writeSkillRollup(store, event, rollup[skillRollupKey(event)]);
+      await writeSeenEventId(store, event.event_id);
     }
   }
 
-  await store.kvPut(SKILL_EVENT_SEEN_KEY, seen);
-  await store.kvPut(SKILL_ROLLUPS_KEY, rollups);
   return { events: events.length, nodes: touchedNodes.size, edges: touchedEdges.size };
 }
 
@@ -325,14 +323,57 @@ async function readSeenEventIds(store: MemoryStore): Promise<Record<string, true
   return parseKvObject(await store.kvGet<Record<string, true> | string>(SKILL_EVENT_SEEN_KEY));
 }
 
+async function hasSeenEventId(store: MemoryStore, eventId: string): Promise<boolean> {
+  const partitioned = await store.kvGet<true>(skillEventSeenKey(eventId));
+  if (partitioned === true) return true;
+  const legacy = await readSeenEventIds(store);
+  return legacy[eventId] === true;
+}
+
+async function writeSeenEventId(store: MemoryStore, eventId: string): Promise<void> {
+  await store.kvPut(skillEventSeenKey(eventId), true);
+}
+
+async function readSkillRollup(
+  store: MemoryStore,
+  event: SkillEvent,
+): Promise<Record<string, SkillRollup>> {
+  const key = skillRollupKey(event);
+  const partitioned = await store.kvGet<SkillRollup | string>(skillRollupStorageKey(event));
+  if (partitioned != null) return { [key]: parseKvValue<SkillRollup>(partitioned) };
+  const legacy = await readSkillRollupMap(store);
+  return legacy[key] != null ? { [key]: legacy[key] } : {};
+}
+
+async function writeSkillRollup(
+  store: MemoryStore,
+  event: SkillEvent,
+  rollup: SkillRollup,
+): Promise<void> {
+  await store.kvPut(skillRollupStorageKey(event), rollup);
+}
+
 async function readSkillRollupMap(store: MemoryStore): Promise<Record<string, SkillRollup>> {
-  return parseKvObject(
+  const rollups = parseKvObject(
     await store.kvGet<Record<string, SkillRollup> | string>(SKILL_ROLLUPS_KEY),
   );
+  const nodes = await store.listNodes();
+  for (const node of nodes) {
+    const skill = (node.properties as Record<string, unknown> | undefined)?.skill;
+    if (!isStoredSkill(skill)) continue;
+    const stored = await store.kvGet<SkillRollup | string>(skillRollupStorageKey(skill));
+    if (stored == null) continue;
+    rollups[skillRollupKey(skill)] = parseKvValue<SkillRollup>(stored);
+  }
+  return rollups;
 }
 
 function parseKvObject<T extends Record<string, unknown>>(raw: T | string | null): T {
   if (raw == null) return {} as T;
+  return parseKvValue<T>(raw);
+}
+
+function parseKvValue<T>(raw: T | string): T {
   return (typeof raw === "string" ? JSON.parse(raw) : raw) as T;
 }
 
@@ -386,8 +427,26 @@ function updateSkillRollup(rollups: Record<string, SkillRollup>, event: SkillEve
   rollups[key] = current;
 }
 
-function skillRollupKey(event: SkillEvent): string {
-  return `${event.source_kind}:${event.name}:${event.path}`;
+function skillRollupKey(skill: Pick<SkillEvent, "source_kind" | "name" | "path">): string {
+  return `${skill.source_kind}:${skill.name}:${skill.path}`;
+}
+
+function skillRollupStorageKey(skill: Pick<SkillEvent, "source_kind" | "name" | "path">): string {
+  return `skill-rollup:${contentHash(skill.source_kind, skill.name, skill.path)}`;
+}
+
+function skillEventSeenKey(eventId: string): string {
+  return `skill-event-seen:${contentHash(eventId)}`;
+}
+
+function isStoredSkill(input: unknown): input is Pick<SkillEvent, "source_kind" | "name" | "path"> {
+  if (input == null || typeof input !== "object") return false;
+  const value = input as Record<string, unknown>;
+  return (
+    typeof value.source_kind === "string" &&
+    typeof value.name === "string" &&
+    typeof value.path === "string"
+  );
 }
 
 function earlierTimestamp(a: string, b: string): string {

@@ -335,6 +335,48 @@ describe("skill telemetry graph persistence", () => {
     },
     TIMEOUT,
   );
+
+  test(
+    "partitions rollups so multi-skill telemetry batches do not exceed kv value limits",
+    async () => {
+      const root = await tempRoot();
+      await initGraph(root);
+      const store = await openStore(root);
+      const events: SkillEvent[] = [];
+
+      for (let skill = 1; skill <= 12; skill++) {
+        for (let attempt = 1; attempt <= 5; attempt++) {
+          events.push({
+            ...EVENT,
+            event_id: `skill-${skill}-result-${attempt}`,
+            timestamp: `2026-05-22T16:${String(skill).padStart(2, "0")}:${String(attempt).padStart(2, "0")}.000Z`,
+            turn_id: `skill-${skill}-turn-${attempt}`,
+            name: `skill-${skill}`,
+            path: `/plugins/dev/skills/engineering/skill-${skill}/SKILL.md`,
+            result: {
+              status: attempt <= 4 ? "failed" : "succeeded",
+              error_class: attempt <= 4 ? "ValidationError" : undefined,
+              error_stage: attempt <= 4 ? "verify" : undefined,
+            },
+          });
+        }
+      }
+
+      await ingestSkillEvents(store, events);
+
+      const rollups = await readSkillRollups(store);
+      expect(rollups).toHaveLength(12);
+      expect(rollups[0]).toEqual(
+        expect.objectContaining({
+          event_count: 5,
+          result_count: 5,
+          outcome_counts: { failed: 4, succeeded: 1 },
+        }),
+      );
+    },
+    TIMEOUT,
+  );
+
 });
 
 describe("plugin dependency boundaries", () => {

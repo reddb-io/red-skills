@@ -95,7 +95,7 @@ Patch block format:
 
 <supporting-info>
 
-`memory improve skills` currently proposes fixes for curatable skills flagged as `frequently-failing` by Skill telemetry rollups. It is deliberately proposal-gated: the Memory plugin may write `.red/memory/proposals/*.md`, but applying a patch remains an explicit review step handled outside this command.
+`memory improve skills` currently proposes fixes for curatable skills flagged as `frequently-failing` by partitioned Skill telemetry rollups. It is deliberately proposal-gated: the Memory plugin may write `.red/memory/proposals/*.md`, but applying a patch remains an explicit review step handled outside this command.
 
 This is the first mutating stage in the self-improvement loop. Proposal generation mutates only `.red/memory/proposals/`; proposal application can patch a target skill only when a reviewed structured block plus `--yes` are both present.
 
