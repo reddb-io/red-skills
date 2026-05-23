@@ -12,7 +12,7 @@ import {
   skillTelemetryEnabled,
 } from "./config.js";
 import { diagnose, prune } from "./doctor.js";
-import { neighbors, path as shortestPath, search, traverse } from "./engine.js";
+import { ask, neighbors, path as shortestPath, search, traverse } from "./engine.js";
 import { exportGraph } from "./export.js";
 import {
   extractConversation,
@@ -63,6 +63,7 @@ Usage:
   memory init [--mode markdown-only|graph] [--hooks] [--skill-telemetry] [--root <dir>] [--yes]
   memory store <fact...>            [--root <dir>] [--scope project|repo|branch|worktree|session|agent-run|user] [--scope-id ID]
   memory recall <query...>          [--root <dir>] [--limit N] [--include-superseded] [--scope ...] [--scope-id ID] [--include-narrower-scopes]
+  memory ask <question...>          [--root <dir>] [--json]
   memory ingest <path>              [--root <dir>] [--max-files N]
   memory refresh [<path...>]         [--root <dir>] [--stdin] [--changed|--staged] [--json]
   memory extract [<transcript-file>] [--root <dir>]   (reads stdin if no file)
@@ -290,6 +291,53 @@ async function runRecall(args: ParsedArgs): Promise<void> {
   for (const hit of hits) {
     console.log(`  [${hit.score}] ${hit.id}`);
     console.log(`        ${hit.excerpt}`);
+  }
+}
+
+async function runAsk(args: ParsedArgs): Promise<void> {
+  const rootDir = rootOf(args.flags);
+  const question = args.positional.join(" ").trim();
+  if (!question) throw new Error("nothing to ask — pass a question: memory ask <question>");
+  const config = await requireConfig(rootDir);
+  if (config.mode !== "graph") {
+    throw new Error(
+      `ask needs graph mode — this project is "${config.mode}". Re-run \`memory init --mode graph\` first`,
+    );
+  }
+
+  const store = await MemoryStore.open({ uri: resolveStoreUri(rootDir, config) });
+  try {
+    const result = await ask(store, question);
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
+
+    console.log(`memory ask: ${result.status}`);
+    if (result.answer) console.log(result.answer);
+    if (result.error) console.log(`provider: unavailable (${result.error})`);
+    console.log(`citations: ${result.citations.length}`);
+    for (const item of [...result.evidence.active, ...result.evidence.superseded]) {
+      const source = item.source ? ` source=${item.source}` : "";
+      console.log(
+        `  ${item.citation} memory_nodes:${item.rid} ${item.title} (${item.confidence}, ${item.status}${source})`,
+      );
+    }
+    if (result.evidence.contradictory.length > 0) {
+      console.log(`contradictions: ${result.evidence.contradictory.length}`);
+      for (const item of result.evidence.contradictory) {
+        const state = item.resolved ? `resolved active=${item.activeRid}` : "unresolved";
+        const reason = item.reason ? ` reason=${item.reason}` : "";
+        console.log(`  ${item.from.citation} contradicts ${item.to.citation} (${state}${reason})`);
+      }
+    }
+    if (result.cost) {
+      console.log(
+        `cost: ${result.cost.provider}/${result.cost.model} prompt=${result.cost.prompt_tokens} completion=${result.cost.completion_tokens} usd=${result.cost.cost_usd}`,
+      );
+    }
+  } finally {
+    await store.close();
   }
 }
 
@@ -2242,6 +2290,8 @@ async function main(): Promise<void> {
       return runStore(args);
     case "recall":
       return runRecall(args);
+    case "ask":
+      return runAsk(args);
     case "ingest":
       return runIngest(args);
     case "refresh":

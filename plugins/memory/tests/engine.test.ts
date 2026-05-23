@@ -254,28 +254,71 @@ describe("path", () => {
 });
 
 describe("ask", () => {
-  test("returns grounded answer citations and per-call cost", async () => {
+  test("grounds supported answers in recalled evidence citations and per-call cost", async () => {
     const store = {
-      ask: async () => ({
-        answer: "JWT tokens rotate every 90 days [1].",
-        citations: [{ marker: 1, urn: "memory_docs:jwt-rotation" }],
-        cost: {
-          cost_usd: 0.00042,
-          prompt_tokens: 120,
-          completion_tokens: 16,
-          model: "gpt-4o-mini",
-          provider: "openai",
-          cache_hit: false,
+      listNodes: async () => [
+        {
+          rid: 1,
+          label: "jwt-rotation",
+          node_type: "decision",
+          properties: {
+            title: "JWT rotation",
+            content: "JWT tokens rotate every 90 days in staging.",
+            confidence: "EXTRACTED",
+            source: "docs/auth.md",
+            tier: "durable",
+            importance: 0.8,
+            created_at: Date.now(),
+            updated_at: Date.now(),
+          },
         },
-      }),
+      ],
+      searchText: async () => [{ rid: 1, score: 4 }],
+      neighborhood: async () => [],
+      supersededByMany: async () => new Map(),
+      recordAccess: async () => {},
+      listEdges: async () => [],
+      ask: async (prompt: string) => {
+        expect(prompt).toContain("[1] JWT rotation");
+        return {
+          answer: "JWT tokens rotate every 90 days in staging [1].",
+          citations: [],
+          cost: {
+            cost_usd: 0.00042,
+            prompt_tokens: 120,
+            completion_tokens: 16,
+            model: "gpt-4o-mini",
+            provider: "openai",
+            cache_hit: false,
+          },
+        };
+      },
     } as unknown as MemoryStore;
 
     const result = await ask(store, "how often do jwt tokens rotate?");
 
     expect(result).toMatchObject({
-      available: true,
-      answer: "JWT tokens rotate every 90 days [1].",
-      citations: [{ marker: 1, urn: "memory_docs:jwt-rotation" }],
+      status: "answered",
+      answer: "JWT tokens rotate every 90 days in staging [1].",
+      citations: [{ marker: 1, urn: "memory_nodes:1" }],
+      evidence: {
+        active: [
+          {
+            citation: "[1]",
+            rid: 1,
+            label: "jwt-rotation",
+            confidence: "EXTRACTED",
+            source: "docs/auth.md",
+          },
+        ],
+        superseded: [],
+        contradictory: [],
+        byConfidence: {
+          EXTRACTED: [expect.objectContaining({ rid: 1 })],
+          INFERRED: [],
+          AMBIGUOUS: [],
+        },
+      },
       cost: {
         cost_usd: 0.00042,
         prompt_tokens: 120,
@@ -287,6 +330,135 @@ describe("ask", () => {
     });
   });
 
+  test("returns insufficient evidence without calling the provider for unsupported questions", async () => {
+    const store = {
+      listNodes: async () => [
+        {
+          rid: 1,
+          label: "jwt-rotation",
+          node_type: "decision",
+          properties: {
+            title: "JWT rotation",
+            content: "JWT tokens rotate every 90 days in staging.",
+            confidence: "EXTRACTED",
+            tier: "durable",
+          },
+        },
+      ],
+      searchText: async () => [],
+      neighborhood: async () => [],
+      supersededByMany: async () => new Map(),
+      recordAccess: async () => {},
+      listEdges: async () => [],
+      ask: async () => {
+        throw new Error("provider should not be called");
+      },
+    } as unknown as MemoryStore;
+
+    const result = await ask(store, "what is the database password?");
+
+    expect(result).toMatchObject({
+      status: "insufficient-evidence",
+      available: true,
+      answer: "Insufficient evidence in Memory to answer this question.",
+      citations: [],
+      evidence: {
+        active: [],
+        superseded: [],
+        contradictory: [],
+        byConfidence: { EXTRACTED: [], INFERRED: [], AMBIGUOUS: [] },
+      },
+      cost: null,
+    });
+  });
+
+  test("surfaces superseded and contradictory evidence distinctly", async () => {
+    const store = {
+      listNodes: async () => [
+        {
+          rid: 1,
+          label: "deploy-friday",
+          node_type: "decision",
+          properties: {
+            title: "Deploy Friday",
+            content: "Deploys happen on Friday.",
+            confidence: "INFERRED",
+            tier: "durable",
+            created_at: 1,
+            updated_at: 1,
+          },
+        },
+        {
+          rid: 2,
+          label: "deploy-tuesday",
+          node_type: "decision",
+          properties: {
+            title: "Deploy Tuesday",
+            content: "Deploys happen on Tuesday.",
+            confidence: "AMBIGUOUS",
+            tier: "durable",
+            created_at: 2,
+            updated_at: 2,
+          },
+        },
+      ],
+      searchText: async () => [],
+      neighborhood: async () => [],
+      supersededByMany: async () => new Map([[1, 2]]),
+      recordAccess: async () => {},
+      listEdges: async () => [
+        {
+          label: "CONTRADICTS",
+          from_rid: 1,
+          to_rid: 2,
+          properties: { reason: "deployment day changed" },
+        },
+      ],
+      ask: async (prompt: string) => {
+        expect(prompt).toContain("Superseded evidence:");
+        expect(prompt).toContain("Deploy Friday");
+        expect(prompt).toContain("Deploy Tuesday");
+        expect(prompt).toContain("Contradictions:");
+        expect(prompt).toContain("contradicts");
+        return {
+          answer: "Current evidence says deploys happen on Tuesday [2]. Friday is superseded [1].",
+          citations: [],
+          cost: {
+            cost_usd: 0.0001,
+            prompt_tokens: 80,
+            completion_tokens: 20,
+            model: "gpt-4o-mini",
+            provider: "openai",
+            cache_hit: false,
+          },
+        };
+      },
+    } as unknown as MemoryStore;
+
+    const result = await ask(store, "when do deploys happen?");
+
+    expect(result.status).toBe("answered");
+    expect(result.evidence.active).toEqual([
+      expect.objectContaining({ rid: 2, status: "active", confidence: "AMBIGUOUS" }),
+    ]);
+    expect(result.evidence.superseded).toEqual([
+      expect.objectContaining({ rid: 1, status: "superseded", activeRid: 2, confidence: "INFERRED" }),
+    ]);
+    expect(result.evidence.contradictory).toEqual([
+      expect.objectContaining({
+        reason: "deployment day changed",
+        resolved: true,
+        activeRid: 2,
+      }),
+    ]);
+    expect(result.evidence.byConfidence.INFERRED).toEqual([
+      expect.objectContaining({ rid: 1 }),
+    ]);
+    expect(result.evidence.byConfidence.AMBIGUOUS).toEqual([
+      expect.objectContaining({ rid: 2 }),
+    ]);
+  });
+
   test(
     "degrades gracefully without an LLM key",
     async () => {
@@ -295,8 +467,10 @@ describe("ask", () => {
 
       const result = await ask(store, "how often do jwt tokens rotate?");
       // No LLM key in CI → not available, but the call must not throw.
+      expect(result.status).toBe("provider-unavailable");
       expect(result).toHaveProperty("available");
       expect(Array.isArray(result.citations)).toBe(true);
+      expect(result.evidence.active.length).toBeGreaterThan(0);
       expect(result.cost).toBeNull();
     },
     TIMEOUT,
