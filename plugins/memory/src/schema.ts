@@ -43,7 +43,11 @@ export type NodeType =
   | "why_note"
   | "session"
   | "task"
-  | "goal";
+  | "goal"
+  // Engineering semantic graph (PRD #95): AFK execution history.
+  | "attempt"
+  | "issue"
+  | "prd";
 
 export type EdgeLabel =
   // Causal
@@ -171,6 +175,7 @@ export function defaultTier(node_type: NodeType): Tier {
     case "session":
       return "ephemeral";
     case "why_note":
+    case "attempt":
       return "reasoning";
     default:
       return "durable";
