@@ -242,9 +242,20 @@ async function main(): Promise<void> {
         const input = AskInput.parse(args);
         const result = await ask(store, input.question);
         return text(JSON.stringify(result, null, 2), {
+          status: result.status,
           available: result.available,
           citations: result.citations.length,
+          active_evidence: result.evidence.active.length,
+          superseded_evidence: result.evidence.superseded.length,
+          contradictions: result.evidence.contradictory.length,
+          extracted_evidence: result.evidence.byConfidence.EXTRACTED.length,
+          inferred_evidence: result.evidence.byConfidence.INFERRED.length,
+          ambiguous_evidence: result.evidence.byConfidence.AMBIGUOUS.length,
           cost_usd: result.cost?.cost_usd ?? null,
+          prompt_tokens: result.cost?.prompt_tokens ?? null,
+          completion_tokens: result.cost?.completion_tokens ?? null,
+          model: result.cost?.model ?? null,
+          provider: result.cost?.provider ?? null,
         });
       }
       case "memory_export": {

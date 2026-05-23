@@ -8,6 +8,7 @@ import type {
 } from "./graph-store.js";
 import { tokenize } from "./recall.js";
 import {
+  type Confidence,
   DEFAULT_IMPORTANCE,
   type MemoryNodeProps,
   type MemoryScope,
@@ -143,6 +144,7 @@ export function rankScore(i: RankInputs): number {
 
 export interface AskResult {
   question: string;
+  status: "answered" | "insufficient-evidence" | "provider-unavailable";
   /** Grounded answer, when an LLM key is configured; null otherwise. */
   answer: string | null;
   citations: { marker: number; urn: string }[];
@@ -150,7 +152,36 @@ export interface AskResult {
   cost: AskCost | null;
   /** False when the engine has no LLM key — recall stays zero-token regardless. */
   available: boolean;
+  evidence: AskEvidenceSummary;
   error?: string;
+}
+
+export interface AskEvidence {
+  citation: string;
+  rid: number;
+  label: string;
+  node_type: NodeType;
+  title: string;
+  excerpt: string;
+  confidence: Confidence;
+  source: string | null;
+  status: "active" | "superseded";
+  activeRid: number;
+}
+
+export interface AskContradiction {
+  from: AskEvidence;
+  to: AskEvidence;
+  reason: string | null;
+  resolved: boolean;
+  activeRid: number | null;
+}
+
+export interface AskEvidenceSummary {
+  active: AskEvidence[];
+  superseded: AskEvidence[];
+  contradictory: AskContradiction[];
+  byConfidence: Record<Confidence, AskEvidence[]>;
 }
 
 const SEED_NEIGHBOR_DECAY = 0.5;
@@ -524,19 +555,179 @@ export async function path(
 /** Grounded ASK over the document collection. Degrades gracefully when the
  *  engine has no LLM key — the rest of the engine stays zero-token. */
 export async function ask(store: MemoryStore, question: string): Promise<AskResult> {
+  const recalled = await recall(store, question, { includeSuperseded: true, depth: 0, k: 8 });
+  const evidence = await buildAskEvidence(store, recalled.nodes);
+  const citations = [...evidence.active, ...evidence.superseded].map((item) => ({
+    marker: Number(item.citation.replace(/\D/g, "")),
+    urn: `memory_nodes:${item.rid}`,
+  }));
+
+  if (evidence.active.length === 0 && evidence.superseded.length === 0) {
+    return {
+      question,
+      status: "insufficient-evidence",
+      answer: "Insufficient evidence in Memory to answer this question.",
+      citations: [],
+      cost: null,
+      available: true,
+      evidence,
+    };
+  }
+
   try {
-    const { answer, citations, cost } = await store.ask(question);
-    return { question, answer, citations, cost, available: true };
+    const { answer, cost } = await store.ask(askPrompt(question, evidence));
+    return {
+      question,
+      status: "answered",
+      answer,
+      citations,
+      cost,
+      available: true,
+      evidence,
+    };
   } catch (err) {
     return {
       question,
+      status: "provider-unavailable",
       answer: null,
-      citations: [],
+      citations,
       cost: null,
       available: false,
+      evidence,
       error: err instanceof Error ? err.message : String(err),
     };
   }
+}
+
+async function buildAskEvidence(
+  store: MemoryStore,
+  nodes: RecalledNode[],
+): Promise<AskEvidenceSummary> {
+  const rids = nodes.map((node) => node.rid);
+  const superseded = await store.supersededByMany(rids);
+  const nodeEvidence = nodes.map((node, index) => toAskEvidence(node, index + 1, superseded));
+  const byRid = new Map(nodeEvidence.map((item) => [item.rid, item]));
+  const contradictory: AskContradiction[] = [];
+
+  for (const edge of await store.listEdges()) {
+    if (edgeLabel(edge) !== "CONTRADICTS") continue;
+    const from = byRid.get(edgeFrom(edge));
+    const to = byRid.get(edgeTo(edge));
+    if (!from || !to) continue;
+    const resolved = from.activeRid === to.activeRid;
+    contradictory.push({
+      from,
+      to,
+      reason: edgeReason(edge),
+      resolved,
+      activeRid: resolved ? from.activeRid : null,
+    });
+  }
+
+  return {
+    active: nodeEvidence.filter((item) => item.status === "active"),
+    superseded: nodeEvidence.filter((item) => item.status === "superseded"),
+    contradictory,
+    byConfidence: evidenceByConfidence(nodeEvidence),
+  };
+}
+
+function evidenceByConfidence(items: AskEvidence[]): Record<Confidence, AskEvidence[]> {
+  return {
+    EXTRACTED: items.filter((item) => item.confidence === "EXTRACTED"),
+    INFERRED: items.filter((item) => item.confidence === "INFERRED"),
+    AMBIGUOUS: items.filter((item) => item.confidence === "AMBIGUOUS"),
+  };
+}
+
+function toAskEvidence(
+  node: RecalledNode,
+  marker: number,
+  superseded: Map<number, number>,
+): AskEvidence {
+  const activeRid = activeHead(node.rid, superseded);
+  return {
+    citation: `[${marker}]`,
+    rid: node.rid,
+    label: node.label,
+    node_type: node.node_type,
+    title: node.properties.title ?? node.label,
+    excerpt: node.excerpt,
+    confidence: node.properties.confidence ?? "AMBIGUOUS",
+    source: typeof node.properties.source === "string" ? node.properties.source : null,
+    status: activeRid === node.rid ? "active" : "superseded",
+    activeRid,
+  };
+}
+
+function askPrompt(question: string, evidence: AskEvidenceSummary): string {
+  return [
+    "Answer the question using only the Memory evidence below.",
+    "Cite every substantive claim with the evidence marker, for example [1].",
+    "If the evidence does not support an answer, reply with: Insufficient evidence.",
+    "Call out contradictions and superseded evidence when relevant.",
+    "",
+    `Question: ${question}`,
+    "",
+    "Active evidence:",
+    ...renderAskEvidence(evidence.active),
+    "",
+    "Superseded evidence:",
+    ...renderAskEvidence(evidence.superseded),
+    "",
+    "Contradictions:",
+    ...renderAskContradictions(evidence.contradictory),
+  ].join("\n");
+}
+
+function renderAskEvidence(items: AskEvidence[]): string[] {
+  if (items.length === 0) return ["(none)"];
+  return items.map((item) => {
+    const source = item.source ? ` source=${item.source}` : "";
+    return `${item.citation} ${item.title} (${item.confidence}; rid=${item.rid}; ${item.status}${source}) ${item.excerpt}`;
+  });
+}
+
+function renderAskContradictions(items: AskContradiction[]): string[] {
+  if (items.length === 0) return ["(none)"];
+  return items.map((item) => {
+    const state = item.resolved ? `resolved active=${item.activeRid}` : "unresolved";
+    const reason = item.reason ? ` reason=${item.reason}` : "";
+    return `${item.from.citation} contradicts ${item.to.citation} (${state}${reason})`;
+  });
+}
+
+function activeHead(rid: number, superseded: Map<number, number>): number {
+  const seen = new Set<number>();
+  let current = rid;
+  while (!seen.has(current)) {
+    seen.add(current);
+    const next = superseded.get(current);
+    if (next == null) return current;
+    current = next;
+  }
+  return current;
+}
+
+function edgeLabel(edge: Record<string, unknown>): string {
+  return String(edge.label ?? edge.edge_label ?? "");
+}
+
+function edgeFrom(edge: Record<string, unknown>): number {
+  return Number(edge.from_rid ?? edge.from ?? edge.from_id ?? edge.source ?? edge.source_id);
+}
+
+function edgeTo(edge: Record<string, unknown>): number {
+  return Number(edge.to_rid ?? edge.to ?? edge.to_id ?? edge.target ?? edge.target_id);
+}
+
+function edgeReason(edge: Record<string, unknown>): string | null {
+  const props = edge.properties;
+  if (props && typeof props === "object" && "reason" in props) {
+    const reason = (props as { reason?: unknown }).reason;
+    return reason == null ? null : String(reason);
+  }
+  return null;
 }
 
 function renderContext(query: string, nodes: RecalledNode[]): string {

@@ -221,12 +221,19 @@ describe("MCP server over stdio", () => {
       })) as ToolResult;
 
       const answer = JSON.parse(result.content[0]?.text ?? "{}") as {
+        status: string;
         citations: unknown[];
+        evidence: { active: unknown[] };
         cost: unknown;
       };
+      expect(answer.status).toBe("provider-unavailable");
       expect(Array.isArray(answer.citations)).toBe(true);
+      expect(answer.evidence.active.length).toBeGreaterThan(0);
       expect(answer).toHaveProperty("cost");
+      expect(result.structuredContent).toHaveProperty("status");
       expect(result.structuredContent).toHaveProperty("citations");
+      expect(result.structuredContent).toHaveProperty("active_evidence");
+      expect(result.structuredContent).toHaveProperty("ambiguous_evidence");
       expect(result.structuredContent).toHaveProperty("cost_usd");
     },
     TIMEOUT,
