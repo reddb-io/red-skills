@@ -168,7 +168,13 @@ build_slot_env_overrides() {
 # RED_AFK_WORKER_ID. Distinct from the runtime WORKER_ID afk.sh picks for itself —
 # this one only labels the spawn for detector / post-exit hook bookkeeping.
 gen_supervisor_wid() {
-  printf 'w%s' "$(LC_ALL=C tr -dc 'A-Z0-9' </dev/urandom | head -c 4)"
+  local alphabet="ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+  local id="" i idx
+  for ((i=0; i<4; i++)); do
+    idx=$(( RANDOM % ${#alphabet} ))
+    id+="${alphabet:$idx:1}"
+  done
+  printf 'w%s' "$id"
 }
 
 # write_defaults_file — atomically record the most-recent applied detector

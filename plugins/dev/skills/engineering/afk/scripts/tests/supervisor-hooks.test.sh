@@ -45,6 +45,11 @@ expect_contains() {
 wid="$(gen_supervisor_wid)"
 [[ "$wid" =~ ^w[A-Z0-9]{4}$ ]] && ok "gen_supervisor_wid format" \
   || bad "gen_supervisor_wid format (got >>$wid<<)"
+for _ in $(seq 1 200); do
+  wid="$(gen_supervisor_wid)" || { bad "gen_supervisor_wid survives repeated calls"; break; }
+  [[ "$wid" =~ ^w[A-Z0-9]{4}$ ]] || { bad "gen_supervisor_wid repeated format (got >>$wid<<)"; break; }
+done
+[[ "$wid" =~ ^w[A-Z0-9]{4}$ ]] && ok "gen_supervisor_wid survives repeated calls"
 
 # ---------- 2. write_defaults_file is atomic, readable ---------------------
 write_defaults_file "cargo gradle"
