@@ -5,7 +5,7 @@ description: Report the project context stack posture without mutating anything.
 
 # memory context-status
 
-Read-only healthcheck for the agent context stack. It reports committed context, Memory mode, graph store presence, Skill telemetry, Wiki readiness, a simple score, and concrete recommendations.
+Read-only healthcheck for the agent context stack. It reports committed context, Memory mode, graph store presence, graph freshness, Skill telemetry, Wiki readiness, a simple score, and concrete recommendations.
 
 <what-to-do>
 
@@ -26,7 +26,7 @@ node "${CLAUDE_PLUGIN_ROOT}/dist/cli.js" status context --json
 Read these sections together:
 
 - `committedContext` — whether `CLAUDE.md`/`AGENTS.md`, `.red/CONTEXT.md`, `.red/CONTEXT-MAP.md`, and `.red/adr/*.md` are present.
-- `memory` — whether Memory is uninitialized, markdown-only, or graph mode; whether graph store and Skill telemetry are available.
+- `memory` — whether Memory is uninitialized, markdown-only, or graph mode; whether graph store, graph freshness, hooks, and Skill telemetry are available.
 - `wiki` — whether `.red/agents/wiki.md` and `.red/wiki/` are both present.
 - `score` — count of ready checks; this is a grounding signal, not a quality guarantee.
 - `recommendations` — setup actions that would improve context readiness.
@@ -40,7 +40,7 @@ This command must not initialize Memory, ingest a graph, create Wiki files, upda
 - ✅ Run before large changes, `/afk` waves, onboarding, or Skill curation.
 - ✅ Treat a low score as a reason to gather context, not as a failure.
 - ✅ Pair with `/context` from the `dev` plugin for the full context stack loop.
-- ❌ Do not confuse presence with freshness; graph freshness still needs explicit ingest/staleness checks.
+- ❌ Do not auto-ingest when graph freshness is stale; recommend `memory ingest . --root .` instead.
 - ❌ Do not auto-enable hooks, MCP, graph mode, telemetry, or Wiki state from this diagnostic.
 
 </what-to-do>

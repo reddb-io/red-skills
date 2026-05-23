@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { isAbsolute, join, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { access, readdir, readFile, stat } from "node:fs/promises";
 import {
@@ -484,6 +484,7 @@ type CheckName =
   | "domain-glossary"
   | "memory-initialized"
   | "memory-graph"
+  | "graph-freshness"
   | "skill-telemetry"
   | "wiki-ready"
   | "adr-context";
@@ -514,7 +515,8 @@ async function runContextStatus(args: ParsedArgs): Promise<void> {
   console.log(
     `  memory: ${report.memory.mode}` +
       (report.memory.mode === "graph"
-        ? ` store=${yesNo(report.memory.graphStoreExists)} telemetry=${yesNo(report.memory.skillTelemetry)}`
+        ? ` store=${yesNo(report.memory.graphStoreExists)} ` +
+          `freshness=${report.memory.graphFreshness.state} telemetry=${yesNo(report.memory.skillTelemetry)}`
         : ""),
   );
   console.log(`  wiki: ${report.wiki.state}`);
@@ -539,6 +541,10 @@ async function contextStatusReport(rootDir: string) {
   const wikiDir = await exists(join(rootDir, ".red", "wiki"));
   const graphStorePath = config?.storePath ?? ".red/memory/graph.rdb";
   const graphStoreExists = config?.mode === "graph" ? await storeExists(rootDir, graphStorePath) : false;
+  const graphFreshness =
+    config?.mode === "graph" && graphStoreExists
+      ? await graphFreshnessStatus(rootDir, graphStorePath)
+      : { state: "unavailable" as const, newerFiles: [] as string[] };
   const hooksEnabled = config ? enabledHookNames(config.hooks) : [];
 
   const memory = config
@@ -548,6 +554,7 @@ async function contextStatusReport(rootDir: string) {
         hooksEnabled,
         graphStorePath: config.mode === "graph" ? graphStorePath : null,
         graphStoreExists,
+        graphFreshness,
       }
     : {
         mode: "uninitialized" as const,
@@ -555,6 +562,7 @@ async function contextStatusReport(rootDir: string) {
         hooksEnabled: [] as string[],
         graphStorePath: null,
         graphStoreExists: false,
+        graphFreshness,
       };
 
   const wiki = {
@@ -595,6 +603,16 @@ async function contextStatusReport(rootDir: string) {
           : "graph mode not enabled",
     },
     {
+      name: "graph-freshness",
+      ok: graphFreshness.state === "fresh" || graphFreshness.state === "unavailable",
+      reason:
+        graphFreshness.state === "fresh"
+          ? "graph store is newer than scanned project files"
+          : graphFreshness.state === "stale"
+            ? `${graphFreshness.newerFiles.length} project file(s) are newer than the graph store`
+            : "graph freshness unavailable without graph mode and store",
+    },
+    {
       name: "skill-telemetry",
       ok: config !== null && skillTelemetryEnabled(config),
       reason: config !== null && skillTelemetryEnabled(config) ? "Skill telemetry enabled" : "Skill telemetry unavailable",
@@ -606,7 +624,13 @@ async function contextStatusReport(rootDir: string) {
     },
   ];
 
-  const recommendations = contextRecommendations({ agentRules, domainGlossary, config, wikiState: wiki.state });
+  const recommendations = contextRecommendations({
+    agentRules,
+    domainGlossary,
+    config,
+    wikiState: wiki.state,
+    graphFreshness,
+  });
   const value = checks.filter((check) => check.ok).length;
 
   return {
@@ -634,6 +658,7 @@ function contextRecommendations(input: {
   domainGlossary: boolean;
   config: Awaited<ReturnType<typeof readConfig>>;
   wikiState: string;
+  graphFreshness: Awaited<ReturnType<typeof graphFreshnessStatus>> | { state: "unavailable"; newerFiles: string[] };
 }): string[] {
   const items: string[] = [];
   if (!input.agentRules) items.push("add CLAUDE.md or AGENTS.md with agent rules");
@@ -642,6 +667,8 @@ function contextRecommendations(input: {
     items.push("run `memory init --mode graph --skill-telemetry` when persistent graph recall is useful");
   } else if (input.config.mode !== "graph") {
     items.push("switch to graph mode when you need graph recall, ingest, telemetry, or curator evidence");
+  } else if (input.graphFreshness.state === "stale") {
+    items.push("run `memory ingest . --root .` before relying on graph recall");
   } else if (!skillTelemetryEnabled(input.config)) {
     items.push("enable Skill telemetry when you want self-improvement evidence for `/curate`");
   }
@@ -679,6 +706,101 @@ async function storeExists(rootDir: string, storePath: string): Promise<boolean>
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
     throw err;
   }
+}
+
+
+async function graphFreshnessStatus(rootDir: string, storePath: string): Promise<{
+  state: "fresh" | "stale" | "unknown";
+  storeMtimeMs: number | null;
+  newestProjectMtimeMs: number | null;
+  newerFiles: string[];
+  scannedFiles: number;
+}> {
+  const storeAbs = isAbsolute(storePath) ? storePath : join(rootDir, storePath);
+  const storeMtimeMs = await newestMtimeMs(storeAbs);
+  if (storeMtimeMs === null) {
+    return { state: "unknown", storeMtimeMs, newestProjectMtimeMs: null, newerFiles: [], scannedFiles: 0 };
+  }
+
+  const scan = await scanProjectFreshness(rootDir, storeMtimeMs);
+  return {
+    state: scan.newerFiles.length > 0 ? "stale" : "fresh",
+    storeMtimeMs,
+    newestProjectMtimeMs: scan.newestProjectMtimeMs,
+    newerFiles: scan.newerFiles,
+    scannedFiles: scan.scannedFiles,
+  };
+}
+
+async function scanProjectFreshness(rootDir: string, storeMtimeMs: number): Promise<{
+  newestProjectMtimeMs: number | null;
+  newerFiles: string[];
+  scannedFiles: number;
+}> {
+  const newerFiles: string[] = [];
+  let newestProjectMtimeMs: number | null = null;
+  let scannedFiles = 0;
+
+  async function walk(dir: string): Promise<void> {
+    const entries = await readdir(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      const abs = join(dir, entry.name);
+      const rel = toPosix(relative(rootDir, abs));
+      if (shouldSkipFreshnessPath(rel, entry.isDirectory())) continue;
+
+      if (entry.isDirectory()) {
+        await walk(abs);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+
+      const info = await stat(abs);
+      scannedFiles += 1;
+      newestProjectMtimeMs = Math.max(newestProjectMtimeMs ?? 0, info.mtimeMs);
+      if (info.mtimeMs > storeMtimeMs) newerFiles.push(rel);
+    }
+  }
+
+  await walk(rootDir);
+  newerFiles.sort();
+  return { newestProjectMtimeMs, newerFiles: newerFiles.slice(0, 20), scannedFiles };
+}
+
+async function newestMtimeMs(path: string): Promise<number | null> {
+  try {
+    const info = await stat(path);
+    if (info.isFile()) return info.mtimeMs;
+    if (!info.isDirectory()) return null;
+    let newest = info.mtimeMs;
+    const entries = await readdir(path, { withFileTypes: true });
+    for (const entry of entries) {
+      const child = await newestMtimeMs(join(path, entry.name));
+      if (child !== null) newest = Math.max(newest, child);
+    }
+    return newest;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw err;
+  }
+}
+
+function shouldSkipFreshnessPath(rel: string, isDir: boolean): boolean {
+  const first = rel.split("/")[0];
+  if ([".git", "node_modules", "dist", "build", "coverage", ".turbo", ".next"].includes(first)) {
+    return true;
+  }
+  if (rel === ".red/memory" || rel.startsWith(".red/memory/")) return true;
+  if (rel === ".red/wiki" || rel.startsWith(".red/wiki/")) return true;
+  if (isDir && entryLooksLikeCache(first)) return true;
+  return false;
+}
+
+function entryLooksLikeCache(name: string): boolean {
+  return name === ".cache" || name === ".pytest_cache" || name === ".vitest";
+}
+
+function toPosix(path: string): string {
+  return path.split(sep).join("/");
 }
 
 function enabledHookNames(hooks: {

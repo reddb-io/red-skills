@@ -625,7 +625,7 @@ and graph export; markdown-only remains explicit-only with no engine. Install
 | **[ingest](./plugins/memory/skills/core/ingest/SKILL.md)** | `/memory:ingest <path>` — walk a repo into the graph: code symbols + markdown structure with their edges (graph mode). |
 | **[extract](./plugins/memory/skills/core/extract/SKILL.md)** | `/memory:extract <transcript>` — extract durable `INFERRED` facts from a transcript using the configured provider (graph mode). |
 | **[skills-status](./plugins/memory/skills/core/skills-status/SKILL.md)** | `/memory:skills-status` — diagnose Skill telemetry and recent usage before curation/self-improvement. |
-| **[context-status](./plugins/memory/skills/core/context-status/SKILL.md)** | `/memory:context-status` — report context stack readiness across agent rules, domain docs, ADRs, Memory graph/telemetry, Wiki, score, and recommendations. |
+| **[context-status](./plugins/memory/skills/core/context-status/SKILL.md)** | `/memory:context-status` — report context stack readiness across agent rules, domain docs, ADRs, Memory graph/freshness/telemetry, Wiki, score, and recommendations. |
 | **[doctor](./plugins/memory/skills/core/doctor/SKILL.md)** | `/memory:doctor` — flag stale nodes (long-unaccessed, never recalled) and prune them after confirmation (graph mode). |
 | **[export](./plugins/memory/skills/core/export/SKILL.md)** | `/memory:export` — export the graph to a navigable graph.html + graph.json + audit.md (graph mode). |
 

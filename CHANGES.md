@@ -11,7 +11,7 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 - **status**: added
 - **upstream**: —
 - **why**: Start the next self-improvement slice with a cheap, scriptable context-quality signal before large tasks, graph work, or Skill curation.
-- **what changed**: Added `memory status context` plus `/memory:context-status` documentation. The report is read-only and scores agent rules, domain glossary, ADRs, Memory initialization, graph store presence, Skill telemetry, and LLM Wiki readiness while emitting setup recommendations instead of mutating state.
+- **what changed**: Added `memory status context` plus `/memory:context-status` documentation. The report is read-only and scores agent rules, domain glossary, ADRs, Memory initialization, graph store presence, graph freshness, Skill telemetry, and LLM Wiki readiness while emitting setup recommendations instead of mutating state.
 
 ## context (engineering) — RedSkills context stack orchestration (added)
 

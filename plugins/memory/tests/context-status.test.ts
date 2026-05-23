@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -90,5 +90,32 @@ describe("memory status context CLI", () => {
     expect(body.memory.skillTelemetry).toBe(false);
     expect(body.memory.graphStoreExists).toBe(false);
     expect(body.recommendations).toContain("switch to graph mode when you need graph recall, ingest, telemetry, or curator evidence");
+  });
+
+  test("flags graph freshness as stale when source files are newer than the graph store", async () => {
+    const root = await tempRoot();
+    await writeFile(join(root, "CLAUDE.md"), "# Agent rules\n", "utf8");
+    await mkdir(join(root, ".red", "adr"), { recursive: true });
+    await writeFile(join(root, ".red", "CONTEXT.md"), "# Glossary\n", "utf8");
+    await writeFile(join(root, ".red", "adr", "0001-test.md"), "# ADR\n", "utf8");
+    await mkdir(join(root, ".red", "agents"), { recursive: true });
+    await mkdir(join(root, ".red", "wiki"), { recursive: true });
+    await writeFile(join(root, ".red", "agents", "wiki.md"), "# Wiki agent\n", "utf8");
+    await initGraph(root, { skillTelemetry: true });
+
+    const oldTime = new Date("2026-01-01T00:00:00.000Z");
+    const newTime = new Date("2026-01-02T00:00:00.000Z");
+    await utimes(join(root, ".red", "memory", "graph.rdb"), oldTime, oldTime);
+    await mkdir(join(root, "src"), { recursive: true });
+    await writeFile(join(root, "src", "newer.ts"), "export const newer = true;\n", "utf8");
+    await utimes(join(root, "src", "newer.ts"), newTime, newTime);
+
+    const result = runMemory(["status", "context", "--root", root, "--json"]);
+    expect(result.status).toBe(0);
+    const body = JSON.parse(result.stdout);
+
+    expect(body.memory.graphFreshness.state).toBe("stale");
+    expect(body.memory.graphFreshness.newerFiles).toContain("src/newer.ts");
+    expect(body.recommendations).toContain("run `memory ingest . --root .` before relying on graph recall");
   });
 });
