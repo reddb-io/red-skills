@@ -21,6 +21,7 @@ import { dirname, join, resolve } from "node:path";
 import { readConfig, skillTelemetryEnabled } from "../config.js";
 import { parseCuratorReport, readArchiveCandidates } from "./candidate-reader.js";
 import { executeArchive, executeRestore } from "./archive-engine.js";
+import { fileBackgroundIssue, totalCandidates } from "./issue-filer.js";
 import type { ArchiveCandidate } from "./types.js";
 
 const INIT_HINT = "memory init --mode graph --skill-telemetry";
@@ -31,6 +32,7 @@ function usage(): string {
 Usage:
   red-curate-skill check                 [--root <dir>]
   red-curate-skill list                  [--root <dir>] [--stale-days N]
+  red-curate-skill background            [--root <dir>] [--stale-days N] [--label <name>]
   red-curate-skill archive --candidate <json>  [--root <dir>] [--archive-dir <rel>]
   red-curate-skill restore <name>        [--root <dir>] [--archive-dir <rel>]`;
 }
@@ -161,6 +163,46 @@ async function runList(args: ParsedArgs): Promise<number> {
   return 0;
 }
 
+async function runBackground(args: ParsedArgs): Promise<number> {
+  const rootDir = rootOf(args.flags);
+  const pre = await precheck(rootDir);
+  if (!pre.ok) {
+    console.error(pre.message);
+    return 2;
+  }
+  const memArgs = ["curate", "skills", "--json"];
+  if (typeof args.flags["stale-days"] === "string") {
+    memArgs.push("--stale-days", args.flags["stale-days"] as string);
+  }
+  const { stdout, status } = runMemoryCli(memArgs, rootDir);
+  if (status !== 0) {
+    console.error(`curate: memory curate skills exited ${status}`);
+    return status;
+  }
+  const envelope = parseCuratorReport(stdout);
+  const { byCategory } = readArchiveCandidates(envelope);
+  if (totalCandidates(byCategory) === 0) {
+    // Empty case: zero outward action — no issue filed, no comment, no noise.
+    console.error("curate: no candidates — no issue filed");
+    return 0;
+  }
+  const label = typeof args.flags.label === "string" ? (args.flags.label as string) : undefined;
+  const receipt = await fileBackgroundIssue(
+    {
+      byCategory,
+      totals: {
+        totalSkills: envelope.totalSkills,
+        curatableSkills: envelope.curatableSkills,
+        readOnlySkills: envelope.readOnlySkills,
+      },
+      generatedAt: envelope.generatedAt,
+    },
+    { cwd: rootDir, label },
+  );
+  console.log(`curate: filed background issue — ${receipt.output || receipt.title}`);
+  return 0;
+}
+
 async function runArchive(args: ParsedArgs): Promise<number> {
   const rootDir = rootOf(args.flags);
   const pre = await precheck(rootDir);
@@ -227,6 +269,8 @@ async function main(): Promise<number> {
       return runCheck(args);
     case "list":
       return runList(args);
+    case "background":
+      return runBackground(args);
     case "archive":
       return runArchive(args);
     case "restore":
