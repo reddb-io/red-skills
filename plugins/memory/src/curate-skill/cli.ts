@@ -141,11 +141,12 @@ async function runList(args: ParsedArgs): Promise<number> {
     return status;
   }
   const envelope = parseCuratorReport(stdout);
-  const { candidates, filtered } = readArchiveCandidates(envelope);
+  const { candidates, byCategory, filtered } = readArchiveCandidates(envelope);
   console.log(
     JSON.stringify(
       {
         candidates,
+        byCategory,
         filtered,
         totals: {
           totalSkills: envelope.totalSkills,

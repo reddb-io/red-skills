@@ -56,18 +56,49 @@ function envelope(recs: CuratorReportEnvelope["recommendations"]): CuratorReport
 }
 
 describe("candidate-reader", () => {
-  test("returns only archive-category, curatable candidates", () => {
+  test("returns candidates across every in-scope curate category", () => {
     const env = envelope([
-      { name: "alpha", source_kind: "project", path: "/x/alpha/SKILL.md", curatable: true, category: "archive", reason: "stale" },
-      { name: "beta", source_kind: "project", path: "/x/beta/SKILL.md", curatable: true, category: "stale", reason: "n/a" },
-      { name: "gamma", source_kind: "plugin", path: "/x/gamma/SKILL.md", curatable: false, category: "archive", reason: "leaked" },
+      { name: "arch", source_kind: "project", path: "/x/arch/SKILL.md", curatable: true, category: "archive", reason: "stale (90d) and never invoked" },
+      { name: "stale-skill", source_kind: "project", path: "/x/s/SKILL.md", curatable: true, category: "stale", reason: "no skill activity for 80d (threshold 60d)" },
+      { name: "ghost", source_kind: "project", path: "/x/g/SKILL.md", curatable: true, category: "abandoned", reason: "loaded 5× but never invoked" },
+      { name: "flaky", source_kind: "project", path: "/x/f/SKILL.md", curatable: true, category: "frequently-failing", reason: "3/6 results failed (50%)" },
+      // Out-of-scope categories (consolidation/restore) are intentionally ignored by this slice.
+      { name: "twin", source_kind: "project", path: "/x/t/SKILL.md", curatable: true, category: "consolidation", reason: "overlap with another skill" },
+      { name: "ressurected", source_kind: "project", path: "/x/r/SKILL.md", curatable: true, category: "restore", reason: "active again" },
     ]);
-    const { candidates, filtered } = readArchiveCandidates(env);
-    expect(candidates.map((c) => c.name)).toEqual(["alpha"]);
-    expect(filtered.map((f) => f.name)).toEqual(["gamma"]);
+    const { candidates, byCategory } = readArchiveCandidates(env);
+    expect(candidates.map((c) => c.name).sort()).toEqual(["arch", "flaky", "ghost", "stale-skill"]);
+    expect(Object.keys(byCategory).sort()).toEqual(
+      ["abandoned", "archive", "frequently-failing", "stale"].sort(),
+    );
+    expect(byCategory.stale?.[0].reason).toContain("80d");
+    expect(byCategory["frequently-failing"]?.[0].reason).toContain("50%");
+    expect(byCategory.abandoned?.[0].reason).toContain("never invoked");
   });
 
-  test("defensively drops a non-curatable archive recommendation even if it leaked through", () => {
+  test("omits categories with zero candidates from byCategory", () => {
+    const env = envelope([
+      { name: "lonely", source_kind: "project", path: "/x/l/SKILL.md", curatable: true, category: "stale", reason: "no skill activity for 70d" },
+    ]);
+    const { byCategory } = readArchiveCandidates(env);
+    expect(Object.keys(byCategory)).toEqual(["stale"]);
+    expect(byCategory.archive).toBeUndefined();
+    expect(byCategory.abandoned).toBeUndefined();
+    expect(byCategory["frequently-failing"]).toBeUndefined();
+  });
+
+  test("defensively drops bundled source_kinds in every category", () => {
+    const env = envelope([
+      { name: "leak-plugin", source_kind: "plugin", path: "/x/lp/SKILL.md", curatable: false, category: "stale", reason: "n/a" },
+      { name: "leak-hub", source_kind: "hub", path: "/x/lh/SKILL.md", curatable: false, category: "frequently-failing", reason: "n/a" },
+      { name: "keep", source_kind: "project", path: "/x/k/SKILL.md", curatable: true, category: "abandoned", reason: "loaded 4× but never invoked" },
+    ]);
+    const { candidates, filtered } = readArchiveCandidates(env);
+    expect(candidates.map((c) => c.name)).toEqual(["keep"]);
+    expect(filtered.map((f) => f.name).sort()).toEqual(["leak-hub", "leak-plugin"]);
+  });
+
+  test("defensively drops a non-curatable recommendation even if it leaked through", () => {
     const env = envelope([
       { name: "leak", source_kind: "project", path: "/x/leak/SKILL.md", curatable: false, category: "archive", reason: "should not happen" },
     ]);
@@ -76,9 +107,9 @@ describe("candidate-reader", () => {
     expect(filtered).toHaveLength(1);
   });
 
-  test("drops pinned candidates via the orchestrator-provided pin set", () => {
+  test("drops pinned candidates via the orchestrator-provided pin set (across categories)", () => {
     const env = envelope([
-      { name: "pinned-one", source_kind: "project", path: "/x/p/SKILL.md", curatable: true, category: "archive", reason: "stale" },
+      { name: "pinned-one", source_kind: "project", path: "/x/p/SKILL.md", curatable: true, category: "stale", reason: "no skill activity for 70d" },
       { name: "freely", source_kind: "project", path: "/x/f/SKILL.md", curatable: true, category: "archive", reason: "stale" },
     ]);
     const { candidates } = readArchiveCandidates(env, { pinned: new Set(["pinned-one"]) });
@@ -97,19 +128,31 @@ describe("candidate-reader", () => {
 
 describe("consent-gate", () => {
   const cands: ArchiveCandidate[] = [
-    { name: "a", source_kind: "project", path: "/x/a/SKILL.md", reason: "" },
-    { name: "b", source_kind: "project", path: "/x/b/SKILL.md", reason: "" },
+    { name: "a", source_kind: "project", path: "/x/a/SKILL.md", reason: "", category: "stale" },
+    { name: "b", source_kind: "project", path: "/x/b/SKILL.md", reason: "", category: "abandoned" },
+    { name: "c", source_kind: "project", path: "/x/c/SKILL.md", reason: "", category: "frequently-failing" },
+    { name: "d", source_kind: "project", path: "/x/d/SKILL.md", reason: "", category: "archive" },
   ];
 
-  test("an empty approval set produces zero approvals", () => {
+  test("an empty approval set produces zero approvals across all categories", () => {
     const dec = decideConsent(cands, new Set());
     expect(dec.approved).toEqual([]);
-    expect(dec.declined).toHaveLength(2);
+    expect(dec.declined).toHaveLength(4);
   });
 
   test("typo'd names never reach approval — only intersection counts", () => {
     const dec = decideConsent(cands, new Set(["a", "nonexistent"]));
     expect(dec.approved.map((c) => c.name)).toEqual(["a"]);
+    expect(dec.declined.map((c) => c.name).sort()).toEqual(["b", "c", "d"]);
+  });
+
+  test("approving subsets across categories preserves the approving category on each item", () => {
+    const dec = decideConsent(cands, new Set(["a", "c", "d"]));
+    expect(dec.approved.map((c) => `${c.name}:${c.category}`).sort()).toEqual([
+      "a:stale",
+      "c:frequently-failing",
+      "d:archive",
+    ]);
     expect(dec.declined.map((c) => c.name)).toEqual(["b"]);
   });
 });
@@ -121,6 +164,7 @@ describe("archive-engine — validation refuses without I/O", () => {
       source_kind: "plugin",
       path: "/x/p/SKILL.md",
       reason: "",
+      category: "archive",
     });
     expect(rej?.reason).toBe("read-only-source-kind");
   });
@@ -131,6 +175,7 @@ describe("archive-engine — validation refuses without I/O", () => {
       source_kind: "hub",
       path: "/x/h/SKILL.md",
       reason: "",
+      category: "archive",
     });
     expect(rej?.reason).toBe("read-only-source-kind");
   });
@@ -141,6 +186,7 @@ describe("archive-engine — validation refuses without I/O", () => {
       source_kind: "project",
       path: "/x/p/SKILL.md",
       reason: "",
+      category: "stale",
       pinned: true,
     });
     expect(rej?.reason).toBe("pinned");
@@ -153,6 +199,7 @@ describe("archive-engine — validation refuses without I/O", () => {
         source_kind: "project",
         path: "/x/ok/SKILL.md",
         reason: "",
+        category: "archive",
       }),
     ).toBeNull();
   });
@@ -166,6 +213,7 @@ describe("archive-engine — validation refuses without I/O", () => {
         source_kind: "plugin",
         path: join(root, "skills", "leaked-plugin", "SKILL.md"),
         reason: "should not happen",
+        category: "archive",
       },
       { rootDir: root },
     );
@@ -198,7 +246,8 @@ describe("archive-engine — archive + restore round-trip", () => {
           name: "demo-skill",
           source_kind: "project",
           path: skillFile,
-          reason: "stale and never invoked",
+          reason: "no skill activity for 90d (threshold 60d)",
+          category: "stale",
         },
         { rootDir: root, now: () => new Date("2026-05-22T16:00:00.000Z") },
       );
@@ -214,6 +263,9 @@ describe("archive-engine — archive + restore round-trip", () => {
       expect(manifest.name).toBe("demo-skill");
       expect(manifest.originalRoot).toBe(skillDir);
       expect(manifest.archivedAt).toBe("2026-05-22T16:00:00.000Z");
+      // The approving category is recorded as the archive reason discriminator.
+      expect(manifest.category).toBe("stale");
+      expect(manifest.reason).toBe("no skill activity for 90d (threshold 60d)");
       expect(manifest.files.map((f: { relativePath: string }) => f.relativePath).sort()).toEqual([
         "SKILL.md",
         "support/extra.md",
@@ -267,6 +319,7 @@ describe("archive-engine — archive + restore round-trip", () => {
           source_kind: "project",
           path: skillFile,
           reason: "stale",
+          category: "archive",
         },
         { rootDir: root, fs: tripwire },
       );
