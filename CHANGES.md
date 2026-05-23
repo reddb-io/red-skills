@@ -6,6 +6,13 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 
 ---
 
+## zoom-out (engineering) — Impact section splits structural vs observed impact from Reasoning attempts (modified)
+
+- **status**: modified
+- **upstream**: —
+- **why**: Issue #100 (parent #95). With AFK now recording Reasoning attempts into the Memory graph (ADR 0017) and `zoom-out` already owning Impact analysis (ADR 0018), the Impact section needs to distinguish *what the codebase says today* from *what prior attempts show happened operationally*, without sliding into using attempt history as a product spec.
+- **what changed**: `plugins/dev/skills/engineering/zoom-out/SKILL.md` — the optional **Impact** section now carries two explicit sub-bullets: **Structural impact** (imports, calls, containment, type-use, docs links, graph neighbors/paths — verified against the current worktree, unchanged contract) and **Observed impact** (files touched together, repeated blocked / no-sentinel / merge-conflict attempts, retry chains to/away from a successful attempt, validation summaries — framed as *operational history*, explicitly **not authoritative product direction or acceptance criteria**, verified against the worktree before relying on it). Cleanly degrades to structural-only when attempt evidence is absent/stale/empty, and to ordinary code reads when neither is meaningful; raw graph dumps still forbidden and now explicitly cover **attempt records** alongside nodes/edges/paths/recall output. Gather Context gains a paragraph noting that the existing `memory_neighbors` / `memory_recall` calls also surface attempt nodes (`TOUCHED` edges to file nodes, `PRECEDES` between attempts) that feed Observed impact. The section stays read-only — still no `/memory:ingest`, no reindex, no graph/memory writes, no new `/impact` skill, no `memory_impact` primitive. Contract test `plugins/dev/skills/engineering/zoom-out/scripts/tests/contract.test.sh` extended from 18 to 31 assertions: structural/observed sub-bullet labels, observed-impact vocabulary (Reasoning attempts, touched together, repeated, retry chains, validation summaries), operational-history framing, non-authoritative product-direction language, graceful degradation, and the attempt-records no-dump clause. All green. Refs #100.
+
 ## zoom-out (engineering) — optional structural Impact section in the Answer Contract (modified)
 
 - **status**: modified

@@ -125,6 +125,31 @@ else
   pass=$((pass + 1))
 fi
 
+# --- Structural vs observed impact split (issue #100) ------------------
+
+present "Impact names Structural impact sub-bullet"  "**Structural impact**"
+present "Impact names Observed impact sub-bullet"    "**Observed impact**"
+present_re "Impact separates structural from observed" "separate structural impact from observed impact"
+
+# --- Observed-impact vocabulary ----------------------------------------
+
+present    "Observed impact cites Reasoning attempts"     "**Reasoning attempts**"
+present    "Observed impact cites touched-together files" "**touched together**"
+present    "Observed impact cites repeated failures"      "**repeated**"
+present    "Observed impact cites retry chains"           "**retry chains**"
+present    "Observed impact cites validation summaries"   "**validation summaries**"
+present_re "Observed impact frames evidence as operational history" "operational history"
+present_re "Observed impact is not authoritative product direction" "not authoritative product (direction|requirements)"
+
+# --- Graceful degradation ----------------------------------------------
+
+present_re "Impact degrades cleanly when attempt evidence is absent" "degrade cleanly"
+present_re "Impact falls back to structural-only when attempts are missing" "drop the Observed impact sub-bullet"
+
+# --- No raw graph dump, attempts included ------------------------------
+
+present_re "Impact forbids raw attempt-record dumps" "do \*\*not\*\* paste raw nodes, edges, paths, recall output, attempt records"
+
 # --- Summary -----------------------------------------------------------
 
 echo
