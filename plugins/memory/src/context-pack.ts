@@ -1,5 +1,11 @@
 import { recall, type RecallOptions, type RecallStore, type RecalledNode } from "./engine.js";
 import type { Confidence } from "./schema.js";
+import {
+  buildSkillRecommendationsFromEvidence,
+  renderSkillRecommendationsSection,
+  type SkillRecommendationReport,
+} from "./skill-recommendations.js";
+import type { SkillRollup } from "./skill-events.js";
 
 export type ContextPackStore = RecallStore;
 
@@ -43,6 +49,7 @@ export interface ContextPack {
   usedChars: number;
   markdown: string;
   entries: ContextPackEntry[];
+  skillRecommendations: SkillRecommendationReport;
   warnings: ContextPackWarning[];
   omittedEntries: number;
 }
@@ -51,6 +58,7 @@ export interface ContextPackOptions extends Pick<RecallOptions, "scope" | "now">
   budgetChars?: number;
   limit?: number;
   depth?: number;
+  skillRollups?: SkillRollup[];
 }
 
 const DEFAULT_BUDGET_CHARS = 4_000;
@@ -89,10 +97,25 @@ export async function buildContextPack(
   const activeNodes = recalled.nodes.filter((node) => !superseded.has(node.rid));
 
   if (activeNodes.length === 0) {
+    const skillRecommendations = buildSkillRecommendationsFromEvidence(
+      goal,
+      [],
+      opts.skillRollups ?? [],
+    );
+    const baseMarkdown = [
+      `# Memory context pack: ${goal}`,
+      "",
+      "Status: insufficient-context",
+      "",
+      "_No strong Memory evidence matched this goal._",
+      "",
+    ].join("\n");
+    const skillMarkdown =
+      skillRecommendations.recommendations.length > 0
+        ? `\n${renderSkillRecommendationsSection(skillRecommendations)}`
+        : "";
     const markdown = fitToBudget(
-      [`# Memory context pack: ${goal}`, "", "Status: insufficient-context", "", "_No strong Memory evidence matched this goal._", ""].join(
-        "\n",
-      ),
+      `${baseMarkdown}${baseMarkdown.length + skillMarkdown.length <= budgetChars ? skillMarkdown : ""}`,
       budgetChars,
     );
     return {
@@ -102,13 +125,19 @@ export async function buildContextPack(
       usedChars: markdown.length,
       markdown,
       entries: [],
+      skillRecommendations,
       warnings,
       omittedEntries: 0,
     };
   }
 
   const entries = activeNodes.map((node, index) => toEntry(node, index + 1, goal));
-  const rendered = renderPack(goal, entries, warnings, budgetChars);
+  const skillRecommendations = buildSkillRecommendationsFromEvidence(
+    goal,
+    activeNodes,
+    opts.skillRollups ?? [],
+  );
+  const rendered = renderPack(goal, entries, warnings, budgetChars, skillRecommendations);
   return {
     goal,
     status: rendered.included.length > 0 ? "ok" : "insufficient-context",
@@ -116,6 +145,7 @@ export async function buildContextPack(
     usedChars: rendered.markdown.length,
     markdown: rendered.markdown,
     entries: rendered.included,
+    skillRecommendations,
     warnings: rendered.warnings,
     omittedEntries: entries.length - rendered.included.length,
   };
@@ -217,6 +247,7 @@ function renderPack(
   entries: ContextPackEntry[],
   warnings: ContextPackWarning[],
   budgetChars: number,
+  skillRecommendations: SkillRecommendationReport,
 ): { markdown: string; included: ContextPackEntry[]; warnings: ContextPackWarning[] } {
   const included: ContextPackEntry[] = [];
   const renderedWarnings = [...warnings];
@@ -257,6 +288,12 @@ function renderPack(
     } else if (included.length === 0) {
       markdown = header(goal, "insufficient-context", renderedWarnings);
     }
+  }
+
+  if (skillRecommendations.recommendations.length > 0) {
+    const skillMarkdown = `\n${renderSkillRecommendationsSection(skillRecommendations)}`;
+    const candidate = `${markdown}${skillMarkdown}`;
+    if (candidate.length <= budgetChars) markdown = candidate;
   }
 
   return { markdown: fitToBudget(markdown, budgetChars), included, warnings: renderedWarnings };

@@ -35,6 +35,10 @@ import {
   findNodeForProvenance,
   formatProvenanceHuman,
 } from "./provenance.js";
+import {
+  buildSkillRecommendations,
+  renderSkillRecommendationsSection,
+} from "./skill-recommendations.js";
 import { computeProposalPriority, sortProposalSummaries } from "./proposal-priority.js";
 import {
   buildPrePrMemoryReview,
@@ -80,6 +84,7 @@ Usage:
   memory classify <candidate...>    [--root <dir>] [--json]
   memory recall <query...>          [--root <dir>] [--limit N] [--include-superseded] [--scope ...] [--scope-id ID] [--include-narrower-scopes]
   memory context-pack <goal...>     [--root <dir>] [--budget N] [--limit N] [--json] [--scope ...] [--scope-id ID] [--include-narrower-scopes]
+  memory recommend skills <task...> [--root <dir>] [--limit N] [--json] [--scope ...] [--scope-id ID] [--include-narrower-scopes]
   memory claim-check <assertion...> [--root <dir>] [--json]
   memory ask <question...>          [--root <dir>] [--json]
   memory provenance <rid|label>     [--root <dir>] [--json]
@@ -386,16 +391,45 @@ async function runContextPack(args: ParsedArgs): Promise<void> {
   const limit = typeof args.flags.limit === "string" ? Number(args.flags.limit) : undefined;
   const store = await MemoryStore.open({ uri: resolveStoreUri(rootDir, config) });
   try {
+    const skillRollups = await readSkillRollups(store);
     const pack = await buildContextPack(store, goal, {
       budgetChars,
       limit,
       scope: scopeFlags(args.flags),
+      skillRollups,
     });
     if (args.flags.json === true) {
       console.log(JSON.stringify(pack, null, 2));
       return;
     }
     process.stdout.write(pack.markdown);
+  } finally {
+    await store.close();
+  }
+}
+
+async function runRecommend(args: ParsedArgs): Promise<void> {
+  const kind = args.positional[0];
+  if (kind !== "skills") {
+    throw new Error("recommend needs a kind — supported: memory recommend skills <task>");
+  }
+  const task = args.positional.slice(1).join(" ").trim();
+  if (!task) throw new Error("nothing to recommend — pass a task: memory recommend skills <task>");
+
+  const { store } = await openGraphStore(args);
+  try {
+    const skillRollups = await readSkillRollups(store);
+    const report = await buildSkillRecommendations(store, task, {
+      limit: intFlag(args.flags, "limit"),
+      scope: scopeFlags(args.flags),
+      skillRollups,
+    });
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(report, null, 2));
+      return;
+    }
+    console.log(`memory: skill recommendations for "${task}"`);
+    process.stdout.write(renderSkillRecommendationsSection(report));
   } finally {
     await store.close();
   }
@@ -2651,6 +2685,8 @@ async function main(): Promise<void> {
       return runRecall(args);
     case "context-pack":
       return runContextPack(args);
+    case "recommend":
+      return runRecommend(args);
     case "claim-check":
       return runClaimCheck(args);
     case "ask":
