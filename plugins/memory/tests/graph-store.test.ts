@@ -87,6 +87,129 @@ describe("MemoryStore over a file:// RedDB", () => {
   );
 
   test(
+    "vector projection is best-effort when the embedding provider is unavailable",
+    async () => {
+      const store = await openStore(await tempRoot());
+      const previousProvider = process.env.RED_MEMORY_VECTOR_PROVIDER;
+      process.env.RED_MEMORY_VECTOR_PROVIDER = "openai";
+      const raw = store.raw as unknown as {
+        query: (sql: string, ...params: unknown[]) => Promise<{ rows: Record<string, unknown>[] }>;
+      };
+      const query = raw.query.bind(raw);
+      raw.query = async (sql: string, ...params: unknown[]) => {
+        if (sql.includes("WITH AUTO EMBED")) throw new Error("missing OPENAI_API_KEY");
+        return query(sql, ...params);
+      };
+
+      try {
+        const rid = await store.upsertNode(factToNode("vector readiness survives writes", slugify));
+
+        await expect(store.getNode(rid)).resolves.toMatchObject({
+          label: "vector-readiness-survives-writes",
+        });
+        await expect(store.vectorStatus()).resolves.toMatchObject({
+          overall: "unavailable",
+          ready: 0,
+          unavailable: 1,
+          failed: 0,
+        });
+      } finally {
+        if (previousProvider == null) delete process.env.RED_MEMORY_VECTOR_PROVIDER;
+        else process.env.RED_MEMORY_VECTOR_PROVIDER = previousProvider;
+      }
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "vector projection records link to nodes and reveal stale text hashes",
+    async () => {
+      const store = await openStore(await tempRoot());
+      const previousProvider = process.env.RED_MEMORY_VECTOR_PROVIDER;
+      process.env.RED_MEMORY_VECTOR_PROVIDER = "openai";
+      const vectorRows: Record<string, unknown>[] = [];
+      const raw = store.raw as unknown as {
+        query: (sql: string, ...params: unknown[]) => Promise<{ rows: Record<string, unknown>[] }>;
+      };
+      const query = raw.query.bind(raw);
+      raw.query = async (sql: string, ...params: unknown[]) => {
+        if (sql.includes("WITH AUTO EMBED")) {
+          const row = {
+            rid: vectorRows.length + 1,
+            node_rid: params[0],
+            node_hash: params[1],
+            text_hash: params[2],
+            text: params[3],
+            label: params[4],
+            node_type: params[5],
+            text_length: params[6],
+            source_collection: params[7],
+            project: params[8],
+            provider: params[9],
+            updated_at: params[10],
+          };
+          vectorRows.push(row);
+          return { rows: [row] };
+        }
+        if (sql === "SELECT * FROM memory_vectors") return { rows: vectorRows };
+        return query(sql, ...params);
+      };
+
+      try {
+        const rid = await store.upsertNode(
+          factToNode("vector records carry node metadata", slugify),
+        );
+
+        expect(vectorRows[0]).toMatchObject({
+          node_rid: rid,
+          label: "vector-records-carry-node-metadata",
+          source_collection: "memory_nodes",
+        });
+        await expect(store.vectorStatus()).resolves.toMatchObject({
+          overall: "ready",
+          ready: 1,
+        });
+
+        vectorRows[0].text_hash = "old-text";
+        await expect(store.vectorStatus()).resolves.toMatchObject({
+          overall: "stale",
+          stale: 1,
+        });
+      } finally {
+        if (previousProvider == null) delete process.env.RED_MEMORY_VECTOR_PROVIDER;
+        else process.env.RED_MEMORY_VECTOR_PROVIDER = previousProvider;
+      }
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "strict vector maintenance fails when projection cannot be rebuilt",
+    async () => {
+      const store = await openStore(await tempRoot());
+      const raw = store.raw as unknown as {
+        query: (sql: string, ...params: unknown[]) => Promise<{ rows: Record<string, unknown>[] }>;
+      };
+      const query = raw.query.bind(raw);
+      raw.query = async (sql: string, ...params: unknown[]) => {
+        if (sql.includes("WITH AUTO EMBED")) throw new Error("vector insert syntax error");
+        return query(sql, ...params);
+      };
+
+      await store.upsertNode(factToNode("strict vector maintenance surfaces failures", slugify));
+
+      await expect(store.maintainVectorProjection({ strict: true })).rejects.toThrow(
+        "vector projection failed",
+      );
+      await expect(store.vectorStatus()).resolves.toMatchObject({
+        overall: "failed",
+        failed: 1,
+      });
+    },
+    TIMEOUT,
+  );
+
+  test(
     "stored nodes carry explicit project scope metadata by default",
     async () => {
       const store = await openStore(await tempRoot());

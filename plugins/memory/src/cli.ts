@@ -148,6 +148,8 @@ Usage:
   memory timeline <topic|rid>       [--root <dir>] [--include-audit] [--json]
   memory structural-impact          [--root <dir>] [--file <path>] [--symbol <name>]
   memory pre-pr-review              [--root <dir>] [--range <git-range>] [--json]
+  memory vector status              [--root <dir>] [--json]
+  memory vector maintain            [--root <dir>] [--strict] [--json]
   memory stats                      [--root <dir>]
   memory doctor                     [--root <dir>] [--stale-days N] [--prune] [--yes]
   memory export [<out-dir>]         [--root <dir>] [--communities]
@@ -2843,6 +2845,38 @@ async function runStats(args: ParsedArgs): Promise<void> {
   }
 }
 
+async function runVector(args: ParsedArgs): Promise<void> {
+  const action = args.positional[0];
+  if (action !== "status" && action !== "maintain") {
+    throw new Error("vector needs an action — supported: memory vector status|maintain");
+  }
+  const { store } = await openGraphStore(args);
+  try {
+    const report =
+      action === "maintain"
+        ? await store.maintainVectorProjection({ strict: args.flags.strict === true })
+        : await store.vectorStatus();
+
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(report, null, 2));
+      return;
+    }
+
+    console.log(
+      `memory: vector projection ${report.overall} — ${report.ready}/${report.total} ready`,
+    );
+    if (report.stale > 0) console.log(`  stale: ${report.stale}`);
+    if (report.unavailable > 0) console.log(`  unavailable: ${report.unavailable}`);
+    if (report.failed > 0) console.log(`  failed: ${report.failed}`);
+    for (const node of report.nodes.filter((n) => n.status !== "ready")) {
+      const detail = node.error ? ` — ${node.error}` : "";
+      console.log(`  ${node.rid} (${node.node_type}) ${node.label}: ${node.status}${detail}`);
+    }
+  } finally {
+    await store.close();
+  }
+}
+
 async function runDoctor(args: ParsedArgs): Promise<void> {
   const { store } = await openGraphStore(args);
   try {
@@ -3121,6 +3155,8 @@ async function main(): Promise<void> {
       return runStructuralImpact(args);
     case "pre-pr-review":
       return runPrePrReview(args);
+    case "vector":
+      return runVector(args);
     case "stats":
       return runStats(args);
     case "doctor":
