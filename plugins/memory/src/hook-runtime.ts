@@ -146,15 +146,22 @@ function focusQuery(input: NormalizedInput): string {
   return parts.filter((p): p is string => Boolean(p && p.trim())).join(" ").trim();
 }
 
-function extractedToNode(m: ExtractedMemory, event: HookEvent): MemoryNode {
+function extractedToNode(m: ExtractedMemory, input: NormalizedInput): MemoryNode {
   return {
     label: slugify(m.title),
     node_type: m.node_type,
     properties: {
       title: m.title,
       content: m.content,
-      source: `hook:${event}`,
+      source: `hook:${input.event}`,
       confidence: "EXTRACTED",
+      provenance: {
+        source_kind: "hook",
+        writer: input.runner,
+        hook: input.event,
+        confidence: "EXTRACTED",
+        evidence: ["transcriptText"],
+      },
     },
   };
 }
@@ -246,7 +253,7 @@ async function handleFlush(
   try {
     let stored = 0;
     for (const m of memories) {
-      await store.upsertNode(extractedToNode(m, input.event));
+      await store.upsertNode(extractedToNode(m, input));
       stored += 1;
     }
     return { noop: false, stored };

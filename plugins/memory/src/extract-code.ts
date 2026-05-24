@@ -50,6 +50,12 @@ export async function extractCode(path: string): Promise<CodeExtraction> {
       language: lang,
       source: path,
       confidence: "EXTRACTED",
+      provenance: {
+        source_kind: "derived",
+        writer: "extract-code",
+        confidence: "EXTRACTED",
+        evidence: [path],
+      },
       hash: contentHash(path, source),
     },
   };
@@ -63,6 +69,12 @@ export async function extractCode(path: string): Promise<CodeExtraction> {
       source: `${path}:${sym.line}`,
       language: lang,
       confidence: "EXTRACTED",
+      provenance: {
+        source_kind: "derived",
+        writer: "extract-code",
+        confidence: "EXTRACTED",
+        evidence: [`${path}:${sym.line}`],
+      },
       hash: contentHash(path, sym.name, sym.kind),
     },
   }));
@@ -76,6 +88,12 @@ export async function extractCode(path: string): Promise<CodeExtraction> {
       source: path,
       language: lang,
       confidence: "EXTRACTED",
+      provenance: {
+        source_kind: "derived",
+        writer: "extract-code",
+        confidence: "EXTRACTED",
+        evidence: [path],
+      },
       hash: contentHash(path, "import", imp.specifier),
       import_kind: imp.kind,
       ...(imp.resolvedPath ? { resolved_path: imp.resolvedPath } : {}),

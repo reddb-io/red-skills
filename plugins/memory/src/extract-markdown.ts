@@ -50,6 +50,12 @@ export async function extractMarkdown(path: string): Promise<MarkdownExtraction>
       tags,
       source: path,
       confidence: "EXTRACTED",
+      provenance: {
+        source_kind: "derived",
+        writer: "extract-markdown",
+        confidence: "EXTRACTED",
+        evidence: [path],
+      },
       hash,
     },
   });
@@ -68,6 +74,12 @@ export async function extractMarkdown(path: string): Promise<MarkdownExtraction>
         title: text,
         source: `${path}#${slug}`,
         confidence: "EXTRACTED",
+        provenance: {
+          source_kind: "derived",
+          writer: "extract-markdown",
+          confidence: "EXTRACTED",
+          evidence: [`${path}#${slug}`],
+        },
         hash: contentHash(path, slug, text),
       },
     });

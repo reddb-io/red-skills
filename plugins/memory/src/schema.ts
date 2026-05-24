@@ -113,6 +113,7 @@ export interface MemoryNodeProps {
   importance?: number;
   confidence?: Confidence;
   source?: string;
+  provenance?: MemoryProvenance;
   language?: string;
   project?: string;
   /** Scope classification for safe recall filtering; defaults to `project`. */
@@ -134,6 +135,22 @@ export interface MemoryNodeProps {
   supersedes_rid?: number;
   /** dedupe hash (stable per source+content) */
   hash?: string;
+  [extra: string]: unknown;
+}
+
+export interface MemoryProvenance {
+  source_kind: "manual" | "hook" | "derived" | "system";
+  writer?: string;
+  command?: string;
+  hook?: string;
+  scope?: {
+    level?: MemoryScope;
+    id?: string;
+  };
+  confidence?: Confidence;
+  evidence?: string[];
+  created_at?: number;
+  updated_at?: number;
   [extra: string]: unknown;
 }
 

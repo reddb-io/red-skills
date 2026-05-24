@@ -29,6 +29,11 @@ import { initGraph, initMarkdownOnly } from "./init.js";
 import { lintMemory, type LintReport } from "./lint.js";
 import { applyProviderEnv, redDbProviderClient } from "./provider-client.js";
 import { scanPrivacy, type PrivacyReport } from "./privacy.js";
+import {
+  buildProvenanceReport,
+  findNodeForProvenance,
+  formatProvenanceHuman,
+} from "./provenance.js";
 import { computeProposalPriority, sortProposalSummaries } from "./proposal-priority.js";
 import {
   buildPrePrMemoryReview,
@@ -75,6 +80,7 @@ Usage:
   memory recall <query...>          [--root <dir>] [--limit N] [--include-superseded] [--scope ...] [--scope-id ID] [--include-narrower-scopes]
   memory context-pack <goal...>     [--root <dir>] [--budget N] [--limit N] [--json] [--scope ...] [--scope-id ID] [--include-narrower-scopes]
   memory ask <question...>          [--root <dir>] [--json]
+  memory provenance <rid|label>     [--root <dir>] [--json]
   memory ingest <path>              [--root <dir>] [--max-files N]
   memory refresh [<path...>]         [--root <dir>] [--stdin] [--changed|--staged] [--json]
   memory extract [<transcript-file>] [--root <dir>]   (reads stdin if no file)
@@ -254,6 +260,17 @@ async function runStore(args: ParsedArgs): Promise<void> {
         factToNode(fact, slugify, {
           scope: explicitScope,
           scopeId: typeof args.flags["scope-id"] === "string" ? args.flags["scope-id"] : undefined,
+          provenance: {
+            source_kind: "manual",
+            writer: "cli",
+            command: "memory store",
+            scope: {
+              ...(explicitScope ? { level: explicitScope } : {}),
+              ...(typeof args.flags["scope-id"] === "string" ? { id: args.flags["scope-id"] } : {}),
+            },
+            confidence: "EXTRACTED",
+            evidence: ["fact argument"],
+          },
         }),
       );
       console.log(`memory: stored node ${rid}`);
@@ -263,9 +280,35 @@ async function runStore(args: ParsedArgs): Promise<void> {
     return;
   }
 
-  const note = await storeNote(resolveNotesDir(rootDir, config), fact);
+  const note = await storeNote(resolveNotesDir(rootDir, config), fact, new Date(), {
+    provenance: {
+      source_kind: "manual",
+      writer: "cli",
+      command: "memory store",
+      confidence: "EXTRACTED",
+      evidence: ["fact argument"],
+    },
+  });
   console.log(`memory: stored ${note.id}`);
   console.log(`  ${note.path}`);
+}
+
+async function runProvenance(args: ParsedArgs): Promise<void> {
+  const target = args.positional.join(" ").trim();
+  if (!target) throw new Error("pass a node rid or label: memory provenance <rid|label>");
+  const { store } = await openGraphStore(args);
+  try {
+    const node = await findNodeForProvenance(store, target);
+    if (!node) throw new Error(`memory node not found: ${target}`);
+    const report = buildProvenanceReport(node);
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(report, null, 2));
+      return;
+    }
+    process.stdout.write(formatProvenanceHuman(report));
+  } finally {
+    await store.close();
+  }
 }
 
 async function runClassify(args: ParsedArgs): Promise<void> {
@@ -2563,6 +2606,8 @@ async function main(): Promise<void> {
       return runContextPack(args);
     case "ask":
       return runAsk(args);
+    case "provenance":
+      return runProvenance(args);
     case "ingest":
       return runIngest(args);
     case "refresh":
