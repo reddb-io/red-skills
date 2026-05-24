@@ -46,6 +46,7 @@ import {
   type PrePrReviewSection,
 } from "./pre-pr-review.js";
 import { buildLearningDebtReport } from "./learning-debt.js";
+import { buildOnboardingMap } from "./onboarding-map.js";
 import { buildPreflightBrief } from "./preflight.js";
 import { recall } from "./recall.js";
 import {
@@ -90,6 +91,7 @@ Usage:
   memory claim-check <assertion...> [--root <dir>] [--json]
   memory preflight <task...>        [--root <dir>] [--limit N] [--min-evidence N] [--stale-days N] [--json] [--scope ...] [--scope-id ID] [--include-narrower-scopes]
   memory learning-debt              [--root <dir>] [--stale-days N] [--json]
+  memory onboarding-map             [--root <dir>] [--stale-days N] [--json]
   memory ask <question...>          [--root <dir>] [--json]
   memory provenance <rid|label>     [--root <dir>] [--json]
   memory ingest <path>              [--root <dir>] [--max-files N]
@@ -481,6 +483,31 @@ async function runLearningDebt(args: ParsedArgs): Promise<void> {
       return;
     }
     process.stdout.write(report.markdown);
+  } finally {
+    await store.close();
+  }
+}
+
+async function runOnboardingMap(args: ParsedArgs): Promise<void> {
+  const rootDir = rootOf(args.flags);
+  const config = await requireConfig(rootDir);
+  if (config.mode !== "graph") {
+    throw new Error(
+      `onboarding-map needs graph mode — this project is "${config.mode}". Re-run \`memory init --mode graph\` first`,
+    );
+  }
+  const telemetryEnabled = skillTelemetryEnabled(config);
+  const store = await MemoryStore.open({ uri: resolveStoreUri(rootDir, config) });
+  try {
+    const map = await buildOnboardingMap(store, {
+      staleDays: intFlag(args.flags, "stale-days"),
+      rollups: telemetryEnabled ? await readSkillRollups(store) : [],
+    });
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(map, null, 2));
+      return;
+    }
+    process.stdout.write(map.markdown);
   } finally {
     await store.close();
   }
@@ -2744,6 +2771,8 @@ async function main(): Promise<void> {
       return runPreflight(args);
     case "learning-debt":
       return runLearningDebt(args);
+    case "onboarding-map":
+      return runOnboardingMap(args);
     case "ask":
       return runAsk(args);
     case "provenance":
