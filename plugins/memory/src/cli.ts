@@ -12,6 +12,7 @@ import {
   skillTelemetryEnabled,
 } from "./config.js";
 import { buildContextPack } from "./context-pack.js";
+import { claimCheck, type ClaimCheckResult } from "./claim-check.js";
 import { diagnose, prune } from "./doctor.js";
 import { ask, neighbors, path as shortestPath, search, traverse } from "./engine.js";
 import { exportGraph } from "./export.js";
@@ -79,6 +80,7 @@ Usage:
   memory classify <candidate...>    [--root <dir>] [--json]
   memory recall <query...>          [--root <dir>] [--limit N] [--include-superseded] [--scope ...] [--scope-id ID] [--include-narrower-scopes]
   memory context-pack <goal...>     [--root <dir>] [--budget N] [--limit N] [--json] [--scope ...] [--scope-id ID] [--include-narrower-scopes]
+  memory claim-check <assertion...> [--root <dir>] [--json]
   memory ask <question...>          [--root <dir>] [--json]
   memory provenance <rid|label>     [--root <dir>] [--json]
   memory ingest <path>              [--root <dir>] [--max-files N]
@@ -443,6 +445,51 @@ async function runAsk(args: ParsedArgs): Promise<void> {
     }
   } finally {
     await store.close();
+  }
+}
+
+async function runClaimCheck(args: ParsedArgs): Promise<void> {
+  const rootDir = rootOf(args.flags);
+  const assertion = args.positional.join(" ").trim();
+  if (!assertion) {
+    throw new Error("nothing to claim-check — pass an assertion: memory claim-check <assertion>");
+  }
+  const config = await requireConfig(rootDir);
+  if (config.mode !== "graph") {
+    throw new Error(
+      `claim-check needs graph mode — this project is "${config.mode}". Re-run \`memory init --mode graph\` first`,
+    );
+  }
+
+  const store = await MemoryStore.open({ uri: resolveStoreUri(rootDir, config) });
+  try {
+    const result = await claimCheck(store, assertion);
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
+    printClaimCheck(result);
+  } finally {
+    await store.close();
+  }
+}
+
+function printClaimCheck(result: ClaimCheckResult): void {
+  console.log(`memory claim-check: ${result.status}`);
+  console.log(result.answer);
+  console.log(`citations: ${result.citations.length}`);
+  for (const item of [...result.evidence.active, ...result.evidence.superseded]) {
+    const source = item.source ? ` source=${item.source}` : "";
+    console.log(
+      `  ${item.citation} memory_nodes:${item.rid} ${item.title} (${item.confidence}, ${item.status}${source})`,
+    );
+  }
+  if (result.evidence.conflicting.length > 0) {
+    console.log(`conflicting evidence: ${result.evidence.conflicting.length}`);
+    for (const item of result.evidence.conflicting) {
+      const reason = item.reason ? ` reason=${item.reason}` : "";
+      console.log(`  ${item.from.citation} contradicts ${item.to.citation}${reason}`);
+    }
   }
 }
 
@@ -2604,6 +2651,8 @@ async function main(): Promise<void> {
       return runRecall(args);
     case "context-pack":
       return runContextPack(args);
+    case "claim-check":
+      return runClaimCheck(args);
     case "ask":
       return runAsk(args);
     case "provenance":
