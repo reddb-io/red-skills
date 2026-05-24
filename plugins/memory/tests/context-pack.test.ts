@@ -97,6 +97,51 @@ describe("context packs", () => {
     ]);
   });
 
+  test("can include shared skill recommendation data", async () => {
+    const store = new MockStore([
+      node(
+        10,
+        "workflow",
+        "Debugging skill guidance",
+        "For debugging failures, use dev:diagnose.",
+        { tags: ["skill:dev:diagnose"] },
+      ),
+    ]);
+
+    const pack = await buildContextPack(store, "debug flaky failures", {
+      budgetChars: 2_000,
+      now: NOW,
+      skillRollups: [
+        {
+          name: "dev:diagnose",
+          source_kind: "plugin",
+          path: "/plugins/dev/skills/engineering/diagnose/SKILL.md",
+          first_seen: "2026-05-22T16:00:00.000Z",
+          last_activity: "2026-05-22T17:00:00.000Z",
+          event_count: 3,
+          view_count: 1,
+          use_count: 1,
+          patch_count: 0,
+          change_count: 0,
+          result_count: 1,
+          outcome_counts: { succeeded: 1 },
+          curatable_status: "active",
+          archive_signal: false,
+          consolidation_signal: false,
+        },
+      ],
+    });
+
+    expect(pack.skillRecommendations.recommendations[0]).toMatchObject({
+      name: "dev:diagnose",
+      evidenceStrength: "strong",
+    });
+    expect(pack.markdown).toContain("## Skill recommendations");
+    expect(pack.markdown).toContain("dev:diagnose");
+    expect(pack.markdown).toContain("[M1]");
+    expect(pack.markdown).toContain("[T1]");
+  });
+
   test("returns an explicit insufficient-context result for empty recall", async () => {
     const pack = await buildContextPack(new MockStore([]), "missing topic", {
       budgetChars: 500,
