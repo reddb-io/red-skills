@@ -109,6 +109,7 @@ describe("MCP server over stdio", () => {
         [
           "memory_ask",
           "memory_conflicts",
+          "memory_communities",
           "memory_doctor",
           "memory_export",
           "memory_neighbors",
@@ -122,6 +123,50 @@ describe("MCP server over stdio", () => {
           "memory_traverse",
         ].sort(),
       );
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "memory_communities exposes read-only community analytics",
+    async () => {
+      const client = await connect(await seedStore());
+      const before = (await client.callTool({
+        name: "memory_stats",
+        arguments: {},
+      })) as ToolResult;
+
+      const result = (await client.callTool({
+        name: "memory_communities",
+        arguments: {},
+      })) as ToolResult;
+
+      const analytics = JSON.parse(result.content[0]?.text ?? "{}") as {
+        graph_hash: string;
+        communities: Array<{ count: number; labels: string[]; titles: string[] }>;
+        assignments: Array<{ label: string; title: string; community_id: string }>;
+      };
+      expect(analytics.graph_hash).toMatch(/^[a-f0-9]{64}$/);
+      expect(analytics.assignments.map((item) => item.label).sort()).toEqual([
+        "auth-service",
+        "cache-ttl",
+        "jwt-rotation",
+      ]);
+      expect(analytics.communities.reduce((sum, item) => sum + item.count, 0)).toBe(3);
+      expect(analytics.communities.some((item) => item.titles.includes("jwt rotation"))).toBe(
+        true,
+      );
+      expect(result.structuredContent).toMatchObject({
+        assignments: 3,
+        nodes: 3,
+        edges: 2,
+      });
+
+      const after = (await client.callTool({
+        name: "memory_stats",
+        arguments: {},
+      })) as ToolResult;
+      expect(after.structuredContent).toEqual(before.structuredContent);
     },
     TIMEOUT,
   );

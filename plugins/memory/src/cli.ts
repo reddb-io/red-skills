@@ -12,6 +12,7 @@ import {
   skillTelemetryEnabled,
 } from "./config.js";
 import { buildContextPack } from "./context-pack.js";
+import { buildCommunityAnalytics } from "./communities.js";
 import { claimCheck, type ClaimCheckResult } from "./claim-check.js";
 import { diagnose, prune } from "./doctor.js";
 import { ask, neighbors, path as shortestPath, search, traverse } from "./engine.js";
@@ -148,6 +149,7 @@ Usage:
   memory supersede <old-rid> <new-rid> [--root <dir>] [--reason <text>]
   memory resolve-conflict <active-rid> <superseded-rid> [--root <dir>] [--reason <text>]
   memory timeline <topic|rid>       [--root <dir>] [--include-audit] [--json]
+  memory communities                [--root <dir>] [--no-cache] [--json]
   memory structural-impact          [--root <dir>] [--file <path>] [--symbol <name>]
   memory pre-pr-review              [--root <dir>] [--range <git-range>] [--json]
   memory vector status              [--root <dir>] [--json]
@@ -2684,6 +2686,35 @@ async function runTimeline(args: ParsedArgs): Promise<void> {
   }
 }
 
+async function runCommunities(args: ParsedArgs): Promise<void> {
+  const { store } = await openGraphStore(args);
+  try {
+    const report = await buildCommunityAnalytics(store, {
+      cache: args.flags["no-cache"] === true ? "off" : "read-write",
+    });
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(report, null, 2));
+      return;
+    }
+    console.log(
+      `memory: ${report.communities.length} community(ies), ${report.assignments.length} assigned node(s)`,
+    );
+    console.log(`  graph hash: ${report.graph_hash}`);
+    console.log(`  cache: ${report.cached ? "hit" : "miss"}`);
+    for (const community of report.communities) {
+      console.log(`  ${community.id}: ${community.count} node(s)`);
+      if (community.titles.length > 0) {
+        console.log(`        top titles: ${community.titles.join(", ")}`);
+      }
+      if (community.labels.length > 0) {
+        console.log(`        labels: ${community.labels.join(", ")}`);
+      }
+    }
+  } finally {
+    await store.close();
+  }
+}
+
 function parseRid(value: string, name: string): number {
   const rid = Number(value);
   if (!Number.isInteger(rid) || rid <= 0) throw new Error(`${name} must be a positive integer`);
@@ -3182,6 +3213,8 @@ async function main(): Promise<void> {
       return runResolveConflict(args);
     case "timeline":
       return runTimeline(args);
+    case "communities":
+      return runCommunities(args);
     case "structural-impact":
       return runStructuralImpact(args);
     case "pre-pr-review":
