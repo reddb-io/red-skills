@@ -35,6 +35,7 @@ import {
   type PrePrMemoryReview,
   type PrePrReviewSection,
 } from "./pre-pr-review.js";
+import { buildPreflightBrief } from "./preflight.js";
 import { recall } from "./recall.js";
 import {
   structuralImpactReader,
@@ -74,6 +75,7 @@ Usage:
   memory classify <candidate...>    [--root <dir>] [--json]
   memory recall <query...>          [--root <dir>] [--limit N] [--include-superseded] [--scope ...] [--scope-id ID] [--include-narrower-scopes]
   memory context-pack <goal...>     [--root <dir>] [--budget N] [--limit N] [--json] [--scope ...] [--scope-id ID] [--include-narrower-scopes]
+  memory preflight <task...>        [--root <dir>] [--limit N] [--min-evidence N] [--stale-days N] [--json] [--scope ...] [--scope-id ID] [--include-narrower-scopes]
   memory ask <question...>          [--root <dir>] [--json]
   memory ingest <path>              [--root <dir>] [--max-files N]
   memory refresh [<path...>]         [--root <dir>] [--stdin] [--changed|--staged] [--json]
@@ -351,6 +353,27 @@ async function runContextPack(args: ParsedArgs): Promise<void> {
       return;
     }
     process.stdout.write(pack.markdown);
+  } finally {
+    await store.close();
+  }
+}
+
+async function runPreflight(args: ParsedArgs): Promise<void> {
+  const task = args.positional.join(" ").trim();
+  if (!task) throw new Error("nothing to brief — pass a task: memory preflight <task>");
+  const { store } = await openGraphStore(args);
+  try {
+    const brief = await buildPreflightBrief(store, task, {
+      limit: intFlag(args.flags, "limit"),
+      minEvidence: intFlag(args.flags, "min-evidence"),
+      staleDays: intFlag(args.flags, "stale-days"),
+      scope: scopeFlags(args.flags),
+    });
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(brief, null, 2));
+      return;
+    }
+    process.stdout.write(brief.markdown);
   } finally {
     await store.close();
   }
@@ -2561,6 +2584,8 @@ async function main(): Promise<void> {
       return runRecall(args);
     case "context-pack":
       return runContextPack(args);
+    case "preflight":
+      return runPreflight(args);
     case "ask":
       return runAsk(args);
     case "ingest":
