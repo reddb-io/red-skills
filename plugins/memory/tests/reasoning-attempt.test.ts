@@ -1,9 +1,10 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, test } from "vitest";
+import { readConfig, resolveStoreUri } from "../src/config.js";
 import { MemoryStore } from "../src/graph-store.js";
 import { initGraph, initMarkdownOnly } from "../src/init.js";
 import {
@@ -35,6 +36,26 @@ async function openStore(): Promise<MemoryStore> {
   });
   stores.push(store);
   return store;
+}
+
+async function openProjectStore(root: string): Promise<MemoryStore> {
+  const config = await readConfig(root);
+  if (!config) throw new Error("expected memory config");
+  const store = await MemoryStore.open({
+    uri: resolveStoreUri(root, config),
+    project: "test",
+  });
+  stores.push(store);
+  return store;
+}
+
+async function projectStats(root: string): Promise<{ nodes: number; edges: number }> {
+  const store = await openProjectStore(root);
+  try {
+    return await store.stats();
+  } finally {
+    await store.close();
+  }
 }
 
 function runMemory(args: string[], input?: string) {
@@ -648,6 +669,168 @@ describe("CLI attempt record", () => {
       );
       expect(result.status).not.toBe(0);
       expect(result.stderr).toContain("this verb needs graph mode");
+    },
+    TIMEOUT,
+  );
+});
+
+describe("CLI attempt learn", () => {
+  test(
+    "reports approval-gated learning proposals without mutating Memory by default",
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), "memory-attempt-learn-"));
+      roots.push(root);
+      await initGraph(root);
+
+      const done = runMemory(
+        ["attempt", "record", "--root", root],
+        JSON.stringify({
+          ...samplePayload,
+          attemptNumber: 1,
+          envelopeHash: "envh-learn-1",
+          summary: "Claim-check verifies claims against local recall evidence without provider ASK.",
+          notes: "running pnpm test; raw stdout in /tmp/bg-task.output",
+          validationRecords: [
+            {
+              name: "pnpm test",
+              command: "pnpm test",
+              status: "passed",
+              summary: "vitest suite passed; raw stdout in /tmp/bg-task.output",
+            },
+          ],
+        } satisfies ReasoningAttemptPayload),
+      );
+      expect(done.status, done.stderr).toBe(0);
+
+      const blocked = runMemory(
+        ["attempt", "record", "--root", root],
+        JSON.stringify({
+          ...samplePayload,
+          attemptNumber: 2,
+          status: "blocked",
+          envelopeHash: "envh-learn-2",
+          touchedFiles: ["skills/core/recall/SKILL.md"],
+          summary: "memory:recall skill failed during verify because graph mode was not initialized.",
+          notes: "WIP: test still running before the next validation pass",
+          errorClass: "ValidationError",
+          validationRecords: [
+            {
+              name: "pnpm typecheck",
+              command: "pnpm typecheck",
+              status: "failed",
+              summary: "TS2322 in recall.ts",
+            },
+            {
+              name: "progress note",
+              status: "skipped",
+              summary: "WIP: test still running before the next validation pass",
+            },
+          ],
+        } satisfies ReasoningAttemptPayload),
+      );
+      expect(blocked.status, blocked.stderr).toBe(0);
+
+      const result = runMemory(["attempt", "learn", "--root", root, "--json"]);
+      expect(result.status, result.stderr).toBe(0);
+      const body = JSON.parse(result.stdout) as {
+        state: string;
+        proposals: Array<{ kind: string; evidence: unknown[] }>;
+        rejected: Array<{ kind: string; action: string }>;
+      };
+
+      expect(body.state).toBe("proposal-ready");
+      expect(body.proposals.map((p) => p.kind)).toEqual(
+        expect.arrayContaining(["durable_fact", "failure", "validation", "skill_improvement"]),
+      );
+      expect(body.proposals[0].evidence.length).toBeGreaterThan(0);
+      expect(body.rejected).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            kind: "raw_operational_log",
+            action: "rejected",
+          }),
+          expect.objectContaining({
+            kind: "temporary_progress",
+            action: "downgraded",
+          }),
+        ]),
+      );
+
+      const after = await openProjectStore(root);
+      const afterNodes = await after.listNodes();
+      expect(afterNodes.some((n) => n.properties.source === "attempt-learning")).toBe(false);
+      await expect(readdir(join(root, ".red", "memory", "proposals"))).rejects.toThrow();
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "writes proposal files without mutating Memory and applies them only with explicit approval",
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), "memory-attempt-learn-apply-"));
+      roots.push(root);
+      await initGraph(root);
+
+      const recorded = runMemory(
+        ["attempt", "record", "--root", root],
+        JSON.stringify({
+          ...samplePayload,
+          attemptNumber: 1,
+          envelopeHash: "envh-learn-apply",
+          summary: "Attempt learning proposals must stay approval-gated until reviewed.",
+          validationRecords: [
+            {
+              name: "pnpm test",
+              command: "pnpm test",
+              status: "passed",
+              summary: "vitest suite passed",
+            },
+          ],
+        } satisfies ReasoningAttemptPayload),
+      );
+      expect(recorded.status, recorded.stderr).toBe(0);
+
+      const beforeStats = await projectStats(root);
+
+      const generated = runMemory(["attempt", "learn", "--root", root, "--write-proposal", "--json"]);
+      expect(generated.status, generated.stderr).toBe(0);
+      const generatedBody = JSON.parse(generated.stdout) as {
+        state: string;
+        proposalFile: string;
+      };
+      expect(generatedBody.state).toBe("proposal-written");
+      expect(generatedBody.proposalFile).toContain(".red/memory/proposals/attempt-learning-");
+      expect((await projectStats(root)).nodes).toBe(beforeStats.nodes);
+
+      const proposal = await readFile(join(root, generatedBody.proposalFile), "utf8");
+      expect(proposal).toContain("# Attempt Learning Proposal");
+      expect(proposal).toContain("```json memory-learning-proposal");
+      expect(proposal).toContain("## Evidence");
+      expect(proposal).toContain("approval-gated");
+
+      const blocked = runMemory(["attempt", "learn", "apply", generatedBody.proposalFile, "--root", root, "--json"]);
+      expect(blocked.status).not.toBe(0);
+      expect((await projectStats(root)).nodes).toBe(beforeStats.nodes);
+
+      const applied = runMemory([
+        "attempt",
+        "learn",
+        "apply",
+        generatedBody.proposalFile,
+        "--root",
+        root,
+        "--yes",
+        "--json",
+      ]);
+      expect(applied.status, applied.stderr).toBe(0);
+      const appliedBody = JSON.parse(applied.stdout) as { state: string; applied: number };
+      expect(appliedBody.state).toBe("applied");
+      expect(appliedBody.applied).toBeGreaterThan(0);
+
+      const store = await openProjectStore(root);
+      const afterNodes = await store.listNodes();
+      expect(afterNodes.some((n) => n.properties.source === "attempt-learning")).toBe(true);
+      expect((await store.stats()).nodes).toBeGreaterThan(beforeStats.nodes);
     },
     TIMEOUT,
   );
