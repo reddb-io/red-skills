@@ -9,6 +9,16 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 
 
 
+## memory explicit VCS commit (core)
+
+- **status**: added
+- **upstream**: —
+- **why**: Let users create auditable RedDB VCS checkpoints for the graph-mode Memory store.
+- **what changed**:
+  - Added `memory commit` for graph mode, backed by the bundled `red vcs commit` command.
+  - The command reapplies Memory tier/versioning policy and reports included versus skipped collections.
+  - Repeated runs report `nothing meaningful to commit` when the included durable/reasoning surface has not changed, including when only skipped transient KV metadata changed.
+
 ## memory semantic patch anchoring (core)
 
 - **status**: added

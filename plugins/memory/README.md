@@ -75,6 +75,21 @@ supported freshness paths are hook-only: PostToolUse hooks, explicit
 keeps the embedded RedDB workflow zero-ops and avoids flaky real-time watcher
 behavior in tests and local shells.
 
+### VCS checkpoints
+
+Graph mode can create an explicit RedDB VCS checkpoint for the versioned Memory
+graph:
+
+```bash
+node plugins/memory/dist/cli.js commit --root . --message "manual memory checkpoint"
+node plugins/memory/dist/cli.js commit --root . --json
+```
+
+The command reapplies the Memory tier/versioning policy, reports included and
+skipped collections, commits only when the included historical surface changed,
+and reports `nothing meaningful to commit` when only skipped transient metadata
+changed.
+
 ### Both runners — and the Codex `PreCompact` gap
 
 The hooks ship for **both runtimes**. `hooks/claude.hooks.json` (wired from

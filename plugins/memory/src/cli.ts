@@ -60,6 +60,7 @@ import { buildLearningDebtReport } from "./learning-debt.js";
 import { buildOnboardingMap } from "./onboarding-map.js";
 import { buildPreflightBrief } from "./preflight.js";
 import { recall } from "./recall.js";
+import { commitMemoryGraph, type MemoryGraphCommitResult } from "./vcs-commit.js";
 import {
   structuralImpactReader,
   type StructuralImpact,
@@ -136,6 +137,7 @@ Usage:
   memory attempt record             [--root <dir>]             (reads AFK attempt JSON from stdin)
   memory attempt learn              [--root <dir>] [--write-proposal] [--json]   (proposal-gated)
   memory attempt learn apply <proposal> [--root <dir>] --yes [--json]
+  memory commit                    [--root <dir>] [--message <text>] [--author <name>] [--email <addr>] [--json]
 
   Graph-mode read verbs (require \`memory init --mode graph\`):
   memory search <query...>          [--root <dir>] [--limit N]
@@ -356,6 +358,33 @@ async function runStore(args: ParsedArgs): Promise<void> {
   });
   console.log(`memory: stored ${note.id}`);
   console.log(`  ${note.path}`);
+}
+
+async function runCommit(args: ParsedArgs): Promise<void> {
+  const rootDir = rootOf(args.flags);
+  const config = await requireConfig(rootDir);
+  const result = await commitMemoryGraph(rootDir, config, {
+    message: stringFlag(args.flags, "message") ?? stringFlag(args.flags, "m"),
+    author: stringFlag(args.flags, "author"),
+    email: stringFlag(args.flags, "email"),
+  });
+  if (args.flags.json === true) {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+  printCommitResult(result);
+}
+
+function printCommitResult(result: MemoryGraphCommitResult): void {
+  if (result.committed) {
+    console.log(`memory commit: ${result.commit?.hash}`);
+    console.log(`  message: ${result.message}`);
+  } else {
+    console.log("memory commit: nothing meaningful to commit");
+    if (result.previousCommit) console.log(`  previous: ${result.previousCommit}`);
+  }
+  console.log(`  included: ${result.included.join(", ") || "none"}`);
+  console.log(`  skipped:  ${result.skipped.join(", ") || "none"}`);
 }
 
 async function runInbox(args: ParsedArgs): Promise<void> {
@@ -3057,6 +3086,8 @@ async function main(): Promise<void> {
       return runInit(args);
     case "store":
       return runStore(args);
+    case "commit":
+      return runCommit(args);
     case "inbox":
       return runInbox(args);
     case "classify":
