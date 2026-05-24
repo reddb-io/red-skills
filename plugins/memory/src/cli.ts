@@ -28,6 +28,7 @@ import { ingestProject, refreshFiles } from "./ingest.js";
 import { initGraph, initMarkdownOnly } from "./init.js";
 import { lintMemory, type LintReport } from "./lint.js";
 import { applyProviderEnv, redDbProviderClient } from "./provider-client.js";
+import { scanPrivacy, type PrivacyReport } from "./privacy.js";
 import { computeProposalPriority, sortProposalSummaries } from "./proposal-priority.js";
 import {
   buildPrePrMemoryReview,
@@ -86,6 +87,8 @@ Usage:
   memory improve apply <proposal>    [--root <dir>] --yes [--json]   (explicit patch apply)
   memory health                    [--root <dir>] [--json]   (operational healthcheck, read-only)
   memory lint                      [--root <dir>] [--json]   (policy hygiene report, read-only)
+  memory privacy scan              [--root <dir>] [--json]   (sensitive data report, read-only)
+  memory privacy export [<out-dir>] [--root <dir>] [--communities] [--json]   (redacted graph export)
   memory status skills              [--root <dir>] [--all] [--limit N] [--json]   (diagnostic, read-only)
   memory status context             [--root <dir>] [--json]   (context stack healthcheck, read-only)
   memory attempt record             [--root <dir>]             (reads AFK attempt JSON from stdin)
@@ -1387,6 +1390,81 @@ async function runLint(args: ParsedArgs): Promise<void> {
   printLintReport(report);
 }
 
+async function runPrivacy(args: ParsedArgs): Promise<void> {
+  const action = args.positional[0] ?? "scan";
+  if (action === "scan") {
+    const rootDir = resolve(rootOf(args.flags));
+    const report = await scanPrivacy(rootDir);
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(report, null, 2));
+      return;
+    }
+    printPrivacyReport(report);
+    return;
+  }
+
+  if (action === "export") {
+    const rootDir = rootOf(args.flags);
+    const target = args.positional[1] ?? ".red/memory/export-redacted";
+    const outDir = isAbsolute(target) ? target : resolve(rootDir, target);
+    const communities = args.flags.communities === true;
+    const { store } = await openGraphStore(args);
+    try {
+      const result = await exportGraph(store, outDir, {
+        communities,
+        redactSensitive: true,
+      });
+      const payload = {
+        readOnly: true,
+        mutated: false,
+        redacted: true,
+        findings: result.privacyFindings,
+        result,
+      };
+      if (args.flags.json === true) {
+        console.log(JSON.stringify(payload, null, 2));
+        return;
+      }
+      console.log(
+        `memory: redacted export — ${result.nodes} node(s), ${result.edges} edge(s), ${result.privacyFindings} finding(s) redacted`,
+      );
+      if (communities) console.log(`  communities: coloured via native Louvain`);
+      console.log(`  graph:  ${result.htmlPath}`);
+      console.log(`  json:   ${result.jsonPath}`);
+      console.log(`  audit:  ${result.auditPath}`);
+      console.log("\nRedacted export wrote artifacts only; no Memory graph or note files were mutated.");
+      return;
+    } finally {
+      await store.close();
+    }
+  }
+
+  throw new Error("usage: memory privacy scan|export [<out-dir>] [--root <dir>] [--json]");
+}
+
+function printPrivacyReport(report: PrivacyReport): void {
+  console.log(
+    `memory: privacy scan — ${report.status} (${report.mode}, ${report.totalMemories} ${plural(
+      report.totalMemories,
+      "memory",
+    )})`,
+  );
+  for (const warning of report.warnings) {
+    console.log(`  warning: ${warning}`);
+  }
+  if (report.findings.length === 0) {
+    console.log("  no sensitive-looking values found");
+  } else {
+    for (const item of report.findings) {
+      console.log(`  [${item.severity}] ${item.kind} ${item.memoryId}`);
+      console.log(`        ${item.message}`);
+      console.log(`        ${item.location}`);
+      if (item.excerpt) console.log(`        ${item.excerpt}`);
+    }
+  }
+  console.log("\nRead-only privacy scan: no memory, graph, note, or export files were mutated.");
+}
+
 function printLintReport(report: LintReport): void {
   console.log(
     `memory: lint — ${report.status} (${report.mode}, ${report.totalMemories} ${plural(
@@ -2499,6 +2577,8 @@ async function main(): Promise<void> {
       return runHealth(args);
     case "lint":
       return runLint(args);
+    case "privacy":
+      return runPrivacy(args);
     case "status":
       return runStatus(args);
     case "attempt":

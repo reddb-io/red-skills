@@ -2,6 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { diagnose, type StaleNode } from "./doctor.js";
 import type { MemoryStore, StoredNode } from "./graph-store.js";
+import { redactGraphData, type PrivacyFinding } from "./privacy.js";
 import type { Confidence } from "./schema.js";
 
 /**
@@ -34,6 +35,8 @@ export interface ExportResult {
   auditPath: string;
   nodes: number;
   edges: number;
+  redacted: boolean;
+  privacyFindings: number;
 }
 
 /** Normalize a raw edge row (uppercased/promoted columns vary) into a tidy edge. */
@@ -60,6 +63,8 @@ export interface ExportOptions {
   staleDays?: number;
   /** Clock injection point for deterministic tests. */
   now?: number;
+  /** Replace sensitive-looking values in graph.json, graph.html, and audit.md. */
+  redactSensitive?: boolean;
 }
 
 export async function exportGraph(
@@ -70,12 +75,21 @@ export async function exportGraph(
   const dir = resolve(outDir);
   await mkdir(dir, { recursive: true });
 
-  const [nodes, rawEdges, stats] = await Promise.all([
+  const [storedNodes, rawEdges, stats] = await Promise.all([
     store.listNodes(),
     store.listEdges(),
     store.stats(),
   ]);
-  const edges = rawEdges.map(toEdge);
+  const storedEdges = rawEdges.map(toEdge);
+  const redaction = opts.redactSensitive
+    ? redactGraphData(storedNodes, storedEdges)
+    : {
+        nodes: storedNodes,
+        edges: storedEdges,
+        findings: [] as PrivacyFinding[],
+      };
+  const nodes = redaction.nodes;
+  const edges = redaction.edges;
 
   // Native community detection is opt-in: only run it (and only attach the
   // `community` field) when asked, so the default export stays byte-identical.
@@ -124,6 +138,8 @@ export async function exportGraph(
     auditPath,
     nodes: nodes.length,
     edges: edges.length,
+    redacted: opts.redactSensitive === true,
+    privacyFindings: redaction.findings.length,
   };
 }
 
