@@ -23,6 +23,7 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
+import { buildCommunityAnalytics } from "./communities.js";
 import { readConfig, resolveStoreUri } from "./config.js";
 import { diagnose } from "./doctor.js";
 import { ask, neighbors, path, recall, search, traverse } from "./engine.js";
@@ -138,6 +139,10 @@ const ExportInput = z.object({
 
 const DoctorInput = z.object({
   stale_days: z.number().int().min(1).default(90),
+});
+
+const CommunitiesInput = z.object({
+  use_cache: z.boolean().default(true),
 });
 
 // ---------- server ----------
@@ -286,6 +291,21 @@ async function main(): Promise<void> {
         const stats = await store.stats();
         return text(JSON.stringify(stats, null, 2), stats);
       }
+      case "memory_communities": {
+        const input = CommunitiesInput.parse(args);
+        const [report, stats] = await Promise.all([
+          buildCommunityAnalytics(store, { cache: input.use_cache ? "read-only" : "off" }),
+          store.stats(),
+        ]);
+        return text(JSON.stringify(report, null, 2), {
+          communities: report.communities.length,
+          assignments: report.assignments.length,
+          graph_hash: report.graph_hash,
+          cached: report.cached,
+          nodes: stats.nodes,
+          edges: stats.edges,
+        });
+      }
       case "memory_conflicts": {
         const input = ConflictsInput.parse(args);
         const conflicts = await listContradictions(store, {
@@ -415,6 +435,12 @@ const TOOLS = [
     name: "memory_stats",
     description: "Counts of nodes/edges and basic store health.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  },
+  {
+    name: "memory_communities",
+    description:
+      "Read-only Memory graph community analytics: native Louvain assignments, community counts, top labels/titles, and graph-hash cache metadata. Does not write derived clusters into Memory graph evidence.",
+    inputSchema: zodToSchema(CommunitiesInput),
   },
   {
     name: "memory_conflicts",
