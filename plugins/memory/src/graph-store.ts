@@ -8,6 +8,7 @@ import {
   type MemoryDoc,
   type MemoryEdge,
   type MemoryNode,
+  type MemoryProvenance,
   type MemoryScope,
   type NodeType,
   defaultTier,
@@ -44,6 +45,7 @@ export interface SearchRow {
 export interface NodeScopeInput {
   scope?: MemoryScope;
   scopeId?: string;
+  provenance?: MemoryProvenance;
 }
 
 /** Provider usage and billing metadata reported by RedDB ASK. */
@@ -204,6 +206,16 @@ export class MemoryStore {
       tier,
       created_at: createdAt,
       updated_at: now,
+      ...(props.provenance
+        ? {
+            provenance: {
+              ...props.provenance,
+              confidence: props.provenance.confidence ?? props.confidence,
+              created_at: props.provenance.created_at ?? createdAt,
+              updated_at: now,
+            },
+          }
+        : {}),
       accessed_at: now,
       access_count: props.access_count ?? 0,
       ...(expiresAt != null ? { expires_at: expiresAt } : {}),
@@ -803,6 +815,7 @@ export function factToNode(
       title,
       content: trimmed,
       source: "manual",
+      ...(scopeInput.provenance ? { provenance: scopeInput.provenance } : {}),
       ...(scopeInput.scope ? { scope: scopeInput.scope } : {}),
       ...(scopeInput.scopeId ? { scope_id: scopeInput.scopeId } : {}),
     },
