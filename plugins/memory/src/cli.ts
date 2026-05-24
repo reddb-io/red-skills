@@ -78,6 +78,12 @@ import {
   type ReasoningAttemptPayload,
 } from "./reasoning/attempt-writer.js";
 import {
+  applyAttemptLearningProposal,
+  buildAttemptLearningReport,
+  parseAttemptLearningProposal,
+  writeAttemptLearningProposalFile,
+} from "./reasoning/learning-proposals.js";
+import {
   ingestSkillEvents,
   parseSkillEvent,
   parseSkillEventInput,
@@ -128,6 +134,8 @@ Usage:
   memory status skills              [--root <dir>] [--all] [--limit N] [--json]   (diagnostic, read-only)
   memory status context             [--root <dir>] [--json]   (context stack healthcheck, read-only)
   memory attempt record             [--root <dir>]             (reads AFK attempt JSON from stdin)
+  memory attempt learn              [--root <dir>] [--write-proposal] [--json]   (proposal-gated)
+  memory attempt learn apply <proposal> [--root <dir>] --yes [--json]
 
   Graph-mode read verbs (require \`memory init --mode graph\`):
   memory search <query...>          [--root <dir>] [--limit N]
@@ -2948,8 +2956,11 @@ async function runHook(args: ParsedArgs): Promise<void> {
 
 async function runAttempt(args: ParsedArgs): Promise<void> {
   const subcommand = args.positional[0];
+  if (subcommand === "learn") {
+    return runAttemptLearn(args);
+  }
   if (subcommand !== "record") {
-    throw new Error("unknown attempt command — expected: memory attempt record");
+    throw new Error("unknown attempt command — expected: memory attempt record|learn");
   }
 
   const raw = await readStdin();
@@ -2962,6 +2973,78 @@ async function runAttempt(args: ParsedArgs): Promise<void> {
     console.log(
       `memory: recorded attempt ${payload.repository}#${payload.issueNumber}/${payload.attemptNumber} (rid ${receipt.attemptRid})`,
     );
+  } finally {
+    await store.close();
+  }
+}
+
+async function runAttemptLearn(args: ParsedArgs): Promise<void> {
+  const action = args.positional[1];
+  if (action === "apply") return runAttemptLearnApply(args);
+  if (action != null) throw new Error("memory attempt learn supports: apply");
+
+  const rootDir = rootOf(args.flags);
+  const json = args.flags.json === true;
+  const writeProposal = args.flags["write-proposal"] === true;
+  const { store } = await openGraphStore(args);
+  try {
+    const report = await buildAttemptLearningReport(store);
+    const proposalFile = writeProposal
+      ? await writeAttemptLearningProposalFile(rootDir, report)
+      : null;
+    const state =
+      report.proposals.length === 0
+        ? "no-candidates"
+        : writeProposal
+          ? "proposal-written"
+          : "proposal-ready";
+    if (json) {
+      console.log(JSON.stringify({ state, proposalFile, ...report }, null, 2));
+      return;
+    }
+    console.log(`memory: attempt learning - ${state}`);
+    for (const proposal of report.proposals) {
+      console.log(`  [${proposal.kind}] ${proposal.title}`);
+      console.log(`    evidence: ${proposal.evidenceSummary}`);
+    }
+    for (const rejected of report.rejected) {
+      console.log(`  ${rejected.action}: ${rejected.kind} - ${rejected.reason}`);
+    }
+    if (proposalFile) console.log(`  proposal: ${proposalFile}`);
+    console.log("\nProposal-gated: durable Memory was not mutated. Review and apply with --yes.");
+  } finally {
+    await store.close();
+  }
+}
+
+async function runAttemptLearnApply(args: ParsedArgs): Promise<void> {
+  const proposalArg = args.positional[2];
+  if (!proposalArg) throw new Error("memory attempt learn apply needs a proposal file");
+  if (args.flags.yes !== true) {
+    throw new Error("memory attempt learn apply requires explicit --yes approval");
+  }
+
+  const rootDir = rootOf(args.flags);
+  const json = args.flags.json === true;
+  const proposalPath = resolve(rootDir, proposalArg);
+  assertInsideRoot(rootDir, proposalPath, "proposal file");
+  assertInsideProposalTree(rootDir, proposalPath);
+  const body = await readFile(proposalPath, "utf8");
+  const report = parseAttemptLearningProposal(body);
+  const { store } = await openGraphStore(args);
+  try {
+    const result = await applyAttemptLearningProposal(store, report);
+    const output = {
+      state: "applied",
+      proposal: toPosix(relative(rootDir, proposalPath)),
+      ...result,
+    };
+    if (json) {
+      console.log(JSON.stringify(output, null, 2));
+      return;
+    }
+    console.log(`memory: applied attempt learning proposal ${output.proposal}`);
+    console.log(`  learned nodes: ${result.applied}`);
   } finally {
     await store.close();
   }
