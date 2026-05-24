@@ -11,6 +11,7 @@ export const COLLECTIONS = {
   edges: "memory_edges",
   docs: "memory_docs",
   vectors: "memory_vectors",
+  events: "memory_events",
   kv: "memory_kv",
 } as const;
 

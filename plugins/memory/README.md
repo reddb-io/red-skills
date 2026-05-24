@@ -202,6 +202,11 @@ Proposals live under `.red/memory/proposals/`. Each proposal has a deterministic
 `.red/memory/proposals/archive/<applied|rejected|stale>/`, so `memory health`
 counts only actionable pending proposals while retaining audit history.
 
+Skill telemetry also dual-writes raw `skill.telemetry` records to the
+append-only Memory event log (`memory_events`). Existing rollups remain the
+serving path for status, curation, and recommendations; the event log is the
+raw audit substrate for future readiness and self-improvement views.
+
 ## MCP server
 
 `memory-mcp` speaks MCP over stdio and exposes the same surface to agents:
