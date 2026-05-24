@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { MemoryStore } from "../src/graph-store.js";
+import { COLLECTIONS } from "../src/schema.js";
 import {
   MEMORY_COLLECTION_VERSIONING,
   applyTierVersioning,
@@ -71,6 +72,7 @@ describe("VCS versioned Memory collections (#105)", () => {
 
       expect(report.versioned).toEqual(expectedVersioned);
       expect(report.skipped).toEqual(expectedSkipped);
+      expect(report.skipped).toContain(COLLECTIONS.events);
 
       await closeStore(store);
 

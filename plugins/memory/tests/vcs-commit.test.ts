@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, test } from "vitest";
 import { MemoryStore } from "../src/graph-store.js";
 import { initGraph } from "../src/init.js";
+import { appendMemoryEvent, parseMemoryEvent } from "../src/memory-events.js";
 import { COLLECTIONS } from "../src/schema.js";
 import { MEMORY_COLLECTION_VERSIONING } from "../src/vcs-versioned-collections.js";
 
@@ -15,6 +16,34 @@ const PLUGIN_ROOT = join(HERE, "..");
 const RED = join(PLUGIN_ROOT, "node_modules", "@reddb-io", "sdk", "bin", "red");
 const roots: string[] = [];
 const stores: MemoryStore[] = [];
+
+const RAW_EVENT = {
+  id: "skill-event:vcs-boundary",
+  occurred_at: "2026-05-22T16:00:00.000Z",
+  kind: "skill.telemetry",
+  source: { kind: "hook", name: "memory event skill" },
+  actor: { kind: "agent", id: "codex" },
+  scope: { level: "session", id: "session-1" },
+  subject: { kind: "skill", id: "plugin:dev:tdd" },
+  payload: {
+    event_type: "result",
+    event_id: "vcs-boundary",
+    timestamp: "2026-05-22T16:00:00.000Z",
+    session_id: "session-1",
+    turn_id: "turn-1",
+    name: "dev:tdd",
+    source_kind: "plugin",
+    path: "/plugins/dev/skills/engineering/tdd/SKILL.md",
+    runner: "codex",
+    result: { status: "succeeded", duration_ms: 1200 },
+  },
+  provenance: {
+    source_kind: "hook",
+    writer: "memory",
+    command: "memory event skill",
+    evidence: ["event_id:vcs-boundary"],
+  },
+} as const;
 
 async function tempRoot(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "memory-vcs-commit-"));
@@ -165,6 +194,39 @@ describe("explicit Memory graph VCS commit", () => {
       committed: false,
     });
     expect(body.skipped).toContain(COLLECTIONS.kv);
+    expect(redVcsLog(root).data).toHaveLength(1);
+  }, TIMEOUT);
+
+  test("raw event log writes are skipped and do not create historical commits", async () => {
+    const root = await tempRoot();
+    await initGraph(root);
+    const store = await openStore(root);
+    await store.upsertNode({
+      label: "decision:raw-events-outside-vcs",
+      node_type: "decision",
+      properties: {
+        title: "Raw events outside VCS",
+        content: "Memory commits exclude operational event logs.",
+      },
+    });
+    await store.close();
+
+    const first = runMemory(["commit", "--root", root, "--json"]);
+    expect(first.status).toBe(0);
+
+    const afterCommit = await openStore(root);
+    await appendMemoryEvent(afterCommit, parseMemoryEvent(RAW_EVENT));
+    await afterCommit.close();
+
+    const second = runMemory(["commit", "--root", root, "--json"]);
+    expect(second.status).toBe(0);
+    const body = JSON.parse(second.stdout);
+
+    expect(body).toMatchObject({
+      status: "unchanged",
+      committed: false,
+    });
+    expect(body.skipped).toContain(COLLECTIONS.events);
     expect(redVcsLog(root).data).toHaveLength(1);
   }, TIMEOUT);
 });

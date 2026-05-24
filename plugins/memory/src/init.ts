@@ -2,6 +2,7 @@ import { mkdir } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import {
   CONFIG_VERSION,
+  DEFAULT_MEMORY_EVENT_RETENTION_DAYS,
   DEFAULT_NOTES_DIR,
   DEFAULT_STORE_PATH,
   HOOKS_OFF,
@@ -77,6 +78,8 @@ export interface GraphOptions {
    * Honored only in graph mode (markdown-only never gets it).
    */
   skillTelemetry?: boolean;
+  /** Raw operational event retention horizon in days. Defaults to 30. */
+  eventRetentionDays?: number;
 }
 
 /**
@@ -95,6 +98,9 @@ export function graphConfig(opts: GraphOptions = {}): MemoryConfig {
     mcp: false,
     reddb: true,
     skillTelemetry: opts.skillTelemetry === true,
+    eventLog: {
+      retentionDays: opts.eventRetentionDays ?? DEFAULT_MEMORY_EVENT_RETENTION_DAYS,
+    },
   };
 }
 

@@ -101,6 +101,13 @@ const memoryEventSchema = z
 export type MemoryEvent = z.infer<typeof memoryEventSchema>;
 export type SkillTelemetryPayload = z.infer<typeof skillTelemetryPayloadSchema>;
 
+export interface MemoryEventReadOptions {
+  /** Retention horizon in milliseconds. When absent, all raw events are returned. */
+  retentionMs?: number;
+  /** Evaluation time for retention. Defaults to the current wall clock. */
+  now?: string | number | Date;
+}
+
 export function parseMemoryEvent(input: unknown): MemoryEvent {
   const parsed = memoryEventSchema.safeParse(input);
   if (parsed.success) return parsed.data;
@@ -153,10 +160,17 @@ export async function appendMemoryEvent(
   );
 }
 
-export async function readMemoryEvents(store: MemoryStore): Promise<MemoryEvent[]> {
+export async function readMemoryEvents(
+  store: MemoryStore,
+  opts: MemoryEventReadOptions = {},
+): Promise<MemoryEvent[]> {
   await ensureMemoryEventsCollection(store);
   const result = await store.raw.query(`SELECT * FROM ${COLLECTIONS.events} ORDER BY rid ASC`);
-  return result.rows.map(rowToMemoryEvent);
+  const events = result.rows.map(rowToMemoryEvent);
+  const cutoff = retentionCutoffMs(opts);
+  return cutoff == null
+    ? events
+    : events.filter((event) => Date.parse(event.occurred_at) >= cutoff);
 }
 
 async function ensureMemoryEventsCollection(store: MemoryStore): Promise<void> {
@@ -181,4 +195,16 @@ function rowToMemoryEvent(row: Record<string, unknown>): MemoryEvent {
 
 function parseJsonColumn(value: unknown): unknown {
   return typeof value === "string" ? JSON.parse(value) : value;
+}
+
+function retentionCutoffMs(opts: MemoryEventReadOptions): number | null {
+  if (opts.retentionMs == null) return null;
+  if (!Number.isFinite(opts.retentionMs) || opts.retentionMs < 0) {
+    throw new Error("memory event retentionMs must be a non-negative number");
+  }
+  const now = opts.now == null ? Date.now() : new Date(opts.now).getTime();
+  if (!Number.isFinite(now)) {
+    throw new Error("memory event retention now must be a valid date");
+  }
+  return now - opts.retentionMs;
 }

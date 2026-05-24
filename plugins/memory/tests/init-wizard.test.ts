@@ -7,6 +7,7 @@ import { afterEach, describe, expect, test } from "vitest";
 import { rm } from "node:fs/promises";
 import {
   configPath,
+  DEFAULT_MEMORY_EVENT_RETENTION_DAYS,
   HOOKS_ALL_ON,
   HOOKS_OFF,
   readConfig,
@@ -134,6 +135,41 @@ describe("skill telemetry opt-in — graph-mode explicit flag", () => {
     const { skillTelemetry, ...legacy } = graphConfig();
     expect(skillTelemetry).toBe(false);
     expect(skillTelemetryEnabled(legacy)).toBe(false);
+  });
+});
+
+describe("Memory event log retention config", () => {
+  test("graph mode documents the default raw event retention horizon", () => {
+    expect(DEFAULT_MEMORY_EVENT_RETENTION_DAYS).toBe(30);
+    expect(graphConfig().eventLog).toEqual({
+      retentionDays: DEFAULT_MEMORY_EVENT_RETENTION_DAYS,
+    });
+  });
+
+  test("graph mode can override the raw event retention horizon", () => {
+    expect(graphConfig({ eventRetentionDays: 7 }).eventLog).toEqual({
+      retentionDays: 7,
+    });
+  });
+
+  test("graph init can set the raw event retention horizon", async () => {
+    const root = await tempRoot();
+    const result = runMemory([
+      "init",
+      "--mode",
+      "graph",
+      "--root",
+      root,
+      "--event-retention-days",
+      "7",
+      "--yes",
+    ]);
+
+    expect(result.status).toBe(0);
+    await expect(readConfig(root)).resolves.toMatchObject({
+      mode: "graph",
+      eventLog: { retentionDays: 7 },
+    });
   });
 });
 

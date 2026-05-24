@@ -64,6 +64,44 @@ afterEach(async () => {
 
 describe("Memory event log", () => {
   test(
+    "reads only raw events inside a configurable retention horizon",
+    async () => {
+      const root = await tempRoot();
+      await initGraph(root);
+      const store = await openStore(root);
+      const old = parseMemoryEvent({
+        ...EVENT,
+        id: "skill-event:old",
+        occurred_at: "2026-04-01T00:00:00.000Z",
+        payload: { ...EVENT.payload, event_id: "old", timestamp: "2026-04-01T00:00:00.000Z" },
+        provenance: { ...EVENT.provenance, evidence: ["event_id:old"] },
+      });
+      const recent = parseMemoryEvent({
+        ...EVENT,
+        id: "skill-event:recent",
+        occurred_at: "2026-05-20T00:00:00.000Z",
+        payload: {
+          ...EVENT.payload,
+          event_id: "recent",
+          timestamp: "2026-05-20T00:00:00.000Z",
+        },
+        provenance: { ...EVENT.provenance, evidence: ["event_id:recent"] },
+      });
+
+      await appendMemoryEvent(store, old);
+      await appendMemoryEvent(store, recent);
+
+      await expect(
+        readMemoryEvents(store, {
+          retentionMs: 30 * 24 * 60 * 60 * 1000,
+          now: "2026-05-24T00:00:00.000Z",
+        }),
+      ).resolves.toEqual([recent]);
+    },
+    TIMEOUT,
+  );
+
+  test(
     "appends operational telemetry with a validated generic envelope",
     async () => {
       const root = await tempRoot();

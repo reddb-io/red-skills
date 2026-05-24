@@ -3,7 +3,7 @@ import { COLLECTIONS, type CollectionName, type Tier } from "./schema.js";
 
 export interface MemoryCollectionVersioning {
   name: CollectionName;
-  model: "graph" | "document" | "kv";
+  model: "graph" | "document" | "kv" | "event-log";
   tiers: readonly Tier[];
 }
 
@@ -16,6 +16,7 @@ export const MEMORY_COLLECTION_VERSIONING: readonly MemoryCollectionVersioning[]
   { name: COLLECTIONS.nodes, model: "graph", tiers: ["durable", "reasoning"] },
   { name: COLLECTIONS.edges, model: "graph", tiers: ["durable", "reasoning"] },
   { name: COLLECTIONS.docs, model: "document", tiers: ["durable"] },
+  { name: COLLECTIONS.events, model: "event-log", tiers: ["ephemeral"] },
   { name: COLLECTIONS.kv, model: "kv", tiers: ["ephemeral"] },
 ] as const;
 
@@ -68,6 +69,11 @@ async function ensureCollection(
       return;
     case "kv":
       await memoryStore.raw.execute(`CREATE KV IF NOT EXISTS ${collection.name}`);
+      return;
+    case "event-log":
+      await memoryStore.raw.execute(
+        `CREATE TABLE IF NOT EXISTS ${collection.name} (id TEXT, occurred_at TEXT, event_kind TEXT, source JSON, actor JSON, scope JSON, subject JSON, payload JSON, provenance JSON) APPEND ONLY`,
+      );
       return;
   }
 }
