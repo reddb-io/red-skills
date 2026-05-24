@@ -26,6 +26,50 @@ export interface MemoryStoreOptions {
 /** A node row read back from the graph, with its engine-assigned id. */
 export type StoredNode = MemoryNode & { rid: number };
 
+export type VectorProjectionState = "ready" | "stale" | "unavailable" | "failed";
+
+export interface VectorNodeStatus {
+  rid: number;
+  label: string;
+  node_type: NodeType;
+  status: VectorProjectionState;
+  text_hash: string;
+  projected_text_hash?: string;
+  error?: string;
+  updated_at?: number;
+}
+
+export interface VectorStatusReport {
+  overall: VectorProjectionState;
+  total: number;
+  ready: number;
+  stale: number;
+  unavailable: number;
+  failed: number;
+  nodes: VectorNodeStatus[];
+}
+
+interface VectorProjectionRecord {
+  rid: number;
+  node_rid: number;
+  node_hash?: string;
+  text_hash: string;
+  label: string;
+  node_type: NodeType;
+  text_length: number;
+  source_collection: string;
+  project: string;
+  provider: string;
+  updated_at: number;
+}
+
+interface VectorFailureRecord {
+  status: "unavailable" | "failed";
+  error: string;
+  text_hash: string;
+  updated_at: number;
+}
+
 /** A node reached by a graph walk (neighborhood/traverse), with its hop depth.
  *  Graph walks return only the engine `node_id` + `label` + `depth`; the full
  *  node (real `node_type`, `properties`) is resolved against `listNodes` by the
@@ -185,7 +229,10 @@ export class MemoryStore {
       contentHash(node.label, node.node_type, props.title, props.content, scope, scopeId);
 
     const existing = await this.findNodeByHash(hash);
-    if (existing != null) return existing;
+    if (existing != null) {
+      await this.projectNodeVector(existing, node, false);
+      return existing;
+    }
 
     // Tier defaults by node_type unless the caller pinned one (issue #68).
     // Only `ephemeral` nodes get a TTL horizon; `durable`/`reasoning` persist.
@@ -244,6 +291,7 @@ export class MemoryStore {
     if (expiresAt != null) {
       await this.kv().put(nodeExpiryKey(rid), expiresAt, { expireMs: expiresAt - now });
     }
+    await this.projectNodeVector(rid, { ...node, properties }, false);
     return rid;
   }
 
@@ -717,6 +765,133 @@ export class MemoryStore {
     }
   }
 
+  // -------------------------------------------------------------------
+  // Vector projection
+  // -------------------------------------------------------------------
+
+  /**
+   * Best-effort mirror of Memory node text into RedDB's native vector path.
+   * The engine owns embedding (`WITH AUTO EMBED`); Memory only records enough
+   * node metadata to report freshness and retry strictly from maintenance.
+   */
+  private async projectNodeVector(
+    rid: number,
+    node: MemoryNode,
+    strict: boolean,
+  ): Promise<VectorProjectionState> {
+    const text = vectorText(node);
+    const textHash = vectorTextHash(node);
+    const provider = vectorProvider(strict);
+    const updatedAt = Date.now();
+    if (provider == null) {
+      return "unavailable";
+    }
+    try {
+      await this.db.query(
+        `INSERT INTO ${COLLECTIONS.vectors} (node_rid, node_hash, text_hash, text, label, node_type, text_length, source_collection, project, provider, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) WITH AUTO EMBED (text) USING ${provider} RETURNING *`,
+        rid,
+        node.properties.hash ?? null,
+        textHash,
+        text,
+        node.label,
+        node.node_type,
+        text.length,
+        COLLECTIONS.nodes,
+        node.properties.project ?? this.project,
+        provider,
+        updatedAt,
+      );
+      await this.clearVectorFailure(rid);
+      return "ready";
+    } catch (err) {
+      const failure = classifyVectorFailure(err, textHash, updatedAt);
+      await this.recordVectorFailure(rid, failure);
+      if (strict) throw new Error(`vector projection ${failure.status}: ${failure.error}`);
+      return failure.status;
+    }
+  }
+
+  async maintainVectorProjection(opts: { strict?: boolean } = {}): Promise<VectorStatusReport> {
+    const strict = opts.strict === true;
+    for (const node of await this.listNodes()) {
+      await this.projectNodeVector(node.rid, node, strict);
+    }
+    const report = await this.vectorStatus();
+    if (strict && report.overall !== "ready") {
+      throw new Error(`vector projection not ready: ${report.overall}`);
+    }
+    return report;
+  }
+
+  async vectorStatus(): Promise<VectorStatusReport> {
+    const nodes = await this.listNodes();
+    const records = await this.listVectorRecords();
+    const byNode = latestVectorRecords(records);
+    const failures = await Promise.all(nodes.map((node) => this.readVectorFailure(node.rid)));
+    const statuses: VectorNodeStatus[] = nodes.map((node, index) => {
+      const expected = vectorTextHash(node);
+      const projected = byNode.get(node.rid);
+      if (projected) {
+        return {
+          rid: node.rid,
+          label: node.label,
+          node_type: node.node_type,
+          status: projected.text_hash === expected ? "ready" : "stale",
+          text_hash: expected,
+          projected_text_hash: projected.text_hash,
+          updated_at: projected.updated_at,
+        };
+      }
+      const failure = failures[index];
+      return {
+        rid: node.rid,
+        label: node.label,
+        node_type: node.node_type,
+        status: failure?.status ?? "unavailable",
+        text_hash: expected,
+        error: failure?.error,
+        updated_at: failure?.updated_at,
+      };
+    });
+
+    const ready = statuses.filter((s) => s.status === "ready").length;
+    const stale = statuses.filter((s) => s.status === "stale").length;
+    const unavailable = statuses.filter((s) => s.status === "unavailable").length;
+    const failed = statuses.filter((s) => s.status === "failed").length;
+    return {
+      overall: vectorOverall({ ready, stale, unavailable, failed }),
+      total: statuses.length,
+      ready,
+      stale,
+      unavailable,
+      failed,
+      nodes: statuses,
+    };
+  }
+
+  private async listVectorRecords(): Promise<VectorProjectionRecord[]> {
+    try {
+      const r = await this.db.query(`SELECT * FROM ${COLLECTIONS.vectors}`);
+      return r.rows.map(rowToVectorRecord).filter((row) => Number.isFinite(row.node_rid));
+    } catch {
+      return [];
+    }
+  }
+
+  private async readVectorFailure(rid: number): Promise<VectorFailureRecord | null> {
+    const raw = await this.kv().get(vectorFailureKey(rid));
+    if (raw == null) return null;
+    return (typeof raw === "string" ? JSON.parse(raw) : raw) as VectorFailureRecord;
+  }
+
+  private async recordVectorFailure(rid: number, failure: VectorFailureRecord): Promise<void> {
+    await this.kv().put(vectorFailureKey(rid), failure);
+  }
+
+  private async clearVectorFailure(rid: number): Promise<void> {
+    await this.kv().delete(vectorFailureKey(rid));
+  }
+
   /**
    * Grounded ASK over the memory document collection (RedDB `ASK` with
    * citations). This is the one read path that calls an LLM — it needs an API
@@ -891,3 +1066,80 @@ export function isExpired(node: StoredNode, now: number = Date.now()): boolean {
  *  key for the whole graph, not one per node — see `recordAccess`. */
 type AccessOverlayMap = Record<string, { count: number; accessed_at: number }>;
 const ACCESS_KEY = "node:access:all";
+
+function vectorText(node: MemoryNode): string {
+  const p = node.properties;
+  const tags = Array.isArray(p.tags) ? p.tags.join(" ") : "";
+  return [node.label, p.title, p.summary, p.content, tags].filter(Boolean).join("\n");
+}
+
+function vectorTextHash(node: MemoryNode): string {
+  return contentHash("memory-vector", vectorText(node));
+}
+
+function vectorProvider(strict: boolean): string | null {
+  if (!strict && process.env.RED_MEMORY_VECTOR_PROVIDER == null) return null;
+  const provider = process.env.RED_MEMORY_VECTOR_PROVIDER ?? "openai";
+  if (/^[a-zA-Z0-9_-]+$/.test(provider)) return provider;
+  return "openai";
+}
+
+function classifyVectorFailure(
+  err: unknown,
+  textHash: string,
+  updatedAt: number,
+): VectorFailureRecord {
+  const error = err instanceof Error ? err.message : String(err);
+  const truncatedError = error.slice(0, 500);
+  const status = /api[_ -]?key|credential|provider|unauthorized|auth|not configured|OPENAI/i.test(
+    error,
+  )
+    ? "unavailable"
+    : "failed";
+  return { status, error: truncatedError, text_hash: textHash, updated_at: updatedAt };
+}
+
+function latestVectorRecords(
+  records: VectorProjectionRecord[],
+): Map<number, VectorProjectionRecord> {
+  const out = new Map<number, VectorProjectionRecord>();
+  for (const record of records) {
+    const prev = out.get(record.node_rid);
+    if (!prev || record.updated_at >= prev.updated_at) out.set(record.node_rid, record);
+  }
+  return out;
+}
+
+function vectorOverall(counts: {
+  ready: number;
+  stale: number;
+  unavailable: number;
+  failed: number;
+}): VectorProjectionState {
+  if (counts.failed > 0) return "failed";
+  if (counts.unavailable > 0) return "unavailable";
+  if (counts.stale > 0) return "stale";
+  return "ready";
+}
+
+function rowToVectorRecord(row: Record<string, unknown>): VectorProjectionRecord {
+  const props = (row.properties ?? row.PROPERTIES ?? {}) as Record<string, unknown>;
+  const get = (key: string) => row[key] ?? row[key.toUpperCase()] ?? props[key];
+  return {
+    rid: Number(get("rid") ?? row.red_entity_id ?? 0),
+    node_rid: Number(get("node_rid")),
+    node_hash: get("node_hash") == null ? undefined : String(get("node_hash")),
+    text_hash: String(get("text_hash") ?? ""),
+    label: String(get("label") ?? ""),
+    node_type: (get("node_type") as NodeType) ?? "concept",
+    text_length: Number(get("text_length") ?? 0),
+    source_collection: String(get("source_collection") ?? COLLECTIONS.nodes),
+    project: String(get("project") ?? "default"),
+    provider: String(get("provider") ?? "unknown"),
+    updated_at: Number(get("updated_at") ?? 0),
+  };
+}
+
+function vectorFailureKey(rid: number): string {
+  return `vector:failure:${rid}`;
+}
