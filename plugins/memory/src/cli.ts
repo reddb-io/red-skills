@@ -23,6 +23,17 @@ import {
 } from "./extract-conversation.js";
 import { formatOutput, parseInput, type RawPayload } from "./hook-adapters.js";
 import { dispatch, type HookEvent, type Runner } from "./hook-runtime.js";
+import {
+  approveInboxItem,
+  inboxItemToProvenance,
+  listInboxItems,
+  markInboxItemPromoted,
+  quarantineInboxItem,
+  readInboxItem,
+  rejectInboxItem,
+  type InboxStatus,
+  type MemoryInboxItem,
+} from "./inbox.js";
 import { graphRecall } from "./graph-recall.js";
 import { MemoryStore, factToNode } from "./graph-store.js";
 import { ingestProject, refreshFiles } from "./ingest.js";
@@ -76,7 +87,7 @@ import {
   type SkillRollup,
 } from "./skill-events.js";
 import { curateSkills, isCuratable, rollupsToCuratorInput } from "./skill-curator.js";
-import type { MemoryScope } from "./schema.js";
+import type { Confidence, MemoryProvenance, MemoryScope } from "./schema.js";
 import { slugify, storeNote } from "./store.js";
 
 const USAGE = `memory — persistent memory for code agents
@@ -84,6 +95,12 @@ const USAGE = `memory — persistent memory for code agents
 Usage:
   memory init [--mode markdown-only|graph] [--hooks] [--skill-telemetry] [--root <dir>] [--yes]
   memory store <fact...>            [--root <dir>] [--scope project|repo|branch|worktree|session|agent-run|user] [--scope-id ID]
+  memory inbox quarantine <fact...> [--root <dir>] --reason <text> --evidence <summary> [--confidence EXTRACTED|INFERRED|AMBIGUOUS] [--source-kind manual|hook|derived|system] [--writer <name>] [--command <cmd>] [--hook <event>] [--json]
+  memory inbox list                 [--root <dir>] [--status quarantined|approved|rejected|promoted|all] [--json]
+  memory inbox inspect <id>         [--root <dir>] [--json]
+  memory inbox approve <id>         [--root <dir>] --yes [--json]
+  memory inbox reject <id>          [--root <dir>] --reason <text> --yes [--json]
+  memory inbox promote <id>         [--root <dir>] --yes [--json]
   memory classify <candidate...>    [--root <dir>] [--json]
   memory recall <query...>          [--root <dir>] [--limit N] [--include-superseded] [--scope ...] [--scope-id ID] [--include-narrower-scopes]
   memory context-pack <goal...>     [--root <dir>] [--budget N] [--limit N] [--json] [--scope ...] [--scope-id ID] [--include-narrower-scopes]
@@ -185,6 +202,33 @@ function parseMemoryScope(value: string | boolean | undefined): MemoryScope | un
   if (value === true) throw new Error("--scope requires a value");
   if ((MEMORY_SCOPES as readonly string[]).includes(value)) return value as MemoryScope;
   throw new Error(`invalid memory scope "${value}"`);
+}
+
+const CONFIDENCE_VALUES: readonly Confidence[] = ["EXTRACTED", "INFERRED", "AMBIGUOUS"];
+
+function parseConfidence(value: string | boolean | undefined): Confidence | undefined {
+  if (value == null || value === false) return undefined;
+  if (value === true) throw new Error("--confidence requires a value");
+  if ((CONFIDENCE_VALUES as readonly string[]).includes(value)) return value as Confidence;
+  throw new Error(`invalid confidence "${value}"`);
+}
+
+const SOURCE_KINDS: readonly MemoryProvenance["source_kind"][] = [
+  "manual",
+  "hook",
+  "derived",
+  "system",
+];
+
+function parseSourceKind(
+  value: string | boolean | undefined,
+): MemoryProvenance["source_kind"] | undefined {
+  if (value == null || value === false) return undefined;
+  if (value === true) throw new Error("--source-kind requires a value");
+  if ((SOURCE_KINDS as readonly string[]).includes(value)) {
+    return value as MemoryProvenance["source_kind"];
+  }
+  throw new Error(`invalid source kind "${value}"`);
 }
 
 function scopeFlags(flags: Record<string, string | boolean>) {
@@ -304,6 +348,179 @@ async function runStore(args: ParsedArgs): Promise<void> {
   });
   console.log(`memory: stored ${note.id}`);
   console.log(`  ${note.path}`);
+}
+
+async function runInbox(args: ParsedArgs): Promise<void> {
+  const action = args.positional[0] ?? "list";
+  const rootDir = rootOf(args.flags);
+  await requireConfig(rootDir);
+
+  switch (action) {
+    case "quarantine": {
+      const item = await quarantineInboxItem(rootDir, {
+        fact: args.positional.slice(1).join(" "),
+        reason: stringFlag(args.flags, "reason") ?? "",
+        evidenceSummary: stringFlag(args.flags, "evidence") ?? "",
+        provenance: {
+          sourceKind: parseSourceKind(args.flags["source-kind"]),
+          writer: stringFlag(args.flags, "writer"),
+          command: stringFlag(args.flags, "command"),
+          hook: stringFlag(args.flags, "hook"),
+          confidence: parseConfidence(args.flags.confidence),
+          scope: scopeContext(args.flags),
+        },
+      });
+      return printInboxResult("quarantined", item, args.flags.json === true);
+    }
+    case "list": {
+      const status = parseInboxStatusFilter(args.flags.status);
+      let items = await listInboxItems(rootDir);
+      if (status) items = items.filter((item) => item.status === status);
+      if (args.flags.json === true) {
+        console.log(JSON.stringify({ items }, null, 2));
+        return;
+      }
+      printInboxList(items);
+      return;
+    }
+    case "inspect": {
+      const id = args.positional[1];
+      if (!id) throw new Error("memory inbox inspect needs an item id");
+      const item = await readInboxItem(rootDir, id);
+      if (args.flags.json === true) {
+        console.log(JSON.stringify({ item }, null, 2));
+        return;
+      }
+      printInboxItem(item);
+      return;
+    }
+    case "approve": {
+      const id = args.positional[1];
+      if (!id) throw new Error("memory inbox approve needs an item id");
+      if (args.flags.yes !== true) {
+        throw new Error("memory inbox approve requires explicit --yes approval");
+      }
+      const item = await approveInboxItem(rootDir, id);
+      return printInboxResult("approved", item, args.flags.json === true);
+    }
+    case "reject": {
+      const id = args.positional[1];
+      if (!id) throw new Error("memory inbox reject needs an item id");
+      if (args.flags.yes !== true) {
+        throw new Error("memory inbox reject requires explicit --yes approval");
+      }
+      const item = await rejectInboxItem(rootDir, id, stringFlag(args.flags, "reason") ?? "");
+      return printInboxResult("rejected", item, args.flags.json === true);
+    }
+    case "promote": {
+      const id = args.positional[1];
+      if (!id) throw new Error("memory inbox promote needs an item id");
+      if (args.flags.yes !== true) {
+        throw new Error("memory inbox promote requires explicit --yes approval");
+      }
+      const config = await requireConfig(rootDir);
+      if (config.mode !== "graph") {
+        throw new Error(
+          `memory inbox promote needs graph mode — this project is "${config.mode}". Re-run \`memory init --mode graph\` first`,
+        );
+      }
+      const pending = await readInboxItem(rootDir, id);
+      if (pending.status !== "approved") {
+        throw new Error(`memory inbox item ${id} must be approved before promotion`);
+      }
+      const store = await MemoryStore.open({ uri: resolveStoreUri(rootDir, config) });
+      let rid = 0;
+      try {
+        rid = await store.upsertNode(
+          factToNode(pending.fact, slugify, {
+            scope: pending.provenance.scope?.level,
+            scopeId: pending.provenance.scope?.id,
+            provenance: inboxItemToProvenance(pending),
+          }),
+        );
+      } finally {
+        await store.close();
+      }
+      const item = await markInboxItemPromoted(rootDir, id, rid);
+      return printInboxResult("promoted", item, args.flags.json === true);
+    }
+    default:
+      throw new Error(
+        "usage: memory inbox quarantine|list|inspect|approve|reject|promote [args]",
+      );
+  }
+}
+
+function parseInboxStatusFilter(value: string | boolean | undefined): InboxStatus | undefined {
+  if (value == null || value === false || value === "all") return undefined;
+  if (value === true) throw new Error("--status requires a value");
+  if (isInboxStatus(value)) return value;
+  throw new Error(`invalid inbox status "${value}"`);
+}
+
+function isInboxStatus(value: string): value is InboxStatus {
+  return ["quarantined", "approved", "rejected", "promoted"].includes(value);
+}
+
+function scopeContext(flags: Record<string, string | boolean>) {
+  const level = parseMemoryScope(flags.scope);
+  const id = stringFlag(flags, "scope-id");
+  if (!level && !id) return undefined;
+  return {
+    ...(level ? { level } : {}),
+    ...(id ? { id } : {}),
+  };
+}
+
+function printInboxResult(action: string, item: MemoryInboxItem, json: boolean): void {
+  if (json) {
+    console.log(JSON.stringify({ state: action, item }, null, 2));
+    return;
+  }
+  console.log(`memory inbox: ${action} ${item.id}`);
+  if (item.promotedRid != null) console.log(`  promoted node: ${item.promotedRid}`);
+}
+
+function printInboxList(items: MemoryInboxItem[]): void {
+  console.log(`memory inbox: ${items.length} ${plural(items.length, "item")}`);
+  for (const item of items) {
+    const privacy = item.privacyFindings.length > 0 ? ` privacy=${item.privacyFindings.length}` : "";
+    console.log(
+      `  ${item.id} [${item.status}] ${item.fact.slice(0, 100)}${privacy} confidence=${item.provenance.confidence}`,
+    );
+  }
+}
+
+function printInboxItem(item: MemoryInboxItem): void {
+  console.log(`memory inbox: ${item.id}`);
+  console.log(`status: ${item.status}`);
+  console.log(`fact: ${item.fact}`);
+  console.log(`reason: ${item.reason}`);
+  console.log(`evidence: ${item.evidenceSummary}`);
+  console.log(
+    `classification: ${item.classification.kind} tier=${item.classification.recommendedTier} scope=${item.classification.recommendedScope}`,
+  );
+  if (item.classification.safetyWarnings.length > 0) {
+    console.log(`warnings: ${item.classification.safetyWarnings.join(", ")}`);
+  }
+  const privacyKinds = [...new Set(item.privacyFindings.map((finding) => finding.kind))];
+  console.log(`privacy: ${privacyKinds.length > 0 ? privacyKinds.join(", ") : "none"}`);
+  console.log(`provenance: ${formatInboxProvenance(item)}`);
+  if (item.rejectionReason) console.log(`rejection: ${item.rejectionReason}`);
+  if (item.promotedRid != null) console.log(`promoted node: ${item.promotedRid}`);
+}
+
+function formatInboxProvenance(item: MemoryInboxItem): string {
+  const p = item.provenance;
+  const parts: string[] = [p.sourceKind];
+  if (p.writer) parts.push(`writer=${p.writer}`);
+  if (p.command) parts.push(`command=${p.command}`);
+  if (p.hook) parts.push(`hook=${p.hook}`);
+  parts.push(`confidence=${p.confidence}`);
+  if (p.scope?.level) {
+    parts.push(`scope=${p.scope.level}${p.scope.id ? `:${p.scope.id}` : ""}`);
+  }
+  return parts.join(" ");
 }
 
 async function runProvenance(args: ParsedArgs): Promise<void> {
@@ -2757,6 +2974,8 @@ async function main(): Promise<void> {
       return runInit(args);
     case "store":
       return runStore(args);
+    case "inbox":
+      return runInbox(args);
     case "classify":
       return runClassify(args);
     case "recall":
