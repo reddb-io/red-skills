@@ -41,6 +41,7 @@ import {
   type PrePrMemoryReview,
   type PrePrReviewSection,
 } from "./pre-pr-review.js";
+import { buildLearningDebtReport } from "./learning-debt.js";
 import { buildPreflightBrief } from "./preflight.js";
 import { recall } from "./recall.js";
 import {
@@ -83,6 +84,7 @@ Usage:
   memory context-pack <goal...>     [--root <dir>] [--budget N] [--limit N] [--json] [--scope ...] [--scope-id ID] [--include-narrower-scopes]
   memory claim-check <assertion...> [--root <dir>] [--json]
   memory preflight <task...>        [--root <dir>] [--limit N] [--min-evidence N] [--stale-days N] [--json] [--scope ...] [--scope-id ID] [--include-narrower-scopes]
+  memory learning-debt              [--root <dir>] [--stale-days N] [--json]
   memory ask <question...>          [--root <dir>] [--json]
   memory provenance <rid|label>     [--root <dir>] [--json]
   memory ingest <path>              [--root <dir>] [--max-files N]
@@ -419,6 +421,32 @@ async function runPreflight(args: ParsedArgs): Promise<void> {
       return;
     }
     process.stdout.write(brief.markdown);
+  } finally {
+    await store.close();
+  }
+}
+
+async function runLearningDebt(args: ParsedArgs): Promise<void> {
+  const rootDir = rootOf(args.flags);
+  const config = await requireConfig(rootDir);
+  if (config.mode !== "graph") {
+    throw new Error(
+      `learning-debt needs graph mode — this project is "${config.mode}". Re-run \`memory init --mode graph\` first`,
+    );
+  }
+  const telemetryEnabled = skillTelemetryEnabled(config);
+  const store = await MemoryStore.open({ uri: resolveStoreUri(rootDir, config) });
+  try {
+    const report = await buildLearningDebtReport(store, {
+      staleDays: intFlag(args.flags, "stale-days"),
+      rollups: telemetryEnabled ? await readSkillRollups(store) : [],
+      skillTelemetryEnabled: telemetryEnabled,
+    });
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(report, null, 2));
+      return;
+    }
+    process.stdout.write(report.markdown);
   } finally {
     await store.close();
   }
@@ -2678,6 +2706,8 @@ async function main(): Promise<void> {
       return runClaimCheck(args);
     case "preflight":
       return runPreflight(args);
+    case "learning-debt":
+      return runLearningDebt(args);
     case "ask":
       return runAsk(args);
     case "provenance":
