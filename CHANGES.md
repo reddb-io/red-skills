@@ -9,6 +9,16 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 
 
 
+## memory event log skill telemetry dual-write (core)
+
+- **status**: added
+- **upstream**: —
+- **why**: Give Memory a shared append-only operational telemetry substrate while keeping existing Skill telemetry rollups stable.
+- **what changed**:
+  - Added a RedDB-backed `memory_events` append-only table with a generic event envelope (`id`, `occurred_at`, `kind`, `source`, `actor`, `scope`, `subject`, `payload`, `provenance`).
+  - Added typed `skill.telemetry` payload validation and append/read helpers.
+  - `memory event skill` / `ingestSkillEvents` now dual-write raw event-log rows before the existing deduped graph/rollup path, so replayed raw events are auditable without changing current Skill rollup counts.
+
 ## memory explicit VCS commit (core)
 
 - **status**: added

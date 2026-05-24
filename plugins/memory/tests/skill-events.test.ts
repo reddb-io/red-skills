@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, test } from "vitest";
 import { initGraph, initMarkdownOnly } from "../src/init.js";
+import { readMemoryEvents } from "../src/memory-events.js";
 import { MemoryStore } from "../src/graph-store.js";
 import {
   ingestSkillEvents,
@@ -237,6 +238,47 @@ describe("memory event skill CLI", () => {
 });
 
 describe("skill telemetry graph persistence", () => {
+  test(
+    "dual-writes raw skill telemetry events while preserving deduped rollups",
+    async () => {
+      const root = await tempRoot();
+      await initGraph(root);
+      const store = await openStore(root);
+
+      await ingestSkillEvents(store, [EVENT, EVENT]);
+
+      const events = await readMemoryEvents(store);
+      expect(events).toHaveLength(2);
+      expect(events).toEqual([
+        expect.objectContaining({
+          id: "skill-event:evt-1",
+          kind: "skill.telemetry",
+          actor: { kind: "agent", id: "codex" },
+          scope: { level: "session", id: "session-1" },
+          subject: { kind: "skill", id: "plugin:dev:tdd" },
+          payload: expect.objectContaining({
+            event_type: "result",
+            event_id: "evt-1",
+            name: "dev:tdd",
+            result: { status: "succeeded", duration_ms: 1200, error_class: "none" },
+          }),
+        }),
+        expect.objectContaining({
+          id: "skill-event:evt-1",
+          kind: "skill.telemetry",
+        }),
+      ]);
+      expect(await readSkillRollups(store)).toEqual([
+        expect.objectContaining({
+          event_count: 1,
+          result_count: 1,
+          outcome_counts: { succeeded: 1 },
+        }),
+      ]);
+    },
+    TIMEOUT,
+  );
+
   test(
     "replaying a skill result event preserves one evidence graph and one rollup count",
     async () => {

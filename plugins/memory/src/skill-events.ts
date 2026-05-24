@@ -2,6 +2,7 @@ import { z } from "zod";
 import { contentHash } from "./hash.js";
 import type { MemoryNode } from "./schema.js";
 import type { MemoryStore } from "./graph-store.js";
+import { appendMemoryEvent, skillEventToMemoryEvent } from "./memory-events.js";
 
 const SAFE_TEXT_MAX = 512;
 const SAFE_PATH_MAX = 2048;
@@ -128,6 +129,8 @@ export async function ingestSkillEvents(
   const touchedEdges = new Set<number>();
 
   for (const event of events) {
+    await appendMemoryEvent(store, skillEventToMemoryEvent(event));
+
     const graph = await upsertSkillEventGraph(store, event);
     for (const rid of graph.nodes) touchedNodes.add(rid);
     for (const rid of graph.edges) touchedEdges.add(rid);
