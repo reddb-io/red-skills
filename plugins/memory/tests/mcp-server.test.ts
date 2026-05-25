@@ -5,6 +5,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { afterEach, beforeAll, describe, expect, test } from "vitest";
 import { MemoryStore } from "../src/graph-store.js";
+import { getReadOnlyMemoryOperation } from "../src/operations.js";
 
 // Spawning tsx + booting RedDB twice (seed, then server) is slow; be generous.
 const TIMEOUT = 40_000;
@@ -122,6 +123,10 @@ describe("MCP server over stdio", () => {
           "memory_timeline",
           "memory_traverse",
         ].sort(),
+      );
+      const communities = tools.find((tool) => tool.name === "memory_communities");
+      expect(communities?.description).toBe(
+        getReadOnlyMemoryOperation("memory.communities").renderer.mcp.description,
       );
     },
     TIMEOUT,
