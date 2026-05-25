@@ -193,6 +193,7 @@ async function main(): Promise<void> {
               depth: n.depth,
               excerpt: n.excerpt,
             })),
+            diagnostics: result.diagnostics,
           });
         } finally {
           if (input.as_of) await recallStore.close();

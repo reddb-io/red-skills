@@ -184,6 +184,38 @@ describe("MemoryStore over a file:// RedDB", () => {
   );
 
   test(
+    "vector search maps projected vector rows back to memory node rids",
+    async () => {
+      const store = await openStore(await tempRoot());
+      const previousProvider = process.env.RED_MEMORY_VECTOR_PROVIDER;
+      process.env.RED_MEMORY_VECTOR_PROVIDER = "openai";
+      const raw = store.raw as unknown as {
+        query: (sql: string, ...params: unknown[]) => Promise<{ rows: Record<string, unknown>[] }>;
+      };
+      const query = raw.query.bind(raw);
+      raw.query = async (sql: string, ...params: unknown[]) => {
+        if (sql.startsWith("SEARCH SIMILAR TEXT")) {
+          expect(sql).toContain("COLLECTION memory_vectors");
+          expect(sql).toContain("USING openai");
+          expect(sql).toContain("LIMIT 3");
+          return { rows: [{ entity_id: 9, node_rid: 42, similarity: 0.82 }] };
+        }
+        return query(sql, ...params);
+      };
+
+      try {
+        await expect(store.searchVector("semantic recall", 3)).resolves.toEqual([
+          { rid: 42, score: 0.82 },
+        ]);
+      } finally {
+        if (previousProvider == null) delete process.env.RED_MEMORY_VECTOR_PROVIDER;
+        else process.env.RED_MEMORY_VECTOR_PROVIDER = previousProvider;
+      }
+    },
+    TIMEOUT,
+  );
+
+  test(
     "strict vector maintenance fails when projection cannot be rebuilt",
     async () => {
       const store = await openStore(await tempRoot());

@@ -20,12 +20,16 @@ class MockStore implements RecallStore {
     private nodes: StoredNode[],
     private superseded: Map<number, number> = new Map(),
     private edges: Record<string, unknown>[] = [],
+    private vectorHits: SearchRow[] = [],
   ) {}
   async listNodes(): Promise<StoredNode[]> {
     return this.nodes;
   }
   async searchText(): Promise<SearchRow[]> {
     return [];
+  }
+  async searchVector(): Promise<SearchRow[]> {
+    return this.vectorHits;
   }
   async neighborhood(): Promise<GraphRow[]> {
     throw new Error("recall should expand from listEdges, not per-seed graph walks");
@@ -225,5 +229,92 @@ describe("recall ranking with a mock store (#72)", () => {
     });
 
     expect(nodes.map((n) => n.rid).sort((a, b) => a - b)).toEqual([1, 3]);
+  });
+
+  test("includes vector-only candidates as governed recall seeds", async () => {
+    const store = new MockStore(
+      [
+        node(1, "durable", { content: "alpha direct match" }),
+        node(2, "durable", { content: "semantic neighbor only" }),
+      ],
+      new Map(),
+      [],
+      [{ rid: 2, score: 0.9 }],
+    );
+
+    const { nodes, diagnostics } = await recall(store, "alpha", { depth: 0, now: NOW });
+
+    expect(nodes.map((n) => n.rid)).toContain(1);
+    expect(nodes.map((n) => n.rid)).toContain(2);
+    expect(diagnostics.vector).toMatchObject({
+      status: "contributed",
+      candidates: 1,
+      contributed: 1,
+    });
+  });
+
+  test("filters vector candidates through scope and supersession safeguards", async () => {
+    const store = new MockStore(
+      [
+        node(1, "durable", { content: "obsolete vector match" }, "project"),
+        node(2, "durable", { content: "current guidance" }, "project"),
+        node(3, "durable", { content: "branch-only guidance" }, "branch"),
+      ],
+      new Map([[1, 2]]),
+      [],
+      [
+        { rid: 1, score: 0.9 },
+        { rid: 3, score: 0.9 },
+        { rid: 99, score: 0.9 },
+      ],
+    );
+
+    const { nodes, diagnostics } = await recall(store, "no textual overlap", {
+      depth: 0,
+      now: NOW,
+    });
+    const rids = nodes.map((n) => n.rid);
+
+    expect(rids).toContain(2);
+    expect(rids).not.toContain(1);
+    expect(rids).not.toContain(3);
+    expect(rids).not.toContain(99);
+    expect(diagnostics.vector).toMatchObject({
+      status: "contributed",
+      candidates: 3,
+      contributed: 1,
+    });
+  });
+
+  test("ranks vector candidates through governed scoring factors", async () => {
+    const store = new MockStore(
+      [
+        node(1, "durable", { content: "vector only", confidence: "AMBIGUOUS" }),
+        node(2, "durable", { content: "vector only", confidence: "EXTRACTED" }),
+        node(3, "reasoning", { content: "vector only", confidence: "EXTRACTED" }),
+        node(4, "durable", {
+          content: "vector only",
+          confidence: "EXTRACTED",
+          created_at: NOW - RECENCY_HALF_LIFE_MS,
+        }),
+        node(5, "durable", { content: "vector only", confidence: "EXTRACTED" }),
+        node(6, "durable", { content: "vector only", confidence: "EXTRACTED" }),
+        node(7, "durable", { content: "centrality helper", confidence: "EXTRACTED" }),
+      ],
+      new Map(),
+      [
+        { from: 6, to: 7 },
+        { from: 6, to: 5 },
+      ],
+      [1, 2, 3, 4, 5, 6].map((rid) => ({ rid, score: 1 })),
+    );
+
+    const { nodes } = await recall(store, "no textual overlap", { depth: 0, now: NOW });
+    const byRid = new Map(nodes.map((n) => [n.rid, n]));
+
+    expect(byRid.get(2)!.score).toBeGreaterThan(byRid.get(1)!.score);
+    expect(byRid.get(2)!.score).toBeGreaterThan(byRid.get(3)!.score);
+    expect(byRid.get(2)!.score).toBeGreaterThan(byRid.get(4)!.score);
+    expect(byRid.get(6)!.score).toBeGreaterThan(byRid.get(5)!.score);
   });
 });

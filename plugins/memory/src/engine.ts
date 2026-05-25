@@ -48,6 +48,20 @@ export interface RecallResult {
   nodes: RecalledNode[];
   /** Markdown block ready to inject into a system note. */
   context_md: string;
+  diagnostics: RecallDiagnostics;
+}
+
+export interface RecallDiagnostics {
+  vector: VectorRecallDiagnostics;
+}
+
+export interface VectorRecallDiagnostics {
+  status: "unavailable" | "available" | "contributed";
+  /** Raw vector rows returned by the store before governance filters. */
+  candidates: number;
+  /** Vector rows that added or strengthened recall candidates. */
+  contributed: number;
+  reason?: string;
 }
 
 export interface RecallOptions {
@@ -90,6 +104,7 @@ export interface RecallScope {
 export interface RecallStore {
   listNodes(now?: number): Promise<StoredNode[]>;
   searchText(query: string, limit?: number): Promise<SearchRow[]>;
+  searchVector?(query: string, limit?: number): Promise<SearchRow[]>;
   neighborhood(
     label: string,
     depth?: number,
@@ -111,6 +126,12 @@ export const TIER_WEIGHT: Record<Tier, number> = {
   ephemeral: 0.4,
 };
 
+export const TRUST_WEIGHT: Record<Confidence, number> = {
+  EXTRACTED: 1.0,
+  INFERRED: 0.85,
+  AMBIGUOUS: 0.65,
+};
+
 /** Recency half-life: a node's recency factor halves every 30 days of age. */
 export const RECENCY_HALF_LIFE_MS = 30 * 86_400_000;
 
@@ -127,6 +148,8 @@ export interface RankInputs {
   degree: number;
   /** Max incident edge count across the graph (normalizes centrality). */
   maxDegree: number;
+  /** Provenance/confidence trust multiplier in (0, 1]. */
+  trust?: number;
 }
 
 /**
@@ -139,7 +162,7 @@ export interface RankInputs {
 export function rankScore(i: RankInputs): number {
   const recency = 0.5 ** (Math.max(0, i.ageMs) / RECENCY_HALF_LIFE_MS);
   const centrality = (i.degree + 1) / (i.maxDegree + 1);
-  return i.relevance * i.importance * recency * centrality * TIER_WEIGHT[i.tier];
+  return i.relevance * i.importance * recency * centrality * TIER_WEIGHT[i.tier] * (i.trust ?? 1);
 }
 
 export interface AskResult {
@@ -185,6 +208,7 @@ export interface AskEvidenceSummary {
 }
 
 const SEED_NEIGHBOR_DECAY = 0.5;
+const VECTOR_SEED_WEIGHT = 0.5;
 const DEFAULT_RECALL_SCOPE: RecallScope = { level: "project" };
 const SCOPE_RANK: Record<MemoryScope, number> = {
   user: 0,
@@ -256,6 +280,11 @@ async function loadIndex(
 function latestTimestamp(node: StoredNode): number {
   const p = node.properties;
   return Math.max(p.accessed_at ?? 0, p.updated_at ?? 0, p.created_at ?? 0);
+}
+
+function trustWeight(node: StoredNode): number {
+  const confidence = node.properties.confidence ?? node.properties.provenance?.confidence;
+  return confidence && confidence in TRUST_WEIGHT ? TRUST_WEIGHT[confidence] : 1;
 }
 
 interface GraphIndex {
@@ -352,6 +381,23 @@ function termScore(node: StoredNode, terms: string[]): number {
   return score;
 }
 
+function emptyDiagnostics(reason?: string): RecallDiagnostics {
+  return {
+    vector: {
+      status: "unavailable",
+      candidates: 0,
+      contributed: 0,
+      ...(reason ? { reason } : {}),
+    },
+  };
+}
+
+function vectorSeedScore(score: number): number {
+  if (!Number.isFinite(score)) return VECTOR_SEED_WEIGHT;
+  const normalized = Math.max(0, Math.min(1, score));
+  return normalized * VECTOR_SEED_WEIGHT;
+}
+
 /**
  * Hybrid recall: FTS + client-side term seeds → graph-neighborhood expansion →
  * ranked nodes + markdown context. Superseded nodes are hidden behind their
@@ -372,7 +418,10 @@ export async function recall(
   } = opts;
   const terms = tokenize(query);
   const index = await loadIndex(store, scope);
-  if (terms.length === 0) return { query, nodes: [], context_md: renderContext(query, []) };
+  if (terms.length === 0) {
+    const diagnostics = emptyDiagnostics("blank query");
+    return { query, nodes: [], context_md: renderContext(query, [], diagnostics), diagnostics };
+  }
 
   // Seed scores from a client-side term scan — deterministic and covers every
   // text field (title/summary/content/tags), independent of what the engine FTS
@@ -388,6 +437,34 @@ export async function recall(
   if (scored.size < k) {
     for (const hit of await store.searchText(query, k * 4)) {
       if (index.has(hit.rid) && !scored.has(hit.rid)) scored.set(hit.rid, SEED_NEIGHBOR_DECAY);
+    }
+  }
+
+  const diagnostics = emptyDiagnostics("vector search is not available on this store");
+  if (store.searchVector) {
+    try {
+      const vectorHits = await store.searchVector(query, k * 4);
+      diagnostics.vector = { status: "available", candidates: vectorHits.length, contributed: 0 };
+      const contributed = new Set<number>();
+      for (const hit of vectorHits) {
+        if (!index.has(hit.rid)) continue;
+        const relevance = vectorSeedScore(hit.score);
+        if (relevance <= 0) continue;
+        const existing = scored.get(hit.rid);
+        if (existing == null || relevance > existing) {
+          scored.set(hit.rid, Math.max(existing ?? 0, relevance));
+          contributed.add(hit.rid);
+        }
+      }
+      diagnostics.vector.contributed = contributed.size;
+      if (contributed.size > 0) diagnostics.vector.status = "contributed";
+    } catch (err) {
+      diagnostics.vector = {
+        status: "unavailable",
+        candidates: 0,
+        contributed: 0,
+        reason: err instanceof Error ? err.message : String(err),
+      };
     }
   }
 
@@ -433,6 +510,7 @@ export async function recall(
       ageMs: now - latestTimestamp(node),
       degree: degree.get(rid) ?? 0,
       maxDegree,
+      trust: trustWeight(node),
     });
     nodes.push(toRecalled(node, score, depthOf.get(rid)));
   }
@@ -446,7 +524,7 @@ export async function recall(
     await store.recordAccess(nodes.map((n) => n.rid)).catch(() => {});
   }
 
-  return { query, nodes, context_md: renderContext(query, nodes) };
+  return { query, nodes, context_md: renderContext(query, nodes, diagnostics), diagnostics };
 }
 
 function promoteSupersessionHeads(
@@ -730,9 +808,17 @@ function edgeReason(edge: Record<string, unknown>): string | null {
   return null;
 }
 
-function renderContext(query: string, nodes: RecalledNode[]): string {
-  if (nodes.length === 0) return `# Memory recall: ${query}\n\n_(no relevant memory)_\n`;
+function renderContext(
+  query: string,
+  nodes: RecalledNode[],
+  diagnostics: RecallDiagnostics = emptyDiagnostics(),
+): string {
+  const vectorLine = renderVectorDiagnostic(diagnostics.vector);
+  if (nodes.length === 0) {
+    return `# Memory recall: ${query}\n\n_${vectorLine}_\n\n_(no relevant memory)_\n`;
+  }
   const lines = [`# Memory recall: ${query}`, ""];
+  lines.push(`_${vectorLine}_`, "");
   for (const n of nodes.slice(0, 12)) {
     const p = n.properties;
     const source = p.source ? ` — ${p.source}` : "";
@@ -741,4 +827,13 @@ function renderContext(query: string, nodes: RecalledNode[]): string {
     if (detail) lines.push(`  ${detail.slice(0, 200)}`);
   }
   return `${lines.join("\n")}\n`;
+}
+
+function renderVectorDiagnostic(d: VectorRecallDiagnostics): string {
+  if (d.status === "contributed") {
+    return `vector retrieval contributed ${d.contributed} candidate(s)`;
+  }
+  if (d.status === "available") return "vector retrieval available; 0 candidate(s) contributed";
+  const reason = d.reason ? `: ${d.reason}` : "";
+  return `vector retrieval unavailable${reason}`;
 }

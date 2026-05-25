@@ -765,6 +765,23 @@ export class MemoryStore {
     }
   }
 
+  /**
+   * Semantic vector search over the projected Memory-node vector rows. Results
+   * are mapped back from vector record ids to Memory node rids so the recall
+   * engine can apply its normal scope, supersession, tier, trust, recency, and
+   * centrality governance before anything reaches callers.
+   */
+  async searchVector(query: string, limit = 20): Promise<SearchRow[]> {
+    const provider = vectorProvider(false);
+    if (provider == null) {
+      throw new Error("RED_MEMORY_VECTOR_PROVIDER is not configured");
+    }
+    const r = await this.db.query(
+      `SEARCH SIMILAR TEXT '${escapeLabel(query)}' COLLECTION ${COLLECTIONS.vectors} USING ${provider} LIMIT ${clampLimit(limit)}`,
+    );
+    return r.rows.map(rowToVectorSearchRow).filter((h) => Number.isFinite(h.rid));
+  }
+
   // -------------------------------------------------------------------
   // Vector projection
   // -------------------------------------------------------------------
@@ -1137,6 +1154,15 @@ function rowToVectorRecord(row: Record<string, unknown>): VectorProjectionRecord
     project: String(get("project") ?? "default"),
     provider: String(get("provider") ?? "unknown"),
     updated_at: Number(get("updated_at") ?? 0),
+  };
+}
+
+function rowToVectorSearchRow(row: Record<string, unknown>): SearchRow {
+  const props = (row.properties ?? row.PROPERTIES ?? {}) as Record<string, unknown>;
+  const get = (key: string) => row[key] ?? row[key.toUpperCase()] ?? props[key];
+  return {
+    rid: Number(get("node_rid") ?? get("entity_id") ?? row.red_entity_id),
+    score: Number(get("similarity") ?? get("score") ?? 1),
   };
 }
 
