@@ -12,8 +12,8 @@ import {
   resolveStoreUri,
   skillTelemetryEnabled,
 } from "./config.js";
+import type { CommunityAnalyticsReport } from "./communities.js";
 import { buildContextPack } from "./context-pack.js";
-import { buildCommunityAnalytics } from "./communities.js";
 import { claimCheck, type ClaimCheckResult } from "./claim-check.js";
 import { diagnose, prune } from "./doctor.js";
 import { ask, neighbors, path as shortestPath, search, traverse } from "./engine.js";
@@ -63,6 +63,7 @@ import { buildLearningDebtReport } from "./learning-debt.js";
 import { buildOnboardingMap } from "./onboarding-map.js";
 import { buildPreflightBrief } from "./preflight.js";
 import { buildReadinessEnvelope, type MemoryReadinessEnvelope } from "./readiness.js";
+import { executeReadOnlyMemoryOperation } from "./operations.js";
 import { recall } from "./recall.js";
 import { commitMemoryGraph, type MemoryGraphCommitResult } from "./vcs-commit.js";
 import {
@@ -2743,9 +2744,9 @@ async function runTimeline(args: ParsedArgs): Promise<void> {
 async function runCommunities(args: ParsedArgs): Promise<void> {
   const { store } = await openGraphStore(args);
   try {
-    const report = await buildCommunityAnalytics(store, {
+    const report = (await executeReadOnlyMemoryOperation("memory.communities", { store }, {
       cache: args.flags["no-cache"] === true ? "off" : "read-write",
-    });
+    })) as CommunityAnalyticsReport;
     if (args.flags.json === true) {
       console.log(JSON.stringify(report, null, 2));
       return;

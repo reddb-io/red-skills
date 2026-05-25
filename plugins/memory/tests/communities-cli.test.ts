@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { MemoryStore } from "../src/graph-store.js";
 import { initGraph } from "../src/init.js";
+import { getReadOnlyMemoryOperation } from "../src/operations.js";
 
 const TIMEOUT = 40_000;
 const pkgRoot = resolve(__dirname, "..");
@@ -74,6 +75,10 @@ describe("memory communities CLI", () => {
     async () => {
       const root = await initRoot();
       await seedTwoCommunities(root);
+      expect(getReadOnlyMemoryOperation("memory.communities").renderer.cli).toMatchObject({
+        command: "communities",
+        supportsJson: true,
+      });
 
       const before = await openStore(root);
       const beforeStats = await before.stats();

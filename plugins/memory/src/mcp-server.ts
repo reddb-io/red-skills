@@ -23,13 +23,17 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-import { buildCommunityAnalytics } from "./communities.js";
 import { readConfig, resolveStoreUri } from "./config.js";
 import { diagnose } from "./doctor.js";
 import { ask, neighbors, path, recall, search, traverse } from "./engine.js";
 import { exportGraph } from "./export.js";
 import { MemoryStore, factToNode } from "./graph-store.js";
 import { HistoricalMemoryStore } from "./historical-memory-store.js";
+import {
+  executeReadOnlyMemoryOperation,
+  getReadOnlyMemoryOperation,
+} from "./operations.js";
+import type { CommunityAnalyticsReport } from "./communities.js";
 import type { EdgeLabel, MemoryScope, NodeType } from "./schema.js";
 import { slugify } from "./store.js";
 import { listContradictions, supersessionTimeline } from "./supersession.js";
@@ -305,7 +309,9 @@ async function main(): Promise<void> {
       case "memory_communities": {
         const input = CommunitiesInput.parse(args);
         const [report, stats] = await Promise.all([
-          buildCommunityAnalytics(store, { cache: input.use_cache ? "read-only" : "off" }),
+          executeReadOnlyMemoryOperation("memory.communities", { store }, {
+            cache: input.use_cache ? "read-only" : "off",
+          }) as Promise<CommunityAnalyticsReport>,
           store.stats(),
         ]);
         return text(JSON.stringify(report, null, 2), {
@@ -448,9 +454,8 @@ const TOOLS = [
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
   },
   {
-    name: "memory_communities",
-    description:
-      "Read-only Memory graph community analytics: native Louvain assignments, community counts, top labels/titles, and graph-hash cache metadata. Does not write derived clusters into Memory graph evidence.",
+    name: getReadOnlyMemoryOperation("memory.communities").renderer.mcp.toolName,
+    description: getReadOnlyMemoryOperation("memory.communities").renderer.mcp.description,
     inputSchema: zodToSchema(CommunitiesInput),
   },
   {
