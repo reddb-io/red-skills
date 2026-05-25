@@ -43,7 +43,12 @@ import { ingestProject, refreshFiles } from "./ingest.js";
 import { initGraph, initMarkdownOnly } from "./init.js";
 import { lintMemory, type LintReport } from "./lint.js";
 import { applyProviderEnv, redDbProviderClient } from "./provider-client.js";
-import { scanPrivacy, type PrivacyReport } from "./privacy.js";
+import {
+  redactSensitiveValue,
+  scanPrivacy,
+  type PrivacyFinding,
+  type PrivacyReport,
+} from "./privacy.js";
 import {
   buildProvenanceReport,
   findNodeForProvenance,
@@ -124,6 +129,7 @@ Usage:
   memory readiness-viewer <goal...> [--root <dir>] [--out <file>] [--limit N] [--min-evidence N] [--stale-days N] [--scope ...] [--scope-id ID] [--include-narrower-scopes]
   memory learning-debt              [--root <dir>] [--stale-days N] [--json]
   memory onboarding-map             [--root <dir>] [--stale-days N] [--json]
+  memory onboarding-map export <out-dir> --public-safe [--strict] [--root <dir>] [--json]
   memory ask <question...>          [--root <dir>] [--json]
   memory provenance <rid|label>     [--root <dir>] [--json]
   memory ingest <path>              [--root <dir>] [--max-files N]
@@ -833,6 +839,9 @@ async function runLearningDebt(args: ParsedArgs): Promise<void> {
 
 async function runOnboardingMap(args: ParsedArgs): Promise<void> {
   const rootDir = rootOf(args.flags);
+  if (args.positional[0] === "export") {
+    return runOnboardingMapExport(args, rootDir);
+  }
   const config = await requireConfig(rootDir);
   if (config.mode !== "graph") {
     throw new Error(
@@ -854,6 +863,213 @@ async function runOnboardingMap(args: ParsedArgs): Promise<void> {
   } finally {
     await store.close();
   }
+}
+
+interface PublicCodebaseMapMetadata {
+  schemaVersion: 1;
+  kind: "memory.codebase-map.public-export";
+  publicSafe: true;
+  generatedAt: string;
+  source: {
+    gitCommit: string | null;
+    graphState: {
+      nodes: number;
+      edges: number;
+      maxRid: number;
+      fingerprint: string;
+    };
+  };
+  privacy: {
+    scanned: true;
+    status: PrivacyReport["status"];
+    findings: number;
+    findingKinds: string[];
+    redacted: boolean;
+    strict: boolean;
+    warnings: string[];
+  };
+  artifacts: {
+    json: string;
+    markdown: string;
+  };
+}
+
+async function runOnboardingMapExport(args: ParsedArgs, rootDir: string): Promise<void> {
+  if (args.flags["public-safe"] !== true) {
+    throw new Error(
+      "onboarding-map export writes demo/comparison artifacts and requires --public-safe",
+    );
+  }
+
+  const config = await requireConfig(rootDir);
+  if (config.mode !== "graph") {
+    throw new Error(
+      `onboarding-map export needs graph mode — this project is "${config.mode}". Re-run \`memory init --mode graph\` first`,
+    );
+  }
+
+  const target = args.positional[1] ?? ".red/memory/public-codebase-map";
+  const outDir = isAbsolute(target) ? target : resolve(rootDir, target);
+  const strict = args.flags.strict === true;
+  const privacy = await scanPrivacy(resolve(rootDir));
+  if (privacy.status !== "ok") {
+    throw new Error(
+      `public-safe export refused: privacy scan could not guarantee safe output (${privacy.warnings.join("; ") || privacy.status})`,
+    );
+  }
+  if (strict && privacy.findings.length > 0) {
+    throw new Error(publicSafeRefusalMessage(privacy.findings));
+  }
+
+  const telemetryEnabled = skillTelemetryEnabled(config);
+  const store = await MemoryStore.open({ uri: resolveStoreUri(rootDir, config) });
+  try {
+    const map = await buildOnboardingMap(store, {
+      staleDays: intFlag(args.flags, "stale-days"),
+      rollups: telemetryEnabled ? await readSkillRollups(store) : [],
+    });
+    const safeMap = redactSensitiveValue(map) as OnboardingMapExportShape;
+    const [nodes, edges] = await Promise.all([store.listNodes(), store.listEdges()]);
+    const redacted = privacy.findings.length > 0;
+    const artifacts = {
+      jsonPath: join(outDir, "codebase-map.json"),
+      markdownPath: join(outDir, "codebase-map.md"),
+      metadataPath: join(outDir, "public-export-metadata.json"),
+    };
+    const metadata: PublicCodebaseMapMetadata = {
+      schemaVersion: 1,
+      kind: "memory.codebase-map.public-export",
+      publicSafe: true,
+      generatedAt: new Date().toISOString(),
+      source: {
+        gitCommit: await currentGitCommit(rootDir),
+        graphState: graphStateMetadata(nodes, edges),
+      },
+      privacy: {
+        scanned: true,
+        status: privacy.status,
+        findings: privacy.findings.length,
+        findingKinds: [...new Set(privacy.findings.map((finding) => finding.kind))].sort(),
+        redacted,
+        strict,
+        warnings: privacy.warnings,
+      },
+      artifacts: {
+        json: "codebase-map.json",
+        markdown: "codebase-map.md",
+      },
+    };
+
+    await mkdir(outDir, { recursive: true });
+    await Promise.all([
+      writeFile(artifacts.jsonPath, `${JSON.stringify(safeMap, null, 2)}\n`, "utf8"),
+      writeFile(artifacts.markdownPath, safeMap.markdown, "utf8"),
+      writeFile(artifacts.metadataPath, `${JSON.stringify(metadata, null, 2)}\n`, "utf8"),
+    ]);
+
+    const payload = {
+      publicSafe: true,
+      redacted,
+      privacy: {
+        scanned: true,
+        status: privacy.status,
+        findings: privacy.findings.length,
+        diagnostics: privacy.findings.map(publicFindingDiagnostic),
+        warnings: privacy.warnings,
+      },
+      artifacts,
+      metadata,
+    };
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(payload, null, 2));
+      return;
+    }
+    const evidenceItems =
+      safeMap.summary.concepts +
+      safeMap.summary.workflows +
+      safeMap.summary.decisions +
+      safeMap.summary.risks +
+      safeMap.summary.validations;
+    console.log(`memory: public-safe codebase map export — ${evidenceItems} evidence item(s)`);
+    if (privacy.findings.length > 0) {
+      console.log(`  warning: redacted ${privacy.findings.length} privacy finding(s)`);
+      for (const finding of privacy.findings.slice(0, 10)) {
+        const diagnostic = publicFindingDiagnostic(finding);
+        console.log(`  - ${diagnostic.kind} ${diagnostic.location}: ${diagnostic.excerpt}`);
+      }
+    }
+    console.log(`  json:     ${artifacts.jsonPath}`);
+    console.log(`  markdown: ${artifacts.markdownPath}`);
+    console.log(`  metadata: ${artifacts.metadataPath}`);
+  } finally {
+    await store.close();
+  }
+}
+
+type OnboardingMapExportShape = Awaited<ReturnType<typeof buildOnboardingMap>>;
+
+function publicSafeRefusalMessage(findings: PrivacyFinding[]): string {
+  const lines = [
+    `public-safe export refused: privacy scan found ${findings.length} sensitive-looking value(s); rerun without --strict to write redacted artifacts.`,
+  ];
+  for (const finding of findings.slice(0, 10)) {
+    const diagnostic = publicFindingDiagnostic(finding);
+    lines.push(`- ${diagnostic.kind} ${diagnostic.location}: ${diagnostic.excerpt}`);
+  }
+  if (findings.length > 10) lines.push(`- ... and ${findings.length - 10} more`);
+  return lines.join("\n");
+}
+
+function publicFindingDiagnostic(finding: PrivacyFinding): {
+  kind: PrivacyFinding["kind"];
+  location: string;
+  excerpt: string;
+} {
+  return {
+    kind: finding.kind,
+    location: finding.location,
+    excerpt: finding.excerpt,
+  };
+}
+
+async function currentGitCommit(rootDir: string): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync("git", ["rev-parse", "--verify", "HEAD"], {
+      cwd: rootDir,
+      encoding: "utf8",
+    });
+    return stdout.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+function graphStateMetadata(
+  nodes: Array<{ rid: number; node_type: string }>,
+  edges: Record<string, unknown>[],
+): PublicCodebaseMapMetadata["source"]["graphState"] {
+  const structural = {
+    nodes: nodes
+      .map((node) => ({ rid: node.rid, node_type: node.node_type }))
+      .sort((a, b) => a.rid - b.rid),
+    edges: edges
+      .map((edge) => ({
+        rid: Number(edge.rid ?? edge.red_entity_id ?? 0),
+        label: String(edge.label ?? edge.LABEL ?? ""),
+        from: Number(edge.from ?? edge.from_id ?? edge.from_rid ?? edge.source ?? edge.FROM ?? 0),
+        to: Number(edge.to ?? edge.to_id ?? edge.to_rid ?? edge.target ?? edge.TO ?? 0),
+      }))
+      .sort(
+        (a, b) =>
+          a.rid - b.rid || a.label.localeCompare(b.label) || a.from - b.from || a.to - b.to,
+      ),
+  };
+  return {
+    nodes: structural.nodes.length,
+    edges: structural.edges.length,
+    maxRid: Math.max(0, ...structural.nodes.map((node) => node.rid)),
+    fingerprint: createHash("sha256").update(JSON.stringify(structural)).digest("hex"),
+  };
 }
 
 async function runAsk(args: ParsedArgs): Promise<void> {

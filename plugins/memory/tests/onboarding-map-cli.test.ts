@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -196,6 +196,114 @@ describe("memory onboarding-map CLI", () => {
       expect(result.stdout).toContain("## Concepts");
       expect(result.stdout).toContain("## Suggested Skills");
       expect(result.stdout).toContain("Recall latency risk");
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "exports public-safe codebase map artifacts with redaction metadata",
+    async () => {
+      const root = await seedRoot();
+      const secret = "sk-publicsafe_1234567890abcdefghijklmnop";
+      const { storeUri } = await initGraph(root, { skillTelemetry: true });
+      const store = await MemoryStore.open({ uri: storeUri, project: "test" });
+      stores.push(store);
+      await store.upsertNode({
+        label: "release-secret",
+        node_type: "workflow",
+        properties: {
+          title: "Release secret workflow",
+          content: `Never publish the demo token ${secret}.`,
+          source: "manual",
+        },
+      });
+      await store.close();
+      stores.pop();
+
+      const outDir = join(root, "public-map");
+      const result = runMemory([
+        "onboarding-map",
+        "export",
+        outDir,
+        "--root",
+        root,
+        "--public-safe",
+        "--json",
+      ]);
+
+      expect(result.status, result.stderr).toBe(0);
+      const body = JSON.parse(result.stdout) as {
+        publicSafe: boolean;
+        redacted: boolean;
+        privacy: { scanned: boolean; findings: number };
+        artifacts: { jsonPath: string; markdownPath: string; metadataPath: string };
+        metadata: {
+          source: {
+            gitCommit: string | null;
+            graphState: { nodes: number; edges: number; fingerprint: string };
+          };
+        };
+      };
+      expect(body.publicSafe).toBe(true);
+      expect(body.redacted).toBe(true);
+      expect(body.privacy).toMatchObject({ scanned: true, findings: 1 });
+      expect(body.metadata.source.graphState.nodes).toBeGreaterThanOrEqual(7);
+      expect(body.metadata.source.graphState.fingerprint).toMatch(/^[a-f0-9]{64}$/);
+
+      const artifacts = await Promise.all([
+        readFile(body.artifacts.jsonPath, "utf8"),
+        readFile(body.artifacts.markdownPath, "utf8"),
+        readFile(body.artifacts.metadataPath, "utf8"),
+      ]);
+      for (const artifact of artifacts) {
+        expect(artifact).not.toContain(secret);
+      }
+      expect(artifacts.join("\n")).toContain("[REDACTED:openai-token]");
+      expect(artifacts[0]).toContain("Release secret workflow");
+      expect(artifacts[1]).toContain("# Memory onboarding map");
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "refuses strict public-safe export when sensitive input is detected",
+    async () => {
+      const root = await seedRoot();
+      const secret = "sk-strict_1234567890abcdefghijklmnop";
+      const { storeUri } = await initGraph(root, { skillTelemetry: true });
+      const store = await MemoryStore.open({ uri: storeUri, project: "test" });
+      stores.push(store);
+      await store.upsertNode({
+        label: "strict-secret",
+        node_type: "workflow",
+        properties: {
+          title: "Strict secret workflow",
+          content: `Do not export ${secret}.`,
+          source: "manual",
+        },
+      });
+      await store.close();
+      stores.pop();
+
+      const outDir = join(root, "strict-public-map");
+      const result = runMemory([
+        "onboarding-map",
+        "export",
+        outDir,
+        "--root",
+        root,
+        "--public-safe",
+        "--strict",
+      ]);
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("public-safe export refused");
+      expect(result.stderr).toContain("openai-token");
+      expect(result.stderr).toContain("[REDACTED:openai-token]");
+      expect(result.stderr).not.toContain(secret);
+      await expect(readFile(join(outDir, "codebase-map.json"), "utf8")).rejects.toMatchObject({
+        code: "ENOENT",
+      });
     },
     TIMEOUT,
   );
