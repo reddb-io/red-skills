@@ -5,7 +5,10 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { afterEach, beforeAll, describe, expect, test } from "vitest";
 import { MemoryStore } from "../src/graph-store.js";
-import { getReadOnlyMemoryOperation } from "../src/operations.js";
+import {
+  getReadOnlyMemoryOperation,
+  listReadOnlyMemoryOperations,
+} from "../src/operations.js";
 
 // Spawning tsx + booting RedDB twice (seed, then server) is slow; be generous.
 const TIMEOUT = 40_000;
@@ -109,14 +112,23 @@ describe("MCP server over stdio", () => {
       expect(names).toEqual(
         [
           "memory_ask",
+          "memory_claim_check",
           "memory_conflicts",
           "memory_communities",
+          "memory_context_pack",
           "memory_doctor",
           "memory_export",
+          "memory_health",
+          "memory_learning_debt",
+          "memory_lint",
           "memory_neighbors",
           "memory_path",
+          "memory_privacy_scan",
+          "memory_provenance",
+          "memory_readiness",
           "memory_recall",
           "memory_search",
+          "memory_skill_recommendations",
           "memory_stats",
           "memory_store",
           "memory_supersede",
@@ -131,6 +143,124 @@ describe("MCP server over stdio", () => {
       expect(communities?.description).toBe(
         getReadOnlyMemoryOperation("memory.communities").renderer.mcp.description,
       );
+      for (const operation of listReadOnlyMemoryOperations()) {
+        const tool = tools.find((item) => item.name === operation.renderer.mcp.toolName);
+        expect(tool?.description).toBe(operation.renderer.mcp.description);
+        expect(tool?.inputSchema).toEqual(expect.objectContaining({ type: "object" }));
+      }
+      const storeTool = tools.find((tool) => tool.name === "memory_store");
+      const supersedeTool = tools.find((tool) => tool.name === "memory_supersede");
+      expect(storeTool?.description?.toLowerCase()).toContain("mutating");
+      expect(supersedeTool?.description?.toLowerCase()).toContain("mutating");
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "registry-backed readiness and trust tools return representative read-only outputs",
+    async () => {
+      const client = await connect(await seedStore());
+      const before = (await client.callTool({
+        name: "memory_stats",
+        arguments: {},
+      })) as ToolResult;
+
+      const readinessRes = (await client.callTool({
+        name: "memory_readiness",
+        arguments: { goal: "jwt rotation", min_evidence: 1 },
+      })) as ToolResult;
+      const readiness = JSON.parse(readinessRes.content[0]?.text ?? "{}") as {
+        contract: { version: string };
+        request: { goal: string };
+      };
+      expect(readiness.contract.version).toBe("memory.readiness.v1");
+      expect(readiness.request.goal).toBe("jwt rotation");
+      expect(readinessRes.structuredContent).toMatchObject({
+        operation_id: "memory.readiness",
+        contract_version: "memory.readiness.v1",
+      });
+
+      const claimRes = (await client.callTool({
+        name: "memory_claim_check",
+        arguments: { assertion: "jwt tokens rotate every 90 days" },
+      })) as ToolResult;
+      const claim = JSON.parse(claimRes.content[0]?.text ?? "{}") as { status: string };
+      expect(claim.status).toBe("supported");
+      expect(claimRes.structuredContent).toMatchObject({
+        operation_id: "memory.claim-check",
+        status: "supported",
+      });
+
+      const contextPackRes = (await client.callTool({
+        name: "memory_context_pack",
+        arguments: { goal: "jwt rotation", budget_chars: 2_000 },
+      })) as ToolResult;
+      const contextPack = JSON.parse(contextPackRes.content[0]?.text ?? "{}") as {
+        markdown: string;
+        entries: unknown[];
+      };
+      expect(contextPack.markdown).toContain("Memory context pack");
+      expect(contextPack.entries.length).toBeGreaterThan(0);
+
+      const provenanceRes = (await client.callTool({
+        name: "memory_provenance",
+        arguments: { target: "jwt-rotation" },
+      })) as ToolResult;
+      const provenance = JSON.parse(provenanceRes.content[0]?.text ?? "{}") as {
+        node: { label: string };
+        provenance: { missing: boolean };
+      };
+      expect(provenance.node.label).toBe("jwt-rotation");
+      expect(provenance.provenance.missing).toBe(true);
+
+      const privacyRes = (await client.callTool({
+        name: "memory_privacy_scan",
+        arguments: {},
+      })) as ToolResult;
+      expect(JSON.parse(privacyRes.content[0]?.text ?? "{}")).toMatchObject({
+        readOnly: true,
+        mutated: false,
+        mode: "graph",
+      });
+
+      const lintRes = (await client.callTool({
+        name: "memory_lint",
+        arguments: {},
+      })) as ToolResult;
+      expect(JSON.parse(lintRes.content[0]?.text ?? "{}")).toMatchObject({
+        readOnly: true,
+        mode: "graph",
+        totalMemories: 3,
+      });
+
+      const recommendationsRes = (await client.callTool({
+        name: "memory_skill_recommendations",
+        arguments: { task: "jwt rotation", limit: 3 },
+      })) as ToolResult;
+      expect(JSON.parse(recommendationsRes.content[0]?.text ?? "{}")).toHaveProperty(
+        "recommendations",
+      );
+
+      const learningDebtRes = (await client.callTool({
+        name: "memory_learning_debt",
+        arguments: {},
+      })) as ToolResult;
+      expect(JSON.parse(learningDebtRes.content[0]?.text ?? "{}")).toHaveProperty("summary");
+
+      const healthRes = (await client.callTool({
+        name: "memory_health",
+        arguments: {},
+      })) as ToolResult;
+      expect(JSON.parse(healthRes.content[0]?.text ?? "{}")).toMatchObject({
+        read_only: true,
+        stats: { nodes: 3, edges: 2 },
+      });
+
+      const after = (await client.callTool({
+        name: "memory_stats",
+        arguments: {},
+      })) as ToolResult;
+      expect(after.structuredContent).toEqual(before.structuredContent);
     },
     TIMEOUT,
   );

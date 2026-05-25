@@ -25,6 +25,50 @@ describe("read-only Memory operations registry", () => {
     expect(listReadOnlyMemoryOperations().map((op) => op.id)).toContain("memory.communities");
   });
 
+  test("declares read-only contracts for agent-native readiness and trust operations", () => {
+    const operations = listReadOnlyMemoryOperations();
+
+    expect(operations.map((op) => op.id).sort()).toEqual(
+      [
+        "memory.ask",
+        "memory.claim-check",
+        "memory.communities",
+        "memory.context-pack",
+        "memory.health",
+        "memory.learning-debt",
+        "memory.lint",
+        "memory.privacy-scan",
+        "memory.provenance",
+        "memory.readiness",
+        "memory.skill-recommendations",
+      ].sort(),
+    );
+    expect(operations.map((op) => op.renderer.mcp.toolName).sort()).toEqual(
+      [
+        "memory_ask",
+        "memory_claim_check",
+        "memory_communities",
+        "memory_context_pack",
+        "memory_health",
+        "memory_learning_debt",
+        "memory_lint",
+        "memory_privacy_scan",
+        "memory_provenance",
+        "memory_readiness",
+        "memory_skill_recommendations",
+      ].sort(),
+    );
+    expect(operations.every((op) => op.safetyClass === "read-only")).toBe(true);
+    expect(operations.map((op) => op.sideEffectClass)).not.toContain("writes-memory");
+    expect(operations.map((op) => op.id)).not.toContain("memory.store");
+    expect(operations.map((op) => op.id)).not.toContain("memory.supersede");
+
+    expect(getReadOnlyMemoryOperation("memory.readiness").outputSchema.parse).toBeTypeOf(
+      "function",
+    );
+    expect(getReadOnlyMemoryOperation("memory.ask").outputSchema.parse).toBeTypeOf("function");
+  });
+
   test("validates operation input before execution", async () => {
     await expect(
       executeReadOnlyMemoryOperation(

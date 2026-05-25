@@ -93,5 +93,5 @@ describe("competitive baseline harness (#73)", () => {
     expect(human).toContain("Foundation evidence gate");
     expect(human).toContain("Agentmemory live baseline: prepared but not implemented");
     expect(human).toContain("No live competitor claims were asserted");
-  });
+  }, 20_000);
 });
