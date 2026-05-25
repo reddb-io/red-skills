@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { access, mkdir, readdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
@@ -63,6 +63,7 @@ import { buildLearningDebtReport } from "./learning-debt.js";
 import { buildOnboardingMap } from "./onboarding-map.js";
 import { buildPreflightBrief } from "./preflight.js";
 import { buildReadinessEnvelope, type MemoryReadinessEnvelope } from "./readiness.js";
+import { buildReadinessViewerArtifact } from "./readiness-viewer.js";
 import { executeReadOnlyMemoryOperation } from "./operations.js";
 import { recall } from "./recall.js";
 import { commitMemoryGraph, type MemoryGraphCommitResult } from "./vcs-commit.js";
@@ -120,6 +121,7 @@ Usage:
   memory claim-check <assertion...> [--root <dir>] [--json]
   memory preflight <task...>        [--root <dir>] [--limit N] [--min-evidence N] [--stale-days N] [--json] [--scope ...] [--scope-id ID] [--include-narrower-scopes]
   memory readiness <goal...>        [--root <dir>] [--limit N] [--min-evidence N] [--stale-days N] [--json] [--scope ...] [--scope-id ID] [--include-narrower-scopes]
+  memory readiness-viewer <goal...> [--root <dir>] [--out <file>] [--limit N] [--min-evidence N] [--stale-days N] [--scope ...] [--scope-id ID] [--include-narrower-scopes]
   memory learning-debt              [--root <dir>] [--stale-days N] [--json]
   memory onboarding-map             [--root <dir>] [--stale-days N] [--json]
   memory ask <question...>          [--root <dir>] [--json]
@@ -770,6 +772,34 @@ async function runReadiness(args: ParsedArgs): Promise<void> {
       return;
     }
     printReadinessEnvelope(envelope);
+  } finally {
+    await store.close();
+  }
+}
+
+async function runReadinessViewer(args: ParsedArgs): Promise<void> {
+  const goal = args.positional.join(" ").trim();
+  if (!goal) {
+    throw new Error("nothing to inspect — pass a goal: memory readiness-viewer <goal>");
+  }
+  const rootDir = rootOf(args.flags);
+  const outPath = resolve(
+    stringFlag(args.flags, "out") ?? join(rootDir, ".red/memory/readiness-viewer.html"),
+  );
+  const { store } = await openGraphStore(args);
+  try {
+    const envelope = await buildReadinessEnvelope(store, goal, {
+      limit: intFlag(args.flags, "limit"),
+      minEvidence: intFlag(args.flags, "min-evidence"),
+      staleDays: intFlag(args.flags, "stale-days"),
+      scope: scopeFlags(args.flags),
+    });
+    const artifact = buildReadinessViewerArtifact(envelope);
+    await mkdir(dirname(outPath), { recursive: true });
+    await writeFile(outPath, artifact.html, "utf8");
+    console.log(`memory: readiness viewer written ${outPath}`);
+    console.log(`  goal: ${envelope.request.goal}`);
+    console.log(`  contract: ${artifact.contract.consumes}`);
   } finally {
     await store.close();
   }
@@ -3283,6 +3313,8 @@ async function main(): Promise<void> {
       return runPreflight(args);
     case "readiness":
       return runReadiness(args);
+    case "readiness-viewer":
+      return runReadinessViewer(args);
     case "learning-debt":
       return runLearningDebt(args);
     case "onboarding-map":
