@@ -1,11 +1,23 @@
-import { buildCommunityAnalytics, type CommunitySummary } from "./communities.js";
-import type { MemoryStore, StoredNode, VectorProjectionState } from "./graph-store.js";
+import { buildCommunityAnalytics, type CommunityAnalyticsReport, type CommunitySummary } from "./communities.js";
+import type { MemoryStore, StoredNode, VectorProjectionState, VectorStatusReport } from "./graph-store.js";
+import { buildLearningDebtReport, type LearningDebtReport } from "./learning-debt.js";
 import { readMemoryEvents } from "./memory-events.js";
-import { buildPreflightBrief, type PreflightBrief, type PreflightOptions } from "./preflight.js";
+import {
+  buildPreflightBrief,
+  type PreflightBrief,
+  type PreflightEvidence,
+  type PreflightOptions,
+  type PreflightWarning,
+} from "./preflight.js";
 import { claimCheck, type ClaimCheckStatus } from "./claim-check.js";
 import { scanPrivacyRecords, type PrivacyMemoryRecord } from "./privacy.js";
 import { type CollectionName, type MemoryProvenance } from "./schema.js";
 import { MEMORY_COLLECTION_VERSIONING } from "./vcs-versioned-collections.js";
+import {
+  buildSkillRecommendations,
+  type SkillRecommendationReport,
+} from "./skill-recommendations.js";
+import { readSkillRollups, type SkillRollup } from "./skill-events.js";
 
 export type ReadinessStatus = "ready" | "review-warnings" | "needs-evidence";
 
@@ -25,8 +37,27 @@ export interface MemoryReadinessEnvelope {
     scope?: PreflightOptions["scope"];
   };
   status: ReadinessStatus;
+  governance: {
+    scope: PreflightOptions["scope"];
+    include_superseded: true;
+    min_evidence: number;
+    stale_days: number;
+    ranking_signals: ["scope", "tier", "supersession", "confidence", "freshness"];
+  };
   task: {
     preflight: PreflightBrief;
+  };
+  evidence: {
+    active: PreflightEvidence[];
+    missing: {
+      missing: boolean;
+      expected_minimum: number;
+      active_count: number;
+      messages: string[];
+    };
+    contradictions: PreflightWarning[];
+    superseded: PreflightEvidence[];
+    stale: PreflightEvidence[];
   };
   retrieval: {
     recall: {
@@ -41,6 +72,7 @@ export interface MemoryReadinessEnvelope {
       stale: number;
       unavailable: number;
       failed: number;
+      error?: string;
     };
   };
   trust: {
@@ -98,12 +130,60 @@ export interface MemoryReadinessEnvelope {
     };
   };
   communities: {
+    status: "available" | "unavailable";
     graph_hash: string;
     communities: number;
     assignments: number;
     top: CommunitySummary[];
+    error?: string;
   };
+  skills: ReadinessSkillRecommendations;
+  learning_debt: ReadinessLearningDebt;
+  next_actions: string[];
 }
+
+type ReadinessSkillRecommendations =
+  | (SkillRecommendationReport & { signal_status: "available" })
+  | {
+      signal_status: "unavailable";
+      task: string;
+      status: "insufficient-evidence";
+      recommendations: [];
+      missingEvidence: string[];
+      error: string;
+    };
+
+type ReadinessLearningDebt =
+  | {
+      status: "available";
+      debt_status: LearningDebtReport["status"];
+      summary: LearningDebtReport["summary"];
+      categories: LearningDebtReport["categories"];
+    }
+  | {
+      status: "unavailable";
+      debt_status: "unknown";
+      summary: null;
+      categories: null;
+      error: string;
+    };
+
+const DEFAULT_MIN_EVIDENCE = 2;
+const DEFAULT_STALE_DAYS = 90;
+
+type VectorReadinessSummary = Pick<
+  VectorStatusReport,
+  "overall" | "total" | "ready" | "stale" | "unavailable" | "failed"
+> & { error?: string };
+
+type CommunityReadinessSummary = CommunityAnalyticsReport & {
+  status: "available" | "unavailable";
+  error?: string;
+};
+
+type SkillRollupSummary =
+  | { status: "available"; rollups: SkillRollup[] }
+  | { status: "unavailable"; rollups: []; error: string };
 
 export async function buildReadinessEnvelope(
   store: MemoryStore,
@@ -111,23 +191,41 @@ export async function buildReadinessEnvelope(
   opts: ReadinessEnvelopeOptions = {},
 ): Promise<MemoryReadinessEnvelope> {
   const now = normalizeNow(opts.now);
+  const minEvidence = opts.minEvidence ?? DEFAULT_MIN_EVIDENCE;
+  const staleDays = opts.staleDays ?? DEFAULT_STALE_DAYS;
   const preflight = await buildPreflightBrief(store, goal, {
     ...opts,
     now: now.getTime(),
   });
-  const [nodes, edges, vector, communities, eventLog, vcs, claim] = await Promise.all([
+  const [nodes, edges, vector, communities, eventLog, vcs, claim, skillRollups] = await Promise.all([
     store.listNodes(),
     store.listEdges(),
-    store.vectorStatus(),
-    buildCommunityAnalytics(store, { cache: "read-only", now }),
+    vectorSummary(store),
+    communitySummary(store, now),
     eventLogSummary(store),
     vcsStatus(store),
     claimCheck(store, goal),
+    skillRollupSummary(store),
   ]);
   const superseded = await store.supersededByMany(nodes.map((node) => node.rid));
+  const [skills, learningDebt] = await Promise.all([
+    skillRecommendationSummary(store, goal, skillRollups, opts),
+    learningDebtSummary(store, skillRollups, now.getTime(), staleDays),
+  ]);
 
   const trust = trustSummary(nodes, edges, superseded, claim);
   const status = readinessStatus(preflight.status, vector.overall, trust.contradictions.unresolved);
+  const evidence = evidenceSummary(preflight, minEvidence);
+  const nextActions = nextActionsFor({
+    preflight,
+    evidence,
+    vector,
+    contradictions: trust.contradictions.unresolved,
+    skills,
+    learningDebt,
+    communities,
+    eventLog,
+  });
 
   return {
     contract: {
@@ -141,7 +239,15 @@ export async function buildReadinessEnvelope(
       ...(opts.scope ? { scope: opts.scope } : {}),
     },
     status,
+    governance: {
+      scope: opts.scope ?? { level: "project" },
+      include_superseded: true,
+      min_evidence: minEvidence,
+      stale_days: staleDays,
+      ranking_signals: ["scope", "tier", "supersession", "confidence", "freshness"],
+    },
     task: { preflight },
+    evidence,
     retrieval: {
       recall: {
         evidence_count: preflight.summary.evidenceCount,
@@ -155,6 +261,7 @@ export async function buildReadinessEnvelope(
         stale: vector.stale,
         unavailable: vector.unavailable,
         failed: vector.failed,
+        ...(vector.error ? { error: vector.error } : {}),
       },
     },
     trust,
@@ -163,11 +270,16 @@ export async function buildReadinessEnvelope(
       event_log: eventLog,
     },
     communities: {
+      status: communities.status,
       graph_hash: communities.graph_hash,
       communities: communities.communities.length,
       assignments: communities.assignments.length,
       top: communities.communities.slice(0, 5),
+      ...(communities.error ? { error: communities.error } : {}),
     },
+    skills,
+    learning_debt: learningDebt,
+    next_actions: nextActions,
   };
 }
 
@@ -175,6 +287,202 @@ function normalizeNow(now: number | Date | undefined): Date {
   if (now instanceof Date) return now;
   if (typeof now === "number") return new Date(now);
   return new Date();
+}
+
+async function vectorSummary(store: MemoryStore): Promise<VectorReadinessSummary> {
+  try {
+    const vector = await store.vectorStatus();
+    return {
+      overall: vector.overall,
+      total: vector.total,
+      ready: vector.ready,
+      stale: vector.stale,
+      unavailable: vector.unavailable,
+      failed: vector.failed,
+    };
+  } catch (err) {
+    return {
+      overall: "unavailable",
+      total: 0,
+      ready: 0,
+      stale: 0,
+      unavailable: 0,
+      failed: 0,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+async function communitySummary(
+  store: MemoryStore,
+  now: Date,
+): Promise<CommunityReadinessSummary> {
+  try {
+    return {
+      status: "available",
+      ...(await buildCommunityAnalytics(store, { cache: "read-only", now })),
+    };
+  } catch (err) {
+    return {
+      status: "unavailable",
+      graph_hash: "",
+      cache_key: "",
+      cached: false,
+      generated_at: now.toISOString(),
+      communities: [],
+      assignments: [],
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+async function skillRollupSummary(store: MemoryStore): Promise<SkillRollupSummary> {
+  try {
+    return { status: "available", rollups: await readSkillRollups(store) };
+  } catch (err) {
+    return {
+      status: "unavailable",
+      rollups: [],
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+async function skillRecommendationSummary(
+  store: MemoryStore,
+  goal: string,
+  rollups: SkillRollupSummary,
+  opts: ReadinessEnvelopeOptions,
+): Promise<ReadinessSkillRecommendations> {
+  if (rollups.status === "unavailable") {
+    return {
+      signal_status: "unavailable",
+      task: goal,
+      status: "insufficient-evidence",
+      recommendations: [],
+      missingEvidence: ["Skill telemetry rollups are unavailable"],
+      error: rollups.error,
+    };
+  }
+  try {
+    return {
+      signal_status: "available",
+      ...(await buildSkillRecommendations(store, goal, {
+        limit: opts.limit,
+        scope: opts.scope,
+        now: opts.now instanceof Date ? opts.now.getTime() : opts.now,
+        skillRollups: rollups.rollups,
+      })),
+    };
+  } catch (err) {
+    return {
+      signal_status: "unavailable",
+      task: goal,
+      status: "insufficient-evidence",
+      recommendations: [],
+      missingEvidence: ["Skill recommendation evidence is unavailable"],
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+async function learningDebtSummary(
+  store: MemoryStore,
+  rollups: SkillRollupSummary,
+  now: number,
+  staleDays: number,
+): Promise<ReadinessLearningDebt> {
+  try {
+    const report = await buildLearningDebtReport(store, {
+      now,
+      staleDays,
+      rollups: rollups.rollups,
+      skillTelemetryEnabled: rollups.status === "available",
+    });
+    return {
+      status: "available",
+      debt_status: report.status,
+      summary: report.summary,
+      categories: report.categories,
+    };
+  } catch (err) {
+    return {
+      status: "unavailable",
+      debt_status: "unknown",
+      summary: null,
+      categories: null,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+function evidenceSummary(
+  preflight: PreflightBrief,
+  minEvidence: number,
+): MemoryReadinessEnvelope["evidence"] {
+  const missingMessages = preflight.warnings
+    .filter((warning) => warning.kind === "missing-evidence")
+    .map((warning) => warning.message);
+  return {
+    active: preflight.evidence.filter((item) => item.statuses.includes("active")),
+    missing: {
+      missing: preflight.summary.missingEvidence,
+      expected_minimum: minEvidence,
+      active_count: preflight.summary.activeEvidenceCount,
+      messages: missingMessages,
+    },
+    contradictions: preflight.warnings.filter((warning) => warning.kind === "contradiction"),
+    superseded: preflight.evidence.filter((item) => item.statuses.includes("superseded")),
+    stale: preflight.evidence.filter((item) => item.statuses.includes("stale")),
+  };
+}
+
+function nextActionsFor(input: {
+  preflight: PreflightBrief;
+  evidence: MemoryReadinessEnvelope["evidence"];
+  vector: VectorReadinessSummary;
+  contradictions: number;
+  skills: ReadinessSkillRecommendations;
+  learningDebt: ReadinessLearningDebt;
+  communities: CommunityReadinessSummary;
+  eventLog: MemoryReadinessEnvelope["operations"]["event_log"];
+}): string[] {
+  const actions: string[] = [];
+  if (input.preflight.summary.missingEvidence) {
+    actions.push("Capture or ingest Memory evidence for this task before implementation.");
+  }
+  if (input.contradictions > 0 || input.evidence.contradictions.length > 0) {
+    actions.push("Resolve or supersede contradictory Memory evidence before relying on it.");
+  }
+  if (input.evidence.superseded.length > 0) {
+    actions.push("Prefer active successor memories over superseded evidence.");
+  }
+  if (input.evidence.stale.length > 0) {
+    actions.push("Verify stale Memory evidence before using it as implementation guidance.");
+  }
+  if (input.vector.overall === "stale" || input.vector.overall === "failed") {
+    actions.push("Run `memory vector maintain` to refresh vector retrieval signals.");
+  } else if (input.vector.overall === "unavailable") {
+    actions.push("Treat vector recall as unavailable and rely on text/graph evidence.");
+  }
+  if (input.skills.recommendations.length > 0) {
+    actions.push(`Load recommended skills: ${input.skills.recommendations.map((s) => s.name).join(", ")}.`);
+  } else {
+    actions.push("Proceed without ranked Skill recommendations; no matching Skill evidence was available.");
+  }
+  if (input.learningDebt.status === "available" && input.learningDebt.debt_status === "debt-found") {
+    actions.push("Review Memory learning debt before starting implementation.");
+  } else if (input.learningDebt.status === "unavailable") {
+    actions.push("Treat learning debt signals as unavailable for this task.");
+  }
+  if (input.communities.status === "unavailable") {
+    actions.push("Treat community analytics as unavailable for this task.");
+  }
+  if (input.eventLog.status === "unavailable") {
+    actions.push("Treat Memory event-log telemetry as unavailable for this task.");
+  }
+  if (actions.length === 0) actions.push("Memory readiness is clean; proceed with implementation.");
+  return [...new Set(actions)];
 }
 
 function readinessStatus(

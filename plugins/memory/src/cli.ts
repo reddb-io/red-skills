@@ -2974,6 +2974,39 @@ function printReadinessEnvelope(envelope: MemoryReadinessEnvelope): void {
     `  telemetry: ${envelope.operations.event_log.total_events} event(s) ` +
       `community-signals=${envelope.communities.communities}/${envelope.communities.assignments}`,
   );
+  if (envelope.evidence.missing.missing) {
+    console.log(
+      `  missing evidence: ${envelope.evidence.missing.active_count}/${envelope.evidence.missing.expected_minimum} active`,
+    );
+    for (const message of envelope.evidence.missing.messages) console.log(`    ${message}`);
+  }
+  if (envelope.evidence.contradictions.length > 0) {
+    console.log(`  contradictions: ${envelope.evidence.contradictions.length}`);
+    for (const warning of envelope.evidence.contradictions) console.log(`    ${warning.message}`);
+  }
+  if (envelope.evidence.superseded.length > 0) {
+    console.log(`  superseded evidence: ${envelope.evidence.superseded.length}`);
+  }
+  if (envelope.evidence.stale.length > 0) {
+    console.log(`  stale evidence: ${envelope.evidence.stale.length}`);
+  }
+  if (envelope.skills.signal_status === "available" && envelope.skills.recommendations.length > 0) {
+    console.log(
+      `  skills: ${envelope.skills.recommendations.map((item) => item.name).join(", ")}`,
+    );
+  } else {
+    console.log(`  skills: ${envelope.skills.status}`);
+  }
+  console.log(
+    `  learning debt: ${envelope.learning_debt.status}` +
+      (envelope.learning_debt.status === "available"
+        ? ` (${envelope.learning_debt.debt_status})`
+        : ""),
+  );
+  if (envelope.next_actions.length > 0) {
+    console.log("  next actions:");
+    for (const action of envelope.next_actions) console.log(`    - ${action}`);
+  }
 }
 
 async function runStats(args: ParsedArgs): Promise<void> {
