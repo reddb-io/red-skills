@@ -12,7 +12,8 @@ const TIMEOUT = 90_000;
 const pkgRoot = resolve(__dirname, "..");
 const roots: string[] = [];
 const stores: MemoryStore[] = [];
-const NOW = new Date("2026-05-24T20:00:00.000Z");
+const NOW = new Date("2030-05-24T20:00:00.000Z");
+const OLD_GUIDANCE_AT = Date.parse("2025-01-01T00:00:00.000Z");
 
 async function tempRoot(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "memory-readiness-"));
@@ -42,7 +43,7 @@ function runMemory(args: string[]) {
   });
 }
 
-async function seedEvidence(store: MemoryStore): Promise<void> {
+async function seedEvidence(store: MemoryStore): Promise<{ oldRid: number; currentRid: number }> {
   const oldRid = await store.upsertNode({
     label: "readiness-old-guidance",
     node_type: "decision",
@@ -50,6 +51,8 @@ async function seedEvidence(store: MemoryStore): Promise<void> {
       title: "old readiness guidance",
       content: "Decision: readiness envelopes may be ad hoc prose.",
       source: "manual",
+      created_at: OLD_GUIDANCE_AT,
+      accessed_at: OLD_GUIDANCE_AT,
       provenance: {
         source_kind: "manual",
         writer: "test",
@@ -66,6 +69,8 @@ async function seedEvidence(store: MemoryStore): Promise<void> {
       content:
         "Decision: readiness envelopes must expose stable JSON for future UI and eval:competitive:v2.",
       source: "manual",
+      created_at: OLD_GUIDANCE_AT,
+      accessed_at: OLD_GUIDANCE_AT,
       provenance: {
         source_kind: "manual",
         writer: "test",
@@ -81,6 +86,8 @@ async function seedEvidence(store: MemoryStore): Promise<void> {
       title: "readiness conflict",
       content: "Pitfall: readiness JSON conflicts with free-form prose output.",
       source: "manual",
+      created_at: OLD_GUIDANCE_AT,
+      accessed_at: OLD_GUIDANCE_AT,
     },
   });
   const validationRid = await store.upsertNode({
@@ -90,11 +97,31 @@ async function seedEvidence(store: MemoryStore): Promise<void> {
       title: "readiness validation",
       content: "Validation: run pnpm test for readiness envelope changes.",
       source: "manual",
+      created_at: OLD_GUIDANCE_AT,
+      accessed_at: OLD_GUIDANCE_AT,
       provenance: {
         source_kind: "system",
         writer: "vitest",
         command: "pnpm test -- readiness",
         evidence: ["test fixture"],
+      },
+    },
+  });
+  await store.upsertNode({
+    label: "readiness-tdd-skill",
+    node_type: "workflow",
+    properties: {
+      title: "readiness TDD skill",
+      content: "Workflow: use dev:tdd when changing readiness stable json behavior.",
+      tags: ["skill:dev:tdd"],
+      source: "manual",
+      created_at: OLD_GUIDANCE_AT,
+      accessed_at: OLD_GUIDANCE_AT,
+      provenance: {
+        source_kind: "manual",
+        writer: "test",
+        command: "seed readiness",
+        evidence: ["skill guidance"],
       },
     },
   });
@@ -138,6 +165,8 @@ async function seedEvidence(store: MemoryStore): Promise<void> {
       },
     }),
   );
+
+  return { oldRid, currentRid };
 }
 
 describe("Memory readiness envelope", () => {
@@ -147,11 +176,12 @@ describe("Memory readiness envelope", () => {
       const root = await tempRoot();
       await initGraph(root, { skillTelemetry: true });
       const store = await openStore(root);
-      await seedEvidence(store);
+      const { oldRid } = await seedEvidence(store);
 
       const envelope = await buildReadinessEnvelope(store, "readiness stable json", {
         now: NOW,
         minEvidence: 2,
+        staleDays: 1,
       });
 
       expect(envelope.contract).toEqual({
@@ -160,7 +190,19 @@ describe("Memory readiness envelope", () => {
         consumer_targets: ["memory-ui", "eval:competitive:v2"],
       });
       expect(envelope.request.goal).toBe("readiness stable json");
+      expect(envelope.governance).toMatchObject({
+        min_evidence: 2,
+        stale_days: 1,
+        ranking_signals: ["scope", "tier", "supersession", "confidence", "freshness"],
+      });
       expect(envelope.task.preflight.summary.evidenceCount).toBeGreaterThanOrEqual(2);
+      expect(envelope.evidence.active.length).toBeGreaterThan(0);
+      expect(envelope.evidence.missing.missing).toBe(false);
+      expect(envelope.evidence.contradictions.length).toBe(1);
+      expect(envelope.evidence.superseded.map((item) => item.urn)).toContain(
+        `memory_nodes:${oldRid}`,
+      );
+      expect(envelope.evidence.stale.length).toBeGreaterThan(0);
       expect(envelope.retrieval.vector.total).toBeGreaterThanOrEqual(4);
       expect(envelope.trust.provenance.nodes_with_provenance).toBeGreaterThan(0);
       expect(envelope.trust.supersession.superseded_nodes).toBe(1);
@@ -178,6 +220,49 @@ describe("Memory readiness envelope", () => {
       expect(envelope.operations.event_log.kinds).toEqual({ "skill.telemetry": 1 });
       expect(envelope.communities.assignments).toBeGreaterThanOrEqual(4);
       expect(envelope.communities.communities).toBeGreaterThan(0);
+      expect(envelope.skills.status).toBe("ok");
+      expect(envelope.skills.recommendations[0]).toMatchObject({
+        name: "dev:tdd",
+        evidenceStrength: "moderate",
+      });
+      expect(envelope.learning_debt.status).toBe("available");
+      expect(envelope.learning_debt.debt_status).toBe("debt-found");
+      expect(envelope.next_actions).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining("Resolve or supersede contradictory Memory evidence"),
+          expect.stringContaining("Load recommended skills: dev:tdd"),
+        ]),
+      );
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "reports missing evidence explicitly instead of failing the readiness command",
+    async () => {
+      const root = await tempRoot();
+      await initGraph(root, { skillTelemetry: true });
+      const store = await openStore(root);
+
+      const envelope = await buildReadinessEnvelope(store, "unseen readiness task", {
+        now: NOW,
+        minEvidence: 1,
+      });
+
+      expect(envelope.status).toBe("needs-evidence");
+      expect(envelope.evidence.missing).toEqual({
+        missing: true,
+        expected_minimum: 1,
+        active_count: 0,
+        messages: [
+          "Only 0 active Memory evidence item(s) matched; at least 1 are expected for a task preflight.",
+        ],
+      });
+      expect(envelope.skills.status).toBe("insufficient-evidence");
+      expect(envelope.learning_debt.status).toBe("available");
+      expect(envelope.next_actions).toContain(
+        "Capture or ingest Memory evidence for this task before implementation.",
+      );
     },
     TIMEOUT,
   );
