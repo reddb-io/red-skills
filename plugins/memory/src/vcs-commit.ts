@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -197,6 +198,10 @@ async function redVcsCommit(
 }
 
 function resolveRedBinary(): string {
+  const bin = process.platform === "win32" ? "red.exe" : "red";
+  const pluginRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+  const local = join(pluginRoot, "node_modules", "@reddb-io", "sdk", "bin", bin);
+  if (existsSync(local)) return local;
   const sdkEntry = fileURLToPath(import.meta.resolve("@reddb-io/sdk"));
-  return join(dirname(dirname(sdkEntry)), "bin", process.platform === "win32" ? "red.exe" : "red");
+  return join(dirname(dirname(sdkEntry)), "bin", bin);
 }

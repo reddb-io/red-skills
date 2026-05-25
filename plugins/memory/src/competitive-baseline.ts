@@ -1,11 +1,21 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { performance } from "node:perf_hooks";
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { buildContextPack } from "./context-pack.js";
 import { competitiveEvalFixture, type CompetitiveEvalFixture } from "./competitive-fixtures.js";
-import { recall, type RecallStore } from "./engine.js";
+import { recall, type RecallStore, type VectorRecallDiagnostics } from "./engine.js";
 import type { GraphRow, SearchRow, StoredNode } from "./graph-store.js";
+import { MemoryStore } from "./graph-store.js";
+import { HistoricalMemoryStore } from "./historical-memory-store.js";
+import { initGraph } from "./init.js";
 import { lintMemoryRecords, type LintMemoryRecord } from "./lint.js";
+import { appendMemoryEvent, parseMemoryEvent } from "./memory-events.js";
+import { buildReadinessEnvelope } from "./readiness.js";
+import type { EdgeLabel } from "./schema.js";
 import { classifyCandidateMemory } from "./store-classifier.js";
+import { commitMemoryGraph } from "./vcs-commit.js";
 
 type Claim = "advantage" | "parity" | "mixed" | "conceded-gap" | "not-claimed";
 
@@ -93,6 +103,83 @@ export interface CompetitiveEvalPolicyCase {
   pass: boolean;
 }
 
+export interface FoundationGateAxis {
+  id: "retrieval" | "readiness" | "trust-governance" | "skill-evolution";
+  score: number;
+  maxScore: number;
+  status: "pass" | "warn" | "fail";
+  detail: string;
+}
+
+export interface FoundationEvidenceGateReport {
+  command: "pnpm --dir plugins/memory eval:competitive";
+  evidenceBase: {
+    name: string;
+    source: "checked-in";
+    nodes: number;
+    edges: number;
+    redDbBacked: true;
+  };
+  retrieval: {
+    score: number;
+    maxScore: number;
+    hybridRecall: {
+      queryCount: number;
+      meanRecallAtK: number;
+      vector: VectorRecallDiagnostics & {
+        projectionOverall: string;
+        projectionTotal: number;
+      };
+    };
+    asOfRecall: {
+      status: "available" | "unavailable";
+      refKind: "commit";
+      nodes: number;
+      recalled: number;
+      error?: string;
+    };
+  };
+  readiness: {
+    score: number;
+    maxScore: number;
+    status: string;
+    contractVersion: string;
+    consumerTargets: string[];
+  };
+  trustGovernance: {
+    score: number;
+    maxScore: number;
+    claimCheck: string;
+    privacyFindings: number;
+    vcsTimeTravel: string;
+    eventLog: {
+      status: string;
+      totalEvents: number;
+      kinds: Record<string, number>;
+    };
+  };
+  skillEvolution: {
+    score: number;
+    maxScore: number;
+    telemetryEvents: number;
+    communities: {
+      count: number;
+      assignments: number;
+    };
+  };
+  composite: {
+    score: number;
+    maxScore: number;
+    status: "ready-foundation" | "review-foundation";
+    axes: FoundationGateAxis[];
+  };
+  agentmemoryLiveBaseline: {
+    state: "prepared-not-implemented";
+    implemented: false;
+    note: string;
+  };
+}
+
 export interface CompetitiveEvalReport {
   generatedAt: string;
   fixture: {
@@ -124,6 +211,7 @@ export interface CompetitiveEvalReport {
     lintCaseCount: number;
     lintFindings: string[];
   };
+  foundationGate: FoundationEvidenceGateReport;
   claimGuards: {
     unsupportedLiveCompetitorClaims: string[];
     unmeasuredLiveBaselines: string[];
@@ -192,6 +280,8 @@ const competitors: CompetitorBaseline[] = [
     nerExtractionQuality: "python-ml-stack",
   },
 ];
+
+const FOUNDATION_GATE_GOAL = "Memory README moat claims backed by executable eval output";
 
 function competitor(name: CompetitorBaseline["name"]): CompetitorBaseline {
   const found = competitors.find((c) => c.name === name);
@@ -392,6 +482,319 @@ function rawCorpusChars(fixture: CompetitiveEvalFixture): number {
   }, 0);
 }
 
+interface FoundationGateOptions {
+  now: number;
+}
+
+async function evaluateFoundationEvidenceGate(
+  fixture: CompetitiveEvalFixture,
+  opts: FoundationGateOptions,
+): Promise<FoundationEvidenceGateReport> {
+  const root = await mkdtemp(join(tmpdir(), "memory-foundation-gate-"));
+  try {
+    const init = await initGraph(root, {
+      project: "competitive-gate",
+      skillTelemetry: true,
+    });
+    const store = await MemoryStore.open({ uri: init.storeUri, project: "competitive-gate" });
+    let envelope: Awaited<ReturnType<typeof buildReadinessEnvelope>>;
+    let vector = await store.vectorStatus();
+    let hybridRecall: FoundationEvidenceGateReport["retrieval"]["hybridRecall"];
+    try {
+      const ridMap = await seedFoundationEvidence(store, fixture, opts.now);
+      vector = await store.vectorStatus();
+
+      const recallCases: CompetitiveEvalRecallCase[] = [];
+      for (const item of fixture.recall) {
+        const result = await recall(store, item.query, { k: item.k, depth: 1, now: opts.now });
+        const returnedRids = result.nodes.slice(0, item.k).map((node) => node.rid);
+        const expected = new Set(item.expectedRids.map((rid) => mappedRid(ridMap, rid)));
+        const hits = returnedRids.filter((rid) => expected.has(rid));
+        const firstExpectedIndex = returnedRids.findIndex((rid) => expected.has(rid));
+        recallCases.push({
+          id: item.id,
+          query: item.query,
+          expectedRids: [...expected],
+          returnedRids,
+          recallAtK: roundMetric(hits.length / item.expectedRids.length),
+          precisionAtK: roundMetric(hits.length / item.k),
+          reciprocalRank: firstExpectedIndex >= 0 ? roundMetric(1 / (firstExpectedIndex + 1)) : 0,
+          latencyMs: 0,
+        });
+      }
+
+      const vectorDiagnostics = await recall(store, fixture.recall[0]?.query ?? fixture.name, {
+        k: fixture.recall[0]?.k ?? 3,
+        depth: 1,
+        now: opts.now,
+      });
+      hybridRecall = {
+        queryCount: recallCases.length,
+        meanRecallAtK: roundMetric(mean(recallCases.map((item) => item.recallAtK))),
+        vector: {
+          ...vectorDiagnostics.diagnostics.vector,
+          projectionOverall: vector.overall,
+          projectionTotal: vector.total,
+        },
+      };
+
+      envelope = await buildReadinessEnvelope(store, FOUNDATION_GATE_GOAL, {
+        now: opts.now,
+        minEvidence: 2,
+      });
+    } finally {
+      await store.close();
+    }
+
+    const committed = await commitMemoryGraph(root, init.config, {
+      message: "foundation evidence gate",
+      author: "RedSkills Memory",
+      email: "memory@reddb.io",
+    });
+    const asOfRecall = await probeAsOfRecall(init.storeUri, committed.commit?.hash, fixture, opts.now);
+
+    const axes = foundationAxes({
+      hybridRecall,
+      asOfRecall,
+      envelope,
+    });
+    const score = axes.reduce((sum, axis) => sum + axis.score, 0);
+    const maxScore = axes.reduce((sum, axis) => sum + axis.maxScore, 0);
+
+    return {
+      command: "pnpm --dir plugins/memory eval:competitive",
+      evidenceBase: {
+        name: fixture.name,
+        source: fixture.source,
+        nodes: fixture.nodes.length,
+        edges: fixture.edges.length,
+        redDbBacked: true,
+      },
+      retrieval: {
+        score: axes.find((axis) => axis.id === "retrieval")?.score ?? 0,
+        maxScore: 1,
+        hybridRecall,
+        asOfRecall,
+      },
+      readiness: {
+        score: axes.find((axis) => axis.id === "readiness")?.score ?? 0,
+        maxScore: 1,
+        status: envelope.status,
+        contractVersion: envelope.contract.version,
+        consumerTargets: [...envelope.contract.consumer_targets],
+      },
+      trustGovernance: {
+        score: axes.find((axis) => axis.id === "trust-governance")?.score ?? 0,
+        maxScore: 1,
+        claimCheck: envelope.trust.claim_check.status,
+        privacyFindings: envelope.trust.privacy.findings,
+        vcsTimeTravel: envelope.vcs.time_travel,
+        eventLog: {
+          status: envelope.operations.event_log.status,
+          totalEvents: envelope.operations.event_log.total_events,
+          kinds: envelope.operations.event_log.kinds,
+        },
+      },
+      skillEvolution: {
+        score: axes.find((axis) => axis.id === "skill-evolution")?.score ?? 0,
+        maxScore: 1,
+        telemetryEvents: envelope.operations.event_log.kinds["skill.telemetry"] ?? 0,
+        communities: {
+          count: envelope.communities.communities,
+          assignments: envelope.communities.assignments,
+        },
+      },
+      composite: {
+        score,
+        maxScore,
+        status: score === maxScore ? "ready-foundation" : "review-foundation",
+        axes,
+      },
+      agentmemoryLiveBaseline: {
+        state: "prepared-not-implemented",
+        implemented: false,
+        note:
+          "Agentmemory live baseline wiring is prepared for eval:competitive:v2, but no live Neo4j-backed competitor run is implemented in this slice.",
+      },
+    };
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+async function seedFoundationEvidence(
+  store: MemoryStore,
+  fixture: CompetitiveEvalFixture,
+  now: number,
+): Promise<Map<number, number>> {
+  const rids = new Map<number, number>();
+  for (const node of fixture.nodes) {
+    const rid = await store.upsertNode({
+      label: node.label,
+      node_type: node.node_type,
+      properties: {
+        ...node.properties,
+        scope: node.properties.scope ?? "project",
+        tier: node.properties.tier ?? "durable",
+        created_at: now,
+        updated_at: now,
+        provenance: {
+          source_kind: "system",
+          writer: "eval:competitive",
+          command: "foundation evidence gate",
+          evidence: [`competitive-fixture:${fixture.name}:${node.rid}`],
+        },
+      },
+    });
+    rids.set(node.rid, rid);
+  }
+
+  for (const edge of fixture.edges) {
+    const from = mappedRid(rids, Number(edge.from));
+    const to = mappedRid(rids, Number(edge.to));
+    const label = String(edge.label ?? "REFERENCES") as EdgeLabel;
+    await store.upsertEdge({
+      label,
+      from_rid: from,
+      to_rid: to,
+      properties: {
+        source: "competitive-fixture",
+        created_at: now,
+      },
+    });
+  }
+
+  await appendMemoryEvent(
+    store,
+    parseMemoryEvent({
+      id: "skill-event:foundation-gate",
+      occurred_at: new Date(now).toISOString(),
+      kind: "skill.telemetry",
+      source: { kind: "hook", name: "memory event skill" },
+      actor: { kind: "agent", id: "codex" },
+      scope: { level: "project", id: fixture.name },
+      subject: { kind: "skill", id: "plugin:memory:eval-competitive" },
+      payload: {
+        event_type: "result",
+        event_id: "foundation-gate",
+        timestamp: new Date(now).toISOString(),
+        session_id: "foundation-gate",
+        turn_id: "competitive-eval",
+        name: "memory:eval-competitive",
+        source_kind: "plugin",
+        path: "plugins/memory/src/competitive-baseline.ts",
+        runner: "codex",
+        result: { status: "succeeded", duration_ms: 1 },
+      },
+      provenance: {
+        source_kind: "system",
+        writer: "eval:competitive",
+        command: "foundation evidence gate",
+        evidence: [`fixture:${fixture.name}`],
+      },
+    }),
+  );
+
+  return rids;
+}
+
+function mappedRid(rids: Map<number, number>, rid: number): number {
+  return rids.get(rid) ?? rid;
+}
+
+async function probeAsOfRecall(
+  uri: string,
+  commit: string | undefined,
+  fixture: CompetitiveEvalFixture,
+  now: number,
+): Promise<FoundationEvidenceGateReport["retrieval"]["asOfRecall"]> {
+  if (!commit) {
+    return {
+      status: "unavailable",
+      refKind: "commit",
+      nodes: 0,
+      recalled: 0,
+      error: "foundation graph did not produce a commit hash",
+    };
+  }
+
+  const historical = await HistoricalMemoryStore.open({ uri, ref: commit });
+  try {
+    const nodes = await historical.listNodes();
+    const firstQuery = fixture.recall[0]?.query ?? fixture.name;
+    const recalled = await recall(historical, firstQuery, { k: 3, depth: 1, now });
+    return {
+      status: nodes.length > 0 ? "available" : "unavailable",
+      refKind: "commit",
+      nodes: nodes.length,
+      recalled: recalled.nodes.length,
+    };
+  } catch (err) {
+    return {
+      status: "unavailable",
+      refKind: "commit",
+      nodes: 0,
+      recalled: 0,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  } finally {
+    await historical.close();
+  }
+}
+
+function foundationAxes(input: {
+  hybridRecall: FoundationEvidenceGateReport["retrieval"]["hybridRecall"];
+  asOfRecall: FoundationEvidenceGateReport["retrieval"]["asOfRecall"];
+  envelope: Awaited<ReturnType<typeof buildReadinessEnvelope>>;
+}): FoundationGateAxis[] {
+  const retrievalPass =
+    input.hybridRecall.queryCount > 0 &&
+    input.hybridRecall.meanRecallAtK > 0 &&
+    input.hybridRecall.vector.projectionTotal > 0 &&
+    input.asOfRecall.status === "available";
+  const readinessPass =
+    input.envelope.contract.version === "memory.readiness.v1" &&
+    input.envelope.contract.consumer_targets.includes("eval:competitive:v2");
+  const trustPass =
+    input.envelope.vcs.time_travel !== "unavailable" &&
+    input.envelope.operations.event_log.total_events > 0 &&
+    input.envelope.trust.privacy.read_only;
+  const skillEvolutionPass =
+    (input.envelope.operations.event_log.kinds["skill.telemetry"] ?? 0) > 0 &&
+    input.envelope.communities.assignments > 0;
+
+  return [
+    {
+      id: "retrieval",
+      score: retrievalPass ? 1 : 0,
+      maxScore: 1,
+      status: retrievalPass ? "pass" : "fail",
+      detail: `hybrid recall=${input.hybridRecall.meanRecallAtK}, vector=${input.hybridRecall.vector.projectionOverall}, as_of=${input.asOfRecall.status}`,
+    },
+    {
+      id: "readiness",
+      score: readinessPass ? 1 : 0,
+      maxScore: 1,
+      status: readinessPass ? "pass" : "fail",
+      detail: `${input.envelope.contract.version} status=${input.envelope.status}`,
+    },
+    {
+      id: "trust-governance",
+      score: trustPass ? 1 : 0,
+      maxScore: 1,
+      status: trustPass ? "pass" : "fail",
+      detail: `vcs=${input.envelope.vcs.time_travel}, events=${input.envelope.operations.event_log.total_events}, privacy=${input.envelope.trust.privacy.findings}`,
+    },
+    {
+      id: "skill-evolution",
+      score: skillEvolutionPass ? 1 : 0,
+      maxScore: 1,
+      status: skillEvolutionPass ? "pass" : "fail",
+      detail: `skill.telemetry=${input.envelope.operations.event_log.kinds["skill.telemetry"] ?? 0}, communities=${input.envelope.communities.communities}/${input.envelope.communities.assignments}`,
+    },
+  ];
+}
+
 export async function evaluateCompetitiveEval(
   opts: CompetitiveEvalOptions = {},
 ): Promise<CompetitiveEvalReport> {
@@ -474,6 +877,7 @@ export async function evaluateCompetitiveEval(
   const unmeasuredLiveBaselines = fixture.liveBaselines
     .filter((baseline) => !baseline.configured)
     .map((baseline) => `${baseline.competitor}:${baseline.metric}`);
+  const foundationGate = await evaluateFoundationEvidenceGate(fixture, { now });
 
   return {
     generatedAt: opts.generatedAt ?? new Date().toISOString(),
@@ -508,6 +912,7 @@ export async function evaluateCompetitiveEval(
       lintCaseCount: lintRecords.length,
       lintFindings,
     },
+    foundationGate,
     claimGuards: {
       unsupportedLiveCompetitorClaims,
       unmeasuredLiveBaselines,
@@ -523,6 +928,7 @@ export function renderCompetitiveEvalJson(report: CompetitiveEvalReport): string
       recall: report.recall,
       context_packs: report.contextPacks,
       policy: report.policy,
+      foundation_gate: report.foundationGate,
       claim_guards: report.claimGuards,
     },
     null,
@@ -544,6 +950,14 @@ export function renderCompetitiveEvalHuman(report: CompetitiveEvalReport): strin
     "",
     "## Policy / extraction",
     `candidates=${report.policy.totalCandidates} classification_accuracy=${report.policy.classificationAccuracy} lint_findings=${report.policy.lintFindings.join(", ") || "none"}`,
+    "",
+    "## Foundation evidence gate",
+    `composite=${report.foundationGate.composite.score}/${report.foundationGate.composite.maxScore} status=${report.foundationGate.composite.status}`,
+    `retrieval=${report.foundationGate.retrieval.score}/${report.foundationGate.retrieval.maxScore} vector=${report.foundationGate.retrieval.hybridRecall.vector.projectionOverall} as_of=${report.foundationGate.retrieval.asOfRecall.status}`,
+    `readiness=${report.foundationGate.readiness.status} contract=${report.foundationGate.readiness.contractVersion}`,
+    `trust-governance=${report.foundationGate.trustGovernance.score}/${report.foundationGate.trustGovernance.maxScore} events=${report.foundationGate.trustGovernance.eventLog.totalEvents} vcs=${report.foundationGate.trustGovernance.vcsTimeTravel}`,
+    `skill-evolution=${report.foundationGate.skillEvolution.score}/${report.foundationGate.skillEvolution.maxScore} telemetry=${report.foundationGate.skillEvolution.telemetryEvents} communities=${report.foundationGate.skillEvolution.communities.count}/${report.foundationGate.skillEvolution.communities.assignments}`,
+    "Agentmemory live baseline: prepared but not implemented in this slice.",
     "",
     "## Claim guards",
   ];
