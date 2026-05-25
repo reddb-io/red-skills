@@ -1,5 +1,4 @@
-import { recall, type RecallScope } from "./engine.js";
-import type { MemoryStore } from "./graph-store.js";
+import { recall, type RecallScope, type RecallStore } from "./engine.js";
 
 export interface GraphRecallHit {
   /** Engine-assigned node rid, as a string for uniform CLI printing. */
@@ -18,16 +17,17 @@ export interface GraphRecallHit {
  * graph-expansion logic.
  */
 export async function graphRecall(
-  store: MemoryStore,
+  store: RecallStore,
   query: string,
   limit = 10,
-  opts: { includeSuperseded?: boolean; scope?: RecallScope } = {},
+  opts: { includeSuperseded?: boolean; scope?: RecallScope; now?: number } = {},
 ): Promise<GraphRecallHit[]> {
   const { nodes } = await recall(store, query, {
     k: limit,
     depth: 1,
     includeSuperseded: opts.includeSuperseded,
     scope: opts.scope,
+    now: opts.now,
   });
   return nodes.slice(0, limit).map((n) => ({
     id: String(n.rid),

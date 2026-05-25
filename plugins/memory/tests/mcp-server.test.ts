@@ -123,6 +123,9 @@ describe("MCP server over stdio", () => {
           "memory_traverse",
         ].sort(),
       );
+      const recallTool = tools.find((t) => t.name === "memory_recall");
+      expect(JSON.stringify(recallTool?.inputSchema)).toContain("as_of");
+      expect(names).not.toContain("memory_commit");
     },
     TIMEOUT,
   );

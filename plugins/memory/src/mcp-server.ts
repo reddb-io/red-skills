@@ -29,6 +29,7 @@ import { diagnose } from "./doctor.js";
 import { ask, neighbors, path, recall, search, traverse } from "./engine.js";
 import { exportGraph } from "./export.js";
 import { MemoryStore, factToNode } from "./graph-store.js";
+import { HistoricalMemoryStore } from "./historical-memory-store.js";
 import type { EdgeLabel, MemoryScope, NodeType } from "./schema.js";
 import { slugify } from "./store.js";
 import { listContradictions, supersessionTimeline } from "./supersession.js";
@@ -66,6 +67,7 @@ const RecallInput = z.object({
   k: z.number().int().min(1).max(50).default(8),
   depth: z.number().int().min(0).max(3).default(1),
   types: z.array(z.string()).optional(),
+  as_of: z.string().optional(),
   scope: z.enum(MEMORY_SCOPES).optional(),
   scope_id: z.string().optional(),
   include_narrower_scopes: z.boolean().default(false),
@@ -165,28 +167,36 @@ async function main(): Promise<void> {
     switch (name) {
       case "memory_recall": {
         const input = RecallInput.parse(args);
-        const result = await recall(store, input.query, {
-          k: input.k,
-          depth: input.depth,
-          types: input.types,
-          scope: input.scope
-            ? {
-                level: input.scope,
-                id: input.scope_id,
-                includeNarrower: input.include_narrower_scopes,
-              }
-            : undefined,
-        });
-        return text(result.context_md, {
-          nodes: result.nodes.map((n) => ({
-            rid: n.rid,
-            label: n.label,
-            node_type: n.node_type,
-            score: n.score,
-            depth: n.depth,
-            excerpt: n.excerpt,
-          })),
-        });
+        const recallStore = input.as_of
+          ? await HistoricalMemoryStore.open({ uri, ref: input.as_of })
+          : store;
+        try {
+          const result = await recall(recallStore, input.query, {
+            k: input.k,
+            depth: input.depth,
+            types: input.types,
+            now: input.as_of ? 0 : undefined,
+            scope: input.scope
+              ? {
+                  level: input.scope,
+                  id: input.scope_id,
+                  includeNarrower: input.include_narrower_scopes,
+                }
+              : undefined,
+          });
+          return text(result.context_md, {
+            nodes: result.nodes.map((n) => ({
+              rid: n.rid,
+              label: n.label,
+              node_type: n.node_type,
+              score: n.score,
+              depth: n.depth,
+              excerpt: n.excerpt,
+            })),
+          });
+        } finally {
+          if (input.as_of) await recallStore.close();
+        }
       }
       case "memory_store": {
         const input = StoreInput.parse(args);

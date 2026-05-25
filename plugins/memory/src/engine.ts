@@ -96,7 +96,7 @@ export interface RecallStore {
     direction?: "outgoing" | "incoming" | "both",
   ): Promise<GraphRow[]>;
   supersededByMany(rids: number[]): Promise<Map<number, number>>;
-  recordAccess(rids: number[]): Promise<void>;
+  recordAccess?(rids: number[]): Promise<void>;
   listEdges(): Promise<Record<string, unknown>[]>;
 }
 
@@ -442,7 +442,7 @@ export async function recall(
   // Decay bookkeeping: a recalled node is a used node. Bump its access overlay
   // (count + last-accessed) so `memory:doctor` can tell what's still earning its
   // keep from what's gone cold. Best-effort — never let it fail a read.
-  if (nodes.length > 0) {
+  if (nodes.length > 0 && store.recordAccess) {
     await store.recordAccess(nodes.map((n) => n.rid)).catch(() => {});
   }
 
