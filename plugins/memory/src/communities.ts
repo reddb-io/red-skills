@@ -19,6 +19,8 @@ export interface CommunitySummary {
 }
 
 export interface CommunityAnalyticsReport {
+  schema_version: "memory.communities.v1";
+  read_only: true;
   graph_hash: string;
   cache_key: string;
   cached: boolean;
@@ -63,6 +65,8 @@ export async function buildCommunityAnalytics(
 
   const assignments = decorateAssignments(nodes, communityPairs);
   return {
+    schema_version: "memory.communities.v1",
+    read_only: true,
     graph_hash: graphHash,
     cache_key: cacheKey,
     cached: cached?.graph_hash === graphHash,

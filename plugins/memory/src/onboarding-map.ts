@@ -57,6 +57,8 @@ export interface OnboardingWarning {
 }
 
 export interface OnboardingMap {
+  schema_version: "memory.onboarding_map.v1";
+  read_only: true;
   status: "ready" | "empty" | "review-warnings";
   summary: Record<OnboardingSection, number> & { warnings: number };
   sections: {
@@ -152,9 +154,14 @@ export async function buildOnboardingMap(
     evidenceCount === 0 ? "empty" : warnings.length > 0 ? "review-warnings" : "ready";
   const withoutMarkdown = { status, summary, sections, warnings } satisfies Omit<
     OnboardingMap,
-    "markdown"
+    "schema_version" | "read_only" | "markdown"
   >;
-  return { ...withoutMarkdown, markdown: renderOnboardingMap(withoutMarkdown) };
+  return {
+    schema_version: "memory.onboarding_map.v1",
+    read_only: true,
+    ...withoutMarkdown,
+    markdown: renderOnboardingMap(withoutMarkdown),
+  };
 }
 
 function emptySections(): OnboardingMap["sections"] {
@@ -308,7 +315,9 @@ function contradictionRidSet(edges: Record<string, unknown>[]): Set<number> {
   return out;
 }
 
-function renderOnboardingMap(report: Omit<OnboardingMap, "markdown">): string {
+function renderOnboardingMap(
+  report: Omit<OnboardingMap, "schema_version" | "read_only" | "markdown">,
+): string {
   const lines = [
     "# Memory onboarding map",
     "",

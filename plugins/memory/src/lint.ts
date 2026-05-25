@@ -29,12 +29,22 @@ export interface LintFinding {
   relatedMemoryId?: string;
 }
 
+export interface LintRuleSuggestion {
+  id: string;
+  title: string;
+  targetFiles: string[];
+  rationale: string;
+  evidence: string[];
+  markdown: string;
+}
+
 export interface LintReport {
   status: LintStatus;
   mode: LintMode;
   readOnly: true;
   totalMemories: number;
   findings: LintFinding[];
+  ruleSuggestions: LintRuleSuggestion[];
   warnings: string[];
 }
 
@@ -63,6 +73,7 @@ export async function lintMemory(rootDir: string, opts: LintOptions = {}): Promi
       readOnly: true,
       totalMemories: 0,
       findings: [],
+      ruleSuggestions: [],
       warnings: ["memory is not initialized here"],
     };
   }
@@ -76,6 +87,7 @@ export async function lintMemory(rootDir: string, opts: LintOptions = {}): Promi
     readOnly: true,
     totalMemories: memories.length,
     findings,
+    ruleSuggestions: buildLintRuleSuggestions(findings),
     warnings,
   };
 }
@@ -85,6 +97,92 @@ export function lintMemoryRecords(
   opts: LintOptions = {},
 ): LintFinding[] {
   return findPolicyProblems(memories, opts);
+}
+
+export function buildLintRuleSuggestions(
+  findings: LintFinding[],
+): LintRuleSuggestion[] {
+  const byCode = new Map<LintFindingCode, LintFinding[]>();
+  for (const finding of findings) {
+    byCode.set(finding.code, [...(byCode.get(finding.code) ?? []), finding]);
+  }
+
+  const suggestions: LintRuleSuggestion[] = [];
+  if (byCode.has("likely-secret")) {
+    suggestions.push(
+      ruleSuggestion({
+        id: "no-secrets-in-memory",
+        title: "Forbid secrets in Memory records",
+        targetFiles: ["AGENTS.md", "CLAUDE.md"],
+        rationale:
+          "Secret-shaped Memory content should become an agent rule because every writer must avoid persisting credentials.",
+        evidence: evidenceFor(byCode.get("likely-secret")),
+        bullet:
+          "Never store secrets, tokens, passwords, private keys, or credential placeholders in Memory; redact them before saving or exporting.",
+      }),
+    );
+  }
+  if (byCode.has("imperative-memory")) {
+    suggestions.push(
+      ruleSuggestion({
+        id: "promote-imperatives-to-agent-rules",
+        title: "Promote imperative Memory into agent rules",
+        targetFiles: ["AGENTS.md", "CLAUDE.md"],
+        rationale:
+          "Imperative guidance belongs in agent instructions; Memory should preserve evidence, decisions, gotchas, and facts.",
+        evidence: evidenceFor(byCode.get("imperative-memory")),
+        bullet:
+          "Keep stable instructions in agent rule files; store only durable facts, decisions, gotchas, and evidence in Memory.",
+      }),
+    );
+  }
+  if (byCode.has("stale-progress-fact")) {
+    suggestions.push(
+      ruleSuggestion({
+        id: "keep-progress-ephemeral",
+        title: "Keep transient progress out of durable Memory",
+        targetFiles: ["AGENTS.md", "CLAUDE.md"],
+        rationale:
+          "Progress updates decay quickly and should not pollute durable recall or future handoffs.",
+        evidence: evidenceFor(byCode.get("stale-progress-fact")),
+        bullet:
+          "Store transient progress as ephemeral/session Memory or handoff text; durable Memory should capture reusable decisions and root causes.",
+      }),
+    );
+  }
+  if (byCode.has("missing-scope") || byCode.has("missing-tier")) {
+    suggestions.push(
+      ruleSuggestion({
+        id: "require-memory-scope-and-tier",
+        title: "Require scope and tier on Memory records",
+        targetFiles: ["AGENTS.md", "CLAUDE.md"],
+        rationale:
+          "Scope and tier are the recall safety boundary for cross-agent and cross-session Memory use.",
+        evidence: evidenceFor([
+          ...(byCode.get("missing-scope") ?? []),
+          ...(byCode.get("missing-tier") ?? []),
+        ]),
+        bullet:
+          "Every manually stored Memory record should declare the narrowest safe scope and the correct tier: durable, reasoning, or ephemeral.",
+      }),
+    );
+  }
+  if (byCode.has("duplicate-like")) {
+    suggestions.push(
+      ruleSuggestion({
+        id: "consolidate-duplicate-guidance",
+        title: "Consolidate duplicate guidance into canonical context",
+        targetFiles: [".red/CONTEXT.md", ".red/contexts/*/CONTEXT.md"],
+        rationale:
+          "Repeated guidance is a sign that the project vocabulary or rule should live in one canonical context artifact.",
+        evidence: evidenceFor(byCode.get("duplicate-like")),
+        bullet:
+          "When the same Memory guidance appears repeatedly, consolidate it into the owning Red context glossary or a single superseding durable Memory node.",
+      }),
+    );
+  }
+
+  return suggestions.sort((a, b) => a.id.localeCompare(b.id));
 }
 
 async function collectMemories(
@@ -214,6 +312,35 @@ function finding(
     message,
     excerpt: excerpt(memory.body || memory.title),
   };
+}
+
+function ruleSuggestion(input: {
+  id: string;
+  title: string;
+  targetFiles: string[];
+  rationale: string;
+  evidence: string[];
+  bullet: string;
+}): LintRuleSuggestion {
+  return {
+    id: input.id,
+    title: input.title,
+    targetFiles: input.targetFiles,
+    rationale: input.rationale,
+    evidence: input.evidence,
+    markdown: `- ${input.bullet}`,
+  };
+}
+
+function evidenceFor(findings: LintFinding[] | undefined): string[] {
+  return [
+    ...new Set(
+      (findings ?? []).flatMap((finding) => [
+        finding.memoryId,
+        ...(finding.relatedMemoryId ? [finding.relatedMemoryId] : []),
+      ]),
+    ),
+  ].sort();
 }
 
 function isStaleProgress(memory: LintMemoryRecord, now: number, staleProgressDays: number): boolean {

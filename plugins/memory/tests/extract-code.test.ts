@@ -33,12 +33,33 @@ describe("extractCode", () => {
     const { nodes, edges } = await extractCode(TS_FIXTURE);
     const fileNode = nodes.find((n) => n.node_type === "file");
     const symbols = nodes.filter((n) => n.node_type === "symbol");
+    const definedIn = edges.filter((e) => e.label === "DEFINED_IN");
 
-    expect(edges).toHaveLength(symbols.length);
-    for (const e of edges) {
+    expect(definedIn).toHaveLength(symbols.length);
+    for (const e of definedIn) {
       expect(e.label).toBe("DEFINED_IN");
       expect(e.toLabel).toBe(fileNode?.label);
     }
+  });
+
+  test("emits conservative intra-file CALLS edges for TS/JS symbols", async () => {
+    const { edges } = await extractCode(TS_FIXTURE);
+
+    expect(edges).toContainEqual({
+      fromLabel: `sym:${TS_FIXTURE}#issueToken`,
+      toLabel: `sym:${TS_FIXTURE}#verifyToken`,
+      label: "CALLS",
+    });
+  });
+
+  test("emits conservative intra-file USES_TYPE edges for TS/JS symbols", async () => {
+    const { edges } = await extractCode(TS_FIXTURE);
+
+    expect(edges).toContainEqual({
+      fromLabel: `sym:${TS_FIXTURE}#issueToken`,
+      toLabel: `sym:${TS_FIXTURE}#UserId`,
+      label: "USES_TYPE",
+    });
   });
 
   test("emits IMPORTS edges from the file node to import specifier nodes", async () => {

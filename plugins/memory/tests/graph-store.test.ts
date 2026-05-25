@@ -184,11 +184,119 @@ describe("MemoryStore over a file:// RedDB", () => {
   );
 
   test(
-    "vector search maps projected vector rows back to memory node rids",
+    "document chunks participate in vector projection readiness",
     async () => {
       const store = await openStore(await tempRoot());
       const previousProvider = process.env.RED_MEMORY_VECTOR_PROVIDER;
       process.env.RED_MEMORY_VECTOR_PROVIDER = "openai";
+      const vectorRows: Record<string, unknown>[] = [];
+      const raw = store.raw as unknown as {
+        query: (sql: string, ...params: unknown[]) => Promise<{ rows: Record<string, unknown>[] }>;
+      };
+      const query = raw.query.bind(raw);
+      raw.query = async (sql: string, ...params: unknown[]) => {
+        if (sql.includes("WITH AUTO EMBED")) {
+          const sourceCollection = String(params[8]);
+          const row =
+            sourceCollection === "memory_docs"
+              ? {
+                  rid: vectorRows.length + 1,
+                  doc_rid: params[0],
+                  node_hash: params[1],
+                  text_hash: params[2],
+                  text: params[3],
+                  label: params[4],
+                  path: params[5],
+                  title: params[6],
+                  text_length: params[7],
+                  source_collection: params[8],
+                  project: params[9],
+                  provider: params[10],
+                  updated_at: params[11],
+                }
+              : {
+                  rid: vectorRows.length + 1,
+                  node_rid: params[0],
+                  node_hash: params[1],
+                  text_hash: params[2],
+                  text: params[3],
+                  label: params[4],
+                  node_type: params[5],
+                  text_length: params[6],
+                  source_collection: params[7],
+                  project: params[8],
+                  provider: params[9],
+                  updated_at: params[10],
+                };
+          vectorRows.push(row);
+          return { rows: [row] };
+        }
+        if (sql === "SELECT * FROM memory_vectors") return { rows: vectorRows };
+        return query(sql, ...params);
+      };
+
+      try {
+        const rid = await store.upsertDoc({
+          path: "docs/security.md",
+          title: "Security Guide",
+          body: "JWT token rotation guidance lives in this document chunk.",
+          frontmatter: { tags: ["security", "jwt"] },
+          hash: "doc-hash-1",
+          updated_at: 123,
+        });
+
+        expect(vectorRows[0]).toMatchObject({
+          doc_rid: rid,
+          label: "doc:docs/security.md",
+          path: "docs/security.md",
+          title: "Security Guide",
+          source_collection: "memory_docs",
+        });
+        await expect(store.vectorStatus()).resolves.toMatchObject({
+          overall: "ready",
+          total: 1,
+          ready: 1,
+          nodes: [],
+          docs: [
+            expect.objectContaining({
+              rid,
+              path: "docs/security.md",
+              title: "Security Guide",
+              source_collection: "memory_docs",
+              status: "ready",
+            }),
+          ],
+        });
+
+        vectorRows[0].text_hash = "old-doc-text";
+        await expect(store.vectorStatus()).resolves.toMatchObject({
+          overall: "stale",
+          stale: 1,
+          docs: [expect.objectContaining({ status: "stale" })],
+        });
+      } finally {
+        if (previousProvider == null) delete process.env.RED_MEMORY_VECTOR_PROVIDER;
+        else process.env.RED_MEMORY_VECTOR_PROVIDER = previousProvider;
+      }
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "vector search maps node rows and grounded document rows back to memory node rids",
+    async () => {
+      const store = await openStore(await tempRoot());
+      const previousProvider = process.env.RED_MEMORY_VECTOR_PROVIDER;
+      process.env.RED_MEMORY_VECTOR_PROVIDER = "openai";
+      const docRootRid = await store.upsertNode({
+        label: "md:/repo/docs/jwt.md",
+        node_type: "concept",
+        properties: {
+          title: "JWT docs",
+          content: "document-root concept",
+          hash: "doc-hash",
+        },
+      });
       const raw = store.raw as unknown as {
         query: (sql: string, ...params: unknown[]) => Promise<{ rows: Record<string, unknown>[] }>;
       };
@@ -198,7 +306,25 @@ describe("MemoryStore over a file:// RedDB", () => {
           expect(sql).toContain("COLLECTION memory_vectors");
           expect(sql).toContain("USING openai");
           expect(sql).toContain("LIMIT 3");
-          return { rows: [{ entity_id: 9, node_rid: 42, similarity: 0.82 }] };
+          return {
+            rows: [
+              { entity_id: 9, node_rid: 42, source_collection: "memory_nodes", similarity: 0.82 },
+              {
+                entity_id: 10,
+                doc_rid: 7,
+                node_hash: "doc-hash",
+                source_collection: "memory_docs",
+                similarity: 0.97,
+              },
+              {
+                entity_id: 11,
+                doc_rid: 8,
+                node_hash: "orphan-doc-hash",
+                source_collection: "memory_docs",
+                similarity: 0.99,
+              },
+            ],
+          };
         }
         return query(sql, ...params);
       };
@@ -206,7 +332,102 @@ describe("MemoryStore over a file:// RedDB", () => {
       try {
         await expect(store.searchVector("semantic recall", 3)).resolves.toEqual([
           { rid: 42, score: 0.82 },
+          { rid: docRootRid, score: 0.97 },
         ]);
+      } finally {
+        if (previousProvider == null) delete process.env.RED_MEMORY_VECTOR_PROVIDER;
+        else process.env.RED_MEMORY_VECTOR_PROVIDER = previousProvider;
+      }
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "local vector provider stores deterministic embeddings in RedDB KV and searches them",
+    async () => {
+      const store = await openStore(await tempRoot());
+      const previousProvider = process.env.RED_MEMORY_VECTOR_PROVIDER;
+      process.env.RED_MEMORY_VECTOR_PROVIDER = "local";
+      try {
+        const nodeRid = await store.upsertNode({
+          label: "jwt-rotation",
+          node_type: "decision",
+          properties: {
+            title: "JWT rotation",
+            content: "JWT tokens rotate every 90 days for staging auth.",
+            hash: "jwt-node-hash",
+          },
+        });
+        const docRootRid = await store.upsertNode({
+          label: "md:/repo/docs/jwt.md",
+          node_type: "concept",
+          properties: {
+            title: "JWT docs",
+            content: "document-root concept",
+            hash: "doc-hash",
+          },
+        });
+        await store.upsertDoc({
+          path: "docs/jwt.md",
+          title: "JWT docs",
+          body: "The JWT document says tokens rotate every 90 days.",
+          frontmatter: { tags: ["jwt", "auth"] },
+          hash: "doc-hash",
+          updated_at: 123,
+        });
+
+        await expect(store.vectorStatus()).resolves.toMatchObject({
+          overall: "ready",
+          total: 3,
+          ready: 3,
+          unavailable: 0,
+          failed: 0,
+        });
+        const hits = await store.searchVector("jwt rotation tokens", 5);
+        expect(hits.map((hit) => hit.rid)).toEqual(
+          expect.arrayContaining([nodeRid, docRootRid]),
+        );
+        expect(hits.every((hit) => hit.score > 0)).toBe(true);
+      } finally {
+        if (previousProvider == null) delete process.env.RED_MEMORY_VECTOR_PROVIDER;
+        else process.env.RED_MEMORY_VECTOR_PROVIDER = previousProvider;
+      }
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "local vector records stay within RedDB KV value limits for metadata-heavy docs",
+    async () => {
+      const store = await openStore(await tempRoot());
+      const previousProvider = process.env.RED_MEMORY_VECTOR_PROVIDER;
+      process.env.RED_MEMORY_VECTOR_PROVIDER = "local";
+      try {
+        await store.upsertNode({
+          label: "md:/repo/docs/deeply/nested/vector-heavy-memory-guide.md",
+          node_type: "concept",
+          properties: {
+            title: "Vector-heavy Memory guide",
+            content: "document-root concept",
+            hash: "metadata-heavy-doc-hash",
+          },
+        });
+        await store.upsertDoc({
+          path: "docs/deeply/nested/vector-heavy-memory-guide.md",
+          title: "Vector-heavy Memory guide with local embeddings and RedDB persistence",
+          body: Array.from({ length: 120 }, (_, index) => `token_${index}`).join(" "),
+          frontmatter: { tags: ["vectors", "memory", "reddb", "local-dev"] },
+          hash: "metadata-heavy-doc-hash",
+          updated_at: 123,
+        });
+
+        await expect(store.maintainVectorProjection()).resolves.toMatchObject({
+          overall: "ready",
+          failed: 0,
+        });
+        await expect(store.searchVector("local embeddings RedDB", 3)).resolves.toEqual(
+          expect.arrayContaining([expect.objectContaining({ score: expect.any(Number) })]),
+        );
       } finally {
         if (previousProvider == null) delete process.env.RED_MEMORY_VECTOR_PROVIDER;
         else process.env.RED_MEMORY_VECTOR_PROVIDER = previousProvider;

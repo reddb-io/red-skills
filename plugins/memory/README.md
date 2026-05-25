@@ -44,6 +44,7 @@ node plugins/memory/dist/cli.js init --mode graph --hooks --skill-telemetry --ye
 node plugins/memory/dist/cli.js store "Decision: API cache TTL is 300 seconds because upstream rate limits."
 node plugins/memory/dist/cli.js claim-check "API cache TTL is 300 seconds." --json
 node plugins/memory/dist/cli.js readiness "prepare an AFK fix for cache expiry" --json
+node plugins/memory/dist/cli.js handoff "cache expiry" --json
 node plugins/memory/dist/cli.js context-pack "diagnose flaky cache expiry tests"
 node plugins/memory/dist/cli.js recall "cache TTL"
 ```
@@ -54,8 +55,175 @@ administer, but the build/install step is required. LLM-backed extraction and
 `memory ask` need a configured provider (`provider` in
 `.red/memory/config.json`, with any referenced API-key env var exported before
 use). Without a provider key, deterministic store/recall, graph reads, claim
-checks, readiness, exports, and most hooks still run; LLM extraction and ASK
-report unavailable or fall back to deterministic extraction where implemented.
+checks, readiness, exports, and most hooks still run; ASK reports unavailable,
+and `memory extract --local` can still ingest explicit structured transcript
+lines such as `Decision: ...`, `Problem: ...`, `Fix: ...`, and
+`Validation: ...`.
+
+To seed an existing repository quickly, graph mode can bootstrap from the
+project's README, agent rules, docs, `.red/CONTEXT.md`, `.red/contexts/*.md`,
+and ADRs, with an optional recent git-log document:
+
+```bash
+node plugins/memory/dist/cli.js bootstrap --root . --dry-run --json
+node plugins/memory/dist/cli.js bootstrap --root . --include-git-log
+node plugins/memory/dist/cli.js docs coverage --root . --json
+node plugins/memory/dist/cli.js backup create --root . --name before-refactor
+```
+
+Bootstrap writes through the same markdown ingest path as `memory ingest`, so
+document chunks, graph roots, deterministic references, vector projection
+status, and retention posture all show up in doc coverage and the operational
+dashboard. The ingest path also inventories binary corpus assets such as PDFs,
+images, audio, video, and Office files as RedDB `file` nodes with media type,
+size, hash, and provenance. That gives agents Graphify-style corpus awareness
+without claiming OCR, transcripts, or multimodal embeddings.
+Use `memory assets --json` or `memory assets-viewer` to inspect that inventory
+through the same read-only CLI/MCP/HTTP surfaces as the rest of Memory.
+
+`memory backup create|list|inspect|restore` snapshots the project-local
+`.red/memory` persistence surface, including the RedDB graph files, config, and
+markdown notes, under `.red/memory/backups/<name>` with a SHA-256 manifest.
+Restore is intentionally gated by `--yes` and creates a pre-restore safety
+backup before replacing the current persistence files.
+
+For optional browser/API inspection, `memory serve` starts a loopback-only
+read-only HTTP surface over the same RedDB store. It serves the workbench and
+dashboard HTML, prints the docs reference graph viewer URL at
+`/docs/reference-graph`, plus JSON endpoints for health, OpenAPI
+(`/openapi.json`), workbench, dashboard, competitive radar, context packs,
+work frontier, memory layers, governance, decay, memory health, hook coverage,
+agent integration status, session timeline, extraction status,
+docs search/read/coverage/reference-graph, smart search, and recall; use
+`--token-env MEMORY_HTTP_TOKEN` to require a bearer token.
+
+`memory smart-search <query>` is the single read-only search entry point for
+agents that want breadth first: it returns a fused `top_results` list plus the
+underlying governed recall hits, ingested document hits, asset inventory hits,
+and vector diagnostics.
+`memory smart-search-viewer <query>` writes the same contract as a
+self-contained HTML artifact with embedded JSON, source counts, fused results,
+asset/vector detail, and recommended next actions.
+This is deliberately not a vector-first ranking path; `memory recall` remains
+the canonical governed memory context surface.
+
+`memory context-pack-viewer <goal>` writes the budgeted, cited context pack as
+a self-contained HTML artifact with embedded JSON, grouped evidence, warnings,
+skill recommendations, and ready-to-inject Markdown. The same viewer is
+available through MCP and `/context-pack?goal=<text>` when `memory serve` is
+running.
+
+`memory layers --json` is the architecture-level readiness report: it maps
+short-term session events, long-term durable graph facts, reasoning traces,
+docs/code graph evidence, and vector projection into one RedDB-backed contract.
+This makes Neo4j-style layered memory inspectable without introducing a graph
+daemon or separate persistence service.
+`memory layers-viewer` writes the same contract as a self-contained HTML
+viewer with embedded JSON, layer counts, RedDB collections, competitor
+alignment, and recommended next actions.
+
+`memory competitive-radar` is an internal planning report that maps capability
+catalog evidence to named competitor axes and next actions. It is intentionally
+read-only and does not create public benchmark claims.
+
+The local Workbench embeds that radar beside the operational dashboard,
+capability catalog, memory layers, and session timeline, so `memory workbench` and
+`memory serve` show the same internal posture report without recomputing it.
+When served over HTTP, the Workbench also includes a read-only Search Console
+backed by `/api/search`; it shows fused smart-search results, recall/doc/asset/
+vector counts, result sources, references, and recommended next actions. The
+static HTML artifact keeps the same UI and explains that search needs
+`memory serve`.
+It also includes a Context Pack panel backed by `/api/context-pack` with a link
+to `/context-pack`, so a concrete agent goal can be turned into grouped,
+budgeted, cited context without leaving the local UI.
+It also includes a Work Frontier panel backed by `/api/frontier` with a link to
+`/frontier`, so remembered task/issue/goal/PRD evidence can be ranked into
+ready, blocked, and completed work without mutating work state.
+It also includes a Docs Explorer backed by `/api/docs/search`, `/api/docs/read`,
+and `/api/docs/related`, with HTML handoff pages at `/docs/search`,
+`/docs/evidence-pack`, and `/docs/related`, plus `/api/docs/coverage` and
+`/api/docs/reference-graph` for graph/vector coverage and extracted reference
+topology, so indexed documentation can be searched, opened, related, audited,
+and mapped from the same local cockpit.
+For graph-heavy debugging, the Workbench includes a Graph Path Explorer backed
+by `/api/path-explain`, exposing directed path evidence without leaving the
+browser.
+For map-first onboarding, it includes an Onboarding Map panel backed by
+`/api/onboarding-map`; `/onboarding-map` serves the same concepts, workflows,
+decisions, risks, validations, suggested skills, and warnings as a
+self-contained HTML viewer.
+For graph analytics debugging, it includes a Graph Communities panel backed by
+`/api/communities`; `/communities` serves the same RedDB native community
+assignments as a self-contained HTML viewer without writing clusters back into
+Memory evidence.
+For embedding diagnostics, it includes a Vector Diagnostics panel backed by
+`/api/vector/status` and `/api/vector/search`; maintenance remains an explicit
+CLI action. `/vector/status` serves the projection readiness as a
+self-contained HTML viewer.
+For hook debugging, it includes a Hook Diagnostics panel backed by
+`/api/hooks/coverage` and `/api/session/timeline`, so lifecycle wiring and
+recent hook evidence are visible without leaving the browser. `/hooks/coverage`
+serves the same coverage as a self-contained HTML viewer.
+For extraction debugging, it includes an Extraction Status panel backed by
+`/api/extraction/status`, so deterministic extractor coverage, local structured
+fallback readiness, provider configuration, Stop hook readiness, and inferred
+fact counts are visible beside hooks and vectors. `/extraction/status` serves
+the same readiness contract as a self-contained HTML viewer.
+For trust debugging, it includes a Governance panel backed by
+`/api/governance`, so provenance coverage, privacy findings, lint findings,
+contradictions, and supersession counts are visible without mutating Memory.
+`memory lint --json` also returns read-only rule-promotion suggestions for
+agent rule files or Red context files when findings show secrets, imperatives,
+transient progress, missing scope/tier, or duplicate guidance. `/governance`
+serves the same report as a self-contained HTML viewer.
+For retention debugging, it includes a Memory Decay panel backed by
+`/api/decay`, so keep/review/deprecate/expire recommendations, policy horizons,
+and first candidates are visible in the same local UI without pruning,
+deleting, superseding, or rewriting evidence. `/decay` serves the same
+retention plan as a self-contained HTML viewer.
+`memory decay --json` adds a read-only retention plan over RedDB graph evidence:
+it classifies nodes as keep, review, deprecate, or expire from access overlays,
+supersession, contradictions, TTL horizons, and pinned importance without
+deleting anything. `memory decay-viewer` writes the same plan as a local HTML
+artifact.
+For self-improvement debugging, it includes a Learning Debt panel backed by
+`/api/learning-debt`, so repeated failure patterns, stale or contradicted
+guidance, missing validation evidence, and Skill telemetry gaps are visible
+without mutating skills. `/learning-debt` serves the same report as a
+self-contained HTML viewer.
+For operational health debugging, it includes a Memory Health panel backed by
+`/api/memory/health`, so graph stats, vector readiness, stale evidence, Skill
+telemetry availability, and recommended next actions are visible without
+confusing that report with the server's endpoint-discovery `/api/health`.
+`/memory/health` serves the same report as a self-contained HTML viewer.
+For layered architecture inspection, it includes a Memory Layers panel backed by
+`/api/layers`, so the short-term, long-term, reasoning, docs/code, and vector
+layers are visible in the same local cockpit. `/layers` serves the same report
+as a self-contained HTML viewer.
+
+For agent interop, `memory routing-guide --agent
+codex|claude|cursor|gemini|aider|opencode|generic --json` emits the target
+rule file, MCP stdio config shape, loopback HTTP command, hook notes where
+supported, and CLI fallbacks. This is intentionally a local-dev adoption
+surface: every agent points at the same project-local RedDB store through
+`memory-mcp`, `memory serve`, or bundled lifecycle hooks rather than a cloud
+memory service. `memory routing-guide-viewer --agent <name>` writes the same
+contract as a self-contained HTML viewer, `/routing-guide?agent=<name>` serves
+it over loopback HTTP, and the Workbench includes an Agent Routing panel backed
+by `/api/routing-guide`. `memory integration-status --json` audits whether
+supported agents have Memory routing snippets and hook coverage in place, while
+`memory integration-status-viewer`, `/integration-status`, `/api/integration-status`,
+and the Workbench Agent Integration Status panel render the same read-only
+status without installing hooks or editing agent rule files.
+
+For cross-agent continuation, `memory handoff [focus]` builds a deterministic
+handoff block from graph evidence: active work, recent decisions, validation
+evidence, risks, relevant context, and citations. `memory handoff-viewer
+[focus]` and `/handoff` render the same `memory.handoff.v1` contract as a
+self-contained local HTML handoff, while `/api/handoff` exposes the JSON report
+to the Workbench and HTTP agents. It is read-only and does not expose raw
+transcripts.
 
 ## Storage modes
 
@@ -106,13 +274,15 @@ and exits silently — a dormant hook never touches the engine or the turn.
 |------|----------|------|
 | **SessionStart** | session start / resume / `/clear` | recalls memory relevant to the focus (goal/branch/cwd) and injects it as context |
 | **PostToolUse** | a file edit (`Edit`/`Write`, or Codex `apply_patch`) | incrementally re-indexes the changed file into the graph |
-| **Stop** | end of an assistant turn | extracts decisions / why-notes from the turn and stores them |
-| **PreCompact** | before a context compaction / `/clear` | flushes ephemeral session knowledge to memory — the anti-goldfish save |
+| **Stop** | end of an assistant turn | extracts structured Problem/Fix/Validation/Decision facts, or decision / why-note fallback memories, and stores them |
+| **PreCompact** | before a context compaction / `/clear` | flushes ephemeral session knowledge to memory before compaction |
 
 Extraction (Stop / PreCompact) runs through a **bounded-LLM extractor** in
 production; with no LLM key configured it falls back to a deterministic
-heuristic so the hooks still capture cued decision / why-note sentences. Recall
-and re-indexing are always zero-token.
+structured-transcript path for explicit `Problem:`, `Fix:`, `Validation:`, and
+`Decision:` lines, including `FIXES` / `TESTED_BY` graph edges. When no
+structured line is present, hooks still capture cued decision / why-note
+sentences. Recall and re-indexing are always zero-token.
 
 ### Incremental freshness
 
@@ -138,6 +308,35 @@ supported freshness paths are hook-only: PostToolUse hooks, explicit
 `memory refresh`, and git-hook-compatible `--staged`/`--stdin` invocations. That
 keeps the embedded RedDB workflow zero-ops and avoids flaky real-time watcher
 behavior in tests and local shells.
+
+### Vector projection
+
+Graph mode keeps a RedDB-native `memory_vectors` projection for graph Memory
+nodes, asset metadata nodes, and ingested `memory_docs` chunks. Node vectors can
+seed governed hybrid recall; asset hits keep their path/kind/media metadata in
+vector diagnostics and smart search; document vectors can seed governed recall
+only when the hit maps by document hash to an ingested markdown root node.
+Ungrounded document hits remain ASK/readiness substrate.
+
+```bash
+node plugins/memory/dist/cli.js vector status --root . --json
+node plugins/memory/dist/cli.js vector status-viewer --root .
+node plugins/memory/dist/cli.js vector maintain --root . --strict
+node plugins/memory/dist/cli.js vector search "auth session" --root . --json
+node plugins/memory/dist/cli.js vector maintain --root . --local --json
+node plugins/memory/dist/cli.js vector search "auth session" --root . --local --json
+```
+
+Projection uses RedDB `WITH AUTO EMBED` when `RED_MEMORY_VECTOR_PROVIDER` is
+configured. Without a provider, writes still succeed and vector status reports
+the projection as unavailable rather than failing recall. For local development,
+`RED_MEMORY_VECTOR_PROVIDER=local` or `--local` stores deterministic hashed
+embeddings in the project RedDB KV surface, so vector diagnostics work without a
+network provider. After `memory vector maintain --local` has written that
+projection once, later `vector status`, `vector search`, capability catalog, and
+radar reads can reuse the persisted local projection without repeating
+`--local`. `vector search` is a diagnostic read over grounded vector candidates;
+governed recall remains the canonical read path for agent context.
 
 ### VCS checkpoints
 
@@ -174,13 +373,87 @@ substantive turn) plus `SessionStart`-on-`/clear` recall instead.
 ## Graph read verbs (graph mode)
 
 Beyond `recall`, graph mode exposes the read primitives directly — all
-zero-token (no LLM):
+zero-token (no LLM). Markdown ingest records headings, wiki-links, inline
+identifiers, and explicit Markdown links as graph references. Code ingest records files, symbols, imports, and
+conservative intra-file TS/JS `CALLS` / `USES_TYPE` edges so impact queries can
+explain call and type relationships as well as dependencies. SQL ingest records
+schema files, tables, columns, and foreign-key `REFERENCES` edges from `.sql`
+files without connecting to a live database. Dev-workflow ingest also indexes
+`package.json` scripts, Dockerfile stages/steps, GitHub Actions jobs/actions,
+and shell functions as RedDB graph evidence. Binary corpus assets (`.pdf`,
+common image/audio/video formats, and Office docs) are indexed as metadata-only
+`file` nodes. Incremental refresh stores a compact
+per-file manifest in RedDB KV, chunked for docs with many references, so rich
+documentation maps stay refreshable through hooks. Pre-PR review uses graph
+edges to flag downstream call/type/reference risks:
 
 ```bash
 node plugins/memory/dist/cli.js search <query>          # full-text node search
+node plugins/memory/dist/cli.js docs search <query>     # zero-token document chunk search
+node plugins/memory/dist/cli.js docs search-viewer <query> # local HTML search results viewer
+node plugins/memory/dist/cli.js docs brief <query>      # cited docs evidence brief with gaps
+node plugins/memory/dist/cli.js docs brief-viewer <query> # local HTML brief viewer
+node plugins/memory/dist/cli.js docs bundle <query>     # top docs plus agent-ready evidence packs
+node plugins/memory/dist/cli.js docs bundle-viewer <query> # local HTML bundle viewer
+node plugins/memory/dist/cli.js docs read <path|rid>    # read an ingested document chunk
+node plugins/memory/dist/cli.js docs evidence-pack <path|rid> # agent-ready doc body/references/related pack
+node plugins/memory/dist/cli.js docs evidence-pack-viewer <path|rid> # local HTML evidence-pack viewer
+node plugins/memory/dist/cli.js docs backlinks <label|rid> # docs that reference a Memory node
+node plugins/memory/dist/cli.js docs backlinks-viewer <label|rid> # local HTML backlinks viewer
+node plugins/memory/dist/cli.js docs related <path|rid> # references and docs with shared references
+node plugins/memory/dist/cli.js docs related-viewer <path|rid> # local HTML related-docs viewer
+node plugins/memory/dist/cli.js docs restore [path|rid] --dry-run # plan file restore from RedDB docs
+node plugins/memory/dist/cli.js docs restore [path|rid] --in-place --yes # explicitly rewrite missing docs
+node plugins/memory/dist/cli.js docs coverage           # graph/vector coverage for docs
+node plugins/memory/dist/cli.js docs coverage-viewer    # local HTML coverage dashboard
+node plugins/memory/dist/cli.js docs reference-graph    # docs-to-reference graph report
+node plugins/memory/dist/cli.js docs reference-graph-viewer # local HTML docs graph viewer
+node plugins/memory/dist/cli.js assets --json           # binary/media asset inventory
+node plugins/memory/dist/cli.js assets-viewer           # local HTML asset inventory
+node plugins/memory/dist/cli.js bootstrap --dry-run     # discover seed docs before indexing
+node plugins/memory/dist/cli.js backup create --name before-change # local RedDB snapshot
+node plugins/memory/dist/cli.js backup restore before-change --yes # explicit restore with safety backup
+node plugins/memory/dist/cli.js serve --token-env MEMORY_HTTP_TOKEN # optional local HTTP UI/API
+node plugins/memory/dist/cli.js smart-search "auth session" --json # recall + docs + assets + vectors
+node plugins/memory/dist/cli.js smart-search-viewer "auth session" # local HTML smart-search viewer
+node plugins/memory/dist/cli.js context-pack-viewer "auth session" # local HTML context-pack viewer
+node plugins/memory/dist/cli.js capabilities --json     # capability catalog by agent surface
+node plugins/memory/dist/cli.js layers --json           # short-term/durable/reasoning/docs-code/vector layers
+node plugins/memory/dist/cli.js layers-viewer           # local HTML layered architecture viewer
+node plugins/memory/dist/cli.js frontier --json         # ready/blocked work frontier
+node plugins/memory/dist/cli.js frontier-viewer         # local HTML work frontier viewer
+node plugins/memory/dist/cli.js lint --json             # hygiene findings + rule suggestions
+node plugins/memory/dist/cli.js decay --json            # keep/review/deprecate/expire retention plan
+node plugins/memory/dist/cli.js decay-viewer            # local HTML decay plan viewer
+node plugins/memory/dist/cli.js governance --json       # provenance/privacy/lint/conflict governance report
+node plugins/memory/dist/cli.js governance-viewer       # local HTML governance viewer
+node plugins/memory/dist/cli.js learning-debt-viewer    # local HTML self-improvement debt viewer
+node plugins/memory/dist/cli.js health-viewer           # local HTML operational health viewer
+node plugins/memory/dist/cli.js onboarding-map-viewer   # local HTML map-first onboarding viewer
+node plugins/memory/dist/cli.js communities-viewer      # local HTML graph community analytics viewer
+node plugins/memory/dist/cli.js competitive-radar --json # internal competitor posture from catalog evidence
+node plugins/memory/dist/cli.js workbench               # local unified Memory UI
+node plugins/memory/dist/cli.js routing-guide --agent cursor --json # multi-agent MCP/HTTP integration guide
+node plugins/memory/dist/cli.js routing-guide-viewer --agent cursor # local HTML multi-agent routing guide
+node plugins/memory/dist/cli.js integration-status --json # audit agent rule files and hook coverage
+node plugins/memory/dist/cli.js integration-status-viewer # local HTML integration status
+node plugins/memory/dist/cli.js extraction status --json # deterministic/inferred extraction readiness
+node plugins/memory/dist/cli.js extraction status-viewer # local HTML extraction readiness viewer
+node plugins/memory/dist/cli.js extract transcript.md --local # provider-free structured transcript extraction
+node plugins/memory/dist/cli.js session timeline --json  # replay-style hook/skill event timeline
+node plugins/memory/dist/cli.js session timeline-viewer  # local HTML timeline viewer
+node plugins/memory/dist/cli.js handoff "auth work"     # cross-agent continuation brief
+node plugins/memory/dist/cli.js handoff-viewer "auth work" # local HTML cross-agent handoff
+node plugins/memory/dist/cli.js dashboard               # local operational dashboard
+node plugins/memory/dist/cli.js routing-guide --agent codex
 node plugins/memory/dist/cli.js neighbors <label>       # 1-hop neighborhood
 node plugins/memory/dist/cli.js traverse <label>        # BFS/DFS walk
 node plugins/memory/dist/cli.js path <from> <to>        # shortest path
+node plugins/memory/dist/cli.js path-explain <from> <to> --json
+node plugins/memory/dist/cli.js path-explain-viewer <from> <to>
+node plugins/memory/dist/cli.js structural-impact-viewer --file src/auth.ts
+node plugins/memory/dist/cli.js pre-pr-review-viewer --range HEAD
+node plugins/memory/dist/cli.js ask "what changed about auth?" --json # cited answer + gap analysis
 node plugins/memory/dist/cli.js conflicts               # unresolved CONTRADICTS edges
 node plugins/memory/dist/cli.js supersede <old> <new> --reason "policy changed"
 node plugins/memory/dist/cli.js resolve-conflict <active> <superseded>
@@ -227,6 +500,8 @@ claim:
 | `checked-fixture-retrieval` | The competitive eval reports retrieval quality from checked-in fixtures. | `dimension:retrieval`, `fixture:recall` |
 | `readiness-envelope-consumer` | The readiness envelope is available for `eval:competitive:v2` consumers. | `dimension:readiness`, `foundation:readiness-envelope` |
 | `session-lifecycle-comparison` | Memory has native agent session lifecycle integration in the comparison table. | `baseline:memory-lifecycle-beats-agent-memory` |
+| `operator-surface-dashboard` | The competitive eval measures docs, hooks, dashboard, and capability catalog operator surfaces. | `dimension:operator-surface`, `foundation:doc-coverage`, `foundation:hook-coverage`, `foundation:operational-dashboard`, `foundation:capability-catalog` |
+| `multi-agent-integration-status` | The competitive eval measures multi-agent Memory routing and integration status across supported coding agents. | `dimension:multi-agent-integration`, `foundation:routing-guide`, `foundation:agent-integration-status`, `foundation:mcp-agent-tools`, `foundation:hook-backed-agent-integration` |
 
 The same guard intentionally leaves live-service competitor wins unclaimed
 unless the required live baseline is measured. In particular, the checked-in
@@ -242,8 +517,16 @@ MEMORY_AGENTMEMORY_BASELINE_CMD='["node","scripts/agentmemory-baseline.mjs"]' \
   pnpm --dir plugins/memory exec tsx src/competitive-baseline.ts --v2 --json --human --live-agentmemory
 ```
 
-The configured command is a local wrapper around the available Agentmemory
-install or service. It must print JSON with optional `summary`, numeric
+The same harness can opt in to a `neo4j-labs/agent-memory` recall-latency
+baseline when a local wrapper for the Neo4j-backed service is available:
+
+```bash
+MEMORY_NEO4J_AGENT_MEMORY_BASELINE_CMD='["node","scripts/neo4j-agent-memory-baseline.mjs"]' \
+  pnpm --dir plugins/memory exec tsx src/competitive-baseline.ts --v2 --json --human --live-agent-memory
+```
+
+The configured commands are local wrappers around the available competitor
+install or service. They must print JSON with optional `summary`, numeric
 `metrics`, and string `evidence` fields. Missing commands are reported as
 unavailable live baselines, not as fixture failures.
 
@@ -267,7 +550,7 @@ baseline and is reported as unmeasured by the claim guard.
 | Session lifecycle integration | Native SessionStart, PostToolUse, Stop, and PreCompact hooks in graph mode. | Assistant instructions and optional search nudges; not a memory lifecycle. | SDK/MCP integration; no RedSkills hook lifecycle. | Advantage: memory is built into the agent session lifecycle. |
 | Engine feature breadth | TTL, KV/cache overlays, native Louvain, ASK; geospatial is not exposed by memory yet. | Static graph export with query/path/explain and 34 detected communities in the fixture. | Neo4j graph, vector/text search, geospatial, MCP tools, eval harness, and framework adapters. | Parity/mixed: both graph competitors have useful breadth; memory wins embedded RedDB primitives, agent-memory wins Neo4j ecosystem breadth. |
 | Recall latency on agent-scale graph | Repo gate targets <100 ms p50 on a ~1k-node graph. | graphify-out fixture: 551 nodes / 1329 edges / 34 communities; path p50 841 ms. | Not asserted here; apples-to-apples latency requires a live Neo4j baseline. | Advantage over checked graphify-out path latency only; no latency claim against agent-memory in this harness. |
-| NER extraction quality | Deterministic extractors plus optional LLM provider for inferred facts. | 491 inferred fixture edges; strong static-code graph output. | spaCy / GLiNER / GLiREL / LLM extraction pipeline. | Conceded gap: Python ML stack is ahead for turnkey NER. |
+| NER extraction quality | Deterministic structural/entity extractors plus optional LLM provider for inferred facts. | 491 inferred fixture edges; strong static-code graph output. | spaCy / GLiNER / GLiREL / LLM extraction pipeline. | Conceded gap: Python ML stack is ahead for turnkey NER. |
 
 ## Readiness envelope
 
@@ -284,6 +567,7 @@ signals from the current Memory graph.
 node plugins/memory/dist/cli.js doctor                  # list stale nodes
 node plugins/memory/dist/cli.js doctor --prune          # prune (confirms first)
 node plugins/memory/dist/cli.js export [<out-dir>]      # graph.json + graph.html + audit.md
+node plugins/memory/dist/cli.js export [<out-dir>] --interop # + JSONL, GraphML, Neo4j Cypher
 ```
 
 `doctor` flags nodes unaccessed for 90+ days (`--stale-days N` to change) that
@@ -293,6 +577,20 @@ each hit's access counter, so frequently-recalled nodes stay fresh.
 
 `export` writes a self-contained, navigable `graph.html` (data inlined, opens
 from disk — no server) alongside `graph.json` and a health-summary `audit.md`.
+The bundle includes node/edge evidence, document metadata, vector-projection
+readiness for nodes and docs, health panels, contradictions, supersession, stale
+evidence, and a small context-pack preview. It deliberately exports document
+metadata and body lengths rather than full document bodies.
+With `--interop`, the same read-only export also writes `nodes.jsonl`,
+`edges.jsonl`, `graph.graphml`, and `neo4j.cypher` for GraphML/Neo4j-style
+exchange. These artifacts are portable views; the project-local RedDB graph
+remains the source of truth.
+
+`memory docs restore [path|rid]` is the explicit restore-only path for
+documentation stored in RedDB. Without `--yes` it plans the restore; with
+`--yes` it writes either to `.red/memory/restored-docs`, a caller-provided
+`--out <dir>`, or the original in-repo path with `--in-place`. Existing files
+are not replaced unless `--overwrite` is passed.
 
 
 ## Self-improvement loop
@@ -302,12 +600,21 @@ agent silently rewrite its own instructions:
 
 ```bash
 node plugins/memory/dist/cli.js health --json
+node plugins/memory/dist/cli.js hooks coverage --json
+node plugins/memory/dist/cli.js hooks coverage-viewer
 node plugins/memory/dist/cli.js improve skills --write-proposal --json
 node plugins/memory/dist/cli.js improve proposals list --json
 node plugins/memory/dist/cli.js improve proposals show .red/memory/proposals/<proposal>.md --json
 node plugins/memory/dist/cli.js improve apply .red/memory/proposals/<proposal>.md --yes --json
 node plugins/memory/dist/cli.js improve proposals archive .red/memory/proposals/<proposal>.md --reason applied --yes --json
 ```
+
+`hooks coverage` is read-only: it reports Claude/Codex manifest wiring,
+config-enabled lifecycle hooks, effective fallback coverage, actionable gaps,
+and known runner differences such as Codex lacking `PreCompact` without turning
+hooks on.
+`hooks coverage-viewer` writes the same report as embedded JSON plus HTML for
+local inspection and MCP/HTTP handoff.
 
 Proposals live under `.red/memory/proposals/`. Each proposal has a deterministic fingerprint, and repeated generation refreshes the matching pending proposal instead of creating duplicate files. Draft structured patches prefer semantic section anchors derived from the dominant failure stage/class before falling back to a safe tail anchor. Archiving moves reviewed files to
 `.red/memory/proposals/archive/<applied|rejected|stale>/`, so `memory health`
@@ -330,9 +637,16 @@ raw operational events age out of event-log reads.
 `memory_recall`, `memory_store`, `memory_search`, `memory_traverse`,
 `memory_neighbors`, `memory_path`, `memory_ask`, `memory_export`,
 `memory_doctor`, `memory_stats`, `memory_conflicts`, `memory_timeline`,
-`memory_supersede`. `memory_recall` returns a ready-to-inject
-markdown context block plus ranked nodes; `memory_ask` is the one LLM-backed
-verb (it needs an engine API key and degrades gracefully without one).
+`memory_supersede`, plus registry-backed read-only tools for readiness,
+readiness viewer HTML, operational dashboard HTML, unified workbench HTML, structural impact viewer HTML, pre-PR review viewer HTML,
+context packs and context pack viewer HTML, work frontiers and work frontier viewer HTML, handoff briefs and handoff viewer HTML, session timelines and session timeline viewer HTML, document search/read/coverage, doc coverage viewer HTML, path explanations and path explanation viewer HTML, pre-PR reviews, multi-agent routing guides for Codex/Claude/Cursor/Gemini/Aider/OpenCode/generic MCP or HTTP agents, claim checks,
+agent integration status and agent integration status viewer HTML, provenance, privacy, governance and governance viewer HTML, lint, decay plans and decay viewer HTML, skill recommendations, learning debt and learning debt viewer HTML, health and health viewer HTML,
+capability catalogs, memory layers, competitive radar, hook coverage, communities, onboarding maps, structural impact,
+extraction status, vector search diagnostics, and vector projection status.
+`memory_recall` returns a
+ready-to-inject markdown context block plus ranked nodes; `memory_ask` is the
+one LLM-backed verb (it needs an engine API key and degrades gracefully without
+one).
 
 It resolves its store from the project config (`.red/memory/config.json` in the
 cwd or `$MEMORY_ROOT`, graph mode required), or from an explicit

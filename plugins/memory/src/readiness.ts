@@ -325,6 +325,8 @@ async function communitySummary(
   } catch (err) {
     return {
       status: "unavailable",
+      schema_version: "memory.communities.v1",
+      read_only: true,
       graph_hash: "",
       cache_key: "",
       cached: false,

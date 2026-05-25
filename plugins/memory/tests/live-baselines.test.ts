@@ -1,5 +1,9 @@
 import { describe, expect, test } from "vitest";
-import { createAgentmemoryCliBaselineAdapter } from "../src/live-baseline-adapters.js";
+import {
+  createAgentmemoryCliBaselineAdapter,
+  createNeo4jAgentMemoryCliBaselineAdapter,
+  neo4jAgentMemoryBaselineCommandFromEnv,
+} from "../src/live-baseline-adapters.js";
 
 describe("live competitor baseline adapters", () => {
   test("Agentmemory CLI adapter advertises capabilities and skips unless explicitly enabled", async () => {
@@ -107,5 +111,58 @@ describe("live competitor baseline adapters", () => {
       evidence: ["agentmemory:longmemeval", "agentmemory:smart-search"],
       summary: "R@5 0.952, p50 18ms",
     });
+  });
+
+  test("Neo4j Agent Memory CLI adapter advertises recall latency and normalizes JSON metrics", async () => {
+    const adapter = createNeo4jAgentMemoryCliBaselineAdapter({
+      command: ["agent-memory-baseline", "--json"],
+      executor: async () => ({
+        status: 0,
+        stdout: JSON.stringify({
+          summary: "Neo4j Agent Memory p50 42ms",
+          metrics: {
+            p50_ms: 42,
+            recall_at_5: 0.88,
+            ignored_text: "not numeric",
+          },
+          evidence: ["neo4j-agent-memory:recall", "neo4j-agent-memory:cypher"],
+        }),
+        stderr: "",
+      }),
+    });
+
+    expect(adapter.capabilities()).toEqual([
+      {
+        id: "recall latency",
+        competitor: "agent-memory",
+        transport: "cli",
+        description:
+          "Run a live neo4j-labs/agent-memory recall-latency baseline through a JSON-emitting CLI command.",
+      },
+    ]);
+
+    const result = await adapter.run({ enabled: true, now: 1_700_000_000_000 });
+
+    expect(result).toMatchObject({
+      competitor: "agent-memory",
+      adapter: "neo4j-agent-memory-cli",
+      state: "measured",
+      configured: true,
+      capabilityId: "recall latency",
+      metrics: {
+        p50_ms: 42,
+        recall_at_5: 0.88,
+      },
+      evidence: ["neo4j-agent-memory:recall", "neo4j-agent-memory:cypher"],
+      summary: "Neo4j Agent Memory p50 42ms",
+    });
+  });
+
+  test("Neo4j Agent Memory baseline command reads JSON env configuration", () => {
+    expect(
+      neo4jAgentMemoryBaselineCommandFromEnv({
+        MEMORY_NEO4J_AGENT_MEMORY_BASELINE_CMD: '["node","scripts/neo4j-agent-memory-baseline.mjs"]',
+      }),
+    ).toEqual(["node", "scripts/neo4j-agent-memory-baseline.mjs"]);
   });
 });

@@ -31,13 +31,50 @@ describe("extractMarkdown", () => {
     expect(titles).toContain("Threat Model");
   });
 
-  test("emits a REFERENCES edge per wiki-link", async () => {
-    const { edges, doc } = await extractMarkdown(MD_FIXTURE);
+  test("grounds wiki-links and inline identifiers as referenced entity nodes", async () => {
+    const { edges, doc, nodes } = await extractMarkdown(MD_FIXTURE);
+    const entities = nodes.filter((n) => n.properties.entity_kind);
+    const entityTitles = entities.map((n) => n.properties.title).sort();
     const targets = edges.map((e) => e.toLabel);
 
+    expect(entityTitles).toEqual([
+      "../runbooks/incidents.md",
+      "JWT_SECRET",
+      "Session",
+      "TokenStore",
+    ]);
+    expect(entities).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          label: "entity:jwt_secret",
+          node_type: "concept",
+          properties: expect.objectContaining({
+            title: "JWT_SECRET",
+            entity_kind: "identifier",
+            confidence: "EXTRACTED",
+          }),
+        }),
+        expect.objectContaining({
+          label: "entity:tokenstore",
+          properties: expect.objectContaining({
+            title: "TokenStore",
+            entity_kind: "wikilink",
+          }),
+        }),
+        expect.objectContaining({
+          label: "entity:../runbooks/incidents.md",
+          properties: expect.objectContaining({
+            title: "../runbooks/incidents.md",
+            entity_kind: "link",
+          }),
+        }),
+      ]),
+    );
     expect(edges.every((e) => e.label === "REFERENCES")).toBe(true);
     expect(edges.every((e) => e.fromHash === doc.hash)).toBe(true);
-    expect(targets).toContain("TokenStore");
-    expect(targets).toContain("Session");
+    expect(targets).toContain("entity:tokenstore");
+    expect(targets).toContain("entity:session");
+    expect(targets).toContain("entity:jwt_secret");
+    expect(targets).toContain("entity:../runbooks/incidents.md");
   });
 });

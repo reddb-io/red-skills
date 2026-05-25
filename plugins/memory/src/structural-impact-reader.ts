@@ -15,6 +15,12 @@ export type StructuralImpactEdge = MemoryEdge & {
 export interface StructuralImpact {
   imports: StructuralImpactEdge[];
   importedBy: StructuralImpactEdge[];
+  calls: StructuralImpactEdge[];
+  calledBy: StructuralImpactEdge[];
+  usesTypes: StructuralImpactEdge[];
+  usedByTypes: StructuralImpactEdge[];
+  references: StructuralImpactEdge[];
+  referencedBy: StructuralImpactEdge[];
   defines: StructuralImpactNode[];
   definedIn: StructuralImpactNode | null;
 }
@@ -29,6 +35,12 @@ export type StructuralImpactReader = (target: StructuralImpactTarget) => Promise
 const EMPTY: StructuralImpact = {
   imports: [],
   importedBy: [],
+  calls: [],
+  calledBy: [],
+  usesTypes: [],
+  usedByTypes: [],
+  references: [],
+  referencedBy: [],
   defines: [],
   definedIn: null,
 };
@@ -85,7 +97,65 @@ export async function readStructuralImpact(
       )
     : [];
 
-  return { imports, importedBy, defines, definedIn };
+  const callAnchors = new Set(
+    symbolNode ? [symbolNode.rid] : defines.map((node) => node.rid),
+  );
+  const calls =
+    callAnchors.size > 0
+      ? materializeEdges(
+          edges.filter((e) => e.label === "CALLS" && callAnchors.has(e.from_rid)),
+          nodeByRid,
+        )
+      : [];
+  const calledBy =
+    callAnchors.size > 0
+      ? materializeEdges(
+          edges.filter((e) => e.label === "CALLS" && callAnchors.has(e.to_rid)),
+          nodeByRid,
+        )
+      : [];
+  const usesTypes =
+    callAnchors.size > 0
+      ? materializeEdges(
+          edges.filter((e) => e.label === "USES_TYPE" && callAnchors.has(e.from_rid)),
+          nodeByRid,
+        )
+      : [];
+  const usedByTypes =
+    callAnchors.size > 0
+      ? materializeEdges(
+          edges.filter((e) => e.label === "USES_TYPE" && callAnchors.has(e.to_rid)),
+          nodeByRid,
+        )
+      : [];
+  const referenceAnchors = callAnchors;
+  const references =
+    referenceAnchors.size > 0
+      ? materializeEdges(
+          edges.filter((e) => e.label === "REFERENCES" && referenceAnchors.has(e.from_rid)),
+          nodeByRid,
+        )
+      : [];
+  const referencedBy =
+    referenceAnchors.size > 0
+      ? materializeEdges(
+          edges.filter((e) => e.label === "REFERENCES" && referenceAnchors.has(e.to_rid)),
+          nodeByRid,
+        )
+      : [];
+
+  return {
+    imports,
+    importedBy,
+    calls,
+    calledBy,
+    usesTypes,
+    usedByTypes,
+    references,
+    referencedBy,
+    defines,
+    definedIn,
+  };
 }
 
 function findFile(nodes: StructuralImpactNode[], targetFile: string): StructuralImpactNode | null {

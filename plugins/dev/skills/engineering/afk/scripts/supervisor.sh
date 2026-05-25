@@ -2,10 +2,11 @@
 # /afk supervisor — maintains N concurrent /afk workers on a single checkout.
 #
 # Usage:
-#   RED_AFK_TARGET=2 bash supervisor.sh [project_root]
+#   RED_AFK_TARGET=2 bash supervisor.sh [--request TEXT] [project_root]
 #
 # Env:
-#   RED_AFK_TARGET — desired worker count (default 2)
+#   RED_AFK_TARGET  — desired worker count (default 2)
+#   RED_AFK_REQUEST — optional special user request forwarded to every worker
 #
 # State (all under $PROJECT_ROOT/.red/tmp/, gitignored):
 #   afk-supervisor.pid           — supervisor PID (single-supervisor lock)
@@ -58,7 +59,20 @@ source "$SCRIPT_DIR/hooks.sh"
 # shellcheck source=./lib/envelope.sh
 source "$SCRIPT_DIR/lib/envelope.sh"
 
-PROJECT_ROOT="${1:-$(pwd)}"
+SUPERVISOR_REQUEST="${RED_AFK_REQUEST:-}"
+PROJECT_ROOT=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --request|-r) SUPERVISOR_REQUEST="$2"; shift 2 ;;
+    -h|--help)
+      sed -n '2,11p' "$0"
+      exit 0
+      ;;
+    *) PROJECT_ROOT="$1"; shift ;;
+  esac
+done
+
+PROJECT_ROOT="${PROJECT_ROOT:-$(pwd)}"
 PROJECT_ROOT="$(cd "$PROJECT_ROOT" && pwd)"
 TMP_DIR="$PROJECT_ROOT/.red/tmp"
 mkdir -p "$TMP_DIR"
@@ -287,7 +301,13 @@ spawn_slot() {
     env_args+=("$line")
   done < <(build_slot_env_overrides "$slot")
 
-  nohup env "${env_args[@]}" "$AFK_SH" "$PROJECT_ROOT" >>"$slot_log" 2>&1 </dev/null &
+  local -a worker_cmd=("$AFK_SH")
+  if [[ -n "$SUPERVISOR_REQUEST" ]]; then
+    worker_cmd+=(--request "$SUPERVISOR_REQUEST")
+  fi
+  worker_cmd+=("$PROJECT_ROOT")
+
+  nohup env "${env_args[@]}" "${worker_cmd[@]}" >>"$slot_log" 2>&1 </dev/null &
   local pid=$!
   SLOT_PIDS[$slot]=$pid
   SLOT_SPAWN_EPOCH[$slot]="$(date +%s)"

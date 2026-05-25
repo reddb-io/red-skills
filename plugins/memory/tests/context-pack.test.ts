@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { buildContextPack, type ContextPackStore } from "../src/context-pack.js";
+import { buildContextPackViewerArtifact } from "../src/context-pack-viewer.js";
 import type { GraphRow, SearchRow, StoredNode } from "../src/graph-store.js";
 
 class MockStore implements ContextPackStore {
@@ -95,6 +96,16 @@ describe("context packs", () => {
       "memory_nodes:4",
       "memory_nodes:5",
     ]);
+
+    const artifact = buildContextPackViewerArtifact(pack);
+    expect(artifact.contract).toEqual({
+      name: "memory.context_pack.viewer",
+      version: "memory.context_pack.viewer.v1",
+      consumes: "memory.context_pack.v1",
+    });
+    expect(artifact.html).toContain("Memory Context Pack");
+    expect(artifact.html).toContain("Auth token constraint");
+    expect(artifact.html).toContain('id="memory-context-pack-data"');
   });
 
   test("can include shared skill recommendation data", async () => {

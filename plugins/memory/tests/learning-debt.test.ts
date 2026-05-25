@@ -3,6 +3,7 @@ import {
   buildLearningDebtReport,
   type LearningDebtStore,
 } from "../src/learning-debt.js";
+import { buildLearningDebtViewerArtifact } from "../src/learning-debt-viewer.js";
 import type { StoredNode } from "../src/graph-store.js";
 import type { SkillRollup } from "../src/skill-events.js";
 
@@ -128,6 +129,8 @@ describe("Memory learning debt reports", () => {
     });
 
     expect(report.status).toBe("debt-found");
+    expect(report.schema_version).toBe("memory.learning_debt.v1");
+    expect(report.read_only).toBe(true);
     expect(report.summary).toMatchObject({
       repeatedFailurePatterns: 1,
       staleOrContradictedGuidance: 2,
@@ -155,5 +158,17 @@ describe("Memory learning debt reports", () => {
     });
     expect(report.markdown).toContain("# Memory learning debt");
     expect(report.markdown).toContain("Repeated Failure Patterns");
+
+    const artifact = buildLearningDebtViewerArtifact(report);
+    expect(artifact.contract).toEqual({
+      name: "memory.learning_debt.viewer",
+      version: "memory.learning_debt.viewer.v1",
+      consumes: "memory.learning_debt.v1",
+    });
+    expect(artifact.html).toContain("Learning Debt");
+    expect(artifact.html).toContain("issue:10 error:validation");
+    expect(artifact.html).toContain("dev:tdd");
+    expect(artifact.html).toContain('id="learning-debt-data"');
+    expect(artifact.html).not.toContain("<script src=");
   });
 });

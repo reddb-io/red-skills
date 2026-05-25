@@ -138,6 +138,8 @@ describe("memory onboarding-map CLI", () => {
 
       expect(result.status, result.stderr).toBe(0);
       const body = JSON.parse(result.stdout) as {
+        schema_version: string;
+        read_only: boolean;
         status: string;
         summary: {
           concepts: number;
@@ -156,6 +158,8 @@ describe("memory onboarding-map CLI", () => {
         markdown: string;
       };
 
+      expect(body.schema_version).toBe("memory.onboarding_map.v1");
+      expect(body.read_only).toBe(true);
       expect(body.status).toBe("review-warnings");
       expect(body.summary).toMatchObject({
         concepts: 1,
@@ -196,6 +200,16 @@ describe("memory onboarding-map CLI", () => {
       expect(result.stdout).toContain("## Concepts");
       expect(result.stdout).toContain("## Suggested Skills");
       expect(result.stdout).toContain("Recall latency risk");
+
+      const out = join(root, "onboarding-map.html");
+      const viewer = runMemory(["onboarding-map-viewer", "--root", root, "--out", out]);
+      expect(viewer.status, viewer.stderr).toBe(0);
+      expect(viewer.stdout).toContain("memory: onboarding map viewer written");
+      expect(viewer.stdout).toContain("contract: memory.onboarding_map.v1");
+      const html = await readFile(out, "utf8");
+      expect(html).toContain("Onboarding Map");
+      expect(html).toContain("Recall latency risk");
+      expect(html).toContain('id="onboarding-map-data"');
     },
     TIMEOUT,
   );

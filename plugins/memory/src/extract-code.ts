@@ -28,7 +28,8 @@ const LANG_BY_EXT: Record<string, string> = {
  *
  * Ported from red-memory `packages/extractor/src/code.ts`. This slice ships the
  * regex symbol scanner — a fully deterministic parse that needs no native
- * toolchain. tree-sitter grammars (call/import/type graphs) are the planned
+ * toolchain. It also extracts conservative intra-file TS/JS call and type-use
+ * edges between symbols. tree-sitter grammars (richer call/type graphs) are the planned
  * upgrade and slot in behind this same `CodeExtraction` shape; until then the
  * regex path is the tested surface, per issue #53 ("deterministic paths only").
  *
@@ -60,7 +61,8 @@ export async function extractCode(path: string): Promise<CodeExtraction> {
     },
   };
 
-  const symbols = regexSymbols(source, lang).map<MemoryNode>((sym) => ({
+  const symbolHits = regexSymbols(source, lang);
+  const symbols = symbolHits.map<MemoryNode>((sym) => ({
     label: `sym:${path}#${sym.name}`,
     node_type: "symbol",
     properties: {
@@ -111,6 +113,8 @@ export async function extractCode(path: string): Promise<CodeExtraction> {
       toLabel: imp.label,
       label: "IMPORTS" as const,
     })),
+    ...extractCallEdges(path, source, lang, symbolHits),
+    ...extractTypeEdges(path, source, lang, symbolHits),
   );
 
   return { nodes: [fileNode, ...symbols, ...imports], edges };
@@ -120,6 +124,7 @@ interface SymbolHit {
   name: string;
   kind: "function" | "class" | "interface" | "type" | "const" | "struct";
   line: number;
+  index: number;
 }
 
 const PATTERNS: Record<string, Array<{ kind: SymbolHit["kind"]; re: RegExp }>> = {
@@ -158,8 +163,84 @@ function regexSymbols(source: string, lang: string): SymbolHit[] {
       const name = m[1];
       if (!name) continue;
       const line = (source.slice(0, m.index ?? 0).match(/\n/g)?.length ?? 0) + 1;
-      hits.push({ name, kind, line });
+      hits.push({ name, kind, line, index: m.index ?? 0 });
     }
   }
-  return hits;
+  return hits.sort((a, b) => a.index - b.index || a.name.localeCompare(b.name));
+}
+
+function extractCallEdges(
+  path: string,
+  source: string,
+  lang: string,
+  symbols: SymbolHit[],
+): CodeExtraction["edges"] {
+  if (!["typescript", "tsx", "javascript"].includes(lang) || symbols.length === 0) {
+    return [];
+  }
+  const callableNames = new Set(
+    symbols
+      .filter((symbol) => symbol.kind === "function" || symbol.kind === "const" || symbol.kind === "class")
+      .map((symbol) => symbol.name),
+  );
+  const edges: CodeExtraction["edges"] = [];
+  for (let i = 0; i < symbols.length; i++) {
+    const from = symbols[i];
+    if (!from || !callableNames.has(from.name)) continue;
+    const body = source.slice(from.index, symbols[i + 1]?.index ?? source.length);
+    const called = new Set<string>();
+    const callRe = /\b(?:new\s+)?([A-Za-z_]\w*)\s*\(/g;
+    for (const match of body.matchAll(callRe)) {
+      const name = match[1];
+      if (!name || name === from.name || !callableNames.has(name)) continue;
+      called.add(name);
+    }
+    for (const name of called) {
+      edges.push({
+        fromLabel: `sym:${path}#${from.name}`,
+        toLabel: `sym:${path}#${name}`,
+        label: "CALLS",
+      });
+    }
+  }
+  return edges;
+}
+
+function extractTypeEdges(
+  path: string,
+  source: string,
+  lang: string,
+  symbols: SymbolHit[],
+): CodeExtraction["edges"] {
+  if (!["typescript", "tsx", "javascript"].includes(lang) || symbols.length === 0) {
+    return [];
+  }
+  const typeNames = new Set(
+    symbols
+      .filter((symbol) => symbol.kind === "type" || symbol.kind === "interface" || symbol.kind === "class")
+      .map((symbol) => symbol.name),
+  );
+  const edges: CodeExtraction["edges"] = [];
+  for (let i = 0; i < symbols.length; i++) {
+    const from = symbols[i];
+    if (!from) continue;
+    const body = source.slice(from.index, symbols[i + 1]?.index ?? source.length);
+    const used = new Set<string>();
+    for (const name of typeNames) {
+      if (name === from.name) continue;
+      if (new RegExp(`\\b${escapeRegExp(name)}\\b`).test(body)) used.add(name);
+    }
+    for (const name of used) {
+      edges.push({
+        fromLabel: `sym:${path}#${from.name}`,
+        toLabel: `sym:${path}#${name}`,
+        label: "USES_TYPE",
+      });
+    }
+  }
+  return edges;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

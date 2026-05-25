@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
@@ -64,6 +64,40 @@ describe("memory context-pack CLI", () => {
       expect(body.markdown).toContain("urn: memory_nodes:");
       expect(body.entries[0].reason).toContain("matched the goal");
       expect(body.entries[0].citation.source).toBe("manual");
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "writes a self-contained context pack viewer",
+    async () => {
+      const root = await initRoot();
+      const stored = runMemory([
+        "store",
+        "Decision: JWT token work must update docs/security.md and use signed fixtures.",
+        "--root",
+        root,
+      ]);
+      expect(stored.status, stored.stderr).toBe(0);
+
+      const out = join(root, "context-pack.html");
+      const result = runMemory([
+        "context-pack-viewer",
+        "jwt token work",
+        "--root",
+        root,
+        "--budget",
+        "1200",
+        "--out",
+        out,
+      ]);
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("memory: context pack viewer written");
+      const html = await readFile(out, "utf8");
+      expect(html).toContain("Memory Context Pack");
+      expect(html).toContain("JWT token work");
+      expect(html).toContain('id="memory-context-pack-data"');
+      expect(html).not.toContain("<script src=");
     },
     TIMEOUT,
   );

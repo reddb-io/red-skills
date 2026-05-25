@@ -290,6 +290,82 @@ export async function extractConversation(
   return parseExtraction(raw);
 }
 
+const STRUCTURED_FACT_PREFIXES: Array<{
+  pattern: RegExp;
+  nodeType: NodeType;
+  titlePrefix: string;
+  tags: string[];
+}> = [
+  {
+    pattern: /^(?:decision|decided)\s*:\s*(.+)$/i,
+    nodeType: "decision",
+    titlePrefix: "Decision",
+    tags: ["decision"],
+  },
+  {
+    pattern: /^(?:problem|issue|bug)\s*:\s*(.+)$/i,
+    nodeType: "problem",
+    titlePrefix: "Problem",
+    tags: ["problem"],
+  },
+  {
+    pattern: /^(?:root cause|cause)\s*:\s*(.+)$/i,
+    nodeType: "problem",
+    titlePrefix: "Root cause",
+    tags: ["root-cause"],
+  },
+  {
+    pattern: /^(?:fix|fixed|solution)\s*:\s*(.+)$/i,
+    nodeType: "fix",
+    titlePrefix: "Fix",
+    tags: ["fix"],
+  },
+  {
+    pattern: /^(?:validation|verified|test|tests)\s*:\s*(.+)$/i,
+    nodeType: "validation",
+    titlePrefix: "Validation",
+    tags: ["validation"],
+  },
+  {
+    pattern: /^(?:workflow|process|runbook)\s*:\s*(.+)$/i,
+    nodeType: "workflow",
+    titlePrefix: "Workflow",
+    tags: ["workflow"],
+  },
+];
+
+/**
+ * Provider-free extraction for structured engineering transcripts.
+ *
+ * This deliberately recognizes only explicit, line-oriented facts such as
+ * `Decision: ...`, `Problem: ...`, `Fix: ...`, and `Validation: ...`. It is not
+ * NER or free-form summarization; it gives local-dev sessions a useful zero
+ * network fallback while keeping broad inference behind the configured provider.
+ */
+export function extractStructuredTranscript(transcript: string): ExtractedFact[] {
+  const facts: ExtractedFact[] = [];
+  for (const rawLine of transcript.split(/\r?\n/)) {
+    const line = stripSpeakerPrefix(rawLine.trim().replace(/^[-*]\s+/, ""));
+    if (!line) continue;
+    const def = STRUCTURED_FACT_PREFIXES.find((candidate) => candidate.pattern.test(line));
+    if (!def) continue;
+    const match = line.match(def.pattern);
+    const text = match?.[1]?.trim();
+    if (!text) continue;
+    const title = `${def.titlePrefix}: ${sentenceTitle(text)}`;
+    facts.push({
+      label: uniqueStructuredLabel(facts, title),
+      node_type: def.nodeType,
+      title,
+      summary: text,
+      tags: def.tags,
+      relations: [],
+    });
+  }
+  addStructuredRelations(facts);
+  return facts;
+}
+
 /** A graph fragment ready for the ingest indexer: nodes + label-keyed edges. */
 export interface InferredExtraction {
   nodes: MemoryNode[];
@@ -323,4 +399,48 @@ export function factsToGraph(facts: ExtractedFact[], source = "conversation"): I
     }
   }
   return { nodes, edges };
+}
+
+function stripSpeakerPrefix(line: string): string {
+  return line.replace(/^(?:user|assistant|agent|system|human|codex|claude)\s*:\s*/i, "");
+}
+
+function sentenceTitle(text: string): string {
+  const compact = text.replace(/\s+/g, " ").trim();
+  return compact.slice(0, 1).toUpperCase() + compact.slice(1, 120);
+}
+
+function uniqueStructuredLabel(facts: ExtractedFact[], title: string): string {
+  const base = slug(title);
+  let label = base;
+  let suffix = 2;
+  const existing = new Set(facts.map((fact) => fact.label));
+  while (existing.has(label)) {
+    label = `${base}-${suffix}`;
+    suffix += 1;
+  }
+  return label;
+}
+
+function slug(value: string): string {
+  return (
+    value
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 80) || "structured-transcript-fact"
+  );
+}
+
+function addStructuredRelations(facts: ExtractedFact[]): void {
+  const lastProblem = [...facts].reverse().find((fact) => fact.node_type === "problem");
+  const lastFix = [...facts].reverse().find((fact) => fact.node_type === "fix");
+  for (const fact of facts) {
+    if (fact.node_type === "fix" && lastProblem && fact.label !== lastProblem.label) {
+      fact.relations.push({ label: "FIXES", target: lastProblem.label });
+    }
+    if (fact.node_type === "validation" && lastFix && fact.label !== lastFix.label) {
+      lastFix.relations.push({ label: "TESTED_BY", target: fact.label });
+    }
+  }
 }

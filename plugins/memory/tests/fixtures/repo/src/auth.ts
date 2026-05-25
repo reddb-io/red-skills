@@ -9,7 +9,8 @@ export class TokenStore {
 }
 
 export function issueToken(user: UserId): string {
-  return user;
+  const token = String(user);
+  return verifyToken(token) ? token : "";
 }
 
 export const verifyToken = (token: string) => token.length > 0;

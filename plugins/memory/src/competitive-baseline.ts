@@ -1,9 +1,12 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { performance } from "node:perf_hooks";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { buildMemoryAgentIntegrationStatus } from "./agent-integration-status.js";
+import { buildMemoryCapabilityCatalog } from "./capability-catalog.js";
 import { buildContextPack } from "./context-pack.js";
+import { buildDocCoverageReport } from "./doc-coverage.js";
 import {
   competitiveEvalFixture,
   competitiveInteropFixtures,
@@ -21,11 +24,18 @@ import { lintMemoryRecords, type LintMemoryRecord } from "./lint.js";
 import {
   agentmemoryBaselineCommandFromEnv,
   createAgentmemoryCliBaselineAdapter,
+  createNeo4jAgentMemoryCliBaselineAdapter,
   defaultCliExecutor,
+  neo4jAgentMemoryBaselineCommandFromEnv,
   type LiveBaselineRunResult,
 } from "./live-baseline-adapters.js";
 import { appendMemoryEvent, parseMemoryEvent } from "./memory-events.js";
+import {
+  buildMemoryOperationalDashboard,
+  buildMemoryOperationalDashboardArtifact,
+} from "./operational-dashboard.js";
 import { buildReadinessEnvelope } from "./readiness.js";
+import { buildMemoryRoutingGuide, SUPPORTED_ROUTING_AGENTS } from "./routing-guide.js";
 import type { EdgeLabel } from "./schema.js";
 import { classifyCandidateMemory } from "./store-classifier.js";
 import { commitMemoryGraph } from "./vcs-commit.js";
@@ -118,7 +128,13 @@ export interface CompetitiveEvalPolicyCase {
 }
 
 export interface FoundationGateAxis {
-  id: "retrieval" | "readiness" | "trust-governance" | "skill-evolution";
+  id:
+    | "retrieval"
+    | "readiness"
+    | "trust-governance"
+    | "skill-evolution"
+    | "operator-surface"
+    | "multi-agent-integration";
   score: number;
   maxScore: number;
   status: "pass" | "warn" | "fail";
@@ -181,6 +197,51 @@ export interface FoundationEvidenceGateReport {
       assignments: number;
     };
   };
+  operatorSurface: {
+    score: number;
+    maxScore: number;
+    docCoverage: {
+      totalDocs: number;
+      groundedDocs: number;
+      docsWithReferences: number;
+      vectorOverall: string;
+    };
+    hookCoverage: {
+      enabledEvents: number;
+      wiredEvents: number;
+      totalEvents: number;
+      gaps: number;
+    };
+    dashboard: {
+      contractVersion: string;
+      consumes: string;
+      htmlBytes: number;
+      state: string;
+    };
+    capabilityCatalog: {
+      total: number;
+      categories: number;
+      redDbBacked: number;
+      ready: number;
+      notConfigured: number;
+    };
+  };
+  multiAgentIntegration: {
+    score: number;
+    maxScore: number;
+    supportedAgents: number;
+    readyAgents: number;
+    partialAgents: number;
+    missingAgents: number;
+    mcpTools: number;
+    cliFallbacks: number;
+    hookCapableAgents: number;
+    hookReadyAgents: number;
+    sources: {
+      routingGuide: "memory.routing_guide.v1";
+      integrationStatus: "memory.agent_integration_status.v1";
+    };
+  };
   composite: {
     score: number;
     maxScore: number;
@@ -233,7 +294,13 @@ export interface CompetitiveEvalReport {
 }
 
 export interface CompetitiveEvalV2Dimension {
-  id: "retrieval" | "readiness" | "trust-governance" | "skill-evolution";
+  id:
+    | "retrieval"
+    | "readiness"
+    | "trust-governance"
+    | "skill-evolution"
+    | "operator-surface"
+    | "multi-agent-integration";
   score: number;
   maxScore: number;
   status: "pass" | "warn" | "fail";
@@ -416,7 +483,7 @@ function buildRows(): ComparisonRow[] {
     },
     {
       axis: "NER extraction quality",
-      memory: "Deterministic extractors plus optional LLM provider for inferred facts.",
+      memory: "Deterministic structural/entity extractors plus optional LLM provider for inferred facts.",
       graphify: `${graphifyOutSummary.inferredEdges} inferred fixture edges; strong static-code graph output.`,
       agentMemory: "spaCy / GLiNER / GLiREL / LLM extraction pipeline.",
       framing: "Conceded gap: Python ML stack is ahead for turnkey NER.",
@@ -621,14 +688,19 @@ async function evaluateFoundationEvidenceGate(
   try {
     const init = await initGraph(root, {
       project: "competitive-gate",
+      hooks: true,
       skillTelemetry: true,
     });
+    await seedAgentRoutingFiles(root);
     const store = await MemoryStore.open({ uri: init.storeUri, project: "competitive-gate" });
     let envelope: Awaited<ReturnType<typeof buildReadinessEnvelope>>;
     let vector = await store.vectorStatus();
     let hybridRecall: FoundationEvidenceGateReport["retrieval"]["hybridRecall"];
+    let operatorSurface!: FoundationEvidenceGateReport["operatorSurface"];
+    let multiAgentIntegration!: FoundationEvidenceGateReport["multiAgentIntegration"];
     try {
       const ridMap = await seedFoundationEvidence(store, fixture, opts.now);
+      await seedFoundationDocCoverage(store, root, ridMap, fixture, opts.now);
       vector = await store.vectorStatus();
 
       const recallCases: CompetitiveEvalRecallCase[] = [];
@@ -669,6 +741,8 @@ async function evaluateFoundationEvidenceGate(
         now: opts.now,
         minEvidence: 2,
       });
+      operatorSurface = await evaluateOperatorSurface(store, root);
+      multiAgentIntegration = await evaluateMultiAgentIntegration(root, opts.now);
     } finally {
       await store.close();
     }
@@ -684,6 +758,8 @@ async function evaluateFoundationEvidenceGate(
       hybridRecall,
       asOfRecall,
       envelope,
+      operatorSurface,
+      multiAgentIntegration,
     });
     const score = axes.reduce((sum, axis) => sum + axis.score, 0);
     const maxScore = axes.reduce((sum, axis) => sum + axis.maxScore, 0);
@@ -731,6 +807,8 @@ async function evaluateFoundationEvidenceGate(
           assignments: envelope.communities.assignments,
         },
       },
+      operatorSurface,
+      multiAgentIntegration,
       composite: {
         score,
         maxScore,
@@ -741,7 +819,7 @@ async function evaluateFoundationEvidenceGate(
         state: "adapter-ready",
         implemented: true,
         note:
-          "Agentmemory live baseline adapter is available through eval:competitive:v2 --live-agentmemory; normal runs remain checked-in fixture only.",
+          "Agentmemory and Neo4j Agent Memory live baseline adapters are available through opt-in eval:competitive:v2 flags; normal runs remain checked-in fixture only.",
       },
     };
   } finally {
@@ -825,6 +903,167 @@ async function seedFoundationEvidence(
   return rids;
 }
 
+async function seedFoundationDocCoverage(
+  store: MemoryStore,
+  root: string,
+  rids: Map<number, number>,
+  fixture: CompetitiveEvalFixture,
+  now: number,
+): Promise<void> {
+  const docHash = `competitive-doc:${fixture.name}`;
+  const docPath = join(root, "docs", "competitive-memory.md");
+  const docRid = await store.upsertDoc({
+    path: docPath,
+    title: "Competitive Memory Evidence",
+    body:
+      "Competitive Memory Evidence links README claims, hook coverage, doc coverage, vector diagnostics, and the operational dashboard.",
+    frontmatter: { tags: ["competitive", "memory", "dashboard"] },
+    hash: docHash,
+    updated_at: now,
+  });
+  const rootRid = await store.upsertNode({
+    label: `md:${docPath}`,
+    node_type: "concept",
+    properties: {
+      title: "Competitive Memory Evidence",
+      summary: "Documentation chunk for competitive operator-surface coverage.",
+      source: docPath,
+      confidence: "EXTRACTED",
+      hash: docHash,
+      created_at: now,
+      updated_at: now,
+      provenance: {
+        source_kind: "system",
+        writer: "eval:competitive",
+        command: "operator surface evidence",
+        evidence: [`memory_docs:${docRid}`],
+      },
+    },
+  });
+  const target = mappedRid(rids, fixture.nodes[0]?.rid ?? 1);
+  await store.upsertEdge({
+    label: "REFERENCES",
+    from_rid: rootRid,
+    to_rid: target,
+    properties: { source: "competitive-fixture", created_at: now },
+  });
+}
+
+async function evaluateOperatorSurface(
+  store: MemoryStore,
+  root: string,
+): Promise<FoundationEvidenceGateReport["operatorSurface"]> {
+  const [docCoverage, dashboard, capabilityCatalog] = await Promise.all([
+    buildDocCoverageReport(store),
+    buildMemoryOperationalDashboard(store, root),
+    buildMemoryCapabilityCatalog(store, root),
+  ]);
+  const artifact = buildMemoryOperationalDashboardArtifact(dashboard);
+  const hookCoverage = dashboard.sources.hook_coverage;
+  const pass =
+    docCoverage.total_docs > 0 &&
+    docCoverage.grounded_docs === docCoverage.total_docs &&
+    docCoverage.docs_with_references > 0 &&
+    hookCoverage.summary.wired_events >= 7 &&
+    hookCoverage.summary.enabled_events >= 7 &&
+    artifact.contract.version === "memory.operational_dashboard.viewer.v1" &&
+    artifact.contract.consumes === "memory.operational_dashboard.v1" &&
+    artifact.html.includes('id="memory-dashboard-data"') &&
+    capabilityCatalog.schema_version === "memory.capability_catalog.v1" &&
+    capabilityCatalog.summary.total >= 9 &&
+    capabilityCatalog.categories.length >= 9 &&
+    capabilityCatalog.summary.red_db_backed >= 8;
+
+  return {
+    score: pass ? 1 : 0,
+    maxScore: 1,
+    docCoverage: {
+      totalDocs: docCoverage.total_docs,
+      groundedDocs: docCoverage.grounded_docs,
+      docsWithReferences: docCoverage.docs_with_references,
+      vectorOverall: docCoverage.vector.overall,
+    },
+    hookCoverage: {
+      enabledEvents: hookCoverage.summary.enabled_events,
+      wiredEvents: hookCoverage.summary.wired_events,
+      totalEvents: hookCoverage.summary.total_events,
+      gaps: hookCoverage.gaps.length,
+    },
+    dashboard: {
+      contractVersion: artifact.contract.version,
+      consumes: artifact.contract.consumes,
+      htmlBytes: Buffer.byteLength(artifact.html, "utf8"),
+      state: dashboard.state,
+    },
+    capabilityCatalog: {
+      total: capabilityCatalog.summary.total,
+      categories: capabilityCatalog.categories.length,
+      redDbBacked: capabilityCatalog.summary.red_db_backed,
+      ready: capabilityCatalog.summary.ready,
+      notConfigured: capabilityCatalog.summary.not_configured,
+    },
+  };
+}
+
+async function seedAgentRoutingFiles(root: string): Promise<void> {
+  const snippetsByPath = new Map<string, string[]>();
+  for (const agent of SUPPORTED_ROUTING_AGENTS) {
+    const guide = buildMemoryRoutingGuide({ agent });
+    for (const target of guide.targetFiles) {
+      const snippets = snippetsByPath.get(target) ?? [];
+      snippets.push(guide.installSnippet);
+      snippetsByPath.set(target, snippets);
+    }
+  }
+
+  await Promise.all(
+    [...snippetsByPath.entries()].map(async ([target, snippets]) => {
+      const path = join(root, target);
+      await mkdir(dirname(path), { recursive: true });
+      await writeFile(path, snippets.join("\n"), "utf8");
+    }),
+  );
+}
+
+async function evaluateMultiAgentIntegration(
+  root: string,
+  now: number,
+): Promise<FoundationEvidenceGateReport["multiAgentIntegration"]> {
+  const status = await buildMemoryAgentIntegrationStatus(root, { now });
+  const representativeGuide = buildMemoryRoutingGuide({ agent: "codex" });
+  const hookCapableAgents = status.agents.filter((agent) => agent.hook_coverage != null);
+  const hookReadyAgents = hookCapableAgents.filter(
+    (agent) =>
+      (agent.hook_coverage?.effective_events ?? 0) > 0 &&
+      (agent.hook_coverage?.actionable_gaps ?? 1) === 0,
+  );
+  const pass =
+    status.summary.agents === SUPPORTED_ROUTING_AGENTS.length &&
+    status.summary.ready === SUPPORTED_ROUTING_AGENTS.length &&
+    status.summary.missing === 0 &&
+    representativeGuide.mcpTools.length >= 10 &&
+    representativeGuide.cliFallbacks.length >= 10 &&
+    hookCapableAgents.length >= 2 &&
+    hookReadyAgents.length === hookCapableAgents.length;
+
+  return {
+    score: pass ? 1 : 0,
+    maxScore: 1,
+    supportedAgents: status.summary.agents,
+    readyAgents: status.summary.ready,
+    partialAgents: status.summary.partial,
+    missingAgents: status.summary.missing,
+    mcpTools: representativeGuide.mcpTools.length,
+    cliFallbacks: representativeGuide.cliFallbacks.length,
+    hookCapableAgents: hookCapableAgents.length,
+    hookReadyAgents: hookReadyAgents.length,
+    sources: {
+      routingGuide: status.sources.routing_guide,
+      integrationStatus: status.schema_version,
+    },
+  };
+}
+
 function mappedRid(rids: Map<number, number>, rid: number): number {
   return rids.get(rid) ?? rid;
 }
@@ -873,6 +1112,8 @@ function foundationAxes(input: {
   hybridRecall: FoundationEvidenceGateReport["retrieval"]["hybridRecall"];
   asOfRecall: FoundationEvidenceGateReport["retrieval"]["asOfRecall"];
   envelope: Awaited<ReturnType<typeof buildReadinessEnvelope>>;
+  operatorSurface: FoundationEvidenceGateReport["operatorSurface"];
+  multiAgentIntegration: FoundationEvidenceGateReport["multiAgentIntegration"];
 }): FoundationGateAxis[] {
   const retrievalPass =
     input.hybridRecall.queryCount > 0 &&
@@ -889,6 +1130,9 @@ function foundationAxes(input: {
   const skillEvolutionPass =
     (input.envelope.operations.event_log.kinds["skill.telemetry"] ?? 0) > 0 &&
     input.envelope.communities.assignments > 0;
+  const operatorSurfacePass = input.operatorSurface.score === input.operatorSurface.maxScore;
+  const multiAgentIntegrationPass =
+    input.multiAgentIntegration.score === input.multiAgentIntegration.maxScore;
 
   return [
     {
@@ -918,6 +1162,20 @@ function foundationAxes(input: {
       maxScore: 1,
       status: skillEvolutionPass ? "pass" : "fail",
       detail: `skill.telemetry=${input.envelope.operations.event_log.kinds["skill.telemetry"] ?? 0}, communities=${input.envelope.communities.communities}/${input.envelope.communities.assignments}`,
+    },
+    {
+      id: "operator-surface",
+      score: operatorSurfacePass ? 1 : 0,
+      maxScore: 1,
+      status: operatorSurfacePass ? "pass" : "fail",
+      detail: `docs=${input.operatorSurface.docCoverage.groundedDocs}/${input.operatorSurface.docCoverage.totalDocs}, hooks=${input.operatorSurface.hookCoverage.enabledEvents}/${input.operatorSurface.hookCoverage.totalEvents}, dashboard=${input.operatorSurface.dashboard.contractVersion}, capabilities=${input.operatorSurface.capabilityCatalog.total}/${input.operatorSurface.capabilityCatalog.categories}`,
+    },
+    {
+      id: "multi-agent-integration",
+      score: multiAgentIntegrationPass ? 1 : 0,
+      maxScore: 1,
+      status: multiAgentIntegrationPass ? "pass" : "fail",
+      detail: `agents=${input.multiAgentIntegration.readyAgents}/${input.multiAgentIntegration.supportedAgents}, mcp_tools=${input.multiAgentIntegration.mcpTools}, hooks=${input.multiAgentIntegration.hookReadyAgents}/${input.multiAgentIntegration.hookCapableAgents}`,
     },
   ];
 }
@@ -1077,7 +1335,13 @@ export async function evaluateCompetitiveEvalV2(
     .map((claim) => claim.id) ?? [];
   const score = dimensions.reduce((sum, dimension) => sum + dimension.score, 0);
   const maxScore = dimensions.reduce((sum, dimension) => sum + dimension.maxScore, 0);
-  const unsupportedLiveCompetitorClaims = [...report.claimGuards.unsupportedLiveCompetitorClaims];
+  const measuredLiveBaselineKeys = measuredLiveBaselineGuardKeys(liveBaselines);
+  const unsupportedLiveCompetitorClaims = report.claimGuards.unsupportedLiveCompetitorClaims.filter(
+    (key) => !measuredLiveBaselineKeys.has(key),
+  );
+  const unmeasuredLiveBaselines = report.claimGuards.unmeasuredLiveBaselines.filter(
+    (key) => !measuredLiveBaselineKeys.has(key),
+  );
   const claimGuardStatus =
     unsupportedPublicClaims.length === 0 && unsupportedLiveCompetitorClaims.length === 0
       ? "pass"
@@ -1102,9 +1366,19 @@ export async function evaluateCompetitiveEvalV2(
       status: claimGuardStatus,
       unsupportedPublicClaims,
       unsupportedLiveCompetitorClaims,
-      unmeasuredLiveBaselines: [...report.claimGuards.unmeasuredLiveBaselines],
+      unmeasuredLiveBaselines,
     },
   };
+}
+
+function measuredLiveBaselineGuardKeys(liveBaselines: LiveBaselineRunResult[]): Set<string> {
+  const keys = new Set<string>();
+  for (const baseline of liveBaselines) {
+    if (baseline.state !== "measured") continue;
+    keys.add(`${baseline.competitor}:${baseline.capabilityId}`);
+    keys.add(`${baseline.competitor}:${evidenceSlug(baseline.capabilityId)}`);
+  }
+  return keys;
 }
 
 function competitiveEvalV2EvidenceIds(
@@ -1201,6 +1475,57 @@ function competitiveEvalV2Dimensions(report: CompetitiveEvalReport): Competitive
         community_assignments: report.foundationGate.skillEvolution.communities.assignments,
       },
     },
+    {
+      id: "operator-surface",
+      score: report.foundationGate.operatorSurface.score,
+      maxScore: report.foundationGate.operatorSurface.maxScore,
+      status: foundationAxes.get("operator-surface")?.status ?? "fail",
+      detail: foundationAxes.get("operator-surface")?.detail ?? "missing operator-surface foundation axis",
+      evidence: [
+        "foundation:doc-coverage",
+        "foundation:hook-coverage",
+        "foundation:operational-dashboard",
+        "foundation:capability-catalog",
+      ],
+      metrics: {
+        docs_grounded: report.foundationGate.operatorSurface.docCoverage.groundedDocs,
+        docs_total: report.foundationGate.operatorSurface.docCoverage.totalDocs,
+        hook_events_enabled: report.foundationGate.operatorSurface.hookCoverage.enabledEvents,
+        hook_events_total: report.foundationGate.operatorSurface.hookCoverage.totalEvents,
+        dashboard_html_bytes: report.foundationGate.operatorSurface.dashboard.htmlBytes,
+        dashboard_contract: report.foundationGate.operatorSurface.dashboard.contractVersion,
+        capability_catalog_total: report.foundationGate.operatorSurface.capabilityCatalog.total,
+        capability_catalog_categories:
+          report.foundationGate.operatorSurface.capabilityCatalog.categories,
+        capability_catalog_red_db_backed:
+          report.foundationGate.operatorSurface.capabilityCatalog.redDbBacked,
+      },
+    },
+    {
+      id: "multi-agent-integration",
+      score: report.foundationGate.multiAgentIntegration.score,
+      maxScore: report.foundationGate.multiAgentIntegration.maxScore,
+      status: foundationAxes.get("multi-agent-integration")?.status ?? "fail",
+      detail:
+        foundationAxes.get("multi-agent-integration")?.detail ??
+        "missing multi-agent integration foundation axis",
+      evidence: [
+        "foundation:routing-guide",
+        "foundation:agent-integration-status",
+        "foundation:mcp-agent-tools",
+        "foundation:hook-backed-agent-integration",
+      ],
+      metrics: {
+        supported_agents: report.foundationGate.multiAgentIntegration.supportedAgents,
+        ready_agents: report.foundationGate.multiAgentIntegration.readyAgents,
+        partial_agents: report.foundationGate.multiAgentIntegration.partialAgents,
+        missing_agents: report.foundationGate.multiAgentIntegration.missingAgents,
+        mcp_tools: report.foundationGate.multiAgentIntegration.mcpTools,
+        cli_fallbacks: report.foundationGate.multiAgentIntegration.cliFallbacks,
+        hook_ready_agents: report.foundationGate.multiAgentIntegration.hookReadyAgents,
+        hook_capable_agents: report.foundationGate.multiAgentIntegration.hookCapableAgents,
+      },
+    },
   ];
 }
 
@@ -1242,14 +1567,14 @@ export function renderCompetitiveEvalV2Human(report: CompetitiveEvalV2Report): s
 
   lines.push("", "## Live baselines");
   if (report.liveBaselines.length === 0) {
-    lines.push("Agentmemory live baseline: not requested.");
+    lines.push("Live baselines: not requested.");
   } else {
     for (const baseline of report.liveBaselines) {
       const metrics = Object.entries(baseline.metrics)
         .map(([key, value]) => `${key}=${value}`)
         .join(" ");
       lines.push(
-        `Agentmemory live baseline: ${baseline.state} - ${baseline.summary}${metrics ? ` (${metrics})` : ""}`,
+        `${liveBaselineLabel(baseline.competitor)} live baseline: ${baseline.state} - ${baseline.summary}${metrics ? ` (${metrics})` : ""}`,
       );
     }
   }
@@ -1268,6 +1593,11 @@ export function renderCompetitiveEvalV2Human(report: CompetitiveEvalV2Report): s
   }
 
   return `${lines.join("\n")}\n`;
+}
+
+function liveBaselineLabel(competitor: LiveBaselineRunResult["competitor"]): string {
+  if (competitor === "agent-memory") return "Neo4j Agent Memory";
+  return "Agentmemory";
 }
 
 function serializeLiveBaseline(baseline: LiveBaselineRunResult): Record<string, unknown> {
@@ -1381,6 +1711,7 @@ export function renderCompetitiveEvalHuman(report: CompetitiveEvalReport): strin
     `trust-governance=${report.foundationGate.trustGovernance.score}/${report.foundationGate.trustGovernance.maxScore} events=${report.foundationGate.trustGovernance.eventLog.totalEvents} vcs=${report.foundationGate.trustGovernance.vcsTimeTravel}`,
     `skill-evolution=${report.foundationGate.skillEvolution.score}/${report.foundationGate.skillEvolution.maxScore} telemetry=${report.foundationGate.skillEvolution.telemetryEvents} communities=${report.foundationGate.skillEvolution.communities.count}/${report.foundationGate.skillEvolution.communities.assignments}`,
     "Agentmemory live baseline: adapter ready; pass --live-agentmemory to eval:competitive:v2 for opt-in live CLI measurement.",
+    "Neo4j Agent Memory live baseline: adapter ready; pass --live-agent-memory to eval:competitive:v2 for opt-in live CLI measurement.",
     "",
     "## Claim guards",
   ];
@@ -1436,6 +1767,13 @@ async function main(): Promise<void> {
     if (flags.has("--live-agentmemory")) {
       const adapter = createAgentmemoryCliBaselineAdapter({
         command: agentmemoryBaselineCommandFromEnv(),
+        executor: defaultCliExecutor,
+      });
+      liveBaselines.push(await adapter.run({ enabled: true, now }));
+    }
+    if (flags.has("--live-agent-memory")) {
+      const adapter = createNeo4jAgentMemoryCliBaselineAdapter({
+        command: neo4jAgentMemoryBaselineCommandFromEnv(),
         executor: defaultCliExecutor,
       });
       liveBaselines.push(await adapter.run({ enabled: true, now }));

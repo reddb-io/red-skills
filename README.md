@@ -263,6 +263,7 @@ Point it at your `ready-for-agent` backlog and walk away. For each issue, `/afk`
 /afk --prd 42                   # drain just the children of PRD #42
 /afk --issues 356,359,362       # explicit list, in argument order
 /afk --runner claude            # pin a backend (default: claude first, codex fallback on exhaustion)
+/afk --request "skip cargo tests" # add a special request to every inner-agent prompt
 /afk -n 5                       # cap at five issues
 /afk --once                     # supervised single iteration (debug mode)
 /afk                            # run it again in another terminal — auto-parallel, no flag needed
@@ -364,6 +365,7 @@ Every env var the skill reads or exports is prefixed `RED_AFK_*`. Operator knobs
 |---|---|---|
 | `RED_AFK_TARGET` | `2` | Worker count maintained by the fleet supervisor. |
 | `RED_AFK_RUNNER` | `claude` | Runner used when no `--runner` flag, env sniff, or path sniff resolves first (last step of the detection cascade). `claude` or `codex`. |
+| `RED_AFK_REQUEST` | *(unset)* | Optional special user request injected into every inner-agent prompt for the run. Equivalent to `/afk --request "..."`; fleet mode forwards it to workers. |
 | `RED_AFK_STAGGER_S` | `2` | Seconds between successive worker spawns at supervisor boot — avoids thundering-herd on git/gh. |
 | `RED_AFK_POLL_S` | `15` | Supervisor health-check tick (sec). Lower = faster respawn, more CPU. |
 | `RED_AFK_FAST_DEATH_S` | `30` | A slot dying in < N s counts toward the circuit breaker. |

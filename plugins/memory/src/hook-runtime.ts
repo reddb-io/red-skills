@@ -6,8 +6,10 @@ import {
   resolveStoreUri,
 } from "./config.js";
 import { recall as engineRecall, type RecallResult } from "./engine.js";
+import { extractStructuredTranscript, factsToGraph } from "./extract-conversation.js";
 import { MemoryStore } from "./graph-store.js";
 import { type IngestReport, reindexFiles } from "./ingest.js";
+import { appendMemoryEvent, hookLifecycleToMemoryEvent } from "./memory-events.js";
 import type { MemoryNode, NodeType } from "./schema.js";
 import { slugify } from "./store.js";
 
@@ -191,13 +193,34 @@ export async function dispatch(
 
   switch (input.event) {
     case "SessionStart":
-      return handleSessionStart(input, rootDir, config, deps);
+      return recordLifecycle(input, rootDir, config, deps, handleSessionStart(input, rootDir, config, deps));
     case "PostToolUse":
-      return handlePostToolUse(input, rootDir, config, deps);
+      return recordLifecycle(input, rootDir, config, deps, handlePostToolUse(input, rootDir, config, deps));
     case "Stop":
     case "PreCompact":
-      return handleFlush(input, rootDir, config, deps);
+      return recordLifecycle(input, rootDir, config, deps, handleFlush(input, rootDir, config, deps));
   }
+}
+
+async function recordLifecycle(
+  input: NormalizedInput,
+  rootDir: string,
+  config: MemoryConfig,
+  deps: HookDeps,
+  work: Promise<HookResult>,
+): Promise<HookResult> {
+  const result = await work;
+  try {
+    const store = await deps.openStore(resolveStoreUri(rootDir, config));
+    try {
+      await appendMemoryEvent(store, hookLifecycleToMemoryEvent(input, result));
+    } finally {
+      await store.close();
+    }
+  } catch {
+    // Lifecycle telemetry must never affect hook behavior.
+  }
+  return result;
 }
 
 async function handleSessionStart(
@@ -247,6 +270,43 @@ async function handleFlush(
 ): Promise<HookResult> {
   const text = input.transcriptText?.trim();
   if (!text) return { noop: true, reason: "empty transcript" };
+  const structuredFacts = extractStructuredTranscript(text);
+  if (structuredFacts.length > 0) {
+    const { nodes, edges } = factsToGraph(structuredFacts, `hook:${input.event}:structured-transcript`);
+    const store = await deps.openStore(resolveStoreUri(rootDir, config));
+    try {
+      const labelToRid = new Map<string, number>();
+      for (const node of nodes) {
+        node.properties.provenance = {
+          source_kind: "hook",
+          writer: input.runner,
+          hook: input.event,
+          confidence: "INFERRED",
+          evidence: ["transcriptText", "structured-transcript"],
+        };
+        labelToRid.set(node.label, await store.upsertNode(node));
+      }
+      for (const edge of edges) {
+        const from = labelToRid.get(edge.fromLabel);
+        const to = labelToRid.get(edge.toLabel);
+        if (from != null && to != null) {
+          await store.upsertEdge({
+            from_rid: from,
+            to_rid: to,
+            label: edge.label,
+            properties: {
+              confidence: "INFERRED",
+              source: `hook:${input.event}:structured-transcript`,
+            },
+          });
+        }
+      }
+      return { noop: false, stored: nodes.length };
+    } finally {
+      await store.close();
+    }
+  }
+
   const memories = await deps.extractor(text);
   if (memories.length === 0) return { noop: true, reason: "nothing worth keeping" };
   const store = await deps.openStore(resolveStoreUri(rootDir, config));

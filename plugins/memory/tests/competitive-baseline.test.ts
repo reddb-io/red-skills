@@ -86,11 +86,24 @@ describe("competitive baseline harness (#73)", () => {
     expect(report.foundationGate.readiness.consumerTargets).toContain("eval:competitive:v2");
     expect(report.foundationGate.trustGovernance.eventLog.totalEvents).toBeGreaterThan(0);
     expect(report.foundationGate.skillEvolution.communities.assignments).toBeGreaterThan(0);
+    expect(report.foundationGate.multiAgentIntegration).toMatchObject({
+      supportedAgents: 7,
+      readyAgents: 7,
+      missingAgents: 0,
+      sources: {
+        routingGuide: "memory.routing_guide.v1",
+        integrationStatus: "memory.agent_integration_status.v1",
+      },
+    });
+    expect(report.foundationGate.multiAgentIntegration.mcpTools).toBeGreaterThanOrEqual(10);
+    expect(report.foundationGate.multiAgentIntegration.hookReadyAgents).toBe(2);
     expect(report.foundationGate.composite.axes.map((axis) => axis.id)).toEqual([
       "retrieval",
       "readiness",
       "trust-governance",
       "skill-evolution",
+      "operator-surface",
+      "multi-agent-integration",
     ]);
     expect(report.foundationGate.agentmemoryLiveBaseline).toMatchObject({
       state: "adapter-ready",
@@ -104,6 +117,7 @@ describe("competitive baseline harness (#73)", () => {
     expect(human).toContain("Policy / extraction");
     expect(human).toContain("Foundation evidence gate");
     expect(human).toContain("Agentmemory live baseline: adapter ready");
+    expect(human).toContain("Neo4j Agent Memory live baseline: adapter ready");
     expect(human).toContain("No live competitor claims were asserted");
   }, 30_000);
 

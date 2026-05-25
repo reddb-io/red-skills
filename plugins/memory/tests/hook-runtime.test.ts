@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { readConfig, resolveStoreUri } from "../src/config.js";
 import { MemoryStore } from "../src/graph-store.js";
+import { readMemoryEvents } from "../src/memory-events.js";
 import { parseClaudeInput, parseCodexInput, formatOutput } from "../src/hook-adapters.js";
 import {
   dispatch,
@@ -83,6 +84,60 @@ describe("PreCompact flush → SessionStart recall across /clear (AC1, AC2)", ()
   );
 
   test(
+    "Stop persists structured problem/fix/validation facts with inferred relations",
+    async () => {
+      const root = await tempRoot();
+      await initGraph(root, { hooks: true });
+
+      const flush = await dispatch(
+        input("Stop", {
+          transcriptText: [
+            "Problem: deploys fail during cold start.",
+            "Fix: warm the connection pool during boot.",
+            "Validation: pnpm test startup passed.",
+          ].join("\n"),
+        }),
+        root,
+      );
+      expect(flush.noop).toBe(false);
+      expect(flush.stored).toBe(3);
+
+      const config = await readConfig(root);
+      if (!config) throw new Error("config missing after init");
+      const store = await MemoryStore.open({ uri: resolveStoreUri(root, config) });
+      try {
+        const nodes = await store.listNodes();
+        const edges = await store.listEdges();
+        const problem = nodes.find((node) => node.label === "problem-deploys-fail-during-cold-start");
+        const fix = nodes.find((node) => node.label === "fix-warm-the-connection-pool-during-boot");
+        const validation = nodes.find((node) => node.label === "validation-pnpm-test-startup-passed");
+
+        expect(problem?.properties.confidence).toBe("INFERRED");
+        expect(problem?.properties.source).toBe("hook:Stop:structured-transcript");
+        expect(fix?.node_type).toBe("fix");
+        expect(validation?.node_type).toBe("validation");
+        expect(edges).toContainEqual(
+          expect.objectContaining({
+            from_rid: fix?.rid,
+            to_rid: problem?.rid,
+            label: "FIXES",
+          }),
+        );
+        expect(edges).toContainEqual(
+          expect.objectContaining({
+            from_rid: fix?.rid,
+            to_rid: validation?.rid,
+            label: "TESTED_BY",
+          }),
+        );
+      } finally {
+        await store.close();
+      }
+    },
+    TIMEOUT,
+  );
+
+  test(
     "SessionStart no-ops when nothing relevant is stored",
     async () => {
       const root = await tempRoot();
@@ -114,6 +169,18 @@ describe("PostToolUse incremental re-index", () => {
       try {
         const nodes = await store.listNodes();
         expect(nodes.some((n) => n.label.includes("renderWidget"))).toBe(true);
+        const events = await readMemoryEvents(store);
+        expect(events).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              kind: "hook.lifecycle",
+              payload: expect.objectContaining({
+                hook_event: "PostToolUse",
+                result: expect.objectContaining({ indexed: 1 }),
+              }),
+            }),
+          ]),
+        );
       } finally {
         await store.close();
       }
@@ -126,7 +193,7 @@ describe("PostToolUse incremental re-index", () => {
     async () => {
       const root = await tempRoot();
       await initGraph(root, { hooks: true });
-      const file = join(root, "pnpm-lock.yaml");
+      const file = join(root, "notes.txt");
       await writeFile(file, "lockfileVersion: 9\n", "utf8");
       const r = await dispatch(input("PostToolUse", { changedFiles: [file] }), root);
       expect(r.noop).toBe(true);

@@ -42,6 +42,14 @@ describe("export", () => {
         properties: { title: "jwt rotation", content: "rotate every 90 days" },
       });
       await store.upsertEdge({ label: "REFERENCES", from_rid: auth, to_rid: jwt });
+      await store.upsertDoc({
+        path: "docs/auth.md",
+        title: "Auth Guide",
+        body: "JWT rotation details live in this document body and should not be fully exported.",
+        frontmatter: { tags: ["auth"] },
+        hash: "auth-doc-hash",
+        updated_at: 123,
+      });
 
       const out = join(dir, "export");
       const result = await exportGraph(store, out);
@@ -53,10 +61,36 @@ describe("export", () => {
       expect(json.nodes).toHaveLength(2);
       expect(json.edges).toHaveLength(1);
       expect(json.stats.nodes).toBe(2);
+      expect(json.docs).toEqual([
+        expect.objectContaining({
+          path: "docs/auth.md",
+          title: "Auth Guide",
+          body_length: 81,
+        }),
+      ]);
+      expect(JSON.stringify(json.docs)).not.toContain("should not be fully exported");
+      expect(json.vector_projection).toMatchObject({
+        overall: "unavailable",
+        total: 3,
+        nodes: expect.arrayContaining([
+          expect.objectContaining({ source_collection: "memory_nodes" }),
+        ]),
+        docs: [
+          expect.objectContaining({
+            path: "docs/auth.md",
+            source_collection: "memory_docs",
+            status: "unavailable",
+          }),
+        ],
+      });
 
       const html = await readFile(result.htmlPath, "utf8");
       expect(html).toContain("<!doctype html>");
       expect(html).toContain("jwt rotation");
+      expect(html).toContain("Vector projection");
+      expect(html).toContain("Documents");
+      expect(html).toContain("docs/auth.md");
+      expect(html).not.toContain("should not be fully exported");
       // Data is inlined — no network fetch needed to navigate.
       expect(html).toContain('id="data"');
 
@@ -64,6 +98,9 @@ describe("export", () => {
       expect(audit).toContain("# Memory graph audit");
       expect(audit).toContain("REFERENCES");
       expect(audit).toContain("Nodes by type");
+      expect(audit).toContain("Documents");
+      expect(audit).toContain("Vector projection");
+      expect(audit).toContain("docs/auth.md");
     },
     TIMEOUT,
   );
@@ -224,6 +261,79 @@ describe("export", () => {
       expect(audit).toContain("Memory health");
       expect(audit).toContain("Unresolved contradictions:** 1");
       expect(audit).toContain("Context pack preview");
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "interop export writes JSONL, GraphML, and Neo4j Cypher artifacts",
+    async () => {
+      const { store, dir } = await openStore();
+      const auth = await store.upsertNode({
+        label: "auth-service",
+        node_type: "concept",
+        properties: {
+          title: "Auth service",
+          content: "Owns token policy.",
+          confidence: "EXTRACTED",
+        },
+      });
+      const jwt = await store.upsertNode({
+        label: "jwt-rotation",
+        node_type: "decision",
+        properties: {
+          title: "JWT rotation",
+          content: "Rotate keys every 90 days.",
+          confidence: "EXTRACTED",
+        },
+      });
+      await store.upsertEdge({
+        label: "REFERENCES",
+        from_rid: auth,
+        to_rid: jwt,
+        properties: { reason: "policy source" },
+      });
+
+      const result = await exportGraph(store, join(dir, "export"), { interop: true });
+
+      expect(result.interop).toEqual({
+        nodesJsonlPath: join(dir, "export", "nodes.jsonl"),
+        edgesJsonlPath: join(dir, "export", "edges.jsonl"),
+        graphmlPath: join(dir, "export", "graph.graphml"),
+        cypherPath: join(dir, "export", "neo4j.cypher"),
+      });
+      const nodesJsonl = await readFile(result.interop!.nodesJsonlPath, "utf8");
+      const nodeLines = nodesJsonl.trim().split("\n").map((line) => JSON.parse(line));
+      expect(nodeLines).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            rid: auth,
+            label: "auth-service",
+            node_type: "concept",
+            evidence_statuses: ["active"],
+          }),
+        ]),
+      );
+      const edgesJsonl = await readFile(result.interop!.edgesJsonlPath, "utf8");
+      expect(JSON.parse(edgesJsonl.trim())).toMatchObject({
+        label: "REFERENCES",
+        from: auth,
+        to: jwt,
+        properties: { reason: "policy source" },
+      });
+      const graphml = await readFile(result.interop!.graphmlPath, "utf8");
+      expect(graphml).toContain("<graphml");
+      expect(graphml).toContain('source="memory_nodes:');
+      expect(graphml).toContain("auth-service");
+      expect(graphml).toContain("REFERENCES");
+      const cypher = await readFile(result.interop!.cypherPath, "utf8");
+      expect(cypher).toContain("CREATE CONSTRAINT memory_node_rid");
+      expect(cypher).toContain("MERGE (n:MemoryNode:Concept");
+      expect(cypher).toContain("MERGE (a)-[r:REFERENCES");
+      expect(cypher).toContain("RedDB remains the source of truth");
+
+      const plain = await exportGraph(store, join(dir, "plain"));
+      expect(plain.interop).toBeUndefined();
     },
     TIMEOUT,
   );

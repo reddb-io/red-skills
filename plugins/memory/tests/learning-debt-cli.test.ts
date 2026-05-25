@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -87,6 +87,8 @@ describe("memory learning-debt CLI", () => {
 
       expect(result.status, result.stderr).toBe(0);
       const body = JSON.parse(result.stdout) as {
+        schema_version: string;
+        read_only: boolean;
         status: string;
         summary: {
           repeatedFailurePatterns: number;
@@ -101,6 +103,8 @@ describe("memory learning-debt CLI", () => {
         markdown: string;
       };
 
+      expect(body.schema_version).toBe("memory.learning_debt.v1");
+      expect(body.read_only).toBe(true);
       expect(body.status).toBe("debt-found");
       expect(body.summary.repeatedFailurePatterns).toBe(1);
       expect(body.summary.missingValidationEvidence).toBeGreaterThanOrEqual(1);
@@ -130,6 +134,16 @@ describe("memory learning-debt CLI", () => {
       expect(result.stdout).toContain("Status: debt-found");
       expect(result.stdout).toContain("Repeated Failure Patterns");
       expect(result.stdout).toContain("Skill Telemetry Gaps");
+
+      const out = join(root, "learning-debt.html");
+      const viewer = runMemory(["learning-debt-viewer", "--root", root, "--out", out]);
+      expect(viewer.status, viewer.stderr).toBe(0);
+      expect(viewer.stdout).toContain("memory: learning debt viewer written");
+      expect(viewer.stdout).toContain("contract: memory.learning_debt.v1");
+      const html = await readFile(out, "utf8");
+      expect(html).toContain("Learning Debt");
+      expect(html).toContain("issue:131 error:validation");
+      expect(html).toContain('id="learning-debt-data"');
     },
     TIMEOUT,
   );

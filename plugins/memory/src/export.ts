@@ -1,9 +1,9 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { diagnose, type StaleNode } from "./doctor.js";
-import type { MemoryStore, StoredNode } from "./graph-store.js";
+import type { MemoryStore, StoredNode, VectorStatusReport } from "./graph-store.js";
 import { redactGraphData, type PrivacyFinding } from "./privacy.js";
-import type { Confidence } from "./schema.js";
+import type { Confidence, MemoryDoc } from "./schema.js";
 
 /**
  * memory export — dump the whole graph to a self-contained, navigable bundle.
@@ -33,6 +33,12 @@ export interface ExportResult {
   jsonPath: string;
   htmlPath: string;
   auditPath: string;
+  interop?: {
+    nodesJsonlPath: string;
+    edgesJsonlPath: string;
+    graphmlPath: string;
+    cypherPath: string;
+  };
   nodes: number;
   edges: number;
   redacted: boolean;
@@ -65,6 +71,8 @@ export interface ExportOptions {
   now?: number;
   /** Replace sensitive-looking values in graph.json, graph.html, and audit.md. */
   redactSensitive?: boolean;
+  /** Write Neo4j/Graphify-style exchange artifacts beside the normal bundle. */
+  interop?: boolean;
 }
 
 export async function exportGraph(
@@ -75,10 +83,12 @@ export async function exportGraph(
   const dir = resolve(outDir);
   await mkdir(dir, { recursive: true });
 
-  const [storedNodes, rawEdges, stats] = await Promise.all([
+  const [storedNodes, rawEdges, stats, docs, vector] = await Promise.all([
     store.listNodes(),
     store.listEdges(),
     store.stats(),
+    store.listDocs(),
+    store.vectorStatus(),
   ]);
   const storedEdges = rawEdges.map(toEdge);
   const redaction = opts.redactSensitive
@@ -98,7 +108,7 @@ export async function exportGraph(
     store.supersededByMany(nodes.map((n) => n.rid)),
     diagnose(store, { staleDays: opts.staleDays, now: opts.now }),
   ]);
-  const dashboard = buildDashboard(nodes, edges, stats, superseded, doctor.stale);
+  const dashboard = buildDashboard(nodes, edges, stats, docs, superseded, doctor.stale);
   const withCommunity = (rid: number) =>
     opts.communities ? { community: communities.get(rid) ?? null } : {};
 
@@ -110,6 +120,8 @@ export async function exportGraph(
     contradictions: dashboard.contradictions,
     supersession: dashboard.supersession,
     context_pack_preview: dashboard.contextPackPreview,
+    docs: docs.map(exportDoc),
+    vector_projection: exportVectorStatus(vector),
     nodes: nodes.map((n) => ({
       rid: n.rid,
       label: n.label,
@@ -124,23 +136,231 @@ export async function exportGraph(
   const jsonPath = join(dir, "graph.json");
   const htmlPath = join(dir, "graph.html");
   const auditPath = join(dir, "audit.md");
+  const interop = opts.interop
+    ? {
+        nodesJsonlPath: join(dir, "nodes.jsonl"),
+        edgesJsonlPath: join(dir, "edges.jsonl"),
+        graphmlPath: join(dir, "graph.graphml"),
+        cypherPath: join(dir, "neo4j.cypher"),
+      }
+    : undefined;
 
-  await Promise.all([
+  const writes = [
     writeFile(jsonPath, `${JSON.stringify(json, null, 2)}\n`, "utf8"),
-    writeFile(htmlPath, renderHtml(nodes, edges, stats, communities, dashboard), "utf8"),
-    writeFile(auditPath, renderAudit(nodes, edges, stats, dashboard), "utf8"),
-  ]);
+    writeFile(htmlPath, renderHtml(nodes, edges, stats, docs, vector, communities, dashboard), "utf8"),
+    writeFile(auditPath, renderAudit(nodes, edges, stats, docs, vector, dashboard), "utf8"),
+  ];
+  if (interop) {
+    writes.push(
+      writeFile(interop.nodesJsonlPath, renderNodesJsonl(nodes, dashboard), "utf8"),
+      writeFile(interop.edgesJsonlPath, renderEdgesJsonl(edges), "utf8"),
+      writeFile(interop.graphmlPath, renderGraphml(nodes, edges, dashboard), "utf8"),
+      writeFile(interop.cypherPath, renderNeo4jCypher(nodes, edges, dashboard), "utf8"),
+    );
+  }
+  await Promise.all(writes);
 
   return {
     dir,
     jsonPath,
     htmlPath,
     auditPath,
+    ...(interop ? { interop } : {}),
     nodes: nodes.length,
     edges: edges.length,
     redacted: opts.redactSensitive === true,
     privacyFindings: redaction.findings.length,
   };
+}
+
+type StoredDoc = MemoryDoc & { rid: number };
+
+function exportDoc(doc: StoredDoc): Record<string, unknown> {
+  return {
+    rid: doc.rid,
+    path: doc.path,
+    title: doc.title ?? null,
+    hash: doc.hash,
+    body_length: doc.body.length,
+    updated_at: doc.updated_at,
+  };
+}
+
+function exportVectorStatus(vector: VectorStatusReport): Record<string, unknown> {
+  return {
+    overall: vector.overall,
+    total: vector.total,
+    ready: vector.ready,
+    stale: vector.stale,
+    unavailable: vector.unavailable,
+    failed: vector.failed,
+    nodes: vector.nodes.map((node) => ({
+      rid: node.rid,
+      label: node.label,
+      node_type: node.node_type,
+      source_collection: node.source_collection,
+      status: node.status,
+      error: node.error,
+      updated_at: node.updated_at,
+    })),
+    docs: vector.docs.map((doc) => ({
+      rid: doc.rid,
+      path: doc.path,
+      title: doc.title,
+      source_collection: doc.source_collection,
+      status: doc.status,
+      error: doc.error,
+      updated_at: doc.updated_at,
+    })),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Interop artifacts
+// ---------------------------------------------------------------------------
+
+function renderNodesJsonl(nodes: StoredNode[], dashboard: DashboardModel): string {
+  return `${nodes
+    .map((node) =>
+      JSON.stringify({
+        rid: node.rid,
+        label: node.label,
+        node_type: node.node_type,
+        title: node.properties.title ?? node.label,
+        evidence_statuses: dashboard.nodeStatuses.get(node.rid) ?? ["active"],
+        properties: node.properties,
+      }),
+    )
+    .join("\n")}\n`;
+}
+
+function renderEdgesJsonl(edges: ExportEdge[]): string {
+  return `${edges
+    .map((edge) =>
+      JSON.stringify({
+        rid: edge.rid,
+        label: edge.label,
+        from: edge.from,
+        to: edge.to,
+        weight: edge.weight,
+        properties: edge.properties,
+      }),
+    )
+    .join("\n")}\n`;
+}
+
+function renderNeo4jCypher(
+  nodes: StoredNode[],
+  edges: ExportEdge[],
+  dashboard: DashboardModel,
+): string {
+  const lines = [
+    "// RedSkills Memory Neo4j import",
+    "// Generated from project-local RedDB Memory export. RedDB remains the source of truth.",
+    "CREATE CONSTRAINT memory_node_rid IF NOT EXISTS FOR (n:MemoryNode) REQUIRE n.rid IS UNIQUE;",
+    "",
+  ];
+  for (const node of nodes) {
+    const props = {
+      rid: node.rid,
+      label: node.label,
+      node_type: node.node_type,
+      title: node.properties.title ?? node.label,
+      evidence_statuses: dashboard.nodeStatuses.get(node.rid) ?? ["active"],
+      properties_json: JSON.stringify(node.properties),
+    };
+    lines.push(`MERGE (n:MemoryNode:${cypherLabel(node.node_type)} {rid: ${node.rid}}) SET n += ${cypherMap(props)};`);
+  }
+  if (edges.length > 0) lines.push("");
+  for (const edge of edges) {
+    const relType = cypherRelationship(edge.label);
+    const props = {
+      rid: edge.rid,
+      label: edge.label,
+      weight: edge.weight,
+      properties_json: JSON.stringify(edge.properties),
+    };
+    lines.push(
+      `MATCH (a:MemoryNode {rid: ${edge.from}}), (b:MemoryNode {rid: ${edge.to}}) MERGE (a)-[r:${relType} {rid: ${edge.rid}}]->(b) SET r += ${cypherMap(props)};`,
+    );
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+function renderGraphml(
+  nodes: StoredNode[],
+  edges: ExportEdge[],
+  dashboard: DashboardModel,
+): string {
+  const lines = [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <key id="label" for="node" attr.name="label" attr.type="string"/>',
+    '  <key id="node_type" for="node" attr.name="node_type" attr.type="string"/>',
+    '  <key id="title" for="node" attr.name="title" attr.type="string"/>',
+    '  <key id="evidence_statuses" for="node" attr.name="evidence_statuses" attr.type="string"/>',
+    '  <key id="properties_json" for="node" attr.name="properties_json" attr.type="string"/>',
+    '  <key id="edge_label" for="edge" attr.name="label" attr.type="string"/>',
+    '  <key id="weight" for="edge" attr.name="weight" attr.type="double"/>',
+    '  <key id="edge_properties_json" for="edge" attr.name="properties_json" attr.type="string"/>',
+    '  <graph id="MemoryGraph" edgedefault="directed">',
+  ];
+  for (const node of nodes) {
+    lines.push(`    <node id="memory_nodes:${node.rid}">`);
+    lines.push(`      <data key="label">${xmlEscape(node.label)}</data>`);
+    lines.push(`      <data key="node_type">${xmlEscape(node.node_type)}</data>`);
+    lines.push(`      <data key="title">${xmlEscape(node.properties.title ?? node.label)}</data>`);
+    lines.push(`      <data key="evidence_statuses">${xmlEscape(JSON.stringify(dashboard.nodeStatuses.get(node.rid) ?? ["active"]))}</data>`);
+    lines.push(`      <data key="properties_json">${xmlEscape(JSON.stringify(node.properties))}</data>`);
+    lines.push("    </node>");
+  }
+  for (const edge of edges) {
+    lines.push(
+      `    <edge id="memory_edges:${edge.rid}" source="memory_nodes:${edge.from}" target="memory_nodes:${edge.to}">`,
+    );
+    lines.push(`      <data key="edge_label">${xmlEscape(edge.label)}</data>`);
+    lines.push(`      <data key="weight">${xmlEscape(String(edge.weight))}</data>`);
+    lines.push(`      <data key="edge_properties_json">${xmlEscape(JSON.stringify(edge.properties))}</data>`);
+    lines.push("    </edge>");
+  }
+  lines.push("  </graph>", "</graphml>");
+  return `${lines.join("\n")}\n`;
+}
+
+function cypherMap(value: Record<string, unknown>): string {
+  return `{${Object.entries(value)
+    .map(([key, item]) => `${key}: ${cypherValue(item)}`)
+    .join(", ")}}`;
+}
+
+function cypherValue(value: unknown): string {
+  if (value == null) return "null";
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (Array.isArray(value)) return `[${value.map(cypherValue).join(", ")}]`;
+  return `'${String(value).replaceAll("\\", "\\\\").replaceAll("'", "\\'")}'`;
+}
+
+function cypherLabel(value: string): string {
+  const cleaned = value
+    .split(/[^A-Za-z0-9]+/)
+    .filter(Boolean)
+    .map((part) => `${part[0]?.toUpperCase() ?? ""}${part.slice(1)}`)
+    .join("");
+  return cleaned || "Memory";
+}
+
+function cypherRelationship(value: string): string {
+  const cleaned = value.toUpperCase().replace(/[^A-Z0-9_]/g, "_");
+  return cleaned || "RELATED_TO";
+}
+
+function xmlEscape(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&apos;");
 }
 
 // ---------------------------------------------------------------------------
@@ -165,6 +385,7 @@ interface DashboardModel {
     state: "healthy" | "needs-attention";
     total_nodes: number;
     total_edges: number;
+    total_docs: number;
     orphan_nodes: number;
     active_nodes: number;
     stale_nodes: number;
@@ -208,6 +429,7 @@ function buildDashboard(
   nodes: StoredNode[],
   edges: ExportEdge[],
   stats: { nodes: number; edges: number },
+  docs: StoredDoc[],
   superseded: Map<number, number>,
   stale: StaleNode[],
 ): DashboardModel {
@@ -300,6 +522,7 @@ function buildDashboard(
       state: issueCount > 0 ? "needs-attention" : "healthy",
       total_nodes: stats.nodes,
       total_edges: stats.edges,
+      total_docs: docs.length,
       orphan_nodes: [...degree.values()].filter((count) => count === 0).length,
       active_nodes: evidence.active.length,
       stale_nodes: stale.length,
@@ -383,6 +606,8 @@ function renderAudit(
   nodes: StoredNode[],
   edges: ExportEdge[],
   stats: { nodes: number; edges: number },
+  docs: StoredDoc[],
+  vector: VectorStatusReport,
   dashboard: DashboardModel,
 ): string {
   const byType = tally(nodes, (n) => n.node_type);
@@ -408,6 +633,7 @@ function renderAudit(
   lines.push(`Generated: ${new Date().toISOString()}`, "");
   lines.push(`- **Nodes:** ${stats.nodes}`);
   lines.push(`- **Edges:** ${stats.edges}`);
+  lines.push(`- **Documents:** ${docs.length}`);
   lines.push(`- **Orphan nodes (no edges):** ${orphans.length}`);
   lines.push(`- **Superseded chains:** ${superseded.length}`, "");
 
@@ -419,6 +645,28 @@ function renderAudit(
   lines.push(`- **Ambiguous nodes:** ${dashboard.health.ambiguous_nodes}`);
   lines.push(`- **Unresolved contradictions:** ${dashboard.health.unresolved_contradictions}`);
   lines.push(`- **Context pack preview nodes:** ${dashboard.health.context_pack_nodes}`, "");
+
+  lines.push("## Vector projection", "");
+  lines.push(`- **Overall:** ${vector.overall}`);
+  lines.push(`- **Ready:** ${vector.ready}/${vector.total}`);
+  lines.push(`- **Node vectors:** ${vector.nodes.length}`);
+  lines.push(`- **Document vectors:** ${vector.docs.length}`);
+  if (vector.stale > 0) lines.push(`- **Stale:** ${vector.stale}`);
+  if (vector.unavailable > 0) lines.push(`- **Unavailable:** ${vector.unavailable}`);
+  if (vector.failed > 0) lines.push(`- **Failed:** ${vector.failed}`);
+  lines.push("");
+
+  lines.push("## Documents", "");
+  if (docs.length === 0) {
+    lines.push("_(none)_");
+  } else {
+    for (const doc of docs.slice(0, 50)) {
+      const title = doc.title ? ` — ${doc.title}` : "";
+      lines.push(`- \`${doc.path}\`${title}`);
+    }
+    if (docs.length > 50) lines.push(`- … and ${docs.length - 50} more`);
+  }
+  lines.push("");
 
   lines.push("## Contradictions", "");
   if (dashboard.contradictions.length === 0) {
@@ -526,6 +774,8 @@ function renderHtml(
   nodes: StoredNode[],
   edges: ExportEdge[],
   stats: { nodes: number; edges: number },
+  docs: StoredDoc[],
+  vector: VectorStatusReport,
   communities: Map<number, string> = new Map(),
   dashboard: DashboardModel,
 ): string {
@@ -541,6 +791,13 @@ function renderHtml(
       statuses: dashboard.nodeStatuses.get(n.rid) ?? ["active"],
     })),
     edges: edges.map((e) => ({ from: e.from, to: e.to, label: e.label })),
+    docs: docs.map((doc) => ({
+      rid: doc.rid,
+      path: doc.path,
+      title: doc.title ?? null,
+      body_length: doc.body.length,
+    })),
+    vector: exportVectorStatus(vector),
     palette,
   };
   const health = dashboard.health;
@@ -550,6 +807,7 @@ function renderHtml(
     ["Stale", health.stale_nodes],
     ["Ambiguous", health.ambiguous_nodes],
     ["Contradictions", health.unresolved_contradictions],
+    ["Docs", health.total_docs],
   ]
     .map(([label, value]) => `<div><strong>${escapeHtml(String(value))}</strong><span>${escapeHtml(String(label))}</span></div>`)
     .join("");
@@ -579,6 +837,21 @@ function renderHtml(
           .slice(0, 8)
           .map((item) => `<li><b>${escapeHtml(item.title)}</b><span>${item.age_days ?? 0}d idle</span></li>`)
           .join("");
+  const docRows =
+    docs.length === 0
+      ? `<p class="muted">No documents exported.</p>`
+      : docs
+          .slice(0, 8)
+          .map((doc) => `<li><b>${escapeHtml(doc.path)}</b><span>${escapeHtml(doc.title ?? "untitled")}</span></li>`)
+          .join("");
+  const vectorRows = [
+    ["Overall", vector.overall],
+    ["Ready", `${vector.ready}/${vector.total}`],
+    ["Node vectors", String(vector.nodes.length)],
+    ["Document vectors", String(vector.docs.length)],
+  ]
+    .map(([label, value]) => `<div><strong>${escapeHtml(value)}</strong><span>${escapeHtml(label)}</span></div>`)
+    .join("");
 
   // Self-contained: a tiny canvas force layout + a filterable sidebar. No CDN,
   // no build — opens straight from disk. The simulation is intentionally minimal
@@ -588,7 +861,7 @@ function renderHtml(
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Memory graph (${stats.nodes} nodes, ${stats.edges} edges)</title>
+<title>Memory graph (${stats.nodes} nodes, ${stats.edges} edges, ${docs.length} docs)</title>
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
@@ -624,11 +897,19 @@ function renderHtml(
 <body>
 <div id="app">
   <div id="side">
-    <h1>Memory graph &middot; ${stats.nodes} nodes / ${stats.edges} edges</h1>
+    <h1>Memory graph &middot; ${stats.nodes} nodes / ${stats.edges} edges / ${docs.length} docs</h1>
     <section class="panel">
       <h2>Memory health</h2>
       <div class="health-state">${escapeHtml(health.state)}</div>
       <div class="metrics">${statusRows}</div>
+    </section>
+    <section class="panel">
+      <h2>Vector projection</h2>
+      <div class="metrics">${vectorRows}</div>
+    </section>
+    <section class="panel">
+      <h2>Documents</h2>
+      <ul>${docRows}</ul>
     </section>
     <section class="panel">
       <h2>Contradictions</h2>

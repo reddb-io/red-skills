@@ -29,13 +29,17 @@ API key is configured in the engine. Graph mode does not require that key. When
 the provider is unavailable, Memory recall degrades to the existing text + graph
 path and reports vector retrieval as unavailable instead of failing the recall.
 
-The first implementation embeds `MemoryNode` text by maintaining a
-`memory_vectors` projection. Each vector record mirrors the node's searchable
-text (`title`, `summary`, `content`, and `tags`) and carries metadata such as
-`node_rid`, `source_hash`, and provider/model information. RedDB owns embedding
-generation and vector search through its native `WITH AUTO EMBED` /
-`SEARCH SIMILAR TEXT` / vector surfaces. Memory uses vector hits only to recover
-the linked `node_rid` values and feed them into governed recall.
+The implementation embeds `MemoryNode` text and ingested document chunks by
+maintaining a `memory_vectors` projection. Node vector records mirror searchable
+node text (`title`, `summary`, `content`, and `tags`) and carry metadata such
+as `node_rid`, `source_hash`, and provider/model information. Document vector
+records mirror `memory_docs` chunks and carry `doc_rid`, `path`, title, and
+hash metadata so vector readiness can prove documentation coverage. RedDB owns
+embedding generation and vector search through its native `WITH AUTO EMBED` /
+`SEARCH SIMILAR TEXT` / vector surfaces. Governed recall uses vector hits only
+when they recover linked `node_rid` values or can be grounded through a document
+hash to the ingested markdown root node. Ungrounded document vector hits remain
+readiness/ASK substrate and are skipped by recall.
 
 Node/doc writes remain resilient: a memory write must not fail only because
 embedding is unavailable or failed. Explicit vector maintenance commands may be
@@ -59,10 +63,11 @@ projection.
   additional seed source.
 - The implementation must call RedDB's native embedding/vector surface instead
   of introducing a separate embedding database or ad hoc vector store.
-- `memory_vectors` is the initial persistence boundary for node embeddings; graph
-  nodes stay graph-shaped and lightweight.
-- `MemoryNode` vectors come first. Document/chunk vectors are a later expansion
-  for long ADR/context/code documentation coverage.
+- `memory_vectors` is the persistence boundary for node and document-chunk
+  embeddings; graph nodes stay graph-shaped and lightweight.
+- Document/chunk vectors prove long ADR/context/code documentation coverage, and
+  they may enter governed recall ranking only after the doc hit is grounded to
+  an applicable Memory node by hash.
 - The no-provider path must be explicit and testable: vector seeds are skipped,
   recall still succeeds, and status/reporting says vector retrieval was
   unavailable.

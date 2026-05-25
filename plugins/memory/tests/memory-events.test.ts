@@ -6,6 +6,7 @@ import { MemoryStore } from "../src/graph-store.js";
 import { initGraph } from "../src/init.js";
 import {
   appendMemoryEvent,
+  hookLifecycleToMemoryEvent,
   parseMemoryEvent,
   readMemoryEvents,
 } from "../src/memory-events.js";
@@ -144,4 +145,32 @@ describe("Memory event log", () => {
     },
     TIMEOUT,
   );
+
+  test("validates hook lifecycle events without storing raw transcript text", () => {
+    const event = hookLifecycleToMemoryEvent(
+      {
+        event: "Stop",
+        runner: "codex",
+        sessionId: "session-42",
+        cwd: "/repo",
+        changedFiles: [],
+        transcriptText: "We decided to keep the raw transcript out of replay.",
+      },
+      { noop: false, stored: 1 },
+      { timestamp: "2026-05-22T17:00:00.000Z", eventId: "hook:stop:1" },
+    );
+
+    expect(event).toMatchObject({
+      id: "hook:stop:1",
+      kind: "hook.lifecycle",
+      scope: { level: "session", id: "session-42" },
+      payload: {
+        event_type: "hook.lifecycle",
+        hook_event: "Stop",
+        result: { noop: false, stored: 1 },
+        transcript_chars: expect.any(Number),
+      },
+    });
+    expect(JSON.stringify(event)).not.toContain("keep the raw transcript");
+  });
 });

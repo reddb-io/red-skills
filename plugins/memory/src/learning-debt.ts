@@ -48,6 +48,8 @@ export interface SkillTelemetryDebt {
 }
 
 export interface LearningDebtReport {
+  schema_version: "memory.learning_debt.v1";
+  read_only: true;
   status: LearningDebtStatus;
   summary: {
     repeatedFailurePatterns: number;
@@ -129,7 +131,12 @@ export async function buildLearningDebtReport(
     ? "debt-found"
     : "clean";
   const withoutMarkdown = { status, summary, categories };
-  return { ...withoutMarkdown, markdown: renderLearningDebtReport(withoutMarkdown) };
+  return {
+    schema_version: "memory.learning_debt.v1",
+    read_only: true,
+    ...withoutMarkdown,
+    markdown: renderLearningDebtReport(withoutMarkdown),
+  };
 }
 
 function repeatedFailuresWithoutLessons(
@@ -333,7 +340,9 @@ function guidanceOrder(a: GuidanceDebt, b: GuidanceDebt): number {
   return rank[a.kind] - rank[b.kind] || ridOf(a.evidence) - ridOf(b.evidence);
 }
 
-function renderLearningDebtReport(report: Omit<LearningDebtReport, "markdown">): string {
+function renderLearningDebtReport(
+  report: Pick<LearningDebtReport, "status" | "summary" | "categories">,
+): string {
   const lines = [
     "# Memory learning debt",
     "",

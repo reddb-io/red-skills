@@ -290,6 +290,28 @@ export const competitiveEvalFixture: CompetitiveEvalFixture = {
       text: "Memory has native agent session lifecycle integration in the comparison table.",
       requiredEvidence: ["baseline:memory-lifecycle-beats-agent-memory"],
     },
+    {
+      id: "operator-surface-dashboard",
+      text: "The competitive eval measures docs, hooks, dashboard, and capability catalog operator surfaces.",
+      requiredEvidence: [
+        "dimension:operator-surface",
+        "foundation:doc-coverage",
+        "foundation:hook-coverage",
+        "foundation:operational-dashboard",
+        "foundation:capability-catalog",
+      ],
+    },
+    {
+      id: "multi-agent-integration-status",
+      text: "The competitive eval measures multi-agent Memory routing and integration status across supported coding agents.",
+      requiredEvidence: [
+        "dimension:multi-agent-integration",
+        "foundation:routing-guide",
+        "foundation:agent-integration-status",
+        "foundation:mcp-agent-tools",
+        "foundation:hook-backed-agent-integration",
+      ],
+    },
   ],
 };
 

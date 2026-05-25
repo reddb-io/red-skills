@@ -3,6 +3,7 @@ import {
   buildOnboardingMap,
   type OnboardingMapStore,
 } from "../src/onboarding-map.js";
+import { buildOnboardingMapViewerArtifact } from "../src/onboarding-map-viewer.js";
 import type { StoredNode } from "../src/graph-store.js";
 import type { SkillRollup } from "../src/skill-events.js";
 
@@ -124,6 +125,10 @@ describe("Memory onboarding map", () => {
       "validations",
       "suggestedSkills",
     ]);
+    expect(map).toMatchObject({
+      schema_version: "memory.onboarding_map.v1",
+      read_only: true,
+    });
     expect(map.summary).toMatchObject({
       concepts: 1,
       workflows: 1,
@@ -162,5 +167,16 @@ describe("Memory onboarding map", () => {
     expect(map.markdown).toContain("# Memory onboarding map");
     expect(map.markdown).toContain("## Suggested Skills");
     expect(map.markdown).toContain("[M5] Recall latency risk");
+
+    const artifact = buildOnboardingMapViewerArtifact(map);
+    expect(artifact.contract).toEqual({
+      name: "memory.onboarding_map.viewer",
+      version: "memory.onboarding_map.viewer.v1",
+      consumes: "memory.onboarding_map.v1",
+    });
+    expect(artifact.html).toContain("Onboarding Map");
+    expect(artifact.html).toContain("Recall latency risk");
+    expect(artifact.html).toContain('id="onboarding-map-data"');
+    expect(artifact.html).not.toContain("<script src=");
   });
 });

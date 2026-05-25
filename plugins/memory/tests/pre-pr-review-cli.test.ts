@@ -1,11 +1,13 @@
 import { spawnSync } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, test } from "vitest";
 import { MemoryStore } from "../src/graph-store.js";
 import { initGraph } from "../src/init.js";
+import { buildPrePrReviewViewerArtifact } from "../src/pre-pr-review-viewer.js";
+import type { PrePrMemoryReview } from "../src/pre-pr-review.js";
 
 const TIMEOUT = 40_000;
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -78,6 +80,41 @@ async function seedReviewGraph(root: string): Promise<void> {
 }
 
 describe("memory pre-pr-review CLI", () => {
+  test("renders a self-contained pre-PR review viewer artifact", () => {
+    const review: PrePrMemoryReview = {
+      comparison: "main...HEAD",
+      changedFiles: ["src/auth.ts"],
+      impactedConcepts: {
+        missing: false,
+        items: [{ title: "JWT rotation", summary: "token rotation behavior", evidence: [] }],
+      },
+      relatedDecisions: {
+        missing: false,
+        items: [{ title: "JWT TTL policy", summary: "Keep JWT TTL short.", evidence: [] }],
+      },
+      knownFailures: { missing: true, items: [] },
+      suggestedValidations: { missing: true, items: [] },
+      risks: { missing: true, items: [] },
+      evidence: [],
+      missingEvidence: ["known failures", "suggested validations", "risks"],
+      readOnly: true,
+    };
+
+    const artifact = buildPrePrReviewViewerArtifact(review);
+
+    expect(artifact.contract).toEqual({
+      name: "memory.pre_pr_review.viewer",
+      version: "memory.pre_pr_review.viewer.v1",
+      consumes: "memory.pre-pr-review",
+    });
+    expect(artifact.html).toContain("<!doctype html>");
+    expect(artifact.html).toContain("Pre-PR Memory Review");
+    expect(artifact.html).toContain("JWT rotation");
+    expect(artifact.html).toContain("JWT TTL policy");
+    expect(artifact.html).toContain('id="pre-pr-review-data"');
+    expect(artifact.html).not.toContain("<script src=");
+  });
+
   test(
     "reviews the current diff and a specified comparison range",
     async () => {
@@ -105,6 +142,36 @@ describe("memory pre-pr-review CLI", () => {
           }),
         ]);
       }
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "writes a local pre-PR review viewer for the current diff",
+    async () => {
+      const root = await tempGitRoot();
+      await seedReviewGraph(root);
+      await writeFile(join(root, "src/auth.ts"), "export function rotateToken() { return 'new'; }\n");
+      const out = join(root, "pre-pr-review.html");
+
+      const result = runMemory([
+        "pre-pr-review-viewer",
+        "--root",
+        root,
+        "--out",
+        out,
+      ]);
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("memory: pre-PR review viewer written");
+      expect(result.stdout).toContain(out);
+
+      const html = await readFile(out, "utf8");
+      expect(html).toContain("Pre-PR Memory Review");
+      expect(html).toContain("src/auth.ts");
+      expect(html).toContain("JWT rotation");
+      expect(html).toContain("JWT TTL policy");
+      expect(html).toContain('id="pre-pr-review-data"');
     },
     TIMEOUT,
   );

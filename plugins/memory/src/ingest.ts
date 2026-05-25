@@ -1,8 +1,11 @@
 import { readFile } from "node:fs/promises";
 import { extname, isAbsolute, resolve } from "node:path";
 import fg from "fast-glob";
+import { extractAsset, isAssetFile } from "./extract-asset.js";
 import { extractCode } from "./extract-code.js";
+import { extractDevArtifact, isDevArtifact } from "./extract-dev-artifact.js";
 import { extractMarkdown } from "./extract-markdown.js";
+import { extractSql } from "./extract-sql.js";
 import { contentHash } from "./hash.js";
 import type { MemoryStore } from "./graph-store.js";
 import type { EdgeLabel, MemoryDoc, MemoryNode } from "./schema.js";
@@ -28,7 +31,15 @@ export interface IngestReport {
   durationMs: number;
 }
 
-const DEFAULT_PATTERNS = ["**/*.{ts,tsx,js,jsx,mjs,cjs,py,go,rs}", "**/*.md"];
+const DEFAULT_PATTERNS = [
+  "**/*.{ts,tsx,js,jsx,mjs,cjs,py,go,rs,sql,sh,bash}",
+  "**/*.md",
+  "**/package.json",
+  "**/Dockerfile",
+  "**/*.dockerfile",
+  "**/.github/workflows/*.{yml,yaml}",
+  "**/*.{pdf,png,jpg,jpeg,gif,webp,svg,mp3,wav,m4a,flac,ogg,mp4,mov,webm,mkv,doc,docx,ppt,pptx,xls,xlsx}",
+];
 const DEFAULT_IGNORE = [
   "**/node_modules/**",
   "**/dist/**",
@@ -41,7 +52,7 @@ const DEFAULT_IGNORE = [
 
 /**
  * Walk a project tree and populate the graph store from the deterministic
- * extractors (`extractCode` + `extractMarkdown`). Idempotent — every node, edge,
+ * extractors (`extractCode`, `extractSql`, and `extractMarkdown`). Idempotent — every node, edge,
  * and doc dedupes by content hash, so re-ingesting an unchanged tree is a no-op.
  *
  * Ported from red-memory `packages/extractor/src/indexer.ts`. Conversation/git
@@ -118,6 +129,30 @@ async function extractFile(path: string): Promise<FileExtraction> {
       nodes: m.nodes,
       edges: m.edges,
       elements: graphElements(path, m.nodes, true),
+    };
+  }
+  if (ext === ".sql") {
+    const s = await extractSql(path);
+    return {
+      nodes: s.nodes,
+      edges: s.edges,
+      elements: graphElements(path, s.nodes, false),
+    };
+  }
+  if (isDevArtifact(path)) {
+    const d = await extractDevArtifact(path);
+    return {
+      nodes: d.nodes,
+      edges: d.edges,
+      elements: graphElements(path, d.nodes, false),
+    };
+  }
+  if (isAssetFile(path)) {
+    const a = await extractAsset(path);
+    return {
+      nodes: a.nodes,
+      edges: a.edges,
+      elements: graphElements(path, a.nodes, false),
     };
   }
 
@@ -197,12 +232,16 @@ export interface RefreshOptions {
 
 interface FileManifestEntry {
   hash: string;
+  format?: "element-hashes" | "element-hash-chunks";
   elements: string[];
+  chunks?: number;
+  element_count?: number;
 }
 
 type FileManifest = Record<string, FileManifestEntry>;
 
-const FILE_MANIFEST_KEY = "ingest:file-manifest:v1";
+const LEGACY_FILE_MANIFEST_KEY = "ingest:file-manifest:v1";
+const FILE_MANIFEST_KEY_PREFIX = "ingest:file-manifest:v2:";
 
 /**
  * Incrementally refresh a specific set of changed files. It keeps a small
@@ -217,7 +256,7 @@ export async function refreshFiles(
 ): Promise<IngestReport> {
   const start = Date.now();
   const rootDir = opts.rootDir ?? process.cwd();
-  const manifest = await readFileManifest(store);
+  const legacyManifest = await readLegacyFileManifest(store);
   const totals = {
     files: 0,
     nodes: 0,
@@ -232,19 +271,18 @@ export async function refreshFiles(
   for (const rawPath of [...new Set(paths)]) {
     const path = isAbsolute(rawPath) ? rawPath : resolve(rootDir, rawPath);
     if (!INDEXABLE_EXT.has(extname(path).toLowerCase())) continue;
-    const previous = manifest[path];
-    let source: string;
+    const previous = await readFileManifestEntry(store, path, legacyManifest[path]);
+    let hash: string;
     try {
-      source = await readFile(path, "utf8");
+      hash = await readIndexHash(path);
     } catch {
       if (previous) {
         totals.stale += previous.elements.length;
-        delete manifest[path];
+        await writeFileManifestEntry(store, path, { hash: "", elements: [] });
       }
       continue;
     }
 
-    const hash = contentHash(path, source);
     if (previous?.hash === hash) {
       totals.skipped += previous.elements.length;
       continue;
@@ -262,17 +300,16 @@ export async function refreshFiles(
     totals.nodes += report.nodes;
     totals.edges += report.edges;
     totals.docs += report.docs;
-    const currentElements = new Set(report.elements);
+    const currentElements = new Set(compactElements(report.elements));
     totals.stale += previous?.elements.filter((element) => !currentElements.has(element)).length ?? 0;
     if (previous) {
       totals.updated += report.elements.length;
     } else {
       totals.added += report.elements.length;
     }
-    manifest[path] = { hash, elements: report.elements };
+    await writeFileManifestEntry(store, path, { hash, elements: report.elements });
   }
 
-  await writeFileManifest(store, manifest);
   return { ...totals, durationMs: Date.now() - start };
 }
 
@@ -301,15 +338,125 @@ const INDEXABLE_EXT = new Set([
   ".py",
   ".go",
   ".rs",
+  ".sql",
   ".md",
+  ".sh",
+  ".bash",
+  ".json",
+  ".dockerfile",
+  ".yml",
+  ".yaml",
+  ".pdf",
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".gif",
+  ".webp",
+  ".svg",
+  ".mp3",
+  ".wav",
+  ".m4a",
+  ".flac",
+  ".ogg",
+  ".mp4",
+  ".mov",
+  ".webm",
+  ".mkv",
+  ".doc",
+  ".docx",
+  ".ppt",
+  ".pptx",
+  ".xls",
+  ".xlsx",
 ]);
 
-async function readFileManifest(store: MemoryStore): Promise<FileManifest> {
-  const raw = await store.kvGet<FileManifest | string>(FILE_MANIFEST_KEY);
+async function readIndexHash(path: string): Promise<string> {
+  if (isAssetFile(path)) {
+    return contentHash(path, await readFile(path, "base64"));
+  }
+  return contentHash(path, await readFile(path, "utf8"));
+}
+
+async function readLegacyFileManifest(store: MemoryStore): Promise<FileManifest> {
+  const raw = await store.kvGet<FileManifest | string>(LEGACY_FILE_MANIFEST_KEY);
   if (raw == null) return {};
   return typeof raw === "string" ? (JSON.parse(raw) as FileManifest) : raw;
 }
 
-async function writeFileManifest(store: MemoryStore, manifest: FileManifest): Promise<void> {
-  await store.kvPut(FILE_MANIFEST_KEY, manifest);
+async function readFileManifestEntry(
+  store: MemoryStore,
+  path: string,
+  legacyEntry?: FileManifestEntry,
+): Promise<FileManifestEntry | undefined> {
+  const raw = await store.kvGet<FileManifestEntry | string>(fileManifestEntryKey(path));
+  if (raw == null) return legacyEntry ? normalizeManifestEntry(legacyEntry) : undefined;
+  const entry = typeof raw === "string" ? (JSON.parse(raw) as FileManifestEntry) : raw;
+  if (entry.format === "element-hash-chunks") {
+    const elements: string[] = [];
+    const chunks = Math.max(0, Math.trunc(entry.chunks ?? 0));
+    for (let index = 0; index < chunks; index += 1) {
+      const chunk = await store.kvGet<string[] | string>(fileManifestChunkKey(path, index));
+      if (typeof chunk === "string") {
+        elements.push(...(JSON.parse(chunk) as string[]));
+      } else if (Array.isArray(chunk)) {
+        elements.push(...chunk);
+      }
+    }
+    return {
+      hash: entry.hash,
+      format: "element-hash-chunks",
+      elements,
+      chunks,
+      element_count: entry.element_count ?? elements.length,
+    };
+  }
+  return normalizeManifestEntry(entry);
+}
+
+async function writeFileManifestEntry(
+  store: MemoryStore,
+  path: string,
+  entry: FileManifestEntry,
+): Promise<void> {
+  const elements = compactElements(entry.elements);
+  const chunks = chunkArray(elements, 40);
+  await store.kvPut(fileManifestEntryKey(path), {
+    hash: entry.hash,
+    format: "element-hash-chunks",
+    elements: [],
+    chunks: chunks.length,
+    element_count: elements.length,
+  });
+  for (let index = 0; index < chunks.length; index += 1) {
+    await store.kvPut(fileManifestChunkKey(path, index), chunks[index]);
+  }
+}
+
+function normalizeManifestEntry(entry: FileManifestEntry): FileManifestEntry {
+  if (entry.format === "element-hashes") return entry;
+  return {
+    hash: entry.hash,
+    format: "element-hashes",
+    elements: compactElements(entry.elements),
+  };
+}
+
+function compactElements(elements: string[]): string[] {
+  return [...new Set(elements.map((element) => contentHash("ingest-element", element)))];
+}
+
+function fileManifestEntryKey(path: string): string {
+  return `${FILE_MANIFEST_KEY_PREFIX}${contentHash("path", path)}`;
+}
+
+function fileManifestChunkKey(path: string, index: number): string {
+  return `${fileManifestEntryKey(path)}:${index}`;
+}
+
+function chunkArray<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size));
+  }
+  return chunks;
 }

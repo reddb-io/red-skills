@@ -368,6 +368,10 @@ describe("ask", () => {
         contradictory: [],
         byConfidence: { EXTRACTED: [], INFERRED: [], AMBIGUOUS: [] },
       },
+      gap_analysis: {
+        status: "unsupported",
+        summary: "Memory has no recalled evidence for this question.",
+      },
       cost: null,
     });
   });
@@ -420,6 +424,8 @@ describe("ask", () => {
         expect(prompt).toContain("Deploy Tuesday");
         expect(prompt).toContain("Contradictions:");
         expect(prompt).toContain("contradicts");
+        expect(prompt).toContain("Gap analysis:");
+        expect(prompt).toContain("No EXTRACTED evidence supports the answer.");
         return {
           answer: "Current evidence says deploys happen on Tuesday [2]. Friday is superseded [1].",
           citations: [],
@@ -457,6 +463,10 @@ describe("ask", () => {
     expect(result.evidence.byConfidence.AMBIGUOUS).toEqual([
       expect.objectContaining({ rid: 2 }),
     ]);
+    expect(result.gap_analysis).toMatchObject({
+      status: "partial",
+      gaps: expect.arrayContaining(["No EXTRACTED evidence supports the answer."]),
+    });
   });
 
   test(
@@ -472,6 +482,8 @@ describe("ask", () => {
       expect(result.answer).toContain("Evidence-only fallback: LLM provider unavailable");
       expect(result.answer).toContain("[1]");
       expect(result.answer).toContain("jwt tokens rotate every 90 days in staging");
+      expect(result.answer).toContain("Gap analysis:");
+      expect(result.gap_analysis.status).toBe("partial");
       expect(Array.isArray(result.citations)).toBe(true);
       expect(result.evidence.active.length).toBeGreaterThan(0);
       expect(result.cost).toBeNull();

@@ -213,6 +213,12 @@ grep -q 'wait "$pid"' "$SUP_SH" \
 grep -q 'RED_AFK_PLUGIN_DIR="$PLUGIN_DIR"' "$SUP_SH" \
   && ok "hooks invoked with RED_AFK_PLUGIN_DIR" \
   || bad "hooks missing RED_AFK_PLUGIN_DIR export"
+grep -q 'SUPERVISOR_REQUEST="${RED_AFK_REQUEST:-}"' "$SUP_SH" \
+  && ok "supervisor reads RED_AFK_REQUEST default" \
+  || bad "supervisor missing RED_AFK_REQUEST default"
+grep -q 'worker_cmd+=(--request "$SUPERVISOR_REQUEST")' "$SUP_SH" \
+  && ok "spawn_slot forwards --request to worker" \
+  || bad "spawn_slot missing --request forwarding"
 
 echo
 echo "summary: $pass passed, $fail failed"

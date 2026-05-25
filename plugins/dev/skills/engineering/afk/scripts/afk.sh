@@ -3,7 +3,7 @@
 #
 # Usage:
 #   afk.sh [--prd N | --issues N,N,N] [--runner claude|codex]
-#          [--alternate] [--fallback-runner] [-n N] [--once] [project_root]
+#          [--alternate] [--fallback-runner] [--request TEXT] [-n N] [--once] [project_root]
 #
 # Runner resolution cascade (when --runner is not set):
 #   1. env-var sniff (CLAUDECODE / CLAUDE_CODE_*, CODEX_*)
@@ -47,6 +47,7 @@ FILTER_KIND="all"
 FILTER_VALUE=""
 ALTERNATE_FLAG=0
 FALLBACK_RUNNER_FLAG=0
+SPECIAL_USER_REQUEST="${RED_AFK_REQUEST:-}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -55,6 +56,7 @@ while [[ $# -gt 0 ]]; do
     --runner)           RUNNER="$2"; shift 2 ;;
     --alternate)        ALTERNATE_FLAG=1; shift ;;
     --fallback-runner)  FALLBACK_RUNNER_FLAG=1; shift ;;
+    --request|-r)       SPECIAL_USER_REQUEST="$2"; shift 2 ;;
     -n)                 ITER_CAP="$2"; shift 2 ;;
     --once)             ONCE=1; ITER_CAP=1; shift ;;
     -h|--help)          sed -n '2,13p' "$0"; exit 0 ;;
@@ -1502,6 +1504,27 @@ write_handoff() {
 # ---------- runner invocation ----------
 RUNNER_EXHAUSTED=0
 
+special_user_request_block() {
+  [[ -n "${SPECIAL_USER_REQUEST:-}" ]] || return 0
+  printf '%s\n' \
+    '---- SPECIAL USER REQUEST ------' \
+    "$SPECIAL_USER_REQUEST" \
+    '-------------------------------'
+}
+
+build_inner_prompt() {
+  local handoff="$1" commits="$2" prompt_body="$3"
+  local request_block
+  request_block="$(special_user_request_block)"
+
+  printf 'Handoff file: %s  (read this first)\n\n' "$handoff"
+  printf 'Recent commits on main:\n%s\n' "$commits"
+  if [[ -n "$request_block" ]]; then
+    printf '\n%s\n' "$request_block"
+  fi
+  printf '\n%s\n' "$prompt_body"
+}
+
 run_inner() {
   local worktree="$1" handoff="$2" runner="$3"
   RUNNER_EXHAUSTED=0
@@ -1513,15 +1536,7 @@ run_inner() {
   prompt_body="$(cat "$SKILL_DIR/AGENT-PROMPT.md")"
 
   local full_prompt
-  full_prompt="$(cat <<EOF
-Handoff file: $handoff  (read this first)
-
-Recent commits on main:
-$commits
-
-$prompt_body
-EOF
-)"
+  full_prompt="$(build_inner_prompt "$handoff" "$commits" "$prompt_body")"
 
   local result=""
   if [[ "$runner" == "claude" ]]; then

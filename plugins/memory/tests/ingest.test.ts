@@ -16,6 +16,8 @@ const IMPORT_FIXTURE_REPO = join(HERE, "fixtures/imports");
 const RUST_IMPORT_FIXTURE_REPO = join(HERE, "fixtures/rust-imports");
 const GO_IMPORT_FIXTURE_REPO = join(HERE, "fixtures/go-imports");
 const PYTHON_IMPORT_FIXTURE_REPO = join(HERE, "fixtures/python-imports");
+const SQL_SCHEMA_FIXTURE_REPO = join(HERE, "fixtures/sql-schema");
+const DEV_ARTIFACT_FIXTURE_REPO = join(HERE, "fixtures/dev-artifacts");
 
 const roots: string[] = [];
 const stores: MemoryStore[] = [];
@@ -46,8 +48,9 @@ describe("ingestProject over a TS+MD fixture repo", () => {
       // 1 TS file + 1 MD file.
       expect(report.files).toBe(2);
       expect(report.docs).toBe(1);
-      // file + 5 symbols, root concept + 3 heading concepts.
-      expect(report.nodes).toBeGreaterThanOrEqual(6 + 4);
+      // file + 5 symbols, root concept + 3 heading concepts + referenced entities.
+      expect(report.nodes).toBeGreaterThanOrEqual(6 + 7);
+      expect(report.edges).toBeGreaterThanOrEqual(3);
 
       const { nodes } = await store.stats();
       expect(nodes).toBe(report.nodes);
@@ -69,6 +72,39 @@ describe("ingestProject over a TS+MD fixture repo", () => {
   );
 
   test(
+    "ingests conservative intra-file CALLS and USES_TYPE edges for code symbols",
+    async () => {
+      const store = await openStore();
+      await ingestProject(store, { cwd: FIXTURE_REPO });
+
+      const nodes = await store.listNodes();
+      const edges = await store.listEdges();
+      const issueToken = nodes.find((n) => n.label.endsWith("#issueToken"));
+      const verifyToken = nodes.find((n) => n.label.endsWith("#verifyToken"));
+      const userId = nodes.find((n) => n.label.endsWith("#UserId"));
+
+      expect(issueToken).toBeDefined();
+      expect(verifyToken).toBeDefined();
+      expect(userId).toBeDefined();
+      expect(edges).toContainEqual(
+        expect.objectContaining({
+          from_rid: issueToken?.rid,
+          to_rid: verifyToken?.rid,
+          label: "CALLS",
+        }),
+      );
+      expect(edges).toContainEqual(
+        expect.objectContaining({
+          from_rid: issueToken?.rid,
+          to_rid: userId?.rid,
+          label: "USES_TYPE",
+        }),
+      );
+    },
+    TIMEOUT,
+  );
+
+  test(
     "recall finds an ingested markdown concept",
     async () => {
       const store = await openStore();
@@ -78,6 +114,18 @@ describe("ingestProject over a TS+MD fixture repo", () => {
       expect(hits.some((h) => /rotation/i.test(h.label) || /rotation/i.test(h.excerpt))).toBe(
         true,
       );
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "recall finds a grounded markdown referenced entity",
+    async () => {
+      const store = await openStore();
+      await ingestProject(store, { cwd: FIXTURE_REPO });
+
+      const hits = await graphRecall(store, "JWT_SECRET");
+      expect(hits.some((h) => h.label === "entity:jwt_secret")).toBe(true);
     },
     TIMEOUT,
   );
@@ -133,6 +181,31 @@ describe("ingestProject over a TS+MD fixture repo", () => {
   );
 
   test(
+    "incremental refresh stores a compact per-file manifest for docs with many references",
+    async () => {
+      const fixture = await mkdtemp(join(tmpdir(), "memory-refresh-doc-"));
+      roots.push(fixture);
+      const file = join(fixture, "docs/links.md");
+      await mkdir(dirname(file), { recursive: true });
+      const links = Array.from(
+        { length: 80 },
+        (_, index) => `[runbook ${index}](../runbooks/runbook-${index}.md)`,
+      ).join("\n");
+      await writeFile(file, `# Link Map\n\n${links}\n`, "utf8");
+
+      const store = await openStore();
+      const first = await refreshFiles(store, [file], { rootDir: fixture });
+      expect(first.files).toBe(1);
+      expect(first.added).toBeGreaterThan(80);
+
+      const unchanged = await refreshFiles(store, [file], { rootDir: fixture });
+      expect(unchanged.files).toBe(0);
+      expect(unchanged.skipped).toBe(first.added);
+    },
+    TIMEOUT,
+  );
+
+  test(
     "ingests IMPORTS edges and does not duplicate them on re-ingest",
     async () => {
       const store = await openStore();
@@ -176,6 +249,141 @@ describe("ingestProject over a TS+MD fixture repo", () => {
       expect(hits.some((h) => h.label.includes("import:") && h.label.includes("node:path"))).toBe(
         true,
       );
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "ingests SQL schema tables, columns, and foreign-key references",
+    async () => {
+      const store = await openStore();
+      await ingestProject(store, { cwd: SQL_SCHEMA_FIXTURE_REPO });
+
+      const nodes = await store.listNodes();
+      const edges = await store.listEdges();
+      const users = nodes.find((node) => node.label.endsWith("#table:users"));
+      const sessions = nodes.find((node) => node.label.endsWith("#table:sessions"));
+      const userId = nodes.find((node) => node.label.endsWith("#column:sessions.user_id"));
+
+      expect(users).toMatchObject({
+        node_type: "symbol",
+        properties: { language: "sql", sql_kind: "table", title: "users" },
+      });
+      expect(sessions).toBeDefined();
+      expect(userId).toMatchObject({
+        node_type: "symbol",
+        properties: { sql_kind: "column", sql_table: "sessions", sql_type: "uuid" },
+      });
+      expect(edges).toContainEqual(
+        expect.objectContaining({
+          from_rid: userId?.rid,
+          to_rid: users?.rid,
+          label: "REFERENCES",
+        }),
+      );
+
+      const hits = await graphRecall(store, "sessions user_id");
+      expect(hits.some((hit) => hit.label.endsWith("#column:sessions.user_id"))).toBe(true);
+
+      const before = await store.stats();
+      await ingestProject(store, { cwd: SQL_SCHEMA_FIXTURE_REPO });
+      const after = await store.stats();
+      expect(after.edges).toBe(before.edges);
+      expect(after.nodes).toBe(before.nodes);
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "ingests heterogeneous dev workflow artifacts",
+    async () => {
+      const store = await openStore();
+      const report = await ingestProject(store, { cwd: DEV_ARTIFACT_FIXTURE_REPO });
+
+      expect(report.files).toBe(4);
+      expect(report.nodes).toBeGreaterThanOrEqual(14);
+      expect(report.edges).toBeGreaterThanOrEqual(10);
+
+      const nodes = await store.listNodes();
+      const edges = await store.listEdges();
+      const npmBuild = nodes.find((node) => node.label.endsWith("package.json#build"));
+      const dockerBase = nodes.find((node) => node.properties.title === "node:22-alpine");
+      const ciTest = nodes.find((node) => node.label.endsWith("/.github/workflows/ci.yml#test"));
+      const deploy = nodes.find((node) => node.label.endsWith("/scripts/deploy.sh#deploy_app"));
+
+      expect(npmBuild).toMatchObject({
+        node_type: "workflow",
+        properties: { artifact_kind: "package-script" },
+      });
+      expect(dockerBase).toMatchObject({
+        node_type: "import",
+        properties: { import_kind: "docker image alias base" },
+      });
+      expect(ciTest).toMatchObject({
+        node_type: "workflow",
+        properties: { artifact_kind: "github-actions-job" },
+      });
+      expect(deploy).toMatchObject({
+        node_type: "workflow",
+        properties: { artifact_kind: "shell-function" },
+      });
+      expect(edges.filter((edge) => edge.label === "DEFINED_IN").length).toBeGreaterThanOrEqual(8);
+      expect(edges.filter((edge) => edge.label === "IMPORTS").length).toBeGreaterThanOrEqual(3);
+
+      const hits = await graphRecall(store, "pnpm lint docker deploy");
+      expect(hits.some((hit) => hit.label.includes("workflow:"))).toBe(true);
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "indexes binary document and media assets as deterministic file nodes",
+    async () => {
+      const fixture = await mkdtemp(join(tmpdir(), "memory-assets-"));
+      roots.push(fixture);
+      const pdf = join(fixture, "docs", "architecture.pdf");
+      const image = join(fixture, "assets", "screen.png");
+      await mkdir(dirname(pdf), { recursive: true });
+      await mkdir(dirname(image), { recursive: true });
+      await writeFile(pdf, Buffer.from("%PDF-1.4\nredskills architecture\n"));
+      await writeFile(image, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a]));
+
+      const store = await openStore();
+      const report = await ingestProject(store, { cwd: fixture });
+
+      expect(report.files).toBe(2);
+      expect(report.docs).toBe(0);
+      expect(report.nodes).toBe(2);
+
+      const nodes = await store.listNodes();
+      const pdfNode = nodes.find((node) => node.label.endsWith("/docs/architecture.pdf"));
+      const imageNode = nodes.find((node) => node.label.endsWith("/assets/screen.png"));
+      expect(pdfNode).toMatchObject({
+        node_type: "file",
+        properties: {
+          title: "architecture.pdf",
+          asset_kind: "document",
+          media_type: "application/pdf",
+          binary: true,
+        },
+      });
+      expect(imageNode).toMatchObject({
+        node_type: "file",
+        properties: {
+          title: "screen.png",
+          asset_kind: "image",
+          media_type: "image/png",
+          binary: true,
+        },
+      });
+
+      const hits = await graphRecall(store, "architecture pdf");
+      expect(hits.some((hit) => hit.label.endsWith("/docs/architecture.pdf"))).toBe(true);
+
+      const before = await store.stats();
+      await ingestProject(store, { cwd: fixture });
+      const after = await store.stats();
+      expect(after.nodes).toBe(before.nodes);
     },
     TIMEOUT,
   );

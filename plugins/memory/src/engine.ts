@@ -176,6 +176,7 @@ export interface AskResult {
   /** False when the engine has no LLM key — recall stays zero-token regardless. */
   available: boolean;
   evidence: AskEvidenceSummary;
+  gap_analysis: AskGapAnalysis;
   error?: string;
 }
 
@@ -205,6 +206,13 @@ export interface AskEvidenceSummary {
   superseded: AskEvidence[];
   contradictory: AskContradiction[];
   byConfidence: Record<Confidence, AskEvidence[]>;
+}
+
+export interface AskGapAnalysis {
+  status: "grounded" | "partial" | "unsupported" | "conflicted";
+  summary: string;
+  gaps: string[];
+  next_actions: string[];
 }
 
 const SEED_NEIGHBOR_DECAY = 0.5;
@@ -635,6 +643,7 @@ export async function path(
 export async function ask(store: MemoryStore, question: string): Promise<AskResult> {
   const recalled = await recall(store, question, { includeSuperseded: true, depth: 0, k: 8 });
   const evidence = await buildAskEvidence(store, recalled.nodes);
+  const gapAnalysis = buildAskGapAnalysis(evidence);
   const citations = [...evidence.active, ...evidence.superseded].map((item) => ({
     marker: Number(item.citation.replace(/\D/g, "")),
     urn: `memory_nodes:${item.rid}`,
@@ -649,11 +658,12 @@ export async function ask(store: MemoryStore, question: string): Promise<AskResu
       cost: null,
       available: true,
       evidence,
+      gap_analysis: gapAnalysis,
     };
   }
 
   try {
-    const { answer, cost } = await store.ask(askPrompt(question, evidence));
+    const { answer, cost } = await store.ask(askPrompt(question, evidence, gapAnalysis));
     return {
       question,
       status: "answered",
@@ -662,17 +672,19 @@ export async function ask(store: MemoryStore, question: string): Promise<AskResu
       cost,
       available: true,
       evidence,
+      gap_analysis: gapAnalysis,
     };
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
     return {
       question,
       status: "provider-unavailable",
-      answer: evidenceOnlyAnswer(evidence, error),
+      answer: evidenceOnlyAnswer(evidence, gapAnalysis, error),
       citations,
       cost: null,
       available: false,
       evidence,
+      gap_analysis: gapAnalysis,
       error,
     };
   }
@@ -719,6 +731,63 @@ function evidenceByConfidence(items: AskEvidence[]): Record<Confidence, AskEvide
   };
 }
 
+function buildAskGapAnalysis(evidence: AskEvidenceSummary): AskGapAnalysis {
+  const gaps: string[] = [];
+  const nextActions: string[] = [];
+  const unresolvedContradictions = evidence.contradictory.filter((item) => !item.resolved);
+  const totalEvidence = evidence.active.length + evidence.superseded.length;
+
+  if (totalEvidence === 0) {
+    return {
+      status: "unsupported",
+      summary: "Memory has no recalled evidence for this question.",
+      gaps: ["No active or superseded Memory evidence matched the question."],
+      next_actions: [
+        "Store a grounded project fact or bootstrap repository docs before asking again.",
+      ],
+    };
+  }
+
+  if (unresolvedContradictions.length > 0) {
+    gaps.push(`${unresolvedContradictions.length} unresolved contradiction(s) affect the evidence.`);
+    nextActions.push("Resolve or supersede the contradictory Memory nodes before relying on the answer.");
+  }
+
+  if (evidence.active.length === 0 && evidence.superseded.length > 0) {
+    gaps.push("Only superseded evidence matched the question.");
+    nextActions.push("Ask against the active replacement evidence or add a current Memory node.");
+  }
+
+  if (evidence.byConfidence.EXTRACTED.length === 0) {
+    gaps.push("No EXTRACTED evidence supports the answer.");
+    nextActions.push("Ground this answer in source-backed extracted evidence when possible.");
+  }
+
+  if (evidence.active.length === 1) {
+    gaps.push("Only one active citation supports the answer.");
+    nextActions.push("Add independent supporting evidence if this answer will guide a risky change.");
+  }
+
+  if (gaps.length === 0) {
+    return {
+      status: "grounded",
+      summary: "Memory has active, non-contradictory extracted evidence for this question.",
+      gaps: [],
+      next_actions: [],
+    };
+  }
+
+  return {
+    status: unresolvedContradictions.length > 0 ? "conflicted" : "partial",
+    summary:
+      unresolvedContradictions.length > 0
+        ? "Memory found relevant evidence, but unresolved contradictions need attention."
+        : "Memory found relevant evidence, but the support is incomplete.",
+    gaps,
+    next_actions: [...new Set(nextActions)],
+  };
+}
+
 function toAskEvidence(
   node: RecalledNode,
   marker: number,
@@ -739,12 +808,17 @@ function toAskEvidence(
   };
 }
 
-function askPrompt(question: string, evidence: AskEvidenceSummary): string {
+function askPrompt(
+  question: string,
+  evidence: AskEvidenceSummary,
+  gapAnalysis: AskGapAnalysis,
+): string {
   return [
     "Answer the question using only the Memory evidence below.",
     "Cite every substantive claim with the evidence marker, for example [1].",
     "If the evidence does not support an answer, reply with: Insufficient evidence.",
     "Call out contradictions and superseded evidence when relevant.",
+    "End with a short gap note when the gap analysis is not grounded.",
     "",
     `Question: ${question}`,
     "",
@@ -756,6 +830,9 @@ function askPrompt(question: string, evidence: AskEvidenceSummary): string {
     "",
     "Contradictions:",
     ...renderAskContradictions(evidence.contradictory),
+    "",
+    "Gap analysis:",
+    ...renderAskGapAnalysis(gapAnalysis),
   ].join("\n");
 }
 
@@ -776,7 +853,22 @@ function renderAskContradictions(items: AskContradiction[]): string[] {
   });
 }
 
-function evidenceOnlyAnswer(evidence: AskEvidenceSummary, error: string): string {
+function renderAskGapAnalysis(gapAnalysis: AskGapAnalysis): string[] {
+  return [
+    `status=${gapAnalysis.status}`,
+    `summary=${gapAnalysis.summary}`,
+    `gaps=${gapAnalysis.gaps.length > 0 ? gapAnalysis.gaps.join(" | ") : "(none)"}`,
+    `next_actions=${
+      gapAnalysis.next_actions.length > 0 ? gapAnalysis.next_actions.join(" | ") : "(none)"
+    }`,
+  ];
+}
+
+function evidenceOnlyAnswer(
+  evidence: AskEvidenceSummary,
+  gapAnalysis: AskGapAnalysis,
+  error: string,
+): string {
   return [
     `Evidence-only fallback: LLM provider unavailable (${error}).`,
     "Active evidence:",
@@ -789,6 +881,8 @@ function evidenceOnlyAnswer(evidence: AskEvidenceSummary, error: string): string
     `EXTRACTED: ${evidence.byConfidence.EXTRACTED.map((item) => item.citation).join(", ") || "(none)"}`,
     `INFERRED: ${evidence.byConfidence.INFERRED.map((item) => item.citation).join(", ") || "(none)"}`,
     `AMBIGUOUS: ${evidence.byConfidence.AMBIGUOUS.map((item) => item.citation).join(", ") || "(none)"}`,
+    "Gap analysis:",
+    ...renderAskGapAnalysis(gapAnalysis),
   ].join("\n");
 }
 

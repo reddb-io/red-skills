@@ -29,6 +29,7 @@ export type StoredNode = MemoryNode & { rid: number };
 export type VectorProjectionState = "ready" | "stale" | "unavailable" | "failed";
 
 export interface VectorNodeStatus {
+  source_collection: typeof COLLECTIONS.nodes;
   rid: number;
   label: string;
   node_type: NodeType;
@@ -39,7 +40,21 @@ export interface VectorNodeStatus {
   updated_at?: number;
 }
 
+export interface VectorDocStatus {
+  source_collection: typeof COLLECTIONS.docs;
+  rid: number;
+  path: string;
+  title: string | null;
+  status: VectorProjectionState;
+  text_hash: string;
+  projected_text_hash?: string;
+  error?: string;
+  updated_at?: number;
+}
+
 export interface VectorStatusReport {
+  schema_version: "memory.vector_status.v1";
+  read_only: true;
   overall: VectorProjectionState;
   total: number;
   ready: number;
@@ -47,20 +62,28 @@ export interface VectorStatusReport {
   unavailable: number;
   failed: number;
   nodes: VectorNodeStatus[];
+  docs: VectorDocStatus[];
 }
 
 interface VectorProjectionRecord {
   rid: number;
   node_rid: number;
+  doc_rid?: number;
   node_hash?: string;
   text_hash: string;
   label: string;
-  node_type: NodeType;
+  node_type?: NodeType;
+  path?: string;
+  title?: string | null;
   text_length: number;
   source_collection: string;
   project: string;
   provider: string;
   updated_at: number;
+}
+
+interface LocalVectorProjectionRecord extends VectorProjectionRecord {
+  embedding: string | number[];
 }
 
 interface VectorFailureRecord {
@@ -605,7 +628,18 @@ export class MemoryStore {
     const existing = await this.findDocByHash(doc.hash);
     if (existing != null) return existing;
     const result = await this.db.documents.insert(COLLECTIONS.docs, this.fitDocRecord(doc));
-    return Number((result as { rid: string | number }).rid);
+    const rid = Number((result as { rid: string | number }).rid);
+    await this.projectDocVector(rid, doc, false);
+    return rid;
+  }
+
+  async listDocs(): Promise<Array<MemoryDoc & { rid: number }>> {
+    try {
+      const { items } = await this.db.documents.list(COLLECTIONS.docs, { limit: 10_000 });
+      return items.map(rowToDoc).filter((doc): doc is MemoryDoc & { rid: number } => doc != null);
+    } catch {
+      return [];
+    }
   }
 
   /**
@@ -766,20 +800,76 @@ export class MemoryStore {
   }
 
   /**
-   * Semantic vector search over the projected Memory-node vector rows. Results
-   * are mapped back from vector record ids to Memory node rids so the recall
-   * engine can apply its normal scope, supersession, tier, trust, recency, and
-   * centrality governance before anything reaches callers.
+   * Semantic vector search over the projected vector rows. Node vectors map
+   * directly to Memory node rids. Document vectors map through their source hash
+   * to the ingested markdown root node, so recall still applies its normal
+   * scope, supersession, tier, trust, recency, and centrality governance.
    */
   async searchVector(query: string, limit = 20): Promise<SearchRow[]> {
-    const provider = vectorProvider(false);
+    const provider = await this.vectorReadProvider();
     if (provider == null) {
       throw new Error("RED_MEMORY_VECTOR_PROVIDER is not configured");
+    }
+    if (isLocalVectorProvider(provider)) {
+      return this.searchLocalVector(query, limit);
     }
     const r = await this.db.query(
       `SEARCH SIMILAR TEXT '${escapeLabel(query)}' COLLECTION ${COLLECTIONS.vectors} USING ${provider} LIMIT ${clampLimit(limit)}`,
     );
-    return r.rows.map(rowToVectorSearchRow).filter((h) => Number.isFinite(h.rid));
+    return this.groundVectorSearchRows(r.rows);
+  }
+
+  private async searchLocalVector(query: string, limit = 20): Promise<SearchRow[]> {
+    const queryEmbedding = localEmbedding(query);
+    const rows = (await this.listLocalVectorRecords())
+      .map((record) => ({
+        record,
+        score: cosineSimilarity(queryEmbedding, decodeLocalEmbedding(record.embedding)),
+      }))
+      .filter((hit) => hit.score > 0)
+      .sort((a, b) => b.score - a.score || a.record.label.localeCompare(b.record.label))
+      .slice(0, clampLimit(limit));
+    const hashToNodeRid = new Map<string, number>();
+    const out: SearchRow[] = [];
+    for (const { record, score } of rows) {
+      if (record.source_collection === COLLECTIONS.nodes) {
+        out.push({ rid: record.node_rid, score });
+        continue;
+      }
+      if (record.source_collection !== COLLECTIONS.docs || !record.node_hash) continue;
+      if (hashToNodeRid.size === 0) {
+        for (const node of await this.listNodes()) {
+          const hash = node.properties.hash;
+          if (typeof hash === "string") hashToNodeRid.set(hash, node.rid);
+        }
+      }
+      const rid = hashToNodeRid.get(record.node_hash);
+      if (rid != null) out.push({ rid, score });
+    }
+    return out;
+  }
+
+  private async groundVectorSearchRows(rows: Record<string, unknown>[]): Promise<SearchRow[]> {
+    const hashToNodeRid = new Map<string, number>();
+    const out: SearchRow[] = [];
+    for (const row of rows) {
+      const hit = rowToVectorSearchHit(row);
+      if (hit.source_collection === COLLECTIONS.nodes) {
+        const rid = Number(hit.node_rid ?? hit.entity_id);
+        if (Number.isFinite(rid)) out.push({ rid, score: hit.score });
+        continue;
+      }
+      if (hit.source_collection !== COLLECTIONS.docs || !hit.node_hash) continue;
+      if (hashToNodeRid.size === 0) {
+        for (const node of await this.listNodes()) {
+          const hash = node.properties.hash;
+          if (typeof hash === "string") hashToNodeRid.set(hash, node.rid);
+        }
+      }
+      const rid = hashToNodeRid.get(hit.node_hash);
+      if (rid != null) out.push({ rid, score: hit.score });
+    }
+    return out;
   }
 
   // -------------------------------------------------------------------
@@ -802,6 +892,24 @@ export class MemoryStore {
     const updatedAt = Date.now();
     if (provider == null) {
       return "unavailable";
+    }
+    if (isLocalVectorProvider(provider)) {
+      await this.recordLocalVector({
+        rid,
+        node_rid: rid,
+        node_hash: node.properties.hash,
+        text_hash: textHash,
+        label: node.label,
+        node_type: node.node_type,
+        text_length: text.length,
+        source_collection: COLLECTIONS.nodes,
+        project: node.properties.project ?? this.project,
+        provider,
+        updated_at: updatedAt,
+        embedding: encodeLocalEmbedding(localEmbedding(text)),
+      });
+      await this.clearVectorFailure(rid);
+      return "ready";
     }
     try {
       await this.db.query(
@@ -828,10 +936,77 @@ export class MemoryStore {
     }
   }
 
+  /**
+   * Best-effort vector projection for document chunks. These records are kept
+   * in the same RedDB vector collection so readiness can prove doc coverage,
+   * but recall only accepts node-backed vector hits until doc->node grounding is
+   * explicit.
+   */
+  private async projectDocVector(
+    rid: number,
+    doc: MemoryDoc,
+    strict: boolean,
+  ): Promise<VectorProjectionState> {
+    const text = docVectorText(doc);
+    const textHash = docVectorTextHash(doc);
+    const provider = vectorProvider(strict);
+    const updatedAt = Date.now();
+    if (provider == null) {
+      return "unavailable";
+    }
+    if (isLocalVectorProvider(provider)) {
+      await this.recordLocalVector({
+        rid,
+        node_rid: 0,
+        doc_rid: rid,
+        node_hash: doc.hash,
+        text_hash: textHash,
+        label: `doc:${doc.path}`,
+        path: doc.path,
+        title: doc.title ?? null,
+        text_length: text.length,
+        source_collection: COLLECTIONS.docs,
+        project: this.project,
+        provider,
+        updated_at: updatedAt,
+        embedding: encodeLocalEmbedding(localEmbedding(text)),
+      });
+      await this.clearVectorFailure(docVectorFailureKey(rid));
+      return "ready";
+    }
+    try {
+      await this.db.query(
+        `INSERT INTO ${COLLECTIONS.vectors} (doc_rid, node_hash, text_hash, text, label, path, title, text_length, source_collection, project, provider, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) WITH AUTO EMBED (text) USING ${provider} RETURNING *`,
+        rid,
+        doc.hash,
+        textHash,
+        text,
+        `doc:${doc.path}`,
+        doc.path,
+        doc.title ?? null,
+        text.length,
+        COLLECTIONS.docs,
+        this.project,
+        provider,
+        updatedAt,
+      );
+      await this.clearVectorFailure(docVectorFailureKey(rid));
+      return "ready";
+    } catch (err) {
+      const failure = classifyVectorFailure(err, textHash, updatedAt);
+      await this.recordVectorFailure(docVectorFailureKey(rid), failure);
+      if (strict) throw new Error(`vector projection ${failure.status}: ${failure.error}`);
+      return failure.status;
+    }
+  }
+
   async maintainVectorProjection(opts: { strict?: boolean } = {}): Promise<VectorStatusReport> {
     const strict = opts.strict === true;
     for (const node of await this.listNodes()) {
       await this.projectNodeVector(node.rid, node, strict);
+    }
+    for (const doc of await this.listDocs()) {
+      await this.projectDocVector(doc.rid, doc, strict);
     }
     const report = await this.vectorStatus();
     if (strict && report.overall !== "ready") {
@@ -842,14 +1017,17 @@ export class MemoryStore {
 
   async vectorStatus(): Promise<VectorStatusReport> {
     const nodes = await this.listNodes();
-    const records = await this.listVectorRecords();
-    const byNode = latestVectorRecords(records);
+    const docs = await this.listDocs();
+    const provider = await this.vectorReadProvider();
+    const records = provider == null ? [] : await this.listVectorRecords(provider);
+    const byTarget = latestVectorRecords(records);
     const failures = await Promise.all(nodes.map((node) => this.readVectorFailure(node.rid)));
     const statuses: VectorNodeStatus[] = nodes.map((node, index) => {
       const expected = vectorTextHash(node);
-      const projected = byNode.get(node.rid);
+      const projected = byTarget.get(vectorTargetKey(COLLECTIONS.nodes, node.rid));
       if (projected) {
         return {
+          source_collection: COLLECTIONS.nodes,
           rid: node.rid,
           label: node.label,
           node_type: node.node_type,
@@ -861,6 +1039,7 @@ export class MemoryStore {
       }
       const failure = failures[index];
       return {
+        source_collection: COLLECTIONS.nodes,
         rid: node.rid,
         label: node.label,
         node_type: node.node_type,
@@ -870,43 +1049,112 @@ export class MemoryStore {
         updated_at: failure?.updated_at,
       };
     });
+    const docFailures = await Promise.all(
+      docs.map((doc) => this.readVectorFailure(docVectorFailureKey(doc.rid))),
+    );
+    const docStatuses: VectorDocStatus[] = docs.map((doc, index) => {
+      const expected = docVectorTextHash(doc);
+      const projected = byTarget.get(vectorTargetKey(COLLECTIONS.docs, doc.rid));
+      if (projected) {
+        return {
+          source_collection: COLLECTIONS.docs,
+          rid: doc.rid,
+          path: doc.path,
+          title: doc.title ?? null,
+          status: projected.text_hash === expected ? "ready" : "stale",
+          text_hash: expected,
+          projected_text_hash: projected.text_hash,
+          updated_at: projected.updated_at,
+        };
+      }
+      const failure = docFailures[index];
+      return {
+        source_collection: COLLECTIONS.docs,
+        rid: doc.rid,
+        path: doc.path,
+        title: doc.title ?? null,
+        status: failure?.status ?? "unavailable",
+        text_hash: expected,
+        error: failure?.error,
+        updated_at: failure?.updated_at,
+      };
+    });
 
-    const ready = statuses.filter((s) => s.status === "ready").length;
-    const stale = statuses.filter((s) => s.status === "stale").length;
-    const unavailable = statuses.filter((s) => s.status === "unavailable").length;
-    const failed = statuses.filter((s) => s.status === "failed").length;
+    const allStatuses = [...statuses, ...docStatuses];
+    const ready = allStatuses.filter((s) => s.status === "ready").length;
+    const stale = allStatuses.filter((s) => s.status === "stale").length;
+    const unavailable = allStatuses.filter((s) => s.status === "unavailable").length;
+    const failed = allStatuses.filter((s) => s.status === "failed").length;
     return {
+      schema_version: "memory.vector_status.v1",
+      read_only: true,
       overall: vectorOverall({ ready, stale, unavailable, failed }),
-      total: statuses.length,
+      total: allStatuses.length,
       ready,
       stale,
       unavailable,
       failed,
       nodes: statuses,
+      docs: docStatuses,
     };
   }
 
-  private async listVectorRecords(): Promise<VectorProjectionRecord[]> {
+  private async listVectorRecords(provider: string): Promise<VectorProjectionRecord[]> {
+    const localRecords = await this.listLocalVectorRecords();
     try {
       const r = await this.db.query(`SELECT * FROM ${COLLECTIONS.vectors}`);
-      return r.rows.map(rowToVectorRecord).filter((row) => Number.isFinite(row.node_rid));
+      return [...r.rows.map(rowToVectorRecord).filter(hasVectorTarget), ...localRecords].filter(
+        (record) => record.provider === provider,
+      );
     } catch {
-      return [];
+      return localRecords.filter((record) => record.provider === provider);
     }
   }
 
-  private async readVectorFailure(rid: number): Promise<VectorFailureRecord | null> {
-    const raw = await this.kv().get(vectorFailureKey(rid));
+  private async vectorReadProvider(): Promise<string | null> {
+    const configured = vectorProvider(false);
+    if (configured != null) return configured;
+    return (await this.listLocalVectorRecords()).length > 0 ? LOCAL_VECTOR_PROVIDER : null;
+  }
+
+  private async listLocalVectorRecords(): Promise<LocalVectorProjectionRecord[]> {
+    const records = await Promise.all([
+      ...(await this.listNodes()).map((node) =>
+        this.readLocalVector(COLLECTIONS.nodes, node.rid),
+      ),
+      ...(await this.listDocs()).map((doc) => this.readLocalVector(COLLECTIONS.docs, doc.rid)),
+    ]);
+    return records.filter((record): record is LocalVectorProjectionRecord => record !== null);
+  }
+
+  private async readLocalVector(
+    sourceCollection: string,
+    rid: number,
+  ): Promise<LocalVectorProjectionRecord | null> {
+    const raw = await this.kv().get(localVectorKey(sourceCollection, rid));
+    if (raw == null) return null;
+    return (typeof raw === "string" ? JSON.parse(raw) : raw) as LocalVectorProjectionRecord;
+  }
+
+  private async recordLocalVector(record: LocalVectorProjectionRecord): Promise<void> {
+    const targetRid =
+      record.source_collection === COLLECTIONS.docs ? record.doc_rid : record.node_rid;
+    if (!Number.isFinite(targetRid)) return;
+    await this.kv().put(localVectorKey(record.source_collection, Number(targetRid)), record);
+  }
+
+  private async readVectorFailure(key: number | string): Promise<VectorFailureRecord | null> {
+    const raw = await this.kv().get(typeof key === "number" ? vectorFailureKey(key) : key);
     if (raw == null) return null;
     return (typeof raw === "string" ? JSON.parse(raw) : raw) as VectorFailureRecord;
   }
 
-  private async recordVectorFailure(rid: number, failure: VectorFailureRecord): Promise<void> {
-    await this.kv().put(vectorFailureKey(rid), failure);
+  private async recordVectorFailure(key: number | string, failure: VectorFailureRecord): Promise<void> {
+    await this.kv().put(typeof key === "number" ? vectorFailureKey(key) : key, failure);
   }
 
-  private async clearVectorFailure(rid: number): Promise<void> {
-    await this.kv().delete(vectorFailureKey(rid));
+  private async clearVectorFailure(key: number | string): Promise<void> {
+    await this.kv().delete(typeof key === "number" ? vectorFailureKey(key) : key);
   }
 
   /**
@@ -1094,11 +1342,77 @@ function vectorTextHash(node: MemoryNode): string {
   return contentHash("memory-vector", vectorText(node));
 }
 
+function docVectorText(doc: MemoryDoc): string {
+  const frontmatter = Object.entries(doc.frontmatter ?? {})
+    .map(([key, value]) => `${key}: ${String(value)}`)
+    .join("\n");
+  return [doc.path, doc.title, frontmatter, doc.body].filter(Boolean).join("\n");
+}
+
+function docVectorTextHash(doc: MemoryDoc): string {
+  return contentHash("memory-doc-vector", docVectorText(doc));
+}
+
 function vectorProvider(strict: boolean): string | null {
   if (!strict && process.env.RED_MEMORY_VECTOR_PROVIDER == null) return null;
   const provider = process.env.RED_MEMORY_VECTOR_PROVIDER ?? "openai";
   if (/^[a-zA-Z0-9_-]+$/.test(provider)) return provider;
   return "openai";
+}
+
+function isLocalVectorProvider(provider: string): boolean {
+  return provider === "local" || provider === "local-dev";
+}
+
+const LOCAL_VECTOR_PROVIDER = "local";
+const LOCAL_VECTOR_DIMENSIONS = 128;
+
+function localEmbedding(text: string): number[] {
+  const vector = Array.from({ length: LOCAL_VECTOR_DIMENSIONS }, () => 0);
+  for (const token of localEmbeddingTokens(text)) {
+    const hash = positiveHash(token);
+    const index = hash % LOCAL_VECTOR_DIMENSIONS;
+    const sign = hash % 2 === 0 ? 1 : -1;
+    vector[index] += sign;
+  }
+  const magnitude = Math.sqrt(vector.reduce((sum, value) => sum + value * value, 0));
+  if (magnitude === 0) return vector;
+  return vector.map((value) => Number((value / magnitude).toFixed(6)));
+}
+
+function encodeLocalEmbedding(vector: number[]): string {
+  return Buffer.from(
+    vector.map((value) => Math.max(-127, Math.min(127, Math.round(value * 127))) & 0xff),
+  ).toString("base64");
+}
+
+function decodeLocalEmbedding(embedding: string | number[]): number[] {
+  if (Array.isArray(embedding)) return embedding;
+  const bytes = Buffer.from(embedding, "base64");
+  return Array.from(bytes, (byte) => (byte > 127 ? byte - 256 : byte) / 127);
+}
+
+function localEmbeddingTokens(text: string): string[] {
+  return text
+    .toLowerCase()
+    .match(/[a-z0-9_]+/g)
+    ?.filter((token) => token.length > 1) ?? [];
+}
+
+function positiveHash(value: string): number {
+  let hash = 2166136261;
+  for (let i = 0; i < value.length; i++) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function cosineSimilarity(a: number[], b: number[]): number {
+  const length = Math.min(a.length, b.length);
+  let score = 0;
+  for (let i = 0; i < length; i++) score += a[i] * b[i];
+  return Number(Math.max(0, score).toFixed(6));
 }
 
 function classifyVectorFailure(
@@ -1118,13 +1432,20 @@ function classifyVectorFailure(
 
 function latestVectorRecords(
   records: VectorProjectionRecord[],
-): Map<number, VectorProjectionRecord> {
-  const out = new Map<number, VectorProjectionRecord>();
+): Map<string, VectorProjectionRecord> {
+  const out = new Map<string, VectorProjectionRecord>();
   for (const record of records) {
-    const prev = out.get(record.node_rid);
-    if (!prev || record.updated_at >= prev.updated_at) out.set(record.node_rid, record);
+    const targetRid = record.source_collection === COLLECTIONS.docs ? record.doc_rid : record.node_rid;
+    if (!Number.isFinite(targetRid)) continue;
+    const key = vectorTargetKey(record.source_collection, Number(targetRid));
+    const prev = out.get(key);
+    if (!prev || record.updated_at >= prev.updated_at) out.set(key, record);
   }
   return out;
+}
+
+function vectorTargetKey(sourceCollection: string, rid: number): string {
+  return `${sourceCollection}:${rid}`;
 }
 
 function vectorOverall(counts: {
@@ -1145,10 +1466,13 @@ function rowToVectorRecord(row: Record<string, unknown>): VectorProjectionRecord
   return {
     rid: Number(get("rid") ?? row.red_entity_id ?? 0),
     node_rid: Number(get("node_rid")),
+    doc_rid: get("doc_rid") == null ? undefined : Number(get("doc_rid")),
     node_hash: get("node_hash") == null ? undefined : String(get("node_hash")),
     text_hash: String(get("text_hash") ?? ""),
     label: String(get("label") ?? ""),
-    node_type: (get("node_type") as NodeType) ?? "concept",
+    node_type: get("node_type") == null ? undefined : (get("node_type") as NodeType),
+    path: get("path") == null ? undefined : String(get("path")),
+    title: get("title") == null ? null : String(get("title")),
     text_length: Number(get("text_length") ?? 0),
     source_collection: String(get("source_collection") ?? COLLECTIONS.nodes),
     project: String(get("project") ?? "default"),
@@ -1157,15 +1481,69 @@ function rowToVectorRecord(row: Record<string, unknown>): VectorProjectionRecord
   };
 }
 
-function rowToVectorSearchRow(row: Record<string, unknown>): SearchRow {
+function hasVectorTarget(row: VectorProjectionRecord): boolean {
+  if (row.source_collection === COLLECTIONS.docs) return Number.isFinite(row.doc_rid);
+  return Number.isFinite(row.node_rid);
+}
+
+interface VectorSearchHit {
+  entity_id?: number;
+  node_rid?: number;
+  doc_rid?: number;
+  node_hash?: string;
+  source_collection: string;
+  score: number;
+}
+
+function rowToVectorSearchHit(row: Record<string, unknown>): VectorSearchHit {
   const props = (row.properties ?? row.PROPERTIES ?? {}) as Record<string, unknown>;
   const get = (key: string) => row[key] ?? row[key.toUpperCase()] ?? props[key];
   return {
-    rid: Number(get("node_rid") ?? get("entity_id") ?? row.red_entity_id),
+    entity_id: optionalNumber(get("entity_id") ?? row.red_entity_id),
+    node_rid: optionalNumber(get("node_rid")),
+    doc_rid: optionalNumber(get("doc_rid")),
+    node_hash: get("node_hash") == null ? undefined : String(get("node_hash")),
+    source_collection: String(get("source_collection") ?? COLLECTIONS.nodes),
     score: Number(get("similarity") ?? get("score") ?? 1),
   };
 }
 
+function optionalNumber(value: unknown): number | undefined {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : undefined;
+}
+
 function vectorFailureKey(rid: number): string {
   return `vector:failure:${rid}`;
+}
+
+function docVectorFailureKey(rid: number): string {
+  return `vector:failure:doc:${rid}`;
+}
+
+function localVectorKey(sourceCollection: string, rid: number): string {
+  return `vector:local:${sourceCollection}:${rid}`;
+}
+
+function rowToDoc(row: Record<string, unknown>): (MemoryDoc & { rid: number }) | null {
+  const get = (key: string) => row[key] ?? row[key.toUpperCase()];
+  const rid = Number(get("rid") ?? row.red_entity_id ?? 0);
+  const path = get("path");
+  const hash = get("hash");
+  if (!Number.isFinite(rid) || typeof path !== "string" || typeof hash !== "string") {
+    return null;
+  }
+  const frontmatter = get("frontmatter");
+  return {
+    rid,
+    path,
+    title: get("title") == null ? undefined : String(get("title")),
+    body: String(get("body") ?? ""),
+    frontmatter:
+      frontmatter && typeof frontmatter === "object" && !Array.isArray(frontmatter)
+        ? (frontmatter as Record<string, unknown>)
+        : undefined,
+    hash,
+    updated_at: Number(get("source_updated_at") ?? get("updated_at") ?? 0),
+  };
 }

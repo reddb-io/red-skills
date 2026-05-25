@@ -103,7 +103,15 @@ export async function buildPrePrMemoryReview(
     relatedNodes.filter((node) => includesType(VALIDATION_TYPES, node.node_type)),
     markerFor,
   );
-  const risks = riskSection(knownFailures.items, relatedNodes, markerFor, changedFiles);
+  const risks = riskSection(
+    knownFailures.items,
+    relatedNodes,
+    markerFor,
+    changedFiles,
+    edges,
+    nodeByRid,
+    changedRids,
+  );
 
   const missingEvidence: string[] = [];
   for (const [name, value] of [
@@ -148,6 +156,9 @@ function riskSection(
   relatedNodes: StoredNode[],
   markerFor: ReturnType<typeof evidenceMarkerFactory>,
   changedFiles: string[],
+  edges: MemoryEdge[],
+  nodeByRid: Map<number, StoredNode>,
+  changedRids: Set<number>,
 ): PrePrReviewSection {
   const items: PrePrReviewItem[] = knownFailureItems.map((item) => ({
     title: `Known failure risk: ${item.title}`,
@@ -161,6 +172,22 @@ function riskSection(
       title: `Downstream file may be affected: ${titleOf(node)}`,
       summary: excerptOf(node),
       evidence: [markerFor(node.rid)],
+    });
+  }
+  for (const edge of edges) {
+    if (edge.label !== "CALLS" && edge.label !== "USES_TYPE" && edge.label !== "REFERENCES") continue;
+    const fromChanged = changedRids.has(edge.from_rid);
+    const toChanged = changedRids.has(edge.to_rid);
+    if (fromChanged === toChanged) continue;
+    const impacted = nodeByRid.get(fromChanged ? edge.to_rid : edge.from_rid);
+    if (!impacted || impacted.node_type !== "symbol") continue;
+    if (changedFiles.some((file) => pathMatches(impacted, file))) continue;
+    const kind =
+      edge.label === "CALLS" ? "Call graph" : edge.label === "USES_TYPE" ? "Type-use" : "Reference";
+    items.push({
+      title: `${kind} dependency may be affected: ${titleOf(impacted)}`,
+      summary: excerptOf(impacted),
+      evidence: [markerFor(impacted.rid)],
     });
   }
   return { items, missing: items.length === 0 };

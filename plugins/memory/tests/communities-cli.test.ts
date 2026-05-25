@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
@@ -79,6 +79,10 @@ describe("memory communities CLI", () => {
         command: "communities",
         supportsJson: true,
       });
+      expect(getReadOnlyMemoryOperation("memory.communities-viewer").renderer.cli).toMatchObject({
+        command: "communities-viewer",
+        supportsJson: false,
+      });
 
       const before = await openStore(root);
       const beforeStats = await before.stats();
@@ -87,12 +91,16 @@ describe("memory communities CLI", () => {
       const first = runMemory(["communities", "--root", root, "--json"]);
       expect(first.status).toBe(0);
       const firstBody = JSON.parse(first.stdout) as {
+        schema_version: string;
+        read_only: boolean;
         cached: boolean;
         graph_hash: string;
         communities: Array<{ id: string; count: number; labels: string[]; titles: string[] }>;
         assignments: Array<{ rid: number; community_id: string; label: string; title: string }>;
       };
 
+      expect(firstBody.schema_version).toBe("memory.communities.v1");
+      expect(firstBody.read_only).toBe(true);
       expect(firstBody.cached).toBe(false);
       expect(firstBody.graph_hash).toMatch(/^[a-f0-9]{64}$/);
       expect(firstBody.communities).toHaveLength(2);
@@ -107,6 +115,17 @@ describe("memory communities CLI", () => {
       expect(secondBody.cached).toBe(true);
       expect(secondBody.graph_hash).toBe(firstBody.graph_hash);
       expect(secondBody.assignments).toEqual(firstBody.assignments);
+
+      const out = join(root, "communities.html");
+      const viewer = runMemory(["communities-viewer", "--root", root, "--out", out]);
+      expect(viewer.status).toBe(0);
+      expect(viewer.stdout).toContain("memory: communities viewer written");
+      expect(viewer.stdout).toContain("contract: memory.communities.v1");
+      const html = await readFile(out, "utf8");
+      expect(html).toContain("Graph Communities");
+      expect(html).toContain("auth login flow");
+      expect(html).toContain('id="communities-data"');
+      expect(html).not.toContain("<script src=");
 
       const after = await openStore(root);
       const afterStats = await after.stats();

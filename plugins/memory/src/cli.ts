@@ -12,17 +12,53 @@ import {
   resolveStoreUri,
   skillTelemetryEnabled,
 } from "./config.js";
+import {
+  createMemoryBackup,
+  listMemoryBackups,
+  readMemoryBackupManifest,
+  restoreMemoryBackup,
+} from "./backup.js";
+import { buildMemoryCapabilityCatalog } from "./capability-catalog.js";
+import { buildMemoryAssetInventory } from "./asset-inventory.js";
+import { buildMemoryAssetInventoryViewerArtifact } from "./asset-inventory-viewer.js";
+import { buildMemoryAgentIntegrationStatus } from "./agent-integration-status.js";
+import { buildMemoryAgentIntegrationStatusViewerArtifact } from "./agent-integration-status-viewer.js";
+import { evaluateCompetitiveEvalV2 } from "./competitive-baseline.js";
+import { buildCompetitiveEvalViewerArtifact } from "./competitive-eval-viewer.js";
+import { buildMemoryCompetitiveRadar } from "./competitive-radar.js";
 import type { CommunityAnalyticsReport } from "./communities.js";
+import { buildCommunitiesViewerArtifact } from "./communities-viewer.js";
 import { buildContextPack } from "./context-pack.js";
+import { buildContextPackViewerArtifact } from "./context-pack-viewer.js";
 import { claimCheck, type ClaimCheckResult } from "./claim-check.js";
+import { buildDocBrief } from "./doc-brief.js";
+import { buildDocBriefViewerArtifact } from "./doc-brief-viewer.js";
+import { buildDocBundle } from "./doc-bundle.js";
+import { buildDocBundleViewerArtifact } from "./doc-bundle-viewer.js";
+import { buildDocBacklinksReport } from "./doc-backlinks.js";
+import { buildDocBacklinksViewerArtifact } from "./doc-backlinks-viewer.js";
+import { buildDocCoverageReport } from "./doc-coverage.js";
+import { buildDocCoverageViewerArtifact } from "./doc-coverage-viewer.js";
+import { buildDocEvidencePack } from "./doc-evidence-pack.js";
+import { buildDocEvidencePackViewerArtifact } from "./doc-evidence-pack-viewer.js";
+import { buildDocReferenceGraphReport } from "./doc-reference-graph.js";
+import { buildDocReferenceGraphViewerArtifact } from "./doc-reference-graph-viewer.js";
+import { buildDocRelatedReport } from "./doc-related.js";
+import { buildDocRelatedViewerArtifact } from "./doc-related-viewer.js";
+import { restoreDocsFromMemory } from "./doc-restore.js";
+import { readDoc, searchDocs } from "./doc-search.js";
+import { buildDocSearchViewerArtifact } from "./doc-search-viewer.js";
 import { diagnose, prune } from "./doctor.js";
 import { ask, neighbors, path as shortestPath, search, traverse } from "./engine.js";
 import { exportGraph } from "./export.js";
 import {
   extractConversation,
+  extractStructuredTranscript,
   factsToGraph,
   resolveProvider,
 } from "./extract-conversation.js";
+import { buildMemoryExtractionStatus } from "./extraction-status.js";
+import { buildMemoryExtractionStatusViewerArtifact } from "./extraction-status-viewer.js";
 import { formatOutput, parseInput, type RawPayload } from "./hook-adapters.js";
 import { dispatch, type HookEvent, type Runner } from "./hook-runtime.js";
 import {
@@ -37,11 +73,19 @@ import {
   type MemoryInboxItem,
 } from "./inbox.js";
 import { graphRecallResult } from "./graph-recall.js";
+import {
+  buildMemoryGovernanceReport,
+  type MemoryGovernanceReport,
+} from "./governance.js";
+import { buildMemoryGovernanceViewerArtifact } from "./governance-viewer.js";
 import { MemoryStore, factToNode } from "./graph-store.js";
 import { HistoricalMemoryStore } from "./historical-memory-store.js";
+import { createMemoryHttpServer } from "./http-server.js";
 import { ingestProject, refreshFiles } from "./ingest.js";
 import { initGraph, initMarkdownOnly } from "./init.js";
 import { lintMemory, type LintReport } from "./lint.js";
+import { buildMemoryLayersReport } from "./memory-layers.js";
+import { buildMemoryLayersViewerArtifact } from "./memory-layers-viewer.js";
 import { applyProviderEnv, redDbProviderClient } from "./provider-client.js";
 import {
   redactSensitiveValue,
@@ -64,19 +108,56 @@ import {
   type PrePrMemoryReview,
   type PrePrReviewSection,
 } from "./pre-pr-review.js";
+import { buildPrePrReviewViewerArtifact } from "./pre-pr-review-viewer.js";
+import { bootstrapProjectMemory } from "./project-bootstrap.js";
 import { buildLearningDebtReport } from "./learning-debt.js";
+import { buildLearningDebtViewerArtifact } from "./learning-debt-viewer.js";
 import { buildOnboardingMap } from "./onboarding-map.js";
+import { buildOnboardingMapViewerArtifact } from "./onboarding-map-viewer.js";
+import {
+  buildMemoryOperationalDashboard,
+  buildMemoryOperationalDashboardArtifact,
+} from "./operational-dashboard.js";
+import { buildPathExplainReport } from "./path-explain.js";
+import { buildPathExplainViewerArtifact } from "./path-explain-viewer.js";
 import { buildPreflightBrief } from "./preflight.js";
 import { buildReadinessEnvelope, type MemoryReadinessEnvelope } from "./readiness.js";
 import { buildReadinessViewerArtifact } from "./readiness-viewer.js";
+import {
+  buildMemoryRoutingGuide,
+  type MemoryRoutingAgent,
+  type MemoryRoutingGuide,
+} from "./routing-guide.js";
+import { buildMemoryRoutingGuideViewerArtifact } from "./routing-guide-viewer.js";
+import { buildSessionTimeline } from "./session-timeline.js";
+import { buildSessionTimelineViewerArtifact } from "./session-timeline-viewer.js";
 import { executeReadOnlyMemoryOperation } from "./operations.js";
+import { buildMemoryHandoff } from "./handoff.js";
+import { buildMemoryHandoffViewerArtifact } from "./handoff-viewer.js";
+import { buildWorkFrontier } from "./work-frontier.js";
+import { buildWorkFrontierViewerArtifact } from "./work-frontier-viewer.js";
+import { buildHookCoverageReport } from "./hook-coverage.js";
+import { buildHookCoverageViewerArtifact } from "./hook-coverage-viewer.js";
+import { buildMemoryHealthReport } from "./memory-health.js";
+import { buildMemoryHealthViewerArtifact } from "./memory-health-viewer.js";
+import { buildMemoryDecayReport } from "./memory-decay.js";
+import { buildMemoryDecayViewerArtifact } from "./memory-decay-viewer.js";
 import { recall } from "./recall.js";
+import { buildMemorySmartSearch } from "./smart-search.js";
+import { buildMemorySmartSearchViewerArtifact } from "./smart-search-viewer.js";
 import { commitMemoryGraph, type MemoryGraphCommitResult } from "./vcs-commit.js";
+import { buildVectorSearchReport } from "./vector-search.js";
+import { buildVectorStatusViewerArtifact } from "./vector-status-viewer.js";
+import {
+  buildMemoryWorkbench,
+  buildMemoryWorkbenchArtifact,
+} from "./workbench.js";
 import {
   structuralImpactReader,
   type StructuralImpact,
   type StructuralImpactTarget,
 } from "./structural-impact-reader.js";
+import { buildStructuralImpactViewerArtifact } from "./structural-impact-viewer.js";
 import {
   listContradictions,
   resolveConflict,
@@ -121,20 +202,76 @@ Usage:
   memory inbox promote <id>         [--root <dir>] --yes [--json]
   memory classify <candidate...>    [--root <dir>] [--json]
   memory recall <query...>          [--root <dir>] [--limit N] [--include-superseded] [--scope ...] [--scope-id ID] [--include-narrower-scopes] [--as-of <reddb-ref>]
+  memory smart-search <query...>    [--root <dir>] [--limit N] [--depth N] [--json]
+  memory smart-search-viewer <query...> [--root <dir>] [--limit N] [--depth N] [--out <file>]
   memory context-pack <goal...>     [--root <dir>] [--budget N] [--limit N] [--json] [--scope ...] [--scope-id ID] [--include-narrower-scopes]
+  memory context-pack-viewer <goal...> [--root <dir>] [--budget N] [--limit N] [--depth N] [--out <file>] [--scope ...] [--scope-id ID] [--include-narrower-scopes]
   memory recommend skills <task...> [--root <dir>] [--limit N] [--json] [--scope ...] [--scope-id ID] [--include-narrower-scopes]
   memory claim-check <assertion...> [--root <dir>] [--json]
   memory preflight <task...>        [--root <dir>] [--limit N] [--min-evidence N] [--stale-days N] [--json] [--scope ...] [--scope-id ID] [--include-narrower-scopes]
   memory readiness <goal...>        [--root <dir>] [--limit N] [--min-evidence N] [--stale-days N] [--json] [--scope ...] [--scope-id ID] [--include-narrower-scopes]
   memory readiness-viewer <goal...> [--root <dir>] [--out <file>] [--limit N] [--min-evidence N] [--stale-days N] [--scope ...] [--scope-id ID] [--include-narrower-scopes]
+  memory capabilities              [--root <dir>] [--json]
+  memory assets [query...]          [--root <dir>] [--kind <kind>] [--json]
+  memory assets-viewer [query...]   [--root <dir>] [--kind <kind>] [--out <file>]
+  memory competitive-eval          [--json]
+  memory competitive-eval-viewer   [--out <file>]
+  memory competitive-radar         [--root <dir>] [--json]
+  memory layers                    [--root <dir>] [--json]
+  memory layers-viewer             [--root <dir>] [--out <file>]
+  memory handoff [focus...]         [--root <dir>] [--limit N] [--json]
+  memory handoff-viewer [focus...]  [--root <dir>] [--limit N] [--out <file>]
+  memory frontier [focus...]        [--root <dir>] [--limit N] [--json]
+  memory frontier-viewer [focus...] [--root <dir>] [--limit N] [--out <file>]
+  memory dashboard                 [--root <dir>] [--out <file>] [--stale-days N] [--json]
+  memory workbench                 [--root <dir>] [--out <file>] [--session <id>] [--limit N] [--json]
+  memory session timeline           [--root <dir>] [--session <id>] [--limit N] [--json]
+  memory session timeline-viewer    [--root <dir>] [--session <id>] [--limit N] [--out <file>]
   memory learning-debt              [--root <dir>] [--stale-days N] [--json]
+  memory learning-debt-viewer       [--root <dir>] [--stale-days N] [--out <file>]
+  memory decay                      [--root <dir>] [--stale-days N] [--deprecate-days N] [--limit N] [--json]
+  memory decay-viewer               [--root <dir>] [--stale-days N] [--deprecate-days N] [--limit N] [--out <file>]
+  memory health-viewer              [--root <dir>] [--stale-days N] [--out <file>]
   memory onboarding-map             [--root <dir>] [--stale-days N] [--json]
+  memory onboarding-map-viewer      [--root <dir>] [--stale-days N] [--out <file>]
   memory onboarding-map export <out-dir> --public-safe [--strict] [--root <dir>] [--json]
+  memory routing-guide              [--agent codex|claude|cursor|gemini|aider|opencode|generic] [--json]
+  memory routing-guide-viewer       [--agent codex|claude|cursor|gemini|aider|opencode|generic] [--out <file>]
+  memory integration-status         [--root <dir>] [--agent codex|claude|cursor|gemini|aider|opencode|generic] [--json]
+  memory integration-status-viewer  [--root <dir>] [--agent codex|claude|cursor|gemini|aider|opencode|generic] [--out <file>]
   memory ask <question...>          [--root <dir>] [--json]
+  memory docs search <query...>     [--root <dir>] [--limit N] [--json]
+  memory docs search-viewer <query...> [--root <dir>] [--limit N] [--out <file>]
+  memory docs brief <query...>      [--root <dir>] [--limit N] [--max-bytes N] [--json]
+  memory docs brief-viewer <query...> [--root <dir>] [--limit N] [--max-bytes N] [--out <file>]
+  memory docs bundle <query...>     [--root <dir>] [--limit N] [--max-bytes N] [--json]
+  memory docs bundle-viewer <query...> [--root <dir>] [--limit N] [--max-bytes N] [--out <file>]
+  memory docs read <path|rid>       [--root <dir>] [--max-bytes N] [--json]
+  memory docs evidence-pack <path|rid> [--root <dir>] [--max-bytes N] [--json]
+  memory docs evidence-pack-viewer <path|rid> [--root <dir>] [--max-bytes N] [--out <file>]
+  memory docs backlinks <label|rid> [--root <dir>] [--json]
+  memory docs backlinks-viewer <label|rid> [--root <dir>] [--out <file>]
+  memory docs related <path|rid>    [--root <dir>] [--json]
+  memory docs related-viewer <path|rid> [--root <dir>] [--out <file>]
+  memory docs restore [path|rid]    [--root <dir>] [--out <dir>|--in-place] [--overwrite] [--dry-run] [--yes] [--json]
+  memory docs coverage              [--root <dir>] [--json]
+  memory docs coverage-viewer       [--root <dir>] [--out <file>]
+  memory docs reference-graph       [--root <dir>] [--json]
+  memory docs reference-graph-viewer [--root <dir>] [--out <file>]
+  memory bootstrap                  [--root <dir>] [--dry-run] [--max-files N] [--include-git-log] [--json]
+  memory backup create              [--root <dir>] [--name <name>] [--json]
+  memory backup list                [--root <dir>] [--json]
+  memory backup inspect <name>      [--root <dir>] [--json]
+  memory backup restore <name>      [--root <dir>] --yes [--json]
+  memory serve                      [--root <dir>] [--host 127.0.0.1] [--port 49375] [--token-env ENV]
   memory provenance <rid|label>     [--root <dir>] [--json]
+  memory governance                 [--root <dir>] [--stale-progress-days N] [--json]
+  memory governance-viewer          [--root <dir>] [--stale-progress-days N] [--out <file>]
   memory ingest <path>              [--root <dir>] [--max-files N]
   memory refresh [<path...>]         [--root <dir>] [--stdin] [--changed|--staged] [--json]
-  memory extract [<transcript-file>] [--root <dir>]   (reads stdin if no file)
+  memory extract [<transcript-file>] [--root <dir>] [--local]   (reads stdin if no file)
+  memory extraction status           [--root <dir>] [--json]
+  memory extraction status-viewer    [--root <dir>] [--out <file>]
   memory event skill                [--root <dir>] [--event-type ...] ... (or JSON/JSONL on stdin)
   memory curate skills              [--root <dir>] [--stale-days N] [--json]   (report-only)
   memory improve skills             [--root <dir>] [--write-proposal] [--json]   (proposal-gated)
@@ -143,6 +280,8 @@ Usage:
   memory improve proposals archive <proposal> --reason applied|rejected|stale --yes [--root <dir>] [--json]
   memory improve apply <proposal>    [--root <dir>] --yes [--json]   (explicit patch apply)
   memory health                    [--root <dir>] [--json]   (operational healthcheck, read-only)
+  memory hooks coverage            [--root <dir>] [--json]   (hook manifest/config coverage, read-only)
+  memory hooks coverage-viewer     [--root <dir>] [--out <file>]
   memory lint                      [--root <dir>] [--json]   (policy hygiene report, read-only)
   memory privacy scan              [--root <dir>] [--json]   (sensitive data report, read-only)
   memory privacy export [<out-dir>] [--root <dir>] [--communities] [--json]   (redacted graph export)
@@ -158,18 +297,25 @@ Usage:
   memory neighbors <label>          [--root <dir>] [--depth N] [--direction outgoing|incoming|both]
   memory traverse <label>           [--root <dir>] [--depth N] [--strategy bfs|dfs] [--direction ...]
   memory path <from> <to>           [--root <dir>] [--algorithm bfs|dijkstra]
+  memory path-explain <from> <to>   [--root <dir>] [--max-depth N] [--json]
+  memory path-explain-viewer <from> <to> [--root <dir>] [--max-depth N] [--out <file>]
   memory conflicts                  [--root <dir>] [--include-resolved] [--json]
   memory supersede <old-rid> <new-rid> [--root <dir>] [--reason <text>]
   memory resolve-conflict <active-rid> <superseded-rid> [--root <dir>] [--reason <text>]
   memory timeline <topic|rid>       [--root <dir>] [--include-audit] [--json]
   memory communities                [--root <dir>] [--no-cache] [--json]
+  memory communities-viewer         [--root <dir>] [--no-cache] [--out <file>]
   memory structural-impact          [--root <dir>] [--file <path>] [--symbol <name>]
+  memory structural-impact-viewer   [--root <dir>] [--file <path>] [--symbol <name>] [--out <file>]
   memory pre-pr-review              [--root <dir>] [--range <git-range>] [--json]
-  memory vector status              [--root <dir>] [--json]
-  memory vector maintain            [--root <dir>] [--strict] [--json]
+  memory pre-pr-review-viewer       [--root <dir>] [--range <git-range>] [--out <file>]
+  memory vector status              [--root <dir>] [--local] [--json]
+  memory vector status-viewer       [--root <dir>] [--local] [--out <file>]
+  memory vector maintain            [--root <dir>] [--local] [--strict] [--json]
+  memory vector search <query...>   [--root <dir>] [--local] [--limit N] [--json]
   memory stats                      [--root <dir>]
   memory doctor                     [--root <dir>] [--stale-days N] [--prune] [--yes]
-  memory export [<out-dir>]         [--root <dir>] [--communities]
+  memory export [<out-dir>]         [--root <dir>] [--communities] [--interop]
   memory graph  [<out-dir>]         [--root <dir>] [--communities]   (alias of export)
 
   Auto-firing hooks (invoked by the plugin manifest, reads payload on stdin):
@@ -285,7 +431,7 @@ async function runInit(args: ParsedArgs): Promise<void> {
     const rl = createInterface({ input: process.stdin, output: process.stdout });
     const answer = (
       await rl.question(
-        "What do you want to use? [markdown-only] / graph (hybrid lands in a later release): ",
+        "What do you want to use? [markdown-only] / graph: ",
       )
     ).trim();
     rl.close();
@@ -665,6 +811,72 @@ async function runRecall(args: ParsedArgs): Promise<void> {
   }
 }
 
+async function runSmartSearch(args: ParsedArgs): Promise<void> {
+  const rootDir = rootOf(args.flags);
+  const query = args.positional.join(" ").trim();
+  if (!query) throw new Error("nothing to search — pass a query: memory smart-search <query>");
+  const { store } = await openGraphStore(args);
+  try {
+    const report = await buildMemorySmartSearch(store, query, {
+      limit: intFlag(args.flags, "limit"),
+      depth: intFlag(args.flags, "depth"),
+      recall: {
+        scope: scopeFlags(args.flags),
+        includeSuperseded: args.flags["include-superseded"] === true,
+      },
+    });
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(report, null, 2));
+      return;
+    }
+    console.log(`memory smart-search: "${query}"`);
+    console.log(
+      `  recall=${report.summary.recall_hits} docs=${report.summary.doc_hits} vector=${report.summary.vector_hits} (${report.summary.vector_status})`,
+    );
+    for (const result of report.top_results.slice(0, 8)) {
+      const ref = result.ref.path ?? result.ref.label ?? result.ref.rid ?? result.id;
+      console.log(
+        `  #${result.rank} ${result.kind} [${result.score.toFixed(3)}] ${ref} (${result.sources.join("+")})`,
+      );
+      console.log(`      ${result.excerpt}`);
+    }
+    for (const action of report.recommended_next_actions) console.log(`  next: ${action}`);
+  } finally {
+    await store.close();
+  }
+}
+
+async function runSmartSearchViewer(args: ParsedArgs): Promise<void> {
+  const rootDir = rootOf(args.flags);
+  const query = args.positional.join(" ").trim();
+  if (!query) {
+    throw new Error("nothing to render — pass a query: memory smart-search-viewer <query>");
+  }
+  const safeName = createHash("sha256").update(query).digest("hex").slice(0, 12);
+  const outPath = resolve(
+    stringFlag(args.flags, "out") ?? join(rootDir, `.red/memory/smart-search-${safeName}.html`),
+  );
+  const { store } = await openGraphStore(args);
+  try {
+    const report = await buildMemorySmartSearch(store, query, {
+      limit: intFlag(args.flags, "limit"),
+      depth: intFlag(args.flags, "depth"),
+      recall: {
+        scope: scopeFlags(args.flags),
+        includeSuperseded: args.flags["include-superseded"] === true,
+      },
+    });
+    const artifact = buildMemorySmartSearchViewerArtifact(report);
+    await mkdir(dirname(outPath), { recursive: true });
+    await writeFile(outPath, artifact.html, "utf8");
+    console.log(`memory: smart-search viewer written ${outPath}`);
+    console.log(`  results: ${report.top_results.length}`);
+    console.log(`  contract: ${artifact.contract.consumes}`);
+  } finally {
+    await store.close();
+  }
+}
+
 function formatVectorRecallDiagnostic(d: {
   status: "unavailable" | "available" | "contributed";
   candidates: number;
@@ -709,6 +921,38 @@ async function runContextPack(args: ParsedArgs): Promise<void> {
       return;
     }
     process.stdout.write(pack.markdown);
+  } finally {
+    await store.close();
+  }
+}
+
+async function runContextPackViewer(args: ParsedArgs): Promise<void> {
+  const rootDir = rootOf(args.flags);
+  const goal = args.positional.join(" ").trim();
+  if (!goal) {
+    throw new Error("nothing to inspect — pass a goal: memory context-pack-viewer <goal>");
+  }
+  const { store } = await openGraphStore(args);
+  try {
+    const skillRollups = await readSkillRollups(store);
+    const pack = await buildContextPack(store, goal, {
+      budgetChars: intFlag(args.flags, "budget"),
+      limit: intFlag(args.flags, "limit"),
+      depth: intFlag(args.flags, "depth"),
+      scope: scopeFlags(args.flags),
+      skillRollups,
+    });
+    const artifact = buildContextPackViewerArtifact(pack);
+    const safeName = slugify(goal).slice(0, 60) || "context-pack";
+    const outPath = resolve(
+      stringFlag(args.flags, "out") ??
+        join(rootDir, `.red/memory/context-pack-${safeName}.html`),
+    );
+    await mkdir(dirname(outPath), { recursive: true });
+    await writeFile(outPath, artifact.html, "utf8");
+    console.log(`memory: context pack viewer written ${outPath}`);
+    console.log(`  status: ${pack.status}`);
+    console.log(`  contract: ${artifact.contract.consumes}`);
   } finally {
     await store.close();
   }
@@ -811,6 +1055,350 @@ async function runReadinessViewer(args: ParsedArgs): Promise<void> {
   }
 }
 
+async function runDashboard(args: ParsedArgs): Promise<void> {
+  const rootDir = resolve(rootOf(args.flags));
+  const { store } = await openGraphStore(args);
+  try {
+    const dashboard = await buildMemoryOperationalDashboard(store, rootDir, {
+      staleDays: intFlag(args.flags, "stale-days"),
+    });
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(dashboard, null, 2));
+      return;
+    }
+    const outPath = resolve(
+      stringFlag(args.flags, "out") ?? join(rootDir, ".red/memory/dashboard.html"),
+    );
+    const artifact = buildMemoryOperationalDashboardArtifact(dashboard);
+    await mkdir(dirname(outPath), { recursive: true });
+    await writeFile(outPath, artifact.html, "utf8");
+    console.log(`memory: operational dashboard written ${outPath}`);
+    console.log(`  state: ${dashboard.state}`);
+    console.log(`  contract: ${artifact.contract.consumes}`);
+  } finally {
+    await store.close();
+  }
+}
+
+async function runWorkbench(args: ParsedArgs): Promise<void> {
+  const rootDir = resolve(rootOf(args.flags));
+  const { store } = await openGraphStore(args);
+  try {
+    const workbench = await buildMemoryWorkbench(store, rootDir, {
+      staleDays: intFlag(args.flags, "stale-days"),
+      sessionId: stringFlag(args.flags, "session"),
+      limit: intFlag(args.flags, "limit"),
+    });
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(workbench, null, 2));
+      return;
+    }
+    const outPath = resolve(
+      stringFlag(args.flags, "out") ?? join(rootDir, ".red/memory/workbench.html"),
+    );
+    const artifact = buildMemoryWorkbenchArtifact(workbench);
+    await mkdir(dirname(outPath), { recursive: true });
+    await writeFile(outPath, artifact.html, "utf8");
+    console.log(`memory: workbench written ${outPath}`);
+    console.log(`  state: ${workbench.dashboard.state}`);
+    console.log(`  contract: ${artifact.contract.consumes.join(", ")}`);
+  } finally {
+    await store.close();
+  }
+}
+
+async function runCapabilities(args: ParsedArgs): Promise<void> {
+  const rootDir = resolve(rootOf(args.flags));
+  const { store } = await openGraphStore(args);
+  try {
+    const catalog = await buildMemoryCapabilityCatalog(store, rootDir);
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(catalog, null, 2));
+      return;
+    }
+    console.log(
+      `memory capabilities: ${catalog.summary.ready}/${catalog.summary.total} ready, ${catalog.summary.red_db_backed} RedDB-backed`,
+    );
+    for (const item of catalog.capabilities) {
+      console.log(`  ${item.category}/${item.id}: ${item.status}`);
+      if (item.cli.length > 0) console.log(`      cli: ${item.cli.join(", ")}`);
+      if (item.mcp.length > 0) console.log(`      mcp: ${item.mcp.join(", ")}`);
+    }
+  } finally {
+    await store.close();
+  }
+}
+
+async function runCompetitiveRadar(args: ParsedArgs): Promise<void> {
+  const rootDir = resolve(rootOf(args.flags));
+  const { store } = await openGraphStore(args);
+  try {
+    const radar = await buildMemoryCompetitiveRadar(store, rootDir);
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(radar, null, 2));
+      return;
+    }
+    console.log(
+      `memory competitive radar: ${radar.summary.competitors} competitor(s), ${radar.summary.degraded_or_not_configured} gap signal(s)`,
+    );
+    console.log(`  note: ${radar.note}`);
+    for (const competitor of radar.competitors) {
+      console.log(
+        `  ${competitor.repository}: ${competitor.posture} score=${competitor.score.toFixed(3)} capabilities=${competitor.relevant_capabilities}`,
+      );
+      for (const gap of competitor.gaps) {
+        console.log(`      gap: ${gap.capability_id} (${gap.status}) -> ${gap.next_action}`);
+      }
+    }
+  } finally {
+    await store.close();
+  }
+}
+
+async function runCompetitiveEval(args: ParsedArgs): Promise<void> {
+  const report = await evaluateCompetitiveEvalV2({ now: Date.now() });
+  if (args.flags.json === true) {
+    console.log(JSON.stringify(report, null, 2));
+    return;
+  }
+  console.log(
+    `memory competitive eval: ${report.composite.score}/${report.composite.maxScore} ${report.composite.status}`,
+  );
+  for (const dimension of report.dimensions) {
+    console.log(`  ${dimension.id}: ${dimension.score}/${dimension.maxScore} ${dimension.status}`);
+  }
+  if (report.claimGuards.unsupportedPublicClaims.length > 0) {
+    console.log(
+      `  unsupported public claims: ${report.claimGuards.unsupportedPublicClaims.join(", ")}`,
+    );
+  }
+}
+
+async function runCompetitiveEvalViewer(args: ParsedArgs): Promise<void> {
+  const rootDir = rootOf(args.flags);
+  const outPath = resolve(
+    stringFlag(args.flags, "out") ?? join(rootDir, ".red/memory/competitive-eval.html"),
+  );
+  const report = await evaluateCompetitiveEvalV2({ now: Date.now() });
+  const artifact = buildCompetitiveEvalViewerArtifact(report);
+  await mkdir(dirname(outPath), { recursive: true });
+  await writeFile(outPath, artifact.html, "utf8");
+  console.log(`memory: competitive eval viewer written ${outPath}`);
+  console.log(
+    `  composite: ${report.composite.score}/${report.composite.maxScore} ${report.composite.status}`,
+  );
+  console.log(`  contract: ${artifact.contract.consumes}`);
+}
+
+async function runMemoryLayers(args: ParsedArgs): Promise<void> {
+  const { store } = await openGraphStore(args);
+  try {
+    const report = await buildMemoryLayersReport(store);
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(report, null, 2));
+      return;
+    }
+    console.log(
+      `memory layers: ${report.summary.ready_layers}/${report.summary.total_layers} ready, ${report.summary.red_db_backed_layers} RedDB-backed`,
+    );
+    for (const layer of report.layers) {
+      console.log(`  ${layer.id}: ${layer.status}`);
+      const counts = Object.entries(layer.counts)
+        .map(([key, value]) => `${key}=${value}`)
+        .join(", ");
+      if (counts) console.log(`      ${counts}`);
+    }
+  } finally {
+    await store.close();
+  }
+}
+
+async function runMemoryLayersViewer(args: ParsedArgs): Promise<void> {
+  const rootDir = rootOf(args.flags);
+  const { store } = await openGraphStore(args);
+  try {
+    const outPath = resolve(
+      stringFlag(args.flags, "out") ?? join(rootDir, ".red/memory/layers-viewer.html"),
+    );
+    const report = await buildMemoryLayersReport(store);
+    const artifact = buildMemoryLayersViewerArtifact(report);
+    await mkdir(dirname(outPath), { recursive: true });
+    await writeFile(outPath, artifact.html, "utf8");
+    console.log(`memory: layers viewer written ${outPath}`);
+    console.log(
+      `  ready: ${report.summary.ready_layers}/${report.summary.total_layers}`,
+    );
+    console.log(`  contract: ${artifact.contract.consumes}`);
+  } finally {
+    await store.close();
+  }
+}
+
+async function runHandoff(args: ParsedArgs): Promise<void> {
+  const focus = args.positional.join(" ").trim();
+  const { store } = await openGraphStore(args);
+  try {
+    const report = await buildMemoryHandoff(store, {
+      focus: focus || undefined,
+      limit: intFlag(args.flags, "limit"),
+    });
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(report, null, 2));
+      return;
+    }
+    console.log(report.markdown);
+  } finally {
+    await store.close();
+  }
+}
+
+async function runHandoffViewer(args: ParsedArgs): Promise<void> {
+  const rootDir = rootOf(args.flags);
+  const focus = args.positional.join(" ").trim();
+  const { store } = await openGraphStore(args);
+  try {
+    const report = await buildMemoryHandoff(store, {
+      focus: focus || undefined,
+      limit: intFlag(args.flags, "limit"),
+    });
+    const artifact = buildMemoryHandoffViewerArtifact(report);
+    const outPath = resolve(
+      stringFlag(args.flags, "out") ?? join(rootDir, ".red/memory/handoff-viewer.html"),
+    );
+    await mkdir(dirname(outPath), { recursive: true });
+    await writeFile(outPath, artifact.html, "utf8");
+    console.log(`memory: handoff viewer written ${outPath}`);
+    console.log(`  status: ${report.status}`);
+    console.log(`  contract: ${artifact.contract.consumes}`);
+  } finally {
+    await store.close();
+  }
+}
+
+async function runWorkFrontier(args: ParsedArgs): Promise<void> {
+  const focus = args.positional.join(" ").trim();
+  const { store } = await openGraphStore(args);
+  try {
+    const report = await buildWorkFrontier(store, {
+      focus: focus || undefined,
+      limit: intFlag(args.flags, "limit"),
+    });
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(report, null, 2));
+      return;
+    }
+    console.log(report.markdown);
+  } finally {
+    await store.close();
+  }
+}
+
+async function runWorkFrontierViewer(args: ParsedArgs): Promise<void> {
+  const rootDir = rootOf(args.flags);
+  const focus = args.positional.join(" ").trim();
+  const { store } = await openGraphStore(args);
+  try {
+    const report = await buildWorkFrontier(store, {
+      focus: focus || undefined,
+      limit: intFlag(args.flags, "limit"),
+    });
+    const artifact = buildWorkFrontierViewerArtifact(report);
+    const outPath = resolve(
+      stringFlag(args.flags, "out") ?? join(rootDir, ".red/memory/work-frontier.html"),
+    );
+    await mkdir(dirname(outPath), { recursive: true });
+    await writeFile(outPath, artifact.html, "utf8");
+    console.log(`memory: work frontier viewer written ${outPath}`);
+    console.log(`  status: ${report.status}`);
+    console.log(`  contract: ${artifact.contract.consumes}`);
+  } finally {
+    await store.close();
+  }
+}
+
+async function runMemoryDecay(args: ParsedArgs): Promise<void> {
+  const { store } = await openGraphStore(args);
+  try {
+    const report = await buildMemoryDecayReport(store, {
+      stale_days: intFlag(args.flags, "stale-days"),
+      deprecate_days: intFlag(args.flags, "deprecate-days"),
+      limit: intFlag(args.flags, "limit"),
+    });
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(report, null, 2));
+      return;
+    }
+    console.log(report.markdown);
+  } finally {
+    await store.close();
+  }
+}
+
+async function runMemoryDecayViewer(args: ParsedArgs): Promise<void> {
+  const rootDir = rootOf(args.flags);
+  const { store } = await openGraphStore(args);
+  try {
+    const report = await buildMemoryDecayReport(store, {
+      stale_days: intFlag(args.flags, "stale-days"),
+      deprecate_days: intFlag(args.flags, "deprecate-days"),
+      limit: intFlag(args.flags, "limit"),
+    });
+    const artifact = buildMemoryDecayViewerArtifact(report);
+    const outPath = resolve(
+      stringFlag(args.flags, "out") ?? join(rootDir, ".red/memory/decay.html"),
+    );
+    await mkdir(dirname(outPath), { recursive: true });
+    await writeFile(outPath, artifact.html, "utf8");
+    console.log(`memory: decay viewer written ${outPath}`);
+    console.log(`  status: ${report.status}`);
+    console.log(`  contract: ${artifact.contract.consumes}`);
+  } finally {
+    await store.close();
+  }
+}
+
+async function runSession(args: ParsedArgs): Promise<void> {
+  const action = args.positional[0];
+  if (action !== "timeline" && action !== "timeline-viewer") {
+    throw new Error("session needs an action — supported: memory session timeline|timeline-viewer");
+  }
+  const { store } = await openGraphStore(args);
+  try {
+    const timeline = await buildSessionTimeline(store, {
+      sessionId: stringFlag(args.flags, "session"),
+      limit: intFlag(args.flags, "limit"),
+    });
+    if (action === "timeline-viewer") {
+      const rootDir = rootOf(args.flags);
+      const outPath = resolve(
+        stringFlag(args.flags, "out") ?? join(rootDir, ".red/memory/session-timeline.html"),
+      );
+      const artifact = buildSessionTimelineViewerArtifact(timeline);
+      await mkdir(dirname(outPath), { recursive: true });
+      await writeFile(outPath, artifact.html, "utf8");
+      console.log(`memory: session timeline viewer written ${outPath}`);
+      console.log(`  events: ${timeline.summary.events}`);
+      console.log(`  contract: ${artifact.contract.consumes}`);
+      return;
+    }
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(timeline, null, 2));
+      return;
+    }
+    const scope = timeline.filter.session_id ? ` for ${timeline.filter.session_id}` : "";
+    console.log(`memory: session timeline${scope} — ${timeline.summary.events} event(s)`);
+    for (const entry of timeline.entries) {
+      console.log(
+        `  ${entry.occurred_at} ${entry.session_id} ${entry.actor} ${entry.title} [${entry.outcome}]`,
+      );
+      if (entry.detail) console.log(`      ${entry.detail}`);
+    }
+    for (const action of timeline.recommended_next_actions) console.log(`  next: ${action}`);
+  } finally {
+    await store.close();
+  }
+}
+
 async function runLearningDebt(args: ParsedArgs): Promise<void> {
   const rootDir = rootOf(args.flags);
   const config = await requireConfig(rootDir);
@@ -832,6 +1420,36 @@ async function runLearningDebt(args: ParsedArgs): Promise<void> {
       return;
     }
     process.stdout.write(report.markdown);
+  } finally {
+    await store.close();
+  }
+}
+
+async function runLearningDebtViewer(args: ParsedArgs): Promise<void> {
+  const rootDir = rootOf(args.flags);
+  const config = await requireConfig(rootDir);
+  if (config.mode !== "graph") {
+    throw new Error(
+      `learning-debt-viewer needs graph mode — this project is "${config.mode}". Re-run \`memory init --mode graph\` first`,
+    );
+  }
+  const telemetryEnabled = skillTelemetryEnabled(config);
+  const store = await MemoryStore.open({ uri: resolveStoreUri(rootDir, config) });
+  try {
+    const report = await buildLearningDebtReport(store, {
+      staleDays: intFlag(args.flags, "stale-days"),
+      rollups: telemetryEnabled ? await readSkillRollups(store) : [],
+      skillTelemetryEnabled: telemetryEnabled,
+    });
+    const artifact = buildLearningDebtViewerArtifact(report);
+    const outPath = resolve(
+      stringFlag(args.flags, "out") ?? join(rootDir, ".red/memory/learning-debt-viewer.html"),
+    );
+    await mkdir(dirname(outPath), { recursive: true });
+    await writeFile(outPath, artifact.html, "utf8");
+    console.log(`memory: learning debt viewer written ${outPath}`);
+    console.log(`  status: ${report.status}`);
+    console.log(`  contract: ${artifact.contract.consumes}`);
   } finally {
     await store.close();
   }
@@ -863,6 +1481,114 @@ async function runOnboardingMap(args: ParsedArgs): Promise<void> {
   } finally {
     await store.close();
   }
+}
+
+async function runOnboardingMapViewer(args: ParsedArgs): Promise<void> {
+  const rootDir = rootOf(args.flags);
+  const config = await requireConfig(rootDir);
+  if (config.mode !== "graph") {
+    throw new Error(
+      `onboarding-map-viewer needs graph mode — this project is "${config.mode}". Re-run \`memory init --mode graph\` first`,
+    );
+  }
+  const outPath =
+    stringFlag(args.flags, "out") ?? join(rootDir, ".red/memory/onboarding-map-viewer.html");
+  const telemetryEnabled = skillTelemetryEnabled(config);
+  const store = await MemoryStore.open({ uri: resolveStoreUri(rootDir, config) });
+  try {
+    const map = await buildOnboardingMap(store, {
+      staleDays: intFlag(args.flags, "stale-days"),
+      rollups: telemetryEnabled ? await readSkillRollups(store) : [],
+    });
+    const artifact = buildOnboardingMapViewerArtifact(map);
+    await mkdir(dirname(outPath), { recursive: true });
+    await writeFile(outPath, artifact.html, "utf8");
+    console.log(`memory: onboarding map viewer written ${outPath}`);
+    console.log(`  status: ${artifact.map.status}`);
+    console.log(`  contract: ${artifact.contract.consumes}`);
+  } finally {
+    await store.close();
+  }
+}
+
+async function runRoutingGuide(args: ParsedArgs): Promise<void> {
+  const guide = buildMemoryRoutingGuide({ agent: routingAgentFlag(args.flags) });
+  if (args.flags.json === true) {
+    console.log(JSON.stringify(guide, null, 2));
+    return;
+  }
+  printRoutingGuide(guide);
+}
+
+async function runRoutingGuideViewer(args: ParsedArgs): Promise<void> {
+  const rootDir = resolve(rootOf(args.flags));
+  const guide = buildMemoryRoutingGuide({ agent: routingAgentFlag(args.flags) });
+  const artifact = buildMemoryRoutingGuideViewerArtifact(guide);
+  const outPath =
+    stringFlag(args.flags, "out") ??
+    join(rootDir, ".red/memory", `routing-guide-${guide.agent}.html`);
+  await mkdir(dirname(outPath), { recursive: true });
+  await writeFile(outPath, artifact.html, "utf8");
+  console.log(`memory: routing guide viewer written ${outPath}`);
+  console.log(`  agent: ${guide.agent}`);
+  console.log(`  contract: ${artifact.contract.consumes}`);
+}
+
+async function runAgentIntegrationStatus(args: ParsedArgs): Promise<void> {
+  const rootDir = resolve(rootOf(args.flags));
+  const report = await buildMemoryAgentIntegrationStatus(rootDir, {
+    agent: routingAgentFlag(args.flags),
+  });
+  if (args.flags.json === true) {
+    console.log(JSON.stringify(report, null, 2));
+    return;
+  }
+  console.log(`memory: agent integration status (${report.schema_version})`);
+  console.log(
+    `  ready=${report.summary.ready} partial=${report.summary.partial} missing=${report.summary.missing}`,
+  );
+  for (const agent of report.agents) {
+    console.log(`  ${agent.agent}: ${agent.state} (${agent.target_files.map((file) => file.path).join(", ")})`);
+  }
+}
+
+async function runAgentIntegrationStatusViewer(args: ParsedArgs): Promise<void> {
+  const rootDir = resolve(rootOf(args.flags));
+  const report = await buildMemoryAgentIntegrationStatus(rootDir, {
+    agent: routingAgentFlag(args.flags),
+  });
+  const artifact = buildMemoryAgentIntegrationStatusViewerArtifact(report);
+  const outPath =
+    stringFlag(args.flags, "out") ?? join(rootDir, ".red/memory/agent-integration-status.html");
+  await mkdir(dirname(outPath), { recursive: true });
+  await writeFile(outPath, artifact.html, "utf8");
+  console.log(`memory: agent integration status viewer written ${outPath}`);
+  console.log(`  ready: ${report.summary.ready}/${report.summary.agents}`);
+  console.log(`  contract: ${artifact.contract.consumes}`);
+}
+
+function routingAgentFlag(flags: Record<string, string | boolean>): MemoryRoutingAgent | undefined {
+  const value = stringFlag(flags, "agent");
+  if (value == null) return undefined;
+  if (
+    value === "codex" ||
+    value === "claude" ||
+    value === "cursor" ||
+    value === "gemini" ||
+    value === "aider" ||
+    value === "opencode" ||
+    value === "generic"
+  ) {
+    return value;
+  }
+  throw new Error("routing-guide --agent must be codex, claude, cursor, gemini, aider, opencode, or generic");
+}
+
+function printRoutingGuide(guide: MemoryRoutingGuide): void {
+  console.log(`memory: routing guide (${guide.schemaVersion}, agent=${guide.agent})`);
+  console.log(`target files: ${guide.targetFiles.join(", ")}`);
+  console.log("");
+  process.stdout.write(guide.installSnippet);
 }
 
 interface PublicCodebaseMapMetadata {
@@ -1109,6 +1835,10 @@ async function runAsk(args: ParsedArgs): Promise<void> {
         console.log(`  ${item.from.citation} contradicts ${item.to.citation} (${state}${reason})`);
       }
     }
+    console.log(`gap analysis: ${result.gap_analysis.status}`);
+    console.log(`  ${result.gap_analysis.summary}`);
+    for (const gap of result.gap_analysis.gaps) console.log(`  gap: ${gap}`);
+    for (const action of result.gap_analysis.next_actions) console.log(`  next: ${action}`);
     if (result.cost) {
       console.log(
         `cost: ${result.cost.provider}/${result.cost.model} prompt=${result.cost.prompt_tokens} completion=${result.cost.completion_tokens} usd=${result.cost.cost_usd}`,
@@ -1117,6 +1847,710 @@ async function runAsk(args: ParsedArgs): Promise<void> {
   } finally {
     await store.close();
   }
+}
+
+async function runDocs(args: ParsedArgs): Promise<void> {
+  const action = args.positional[0];
+  if (action === "brief") return runDocsBrief(args);
+  if (action === "brief-viewer") return runDocsBriefViewer(args);
+  if (action === "bundle") return runDocsBundle(args);
+  if (action === "bundle-viewer") return runDocsBundleViewer(args);
+  if (action === "read") return runDocsRead(args);
+  if (action === "evidence-pack") return runDocsEvidencePack(args);
+  if (action === "evidence-pack-viewer") return runDocsEvidencePackViewer(args);
+  if (action === "backlinks") return runDocsBacklinks(args);
+  if (action === "backlinks-viewer") return runDocsBacklinksViewer(args);
+  if (action === "related") return runDocsRelated(args);
+  if (action === "related-viewer") return runDocsRelatedViewer(args);
+  if (action === "restore") return runDocsRestore(args);
+  if (action === "coverage") return runDocsCoverage(args);
+  if (action === "coverage-viewer") return runDocsCoverageViewer(args);
+  if (action === "reference-graph") return runDocsReferenceGraph(args);
+  if (action === "reference-graph-viewer") return runDocsReferenceGraphViewer(args);
+  if (action === "search-viewer") return runDocsSearchViewer(args);
+  if (action !== "search") {
+    throw new Error(
+      "docs needs an action — supported: memory docs search <query>, memory docs search-viewer <query>, memory docs brief <query>, memory docs brief-viewer <query>, memory docs bundle <query>, memory docs bundle-viewer <query>, memory docs read <path|rid>, memory docs evidence-pack <path|rid>, memory docs evidence-pack-viewer <path|rid>, memory docs backlinks <label|rid>, memory docs backlinks-viewer <label|rid>, memory docs related <path|rid>, memory docs related-viewer <path|rid>, memory docs restore [path|rid], memory docs coverage, memory docs coverage-viewer, memory docs reference-graph, memory docs reference-graph-viewer",
+    );
+  }
+  const query = args.positional.slice(1).join(" ").trim();
+  if (!query) throw new Error("nothing to search — pass a query: memory docs search <query>");
+  const { store } = await openGraphStore(args);
+  try {
+    const report = await searchDocs(store, query, { limit: intFlag(args.flags, "limit") });
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(report, null, 2));
+      return;
+    }
+    console.log(`memory docs: ${report.hits.length}/${report.total_docs} hit(s) for "${query}"`);
+    for (const hit of report.hits) {
+      const title = hit.title ? ` — ${hit.title}` : "";
+      console.log(`  [${hit.score}] ${hit.path}${title}`);
+      console.log(`      fields: ${hit.matched_fields.join(", ")}`);
+      if (hit.excerpt) console.log(`      ${hit.excerpt}`);
+    }
+  } finally {
+    await store.close();
+  }
+}
+
+async function runAssets(args: ParsedArgs): Promise<void> {
+  const { store } = await openGraphStore(args);
+  try {
+    const report = await buildMemoryAssetInventory(store, {
+      kind: stringFlag(args.flags, "kind"),
+      query: args.positional.join(" ").trim() || undefined,
+    });
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(report, null, 2));
+      return;
+    }
+    console.log(
+      `memory assets: ${report.total_assets} asset(s), ${formatAssetBytes(report.total_bytes)}`,
+    );
+    for (const kind of report.kinds) {
+      console.log(`  ${kind.kind}: ${kind.count} asset(s), ${formatAssetBytes(kind.bytes)}`);
+    }
+    for (const warning of report.warnings) console.log(`  warning: ${warning}`);
+    for (const asset of report.assets) {
+      console.log(
+        `  ${asset.path}: ${asset.asset_kind}, ${asset.media_type}, ${formatAssetBytes(asset.bytes)}`,
+      );
+    }
+  } finally {
+    await store.close();
+  }
+}
+
+async function runAssetsViewer(args: ParsedArgs): Promise<void> {
+  const rootDir = rootOf(args.flags);
+  const outPath = resolve(
+    stringFlag(args.flags, "out") ?? join(rootDir, ".red/memory/asset-inventory-viewer.html"),
+  );
+  const { store } = await openGraphStore(args);
+  try {
+    const report = await buildMemoryAssetInventory(store, {
+      kind: stringFlag(args.flags, "kind"),
+      query: args.positional.join(" ").trim() || undefined,
+    });
+    const artifact = buildMemoryAssetInventoryViewerArtifact(report);
+    await mkdir(dirname(outPath), { recursive: true });
+    await writeFile(outPath, artifact.html, "utf8");
+    console.log(`memory: asset inventory viewer written ${outPath}`);
+    console.log(`  assets: ${report.total_assets}`);
+    console.log(`  contract: ${artifact.contract.consumes}`);
+  } finally {
+    await store.close();
+  }
+}
+
+function formatAssetBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+async function runDocsBundle(args: ParsedArgs): Promise<void> {
+  const query = args.positional.slice(1).join(" ").trim();
+  if (!query) throw new Error("nothing to bundle — pass a query: memory docs bundle <query>");
+  const { store } = await openGraphStore(args);
+  try {
+    const bundle = await buildDocBundle(store, {
+      query,
+      limit: intFlag(args.flags, "limit"),
+      max_bytes: intFlag(args.flags, "max-bytes"),
+    });
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(bundle, null, 2));
+      return;
+    }
+    process.stdout.write(bundle.markdown);
+  } finally {
+    await store.close();
+  }
+}
+
+async function runDocsSearchViewer(args: ParsedArgs): Promise<void> {
+  const query = args.positional.slice(1).join(" ").trim();
+  if (!query) {
+    throw new Error("nothing to render — pass a query: memory docs search-viewer <query>");
+  }
+  const rootDir = rootOf(args.flags);
+  const safeName = createHash("sha256").update(query).digest("hex").slice(0, 12);
+  const outPath = resolve(
+    stringFlag(args.flags, "out") ?? join(rootDir, `.red/memory/doc-search-${safeName}.html`),
+  );
+  const { store } = await openGraphStore(args);
+  try {
+    const report = await searchDocs(store, query, { limit: intFlag(args.flags, "limit") });
+    const artifact = buildDocSearchViewerArtifact(report);
+    await mkdir(dirname(outPath), { recursive: true });
+    await writeFile(outPath, artifact.html, "utf8");
+    console.log(`memory: doc search viewer written ${outPath}`);
+    console.log(`  hits: ${report.hits.length}/${report.total_docs}`);
+    console.log(`  contract: ${artifact.contract.consumes}`);
+  } finally {
+    await store.close();
+  }
+}
+
+async function runDocsBrief(args: ParsedArgs): Promise<void> {
+  const query = args.positional.slice(1).join(" ").trim();
+  if (!query) throw new Error("nothing to brief — pass a query: memory docs brief <query>");
+  const { store } = await openGraphStore(args);
+  try {
+    const brief = await buildDocBrief(store, {
+      query,
+      limit: intFlag(args.flags, "limit"),
+      max_bytes: intFlag(args.flags, "max-bytes"),
+    });
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(brief, null, 2));
+      return;
+    }
+    process.stdout.write(brief.markdown);
+  } finally {
+    await store.close();
+  }
+}
+
+async function runDocsBriefViewer(args: ParsedArgs): Promise<void> {
+  const query = args.positional.slice(1).join(" ").trim();
+  if (!query) {
+    throw new Error("nothing to render — pass a query: memory docs brief-viewer <query>");
+  }
+  const rootDir = rootOf(args.flags);
+  const safeName = createHash("sha256").update(query).digest("hex").slice(0, 12);
+  const outPath = resolve(
+    stringFlag(args.flags, "out") ?? join(rootDir, `.red/memory/doc-brief-${safeName}.html`),
+  );
+  const { store } = await openGraphStore(args);
+  try {
+    const brief = await buildDocBrief(store, {
+      query,
+      limit: intFlag(args.flags, "limit"),
+      max_bytes: intFlag(args.flags, "max-bytes"),
+    });
+    const artifact = buildDocBriefViewerArtifact(brief);
+    await mkdir(dirname(outPath), { recursive: true });
+    await writeFile(outPath, artifact.html, "utf8");
+    console.log(`memory: doc brief viewer written ${outPath}`);
+    console.log(`  status: ${brief.status}`);
+    console.log(`  citations: ${brief.citations.length}`);
+    console.log(`  contract: ${artifact.contract.consumes}`);
+  } finally {
+    await store.close();
+  }
+}
+
+async function runDocsBundleViewer(args: ParsedArgs): Promise<void> {
+  const query = args.positional.slice(1).join(" ").trim();
+  if (!query) {
+    throw new Error("nothing to render — pass a query: memory docs bundle-viewer <query>");
+  }
+  const rootDir = rootOf(args.flags);
+  const safeName = createHash("sha256").update(query).digest("hex").slice(0, 12);
+  const outPath = resolve(
+    stringFlag(args.flags, "out") ?? join(rootDir, `.red/memory/doc-bundle-${safeName}.html`),
+  );
+  const { store } = await openGraphStore(args);
+  try {
+    const bundle = await buildDocBundle(store, {
+      query,
+      limit: intFlag(args.flags, "limit"),
+      max_bytes: intFlag(args.flags, "max-bytes"),
+    });
+    const artifact = buildDocBundleViewerArtifact(bundle);
+    await mkdir(dirname(outPath), { recursive: true });
+    await writeFile(outPath, artifact.html, "utf8");
+    console.log(`memory: doc bundle viewer written ${outPath}`);
+    console.log(`  hits: ${bundle.hits.length}/${bundle.total_docs}`);
+    console.log(`  packs: ${bundle.packs.length}`);
+    console.log(`  contract: ${artifact.contract.consumes}`);
+  } finally {
+    await store.close();
+  }
+}
+
+async function runDocsCoverage(args: ParsedArgs): Promise<void> {
+  const { store } = await openGraphStore(args);
+  try {
+    const report = await buildDocCoverageReport(store);
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(report, null, 2));
+      return;
+    }
+    console.log(
+      `memory docs coverage: ${report.grounded_docs}/${report.total_docs} grounded, ${report.docs_with_references} with references`,
+    );
+    console.log(
+      `  vectors: ${report.vector.overall} (${report.vector.ready}/${report.vector.total} ready)`,
+    );
+    for (const warning of report.warnings) console.log(`  warning: ${warning}`);
+    for (const doc of report.docs) {
+      const title = doc.title ? ` — ${doc.title}` : "";
+      console.log(
+        `  ${doc.path}${title}: ${doc.graph_status}, refs=${doc.references.count}, vector=${doc.vector_status}`,
+      );
+    }
+  } finally {
+    await store.close();
+  }
+}
+
+async function runDocsCoverageViewer(args: ParsedArgs): Promise<void> {
+  const rootDir = rootOf(args.flags);
+  const outPath = resolve(
+    stringFlag(args.flags, "out") ?? join(rootDir, ".red/memory/doc-coverage-viewer.html"),
+  );
+  const { store } = await openGraphStore(args);
+  try {
+    const report = await buildDocCoverageReport(store);
+    const artifact = buildDocCoverageViewerArtifact(report);
+    await mkdir(dirname(outPath), { recursive: true });
+    await writeFile(outPath, artifact.html, "utf8");
+    console.log(`memory: doc coverage viewer written ${outPath}`);
+    console.log(`  docs: ${report.total_docs}`);
+    console.log(`  contract: ${artifact.contract.consumes}`);
+  } finally {
+    await store.close();
+  }
+}
+
+async function runDocsReferenceGraph(args: ParsedArgs): Promise<void> {
+  const { store } = await openGraphStore(args);
+  try {
+    const report = await buildDocReferenceGraphReport(store);
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(report, null, 2));
+      return;
+    }
+    console.log(
+      `memory docs reference-graph: ${report.reference_edges} edge(s), ${report.reference_nodes} referenced node(s), ${report.grounded_docs}/${report.total_docs} grounded docs`,
+    );
+    for (const warning of report.warnings) console.log(`  warning: ${warning}`);
+    for (const ref of report.top_references.slice(0, 10)) {
+      console.log(
+        `  ${ref.node.title} (${ref.node.label}) referenced by ${ref.incoming_docs} doc(s)`,
+      );
+    }
+  } finally {
+    await store.close();
+  }
+}
+
+async function runDocsReferenceGraphViewer(args: ParsedArgs): Promise<void> {
+  const rootDir = rootOf(args.flags);
+  const outPath = resolve(
+    stringFlag(args.flags, "out") ?? join(rootDir, ".red/memory/doc-reference-graph-viewer.html"),
+  );
+  const { store } = await openGraphStore(args);
+  try {
+    const report = await buildDocReferenceGraphReport(store);
+    const artifact = buildDocReferenceGraphViewerArtifact(report);
+    await mkdir(dirname(outPath), { recursive: true });
+    await writeFile(outPath, artifact.html, "utf8");
+    console.log(`memory: doc reference graph viewer written ${outPath}`);
+    console.log(`  edges: ${report.reference_edges}`);
+    console.log(`  contract: ${artifact.contract.consumes}`);
+  } finally {
+    await store.close();
+  }
+}
+
+async function runDocsRelated(args: ParsedArgs): Promise<void> {
+  const target = args.positional.slice(1).join(" ").trim();
+  if (!target) throw new Error("nothing to relate — pass a path or rid: memory docs related <path|rid>");
+  const { store } = await openGraphStore(args);
+  try {
+    const report = await buildDocRelatedReport(store, {
+      ...(isIntegerText(target) ? { rid: Number(target) } : { path: target }),
+    });
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(report, null, 2));
+      return;
+    }
+    if (!report.found || !report.target) {
+      console.log(`memory docs related: no document found for ${target}`);
+      return;
+    }
+    console.log(
+      `memory docs related: ${report.target.path ?? report.target.title} (${report.references.length} reference(s), ${report.related_docs.length} related doc(s))`,
+    );
+    for (const warning of report.warnings) console.log(`  warning: ${warning}`);
+    for (const ref of report.references.slice(0, 10)) {
+      console.log(`  ref: ${ref.title} (${ref.label})`);
+    }
+    for (const doc of report.related_docs.slice(0, 10)) {
+      console.log(`  related: ${doc.path} (${doc.shared_references} shared reference(s))`);
+    }
+  } finally {
+    await store.close();
+  }
+}
+
+async function runDocsBacklinks(args: ParsedArgs): Promise<void> {
+  const target = args.positional.slice(1).join(" ").trim();
+  if (!target) {
+    throw new Error("nothing to trace — pass a label, title, or rid: memory docs backlinks <label|rid>");
+  }
+  const { store } = await openGraphStore(args);
+  try {
+    const report = await buildDocBacklinksReport(store, {
+      ...(isIntegerText(target) ? { rid: Number(target) } : { query: target }),
+    });
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(report, null, 2));
+      return;
+    }
+    if (!report.found) {
+      console.log(`memory docs backlinks: no referenced node found for ${target}`);
+      for (const warning of report.warnings) console.log(`  warning: ${warning}`);
+      return;
+    }
+    console.log(
+      `memory docs backlinks: ${report.references.length} reference node(s), ${report.docs.length} doc(s) for ${target}`,
+    );
+    for (const warning of report.warnings) console.log(`  warning: ${warning}`);
+    for (const ref of report.references.slice(0, 5)) {
+      console.log(`  ref: ${ref.title} (${ref.label})`);
+    }
+    for (const doc of report.docs.slice(0, 10)) {
+      console.log(`  doc: ${doc.path} (${doc.matched_references} matched reference(s))`);
+    }
+  } finally {
+    await store.close();
+  }
+}
+
+async function runDocsBacklinksViewer(args: ParsedArgs): Promise<void> {
+  const target = args.positional.slice(1).join(" ").trim();
+  if (!target) {
+    throw new Error(
+      "nothing to render — pass a label, title, or rid: memory docs backlinks-viewer <label|rid>",
+    );
+  }
+  const rootDir = rootOf(args.flags);
+  const safeName = isIntegerText(target)
+    ? `rid-${target}`
+    : createHash("sha256").update(target).digest("hex").slice(0, 12);
+  const outPath = resolve(
+    stringFlag(args.flags, "out") ?? join(rootDir, `.red/memory/doc-backlinks-${safeName}.html`),
+  );
+  const { store } = await openGraphStore(args);
+  try {
+    const report = await buildDocBacklinksReport(store, {
+      ...(isIntegerText(target) ? { rid: Number(target) } : { query: target }),
+    });
+    const artifact = buildDocBacklinksViewerArtifact(report);
+    await mkdir(dirname(outPath), { recursive: true });
+    await writeFile(outPath, artifact.html, "utf8");
+    console.log(`memory: doc backlinks viewer written ${outPath}`);
+    console.log(`  found: ${report.found}`);
+    console.log(`  docs: ${report.docs.length}`);
+    console.log(`  contract: ${artifact.contract.consumes}`);
+  } finally {
+    await store.close();
+  }
+}
+
+async function runDocsRelatedViewer(args: ParsedArgs): Promise<void> {
+  const target = args.positional.slice(1).join(" ").trim();
+  if (!target) {
+    throw new Error("nothing to render — pass a path or rid: memory docs related-viewer <path|rid>");
+  }
+  const rootDir = rootOf(args.flags);
+  const safeName = isIntegerText(target)
+    ? `rid-${target}`
+    : createHash("sha256").update(target).digest("hex").slice(0, 12);
+  const outPath = resolve(
+    stringFlag(args.flags, "out") ?? join(rootDir, `.red/memory/doc-related-${safeName}.html`),
+  );
+  const { store } = await openGraphStore(args);
+  try {
+    const report = await buildDocRelatedReport(store, {
+      ...(isIntegerText(target) ? { rid: Number(target) } : { path: target }),
+    });
+    const artifact = buildDocRelatedViewerArtifact(report);
+    await mkdir(dirname(outPath), { recursive: true });
+    await writeFile(outPath, artifact.html, "utf8");
+    console.log(`memory: doc related viewer written ${outPath}`);
+    console.log(`  found: ${report.found}`);
+    console.log(`  related: ${report.related_docs.length}`);
+    console.log(`  contract: ${artifact.contract.consumes}`);
+  } finally {
+    await store.close();
+  }
+}
+
+async function runDocsRead(args: ParsedArgs): Promise<void> {
+  const target = args.positional.slice(1).join(" ").trim();
+  if (!target) throw new Error("nothing to read — pass a path or rid: memory docs read <path|rid>");
+  const { store } = await openGraphStore(args);
+  try {
+    const report = await readDoc(store, {
+      ...(isIntegerText(target) ? { rid: Number(target) } : { path: target }),
+      max_bytes: intFlag(args.flags, "max-bytes"),
+    });
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(report, null, 2));
+      return;
+    }
+    if (!report.found) {
+      console.log(`memory docs: no document found for ${target}`);
+      return;
+    }
+    const title = report.title ? ` — ${report.title}` : "";
+    const suffix = report.truncated
+      ? ` (truncated ${report.returned_bytes}/${report.body_bytes} bytes)`
+      : "";
+    console.log(`memory docs: ${report.path}${title}${suffix}`);
+    if (report.body) process.stdout.write(`${report.body}\n`);
+  } finally {
+    await store.close();
+  }
+}
+
+async function runDocsEvidencePack(args: ParsedArgs): Promise<void> {
+  const target = args.positional.slice(1).join(" ").trim();
+  if (!target) {
+    throw new Error(
+      "nothing to pack — pass a path or rid: memory docs evidence-pack <path|rid>",
+    );
+  }
+  const { store } = await openGraphStore(args);
+  try {
+    const pack = await buildDocEvidencePack(store, {
+      ...(isIntegerText(target) ? { rid: Number(target) } : { path: target }),
+      max_bytes: intFlag(args.flags, "max-bytes"),
+    });
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(pack, null, 2));
+      return;
+    }
+    process.stdout.write(pack.markdown);
+  } finally {
+    await store.close();
+  }
+}
+
+async function runDocsEvidencePackViewer(args: ParsedArgs): Promise<void> {
+  const target = args.positional.slice(1).join(" ").trim();
+  if (!target) {
+    throw new Error(
+      "nothing to render — pass a path or rid: memory docs evidence-pack-viewer <path|rid>",
+    );
+  }
+  const rootDir = rootOf(args.flags);
+  const safeName = isIntegerText(target)
+    ? `rid-${target}`
+    : createHash("sha256").update(target).digest("hex").slice(0, 12);
+  const outPath = resolve(
+    stringFlag(args.flags, "out") ??
+      join(rootDir, `.red/memory/doc-evidence-pack-${safeName}.html`),
+  );
+  const { store } = await openGraphStore(args);
+  try {
+    const pack = await buildDocEvidencePack(store, {
+      ...(isIntegerText(target) ? { rid: Number(target) } : { path: target }),
+      max_bytes: intFlag(args.flags, "max-bytes"),
+    });
+    const artifact = buildDocEvidencePackViewerArtifact(pack);
+    await mkdir(dirname(outPath), { recursive: true });
+    await writeFile(outPath, artifact.html, "utf8");
+    console.log(`memory: doc evidence pack viewer written ${outPath}`);
+    console.log(`  found: ${pack.found}`);
+    console.log(`  references: ${pack.related.references.length}`);
+    console.log(`  contract: ${artifact.contract.consumes}`);
+  } finally {
+    await store.close();
+  }
+}
+
+async function runDocsRestore(args: ParsedArgs): Promise<void> {
+  const rootDir = rootOf(args.flags);
+  const target = args.positional.slice(1).join(" ").trim();
+  const dryRun = args.flags["dry-run"] === true || args.flags.yes !== true;
+  const { store } = await openGraphStore(args);
+  try {
+    const report = await restoreDocsFromMemory(store, {
+      rootDir,
+      ...(target
+        ? isIntegerText(target)
+          ? { targetRid: Number(target) }
+          : { targetPath: target }
+        : {}),
+      outDir: stringFlag(args.flags, "out"),
+      inPlace: args.flags["in-place"] === true,
+      overwrite: args.flags.overwrite === true,
+      dryRun,
+    });
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(report, null, 2));
+      return;
+    }
+    const mode = report.dry_run ? "dry-run" : "restore";
+    console.log(
+      `memory docs ${mode}: ${report.summary.restored} restored, ${report.summary.planned} planned, ${report.summary.skipped} skipped, ${report.summary.missing} missing`,
+    );
+    if (report.dry_run) console.log("  pass --yes to write restored document files");
+    for (const item of report.items) {
+      const reason = item.reason ? ` (${item.reason})` : "";
+      console.log(`  ${item.status}: ${item.source_path} -> ${item.destination_path}${reason}`);
+    }
+    for (const action of report.recommended_next_actions) console.log(`  next: ${action}`);
+  } finally {
+    await store.close();
+  }
+}
+
+async function runBackup(args: ParsedArgs): Promise<void> {
+  const action = args.positional[0] ?? "create";
+  const rootDir = rootOf(args.flags);
+  const json = args.flags.json === true;
+
+  if (action === "create") {
+    await requireConfig(rootDir);
+    const result = await createMemoryBackup(rootDir, { name: stringFlag(args.flags, "name") });
+    if (json) {
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
+    console.log(`memory: backup created ${result.manifest.name}`);
+    console.log(`  dir: ${result.backup_dir}`);
+    console.log(`  files: ${result.files} bytes=${result.bytes}`);
+    for (const warning of result.manifest.warnings) console.log(`  warning: ${warning}`);
+    return;
+  }
+
+  if (action === "list") {
+    const backups = await listMemoryBackups(rootDir);
+    if (json) {
+      console.log(JSON.stringify({ schema_version: "memory.backup.list.v1", backups }, null, 2));
+      return;
+    }
+    console.log(`memory backups: ${backups.length}`);
+    for (const backup of backups) {
+      console.log(
+        `  ${backup.name} ${backup.mode} files=${backup.files} bytes=${backup.bytes} created=${backup.created_at}`,
+      );
+    }
+    return;
+  }
+
+  if (action === "inspect") {
+    const name = args.positional[1];
+    if (!name) throw new Error("memory backup inspect needs a backup name");
+    const manifest = await readMemoryBackupManifest(rootDir, name);
+    if (json) {
+      console.log(JSON.stringify(manifest, null, 2));
+      return;
+    }
+    console.log(`memory backup: ${manifest.name}`);
+    console.log(`  created: ${manifest.created_at}`);
+    console.log(`  mode: ${manifest.mode}`);
+    console.log(`  files: ${manifest.files.length}`);
+    for (const file of manifest.files.slice(0, 20)) {
+      console.log(`  ${file.path} ${file.bytes} ${file.sha256.slice(0, 12)}`);
+    }
+    if (manifest.files.length > 20) console.log(`  ... ${manifest.files.length - 20} more`);
+    return;
+  }
+
+  if (action === "restore") {
+    const name = args.positional[1];
+    if (!name) throw new Error("memory backup restore needs a backup name");
+    if (args.flags.yes !== true) {
+      throw new Error("memory backup restore requires explicit --yes approval");
+    }
+    const result = await restoreMemoryBackup(rootDir, name);
+    if (json) {
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
+    console.log(`memory: restored backup ${result.restored_from}`);
+    console.log(`  restored: ${result.restored_files} files bytes=${result.restored_bytes}`);
+    console.log(`  safety backup: ${result.safety_backup.manifest.name}`);
+    for (const warning of result.warnings) console.log(`  warning: ${warning}`);
+    return;
+  }
+
+  throw new Error("backup needs an action — supported: create, list, inspect, restore");
+}
+
+async function runServe(args: ParsedArgs): Promise<void> {
+  const rootDir = resolve(rootOf(args.flags));
+  const host = stringFlag(args.flags, "host") ?? "127.0.0.1";
+  const port = intFlag(args.flags, "port") ?? 49375;
+  const tokenEnv = stringFlag(args.flags, "token-env");
+  const token = tokenEnv ? process.env[tokenEnv] : undefined;
+  if (tokenEnv && !token) throw new Error(`--token-env ${tokenEnv} is not set`);
+
+  const { store } = await openGraphStore(args);
+  const server = createMemoryHttpServer({ rootDir, store, token });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(port, host, () => {
+      const address = server.address();
+      const actualPort = typeof address === "object" && address ? address.port : port;
+      console.log(`memory: serving read-only HTTP on http://${host}:${actualPort}/`);
+      console.log(`  workbench: http://${host}:${actualPort}/workbench`);
+      console.log(`  dashboard: http://${host}:${actualPort}/dashboard`);
+      console.log(`  docs graph: http://${host}:${actualPort}/docs/reference-graph`);
+      console.log(`  recall API: http://${host}:${actualPort}/api/recall?query=...`);
+      console.log(`  auth: ${token ? `bearer token from ${tokenEnv}` : "none"}`);
+    });
+
+    const shutdown = () => {
+      server.close(() => {
+        store.close().finally(resolve);
+      });
+    };
+    process.once("SIGINT", shutdown);
+    process.once("SIGTERM", shutdown);
+  });
+}
+
+async function runHooks(args: ParsedArgs): Promise<void> {
+  const action = args.positional[0];
+  if (action === "coverage-viewer") return runHooksCoverageViewer(args);
+  if (action !== "coverage") {
+    throw new Error("hooks needs an action — supported: memory hooks coverage, memory hooks coverage-viewer");
+  }
+  const report = await buildHookCoverageReport(rootOf(args.flags));
+  if (args.flags.json === true) {
+    console.log(JSON.stringify(report, null, 2));
+    return;
+  }
+  console.log(
+    `memory hooks coverage: ${report.summary.enabled_events}/${report.summary.total_events} enabled (${report.mode})`,
+  );
+  for (const runner of report.runners) {
+    console.log(
+      `  ${runner.runner}: ${runner.coverage.enabled}/${runner.coverage.total} enabled, ${runner.coverage.wired} wired`,
+    );
+    for (const event of runner.events) {
+      const state = event.enabled ? "enabled" : event.wired ? "wired" : "missing";
+      const matcher = event.matcher ? ` matcher=${event.matcher}` : "";
+      console.log(`    ${event.event}: ${state}${matcher}`);
+    }
+  }
+  for (const gap of report.gaps) console.log(`  gap: ${gap}`);
+  for (const action of report.recommended_next_actions) console.log(`  next: ${action}`);
+}
+
+async function runHooksCoverageViewer(args: ParsedArgs): Promise<void> {
+  const rootDir = rootOf(args.flags);
+  const outPath = resolve(
+    stringFlag(args.flags, "out") ?? join(rootDir, ".red/memory/hook-coverage-viewer.html"),
+  );
+  const report = await buildHookCoverageReport(rootDir);
+  const artifact = buildHookCoverageViewerArtifact(report);
+  await mkdir(dirname(outPath), { recursive: true });
+  await writeFile(outPath, artifact.html, "utf8");
+  console.log(`memory: hook coverage viewer written ${outPath}`);
+  console.log(`  effective: ${report.summary.effective_events}/${report.summary.total_events}`);
+  console.log(`  contract: ${artifact.contract.consumes}`);
 }
 
 async function runClaimCheck(args: ParsedArgs): Promise<void> {
@@ -1188,6 +2622,47 @@ async function runIngest(args: ParsedArgs): Promise<void> {
     console.log(
       `  ${report.files} file(s) → ${report.nodes} node(s), ${report.edges} edge(s), ${report.docs} doc(s) in ${report.durationMs}ms`,
     );
+  } finally {
+    await store.close();
+  }
+}
+
+async function runBootstrap(args: ParsedArgs): Promise<void> {
+  const rootDir = rootOf(args.flags);
+  const config = await requireConfig(rootDir);
+  if (config.mode !== "graph") {
+    throw new Error(
+      `bootstrap needs graph mode — this project is "${config.mode}". Re-run \`memory init --mode graph\` first`,
+    );
+  }
+
+  const store = await MemoryStore.open({ uri: resolveStoreUri(rootDir, config) });
+  try {
+    const report = await bootstrapProjectMemory(store, {
+      rootDir,
+      dryRun: args.flags["dry-run"] === true,
+      maxFiles: intFlag(args.flags, "max-files"),
+      includeGitLog: args.flags["include-git-log"] === true,
+    });
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(report, null, 2));
+      return;
+    }
+    const mode = report.dry_run ? "planned" : "indexed";
+    console.log(
+      `memory bootstrap: ${mode} ${report.summary.indexed_sources}/${report.summary.discovered_sources} source(s)`,
+    );
+    console.log(
+      `  ${report.summary.nodes} node(s), ${report.summary.edges} edge(s), ${report.summary.docs} doc(s)`,
+    );
+    for (const source of report.sources.slice(0, 20)) {
+      const status = source.indexed ? "indexed" : "skipped";
+      const reason = source.reason ? ` (${source.reason})` : "";
+      console.log(`  ${status}: ${source.kind} ${source.path}${reason}`);
+    }
+    for (const action of report.recommended_next_actions) {
+      console.log(`  next: ${action}`);
+    }
   } finally {
     await store.close();
   }
@@ -2139,6 +3614,84 @@ async function runHealth(args: ParsedArgs): Promise<void> {
   console.log("\nRead-only healthcheck: no memory, graph, proposal, or skill files were mutated.");
 }
 
+async function runHealthViewer(args: ParsedArgs): Promise<void> {
+  const rootDir = rootOf(args.flags);
+  const { store } = await openGraphStore(args);
+  try {
+    const report = await buildMemoryHealthReport(store, {
+      stale_days: intFlag(args.flags, "stale-days"),
+    });
+    const artifact = buildMemoryHealthViewerArtifact(report);
+    const outPath = resolve(
+      stringFlag(args.flags, "out") ?? join(rootDir, ".red/memory/health-viewer.html"),
+    );
+    await mkdir(dirname(outPath), { recursive: true });
+    await writeFile(outPath, artifact.html, "utf8");
+    console.log(`memory: health viewer written ${outPath}`);
+    console.log(`  state: ${report.state}`);
+    console.log(`  contract: ${artifact.contract.consumes}`);
+  } finally {
+    await store.close();
+  }
+}
+
+async function runGovernance(args: ParsedArgs): Promise<void> {
+  const { store } = await openGraphStore(args);
+  try {
+    const report = await buildMemoryGovernanceReport(store, {
+      staleProgressDays: intFlag(args.flags, "stale-progress-days"),
+    });
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(report, null, 2));
+      return;
+    }
+    printGovernance(report);
+  } finally {
+    await store.close();
+  }
+}
+
+async function runGovernanceViewer(args: ParsedArgs): Promise<void> {
+  const rootDir = rootOf(args.flags);
+  const { store } = await openGraphStore(args);
+  try {
+    const report = await buildMemoryGovernanceReport(store, {
+      staleProgressDays: intFlag(args.flags, "stale-progress-days"),
+    });
+    const artifact = buildMemoryGovernanceViewerArtifact(report);
+    const outPath = resolve(
+      stringFlag(args.flags, "out") ?? join(rootDir, ".red/memory/governance-viewer.html"),
+    );
+    await mkdir(dirname(outPath), { recursive: true });
+    await writeFile(outPath, artifact.html, "utf8");
+    console.log(`memory: governance viewer written ${outPath}`);
+    console.log(`  status: ${report.status}`);
+    console.log(`  contract: ${artifact.contract.consumes}`);
+  } finally {
+    await store.close();
+  }
+}
+
+function printGovernance(report: MemoryGovernanceReport): void {
+  console.log(`memory: governance — ${report.status}`);
+  console.log(
+    `  provenance=${report.summary.nodes_with_provenance}/${report.summary.total_nodes} ` +
+      `privacy=${report.summary.privacy_findings} lint=${report.summary.lint_findings} ` +
+      `conflicts=${report.summary.unresolved_contradictions} superseded=${report.summary.superseded_nodes}`,
+  );
+  for (const item of report.provenance.missing.slice(0, 5)) {
+    console.log(`  missing provenance: memory_nodes:${item.rid} ${item.title}`);
+  }
+  for (const finding of report.privacy.findings.slice(0, 5)) {
+    console.log(`  privacy: ${finding.kind} ${finding.location} (${finding.severity})`);
+  }
+  for (const finding of report.lint.findings.slice(0, 5)) {
+    console.log(`  lint: ${finding.code} ${finding.location} (${finding.severity})`);
+  }
+  for (const action of report.recommended_next_actions) console.log(`  next: ${action}`);
+  console.log("\nRead-only governance report: no memory, graph, note, or export files were mutated.");
+}
+
 async function runLint(args: ParsedArgs): Promise<void> {
   const rootDir = resolve(rootOf(args.flags));
   const report = await lintMemory(rootDir);
@@ -2244,6 +3797,14 @@ function printLintReport(report: LintReport): void {
       console.log(`  [${item.severity}] ${item.code} ${item.memoryId}${related}`);
       console.log(`        ${item.message}`);
       if (item.excerpt) console.log(`        ${item.excerpt}`);
+    }
+  }
+  if (report.ruleSuggestions.length > 0) {
+    console.log("\nRule suggestions:");
+    for (const suggestion of report.ruleSuggestions) {
+      console.log(`  ${suggestion.id}: ${suggestion.title}`);
+      console.log(`        target: ${suggestion.targetFiles.join(", ")}`);
+      console.log(`        ${suggestion.markdown}`);
     }
   }
   console.log("\nRead-only lint: no memory, graph, or note files were mutated.");
@@ -2757,11 +4318,11 @@ function plural(count: number, singular: string): string {
 }
 
 /**
- * LLM conversation extraction (the `INFERRED` write path). Reads a transcript
- * from a file or stdin, routes it through the configured RedDB AI provider, and
- * upserts the inferred facts into the graph. Requires graph mode and a
- * configured `provider`. This is an explicit write verb — the Stop hook and
- * `/memory:store` invoke it; recall/search never do.
+ * Conversation extraction (the `INFERRED` write path). Reads a transcript from
+ * a file or stdin, then either routes it through the configured RedDB AI
+ * provider or uses the local structured-transcript fallback when no provider is
+ * configured / `--local` is passed. This is an explicit write verb — the Stop
+ * hook and `/memory:store` invoke it; recall/search never do.
  */
 async function runExtract(args: ParsedArgs): Promise<void> {
   const rootDir = rootOf(args.flags);
@@ -2770,11 +4331,6 @@ async function runExtract(args: ParsedArgs): Promise<void> {
   if (config.mode !== "graph") {
     throw new Error(
       `extract needs graph mode — this project is "${config.mode}". Re-run \`memory init --mode graph\` first`,
-    );
-  }
-  if (!config.provider) {
-    throw new Error(
-      "extract needs an AI provider configured — set `provider` in .red/memory/config.json",
     );
   }
 
@@ -2787,17 +4343,23 @@ async function runExtract(args: ParsedArgs): Promise<void> {
     return;
   }
 
-  const resolved = resolveProvider(config.provider);
-  applyProviderEnv(resolved, config.provider.apiKeyEnv);
-
   const store = await MemoryStore.open({ uri: resolveStoreUri(rootDir, config) });
   try {
-    const facts = await extractConversation(transcript, redDbProviderClient(store));
+    const providerConfig = config.provider;
+    const useLocal = args.flags.local === true || !providerConfig;
+    const resolved = useLocal ? null : resolveProvider(providerConfig);
+    if (resolved && providerConfig) {
+      applyProviderEnv(resolved, providerConfig.apiKeyEnv);
+    }
+    const facts = useLocal
+      ? extractStructuredTranscript(transcript)
+      : await extractConversation(transcript, redDbProviderClient(store));
     if (facts.length === 0) {
       console.log("memory: no facts extracted");
       return;
     }
-    const { nodes, edges } = factsToGraph(facts);
+    const source = useLocal ? "conversation-local-structured" : "conversation";
+    const { nodes, edges } = factsToGraph(facts, source);
     const labelToRid = new Map<string, number>();
     for (const node of nodes) labelToRid.set(node.label, await store.upsertNode(node));
     let edgeCount = 0;
@@ -2809,9 +4371,56 @@ async function runExtract(args: ParsedArgs): Promise<void> {
         edgeCount += 1;
       }
     }
+    const via = resolved ? `${resolved.mode} (${resolved.egress})` : "local structured transcript";
+    console.log(`memory: extracted ${nodes.length} INFERRED fact(s), ${edgeCount} edge(s) via ${via}`);
+  } finally {
+    await store.close();
+  }
+}
+
+async function runExtraction(args: ParsedArgs): Promise<void> {
+  const action = args.positional[0];
+  if (action === "status-viewer") return runExtractionStatusViewer(args);
+  if (action !== "status") {
+    throw new Error("extraction needs an action — supported: memory extraction status, memory extraction status-viewer");
+  }
+  const rootDir = resolve(rootOf(args.flags));
+  const { store } = await openGraphStore(args);
+  try {
+    const status = await buildMemoryExtractionStatus(store, rootDir);
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(status, null, 2));
+      return;
+    }
     console.log(
-      `memory: extracted ${nodes.length} INFERRED fact(s), ${edgeCount} edge(s) via ${resolved.mode} (${resolved.egress})`,
+      `memory extraction: inferred=${status.inferred.available ? "available" : "unavailable"} facts=${status.inferred.facts}`,
     );
+    if (status.inferred.mode) {
+      console.log(
+        `  provider: ${status.inferred.mode}/${status.inferred.model} (${status.inferred.egress})`,
+      );
+    }
+    if (status.inferred.error) console.log(`  warning: ${status.inferred.error}`);
+    for (const action of status.recommended_next_actions) console.log(`  next: ${action}`);
+  } finally {
+    await store.close();
+  }
+}
+
+async function runExtractionStatusViewer(args: ParsedArgs): Promise<void> {
+  const rootDir = resolve(rootOf(args.flags));
+  const outPath = resolve(
+    stringFlag(args.flags, "out") ?? join(rootDir, ".red/memory/extraction-status-viewer.html"),
+  );
+  const { store } = await openGraphStore(args);
+  try {
+    const status = await buildMemoryExtractionStatus(store, rootDir);
+    const artifact = buildMemoryExtractionStatusViewerArtifact(status);
+    await mkdir(dirname(outPath), { recursive: true });
+    await writeFile(outPath, artifact.html, "utf8");
+    console.log(`memory: extraction status viewer written ${outPath}`);
+    console.log(`  inferred: ${status.inferred.available ? "available" : "unavailable"}`);
+    console.log(`  contract: ${artifact.contract.consumes}`);
   } finally {
     await store.close();
   }
@@ -2835,6 +4444,10 @@ function intFlag(flags: Record<string, string | boolean>, key: string): number |
 
 function stringFlag(flags: Record<string, string | boolean>, key: string): string | undefined {
   return typeof flags[key] === "string" ? flags[key] : undefined;
+}
+
+function isIntegerText(value: string): boolean {
+  return /^[0-9]+$/.test(value);
 }
 
 function strFlag<T extends string>(
@@ -2910,6 +4523,52 @@ async function runPath(args: ParsedArgs): Promise<void> {
     console.log(
       `memory: path "${from}" → "${to}": ${result.hopCount} hop(s), weight ${result.totalWeight}`,
     );
+  } finally {
+    await store.close();
+  }
+}
+
+async function runPathExplain(args: ParsedArgs): Promise<void> {
+  const [from, to] = args.positional;
+  if (!from || !to) throw new Error("pass two labels: memory path-explain <from> <to>");
+  const { store } = await openGraphStore(args);
+  try {
+    const report = await buildPathExplainReport(store, {
+      from,
+      to,
+      maxDepth: intFlag(args.flags, "max-depth"),
+    });
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(report, null, 2));
+      return;
+    }
+    console.log(report.markdown);
+  } finally {
+    await store.close();
+  }
+}
+
+async function runPathExplainViewer(args: ParsedArgs): Promise<void> {
+  const [from, to] = args.positional;
+  if (!from || !to) throw new Error("pass two labels: memory path-explain-viewer <from> <to>");
+  const rootDir = rootOf(args.flags);
+  const outPath = resolve(
+    stringFlag(args.flags, "out") ?? join(rootDir, ".red/memory/path-explain-viewer.html"),
+  );
+  const { store } = await openGraphStore(args);
+  try {
+    const report = await buildPathExplainReport(store, {
+      from,
+      to,
+      maxDepth: intFlag(args.flags, "max-depth"),
+    });
+    const artifact = buildPathExplainViewerArtifact(report);
+    await mkdir(dirname(outPath), { recursive: true });
+    await writeFile(outPath, artifact.html, "utf8");
+    console.log(`memory: path explanation viewer written ${outPath}`);
+    console.log(`  from: ${from}`);
+    console.log(`  to: ${to}`);
+    console.log(`  contract: ${artifact.contract.consumes}`);
   } finally {
     await store.close();
   }
@@ -3016,6 +4675,25 @@ async function runCommunities(args: ParsedArgs): Promise<void> {
   }
 }
 
+async function runCommunitiesViewer(args: ParsedArgs): Promise<void> {
+  const rootDir = rootOf(args.flags);
+  const outPath = stringFlag(args.flags, "out") ?? join(rootDir, ".red/memory/communities-viewer.html");
+  const { store } = await openGraphStore(args);
+  try {
+    const report = (await executeReadOnlyMemoryOperation("memory.communities", { store }, {
+      cache: args.flags["no-cache"] === true ? "off" : "read-write",
+    })) as CommunityAnalyticsReport;
+    const artifact = buildCommunitiesViewerArtifact(report);
+    await mkdir(dirname(outPath), { recursive: true });
+    await writeFile(outPath, artifact.html, "utf8");
+    console.log(`memory: communities viewer written ${outPath}`);
+    console.log(`  communities: ${artifact.report.communities.length}`);
+    console.log(`  contract: ${artifact.contract.consumes}`);
+  } finally {
+    await store.close();
+  }
+}
+
 function parseRid(value: string, name: string): number {
   const rid = Number(value);
   if (!Number.isInteger(rid) || rid <= 0) throw new Error(`${name} must be a positive integer`);
@@ -3101,6 +4779,59 @@ async function runPrePrReview(args: ParsedArgs): Promise<void> {
   }
 }
 
+async function runPrePrReviewViewer(args: ParsedArgs): Promise<void> {
+  const rootDir = rootOf(args.flags);
+  const config = await requireConfig(rootDir);
+  if (config.mode !== "graph") {
+    throw new Error(
+      `pre-pr-review-viewer needs graph mode — this project is "${config.mode}". Re-run \`memory init --mode graph\` first`,
+    );
+  }
+  const comparison = stringFlag(args.flags, "range") ?? stringFlag(args.flags, "comparison");
+  const changedFiles = await readChangedFiles(rootDir, comparison);
+  const outPath = resolve(
+    stringFlag(args.flags, "out") ?? join(rootDir, ".red/memory/pre-pr-review-viewer.html"),
+  );
+  const store = await MemoryStore.open({ uri: resolveStoreUri(rootDir, config) });
+  try {
+    const review = await buildPrePrMemoryReview(store, { changedFiles, comparison });
+    const artifact = buildPrePrReviewViewerArtifact(review);
+    await mkdir(dirname(outPath), { recursive: true });
+    await writeFile(outPath, artifact.html, "utf8");
+    console.log(`memory: pre-PR review viewer written ${outPath}`);
+    console.log(`  changed files: ${review.changedFiles.length}`);
+    console.log(`  contract: ${artifact.contract.consumes}`);
+  } finally {
+    await store.close();
+  }
+}
+
+async function runStructuralImpactViewer(args: ParsedArgs): Promise<void> {
+  const target: StructuralImpactTarget = {
+    file: typeof args.flags.file === "string" ? args.flags.file : undefined,
+    symbol: typeof args.flags.symbol === "string" ? args.flags.symbol : undefined,
+  };
+  if (!target.file && !target.symbol) {
+    throw new Error("pass --file <path>, --symbol <name>, or both");
+  }
+  const rootDir = rootOf(args.flags);
+  const outPath = resolve(
+    stringFlag(args.flags, "out") ?? join(rootDir, ".red/memory/structural-impact-viewer.html"),
+  );
+  const { store } = await openGraphStore(args);
+  try {
+    const impact = await structuralImpactReader(store)(target);
+    const artifact = buildStructuralImpactViewerArtifact(target, impact);
+    await mkdir(dirname(outPath), { recursive: true });
+    await writeFile(outPath, artifact.html, "utf8");
+    console.log(`memory: structural impact viewer written ${outPath}`);
+    console.log(`  target: ${target.file ?? ""}${target.symbol ? ` ${target.symbol}` : ""}`.trim());
+    console.log(`  contract: ${artifact.contract.consumes}`);
+  } finally {
+    await store.close();
+  }
+}
+
 function printStructuralImpact(target: StructuralImpactTarget, impact: StructuralImpact): void {
   const label = [target.file ? `file ${target.file}` : "", target.symbol ? `symbol ${target.symbol}` : ""]
     .filter(Boolean)
@@ -3112,6 +4843,24 @@ function printStructuralImpact(target: StructuralImpactTarget, impact: Structura
   }
   for (const edge of impact.importedBy) {
     lines.push(`${edge.from.properties.title} imports this target through ${edge.to.properties.title ?? edge.to.label}`);
+  }
+  for (const edge of impact.calls) {
+    lines.push(`${edge.from.properties.title} calls ${edge.to.properties.title ?? edge.to.label}`);
+  }
+  for (const edge of impact.calledBy) {
+    lines.push(`${edge.from.properties.title} calls this target`);
+  }
+  for (const edge of impact.usesTypes) {
+    lines.push(`${edge.from.properties.title} uses type ${edge.to.properties.title ?? edge.to.label}`);
+  }
+  for (const edge of impact.usedByTypes) {
+    lines.push(`${edge.from.properties.title} uses this target as a type`);
+  }
+  for (const edge of impact.references) {
+    lines.push(`${edge.from.properties.title} references ${edge.to.properties.title ?? edge.to.label}`);
+  }
+  for (const edge of impact.referencedBy) {
+    lines.push(`${edge.from.properties.title} references this target`);
   }
   for (const node of impact.defines) {
     lines.push(`${impact.definedIn?.properties.title ?? target.file ?? "target file"} defines ${node.properties.title}`);
@@ -3267,11 +5016,56 @@ async function runStats(args: ParsedArgs): Promise<void> {
 
 async function runVector(args: ParsedArgs): Promise<void> {
   const action = args.positional[0];
-  if (action !== "status" && action !== "maintain") {
-    throw new Error("vector needs an action — supported: memory vector status|maintain");
+  if (action !== "status" && action !== "status-viewer" && action !== "maintain" && action !== "search") {
+    throw new Error(
+      "vector needs an action — supported: memory vector status|status-viewer|maintain|search",
+    );
   }
+  const previousProvider = process.env.RED_MEMORY_VECTOR_PROVIDER;
+  if (args.flags.local === true) process.env.RED_MEMORY_VECTOR_PROVIDER = "local";
   const { store } = await openGraphStore(args);
   try {
+    if (action === "search") {
+      const query = args.positional.slice(1).join(" ").trim();
+      if (!query) throw new Error("nothing to search — pass a query: memory vector search <query>");
+      const report = await buildVectorSearchReport(store, query, {
+        limit: intFlag(args.flags, "limit"),
+      });
+      if (args.flags.json === true) {
+        console.log(JSON.stringify(report, null, 2));
+        return;
+      }
+      if (report.status === "unavailable") {
+        const detail = report.error ? ` — ${report.error}` : "";
+        console.log(`memory: vector search unavailable${detail}`);
+        return;
+      }
+      console.log(
+        `memory: vector search ${report.hits.length}/${report.limit} hit(s) for "${query}"`,
+      );
+      for (const hit of report.hits) {
+        const source = hit.source ? ` source=${hit.source}` : "";
+        console.log(
+          `  ${hit.score.toFixed(3)} memory_nodes:${hit.rid} (${hit.node_type}) ${hit.title}${source}`,
+        );
+        if (hit.excerpt) console.log(`      ${hit.excerpt}`);
+      }
+      return;
+    }
+
+    if (action === "status-viewer") {
+      const rootDir = rootOf(args.flags);
+      const outPath =
+        stringFlag(args.flags, "out") ?? join(rootDir, ".red/memory/vector-status-viewer.html");
+      const artifact = buildVectorStatusViewerArtifact(await store.vectorStatus());
+      await mkdir(dirname(outPath), { recursive: true });
+      await writeFile(outPath, artifact.html, "utf8");
+      console.log(`memory: vector status viewer written ${outPath}`);
+      console.log(`  status: ${artifact.report.overall}`);
+      console.log(`  contract: ${artifact.contract.consumes}`);
+      return;
+    }
+
     const report =
       action === "maintain"
         ? await store.maintainVectorProjection({ strict: args.flags.strict === true })
@@ -3292,8 +5086,16 @@ async function runVector(args: ParsedArgs): Promise<void> {
       const detail = node.error ? ` — ${node.error}` : "";
       console.log(`  ${node.rid} (${node.node_type}) ${node.label}: ${node.status}${detail}`);
     }
+    for (const doc of report.docs.filter((d) => d.status !== "ready")) {
+      const detail = doc.error ? ` — ${doc.error}` : "";
+      console.log(`  doc:${doc.rid} ${doc.path}: ${doc.status}${detail}`);
+    }
   } finally {
     await store.close();
+    if (args.flags.local === true) {
+      if (previousProvider == null) delete process.env.RED_MEMORY_VECTOR_PROVIDER;
+      else process.env.RED_MEMORY_VECTOR_PROVIDER = previousProvider;
+    }
   }
 }
 
@@ -3353,14 +5155,21 @@ async function runExport(args: ParsedArgs): Promise<void> {
   const target = args.positional[0] ?? ".red/memory/export";
   const outDir = isAbsolute(target) ? target : resolve(rootDir, target);
   const communities = args.flags.communities === true;
+  const interop = args.flags.interop === true;
   const { store } = await openGraphStore(args);
   try {
-    const result = await exportGraph(store, outDir, { communities });
+    const result = await exportGraph(store, outDir, { communities, interop });
     console.log(`memory: exported ${result.nodes} node(s), ${result.edges} edge(s)`);
     if (communities) console.log(`  communities: coloured via native Louvain`);
     console.log(`  graph:  ${result.htmlPath}`);
     console.log(`  json:   ${result.jsonPath}`);
     console.log(`  audit:  ${result.auditPath}`);
+    if (result.interop) {
+      console.log(`  nodes:  ${result.interop.nodesJsonlPath}`);
+      console.log(`  edges:  ${result.interop.edgesJsonlPath}`);
+      console.log(`  graphml:${result.interop.graphmlPath}`);
+      console.log(`  cypher: ${result.interop.cypherPath}`);
+    }
   } finally {
     await store.close();
   }
@@ -3519,8 +5328,14 @@ async function main(): Promise<void> {
       return runClassify(args);
     case "recall":
       return runRecall(args);
+    case "smart-search":
+      return runSmartSearch(args);
+    case "smart-search-viewer":
+      return runSmartSearchViewer(args);
     case "context-pack":
       return runContextPack(args);
+    case "context-pack-viewer":
+      return runContextPackViewer(args);
     case "recommend":
       return runRecommend(args);
     case "claim-check":
@@ -3531,12 +5346,66 @@ async function main(): Promise<void> {
       return runReadiness(args);
     case "readiness-viewer":
       return runReadinessViewer(args);
+    case "capabilities":
+      return runCapabilities(args);
+    case "assets":
+      return runAssets(args);
+    case "assets-viewer":
+      return runAssetsViewer(args);
+    case "competitive-eval":
+      return runCompetitiveEval(args);
+    case "competitive-eval-viewer":
+      return runCompetitiveEvalViewer(args);
+    case "competitive-radar":
+      return runCompetitiveRadar(args);
+    case "layers":
+      return runMemoryLayers(args);
+    case "layers-viewer":
+      return runMemoryLayersViewer(args);
+    case "handoff":
+      return runHandoff(args);
+    case "handoff-viewer":
+      return runHandoffViewer(args);
+    case "frontier":
+      return runWorkFrontier(args);
+    case "frontier-viewer":
+      return runWorkFrontierViewer(args);
+    case "decay":
+      return runMemoryDecay(args);
+    case "decay-viewer":
+      return runMemoryDecayViewer(args);
+    case "dashboard":
+      return runDashboard(args);
+    case "workbench":
+      return runWorkbench(args);
+    case "session":
+      return runSession(args);
     case "learning-debt":
       return runLearningDebt(args);
+    case "learning-debt-viewer":
+      return runLearningDebtViewer(args);
     case "onboarding-map":
       return runOnboardingMap(args);
+    case "onboarding-map-viewer":
+      return runOnboardingMapViewer(args);
+    case "routing-guide":
+      return runRoutingGuide(args);
+    case "routing-guide-viewer":
+      return runRoutingGuideViewer(args);
+    case "integration-status":
+      return runAgentIntegrationStatus(args);
+    case "integration-status-viewer":
+      return runAgentIntegrationStatusViewer(args);
     case "ask":
       return runAsk(args);
+    case "docs":
+      return runDocs(args);
+    case "bootstrap":
+      return runBootstrap(args);
+    case "backup":
+      return runBackup(args);
+    case "serve":
+      return runServe(args);
     case "provenance":
       return runProvenance(args);
     case "ingest":
@@ -3551,6 +5420,14 @@ async function main(): Promise<void> {
       return runImprove(args);
     case "health":
       return runHealth(args);
+    case "health-viewer":
+      return runHealthViewer(args);
+    case "governance":
+      return runGovernance(args);
+    case "governance-viewer":
+      return runGovernanceViewer(args);
+    case "hooks":
+      return runHooks(args);
     case "lint":
       return runLint(args);
     case "privacy":
@@ -3561,6 +5438,8 @@ async function main(): Promise<void> {
       return runAttempt(args);
     case "extract":
       return runExtract(args);
+    case "extraction":
+      return runExtraction(args);
     case "search":
       return runSearch(args);
     case "neighbors":
@@ -3569,6 +5448,10 @@ async function main(): Promise<void> {
       return runTraverse(args);
     case "path":
       return runPath(args);
+    case "path-explain":
+      return runPathExplain(args);
+    case "path-explain-viewer":
+      return runPathExplainViewer(args);
     case "conflicts":
       return runConflicts(args);
     case "supersede":
@@ -3579,10 +5462,16 @@ async function main(): Promise<void> {
       return runTimeline(args);
     case "communities":
       return runCommunities(args);
+    case "communities-viewer":
+      return runCommunitiesViewer(args);
     case "structural-impact":
       return runStructuralImpact(args);
+    case "structural-impact-viewer":
+      return runStructuralImpactViewer(args);
     case "pre-pr-review":
       return runPrePrReview(args);
+    case "pre-pr-review-viewer":
+      return runPrePrReviewViewer(args);
     case "vector":
       return runVector(args);
     case "stats":

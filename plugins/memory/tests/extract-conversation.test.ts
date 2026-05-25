@@ -8,6 +8,7 @@ import {
   type ProviderRequest,
   buildExtractionPrompt,
   extractConversation,
+  extractStructuredTranscript,
   factsToGraph,
   parseExtraction,
   resolveProvider,
@@ -116,6 +117,39 @@ describe("extractConversation (golden file)", () => {
       },
     };
     await expect(extractConversation(TRANSCRIPT, client)).resolves.toEqual([]);
+  });
+});
+
+describe("extractStructuredTranscript", () => {
+  test("extracts explicit engineering facts without a provider", () => {
+    const facts = extractStructuredTranscript(`
+      user: Problem: deploys fail during cold start.
+      assistant: Fix: warm the connection pool during boot.
+      assistant: Validation: pnpm test passed for startup.
+      user: Decision: keep the warm-pool pattern for worker services.
+    `);
+
+    expect(facts.map((fact) => fact.node_type)).toEqual([
+      "problem",
+      "fix",
+      "validation",
+      "decision",
+    ]);
+    expect(facts.map((fact) => fact.label)).toEqual([
+      "problem-deploys-fail-during-cold-start",
+      "fix-warm-the-connection-pool-during-boot",
+      "validation-pnpm-test-passed-for-startup",
+      "decision-keep-the-warm-pool-pattern-for-worker-services",
+    ]);
+    expect(facts[1].relations).toEqual([
+      { label: "FIXES", target: "problem-deploys-fail-during-cold-start" },
+      { label: "TESTED_BY", target: "validation-pnpm-test-passed-for-startup" },
+    ]);
+    expect(facts[2].relations).toEqual([]);
+  });
+
+  test("ignores free-form transcript lines so local extraction stays conservative", () => {
+    expect(extractStructuredTranscript("we should probably remember this later")).toEqual([]);
   });
 });
 

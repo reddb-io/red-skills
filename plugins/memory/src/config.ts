@@ -2,11 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { AiProviderConfig } from "./extract-conversation.js";
 
-/**
- * Storage backends the `memory init` wizard can configure. This slice only
- * implements `markdown-only`; `graph` and `hybrid` arrive in later PRD #49
- * slices and are kept in the type so the config schema is forward-stable.
- */
+/** Storage backends the `memory init` wizard can configure. */
 export type StorageMode = "markdown-only" | "graph" | "hybrid";
 
 /**
@@ -27,8 +23,8 @@ export interface MemoryConfig {
   /** Where markdown notes live, relative to the repo root. */
   notesDir: string;
   /**
-   * Repo-relative path to the per-project RedDB graph store. Set in `graph`
-   * (and later `hybrid`) mode; absent in markdown-only mode.
+   * Repo-relative path to the per-project RedDB graph store. Set in graph-like
+   * modes; absent in markdown-only mode.
    */
   storePath?: string;
   hooks: HookConfig;

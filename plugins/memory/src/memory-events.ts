@@ -3,6 +3,7 @@ import type { QueryParam } from "@reddb-io/sdk";
 import type { MemoryStore } from "./graph-store.js";
 import { COLLECTIONS } from "./schema.js";
 import type { SkillEvent } from "./skill-events.js";
+import type { HookResult, NormalizedInput } from "./hook-runtime.js";
 
 const SAFE_TEXT_MAX = 512;
 const SAFE_PATH_MAX = 2048;
@@ -66,6 +67,32 @@ const skillTelemetryPayloadSchema = z
     }
   });
 
+const hookLifecyclePayloadSchema = z
+  .object({
+    event_type: z.literal("hook.lifecycle"),
+    event_id: safeString("payload.event_id", 200),
+    timestamp: z
+      .string()
+      .datetime({ offset: true })
+      .or(z.string().datetime({ offset: false })),
+    session_id: safeString("payload.session_id", 200).optional(),
+    runner: z.enum(["claude", "codex"]),
+    hook_event: z.enum(["SessionStart", "PostToolUse", "Stop", "PreCompact"]),
+    cwd: safeString("payload.cwd", SAFE_PATH_MAX).optional(),
+    changed_files: z.array(safeString("payload.changed_files", SAFE_PATH_MAX)).max(200),
+    transcript_chars: z.number().int().nonnegative().max(10_000_000).optional(),
+    result: z
+      .object({
+        noop: z.boolean(),
+        reason: safeString("payload.result.reason", 240).optional(),
+        stored: z.number().int().nonnegative().max(100_000).optional(),
+        indexed: z.number().int().nonnegative().max(100_000).optional(),
+        injected_chars: z.number().int().nonnegative().max(10_000_000).optional(),
+      })
+      .strict(),
+  })
+  .strict();
+
 const provenanceSchema = z
   .object({
     source_kind: z.enum(["manual", "hook", "derived", "system"]),
@@ -83,7 +110,7 @@ const memoryEventSchema = z
       .string()
       .datetime({ offset: true })
       .or(z.string().datetime({ offset: false })),
-    kind: z.literal("skill.telemetry"),
+    kind: z.enum(["skill.telemetry", "hook.lifecycle"]),
     source: envelopeObject("source"),
     actor: envelopeObject("actor"),
     scope: z
@@ -93,13 +120,14 @@ const memoryEventSchema = z
       })
       .catchall(z.unknown()),
     subject: envelopeObject("subject"),
-    payload: skillTelemetryPayloadSchema,
+    payload: z.union([skillTelemetryPayloadSchema, hookLifecyclePayloadSchema]),
     provenance: provenanceSchema,
   })
   .strict();
 
 export type MemoryEvent = z.infer<typeof memoryEventSchema>;
 export type SkillTelemetryPayload = z.infer<typeof skillTelemetryPayloadSchema>;
+export type HookLifecyclePayload = z.infer<typeof hookLifecyclePayloadSchema>;
 
 export interface MemoryEventReadOptions {
   /** Retention horizon in milliseconds. When absent, all raw events are returned. */
@@ -136,6 +164,55 @@ export function skillEventToMemoryEvent(event: SkillEvent): MemoryEvent {
       writer: "memory",
       command: "memory event skill",
       evidence: [`event_id:${event.event_id}`],
+    },
+  });
+}
+
+export function hookLifecycleToMemoryEvent(
+  input: NormalizedInput,
+  result: HookResult,
+  opts: { timestamp?: string | Date; eventId?: string } = {},
+): MemoryEvent {
+  const timestamp =
+    opts.timestamp instanceof Date
+      ? opts.timestamp.toISOString()
+      : opts.timestamp ?? new Date().toISOString();
+  const sessionId = input.sessionId ?? `cwd:${input.cwd ?? "unknown"}`;
+  const eventId =
+    opts.eventId ??
+    `hook:${input.runner}:${input.event}:${sessionId}:${Date.parse(timestamp) || timestamp}`;
+  return parseMemoryEvent({
+    id: eventId,
+    occurred_at: timestamp,
+    kind: "hook.lifecycle",
+    source: { kind: "hook", name: input.event },
+    actor: { kind: "agent", id: input.runner },
+    scope: { level: "session", id: sessionId },
+    subject: { kind: "hook", id: input.event },
+    payload: {
+      event_type: "hook.lifecycle",
+      event_id: eventId,
+      timestamp,
+      session_id: input.sessionId,
+      runner: input.runner,
+      hook_event: input.event,
+      cwd: input.cwd,
+      changed_files: input.changedFiles,
+      transcript_chars: input.transcriptText?.length,
+      result: {
+        noop: result.noop,
+        reason: result.reason,
+        stored: result.stored,
+        indexed: result.indexed,
+        injected_chars: result.inject?.length,
+      },
+    },
+    provenance: {
+      source_kind: "hook",
+      writer: "memory",
+      command: "memory hook",
+      hook: input.event,
+      evidence: [`event_id:${eventId}`],
     },
   });
 }

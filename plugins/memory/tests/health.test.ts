@@ -1,11 +1,13 @@
 import { spawnSync } from "node:child_process";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, test } from "vitest";
 import { MemoryStore } from "../src/graph-store.js";
 import { initGraph } from "../src/init.js";
+import { buildMemoryHealthReport } from "../src/memory-health.js";
+import { buildMemoryHealthViewerArtifact } from "../src/memory-health-viewer.js";
 import { ingestSkillEvents, type SkillEvent } from "../src/skill-events.js";
 
 const TIMEOUT = 30_000;
@@ -99,6 +101,43 @@ describe("memory health CLI", () => {
       dominantErrorStage: "verify",
     });
     expect(body.recommendedNextActions).toContain("review and apply the top high-priority Skill improvement proposal");
+
+    const viewer = runMemory(["health-viewer", "--root", root, "--out", join(root, "health.html")]);
+    expect(viewer.status, viewer.stderr).toBe(0);
+    expect(viewer.stdout).toContain("memory: health viewer written");
+    const html = await readFile(join(root, "health.html"), "utf8");
+    expect(html).toContain("Memory Health");
+    expect(html).toContain('id="memory-health-data"');
+  }, TIMEOUT);
+
+  test("builds a graph health report and self-contained viewer artifact", async () => {
+    const root = await tempRoot();
+    await initGraph(root, { hooks: true, skillTelemetry: true });
+    const store = await openStore(root);
+    await store.upsertNode({
+      label: "memory-health-check",
+      node_type: "concept",
+      properties: { title: "Memory health check", content: "Health viewer evidence." },
+    });
+
+    const report = await buildMemoryHealthReport(store, { stale_days: 90 });
+    expect(report).toMatchObject({
+      schema_version: "memory.health.v1",
+      read_only: true,
+      stats: { nodes: expect.any(Number), edges: expect.any(Number) },
+      skill_telemetry: { status: "available" },
+    });
+
+    const artifact = buildMemoryHealthViewerArtifact(report);
+    expect(artifact.contract).toEqual({
+      name: "memory.health.viewer",
+      version: "memory.health.viewer.v1",
+      consumes: "memory.health.v1",
+    });
+    expect(artifact.html).toContain("Memory Health");
+    expect(artifact.html).toContain("Vector projection");
+    expect(artifact.html).toContain('id="memory-health-data"');
+    expect(artifact.html).not.toContain("<script src=");
   }, TIMEOUT);
 
   test("explains missing memory without failing", async () => {

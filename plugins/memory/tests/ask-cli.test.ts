@@ -48,6 +48,7 @@ describe("memory ask CLI", () => {
         answer: string;
         citations: unknown[];
         evidence: { active: Array<{ rid: number; source: string; confidence: string }> };
+        gap_analysis: { status: string; gaps: string[]; next_actions: string[] };
         cost: unknown;
       };
 
@@ -56,11 +57,14 @@ describe("memory ask CLI", () => {
       expect(body.answer).toContain("Evidence-only fallback: LLM provider unavailable");
       expect(body.answer).toContain("[1]");
       expect(body.answer).toContain("JWT tokens rotate every 90 days in staging.");
+      expect(body.answer).toContain("Gap analysis:");
       expect(body.citations).toHaveLength(1);
       expect(body.evidence.active[0]).toMatchObject({
         source: "manual",
         confidence: "AMBIGUOUS",
       });
+      expect(body.gap_analysis.status).toBe("partial");
+      expect(body.gap_analysis.gaps).toContain("No EXTRACTED evidence supports the answer.");
       expect(body.cost).toBeNull();
     },
     TIMEOUT,
@@ -85,6 +89,7 @@ describe("memory ask CLI", () => {
         answer: string;
         citations: unknown[];
         evidence: { active: unknown[]; superseded: unknown[]; contradictory: unknown[] };
+        gap_analysis: { status: string; summary: string; next_actions: string[] };
         cost: unknown;
       };
 
@@ -94,6 +99,10 @@ describe("memory ask CLI", () => {
       expect(body.evidence.active).toEqual([]);
       expect(body.evidence.superseded).toEqual([]);
       expect(body.evidence.contradictory).toEqual([]);
+      expect(body.gap_analysis).toMatchObject({
+        status: "unsupported",
+        summary: "Memory has no recalled evidence for this question.",
+      });
       expect(body.cost).toBeNull();
     },
     TIMEOUT,

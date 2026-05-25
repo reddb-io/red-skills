@@ -265,6 +265,20 @@ expect_not_contains "case6/drops open tag"        "$NOTES_OUT" "<agent-notes>"
 expect_not_contains "case6/drops close tag"       "$NOTES_OUT" "</agent-notes>"
 rm -f "$handoff_tmp"
 
+# ---------- special request prompt block ----------
+SPECIAL_USER_REQUEST="dont run cargo tests for this issue resolution"
+REQ_BLOCK="$(special_user_request_block)"
+expect_eq "special-request/block" "$REQ_BLOCK" $'---- SPECIAL USER REQUEST ------\ndont run cargo tests for this issue resolution\n-------------------------------'
+
+PROMPT_WITH_REQ="$(build_inner_prompt "/tmp/handoff.md" "abc123"$'\n'"message" "agent prompt body")"
+expect_contains "special-request/prompt has header" "$PROMPT_WITH_REQ" "---- SPECIAL USER REQUEST ------"
+expect_contains "special-request/prompt has body" "$PROMPT_WITH_REQ" "dont run cargo tests for this issue resolution"
+expect_contains "special-request/prompt before agent prompt" "$PROMPT_WITH_REQ" $'-------------------------------\n\nagent prompt body'
+
+SPECIAL_USER_REQUEST=""
+PROMPT_NO_REQ="$(build_inner_prompt "/tmp/handoff.md" "abc123" "agent prompt body")"
+expect_not_contains "special-request/omitted when empty" "$PROMPT_NO_REQ" "SPECIAL USER REQUEST"
+
 echo
 echo "summary: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

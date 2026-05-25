@@ -253,6 +253,33 @@ describe("recall ranking with a mock store (#72)", () => {
     });
   });
 
+  test("treats doc-grounded vector candidates as governed recall seeds", async () => {
+    const store = new MockStore(
+      [
+        node(1, "durable", { content: "alpha direct match" }),
+        node(2, "durable", {
+          title: "JWT security guide",
+          content: "markdown root concept without lexical query overlap",
+        }),
+      ],
+      new Map(),
+      [],
+      [{ rid: 2, score: 0.95 }],
+    );
+
+    const { nodes, diagnostics } = await recall(store, "semantic token rotation", {
+      depth: 0,
+      now: NOW,
+    });
+
+    expect(nodes.map((n) => n.rid)).toContain(2);
+    expect(diagnostics.vector).toMatchObject({
+      status: "contributed",
+      candidates: 1,
+      contributed: 1,
+    });
+  });
+
   test("filters vector candidates through scope and supersession safeguards", async () => {
     const store = new MockStore(
       [

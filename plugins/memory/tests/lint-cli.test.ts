@@ -125,6 +125,12 @@ describe("memory lint CLI", () => {
       readOnly: boolean;
       totalMemories: number;
       findings: Array<{ code: string; memoryId: string; relatedMemoryId?: string }>;
+      ruleSuggestions: Array<{
+        id: string;
+        targetFiles: string[];
+        evidence: string[];
+        markdown: string;
+      }>;
     };
 
     expect(body.mode).toBe("markdown-only");
@@ -141,6 +147,29 @@ describe("memory lint CLI", () => {
       ]),
     );
     expect(body.findings.some((finding) => finding.memoryId === "good")).toBe(false);
+    expect(body.ruleSuggestions.map((suggestion) => suggestion.id)).toEqual(
+      expect.arrayContaining([
+        "consolidate-duplicate-guidance",
+        "keep-progress-ephemeral",
+        "no-secrets-in-memory",
+        "promote-imperatives-to-agent-rules",
+        "require-memory-scope-and-tier",
+      ]),
+    );
+    expect(
+      body.ruleSuggestions.find((suggestion) => suggestion.id === "no-secrets-in-memory"),
+    ).toMatchObject({
+      targetFiles: ["AGENTS.md", "CLAUDE.md"],
+      evidence: ["bad-secret"],
+    });
+    expect(
+      body.ruleSuggestions.find(
+        (suggestion) => suggestion.id === "consolidate-duplicate-guidance",
+      )?.targetFiles,
+    ).toContain(".red/CONTEXT.md");
+    expect(body.ruleSuggestions.map((suggestion) => suggestion.markdown).join("\n")).toContain(
+      "durable facts",
+    );
 
     const after = await Promise.all(
       (await readdir(join(root, ".red", "memory", "notes"))).map(async (file) => [
@@ -188,6 +217,7 @@ describe("memory lint CLI", () => {
         readOnly: boolean;
         totalMemories: number;
         findings: Array<{ code: string }>;
+        ruleSuggestions: Array<{ id: string }>;
       };
 
       expect(body.mode).toBe("graph");
@@ -196,6 +226,18 @@ describe("memory lint CLI", () => {
       expect(body.findings.map((finding) => finding.code)).toEqual(
         expect.arrayContaining(["stale-progress-fact", "imperative-memory", "likely-secret"]),
       );
+      expect(body.ruleSuggestions.map((suggestion) => suggestion.id)).toEqual(
+        expect.arrayContaining([
+          "keep-progress-ephemeral",
+          "no-secrets-in-memory",
+          "promote-imperatives-to-agent-rules",
+        ]),
+      );
+
+      const text = runMemory(["lint", "--root", root]);
+      expect(text.status, text.stderr).toBe(0);
+      expect(text.stdout).toContain("Rule suggestions:");
+      expect(text.stdout).toContain("no-secrets-in-memory");
     },
     TIMEOUT,
   );
@@ -211,6 +253,7 @@ describe("memory lint CLI", () => {
       readOnly: true,
       totalMemories: 0,
       findings: [],
+      ruleSuggestions: [],
     });
     await expect(access(join(root, ".red"))).rejects.toThrow();
   }, TIMEOUT);
