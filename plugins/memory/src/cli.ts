@@ -38,6 +38,7 @@ import {
 } from "./inbox.js";
 import { graphRecall } from "./graph-recall.js";
 import { MemoryStore, factToNode } from "./graph-store.js";
+import { HistoricalMemoryStore } from "./historical-memory-store.js";
 import { ingestProject, refreshFiles } from "./ingest.js";
 import { initGraph, initMarkdownOnly } from "./init.js";
 import { lintMemory, type LintReport } from "./lint.js";
@@ -112,7 +113,7 @@ Usage:
   memory inbox reject <id>          [--root <dir>] --reason <text> --yes [--json]
   memory inbox promote <id>         [--root <dir>] --yes [--json]
   memory classify <candidate...>    [--root <dir>] [--json]
-  memory recall <query...>          [--root <dir>] [--limit N] [--include-superseded] [--scope ...] [--scope-id ID] [--include-narrower-scopes]
+  memory recall <query...>          [--root <dir>] [--limit N] [--include-superseded] [--scope ...] [--scope-id ID] [--include-narrower-scopes] [--as-of <reddb-ref>]
   memory context-pack <goal...>     [--root <dir>] [--budget N] [--limit N] [--json] [--scope ...] [--scope-id ID] [--include-narrower-scopes]
   memory recommend skills <task...> [--root <dir>] [--limit N] [--json] [--scope ...] [--scope-id ID] [--include-narrower-scopes]
   memory claim-check <assertion...> [--root <dir>] [--json]
@@ -616,11 +617,15 @@ async function runRecall(args: ParsedArgs): Promise<void> {
   const limit = typeof args.flags.limit === "string" ? Number(args.flags.limit) : 10;
 
   if (config.mode === "graph") {
-    const store = await MemoryStore.open({ uri: resolveStoreUri(rootDir, config) });
+    const asOf = stringFlag(args.flags, "as-of");
+    const store = asOf
+      ? await HistoricalMemoryStore.open({ uri: resolveStoreUri(rootDir, config), ref: asOf })
+      : await MemoryStore.open({ uri: resolveStoreUri(rootDir, config) });
     try {
       const hits = await graphRecall(store, query, limit, {
         includeSuperseded: args.flags["include-superseded"] === true,
         scope: scopeFlags(args.flags),
+        now: asOf ? 0 : undefined,
       });
       if (hits.length === 0) {
         console.log(`memory: no matches for "${query}"`);
