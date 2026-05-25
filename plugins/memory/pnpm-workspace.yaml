@@ -1,7 +1,10 @@
-# Self-contained workspace nested under plugins/memory/.
-# This tracer-bullet slice keeps everything in the root package (src/); future
-# slices add sibling packages (core, extractor, recall, mcp-server, …) under
-# packages/* without touching the red-skills root, which stays build-free.
-packages:
-  - "."
-  - "packages/*"
+# pnpm v11+ moved the "pnpm" field from plugins/memory/package.json here.
+# Approving build scripts lets AFK feedback gates run `pnpm install` without
+# hitting ERR_PNPM_IGNORED_BUILDS (the inner agent has no TTY to interact).
+onlyBuiltDependencies:
+  - "@reddb-io/sdk"
+  - esbuild
+
+allowBuilds:
+  "@reddb-io/sdk": true
+  esbuild: true
