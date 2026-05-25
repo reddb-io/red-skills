@@ -37,7 +37,10 @@ function p50(samples: number[]): number {
 }
 
 describe("recall latency (#72)", () => {
-  test(
+  // Perf test is sensitive to host load; AFK feedback gates set RED_AFK_SKIP_PERF=1
+  // to skip it without masking real regressions in dev or CI perf-tracking runs.
+  const skipPerf = process.env.RED_AFK_SKIP_PERF === "1";
+  (skipPerf ? test.skip : test)(
     "stays under target p50 on a ~1k-node graph",
     async () => {
       const store = await openStore();
