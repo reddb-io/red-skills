@@ -60,6 +60,7 @@ import {
 import { buildLearningDebtReport } from "./learning-debt.js";
 import { buildOnboardingMap } from "./onboarding-map.js";
 import { buildPreflightBrief } from "./preflight.js";
+import { buildReadinessEnvelope, type MemoryReadinessEnvelope } from "./readiness.js";
 import { recall } from "./recall.js";
 import { commitMemoryGraph, type MemoryGraphCommitResult } from "./vcs-commit.js";
 import {
@@ -115,6 +116,7 @@ Usage:
   memory recommend skills <task...> [--root <dir>] [--limit N] [--json] [--scope ...] [--scope-id ID] [--include-narrower-scopes]
   memory claim-check <assertion...> [--root <dir>] [--json]
   memory preflight <task...>        [--root <dir>] [--limit N] [--min-evidence N] [--stale-days N] [--json] [--scope ...] [--scope-id ID] [--include-narrower-scopes]
+  memory readiness <goal...>        [--root <dir>] [--limit N] [--min-evidence N] [--stale-days N] [--json] [--scope ...] [--scope-id ID] [--include-narrower-scopes]
   memory learning-debt              [--root <dir>] [--stale-days N] [--json]
   memory onboarding-map             [--root <dir>] [--stale-days N] [--json]
   memory ask <question...>          [--root <dir>] [--json]
@@ -715,6 +717,27 @@ async function runPreflight(args: ParsedArgs): Promise<void> {
       return;
     }
     process.stdout.write(brief.markdown);
+  } finally {
+    await store.close();
+  }
+}
+
+async function runReadiness(args: ParsedArgs): Promise<void> {
+  const goal = args.positional.join(" ").trim();
+  if (!goal) throw new Error("nothing to assess — pass a goal: memory readiness <goal>");
+  const { store } = await openGraphStore(args);
+  try {
+    const envelope = await buildReadinessEnvelope(store, goal, {
+      limit: intFlag(args.flags, "limit"),
+      minEvidence: intFlag(args.flags, "min-evidence"),
+      staleDays: intFlag(args.flags, "stale-days"),
+      scope: scopeFlags(args.flags),
+    });
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(envelope, null, 2));
+      return;
+    }
+    printReadinessEnvelope(envelope);
   } finally {
     await store.close();
   }
@@ -2895,6 +2918,32 @@ function printPrePrSection(title: string, section: PrePrReviewSection): void {
   }
 }
 
+function printReadinessEnvelope(envelope: MemoryReadinessEnvelope): void {
+  console.log(`memory: readiness — ${envelope.status}`);
+  console.log(`  goal: ${envelope.request.goal}`);
+  console.log(
+    `  evidence: ${envelope.retrieval.recall.active_evidence_count}/${envelope.retrieval.recall.evidence_count} active`,
+  );
+  console.log(
+    `  vector: ${envelope.retrieval.vector.overall} (${envelope.retrieval.vector.ready}/${envelope.retrieval.vector.total} ready)`,
+  );
+  console.log(
+    `  trust: provenance=${envelope.trust.provenance.nodes_with_provenance}/${envelope.trust.provenance.total_nodes} ` +
+      `superseded=${envelope.trust.supersession.superseded_nodes} ` +
+      `contradictions=${envelope.trust.contradictions.unresolved} ` +
+      `privacy-findings=${envelope.trust.privacy.findings}`,
+  );
+  console.log(
+    `  vcs: ${envelope.vcs.time_travel} (${envelope.vcs.collections
+      .map((collection) => `${collection.name}:${collection.status}`)
+      .join(", ")})`,
+  );
+  console.log(
+    `  telemetry: ${envelope.operations.event_log.total_events} event(s) ` +
+      `community-signals=${envelope.communities.communities}/${envelope.communities.assignments}`,
+  );
+}
+
 async function runStats(args: ParsedArgs): Promise<void> {
   const { store } = await openGraphStore(args);
   try {
@@ -3167,6 +3216,8 @@ async function main(): Promise<void> {
       return runClaimCheck(args);
     case "preflight":
       return runPreflight(args);
+    case "readiness":
+      return runReadiness(args);
     case "learning-debt":
       return runLearningDebt(args);
     case "onboarding-map":

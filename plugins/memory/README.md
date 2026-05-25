@@ -167,6 +167,15 @@ baseline and is reported as unmeasured by the claim guard.
 | Recall latency on agent-scale graph | Repo gate targets <100 ms p50 on a ~1k-node graph. | graphify-out fixture: 551 nodes / 1329 edges / 34 communities; path p50 841 ms. | Not asserted here; apples-to-apples latency requires a live Neo4j baseline. | Advantage over checked graphify-out path latency only; no latency claim against agent-memory in this harness. |
 | NER extraction quality | Deterministic extractors plus optional LLM provider for inferred facts. | 491 inferred fixture edges; strong static-code graph output. | spaCy / GLiNER / GLiREL / LLM extraction pipeline. | Conceded gap: Python ML stack is ahead for turnkey NER. |
 
+## Readiness envelope
+
+`memory readiness <goal> --json` emits the stable `memory.readiness.v1`
+envelope for future UI and `eval:competitive:v2` consumers. The envelope
+combines task preflight evidence, vector projection status, provenance,
+supersession, contradictions, privacy and claim-check summaries, RedDB
+VCS/time-travel collection status, event-log telemetry, and graph community
+signals from the current Memory graph.
+
 ## Maintenance & export (graph mode)
 
 ```bash
