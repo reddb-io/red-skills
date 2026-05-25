@@ -11,6 +11,12 @@ import { MemoryStore } from "./graph-store.js";
 import { HistoricalMemoryStore } from "./historical-memory-store.js";
 import { initGraph } from "./init.js";
 import { lintMemoryRecords, type LintMemoryRecord } from "./lint.js";
+import {
+  agentmemoryBaselineCommandFromEnv,
+  createAgentmemoryCliBaselineAdapter,
+  defaultCliExecutor,
+  type LiveBaselineRunResult,
+} from "./live-baseline-adapters.js";
 import { appendMemoryEvent, parseMemoryEvent } from "./memory-events.js";
 import { buildReadinessEnvelope } from "./readiness.js";
 import type { EdgeLabel } from "./schema.js";
@@ -71,6 +77,7 @@ export interface CompetitiveBaselineReport {
 
 export interface CompetitiveEvalOptions {
   fixture?: CompetitiveEvalFixture;
+  liveBaselines?: LiveBaselineRunResult[];
   now?: number;
   generatedAt?: string;
 }
@@ -174,8 +181,8 @@ export interface FoundationEvidenceGateReport {
     axes: FoundationGateAxis[];
   };
   agentmemoryLiveBaseline: {
-    state: "prepared-not-implemented";
-    implemented: false;
+    state: "adapter-ready";
+    implemented: true;
     note: string;
   };
 }
@@ -232,7 +239,8 @@ export interface CompetitiveEvalV2Report {
   schemaVersion: "memory.competitive_eval.v2";
   generatedAt: string;
   fixture: CompetitiveEvalReport["fixture"];
-  liveServices: "not-required";
+  liveServices: "not-required" | "opt-in";
+  liveBaselines: LiveBaselineRunResult[];
   composite: {
     score: number;
     maxScore: number;
@@ -641,10 +649,10 @@ async function evaluateFoundationEvidenceGate(
         axes,
       },
       agentmemoryLiveBaseline: {
-        state: "prepared-not-implemented",
-        implemented: false,
+        state: "adapter-ready",
+        implemented: true,
         note:
-          "Agentmemory live baseline wiring is prepared for eval:competitive:v2, but no live Neo4j-backed competitor run is implemented in this slice.",
+          "Agentmemory live baseline adapter is available through eval:competitive:v2 --live-agentmemory; normal runs remain checked-in fixture only.",
       },
     };
   } finally {
@@ -971,9 +979,10 @@ export async function evaluateCompetitiveEvalV2(
 ): Promise<CompetitiveEvalV2Report> {
   const report = await evaluateCompetitiveEval(opts);
   const fixture = opts.fixture ?? competitiveEvalFixture;
+  const liveBaselines = opts.liveBaselines ?? [];
   const dimensions = competitiveEvalV2Dimensions(report);
   const baseline = evaluateCompetitiveBaseline(new Date(0));
-  const executableEvidence = competitiveEvalV2EvidenceIds(dimensions, baseline, fixture);
+  const executableEvidence = competitiveEvalV2EvidenceIds(dimensions, baseline, fixture, liveBaselines);
   const unsupportedPublicClaims = fixture.publicClaims
     ?.filter((claim) => claim.requiredEvidence.some((evidence) => !executableEvidence.has(evidence)))
     .map((claim) => claim.id) ?? [];
@@ -989,7 +998,8 @@ export async function evaluateCompetitiveEvalV2(
     schemaVersion: "memory.competitive_eval.v2",
     generatedAt: report.generatedAt,
     fixture: report.fixture,
-    liveServices: "not-required",
+    liveServices: liveBaselines.length > 0 ? "opt-in" : "not-required",
+    liveBaselines,
     composite: {
       score,
       maxScore,
@@ -1012,6 +1022,7 @@ function competitiveEvalV2EvidenceIds(
   dimensions: CompetitiveEvalV2Dimension[],
   baseline: CompetitiveBaselineReport,
   fixture: CompetitiveEvalFixture,
+  liveBaselines: LiveBaselineRunResult[],
 ): Set<string> {
   const evidence = new Set<string>();
   for (const dimension of dimensions) {
@@ -1026,6 +1037,12 @@ function competitiveEvalV2EvidenceIds(
   for (const baseline of fixture.liveBaselines) {
     if (baseline.configured) {
       evidence.add(`live-baseline:${baseline.competitor}:${evidenceSlug(baseline.metric)}`);
+    }
+  }
+  for (const baseline of liveBaselines) {
+    if (baseline.state === "measured") {
+      evidence.add(`live-baseline:${baseline.competitor}:${evidenceSlug(baseline.capabilityId)}`);
+      for (const id of baseline.evidence) evidence.add(id);
     }
   }
   return evidence;
@@ -1105,6 +1122,7 @@ export function renderCompetitiveEvalV2Json(report: CompetitiveEvalV2Report): st
       generated_at: report.generatedAt,
       fixture: report.fixture,
       live_services: report.liveServices,
+      live_baselines: report.liveBaselines.map(serializeLiveBaseline),
       composite: report.composite,
       dimensions: report.dimensions,
       claim_guards: {
@@ -1133,6 +1151,20 @@ export function renderCompetitiveEvalV2Human(report: CompetitiveEvalV2Report): s
     lines.push(`${dimension.id}: ${dimension.score}/${dimension.maxScore} ${dimension.status} - ${dimension.detail}`);
   }
 
+  lines.push("", "## Live baselines");
+  if (report.liveBaselines.length === 0) {
+    lines.push("Agentmemory live baseline: not requested.");
+  } else {
+    for (const baseline of report.liveBaselines) {
+      const metrics = Object.entries(baseline.metrics)
+        .map(([key, value]) => `${key}=${value}`)
+        .join(" ");
+      lines.push(
+        `Agentmemory live baseline: ${baseline.state} - ${baseline.summary}${metrics ? ` (${metrics})` : ""}`,
+      );
+    }
+  }
+
   lines.push("", "## Claim guards", `Claim guards: ${report.claimGuards.status}`);
   if (report.claimGuards.unsupportedPublicClaims.length > 0) {
     lines.push(`Unsupported public claims: ${report.claimGuards.unsupportedPublicClaims.join(", ")}`);
@@ -1147,6 +1179,22 @@ export function renderCompetitiveEvalV2Human(report: CompetitiveEvalV2Report): s
   }
 
   return `${lines.join("\n")}\n`;
+}
+
+function serializeLiveBaseline(baseline: LiveBaselineRunResult): Record<string, unknown> {
+  return {
+    competitor: baseline.competitor,
+    adapter: baseline.adapter,
+    state: baseline.state,
+    source: baseline.source,
+    configured: baseline.configured,
+    capability_id: baseline.capabilityId,
+    command: baseline.command,
+    metrics: baseline.metrics,
+    evidence: baseline.evidence,
+    summary: baseline.summary,
+    ...(baseline.error ? { error: baseline.error } : {}),
+  };
 }
 
 export function renderCompetitiveEvalHuman(report: CompetitiveEvalReport): string {
@@ -1170,7 +1218,7 @@ export function renderCompetitiveEvalHuman(report: CompetitiveEvalReport): strin
     `readiness=${report.foundationGate.readiness.status} contract=${report.foundationGate.readiness.contractVersion}`,
     `trust-governance=${report.foundationGate.trustGovernance.score}/${report.foundationGate.trustGovernance.maxScore} events=${report.foundationGate.trustGovernance.eventLog.totalEvents} vcs=${report.foundationGate.trustGovernance.vcsTimeTravel}`,
     `skill-evolution=${report.foundationGate.skillEvolution.score}/${report.foundationGate.skillEvolution.maxScore} telemetry=${report.foundationGate.skillEvolution.telemetryEvents} communities=${report.foundationGate.skillEvolution.communities.count}/${report.foundationGate.skillEvolution.communities.assignments}`,
-    "Agentmemory live baseline: prepared but not implemented in this slice.",
+    "Agentmemory live baseline: adapter ready; pass --live-agentmemory to eval:competitive:v2 for opt-in live CLI measurement.",
     "",
     "## Claim guards",
   ];
@@ -1221,9 +1269,19 @@ async function main(): Promise<void> {
   }
 
   if (flags.has("--v2")) {
+    const now = Date.now();
+    const liveBaselines: LiveBaselineRunResult[] = [];
+    if (flags.has("--live-agentmemory")) {
+      const adapter = createAgentmemoryCliBaselineAdapter({
+        command: agentmemoryBaselineCommandFromEnv(),
+        executor: defaultCliExecutor,
+      });
+      liveBaselines.push(await adapter.run({ enabled: true, now }));
+    }
     const evalReport = await evaluateCompetitiveEvalV2({
-      now: Date.now(),
+      now,
       generatedAt: new Date().toISOString(),
+      liveBaselines,
     });
     if (json || defaultOutput) {
       process.stdout.write(renderCompetitiveEvalV2Json(evalReport));

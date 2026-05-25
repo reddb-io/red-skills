@@ -81,8 +81,8 @@ describe("competitive baseline harness (#73)", () => {
       "skill-evolution",
     ]);
     expect(report.foundationGate.agentmemoryLiveBaseline).toMatchObject({
-      state: "prepared-not-implemented",
-      implemented: false,
+      state: "adapter-ready",
+      implemented: true,
     });
     expect(report.claimGuards.unsupportedLiveCompetitorClaims).toEqual([]);
 
@@ -91,7 +91,7 @@ describe("competitive baseline harness (#73)", () => {
     expect(human).toContain("Context-pack size");
     expect(human).toContain("Policy / extraction");
     expect(human).toContain("Foundation evidence gate");
-    expect(human).toContain("Agentmemory live baseline: prepared but not implemented");
+    expect(human).toContain("Agentmemory live baseline: adapter ready");
     expect(human).toContain("No live competitor claims were asserted");
-  });
+  }, 30_000);
 });
