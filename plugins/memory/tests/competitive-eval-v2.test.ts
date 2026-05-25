@@ -1,4 +1,7 @@
 import { spawnSync } from "node:child_process";
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import {
   evaluateCompetitiveEvalV2,
@@ -7,10 +10,14 @@ import {
 } from "../src/competitive-baseline.js";
 import { competitiveEvalFixture, type CompetitiveEvalFixture } from "../src/competitive-fixtures.js";
 
-function runCompetitiveEvalV2(args: string[]): ReturnType<typeof spawnSync> {
+function runCompetitiveEvalV2(
+  args: string[],
+  env: NodeJS.ProcessEnv = {},
+): ReturnType<typeof spawnSync> {
   return spawnSync(process.execPath, ["--import", "tsx", "src/competitive-baseline.ts", ...args], {
     cwd: new URL("../", import.meta.url),
     encoding: "utf8",
+    env: { ...process.env, ...env },
     timeout: 30_000,
   });
 }
@@ -46,10 +53,12 @@ describe("competitive eval v2 scaffold (#155)", () => {
       "generated_at",
       "fixture",
       "live_services",
+      "live_baselines",
       "composite",
       "dimensions",
       "claim_guards",
     ]);
+    expect(body.live_baselines).toEqual([]);
     expect(body.dimensions.map((dimension: { id: string }) => dimension.id)).toEqual([
       "retrieval",
       "readiness",
@@ -62,7 +71,7 @@ describe("competitive eval v2 scaffold (#155)", () => {
     expect(human).toContain("Composite: 4/4 normalized=1 status=pass");
     expect(human).toContain("retrieval: 1/1 pass");
     expect(human).toContain("Claim guards: pass");
-  });
+  }, 30_000);
 
   test("fails public documentation claims that are not backed by executable evidence", async () => {
     const fixture: CompetitiveEvalFixture = {
@@ -90,7 +99,65 @@ describe("competitive eval v2 scaffold (#155)", () => {
     expect(renderCompetitiveEvalV2Human(report)).toContain(
       "Unsupported public claims: unsupported-agent-memory-latency-win",
     );
-  });
+  }, 30_000);
+
+  test("includes measured Agentmemory live baselines in JSON, human summaries, and claim evidence", async () => {
+    const fixture: CompetitiveEvalFixture = {
+      ...competitiveEvalFixture,
+      publicClaims: [
+        {
+          id: "agentmemory-recall-measured",
+          text: "Agentmemory recall was measured through the live adapter.",
+          requiredEvidence: ["live-baseline:agentmemory:agentmemory-cli-recall"],
+        },
+      ],
+    };
+
+    const report = await evaluateCompetitiveEvalV2({
+      fixture,
+      now: 1_700_000_000_000,
+      generatedAt: "2023-11-14T22:13:20.000Z",
+      liveBaselines: [
+        {
+          competitor: "agentmemory",
+          adapter: "agentmemory-cli",
+          state: "measured",
+          source: "live-cli",
+          configured: true,
+          capabilityId: "agentmemory.cli.recall",
+          command: ["agentmemory", "baseline", "--json"],
+          metrics: { recall_at_5: 0.952, p50_ms: 18 },
+          evidence: ["agentmemory:smart-search"],
+          summary: "R@5 0.952, p50 18ms",
+        },
+      ],
+    });
+
+    expect(report.liveServices).toBe("opt-in");
+    expect(report.liveBaselines).toHaveLength(1);
+    expect(report.claimGuards.status).toBe("pass");
+    expect(report.claimGuards.unsupportedPublicClaims).toEqual([]);
+
+    const body = JSON.parse(renderCompetitiveEvalV2Json(report));
+    expect(body.live_baselines).toEqual([
+      {
+        competitor: "agentmemory",
+        adapter: "agentmemory-cli",
+        state: "measured",
+        source: "live-cli",
+        configured: true,
+        capability_id: "agentmemory.cli.recall",
+        command: ["agentmemory", "baseline", "--json"],
+        metrics: { recall_at_5: 0.952, p50_ms: 18 },
+        evidence: ["agentmemory:smart-search"],
+        summary: "R@5 0.952, p50 18ms",
+      },
+    ]);
+
+    const human = renderCompetitiveEvalV2Human(report);
+    expect(human).toContain("Agentmemory live baseline: measured - R@5 0.952, p50 18ms");
+    expect(human).toContain("recall_at_5=0.952");
+  }, 30_000);
 
   test("CLI can run the v2 harness and emit JSON plus a human summary", () => {
     const result = runCompetitiveEvalV2(["--v2", "--json", "--human"]);
@@ -99,5 +166,25 @@ describe("competitive eval v2 scaffold (#155)", () => {
     expect(result.stdout).toContain('"schema_version": "memory.competitive_eval.v2"');
     expect(result.stdout).toContain("# Memory competitive eval v2");
     expect(result.stderr).toBe("");
-  });
+  }, 30_000);
+
+  test("CLI can opt in to a live Agentmemory baseline without requiring it by default", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "memory-agentmemory-baseline-"));
+    const fakeAgentmemory = join(dir, "agentmemory-baseline.mjs");
+    await writeFile(
+      fakeAgentmemory,
+      `console.log(JSON.stringify({ summary: "fake Agentmemory R@5 0.9", metrics: { recall_at_5: 0.9, p50_ms: 12 }, evidence: ["agentmemory:fake"] }));\n`,
+      "utf8",
+    );
+
+    const result = runCompetitiveEvalV2(["--v2", "--json", "--human", "--live-agentmemory"], {
+      MEMORY_AGENTMEMORY_BASELINE_CMD: JSON.stringify([process.execPath, fakeAgentmemory]),
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain('"live_services": "opt-in"');
+    expect(result.stdout).toContain('"competitor": "agentmemory"');
+    expect(result.stdout).toContain("Agentmemory live baseline: measured - fake Agentmemory R@5 0.9");
+  }, 30_000);
 });

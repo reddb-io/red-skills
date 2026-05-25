@@ -152,6 +152,19 @@ competitor claims. Latency is machine-local, so CI should compare the JSON
 shape and thresholds rather than treating the exact milliseconds as a public
 benchmark.
 
+`eval:competitive:v2` can also opt in to a live `rohitg00/agentmemory` CLI
+baseline without making normal tests or fixture runs depend on Agentmemory:
+
+```bash
+MEMORY_AGENTMEMORY_BASELINE_CMD='["node","scripts/agentmemory-baseline.mjs"]' \
+  pnpm --dir plugins/memory exec tsx src/competitive-baseline.ts --v2 --json --human --live-agentmemory
+```
+
+The configured command is a local wrapper around the available Agentmemory
+install or service. It must print JSON with optional `summary`, numeric
+`metrics`, and string `evidence` fields. Missing commands are reported as
+unavailable live baselines, not as fixture failures.
+
 The fixture summary comes from the existing `reddb-benchmark/graphify-out`
 run: 551 nodes, 1329 edges, 34 detected communities, 491 inferred edges, and
 zero reported input/output tokens. The harness encodes measurable "better than"
