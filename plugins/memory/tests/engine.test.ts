@@ -469,6 +469,9 @@ describe("ask", () => {
       // No LLM key in CI → not available, but the call must not throw.
       expect(result.status).toBe("provider-unavailable");
       expect(result).toHaveProperty("available");
+      expect(result.answer).toContain("Evidence-only fallback: LLM provider unavailable");
+      expect(result.answer).toContain("[1]");
+      expect(result.answer).toContain("jwt tokens rotate every 90 days in staging");
       expect(Array.isArray(result.citations)).toBe(true);
       expect(result.evidence.active.length).toBeGreaterThan(0);
       expect(result.cost).toBeNull();

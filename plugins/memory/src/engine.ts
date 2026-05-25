@@ -168,7 +168,7 @@ export function rankScore(i: RankInputs): number {
 export interface AskResult {
   question: string;
   status: "answered" | "insufficient-evidence" | "provider-unavailable";
-  /** Grounded answer, when an LLM key is configured; null otherwise. */
+  /** Grounded answer, or a cited evidence-only fallback when ASK is unavailable. */
   answer: string | null;
   citations: { marker: number; urn: string }[];
   /** Per-call usage and billing metadata; null when ASK is unavailable. */
@@ -664,15 +664,16 @@ export async function ask(store: MemoryStore, question: string): Promise<AskResu
       evidence,
     };
   } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
     return {
       question,
       status: "provider-unavailable",
-      answer: null,
+      answer: evidenceOnlyAnswer(evidence, error),
       citations,
       cost: null,
       available: false,
       evidence,
-      error: err instanceof Error ? err.message : String(err),
+      error,
     };
   }
 }
@@ -773,6 +774,22 @@ function renderAskContradictions(items: AskContradiction[]): string[] {
     const reason = item.reason ? ` reason=${item.reason}` : "";
     return `${item.from.citation} contradicts ${item.to.citation} (${state}${reason})`;
   });
+}
+
+function evidenceOnlyAnswer(evidence: AskEvidenceSummary, error: string): string {
+  return [
+    `Evidence-only fallback: LLM provider unavailable (${error}).`,
+    "Active evidence:",
+    ...renderAskEvidence(evidence.active),
+    "Superseded evidence:",
+    ...renderAskEvidence(evidence.superseded),
+    "Contradictions:",
+    ...renderAskContradictions(evidence.contradictory),
+    "Confidence buckets:",
+    `EXTRACTED: ${evidence.byConfidence.EXTRACTED.map((item) => item.citation).join(", ") || "(none)"}`,
+    `INFERRED: ${evidence.byConfidence.INFERRED.map((item) => item.citation).join(", ") || "(none)"}`,
+    `AMBIGUOUS: ${evidence.byConfidence.AMBIGUOUS.map((item) => item.citation).join(", ") || "(none)"}`,
+  ].join("\n");
 }
 
 function activeHead(rid: number, superseded: Map<number, number>): number {

@@ -45,6 +45,7 @@ describe("memory ask CLI", () => {
       const body = JSON.parse(result.stdout) as {
         status: string;
         available: boolean;
+        answer: string;
         citations: unknown[];
         evidence: { active: Array<{ rid: number; source: string; confidence: string }> };
         cost: unknown;
@@ -52,6 +53,9 @@ describe("memory ask CLI", () => {
 
       expect(body.status).toBe("provider-unavailable");
       expect(body.available).toBe(false);
+      expect(body.answer).toContain("Evidence-only fallback: LLM provider unavailable");
+      expect(body.answer).toContain("[1]");
+      expect(body.answer).toContain("JWT tokens rotate every 90 days in staging.");
       expect(body.citations).toHaveLength(1);
       expect(body.evidence.active[0]).toMatchObject({
         source: "manual",
