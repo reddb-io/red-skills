@@ -186,6 +186,7 @@ async function main(): Promise<void> {
             depth: n.depth,
             excerpt: n.excerpt,
           })),
+          diagnostics: result.diagnostics,
         });
       }
       case "memory_store": {

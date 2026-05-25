@@ -1,4 +1,4 @@
-import { recall, type RecallScope } from "./engine.js";
+import { recall, type RecallDiagnostics, type RecallScope } from "./engine.js";
 import type { MemoryStore } from "./graph-store.js";
 
 export interface GraphRecallHit {
@@ -9,6 +9,11 @@ export interface GraphRecallHit {
   node_type: string;
   score: number;
   excerpt: string;
+}
+
+export interface GraphRecallResult {
+  hits: GraphRecallHit[];
+  diagnostics: RecallDiagnostics;
 }
 
 /**
@@ -23,18 +28,30 @@ export async function graphRecall(
   limit = 10,
   opts: { includeSuperseded?: boolean; scope?: RecallScope } = {},
 ): Promise<GraphRecallHit[]> {
-  const { nodes } = await recall(store, query, {
+  return (await graphRecallResult(store, query, limit, opts)).hits;
+}
+
+export async function graphRecallResult(
+  store: MemoryStore,
+  query: string,
+  limit = 10,
+  opts: { includeSuperseded?: boolean; scope?: RecallScope } = {},
+): Promise<GraphRecallResult> {
+  const { nodes, diagnostics } = await recall(store, query, {
     k: limit,
     depth: 1,
     includeSuperseded: opts.includeSuperseded,
     scope: opts.scope,
   });
-  return nodes.slice(0, limit).map((n) => ({
-    id: String(n.rid),
-    rid: n.rid,
-    label: n.label,
-    node_type: n.node_type,
-    score: n.score,
-    excerpt: n.excerpt,
-  }));
+  return {
+    hits: nodes.slice(0, limit).map((n) => ({
+      id: String(n.rid),
+      rid: n.rid,
+      label: n.label,
+      node_type: n.node_type,
+      score: n.score,
+      excerpt: n.excerpt,
+    })),
+    diagnostics,
+  };
 }

@@ -35,7 +35,7 @@ import {
   type InboxStatus,
   type MemoryInboxItem,
 } from "./inbox.js";
-import { graphRecall } from "./graph-recall.js";
+import { graphRecallResult } from "./graph-recall.js";
 import { MemoryStore, factToNode } from "./graph-store.js";
 import { ingestProject, refreshFiles } from "./ingest.js";
 import { initGraph, initMarkdownOnly } from "./init.js";
@@ -608,15 +608,17 @@ async function runRecall(args: ParsedArgs): Promise<void> {
   if (config.mode === "graph") {
     const store = await MemoryStore.open({ uri: resolveStoreUri(rootDir, config) });
     try {
-      const hits = await graphRecall(store, query, limit, {
+      const { hits, diagnostics } = await graphRecallResult(store, query, limit, {
         includeSuperseded: args.flags["include-superseded"] === true,
         scope: scopeFlags(args.flags),
       });
       if (hits.length === 0) {
         console.log(`memory: no matches for "${query}"`);
+        console.log(`  ${formatVectorRecallDiagnostic(diagnostics.vector)}`);
         return;
       }
       console.log(`memory: ${hits.length} match(es) for "${query}"`);
+      console.log(`  ${formatVectorRecallDiagnostic(diagnostics.vector)}`);
       for (const hit of hits) {
         console.log(`  [${hit.score}] ${hit.id} (${hit.node_type}) ${hit.label}`);
         console.log(`        ${hit.excerpt}`);
@@ -637,6 +639,22 @@ async function runRecall(args: ParsedArgs): Promise<void> {
     console.log(`  [${hit.score}] ${hit.id}`);
     console.log(`        ${hit.excerpt}`);
   }
+}
+
+function formatVectorRecallDiagnostic(d: {
+  status: "unavailable" | "available" | "contributed";
+  candidates: number;
+  contributed: number;
+  reason?: string;
+}): string {
+  if (d.status === "contributed") {
+    return `vector retrieval contributed ${d.contributed} candidate(s)`;
+  }
+  if (d.status === "available") {
+    return "vector retrieval available; 0 candidate(s) contributed";
+  }
+  const reason = d.reason ? `: ${d.reason}` : "";
+  return `vector retrieval unavailable${reason}`;
 }
 
 async function runContextPack(args: ParsedArgs): Promise<void> {

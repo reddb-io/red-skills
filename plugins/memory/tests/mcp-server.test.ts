@@ -189,6 +189,9 @@ describe("MCP server over stdio", () => {
       expect(nodes[0].label).toBe("jwt-rotation");
       // auth-service surfaces as a one-hop neighbor of the jwt seed.
       expect(nodes.some((n) => n.label === "auth-service")).toBe(true);
+      expect(result.structuredContent?.diagnostics).toMatchObject({
+        vector: { status: "unavailable" },
+      });
     },
     TIMEOUT,
   );
