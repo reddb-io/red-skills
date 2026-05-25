@@ -126,6 +126,35 @@ alignment, and recommended next actions.
 catalog evidence to named competitor axes and next actions. It is intentionally
 read-only and does not create public benchmark claims.
 
+`memory competitive-eval` runs the checked-in competitive eval harness and
+prints a human-readable summary of the composite score, each dimension status,
+and any unsupported public claims. `memory competitive-eval --json` emits the
+same report as machine-readable JSON for CI and `eval:competitive:v2` consumers.
+The command operates on checked-in fixtures and the source tree — it does not
+mutate Memory state and does not make live-service competitor claims.
+
+```bash
+node plugins/memory/dist/cli.js competitive-eval
+# memory competitive eval: 6/6 pass
+#   retrieval: 1/1 pass
+#   readiness: 1/1 pass
+#   operator-surface: 1/1 pass
+#   multi-agent-integration: 1/1 pass
+```
+
+`memory competitive-eval-viewer` writes the same eval contract as a
+self-contained HTML viewer with embedded JSON. By default it writes to
+`.red/memory/competitive-eval.html` under the current root; pass
+`--out <file>` to override the destination. The viewer is also served at
+`/competitive-eval` and `/api/competitive-eval` when `memory serve` is running.
+
+```bash
+node plugins/memory/dist/cli.js competitive-eval-viewer
+# memory: competitive eval viewer written .red/memory/competitive-eval.html
+#   composite: 6/6 pass
+#   contract: memory.competitive_eval.v2
+```
+
 The local Workbench embeds that radar beside the operational dashboard,
 capability catalog, memory layers, and session timeline, so `memory workbench` and
 `memory serve` show the same internal posture report without recomputing it.
@@ -432,6 +461,9 @@ node plugins/memory/dist/cli.js health-viewer           # local HTML operational
 node plugins/memory/dist/cli.js onboarding-map-viewer   # local HTML map-first onboarding viewer
 node plugins/memory/dist/cli.js communities-viewer      # local HTML graph community analytics viewer
 node plugins/memory/dist/cli.js competitive-radar --json # internal competitor posture from catalog evidence
+node plugins/memory/dist/cli.js competitive-eval         # human-readable composite + per-dimension summary
+node plugins/memory/dist/cli.js competitive-eval --json  # machine-readable competitive eval report
+node plugins/memory/dist/cli.js competitive-eval-viewer  # local HTML competitive eval viewer (default: .red/memory/competitive-eval.html)
 node plugins/memory/dist/cli.js workbench               # local unified Memory UI
 node plugins/memory/dist/cli.js routing-guide --agent cursor --json # multi-agent MCP/HTTP integration guide
 node plugins/memory/dist/cli.js routing-guide-viewer --agent cursor # local HTML multi-agent routing guide

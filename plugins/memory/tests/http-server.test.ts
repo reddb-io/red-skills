@@ -108,7 +108,9 @@ describe("Memory local HTTP server", () => {
         paths: {
           "/api/assets": expect.any(Object),
           "/api/communities": expect.any(Object),
+          "/api/competitive-eval": expect.any(Object),
           "/api/competitive-radar": expect.any(Object),
+          "/competitive-eval": expect.any(Object),
           "/api/context-pack": expect.any(Object),
           "/api/decay": expect.any(Object),
           "/api/integration-status": expect.any(Object),
@@ -267,6 +269,29 @@ describe("Memory local HTTP server", () => {
         read_only: true,
         summary: { competitors: 5 },
       });
+
+      const competitiveEval = await fetch(`${base}/api/competitive-eval`);
+      expect(competitiveEval.status).toBe(200);
+      expect(await competitiveEval.json()).toMatchObject({
+        schemaVersion: "memory.competitive_eval.v2",
+        composite: expect.objectContaining({
+          score: expect.any(Number),
+          maxScore: expect.any(Number),
+          status: expect.any(String),
+        }),
+        claimGuards: expect.objectContaining({
+          status: expect.any(String),
+        }),
+      });
+
+      const competitiveEvalViewer = await fetch(`${base}/competitive-eval`);
+      expect(competitiveEvalViewer.status).toBe(200);
+      expect(competitiveEvalViewer.headers.get("content-type")).toContain("text/html");
+      const competitiveEvalViewerHtml = await competitiveEvalViewer.text();
+      expect(competitiveEvalViewerHtml).toContain("<title>Memory Competitive Eval</title>");
+      expect(competitiveEvalViewerHtml).toContain(
+        '<script id="memory-competitive-eval-data" type="application/json">',
+      );
 
       const communities = await fetch(`${base}/api/communities`);
       expect(communities.status).toBe(200);
