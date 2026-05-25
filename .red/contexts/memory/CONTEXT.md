@@ -258,6 +258,10 @@ _Avoid_: rule installer, agent account manager
 The read-only browser panel inside the **Memory workbench** that calls `/api/integration-status` and links to **Agent integration status viewer** for agent rule-file, routing-snippet, and hook-coverage status.
 _Avoid_: rule installer, hook enabler, agent account manager
 
+**Workbench competitive eval panel**:
+The Workbench section that surfaces the embedded `evaluateCompetitiveEvalV2` result, including the "Eval score/max" metric and a link to `/competitive-eval`.
+_Avoid_: workbench eval card, competitive panel
+
 **Memory capability catalog**:
 The read-only JSON/MCP contract that groups Memory's agent surfaces by retrieval, docs, vectors, UI, hooks, code graph, governance, telemetry, and interop capability.
 _Avoid_: marketing checklist, static README matrix
@@ -265,6 +269,10 @@ _Avoid_: marketing checklist, static README matrix
 **Memory competitive radar**:
 The read-only planning report that maps **Memory capability catalog** evidence to named competitor axes and next actions without making public benchmark claims.
 _Avoid_: win claim, marketing matrix
+
+**Competitive eval viewer**:
+The self-contained HTML artifact (contract `memory.competitive_eval.viewer.v1`) that renders `memory.competitive_eval.v2` with composite score, dimensions, live baselines, claim guards, and an embedded JSON data block.
+_Avoid_: eval HTML, benchmark report
 
 **Memory path explanation**:
 The read-only graph report that resolves a directed path between two Memory labels into nodes, edge labels, citations, and markdown.
