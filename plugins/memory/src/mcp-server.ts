@@ -25,15 +25,15 @@ import {
 import { z } from "zod";
 import { readConfig, resolveStoreUri } from "./config.js";
 import { diagnose } from "./doctor.js";
-import { ask, neighbors, path, recall, search, traverse } from "./engine.js";
+import { neighbors, path, recall, search, traverse } from "./engine.js";
 import { exportGraph } from "./export.js";
 import { MemoryStore, factToNode } from "./graph-store.js";
 import { HistoricalMemoryStore } from "./historical-memory-store.js";
 import {
   executeReadOnlyMemoryOperation,
-  getReadOnlyMemoryOperation,
+  listReadOnlyMemoryOperations,
+  type ReadOnlyMemoryOperation,
 } from "./operations.js";
-import type { CommunityAnalyticsReport } from "./communities.js";
 import type { EdgeLabel, MemoryScope, NodeType } from "./schema.js";
 import { slugify } from "./store.js";
 import { listContradictions, supersessionTimeline } from "./supersession.js";
@@ -122,8 +122,6 @@ const PathInput = z.object({
   algorithm: z.enum(["bfs", "dijkstra"]).default("bfs"),
 });
 
-const AskInput = z.object({ question: z.string().min(1) });
-
 const SupersedeInput = z.object({
   old_rid: z.number().int(),
   new_rid: z.number().int(),
@@ -147,10 +145,6 @@ const DoctorInput = z.object({
   stale_days: z.number().int().min(1).default(90),
 });
 
-const CommunitiesInput = z.object({
-  use_cache: z.boolean().default(true),
-});
-
 // ---------- server ----------
 
 async function main(): Promise<void> {
@@ -167,6 +161,14 @@ async function main(): Promise<void> {
   server.setRequestHandler(CallToolRequestSchema, async (req) => {
     const name = req.params.name;
     const args = req.params.arguments ?? {};
+    const operation = OPERATION_BY_TOOL_NAME.get(name);
+    if (operation) {
+      const output = await executeReadOnlyMemoryOperation(operation.id, { store }, args);
+      return text(
+        JSON.stringify(output, null, 2),
+        await operationStructuredContent(operation.id, output, store),
+      );
+    }
 
     switch (name) {
       case "memory_recall": {
@@ -258,26 +260,6 @@ async function main(): Promise<void> {
         const result = await path(store, input.from, input.to, input.algorithm);
         return text(JSON.stringify(result, null, 2), { reachable: result?.reachable ?? false });
       }
-      case "memory_ask": {
-        const input = AskInput.parse(args);
-        const result = await ask(store, input.question);
-        return text(JSON.stringify(result, null, 2), {
-          status: result.status,
-          available: result.available,
-          citations: result.citations.length,
-          active_evidence: result.evidence.active.length,
-          superseded_evidence: result.evidence.superseded.length,
-          contradictions: result.evidence.contradictory.length,
-          extracted_evidence: result.evidence.byConfidence.EXTRACTED.length,
-          inferred_evidence: result.evidence.byConfidence.INFERRED.length,
-          ambiguous_evidence: result.evidence.byConfidence.AMBIGUOUS.length,
-          cost_usd: result.cost?.cost_usd ?? null,
-          prompt_tokens: result.cost?.prompt_tokens ?? null,
-          completion_tokens: result.cost?.completion_tokens ?? null,
-          model: result.cost?.model ?? null,
-          provider: result.cost?.provider ?? null,
-        });
-      }
       case "memory_export": {
         const input = ExportInput.parse(args);
         if (input.out_dir) {
@@ -305,23 +287,6 @@ async function main(): Promise<void> {
       case "memory_stats": {
         const stats = await store.stats();
         return text(JSON.stringify(stats, null, 2), stats);
-      }
-      case "memory_communities": {
-        const input = CommunitiesInput.parse(args);
-        const [report, stats] = await Promise.all([
-          executeReadOnlyMemoryOperation("memory.communities", { store }, {
-            cache: input.use_cache ? "read-only" : "off",
-          }) as Promise<CommunityAnalyticsReport>,
-          store.stats(),
-        ]);
-        return text(JSON.stringify(report, null, 2), {
-          communities: report.communities.length,
-          assignments: report.assignments.length,
-          graph_hash: report.graph_hash,
-          cached: report.cached,
-          nodes: stats.nodes,
-          edges: stats.edges,
-        });
       }
       case "memory_conflicts": {
         const input = ConflictsInput.parse(args);
@@ -397,7 +362,13 @@ function text(body: string, structured?: Record<string, unknown>) {
   };
 }
 
-const TOOLS = [
+const OPERATION_TOOLS = listReadOnlyMemoryOperations().map((operation) => ({
+  name: operation.renderer.mcp.toolName,
+  description: operation.renderer.mcp.description,
+  inputSchema: zodToSchema(operation.inputSchema),
+}));
+
+const MANUAL_TOOLS = [
   {
     name: "memory_recall",
     description:
@@ -407,7 +378,7 @@ const TOOLS = [
   {
     name: "memory_store",
     description:
-      "Persist a durable fact (decision, problem, solution, why-note, ...) with optional typed relations to existing nodes. Idempotent by content hash.",
+      "MUTATING: persist a durable fact (decision, problem, solution, why-note, ...) with optional typed relations to existing nodes. Idempotent by content hash.",
     inputSchema: zodToSchema(StoreInput),
   },
   {
@@ -431,12 +402,6 @@ const TOOLS = [
     inputSchema: zodToSchema(PathInput),
   },
   {
-    name: "memory_ask",
-    description:
-      "Grounded ASK over the memory document collection (RedDB ASK with citations and per-call cost). Requires an LLM key on the engine; degrades gracefully when absent.",
-    inputSchema: zodToSchema(AskInput),
-  },
-  {
     name: "memory_export",
     description:
       "Dump the whole graph (nodes, edges, stats) as JSON. Pass `out_dir` to also write a navigable graph.html + graph.json + audit.md bundle there.",
@@ -454,11 +419,6 @@ const TOOLS = [
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
   },
   {
-    name: getReadOnlyMemoryOperation("memory.communities").renderer.mcp.toolName,
-    description: getReadOnlyMemoryOperation("memory.communities").renderer.mcp.description,
-    inputSchema: zodToSchema(CommunitiesInput),
-  },
-  {
     name: "memory_conflicts",
     description:
       "Read-only contradiction inspection. Lists CONTRADICTS edges that have not converged on the same active supersession head; pass include_resolved to audit resolved conflicts too.",
@@ -473,10 +433,147 @@ const TOOLS = [
   {
     name: "memory_supersede",
     description:
-      "Mark a node as superseded by a newer one. Recall hides the old node behind its successor by default.",
+      "MUTATING: mark a node as superseded by a newer one. Recall hides the old node behind its successor by default.",
     inputSchema: zodToSchema(SupersedeInput),
   },
 ];
+
+const TOOLS = [...OPERATION_TOOLS, ...MANUAL_TOOLS];
+
+const OPERATION_BY_TOOL_NAME = new Map<string, ReadOnlyMemoryOperation>(
+  listReadOnlyMemoryOperations().map((operation) => [
+    operation.renderer.mcp.toolName,
+    operation,
+  ]),
+);
+
+async function operationStructuredContent(
+  operationId: string,
+  output: unknown,
+  store: MemoryStore,
+): Promise<Record<string, unknown>> {
+  if (!isRecord(output)) return { operation_id: operationId };
+
+  switch (operationId) {
+    case "memory.ask": {
+      const evidence = isRecord(output.evidence) ? output.evidence : {};
+      const byConfidence = isRecord(evidence.byConfidence) ? evidence.byConfidence : {};
+      return {
+        operation_id: operationId,
+        status: output.status,
+        available: output.available,
+        citations: arrayLength(output.citations),
+        active_evidence: arrayLength(evidence.active),
+        superseded_evidence: arrayLength(evidence.superseded),
+        contradictions: arrayLength(evidence.contradictory),
+        extracted_evidence: arrayLength(byConfidence.EXTRACTED),
+        inferred_evidence: arrayLength(byConfidence.INFERRED),
+        ambiguous_evidence: arrayLength(byConfidence.AMBIGUOUS),
+        cost_usd: isRecord(output.cost) ? output.cost.cost_usd ?? null : null,
+        prompt_tokens: isRecord(output.cost) ? output.cost.prompt_tokens ?? null : null,
+        completion_tokens: isRecord(output.cost) ? output.cost.completion_tokens ?? null : null,
+        model: isRecord(output.cost) ? output.cost.model ?? null : null,
+        provider: isRecord(output.cost) ? output.cost.provider ?? null : null,
+      };
+    }
+    case "memory.claim-check":
+      return {
+        operation_id: operationId,
+        status: output.status,
+        citations: arrayLength(output.citations),
+        active_evidence: arrayLength(
+          isRecord(output.evidence) ? output.evidence.active : undefined,
+        ),
+        conflicting_evidence: arrayLength(
+          isRecord(output.evidence) ? output.evidence.conflicting : undefined,
+        ),
+      };
+    case "memory.communities": {
+      const stats = await store.stats();
+      return {
+        operation_id: operationId,
+        communities: arrayLength(output.communities),
+        assignments: arrayLength(output.assignments),
+        graph_hash: output.graph_hash,
+        cached: output.cached,
+        nodes: stats.nodes,
+        edges: stats.edges,
+      };
+    }
+    case "memory.context-pack":
+      return {
+        operation_id: operationId,
+        status: output.status,
+        entries: arrayLength(output.entries),
+        warnings: arrayLength(output.warnings),
+        omitted_entries: output.omittedEntries,
+      };
+    case "memory.health":
+      return {
+        operation_id: operationId,
+        state: output.state,
+        stats: output.stats,
+        stale: isRecord(output.stale) ? output.stale.stale : undefined,
+      };
+    case "memory.learning-debt":
+      return {
+        operation_id: operationId,
+        status: output.status,
+        summary: output.summary,
+      };
+    case "memory.lint":
+      return {
+        operation_id: operationId,
+        status: output.status,
+        findings: arrayLength(output.findings),
+        total_memories: output.totalMemories,
+        read_only: output.readOnly,
+      };
+    case "memory.privacy-scan":
+      return {
+        operation_id: operationId,
+        status: output.status,
+        findings: arrayLength(output.findings),
+        total_memories: output.totalMemories,
+        read_only: output.readOnly,
+        mutated: output.mutated,
+      };
+    case "memory.provenance":
+      return {
+        operation_id: operationId,
+        rid: isRecord(output.node) ? output.node.rid : undefined,
+        label: isRecord(output.node) ? output.node.label : undefined,
+        missing: isRecord(output.provenance) ? output.provenance.missing : undefined,
+      };
+    case "memory.readiness":
+      return {
+        operation_id: operationId,
+        status: output.status,
+        contract_version: isRecord(output.contract) ? output.contract.version : undefined,
+        active_evidence: arrayLength(
+          isRecord(output.evidence) ? output.evidence.active : undefined,
+        ),
+        next_actions: arrayLength(output.next_actions),
+      };
+    case "memory.skill-recommendations":
+      return {
+        operation_id: operationId,
+        status: output.status,
+        recommendations: arrayLength(output.recommendations),
+        missing_evidence: arrayLength(output.missingEvidence),
+      };
+    default:
+      return { operation_id: operationId };
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function arrayLength(value: unknown): number {
+  return Array.isArray(value) ? value.length : 0;
+}
 
 function zodToSchema(schema: z.ZodTypeAny): Record<string, unknown> {
   // Minimal conversion — MCP only requires shape hints, not a full JSON Schema.
