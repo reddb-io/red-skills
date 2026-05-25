@@ -39,6 +39,12 @@ export interface CompetitiveLiveBaselineFixture {
   assertedClaim: boolean;
 }
 
+export interface CompetitivePublicClaimFixture {
+  id: string;
+  text: string;
+  requiredEvidence: string[];
+}
+
 export interface CompetitiveEvalFixture {
   name: string;
   source: "checked-in";
@@ -49,6 +55,7 @@ export interface CompetitiveEvalFixture {
   candidates: CompetitiveCandidateFixture[];
   policyMemories: CompetitivePolicyMemoryFixture[];
   liveBaselines: CompetitiveLiveBaselineFixture[];
+  publicClaims?: CompetitivePublicClaimFixture[];
 }
 
 const NOW = 1_700_000_000_000;
@@ -231,6 +238,23 @@ export const competitiveEvalFixture: CompetitiveEvalFixture = {
       metric: "recall latency",
       configured: false,
       assertedClaim: false,
+    },
+  ],
+  publicClaims: [
+    {
+      id: "checked-fixture-retrieval",
+      text: "The competitive eval reports retrieval quality from checked-in fixtures.",
+      requiredEvidence: ["dimension:retrieval", "fixture:recall"],
+    },
+    {
+      id: "readiness-envelope-consumer",
+      text: "The readiness envelope is available for eval:competitive:v2 consumers.",
+      requiredEvidence: ["dimension:readiness", "foundation:readiness-envelope"],
+    },
+    {
+      id: "session-lifecycle-comparison",
+      text: "Memory has native agent session lifecycle integration in the comparison table.",
+      requiredEvidence: ["baseline:memory-lifecycle-beats-agent-memory"],
     },
   ],
 };
