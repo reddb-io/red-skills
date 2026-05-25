@@ -1,10 +1,61 @@
 # memory — persistent memory for code agents
 
-The `memory` plugin gives Claude Code / Codex agents a persistent, queryable
-memory so decisions, gotchas, and why-notes survive `/clear` and cross sessions.
+The `memory` plugin gives Claude Code / Codex agents governed operational
+memory: scoped decisions, gotchas, reasoning traces, provenance, supersession,
+and trust checks that survive `/clear` and cross sessions. It is not a generic
+graph clone or a note bucket; the useful unit is agent work evidence that can be
+recalled, verified, aged, superseded, exported, and used by RedSkills workflows.
+
 It **lives on top of the `dev` plugin** and is meant to improve dev's processes
-(`/afk` recall, `/triage` dedup, `/diagnose` root-cause history). Installing
-`memory` requires `dev`.
+(`/afk` recall, `/triage` dedup, `/diagnose` root-cause history, `/zoom-out`
+orientation). Installing `memory` requires `dev`.
+
+## Quickstart: source-only operational memory
+
+The plugin ships source-only. From a checkout of `red-skills`, build the local
+CLI first; `dist/` and `node_modules/` are intentionally not committed.
+
+```bash
+pnpm --dir plugins/memory install
+pnpm --dir plugins/memory build
+```
+
+For the smallest useful setup, initialize markdown-only mode in the repo whose
+work you want to remember:
+
+```bash
+node plugins/memory/dist/cli.js init --mode markdown-only --yes
+node plugins/memory/dist/cli.js store "Decision: API cache TTL is 300 seconds because upstream rate limits."
+node plugins/memory/dist/cli.js recall "cache TTL"
+```
+
+That path writes plain notes under `.red/memory/notes/` and gives agents a
+best-effort recall surface with no RedDB engine, hooks, MCP server, telemetry,
+or provider key. It is a low-risk way to make durable facts searchable before a
+later `/afk`, `/triage`, or `/diagnose` session.
+
+Use graph mode when you want governed operational memory rather than plain
+notes: graph recall, provenance, supersession/conflict edges, context packs,
+claim checks, readiness, event-log evidence, Skill telemetry, MCP read tools,
+and optional lifecycle hooks.
+
+```bash
+node plugins/memory/dist/cli.js init --mode graph --hooks --skill-telemetry --yes
+node plugins/memory/dist/cli.js store "Decision: API cache TTL is 300 seconds because upstream rate limits."
+node plugins/memory/dist/cli.js claim-check "API cache TTL is 300 seconds." --json
+node plugins/memory/dist/cli.js readiness "prepare an AFK fix for cache expiry" --json
+node plugins/memory/dist/cli.js context-pack "diagnose flaky cache expiry tests"
+node plugins/memory/dist/cli.js recall "cache TTL"
+```
+
+Graph mode provisions a per-project embedded RedDB file at
+`.red/memory/graph.rdb` through the bundled SDK binary; there is no daemon to
+administer, but the build/install step is required. LLM-backed extraction and
+`memory ask` need a configured provider (`provider` in
+`.red/memory/config.json`, with any referenced API-key env var exported before
+use). Without a provider key, deterministic store/recall, graph reads, claim
+checks, readiness, exports, and most hooks still run; LLM extraction and ASK
+report unavailable or fall back to deterministic extraction where implemented.
 
 ## Storage modes
 
@@ -30,6 +81,19 @@ auto-firing hooks below; they default off and are turned on at `memory init`.
 The `dev` plugin soft-uses Memory for `/afk`, `/triage`, `/diagnose`, and
 `/zoom-out` when it is initialized; absence or failure degrades to the original
 workflow instead of becoming a hard dependency.
+
+## Dev workflow participation
+
+Memory is deliberately a soft dependency for the `dev` plugin. Every integration
+must treat recalled material as a claim made at store time and verify it against
+the current repo before acting on it.
+
+| Dev workflow | How Memory participates | Graceful degradation |
+|--------------|-------------------------|----------------------|
+| `/afk` | Recalls issue and brief terms before planning so an inner agent can see prior decisions, known dead ends, or successful attempt history. Graph mode can also record terminal AFK attempts as operational evidence for later analysis. | Missing, markdown-only, empty, stale, or failing Memory never blocks the issue; the agent proceeds from the handoff and current files. |
+| `/triage` | Recalls issue symptoms and product terms to dedupe against known bugs, shipped decisions, or prior out-of-scope calls before recommending labels. | No hit means only "nothing stored"; triage continues from the issue body, comments, labels, and repo context. |
+| `/diagnose` | Recalls previous root causes for the symptom area before hypothesis ranking, then a completed diagnosis can be stored as root-cause history. | If recall is unavailable, diagnosis still follows reproduce -> minimize -> hypothesize -> instrument -> fix -> regression-test. |
+| `/zoom-out` | Uses recall and graph reads for map-first orientation, structural impact, and observed AFK attempt history when graph mode is ready. | It remains read-only and falls back to ordinary code exploration; it may recommend `/memory:ingest` only as a future improvement when indexing would materially help. |
 
 ## Auto-firing hooks (graph mode, opt-in)
 
@@ -152,6 +216,23 @@ imperative memories / likely secrets / stale progress, and no unsupported live
 competitor claims. Latency is machine-local, so CI should compare the JSON
 shape and thresholds rather than treating the exact milliseconds as a public
 benchmark.
+
+Executable public claims are listed in
+`src/competitive-fixtures.ts` and checked by `eval:competitive:v2`. README copy
+should cite these evidence IDs when it makes a public comparison or product
+claim:
+
+| Public claim ID | README claim | Executable evidence IDs |
+|-----------------|--------------|-------------------------|
+| `checked-fixture-retrieval` | The competitive eval reports retrieval quality from checked-in fixtures. | `dimension:retrieval`, `fixture:recall` |
+| `readiness-envelope-consumer` | The readiness envelope is available for `eval:competitive:v2` consumers. | `dimension:readiness`, `foundation:readiness-envelope` |
+| `session-lifecycle-comparison` | Memory has native agent session lifecycle integration in the comparison table. | `baseline:memory-lifecycle-beats-agent-memory` |
+
+The same guard intentionally leaves live-service competitor wins unclaimed
+unless the required live baseline is measured. In particular, the checked-in
+fixture may compare against `graphify-out` path latency, but it does not claim a
+latency win over `neo4j-labs/agent-memory` without an opt-in live Neo4j
+baseline.
 
 `eval:competitive:v2` can also opt in to a live `rohitg00/agentmemory` CLI
 baseline without making normal tests or fixture runs depend on Agentmemory:

@@ -609,13 +609,19 @@ Composable. Boring on purpose where boring is enough. Sharp where it matters.
 <details>
 <summary><strong>Memory plugin — persistent memory (markdown-only · graph)</strong></summary>
 
-The separate **`memory`** plugin gives agents a persistent, queryable memory that
-survives `/clear` and crosses sessions. It lives on top of `dev` (requires it).
+The separate **`memory`** plugin gives agents governed operational memory:
+scoped decisions, gotchas, provenance, supersession, and trust checks that
+survive `/clear` and cross sessions. It lives on top of `dev` (requires it).
 Two storage modes ship today — **markdown-only** (plain notes, zero engine
 dependency) and **graph** (a typed knowledge graph over a per-project RedDB
 store). Graph mode can opt into lifecycle hooks, Skill telemetry, MCP access,
 and graph export; markdown-only remains explicit-only with no engine. Install
-`memory` alongside `dev`, then run `memory init`.
+`memory` alongside `dev`, then use the
+[source-only quickstart](./plugins/memory/README.md#quickstart-source-only-operational-memory).
+
+The detailed Memory README also carries the competitive comparison and the
+claim-to-eval evidence map used by `eval:competitive:v2`, so public claims stay
+tied to executable checks instead of unsupported marketing copy.
 
 | Skill | What it does |
 |-------|--------------|
