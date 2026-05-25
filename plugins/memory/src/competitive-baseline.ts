@@ -218,6 +218,36 @@ export interface CompetitiveEvalReport {
   };
 }
 
+export interface CompetitiveEvalV2Dimension {
+  id: "retrieval" | "readiness" | "trust-governance" | "skill-evolution";
+  score: number;
+  maxScore: number;
+  status: "pass" | "warn" | "fail";
+  detail: string;
+  evidence: string[];
+  metrics: Record<string, string | number>;
+}
+
+export interface CompetitiveEvalV2Report {
+  schemaVersion: "memory.competitive_eval.v2";
+  generatedAt: string;
+  fixture: CompetitiveEvalReport["fixture"];
+  liveServices: "not-required";
+  composite: {
+    score: number;
+    maxScore: number;
+    normalizedScore: number;
+    status: "pass" | "warn" | "fail";
+  };
+  dimensions: CompetitiveEvalV2Dimension[];
+  claimGuards: {
+    status: "pass" | "fail";
+    unsupportedPublicClaims: string[];
+    unsupportedLiveCompetitorClaims: string[];
+    unmeasuredLiveBaselines: string[];
+  };
+}
+
 /**
  * Checked-in summary derived from
  * `/home/cyber/Work/reddb.io/reddb-benchmark/graphify-out`.
@@ -936,6 +966,189 @@ export function renderCompetitiveEvalJson(report: CompetitiveEvalReport): string
   )}\n`;
 }
 
+export async function evaluateCompetitiveEvalV2(
+  opts: CompetitiveEvalOptions = {},
+): Promise<CompetitiveEvalV2Report> {
+  const report = await evaluateCompetitiveEval(opts);
+  const fixture = opts.fixture ?? competitiveEvalFixture;
+  const dimensions = competitiveEvalV2Dimensions(report);
+  const baseline = evaluateCompetitiveBaseline(new Date(0));
+  const executableEvidence = competitiveEvalV2EvidenceIds(dimensions, baseline, fixture);
+  const unsupportedPublicClaims = fixture.publicClaims
+    ?.filter((claim) => claim.requiredEvidence.some((evidence) => !executableEvidence.has(evidence)))
+    .map((claim) => claim.id) ?? [];
+  const score = dimensions.reduce((sum, dimension) => sum + dimension.score, 0);
+  const maxScore = dimensions.reduce((sum, dimension) => sum + dimension.maxScore, 0);
+  const unsupportedLiveCompetitorClaims = [...report.claimGuards.unsupportedLiveCompetitorClaims];
+  const claimGuardStatus =
+    unsupportedPublicClaims.length === 0 && unsupportedLiveCompetitorClaims.length === 0
+      ? "pass"
+      : "fail";
+
+  return {
+    schemaVersion: "memory.competitive_eval.v2",
+    generatedAt: report.generatedAt,
+    fixture: report.fixture,
+    liveServices: "not-required",
+    composite: {
+      score,
+      maxScore,
+      normalizedScore: maxScore > 0 ? roundMetric(score / maxScore) : 0,
+      status: dimensions.every((dimension) => dimension.status === "pass") && claimGuardStatus === "pass"
+        ? "pass"
+        : "fail",
+    },
+    dimensions,
+    claimGuards: {
+      status: claimGuardStatus,
+      unsupportedPublicClaims,
+      unsupportedLiveCompetitorClaims,
+      unmeasuredLiveBaselines: [...report.claimGuards.unmeasuredLiveBaselines],
+    },
+  };
+}
+
+function competitiveEvalV2EvidenceIds(
+  dimensions: CompetitiveEvalV2Dimension[],
+  baseline: CompetitiveBaselineReport,
+  fixture: CompetitiveEvalFixture,
+): Set<string> {
+  const evidence = new Set<string>();
+  for (const dimension of dimensions) {
+    if (dimension.status === "pass" && dimension.score === dimension.maxScore) {
+      evidence.add(`dimension:${dimension.id}`);
+    }
+    for (const id of dimension.evidence) evidence.add(id);
+  }
+  for (const assertion of baseline.assertions) {
+    if (assertion.pass) evidence.add(`baseline:${assertion.id}`);
+  }
+  for (const baseline of fixture.liveBaselines) {
+    if (baseline.configured) {
+      evidence.add(`live-baseline:${baseline.competitor}:${evidenceSlug(baseline.metric)}`);
+    }
+  }
+  return evidence;
+}
+
+function evidenceSlug(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+
+function competitiveEvalV2Dimensions(report: CompetitiveEvalReport): CompetitiveEvalV2Dimension[] {
+  const foundationAxes = new Map(report.foundationGate.composite.axes.map((axis) => [axis.id, axis]));
+  return [
+    {
+      id: "retrieval",
+      score: report.foundationGate.retrieval.score,
+      maxScore: report.foundationGate.retrieval.maxScore,
+      status: foundationAxes.get("retrieval")?.status ?? "fail",
+      detail: foundationAxes.get("retrieval")?.detail ?? "missing retrieval foundation axis",
+      evidence: [
+        "fixture:recall",
+        "foundation:hybrid-recall",
+        "foundation:as-of-recall",
+      ],
+      metrics: {
+        query_count: report.recall.queryCount,
+        recall_at_k: report.recall.meanRecallAtK,
+        precision_at_k: report.recall.meanPrecisionAtK,
+        p50_ms: report.recall.latency.p50Ms,
+        as_of_recall: report.foundationGate.retrieval.asOfRecall.status,
+      },
+    },
+    {
+      id: "readiness",
+      score: report.foundationGate.readiness.score,
+      maxScore: report.foundationGate.readiness.maxScore,
+      status: foundationAxes.get("readiness")?.status ?? "fail",
+      detail: foundationAxes.get("readiness")?.detail ?? "missing readiness foundation axis",
+      evidence: ["foundation:readiness-envelope"],
+      metrics: {
+        envelope_status: report.foundationGate.readiness.status,
+        contract_version: report.foundationGate.readiness.contractVersion,
+      },
+    },
+    {
+      id: "trust-governance",
+      score: report.foundationGate.trustGovernance.score,
+      maxScore: report.foundationGate.trustGovernance.maxScore,
+      status: foundationAxes.get("trust-governance")?.status ?? "fail",
+      detail: foundationAxes.get("trust-governance")?.detail ?? "missing trust-governance foundation axis",
+      evidence: ["foundation:claim-check", "foundation:event-log", "foundation:vcs-time-travel"],
+      metrics: {
+        claim_check: report.foundationGate.trustGovernance.claimCheck,
+        event_count: report.foundationGate.trustGovernance.eventLog.totalEvents,
+        vcs_time_travel: report.foundationGate.trustGovernance.vcsTimeTravel,
+      },
+    },
+    {
+      id: "skill-evolution",
+      score: report.foundationGate.skillEvolution.score,
+      maxScore: report.foundationGate.skillEvolution.maxScore,
+      status: foundationAxes.get("skill-evolution")?.status ?? "fail",
+      detail: foundationAxes.get("skill-evolution")?.detail ?? "missing skill-evolution foundation axis",
+      evidence: ["foundation:skill-telemetry", "foundation:communities"],
+      metrics: {
+        telemetry_events: report.foundationGate.skillEvolution.telemetryEvents,
+        communities: report.foundationGate.skillEvolution.communities.count,
+        community_assignments: report.foundationGate.skillEvolution.communities.assignments,
+      },
+    },
+  ];
+}
+
+export function renderCompetitiveEvalV2Json(report: CompetitiveEvalV2Report): string {
+  return `${JSON.stringify(
+    {
+      schema_version: report.schemaVersion,
+      generated_at: report.generatedAt,
+      fixture: report.fixture,
+      live_services: report.liveServices,
+      composite: report.composite,
+      dimensions: report.dimensions,
+      claim_guards: {
+        status: report.claimGuards.status,
+        unsupported_public_claims: report.claimGuards.unsupportedPublicClaims,
+        unsupported_live_competitor_claims: report.claimGuards.unsupportedLiveCompetitorClaims,
+        unmeasured_live_baselines: report.claimGuards.unmeasuredLiveBaselines,
+      },
+    },
+    null,
+    2,
+  )}\n`;
+}
+
+export function renderCompetitiveEvalV2Human(report: CompetitiveEvalV2Report): string {
+  const lines = [
+    "# Memory competitive eval v2",
+    "",
+    `Fixture: ${report.fixture.name} (${report.fixture.source}, ${report.fixture.nodes} nodes / ${report.fixture.edges} edges)`,
+    `Composite: ${report.composite.score}/${report.composite.maxScore} normalized=${report.composite.normalizedScore} status=${report.composite.status}`,
+    "",
+    "## Dimensions",
+  ];
+
+  for (const dimension of report.dimensions) {
+    lines.push(`${dimension.id}: ${dimension.score}/${dimension.maxScore} ${dimension.status} - ${dimension.detail}`);
+  }
+
+  lines.push("", "## Claim guards", `Claim guards: ${report.claimGuards.status}`);
+  if (report.claimGuards.unsupportedPublicClaims.length > 0) {
+    lines.push(`Unsupported public claims: ${report.claimGuards.unsupportedPublicClaims.join(", ")}`);
+  }
+  if (report.claimGuards.unsupportedLiveCompetitorClaims.length > 0) {
+    lines.push(
+      `Unsupported live competitor claims: ${report.claimGuards.unsupportedLiveCompetitorClaims.join(", ")}`,
+    );
+  }
+  if (report.claimGuards.unmeasuredLiveBaselines.length > 0) {
+    lines.push(`Unmeasured live baselines: ${report.claimGuards.unmeasuredLiveBaselines.join(", ")}`);
+  }
+
+  return `${lines.join("\n")}\n`;
+}
+
 export function renderCompetitiveEvalHuman(report: CompetitiveEvalReport): string {
   const lines = [
     "# Memory competitive eval",
@@ -995,6 +1208,10 @@ export function renderBaselineJson(report: CompetitiveBaselineReport): string {
 async function main(): Promise<void> {
   const flags = new Set(process.argv.slice(2));
   const report = evaluateCompetitiveBaseline(new Date());
+  const json = flags.has("--json");
+  const human = flags.has("--human");
+  const defaultOutput = !json && !human;
+
   if (flags.has("--baseline-only")) {
     process.stdout.write(renderBaselineJson(report));
     process.stdout.write("\n");
@@ -1003,13 +1220,28 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (flags.has("--v2")) {
+    const evalReport = await evaluateCompetitiveEvalV2({
+      now: Date.now(),
+      generatedAt: new Date().toISOString(),
+    });
+    if (json || defaultOutput) {
+      process.stdout.write(renderCompetitiveEvalV2Json(evalReport));
+    }
+    if (human || defaultOutput) {
+      if (json || defaultOutput) process.stdout.write("\n");
+      process.stdout.write(renderCompetitiveEvalV2Human(evalReport));
+    }
+    if (evalReport.composite.status === "fail" || evalReport.claimGuards.status === "fail") {
+      process.exitCode = 1;
+    }
+    return;
+  }
+
   const evalReport = await evaluateCompetitiveEval({
     now: Date.now(),
     generatedAt: new Date().toISOString(),
   });
-  const json = flags.has("--json");
-  const human = flags.has("--human");
-  const defaultOutput = !json && !human;
 
   if (json || defaultOutput) {
     process.stdout.write(renderCompetitiveEvalJson(evalReport));
