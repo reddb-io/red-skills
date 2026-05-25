@@ -88,7 +88,8 @@ node plugins/memory/dist/cli.js commit --root . --json
 The command reapplies the Memory tier/versioning policy, reports included and
 skipped collections, commits only when the included historical surface changed,
 and reports `nothing meaningful to commit` when only skipped transient metadata
-changed.
+changed. Skipped collections include transient KV metadata and the raw
+`memory_events` audit log; these are intentionally outside historical recall.
 
 ### Both runners — and the Codex `PreCompact` gap
 
@@ -205,7 +206,13 @@ counts only actionable pending proposals while retaining audit history.
 Skill telemetry also dual-writes raw `skill.telemetry` records to the
 append-only Memory event log (`memory_events`). Existing rollups remain the
 serving path for status, curation, and recommendations; the event log is the
-raw audit substrate for future readiness and self-improvement views.
+raw audit substrate for future readiness and self-improvement views. Raw event
+readers apply a configurable retention horizon: graph init defaults to 30 days,
+and `memory init --mode graph --event-retention-days N` writes a different
+project horizon into `.red/memory/config.json`. The `memory_events` collection
+is always non-versioned and skipped by `memory commit`; promoted durable or
+reasoning graph evidence, rollups, and recallable facts survive even when old
+raw operational events age out of event-log reads.
 
 ## MCP server
 

@@ -44,6 +44,14 @@ export interface MemoryConfig {
    */
   skillTelemetry?: boolean;
   /**
+   * Raw operational Memory event log policy. Events are an audit substrate, not
+   * durable Memory facts; graph mode keeps them for a bounded default horizon.
+   */
+  eventLog?: {
+    /** Number of days raw operational events remain visible to event readers. */
+    retentionDays: number;
+  };
+  /**
    * AI provider for LLM conversation extraction (the `INFERRED` path). Absent
    * until the user configures one; when absent, only the deterministic
    * `EXTRACTED` paths run. Selects a RedDB engine-side provider mode
@@ -54,6 +62,9 @@ export interface MemoryConfig {
 }
 
 export const CONFIG_VERSION = 1;
+
+/** Default raw Memory event retention horizon: 30 days. */
+export const DEFAULT_MEMORY_EVENT_RETENTION_DAYS = 30;
 
 /** Every hook disabled — the markdown-only default. */
 export const HOOKS_OFF: HookConfig = {

@@ -6,6 +6,7 @@ import { createInterface } from "node:readline/promises";
 import { access, mkdir, readdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import {
+  DEFAULT_MEMORY_EVENT_RETENTION_DAYS,
   readConfig,
   resolveNotesDir,
   resolveStoreUri,
@@ -101,7 +102,7 @@ import { slugify, storeNote } from "./store.js";
 const USAGE = `memory — persistent memory for code agents
 
 Usage:
-  memory init [--mode markdown-only|graph] [--hooks] [--skill-telemetry] [--root <dir>] [--yes]
+  memory init [--mode markdown-only|graph] [--hooks] [--skill-telemetry] [--event-retention-days N] [--root <dir>] [--yes]
   memory store <fact...>            [--root <dir>] [--scope project|repo|branch|worktree|session|agent-run|user] [--scope-id ID]
   memory inbox quarantine <fact...> [--root <dir>] --reason <text> --evidence <summary> [--confidence EXTRACTED|INFERRED|AMBIGUOUS] [--source-kind manual|hook|derived|system] [--writer <name>] [--command <cmd>] [--hook <event>] [--json]
   memory inbox list                 [--root <dir>] [--status quarantined|approved|rejected|promoted|all] [--json]
@@ -280,6 +281,10 @@ async function runInit(args: ParsedArgs): Promise<void> {
   }
   mode = mode ?? "markdown-only";
   const skillTelemetry = args.flags["skill-telemetry"] === true;
+  const eventRetentionDays = intFlag(args.flags, "event-retention-days");
+  if (eventRetentionDays != null && (!Number.isFinite(eventRetentionDays) || eventRetentionDays < 0)) {
+    throw new Error("--event-retention-days must be a non-negative number");
+  }
 
   if (mode === "markdown-only") {
     const result = await initMarkdownOnly(rootDir);
@@ -300,13 +305,16 @@ async function runInit(args: ParsedArgs): Promise<void> {
     // leaves them off. markdown-only never gets hooks regardless.
     const hooks = args.flags.hooks === true || args.flags.hooks === "all";
     // Skill telemetry is a separate explicit opt-in, graph-mode only.
-    const result = await initGraph(rootDir, { hooks, skillTelemetry });
+    const result = await initGraph(rootDir, { hooks, skillTelemetry, eventRetentionDays });
     const on = Object.values(result.config.hooks).some(Boolean);
     console.log(`memory: initialized graph mode`);
     console.log(`  config: ${result.configPath}`);
     console.log(`  store:  ${result.storeUri}`);
     console.log(`  hooks:  ${on ? "on" : "off"}    mcp: off    reddb: required`);
     console.log(`  skill telemetry: ${result.config.skillTelemetry ? "on" : "off"}`);
+    console.log(
+      `  event retention: ${result.config.eventLog?.retentionDays ?? DEFAULT_MEMORY_EVENT_RETENTION_DAYS} day(s)`,
+    );
     console.log(`  vcs versioned: ${result.versioning.versioned.join(", ")}`);
     console.log(`  vcs skipped:   ${result.versioning.skipped.join(", ")}`);
     return;

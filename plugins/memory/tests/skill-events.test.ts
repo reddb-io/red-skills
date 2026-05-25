@@ -10,6 +10,7 @@ import { MemoryStore } from "../src/graph-store.js";
 import {
   ingestSkillEvents,
   parseSkillEventInput,
+  readRecentSkillEvents,
   readSkillRollups,
   type SkillEvent,
 } from "../src/skill-events.js";
@@ -238,6 +239,39 @@ describe("memory event skill CLI", () => {
 });
 
 describe("skill telemetry graph persistence", () => {
+  test(
+    "promoted graph evidence survives when raw events fall outside retention",
+    async () => {
+      const root = await tempRoot();
+      await initGraph(root);
+      const store = await openStore(root);
+
+      await ingestSkillEvents(store, [EVENT]);
+
+      await expect(
+        readMemoryEvents(store, {
+          retentionMs: 24 * 60 * 60 * 1000,
+          now: "2026-05-24T16:00:00.000Z",
+        }),
+      ).resolves.toEqual([]);
+      await expect(readRecentSkillEvents(store)).resolves.toEqual([
+        expect.objectContaining({
+          event_type: "result",
+          name: "dev:tdd",
+          status: "succeeded",
+        }),
+      ]);
+      await expect(readSkillRollups(store)).resolves.toEqual([
+        expect.objectContaining({
+          event_count: 1,
+          result_count: 1,
+          outcome_counts: { succeeded: 1 },
+        }),
+      ]);
+    },
+    TIMEOUT,
+  );
+
   test(
     "dual-writes raw skill telemetry events while preserving deduped rollups",
     async () => {
