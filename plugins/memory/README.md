@@ -137,6 +137,7 @@ is backed by executable assertions instead of marketing copy:
 
 ```bash
 pnpm --dir plugins/memory eval:competitive
+pnpm --dir plugins/memory interop:competitive
 pnpm --dir plugins/memory baseline:competitive
 pnpm --dir plugins/memory test -- competitive-baseline
 ```
@@ -164,6 +165,12 @@ The configured command is a local wrapper around the available Agentmemory
 install or service. It must print JSON with optional `summary`, numeric
 `metrics`, and string `evidence` fields. Missing commands are reported as
 unavailable live baselines, not as fixture failures.
+
+`interop:competitive` also runs entirely against checked-in fixtures. It emits
+JSON and a human-readable mapping report for Graphify-like and
+Neo4j-agent-memory-like artifact shapes, including preserved, approximated, and
+dropped concepts. The report is intentionally limited to fixture interop and
+does not claim full Graphify, Neo4j, Cypher, or live-service parity.
 
 The fixture summary comes from the existing `reddb-benchmark/graphify-out`
 run: 551 nodes, 1329 edges, 34 detected communities, 491 inferred edges, and

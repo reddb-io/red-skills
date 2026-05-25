@@ -45,6 +45,40 @@ export interface CompetitivePublicClaimFixture {
   requiredEvidence: string[];
 }
 
+export type CompetitiveInteropCompetitor = "graphify-like" | "neo4j-agent-memory-like";
+
+export type CompetitiveInteropDecisionKind = "preserved" | "approximated" | "dropped";
+
+export interface CompetitiveInteropNodeFixture {
+  id: string;
+  kind: string;
+  label: string;
+}
+
+export interface CompetitiveInteropEdgeFixture {
+  from: string;
+  to: string;
+  kind: string;
+}
+
+export interface CompetitiveInteropMappingFixture {
+  sourceConcept: string;
+  memoryConcept: string | null;
+  decision: CompetitiveInteropDecisionKind;
+  count: number;
+  rationale: string;
+}
+
+export interface CompetitiveInteropArtifactFixture {
+  competitor: CompetitiveInteropCompetitor;
+  artifactName: string;
+  source: "checked-in";
+  nodes: CompetitiveInteropNodeFixture[];
+  edges: CompetitiveInteropEdgeFixture[];
+  mapping: CompetitiveInteropMappingFixture[];
+  caveats: string[];
+}
+
 export interface CompetitiveEvalFixture {
   name: string;
   source: "checked-in";
@@ -258,3 +292,93 @@ export const competitiveEvalFixture: CompetitiveEvalFixture = {
     },
   ],
 };
+
+export const competitiveInteropFixtures: CompetitiveInteropArtifactFixture[] = [
+  {
+    competitor: "graphify-like",
+    artifactName: "graphify-static-code-graph",
+    source: "checked-in",
+    nodes: [
+      { id: "file:src/auth.ts", kind: "file", label: "src/auth.ts" },
+      { id: "symbol:authenticateUser", kind: "function", label: "authenticateUser" },
+      { id: "symbol:SessionStore", kind: "class", label: "SessionStore" },
+      { id: "community:auth-flow", kind: "community", label: "auth-flow" },
+    ],
+    edges: [
+      { from: "file:src/auth.ts", to: "symbol:authenticateUser", kind: "DEFINES" },
+      { from: "file:src/auth.ts", to: "symbol:SessionStore", kind: "DEFINES" },
+      { from: "symbol:authenticateUser", to: "symbol:SessionStore", kind: "CALLS" },
+      { from: "community:auth-flow", to: "symbol:authenticateUser", kind: "GROUPS" },
+    ],
+    mapping: [
+      {
+        sourceConcept: "file and symbol identity",
+        memoryConcept: "source-backed Memory nodes",
+        decision: "preserved",
+        count: 2,
+        rationale: "Stable labels and source paths can be retained as node properties and provenance evidence.",
+      },
+      {
+        sourceConcept: "code relationship kinds",
+        memoryConcept: "typed Memory edges with relationship labels in properties",
+        decision: "approximated",
+        count: 2,
+        rationale: "Memory can keep the endpoints and a relationship label, but it does not expose Graphify's full static-code edge taxonomy.",
+      },
+      {
+        sourceConcept: "layout, ranking, and path timing metadata",
+        memoryConcept: null,
+        decision: "dropped",
+        count: 2,
+        rationale: "The interop report is a shape-mapping fixture, not a Graphify renderer or benchmark replay.",
+      },
+    ],
+    caveats: [
+      "This fixture maps a Graphify-like static graph shape; it does not claim full Graphify import, rendering, or query parity.",
+    ],
+  },
+  {
+    competitor: "neo4j-agent-memory-like",
+    artifactName: "neo4j-agent-memory-session-export",
+    source: "checked-in",
+    nodes: [
+      { id: "episode:session-1", kind: "Episode", label: "session-1" },
+      { id: "memory:release-gate", kind: "Memory", label: "Release gate policy" },
+      { id: "entity:Memory", kind: "Entity", label: "Memory" },
+      { id: "observation:claim-guard", kind: "Observation", label: "claim guard" },
+      { id: "index:semantic", kind: "VectorIndex", label: "semantic index" },
+    ],
+    edges: [
+      { from: "episode:session-1", to: "memory:release-gate", kind: "RECORDED" },
+      { from: "memory:release-gate", to: "entity:Memory", kind: "MENTIONS" },
+      { from: "memory:release-gate", to: "observation:claim-guard", kind: "SUPPORTS" },
+      { from: "index:semantic", to: "memory:release-gate", kind: "INDEXES" },
+    ],
+    mapping: [
+      {
+        sourceConcept: "memory text, entity labels, and provenance",
+        memoryConcept: "Memory node properties and provenance evidence",
+        decision: "preserved",
+        count: 3,
+        rationale: "Durable facts, entity names, and source/session evidence fit directly into Memory records.",
+      },
+      {
+        sourceConcept: "Neo4j labels, relationship names, and episodic grouping",
+        memoryConcept: "Memory node types, edge labels, and scope metadata",
+        decision: "approximated",
+        count: 3,
+        rationale: "Memory can retain the semantic intent, but not every Neo4j label, relationship, or traversal convention has a one-to-one Memory concept.",
+      },
+      {
+        sourceConcept: "Cypher/index configuration and geospatial database features",
+        memoryConcept: null,
+        decision: "dropped",
+        count: 2,
+        rationale: "Checked fixtures do not stand up Neo4j, replay indexes, or assert database-engine feature parity.",
+      },
+    ],
+    caveats: [
+      "This fixture maps a Neo4j-agent-memory-like export shape; it does not claim full Neo4j, Cypher, geospatial, or live-service parity.",
+    ],
+  },
+];

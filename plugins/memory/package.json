@@ -20,6 +20,7 @@
     "baseline:competitive": "tsx src/competitive-baseline.ts --json --human",
     "eval:competitive": "tsx src/competitive-baseline.ts --json --human",
     "eval:competitive:v2": "tsx src/competitive-baseline.ts --v2 --json --human",
+    "interop:competitive": "tsx src/competitive-baseline.ts --interop --json --human",
     "dev": "node --import tsx src/cli.ts"
   },
   "dependencies": {
