@@ -64,6 +64,14 @@ import { formatOutput, parseInput, type RawPayload } from "./hook-adapters.js";
 import { dispatch, type HookEvent, type Runner } from "./hook-runtime.js";
 import { importAmsDump } from "./import-ams.js";
 import { formatMarkdownReport, runBenchRecall } from "./bench-recall.js";
+import {
+  DEFAULT_WORKLOAD,
+  formatLatencyReport,
+  loadWorkloadOverrides,
+  runBenchLatency,
+  type OpClass,
+  type WorkloadConfig,
+} from "./bench-latency.js";
 import { runPromote } from "./promote.js";
 import {
   approveInboxItem,
@@ -372,6 +380,15 @@ Usage:
   precision@k and recall@k at k ∈ {1, 5, 10}. Fully in-process and
   deterministic. See \`bench/recall/README.md\`.
   memory bench recall              [--root <dir>] [--corpus <dir>] [--k 1,5,10]
+                                   [--out <file>] [--report <file>] [--json]
+
+  Latency bench (PRD #174, issue #186) — p50/p95/p99/p99.9 of three hot-read
+  op classes (working-get, session-recall, long-term-recall) against our
+  in-process path and an AMS-on-Redis reference. Workload is seeded; see
+  \`bench/latency/README.md\`.
+  memory bench latency             [--root <dir>] [--workload <dir>]
+                                   [--iterations N] [--warmup N] [--seed N]
+                                   [--ops working-get,session-recall,long-term-recall]
                                    [--out <file>] [--report <file>] [--json]
 
 Two storage modes: markdown-only (plain notes, no engine) and graph (a typed
@@ -5777,8 +5794,14 @@ async function runImport(args: ParsedArgs): Promise<void> {
 
 async function runBench(args: ParsedArgs): Promise<void> {
   const sub = args.positional[0];
+  if (sub === "latency") {
+    await runBenchLatencyCmd(args);
+    return;
+  }
   if (sub !== "recall") {
-    throw new Error(`usage: memory bench recall [--corpus <dir>] [--k 1,5,10] [--out <file>] [--report <file>] [--json]`);
+    throw new Error(
+      `usage: memory bench (recall|latency) ... (see \`memory --help\`)`,
+    );
   }
   const rootDir = rootOf(args.flags);
   const corpusDir =
@@ -5819,6 +5842,76 @@ async function runBench(args: ParsedArgs): Promise<void> {
     const ar = report.aggregate.ams_reference.recall_at_k[String(k)] ?? 0;
     console.log(
       `  k=${k}  ours P=${op.toFixed(3)} R=${or.toFixed(3)}  ams P=${ap.toFixed(3)} R=${ar.toFixed(3)}`,
+    );
+  }
+  if (outPath) console.log(`  json written ${outPath}`);
+  if (reportPath) console.log(`  report written ${reportPath}`);
+}
+
+async function runBenchLatencyCmd(args: ParsedArgs): Promise<void> {
+  const rootDir = rootOf(args.flags);
+  const workloadDir =
+    stringFlag(args.flags, "workload") ?? join(rootDir, "plugins/memory/bench/latency");
+  const fileOverrides = await loadWorkloadOverrides(workloadDir);
+  const cliOverrides: Partial<WorkloadConfig> = {};
+  const iterRaw = stringFlag(args.flags, "iterations");
+  const warmRaw = stringFlag(args.flags, "warmup");
+  const seedRaw = stringFlag(args.flags, "seed");
+  const opsRaw = stringFlag(args.flags, "ops");
+  if (iterRaw !== undefined) {
+    const n = Number(iterRaw);
+    if (!Number.isFinite(n) || n <= 0) {
+      throw new Error("memory bench latency: --iterations must be a positive integer");
+    }
+    cliOverrides.iterations = Math.floor(n);
+  }
+  if (warmRaw !== undefined) {
+    const n = Number(warmRaw);
+    if (!Number.isFinite(n) || n < 0) {
+      throw new Error("memory bench latency: --warmup must be a non-negative integer");
+    }
+    cliOverrides.warmup = Math.floor(n);
+  }
+  if (seedRaw !== undefined) {
+    const n = Number(seedRaw);
+    if (!Number.isFinite(n)) {
+      throw new Error("memory bench latency: --seed must be a number");
+    }
+    cliOverrides.seed = Math.floor(n);
+  }
+  if (opsRaw !== undefined) {
+    const allowed: OpClass[] = ["working-get", "session-recall", "long-term-recall"];
+    const parts = opsRaw.split(",").map((s) => s.trim());
+    const picked = parts.filter((p): p is OpClass => (allowed as string[]).includes(p));
+    if (picked.length === 0) {
+      throw new Error(
+        `memory bench latency: --ops must include one of ${allowed.join(", ")}`,
+      );
+    }
+    cliOverrides.op_classes = picked;
+  }
+  const workload = { ...DEFAULT_WORKLOAD, ...fileOverrides, ...cliOverrides };
+  const report = await runBenchLatency({ workload });
+  const outPath = stringFlag(args.flags, "out");
+  const reportPath = stringFlag(args.flags, "report");
+  if (outPath) {
+    await mkdir(dirname(outPath), { recursive: true });
+    await writeFile(outPath, `${JSON.stringify(report, null, 2)}\n`);
+  }
+  if (reportPath) {
+    await mkdir(dirname(reportPath), { recursive: true });
+    await writeFile(reportPath, formatLatencyReport(report));
+  }
+  if (args.flags.json === true) {
+    console.log(JSON.stringify(report, null, 2));
+    return;
+  }
+  console.log(
+    `memory bench latency: sessions=${workload.sessions} events/session=${workload.events_per_session} long-term=${workload.long_term_nodes} iters=${workload.iterations} (+${workload.warmup} warmup) seed=0x${workload.seed.toString(16)}`,
+  );
+  for (const r of report.results) {
+    console.log(
+      `  ${r.op.padEnd(20)} ours p50=${r.ours.p50_us.toFixed(2)}µs p99=${r.ours.p99_us.toFixed(2)}µs  ams p50=${r.ams_reference.p50_us.toFixed(2)}µs p99=${r.ams_reference.p99_us.toFixed(2)}µs  speedup p99×${r.speedup.p99.toFixed(2)}`,
     );
   }
   if (outPath) console.log(`  json written ${outPath}`);

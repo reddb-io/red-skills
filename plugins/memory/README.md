@@ -632,6 +632,26 @@ The bench is fully in-process and deterministic — same corpus + queries on the
 same git ref yields byte-equal results (the test suite asserts this with zero
 tolerance). Latest results: [`bench/results/2026-05-26-recall.md`](./bench/results/2026-05-26-recall.md).
 
+## Hot-read latency bench (vs AMS)
+
+`memory bench latency` measures p50 / p95 / p99 / p99.9 of three hot-read op
+classes — `working-get`, `session-recall`, `long-term-recall` — against our
+in-process L1/L2 cache path and an AMS-on-Redis reference path (JSON parse per
+response, client-side fan-out for graph hops). Workload is seeded
+(`mulberry32`); both paths do only real CPU work, no artificial sleeps.
+
+```bash
+node plugins/memory/dist/cli.js bench latency \
+  --out plugins/memory/bench/results/<date>-latency.json \
+  --report plugins/memory/bench/results/<date>-latency.md
+```
+
+Workload shape and tolerance live in
+[`bench/latency/README.md`](./bench/latency/README.md). The test suite asserts
+the architectural invariant (`p99(ams) >= p99(ours)`) rather than absolute
+numbers, because wall-clock percentiles vary with host noise. Latest results:
+[`bench/results/2026-05-26-latency.md`](./bench/results/2026-05-26-latency.md).
+
 ## Readiness envelope
 
 `memory readiness <goal> --json` emits the stable `memory.readiness.v1`
