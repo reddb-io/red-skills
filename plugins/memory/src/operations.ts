@@ -747,7 +747,7 @@ const ASK_OPERATION: MemoryOperation<AskInput, AskResult> = {
         "Read-only evidence-backed ASK over Memory evidence. Returns grounded answer status, citations, active/superseded/contradictory evidence, gap analysis, and provider cost metadata when available.",
     },
   },
-  execute: (ctx, input) => ask(ctx.store, input.question),
+  execute: (ctx, input) => ask(ctx.store, input.question, { rootDir: ctx.rootDir }),
 };
 
 const ASSET_INVENTORY_OPERATION: MemoryOperation<

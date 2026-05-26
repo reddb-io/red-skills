@@ -1994,7 +1994,7 @@ async function runAsk(args: ParsedArgs): Promise<void> {
 
   const store = await MemoryStore.open({ uri: resolveStoreUri(rootDir, config) });
   try {
-    const result = await ask(store, question);
+    const result = await ask(store, question, { rootDir });
     if (args.flags.json === true) {
       console.log(JSON.stringify(result, null, 2));
       return;
@@ -2022,6 +2022,18 @@ async function runAsk(args: ParsedArgs): Promise<void> {
     console.log(`  ${result.gap_analysis.summary}`);
     for (const gap of result.gap_analysis.gaps) console.log(`  gap: ${gap}`);
     for (const action of result.gap_analysis.next_actions) console.log(`  next: ${action}`);
+    if (result.what_i_dont_know.length > 0) {
+      console.log(`what I don't know: ${result.what_i_dont_know.length}`);
+      for (const item of result.what_i_dont_know) console.log(`  - ${item}`);
+    }
+    if (result.federation_hits.length > 0) {
+      console.log(`federation hits: ${result.federation_hits.length}`);
+      for (const hit of result.federation_hits) {
+        console.log(
+          `  ${hit.origin_repo}${hit.id ? `:${hit.id}` : ""} score=${hit.score} local=${hit.confidence_local} remote=${hit.confidence_remote}`,
+        );
+      }
+    }
     if (result.cost) {
       console.log(
         `cost: ${result.cost.provider}/${result.cost.model} prompt=${result.cost.prompt_tokens} completion=${result.cost.completion_tokens} usd=${result.cost.cost_usd}`,

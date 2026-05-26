@@ -180,14 +180,44 @@ export interface AskResult {
   status: "answered" | "insufficient-evidence" | "provider-unavailable";
   /** Grounded answer, or a cited evidence-only fallback when ASK is unavailable. */
   answer: string | null;
-  citations: { marker: number; urn: string }[];
+  citations: AskCitation[];
   /** Per-call usage and billing metadata; null when ASK is unavailable. */
   cost: AskCost | null;
   /** False when the engine has no LLM key — recall stays zero-token regardless. */
   available: boolean;
   evidence: AskEvidenceSummary;
   gap_analysis: AskGapAnalysis;
+  /**
+   * Compositional gaps (issue #173): explicit "what I don't know" surface
+   * from learning-debt repeated-failure patterns and reasoning-replay gaps.
+   * Always present (possibly empty) for backwards-compatible additive shape.
+   */
+  what_i_dont_know: string[];
+  /**
+   * Federation hits (issue #173): when `.red/memory/federation.yaml` exists
+   * and returned results for this question, each hit is summarized with its
+   * origin repo and confidence signals. Empty when federation is not
+   * configured or returned no results.
+   */
+  federation_hits: AskFederationHit[];
   error?: string;
+}
+
+export interface AskCitation {
+  marker: number;
+  urn: string;
+  /** Per-citation composed confidence in [0, 1] (issue #167 / #173). Null when unavailable. */
+  confidence: number | null;
+}
+
+export interface AskFederationHit {
+  origin_repo: string;
+  id: string | null;
+  score: number;
+  confidence_local: number;
+  confidence_remote: number;
+  path: string | null;
+  excerpt: string | null;
 }
 
 export interface AskEvidence {
@@ -779,15 +809,29 @@ export async function path(
 }
 
 /** Grounded ASK over the document collection. Degrades gracefully when the
- *  engine has no LLM key — the rest of the engine stays zero-token. */
-export async function ask(store: MemoryStore, question: string): Promise<AskResult> {
+ *  engine has no LLM key — the rest of the engine stays zero-token.
+ *
+ *  Issue #173: when `opts.rootDir` is provided, ask additionally composes
+ *  reasoning-replay (semantic gaps from past attempts), learning-debt
+ *  (repeated-failure patterns), and federation (cross-root hits) into the
+ *  result. All compositions are additive and read-only; on failure each
+ *  composing surface degrades to its empty form so the core ASK keeps working.
+ */
+export async function ask(
+  store: MemoryStore,
+  question: string,
+  opts: { rootDir?: string; now?: number } = {},
+): Promise<AskResult> {
   const recalled = await recall(store, question, { includeSuperseded: true, depth: 0, k: 8 });
   const evidence = await buildAskEvidence(store, recalled.nodes);
   const gapAnalysis = buildAskGapAnalysis(evidence);
-  const citations = [...evidence.active, ...evidence.superseded].map((item) => ({
+  const citations: AskCitation[] = [...evidence.active, ...evidence.superseded].map((item) => ({
     marker: Number(item.citation.replace(/\D/g, "")),
     urn: `memory_nodes:${item.rid}`,
+    confidence: item.confidence_score ?? null,
   }));
+  const whatIDontKnow = await composeWhatIDontKnow(store, question, gapAnalysis, opts.now);
+  const federationHits = await composeFederationHits(question, opts.rootDir, opts.now);
 
   if (evidence.active.length === 0 && evidence.superseded.length === 0) {
     return {
@@ -799,6 +843,8 @@ export async function ask(store: MemoryStore, question: string): Promise<AskResu
       available: true,
       evidence,
       gap_analysis: gapAnalysis,
+      what_i_dont_know: whatIDontKnow,
+      federation_hits: federationHits,
     };
   }
 
@@ -813,6 +859,8 @@ export async function ask(store: MemoryStore, question: string): Promise<AskResu
       available: true,
       evidence,
       gap_analysis: gapAnalysis,
+      what_i_dont_know: whatIDontKnow,
+      federation_hits: federationHits,
     };
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
@@ -825,8 +873,65 @@ export async function ask(store: MemoryStore, question: string): Promise<AskResu
       available: false,
       evidence,
       gap_analysis: gapAnalysis,
+      what_i_dont_know: whatIDontKnow,
+      federation_hits: federationHits,
       error,
     };
+  }
+}
+
+async function composeWhatIDontKnow(
+  store: MemoryStore,
+  question: string,
+  gapAnalysis: AskGapAnalysis,
+  now?: number,
+): Promise<string[]> {
+  const out: string[] = [...gapAnalysis.gaps];
+  try {
+    const { buildReasoningReplay } = await import("./reasoning/reasoning-replay.js");
+    const replay = await buildReasoningReplay(store, question, { limit: 5, now });
+    for (const gap of replay.gaps) out.push(gap);
+  } catch {
+    /* degrade silently — ask stays zero-token by default */
+  }
+  try {
+    const { buildLearningDebtReport } = await import("./learning-debt.js");
+    const report = await buildLearningDebtReport(
+      store as unknown as import("./learning-debt.js").LearningDebtStore,
+      { now },
+    );
+    for (const debt of report.categories.repeatedFailurePatterns) {
+      if (debt.hasDurableLesson) continue;
+      out.push(
+        `repeated-failure: ${debt.pattern} (${debt.attemptCount} attempts) — no durable lesson recorded`,
+      );
+    }
+  } catch {
+    /* degrade silently */
+  }
+  return [...new Set(out)];
+}
+
+async function composeFederationHits(
+  question: string,
+  rootDir: string | undefined,
+  now?: number,
+): Promise<AskFederationHit[]> {
+  if (!rootDir) return [];
+  try {
+    const { buildFederationReport } = await import("./federation.js");
+    const report = await buildFederationReport(rootDir, question, { now });
+    return report.results.map((hit) => ({
+      origin_repo: hit.origin_repo,
+      id: hit.id,
+      score: hit.score,
+      confidence_local: hit.confidence_local,
+      confidence_remote: hit.confidence_remote,
+      path: hit.path,
+      excerpt: hit.excerpt,
+    }));
+  } catch {
+    return [];
   }
 }
 

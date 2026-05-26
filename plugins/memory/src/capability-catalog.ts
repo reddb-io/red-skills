@@ -232,7 +232,7 @@ function capabilityDefinitions(facts: CapabilityFacts): MemoryCapability[] {
     capability({
       id: "federation",
       title: "Cross-root memory federation (no policy)",
-      category: "retrieval",
+      category: "intelligence",
       status: "available",
       red_db_backed: false,
       cli: ["memory federate --query \"<topic>\" [--json]"],
@@ -246,7 +246,7 @@ function capabilityDefinitions(facts: CapabilityFacts): MemoryCapability[] {
     capability({
       id: "autocure",
       title: "Auto-curation orchestrator (opt-in)",
-      category: "governance",
+      category: "intelligence",
       status: "available",
       red_db_backed: true,
       cli: ["memory autocure [--apply] [--stale-days N] [--json]"],
@@ -262,7 +262,7 @@ function capabilityDefinitions(facts: CapabilityFacts): MemoryCapability[] {
     capability({
       id: "confidence-scoring",
       title: "Composed confidence scoring",
-      category: "governance",
+      category: "intelligence",
       status: "ready",
       red_db_backed: true,
       cli: ["memory confidence --node <rid>"],
@@ -615,7 +615,7 @@ function capabilityDefinitions(facts: CapabilityFacts): MemoryCapability[] {
     capability({
       id: "reasoning-replay",
       title: "Reasoning replay over past attempts",
-      category: "retrieval",
+      category: "intelligence",
       status: "available",
       red_db_backed: true,
       cli: ["memory reasoning-replay --task \"<descriptor>\" [--json] [--limit N]"],
