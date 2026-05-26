@@ -138,6 +138,12 @@ import {
   ensure as sessionEnsure,
   start as sessionStart,
 } from "./session-manager.js";
+import {
+  appendEvent as workingAppendEvent,
+  getRawTranscript as workingGetRaw,
+  listEvents as workingListEvents,
+  setRawTranscript as workingSetRaw,
+} from "./working-memory.js";
 import { executeReadOnlyMemoryOperation } from "./operations.js";
 import { buildMemoryHandoff } from "./handoff.js";
 import { buildMemoryHandoffViewerArtifact } from "./handoff-viewer.js";
@@ -244,6 +250,9 @@ Usage:
   memory session show               [--root <dir>] [--json]   (prints the current session id, or "none")
   memory session start              [--root <dir>] [--id <id>] [--json]   (mints + writes a fresh id)
   memory session end                [--root <dir>] [--json]   (drops .red/memory/sessions/current)
+  memory working append             [--root <dir>] --type <event-type> --value <text> [--json]
+  memory working get                [--root <dir>] [--type <event-type>] [--json]
+  memory working raw                [--root <dir>] [--set <text>] [--json]
   memory learning-debt              [--root <dir>] [--stale-days N] [--json]
   memory learning-debt-viewer       [--root <dir>] [--stale-days N] [--out <file>]
   memory decay                      [--root <dir>] [--stale-days N] [--deprecate-days N] [--limit N] [--json]
@@ -1639,6 +1648,77 @@ async function runSession(args: ParsedArgs): Promise<void> {
       if (entry.detail) console.log(`      ${entry.detail}`);
     }
     for (const action of timeline.recommended_next_actions) console.log(`  next: ${action}`);
+  } finally {
+    await store.close();
+  }
+}
+
+async function runWorking(args: ParsedArgs): Promise<void> {
+  const action = args.positional[0];
+  if (
+    action !== "append" &&
+    action !== "get" &&
+    action !== "raw"
+  ) {
+    throw new Error(
+      "working needs an action — supported: memory working append|get|raw",
+    );
+  }
+  const rootDir = rootOf(args.flags);
+  const { store } = await openGraphStore(args);
+  try {
+    if (action === "append") {
+      const type = stringFlag(args.flags, "type");
+      const value = stringFlag(args.flags, "value");
+      if (!type) throw new Error("working append requires --type <event-type>");
+      if (value == null) throw new Error("working append requires --value <text>");
+      const event = await workingAppendEvent(store, rootDir, { type, value });
+      if (args.flags.json === true) {
+        console.log(JSON.stringify(event, null, 2));
+        return;
+      }
+      console.log(
+        `memory: working append ok — session=${event.session_id} type=${event.type} seq=${event.sequence}`,
+      );
+      return;
+    }
+    if (action === "get") {
+      const type = stringFlag(args.flags, "type");
+      const events = await workingListEvents(store, rootDir, type ? { type } : {});
+      if (args.flags.json === true) {
+        console.log(JSON.stringify({ events }, null, 2));
+        return;
+      }
+      const scope = type ? ` type=${type}` : "";
+      console.log(`memory: working get${scope} — ${events.length} event(s)`);
+      for (const e of events) {
+        console.log(`  #${e.sequence} ${new Date(e.created_at).toISOString()} ${e.type}  ${e.value}`);
+      }
+      return;
+    }
+    // action === "raw"
+    const setVal = stringFlag(args.flags, "set");
+    if (setVal != null) {
+      const result = await workingSetRaw(store, rootDir, setVal);
+      if (args.flags.json === true) {
+        console.log(JSON.stringify(result, null, 2));
+        return;
+      }
+      console.log(
+        `memory: working raw set — session=${result.session_id} bytes=${Buffer.byteLength(result.value, "utf8")}`,
+      );
+      return;
+    }
+    const got = await workingGetRaw(store, rootDir);
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(got, null, 2));
+      return;
+    }
+    if (!got) {
+      console.log("memory: working raw — (none)");
+      return;
+    }
+    console.log(got.value);
   } finally {
     await store.close();
   }
@@ -5685,6 +5765,8 @@ async function main(): Promise<void> {
       return runWorkbench(args);
     case "session":
       return runSession(args);
+    case "working":
+      return runWorking(args);
     case "learning-debt":
       return runLearningDebt(args);
     case "learning-debt-viewer":
