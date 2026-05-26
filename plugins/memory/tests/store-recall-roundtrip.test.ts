@@ -1,6 +1,8 @@
+import { spawnSync } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, test } from "vitest";
 import { initMarkdownOnly } from "../src/init.js";
 import { resolveNotesDir } from "../src/config.js";
@@ -55,5 +57,57 @@ describe("init → store → recall round-trip (markdown-only)", () => {
     const hits = await recall(notes, "database password rotation");
     expect(hits).toHaveLength(1);
     expect(hits[0].excerpt).toContain("password rotates every 90 days");
+  });
+});
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const PLUGIN_ROOT = join(HERE, "..");
+
+function runMemory(args: string[]) {
+  return spawnSync(process.execPath, ["--import", "tsx", "src/cli.ts", ...args], {
+    cwd: PLUGIN_ROOT,
+    encoding: "utf8",
+    timeout: 30_000,
+  });
+}
+
+describe("memory recall --layer (issue #175)", () => {
+  test("`--layer L3` returns the same hits as the default recall (no flag)", async () => {
+    const root = await tempRoot();
+    await initMarkdownOnly(root);
+    const store = runMemory([
+      "store",
+      "--root",
+      root,
+      "the staging database password rotates every 90 days",
+    ]);
+    expect(store.status).toBe(0);
+
+    const defaultRun = runMemory(["recall", "--root", root, "database password rotation"]);
+    const l3Run = runMemory(["recall", "--root", root, "--layer", "L3", "database password rotation"]);
+    expect(defaultRun.status).toBe(0);
+    expect(l3Run.status).toBe(0);
+    expect(l3Run.stdout).toBe(defaultRun.stdout);
+    expect(defaultRun.stdout).toMatch(/password rotates every 90 days/);
+  });
+
+  test("`--layer L1` and `--layer L2` return no hits while L1/L2 storage is not wired up", async () => {
+    const root = await tempRoot();
+    await initMarkdownOnly(root);
+    runMemory(["store", "--root", root, "the staging database password rotates every 90 days"]);
+
+    for (const layer of ["L1", "L2"]) {
+      const run = runMemory(["recall", "--root", root, "--layer", layer, "database password rotation"]);
+      expect(run.status).toBe(0);
+      expect(run.stdout).toContain("no matches");
+    }
+  });
+
+  test("an unknown layer value is rejected at the CLI", async () => {
+    const root = await tempRoot();
+    await initMarkdownOnly(root);
+    const run = runMemory(["recall", "--root", root, "--layer", "L4", "anything"]);
+    expect(run.status).not.toBe(0);
+    expect(run.stderr).toMatch(/invalid memory layer/);
   });
 });
