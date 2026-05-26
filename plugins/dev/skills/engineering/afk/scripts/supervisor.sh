@@ -468,8 +468,31 @@ find_slot_iter_log() {
 # does not have to source afk.sh (which has main-loop side effects).
 # Recursively SIG to the pid and every descendant. Silent on missing
 # pids — best-effort by design.
+#
+# Blast-radius guards (issue #193). The reaper feeds this function a PID
+# read out of SLOT_PIDS[$slot], and recurses through `pgrep -P`. Every
+# input is treated as untrusted: a corrupted bookkeeping entry, a stray
+# negative PID, or `0` would otherwise turn a single `kill` into a
+# pgroup-wide blast that takes the supervisor itself down (the
+# orchestrator inherits the supervisor's pgrp because `nohup` does not
+# `setsid`; `kill -SIG 0` targets the caller's pgrp). The guards refuse:
+#
+#   - empty / non-numeric pid (corrupted SLOT_PIDS, missing var)
+#   - pid <= 1  (0 = caller's pgrp foot-gun; 1 = init)
+#   - pid == SUPERVISOR_PID / $$ / BASHPID  (would trip the cleanup trap
+#     and exit the supervisor cleanly — the exact symptom #193 reported)
+#   - negative pid  (process-group target, never appropriate here)
+#
+# A refused recursion arg is silently skipped — best-effort still holds.
 sup_kill_tree() {
-  local pid="$1" sig="${2:-TERM}"
+  local pid="${1:-}" sig="${2:-TERM}"
+  # Strip leading + and reject anything that is not a positive integer.
+  case "$pid" in
+    ''|*[!0-9]*) return 0 ;;
+  esac
+  (( pid > 1 )) || return 0
+  (( pid == ${SUPERVISOR_PID:-$$} )) && return 0
+  (( pid == BASHPID )) && return 0
   local k
   for k in $(pgrep -P "$pid" 2>/dev/null); do
     sup_kill_tree "$k" "$sig"
@@ -972,13 +995,25 @@ log_applied_detectors_boot_line() {
   fi
 }
 
-trap cleanup SIGTERM SIGINT
-
 # When sourced (e.g. from test harnesses) skip the main loop so unit
 # tests can exercise pure functions without spawning workers or grabbing
 # the singleton lock. Every function above this line is reachable from
 # `source supervisor.sh`.
+#
+# The cleanup trap is intentionally installed *below* the source-guard:
+# sourcing supervisor.sh from a test must not hijack the test shell's
+# SIGTERM handler. The live supervisor still installs the trap normally
+# when run as `bash supervisor.sh …` (the source-guard returns before
+# the trap line, but the main binary keeps reading past it).
 [[ "${BASH_SOURCE[0]}" != "$0" ]] && return 0 2>/dev/null
+
+trap cleanup SIGTERM SIGINT
+
+# Pin the supervisor's PID for sup_kill_tree's blast-radius guard
+# (#193). Tests source supervisor.sh and inherit the guard via the
+# `${SUPERVISOR_PID:-$$}` fallback inside the function — they don't
+# need this assignment because the source-guard returned above.
+SUPERVISOR_PID="$$"
 
 validate_stall_thresholds || exit $?
 

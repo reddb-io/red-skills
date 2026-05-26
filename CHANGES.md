@@ -6,6 +6,15 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 
 ---
 
+## afk (engineering) — sup_kill_tree blast-radius guard keeps supervisor alive across reaps (modified)
+
+- **status**: modified
+- **upstream**: —
+- **why**: Issue #193. #190's hard stall reaper calls `sup_kill_tree` on the orchestrator pid, and in production the supervisor itself died shortly after a reap fired — PID file left behind, slot un-respawned. Root cause: `sup_kill_tree` accepted any value (including `$$`, `0`, negative, non-numeric) and dutifully fanned out `kill`. The orchestrator inherits the supervisor's process group (`nohup` does not `setsid`), so `kill -SIG 0` would target the supervisor's pgrp; a corrupted `SLOT_PIDS[$slot]` pointing at `$$` would trip the supervisor's own `cleanup` SIGTERM trap and exit it cleanly. Both are single-shot foot-guns that take the whole fleet down.
+- **what changed**: `sup_kill_tree` now refuses empty / non-numeric / `<=1` / negative pids, and refuses `$$` / `SUPERVISOR_PID` / `BASHPID` — the guards short-circuit before the recursive `pgrep -P` walk and before the final `kill`. A new `SUPERVISOR_PID` is pinned at boot for the live supervisor; sourced tests fall back to `$$` inside the function. Moved `trap cleanup SIGTERM SIGINT` to *below* the source-guard so test harnesses don't hijack their own SIGTERM handler when they `source supervisor.sh`. New `scripts/tests/sup-kill-tree.test.sh` (11 assertions) stages a real `supervisor → orch → grandchild` process tree (no stubs) and asserts: (1) `sup_kill_tree $ORCH` reaps the descendant tree, (2) the supervisor PID survives, (3) every guard refuses cleanly without signalling the supervisor. Without the guard the test exits silently rc=0 via the cleanup trap — proof that the production symptom is reproducible at the unit level. Refs #193.
+
+
+
 ## afk (engineering) — pnpm PATH shim wraps test invocations in a hard timeout (modified)
 
 - **status**: modified
