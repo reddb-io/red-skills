@@ -32,6 +32,8 @@ source "$SCRIPT_DIR/lib/envelope.sh"
 source "$SCRIPT_DIR/lib/history.sh"
 # shellcheck source=./lib/pin-reader.sh
 source "$SCRIPT_DIR/lib/pin-reader.sh"
+# shellcheck source=./lib/remote-branch.sh
+source "$SCRIPT_DIR/lib/remote-branch.sh"
 
 MEMORY_BRIDGE_SH="$SKILL_DIR/../../../scripts/memory-bridge.sh"
 if [[ -f "$MEMORY_BRIDGE_SH" ]]; then
@@ -2143,6 +2145,13 @@ process_issue() {
   git -C "$PROJECT_ROOT" fetch origin "$pinned" --quiet
   git -C "$PROJECT_ROOT" worktree add "$worktree" -b "$branch" "origin/$pinned" >/dev/null
 
+  # Continuous remote-branch push (issue #191): mirror the worker branch on
+  # origin from minute zero so any SIGKILL of the orchestrator from here on
+  # preserves the diff without manual recovery. Both calls are best-effort and
+  # always return 0 — afk-attempts/* remains the canonical failure-push net.
+  push_initial "$worktree" "$branch"
+  install_post_commit_hook "$worktree" "$branch"
+
   # Mint a per-worker session id into the worktree's
   # `.red/memory/sessions/current` so working-memory layers (L1/L2) scope
   # themselves to this AFK iteration even when the memory plugin's
@@ -2338,6 +2347,13 @@ process_issue() {
   rm -f "$validation_file"
   gh -R "$(gh_repo)" issue close "$n" --reason completed >/dev/null
   gh -R "$(gh_repo)" issue edit "$n" --remove-label running >/dev/null 2>&1 || true
+
+  # Continuous remote-branch lifecycle (issue #191): the worker branch was
+  # mirrored on origin throughout the iteration; on DONE it's merged into the
+  # pinned base and the live `afk/{wid}/{N}-slug` remote can go. Best-effort:
+  # a failed delete (branch protection, network) logs a warn but does not
+  # block the close path. The afk-attempts/* failure namespace is untouched.
+  delete_remote "$branch"
 
   # cleanup
   git -C "$PROJECT_ROOT" worktree remove "$worktree" --force 2>/dev/null || log "could not remove worktree $worktree"
