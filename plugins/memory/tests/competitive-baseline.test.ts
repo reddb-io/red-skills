@@ -182,6 +182,14 @@ describe("competitive baseline harness (#73)", () => {
     expect(result.stdout).toContain('"live_services": "not-required"');
     expect(result.stdout).toContain("# Memory competitor interop report");
     expect(result.stdout).toContain("No unsupported full-parity claims were asserted.");
-    expect(result.stderr).toBe("");
+    // pnpm v11+ writes harmless "Ignored build scripts" warnings to stderr on first run.
+    // Filter known noise; assert no actual error lines.
+    const stderr = result.stderr ?? "";
+    const meaningfulStderr = stderr
+      .split("\n")
+      .filter((line) => line.trim())
+      .filter((line) => !/Ignored build scripts|approve-builds/i.test(line))
+      .join("\n");
+    expect(meaningfulStderr).toBe("");
   });
 });
