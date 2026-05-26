@@ -1179,6 +1179,15 @@ async function operationStructuredContent(
         confidence: output.confidence,
       };
     }
+    case "memory.federation":
+      return {
+        operation_id: operationId,
+        schema_version: output.schema_version,
+        read_only: output.read_only,
+        query: output.query,
+        roots_queried: output.roots_queried,
+        result_count: arrayLength(output.results),
+      };
     case "memory.path-explain":
       return {
         operation_id: operationId,

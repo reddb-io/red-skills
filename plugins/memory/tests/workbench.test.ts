@@ -150,6 +150,7 @@ describe("Memory workbench", () => {
         "memory.agent_integration_status.v1",
         "memory.session_timeline.v1",
         "memory.reasoning_replay.v1",
+        "memory.federation.v1",
       ],
     });
     expect(artifact.html).toContain("Memory Workbench");
@@ -290,6 +291,8 @@ describe("Memory workbench", () => {
     expect(artifact.html).toContain('id="memory-workbench-data"');
     expect(artifact.html).toContain("Reasoning Replay");
     expect(artifact.html).toContain("No recent reasoning replays yet");
+    expect(artifact.html).toContain("Federation Status");
+    expect(artifact.html).toContain("No federation roots configured");
     expect(artifact.html).not.toContain("<script src=");
   }, TIMEOUT);
 

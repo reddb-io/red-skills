@@ -202,6 +202,7 @@ describe("MCP server over stdio", () => {
           "memory_export",
           "memory_extraction_status",
           "memory_extraction_status_viewer",
+          "memory_federate",
           "memory_governance",
           "memory_governance_viewer",
           "memory_health",

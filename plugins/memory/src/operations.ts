@@ -225,6 +225,10 @@ import {
   type ReasoningReplayReport,
 } from "./reasoning/reasoning-replay.js";
 import {
+  buildFederationReport,
+  type FederationReport,
+} from "./federation.js";
+import {
   buildSessionTimeline,
   type SessionTimeline,
 } from "./session-timeline.js";
@@ -574,6 +578,13 @@ const ReasoningReplayInputSchema = z.object({
 });
 type ReasoningReplayInput = z.infer<typeof ReasoningReplayInputSchema>;
 
+const FederationInputSchema = z.object({
+  query: z.string().min(1),
+  limit: z.number().int().min(1).max(100).optional(),
+  per_root_limit: z.number().int().min(1).max(100).optional(),
+});
+type FederationInput = z.infer<typeof FederationInputSchema>;
+
 const CommunitySummarySchema = z.object({
   id: z.string(),
   count: z.number(),
@@ -674,6 +685,7 @@ const VectorStatusOutputSchema = objectOutputSchema<VectorStatusReport>();
 const VectorStatusViewerOutputSchema = objectOutputSchema<VectorStatusViewerArtifact>();
 const VectorSearchOutputSchema = objectOutputSchema<VectorSearchReport>();
 const ReasoningReplayOutputSchema = objectOutputSchema<ReasoningReplayReport>();
+const FederationOutputSchema = objectOutputSchema<FederationReport>();
 
 const HealthOutputSchema = objectOutputSchema<MemoryHealthReport>();
 const HealthViewerOutputSchema = objectOutputSchema<MemoryHealthViewerArtifact>();
@@ -2585,6 +2597,31 @@ const REASONING_REPLAY_OPERATION: MemoryOperation<
     buildReasoningReplay(ctx.store, input.task, { limit: input.limit }),
 };
 
+const FEDERATION_OPERATION: MemoryOperation<FederationInput, FederationReport> = {
+  id: "memory.federation",
+  title: "Memory federation",
+  description:
+    "Read-only cross-root federation. Reads memory notes from each configured root in .red/memory/federation.yaml and returns merged hits tagged with origin_repo. No privacy policy applied in this slice.",
+  inputSchema: FederationInputSchema,
+  outputSchema: FederationOutputSchema,
+  safetyClass: "read-only",
+  sideEffectClass: "none",
+  capabilities: [],
+  renderer: {
+    cli: { command: "federate", supportsJson: true },
+    mcp: {
+      toolName: "memory_federate",
+      description:
+        "Read-only federation surface. Reads memory notes from every root listed in .red/memory/federation.yaml at the active project root, merges hits, and tags each with origin_repo. Returns an empty report when no config exists. Local roots only in this slice.",
+    },
+  },
+  execute: (ctx, input) =>
+    buildFederationReport(ctx.rootDir ?? process.cwd(), input.query, {
+      limit: input.limit,
+      perRootLimit: input.per_root_limit,
+    }),
+};
+
 const READ_ONLY_OPERATIONS = createReadOnlyMemoryOperationRegistry([
   ASK_OPERATION,
   ASSET_INVENTORY_OPERATION,
@@ -2647,6 +2684,7 @@ const READ_ONLY_OPERATIONS = createReadOnlyMemoryOperationRegistry([
   PRIVACY_OPERATION,
   PROVENANCE_OPERATION,
   REASONING_REPLAY_OPERATION,
+  FEDERATION_OPERATION,
   READINESS_OPERATION,
   READINESS_VIEWER_OPERATION,
   ROUTING_GUIDE_OPERATION,

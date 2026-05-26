@@ -56,6 +56,7 @@ import { buildOnboardingMapViewerArtifact } from "./onboarding-map-viewer.js";
 import { buildSessionTimeline } from "./session-timeline.js";
 import { readSkillRollups } from "./skill-events.js";
 import { buildReasoningReplay } from "./reasoning/reasoning-replay.js";
+import { buildFederationReport } from "./federation.js";
 import { buildMemorySmartSearch } from "./smart-search.js";
 import { buildMemorySmartSearchViewerArtifact } from "./smart-search-viewer.js";
 import { buildVectorSearchReport } from "./vector-search.js";
@@ -176,6 +177,7 @@ const ENDPOINTS = [
   "GET /api/smart-search?query=<text>",
   "GET /api/recall?query=<text>",
   "GET /api/reasoning-replay?task=<text>",
+  "GET /api/federate?query=<text>",
 ];
 
 export function createMemoryHttpServer(opts: MemoryHttpServerOptions): Server {
@@ -912,6 +914,24 @@ async function handleRequest(
     return;
   }
 
+  if (url.pathname === "/api/federate") {
+    const query = url.searchParams.get("query") ?? url.searchParams.get("q") ?? "";
+    if (!query.trim()) {
+      sendJson(res, 400, { error: "query is required" });
+      return;
+    }
+    sendJson(
+      res,
+      200,
+      await buildFederationReport(opts.rootDir, query, {
+        limit: numberParam(url.searchParams.get("limit")),
+        perRootLimit: numberParam(url.searchParams.get("per_root_limit")),
+        now: opts.now,
+      }),
+    );
+    return;
+  }
+
   if (url.pathname === "/api/reasoning-replay") {
     const task = url.searchParams.get("task") ?? url.searchParams.get("query") ?? "";
     if (!task.trim()) {
@@ -1485,6 +1505,13 @@ function openApiDocument(opts: MemoryHttpServerOptions): MemoryOpenApiDocument {
           summary: "Memory smart search",
           parameters: [queryParam, limitParam],
           responses: { "200": jsonResponse("Smart search result") },
+        },
+      },
+      "/api/federate": {
+        get: {
+          summary: "Federation cross-root read",
+          parameters: [queryParam, limitParam],
+          responses: { "200": jsonResponse("Federation result") },
         },
       },
       "/api/reasoning-replay": {
