@@ -1,1 +1,8 @@
 {"duration_ms":1656,"identity":"","kind":"internal","sql":"CREATE TABLE IF NOT EXISTS memory_events (id TEXT, occurred_at TEXT, event_kind TEXT, source JSON, actor JSON, scope JSON, subject JSON, payload JSON, provenance JSON) APPEND ONLY","tenant":"","ts_ms":1779701001173}
+{"duration_ms":1115,"identity":"","kind":"select","sql":"KV GET memory_kv.'vector:local:memory_nodes:8561'","tenant":"","ts_ms":1779801378830}
+{"duration_ms":1117,"identity":"","kind":"select","sql":"KV GET memory_kv.'vector:local:memory_nodes:335'","tenant":"","ts_ms":1779801617074}
+{"duration_ms":1149,"identity":"","kind":"select","sql":"KV GET memory_kv.'vector:local:memory_nodes:1574'","tenant":"","ts_ms":1779801728803}
+{"duration_ms":1305,"identity":"","kind":"select","sql":"KV GET memory_kv.'vector:local:memory_nodes:8621'","tenant":"","ts_ms":1779801741719}
+{"duration_ms":1168,"identity":"","kind":"select","sql":"KV GET memory_kv.'vector:local:memory_nodes:254'","tenant":"","ts_ms":1779801749020}
+{"duration_ms":1016,"identity":"","kind":"select","sql":"KV GET memory_kv.'vector:local:memory_nodes:1476'","tenant":"","ts_ms":1779801750037}
+{"duration_ms":1052,"identity":"","kind":"select","sql":"KV GET memory_kv.'vector:local:memory_nodes:1338'","tenant":"","ts_ms":1779801817937}
