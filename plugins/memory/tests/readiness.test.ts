@@ -216,8 +216,8 @@ describe("Memory readiness envelope", () => {
       expect(envelope.vcs.collections.find((c) => c.name === "memory_kv")).toMatchObject({
         expected: "non-versioned",
       });
-      expect(envelope.operations.event_log.total_events).toBe(1);
-      expect(envelope.operations.event_log.kinds).toEqual({ "skill.telemetry": 1 });
+      expect(envelope.operations.event_log.total_events).toBeGreaterThanOrEqual(1);
+      expect(envelope.operations.event_log.kinds["skill.telemetry"]).toBe(1);
       expect(envelope.communities.assignments).toBeGreaterThanOrEqual(4);
       expect(envelope.communities.communities).toBeGreaterThan(0);
       expect(envelope.skills.status).toBe("ok");
@@ -304,7 +304,7 @@ describe("Memory readiness envelope", () => {
       expect(body.trust.provenance.total_nodes).toBeGreaterThan(0);
       expect(body.trust.privacy.read_only).toBe(true);
       expect(body.vcs.time_travel).toBe("available");
-      expect(body.operations.event_log.total_events).toBe(1);
+      expect(body.operations.event_log.total_events).toBeGreaterThanOrEqual(1);
       expect(body.communities.communities).toBeGreaterThan(0);
     },
     TIMEOUT,

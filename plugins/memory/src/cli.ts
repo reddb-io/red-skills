@@ -151,7 +151,11 @@ import { buildWorkFrontier } from "./work-frontier.js";
 import { buildWorkFrontierViewerArtifact } from "./work-frontier-viewer.js";
 import { buildHookCoverageReport } from "./hook-coverage.js";
 import { buildHookCoverageViewerArtifact } from "./hook-coverage-viewer.js";
-import { buildMemoryHealthReport } from "./memory-health.js";
+import {
+  buildMemoryHealthReport,
+  engineEventHealth,
+  type MemoryHealthReport,
+} from "./memory-health.js";
 import { buildMemoryHealthViewerArtifact } from "./memory-health-viewer.js";
 import { buildMemoryDecayReport } from "./memory-decay.js";
 import { buildMemoryDecayViewerArtifact } from "./memory-decay-viewer.js";
@@ -4156,19 +4160,23 @@ async function healthReport(rootDir: string) {
   const pendingProposalFiles = (await listPendingProposalFiles(rootDir)).length;
   let rollups: SkillRollup[] = [];
   let topProposals: SkillImprovementProposalSummary[] = [];
+  let engineEvents: MemoryHealthReport["engine_events"] | null = null;
 
-  if (telemetryEnabled) {
+  if (graphMode && config) {
     const store = await MemoryStore.open({ uri: resolveStoreUri(rootDir, config) });
     try {
-      rollups = await readSkillRollups(store);
-      const recent = await readRecentSkillEvents(store, 50);
-      const curated = curateSkills(rollupsToCuratorInput(rollups));
-      topProposals = await buildSkillImprovementProposals(
-        rootDir,
-        curated.recommendations,
-        recent,
-        false,
-      );
+      if (telemetryEnabled) {
+        rollups = await readSkillRollups(store);
+        const recent = await readRecentSkillEvents(store, 50);
+        const curated = curateSkills(rollupsToCuratorInput(rollups));
+        topProposals = await buildSkillImprovementProposals(
+          rootDir,
+          curated.recommendations,
+          recent,
+          false,
+        );
+      }
+      engineEvents = await engineEventHealth(store);
     } finally {
       await store.close();
     }
@@ -4205,6 +4213,7 @@ async function healthReport(rootDir: string) {
     highPriorityProposals,
     pendingProposalFiles,
     topProposals: topProposals.slice(0, 5),
+    engineEvents,
     recommendedNextActions,
   };
 }

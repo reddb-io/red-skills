@@ -248,12 +248,13 @@ describe("skill telemetry graph persistence", () => {
 
       await ingestSkillEvents(store, [EVENT]);
 
-      await expect(
-        readMemoryEvents(store, {
+      const eventsInRetention = (
+        await readMemoryEvents(store, {
           retentionMs: 24 * 60 * 60 * 1000,
           now: "2026-05-24T16:00:00.000Z",
-        }),
-      ).resolves.toEqual([]);
+        })
+      ).filter((event) => event.kind === "skill.telemetry");
+      expect(eventsInRetention).toEqual([]);
       await expect(readRecentSkillEvents(store)).resolves.toEqual([
         expect.objectContaining({
           event_type: "result",
@@ -281,7 +282,9 @@ describe("skill telemetry graph persistence", () => {
 
       await ingestSkillEvents(store, [EVENT, EVENT]);
 
-      const events = await readMemoryEvents(store);
+      const events = (await readMemoryEvents(store)).filter(
+        (event) => event.kind === "skill.telemetry",
+      );
       expect(events).toHaveLength(2);
       expect(events).toEqual([
         expect.objectContaining({

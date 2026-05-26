@@ -6,6 +6,7 @@ import {
   type DetectedConflict,
 } from "./conflict-detector.js";
 import { contentHash } from "./hash.js";
+import { appendEngineOpEvent, type EngineOpInput } from "./memory-events.js";
 import {
   COLLECTIONS,
   DEFAULT_EPHEMERAL_TTL_MS,
@@ -261,6 +262,12 @@ export class MemoryStore {
     const existing = await this.findNodeByHash(hash);
     if (existing != null) {
       await this.projectNodeVector(existing, node, false);
+      await this.emitEngineOp({
+        op: "store",
+        outcome: "deduped",
+        layer: props.layer ?? "L3",
+        node_id: existing,
+      });
       return existing;
     }
 
@@ -331,6 +338,12 @@ export class MemoryStore {
     }
     await this.projectNodeVector(rid, { ...node, properties }, false);
     await this.detectAndRecordConflicts(rid, { ...node, properties });
+    await this.emitEngineOp({
+      op: "store",
+      outcome: "created",
+      layer: layer ?? "L3",
+      node_id: rid,
+    });
     return rid;
   }
 
@@ -382,6 +395,16 @@ export class MemoryStore {
     } catch {
       // best-effort — never block the underlying write
     }
+  }
+
+  /**
+   * Best-effort engine-event emitter. Engine ops (store, recall, promote,
+   * evict, conflict-detected) feed `mem.events` for `memory health` aggregates
+   * (issue #181). Failure here never propagates — telemetry degrades, the
+   * engine op does not.
+   */
+  async emitEngineOp(input: EngineOpInput): Promise<void> {
+    await appendEngineOpEvent(this, input);
   }
 
   /** Resolve a content hash to its node rid via the KV dedupe index. */
@@ -547,6 +570,12 @@ export class MemoryStore {
     const map = await this.readSupersededMap();
     map[oldRid] = newRid;
     await this.kv().put(SUPERSEDED_KEY, map);
+    await this.emitEngineOp({
+      op: "conflict-detected",
+      outcome: "succeeded",
+      layer: "L3",
+      node_id: oldRid,
+    });
     return edgeRid;
   }
 

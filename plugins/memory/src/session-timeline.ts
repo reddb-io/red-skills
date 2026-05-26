@@ -71,6 +71,25 @@ export async function buildSessionTimeline(
 
 function toEntry(event: MemoryEvent): SessionTimelineEntry {
   const payload = event.payload;
+  if (payload.event_type === "engine.op") {
+    const detailParts = [
+      payload.layer ? `layer:${payload.layer}` : null,
+      payload.hit_count != null ? `${payload.hit_count} hit(s)` : null,
+      payload.node_id ? `node:${payload.node_id}` : null,
+      payload.query ? `query:${payload.query}` : null,
+    ].filter((part): part is string => Boolean(part));
+    return {
+      id: event.id,
+      occurred_at: event.occurred_at,
+      kind: event.kind,
+      session_id: sessionIdOf(event),
+      actor: actorOf(event),
+      title: `engine.${payload.op}`,
+      detail: detailParts.join("; ") || payload.outcome,
+      outcome: engineOutcome(payload.outcome),
+      source: sourceOf(event),
+    };
+  }
   if (payload.event_type === "hook.lifecycle") {
     const parts = [
       payload.result.stored != null ? `${payload.result.stored} stored` : null,
@@ -103,6 +122,12 @@ function toEntry(event: MemoryEvent): SessionTimelineEntry {
     outcome: skillOutcome(payload.result?.status),
     source: sourceOf(event),
   };
+}
+
+function engineOutcome(outcome: string): SessionTimelineEntry["outcome"] {
+  if (outcome === "failed") return "failed";
+  if (outcome === "miss") return "noop";
+  return "succeeded";
 }
 
 function skillOutcome(status: string | undefined): SessionTimelineEntry["outcome"] {

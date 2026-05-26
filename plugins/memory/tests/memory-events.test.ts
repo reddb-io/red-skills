@@ -5,7 +5,9 @@ import { afterEach, describe, expect, test } from "vitest";
 import { MemoryStore } from "../src/graph-store.js";
 import { initGraph } from "../src/init.js";
 import {
+  appendEngineOpEvent,
   appendMemoryEvent,
+  engineOpToMemoryEvent,
   hookLifecycleToMemoryEvent,
   parseMemoryEvent,
   readMemoryEvents,
@@ -145,6 +147,96 @@ describe("Memory event log", () => {
     },
     TIMEOUT,
   );
+
+  test(
+    "engine ops emit through upsertNode / supersede / recall and surface in mem.events",
+    async () => {
+      const { graphRecallResult } = await import("../src/graph-recall.js");
+      const root = await tempRoot();
+      await initGraph(root);
+      const store = await openStore(root);
+
+      // store (created), then store (deduped via second upsert)
+      const ridA = await store.upsertNode({
+        label: "engine-op-A",
+        node_type: "concept",
+        properties: { title: "engine op A", content: "alpha" },
+      });
+      const ridADup = await store.upsertNode({
+        label: "engine-op-A",
+        node_type: "concept",
+        properties: { title: "engine op A", content: "alpha" },
+      });
+      expect(ridA).toBe(ridADup);
+
+      const ridB = await store.upsertNode({
+        label: "engine-op-B",
+        node_type: "concept",
+        properties: { title: "engine op B", content: "bravo" },
+      });
+
+      // conflict-detected via supersede
+      await store.supersede(ridA, ridB, "newer evidence");
+
+      // recall — hit
+      await graphRecallResult(store, "engine op B");
+
+      const events = await readMemoryEvents(store);
+      const engineEvents = events.filter((e) => e.kind === "engine.op");
+      const ops = engineEvents.map((e) => {
+        const p = e.payload as { op: string; outcome: string };
+        return `${p.op}:${p.outcome}`;
+      });
+      expect(ops).toContain("store:created");
+      expect(ops).toContain("store:deduped");
+      expect(ops).toContain("conflict-detected:succeeded");
+      expect(ops.some((s) => s.startsWith("recall:"))).toBe(true);
+    },
+    TIMEOUT,
+  );
+
+  test("appendEngineOpEvent never throws on engine telemetry failures", async () => {
+    const fakeStore = {
+      raw: {
+        execute: async () => {
+          throw new Error("simulated engine outage");
+        },
+        query: async () => {
+          throw new Error("simulated engine outage");
+        },
+      },
+    } as unknown as MemoryStore;
+
+    await expect(
+      appendEngineOpEvent(fakeStore, { op: "store", outcome: "created", layer: "L3" }),
+    ).resolves.toBeUndefined();
+  });
+
+  test("engineOpToMemoryEvent serializes the issue #181 fields", () => {
+    const event = engineOpToMemoryEvent({
+      op: "recall",
+      outcome: "hit",
+      layer: "L3",
+      session_id: "session-X",
+      query: "memory layers",
+      hit_count: 3,
+      timestamp: "2026-05-22T18:00:00.000Z",
+      eventId: "engine:recall:1",
+    });
+    expect(event).toMatchObject({
+      id: "engine:recall:1",
+      kind: "engine.op",
+      payload: {
+        event_type: "engine.op",
+        op: "recall",
+        outcome: "hit",
+        layer: "L3",
+        session_id: "session-X",
+        query: "memory layers",
+        hit_count: 3,
+      },
+    });
+  });
 
   test("validates hook lifecycle events without storing raw transcript text", () => {
     const event = hookLifecycleToMemoryEvent(
