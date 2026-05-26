@@ -312,6 +312,18 @@ export const competitiveEvalFixture: CompetitiveEvalFixture = {
         "foundation:hook-backed-agent-integration",
       ],
     },
+    {
+      id: "intelligent-memory-five-surfaces",
+      text: "Memory is intelligent: composed confidence, reasoning-replay, federation, what-if, and autocure each ship as a measured surface (#173).",
+      requiredEvidence: [
+        "dimension:intelligence",
+        "foundation:confidence-scoring",
+        "foundation:reasoning-replay",
+        "foundation:federation",
+        "foundation:whatif",
+        "foundation:autocure",
+      ],
+    },
   ],
 };
 

@@ -169,6 +169,15 @@ function renderCompetitiveEvalViewer(report: CompetitiveEvalV2Report): string {
 }
 
 function dimensionItem(dimension: CompetitiveEvalV2Report["dimensions"][number]): string {
+  const subChecks = dimension.subChecks ?? [];
+  const subChecksHtml = subChecks.length === 0
+    ? ""
+    : `<div class="counts">${subChecks
+        .map(
+          (check) =>
+            `<span class="count ${statusClass(check.status)}" title="${escapeHtml(check.detail)}">${escapeHtml(check.id)}: ${escapeHtml(check.status)}</span>`,
+        )
+        .join("")}</div>`;
   return `<li>
     <div>
       <h3>${escapeHtml(dimension.id)}</h3>
@@ -176,6 +185,7 @@ function dimensionItem(dimension: CompetitiveEvalV2Report["dimensions"][number])
       <div class="counts">
         ${Object.entries(dimension.metrics).map(([key, value]) => `<span class="count">${escapeHtml(key)}=${escapeHtml(String(value))}</span>`).join("")}
       </div>
+      ${subChecksHtml}
       <p class="meta">${dimension.evidence.map((item) => `<code>${escapeHtml(item)}</code>`).join(" ")}</p>
     </div>
     <span class="pill ${statusClass(dimension.status)}">${dimension.score}/${dimension.maxScore} ${escapeHtml(dimension.status)}</span>

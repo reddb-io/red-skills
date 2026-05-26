@@ -534,6 +534,7 @@ claim:
 | `session-lifecycle-comparison` | Memory has native agent session lifecycle integration in the comparison table. | `baseline:memory-lifecycle-beats-agent-memory` |
 | `operator-surface-dashboard` | The competitive eval measures docs, hooks, dashboard, and capability catalog operator surfaces. | `dimension:operator-surface`, `foundation:doc-coverage`, `foundation:hook-coverage`, `foundation:operational-dashboard`, `foundation:capability-catalog` |
 | `multi-agent-integration-status` | The competitive eval measures multi-agent Memory routing and integration status across supported coding agents. | `dimension:multi-agent-integration`, `foundation:routing-guide`, `foundation:agent-integration-status`, `foundation:mcp-agent-tools`, `foundation:hook-backed-agent-integration` |
+| `intelligent-memory-five-surfaces` | Memory is intelligent: composed confidence, reasoning-replay, federation, what-if, and autocure each ship as a measured surface (#173). | `dimension:intelligence`, `foundation:confidence-scoring`, `foundation:reasoning-replay`, `foundation:federation`, `foundation:whatif`, `foundation:autocure` |
 
 The same guard intentionally leaves live-service competitor wins unclaimed
 unless the required live baseline is measured. In particular, the checked-in

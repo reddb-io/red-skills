@@ -1548,71 +1548,66 @@ function competitiveEvalV2Dimensions(
         hook_capable_agents: report.foundationGate.multiAgentIntegration.hookCapableAgents,
       },
     },
-    {
-      id: "intelligence",
-      score:
-        ctx.reasoningReplaySubCheck.status === "pass" &&
-        ctx.federationSubCheck.status === "pass" &&
-        ctx.whatifSubCheck.status === "pass"
-          ? 1
-          : 0,
-      maxScore: 1,
-      status:
-        ctx.reasoningReplaySubCheck.status === "pass" &&
-        ctx.federationSubCheck.status === "pass" &&
-        ctx.whatifSubCheck.status === "pass"
-          ? "pass"
-          : ctx.reasoningReplaySubCheck.status === "fail" ||
-              ctx.federationSubCheck.status === "fail" ||
-              ctx.whatifSubCheck.status === "fail"
-            ? "fail"
-            : "warn",
-      detail:
-        "Composed confidence (memory.confidence.v1) wired into recall/traverse/path-explain/ask (#167); reasoning-replay (memory.reasoning_replay.v1) attaches outcomes + gaps (#169); federation (memory.federation.v1) enforces redact policy at read time (#170); what-if (memory.whatif.v1) predicts pre-action blast radius (#172).",
-      evidence: [
-        "foundation:confidence-scoring",
-        "foundation:reasoning-replay",
-        "foundation:federation",
-        "foundation:whatif",
-      ],
-      metrics: {
-        composer: "confidence-scoring.ts",
-        signals: 4,
-        weights: "provenance=0.30 recency=0.25 supersession=0.25 validation=0.20",
-        reasoning_replay_status: ctx.reasoningReplaySubCheck.status,
-        federation_status: ctx.federationSubCheck.status,
-        whatif_status: ctx.whatifSubCheck.status,
-      },
-      subChecks: [
-        {
-          id: "confidence-scoring",
-          status: "pass",
-          detail:
-            "Pure composer + table tests; CLI/MCP/HTTP op `memory.confidence.v1` exposes per-signal breakdown.",
-        },
-        {
-          id: "reasoning-replay",
-          status: ctx.reasoningReplaySubCheck.status,
-          detail: ctx.reasoningReplaySubCheck.detail,
-        },
-        {
-          id: "federation",
-          status: ctx.federationSubCheck.status,
-          detail: ctx.federationSubCheck.detail,
-        },
-        {
-          id: "whatif",
-          status: ctx.whatifSubCheck.status,
-          detail: ctx.whatifSubCheck.detail,
-        },
-        {
-          id: "autocure",
-          status: evaluateAutocureSubCheck().status,
-          detail: evaluateAutocureSubCheck().detail,
-        },
-      ],
-    },
+    intelligenceDimension(ctx),
   ];
+}
+
+function intelligenceDimension(
+  ctx: CompetitiveEvalV2DimensionContext,
+): CompetitiveEvalV2Dimension {
+  const confidenceScoring = {
+    status: "pass" as const,
+    detail:
+      "Pure composer + table tests; CLI/MCP/HTTP op `memory.confidence.v1` exposes per-signal breakdown.",
+  };
+  const autocure = evaluateAutocureSubCheck();
+  const subChecks = [
+    { id: "confidence-scoring", ...confidenceScoring },
+    {
+      id: "reasoning-replay",
+      status: ctx.reasoningReplaySubCheck.status,
+      detail: ctx.reasoningReplaySubCheck.detail,
+    },
+    {
+      id: "federation",
+      status: ctx.federationSubCheck.status,
+      detail: ctx.federationSubCheck.detail,
+    },
+    {
+      id: "whatif",
+      status: ctx.whatifSubCheck.status,
+      detail: ctx.whatifSubCheck.detail,
+    },
+    { id: "autocure", status: autocure.status, detail: autocure.detail },
+  ];
+  const allPass = subChecks.every((check) => check.status === "pass");
+  const anyFail = subChecks.some((check) => check.status === "fail");
+  return {
+    id: "intelligence",
+    score: allPass ? 1 : 0,
+    maxScore: 1,
+    status: allPass ? "pass" : anyFail ? "fail" : "warn",
+    detail:
+      "Composed confidence (memory.confidence.v1) wired into recall/traverse/path-explain/ask (#167); reasoning-replay (memory.reasoning_replay.v1) attaches outcomes + gaps (#169); federation (memory.federation.v1) enforces redact policy at read time (#170); what-if (memory.whatif.v1) predicts pre-action blast radius (#172); autocure (memory.autocure.v1) composes doctor + decay + supersession (#171); ask composes citations + what_i_dont_know + federation_hits (#173).",
+    evidence: [
+      "foundation:confidence-scoring",
+      "foundation:reasoning-replay",
+      "foundation:federation",
+      "foundation:whatif",
+      "foundation:autocure",
+    ],
+    metrics: {
+      composer: "confidence-scoring.ts",
+      signals: 4,
+      weights: "provenance=0.30 recency=0.25 supersession=0.25 validation=0.20",
+      reasoning_replay_status: ctx.reasoningReplaySubCheck.status,
+      federation_status: ctx.federationSubCheck.status,
+      whatif_status: ctx.whatifSubCheck.status,
+      autocure_status: autocure.status,
+      confidence_scoring_status: confidenceScoring.status,
+    },
+    subChecks,
+  };
 }
 
 async function runReasoningReplaySubCheck(): Promise<{
