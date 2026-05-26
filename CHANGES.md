@@ -6,6 +6,15 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 
 ---
 
+## memory — PromotionEngine (type+dedup gate) + layered triggers (added)
+
+- **status**: added
+- **upstream**: —
+- **why**: Issue #183 (parent PRD #174). L2 working memory (#178) accumulated typed candidates per session but had no mechanism to promote them into the durable L3 graph. Without a promotion path, every decision/fix/why-note died with the session; doctor and supersession (#179) had nothing durable to operate on for new sessions.
+- **what changed**: New `plugins/memory/src/promotion-engine.ts` — pure `(candidates, existing) → (promote, reinforce, skipped)` with a **type gate** (default whitelist `decision`/`fix`/`gotcha`/`validation`/`why_note`/`reasoning`/`solution`/`problem`) and a **dedup gate** (exact-text match, cosine ≥ 0.92 on supplied embeddings, Jaccard ≥ 0.6 on keyword sets — all configurable). No confidence threshold; supersession + doctor handle the long tail. Within one run the engine shadows its own promotions so two near-equivalent candidates collapse to one promote + one reinforce. New `plugins/memory/src/promote.ts` runtime maps L2 working events (`*_candidate` event types → corresponding `NodeType`), runs the engine against L3, then applies decisions: `upsertNode` for promotes, KV reinforcement overlay bump for reinforces (graph collections reject `UPDATE` by rid — ADR 0007, same constraint as the access overlay). Each decision emits one `engine.op` event with `op="promote"` and `outcome="created"|"deduped"` to `memory_events` (slice #181). New `MemoryStore.recordReinforcement(rid)` / `reinforcedCount(rid)` / `reinforcementRecords()` on `graph-store.ts` keyed under `node:reinforce:all`. **Layered triggers**: (1) explicit — `memory promote [--triggered-by ...] [--session ...] [--json]` CLI verb; (2) hook — `Stop` / `PreCompact` flush in `hook-runtime.ts` calls `runPromote({ triggeredBy: "hook" })` after the existing extractor; (3) overflow — `working-memory.appendEvent` fires `runPromote({ triggeredBy: "overflow" })` once a session's sequence crosses `RED_MEMORY_L2_OVERFLOW_THRESHOLD` (default 200). All non-explicit triggers are best-effort and never bubble up. New `plugins/memory/tests/promotion-engine.test.ts` (12 assertions covering no-dup, exact-dup, keyword-near-dup, vector-near-dup, type-filter-rejected, reinforcement-count-increment, batch-internal dedup, type-mismatch, custom promotable set, keyword extraction). New `plugins/memory/tests/promote.test.ts` (4 assertions over promote+event-emission, reinforce-over-double-promote, overflow-backstop, no-session error). Full memory suite: 752 passed / 1 skipped. Refs #183.
+
+---
+
 ## afk (engineering) — periodic orchestrator heartbeat into afk.log keeps silent hangs diagnosable (modified)
 
 - **status**: modified

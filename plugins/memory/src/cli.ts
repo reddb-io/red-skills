@@ -61,6 +61,7 @@ import { buildMemoryExtractionStatus } from "./extraction-status.js";
 import { buildMemoryExtractionStatusViewerArtifact } from "./extraction-status-viewer.js";
 import { formatOutput, parseInput, type RawPayload } from "./hook-adapters.js";
 import { dispatch, type HookEvent, type Runner } from "./hook-runtime.js";
+import { runPromote } from "./promote.js";
 import {
   approveInboxItem,
   inboxItemToProvenance,
@@ -351,6 +352,11 @@ Usage:
 
   Auto-firing hooks (invoked by the plugin manifest, reads payload on stdin):
   memory hook <event> --runner <claude|codex>   [--root <dir>]
+
+  Promotion (PRD #174, issue #183) — run the PromotionEngine for the current
+  session, promoting typed L2 candidates and bumping reinforcement on dedup
+  hits. Emits one promote event per decision.
+  memory promote [--triggered-by explicit|hook|overflow] [--session <id>] [--json] [--root <dir>]
 
 Two storage modes: markdown-only (plain notes, no engine) and graph (a typed
 knowledge graph over a per-project RedDB store). Run \`memory init\` once to pick
@@ -5699,6 +5705,34 @@ async function runAttemptLearnApply(args: ParsedArgs): Promise<void> {
   }
 }
 
+async function runPromoteCmd(args: ParsedArgs): Promise<void> {
+  const rootDir = rootOf(args.flags);
+  const json = Boolean(args.flags.json);
+  const triggeredByFlag = stringFlag(args.flags, "triggered-by");
+  const triggeredBy =
+    triggeredByFlag === "hook" || triggeredByFlag === "overflow"
+      ? triggeredByFlag
+      : "explicit";
+  const { store } = await openGraphStore(args);
+  try {
+    const report = await runPromote(store, rootDir, {
+      triggeredBy,
+      sessionId: stringFlag(args.flags, "session"),
+    });
+    if (json) {
+      console.log(JSON.stringify(report, null, 2));
+      return;
+    }
+    console.log(
+      `memory: promoted=${report.promoted} reinforced=${report.reinforced} skipped=${report.skipped} (session=${report.session_id})`,
+    );
+    for (const rid of report.promoted_rids) console.log(`  +promote rid=${rid}`);
+    for (const rid of report.reinforced_rids) console.log(`  ~reinforce rid=${rid}`);
+  } finally {
+    await store.close();
+  }
+}
+
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   switch (args.command) {
@@ -5881,6 +5915,8 @@ async function main(): Promise<void> {
       return runExport(args);
     case "hook":
       return runHook(args);
+    case "promote":
+      return runPromoteCmd(args);
     case undefined:
     case "help":
     case "--help":

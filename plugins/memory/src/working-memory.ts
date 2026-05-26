@@ -14,10 +14,27 @@
  * `layer-router.ts` header). No new namespace machinery.
  */
 import type { MemoryStore, StoredNode } from "./graph-store.js";
+import { runPromote } from "./promote.js";
 import { current as sessionCurrent } from "./session-manager.js";
 
 export const NO_SESSION_MSG =
   "no session — run `memory session show` or start one";
+
+/**
+ * L2 overflow threshold (issue #183). Once a session's L2 event count crosses
+ * this many entries, the next append triggers a PromotionEngine pass before
+ * eviction can trim the buffer. Configurable via the env var; default keeps
+ * the buffer roomy enough for normal turns but firm enough that a runaway
+ * session can't accumulate forever.
+ */
+export const DEFAULT_L2_OVERFLOW_THRESHOLD = 200;
+
+function l2OverflowThreshold(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env.RED_MEMORY_L2_OVERFLOW_THRESHOLD;
+  if (!raw) return DEFAULT_L2_OVERFLOW_THRESHOLD;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : DEFAULT_L2_OVERFLOW_THRESHOLD;
+}
 
 export interface WorkingEvent {
   rid: number;
@@ -60,6 +77,16 @@ export async function appendEvent(
       created_at,
     },
   });
+  // Overflow backstop (issue #183): once L2 crosses the configured threshold,
+  // drain promotable candidates into L3 before eviction can reap them. Covers
+  // runners (Codex pre-2026-05) that don't have a PreCompact hook to lean on.
+  if (sequence >= l2OverflowThreshold()) {
+    try {
+      await runPromote(store, rootDir, { triggeredBy: "overflow", sessionId: session_id });
+    } catch {
+      // Overflow is a backstop — never let it fail the L2 write that triggered it.
+    }
+  }
   return { rid, session_id, type: input.type, value: input.value, sequence, created_at };
 }
 
