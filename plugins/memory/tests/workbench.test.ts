@@ -150,6 +150,7 @@ describe("Memory workbench", () => {
         "memory.agent_integration_status.v1",
         "memory.session_timeline.v1",
         "memory.reasoning_replay.v1",
+        "memory.whatif.v1",
         "memory.federation.v1",
         "memory.autocure.v1",
       ],

@@ -87,6 +87,7 @@ describe("Memory capability catalog", () => {
         "governance",
         "telemetry",
         "interop",
+        "intelligence",
       ]);
       expect(catalog.capabilities.map((item) => item.id)).toEqual(
         expect.arrayContaining([

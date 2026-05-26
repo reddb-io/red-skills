@@ -16,7 +16,8 @@ export type CapabilityCategory =
   | "code-graph"
   | "governance"
   | "telemetry"
-  | "interop";
+  | "interop"
+  | "intelligence";
 
 export type CapabilityStatus = "ready" | "available" | "degraded" | "not-configured";
 
@@ -120,6 +121,7 @@ const CATEGORY_TITLES: Record<CapabilityCategory, string> = {
   governance: "Governance",
   telemetry: "Telemetry",
   interop: "Interop",
+  intelligence: "Intelligence",
 };
 
 const CATEGORY_ORDER = Object.keys(CATEGORY_TITLES) as CapabilityCategory[];
@@ -593,6 +595,24 @@ function capabilityDefinitions(facts: CapabilityFacts): MemoryCapability[] {
       ],
     }),
     capability({
+      id: "whatif-pre-action-blast-radius",
+      title: "What-if pre-action blast radius",
+      category: "intelligence",
+      status: "available",
+      red_db_backed: true,
+      cli: ["memory whatif --change \"<descriptor>\" [--change \"<descriptor>\" ...] [--limit N] [--json]"],
+      mcp: ["memory_whatif"],
+      evidence: [
+        "dimension:intelligence",
+        "foundation:structural-impact",
+        "foundation:reasoning-replay",
+      ],
+      competitor_relevance: ["gbrain", "ai-memory"],
+      notes: [
+        "memory.whatif.v1: composes structural-impact-reader (syntactic blast) with reasoning-replay (semantic blast from similar past attempts). Returns affected files/symbols/tests, historical_attempts, breakage_likelihood [0,1], and self_confidence [0,1].",
+      ],
+    }),
+    capability({
       id: "reasoning-replay",
       title: "Reasoning replay over past attempts",
       category: "retrieval",
@@ -706,6 +726,7 @@ function summarize(capabilities: MemoryCapability[]): MemoryCapabilityCatalog["s
     governance: 0,
     telemetry: 0,
     interop: 0,
+    intelligence: 0,
   } satisfies Record<CapabilityCategory, number>;
   for (const item of capabilities) categories[item.category]++;
   return {

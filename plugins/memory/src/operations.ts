@@ -255,6 +255,11 @@ import {
   type StructuralImpact,
 } from "./structural-impact-reader.js";
 import {
+  buildWhatifReport,
+  type WhatifChange,
+  type WhatifReport,
+} from "./whatif.js";
+import {
   buildStructuralImpactViewerArtifact,
   type StructuralImpactViewerArtifact,
 } from "./structural-impact-viewer.js";
@@ -578,6 +583,24 @@ const ReasoningReplayInputSchema = z.object({
 });
 type ReasoningReplayInput = z.infer<typeof ReasoningReplayInputSchema>;
 
+const WhatifChangeSchema = z.object({
+  kind: z.enum(["rename", "delete", "edit"]),
+  file: z.string().min(1).optional(),
+  symbol: z.string().min(1).optional(),
+  with: z.string().min(1).optional(),
+  description: z.string().min(1).optional(),
+}) satisfies z.ZodType<WhatifChange>;
+
+const WhatifInputSchema = z
+  .object({
+    changes: z.array(WhatifChangeSchema).min(1),
+    limit: z.number().int().min(1).max(50).optional(),
+  })
+  .refine((input) => input.changes.every((c) => c.file || c.symbol || c.description), {
+    message: "every change needs at least file, symbol, or description",
+  });
+type WhatifInput = z.infer<typeof WhatifInputSchema>;
+
 const FederationInputSchema = z.object({
   query: z.string().min(1),
   limit: z.number().int().min(1).max(100).optional(),
@@ -686,6 +709,7 @@ const VectorStatusViewerOutputSchema = objectOutputSchema<VectorStatusViewerArti
 const VectorSearchOutputSchema = objectOutputSchema<VectorSearchReport>();
 const ReasoningReplayOutputSchema = objectOutputSchema<ReasoningReplayReport>();
 const FederationOutputSchema = objectOutputSchema<FederationReport>();
+const WhatifOutputSchema = objectOutputSchema<WhatifReport>();
 
 const HealthOutputSchema = objectOutputSchema<MemoryHealthReport>();
 const HealthViewerOutputSchema = objectOutputSchema<MemoryHealthViewerArtifact>();
@@ -2597,6 +2621,28 @@ const REASONING_REPLAY_OPERATION: MemoryOperation<
     buildReasoningReplay(ctx.store, input.task, { limit: input.limit }),
 };
 
+const WHATIF_OPERATION: MemoryOperation<WhatifInput, WhatifReport> = {
+  id: "memory.whatif",
+  title: "Memory what-if (pre-action blast radius)",
+  description:
+    "Read-only pre-action blast-radius prediction. Composes structural-impact-reader and reasoning-replay to return affected files, symbols, tests, historical similar attempts, a composite breakage_likelihood, and a self_confidence score.",
+  inputSchema: WhatifInputSchema,
+  outputSchema: WhatifOutputSchema,
+  safetyClass: "read-only",
+  sideEffectClass: "none",
+  capabilities: ["graph-store"],
+  renderer: {
+    cli: { command: "whatif", supportsJson: true },
+    mcp: {
+      toolName: "memory_whatif",
+      description:
+        "Read-only what-if surface (memory.whatif.v1). Accepts a list of proposed changes (rename/delete/edit, each with file/symbol/with/description) and returns predicted blast radius: affected.files, affected.symbols, affected.tests, historical_attempts from reasoning-replay, breakage_likelihood in [0,1], and self_confidence in [0,1]. Never mutates state.",
+    },
+  },
+  execute: (ctx, input) =>
+    buildWhatifReport(ctx.store, input.changes, { limit: input.limit }),
+};
+
 const FEDERATION_OPERATION: MemoryOperation<FederationInput, FederationReport> = {
   id: "memory.federation",
   title: "Memory federation",
@@ -2684,6 +2730,7 @@ const READ_ONLY_OPERATIONS = createReadOnlyMemoryOperationRegistry([
   PRIVACY_OPERATION,
   PROVENANCE_OPERATION,
   REASONING_REPLAY_OPERATION,
+  WHATIF_OPERATION,
   FEDERATION_OPERATION,
   READINESS_OPERATION,
   READINESS_VIEWER_OPERATION,
