@@ -54,6 +54,12 @@ import {
   buildFederationReport,
   type FederationReport,
 } from "./federation.js";
+import {
+  readAutoCureRunLog,
+  runAutoCure,
+  type AutoCureReport,
+  type AutoCureRunLog,
+} from "./auto-curation.js";
 import { buildMemoryRoutingGuide, type MemoryRoutingGuide } from "./routing-guide.js";
 import { buildSessionTimeline, type SessionTimeline } from "./session-timeline.js";
 import { readSkillRollups } from "./skill-events.js";
@@ -81,6 +87,8 @@ export interface MemoryWorkbench {
   session_timeline: SessionTimeline;
   reasoning_replay: ReasoningReplayReport;
   federation: FederationReport;
+  autocure: AutoCureReport;
+  autocure_runs: AutoCureRunLog;
 }
 
 export interface MemoryWorkbenchArtifact {
@@ -106,6 +114,7 @@ export interface MemoryWorkbenchArtifact {
       "memory.session_timeline.v1",
       "memory.reasoning_replay.v1",
       "memory.federation.v1",
+      "memory.autocure.v1",
     ];
   };
   workbench: MemoryWorkbench;
@@ -136,6 +145,8 @@ export async function buildMemoryWorkbench(
     sessionTimeline,
     reasoningReplay,
     federation,
+    autocure,
+    autocureRuns,
   ] = await Promise.all([
     buildMemoryOperationalDashboard(store, rootDir, {
       staleDays: opts.staleDays,
@@ -172,6 +183,8 @@ export async function buildMemoryWorkbench(
     }),
     buildReasoningReplay(store, "memory", { limit: 5, now: opts.now }),
     buildFederationReport(rootDir, "memory", { limit: 5, now: opts.now }),
+    runAutoCure(store, { apply: false, staleDays: opts.staleDays, now: opts.now }),
+    readAutoCureRunLog(store),
   ]);
   return {
     schema_version: "memory.workbench.v1",
@@ -196,6 +209,8 @@ export async function buildMemoryWorkbench(
     session_timeline: sessionTimeline,
     reasoning_replay: reasoningReplay,
     federation,
+    autocure,
+    autocure_runs: autocureRuns,
   };
 }
 
@@ -225,6 +240,7 @@ export function buildMemoryWorkbenchArtifact(
         "memory.session_timeline.v1",
         "memory.reasoning_replay.v1",
         "memory.federation.v1",
+        "memory.autocure.v1",
       ],
     },
     workbench,
@@ -443,6 +459,7 @@ function renderWorkbench(workbench: MemoryWorkbench): string {
         ${timelineSection(workbench)}
         ${reasoningReplaySection(workbench)}
         ${federationStatusSection(workbench)}
+        ${autocureHealthSection(workbench)}
         ${actionsSection(workbench)}
       </div>
     </div>
@@ -895,6 +912,28 @@ function outcomeClass(outcome: string): string {
   if (outcome === "blocked") return "bad";
   if (outcome === "no-sentinel") return "warn";
   return "warn";
+}
+
+function autocureHealthSection(workbench: MemoryWorkbench): string {
+  const autocure = workbench.autocure;
+  const runs = workbench.autocure_runs.entries;
+  const recent = runs.slice(-5).reverse();
+  const trend = recent
+    .map(
+      (entry) =>
+        `<li><span class="pill ${entry.dry_run ? "warn" : "ok"}">${entry.dry_run ? "dry-run" : "apply"}</span> ${escapeHtml(entry.generated_at)} — entropy ${entry.entropy_before} → ${entry.entropy_after}, proposed=${entry.proposed} applied=${entry.applied} skipped_claim_guarded=${entry.skipped_claim_guarded}</li>`,
+    )
+    .join("");
+  return `<section>
+    <h2>Autocure Health</h2>
+    <p class="meta">Opt-in auto-curation (issue #171). Dry-run by default; <code>POST /api/autocure</code> mutates. Claim-guarded nodes (<code>properties.claim_guard</code>) never appear in <code>actions_applied</code>.</p>
+    <p class="meta">Current entropy ${autocure.entropy_before} (nodes=${autocure.totals.nodes}, edges=${autocure.totals.edges}, claim_guarded=${autocure.totals.claim_guarded}); ${autocure.actions_proposed.length} action(s) proposed.</p>
+    ${
+      recent.length === 0
+        ? `<p class="empty">No recent autocure runs yet — call <code>memory autocure</code> to populate the trend.</p>`
+        : `<ul>${trend}</ul>`
+    }
+  </section>`;
 }
 
 function actionsSection(workbench: MemoryWorkbench): string {

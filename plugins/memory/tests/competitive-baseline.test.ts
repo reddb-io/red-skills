@@ -184,11 +184,16 @@ describe("competitive baseline harness (#73)", () => {
     expect(result.stdout).toContain("No unsupported full-parity claims were asserted.");
     // pnpm v11+ writes harmless "Ignored build scripts" warnings to stderr on first run.
     // Filter known noise; assert no actual error lines.
-    const stderr = result.stderr ?? "";
+    const stderr = String(result.stderr ?? "");
     const meaningfulStderr = stderr
       .split("\n")
-      .filter((line) => line.trim())
-      .filter((line) => !/Ignored build scripts|approve-builds/i.test(line))
+      .filter((line: string) => line.trim())
+      .filter(
+        (line: string) =>
+          !/^\$ |^>|Ignored build scripts|approve-builds|"pnpm" field in package\.json|Already up to date|Done in /i.test(
+            line,
+          ),
+      )
       .join("\n");
     expect(meaningfulStderr).toBe("");
   });

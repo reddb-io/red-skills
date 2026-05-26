@@ -25,6 +25,7 @@ import {
 import { z } from "zod";
 import { readConfig, resolveStoreUri } from "./config.js";
 import { diagnose } from "./doctor.js";
+import { runAutoCure } from "./auto-curation.js";
 import { neighbors, path, recall, search, traverse } from "./engine.js";
 import { exportGraph } from "./export.js";
 import { MemoryStore, factToNode } from "./graph-store.js";
@@ -143,6 +144,11 @@ const ExportInput = z.object({
 
 const DoctorInput = z.object({
   stale_days: z.number().int().min(1).default(90),
+});
+
+const AutocureInput = z.object({
+  apply: z.boolean().default(false),
+  stale_days: z.number().int().min(1).optional(),
 });
 
 // ---------- server ----------
@@ -310,6 +316,21 @@ async function main(): Promise<void> {
           edge_rid: edgeRid,
         });
       }
+      case "memory_autocure": {
+        const input = AutocureInput.parse(args);
+        const report = await runAutoCure(store, {
+          apply: input.apply,
+          staleDays: input.stale_days,
+        });
+        return text(JSON.stringify(report, null, 2), {
+          dry_run: report.dry_run,
+          proposed: report.actions_proposed.length,
+          applied: report.actions_applied.length,
+          skipped_claim_guarded: report.skipped_claim_guarded.length,
+          entropy_before: report.entropy_before,
+          entropy_after: report.entropy_after,
+        });
+      }
       default:
         throw new Error(`unknown tool: ${name}`);
     }
@@ -437,6 +458,12 @@ const MANUAL_TOOLS = [
     description:
       "MUTATING: mark a node as superseded by a newer one. Recall hides the old node behind its successor by default.",
     inputSchema: zodToSchema(SupersedeInput),
+  },
+  {
+    name: "memory_autocure",
+    description:
+      "Opt-in auto-curation orchestrator (memory.autocure.v1). Default is dry-run: returns proposed actions and entropy_before/entropy_after with no mutation. Pass apply=true to execute proposals; claim-guarded nodes (properties.claim_guard === true) are never mutated and surface in skipped_claim_guarded.",
+    inputSchema: zodToSchema(AutocureInput),
   },
 ];
 

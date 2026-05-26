@@ -151,6 +151,7 @@ describe("Memory workbench", () => {
         "memory.session_timeline.v1",
         "memory.reasoning_replay.v1",
         "memory.federation.v1",
+        "memory.autocure.v1",
       ],
     });
     expect(artifact.html).toContain("Memory Workbench");
@@ -293,6 +294,7 @@ describe("Memory workbench", () => {
     expect(artifact.html).toContain("No recent reasoning replays yet");
     expect(artifact.html).toContain("Federation Status");
     expect(artifact.html).toContain("No federation roots configured");
+    expect(artifact.html).toContain("Autocure Health");
     expect(artifact.html).not.toContain("<script src=");
   }, TIMEOUT);
 

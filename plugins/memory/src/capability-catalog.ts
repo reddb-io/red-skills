@@ -242,6 +242,22 @@ function capabilityDefinitions(facts: CapabilityFacts): MemoryCapability[] {
       ],
     }),
     capability({
+      id: "autocure",
+      title: "Auto-curation orchestrator (opt-in)",
+      category: "governance",
+      status: "available",
+      red_db_backed: true,
+      cli: ["memory autocure [--apply] [--stale-days N] [--json]"],
+      mcp: ["memory_autocure"],
+      evidence: ["dimension:intelligence", "foundation:autocure"],
+      competitor_relevance: ["agentmemory", "ai-memory"],
+      notes: [
+        "memory.autocure.v1 composes doctor + decay + supersession into one pass: dedupe-supersede, supersede-contradiction, expire-stale, promote-edge, archive-untouched.",
+        "Dry-run by default; --apply mutates. Claim-guarded nodes (properties.claim_guard === true) are never mutated and surface in skipped_claim_guarded.",
+        "Each run stamps entropy_before/entropy_after; recent runs persist in KV and surface in the workbench Autocure Health panel.",
+      ],
+    }),
+    capability({
       id: "confidence-scoring",
       title: "Composed confidence scoring",
       category: "governance",

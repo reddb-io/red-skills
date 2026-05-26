@@ -167,6 +167,7 @@ describe("MCP server over stdio", () => {
           "memory_asset_inventory_viewer",
           "memory_agent_integration_status",
           "memory_agent_integration_status_viewer",
+          "memory_autocure",
           "memory_capability_catalog",
           "memory_claim_check",
           "memory_conflicts",

@@ -57,6 +57,7 @@ import { buildSessionTimeline } from "./session-timeline.js";
 import { readSkillRollups } from "./skill-events.js";
 import { buildReasoningReplay } from "./reasoning/reasoning-replay.js";
 import { buildFederationReport } from "./federation.js";
+import { runAutoCure, readAutoCureRunLog } from "./auto-curation.js";
 import { buildMemorySmartSearch } from "./smart-search.js";
 import { buildMemorySmartSearchViewerArtifact } from "./smart-search-viewer.js";
 import { buildVectorSearchReport } from "./vector-search.js";
@@ -178,6 +179,7 @@ const ENDPOINTS = [
   "GET /api/recall?query=<text>",
   "GET /api/reasoning-replay?task=<text>",
   "GET /api/federate?query=<text>",
+  "GET /api/autocure (dry-run) | POST /api/autocure (apply)",
 ];
 
 export function createMemoryHttpServer(opts: MemoryHttpServerOptions): Server {
@@ -196,14 +198,32 @@ async function handleRequest(
   res: ServerResponse,
   opts: MemoryHttpServerOptions,
 ): Promise<void> {
-  if (req.method !== "GET" && req.method !== "HEAD") {
+  const url = new URL(req.url ?? "/", "http://127.0.0.1");
+  const isAutocurePost = req.method === "POST" && url.pathname === "/api/autocure";
+  if (req.method !== "GET" && req.method !== "HEAD" && !isAutocurePost) {
     sendJson(res, 405, { error: "method not allowed" });
     return;
   }
 
-  const url = new URL(req.url ?? "/", "http://127.0.0.1");
   if (!publicEndpoint(url.pathname) && !authorized(req, opts.token)) {
     sendJson(res, 401, { error: "unauthorized" });
+    return;
+  }
+
+  if (url.pathname === "/api/autocure") {
+    const apply = isAutocurePost || url.searchParams.get("apply") === "true";
+    const report = await runAutoCure(opts.store, {
+      apply,
+      staleDays: numberParam(url.searchParams.get("stale_days")),
+      now: opts.now,
+    });
+    sendJson(res, 200, report);
+    return;
+  }
+
+  if (url.pathname === "/api/autocure/runs") {
+    const log = await readAutoCureRunLog(opts.store);
+    sendJson(res, 200, log);
     return;
   }
 

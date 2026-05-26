@@ -145,6 +145,7 @@ import { buildMemoryDecayReport } from "./memory-decay.js";
 import { buildMemoryDecayViewerArtifact } from "./memory-decay-viewer.js";
 import { recall } from "./recall.js";
 import { buildFederationReport } from "./federation.js";
+import { runAutoCure } from "./auto-curation.js";
 import { buildReasoningReplay } from "./reasoning/reasoning-replay.js";
 import { buildMemorySmartSearch } from "./smart-search.js";
 import { buildMemorySmartSearchViewerArtifact } from "./smart-search-viewer.js";
@@ -206,6 +207,7 @@ Usage:
   memory classify <candidate...>    [--root <dir>] [--json]
   memory recall <query...>          [--root <dir>] [--limit N] [--include-superseded] [--scope ...] [--scope-id ID] [--include-narrower-scopes] [--as-of <reddb-ref>]
   memory federate                   [--root <dir>] --query "<topic>" [--limit N] [--per-root-limit N] [--json]
+  memory autocure                   [--root <dir>] [--apply] [--stale-days N] [--json]
   memory smart-search <query...>    [--root <dir>] [--limit N] [--depth N] [--json]
   memory smart-search-viewer <query...> [--root <dir>] [--limit N] [--depth N] [--out <file>]
   memory context-pack <goal...>     [--root <dir>] [--budget N] [--limit N] [--json] [--scope ...] [--scope-id ID] [--include-narrower-scopes]
@@ -846,6 +848,51 @@ async function runFederate(args: ParsedArgs): Promise<void> {
   for (const result of report.results) {
     console.log(`  [${result.score}] @${result.origin_repo} ${result.id}`);
     console.log(`        ${result.excerpt}`);
+  }
+}
+
+async function runAutocure(args: ParsedArgs): Promise<void> {
+  const apply = args.flags.apply === true;
+  const { store } = await openGraphStore(args);
+  try {
+    const report = await runAutoCure(store, {
+      apply,
+      staleDays: intFlag(args.flags, "stale-days"),
+    });
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(report, null, 2));
+      return;
+    }
+    const mode = report.dry_run ? "dry-run" : "apply";
+    console.log(
+      `memory autocure (${mode}): ${report.actions_proposed.length} proposed, ${report.actions_applied.length} applied, ${report.skipped_claim_guarded.length} skipped (claim-guarded)`,
+    );
+    console.log(
+      `  entropy: ${report.entropy_before} -> ${report.entropy_after} (nodes=${report.totals.nodes}, edges=${report.totals.edges}, claim_guarded=${report.totals.claim_guarded})`,
+    );
+    for (const [kind, counts] of Object.entries(report.by_kind)) {
+      if (counts.proposed === 0 && counts.applied === 0) continue;
+      console.log(`  ${kind}: proposed=${counts.proposed} applied=${counts.applied}`);
+    }
+    for (const action of report.actions_proposed.slice(0, 10)) {
+      const target = `${action.target.node_type}:${action.target.label}#${action.target.rid}`;
+      const peer = action.with
+        ? ` -> ${action.with.node_type}:${action.with.label}#${action.with.rid}`
+        : "";
+      console.log(`  [${action.kind}] ${target}${peer}`);
+      console.log(`        ${action.reason}`);
+    }
+    if (report.skipped_claim_guarded.length > 0) {
+      console.log("  claim-guarded (skipped):");
+      for (const action of report.skipped_claim_guarded.slice(0, 10)) {
+        console.log(`    ${action.kind} on #${action.target.rid}`);
+      }
+    }
+    if (report.dry_run) {
+      console.log("\nRe-run with --apply to mutate (claim-guarded nodes still skipped).");
+    }
+  } finally {
+    await store.close();
   }
 }
 
@@ -5427,6 +5474,8 @@ async function main(): Promise<void> {
       return runReasoningReplay(args);
     case "federate":
       return runFederate(args);
+    case "autocure":
+      return runAutocure(args);
     case "smart-search-viewer":
       return runSmartSearchViewer(args);
     case "context-pack":
