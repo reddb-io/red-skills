@@ -410,8 +410,8 @@ When `/afk` is invoked **to spawn a worker** (i.e., not the `monitor` subcommand
 
 1. Fetch `CronCreate` and `CronList` via `ToolSearch` if not already loaded (they are deferred tools).
 2. `CronList` — if any existing job has `prompt == "/dev:afk monitor"`, **skip step 3** (don't double-schedule when the user runs a second parallel `/afk` in the same session).
-3. `CronCreate(cron="*/3 * * * *", prompt="/dev:afk monitor", recurring=true)`. The cron is session-only — it dies when the Claude Code session ends, so no risk of orphans across sessions. Auto-expires after 7 days regardless.
-4. Tell the user **one line**: `monitor loop scheduled (every 3 min) — auto-cancels when all workers exit.`
+3. `CronCreate(cron="*/10 * * * *", prompt="/dev:afk monitor", recurring=true)`. The cron is session-only — it dies when the Claude Code session ends, so no risk of orphans across sessions. Auto-expires after 7 days regardless.
+4. Tell the user **one line**: `monitor loop scheduled (every 10 min) — auto-cancels when all workers exit.`
 
 The monitor invocation handles its own teardown — see *Self-Cancel* under the Monitor section below.
 
@@ -458,7 +458,7 @@ Fleet mode is **runner-portable**: `supervisor.sh` is bash process orchestration
    ```
    Capture the printed PID. Wait up to 3 s for `.red/tmp/afk-supervisor.pid` to exist and contain a live PID (read it back — the supervisor writes its own `$$`, which may differ from the shell-level `$!` if a wrapper is involved). If it never appears, treat as a launch failure: tail `.red/tmp/afk-supervisor.log` for the last error and report it; do not retry.
 4. **Attach the best available monitor surface.**
-   - Claude Code: same flow as *Auto-Monitor Loop* — `CronList` first to deduplicate, then `CronCreate(cron="*/3 * * * *", prompt="/dev:afk monitor", recurring=true)`. If cron tools are unavailable, skip and use the manual-monitor line.
+   - Claude Code: same flow as *Auto-Monitor Loop* — `CronList` first to deduplicate, then `CronCreate(cron="*/10 * * * *", prompt="/dev:afk monitor", recurring=true)`. If cron tools are unavailable, skip and use the manual-monitor line.
    - Codex: fetch a sub-agent spawn primitive via `ToolSearch` (query: `spawn agent background monitor`). If available, spawn exactly one read-only Codex monitor agent for this newly-launched supervisor. Its task: from the project root, periodically run `bash plugins/dev/skills/engineering/afk/scripts/monitor.sh --once`, report concise progress, and auto-close when `.red/tmp/afk-supervisor.pid` is missing/dead and no `[live]` workers remain. It must never edit files, claim issues, stop workers, or run merges. The user may close it manually; workers continue. If the primitive is unavailable, skip and use the manual-monitor line.
    - Bare/unknown: skip native monitor setup and use the manual-monitor line.
 5. **Report back.** Print:
@@ -469,7 +469,7 @@ Fleet mode is **runner-portable**: `supervisor.sh` is bash process orchestration
       <monitor-status-line>
    ```
    Monitor status line choices:
-   - Claude cron scheduled: `monitor loop scheduled (every 3 min) — auto-cancels when all workers exit.`
+   - Claude cron scheduled: `monitor loop scheduled (every 10 min) — auto-cancels when all workers exit.`
    - Claude cron already existed: `monitor loop already running (existing cron <id>).`
    - Codex monitor agent spawned: `Codex monitor agent spawned — auto-closes when fleet exits; manual monitor: /dev:afk monitor.`
    - Native monitor unavailable: `monitor loop unavailable in this runner; run /dev:afk monitor or tail .red/tmp/afk-supervisor.log manually.`
@@ -571,7 +571,7 @@ After rendering the dashboard, the agent must:
    - `CronList` — find every job with `prompt == "/dev:afk monitor"`. There will normally be exactly one; multiples can appear if the user manually invoked `/loop 3m /dev:afk monitor` on top of the auto-loop.
    - `CronDelete` each match.
    - Append one line to the user-facing output: `🛑 no live workers — auto-cancelled monitor loop (cron <id>).`
-3. If `live_workers >= 1`: do nothing. The cron continues firing every 3 minutes.
+3. If `live_workers >= 1`: do nothing. The cron continues firing every 10 minutes.
 
 When `CronList` / `CronDelete` are unavailable (Codex runner, or `/afk monitor` invoked outside Claude Code), skip the teardown silently — the cron infrastructure isn't running there to begin with.
 
