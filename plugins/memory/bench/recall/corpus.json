@@ -1,0 +1,182 @@
+[
+  {
+    "id": "doc-001",
+    "type": "decision",
+    "tags": ["package-manager", "tooling"],
+    "text": "Decision: standardise on pnpm as the package manager for every workspace in the repo. Yarn lockfiles must be removed."
+  },
+  {
+    "id": "doc-002",
+    "type": "fix",
+    "tags": ["package-manager", "ci"],
+    "text": "Fix: CI was failing because the lockfile drifted between npm and pnpm. Resolution: delete package-lock.json and rerun pnpm install in CI."
+  },
+  {
+    "id": "doc-003",
+    "type": "gotcha",
+    "tags": ["package-manager", "hoisting"],
+    "text": "Gotcha: pnpm does not hoist transitive dependencies by default. Code that relied on accidental transitive imports must add direct dependencies."
+  },
+  {
+    "id": "doc-004",
+    "type": "chat",
+    "tags": ["small-talk"],
+    "text": "Morning everyone, hope you all had a good weekend. Coffee is on in the kitchen."
+  },
+  {
+    "id": "doc-005",
+    "type": "decision",
+    "tags": ["auth", "session"],
+    "text": "Decision: session tokens are stored only in HttpOnly Secure SameSite=Lax cookies, never in localStorage."
+  },
+  {
+    "id": "doc-006",
+    "type": "fix",
+    "tags": ["auth", "csrf"],
+    "text": "Fix: the CSRF token check rejected legitimate cross-origin requests from the docs subdomain. Resolution: add docs.example.com to the trusted origin list and require the X-CSRF-Token header for state-changing verbs only."
+  },
+  {
+    "id": "doc-007",
+    "type": "reasoning",
+    "tags": ["auth", "session"],
+    "text": "Reasoning: localStorage is XSS-exfiltratable; HttpOnly cookies are not. Therefore session tokens belong in HttpOnly cookies even though the SPA cannot read them directly."
+  },
+  {
+    "id": "doc-008",
+    "type": "gotcha",
+    "tags": ["auth", "samesite"],
+    "text": "Gotcha: SameSite=Strict cookies are not sent on the first cross-site click that lands on a protected page, so the initial request appears unauthenticated. SameSite=Lax is the working trade-off for login redirects."
+  },
+  {
+    "id": "doc-009",
+    "type": "chat",
+    "tags": ["small-talk"],
+    "text": "Quick reminder: standup is moving to 10:30 starting next Monday. Calendar invites already updated."
+  },
+  {
+    "id": "doc-010",
+    "type": "decision",
+    "tags": ["database", "postgres", "migration"],
+    "text": "Decision: large Postgres migrations must run with statement_timeout disabled in a dedicated migration session, not in the application connection pool."
+  },
+  {
+    "id": "doc-011",
+    "type": "fix",
+    "tags": ["database", "postgres", "deadlock"],
+    "text": "Fix: a deadlock between background vacuum and an online ALTER TABLE caused the migration to hang for 14 minutes. Resolution: pin migrations to run during the autovacuum cool-down window and lock_timeout = '5s' so they bail fast instead of stalling."
+  },
+  {
+    "id": "doc-012",
+    "type": "reasoning",
+    "tags": ["database", "postgres", "indexing"],
+    "text": "Reasoning: building an index on a 50M row table without CONCURRENTLY takes an ACCESS EXCLUSIVE lock and stalls all writers. Therefore every production index migration uses CREATE INDEX CONCURRENTLY and a retry guard against duplicate index failures."
+  },
+  {
+    "id": "doc-013",
+    "type": "gotcha",
+    "tags": ["database", "postgres", "json"],
+    "text": "Gotcha: jsonb_set returns NULL when the target path does not exist unless create_missing is true. Calls that omit create_missing silently drop the write."
+  },
+  {
+    "id": "doc-014",
+    "type": "chat",
+    "tags": ["small-talk"],
+    "text": "Lunch order for the Friday all-hands is going around the channel. Reply with your pick by 4pm Thursday."
+  },
+  {
+    "id": "doc-015",
+    "type": "decision",
+    "tags": ["logging", "observability"],
+    "text": "Decision: backend services use tetis-logger for all logging. Pretty-printed in dev, JSON structured in prod, with automatic error serialization."
+  },
+  {
+    "id": "doc-016",
+    "type": "fix",
+    "tags": ["logging", "secrets"],
+    "text": "Fix: request bodies were being logged in full and leaked Stripe webhook signing secrets into the log aggregator. Resolution: install a redaction serializer on the logger that drops Authorization, X-Webhook-Secret, and any field named 'token' or 'password'."
+  },
+  {
+    "id": "doc-017",
+    "type": "decision",
+    "tags": ["http", "api-versioning"],
+    "text": "Decision: public API versioning lives in the URL path (/v1, /v2). Breaking changes require a new path segment; additive changes stay on the current version."
+  },
+  {
+    "id": "doc-018",
+    "type": "fix",
+    "tags": ["http", "caching"],
+    "text": "Fix: a stale CDN cache served a deleted user's profile for ~12 hours after deletion. Resolution: set Cache-Control: private, no-store on every authenticated profile endpoint and add a purge step to the deletion job."
+  },
+  {
+    "id": "doc-019",
+    "type": "reasoning",
+    "tags": ["http", "rate-limit"],
+    "text": "Reasoning: a global IP-based rate limit punishes shared NATs and CGNAT. Per-account token-bucket limits give the same DDoS protection without false-positives against legitimate office traffic."
+  },
+  {
+    "id": "doc-020",
+    "type": "chat",
+    "tags": ["small-talk"],
+    "text": "Welcome to the new hires joining this sprint — feel free to introduce yourselves in the channel."
+  },
+  {
+    "id": "doc-021",
+    "type": "gotcha",
+    "tags": ["typescript", "build"],
+    "text": "Gotcha: tsc --build with composite projects does not re-emit declaration files when only JSDoc changes. Use tsc --build --force after large doc-only refactors or downstream packages will see stale d.ts."
+  },
+  {
+    "id": "doc-022",
+    "type": "decision",
+    "tags": ["typescript", "config"],
+    "text": "Decision: every package targets ES2022 with module=NodeNext and strict=true. No exceptions; opt-out PRs are rejected at review."
+  },
+  {
+    "id": "doc-023",
+    "type": "fix",
+    "tags": ["docker", "node"],
+    "text": "Fix: the Node container OOM-killed under load because the default --max-old-space-size of 1.5GB was lower than the container memory limit. Resolution: set NODE_OPTIONS=--max-old-space-size=3072 to match the 4GB pod limit with headroom."
+  },
+  {
+    "id": "doc-024",
+    "type": "reasoning",
+    "tags": ["security", "secrets"],
+    "text": "Reasoning: committed .env files leak even after git rm because git history retains them. Therefore the only safe rotation after a leak is to rotate the credential at the provider, not to remove the file from main."
+  },
+  {
+    "id": "doc-025",
+    "type": "chat",
+    "tags": ["small-talk"],
+    "text": "Anyone going to the JS conference next month? Putting together a group rate request."
+  },
+  {
+    "id": "doc-026",
+    "type": "gotcha",
+    "tags": ["http", "compression"],
+    "text": "Gotcha: enabling gzip on responses below ~1KB makes them larger, not smaller, because of the gzip framing overhead. Set a min-length threshold of 1024 bytes."
+  },
+  {
+    "id": "doc-027",
+    "type": "decision",
+    "tags": ["testing", "ci"],
+    "text": "Decision: integration tests must hit a real database, not a mocked one. Reason: a prior migration broke production while mocked tests passed clean."
+  },
+  {
+    "id": "doc-028",
+    "type": "fix",
+    "tags": ["testing", "flake"],
+    "text": "Fix: a flaky e2e test failed once a week because it asserted on Date.now() drift across the test runner and the server. Resolution: freeze the clock with vi.useFakeTimers() inside the test and seed the server with a fixed --now flag."
+  },
+  {
+    "id": "doc-029",
+    "type": "reasoning",
+    "tags": ["concurrency", "queue"],
+    "text": "Reasoning: at-least-once delivery requires idempotent consumers, because the broker will retry on any uncertain ack. Therefore each consumer step persists a processed-idempotency-key before it commits side effects."
+  },
+  {
+    "id": "doc-030",
+    "type": "chat",
+    "tags": ["small-talk"],
+    "text": "Anyone have a recommendation for a good mechanical keyboard for long coding sessions?"
+  }
+]

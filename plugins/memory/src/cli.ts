@@ -62,6 +62,7 @@ import { buildMemoryExtractionStatusViewerArtifact } from "./extraction-status-v
 import { formatOutput, parseInput, type RawPayload } from "./hook-adapters.js";
 import { dispatch, type HookEvent, type Runner } from "./hook-runtime.js";
 import { importAmsDump } from "./import-ams.js";
+import { formatMarkdownReport, runBenchRecall } from "./bench-recall.js";
 import { runPromote } from "./promote.js";
 import {
   approveInboxItem,
@@ -362,6 +363,13 @@ Usage:
   AMS migration (PRD #174, issue #184) — one-shot offline importer for Redis
   agent-memory-server JSON dumps. See \`docs/migrating-from-ams.md\`.
   memory import ams <dump.json>     [--root <dir>] [--json]
+
+  Recall-quality bench (PRD #174, issue #185) — runs the checked-in labeled
+  corpus through our RRF recall and a pure-vector AMS reference, reporting
+  precision@k and recall@k at k ∈ {1, 5, 10}. Fully in-process and
+  deterministic. See \`bench/recall/README.md\`.
+  memory bench recall              [--root <dir>] [--corpus <dir>] [--k 1,5,10]
+                                   [--out <file>] [--report <file>] [--json]
 
 Two storage modes: markdown-only (plain notes, no engine) and graph (a typed
 knowledge graph over a per-project RedDB store). Run \`memory init\` once to pick
@@ -5738,6 +5746,56 @@ async function runImport(args: ParsedArgs): Promise<void> {
   }
 }
 
+async function runBench(args: ParsedArgs): Promise<void> {
+  const sub = args.positional[0];
+  if (sub !== "recall") {
+    throw new Error(`usage: memory bench recall [--corpus <dir>] [--k 1,5,10] [--out <file>] [--report <file>] [--json]`);
+  }
+  const rootDir = rootOf(args.flags);
+  const corpusDir =
+    stringFlag(args.flags, "corpus") ?? join(rootDir, "plugins/memory/bench/recall");
+  const kRaw = stringFlag(args.flags, "k");
+  const kValues = kRaw
+    ? kRaw
+        .split(",")
+        .map((s) => Number(s.trim()))
+        .filter((n) => Number.isFinite(n) && n > 0)
+    : undefined;
+  if (kRaw && (!kValues || kValues.length === 0)) {
+    throw new Error(`memory bench recall: --k must be a comma-separated list of positive integers`);
+  }
+  const report = await runBenchRecall({ corpusDir, kValues });
+  const outPath = stringFlag(args.flags, "out");
+  const reportPath = stringFlag(args.flags, "report");
+  if (outPath) {
+    await mkdir(dirname(outPath), { recursive: true });
+    await writeFile(outPath, `${JSON.stringify(report, null, 2)}\n`);
+  }
+  if (reportPath) {
+    await mkdir(dirname(reportPath), { recursive: true });
+    await writeFile(reportPath, formatMarkdownReport(report));
+  }
+  if (args.flags.json === true) {
+    console.log(JSON.stringify(report, null, 2));
+    return;
+  }
+  const ks = report.k_values;
+  console.log(
+    `memory bench recall: corpus=${report.corpus_size} queries=${report.query_count} k=${ks.join(",")}`,
+  );
+  for (const k of ks) {
+    const op = report.aggregate.ours.precision_at_k[String(k)] ?? 0;
+    const or = report.aggregate.ours.recall_at_k[String(k)] ?? 0;
+    const ap = report.aggregate.ams_reference.precision_at_k[String(k)] ?? 0;
+    const ar = report.aggregate.ams_reference.recall_at_k[String(k)] ?? 0;
+    console.log(
+      `  k=${k}  ours P=${op.toFixed(3)} R=${or.toFixed(3)}  ams P=${ap.toFixed(3)} R=${ar.toFixed(3)}`,
+    );
+  }
+  if (outPath) console.log(`  json written ${outPath}`);
+  if (reportPath) console.log(`  report written ${reportPath}`);
+}
+
 async function runPromoteCmd(args: ParsedArgs): Promise<void> {
   const rootDir = rootOf(args.flags);
   const json = Boolean(args.flags.json);
@@ -5952,6 +6010,8 @@ async function main(): Promise<void> {
       return runImport(args);
     case "promote":
       return runPromoteCmd(args);
+    case "bench":
+      return runBench(args);
     case undefined:
     case "help":
     case "--help":
