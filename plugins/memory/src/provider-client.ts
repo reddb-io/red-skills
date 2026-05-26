@@ -1,5 +1,11 @@
 import type { MemoryStore } from "./graph-store.js";
-import type { ProviderClient, ProviderRequest, ResolvedProvider } from "./extract-conversation.js";
+import type {
+  AiProviderConfig,
+  ProviderClient,
+  ProviderRequest,
+  ResolvedProvider,
+} from "./extract-conversation.js";
+import { ProviderBridge } from "./provider-bridge.js";
 
 /**
  * Production `ProviderClient` — routes a completion through RedDB's engine-side
@@ -14,15 +20,21 @@ import type { ProviderClient, ProviderRequest, ResolvedProvider } from "./extrac
  * provider configured; without one, `ASK` degrades and extraction yields no
  * facts, exactly like the rest of the LLM surface (see `engine.ask`).
  */
-export function redDbProviderClient(store: MemoryStore): ProviderClient {
+export function redDbProviderClient(
+  store: MemoryStore,
+  config?: AiProviderConfig,
+): ProviderClient {
+  const bridge = new ProviderBridge(store, { config });
   return {
     async complete(req: ProviderRequest): Promise<string> {
-      // The engine-side provider has no separate "system" channel over `ASK`;
-      // fold both turns into one prompt. The transcript already lives in the
-      // user turn, so the model has everything it needs inline.
-      const prompt = `${req.system}\n\n${req.user}`;
-      const { answer } = await store.ask(prompt);
-      return answer;
+      // The bridge handles error surfacing and env-override resolution; we
+      // flatten the system+user request into a two-turn chat so extraction's
+      // existing prompt shape (system pin + transcript-bearing user turn)
+      // survives the cutover intact.
+      return bridge.chat([
+        { role: "system", content: req.system },
+        { role: "user", content: req.user },
+      ]);
     },
   };
 }

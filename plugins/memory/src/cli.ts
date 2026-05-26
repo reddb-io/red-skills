@@ -4610,7 +4610,7 @@ async function runExtract(args: ParsedArgs): Promise<void> {
     }
     const facts = useLocal
       ? extractStructuredTranscript(transcript)
-      : await extractConversation(transcript, redDbProviderClient(store));
+      : await extractConversation(transcript, redDbProviderClient(store, providerConfig));
     if (facts.length === 0) {
       console.log("memory: no facts extracted");
       return;
