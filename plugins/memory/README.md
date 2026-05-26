@@ -399,6 +399,35 @@ context-trim event exists, so the anti-goldfish flush-before-context-death
 safety net is absent there. On Codex the flush leans on `Stop` (extract every
 substantive turn) plus `SessionStart`-on-`/clear` recall instead.
 
+### Session lifecycle — `.red/memory/sessions/current`
+
+Working-memory layers (L1/L2) scope themselves to a per-worktree session id
+written to `.red/memory/sessions/current`. The id is set up by whichever
+mechanism fires first:
+
+1. **Claude Code `SessionStart` hook** — mints a fresh UUID (or reuses the
+   runner-supplied `session_id`) on session start, resume, and `/clear`.
+   Always runs when the manifest is wired, even in markdown-only mode.
+2. **Codex / any runner without a wired `SessionStart` hook** — Codex now has
+   a `SessionStart` event (see [`reference_codex_hooks`][1] and issue #55), so
+   when the manifest is enabled the same path applies. When it is not, the
+   first `memory` CLI or MCP call to fire a hook ensures a session: it honours
+   `$MEMORY_SESSION_ID` if the harness exports one, otherwise mints a UUID.
+3. **AFK worker spawn** — the `/afk` orchestrator writes a fresh UUID into the
+   worktree's `.red/memory/sessions/current` immediately after `git worktree
+   add`, so each parallel worker starts with an isolated working-memory scope
+   even before any hook fires.
+
+Inspect and reset the file from the CLI:
+
+```bash
+memory session show     # prints the current id, or "none"
+memory session start    # mints + writes a fresh id (idempotent on the file)
+memory session end      # drops the file
+```
+
+[1]: https://developers.openai.com/codex/hooks
+
 ## Graph read verbs (graph mode)
 
 Beyond `recall`, graph mode exposes the read primitives directly — all
