@@ -1169,6 +1169,16 @@ async function operationStructuredContent(
           typeof output.html === "string" ? Buffer.byteLength(output.html, "utf8") : 0,
       };
     }
+    case "memory.confidence": {
+      const node = isRecord(output.node) ? output.node : {};
+      return {
+        operation_id: operationId,
+        schema_version: output.schema_version,
+        read_only: output.read_only,
+        node_rid: node.rid,
+        confidence: output.confidence,
+      };
+    }
     case "memory.path-explain":
       return {
         operation_id: operationId,

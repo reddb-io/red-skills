@@ -34,6 +34,8 @@ export interface ContextPackEntry {
   reason: string;
   excerpt: string;
   score: number;
+  /** Composed confidence in [0, 1] (issue #167). */
+  confidence_score?: number;
 }
 
 export interface ContextPackWarning {
@@ -206,6 +208,7 @@ function toEntry(node: RecalledNode, marker: number, goal: string): ContextPackE
     reason: inclusionReason(node, section, goal),
     excerpt: normalizeWhitespace(node.excerpt),
     score: node.score,
+    ...(node.confidence != null ? { confidence_score: node.confidence } : {}),
   };
 }
 

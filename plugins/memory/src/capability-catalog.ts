@@ -228,6 +228,21 @@ function capabilityDefinitions(facts: CapabilityFacts): MemoryCapability[] {
       ],
     }),
     capability({
+      id: "confidence-scoring",
+      title: "Composed confidence scoring",
+      category: "governance",
+      status: "ready",
+      red_db_backed: true,
+      cli: ["memory confidence --node <rid>"],
+      mcp: ["memory_confidence"],
+      evidence: ["foundation:confidence-scoring", "dimension:intelligence"],
+      competitor_relevance: ["agentmemory", "ai-memory"],
+      notes: [
+        "Pure composer turns provenance depth, recency, supersession, and validation edges into a [0,1] confidence score with a per-signal breakdown.",
+        "Recall, traverse, path-explain, and ask now carry confidence inline; path-explain uses weakest-link min along the path.",
+      ],
+    }),
+    capability({
       id: "agent-ask",
       title: "Evidence-backed agent answers",
       category: "retrieval",
@@ -545,6 +560,20 @@ function capabilityDefinitions(facts: CapabilityFacts): MemoryCapability[] {
       competitor_relevance: ["agentmemory", "gbrain", "ai-memory"],
       notes: [
         "Routing guide emits agent-rule targets, MCP stdio config, loopback HTTP command, and hook guidance for Codex, Claude, Cursor, Gemini, Aider, OpenCode, and generic MCP/HTTP agents; integration status audits whether rule files and hook coverage are actually present.",
+      ],
+    }),
+    capability({
+      id: "reasoning-replay",
+      title: "Reasoning replay over past attempts",
+      category: "retrieval",
+      status: "available",
+      red_db_backed: true,
+      cli: ["memory reasoning-replay --task \"<descriptor>\" [--json] [--limit N]"],
+      mcp: ["memory_reasoning_replay"],
+      evidence: ["dimension:retrieval", "foundation:reasoning-attempt"],
+      competitor_relevance: ["agentmemory", "ai-memory", "gbrain"],
+      notes: [
+        "Slice 1a: ranks reasoning-tier attempt nodes by token similarity to a task descriptor. Returns attempt_id, similarity, when, and summary; outcome attachment and gap detection land in slice 1b.",
       ],
     }),
     capability({

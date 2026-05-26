@@ -1,3 +1,12 @@
+import {
+  pathConfidence,
+  type ConfidenceBreakdown,
+} from "./confidence-scoring.js";
+import {
+  buildConfidenceContext,
+  confidenceForNode,
+  type ConfidenceContext,
+} from "./engine.js";
 import type { MemoryStore, StoredNode } from "./graph-store.js";
 import type { EdgeLabel, NodeType } from "./schema.js";
 
@@ -12,6 +21,9 @@ export interface PathExplainNode {
   label: string;
   node_type: NodeType;
   title: string;
+  /** Composed confidence in [0, 1] for this node (issue #167). */
+  confidence?: number;
+  confidence_breakdown?: ConfidenceBreakdown;
 }
 
 export interface PathExplainEdge {
@@ -34,6 +46,8 @@ export interface PathExplainReport {
   edges: PathExplainEdge[];
   markdown: string;
   recommended_next_actions: string[];
+  /** Path-level confidence: weakest-link min over node confidences (issue #167). */
+  path_confidence: number | null;
 }
 
 interface NormalizedEdge {
@@ -60,7 +74,9 @@ export async function buildPathExplainReport(
   const result = from && to ? findPath(from.rid, to.rid, edgeRows, maxDepth) : null;
   const nodeByRid = new Map(nodes.map((node) => [node.rid, node]));
   const path = result?.path.map((rid) => nodeByRid.get(rid)).filter((node): node is StoredNode => node != null) ?? [];
-  const edges = result?.edges.map((edge) => toExplainedEdge(edge, nodeByRid)).filter((edge): edge is PathExplainEdge => edge != null) ?? [];
+  const confidenceCtx = await buildConfidenceContext(store);
+  const pathRefs = path.map((node) => nodeRef(node, confidenceCtx));
+  const edges = result?.edges.map((edge) => toExplainedEdge(edge, nodeByRid, confidenceCtx)).filter((edge): edge is PathExplainEdge => edge != null) ?? [];
   const report: Omit<PathExplainReport, "markdown"> = {
     schema_version: "memory.path_explain.v1",
     read_only: true,
@@ -71,9 +87,10 @@ export async function buildPathExplainReport(
     },
     reachable: path.length > 0,
     hop_count: path.length > 0 ? Math.max(0, path.length - 1) : null,
-    path: path.map(nodeRef),
+    path: pathRefs,
     edges,
     recommended_next_actions: nextActions(from, to, path.length > 0),
+    path_confidence: pathConfidence(pathRefs.map((n) => n.confidence ?? 0)),
   };
   return { ...report, markdown: renderMarkdown(report) };
 }
@@ -129,19 +146,24 @@ function normalizeEdge(row: Record<string, unknown>): NormalizedEdge | null {
 function toExplainedEdge(
   edge: NormalizedEdge,
   nodeByRid: Map<number, StoredNode>,
+  confidenceCtx: ConfidenceContext,
 ): PathExplainEdge | null {
   const from = nodeByRid.get(edge.from_rid);
   const to = nodeByRid.get(edge.to_rid);
   if (!from || !to) return null;
-  return { from: nodeRef(from), to: nodeRef(to), label: edge.label };
+  return { from: nodeRef(from, confidenceCtx), to: nodeRef(to, confidenceCtx), label: edge.label };
 }
 
-function nodeRef(node: StoredNode): PathExplainNode {
+function nodeRef(node: StoredNode, confidenceCtx?: ConfidenceContext): PathExplainNode {
+  const breakdown = confidenceCtx ? confidenceForNode(node, confidenceCtx) : undefined;
   return {
     rid: node.rid,
     label: node.label,
     node_type: node.node_type,
     title: typeof node.properties.title === "string" ? node.properties.title : node.label,
+    ...(breakdown
+      ? { confidence: breakdown.confidence, confidence_breakdown: breakdown }
+      : {}),
   };
 }
 
@@ -155,7 +177,10 @@ function renderMarkdown(report: Omit<PathExplainReport, "markdown">): string {
     "",
   ];
   if (report.reachable) {
-    lines.push(`Hop count: ${report.hop_count}`, "", "## Path");
+    const conf = report.path_confidence;
+    lines.push(`Hop count: ${report.hop_count}`);
+    if (conf != null) lines.push(`Path confidence: ${conf.toFixed(3)}`);
+    lines.push("", "## Path");
     for (const edge of report.edges) {
       lines.push(
         `- ${edge.from.title} (${edge.from.label}) --${edge.label}--> ${edge.to.title} (${edge.to.label})`,

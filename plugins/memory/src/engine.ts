@@ -1,3 +1,10 @@
+import {
+  pathConfidence as pathConfidenceWeakestLink,
+  scoreConfidence,
+  type ConfidenceBreakdown,
+  type ConfidenceSignals,
+  type SupersessionStatus,
+} from "./confidence-scoring.js";
 import type {
   AskCost,
   GraphRow,
@@ -41,6 +48,9 @@ export interface RecalledNode {
   depth?: number;
   properties: MemoryNodeProps;
   excerpt: string;
+  /** Composed confidence in [0, 1] with per-signal breakdown (issue #167). */
+  confidence?: number;
+  confidence_breakdown?: ConfidenceBreakdown;
 }
 
 export interface RecallResult {
@@ -191,6 +201,9 @@ export interface AskEvidence {
   source: string | null;
   status: "active" | "superseded";
   activeRid: number;
+  /** Composed confidence in [0, 1] (issue #167). */
+  confidence_score?: number;
+  confidence_breakdown?: ConfidenceBreakdown;
 }
 
 export interface AskContradiction {
@@ -293,6 +306,117 @@ function latestTimestamp(node: StoredNode): number {
 function trustWeight(node: StoredNode): number {
   const confidence = node.properties.confidence ?? node.properties.provenance?.confidence;
   return confidence && confidence in TRUST_WEIGHT ? TRUST_WEIGHT[confidence] : 1;
+}
+
+/**
+ * Shared context for the confidence composer (issue #167). Built once per
+ * read so recall, neighbors, traverse, and ask all see the same supersession
+ * + validation snapshot.
+ */
+export interface ConfidenceContext {
+  now: number;
+  /** rid → successor rid; presence means the node is superseded. */
+  supersededMap: Map<number, number>;
+  /** rids that supersede something (head-of-chain markers). */
+  supersedingSet: Set<number>;
+  /** rid → counts of incident CONFIRMS / CONTRADICTS edges. */
+  validation: Map<number, { confirms: number; contradicts: number }>;
+}
+
+export async function buildConfidenceContext(
+  store: RecallStore | MemoryStore,
+  now: number = Date.now(),
+): Promise<ConfidenceContext> {
+  const nodes = await store.listNodes();
+  const supersededMap = await store.supersededByMany(nodes.map((n) => n.rid));
+  const supersedingSet = new Set<number>();
+  for (const successor of supersededMap.values()) supersedingSet.add(successor);
+  const validation = new Map<number, { confirms: number; contradicts: number }>();
+  const bump = (rid: number, kind: "confirms" | "contradicts") => {
+    if (!Number.isFinite(rid)) return;
+    const entry = validation.get(rid) ?? { confirms: 0, contradicts: 0 };
+    entry[kind] += 1;
+    validation.set(rid, entry);
+  };
+  for (const edge of await store.listEdges()) {
+    const label = edgeLabel(edge);
+    if (label !== "CONFIRMS" && label !== "CONTRADICTS") continue;
+    const kind = label === "CONFIRMS" ? "confirms" : "contradicts";
+    bump(edgeFrom(edge), kind);
+    bump(edgeTo(edge), kind);
+  }
+  return { now, supersededMap, supersedingSet, validation };
+}
+
+export function confidenceSignalsFor(
+  node: StoredNode,
+  ctx: ConfidenceContext,
+): ConfidenceSignals {
+  const p = node.properties;
+  let provenanceDepth = 0;
+  const provenance = p.provenance;
+  if (provenance) {
+    if (Array.isArray(provenance.evidence)) provenanceDepth = provenance.evidence.length;
+    if (provenanceDepth === 0 && provenance.source_kind === "manual") provenanceDepth = 1;
+  }
+  if (typeof p.source === "string" && p.source.length > 0) provenanceDepth = Math.max(provenanceDepth, 1);
+  const confidenceEnum = p.confidence ?? p.provenance?.confidence;
+  if (confidenceEnum === "EXTRACTED") provenanceDepth = Math.max(provenanceDepth, 2);
+  else if (confidenceEnum === "INFERRED") provenanceDepth = Math.max(provenanceDepth, 1);
+
+  const ageMs = Math.max(0, ctx.now - latestTimestamp(node));
+  const recency = 0.5 ** (ageMs / RECENCY_HALF_LIFE_MS);
+
+  let supersession_status: SupersessionStatus = "active";
+  if (ctx.supersededMap.has(node.rid)) supersession_status = "superseded";
+  else if (ctx.supersedingSet.has(node.rid)) supersession_status = "superseding";
+
+  const v = ctx.validation.get(node.rid);
+  const totals = (v?.confirms ?? 0) + (v?.contradicts ?? 0);
+  const validation_signal = totals === 0 ? 0 : ((v?.confirms ?? 0) - (v?.contradicts ?? 0)) / totals;
+
+  return { provenance_depth: provenanceDepth, recency, supersession_status, validation_signal };
+}
+
+export function confidenceForNode(
+  node: StoredNode,
+  ctx: ConfidenceContext,
+): ConfidenceBreakdown {
+  return scoreConfidence(confidenceSignalsFor(node, ctx));
+}
+
+export function pathConfidence(nodeConfidences: readonly number[]): number | null {
+  return pathConfidenceWeakestLink(nodeConfidences);
+}
+
+function recallConfidenceContext(
+  now: number,
+  supersededMap: Map<number, number>,
+  edges: Record<string, unknown>[],
+): ConfidenceContext {
+  const supersedingSet = new Set<number>();
+  for (const successor of supersededMap.values()) supersedingSet.add(successor);
+  const validation = new Map<number, { confirms: number; contradicts: number }>();
+  const bump = (rid: number, kind: "confirms" | "contradicts") => {
+    if (!Number.isFinite(rid)) return;
+    const entry = validation.get(rid) ?? { confirms: 0, contradicts: 0 };
+    entry[kind] += 1;
+    validation.set(rid, entry);
+  };
+  for (const edge of edges) {
+    const label = edgeLabel(edge);
+    if (label !== "CONFIRMS" && label !== "CONTRADICTS") continue;
+    const kind = label === "CONFIRMS" ? "confirms" : "contradicts";
+    bump(edgeFrom(edge), kind);
+    bump(edgeTo(edge), kind);
+  }
+  return { now, supersededMap, supersedingSet, validation };
+}
+
+function attachConfidence(node: RecalledNode, source: StoredNode, ctx: ConfidenceContext): void {
+  const breakdown = confidenceForNode(source, ctx);
+  node.confidence = breakdown.confidence;
+  node.confidence_breakdown = breakdown;
 }
 
 interface GraphIndex {
@@ -487,7 +611,8 @@ export async function recall(
   // One edge scan serves both neighborhood expansion and centrality. The engine
   // graph-walk primitive remains exposed via `neighbors`/`traverse`, but recall
   // avoids N seed-level round-trips on the hot path.
-  const graph = graphIndex(await store.listEdges());
+  const edges = await store.listEdges();
+  const graph = graphIndex(edges);
 
   if (depth > 0) {
     for (const [rid, score] of seeds) {
@@ -500,6 +625,10 @@ export async function recall(
   // Head-of-chain markers for every candidate in one round-trip (issue #72).
   const supersededMap = await store.supersededByMany([...index.keys()]);
   promoteSupersessionHeads(scored, depthOf, index, supersededMap);
+
+  // Confidence composition shares the recall's supersession + edge snapshot
+  // so the per-node breakdown stays consistent with the rest of the result.
+  const confidenceCtx = recallConfidenceContext(now, supersededMap, edges);
 
   const nodes: RecalledNode[] = [];
   for (const [rid, relevance] of scored) {
@@ -520,7 +649,9 @@ export async function recall(
       maxDegree,
       trust: trustWeight(node),
     });
-    nodes.push(toRecalled(node, score, depthOf.get(rid)));
+    const recalled = toRecalled(node, score, depthOf.get(rid));
+    attachConfidence(recalled, node, confidenceCtx);
+    nodes.push(recalled);
   }
 
   nodes.sort((a, b) => b.score - a.score || a.rid - b.rid);
@@ -593,11 +724,18 @@ export async function search(
 
 /** Resolve graph-walk rows (neighborhood/traverse) to full nodes, depth-tagged
  *  and scored by closeness (a hop-0 node scores 1, hop-1 scores 0.5, …). */
-function resolveWalk(rows: GraphRow[], index: Map<number, StoredNode>): RecalledNode[] {
+function resolveWalk(
+  rows: GraphRow[],
+  index: Map<number, StoredNode>,
+  confidenceCtx?: ConfidenceContext,
+): RecalledNode[] {
   const out: RecalledNode[] = [];
   for (const row of rows) {
     const node = index.get(row.rid);
-    if (node) out.push(toRecalled(node, 1 / (1 + row.depth), row.depth));
+    if (!node) continue;
+    const recalled = toRecalled(node, 1 / (1 + row.depth), row.depth);
+    if (confidenceCtx) attachConfidence(recalled, node, confidenceCtx);
+    out.push(recalled);
   }
   out.sort((a, b) => (a.depth ?? 0) - (b.depth ?? 0) || a.rid - b.rid);
   return out;
@@ -611,7 +749,8 @@ export async function neighbors(
   direction: "outgoing" | "incoming" | "both" = "both",
 ): Promise<RecalledNode[]> {
   const index = await loadIndex(store, { level: "project", includeNarrower: true });
-  return resolveWalk(await store.neighborhood(label, depth, direction), index);
+  const confidenceCtx = await buildConfidenceContext(store);
+  return resolveWalk(await store.neighborhood(label, depth, direction), index, confidenceCtx);
 }
 
 /** BFS/DFS traversal from a node label, resolved to full nodes. */
@@ -625,7 +764,8 @@ export async function traverse(
   } = {},
 ): Promise<RecalledNode[]> {
   const index = await loadIndex(store, { level: "project", includeNarrower: true });
-  return resolveWalk(await store.traverse(start, opts), index);
+  const confidenceCtx = await buildConfidenceContext(store);
+  return resolveWalk(await store.traverse(start, opts), index, confidenceCtx);
 }
 
 /** Shortest path between two node labels. */
@@ -805,6 +945,8 @@ function toAskEvidence(
     source: typeof node.properties.source === "string" ? node.properties.source : null,
     status: activeRid === node.rid ? "active" : "superseded",
     activeRid,
+    confidence_score: node.confidence,
+    confidence_breakdown: node.confidence_breakdown,
   };
 }
 
@@ -840,7 +982,9 @@ function renderAskEvidence(items: AskEvidence[]): string[] {
   if (items.length === 0) return ["(none)"];
   return items.map((item) => {
     const source = item.source ? ` source=${item.source}` : "";
-    return `${item.citation} ${item.title} (${item.confidence}; rid=${item.rid}; ${item.status}${source}) ${item.excerpt}`;
+    const score =
+      item.confidence_score != null ? ` confidence=${item.confidence_score.toFixed(3)}` : "";
+    return `${item.citation} ${item.title} (${item.confidence}; rid=${item.rid}; ${item.status}${source}${score}) ${item.excerpt}`;
   });
 }
 

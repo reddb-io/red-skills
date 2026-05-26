@@ -118,6 +118,7 @@ import {
   buildMemoryOperationalDashboard,
   buildMemoryOperationalDashboardArtifact,
 } from "./operational-dashboard.js";
+import { buildConfidenceReport, renderConfidenceMarkdown } from "./confidence.js";
 import { buildPathExplainReport } from "./path-explain.js";
 import { buildPathExplainViewerArtifact } from "./path-explain-viewer.js";
 import { buildPreflightBrief } from "./preflight.js";
@@ -143,6 +144,7 @@ import { buildMemoryHealthViewerArtifact } from "./memory-health-viewer.js";
 import { buildMemoryDecayReport } from "./memory-decay.js";
 import { buildMemoryDecayViewerArtifact } from "./memory-decay-viewer.js";
 import { recall } from "./recall.js";
+import { buildReasoningReplay } from "./reasoning/reasoning-replay.js";
 import { buildMemorySmartSearch } from "./smart-search.js";
 import { buildMemorySmartSearchViewerArtifact } from "./smart-search-viewer.js";
 import { commitMemoryGraph, type MemoryGraphCommitResult } from "./vcs-commit.js";
@@ -299,6 +301,7 @@ Usage:
   memory path <from> <to>           [--root <dir>] [--algorithm bfs|dijkstra]
   memory path-explain <from> <to>   [--root <dir>] [--max-depth N] [--json]
   memory path-explain-viewer <from> <to> [--root <dir>] [--max-depth N] [--out <file>]
+  memory confidence --node <rid>    [--root <dir>] [--json]
   memory conflicts                  [--root <dir>] [--include-resolved] [--json]
   memory supersede <old-rid> <new-rid> [--root <dir>] [--reason <text>]
   memory resolve-conflict <active-rid> <superseded-rid> [--root <dir>] [--reason <text>]
@@ -808,6 +811,40 @@ async function runRecall(args: ParsedArgs): Promise<void> {
   for (const hit of hits) {
     console.log(`  [${hit.score}] ${hit.id}`);
     console.log(`        ${hit.excerpt}`);
+  }
+}
+
+async function runReasoningReplay(args: ParsedArgs): Promise<void> {
+  const task = (stringFlag(args.flags, "task") ?? args.positional.join(" ")).trim();
+  if (!task) {
+    throw new Error(
+      "nothing to replay — pass --task \"<descriptor>\" or memory reasoning-replay <descriptor>",
+    );
+  }
+  const { store } = await openGraphStore(args);
+  try {
+    const report = await buildReasoningReplay(store, task, {
+      limit: intFlag(args.flags, "limit"),
+    });
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(report, null, 2));
+      return;
+    }
+    console.log(
+      `memory reasoning-replay: "${report.task}" — ${report.results.length}/${report.total_attempts} attempt(s)`,
+    );
+    if (report.results.length === 0) {
+      console.log("  no past attempts in the reasoning tier yet");
+      return;
+    }
+    for (const result of report.results) {
+      console.log(
+        `  [${result.similarity.toFixed(4)}] ${result.attempt_id}  ${result.when}`,
+      );
+      console.log(`        ${result.summary}`);
+    }
+  } finally {
+    await store.close();
   }
 }
 
@@ -4574,6 +4611,27 @@ async function runPathExplainViewer(args: ParsedArgs): Promise<void> {
   }
 }
 
+async function runConfidence(args: ParsedArgs): Promise<void> {
+  const nodeArg = stringFlag(args.flags, "node") ?? args.positional[0];
+  if (!nodeArg) {
+    throw new Error("pass a node rid: memory confidence --node <rid>");
+  }
+  const { store } = await openGraphStore(args);
+  try {
+    const report = await buildConfidenceReport(store, nodeArg);
+    if (!report) {
+      throw new Error(`memory: no node with rid=${nodeArg}`);
+    }
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(report, null, 2));
+      return;
+    }
+    console.log(renderConfidenceMarkdown(report));
+  } finally {
+    await store.close();
+  }
+}
+
 async function runConflicts(args: ParsedArgs): Promise<void> {
   const { store } = await openGraphStore(args);
   try {
@@ -5330,6 +5388,8 @@ async function main(): Promise<void> {
       return runRecall(args);
     case "smart-search":
       return runSmartSearch(args);
+    case "reasoning-replay":
+      return runReasoningReplay(args);
     case "smart-search-viewer":
       return runSmartSearchViewer(args);
     case "context-pack":
@@ -5452,6 +5512,8 @@ async function main(): Promise<void> {
       return runPathExplain(args);
     case "path-explain-viewer":
       return runPathExplainViewer(args);
+    case "confidence":
+      return runConfidence(args);
     case "conflicts":
       return runConflicts(args);
     case "supersede":

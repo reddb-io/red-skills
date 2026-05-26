@@ -23,6 +23,7 @@ import { buildDocReferenceGraphReport } from "./doc-reference-graph.js";
 import { buildDocReferenceGraphViewerArtifact } from "./doc-reference-graph-viewer.js";
 import { buildDocRelatedReport } from "./doc-related.js";
 import { buildDocRelatedViewerArtifact } from "./doc-related-viewer.js";
+import { buildConfidenceReport } from "./confidence.js";
 import { recall } from "./engine.js";
 import { buildMemoryHandoff } from "./handoff.js";
 import { buildMemoryHandoffViewerArtifact } from "./handoff-viewer.js";
@@ -54,6 +55,7 @@ import { buildOnboardingMap } from "./onboarding-map.js";
 import { buildOnboardingMapViewerArtifact } from "./onboarding-map-viewer.js";
 import { buildSessionTimeline } from "./session-timeline.js";
 import { readSkillRollups } from "./skill-events.js";
+import { buildReasoningReplay } from "./reasoning/reasoning-replay.js";
 import { buildMemorySmartSearch } from "./smart-search.js";
 import { buildMemorySmartSearchViewerArtifact } from "./smart-search-viewer.js";
 import { buildVectorSearchReport } from "./vector-search.js";
@@ -166,12 +168,14 @@ const ENDPOINTS = [
   "GET /api/docs/related?path=<path>|rid=<rid>",
   "GET /api/docs/search?query=<text>",
   "GET /api/docs/read?path=<path>|rid=<rid>",
+  "GET /api/confidence?node=<rid>",
   "GET /api/path-explain?from=<label>&to=<label>",
   "GET /api/vector/status",
   "GET /api/vector/search?query=<text>",
   "GET /api/search?query=<text>",
   "GET /api/smart-search?query=<text>",
   "GET /api/recall?query=<text>",
+  "GET /api/reasoning-replay?task=<text>",
 ];
 
 export function createMemoryHttpServer(opts: MemoryHttpServerOptions): Server {
@@ -837,6 +841,21 @@ async function handleRequest(
     return;
   }
 
+  if (url.pathname === "/api/confidence") {
+    const nodeParam = url.searchParams.get("node") ?? url.searchParams.get("rid") ?? "";
+    if (!nodeParam.trim()) {
+      sendJson(res, 400, { error: "node is required" });
+      return;
+    }
+    const report = await buildConfidenceReport(opts.store, nodeParam);
+    if (!report) {
+      sendJson(res, 404, { error: `no node with rid=${nodeParam}` });
+      return;
+    }
+    sendJson(res, 200, report);
+    return;
+  }
+
   if (url.pathname === "/api/path-explain") {
     const from = url.searchParams.get("from") ?? "";
     const to = url.searchParams.get("to") ?? "";
@@ -890,6 +909,23 @@ async function handleRequest(
     }
     const limit = numberParam(url.searchParams.get("limit"));
     sendJson(res, 200, await recall(opts.store, query, { k: limit }));
+    return;
+  }
+
+  if (url.pathname === "/api/reasoning-replay") {
+    const task = url.searchParams.get("task") ?? url.searchParams.get("query") ?? "";
+    if (!task.trim()) {
+      sendJson(res, 400, { error: "task is required" });
+      return;
+    }
+    sendJson(
+      res,
+      200,
+      await buildReasoningReplay(opts.store, task, {
+        limit: numberParam(url.searchParams.get("limit")),
+        now: opts.now,
+      }),
+    );
     return;
   }
 
@@ -1389,6 +1425,21 @@ function openApiDocument(opts: MemoryHttpServerOptions): MemoryOpenApiDocument {
           responses: { "200": jsonResponse("Doc read result") },
         },
       },
+      "/api/confidence": {
+        get: {
+          summary: "Composed confidence breakdown for a Memory node (issue #167)",
+          parameters: [
+            {
+              name: "node",
+              in: "query",
+              required: true,
+              description: "Numeric rid of the Memory node",
+              schema: { type: "string" },
+            },
+          ],
+          responses: { "200": jsonResponse("Confidence breakdown") },
+        },
+      },
       "/api/path-explain": {
         get: {
           summary: "Explain a directed Memory graph path",
@@ -1434,6 +1485,21 @@ function openApiDocument(opts: MemoryHttpServerOptions): MemoryOpenApiDocument {
           summary: "Memory smart search",
           parameters: [queryParam, limitParam],
           responses: { "200": jsonResponse("Smart search result") },
+        },
+      },
+      "/api/reasoning-replay": {
+        get: {
+          summary: "Reasoning replay (similarity-ranked attempts)",
+          parameters: [
+            {
+              name: "task",
+              in: "query",
+              required: true,
+              schema: { type: "string", minLength: 1 },
+            },
+            limitParam,
+          ],
+          responses: { "200": jsonResponse("Reasoning replay result") },
         },
       },
     },

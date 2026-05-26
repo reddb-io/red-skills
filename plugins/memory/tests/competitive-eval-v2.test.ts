@@ -40,10 +40,11 @@ describe("competitive eval v2 scaffold (#155)", () => {
       "skill-evolution",
       "operator-surface",
       "multi-agent-integration",
+      "intelligence",
     ]);
     expect(report.composite).toMatchObject({
-      score: 6,
-      maxScore: 6,
+      score: 7,
+      maxScore: 7,
       normalizedScore: 1,
       status: "pass",
     });
@@ -69,11 +70,13 @@ describe("competitive eval v2 scaffold (#155)", () => {
       "skill-evolution",
       "operator-surface",
       "multi-agent-integration",
+      "intelligence",
     ]);
 
     const human = renderCompetitiveEvalV2Human(report);
     expect(human).toContain("# Memory competitive eval v2");
-    expect(human).toContain("Composite: 6/6 normalized=1 status=pass");
+    expect(human).toContain("Composite: 7/7 normalized=1 status=pass");
+    expect(human).toContain("intelligence: 1/1 pass");
     expect(human).toContain("retrieval: 1/1 pass");
     expect(human).toContain("operator-surface: 1/1 pass");
     expect(human).toContain("multi-agent-integration: 1/1 pass");

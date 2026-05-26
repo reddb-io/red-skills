@@ -149,6 +149,7 @@ describe("Memory workbench", () => {
         "memory.routing_guide.v1",
         "memory.agent_integration_status.v1",
         "memory.session_timeline.v1",
+        "memory.reasoning_replay.v1",
       ],
     });
     expect(artifact.html).toContain("Memory Workbench");
@@ -287,8 +288,10 @@ describe("Memory workbench", () => {
     expect(artifact.html).toContain('fetch("/api/session/timeline');
     expect(artifact.html).toContain("Session Timeline");
     expect(artifact.html).toContain('id="memory-workbench-data"');
+    expect(artifact.html).toContain("Reasoning Replay");
+    expect(artifact.html).toContain("No recent reasoning replays yet");
     expect(artifact.html).not.toContain("<script src=");
-  });
+  }, TIMEOUT);
 
   test(
     "CLI writes the workbench HTML and can emit JSON",

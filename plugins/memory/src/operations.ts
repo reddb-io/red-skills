@@ -177,6 +177,10 @@ import {
   type MemoryOperationalDashboardArtifact,
 } from "./operational-dashboard.js";
 import {
+  buildConfidenceReport,
+  type ConfidenceReport,
+} from "./confidence.js";
+import {
   buildPathExplainReport,
   type PathExplainReport,
 } from "./path-explain.js";
@@ -216,6 +220,10 @@ import {
   buildMemoryRoutingGuideViewerArtifact,
   type MemoryRoutingGuideViewerArtifact,
 } from "./routing-guide-viewer.js";
+import {
+  buildReasoningReplay,
+  type ReasoningReplayReport,
+} from "./reasoning/reasoning-replay.js";
 import {
   buildSessionTimeline,
   type SessionTimeline,
@@ -511,6 +519,11 @@ const PathExplainInputSchema = z.object({
 });
 type PathExplainInput = z.infer<typeof PathExplainInputSchema>;
 
+const ConfidenceInputSchema = z.object({
+  node: z.union([z.number().int(), z.string().min(1)]),
+});
+type ConfidenceInput = z.infer<typeof ConfidenceInputSchema>;
+
 const CommunitiesInputSchema = z.object({
   cache: CommunityCacheSchema,
 });
@@ -554,6 +567,12 @@ const VectorSearchInputSchema = z.object({
   limit: z.number().int().min(1).max(50).optional(),
 });
 type VectorSearchInput = z.infer<typeof VectorSearchInputSchema>;
+
+const ReasoningReplayInputSchema = z.object({
+  task: z.string().min(1),
+  limit: z.number().int().min(1).max(50).optional(),
+});
+type ReasoningReplayInput = z.infer<typeof ReasoningReplayInputSchema>;
 
 const CommunitySummarySchema = z.object({
   id: z.string(),
@@ -643,6 +662,7 @@ const SessionTimelineOutputSchema = objectOutputSchema<SessionTimeline>();
 const SessionTimelineViewerOutputSchema =
   objectOutputSchema<SessionTimelineViewerArtifact>();
 const PathExplainOutputSchema = objectOutputSchema<PathExplainReport>();
+const ConfidenceOutputSchema = objectOutputSchema<ConfidenceReport>();
 const PathExplainViewerOutputSchema = objectOutputSchema<PathExplainViewerArtifact>();
 const StructuralImpactOutputSchema = objectOutputSchema<StructuralImpact>();
 const StructuralImpactViewerOutputSchema =
@@ -653,6 +673,7 @@ const ExtractionStatusViewerOutputSchema =
 const VectorStatusOutputSchema = objectOutputSchema<VectorStatusReport>();
 const VectorStatusViewerOutputSchema = objectOutputSchema<VectorStatusViewerArtifact>();
 const VectorSearchOutputSchema = objectOutputSchema<VectorSearchReport>();
+const ReasoningReplayOutputSchema = objectOutputSchema<ReasoningReplayReport>();
 
 const HealthOutputSchema = objectOutputSchema<MemoryHealthReport>();
 const HealthViewerOutputSchema = objectOutputSchema<MemoryHealthViewerArtifact>();
@@ -1046,6 +1067,31 @@ const WORK_FRONTIER_VIEWER_OPERATION: MemoryOperation<
         limit: input.limit,
       }),
     ),
+};
+
+const CONFIDENCE_OPERATION: MemoryOperation<ConfidenceInput, ConfidenceReport> = {
+  id: "memory.confidence",
+  title: "Memory confidence breakdown",
+  description:
+    "Read-only composed confidence (0..1) plus per-signal breakdown for a Memory node (issue #167).",
+  inputSchema: ConfidenceInputSchema,
+  outputSchema: ConfidenceOutputSchema,
+  safetyClass: "read-only",
+  sideEffectClass: "none",
+  capabilities: ["graph-store"],
+  renderer: {
+    cli: { command: "confidence", supportsJson: true },
+    mcp: {
+      toolName: "memory_confidence",
+      description:
+        "Read-only composed confidence breakdown for a Memory node. Returns the [0,1] score, per-signal components (provenance, recency, supersession, validation), and raw signals.",
+    },
+  },
+  execute: async (ctx, input) => {
+    const report = await buildConfidenceReport(ctx.store, input.node);
+    if (!report) throw new Error(`memory: no node with rid=${input.node}`);
+    return report;
+  },
 };
 
 const PATH_EXPLAIN_OPERATION: MemoryOperation<PathExplainInput, PathExplainReport> = {
@@ -2514,6 +2560,31 @@ const VECTOR_SEARCH_OPERATION: MemoryOperation<VectorSearchInput, VectorSearchRe
     buildVectorSearchReport(ctx.store, input.query, { limit: input.limit }),
 };
 
+const REASONING_REPLAY_OPERATION: MemoryOperation<
+  ReasoningReplayInput,
+  ReasoningReplayReport
+> = {
+  id: "memory.reasoning-replay",
+  title: "Memory reasoning replay",
+  description:
+    "Read-only similarity ranking over reasoning-tier attempt nodes for a task descriptor.",
+  inputSchema: ReasoningReplayInputSchema,
+  outputSchema: ReasoningReplayOutputSchema,
+  safetyClass: "read-only",
+  sideEffectClass: "none",
+  capabilities: ["graph-store"],
+  renderer: {
+    cli: { command: "reasoning-replay", supportsJson: true },
+    mcp: {
+      toolName: "memory_reasoning_replay",
+      description:
+        "Read-only reasoning replay surface. Ranks past attempt nodes by semantic similarity to a task descriptor and returns top-K with attempt_id, similarity, when, and summary. Outcome attachment lands in a follow-up slice.",
+    },
+  },
+  execute: (ctx, input) =>
+    buildReasoningReplay(ctx.store, input.task, { limit: input.limit }),
+};
+
 const READ_ONLY_OPERATIONS = createReadOnlyMemoryOperationRegistry([
   ASK_OPERATION,
   ASSET_INVENTORY_OPERATION,
@@ -2568,12 +2639,14 @@ const READ_ONLY_OPERATIONS = createReadOnlyMemoryOperationRegistry([
   MEMORY_LAYERS_VIEWER_OPERATION,
   ONBOARDING_MAP_OPERATION,
   ONBOARDING_MAP_VIEWER_OPERATION,
+  CONFIDENCE_OPERATION,
   PATH_EXPLAIN_OPERATION,
   PATH_EXPLAIN_VIEWER_OPERATION,
   PRE_PR_REVIEW_OPERATION,
   PRE_PR_REVIEW_VIEWER_OPERATION,
   PRIVACY_OPERATION,
   PROVENANCE_OPERATION,
+  REASONING_REPLAY_OPERATION,
   READINESS_OPERATION,
   READINESS_VIEWER_OPERATION,
   ROUTING_GUIDE_OPERATION,

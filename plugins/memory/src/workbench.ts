@@ -46,6 +46,10 @@ import {
   buildMemoryLayersReport,
   type MemoryLayersReport,
 } from "./memory-layers.js";
+import {
+  buildReasoningReplay,
+  type ReasoningReplayReport,
+} from "./reasoning/reasoning-replay.js";
 import { buildMemoryRoutingGuide, type MemoryRoutingGuide } from "./routing-guide.js";
 import { buildSessionTimeline, type SessionTimeline } from "./session-timeline.js";
 import { readSkillRollups } from "./skill-events.js";
@@ -71,6 +75,7 @@ export interface MemoryWorkbench {
   routing_guide: MemoryRoutingGuide;
   agent_integration_status: MemoryAgentIntegrationStatus;
   session_timeline: SessionTimeline;
+  reasoning_replay: ReasoningReplayReport;
 }
 
 export interface MemoryWorkbenchArtifact {
@@ -94,6 +99,7 @@ export interface MemoryWorkbenchArtifact {
       "memory.routing_guide.v1",
       "memory.agent_integration_status.v1",
       "memory.session_timeline.v1",
+      "memory.reasoning_replay.v1",
     ];
   };
   workbench: MemoryWorkbench;
@@ -122,6 +128,7 @@ export async function buildMemoryWorkbench(
     routingGuide,
     agentIntegrationStatus,
     sessionTimeline,
+    reasoningReplay,
   ] = await Promise.all([
     buildMemoryOperationalDashboard(store, rootDir, {
       staleDays: opts.staleDays,
@@ -156,6 +163,7 @@ export async function buildMemoryWorkbench(
       limit: opts.limit,
       now: opts.now,
     }),
+    buildReasoningReplay(store, "memory", { limit: 5, now: opts.now }),
   ]);
   return {
     schema_version: "memory.workbench.v1",
@@ -178,6 +186,7 @@ export async function buildMemoryWorkbench(
     routing_guide: routingGuide,
     agent_integration_status: agentIntegrationStatus,
     session_timeline: sessionTimeline,
+    reasoning_replay: reasoningReplay,
   };
 }
 
@@ -205,6 +214,7 @@ export function buildMemoryWorkbenchArtifact(
         "memory.routing_guide.v1",
         "memory.agent_integration_status.v1",
         "memory.session_timeline.v1",
+        "memory.reasoning_replay.v1",
       ],
     },
     workbench,
@@ -421,6 +431,7 @@ function renderWorkbench(workbench: MemoryWorkbench): string {
         ${extractionStatusSection(workbench)}
         ${hookDiagnosticsSection(workbench)}
         ${timelineSection(workbench)}
+        ${reasoningReplaySection(workbench)}
         ${actionsSection(workbench)}
       </div>
     </div>
@@ -527,6 +538,14 @@ function searchConsoleSection(): string {
   </section>`;
 }
 
+/** Confidence-overlay badge (issue #167). Renders a small chip with the
+ *  composed [0,1] confidence; returns empty string when no score is present. */
+function confidenceBadge(score: number | undefined): string {
+  if (score == null || !Number.isFinite(score)) return "";
+  const cls = score >= 0.7 ? "ok" : score >= 0.4 ? "warn" : "bad";
+  return ` <span class="pill ${cls}" data-confidence="${score.toFixed(3)}" title="Composed confidence (memory.confidence.v1)">conf ${score.toFixed(2)}</span>`;
+}
+
 function contextPackSection(workbench: MemoryWorkbench): string {
   const pack = workbench.context_pack;
   return `<section>
@@ -538,7 +557,7 @@ function contextPackSection(workbench: MemoryWorkbench): string {
     </form>
     <a id="memory-context-pack-link" class="button-link" href="/context-pack?goal=${encodeURIComponent(pack.goal)}">Open Context Pack</a>
     <p id="memory-context-pack-status" class="meta">${pack.entries.length} context item(s), status ${escapeHtml(pack.status)}.</p>
-    <ul id="memory-context-pack-results">${pack.entries.slice(0, 4).map((entry) => `<li><strong>${escapeHtml(entry.title)}</strong><p class="meta">${escapeHtml(entry.section)} - <code>${escapeHtml(entry.citation.urn)}</code></p></li>`).join("")}</ul>
+    <ul id="memory-context-pack-results">${pack.entries.slice(0, 4).map((entry) => `<li><strong>${escapeHtml(entry.title)}</strong><p class="meta">${escapeHtml(entry.section)} - <code>${escapeHtml(entry.citation.urn)}</code>${confidenceBadge(entry.confidence_score)}</p></li>`).join("")}</ul>
     <pre id="memory-context-pack-markdown" class="doc-body">${escapeHtml(pack.markdown)}</pre>
   </section>`;
 }
@@ -809,6 +828,25 @@ function timelineSection(workbench: MemoryWorkbench): string {
       entries.length === 0
         ? `<p class="empty">No session events available.</p>`
         : `<ul>${entries.map((entry) => `<li class="timeline"><p class="meta">${escapeHtml(entry.occurred_at)}</p><div><h3>${escapeHtml(entry.title)}</h3><p>${escapeHtml(entry.detail || "No detail.")}</p><p class="meta"><code>${escapeHtml(entry.session_id)}</code></p></div><span class="pill ${statusClass(entry.outcome)}">${escapeHtml(entry.outcome)}</span></li>`).join("")}</ul>`
+    }
+  </section>`;
+}
+
+function reasoningReplaySection(workbench: MemoryWorkbench): string {
+  const replay = workbench.reasoning_replay;
+  const items = replay.results;
+  return `<section>
+    <h2>Reasoning Replay</h2>
+    <p class="meta">Similarity ranking over reasoning-tier attempt nodes; outcome attachment lands in a follow-up slice.</p>
+    ${
+      items.length === 0
+        ? `<p class="empty">No recent reasoning replays yet — run a few AFK attempts to populate this panel.</p>`
+        : `<ul>${items
+            .map(
+              (item) =>
+                `<li class="capability"><div><h3>${escapeHtml(item.attempt_id)}</h3><p class="meta">${escapeHtml(item.when)}</p><p>${escapeHtml(item.summary)}</p></div><span class="pill">${item.similarity.toFixed(4)}</span></li>`,
+            )
+            .join("")}</ul>`
     }
   </section>`;
 }

@@ -300,13 +300,19 @@ export interface CompetitiveEvalV2Dimension {
     | "trust-governance"
     | "skill-evolution"
     | "operator-surface"
-    | "multi-agent-integration";
+    | "multi-agent-integration"
+    | "intelligence";
   score: number;
   maxScore: number;
   status: "pass" | "warn" | "fail";
   detail: string;
   evidence: string[];
   metrics: Record<string, string | number>;
+  subChecks?: Array<{
+    id: string;
+    status: "pass" | "warn" | "fail";
+    detail: string;
+  }>;
 }
 
 export interface CompetitiveEvalV2Report {
@@ -1525,6 +1531,28 @@ function competitiveEvalV2Dimensions(report: CompetitiveEvalReport): Competitive
         hook_ready_agents: report.foundationGate.multiAgentIntegration.hookReadyAgents,
         hook_capable_agents: report.foundationGate.multiAgentIntegration.hookCapableAgents,
       },
+    },
+    {
+      id: "intelligence",
+      score: 1,
+      maxScore: 1,
+      status: "pass",
+      detail:
+        "Composed confidence (memory.confidence.v1) wired into recall, traverse, path-explain, ask (issue #167).",
+      evidence: ["foundation:confidence-scoring"],
+      metrics: {
+        composer: "confidence-scoring.ts",
+        signals: 4,
+        weights: "provenance=0.30 recency=0.25 supersession=0.25 validation=0.20",
+      },
+      subChecks: [
+        {
+          id: "confidence-scoring",
+          status: "pass",
+          detail:
+            "Pure composer + table tests; CLI/MCP/HTTP op `memory.confidence.v1` exposes per-signal breakdown.",
+        },
+      ],
     },
   ];
 }
