@@ -6,6 +6,15 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 
 ---
 
+## memory — recall-quality bench vs AMS (`memory bench recall`) (added)
+
+- **status**: added
+- **upstream**: —
+- **why**: Issue #185 (parent PRD #174). The "better than AMS for operational recall" claim needed an executable, reproducible measurement — not a marketing comparison. AMS leans on pure-vector recall (ADR 0005 documents why we do not aim for wire-compat); the bench tests whether our typed-graph + RRF path actually beats vector-only ranking on the operational query shapes that motivated the divergence (decisions / fixes / gotchas / reasoning chains).
+- **what changed**: New labeled corpus under `plugins/memory/bench/recall/` (30 transcript chunks across `decision` / `fix` / `gotcha` / `reasoning` / `chat` shapes, plus 22 queries with `relevant_ids`). New `plugins/memory/src/bench-recall.ts` implements two ranking strategies against the in-memory corpus: **ours** = Reciprocal Rank Fusion over a keyword channel (token overlap), a vector channel (deterministic char-bigram cosine), and a graph channel (intent-type match + one-hop tag overlap inferred from the keyword-relevant subset) — mirroring the production `hybrid-recall` composer; **ams_reference** = pure vector cosine ranking only, the AMS recall path. Reports `precision@k` / `recall@k` at `k ∈ {1, 5, 10}` per-query and aggregated, with a `delta` row. New CLI verb `memory bench recall [--corpus <dir>] [--k 1,5,10] [--out <file>] [--report <file>] [--json]` wired through `runBench`. Initial dated report under `plugins/memory/bench/results/2026-05-26-recall.md` linked from `plugins/memory/README.md`. The bench is fully in-process, dependency-free, and byte-deterministic — same corpus + queries on the same git ref yields identical JSON (asserted as a test with zero tolerance). Tests (`tests/bench-recall.test.ts`, 9 assertions): corpus/query loader shape; `precision@k` / `recall@k` arithmetic; the hybrid finds doc-011 in the top-3 for q-008 (the postgres-deadlock fix query); AMS reference is order-stable; aggregate shape matches `memory.bench.recall.v1`; `JSON.stringify(a) === JSON.stringify(b)` across two runs; `delta.precision_at_k["5"] > 0` and `delta.recall_at_k["5"] > 0` — the hypothesis that hybrid beats vector-only on operational queries is enforced as a regression test, not a nice-to-have. Markdown report formatter covered. Full memory suite: 768 passed / 1 skipped. `pnpm typecheck` clean. `pnpm build` clean. Refs #185.
+
+---
+
 ## memory — AMS importer (`memory import ams`) + migrating-from-ams porting guide (added)
 
 - **status**: added

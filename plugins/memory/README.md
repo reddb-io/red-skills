@@ -614,6 +614,24 @@ baseline and is reported as unmeasured by the claim guard.
 | Recall latency on agent-scale graph | Repo gate targets <100 ms p50 on a ~1k-node graph. | graphify-out fixture: 551 nodes / 1329 edges / 34 communities; path p50 841 ms. | Not asserted here; apples-to-apples latency requires a live Neo4j baseline. | Advantage over checked graphify-out path latency only; no latency claim against agent-memory in this harness. |
 | NER extraction quality | Deterministic structural/entity extractors plus optional LLM provider for inferred facts. | 491 inferred fixture edges; strong static-code graph output. | spaCy / GLiNER / GLiREL / LLM extraction pipeline. | Conceded gap: Python ML stack is ahead for turnkey NER. |
 
+## Recall-quality bench (vs AMS)
+
+`memory bench recall` runs a checked-in labeled operational corpus through our
+RRF recall (keyword + vector + typed-graph) and a pure-vector AMS reference,
+reporting `precision@k` and `recall@k` at `k ∈ {1, 5, 10}`. The corpus
+(`plugins/memory/bench/recall/`) emphasises decisions, fixes, gotchas, and
+reasoning chains where typed-graph signals should beat blind vector search.
+
+```bash
+node plugins/memory/dist/cli.js bench recall \
+  --out plugins/memory/bench/results/<date>-recall.json \
+  --report plugins/memory/bench/results/<date>-recall.md
+```
+
+The bench is fully in-process and deterministic — same corpus + queries on the
+same git ref yields byte-equal results (the test suite asserts this with zero
+tolerance). Latest results: [`bench/results/2026-05-26-recall.md`](./bench/results/2026-05-26-recall.md).
+
 ## Readiness envelope
 
 `memory readiness <goal> --json` emits the stable `memory.readiness.v1`

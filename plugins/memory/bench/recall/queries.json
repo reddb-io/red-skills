@@ -1,0 +1,134 @@
+[
+  {
+    "id": "q-001",
+    "query": "what package manager did we pick and why",
+    "intent": "decision",
+    "relevant_ids": ["doc-001"]
+  },
+  {
+    "id": "q-002",
+    "query": "pnpm CI lockfile failure resolution",
+    "intent": "fix",
+    "relevant_ids": ["doc-002", "doc-001"]
+  },
+  {
+    "id": "q-003",
+    "query": "why is my code not resolving a transitive dependency anymore",
+    "intent": "gotcha",
+    "relevant_ids": ["doc-003"]
+  },
+  {
+    "id": "q-004",
+    "query": "where do we store session tokens in the browser",
+    "intent": "decision",
+    "relevant_ids": ["doc-005", "doc-007"]
+  },
+  {
+    "id": "q-005",
+    "query": "csrf token rejecting docs subdomain requests",
+    "intent": "fix",
+    "relevant_ids": ["doc-006"]
+  },
+  {
+    "id": "q-006",
+    "query": "why are first-click login redirects unauthenticated",
+    "intent": "gotcha",
+    "relevant_ids": ["doc-008", "doc-005"]
+  },
+  {
+    "id": "q-007",
+    "query": "how do we run large postgres migrations safely",
+    "intent": "decision",
+    "relevant_ids": ["doc-010", "doc-012"]
+  },
+  {
+    "id": "q-008",
+    "query": "postgres migration hanging deadlock with vacuum",
+    "intent": "fix",
+    "relevant_ids": ["doc-011"]
+  },
+  {
+    "id": "q-009",
+    "query": "creating an index on a huge table without locking writers",
+    "intent": "reasoning",
+    "relevant_ids": ["doc-012"]
+  },
+  {
+    "id": "q-010",
+    "query": "jsonb_set silently dropping writes",
+    "intent": "gotcha",
+    "relevant_ids": ["doc-013"]
+  },
+  {
+    "id": "q-011",
+    "query": "what logger library do backend services use",
+    "intent": "decision",
+    "relevant_ids": ["doc-015"]
+  },
+  {
+    "id": "q-012",
+    "query": "logger leaked webhook signing secret",
+    "intent": "fix",
+    "relevant_ids": ["doc-016"]
+  },
+  {
+    "id": "q-013",
+    "query": "how do we version our public API",
+    "intent": "decision",
+    "relevant_ids": ["doc-017"]
+  },
+  {
+    "id": "q-014",
+    "query": "deleted user profile still served by CDN",
+    "intent": "fix",
+    "relevant_ids": ["doc-018"]
+  },
+  {
+    "id": "q-015",
+    "query": "why per-account rate limit instead of IP",
+    "intent": "reasoning",
+    "relevant_ids": ["doc-019"]
+  },
+  {
+    "id": "q-016",
+    "query": "tsc composite build not updating downstream d.ts",
+    "intent": "gotcha",
+    "relevant_ids": ["doc-021"]
+  },
+  {
+    "id": "q-017",
+    "query": "node container getting OOM killed under load",
+    "intent": "fix",
+    "relevant_ids": ["doc-023"]
+  },
+  {
+    "id": "q-018",
+    "query": "rotating credentials after .env leak",
+    "intent": "reasoning",
+    "relevant_ids": ["doc-024"]
+  },
+  {
+    "id": "q-019",
+    "query": "gzip making small responses bigger",
+    "intent": "gotcha",
+    "relevant_ids": ["doc-026"]
+  },
+  {
+    "id": "q-020",
+    "query": "why integration tests must hit a real database",
+    "intent": "decision",
+    "relevant_ids": ["doc-027"]
+  },
+  {
+    "id": "q-021",
+    "query": "flaky e2e test caused by clock drift",
+    "intent": "fix",
+    "relevant_ids": ["doc-028"]
+  },
+  {
+    "id": "q-022",
+    "query": "why do queue consumers need idempotency keys",
+    "intent": "reasoning",
+    "relevant_ids": ["doc-029"]
+  }
+]
