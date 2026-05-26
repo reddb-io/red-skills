@@ -48,6 +48,18 @@ export interface MemoryConfig {
     retentionDays: number;
   };
   /**
+   * L2 working-memory eviction policy (issue #182). Drives the `memory working
+   * evict` sweep. Both fields are optional — resolved against the documented
+   * defaults via {@link resolveL2Policy}. L1 is naturally ephemeral and L3 is
+   * never touched by this policy.
+   */
+  l2?: {
+    /** Max age before an L2 node is reaped. Default {@link DEFAULT_L2_TTL_MS} (24h). */
+    ttlMs?: number;
+    /** Per-session byte budget for L2 events. Default {@link DEFAULT_L2_BYTE_BUDGET} (16 MiB). */
+    byteBudget?: number;
+  };
+  /**
    * AI provider for LLM conversation extraction (the `INFERRED` path). Absent
    * until the user configures one; when absent, only the deterministic
    * `EXTRACTED` paths run. Selects a RedDB engine-side provider mode
@@ -61,6 +73,34 @@ export const CONFIG_VERSION = 1;
 
 /** Default raw Memory event retention horizon: 30 days. */
 export const DEFAULT_MEMORY_EVENT_RETENTION_DAYS = 30;
+
+/** Default L2 node max age: 24 hours. */
+export const DEFAULT_L2_TTL_MS = 24 * 60 * 60 * 1000;
+
+/** Default L2 per-session byte budget: 16 MiB. */
+export const DEFAULT_L2_BYTE_BUDGET = 16 * 1024 * 1024;
+
+/** Resolved L2 eviction policy after config + defaults are applied. */
+export interface ResolvedL2Policy {
+  ttlMs: number;
+  byteBudget: number;
+}
+
+/**
+ * Resolve the active L2 eviction policy from a memory config. Missing or
+ * non-finite fields fall back to {@link DEFAULT_L2_TTL_MS} and
+ * {@link DEFAULT_L2_BYTE_BUDGET}.
+ */
+export function resolveL2Policy(config: MemoryConfig | null | undefined): ResolvedL2Policy {
+  const l2 = config?.l2 ?? {};
+  const ttl = typeof l2.ttlMs === "number" && Number.isFinite(l2.ttlMs) && l2.ttlMs > 0
+    ? l2.ttlMs
+    : DEFAULT_L2_TTL_MS;
+  const budget = typeof l2.byteBudget === "number" && Number.isFinite(l2.byteBudget) && l2.byteBudget > 0
+    ? l2.byteBudget
+    : DEFAULT_L2_BYTE_BUDGET;
+  return { ttlMs: ttl, byteBudget: budget };
+}
 
 /** Every hook disabled — the markdown-only default. */
 export const HOOKS_OFF: HookConfig = {
