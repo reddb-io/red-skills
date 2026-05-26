@@ -34,6 +34,8 @@ source "$SCRIPT_DIR/lib/history.sh"
 source "$SCRIPT_DIR/lib/pin-reader.sh"
 # shellcheck source=./lib/remote-branch.sh
 source "$SCRIPT_DIR/lib/remote-branch.sh"
+# shellcheck source=./lib/heartbeat.sh
+source "$SCRIPT_DIR/lib/heartbeat.sh"
 
 MEMORY_BRIDGE_SH="$SKILL_DIR/../../../scripts/memory-bridge.sh"
 if [[ -f "$MEMORY_BRIDGE_SH" ]]; then
@@ -643,23 +645,12 @@ gh_repo() {
 }
 
 # ---------- local heartbeat ----------
-# Issue-thread heartbeat glyphs (`:one:` … `:four:`) were retired in Slice D —
-# the heartbeat sub-shell that posted them no longer exists. Local liveness
-# signal is provided by:
-#   - the inner-agent stream tee'd into ITER_LOG (continuous forensic trail)
-#   - state file mtime, bumped on every state_write call (monitor uses this to
-#     compute the 🟢 live / 🟡 stale flag together with the orchestrator pid)
+# Issue-thread heartbeat glyphs (`:one:` … `:four:`) were retired in Slice D.
+# Periodic local heartbeat lives in lib/heartbeat.sh (issue #194) — it writes
+# one line per RED_AFK_HEARTBEAT_S to ITER_LOG so afk.log keeps advancing even
+# when the inner-agent stdout tee buffers or the inner agent is SIGSTOPped.
 # The `heartbeat_glyph` and `heartbeat_pid` state-file fields are kept as
 # vestigial nulls for one release window so old monitors don't error on read.
-HEARTBEAT_PID=""
-heartbeat_start() {
-  [[ -n "$ITER_LOG" ]] && printf '[heartbeat] iteration started for #%s at %s\n' \
-    "$1" "$(date -Is)" >> "$ITER_LOG"
-}
-heartbeat_stop() {
-  [[ -n "$ITER_LOG" ]] && printf '[heartbeat] iteration stopped at %s\n' \
-    "$(date -Is)" >> "$ITER_LOG"
-}
 
 # ---------- terminal-event envelope ----------
 # Every terminal event of an iteration (BLOCKED, no-sentinel, merge-conflict,
