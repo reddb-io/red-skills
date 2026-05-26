@@ -126,7 +126,7 @@ Surgical precision. If you find an unrelated bug, mention it in Notes — don't 
 
 ## Background Tasks and Polling (binding)
 
-Several `/afk` iterations have been killed by inner agents writing untimed polling loops around `run_in_background` tasks — the bg task crashes silently or never writes the expected string, the polling loop runs forever, and even after you emit `<promise>DONE</promise>` the orchestrator's pipe stays open because your `until` loop is still alive. The orchestrator now has a watchdog (kills the inner pipeline 30 s after seeing the sentinel if it doesn't close on its own), but you are still responsible for not building the trap in the first place.
+Several `/afk` iterations have been killed by inner agents writing untimed polling loops around `run_in_background` tasks — the bg task crashes silently or never writes the expected string, the polling loop runs forever, and even after you emit `<promise>DONE</promise>` the orchestrator's pipe stays open because your `until` loop is still alive. The orchestrator now has a watchdog (kills the inner pipeline 30 s after seeing the sentinel if it doesn't close on its own) **and a `pnpm` PATH shim** that wraps `pnpm test` / `pnpm test:*` invocations with `timeout ${RED_AFK_TEST_TIMEOUT_S:-300}s` so a hung test runner cannot keep your polling loop alive past the deadline. You are still responsible for not building the trap in the first place — the shim is a safety net, not the design.
 
 **Forbidden — the wheel-spin pattern:**
 
