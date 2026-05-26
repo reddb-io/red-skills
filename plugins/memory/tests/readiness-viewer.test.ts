@@ -274,6 +274,8 @@ function sampleEnvelope(): MemoryReadinessEnvelope {
       contradictions: {
         total: 1,
         unresolved: 1,
+        cross_session: 0,
+        unresolved_pairs: [],
       },
       privacy: {
         read_only: true,

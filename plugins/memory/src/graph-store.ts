@@ -1,4 +1,10 @@
 import { type AskCitation, type QueryParam, type RedDB, connect } from "@reddb-io/sdk";
+import {
+  CONFLICT_NODE_TYPES,
+  detectConflicts,
+  type ConflictNode,
+  type DetectedConflict,
+} from "./conflict-detector.js";
 import { contentHash } from "./hash.js";
 import {
   COLLECTIONS,
@@ -324,7 +330,58 @@ export class MemoryStore {
       await this.kv().put(nodeExpiryKey(rid), expiresAt, { expireMs: expiresAt - now });
     }
     await this.projectNodeVector(rid, { ...node, properties }, false);
+    await this.detectAndRecordConflicts(rid, { ...node, properties });
     return rid;
+  }
+
+  /**
+   * After a fresh L3 insert, compare the new node against existing L3 nodes
+   * and emit a `CONTRADICTS` edge for each detected conflict (issue #179).
+   * Bounded to the conflict-relevant node types so non-decision writes
+   * (`file`, `symbol`, `session`, …) bypass the scan entirely. Failures here
+   * never block the write — conflict surfacing is a best-effort augmentation.
+   */
+  private async detectAndRecordConflicts(
+    rid: number,
+    inserted: MemoryNode,
+  ): Promise<void> {
+    if (!CONFLICT_NODE_TYPES.has(inserted.node_type)) return;
+    const layer = inserted.properties.layer ?? "L3";
+    if (layer !== "L3") return;
+
+    try {
+      const existing = await this.listNodes();
+      const peers: ConflictNode[] = [];
+      for (const peer of existing) {
+        if (peer.rid === rid) continue;
+        if (peer.node_type !== inserted.node_type) continue;
+        peers.push({
+          rid: peer.rid,
+          label: peer.label,
+          node_type: peer.node_type,
+          properties: peer.properties,
+        });
+      }
+      const conflicts = detectConflicts(
+        {
+          rid,
+          label: inserted.label,
+          node_type: inserted.node_type,
+          properties: inserted.properties,
+        },
+        peers,
+      );
+      for (const conflict of conflicts) {
+        await this.upsertEdge({
+          label: "CONTRADICTS",
+          from_rid: rid,
+          to_rid: conflict.rid,
+          properties: conflictEdgeProps(conflict),
+        });
+      }
+    } catch {
+      // best-effort — never block the underlying write
+    }
   }
 
   /** Resolve a content hash to its node rid via the KV dedupe index. */
@@ -1228,6 +1285,20 @@ export class MemoryStore {
   get raw(): RedDB {
     return this.db;
   }
+}
+
+function conflictEdgeProps(conflict: DetectedConflict): {
+  reason: string;
+  kind: DetectedConflict["kind"];
+  candidate_session: string | null;
+  existing_session: string | null;
+} {
+  return {
+    reason: conflict.reason,
+    kind: conflict.kind,
+    candidate_session: conflict.sessions.candidate,
+    existing_session: conflict.sessions.existing,
+  };
 }
 
 /**

@@ -90,6 +90,15 @@ export interface MemoryReadinessEnvelope {
     contradictions: {
       total: number;
       unresolved: number;
+      cross_session: number;
+      unresolved_pairs: Array<{
+        from_rid: number;
+        to_rid: number;
+        kind: string | null;
+        reason: string | null;
+        from_session: string | null;
+        to_session: string | null;
+      }>;
     };
     privacy: {
       read_only: true;
@@ -567,13 +576,45 @@ function contradictionSummary(
   edges: Record<string, unknown>[],
   superseded: Map<number, number>,
 ): MemoryReadinessEnvelope["trust"]["contradictions"] {
-  const contradictions = edges.filter((edge) => edgeLabel(edge) === "CONTRADICTS");
+  const seenPairs = new Set<string>();
+  const contradictions = edges.filter((edge) => {
+    if (edgeLabel(edge) !== "CONTRADICTS") return false;
+    const from = edgeEndpoint(edge, "from");
+    const to = edgeEndpoint(edge, "to");
+    const key = from < to ? `${from}:${to}` : `${to}:${from}`;
+    if (seenPairs.has(key)) return false;
+    seenPairs.add(key);
+    return true;
+  });
   const unresolved = contradictions.filter((edge) => {
     const from = activeHead(edgeEndpoint(edge, "from"), superseded);
     const to = activeHead(edgeEndpoint(edge, "to"), superseded);
     return Number.isFinite(from) && Number.isFinite(to) && from !== to;
   });
-  return { total: contradictions.length, unresolved: unresolved.length };
+  const unresolvedPairs = unresolved.map((edge) => {
+    const props = edgeProperties(edge);
+    const fromSession =
+      typeof props.candidate_session === "string" ? props.candidate_session : null;
+    const toSession =
+      typeof props.existing_session === "string" ? props.existing_session : null;
+    return {
+      from_rid: edgeEndpoint(edge, "from"),
+      to_rid: edgeEndpoint(edge, "to"),
+      kind: typeof props.kind === "string" ? props.kind : null,
+      reason: typeof props.reason === "string" ? props.reason : null,
+      from_session: fromSession,
+      to_session: toSession,
+    };
+  });
+  const crossSession = unresolvedPairs.filter(
+    (pair) => pair.from_session && pair.to_session && pair.from_session !== pair.to_session,
+  ).length;
+  return {
+    total: contradictions.length,
+    unresolved: unresolved.length,
+    cross_session: crossSession,
+    unresolved_pairs: unresolvedPairs,
+  };
 }
 
 async function eventLogSummary(

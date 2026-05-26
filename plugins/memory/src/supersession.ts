@@ -52,6 +52,10 @@ export async function listContradictions(
   const nodes = new Map((await store.listNodes()).map((node) => [node.rid, node]));
   const superseded = await store.supersededByMany([...nodes.keys()]);
   const out: ContradictionSummary[] = [];
+  // `CONTRADICTS` is symmetric in meaning but stored as a directed edge. Two
+  // edges between the same pair (one from each side) are the same contradiction;
+  // dedupe on the unordered {min,max} pair so callers don't double-count.
+  const seenPairs = new Set<string>();
 
   for (const edge of await store.listEdges()) {
     if (edgeLabel(edge) !== "CONTRADICTS") continue;
@@ -60,6 +64,9 @@ export async function listContradictions(
     const from = nodes.get(fromRid);
     const to = nodes.get(toRid);
     if (!from || !to) continue;
+    const pairKey = fromRid < toRid ? `${fromRid}:${toRid}` : `${toRid}:${fromRid}`;
+    if (seenPairs.has(pairKey)) continue;
+    seenPairs.add(pairKey);
 
     const fromHead = activeHead(fromRid, superseded, nodes);
     const toHead = activeHead(toRid, superseded, nodes);

@@ -30,6 +30,12 @@ export interface ClaimConflict {
   from: ClaimEvidence;
   to: ClaimEvidence;
   reason: string | null;
+  kind: string | null;
+  sessions: {
+    from: string | null;
+    to: string | null;
+    cross_session: boolean;
+  };
 }
 
 export interface ClaimCheckResult {
@@ -214,10 +220,58 @@ function collectConflicts(
 
     evidenceByRid.set(from.rid, from);
     evidenceByRid.set(to.rid, to);
-    conflicts.push({ from, to, reason: edgeReason(edge) });
+    const fromSession = sessionFromEdge(edge, "candidate") ?? sessionFromNode(nodesByRid.get(from.rid));
+    const toSession = sessionFromEdge(edge, "existing") ?? sessionFromNode(nodesByRid.get(to.rid));
+    conflicts.push({
+      from,
+      to,
+      reason: edgeReason(edge),
+      kind: edgeKind(edge),
+      sessions: {
+        from: fromSession,
+        to: toSession,
+        cross_session: Boolean(fromSession && toSession && fromSession !== toSession),
+      },
+    });
   }
 
   return conflicts;
+}
+
+function edgeKind(edge: Record<string, unknown>): string | null {
+  const props = edge.properties ?? edge.PROPERTIES;
+  if (props && typeof props === "object" && "kind" in props) {
+    const kind = (props as { kind?: unknown }).kind;
+    return typeof kind === "string" ? kind : null;
+  }
+  return null;
+}
+
+function sessionFromEdge(
+  edge: Record<string, unknown>,
+  side: "candidate" | "existing",
+): string | null {
+  const props = edge.properties ?? edge.PROPERTIES;
+  if (!props || typeof props !== "object") return null;
+  const key = side === "candidate" ? "candidate_session" : "existing_session";
+  const value = (props as Record<string, unknown>)[key];
+  return typeof value === "string" && value ? value : null;
+}
+
+function sessionFromNode(node: StoredNode | undefined): string | null {
+  if (!node) return null;
+  const props = node.properties;
+  const provenance = props.provenance as
+    | { scope?: { level?: string; id?: string } }
+    | undefined;
+  if (provenance?.scope?.level === "session" && provenance.scope.id) {
+    return provenance.scope.id;
+  }
+  if (props.scope === "session" && typeof props.scope_id === "string") {
+    return props.scope_id;
+  }
+  const sid = (props as { session_id?: unknown }).session_id;
+  return typeof sid === "string" ? sid : null;
 }
 
 function evidenceForStored(
