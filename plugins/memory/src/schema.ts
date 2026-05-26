@@ -32,6 +32,21 @@ export type Confidence = "EXTRACTED" | "INFERRED" | "AMBIGUOUS";
 export type Tier = "ephemeral" | "durable" | "reasoning";
 
 /**
+ * Memory layer (PRD #174, issue #175). The *physical* storage layer a Memory
+ * node currently lives in. Orthogonal to {@link Tier}: tier names the retention
+ * class, layer names the physical location and may change on promotion or
+ * eviction.
+ *
+ * - `L1` — in-process hot cache, per-agent turn. Not yet populated by this
+ *   slice; reserved for hot-path reads/writes inside one agent invocation.
+ * - `L2` — RedDB session-scoped cache with TTL + size eviction. Not yet
+ *   populated by this slice; reserved for session-bound ephemeral memory.
+ * - `L3` — RedDB graph, durable. The only layer that physically stores nodes
+ *   today; every existing recall/store call routes here.
+ */
+export type MemoryLayer = "L1" | "L2" | "L3";
+
+/**
  * Applicability boundary for a memory fact (issue #116). Broader scopes are
  * safe to recall in more places; narrower scopes require matching context or
  * an explicit request before they surface.
@@ -123,6 +138,12 @@ export interface MemoryNodeProps {
   scope_id?: string;
   /** Memory tier; defaults on write per `defaultTier(node_type)`. */
   tier?: Tier;
+  /**
+   * Memory storage layer; defaults on write per `defaultLayer(node_type)`.
+   * Indexed for filtering by recall and the layer router. Today's nodes all
+   * default to `L3` (durable graph); L1/L2 are reserved for future slices.
+   */
+  layer?: MemoryLayer;
   created_at?: number;
   updated_at?: number;
   accessed_at?: number;
@@ -208,6 +229,16 @@ export const DEFAULT_EPHEMERAL_TTL_MS = 86_400_000;
  * `session` nodes are transient → `ephemeral`; `why_note` trace nodes →
  * `reasoning`; everything else (facts, decisions, code, …) → `durable`.
  */
+/**
+ * Default storage layer for a node written without an explicit `layer`
+ * (issue #175). This slice only populates `L3`; subsequent slices will
+ * introduce promotion/eviction paths into `L1`/`L2`. Returning `L3` for every
+ * node keeps today's behaviour observably identical.
+ */
+export function defaultLayer(_node_type: NodeType): MemoryLayer {
+  return "L3";
+}
+
 export function defaultTier(node_type: NodeType): Tier {
   switch (node_type) {
     case "session":

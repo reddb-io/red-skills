@@ -12,6 +12,7 @@ import {
   type MemoryScope,
   type NodeType,
   defaultTier,
+  type MemoryLayer,
 } from "./schema.js";
 
 export interface MemoryStoreOptions {
@@ -260,6 +261,13 @@ export class MemoryStore {
     // Tier defaults by node_type unless the caller pinned one (issue #68).
     // Only `ephemeral` nodes get a TTL horizon; `durable`/`reasoning` persist.
     const tier = props.tier ?? defaultTier(node.node_type);
+    // `layer` is persisted only when the caller pins it to a non-default value.
+    // Today every default routes to L3, so omitting it keeps the properties
+    // payload byte-identical to pre-#175 writes — the embedded RedDB engine
+    // has a per-value cap (ADR 0007) and even a stable ~14 byte addition can
+    // tip large `skill_event` nodes over the cap. Future slices that promote
+    // a node to L1/L2 will set `layer` explicitly and pay the cost only then.
+    const layer: MemoryLayer | undefined = props.layer;
     const createdAt = props.created_at ?? now;
     const expiresAt =
       tier === "ephemeral"
@@ -274,6 +282,7 @@ export class MemoryStore {
       ...(scopeId ? { scope_id: scopeId } : {}),
       importance: props.importance ?? DEFAULT_IMPORTANCE,
       tier,
+      ...(layer != null ? { layer } : {}),
       created_at: createdAt,
       updated_at: now,
       ...(props.provenance

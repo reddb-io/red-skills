@@ -191,7 +191,7 @@ import {
   type SkillRollup,
 } from "./skill-events.js";
 import { curateSkills, isCuratable, rollupsToCuratorInput } from "./skill-curator.js";
-import type { Confidence, MemoryProvenance, MemoryScope } from "./schema.js";
+import type { Confidence, MemoryLayer, MemoryProvenance, MemoryScope } from "./schema.js";
 import { slugify, storeNote } from "./store.js";
 
 const USAGE = `memory — persistent memory for code agents
@@ -206,7 +206,7 @@ Usage:
   memory inbox reject <id>          [--root <dir>] --reason <text> --yes [--json]
   memory inbox promote <id>         [--root <dir>] --yes [--json]
   memory classify <candidate...>    [--root <dir>] [--json]
-  memory recall <query...>          [--root <dir>] [--limit N] [--include-superseded] [--scope ...] [--scope-id ID] [--include-narrower-scopes] [--as-of <reddb-ref>]
+  memory recall <query...>          [--root <dir>] [--limit N] [--include-superseded] [--scope ...] [--scope-id ID] [--include-narrower-scopes] [--as-of <reddb-ref>] [--layer L1|L2|L3]
   memory federate                   [--root <dir>] --query "<topic>" [--limit N] [--per-root-limit N] [--json]
   memory whatif                     [--root <dir>] --change "<descriptor>" [--change "<descriptor>" ...] [--limit N] [--json]
   memory autocure                   [--root <dir>] [--apply] [--stale-days N] [--json]
@@ -384,6 +384,16 @@ function parseMemoryScope(value: string | boolean | undefined): MemoryScope | un
   if (value === true) throw new Error("--scope requires a value");
   if ((MEMORY_SCOPES as readonly string[]).includes(value)) return value as MemoryScope;
   throw new Error(`invalid memory scope "${value}"`);
+}
+
+const MEMORY_LAYERS: readonly MemoryLayer[] = ["L1", "L2", "L3"];
+
+function parseLayerFlag(value: string | boolean | undefined): MemoryLayer | undefined {
+  if (value == null || value === false) return undefined;
+  if (value === true) throw new Error("--layer requires a value (L1|L2|L3)");
+  const upper = value.toUpperCase();
+  if ((MEMORY_LAYERS as readonly string[]).includes(upper)) return upper as MemoryLayer;
+  throw new Error(`invalid memory layer "${value}" — expected L1, L2, or L3`);
 }
 
 const CONFIDENCE_VALUES: readonly Confidence[] = ["EXTRACTED", "INFERRED", "AMBIGUOUS"];
@@ -779,6 +789,10 @@ async function runRecall(args: ParsedArgs): Promise<void> {
   if (!query) throw new Error("nothing to recall — pass a query: memory recall <query>");
   const config = await requireConfig(rootDir);
   const limit = typeof args.flags.limit === "string" ? Number(args.flags.limit) : 10;
+  const requestedLayer = parseLayerFlag(args.flags.layer);
+  // Today only L3 is populated; explicit non-L3 requests return empty rather
+  // than silently falling back to L3 (PRD #174 prepares the L1/L2 surfaces).
+  const layerFiltersOut = requestedLayer != null && requestedLayer !== "L3";
 
   if (config.mode === "graph") {
     const asOf = stringFlag(args.flags, "as-of");
@@ -786,11 +800,12 @@ async function runRecall(args: ParsedArgs): Promise<void> {
       ? await HistoricalMemoryStore.open({ uri: resolveStoreUri(rootDir, config), ref: asOf })
       : await MemoryStore.open({ uri: resolveStoreUri(rootDir, config) });
     try {
-      const { hits, diagnostics } = await graphRecallResult(store, query, limit, {
+      const { hits: rawHits, diagnostics } = await graphRecallResult(store, query, limit, {
         includeSuperseded: args.flags["include-superseded"] === true,
         scope: scopeFlags(args.flags),
         now: asOf ? 0 : undefined,
       });
+      const hits = layerFiltersOut ? [] : rawHits;
       if (hits.length === 0) {
         console.log(`memory: no matches for "${query}"`);
         console.log(`  ${formatVectorRecallDiagnostic(diagnostics.vector)}`);
@@ -808,7 +823,9 @@ async function runRecall(args: ParsedArgs): Promise<void> {
     return;
   }
 
-  const hits = await recall(resolveNotesDir(rootDir, config), query, limit);
+  const hits = layerFiltersOut
+    ? []
+    : await recall(resolveNotesDir(rootDir, config), query, limit);
   if (hits.length === 0) {
     console.log(`memory: no matches for "${query}"`);
     return;
