@@ -6,6 +6,15 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 
 ---
 
+## afk (engineering) — periodic orchestrator heartbeat into afk.log keeps silent hangs diagnosable (modified)
+
+- **status**: modified
+- **upstream**: —
+- **why**: Issue #194. On the wQM2K case (#178, 2026-05-26) `afk.log` contained only the two boundary markers (`iteration started` / `iteration stopped`) after a 30-minute hang — the inner-agent stdout that should have been tee'd in (Slice D's "local liveness via stdout tee") never arrived, almost certainly buffered inside the runner pipeline and never flushed before the reaper killed the tree. Result: no forensic surface to tell which stage the worker died in. The boundary markers alone are not a liveness signal.
+- **what changed**: New `scripts/lib/heartbeat.sh` (sourced by `afk.sh`) replaces the two inline marker writers. `heartbeat_start` writes the `iteration started` marker *and* spawns a background sub-shell that appends one line per `RED_AFK_HEARTBEAT_S` (default 60s) to `$ITER_LOG`: `[heartbeat] stage:STAGE t+HH:MM:SS last_stream_line="..." cpu=N% rss=NM`. The loop re-reads `current.stage` + `current.last_stream_line` from `afk.state.json` via `state_read_into` on every tick, so the snapshot is always current (mid-iteration stage flips show up in the next heartbeat); `ps` against the orchestrator pid supplies cpu/rss; failure to read state or `ps` is best-effort and never crashes the loop. `heartbeat_stop` SIGTERMs the sub-shell, waits, then writes the closing marker. Because the loop lives in a separate sub-shell from the inner-agent pipeline, a SIGSTOPped inner agent (or a buffered runner tee) no longer silences the log — stage stays frozen, wall-clock keeps advancing. The existing `no-sentinel` envelope's `data-section=log` is the unchanged downstream consumer: `tail_iter_log 50` now carries the periodic heartbeats so the issue thread alone is enough to diagnose where the hang occurred. New `scripts/tests/heartbeat-loop.test.sh` (15 assertions) exercises the format helper, the emit shape against the issue's literal example line, quote-escaping, the live loop with `RED_AFK_HEARTBEAT_S=1` against a SIGSTOPped sleeper (acceptance: forcibly hung worker still produces heartbeats with wall-clock advancing and stage frozen — and a mid-stream `state_write` flips stage in the next tick, proving the loop re-reads state), `heartbeat_stop` reaping the sub-shell deterministically, and the empty-`ITER_LOG` early-return. Refs #194.
+
+---
+
 ## afk (engineering) — sup_kill_tree blast-radius guard keeps supervisor alive across reaps (modified)
 
 - **status**: modified
