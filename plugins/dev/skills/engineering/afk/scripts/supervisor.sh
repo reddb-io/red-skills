@@ -8,6 +8,13 @@
 #   RED_AFK_TARGET  — desired worker count (default 2)
 #   RED_AFK_REQUEST — optional special user request forwarded to every worker
 #
+# Worker env passthrough: any other RED_AFK_* var exported in the supervisor's
+# shell is forwarded to every worker via `nohup env KEY=value …`. Use this to
+# inject worker-side toggles like `RED_AFK_SKIP_PERF=1` or
+# `RED_AFK_SKIP_COMPETITIVE_BASELINE=1` without writing a hook. Internal
+# supervisor knobs (TARGET, POLL_S, STALL_*, CIRCUIT_*) and the per-slot
+# `*_BASE` build-isolation vars are excluded — see PASSTHROUGH_DENYLIST.
+#
 # State (all under $PROJECT_ROOT/.red/tmp/, gitignored):
 #   afk-supervisor.pid           — supervisor PID (single-supervisor lock)
 #   afk-supervisor.log           — supervisor event log
@@ -178,6 +185,51 @@ build_slot_env_overrides() {
   done
 }
 
+# Internal supervisor-only env vars that must NOT pass through to workers.
+# These either control the supervisor itself (target, poll, breaker) or are
+# already wired through dedicated paths (request, runner, per-slot _BASE).
+# Anything else prefixed `RED_AFK_` gets auto-forwarded so operators can
+# `export RED_AFK_SKIP_PERF=1` (etc) before launching `/dev:afk fleet` and
+# have it reach every worker without writing a hook.
+PASSTHROUGH_DENYLIST=(
+  RED_AFK_TARGET
+  RED_AFK_REQUEST
+  RED_AFK_RUNNER
+  RED_AFK_POLL_S
+  RED_AFK_STALL_POLL_S
+  RED_AFK_STALL_THRESHOLD_S
+  RED_AFK_CIRCUIT_K
+  RED_AFK_CIRCUIT_WINDOW_S
+  RED_AFK_PLUGIN_DIR
+  RED_AFK_SLOT
+  RED_AFK_WORKER_ID
+  RED_AFK_EXIT_CODE
+  RED_AFK_DURATION_S
+)
+
+# build_passthrough_env — scan the supervisor's own environment for every
+# `RED_AFK_*` variable that is *not* in PASSTHROUGH_DENYLIST and not a
+# `_BASE` build-isolation var (those are handled by build_slot_env_overrides
+# per slot). Emit one `KEY=value` line per match. Empty output when nothing
+# matches. Order is deterministic (sorted by key).
+build_passthrough_env() {
+  local key val
+  local -a deny=("${PASSTHROUGH_DENYLIST[@]}")
+  # Compgen against env yields exported names; iterate sorted for stability.
+  while IFS= read -r key; do
+    [[ -z "$key" ]] && continue
+    [[ "$key" == *_BASE ]] && continue
+    local skip=0
+    for d in "${deny[@]}"; do
+      [[ "$key" == "$d" ]] && { skip=1; break; }
+    done
+    (( skip )) && continue
+    val="${!key-}"
+    [[ -z "${val+x}" ]] && continue
+    printf '%s=%s\n' "$key" "$val"
+  done < <(compgen -e | grep '^RED_AFK_' | sort)
+}
+
 # gen_supervisor_wid — fresh `wXXXX` worker ID handed to pre-spawn hooks via
 # RED_AFK_WORKER_ID. Distinct from the runtime WORKER_ID afk.sh picks for itself —
 # this one only labels the spawn for detector / post-exit hook bookkeeping.
@@ -300,6 +352,12 @@ spawn_slot() {
     [[ -z "$line" ]] && continue
     env_args+=("$line")
   done < <(build_slot_env_overrides "$slot")
+  # Operator-set RED_AFK_* passthrough (RED_AFK_SKIP_PERF, RED_AFK_SKIP_*, etc).
+  # Appended after build-isolation so explicit per-slot vars still win.
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    env_args+=("$line")
+  done < <(build_passthrough_env)
 
   local -a worker_cmd=("$AFK_SH")
   if [[ -n "$SUPERVISOR_REQUEST" ]]; then

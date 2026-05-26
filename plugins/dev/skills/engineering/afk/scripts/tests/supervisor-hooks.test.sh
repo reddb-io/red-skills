@@ -220,6 +220,27 @@ grep -q 'worker_cmd+=(--request "$SUPERVISOR_REQUEST")' "$SUP_SH" \
   && ok "spawn_slot forwards --request to worker" \
   || bad "spawn_slot missing --request forwarding"
 
+# ---------- 11. RED_AFK_* passthrough env ---------------------------------
+(
+  export RED_AFK_SKIP_PERF=1
+  export RED_AFK_FOO=bar
+  export RED_AFK_TARGET=42
+  export RED_AFK_CARGO_TARGET_BASE=/tmp/x
+  export RED_AFK_POLL_S=99
+  out="$(build_passthrough_env)"
+  if grep -qx 'RED_AFK_SKIP_PERF=1' <<<"$out"; then ok "passthrough: SKIP_PERF forwarded"; else bad "passthrough: SKIP_PERF missing"; fi
+  if grep -qx 'RED_AFK_FOO=bar' <<<"$out"; then ok "passthrough: FOO forwarded"; else bad "passthrough: FOO missing"; fi
+  if grep -qx 'RED_AFK_TARGET=42' <<<"$out"; then bad "passthrough: TARGET leaked (denylist)"; else ok "passthrough: TARGET excluded"; fi
+  if grep -q 'RED_AFK_CARGO_TARGET_BASE' <<<"$out"; then bad "passthrough: _BASE leaked"; else ok "passthrough: _BASE excluded"; fi
+  if grep -qx 'RED_AFK_POLL_S=99' <<<"$out"; then bad "passthrough: POLL_S leaked (denylist)"; else ok "passthrough: POLL_S excluded"; fi
+)
+grep -q 'build_passthrough_env' "$SUP_SH" \
+  && ok "supervisor defines build_passthrough_env" \
+  || bad "supervisor missing build_passthrough_env"
+grep -q 'build_passthrough_env "$slot"\|build_passthrough_env)' "$SUP_SH" \
+  && ok "spawn_slot consumes build_passthrough_env" \
+  || bad "spawn_slot does not consume build_passthrough_env"
+
 echo
 echo "summary: $pass passed, $fail failed"
 [[ $fail -eq 0 ]]
