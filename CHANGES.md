@@ -6,6 +6,15 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 
 ---
 
+## memory — AMS importer (`memory import ams`) + migrating-from-ams porting guide (added)
+
+- **status**: added
+- **upstream**: —
+- **why**: Issue #184 (parent PRD #174). ADR 0005 committed to **no wire compatibility** with Redis `agent-memory-server` (AMS) — AMS users migrate via a one-shot offline importer + porting guide, not a live shadow read. Without the importer + docs, the "better than AMS for the local-per-repo case" positioning has no defensible migration path.
+- **what changed**: New `plugins/memory/src/import-ams.ts` reads an AMS JSON dump (`{ working_memory: [...], long_term_memory: [...] }`) and lands it in the local graph. `working_memory[].memories` map to L2 typed events partitioned by `session_id` (heuristic event-type inference from `memory_type` + `Decision:`/`Fix:`/`Gotcha:`/`Why:`/`Problem:`/`Solution:`/`Validation:`/`Goal:` text prefixes — falls back to `note_candidate`). `working_memory[].messages` map to a single L2 raw transcript blob per session. `long_term_memory[]` entries run through a candidate-shaped check that **first** asks the `ConflictDetector` (#179) — if a polarity flip / divergent-value / cross-session same-text contradiction is detected, the candidate is force-promoted so `MemoryStore.upsertNode`'s built-in detector writes `CONTRADICTS` edges instead of letting the dedup gate silently collapse the disagreement. Otherwise the PromotionEngine (#183) dedup gate runs over live L3 + the importer's in-batch shadow; near-dups bump reinforcement via the KV overlay. `user_id` is dropped (no multi-tenant axis); `namespace` lands as an `ams_namespace` property; ISO `created_at` / `updated_at` are parsed and reused. New CLI verb `memory import ams <dump.json> [--root <dir>] [--json]` wired through `runImport` in `cli.ts`. New `plugins/memory/docs/migrating-from-ams.md` covers the mapping table, the explicit non-features (hosted multi-tenant, REST wire compat, `user_id` axis, LiteLLM-specific provider names), and the export/import/verify steps. New `plugins/memory/tests/fixtures/ams/sample-dump.json` exercises both tiers + a contradiction case. New `plugins/memory/tests/import-ams.test.ts` (6 assertions): heuristic node-type inference; `parseAmsDump` rejects bad shapes; end-to-end sample-dump import lands the right L2 sessions/events/transcript and the right L3 promote/reinforce/contradiction split; contradicting decisions both land with `ams-import` provenance; the importer preserves (or restores) the caller's current session id; re-import is idempotent (duplicates → reinforcement bumps). Full memory suite: 758 passed / 1 skipped. `pnpm typecheck` clean. `pnpm build` clean. Refs #184.
+
+---
+
 ## memory — PromotionEngine (type+dedup gate) + layered triggers (added)
 
 - **status**: added

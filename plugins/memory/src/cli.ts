@@ -61,6 +61,7 @@ import { buildMemoryExtractionStatus } from "./extraction-status.js";
 import { buildMemoryExtractionStatusViewerArtifact } from "./extraction-status-viewer.js";
 import { formatOutput, parseInput, type RawPayload } from "./hook-adapters.js";
 import { dispatch, type HookEvent, type Runner } from "./hook-runtime.js";
+import { importAmsDump } from "./import-ams.js";
 import { runPromote } from "./promote.js";
 import {
   approveInboxItem,
@@ -357,6 +358,10 @@ Usage:
   session, promoting typed L2 candidates and bumping reinforcement on dedup
   hits. Emits one promote event per decision.
   memory promote [--triggered-by explicit|hook|overflow] [--session <id>] [--json] [--root <dir>]
+
+  AMS migration (PRD #174, issue #184) — one-shot offline importer for Redis
+  agent-memory-server JSON dumps. See \`docs/migrating-from-ams.md\`.
+  memory import ams <dump.json>     [--root <dir>] [--json]
 
 Two storage modes: markdown-only (plain notes, no engine) and graph (a typed
 knowledge graph over a per-project RedDB store). Run \`memory init\` once to pick
@@ -5705,6 +5710,34 @@ async function runAttemptLearnApply(args: ParsedArgs): Promise<void> {
   }
 }
 
+async function runImport(args: ParsedArgs): Promise<void> {
+  const source = args.positional[0];
+  const file = args.positional[1];
+  if (source !== "ams") {
+    throw new Error(`usage: memory import ams <dump.json> [--root <dir>] [--json]`);
+  }
+  if (!file) {
+    throw new Error("memory import ams: missing <dump.json> path");
+  }
+  const rootDir = rootOf(args.flags);
+  const { store } = await openGraphStore(args);
+  try {
+    const report = await importAmsDump(store, rootDir, file);
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(report, null, 2));
+      return;
+    }
+    console.log(
+      `memory import ams: working_memory sessions=${report.working.sessions.length} events=${report.working.events} transcripts=${report.working.transcripts}`,
+    );
+    console.log(
+      `memory import ams: long_term_memory promoted=${report.long_term.promoted} reinforced=${report.long_term.reinforced} skipped=${report.long_term.skipped}`,
+    );
+  } finally {
+    await store.close();
+  }
+}
+
 async function runPromoteCmd(args: ParsedArgs): Promise<void> {
   const rootDir = rootOf(args.flags);
   const json = Boolean(args.flags.json);
@@ -5915,6 +5948,8 @@ async function main(): Promise<void> {
       return runExport(args);
     case "hook":
       return runHook(args);
+    case "import":
+      return runImport(args);
     case "promote":
       return runPromoteCmd(args);
     case undefined:

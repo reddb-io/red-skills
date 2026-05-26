@@ -1,0 +1,71 @@
+{
+  "working_memory": [
+    {
+      "session_id": "ams-sess-alpha",
+      "user_id": "ignored-by-importer",
+      "messages": [
+        { "role": "user", "content": "Should we use pnpm here?", "timestamp": "2026-05-20T10:00:00Z" },
+        { "role": "assistant", "content": "Yes, stick with pnpm.", "timestamp": "2026-05-20T10:00:05Z" }
+      ],
+      "memories": [
+        {
+          "id": "ams-mem-1",
+          "text": "Decision: Use pnpm for this repo",
+          "memory_type": "semantic",
+          "topics": ["tooling", "package-manager"],
+          "created_at": "2026-05-20T10:01:00Z"
+        },
+        {
+          "id": "ams-mem-2",
+          "text": "Fix: Quote shell variables that contain spaces",
+          "topics": ["bash"],
+          "created_at": "2026-05-20T10:02:00Z"
+        }
+      ]
+    },
+    {
+      "session_id": "ams-sess-beta",
+      "memories": [
+        {
+          "id": "ams-mem-3",
+          "text": "Gotcha: pre-commit hook can mask actual lint errors",
+          "memory_type": "episodic",
+          "created_at": "2026-05-21T08:00:00Z"
+        }
+      ]
+    }
+  ],
+  "long_term_memory": [
+    {
+      "id": "ams-ltm-1",
+      "text": "Decision: Use pnpm for this repo",
+      "memory_type": "decision",
+      "namespace": "tooling",
+      "session_id": "ams-sess-alpha",
+      "created_at": "2026-05-20T10:01:00Z"
+    },
+    {
+      "id": "ams-ltm-2",
+      "text": "Fix: Quote shell variables that contain spaces",
+      "memory_type": "fix",
+      "session_id": "ams-sess-alpha",
+      "created_at": "2026-05-20T10:02:00Z"
+    },
+    {
+      "id": "ams-ltm-3",
+      "text": "Decision: Use pnpm in this repo",
+      "memory_type": "decision",
+      "namespace": "tooling",
+      "session_id": "ams-sess-beta",
+      "created_at": "2026-05-21T09:00:00Z"
+    },
+    {
+      "id": "ams-ltm-4",
+      "text": "Decision: Do not use pnpm for this repo",
+      "memory_type": "decision",
+      "namespace": "tooling",
+      "session_id": "ams-sess-gamma",
+      "created_at": "2026-05-22T09:00:00Z"
+    }
+  ]
+}
