@@ -31,10 +31,20 @@
 # inspects each live slot's per-iteration afk.log mtime. A slot whose
 # worker has been alive ≥ RED_AFK_STALL_THRESHOLD_S *and* whose afk.log
 # hasn't been written to in ≥ RED_AFK_STALL_THRESHOLD_S is flagged
-# `stalled:true` in the state file. The supervisor does NOT kill or
-# restart stalled workers — surfacing is the entire job. Monitor reads
-# the same file and renders stalled slots distinctly. The flag clears
-# automatically on the next sample once the log advances.
+# `stalled:true` in the state file. Monitor reads the same file and renders
+# stalled slots distinctly. The flag clears automatically on the next
+# sample once the log advances.
+#
+# Hard stall reaper: once a slot has been continuously stalled for
+# ≥ RED_AFK_STALL_KILL_THRESHOLD_S (default 30 min, must be greater than
+# RED_AFK_STALL_THRESHOLD_S), the supervisor escalates: kill_tree the
+# orchestrator process, post a `data-attempt-status="no-sentinel"`
+# envelope referencing the iter dir's afk.log tail, restore the issue
+# label to `ready-for-agent`, tear down the worktree + iter dir, and let
+# the normal health-check loop respawn the slot. Conservative default
+# leaves legitimate long iterations alone; operators can tune lower for
+# noisy fleets or higher for compile-heavy projects. Idempotent per slot
+# lifetime via SLOT_REAPED.
 #
 # Per-slot build isolation: build tools that serialize on a single cache
 # directory (cargo, Gradle, …) can stall the fleet. When the operator sets
@@ -110,6 +120,20 @@ CIRCUIT_WINDOW_S="${RED_AFK_CIRCUIT_WINDOW_S:-90}"
 RED_AFK_STALL_THRESHOLD_S="${RED_AFK_STALL_THRESHOLD_S:-600}"
 RED_AFK_STALL_POLL_S="${RED_AFK_STALL_POLL_S:-30}"
 
+# Hard reap threshold — see header. Must be strictly greater than
+# RED_AFK_STALL_THRESHOLD_S; validate_stall_thresholds enforces this at
+# main-loop entry (sourcing supervisor.sh from tests deliberately skips
+# the check so callers can stage arbitrary values).
+RED_AFK_STALL_KILL_THRESHOLD_S="${RED_AFK_STALL_KILL_THRESHOLD_S:-1800}"
+
+validate_stall_thresholds() {
+  if (( RED_AFK_STALL_KILL_THRESHOLD_S <= RED_AFK_STALL_THRESHOLD_S )); then
+    echo "[supervisor] ERROR: RED_AFK_STALL_KILL_THRESHOLD_S ($RED_AFK_STALL_KILL_THRESHOLD_S) must be > RED_AFK_STALL_THRESHOLD_S ($RED_AFK_STALL_THRESHOLD_S)" >&2
+    return 2
+  fi
+  return 0
+}
+
 # Per-slot build-isolation env vars. Each entry is "BASE_VAR:TARGET_VAR".
 # When BASE_VAR is set in the supervisor's env, every spawned worker on
 # slot i gets TARGET_VAR=${BASE_VAR}/slot-{i} exported and the directory
@@ -160,6 +184,7 @@ declare -a SLOT_SWEPT=()              # 1 when sweep_parked_slot has already fir
 declare -a SLOT_STALLED=()             # 1 when currently flagged stalled
 declare -a SLOT_STALL_SINCE_EPOCH=()   # epoch when the stall window opened
 declare -a SLOT_STALL_LOG=()           # iteration log path observed at stall time
+declare -a SLOT_REAPED=()              # 1 when reap_stalled_slot has already fired
 declare -a SLOT_WORKER_IDS=()           # per-slot RED_AFK_WORKER_ID handed to pre-spawn hooks
 declare -a SLOT_APPLIED_DETECTORS=()    # most-recent applied detectors per slot (space-separated)
 LAST_STALL_POLL_EPOCH=0
@@ -198,6 +223,7 @@ PASSTHROUGH_DENYLIST=(
   RED_AFK_POLL_S
   RED_AFK_STALL_POLL_S
   RED_AFK_STALL_THRESHOLD_S
+  RED_AFK_STALL_KILL_THRESHOLD_S
   RED_AFK_CIRCUIT_K
   RED_AFK_CIRCUIT_WINDOW_S
   RED_AFK_PLUGIN_DIR
@@ -438,6 +464,35 @@ find_slot_iter_log() {
   done
 }
 
+# Same shape as afk.sh's kill_tree — duplicated here so the supervisor
+# does not have to source afk.sh (which has main-loop side effects).
+# Recursively SIG to the pid and every descendant. Silent on missing
+# pids — best-effort by design.
+sup_kill_tree() {
+  local pid="$1" sig="${2:-TERM}"
+  local k
+  for k in $(pgrep -P "$pid" 2>/dev/null); do
+    sup_kill_tree "$k" "$sig"
+  done
+  kill -"$sig" "$pid" 2>/dev/null || true
+}
+
+# Same matching logic as find_slot_iter_log but returns the iter
+# directory itself. Echoes nothing when the worker is between
+# iterations (no afk.pid match).
+find_slot_iter_dir() {
+  local slot="$1"
+  local pid="${SLOT_PIDS[$slot]:-}"
+  local pid_file
+  [[ -n "$pid" ]] || return 0
+  for pid_file in "$TMP_DIR"/work-*/afk.pid; do
+    [[ -f "$pid_file" ]] || continue
+    [[ "$(cat "$pid_file" 2>/dev/null)" == "$pid" ]] || continue
+    printf '%s\n' "$(dirname "$pid_file")"
+    return 0
+  done
+}
+
 # Pure predicate for unit testing. Given the worker's spawn epoch,
 # the iteration log's last-modified epoch (0 = no log yet), the
 # current epoch, and the stall threshold, echo `yes` when the slot
@@ -476,6 +531,17 @@ poll_stall_detector() {
         SLOT_STALL_SINCE_EPOCH[$i]="$mtime"
         SLOT_STALL_LOG[$i]="$log"
         log "⏸️  slot $i flagged stalled (log idle for $(( now - mtime ))s: $log)"
+        changed=1
+      fi
+      # Hard-reap escalation: silence past RED_AFK_STALL_KILL_THRESHOLD_S
+      # is reclaimed exactly once per slot lifetime. The reap clears the
+      # bookkeeping itself, so the normal health-check loop respawns the
+      # slot on its next pass.
+      local since="${SLOT_STALL_SINCE_EPOCH[$i]:-0}"
+      if (( since > 0 )) \
+         && (( now - since >= RED_AFK_STALL_KILL_THRESHOLD_S )) \
+         && [[ "${SLOT_REAPED[$i]:-0}" != "1" ]]; then
+        reap_stalled_slot "$i"
         changed=1
       fi
     else
@@ -680,6 +746,131 @@ sweep_parked_slot() {
   fi
 }
 
+# reap_stalled_slot <slot>
+# Hard-reap a slot whose worker has been silent past
+# RED_AFK_STALL_KILL_THRESHOLD_S. Steps in order, every step best-effort
+# past the kill so a partial cleanup never blocks the rest:
+#   1. Kill the orchestrator tree (TERM, 5s grace, then KILL).
+#   2. Free the slot bookkeeping so the next health-check respawns it.
+#   3. If we recovered an issue number from afk.state.json: post a
+#      `no-sentinel` envelope via the shared envelope_emit_attempt entry
+#      point and rotate labels back to ready-for-agent.
+#   4. Tear down worktree, branch, iter dir.
+# Idempotent per supervisor lifetime via SLOT_REAPED; on restart the
+# iter dir is gone so re-reap is a natural no-op.
+reap_stalled_slot() {
+  local slot="$1"
+  [[ "${SLOT_REAPED[$slot]:-0}" == "1" ]] && return 0
+  SLOT_REAPED[$slot]=1
+
+  local now since elapsed
+  now="$(date +%s)"
+  since="${SLOT_STALL_SINCE_EPOCH[$slot]:-0}"
+  elapsed=$(( now - since ))
+
+  local orch_pid="${SLOT_PIDS[$slot]:-}"
+  local iter_dir; iter_dir="$(find_slot_iter_dir "$slot")"
+
+  local issue="" title="" slug="" worker_id="" started_at=""
+  if [[ -n "$iter_dir" && -f "$iter_dir/afk.state.json" ]] \
+     && command -v jq >/dev/null 2>&1; then
+    local sf="$iter_dir/afk.state.json"
+    issue="$(jq -r '.current.number // empty' "$sf" 2>/dev/null)"
+    title="$(jq -r '.current.title // empty' "$sf" 2>/dev/null)"
+    slug="$(jq -r '.current.slug // empty' "$sf" 2>/dev/null)"
+    worker_id="$(jq -r '.worker_id // empty' "$sf" 2>/dev/null)"
+    started_at="$(jq -r '.started_at // empty' "$sf" 2>/dev/null)"
+  fi
+
+  # 1. kill_tree the orchestrator.
+  if [[ -n "$orch_pid" ]] && kill -0 "$orch_pid" 2>/dev/null; then
+    sup_kill_tree "$orch_pid" TERM
+    sleep 5
+    if kill -0 "$orch_pid" 2>/dev/null; then
+      sup_kill_tree "$orch_pid" KILL
+    fi
+  fi
+
+  # 2. Free the slot — clear bookkeeping so the health-check respawn loop
+  # picks it up on the next cycle even if cleanup below partially fails.
+  SLOT_PIDS[$slot]=""
+  SLOT_STALLED[$slot]=0
+  SLOT_STALL_SINCE_EPOCH[$slot]=0
+  SLOT_STALL_LOG[$slot]=""
+
+  # 3. Post envelope + rotate labels (skip silently if we never learned the
+  # issue number — the worker died before claim, the iter dir is enough).
+  if [[ -n "$issue" && "$issue" != "null" ]] && command -v gh >/dev/null 2>&1; then
+    local repo
+    repo="$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || true)"
+
+    local notes_tmp log_tmp
+    notes_tmp="$(mktemp)"; log_tmp="$(mktemp)"
+    if [[ -f "$iter_dir/handoff.md" ]]; then
+      envelope_extract_notes "$iter_dir/handoff.md" > "$notes_tmp"
+    fi
+    [[ -s "$notes_tmp" ]] || printf '(no agent notes recorded before stall-reap)\n' > "$notes_tmp"
+    if [[ -f "$iter_dir/afk.log" ]]; then
+      tail -n 50 "$iter_dir/afk.log" > "$log_tmp"
+    else
+      : > "$log_tmp"
+    fi
+
+    local duration_s=0 started_epoch
+    if [[ -n "$started_at" ]]; then
+      started_epoch="$(date -d "$started_at" +%s 2>/dev/null || echo 0)"
+      (( started_epoch > 0 )) && duration_s=$(( now - started_epoch ))
+    fi
+    local summary
+    summary="$(printf 'worker `%s` · status: no-sentinel · duration: %s · diff: stall-reaped · attempt: 1 · reason: stall-reaped' \
+      "${worker_id:-unknown}" "$(envelope_fmt_duration "$duration_s")")"
+
+    local branch="afk/${worker_id}/${issue}-${slug}"
+    local remote_name="afk-attempts/${worker_id}/${issue}-${slug}"
+    local worktree_rel=".red/tmp/work-${worker_id}-i${issue}/worktree"
+    local repo_dir="$iter_dir/worktree"
+    [[ -d "$repo_dir" ]] || repo_dir=""
+
+    _sup_reaper_poster() { gh -R "$repo" issue comment "$1" --body "$2" >/dev/null 2>&1; }
+
+    if [[ -n "$repo" ]]; then
+      if envelope_emit_attempt \
+           poster=_sup_reaper_poster status=no-sentinel "issue=$issue" \
+           "summary=$summary" "repo=$repo" "repo_dir=$repo_dir" \
+           "branch=$branch" "remote_name=$remote_name" \
+           "worktree_rel=$worktree_rel" \
+           "diffstat=(stall-reaped, no diff computed)" \
+           "notes_file=$notes_tmp" "log_file=$log_tmp"; then
+        log "slot $slot reap: posted no-sentinel envelope on #$issue"
+      else
+        log "slot $slot reap: WARN failed to post envelope on #$issue"
+      fi
+      if gh -R "$repo" issue edit "$issue" \
+           --remove-label running \
+           --add-label ready-for-agent \
+           >/dev/null 2>&1; then
+        log "slot $slot reap: restored labels on #$issue (+ready-for-agent -running)"
+      else
+        log "slot $slot reap: WARN failed to edit labels on #$issue"
+      fi
+    fi
+    rm -f "$notes_tmp" "$log_tmp"
+  fi
+
+  # 4. Teardown — worktree + local branch + iter dir.
+  if [[ -n "$iter_dir" && -d "$iter_dir/worktree" ]]; then
+    git -C "$PROJECT_ROOT" worktree remove --force "$iter_dir/worktree" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "$worker_id" && -n "$issue" && -n "$slug" ]]; then
+    git -C "$PROJECT_ROOT" branch -D "afk/${worker_id}/${issue}-${slug}" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "$iter_dir" && -d "$iter_dir" ]]; then
+    rm -rf "$iter_dir" || true
+  fi
+
+  log "slot $slot: hard-reaped after stalled ${elapsed}s (orchestrator pid=${orch_pid:-?}, issue=#${issue:-?}, worker=${worker_id:-?})"
+}
+
 # Handle a slot whose worker has exited: decide park-or-respawn based on
 # fast-death history. A "fast death" is a worker that exited within
 # < FAST_DEATH_THRESHOLD_S of being spawned. Hitting CIRCUIT_K such deaths
@@ -788,6 +979,8 @@ trap cleanup SIGTERM SIGINT
 # the singleton lock. Every function above this line is reachable from
 # `source supervisor.sh`.
 [[ "${BASH_SOURCE[0]}" != "$0" ]] && return 0 2>/dev/null
+
+validate_stall_thresholds || exit $?
 
 log_applied_detectors_boot_line
 
