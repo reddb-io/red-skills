@@ -1334,7 +1334,11 @@ export async function evaluateCompetitiveEvalV2(
   const fixture = opts.fixture ?? competitiveEvalFixture;
   const liveBaselines = opts.liveBaselines ?? [];
   const reasoningReplaySubCheck = await runReasoningReplaySubCheck();
-  const dimensions = competitiveEvalV2Dimensions(report, { reasoningReplaySubCheck });
+  const federationSubCheck = await runFederationSubCheck();
+  const dimensions = competitiveEvalV2Dimensions(report, {
+    reasoningReplaySubCheck,
+    federationSubCheck,
+  });
   const baseline = evaluateCompetitiveBaseline(new Date(0));
   const executableEvidence = competitiveEvalV2EvidenceIds(dimensions, baseline, fixture, liveBaselines);
   const unsupportedPublicClaims = fixture.publicClaims
@@ -1424,6 +1428,7 @@ function evidenceSlug(value: string): string {
 
 interface CompetitiveEvalV2DimensionContext {
   reasoningReplaySubCheck: { status: "pass" | "warn" | "fail"; detail: string };
+  federationSubCheck: { status: "pass" | "warn" | "fail"; detail: string };
 }
 
 function competitiveEvalV2Dimensions(
@@ -1542,17 +1547,33 @@ function competitiveEvalV2Dimensions(
     },
     {
       id: "intelligence",
-      score: ctx.reasoningReplaySubCheck.status === "pass" ? 1 : 0,
+      score:
+        ctx.reasoningReplaySubCheck.status === "pass" &&
+        ctx.federationSubCheck.status === "pass"
+          ? 1
+          : 0,
       maxScore: 1,
-      status: ctx.reasoningReplaySubCheck.status,
+      status:
+        ctx.reasoningReplaySubCheck.status === "pass" &&
+        ctx.federationSubCheck.status === "pass"
+          ? "pass"
+          : ctx.reasoningReplaySubCheck.status === "fail" ||
+              ctx.federationSubCheck.status === "fail"
+            ? "fail"
+            : "warn",
       detail:
-        "Composed confidence (memory.confidence.v1) wired into recall/traverse/path-explain/ask (#167); reasoning-replay (memory.reasoning_replay.v1) attaches outcomes + gaps (#169).",
-      evidence: ["foundation:confidence-scoring", "foundation:reasoning-replay"],
+        "Composed confidence (memory.confidence.v1) wired into recall/traverse/path-explain/ask (#167); reasoning-replay (memory.reasoning_replay.v1) attaches outcomes + gaps (#169); federation (memory.federation.v1) enforces redact policy at read time (#170).",
+      evidence: [
+        "foundation:confidence-scoring",
+        "foundation:reasoning-replay",
+        "foundation:federation",
+      ],
       metrics: {
         composer: "confidence-scoring.ts",
         signals: 4,
         weights: "provenance=0.30 recency=0.25 supersession=0.25 validation=0.20",
         reasoning_replay_status: ctx.reasoningReplaySubCheck.status,
+        federation_status: ctx.federationSubCheck.status,
       },
       subChecks: [
         {
@@ -1565,6 +1586,11 @@ function competitiveEvalV2Dimensions(
           id: "reasoning-replay",
           status: ctx.reasoningReplaySubCheck.status,
           detail: ctx.reasoningReplaySubCheck.detail,
+        },
+        {
+          id: "federation",
+          status: ctx.federationSubCheck.status,
+          detail: ctx.federationSubCheck.detail,
         },
         {
           id: "autocure",
@@ -1620,6 +1646,113 @@ async function runReasoningReplaySubCheck(): Promise<{
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+}
+
+/**
+ * Eval-v2 `federation` sub-check (issue #170).
+ *
+ * Sets up two markdown-only memory roots and a host root with a federation
+ * config that redacts the `excerpt` field and drops one origin via `scopes:`.
+ * Asserts the read surface honors the policy — masked field is null, dropped
+ * scope yields zero results — and that telemetry fires exactly once. Returns
+ * `pass` iff every assertion holds.
+ */
+async function runFederationSubCheck(): Promise<{
+  status: "pass" | "warn" | "fail";
+  detail: string;
+}> {
+  const { buildFederationReport } = await import("./federation.js");
+  const root = await mkdtemp(join(tmpdir(), "memory-federation-subcheck-"));
+  try {
+    const alpha = await scaffoldFederationRoot(root, "alpha", {
+      "ingest.md": "# ingest\n\nAlpha ingest note used in the eval sub-check.",
+    });
+    const beta = await scaffoldFederationRoot(root, "beta", {
+      "ingest.md": "# ingest\n\nBeta ingest note that policy will drop.",
+    });
+    const host = join(root, "host");
+    await mkdir(join(host, ".red/memory"), { recursive: true });
+    const yaml = [
+      "roots:",
+      `  - repo: alpha`,
+      `    path: ${alpha}`,
+      `  - repo: beta`,
+      `    path: ${beta}`,
+      "redact:",
+      "  fields:",
+      "    - excerpt",
+      "  scopes:",
+      "    - beta",
+      "trust:",
+      "  alpha: 0.9",
+    ].join("\n");
+    await writeFile(join(host, ".red/memory/federation.yaml"), `${yaml}\n`);
+
+    let telemetryHits = 0;
+    const report = await buildFederationReport(host, "ingest", {
+      onTelemetry: () => {
+        telemetryHits += 1;
+      },
+    });
+
+    if (report.results.length === 0) {
+      return { status: "fail", detail: "federation sub-check returned no results" };
+    }
+    if (report.results.some((r) => r.origin_repo === "beta")) {
+      return {
+        status: "fail",
+        detail: "federation sub-check leaked a result from a redact-scoped origin",
+      };
+    }
+    if (report.results.some((r) => r.excerpt !== null)) {
+      return {
+        status: "fail",
+        detail: "federation sub-check leaked a redacted field through the surface",
+      };
+    }
+    if (telemetryHits !== 1) {
+      return {
+        status: "fail",
+        detail: `federation sub-check expected one telemetry event, got ${telemetryHits}`,
+      };
+    }
+    return {
+      status: "pass",
+      detail: `federation read honored policy (fields=${report.policy.fields.join(",")}, scopes=${report.policy.scopes.join(",")}) and emitted memory.federation.read.`,
+    };
+  } catch (err) {
+    return {
+      status: "fail",
+      detail: `federation sub-check failed: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+async function scaffoldFederationRoot(
+  parent: string,
+  name: string,
+  notes: Record<string, string>,
+): Promise<string> {
+  const dir = join(parent, name);
+  const notesDir = join(dir, ".red/memory/notes");
+  await mkdir(notesDir, { recursive: true });
+  await writeFile(
+    join(dir, ".red/memory/config.json"),
+    JSON.stringify({
+      version: 1,
+      mode: "markdown-only",
+      notesDir: ".red/memory/notes",
+      hooks: { sessionStart: false, postToolUse: false, stop: false, preCompact: false },
+      mcp: false,
+      reddb: false,
+    }),
+  );
+  for (const [file, body] of Object.entries(notes)) {
+    await writeFile(join(notesDir, file), body);
+  }
+  return dir;
 }
 
 /**
