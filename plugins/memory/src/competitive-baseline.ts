@@ -1333,7 +1333,8 @@ export async function evaluateCompetitiveEvalV2(
   const report = await evaluateCompetitiveEval(opts);
   const fixture = opts.fixture ?? competitiveEvalFixture;
   const liveBaselines = opts.liveBaselines ?? [];
-  const dimensions = competitiveEvalV2Dimensions(report);
+  const reasoningReplaySubCheck = await runReasoningReplaySubCheck();
+  const dimensions = competitiveEvalV2Dimensions(report, { reasoningReplaySubCheck });
   const baseline = evaluateCompetitiveBaseline(new Date(0));
   const executableEvidence = competitiveEvalV2EvidenceIds(dimensions, baseline, fixture, liveBaselines);
   const unsupportedPublicClaims = fixture.publicClaims
@@ -1421,7 +1422,14 @@ function evidenceSlug(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 }
 
-function competitiveEvalV2Dimensions(report: CompetitiveEvalReport): CompetitiveEvalV2Dimension[] {
+interface CompetitiveEvalV2DimensionContext {
+  reasoningReplaySubCheck: { status: "pass" | "warn" | "fail"; detail: string };
+}
+
+function competitiveEvalV2Dimensions(
+  report: CompetitiveEvalReport,
+  ctx: CompetitiveEvalV2DimensionContext,
+): CompetitiveEvalV2Dimension[] {
   const foundationAxes = new Map(report.foundationGate.composite.axes.map((axis) => [axis.id, axis]));
   return [
     {
@@ -1534,16 +1542,17 @@ function competitiveEvalV2Dimensions(report: CompetitiveEvalReport): Competitive
     },
     {
       id: "intelligence",
-      score: 1,
+      score: ctx.reasoningReplaySubCheck.status === "pass" ? 1 : 0,
       maxScore: 1,
-      status: "pass",
+      status: ctx.reasoningReplaySubCheck.status,
       detail:
-        "Composed confidence (memory.confidence.v1) wired into recall, traverse, path-explain, ask (issue #167).",
-      evidence: ["foundation:confidence-scoring"],
+        "Composed confidence (memory.confidence.v1) wired into recall/traverse/path-explain/ask (#167); reasoning-replay (memory.reasoning_replay.v1) attaches outcomes + gaps (#169).",
+      evidence: ["foundation:confidence-scoring", "foundation:reasoning-replay"],
       metrics: {
         composer: "confidence-scoring.ts",
         signals: 4,
         weights: "provenance=0.30 recency=0.25 supersession=0.25 validation=0.20",
+        reasoning_replay_status: ctx.reasoningReplaySubCheck.status,
       },
       subChecks: [
         {
@@ -1552,9 +1561,60 @@ function competitiveEvalV2Dimensions(report: CompetitiveEvalReport): Competitive
           detail:
             "Pure composer + table tests; CLI/MCP/HTTP op `memory.confidence.v1` exposes per-signal breakdown.",
         },
+        {
+          id: "reasoning-replay",
+          status: ctx.reasoningReplaySubCheck.status,
+          detail: ctx.reasoningReplaySubCheck.detail,
+        },
       ],
     },
   ];
+}
+
+async function runReasoningReplaySubCheck(): Promise<{
+  status: "pass" | "warn" | "fail";
+  detail: string;
+}> {
+  const { buildReasoningReplay } = await import("./reasoning/reasoning-replay.js");
+  const { recordReasoningAttempt } = await import("./reasoning/attempt-writer.js");
+  const root = await mkdtemp(join(tmpdir(), "memory-reasoning-replay-subcheck-"));
+  try {
+    const init = await initGraph(root, { project: "reasoning-replay-subcheck" });
+    const store = await MemoryStore.open({ uri: init.storeUri, project: "reasoning-replay-subcheck" });
+    try {
+      await recordReasoningAttempt(store, {
+        repository: "reddb-io/red-skills",
+        issueNumber: 169,
+        attemptNumber: 1,
+        status: "done",
+        summary: "reasoning-replay outcome attachment fixture",
+        touchedFiles: ["plugins/memory/src/reasoning/reasoning-replay.ts"],
+      });
+      const replay = await buildReasoningReplay(store, "reasoning replay outcome attachment", { limit: 3 });
+      const hasOutcome = replay.results.some((result) =>
+        ["done", "blocked", "no-sentinel", "unknown"].includes(result.outcome),
+      );
+      if (replay.results.length === 0 || !hasOutcome) {
+        return {
+          status: "fail",
+          detail: `reasoning-replay fixture returned ${replay.results.length} result(s) without an outcome field`,
+        };
+      }
+      return {
+        status: "pass",
+        detail: `reasoning-replay returned ${replay.results.length} result(s); first outcome=${replay.results[0]?.outcome}`,
+      };
+    } finally {
+      await store.close();
+    }
+  } catch (err) {
+    return {
+      status: "fail",
+      detail: `reasoning-replay sub-check failed: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 }
 
 export function renderCompetitiveEvalV2Json(report: CompetitiveEvalV2Report): string {

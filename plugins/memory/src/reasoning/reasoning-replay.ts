@@ -1,20 +1,28 @@
 /**
- * Reasoning replay — first vertical slice of the replay surface (issue #166).
+ * Reasoning replay surface (issues #166, #169).
  *
  * Reads `attempt` nodes from the `reasoning` tier and ranks them by token
- * similarity to a task descriptor. Outcome attachment and gap detection are
- * scheduled for slice #1b; this report always returns `gaps: []` and omits
- * `outcome` from each result.
+ * similarity to a task descriptor. Each result carries an `outcome` derived
+ * from the AFK envelope `data-attempt-status` (mirrored on the attempt node
+ * `status` property). `gaps[]` surfaces `learning-debt` repeated-failure
+ * patterns scoped to the matched attempts' issues.
  */
 
+import {
+  buildLearningDebtReport,
+  type LearningDebtStore,
+} from "../learning-debt.js";
 import type { MemoryStore, StoredNode } from "../graph-store.js";
 import { tokenize } from "../recall.js";
+
+export type ReasoningReplayOutcome = "done" | "blocked" | "no-sentinel" | "unknown";
 
 export interface ReasoningReplayResult {
   attempt_id: string;
   similarity: number;
   when: string;
   summary: string;
+  outcome: ReasoningReplayOutcome;
 }
 
 export interface ReasoningReplayReport {
@@ -35,6 +43,11 @@ export interface ReasoningReplayOptions {
 
 const DEFAULT_LIMIT = 5;
 const MAX_LIMIT = 50;
+const KNOWN_OUTCOMES: ReadonlySet<ReasoningReplayOutcome> = new Set([
+  "done",
+  "blocked",
+  "no-sentinel",
+]);
 
 export async function buildReasoningReplay(
   store: MemoryStore,
@@ -43,7 +56,8 @@ export async function buildReasoningReplay(
 ): Promise<ReasoningReplayReport> {
   const trimmed = task.trim();
   const limit = clampLimit(opts.limit);
-  const generatedAt = new Date(opts.now ?? Date.now()).toISOString();
+  const now = opts.now ?? Date.now();
+  const generatedAt = new Date(now).toISOString();
   const terms = tokenize(trimmed);
 
   const nodes = await store.listNodes(opts.now);
@@ -56,12 +70,16 @@ export async function buildReasoningReplay(
       return a.node.label.localeCompare(b.node.label);
     });
 
-  const results: ReasoningReplayResult[] = scored.slice(0, limit).map(({ node, similarity }) => ({
+  const top = scored.slice(0, limit);
+  const results: ReasoningReplayResult[] = top.map(({ node, similarity }) => ({
     attempt_id: node.label,
     similarity: roundSimilarity(similarity),
     when: attemptWhen(node, generatedAt),
     summary: attemptSummary(node),
+    outcome: outcomeForAttempt(node),
   }));
+
+  const gaps = await collectGaps(store, top.map(({ node }) => node), now);
 
   return {
     schema_version: "memory.reasoning_replay.v1",
@@ -71,7 +89,7 @@ export async function buildReasoningReplay(
     limit,
     total_attempts: attempts.length,
     results,
-    gaps: [],
+    gaps,
   };
 }
 
@@ -116,6 +134,73 @@ function attemptWhen(node: StoredNode, fallback: string): string {
 function pickEpochMs(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value) && value > 0) return value;
   return null;
+}
+
+function outcomeForAttempt(node: StoredNode): ReasoningReplayOutcome {
+  const raw = node.properties.status;
+  if (typeof raw !== "string") return "unknown";
+  const status = raw.trim().toLowerCase();
+  return KNOWN_OUTCOMES.has(status as ReasoningReplayOutcome)
+    ? (status as ReasoningReplayOutcome)
+    : "unknown";
+}
+
+/**
+ * AFK envelope wire schema (see plugins/dev/skills/engineering/afk/scripts/lib/envelope.sh):
+ *   <details data-attempt-status="<status>"><summary>...</summary>...</details>
+ *
+ * Returns the raw status string when found, or null otherwise. Useful for
+ * back-filling outcomes from raw GitHub comment bodies; the reasoning-replay
+ * surface itself reads the mirrored `status` property on attempt nodes.
+ */
+export function parseAttemptStatusFromEnvelope(body: string | null | undefined): string | null {
+  if (!body) return null;
+  const match = /<details[^>]*\bdata-attempt-status\s*=\s*"([^"]+)"/i.exec(body);
+  return match?.[1]?.trim() || null;
+}
+
+/**
+ * Maps a raw envelope/attempt status to the bounded replay outcome vocabulary.
+ */
+export function mapStatusToOutcome(
+  status: string | null | undefined,
+): ReasoningReplayOutcome {
+  if (typeof status !== "string") return "unknown";
+  const normalized = status.trim().toLowerCase();
+  return KNOWN_OUTCOMES.has(normalized as ReasoningReplayOutcome)
+    ? (normalized as ReasoningReplayOutcome)
+    : "unknown";
+}
+
+async function collectGaps(
+  store: MemoryStore,
+  matchedAttempts: StoredNode[],
+  now: number,
+): Promise<string[]> {
+  if (matchedAttempts.length === 0) return [];
+  const matchedIssues = new Set<number>();
+  for (const node of matchedAttempts) {
+    const issue = Number(node.properties.issue_number);
+    if (Number.isFinite(issue)) matchedIssues.add(issue);
+  }
+  if (matchedIssues.size === 0) return [];
+
+  let report;
+  try {
+    report = await buildLearningDebtReport(store as unknown as LearningDebtStore, { now });
+  } catch {
+    return [];
+  }
+
+  const gaps: string[] = [];
+  for (const debt of report.categories.repeatedFailurePatterns) {
+    if (debt.issueNumber == null) continue;
+    if (!matchedIssues.has(debt.issueNumber)) continue;
+    gaps.push(
+      `${debt.pattern} (${debt.attemptCount} attempts) — no durable lesson recorded (${debt.citations.join(", ")})`,
+    );
+  }
+  return gaps;
 }
 
 /**

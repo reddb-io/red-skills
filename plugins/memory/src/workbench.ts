@@ -846,19 +846,27 @@ function timelineSection(workbench: MemoryWorkbench): string {
 function reasoningReplaySection(workbench: MemoryWorkbench): string {
   const replay = workbench.reasoning_replay;
   const items = replay.results;
+  const gaps = replay.gaps;
+  const gapsHtml =
+    gaps.length === 0
+      ? ""
+      : `<h3>Gaps</h3><ul class="reasoning-gaps">${gaps
+          .map((gap) => `<li>${escapeHtml(gap)}</li>`)
+          .join("")}</ul>`;
   return `<section>
     <h2>Reasoning Replay</h2>
-    <p class="meta">Similarity ranking over reasoning-tier attempt nodes; outcome attachment lands in a follow-up slice.</p>
+    <p class="meta">Similarity ranking over reasoning-tier attempt nodes, with AFK envelope outcome and learning-debt gaps.</p>
     ${
       items.length === 0
         ? `<p class="empty">No recent reasoning replays yet — run a few AFK attempts to populate this panel.</p>`
         : `<ul>${items
             .map(
               (item) =>
-                `<li class="capability"><div><h3>${escapeHtml(item.attempt_id)}</h3><p class="meta">${escapeHtml(item.when)}</p><p>${escapeHtml(item.summary)}</p></div><span class="pill">${item.similarity.toFixed(4)}</span></li>`,
+                `<li class="capability"><div><h3>${escapeHtml(item.attempt_id)}</h3><p class="meta">${escapeHtml(item.when)}</p><p>${escapeHtml(item.summary)}</p></div><span class="pill ${outcomeClass(item.outcome)}" data-outcome="${escapeHtml(item.outcome)}">${escapeHtml(item.outcome)}</span><span class="pill">${item.similarity.toFixed(4)}</span></li>`,
             )
             .join("")}</ul>`
     }
+    ${gapsHtml}
   </section>`;
 }
 
@@ -880,6 +888,13 @@ function federationStatusSection(workbench: MemoryWorkbench): string {
     }
     <p class="meta">${federation.results.length} merged result(s) across ${federation.roots_queried} root(s).</p>
   </section>`;
+}
+
+function outcomeClass(outcome: string): string {
+  if (outcome === "done") return "ok";
+  if (outcome === "blocked") return "bad";
+  if (outcome === "no-sentinel") return "warn";
+  return "warn";
 }
 
 function actionsSection(workbench: MemoryWorkbench): string {

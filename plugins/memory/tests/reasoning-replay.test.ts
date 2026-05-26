@@ -6,6 +6,8 @@ import { MemoryStore } from "../src/graph-store.js";
 import {
   buildReasoningReplay,
   jaccardSimilarity,
+  mapStatusToOutcome,
+  parseAttemptStatusFromEnvelope,
 } from "../src/reasoning/reasoning-replay.js";
 import { recordReasoningAttempt } from "../src/reasoning/attempt-writer.js";
 
@@ -93,12 +95,14 @@ describe("reasoning replay", () => {
           similarity: expect.any(Number),
           when: expect.any(String),
           summary: expect.any(String),
+          outcome: expect.stringMatching(/^(done|blocked|no-sentinel|unknown)$/),
         }),
       );
       expect(result.similarity).toBeGreaterThanOrEqual(0);
       expect(result.similarity).toBeLessThanOrEqual(1);
       expect(() => new Date(result.when).toISOString()).not.toThrow();
     }
+    expect(first.results[0]?.outcome).toBe("done");
 
     // Determinism: a second call yields the same ranking and similarities.
     const second = await buildReasoningReplay(store, "rebuild ingest pipeline", {
@@ -108,6 +112,89 @@ describe("reasoning replay", () => {
       first.results.map((r) => [r.attempt_id, r.similarity]),
     );
   }, TIMEOUT);
+
+  test("attaches outcome derived from the attempt status", async () => {
+    const store = await openStore();
+    await recordReasoningAttempt(store, {
+      repository: "reddb-io/red-skills",
+      issueNumber: 10,
+      attemptNumber: 1,
+      status: "done",
+      summary: "rebuild ingest pipeline",
+      touchedFiles: [],
+    });
+    await recordReasoningAttempt(store, {
+      repository: "reddb-io/red-skills",
+      issueNumber: 11,
+      attemptNumber: 1,
+      status: "blocked",
+      summary: "rebuild ingest pipeline diagnostics",
+      touchedFiles: [],
+    });
+
+    const report = await buildReasoningReplay(store, "rebuild ingest pipeline", { limit: 5 });
+    const byIssue = Object.fromEntries(
+      report.results.map((r) => [r.attempt_id, r.outcome]),
+    );
+    expect(byIssue["attempt:reddb-io/red-skills#10/1"]).toBe("done");
+    expect(byIssue["attempt:reddb-io/red-skills#11/1"]).toBe("blocked");
+  }, TIMEOUT);
+
+  test("populates gaps from learning-debt repeated-failure patterns scoped to matched attempts", async () => {
+    const store = await openStore();
+    // Two blocked attempts on the same issue with the same error class → a
+    // repeated-failure pattern without a durable lesson.
+    await recordReasoningAttempt(store, {
+      repository: "reddb-io/red-skills",
+      issueNumber: 99,
+      attemptNumber: 1,
+      status: "blocked",
+      summary: "vector projection diagnostics",
+      errorClass: "ProjectionMissing",
+      touchedFiles: ["plugins/memory/src/vector-search.ts"],
+    });
+    await recordReasoningAttempt(store, {
+      repository: "reddb-io/red-skills",
+      issueNumber: 99,
+      attemptNumber: 2,
+      status: "blocked",
+      summary: "vector projection diagnostics retry",
+      errorClass: "ProjectionMissing",
+      touchedFiles: ["plugins/memory/src/vector-search.ts"],
+    });
+
+    const report = await buildReasoningReplay(store, "vector projection diagnostics", {
+      limit: 5,
+    });
+    expect(report.results.length).toBeGreaterThan(0);
+    expect(report.gaps.length).toBeGreaterThan(0);
+    expect(report.gaps.some((gap) => gap.includes("issue:99"))).toBe(true);
+  }, TIMEOUT);
+
+  test("parseAttemptStatusFromEnvelope extracts data-attempt-status from AFK envelopes", () => {
+    expect(parseAttemptStatusFromEnvelope(null)).toBeNull();
+    expect(parseAttemptStatusFromEnvelope("")).toBeNull();
+    expect(parseAttemptStatusFromEnvelope("plain comment")).toBeNull();
+    expect(
+      parseAttemptStatusFromEnvelope(
+        '<details data-attempt-status="done"><summary>foo</summary>body</details>',
+      ),
+    ).toBe("done");
+    expect(
+      parseAttemptStatusFromEnvelope(
+        '<details class="x" data-attempt-status="blocked"><summary>x</summary></details>',
+      ),
+    ).toBe("blocked");
+  });
+
+  test("mapStatusToOutcome bounds the outcome vocabulary", () => {
+    expect(mapStatusToOutcome("done")).toBe("done");
+    expect(mapStatusToOutcome("BLOCKED")).toBe("blocked");
+    expect(mapStatusToOutcome("no-sentinel")).toBe("no-sentinel");
+    expect(mapStatusToOutcome("retrying")).toBe("unknown");
+    expect(mapStatusToOutcome(undefined)).toBe("unknown");
+    expect(mapStatusToOutcome(null)).toBe("unknown");
+  });
 
   test("jaccardSimilarity is symmetric and well-bounded", () => {
     expect(jaccardSimilarity(["a", "b"], ["a", "b"])).toBe(1);
