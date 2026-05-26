@@ -228,6 +228,20 @@ function capabilityDefinitions(facts: CapabilityFacts): MemoryCapability[] {
       ],
     }),
     capability({
+      id: "federation",
+      title: "Cross-root memory federation (no policy)",
+      category: "retrieval",
+      status: "available",
+      red_db_backed: false,
+      cli: ["memory federate --query \"<topic>\" [--json]"],
+      mcp: ["memory_federate"],
+      evidence: ["dimension:retrieval", "foundation:federation"],
+      competitor_relevance: ["agentmemory", "ai-memory"],
+      notes: [
+        "Slice 1: read-only merge of memory notes across roots listed in .red/memory/federation.yaml. Each result carries origin_repo. Missing config returns an empty report; no privacy policy is applied yet (lands in a follow-up slice).",
+      ],
+    }),
+    capability({
       id: "confidence-scoring",
       title: "Composed confidence scoring",
       category: "governance",
@@ -574,6 +588,20 @@ function capabilityDefinitions(facts: CapabilityFacts): MemoryCapability[] {
       competitor_relevance: ["agentmemory", "ai-memory", "gbrain"],
       notes: [
         "Slice 1a: ranks reasoning-tier attempt nodes by token similarity to a task descriptor. Returns attempt_id, similarity, when, and summary; outcome attachment and gap detection land in slice 1b.",
+      ],
+    }),
+    capability({
+      id: "federation-cross-root-read",
+      title: "Federation cross-root read (no policy yet)",
+      category: "retrieval",
+      status: "available",
+      red_db_backed: false,
+      cli: ["memory federate --query \"<topic>\" [--root <dir>] [--limit N] [--per-root-limit N] [--json]"],
+      mcp: ["memory_federate"],
+      evidence: ["dimension:retrieval", "dimension:operator-surface"],
+      competitor_relevance: ["agentmemory", "gbrain"],
+      notes: [
+        "Slice 3a: reads memory notes across the roots listed in .red/memory/federation.yaml, merges hits, and tags each with origin_repo. Local-only in this slice; privacy policy lands in 3b.",
       ],
     }),
     capability({

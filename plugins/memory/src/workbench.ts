@@ -50,6 +50,10 @@ import {
   buildReasoningReplay,
   type ReasoningReplayReport,
 } from "./reasoning/reasoning-replay.js";
+import {
+  buildFederationReport,
+  type FederationReport,
+} from "./federation.js";
 import { buildMemoryRoutingGuide, type MemoryRoutingGuide } from "./routing-guide.js";
 import { buildSessionTimeline, type SessionTimeline } from "./session-timeline.js";
 import { readSkillRollups } from "./skill-events.js";
@@ -76,6 +80,7 @@ export interface MemoryWorkbench {
   agent_integration_status: MemoryAgentIntegrationStatus;
   session_timeline: SessionTimeline;
   reasoning_replay: ReasoningReplayReport;
+  federation: FederationReport;
 }
 
 export interface MemoryWorkbenchArtifact {
@@ -100,6 +105,7 @@ export interface MemoryWorkbenchArtifact {
       "memory.agent_integration_status.v1",
       "memory.session_timeline.v1",
       "memory.reasoning_replay.v1",
+      "memory.federation.v1",
     ];
   };
   workbench: MemoryWorkbench;
@@ -129,6 +135,7 @@ export async function buildMemoryWorkbench(
     agentIntegrationStatus,
     sessionTimeline,
     reasoningReplay,
+    federation,
   ] = await Promise.all([
     buildMemoryOperationalDashboard(store, rootDir, {
       staleDays: opts.staleDays,
@@ -164,6 +171,7 @@ export async function buildMemoryWorkbench(
       now: opts.now,
     }),
     buildReasoningReplay(store, "memory", { limit: 5, now: opts.now }),
+    buildFederationReport(rootDir, "memory", { limit: 5, now: opts.now }),
   ]);
   return {
     schema_version: "memory.workbench.v1",
@@ -187,6 +195,7 @@ export async function buildMemoryWorkbench(
     agent_integration_status: agentIntegrationStatus,
     session_timeline: sessionTimeline,
     reasoning_replay: reasoningReplay,
+    federation,
   };
 }
 
@@ -215,6 +224,7 @@ export function buildMemoryWorkbenchArtifact(
         "memory.agent_integration_status.v1",
         "memory.session_timeline.v1",
         "memory.reasoning_replay.v1",
+        "memory.federation.v1",
       ],
     },
     workbench,
@@ -432,6 +442,7 @@ function renderWorkbench(workbench: MemoryWorkbench): string {
         ${hookDiagnosticsSection(workbench)}
         ${timelineSection(workbench)}
         ${reasoningReplaySection(workbench)}
+        ${federationStatusSection(workbench)}
         ${actionsSection(workbench)}
       </div>
     </div>
@@ -848,6 +859,26 @@ function reasoningReplaySection(workbench: MemoryWorkbench): string {
             )
             .join("")}</ul>`
     }
+  </section>`;
+}
+
+function federationStatusSection(workbench: MemoryWorkbench): string {
+  const federation = workbench.federation;
+  const roots = federation.roots;
+  return `<section>
+    <h2>Federation Status</h2>
+    <p class="meta">Cross-root memory federation (issue #168). Reads <code>.red/memory/federation.yaml</code>; no privacy policy applied yet.</p>
+    ${
+      roots.length === 0
+        ? `<p class="empty">No federation roots configured — add <code>.red/memory/federation.yaml</code> to enable cross-root reads.</p>`
+        : `<ul>${roots
+            .map(
+              (root) =>
+                `<li class="capability"><div><h3>${escapeHtml(root.origin_repo)}</h3><p class="meta">${escapeHtml(root.path)}</p></div><span class="pill ${root.status === "ok" ? "ok" : "warn"}">${escapeHtml(root.status)} - ${root.hits} hit(s)</span></li>`,
+            )
+            .join("")}</ul>`
+    }
+    <p class="meta">${federation.results.length} merged result(s) across ${federation.roots_queried} root(s).</p>
   </section>`;
 }
 

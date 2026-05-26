@@ -144,6 +144,7 @@ import { buildMemoryHealthViewerArtifact } from "./memory-health-viewer.js";
 import { buildMemoryDecayReport } from "./memory-decay.js";
 import { buildMemoryDecayViewerArtifact } from "./memory-decay-viewer.js";
 import { recall } from "./recall.js";
+import { buildFederationReport } from "./federation.js";
 import { buildReasoningReplay } from "./reasoning/reasoning-replay.js";
 import { buildMemorySmartSearch } from "./smart-search.js";
 import { buildMemorySmartSearchViewerArtifact } from "./smart-search-viewer.js";
@@ -204,6 +205,7 @@ Usage:
   memory inbox promote <id>         [--root <dir>] --yes [--json]
   memory classify <candidate...>    [--root <dir>] [--json]
   memory recall <query...>          [--root <dir>] [--limit N] [--include-superseded] [--scope ...] [--scope-id ID] [--include-narrower-scopes] [--as-of <reddb-ref>]
+  memory federate                   [--root <dir>] --query "<topic>" [--limit N] [--per-root-limit N] [--json]
   memory smart-search <query...>    [--root <dir>] [--limit N] [--depth N] [--json]
   memory smart-search-viewer <query...> [--root <dir>] [--limit N] [--depth N] [--out <file>]
   memory context-pack <goal...>     [--root <dir>] [--budget N] [--limit N] [--json] [--scope ...] [--scope-id ID] [--include-narrower-scopes]
@@ -811,6 +813,39 @@ async function runRecall(args: ParsedArgs): Promise<void> {
   for (const hit of hits) {
     console.log(`  [${hit.score}] ${hit.id}`);
     console.log(`        ${hit.excerpt}`);
+  }
+}
+
+async function runFederate(args: ParsedArgs): Promise<void> {
+  const rootDir = rootOf(args.flags);
+  const query = (stringFlag(args.flags, "query") ?? args.positional.join(" ")).trim();
+  if (!query) {
+    throw new Error(
+      'nothing to federate — pass --query "<topic>" or memory federate <topic>',
+    );
+  }
+  const report = await buildFederationReport(rootDir, query, {
+    limit: intFlag(args.flags, "limit"),
+    perRootLimit: intFlag(args.flags, "per-root-limit"),
+  });
+  if (args.flags.json === true) {
+    console.log(JSON.stringify(report, null, 2));
+    return;
+  }
+  console.log(
+    `memory federate: "${report.query}" — ${report.results.length} hit(s) across ${report.roots_queried} root(s)`,
+  );
+  if (report.roots_queried === 0) {
+    console.log("  no federation roots configured (.red/memory/federation.yaml)");
+    return;
+  }
+  for (const root of report.roots) {
+    const tag = root.status === "ok" ? `${root.hits} hit(s)` : root.status;
+    console.log(`  root ${root.origin_repo}: ${tag}`);
+  }
+  for (const result of report.results) {
+    console.log(`  [${result.score}] @${result.origin_repo} ${result.id}`);
+    console.log(`        ${result.excerpt}`);
   }
 }
 
@@ -5390,6 +5425,8 @@ async function main(): Promise<void> {
       return runSmartSearch(args);
     case "reasoning-replay":
       return runReasoningReplay(args);
+    case "federate":
+      return runFederate(args);
     case "smart-search-viewer":
       return runSmartSearchViewer(args);
     case "context-pack":
