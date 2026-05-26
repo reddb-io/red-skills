@@ -10,6 +10,7 @@ import { extractStructuredTranscript, factsToGraph } from "./extract-conversatio
 import { MemoryStore } from "./graph-store.js";
 import { type IngestReport, reindexFiles } from "./ingest.js";
 import { appendMemoryEvent, hookLifecycleToMemoryEvent } from "./memory-events.js";
+import { runPromote } from "./promote.js";
 import type { MemoryNode, NodeType } from "./schema.js";
 import { slugify } from "./store.js";
 
@@ -308,13 +309,27 @@ async function handleFlush(
   }
 
   const memories = await deps.extractor(text);
-  if (memories.length === 0) return { noop: true, reason: "nothing worth keeping" };
   const store = await deps.openStore(resolveStoreUri(rootDir, config));
   try {
     let stored = 0;
     for (const m of memories) {
       await store.upsertNode(extractedToNode(m, input));
       stored += 1;
+    }
+    // Issue #183: PreCompact / Stop also drive the PromotionEngine for the
+    // current session, so typed L2 candidates are promoted (or reinforced)
+    // before the session is compacted away. Failure is swallowed — flush must
+    // never bubble up an error to the runner.
+    let promoted = 0;
+    try {
+      const report = await runPromote(store, rootDir, { triggeredBy: "hook" });
+      promoted = report.promoted + report.reinforced;
+      stored += report.promoted;
+    } catch {
+      // best-effort — e.g. no session yet, nothing in L2, store closed mid-flush
+    }
+    if (stored === 0 && promoted === 0) {
+      return { noop: true, reason: "nothing worth keeping" };
     }
     return { noop: false, stored };
   } finally {

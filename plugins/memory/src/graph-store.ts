@@ -667,6 +667,43 @@ export class MemoryStore {
   }
 
   // -------------------------------------------------------------------
+  // Reinforcement (PromotionEngine dedup gate, issue #183)
+  // -------------------------------------------------------------------
+
+  /**
+   * Bump a node's `reinforced` count. Stored in a KV overlay alongside the
+   * access overlay because graph collections reject `UPDATE` by rid (ADR 0007).
+   * Returns the new count.
+   */
+  async recordReinforcement(rid: number): Promise<number> {
+    const map = await this.readReinforceMap();
+    const next = (Number(map[rid] ?? 0) || 0) + 1;
+    map[rid] = next;
+    await this.kv().put(REINFORCE_KEY, map);
+    return next;
+  }
+
+  /** Current reinforcement count for `rid`, or `0` if it has never been bumped. */
+  async reinforcedCount(rid: number): Promise<number> {
+    const map = await this.readReinforceMap();
+    return Number(map[rid] ?? 0) || 0;
+  }
+
+  /** The full reinforcement overlay; doctor + promote viewer read it. */
+  async reinforcementRecords(): Promise<Map<number, number>> {
+    const map = await this.readReinforceMap();
+    const out = new Map<number, number>();
+    for (const [rid, v] of Object.entries(map)) out.set(Number(rid), Number(v));
+    return out;
+  }
+
+  private async readReinforceMap(): Promise<ReinforceOverlayMap> {
+    const raw = await this.kv().get(REINFORCE_KEY);
+    if (raw == null) return {};
+    return (typeof raw === "string" ? JSON.parse(raw) : raw) as ReinforceOverlayMap;
+  }
+
+  // -------------------------------------------------------------------
   // Delete (prune)
   // -------------------------------------------------------------------
 
@@ -1440,6 +1477,13 @@ export function isExpired(node: StoredNode, now: number = Date.now()): boolean {
  *  key for the whole graph, not one per node — see `recordAccess`. */
 type AccessOverlayMap = Record<string, { count: number; accessed_at: number }>;
 const ACCESS_KEY = "node:access:all";
+
+/** Aggregate reinforcement overlay: rid → reinforced count. One KV key for the
+ *  whole graph, mirrors {@link ACCESS_KEY}. PromotionEngine bumps this on each
+ *  dedup hit instead of mutating the node row (graph collections reject UPDATE,
+ *  ADR 0007). */
+type ReinforceOverlayMap = Record<string, number>;
+const REINFORCE_KEY = "node:reinforce:all";
 
 function vectorText(node: MemoryNode): string {
   const p = node.properties;
