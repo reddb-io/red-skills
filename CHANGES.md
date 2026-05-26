@@ -6,6 +6,15 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 
 ---
 
+## afk (engineering) — pnpm PATH shim wraps test invocations in a hard timeout (modified)
+
+- **status**: modified
+- **upstream**: —
+- **why**: Issue #192. The most expensive recurring AFK failure is a bash-hang where the inner agent starts `pnpm test` via `Bash(run_in_background)` and then enters `until grep "PASS" out.log; do sleep N; done` without a deadline. When vitest hangs (pool exhaustion, IO contention, OOM) the polling loop runs forever; the orchestrator only sees a healthy `claude` process and waits for the supervisor reaper at 30 min. `AGENT-PROMPT.md` already forbade the pattern, but the rule kept drifting — prompt-level constraints cannot outlast LLM drift. Remove the *capability*, not the *permission*.
+- **what changed**: New `scripts/lib/inner-shims/pnpm` — a PATH-prepended shim that detects `pnpm test` / `pnpm test:*` (including `pnpm -C dir test`, `pnpm run test`, `pnpm --filter=x test:integration`) and `exec`s `timeout --kill-after=${RED_AFK_TEST_KILL_AFTER_S:-30} ${RED_AFK_TEST_TIMEOUT_S:-300} <real pnpm> "$@"`. The shim re-resolves the real `pnpm` by stripping its own directory out of `PATH`, so it never recurses; non-test verbs (install, build, lint, add, …) are forwarded unwrapped. `RED_AFK_PNPM_SHIM_DISABLE=1` bypasses the wrap. `afk.sh` `run_claude` and `run_codex` prepend `$SCRIPT_DIR/lib/inner-shims` to `PATH` for the inner-agent subshell only, so the deadline is enforced by the binary itself — an untimed polling loop now terminates when the shim's timeout fires the bg test process, not when the supervisor reaper trips at 30 min. New `scripts/tests/pnpm-shim.test.sh` (9 cases — test/run/-C/test:* all hit the 2s synthetic timeout; install/build/add pass through; `RED_AFK_PNPM_SHIM_DISABLE` bypasses; argv forwarded to the real pnpm). `AGENT-PROMPT.md` *Background Tasks and Polling* notes the shim is now the safety net; the prompt rule remains as an explicit "don't build the trap" reminder. Refs #192.
+
+
+
 ## afk (engineering) — continuous remote-branch push for live iterations (modified)
 
 - **status**: modified

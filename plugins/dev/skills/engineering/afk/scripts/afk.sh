@@ -1609,9 +1609,11 @@ run_claude() {
   local worktree="$1" prompt="$2"
   local tmp; tmp="$(mktemp)"
   local log_target="${ITER_LOG:-/dev/null}"
+  local shim_dir="$SCRIPT_DIR/lib/inner-shims"
 
   (
     cd "$worktree"
+    PATH="$shim_dir:$PATH" \
     claude --model opus --effort medium --permission-mode bypassPermissions \
            --output-format stream-json --verbose --print "$prompt" 2>&1 \
       | grep --line-buffered '^{' \
@@ -1640,8 +1642,10 @@ run_codex() {
   local raw; raw="$(mktemp)"
   local json; json="$(mktemp)"
   local log_target="${ITER_LOG:-/dev/null}"
+  local shim_dir="$SCRIPT_DIR/lib/inner-shims"
 
   (
+    PATH="$shim_dir:$PATH" \
     codex exec --json -C "$worktree" \
       --sandbox danger-full-access \
       --dangerously-bypass-approvals-and-sandbox \
