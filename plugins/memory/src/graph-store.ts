@@ -457,7 +457,8 @@ export class MemoryStore {
       const r = await this.db.query(`SELECT * FROM ${COLLECTIONS.nodes}`);
       this.nodeCache = r.rows.map(rowToNode);
     }
-    return this.nodeCache.filter((n) => !isExpired(n, now));
+    const evicted = await this.evictedRids();
+    return this.nodeCache.filter((n) => !isExpired(n, now) && !evicted.has(n.rid));
   }
 
   private invalidateNodeCache(): void {
@@ -738,6 +739,57 @@ export class MemoryStore {
     } finally {
       this.invalidateNodeCache();
     }
+  }
+
+  /**
+   * Mark a batch of nodes as evicted. Eviction is implemented as a KV overlay
+   * rather than a physical multi-DELETE because the bundled RedDB engine has
+   * two delete-related bugs that make a real reap unsafe for batches:
+   *
+   * 1. The second and later `DELETE FROM memory_nodes` on a single connection
+   *    return `affected: 0` even when the matching row is physically present.
+   *    Single-row callers (`memory doctor`, `auto-curation`'s `expire-stale`)
+   *    never trip it because they only issue one DELETE before the process
+   *    exits.
+   * 2. The "close-and-reopen between deletes" workaround drops the most
+   *    recently inserted node from the next read after reopen — a separate
+   *    persistence bug that takes down the safety-net L2 transcript whenever
+   *    eviction interleaves with an active session.
+   *
+   * The overlay matches the {@link recordAccess} / reinforcement pattern (ADR
+   * 0007): one aggregate KV map of evicted rids, filtered out by
+   * {@link listNodes}. Consumers see the eviction immediately; disk rows
+   * accumulate until a future engine fix lets us run a real reap.
+   */
+  async recordEvicted(rids: Iterable<number>): Promise<number> {
+    const list = Array.from(rids);
+    if (list.length === 0) return 0;
+    const map = await this.readEvictedMap();
+    let added = 0;
+    const now = Date.now();
+    for (const rid of list) {
+      if (map[rid] == null) {
+        map[rid] = now;
+        added++;
+      }
+    }
+    if (added > 0) {
+      await this.kv().put(EVICTED_KEY, map);
+      this.invalidateNodeCache();
+    }
+    return added;
+  }
+
+  /** Read the set of rids marked evicted via {@link recordEvicted}. */
+  async evictedRids(): Promise<Set<number>> {
+    const map = await this.readEvictedMap();
+    return new Set(Object.keys(map).map((k) => Number(k)));
+  }
+
+  private async readEvictedMap(): Promise<Record<string, number>> {
+    const raw = await this.kv().get(EVICTED_KEY);
+    if (raw == null) return {};
+    return (typeof raw === "string" ? JSON.parse(raw) : raw) as Record<string, number>;
   }
 
   // -------------------------------------------------------------------
@@ -1484,6 +1536,12 @@ const ACCESS_KEY = "node:access:all";
  *  ADR 0007). */
 type ReinforceOverlayMap = Record<string, number>;
 const REINFORCE_KEY = "node:reinforce:all";
+
+/** Aggregate eviction overlay: rid → evicted_at (ms). Filtered out by
+ *  {@link MemoryStore.listNodes}, so consumers stop seeing the node even
+ *  though the underlying row may still live on disk (see
+ *  {@link MemoryStore.recordEvicted}). */
+const EVICTED_KEY = "node:evicted:all";
 
 function vectorText(node: MemoryNode): string {
   const p = node.properties;

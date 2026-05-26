@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 import {
   DEFAULT_MEMORY_EVENT_RETENTION_DAYS,
   readConfig,
+  resolveL2Policy,
   resolveNotesDir,
   resolveStoreUri,
   skillTelemetryEnabled,
@@ -147,6 +148,7 @@ import {
   listEvents as workingListEvents,
   setRawTranscript as workingSetRaw,
 } from "./working-memory.js";
+import { evictL2 } from "./working-memory-evict.js";
 import { executeReadOnlyMemoryOperation } from "./operations.js";
 import { buildMemoryHandoff } from "./handoff.js";
 import { buildMemoryHandoffViewerArtifact } from "./handoff-viewer.js";
@@ -260,6 +262,7 @@ Usage:
   memory working append             [--root <dir>] --type <event-type> --value <text> [--json]
   memory working get                [--root <dir>] [--type <event-type>] [--json]
   memory working raw                [--root <dir>] [--set <text>] [--json]
+  memory working evict              [--root <dir>] [--ttl-ms N] [--byte-budget N] [--json]
   memory learning-debt              [--root <dir>] [--stale-days N] [--json]
   memory learning-debt-viewer       [--root <dir>] [--stale-days N] [--out <file>]
   memory decay                      [--root <dir>] [--stale-days N] [--deprecate-days N] [--limit N] [--json]
@@ -1681,10 +1684,11 @@ async function runWorking(args: ParsedArgs): Promise<void> {
   if (
     action !== "append" &&
     action !== "get" &&
-    action !== "raw"
+    action !== "raw" &&
+    action !== "evict"
   ) {
     throw new Error(
-      "working needs an action — supported: memory working append|get|raw",
+      "working needs an action — supported: memory working append|get|raw|evict",
     );
   }
   const rootDir = rootOf(args.flags);
@@ -1716,6 +1720,31 @@ async function runWorking(args: ParsedArgs): Promise<void> {
       console.log(`memory: working get${scope} — ${events.length} event(s)`);
       for (const e of events) {
         console.log(`  #${e.sequence} ${new Date(e.created_at).toISOString()} ${e.type}  ${e.value}`);
+      }
+      return;
+    }
+    if (action === "evict") {
+      const config = await readConfig(rootDir);
+      const defaults = resolveL2Policy(config);
+      const ttlMs = intFlag(args.flags, "ttl-ms") ?? defaults.ttlMs;
+      const byteBudget = intFlag(args.flags, "byte-budget") ?? defaults.byteBudget;
+      const report = await evictL2(store, { ttlMs, byteBudget });
+      if (args.flags.json === true) {
+        console.log(JSON.stringify(report, null, 2));
+        return;
+      }
+      console.log(
+        `memory: working evict — scanned=${report.scanned_nodes} evicted=${report.evicted.length} (ttl_ms=${ttlMs} byte_budget=${byteBudget})`,
+      );
+      for (const rec of report.evicted) {
+        console.log(`  ${rec.reason}  rid=${rec.rid}  session=${rec.session_id}  ${rec.label}  bytes=${rec.bytes}`);
+      }
+      for (const s of report.by_session) {
+        if (s.byte_budget_triggered) {
+          console.log(
+            `  session=${s.session_id}: ${s.bytes_before}B → ${s.bytes_after}B (${s.evicted} event(s) evicted by budget)`,
+          );
+        }
       }
       return;
     }
