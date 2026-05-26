@@ -6,6 +6,12 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 
 ---
 
+## afk (engineering) — continuous remote-branch push for live iterations (modified)
+
+- **status**: modified
+- **upstream**: —
+- **why**: Issue #191. `/afk` only pushed the worker branch to origin on terminal failure (the `afk-attempts/*` envelope path). A SIGKILL of the orchestrator before envelope build (supervisor crash, OOM, manual kill) left the iter dir for the next boot's Orphan Cleanup to wipe, losing the diff. We had to manually `git push afk-attempts/...` 6+ times in two sessions.
+- **what changed**: New pure module `scripts/lib/remote-branch.sh` with three best-effort helpers — `push_initial` (push HEAD to `refs/heads/afk/{wid}/{N}-slug` with `--force-with-lease` at worktree-create), `install_post_commit_hook` (drop an executable `$worktree/.git/hooks/post-commit` that fire-and-forgets a `git push origin HEAD --force-with-lease` after every inner-agent commit), and `delete_remote` (`git push origin --delete afk/...` on DONE close). All three log a `warn:` and return 0 on failure so they never block the orchestrator. `afk.sh` sources the lib and wires the two write-path calls right after `git worktree add` (process_issue, step 2) and the delete right after `gh issue close --reason completed` (step 10), keeping all other behaviour unchanged. `afk-attempts/*` failure-push namespace is untouched — `afk/*` is now a live-iteration namespace deleted on DONE; `afk-attempts/*` is still the failure-only forensic ref. New `scripts/tests/remote-branch.test.sh` (20 assertions, mocks `git` via PATH override). SKILL.md updates the *Per-Issue Loop* steps 2/10/11 and adds a *Branch namespaces* paragraph in *Terminal-Event Envelope*. Refs #191.
 
 
 
