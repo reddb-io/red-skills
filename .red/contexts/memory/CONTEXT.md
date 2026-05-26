@@ -30,6 +30,10 @@ _Avoid_: note, row
 The retention class on a **Memory node**: `ephemeral`, `durable`, or `reasoning`.
 _Avoid_: ttl class, expiry level, retention policy
 
+**Memory layer**:
+The physical storage layer a **Memory node** currently lives in: `L1` (in-process hot, per-agent turn), `L2` (RedDB session-scoped with TTL + size eviction), `L3` (RedDB graph, durable). Orthogonal to **Memory tier**: a node's tier names its retention class, its layer names where it physically lives right now and may change on promotion or eviction.
+_Avoid_: cache tier, storage tier, band
+
 **Reasoning memory**:
 Durable graph records of agent reasoning evidence, outcomes, touched files, decisions, and validation.
 _Avoid_: chain-of-thought dump, transcript memory
