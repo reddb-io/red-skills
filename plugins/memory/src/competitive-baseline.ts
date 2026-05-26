@@ -1335,9 +1335,11 @@ export async function evaluateCompetitiveEvalV2(
   const liveBaselines = opts.liveBaselines ?? [];
   const reasoningReplaySubCheck = await runReasoningReplaySubCheck();
   const federationSubCheck = await runFederationSubCheck();
+  const whatifSubCheck = await runWhatifSubCheck();
   const dimensions = competitiveEvalV2Dimensions(report, {
     reasoningReplaySubCheck,
     federationSubCheck,
+    whatifSubCheck,
   });
   const baseline = evaluateCompetitiveBaseline(new Date(0));
   const executableEvidence = competitiveEvalV2EvidenceIds(dimensions, baseline, fixture, liveBaselines);
@@ -1429,6 +1431,7 @@ function evidenceSlug(value: string): string {
 interface CompetitiveEvalV2DimensionContext {
   reasoningReplaySubCheck: { status: "pass" | "warn" | "fail"; detail: string };
   federationSubCheck: { status: "pass" | "warn" | "fail"; detail: string };
+  whatifSubCheck: { status: "pass" | "warn" | "fail"; detail: string };
 }
 
 function competitiveEvalV2Dimensions(
@@ -1549,24 +1552,28 @@ function competitiveEvalV2Dimensions(
       id: "intelligence",
       score:
         ctx.reasoningReplaySubCheck.status === "pass" &&
-        ctx.federationSubCheck.status === "pass"
+        ctx.federationSubCheck.status === "pass" &&
+        ctx.whatifSubCheck.status === "pass"
           ? 1
           : 0,
       maxScore: 1,
       status:
         ctx.reasoningReplaySubCheck.status === "pass" &&
-        ctx.federationSubCheck.status === "pass"
+        ctx.federationSubCheck.status === "pass" &&
+        ctx.whatifSubCheck.status === "pass"
           ? "pass"
           : ctx.reasoningReplaySubCheck.status === "fail" ||
-              ctx.federationSubCheck.status === "fail"
+              ctx.federationSubCheck.status === "fail" ||
+              ctx.whatifSubCheck.status === "fail"
             ? "fail"
             : "warn",
       detail:
-        "Composed confidence (memory.confidence.v1) wired into recall/traverse/path-explain/ask (#167); reasoning-replay (memory.reasoning_replay.v1) attaches outcomes + gaps (#169); federation (memory.federation.v1) enforces redact policy at read time (#170).",
+        "Composed confidence (memory.confidence.v1) wired into recall/traverse/path-explain/ask (#167); reasoning-replay (memory.reasoning_replay.v1) attaches outcomes + gaps (#169); federation (memory.federation.v1) enforces redact policy at read time (#170); what-if (memory.whatif.v1) predicts pre-action blast radius (#172).",
       evidence: [
         "foundation:confidence-scoring",
         "foundation:reasoning-replay",
         "foundation:federation",
+        "foundation:whatif",
       ],
       metrics: {
         composer: "confidence-scoring.ts",
@@ -1574,6 +1581,7 @@ function competitiveEvalV2Dimensions(
         weights: "provenance=0.30 recency=0.25 supersession=0.25 validation=0.20",
         reasoning_replay_status: ctx.reasoningReplaySubCheck.status,
         federation_status: ctx.federationSubCheck.status,
+        whatif_status: ctx.whatifSubCheck.status,
       },
       subChecks: [
         {
@@ -1591,6 +1599,11 @@ function competitiveEvalV2Dimensions(
           id: "federation",
           status: ctx.federationSubCheck.status,
           detail: ctx.federationSubCheck.detail,
+        },
+        {
+          id: "whatif",
+          status: ctx.whatifSubCheck.status,
+          detail: ctx.whatifSubCheck.detail,
         },
         {
           id: "autocure",
@@ -1724,6 +1737,81 @@ async function runFederationSubCheck(): Promise<{
     return {
       status: "fail",
       detail: `federation sub-check failed: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Eval-v2 `whatif` sub-check (issue #172).
+ *
+ * Seeds one `reasoning` attempt for a known-blocked rename, then asserts the
+ * `memory.whatif.v1` surface returns the prior attempt in `historical_attempts`
+ * with `breakage_likelihood > 0` and `self_confidence > 0`. Pure surface test;
+ * no structural graph data needed because the historical signal is enough to
+ * exercise the composition.
+ */
+async function runWhatifSubCheck(): Promise<{
+  status: "pass" | "warn" | "fail";
+  detail: string;
+}> {
+  const { buildWhatifReport } = await import("./whatif.js");
+  const { recordReasoningAttempt } = await import("./reasoning/attempt-writer.js");
+  const root = await mkdtemp(join(tmpdir(), "memory-whatif-subcheck-"));
+  try {
+    const init = await initGraph(root, { project: "whatif-subcheck" });
+    const store = await MemoryStore.open({ uri: init.storeUri, project: "whatif-subcheck" });
+    try {
+      await recordReasoningAttempt(store, {
+        repository: "reddb-io/red-skills",
+        issueNumber: 172,
+        attemptNumber: 1,
+        status: "blocked",
+        summary: "rename legacyHandler to handler — broke downstream callers",
+        touchedFiles: ["plugins/memory/src/whatif.ts"],
+      });
+      const report = await buildWhatifReport(
+        store,
+        [
+          {
+            kind: "rename",
+            symbol: "legacyHandler",
+            with: "handler",
+            description: "rename legacyHandler to handler",
+          },
+        ],
+        { limit: 3 },
+      );
+      if (report.historical_attempts.length === 0) {
+        return {
+          status: "fail",
+          detail: "whatif sub-check: historical_attempts empty despite seeded fixture",
+        };
+      }
+      if (report.breakage_likelihood <= 0) {
+        return {
+          status: "fail",
+          detail: `whatif sub-check: breakage_likelihood=${report.breakage_likelihood} did not reflect a blocked prior attempt`,
+        };
+      }
+      if (report.self_confidence <= 0) {
+        return {
+          status: "fail",
+          detail: "whatif sub-check: self_confidence=0 despite historical evidence",
+        };
+      }
+      return {
+        status: "pass",
+        detail: `whatif returned ${report.historical_attempts.length} historical attempt(s); breakage_likelihood=${report.breakage_likelihood}, self_confidence=${report.self_confidence}.`,
+      };
+    } finally {
+      await store.close();
+    }
+  } catch (err) {
+    return {
+      status: "fail",
+      detail: `whatif sub-check failed: ${err instanceof Error ? err.message : String(err)}`,
     };
   } finally {
     await rm(root, { recursive: true, force: true });

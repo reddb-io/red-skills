@@ -50,6 +50,7 @@ import {
   buildReasoningReplay,
   type ReasoningReplayReport,
 } from "./reasoning/reasoning-replay.js";
+import { buildWhatifReport, type WhatifReport } from "./whatif.js";
 import {
   buildFederationReport,
   type FederationReport,
@@ -86,6 +87,7 @@ export interface MemoryWorkbench {
   agent_integration_status: MemoryAgentIntegrationStatus;
   session_timeline: SessionTimeline;
   reasoning_replay: ReasoningReplayReport;
+  whatif: WhatifReport;
   federation: FederationReport;
   autocure: AutoCureReport;
   autocure_runs: AutoCureRunLog;
@@ -113,6 +115,7 @@ export interface MemoryWorkbenchArtifact {
       "memory.agent_integration_status.v1",
       "memory.session_timeline.v1",
       "memory.reasoning_replay.v1",
+      "memory.whatif.v1",
       "memory.federation.v1",
       "memory.autocure.v1",
     ];
@@ -144,6 +147,7 @@ export async function buildMemoryWorkbench(
     agentIntegrationStatus,
     sessionTimeline,
     reasoningReplay,
+    whatif,
     federation,
     autocure,
     autocureRuns,
@@ -182,6 +186,11 @@ export async function buildMemoryWorkbench(
       now: opts.now,
     }),
     buildReasoningReplay(store, "memory", { limit: 5, now: opts.now }),
+    buildWhatifReport(
+      store,
+      [{ kind: "edit", description: "memory workbench preview", file: rootDir }],
+      { limit: 3, now: opts.now },
+    ),
     buildFederationReport(rootDir, "memory", { limit: 5, now: opts.now }),
     runAutoCure(store, { apply: false, staleDays: opts.staleDays, now: opts.now }),
     readAutoCureRunLog(store),
@@ -208,6 +217,7 @@ export async function buildMemoryWorkbench(
     agent_integration_status: agentIntegrationStatus,
     session_timeline: sessionTimeline,
     reasoning_replay: reasoningReplay,
+    whatif,
     federation,
     autocure,
     autocure_runs: autocureRuns,
@@ -239,6 +249,7 @@ export function buildMemoryWorkbenchArtifact(
         "memory.agent_integration_status.v1",
         "memory.session_timeline.v1",
         "memory.reasoning_replay.v1",
+        "memory.whatif.v1",
         "memory.federation.v1",
         "memory.autocure.v1",
       ],
@@ -458,6 +469,7 @@ function renderWorkbench(workbench: MemoryWorkbench): string {
         ${hookDiagnosticsSection(workbench)}
         ${timelineSection(workbench)}
         ${reasoningReplaySection(workbench)}
+        ${whatifSection(workbench)}
         ${federationStatusSection(workbench)}
         ${autocureHealthSection(workbench)}
         ${actionsSection(workbench)}
@@ -884,6 +896,40 @@ function reasoningReplaySection(workbench: MemoryWorkbench): string {
             .join("")}</ul>`
     }
     ${gapsHtml}
+  </section>`;
+}
+
+function whatifSection(workbench: MemoryWorkbench): string {
+  const whatif = workbench.whatif;
+  const riskClass =
+    whatif.breakage_likelihood >= 0.66
+      ? "bad"
+      : whatif.breakage_likelihood >= 0.33
+        ? "warn"
+        : "ok";
+  const filesPreview = whatif.affected.files.slice(0, 5);
+  const symbolsPreview = whatif.affected.symbols.slice(0, 5);
+  return `<section>
+    <h2>What-if Sandbox</h2>
+    <p class="meta">Pre-action blast radius (memory.whatif.v1). Composes structural-impact-reader + reasoning-replay; never mutates state.</p>
+    <ul>
+      <li><strong>Breakage likelihood</strong><p class="meta">composite of structural fan-out + historical outcomes</p><span class="pill ${riskClass}">${whatif.breakage_likelihood.toFixed(3)}</span></li>
+      <li><strong>Self-confidence</strong><p class="meta">structural and historical evidence presence</p><span class="pill">${whatif.self_confidence.toFixed(2)}</span></li>
+      <li><strong>Affected</strong><p class="meta">${whatif.affected.files.length} file(s), ${whatif.affected.symbols.length} symbol(s), ${whatif.affected.tests.length} test(s)</p></li>
+    </ul>
+    ${
+      filesPreview.length === 0 && symbolsPreview.length === 0
+        ? `<p class="empty">No structural impact for the preview change — call <code>memory whatif --change "&lt;descriptor&gt;"</code> to evaluate real changes.</p>`
+        : `<ul>${[
+            ...filesPreview.map((file) => `<li><strong>file</strong> <code>${escapeHtml(file)}</code></li>`),
+            ...symbolsPreview.map((sym) => `<li><strong>sym</strong> <code>${escapeHtml(sym)}</code></li>`),
+          ].join("")}</ul>`
+    }
+    ${
+      whatif.historical_attempts.length === 0
+        ? `<p class="meta">No similar past attempts in the reasoning tier yet.</p>`
+        : `<p class="meta">Historical attempts: ${whatif.historical_attempts.length} (top similarity ${whatif.historical_attempts[0]?.similarity.toFixed(3)}).</p>`
+    }
   </section>`;
 }
 

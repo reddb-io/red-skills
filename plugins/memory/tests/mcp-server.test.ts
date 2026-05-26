@@ -251,6 +251,7 @@ describe("MCP server over stdio", () => {
           "memory_vector_search",
           "memory_vector_status",
           "memory_vector_status_viewer",
+          "memory_whatif",
           "memory_workbench",
         ].sort(),
       );

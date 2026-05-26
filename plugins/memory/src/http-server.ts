@@ -56,6 +56,7 @@ import { buildOnboardingMapViewerArtifact } from "./onboarding-map-viewer.js";
 import { buildSessionTimeline } from "./session-timeline.js";
 import { readSkillRollups } from "./skill-events.js";
 import { buildReasoningReplay } from "./reasoning/reasoning-replay.js";
+import { buildWhatifReport, parseWhatifChange, type WhatifChange } from "./whatif.js";
 import { buildFederationReport } from "./federation.js";
 import { runAutoCure, readAutoCureRunLog } from "./auto-curation.js";
 import { buildMemorySmartSearch } from "./smart-search.js";
@@ -178,6 +179,7 @@ const ENDPOINTS = [
   "GET /api/smart-search?query=<text>",
   "GET /api/recall?query=<text>",
   "GET /api/reasoning-replay?task=<text>",
+  "GET /api/whatif?change=<descriptor>[&change=<descriptor>...] | POST /api/whatif",
   "GET /api/federate?query=<text>",
   "GET /api/autocure (dry-run) | POST /api/autocure (apply)",
 ];
@@ -200,7 +202,8 @@ async function handleRequest(
 ): Promise<void> {
   const url = new URL(req.url ?? "/", "http://127.0.0.1");
   const isAutocurePost = req.method === "POST" && url.pathname === "/api/autocure";
-  if (req.method !== "GET" && req.method !== "HEAD" && !isAutocurePost) {
+  const isWhatifPost = req.method === "POST" && url.pathname === "/api/whatif";
+  if (req.method !== "GET" && req.method !== "HEAD" && !isAutocurePost && !isWhatifPost) {
     sendJson(res, 405, { error: "method not allowed" });
     return;
   }
@@ -969,6 +972,25 @@ async function handleRequest(
     return;
   }
 
+  if (url.pathname === "/api/whatif") {
+    const changes = await collectWhatifChanges(req, url);
+    if (changes.length === 0) {
+      sendJson(res, 400, {
+        error: "at least one change is required (GET ?change=<descriptor> or POST {changes:[...]})",
+      });
+      return;
+    }
+    sendJson(
+      res,
+      200,
+      await buildWhatifReport(opts.store, changes, {
+        limit: numberParam(url.searchParams.get("limit")),
+        now: opts.now,
+      }),
+    );
+    return;
+  }
+
   if (url.pathname === "/api/search" || url.pathname === "/api/smart-search") {
     const query = url.searchParams.get("query") ?? url.searchParams.get("q") ?? "";
     if (!query.trim()) {
@@ -1534,6 +1556,29 @@ function openApiDocument(opts: MemoryHttpServerOptions): MemoryOpenApiDocument {
           responses: { "200": jsonResponse("Federation result") },
         },
       },
+      "/api/whatif": {
+        get: {
+          summary: "What-if blast radius (repeatable ?change=<descriptor>)",
+          parameters: [
+            {
+              name: "change",
+              in: "query",
+              required: true,
+              schema: { type: "string", minLength: 1 },
+            },
+            limitParam,
+          ],
+          responses: { "200": jsonResponse("What-if report") },
+        },
+        post: {
+          summary: "What-if blast radius (JSON body {changes:[...]} )",
+          requestBody: {
+            required: true,
+            content: { "application/json": { schema: { type: "object" } } },
+          },
+          responses: { "200": jsonResponse("What-if report") },
+        },
+      },
       "/api/reasoning-replay": {
         get: {
           summary: "Reasoning replay (similarity-ranked attempts)",
@@ -1565,6 +1610,58 @@ function authorized(req: IncomingMessage, token?: string): boolean {
 
 function publicEndpoint(pathname: string): boolean {
   return pathname === "/api/health" || pathname === "/openapi.json" || pathname === "/api/openapi.json";
+}
+
+async function collectWhatifChanges(
+  req: IncomingMessage,
+  url: URL,
+): Promise<WhatifChange[]> {
+  const out: WhatifChange[] = [];
+  for (const raw of url.searchParams.getAll("change")) {
+    if (typeof raw === "string" && raw.trim()) out.push(parseWhatifChange(raw));
+  }
+  if (req.method === "POST") {
+    const body = await readBody(req);
+    if (body.trim()) {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(body);
+      } catch {
+        return [];
+      }
+      const candidate = (parsed as { changes?: unknown }).changes;
+      if (Array.isArray(candidate)) {
+        for (const entry of candidate) {
+          if (typeof entry === "string" && entry.trim()) {
+            out.push(parseWhatifChange(entry));
+          } else if (entry && typeof entry === "object") {
+            const c = entry as Partial<WhatifChange>;
+            if (c.kind && (c.file || c.symbol || c.description)) {
+              out.push({
+                kind: c.kind,
+                file: c.file,
+                symbol: c.symbol,
+                with: c.with,
+                description: c.description,
+              });
+            }
+          }
+        }
+      }
+    }
+  }
+  return out;
+}
+
+function readBody(req: IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (chunk: Buffer | string) => {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    });
+    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    req.on("error", reject);
+  });
 }
 
 async function safeSkillRollups(store: MemoryStore) {

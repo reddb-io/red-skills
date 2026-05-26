@@ -147,6 +147,7 @@ import { recall } from "./recall.js";
 import { buildFederationReport } from "./federation.js";
 import { runAutoCure } from "./auto-curation.js";
 import { buildReasoningReplay } from "./reasoning/reasoning-replay.js";
+import { buildWhatifReport, parseWhatifChange, type WhatifChange } from "./whatif.js";
 import { buildMemorySmartSearch } from "./smart-search.js";
 import { buildMemorySmartSearchViewerArtifact } from "./smart-search-viewer.js";
 import { commitMemoryGraph, type MemoryGraphCommitResult } from "./vcs-commit.js";
@@ -207,6 +208,7 @@ Usage:
   memory classify <candidate...>    [--root <dir>] [--json]
   memory recall <query...>          [--root <dir>] [--limit N] [--include-superseded] [--scope ...] [--scope-id ID] [--include-narrower-scopes] [--as-of <reddb-ref>]
   memory federate                   [--root <dir>] --query "<topic>" [--limit N] [--per-root-limit N] [--json]
+  memory whatif                     [--root <dir>] --change "<descriptor>" [--change "<descriptor>" ...] [--limit N] [--json]
   memory autocure                   [--root <dir>] [--apply] [--stale-days N] [--json]
   memory smart-search <query...>    [--root <dir>] [--limit N] [--depth N] [--json]
   memory smart-search-viewer <query...> [--root <dir>] [--limit N] [--depth N] [--out <file>]
@@ -928,6 +930,68 @@ async function runReasoningReplay(args: ParsedArgs): Promise<void> {
   } finally {
     await store.close();
   }
+}
+
+async function runWhatif(args: ParsedArgs): Promise<void> {
+  // Collect every `--change <value>` from process.argv since the shared
+  // parser only keeps the last value per flag.
+  const rawChanges = collectRepeatedFlag(process.argv.slice(2), "change");
+  const positionalChanges = args.positional.filter((p) => p.length > 0);
+  const sources = [...rawChanges, ...positionalChanges];
+  if (sources.length === 0) {
+    throw new Error(
+      'nothing to evaluate — pass one or more --change "<descriptor>" or memory whatif "<descriptor>" ["<descriptor>" ...]',
+    );
+  }
+  const changes: WhatifChange[] = sources.map(parseWhatifChange);
+  const { store } = await openGraphStore(args);
+  try {
+    const report = await buildWhatifReport(store, changes, {
+      limit: intFlag(args.flags, "limit"),
+    });
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(report, null, 2));
+      return;
+    }
+    console.log(
+      `memory whatif: ${report.changes.length} change(s) — breakage_likelihood ${report.breakage_likelihood.toFixed(3)} (self_confidence ${report.self_confidence.toFixed(2)})`,
+    );
+    console.log(
+      `  affected: ${report.affected.files.length} file(s), ${report.affected.symbols.length} symbol(s), ${report.affected.tests.length} test(s)`,
+    );
+    for (const file of report.affected.files.slice(0, 8)) {
+      console.log(`    file  ${file}`);
+    }
+    for (const symbol of report.affected.symbols.slice(0, 8)) {
+      console.log(`    sym   ${symbol}`);
+    }
+    if (report.historical_attempts.length === 0) {
+      console.log("  no similar past attempts in the reasoning tier");
+    } else {
+      console.log(`  historical attempts (${report.historical_attempts.length}):`);
+      for (const attempt of report.historical_attempts) {
+        console.log(
+          `    [${attempt.similarity.toFixed(3)}] ${attempt.attempt_id} (${attempt.outcome})  ${attempt.when}`,
+        );
+      }
+    }
+  } finally {
+    await store.close();
+  }
+}
+
+function collectRepeatedFlag(argv: string[], key: string): string[] {
+  const flag = `--${key}`;
+  const out: string[] = [];
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] !== flag) continue;
+    const value = argv[i + 1];
+    if (value !== undefined && !value.startsWith("--")) {
+      out.push(value);
+      i++;
+    }
+  }
+  return out;
 }
 
 async function runSmartSearch(args: ParsedArgs): Promise<void> {
@@ -5472,6 +5536,8 @@ async function main(): Promise<void> {
       return runSmartSearch(args);
     case "reasoning-replay":
       return runReasoningReplay(args);
+    case "whatif":
+      return runWhatif(args);
     case "federate":
       return runFederate(args);
     case "autocure":
