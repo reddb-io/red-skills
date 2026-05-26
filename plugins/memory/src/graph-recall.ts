@@ -5,7 +5,9 @@ import {
   type RecallScope,
   type RecallStore,
 } from "./engine.js";
+import type { MemoryStore } from "./graph-store.js";
 import { hybridRecall, type Ranking } from "./hybrid-recall.js";
+import { appendEngineOpEvent } from "./memory-events.js";
 
 export interface GraphRecallHit {
   /** Engine-assigned node rid, as a string for uniform CLI printing. */
@@ -47,6 +49,10 @@ export async function graphRecall(
   return (await graphRecallResult(store, query, limit, opts)).hits;
 }
 
+function isMemoryStore(store: RecallStore): store is MemoryStore {
+  return typeof (store as Partial<MemoryStore>).emitEngineOp === "function";
+}
+
 export async function graphRecallResult(
   store: RecallStore,
   query: string,
@@ -60,6 +66,16 @@ export async function graphRecallResult(
     scope: opts.scope,
     now: opts.now,
   });
+
+  if (isMemoryStore(store)) {
+    await appendEngineOpEvent(store, {
+      op: "recall",
+      outcome: nodes.length > 0 ? "hit" : "miss",
+      layer: "L3",
+      query,
+      hit_count: nodes.length,
+    });
+  }
 
   if (nodes.length === 0) {
     return { hits: [], diagnostics };

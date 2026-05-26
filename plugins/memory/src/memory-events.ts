@@ -67,6 +67,32 @@ const skillTelemetryPayloadSchema = z
     }
   });
 
+const engineOpPayloadSchema = z
+  .object({
+    event_type: z.literal("engine.op"),
+    event_id: safeString("payload.event_id", 200),
+    timestamp: z
+      .string()
+      .datetime({ offset: true })
+      .or(z.string().datetime({ offset: false })),
+    op: z.enum(["store", "recall", "promote", "evict", "conflict-detected"]),
+    layer: z.enum(["L1", "L2", "L3"]).optional(),
+    session_id: safeString("payload.session_id", 200).optional(),
+    node_id: safeString("payload.node_id", 200).optional(),
+    query: safeString("payload.query", SAFE_TEXT_MAX).optional(),
+    outcome: z.enum([
+      "created",
+      "deduped",
+      "hit",
+      "miss",
+      "succeeded",
+      "failed",
+    ]),
+    hit_count: z.number().int().nonnegative().max(1_000_000).optional(),
+    error: safeString("payload.error", 400).optional(),
+  })
+  .strict();
+
 const hookLifecyclePayloadSchema = z
   .object({
     event_type: z.literal("hook.lifecycle"),
@@ -110,7 +136,7 @@ const memoryEventSchema = z
       .string()
       .datetime({ offset: true })
       .or(z.string().datetime({ offset: false })),
-    kind: z.enum(["skill.telemetry", "hook.lifecycle"]),
+    kind: z.enum(["skill.telemetry", "hook.lifecycle", "engine.op"]),
     source: envelopeObject("source"),
     actor: envelopeObject("actor"),
     scope: z
@@ -120,7 +146,11 @@ const memoryEventSchema = z
       })
       .catchall(z.unknown()),
     subject: envelopeObject("subject"),
-    payload: z.union([skillTelemetryPayloadSchema, hookLifecyclePayloadSchema]),
+    payload: z.union([
+      skillTelemetryPayloadSchema,
+      hookLifecyclePayloadSchema,
+      engineOpPayloadSchema,
+    ]),
     provenance: provenanceSchema,
   })
   .strict();
@@ -128,6 +158,22 @@ const memoryEventSchema = z
 export type MemoryEvent = z.infer<typeof memoryEventSchema>;
 export type SkillTelemetryPayload = z.infer<typeof skillTelemetryPayloadSchema>;
 export type HookLifecyclePayload = z.infer<typeof hookLifecyclePayloadSchema>;
+export type EngineOpPayload = z.infer<typeof engineOpPayloadSchema>;
+export type EngineOp = EngineOpPayload["op"];
+export type EngineOpOutcome = EngineOpPayload["outcome"];
+
+export interface EngineOpInput {
+  op: EngineOp;
+  outcome: EngineOpOutcome;
+  layer?: EngineOpPayload["layer"];
+  session_id?: string;
+  node_id?: string | number;
+  query?: string;
+  hit_count?: number;
+  error?: string;
+  timestamp?: string | Date;
+  eventId?: string;
+}
 
 export interface MemoryEventReadOptions {
   /** Retention horizon in milliseconds. When absent, all raw events are returned. */
@@ -215,6 +261,62 @@ export function hookLifecycleToMemoryEvent(
       evidence: [`event_id:${eventId}`],
     },
   });
+}
+
+export function engineOpToMemoryEvent(input: EngineOpInput): MemoryEvent {
+  const timestamp =
+    input.timestamp instanceof Date
+      ? input.timestamp.toISOString()
+      : input.timestamp ?? new Date().toISOString();
+  const nodeId = input.node_id == null ? undefined : String(input.node_id);
+  const eventId =
+    input.eventId ??
+    `engine:${input.op}:${nodeId ?? input.query ?? "anon"}:${Date.parse(timestamp) || timestamp}`;
+  const sessionId = input.session_id ?? `engine:${input.op}`;
+  return parseMemoryEvent({
+    id: eventId,
+    occurred_at: timestamp,
+    kind: "engine.op",
+    source: { kind: "engine", name: "memory.engine" },
+    actor: { kind: "engine", id: "memory" },
+    scope: { level: "session", id: sessionId },
+    subject: { kind: "engine-op", id: input.op, name: nodeId ?? input.query },
+    payload: {
+      event_type: "engine.op",
+      event_id: eventId,
+      timestamp,
+      op: input.op,
+      ...(input.layer ? { layer: input.layer } : {}),
+      ...(input.session_id ? { session_id: input.session_id } : {}),
+      ...(nodeId ? { node_id: nodeId } : {}),
+      ...(input.query ? { query: input.query } : {}),
+      outcome: input.outcome,
+      ...(input.hit_count != null ? { hit_count: input.hit_count } : {}),
+      ...(input.error ? { error: input.error } : {}),
+    },
+    provenance: {
+      source_kind: "system",
+      writer: "memory",
+      command: `engine.${input.op}`,
+      evidence: [`event_id:${eventId}`],
+    },
+  });
+}
+
+/**
+ * Best-effort engine event append. Engine ops emit telemetry via this entry
+ * point and must never see an exception — failure to record telemetry must
+ * not fail the engine operation that triggered it (issue #181).
+ */
+export async function appendEngineOpEvent(
+  store: MemoryStore,
+  input: EngineOpInput,
+): Promise<void> {
+  try {
+    await appendMemoryEvent(store, engineOpToMemoryEvent(input));
+  } catch {
+    // Swallowed by design — see function docs.
+  }
 }
 
 export async function appendMemoryEvent(

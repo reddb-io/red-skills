@@ -98,7 +98,11 @@ export async function buildMemoryLayersReport(
   };
 }
 
-function shortTermLayer(events: MemoryEvent[]): MemoryLayer {
+function shortTermLayer(rawEvents: MemoryEvent[]): MemoryLayer {
+  // Engine ops (store/recall/promote/evict/conflict-detected) are surfaced
+  // separately by `memory health`; the short-term layer stays focused on the
+  // hook + skill lifecycle evidence it was originally introduced for.
+  const events = rawEvents.filter((event) => event.kind !== "engine.op");
   const sessions = new Set(events.map((event) => String(event.scope.id ?? "unknown")));
   const hookEvents = events.filter((event) => event.kind === "hook.lifecycle").length;
   const skillEvents = events.filter((event) => event.kind === "skill.telemetry").length;

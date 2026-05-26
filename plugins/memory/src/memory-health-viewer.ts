@@ -142,6 +142,11 @@ function renderMemoryHealthViewer(report: MemoryHealthReport): string {
             ${signalItem("Vector projection", `${report.vector.overall}: ${report.vector.ready}/${report.vector.total} ready, ${report.vector.failed} failed`, report.vector.overall)}
             ${signalItem("Stale evidence", `${report.stale.stale}/${report.stale.total} stale node(s)`, report.stale.stale > 0 ? "attention" : "ready")}
             ${signalItem("Skill telemetry", `${report.skill_telemetry.status}, ${report.skill_telemetry.rollups} rollup(s)`, report.skill_telemetry.status === "available" ? "ready" : "degraded")}
+            ${signalItem(
+              "Engine events",
+              `${report.engine_events.status}, ${report.engine_events.total} event(s) — recall hit rate ${(report.engine_events.recall_hit_rate * 100).toFixed(0)}%, ${report.engine_events.conflict_count} conflict(s), ${report.engine_events.promotion_count} promotion(s), ${report.engine_events.eviction_count} eviction(s)`,
+              report.engine_events.status === "available" ? "ready" : "degraded",
+            )}
           </ul>
         </section>
       </div>
