@@ -892,7 +892,7 @@ function federationStatusSection(workbench: MemoryWorkbench): string {
   const roots = federation.roots;
   return `<section>
     <h2>Federation Status</h2>
-    <p class="meta">Cross-root memory federation (issue #168). Reads <code>.red/memory/federation.yaml</code>; no privacy policy applied yet.</p>
+    <p class="meta">Cross-root memory federation (issues #168, #170). Reads <code>.red/memory/federation.yaml</code>; redaction policy applied at read time (fields=${escapeHtml(federation.policy.fields.join(", ") || "none")}, scopes=${escapeHtml(federation.policy.scopes.join(", ") || "none")}${federation.policy.default_deny ? ", default-deny" : ""}).</p>
     ${
       roots.length === 0
         ? `<p class="empty">No federation roots configured — add <code>.red/memory/federation.yaml</code> to enable cross-root reads.</p>`
