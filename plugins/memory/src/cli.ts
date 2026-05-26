@@ -132,6 +132,12 @@ import {
 import { buildMemoryRoutingGuideViewerArtifact } from "./routing-guide-viewer.js";
 import { buildSessionTimeline } from "./session-timeline.js";
 import { buildSessionTimelineViewerArtifact } from "./session-timeline-viewer.js";
+import {
+  current as sessionCurrent,
+  end as sessionEnd,
+  ensure as sessionEnsure,
+  start as sessionStart,
+} from "./session-manager.js";
 import { executeReadOnlyMemoryOperation } from "./operations.js";
 import { buildMemoryHandoff } from "./handoff.js";
 import { buildMemoryHandoffViewerArtifact } from "./handoff-viewer.js";
@@ -235,6 +241,9 @@ Usage:
   memory workbench                 [--root <dir>] [--out <file>] [--session <id>] [--limit N] [--json]
   memory session timeline           [--root <dir>] [--session <id>] [--limit N] [--json]
   memory session timeline-viewer    [--root <dir>] [--session <id>] [--limit N] [--out <file>]
+  memory session show               [--root <dir>] [--json]   (prints the current session id, or "none")
+  memory session start              [--root <dir>] [--id <id>] [--json]   (mints + writes a fresh id)
+  memory session end                [--root <dir>] [--json]   (drops .red/memory/sessions/current)
   memory learning-debt              [--root <dir>] [--stale-days N] [--json]
   memory learning-debt-viewer       [--root <dir>] [--stale-days N] [--out <file>]
   memory decay                      [--root <dir>] [--stale-days N] [--deprecate-days N] [--limit N] [--json]
@@ -1557,10 +1566,46 @@ async function runMemoryDecayViewer(args: ParsedArgs): Promise<void> {
   }
 }
 
+async function runSessionShow(args: ParsedArgs): Promise<void> {
+  const rootDir = rootOf(args.flags);
+  const id = await sessionCurrent(rootDir);
+  if (args.flags.json === true) {
+    console.log(JSON.stringify({ session_id: id }, null, 2));
+    return;
+  }
+  console.log(id ?? "none");
+}
+
+async function runSessionStart(args: ParsedArgs): Promise<void> {
+  const rootDir = rootOf(args.flags);
+  const explicit = stringFlag(args.flags, "id");
+  const id = await sessionStart(rootDir, explicit ? { id: explicit } : {});
+  if (args.flags.json === true) {
+    console.log(JSON.stringify({ session_id: id }, null, 2));
+    return;
+  }
+  console.log(`memory: session started — ${id}`);
+}
+
+async function runSessionEnd(args: ParsedArgs): Promise<void> {
+  const rootDir = rootOf(args.flags);
+  await sessionEnd(rootDir);
+  if (args.flags.json === true) {
+    console.log(JSON.stringify({ ok: true }, null, 2));
+    return;
+  }
+  console.log("memory: session ended");
+}
+
 async function runSession(args: ParsedArgs): Promise<void> {
   const action = args.positional[0];
+  if (action === "show") return runSessionShow(args);
+  if (action === "start") return runSessionStart(args);
+  if (action === "end") return runSessionEnd(args);
   if (action !== "timeline" && action !== "timeline-viewer") {
-    throw new Error("session needs an action — supported: memory session timeline|timeline-viewer");
+    throw new Error(
+      "session needs an action — supported: memory session show|start|end|timeline|timeline-viewer",
+    );
   }
   const { store } = await openGraphStore(args);
   try {
@@ -5442,6 +5487,25 @@ async function runHook(args: ParsedArgs): Promise<void> {
           ? payload.cwd
           : process.cwd();
     const input = await parseInput(runner, event, payload);
+    // Lifecycle session minting (issue #176). SessionStart always (re)mints —
+    // a fresh harness session gets a fresh id, ungated by config.hooks so even
+    // markdown-only repos with a wired manifest get an inspectable session
+    // file. Every other event ensures one exists, which covers the Codex /
+    // no-hook fallback: the first MCP/CLI call mints when SessionStart never
+    // fired. Failures here must not break the hook — swallow silently.
+    try {
+      if (event === "SessionStart") {
+        await sessionStart(rootDir, input.sessionId ? { id: input.sessionId } : {});
+      } else if (!(await sessionCurrent(rootDir))) {
+        if (input.sessionId) {
+          await sessionStart(rootDir, { id: input.sessionId });
+        } else {
+          await sessionEnsure(rootDir);
+        }
+      }
+    } catch {
+      // session file is best-effort; never abort the turn.
+    }
     const result = await dispatch(input, rootDir);
     process.stdout.write(formatOutput(runner, event, result));
   } catch {

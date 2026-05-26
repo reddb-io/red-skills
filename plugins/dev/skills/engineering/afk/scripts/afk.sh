@@ -2143,6 +2143,26 @@ process_issue() {
   git -C "$PROJECT_ROOT" fetch origin "$pinned" --quiet
   git -C "$PROJECT_ROOT" worktree add "$worktree" -b "$branch" "origin/$pinned" >/dev/null
 
+  # Mint a per-worker session id into the worktree's
+  # `.red/memory/sessions/current` so working-memory layers (L1/L2) scope
+  # themselves to this AFK iteration even when the memory plugin's
+  # SessionStart hook hasn't fired yet (Codex path, or when the manifest is
+  # not wired). Best-effort: a missing `uuidgen` falls back to /proc/sys/.
+  if [[ -n "$worktree" && -d "$worktree" ]]; then
+    mkdir -p "$worktree/.red/memory/sessions" 2>/dev/null || true
+    local _sid=""
+    if command -v uuidgen >/dev/null 2>&1; then
+      _sid="$(uuidgen 2>/dev/null || true)"
+    fi
+    if [[ -z "$_sid" && -r /proc/sys/kernel/random/uuid ]]; then
+      _sid="$(cat /proc/sys/kernel/random/uuid 2>/dev/null || true)"
+    fi
+    if [[ -z "$_sid" ]]; then
+      _sid="afk-${WORKER_ID}-i${n}-$(date +%s%N 2>/dev/null || date +%s)"
+    fi
+    printf '%s\n' "$_sid" >"$worktree/.red/memory/sessions/current" 2>/dev/null || true
+  fi
+
   state_write "$STATE_FILE" \
     current.number:=$n \
     current.title="$title" \
