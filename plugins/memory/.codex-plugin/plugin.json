@@ -1,6 +1,6 @@
 {
   "name": "memory",
-  "version": "1.48.1",
+  "version": "1.101.0",
   "description": "reddb.io memory plugin - persistent, queryable memory for code agents that lives on top of dev. Supports markdown notes, RedDB graph memory, graph ingest/recall/export, optional lifecycle hooks, MCP, and Skill telemetry for self-improvement.",
   "author": {
     "name": "reddb.io",

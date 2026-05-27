@@ -115,6 +115,8 @@ jobs:
           manifests=(
             plugins/dev/.claude-plugin/plugin.json
             plugins/dev/.codex-plugin/plugin.json
+            plugins/memory/.claude-plugin/plugin.json
+            plugins/memory/.codex-plugin/plugin.json
           )
           new="${NEXT#v}"
           for manifest in "${manifests[@]}"; do
