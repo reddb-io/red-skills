@@ -19,7 +19,7 @@ Drain the agent-ready backlog. Single skill that owns issue selection, worktree 
 - `/afk --request "dont run cargo tests for this issue resolution"` or `/afk -r "..."` — add a special user request block to every inner-agent prompt for this run.
 - `/afk -n 5` — cap at five issues (default: drain until empty).
 - `/afk --once` — single supervised iteration. Same as `scripts/once.sh`. Use for debugging the prompt.
-- `/afk monitor` — readonly status board, aggregates every `.red/tmp/work-*/afk.state.json` so you see all live workers from another terminal.
+- `/afk monitor` — readonly status board, aggregates every `.red/tmp/work-*/afk.state.json` so you see all live workers from another terminal. **Also (binding):** mirrors live workers onto the host runner's native task surface — `TaskCreate`/`TaskUpdate` under Claude Code, the sub-agent surface under Codex when present (falls back to the dashboard otherwise). See *Task Mirror* below — this is not optional and you must do it on every tick, even when the user only asked "como estamos?".
 - `/afk fleet [N]` — launch the supervisor maintaining `N` concurrent workers (default `2`). See *Fleet Mode* below.
 - `/afk fleet stop` — gracefully shut down a running fleet supervisor and cancel its auto-monitor cron.
 
@@ -520,6 +520,16 @@ Idempotency: `SLOT_SWEPT[slot]=1` blocks a second sweep within the same supervis
 - *Self-Cancel* under Monitor — the dual teardown path (cron tears itself down when no workers remain; fleet stop tears it down immediately).
 
 ## Monitor
+
+> **BINDING — every monitor tick must do BOTH of the following, in order. No shortcuts.**
+>
+> 1. **Render the dashboard** (`scripts/monitor.sh --once`).
+> 2. **Mirror live workers onto the host runner's native task surface.** Per-runner mapping:
+>    - **Claude Code:** apply `mirror_plan` via `TaskCreate` (one task per live worker, titled `#<n> w<id> — <title>`) and `TaskUpdate` (description carries `stage:<x>`, terminal events flip `state` to `completed`/`failed`). See *Task Mirror* below for the full protocol.
+>    - **Codex:** call `mirror_sink_codex`. Today `codex_native_task_available` returns non-zero, so the sink falls back to the dashboard plus a one-line notice — that *is* the mirror under Codex; do not silently skip. If Codex grows a native surface, the sink emits the same `mirror_plan` descriptors against it.
+>    - **Bare terminal / unknown runner:** skip the mirror silently — `monitor.sh` is the canonical view.
+>
+> The mirror is the only way the user sees per-worker progress advance in their native UI. Skipping it (because "nothing changed" or "just answering a status question") is a bug, not a shortcut — `mirror_plan` is idempotent and emits zero descriptors when nothing changed.
 
 `/afk monitor` is the readonly aggregated view across all live workers. **Implementation is `scripts/monitor.sh` — invoke it directly, do not reinvent the rendering in inline bash.** The script:
 
