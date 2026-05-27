@@ -8,3 +8,6 @@ onlyBuiltDependencies:
 allowBuilds:
   "@reddb-io/sdk": true
   esbuild: true
+
+minimumReleaseAgeExclude:
+  - '@reddb-io/sdk@1.7.0'

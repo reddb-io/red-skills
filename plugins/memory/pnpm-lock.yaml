@@ -12,8 +12,8 @@ importers:
         specifier: ^1.0.0
         version: 1.29.0(zod@3.25.76)
       '@reddb-io/sdk':
-        specifier: 1.3.1
-        version: 1.3.1
+        specifier: 1.7.0
+        version: 1.7.0
       fast-glob:
         specifier: ^3.3.2
         version: 3.3.3
@@ -364,8 +364,8 @@ packages:
     resolution: {integrity: sha512-oGB+UxlgWcgQkgwo8GcEGwemoTFt3FIO9ababBmaGwXIoBKZ+GTy0pP185beGg7Llih/NSHSV2XAs1lnznocSg==}
     engines: {node: '>= 8'}
 
-  '@reddb-io/sdk@1.3.1':
-    resolution: {integrity: sha512-bjYXlm1XDkzJrbpk5y55OAyRbpWxJ2FWbBxKKhyn2XLIPLbnA8OexzfJA5n2Ja5ANGq6RPkG5zAifl3b+YrsGg==}
+  '@reddb-io/sdk@1.7.0':
+    resolution: {integrity: sha512-uxdUC8UXuCv5ngj1kbo7Cylz5wa6qZeV0Hx2Qjvwu4nZoYYhQJRTlrdx+m6HjscSCnMbIfh64eFdI5SNDMqczw==}
     engines: {node: '>=18'}
 
   '@rollup/rollup-android-arm-eabi@4.60.4':
@@ -1368,7 +1368,7 @@ snapshots:
       '@nodelib/fs.scandir': 2.1.5
       fastq: 1.20.1
 
-  '@reddb-io/sdk@1.3.1': {}
+  '@reddb-io/sdk@1.7.0': {}
 
   '@rollup/rollup-android-arm-eabi@4.60.4':
     optional: true
