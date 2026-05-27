@@ -6,6 +6,21 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 
 ---
 
+## quality-gate contract — verify_task phase schema (added)
+
+- **status**: added
+- **upstream**: —
+- **why**: Third runner-neutral phase contract built on top of the #205 envelope and the #200 executor (PRD #196 / issue #201). Defines the `verify_task` phase that runs between executor completion and `finalize`'s commit/merge: discovers and runs repo-local quality commands (preferring RTK / hook-backed wrappers when safe), grades each acceptance criterion against the captured evidence, detects skipped tests / hollow tests / zero-test matches / placeholder implementations, flags scope drift, and emits a structured `approved` / `blocked` / `stub_detected` outcome. Lets Claude Code sub-agents, Codex CLI inline phases, and Hermes fallback emit the same gate output without changing `/afk` runtime behavior yet.
+- **what changed**:
+  - `.red/contracts/quality-gate.md`: phase contract document — inputs limited to the existing issue/handoff artefacts plus optional analyzer/executor envelopes and the worktree diff, output specialization of the base envelope with an additional `quality_gate` object (outcome, checks_run, discovered_commands, stub_findings, scope_drift_findings, acceptance_verification, fixes_applied, fixes_rejected, rtk_used), verify-phase invariants, outcome priority rules (stub_detected > blocked > approved), stub-detection taxonomy, scope-drift / unproven-acceptance / failed-acceptance failure modes, allowed-vs-rejected fix rubric, RTK and hook-backed wrapper preference, per-runner emission notes, and Claude Code packaging notes referencing `plugins/dev/agents/` and the #198 agent-metadata validator.
+  - `.red/contracts/quality-gate.schema.json`: JSON Schema (draft 2020-12) pinning `phase` to `verify_task`, allowing acceptance results in {pass, fail, unverified}, requiring the closed `quality_gate` object with non-empty enums for outcome / stub-kind / verification-source, and encoding the outcome-vs-envelope invariants (approved => status=completed, all-pass acceptance, empty failures / stubs / scope-drift; stub_detected => status in {blocked, escalation_needed}, stub_findings non-empty, next_human_action set; blocked => status in {blocked, escalation_needed}).
+  - `.red/contracts/fixtures/quality-gate/`: 9 fixtures — 4 valid (`approved-normal`, `blocked-test-failure`, `stub-detected-skipped-test`, `stub-detected-scope-drift`) and 5 invalid (`missing-quality-gate`, `malformed-json`, `approved-with-failure`, `approved-with-unverified`, `checks-mismatch`) covering every outcome and the four documented failure modes.
+  - `scripts/validate-quality-gate-contract.sh`: jq-only structural validator mirroring `validate-task-executor-contract.sh`; enforces required keys, enums (status, runner, confidence, result, outcome, stub-kind, verified), verify-phase invariants (verification_commands ↔ verification_results ↔ quality_gate.checks_run same length / same commands / same exit codes), the outcome-vs-envelope invariants, the base hollow-success rule, and the per-object shapes of `checks_run`, `discovered_commands`, `stub_findings`, `scope_drift_findings`, `acceptance_verification`, `fixes_applied`, and `fixes_rejected`.
+  - `scripts/test-validate-quality-gate-contract.sh`: fixture-based test wired into `.github/workflows/red-release.yml` alongside the existing agent-metadata, afk-task, issue-analyzer, and task-executor fixture tests.
+- **compatibility**: documentation-only. `/afk` does not yet invoke the quality-gate or consume its envelope; the orchestrator continues to drive on the `<promise>DONE</promise>` / `<promise>BLOCKED</promise>` sentinels. Production wiring (and the live merge gate that reacts to `approved` / `blocked` / `stub_detected`) is deferred to later PRD #196 slices. Per #204 §4, public copy treats Codex emission as an inlined phase, not as a "Codex sub-agent". No commit/merge behavior is moved into the gate; the gate's allowed fixes are restricted to mechanical, in-scope edits and are recorded in `quality_gate.fixes_applied`.
+
+---
+
 ## task-executor contract — execute_task phase schema (added)
 
 - **status**: added

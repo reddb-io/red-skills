@@ -1,0 +1,48 @@
+{
+  "status": "completed",
+  "phase": "verify_task",
+  "runner": "claude",
+  "issue_number": 201,
+  "scope_summary": "Claims approved while one acceptance criterion is unverified — should be rejected by the outcome=approved invariant.",
+  "non_goals": [],
+  "acceptance_criteria_results": [
+    { "criterion": "Tests pass.", "result": "pass", "evidence": "checks_run[0]" },
+    { "criterion": "Manual visual check looks fine.", "result": "unverified", "evidence": "no automated coverage" }
+  ],
+  "changed_files": ["src/widget.tsx"],
+  "verification_commands": ["pnpm test"],
+  "verification_results": [
+    { "command": "pnpm test", "exit_code": 0, "summary": "all green" }
+  ],
+  "quality_gate_failures": [],
+  "blocker_reason": null,
+  "next_human_action": null,
+  "remaining_risks": [],
+  "confidence": "medium",
+  "raw_runner_output_path": null,
+  "quality_gate": {
+    "outcome": "approved",
+    "checks_run": [
+      {
+        "name": "test",
+        "command": "pnpm test",
+        "exit_code": 0,
+        "duration_seconds": 1.5,
+        "output_summary": "all green",
+        "used_rtk": false
+      }
+    ],
+    "discovered_commands": [
+      { "name": "test", "command": "pnpm test", "reason_included": "package.json", "reason_skipped": null }
+    ],
+    "stub_findings": [],
+    "scope_drift_findings": [],
+    "acceptance_verification": [
+      { "criterion": "Tests pass.",                     "verified": "by_command",                   "evidence_source": "checks_run[0]" },
+      { "criterion": "Manual visual check looks fine.", "verified": "unverifiable_in_this_phase",   "evidence_source": "no automated coverage available" }
+    ],
+    "fixes_applied": [],
+    "fixes_rejected": [],
+    "rtk_used": false
+  }
+}

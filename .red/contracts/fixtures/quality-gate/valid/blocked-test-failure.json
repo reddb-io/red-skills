@@ -1,0 +1,94 @@
+{
+  "status": "blocked",
+  "phase": "verify_task",
+  "runner": "claude",
+  "issue_number": 9991,
+  "scope_summary": "Verified the executor's diff. The new behaviour's test failed with a real assertion; one acceptance criterion is graded `fail` and the gate emits a blocked outcome so the next attempt can fix the implementation.",
+  "non_goals": [
+    "Edit the failing test to make it pass",
+    "Disable the failing assertion",
+    "Refactor src/widget.tsx beyond what the executor already touched"
+  ],
+  "acceptance_criteria_results": [
+    {
+      "criterion": "The widget renders the new label when given the `compact` prop.",
+      "result": "fail",
+      "evidence": "rtk vitest reported AssertionError: expected 'Full label' to equal 'Compact' (checks_run[0])"
+    },
+    {
+      "criterion": "The widget exposes a typed `onCompactToggle` callback.",
+      "result": "pass",
+      "evidence": "pnpm typecheck — exit 0 (checks_run[1])"
+    }
+  ],
+  "changed_files": [
+    "src/widget.tsx",
+    "src/widget.test.tsx"
+  ],
+  "verification_commands": [
+    "rtk vitest src/widget.test.tsx",
+    "pnpm typecheck"
+  ],
+  "verification_results": [
+    { "command": "rtk vitest src/widget.test.tsx", "exit_code": 1, "summary": "3 passed, 1 failed (compact label assertion)" },
+    { "command": "pnpm typecheck", "exit_code": 0, "summary": "tsc --noEmit clean" }
+  ],
+  "quality_gate_failures": [
+    "vitest: src/widget.test.tsx > renders compact label — AssertionError: expected 'Full label' to equal 'Compact'"
+  ],
+  "blocker_reason": "The compact-label test failed against the executor's implementation. The implementation returns the full label regardless of the `compact` prop.",
+  "next_human_action": "Re-queue with a hint to gate the label on the `compact` prop in src/widget.tsx; the failing test already encodes the expected behaviour and should be left as-is.",
+  "remaining_risks": [
+    "Fixing the label gate may unblock a related test in src/widget.snapshot.test.tsx that this gate did not run because the file was unchanged."
+  ],
+  "confidence": "high",
+  "raw_runner_output_path": ".red/tmp/work-XYZ-i2/raw/quality-gate.stream.json",
+  "quality_gate": {
+    "outcome": "blocked",
+    "checks_run": [
+      {
+        "name": "vitest",
+        "command": "rtk vitest src/widget.test.tsx",
+        "exit_code": 1,
+        "duration_seconds": 1.4,
+        "output_summary": "3 passed, 1 failed (compact label assertion)",
+        "used_rtk": true
+      },
+      {
+        "name": "typecheck",
+        "command": "pnpm typecheck",
+        "exit_code": 0,
+        "duration_seconds": 3.2,
+        "output_summary": "tsc --noEmit clean",
+        "used_rtk": false
+      }
+    ],
+    "discovered_commands": [
+      { "name": "vitest",    "command": "rtk vitest src/widget.test.tsx", "reason_included": "test files in diff", "reason_skipped": null },
+      { "name": "typecheck", "command": "pnpm typecheck",                "reason_included": "tsconfig.json present", "reason_skipped": null },
+      { "name": "lint",      "command": "rtk pnpm lint src/widget.tsx",  "reason_included": null,                   "reason_skipped": "skipped because vitest already failed; rerun on next attempt" }
+    ],
+    "stub_findings": [],
+    "scope_drift_findings": [],
+    "acceptance_verification": [
+      {
+        "criterion": "The widget renders the new label when given the `compact` prop.",
+        "verified": "by_command",
+        "evidence_source": "checks_run[0] — vitest failed assertion"
+      },
+      {
+        "criterion": "The widget exposes a typed `onCompactToggle` callback.",
+        "verified": "by_command",
+        "evidence_source": "checks_run[1] — pnpm typecheck clean"
+      }
+    ],
+    "fixes_applied": [],
+    "fixes_rejected": [
+      {
+        "requested_fix": "Edit the failing test assertion from 'Compact' to 'Full label' so the test passes.",
+        "reason": "That would turn a real failure into a hollow_test stub finding. The implementation is wrong, not the test."
+      }
+    ],
+    "rtk_used": true
+  }
+}

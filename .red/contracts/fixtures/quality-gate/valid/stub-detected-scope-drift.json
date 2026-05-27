@@ -1,0 +1,96 @@
+{
+  "status": "blocked",
+  "phase": "verify_task",
+  "runner": "claude",
+  "issue_number": 9993,
+  "scope_summary": "All commands passed, but the executor honoured a late human-guidance ask and edited a file outside the analyzer's scope_boundaries. The gate emits scope_drift_findings and blocks so the merge does not silently ship out-of-scope changes.",
+  "non_goals": [
+    "Revert the out-of-scope edit on behalf of the executor",
+    "Approve the slice on the strength of passing tests alone"
+  ],
+  "acceptance_criteria_results": [
+    {
+      "criterion": "The widget renders the new label when given the `compact` prop.",
+      "result": "pass",
+      "evidence": "rtk vitest src/widget.test.tsx — 4 passed, 0 failed (checks_run[0])"
+    },
+    {
+      "criterion": "The widget exposes a typed `onCompactToggle` callback.",
+      "result": "pass",
+      "evidence": "pnpm typecheck — exit 0 (checks_run[1])"
+    }
+  ],
+  "changed_files": [
+    "src/widget.tsx",
+    "src/widget.test.tsx",
+    "src/legacy/helpers.ts"
+  ],
+  "verification_commands": [
+    "rtk vitest src/widget.test.tsx",
+    "pnpm typecheck"
+  ],
+  "verification_results": [
+    { "command": "rtk vitest src/widget.test.tsx", "exit_code": 0, "summary": "4 passed, 0 failed" },
+    { "command": "pnpm typecheck", "exit_code": 0, "summary": "tsc --noEmit clean" }
+  ],
+  "quality_gate_failures": [],
+  "blocker_reason": "src/legacy/helpers.ts was edited but is outside the analyzer's scope_boundaries (only src/widget.* were in scope). The change is unrelated to the brief and was made in response to a human-guidance comment that was not promoted to a separate issue.",
+  "next_human_action": "Either re-triage the legacy/helpers.ts change as its own issue and revert it from this slice, or expand the analyzer's scope_boundaries explicitly via a body edit before re-queuing.",
+  "remaining_risks": [
+    "If the legacy/helpers.ts change is reverted in a follow-up attempt, dependent tests in src/legacy/ should be re-run to confirm no regression slipped through."
+  ],
+  "confidence": "high",
+  "raw_runner_output_path": null,
+  "quality_gate": {
+    "outcome": "blocked",
+    "checks_run": [
+      {
+        "name": "vitest",
+        "command": "rtk vitest src/widget.test.tsx",
+        "exit_code": 0,
+        "duration_seconds": 1.3,
+        "output_summary": "4 passed, 0 failed",
+        "used_rtk": true
+      },
+      {
+        "name": "typecheck",
+        "command": "pnpm typecheck",
+        "exit_code": 0,
+        "duration_seconds": 3.3,
+        "output_summary": "tsc --noEmit clean",
+        "used_rtk": false
+      }
+    ],
+    "discovered_commands": [
+      { "name": "vitest",    "command": "rtk vitest src/widget.test.tsx", "reason_included": "test files in diff", "reason_skipped": null },
+      { "name": "typecheck", "command": "pnpm typecheck",                "reason_included": "tsconfig.json present", "reason_skipped": null }
+    ],
+    "stub_findings": [],
+    "scope_drift_findings": [
+      {
+        "file": "src/legacy/helpers.ts",
+        "reason": "Edited in response to a late human-guidance comment; not listed in the analyzer's scope_boundaries and unrelated to the brief's widget work."
+      }
+    ],
+    "acceptance_verification": [
+      {
+        "criterion": "The widget renders the new label when given the `compact` prop.",
+        "verified": "by_command",
+        "evidence_source": "checks_run[0] — vitest passed"
+      },
+      {
+        "criterion": "The widget exposes a typed `onCompactToggle` callback.",
+        "verified": "by_command",
+        "evidence_source": "checks_run[1] — typecheck clean"
+      }
+    ],
+    "fixes_applied": [],
+    "fixes_rejected": [
+      {
+        "requested_fix": "Run `git checkout HEAD -- src/legacy/helpers.ts` to revert the drift.",
+        "reason": "Forbidden git operation for the gate, and reverting changes a human asked for without re-triage is a judgement call the gate will not make alone."
+      }
+    ],
+    "rtk_used": true
+  }
+}
