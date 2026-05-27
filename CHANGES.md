@@ -6,6 +6,15 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 
 ---
 
+## memory — MCP tier-aware verbs (session/working/promote) (added)
+
+- **status**: added
+- **upstream**: —
+- **why**: Issue #188 (parent PRD #174). The CLI stays tier-agnostic for humans (`memory store` / `memory recall` route through the layer router), but agents that need precision had no way to drive the L2 working-memory layer (#178) or the PromotionEngine (#183) from MCP. This adds five tier-aware tools so agents can mint a session, append typed L2 events, read the stream back, and promote it into L3 deliberately — complementing the harness-hook path from slice #176.
+- **what changed**: New tools registered on the memory MCP server (`plugins/memory/src/mcp-server.ts`): `memory_session_start` (mints + writes `.red/memory/sessions/current`, optional caller-supplied `id`), `memory_session_end` (drops the file), `memory_working_get` (lists typed L2 events for the current session, optional `type` filter), `memory_working_set` (appends a typed event; triggers the L2 overflow promotion backstop when the threshold is crossed), and `memory_promote` (runs `runPromote` against L3, returning `promoted / reinforced / skipped` + rids + decisions). Working-memory and promote verbs require an active session; without one they throw a single uniform message — `"no active memory session — call memory_session_start first (or rely on the SessionStart hook to mint one)"` — so the agent can self-correct without human-in-the-loop. The existing read-only MCP surface is unchanged. README "MCP server" section gained a "Tier-aware verbs (agents)" subsection listing the five tools and the no-session contract. New end-to-end MCP test in `tests/mcp-server.test.ts` ("tier-aware verbs drive session / working-memory / promotion") exercises the full lifecycle: no-session error → `session_start` → `working_set` (sequence=1) → `working_get` round-trip → `promote` (promoted=1) → `session_end` → no-session error again → read-only `stats` still works. Full memory suite green; `pnpm typecheck` and `pnpm build` clean. Refs #188.
+
+---
+
 ## memory — recall-quality bench vs AMS (`memory bench recall`) (added)
 
 - **status**: added

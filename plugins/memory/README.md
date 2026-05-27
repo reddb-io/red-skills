@@ -728,6 +728,25 @@ ready-to-inject markdown context block plus ranked nodes; `memory_ask` is the
 one LLM-backed verb (it needs an engine API key and degrades gracefully without
 one).
 
+### Tier-aware verbs (agents)
+
+The CLI stays tier-agnostic for humans (`memory store` / `memory recall` route
+through the layer router). Agents that need precision can drive the memory
+tiers explicitly through MCP:
+
+| Tool | Purpose |
+|------|---------|
+| `memory_session_start` | Mint and write a new session id to `.red/memory/sessions/current`. Optional `id` reuses a runner-supplied value (e.g. a SessionStart payload). |
+| `memory_session_end`   | Drop the session file. After this, working-memory and promote calls error until a new session is minted. |
+| `memory_working_get`   | Read typed L2 events for the current session (oldest first). Optional `type` filter. |
+| `memory_working_set`   | Append a typed L2 event (`type`, `value`). Crossing the L2 overflow threshold may trigger a promotion pass as a backstop. |
+| `memory_promote`       | Run the PromotionEngine for the current session against L3. Returns `(promoted, reinforced, skipped)` plus rids. |
+
+Working-memory and promote verbs require an active session. Calls without one
+error with `"no active memory session — call memory_session_start first (or
+rely on the SessionStart hook to mint one)"` so the agent can self-correct
+without a human in the loop.
+
 It resolves its store from the project config (`.red/memory/config.json` in the
 cwd or `$MEMORY_ROOT`, graph mode required), or from an explicit
 `RED_MEMORY_URI`:
