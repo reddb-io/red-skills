@@ -1298,10 +1298,25 @@ export class MemoryStore {
   private async vectorReadProvider(): Promise<string | null> {
     const configured = vectorProvider(false);
     if (configured != null) return configured;
-    return (await this.listLocalVectorRecords()).length > 0 ? LOCAL_VECTOR_PROVIDER : null;
+
+    // Fast-path local-dev vector auto-discovery. Older code detected local
+    // vectors by probing one KV key per node/doc on every recall; on a 1k-node
+    // graph that made the zero-token recall hot path spend seconds in KV reads
+    // even when no vectors existed. New local projections maintain one aggregate
+    // index, so the common "not configured" path is a single KV read.
+    return (await this.readLocalVectorIndex()).size > 0 ? LOCAL_VECTOR_PROVIDER : null;
   }
 
   private async listLocalVectorRecords(): Promise<LocalVectorProjectionRecord[]> {
+    const indexed = await this.readLocalVectorIndex();
+    if (indexed.size > 0) {
+      const records = await Promise.all([...indexed.values()].map((key) => this.readLocalVectorKey(key)));
+      return records.filter((record): record is LocalVectorProjectionRecord => record !== null);
+    }
+
+    // Back-compat fallback for local projections written before the aggregate
+    // index existed. This path is intentionally not used for provider discovery
+    // above, because a full node/doc scan is too expensive for recall.
     const records = await Promise.all([
       ...(await this.listNodes()).map((node) =>
         this.readLocalVector(COLLECTIONS.nodes, node.rid),
@@ -1325,6 +1340,53 @@ export class MemoryStore {
       record.source_collection === COLLECTIONS.docs ? record.doc_rid : record.node_rid;
     if (!Number.isFinite(targetRid)) return;
     await this.kv().put(localVectorKey(record.source_collection, Number(targetRid)), record);
+    const index = await this.readLocalVectorIndex();
+    index.set(
+      vectorTargetKey(record.source_collection, Number(targetRid)),
+      localVectorKey(record.source_collection, Number(targetRid)),
+    );
+    await this.writeLocalVectorIndex(index);
+  }
+
+  private async readLocalVectorIndex(): Promise<Map<string, string>> {
+    const raw = await this.kv().get(LOCAL_VECTOR_INDEX_KEY);
+    if (raw == null) return new Map();
+    const parsed = (typeof raw === "string" ? JSON.parse(raw) : raw) as
+      | Record<string, string | LocalVectorProjectionRecord>
+      | LocalVectorProjectionRecord[];
+    if (Array.isArray(parsed)) {
+      return new Map(
+        parsed
+          .map((record) => {
+            const targetRid =
+              record.source_collection === COLLECTIONS.docs ? record.doc_rid : record.node_rid;
+            return Number.isFinite(targetRid)
+              ? [
+                  vectorTargetKey(record.source_collection, Number(targetRid)),
+                  localVectorKey(record.source_collection, Number(targetRid)),
+                ]
+              : null;
+          })
+          .filter((entry): entry is [string, string] => entry != null),
+      );
+    }
+    return new Map(
+      Object.entries(parsed).map(([target, value]) => {
+        if (typeof value === "string") return [target, value];
+        const targetRid = value.source_collection === COLLECTIONS.docs ? value.doc_rid : value.node_rid;
+        return [target, localVectorKey(value.source_collection, Number(targetRid))];
+      }),
+    );
+  }
+
+  private async writeLocalVectorIndex(index: Map<string, string>): Promise<void> {
+    await this.kv().put(LOCAL_VECTOR_INDEX_KEY, Object.fromEntries(index));
+  }
+
+  private async readLocalVectorKey(key: string): Promise<LocalVectorProjectionRecord | null> {
+    const raw = await this.kv().get(key);
+    if (raw == null) return null;
+    return (typeof raw === "string" ? JSON.parse(raw) : raw) as LocalVectorProjectionRecord;
   }
 
   private async readVectorFailure(key: number | string): Promise<VectorFailureRecord | null> {
@@ -1576,6 +1638,7 @@ function isLocalVectorProvider(provider: string): boolean {
 }
 
 const LOCAL_VECTOR_PROVIDER = "local";
+const LOCAL_VECTOR_INDEX_KEY = "vector:local:index";
 const LOCAL_VECTOR_DIMENSIONS = 128;
 
 function localEmbedding(text: string): number[] {

@@ -13,7 +13,7 @@
     {
       "name": "memory",
       "source": "./plugins/memory",
-      "description": "reddb.io memory plugin — persistent, queryable memory for code agents. Markdown-only slice: `memory init`, `/memory:store`, `/memory:recall`. Requires the `dev` plugin.",
+      "description": "reddb.io memory plugin — governed operational memory for code agents on top of dev: markdown notes, RedDB graph memory, governed recall, context packs, claim checks, readiness, lifecycle hooks, MCP/HTTP surfaces, Workbench diagnostics, and Skill telemetry.",
       "dependencies": [
         "dev"
       ]

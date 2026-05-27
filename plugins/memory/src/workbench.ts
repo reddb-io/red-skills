@@ -333,6 +333,20 @@ function renderWorkbench(workbench: MemoryWorkbench): string {
     }
     .metric strong { display: block; font-size: 22px; }
     .metric span { color: var(--muted); font-size: 13px; }
+    .workflow-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 10px;
+      margin: 0 0 14px;
+    }
+    .workflow-card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 12px;
+    }
+    .workflow-card strong { display: block; margin-bottom: 4px; }
+    .workflow-card code { color: var(--accent); }
     .layout { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(340px, .8fr); gap: 14px; }
     .stack { display: grid; gap: 14px; }
     ul { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; }
@@ -440,7 +454,20 @@ function renderWorkbench(workbench: MemoryWorkbench): string {
       ${metric("Eval", `${workbench.competitive_eval.composite.score}/${workbench.competitive_eval.composite.maxScore}`)}
       ${metric("Radar", workbench.competitive_radar.summary.competitors)}
       ${metric("Timeline", workbench.session_timeline.summary.events)}
+      ${metric("Autocure", `${workbench.autocure.actions_proposed.length}/${workbench.autocure.actions_applied.length}`)}
     </div>
+    <section>
+      <h2>Command map</h2>
+      <p class="meta">Use these as the primary entry points. Everything else in the Workbench is an operator or diagnostic view over the same governed evidence store.</p>
+      <div class="workflow-grid">
+        ${workflowCard("Remember one fact", "memory store \"Decision: ...\"", "Capture scoped evidence for later recall.")}
+        ${workflowCard("Get context before acting", "memory recall \"topic\"", "Canonical governed context path.")}
+        ${workflowCard("Prepare another agent", "memory context-pack \"goal\"", "Budgeted, cited continuation context.")}
+        ${workflowCard("Decide if safe", "memory readiness \"goal\"", "Go/no-go envelope with warnings.")}
+        ${workflowCard("Search every surface", "memory smart-search \"query\"", "Broad discovery across recall, docs, assets, and vectors.")}
+        ${workflowCard("Operate/debug Memory", "memory health-viewer", "Freshness, hooks, trust, retention, and capability status.")}
+      </div>
+    </section>
     <div class="layout">
       <div class="stack">
         ${summarySection(workbench)}
@@ -526,6 +553,10 @@ function competitiveEvalSection(workbench: MemoryWorkbench): string {
 
 function metric(label: string, value: number | string): string {
   return `<div class="metric"><strong>${escapeHtml(String(value))}</strong><span>${escapeHtml(label)}</span></div>`;
+}
+
+function workflowCard(title: string, command: string, description: string): string {
+  return `<div class="workflow-card"><strong>${escapeHtml(title)}</strong><code>${escapeHtml(command)}</code><p class="meta">${escapeHtml(description)}</p></div>`;
 }
 
 function summarySection(workbench: MemoryWorkbench): string {

@@ -1,6 +1,6 @@
 ---
 name: store
-description: Save a fact to the project's persistent memory as a plain markdown note. Use when the user says "remember this", "store that …", "/memory:store …", or when you want a decision, gotcha, or why-note to survive across sessions. Requires `memory init` to have run.
+description: Save one durable work fact to the project's configured memory surface. Use when the user says "remember this", "store that …", "/memory:store …", or when you want a scoped decision, gotcha, validation, or why-note to survive across sessions. Requires `memory init` to have run.
 ---
 
 # memory store
@@ -8,9 +8,10 @@ description: Save a fact to the project's persistent memory as a plain markdown 
 Saves one fact to the project's memory and routes to whatever `memory init`
 configured. In **markdown-only** mode it writes a markdown note under
 `.red/memory/notes/` — the note **is** the canonical store, human-readable and
-committable. In **graph** mode it writes a deduped `concept` node to the RedDB
-store (storing the same fact twice returns the same node). Either way the fact
-is recallable later with `/memory:recall`. Nothing else fires.
+committable. In **graph** mode it writes a deduped operational-memory node to
+the RedDB store (storing the same fact twice returns the same node) with the
+metadata needed for governed recall, freshness, and later supersession. Either
+way the fact is recallable later with `/memory:recall`.
 
 <what-to-do>
 
@@ -26,12 +27,13 @@ node "${CLAUDE_PLUGIN_ROOT}/dist/cli.js" store <the fact text>
 ```
 
 Pass the fact as the argument (everything after `store` is joined into one
-note). The CLI writes `<timestamp>-<slug>.md` with YAML frontmatter and the fact
-as the body, and prints the note path.
+note). The CLI routes by config. Markdown-only writes `<timestamp>-<slug>.md` with YAML
+frontmatter and the fact as the body. Graph mode prints the stored/deduped node
+identity and keeps the durable evidence in `.red/memory/graph.rdb`.
 
 ## 3. Confirm
 
-Report the note id/path so the user knows what was captured.
+Report the note path or graph node id so the user knows what was captured.
 
 ## DOs / DON'Ts
 

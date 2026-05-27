@@ -156,6 +156,10 @@ describe("Memory workbench", () => {
       ],
     });
     expect(artifact.html).toContain("Memory Workbench");
+    expect(artifact.html).toContain("Command map");
+    expect(artifact.html).toContain("Get context before acting");
+    expect(artifact.html).toContain("memory recall &quot;topic&quot;");
+    expect(artifact.html).toContain("Everything else in the Workbench is an operator or diagnostic view");
     expect(artifact.html).toContain("Operational Summary");
     expect(artifact.html).toContain("Memory Layers");
     expect(artifact.html).toContain('id="memory-layers-refresh"');

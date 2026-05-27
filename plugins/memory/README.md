@@ -1,4 +1,4 @@
-# memory — persistent memory for code agents
+# memory — governed operational memory for code agents
 
 The `memory` plugin gives Claude Code / Codex agents governed operational
 memory: scoped decisions, gotchas, reasoning traces, provenance, supersession,
@@ -10,7 +10,57 @@ It **lives on top of the `dev` plugin** and is meant to improve dev's processes
 (`/afk` recall, `/triage` dedup, `/diagnose` root-cause history, `/zoom-out`
 orientation). Installing `memory` requires `dev`.
 
-## Quickstart: source-only operational memory
+## What this plugin is
+
+Memory has one job: make future agents safer and faster by turning work evidence
+into governed context. The core path is intentionally small:
+
+| Step | Command surface | What good output looks like |
+|------|-----------------|-----------------------------|
+| Initialize | `memory init` / `$init` | A project-local `.red/memory` surface with either markdown-only notes or graph-backed governed memory. |
+| Capture | `memory store` / `$store`, hooks, `memory extract` | One scoped decision, gotcha, validation, risk, or root-cause fact with enough provenance to verify later. |
+| Recall | `memory recall` / `$recall`, SessionStart hooks | A compact set of relevant claims/evidence, ranked by usefulness and hiding superseded guidance by default. |
+| Verify | `claim-check`, `readiness`, `governance`, `lint`, `decay`, `health` | Stale, contradicted, unsupported, or risky claims are visible before an agent acts on them. |
+| Handoff | `context-pack`, `handoff`, Workbench panels | Cited context that another agent/session can inject without replaying the whole history. |
+
+Everything else exists to support that loop. MCP/HTTP, Workbench pages, graph
+reads, smart search, vector diagnostics, competitive evals, and export commands
+are operator and integration surfaces over the same evidence store; they should
+not become a second source of truth.
+
+## Which mode should I use?
+
+| Need | Use | Why |
+|------|-----|-----|
+| Lowest-risk searchable notes in any repo | `markdown-only` | No RedDB engine, hooks, MCP, provider, or background process; facts are plain markdown under `.red/memory/notes/`. |
+| Agent workflow memory with provenance, freshness, supersession, and claim checks | `graph` | Stores operational evidence in `.red/memory/graph.rdb` and powers governed recall/readiness/handoff. |
+| Automatic lifecycle capture | `graph --hooks` | SessionStart/PostToolUse/Stop/PreCompact hooks can recall, refresh, and extract evidence when the host supports them. |
+| Browser/API/operator inspection | `graph` + `memory serve` or `memory workbench` | Read-only Workbench, dashboard, docs/search, governance, health, and routing panels over the local store. |
+| Semantic/vector diagnostics | `graph` + `memory vector maintain` | Optional projection for search diagnostics; governed recall remains the canonical agent-context path. |
+
+Default recommendation: start with `markdown-only` for a cautious rollout, then
+switch new projects to `graph --hooks --skill-telemetry` once you want the full
+RedSkills workflow loop.
+
+## Common workflows
+
+Use this map before reaching for the full command list:
+
+| If you want to... | Start with | Why |
+|-------------------|------------|-----|
+| Remember one durable work fact | `memory store "Decision: ..."` | Captures scoped evidence for later recall. |
+| Get context before acting | `memory recall "topic"` | Canonical governed context path; hides superseded guidance by default. |
+| Prepare another agent/session | `memory context-pack "goal"` or `memory handoff "focus"` | Produces cited, budgeted context instead of dumping search results. |
+| Decide whether it is safe to proceed | `memory readiness "goal"` or `memory claim-check "assertion"` | Surfaces stale, missing, contradicted, or unsupported evidence. |
+| Search across every indexed surface | `memory smart-search "query"` | Broad discovery across recall, docs, assets, and vector diagnostics. |
+| Operate/debug Memory itself | `memory workbench`, `memory health-viewer`, `memory governance` | Inspects capability status, freshness, hooks, trust, and retention. |
+
+The rule of thumb: agents should use `recall` for action context, `readiness`
+for go/no-go decisions, and `context-pack`/`handoff` for continuation. Broader
+search, Workbench, vector, docs, and competitive surfaces are diagnostics or
+operator views over the same evidence.
+
+## Golden path: governed operational memory
 
 The plugin ships source-only. From a checkout of `red-skills`, build the local
 CLI first; `dist/` and `node_modules/` are intentionally not committed.
@@ -48,6 +98,20 @@ node plugins/memory/dist/cli.js handoff "cache expiry" --json
 node plugins/memory/dist/cli.js context-pack "diagnose flaky cache expiry tests"
 node plugins/memory/dist/cli.js recall "cache TTL"
 ```
+
+That is the canonical Init → Store → Recall → Verify → Handoff loop:
+
+1. **Init** creates a project-local memory surface.
+2. **Store** captures one durable, scoped work fact with enough “why” to be useful later.
+3. **Recall** produces governed zero-token context; graph mode keeps the hot path deterministic and treats vectors as optional contributors, not the source of truth.
+4. **Verify** uses claim checks/readiness/governance to separate evidence from stale or contradicted claims.
+5. **Handoff** turns the evidence into a compact context pack for the next agent/session.
+
+The product promise is operational memory for code agents: remember decisions,
+gotchas, reasoning traces, validations, and lifecycle evidence in a way that can
+be aged, superseded, audited, exported, and injected back into RedSkills work.
+Vectors, docs search, dashboards, and graph analytics are supporting surfaces;
+`memory recall` remains the canonical governed context path.
 
 Graph mode provisions a per-project embedded RedDB file at
 `.red/memory/graph.rdb` through the bundled SDK binary; there is no daemon to
@@ -87,9 +151,27 @@ markdown notes, under `.red/memory/backups/<name>` with a SHA-256 manifest.
 Restore is intentionally gated by `--yes` and creates a pre-restore safety
 backup before replacing the current persistence files.
 
+## Read surfaces and operator diagnostics
+
+Use this section when you need to inspect, integrate, or debug Memory rather than
+just store and recall facts. The surfaces below are read-only unless explicitly
+documented otherwise:
+
+| Surface | Primary command | Best for |
+|---------|-----------------|----------|
+| Governed recall | `memory recall <query>` | Agent context injection from operational evidence. |
+| Smart search | `memory smart-search <query>` | Broad discovery across recall, docs, assets, and vector diagnostics. |
+| Context pack | `memory context-pack <goal>` | Budgeted, cited context for a specific task. |
+| Handoff | `memory handoff [focus]` | Cross-session/cross-agent continuation brief. |
+| Workbench | `memory workbench` / `memory serve` | Local browser cockpit for dashboards, governance, docs, hooks, routing, and health. |
+| MCP/HTTP | `memory-mcp`, `memory serve` | Read access for Claude/Codex/Cursor/Gemini/Aider/OpenCode/generic agents. |
+| Export/backup | `memory export`, `memory backup` | Offline audit, interop, and rollback safety. |
+
+### Memory Workbench and diagnostics
+
 For optional browser/API inspection, `memory serve` starts a loopback-only
-read-only HTTP surface over the same RedDB store. It serves the workbench and
-dashboard HTML, prints the docs reference graph viewer URL at
+read-only HTTP surface over the same RedDB store. It serves the Memory Workbench
+and dashboard HTML, prints the docs reference graph viewer URL at
 `/docs/reference-graph`, plus JSON endpoints for health, OpenAPI
 (`/openapi.json`), workbench, dashboard, competitive radar, context packs,
 work frontier, memory layers, governance, decay, memory health, hook coverage,
@@ -155,8 +237,9 @@ node plugins/memory/dist/cli.js competitive-eval-viewer
 #   contract: memory.competitive_eval.v2
 ```
 
-The local Workbench embeds that radar beside the operational dashboard,
-capability catalog, memory layers, and session timeline, so `memory workbench` and
+The local **Memory Workbench** is the umbrella for the browser-facing operator
+surface. It embeds the radar beside the operational dashboard, capability
+catalog, memory layers, and session timeline, so `memory workbench` and
 `memory serve` show the same internal posture report without recomputing it.
 When served over HTTP, the Workbench also includes a read-only Search Console
 backed by `/api/search`; it shows fused smart-search results, recall/doc/asset/
@@ -261,14 +344,15 @@ transcripts.
 - **markdown-only** — zero engine dependency. Writes `.red/memory/config.json`
   and `.red/memory/notes/`; `/memory:store` writes a plain markdown note,
   `/memory:recall` full-text-searches the notes.
-- **graph** — a typed knowledge graph over a per-project embedded RedDB store at
-  `.red/memory/graph.rdb`. `/memory:store` upserts a deduped `concept` node;
-  `/memory:recall` runs the **hybrid recall engine** — full-text seeds expanded
-  through the graph neighborhood, then ranked by `importance × recency ×
+- **graph** — governed operational memory over a per-project embedded RedDB store
+  at `.red/memory/graph.rdb`. `/memory:store` upserts a deduped operational fact;
+  `/memory:recall` runs the governed recall engine — deterministic text seeds
+  expanded through the graph neighborhood, then ranked by `importance × recency ×
   graph-centrality × tier-weight` (durable decisions outrank reasoning traces
   outrank ephemeral session noise), with the head of any `SUPERSEDED_BY` chain
   returned in place of superseded nodes (`--include-superseded` returns the full
-  chain). RedDB runs out-of-process from the
+  chain). Vector projections can contribute when explicitly ready, but they are
+  not the source of truth. RedDB runs out-of-process from the
   SDK's bundled binary — no service to manage. Graph writes use multi-model DML
   and KV-backed dedupe; see [ADR 0007](../../.red/adr/0007-reddb-graph-writes-via-multi-model-dml.md).
 

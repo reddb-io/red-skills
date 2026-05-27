@@ -224,7 +224,20 @@ import { curateSkills, isCuratable, rollupsToCuratorInput } from "./skill-curato
 import type { Confidence, MemoryLayer, MemoryProvenance, MemoryScope } from "./schema.js";
 import { slugify, storeNote } from "./store.js";
 
-const USAGE = `memory — persistent memory for code agents
+const USAGE = `memory — governed operational memory for code agents
+
+Common workflows:
+  remember one fact          memory store "Decision: ..."
+  get context before acting  memory recall "topic"
+  prepare another agent      memory context-pack "goal"  | memory handoff "focus"
+  decide if safe to proceed  memory readiness "goal"     | memory claim-check "assertion"
+  search every surface       memory smart-search "query"
+  operate/debug Memory       memory workbench             | memory health-viewer | memory governance
+
+Rule of thumb: recall is the canonical governed context path; readiness is the
+go/no-go envelope; context-pack and handoff are continuation surfaces; smart
+search, docs, vectors, Workbench, MCP, and HTTP are diagnostics/integration views
+over the same evidence store.
 
 Usage:
   memory init [--mode markdown-only|graph] [--hooks] [--skill-telemetry] [--event-retention-days N] [--root <dir>] [--yes]

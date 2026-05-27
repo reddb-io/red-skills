@@ -12,7 +12,15 @@ describe("public Memory documentation claims", () => {
   test("quickstart documents useful source-only plugin behavior", async () => {
     const readme = await readFile(README, "utf8");
 
-    expect(readme).toContain("## Quickstart: source-only operational memory");
+    expect(readme).toContain("## Golden path: governed operational memory");
+    expect(readme).toContain("## What this plugin is");
+    expect(readme).toContain("## Which mode should I use?");
+    expect(readme).toContain("## Common workflows");
+    expect(readme).toContain("## Read surfaces and operator diagnostics");
+    expect(readme).toContain("Initialize | `memory init` / `$init`");
+    expect(readme).toContain("Lowest-risk searchable notes in any repo");
+    expect(readme).toContain("Get context before acting");
+    expect(readme).toContain("`memory recall \"topic\"`");
     expect(readme).toContain("pnpm --dir plugins/memory install");
     expect(readme).toContain("pnpm --dir plugins/memory build");
     expect(readme).toContain("node plugins/memory/dist/cli.js init --mode markdown-only");

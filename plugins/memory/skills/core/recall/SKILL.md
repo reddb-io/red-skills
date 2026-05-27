@@ -1,6 +1,6 @@
 ---
 name: recall
-description: Search the project's persistent memory and return matching notes, ranked by relevance. Use when the user asks "what do we know about …", "did we decide …", "have we seen this before", "/memory:recall …", or when you want past decisions/gotchas before acting. Requires `memory init` to have run.
+description: Search the project's configured memory surface and return governed context ranked by relevance. Use when the user asks "what do we know about …", "did we decide …", "have we seen this before", "/memory:recall …", or when you want past decisions/gotchas before acting. Requires `memory init` to have run.
 ---
 
 # memory recall
@@ -8,11 +8,14 @@ description: Search the project's persistent memory and return matching notes, r
 Searches the project's memory for facts stored by `/memory:store`, ranked by how
 strongly they match the query — the zero-token read path, no LLM extraction. In
 **markdown-only** mode it full-text-searches the notes; in **graph** mode it runs
-the hybrid recall engine — full-text seeds expanded through the graph
-neighborhood, ranked, dropping superseded nodes (returns the head of a
-`SUPERSEDED_BY` chain). Routing follows `memory init`. Graph mode also exposes
-`search`/`neighbors`/`traverse`/`path`/`stats` read verbs and an MCP server
-(`memory-mcp`); see the plugin README.
+the governed recall engine — deterministic text seeds expanded through the graph
+neighborhood, ranked with tier/trust/recency/centrality, hiding superseded nodes
+behind the current head of a `SUPERSEDED_BY` chain. Vector hits can contribute
+when a vector provider/projection is explicitly ready, but recall is not
+vector-first. Routing follows `memory init`. Graph mode also exposes
+`search`/`neighbors`/`traverse`/`path`/`stats` read verbs, MCP (`memory-mcp`),
+HTTP, context-pack, readiness, claim-check, and Workbench diagnostics; see the
+plugin README.
 
 <what-to-do>
 
@@ -32,9 +35,10 @@ Everything after `recall` is the query. Add `--limit N` to cap results
 
 ## 3. Use the hits
 
-Read the returned notes and fold what's relevant into your answer or your next
-step — cite the fact, don't just dump the list. If there are no matches, say so
-plainly rather than guessing.
+Read the returned evidence and fold what's relevant into your answer or your
+next step — cite the fact, don't just dump the list. Treat recall as a governed
+context candidate set: verify stale/high-impact claims before relying on them.
+If there are no matches, say so plainly rather than guessing.
 
 ## DOs / DON'Ts
 

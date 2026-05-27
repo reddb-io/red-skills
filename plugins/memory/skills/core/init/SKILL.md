@@ -1,24 +1,27 @@
 ---
 name: init
-description: One-time setup wizard for the memory plugin. Asks what storage to use and writes the per-project memory config. Two modes ship today — markdown-only (plain notes, no engine) and graph (a typed knowledge graph over a per-project RedDB store). Hooks and MCP stay off in both. Use when the user installs the memory plugin and wants to turn memory on, or says "memory init", "set up memory", "initialize memory".
+description: One-time setup wizard for the memory plugin. Asks what storage to use and writes the per-project memory config. Two modes ship today — markdown-only (plain notes, no engine) and graph (governed operational memory over a per-project RedDB store). Hooks are optional in graph mode; MCP/read surfaces are available after build. Use when the user installs the memory plugin and wants to turn memory on, or says "memory init", "set up memory", "initialize memory".
 ---
 
 # memory init
 
 Bootstraps the `memory` plugin for the current repo. Pick a storage mode:
 
-- **markdown-only** — persistent, queryable memory with **zero engine
-  dependency**: notes are plain markdown under `.red/memory/notes/`, no hooks
-  fire, no MCP server runs, RedDB is not required.
-- **graph** — a typed knowledge graph (nodes + edges) over a per-project RedDB
-  store at `.red/memory/graph.rdb`. `/memory:store` writes nodes (deduped by
-  content); `/memory:recall` scans and expands the graph. RedDB is required, but
-  it runs out-of-process from the bundled binary — no service to manage. Graph
-  mode can also opt into the four **auto-firing hooks** (SessionStart recall,
-  PostToolUse re-index, Stop extract, PreCompact flush); they default off.
+- **markdown-only** — searchable project notes with **zero engine dependency**:
+  notes are plain markdown under `.red/memory/notes/`, no hooks fire, no MCP
+  server runs, RedDB is not required.
+- **graph** — governed operational memory (nodes + edges) over a per-project
+  RedDB store at `.red/memory/graph.rdb`. `/memory:store` writes deduped facts;
+  `/memory:recall` returns zero-token governed context with graph expansion,
+  provenance/trust, and supersession handling. RedDB is required, but it runs
+  out-of-process from the bundled binary — no service to manage. Graph mode can
+  also opt into **auto-firing hooks** (SessionStart recall, PostToolUse re-index,
+  Stop extract, PreCompact flush where the host supports it); they default off.
 
-Hybrid mode arrives in a later release. markdown-only never gets hooks. MCP
-stays off in both modes this slice.
+Hybrid mode is not a separate storage mode: use markdown-only for plain notes or
+graph for governed operational memory. markdown-only never gets hooks. MCP/read
+surfaces are available from the built CLI; hook activation still comes from the
+per-project config.
 
 The `memory` plugin requires the `dev` plugin (it builds on dev's processes —
 `/afk`, `/triage`, `/diagnose`). Install `dev` first.
@@ -69,8 +72,11 @@ default, and note that Codex has no `PreCompact` event (the flush leans on Stop
 ## 3. Confirm
 
 Tell the user memory is on, which mode, whether the auto-firing hooks are on or
-off (MCP stays off), and that they can now use `/memory:store <fact>` and
+off, and that they can now use `/memory:store <fact>` and
 `/memory:recall <query>` — which route to the configured mode automatically.
+For graph mode, mention the golden path: store one scoped decision/gotcha,
+recall it, verify with claim-check/readiness/governance, then hand off with a
+context pack when needed.
 
 ## DOs / DON'Ts
 
@@ -123,12 +129,11 @@ bundled `red` binary out-of-process, so there is no service to run.
 
 ## Scope of this slice
 
-Builds on the markdown-only tracer (PRD #49, #51) by adding graph mode: the
-core `MemoryStore` over RedDB (node/edge write + dedupe + supersede), the
-`memory init --mode graph` build/provision path, mode-routed `/memory:store` /
-`/memory:recall`, and the four init-gated **auto-firing hooks** (SessionStart
-recall, PostToolUse re-index, Stop extract, PreCompact flush) wired for both
-Claude Code and Codex. Not yet included (later slices): hybrid storage, the MCP
-server enablement at init, and the `/afk`, `/triage`, `/diagnose` integrations.
+Current graph mode includes the core `MemoryStore` over RedDB (node/edge write,
+dedupe, supersession, confidence/governance overlays), mode-routed
+`/memory:store` / `/memory:recall`, optional lifecycle hooks, MCP/HTTP read
+surfaces, context packs, claim checks, readiness, docs ingest, Skill telemetry,
+and Workbench diagnostics. The operational stance is evidence-first memory for
+RedSkills workflows, not a generic vector database.
 
 </supporting-info>

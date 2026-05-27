@@ -205,7 +205,7 @@ function capabilityDefinitions(facts: CapabilityFacts): MemoryCapability[] {
   return [
     capability({
       id: "governed-hybrid-recall",
-      title: "Governed hybrid recall",
+      title: "Governed recall",
       category: "retrieval",
       status: vectorStatus === "ready" ? "ready" : "available",
       red_db_backed: true,
@@ -231,7 +231,7 @@ function capabilityDefinitions(facts: CapabilityFacts): MemoryCapability[] {
     }),
     capability({
       id: "federation",
-      title: "Cross-root memory federation (no policy)",
+      title: "Cross-root memory federation",
       category: "intelligence",
       status: "available",
       red_db_backed: false,
@@ -240,7 +240,7 @@ function capabilityDefinitions(facts: CapabilityFacts): MemoryCapability[] {
       evidence: ["dimension:retrieval", "foundation:federation"],
       competitor_relevance: ["agentmemory", "ai-memory"],
       notes: [
-        "Slice 1: read-only merge of memory notes across roots listed in .red/memory/federation.yaml. Each result carries origin_repo. Missing config returns an empty report; no privacy policy is applied yet (lands in a follow-up slice).",
+        "Read-only merge of memory notes across roots listed in .red/memory/federation.yaml. Each result carries origin_repo plus local/remote confidence; redaction policy is applied at read time, and malformed policy falls back to default-deny.",
       ],
     }),
     capability({
@@ -628,7 +628,7 @@ function capabilityDefinitions(facts: CapabilityFacts): MemoryCapability[] {
     }),
     capability({
       id: "federation-cross-root-read",
-      title: "Federation cross-root read (no policy yet)",
+      title: "Federated recall read",
       category: "retrieval",
       status: "available",
       red_db_backed: false,
@@ -637,7 +637,7 @@ function capabilityDefinitions(facts: CapabilityFacts): MemoryCapability[] {
       evidence: ["dimension:retrieval", "dimension:operator-surface"],
       competitor_relevance: ["agentmemory", "gbrain"],
       notes: [
-        "Slice 3a: reads memory notes across the roots listed in .red/memory/federation.yaml, merges hits, and tags each with origin_repo. Local-only in this slice; privacy policy lands in 3b.",
+        "Reads memory notes across the roots listed in .red/memory/federation.yaml, merges hits, tags each with origin_repo, and applies read-time redaction/trust policy before returning results.",
       ],
     }),
     capability({

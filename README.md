@@ -9,31 +9,44 @@
    ╚═╝  ╚═╝╚══════╝╚═════╝     ╚══════╝╚═╝  ╚═╝╚═╝╚══════╝╚══════╝╚══════╝
 ```
 
-### **Issues in. Merged PRs out.**
+### Ship code while the agent remembers why.
 
-reddb.io's slash-command library for Claude Code, Codex, and friends.
-**Ship while you sleep.**
+RedSkills is reddb.io's agent workflow kit for Claude Code, Codex, and any agent that can read `SKILL.md` files.
 
-**One-line install — auto-updates on every Claude Code startup:**
+It ships as two plugins:
+
+| Plugin | Job | Use it when... |
+|--------|-----|----------------|
+| **`dev`** | Turns plans and GitHub issues into reviewed, tested PRs. | You want `/start`, `/to-prd`, `/to-issues`, `/triage`, `/tdd`, `/diagnose`, `/wiki`, and the autonomous `/afk` loop. |
+| **`memory`** | Gives those agents governed operational memory. | You want decisions, gotchas, validations, provenance, claim checks, readiness, context packs, and handoffs to survive `/clear`. |
+
+**Install both in Claude Code:**
 
 ```
-/plugin marketplace add reddb-io/red-skills && /plugin install dev@red-skills
+/plugin marketplace add reddb-io/red-skills && /plugin install dev@red-skills && /plugin install memory@red-skills
 ```
 
-[Install details](#install) · [`/afk`](#-afk--autonomous-issue-execution) · [Fleet mode](#fleet-mode--one-command-n-workers) · [Pipeline](#-the-pipeline-that-feeds-it) · [Codebase understanding](#-codebase-understanding-surface) · [Wiki](#-knowledge--your-private-llm-wiki) · [Reference](#reference)
+[Install](#install) · [Two plugins](#two-plugins-one-workflow) · [`/afk`](#-afk--autonomous-issue-execution) · [Memory](#memory--governed-operational-memory) · [Pipeline](#-the-pipeline-that-feeds-it) · [Reference](#reference)
 
 ```
-   /start   ─▶   /to-prd   ─▶   /to-issues   ─▶   /triage   ─▶   ⚡ /afk
-   refine        publish        slice into        write the      drain →
-   the plan      a PRD          vertical          AGENT-BRIEF    test, merge,
-                                slices                           close, repeat
+   dev plugin                                      memory plugin
+   ──────────                                      ─────────────
+
+   /start ─▶ /to-prd ─▶ /to-issues ─▶ /triage ─▶ /afk
+     │                                              │
+     └────────────── stores what mattered ─────────▶│
+                                                    ▼
+                       init ─▶ store ─▶ recall ─▶ verify ─▶ handoff
 ```
+
+**The punchline:** `dev` does the work. `memory` keeps the next agent from starting cold.
 
 **Highlights**
 
-🚀 Fleet mode · 🤖 Claude + Codex runner cascade · 🪝 `.red/config.yaml` hooks & detectors (`cargo`, `gradle`)
-📒 Canonical envelopes — the issue thread *is* the source of truth · 📊 Live monitor with 48 h sparkline
-🎨 Project-aware statusline · 🔒 Safe-by-construction git (no `reset` / `stash` / `--force`)
+- Fleet mode for draining real GitHub issue queues with Claude or Codex.
+- Safe git guardrails, live monitors, statusline, and `.red/config.yaml` detectors.
+- Governed memory over markdown notes or a project-local RedDB graph.
+- Recall, claim-check, readiness, context-pack, handoff, Workbench, MCP, and HTTP surfaces.
 
 </div>
 
@@ -41,20 +54,45 @@ reddb.io's slash-command library for Claude Code, Codex, and friends.
 
 ---
 
+## Two plugins, one workflow
+
+RedSkills is not a bag of prompts. It is a small operating system for agentic engineering work.
+
+| Layer | Plugin | What it owns | First command |
+|-------|--------|--------------|---------------|
+| Work execution | `dev` | Planning, PRDs, issue slicing, triage, TDD, diagnosis, wiki, codebase orientation, and `/afk` workers. | `/setup-red-skills` |
+| Work memory | `memory` | Durable decisions, gotchas, reasoning traces, validations, provenance, supersession, claim checks, readiness, and handoff context. | `memory init` or `$init` |
+
+Use `dev` when you want an agent to move the repo forward. Add `memory` when you want that movement to compound instead of evaporating after every session.
+
+The intended loop is simple:
+
+```text
+Plan with dev        /start -> /to-prd -> /to-issues
+Queue with dev       /triage -> ready-for-agent
+Execute with dev     /afk -> test -> merge -> close
+Remember with memory store -> recall -> claim-check/readiness -> handoff
+```
+
+`memory` depends on `dev` because memory is most valuable when it is attached to real work: issues, attempts, validations, code changes, and decisions an agent will need later.
+
+---
+
 ## Install
 
 ### Claude Code — marketplace install
 
-RedSkills ships as a Claude Code **plugin marketplace**. Add the marketplace once, install the `dev` plugin, and Claude Code pulls new commits at startup when marketplace auto-update is enabled.
+RedSkills ships as a Claude Code **plugin marketplace** with two plugins. Install `dev` for the engineering workflow. Install `memory` as well when you want governed memory, lifecycle hooks, Workbench diagnostics, and context handoff.
 
 Inside Claude Code:
 
 ```
 /plugin marketplace add reddb-io/red-skills
 /plugin install dev@red-skills
+/plugin install memory@red-skills
 ```
 
-Use the skills as native slash commands:
+Use `dev` skills as native slash commands:
 
 ```text
 /setup-red-skills
@@ -62,7 +100,15 @@ Use the skills as native slash commands:
 /afk --once
 ```
 
-From now on Claude Code checks `reddb-io/red-skills` at session start. Toggle the behaviour with `/plugin` → **Marketplaces** → select `red-skills` → **Enable auto-update**.
+Use `memory` through its skills and CLI-backed command surface:
+
+```text
+$init
+$store Decision: retries use exponential backoff with jitter.
+$recall retry policy
+```
+
+From now on Claude Code checks `reddb-io/red-skills` at session start. Toggle the behaviour with `/plugin` -> **Marketplaces** -> select `red-skills` -> **Enable auto-update**.
 
 Force a refresh without restarting:
 
@@ -73,6 +119,7 @@ Force a refresh without restarting:
 Remove:
 
 ```
+/plugin uninstall memory@red-skills
 /plugin uninstall dev@red-skills
 /plugin marketplace remove red-skills
 ```
@@ -81,7 +128,7 @@ Remove:
 
 ### Codex CLI — marketplace install
 
-RedSkills also ships Codex plugin metadata. Codex reads `.agents/plugins/marketplace.json`, then loads the same `plugins/dev/skills/` tree through `plugins/dev/.codex-plugin/plugin.json`.
+RedSkills also ships Codex plugin metadata for both `dev` and `memory`. Codex reads `.agents/plugins/marketplace.json`, then loads the plugin trees through `plugins/*/.codex-plugin/plugin.json`. `dev` is installed by default; `memory` is available and declares a dependency on `dev`.
 
 ```bash
 codex plugin marketplace add reddb-io/red-skills
@@ -93,6 +140,9 @@ Use the skills by name in Codex prompts. The convention is `$<skill>`:
 $setup-red-skills
 $triage
 $afk --once
+$init
+$store Decision: retries use exponential backoff with jitter.
+$recall retry policy
 ```
 
 Refresh later:
@@ -166,9 +216,9 @@ The script links into `~/.claude/skills`, `~/.agents/skills`, and `~/.codex/skil
 
 | Agent | Invocation | Notes |
 |-------|------------|-------|
-| **Claude Code** | `/afk`, `/wiki`, `/triage`, … | Native slash commands after `/plugin install dev@red-skills`. |
-| **Codex CLI** | `$afk`, `$wiki`, `$triage`, … | Skill-name convention after `codex plugin marketplace add reddb-io/red-skills`. |
-| **Gemini CLI / others** | `$afk`, etc. | Same `$<name>` convention. Works with any agent that can read local `SKILL.md` files and run bash. |
+| **Claude Code** | `/afk`, `/wiki`, `/triage`, `$init`, `$recall`, ... | Native `dev` slash commands after `/plugin install dev@red-skills`; install `memory@red-skills` for governed memory skills. |
+| **Codex CLI** | `$afk`, `$wiki`, `$triage`, `$init`, `$recall`, ... | Skill-name convention after `codex plugin marketplace add reddb-io/red-skills`. |
+| **Gemini CLI / others** | `$afk`, `$recall`, etc. | Same `$<name>` convention. Works with any agent that can read local `SKILL.md` files and run bash. |
 
 Teach Codex (or any non-Claude-Code agent) the convention by appending to `~/.codex/AGENTS.md`:
 
@@ -215,6 +265,34 @@ rtk gain               # token savings analytics; run after a day to see ROI
 Strongly recommended before draining a non-trivial backlog with `/afk`. **Pays for itself in the first hour.**
 
 > ⚠ **Name collision.** Another tool called `rtk` ([Rust Type Kit](https://github.com/reachingforthejack/rtk)) sometimes lands first on `PATH`. If `rtk gain` errors out, fix `PATH` so `rtk-ai/rtk` wins.
+
+---
+
+## Memory — governed operational memory
+
+Agents forget the exact things you need them to remember: why a decision was made, which workaround failed, what the last validation proved, and which warning is stale. The `memory` plugin turns that into a governed local memory surface.
+
+The loop is deliberately boring:
+
+```text
+memory init
+memory store "Decision: ..."
+memory recall "what matters now"
+memory claim-check "is this still true?"
+memory readiness "should an agent start this?"
+memory handoff "what should the next session know?"
+```
+
+Two modes ship today:
+
+| Mode | What it gives you | Best for |
+|------|-------------------|----------|
+| `markdown-only` | Plain notes in `.red/memory/notes/` with explicit store/recall. No RedDB engine, no hooks, no background process. | Cautious rollout in any repo. |
+| `graph` | Project-local `.red/memory/graph.rdb` with provenance, supersession, claim checks, readiness, context packs, hooks, MCP/HTTP, Workbench, and export. | Serious agent workflows where memory has to be trusted, inspected, and handed off. |
+
+The useful path is Init -> Store -> Recall -> Verify -> Handoff. Everything else, vectors, docs search, Workbench panels, HTTP endpoints, competitive evals, exists to support that path instead of becoming another source of truth.
+
+Start here: [plugins/memory/README.md](./plugins/memory/README.md).
 
 ---
 
@@ -614,12 +692,12 @@ Composable. Boring on purpose where boring is enough. Sharp where it matters.
 The separate **`memory`** plugin gives agents governed operational memory:
 scoped decisions, gotchas, provenance, supersession, and trust checks that
 survive `/clear` and cross sessions. It lives on top of `dev` (requires it).
-Two storage modes ship today — **markdown-only** (plain notes, zero engine
-dependency) and **graph** (a typed knowledge graph over a per-project RedDB
-store). Graph mode can opt into lifecycle hooks, Skill telemetry, MCP access,
-and graph export; markdown-only remains explicit-only with no engine. Install
-`memory` alongside `dev`, then use the
-[source-only quickstart](./plugins/memory/README.md#quickstart-source-only-operational-memory).
+Two storage modes ship today: **markdown-only** (plain notes, zero engine
+dependency) and **graph** (a governed evidence graph over a per-project RedDB
+store). Graph mode can opt into lifecycle hooks, Skill telemetry, MCP/HTTP
+access, Workbench diagnostics, and graph export; markdown-only remains
+explicit-only with no engine. Install `memory` alongside `dev`, then use the
+[Memory golden path](./plugins/memory/README.md#golden-path-governed-operational-memory).
 
 The detailed Memory README also carries the competitive comparison and the
 claim-to-eval evidence map used by `eval:competitive:v2`, so public claims stay
@@ -641,8 +719,8 @@ tied to executable checks instead of unsupported marketing copy.
 
 See [plugins/memory/README.md](./plugins/memory/README.md) and, for the RedDB
 graph-write constraints, [ADR 0007](./.red/adr/0007-reddb-graph-writes-via-multi-model-dml.md).
-Hybrid storage remains future work; graph mode already provides the lifecycle
-hooks, MCP server, Skill telemetry, and soft integrations used by `dev`.
+Graph mode provides the governed recall, lifecycle hooks, MCP/HTTP surfaces,
+Skill telemetry, and soft integrations used by `dev`.
 
 </details>
 
@@ -669,4 +747,4 @@ hooks, MCP server, Skill telemetry, and soft integrations used by `dev`.
 
 ## License
 
-MIT, inherited from [`mattpocock/skills`](https://github.com/mattpocock/skills). See [LICENSE](./LICENSE).
+Apache-2.0. See [LICENSE](./LICENSE). The [NOTICE](./NOTICE) file preserves the original MIT attribution for upstream-derived skills from [`mattpocock/skills`](https://github.com/mattpocock/skills).
