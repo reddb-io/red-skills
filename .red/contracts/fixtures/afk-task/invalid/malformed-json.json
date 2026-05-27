@@ -1,0 +1,5 @@
+{ "status": "completed", "phase": "execute_task", "runner": "claude",
+  "issue_number": 205,
+  this is not valid JSON — a stray sentence inside the object body, no quotes,
+  "scope_summary": "should never parse"
+}

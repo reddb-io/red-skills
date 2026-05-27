@@ -1,0 +1,28 @@
+{
+  "status": "blocked",
+  "phase": "execute_task",
+  "runner": "codex",
+  "issue_number": 401,
+  "scope_summary": "Implement Codex phase decomposition for the issue-analyzer phase per #199.",
+  "non_goals": [],
+  "acceptance_criteria_results": [
+    {
+      "criterion": "issue-analyzer emits the structured JSON envelope.",
+      "result": "unverified",
+      "evidence": "blocked before tests could run"
+    }
+  ],
+  "changed_files": [
+    "plugins/dev/skills/engineering/afk/AGENT-PROMPT.md"
+  ],
+  "verification_commands": [],
+  "verification_results": [],
+  "quality_gate_failures": [],
+  "blocker_reason": "The handoff brief contradicts itself: '## Acceptance' says emit JSON to stdout, but '## Refs' points at a fixture that expects a fenced markdown block. Latest <human-guidance> does not disambiguate.",
+  "next_human_action": "Clarify whether the analyzer envelope is raw JSON on stdout or fenced inside the assistant message, and update the issue body before re-promoting.",
+  "remaining_risks": [
+    "Partial edit to AGENT-PROMPT.md may be confusing on inspection; rebuild from main on next attempt."
+  ],
+  "confidence": "high",
+  "raw_runner_output_path": ".red/tmp/work-aaaa-i1/last-message.txt"
+}
