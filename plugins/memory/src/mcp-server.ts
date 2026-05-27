@@ -35,9 +35,19 @@ import {
   listReadOnlyMemoryOperations,
   type ReadOnlyMemoryOperation,
 } from "./operations.js";
+import { runPromote } from "./promote.js";
 import type { EdgeLabel, MemoryScope, NodeType } from "./schema.js";
+import {
+  current as sessionCurrent,
+  end as sessionEnd,
+  start as sessionStart,
+} from "./session-manager.js";
 import { slugify } from "./store.js";
 import { listContradictions, supersessionTimeline } from "./supersession.js";
+import {
+  appendEvent as workingAppendEvent,
+  listEvents as workingListEvents,
+} from "./working-memory.js";
 
 // ---------- tool input schemas ----------
 
@@ -150,6 +160,35 @@ const AutocureInput = z.object({
   apply: z.boolean().default(false),
   stale_days: z.number().int().min(1).optional(),
 });
+
+const SessionStartInput = z.object({
+  id: z.string().min(1).optional(),
+});
+
+const SessionEndInput = z.object({}).strict();
+
+const WorkingGetInput = z.object({
+  type: z.string().min(1).optional(),
+});
+
+const WorkingSetInput = z.object({
+  type: z.string().min(1),
+  value: z.string(),
+});
+
+const PromoteInput = z.object({
+  triggered_by: z.enum(["explicit", "hook", "overflow"]).default("explicit"),
+  session_id: z.string().min(1).optional(),
+});
+
+const NO_ACTIVE_SESSION_ERROR =
+  "no active memory session — call memory_session_start first (or rely on the SessionStart hook to mint one)";
+
+async function requireActiveSession(rootDir: string): Promise<string> {
+  const id = await sessionCurrent(rootDir);
+  if (!id) throw new Error(NO_ACTIVE_SESSION_ERROR);
+  return id;
+}
 
 // ---------- server ----------
 
@@ -331,6 +370,56 @@ async function main(): Promise<void> {
           entropy_after: report.entropy_after,
         });
       }
+      case "memory_session_start": {
+        const input = SessionStartInput.parse(args);
+        const id = await sessionStart(root, input.id ? { id: input.id } : {});
+        return text(`session started — ${id}`, { session_id: id });
+      }
+      case "memory_session_end": {
+        SessionEndInput.parse(args);
+        await sessionEnd(root);
+        return text("session ended", { ok: true });
+      }
+      case "memory_working_get": {
+        const input = WorkingGetInput.parse(args);
+        await requireActiveSession(root);
+        const events = await workingListEvents(
+          store,
+          root,
+          input.type ? { type: input.type } : {},
+        );
+        return text(JSON.stringify({ events }, null, 2), {
+          count: events.length,
+        });
+      }
+      case "memory_working_set": {
+        const input = WorkingSetInput.parse(args);
+        await requireActiveSession(root);
+        const event = await workingAppendEvent(store, root, {
+          type: input.type,
+          value: input.value,
+        });
+        return text(JSON.stringify(event, null, 2), {
+          rid: event.rid,
+          session_id: event.session_id,
+          sequence: event.sequence,
+          type: event.type,
+        });
+      }
+      case "memory_promote": {
+        const input = PromoteInput.parse(args);
+        const sessionId = input.session_id ?? (await requireActiveSession(root));
+        const report = await runPromote(store, root, {
+          triggeredBy: input.triggered_by,
+          sessionId,
+        });
+        return text(JSON.stringify(report, null, 2), {
+          session_id: report.session_id,
+          promoted: report.promoted,
+          reinforced: report.reinforced,
+          skipped: report.skipped,
+        });
+      }
       default:
         throw new Error(`unknown tool: ${name}`);
     }
@@ -458,6 +547,36 @@ const MANUAL_TOOLS = [
     description:
       "MUTATING: mark a node as superseded by a newer one. Recall hides the old node behind its successor by default.",
     inputSchema: zodToSchema(SupersedeInput),
+  },
+  {
+    name: "memory_session_start",
+    description:
+      "MUTATING: mint and write a new memory session id to `.red/memory/sessions/current` (overwriting any existing id). Pass `id` to reuse a runner-supplied session id; otherwise a UUID is minted. Working-memory (L2) reads/writes and promotion all scope to this session id.",
+    inputSchema: zodToSchema(SessionStartInput),
+  },
+  {
+    name: "memory_session_end",
+    description:
+      "MUTATING: drop `.red/memory/sessions/current`. After this, working-memory and promotion verbs will error until `memory_session_start` (or a SessionStart hook) mints a new id.",
+    inputSchema: zodToSchema(SessionEndInput),
+  },
+  {
+    name: "memory_working_get",
+    description:
+      "Read typed L2 working-memory events for the current session, oldest first. Optional `type` filter (e.g. `decision_candidate`, `tool_call`). Requires an active session.",
+    inputSchema: zodToSchema(WorkingGetInput),
+  },
+  {
+    name: "memory_working_set",
+    description:
+      "MUTATING: append a typed event to the current session's L2 working-memory stream. `type` is the event tag, `value` is the verbatim text. Crossing the L2 overflow threshold may trigger a promotion pass as a backstop. Requires an active session.",
+    inputSchema: zodToSchema(WorkingSetInput),
+  },
+  {
+    name: "memory_promote",
+    description:
+      "MUTATING: run the PromotionEngine for the current session against L3 — promotes new typed L2 events into durable nodes and reinforces matched existing ones. Returns `(promoted, reinforced, skipped)` plus rids and decisions. Requires an active session unless `session_id` is supplied.",
+    inputSchema: zodToSchema(PromoteInput),
   },
   {
     name: "memory_autocure",
