@@ -1,0 +1,7 @@
+{
+  "name": "codex-declares-agents",
+  "version": "0.0.0",
+  "description": "Fixture: a Codex plugin manifest that wrongly declares Claude-only 'agents'.",
+  "skills": "./skills/",
+  "agents": "./agents/"
+}

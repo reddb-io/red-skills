@@ -88,6 +88,11 @@ validate_plugin() {
 validate_plugin dev
 validate_plugin memory
 
+# Packaged Claude Code agents (plugins/<plugin>/agents/) — only Claude loads
+# them, so we validate frontmatter and ensure the Codex side does not
+# advertise them. The script no-ops when no plugin ships an agents/ dir.
+"$REPO/scripts/validate-agent-metadata.sh"
+
 # memory hard-depends on dev, in both plugin manifests and both marketplaces.
 for f in \
   plugins/memory/.claude-plugin/plugin.json \
