@@ -1,0 +1,18 @@
+{
+  "status": "completed",
+  "phase": "execute_task",
+  "runner": "claude",
+  "issue_number": 200,
+  "scope_summary": "Envelope without the execution object.",
+  "non_goals": [],
+  "acceptance_criteria_results": [],
+  "changed_files": ["foo.md"],
+  "verification_commands": [],
+  "verification_results": [],
+  "quality_gate_failures": [],
+  "blocker_reason": null,
+  "next_human_action": null,
+  "remaining_risks": [],
+  "confidence": "medium",
+  "raw_runner_output_path": null
+}

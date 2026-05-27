@@ -1,0 +1,208 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://reddb.io/red-skills/contracts/task-executor.schema.json",
+  "title": "AFK Task-Executor Envelope",
+  "description": "Runner-neutral envelope produced by the execute_task phase. Extends the base AFK task envelope (.red/contracts/afk-task.schema.json) with the executor-specific `execution` object. See .red/contracts/task-executor.md.",
+  "type": "object",
+  "required": [
+    "status",
+    "phase",
+    "runner",
+    "issue_number",
+    "scope_summary",
+    "non_goals",
+    "acceptance_criteria_results",
+    "changed_files",
+    "verification_commands",
+    "verification_results",
+    "quality_gate_failures",
+    "blocker_reason",
+    "next_human_action",
+    "remaining_risks",
+    "confidence",
+    "raw_runner_output_path",
+    "execution"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "enum": ["completed", "blocked", "escalation_needed"]
+    },
+    "phase": {
+      "const": "execute_task"
+    },
+    "runner": {
+      "enum": ["claude", "codex", "hermes"]
+    },
+    "issue_number": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "scope_summary": {
+      "type": "string",
+      "minLength": 1
+    },
+    "non_goals": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "acceptance_criteria_results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["criterion", "result", "evidence"],
+        "additionalProperties": false,
+        "properties": {
+          "criterion": { "type": "string", "minLength": 1 },
+          "result": { "const": "unverified" },
+          "evidence": { "type": "string" }
+        }
+      }
+    },
+    "changed_files": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "verification_commands": {
+      "type": "array",
+      "maxItems": 0
+    },
+    "verification_results": {
+      "type": "array",
+      "maxItems": 0
+    },
+    "quality_gate_failures": {
+      "type": "array",
+      "maxItems": 0
+    },
+    "blocker_reason": {
+      "type": ["string", "null"]
+    },
+    "next_human_action": {
+      "type": ["string", "null"]
+    },
+    "remaining_risks": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "confidence": {
+      "enum": ["low", "medium", "high"]
+    },
+    "raw_runner_output_path": {
+      "type": ["string", "null"]
+    },
+    "execution": {
+      "type": "object",
+      "required": [
+        "implementation_summary",
+        "changes_by_criterion",
+        "out_of_scope_rejections",
+        "non_goals_preserved",
+        "commit_hint",
+        "escalation_triggers",
+        "follow_ups"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "implementation_summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "changes_by_criterion": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["criterion", "files_touched", "approach", "status"],
+            "additionalProperties": false,
+            "properties": {
+              "criterion": { "type": "string", "minLength": 1 },
+              "files_touched": {
+                "type": "array",
+                "items": { "type": "string", "minLength": 1 }
+              },
+              "approach": { "type": "string", "minLength": 1 },
+              "status": { "enum": ["implemented", "partial", "deferred"] }
+            }
+          }
+        },
+        "out_of_scope_rejections": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["requested_change", "reason"],
+            "additionalProperties": false,
+            "properties": {
+              "requested_change": { "type": "string", "minLength": 1 },
+              "reason": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        "non_goals_preserved": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "commit_hint": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["subject", "body"],
+              "additionalProperties": false,
+              "properties": {
+                "subject": { "type": "string", "minLength": 1 },
+                "body": { "type": "string" }
+              }
+            }
+          ]
+        },
+        "escalation_triggers": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "follow_ups": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "blocked" } } },
+      "then": {
+        "properties": {
+          "blocker_reason": { "type": "string", "minLength": 1 },
+          "next_human_action": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "status": { "const": "escalation_needed" } } },
+      "then": {
+        "properties": {
+          "next_human_action": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "status": { "const": "completed" } } },
+      "then": {
+        "properties": {
+          "changed_files": { "type": "array", "minItems": 1 },
+          "execution": {
+            "properties": {
+              "changes_by_criterion": {
+                "type": "array",
+                "items": {
+                  "properties": {
+                    "status": { "const": "implemented" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}
