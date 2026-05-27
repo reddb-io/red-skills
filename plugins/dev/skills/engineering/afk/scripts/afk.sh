@@ -36,6 +36,8 @@ source "$SCRIPT_DIR/lib/pin-reader.sh"
 source "$SCRIPT_DIR/lib/remote-branch.sh"
 # shellcheck source=./lib/heartbeat.sh
 source "$SCRIPT_DIR/lib/heartbeat.sh"
+# shellcheck source=./lib/capabilities.sh
+source "$SCRIPT_DIR/lib/capabilities.sh"
 
 MEMORY_BRIDGE_SH="$SKILL_DIR/../../../scripts/memory-bridge.sh"
 if [[ -f "$MEMORY_BRIDGE_SH" ]]; then
@@ -1531,12 +1533,45 @@ run_inner() {
   local full_prompt
   full_prompt="$(build_inner_prompt "$handoff" "$commits" "$prompt_body")"
 
-  local result=""
-  if [[ "$runner" == "claude" ]]; then
-    result="$(run_claude "$worktree" "$full_prompt")"
-  else
-    result="$(run_codex "$worktree" "$full_prompt")"
+  # ---- capability dispatch (issue #202) ----------------------------------
+  # Probe the runner once, pick a run mode, log it, and persist it in state
+  # so /afk monitor and forensic readers see which path produced the result.
+  # Native / phased modes degrade to their basic counterparts when the
+  # production artefacts (sub-agent files, phase prompts) are not yet
+  # shipped — keeping #202 land-able ahead of #199–#201's downstream wiring.
+  local caps_kv
+  caps_kv="$(capabilities_detect "$runner" | tr '\n' ' ')"
+  # shellcheck disable=SC2086
+  set -- $caps_kv
+  local run_mode
+  run_mode="$(capabilities_select_mode "$runner" "$@")"
+  log "$(capabilities_dispatch_log "$runner" "$run_mode" "$@")"
+  if [[ -n "${STATE_FILE:-}" && -f "${STATE_FILE:-/dev/null}" ]]; then
+    state_write "$STATE_FILE" current.run_mode="$run_mode" || true
   fi
+  export RED_AFK_RUN_MODE_RESOLVED="$run_mode"
+
+  local result=""
+  case "$run_mode" in
+    claude-native|claude-basic)
+      result="$(run_claude "$worktree" "$full_prompt")"
+      ;;
+    codex-phased|codex-basic)
+      result="$(run_codex "$worktree" "$full_prompt")"
+      ;;
+    hermes-fallback)
+      # Fallback path. Today there is no third backend installed, so route
+      # through whichever runner the operator pinned via $runner. The
+      # AGENT-PROMPT.md body + sentinel contract is the cross-runner floor
+      # described in afk-task.md, so a custom runner that respects it can
+      # be slotted in here later without touching the dispatch site.
+      if [[ "$runner" == "codex" ]]; then
+        result="$(run_codex "$worktree" "$full_prompt")"
+      else
+        result="$(run_claude "$worktree" "$full_prompt")"
+      fi
+      ;;
+  esac
 
   # exhaustion strings — keep in sync with runner-*.md
   if echo "$result" | grep -qiE 'usage limit|weekly (limit|cap)|session (limit|exhausted)|quota|rate_limit_error|try again later'; then

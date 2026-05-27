@@ -61,7 +61,8 @@ _STATE_JQ_FILTER='
       "current_retries="          + (($c.retries            // 0)     | tostring | @sh),
       "current_diff_added="       + (($c.diff_added         // 0)     | tostring | @sh),
       "current_diff_removed="     + (($c.diff_removed       // 0)     | tostring | @sh),
-      "current_last_stream_line=" + (($c.last_stream_line   // "")    | @sh)
+      "current_last_stream_line=" + (($c.last_stream_line   // "")    | @sh),
+      "current_run_mode="         + (($c.run_mode           // "")    | @sh)
     )
 '
 
