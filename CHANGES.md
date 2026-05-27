@@ -6,6 +6,17 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 
 ---
 
+## README cross-runner task engine docs (added)
+
+- **status**: added
+- **upstream**: —
+- **why**: Issue #203 — once `/afk` capability dispatch shipped (#202), the public docs still framed `/afk` as Claude-first with Codex as a fallback runner identity. The PRD #196 product story is the opposite: `/afk` plus the runner-neutral task contract at `.red/contracts/afk-task.md` is the surface, Claude Code-native sub-agents are an acceleration path, and Codex gets first-class workflow parity via `codex-phased`. Users opening the README need to see the compatibility matrix, the runner-agnostic user flow, the JS workflow decision from #197, and the deliberate non-promise about native Codex sub-agents (pending #204) — without re-reading the AFK SKILL.md to assemble that picture.
+- **what changed**:
+  - `README.md`: new *Cross-runner task engine* subsection inside `## ⚡ /afk` (after *Invocation modes*, before *Live monitor*). Documents the runner-neutral task contract, the five run modes (`claude-native` / `claude-basic` / `codex-phased` / `codex-basic` / `hermes-fallback`) as a table with required artefacts and inner-agent behaviour, the safe-degradation rule, the observable dispatch surface (log line, `current.run_mode`, `RED_AFK_RUN_MODE_RESOLVED`), the `RED_AFK_RUN_MODE` operator overrides, the runner-agnostic user flow diagram, the deliberate non-promise about native Codex sub-agents (pending #204), and the JS workflow decision (out of scope per #197 §3 — algorithmic logic stays in MCP/hooks, phase contracts stay in markdown). Every new public claim links to its evidence — the dispatch implementation (`scripts/lib/capabilities.sh`), the hermetic test (`scripts/tests/capabilities.test.sh`), the SKILL.md *Capability Dispatch* section, the runner-hermes doc, the Claude/Codex surface research docs, and the task contract.
+- **compatibility**: docs-only. Adds one subsection to the `/afk` section of the README and changes no other surface. No new orchestrator code, no schema change, no behaviour change for any run. Preserves existing positioning around issue-native async execution, RTK, fleet mode, and the optional Memory plugin — the new subsection narrates the dispatch already wired in #202 rather than introducing any new capability.
+
+---
+
 ## afk capability dispatch — runner-mode selection (added)
 
 - **status**: added
