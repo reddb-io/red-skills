@@ -1,0 +1,34 @@
+{
+  "status": "completed",
+  "phase": "verify_task",
+  "runner": "claude",
+  "issue_number": 205,
+  "scope_summary": "Claims success while quality_gate_failures is non-empty and an acceptance criterion is failing.",
+  "non_goals": [],
+  "acceptance_criteria_results": [
+    {
+      "criterion": "pnpm test passes.",
+      "result": "fail",
+      "evidence": "1 failing test in plugins/dev"
+    }
+  ],
+  "changed_files": [
+    "plugins/dev/src/something.ts"
+  ],
+  "verification_commands": ["pnpm test"],
+  "verification_results": [
+    {
+      "command": "pnpm test",
+      "exit_code": 1,
+      "summary": "1 failure"
+    }
+  ],
+  "quality_gate_failures": [
+    "vitest: 1 failure"
+  ],
+  "blocker_reason": null,
+  "next_human_action": null,
+  "remaining_risks": [],
+  "confidence": "high",
+  "raw_runner_output_path": null
+}

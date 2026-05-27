@@ -1,0 +1,16 @@
+{
+  "status": "completed",
+  "phase": "execute_task",
+  "runner": "claude",
+  "issue_number": 205,
+  "scope_summary": "Missing non_goals and quality_gate_failures — should fail validation.",
+  "acceptance_criteria_results": [],
+  "changed_files": [],
+  "verification_commands": [],
+  "verification_results": [],
+  "blocker_reason": null,
+  "next_human_action": null,
+  "remaining_risks": [],
+  "confidence": "high",
+  "raw_runner_output_path": null
+}

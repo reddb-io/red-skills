@@ -6,6 +6,21 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 
 ---
 
+## afk-task contract — runner-neutral envelope schema (added)
+
+- **status**: added
+- **upstream**: —
+- **why**: Foundational spine for PRD #196: Claude Code sub-agents, Codex CLI inline phases, and Hermes fallback must speak the same lifecycle language. Issue #205.
+- **what changed**:
+  - `.red/contracts/afk-task.md`: runner-neutral phase contract (`analyze_issue → execute_task → verify_task → fix_or_escalate → finalize`), required-field table, per-runner consumption notes, and the hollow-success rule.
+  - `.red/contracts/afk-task.schema.json`: JSON Schema (draft 2020-12) with conditional requirements for `blocked` / `escalation_needed`.
+  - `.red/contracts/fixtures/afk-task/`: 6 fixtures — 3 valid (`completed-execute`, `blocked-execute`, `escalation-verify`) and 3 invalid (`malformed-json`, `missing-fields`, `hollow-success`).
+  - `scripts/validate-afk-task-contract.sh`: jq-only structural validator (no node/python deps); enforces required keys, enums, conditional fields, and the hollow-success detector.
+  - `scripts/test-validate-afk-task-contract.sh`: fixture-based test wired into `.github/workflows/red-release.yml` alongside the existing agent-metadata fixture test.
+- **compatibility**: documentation-only. `/afk` continues to use the `<promise>DONE</promise>` / `<promise>BLOCKED</promise>` sentinels. Production wiring is deferred to #199–#202. No runner is required to emit the envelope until then; Codex stays "phased task execution" in public copy (no native sub-agents promised), per #204 §4.
+
+---
+
 ## memory — AFK lifecycle hook (`memory afk-finalize`) (added)
 
 - **status**: added

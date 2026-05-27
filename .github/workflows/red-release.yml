@@ -58,6 +58,10 @@ jobs:
         if: steps.fleet.outputs.running == '0'
         run: scripts/test-validate-agent-metadata.sh
 
+      - name: Test AFK task contract fixtures
+        if: steps.fleet.outputs.running == '0'
+        run: scripts/test-validate-afk-task-contract.sh
+
       - name: Decide bump kind
         id: bump
         if: steps.fleet.outputs.running == '0'
