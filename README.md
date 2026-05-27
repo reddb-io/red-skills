@@ -352,6 +352,41 @@ Point it at your `ready-for-agent` backlog and walk away. For each issue, `/afk`
 
 Every `/afk` invocation gets its own 4-char worker ID (e.g. `wK7M2`), so opening N terminals = N parallel workers with zero coordination — or use `/afk fleet 4` for a single command that supervises four. Label transitions on GitHub are atomic, so two workers can never claim the same issue.
 
+### Cross-runner task engine
+
+RedSkills' product surface is `/afk` plus a runner-neutral **task contract** at [`.red/contracts/afk-task.md`](./.red/contracts/afk-task.md). The contract assumes nothing about the executor beyond reading the handoff file, doing the work, and emitting `<promise>DONE</promise>` or `<promise>BLOCKED</promise>`. Every backend below — Claude Code (native or basic), Codex CLI (phased or basic), and any custom fallback — fulfils the same contract. Claude Code-native sub-agents are an **acceleration path**, not a separate product; Codex gets workflow parity through phased `codex exec`.
+
+Once `/afk` resolves a runner identity (detection cascade or `--runner` pin), it probes that runner's capabilities and selects a **run mode**. Selection lives in [`scripts/lib/capabilities.sh`](./plugins/dev/skills/engineering/afk/scripts/lib/capabilities.sh) and is logged on every iteration as `dispatch: runner=<r> mode=<m> …`, persisted in `afk.state.json` at `current.run_mode`, and exported to children as `RED_AFK_RUN_MODE_RESOLVED`. **Degradation is always safe**: if the production artefacts for the optimised path are missing, dispatch silently falls back to the basic counterpart and the sentinel-driven lifecycle is unchanged.
+
+| Run mode | Runner | Required artefacts | What the inner agent does |
+|----------|--------|--------------------|---------------------------|
+| `claude-native` | Claude Code | `plugins/dev/agents/{issue-analyzer,task-executor,quality-gate}.md` (shipped progressively by #199 / #200 / #201) | Single inner-agent spawn that delegates phases to native sub-agents via the Task tool. Highest fidelity to the task contract. |
+| `claude-basic` | Claude Code | none — current default | One `claude -p` session with the inlined [`AGENT-PROMPT.md`](./plugins/dev/skills/engineering/afk/AGENT-PROMPT.md) and sentinel completion. |
+| `codex-phased` | Codex CLI | `phases/codex/{analyze,verify,finalize}.md` under the AFK skill (tracked by #204 follow-up) | One `codex exec` session with the phase prompts pre-concatenated — analyze / execute / verify / fix / finalize. First-class workflow parity, no native sub-agent dependency. |
+| `codex-basic` | Codex CLI | none — current default | One `codex exec` session with the inlined `AGENT-PROMPT.md`. |
+| `hermes-fallback` | Anything else | none | Treats the runner as an opaque executor of the prompt body; the sentinel contract still applies. See [`runner-hermes.md`](./plugins/dev/skills/engineering/afk/runner-hermes.md) for what fallback explicitly does *not* provide. |
+
+Operator overrides via `RED_AFK_RUN_MODE`: `basic` forces the basic path (parity testing); `fallback` forces `hermes-fallback`; `native` / `phased` request the optimised path and are honoured only when the environment can satisfy them. Mode is metadata about *how* the work happened — never authority over *what* counts as completion. Details, log shape, state field, and the full operator-override table live in the AFK [SKILL.md *Capability Dispatch* section](./plugins/dev/skills/engineering/afk/SKILL.md#capability-dispatch-issue-202); the dispatch table is covered by 22 hermetic test cases in [`scripts/tests/capabilities.test.sh`](./plugins/dev/skills/engineering/afk/scripts/tests/capabilities.test.sh).
+
+**The expected user flow is runner-agnostic:**
+
+```
+/start ─▶ /to-prd ─▶ /to-issues ─▶ /triage ─▶ /afk
+                                                │
+                                                ▼
+                                     capability dispatch picks the best
+                                     available run mode for the resolved
+                                     runner — claude-native > claude-basic,
+                                     codex-phased > codex-basic, hermes
+                                     for everything else. Nothing in the
+                                     user flow changes when a better mode
+                                     ships; the dispatcher promotes itself.
+```
+
+A note on **native Codex sub-agents**: as of today there is no documented native sub-agent surface in Codex CLI. The `codex-phased` mode is RedSkills' answer — workflow parity delivered through phased `codex exec` prompts — and the public docs deliberately do not promise native Codex sub-agents. Discovery work is tracked under #204; if a native surface lands, the dispatcher gains a new mode without touching the user flow.
+
+A note on **JavaScript plugin workflows**: the cross-runner task engine ships as bash + markdown contracts on purpose. Discovery (see [`.red/research/197-claude-code-surfaces.md`](./.red/research/197-claude-code-surfaces.md) §3) confirmed Claude Code has no documented JS workflow-file mechanism — JavaScript legitimately enters a plugin only through MCP servers (e.g. the memory plugin's `dist/cli.js`, `code-nav`) or hook scripts. The AFK engine therefore keeps algorithmic logic in MCP / hook scripts and phase contracts in markdown, which is the same shape Codex and any fallback runner can fulfil. JS workflow files are explicitly out of scope unless Anthropic ships such a surface.
+
 ### Live monitor
 
 Every iteration writes atomic state to `.red/tmp/work-{worker}-i{N}/afk.state.json` and tees the inner agent's stdout into `afk.log` alongside it. Open a second terminal:
