@@ -228,6 +228,36 @@ Exhaustion detection lives in [`runner-claude.md`](runner-claude.md) and [`runne
 
 When swap happens mid-issue (only with `--fallback-runner`), the same worktree and handoff file are reused; the new runner sees the previous agent's Notes appended.
 
+## Capability Dispatch (issue #202)
+
+Once the runner identity is resolved (detection cascade or `--runner` pin), `/afk` probes that runner's capability surface once per iteration and selects a **run mode**. The probe lives in [`scripts/lib/capabilities.sh`](scripts/lib/capabilities.sh) and reports a fixed set of axes — `native_agents`, `structured_output`, `resume_session`, `worktree_support`, `hooks_events`, `permission_modes`, `phased_mode` — derived from what the runner's `runner-*.md` already documents plus filesystem probes for the production phase artefacts (sub-agent files for Claude, inline phase prompts for Codex).
+
+The selected mode is one of:
+
+| Mode | Used when | Behaviour |
+|---|---|---|
+| `claude-native` | Runner is `claude` AND `plugins/dev/agents/{issue-analyzer,task-executor,quality-gate}.md` all exist. | Single inner-agent spawn that delegates phases to native sub-agents via the Task tool. Highest fidelity to the cross-runner contract at [`.red/contracts/afk-task.md`](../../../../.red/contracts/afk-task.md). |
+| `claude-basic` | Runner is `claude` but the production sub-agent files are absent or incomplete (current default). | Today's behaviour: one `claude -p` session with the inlined `AGENT-PROMPT.md` body and sentinel completion. |
+| `codex-phased` | Runner is `codex` AND `phases/codex/{analyze,verify,finalize}.md` ship under the AFK skill. | One `codex exec` session with the phase prompts pre-concatenated (Option C+ from [`.red/research/204-codex-cli-surfaces.md`](../../../../.red/research/204-codex-cli-surfaces.md) §4). |
+| `codex-basic` | Runner is `codex` without the phase prompts (current default). | Today's behaviour: one `codex exec` session with the inlined `AGENT-PROMPT.md` body. |
+| `hermes-fallback` | Runner identity is something other than `claude` or `codex`, or operator forced `RED_AFK_RUN_MODE=fallback`. | Treats the runner as an opaque executor of the prompt body; sentinel contract still applies. |
+
+**Degradation is always safe.** Native and phased modes detect their required artefacts on disk and silently fall back to the basic counterpart when those artefacts are missing. This is what lets the dispatcher land ahead of the production sub-agents / phase prompts shipped by #199, #200, #201 — when those slices wire up, the mode automatically promotes without touching `/afk` code.
+
+The selected mode is:
+
+- **logged** once per iteration on the orchestrator's `afk.log`: `dispatch: runner=<r> mode=<m> native_agents=<0|1> ...`.
+- **persisted** in `afk.state.json` at `current.run_mode`, so `/afk monitor` and the state-reader functions surface it for live-vs-stale worker reporting alongside `current.stage` and `current.runner`.
+- **exported** to child processes as `RED_AFK_RUN_MODE_RESOLVED`, which a hook script (or a future inline-phase prompt builder) can read.
+
+Operator overrides:
+
+- `RED_AFK_RUN_MODE=basic` — force the basic path (`claude-basic` / `codex-basic`) even when native artefacts exist. Useful for parity testing.
+- `RED_AFK_RUN_MODE=fallback` — force `hermes-fallback` unconditionally. Useful for testing a custom-runner integration.
+- `RED_AFK_RUN_MODE=native` / `RED_AFK_RUN_MODE=phased` — request the optimised path; honoured only when the environment can satisfy it, otherwise the auto-selection branch runs.
+
+The blocked/escalation lifecycle is unchanged: `<promise>BLOCKED</promise>` on any mode flips the issue to `ready-for-human` through the existing envelope/comment path, and `<promise>DONE</promise>` still gates the merge/cleanup safeguards. The run mode is metadata about *how* the work happened, never authority over *what* counts as completion.
+
 ## Sentinel Watchdog
 
 Failure mode observed in production: the inner agent emits `<promise>DONE</promise>` (or `BLOCKED`) but the orchestrator's stream-json pipe stays open for hours. Cause: a tool call the inner agent left running — typically `run_in_background` followed by a `bash -c 'until grep "test result" $out; do sleep 5; done'` polling loop without a timeout. The bg task crashes silently, the loop runs forever, the inner agent can't terminate because the tool call is still active, and the pipeline hangs.
