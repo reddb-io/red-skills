@@ -1,0 +1,125 @@
+{
+  "schema_version": "memory.bench.latency.v1",
+  "generated_at": "2026-05-26T23:05:40.635Z",
+  "workload": {
+    "sessions": 32,
+    "events_per_session": 24,
+    "long_term_nodes": 512,
+    "payload_chars": 256,
+    "iterations": 5000,
+    "warmup": 500,
+    "seed": 659918,
+    "op_classes": [
+      "working-get",
+      "session-recall",
+      "long-term-recall"
+    ]
+  },
+  "results": [
+    {
+      "op": "working-get",
+      "ours": {
+        "count": 5000,
+        "min_us": 0.104,
+        "p50_us": 0.153,
+        "p95_us": 0.38,
+        "p99_us": 0.416,
+        "p999_us": 3.157,
+        "max_us": 29.461,
+        "mean_us": 0.216
+      },
+      "ams_reference": {
+        "count": 5000,
+        "min_us": 3.147,
+        "p50_us": 4.479,
+        "p95_us": 13.848,
+        "p99_us": 31.562,
+        "p999_us": 126.405,
+        "max_us": 929.125,
+        "mean_us": 7.039
+      },
+      "delta": {
+        "p50_us": 4.326,
+        "p95_us": 13.468,
+        "p99_us": 31.146,
+        "p999_us": 123.248
+      },
+      "speedup": {
+        "p50": 29.27,
+        "p95": 36.44,
+        "p99": 75.87,
+        "p999": 40.04
+      }
+    },
+    {
+      "op": "session-recall",
+      "ours": {
+        "count": 5000,
+        "min_us": 0.082,
+        "p50_us": 0.121,
+        "p95_us": 0.161,
+        "p99_us": 0.235,
+        "p999_us": 6.958,
+        "max_us": 17.178,
+        "mean_us": 0.136
+      },
+      "ams_reference": {
+        "count": 5000,
+        "min_us": 3.16,
+        "p50_us": 3.553,
+        "p95_us": 7.902,
+        "p99_us": 9.108,
+        "p999_us": 73.642,
+        "max_us": 234.47,
+        "mean_us": 4.707
+      },
+      "delta": {
+        "p50_us": 3.432,
+        "p95_us": 7.741,
+        "p99_us": 8.873,
+        "p999_us": 66.684
+      },
+      "speedup": {
+        "p50": 29.36,
+        "p95": 49.08,
+        "p99": 38.76,
+        "p999": 10.58
+      }
+    },
+    {
+      "op": "long-term-recall",
+      "ours": {
+        "count": 5000,
+        "min_us": 0.562,
+        "p50_us": 0.778,
+        "p95_us": 1.45,
+        "p99_us": 1.77,
+        "p999_us": 6.567,
+        "max_us": 7.88,
+        "mean_us": 0.899
+      },
+      "ams_reference": {
+        "count": 5000,
+        "min_us": 3.916,
+        "p50_us": 4.247,
+        "p95_us": 9.671,
+        "p99_us": 12.535,
+        "p999_us": 34.769,
+        "max_us": 282.314,
+        "mean_us": 5.885
+      },
+      "delta": {
+        "p50_us": 3.469,
+        "p95_us": 8.221,
+        "p99_us": 10.765,
+        "p999_us": 28.202
+      },
+      "speedup": {
+        "p50": 5.46,
+        "p95": 6.67,
+        "p99": 7.08,
+        "p999": 5.29
+      }
+    }
+  ]
+}

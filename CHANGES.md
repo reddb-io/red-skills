@@ -6,6 +6,15 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 
 ---
 
+## memory — hot-read latency bench vs AMS (`memory bench latency`) (added)
+
+- **status**: added
+- **upstream**: —
+- **why**: Issue #186 (parent PRD #174). The recall-quality bench (#185) covered ranking, not the second half of the "better than AMS" positioning: hot-read latency. RedDB's L1/L2 cache should dominate over the wire-protocol overhead of AMS-on-Redis at p50; p99 is the real fight and the most informative number. Without an executable, reproducible measurement, the claim has no defensible numbers.
+- **what changed**: New `plugins/memory/src/bench-latency.ts` measures three op classes — `working-get` (L2 read by session id), `session-recall` (top-`k` scan over a session), `long-term-recall` (`FANOUT=8` L3 ids per op) — against two in-process strategies: **ours** = direct Map lookup mirroring an L1/L2 cached read; **ams_reference** = JSON-serialised payload + `JSON.parse` per response + client-side fan-out across keys, modelling what any Redis-backed `agent-memory-server` pays on every hot read. Neither path sleeps; both do only real CPU work. Workload is seeded `mulberry32(0xa11ce)` with 5000 iters + 500 warmup over 32 sessions × 24 events + 512 long-term nodes × 256-char payloads (all overridable via `--iterations` / `--warmup` / `--seed` / `--ops`, plus an optional `bench/latency/workload.json`). Reports p50/p95/p99/p99.9/mean per strategy plus `delta` and `speedup` rows under schema `memory.bench.latency.v1`. New CLI verb `memory bench latency [--workload <dir>] [--iterations N] [--warmup N] [--seed N] [--ops ...] [--out <file>] [--report <file>] [--json]` wired into the existing `runBench` dispatcher alongside `bench recall`. New `plugins/memory/bench/latency/README.md` documents the workload, op semantics, and reproducibility tolerance. Initial dated report under `plugins/memory/bench/results/2026-05-26-latency.md` linked from `plugins/memory/README.md`. Refs #186.
+
+---
+
 ## memory — MCP tier-aware verbs (session/working/promote) (added)
 
 - **status**: added
