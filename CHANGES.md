@@ -6,6 +6,13 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 
 ---
 
+## memory — AFK lifecycle hook (`memory afk-finalize`) (added)
+
+- **status**: added
+- **upstream**: —
+- **why**: Issue #187 (parent PRD #174). AFK workers had no end-of-worktree memory sequence — typed L2 candidates from a session could be lost if neither the L2 overflow backstop nor a `Stop`/`PreCompact` hook fired before the worktree was torn down, and the raw transcript blob vanished with the rest of L2 even when re-extraction with a better prompt would have been valuable.
+- **what changed**: New `plugins/memory/src/afk-lifecycle.ts` exporting `runAfkLifecycle(store, rootDir, { worktreeId, sessionId? })` that runs three steps: (1) `runPromote` with `triggeredBy: "hook"` for the session id — every typed candidate gets dedup-checked regardless of overflow thresholds; (2) read the L2 raw transcript blob and upsert it into L3 as a `transcript` node (new `NodeType` variant added to `schema.ts`) with `scope: "worktree"`, `scope_id: worktreeId`, plus `worktree_id` / `session_id` properties and provenance evidence, using a stable label (`transcript:worktree:<wid>:session:<sid>`) so a repeat call is a content-hash dedup hit rather than a new row; (3) drop every L2 node for the session via the existing `recordEvicted` overlay (slice #182 semantics) so the rows stop surfacing through `listNodes` immediately. New CLI verb `memory afk-finalize --worktree <id> [--session <id>] [--json] [--root <dir>]` wired into the dispatcher; falls back to `RED_AFK_WORKER_ID` / `RED_AFK_ITER_DIR` env vars so the AFK post-iteration lifecycle hook can invoke it with no extra plumbing. Uses the existing transcript reader path (`getRawTranscript`) when the session file is still present, falling back to a session-id-keyed L2 scan when the runner already dropped `.red/memory/sessions/current` before finalize fires. Idempotency: step 1 is a no-op when no L2 events remain; step 2 dedups via `upsertNode`'s `(label, node_type, title, content, scope, scope_id)` content hash; step 3 finds nothing on a second call. Tests in `plugins/memory/tests/afk-lifecycle.test.ts` cover the happy path (promote+archive+drop), no-op re-invocation (single transcript node survives across two calls), and the detached-session path (sessionId override after the file has been torn down). Refs #187.
+
 ## memory — hot-read latency bench vs AMS (`memory bench latency`) (added)
 
 - **status**: added

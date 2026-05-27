@@ -79,7 +79,11 @@ export type NodeType =
   | "attempt"
   | "issue"
   | "prd"
-  | "validation";
+  | "validation"
+  // AFK lifecycle (PRD #174, issue #187): archived raw L2 transcript blob
+  // copied into L3 as a durable artifact so re-extraction with a better
+  // prompt stays possible after the worktree is gone.
+  | "transcript";
 
 export type EdgeLabel =
   // Causal
