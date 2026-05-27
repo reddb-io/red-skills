@@ -73,6 +73,7 @@ import {
   type WorkloadConfig,
 } from "./bench-latency.js";
 import { runPromote } from "./promote.js";
+import { runAfkLifecycle } from "./afk-lifecycle.js";
 import {
   approveInboxItem,
   inboxItemToProvenance,
@@ -370,6 +371,12 @@ Usage:
   session, promoting typed L2 candidates and bumping reinforcement on dedup
   hits. Emits one promote event per decision.
   memory promote [--triggered-by explicit|hook|overflow] [--session <id>] [--json] [--root <dir>]
+
+  AFK lifecycle (PRD #174, issue #187) — end-of-worktree sequence the AFK
+  worker invokes after its iteration closes: promote-all typed L2 candidates
+  into L3, archive the raw transcript as a durable L3 \`transcript\` node
+  tagged with the worktree id, then drop the session's L2 nodes. Idempotent.
+  memory afk-finalize --worktree <id>  [--session <id>] [--json] [--root <dir>]
 
   AMS migration (PRD #174, issue #184) — one-shot offline importer for Redis
   agent-memory-server JSON dumps. See \`docs/migrating-from-ams.md\`.
@@ -5946,6 +5953,37 @@ async function runPromoteCmd(args: ParsedArgs): Promise<void> {
   }
 }
 
+async function runAfkFinalize(args: ParsedArgs): Promise<void> {
+  const rootDir = rootOf(args.flags);
+  const json = Boolean(args.flags.json);
+  const worktreeId =
+    stringFlag(args.flags, "worktree") ??
+    process.env.RED_AFK_WORKER_ID ??
+    process.env.RED_AFK_ITER_DIR;
+  if (!worktreeId) {
+    throw new Error(
+      "memory afk-finalize: --worktree <id> required (or set RED_AFK_WORKER_ID)",
+    );
+  }
+  const sessionId = stringFlag(args.flags, "session");
+  const { store } = await openGraphStore(args);
+  try {
+    const report = await runAfkLifecycle(store, rootDir, {
+      worktreeId,
+      sessionId,
+    });
+    if (json) {
+      console.log(JSON.stringify(report, null, 2));
+      return;
+    }
+    console.log(
+      `memory afk-finalize: session=${report.session_id} worktree=${report.worktree_id} promoted=${report.promote.promoted} reinforced=${report.promote.reinforced} transcript=${report.transcript_rid ?? "none"}${report.transcript_created ? " (new)" : report.transcript_rid ? " (deduped)" : ""} dropped=${report.dropped_rids.length}`,
+    );
+  } finally {
+    await store.close();
+  }
+}
+
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   switch (args.command) {
@@ -6132,6 +6170,8 @@ async function main(): Promise<void> {
       return runImport(args);
     case "promote":
       return runPromoteCmd(args);
+    case "afk-finalize":
+      return runAfkFinalize(args);
     case "bench":
       return runBench(args);
     case undefined:

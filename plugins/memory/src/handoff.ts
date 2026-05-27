@@ -120,6 +120,7 @@ function scoreNode(node: StoredNode, terms: string[], now: number): number {
     person: 1,
     session: 5,
     symbol: 2,
+    transcript: 2,
   } satisfies Record<NodeType, number>;
   const haystack = nodeText(node).toLowerCase();
   const focusScore =
