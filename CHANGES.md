@@ -6,6 +6,21 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 
 ---
 
+## task-executor contract — execute_task phase schema (added)
+
+- **status**: added
+- **upstream**: —
+- **why**: Second runner-neutral phase contract built on top of the #205 envelope and the #199 analyzer (PRD #196 / issue #200). Lets Claude Code sub-agents, Codex CLI inline phases, and Hermes fallback emit the same structured `execute_task` output without changing `/afk` runtime behavior yet, and pins the executor's role to scoped implementation only (no commit, no quality gates).
+- **what changed**:
+  - `.red/contracts/task-executor.md`: phase contract document — inputs limited to the existing handoff/issue artefacts plus an optional analyzer envelope, output specialization of the base envelope with an additional `execution` object (implementation_summary, changes_by_criterion, out_of_scope_rejections, non_goals_preserved, commit_hint, escalation_triggers, follow_ups), execute-phase invariants, scope rules (no commit/merge, no quality gates, no out-of-scope writes, no new queues), escalate-vs-block rubric, per-runner emission notes, and Claude Code packaging notes referencing `plugins/dev/agents/` and the #198 agent-metadata validator.
+  - `.red/contracts/task-executor.schema.json`: JSON Schema (draft 2020-12) pinning `phase` to `execute_task`, forcing the unverified-only acceptance-results invariant, requiring empty verification/quality-gate arrays, requiring the closed `execution` object, and adding the completed-status invariants (`changed_files` non-empty, every `changes_by_criterion[*].status` is `implemented`).
+  - `.red/contracts/fixtures/task-executor/`: 5 fixtures — 2 valid (`normal-implementation` covering an unambiguous completed executor envelope, `blocked-out-of-scope` covering an escalation triggered by an out-of-scope human-guidance ask) and 3 invalid (`missing-execution`, `malformed-json`, `completed-without-changes`).
+  - `scripts/validate-task-executor-contract.sh`: jq-only structural validator mirroring `validate-issue-analyzer-contract.sh`; enforces required keys, enums, execute-phase invariants (no quality gates, all results unverified, completed requires non-empty changed_files and all changes implemented), the execution object's required fields and shapes, and the subset rule that `changes_by_criterion[*].files_touched` ⊆ `changed_files`.
+  - `scripts/test-validate-task-executor-contract.sh`: fixture-based test wired into `.github/workflows/red-release.yml` alongside the existing afk-task, issue-analyzer, and agent-metadata fixture tests.
+- **compatibility**: documentation-only. `/afk` does not yet invoke the executor or consume its envelope; the orchestrator continues to drive on the `<promise>DONE</promise>` / `<promise>BLOCKED</promise>` sentinels. Production wiring is deferred to later PRD #196 slices. Per #204 §4, public copy treats Codex emission as an inlined phase, not as a "Codex sub-agent". No commit/merge behavior is moved into the executor.
+
+---
+
 ## issue-analyzer contract — analyze_issue phase schema (added)
 
 - **status**: added
