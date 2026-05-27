@@ -54,6 +54,22 @@ An envelope is **hollow** — and rejected by the validator — when **all** of 
 
 Hollow success is the failure mode the PRD is most worried about: an agent that says "done" while its own evidence shows otherwise. The validator catches the shape at write time; the orchestrator can additionally treat hollow envelopes as `escalation_needed` at consume time (out of scope for this issue).
 
+### Task adherence (binding)
+
+Adherence is the rule that every envelope is provably tied to the issue's `## Acceptance` checklist, with no scope creep and no hollow completions. It is enforced at three layers in the AFK pipeline:
+
+- **Prompt layer** — the inner-agent prompt shipped at [`plugins/dev/skills/engineering/afk/AGENT-PROMPT.md`](../../plugins/dev/skills/engineering/afk/AGENT-PROMPT.md) carries a *Task Adherence* checklist binding on every runner (Claude Code native sub-agents, Codex CLI inline phases, Hermes / fallback all spawn with the same prompt body). The checklist requires the inner agent to write per-step blocks into `<agent-notes>`: `## Scope:`, `## Non-goals:`, `## Files:`, `## Commands:`, `## Acceptance Summary`, `## Out-of-scope edits:` / `## Out-of-scope rejections:`, `## Verification:`, `## Hollow-completion check:`, and `## Guidance applied:`. The orchestrator's envelope poster ([`scripts/lib/envelope.sh`](../../plugins/dev/skills/engineering/afk/scripts/lib/envelope.sh) — `envelope_extract_notes`) publishes that block verbatim into the issue comment, so reviewers see which acceptance criteria passed, which were not checked, and why.
+- **Phase-envelope layer** — the executor envelope ([`task-executor.md`](./task-executor.md) — `execution.non_goals_preserved`, `execution.out_of_scope_rejections`, `execution.changes_by_criterion`) and the quality-gate envelope ([`quality-gate.md`](./quality-gate.md) — `quality_gate.stub_findings`, `quality_gate.scope_drift_findings`, `quality_gate.acceptance_verification`) carry the same adherence claims in structured form when the production runners emit them. The validators ([`validate-task-executor-contract.sh`](../../scripts/validate-task-executor-contract.sh), [`validate-quality-gate-contract.sh`](../../scripts/validate-quality-gate-contract.sh)) refuse envelopes that contradict adherence — e.g. `status: completed` with empty `changed_files`, `outcome: approved` with non-empty `stub_findings` or `scope_drift_findings`, `outcome: approved` with any `unverified` acceptance row.
+- **Base-envelope layer** — the hollow-success rule above is the cross-phase floor: `status: completed` plus any `acceptance_criteria_results[*].result` of `fail` or `unverified`, or any non-empty `quality_gate_failures`, is rejected by the validator. This rule fires regardless of phase, runner, or whether a quality gate envelope is present.
+
+The Acceptance Summary block in `<agent-notes>` and the `acceptance_criteria_results` array in the envelope are the same audit trail in two formats — markdown for human review in the issue comment, JSON for orchestrator consumption. Both MUST list one row per `## Acceptance` checkbox with status (`pass` / `fail` / `unverified`) and evidence (commit SHA, `file:line`, command name, or "no command exercises this").
+
+Per-runner notes:
+
+- **Claude Code** consumes the prompt layer today; the phase-envelope layer becomes load-bearing as the production sub-agents in #199/#200/#201 wire up.
+- **Codex CLI** consumes the prompt layer today (Codex spawns with the same `AGENT-PROMPT.md` body, per [`runner-codex.md`](../../plugins/dev/skills/engineering/afk/runner-codex.md)). When the inline phases are activated, they emit the same envelopes Claude does — the contract — not file layout — is what keeps them interchangeable.
+- **Hermes / fallback** consumes the prompt layer today. Adherence claims in the envelope, when emitted, MUST follow the same shape; a missing phase is "not attempted", not "failed".
+
 ### Malformed JSON
 
 Anything that does not parse as JSON, or whose top-level value is not an object, fails validation with a `malformed JSON` error. This is the cheapest detector — runners that don't speak JSON natively should pipe through `jq -c .` before writing.
