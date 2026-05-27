@@ -1,0 +1,56 @@
+{
+  "status": "escalation_needed",
+  "phase": "analyze_issue",
+  "runner": "claude",
+  "issue_number": 9999,
+  "scope_summary": "Issue asks to 'make the agent smarter' with no concrete acceptance criteria, no referenced files, and a brief that contradicts itself between paragraphs. Analyzer cannot scope this into a single AFK slice.",
+  "non_goals": [
+    "Guess the intended scope from the title alone",
+    "Refactor the orchestrator unilaterally"
+  ],
+  "acceptance_criteria_results": [
+    {
+      "criterion": "The agent is smarter.",
+      "result": "unverified",
+      "evidence": "Acceptance criterion is subjective and unmeasurable as written."
+    }
+  ],
+  "changed_files": [],
+  "verification_commands": [],
+  "verification_results": [],
+  "quality_gate_failures": [],
+  "blocker_reason": null,
+  "next_human_action": "Rewrite the issue body with concrete acceptance criteria (which agent, which behaviour, which observable signal), or split the issue into bug-fix and feature slices before re-queueing.",
+  "remaining_risks": [
+    "Picking up this issue without re-triage will burn an AFK iteration on a guess and likely produce hollow output."
+  ],
+  "confidence": "high",
+  "raw_runner_output_path": null,
+  "analysis": {
+    "task_type": "unknown",
+    "affected_area": "unknown — brief references both the orchestrator and the memory plugin without specifying which to edit",
+    "recommended_skills": ["triage", "reflect"],
+    "risk_level": "high",
+    "scope_boundaries": [
+      "Do not modify any code until the brief is rewritten",
+      "Do not infer scope from the issue title"
+    ],
+    "acceptance_criteria_map": [
+      {
+        "criterion": "The agent is smarter.",
+        "plan": "Cannot plan: the criterion has no observable signal. Needs a concrete capability statement and a measurable verification.",
+        "verification": "Cannot verify: re-triage required before any executor can claim this."
+      }
+    ],
+    "verification_expectations": [
+      "Re-triage by a human; analyzer should not attempt verification until the brief is concrete."
+    ],
+    "open_questions": [
+      "Which agent — the /afk inner agent, /triage, /diagnose, or all of them?",
+      "What concrete behaviour change counts as 'smarter'?",
+      "How is success measured — fewer BLOCKED outcomes, fewer attempts per issue, higher confidence scores, something else?",
+      "Are the two paragraphs in the brief describing the same change or two different changes?"
+    ],
+    "ambiguity_score": "high"
+  }
+}

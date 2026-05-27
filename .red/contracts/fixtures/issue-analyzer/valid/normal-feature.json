@@ -1,0 +1,107 @@
+{
+  "status": "completed",
+  "phase": "analyze_issue",
+  "runner": "claude",
+  "issue_number": 199,
+  "scope_summary": "Add a runner-neutral issue-analyzer phase contract under .red/contracts/ with schema, fixtures, and a jq-only validator wired into red-release.yml. No /afk runtime changes.",
+  "non_goals": [
+    "Wire /afk to invoke the analyzer or consume its envelope",
+    "Add a Claude Code packaged sub-agent under plugins/dev/agents/",
+    "Modify the existing afk-task schema or fixtures"
+  ],
+  "acceptance_criteria_results": [
+    {
+      "criterion": "The issue-analyzer contract is documented in the runner-neutral AFK contract format from #205, with Claude Code agent packaging notes where applicable.",
+      "result": "unverified",
+      "evidence": ".red/contracts/issue-analyzer.md to be added"
+    },
+    {
+      "criterion": "The contract consumes the same issue/handoff concepts used by /afk instead of introducing docs/plans/tasks as the primary queue.",
+      "result": "unverified",
+      "evidence": "Inputs section of issue-analyzer.md must reference issue body, handoff, and previous attempts only"
+    },
+    {
+      "criterion": "The output has a deterministic structured shape suitable for a shell/CLI parser or orchestrator prompt.",
+      "result": "unverified",
+      "evidence": "issue-analyzer.schema.json with additionalProperties:false at both envelope and analysis"
+    },
+    {
+      "criterion": "The output includes scope boundaries, non-goals, acceptance criteria, and verification expectations.",
+      "result": "unverified",
+      "evidence": "analysis.scope_boundaries, analysis.acceptance_criteria_map, analysis.verification_expectations, envelope.non_goals"
+    },
+    {
+      "criterion": "Fixture coverage demonstrates analysis of at least one normal AFK issue and one ambiguous issue that should escalate.",
+      "result": "unverified",
+      "evidence": "fixtures/issue-analyzer/valid/{normal-feature,escalation-ambiguous}.json"
+    },
+    {
+      "criterion": "The implementation does not change /afk runtime behavior yet.",
+      "result": "unverified",
+      "evidence": "No edits under plugins/dev/skills/engineering/afk/ or the orchestrator prompts"
+    }
+  ],
+  "changed_files": [],
+  "verification_commands": [],
+  "verification_results": [],
+  "quality_gate_failures": [],
+  "blocker_reason": null,
+  "next_human_action": null,
+  "remaining_risks": [
+    "Downstream PRD #196 slices may discover the analysis shape needs fields beyond this minimal cut."
+  ],
+  "confidence": "high",
+  "raw_runner_output_path": null,
+  "analysis": {
+    "task_type": "contract",
+    "affected_area": ".red/contracts/ and scripts/",
+    "recommended_skills": ["tdd", "write-a-skill"],
+    "risk_level": "low",
+    "scope_boundaries": [
+      "Only files under .red/contracts/ and scripts/",
+      "Wire validation into .github/workflows/red-release.yml only, not into pre-commit",
+      "Do not edit plugins/dev/skills/engineering/afk/ or any orchestrator prompts",
+      "Do not modify the existing afk-task schema, validator, or fixtures"
+    ],
+    "acceptance_criteria_map": [
+      {
+        "criterion": "The issue-analyzer contract is documented in the runner-neutral AFK contract format from #205, with Claude Code agent packaging notes where applicable.",
+        "plan": "Write .red/contracts/issue-analyzer.md mirroring the structure of afk-task.md and adding a Claude Code packaging section that references plugins/dev/agents/ and the #198 metadata validator.",
+        "verification": "Manual diff against afk-task.md sections and grep for the Claude Code packaging heading."
+      },
+      {
+        "criterion": "The contract consumes the same issue/handoff concepts used by /afk instead of introducing docs/plans/tasks as the primary queue.",
+        "plan": "Document Inputs as issue body, previous attempts, human guidance, thread discussion, recent commits, .red/ context — no new queue.",
+        "verification": "Grep issue-analyzer.md for 'docs queue' / 'plans queue' / 'tasks queue' returns no introduction of new queues."
+      },
+      {
+        "criterion": "The output has a deterministic structured shape suitable for a shell/CLI parser or orchestrator prompt.",
+        "plan": "Author issue-analyzer.schema.json with additionalProperties:false at the envelope and the analysis object; pin phase to const analyze_issue.",
+        "verification": "jq parses every fixture; validator script enforces required keys and closed schema."
+      },
+      {
+        "criterion": "The output includes scope boundaries, non-goals, acceptance criteria, and verification expectations.",
+        "plan": "Make analysis.scope_boundaries, analysis.acceptance_criteria_map, and analysis.verification_expectations required; rely on envelope.non_goals for non-goals.",
+        "verification": "Schema marks all four required; fixtures populate non-empty values."
+      },
+      {
+        "criterion": "Fixture coverage demonstrates analysis of at least one normal AFK issue and one ambiguous issue that should escalate.",
+        "plan": "Add valid/normal-feature.json and valid/escalation-ambiguous.json plus three invalid fixtures for the validator's negative tests.",
+        "verification": "scripts/test-validate-issue-analyzer-contract.sh exits 0 with all expected pass/fail outcomes."
+      },
+      {
+        "criterion": "The implementation does not change /afk runtime behavior yet.",
+        "plan": "Touch only files under .red/contracts/, scripts/, CHANGES.md, and .github/workflows/red-release.yml.",
+        "verification": "git diff --name-only shows no files under plugins/dev/skills/engineering/afk/ and no agent prompt edits."
+      }
+    ],
+    "verification_expectations": [
+      "scripts/validate-issue-analyzer-contract.sh .red/contracts/fixtures/issue-analyzer/valid/normal-feature.json",
+      "scripts/test-validate-issue-analyzer-contract.sh",
+      "scripts/test-validate-afk-task-contract.sh",
+      "scripts/test-validate-agent-metadata.sh"
+    ],
+    "open_questions": [],
+    "ambiguity_score": "low"
+  }
+}

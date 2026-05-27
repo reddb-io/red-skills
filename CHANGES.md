@@ -6,6 +6,21 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 
 ---
 
+## issue-analyzer contract — analyze_issue phase schema (added)
+
+- **status**: added
+- **upstream**: —
+- **why**: First runner-neutral phase contract built on top of the #205 envelope (PRD #196 / issue #199). Lets Claude Code sub-agents, Codex CLI inline phases, and Hermes fallback emit the same structured `analyze_issue` output without changing `/afk` runtime behavior yet.
+- **what changed**:
+  - `.red/contracts/issue-analyzer.md`: phase contract document — inputs limited to the existing handoff/issue artefacts, output specialization of the base envelope with an additional `analysis` object (task_type, affected_area, recommended_skills, risk_level, scope_boundaries, acceptance_criteria_map, verification_expectations, open_questions, ambiguity_score), analyze-phase invariants, per-runner emission notes, and Claude Code packaging notes referencing `plugins/dev/agents/` and the #198 agent-metadata validator.
+  - `.red/contracts/issue-analyzer.schema.json`: JSON Schema (draft 2020-12) pinning `phase` to `analyze_issue`, forcing the unverified-only acceptance-results invariant, requiring the closed `analysis` object, and adding cross-field invariants for `task_type=unknown` and `ambiguity_score=high`.
+  - `.red/contracts/fixtures/issue-analyzer/`: 5 fixtures — 2 valid (`normal-feature` covering an unambiguous issue, `escalation-ambiguous` covering an ambiguous escalation) and 3 invalid (`missing-analysis`, `unverified-but-completed`, `ambiguity-without-questions`).
+  - `scripts/validate-issue-analyzer-contract.sh`: jq-only structural validator mirroring `validate-afk-task-contract.sh`; enforces required keys, enums, analyze-phase invariants (no executed work, all results unverified), the analysis object's required fields and shapes, and the two cross-field invariants.
+  - `scripts/test-validate-issue-analyzer-contract.sh`: fixture-based test wired into `.github/workflows/red-release.yml` alongside the existing afk-task and agent-metadata fixture tests.
+- **compatibility**: documentation-only. `/afk` does not yet invoke the analyzer or consume its envelope; the orchestrator continues to drive on the `<promise>DONE</promise>` / `<promise>BLOCKED</promise>` sentinels. Production wiring is deferred to later PRD #196 slices. Per #204 §4, public copy treats Codex emission as an inlined phase, not as a "Codex sub-agent".
+
+---
+
 ## afk-task contract — runner-neutral envelope schema (added)
 
 - **status**: added
