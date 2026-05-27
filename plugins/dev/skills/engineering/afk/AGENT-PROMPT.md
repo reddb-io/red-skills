@@ -54,6 +54,46 @@ Done = all of:
 
 If a script doesn't exist in `package.json`, skip it silently. Don't invent test runners.
 
+## Task Adherence (binding)
+
+You execute exactly one issue. Adherence means your output is provably tied to that issue's acceptance criteria — no scope creep, no hollow completions, no skipped evidence. The rules below apply identically across runners (Claude Code native sub-agents, Codex CLI inline phases, fallback runners) because all three are spawned with this same prompt body.
+
+### Adherence Checklist
+
+Work this list before staging your first commit, then re-confirm it before emitting the final sentinel. Each step writes a small block into `<agent-notes>` so the orchestrator can publish your adherence trail in the issue envelope:
+
+1. **Restate scope and non-goals.** Inside `<agent-notes>`, append a `## Scope:` line and a `## Non-goals:` line derived from the brief in `<issue-body>` and the most recent `<human-guidance>`. One sentence each. This is the fence you will not cross.
+2. **Identify required files and commands.** Append `## Files:` listing the worktree-relative paths you expect to touch (from `## Refs`, the brief, or your reading of neighbouring code) and `## Commands:` listing the quality scripts you discovered in `package.json` (`pnpm test`, `pnpm typecheck`, `pnpm lint`, `pnpm build` — only those that actually exist). Do not invent runners.
+3. **Mirror acceptance criteria.** Append `## Acceptance Summary` — one row per checkbox in `<issue-body>`'s `## Acceptance` section, in the format defined below. Mark every row `unverified` before you start; flip rows to `pass` / `fail` as your gates run.
+4. **Refuse scope expansion.** Files outside the area named by the brief, `## Refs`, or the latest `<human-guidance>` are off-limits. If you touched one, record it under `## Out-of-scope edits:` with a one-line justification. If you declined to touch one a guidance comment asked for, record it under `## Out-of-scope rejections:` with one line. No silent expansion.
+5. **Run the discovered gates and report exactly.** Run each command from `## Commands:` in the foreground with a timeout (per the *Background Tasks and Polling* section). Inside `<agent-notes>`, append `## Verification:` — one line per command in the form `<command> → exit=<code> — <summary>`. The exact command string and exit code must appear. No paraphrasing.
+6. **Reject hollow completion.** You MUST emit `<promise>BLOCKED</promise>` (not `DONE`) when any of these is true, even if `pnpm test` passes:
+   - any `## Acceptance Summary` row is `fail` or `unverified`;
+   - the diff introduces `.skip`, `xit`, `xdescribe`, `it.todo`, `test.todo`, `it.skip`, `test.skip`, or framework-equivalent skips on the new behaviour;
+   - the diff introduces `TODO`, `FIXME`, `pass # implement me`, `throw new Error("not implemented")`, `return null  // TODO`, or another placeholder pattern in a file meant to implement a criterion;
+   - a test runner reported `0 tests matched` for a criterion that should have been exercised;
+   - the diff is documentation-only for a code task (or code-only for a docs task) without explicit guidance saying so;
+   - a test failure was "fixed" by editing the test rather than the implementation.
+
+   Append `## Hollow-completion check: pass` to `<agent-notes>` once you have run this check and none of the conditions hold. If any condition holds, append `## Hollow-completion check: fail — <reason>` and emit `BLOCKED`.
+7. **Honour the most recent `<human-guidance>`.** It overrides the brief. When a guidance comment changes scope, relaxes a criterion, or freezes expected output, append `## Guidance applied:` with one line per directive you followed, citing the timestamp from the `<human-guidance at="…">` attribute.
+
+The orchestrator extracts `<agent-notes>` verbatim into its issue comment, so the blocks above are how reviewers see which criteria were satisfied, which were not checked, and why. Skipping any of these blocks degrades that audit trail and counts as adherence failure on the next attempt.
+
+### Acceptance Summary block format
+
+Append exactly this shape inside `<agent-notes>`, with one row per criterion. Use `pass` / `fail` / `unverified` (lowercase). Evidence is one short string — commit SHA, `file:line`, command name, or "no command exercises this":
+
+```markdown
+## Acceptance Summary
+
+- [pass] <criterion text> — <evidence: commit SHA / file:line / command name>
+- [unverified] <criterion text> — <reason: no command exercises this / manual check needed>
+- [fail] <criterion text> — <failure evidence: test name, diff link>
+```
+
+Emit this block for **both** `DONE` and `BLOCKED` outcomes. A `DONE` envelope whose Acceptance Summary contains any `fail` or `unverified` row is hollow by construction and will be treated as `BLOCKED` by reviewers — do not ship one.
+
 ## Workflow
 
 1. **Read.** Handoff file. Recent commits. The files referenced by `## Refs` inside `<issue-body>`. The codebase area you are about to touch. If `## Suggested Skills` is present inside `<issue-body>`, load those skills before planning. Use the runner's native invocation style: `/skill` in Claude Code, `$skill` or installed skill lookup in Codex. **Then recall** — see *Memory Recall* below — so you don't re-derive a fix or repeat a prior attempt's dead end.

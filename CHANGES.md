@@ -6,6 +6,18 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 
 ---
 
+## afk inner-agent prompt — task-adherence checklist (added)
+
+- **status**: added
+- **upstream**: —
+- **why**: Issue #206 — task adherence must be a cross-runner contract requirement, not a Claude-only prompt tweak. The #205/#199/#200/#201 contracts already define the runner-neutral adherence rules (executor `out_of_scope_rejections` / `non_goals_preserved`, quality-gate `stub_findings` / `scope_drift_findings` / `acceptance_verification`, base-envelope hollow-success), but those contracts are documentation-only until production wiring lands. This slice promotes the adherence rules into the prompt layer that every runner shares today, so adherence binds Claude Code, Codex CLI, and the fallback runner without waiting for the per-phase sub-agents in PRD #196.
+- **what changed**:
+  - `plugins/dev/skills/engineering/afk/AGENT-PROMPT.md`: new binding Task Adherence section after What Done Means. Seven-step checklist that writes per-step blocks into `<agent-notes>` (`## Scope:`, `## Non-goals:`, `## Files:`, `## Commands:`, `## Acceptance Summary`, `## Out-of-scope edits:` / `## Out-of-scope rejections:`, `## Verification:`, `## Hollow-completion check:`, `## Guidance applied:`). The hollow-completion clause encodes the quality-gate stub-detection taxonomy as a hard refusal of `<promise>DONE</promise>` — the inner agent self-gates on integrity-of-evidence failures (skipped tests, placeholder patterns, zero-test-match, docs-only-for-code-task, test edits that mask failures), not just on failing test runners. The Acceptance Summary block format pins the row shape (status enum + criterion + evidence string) so the orchestrator's existing `envelope_extract_notes` poster surfaces per-criterion status in the issue comment.
+  - `.red/contracts/afk-task.md`: new Task Adherence section in the cross-runner envelope contract. Names adherence as a three-layer rule (prompt, phase-envelope, base-envelope), points each layer at its existing enforcer, documents the equivalence between the `## Acceptance Summary` markdown block and the `acceptance_criteria_results` JSON array, and records per-runner status — prompt layer is active today on all three runners because `runner-claude.md` and `runner-codex.md` both spawn with the same `AGENT-PROMPT.md` body.
+- **compatibility**: prompt-only and documentation-only. No orchestrator code changed — the existing `envelope_extract_notes` path in `scripts/lib/envelope.sh` already publishes `<agent-notes>` verbatim into the issue comment, so the per-criterion audit trail flows through the existing envelope without any new poster code. The `<promise>DONE</promise>` / `<promise>BLOCKED</promise>` sentinels remain the lifecycle signal. The Task Adherence checklist is "reused where practical" across Claude, Codex, and Hermes by construction (single shared prompt body), not by duplicating prompt text per runner.
+
+---
+
 ## quality-gate contract — verify_task phase schema (added)
 
 - **status**: added
