@@ -54,6 +54,10 @@ jobs:
         if: steps.fleet.outputs.running == '0'
         run: scripts/validate-install-metadata.sh
 
+      - name: Test agent metadata fixtures
+        if: steps.fleet.outputs.running == '0'
+        run: scripts/test-validate-agent-metadata.sh
+
       - name: Decide bump kind
         id: bump
         if: steps.fleet.outputs.running == '0'

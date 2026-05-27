@@ -1,0 +1,6 @@
+{
+  "name": "sample-plugin",
+  "version": "0.0.0",
+  "description": "Fixture: a Codex plugin manifest that correctly omits 'agents'.",
+  "skills": "./skills/"
+}
