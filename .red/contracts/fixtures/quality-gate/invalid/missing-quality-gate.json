@@ -1,0 +1,20 @@
+{
+  "status": "completed",
+  "phase": "verify_task",
+  "runner": "claude",
+  "issue_number": 201,
+  "scope_summary": "Envelope without the quality_gate object.",
+  "non_goals": [],
+  "acceptance_criteria_results": [
+    { "criterion": "Some criterion.", "result": "pass", "evidence": "n/a" }
+  ],
+  "changed_files": ["foo.md"],
+  "verification_commands": [],
+  "verification_results": [],
+  "quality_gate_failures": [],
+  "blocker_reason": null,
+  "next_human_action": null,
+  "remaining_risks": [],
+  "confidence": "medium",
+  "raw_runner_output_path": null
+}

@@ -70,6 +70,10 @@ jobs:
         if: steps.fleet.outputs.running == '0'
         run: scripts/test-validate-task-executor-contract.sh
 
+      - name: Test quality-gate contract fixtures
+        if: steps.fleet.outputs.running == '0'
+        run: scripts/test-validate-quality-gate-contract.sh
+
       - name: Decide bump kind
         id: bump
         if: steps.fleet.outputs.running == '0'

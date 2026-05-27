@@ -1,0 +1,48 @@
+{
+  "status": "completed",
+  "phase": "verify_task",
+  "runner": "claude",
+  "issue_number": 201,
+  "scope_summary": "Claims approved while quality_gate_failures is non-empty — should be rejected.",
+  "non_goals": [],
+  "acceptance_criteria_results": [
+    { "criterion": "Tests pass.", "result": "pass", "evidence": "n/a" }
+  ],
+  "changed_files": ["src/widget.tsx"],
+  "verification_commands": ["pnpm test"],
+  "verification_results": [
+    { "command": "pnpm test", "exit_code": 1, "summary": "1 failed" }
+  ],
+  "quality_gate_failures": [
+    "vitest: 1 test failed"
+  ],
+  "blocker_reason": null,
+  "next_human_action": null,
+  "remaining_risks": [],
+  "confidence": "high",
+  "raw_runner_output_path": null,
+  "quality_gate": {
+    "outcome": "approved",
+    "checks_run": [
+      {
+        "name": "test",
+        "command": "pnpm test",
+        "exit_code": 1,
+        "duration_seconds": 2.0,
+        "output_summary": "1 failed",
+        "used_rtk": false
+      }
+    ],
+    "discovered_commands": [
+      { "name": "test", "command": "pnpm test", "reason_included": "package.json", "reason_skipped": null }
+    ],
+    "stub_findings": [],
+    "scope_drift_findings": [],
+    "acceptance_verification": [
+      { "criterion": "Tests pass.", "verified": "by_command", "evidence_source": "checks_run[0]" }
+    ],
+    "fixes_applied": [],
+    "fixes_rejected": [],
+    "rtk_used": false
+  }
+}

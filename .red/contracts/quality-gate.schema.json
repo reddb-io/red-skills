@@ -1,0 +1,311 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://reddb.io/red-skills/contracts/quality-gate.schema.json",
+  "title": "AFK Quality-Gate Envelope",
+  "description": "Runner-neutral envelope produced by the verify_task phase. Extends the base AFK task envelope (.red/contracts/afk-task.schema.json) with the gate-specific `quality_gate` object. See .red/contracts/quality-gate.md.",
+  "type": "object",
+  "required": [
+    "status",
+    "phase",
+    "runner",
+    "issue_number",
+    "scope_summary",
+    "non_goals",
+    "acceptance_criteria_results",
+    "changed_files",
+    "verification_commands",
+    "verification_results",
+    "quality_gate_failures",
+    "blocker_reason",
+    "next_human_action",
+    "remaining_risks",
+    "confidence",
+    "raw_runner_output_path",
+    "quality_gate"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "enum": ["completed", "blocked", "escalation_needed"]
+    },
+    "phase": {
+      "const": "verify_task"
+    },
+    "runner": {
+      "enum": ["claude", "codex", "hermes"]
+    },
+    "issue_number": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "scope_summary": {
+      "type": "string",
+      "minLength": 1
+    },
+    "non_goals": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "acceptance_criteria_results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["criterion", "result", "evidence"],
+        "additionalProperties": false,
+        "properties": {
+          "criterion": { "type": "string", "minLength": 1 },
+          "result": { "enum": ["pass", "fail", "unverified"] },
+          "evidence": { "type": "string" }
+        }
+      }
+    },
+    "changed_files": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "verification_commands": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "verification_results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["command", "exit_code", "summary"],
+        "additionalProperties": false,
+        "properties": {
+          "command": { "type": "string", "minLength": 1 },
+          "exit_code": { "type": "integer" },
+          "summary": { "type": "string" }
+        }
+      }
+    },
+    "quality_gate_failures": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "blocker_reason": {
+      "type": ["string", "null"]
+    },
+    "next_human_action": {
+      "type": ["string", "null"]
+    },
+    "remaining_risks": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "confidence": {
+      "enum": ["low", "medium", "high"]
+    },
+    "raw_runner_output_path": {
+      "type": ["string", "null"]
+    },
+    "quality_gate": {
+      "type": "object",
+      "required": [
+        "outcome",
+        "checks_run",
+        "discovered_commands",
+        "stub_findings",
+        "scope_drift_findings",
+        "acceptance_verification",
+        "fixes_applied",
+        "fixes_rejected",
+        "rtk_used"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "outcome": {
+          "enum": ["approved", "blocked", "stub_detected"]
+        },
+        "checks_run": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "command",
+              "exit_code",
+              "duration_seconds",
+              "output_summary",
+              "used_rtk"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "name": { "type": "string", "minLength": 1 },
+              "command": { "type": "string", "minLength": 1 },
+              "exit_code": { "type": "integer" },
+              "duration_seconds": { "type": "number", "minimum": 0 },
+              "output_summary": { "type": "string" },
+              "used_rtk": { "type": "boolean" }
+            }
+          }
+        },
+        "discovered_commands": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "command", "reason_included", "reason_skipped"],
+            "additionalProperties": false,
+            "properties": {
+              "name": { "type": "string", "minLength": 1 },
+              "command": { "type": "string", "minLength": 1 },
+              "reason_included": { "type": ["string", "null"] },
+              "reason_skipped": { "type": ["string", "null"] }
+            }
+          }
+        },
+        "stub_findings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["kind", "location", "evidence"],
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "enum": [
+                  "skipped_test",
+                  "hollow_test",
+                  "zero_test_match",
+                  "placeholder_implementation"
+                ]
+              },
+              "location": { "type": "string", "minLength": 1 },
+              "evidence": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        "scope_drift_findings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["file", "reason"],
+            "additionalProperties": false,
+            "properties": {
+              "file": { "type": "string", "minLength": 1 },
+              "reason": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        "acceptance_verification": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["criterion", "verified", "evidence_source"],
+            "additionalProperties": false,
+            "properties": {
+              "criterion": { "type": "string", "minLength": 1 },
+              "verified": {
+                "enum": [
+                  "by_command",
+                  "by_artifact",
+                  "unverifiable_in_this_phase",
+                  "human_override"
+                ]
+              },
+              "evidence_source": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        "fixes_applied": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["file", "description", "in_scope_justification"],
+            "additionalProperties": false,
+            "properties": {
+              "file": { "type": "string", "minLength": 1 },
+              "description": { "type": "string", "minLength": 1 },
+              "in_scope_justification": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        "fixes_rejected": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["requested_fix", "reason"],
+            "additionalProperties": false,
+            "properties": {
+              "requested_fix": { "type": "string", "minLength": 1 },
+              "reason": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        "rtk_used": { "type": "boolean" }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "blocked" } } },
+      "then": {
+        "properties": {
+          "blocker_reason": { "type": "string", "minLength": 1 },
+          "next_human_action": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "status": { "const": "escalation_needed" } } },
+      "then": {
+        "properties": {
+          "next_human_action": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "quality_gate": { "properties": { "outcome": { "const": "approved" } } }
+        }
+      },
+      "then": {
+        "properties": {
+          "status": { "const": "completed" },
+          "quality_gate_failures": { "type": "array", "maxItems": 0 },
+          "acceptance_criteria_results": {
+            "type": "array",
+            "items": { "properties": { "result": { "const": "pass" } } }
+          },
+          "quality_gate": {
+            "properties": {
+              "stub_findings": { "type": "array", "maxItems": 0 },
+              "scope_drift_findings": { "type": "array", "maxItems": 0 }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "quality_gate": { "properties": { "outcome": { "const": "stub_detected" } } }
+        }
+      },
+      "then": {
+        "properties": {
+          "status": { "enum": ["blocked", "escalation_needed"] },
+          "quality_gate": {
+            "properties": {
+              "stub_findings": { "type": "array", "minItems": 1 }
+            }
+          },
+          "next_human_action": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "quality_gate": { "properties": { "outcome": { "const": "blocked" } } }
+        }
+      },
+      "then": {
+        "properties": {
+          "status": { "enum": ["blocked", "escalation_needed"] }
+        }
+      }
+    }
+  ]
+}

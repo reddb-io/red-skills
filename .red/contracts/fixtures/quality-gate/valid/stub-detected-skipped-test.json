@@ -1,0 +1,107 @@
+{
+  "status": "blocked",
+  "phase": "verify_task",
+  "runner": "claude",
+  "issue_number": 9992,
+  "scope_summary": "The executor's diff added a `.skip`-flagged test for the new behaviour and a placeholder implementation. The test runner reports green, but the gate refuses to approve evidence that does not actually exercise the new behaviour.",
+  "non_goals": [
+    "Un-skip the test on behalf of the executor",
+    "Apply broad refactors triggered by lint",
+    "Treat the placeholder return as a valid implementation"
+  ],
+  "acceptance_criteria_results": [
+    {
+      "criterion": "The widget renders the new label when given the `compact` prop.",
+      "result": "unverified",
+      "evidence": "vitest reported 0 tests ran for the compact-label pattern; the .skip-flagged test in src/widget.test.tsx:42 did not execute."
+    },
+    {
+      "criterion": "The widget exposes a typed `onCompactToggle` callback.",
+      "result": "pass",
+      "evidence": "pnpm typecheck — exit 0 (checks_run[1])"
+    }
+  ],
+  "changed_files": [
+    "src/widget.tsx",
+    "src/widget.test.tsx"
+  ],
+  "verification_commands": [
+    "rtk vitest src/widget.test.tsx",
+    "pnpm typecheck"
+  ],
+  "verification_results": [
+    { "command": "rtk vitest src/widget.test.tsx", "exit_code": 0, "summary": "1 skipped, 2 passed (no test ran for compact-label)" },
+    { "command": "pnpm typecheck", "exit_code": 0, "summary": "tsc --noEmit clean" }
+  ],
+  "quality_gate_failures": [],
+  "blocker_reason": "Evidence is hollow: the test for the new behaviour is marked .skip and the implementation returns null with a TODO. The slice cannot be approved on a green-but-empty run.",
+  "next_human_action": "Re-queue with explicit instructions to remove the .skip flag in src/widget.test.tsx:42 and replace the placeholder return in src/widget.tsx:18 with a real compact-label branch.",
+  "remaining_risks": [
+    "The executor may have other .skip flags outside the diff that the gate did not surface; a follow-up audit should sweep the file."
+  ],
+  "confidence": "high",
+  "raw_runner_output_path": ".red/tmp/work-XYZ-i3/raw/quality-gate.stream.json",
+  "quality_gate": {
+    "outcome": "stub_detected",
+    "checks_run": [
+      {
+        "name": "vitest",
+        "command": "rtk vitest src/widget.test.tsx",
+        "exit_code": 0,
+        "duration_seconds": 1.0,
+        "output_summary": "1 skipped, 2 passed",
+        "used_rtk": true
+      },
+      {
+        "name": "typecheck",
+        "command": "pnpm typecheck",
+        "exit_code": 0,
+        "duration_seconds": 3.1,
+        "output_summary": "tsc --noEmit clean",
+        "used_rtk": false
+      }
+    ],
+    "discovered_commands": [
+      { "name": "vitest",    "command": "rtk vitest src/widget.test.tsx", "reason_included": "test files in diff", "reason_skipped": null },
+      { "name": "typecheck", "command": "pnpm typecheck",                "reason_included": "tsconfig.json present", "reason_skipped": null }
+    ],
+    "stub_findings": [
+      {
+        "kind": "skipped_test",
+        "location": "src/widget.test.tsx:42",
+        "evidence": "it.skip('renders the compact label', () => { … }) — flagged in the diff that introduced the test"
+      },
+      {
+        "kind": "zero_test_match",
+        "location": "src/widget.test.tsx",
+        "evidence": "vitest reported '1 skipped' and zero tests matching the compact-label criterion"
+      },
+      {
+        "kind": "placeholder_implementation",
+        "location": "src/widget.tsx:18",
+        "evidence": "return null; // TODO: render compact label when props.compact is true"
+      }
+    ],
+    "scope_drift_findings": [],
+    "acceptance_verification": [
+      {
+        "criterion": "The widget renders the new label when given the `compact` prop.",
+        "verified": "unverifiable_in_this_phase",
+        "evidence_source": "stub_findings[0] (.skip) + stub_findings[2] (TODO placeholder)"
+      },
+      {
+        "criterion": "The widget exposes a typed `onCompactToggle` callback.",
+        "verified": "by_command",
+        "evidence_source": "checks_run[1] — pnpm typecheck clean"
+      }
+    ],
+    "fixes_applied": [],
+    "fixes_rejected": [
+      {
+        "requested_fix": "Remove the `.skip` and let the test run as-is so vitest emits a failure instead.",
+        "reason": "Editing a freshly-added test on behalf of the executor masks the stub; the gate reports it instead."
+      }
+    ],
+    "rtk_used": true
+  }
+}
