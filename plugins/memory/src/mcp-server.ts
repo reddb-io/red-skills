@@ -236,14 +236,18 @@ async function main(): Promise<void> {
               : undefined,
           });
           return text(result.context_md, {
-            nodes: result.nodes.map((n) => ({
-              rid: n.rid,
-              label: n.label,
-              node_type: n.node_type,
-              score: n.score,
-              depth: n.depth,
-              excerpt: n.excerpt,
-            })),
+            nodes: result.nodes.map((n) => {
+              const hooks = extractMcpHookEntries(n.properties.hooks);
+              return {
+                rid: n.rid,
+                label: n.label,
+                node_type: n.node_type,
+                score: n.score,
+                depth: n.depth,
+                excerpt: n.excerpt,
+                ...(hooks ? { hooks } : {}),
+              };
+            }),
             diagnostics: result.diagnostics,
           });
         } finally {
@@ -1562,6 +1566,29 @@ async function operationStructuredContent(
     default:
       return { operation_id: operationId };
   }
+}
+
+function extractMcpHookEntries(
+  raw: unknown,
+): Array<{ lifecycle: string; command: string; exit_code: number }> | null {
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+  const out: Array<{ lifecycle: string; command: string; exit_code: number }> = [];
+  for (const item of raw) {
+    if (item == null || typeof item !== "object") continue;
+    const entry = item as Record<string, unknown>;
+    const lifecycle = typeof entry.lifecycle === "string" ? entry.lifecycle : "";
+    const command = typeof entry.command === "string" ? entry.command : "";
+    const exit = entry.exit_code;
+    const exit_code =
+      typeof exit === "number" && Number.isFinite(exit)
+        ? exit
+        : typeof exit === "string" && /^-?\d+$/.test(exit.trim())
+          ? Number(exit.trim())
+          : NaN;
+    if (!lifecycle || !command || !Number.isFinite(exit_code)) continue;
+    out.push({ lifecycle, command, exit_code });
+  }
+  return out.length > 0 ? out : null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
