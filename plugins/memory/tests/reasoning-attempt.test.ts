@@ -18,6 +18,8 @@ import {
   type ReasoningAttemptPayload,
 } from "../src/reasoning/attempt-writer.js";
 import { defaultTier } from "../src/schema.js";
+import { graphRecallResult } from "../src/graph-recall.js";
+import { recall } from "../src/engine.js";
 
 // RedDB connects by spawning the bundled `red` binary; give each test room.
 const TIMEOUT = 30_000;
@@ -183,6 +185,72 @@ describe("recordReasoningAttempt", () => {
       expect(props.validation_summary).toBe(samplePayload.validationSummary);
       expect(props.summary).toBe(samplePayload.summary);
       expect(props.touched_files).toEqual(samplePayload.touchedFiles);
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "stamps user-hook executions onto the attempt node and drops the field when none ran",
+    async () => {
+      const store = await openStore();
+      const withHooks = await recordReasoningAttempt(store, {
+        ...samplePayload,
+        hooks: [
+          { lifecycle: "pre_pick", command: "scripts/filter.sh --label slice:afk", exit_code: 0 },
+          { lifecycle: "post_pick", command: "scripts/audit.sh", exit_code: 1 },
+          // Junk entries are dropped instead of forwarded so the node never
+          // carries half-filled triples.
+          { lifecycle: "", command: "noop", exit_code: 0 } as never,
+          { lifecycle: "post_merge", command: "", exit_code: 0 } as never,
+        ],
+      });
+      const node = await store.getNode(withHooks.attemptRid);
+      expect(node?.properties.hooks).toEqual([
+        { lifecycle: "pre_pick", command: "scripts/filter.sh --label slice:afk", exit_code: 0 },
+        { lifecycle: "post_pick", command: "scripts/audit.sh", exit_code: 1 },
+      ]);
+
+      const withoutHooks = await recordReasoningAttempt(store, {
+        ...samplePayload,
+        attemptNumber: 2,
+        envelopeHash: "envh-no-hooks",
+        hooks: undefined,
+      });
+      const empty = await store.getNode(withoutHooks.attemptRid);
+      expect(empty?.properties.hooks).toBeUndefined();
+
+      const withEmptyArray = await recordReasoningAttempt(store, {
+        ...samplePayload,
+        attemptNumber: 3,
+        envelopeHash: "envh-empty-hooks",
+        hooks: [],
+      });
+      const stillEmpty = await store.getNode(withEmptyArray.attemptRid);
+      expect(stillEmpty?.properties.hooks).toBeUndefined();
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "recall surfaces include the attempt hooks field in CLI hits and context_md",
+    async () => {
+      const store = await openStore();
+      await recordReasoningAttempt(store, {
+        ...samplePayload,
+        summary: "filterhook attempt for recall coverage",
+        hooks: [
+          { lifecycle: "pre_pick", command: "scripts/filter.sh", exit_code: 0 },
+          { lifecycle: "post_pick", command: "scripts/audit.sh", exit_code: 2 },
+        ],
+      });
+      const { hits } = await graphRecallResult(store, "filterhook recall coverage", 10);
+      const attemptHit = hits.find((h) => h.node_type === "attempt");
+      expect(attemptHit?.hooks).toEqual([
+        { lifecycle: "pre_pick", command: "scripts/filter.sh", exit_code: 0 },
+        { lifecycle: "post_pick", command: "scripts/audit.sh", exit_code: 2 },
+      ]);
+      const { context_md } = await recall(store, "filterhook recall coverage", { k: 10 });
+      expect(context_md).toContain("hooks: pre_pick=0, post_pick=2");
     },
     TIMEOUT,
   );
