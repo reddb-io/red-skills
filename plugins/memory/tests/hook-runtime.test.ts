@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
@@ -149,26 +149,37 @@ describe("PreCompact flush → SessionStart recall across /clear (AC1, AC2)", ()
   );
 });
 
-describe("PostToolUse incremental re-index", () => {
+describe("PostToolUse incremental re-index (watched-path scoping)", () => {
+  /** Write a watched ADR markdown file under `<root>/.red/adr/` and return its path. */
+  async function writeWatchedAdr(root: string, name: string, body: string): Promise<string> {
+    const dir = join(root, ".red", "adr");
+    await mkdir(dir, { recursive: true });
+    const file = join(dir, name);
+    await writeFile(file, body, "utf8");
+    return file;
+  }
+
   test(
-    "re-indexes a changed source file into the graph",
+    "a watched path triggers ingest into the graph",
     async () => {
       const root = await tempRoot();
       await initGraph(root, { hooks: true });
-      const file = join(root, "widget.ts");
-      await writeFile(file, "export function renderWidget() { return 42; }\n", "utf8");
+      const file = await writeWatchedAdr(
+        root,
+        "0099-zigzag.md",
+        "# ADR 0099: Zigzag\n\nWe decided to adopt the zigzag caching strategy.\n",
+      );
 
       const r = await dispatch(input("PostToolUse", { changedFiles: [file] }), root);
       expect(r.noop).toBe(false);
       expect(r.indexed).toBe(1);
 
-      // The symbol is now queryable from the store.
       const config = await readConfig(root);
       if (!config) throw new Error("config missing after init");
       const store = await MemoryStore.open({ uri: resolveStoreUri(root, config) });
       try {
         const nodes = await store.listNodes();
-        expect(nodes.some((n) => n.label.includes("renderWidget"))).toBe(true);
+        expect(nodes.length).toBeGreaterThan(0);
         const events = await readMemoryEvents(store);
         expect(events).toEqual(
           expect.arrayContaining([
@@ -189,14 +200,76 @@ describe("PostToolUse incremental re-index", () => {
   );
 
   test(
-    "no-ops when the changed file is not indexable",
+    "a non-watched path skips ingest but still records a lifecycle noop event",
     async () => {
       const root = await tempRoot();
       await initGraph(root, { hooks: true });
-      const file = join(root, "notes.txt");
-      await writeFile(file, "lockfileVersion: 9\n", "utf8");
+      // Indexable by extension, but not a watched memory surface.
+      const file = join(root, "widget.ts");
+      await writeFile(file, "export function renderWidget() { return 42; }\n", "utf8");
+
       const r = await dispatch(input("PostToolUse", { changedFiles: [file] }), root);
       expect(r.noop).toBe(true);
+      expect(r.reason).toBe("no watched path");
+
+      const config = await readConfig(root);
+      if (!config) throw new Error("config missing after init");
+      const store = await MemoryStore.open({ uri: resolveStoreUri(root, config) });
+      try {
+        // No symbol from the skipped file landed in the graph.
+        const nodes = await store.listNodes();
+        expect(nodes.some((n) => n.label.includes("renderWidget"))).toBe(false);
+        // The skipped invocation is still on the Memory event log (ADR 0025).
+        const events = await readMemoryEvents(store);
+        expect(events).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              kind: "hook.lifecycle",
+              payload: expect.objectContaining({
+                hook_event: "PostToolUse",
+                result: expect.objectContaining({ noop: true, reason: "no watched path" }),
+              }),
+            }),
+          ]),
+        );
+      } finally {
+        await store.close();
+      }
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "a mixed changed-files list ingests only the watched subset",
+    async () => {
+      const root = await tempRoot();
+      await initGraph(root, { hooks: true });
+      const watched = await writeWatchedAdr(
+        root,
+        "0100-mixed.md",
+        "# ADR 0100\n\nWe decided to keep the watched subset.\n",
+      );
+      const unwatched = join(root, "widget.ts");
+      await writeFile(unwatched, "export function renderWidget() { return 42; }\n", "utf8");
+
+      const r = await dispatch(
+        input("PostToolUse", { changedFiles: [unwatched, watched] }),
+        root,
+      );
+      expect(r.noop).toBe(false);
+      // Only the one watched file was re-indexed.
+      expect(r.indexed).toBe(1);
+
+      const config = await readConfig(root);
+      if (!config) throw new Error("config missing after init");
+      const store = await MemoryStore.open({ uri: resolveStoreUri(root, config) });
+      try {
+        const nodes = await store.listNodes();
+        // The non-watched source symbol was never indexed.
+        expect(nodes.some((n) => n.label.includes("renderWidget"))).toBe(false);
+      } finally {
+        await store.close();
+      }
     },
     TIMEOUT,
   );
