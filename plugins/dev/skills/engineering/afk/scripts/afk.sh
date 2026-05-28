@@ -1955,6 +1955,13 @@ feedback() {
           local start_ms end_ms duration_ms command_text status summary
           command_text="pnpm -C $dir $script"
           start_ms="$(afk_now_ms)"
+          # Feedback validation is a merge gate, not a perf-tracking run.
+          # Default the well-known opt-outs so packages can park host-sensitive
+          # perf / latency / load tests behind them. Operators who set these
+          # explicitly in the env keep their value.
+          : "${RED_AFK_SKIP_PERF:=1}"
+          : "${RED_AFK_SKIP_COMPETITIVE_BASELINE:=1}"
+          export RED_AFK_SKIP_PERF RED_AFK_SKIP_COMPETITIVE_BASELINE
           if pnpm -C "$dir" "$script" >"$log_file" 2>&1; then
             parts+=("$label:✓")
             status="passed"
