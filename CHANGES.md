@@ -6,6 +6,23 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 
 ---
 
+## afk lifecycle hooks — dispatcher + config loader + pre_session/post_session (added)
+
+- **status**: added
+- **upstream**: —
+- **why**: Issue #208 (under PRD #207) — first tracer bullet for the AFK lifecycle hook system. Introduces the dispatcher contract (env vars + JSON-on-stdin + JSON-on-stdout + per-hook exit-code policy), the `afk.hooks.<name>` config block (with bare-string shorthand and hard-fail on unknown names), and the simplest pair of lifecycle points (`pre_session`, `post_session`) wired through `afk.sh`.
+- **what changed**:
+  - `plugins/dev/skills/engineering/afk/scripts/lib/hook-dispatcher.sh`: new module owning `hook_dispatch <name> <ctx_json>` and `hook_register <name> <cmd>…`. Canonical lifecycle name set, `HOOK_EXIT_POLICY` table per PRD §"Per-hook exit-code policy", JSON-object stdout merge via `jq -e`, non-JSON stdout treated as parse failure (abort under `pre_*`, log-and-continue under `post_*` / `on_*` / `on_idle`).
+  - `plugins/dev/skills/engineering/afk/scripts/lib/hook-config.sh`: minimal YAML reader for the `afk.hooks` subtree (no `yq` dependency, consistent with existing `config.sh`). Accepts bare-string shorthand and block lists, expands `defaults.<name>: false` into `HOOK_DEFAULTS_DISABLED`, and emits rc=3 on unknown hook names. Defaults register before user-declared hooks; declaration order preserved within each group.
+  - `plugins/dev/skills/engineering/afk/scripts/afk.sh`: sources the new modules and wires `pre_session` immediately after `bootstrap` (non-zero aborts the session with a visible log line) and `post_session` immediately before the final `<promise>NO MORE TASKS</promise>` (non-zero logged and skipped per policy).
+  - `plugins/dev/skills/engineering/afk/scripts/tests/hook-dispatcher.test.sh`: covers env-var contract, stdin JSON shape, stdout merge happy path, chained mutations, parse-failure handling, exit-code policy for `pre_session` (abort) and `post_session` (continue), unknown lifecycle point, and the canonical-name set.
+  - `plugins/dev/skills/engineering/afk/scripts/tests/hook-config.test.sh`: covers bare-string shorthand, block lists, unknown hook name hard-fail (both bare and list form), defaults toggle, mixed shapes, unrelated keys, and order preservation.
+  - `plugins/dev/skills/engineering/afk/scripts/tests/lifecycle-pre-post-session.test.sh`: end-to-end wiring check — `afk.sh` sources the new modules and dispatches `pre_session`/`post_session`; YAML-driven config drives the registered list; env vars thread through to the hook bash subprocess.
+  - `plugins/dev/skills/engineering/afk/SKILL.md`: new *Lifecycle Hooks* section enumerating the interceptor contract, ordering rules, and the two hooks shipped here (env vars, mutable slice, exit-code policy) with a worked YAML example.
+- **compatibility**: additive only. The existing `hooks.sh` detector orchestrator and `config.sh` flat-scalar loader are untouched; both keep working and their tests still pass. No built-in defaults are migrated into the new dispatcher in this slice — that's the work of follow-up issues under PRD #207.
+
+---
+
 ## README cross-runner task engine docs (added)
 
 - **status**: added
