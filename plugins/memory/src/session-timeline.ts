@@ -111,6 +111,20 @@ function toEntry(event: MemoryEvent): SessionTimelineEntry {
     };
   }
 
+  if (payload.event_type === "memory.drift.caught") {
+    return {
+      id: event.id,
+      occurred_at: event.occurred_at,
+      kind: event.kind,
+      session_id: sessionIdOf(event),
+      actor: actorOf(event),
+      title: "memory drift caught",
+      detail: `${payload.changed_paths.length} unmarked watched path(s): ${payload.changed_paths.join(", ")}`,
+      outcome: "failed",
+      source: sourceOf(event),
+    };
+  }
+
   return {
     id: event.id,
     occurred_at: event.occurred_at,

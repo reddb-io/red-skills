@@ -59,15 +59,34 @@ function globToRegExp(glob: string): RegExp {
   return new RegExp(`(?:^|/)${re}$`);
 }
 
-const WATCHED_MATCHERS: readonly RegExp[] = WATCHED_GLOBS.map(globToRegExp);
+/**
+ * Compile a glob list into a path matcher. Both predicates normalise Windows
+ * separators and match each glob as a path suffix, so an absolute changed-file
+ * path matches a repo-relative watched glob. Reused by the PostToolUse hook
+ * (over {@link WATCHED_GLOBS}) and by the CI drift guard (#224), which watches
+ * a deliberately narrower set — the gitignored, auto-generated `.red/wiki/`
+ * surface is excluded from PR-level enforcement.
+ */
+export function compileGlobMatcher(globs: readonly string[]): {
+  isMatch: (path: string) => boolean;
+  filter: (paths: readonly string[]) => string[];
+} {
+  const matchers = globs.map(globToRegExp);
+  const isMatch = (path: string): boolean => {
+    const normalized = path.replace(/\\/g, "/");
+    return matchers.some((re) => re.test(normalized));
+  };
+  return { isMatch, filter: (paths) => paths.filter(isMatch) };
+}
+
+const WATCHED_MATCHER = compileGlobMatcher(WATCHED_GLOBS);
 
 /** True when `path` matches any {@link WATCHED_GLOBS} entry as a path suffix. */
 export function isWatchedPath(path: string): boolean {
-  const normalized = path.replace(/\\/g, "/");
-  return WATCHED_MATCHERS.some((re) => re.test(normalized));
+  return WATCHED_MATCHER.isMatch(path);
 }
 
 /** Keep only the paths the closed loop watches. Order is preserved. */
 export function filterWatchedPaths(paths: readonly string[]): string[] {
-  return paths.filter(isWatchedPath);
+  return WATCHED_MATCHER.filter(paths);
 }

@@ -95,6 +95,8 @@ import { MemoryStore, factToNode } from "./graph-store.js";
 import { HistoricalMemoryStore } from "./historical-memory-store.js";
 import { createMemoryHttpServer } from "./http-server.js";
 import { ingestGuidance } from "./audit-marker.js";
+import { evaluateDriftGuard } from "./drift-guard.js";
+import { appendMemoryEvent, driftCaughtToMemoryEvent } from "./memory-events.js";
 import { ingestProject, refreshFiles } from "./ingest.js";
 import { initGraph, initMarkdownOnly } from "./init.js";
 import { lintMemory, type LintReport } from "./lint.js";
@@ -3059,6 +3061,128 @@ async function runIngest(args: ParsedArgs): Promise<void> {
     console.log(ingestGuidance(await currentGitCommit(rootDir)));
   } finally {
     await store.close();
+  }
+}
+
+/**
+ * PR-level CI drift guard (ADR 0027 Gap 3, issue #224). Reuses the pure
+ * {@link evaluateDriftGuard} decision core over inputs collected from git / the
+ * workflow. On failure it prints the documented actionable line, best-effort
+ * appends a `memory.drift.caught` event to the Memory event log (ADR 0025), and
+ * sets a non-zero exit code. Code-only PRs (no watched path changed) pass
+ * silently with no telemetry event.
+ */
+async function runDriftGuard(args: ParsedArgs): Promise<void> {
+  const rootDir = rootOf(args.flags);
+
+  const changedFiles = await driftGuardChangedFiles(rootDir, args);
+  const headCommitMessage = await driftGuardHeadMessage(rootDir, args);
+  const auditLogLines = await driftGuardAuditLog(rootDir);
+
+  const verdict = evaluateDriftGuard({ changedFiles, headCommitMessage, auditLogLines });
+
+  if (args.flags.json === true) {
+    console.log(JSON.stringify(verdict, null, 2));
+  }
+
+  if (verdict.status === "pass") {
+    if (args.flags.json !== true) {
+      if (verdict.reason === "no-watched-paths") {
+        console.log("memory drift-guard: no watched paths changed — pass");
+      } else {
+        console.log(
+          `memory drift-guard: audit marker present (${verdict.marker.form}) — pass`,
+        );
+      }
+    }
+    return;
+  }
+
+  // Failure: emit the actionable line, record the telemetry event, exit non-zero.
+  console.error(verdict.actionableLine);
+
+  const event = driftCaughtToMemoryEvent({
+    changedPaths: verdict.watchedChanged,
+    reason: verdict.actionableLine,
+    prNumber: typeof args.flags["pr-number"] === "string" ? args.flags["pr-number"] : undefined,
+    headSha: typeof args.flags["head-sha"] === "string" ? args.flags["head-sha"] : undefined,
+    baseRef: typeof args.flags["base-ref"] === "string" ? args.flags["base-ref"] : undefined,
+  });
+  // The envelope is always emitted so CI logs carry the ADR 0025 event even when
+  // no local graph store exists (the Action runs against a fresh checkout).
+  console.log(JSON.stringify(event));
+  // Best-effort append to the local event log when graph mode is initialized —
+  // never let a telemetry write turn a guard failure into a crash (issue #181).
+  await driftGuardRecordEvent(rootDir, event);
+
+  process.exitCode = 1;
+}
+
+/** Resolve the PR's changed files: an explicit `--changed-files <path>` list, or a `git diff` against `--base`. */
+async function driftGuardChangedFiles(rootDir: string, args: ParsedArgs): Promise<string[]> {
+  const listPath = args.flags["changed-files"];
+  if (typeof listPath === "string") {
+    const resolved = isAbsolute(listPath) ? listPath : resolve(rootDir, listPath);
+    const body = await readFile(resolved, "utf8");
+    return body.split(/\r?\n/).map((l) => l.trim()).filter((l) => l !== "");
+  }
+  const base = args.flags.base;
+  if (typeof base === "string") {
+    const { stdout } = await execFileAsync("git", ["diff", "--name-only", `${base}...HEAD`], {
+      cwd: rootDir,
+      encoding: "utf8",
+    });
+    return stdout.split(/\r?\n/).map((l) => l.trim()).filter((l) => l !== "");
+  }
+  throw new Error(
+    "drift-guard needs the PR's changed files — pass --changed-files <path> or --base <ref>",
+  );
+}
+
+/** Resolve the head commit message: an explicit `--head-message <path>`, or `git log -1` at HEAD. */
+async function driftGuardHeadMessage(rootDir: string, args: ParsedArgs): Promise<string | undefined> {
+  const msgPath = args.flags["head-message"];
+  if (typeof msgPath === "string") {
+    const resolved = isAbsolute(msgPath) ? msgPath : resolve(rootDir, msgPath);
+    return readFile(resolved, "utf8");
+  }
+  try {
+    const { stdout } = await execFileAsync("git", ["log", "-1", "--format=%B"], {
+      cwd: rootDir,
+      encoding: "utf8",
+    });
+    return stdout;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Read `.red/memory/.audit.log` lines if the project maintains that surface; absent is fine. */
+async function driftGuardAuditLog(rootDir: string): Promise<string[] | undefined> {
+  try {
+    const body = await readFile(join(rootDir, ".red/memory/.audit.log"), "utf8");
+    return body.split(/\r?\n/);
+  } catch {
+    return undefined;
+  }
+}
+
+/** Best-effort append of the drift event to the local Memory event log. Swallows all failure. */
+async function driftGuardRecordEvent(
+  rootDir: string,
+  event: ReturnType<typeof driftCaughtToMemoryEvent>,
+): Promise<void> {
+  try {
+    const config = await readConfig(rootDir);
+    if (!config || config.mode !== "graph") return;
+    const store = await MemoryStore.open({ uri: resolveStoreUri(rootDir, config) });
+    try {
+      await appendMemoryEvent(store, event);
+    } finally {
+      await store.close();
+    }
+  } catch {
+    // Telemetry is best-effort — a missing/locked store must not change the verdict.
   }
 }
 
@@ -6188,6 +6312,8 @@ async function main(): Promise<void> {
       return runExport(args);
     case "hook":
       return runHook(args);
+    case "drift-guard":
+      return runDriftGuard(args);
     case "import":
       return runImport(args);
     case "promote":
