@@ -9,6 +9,13 @@ import type { MemoryStore } from "./graph-store.js";
 import { hybridRecall, type Ranking } from "./hybrid-recall.js";
 import { appendEngineOpEvent } from "./memory-events.js";
 
+/** One Envelope user-hook execution surfaced on an attempt hit (issue #216). */
+export interface GraphRecallHookEntry {
+  lifecycle: string;
+  command: string;
+  exit_code: number;
+}
+
 export interface GraphRecallHit {
   /** Engine-assigned node rid, as a string for uniform CLI printing. */
   id: string;
@@ -17,6 +24,12 @@ export interface GraphRecallHit {
   node_type: string;
   score: number;
   excerpt: string;
+  /**
+   * User-hook executions from the Envelope `hooks` section (issue #216).
+   * Only set when the underlying node carries a non-empty `hooks` property
+   * (today: `attempt` nodes recorded after the AFK terminal envelope).
+   */
+  hooks?: GraphRecallHookEntry[];
 }
 
 export interface GraphRecallResult {
@@ -95,6 +108,7 @@ export async function graphRecallResult(
   for (const entry of fused) {
     const node = candidates.get(entry.rid);
     if (!node) continue;
+    const hooks = extractHookEntries(node.properties.hooks);
     hits.push({
       id: String(node.rid),
       rid: node.rid,
@@ -102,11 +116,33 @@ export async function graphRecallResult(
       node_type: node.node_type,
       score: entry.score,
       excerpt: node.excerpt,
+      ...(hooks ? { hooks } : {}),
     });
     if (hits.length >= limit) break;
   }
 
   return { hits, diagnostics };
+}
+
+function extractHookEntries(raw: unknown): GraphRecallHookEntry[] | null {
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+  const out: GraphRecallHookEntry[] = [];
+  for (const item of raw) {
+    if (item == null || typeof item !== "object") continue;
+    const entry = item as Record<string, unknown>;
+    const lifecycle = typeof entry.lifecycle === "string" ? entry.lifecycle : "";
+    const command = typeof entry.command === "string" ? entry.command : "";
+    const exit = entry.exit_code;
+    const exit_code =
+      typeof exit === "number" && Number.isFinite(exit)
+        ? exit
+        : typeof exit === "string" && /^-?\d+$/.test(exit.trim())
+          ? Number(exit.trim())
+          : NaN;
+    if (!lifecycle || !command || !Number.isFinite(exit_code)) continue;
+    out.push({ lifecycle, command, exit_code });
+  }
+  return out.length > 0 ? out : null;
 }
 
 async function keywordRanking(
