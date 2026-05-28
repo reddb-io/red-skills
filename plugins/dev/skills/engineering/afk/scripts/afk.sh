@@ -2631,13 +2631,54 @@ cleanup() {
   fi
   log "interrupted — iteration preserved at ${ITER_DIR:-<none>}"
   iter_close_preserve
+  AFK_SESSION_CLEAN_EXIT=1
   exit 130
 }
 trap cleanup INT TERM
 
+# ---------- on_session_error last-gasp hook (PRD #207, issue #214) ----------
+# Fires `on_session_error` when the AFK loop itself terminates without
+# setting AFK_SESSION_CLEAN_EXIT — i.e. an unhandled exception, a `set -e`
+# kill of the orchestrator script, supervisor death, or any path that did
+# not run through `post_session` / `on_idle` / cleanup / a user-requested
+# abort. Distinct from `on_worker_error` (a single worker crashed; the loop
+# kept running) and from `post_session` (clean shutdown). Exit-code policy
+# is `continue`: this hook cannot rescue the session, only announce its
+# death. The function is defined ABOVE the source guard so test harnesses
+# that `source afk.sh` can drive the handler directly without booting the
+# orchestrator; the EXIT trap is installed AFTER the guard, so sourcing
+# does not arm a trap in the calling shell.
+AFK_SESSION_CLEAN_EXIT=0
+_afk_on_session_error_handler() {
+  local rc=$?
+  [[ "${AFK_SESSION_CLEAN_EXIT:-0}" == "1" ]] && return 0
+  (( rc == 0 )) && return 0
+  declare -f hook_dispatch >/dev/null 2>&1 || return 0
+  export RED_AFK_ERROR_CLASS="${RED_AFK_ERROR_CLASS:-session-crash}"
+  export RED_AFK_WORKSPACE="${PROJECT_ROOT:-$PWD}"
+  export RED_AFK_RUNNER="${RUNNER:-}"
+  local _err_msg="${RED_AFK_ERROR_MESSAGE:-AFK session terminated unexpectedly (rc=$rc)}"
+  export RED_AFK_ERROR_MESSAGE="$_err_msg"
+  local _ctx
+  _ctx="$(jq -nc \
+    --arg runner "${RUNNER:-}" \
+    --arg worker "${WORKER_ID:-}" \
+    --arg ws     "${PROJECT_ROOT:-$PWD}" \
+    --arg class  "$RED_AFK_ERROR_CLASS" \
+    --arg msg    "$_err_msg" \
+    --arg rc     "$rc" \
+    '{runner:$runner, worker_id:$worker, workspace:$ws,
+      error:{class:$class, rc:($rc|tonumber? // 0), message:$msg}}' 2>/dev/null \
+    || printf '{}')"
+  hook_dispatch on_session_error "$_ctx" >/dev/null 2>&1 || true
+  return 0
+}
+
 # When sourced (e.g. from test harnesses), skip the orchestrator's main block —
 # expose every function for unit testing without invoking the real loop.
 [[ "${BASH_SOURCE[0]}" != "$0" ]] && return 0 2>/dev/null
+
+trap _afk_on_session_error_handler EXIT
 
 # ---------- pre-spawn boot-log ----------
 # Run the generic hook orchestrator's `pre-spawn` chain once at worker
@@ -2681,11 +2722,13 @@ if hook_config_load "${PROJECT_ROOT:-$PWD}/.red/config.yaml"; then
   else
     _rc=$?
     log "✗ pre_session hook aborted session (rc=$_rc)"
+    AFK_SESSION_CLEAN_EXIT=1
     exit "$_rc"
   fi
 else
   _rc=$?
   log "✗ hook config load failed (rc=$_rc) — aborting session"
+  AFK_SESSION_CLEAN_EXIT=1
   exit "$_rc"
 fi
 
@@ -2706,7 +2749,7 @@ straggler_check() {
     log "  needs-slicing → run /to-issues on those PRDs. others → run /triage."
     if [[ -t 0 && $ONCE -eq 0 ]]; then
       read -r -p "[afk] proceed anyway? [y/N] " ans
-      [[ "$ans" =~ ^[yY]$ ]] || { log "aborted by user"; exit 0; }
+      [[ "$ans" =~ ^[yY]$ ]] || { log "aborted by user"; AFK_SESSION_CLEAN_EXIT=1; exit 0; }
     fi
   fi
 }
@@ -2772,6 +2815,7 @@ if [[ "$TOTAL" -eq 0 ]]; then
   hook_dispatch on_idle "$_afk_idle_ctx" >/dev/null \
     || log "on_idle hook reported non-zero — continuing"
   echo "<promise>NO MORE TASKS</promise>"
+  AFK_SESSION_CLEAN_EXIT=1
   exit 0
 fi
 
@@ -2816,4 +2860,5 @@ _afk_post_ctx="$(jq -nc \
 hook_dispatch post_session "$_afk_post_ctx" >/dev/null \
   || log "post_session hook reported non-zero — continuing"
 
+AFK_SESSION_CLEAN_EXIT=1
 echo "<promise>NO MORE TASKS</promise>"
