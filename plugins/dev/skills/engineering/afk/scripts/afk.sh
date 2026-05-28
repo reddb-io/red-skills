@@ -1975,6 +1975,33 @@ do_merge() {
     return 1
   fi
 
+  # ---------- pre_merge lifecycle hook (PRD #207, issue #213) ----------
+  # Fires after legacy `pre-merge` (which keeps the three-layer detector model
+  # working) and before `git merge --no-ff`. The mutable slice is
+  # {issue, workspace, diff}: a user pre_merge hook can reject a diff (e.g.
+  # > 5k LOC) by exiting non-zero, aborting the merge for this issue.
+  # Exit-code policy is `abort`: the merge is short-circuited and the failure
+  # routes through the existing merge-conflict envelope path in process_issue.
+  local _afk_pm_diff
+  _afk_pm_diff="$(git -C "$PROJECT_ROOT" diff "$merge_base" "$branch" 2>/dev/null || true)"
+  export RED_AFK_WORKSPACE="$PROJECT_ROOT"
+  export RED_AFK_MERGE_BASE="$merge_base"
+  local _afk_pm_ctx _afk_pm_rc=0
+  _afk_pm_ctx="$(jq -nc \
+    --argjson num "$n" \
+    --arg title "$title" \
+    --arg ws "$PROJECT_ROOT" \
+    --arg branch "$branch" \
+    --arg diff "$_afk_pm_diff" \
+    '{issue:{number:$num, title:$title}, workspace:$ws, branch:$branch, diff:$diff}')"
+  hook_dispatch pre_merge "$_afk_pm_ctx" >/dev/null || _afk_pm_rc=$?
+  unset RED_AFK_MERGE_BASE
+  if (( _afk_pm_rc != 0 )); then
+    log "✗ pre_merge hook chain aborted (rc=$_afk_pm_rc) for #$n — aborting merge"
+    [[ -n "$restore_branch" ]] && git -C "$PROJECT_ROOT" switch "$restore_branch" >/dev/null 2>&1 || true
+    return 1
+  fi
+
   # Capture the integrated tip so a rejected push can be rolled back to it,
   # leaving no orphan merge commit on the target branch.
   local pre_merge_sha
@@ -2009,6 +2036,33 @@ do_merge() {
   local merge_sha
   merge_sha="$(git -C "$PROJECT_ROOT" rev-parse --short HEAD)"
   run_lifecycle_hook post-merge "RED_AFK_MERGE_SHA=${merge_sha}" || true
+
+  # ---------- post_merge lifecycle hook (PRD #207, issue #213) ----------
+  # Fires after the push succeeds. The mutable slice is {issue, merge_commit};
+  # the `validation` built-in default (registered first) runs CI/smoke against
+  # the merged primary checkout so user post_merge hooks see the validation
+  # status reconciled into the context before they fire. RED_AFK_MERGE_COMMIT
+  # carries the full merge sha so a user notifier can build the merge URL.
+  # Exit-code policy is `continue`: a broken notifier or a flaky smoke test
+  # must never roll back the merge or wedge the loop.
+  local _afk_pom_full_sha
+  _afk_pom_full_sha="$(git -C "$PROJECT_ROOT" rev-parse HEAD 2>/dev/null || true)"
+  export RED_AFK_WORKSPACE="$PROJECT_ROOT"
+  export RED_AFK_MERGE_COMMIT="$_afk_pom_full_sha"
+  export RED_AFK_MERGE_SHA="$merge_sha"
+  local _afk_pom_ctx _afk_pom_rc=0
+  _afk_pom_ctx="$(jq -nc \
+    --argjson num "$n" \
+    --arg title "$title" \
+    --arg ws "$PROJECT_ROOT" \
+    --arg sha "$_afk_pom_full_sha" \
+    --arg short "$merge_sha" \
+    '{issue:{number:$num, title:$title}, workspace:$ws, merge_commit:{sha:$sha, short:$short}}')"
+  hook_dispatch post_merge "$_afk_pom_ctx" >/dev/null || _afk_pom_rc=$?
+  if (( _afk_pom_rc != 0 )); then
+    log "post_merge hook chain exited rc=$_afk_pom_rc — continuing (policy=continue)"
+  fi
+  unset RED_AFK_MERGE_COMMIT RED_AFK_MERGE_SHA
 
   # Restore the primary checkout to its original branch (main), keeping the
   # precheck invariant intact for the next iteration.
