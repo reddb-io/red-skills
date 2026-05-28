@@ -7,6 +7,7 @@ import { initGraph } from "../src/init.js";
 import {
   appendEngineOpEvent,
   appendMemoryEvent,
+  driftCaughtToMemoryEvent,
   engineOpToMemoryEvent,
   hookLifecycleToMemoryEvent,
   parseMemoryEvent,
@@ -265,4 +266,54 @@ describe("Memory event log", () => {
     });
     expect(JSON.stringify(event)).not.toContain("keep the raw transcript");
   });
+
+  test("driftCaughtToMemoryEvent builds a contract-valid memory.drift.caught event (#224)", () => {
+    const event = driftCaughtToMemoryEvent({
+      changedPaths: [".red/adr/0032.md", ".red/CONTEXT.md"],
+      reason:
+        "Run /memory:ingest .red/adr/0032.md and re-push (or add Memory-NoIngest: <reason> trailer).",
+      prNumber: "224",
+      headSha: "1a2b3c4",
+      baseRef: "main",
+      timestamp: "2026-05-28T18:00:00.000Z",
+      eventId: "drift:224:1",
+    });
+    expect(event).toMatchObject({
+      id: "drift:224:1",
+      kind: "memory.drift.caught",
+      scope: { level: "pull-request", id: "224" },
+      payload: {
+        event_type: "memory.drift.caught",
+        changed_paths: [".red/adr/0032.md", ".red/CONTEXT.md"],
+        pr_number: "224",
+        head_sha: "1a2b3c4",
+        base_ref: "main",
+      },
+    });
+    // Round-trips through the strict envelope validator.
+    expect(() => parseMemoryEvent(event)).not.toThrow();
+  });
+
+  test(
+    "appendMemoryEvent persists a memory.drift.caught event onto the append-only log",
+    async () => {
+      const root = await tempRoot();
+      await initGraph(root);
+      const store = await openStore(root);
+      const event = driftCaughtToMemoryEvent({
+        changedPaths: [".red/adr/0040.md"],
+        reason: "Run /memory:ingest .red/adr/0040.md and re-push (or add Memory-NoIngest: <reason> trailer).",
+        eventId: "drift:pr:40",
+        timestamp: "2026-05-28T19:00:00.000Z",
+      });
+
+      await appendMemoryEvent(store, event);
+
+      const drift = (await readMemoryEvents(store)).filter(
+        (e) => e.kind === "memory.drift.caught",
+      );
+      expect(drift).toEqual([event]);
+    },
+    TIMEOUT,
+  );
 });
