@@ -446,6 +446,14 @@ iter_open() {
   mkdir -p "$ITER_DIR"
   printf '%s' "$$" > "$ITER_PID_FILE"
   : >> "$ITER_LOG"
+  # User-hook execution recorder (issue #215). The dispatcher appends a
+  # tab-separated triple per user-declared hook that runs during this
+  # issue's lifecycle, then `emit_envelope` reads the file back to compose
+  # the terminal Envelope's `data-section="hooks"` block. Scoped per
+  # iteration so cross-issue leakage is impossible — the file lives inside
+  # ITER_DIR and is torn down with it on iter_close_*.
+  export HOOK_EXECUTIONS_FILE="$ITER_DIR/hooks-executed.log"
+  hook_executions_reset
   state_init "$STATE_FILE" \
     worker_id="$WORKER_ID" \
     pid:=$$ \
@@ -906,6 +914,14 @@ emit_envelope() {
 
   local rc
   local notes_file="" log_file="" validation_file="" validation_sidecar_file=""
+  # Build the user-hook executions section body from the iteration
+  # recorder (issue #215). Empty file → the Module skips the section.
+  local hooks_file=""
+  if declare -f hook_executions_dump >/dev/null 2>&1; then
+    hooks_file="$(mktemp)"
+    hook_executions_dump "$hooks_file" >/dev/null 2>&1 || true
+    [[ -s "$hooks_file" ]] || { rm -f "$hooks_file"; hooks_file=""; }
+  fi
   if [[ "$status" == "done" ]]; then
     while [[ $# -ge 2 ]]; do
       case "$1" in
@@ -914,7 +930,8 @@ emit_envelope() {
       esac
       shift 2
     done
-    envelope_emit_done poster=_afk_envelope_poster "issue=$n" "summary=$summary" "validation_file=$validation_file"
+    envelope_emit_done poster=_afk_envelope_poster "issue=$n" "summary=$summary" \
+      "validation_file=$validation_file" "hooks_file=$hooks_file"
     rc=$?
   else
     # Collect the notes/log section files the caller passed; the Module adds the
@@ -933,9 +950,10 @@ emit_envelope() {
       "repo=$(gh_repo)" "repo_dir=$PROJECT_ROOT" "branch=$branch" \
       "remote_name=afk-attempts/${WORKER_ID}/${n}-${slug}" \
       "worktree_rel=$worktree_rel" "diffstat=$full_diffstat" \
-      "notes_file=$notes_file" "log_file=$log_file"
+      "notes_file=$notes_file" "log_file=$log_file" "hooks_file=$hooks_file"
     rc=$?
   fi
+  [[ -n "$hooks_file" ]] && rm -f "$hooks_file"
 
   if [[ "$rc" -eq 0 ]]; then
     state_write "$STATE_FILE" envelope.posted:=true
