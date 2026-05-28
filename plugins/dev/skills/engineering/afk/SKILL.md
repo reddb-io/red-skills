@@ -747,6 +747,34 @@ processed : 4 closed, 0 blocked, 0 failed
 remaining : 8 still ready-for-agent
 ```
 
+## Lifecycle Hooks
+
+`/afk` exposes a fixed set of lifecycle points declared in `.red/config.yaml` under `afk.hooks` and resolved as ordered lists of shell commands. Every hook follows a single interceptor contract:
+
+- Input: documented `RED_AFK_*` env vars (unset — *not* empty-string — when the field is irrelevant to the current point) plus the full mutable context as JSON on stdin.
+- Output: empty stdout → context unchanged; JSON object on stdout → AFK replaces the documented mutable slice with the returned value. Non-JSON stdout is treated as a parse failure.
+- Exit code: `0` continues the chain; non-zero is routed through a per-hook policy table — `pre_*` aborts the step, `post_*` / `on_idle` / `on_*_error` log and continue so a broken notifier never wedges AFK.
+
+Within a single hook list, **built-in defaults run first, user-declared commands run after**, and declaration order is preserved inside each group. A bare string is shorthand for a one-element list. An unknown hook name in `.red/config.yaml` is a hard error at session boot. Disable a built-in default with `afk.hooks.defaults.<name>: false` — reordering is not supported.
+
+The full lifecycle table is defined in PRD #207. The hooks shipped in the first tracer slice (issue #208) are:
+
+| Hook            | When it fires                              | Env vars              | Mutable slice   | Exit-code policy        |
+|-----------------|--------------------------------------------|-----------------------|-----------------|-------------------------|
+| `pre_session`   | Boot, before any queue work                | `RED_AFK_RUNNER`, `RED_AFK_WORKSPACE` | session config (`runner`, `worker_id`, `filter`, `iter_cap`) | non-zero **aborts** the session loudly |
+| `post_session`  | Normal session termination                 | `RED_AFK_RUNNER`, `RED_AFK_WORKSPACE` | session stats (`runner`, `worker_id`, `stats.{done,blocked,total}`) | non-zero is **logged** and the session ends as `NO MORE TASKS` |
+
+Example configuration:
+
+```yaml
+afk:
+  hooks:
+    pre_session: "echo boot"            # bare-string shorthand
+    post_session:
+      - "echo session done"
+      - "curl -s -X POST $SLACK_URL -d \"done=$(jq -r .stats.done)\""
+```
+
 ## Safety
 
 See [`SAFETY.md`](SAFETY.md). The orchestrator and the inner agent both inherit those rules. Violations abort the loop.
