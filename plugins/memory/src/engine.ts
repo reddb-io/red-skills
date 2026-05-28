@@ -1185,8 +1185,29 @@ function renderContext(
     lines.push(`- **${p.title ?? n.label}** _(${n.node_type})_${source}`);
     const detail = p.summary ?? p.content;
     if (detail) lines.push(`  ${detail.slice(0, 200)}`);
+    // attempt nodes carry their Envelope hook executions as a `hooks` array
+    // (issue #216). Surface a one-line summary so recall consumers see which
+    // user hooks fired without re-reading the raw Envelope.
+    const hooksLine = renderAttemptHooks(p.hooks);
+    if (hooksLine) lines.push(`  ${hooksLine}`);
   }
   return `${lines.join("\n")}\n`;
+}
+
+function renderAttemptHooks(hooks: unknown): string | null {
+  if (!Array.isArray(hooks) || hooks.length === 0) return null;
+  const parts: string[] = [];
+  for (const raw of hooks) {
+    if (raw == null || typeof raw !== "object") continue;
+    const entry = raw as Record<string, unknown>;
+    const lifecycle = typeof entry.lifecycle === "string" ? entry.lifecycle : "";
+    if (!lifecycle) continue;
+    const exit = entry.exit_code;
+    const exitStr = typeof exit === "number" || typeof exit === "string" ? String(exit) : "?";
+    parts.push(`${lifecycle}=${exitStr}`);
+  }
+  if (parts.length === 0) return null;
+  return `_hooks: ${parts.join(", ")}_`;
 }
 
 function renderVectorDiagnostic(d: VectorRecallDiagnostics): string {
