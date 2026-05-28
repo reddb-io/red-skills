@@ -70,11 +70,33 @@ _hook_unquote() {
 }
 
 # Register built-in defaults at their lifecycle points. Called BEFORE
-# user-declared hooks so user hooks always run last at any point. The
-# first tracer bullet (issue #208) ships no defaults; subsequent slices
-# add migrated detectors here.
+# user-declared hooks so user hooks always run last at any point. Defaults
+# register in a fixed alphabetical order at each point; users can only
+# *disable* individual defaults via `afk.hooks.defaults.<name>: false`,
+# never reorder them (see SKILL.md "Lifecycle Hooks").
+#
+# Currently shipped (issue #211, PRD #207):
+#   pre_worktree:
+#     - cargo   → defaults/cargo-pre-worktree.sh
+#     - gradle  → defaults/gradle-pre-worktree.sh
 hook_config_register_defaults() {
-  :  # intentionally empty — first slice
+  # Always derive the defaults dir from this file's own location — lib/
+  # lives at <plugin>/scripts/lib, so climbing two levels lands at the
+  # plugin root. RED_AFK_PLUGIN_DIR can point at a co-installed copy of
+  # the skill that does not yet ship these defaults (e.g. when a worktree
+  # adds new ones), so we deliberately anchor on this file instead.
+  local plugin_dir
+  plugin_dir="$(cd "$_HOOK_CONFIG_DIR/../.." && pwd)"
+  local defaults_dir="$plugin_dir/defaults"
+
+  if [[ -z "${HOOK_DEFAULTS_DISABLED[cargo]:-}" \
+        && -x "$defaults_dir/cargo-pre-worktree.sh" ]]; then
+    hook_register pre_worktree "$defaults_dir/cargo-pre-worktree.sh"
+  fi
+  if [[ -z "${HOOK_DEFAULTS_DISABLED[gradle]:-}" \
+        && -x "$defaults_dir/gradle-pre-worktree.sh" ]]; then
+    hook_register pre_worktree "$defaults_dir/gradle-pre-worktree.sh"
+  fi
 }
 
 # hook_config_load [FILE]
