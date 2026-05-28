@@ -6,6 +6,19 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 
 ---
 
+## afk lifecycle hooks — on_idle (added)
+
+- **status**: added
+- **upstream**: —
+- **why**: Issue #209 (under PRD #207) — second tracer slice for the AFK lifecycle hook system. Wires `on_idle` as the "between drains" maintenance point, distinct from `post_session`'s session-termination role. PRD demo case: `afk.hooks.on_idle: ["cargo clean -p reddb-storage"]` fires exactly when the storage cache is no longer load-bearing for the next worker.
+- **what changed**:
+  - `plugins/dev/skills/engineering/afk/scripts/afk.sh`: dispatch `on_idle` inside the `TOTAL -eq 0` branch (queue drained at top of loop iteration), before the `NO MORE TASKS` exit. Context passes `runner`, `worker_id`, and `stats.{done,blocked,total}` (read-only in this slice — no mutable slice). Non-zero is logged and the session still exits cleanly per the dispatcher's `continue` policy. The post-loop session-exit path is untouched: only `post_session` fires there.
+  - `plugins/dev/skills/engineering/afk/scripts/tests/lifecycle-on-idle.test.sh`: covers the wiring (dispatch sits inside the empty-queue branch, before exit; exactly one site; precedes the per-issue loop), the dispatcher policy (`continue`), canonical-name set membership, the PRD's `cargo clean` example end-to-end (non-zero rc=101 logged, dispatch returns 0, ctx unchanged, follow-up command still runs), and the SKILL.md doc surface.
+  - `plugins/dev/skills/engineering/afk/SKILL.md`: extends the *Lifecycle Hooks* table with an `on_idle` row (when it fires, env vars, "none" mutable slice, exit-code policy) and adds the `cargo clean -p reddb-storage` line to the worked YAML example.
+- **compatibility**: additive only. No change to `pre_session`/`post_session` semantics, no built-in defaults registered. The existing `hook-dispatcher` `HOOK_EXIT_POLICY[on_idle]=continue` from #208 is what governs the new wiring — no policy table edit needed.
+
+---
+
 ## afk lifecycle hooks — dispatcher + config loader + pre_session/post_session (added)
 
 - **status**: added

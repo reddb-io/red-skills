@@ -757,11 +757,12 @@ remaining : 8 still ready-for-agent
 
 Within a single hook list, **built-in defaults run first, user-declared commands run after**, and declaration order is preserved inside each group. A bare string is shorthand for a one-element list. An unknown hook name in `.red/config.yaml` is a hard error at session boot. Disable a built-in default with `afk.hooks.defaults.<name>: false` — reordering is not supported.
 
-The full lifecycle table is defined in PRD #207. The hooks shipped in the first tracer slice (issue #208) are:
+The full lifecycle table is defined in PRD #207. The hooks shipped so far:
 
 | Hook            | When it fires                              | Env vars              | Mutable slice   | Exit-code policy        |
 |-----------------|--------------------------------------------|-----------------------|-----------------|-------------------------|
 | `pre_session`   | Boot, before any queue work                | `RED_AFK_RUNNER`, `RED_AFK_WORKSPACE` | session config (`runner`, `worker_id`, `filter`, `iter_cap`) | non-zero **aborts** the session loudly |
+| `on_idle`       | Queue drained at top of loop iteration, before sleep/exit. Distinct from `post_session` — this is "between drains" maintenance (e.g. cache cleanup), not session termination. Does **not** fire on session exit. | `RED_AFK_RUNNER`, `RED_AFK_WORKSPACE` | none in this slice — `stats.{done,blocked,total}` are read-only context | non-zero is **logged** and the loop continues |
 | `post_session`  | Normal session termination                 | `RED_AFK_RUNNER`, `RED_AFK_WORKSPACE` | session stats (`runner`, `worker_id`, `stats.{done,blocked,total}`) | non-zero is **logged** and the session ends as `NO MORE TASKS` |
 
 Example configuration:
@@ -770,6 +771,8 @@ Example configuration:
 afk:
   hooks:
     pre_session: "echo boot"            # bare-string shorthand
+    on_idle:
+      - "cargo clean -p reddb-storage"  # safe between drains, not on exit
     post_session:
       - "echo session done"
       - "curl -s -X POST $SLACK_URL -d \"done=$(jq -r .stats.done)\""
