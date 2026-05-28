@@ -106,6 +106,32 @@ graph store below. Accordingly:
 The drift guard #224 consumes the trailer form (parse `git log` trailers
 for `Memory-Ingested:` / `Memory-NoIngest:`).
 
+## PostToolUse watched paths (closed loop)
+
+The Memory plugin's `PostToolUse` hook does **not** re-index every file the
+agent edits. It is path-scoped to the closed-loop memory surfaces declared in
+**ADR 0027 Amendment**. When an `Edit` / `Write` (Claude) or `apply_patch`
+(Codex) touches none of these, `handlePostToolUse` short-circuits to a noop
+*before opening the store*; a mixed changed-files list re-indexes the watched
+subset only. The skipped invocation is still written to the Memory event log
+(ADR 0025) via `recordLifecycle`, so the noop is auditable.
+
+The watched set is the single `WATCHED_GLOBS` constant in
+`plugins/memory/src/watched-paths.ts`:
+
+```
+.red/adr/**/*.md
+.red/wiki/pages/**/*.md
+.red/CONTEXT.md
+.red/CONTEXT-MAP.md
+.red/contexts/**/*.md
+```
+
+Adding a new memory surface (e.g. `.red/contracts/**`) is a **one-line change**
+to that constant — no handler, matcher, or `.hooks.json` edit is needed. The
+`.hooks.json` matchers stay `Edit|Write` (Claude) and `apply_patch` (Codex);
+path matching happens on the changed-files payload, not on the matcher string.
+
 ## Out of scope
 
 The graph-mode memory store (`.red/memory/graph.rdb*`, `sessions/`,

@@ -13,6 +13,7 @@ import { appendMemoryEvent, hookLifecycleToMemoryEvent } from "./memory-events.j
 import { runPromote } from "./promote.js";
 import type { MemoryNode, NodeType } from "./schema.js";
 import { slugify } from "./store.js";
+import { filterWatchedPaths } from "./watched-paths.js";
 
 /**
  * The four auto-firing hooks, identified by their Claude Code event names. The
@@ -253,9 +254,18 @@ async function handlePostToolUse(
   if (input.changedFiles.length === 0) {
     return { noop: true, reason: "no changed files" };
   }
+  // Path-scope to the closed-loop memory surfaces (ADR 0027 Amendment) *before*
+  // opening the store: only `.red/{adr,wiki/pages,CONTEXT*,contexts}` edits drive
+  // an ingest. A mixed changed-files list proceeds with the watched subset only.
+  // The noop still flows through `recordLifecycle` (see `dispatch`), so the
+  // Memory event log (ADR 0025) reflects the skipped invocation.
+  const watched = filterWatchedPaths(input.changedFiles);
+  if (watched.length === 0) {
+    return { noop: true, reason: "no watched path" };
+  }
   const store = await deps.openStore(resolveStoreUri(rootDir, config));
   try {
-    const report = await deps.reindexFiles(store, input.changedFiles);
+    const report = await deps.reindexFiles(store, watched);
     if (report.files === 0) return { noop: true, reason: "no indexable files changed" };
     return { noop: false, indexed: report.files };
   } finally {
