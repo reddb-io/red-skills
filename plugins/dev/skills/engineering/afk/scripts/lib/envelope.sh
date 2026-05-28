@@ -67,6 +67,13 @@
 #       notes_file    path to the notes section body (blocked, no-sentinel)
 #       log_file      path to the log section body (no-sentinel, merge-conflict)
 #       section_file  path to the discard summary section body (discarded)
+#       hooks_file    path to the hooks section body — one
+#                     `<lifecycle_name> <command> exit=<rc>` line per
+#                     user-declared hook that ran during this issue's
+#                     lifecycle, in execution order (issue #215). When
+#                     omitted or empty, the hooks section is skipped.
+#                     Built-in defaults are recorded separately and do
+#                     not appear in this file.
 #
 #   envelope_emit_done poster=FN issue=N summary=STR
 #     The section-less success Envelope. No afk-attempts push. Returns the
@@ -148,7 +155,7 @@ envelope_push_attempt() {
 envelope_emit_attempt() {
   local poster="" status="" issue="" summary=""
   local repo="" repo_dir="" branch="" remote_name="" worktree_rel="" diffstat=""
-  local notes_file="" log_file="" section_file=""
+  local notes_file="" log_file="" section_file="" hooks_file=""
   local arg key val
   for arg in "$@"; do
     key="${arg%%=*}"
@@ -167,6 +174,7 @@ envelope_emit_attempt() {
       notes_file)   notes_file="$val" ;;
       log_file)     log_file="$val" ;;
       section_file) section_file="$val" ;;
+      hooks_file)   hooks_file="$val" ;;
       *) printf '[envelope] envelope_emit_attempt: unknown arg %q\n' "$arg" >&2 ;;
     esac
   done
@@ -191,6 +199,13 @@ envelope_emit_attempt() {
       merge-conflict) sections=( diff "$diff_tmp" log "$log_file" ) ;;
       *) printf '[envelope] envelope_emit_attempt: unknown status %q\n' "$status" >&2 ;;
     esac
+    # Hooks block sits last in the worker failure family — after diff/log
+    # so existing section-order tests (notes < diff < log) stay green.
+    # Skipped on `discarded` (the supervisor adapter has no per-issue
+    # lifecycle to record) and on empty `hooks_file` (no user hooks ran).
+    if [[ -n "$hooks_file" && -s "$hooks_file" ]]; then
+      sections+=( hooks "$hooks_file" )
+    fi
   fi
 
   local body; body="$(envelope_build_body "$status" "$summary" "${sections[@]}")"
@@ -202,7 +217,7 @@ envelope_emit_attempt() {
 
 # envelope_emit_done poster=FN issue=N summary=STR [validation_file=PATH]
 envelope_emit_done() {
-  local poster="" issue="" summary="" validation_file=""
+  local poster="" issue="" summary="" validation_file="" hooks_file=""
   local arg key val
   for arg in "$@"; do
     key="${arg%%=*}"
@@ -212,11 +227,17 @@ envelope_emit_done() {
       issue)           issue="$val" ;;
       summary)         summary="$val" ;;
       validation_file) validation_file="$val" ;;
+      hooks_file)      hooks_file="$val" ;;
       *) printf '[envelope] envelope_emit_done: unknown arg %q\n' "$arg" >&2 ;;
     esac
   done
   local -a sections=()
   [[ -n "$validation_file" ]] && sections=( validation "$validation_file" )
+  # Hooks section sits after validation so existing `done` envelopes with
+  # validation alone keep their layout. Skipped on empty hooks_file.
+  if [[ -n "$hooks_file" && -s "$hooks_file" ]]; then
+    sections+=( hooks "$hooks_file" )
+  fi
   local body; body="$(envelope_build_body "done" "$summary" "${sections[@]}")"
   ENVELOPE_LAST_BODY="$body"
   "$poster" "$issue" "$body"

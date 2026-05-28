@@ -94,25 +94,30 @@ hook_config_register_defaults() {
   plugin_dir="$(cd "$_HOOK_CONFIG_DIR/../.." && pwd)"
   local defaults_dir="$plugin_dir/defaults"
 
+  # All built-in defaults register with kind=default so the dispatcher
+  # excludes them from HOOK_USER_EXECUTIONS — the terminal Envelope's
+  # `data-section="hooks"` block only surfaces user-declared hooks
+  # (issue #215). The env-var binding is scoped per `hook_register` call
+  # to avoid leaking the kind into the user-hook replay below.
   if [[ -z "${HOOK_DEFAULTS_DISABLED[cargo]:-}" \
         && -x "$defaults_dir/cargo-pre-worktree.sh" ]]; then
-    hook_register pre_worktree "$defaults_dir/cargo-pre-worktree.sh"
+    HOOK_REGISTER_KIND=default hook_register pre_worktree "$defaults_dir/cargo-pre-worktree.sh"
   fi
   if [[ -z "${HOOK_DEFAULTS_DISABLED[gradle]:-}" \
         && -x "$defaults_dir/gradle-pre-worktree.sh" ]]; then
-    hook_register pre_worktree "$defaults_dir/gradle-pre-worktree.sh"
+    HOOK_REGISTER_KIND=default hook_register pre_worktree "$defaults_dir/gradle-pre-worktree.sh"
   fi
   if [[ -z "${HOOK_DEFAULTS_DISABLED[heartbeat]:-}" \
         && -x "$defaults_dir/heartbeat-post-worker.sh" ]]; then
-    hook_register post_worker "$defaults_dir/heartbeat-post-worker.sh"
+    HOOK_REGISTER_KIND=default hook_register post_worker "$defaults_dir/heartbeat-post-worker.sh"
   fi
   if [[ -z "${HOOK_DEFAULTS_DISABLED[envelope]:-}" \
         && -x "$defaults_dir/envelope-post-worker.sh" ]]; then
-    hook_register post_worker "$defaults_dir/envelope-post-worker.sh"
+    HOOK_REGISTER_KIND=default hook_register post_worker "$defaults_dir/envelope-post-worker.sh"
   fi
   if [[ -z "${HOOK_DEFAULTS_DISABLED[validation]:-}" \
         && -x "$defaults_dir/validation-post-merge.sh" ]]; then
-    hook_register post_merge "$defaults_dir/validation-post-merge.sh"
+    HOOK_REGISTER_KIND=default hook_register post_merge "$defaults_dir/validation-post-merge.sh"
   fi
 }
 
@@ -125,6 +130,7 @@ hook_config_load() {
 
   # Reset state on every load.
   HOOK_LISTS=()
+  HOOK_KINDS=()
   HOOK_DEFAULTS_DISABLED=()
 
   if [[ ! -f "$file" ]]; then
