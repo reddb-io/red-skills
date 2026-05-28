@@ -764,8 +764,26 @@ The full lifecycle table is defined in PRD #207. The hooks shipped so far:
 | `pre_session`   | Boot, before any queue work                | `RED_AFK_RUNNER`, `RED_AFK_WORKSPACE` | session config (`runner`, `worker_id`, `filter`, `iter_cap`) | non-zero **aborts** the session loudly |
 | `pre_pick`      | Before listing the tracker queue           | `RED_AFK_RUNNER`, `RED_AFK_WORKSPACE` | query params (`label`, `state`, `limit`) — `filter.{kind,value}` is read-only context | non-zero **aborts** the pick; queue listing is **skipped this iteration** and AFK falls through to the empty-queue / `on_idle` path |
 | `post_pick`     | After listing, before claiming             | `RED_AFK_RUNNER`, `RED_AFK_WORKSPACE` | `issues[]` (filter / reorder; replace with `{issues:[…]}`) — extra keys are silently ignored | non-zero is **logged** and AFK continues with the **un-mutated** list (defensive default — a broken filter must not silently drop work) |
+| `pre_worktree`  | After claim, before `git worktree add`     | `RED_AFK_RUNNER`, `RED_AFK_WORKSPACE`, `RED_AFK_ISSUE`, `RED_AFK_SLOT` | `issue`, `target` (worktree path), `env` (k/v map merged into the parent shell so `CARGO_TARGET_DIR` etc. propagate to the runner) — `branch` is read-only context | non-zero **aborts**: the claim is restored to `ready-for-agent`, the iteration tear-down runs, and the worktree is **not** created |
+| `pre_worker`    | After worktree exists, before runner boots | `RED_AFK_RUNNER`, `RED_AFK_WORKSPACE` (now the worktree), `RED_AFK_ISSUE` | `issue`, `workspace` (worktree path) — `runner` is read-only context | non-zero **skips runner invocation**: the worktree is preserved, the heartbeat stops, and the claim is restored to `ready-for-agent` so post-pick state is reconciled cleanly |
 | `on_idle`       | Queue drained at top of loop iteration, before sleep/exit. Distinct from `post_session` — this is "between drains" maintenance (e.g. cache cleanup), not session termination. Does **not** fire on session exit. | `RED_AFK_RUNNER`, `RED_AFK_WORKSPACE` | none in this slice — `stats.{done,blocked,total}` are read-only context | non-zero is **logged** and the loop continues |
 | `post_session`  | Normal session termination                 | `RED_AFK_RUNNER`, `RED_AFK_WORKSPACE` | session stats (`runner`, `worker_id`, `stats.{done,blocked,total}`) | non-zero is **logged** and the session ends as `NO MORE TASKS` |
+
+### Built-in defaults
+
+Defaults are AFK-shipped commands registered before any user hook at the
+same lifecycle point. They run **first**, in a fixed registration order
+that users cannot change — only **disable** individual defaults via
+`afk.hooks.defaults.<name>: false`. The disable-not-reorder rule keeps
+later defaults (and user hooks) able to assume an earlier default has
+already had its turn at the env.
+
+Currently shipped:
+
+| Default  | Lifecycle point | Effect                                                                                  | Disable                              |
+|----------|-----------------|-----------------------------------------------------------------------------------------|--------------------------------------|
+| `cargo`  | `pre_worktree`  | When `Cargo.toml` exists at `$PROJECT_ROOT`, sets `CARGO_TARGET_DIR=${RED_AFK_CARGO_TARGET_BASE:-/opt/cargo-target}/slot-${RED_AFK_SLOT}` (mkdir-p'd) so each slot's cargo state is isolated. | `afk.hooks.defaults.cargo: false`  |
+| `gradle` | `pre_worktree`  | When `build.gradle*` exists at `$PROJECT_ROOT` **and** `RED_AFK_GRADLE_USER_HOME_BASE` is set, sets `GRADLE_USER_HOME=${RED_AFK_GRADLE_USER_HOME_BASE}/slot-${RED_AFK_SLOT}` so each slot's Gradle daemons / caches are isolated. The env-var opt-in is deliberate — AFK will not claim a path on your filesystem without consent. | `afk.hooks.defaults.gradle: false` |
 
 Example configuration:
 
@@ -777,11 +795,17 @@ afk:
       # filter the queue to issues you opened — RED_AFK_GITHUB_LOGIN must be set
       - "RED_AFK_GITHUB_LOGIN=$(gh api user --jq .login) \
          plugins/dev/skills/engineering/afk/examples/only-mine.sh"
+    pre_worktree:
+      # user hooks see CARGO_TARGET_DIR / GRADLE_USER_HOME already exported
+      # by the built-in `cargo` / `gradle` defaults that ran before them
+      - "echo isolated cargo dir: $CARGO_TARGET_DIR"
     on_idle:
       - "cargo clean -p reddb-storage"  # safe between drains, not on exit
     post_session:
       - "echo session done"
       - "curl -s -X POST $SLACK_URL -d \"done=$(jq -r .stats.done)\""
+    defaults:
+      gradle: false                     # opt out of the gradle built-in
 ```
 
 ## Safety
