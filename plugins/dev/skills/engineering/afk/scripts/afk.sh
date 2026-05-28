@@ -591,9 +591,14 @@ slugify() {
 }
 
 select_issues() {
+  # Query params come from globals set by the pre_pick hook wiring (see below).
+  # Defaults match the historical hardcoded values when the globals are unset.
+  local label="${PICK_LABEL:-ready-for-agent}"
+  local state="${PICK_STATE:-open}"
+  local limit="${PICK_LIMIT:-100}"
   local raw
-  raw="$(gh -R "$(gh_repo)" issue list --label ready-for-agent --state open \
-        --json number,title,labels,body --limit 100)"
+  raw="$(gh -R "$(gh_repo)" issue list --label "$label" --state "$state" \
+        --json number,title,labels,body,author --limit "$limit")"
 
   # Hard exclude PRDs even if accidentally tagged ready-for-agent.
   # PRDs are not implementable units; /to-issues must split them first.
@@ -2514,7 +2519,49 @@ straggler_check() {
 }
 straggler_check
 
-ISSUES_JSON="$(select_issues)"
+# ---------- pre_pick lifecycle hook ----------
+# Build the default query-params context, let pre_pick mutate it, then drive
+# select_issues from the mutated values via PICK_* globals. Mutable slice:
+# {label, state, limit}. The filter sub-object is read-only context (the
+# /afk CLI owns it). Non-zero exit aborts the pick — listing is skipped for
+# this iteration and we fall through to the empty-queue (on_idle) path.
+_afk_pick_ctx="$(jq -nc \
+  --arg label "ready-for-agent" \
+  --arg state "open" \
+  --argjson limit 100 \
+  --arg fkind "${FILTER_KIND:-all}" \
+  --arg fval  "${FILTER_VALUE:-}" \
+  '{label:$label, state:$state, limit:$limit, filter:{kind:$fkind, value:$fval}}')"
+_afk_skip_pick=0
+if _afk_pick_ctx="$(hook_dispatch pre_pick "$_afk_pick_ctx")"; then
+  PICK_LABEL="$(echo "$_afk_pick_ctx" | jq -r '.label // "ready-for-agent"')"
+  PICK_STATE="$(echo "$_afk_pick_ctx" | jq -r '.state // "open"')"
+  PICK_LIMIT="$(echo "$_afk_pick_ctx" | jq -r '.limit // 100')"
+else
+  _rc=$?
+  log "✗ pre_pick hook aborted pick (rc=$_rc) — skipping queue listing this iteration"
+  _afk_skip_pick=1
+fi
+
+if [[ $_afk_skip_pick -eq 1 ]]; then
+  ISSUES_JSON='[]'
+else
+  ISSUES_JSON="$(select_issues)"
+
+  # ---------- post_pick lifecycle hook ----------
+  # Wrap the issues[] in {issues: [...]} so the JSON-object dispatcher
+  # contract holds. Mutable slice: `.issues`. Hooks may filter/reorder.
+  # Policy is `continue`: a broken filter must not silently drop work, so
+  # we fall back to the pre-hook list when the hook fails. Extra keys
+  # outside `.issues` are silently ignored.
+  _afk_post_pick_ctx="$(jq -nc --argjson issues "$ISSUES_JSON" '{issues:$issues}')"
+  _afk_post_pick_ctx="$(hook_dispatch post_pick "$_afk_post_pick_ctx")"
+  _afk_new_issues="$(echo "$_afk_post_pick_ctx" | jq -c '.issues // empty' 2>/dev/null || true)"
+  if [[ -n "$_afk_new_issues" ]]; then
+    ISSUES_JSON="$_afk_new_issues"
+  fi
+fi
+
 TOTAL="$(echo "$ISSUES_JSON" | jq 'length')"
 if [[ "$TOTAL" -eq 0 ]]; then
   # ---------- on_idle lifecycle hook ----------
