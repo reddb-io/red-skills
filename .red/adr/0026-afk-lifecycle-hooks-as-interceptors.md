@@ -29,19 +29,53 @@ The AFK lifecycle exposes the following hooks, in execution order:
 | `pre_pick`          | Before listing the issue tracker queue                       | query params             |
 | `post_pick`         | After listing, before claiming                               | issues[]                 |
 | `pre_worktree`      | Before the per-issue worktree is created                     | issue, target path       |
-| `pre_worker`        | Worktree ready, before runner (claude/codex) executes        | issue, workspace         |
-| `post_worker`       | Runner returned (success **or** clean failure)               | issue, workspace, result |
+| `pre_attempt`       | Before each runner invocation on this issue (fires once per attempt — re-fires on runner-fallback swap) | issue, workspace, attempt_n |
+| `post_attempt`      | Runner returned (success **or** clean failure) for this attempt | issue, workspace, result, attempt_n |
 | `pre_merge`         | Before merging worker branch into the pinned branch          | issue, workspace, diff   |
 | `post_merge`        | After successful merge                                       | issue, merge commit      |
-| `on_worker_error`   | Unhandled exception inside a single worker                   | issue, workspace, error  |
+| `on_attempt_error`  | Unhandled exception inside this attempt's runner             | issue, workspace, error, attempt_n |
 | `on_idle`           | Queue drained, before sleep/exit                             | session stats            |
 | `post_session`      | Normal session termination                                   | session stats            |
 | `on_session_error`  | Unhandled exception in the loop itself (last gasp)           | error                    |
 
 `on_idle` is intentionally separate from `post_session` so projects can run
 "between drains" maintenance (e.g. `cargo clean`, prune stale worktrees,
-`docker system prune`) without that cost being paid per-issue inside
-`post_worker`.
+`docker system prune`) without that cost being paid per-attempt inside
+`post_attempt`.
+
+### Worker vs attempt vocabulary
+
+The lifecycle uses two distinct terms that earlier drafts conflated:
+
+- **worker** = the AFK orchestrator process draining the queue (identified
+  by `RED_AFK_WORKER_ID`, e.g. `wNHSY`). One worker processes many issues
+  over its lifetime, one issue at a time.
+- **attempt** = one execution of the inner agent on one issue, as defined
+  by ADR 0017 ("the audit object for one execution"). Under
+  `--fallback-runner`, a single issue can produce **multiple attempts** —
+  e.g. claude exhausts mid-issue, codex picks up the same worktree as
+  attempt 2.
+
+The `pre_attempt` / `post_attempt` / `on_attempt_error` hooks fire **per
+runner invocation**, not per issue. A `--fallback-runner` swap on issue
+#42 produces two `pre_attempt` → `post_attempt` cycles, with `attempt_n`
+incrementing (1 for the first, 2 for the swap). Each cycle carries the
+runner identity in `RED_AFK_RUNNER` so hooks can branch on it.
+
+This alignment matters because the Memory plugin's `attempt` node (ADR
+0017) already records one node per runner invocation; binding the hook
+boundary to the same semantic means the `attempt.hooks` summary field
+introduced by #216 maps 1:1 — every attempt node corresponds to exactly
+one `pre_attempt → post_attempt` cycle, and every hook firing has a
+sibling attempt node to attach to.
+
+"Session-level" framing for the worker process lives in `pre_session` /
+`post_session` / `on_session_error`. "Issue-level" framing lives between
+`pre_worktree` (worktree created) and `pre_merge` (about to integrate).
+"Attempt-level" framing lives between `pre_attempt` and `post_attempt`,
+and can repeat within one issue. Hooks that want "fire exactly once per
+issue regardless of fallback" should use `pre_worktree` or `pre_merge`,
+not `pre_attempt`.
 
 ### Interceptor contract
 
@@ -67,9 +101,9 @@ Exit codes:
 - non-zero → abort *this step* with hook-specific semantics:
   - `pre_session`, `pre_pick`, `pre_worktree`, `pre_merge`: abort the
     session / pick / worktree / merge.
-  - `pre_worker`: skip this issue, continue the loop.
-  - `post_worker`, `post_merge`, `post_pick`, `on_idle`, `post_session`,
-    `on_worker_error`, `on_session_error`: log the failure and continue —
+  - `pre_attempt`: skip this issue, continue the loop.
+  - `post_attempt`, `post_merge`, `post_pick`, `on_idle`, `post_session`,
+    `on_attempt_error`, `on_session_error`: log the failure and continue —
     a broken notifier must never wedge `/afk`.
 
 Multiple commands per hook run sequentially in declaration order; each one
@@ -87,9 +121,9 @@ afk:
       - "bash ./.red/hooks/only-mine.sh"      # may emit {"labels":["mine"]}
     post_pick:
       - "bash ./.red/hooks/dedupe.sh"         # may emit filtered issues[]
-    post_worker:
+    post_attempt:
       - "bash ./.red/hooks/notify.sh"
-    on_worker_error:
+    on_attempt_error:
       - "bash ./.red/hooks/page-oncall.sh"
     on_idle:
       - "cargo clean -p reddb-storage"        # the canonical example
@@ -114,11 +148,11 @@ hook names are a config error (caught at session boot, surfaced through
   validation without forking the skill.
 - **`on_idle` separates "between drains" maintenance from per-issue
   teardown.** The cargo example is the giveaway: `cargo clean` per
-  `post_worker` would defeat incremental compilation; `cargo clean` at
+  `post_attempt` would defeat incremental compilation; `cargo clean` at
   `on_idle` runs exactly when the cache is no longer load-bearing.
-- **Errors are first-class without conflating outcomes.** `post_worker`
+- **Errors are first-class without conflating outcomes.** `post_attempt`
   always runs for "the worker terminated normally" (success or clean
-  failure). `on_worker_error` exists for "the worker itself blew up", and
+  failure). `on_attempt_error` exists for "the worker itself blew up", and
   `on_session_error` exists for "the loop blew up". Hook authors do not
   have to demultiplex on `result.status`.
 - **Env vars for the common case, JSON for the rich case.** Asking every
@@ -145,9 +179,9 @@ lifecycle point, run through the same dispatcher as user hooks):
 
 - `detectors/cargo.sh`, `detectors/gradle.sh` → `pre_worktree`
 - `.env` / symlink seeding into the worktree → `pre_worktree`
-- Heartbeat tick and intermediate envelope updates → `post_worker`
+- Heartbeat tick and intermediate envelope updates → `post_attempt`
 - Post-merge CI / smoke validation → `post_merge`
-- Task Mirror sync to the tracker → `post_pick`, `post_worker`
+- Task Mirror sync to the tracker → `post_pick`, `post_attempt`
 - Session summary notification → `post_session`
 
 **Stays as mechanism** (lifecycle steps themselves, not entries in any
@@ -222,7 +256,24 @@ reaching under the hood.
 - **Hooks as a separate `.red/afk/hooks.yaml`.** Rejected for the first
   slice to keep configuration discovery cheap; can be split later if the
   block grows unwieldy.
-- **Merge `on_worker_error` into `post_worker` with a status field.**
+- **Keep the names `pre_worker` / `post_worker` / `on_worker_error`.**
+  Rejected because "worker" already names the AFK orchestrator process
+  (`RED_AFK_WORKER_ID`), and ADR 0017 already established "attempt" as
+  the canonical domain term for one runner invocation. Co-opting "worker"
+  for hook events meant the same word carried two unrelated meanings,
+  which confused readers and broke recall queries grounded in ADR 0017
+  vocabulary. The hooks fire per runner invocation, so `pre_attempt` /
+  `post_attempt` / `on_attempt_error` matches both the existing graph
+  schema and the actual firing cadence.
+- **Rename without changing semantics ("Leitura A" — same one-shot
+  per-issue firing, just renamed).** Rejected because that retains the
+  semantic mismatch with `--fallback-runner`. Under fallback, one issue
+  produces two runner invocations; a hook that only fires once cannot
+  observe the swap or differentiate the runner that crashed from the
+  runner that recovered. Per-attempt firing aligns with both ADR 0017's
+  one-node-per-execution rule and the operator intuition that a fallback
+  retry is a "fresh attempt".
+- **Merge `on_attempt_error` into `post_attempt` with a status field.**
   Rejected because crash paths and clean-failure paths have different
   invariants (workspace may be half-populated, branch may not exist) and
   conflating them would force every hook author to defensively branch on

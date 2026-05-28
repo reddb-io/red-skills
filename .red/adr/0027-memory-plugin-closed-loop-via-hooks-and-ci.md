@@ -7,10 +7,17 @@ The Memory plugin ships with rich surfaces — the RedDB graph
 `~/.claude/projects/<project>/memory/MEMORY.md`. Today the population of
 those surfaces is **passive in two directions**:
 
-- The plugin's `config.json` declares hook flags
-  (`sessionStart`, `postToolUse`, `stop`, `preCompact` all `true`), but
-  `.claude/settings.json` only wires the branch-lock hook. The plugin's
-  hooks are aspirational — Claude Code never fires them.
+- The plugin **ships its hooks wired** at the plugin-distribution layer:
+  `plugins/memory/hooks/{claude,codex}.hooks.json` declare `SessionStart`,
+  `PostToolUse` (matcher `Edit|Write` for Claude, `apply_patch` for Codex),
+  `Stop`, and `PreCompact` entries that each invoke
+  `dist/cli.js hook <event> --runner <r>` with best-effort failure handling
+  (`|| printf "{}"`). The dispatcher in `plugins/memory/src/hook-runtime.ts`
+  routes them to `handleSessionStart` (engine `recall`), `handlePostToolUse`
+  (`reindexFiles`), and `handleFlush` (`extractStructuredTranscript` +
+  `factsToGraph`, then `PromotionEngine`). `recordLifecycle` writes each
+  invocation into the Memory event log (ADR 0025). The plumbing is real;
+  what is missing is policy on top of it (see Amendment below).
 - `/memory:extract`, `/memory:ingest`, `/memory:recall`, `/wiki ingest`,
   `/context refresh` all require explicit invocation. Decisions made in a
   session (the interceptor pattern in ADR 0026, the mechanism-vs-hook
@@ -22,6 +29,63 @@ The result is uneven: ADRs are well-maintained (27 files), the graph holds
 35 MB of older state, the wiki index is 60 bytes, and
 `MEMORY.md` lives outside the repo so it is per-machine rather than
 per-project. The plumbing exists, the loop is open.
+
+## Amendment — the three real gaps (2026-05-28)
+
+The original "Decision" below conflated *the plugin distribution layer*
+(where the hooks are already wired in `plugins/memory/hooks/*.hooks.json`)
+with *the operator config layer* (`.claude/settings.json`, only the
+branch-lock entry). Re-decided scope: do **not** wire any hook in
+`.claude/settings.json`, do **not** ship a `.claude/hooks/memory/`
+wrapper. The hooks already fire. What remains is **policy on top of the
+existing wiring**, in three slices:
+
+### Gap 1 — Audit marker contract (issue #218)
+
+A formal way for any actor (Memory plugin, `/memory:ingest`, CI) to prove
+an ingest happened on a specific commit SHA. Two equivalent forms:
+
+- Commit trailer `Memory-Ingested: <sha>` (or `Memory-NoIngest: <reason>`
+  as an explicit bypass for typos / formatting).
+- Audit-log entry `<iso8601> ingest <path> <sha>` in
+  `.red/memory/.audit.log`, written by `memory ingest`.
+
+Both surfaces are visible across PRs (audit log tracked in the repo, or
+the contract is restricted to the trailer form). Documented in
+`.red/agents/memory.md`. Prerequisite for Gap 3.
+
+### Gap 2 — PostToolUse path-scoping (issue #222)
+
+`handlePostToolUse` runs end-to-end on every `Edit`/`Write` today and
+delegates indexability to `reindexFiles`. The closed loop has a narrower
+**declared interest**: `.red/adr/**`, `.red/wiki/pages/**`,
+`.red/CONTEXT.md`, `.red/CONTEXT-MAP.md`, `.red/contexts/**`. Add a
+declarative watched-globs list, consumed by the handler, that
+short-circuits to noop before opening the store when no watched path is
+in the changed-files payload. The `.hooks.json` matcher stays `Edit|Write`
+(path matching is on the payload).
+
+### Gap 3 — CI drift guard (issue #224)
+
+`.github/workflows/red-memory-drift-guard.yml` fires on every PR. If
+watched paths changed without an audit marker (Gap 1) on the head SHA,
+fail with one actionable line pointing at `/memory:ingest <path>` or the
+`Memory-NoIngest: <reason>` bypass. Emit `memory.drift.caught` into the
+Memory event log on failure. The guard is the only loop closure CI can
+enforce — local hooks already cover the Claude path; the guard
+symmetrically catches Codex contributors and the human-only
+"vim the ADR" case.
+
+### Already implemented or merged
+
+- SessionStart recall, PostToolUse reindex, Stop / PreCompact flush, and
+  lifecycle logging: shipped in `plugins/memory/src/hook-runtime.ts`
+  (issues #221 and #223 closed as already done).
+- PR-merge → wiki extract Action (#219 — merged).
+- Repo-versioned `MEMORY.md` migration (#220 — merged).
+
+The original Decision section below is retained for history; refer to
+this Amendment for the active scope.
 
 ## Decision
 
