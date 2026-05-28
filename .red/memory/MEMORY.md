@@ -1,0 +1,6 @@
+- [Red workflow prefix](memory/feedback_red_workflow_prefix.md) — all RedSkills GitHub Actions workflow filenames must start with `red-`
+- [Label naming](memory/feedback_label_naming.md) — issue labels must be kebab-case or `prefix:value` (e.g. `priority:high`, `slice:afk`, `prd:42`); no uppercase/Camel/snake
+- [Repo English-only](memory/feedback_repo_english_only.md) — 100% of red-skills repo content must be in English; user chat may stay Portuguese
+- [Codex hooks](memory/reference_codex_hooks.md) — Codex CLI hook events + plugin bundling; no PreCompact equivalent (gap vs Claude for the memory plugin / #55)
+- [AFK stall enforcement](memory/feedback_afk_stall_enforcement.md) — supervisor stall flag is surfacing-only by design; prompt-level no-untimed-polling rule drifts, so flag needs hard reaper at longer threshold
+- [AFK stall false negatives](memory/feedback_afk_stall_false_negatives.md) — never call a worker stuck from monitor alone; verify `pstree` for active vitest/build/etc descendants first
