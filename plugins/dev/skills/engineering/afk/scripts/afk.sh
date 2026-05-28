@@ -2180,6 +2180,50 @@ process_issue() {
   # capped/raced issues never trigger the parent-PRD `gh` lookup.
   local pinned; pinned="$(resolve_pinned_branch "$body")"
 
+  # ---------- pre_worktree lifecycle hook ----------
+  # Fires after the claim and before `git worktree add`. Mutable slice:
+  # `issue`, `target` (worktree path), `env` (k/v map exported into the
+  # parent shell before the worktree is created, so `CARGO_TARGET_DIR` and
+  # friends propagate to the runner). `branch` is read-only context.
+  # Built-in defaults (cargo, gradle) run first; user `pre_worktree`
+  # commands run after, in declaration order. Non-zero exit aborts the
+  # iteration: the claim is restored to `ready-for-agent`, ITER_DIR is torn
+  # down, and we never create the worktree.
+  export RED_AFK_WORKSPACE="${PROJECT_ROOT:-$PWD}"
+  export RED_AFK_RUNNER="${RUNNER:-}"
+  export RED_AFK_ISSUE="$n"
+  export RED_AFK_SLOT="${RED_AFK_SLOT:-0}"
+  local _afk_pwt_ctx
+  _afk_pwt_ctx="$(jq -nc \
+    --argjson num "$n" \
+    --arg title "$title" \
+    --arg target "$worktree" \
+    --arg branch "$branch" \
+    '{issue:{number:$num, title:$title}, target:$target, branch:$branch, env:{}}')"
+  local _afk_pwt_out _afk_pwt_rc=0
+  _afk_pwt_out="$(hook_dispatch pre_worktree "$_afk_pwt_ctx")" || _afk_pwt_rc=$?
+  if (( _afk_pwt_rc != 0 )); then
+    log "✗ pre_worktree hook aborted (rc=$_afk_pwt_rc) for #$n — restoring ready-for-agent"
+    gh -R "$(gh_repo)" issue edit "$n" --remove-label running --add-label ready-for-agent >/dev/null 2>&1 || true
+    gh -R "$(gh_repo)" issue comment "$n" --body "🤖 /afk aborted before worktree creation: pre_worktree hook exited \`$_afk_pwt_rc\`. Restored \`ready-for-agent\`." >/dev/null 2>&1 || true
+    [[ -n "$ITER_DIR" && -d "$ITER_DIR" ]] && rm -rf "$ITER_DIR"
+    ITER_DIR="" STATE_FILE="" ITER_LOG="" ITER_PID_FILE=""
+    claim_lock_release "$n"
+    CURRENT_ISSUE="" CURRENT_BRANCH=""
+    return 0
+  fi
+  # Apply mutated `target` (worktree path) and `.env.*` exports.
+  local _afk_pwt_target
+  _afk_pwt_target="$(echo "$_afk_pwt_out" | jq -r '.target // empty' 2>/dev/null || true)"
+  if [[ -n "$_afk_pwt_target" && "$_afk_pwt_target" != "$worktree" ]]; then
+    worktree="$_afk_pwt_target"
+  fi
+  local _afk_env_pair _afk_env_k _afk_env_v
+  while IFS=$'\t' read -r _afk_env_k _afk_env_v; do
+    [[ -z "$_afk_env_k" ]] && continue
+    export "${_afk_env_k}=${_afk_env_v}"
+  done < <(echo "$_afk_pwt_out" | jq -r '.env // {} | to_entries[] | "\(.key)\t\(.value)"' 2>/dev/null)
+
   # worktree — based on the pinned branch (defaults to main when unpinned).
   git -C "$PROJECT_ROOT" fetch origin "$pinned" --quiet
   git -C "$PROJECT_ROOT" worktree add "$worktree" -b "$branch" "origin/$pinned" >/dev/null
@@ -2231,6 +2275,32 @@ process_issue() {
 
   heartbeat_start "$n"
   state_write "$STATE_FILE" current.stage=impl
+
+  # ---------- pre_worker lifecycle hook ----------
+  # Fires after the worktree exists, before the runner is invoked. Mutable
+  # slice: `issue`, `workspace` (worktree path). `runner` is read-only
+  # context. Non-zero exit skips the runner invocation: heartbeat stops,
+  # the worktree is preserved on disk, and the claim is returned to
+  # `ready-for-agent` so the next iteration can pick it up — post-pick
+  # state is reconciled cleanly.
+  export RED_AFK_WORKSPACE="$worktree"
+  local _afk_pw_ctx _afk_pw_out _afk_pw_rc=0
+  _afk_pw_ctx="$(jq -nc \
+    --argjson num "$n" \
+    --arg title "$title" \
+    --arg ws "$worktree" \
+    --arg runner "${RUNNER:-}" \
+    '{issue:{number:$num, title:$title}, workspace:$ws, runner:$runner}')"
+  _afk_pw_out="$(hook_dispatch pre_worker "$_afk_pw_ctx")" || _afk_pw_rc=$?
+  if (( _afk_pw_rc != 0 )); then
+    heartbeat_stop
+    log "✗ pre_worker hook aborted (rc=$_afk_pw_rc) for #$n — skipping runner invocation, restoring ready-for-agent"
+    gh -R "$(gh_repo)" issue edit "$n" --remove-label running --add-label ready-for-agent >/dev/null 2>&1 || true
+    gh -R "$(gh_repo)" issue comment "$n" --body "🤖 /afk skipped runner invocation: pre_worker hook exited \`$_afk_pw_rc\`. Restored \`ready-for-agent\`." >/dev/null 2>&1 || true
+    claim_lock_release "$n"
+    CURRENT_ISSUE="" CURRENT_BRANCH=""
+    return 0
+  fi
 
   local result
   result="$(run_inner "$worktree" "$handoff" "$RUNNER")"
