@@ -2302,8 +2302,45 @@ process_issue() {
     return 0
   fi
 
-  local result
-  result="$(run_inner "$worktree" "$handoff" "$RUNNER")"
+  local result _runner_rc=0
+  result="$(run_inner "$worktree" "$handoff" "$RUNNER")" || _runner_rc=$?
+
+  # ---------- on_worker_error lifecycle hook ----------
+  # Fires only on an unhandled exception in the worker path (run_inner
+  # exited non-zero in a way the orchestrator did not anticipate). Clean
+  # test/build failures still route through post_worker with
+  # result.status=fail; quota exhaustion is its own pre-existing branch
+  # below and never lands here. Exit-code policy is `continue`, so a
+  # broken pager integration cannot wedge the loop.
+  if (( _runner_rc != 0 )) && [[ $RUNNER_EXHAUSTED -ne 1 ]]; then
+    heartbeat_stop
+    export RED_AFK_WORKSPACE="$worktree"
+    export RED_AFK_ERROR_CLASS="runner-crash"
+    local _afk_owe_ctx _afk_owe_rc=0
+    _afk_owe_ctx="$(jq -nc \
+      --argjson num "$n" \
+      --arg title "$title" \
+      --arg ws "$worktree" \
+      --arg rc "$_runner_rc" \
+      '{issue:{number:$num, title:$title}, workspace:$ws, error:{class:"runner-crash", rc:($rc|tonumber? // 0)}}')"
+    hook_dispatch on_worker_error "$_afk_owe_ctx" >/dev/null \
+      || _afk_owe_rc=$?
+    if (( _afk_owe_rc != 0 )); then
+      log "on_worker_error hook chain exited rc=$_afk_owe_rc — continuing (policy=continue)"
+    fi
+    unset RED_AFK_ERROR_CLASS
+    local dur_err=$(( $(date +%s) - started_epoch ))
+    log "✗ #$n runner crashed (rc=$_runner_rc) — flipping to ready-for-human"
+    gh -R "$(gh_repo)" issue edit "$n" --remove-label running --add-label ready-for-human >/dev/null 2>&1 || true
+    gh -R "$(gh_repo)" issue comment "$n" --body "🤖 /afk: runner crashed with rc=\`$_runner_rc\`. Iteration preserved at \`$ITER_DIR\`." >/dev/null 2>&1 || true
+    AGG_BLOCKED=$((AGG_BLOCKED+1))
+    state_write "$STATE_FILE" blocked:=$AGG_BLOCKED current:=null
+    emit_history "blocked" "$n" "$RUNNER" "$dur_err" "" "runner-crash"
+    snapshot_iter_for_hook
+    iter_close_preserve
+    fire_post_iteration "blocked" "$dur_err"
+    return 0
+  fi
 
   if [[ $RUNNER_EXHAUSTED -eq 1 ]]; then
     heartbeat_stop
@@ -2339,7 +2376,39 @@ process_issue() {
     fi
   fi
 
-  heartbeat_stop
+  # ---------- post_worker lifecycle hook ----------
+  # Fires when the runner returned — success or clean failure. The built-in
+  # `heartbeat` default (registered first) replaces the inline `heartbeat_stop`
+  # that used to live here, so the iteration's heartbeat side-channel
+  # terminates before any user post_worker hook runs; the `envelope` default
+  # then reconciles result.status onto the state file so user hooks see a
+  # consistent envelope. Exit-code policy is `continue` — a broken notifier
+  # must never wedge the loop.
+  local _pw_status="fail"
+  if echo "$result" | grep -q '<promise>DONE</promise>'; then
+    _pw_status="success"
+  fi
+  export RED_AFK_WORKSPACE="$worktree"
+  export RED_AFK_RESULT_STATUS="$_pw_status"
+  export RED_AFK_HEARTBEAT_PID="${HEARTBEAT_PID:-}"
+  export RED_AFK_ITER_LOG="${ITER_LOG:-}"
+  export RED_AFK_STATE_FILE="${STATE_FILE:-}"
+  local _afk_pow_ctx _afk_pow_rc=0
+  _afk_pow_ctx="$(jq -nc \
+    --argjson num "$n" \
+    --arg title "$title" \
+    --arg ws "$worktree" \
+    --arg status "$_pw_status" \
+    '{issue:{number:$num, title:$title}, workspace:$ws, result:{status:$status}}')"
+  hook_dispatch post_worker "$_afk_pow_ctx" >/dev/null || _afk_pow_rc=$?
+  if (( _afk_pow_rc != 0 )); then
+    log "post_worker hook chain exited rc=$_afk_pow_rc — continuing (policy=continue)"
+  fi
+  # The heartbeat default has already killed the sub-shell; clear the
+  # parent-shell pid so any later heartbeat_stop (e.g. via the INT/TERM
+  # trap during cleanup) is a no-op rather than killing the wrong process.
+  HEARTBEAT_PID=""
+  unset RED_AFK_RESULT_STATUS RED_AFK_HEARTBEAT_PID
 
   # sentinel detection
   if echo "$result" | grep -q '<promise>BLOCKED</promise>'; then
