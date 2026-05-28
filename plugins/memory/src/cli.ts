@@ -94,6 +94,7 @@ import { buildMemoryGovernanceViewerArtifact } from "./governance-viewer.js";
 import { MemoryStore, factToNode } from "./graph-store.js";
 import { HistoricalMemoryStore } from "./historical-memory-store.js";
 import { createMemoryHttpServer } from "./http-server.js";
+import { ingestGuidance } from "./audit-marker.js";
 import { ingestProject, refreshFiles } from "./ingest.js";
 import { initGraph, initMarkdownOnly } from "./init.js";
 import { lintMemory, type LintReport } from "./lint.js";
@@ -3052,6 +3053,10 @@ async function runIngest(args: ParsedArgs): Promise<void> {
     console.log(
       `  ${report.files} file(s) → ${report.nodes} node(s), ${report.edges} edge(s), ${report.docs} doc(s) in ${report.durationMs}ms`,
     );
+    // Audit-marker contract (.red/agents/memory.md): commit-trailer surface.
+    // Emit guidance for the commit that lands this ingest rather than writing
+    // an on-disk log. Best-effort — never let HEAD lookup abort the ingest.
+    console.log(ingestGuidance(await currentGitCommit(rootDir)));
   } finally {
     await store.close();
   }

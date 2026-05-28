@@ -67,6 +67,45 @@ Claude Code layout):
 The harness symlink means the loader picks up new facts immediately
 on the next session — no harness reload required.
 
+## Audit-marker contract
+
+An **audit marker** proves that `memory ingest` ran against a specific
+commit SHA. It is the prerequisite for the CI drift guard (#224). Two
+forms are recognised — **either one** satisfies the contract:
+
+1. **Commit trailer** in a commit message:
+   - `Memory-Ingested: <ingest-sha>` — the tree at `<ingest-sha>` was
+     ingested into the graph.
+   - `Memory-NoIngest: <reason>` — explicit bypass for commits that do
+     not need an ingest (typos, formatting-only edits). The `<reason>`
+     must be non-empty.
+2. **Audit-log entry** of the shape `<iso8601> ingest <path> <ingest-sha>`
+   (space-delimited, four fields).
+
+`<ingest-sha>` is a 7–40 char lowercase-hex git object name; `<iso8601>`
+is a full ISO-8601 instant with `Z` or a numeric offset.
+
+### Surface decision: **commit-trailer only**
+
+RedSkills ships the **commit-trailer** form as the written surface. We do
+**not** track an on-disk audit log. The trailer is git-native and
+bisectable, needs no `.gitignore` exception, and avoids a mutating
+tracked file that would contradict the operational-state framing of the
+graph store below. Accordingly:
+
+- `memory ingest` does not write a file. After a successful ingest it
+  **emits guidance** — a ready-to-paste `Memory-Ingested: <HEAD-sha>`
+  trailer (or a `<ingest-sha>` placeholder when HEAD is unknown), plus a
+  note about the `Memory-NoIngest:` bypass.
+- The parser in `plugins/memory/src/audit-marker.ts` (`parseAuditMarker`)
+  recognises **both** forms and rejects malformed input with a clear
+  error, so a project that chooses to maintain an on-disk audit log is
+  still supported by the same parser — only the *written* surface is
+  fixed to the trailer.
+
+The drift guard #224 consumes the trailer form (parse `git log` trailers
+for `Memory-Ingested:` / `Memory-NoIngest:`).
+
 ## Out of scope
 
 The graph-mode memory store (`.red/memory/graph.rdb*`, `sessions/`,
