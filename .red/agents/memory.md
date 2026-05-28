@@ -132,6 +132,36 @@ to that constant — no handler, matcher, or `.hooks.json` edit is needed. The
 `.hooks.json` matchers stay `Edit|Write` (Claude) and `apply_patch` (Codex);
 path matching happens on the changed-files payload, not on the matcher string.
 
+## CI drift guard (PR-level closed loop)
+
+The `.github/workflows/red-memory-drift-guard.yml` Action (ADR 0027 Gap 3,
+issue #224) is the PR-level half of the closed loop. It fires on every PR and
+catches the cases the in-session hook cannot — Codex contributors and the
+human-only "vim the ADR" edit:
+
+- It diffs the PR against its merge base. If no **watched path** changed, it
+  passes silently — code-only PRs are never nagged.
+- The guard's watched set is a **deliberately narrower** subset of the
+  PostToolUse `WATCHED_GLOBS` — the four git-tracked surfaces, declared as
+  `DRIFT_GUARD_GLOBS` in `plugins/memory/src/drift-guard.ts`:
+  `.red/adr/**`, `.red/CONTEXT.md`, `.red/CONTEXT-MAP.md`, `.red/contexts/**`.
+  `.red/wiki/pages/**` is **excluded**: it is gitignored and machine-generated
+  by `red-memory-wiki-extract.yml`, so enforcing a marker on it would nag on
+  automated commits.
+- When a watched path changed, the guard requires an audit marker (above) — a
+  `Memory-Ingested:` / `Memory-NoIngest:` trailer on the head commit, or an
+  audit-log entry. On a missing marker it fails with one actionable line:
+  `Run /memory:ingest <path> and re-push (or add Memory-NoIngest: <reason> trailer).`
+- On failure it emits a `memory.drift.caught` event into the Memory event log
+  (ADR 0025) so the maintainer can see how often the guard catches drift. The
+  guard **never** ingests into the graph from CI (ADR 0027 rejected that — the
+  graph store is local); telemetry is best-effort and the ADR 0025 envelope is
+  always printed to the workflow log.
+
+The decision core (`evaluateDriftGuard` in `plugins/memory/src/drift-guard.ts`)
+is pure and reuses `parseAuditMarker` (#218) and the watched-path matcher (#222);
+the `memory drift-guard` CLI subcommand wires it to git and the event log.
+
 ## Out of scope
 
 The graph-mode memory store (`.red/memory/graph.rdb*`, `sessions/`,
