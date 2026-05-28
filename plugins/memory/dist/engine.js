@@ -1,0 +1,839 @@
+import { pathConfidence as pathConfidenceWeakestLink, scoreConfidence, } from "./confidence-scoring.js";
+import { tokenize } from "./recall.js";
+import { DEFAULT_IMPORTANCE, } from "./schema.js";
+/**
+ * Tier-weight multiplier for recall ranking (issue #72). Durable decisions
+ * outrank reasoning traces, which outrank ephemeral session noise — so for two
+ * otherwise-comparable nodes the more durable one surfaces first.
+ */
+export const TIER_WEIGHT = {
+    durable: 1.0,
+    reasoning: 0.7,
+    ephemeral: 0.4,
+};
+export const TRUST_WEIGHT = {
+    EXTRACTED: 1.0,
+    INFERRED: 0.85,
+    AMBIGUOUS: 0.65,
+};
+/** Recency half-life: a node's recency factor halves every 30 days of age. */
+export const RECENCY_HALF_LIFE_MS = 30 * 86_400_000;
+/**
+ * Composite recall score: `relevance × importance × recency × centrality ×
+ * tier-weight` (issue #72). Relevance keeps a direct text match ahead of a
+ * graph-only neighbor; the remaining factors order *comparable* nodes — newer,
+ * more central, more durable nodes float up. Every factor is in (0, 1] except
+ * relevance, so it stays the dominant signal.
+ */
+export function rankScore(i) {
+    const recency = 0.5 ** (Math.max(0, i.ageMs) / RECENCY_HALF_LIFE_MS);
+    const centrality = (i.degree + 1) / (i.maxDegree + 1);
+    return i.relevance * i.importance * recency * centrality * TIER_WEIGHT[i.tier] * (i.trust ?? 1);
+}
+const SEED_NEIGHBOR_DECAY = 0.5;
+const VECTOR_SEED_WEIGHT = 0.5;
+const DEFAULT_RECALL_SCOPE = { level: "project" };
+const SCOPE_RANK = {
+    user: 0,
+    project: 1,
+    repo: 2,
+    branch: 3,
+    worktree: 4,
+    session: 5,
+    "agent-run": 6,
+};
+/** The text fields of a node that recall scores against. */
+function nodeText(node) {
+    const p = node.properties;
+    const tags = Array.isArray(p.tags) ? p.tags.join(" ") : "";
+    return [node.label, p.title, p.summary, p.content, tags].filter(Boolean).join(" ");
+}
+function excerptOf(node) {
+    const p = node.properties;
+    return (p.summary ?? p.content ?? p.title ?? node.label).slice(0, 200);
+}
+function toRecalled(node, score, depth) {
+    return {
+        rid: node.rid,
+        label: node.label,
+        node_type: node.node_type,
+        score,
+        depth,
+        properties: node.properties,
+        excerpt: excerptOf(node),
+    };
+}
+function nodeScope(node) {
+    return node.properties.scope ?? "project";
+}
+function nodeMatchesScope(node, scope) {
+    const memoryScope = nodeScope(node);
+    const memoryRank = SCOPE_RANK[memoryScope];
+    const queryRank = SCOPE_RANK[scope.level];
+    if (scope.id) {
+        if (memoryScope === scope.level)
+            return node.properties.scope_id === scope.id;
+        return scope.includeNarrower === true && memoryRank > queryRank;
+    }
+    const isAncestorOrSelf = memoryRank <= queryRank;
+    const isExplicitNarrower = scope.includeNarrower === true && memoryRank > queryRank;
+    if (!isAncestorOrSelf && !isExplicitNarrower)
+        return false;
+    return true;
+}
+/** Load every node once into an rid→node map; the read paths share it so they
+ *  resolve graph-walk rids and FTS hits without rescanning. */
+async function loadIndex(store, scope = DEFAULT_RECALL_SCOPE) {
+    const index = new Map();
+    for (const node of await store.listNodes()) {
+        if (nodeMatchesScope(node, scope))
+            index.set(node.rid, node);
+    }
+    return index;
+}
+/** Most recent timestamp recorded on a node, for recency scoring. */
+function latestTimestamp(node) {
+    const p = node.properties;
+    return Math.max(p.accessed_at ?? 0, p.updated_at ?? 0, p.created_at ?? 0);
+}
+function trustWeight(node) {
+    const confidence = node.properties.confidence ?? node.properties.provenance?.confidence;
+    return confidence && confidence in TRUST_WEIGHT ? TRUST_WEIGHT[confidence] : 1;
+}
+export async function buildConfidenceContext(store, now = Date.now()) {
+    const nodes = await store.listNodes();
+    const supersededMap = await store.supersededByMany(nodes.map((n) => n.rid));
+    const supersedingSet = new Set();
+    for (const successor of supersededMap.values())
+        supersedingSet.add(successor);
+    const validation = new Map();
+    const bump = (rid, kind) => {
+        if (!Number.isFinite(rid))
+            return;
+        const entry = validation.get(rid) ?? { confirms: 0, contradicts: 0 };
+        entry[kind] += 1;
+        validation.set(rid, entry);
+    };
+    for (const edge of await store.listEdges()) {
+        const label = edgeLabel(edge);
+        if (label !== "CONFIRMS" && label !== "CONTRADICTS")
+            continue;
+        const kind = label === "CONFIRMS" ? "confirms" : "contradicts";
+        bump(edgeFrom(edge), kind);
+        bump(edgeTo(edge), kind);
+    }
+    return { now, supersededMap, supersedingSet, validation };
+}
+export function confidenceSignalsFor(node, ctx) {
+    const p = node.properties;
+    let provenanceDepth = 0;
+    const provenance = p.provenance;
+    if (provenance) {
+        if (Array.isArray(provenance.evidence))
+            provenanceDepth = provenance.evidence.length;
+        if (provenanceDepth === 0 && provenance.source_kind === "manual")
+            provenanceDepth = 1;
+    }
+    if (typeof p.source === "string" && p.source.length > 0)
+        provenanceDepth = Math.max(provenanceDepth, 1);
+    const confidenceEnum = p.confidence ?? p.provenance?.confidence;
+    if (confidenceEnum === "EXTRACTED")
+        provenanceDepth = Math.max(provenanceDepth, 2);
+    else if (confidenceEnum === "INFERRED")
+        provenanceDepth = Math.max(provenanceDepth, 1);
+    const ageMs = Math.max(0, ctx.now - latestTimestamp(node));
+    const recency = 0.5 ** (ageMs / RECENCY_HALF_LIFE_MS);
+    let supersession_status = "active";
+    if (ctx.supersededMap.has(node.rid))
+        supersession_status = "superseded";
+    else if (ctx.supersedingSet.has(node.rid))
+        supersession_status = "superseding";
+    const v = ctx.validation.get(node.rid);
+    const totals = (v?.confirms ?? 0) + (v?.contradicts ?? 0);
+    const validation_signal = totals === 0 ? 0 : ((v?.confirms ?? 0) - (v?.contradicts ?? 0)) / totals;
+    return { provenance_depth: provenanceDepth, recency, supersession_status, validation_signal };
+}
+export function confidenceForNode(node, ctx) {
+    return scoreConfidence(confidenceSignalsFor(node, ctx));
+}
+export function pathConfidence(nodeConfidences) {
+    return pathConfidenceWeakestLink(nodeConfidences);
+}
+function recallConfidenceContext(now, supersededMap, edges) {
+    const supersedingSet = new Set();
+    for (const successor of supersededMap.values())
+        supersedingSet.add(successor);
+    const validation = new Map();
+    const bump = (rid, kind) => {
+        if (!Number.isFinite(rid))
+            return;
+        const entry = validation.get(rid) ?? { confirms: 0, contradicts: 0 };
+        entry[kind] += 1;
+        validation.set(rid, entry);
+    };
+    for (const edge of edges) {
+        const label = edgeLabel(edge);
+        if (label !== "CONFIRMS" && label !== "CONTRADICTS")
+            continue;
+        const kind = label === "CONFIRMS" ? "confirms" : "contradicts";
+        bump(edgeFrom(edge), kind);
+        bump(edgeTo(edge), kind);
+    }
+    return { now, supersededMap, supersedingSet, validation };
+}
+function attachConfidence(node, source, ctx) {
+    const breakdown = confidenceForNode(source, ctx);
+    node.confidence = breakdown.confidence;
+    node.confidence_breakdown = breakdown;
+}
+/**
+ * In-memory graph snapshot keyed by rid, built from one `listEdges` scan. Each
+ * edge contributes both centrality and undirected recall expansion, avoiding a
+ * graph-walk query per seed on the recall hot path.
+ */
+function graphIndex(edges) {
+    const degree = new Map();
+    const neighbors = new Map();
+    const bump = (rid) => {
+        if (Number.isFinite(rid))
+            degree.set(rid, (degree.get(rid) ?? 0) + 1);
+    };
+    const link = (from, to) => {
+        if (!Number.isFinite(from) || !Number.isFinite(to))
+            return;
+        const list = neighbors.get(from) ?? [];
+        list.push(to);
+        neighbors.set(from, list);
+    };
+    for (const e of edges) {
+        const from = Number(e.from ?? e.from_id ?? e.from_rid ?? e.source ?? e.FROM ?? Number.NaN);
+        const to = Number(e.to ?? e.to_id ?? e.to_rid ?? e.target ?? e.TO ?? Number.NaN);
+        bump(from);
+        bump(to);
+        link(from, to);
+        link(to, from);
+    }
+    let maxDegree = 0;
+    for (const d of degree.values())
+        if (d > maxDegree)
+            maxDegree = d;
+    return { degree, maxDegree, neighbors };
+}
+function expandSeedFromEdges(seedRid, seedScore, depth, graph, index, scored, depthOf) {
+    const seen = new Set([seedRid]);
+    let frontier = [seedRid];
+    for (let hop = 1; hop <= depth && frontier.length > 0; hop++) {
+        const next = [];
+        for (const rid of frontier) {
+            for (const neighborRid of graph.neighbors.get(rid) ?? []) {
+                if (seen.has(neighborRid) || !index.has(neighborRid))
+                    continue;
+                seen.add(neighborRid);
+                next.push(neighborRid);
+                if (!scored.has(neighborRid)) {
+                    scored.set(neighborRid, seedScore * SEED_NEIGHBOR_DECAY);
+                    depthOf.set(neighborRid, hop);
+                }
+            }
+        }
+        frontier = next;
+    }
+}
+function resolveSupersessionHead(rid, supersededMap, index) {
+    const seen = new Set([rid]);
+    let current = rid;
+    while (true) {
+        const next = supersededMap.get(current);
+        if (next == null || seen.has(next) || !index.has(next))
+            return current;
+        seen.add(next);
+        current = next;
+    }
+}
+/** Token-overlap score: how many distinct query terms appear in the node. */
+function termScore(node, terms) {
+    let score = 0;
+    const seen = new Set();
+    for (const token of tokenize(nodeText(node))) {
+        if (terms.includes(token) && !seen.has(token)) {
+            seen.add(token);
+            score += 1;
+        }
+    }
+    return score;
+}
+function emptyDiagnostics(reason) {
+    return {
+        vector: {
+            status: "unavailable",
+            candidates: 0,
+            contributed: 0,
+            ...(reason ? { reason } : {}),
+        },
+    };
+}
+function vectorSeedScore(score) {
+    if (!Number.isFinite(score))
+        return VECTOR_SEED_WEIGHT;
+    const normalized = Math.max(0, Math.min(1, score));
+    return normalized * VECTOR_SEED_WEIGHT;
+}
+/**
+ * Hybrid recall: FTS + client-side term seeds → graph-neighborhood expansion →
+ * ranked nodes + markdown context. Superseded nodes are hidden behind their
+ * successor. Returns the full ranked set (seeds + neighbors); callers cap it.
+ */
+export async function recall(store, query, opts = {}) {
+    const { k = 8, depth = 1, types, includeSuperseded = false, scope = DEFAULT_RECALL_SCOPE, now = Date.now(), } = opts;
+    const terms = tokenize(query);
+    const index = await loadIndex(store, scope);
+    if (terms.length === 0) {
+        const diagnostics = emptyDiagnostics("blank query");
+        return { query, nodes: [], context_md: renderContext(query, [], diagnostics), diagnostics };
+    }
+    // Seed scores from a client-side term scan — deterministic and covers every
+    // text field (title/summary/content/tags), independent of what the engine FTS
+    // index happens to cover.
+    const scored = new Map();
+    for (const node of index.values()) {
+        const s = termScore(node, terms);
+        if (s > 0)
+            scored.set(node.rid, s);
+    }
+    // Engine FTS widens sparse seed sets. When the deterministic scan already
+    // found enough seeds to expand, skip the extra engine query on the hot path.
+    if (scored.size < k) {
+        for (const hit of await store.searchText(query, k * 4)) {
+            if (index.has(hit.rid) && !scored.has(hit.rid))
+                scored.set(hit.rid, SEED_NEIGHBOR_DECAY);
+        }
+    }
+    const diagnostics = emptyDiagnostics("vector search is not available on this store");
+    if (store.searchVector) {
+        try {
+            const vectorHits = await store.searchVector(query, k * 4);
+            diagnostics.vector = { status: "available", candidates: vectorHits.length, contributed: 0 };
+            const contributed = new Set();
+            for (const hit of vectorHits) {
+                if (!index.has(hit.rid))
+                    continue;
+                const relevance = vectorSeedScore(hit.score);
+                if (relevance <= 0)
+                    continue;
+                const existing = scored.get(hit.rid);
+                if (existing == null || relevance > existing) {
+                    scored.set(hit.rid, Math.max(existing ?? 0, relevance));
+                    contributed.add(hit.rid);
+                }
+            }
+            diagnostics.vector.contributed = contributed.size;
+            if (contributed.size > 0)
+                diagnostics.vector.status = "contributed";
+        }
+        catch (err) {
+            diagnostics.vector = {
+                status: "unavailable",
+                candidates: 0,
+                contributed: 0,
+                reason: err instanceof Error ? err.message : String(err),
+            };
+        }
+    }
+    // Expand the top-k seeds by `depth` hops. A neighbor inherits a decayed share
+    // of the seed's score and remembers its hop distance.
+    const seeds = [...scored.entries()]
+        .sort((a, b) => b[1] - a[1] || a[0] - b[0])
+        .slice(0, k);
+    const depthOf = new Map();
+    for (const [rid] of seeds)
+        depthOf.set(rid, 0);
+    // One edge scan serves both neighborhood expansion and centrality. The engine
+    // graph-walk primitive remains exposed via `neighbors`/`traverse`, but recall
+    // avoids N seed-level round-trips on the hot path.
+    const edges = await store.listEdges();
+    const graph = graphIndex(edges);
+    if (depth > 0) {
+        for (const [rid, score] of seeds) {
+            if (index.has(rid))
+                expandSeedFromEdges(rid, score, depth, graph, index, scored, depthOf);
+        }
+    }
+    // Centrality normalizes per-graph.
+    const { degree, maxDegree } = graph;
+    // Head-of-chain markers for every candidate in one round-trip (issue #72).
+    const supersededMap = await store.supersededByMany([...index.keys()]);
+    promoteSupersessionHeads(scored, depthOf, index, supersededMap);
+    // Confidence composition shares the recall's supersession + edge snapshot
+    // so the per-node breakdown stays consistent with the rest of the result.
+    const confidenceCtx = recallConfidenceContext(now, supersededMap, edges);
+    const nodes = [];
+    for (const [rid, relevance] of scored) {
+        // Head-of-chain default: a superseded node is hidden behind its successor
+        // unless the caller asked for the full chain (`--include-superseded`).
+        if (!includeSuperseded && supersededMap.get(rid) != null)
+            continue;
+        const node = index.get(rid);
+        if (!node)
+            continue;
+        if (types && types.length > 0 && !types.includes(node.node_type))
+            continue;
+        // Tier-aware composite score: relevance keeps the strongest text match on
+        // top; importance/recency/centrality/tier-weight order comparable nodes.
+        const score = rankScore({
+            relevance,
+            importance: node.properties.importance ?? DEFAULT_IMPORTANCE,
+            tier: node.properties.tier ?? "durable",
+            ageMs: now - latestTimestamp(node),
+            degree: degree.get(rid) ?? 0,
+            maxDegree,
+            trust: trustWeight(node),
+        });
+        const recalled = toRecalled(node, score, depthOf.get(rid));
+        attachConfidence(recalled, node, confidenceCtx);
+        nodes.push(recalled);
+    }
+    nodes.sort((a, b) => b.score - a.score || a.rid - b.rid);
+    // Decay bookkeeping: a recalled node is a used node. Bump its access overlay
+    // (count + last-accessed) so `memory:doctor` can tell what's still earning its
+    // keep from what's gone cold. Best-effort — never let it fail a read.
+    if (nodes.length > 0 && store.recordAccess) {
+        await store.recordAccess(nodes.map((n) => n.rid)).catch(() => { });
+    }
+    return { query, nodes, context_md: renderContext(query, nodes, diagnostics), diagnostics };
+}
+function promoteSupersessionHeads(scored, depthOf, index, supersededMap) {
+    const original = [...scored.entries()];
+    if (original.length === 0 || supersededMap.size === 0)
+        return;
+    for (const [rid, score] of original) {
+        const head = resolveSupersessionHead(rid, supersededMap, index);
+        if (head === rid || !index.has(head))
+            continue;
+        const existingScore = scored.get(head) ?? 0;
+        scored.set(head, Math.max(existingScore, score));
+        const oldDepth = depthOf.get(rid) ?? 0;
+        const existingDepth = depthOf.get(head);
+        depthOf.set(head, existingDepth == null ? oldDepth : Math.min(existingDepth, oldDepth));
+    }
+}
+/**
+ * Direct full-text search over node titles + content. Merges two signals: a
+ * client-side term scan (deterministic, covers every text field including
+ * `content`) and the engine's `SEARCH TEXT` (covers label/title, contributes
+ * its own ranking). A node matched by either surfaces; term-scan matches rank
+ * above FTS-only matches.
+ */
+export async function search(store, query, limit = 20, scope = DEFAULT_RECALL_SCOPE) {
+    const index = await loadIndex(store, scope);
+    const terms = tokenize(query);
+    const scored = new Map();
+    if (terms.length > 0) {
+        for (const node of index.values()) {
+            const s = termScore(node, terms);
+            if (s > 0)
+                scored.set(node.rid, s);
+        }
+    }
+    for (const hit of await store.searchText(query, limit)) {
+        if (index.has(hit.rid) && !scored.has(hit.rid))
+            scored.set(hit.rid, SEED_NEIGHBOR_DECAY);
+    }
+    const out = [];
+    for (const [rid, score] of scored) {
+        const node = index.get(rid);
+        if (node)
+            out.push(toRecalled(node, score));
+    }
+    out.sort((a, b) => b.score - a.score || a.rid - b.rid);
+    return out.slice(0, limit);
+}
+/** Resolve graph-walk rows (neighborhood/traverse) to full nodes, depth-tagged
+ *  and scored by closeness (a hop-0 node scores 1, hop-1 scores 0.5, …). */
+function resolveWalk(rows, index, confidenceCtx) {
+    const out = [];
+    for (const row of rows) {
+        const node = index.get(row.rid);
+        if (!node)
+            continue;
+        const recalled = toRecalled(node, 1 / (1 + row.depth), row.depth);
+        if (confidenceCtx)
+            attachConfidence(recalled, node, confidenceCtx);
+        out.push(recalled);
+    }
+    out.sort((a, b) => (a.depth ?? 0) - (b.depth ?? 0) || a.rid - b.rid);
+    return out;
+}
+/** One-or-more-hop neighborhood around a node label, resolved to full nodes. */
+export async function neighbors(store, label, depth = 1, direction = "both") {
+    const index = await loadIndex(store, { level: "project", includeNarrower: true });
+    const confidenceCtx = await buildConfidenceContext(store);
+    return resolveWalk(await store.neighborhood(label, depth, direction), index, confidenceCtx);
+}
+/** BFS/DFS traversal from a node label, resolved to full nodes. */
+export async function traverse(store, start, opts = {}) {
+    const index = await loadIndex(store, { level: "project", includeNarrower: true });
+    const confidenceCtx = await buildConfidenceContext(store);
+    return resolveWalk(await store.traverse(start, opts), index, confidenceCtx);
+}
+/** Shortest path between two node labels. */
+export async function path(store, from, to, algorithm = "bfs") {
+    return store.shortestPath(from, to, algorithm);
+}
+/** Grounded ASK over the document collection. Degrades gracefully when the
+ *  engine has no LLM key — the rest of the engine stays zero-token.
+ *
+ *  Issue #173: when `opts.rootDir` is provided, ask additionally composes
+ *  reasoning-replay (semantic gaps from past attempts), learning-debt
+ *  (repeated-failure patterns), and federation (cross-root hits) into the
+ *  result. All compositions are additive and read-only; on failure each
+ *  composing surface degrades to its empty form so the core ASK keeps working.
+ */
+export async function ask(store, question, opts = {}) {
+    const recalled = await recall(store, question, { includeSuperseded: true, depth: 0, k: 8 });
+    const evidence = await buildAskEvidence(store, recalled.nodes);
+    const gapAnalysis = buildAskGapAnalysis(evidence);
+    const citations = [...evidence.active, ...evidence.superseded].map((item) => ({
+        marker: Number(item.citation.replace(/\D/g, "")),
+        urn: `memory_nodes:${item.rid}`,
+        confidence: item.confidence_score ?? null,
+    }));
+    const whatIDontKnow = await composeWhatIDontKnow(store, question, gapAnalysis, opts.now);
+    const federationHits = await composeFederationHits(question, opts.rootDir, opts.now);
+    if (evidence.active.length === 0 && evidence.superseded.length === 0) {
+        return {
+            question,
+            status: "insufficient-evidence",
+            answer: "Insufficient evidence in Memory to answer this question.",
+            citations: [],
+            cost: null,
+            available: true,
+            evidence,
+            gap_analysis: gapAnalysis,
+            what_i_dont_know: whatIDontKnow,
+            federation_hits: federationHits,
+        };
+    }
+    try {
+        const { answer, cost } = await store.ask(askPrompt(question, evidence, gapAnalysis));
+        return {
+            question,
+            status: "answered",
+            answer,
+            citations,
+            cost,
+            available: true,
+            evidence,
+            gap_analysis: gapAnalysis,
+            what_i_dont_know: whatIDontKnow,
+            federation_hits: federationHits,
+        };
+    }
+    catch (err) {
+        const error = err instanceof Error ? err.message : String(err);
+        return {
+            question,
+            status: "provider-unavailable",
+            answer: evidenceOnlyAnswer(evidence, gapAnalysis, error),
+            citations,
+            cost: null,
+            available: false,
+            evidence,
+            gap_analysis: gapAnalysis,
+            what_i_dont_know: whatIDontKnow,
+            federation_hits: federationHits,
+            error,
+        };
+    }
+}
+async function composeWhatIDontKnow(store, question, gapAnalysis, now) {
+    const out = [...gapAnalysis.gaps];
+    try {
+        const { buildReasoningReplay } = await import("./reasoning/reasoning-replay.js");
+        const replay = await buildReasoningReplay(store, question, { limit: 5, now });
+        for (const gap of replay.gaps)
+            out.push(gap);
+    }
+    catch {
+        /* degrade silently — ask stays zero-token by default */
+    }
+    try {
+        const { buildLearningDebtReport } = await import("./learning-debt.js");
+        const report = await buildLearningDebtReport(store, { now });
+        for (const debt of report.categories.repeatedFailurePatterns) {
+            if (debt.hasDurableLesson)
+                continue;
+            out.push(`repeated-failure: ${debt.pattern} (${debt.attemptCount} attempts) — no durable lesson recorded`);
+        }
+    }
+    catch {
+        /* degrade silently */
+    }
+    return [...new Set(out)];
+}
+async function composeFederationHits(question, rootDir, now) {
+    if (!rootDir)
+        return [];
+    try {
+        const { buildFederationReport } = await import("./federation.js");
+        const report = await buildFederationReport(rootDir, question, { now });
+        return report.results.map((hit) => ({
+            origin_repo: hit.origin_repo,
+            id: hit.id,
+            score: hit.score,
+            confidence_local: hit.confidence_local,
+            confidence_remote: hit.confidence_remote,
+            path: hit.path,
+            excerpt: hit.excerpt,
+        }));
+    }
+    catch {
+        return [];
+    }
+}
+async function buildAskEvidence(store, nodes) {
+    const rids = nodes.map((node) => node.rid);
+    const superseded = await store.supersededByMany(rids);
+    const nodeEvidence = nodes.map((node, index) => toAskEvidence(node, index + 1, superseded));
+    const byRid = new Map(nodeEvidence.map((item) => [item.rid, item]));
+    const contradictory = [];
+    for (const edge of await store.listEdges()) {
+        if (edgeLabel(edge) !== "CONTRADICTS")
+            continue;
+        const from = byRid.get(edgeFrom(edge));
+        const to = byRid.get(edgeTo(edge));
+        if (!from || !to)
+            continue;
+        const resolved = from.activeRid === to.activeRid;
+        contradictory.push({
+            from,
+            to,
+            reason: edgeReason(edge),
+            resolved,
+            activeRid: resolved ? from.activeRid : null,
+        });
+    }
+    return {
+        active: nodeEvidence.filter((item) => item.status === "active"),
+        superseded: nodeEvidence.filter((item) => item.status === "superseded"),
+        contradictory,
+        byConfidence: evidenceByConfidence(nodeEvidence),
+    };
+}
+function evidenceByConfidence(items) {
+    return {
+        EXTRACTED: items.filter((item) => item.confidence === "EXTRACTED"),
+        INFERRED: items.filter((item) => item.confidence === "INFERRED"),
+        AMBIGUOUS: items.filter((item) => item.confidence === "AMBIGUOUS"),
+    };
+}
+function buildAskGapAnalysis(evidence) {
+    const gaps = [];
+    const nextActions = [];
+    const unresolvedContradictions = evidence.contradictory.filter((item) => !item.resolved);
+    const totalEvidence = evidence.active.length + evidence.superseded.length;
+    if (totalEvidence === 0) {
+        return {
+            status: "unsupported",
+            summary: "Memory has no recalled evidence for this question.",
+            gaps: ["No active or superseded Memory evidence matched the question."],
+            next_actions: [
+                "Store a grounded project fact or bootstrap repository docs before asking again.",
+            ],
+        };
+    }
+    if (unresolvedContradictions.length > 0) {
+        gaps.push(`${unresolvedContradictions.length} unresolved contradiction(s) affect the evidence.`);
+        nextActions.push("Resolve or supersede the contradictory Memory nodes before relying on the answer.");
+    }
+    if (evidence.active.length === 0 && evidence.superseded.length > 0) {
+        gaps.push("Only superseded evidence matched the question.");
+        nextActions.push("Ask against the active replacement evidence or add a current Memory node.");
+    }
+    if (evidence.byConfidence.EXTRACTED.length === 0) {
+        gaps.push("No EXTRACTED evidence supports the answer.");
+        nextActions.push("Ground this answer in source-backed extracted evidence when possible.");
+    }
+    if (evidence.active.length === 1) {
+        gaps.push("Only one active citation supports the answer.");
+        nextActions.push("Add independent supporting evidence if this answer will guide a risky change.");
+    }
+    if (gaps.length === 0) {
+        return {
+            status: "grounded",
+            summary: "Memory has active, non-contradictory extracted evidence for this question.",
+            gaps: [],
+            next_actions: [],
+        };
+    }
+    return {
+        status: unresolvedContradictions.length > 0 ? "conflicted" : "partial",
+        summary: unresolvedContradictions.length > 0
+            ? "Memory found relevant evidence, but unresolved contradictions need attention."
+            : "Memory found relevant evidence, but the support is incomplete.",
+        gaps,
+        next_actions: [...new Set(nextActions)],
+    };
+}
+function toAskEvidence(node, marker, superseded) {
+    const activeRid = activeHead(node.rid, superseded);
+    return {
+        citation: `[${marker}]`,
+        rid: node.rid,
+        label: node.label,
+        node_type: node.node_type,
+        title: node.properties.title ?? node.label,
+        excerpt: node.excerpt,
+        confidence: node.properties.confidence ?? "AMBIGUOUS",
+        source: typeof node.properties.source === "string" ? node.properties.source : null,
+        status: activeRid === node.rid ? "active" : "superseded",
+        activeRid,
+        confidence_score: node.confidence,
+        confidence_breakdown: node.confidence_breakdown,
+    };
+}
+function askPrompt(question, evidence, gapAnalysis) {
+    return [
+        "Answer the question using only the Memory evidence below.",
+        "Cite every substantive claim with the evidence marker, for example [1].",
+        "If the evidence does not support an answer, reply with: Insufficient evidence.",
+        "Call out contradictions and superseded evidence when relevant.",
+        "End with a short gap note when the gap analysis is not grounded.",
+        "",
+        `Question: ${question}`,
+        "",
+        "Active evidence:",
+        ...renderAskEvidence(evidence.active),
+        "",
+        "Superseded evidence:",
+        ...renderAskEvidence(evidence.superseded),
+        "",
+        "Contradictions:",
+        ...renderAskContradictions(evidence.contradictory),
+        "",
+        "Gap analysis:",
+        ...renderAskGapAnalysis(gapAnalysis),
+    ].join("\n");
+}
+function renderAskEvidence(items) {
+    if (items.length === 0)
+        return ["(none)"];
+    return items.map((item) => {
+        const source = item.source ? ` source=${item.source}` : "";
+        const score = item.confidence_score != null ? ` confidence=${item.confidence_score.toFixed(3)}` : "";
+        return `${item.citation} ${item.title} (${item.confidence}; rid=${item.rid}; ${item.status}${source}${score}) ${item.excerpt}`;
+    });
+}
+function renderAskContradictions(items) {
+    if (items.length === 0)
+        return ["(none)"];
+    return items.map((item) => {
+        const state = item.resolved ? `resolved active=${item.activeRid}` : "unresolved";
+        const reason = item.reason ? ` reason=${item.reason}` : "";
+        return `${item.from.citation} contradicts ${item.to.citation} (${state}${reason})`;
+    });
+}
+function renderAskGapAnalysis(gapAnalysis) {
+    return [
+        `status=${gapAnalysis.status}`,
+        `summary=${gapAnalysis.summary}`,
+        `gaps=${gapAnalysis.gaps.length > 0 ? gapAnalysis.gaps.join(" | ") : "(none)"}`,
+        `next_actions=${gapAnalysis.next_actions.length > 0 ? gapAnalysis.next_actions.join(" | ") : "(none)"}`,
+    ];
+}
+function evidenceOnlyAnswer(evidence, gapAnalysis, error) {
+    return [
+        `Evidence-only fallback: LLM provider unavailable (${error}).`,
+        "Active evidence:",
+        ...renderAskEvidence(evidence.active),
+        "Superseded evidence:",
+        ...renderAskEvidence(evidence.superseded),
+        "Contradictions:",
+        ...renderAskContradictions(evidence.contradictory),
+        "Confidence buckets:",
+        `EXTRACTED: ${evidence.byConfidence.EXTRACTED.map((item) => item.citation).join(", ") || "(none)"}`,
+        `INFERRED: ${evidence.byConfidence.INFERRED.map((item) => item.citation).join(", ") || "(none)"}`,
+        `AMBIGUOUS: ${evidence.byConfidence.AMBIGUOUS.map((item) => item.citation).join(", ") || "(none)"}`,
+        "Gap analysis:",
+        ...renderAskGapAnalysis(gapAnalysis),
+    ].join("\n");
+}
+function activeHead(rid, superseded) {
+    const seen = new Set();
+    let current = rid;
+    while (!seen.has(current)) {
+        seen.add(current);
+        const next = superseded.get(current);
+        if (next == null)
+            return current;
+        current = next;
+    }
+    return current;
+}
+function edgeLabel(edge) {
+    return String(edge.label ?? edge.edge_label ?? "");
+}
+function edgeFrom(edge) {
+    return Number(edge.from_rid ?? edge.from ?? edge.from_id ?? edge.source ?? edge.source_id);
+}
+function edgeTo(edge) {
+    return Number(edge.to_rid ?? edge.to ?? edge.to_id ?? edge.target ?? edge.target_id);
+}
+function edgeReason(edge) {
+    const props = edge.properties;
+    if (props && typeof props === "object" && "reason" in props) {
+        const reason = props.reason;
+        return reason == null ? null : String(reason);
+    }
+    return null;
+}
+function renderContext(query, nodes, diagnostics = emptyDiagnostics()) {
+    const vectorLine = renderVectorDiagnostic(diagnostics.vector);
+    if (nodes.length === 0) {
+        return `# Memory recall: ${query}\n\n_${vectorLine}_\n\n_(no relevant memory)_\n`;
+    }
+    const lines = [`# Memory recall: ${query}`, ""];
+    lines.push(`_${vectorLine}_`, "");
+    for (const n of nodes.slice(0, 12)) {
+        const p = n.properties;
+        const source = p.source ? ` — ${p.source}` : "";
+        lines.push(`- **${p.title ?? n.label}** _(${n.node_type})_${source}`);
+        const detail = p.summary ?? p.content;
+        if (detail)
+            lines.push(`  ${detail.slice(0, 200)}`);
+        // attempt nodes carry their Envelope hook executions as a `hooks` array
+        // (issue #216). Surface a one-line summary so recall consumers see which
+        // user hooks fired without re-reading the raw Envelope.
+        const hooksLine = renderAttemptHooks(p.hooks);
+        if (hooksLine)
+            lines.push(`  ${hooksLine}`);
+    }
+    return `${lines.join("\n")}\n`;
+}
+function renderAttemptHooks(hooks) {
+    if (!Array.isArray(hooks) || hooks.length === 0)
+        return null;
+    const parts = [];
+    for (const raw of hooks) {
+        if (raw == null || typeof raw !== "object")
+            continue;
+        const entry = raw;
+        const lifecycle = typeof entry.lifecycle === "string" ? entry.lifecycle : "";
+        if (!lifecycle)
+            continue;
+        const exit = entry.exit_code;
+        const exitStr = typeof exit === "number" || typeof exit === "string" ? String(exit) : "?";
+        parts.push(`${lifecycle}=${exitStr}`);
+    }
+    if (parts.length === 0)
+        return null;
+    return `_hooks: ${parts.join(", ")}_`;
+}
+function renderVectorDiagnostic(d) {
+    if (d.status === "contributed") {
+        return `vector retrieval contributed ${d.contributed} candidate(s)`;
+    }
+    if (d.status === "available")
+        return "vector retrieval available; 0 candidate(s) contributed";
+    const reason = d.reason ? `: ${d.reason}` : "";
+    return `vector retrieval unavailable${reason}`;
+}

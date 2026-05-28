@@ -1,4 +1,7 @@
-# Built at `memory init` time on the user's machine — never committed.
-dist/
+# `dist/` is committed on purpose: the plugin ships as a marketplace git checkout
+# into ~/.claude/plugins/cache/, and Claude Code never runs a build on install or
+# autoUpdate. The lifecycle hooks invoke ${CLAUDE_PLUGIN_ROOT}/dist/cli.js, so the
+# built CLI must travel inside the published commit or the hooks silently no-op.
+# red-memory-dist-check.yml enforces that the committed dist matches src/.
 node_modules/
 *.tsbuildinfo

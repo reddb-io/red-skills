@@ -1,0 +1,151 @@
+import { recall, } from "./engine.js";
+import { hybridRecall } from "./hybrid-recall.js";
+import { appendEngineOpEvent } from "./memory-events.js";
+/**
+ * CLI-facing recall: runs the engine's graph-aware recall to assemble the
+ * candidate set (scope filtering, supersession resolution, graph expansion,
+ * confidence attachment) and then re-orders the candidates by folding three
+ * per-axis rankings through Reciprocal Rank Fusion (#180):
+ *
+ *   - keyword: `store.searchText` order
+ *   - vector:  `store.searchVector` order (when available)
+ *   - graph:   candidate order by graph-distance (depth asc, engine score desc)
+ *
+ * RRF carries no per-source weights, so a hit's final position is determined
+ * purely by where it landed in each contributing ranking. Hits the engine
+ * surfaces always remain — the graph ranking covers the full candidate set —
+ * but their order now blends across vector, keyword, and graph-distance signals
+ * without any hand-tuned multiplier. See `hybrid-recall.ts` for the composer.
+ */
+export async function graphRecall(store, query, limit = 10, opts = {}) {
+    return (await graphRecallResult(store, query, limit, opts)).hits;
+}
+function isMemoryStore(store) {
+    return typeof store.emitEngineOp === "function";
+}
+export async function graphRecallResult(store, query, limit = 10, opts = {}) {
+    const { nodes, diagnostics } = await recall(store, query, {
+        k: limit,
+        depth: 1,
+        includeSuperseded: opts.includeSuperseded,
+        scope: opts.scope,
+        now: opts.now,
+    });
+    if (isMemoryStore(store)) {
+        await appendEngineOpEvent(store, {
+            op: "recall",
+            outcome: nodes.length > 0 ? "hit" : "miss",
+            layer: "L3",
+            query,
+            hit_count: nodes.length,
+        });
+    }
+    if (nodes.length === 0) {
+        return { hits: [], diagnostics };
+    }
+    const candidates = new Map();
+    for (const node of nodes)
+        candidates.set(node.rid, node);
+    const rankings = [
+        { source: "keyword", rids: await keywordRanking(store, query, limit, candidates) },
+        { source: "vector", rids: await vectorRanking(store, query, limit, candidates) },
+        { source: "graph", rids: graphRanking(nodes) },
+    ];
+    const fused = hybridRecall(rankings);
+    const hits = [];
+    for (const entry of fused) {
+        const node = candidates.get(entry.rid);
+        if (!node)
+            continue;
+        const hooks = extractHookEntries(node.properties.hooks);
+        hits.push({
+            id: String(node.rid),
+            rid: node.rid,
+            label: node.label,
+            node_type: node.node_type,
+            score: entry.score,
+            excerpt: node.excerpt,
+            ...(hooks ? { hooks } : {}),
+        });
+        if (hits.length >= limit)
+            break;
+    }
+    return { hits, diagnostics };
+}
+function extractHookEntries(raw) {
+    if (!Array.isArray(raw) || raw.length === 0)
+        return null;
+    const out = [];
+    for (const item of raw) {
+        if (item == null || typeof item !== "object")
+            continue;
+        const entry = item;
+        const lifecycle = typeof entry.lifecycle === "string" ? entry.lifecycle : "";
+        const command = typeof entry.command === "string" ? entry.command : "";
+        const exit = entry.exit_code;
+        const exit_code = typeof exit === "number" && Number.isFinite(exit)
+            ? exit
+            : typeof exit === "string" && /^-?\d+$/.test(exit.trim())
+                ? Number(exit.trim())
+                : NaN;
+        if (!lifecycle || !command || !Number.isFinite(exit_code))
+            continue;
+        out.push({ lifecycle, command, exit_code });
+    }
+    return out.length > 0 ? out : null;
+}
+async function keywordRanking(store, query, limit, candidates) {
+    try {
+        const rows = await store.searchText(query, limit * 4);
+        const seen = new Set();
+        const out = [];
+        for (const row of rows) {
+            if (!candidates.has(row.rid) || seen.has(row.rid))
+                continue;
+            seen.add(row.rid);
+            out.push(row.rid);
+        }
+        return out;
+    }
+    catch {
+        return [];
+    }
+}
+async function vectorRanking(store, query, limit, candidates) {
+    if (!store.searchVector)
+        return [];
+    try {
+        const rows = await store.searchVector(query, limit * 4);
+        const seen = new Set();
+        const out = [];
+        for (const row of rows) {
+            if (!candidates.has(row.rid) || seen.has(row.rid))
+                continue;
+            seen.add(row.rid);
+            out.push(row.rid);
+        }
+        return out;
+    }
+    catch {
+        return [];
+    }
+}
+/**
+ * Graph-distance ranking: order every engine candidate by hop depth (seeds
+ * first, then 1-hop expansions, then 2-hop, …). Within a depth bucket, the
+ * engine's composite score breaks ties so the higher-priority node ranks
+ * better in this axis. Covers the full candidate set, which guarantees RRF
+ * never drops a node the engine surfaced.
+ */
+function graphRanking(nodes) {
+    const ordered = [...nodes].sort((a, b) => {
+        const da = a.depth ?? 0;
+        const db = b.depth ?? 0;
+        if (da !== db)
+            return da - db;
+        if (b.score !== a.score)
+            return b.score - a.score;
+        return a.rid - b.rid;
+    });
+    return ordered.map((n) => n.rid);
+}

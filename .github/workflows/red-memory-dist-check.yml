@@ -1,0 +1,69 @@
+# Memory plugin dist freshness guard.
+#
+# `plugins/memory/dist/` is committed on purpose (see plugins/memory/.gitignore):
+# the plugin ships as a marketplace git checkout into ~/.claude/plugins/cache/,
+# and Claude Code never runs a build on install or autoUpdate. The lifecycle
+# hooks invoke ${CLAUDE_PLUGIN_ROOT}/dist/cli.js, so the built CLI must travel
+# inside the published commit or the hooks silently no-op.
+#
+# This guard fails any PR whose committed dist/ does not match a clean build of
+# src/ — i.e. someone edited the source but forgot to rebuild + commit. Run
+# `pnpm -C plugins/memory build` and commit the result to fix.
+#
+# Scoped to PRs that touch the memory plugin (paths filter) so unrelated PRs
+# don't pay the build cost.
+
+name: red-memory-dist-check
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'plugins/memory/src/**'
+      - 'plugins/memory/dist/**'
+      - 'plugins/memory/package.json'
+      - 'plugins/memory/pnpm-lock.yaml'
+      - 'plugins/memory/tsconfig*.json'
+      - '.github/workflows/red-memory-dist-check.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: red-memory-dist-check-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  dist-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Rebuild dist from src
+        working-directory: plugins/memory
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile
+          pnpm build
+
+      - name: Fail if committed dist drifted from src
+        run: |
+          set -euo pipefail
+          if ! git diff --quiet -- plugins/memory/dist; then
+            echo "::error::plugins/memory/dist is out of sync with src/. Run 'pnpm -C plugins/memory build' and commit the result."
+            echo "--- drift ---"
+            git diff --stat -- plugins/memory/dist
+            exit 1
+          fi
+          echo "dist matches src ✓"

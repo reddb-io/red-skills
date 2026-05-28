@@ -1,0 +1,347 @@
+import { mkdir, writeFile } from "node:fs/promises";
+import { join, relative } from "node:path";
+import { contentHash } from "../hash.js";
+export async function buildAttemptLearningReport(store) {
+    const nodes = await store.listNodes();
+    const edges = await store.listEdges();
+    const attempts = nodes
+        .filter((node) => node.node_type === "attempt")
+        .sort(compareAttemptNodes);
+    const validations = nodes
+        .filter((node) => node.node_type === "validation")
+        .sort((a, b) => a.rid - b.rid);
+    const proposals = [];
+    const rejected = [];
+    for (const attempt of attempts) {
+        const evidence = [attemptEvidence(attempt)];
+        const summary = stringProp(attempt, "summary") ?? stringProp(attempt, "content") ?? "";
+        const notes = stringProp(attempt, "notes") ?? "";
+        const rejection = rejectionForAttemptText(notes || summary, evidence);
+        if (rejection)
+            rejected.push(rejection);
+        if (isTerminalFailure(attempt)) {
+            proposals.push(proposal({
+                kind: "failure",
+                title: `Failure: ${String(attempt.properties.status ?? "attempt failed")} on ${attempt.label}`,
+                recommendation: compactText(summary ||
+                    `${attempt.label} ended with status ${String(attempt.properties.status ?? "unknown")}.`),
+                targetNodeType: "problem",
+                confidence: "EXTRACTED",
+                evidence,
+            }));
+            const skillPath = skillPathFromAttempt(attempt);
+            if (skillPath) {
+                proposals.push(proposal({
+                    kind: "skill_improvement",
+                    title: `Skill improvement candidate: ${skillPath}`,
+                    recommendation: compactText(`Review ${skillPath} for missing prerequisites, validation guidance, or recovery steps related to ${String(attempt.properties.error_class ?? attempt.properties.status ?? "the failed attempt")}.`),
+                    targetNodeType: "workflow",
+                    confidence: "INFERRED",
+                    evidence,
+                }));
+            }
+        }
+        if (isDurableFactCandidate(summary)) {
+            proposals.push(proposal({
+                kind: "durable_fact",
+                title: `Durable fact from ${attempt.label}`,
+                recommendation: compactText(summary),
+                targetNodeType: "decision",
+                confidence: "INFERRED",
+                evidence,
+            }));
+        }
+    }
+    for (const validation of validations) {
+        const evidence = [validationEvidence(validation)];
+        const failed = isFailedValidation(validation);
+        const validationSummary = String(validation.properties.summary ?? "");
+        const validationRejection = rejectionForAttemptText(validationSummary, evidence);
+        if (validationRejection)
+            rejected.push(validationRejection);
+        proposals.push(proposal({
+            kind: "validation",
+            title: `Validation ${String(validation.properties.name ?? validation.label)} ${String(validation.properties.status ?? "recorded")}`,
+            recommendation: compactText([
+                validation.properties.command
+                    ? `Command \`${String(validation.properties.command)}\``
+                    : `Validation ${String(validation.properties.name ?? validation.label)}`,
+                `finished with status ${String(validation.properties.status ?? "unknown")}.`,
+                validationRejection ? "" : validationSummary,
+            ].join(" ")),
+            targetNodeType: "validation",
+            confidence: "EXTRACTED",
+            evidence,
+        }));
+        if (isPassedValidation(validation)) {
+            proposals.push(proposal({
+                kind: "durable_fact",
+                title: `Durable fact from validation ${String(validation.properties.name ?? validation.label)}`,
+                recommendation: compactText(`Validation ${String(validation.properties.name ?? validation.label)} passed for issue ${String(validation.properties.issue_number ?? "unknown")}.`),
+                targetNodeType: "decision",
+                confidence: "EXTRACTED",
+                evidence,
+            }));
+        }
+        if (failed) {
+            proposals.push(proposal({
+                kind: "failure",
+                title: `Failure: validation ${String(validation.properties.name ?? validation.label)} failed`,
+                recommendation: compactText(String(validation.properties.summary ?? "") ||
+                    `Validation ${String(validation.properties.name ?? validation.label)} failed.`),
+                targetNodeType: "problem",
+                confidence: "EXTRACTED",
+                evidence,
+            }));
+            const skillPath = skillPathFromValidation(validation, nodes, edges);
+            if (skillPath) {
+                proposals.push(proposal({
+                    kind: "skill_improvement",
+                    title: `Skill improvement candidate: ${skillPath}`,
+                    recommendation: compactText(`Review ${skillPath} for validation guidance related to failed check ${String(validation.properties.name ?? validation.label)}.`),
+                    targetNodeType: "workflow",
+                    confidence: "INFERRED",
+                    evidence,
+                }));
+            }
+        }
+    }
+    return {
+        proposals: dedupeProposals(proposals).sort((a, b) => a.kind.localeCompare(b.kind) || a.title.localeCompare(b.title)),
+        rejected,
+    };
+}
+export async function writeAttemptLearningProposalFile(rootDir, report) {
+    if (report.proposals.length === 0)
+        return null;
+    const fingerprint = reportFingerprint(report);
+    const proposalDir = join(rootDir, ".red", "memory", "proposals");
+    await mkdir(proposalDir, { recursive: true });
+    const file = `attempt-learning-${fingerprint.slice(0, 12)}.md`;
+    const path = join(proposalDir, file);
+    await writeFile(path, renderAttemptLearningProposal(report, fingerprint), "utf8");
+    return toPosix(relative(rootDir, path));
+}
+export function parseAttemptLearningProposal(body) {
+    const match = body.match(/```json memory-learning-proposal\s*([\s\S]*?)```/);
+    if (!match)
+        throw new Error("proposal needs a structured memory-learning-proposal block");
+    const raw = JSON.parse(match[1]);
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+        throw new Error("memory-learning-proposal must be a JSON object");
+    }
+    const obj = raw;
+    if (!Array.isArray(obj.proposals)) {
+        throw new Error("memory-learning-proposal.proposals is required");
+    }
+    return {
+        proposals: obj.proposals,
+        rejected: Array.isArray(obj.rejected) ? obj.rejected : [],
+    };
+}
+export async function applyAttemptLearningProposal(store, report) {
+    const nodeRids = [];
+    const edgeRids = [];
+    for (const item of report.proposals) {
+        const node = {
+            label: `learning:${item.kind}:${item.id.slice(0, 16)}`,
+            node_type: item.targetNodeType,
+            properties: {
+                title: item.title,
+                content: item.recommendation,
+                summary: item.evidenceSummary,
+                source: "attempt-learning",
+                confidence: item.confidence,
+                tags: ["attempt-learning", item.kind],
+                hash: contentHash("attempt-learning", item.id),
+                provenance: {
+                    source_kind: "derived",
+                    writer: "memory attempt learn apply",
+                    command: "memory attempt learn apply",
+                    confidence: item.confidence,
+                    evidence: item.evidence.map((e) => e.description),
+                },
+            },
+        };
+        const nodeRid = await store.upsertNode(node);
+        nodeRids.push(nodeRid);
+        for (const evidence of item.evidence) {
+            edgeRids.push(await store.upsertEdge({
+                label: "LEARNED_FROM",
+                from_rid: nodeRid,
+                to_rid: evidence.rid,
+                properties: { reason: item.kind, source: "attempt-learning" },
+            }));
+        }
+    }
+    return { applied: report.proposals.length, nodeRids, edgeRids };
+}
+function proposal(input) {
+    const evidenceSummary = input.evidence.map((e) => e.description).join("; ");
+    const id = contentHash("attempt-learning", input.kind, input.title, input.recommendation, evidenceSummary);
+    return { ...input, id, evidenceSummary };
+}
+function dedupeProposals(items) {
+    const seen = new Set();
+    const out = [];
+    for (const item of items) {
+        if (seen.has(item.id))
+            continue;
+        seen.add(item.id);
+        out.push(item);
+    }
+    return out;
+}
+function compareAttemptNodes(a, b) {
+    const repo = String(a.properties.repository ?? "").localeCompare(String(b.properties.repository ?? ""));
+    if (repo !== 0)
+        return repo;
+    const issue = Number(a.properties.issue_number ?? 0) - Number(b.properties.issue_number ?? 0);
+    if (issue !== 0)
+        return issue;
+    const attempt = Number(a.properties.attempt_number ?? 0) - Number(b.properties.attempt_number ?? 0);
+    if (attempt !== 0)
+        return attempt;
+    return a.rid - b.rid;
+}
+function attemptEvidence(attempt) {
+    const status = String(attempt.properties.status ?? "unknown");
+    const summary = compactText(String(attempt.properties.summary ?? attempt.properties.content ?? attempt.properties.title ?? ""));
+    return {
+        rid: attempt.rid,
+        label: attempt.label,
+        nodeType: "attempt",
+        description: `attempt rid=${attempt.rid} label=${attempt.label} status=${status}${summary ? ` summary=${summary}` : ""}`,
+    };
+}
+function validationEvidence(validation) {
+    return {
+        rid: validation.rid,
+        label: validation.label,
+        nodeType: "validation",
+        description: `validation rid=${validation.rid} label=${validation.label} name=${String(validation.properties.name ?? "")} status=${String(validation.properties.status ?? "unknown")}`,
+    };
+}
+function rejectionForAttemptText(text, evidence) {
+    if (!text)
+        return null;
+    if (/\b(raw stdout|raw stderr|operational log|tail of .*log|bg-task|\/tmp\/)\b/i.test(text)) {
+        return {
+            kind: "raw_operational_log",
+            action: "rejected",
+            reason: "raw operational logs are not durable Memory facts",
+            evidence,
+        };
+    }
+    if (/\b(wip|in progress|still running|trying|next step|todo|temporary)\b/i.test(text)) {
+        return {
+            kind: "temporary_progress",
+            action: "downgraded",
+            reason: "temporary progress is attempt evidence, not a durable learning",
+            evidence,
+        };
+    }
+    return null;
+}
+function isTerminalFailure(attempt) {
+    const status = String(attempt.properties.status ?? "").toLowerCase();
+    return status !== "" && status !== "done";
+}
+function isDurableFactCandidate(text) {
+    if (!text || text.length < 24)
+        return false;
+    if (/\b(wip|still running|trying|todo|raw stdout|raw stderr|operational log)\b/i.test(text)) {
+        return false;
+    }
+    return /\b(must|uses?|stores?|records?|creates?|links?|dedupes?|verifies?|rejects?|requires?|without|approval-gated)\b/i.test(text);
+}
+function skillPathFromAttempt(attempt) {
+    const touched = attempt.properties.touched_files;
+    if (!Array.isArray(touched))
+        return null;
+    for (const item of touched) {
+        if (typeof item !== "string")
+            continue;
+        if (/((^|\/)skills\/.*\/SKILL\.md$)|(^|\/)SKILL\.md$/i.test(item))
+            return item;
+    }
+    return null;
+}
+function skillPathFromValidation(validation, nodes, edges) {
+    const testedBy = edges.find((edge) => edgeLabel(edge) === "TESTED_BY" && edgeTo(edge) === validation.rid);
+    const attemptRid = edgeFrom(testedBy);
+    if (!Number.isFinite(attemptRid))
+        return null;
+    const touched = edges.find((edge) => edgeLabel(edge) === "TOUCHED" && edgeFrom(edge) === attemptRid);
+    const fileRid = edgeTo(touched);
+    if (!Number.isFinite(fileRid))
+        return null;
+    const file = nodes.find((node) => node.rid === fileRid);
+    const path = stringPropFromNode(file, "title") ?? stringPropFromNode(file, "source") ?? "";
+    return /(^|\/)skills\/.*\/SKILL\.md$/i.test(path) ? path : null;
+}
+function edgeLabel(edge) {
+    return String(edge?.label ?? edge?.LABEL ?? "");
+}
+function edgeFrom(edge) {
+    return Number(edge?.from ?? edge?.from_rid ?? edge?.FROM ?? edge?.FROM_RID);
+}
+function edgeTo(edge) {
+    return Number(edge?.to ?? edge?.to_rid ?? edge?.TO ?? edge?.TO_RID);
+}
+function isFailedValidation(validation) {
+    const status = String(validation.properties.status ?? "").toLowerCase();
+    return status === "failed" || status === "error" || status === "timed-out";
+}
+function isPassedValidation(validation) {
+    const status = String(validation.properties.status ?? "").toLowerCase();
+    return status === "passed" || status === "succeeded" || status === "success";
+}
+function stringProp(node, key) {
+    const value = node.properties[key];
+    return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+function stringPropFromNode(node, key) {
+    if (!node)
+        return null;
+    return stringProp(node, key);
+}
+function compactText(text) {
+    return text.replace(/\s+/g, " ").trim().slice(0, 500);
+}
+function reportFingerprint(report) {
+    return contentHash("attempt-learning-report", ...report.proposals.map((p) => p.id));
+}
+function renderAttemptLearningProposal(report, fingerprint) {
+    const kinds = [...new Set(report.proposals.map((p) => p.kind))].join(", ");
+    return `# Attempt Learning Proposal
+
+Status: approval-gated
+Generated: ${new Date().toISOString()}
+Fingerprint: ${fingerprint}
+Kinds: ${kinds}
+
+## Evidence
+
+${report.proposals.map((p) => `- ${p.kind}: ${p.evidenceSummary}`).join("\n")}
+
+## Proposed Learnings
+
+${report.proposals.map((p) => `- [${p.kind}] ${p.title}: ${p.recommendation}`).join("\n")}
+
+## Rejected Or Downgraded
+
+${report.rejected.length === 0 ? "- none" : report.rejected.map((r) => `- [${r.action}] ${r.kind}: ${r.reason}`).join("\n")}
+
+## Apply Policy
+
+This proposal is approval-gated. Generating it wrote this file only; it did not create durable Memory nodes. Apply only after review with \`memory attempt learn apply <proposal> --yes\`.
+
+\`\`\`json memory-learning-proposal
+${JSON.stringify(report, null, 2)}
+\`\`\`
+`;
+}
+function toPosix(path) {
+    return path.split("\\").join("/");
+}

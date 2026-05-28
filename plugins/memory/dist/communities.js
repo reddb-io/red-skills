@@ -1,0 +1,105 @@
+import { createHash } from "node:crypto";
+export async function buildCommunityAnalytics(store, opts = {}) {
+    const cacheMode = opts.cache ?? "read-write";
+    const [nodes, edges] = await Promise.all([store.listNodes(), store.listEdges()]);
+    const graphHash = graphStateHash(nodes, edges);
+    const cacheKey = `cache:communities:${graphHash}`;
+    const cached = cacheMode === "off" ? null : parseCached(await store.kvGet(cacheKey));
+    const communityPairs = cached?.graph_hash === graphHash
+        ? cached.assignments
+        : mapToPairs(await store.communities());
+    if (cacheMode === "read-write" && cached?.graph_hash !== graphHash) {
+        await store.kvPut(cacheKey, {
+            graph_hash: graphHash,
+            assignments: communityPairs,
+            generated_at: (opts.now ?? new Date()).toISOString(),
+        });
+    }
+    const assignments = decorateAssignments(nodes, communityPairs);
+    return {
+        schema_version: "memory.communities.v1",
+        read_only: true,
+        graph_hash: graphHash,
+        cache_key: cacheKey,
+        cached: cached?.graph_hash === graphHash,
+        generated_at: (opts.now ?? new Date()).toISOString(),
+        communities: summarizeCommunities(assignments),
+        assignments,
+    };
+}
+function parseCached(raw) {
+    if (raw == null)
+        return null;
+    if (typeof raw !== "string")
+        return raw;
+    try {
+        return JSON.parse(raw);
+    }
+    catch {
+        return null;
+    }
+}
+function mapToPairs(map) {
+    return [...map.entries()]
+        .map(([rid, community_id]) => ({ rid, community_id }))
+        .sort((a, b) => a.rid - b.rid);
+}
+function decorateAssignments(nodes, assignments) {
+    const byRid = new Map(nodes.map((node) => [node.rid, node]));
+    return assignments
+        .map((assignment) => {
+        const node = byRid.get(assignment.rid);
+        if (!node)
+            return null;
+        return {
+            rid: node.rid,
+            community_id: assignment.community_id,
+            label: node.label,
+            node_type: String(node.node_type),
+            title: node.properties.title ?? node.label,
+        };
+    })
+        .filter((item) => item != null)
+        .sort((a, b) => a.community_id.localeCompare(b.community_id) || a.label.localeCompare(b.label));
+}
+function summarizeCommunities(assignments) {
+    const groups = new Map();
+    for (const assignment of assignments) {
+        const group = groups.get(assignment.community_id) ?? [];
+        group.push(assignment);
+        groups.set(assignment.community_id, group);
+    }
+    return [...groups.entries()]
+        .map(([id, group]) => {
+        const sorted = [...group].sort((a, b) => a.title.localeCompare(b.title));
+        return {
+            id,
+            count: group.length,
+            labels: sorted.slice(0, 5).map((item) => item.label),
+            titles: sorted.slice(0, 5).map((item) => item.title),
+        };
+    })
+        .sort((a, b) => b.count - a.count || a.id.localeCompare(b.id));
+}
+function graphStateHash(nodes, edges) {
+    const normalized = {
+        nodes: nodes
+            .map((node) => ({
+            rid: node.rid,
+            label: node.label,
+            node_type: node.node_type,
+            hash: node.properties.hash,
+        }))
+            .sort((a, b) => a.rid - b.rid),
+        edges: edges
+            .map((edge) => ({
+            rid: Number(edge.rid ?? edge.red_entity_id ?? 0),
+            label: String(edge.label ?? edge.LABEL ?? ""),
+            from: Number(edge.from ?? edge.from_id ?? edge.from_rid ?? edge.source ?? edge.FROM ?? 0),
+            to: Number(edge.to ?? edge.to_id ?? edge.to_rid ?? edge.target ?? edge.TO ?? 0),
+            weight: Number(edge.weight ?? edge.WEIGHT ?? 1),
+        }))
+            .sort((a, b) => a.rid - b.rid || a.from - b.from || a.to - b.to || a.label.localeCompare(b.label)),
+    };
+    return createHash("sha256").update(JSON.stringify(normalized)).digest("hex");
+}
