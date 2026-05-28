@@ -1,0 +1,9 @@
+{
+  "title": "feat(memory): closed-loop wiki extraction (renamed)",
+  "body": "Same PR, different title — slug must change and old page must vanish.\n",
+  "author": { "login": "octocat" },
+  "mergeCommit": { "oid": "deadbeefcafebabe1234567890abcdef12345678" },
+  "url": "https://github.com/reddb-io/red-skills/pull/100",
+  "files": [],
+  "commits": []
+}

@@ -1,0 +1,15 @@
+{
+  "title": "feat(memory): add closed-loop wiki extraction",
+  "body": "This PR adds the auto-publish loop for merged PRs.\n\n## Why\n\nThe wiki was effectively empty.\n",
+  "author": { "login": "octocat" },
+  "mergeCommit": { "oid": "deadbeefcafebabe1234567890abcdef12345678" },
+  "url": "https://github.com/reddb-io/red-skills/pull/100",
+  "files": [
+    { "path": ".github/workflows/red-memory-wiki-extract.yml" },
+    { "path": "scripts/memory-wiki-extract-from-pr.sh" }
+  ],
+  "commits": [
+    { "messageHeadline": "feat: add workflow" },
+    { "messageHeadline": "test: cover idempotency" }
+  ]
+}
