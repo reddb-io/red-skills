@@ -75,13 +75,15 @@ _hook_unquote() {
 # *disable* individual defaults via `afk.hooks.defaults.<name>: false`,
 # never reorder them (see SKILL.md "Lifecycle Hooks").
 #
-# Currently shipped (issues #211, #212, PRD #207):
+# Currently shipped (issues #211, #212, #213, PRD #207):
 #   pre_worktree:
-#     - cargo     → defaults/cargo-pre-worktree.sh
-#     - gradle    → defaults/gradle-pre-worktree.sh
+#     - cargo      → defaults/cargo-pre-worktree.sh
+#     - gradle     → defaults/gradle-pre-worktree.sh
 #   post_worker:
-#     - heartbeat → defaults/heartbeat-post-worker.sh
-#     - envelope  → defaults/envelope-post-worker.sh
+#     - heartbeat  → defaults/heartbeat-post-worker.sh
+#     - envelope   → defaults/envelope-post-worker.sh
+#   post_merge:
+#     - validation → defaults/validation-post-merge.sh
 hook_config_register_defaults() {
   # Always derive the defaults dir from this file's own location — lib/
   # lives at <plugin>/scripts/lib, so climbing two levels lands at the
@@ -107,6 +109,10 @@ hook_config_register_defaults() {
   if [[ -z "${HOOK_DEFAULTS_DISABLED[envelope]:-}" \
         && -x "$defaults_dir/envelope-post-worker.sh" ]]; then
     hook_register post_worker "$defaults_dir/envelope-post-worker.sh"
+  fi
+  if [[ -z "${HOOK_DEFAULTS_DISABLED[validation]:-}" \
+        && -x "$defaults_dir/validation-post-merge.sh" ]]; then
+    hook_register post_merge "$defaults_dir/validation-post-merge.sh"
   fi
 }
 
