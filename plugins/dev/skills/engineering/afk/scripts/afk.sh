@@ -2516,7 +2516,24 @@ straggler_check
 
 ISSUES_JSON="$(select_issues)"
 TOTAL="$(echo "$ISSUES_JSON" | jq 'length')"
-[[ "$TOTAL" -eq 0 ]] && { echo "<promise>NO MORE TASKS</promise>"; exit 0; }
+if [[ "$TOTAL" -eq 0 ]]; then
+  # ---------- on_idle lifecycle hook ----------
+  # Queue drained at the top of the loop iteration — fire on_idle before the
+  # session exits. This is the "between drains" maintenance point (PRD #207);
+  # cache cleanup belongs here, not in post_session. Exit-code policy is
+  # `continue`: a flaky cleanup must never wedge the loop.
+  _afk_idle_ctx="$(jq -nc \
+    --arg runner "${RUNNER:-}" \
+    --arg worker "${WORKER_ID:-}" \
+    --argjson done    "${AGG_DONE:-0}" \
+    --argjson blocked "${AGG_BLOCKED:-0}" \
+    --argjson total   "${AGG_TOTAL:-0}" \
+    '{runner:$runner, worker_id:$worker, stats:{done:$done, blocked:$blocked, total:$total}}')"
+  hook_dispatch on_idle "$_afk_idle_ctx" >/dev/null \
+    || log "on_idle hook reported non-zero — continuing"
+  echo "<promise>NO MORE TASKS</promise>"
+  exit 0
+fi
 
 NUMBERS=()
 while IFS= read -r n; do NUMBERS+=("$n"); done < <(echo "$ISSUES_JSON" | jq '.[].number')
