@@ -897,6 +897,10 @@ async function runRecall(args: ParsedArgs): Promise<void> {
       for (const hit of hits) {
         console.log(`  [${hit.score}] ${hit.id} (${hit.node_type}) ${hit.label}`);
         console.log(`        ${hit.excerpt}`);
+        if (hit.hooks && hit.hooks.length > 0) {
+          const parts = hit.hooks.map((h) => `${h.lifecycle}=${h.exit_code}`);
+          console.log(`        hooks: ${parts.join(", ")}`);
+        }
       }
     } finally {
       await store.close();

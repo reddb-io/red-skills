@@ -50,6 +50,10 @@ _Avoid_: stdout parse, test note
 The AFK-produced JSONL file of structured validation records consumed by Memory when recording a **Reasoning attempt**.
 _Avoid_: log scrape, validation summary
 
+**Reasoning attempt hooks**:
+The optional `hooks` array property on a **Reasoning attempt** node, carrying one `{lifecycle, command, exit_code}` entry per user-declared AFK lifecycle hook that ran during the attempt. Populated best-effort from the terminal Envelope's hook section; absent (not empty) when no user hooks ran.
+_Avoid_: envelope hook dump, hook log
+
 **Memory event log**:
 The RedDB-backed operational telemetry stream for Memory-visible agent events, including skill events, attempt validations, hook events, and derived lifecycle observations.
 _Avoid_: separate telemetry tables, raw logs
@@ -496,6 +500,7 @@ _Avoid_: memory rollback, historical search
 - **Markdown-only mode** stores **Memory notes**; **Graph mode** stores **Memory nodes**.
 - A **Reasoning attempt** may connect to issue, PRD, file, and **Validation node** evidence.
 - A **Validation sidecar** feeds **Validation nodes** and `TESTED_BY` edges; `validation_summary` remains a quick aggregate property.
+- **Reasoning attempt hooks** live as a property on the **Reasoning attempt** node; absent when the project declared no user hooks, never represented as an edge or separate node.
 - The **Memory event log** is the shared telemetry substrate for skill, attempt, and hook observations before specialized rollups are produced.
 - The **Memory readiness envelope** is the contract shared by UI and `eval:competitive:v2`, so product views and benchmarks are backed by the same evidence.
 - A **Memory handoff report** composes live graph evidence for cross-agent continuation; it does not read or expose raw transcripts.

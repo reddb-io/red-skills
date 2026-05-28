@@ -119,6 +119,20 @@ expect_eq "validation sidecar parser: valid records" "$(afk_validation_sidecar_r
 expect_eq "validation sidecar parser: missing file" "$(afk_validation_sidecar_records_json "$TMP/nope.jsonl" | jq -r 'length')" "0"
 expect_eq "validation sidecar parser: malformed file" "$(afk_validation_sidecar_records_json "$malformed_sidecar" | jq -r 'length')" "0"
 
+hooks_log="$TMP/hooks-executed.log"
+printf 'pre_pick\tscripts/filter.sh --label slice:afk\t0\npost_pick\tscripts/audit.sh\t1\n' > "$hooks_log"
+hooks_log_bad="$TMP/hooks-bad.log"
+printf 'lifecycle_only\n\tjust\ttabs\n\t\tcommand_only\t\nbad\tcmd\tnotanumber\n' > "$hooks_log_bad"
+hooks_log_empty="$TMP/hooks-empty.log"
+: > "$hooks_log_empty"
+
+expect_eq "hooks log parser: valid records" "$(afk_hooks_log_records_json "$hooks_log" | jq -r 'length')" "2"
+expect_eq "hooks log parser: first lifecycle" "$(afk_hooks_log_records_json "$hooks_log" | jq -r '.[0].lifecycle')" "pre_pick"
+expect_eq "hooks log parser: second exit code" "$(afk_hooks_log_records_json "$hooks_log" | jq -r '.[1].exit_code')" "1"
+expect_eq "hooks log parser: drops malformed" "$(afk_hooks_log_records_json "$hooks_log_bad" | jq -r 'length')" "0"
+expect_eq "hooks log parser: empty file" "$(afk_hooks_log_records_json "$hooks_log_empty" | jq -r 'length')" "0"
+expect_eq "hooks log parser: missing file" "$(afk_hooks_log_records_json "$TMP/nope.log" | jq -r 'length')" "0"
+
 SUM_DONE="$(build_envelope_summary done 125 merged 3 abc1234)"
 EXPECT_DONE="$TMP/expect-done.body"
 printf '%s' "$(envelope_build_body done "$SUM_DONE" validation "$validation_file")" > "$EXPECT_DONE"
@@ -185,6 +199,19 @@ before="$MEMORY_COUNT"
 emit_envelope done 99 125 afk/wTEST/99-memory-attempt 3 abc1234 memory-attempt ".red/tmp/work-wTEST-i99/worktree" validation "$validation_file" && rc=0 || rc=$?
 expect_eq "post failure still fails emit_envelope" "$rc" "1"
 expect_eq "post failure does not call memory" "$((MEMORY_COUNT - before))" "0"
+
+expect_json_eq "no-hooks-by-default payload omits hooks field" "$MEMORY_PAYLOAD_DIR/1.json" '.hooks // "missing"' "missing"
+
+POST_RC=0
+MEMORY_RC=0
+export HOOK_EXECUTIONS_FILE="$hooks_log"
+emit_envelope done 99 125 afk/wTEST/99-memory-attempt 3 abc1234 memory-attempt ".red/tmp/work-wTEST-i99/worktree" validation "$validation_file" || true
+payload="$MEMORY_PAYLOAD_DIR/$MEMORY_COUNT.json"
+expect_json_eq "with-hooks payload includes hooks length" "$payload" '.hooks | length' "2"
+expect_json_eq "with-hooks payload first lifecycle" "$payload" '.hooks[0].lifecycle' "pre_pick"
+expect_json_eq "with-hooks payload first command preserves spaces" "$payload" '.hooks[0].command' "scripts/filter.sh --label slice:afk"
+expect_json_eq "with-hooks payload second exit_code" "$payload" '.hooks[1].exit_code' "1"
+unset HOOK_EXECUTIONS_FILE
 
 echo
 echo "afk-memory-attempt: $pass passed, $fail failed"

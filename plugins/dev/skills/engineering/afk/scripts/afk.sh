@@ -795,18 +795,20 @@ sha256_text() {
 afk_memory_record_terminal_attempt() {
   local status="$1" n="$2" dur="$3" branch="$4" attempt="$5" merge_sha="$6" summary="$7" diffstat="$8"
   local envelope_body="$9" notes_file="${10:-}" log_file="${11:-}" validation_file="${12:-}" validation_sidecar_file="${13:-}"
+  local hooks_log_file="${14:-${HOOK_EXECUTIONS_FILE:-}}"
 
   declare -F memory_record_attempt >/dev/null 2>&1 || return 0
   command -v jq >/dev/null 2>&1 || return 0
   [[ -n "$envelope_body" ]] || return 0
 
-  local tmpdir payload issue_body_file notes_tmp validation_tmp validation_records_tmp
+  local tmpdir payload issue_body_file notes_tmp validation_tmp validation_records_tmp hooks_records_tmp
   tmpdir="$(mktemp -d)"
   payload="$tmpdir/attempt.json"
   issue_body_file="$tmpdir/issue-body.md"
   notes_tmp="$tmpdir/notes.txt"
   validation_tmp="$tmpdir/validation.txt"
   validation_records_tmp="$tmpdir/validation-records.json"
+  hooks_records_tmp="$tmpdir/hooks-records.json"
   printf '%s' "${CURRENT_ISSUE_BODY:-}" > "$issue_body_file"
   : > "$notes_tmp"
   : > "$validation_tmp"
@@ -819,6 +821,7 @@ afk_memory_record_terminal_attempt() {
     cat "$validation_file" > "$validation_tmp"
   fi
   afk_validation_sidecar_records_json "$validation_sidecar_file" > "$validation_records_tmp"
+  afk_hooks_log_records_json "$hooks_log_file" > "$hooks_records_tmp"
 
   local repo issue_url envelope_hash envelope_ref touched_json failure_branch error_class
   repo="$(gh_repo)"
@@ -854,6 +857,7 @@ afk_memory_record_terminal_attempt() {
     --arg errorClass "$error_class" \
     --rawfile validationSummary "$validation_tmp" \
     --slurpfile validationRecords "$validation_records_tmp" \
+    --slurpfile hookRecords "$hooks_records_tmp" \
     --arg summary "$summary" \
     'def trim_final_newline: sub("\n$"; "");
     {
@@ -879,6 +883,7 @@ afk_memory_record_terminal_attempt() {
       summary: $summary
     }
     + (if (($validationRecords[0] // []) | length) > 0 then {validationRecords: $validationRecords[0]} else {} end)
+    + (if (($hookRecords[0] // []) | length) > 0 then {hooks: $hookRecords[0]} else {} end)
     | with_entries(select(.value != "" and .value != null))' > "$payload" \
     || { rm -rf "$tmpdir"; return 0; }
 
@@ -1852,6 +1857,43 @@ afk_validation_sidecar_append() {
     + (if $command != "" then {command: $command} else {} end)
     + (if $durationMs != "" then {durationMs: ($durationMs | tonumber)} else {} end)
     + (if $summary != "" then {summary: $summary} else {} end)' >> "$sidecar" 2>/dev/null || true
+}
+
+afk_hooks_log_records_json() {
+  # Convert the user-hook execution log (HOOK_EXECUTIONS_FILE,
+  # tab-separated `lifecycle\tcommand\texit_code` triples) into a JSON
+  # array of {lifecycle, command, exit_code} entries the Memory writer
+  # can stamp onto the `attempt` node (issue #216). Missing file, empty
+  # file, missing jq, or any malformed line collapses to `[]` so the
+  # caller drops the property entirely.
+  local log="$1"
+  if [[ -z "$log" || ! -f "$log" || ! -s "$log" ]]; then
+    printf '[]\n'
+    return 0
+  fi
+  command -v jq >/dev/null 2>&1 || { printf '[]\n'; return 0; }
+  awk -F '\t' '
+    NF >= 3 && $1 != "" && $2 != "" && $3 ~ /^-?[0-9]+$/ {
+      printf "{\"lifecycle\":%s,\"command\":%s,\"exit_code\":%d}\n", \
+        jstr($1), jstr($2), $3 + 0
+    }
+    function jstr(s,    out, i, c, n) {
+      out = "\""
+      n = length(s)
+      for (i = 1; i <= n; i++) {
+        c = substr(s, i, 1)
+        if (c == "\\") out = out "\\\\"
+        else if (c == "\"") out = out "\\\""
+        else if (c == "\n") out = out "\\n"
+        else if (c == "\r") out = out "\\r"
+        else if (c == "\t") out = out "\\t"
+        else out = out c
+      }
+      return out "\""
+    }
+  ' "$log" 2>/dev/null \
+    | jq -cs '.' 2>/dev/null \
+    || printf '[]\n'
 }
 
 afk_validation_sidecar_records_json() {
