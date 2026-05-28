@@ -22,6 +22,10 @@ SKILL_DIR="$(dirname "$SCRIPT_DIR")"
 source "$SCRIPT_DIR/config.sh"
 # shellcheck source=./hooks.sh
 source "$SCRIPT_DIR/hooks.sh"
+# shellcheck source=./lib/hook-dispatcher.sh
+source "$SCRIPT_DIR/lib/hook-dispatcher.sh"
+# shellcheck source=./lib/hook-config.sh
+source "$SCRIPT_DIR/lib/hook-config.sh"
 # shellcheck source=./lib/state.sh
 source "$SCRIPT_DIR/lib/state.sh"
 # shellcheck source=./lib/merge.sh
@@ -2461,6 +2465,32 @@ precheck
 bootstrap
 log "runner: $RUNNER (detected via $RUNNER_DETECTION_METHOD)"
 log_applied_detectors_boot_line
+
+# ---------- pre_session lifecycle hook ----------
+# Load `afk.hooks.*` from .red/config.yaml and fire pre_session before any
+# queue work. Non-zero exit aborts the session loudly (PRD #207).
+if hook_config_load "${PROJECT_ROOT:-$PWD}/.red/config.yaml"; then
+  export RED_AFK_WORKSPACE="${PROJECT_ROOT:-$PWD}"
+  export RED_AFK_RUNNER="${RUNNER:-}"
+  _afk_session_ctx="$(jq -nc \
+    --arg runner "${RUNNER:-}" \
+    --arg worker "${WORKER_ID:-}" \
+    --arg filter "${FILTER_KIND:-}" \
+    --arg cap    "${ITER_CAP:-999}" \
+    '{runner:$runner, worker_id:$worker, filter:$filter, iter_cap:($cap|tonumber? // 999)}')"
+  if _afk_session_ctx="$(hook_dispatch pre_session "$_afk_session_ctx")"; then
+    :
+  else
+    _rc=$?
+    log "✗ pre_session hook aborted session (rc=$_rc)"
+    exit "$_rc"
+  fi
+else
+  _rc=$?
+  log "✗ hook config load failed (rc=$_rc) — aborting session"
+  exit "$_rc"
+fi
+
 prune_orphans
 sweep_unblocked
 
@@ -2515,4 +2545,18 @@ done
 
 hr
 log "/afk done. worker: $WORKER_ID, processed: $AGG_DONE done, $AGG_BLOCKED blocked"
+
+# ---------- post_session lifecycle hook ----------
+# Fire post_session on normal termination. Non-zero exits are logged and
+# do not block the final NO MORE TASKS sentinel (PRD #207).
+_afk_post_ctx="$(jq -nc \
+  --arg runner "${RUNNER:-}" \
+  --arg worker "${WORKER_ID:-}" \
+  --argjson done    "${AGG_DONE:-0}" \
+  --argjson blocked "${AGG_BLOCKED:-0}" \
+  --argjson total   "${AGG_TOTAL:-0}" \
+  '{runner:$runner, worker_id:$worker, stats:{done:$done, blocked:$blocked, total:$total}}')"
+hook_dispatch post_session "$_afk_post_ctx" >/dev/null \
+  || log "post_session hook reported non-zero — continuing"
+
 echo "<promise>NO MORE TASKS</promise>"
