@@ -762,6 +762,8 @@ The full lifecycle table is defined in PRD #207. The hooks shipped so far:
 | Hook            | When it fires                              | Env vars              | Mutable slice   | Exit-code policy        |
 |-----------------|--------------------------------------------|-----------------------|-----------------|-------------------------|
 | `pre_session`   | Boot, before any queue work                | `RED_AFK_RUNNER`, `RED_AFK_WORKSPACE` | session config (`runner`, `worker_id`, `filter`, `iter_cap`) | non-zero **aborts** the session loudly |
+| `pre_pick`      | Before listing the tracker queue           | `RED_AFK_RUNNER`, `RED_AFK_WORKSPACE` | query params (`label`, `state`, `limit`) — `filter.{kind,value}` is read-only context | non-zero **aborts** the pick; queue listing is **skipped this iteration** and AFK falls through to the empty-queue / `on_idle` path |
+| `post_pick`     | After listing, before claiming             | `RED_AFK_RUNNER`, `RED_AFK_WORKSPACE` | `issues[]` (filter / reorder; replace with `{issues:[…]}`) — extra keys are silently ignored | non-zero is **logged** and AFK continues with the **un-mutated** list (defensive default — a broken filter must not silently drop work) |
 | `on_idle`       | Queue drained at top of loop iteration, before sleep/exit. Distinct from `post_session` — this is "between drains" maintenance (e.g. cache cleanup), not session termination. Does **not** fire on session exit. | `RED_AFK_RUNNER`, `RED_AFK_WORKSPACE` | none in this slice — `stats.{done,blocked,total}` are read-only context | non-zero is **logged** and the loop continues |
 | `post_session`  | Normal session termination                 | `RED_AFK_RUNNER`, `RED_AFK_WORKSPACE` | session stats (`runner`, `worker_id`, `stats.{done,blocked,total}`) | non-zero is **logged** and the session ends as `NO MORE TASKS` |
 
@@ -771,6 +773,10 @@ Example configuration:
 afk:
   hooks:
     pre_session: "echo boot"            # bare-string shorthand
+    post_pick:
+      # filter the queue to issues you opened — RED_AFK_GITHUB_LOGIN must be set
+      - "RED_AFK_GITHUB_LOGIN=$(gh api user --jq .login) \
+         plugins/dev/skills/engineering/afk/examples/only-mine.sh"
     on_idle:
       - "cargo clean -p reddb-storage"  # safe between drains, not on exit
     post_session:
