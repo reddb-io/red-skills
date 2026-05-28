@@ -119,6 +119,24 @@ const hookLifecyclePayloadSchema = z
   })
   .strict();
 
+const driftCaughtPayloadSchema = z
+  .object({
+    event_type: z.literal("memory.drift.caught"),
+    event_id: safeString("payload.event_id", 200),
+    timestamp: z
+      .string()
+      .datetime({ offset: true })
+      .or(z.string().datetime({ offset: false })),
+    /** Watched paths that changed in the PR without an audit marker. */
+    changed_paths: z.array(safeString("payload.changed_paths", SAFE_PATH_MAX)).min(1).max(200),
+    /** The documented actionable line the guard printed when it failed the PR. */
+    reason: safeString("payload.reason", SAFE_TEXT_MAX),
+    pr_number: safeString("payload.pr_number", 80).optional(),
+    head_sha: safeString("payload.head_sha", 80).optional(),
+    base_ref: safeString("payload.base_ref", 240).optional(),
+  })
+  .strict();
+
 const provenanceSchema = z
   .object({
     source_kind: z.enum(["manual", "hook", "derived", "system"]),
@@ -136,7 +154,7 @@ const memoryEventSchema = z
       .string()
       .datetime({ offset: true })
       .or(z.string().datetime({ offset: false })),
-    kind: z.enum(["skill.telemetry", "hook.lifecycle", "engine.op"]),
+    kind: z.enum(["skill.telemetry", "hook.lifecycle", "engine.op", "memory.drift.caught"]),
     source: envelopeObject("source"),
     actor: envelopeObject("actor"),
     scope: z
@@ -150,6 +168,7 @@ const memoryEventSchema = z
       skillTelemetryPayloadSchema,
       hookLifecyclePayloadSchema,
       engineOpPayloadSchema,
+      driftCaughtPayloadSchema,
     ]),
     provenance: provenanceSchema,
   })
@@ -161,6 +180,19 @@ export type HookLifecyclePayload = z.infer<typeof hookLifecyclePayloadSchema>;
 export type EngineOpPayload = z.infer<typeof engineOpPayloadSchema>;
 export type EngineOp = EngineOpPayload["op"];
 export type EngineOpOutcome = EngineOpPayload["outcome"];
+export type DriftCaughtPayload = z.infer<typeof driftCaughtPayloadSchema>;
+
+export interface DriftCaughtInput {
+  /** Watched paths that changed without an audit marker. Must be non-empty. */
+  changedPaths: readonly string[];
+  /** The documented actionable line the guard failed the PR with. */
+  reason: string;
+  prNumber?: string;
+  headSha?: string;
+  baseRef?: string;
+  timestamp?: string | Date;
+  eventId?: string;
+}
 
 export interface EngineOpInput {
   op: EngineOp;
@@ -298,6 +330,46 @@ export function engineOpToMemoryEvent(input: EngineOpInput): MemoryEvent {
       source_kind: "system",
       writer: "memory",
       command: `engine.${input.op}`,
+      evidence: [`event_id:${eventId}`],
+    },
+  });
+}
+
+/**
+ * Build a `memory.drift.caught` event (ADR 0025) for the CI drift guard (#224).
+ * The guard emits one of these when it fails a PR so the maintainer can see how
+ * often the markdown↔graph drift guard actually catches divergence.
+ */
+export function driftCaughtToMemoryEvent(input: DriftCaughtInput): MemoryEvent {
+  const timestamp =
+    input.timestamp instanceof Date
+      ? input.timestamp.toISOString()
+      : input.timestamp ?? new Date().toISOString();
+  const scopeId = input.prNumber ?? input.headSha ?? "pr";
+  const eventId =
+    input.eventId ?? `drift:${scopeId}:${Date.parse(timestamp) || timestamp}`;
+  return parseMemoryEvent({
+    id: eventId,
+    occurred_at: timestamp,
+    kind: "memory.drift.caught",
+    source: { kind: "ci", name: "red-memory-drift-guard" },
+    actor: { kind: "ci", id: "github-actions" },
+    scope: { level: "pull-request", id: scopeId },
+    subject: { kind: "drift", id: input.changedPaths[0] },
+    payload: {
+      event_type: "memory.drift.caught",
+      event_id: eventId,
+      timestamp,
+      changed_paths: [...input.changedPaths],
+      reason: input.reason,
+      ...(input.prNumber ? { pr_number: input.prNumber } : {}),
+      ...(input.headSha ? { head_sha: input.headSha } : {}),
+      ...(input.baseRef ? { base_ref: input.baseRef } : {}),
+    },
+    provenance: {
+      source_kind: "system",
+      writer: "memory",
+      command: "memory drift-guard",
       evidence: [`event_id:${eventId}`],
     },
   });
