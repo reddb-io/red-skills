@@ -38,6 +38,21 @@ export type ReasoningAttemptStatus =
   | "no-sentinel"
   | "merge-conflict";
 
+/**
+ * One user-hook execution recorded from the AFK Envelope's `hooks` section
+ * (issue #215). The trio is recorded best-effort on the `attempt` node so a
+ * recall query like *"what filter did this attempt run with?"* answers from
+ * graph properties instead of re-reading the raw Envelope.
+ */
+export interface AttemptHookRecord {
+  /** Lifecycle point the hook ran at, e.g. `pre_pick`, `post_pick`. */
+  lifecycle: string;
+  /** The hook command line as registered. */
+  command: string;
+  /** Process exit code the hook returned. */
+  exit_code: number;
+}
+
 /** One structured AFK validation sidecar record. */
 export interface ValidationSidecarRecord {
   /** Stable check name, e.g. `test:plugins/memory`. */
@@ -104,6 +119,13 @@ export interface ReasoningAttemptPayload {
   validationSummary?: string;
   /** Structured validation sidecar records; never parsed from free-form text. */
   validationRecords?: ValidationSidecarRecord[];
+  /**
+   * User-hook executions captured from the Envelope `hooks` section
+   * (issue #215). Dropped entirely when no user hooks ran — a project with no
+   * user hooks declared produces an `attempt` node without the property,
+   * keeping the schema empty-array-free.
+   */
+  hooks?: AttemptHookRecord[];
   /** Short why/outcome summary; one or two sentences. */
   summary?: string;
 }
@@ -202,6 +224,7 @@ export async function recordReasoningAttempt(
   }
 
   const touched = dedupeTouchedFiles(payload.touchedFiles);
+  const hooks = normaliseHookRecords(payload.hooks);
   const attemptLabel = attemptNodeLabel(
     payload.repository,
     payload.issueNumber,
@@ -231,6 +254,10 @@ export async function recordReasoningAttempt(
       notes: payload.notes,
       error_class: payload.errorClass,
       validation_summary: payload.validationSummary,
+      // Only set when at least one user hook executed (issue #216). Absent
+      // property + normalised array contract keeps recall surfaces from
+      // rendering an empty section for projects with no user hooks declared.
+      ...(hooks.length > 0 ? { hooks } : {}),
       summary: payload.summary,
       source: "afk",
       // Identity is the AFK attempt coordinates plus envelope hash when known.
@@ -472,6 +499,29 @@ function dedupeTouchedFiles(paths: string[] | undefined): string[] {
     if (trimmed.length === 0 || seen.has(trimmed)) continue;
     seen.add(trimmed);
     out.push(trimmed);
+  }
+  return out;
+}
+
+function normaliseHookRecords(
+  records: AttemptHookRecord[] | undefined,
+): AttemptHookRecord[] {
+  if (!Array.isArray(records)) return [];
+  const out: AttemptHookRecord[] = [];
+  for (const record of records) {
+    if (record == null || typeof record !== "object") continue;
+    const raw = record as unknown as Record<string, unknown>;
+    const lifecycle = typeof raw.lifecycle === "string" ? raw.lifecycle.trim() : "";
+    const command = typeof raw.command === "string" ? raw.command.trim() : "";
+    const rawExit = raw.exit_code;
+    const exit_code =
+      typeof rawExit === "number" && Number.isFinite(rawExit)
+        ? Math.trunc(rawExit)
+        : typeof rawExit === "string" && /^-?\d+$/.test(rawExit.trim())
+          ? Number(rawExit.trim())
+          : NaN;
+    if (!lifecycle || !command || !Number.isFinite(exit_code)) continue;
+    out.push({ lifecycle, command, exit_code });
   }
   return out;
 }
