@@ -6,6 +6,20 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 
 ---
 
+## afk lifecycle hooks — pre_pick / post_pick + only-mine.sh example (added)
+
+- **status**: added
+- **upstream**: —
+- **why**: Issue #210 (under PRD #207) — first AFK lifecycle slice that exercises the **JSON-stdout context mutation** path of the interceptor contract. `pre_pick` lets users mutate the tracker-listing query params; `post_pick` lets users filter/reorder the returned queue before claiming. Ships `examples/only-mine.sh` to demonstrate the end-to-end pattern.
+- **what changed**:
+  - `plugins/dev/skills/engineering/afk/scripts/afk.sh`: refactored `select_issues()` to read `PICK_LABEL` / `PICK_STATE` / `PICK_LIMIT` (defaults preserve historical hardcoded values) and to include `author` in the `--json` fields so author-based filters can work. Wired `pre_pick` immediately before `select_issues` — mutable slice `{label, state, limit}`; `abort` policy means a non-zero hook skips listing this iteration and falls through to the empty-queue / `on_idle` path. Wired `post_pick` immediately after `select_issues`, before the per-issue main loop — mutable slice is `.issues` inside a `{issues:[…]}` wrapper (extra keys ignored). `continue` policy means a broken filter falls back to the un-mutated list rather than silently dropping work.
+  - `plugins/dev/skills/engineering/afk/examples/only-mine.sh` (new, executable): example `post_pick` hook that reads `$RED_AFK_GITHUB_LOGIN` and filters `.issues[]` by `author.login`. When the env var is unset the hook is a no-op (empty stdout → context unchanged) — so declaring it without configuring the login does not wipe the queue.
+  - `plugins/dev/skills/engineering/afk/scripts/tests/lifecycle-pre-post-pick.test.sh`: 39 assertions covering wiring placement (exactly one of each, pre before `select_issues`, post after but before the main loop), dispatcher policies, mutation happy paths for both hooks, empty-stdout pass-through, ignored extra keys, exit-code policy (pre_pick abort propagates rc; post_pick continue logs and returns rc=0 with the un-mutated list), declaration-order preservation, chained mutation (second hook sees first hook's output), SKILL.md doc surface, and `only-mine.sh` end-to-end through the dispatcher.
+  - `plugins/dev/skills/engineering/afk/SKILL.md`: extends the *Lifecycle Hooks* table with `pre_pick` and `post_pick` rows (env vars, mutable slice, exit-code policy) and adds the `only-mine.sh` line to the worked YAML example.
+- **compatibility**: additive only. No change to existing `pre_session` / `post_session` / `on_idle` semantics. The `hook-dispatcher` `HOOK_EXIT_POLICY[pre_pick]=abort` / `[post_pick]=continue` already shipped with #208 govern the new wiring — no policy-table edit needed. `select_issues` defaults preserve historical behaviour when the new `PICK_*` globals are unset.
+
+---
+
 ## afk lifecycle hooks — on_idle (added)
 
 - **status**: added
