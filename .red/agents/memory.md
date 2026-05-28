@@ -1,0 +1,77 @@
+# Memory
+
+How agent auto-memory is stored in this repo.
+
+## Layout
+
+Auto-memory is versioned in-repo so governance rules (English-only,
+label naming, AFK stall semantics, workflow-prefix rule) ship with the
+clone instead of living per-machine under `~/.claude/`:
+
+```
+.red/memory/
+├── MEMORY.md              ← index of all stored facts (one line per fact)
+└── memory/
+    ├── feedback_<slug>.md ← per-fact files (one file per memory entry)
+    ├── project_<slug>.md
+    ├── reference_<slug>.md
+    └── user_<slug>.md
+```
+
+`MEMORY.md` links to each per-fact file via the relative path
+`memory/<slug>.md`. The per-fact files carry frontmatter (`name`,
+`description`, `metadata.type`) and a short body, following the
+auto-memory format the harness already expects.
+
+## Harness symlink
+
+The Claude Code system-prompt loader reads memory from
+`~/.claude/projects/<project-slug>/memory/`. After migration, that
+path is a **symlink** to `<repo>/.red/memory/`, so the loader keeps
+resolving the same content without harness changes. `<project-slug>`
+is the absolute repo path with `/` replaced by `-` (e.g.
+`-home-cyber-Work-reddb-io-red-skills`).
+
+## Migrating from the legacy harness layout
+
+Run once per clone:
+
+```bash
+scripts/memory-migrate-from-harness.sh
+```
+
+The script is idempotent — re-running on an already-migrated repo
+prints `already migrated, no-op` and changes nothing. It also handles
+the fresh-clone case: when `.red/memory/MEMORY.md` already exists
+in-repo but the harness still has a real directory (a contributor who
+just cloned), the script installs the symlink without overwriting the
+in-repo content.
+
+Optional flags (rarely needed; defaults are correct for the standard
+Claude Code layout):
+
+- `--harness-root <path>` — default `$HOME/.claude/projects`
+- `--repo-root <path>` — default `git rev-parse --show-toplevel`
+- `--project-slug <slug>` — default derived from the repo path
+
+## Adding a new memory fact
+
+1. Create `<repo>/.red/memory/memory/<type>_<slug>.md` with the
+   standard frontmatter (`name`, `description`, `metadata.type`) and
+   the body shape required by the type (`feedback` / `project` /
+   `reference` / `user`).
+2. Add one line to `.red/memory/MEMORY.md` linking to the new file:
+   `- [Title](memory/<type>_<slug>.md) — one-line hook`.
+3. Commit both files in the same change so the index never drifts.
+
+The harness symlink means the loader picks up new facts immediately
+on the next session — no harness reload required.
+
+## Out of scope
+
+The graph-mode memory store (`.red/memory/graph.rdb*`, `sessions/`,
+`.audit.log`, `graph.result-cache.l2*`) is operational state, not
+auto-memory. It is gitignored and lives next to (not inside) the
+auto-memory layout above. The two surfaces are independent: the
+auto-memory index is the human-curated governance store; the graph
+is the machine-curated decision store.
