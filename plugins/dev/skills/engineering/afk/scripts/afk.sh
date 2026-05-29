@@ -461,6 +461,13 @@ iter_open() {
   mkdir -p "$ITER_DIR"
   printf '%s' "$$" > "$ITER_PID_FILE"
   : >> "$ITER_LOG"
+  # Create the clean agent lane empty at t0 so the supervisor's stall detector
+  # has a liveness baseline from the very start of the iteration (issue #251).
+  # The heartbeat never writes this lane, so its mtime advances only on a real
+  # inner-agent turn — a worker that wedges before its first turn still ages
+  # past the stall/kill thresholds and is reaped, instead of looking "no log
+  # yet" forever. afk.log keeps its own t0 touch above for the human log tail.
+  : >> "$AGENT_LANE"
   # User-hook execution recorder (issue #215). The dispatcher appends a
   # tab-separated triple per user-declared hook that runs during this
   # issue's lifecycle, then `emit_envelope` reads the file back to compose
