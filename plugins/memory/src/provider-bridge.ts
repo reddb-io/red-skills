@@ -10,9 +10,9 @@ import {
  * Thin bridge module that routes every LLM call the memory plugin needs —
  * chat completion (extraction, `memory ask`) and text embeddings (vector
  * indexing, recall) — through RedDB's engine-side `red.config.ai.provider`
- * layer. RedDB already normalizes the three wire-protocol families
- * (`openai-native`, `anthropic-native`, `openai-compat`) behind a single
- * `ASK`/SQL surface, so the plugin never imports an LLM SDK directly.
+ * layer. RedDB already normalizes the provider families
+ * (`openai-native`, `anthropic-native`, `openai-compat`, `bedrock`) behind a
+ * single `ASK`/SQL surface, so the plugin never imports an LLM SDK directly.
  *
  * Configuration mirrors RedDB itself:
  *   - the provider config object (mirroring the engine's `red.config.ai`)
@@ -49,6 +49,7 @@ const PROVIDER_MODES: readonly ProviderMode[] = [
   "openai-compat",
   "openai-native",
   "anthropic-native",
+  "bedrock",
 ];
 
 /** Env var name RedDB itself reads to override the persisted provider mode. */
