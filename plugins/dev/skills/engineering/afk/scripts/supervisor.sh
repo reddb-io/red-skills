@@ -28,23 +28,32 @@
 # respawns until the supervisor is restarted. Other slots keep going.
 #
 # Passive stall detector: every RED_AFK_STALL_POLL_S seconds the supervisor
-# inspects each live slot's per-iteration afk.log mtime. A slot whose
-# worker has been alive ≥ RED_AFK_STALL_THRESHOLD_S *and* whose afk.log
-# hasn't been written to in ≥ RED_AFK_STALL_THRESHOLD_S is flagged
-# `stalled:true` in the state file. Monitor reads the same file and renders
-# stalled slots distinctly. The flag clears automatically on the next
-# sample once the log advances.
+# inspects each live slot's per-iteration *agent lane* (agent.log.jsonl)
+# mtime — the clean liveness signal that carries one record per inner-agent
+# turn and nothing synthetic. The orchestrator's heartbeat writes afk.log and
+# the firehose every minute, so those lanes never go silent while a worker is
+# alive; keying liveness off them masked genuine stalls (#243). The agent lane
+# is the one lane the heartbeat never touches. A slot whose worker has been
+# alive ≥ RED_AFK_STALL_THRESHOLD_S *and* whose agent lane hasn't advanced in
+# ≥ RED_AFK_STALL_THRESHOLD_S is flagged `stalled:true` in the state file.
+# Monitor reads the same file and renders stalled slots distinctly. The flag
+# clears automatically on the next sample once the lane advances.
 #
-# Hard stall reaper: once a slot has been continuously stalled for
-# ≥ RED_AFK_STALL_KILL_THRESHOLD_S (default 30 min, must be greater than
-# RED_AFK_STALL_THRESHOLD_S), the supervisor escalates: kill_tree the
-# orchestrator process, post a `data-attempt-status="no-sentinel"`
-# envelope referencing the iter dir's afk.log tail, restore the issue
-# label to `ready-for-agent`, tear down the worktree + iter dir, and let
-# the normal health-check loop respawn the slot. Conservative default
-# leaves legitimate long iterations alone; operators can tune lower for
-# noisy fleets or higher for compile-heavy projects. Idempotent per slot
-# lifetime via SLOT_REAPED.
+# Hard stall reaper: once a slot has been continuously silent on the agent
+# lane for ≥ RED_AFK_STALL_KILL_THRESHOLD_S (default 30 min, must be greater
+# than RED_AFK_STALL_THRESHOLD_S), the supervisor *considers* escalating — but
+# silence alone is not death. The kill is gated behind the reaper-signal
+# predicate (lib/reaper-signal.sh): a worker silent on the agent lane while a
+# build/test descendant (vitest, tsc, cargo, …) is still running, or whose
+# process tree shows non-trivial cpu, is BUSY and left alone. Only a worker
+# that is idle past the threshold AND has no active descendant AND shows flat
+# cpu is reaped: kill_tree the orchestrator process, post a
+# `data-attempt-status="no-sentinel"` envelope referencing the iter dir's
+# afk.log tail, restore the issue label to `ready-for-agent`, tear down the
+# worktree + iter dir, and let the normal health-check loop respawn the slot.
+# Conservative default leaves legitimate long iterations alone; operators can
+# tune lower for noisy fleets or higher for compile-heavy projects. Idempotent
+# per slot lifetime via SLOT_REAPED.
 #
 # Per-slot build isolation: build tools that serialize on a single cache
 # directory (cargo, Gradle, …) can stall the fleet. When the operator sets
@@ -75,6 +84,8 @@ source "$SCRIPT_DIR/config.sh"
 source "$SCRIPT_DIR/hooks.sh"
 # shellcheck source=./lib/envelope.sh
 source "$SCRIPT_DIR/lib/envelope.sh"
+# shellcheck source=./lib/reaper-signal.sh
+source "$SCRIPT_DIR/lib/reaper-signal.sh"
 
 SUPERVISOR_REQUEST="${RED_AFK_REQUEST:-}"
 PROJECT_ROOT=""
@@ -445,23 +456,28 @@ write_supervisor_state() {
 write_circuit_state() { write_supervisor_state; }
 
 # Locate the per-iteration afk.log path for a slot's current worker
-# process. Workers create $TMP_DIR/work-<wid>-i<n>/afk.pid containing
-# their PID for the lifetime of one iteration; we grep for the slot's
-# pid across those files to find the live iteration directory. Echoes
-# the absolute log path on success and nothing when the worker is
-# between iterations (legitimately silent).
+# process (find_slot_iter_dir owns the pid→dir lookup). Echoes the
+# absolute log path on success and nothing when the worker is between
+# iterations (legitimately silent). afk.log is the heartbeat-poisoned
+# human log — the stall detector keys off the clean agent lane below
+# (find_slot_agent_lane); this finder is kept for callers that want the
+# back-compat plain log.
 find_slot_iter_log() {
-  local slot="$1"
-  local pid="${SLOT_PIDS[$slot]:-}"
-  local pid_file dir
-  [[ -n "$pid" ]] || return 0
-  for pid_file in "$TMP_DIR"/work-*/afk.pid; do
-    [[ -f "$pid_file" ]] || continue
-    [[ "$(cat "$pid_file" 2>/dev/null)" == "$pid" ]] || continue
-    dir="$(dirname "$pid_file")"
-    printf '%s\n' "$dir/afk.log"
-    return 0
-  done
+  local dir; dir="$(find_slot_iter_dir "$1")"
+  [[ -n "$dir" ]] && printf '%s\n' "$dir/afk.log"
+  return 0
+}
+
+# Locate the per-iteration clean agent lane (agent.log.jsonl) for a
+# slot's current worker. This is the liveness signal the stall detector
+# and hard-reaper watch: the orchestrator's heartbeat writes afk.log and
+# the firehose every minute but never this lane, so its mtime advances
+# only when the inner agent actually produces a turn (#243). Echoes the
+# absolute path on success, nothing when the worker is between iterations.
+find_slot_agent_lane() {
+  local dir; dir="$(find_slot_iter_dir "$1")"
+  [[ -n "$dir" ]] && printf '%s\n' "$dir/agent.log.jsonl"
+  return 0
 }
 
 # Same shape as afk.sh's kill_tree — duplicated here so the supervisor
@@ -531,48 +547,104 @@ compute_stalled() {
   echo yes
 }
 
+# Build/test executables whose presence under the worker tree means the worker
+# is doing real work even while the agent lane is silent (#243). Many JS-
+# ecosystem tools run as `node`, so this list is not exhaustive on its own —
+# the cpu signal (sup_tree_cpu) catches the rest. Matched against `ps -o comm=`
+# basenames, anchored and case-insensitive. Overridable for unusual toolchains.
+REAPER_BUSY_CMD_RE="${RED_AFK_REAPER_BUSY_CMD_RE:-vitest|jest|mocha|playwright|tsc|tsx|esbuild|webpack|rollup|vite|cargo|rustc|gradle|mvn|javac|java|pytest|python[0-9.]*|go|make|cmake|ninja|cc1|cc1plus|gcc|g\+\+|clang|clang\+\+|ld|bun}"
+
+# sup_descendant_pids <pid> — echo <pid> and every descendant pid, one per line.
+# Guards mirror sup_kill_tree: a non-numeric or <=1 pid yields nothing.
+sup_descendant_pids() {
+  local pid="${1:-}" k
+  case "$pid" in ''|*[!0-9]*) return 0 ;; esac
+  (( pid > 1 )) || return 0
+  printf '%s\n' "$pid"
+  for k in $(pgrep -P "$pid" 2>/dev/null); do
+    sup_descendant_pids "$k"
+  done
+}
+
+# sup_active_descendant <pid> — `yes` when any process in the worker tree is a
+# recognised build/test tool (REAPER_BUSY_CMD_RE), else `no`. Best-effort: a
+# missing tree or a ps failure reads as `no`. Defined as a function so tests can
+# stub it without a live process tree.
+sup_active_descendant() {
+  local pid="${1:-}" pids
+  pids="$(sup_descendant_pids "$pid" | paste -sd, -)"
+  [[ -n "$pids" ]] || { echo no; return; }
+  if ps -o comm= -p "$pids" 2>/dev/null | grep -Eiq "^(${REAPER_BUSY_CMD_RE})$"; then
+    echo yes
+  else
+    echo no
+  fi
+}
+
+# sup_tree_cpu <pid> — aggregate %cpu across the worker tree (pid + all
+# descendants), echoed as a one-decimal string (0.0 when the tree is gone).
+# Best-effort; never aborts the caller. A function so tests can stub it.
+sup_tree_cpu() {
+  local pid="${1:-}" pids
+  pids="$(sup_descendant_pids "$pid" | paste -sd, -)"
+  [[ -n "$pids" ]] || { echo 0; return; }
+  ps -o %cpu= -p "$pids" 2>/dev/null | awk '{s+=$1} END{printf "%.1f", s+0}'
+}
+
 # Sample every non-parked slot. Sets / clears SLOT_STALLED[slot] and
-# rewrites the state file when any slot's stall flag flipped. No-op
-# beyond bookkeeping — the supervisor must not act on stalled workers.
+# rewrites the state file when any slot's stall flag flipped. Liveness is
+# read from the clean agent lane (agent.log.jsonl), never afk.log/firehose —
+# the heartbeat poisons those every minute (#243). The flag itself is passive
+# bookkeeping; the only action taken is the gated hard reap below.
 poll_stall_detector() {
-  local now changed=0 i log mtime spawn flagged
+  local now changed=0 i lane mtime spawn flagged
   now="$(date +%s)"
   for ((i=0; i<RED_AFK_TARGET; i++)); do
     [[ "${SLOT_PARKED[$i]:-0}" == "1" ]] && continue
     spawn="${SLOT_SPAWN_EPOCH[$i]:-0}"
-    log="$(find_slot_iter_log "$i")"
+    lane="$(find_slot_agent_lane "$i")"
     mtime=0
-    if [[ -n "$log" && -f "$log" ]]; then
-      mtime="$(stat -c %Y "$log" 2>/dev/null || echo 0)"
+    if [[ -n "$lane" && -f "$lane" ]]; then
+      mtime="$(stat -c %Y "$lane" 2>/dev/null || echo 0)"
     fi
     flagged="$(compute_stalled "$spawn" "$mtime" "$now" "$RED_AFK_STALL_THRESHOLD_S")"
     if [[ "$flagged" == "yes" ]]; then
       if [[ "${SLOT_STALLED[$i]:-0}" != "1" ]]; then
         SLOT_STALLED[$i]=1
-        # Anchor the stall window to the last observed log activity so
-        # the duration the monitor renders matches "log idle for N".
+        # Anchor the stall window to the last observed agent-lane activity so
+        # the duration the monitor renders matches "agent lane idle for N".
         SLOT_STALL_SINCE_EPOCH[$i]="$mtime"
-        SLOT_STALL_LOG[$i]="$log"
-        log "⏸️  slot $i flagged stalled (log idle for $(( now - mtime ))s: $log)"
+        SLOT_STALL_LOG[$i]="$lane"
+        log "⏸️  slot $i flagged stalled (agent lane idle for $(( now - mtime ))s: $lane)"
         changed=1
       fi
-      # Hard-reap escalation: silence past RED_AFK_STALL_KILL_THRESHOLD_S
-      # is reclaimed exactly once per slot lifetime. The reap clears the
-      # bookkeeping itself, so the normal health-check loop respawns the
-      # slot on its next pass.
+      # Hard-reap escalation: silence past RED_AFK_STALL_KILL_THRESHOLD_S makes
+      # the slot a *candidate*, but agent-lane silence alone is not death (#243).
+      # Sample the worker tree and gate the irreversible kill behind the
+      # reaper-signal predicate — a worker mid-build/test (active descendant) or
+      # burning cpu is busy, never reaped. Reclaimed once per slot lifetime.
       local since="${SLOT_STALL_SINCE_EPOCH[$i]:-0}"
       if (( since > 0 )) \
          && (( now - since >= RED_AFK_STALL_KILL_THRESHOLD_S )) \
          && [[ "${SLOT_REAPED[$i]:-0}" != "1" ]]; then
-        reap_stalled_slot "$i"
-        changed=1
+        local orch="${SLOT_PIDS[$i]:-}" idle active cpu decision
+        idle=$(( now - since ))
+        active="$(sup_active_descendant "$orch")"
+        cpu="$(sup_tree_cpu "$orch")"
+        decision="$(reaper_signal_decide "$idle" "$RED_AFK_STALL_KILL_THRESHOLD_S" "$active" "$cpu")"
+        if [[ "$decision" == "kill" ]]; then
+          reap_stalled_slot "$i"
+          changed=1
+        else
+          log "🛡️  slot $i silent ${idle}s but busy (active_descendant=$active cpu=${cpu}%) — deferring reap"
+        fi
       fi
     else
       if [[ "${SLOT_STALLED[$i]:-0}" == "1" ]]; then
         SLOT_STALLED[$i]=0
         SLOT_STALL_SINCE_EPOCH[$i]=0
         SLOT_STALL_LOG[$i]=""
-        log "▶️  slot $i stall cleared (log advanced)"
+        log "▶️  slot $i stall cleared (agent lane advanced)"
         changed=1
       fi
     fi
