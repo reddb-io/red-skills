@@ -1,11 +1,12 @@
 import { spawnSync } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, test } from "vitest";
 import { parseAuditMarker } from "../src/audit-marker.js";
 import { initGraph } from "../src/init.js";
+import { MEMORY_IGNORE_FILENAME } from "../src/scope.js";
 
 const TIMEOUT = 30_000;
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -82,6 +83,87 @@ describe("memory ingest CLI — audit-marker guidance", () => {
       const result = runMemory(root, ["ingest", root, "--root", root]);
       expect(result.status).toBe(0);
       expect(result.stdout).toContain("Memory-Ingested: <ingest-sha>");
+    },
+    TIMEOUT,
+  );
+});
+
+describe("memory ingest CLI — scope wizard (#235)", () => {
+  async function seedRepo(): Promise<string> {
+    const root = await tempRoot();
+    await initGraph(root);
+    await mkdir(join(root, "src"), { recursive: true });
+    await mkdir(join(root, "libs/core"), { recursive: true });
+    await writeFile(join(root, "src/app.ts"), "export const app = 1;\n", "utf8");
+    await writeFile(join(root, "src/app.test.ts"), "export const t = 1;\n", "utf8");
+    await writeFile(join(root, "libs/core/index.ts"), "export const lib = 1;\n", "utf8");
+    return root;
+  }
+
+  test(
+    "reports the candidate-file count before processing (AC1)",
+    async () => {
+      const root = await seedRepo();
+      const result = runMemory(root, ["ingest", root, "--root", root]);
+      expect(result.status).toBe(0);
+      expect(result.stdout).toMatch(/candidate file\(s\)/);
+      // The scope report precedes the ingest summary line.
+      expect(result.stdout.indexOf("candidate file(s)")).toBeLessThan(
+        result.stdout.indexOf("memory: ingested"),
+      );
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "a scope preset narrows the candidate set (AC2)",
+    async () => {
+      const root = await seedRepo();
+      const proceed = runMemory(root, ["ingest", root, "--root", root, "--scope", "proceed"]);
+      const core = runMemory(root, ["ingest", root, "--root", root, "--scope", "core"]);
+      expect(proceed.status).toBe(0);
+      expect(core.status).toBe(0);
+      expect(core.stdout).toContain("memory ingest scope: core only");
+      // core drops src/app.test.ts and the libs/ tree → fewer candidates than proceed.
+      const count = (out: string) => Number(/(\d+) candidate file\(s\)/.exec(out)?.[1]);
+      expect(count(core.stdout)).toBeLessThan(count(proceed.stdout));
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "generate-ignore writes a committed, human-editable ignore file and skips ingest (AC3)",
+    async () => {
+      const root = await seedRepo();
+      const result = runMemory(root, [
+        "ingest",
+        root,
+        "--root",
+        root,
+        "--scope",
+        "generate-ignore",
+      ]);
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain(MEMORY_IGNORE_FILENAME);
+      expect(result.stdout).not.toContain("memory: ingested"); // no ingest this run
+      const body = await readFile(join(root, MEMORY_IGNORE_FILENAME), "utf8");
+      expect(body).toMatch(/^#/m); // header comment → human-editable
+      expect(body).toContain("**/node_modules/**");
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "subsequent runs honour the committed ignore file without re-prompting (AC4)",
+    async () => {
+      const root = await seedRepo();
+      // Ignore the whole libs/ tree via a hand-written .memoryignore.
+      await writeFile(join(root, MEMORY_IGNORE_FILENAME), "# team scope\n**/libs/**\n", "utf8");
+      const result = runMemory(root, ["ingest", root, "--root", root]);
+      expect(result.status).toBe(0);
+      const count = Number(/(\d+) candidate file\(s\)/.exec(result.stdout)?.[1]);
+      // src/app.ts + src/app.test.ts remain; libs/core/index.ts is ignored.
+      expect(count).toBe(2);
     },
     TIMEOUT,
   );

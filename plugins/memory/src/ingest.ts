@@ -7,6 +7,7 @@ import { extractDevArtifact, isDevArtifact } from "./extract-dev-artifact.js";
 import { extractMarkdown } from "./extract-markdown.js";
 import { extractSql } from "./extract-sql.js";
 import { contentHash } from "./hash.js";
+import { readMemoryIgnore } from "./scope.js";
 import type { MemoryStore } from "./graph-store.js";
 import type { EdgeLabel, MemoryDoc, MemoryNode } from "./schema.js";
 
@@ -63,9 +64,12 @@ export async function ingestProject(
   opts: IngestOptions,
 ): Promise<IngestReport> {
   const start = Date.now();
+  // Honour the committed `.memoryignore` so subsequent runs respect the team's
+  // scope choice without re-prompting (#235, AC4).
+  const memoryIgnore = await readMemoryIgnore(opts.cwd);
   const files = await fg(opts.patterns ?? DEFAULT_PATTERNS, {
     cwd: opts.cwd,
-    ignore: [...DEFAULT_IGNORE, ...(opts.ignore ?? [])],
+    ignore: [...DEFAULT_IGNORE, ...memoryIgnore, ...(opts.ignore ?? [])],
     absolute: true,
     onlyFiles: true,
     dot: false,
@@ -89,6 +93,24 @@ export async function ingestProject(
     stale: 0,
     durationMs: Date.now() - start,
   };
+}
+
+/**
+ * List the candidate files an ingest would walk, as repo-relative paths. The
+ * pre-ingest scope wizard (#235) counts and scopes this list before any graph
+ * write happens. Applies the same default patterns/ignores as
+ * {@link ingestProject}; `opts.ignore` layers on top (e.g. a scope preset).
+ * The committed `.memoryignore` is *not* applied here — callers layer it via
+ * `planScope` so the report can show the count both before and after scoping.
+ */
+export async function collectCandidates(opts: IngestOptions): Promise<string[]> {
+  return fg(opts.patterns ?? DEFAULT_PATTERNS, {
+    cwd: opts.cwd,
+    ignore: [...DEFAULT_IGNORE, ...(opts.ignore ?? [])],
+    absolute: false,
+    onlyFiles: true,
+    dot: false,
+  });
 }
 
 /** Per-file node/edge/doc counts from a single {@link indexFile} pass. */

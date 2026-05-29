@@ -40,7 +40,30 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap.mjs" ingest <path>
 the pass on a large monorepo. `node_modules/`, `dist/`, `.git/`, `.red/`, and
 build/coverage output are ignored by default.
 
-## 3. Refresh Changed Files
+## 3. Scope a Large Repo
+
+Before graphing a big tree, scope the pass. The CLI always prints the
+**candidate-file count** before processing so you know what you're about to
+index. Narrow it with `--scope`:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap.mjs" ingest <path> --scope core
+```
+
+| `--scope`         | What it graphs                                                        |
+| ----------------- | -------------------------------------------------------------------- |
+| `proceed`         | every candidate (the default)                                        |
+| `core`            | core/app source only — skips tests, examples, vendored & lib trees   |
+| `libs`            | shared library/package code only — skips app trees, tests & examples |
+| `generate-ignore` | writes a committed `.memoryignore` and stops (no ingest this run)     |
+
+`--scope generate-ignore` writes a **`.memoryignore`** at the repo root — a
+committed, human-editable, gitignore-style list of fast-glob patterns (one per
+line, `#` comments allowed). Commit it so the whole team shares the same graph
+scope. Every later `memory ingest` / `memory refresh` honours it automatically,
+with no re-prompt. Hand-edit it any time to add or remove patterns.
+
+## 4. Refresh Changed Files
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap.mjs" refresh <file...> --root .
@@ -51,7 +74,7 @@ git diff --cached --name-only -z | node "${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap
 Use `refresh` after small edits or from git hooks. It is graph-mode only and
 does not require a daemon.
 
-## 4. Report
+## 5. Report
 
 The CLI prints the file / node / edge / doc counts. Relay them so the user knows
 what was indexed. For refresh, also relay added / updated / skipped / stale

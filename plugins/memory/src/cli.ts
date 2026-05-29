@@ -101,7 +101,15 @@ import { createMemoryHttpServer } from "./http-server.js";
 import { ingestGuidance } from "./audit-marker.js";
 import { evaluateDriftGuard } from "./drift-guard.js";
 import { appendMemoryEvent, driftCaughtToMemoryEvent } from "./memory-events.js";
-import { ingestProject, refreshFiles } from "./ingest.js";
+import { collectCandidates, ingestProject, refreshFiles } from "./ingest.js";
+import {
+  defaultIgnorePatterns,
+  formatScopeReport,
+  planScope,
+  readMemoryIgnore,
+  resolvePreset,
+  writeMemoryIgnore,
+} from "./scope.js";
 import { initGraph, initMarkdownOnly } from "./init.js";
 import { lintMemory, type LintReport } from "./lint.js";
 import { buildMemoryLayersReport } from "./memory-layers.js";
@@ -3057,9 +3065,24 @@ async function runIngest(args: ParsedArgs): Promise<void> {
       ? Number(args.flags["max-files"])
       : undefined;
 
+  // Pre-ingest scope wizard (#235): pick a preset, report the candidate count
+  // before processing, and optionally generate the committed `.memoryignore`.
+  const preset = resolvePreset(typeof args.flags.scope === "string" ? args.flags.scope : undefined);
+
+  if (preset.name === "generate-ignore") {
+    const path = await writeMemoryIgnore(cwd, defaultIgnorePatterns());
+    console.log(`memory: wrote ${path}`);
+    console.log("  edit and commit it; subsequent ingests honour it without re-prompting.");
+    return;
+  }
+
+  const candidateFiles = await collectCandidates({ cwd });
+  const memoryIgnore = await readMemoryIgnore(cwd);
+  console.log(formatScopeReport(planScope(candidateFiles, preset.name, memoryIgnore)));
+
   const store = await MemoryStore.open({ uri: resolveStoreUri(rootDir, config) });
   try {
-    const report = await ingestProject(store, { cwd, maxFiles });
+    const report = await ingestProject(store, { cwd, maxFiles, ignore: preset.ignore });
     console.log(`memory: ingested ${cwd}`);
     console.log(
       `  ${report.files} file(s) → ${report.nodes} node(s), ${report.edges} edge(s), ${report.docs} doc(s) in ${report.durationMs}ms`,
