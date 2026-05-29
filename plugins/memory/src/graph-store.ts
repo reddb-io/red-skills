@@ -1309,20 +1309,7 @@ export class MemoryStore {
 
   private async listLocalVectorRecords(): Promise<LocalVectorProjectionRecord[]> {
     const indexed = await this.readLocalVectorIndex();
-    if (indexed.size > 0) {
-      const records = await Promise.all([...indexed.values()].map((key) => this.readLocalVectorKey(key)));
-      return records.filter((record): record is LocalVectorProjectionRecord => record !== null);
-    }
-
-    // Back-compat fallback for local projections written before the aggregate
-    // index existed. This path is intentionally not used for provider discovery
-    // above, because a full node/doc scan is too expensive for recall.
-    const records = await Promise.all([
-      ...(await this.listNodes()).map((node) =>
-        this.readLocalVector(COLLECTIONS.nodes, node.rid),
-      ),
-      ...(await this.listDocs()).map((doc) => this.readLocalVector(COLLECTIONS.docs, doc.rid)),
-    ]);
+    const records = await Promise.all([...indexed.values()].map((key) => this.readLocalVectorKey(key)));
     return records.filter((record): record is LocalVectorProjectionRecord => record !== null);
   }
 

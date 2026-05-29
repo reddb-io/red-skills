@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh -c 'bs=\"${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap.mjs\"; if [ -f \"$bs\" ]; then node \"$bs\" hook SessionStart --runner claude || printf \"{}\"; else cat >/dev/null 2>&1 || true; printf \"{}\"; fi'"
+            "command": "sh -c 'node \"${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap.mjs\" hook SessionStart --runner claude || printf \"{}\"'"
           }
         ]
       }
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh -c 'bs=\"${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap.mjs\"; if [ -f \"$bs\" ]; then node \"$bs\" hook PostToolUse --runner claude || printf \"{}\"; else cat >/dev/null 2>&1 || true; printf \"{}\"; fi'"
+            "command": "sh -c 'node \"${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap.mjs\" hook PostToolUse --runner claude || printf \"{}\"'"
           }
         ]
       }
@@ -26,7 +26,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh -c 'bs=\"${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap.mjs\"; if [ -f \"$bs\" ]; then node \"$bs\" hook Stop --runner claude || printf \"{}\"; else cat >/dev/null 2>&1 || true; printf \"{}\"; fi'"
+            "command": "sh -c 'node \"${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap.mjs\" hook Stop --runner claude || printf \"{}\"'"
           }
         ]
       }
@@ -36,7 +36,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh -c 'bs=\"${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap.mjs\"; if [ -f \"$bs\" ]; then node \"$bs\" hook PreCompact --runner claude || printf \"{}\"; else cat >/dev/null 2>&1 || true; printf \"{}\"; fi'"
+            "command": "sh -c 'node \"${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap.mjs\" hook PreCompact --runner claude || printf \"{}\"'"
           }
         ]
       }

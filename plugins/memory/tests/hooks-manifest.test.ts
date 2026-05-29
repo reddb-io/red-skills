@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -39,63 +39,58 @@ function commands(manifest: HookManifest): string[] {
 }
 
 describe("hook manifests", () => {
-  test("Codex hooks fail open when dist/cli.js has not been built", async () => {
-    const root = await tempRoot();
-    const manifest = await loadManifest("hooks/codex.hooks.json");
+  // ADR 0029: hooks invoke the committed bootstrap, which fetches the runtime.
+  // No `dist/cli.js`, no build-on-machine fallback.
+  test("every hook invokes scripts/bootstrap.mjs and never dist/cli.js", async () => {
+    for (const file of ["hooks/claude.hooks.json", "hooks/codex.hooks.json"]) {
+      const manifest = await loadManifest(file);
+      const cmds = commands(manifest);
+      expect(cmds.length).toBeGreaterThan(0);
+      for (const command of cmds) {
+        expect(command).toContain("scripts/bootstrap.mjs");
+        expect(command).not.toContain("dist/cli.js");
+      }
+    }
+  });
 
+  test("Codex hooks drain stdin before delegating", async () => {
+    const manifest = await loadManifest("hooks/codex.hooks.json");
     for (const command of commands(manifest)) {
       expect(command).toContain('cat >"$tmp"');
-      const result = spawnSync(command, {
-        shell: true,
-        cwd: process.cwd(),
-        input: `${"x".repeat(1024 * 64)}\n`,
-        encoding: "utf8",
-        env: { ...process.env, CODEX_PLUGIN_ROOT: root },
-      });
-
-      expect(result.status).toBe(0);
-      expect(result.stdout).toBe("{}");
     }
   });
 
-  test("Codex hooks drain stdin before invoking an existing CLI", async () => {
-    const root = await tempRoot();
-    const manifest = await loadManifest("hooks/codex.hooks.json");
-    await mkdir(join(root, "dist"), { recursive: true });
-    const cli = join(root, "dist", "cli.js");
-    await writeFile(cli, "#!/usr/bin/env node\nprocess.stdout.write('{}');\nprocess.exit(0);\n");
-    await chmod(cli, 0o755);
-
-    for (const command of commands(manifest)) {
-      const result = spawnSync(
-        "bash",
-        ["-lc", `set -o pipefail; head -c 1048576 /dev/zero | tr '\\0' x | ${command}`],
-        {
-          cwd: process.cwd(),
-          encoding: "utf8",
-          env: { ...process.env, CODEX_PLUGIN_ROOT: root },
-        },
-      );
-
-      expect(result.status).toBe(0);
-      expect(result.stdout).toBe("{}");
-    }
-  });
-
-  test("Claude hooks fail open when dist/cli.js has not been built", async () => {
+  test("Claude hooks fail open to {} when the runtime cannot be resolved", async () => {
     const root = await tempRoot();
     const manifest = await loadManifest("hooks/claude.hooks.json");
 
     for (const command of commands(manifest)) {
-      expect(command).toContain("cat >/dev/null");
+      // A bogus plugin root has no scripts/bootstrap.mjs, so node errors and the
+      // `|| printf "{}"` guard keeps the hook a no-op instead of breaking the session.
       const result = spawnSync(command, {
         shell: true,
         cwd: process.cwd(),
-        input: `${"x".repeat(1024 * 64)}\n`,
+        input: "{}\n",
         encoding: "utf8",
         env: { ...process.env, CLAUDE_PLUGIN_ROOT: root },
       });
+      expect(result.status).toBe(0);
+      expect(result.stdout).toBe("{}");
+    }
+  });
 
+  test("Codex hooks fail open to {} when the runtime cannot be resolved", async () => {
+    const root = await tempRoot();
+    const manifest = await loadManifest("hooks/codex.hooks.json");
+
+    for (const command of commands(manifest)) {
+      const result = spawnSync(command, {
+        shell: true,
+        cwd: process.cwd(),
+        input: "{}\n",
+        encoding: "utf8",
+        env: { ...process.env, CODEX_PLUGIN_ROOT: root },
+      });
       expect(result.status).toBe(0);
       expect(result.stdout).toBe("{}");
     }

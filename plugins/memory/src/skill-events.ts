@@ -322,15 +322,8 @@ async function upsertSkillEventGraph(
   return { nodes: [skillRid, sessionRid, turnRid, eventRid], edges };
 }
 
-async function readSeenEventIds(store: MemoryStore): Promise<Record<string, true>> {
-  return parseKvObject(await store.kvGet<Record<string, true> | string>(SKILL_EVENT_SEEN_KEY));
-}
-
 async function hasSeenEventId(store: MemoryStore, eventId: string): Promise<boolean> {
-  const partitioned = await store.kvGet<true>(skillEventSeenKey(eventId));
-  if (partitioned === true) return true;
-  const legacy = await readSeenEventIds(store);
-  return legacy[eventId] === true;
+  return (await store.kvGet<true>(skillEventSeenKey(eventId))) === true;
 }
 
 async function writeSeenEventId(store: MemoryStore, eventId: string): Promise<void> {
@@ -341,11 +334,9 @@ async function readSkillRollup(
   store: MemoryStore,
   event: SkillEvent,
 ): Promise<Record<string, SkillRollup>> {
-  const key = skillRollupKey(event);
   const partitioned = await store.kvGet<SkillRollup | string>(skillRollupStorageKey(event));
-  if (partitioned != null) return { [key]: parseKvValue<SkillRollup>(partitioned) };
-  const legacy = await readSkillRollupMap(store);
-  return legacy[key] != null ? { [key]: legacy[key] } : {};
+  if (partitioned == null) return {};
+  return { [skillRollupKey(event)]: parseKvValue<SkillRollup>(partitioned) };
 }
 
 async function writeSkillRollup(
@@ -357,9 +348,7 @@ async function writeSkillRollup(
 }
 
 async function readSkillRollupMap(store: MemoryStore): Promise<Record<string, SkillRollup>> {
-  const rollups = parseKvObject(
-    await store.kvGet<Record<string, SkillRollup> | string>(SKILL_ROLLUPS_KEY),
-  );
+  const rollups: Record<string, SkillRollup> = {};
   const nodes = await store.listNodes();
   for (const node of nodes) {
     const skill = (node.properties as Record<string, unknown> | undefined)?.skill;
@@ -369,11 +358,6 @@ async function readSkillRollupMap(store: MemoryStore): Promise<Record<string, Sk
     rollups[skillRollupKey(skill)] = parseKvValue<SkillRollup>(stored);
   }
   return rollups;
-}
-
-function parseKvObject<T extends Record<string, unknown>>(raw: T | string | null): T {
-  if (raw == null) return {} as T;
-  return parseKvValue<T>(raw);
 }
 
 function parseKvValue<T>(raw: T | string): T {
@@ -459,9 +443,6 @@ function earlierTimestamp(a: string, b: string): string {
 function laterTimestamp(a: string, b: string): string {
   return Date.parse(a) >= Date.parse(b) ? a : b;
 }
-
-const SKILL_EVENT_SEEN_KEY = "skill-events:seen";
-const SKILL_ROLLUPS_KEY = "skill-rollups:all";
 
 function parseJsonOrJsonl(input: string): unknown {
   try {
