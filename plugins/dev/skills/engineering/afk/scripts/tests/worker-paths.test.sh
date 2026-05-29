@@ -156,6 +156,48 @@ expected_workers="$(printf '%s\n' \
   "$TMPROOT/workers/wCCCC" | sort)"
 expect_eq "workers-glob/expands-to-all-workers" "$expected_workers" "$matched_workers"
 
+# ===========================================================================
+# worker_paths_worker_dir / pidfile / live_pids_glob — literal + rejection
+# ===========================================================================
+expect_eq "worker-dir/literal" \
+  "/tmp/afk/workers/wA1B9" \
+  "$(worker_paths_worker_dir /tmp/afk wA1B9)"
+expect_eq "worker-dir/trailing-slash-normalised" \
+  "/tmp/afk/workers/wA1B9" \
+  "$(worker_paths_worker_dir /tmp/afk/ wA1B9)"
+expect_rc "worker-dir/empty-root rejected"     1 worker_paths_worker_dir "" wA1B9
+expect_rc "worker-dir/worker-with-slash"       1 worker_paths_worker_dir /tmp "w/x"
+
+expect_eq "pidfile/literal" \
+  "/tmp/afk/workers/wA1B9/worker.pid" \
+  "$(worker_paths_pidfile /tmp/afk wA1B9)"
+expect_rc "pidfile/empty-worker rejected"      1 worker_paths_pidfile /tmp ""
+
+expect_eq "live-pids-glob/literal" \
+  "/tmp/afk/workers/*/worker.pid" \
+  "$(worker_paths_live_pids_glob /tmp/afk)"
+expect_rc "live-pids-glob/empty-root rejected" 1 worker_paths_live_pids_glob ""
+
+# round-trip: pidfile sits inside worker_dir, which is the parent of every
+# attempt dir for that worker.
+expect_eq "worker-dir/parents-the-attempt" \
+  "$(worker_paths_worker_dir /tmp/afk wA1B9)/245-a1" \
+  "$(worker_paths_build /tmp/afk wA1B9 245 1)"
+
+# Live-pids glob: expands to exactly the worker.pid files present. Liveness is
+# keyed off the pid file, not directory existence — so a worker dir with no
+# worker.pid (e.g. a retained corpse) is correctly excluded. Drop pids for two
+# of the three fixture workers; the glob must select exactly those two.
+: > "$TMPROOT/workers/wAAAA/worker.pid"
+: > "$TMPROOT/workers/wBBBB/worker.pid"
+pids_glob="$(worker_paths_live_pids_glob "$TMPROOT")"
+# shellcheck disable=SC2086
+matched_pids="$(printf '%s\n' $pids_glob | sort)"
+expected_pids="$(printf '%s\n' \
+  "$TMPROOT/workers/wAAAA/worker.pid" \
+  "$TMPROOT/workers/wBBBB/worker.pid" | sort)"
+expect_eq "live-pids-glob/expands-to-pidfiles-only" "$expected_pids" "$matched_pids"
+
 echo
 echo "summary: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

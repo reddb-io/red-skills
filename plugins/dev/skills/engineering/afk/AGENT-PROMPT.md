@@ -4,7 +4,7 @@ You are an AFK agent invoked by `/afk`. You are running inside an isolated git w
 
 ## Inputs You Will Receive
 
-- **Handoff file** at `../handoff.md` (relative to the worktree; the file lives in the parent iteration directory `.red/tmp/work-{id}-i{N}/`) — the contract. Read it first.
+- **Handoff file** at `../handoff.md` (relative to the worktree; the file lives in the parent attempt directory `.red/tmp/workers/{id}/{N}-a{n}/`) — the contract. Read it first.
 - **Recent commits** of `main` (last 5).
 - This prompt.
 

@@ -50,8 +50,16 @@ _Avoid_: branch lock
 The developer's main working clone of the repo, contrasted with an AFK **Worktree**.
 _Avoid_: main repo, root checkout
 
+**Worker**:
+A single AFK orchestrator instance, identified by `w` + 4 characters (e.g. `wZ2R4`). It owns `.red/tmp/workers/{wid}/` and a single `worker.pid` liveness anchor, written once at bootstrap and removed on exit.
+_Avoid_: agent, slot, runner
+
+**Attempt**:
+One numbered AFK execution of an **Issue**, materialised at `.red/tmp/workers/{wid}/{issue}-a{n}/`. The `a{n}` counter is per-**Issue** across all **Workers**, so each retry — even by a different worker — is a fresh attempt directory.
+_Avoid_: iteration, run, retry dir
+
 **Worktree**:
-An isolated `git worktree` created by AFK per issue under `.red/tmp/work-*/`.
+An isolated `git worktree` created by AFK per **Attempt** under `.red/tmp/workers/{wid}/{issue}-a{n}/worktree/`.
 _Avoid_: afk clone, sandbox checkout
 
 **Fleet supervisor**:
@@ -96,6 +104,7 @@ _Avoid_: memory cleaner, silent curator
 - An **Issue** carries one **Triage role** at a time.
 - An **Issue** accumulates **Envelopes**, **Directive blocks**, **Human guidance**, and **Thread discussion**.
 - A **Fleet supervisor** maintains AFK workers; **Auto-monitor loop**, **Task mirror**, **Codex monitor agent**, and `monitor.sh` only observe.
+- A **Worker** owns many **Attempts**; each **Attempt** resolves exactly one **Issue** and holds one **Worktree**. The **Worker**'s `worker.pid` is the single liveness signal consumers read.
 - A **Branch lock** constrains the **Primary checkout**; AFK **Worktrees** remain exempt.
 - A **Pinned branch** constrains AFK base and merge target; it is independent of **Branch lock**.
 - The **Codebase understanding surface** may read Memory graph evidence, but it does not own graph storage or ingest.

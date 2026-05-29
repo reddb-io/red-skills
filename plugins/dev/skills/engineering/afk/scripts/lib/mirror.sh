@@ -5,9 +5,10 @@
 # Three layers, two of them pure:
 #
 #   state-reader      mirror_read_workers <project_root>
-#     Globs .red/tmp/work-*/afk.state.json, verifies liveness via the sibling
-#     afk.pid (kill -0), and emits one normalized JSONL record per worker that
-#     currently maps to a task. No harness coupling, never writes state.
+#     Globs .red/tmp/workers/*/*/afk.state.json, verifies liveness via the state
+#     file's .pid (the orchestrator $$; kill -0), and emits one normalized JSONL
+#     record per worker that currently maps to a task. No harness coupling,
+#     never writes state.
 #
 #   mirror-reconciler mirror_reconcile <desired_jsonl> <tracked_jsonl>
 #     Pure diff. Given the desired worker set (from the reader) and the set of
@@ -35,18 +36,20 @@ source "$(dirname "${BASH_SOURCE[0]}")/state.sh"
 # mirror_read_workers <project_root>
 # Emits JSONL, one record per work dir that maps to a live or crashed task.
 # A record is emitted only when the iteration carries a current issue number
-# (an idle worker between issues owns no task). Liveness comes from the sibling
-# afk.pid, not the .pid field, matching monitor.sh and afk.sh prune_orphans.
+# (an idle worker between issues owns no task). Liveness comes from the state
+# file's .pid (the orchestrator $$), matching monitor.sh / statusline.sh via
+# state_is_live. A preserved blocked attempt has its .pid zeroed by
+# iter_close_preserve, so it reads not-live — the same effect the old
+# per-attempt afk.pid removal had under the flat scheme.
 mirror_read_workers() {
   local root="${1:-$(pwd)}"
   local tmp_dir="$root/.red/tmp"
-  local state_file iter_dir pid_file pid live status started
+  local state_file iter_dir live status started
 
   shopt -s nullglob
-  for state_file in "$tmp_dir"/work-*/afk.state.json; do
+  for state_file in "$tmp_dir"/workers/*/*/afk.state.json; do
     [[ -f "$state_file" ]] || continue
     iter_dir="$(dirname "$state_file")"
-    pid_file="$iter_dir/afk.pid"
 
     state_read_into _w "$state_file"
 
@@ -54,10 +57,7 @@ mirror_read_workers() {
     [[ -n "$_w_current_number" && "$_w_current_number" != "null" ]] || continue
 
     live=0
-    if [[ -f "$pid_file" ]]; then
-      pid="$(cat "$pid_file" 2>/dev/null)"
-      [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null && live=1
-    fi
+    state_is_live "$state_file" && live=1
 
     if (( live )); then
       status="running"

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# /afk monitor — readonly status board. Globs .red/tmp/work-*/afk.state.json
+# /afk monitor — readonly status board. Globs .red/tmp/workers/*/*/afk.state.json
 # (one file per live iteration) and renders one section per worker.
 #
 # Two modes, auto-selected by stdout type:
@@ -416,9 +416,9 @@ render_full() {
   render_fleet_header
   render_sparkline
   echo
-  local states=( "$TMP_DIR"/work-*/afk.state.json )
+  local states=( "$TMP_DIR"/workers/*/*/afk.state.json )
   if [[ ! -e "${states[0]}" ]]; then
-    echo "no live iterations under $TMP_DIR/work-*/ — /afk not running here?"
+    echo "no live iterations under $TMP_DIR/workers/*/ — /afk not running here?"
   else
     for sf in "${states[@]}"; do render_worker "$sf"; done
   fi
@@ -448,7 +448,7 @@ When you summarise the lines below for the user, follow these rules verbatim. Tr
 EOF
   render_fleet_header
   render_sparkline
-  local states=( "$TMP_DIR"/work-*/afk.state.json )
+  local states=( "$TMP_DIR"/workers/*/*/afk.state.json )
   if [[ ! -e "${states[0]}" ]]; then
     echo "workers: (none — /afk not running here)"
   else

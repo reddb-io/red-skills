@@ -18,7 +18,7 @@ claude \
 `$full_prompt` is built by the orchestrator as:
 
 ```
-Handoff file: <absolute path to .red/tmp/work-{id}-i{N}/handoff.md>
+Handoff file: <absolute path to .red/tmp/workers/{id}/{N}-a{n}/handoff.md>
 
 Recent commits on main:
 <git log -n 5 --format="%H%n%ad%n%B---" --date=short>
@@ -60,7 +60,7 @@ Claude is invoked with the worktree as `cwd`. It has filesystem access only insi
 
 ## Handoff File Contract
 
-Claude reads the handoff file path passed in the prompt at the start of its session. The file lives one level above the worktree, at `.red/tmp/work-{id}-i{N}/handoff.md`, so it survives runner retries.
+Claude reads the handoff file path passed in the prompt at the start of its session. The file lives one level above the worktree, at `.red/tmp/workers/{id}/{N}-a{n}/handoff.md`, so it survives runner retries.
 
 ## Notes On Permissions
 

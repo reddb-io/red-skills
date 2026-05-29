@@ -110,9 +110,11 @@ SUPERVISOR_RUNNER="claude"
 WID="wTEST"
 ISSUE=190
 SLUG="bug-afk-supervisor-stall"
-ITER_DIR="$TMP_ROOT/.red/tmp/work-${WID}-i${ISSUE}"
+# Nested layout (#252): attempt dir under workers/{wid}/, slot pid lives in the
+# per-worker workers/{wid}/worker.pid that find_slot_iter_dir matches.
+ITER_DIR="$TMP_ROOT/.red/tmp/workers/${WID}/${ISSUE}-a1"
 mkdir -p "$ITER_DIR/worktree"
-echo "$$" > "$ITER_DIR/afk.pid"
+echo "$$" > "$(dirname "$ITER_DIR")/worker.pid"
 cat > "$ITER_DIR/afk.state.json" <<EOF
 {
   "worker_id": "$WID",
@@ -208,9 +210,12 @@ assert_eq "reap: no extra kill calls on second poll" "$PRE_KILL" "$POST_KILL"
 # A reap with no afk.state.json must still kill, free the slot, and
 # remove the iter dir, but post no envelope and rotate no labels.
 WID2="wPREB"
-ITER_DIR2="$TMP_ROOT/.red/tmp/work-${WID2}-i0"
+ITER_DIR2="$TMP_ROOT/.red/tmp/workers/${WID2}/0-a1"
+# First worker fully exited — its EXIT trap would have removed worker.pid and the
+# worker dir; do the same here so only wPREB's worker.pid matches slot pid $$.
+rm -rf "$TMP_ROOT/.red/tmp/workers/${WID}"
 mkdir -p "$ITER_DIR2"
-echo "$$" > "$ITER_DIR2/afk.pid"
+echo "$$" > "$(dirname "$ITER_DIR2")/worker.pid"
 : > "$ITER_DIR2/afk.log"
 : > "$ITER_DIR2/agent.log.jsonl"
 

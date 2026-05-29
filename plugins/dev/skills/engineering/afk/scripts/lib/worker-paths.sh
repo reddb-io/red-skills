@@ -46,6 +46,21 @@
 #   worker_paths_workers_glob <root>
 #     Echo the canonical glob matching all live worker directories:
 #     `<root>/workers/*`. Returns 0 on a non-empty <root>, else non-zero.
+#
+#   worker_paths_worker_dir <root> <worker>
+#     Echo `<root>/workers/<worker>` — the per-worker directory that groups all
+#     of one worker's attempts. Returns 0 on a valid worker, else non-zero.
+#
+#   worker_paths_pidfile <root> <worker>
+#     Echo `<root>/workers/<worker>/worker.pid` — the per-worker pid file the
+#     orchestrator writes once at bootstrap. Liveness is keyed off this file
+#     (`kill -0`), never off directory existence, because retained attempt
+#     directories outlive their worker (PRD #244 split teardown). Returns 0 on a
+#     valid worker, else non-zero.
+#
+#   worker_paths_live_pids_glob <root>
+#     Echo `<root>/workers/*/worker.pid` — the glob consumers walk to find every
+#     worker's pid file for the liveness check. Returns 0 on a non-empty <root>.
 
 # _worker_paths_valid_worker <token>
 # True iff <token> is a single non-empty path segment of [A-Za-z0-9_-].
@@ -111,5 +126,34 @@ worker_paths_workers_glob() {
   [[ -n "$root" ]] || return 1
   root="${root%/}"
   printf '%s/workers/*\n' "$root"
+  return 0
+}
+
+# worker_paths_worker_dir <root> <worker>
+worker_paths_worker_dir() {
+  local root="$1" worker="$2"
+  [[ -n "$root" ]] || return 1
+  _worker_paths_valid_worker "$worker" || return 1
+  root="${root%/}"
+  printf '%s/workers/%s\n' "$root" "$worker"
+  return 0
+}
+
+# worker_paths_pidfile <root> <worker>
+worker_paths_pidfile() {
+  local root="$1" worker="$2"
+  [[ -n "$root" ]] || return 1
+  _worker_paths_valid_worker "$worker" || return 1
+  root="${root%/}"
+  printf '%s/workers/%s/worker.pid\n' "$root" "$worker"
+  return 0
+}
+
+# worker_paths_live_pids_glob <root>
+worker_paths_live_pids_glob() {
+  local root="$1"
+  [[ -n "$root" ]] || return 1
+  root="${root%/}"
+  printf '%s/workers/*/worker.pid\n' "$root"
   return 0
 }

@@ -46,7 +46,7 @@ On any of those, the orchestrator emits `RUNNER_EXHAUSTED`, preserves the worktr
 
 ## Working Directory
 
-`-C $WORKTREE` pins Codex to the worktree. The handoff file lives at `../handoff.md` (one level above the worktree, inside the iteration directory `.red/tmp/work-{id}-i{N}/`).
+`-C $WORKTREE` pins Codex to the worktree. The handoff file lives at `../handoff.md` (one level above the worktree, inside the attempt directory `.red/tmp/workers/{id}/{N}-a{n}/`).
 
 ## Task Mirror Sink
 

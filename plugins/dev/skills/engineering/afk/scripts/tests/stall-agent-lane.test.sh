@@ -63,12 +63,14 @@ RED_AFK_TARGET=1
 RED_AFK_STALL_THRESHOLD_S=30
 SUPERVISOR_RUNNER="claude"
 
-# stage_fixture <iter_dir> — create a worker iteration dir whose afk.pid is this
-# shell, with afk.log + agent lane + state + handoff, both logs aged 120s.
+# stage_fixture <iter_dir> — create a worker iteration dir (nested #252 layout
+# workers/{wid}/{issue}-a{n}) plus the per-worker workers/{wid}/worker.pid this
+# shell owns, with afk.log + agent lane + state + handoff, both logs aged 120s.
 stage_fixture() {
-  local dir="$1" past; past=$(( $(date +%s) - 120 ))
+  local dir="$1" past wdir; past=$(( $(date +%s) - 120 ))
+  wdir="$(dirname "$dir")"
   mkdir -p "$dir/worktree"
-  echo "$$" > "$dir/afk.pid"
+  echo "$$" > "$wdir/worker.pid"
   cat > "$dir/afk.state.json" <<EOF
 { "worker_id": "wTEST", "started_at": "$(date -Iseconds -d "@$(( $(date +%s) - 200 ))")",
   "current": { "number": 251, "title": "afk reaper agent lane", "slug": "afk-reaper-agent-lane" } }
@@ -98,7 +100,7 @@ reset_slot() {
 # afk.log is fresh (the heartbeat). A fresh worker not yet flagged is staged,
 # poll must flag it from lane silence even though afk.log just moved.
 RED_AFK_STALL_KILL_THRESHOLD_S=600
-ITER_DIR="$TMP_ROOT/.red/tmp/work-wTEST-i251"
+ITER_DIR="$TMP_ROOT/.red/tmp/workers/wTEST/251-a1"
 stage_fixture "$ITER_DIR"
 SLOT_PIDS=("$$")
 SLOT_SPAWN_EPOCH=("$(( $(date +%s) - 200 ))")
@@ -114,7 +116,7 @@ assert_eq "masking fix: flagged from agent-lane silence (afk.log fresh)" "1" "${
 RED_AFK_STALL_KILL_THRESHOLD_S=90
 sup_active_descendant() { echo no; }
 sup_tree_cpu() { echo 0; }
-ITER_DIR="$TMP_ROOT/.red/tmp/work-wTEST-i251"
+ITER_DIR="$TMP_ROOT/.red/tmp/workers/wTEST/251-a1"
 stage_fixture "$ITER_DIR"
 touch "$ITER_DIR/afk.log"   # heartbeat keeps afk.log fresh
 reset_slot "$ITER_DIR"
@@ -131,7 +133,7 @@ if grep -qF 'data-attempt-status="no-sentinel"' "$GH_CALLS"; then ok "reap fires
 RED_AFK_STALL_KILL_THRESHOLD_S=90
 sup_active_descendant() { echo yes; }   # a vitest/build descendant is running
 sup_tree_cpu() { echo 0; }              # even at flat cpu, the descendant protects it
-ITER_DIR="$TMP_ROOT/.red/tmp/work-wTEST-i251"
+ITER_DIR="$TMP_ROOT/.red/tmp/workers/wTEST/251-a1"
 stage_fixture "$ITER_DIR"
 reset_slot "$ITER_DIR"
 : >"$GH_CALLS"; : >"$KILL_CALLS"; : >"$LOG_FILE"
@@ -150,7 +152,7 @@ assert_eq "busy descendant: still flagged stalled" "1" "${SLOT_STALLED[0]}"
 RED_AFK_STALL_KILL_THRESHOLD_S=90
 sup_active_descendant() { echo no; }    # no recognised tool, but...
 sup_tree_cpu() { echo 87.5; }           # ...the worker tree is burning cpu
-ITER_DIR="$TMP_ROOT/.red/tmp/work-wTEST-i251"
+ITER_DIR="$TMP_ROOT/.red/tmp/workers/wTEST/251-a1"
 stage_fixture "$ITER_DIR"
 reset_slot "$ITER_DIR"
 : >"$GH_CALLS"; : >"$KILL_CALLS"

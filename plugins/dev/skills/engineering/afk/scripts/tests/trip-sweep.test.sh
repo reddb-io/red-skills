@@ -78,26 +78,26 @@ assert_eq "parse: missing log yields nothing" "" "$MISSING_OUT"
 
 # ---------- iter_dirs_for_worker / iter_dir_issue_number ----------
 
-mkdir -p "$TMP_ROOT/.red/tmp/work-wAAAA-i7"
-echo '{"current":{"number":7}}' >"$TMP_ROOT/.red/tmp/work-wAAAA-i7/afk.state.json"
-mkdir -p "$TMP_ROOT/.red/tmp/work-wAAAA-i9"
-echo '{"current":{"number":9}}' >"$TMP_ROOT/.red/tmp/work-wAAAA-i9/afk.state.json"
-mkdir -p "$TMP_ROOT/.red/tmp/work-wBBBB-i7"  # worker died before claim → no state
-mkdir -p "$TMP_ROOT/.red/tmp/work-wXXXX-i1"  # unrelated worker, must be ignored
-echo '{"current":{"number":99}}' >"$TMP_ROOT/.red/tmp/work-wXXXX-i1/afk.state.json"
+mkdir -p "$TMP_ROOT/.red/tmp/workers/wAAAA/7-a1"
+echo '{"current":{"number":7}}' >"$TMP_ROOT/.red/tmp/workers/wAAAA/7-a1/afk.state.json"
+mkdir -p "$TMP_ROOT/.red/tmp/workers/wAAAA/9-a1"
+echo '{"current":{"number":9}}' >"$TMP_ROOT/.red/tmp/workers/wAAAA/9-a1/afk.state.json"
+mkdir -p "$TMP_ROOT/.red/tmp/workers/wBBBB/7-a1"  # worker died before claim → no state
+mkdir -p "$TMP_ROOT/.red/tmp/workers/wXXXX/1-a1"  # unrelated worker, must be ignored
+echo '{"current":{"number":99}}' >"$TMP_ROOT/.red/tmp/workers/wXXXX/1-a1/afk.state.json"
 
 DIRS_A="$(iter_dirs_for_worker "wAAAA" | sort | paste -sd, -)"
 assert_eq "iter_dirs_for_worker: matches both iter dirs" \
-  "$TMP_ROOT/.red/tmp/work-wAAAA-i7,$TMP_ROOT/.red/tmp/work-wAAAA-i9" \
+  "$TMP_ROOT/.red/tmp/workers/wAAAA/7-a1,$TMP_ROOT/.red/tmp/workers/wAAAA/9-a1" \
   "$DIRS_A"
 
 DIRS_C="$(iter_dirs_for_worker "wCCCC")"
 assert_eq "iter_dirs_for_worker: unknown worker yields nothing" "" "$DIRS_C"
 
-ISSUE7="$(iter_dir_issue_number "$TMP_ROOT/.red/tmp/work-wAAAA-i7")"
+ISSUE7="$(iter_dir_issue_number "$TMP_ROOT/.red/tmp/workers/wAAAA/7-a1")"
 assert_eq "iter_dir_issue_number: reads .current.number" "7" "$ISSUE7"
 
-ISSUE_NONE="$(iter_dir_issue_number "$TMP_ROOT/.red/tmp/work-wBBBB-i7")"
+ISSUE_NONE="$(iter_dir_issue_number "$TMP_ROOT/.red/tmp/workers/wBBBB/7-a1")"
 assert_eq "iter_dir_issue_number: no state file → empty" "" "$ISSUE_NONE"
 
 # ---------- build_discard_envelope ----------
@@ -170,11 +170,11 @@ assert_contains "sweep removes ready-for-human" "$EDITS" '--remove-label ready-f
 assert_contains "sweep removes running"        "$EDITS" '--remove-label running'
 
 # Expect: every iter dir for the affected workers removed.
-[ ! -d "$TMP_ROOT/.red/tmp/work-wAAAA-i7" ] && ok "sweep removed work-wAAAA-i7" || bad "sweep left work-wAAAA-i7"
-[ ! -d "$TMP_ROOT/.red/tmp/work-wAAAA-i9" ] && ok "sweep removed work-wAAAA-i9" || bad "sweep left work-wAAAA-i9"
-[ ! -d "$TMP_ROOT/.red/tmp/work-wBBBB-i7" ] && ok "sweep removed work-wBBBB-i7" || bad "sweep left work-wBBBB-i7"
+[ ! -d "$TMP_ROOT/.red/tmp/workers/wAAAA/7-a1" ] && ok "sweep removed workers/wAAAA/7-a1" || bad "sweep left workers/wAAAA/7-a1"
+[ ! -d "$TMP_ROOT/.red/tmp/workers/wAAAA/9-a1" ] && ok "sweep removed workers/wAAAA/9-a1" || bad "sweep left workers/wAAAA/9-a1"
+[ ! -d "$TMP_ROOT/.red/tmp/workers/wBBBB/7-a1" ] && ok "sweep removed workers/wBBBB/7-a1" || bad "sweep left workers/wBBBB/7-a1"
 # Unrelated worker dir must survive.
-[ -d "$TMP_ROOT/.red/tmp/work-wXXXX-i1" ] && ok "sweep preserved unrelated worker dir" || bad "sweep clobbered unrelated worker dir"
+[ -d "$TMP_ROOT/.red/tmp/workers/wXXXX/1-a1" ] && ok "sweep preserved unrelated worker dir" || bad "sweep clobbered unrelated worker dir"
 
 # SLOT_SWEPT guard set.
 assert_eq "sweep sets SLOT_SWEPT=1" "1" "${SLOT_SWEPT[0]}"
@@ -193,7 +193,7 @@ assert_eq "sweep idempotent on re-invocation" "$PRE_CALLS" "$POST_CALLS"
 SLOT_SWEPT=(0)
 SLOT_FAST_DEATHS=("200 210 220 230 240")
 : >"$GH_CALLS"
-mkdir -p "$TMP_ROOT/.red/tmp/work-wDDDD-i1"  # no state file
+mkdir -p "$TMP_ROOT/.red/tmp/workers/wDDDD/1-a1"  # no state file
 cat >"$SWEEP_SLOT_LOG" <<'EOF'
 [afk] worker: wDDDD
 EOF
@@ -204,7 +204,7 @@ ZERO_COMMENTS="$(grep -c 'issue comment' "$GH_CALLS" || true)"
 assert_eq "no-claimed-issues sweep: zero envelopes posted" "0" "$ZERO_COMMENTS"
 ZERO_EDITS="$(grep -c 'issue edit' "$GH_CALLS" || true)"
 assert_eq "no-claimed-issues sweep: zero label edits"      "0" "$ZERO_EDITS"
-[ ! -d "$TMP_ROOT/.red/tmp/work-wDDDD-i1" ] && ok "no-claimed-issues sweep: iter dir removed" || bad "no-claimed-issues sweep: iter dir kept"
+[ ! -d "$TMP_ROOT/.red/tmp/workers/wDDDD/1-a1" ] && ok "no-claimed-issues sweep: iter dir removed" || bad "no-claimed-issues sweep: iter dir kept"
 
 # ---------- no-workers-observed path ----------
 # Brand new slot, slot log never opened (or empty) → sweep is a no-op,

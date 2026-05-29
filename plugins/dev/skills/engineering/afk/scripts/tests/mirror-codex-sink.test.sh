@@ -52,15 +52,13 @@ trap 'rm -rf "$ROOT"' EXIT
 # Same fixture helper shape as mirror.test.sh: a state file + (optional) live pid.
 mk_worker() {
   local wid="$1" issue="$2" title="$3" stage="$4" pid="$5"
-  local dir="$ROOT/.red/tmp/work-${wid}-i${issue}"
+  # Nested layout (#252): workers/{wid}/{issue}-a1; liveness via state .pid.
+  local dir="$ROOT/.red/tmp/workers/${wid}/${issue}-a1"
   mkdir -p "$dir"
   state_init "$dir/afk.state.json" worker_id="$wid" pid:="${pid/-/0}"
   state_write "$dir/afk.state.json" \
     current.number:="$issue" current.title="$title" \
     current.stage="$stage" current.started_at="2026-05-21T09:00:00-03:00"
-  if [[ "$pid" != "-" ]]; then
-    printf '%s' "$pid" > "$dir/afk.pid"
-  fi
 }
 
 LIVE=$$

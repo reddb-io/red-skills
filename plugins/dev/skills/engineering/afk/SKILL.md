@@ -19,7 +19,7 @@ Drain the agent-ready backlog. Single skill that owns issue selection, worktree 
 - `/afk --request "dont run cargo tests for this issue resolution"` or `/afk -r "..."` — add a special user request block to every inner-agent prompt for this run.
 - `/afk -n 5` — cap at five issues (default: drain until empty).
 - `/afk --once` — single supervised iteration. Same as `scripts/once.sh`. Use for debugging the prompt.
-- `/afk monitor` — readonly status board, aggregates every `.red/tmp/work-*/afk.state.json` so you see all live workers from another terminal. **Also (binding):** mirrors live workers onto the host runner's native task surface — `TaskCreate`/`TaskUpdate` under Claude Code, the sub-agent surface under Codex when present (falls back to the dashboard otherwise). See *Task Mirror* below — this is not optional and you must do it on every tick, even when the user only asked "como estamos?".
+- `/afk monitor` — readonly status board, aggregates every `.red/tmp/workers/*/*/afk.state.json` so you see all live workers from another terminal. **Also (binding):** mirrors live workers onto the host runner's native task surface — `TaskCreate`/`TaskUpdate` under Claude Code, the sub-agent surface under Codex when present (falls back to the dashboard otherwise). See *Task Mirror* below — this is not optional and you must do it on every tick, even when the user only asked "como estamos?".
 - `/afk fleet [N]` — launch the supervisor maintaining `N` concurrent workers (default `2`). See *Fleet Mode* below.
 - `/afk fleet stop` — gracefully shut down a running fleet supervisor and cancel its auto-monitor cron.
 
@@ -33,19 +33,19 @@ Drain the agent-ready backlog. Single skill that owns issue selection, worktree 
 /afk            # terminal C → spawns worker "w9RQP"
 ```
 
-Each invocation generates its own **worker ID** — literal `w` plus 4 random characters from `[A-Z0-9]` (e.g. `wZ2R4`, ~1.7M possible IDs) — and uses it as the prefix for every per-run file. The leading `w` makes `work-w*-i*` an unambiguous glob for AFK iteration dirs. The ID is printed on the first line of the run so you can tail or kill it later.
+Each invocation generates its own **worker ID** — literal `w` plus 4 random characters from `[A-Z0-9]` (e.g. `wZ2R4`, ~1.7M possible IDs) — and uses it as the prefix for every per-run file. The leading `w` makes the worker directory `.red/tmp/workers/{id}` an unambiguous live-worker anchor. The ID is printed on the first line of the run so you can tail or kill it later.
 
-Per-issue files live under `.red/tmp/work-{id}-i{N}/` in the primary checkout. Everything for one (worker, issue) iteration is in one directory — when the iteration ends successfully the whole directory is removed; when it blocks the whole directory is preserved.
+Per-attempt files live under `.red/tmp/workers/{id}/{N}-a{n}/` in the primary checkout, where `{id}` is the worker ID, `{N}` is the issue number, and `{n}` is the per-issue attempt counter (derived by the attempt-ledger — every retry, even by a different worker, gets a fresh `a{n}` directory). Everything for one (worker, issue, attempt) is in one directory — when the attempt ends successfully the whole directory is removed; when it blocks the whole directory is preserved. The worker also holds a single per-worker liveness anchor at `.red/tmp/workers/{id}/worker.pid` (see the `worker.pid` row below).
 
 | Path | Purpose |
 |---|---|
-| `.red/tmp/work-{id}-i{N}/worktree/` | Git worktree for issue `N`. Lives inside the gitignored `.red/tmp/` so it never pollutes sibling directories. |
-| `.red/tmp/work-{id}-i{N}/afk.pid` | PID of the orchestrator. Used by `/afk monitor` to flag dead workers as `stale` via `kill -0`. Re-written on each iteration. |
-| `.red/tmp/work-{id}-i{N}/afk.log` | Append-only plain log for this iteration (orchestrator output + inner-agent stdout + heartbeat lines). Per-issue scope — each issue gets a fresh log. |
-| `.red/tmp/work-{id}-i{N}/agent.log.jsonl` | Clean **agent lane** (issue #250) — one `type=agent` JSONL record per assistant turn and nothing synthetic, so it is the true liveness signal and reads as a live transcript: `tail -f … \| jq -r .msg`. Single-writer. |
-| `.red/tmp/work-{id}-i{N}/log.jsonl` | The **firehose** (issue #250) — every record of the attempt in the uniform JSONL envelope: agent turns, heartbeat vitals, hook dispatches, runner timings, and errors. Flock-serialised (many concurrent writers). |
-| `.red/tmp/work-{id}-i{N}/afk.state.json` | State snapshot for this iteration. Schema in *State File* below. |
-| `.red/tmp/work-{id}-i{N}/handoff.md` | Handoff file the inner agent reads — `<issue-body>` (issue body verbatim, including the `## Agent brief` markdown section), `<previous-attempts>`, `<human-guidance-thread>` (one `<human-guidance>` per extracted directive), `<thread-discussion>` (advisory comments with no directive marker), `<agent-notes>`. Top-level XML wrappers make body/comments/notes unambiguous. Template in *Handoff File Template* below. |
+| `.red/tmp/workers/{id}/worker.pid` | Per-worker liveness anchor: the orchestrator's PID, written **once at bootstrap** and removed on the worker's EXIT trap (along with rmdir of the empty worker dir). The single liveness anchor for the worker; the fleet supervisor's slot matching keys off it. |
+| `.red/tmp/workers/{id}/{N}-a{n}/worktree/` | Git worktree for issue `N` on attempt `n`. Lives inside the gitignored `.red/tmp/` so it never pollutes sibling directories. |
+| `.red/tmp/workers/{id}/{N}-a{n}/afk.log` | Append-only plain log for this attempt (orchestrator output + inner-agent stdout + heartbeat lines). Per-attempt scope — each attempt gets a fresh log. |
+| `.red/tmp/workers/{id}/{N}-a{n}/agent.log.jsonl` | Clean **agent lane** (issue #250) — one `type=agent` JSONL record per assistant turn and nothing synthetic, so it is the true liveness signal and reads as a live transcript: `tail -f … \| jq -r .msg`. Single-writer. |
+| `.red/tmp/workers/{id}/{N}-a{n}/log.jsonl` | The **firehose** (issue #250) — every record of the attempt in the uniform JSONL envelope: agent turns, heartbeat vitals, hook dispatches, runner timings, and errors. Flock-serialised (many concurrent writers). |
+| `.red/tmp/workers/{id}/{N}-a{n}/afk.state.json` | State snapshot for this attempt. Schema in *State File* below. |
+| `.red/tmp/workers/{id}/{N}-a{n}/handoff.md` | Handoff file the inner agent reads — `<issue-body>` (issue body verbatim, including the `## Agent brief` markdown section), `<previous-attempts>`, `<human-guidance-thread>` (one `<human-guidance>` per extracted directive), `<thread-discussion>` (advisory comments with no directive marker), `<agent-notes>`. Top-level XML wrappers make body/comments/notes unambiguous. Template in *Handoff File Template* below. |
 
 Two workers cannot claim the same issue thanks to a local `mkdir` lock at `.red/tmp/claims/{N}/` plus a `gh issue view` pre-check before the edit. The gh edit itself is not atomic (see *Issue Lifecycle* below for the full three-layer scheme). The race surface is the brief window between two separate checkouts on the same host — acceptable for the intended scale.
 
@@ -65,7 +65,7 @@ Run before the first iteration:
 
 1. Ensure `.red/tmp/` exists. Create it.
 2. Ensure `.red/tmp/` is in `.gitignore` of the primary checkout. Append if missing.
-3. **Generate the worker ID.** Literal `w` + 4 random characters from `[A-Z0-9]` (e.g. `wZ2R4`). On the astronomically unlikely chance the chosen ID already maps to a live `.red/tmp/work-{id}-*/afk.pid`, regenerate. Print the ID on the first line of the run: `worker: {id}`. All per-iteration paths interpolate `{id}` and the issue number `{N}`.
+3. **Generate the worker ID.** Literal `w` + 4 random characters from `[A-Z0-9]` (e.g. `wZ2R4`). On the astronomically unlikely chance the chosen ID already maps to a live worker directory `.red/tmp/workers/{id}` (its `worker.pid` alive), regenerate. Print the ID on the first line of the run: `worker: {id}`. All per-attempt paths interpolate `{id}`, the issue number `{N}`, and the attempt number `{n}`.
 4. Resolve the runner via the detection cascade:
    1. `--runner X` flag (pin) — wins over everything, logged as `detected via --runner pin`.
    2. **Env-var sniff** — `CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`, or `CLAUDE_CODE_SSE_PORT` → `claude`; `CODEX_HOME`, `CODEX_SANDBOX`, `CODEX_SANDBOX_NETWORK_DISABLED`, or `CODEX_MANAGED_BY_NPM` → `codex`. Logged as `detected via env-var`.
@@ -74,18 +74,19 @@ Run before the first iteration:
    5. **Env fallback** — `${RED_AFK_RUNNER:-claude}`. Logged as `detected via env-fallback`.
    The boot log prints one line per invocation: `runner: <runner> (detected via <method>)`. Load [`runner-claude.md`](runner-claude.md) or [`runner-codex.md`](runner-codex.md) so the spawn command is ready.
 5. Read [`SAFETY.md`](SAFETY.md). It is binding for every shell action the loop takes.
-6. Install signal handlers — SIGINT, SIGTERM, and normal exit all release any in-flight issue claim and preserve the active `work-{id}-i{N}/` directory before terminating.
+6. **Write the per-worker pid file.** Create `.red/tmp/workers/{id}/` and write `worker.pid` (current `$$`) **once** — this is the worker's single liveness anchor for its whole lifetime.
+7. Install signal handlers — SIGINT, SIGTERM, and normal exit all release any in-flight issue claim, preserve the active `workers/{id}/{N}-a{n}/` attempt directory, and on the EXIT trap remove `worker.pid` (and rmdir the empty worker dir) before terminating.
 
-The per-iteration `work-{id}-i{N}/` directory (pid, log, state, handoff, worktree) is created in *Per-Issue Loop* step 1 below, not here — the worker has no files until it claims an issue.
+The per-attempt `workers/{id}/{N}-a{n}/` directory (log, state, handoff, worktree) is created in *Per-Issue Loop* step 1 below, not here — the worker has no attempt files until it claims an issue. Only `worker.pid` exists from bootstrap.
 
 ## Orphan Cleanup (boot-time)
 
-Right after bootstrap and before *Straggler Check*, `/afk` sweeps `.red/tmp/work-*/` for orphaned iteration dirs (orchestrator pid dead). For each:
+Right after bootstrap and before *Straggler Check*, `/afk` runs two passes. First it **drain-wipes** any leftover **legacy flat** `.red/tmp/work-*/` dirs — these are never created under the nested scheme (the drain-first cutover, issue #252), so any survivor is a pre-cutover relic and is removed unconditionally. Then it sweeps the nested attempt dirs `.red/tmp/workers/*/*/` whose parent worker's `worker.pid` is dead, and afterwards removes the dead `worker.pid` files and the now-empty worker dirs. For each orphaned attempt dir:
 
 1. **(Slice D — heartbeat sub-shell retired.)** No zombie reap step is needed; older state files may still carry a `heartbeat_pid` but it's vestigial and ignored.
 2. **Decide fate from issue state.** `gh issue view N --json labels,state`:
    - `state == CLOSED` → `rm -rf`. Work landed; nothing to inspect.
-   - label `ready-for-human` → **split TTL** based on `envelope.posted` in the iteration state file (see *Terminal-Event Envelope* below):
+   - label `ready-for-human` → **split TTL** based on `envelope.posted` in the attempt state file (see *Terminal-Event Envelope* below):
      - `envelope.posted == true` → 1-day TTL. The issue thread already carries the canonical record; the local dir is pure redundancy.
      - `envelope.posted == false` or field missing → 7-day TTL. The envelope POST failed (or this dir predates the envelope writer), so the local notes/log are the only copy.
    - label `running` (orchestrator crashed mid-issue) → restore `ready-for-agent`, post a recovery comment, then `rm -rf`. Leaving the issue eternally `running` is worse than losing the dir.
@@ -197,9 +198,9 @@ Residual gap: two clones of the same repo on the same host (or different hosts) 
 
 For each issue `N`:
 
-1. **Claim.** `gh issue edit N --remove-label ready-for-agent --add-label running`. Then create the iteration directory `.red/tmp/work-{id}-i{N}/` and write `afk.pid` (current `$$`), open `afk.log` (tee target for orchestrator output), and initialise `afk.state.json` per *State File* below. Comment a start line on the issue: ISO timestamp, runner identity, worktree path. If labelling fails because someone else already claimed it, abandon the iteration directory and skip to the next issue.
-2. **Worktree.** Resolve the **pinned branch** (`lib/pin-reader.sh`, ADR 0008): the issue's own `branch:` line, else its parent PRD's, else `main`. Then `git -C primary fetch origin {pinned}` and `git worktree add .red/tmp/work-{id}-i{N}/worktree -b afk/{id}/{N}-{slug} origin/{pinned}` from the primary checkout. The worktree lives inside the gitignored `.red/tmp/` tree so it never appears in `git status` for `main`. Immediately after worktree creation the orchestrator mirrors the new branch on origin (`lib/remote-branch.sh::push_initial` — `git push origin -u HEAD:refs/heads/afk/{id}/{N}-{slug} --force-with-lease`) and installs a per-worktree `post-commit` hook (`install_post_commit_hook`) that fire-and-forgets a `git push origin HEAD --force-with-lease` after every inner-agent commit. Both calls are best-effort: a network/auth failure logs a `warn:` line and the iteration continues — the `afk-attempts/*` failure-push net (see *Terminal-Event Envelope*) still fires on terminal failure. Net effect: `afk/{id}/{N}-{slug}` is a **remote-tracked branch throughout the iteration**, so a SIGKILL anywhere from here on preserves the diff on origin without manual recovery.
-3. **Handoff file.** Materialise the handoff into `.red/tmp/work-{id}-i{N}/handoff.md` using the template below — top-level XML wrappers (`<issue-body>`, `<previous-attempts>`, `<human-guidance-thread>`, `<agent-notes>`) keep the issue body, orchestrator-authored prior attempts, human comments, and the inner-agent scratchpad unambiguous. `<issue-body>` carries the issue body verbatim (including the `## Agent brief` section written by `/triage`). The handoff file lives one level above the worktree so the inner agent reads it via `../handoff.md` from inside the worktree, and so it survives a worktree wipe on retry.
+1. **Claim.** `gh issue edit N --remove-label ready-for-agent --add-label running`. Then resolve the attempt number `{n}` from the attempt-ledger (per-issue across all workers), create the attempt directory `.red/tmp/workers/{id}/{N}-a{n}/`, open `afk.log` (tee target for orchestrator output), and initialise `afk.state.json` per *State File* below. The orchestrator PID is already recorded once in the per-worker `worker.pid` (written at bootstrap) and is also embedded in `afk.state.json`'s `.pid` field — there is no per-attempt pid file. Comment a start line on the issue: ISO timestamp, runner identity, worktree path. If labelling fails because someone else already claimed it, abandon the attempt directory and skip to the next issue.
+2. **Worktree.** Resolve the **pinned branch** (`lib/pin-reader.sh`, ADR 0008): the issue's own `branch:` line, else its parent PRD's, else `main`. Then `git -C primary fetch origin {pinned}` and `git worktree add .red/tmp/workers/{id}/{N}-a{n}/worktree -b afk/{id}/{N}-{slug} origin/{pinned}` from the primary checkout. The worktree lives inside the gitignored `.red/tmp/` tree so it never appears in `git status` for `main`. Immediately after worktree creation the orchestrator mirrors the new branch on origin (`lib/remote-branch.sh::push_initial` — `git push origin -u HEAD:refs/heads/afk/{id}/{N}-{slug} --force-with-lease`) and installs a per-worktree `post-commit` hook (`install_post_commit_hook`) that fire-and-forgets a `git push origin HEAD --force-with-lease` after every inner-agent commit. Both calls are best-effort: a network/auth failure logs a `warn:` line and the iteration continues — the `afk-attempts/*` failure-push net (see *Terminal-Event Envelope*) still fires on terminal failure. Net effect: `afk/{id}/{N}-{slug}` is a **remote-tracked branch throughout the iteration**, so a SIGKILL anywhere from here on preserves the diff on origin without manual recovery.
+3. **Handoff file.** Materialise the handoff into `.red/tmp/workers/{id}/{N}-a{n}/handoff.md` using the template below — top-level XML wrappers (`<issue-body>`, `<previous-attempts>`, `<human-guidance-thread>`, `<agent-notes>`) keep the issue body, orchestrator-authored prior attempts, human comments, and the inner-agent scratchpad unambiguous. `<issue-body>` carries the issue body verbatim (including the `## Agent brief` section written by `/triage`). The handoff file lives one level above the worktree so the inner agent reads it via `../handoff.md` from inside the worktree, and so it survives a worktree wipe on retry.
 4. **Local heartbeat marker.** Write one `[heartbeat] iteration started for #N` line to `afk.log`. Slice D retired the periodic GitHub-comment heartbeat (`:one: :two: :three: :four:`) — local liveness is now signalled by the inner-agent stdout stream tee'd into `afk.log` plus state-file mtime, both of which already exist.
 5. **Inner agent.** Invoke claude/codex per [`runner-*.md`](runner-claude.md) with [`AGENT-PROMPT.md`](AGENT-PROMPT.md) + the handoff file + last 5 commits of `main` + the optional `--request/-r` special user request block. Stream stdout into the loop's header tail. Detect stages by grep on the stream — see *Stage Detection* below.
 6. **Inner result.**
@@ -216,7 +217,7 @@ For each issue `N`:
    - Conflict? Try a one-shot self-resolve (`merge_resolve_conflict`): re-enter the inner agent **in primary** with the conflict diff and `git status` as context, instructing it to fix conflicts and `git commit --no-edit` the merge. Resolved = no unmerged paths and no `MERGE_HEAD` left. On still-conflicting: abort with `git merge --abort`, comment the diff on the issue, re-label `ready-for-human`, move on.
 9. **Push.** `git -C primary push origin {pinned}` over SSH. Rejected? **Roll the merge commit back** to `pre_merge_sha` (`merge_rollback`) so no orphan merge commit lingers on local `{pinned}`, then comment, re-label `ready-for-human`, move on. Do not retry-loop indefinitely.
 10. **Close.** Validation comment on the issue: tests pass/fail, lint, typecheck, build, commits added, files touched. Then `gh issue close N --reason completed`. Remove `running` label. Once the close succeeds, delete the live remote branch with `lib/remote-branch.sh::delete_remote` (`git push origin --delete afk/{id}/{N}-{slug}`) so the remote graveyard stays tidy — the merge commit on `{pinned}` already carries the diff. Best-effort: a failed delete (branch protection, network) logs a `warn:` line and the close still completes; the orphan `afk/*` branch can be cleaned up later.
-11. **Cleanup.** `git worktree remove .red/tmp/work-{id}-i{N}/worktree`, `git branch -D afk/{id}/{N}-{slug}` (the branch is already merged into main), then `rm -rf .red/tmp/work-{id}-i{N}/` so the iteration leaves no trace. The remote `afk/{id}/{N}-{slug}` ref was deleted in step 10 on DONE; failure paths leave the remote ref intact and instead push the canonical `afk-attempts/{id}/{N}-{slug}` ref (see *Terminal-Event Envelope*). On blocker paths the iteration directory is preserved for human inspection.
+11. **Cleanup.** `git worktree remove .red/tmp/workers/{id}/{N}-a{n}/worktree`, `git branch -D afk/{id}/{N}-{slug}` (the branch is already merged into main), then `rm -rf .red/tmp/workers/{id}/{N}-a{n}/` so the attempt leaves no trace. The remote `afk/{id}/{N}-{slug}` ref was deleted in step 10 on DONE; failure paths leave the remote ref intact and instead push the canonical `afk-attempts/{id}/{N}-{slug}` ref (see *Terminal-Event Envelope*). On blocker paths the attempt directory is preserved for human inspection.
 12. **Tick.** Update state file. Recompute ETA from rolling average of last 3 issue durations. Print one summary line: `finished {done}/{total} ({pct}%) — next: #{next}`.
 
 ## Runner Fallback
@@ -399,7 +400,7 @@ Redraw every 3 s on the controlling TTY, top of the scroll buffer. Use `tput sc;
 │ done: 3 / 12 (25%)     blocked: 0          merged: 3      │
 │                                                            │
 │ ▶ #142 wire OAuth callback                                 │
-│   worktree: .red/tmp/work-wZ2R4-i142/worktree               │
+│   worktree: .red/tmp/workers/wZ2R4/142-a1/worktree          │
 │   stage: impl                                              │
 │   last: writing tests for callback handler                 │
 │                                                            │
@@ -411,14 +412,14 @@ If stdout is not a TTY (CI, piped log), skip header rendering and print one JSON
 
 ## State File
 
-Path: `.red/tmp/work-{id}-i{N}/afk.state.json` — one snapshot per (worker, issue) iteration. Schema:
+Path: `.red/tmp/workers/{id}/{N}-a{n}/afk.state.json` — one snapshot per (worker, issue, attempt). Schema:
 
 ```json
 {
   "version": 1,
   "worker_id": "wZ2R4",
   "pid": 12340,
-  "log": ".red/tmp/work-wZ2R4-i142/afk.log",
+  "log": ".red/tmp/workers/wZ2R4/142-a1/afk.log",
   "started_at": "2026-05-16T12:00:00-03:00",
   "runner": "codex",
   "filter": { "kind": "prd|issues|all", "value": "42" },
@@ -432,8 +433,8 @@ Path: `.red/tmp/work-{id}-i{N}/afk.state.json` — one snapshot per (worker, iss
     "number": 142,
     "title": "wire OAuth callback",
     "slug": "wire-oauth-callback",
-    "worktree": ".red/tmp/work-wZ2R4-i142/worktree",
-    "handoff": ".red/tmp/work-wZ2R4-i142/handoff.md",
+    "worktree": ".red/tmp/workers/wZ2R4/142-a1/worktree",
+    "handoff": ".red/tmp/workers/wZ2R4/142-a1/handoff.md",
     "started_at": "2026-05-16T12:14:00-03:00",
     "stage": "impl",
     "heartbeat_glyph": null,
@@ -447,7 +448,7 @@ Path: `.red/tmp/work-{id}-i{N}/afk.state.json` — one snapshot per (worker, iss
 }
 ```
 
-Atomic write: write to `afk.state.json.tmp` inside the iteration directory, `mv` over the original. `/afk monitor` and any other reader open it read-only. Between issues the worker has no live state file — monitor renders that as "idle".
+Atomic write: write to `afk.state.json.tmp` inside the attempt directory, `mv` over the original. `/afk monitor` and any other reader open it read-only. Between issues the worker has no live state file — monitor renders that as "idle".
 
 ## Auto-Monitor Loop (Claude Code only — binding)
 
@@ -466,11 +467,11 @@ The monitor invocation handles its own teardown — see *Self-Cancel* under the 
 
 - The invocation is `/afk monitor` (not a worker spawn).
 - The invocation is `/afk --once` (single supervised iteration; user is already watching).
-- `CronCreate` is unavailable (not running under Claude Code — e.g. Codex). Print one line `monitor loop unavailable in this runner; tail .red/tmp/work-*/afk.log manually.` and continue.
+- `CronCreate` is unavailable (not running under Claude Code — e.g. Codex). Print one line `monitor loop unavailable in this runner; tail .red/tmp/workers/*/*/afk.log manually.` and continue.
 
 ## Fleet Mode (runner-portable — binding)
 
-`/dev:afk fleet [N]` and `/dev:afk fleet stop` are user-facing wrappers around [`scripts/supervisor.sh`](scripts/supervisor.sh). They let one terminal command spin up (or shut down) `N` concurrent `afk.sh` workers on the current checkout, with the supervisor handling respawn, the circuit breaker, the **passive stall detector** (samples each slot's per-iteration **agent lane** `agent.log.jsonl` mtime — the clean liveness signal — every `RED_AFK_STALL_POLL_S=30s`; flags any slot alive ≥ `RED_AFK_STALL_THRESHOLD_S=600` whose agent lane has been idle ≥ the same — surfaces as `⏸️ stalled` in `/dev:afk monitor`. It keys off the agent lane, never `afk.log`/`log.jsonl`, because the orchestrator heartbeat writes those every minute and would mask a real stall — the masking that defeated detection in #243), the **hard stall reaper** (a slot silent on the agent lane past `RED_AFK_STALL_KILL_THRESHOLD_S=1800` is only a *candidate*: the irreversible kill is gated behind the reaper-signal predicate [`lib/reaper-signal.sh`], so a worker mid-build/test — an active `vitest`/`tsc`/`cargo`/… descendant under its tree, or non-trivial aggregate cpu — is **busy** and left alone, while a genuinely stuck worker [idle past the threshold, no active descendant, flat cpu] is `kill_tree`d, a `data-attempt-status="no-sentinel"` envelope is posted with the iter-dir `afk.log` tail, the issue label is rotated back to `ready-for-agent`, the worktree + iter dir are removed, and the slot is freed for the next health-check respawn — `RED_AFK_STALL_KILL_THRESHOLD_S` must be strictly greater than `RED_AFK_STALL_THRESHOLD_S`, validated at supervisor boot), and per-slot build isolation (see [`scripts/supervisor.sh`](scripts/supervisor.sh) header for the env contract).
+`/dev:afk fleet [N]` and `/dev:afk fleet stop` are user-facing wrappers around [`scripts/supervisor.sh`](scripts/supervisor.sh). They let one terminal command spin up (or shut down) `N` concurrent `afk.sh` workers on the current checkout, with the supervisor handling respawn, the circuit breaker, the **passive stall detector** (samples each slot's per-attempt **agent lane** `agent.log.jsonl` mtime — the clean liveness signal — every `RED_AFK_STALL_POLL_S=30s`; flags any slot alive ≥ `RED_AFK_STALL_THRESHOLD_S=600` whose agent lane has been idle ≥ the same — surfaces as `⏸️ stalled` in `/dev:afk monitor`. It keys off the agent lane, never `afk.log`/`log.jsonl`, because the orchestrator heartbeat writes those every minute and would mask a real stall — the masking that defeated detection in #243), the **hard stall reaper** (a slot silent on the agent lane past `RED_AFK_STALL_KILL_THRESHOLD_S=1800` is only a *candidate*: the irreversible kill is gated behind the reaper-signal predicate [`lib/reaper-signal.sh`], so a worker mid-build/test — an active `vitest`/`tsc`/`cargo`/… descendant under its tree, or non-trivial aggregate cpu — is **busy** and left alone, while a genuinely stuck worker [idle past the threshold, no active descendant, flat cpu] is `kill_tree`d, a `data-attempt-status="no-sentinel"` envelope is posted with the attempt-dir `afk.log` tail, the issue label is rotated back to `ready-for-agent`, the worktree + attempt dir are removed, and the slot is freed for the next health-check respawn — `RED_AFK_STALL_KILL_THRESHOLD_S` must be strictly greater than `RED_AFK_STALL_THRESHOLD_S`, validated at supervisor boot), and per-slot build isolation (see [`scripts/supervisor.sh`](scripts/supervisor.sh) header for the env contract).
 
 **Worker env passthrough.** Any `RED_AFK_*` variable exported in the operator's shell before `/dev:afk fleet` is auto-forwarded to every worker the supervisor spawns. Use this for worker-side toggles like `RED_AFK_SKIP_PERF=1` or `RED_AFK_SKIP_COMPETITIVE_BASELINE=1` without writing a hook. Internal supervisor knobs (`RED_AFK_TARGET`, `RED_AFK_POLL_S`, `RED_AFK_STALL_*`, `RED_AFK_CIRCUIT_*`, `RED_AFK_RUNNER`, `RED_AFK_REQUEST`, `RED_AFK_PLUGIN_DIR`) and the per-slot `*_BASE` build-isolation vars are excluded — they have dedicated wiring. See `PASSTHROUGH_DENYLIST` in `supervisor.sh` for the canonical list.
 
@@ -540,13 +541,13 @@ Steps, in order:
 
 When the circuit breaker parks a slot (`CIRCUIT_K` fast deaths inside `CIRCUIT_WINDOW_S`) the supervisor — not a human — runs `sweep_parked_slot` to clean up after the burned workers. Three actions, in order, gated on the trip:
 
-1. **Sweep affected iter dirs.** From the slot log (`afk-supervisor-slot-{slot}.log`) the supervisor parses every `[afk] worker: w…` boot stamp emitted while the slot was alive, globs `.red/tmp/work-{wid}-i*/` for each ID, and reads `afk.state.json`'s `.current.number` to identify the affected issues. Each iter dir is `rm -rf`'d after its issue has been processed.
+1. **Sweep affected attempt dirs.** From the slot log (`afk-supervisor-slot-{slot}.log`) the supervisor parses every `[afk] worker: w…` boot stamp emitted while the slot was alive, globs `.red/tmp/workers/{wid}/*/` for each ID, and reads `afk.state.json`'s `.current.number` to identify the affected issues. Each attempt dir is `rm -rf`'d after its issue has been processed.
 2. **Post a discard envelope on each affected issue.** Same `<details data-attempt-status="…">` schema as `build_envelope` in `afk.sh`, with `status="discarded"` and a summary line that names the runner and the trip cause (`runner-broken, slot parked after K fast deaths`). The envelope's `data-section="summary"` block carries the slot index, comma-joined worker IDs, fast-death count, and the supervisor log path. No `notes`, `drop`, or `log` sections — the attempts produced no usable artefacts.
 3. **Restore label state on each affected issue.** Single `gh issue edit` adds `ready-for-agent` and `runner-error`, removes `ready-for-human` and (defensively) `running` — covers both the "issue had already been promoted to `ready-for-human`" path and the "issue was still `running` at the moment of trip" path.
 
 The `runner-error` label is created idempotently by `/setup-red-skills` (see [triage-labels.md](../setup-red-skills/triage-labels.md)). The supervisor still calls `gh label create runner-error` on the fly during a trip so cleanup never fails just because the label is missing.
 
-Idempotency: `SLOT_SWEPT[slot]=1` blocks a second sweep within the same supervisor lifetime. Across restarts a new trip yields fresh worker IDs and fresh iter dirs, so re-tripping never re-touches the previously swept issues. A trip that finds no claimed issues (all workers exited before claiming) parks the slot but posts no envelopes — the iter-dir sweep is a no-op.
+Idempotency: `SLOT_SWEPT[slot]=1` blocks a second sweep within the same supervisor lifetime. Across restarts a new trip yields fresh worker IDs and fresh attempt dirs, so re-tripping never re-touches the previously swept issues. A trip that finds no claimed issues (all workers exited before claiming) parks the slot but posts no envelopes — the attempt-dir sweep is a no-op.
 
 ### Refs
 
@@ -568,8 +569,8 @@ Idempotency: `SLOT_SWEPT[slot]=1` blocks a second sweep within the same supervis
 
 `/afk monitor` is the readonly aggregated view across all live workers. **Implementation is `scripts/monitor.sh` — invoke it directly, do not reinvent the rendering in inline bash.** The script:
 
-1. Globs `.red/tmp/work-*/afk.state.json` and renders one section per active iteration.
-2. Verifies liveness via the sibling `afk.pid` — iterations whose PID is dead are flagged `stale` and not counted as running.
+1. Globs `.red/tmp/workers/*/*/afk.state.json` and renders one section per active attempt.
+2. Verifies liveness via the orchestrator PID recorded in `afk.state.json` (`.pid` field, read through the `state_is_live` helper) — attempts whose PID is dead are flagged `stale`/`gone` and excluded, not counted as running.
 3. Optionally tails the sibling `afk.log` for the most recent line under each worker's header.
 4. Renders the 48h sparkline header (next subsection) on every refresh.
 
@@ -656,7 +657,7 @@ The pure diff logic lives in [`scripts/lib/mirror.sh`](scripts/lib/mirror.sh). A
 
 An empty plan means nothing changed since the last tick — apply no calls. Because the plan is keyed by `worker_id:issue`, an idempotent re-run with no stage advance emits zero descriptors.
 
-**Re-hydration on session reopen.** A native task dies with the Claude Code session; the `nohup` AFK worker does not. When a session opens with workers still running, `TaskList` (step 2) returns no mirror-owned tasks, so the tracked set is **empty** and `mirror_plan` reconciles cold — emitting a `TaskCreate` for every live worker. The status bar recovers the per-worker tasks with no operator action. This is the same path as steady-state, not a new one: only workers whose `afk.pid` is alive re-hydrate (dead workers are untracked-terminal on a cold tick → no ghost task), and the next tick is idempotent because the freshly-created tasks now form the tracked set.
+**Re-hydration on session reopen.** A native task dies with the Claude Code session; the `nohup` AFK worker does not. When a session opens with workers still running, `TaskList` (step 2) returns no mirror-owned tasks, so the tracked set is **empty** and `mirror_plan` reconciles cold — emitting a `TaskCreate` for every live worker. The status bar recovers the per-worker tasks with no operator action. This is the same path as steady-state, not a new one: only workers whose orchestrator PID (the `.pid` field in `afk.state.json`, via `state_is_live`) is alive re-hydrate (dead workers are untracked-terminal on a cold tick → no ghost task), and the next tick is idempotent because the freshly-created tasks now form the tracked set.
 
 When `TaskCreate` / `TaskUpdate` are unavailable because the session is **outside any runner** (a bare terminal), **skip the mirror silently** — there is no native surface to drive, and `monitor.sh` is already the canonical view.
 
@@ -671,7 +672,7 @@ Do **not** invent a cross-runner task abstraction (rejected in ADR 0003) — kee
 
 ## Handoff File Template
 
-`.red/tmp/work-{id}-i{N}/handoff.md`:
+`.red/tmp/workers/{id}/{N}-a{n}/handoff.md`:
 
 Top-level content is XML elements (not markdown headers) so the inner agent
 cannot confuse the issue body with comments, or human direction with

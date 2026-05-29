@@ -40,6 +40,12 @@ source "$SCRIPT_DIR/lib/pin-reader.sh"
 source "$SCRIPT_DIR/lib/remote-branch.sh"
 # shellcheck source=./lib/heartbeat.sh
 source "$SCRIPT_DIR/lib/heartbeat.sh"
+# PRD #244 nested layout (#252 cutover): worker-paths owns the
+# workers/{wid}/{issue}-a{n} grammar; attempt-ledger derives the next attempt
+# number from the on-disk attempt tree. attempt-ledger sources worker-paths
+# itself, but we source both explicitly so the order is unambiguous.
+source "$SCRIPT_DIR/lib/worker-paths.sh"
+source "$SCRIPT_DIR/lib/attempt-ledger.sh"
 # shellcheck source=./lib/capabilities.sh
 source "$SCRIPT_DIR/lib/capabilities.sh"
 # shellcheck source=./lib/jsonl-log.sh
@@ -92,21 +98,24 @@ HISTORY_FILE="$STATE_DIR/afk-history.jsonl"
 HISTORY_MAX_LINES=10000
 
 # Worker ID — literal "w" + 4 chars from [A-Z0-9] (e.g. wZ2R4).
-# Regenerated until no live .red/tmp/work-{id}-i*/afk.pid exists.
-# Format is distinct from arbitrary directory globs so `work-w*-i*` reliably
-# matches only AFK iteration dirs, and IDs stand out visually in logs.
+# Regenerated until no `.red/tmp/workers/{id}/` directory already exists, so a
+# fresh worker never collides with a live or retained worker's tree. IDs stand
+# out visually in logs.
 gen_worker_id() {
   local id
   while :; do
     id="w$(LC_ALL=C tr -dc 'A-Z0-9' </dev/urandom | head -c 4)"
-    [[ -z "$(ls -d "$TMP_DIR"/work-"$id"-i* 2>/dev/null)" ]] && { echo "$id"; return; }
+    [[ ! -e "$TMP_DIR/workers/$id" ]] && { echo "$id"; return; }
   done
 }
 WORKER_ID=""        # set in bootstrap
-ITER_DIR=""         # set per-iteration: $TMP_DIR/work-$WORKER_ID-i$N
+WORKER_DIR=""       # set in bootstrap: $TMP_DIR/workers/$WORKER_ID  (groups all attempts)
+WORKER_PID_FILE=""  # set in bootstrap: $WORKER_DIR/worker.pid  (per-worker liveness anchor)
+ITER_DIR=""         # set per-iteration: $TMP_DIR/workers/$WORKER_ID/$N-a$ITER_ATTEMPT
+ITER_ATTEMPT=1      # set per-iteration: attempt-ledger run number for ($WORKER_ID,$N)
 STATE_FILE=""       # set per-iteration: $ITER_DIR/afk.state.json
 ITER_LOG=""         # set per-iteration: $ITER_DIR/afk.log
-ITER_PID_FILE=""    # set per-iteration: $ITER_DIR/afk.pid
+ITER_PID_FILE=""    # vestigial: per-attempt afk.pid no longer written; liveness is WORKER_PID_FILE
 # JSONL lanes added alongside afk.log (issue #250, PRD #244). The clean agent
 # lane carries one type=agent record per assistant turn and nothing synthetic;
 # the firehose carries everything (agent output, heartbeat vitals, hooks,
@@ -236,6 +245,15 @@ bootstrap() {
   grep -qxF '.red/state/' "$gi" 2>/dev/null || { echo '.red/state/' >> "$gi"; log "added .red/state/ to .gitignore"; }
   WORKER_ID="$(gen_worker_id)"
   log "worker: $WORKER_ID"
+  # Per-worker tree + liveness pid (PRD #244 #252). worker.pid is written ONCE
+  # here, before the first claim, and removed on any exit via the EXIT trap —
+  # liveness everywhere keys off `kill -0` on this file, never off directory
+  # existence (retained attempt dirs outlive their worker, ADR 0030).
+  WORKER_DIR="$(worker_paths_worker_dir "$TMP_DIR" "$WORKER_ID")"
+  WORKER_PID_FILE="$(worker_paths_pidfile "$TMP_DIR" "$WORKER_ID")"
+  mkdir -p "$WORKER_DIR"
+  printf '%s' "$$" > "$WORKER_PID_FILE"
+  trap 'rm -f "${WORKER_PID_FILE:-/dev/null}" 2>/dev/null; rmdir "${WORKER_DIR:-/nonexistent}" 2>/dev/null || true' EXIT
 }
 
 # ---------- event log ----------
@@ -254,8 +272,9 @@ emit_history() {
 }
 
 # ---------- orphan iteration cleanup ----------
-# Sweeps $TMP_DIR/work-*/ at boot. An iteration dir is orphaned when its
-# orchestrator pid is dead. For each orphan:
+# Sweeps nested $TMP_DIR/workers/*/*/ attempt dirs at boot (plus a drain-first
+# wipe of any leftover flat work-*/). An attempt dir is orphaned when its parent
+# worker's worker.pid is dead. For each orphan:
 #   - (heartbeat sub-shell retired — Slice D)
 #   - if the issue is closed OR no longer carries ready-for-human → rm -rf
 #   - if the issue is still labelled running (orchestrator crashed mid-issue)
@@ -273,12 +292,31 @@ prune_orphans() {
   local now_s; now_s="$(date +%s)"
 
   shopt -s nullglob
+
+  # Drain-first cutover (#252): old flat-scheme work-* dirs are never created by
+  # this version. Wipe any left over from a pre-cutover run whose orchestrator
+  # is dead, removing their dangling git worktrees first.
   for d in "$TMP_DIR"/work-*/; do
     [[ -d "$d" ]] || continue
-    local pid_file="$d/afk.pid"
+    local op="$d/afk.pid" opid=""
+    [[ -f "$op" ]] && opid="$(cat "$op" 2>/dev/null)"
+    if [[ -z "$opid" ]] || ! kill -0 "$opid" 2>/dev/null; then
+      git -C "$PROJECT_ROOT" worktree remove --force "${d%/}/worktree" 2>/dev/null || true
+      rm -rf "$d"
+      pruned=$((pruned+1))
+    fi
+  done
+  git -C "$PROJECT_ROOT" worktree prune 2>/dev/null || true
+
+  # Orphan attempt dirs under the nested layout: an attempt is orphaned when its
+  # parent worker's worker.pid is dead (PRD #244 #252). Liveness keys off
+  # workers/{wid}/worker.pid, never directory existence.
+  for d in "$TMP_DIR"/workers/*/*/; do
+    [[ -d "$d" ]] || continue
+    local pid_file; pid_file="$(dirname "${d%/}")/worker.pid"
     local state_file="$d/afk.state.json"
 
-    # active worker → skip
+    # parent worker alive → skip (its attempt dirs are in use)
     if [[ -f "$pid_file" ]]; then
       local p; p="$(cat "$pid_file" 2>/dev/null)"
       if [[ -n "$p" ]] && kill -0 "$p" 2>/dev/null; then
@@ -346,6 +384,19 @@ prune_orphans() {
       rm -rf "$d"
       pruned=$((pruned+1))
     fi
+  done
+
+  # Sweep dead per-worker pids and now-empty worker dirs (PRD #244 #252).
+  for pid_file in "$TMP_DIR"/workers/*/worker.pid; do
+    [[ -f "$pid_file" ]] || continue
+    local wp; wp="$(cat "$pid_file" 2>/dev/null)"
+    if [[ -z "$wp" ]] || ! kill -0 "$wp" 2>/dev/null; then
+      rm -f "$pid_file" 2>/dev/null
+    fi
+  done
+  local wdir
+  for wdir in "$TMP_DIR"/workers/*/; do
+    [[ -d "$wdir" ]] && rmdir "$wdir" 2>/dev/null || true
   done
   shopt -u nullglob
 
@@ -450,16 +501,22 @@ AGG_DURATIONS='[]'
 # ---------- per-iteration directory ----------
 iter_open() {
   local n="$1"
-  ITER_DIR="$TMP_DIR/work-${WORKER_ID}-i${n}"
+  # Attempt-first nested layout (PRD #244 #252): the attempt number is one past
+  # the highest already on disk for this (worker, issue), so a retry is its own
+  # {issue}-a{n} dir instead of overwriting. worker-paths owns the path grammar.
+  # attempt-ledger keys the attempt counter per ISSUE across all workers
+  # (glob workers/*/{issue}-a*), so a retry — even by a different worker — is a
+  # fresh a{n} dir. worker-paths then nests it under THIS worker.
+  ITER_ATTEMPT="$(attempt_ledger_next_number "$TMP_DIR" "$n")"
+  ITER_DIR="$(worker_paths_build "$TMP_DIR" "$WORKER_ID" "$n" "$ITER_ATTEMPT")"
   STATE_FILE="$ITER_DIR/afk.state.json"
   ITER_LOG="$ITER_DIR/afk.log"
-  # JSONL lanes alongside afk.log (issue #250); this slice does not move
-  # directories — it adds the lanes into the current iteration dir.
   AGENT_LANE="$ITER_DIR/agent.log.jsonl"
   FIREHOSE="$ITER_DIR/log.jsonl"
-  ITER_PID_FILE="$ITER_DIR/afk.pid"
+  # No per-attempt afk.pid is written: liveness is the per-worker
+  # WORKER_PID_FILE created at bootstrap. ITER_PID_FILE stays a vestigial empty
+  # global so the existing reset lines remain harmless.
   mkdir -p "$ITER_DIR"
-  printf '%s' "$$" > "$ITER_PID_FILE"
   : >> "$ITER_LOG"
   # Create the clean agent lane empty at t0 so the supervisor's stall detector
   # has a liveness baseline from the very start of the iteration (issue #251).
@@ -501,8 +558,12 @@ iter_close_success() {
 }
 
 iter_close_preserve() {
-  # blocker / interrupt — keep dir for human, only drop the pid so monitor flags as inactive.
-  [[ -n "$ITER_PID_FILE" && -f "$ITER_PID_FILE" ]] && rm -f "$ITER_PID_FILE"
+  # blocker / interrupt — keep the attempt dir for human inspection, but zero the
+  # state file's .pid so monitor / mirror / statusline read it as not-live
+  # (state_is_live → false). Replicates the old per-attempt afk.pid removal.
+  # The per-worker worker.pid is NOT touched — the worker process is still alive
+  # and moves on to the next issue.
+  [[ -n "$STATE_FILE" && -f "$STATE_FILE" ]] && state_write "$STATE_FILE" pid:=0
   ITER_DIR="" STATE_FILE="" ITER_LOG="" ITER_PID_FILE="" AGENT_LANE="" FIREHOSE=""
   claim_lock_release
 }
@@ -2317,7 +2378,7 @@ process_issue() {
 
   iter_open "$n"
   local worktree="$ITER_DIR/worktree"
-  local worktree_rel=".red/tmp/work-${WORKER_ID}-i${n}/worktree"
+  local worktree_rel="${ITER_DIR#"$PROJECT_ROOT"/}/worktree"
 
   # Lifecycle cursor used by run_lifecycle_hook.
   CURRENT_ISSUE="$n"
@@ -2428,7 +2489,7 @@ process_issue() {
     current.title="$title" \
     current.slug="$slug" \
     current.worktree="$worktree_rel" \
-    current.handoff=".red/tmp/work-${WORKER_ID}-i${n}/handoff.md" \
+    current.handoff="${ITER_DIR#"$PROJECT_ROOT"/}/handoff.md" \
     current.started_at="$started_at" \
     current.stage=setup \
     current.heartbeat_glyph:=null \

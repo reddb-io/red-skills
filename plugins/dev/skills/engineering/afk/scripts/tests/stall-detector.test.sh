@@ -74,9 +74,12 @@ assert_eq "custom threshold 30s → no"  "no"  "$(compute_stalled $((NOW-29))   
 # only reads files.
 RED_AFK_TARGET=1
 RED_AFK_STALL_THRESHOLD_S=30
-ITER_DIR="$TMP_ROOT/.red/tmp/work-wTEST-i1"
+# Nested layout (#252): the attempt dir lives under workers/{wid}/, and the
+# slot pid matches the per-worker workers/{wid}/worker.pid.
+WORKER_DIR="$TMP_ROOT/.red/tmp/workers/wTEST"
+ITER_DIR="$WORKER_DIR/1-a1"
 mkdir -p "$ITER_DIR"
-echo "$$" > "$ITER_DIR/afk.pid"
+echo "$$" > "$WORKER_DIR/worker.pid"
 SLOT_PIDS=("$$")
 
 # Liveness is read from the clean agent lane (agent.log.jsonl), never afk.log
