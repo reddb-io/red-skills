@@ -161,6 +161,31 @@ describe("Memory extraction status", () => {
     expect(status.recommended_next_actions).toEqual(["Memory extraction paths are ready"]);
   });
 
+  test("reports a bedrock provider's region-derived endpoint and external egress", async () => {
+    const { root, store } = await graphRoot({ hooks: true });
+    const config = await readConfig(root);
+    if (!config) throw new Error("missing test config");
+    await writeConfig(root, {
+      ...config,
+      provider: {
+        mode: "bedrock",
+        model: "anthropic.claude-3-5-sonnet-20240620-v1:0",
+        region: "us-east-1",
+      },
+    });
+
+    const status = await buildMemoryExtractionStatus(store, root);
+
+    expect(status.inferred).toMatchObject({
+      configured: true,
+      available: true,
+      mode: "bedrock",
+      model: "anthropic.claude-3-5-sonnet-20240620-v1:0",
+      endpoint: "https://bedrock-runtime.us-east-1.amazonaws.com",
+      egress: "external",
+    });
+  });
+
   test("CLI reports extraction status as JSON", async () => {
     const { root, store } = await graphRoot();
     await store.close();
