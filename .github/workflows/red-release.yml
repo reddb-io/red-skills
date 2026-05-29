@@ -151,7 +151,16 @@ jobs:
           else
             git add "${manifests[@]}"
             git commit -m "chore(release): $NEXT [skip release]"
-            git push origin HEAD:main
+            # Rebase-resilient push: red-memory-wiki-extract.yml also pushes to
+            # main on PR-merge (via GITHUB_TOKEN, which can't re-trigger this
+            # workflow), so the bump push races it and loses on a plain push.
+            # Retry with a rebase so a concurrent push never wedges the release.
+            for attempt in 1 2 3; do
+              if git push origin HEAD:main; then break; fi
+              echo "push rejected (attempt $attempt) — rebasing onto origin/main"
+              git fetch origin main
+              git rebase origin/main
+            done
           fi
 
       # ADR 0029: the Memory runtime ships as release assets, not committed
