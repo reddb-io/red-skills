@@ -245,6 +245,38 @@ describe("resolveProvider (provider-mode selection)", () => {
       expect(resolved.endpoint).toBeNull();
     }
   });
+
+  test("bedrock derives the regional runtime endpoint and carries the region", () => {
+    const resolved = resolveProvider({
+      mode: "bedrock",
+      model: "anthropic.claude-3-5-sonnet-20240620-v1:0",
+      region: "us-east-1",
+    });
+    expect(resolved.mode).toBe("bedrock");
+    expect(resolved.endpoint).toBe("https://bedrock-runtime.us-east-1.amazonaws.com");
+    expect(resolved.region).toBe("us-east-1");
+    // Bedrock is your AWS account/region, not loopback — it leaves the box.
+    expect(resolved.egress).toBe("external");
+  });
+
+  test("bedrock honours an explicit baseUrl (VPC/PrivateLink or local proxy)", () => {
+    const resolved = resolveProvider({
+      mode: "bedrock",
+      model: "anthropic.claude-3-haiku-20240307-v1:0",
+      region: "eu-west-1",
+      baseUrl: "http://localhost:4566",
+    });
+    // An on-box endpoint (e.g. a LocalStack/proxy) keeps inference local.
+    expect(resolved.endpoint).toBe("http://localhost:4566");
+    expect(resolved.egress).toBe("local");
+    expect(resolved.region).toBe("eu-west-1");
+  });
+
+  test("bedrock without a region or baseUrl is a config error", () => {
+    expect(() =>
+      resolveProvider({ mode: "bedrock", model: "anthropic.claude-3-haiku-20240307-v1:0" }),
+    ).toThrow(/region/);
+  });
 });
 
 describe("read-path boundary (extraction never fires on recall/search)", () => {

@@ -58,6 +58,12 @@ const ANTHROPIC_NATIVE: AiProviderConfig = {
   model: "claude-3-haiku",
 };
 
+const BEDROCK: AiProviderConfig = {
+  mode: "bedrock",
+  model: "anthropic.claude-3-5-sonnet-20240620-v1:0",
+  region: "us-east-1",
+};
+
 describe("ProviderBridge.chat", () => {
   test("flattens messages into a single ASK prompt and returns the answer", async () => {
     const store = fakeStore({ askAnswer: "hello there" });
@@ -79,6 +85,7 @@ describe("ProviderBridge.chat", () => {
     ["openai-compat", OPENAI_COMPAT],
     ["openai-native", OPENAI_NATIVE],
     ["anthropic-native", ANTHROPIC_NATIVE],
+    ["bedrock", BEDROCK],
   ])("succeeds in %s mode by delegating to the engine ASK surface", async (_mode, config) => {
     const store = fakeStore({ askAnswer: "answered" });
     const bridge = new ProviderBridge(store, { config, env: {} });
@@ -185,6 +192,16 @@ describe("provider mode resolution", () => {
       env: { [PROVIDER_MODE_ENV]: "anthropic-native" },
     });
     expect(bridge.resolved?.mode).toBe("anthropic-native");
+  });
+
+  test(`${PROVIDER_MODE_ENV} accepts bedrock as a valid override`, () => {
+    const bridge = new ProviderBridge(fakeStore(), {
+      // region present so the override to bedrock resolves cleanly
+      config: { ...OPENAI_NATIVE, region: "us-east-1" },
+      env: { [PROVIDER_MODE_ENV]: "bedrock" },
+    });
+    expect(bridge.resolved?.mode).toBe("bedrock");
+    expect(bridge.resolved?.region).toBe("us-east-1");
   });
 
   test(`${PROVIDER_MODE_ENV} with an unknown value is rejected, not silently ignored`, () => {

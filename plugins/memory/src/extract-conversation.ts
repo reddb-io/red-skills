@@ -22,13 +22,18 @@ import type { EdgeLabel, MemoryNode, NodeType } from "./schema.js";
  * The model call goes through a `ProviderClient` interface so the engine-side
  * provider is injected (and mocked deterministically in tests). Provider-mode
  * selection (`openai-compat` for local Ollama / any OpenAI-compatible endpoint,
- * `openai-native`, `anthropic-native`) is resolved from config by
- * `resolveProvider` — which also reports whether a configured endpoint keeps
- * inference local (no external network egress).
+ * `openai-native`, `anthropic-native`, `bedrock` for an AWS-account-hosted
+ * model) is resolved from config by `resolveProvider` — which also reports
+ * whether a configured endpoint keeps inference local (no external network
+ * egress).
  */
 
 /** RedDB engine-side AI provider modes the extractor can route through. */
-export type ProviderMode = "openai-compat" | "openai-native" | "anthropic-native";
+export type ProviderMode =
+  | "openai-compat"
+  | "openai-native"
+  | "anthropic-native"
+  | "bedrock";
 
 /** Whether resolved inference leaves the machine. `local` ⇒ no external egress. */
 export type Egress = "local" | "external";
@@ -41,9 +46,18 @@ export interface AiProviderConfig {
   /**
    * Base URL for `openai-compat` — a local Ollama (`http://localhost:11434/v1`)
    * or any OpenAI-compatible endpoint. Ignored by the native modes, which use
-   * the provider's own fixed endpoint.
+   * the provider's own fixed endpoint. Optional for `bedrock` too: set it to a
+   * VPC/PrivateLink interface endpoint (or an on-box proxy) to override the
+   * region-derived `bedrock-runtime` host.
    */
   baseUrl?: string;
+  /**
+   * AWS region for `bedrock` (e.g. `us-east-1`). Required for `bedrock` unless
+   * an explicit `baseUrl` is given; it picks the `bedrock-runtime.<region>`
+   * endpoint and is exported so the engine signs requests for the right region.
+   * Ignored by the other modes.
+   */
+  region?: string;
   /** Env var name holding the API key, when the endpoint needs one. */
   apiKeyEnv?: string;
 }
@@ -56,6 +70,8 @@ export interface ResolvedProvider {
   endpoint: string | null;
   /** `local` when inference stays on the machine, `external` otherwise. */
   egress: Egress;
+  /** AWS region for `bedrock`, exported for request signing. Absent otherwise. */
+  region?: string;
 }
 
 /** A model request: a system instruction and the transcript-bearing user turn. */
@@ -151,6 +167,12 @@ const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "0.0.0.0"]);
  * - `openai-compat`: uses `baseUrl`. Egress is `local` when the host is a
  *   loopback address (a local Ollama / on-box server), `external` otherwise.
  *   A missing `baseUrl` is a config error — the compat mode needs one.
+ * - `bedrock`: hits an AWS-account-hosted model. The endpoint is the explicit
+ *   `baseUrl` (a VPC/PrivateLink endpoint or on-box proxy) when given, else the
+ *   region-derived `https://bedrock-runtime.<region>.amazonaws.com`. A config
+ *   without either `region` or `baseUrl` is an error. Egress is `local` only
+ *   when the endpoint host is a loopback address; the regional AWS host is
+ *   `external` (it leaves the box, but stays inside your AWS account/region).
  * - `openai-native` / `anthropic-native`: hit the vendor's own endpoint, so
  *   egress is always `external` and `endpoint` is null (the provider decides).
  */
@@ -170,6 +192,26 @@ export function resolveProvider(config: AiProviderConfig): ResolvedProvider {
       model: config.model,
       endpoint: config.baseUrl,
       egress: LOCAL_HOSTS.has(host) ? "local" : "external",
+    };
+  }
+  if (config.mode === "bedrock") {
+    if (!config.region && !config.baseUrl) {
+      throw new Error("bedrock provider requires a region (or an explicit baseUrl)");
+    }
+    const endpoint =
+      config.baseUrl ?? `https://bedrock-runtime.${config.region}.amazonaws.com`;
+    let host: string;
+    try {
+      host = new URL(endpoint).hostname;
+    } catch {
+      throw new Error(`invalid provider baseUrl: ${config.baseUrl}`);
+    }
+    return {
+      mode: config.mode,
+      model: config.model,
+      endpoint,
+      egress: LOCAL_HOSTS.has(host) ? "local" : "external",
+      region: config.region,
     };
   }
   return { mode: config.mode, model: config.model, endpoint: null, egress: "external" };

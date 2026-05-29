@@ -55,6 +55,11 @@ export function applyProviderEnv(resolved: ResolvedProvider, apiKeyEnv?: string)
   }
   if (!process.env.RED_AI_MODEL) process.env.RED_AI_MODEL = resolved.model;
   if (!process.env.RED_AI_PROVIDER) process.env.RED_AI_PROVIDER = resolved.mode;
+  // Bedrock signs requests per region; surface it so the engine targets the
+  // right `bedrock-runtime` host. Other modes carry no region and skip this.
+  if (resolved.region && !process.env.RED_AI_REGION) {
+    process.env.RED_AI_REGION = resolved.region;
+  }
   // The API key stays in the user-named env var; surface it under the engine's
   // expected name only if that var is actually set and the engine's is not.
   if (apiKeyEnv && process.env[apiKeyEnv] && !process.env.RED_AI_API_KEY) {
