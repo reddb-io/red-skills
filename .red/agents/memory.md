@@ -162,6 +162,49 @@ The decision core (`evaluateDriftGuard` in `plugins/memory/src/drift-guard.ts`)
 is pure and reuses `parseAuditMarker` (#218) and the watched-path matcher (#222);
 the `memory drift-guard` CLI subcommand wires it to git and the event log.
 
+## Git auto-update hooks (commit / checkout closed loop)
+
+The `PostToolUse` hook keeps the graph fresh *within* an agent session. The
+**git auto-update hooks** (issue #236) close the loop for edits that land
+through ordinary git — human commits, branch switches, rebases — so the graph
+never silently goes stale and a checkout does not force a full rebuild.
+
+Two git hooks are installed **opt-in** by `memory vcs install-hooks`:
+
+- `post-commit` — re-ingests the files changed by the new commit (HEAD vs its
+  parent; the empty tree on a root commit) and re-exports `graph.json`.
+- `post-checkout` — on a real *branch* checkout (git's third arg is `1`),
+  re-ingests the files that differ between the two HEADs and re-exports. File
+  checkouts (`0`) and no-move checkouts are skipped.
+
+Both are **incremental**: only the changed files are refreshed, via the same
+`refreshFiles` content-hash path the `PostToolUse` hook uses. Deleted and
+rename-source paths are fed through too, so their graph elements go stale.
+
+### Design split (where to look)
+
+- `plugins/memory/src/git-diff-selection.ts` — the **pure, git-free** core:
+  parse `git diff --name-status` (both `-z` and tab forms), split changes into
+  reindex-vs-stale, and resolve the post-commit / post-checkout rev ranges. This
+  is the deep module, unit-tested in isolation (`tests/git-diff-selection.test.ts`).
+- `plugins/memory/src/vcs-refresh.ts` — the orchestrator (`refreshFromGit`): the
+  thin git layer + gating + `refreshFiles` + `exportGraph`. No-ops when memory is
+  uninitialized or not in graph mode.
+- `plugins/memory/src/vcs-hooks-install.ts` — renders/install/uninstall the shell
+  stubs. A stub carries a `reddb-memory auto-update hook` marker so re-install and
+  uninstall are safe; a foreign hook of the same name is never clobbered without
+  `--force` (which backs it up first).
+
+### Safety contract
+
+- **Opt-in**: nothing is installed until the user runs `memory vcs install-hooks`
+  (gated on graph-mode init).
+- **Safe no-op**: each stub exits 0 immediately when `.red/memory/config.json` is
+  absent, and `memory vcs refresh` **fails open** — any error prints a no-op line
+  and exits 0, so a hook can never abort `git commit` / `git checkout`.
+- The stub resolves the runtime via `$RED_MEMORY_CLI` (tests/dev override), then an
+  embedded `bootstrap.mjs`, then a `memory` on PATH — exiting 0 if none resolves.
+
 ## Out of scope
 
 The graph-mode memory store (`.red/memory/graph.rdb*`, `sessions/`,
