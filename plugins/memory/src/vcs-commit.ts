@@ -198,16 +198,16 @@ async function redVcsCommit(
 }
 
 function resolveRedBinary(): string {
-  // REDDB_BIN is the canonical override (SDK ADR 0006) and the path the
-  // bundled-runtime bootstrap sets (ADR 0029). Honour it first: in the shipped
-  // bundle there is no node_modules and `import.meta.resolve("@reddb-io/sdk")`
-  // throws, so this must short-circuit before the on-disk package lookups.
+  // REDDB_BIN is the canonical override (SDK ADR 0006) and the path the bundled
+  // runtime bootstrap always sets (ADR 0029).
   const override = process.env.REDDB_BIN;
   if (override && existsSync(override)) return override;
+  // Dev/test fallback: the SDK binary in node_modules.
   const bin = process.platform === "win32" ? "red.exe" : "red";
   const pluginRoot = dirname(dirname(fileURLToPath(import.meta.url)));
   const local = join(pluginRoot, "node_modules", "@reddb-io", "sdk", "bin", bin);
   if (existsSync(local)) return local;
-  const sdkEntry = fileURLToPath(import.meta.resolve("@reddb-io/sdk"));
-  return join(dirname(dirname(sdkEntry)), "bin", bin);
+  throw new Error(
+    `red binary not found — set REDDB_BIN or install @reddb-io/sdk (looked at ${local})`,
+  );
 }
