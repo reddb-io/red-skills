@@ -166,6 +166,7 @@ documented otherwise:
 | Workbench | `memory workbench` / `memory serve` | Local browser cockpit for dashboards, governance, docs, hooks, routing, and health. |
 | MCP/HTTP | `memory-mcp`, `memory serve` | Read access for Claude/Codex/Cursor/Gemini/Aider/OpenCode/generic agents. |
 | Export/backup | `memory export`, `memory backup` | Offline audit, interop, and rollback safety. |
+| Architecture overview | `memory architecture-overview` | One-read onboarding map of layers/communities and their connection counts, built from the `graph.json` contract; complements (does not replace) the wiki. |
 
 ### Memory Workbench and diagnostics
 
