@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh -c 'tmp=\"$(mktemp)\"; trap \"rm -f \\\"$tmp\\\"\" EXIT; cat >\"$tmp\" 2>/dev/null || true; cli=\"${CODEX_PLUGIN_ROOT}/dist/cli.js\"; if [ -f \"$cli\" ]; then node \"$cli\" hook SessionStart --runner codex <\"$tmp\" || printf \"{}\"; else printf \"{}\"; fi'"
+            "command": "sh -c 'tmp=\"$(mktemp)\"; trap \"rm -f \\\"$tmp\\\"\" EXIT; cat >\"$tmp\" 2>/dev/null || true; bs=\"${CODEX_PLUGIN_ROOT}/scripts/bootstrap.mjs\"; if [ -f \"$bs\" ]; then node \"$bs\" hook SessionStart --runner codex <\"$tmp\" || printf \"{}\"; else printf \"{}\"; fi'"
           }
         ]
       }
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh -c 'tmp=\"$(mktemp)\"; trap \"rm -f \\\"$tmp\\\"\" EXIT; cat >\"$tmp\" 2>/dev/null || true; cli=\"${CODEX_PLUGIN_ROOT}/dist/cli.js\"; if [ -f \"$cli\" ]; then node \"$cli\" hook PostToolUse --runner codex <\"$tmp\" || printf \"{}\"; else printf \"{}\"; fi'"
+            "command": "sh -c 'tmp=\"$(mktemp)\"; trap \"rm -f \\\"$tmp\\\"\" EXIT; cat >\"$tmp\" 2>/dev/null || true; bs=\"${CODEX_PLUGIN_ROOT}/scripts/bootstrap.mjs\"; if [ -f \"$bs\" ]; then node \"$bs\" hook PostToolUse --runner codex <\"$tmp\" || printf \"{}\"; else printf \"{}\"; fi'"
           }
         ]
       }
@@ -26,7 +26,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh -c 'tmp=\"$(mktemp)\"; trap \"rm -f \\\"$tmp\\\"\" EXIT; cat >\"$tmp\" 2>/dev/null || true; cli=\"${CODEX_PLUGIN_ROOT}/dist/cli.js\"; if [ -f \"$cli\" ]; then node \"$cli\" hook Stop --runner codex <\"$tmp\" || printf \"{}\"; else printf \"{}\"; fi'"
+            "command": "sh -c 'tmp=\"$(mktemp)\"; trap \"rm -f \\\"$tmp\\\"\" EXIT; cat >\"$tmp\" 2>/dev/null || true; bs=\"${CODEX_PLUGIN_ROOT}/scripts/bootstrap.mjs\"; if [ -f \"$bs\" ]; then node \"$bs\" hook Stop --runner codex <\"$tmp\" || printf \"{}\"; else printf \"{}\"; fi'"
           }
         ]
       }
