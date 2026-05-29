@@ -6,6 +6,10 @@ Everything else in `graph.json` (`health`, `evidence`, `contradictions`, `supers
 
 The canonical, language-neutral schema is a JSON Schema (draft-07) returned by `graphContractJsonSchema()` in `src/graph-contract.ts`; `validateGraphContract(value)` validates a value against it.
 
+## Consumers
+
+`memory architecture-overview` is the first in-tree consumer: it reads the contract (from the store or, with `--from <graph.json>`, straight off `graph.json#contract`) and renders a single onboarding file summarising layers and communities by node count and connection count. It is built only from the contract above — no bespoke shape — so it stays consistent with any other tool reading the same seam, and it complements (rather than replaces) the wiki's C4/entity pages.
+
 ## Version negotiation
 
 The contract carries a `version` (currently `1.0.0`, exported as `GRAPH_CONTRACT_VERSION`). Producers stamp it; consumers compare it before trusting the shape. A breaking change to any field below bumps the major version.
