@@ -20,7 +20,10 @@
 #
 #     stage / last_stream_line come from afk.state.json via
 #     state_read_into; cpu / rss come from `ps` on the orchestrator pid.
-#     PID is stored in HEARTBEAT_PID.
+#     PID is stored in HEARTBEAT_PID. When a FIREHOSE lane is set (issue
+#     #250), each tick also appends a type=heartbeat JSONL envelope carrying
+#     the same vitals to the firehose — but never to the clean agent lane,
+#     so the agent lane stays the true liveness signal (#243).
 #
 #   heartbeat_stop
 #     SIGTERMs the sub-shell, waits, and writes the
@@ -52,6 +55,13 @@ heartbeat_proc_metrics() {
 
 heartbeat_emit_once() {
   local statefile="$1" iterlog="$2" started_epoch="$3" orch_pid="$4"
+  # Optional firehose lane + identity (issue #250). When a firehose path is
+  # given and the JSONL writer is in scope, the same vitals this function
+  # appends to ITER_LOG as a plain line are also appended to the firehose as a
+  # type=heartbeat envelope — so the full attempt story is reconstructable.
+  # The heartbeat NEVER writes the clean agent lane: that lane carries inner-
+  # agent output only and is the true liveness signal (#243).
+  local firehose="${5:-}" hb_worker="${6:-}" hb_issue="${7:-0}" hb_attempt="${8:-0}"
   local now elapsed elapsed_fmt
   now="$(date +%s)"
   elapsed=$((now - started_epoch))
@@ -76,6 +86,18 @@ heartbeat_emit_once() {
 
   printf '[heartbeat] stage:%s t+%s last_stream_line="%s" cpu=%s%% rss=%sM\n' \
     "$stage" "$elapsed_fmt" "$stream" "$cpu_int" "$rss_mb" >> "$iterlog"
+
+  # Mirror the vitals to the firehose as a type=heartbeat record. The firehose
+  # is multi-writer within an attempt (this loop + the agent fanout + the
+  # orchestrator's timing/error/hook records), so the write is flock-serialised
+  # to never interleave a line. Best-effort: a firehose write must never crash
+  # the heartbeat loop, hence `|| true`.
+  if [[ -n "$firehose" ]] && declare -F jsonl_log_append_shared >/dev/null 2>&1; then
+    jsonl_log_append_shared "$firehose" heartbeat "stage:$stage t+$elapsed_fmt" \
+      worker="$hb_worker" issue="$hb_issue" attempt="$hb_attempt" \
+      stage="$stage" elapsed="$elapsed_fmt" cpu="$cpu_int" rss="$rss_mb" \
+      last_stream_line="$stream" 2>/dev/null || true
+  fi
 }
 
 heartbeat_start() {
@@ -89,6 +111,11 @@ heartbeat_start() {
   local started_epoch
   started_epoch="$(date +%s)"
   local statefile="$STATE_FILE" iterlog="$ITER_LOG" orch_pid="$$"
+  # Firehose lane + identity (issue #250): the loop mirrors each vital to the
+  # firehose as a type=heartbeat record. Empty FIREHOSE → plain ITER_LOG only,
+  # exactly as before.
+  local firehose="${FIREHOSE:-}" hb_worker="${WORKER_ID:-}" \
+        hb_issue="${CURRENT_ISSUE:-0}" hb_attempt="${CURRENT_ATTEMPT:-0}"
   (
     # Each iteration of the loop is an independent best-effort emit —
     # failure to read state / ps must never crash the loop, otherwise a
@@ -98,6 +125,7 @@ heartbeat_start() {
       [[ -f "$iterlog" ]] || exit 0
       kill -0 "$orch_pid" 2>/dev/null || exit 0
       heartbeat_emit_once "$statefile" "$iterlog" "$started_epoch" "$orch_pid" \
+        "$firehose" "$hb_worker" "$hb_issue" "$hb_attempt" \
         2>/dev/null || true
     done
   ) &
