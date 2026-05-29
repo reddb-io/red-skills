@@ -6,6 +6,15 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 
 ---
 
+## afk reaper-signal module — busy-vs-stuck liveness predicate (added)
+
+- **status**: added
+- **upstream**: —
+- **why**: Issue #248 (under PRD #244) — the passive stall detector (`supervisor.sh`, `compute_stalled`) flags a worker whose agent lane has gone silent past a threshold, but silence alone is not death: a worker mid-`pnpm build` or mid-`vitest` writes nothing to the agent lane for minutes, and a hard reaper keyed off lane silence alone kills live work (cf. #243, where a heartbeat-poisoned firehose mtime defeated the existing kill). This slice ships the clean liveness decision as a tested pure library; wiring it into the supervisor reap path is a later slice.
+- **what changed**:
+  - `plugins/dev/skills/engineering/afk/scripts/lib/reaper-signal.sh`: a new pure module (no `ps`/`pstree`, no filesystem, no globals) exposing `reaper_signal_decide <idle_s> <idle_threshold_s> <active_descendant> <cpu_pct> [<cpu_busy_pct>]`, which echoes `kill`/`no-kill` and always returns 0. The orchestrator owns the process-snapshot I/O and passes the gathered signals in as strings, so the decision stays unit-testable against fixed inputs. A worker is busy (no-kill) when, despite agent-lane silence, either an active build/test descendant exists (truthy `active_descendant`) or the worker tree shows non-trivial cpu (`cpu_pct >= cpu_busy_pct`, default 5%); it is stuck (kill) only when idle past the threshold AND no active descendant AND flat cpu. Ambiguity favours no-kill: cpu exactly at the busy line counts as busy, idle below the threshold never kills, and an unparseable threshold never kills (non-integer idle → 0, non-numeric cpu → 0). Helpers `_reaper_truthy`, `_reaper_is_uint`, `_reaper_is_num`, and the awk-based float-safe `_reaper_cpu_busy` keep the predicate pure text.
+  - `plugins/dev/skills/engineering/afk/scripts/tests/reaper-signal.test.sh`: 37 assertions sourcing the module directly (no orchestrator globals, no `ps`/`pstree`), covering AC1 (active descendant outranks flat cpu, in its common spellings), AC2 (non-trivial/float cpu, cpu-at-line, custom busy line), AC3 (idle + no descendant + flat cpu → kill, falsy descendant spellings, trivial-but-flat cpu), the idle-vs-threshold and cpu-busy boundaries, the fail-safe paths (bad threshold / non-numeric idle / non-numeric cpu), the always-returns-0 contract, and the helper predicates.
+
 ## afk base-resolver module — lock-value > pinned branch > main precedence (added)
 
 - **status**: added
