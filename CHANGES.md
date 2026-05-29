@@ -6,6 +6,15 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 
 ---
 
+## afk jsonl-log module — uniform-envelope appender + flock + readers (added)
+
+- **status**: added
+- **upstream**: —
+- **why**: Issue #246 (under PRD #244) — the AFK structured-logging slice. Lane writes (per-attempt and shared cross-worker) had no single owner for the envelope shape or the flock discipline; the only existing analog, `lib/history.sh`, is hard-bound to the terminal-event ledger schema. This slice ships a general, reusable lane logger as a tested library only; no orchestrator consumer is wired to it yet.
+- **what changed**:
+  - `plugins/dev/skills/engineering/afk/scripts/lib/jsonl-log.sh`: a new pure module (clock is the only ambient input, like `lib/history.sh`) that owns the uniform JSONL envelope `{ts, lvl, worker, issue, attempt, type, msg, …extra}` in one place. `jsonl_log_append` does a plain `>>` for single-writer per-attempt lanes; `jsonl_log_append_shared` does the identical write under `flock 9` for many-writer shared lanes so concurrent workers never interleave a line (same discipline as the afk-history ledger). `jsonl_log_append_agent` stamps `type=agent` and rejects any attempt to write a synthetic/orchestrator record type, enforcing by contract that the agent lane carries only agent output. `jsonl_log_filter_worker` / `jsonl_log_filter_type` are jq-`select` readers that return matching records in file order (missing file → rc 1, silent, so the caller renders its own empty state). Validation refuses missing required args (rc 2), non-numeric issue/attempt, and reserved (`ts`/`type`/`msg`) or ill-formed extra keys (rc 3), and jq-escapes a `msg` carrying quotes/newlines/JSON metacharacters into exactly one valid line — malformed input never corrupts a lane.
+  - `plugins/dev/skills/engineering/afk/scripts/tests/jsonl-log.test.sh`: 49 assertions covering envelope shape (every standard field, JSON types, canonical key order, defaults, auto-created parent dir), malformed-input rejection and the nasty-`msg` round-trip, concurrent-append integrity (40 parallel shared-lane writers → 40 lines, each independently valid JSON, all payloads distinct), the agent-lane synthetic-type contract, and both readers (file order, no-match rc 0, missing-file rc 1).
+
 ## afk worker-paths module — own the workers/{wid}/{issue}-a{n} scheme (added)
 
 - **status**: added
