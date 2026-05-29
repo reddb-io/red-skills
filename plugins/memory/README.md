@@ -397,6 +397,43 @@ structured-transcript path for explicit `Problem:`, `Fix:`, `Validation:`, and
 structured line is present, hooks still capture cued decision / why-note
 sentences. Recall and re-indexing are always zero-token.
 
+### Pointing extraction at a local or in-account model
+
+The `INFERRED` extraction path (`memory extract`, the Stop hook) routes through
+whatever you put under `provider` in `.red/memory/config.json`. Export itself
+never needs an LLM — this only governs extraction. For privacy-sensitive
+projects where code must not leave your environment, point `provider` at a
+local or in-account model:
+
+```jsonc
+// Local Ollama (or any OpenAI-compatible server) — inference stays on the box.
+"provider": {
+  "mode": "openai-compat",
+  "model": "llama3.1",
+  "baseUrl": "http://localhost:11434/v1"
+}
+
+// AWS Bedrock — inference runs in your own AWS account/region.
+"provider": {
+  "mode": "bedrock",
+  "model": "anthropic.claude-3-5-sonnet-20240620-v1:0",
+  "region": "us-east-1"
+  // Optional: "baseUrl" for a VPC/PrivateLink interface endpoint or on-box proxy.
+}
+```
+
+`memory extraction status --json` reports the resolved `mode`, `endpoint`, and
+an `egress` flag: `local` when the endpoint host is a loopback address (an
+Ollama on `localhost`, or a Bedrock proxy bound to the box), `external`
+otherwise. Bedrock's regional `bedrock-runtime.<region>.amazonaws.com` host
+reads as `external` — traffic leaves the machine but stays inside your AWS
+account/region; a loopback `baseUrl` (e.g. a local gateway) reads as `local`.
+
+When `provider` is **absent**, extraction falls back cleanly to the
+deterministic structured-transcript path — no provider, no network, no error.
+`memory extract --local` forces that same fallback even when a provider is
+configured.
+
 ### Incremental freshness
 
 For local-first graph freshness without a long-running daemon, graph mode also
