@@ -17,6 +17,8 @@ LIB_DIR="$HERE/../lib"
 source "$LIB_DIR/state.sh"
 # shellcheck source=../lib/heartbeat.sh
 source "$LIB_DIR/heartbeat.sh"
+# shellcheck source=../lib/jsonl-log.sh
+source "$LIB_DIR/jsonl-log.sh"   # firehose envelope writer (issue #250)
 
 TMP_ROOT="$(mktemp -d -t heartbeat.XXXXXX)"
 cleanup_root() {
@@ -80,6 +82,54 @@ if [[ "$last" == *'last_stream_line="he said \"ok\""'* ]]; then
 else
   bad "emit_once: quote escaping" "got=$last"
 fi
+
+# ---------- heartbeat vitals → firehose, never the agent lane (issue #250) ----------
+# The heartbeat writes its vitals as a type=heartbeat JSONL record to the
+# firehose so the full attempt story is reconstructable, but it must never
+# touch the clean agent lane (which carries inner-agent output only) — that is
+# what keeps the agent lane the true liveness signal (#243).
+FIRE_HB="$TMP_ROOT/log.jsonl"
+AGENT_HB="$TMP_ROOT/agent.log.jsonl"
+: > "$FIRE_HB"
+STATE_FB="$TMP_ROOT/state-fb.json"
+state_init "$STATE_FB" current.stage=tests current.last_stream_line='running pnpm test'
+
+heartbeat_emit_once "$STATE_FB" "$ITER_LOG" "$(( $(date +%s) - 130 ))" "$$" \
+  "$FIRE_HB" wHB 250 1
+
+if [[ "$(wc -l < "$FIRE_HB" | tr -d ' ')" == "1" ]] \
+   && [[ "$(jq -r '.type' "$FIRE_HB")" == "heartbeat" ]]; then
+  ok "firehose: heartbeat writes exactly one type=heartbeat record"
+else
+  bad "firehose heartbeat record" "got=$(cat "$FIRE_HB")"
+fi
+
+if [[ "$(jq -rc '[.worker,.issue,.attempt,.stage]' "$FIRE_HB")" == '["wHB",250,1,"tests"]' ]]; then
+  ok "firehose: heartbeat record carries identity + stage vitals"
+else
+  bad "firehose heartbeat vitals" "got=$(jq -rc '[.worker,.issue,.attempt,.stage]' "$FIRE_HB")"
+fi
+
+if jq -e 'has("cpu") and has("rss") and has("elapsed")' "$FIRE_HB" >/dev/null 2>&1; then
+  ok "firehose: heartbeat record carries cpu/rss/elapsed vitals"
+else
+  bad "firehose heartbeat cpu/rss/elapsed" "got=$(cat "$FIRE_HB")"
+fi
+
+if [[ ! -e "$AGENT_HB" ]]; then
+  ok "agent lane: heartbeat never writes the agent lane"
+else
+  bad "agent lane touched by heartbeat" "exists=$AGENT_HB"
+fi
+
+# A heartbeat with no firehose arg still writes the plain ITER_LOG line only
+# (back-compat: the 4-arg call site is unchanged).
+fire_before_plain="$(grep -c '^\[heartbeat\] stage:' "$ITER_LOG" || true)"
+heartbeat_emit_once "$STATE_FB" "$ITER_LOG" "$(date +%s)" "$$"
+fire_after_plain="$(grep -c '^\[heartbeat\] stage:' "$ITER_LOG" || true)"
+[[ "$fire_after_plain" -eq "$((fire_before_plain + 1))" && "$(wc -l < "$FIRE_HB" | tr -d ' ')" == "1" ]] \
+  && ok "back-compat: 4-arg emit writes plain line only, firehose untouched" \
+  || bad "back-compat 4-arg emit" "plain=$fire_before_plain→$fire_after_plain fire=$(wc -l < "$FIRE_HB")"
 
 # ---------- heartbeat_start / heartbeat_stop loop ----------
 

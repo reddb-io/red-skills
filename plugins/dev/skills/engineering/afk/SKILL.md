@@ -41,7 +41,9 @@ Per-issue files live under `.red/tmp/work-{id}-i{N}/` in the primary checkout. E
 |---|---|
 | `.red/tmp/work-{id}-i{N}/worktree/` | Git worktree for issue `N`. Lives inside the gitignored `.red/tmp/` so it never pollutes sibling directories. |
 | `.red/tmp/work-{id}-i{N}/afk.pid` | PID of the orchestrator. Used by `/afk monitor` to flag dead workers as `stale` via `kill -0`. Re-written on each iteration. |
-| `.red/tmp/work-{id}-i{N}/afk.log` | Append-only log for this iteration. Per-issue scope — each issue gets a fresh log. |
+| `.red/tmp/work-{id}-i{N}/afk.log` | Append-only plain log for this iteration (orchestrator output + inner-agent stdout + heartbeat lines). Per-issue scope — each issue gets a fresh log. |
+| `.red/tmp/work-{id}-i{N}/agent.log.jsonl` | Clean **agent lane** (issue #250) — one `type=agent` JSONL record per assistant turn and nothing synthetic, so it is the true liveness signal and reads as a live transcript: `tail -f … \| jq -r .msg`. Single-writer. |
+| `.red/tmp/work-{id}-i{N}/log.jsonl` | The **firehose** (issue #250) — every record of the attempt in the uniform JSONL envelope: agent turns, heartbeat vitals, hook dispatches, runner timings, and errors. Flock-serialised (many concurrent writers). |
 | `.red/tmp/work-{id}-i{N}/afk.state.json` | State snapshot for this iteration. Schema in *State File* below. |
 | `.red/tmp/work-{id}-i{N}/handoff.md` | Handoff file the inner agent reads — `<issue-body>` (issue body verbatim, including the `## Agent brief` markdown section), `<previous-attempts>`, `<human-guidance-thread>` (one `<human-guidance>` per extracted directive), `<thread-discussion>` (advisory comments with no directive marker), `<agent-notes>`. Top-level XML wrappers make body/comments/notes unambiguous. Template in *Handoff File Template* below. |
 
@@ -281,6 +283,7 @@ The issue-thread heartbeat (`:one:` / `:two:` / `:three:` / `:four:` cycling eve
 Local liveness is signalled by:
 
 - **Inner-agent stdout stream**, continuously tee'd into the iteration's `afk.log` by `run_inner` — forensic inspection of a running worker tails this file.
+- **Clean agent lane + firehose** (issue #250) — alongside `afk.log`, `run_claude`/`run_codex` fan each assistant turn out through `scripts/lib/agent-lane.sh` to a clean single-writer `agent.log.jsonl` (one `type=agent` record per turn, nothing synthetic — the true liveness signal, readable as a live transcript with `tail -f … | jq -r .msg`) and to a `log.jsonl` firehose that also carries the heartbeat vitals, hook dispatches, runner timings, and errors in the uniform JSONL envelope. The heartbeat writes its vitals to the firehose as a `type=heartbeat` record but never to the agent lane, so the agent lane's silence is real silence (the masking that defeated stall/reaper detection in #243). `afk.log` is unchanged and still carries the tee'd stdout + heartbeat lines below.
 - **State-file mtime**, bumped on every `state_set` call. The monitor combines orchestrator pid liveness with state-file freshness to render `🟢 live` vs `🟡 stale`.
 - **Iteration boundary markers** — `heartbeat_start` / `heartbeat_stop` write a single `[heartbeat] iteration started/stopped` line each to `afk.log` so forensic readers can see when an iteration entered and left the inner-agent stage.
 - **Periodic orchestrator heartbeat** (issue #194) — `heartbeat_start` also spawns a side-channel sub-shell that appends one line every `RED_AFK_HEARTBEAT_S` (default 60s) to `afk.log`:

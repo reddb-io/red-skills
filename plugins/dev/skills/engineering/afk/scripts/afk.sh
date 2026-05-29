@@ -42,6 +42,10 @@ source "$SCRIPT_DIR/lib/remote-branch.sh"
 source "$SCRIPT_DIR/lib/heartbeat.sh"
 # shellcheck source=./lib/capabilities.sh
 source "$SCRIPT_DIR/lib/capabilities.sh"
+# shellcheck source=./lib/jsonl-log.sh
+source "$SCRIPT_DIR/lib/jsonl-log.sh"
+# shellcheck source=./lib/agent-lane.sh
+source "$SCRIPT_DIR/lib/agent-lane.sh"
 
 MEMORY_BRIDGE_SH="$SKILL_DIR/../../../scripts/memory-bridge.sh"
 if [[ -f "$MEMORY_BRIDGE_SH" ]]; then
@@ -103,6 +107,13 @@ ITER_DIR=""         # set per-iteration: $TMP_DIR/work-$WORKER_ID-i$N
 STATE_FILE=""       # set per-iteration: $ITER_DIR/afk.state.json
 ITER_LOG=""         # set per-iteration: $ITER_DIR/afk.log
 ITER_PID_FILE=""    # set per-iteration: $ITER_DIR/afk.pid
+# JSONL lanes added alongside afk.log (issue #250, PRD #244). The clean agent
+# lane carries one type=agent record per assistant turn and nothing synthetic;
+# the firehose carries everything (agent output, heartbeat vitals, hooks,
+# timings, errors). afk.log itself is unchanged — these are additive.
+AGENT_LANE=""       # set per-iteration: $ITER_DIR/agent.log.jsonl
+FIREHOSE=""         # set per-iteration: $ITER_DIR/log.jsonl
+CURRENT_ATTEMPT=1   # per-iteration attempt number (mirrors process_issue's local)
 
 # ---------- runner detection cascade ----------
 detect_runner_from_process_text() {
@@ -442,6 +453,10 @@ iter_open() {
   ITER_DIR="$TMP_DIR/work-${WORKER_ID}-i${n}"
   STATE_FILE="$ITER_DIR/afk.state.json"
   ITER_LOG="$ITER_DIR/afk.log"
+  # JSONL lanes alongside afk.log (issue #250); this slice does not move
+  # directories — it adds the lanes into the current iteration dir.
+  AGENT_LANE="$ITER_DIR/agent.log.jsonl"
+  FIREHOSE="$ITER_DIR/log.jsonl"
   ITER_PID_FILE="$ITER_DIR/afk.pid"
   mkdir -p "$ITER_DIR"
   printf '%s' "$$" > "$ITER_PID_FILE"
@@ -474,15 +489,32 @@ iter_open() {
 
 iter_close_success() {
   [[ -n "$ITER_DIR" && -d "$ITER_DIR" ]] && rm -rf "$ITER_DIR"
-  ITER_DIR="" STATE_FILE="" ITER_LOG="" ITER_PID_FILE=""
+  ITER_DIR="" STATE_FILE="" ITER_LOG="" ITER_PID_FILE="" AGENT_LANE="" FIREHOSE=""
   claim_lock_release
 }
 
 iter_close_preserve() {
   # blocker / interrupt — keep dir for human, only drop the pid so monitor flags as inactive.
   [[ -n "$ITER_PID_FILE" && -f "$ITER_PID_FILE" ]] && rm -f "$ITER_PID_FILE"
-  ITER_DIR="" STATE_FILE="" ITER_LOG="" ITER_PID_FILE=""
+  ITER_DIR="" STATE_FILE="" ITER_LOG="" ITER_PID_FILE="" AGENT_LANE="" FIREHOSE=""
   claim_lock_release
+}
+
+# afk_firehose <type> <msg> [KEY=VALUE]...
+# Append one non-agent (synthetic) record to the per-attempt firehose, stamped
+# with the current worker/issue/attempt identity. Used for the firehose's hook,
+# timing, and error records (heartbeat vitals are written by lib/heartbeat.sh,
+# agent output by agent_lane_fanout). Best-effort: a no-op when no firehose is
+# open and never fatal — a logging failure must not perturb the iteration.
+afk_firehose() {
+  local _type="$1" _msg="${2-}"
+  [[ -n "$FIREHOSE" ]] || return 0
+  shift 2 2>/dev/null || shift $#
+  # Flock-serialised: the firehose has concurrent writers within an attempt
+  # (heartbeat loop, agent fanout, and these orchestrator records).
+  jsonl_log_append_shared "$FIREHOSE" "$_type" "$_msg" \
+    worker="${WORKER_ID:-}" issue="${CURRENT_ISSUE:-0}" attempt="${CURRENT_ATTEMPT:-1}" \
+    "$@" 2>/dev/null || true
 }
 
 # ---------- lifecycle hooks ----------
@@ -516,7 +548,13 @@ run_lifecycle_hook() {
   for kv in "$@"; do
     export "$kv"
   done
-  hooks_run "$point"
+  # Record the hook dispatch on the firehose (issue #250) before running it, so
+  # the firehose carries the hook lane of the attempt story. The rc is captured
+  # and returned unchanged so the dispatch's exit semantics are preserved.
+  afk_firehose hook "lifecycle:$point"
+  local _lh_rc=0
+  hooks_run "$point" || _lh_rc=$?
+  return "$_lh_rc"
 }
 
 # Per-iteration cursor used by run_lifecycle_hook. Set/cleared in process_issue.
@@ -1676,9 +1714,10 @@ run_claude() {
            --output-format stream-json --verbose --print "$prompt" 2>&1 \
       | grep --line-buffered '^{' \
       | tee "$tmp" \
-      | jq --unbuffered -rj 'select(.type == "assistant").message.content[]? | select(.type == "text").text // empty | . + "\n"' \
+      | jq --unbuffered -c 'select(.type == "assistant").message.content[]? | select(.type == "text").text // empty' \
         2>/dev/null \
-      | tee -a "$log_target" \
+      | agent_lane_fanout "$log_target" "$AGENT_LANE" "$FIREHOSE" \
+          worker="$WORKER_ID" issue="${CURRENT_ISSUE:-0}" attempt="${CURRENT_ATTEMPT:-1}" \
       || true
   ) &
   local pipe_pid=$!
@@ -1712,9 +1751,10 @@ run_codex() {
       | tee "$raw" \
       | grep --line-buffered -E "$JSON_EVENT_LINE_REGEX" \
       | tee "$json" \
-      | jq --unbuffered -rj 'select(.type == "item.completed") | .item.text // empty | . + "\n"' \
+      | jq --unbuffered -c 'select(.type == "item.completed") | .item.text // empty' \
         2>/dev/null \
-      | tee -a "$log_target" \
+      | agent_lane_fanout "$log_target" "$AGENT_LANE" "$FIREHOSE" \
+          worker="$WORKER_ID" issue="${CURRENT_ISSUE:-0}" attempt="${CURRENT_ATTEMPT:-1}" \
       || true
   ) &
   local pipe_pid=$!
@@ -2287,7 +2327,7 @@ process_issue() {
     gh -R "$(gh_repo)" issue edit "$n" --remove-label running --add-label ready-for-agent >/dev/null 2>&1 || true
     gh -R "$(gh_repo)" issue comment "$n" --body "🤖 /afk aborted before worktree setup: pre-iteration hook exited \`$hook_rc\`. Restored \`ready-for-agent\`." >/dev/null 2>&1 || true
     [[ -n "$ITER_DIR" && -d "$ITER_DIR" ]] && rm -rf "$ITER_DIR"
-    ITER_DIR="" STATE_FILE="" ITER_LOG="" ITER_PID_FILE=""
+    ITER_DIR="" STATE_FILE="" ITER_LOG="" ITER_PID_FILE="" AGENT_LANE="" FIREHOSE=""
     claim_lock_release "$n"
     CURRENT_ISSUE="" CURRENT_BRANCH=""
     return 0
@@ -2328,7 +2368,7 @@ process_issue() {
     gh -R "$(gh_repo)" issue edit "$n" --remove-label running --add-label ready-for-agent >/dev/null 2>&1 || true
     gh -R "$(gh_repo)" issue comment "$n" --body "🤖 /afk aborted before worktree creation: pre_worktree hook exited \`$_afk_pwt_rc\`. Restored \`ready-for-agent\`." >/dev/null 2>&1 || true
     [[ -n "$ITER_DIR" && -d "$ITER_DIR" ]] && rm -rf "$ITER_DIR"
-    ITER_DIR="" STATE_FILE="" ITER_LOG="" ITER_PID_FILE=""
+    ITER_DIR="" STATE_FILE="" ITER_LOG="" ITER_PID_FILE="" AGENT_LANE="" FIREHOSE=""
     claim_lock_release "$n"
     CURRENT_ISSUE="" CURRENT_BRANCH=""
     return 0
@@ -2391,6 +2431,7 @@ process_issue() {
     current.last_stream_line=""
 
   local attempt=1
+  CURRENT_ATTEMPT="$attempt"   # mirror to the global the lanes/heartbeat read (issue #250)
   local handoff
   handoff="$(write_handoff "$n" "$title" "$slug" "$body" "$worktree" "$RUNNER" "$attempt")"
 
@@ -2424,7 +2465,11 @@ process_issue() {
   fi
 
   local result _runner_rc=0
+  local _runner_t0; _runner_t0="$(date +%s)"
   result="$(run_inner "$worktree" "$handoff" "$RUNNER")" || _runner_rc=$?
+  # Firehose timing record (issue #250): how long the runner ran and its rc.
+  afk_firehose timing "runner $RUNNER returned rc=$_runner_rc" \
+    elapsed_s="$(( $(date +%s) - _runner_t0 ))" rc="$_runner_rc"
 
   # ---------- on_worker_error lifecycle hook ----------
   # Fires only on an unhandled exception in the worker path (run_inner
@@ -2435,6 +2480,10 @@ process_issue() {
   # broken pager integration cannot wedge the loop.
   if (( _runner_rc != 0 )) && [[ $RUNNER_EXHAUSTED -ne 1 ]]; then
     heartbeat_stop
+    # Firehose error record (issue #250) — written before iter_close zeroes the
+    # lane so the firehose carries the failure that ended the attempt.
+    afk_firehose error "runner $RUNNER crashed (rc=$_runner_rc)" \
+      class=runner-crash rc="$_runner_rc"
     export RED_AFK_WORKSPACE="$worktree"
     export RED_AFK_ERROR_CLASS="runner-crash"
     local _afk_owe_ctx _afk_owe_rc=0
@@ -2470,6 +2519,7 @@ process_issue() {
       log "runner $RUNNER exhausted — swapping to $other and retrying #$n (--fallback-runner)"
       RUNNER="$other"
       attempt=$((attempt+1))
+      CURRENT_ATTEMPT="$attempt"
       handoff="$(write_handoff "$n" "$title" "$slug" "$body" "$worktree" "$RUNNER" "$attempt")"
       heartbeat_start "$n"
       result="$(run_inner "$worktree" "$handoff" "$RUNNER")"
