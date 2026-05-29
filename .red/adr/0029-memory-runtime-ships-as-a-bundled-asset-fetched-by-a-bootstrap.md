@@ -138,8 +138,12 @@ bundle, never `dist/` or `node_modules`.
   `~/.cache/reddb-memory/<ver>/` with no network.
 - Offline first-run degrades to the documented no-op with a `bootstrap.log`
   entry — strictly better than today's silent failure.
-- `import.meta.resolve("@reddb-io/sdk")` in `vcs-commit.ts` is made dead code in
-  the shipped path (the bootstrap always sets `REDDB_BIN`); no refactor needed,
-  but it may be removed for clarity.
+- `vcs-commit.ts::resolveRedBinary()` **did** require a one-line fix (caught by
+  an end-to-end bootstrap run, not the spike): it fell back to
+  `import.meta.resolve("@reddb-io/sdk")`, which throws in the bundle (no
+  node_modules). It now honours `REDDB_BIN` first — the path the bootstrap sets
+  and the SDK's canonical override (SDK ADR 0006) — so the resolve never fires
+  in the shipped path. Lesson: validate the bundle by actually running a hook
+  end-to-end against the published release, not just `--help`.
 - This is the operational-delivery half of ADR 0027 / PRD #217: with it, hooks
   fire the CLI in installed copies for the first time.
