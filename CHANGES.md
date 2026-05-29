@@ -6,6 +6,16 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 
 ---
 
+## afk completion sweep: cross-worker prune of an issue's attempts + age/count cap (modified)
+
+- **status**: modified
+- **upstream**: —
+- **why**: Issue #257 (under PRD #244) — the local-disk side of completion cleanup. The split teardown (#256) only drops the heavy worktree on close and retains the attempt dir for the orphan-sweep TTL, so a completed issue's retained dirs lingered across every worker that tried it. And nothing reclaimed the attempt dirs of an issue that *never* completes (blocked-forever retries), so disk leaked. This slice adds the completion-triggered cross-worker sweep plus an age/count cap fallback, both refusing to touch a live worker's active attempt.
+- **what changed**:
+  - `plugins/dev/skills/engineering/afk/scripts/afk.sh`: new `completion_sweep_issue <issue>` removes every attempt dir for a completed issue across all workers via `lib/worker-paths.sh`'s canonical `workers/*/<issue>-a*` glob (worktree first, reusing `iter_drop_worktree`); new `cap_issue_attempts` prunes attempt dirs over an age cap (`RED_AFK_ATTEMPT_TTL_S`, default 14d) or per-issue count cap (`RED_AFK_ATTEMPT_KEEP`, default 5, newest kept) with defensive env readers `attempt_ttl_s` / `attempt_keep`; shared guard `_attempt_dir_is_live` keeps both off any attempt whose own state file carries a live pid, and `_drop_attempt_dir` is the single removal helper. Wired the sweep into `process_issue`'s DONE path (after `fire_post_iteration`) and the cap into main boot (after `prune_orphans`).
+  - `plugins/dev/skills/engineering/afk/scripts/tests/completion-sweep.test.sh` (new): 19 assertions against a real parent repo + linked worktrees under mktemp — cross-worker sweep, unrelated-issue survival, idempotent re-sweep, live-attempt skip, age cap, count cap, live-attempt-preserved-despite-age, plus a static wiring guard that the DONE path calls the sweep.
+  - `plugins/dev/skills/engineering/afk/SKILL.md`: close step 11 now documents the completion sweep; new *Attempt Cap (boot-time)* section documents the age/count caps and their env knobs.
+
 ## afk reaper watches the agent lane + process cross-check (modified)
 
 - **status**: modified
