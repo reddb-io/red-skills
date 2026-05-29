@@ -43,6 +43,7 @@ export async function extractCode(path: string): Promise<CodeExtraction> {
   if (!lang) return { nodes: [], edges: [] };
 
   const source = await readFile(path, "utf8");
+  const exports = exportedNames(source, lang);
   const fileNode: MemoryNode = {
     label: `file:${path}`,
     node_type: "file",
@@ -58,6 +59,9 @@ export async function extractCode(path: string): Promise<CodeExtraction> {
         evidence: [path],
       },
       hash: contentHash(path, source),
+      // Exported symbol names, surfaced so the graph contract (#234) can
+      // round-trip a file's public surface to consumers.
+      ...(exports.length > 0 ? { exports } : {}),
     },
   };
 
@@ -243,4 +247,33 @@ function extractTypeEdges(
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Conservative, deterministic list of a file's exported names. Covers the
+ * common declaration and re-export forms across the supported languages:
+ *  - `export function/class/interface/type/const/let/var <name>` (TS/JS)
+ *  - `export { a, b as c }` named clauses (TS/JS)
+ *  - `pub fn/struct/trait/enum <name>` (Rust)
+ * Python and Go have no keyword-level export marker (Go uses capitalization),
+ * so they contribute nothing here — `exports` stays empty rather than guessing.
+ */
+function exportedNames(source: string, lang: string): string[] {
+  const names = new Set<string>();
+  if (["typescript", "tsx", "javascript"].includes(lang)) {
+    const decl =
+      /^\s*export\s+(?:default\s+)?(?:async\s+)?(?:abstract\s+)?(?:function|class|interface|type|const|let|var)\s+([A-Za-z_]\w*)/gm;
+    for (const m of source.matchAll(decl)) if (m[1]) names.add(m[1]);
+    const clause = /export\s*\{([^}]*)\}/g;
+    for (const m of source.matchAll(clause)) {
+      for (const part of (m[1] ?? "").split(",")) {
+        const exported = part.trim().split(/\s+as\s+/i).pop()?.trim();
+        if (exported && /^[A-Za-z_]\w*$/.test(exported)) names.add(exported);
+      }
+    }
+  } else if (lang === "rust") {
+    const decl = /^\s*pub\s+(?:async\s+)?(?:fn|struct|trait|enum|type|const|static)\s+([A-Za-z_]\w*)/gm;
+    for (const m of source.matchAll(decl)) if (m[1]) names.add(m[1]);
+  }
+  return [...names];
 }
