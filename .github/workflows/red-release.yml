@@ -154,6 +154,58 @@ jobs:
             git push origin HEAD:main
           fi
 
+      # ADR 0029: the Memory runtime ships as release assets, not committed
+      # build output. esbuild bundles the CLI (all JS deps inlined) into one
+      # platform-independent file; a manifest pins its checksum + the reddb tag
+      # whose per-platform `red` binaries the bootstrap reuses. Assets are
+      # attached at `gh release create` so they exist the moment the Release
+      # publishes.
+      - uses: pnpm/action-setup@v4
+        if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
+        with:
+          node-version: 22
+
+      - name: Build memory runtime bundle + manifest
+        if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
+        working-directory: plugins/memory
+        env:
+          NEXT: ${{ steps.version.outputs.next }}
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile
+          pnpm bundle
+          node --input-type=module <<'EOF'
+          import { createHash } from 'node:crypto';
+          import { readFileSync, writeFileSync } from 'node:fs';
+          const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
+          const sdk = pkg.dependencies['@reddb-io/sdk'];
+          const cli = readFileSync('dist-bundle/memory-cli.mjs');
+          const manifest = {
+            schema: 'red.memory.runtime.v1',
+            version: process.env.NEXT.replace(/^v/, ''),
+            cli: { asset: 'memory-cli.mjs', sha256: createHash('sha256').update(cli).digest('hex') },
+            reddb: {
+              repo: 'reddb-io/reddb',
+              tag: `v${sdk}`,
+              assets: {
+                'linux-x86_64': 'red-linux-x86_64',
+                'linux-aarch64': 'red-linux-aarch64',
+                'linux-armv7': 'red-linux-armv7',
+                'macos-x86_64': 'red-macos-x86_64',
+                'macos-aarch64': 'red-macos-aarch64',
+                'windows-x86_64': 'red-windows-x86_64.exe',
+              },
+            },
+          };
+          writeFileSync('memory-runtime-manifest.json', JSON.stringify(manifest, null, 2));
+          console.log('runtime manifest:', JSON.stringify(manifest));
+          EOF
+
       - name: Tag + GitHub Release
         if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
         env:
@@ -164,13 +216,17 @@ jobs:
           set -euo pipefail
           git tag -a "$NEXT" -m "Release $NEXT"
           git push origin "$NEXT"
+          assets=(
+            plugins/memory/dist-bundle/memory-cli.mjs
+            plugins/memory/memory-runtime-manifest.json
+          )
           if [ -n "$PREVIOUS" ]; then
-            gh release create "$NEXT" \
+            gh release create "$NEXT" "${assets[@]}" \
               --title "$NEXT" \
               --generate-notes \
               --notes-start-tag "$PREVIOUS"
           else
-            gh release create "$NEXT" \
+            gh release create "$NEXT" "${assets[@]}" \
               --title "$NEXT" \
               --generate-notes
           fi
