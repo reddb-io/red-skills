@@ -38,7 +38,7 @@ seed_cache() {
 # Build a worker state dir. Args: root, slug, pid, issue, added, removed, blocked.
 make_worker() {
   local root="$1" slug="$2" pid="$3" issue="$4" added="$5" removed="$6" blocked="$7"
-  local dir="$root/.red/tmp/work-$slug"
+  local dir="$root/.red/tmp/workers/$slug/${issue}-a1"
   mkdir -p "$dir"
   jq -n \
     --argjson pid "$pid" \

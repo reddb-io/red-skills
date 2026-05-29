@@ -254,7 +254,7 @@ FILTER_KIND=""; FILTER_VALUE=""
 AGG_TOTAL=0; AGG_DONE=0; AGG_FAILED=0; AGG_BLOCKED=0
 AGG_COMPLETED="[]"; AGG_QUEUE="[]"; AGG_DURATIONS="[]"
 iter_open 215
-expected_file="$TMP_DIR/work-wTEST-i215/hooks-executed.log"
+expected_file="$ITER_DIR/hooks-executed.log"  # nested workers/wTEST/215-a1 (#252)
 if [[ "$HOOK_EXECUTIONS_FILE" == "$expected_file" ]]; then
   echo "PASS  iter_open: HOOK_EXECUTIONS_FILE set in ITER_DIR"; pass=$((pass+1))
 else

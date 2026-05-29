@@ -5,7 +5,7 @@ Binding for both the orchestrator (the shell loop) and the inner agent (claude/c
 ## Repository Layout Invariants
 
 - The **primary checkout** stays on `main` at all times. Never `git checkout`, `git switch`, or `git branch -m` inside it.
-- All work happens in **worktrees** under `.red/tmp/work-{id}-i{N}/worktree/` (inside the primary checkout but gitignored) on a branch named `afk/{id}/{N}-{slug}`.
+- All work happens in **worktrees** under `.red/tmp/workers/{id}/{N}-a{n}/worktree/` (inside the primary checkout but gitignored) on a branch named `afk/{id}/{N}-{slug}`.
 - The worktree branch is **local-only** until the final push of `main`. The orchestrator pushes `main`, not the worktree branch.
 
 ## Git Operations
@@ -70,7 +70,7 @@ One self-resolve attempt: re-enter the inner agent with the conflict diff in the
 ## Heartbeat and State Files
 
 - The periodic issue-thread heartbeat (`:one:` … `:four:` via `gh issue comment`) was retired in Slice D — there is no sub-shell to track or kill. `heartbeat_pid` in older state files is vestigial and ignored.
-- State file writes are atomic: write to `.red/tmp/work-{id}-i{N}/afk.state.json.tmp`, `mv` over the real path. Never partial writes.
+- State file writes are atomic: write to `.red/tmp/workers/{id}/{N}-a{n}/afk.state.json.tmp`, `mv` over the real path. Never partial writes.
 - The monitor never writes. Only the orchestrator writes state.
 
 ## Signals and Shutdown
@@ -79,7 +79,7 @@ One self-resolve attempt: re-enter the inner agent with the conflict diff in the
 - `SIGTERM`: same as `SIGINT`.
 - Never trap `SIGKILL` — let the OS do its thing.
 
-There is no heartbeat sub-shell to reap on any of these paths since Slice D — the only cleanup work is releasing the in-flight claim and preserving the iteration directory.
+There is no heartbeat sub-shell to reap on any of these paths since Slice D — the only cleanup work is releasing the in-flight claim, preserving the active attempt directory, and removing the per-worker `worker.pid` (and the empty worker dir) on the EXIT trap.
 
 ## What "Blocker" Means
 

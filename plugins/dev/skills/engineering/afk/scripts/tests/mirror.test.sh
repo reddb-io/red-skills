@@ -40,15 +40,14 @@ trap 'rm -rf "$ROOT"' EXIT
 # a live pid file. Usage: mk_worker <wid> <issue> <title> <stage> <pid|->
 mk_worker() {
   local wid="$1" issue="$2" title="$3" stage="$4" pid="$5"
-  local dir="$ROOT/.red/tmp/work-${wid}-i${issue}"
+  # Nested layout (#252): attempt dir is workers/{wid}/{issue}-a1. Liveness is
+  # read from the state file's .pid (state_is_live), so no sibling pid file.
+  local dir="$ROOT/.red/tmp/workers/${wid}/${issue}-a1"
   mkdir -p "$dir"
   state_init "$dir/afk.state.json" worker_id="$wid" pid:="${pid/-/0}"
   state_write "$dir/afk.state.json" \
     current.number:="$issue" current.title="$title" \
     current.stage="$stage" current.started_at="2026-05-21T09:00:00-03:00"
-  if [[ "$pid" != "-" ]]; then
-    printf '%s' "$pid" > "$dir/afk.pid"
-  fi
 }
 
 # A live pid for "running" workers: this test shell is guaranteed alive.
@@ -64,7 +63,7 @@ mk_worker wCCCC 31 "crashed worker"    impl 999999     # pid dead → gone
 mk_worker wDDDD 0  ""                   setup "$LIVE"   # no real issue → omitted
 
 # wDDDD has current.number 0; fix it to be a truly-absent current to test idle
-state_write "$ROOT/.red/tmp/work-wDDDD-i0/afk.state.json" current:=null
+state_write "$ROOT/.red/tmp/workers/wDDDD/0-a1/afk.state.json" current:=null
 
 readers="$(mirror_read_workers "$ROOT" | jq -c '.' | sort)"
 
@@ -84,8 +83,7 @@ d="$(printf '%s\n' "$readers" | jq -c 'select(.worker_id=="wDDDD")')"
 expect_eq "reader: idle worker (current null) omitted" "" "$d"
 
 # Missing / partial state file: a work dir with no state file → no record, no crash.
-mkdir -p "$ROOT/.red/tmp/work-wEEEE-i9"
-printf '%s' "$LIVE" > "$ROOT/.red/tmp/work-wEEEE-i9/afk.pid"
+mkdir -p "$ROOT/.red/tmp/workers/wEEEE/9-a1"
 count2="$(mirror_read_workers "$ROOT" | grep -c .)"
 expect_eq "reader: dir without state file ignored" "3" "$count2"
 
@@ -179,9 +177,9 @@ steady_keys="$(printf '%s\n' "$plan_steady" | jq -r 'select(.key=="wAAAA:22" or 
 expect_eq "plan: unchanged running workers emit no call" "" "$steady_keys"
 
 # Read-only invariant: the reader/plan must never mutate the state files.
-before="$(cat "$ROOT/.red/tmp/work-wAAAA-i22/afk.state.json")"
+before="$(cat "$ROOT/.red/tmp/workers/wAAAA/22-a1/afk.state.json")"
 mirror_plan "$ROOT" "$tracked_all" >/dev/null
-after="$(cat "$ROOT/.red/tmp/work-wAAAA-i22/afk.state.json")"
+after="$(cat "$ROOT/.red/tmp/workers/wAAAA/22-a1/afk.state.json")"
 expect_eq "plan: state file untouched (read-only invariant)" "$before" "$after"
 
 # ----------------------------------------------------------------------

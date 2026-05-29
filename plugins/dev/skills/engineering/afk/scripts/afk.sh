@@ -504,7 +504,10 @@ iter_open() {
   # Attempt-first nested layout (PRD #244 #252): the attempt number is one past
   # the highest already on disk for this (worker, issue), so a retry is its own
   # {issue}-a{n} dir instead of overwriting. worker-paths owns the path grammar.
-  ITER_ATTEMPT="$(attempt_ledger_next_number "$TMP_DIR" "$WORKER_ID" "$n")"
+  # attempt-ledger keys the attempt counter per ISSUE across all workers
+  # (glob workers/*/{issue}-a*), so a retry — even by a different worker — is a
+  # fresh a{n} dir. worker-paths then nests it under THIS worker.
+  ITER_ATTEMPT="$(attempt_ledger_next_number "$TMP_DIR" "$n")"
   ITER_DIR="$(worker_paths_build "$TMP_DIR" "$WORKER_ID" "$n" "$ITER_ATTEMPT")"
   STATE_FILE="$ITER_DIR/afk.state.json"
   ITER_LOG="$ITER_DIR/afk.log"
