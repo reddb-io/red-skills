@@ -27,7 +27,7 @@ nothing to recall. Suggest `/memory:init`.
 ## 2. Recall
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/dist/cli.js" recall <query terms>
+node "${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap.mjs" recall <query terms>
 ```
 
 Everything after `recall` is the query. Add `--limit N` to cap results

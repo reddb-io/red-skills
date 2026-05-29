@@ -26,10 +26,10 @@ Use a transcript/log that contains durable learning: decisions, root causes, got
 
 ```bash
 # From a file
-node "${CLAUDE_PLUGIN_ROOT}/dist/cli.js" extract <transcript-file>
+node "${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap.mjs" extract <transcript-file>
 
 # Or from stdin
-cat <transcript-file> | node "${CLAUDE_PLUGIN_ROOT}/dist/cli.js" extract
+cat <transcript-file> | node "${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap.mjs" extract
 ```
 
 The command prints how many `INFERRED` facts and edges were written and which provider mode/egress was used.
@@ -39,7 +39,7 @@ The command prints how many `INFERRED` facts and edges were written and which pr
 Run a targeted recall for one or two extracted topics:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/dist/cli.js" recall "<topic>"
+node "${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap.mjs" recall "<topic>"
 ```
 
 Report whether the new facts are discoverable. If extraction produced nothing, say so plainly and do not invent facts.

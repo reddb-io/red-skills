@@ -24,7 +24,7 @@ initialized or is markdown-only, say so and stop.
 ## 2. Export
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/dist/cli.js" export [<out-dir>] [--communities]
+node "${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap.mjs" export [<out-dir>] [--communities]
 ```
 
 `<out-dir>` defaults to `.red/memory/export`. The command prints the three file

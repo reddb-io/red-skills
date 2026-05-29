@@ -23,7 +23,7 @@ If `.red/memory/config.json` is missing, memory was never initialized — run
 ## 2. Store the fact
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/dist/cli.js" store <the fact text>
+node "${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap.mjs" store <the fact text>
 ```
 
 Pass the fact as the argument (everything after `store` is joined into one
