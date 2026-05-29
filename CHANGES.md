@@ -6,6 +6,15 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 
 ---
 
+## afk base-resolver module — lock-value > pinned branch > main precedence (added)
+
+- **status**: added
+- **upstream**: —
+- **why**: Issue #247 (under PRD #244) — AFK bases each worktree on, and merges each item back into, a single branch, but three sources can name it (branch lock, issue/PRD pin, default) and the winning-source precedence had no single owner. This slice ships that decision as a tested pure library; wiring it into the merge path is a later slice.
+- **what changed**:
+  - `plugins/dev/skills/engineering/afk/scripts/lib/base-resolver.sh`: a new pure module (no git, filesystem, or globals) exposing `base_resolve <lock_value> <pin_value> [<default_branch>]`, which applies the fixed precedence lock-value > pinned branch > `main` and always returns 0. Callers (the orchestrator) read the lock file (`lock-store.sh`, `lock_store_read`) and resolve the pin (`pin-reader.sh`, `pin_resolve`) themselves and pass both in as strings, so the precedence stays unit-testable against fixed inputs. An empty or whitespace-only argument counts as "not set" (via the `_base_is_set` predicate), so a non-empty lock always wins over any pin, else a non-empty pin, else the default (`main` when omitted/empty). Because `pin_resolve` already collapses "no pin" to `main`, passing its output as the pin value is safe.
+  - `plugins/dev/skills/engineering/afk/scripts/tests/base-resolver.test.sh`: 17 assertions sourcing the module directly (no orchestrator globals), covering the full precedence matrix (lock beats pin / lock with no pin / lock over a `main` pin / pin when unlocked / neither → main / no args → main), whitespace-only inputs treated as unset, the explicit default override and its precedence, the always-returns-0 contract, and the `_base_is_set` predicate.
+
 ## afk jsonl-log module — uniform-envelope appender + flock + readers (added)
 
 - **status**: added
