@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { access, mkdir, readdir, readFile, rename, stat, writeFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import {
   DEFAULT_MEMORY_EVENT_RETENTION_DAYS,
@@ -62,6 +64,8 @@ import { buildMemoryExtractionStatus } from "./extraction-status.js";
 import { buildMemoryExtractionStatusViewerArtifact } from "./extraction-status-viewer.js";
 import { formatOutput, parseInput, type RawPayload } from "./hook-adapters.js";
 import { dispatch, type HookEvent, type Runner } from "./hook-runtime.js";
+import { refreshFromGit, type VcsEvent } from "./vcs-refresh.js";
+import { installGitHooks, uninstallGitHooks } from "./vcs-hooks-install.js";
 import { importAmsDump } from "./import-ams.js";
 import { formatMarkdownReport, runBenchRecall } from "./bench-recall.js";
 import {
@@ -382,6 +386,11 @@ Usage:
 
   Auto-firing hooks (invoked by the plugin manifest, reads payload on stdin):
   memory hook <event> --runner <claude|codex>   [--root <dir>]
+
+  Git auto-update hooks (#236) — keep the graph fresh on commit/checkout:
+  memory vcs install-hooks          [--root <dir>] [--force] [--json]
+  memory vcs uninstall-hooks        [--root <dir>] [--json]
+  memory vcs refresh --event post-commit|post-checkout   [--prev <sha> --new <sha> --flag <0|1>] [--no-export] [--root <dir>] [--json]
 
   Promotion (PRD #174, issue #183) — run the PromotionEngine for the current
   session, promoting typed L2 candidates and bumping reinforcement on dedup
@@ -5821,6 +5830,149 @@ async function runHook(args: ParsedArgs): Promise<void> {
   }
 }
 
+const VCS_EVENTS: readonly VcsEvent[] = ["post-commit", "post-checkout"];
+
+/**
+ * `memory vcs <refresh|install-hooks|uninstall-hooks>` — the git-side
+ * auto-update surface (issue #236). `refresh` is what the installed git hooks
+ * call; it MUST fail open (always exit 0, never throw) so a misconfigured or
+ * uninitialized repo can never break `git commit` / `git checkout`.
+ */
+async function runVcs(args: ParsedArgs): Promise<void> {
+  const sub = args.positional[0];
+  switch (sub) {
+    case "refresh":
+      return runVcsRefresh(args);
+    case "install-hooks":
+      return runVcsInstallHooks(args);
+    case "uninstall-hooks":
+      return runVcsUninstallHooks(args);
+    default:
+      throw new Error(
+        "vcs needs a subcommand — memory vcs refresh|install-hooks|uninstall-hooks",
+      );
+  }
+}
+
+async function runVcsRefresh(args: ParsedArgs): Promise<void> {
+  const rootDir = rootOf(args.flags);
+  const event = stringFlag(args.flags, "event") as VcsEvent | undefined;
+  const json = args.flags.json === true;
+  if (!event || !VCS_EVENTS.includes(event)) {
+    // Unknown invocation: stay silent and exit 0 — never break the git op.
+    if (json) console.log(JSON.stringify({ noop: true, reason: "unknown vcs event" }));
+    return;
+  }
+  try {
+    const result = await refreshFromGit(rootDir, {
+      event,
+      prevHead: stringFlag(args.flags, "prev"),
+      newHead: stringFlag(args.flags, "new"),
+      flag: stringFlag(args.flags, "flag"),
+      export: args.flags["no-export"] !== true,
+    });
+    if (json) {
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
+    if (result.noop) {
+      console.log(`memory: ${event} — no-op (${result.reason})`);
+      return;
+    }
+    const r = result.refresh;
+    console.log(
+      `memory: ${event} refreshed ${r?.files ?? 0} changed file(s) — ${r?.added ?? 0} added, ${r?.updated ?? 0} updated, ${r?.stale ?? 0} stale`,
+    );
+    if (result.exported) {
+      console.log(`  exported ${result.exported.nodes} node(s) → ${result.exported.jsonPath}`);
+    }
+  } catch (err) {
+    // Fail open: a git hook must never abort the user's commit/checkout.
+    const reason = `error: ${err instanceof Error ? err.message : String(err)}`;
+    if (json) {
+      console.log(JSON.stringify({ noop: true, reason }));
+    } else {
+      console.log(`memory: ${event} — no-op (${reason})`);
+    }
+  }
+}
+
+/** Resolve the repo's git hooks directory, falling back to `<root>/.git/hooks`. */
+async function resolveHooksDir(rootDir: string): Promise<string> {
+  try {
+    const { stdout } = await execFileAsync("git", ["-C", rootDir, "rev-parse", "--git-path", "hooks"], {
+      encoding: "utf8",
+    });
+    const rel = stdout.trim();
+    return rel ? (isAbsolute(rel) ? rel : resolve(rootDir, rel)) : resolve(rootDir, ".git/hooks");
+  } catch {
+    return resolve(rootDir, ".git/hooks");
+  }
+}
+
+/** Best-effort path to the plugin's bootstrap.mjs, embedded in installed hooks. */
+function resolveBootstrapPath(): string | undefined {
+  const root = process.env.CLAUDE_PLUGIN_ROOT ?? process.env.CODEX_PLUGIN_ROOT;
+  const candidates = [
+    root ? join(root, "scripts", "bootstrap.mjs") : undefined,
+    // Dev/source layout: this file is <pluginRoot>/src/cli.ts.
+    join(dirname(dirname(fileURLToPath(import.meta.url))), "scripts", "bootstrap.mjs"),
+  ];
+  for (const c of candidates) {
+    if (c && existsSync(c)) return c;
+  }
+  return undefined;
+}
+
+async function runVcsInstallHooks(args: ParsedArgs): Promise<void> {
+  const rootDir = rootOf(args.flags);
+  const config = await readConfig(rootDir);
+  if (!config) {
+    console.log(
+      "memory: not initialized here — run `memory init --mode graph` before installing git hooks",
+    );
+    return;
+  }
+  if (config.mode !== "graph") {
+    console.log(
+      `memory: git hooks need graph mode — this project is "${config.mode}". Re-run \`memory init --mode graph\` first`,
+    );
+    return;
+  }
+  const hooksDir = await resolveHooksDir(rootDir);
+  const result = await installGitHooks({
+    hooksDir,
+    bootstrapPath: resolveBootstrapPath(),
+    force: args.flags.force === true,
+  });
+  if (args.flags.json === true) {
+    console.log(JSON.stringify({ hooksDir, ...result }, null, 2));
+    return;
+  }
+  if (result.installed.length > 0) {
+    console.log(`memory: installed ${result.installed.join(", ")} into ${hooksDir}`);
+  }
+  for (const b of result.backedUp) console.log(`  backed up existing hook → ${b}`);
+  for (const s of result.skipped) console.log(`  skipped ${s.hook}: ${s.reason}`);
+}
+
+async function runVcsUninstallHooks(args: ParsedArgs): Promise<void> {
+  const rootDir = rootOf(args.flags);
+  const hooksDir = await resolveHooksDir(rootDir);
+  const result = await uninstallGitHooks(hooksDir);
+  if (args.flags.json === true) {
+    console.log(JSON.stringify({ hooksDir, ...result }, null, 2));
+    return;
+  }
+  if (result.removed.length > 0) {
+    console.log(`memory: removed ${result.removed.join(", ")} from ${hooksDir}`);
+  } else {
+    console.log(`memory: no managed hooks found in ${hooksDir}`);
+  }
+  for (const r of result.restored) console.log(`  restored backed-up hook → ${r}`);
+  for (const s of result.skipped) console.log(`  ${s.reason}`);
+}
+
 async function runAttempt(args: ParsedArgs): Promise<void> {
   const subcommand = args.positional[0];
   if (subcommand === "learn") {
@@ -6312,6 +6464,8 @@ async function main(): Promise<void> {
       return runExport(args);
     case "hook":
       return runHook(args);
+    case "vcs":
+      return runVcs(args);
     case "drift-guard":
       return runDriftGuard(args);
     case "import":
