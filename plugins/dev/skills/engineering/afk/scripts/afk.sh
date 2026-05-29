@@ -564,8 +564,33 @@ iter_open() {
     durations_seconds:="$AGG_DURATIONS"
 }
 
+# iter_drop_worktree [<worktree_path>]
+# Remove ONLY the heavy git worktree from the attempt dir, leaving the cheap
+# artifacts (JSONL lanes, handoff, state file, logs) untouched (issue #256,
+# PRD #244). Every close path calls this so no worktree ever survives a close,
+# while the post-mortem trail in the attempt dir is preserved. `git worktree
+# remove` unregisters the worktree from the parent repo; a leftover directory
+# (git refused, or the worktree was already pruned) is force-removed so the
+# registry and the filesystem agree. Best-effort and never fatal — defaults to
+# the current iteration's worktree when called with no argument.
+iter_drop_worktree() {
+  local wt="${1:-$ITER_DIR/worktree}"
+  [[ -n "$wt" && "$wt" != "/worktree" ]] || return 0
+  git -C "$PROJECT_ROOT" worktree remove "$wt" --force 2>/dev/null \
+    || log "could not remove worktree $wt"
+  [[ -e "$wt" ]] && rm -rf "$wt" 2>/dev/null
+  return 0
+}
+
 iter_close_success() {
-  [[ -n "$ITER_DIR" && -d "$ITER_DIR" ]] && rm -rf "$ITER_DIR"
+  # Split teardown (issue #256): always drop the heavy worktree, but RETAIN the
+  # cheap artifacts (the JSONL lanes + the handoff) in the attempt dir for
+  # post-mortem. This replaces the old behaviour where success rm -rf'd the
+  # whole ITER_DIR, wiping the lanes. The retained state file is marked not-live
+  # (pid 0) so monitor / mirror / statusline read it as finished, mirroring the
+  # preserve path.
+  iter_drop_worktree "$ITER_DIR/worktree"
+  [[ -n "$STATE_FILE" && -f "$STATE_FILE" ]] && state_write "$STATE_FILE" pid:=0
   ITER_DIR="" STATE_FILE="" ITER_LOG="" ITER_PID_FILE="" AGENT_LANE="" FIREHOSE=""
   claim_lock_release
 }
@@ -576,6 +601,10 @@ iter_close_preserve() {
   # (state_is_live → false). Replicates the old per-attempt afk.pid removal.
   # The per-worker worker.pid is NOT touched — the worker process is still alive
   # and moves on to the next issue.
+  # Split teardown (issue #256): the heavy worktree is dropped here too — only
+  # the cheap JSONL lanes + handoff are worth keeping, and no worktree survives
+  # a close. Done BEFORE the ITER_DIR globals are cleared below.
+  iter_drop_worktree "$ITER_DIR/worktree"
   [[ -n "$STATE_FILE" && -f "$STATE_FILE" ]] && state_write "$STATE_FILE" pid:=0
   ITER_DIR="" STATE_FILE="" ITER_LOG="" ITER_PID_FILE="" AGENT_LANE="" FIREHOSE=""
   claim_lock_release
@@ -2869,10 +2898,6 @@ process_issue() {
   # block the close path. The afk-attempts/* failure namespace is untouched.
   delete_remote "$branch"
 
-  # cleanup
-  git -C "$PROJECT_ROOT" worktree remove "$worktree" --force 2>/dev/null || log "could not remove worktree $worktree"
-  git -C "$PROJECT_ROOT" branch -d "$branch" 2>/dev/null || true
-
   # aggregate state (in-memory; persists across iterations via next iter_open).
   AGG_DONE=$((AGG_DONE+1))
   AGG_COMPLETED="$(jq -c --argjson n "$n" '. + [$n]' <<<"$AGG_COMPLETED")"
@@ -2884,7 +2909,11 @@ process_issue() {
     current:=null
   emit_history "done" "$n" "$RUNNER" "$dur" "$merge_sha" ""
   snapshot_iter_for_hook
+  # Split teardown (issue #256): iter_close_success drops the worktree and
+  # retains the JSONL lanes + handoff. The worker branch can only be deleted
+  # once its worktree is gone, so `git branch -d` runs AFTER the close.
   iter_close_success
+  git -C "$PROJECT_ROOT" branch -d "$branch" 2>/dev/null || true
   fire_post_iteration "done" "$dur"
 
   log "✓ #$n done in ${dur}s — merge $merge_sha — $fb"
