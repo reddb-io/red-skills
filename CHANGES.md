@@ -6,6 +6,15 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 
 ---
 
+## afk attempt-ledger module — next-attempt number + restart context (added)
+
+- **status**: added
+- **upstream**: —
+- **why**: Issue #249 (under PRD #244) — when the orchestrator is about to (re)spawn a worker on an issue it needs both the next attempt number and the context to restart informed rather than blind: the previous attempt's remote snapshot branch reference and its recorded failure reason. The attempt-first tree (`workers/<worker>/<issue>-a<attempt>/`) is owned grammar-only by `worker-paths.sh` (it builds/parses paths and returns canonical glob *patterns* as literal strings, never touching disk), so something must expand those globs against the real filesystem. This slice ships that FS-enumeration consumer as a tested library; wiring it into the spawn/handoff path is a later slice.
+- **what changed**:
+  - `plugins/dev/skills/engineering/afk/scripts/lib/attempt-ledger.sh`: a new module that reads the attempt tree, delegating all path grammar to `worker-paths.sh` (sourced relatively when not already in scope). `attempt_ledger_next_number <root> <issue>` expands `worker_paths_issue_glob` against the FS, parses each hit back with `worker_paths_parse`, and echoes (highest existing attempt) + 1, or 1 on the first attempt; returns non-zero on a malformed identity. `attempt_ledger_prev_dir <root> <issue>` echoes the highest-numbered existing attempt directory, returning non-zero when there is no prior (the first-attempt signal). `attempt_ledger_context <root> <issue>` assembles a restart-context block (`prev-attempt`, `prev-snapshot-branch`, `prev-failure-reason`) from the previous attempt's directory, reading the read-only per-attempt marker contract — `snapshot-branch.ref` (one-line remote snapshot branch ref) and `failure.reason` (free-text recorded reason), both optional and written by the reap/envelope path in a later slice. Missing markers degrade to labelled `(none)` / `(none recorded)` placeholders rather than erroring, so a kill before either was written still yields a usable block. The `_attempt_ledger_highest` helper scopes a `nullglob` change to itself so the unexpanded pattern never leaks into the loop.
+  - `plugins/dev/skills/engineering/afk/scripts/tests/attempt-ledger.test.sh`: 28 assertions building a real attempt tree under `mktemp` (the FS enumeration is exercised for what it is), covering next-number derivation (first attempt → 1, single prior → 2, numeric — not lexical — max across workers, per-issue independence, unseen issue → 1, junk dir with a non-numeric suffix ignored), the always-returns-0-on-valid / non-zero-on-malformed contract, previous-attempt directory selection (highest wins, empty + non-zero when none), and context assembly (branch + reason + attempt number, empty first-attempt context, graceful degradation for bare / partial / multi-line marker files).
+
 ## afk reaper-signal module — busy-vs-stuck liveness predicate (added)
 
 - **status**: added
