@@ -53,7 +53,13 @@ import { readDoc, searchDocs } from "./doc-search.js";
 import { buildDocSearchViewerArtifact } from "./doc-search-viewer.js";
 import { diagnose, prune } from "./doctor.js";
 import { ask, neighbors, path as shortestPath, search, traverse } from "./engine.js";
-import { exportGraph } from "./export.js";
+import { exportGraph, toEdge } from "./export.js";
+import { buildArchitectureOverview } from "./architecture-overview.js";
+import {
+  buildGraphContract,
+  validateGraphContract,
+  type GraphContract,
+} from "./graph-contract.js";
 import {
   extractConversation,
   extractStructuredTranscript,
@@ -391,6 +397,7 @@ Usage:
   memory doctor                     [--root <dir>] [--stale-days N] [--prune] [--yes]
   memory export [<out-dir>]         [--root <dir>] [--communities] [--interop]
   memory graph  [<out-dir>]         [--root <dir>] [--communities]   (alias of export)
+  memory architecture-overview      [--root <dir>] [--from <graph.json>] [--out <file>] [--stdout] [--json]
 
   Auto-firing hooks (invoked by the plugin manifest, reads payload on stdin):
   memory hook <event> --runner <claude|codex>   [--root <dir>]
@@ -5792,6 +5799,68 @@ async function runExport(args: ParsedArgs): Promise<void> {
   }
 }
 
+/**
+ * Resolve the graph contract for the architecture overview. Prefers an existing
+ * `graph.json` (`--from`) so the overview is provably built from the #234
+ * contract; otherwise builds the same contract from the store (with native
+ * community detection, since the overview summarises communities).
+ */
+async function resolveOverviewContract(
+  args: ParsedArgs,
+  rootDir: string,
+): Promise<GraphContract> {
+  const from = stringFlag(args.flags, "from");
+  if (from) {
+    const path = isAbsolute(from) ? from : resolve(rootDir, from);
+    const raw = JSON.parse(await readFile(path, "utf8")) as { contract?: unknown };
+    const contract = raw.contract ?? raw;
+    const validation = validateGraphContract(contract);
+    if (!validation.valid) {
+      throw new Error(
+        `architecture-overview: ${path} is not a valid graph contract — ${validation.errors.join("; ")}`,
+      );
+    }
+    return contract as GraphContract;
+  }
+
+  const { store } = await openGraphStore(args);
+  try {
+    const [nodes, rawEdges, communities] = await Promise.all([
+      store.listNodes(),
+      store.listEdges(),
+      store.communities(),
+    ]);
+    return buildGraphContract({ nodes, edges: rawEdges.map(toEdge), communities });
+  } finally {
+    await store.close();
+  }
+}
+
+async function runArchitectureOverview(args: ParsedArgs): Promise<void> {
+  const rootDir = rootOf(args.flags);
+  const contract = await resolveOverviewContract(args, rootDir);
+  const overview = buildArchitectureOverview(contract);
+
+  if (args.flags.json === true) {
+    console.log(JSON.stringify(overview, null, 2));
+    return;
+  }
+  if (args.flags.stdout === true) {
+    process.stdout.write(overview.markdown);
+    return;
+  }
+
+  const target = stringFlag(args.flags, "out") ?? ".red/memory/architecture-overview.md";
+  const outPath = isAbsolute(target) ? target : resolve(rootDir, target);
+  await mkdir(dirname(outPath), { recursive: true });
+  await writeFile(outPath, overview.markdown, "utf8");
+  console.log(`memory: architecture overview written ${outPath}`);
+  console.log(`  contract: ${overview.generated_from.contract_version}`);
+  console.log(
+    `  ${overview.totals.nodes} node(s), ${overview.layers.length} layer(s), ${overview.communities.length} community(ies)`,
+  );
+}
+
 /** Read all of stdin (the runner's hook payload) into a string. */
 async function readStdin(): Promise<string> {
   if (process.stdin.isTTY) return "";
@@ -6485,6 +6554,8 @@ async function main(): Promise<void> {
     case "export":
     case "graph":
       return runExport(args);
+    case "architecture-overview":
+      return runArchitectureOverview(args);
     case "hook":
       return runHook(args);
     case "vcs":
