@@ -47,7 +47,7 @@ export interface ExportResult {
 }
 
 /** Normalize a raw edge row (uppercased/promoted columns vary) into a tidy edge. */
-function toEdge(row: Record<string, unknown>): ExportEdge {
+export function toEdge(row: Record<string, unknown>): ExportEdge {
   return {
     rid: Number(row.rid ?? row.red_entity_id ?? 0),
     label: String(row.label ?? row.LABEL ?? ""),
