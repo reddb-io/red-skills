@@ -6,6 +6,15 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 
 ---
 
+## afk worker-paths module — own the workers/{wid}/{issue}-a{n} scheme (added)
+
+- **status**: added
+- **upstream**: —
+- **why**: Issue #245 (under PRD #244) — the first slice of the AFK worker/attempt directory restructure. The new attempt-first layout `.red/tmp/workers/{wid}/{issue}-a{n}/` needs a single owner so the path format lives in one place instead of scattered string literals across the six consumers PRD #244 enumerates (story 26). This slice ships that owner as a tested library only; no consumer is wired to it yet.
+- **what changed**:
+  - `plugins/dev/skills/engineering/afk/scripts/lib/worker-paths.sh`: a new pure-text module (no `gh`, git, or filesystem access) that builds an attempt directory path from a `(worker, issue, attempt)` identity (`worker_paths_build`), parses the identity back out of a path round-tripping with the builder (`worker_paths_parse`), and exposes the two canonical globs the rest of the system needs — all attempts of one issue across every worker (`worker_paths_issue_glob` → `…/workers/*/<issue>-a*`) and all live workers (`worker_paths_workers_glob` → `…/workers/*`). Globs are returned as literal patterns, not expanded, so the surface stays unit-testable. Validation rejects malformed identities predictably: worker ids must be a single `[A-Za-z0-9_-]` segment (no slashes), issue/attempt must be positive integers with no sign or leading zeros; parse derives the leaf as `<issue>-a<attempt>`, the worker from its parent, and requires the grandparent segment to be exactly `workers`, so it is independent of root depth.
+  - `plugins/dev/skills/engineering/afk/scripts/tests/worker-paths.test.sh`: 30 assertions covering build (happy path, trailing-slash normalisation, and eight malformed-identity rejections), parse (depth-independence, trailing slash, and six non-matching-path rejections including a `worktree/` subdir), a four-identity round-trip, and both globs verified twice — as literal patterns and expanded against a fixture worker tree to confirm they select exactly the right directories.
+
 ## memory attempt.hooks summary field from Envelope (added)
 
 - **status**: added
