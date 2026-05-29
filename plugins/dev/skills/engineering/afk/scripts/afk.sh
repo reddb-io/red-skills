@@ -113,6 +113,14 @@ WORKER_DIR=""       # set in bootstrap: $TMP_DIR/workers/$WORKER_ID  (groups all
 WORKER_PID_FILE=""  # set in bootstrap: $WORKER_DIR/worker.pid  (per-worker liveness anchor)
 ITER_DIR=""         # set per-iteration: $TMP_DIR/workers/$WORKER_ID/$N-a$ITER_ATTEMPT
 ITER_ATTEMPT=1      # set per-iteration: attempt-ledger run number for ($WORKER_ID,$N)
+# Restart-informed retries (issue #255, PRD #244). PRIOR_ATTEMPT_CONTEXT is the
+# previous attempt's restart block (snapshot branch ref + failure reason),
+# captured in iter_open BEFORE the current attempt dir is created so the ledger
+# reads the prior attempt — not an empty current dir. Empty on a first attempt.
+# PRIOR_ATTEMPT_LOCAL_REF is the stable local ref the prior snapshot branch is
+# fetched into so the inner agent can inspect the last (failed) approach.
+PRIOR_ATTEMPT_CONTEXT=""
+PRIOR_ATTEMPT_LOCAL_REF="refs/afk/prior-attempt"
 STATE_FILE=""       # set per-iteration: $ITER_DIR/afk.state.json
 ITER_LOG=""         # set per-iteration: $ITER_DIR/afk.log
 ITER_PID_FILE=""    # vestigial: per-attempt afk.pid no longer written; liveness is WORKER_PID_FILE
@@ -509,6 +517,11 @@ iter_open() {
   # fresh a{n} dir. worker-paths then nests it under THIS worker.
   ITER_ATTEMPT="$(attempt_ledger_next_number "$TMP_DIR" "$n")"
   ITER_DIR="$(worker_paths_build "$TMP_DIR" "$WORKER_ID" "$n" "$ITER_ATTEMPT")"
+  # Restart-informed retries (issue #255): capture the PREVIOUS attempt's restart
+  # context now, while only prior attempt dirs exist on disk — the current
+  # ITER_DIR is not yet created below, so the ledger returns the prior attempt's
+  # markers rather than an empty current dir. First attempt → empty (rc != 0).
+  PRIOR_ATTEMPT_CONTEXT="$(attempt_ledger_context "$TMP_DIR" "$n" 2>/dev/null || true)"
   STATE_FILE="$ITER_DIR/afk.state.json"
   ITER_LOG="$ITER_DIR/afk.log"
   AGENT_LANE="$ITER_DIR/agent.log.jsonl"
@@ -1009,6 +1022,25 @@ _afk_envelope_poster() {
 # the Module, then writes `.envelope.posted` (the orphan-cleanup TTL signal) —
 # which the Module never touches. The diff section is built inside the Module
 # from the push result; callers pass only the notes/log section files.
+# record_failure_markers <iter_dir> <remote_ref> <reason>
+# Persist the two attempt-ledger marker files into the attempt dir so the NEXT
+# attempt's attempt_ledger_context can fetch the prior snapshot branch and
+# surface the recorded failure reason (issue #255, PRD #244):
+#   <iter_dir>/snapshot-branch.ref   the afk-attempts/* ref the failed attempt
+#                                    was pushed to (omitted when <remote_ref> is
+#                                    empty, e.g. a runner-crash with no push).
+#   <iter_dir>/failure.reason        free-text reason (the envelope summary).
+# Only terminal FAILURE attempts call this — a DONE attempt merges to the base
+# and leaves no snapshot branch to inherit. Best-effort: a missing dir is a
+# no-op so a kill before iter_open never fails the emit path.
+record_failure_markers() {
+  local iter_dir="$1" remote_ref="$2" reason="$3"
+  [[ -n "$iter_dir" && -d "$iter_dir" ]] || return 0
+  [[ -n "$remote_ref" ]] && printf '%s\n' "$remote_ref" > "$iter_dir/snapshot-branch.ref"
+  [[ -n "$reason" ]]     && printf '%s\n' "$reason"     > "$iter_dir/failure.reason"
+  return 0
+}
+
 # emit_envelope <status> <issue#> <duration_s> <branch> <attempt> <merge_sha> <slug> <worktree_rel> [<section> <body_file>]...
 emit_envelope() {
   local status="$1" n="$2" dur="$3" branch="$4" attempt="$5" merge_sha="$6" slug="$7" worktree_rel="$8"
@@ -1022,6 +1054,15 @@ emit_envelope() {
   full_diffstat="$(branch_diffstat_full "$branch")"
   local summary
   summary="$(build_envelope_summary "$status" "$dur" "$diff_or_merged" "$attempt" "$merge_sha")"
+
+  # Restart-informed retries (issue #255): on a terminal FAILURE, persist the
+  # snapshot branch ref + failure reason into the attempt dir so the next
+  # attempt's handoff can fetch the prior approach and surface why it failed.
+  # Written regardless of whether the GitHub envelope post below succeeds — the
+  # markers feed the next attempt, not the issue thread.
+  if [[ "$status" != "done" ]]; then
+    record_failure_markers "${ITER_DIR:-}" "afk-attempts/${WORKER_ID}/${n}-${slug}" "$summary"
+  fi
 
   local rc
   local notes_file="" log_file="" validation_file="" validation_sidecar_file=""
@@ -1567,11 +1608,15 @@ trip_per_issue_cap() {
   fi
 }
 
-# build_retry_handoff_body <n> <title> <body> <runner> <attempt> <url> <comments_json>
+# build_retry_handoff_body <n> <title> <body> <runner> <attempt> <url> <comments_json> [<prior_ctx_block>]
 # Composes the full handoff markdown to stdout. Pure function — no network,
 # no filesystem writes. Sections that would be empty are omitted entirely.
+# <prior_ctx_block> (issue #255) is the optional restart-informed retry block;
+# when non-empty it becomes the <prior-attempt-context> element. Omitted on a
+# first attempt, so first-attempt handoffs are byte-for-byte unchanged.
 build_retry_handoff_body() {
   local n="$1" title="$2" body="$3" runner="$4" attempt="$5" url="$6" comments_json="$7"
+  local prior_ctx_block="${8:-}"
   echo "# Issue #${n} — ${title} [AFK]"
   echo
   echo "source: ${url}"
@@ -1603,6 +1648,13 @@ build_retry_handoff_body() {
     echo "</human-guidance-thread>"
   fi
 
+  if [[ -n "$prior_ctx_block" ]]; then
+    echo
+    echo "<prior-attempt-context>"
+    printf '%s\n' "$prior_ctx_block"
+    echo "</prior-attempt-context>"
+  fi
+
   if [[ -n "$discussion_block" ]]; then
     echo
     echo "<thread-discussion>"
@@ -1614,6 +1666,38 @@ build_retry_handoff_body() {
   echo "<agent-notes>"
   echo "<!-- inner agent appends progress/blockers here across attempts -->"
   echo "</agent-notes>"
+}
+
+# fetch_prior_attempt_context <ctx> <worktree>
+# Restart-informed retries (issue #255). <ctx> is the previous attempt's restart
+# block captured by iter_open (PRIOR_ATTEMPT_CONTEXT); empty on a first attempt.
+# When non-empty, fetch the prior snapshot branch into the worktree under the
+# stable PRIOR_ATTEMPT_LOCAL_REF so the inner agent can inspect the last (failed)
+# approach, then echo the context augmented with the fetched-ref line. The new
+# attempt still branches fresh off the base — this ref is read-only history, not
+# a base to build on. Echoes nothing (rc 1) on a first attempt. Best-effort: a
+# failed/unavailable fetch still surfaces the reason + ref name, never aborts.
+fetch_prior_attempt_context() {
+  local ctx="$1" worktree="$2"
+  [[ -n "$ctx" ]] || return 1
+
+  local ref fetched=""
+  ref="$(sed -n 's/^prev-snapshot-branch: //p' <<<"$ctx")"
+  if [[ -n "$ref" && "$ref" != "(none)" && -d "$worktree" ]]; then
+    if git -C "$worktree" fetch origin "+${ref}:${PRIOR_ATTEMPT_LOCAL_REF}" --quiet 2>/dev/null; then
+      fetched="$PRIOR_ATTEMPT_LOCAL_REF"
+    fi
+  fi
+
+  printf '%s\n' "$ctx"
+  if [[ -n "$fetched" ]]; then
+    printf 'prev-fetched-ref: %s\n' "$fetched"
+    printf '(inspect the prior failed approach with `git log %s` / `git diff %s`; you branch fresh off the base — do NOT fix-forward on it)\n' \
+      "$fetched" "$fetched"
+  else
+    printf 'prev-fetched-ref: (fetch unavailable — snapshot branch unreachable; use the failure reason above)\n'
+  fi
+  return 0
 }
 
 # ---------- handoff file ----------
@@ -1629,7 +1713,12 @@ write_handoff() {
     2>/dev/null)"
   [[ -z "$comments_json" ]] && comments_json='[]'
 
-  build_retry_handoff_body "$n" "$title" "$body" "$runner" "$attempt" "$url" "$comments_json" > "$handoff"
+  # Restart-informed retry block (issue #255): fetch the prior snapshot branch
+  # and assemble the <prior-attempt-context> body. Empty on a first attempt.
+  local prior_ctx_block
+  prior_ctx_block="$(fetch_prior_attempt_context "${PRIOR_ATTEMPT_CONTEXT:-}" "$worktree" || true)"
+
+  build_retry_handoff_body "$n" "$title" "$body" "$runner" "$attempt" "$url" "$comments_json" "$prior_ctx_block" > "$handoff"
 
   echo "$handoff"
 }
@@ -2498,7 +2587,10 @@ process_issue() {
     current.retries:=0 \
     current.last_stream_line=""
 
-  local attempt=1
+  # Attempt number is the attempt-ledger run number set by iter_open (issue #255):
+  # a retry — even by a different worker — is attempt N>1, so the handoff and
+  # envelope label it correctly and the prior-attempt context is surfaced.
+  local attempt="${ITER_ATTEMPT:-1}"
   CURRENT_ATTEMPT="$attempt"   # mirror to the global the lanes/heartbeat read (issue #250)
   local handoff
   handoff="$(write_handoff "$n" "$title" "$slug" "$body" "$worktree" "$RUNNER" "$attempt")"
@@ -2568,6 +2660,11 @@ process_issue() {
     fi
     unset RED_AFK_ERROR_CLASS
     local dur_err=$(( $(date +%s) - started_epoch ))
+    # Restart-informed retries (issue #255): the crash path posts a plain
+    # comment, not an envelope, so record the failure reason here so the next
+    # attempt still sees why this one died. No afk-attempts push happened, so
+    # there is no snapshot branch ref to record.
+    record_failure_markers "${ITER_DIR:-}" "" "runner-crash rc=${_runner_rc} (attempt ${attempt})"
     log "✗ #$n runner crashed (rc=$_runner_rc) — flipping to ready-for-human"
     gh -R "$(gh_repo)" issue edit "$n" --remove-label running --add-label ready-for-human >/dev/null 2>&1 || true
     gh -R "$(gh_repo)" issue comment "$n" --body "🤖 /afk: runner crashed with rc=\`$_runner_rc\`. Iteration preserved at \`$ITER_DIR\`." >/dev/null 2>&1 || true
