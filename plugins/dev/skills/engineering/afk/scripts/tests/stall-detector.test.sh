@@ -79,25 +79,34 @@ mkdir -p "$ITER_DIR"
 echo "$$" > "$ITER_DIR/afk.pid"
 SLOT_PIDS=("$$")
 
-# 1) Brand-new worker with a fresh log → not flagged.
+# Liveness is read from the clean agent lane (agent.log.jsonl), never afk.log
+# (the heartbeat poisons afk.log every minute — #243). find_slot_iter_log still
+# resolves the human log; find_slot_agent_lane resolves the liveness lane.
+LOG_PATH="$(find_slot_iter_log 0)"
+assert_eq "find_slot_iter_log resolves afk.log" "$ITER_DIR/afk.log" "$LOG_PATH"
+LANE_PATH="$(find_slot_agent_lane 0)"
+assert_eq "find_slot_agent_lane resolves agent lane" "$ITER_DIR/agent.log.jsonl" "$LANE_PATH"
+
+# 1) Brand-new worker with a fresh agent lane → not flagged.
 SLOT_SPAWN_EPOCH=("$(date +%s)")
 SLOT_STALLED=(0)
 SLOT_STALL_SINCE_EPOCH=(0)
 SLOT_STALL_LOG=("")
-echo "fresh" > "$ITER_DIR/afk.log"
-LOG_PATH="$(find_slot_iter_log 0)"
-assert_eq "find_slot_iter_log resolves" "$ITER_DIR/afk.log" "$LOG_PATH"
+echo '{"type":"agent","msg":"fresh"}' > "$ITER_DIR/agent.log.jsonl"
 
 poll_stall_detector
 assert_eq "fresh worker not flagged"    "0" "${SLOT_STALLED[0]}"
 
-# 2) Backdate spawn and log mtime past the threshold → flagged.
+# 2) Backdate spawn and the agent lane mtime past the threshold → flagged.
+# afk.log stays fresh (as the heartbeat would keep it) to prove liveness is
+# read from the lane, not afk.log.
 PAST=$(( $(date +%s) - 120 ))
 SLOT_SPAWN_EPOCH=("$PAST")
-touch -d "@$PAST" "$ITER_DIR/afk.log"
+touch -d "@$PAST" "$ITER_DIR/agent.log.jsonl"
+echo "[heartbeat] still beating" > "$ITER_DIR/afk.log"
 
 poll_stall_detector
-assert_eq "old + silent flagged"        "1" "${SLOT_STALLED[0]}"
+assert_eq "old + silent agent lane flagged (afk.log fresh)" "1" "${SLOT_STALLED[0]}"
 
 # State file is written and conforms to the monitor's reader contract.
 STATE_FILE="$TMP_ROOT/.red/tmp/afk-supervisor-circuit.json"
@@ -111,8 +120,8 @@ if [ "$dur_in_state" -ge 100 ]; then ok "duration_s reflects silence"; else bad 
 parked_len="$(jq -r '.parked | length' "$STATE_FILE")"
 assert_eq "parked[] preserved"          "0" "$parked_len"
 
-# 3) Advance the log — flag clears on next poll.
-touch "$ITER_DIR/afk.log"
+# 3) Advance the agent lane — flag clears on next poll.
+touch "$ITER_DIR/agent.log.jsonl"
 poll_stall_detector
 assert_eq "stall cleared after activity" "0" "${SLOT_STALLED[0]}"
 stalled_len="$(jq -r '.stalled | length' "$STATE_FILE")"
