@@ -518,16 +518,26 @@ sup_kill_tree() {
 
 # Same matching logic as find_slot_iter_log but returns the iter
 # directory itself. Echoes nothing when the worker is between
-# iterations (no afk.pid match).
+# iterations (no worker.pid match, or no attempt dir yet).
+# Matches the slot's worker pid against the per-worker workers/{wid}/worker.pid
+# (PRD #244 #252), then returns the worker's CURRENT iteration — its newest
+# attempt dir under workers/{wid}/.
 find_slot_iter_dir() {
   local slot="$1"
   local pid="${SLOT_PIDS[$slot]:-}"
-  local pid_file
+  local pid_file wdir d newest
   [[ -n "$pid" ]] || return 0
-  for pid_file in "$TMP_DIR"/work-*/afk.pid; do
+  shopt -s nullglob
+  for pid_file in "$TMP_DIR"/workers/*/worker.pid; do
     [[ -f "$pid_file" ]] || continue
     [[ "$(cat "$pid_file" 2>/dev/null)" == "$pid" ]] || continue
-    printf '%s\n' "$(dirname "$pid_file")"
+    wdir="$(dirname "$pid_file")"
+    newest=""
+    for d in "$wdir"/*/; do
+      [[ -d "$d" ]] || continue
+      if [[ -z "$newest" || "$d" -nt "$newest" ]]; then newest="${d%/}"; fi
+    done
+    [[ -n "$newest" ]] && printf '%s\n' "$newest"
     return 0
   done
 }
@@ -685,13 +695,13 @@ parse_worker_ids_from_log() {
 }
 
 # iter_dir_for_worker <worker_id>
-# Echo every `.red/tmp/work-{wid}-i*/` directory that exists for the
-# given worker ID. Multiple iter dirs per worker are possible when the
-# worker drained several issues before its slot got parked.
+# Echo every `.red/tmp/workers/{wid}/{issue}-a{n}/` attempt directory that
+# exists for the given worker ID. Multiple attempt dirs per worker are possible
+# when the worker drained several issues (or retried) before its slot got parked.
 iter_dirs_for_worker() {
   local wid="$1" d
   shopt -s nullglob
-  for d in "$TMP_DIR"/work-"${wid}"-i*/; do
+  for d in "$TMP_DIR"/workers/"${wid}"/*/; do
     [[ -d "$d" ]] && printf '%s\n' "${d%/}"
   done
   shopt -u nullglob
@@ -922,7 +932,7 @@ reap_stalled_slot() {
 
     local branch="afk/${worker_id}/${issue}-${slug}"
     local remote_name="afk-attempts/${worker_id}/${issue}-${slug}"
-    local worktree_rel=".red/tmp/work-${worker_id}-i${issue}/worktree"
+    local worktree_rel=".red/tmp/${iter_dir#"$TMP_DIR"/}/worktree"
     local repo_dir="$iter_dir/worktree"
     [[ -d "$repo_dir" ]] || repo_dir=""
 

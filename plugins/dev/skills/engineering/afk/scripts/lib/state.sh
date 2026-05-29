@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# lib/state.sh — accessor module for .red/tmp/work-*/afk.state.json.
+# lib/state.sh — accessor module for .red/tmp/workers/*/*/afk.state.json.
 #
 # Owns the v1 schema. Callers never write jq filters or touch the state file
 # directly. Adding a new field is a one-line change to _STATE_JQ_FILTER below

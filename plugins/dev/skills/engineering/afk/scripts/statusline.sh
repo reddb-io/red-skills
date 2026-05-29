@@ -3,7 +3,7 @@
 #
 # Reads the Claude Code statusline JSON payload from stdin (cwd, model,
 # effort, context window) and combines it with live /afk worker state
-# from $cwd/.red/tmp/work-*/.
+# from $cwd/.red/tmp/workers/*/*/.
 #
 # Output example (no truncation, one line):
 #   red-skills · Opus·high · 47k 24% · 🤖4 📋1 🙋11 🚧10 +12 -3 #17
@@ -138,7 +138,7 @@ if [[ -d .red/tmp ]]; then
   total_removed=0
   current_issues=()
 
-  for state in .red/tmp/work-*/afk.state.json; do
+  for state in .red/tmp/workers/*/*/afk.state.json; do
     state_is_live "$state" || continue
     state_read_into st "$state"
 

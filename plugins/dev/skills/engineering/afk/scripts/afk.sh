@@ -272,8 +272,9 @@ emit_history() {
 }
 
 # ---------- orphan iteration cleanup ----------
-# Sweeps $TMP_DIR/work-*/ at boot. An iteration dir is orphaned when its
-# orchestrator pid is dead. For each orphan:
+# Sweeps nested $TMP_DIR/workers/*/*/ attempt dirs at boot (plus a drain-first
+# wipe of any leftover flat work-*/). An attempt dir is orphaned when its parent
+# worker's worker.pid is dead. For each orphan:
 #   - (heartbeat sub-shell retired — Slice D)
 #   - if the issue is closed OR no longer carries ready-for-human → rm -rf
 #   - if the issue is still labelled running (orchestrator crashed mid-issue)
@@ -291,12 +292,31 @@ prune_orphans() {
   local now_s; now_s="$(date +%s)"
 
   shopt -s nullglob
+
+  # Drain-first cutover (#252): old flat-scheme work-* dirs are never created by
+  # this version. Wipe any left over from a pre-cutover run whose orchestrator
+  # is dead, removing their dangling git worktrees first.
   for d in "$TMP_DIR"/work-*/; do
     [[ -d "$d" ]] || continue
-    local pid_file="$d/afk.pid"
+    local op="$d/afk.pid" opid=""
+    [[ -f "$op" ]] && opid="$(cat "$op" 2>/dev/null)"
+    if [[ -z "$opid" ]] || ! kill -0 "$opid" 2>/dev/null; then
+      git -C "$PROJECT_ROOT" worktree remove --force "${d%/}/worktree" 2>/dev/null || true
+      rm -rf "$d"
+      pruned=$((pruned+1))
+    fi
+  done
+  git -C "$PROJECT_ROOT" worktree prune 2>/dev/null || true
+
+  # Orphan attempt dirs under the nested layout: an attempt is orphaned when its
+  # parent worker's worker.pid is dead (PRD #244 #252). Liveness keys off
+  # workers/{wid}/worker.pid, never directory existence.
+  for d in "$TMP_DIR"/workers/*/*/; do
+    [[ -d "$d" ]] || continue
+    local pid_file; pid_file="$(dirname "${d%/}")/worker.pid"
     local state_file="$d/afk.state.json"
 
-    # active worker → skip
+    # parent worker alive → skip (its attempt dirs are in use)
     if [[ -f "$pid_file" ]]; then
       local p; p="$(cat "$pid_file" 2>/dev/null)"
       if [[ -n "$p" ]] && kill -0 "$p" 2>/dev/null; then
@@ -364,6 +384,19 @@ prune_orphans() {
       rm -rf "$d"
       pruned=$((pruned+1))
     fi
+  done
+
+  # Sweep dead per-worker pids and now-empty worker dirs (PRD #244 #252).
+  for pid_file in "$TMP_DIR"/workers/*/worker.pid; do
+    [[ -f "$pid_file" ]] || continue
+    local wp; wp="$(cat "$pid_file" 2>/dev/null)"
+    if [[ -z "$wp" ]] || ! kill -0 "$wp" 2>/dev/null; then
+      rm -f "$pid_file" 2>/dev/null
+    fi
+  done
+  local wdir
+  for wdir in "$TMP_DIR"/workers/*/; do
+    [[ -d "$wdir" ]] && rmdir "$wdir" 2>/dev/null || true
   done
   shopt -u nullglob
 
@@ -522,8 +555,12 @@ iter_close_success() {
 }
 
 iter_close_preserve() {
-  # blocker / interrupt — keep dir for human, only drop the pid so monitor flags as inactive.
-  [[ -n "$ITER_PID_FILE" && -f "$ITER_PID_FILE" ]] && rm -f "$ITER_PID_FILE"
+  # blocker / interrupt — keep the attempt dir for human inspection, but zero the
+  # state file's .pid so monitor / mirror / statusline read it as not-live
+  # (state_is_live → false). Replicates the old per-attempt afk.pid removal.
+  # The per-worker worker.pid is NOT touched — the worker process is still alive
+  # and moves on to the next issue.
+  [[ -n "$STATE_FILE" && -f "$STATE_FILE" ]] && state_write "$STATE_FILE" pid:=0
   ITER_DIR="" STATE_FILE="" ITER_LOG="" ITER_PID_FILE="" AGENT_LANE="" FIREHOSE=""
   claim_lock_release
 }
