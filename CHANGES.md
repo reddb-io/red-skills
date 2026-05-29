@@ -6,6 +6,19 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 
 ---
 
+## afk reaper watches the agent lane + process cross-check (modified)
+
+- **status**: modified
+- **upstream**: —
+- **why**: Issue #251 (under PRD #244, closes #243) — the slice that finally *wires* the reaper-signal predicate (#248) into the fleet supervisor and repoints liveness onto the clean agent lane (#250). Until now the passive stall detector and hard reaper keyed off `afk.log`, which the orchestrator heartbeat writes every minute — so a hung worker's log kept advancing and both the stall flag and the irreversible kill were masked (#243). And even once flagged, the kill fired on lane silence alone, so a worker sitting mid-`pnpm build`/`vitest` (silent on the agent lane but genuinely busy) would be reaped. This slice closes #243 end-to-end: a genuinely stalled worker is detected and reclaimed; a busy one is not.
+- **what changed**:
+  - `plugins/dev/skills/engineering/afk/scripts/supervisor.sh`: sources `lib/reaper-signal.sh`; `poll_stall_detector` now reads liveness from the clean agent lane via the new `find_slot_agent_lane` (which, with `find_slot_iter_log`, delegates to the shared `find_slot_iter_dir` pid→dir lookup) instead of `afk.log`, so the heartbeat can no longer keep a stalled slot's mtime fresh. The hard-reap escalation is gated behind `reaper_signal_decide`: the supervisor samples the worker tree (`sup_active_descendant` matches a build/test executable from the overridable `REAPER_BUSY_CMD_RE` against `ps -o comm=`; `sup_tree_cpu` aggregates `%cpu` across the orchestrator pid + descendants via the guarded `sup_descendant_pids`) and only calls `reap_stalled_slot` when the predicate returns `kill` (idle past `RED_AFK_STALL_KILL_THRESHOLD_S` AND no active descendant AND flat cpu); a busy candidate logs a `🛡️ … deferring reap` line and is left alone. Header comment rewritten to document the agent-lane liveness signal and the kill gate.
+  - `plugins/dev/skills/engineering/afk/scripts/afk.sh`: `iter_open` now creates the agent lane empty (`: >> "$AGENT_LANE"`) at t0 alongside `afk.log`, so the supervisor has a liveness baseline from the start of the iteration — a worker that wedges before its first turn still ages past the stall/kill thresholds instead of reading "no log yet" forever.
+  - `plugins/dev/skills/engineering/afk/scripts/tests/stall-detector.test.sh`: liveness fixtures rewritten to write/age the agent lane (afk.log kept fresh to prove the detector ignores it); adds a `find_slot_agent_lane` resolution assertion.
+  - `plugins/dev/skills/engineering/afk/scripts/tests/stall-reaper.test.sh`: stages the agent lane (aged) alongside afk.log so `poll_stall_detector` still flags the slot, and stubs `sup_active_descendant`/`sup_tree_cpu` to "genuinely stuck" so the end-to-end kill path runs deterministically.
+  - `plugins/dev/skills/engineering/afk/scripts/tests/stall-agent-lane.test.sh` (new): the #243 regression — 16 assertions covering (1) flagged from agent-lane silence while afk.log is fresh, (2) a stuck worker reaped past the kill threshold despite a fresh afk.log, (3) no reap while a build/test descendant is active, and (4) no reap while the worker tree shows non-trivial cpu.
+  - `plugins/dev/skills/engineering/afk/SKILL.md`: the fleet-supervisor section now documents the detector keying off the agent lane (not `afk.log`/firehose) and the reaper's busy-vs-stuck gate.
+
 ## afk clean agent lane + firehose; heartbeat off the agent lane (modified)
 
 - **status**: modified
