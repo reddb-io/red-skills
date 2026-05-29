@@ -14,32 +14,32 @@ Generate concrete Skill improvement proposals from Skill telemetry evidence.
 Prefer JSON when another agent or command will inspect the result:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/dist/cli.js" improve skills --json
+node "${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap.mjs" improve skills --json
 ```
 
 To write proposal files:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/dist/cli.js" improve skills --write-proposal --json
+node "${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap.mjs" improve skills --write-proposal --json
 ```
 
 To list and inspect pending proposal files before applying or archiving:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/dist/cli.js" improve proposals list --json
-node "${CLAUDE_PLUGIN_ROOT}/dist/cli.js" improve proposals show .red/memory/proposals/<proposal>.md --json
+node "${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap.mjs" improve proposals list --json
+node "${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap.mjs" improve proposals show .red/memory/proposals/<proposal>.md --json
 ```
 
 To apply a reviewed proposal that contains a structured patch block:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/dist/cli.js" improve apply .red/memory/proposals/<proposal>.md --yes --json
+node "${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap.mjs" improve apply .red/memory/proposals/<proposal>.md --yes --json
 ```
 
 To remove a reviewed proposal from the pending queue without deleting history:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/dist/cli.js" improve proposals archive .red/memory/proposals/<proposal>.md --reason rejected --yes --json
+node "${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap.mjs" improve proposals archive .red/memory/proposals/<proposal>.md --reason rejected --yes --json
 ```
 
 The command writes proposals under:

@@ -33,7 +33,7 @@ tell the user to re-run `memory init --mode graph`.
 ## 2. Ingest
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/dist/cli.js" ingest <path>
+node "${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap.mjs" ingest <path>
 ```
 
 `<path>` is the directory to walk (defaults to `.`). Add `--max-files N` to cap
@@ -43,9 +43,9 @@ build/coverage output are ignored by default.
 ## 3. Refresh Changed Files
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/dist/cli.js" refresh <file...> --root .
-node "${CLAUDE_PLUGIN_ROOT}/dist/cli.js" refresh --staged --root .
-git diff --cached --name-only -z | node "${CLAUDE_PLUGIN_ROOT}/dist/cli.js" refresh --stdin --root .
+node "${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap.mjs" refresh <file...> --root .
+node "${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap.mjs" refresh --staged --root .
+git diff --cached --name-only -z | node "${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap.mjs" refresh --stdin --root .
 ```
 
 Use `refresh` after small edits or from git hooks. It is graph-mode only and

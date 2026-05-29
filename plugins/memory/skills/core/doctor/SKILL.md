@@ -24,7 +24,7 @@ initialized or is markdown-only, say so and stop — there is no graph to inspec
 Always list before deleting:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/dist/cli.js" doctor
+node "${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap.mjs" doctor
 ```
 
 Add `--stale-days N` to change the threshold. This only **lists** — nothing is
@@ -36,7 +36,7 @@ If the user wants the stale nodes gone, re-run with `--prune`. It re-lists the
 candidates and asks for a typed `yes` before deleting:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/dist/cli.js" doctor --prune
+node "${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap.mjs" doctor --prune
 ```
 
 In a non-interactive shell, `--prune` refuses unless `--yes` is also passed. Pass

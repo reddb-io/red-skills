@@ -28,16 +28,14 @@ The `memory` plugin requires the `dev` plugin (it builds on dev's processes —
 
 <what-to-do>
 
-## 1. Build the CLI if needed (first run only)
+## 1. Runtime is fetched automatically (no build step)
 
-The plugin ships **source only** — `dist/` and `node_modules/` are gitignored and
-built on the user's machine. If `${CLAUDE_PLUGIN_ROOT}/dist/cli.js` does not
-exist, build it (needs only node + pnpm, nothing else):
-
-```bash
-pnpm --dir "${CLAUDE_PLUGIN_ROOT}" install
-pnpm --dir "${CLAUDE_PLUGIN_ROOT}" build
-```
+`${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap.mjs` ships with the plugin and resolves
+the runtime on first use — it downloads the bundled CLI (`memory-cli.mjs`) plus
+the native `red` engine into `~/.cache/reddb-memory/<version>/` and verifies
+their checksums (ADR 0029). There is nothing to build or `pnpm install`; the
+first command below just pays a one-time download (needs network). Every command
+in these skills runs through the bootstrap, which delegates to the fetched CLI.
 
 ## 2. Run the wizard
 
@@ -46,13 +44,13 @@ Pass the mode the user picked:
 
 ```bash
 # markdown-only — no engine, nothing auto-fires
-node "${CLAUDE_PLUGIN_ROOT}/dist/cli.js" init --mode markdown-only
+node "${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap.mjs" init --mode markdown-only
 
 # graph — typed knowledge graph over a per-project RedDB store
-node "${CLAUDE_PLUGIN_ROOT}/dist/cli.js" init --mode graph
+node "${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap.mjs" init --mode graph
 
 # graph with the four auto-firing hooks on (recall/index/extract/flush)
-node "${CLAUDE_PLUGIN_ROOT}/dist/cli.js" init --mode graph --hooks
+node "${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap.mjs" init --mode graph --hooks
 ```
 
 markdown-only writes `.red/memory/config.json` (all hooks off, MCP off, RedDB

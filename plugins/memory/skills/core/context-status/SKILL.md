@@ -12,13 +12,13 @@ Read-only healthcheck for the agent context stack. It reports committed context,
 ## 1. Run the status report
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/dist/cli.js" status context
+node "${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap.mjs" status context
 ```
 
 Use JSON for automation:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/dist/cli.js" status context --json
+node "${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap.mjs" status context --json
 ```
 
 ## 2. Interpret the posture

@@ -12,7 +12,7 @@ Read-only diagnostic for the self-improvement loop. It shows whether Skill telem
 ## 1. Run the diagnostic
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/dist/cli.js" status skills
+node "${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap.mjs" status skills
 ```
 
 Use `--all` to include bundled plugin/hub skills, and `--json` when another script needs structured output.
@@ -31,7 +31,7 @@ Do not treat non-enabled states as errors; this command is a diagnostic and exit
 - If telemetry is enabled and the user wants maintenance recommendations, run:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/dist/cli.js" curate skills
+node "${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap.mjs" curate skills
 ```
 
 - If there are archive candidates and the user wants to act, use the `dev` plugin's `/curate` workflow. The Memory plugin's curator is report-only.
