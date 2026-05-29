@@ -91,6 +91,15 @@ sup_kill_tree() {
   return 0
 }
 
+# Gate samplers (issue #251): the reap is now gated behind reaper_signal_decide,
+# which the supervisor feeds from sup_active_descendant + sup_tree_cpu. Stub
+# both to "genuinely stuck" (no build/test descendant, flat cpu) so this
+# end-to-end reaper test exercises the kill path deterministically without a
+# live process tree. The busy-worker (no-kill) branch is covered separately in
+# stall-agent-lane.test.sh.
+sup_active_descendant() { echo no; }
+sup_tree_cpu() { echo 0; }
+
 # Stage the iter dir as a real worker would: afk.pid + afk.state.json +
 # afk.log + handoff.md.
 RED_AFK_TARGET=1
@@ -120,6 +129,10 @@ cat > "$ITER_DIR/afk.log" <<'EOF'
 [afk] worker: wTEST
 [afk] inner: stalled tool call — never returns
 EOF
+# The agent lane is the liveness signal poll_stall_detector samples (#251); the
+# reaper still reads afk.log above for the envelope's log tail. Stage the lane
+# so the slot stays flagged when poll recomputes from it.
+echo '{"type":"agent","msg":"last turn before the stall"}' > "$ITER_DIR/agent.log.jsonl"
 cat > "$ITER_DIR/handoff.md" <<'EOF'
 # Issue #190
 <agent-notes>
@@ -137,9 +150,10 @@ SLOT_REAPED=(0)
 SLOT_PARKED=(0)
 SLOT_SWEPT=(0)
 
-# Back-date the log mtime to before the kill window so compute_stalled
-# still returns yes inside poll_stall_detector.
-touch -d "@$(( $(date +%s) - 120 ))" "$ITER_DIR/afk.log"
+# Back-date the agent-lane mtime to before the kill window so compute_stalled
+# still returns yes inside poll_stall_detector. afk.log stays fresh (as a live
+# heartbeat would keep it) to prove liveness is read from the lane, not afk.log.
+touch -d "@$(( $(date +%s) - 120 ))" "$ITER_DIR/agent.log.jsonl"
 
 # Drive the public entry point — poll detects the stall is past the kill
 # threshold and dispatches reap_stalled_slot.
@@ -198,15 +212,16 @@ ITER_DIR2="$TMP_ROOT/.red/tmp/work-${WID2}-i0"
 mkdir -p "$ITER_DIR2"
 echo "$$" > "$ITER_DIR2/afk.pid"
 : > "$ITER_DIR2/afk.log"
+: > "$ITER_DIR2/agent.log.jsonl"
 
 SLOT_PIDS=("$$")
 SLOT_STALL_SINCE_EPOCH=("$(( $(date +%s) - 120 ))")
 SLOT_STALLED=(1)
-SLOT_STALL_LOG=("$ITER_DIR2/afk.log")
+SLOT_STALL_LOG=("$ITER_DIR2/agent.log.jsonl")
 SLOT_REAPED=(0)
 
 : >"$GH_CALLS"; : >"$TMP_ROOT/kill.calls"
-touch -d "@$(( $(date +%s) - 120 ))" "$ITER_DIR2/afk.log"
+touch -d "@$(( $(date +%s) - 120 ))" "$ITER_DIR2/agent.log.jsonl"
 
 poll_stall_detector
 
