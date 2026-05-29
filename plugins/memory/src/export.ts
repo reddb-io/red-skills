@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { diagnose, type StaleNode } from "./doctor.js";
+import { buildGraphContract } from "./graph-contract.js";
 import type { MemoryStore, StoredNode, VectorStatusReport } from "./graph-store.js";
 import { redactGraphData, type PrivacyFinding } from "./privacy.js";
 import type { Confidence, MemoryDoc } from "./schema.js";
@@ -112,8 +113,14 @@ export async function exportGraph(
   const withCommunity = (rid: number) =>
     opts.communities ? { community: communities.get(rid) ?? null } : {};
 
+  // Versioned integration seam (#234): the stable contract consumers negotiate
+  // against. Built from the same (redacted) nodes/edges and the community map so
+  // it stays consistent with the rest of the bundle.
+  const contract = buildGraphContract({ nodes, edges, communities });
+
   const json = {
     generated_at: new Date().toISOString(),
+    contract,
     stats,
     health: dashboard.health,
     evidence: dashboard.evidence,
