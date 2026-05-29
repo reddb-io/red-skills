@@ -610,6 +610,144 @@ iter_close_preserve() {
   claim_lock_release
 }
 
+# ---------- completion sweep + attempt cap (issue #257, PRD #244) ----------
+# The local-disk side of completion cleanup. Two reclaimers share one invariant:
+# never remove a *live* worker's active attempt (an attempt whose own state file
+# carries a live pid). The cross-worker reach comes entirely from
+# lib/worker-paths.sh's canonical `workers/*/<issue>-a*` glob — neither function
+# is limited to the worker that happens to call it.
+
+# _attempt_dir_is_live <dir> — rc 0 iff the attempt's own state file is live.
+# This is the single guard that keeps both the sweep and the cap off any attempt
+# a worker is still running (issue #257 acceptance: never touch a live attempt).
+_attempt_dir_is_live() {
+  state_is_live "${1%/}/afk.state.json"
+}
+
+# _drop_attempt_dir <dir> — remove one attempt dir, worktree first. Reuses
+# iter_drop_worktree so the linked git worktree is unregistered from the parent
+# repo before the directory is force-removed. Best-effort, rc-0 no-op on a
+# missing dir.
+_drop_attempt_dir() {
+  local d="${1%/}"
+  [[ -n "$d" && -d "$d" ]] || return 0
+  iter_drop_worktree "$d/worktree"
+  rm -rf "$d"
+}
+
+# completion_sweep_issue <issue> [root]
+# On issue completion, remove EVERY attempt directory for that issue across ALL
+# workers (the cross-worker `<root>/workers/*/<issue>-a*` glob from
+# lib/worker-paths.sh), worktree first. A live worker's active attempt is skipped
+# — though the claim lock makes a live duplicate of a just-completed issue
+# unlikely, the guard keeps the sweep correct if one exists. Best-effort and
+# always rc 0: a no-op when nothing matches.
+completion_sweep_issue() {
+  local issue="$1" root="${2:-$TMP_DIR}"
+  _worker_paths_valid_number "$issue" || return 0
+  local glob; glob="$(worker_paths_issue_glob "$root" "$issue")" || return 0
+  local swept=0 d
+  shopt -s nullglob
+  # Intentional unquoted expansion: worker_paths_issue_glob returns the glob as a
+  # literal pattern (it never touches the filesystem), so the shell expands it
+  # here under nullglob (no matches → empty loop).
+  for d in $glob; do
+    [[ -d "$d" ]] || continue
+    if _attempt_dir_is_live "$d"; then
+      log "completion sweep #$issue: skip live attempt $d"
+      continue
+    fi
+    _drop_attempt_dir "$d"
+    swept=$((swept + 1))
+  done
+  shopt -u nullglob
+  git -C "$PROJECT_ROOT" worktree prune 2>/dev/null || true
+  [[ $swept -gt 0 ]] && log "completion sweep #$issue: removed $swept attempt dir(s) across all workers"
+  return 0
+}
+
+# attempt_ttl_s  →  prints the resolved age cap in seconds (default 14 days).
+# Defensive: a non-numeric/zero RED_AFK_ATTEMPT_TTL_S falls back to the default
+# so an operator typo can never disable the cap.
+attempt_ttl_s() {
+  local v="${RED_AFK_ATTEMPT_TTL_S:-$((14 * 86400))}"
+  if [[ "$v" =~ ^[0-9]+$ ]] && (( v > 0 )); then echo "$v"; else echo $((14 * 86400)); fi
+}
+
+# attempt_keep  →  prints the resolved per-issue count cap (default 5, newest
+# kept). Defensive against operator typos like attempt_ttl_s.
+attempt_keep() {
+  local v="${RED_AFK_ATTEMPT_KEEP:-5}"
+  if [[ "$v" =~ ^[0-9]+$ ]] && (( v > 0 )); then echo "$v"; else echo 5; fi
+}
+
+# cap_issue_attempts [root]
+# Fallback for issues that never complete (completion_sweep_issue only fires on a
+# completion). Walks every attempt dir across all workers, groups by issue, and
+# for each issue prunes dirs that exceed either cap, newest kept by attempt
+# number:
+#   - age cap   — mtime older than attempt_ttl_s (blocked-forever work).
+#   - count cap — more than attempt_keep retained attempts for one issue.
+# Live attempts are never counted toward the cap nor removed. Best-effort, rc 0.
+cap_issue_attempts() {
+  local root="${1:-$TMP_DIR}"
+  local ttl keep now_s capped=0
+  ttl="$(attempt_ttl_s)"; keep="$(attempt_keep)"; now_s="$(date +%s)"
+
+  shopt -s nullglob
+  # Distinct issue numbers present across all workers.
+  local -A seen=()
+  local d parsed _w issue _a
+  for d in "$root"/workers/*/*-a*/; do
+    [[ -d "${d%/}" ]] || continue
+    parsed="$(worker_paths_parse "${d%/}")" || continue
+    read -r _w issue _a <<<"$parsed"
+    seen["$issue"]=1
+  done
+
+  for issue in "${!seen[@]}"; do
+    local glob; glob="$(worker_paths_issue_glob "$root" "$issue")" || continue
+    # Collect non-live attempts as tab-delimited "mtime<TAB>attempt<TAB>dir".
+    local rows=() m a p
+    for d in $glob; do
+      [[ -d "$d" ]] || continue
+      _attempt_dir_is_live "$d" && continue
+      m="$(stat -c %Y "$d" 2>/dev/null || echo 0)"
+      p="$(worker_paths_parse "${d%/}")" || continue
+      read -r _w _a a <<<"$p"
+      rows+=("$(printf '%s\t%s\t%s' "$m" "$a" "${d%/}")")
+    done
+    (( ${#rows[@]} == 0 )) && continue
+
+    # Age cap: drop anything older than the TTL; the rest survive to the count cap.
+    local survivors=() row mtime dir
+    for row in "${rows[@]}"; do
+      IFS=$'\t' read -r mtime _a dir <<<"$row"
+      if (( now_s - mtime > ttl )); then
+        _drop_attempt_dir "$dir"
+        capped=$((capped + 1))
+      else
+        survivors+=("$row")
+      fi
+    done
+
+    # Count cap: keep the newest <keep> by attempt number, drop the oldest rest.
+    (( ${#survivors[@]} > keep )) || continue
+    local drop_n=$(( ${#survivors[@]} - keep )) i=0 line
+    while IFS= read -r line; do
+      (( i < drop_n )) || break
+      IFS=$'\t' read -r _m _a dir <<<"$line"
+      _drop_attempt_dir "$dir"
+      capped=$((capped + 1))
+      i=$((i + 1))
+    done < <(printf '%s\n' "${survivors[@]}" | sort -t$'\t' -k2 -n)
+  done
+  shopt -u nullglob
+  git -C "$PROJECT_ROOT" worktree prune 2>/dev/null || true
+  [[ $capped -gt 0 ]] && log "attempt cap: reclaimed $capped attempt dir(s) over age/count limits"
+  return 0
+}
+
 # afk_firehose <type> <msg> [KEY=VALUE]...
 # Append one non-agent (synthetic) record to the per-attempt firehose, stamped
 # with the current worker/issue/attempt identity. Used for the firehose's hook,
@@ -2916,6 +3054,13 @@ process_issue() {
   git -C "$PROJECT_ROOT" branch -d "$branch" 2>/dev/null || true
   fire_post_iteration "done" "$dur"
 
+  # Completion sweep (issue #257, PRD #244): the issue is closed and merged, so
+  # reclaim EVERY attempt dir for it across ALL workers — not just this worker's
+  # just-retained one. Runs after fire_post_iteration so the post-iteration hook
+  # still sees the snapshot paths. The split-teardown retention (#256) only
+  # buys time for the orphan-sweep TTL; a completed issue needs none of it.
+  completion_sweep_issue "$n"
+
   log "✓ #$n done in ${dur}s — merge $merge_sha — $fb"
 
   # rotate runner for next issue if alternating
@@ -3044,6 +3189,11 @@ else
 fi
 
 prune_orphans
+# Age/count cap (issue #257, PRD #244): the completion sweep only fires when an
+# issue completes; issues that never complete (blocked-forever) would otherwise
+# leak attempt dirs. Cap them here at boot, after the orphan sweep has cleared
+# dead-worker dirs, so only the still-relevant attempts are weighed.
+cap_issue_attempts
 sweep_unblocked
 
 # --- straggler check: warn about issues that never made it to ready-for-agent
