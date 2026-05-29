@@ -29,6 +29,14 @@ describe("extractCode", () => {
     expect(symbols).toHaveLength(5);
   });
 
+  test("captures exported names on the file node for the graph contract", async () => {
+    const { nodes } = await extractCode(TS_FIXTURE);
+    const file = nodes.find((n) => n.node_type === "file");
+    expect(file?.properties.exports).toEqual(
+      expect.arrayContaining(["Session", "UserId", "TokenStore", "issueToken", "verifyToken"]),
+    );
+  });
+
   test("emits a DEFINED_IN edge from every symbol to its file", async () => {
     const { nodes, edges } = await extractCode(TS_FIXTURE);
     const fileNode = nodes.find((n) => n.node_type === "file");

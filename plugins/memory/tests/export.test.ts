@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { exportGraph } from "../src/export.js";
+import { GRAPH_CONTRACT_VERSION, validateGraphContract } from "../src/graph-contract.js";
 import { MemoryStore } from "../src/graph-store.js";
 
 const TIMEOUT = 30_000;
@@ -162,6 +163,82 @@ describe("export", () => {
       const result = await exportGraph(store, join(dir, "export"));
       const audit = await readFile(result.auditPath, "utf8");
       expect(audit).toContain("Orphan nodes (no edges):** 1");
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "graph.json carries a versioned contract that validates against the schema",
+    async () => {
+      const { store, dir } = await openStore();
+      // A file that "defines" a symbol and "imports" a module; a referenced
+      // peer; and a lonely note with no inbound edges (an orphan).
+      const file = await store.upsertNode({
+        label: "file:/repo/src/auth.ts",
+        node_type: "file",
+        properties: {
+          title: "/repo/src/auth.ts",
+          description: "auth module",
+          exports: ["issueToken"],
+          layer: "L3",
+        },
+      });
+      const sym = await store.upsertNode({
+        label: "sym:/repo/src/auth.ts#issueToken",
+        node_type: "symbol",
+        properties: { title: "issueToken", summary: "function" },
+      });
+      const dep = await store.upsertNode({
+        label: "import:/repo/src/auth.ts#node:crypto",
+        node_type: "import",
+        properties: { title: "node:crypto" },
+      });
+      await store.upsertNode({
+        label: "lonely",
+        node_type: "concept",
+        properties: { title: "lonely note", content: "no inbound edges" },
+      });
+      await store.upsertEdge({ label: "DEFINED_IN", from_rid: sym, to_rid: file });
+      await store.upsertEdge({ label: "IMPORTS", from_rid: file, to_rid: dep });
+
+      const result = await exportGraph(store, join(dir, "export"), { communities: true });
+      const json = JSON.parse(await readFile(result.jsonPath, "utf8"));
+
+      // Validates against the published schema.
+      const validation = validateGraphContract(json.contract);
+      expect(validation).toEqual({ valid: true, errors: [] });
+      expect(json.contract.version).toBe(GRAPH_CONTRACT_VERSION);
+
+      const node = (rid: number) =>
+        json.contract.nodes.find((n: { id: number }) => n.id === rid);
+      // description + exports round-trip from ingest.
+      expect(node(file)).toMatchObject({
+        description: "auth module",
+        exports: ["issueToken"],
+        layer: "L3",
+      });
+      // Symbol description falls back to its summary; community attached.
+      expect(node(sym).description).toBe("function");
+      expect(node(sym).community).toBeTypeOf("string");
+
+      // Directional kinds: DEFINED_IN flips to defines (file→symbol), IMPORTS stays.
+      const kinds = json.contract.edges.map((e: { source: number; target: number; kind: string }) => e);
+      expect(kinds).toEqual(
+        expect.arrayContaining([
+          { source: file, target: sym, kind: "defines", label: "DEFINED_IN", direction: "directed" },
+          { source: file, target: dep, kind: "imports", label: "IMPORTS", direction: "directed" },
+        ]),
+      );
+
+      // Orphan flagging: the symbol is defined-in (inbound) so not an orphan;
+      // the lonely note and the file (no inbound) are orphans.
+      const orphans = json.contract.nodes
+        .filter((n: { orphan: boolean }) => n.orphan)
+        .map((n: { label: string }) => n.label)
+        .sort();
+      expect(orphans).toContain("lonely");
+      expect(orphans).toContain("file:/repo/src/auth.ts");
+      expect(node(sym).orphan).toBe(false);
     },
     TIMEOUT,
   );
