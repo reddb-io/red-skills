@@ -33,7 +33,7 @@ import { resolveHooks } from "../core/hook-config.js";
 import { attemptLedgerContext, formatAttemptContext, highestAttempt, type AttemptDirEntry } from "../core/attempt-ledger.js";
 import { isValidWorkerId } from "../core/worker-paths.js";
 import { readdirSync } from "node:fs";
-import { specialUserRequestBlock } from "../core/runner-spawn.js";
+import { specialUserRequestBlock, claudeSpawnArgs, codexSpawnArgs } from "../core/runner-spawn.js";
 import { buildWorkerAttemptPath } from "../core/worker-paths.js";
 import { branchLockPath, readLockedBranch, isLocked } from "../runtime/lock.js";
 import { makeHookExec, makeHookResolveOptions, hookEnv } from "../runtime/hooks.js";
@@ -195,6 +195,7 @@ function buildProcessDeps(
   feedback: FeedbackWorktree,
   current: CurrentAttempt,
   fallbackRunner: boolean,
+  runner: Runner,
 ): ProcessIssueDeps {
   const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo };
   const gitCtx: GitContext = { cwd: ctx.root };
@@ -250,6 +251,18 @@ function buildProcessDeps(
     runAgent: makeRunAgent(sandbox),
     model,
     fallbackRunner,
+    // One-shot merge-conflict resolver (merge_resolve_conflict): re-enter the
+    // configured runner in the primary checkout with the resolver prompt. The
+    // merge primitive verifies git state afterwards, so a non-zero / thrown
+    // runner here is swallowed. Mirrors run_claude / run_codex on $PROJECT_ROOT.
+    conflictResolver: async (prompt: string) => {
+      const invocation =
+        runner === "codex"
+          ? codexSpawnArgs({ prompt, worktree: ctx.root, lastMessagePath: join(paths.tmpDir, "merge-resolve.last") })
+          : claudeSpawnArgs({ prompt, worktree: ctx.root });
+      const { execTool } = await import("../runtime/exec.js");
+      await execTool(invocation.command, invocation.args, { cwd: ctx.root });
+    },
     hooks: {
       config,
       resolveOptions,
@@ -404,7 +417,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
     bootDeps,
     bootOptions,
     processIssue,
-    processDeps: buildProcessDeps(ctx, settings.model, settings.sandbox, feedback, current, flags.fallbackRunner),
+    processDeps: buildProcessDeps(ctx, settings.model, settings.sandbox, feedback, current, flags.fallbackRunner, runner),
     // Session-scoped lifecycle hooks (PRD #207): compose the same config /
     // resolver / exec / env the process deps use, so session + per-issue points
     // share one dispatcher rather than duplicating the wiring.

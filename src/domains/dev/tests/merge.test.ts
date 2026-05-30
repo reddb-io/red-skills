@@ -3,6 +3,8 @@ import {
   integrateOrigin,
   landMerge,
   landPr,
+  resolveMergeConflict,
+  buildConflictPrompt,
   type Exec,
   type ExecResult,
 } from "../src/core/merge.js";
@@ -259,5 +261,68 @@ describe("landPr (unlocked path)", () => {
       title: "t",
     });
     expect(result.ok).toBe(false);
+  });
+});
+
+describe("resolveMergeConflict (one-shot self-resolver)", () => {
+  // unmerged-paths and MERGE_HEAD reads drive the verdict; the resolver itself
+  // only side-effects the checkout (faked).
+  function exec(
+    over: { unmerged?: string; mergeHeadCode?: number } = {},
+  ): { exec: Exec; calls: string[][] } {
+    const calls: string[][] = [];
+    const e: Exec = async (argv) => {
+      calls.push(argv);
+      const j = argv.join(" ");
+      if (j.includes("status")) return { code: 0, stdout: "On branch main\nUnmerged paths", stderr: "" };
+      if (j.includes("diff --name-only --diff-filter=U")) {
+        return { code: 0, stdout: over.unmerged ?? "", stderr: "" };
+      }
+      if (j.includes("diff")) return { code: 0, stdout: "<<<<<<< conflict\n=======\n>>>>>>>", stderr: "" };
+      if (j.includes("rev-parse -q --verify MERGE_HEAD")) {
+        return { code: over.mergeHeadCode ?? 1, stdout: "", stderr: "" };
+      }
+      return { code: 0, stdout: "", stderr: "" };
+    };
+    return { exec: e, calls };
+  }
+
+  const input = { repo: "/repo", branch: "afk/wX/9-x", n: 9, title: "fix", target: "main" };
+
+  it("returns resolved when no unmerged paths remain and MERGE_HEAD is cleared", async () => {
+    const { exec: e } = exec({ unmerged: "", mergeHeadCode: 1 });
+    let prompt = "";
+    const r = await resolveMergeConflict(e, async (p) => { prompt = p; }, input);
+    expect(r.resolved).toBe(true);
+    // the resolver was dispatched with a prompt carrying the branch + issue.
+    expect(prompt).toContain("afk/wX/9-x");
+    expect(prompt).toContain("#9");
+  });
+
+  it("falls back (unmerged-paths) when conflicts remain after the runner", async () => {
+    const { exec: e } = exec({ unmerged: "src/x.ts\n", mergeHeadCode: 0 });
+    const r = await resolveMergeConflict(e, async () => {}, input);
+    expect(r).toEqual({ resolved: false, reason: "unmerged-paths" });
+  });
+
+  it("falls back (uncommitted-merge) when the merge was left uncommitted", async () => {
+    // no unmerged paths, but MERGE_HEAD still verifies (rc 0) → merge not committed.
+    const { exec: e } = exec({ unmerged: "", mergeHeadCode: 0 });
+    const r = await resolveMergeConflict(e, async () => {}, input);
+    expect(r).toEqual({ resolved: false, reason: "uncommitted-merge" });
+  });
+
+  it("still verifies git state when the runner throws (best-effort dispatch)", async () => {
+    const { exec: e } = exec({ unmerged: "", mergeHeadCode: 1 });
+    const r = await resolveMergeConflict(e, async () => { throw new Error("runner blew up"); }, input);
+    expect(r.resolved).toBe(true);
+  });
+
+  it("truncates the diff context to 400 lines in the prompt", () => {
+    const diff = Array.from({ length: 1000 }, (_, i) => `line ${i}`).join("\n");
+    const prompt = buildConflictPrompt(input, "status", diff);
+    expect(prompt).toContain("line 0");
+    expect(prompt).toContain("line 399");
+    expect(prompt).not.toContain("line 400");
   });
 });

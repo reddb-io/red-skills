@@ -8,10 +8,12 @@
 // reading the (optionally JSON) mutated context back from stdout. This module
 // supplies that executor over a real shell, plus the env every hook receives.
 
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { execTool } from "./exec.js";
 import type { HookExec } from "../core/hook-dispatcher.js";
 import { scriptDefaultResolver, type ResolveHooksOptions } from "../core/hook-config.js";
+import { skillDirFromModule } from "../platform/legacy.js";
 
 /**
  * A real `HookExec`: runs the hook command through `sh -c`, passing the
@@ -32,13 +34,25 @@ export function makeHookExec(cwd: string): HookExec {
 
 /**
  * The default-command resolver bound to the shipped hook scripts. The built-in
- * defaults (cargo / gradle / heartbeat / envelope / validation) live under
- * `<root>/.red/hooks/defaults`; a default whose script is absent is skipped, so
- * an install without the scripts simply runs no default for that point.
+ * defaults (cargo / gradle / heartbeat / envelope / validation) ship inside the
+ * AFK skill at `<plugin>/defaults/<name>.sh` — NOT in the consuming project's
+ * checkout. hook-config.sh anchors its `defaults_dir` on the plugin root the
+ * same way (`<plugin>/defaults`); the native cutover wrongly pointed at
+ * `<root>/.red/hooks/defaults`, so the cargo/gradle per-slot build-isolation
+ * defaults (and heartbeat/envelope/validation) never registered. Resolve the
+ * plugin root from this module's own location, falling back to the legacy
+ * project path if the skill dir cannot be located (e.g. a bundled copy without
+ * the surrounding tree), so an install without the scripts simply runs no
+ * default for that point.
  */
 export function makeHookResolveOptions(root: string): ResolveHooksOptions {
-  const defaultsDir = join(root, ".red", "hooks", "defaults");
-  return { defaultCommand: scriptDefaultResolver(defaultsDir) };
+  let defaultsDir: string;
+  try {
+    defaultsDir = join(skillDirFromModule(), "defaults");
+  } catch {
+    defaultsDir = join(root, ".red", "hooks", "defaults");
+  }
+  return { defaultCommand: scriptDefaultResolver(defaultsDir, existsSync) };
 }
 
 /** The RED_AFK_* env handed to every hook command. */

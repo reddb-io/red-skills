@@ -235,7 +235,7 @@ describe("runBoot orphan cleanup applies each fate", () => {
     const orphans: OrphanDir[] = [{ path: "/d/closed", issue: 1, ageS: 0 }];
     const r = await runBoot(deps, options({ orphans }));
     expect(fsCalls.removeDir).toEqual(["/d/closed"]);
-    expect(r.orphanCleanup).toEqual({ removed: ["/d/closed"], restored: [], kept: [] });
+    expect(r.orphanCleanup).toEqual({ removed: ["/d/closed"], restored: [], kept: [], legacyWiped: [], claimsReleased: [] });
   });
 
   it("restores ready-for-agent then removes a crashed `running` orphan", async () => {
@@ -255,7 +255,7 @@ describe("runBoot orphan cleanup applies each fate", () => {
       { issue: 7, body: "🤖 /afk orchestrator died mid-issue; restoring ready-for-agent." },
     ]);
     expect(fsCalls.removeDir).toEqual(["/d/running"]);
-    expect(r.orphanCleanup).toEqual({ removed: ["/d/running"], restored: [7], kept: [] });
+    expect(r.orphanCleanup).toEqual({ removed: ["/d/running"], restored: [7], kept: [], legacyWiped: [], claimsReleased: [] });
     // edit + comment fire before the rm.
     expect(calls.filter((c) => c.startsWith("gh.") || c === "fs.removeDir:/d/running")).toEqual([
       "gh.editLabels:7",
@@ -279,7 +279,7 @@ describe("runBoot orphan cleanup applies each fate", () => {
     ];
     const r = await runBoot(deps, options({ orphans }));
     expect(fsCalls.removeDir).toEqual(["/d/old"]);
-    expect(r.orphanCleanup).toEqual({ removed: ["/d/old"], restored: [], kept: ["/d/young"] });
+    expect(r.orphanCleanup).toEqual({ removed: ["/d/old"], restored: [], kept: ["/d/young"], legacyWiped: [], claimsReleased: [] });
   });
 
   it("a dir with no state file never queries gh and is kept under the 1-day TTL", async () => {
@@ -293,6 +293,70 @@ describe("runBoot orphan cleanup applies each fate", () => {
     await runBoot(deps, options({ orphans }));
     expect(queried).toBe(false);
     expect(fsCalls.removeDir).toEqual([]);
+  });
+});
+
+describe("runBoot legacy work-* drain-wipe (#252)", () => {
+  it("unconditionally removes every dead legacy work dir, before the orphan sweep", async () => {
+    const { deps, calls, fsCalls } = makeDeps();
+    const r = await runBoot(
+      deps,
+      options({
+        legacyWorkDirs: ["/p/.red/tmp/work-001", "/p/.red/tmp/work-002"],
+        orphans: [{ path: "/d/orphan", issue: null, ageS: 10 * DAY }],
+      }),
+    );
+    expect(fsCalls.removeDir).toEqual([
+      "/p/.red/tmp/work-001",
+      "/p/.red/tmp/work-002",
+      "/d/orphan",
+    ]);
+    expect(r.orphanCleanup?.legacyWiped).toEqual([
+      "/p/.red/tmp/work-001",
+      "/p/.red/tmp/work-002",
+    ]);
+    // the legacy wipe fires before any orphan-dir removal.
+    const removes = calls.filter((c) => c.startsWith("fs.removeDir:"));
+    expect(removes[0]).toBe("fs.removeDir:/p/.red/tmp/work-001");
+  });
+
+  it("is a no-op when there are no legacy dirs", async () => {
+    const { deps, fsCalls } = makeDeps();
+    const r = await runBoot(deps, options());
+    expect(fsCalls.removeDir).toEqual([]);
+    expect(r.orphanCleanup?.legacyWiped).toEqual([]);
+  });
+});
+
+describe("runBoot stale claim-lock sweep", () => {
+  it("reclaims every stale claim dir, after the orphan sweep", async () => {
+    const { deps, calls, fsCalls } = makeDeps();
+    const r = await runBoot(
+      deps,
+      options({
+        orphans: [{ path: "/d/orphan", issue: null, ageS: 10 * DAY }],
+        staleClaimDirs: [{ path: "/p/.red/tmp/claims/7" }, { path: "/p/.red/tmp/claims/9" }],
+      }),
+    );
+    expect(r.orphanCleanup?.claimsReleased).toEqual([
+      "/p/.red/tmp/claims/7",
+      "/p/.red/tmp/claims/9",
+    ]);
+    // claim sweep runs LAST — after the orphan-dir removal.
+    const removes = calls.filter((c) => c.startsWith("fs.removeDir:"));
+    expect(removes).toEqual([
+      "fs.removeDir:/d/orphan",
+      "fs.removeDir:/p/.red/tmp/claims/7",
+      "fs.removeDir:/p/.red/tmp/claims/9",
+    ]);
+    expect(fsCalls.removeDir).toContain("/p/.red/tmp/claims/7");
+  });
+
+  it("is a no-op when no claim is stale", async () => {
+    const { deps, fsCalls } = makeDeps();
+    const r = await runBoot(deps, options());
+    expect(fsCalls.removeDir).toEqual([]);
+    expect(r.orphanCleanup?.claimsReleased).toEqual([]);
   });
 });
 

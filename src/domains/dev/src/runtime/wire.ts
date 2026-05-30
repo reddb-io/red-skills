@@ -274,6 +274,13 @@ export async function collectBootOptions(
 
   const unblockCandidates = await ghx.listUnblockCandidates(ghCtx);
 
+  // Stale claim-lock sweep + pre-cutover work-* drain-wipe (#252). Both probe
+  // pid liveness at discovery so boot's orphan step stays a pure removal.
+  const [staleClaimDirs, legacyWorkDirs] = await Promise.all([
+    fsx.listStaleClaimDirs(paths.tmpDir),
+    fsx.listLegacyWorkDirs(paths.tmpDir),
+  ]);
+
   return {
     precheck: facts,
     bootstrap,
@@ -281,6 +288,8 @@ export async function collectBootOptions(
     attemptCap: { byIssue },
     branches: { snapshotRefs, remoteLiveRefs, localLiveRefs },
     unblockCandidates,
+    staleClaimDirs,
+    legacyWorkDirs,
   };
 }
 

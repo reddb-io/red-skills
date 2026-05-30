@@ -36,6 +36,116 @@ function isAlive(pid: number): boolean {
 }
 
 /**
+ * Internal supervisor-only RED_AFK_* env vars that must NOT pass through to
+ * spawned workers. These either drive the supervisor itself (target / poll /
+ * breaker / stall thresholds) or are wired through dedicated paths (request,
+ * runner, per-slot _BASE). Anything else prefixed `RED_AFK_` IS forwarded so an
+ * operator can `export RED_AFK_SKIP_PERF=1` before launching the fleet and have
+ * it reach every worker without writing a hook. Mirrors supervisor.sh's
+ * PASSTHROUGH_DENYLIST exactly.
+ */
+export const PASSTHROUGH_DENYLIST: readonly string[] = [
+  "RED_AFK_TARGET",
+  "RED_AFK_REQUEST",
+  "RED_AFK_RUNNER",
+  "RED_AFK_POLL_S",
+  "RED_AFK_STALL_POLL_S",
+  "RED_AFK_STALL_THRESHOLD_S",
+  "RED_AFK_STALL_KILL_THRESHOLD_S",
+  "RED_AFK_CIRCUIT_K",
+  "RED_AFK_CIRCUIT_WINDOW_S",
+  "RED_AFK_PLUGIN_DIR",
+  "RED_AFK_SLOT",
+  "RED_AFK_WORKER_ID",
+  "RED_AFK_EXIT_CODE",
+  "RED_AFK_DURATION_S",
+];
+
+/**
+ * The set of operator `RED_AFK_*` vars forwarded to a worker: every `RED_AFK_*`
+ * key in `source` that is NOT in {@link PASSTHROUGH_DENYLIST} and NOT a per-slot
+ * `_BASE` build-isolation var. Pure over the injected env bag. Mirrors the
+ * `compgen -e | grep '^RED_AFK_'` scan in build_passthrough_env, exposed
+ * separately so the denylist logic is unit-testable.
+ */
+export function passthroughKeys(source: Record<string, string | undefined>): string[] {
+  const deny = new Set(PASSTHROUGH_DENYLIST);
+  return Object.keys(source)
+    .filter((key) => key.startsWith("RED_AFK_") && !deny.has(key) && !key.endsWith("_BASE"))
+    .sort();
+}
+
+/**
+ * Build the full worker env for a spawned slot. Start from the supervisor's
+ * environment, STRIP every internal supervisor knob ({@link PASSTHROUGH_DENYLIST})
+ * and every per-slot `_BASE` build-isolation var so they can never leak to the
+ * worker, then re-pin `RED_AFK_RUNNER` to the supervisor's runner. Operator-set
+ * `RED_AFK_*` vars and the rest of the environment pass through untouched. Pure
+ * over the injected env bag for testing (build_passthrough_env intent).
+ */
+export function buildWorkerEnv(
+  source: Record<string, string | undefined>,
+  runner: string,
+): Record<string, string> {
+  const deny = new Set(PASSTHROUGH_DENYLIST);
+  const out: Record<string, string> = {};
+  for (const [key, val] of Object.entries(source)) {
+    if (val === undefined) continue;
+    if (key.startsWith("RED_AFK_") && (deny.has(key) || key.endsWith("_BASE"))) continue;
+    out[key] = val;
+  }
+  out.RED_AFK_RUNNER = runner;
+  return out;
+}
+
+/**
+ * Parse the supervisor's own argv (forwarded by fleet.ts) into the filter /
+ * runner-swap policy flags each slot's `run --once` must carry, so a supervised
+ * fleet honours the same PRD/issue filter + alternate/fallback policy a single
+ * `/afk run` would. Recognises the value flags `--prd` / `--issues` / `--request`
+ * (with `-r`) and the boolean flags `--alternate` / `--fallback-runner`, all in
+ * both `--flag value` and `--flag=value` forms. Unknown args are dropped (the
+ * supervisor only forwards the known filter/policy surface). Returns the argv
+ * fragment to append after `run --once --runner <r>`.
+ */
+export function slotFilterArgs(args: readonly string[]): string[] {
+  const out: string[] = [];
+  const valueFlags = new Map<string, string>([
+    ["--prd", "--prd"],
+    ["--issues", "--issues"],
+    ["--request", "--request"],
+    ["-r", "--request"],
+  ]);
+  const boolFlags = new Set(["--alternate", "--fallback-runner"]);
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i]!;
+    const eq = arg.indexOf("=");
+    if (eq > 0) {
+      const head = arg.slice(0, eq);
+      const canonical = valueFlags.get(head);
+      if (canonical) {
+        out.push(canonical, arg.slice(eq + 1));
+        continue;
+      }
+    }
+    const canonical = valueFlags.get(arg);
+    if (canonical) {
+      const value = args[i + 1];
+      if (value !== undefined) {
+        out.push(canonical, value);
+        i += 1;
+      }
+      continue;
+    }
+    if (boolFlags.has(arg)) {
+      out.push(arg);
+      continue;
+    }
+  }
+  return out;
+}
+
+/**
  * Build SupervisorDeps backed by REAL process / filesystem / gh IO. Every
  * closure mirrors a supervisor.sh function (see runtime/proc-tree.ts +
  * runtime/supervisor-fs.ts) and is best-effort: a failed ps / stat / gh degrades
@@ -52,18 +162,29 @@ function buildSupervisorDeps(
   logFd: number,
   runner: string,
   ghCtx: ghx.GhContext,
+  slotArgs: readonly string[],
 ): SupervisorDeps {
   const bundle = process.argv[1];
   const now = () => Math.floor(Date.now() / 1000);
   // slot index → live orchestrator pid (SLOT_PIDS parity).
   const slotPids = new Map<number, number>();
+  // Worker env (build_passthrough_env parity): start from the supervisor's full
+  // env, then STRIP every internal supervisor knob in PASSTHROUGH_DENYLIST plus
+  // every per-slot `_BASE` build-isolation var, so they never leak to the worker
+  // (gap 4). Operator-set RED_AFK_* vars (RED_AFK_SKIP_PERF, etc) and the rest of
+  // the environment survive. RED_AFK_RUNNER is re-added explicitly below so the
+  // worker's detection cascade pins the supervisor's runner.
+  const workerEnv = buildWorkerEnv(process.env, runner);
 
   return {
     proc: {
       spawnSlot: async (slot) => {
-        const child = spawn(process.execPath, [bundle, "run", "--once", "--runner", runner], {
+        // Forward the PRD/issue filter + runner-swap policy so a supervised
+        // fleet honours the same filter a single `/afk run` would (gap 5).
+        const runArgs = ["run", "--once", "--runner", runner, ...slotArgs];
+        const child = spawn(process.execPath, [bundle, ...runArgs], {
           cwd: root,
-          env: { ...process.env, RED_AFK_RUNNER: runner },
+          env: workerEnv,
           detached: true,
           stdio: ["ignore", logFd, logFd],
         });
@@ -165,7 +286,10 @@ export async function superviseCommand(args: string[], cwd = process.cwd()): Pro
   const state = initSupervisorState(config.target);
   const repo = await resolveRepoSlug(root).catch(() => "");
   const ghCtx = { cwd: root, repo };
-  const deps = buildSupervisorDeps(root, tmp, logFd, config.runner, ghCtx);
+  // The filter/policy flags fleet.ts forwarded (--prd/--issues/--alternate/
+  // --fallback-runner/--request), threaded into every slot's `run --once`.
+  const slotArgs = slotFilterArgs(args);
+  const deps = buildSupervisorDeps(root, tmp, logFd, config.runner, ghCtx, slotArgs);
 
   const stopRequested = (): boolean => existsSync(stopFile);
 

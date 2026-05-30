@@ -77,7 +77,9 @@ import {
   integrateOrigin,
   landMerge,
   landPr,
+  resolveMergeConflict,
   type Exec as MergeExec,
+  type ConflictResolver,
 } from "./merge.js";
 import { emitEnvelope, type EmitEnvelopeDeps, type SectionBodies } from "./envelope-emit.js";
 import { dispatchHooks, type HookExec } from "./hook-dispatcher.js";
@@ -202,6 +204,14 @@ export interface ProcessIssueDeps {
    * false (default), a single exhaustion is terminal.
    */
   fallbackRunner?: boolean;
+  /**
+   * One-shot inner-agent merge-conflict resolver (merge_resolve_conflict). When
+   * a `git merge --no-ff` leaves conflicts in the primary checkout, dispatch the
+   * configured runner once with the resolver prompt. Returns void; the merge
+   * primitive verifies the git state afterwards. Optional: when absent, a merge
+   * conflict goes straight to ready-for-human (the pre-recovery behaviour).
+   */
+  conflictResolver?: ConflictResolver;
   /** Envelope-emit IO (poster / marker writer / posted writer / git push). */
   envelope: EmitEnvelopeDeps;
   /** Clock: epoch seconds (date +%s) and an ISO timestamp (date -Iseconds). */
@@ -387,6 +397,11 @@ export async function processIssue(
     handoffPath,
     branch,
     base,
+    // Restore the issue #191 continuous-push guarantee: sandcastle pushes the
+    // worker branch up-front + after every commit (host worktree hook), so a
+    // SIGKILL mid-iteration preserves the diff on origin. Best-effort.
+    remote: input.remote,
+    continuousPush: true,
   });
 
   // ---- runner-fallback subsystem (--fallback-runner / RUNNER_EXHAUSTED) ----
@@ -414,7 +429,15 @@ export async function processIssue(
     ) {
       return await abortAfterClaim(deps, input, branch, base, hooksFired, "pre_attempt");
     }
-    run = await deps.runAgent({ runner: other, model: deps.model, handoffPath, branch, base });
+    run = await deps.runAgent({
+      runner: other,
+      model: deps.model,
+      handoffPath,
+      branch,
+      base,
+      remote: input.remote,
+      continuousPush: true,
+    });
     if (run.outcome === "exhausted") {
       // Both runners exhausted → close the fallback attempt's cycle, then it is
       // terminal with the double-exhaustion (both-runners) history event.
@@ -559,6 +582,35 @@ export async function processIssue(
       title: input.title,
     });
     landed = r.ok;
+  }
+  // One-shot self-resolve (merge_resolve_conflict, SKILL.md step 8): when the
+  // `git merge --no-ff` left conflicts, dispatch the configured runner once to
+  // resolve + commit the merge in the primary checkout. The resolver verifies
+  // git state (no unmerged paths, MERGE_HEAD cleared); on success the landing
+  // continues to close, otherwise we `git merge --abort` and fall through to the
+  // ready-for-human merge-conflict path. Only attempted on the LOCKED path,
+  // where the merge happens locally — the unlocked PR path never merges in this
+  // checkout (gh admin-merges remotely), so there is nothing to resolve here.
+  if (!landed && locked && deps.conflictResolver) {
+    const resolved = await resolveMergeConflict(deps.mergeExec, deps.conflictResolver, {
+      repo: input.repoDir,
+      branch: workerBranch,
+      n: issue,
+      title: input.title,
+      target: base,
+    });
+    if (resolved.resolved) {
+      const push = await deps.mergeExec(["git", "-C", input.repoDir, "push", input.remote, base]);
+      if (push.code === 0) {
+        landed = true;
+      } else {
+        await deps.mergeExec(["git", "-C", input.repoDir, "reset", "--hard", preMergeSha]);
+      }
+    } else {
+      // Still conflicting → abandon the merge so the checkout is clean for the
+      // next iteration, then surface ready-for-human below.
+      await deps.mergeExec(["git", "-C", input.repoDir, "merge", "--abort"]);
+    }
   }
   if (!landed) {
     return await mergeFailed(common, "land-failed", locked);
