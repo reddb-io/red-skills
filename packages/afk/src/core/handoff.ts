@@ -1,0 +1,272 @@
+// handoff — pure assembly of the AFK handoff.md file, ported from the bash
+// builders in afk.sh (`build_previous_attempts`, `build_human_guidance`,
+// `build_thread_discussion`, `build_retry_handoff_body`).
+//
+// The whole module is pure string assembly: no `gh`, no `jq`, no network, no
+// filesystem. The orchestrator injects everything that touches the world —
+// the issue comments (already projected to `{author, body, createdAt}`), the
+// already-fetched prior-attempt-context block (issue #255), the resolved
+// source url and `started` timestamp — so the layout is deterministic and
+// unit-testable.
+//
+// Comment routing reuses the single source of truth in comment-classification:
+// `classifyComment` decides envelope / directive / discussion, and
+// `extractDirectives` pulls the verbatim directive bodies. A directive-carrier
+// comment emits one `<human-guidance>` element PER extracted directive (so a
+// comment with two markers emits two siblings with identical author/at); a
+// narrative comment with no marker emits one `<thread-discussion-entry>`.
+//
+// Top-level XML wrappers appear in template order, and any section that would
+// be empty is omitted entirely — byte-for-byte matching the bash:
+//   <issue-body> · <previous-attempts> · <human-guidance-thread> ·
+//   <prior-attempt-context> · <thread-discussion> · <agent-notes>
+
+import { classifyComment, extractDirectives } from "./comment-classification.js";
+
+/** A comment as projected by the orchestrator from `gh issue view --json comments`. */
+export interface HandoffComment {
+  body: string;
+  /** GitHub login of the author; defaults to `unknown` when absent. */
+  author?: string;
+  /** ISO-8601 creation timestamp; the `at="…"` attribute is omitted when absent. */
+  createdAt?: string;
+}
+
+export interface HandoffInput {
+  /** Issue number. */
+  issue: number;
+  /** Issue title (the `# Issue #N — {title} [AFK]` heading). */
+  title: string;
+  /** Issue body, surfaced verbatim inside `<issue-body>`. */
+  body: string;
+  /** Runner name (`claude` | `codex`). */
+  runner: string;
+  /** `started:` timestamp — injected, never read from a clock here. */
+  started: string;
+  /** Attempt number (1-based). */
+  attempt: number;
+  /** Resolved `gh` issue url for the `source:` line. */
+  url: string;
+  /** Issue comments in chronological order. */
+  comments: HandoffComment[];
+  /**
+   * Already-fetched restart-informed retry block (issue #255). Empty/undefined
+   * on a first attempt, so `<prior-attempt-context>` is omitted and the
+   * first-attempt handoff is byte-for-byte unchanged.
+   */
+  priorAttemptContext?: string;
+  /** Optional PRD reference for the `prd: #N` line (FILTER_KIND=prd in bash). */
+  prdRef?: string;
+}
+
+/** Trimmed-of-all-whitespace emptiness test (bash `[[ -n "$x" ]]` after capture). */
+function isPresent(value: string | undefined): value is string {
+  return value !== undefined && value.length > 0;
+}
+
+/** The envelope's `data-attempt-status` value, or "" — mirrors `envelope_field status`. */
+function envelopeFieldStatus(body: string): string {
+  return /data-attempt-status="([^"]*)"/.exec(body)?.[1] ?? "";
+}
+
+/** The summary line's `worker \`…\`` value, or "" — mirrors `envelope_field worker`. */
+function envelopeFieldWorker(body: string): string {
+  return /worker `([^`]*)`/.exec(body)?.[1] ?? "";
+}
+
+/** The summary line's `duration: <nonspace>` value, or "" — mirrors `envelope_field duration`. */
+function envelopeFieldDuration(body: string): string {
+  return /duration: ([^ ]*)/.exec(body)?.[1] ?? "";
+}
+
+/**
+ * Raw content of an envelope's `<details data-section="name">` block, or null
+ * when absent. Mirrors `envelope_section`: captures lines up to the next
+ * `</details>` at section depth, drops the `<summary>…</summary>` line, then
+ * strips leading/trailing blank lines and a single matching ```…``` fence pair.
+ */
+function envelopeSection(body: string, name: string): string | null {
+  const open = `<details data-section="${name}">`;
+  const lines = body.split("\n");
+  const captured: string[] = [];
+  let capture = false;
+  let found = false;
+
+  for (const line of lines) {
+    if (capture) {
+      if (/^<\/details>\s*$/.test(line)) {
+        capture = false;
+        continue;
+      }
+      if (/^<summary>.*<\/summary>\s*$/.test(line)) continue;
+      captured.push(line);
+      continue;
+    }
+    if (line.includes(open)) {
+      capture = true;
+      found = true;
+    }
+  }
+
+  if (!found) return null;
+  return stripFencesAndBlanks(captured);
+}
+
+/** Peel surrounding blank lines and one matching ```…``` fence pair (`_strip_log_fences_and_blanks`). */
+function stripFencesAndBlanks(lines: string[]): string {
+  let first = -1;
+  let last = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (!/^\s*$/.test(lines[i]!)) {
+      if (first === -1) first = i;
+      last = i;
+    }
+  }
+  if (first === -1) return "";
+  if (/^```/.test(lines[first]!) && /^```\s*$/.test(lines[last]!) && last > first) {
+    first += 1;
+    last -= 1;
+  }
+  return lines.slice(first, last + 1).join("\n");
+}
+
+/**
+ * `<previous-attempts>` inner body: one `<previous-attempt>` element per
+ * envelope comment, in chronological order, with status/worker/duration/branch
+ * attributes (when present) and `<notes>`/`<drop>`/`<log>` children. Returns ""
+ * when no comment is an envelope — caller suppresses the wrapper.
+ */
+export function buildPreviousAttempts(comments: HandoffComment[]): string {
+  const envelopes = comments.filter((c) => classifyComment({ body: c.body }) === "envelope");
+  if (envelopes.length === 0) return "";
+
+  const blocks: string[] = [];
+  envelopes.forEach((comment, index) => {
+    const body = comment.body;
+    const status = envelopeFieldStatus(body) || "unknown";
+    const worker = envelopeFieldWorker(body);
+    const duration = envelopeFieldDuration(body);
+    const branchRaw = envelopeSection(body, "branch");
+    const branch = branchRaw === null ? "" : branchRaw.split("\n", 1)[0]!;
+
+    let attr = `<previous-attempt n="${index + 1}" status="${status}"`;
+    if (isPresent(worker)) attr += ` worker="${worker}"`;
+    if (isPresent(duration)) attr += ` duration="${duration}"`;
+    if (isPresent(branch)) attr += ` branch="${branch}"`;
+    attr += ">";
+
+    const parts = [attr];
+    const notes = envelopeSection(body, "notes");
+    if (isPresent(notes ?? undefined)) parts.push(`<notes>\n${notes}\n</notes>`);
+    const drop = envelopeSection(body, "drop");
+    if (isPresent(drop ?? undefined)) parts.push(`<drop>\n${drop}\n</drop>`);
+    const log = envelopeSection(body, "log");
+    if (isPresent(log ?? undefined)) parts.push(`<log>\n${log}\n</log>`);
+    parts.push("</previous-attempt>");
+    blocks.push(parts.join("\n"));
+  });
+
+  return blocks.join("\n");
+}
+
+/**
+ * `<human-guidance-thread>` inner body: one `<human-guidance>` element per
+ * extracted directive, in document order within each directive-carrier comment
+ * and chronological order across comments. A comment with two markers emits two
+ * siblings with identical author/at. Returns "" when no directive exists.
+ */
+export function buildHumanGuidance(comments: HandoffComment[]): string {
+  const blocks: string[] = [];
+  for (const comment of comments) {
+    if (classifyComment({ body: comment.body }) !== "directive") continue;
+    const author = comment.author && comment.author.length > 0 ? comment.author : "unknown";
+    const created = comment.createdAt;
+    for (const directive of extractDirectives(comment.body)) {
+      const openTag = isPresent(created)
+        ? `<human-guidance author="@${author}" at="${created}">`
+        : `<human-guidance author="@${author}">`;
+      blocks.push(`${openTag}\n${directive}\n</human-guidance>`);
+    }
+  }
+  return blocks.join("\n");
+}
+
+/**
+ * `<thread-discussion>` inner body: one `<thread-discussion-entry>` per comment
+ * classified `discussion` (narrative, no directive marker, not audit noise),
+ * wrapping the verbatim body in chronological order. Returns "" when none.
+ */
+export function buildThreadDiscussion(comments: HandoffComment[]): string {
+  const blocks: string[] = [];
+  for (const comment of comments) {
+    if (classifyComment({ body: comment.body }) !== "discussion") continue;
+    const author = comment.author && comment.author.length > 0 ? comment.author : "unknown";
+    const created = comment.createdAt;
+    const openTag = isPresent(created)
+      ? `<thread-discussion-entry author="@${author}" at="${created}">`
+      : `<thread-discussion-entry author="@${author}">`;
+    blocks.push(`${openTag}\n${comment.body}\n</thread-discussion-entry>`);
+  }
+  return blocks.join("\n");
+}
+
+/**
+ * Assemble the full handoff.md content. Pure: no network, no filesystem. The
+ * top-level XML wrappers appear in template order; any empty section is omitted
+ * entirely (matching the bash `build_retry_handoff_body`). `<prior-attempt-context>`
+ * is omitted whenever `priorAttemptContext` is empty/undefined (first attempt).
+ */
+export function buildHandoff(input: HandoffInput): string {
+  const lines: string[] = [];
+  lines.push(`# Issue #${input.issue} — ${input.title} [AFK]`);
+  lines.push("");
+  lines.push(`source: ${input.url}`);
+  if (isPresent(input.prdRef)) lines.push(`prd: #${input.prdRef}`);
+  lines.push(`runner: ${input.runner}`);
+  lines.push(`started: ${input.started}`);
+  lines.push(`attempt: ${input.attempt}`);
+  lines.push("");
+  lines.push("<issue-body>");
+  lines.push(input.body);
+  lines.push("</issue-body>");
+
+  const attempts = buildPreviousAttempts(input.comments);
+  const guidance = buildHumanGuidance(input.comments);
+  const discussion = buildThreadDiscussion(input.comments);
+  const priorCtx = input.priorAttemptContext ?? "";
+
+  if (isPresent(attempts)) {
+    lines.push("");
+    lines.push("<previous-attempts>");
+    lines.push(attempts);
+    lines.push("</previous-attempts>");
+  }
+
+  if (isPresent(guidance)) {
+    lines.push("");
+    lines.push("<human-guidance-thread>");
+    lines.push(guidance);
+    lines.push("</human-guidance-thread>");
+  }
+
+  if (isPresent(priorCtx)) {
+    lines.push("");
+    lines.push("<prior-attempt-context>");
+    lines.push(priorCtx);
+    lines.push("</prior-attempt-context>");
+  }
+
+  if (isPresent(discussion)) {
+    lines.push("");
+    lines.push("<thread-discussion>");
+    lines.push(discussion);
+    lines.push("</thread-discussion>");
+  }
+
+  lines.push("");
+  lines.push("<agent-notes>");
+  lines.push("<!-- inner agent appends progress/blockers here across attempts -->");
+  lines.push("</agent-notes>");
+
+  return lines.join("\n") + "\n";
+}

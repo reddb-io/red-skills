@@ -1,0 +1,476 @@
+// boot — the AFK boot-time sequence, ported from afk.sh's top-level startup
+// (lines ~3344-3395: precheck → bootstrap → prune_orphans → cap_issue_attempts
+// → prune_completed_attempt_branches → prune_completed_remote_live_branches →
+// prune_completed_local_branches → sweep_unblocked → straggler_check), plus the
+// SKILL.md "Bootstrap / Hard Preconditions / Orphan Cleanup / Attempt Cap /
+// Snapshot Branch Grace Cleanup / Unblock Sweep / Straggler Check" sections.
+//
+// This module is PURE SEQUENCING. It owns only the ORDER of the boot steps and
+// the compose-decider-then-apply pattern: every step composes one of the already
+// ported pure deciders (reclaim.ts / branch-cleanup.ts / boot-sweep.ts) and then
+// applies the plan's side effects through injected gh/fs/git IO. No real gh, git,
+// or fs call lives here — the deciders perform no IO, and `runBoot` performs IO
+// only through the injected `deps`.
+
+import {
+  decideOrphanFate,
+  planAttemptCap,
+  resolveAttemptKeep,
+  resolveAttemptTtlS,
+  type AttemptDir,
+  type IssueOpenState,
+} from "./reclaim.js";
+import {
+  planAttemptSnapshotCleanup,
+  planLiveBranchCleanup,
+  planLocalBranchCleanup,
+  branchesToReap,
+  resolveSnapshotGraceS,
+  type BranchRef,
+  type IssueLookup,
+} from "./branch-cleanup.js";
+import {
+  planUnblockSweep,
+  stragglerCounts,
+  shouldWarnStragglers,
+  type BlockerStateLookup,
+  type StragglerCountLookup,
+  type StragglerCounts,
+  type UnblockCandidate,
+} from "./boot-sweep.js";
+
+// ---------- precheck (hard preconditions) ----------
+
+/** The hard preconditions the precheck enforces, in afk.sh order. A failure
+ * names exactly which precondition tripped so the caller can `die` with a
+ * faithful message. Mirrors precheck()'s `die` ladder. */
+export type Precondition =
+  | "gh-missing"
+  | "gh-unauthenticated"
+  | "not-a-git-repo"
+  | "https-remote-forbidden"
+  | "no-main-branch"
+  | "not-on-main"
+  | "pnpm-missing";
+
+/** Facts the precheck consumes. The caller resolves each via real IO (command
+ * lookups, `gh auth status`, `git remote -v`, `git branch --show-current`) and
+ * injects them so the precheck stays a pure rule over inputs. */
+export interface PrecheckFacts {
+  ghInstalled: boolean;
+  ghAuthenticated: boolean;
+  isGitRepo: boolean;
+  /** Every remote URL from `git remote -v` (deduped is fine). */
+  remoteUrls: readonly string[];
+  hasMainBranch: boolean;
+  /** `git branch --show-current` in the primary checkout. */
+  currentBranch: string;
+  pnpmInstalled: boolean;
+}
+
+/** A pass/fail precheck verdict. On failure, `failed` names the precondition and
+ * `detail` carries the offending value (e.g. the https URL, the wrong branch).
+ * pnpm-missing is a WARNING in afk.sh (`log "warn: …"`), not a `die`; it is
+ * surfaced via `warnings` while the verdict still passes. */
+export type PrecheckResult =
+  | { ok: true; warnings: string[] }
+  | { ok: false; failed: Precondition; detail?: string };
+
+/** Evaluate the hard preconditions in afk.sh order. The `die` ladder is:
+ *   gh installed → gh authenticated → is-git-repo → no https remote →
+ *   local main exists → on main. pnpm is the lone soft check (warn, not die),
+ *   evaluated last so a clean pass still reports the warning. */
+export function precheck(facts: PrecheckFacts): PrecheckResult {
+  if (!facts.ghInstalled) return { ok: false, failed: "gh-missing" };
+  if (!facts.ghAuthenticated) return { ok: false, failed: "gh-unauthenticated" };
+  if (!facts.isGitRepo) return { ok: false, failed: "not-a-git-repo" };
+  for (const url of facts.remoteUrls) {
+    if (url.startsWith("https://")) {
+      return { ok: false, failed: "https-remote-forbidden", detail: url };
+    }
+  }
+  if (!facts.hasMainBranch) return { ok: false, failed: "no-main-branch" };
+  if (facts.currentBranch !== "main") {
+    return { ok: false, failed: "not-on-main", detail: facts.currentBranch };
+  }
+  const warnings: string[] = [];
+  if (!facts.pnpmInstalled) {
+    warnings.push("pnpm not on PATH; feedback loops will be skipped");
+  }
+  return { ok: true, warnings };
+}
+
+// ---------- injected IO ----------
+
+/** Filesystem side effects the boot sequence needs. All are best-effort in
+ * afk.sh (`|| true`); the injected impl decides real semantics. */
+export interface BootFs {
+  /** mkdir -p */
+  ensureDir(path: string): Promise<void>;
+  /** Append a line to .gitignore iff not already present (grep -qxF guard). */
+  ensureGitignoreLine(gitignorePath: string, line: string): Promise<void>;
+  /** Write the per-worker `worker.pid` (printf '%s' $$ > worker.pid). */
+  writeWorkerPid(pidFile: string, pid: number): Promise<void>;
+  /** rm -rf an orphaned attempt dir. */
+  removeDir(path: string): Promise<void>;
+}
+
+/** gh side effects: label edits and audit/recovery comments. Best-effort. */
+export interface BootGh {
+  /** gh issue edit --remove-label … --add-label … */
+  editLabels(issue: number, remove: string[], add: string[]): Promise<void>;
+  /** gh issue comment --body … */
+  comment(issue: number, body: string): Promise<void>;
+}
+
+/** git side effects: delete a remote or local branch ref. Best-effort. The
+ * scope (remote vs local) is carried by the planner that produced the ref. */
+export interface BootGit {
+  /** Delete an origin branch (git push origin --delete <branch>). */
+  deleteRemoteBranch(branch: string): Promise<void>;
+  /** Delete a local branch (git branch -D <branch>). */
+  deleteLocalBranch(branch: string): Promise<void>;
+}
+
+/** Injected lookups the deciders need. Each mirrors a `gh issue view`/`gh issue
+ * list` call in afk.sh, kept out of this module so it stays IO-free. */
+export interface BootLookups {
+  /** Orphan-cleanup per-dir lookup: issue state + decision label + envelope
+   * flag. ghOk=false models a failed `gh issue view`. Mirrors the per-dir gh
+   * read inside prune_orphans. */
+  orphanState(issue: number): Promise<{
+    ghOk: boolean;
+    state: IssueOpenState;
+    label: string | null;
+    envelopePosted: boolean;
+  }>;
+  /** Branch-cleanup issue-state lookup (branch-cleanup.ts IssueLookup). */
+  branchIssue: IssueLookup;
+  /** Unblock-sweep blocker-state lookup (boot-sweep.ts BlockerStateLookup). */
+  blockerState: BlockerStateLookup;
+  /** Straggler per-bucket count lookups (boot-sweep.ts StragglerCountLookup). */
+  straggler: StragglerCountLookup;
+}
+
+/** All injected IO + lookups for the boot run. */
+export interface BootDeps {
+  fs: BootFs;
+  gh: BootGh;
+  git: BootGit;
+  lookups: BootLookups;
+  /** Current epoch seconds (date +%s), injected so the run is deterministic. */
+  nowS: number;
+  /** Env for the cap/grace resolvers (defaults to process.env). */
+  env?: Record<string, string | undefined>;
+}
+
+// ---------- step inputs ----------
+
+/** Bootstrap paths, pre-resolved by the caller from worker-paths.ts so this
+ * module never builds a path itself. */
+export interface BootstrapInput {
+  /** .red/tmp dir (mkdir -p). */
+  tmpDir: string;
+  /** .red/state dir (mkdir -p). */
+  stateDir: string;
+  /** Primary checkout .gitignore path. */
+  gitignorePath: string;
+  /** Per-worker dir (mkdir -p). */
+  workerDir: string;
+  /** Per-worker worker.pid path. */
+  workerPidFile: string;
+  /** This orchestrator's pid ($$). */
+  workerPid: number;
+}
+
+/** One orphaned attempt dir the caller discovered (dead-worker attempt dir).
+ * The caller has already stat'd the dir age and read the state file's issue
+ * number / envelope flag; `issue` is null for a dir with no parseable issue
+ * number (afk.sh's `-z issue_n` branch). */
+export interface OrphanDir {
+  path: string;
+  /** Issue number from the state file, or null when there is no state file. */
+  issue: number | null;
+  /** Dir age in seconds (now - mtime). */
+  ageS: number;
+}
+
+/** Attempt dirs grouped by issue for the cap pass (cap_issue_attempts walks
+ * every worker, groups by issue, then caps each group). */
+export interface AttemptCapInput {
+  byIssue: ReadonlyMap<number, readonly AttemptDir[]>;
+}
+
+/** Branch refs for the three branch-cleanup reapers, pre-listed by the caller
+ * (ls-remote / git branch). Local refs already exclude checked-out branches. */
+export interface BranchCleanupInput {
+  snapshotRefs: readonly BranchRef[];
+  remoteLiveRefs: readonly BranchRef[];
+  localLiveRefs: readonly BranchRef[];
+}
+
+/** The full set of per-step inputs the caller resolves before `runBoot`. */
+export interface BootOptions {
+  precheck: PrecheckFacts;
+  bootstrap: BootstrapInput;
+  orphans: readonly OrphanDir[];
+  attemptCap: AttemptCapInput;
+  branches: BranchCleanupInput;
+  unblockCandidates: readonly UnblockCandidate[];
+}
+
+// ---------- per-step results (for parity assertions / logging) ----------
+
+export interface OrphanCleanupResult {
+  removed: string[];
+  restored: number[];
+  /** Dirs kept (keep-until TTL not yet exceeded). */
+  kept: string[];
+}
+
+export interface AttemptCapResult {
+  reclaimed: string[];
+}
+
+export interface BranchCleanupResult {
+  snapshotReaped: string[];
+  remoteLiveReaped: string[];
+  localLiveReaped: string[];
+}
+
+export interface UnblockSweepResult {
+  promoted: number[];
+}
+
+export interface StragglerResult {
+  counts: StragglerCounts;
+  warn: boolean;
+}
+
+/** The boot run outcome. On a precheck failure the sequence short-circuits and
+ * only `precheck` is populated (the bash `die` aborts before any other step). */
+export interface BootResult {
+  precheck: PrecheckResult;
+  bootstrap?: { ok: true };
+  orphanCleanup?: OrphanCleanupResult;
+  attemptCap?: AttemptCapResult;
+  branchCleanup?: BranchCleanupResult;
+  unblockSweep?: UnblockSweepResult;
+  straggler?: StragglerResult;
+}
+
+// ---------- the orchestration ----------
+
+/**
+ * Run the AFK boot sequence IN ORDER, composing each pure decider and applying
+ * its plan through injected IO. The order is the parity target (afk.sh top-level
+ * startup):
+ *
+ *   1. precheck             — hard preconditions; a failure aborts the run.
+ *   2. bootstrap            — ensure .red/tmp + .red/state, gitignore lines,
+ *                             per-worker dir + worker.pid (via fs).
+ *   3. orphan cleanup       — decideOrphanFate per dead-worker attempt dir, then
+ *                             apply remove / restore-and-remove / keep (gh + fs).
+ *   4. attempt cap          — planAttemptCap per issue, remove the reclaimed dirs.
+ *   5. branch cleanup       — planAttemptSnapshotCleanup, planLiveBranchCleanup,
+ *                             planLocalBranchCleanup; delete reaped refs (git).
+ *   6. unblock sweep        — planUnblockSweep; edit labels + audit comment (gh).
+ *   7. straggler check      — stragglerCounts + shouldWarnStragglers → warn flag.
+ *
+ * Steps 3-7 run only after a passing precheck, mirroring the bash `die`/`set -e`
+ * abort. The TTY "proceed anyway?" prompt is the caller's: this returns the
+ * straggler warn flag, it does not block.
+ */
+export async function runBoot(deps: BootDeps, options: BootOptions): Promise<BootResult> {
+  // ---- 1. precheck ----
+  const pre = precheck(options.precheck);
+  if (!pre.ok) return { precheck: pre };
+
+  // ---- 2. bootstrap ----
+  const b = options.bootstrap;
+  await deps.fs.ensureDir(b.tmpDir);
+  await deps.fs.ensureDir(b.stateDir);
+  await deps.fs.ensureGitignoreLine(b.gitignorePath, ".red/tmp/");
+  await deps.fs.ensureGitignoreLine(b.gitignorePath, ".red/state/");
+  await deps.fs.ensureDir(b.workerDir);
+  await deps.fs.writeWorkerPid(b.workerPidFile, b.workerPid);
+
+  // ---- 3. orphan cleanup ----
+  const orphanCleanup = await runOrphanCleanup(deps, options.orphans);
+
+  // ---- 4. attempt cap ----
+  const attemptCap = await runAttemptCap(deps, options.attemptCap);
+
+  // ---- 5. snapshot grace + live/local branch cleanup ----
+  const branchCleanup = await runBranchCleanup(deps, options.branches);
+
+  // ---- 6. unblock sweep ----
+  const unblockSweep = await runUnblockSweep(deps, options.unblockCandidates);
+
+  // ---- 7. straggler check ----
+  const straggler = await runStragglerCheck(deps);
+
+  return {
+    precheck: pre,
+    bootstrap: { ok: true },
+    orphanCleanup,
+    attemptCap,
+    branchCleanup,
+    unblockSweep,
+    straggler,
+  };
+}
+
+/** Step 3: decideOrphanFate per dir, then apply the fate via gh + fs. Mirrors
+ * the prune_orphans inner loop:
+ *   - keep-until(ttl): remove iff the dir's age already exceeds the TTL; else keep.
+ *   - restore-and-remove: edit labels (running → ready-for-agent) + recovery
+ *     comment, then rm -rf.
+ *   - remove: rm -rf. */
+async function runOrphanCleanup(
+  deps: BootDeps,
+  orphans: readonly OrphanDir[],
+): Promise<OrphanCleanupResult> {
+  const removed: string[] = [];
+  const restored: number[] = [];
+  const kept: string[] = [];
+
+  for (const dir of orphans) {
+    const hasStateFile = dir.issue !== null;
+    let state: IssueOpenState = "OPEN";
+    let label: string | null = null;
+    let envelopePosted = false;
+    let ghOk = true;
+
+    if (hasStateFile && dir.issue !== null) {
+      const r = await deps.lookups.orphanState(dir.issue);
+      ghOk = r.ghOk;
+      state = r.state;
+      label = r.label;
+      envelopePosted = r.envelopePosted;
+    }
+
+    const fate = decideOrphanFate({
+      issueState: state,
+      label,
+      envelopePosted,
+      hasStateFile,
+      ageS: dir.ageS,
+      ghOk,
+    });
+
+    if (fate.kind === "remove") {
+      await deps.fs.removeDir(dir.path);
+      removed.push(dir.path);
+    } else if (fate.kind === "restore-and-remove") {
+      await deps.gh.editLabels(dir.issue!, ["running"], ["ready-for-agent"]);
+      await deps.gh.comment(
+        dir.issue!,
+        "🤖 /afk orchestrator died mid-issue; restoring ready-for-agent.",
+      );
+      restored.push(dir.issue!);
+      await deps.fs.removeDir(dir.path);
+      removed.push(dir.path);
+    } else {
+      // keep-until(ttlS): remove only once the dir has aged past the TTL.
+      if (dir.ageS > fate.ttlS) {
+        await deps.fs.removeDir(dir.path);
+        removed.push(dir.path);
+      } else {
+        kept.push(dir.path);
+      }
+    }
+  }
+
+  return { removed, restored, kept };
+}
+
+/** Step 4: planAttemptCap per issue with the resolved age/count caps, then rm
+ * -rf each reclaimed dir. Mirrors cap_issue_attempts. */
+async function runAttemptCap(deps: BootDeps, input: AttemptCapInput): Promise<AttemptCapResult> {
+  const ttlS = resolveAttemptTtlS(deps.env);
+  const keep = resolveAttemptKeep(deps.env);
+  const reclaimed: string[] = [];
+
+  for (const [, attempts] of input.byIssue) {
+    const reaped = planAttemptCap(attempts, { ttlS, keep, nowS: deps.nowS });
+    for (const dir of reaped) {
+      await deps.fs.removeDir(dir.path);
+      reclaimed.push(dir.path);
+    }
+  }
+
+  return { reclaimed };
+}
+
+/** Step 5: the three branch-cleanup planners, deleting only the reaped refs.
+ * Snapshot refs delete remotely (afk-attempts/*), remote-live refs delete
+ * remotely (afk/*), local-live refs delete locally. Order mirrors afk.sh:
+ * prune_completed_attempt_branches → _remote_live → _local. */
+async function runBranchCleanup(
+  deps: BootDeps,
+  input: BranchCleanupInput,
+): Promise<BranchCleanupResult> {
+  const graceS = resolveSnapshotGraceS(deps.env);
+
+  const snapshotPlan = planAttemptSnapshotCleanup(
+    input.snapshotRefs,
+    deps.lookups.branchIssue,
+    deps.nowS,
+    graceS,
+  );
+  const snapshotReaped: string[] = [];
+  for (const d of branchesToReap(snapshotPlan)) {
+    await deps.git.deleteRemoteBranch(d.branch);
+    snapshotReaped.push(d.branch);
+  }
+
+  const remoteLivePlan = planLiveBranchCleanup(
+    input.remoteLiveRefs,
+    deps.lookups.branchIssue,
+    deps.nowS,
+  );
+  const remoteLiveReaped: string[] = [];
+  for (const d of branchesToReap(remoteLivePlan)) {
+    await deps.git.deleteRemoteBranch(d.branch);
+    remoteLiveReaped.push(d.branch);
+  }
+
+  const localLivePlan = planLocalBranchCleanup(
+    input.localLiveRefs,
+    deps.lookups.branchIssue,
+    deps.nowS,
+  );
+  const localLiveReaped: string[] = [];
+  for (const d of branchesToReap(localLivePlan)) {
+    await deps.git.deleteLocalBranch(d.branch);
+    localLiveReaped.push(d.branch);
+  }
+
+  return { snapshotReaped, remoteLiveReaped, localLiveReaped };
+}
+
+/** Step 6: planUnblockSweep, then promote each planned issue (remove
+ * ready-for-human, add ready-for-agent) and post its audit comment. Mirrors
+ * sweep_unblocked. */
+async function runUnblockSweep(
+  deps: BootDeps,
+  candidates: readonly UnblockCandidate[],
+): Promise<UnblockSweepResult> {
+  const plans = await planUnblockSweep(candidates, deps.lookups.blockerState);
+  const promoted: number[] = [];
+  for (const p of plans) {
+    await deps.gh.editLabels(p.number, ["ready-for-human"], ["ready-for-agent"]);
+    await deps.gh.comment(p.number, p.comment);
+    promoted.push(p.number);
+  }
+  return { promoted };
+}
+
+/** Step 7: gather the straggler counts and decide whether to warn. The actual
+ * TTY "proceed anyway?" prompt is the caller's — this only returns the flag.
+ * Mirrors straggler_check. */
+async function runStragglerCheck(deps: BootDeps): Promise<StragglerResult> {
+  const counts = await stragglerCounts(deps.lookups.straggler);
+  return { counts, warn: shouldWarnStragglers(counts) };
+}
