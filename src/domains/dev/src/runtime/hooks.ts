@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { execTool } from "./exec.js";
 import type { HookExec } from "../core/hook-dispatcher.js";
 import { scriptDefaultResolver, type ResolveHooksOptions } from "../core/hook-config.js";
-import { skillDirFromModule } from "../platform/legacy.js";
+import { skillDirFromModule } from "../platform/skill-paths.js";
 
 /**
  * A real `HookExec`: runs the hook command through `sh -c`, passing the

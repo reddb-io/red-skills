@@ -33,7 +33,7 @@ numbers. The script is quiet when no AFK worker is active.
 {
   "statusLine": {
     "type": "command",
-    "command": "bash ${CLAUDE_PLUGIN_ROOT}/skills/engineering/afk/scripts/statusline.sh \"$CLAUDE_PROJECT_DIR\"",
+    "command": "node \"$CLAUDE_PLUGIN_ROOT/skills/engineering/afk/bin/afk.mjs\" statusline \"$CLAUDE_PROJECT_DIR\"",
     "refreshInterval": 5
   }
 }
@@ -41,11 +41,12 @@ numbers. The script is quiet when no AFK worker is active.
 
 `${CLAUDE_PLUGIN_ROOT}` is substituted by Claude Code to the installed plugin
 path, so the statusline always runs the newest installed version — never pin a
-`…/cache/<version>/…` path. The trailing `"$CLAUDE_PROJECT_DIR"` is the
-project root Claude Code was started in, passed as the script's first argument
-so it reads that checkout's `.red/tmp/workers/` regardless of where the command
-itself runs; when the variable is unset the script falls back to the stdin
-payload's cwd.
+`…/cache/<version>/…` path. The command runs the dependency-free AFK bundle's
+`statusline` subcommand. The trailing `"$CLAUDE_PROJECT_DIR"` is the project
+root Claude Code was started in, passed as the command's first argument so it
+reads that checkout's `.red/tmp/workers/` regardless of where the command itself
+runs; when the variable is unset the command falls back to the stdin payload's
+cwd.
 
 Use `jq` to merge when `.claude/settings.json` already exists. If the file is
 missing, create `.claude/` and write a new settings file. Keep unrelated
@@ -54,7 +55,7 @@ settings intact.
 5. Verify:
    - Confirm `.claude/settings.json` is valid JSON.
    - Confirm `.claude/settings.json` now has `.statusLine.command`.
-   - Do not run the statusline script as a final proof unless the repo already has the plugin mounted; the `${CLAUDE_PLUGIN_ROOT}` variable is resolved by Claude Code at render time.
+   - Do not run the statusline command as a final proof unless the repo already has the plugin mounted; the `${CLAUDE_PLUGIN_ROOT}` variable is resolved by Claude Code at render time.
 
 ## Notes
 

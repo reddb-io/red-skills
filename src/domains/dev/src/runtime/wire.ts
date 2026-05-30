@@ -9,6 +9,7 @@
 // actually runs), so `monitor`, `reap`, and an empty `run` never pull the
 // provider subpaths.
 
+import { readFileSync, writeFileSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { loadConfig, getConfig } from "../core/config.js";
 import type { SandboxMode } from "../core/execution.js";
@@ -155,6 +156,128 @@ export async function collectMonitorInputs(root = process.cwd()): Promise<Monito
   const histText = await fsx.readText(paths.historyPath);
   const events = histText === null ? [] : parseHistoryLines(histText).map((r) => ({ event: r.event, epoch: r.epoch }));
   return { workers, events };
+}
+
+// ---------- statusline inputs ----------
+
+import type { AfkInput } from "../core/statusline.js";
+
+/** The TTL (seconds) of the GitHub-derived queue/human counts cache, matching
+ * statusline.sh's 60 s window. */
+export const STATUSLINE_CACHE_TTL_S = 60;
+
+interface StatuslineCache {
+  queue: number;
+  human: number;
+  ts: number;
+}
+
+function readStatuslineCache(path: string): StatuslineCache | null {
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<StatuslineCache>;
+    return {
+      queue: Number(parsed.queue ?? 0),
+      human: Number(parsed.human ?? 0),
+      ts: Number(parsed.ts ?? 0),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeStatuslineCacheAtomic(path: string, cache: StatuslineCache): void {
+  try {
+    const tmp = `${path}.tmp`;
+    writeFileSync(tmp, JSON.stringify(cache), "utf8");
+    renameSync(tmp, path);
+  } catch {
+    // best-effort, like the bash `|| true`
+  }
+}
+
+/**
+ * Aggregate the live /afk workers under the workers root into the statusline's
+ * block-4 input, exactly like statusline.sh's per-state loop: count live
+ * workers, sum blocked + diffstat (falling back to a worktree `git diff
+ * --shortstat origin/main` when the state file's diff fields are both 0), and
+ * collect the in-progress issue numbers in directory order. Returns null when
+ * there are no live workers, so the caller drops the whole AFK block.
+ *
+ * The 📋 ready-for-agent / 🆘 ready-for-human counts are GitHub-derived and
+ * cached for {@link STATUSLINE_CACHE_TTL_S} seconds in
+ * `.red/tmp/statusline-cache.json`: a cold cache refreshes synchronously, a
+ * fresh cache is read as-is, and a stale cache is read AND refreshed in the
+ * background (the bash `( refresh_cache ) &`), so the render stays fast.
+ */
+export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput | null> {
+  const paths = afkPaths(ctx.root);
+  const stateFiles = await fsx.globWorkerStates(paths.workersRoot);
+  const gitCtx: gitx.GitContext = { cwd: ctx.root };
+
+  let workers = 0;
+  let blocked = 0;
+  let added = 0;
+  let removed = 0;
+  const issues: Array<number | string> = [];
+
+  for (const file of stateFiles) {
+    const text = await fsx.readText(file);
+    if (text === null) continue;
+    let state;
+    try {
+      state = parseState(JSON.parse(text));
+    } catch {
+      continue;
+    }
+    if (!isStateLive(state)) continue;
+
+    workers += 1;
+    blocked += state.blocked;
+
+    let a = state.current.diff_added;
+    let r = state.current.diff_removed;
+    if (a === 0 && r === 0 && state.current.worktree) {
+      // Fallback: compute the diffstat from the worktree like statusline.sh.
+      const stat = await gitx.diffstatShortstat({ cwd: state.current.worktree }, "origin/main");
+      a = stat.added;
+      r = stat.removed;
+    }
+    added += a;
+    removed += r;
+
+    const number = state.current.number;
+    if (number !== "" && number !== undefined && number !== null) issues.push(number);
+  }
+
+  if (workers <= 0) return null;
+
+  // GitHub-derived counts with a 60 s cache.
+  const cachePath = join(paths.tmpDir, "statusline-cache.json");
+  const nowS = Math.floor(Date.now() / 1000);
+  const cached = readStatuslineCache(cachePath);
+  let queue = cached?.queue ?? 0;
+  let human = cached?.human ?? 0;
+
+  const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo };
+  const refresh = async (): Promise<void> => {
+    const [q, h] = await Promise.all([
+      ghx.countReadyForAgent(ghCtx),
+      ghx.countReadyForHuman(ghCtx),
+    ]);
+    queue = q;
+    human = h;
+    writeStatuslineCacheAtomic(cachePath, { queue: q, human: h, ts: nowS });
+  };
+
+  if (!cached) {
+    // Cold cache: refresh synchronously so the first render is correct.
+    await refresh();
+  } else if (nowS - cached.ts >= STATUSLINE_CACHE_TTL_S) {
+    // Stale: use the cached numbers now, refresh in the background.
+    void refresh().catch(() => undefined);
+  }
+
+  return { workers, queue, human, blocked, added, removed, issues };
 }
 
 // ---------- reap inputs ----------

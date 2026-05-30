@@ -1,5 +1,4 @@
 import { parseRunnerFlag, detectRunner } from "../core/runner-detection.js";
-import { runLegacy } from "../platform/legacy.js";
 import {
   runSession,
   type SessionContext,
@@ -346,13 +345,6 @@ function nextAttemptSync(tmpDir: string, issue: number): number {
 
 export async function runCommand(options: RunOptions): Promise<number> {
   const cwd = options.cwd ?? process.cwd();
-
-  if (process.env.RED_AFK_LEGACY === "1") {
-    if (!process.env.RED_AFK_TS_QUIET_BOOT) {
-      process.stderr.write("[afk-ts] RED_AFK_LEGACY=1 — delegating orchestration to scripts/afk.sh\n");
-    }
-    return runLegacy("afk", options.args, cwd);
-  }
 
   const flags = parseRunFlags(options.args);
   const detection = detectRunner({ flag: flags.runnerFlag ?? parseRunnerFlag(options.args), scriptPath: process.argv[1] });

@@ -77,6 +77,20 @@ export async function diffstat(ctx: GitContext, branch: string, base: string): P
   return r.code === 0 ? r.stdout.trim() : "";
 }
 
+/**
+ * Parsed `git diff --shortstat <base>` from the working tree at `ctx.cwd`.
+ * Mirrors statusline.sh's worktree diffstat fallback: extracts the
+ * `N insertion` / `N deletion` integers, defaulting each to 0 when absent or
+ * on any failure.
+ */
+export async function diffstatShortstat(ctx: GitContext, base: string): Promise<{ added: number; removed: number }> {
+  const r = await git(["diff", "--shortstat", base], opts(ctx));
+  if (r.code !== 0) return { added: 0, removed: 0 };
+  const ins = /(\d+) insertion/.exec(r.stdout);
+  const del = /(\d+) deletion/.exec(r.stdout);
+  return { added: ins ? Number(ins[1]) : 0, removed: del ? Number(del[1]) : 0 };
+}
+
 /** `git log -n <count>` one-line block for a ref (the inner-prompt recent
  * commits block). Best-effort: empty string when the ref/log is unavailable. */
 export async function recentCommits(ctx: GitContext, ref = "main", count = 5): Promise<string> {

@@ -15,3 +15,4 @@ export {
   type CommandSpec,
   type RouterSchema,
 } from "./args.js";
+export * from "./log.js";

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { makeHookResolveOptions } from "../src/runtime/hooks.js";
-import { skillDirFromModule } from "../src/platform/legacy.js";
+import { skillDirFromModule } from "../src/platform/skill-paths.js";
 import { resolveHooks } from "../src/core/hook-config.js";
 
 /**
@@ -12,8 +12,8 @@ import { resolveHooks } from "../src/core/hook-config.js";
  * consuming project's `.red/hooks/defaults`, or the built-in defaults never
  * register and per-slot CARGO_TARGET_DIR / GRADLE_USER_HOME isolation never fires.
  *
- * From the SOURCE tree `skillDirFromModule` cannot find `scripts/afk.sh` as an
- * ancestor (the skill lives under plugins/, not above src/), so it throws and the
+ * From the SOURCE tree `skillDirFromModule` cannot find a `defaults/` directory
+ * as an ancestor (the skill lives under plugins/, not above src/), so it throws and the
  * resolver falls back to the project path. We therefore verify the resolution
  * logic against the SHIPPED bundle location, which is what runs in production.
  */

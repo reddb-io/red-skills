@@ -247,6 +247,16 @@ export async function countUnlabeled(ctx: GhContext): Promise<number> {
   }
 }
 
+/** Count open `ready-for-agent` issues (the 📋 statusline queue count). */
+export function countReadyForAgent(ctx: GhContext): Promise<number> {
+  return countIssues(ctx, ["--label", "ready-for-agent"]);
+}
+
+/** Count open `ready-for-human` issues (the 🆘 statusline count). */
+export function countReadyForHuman(ctx: GhContext): Promise<number> {
+  return countIssues(ctx, ["--label", "ready-for-human"]);
+}
+
 /** Count `needs-triage` straggler issues. */
 export function countNeedsTriage(ctx: GhContext): Promise<number> {
   return countIssues(ctx, ["--label", "needs-triage"]);
