@@ -18,3 +18,6 @@ node_modules/
 
 # Per-plugin build outputs — shipped as GitHub Release assets, fetched dynamically (ADR 0034)
 dist/
+
+# vitest cache
+.vite/
