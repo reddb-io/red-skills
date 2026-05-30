@@ -939,10 +939,17 @@ bundled `red` binary); markdown-only needs only node.
 ## Develop
 
 ```bash
-pnpm --dir plugins/memory test        # vitest
-pnpm --dir plugins/memory typecheck   # tsc --noEmit
-pnpm --dir plugins/memory build       # tsc → dist/
+pnpm --dir plugins/memory test              # fast, deterministic vitest gate
+pnpm --dir plugins/memory test:integration  # heavy RedDB real-server / CLI suite
+pnpm --dir plugins/memory typecheck         # tsc --noEmit
+pnpm --dir plugins/memory build             # tsc → dist/
 ```
+
+`test` is the AFK feedback gate: in-process tests only, run with file
+parallelism so it stays well under the AFK timeout. The process-spawning
+real-server / real-CLI tests and the latency benchmark live in the
+`test:integration` project (see `vitest.suites.ts`) — run them explicitly or in
+CI, not in the AFK loop, since they flake under CPU contention.
 
 The TS workspace is self-contained under `plugins/memory/`; the red-skills root
 stays build-free.
