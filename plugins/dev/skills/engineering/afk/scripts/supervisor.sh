@@ -84,6 +84,8 @@ source "$SCRIPT_DIR/config.sh"
 source "$SCRIPT_DIR/hooks.sh"
 # shellcheck source=./lib/envelope.sh
 source "$SCRIPT_DIR/lib/envelope.sh"
+# shellcheck source=./lib/branch-ref.sh
+source "$SCRIPT_DIR/lib/branch-ref.sh"
 # shellcheck source=./lib/reaper-signal.sh
 source "$SCRIPT_DIR/lib/reaper-signal.sh"
 
@@ -876,7 +878,7 @@ reap_stalled_slot() {
   local orch_pid="${SLOT_PIDS[$slot]:-}"
   local iter_dir; iter_dir="$(find_slot_iter_dir "$slot")"
 
-  local issue="" title="" slug="" worker_id="" started_at=""
+  local issue="" title="" slug="" worker_id="" started_at="" branch=""
   if [[ -n "$iter_dir" && -f "$iter_dir/afk.state.json" ]] \
      && command -v jq >/dev/null 2>&1; then
     local sf="$iter_dir/afk.state.json"
@@ -930,8 +932,15 @@ reap_stalled_slot() {
     summary="$(printf 'worker `%s` · status: no-sentinel · duration: %s · diff: stall-reaped · attempt: 1 · reason: stall-reaped' \
       "${worker_id:-unknown}" "$(envelope_fmt_duration "$duration_s")")"
 
-    local branch="afk/${worker_id}/${issue}-${slug}"
-    local remote_name="afk-attempts/${worker_id}/${issue}-${slug}"
+    local remote_name=""
+    if ! branch="$(afk_ref_build_from_slug afk "$worker_id" "$issue" "$slug")"; then
+      log "slot $slot reap: refusing malformed live branch ref (worker=${worker_id:-?}, issue=${issue:-?}, slug=${slug:-?})"
+      branch=""
+    fi
+    if ! remote_name="$(afk_ref_build_from_slug afk-attempts "$worker_id" "$issue" "$slug")"; then
+      log "slot $slot reap: refusing malformed snapshot ref (worker=${worker_id:-?}, issue=${issue:-?}, slug=${slug:-?})"
+      remote_name=""
+    fi
     local worktree_rel=".red/tmp/${iter_dir#"$TMP_DIR"/}/worktree"
     local repo_dir="$iter_dir/worktree"
     [[ -d "$repo_dir" ]] || repo_dir=""
@@ -966,8 +975,8 @@ reap_stalled_slot() {
   if [[ -n "$iter_dir" && -d "$iter_dir/worktree" ]]; then
     git -C "$PROJECT_ROOT" worktree remove --force "$iter_dir/worktree" >/dev/null 2>&1 || true
   fi
-  if [[ -n "$worker_id" && -n "$issue" && -n "$slug" ]]; then
-    git -C "$PROJECT_ROOT" branch -D "afk/${worker_id}/${issue}-${slug}" >/dev/null 2>&1 || true
+  if [[ -n "$branch" ]]; then
+    git -C "$PROJECT_ROOT" branch -D "$branch" >/dev/null 2>&1 || true
   fi
   if [[ -n "$iter_dir" && -d "$iter_dir" ]]; then
     rm -rf "$iter_dir" || true

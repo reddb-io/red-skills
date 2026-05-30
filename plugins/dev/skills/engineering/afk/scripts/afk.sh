@@ -38,6 +38,8 @@ source "$SCRIPT_DIR/lib/history.sh"
 source "$SCRIPT_DIR/lib/pin-reader.sh"
 # shellcheck source=./lib/base-resolver.sh
 source "$SCRIPT_DIR/lib/base-resolver.sh"
+# shellcheck source=./lib/branch-ref.sh
+source "$SCRIPT_DIR/lib/branch-ref.sh"
 # Branch-lock value reader (ADR 0031, issue #253). lock-store ships in the
 # sibling branch-lock skill of the same dev plugin, so the relative path is
 # stable. Guard the source — a partial install just behaves as unlocked
@@ -897,9 +899,7 @@ claim_lock_release() {
 
 # ---------- issue selection ----------
 slugify() {
-  echo "$1" | tr '[:upper:]' '[:lower:]' \
-    | sed -E 's/[^a-z0-9]+/-/g; s/^-+|-+$//g' \
-    | cut -c1-40
+  afk_ref_slugify "$1"
 }
 
 select_issues() {
@@ -1049,7 +1049,11 @@ branch_diffstat_full() {
 # path now pushes inside envelope_emit_attempt.
 push_attempt_branch() {
   local branch="$1" n="$2" slug="$3"
-  local remote_branch="afk-attempts/${WORKER_ID}/${n}-${slug}"
+  local remote_branch
+  if ! remote_branch="$(afk_ref_build_from_slug afk-attempts "$WORKER_ID" "$n" "$slug")"; then
+    log "warn: refusing malformed attempt branch ref for #${n} (worker=${WORKER_ID}, slug=${slug})"
+    return 1
+  fi
   envelope_push_attempt "$PROJECT_ROOT" "$branch" "$remote_branch" \
     || { log "warn: failed to push attempt branch to origin/${remote_branch}"; return 1; }
 }
@@ -1245,8 +1249,15 @@ emit_envelope() {
   # attempt's handoff can fetch the prior approach and surface why it failed.
   # Written regardless of whether the GitHub envelope post below succeeds — the
   # markers feed the next attempt, not the issue thread.
+  local snapshot_ref=""
   if [[ "$status" != "done" ]]; then
-    record_failure_markers "${ITER_DIR:-}" "afk-attempts/${WORKER_ID}/${n}-${slug}" "$summary"
+    if snapshot_ref="$(afk_ref_build_from_slug afk-attempts "$WORKER_ID" "$n" "$slug")"; then
+      record_failure_markers "${ITER_DIR:-}" "$snapshot_ref" "$summary"
+    else
+      log "warn: refusing malformed snapshot ref for #${n} (worker=${WORKER_ID}, slug=${slug})"
+      record_failure_markers "${ITER_DIR:-}" "" "$summary"
+      snapshot_ref=""
+    fi
   fi
 
   local rc
@@ -1285,7 +1296,7 @@ emit_envelope() {
     envelope_emit_attempt \
       poster=_afk_envelope_poster "status=$status" "issue=$n" "summary=$summary" \
       "repo=$(gh_repo)" "repo_dir=$PROJECT_ROOT" "branch=$branch" \
-      "remote_name=afk-attempts/${WORKER_ID}/${n}-${slug}" \
+      "remote_name=$snapshot_ref" \
       "worktree_rel=$worktree_rel" "diffstat=$full_diffstat" \
       "notes_file=$notes_file" "log_file=$log_file" "hooks_file=$hooks_file"
     rc=$?
@@ -2693,7 +2704,11 @@ _afk_fire_post_attempt() {
 process_issue() {
   local n="$1" title="$2" body="$3"
   local slug; slug="$(slugify "$title")"
-  local branch="afk/${WORKER_ID}/${n}-${slug}"
+  local branch
+  if ! branch="$(afk_ref_build_from_slug afk "$WORKER_ID" "$n" "$slug")"; then
+    log "refusing malformed live branch ref for #${n} (worker=${WORKER_ID}, slug=${slug})"
+    return 0
+  fi
   local started_at; started_at="$(date -Iseconds)"
   local started_epoch; started_epoch="$(date +%s)"
 
