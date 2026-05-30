@@ -144,11 +144,13 @@ jobs:
       # git add is a no-op.
       - name: Build AFK runtime bundle
         if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
-        working-directory: packages/afk
+        working-directory: src/domains/dev
         run: |
           set -euo pipefail
           pnpm install --frozen-lockfile
-          pnpm bundle
+          # `build` emits the canonical dist/dev.bundle.min.mjs (release asset,
+          # ADR 0034) plus the transition bin/afk.mjs staged below.
+          pnpm build
 
       - name: Sync plugin manifest versions
         if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
@@ -196,13 +198,17 @@ jobs:
       # publishes. pnpm/node are already set up above for the AFK bundle.
       - name: Build memory runtime bundle + manifest
         if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
-        working-directory: plugins/memory
+        working-directory: src/domains/memory
         env:
           NEXT: ${{ steps.version.outputs.next }}
         run: |
           set -euo pipefail
           pnpm install --frozen-lockfile
-          pnpm bundle
+          # bundle:legacy keeps emitting dist-bundle/memory-cli.mjs the manifest +
+          # current bootstrap expect (ADR 0029). The new canonical
+          # dist/memory.bundle.min.mjs (ADR 0034) is built by `pnpm bundle`; both
+          # asset models coexist until the dynamic-fetch phase unifies them.
+          pnpm bundle:legacy
           node --input-type=module <<'EOF'
           import { createHash } from 'node:crypto';
           import { readFileSync, writeFileSync } from 'node:fs';
@@ -241,8 +247,8 @@ jobs:
           git tag -a "$NEXT" -m "Release $NEXT"
           git push origin "$NEXT"
           assets=(
-            plugins/memory/dist-bundle/memory-cli.mjs
-            plugins/memory/memory-runtime-manifest.json
+            src/domains/memory/dist-bundle/memory-cli.mjs
+            src/domains/memory/memory-runtime-manifest.json
           )
           if [ -n "$PREVIOUS" ]; then
             gh release create "$NEXT" "${assets[@]}" \
