@@ -137,13 +137,30 @@ expect_eq "unknown lifecycle point: rc=2" "$rc" "2"
 
 # ---------- 11. canonical name set covers PRD lifecycle table ----------
 names="$(hook_canonical_names | sort | tr '\n' ',')"
-for required in pre_session pre_pick post_pick pre_worktree pre_worker post_worker pre_merge post_merge on_worker_error on_idle post_session on_session_error; do
+for required in pre_session pre_pick post_pick pre_worktree pre_attempt post_attempt pre_merge post_merge on_attempt_error on_idle post_session on_session_error; do
   if [[ ",$names" == *",$required,"* ]]; then
     echo "PASS  canonical includes $required"; pass=$((pass+1))
   else
     echo "FAIL  canonical missing $required"; fail=$((fail+1))
   fi
 done
+
+# ---------- 12. renamed (#226): old *_worker names are NOT canonical ----------
+for gone in pre_worker post_worker on_worker_error; do
+  if [[ ",$names" == *",$gone,"* ]]; then
+    echo "FAIL  old name $gone still canonical (should be aliased only)"; fail=$((fail+1))
+  else
+    echo "PASS  old name $gone removed from canonical set"; pass=$((pass+1))
+  fi
+done
+
+# ---------- 13. deprecated aliases resolve to their canonical replacement ----------
+expect_eq "alias pre_worker → pre_attempt"      "$(hook_canonical_alias pre_worker)"      "pre_attempt"
+expect_eq "alias post_worker → post_attempt"    "$(hook_canonical_alias post_worker)"     "post_attempt"
+expect_eq "alias on_worker_error → on_attempt_error" "$(hook_canonical_alias on_worker_error)" "on_attempt_error"
+# A canonical / unknown name passes through unchanged and returns non-zero.
+hook_canonical_alias pre_attempt >/dev/null; expect_eq "pre_attempt is not an alias (rc=1)" "$?" "1"
+expect_eq "non-alias prints unchanged" "$(hook_canonical_alias pre_attempt)" "pre_attempt"
 
 echo
 echo "summary: $pass passed, $fail failed"
