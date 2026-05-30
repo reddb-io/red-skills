@@ -28,10 +28,21 @@
 #     0; if delete fails (branch protection, network) the close path still
 #     proceeds.
 #
-# What this lib deliberately does NOT touch: the `afk-attempts/{wid}/{N}-slug`
-# failure-push namespace. That stays the canonical 'failed work' marker the
-# terminal-failure envelope links to. `afk/*` is the live-iteration namespace;
-# `afk-attempts/*` is the failure namespace; they never overlap.
+# The live-push lifecycle above (push_initial / install_post_commit_hook /
+# delete_remote) deliberately touches ONLY the `afk/{wid}/{N}-slug` namespace.
+# The `afk-attempts/{wid}/{N}-slug` failure-push namespace stays the canonical
+# 'failed work' marker the terminal-failure envelope links to — `afk/*` is the
+# live-iteration namespace, `afk-attempts/*` is the failure namespace, and the
+# two never overlap.
+#
+#   prune_completed_attempt_branches [root]   (issue #258)
+#     The one reaper of the `afk-attempts/*` namespace. Remote side of completion
+#     cleanup: once an issue has been *closed* longer than a configurable grace
+#     window, its snapshot branches are deleted from origin; within the grace
+#     window (so a reopened issue can still recover prior attempts) and for any
+#     still-open issue, they are left strictly in place. Best-effort, boot-time,
+#     never on the close path. Complements the local-disk completion sweep
+#     (completion_sweep_issue, issue #257).
 
 # Logger — match the sibling lib/*.sh convention. afk.sh defines `log` as a
 # function; when this lib is sourced into a context that doesn't (e.g. unit
@@ -135,5 +146,82 @@ delete_remote() {
   if ! git -C "$repo_dir" push origin --delete "$branch" >/dev/null 2>&1; then
     _remote_branch_log "warn: failed to delete remote ${branch} after close, branch survives on origin for cleanup later"
   fi
+  return 0
+}
+
+# _attempt_snapshot_grace_s  →  prints the resolved grace window in seconds
+# (default 7 days). A completed issue's snapshot branches survive this long after
+# the issue closed before they are deleted. Defensive: a non-numeric
+# RED_AFK_ATTEMPT_SNAPSHOT_GRACE_S falls back to the default so an operator typo
+# can never silently disable the grace. 0 is honoured (delete immediately on
+# completion) — unlike the count/age caps, a zero grace is a meaningful config.
+_attempt_snapshot_grace_s() {
+  local v="${RED_AFK_ATTEMPT_SNAPSHOT_GRACE_S:-$((7 * 86400))}"
+  if [[ "$v" =~ ^[0-9]+$ ]]; then echo "$v"; else echo $((7 * 86400)); fi
+}
+
+# prune_completed_attempt_branches [root]
+#
+# Remote-side completion cleanup (issue #258, PRD #244). Enumerate the
+# `afk-attempts/{wid}/{N}-slug` snapshot branches on origin, group them by the
+# issue number in the ref, and for each issue:
+#   - still OPEN                          → never touched (leave every branch).
+#   - CLOSED, closed <= grace ago         → kept (a reopen can still recover it).
+#   - CLOSED, closed >  grace ago         → every snapshot branch deleted.
+#   - unclassifiable (gh error/no close)  → left strictly untouched.
+# The grace window is _attempt_snapshot_grace_s. Best-effort and always rc 0:
+# called at boot, never on the close path, so a slow/failing `gh` or `git` can
+# never block a completion. `gh_repo` is provided by the orchestrator that
+# sources this lib.
+prune_completed_attempt_branches() {
+  local repo_dir="${PROJECT_ROOT:-$(pwd)}"
+  local repo grace now_s
+  repo="$(gh_repo 2>/dev/null)" || return 0
+  [[ -n "$repo" ]] || return 0
+  grace="$(_attempt_snapshot_grace_s)"
+  now_s="$(date +%s)"
+
+  local refs
+  refs="$(git -C "$repo_dir" ls-remote --heads origin 'refs/heads/afk-attempts/*' 2>/dev/null)" || return 0
+  [[ -n "$refs" ]] || return 0
+
+  # Group branch names by the issue number embedded in afk-attempts/{wid}/{N}-slug.
+  local -A issue_branches=()
+  local line ref branch issue rest
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    ref="${line#*$'\t'}"          # drop the leading "<sha><TAB>"
+    branch="${ref#refs/heads/}"   # afk-attempts/{wid}/{N}-slug
+    rest="${branch#afk-attempts/*/}"  # {N}-slug
+    issue="${rest%%-*}"               # {N}
+    [[ "$issue" =~ ^[0-9]+$ ]] || continue
+    issue_branches["$issue"]+="${branch}"$'\n'
+  done <<<"$refs"
+
+  local deleted=0 issue
+  for issue in "${!issue_branches[@]}"; do
+    local meta state closed_at closed_s
+    meta="$(gh -R "$repo" issue view "$issue" --json state,closedAt 2>/dev/null)" || continue
+    [[ -n "$meta" ]] || continue
+    state="$(jq -r '.state // ""' <<<"$meta" 2>/dev/null)"
+    # Only a provably-CLOSED issue is eligible; OPEN or unknown → never touched.
+    [[ "$state" == "CLOSED" ]] || continue
+    closed_at="$(jq -r '.closedAt // ""' <<<"$meta" 2>/dev/null)"
+    [[ -n "$closed_at" ]] || continue
+    closed_s="$(date -d "$closed_at" +%s 2>/dev/null)" || continue
+    [[ -n "$closed_s" ]] || continue
+    (( now_s - closed_s > grace )) || continue   # still within grace → keep
+
+    while IFS= read -r branch; do
+      [[ -n "$branch" ]] || continue
+      if git -C "$repo_dir" push origin --delete "$branch" >/dev/null 2>&1; then
+        deleted=$((deleted + 1))
+      else
+        _remote_branch_log "warn: failed to delete remote snapshot ${branch}, survives on origin for cleanup later"
+      fi
+    done <<<"${issue_branches[$issue]}"
+  done
+
+  [[ $deleted -gt 0 ]] && _remote_branch_log "snapshot cleanup: deleted $deleted completed-issue attempt branch(es) past the grace window"
   return 0
 }

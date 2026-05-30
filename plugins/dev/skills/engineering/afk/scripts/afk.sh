@@ -3194,6 +3194,11 @@ prune_orphans
 # leak attempt dirs. Cap them here at boot, after the orphan sweep has cleared
 # dead-worker dirs, so only the still-relevant attempts are weighed.
 cap_issue_attempts
+# Remote-side completion cleanup (issue #258, PRD #244): the sweeps above reclaim
+# local attempt dirs; this reaps the afk-attempts/* snapshot branches of issues
+# that closed more than the grace window ago. Within-grace and still-open issues
+# are left in place. Best-effort and never on the close path — runs here at boot.
+prune_completed_attempt_branches
 sweep_unblocked
 
 # --- straggler check: warn about issues that never made it to ready-for-agent
