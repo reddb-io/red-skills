@@ -1,0 +1,94 @@
+// pin-reader — read the branch a work item is pinned to (ADR 0008).
+//
+// A PRD or issue body may carry a canonical `branch:` line declaring the branch
+// `/afk` should base its worktree on and merge back into. The inheritance chain
+// is small:
+//
+//   1. the issue's own `branch:` line wins;
+//   2. else the parent PRD's `branch:` line (the issue inherits it);
+//   3. else `main` (no pin anywhere).
+//
+// The parsing functions are pure text predicates: no gh, no git, no network.
+// `resolvePin` is an orchestration function that takes injected lookups
+// (fetchIssueBody / resolveParentPrd) so the inheritance precedence stays
+// unit-testable against fixed strings.
+
+// A canonical `branch:` line: optional leading whitespace, an optional markdown
+// list marker (`-`/`*` plus whitespace), the literal lowercase key `branch:`,
+// whitespace, then a single non-whitespace branch token. Prose like
+// "this branch: foo" never matches because the key must start the line.
+const BRANCH_LINE = /^[ \t]*(?:[-*][ \t]+)?branch:[ \t]+(\S+)/;
+
+// The first `PRD #<n>` reference (the `## Parent` convention from /to-issues).
+// Not anchored — it matches anywhere on a line and tolerates spaces around `#`.
+const PARENT_PRD = /PRD[ \t]*#[ \t]*(\d+)/;
+
+export const DEFAULT_BRANCH = "main";
+
+function stripWrapper(value: string, open: string, close: string): string {
+  let result = value;
+  if (result.startsWith(open)) result = result.slice(open.length);
+  if (result.endsWith(close)) result = result.slice(0, result.length - close.length);
+  return result;
+}
+
+/**
+ * Extract the branch from the first canonical `branch:` line in `body`.
+ * Returns the branch token (a single layer of wrapping backticks or matched
+ * quotes stripped), or `undefined` when no canonical line is present.
+ */
+export function parseBranchPin(body: string): string | undefined {
+  for (const line of body.split("\n")) {
+    const match = BRANCH_LINE.exec(line);
+    if (!match) continue;
+    let value = match[1]!;
+    value = stripWrapper(value, "`", "`");
+    value = stripWrapper(value, '"', '"');
+    value = stripWrapper(value, "'", "'");
+    if (value.length === 0) continue;
+    return value;
+  }
+  return undefined;
+}
+
+/**
+ * Extract the number from the first `PRD #<n>` reference in `body`, or
+ * `undefined` when no reference is present.
+ */
+export function parseParentPrd(body: string): number | undefined {
+  const match = PARENT_PRD.exec(body);
+  return match ? Number(match[1]) : undefined;
+}
+
+export interface ResolvePinDeps {
+  /** Fetch the raw body for issue/PRD number `n`, or `undefined` if missing. */
+  fetchIssueBody: (n: number) => Promise<string | undefined>;
+}
+
+export interface ResolvePinInput {
+  /** The raw body of the issue whose pin is being resolved. */
+  issueBody: string;
+}
+
+/**
+ * Apply the inheritance chain and always resolve to a branch:
+ *   the issue's own pin, else its parent PRD's pin, else `main`.
+ *
+ * The parent PRD body is fetched lazily via the injected `fetchIssueBody`,
+ * keyed off the issue body's `PRD #<n>` reference.
+ */
+export async function resolvePin(input: ResolvePinInput, deps: ResolvePinDeps): Promise<string> {
+  const own = parseBranchPin(input.issueBody);
+  if (own) return own;
+
+  const parent = parseParentPrd(input.issueBody);
+  if (parent !== undefined) {
+    const prdBody = await deps.fetchIssueBody(parent);
+    if (prdBody !== undefined) {
+      const inherited = parseBranchPin(prdBody);
+      if (inherited) return inherited;
+    }
+  }
+
+  return DEFAULT_BRANCH;
+}
