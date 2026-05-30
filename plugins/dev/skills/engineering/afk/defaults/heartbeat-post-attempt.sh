@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
-# heartbeat-post-worker.sh — built-in post_worker default (PRD #207, issue #212).
+# heartbeat-post-attempt.sh — built-in post_attempt default (PRD #207, issue
+# #212; renamed from post_worker in #226).
 #
 # Contract:
-#   stdin   — JSON object: post_worker context (issue, workspace, result).
+#   stdin   — JSON object: post_attempt context (issue, workspace, result).
 #   stdout  — empty (context unchanged). The default is a pure side-effect:
 #             it stops the orchestrator's per-minute heartbeat side-channel
 #             and writes the "iteration stopped" boundary marker into the
 #             iteration log, migrating the inline `heartbeat_stop` that
 #             used to fire from afk.sh right after `run_inner` returned.
-#   exit    — 0. Never aborts the post_worker chain (the dispatcher already
-#             routes post_worker rc through `continue` policy, but the
+#   exit    — 0. Never aborts the post_attempt chain (the dispatcher already
+#             routes post_attempt rc through `continue` policy, but the
 #             default also belt-and-braces this with a 0 exit).
 #
 # Env contract (set by afk.sh before dispatch):
