@@ -21,6 +21,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [merge: #273 AFK reaper: completion reaper for the afk/* live-branch namespace](./pages/280-merge-273-afk-reaper-completion-reaper-for-the-afk-live-bran.md)
 - [merge: #274 AFK reaper: local afk/* branch GC at boot (closed/merged, never checked-out)](./pages/278-merge-274-afk-reaper-local-afk-branch-gc-at-boot-closed-merg.md)
 - [merge: #275 AFK reaper: on-demand invocation + branch-count visibility](./pages/281-merge-275-afk-reaper-on-demand-invocation-branch-count-visib.md)
+- [refactor(afk): delete legacy bash, native-only runtime + parity recovery + zero-dep logger](./pages/289-refactor-afk-delete-legacy-bash-native-only-runtime-parity-r.md)
 - [refactor: monorepo (src/domains + shared + per-plugin bundles + dynamic fetch) + functionality recovery](./pages/288-refactor-monorepo-src-domains-shared-per-plugin-bundles-dyna.md)
 - [test(memory): split vitest suite into fast gate + integration project (#242)](./pages/264-test-memory-split-vitest-suite-into-fast-gate-integration-pr.md)
 
