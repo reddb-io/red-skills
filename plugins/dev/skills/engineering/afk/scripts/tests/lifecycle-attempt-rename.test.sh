@@ -93,6 +93,23 @@ expect_eq "two pre_attempt firings (per runner invocation)" \
   "$(grep -c '^pre_attempt|' "$CALLS")" "2"
 expect_eq "two post_attempt firings (per runner invocation)" \
   "$(grep -c '^post_attempt|' "$CALLS")" "2"
+
+# ADR 0028 / issue #227: the parsed <promise> outcome rides into the
+# post_attempt context as result.outcome and the RED_AFK_RESULT_OUTCOME env var.
+# (Run after the firing-count assertions above so these extra calls don't skew
+# the per-invocation cadence count.)
+_afk_fire_post_attempt 42 "Title" /tmp/ws success 2 done
+expect_eq "post_attempt ctx: result.outcome carried (done)" \
+  "$(printf '%s' "$(cat "$LAST_CTX")" | jq -r '.result.outcome')" "done"
+expect_eq "post_attempt: RED_AFK_RESULT_OUTCOME exported (done)" "${RED_AFK_RESULT_OUTCOME:-}" "done"
+_afk_fire_post_attempt 42 "Title" /tmp/ws fail 2 blocked
+expect_eq "post_attempt ctx: result.outcome carried (blocked)" \
+  "$(printf '%s' "$(cat "$LAST_CTX")" | jq -r '.result.outcome')" "blocked"
+# Omitting the 6th arg (the exhausted firings) defaults result.outcome to "".
+_afk_fire_post_attempt 42 "Title" /tmp/ws exhausted 1
+expect_eq "post_attempt ctx: result.outcome defaults empty when omitted" \
+  "$(printf '%s' "$(cat "$LAST_CTX")" | jq -r '.result.outcome')" ""
+
 rm -f "$CALLS" "$LAST_CTX"
 rm -rf "$SANDBOX"
 
