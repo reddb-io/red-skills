@@ -33,11 +33,19 @@ numbers. The script is quiet when no AFK worker is active.
 {
   "statusLine": {
     "type": "command",
-    "command": "bash ${CLAUDE_PLUGIN_ROOT}/skills/engineering/afk/scripts/statusline.sh",
+    "command": "bash ${CLAUDE_PLUGIN_ROOT}/skills/engineering/afk/scripts/statusline.sh \"$CLAUDE_PROJECT_DIR\"",
     "refreshInterval": 5
   }
 }
 ```
+
+`${CLAUDE_PLUGIN_ROOT}` is substituted by Claude Code to the installed plugin
+path, so the statusline always runs the newest installed version — never pin a
+`…/cache/<version>/…` path. The trailing `"$CLAUDE_PROJECT_DIR"` is the
+project root Claude Code was started in, passed as the script's first argument
+so it reads that checkout's `.red/tmp/workers/` regardless of where the command
+itself runs; when the variable is unset the script falls back to the stdin
+payload's cwd.
 
 Use `jq` to merge when `.claude/settings.json` already exists. If the file is
 missing, create `.claude/` and write a new settings file. Keep unrelated
