@@ -51,17 +51,16 @@ On any of those, the orchestrator emits `RUNNER_EXHAUSTED`, preserves the worktr
 ## Task Mirror Sink
 
 The native Task mirror (ADR 0003, SKILL.md *Task Mirror*) is runner-specific: the
-`state-reader` and `mirror-reconciler` in [`scripts/lib/mirror.sh`](scripts/lib/mirror.sh)
-are shared with Claude unchanged; only the sink differs. The Codex sink is
-[`mirror_sink_codex`](scripts/lib/mirror.sh):
+state reader and plan reconciler are shared with Claude unchanged; only the sink
+differs. The Codex sink:
 
-- It branches on `codex_native_task_available`, the single mockable capability
-  probe. Codex ships no native background-task / progress surface today, so the
-  probe returns non-zero and the sink **falls back to the `monitor.sh` dashboard
-  plus a one-line notice** — no crash, no half-rendered state.
-- If a future Codex grows a native surface, override `codex_native_task_available`
-  to return 0; the sink then emits the same `mirror_plan` call descriptors the
-  Claude sink applies, to be driven against the Codex primitive.
+- branches on the Codex native-task capability probe. Codex ships no native
+  background-task / progress surface today, so the probe is negative and the sink
+  **falls back to the `monitor` dashboard plus a one-line notice** — no crash, no
+  half-rendered state.
+- If a future Codex grows a native surface, the probe goes positive; the sink then
+  emits the same call-plan descriptors the Claude sink applies, to be driven
+  against the Codex primitive.
 
 This is an explicit per-runner adapter, not a cross-runner abstraction (rejected
 in ADR 0003).
@@ -75,12 +74,12 @@ monitor agent only for presentation.
 
 When a Codex session launches `/dev:afk fleet N`:
 
-- pass `RED_AFK_RUNNER=codex` to `supervisor.sh` so detached workers stay on the
-  Codex runner deterministically;
+- launch `/dev:afk fleet N --runner codex` (which carries `RED_AFK_RUNNER=codex`
+  into the supervisor) so detached workers stay on the Codex runner
+  deterministically;
 - spawn at most one read-only monitor agent for the newly-started supervisor
   when the sub-agent primitive is available;
-- have that monitor agent periodically run
-  `bash plugins/dev/skills/engineering/afk/scripts/monitor.sh --once`, report
+- have that monitor agent periodically run `/dev:afk monitor --once`, report
   concise progress, and exit once no supervisor or live workers remain;
 - never let the monitor agent edit files, claim issues, stop workers, run
   validation, merge, or push.

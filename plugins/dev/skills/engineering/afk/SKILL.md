@@ -12,13 +12,15 @@ Drain the agent-ready backlog. Single skill that owns issue selection, worktree 
 
 > **Run this skill — do not read its code.** This `SKILL.md` is the complete behavioural contract. The `bin/` bundle and the `scripts/` shell files are **build/runtime artifacts**, not documentation: opening them to "understand what `/afk` does" wastes context and is never required. Everything an agent needs to operate `/afk` is in this file.
 
-The skill ships a single committed runtime bundle:
+The skill ships a single committed runtime bundle. Invoke it as:
 
 ```
-node "$CLAUDE_PLUGIN_ROOT/skills/engineering/afk/bin/afk.mjs" <run|monitor|fleet|reap> [args]
+node "$CLAUDE_PLUGIN_ROOT/skills/engineering/afk/bin/afk.mjs" <command> [params]
 ```
 
-`bin/afk.mjs` is a dependency-free esbuild bundle (one file, no `node_modules`, no install step) built from the TypeScript source at the repo's `packages/afk/` — which lives **outside** the plugin tree so it never ships to the client cache and never appears in the skill directory (ADR 0032). The bundle is the public entrypoint; it executes natively where it has a typed implementation (e.g. `fleet`) and delegates to the legacy `scripts/*.sh` orchestrator for everything not yet ported. The shell entrypoints (`bash scripts/afk.sh …`) remain valid during the migration and are invoked identically by the bundle.
+Commands and their parameters are documented in *When To Use* below — that section is authoritative for the CLI surface. The five commands are `run` (the default — a bare token routes here with argv preserved), `monitor`, `fleet`, `reap`, and the hidden `__supervise` (the fleet supervisor entrypoint; never invoked by hand). `run` accepts `--prd`, `--issues`, `--runner`, `--alternate`, `--fallback-runner`, `--request`/`-r`, `-n`, and `--once`; `monitor` accepts `--once`; `fleet` accepts an optional numeric target `N`, the `stop` subcommand, `--request`/`-r`, and `--runner`; `reap` takes no flags.
+
+The bundle is a dependency-free build (one file, no `node_modules`, no install step) and is the public entrypoint. It executes natively for the ported commands and delegates to the legacy shell orchestrator for anything not yet ported. Setting `RED_AFK_LEGACY=1` forces the shell `scripts/*.sh` fallback for the whole run; those scripts remain present during the transition and are **not** deleted (ADR 0032, ADR 0034). Treat this `SKILL.md` as the contract: run the bundle, don't read its source.
 
 ## When To Use
 
@@ -30,7 +32,7 @@ node "$CLAUDE_PLUGIN_ROOT/skills/engineering/afk/bin/afk.mjs" <run|monitor|fleet
 - `/afk --fallback-runner` — opt in to swapping runners mid-issue when one returns `RUNNER_EXHAUSTED`. Without this flag, exhaustion exits with code 75.
 - `/afk --request "dont run cargo tests for this issue resolution"` or `/afk -r "..."` — add a special user request block to every inner-agent prompt for this run.
 - `/afk -n 5` — cap at five issues (default: drain until empty).
-- `/afk --once` — single supervised iteration. Same as `scripts/once.sh`. Use for debugging the prompt.
+- `/afk --once` — single supervised iteration. Use for debugging the prompt.
 - `/afk monitor` — readonly status board, aggregates every `.red/tmp/workers/*/*/afk.state.json` so you see all live workers from another terminal. **Also (binding):** mirrors live workers onto the host runner's native task surface — `TaskCreate`/`TaskUpdate` under Claude Code, the sub-agent surface under Codex when present (falls back to the dashboard otherwise). See *Task Mirror* below — this is not optional and you must do it on every tick, even when the user only asked "como estamos?".
 - `/afk fleet [N]` — launch the supervisor maintaining `N` concurrent workers (default `2`). See *Fleet Mode* below.
 - `/afk fleet stop` — gracefully shut down a running fleet supervisor and cancel its auto-monitor cron.
@@ -129,7 +131,7 @@ The grace window is `RED_AFK_ATTEMPT_SNAPSHOT_GRACE_S` (default 7 days), measure
 
 ## On-Demand Branch Reaper (issue #275)
 
-Run `bash plugins/dev/skills/engineering/afk/scripts/afk-reap.sh [project_root]` to perform branch hygiene without starting a worker, claiming an issue, or firing lifecycle hooks. The command first prints one line:
+Run `/afk reap` (the bundle's `reap` command) to perform branch hygiene without starting a worker, claiming an issue, or firing lifecycle hooks. The command first prints one line:
 
 ```text
 afk branch counts: remote-afk=N remote-afk-attempts=N local-afk=N
@@ -232,7 +234,7 @@ Label transitions are **not** atomic at the gh level — `gh issue edit --remove
 
 1. **Local `mkdir` lock** at `.red/tmp/claims/{N}/` (POSIX-atomic). Workers in the same checkout race here, and the loser skips.
 2. **Pre-check** via `gh issue view --json labels` — if `ready-for-agent` is already gone or `running` is already present, abort before the edit. Cuts the cross-checkout race window to roughly one round-trip.
-3. **Stale-lock sweep** at boot, inside `prune_orphans` — any `.red/tmp/claims/{N}/` whose recorded pid is dead gets reclaimed automatically.
+3. **Stale-lock sweep** at boot, during orphan cleanup — any `.red/tmp/claims/{N}/` whose recorded pid is dead gets reclaimed automatically.
 
 Residual gap: two clones of the same repo on the same host (or different hosts) do not share `.red/tmp/`, so each holds its own mkdir lock and the gh edit race re-opens for the brief window the pre-check leaves uncovered. Acceptable for the intended scale (a few terminals, one checkout). If you need cross-host claim safety, gate `/afk` on a proper coordinator instead of GitHub labels.
 
@@ -241,9 +243,9 @@ Residual gap: two clones of the same repo on the same host (or different hosts) 
 For each issue `N`:
 
 1. **Claim.** `gh issue edit N --remove-label ready-for-agent --add-label running`. Then resolve the attempt number `{n}` from the attempt-ledger (per-issue across all workers), create the attempt directory `.red/tmp/workers/{id}/{N}-a{n}/`, open `afk.log` (tee target for orchestrator output), and initialise `afk.state.json` per *State File* below. The orchestrator PID is already recorded once in the per-worker `worker.pid` (written at bootstrap) and is also embedded in `afk.state.json`'s `.pid` field — there is no per-attempt pid file. Comment a start line on the issue: ISO timestamp, runner identity, worktree path. If labelling fails because someone else already claimed it, abandon the attempt directory and skip to the next issue.
-2. **Worktree.** Resolve the **base branch** (`lib/base-resolver.sh`, ADR 0031) with precedence **lock > pin > main**: the primary checkout's branch-lock value (`.red/tmp/branch-lock.yaml`, read via the branch-lock skill's `lock_store_read`) wins when set; else the **pinned branch** (`lib/pin-reader.sh`, ADR 0008 — the issue's own `branch:` line, else its parent PRD's); else `main`. (`{pinned}` below denotes this resolved base.) Then `git -C primary fetch origin {pinned}` and `git worktree add .red/tmp/workers/{id}/{N}-a{n}/worktree -b afk/{id}/{N}-{slug} origin/{pinned}` from the primary checkout. The worktree lives inside the gitignored `.red/tmp/` tree so it never appears in `git status` for `main`. Immediately after worktree creation the orchestrator mirrors the new branch on origin (`lib/remote-branch.sh::push_initial` — `git push origin -u HEAD:refs/heads/afk/{id}/{N}-{slug} --force-with-lease`) and installs a per-worktree `post-commit` hook (`install_post_commit_hook`) that fire-and-forgets a `git push origin HEAD --force-with-lease` after every inner-agent commit. Both calls are best-effort: a network/auth failure logs a `warn:` line and the iteration continues — the `afk-attempts/*` failure-push net (see *Terminal-Event Envelope*) still fires on terminal failure. Net effect: `afk/{id}/{N}-{slug}` is a **remote-tracked branch throughout the iteration**, so a SIGKILL anywhere from here on preserves the diff on origin without manual recovery.
+2. **Worktree.** Resolve the **base branch** with precedence **lock > pin > main** (ADR 0031): the primary checkout's branch-lock value (`.red/tmp/branch-lock.yaml`, written by the branch-lock skill) wins when set; else the **pinned branch** (ADR 0008 — the issue's own `branch:` line, else its parent PRD's); else `main`. (`{pinned}` below denotes this resolved base.) Then `git -C primary fetch origin {pinned}` and `git worktree add .red/tmp/workers/{id}/{N}-a{n}/worktree -b afk/{id}/{N}-{slug} origin/{pinned}` from the primary checkout. The worktree lives inside the gitignored `.red/tmp/` tree so it never appears in `git status` for `main`. Immediately after worktree creation the runtime mirrors the new branch on origin (`git push origin -u HEAD:refs/heads/afk/{id}/{N}-{slug} --force-with-lease`) and installs a per-worktree `post-commit` hook that fire-and-forgets a `git push origin HEAD --force-with-lease` after every inner-agent commit. Both calls are best-effort: a network/auth failure logs a `warn:` line and the iteration continues — the `afk-attempts/*` failure-push net (see *Terminal-Event Envelope*) still fires on terminal failure. Net effect: `afk/{id}/{N}-{slug}` is a **remote-tracked branch throughout the iteration**, so a SIGKILL anywhere from here on preserves the diff on origin without manual recovery.
 3. **Handoff file.** Materialise the handoff into `.red/tmp/workers/{id}/{N}-a{n}/handoff.md` using the template below — top-level XML wrappers (`<issue-body>`, `<previous-attempts>`, `<prior-attempt-context>`, `<human-guidance-thread>`, `<agent-notes>`) keep the issue body, orchestrator-authored prior attempts, the restart-informed retry block, human comments, and the inner-agent scratchpad unambiguous. `<issue-body>` carries the issue body verbatim (including the `## Agent brief` section written by `/triage`). The handoff file lives one level above the worktree so the inner agent reads it via `../handoff.md` from inside the worktree, and so it survives a worktree wipe on retry.
-   - **Restart-informed retries (PRD #244, issue #255).** On a terminal failure the orchestrator writes two marker files into the failing attempt dir: `snapshot-branch.ref` (the `afk-attempts/{id}/{N}-{slug}` ref it pushed to) and `failure.reason` (the envelope summary). On the **next** attempt — read by `lib/attempt-ledger.sh::attempt_ledger_context` in `iter_open`, *before* the current attempt dir is created, so it sees the prior attempt's markers — the handoff builder fetches that snapshot branch into the worktree under the local ref `refs/afk/prior-attempt` and emits a `<prior-attempt-context>` element carrying `prev-snapshot-branch`, the verbatim `prev-failure-reason`, and `prev-fetched-ref`. The retry still branches **fresh off the base** (step 2 is unchanged), so a wrong prior approach never compounds; the fetched ref is read-only history for the inner agent to inspect. First attempts skip all of this and are byte-for-byte unchanged.
+   - **Restart-informed retries (PRD #244, issue #255).** On a terminal failure the orchestrator writes two marker files into the failing attempt dir: `snapshot-branch.ref` (the `afk-attempts/{id}/{N}-{slug}` ref it pushed to) and `failure.reason` (the envelope summary). On the **next** attempt — the runtime reads those markers *before* the current attempt dir is created, so it sees the prior attempt's state — the handoff builder fetches that snapshot branch into the worktree under the local ref `refs/afk/prior-attempt` and emits a `<prior-attempt-context>` element carrying `prev-snapshot-branch`, the verbatim `prev-failure-reason`, and `prev-fetched-ref`. The retry still branches **fresh off the base** (step 2 is unchanged), so a wrong prior approach never compounds; the fetched ref is read-only history for the inner agent to inspect. First attempts skip all of this and are byte-for-byte unchanged.
 4. **Local heartbeat marker.** Write one `[heartbeat] iteration started for #N` line to `afk.log`. Slice D retired the periodic GitHub-comment heartbeat (`:one: :two: :three: :four:`) — local liveness is now signalled by the inner-agent stdout stream tee'd into `afk.log` plus state-file mtime, both of which already exist.
 5. **Inner agent.** Invoke claude/codex per [`runner-*.md`](runner-claude.md) with [`AGENT-PROMPT.md`](AGENT-PROMPT.md) + the handoff file + last 5 commits of `main` + the optional `--request/-r` special user request block. Stream stdout into the loop's header tail. Detect stages by grep on the stream — see *Stage Detection* below.
 6. **Inner result.**
@@ -252,17 +254,17 @@ For each issue `N`:
    - Inner emits `<promise>NO MORE TASKS</promise>` from inside one iteration → ignored. That sentinel is for the outer loop.
    - Runner-exhausted signal (rate limit / quota error string per runner) → keep the worktree, swap runner, retry the same issue once. If both runners exhaust, exit 75 (`EX_TEMPFAIL`).
 7. **Feedback loops.** In the worktree, derive relevant package scopes from the worker branch diff against the pinned base, then run `test`, `typecheck`, `lint`, and `build` with `pnpm -C <scope>` for each touched package that declares the script. Root-only repos keep using the root package. Any missing script is reported as an explicit per-scope skip in the validation section. Any failure blocks the merge and flips the issue to `ready-for-human` with the validation report in the blocker envelope.
-8. **Merge.** All steps target the **base branch** resolved in step 2 (`{pinned}`, defaults to `main`). The integration prelude is shared; **landing is lock-toggled** (ADR 0030, `afk_is_locked`).
+8. **Merge.** All steps target the **base branch** resolved in step 2 (`{pinned}`, defaults to `main`). The integration prelude is shared; **landing is lock-toggled** by the branch-lock state (ADR 0030).
    - Primary dirty? Auto-stage and commit `chore(afk): pre-merge snapshot for #N` in primary. Never `git stash`. Never `git checkout -- .`.
    - `git -C primary fetch origin {pinned}`. The primary checkout is pinned to `main` by the precheck; when `{pinned}` is not `main`, switch the primary checkout onto it for the merge (creating the local branch from `origin/{pinned}` if needed) and **restore it to `main` on every exit path**.
-   - **Integrate the fetched tip into local `{pinned}` before merging** (`merge_integrate_origin` in `lib/merge.sh`): fast-forward when local is strictly behind, otherwise rebase local commits onto `origin/{pinned}`. Without this the worker branch merges onto the stale boot-time HEAD and the push is rejected non-fast-forward whenever origin moved mid-run. If integration fails (diverged history that won't rebase), abort the merge → `ready-for-human`.
+   - **Integrate the fetched tip into local `{pinned}` before merging**: fast-forward when local is strictly behind, otherwise rebase local commits onto `origin/{pinned}`. Without this the worker branch merges onto the stale boot-time HEAD and the push is rejected non-fast-forward whenever origin moved mid-run. If integration fails (diverged history that won't rebase), abort the merge → `ready-for-human`.
    - Capture the integrated tip (`pre_merge_sha`) for rollback, then land per lock state:
-     - **Locked** (`.red/tmp/branch-lock.yaml` present — `{pinned}` *is* the locked branch): `git -C primary merge --no-ff afk/{id}/{N}-{slug} -m "merge: #{N} {title}"` directly into the local locked branch, then `git -C primary push origin {pinned}`. **Nothing reaches `main`** — promoting the locked branch to `main` is the operator's call. Conflict → one-shot self-resolve (`merge_resolve_conflict`); still-conflicting → `git merge --abort` → `ready-for-human`. Push rejected → `merge_rollback` to `pre_merge_sha` → `ready-for-human`.
-     - **Unlocked**: land via an **admin-merged PR** (`land_pr`). Force-push the attempt branch's final state to origin, open (or reuse) a PR `--base {pinned} --head afk/{id}/{N}-{slug}`, then `gh pr merge --admin --merge`. The **PR is the durable per-attempt history** — it survives the branch deletion in step 11. No completed work reaches `{pinned}` except through this admin-merge. Any failure (push, create, or admin-merge) → `ready-for-human`. Then fast-forward local `{pinned}` to the PR merge commit so the closing envelope's `merge_sha` is correct.
+     - **Locked** (`.red/tmp/branch-lock.yaml` present — `{pinned}` *is* the locked branch): `git -C primary merge --no-ff afk/{id}/{N}-{slug} -m "merge: #{N} {title}"` directly into the local locked branch, then `git -C primary push origin {pinned}`. **Nothing reaches `main`** — promoting the locked branch to `main` is the operator's call. Conflict → one-shot self-resolve; still-conflicting → `git merge --abort` → `ready-for-human`. Push rejected → roll back to `pre_merge_sha` → `ready-for-human`.
+     - **Unlocked**: land via an **admin-merged PR**. Force-push the attempt branch's final state to origin, open (or reuse) a PR `--base {pinned} --head afk/{id}/{N}-{slug}`, then `gh pr merge --admin --merge`. The **PR is the durable per-attempt history** — it survives the branch deletion in step 11. No completed work reaches `{pinned}` except through this admin-merge. Any failure (push, create, or admin-merge) → `ready-for-human`. Then fast-forward local `{pinned}` to the PR merge commit so the closing envelope's `merge_sha` is correct.
 9. **Push.** Folded into step 8: the **locked** path pushes the locked branch over SSH (rollback on reject); the **unlocked** path's push *is* the admin-merge of the PR. Either way, do not retry-loop indefinitely.
-10. **Close.** Validation comment on the issue: tests pass/fail, lint, typecheck, build, commits added, files touched. Then `gh issue close N --reason completed`. Remove `running` label. Once the close succeeds, delete the live remote branch with `lib/remote-branch.sh::delete_remote` (`git push origin --delete afk/{id}/{N}-{slug}`) so the remote graveyard stays tidy — the merge commit on `{pinned}` already carries the diff. Best-effort: a failed delete (branch protection, network) logs a `warn:` line and the close still completes; the orphan `afk/*` branch can be cleaned up later.
+10. **Close.** Validation comment on the issue: tests pass/fail, lint, typecheck, build, commits added, files touched. Then `gh issue close N --reason completed`. Remove `running` label. Once the close succeeds, delete the live remote branch (`git push origin --delete afk/{id}/{N}-{slug}`) so the remote graveyard stays tidy — the merge commit on `{pinned}` already carries the diff. Best-effort: a failed delete (branch protection, network) logs a `warn:` line and the close still completes; the orphan `afk/*` branch can be cleaned up later.
 11. **Cleanup (split teardown, issue #256).** Every close path — success **and** failure/blocker — always drops the heavy worktree (`git worktree remove .red/tmp/workers/{id}/{N}-a{n}/worktree`) while **retaining** the cheap artifacts (the JSONL lanes `log.jsonl` / `agent.log.jsonl` and the `handoff.md`) in the attempt directory for post-mortem. On DONE the merged branch is also deleted (`git branch -d afk/{id}/{N}-{slug}`, after the worktree is gone). The retained attempt's state file is marked not-live (`pid: 0`) so monitor / mirror / statusline read it as finished. No worktree survives a close; the attempt dir itself is reclaimed later by the boot-time orphan sweep's TTL **or, on DONE, immediately by the completion sweep below**. The remote `afk/{id}/{N}-{slug}` ref was deleted in step 10 on DONE; failure paths leave the remote ref intact and instead push the canonical `afk-attempts/{id}/{N}-{slug}` ref (see *Terminal-Event Envelope*).
-    - **Completion sweep (issue #257).** Once an issue is closed and merged, `completion_sweep_issue {N}` reclaims **every** attempt dir for that issue across **all** workers via the canonical `.red/tmp/workers/*/{N}-a*` glob (`lib/worker-paths.sh`) — not just the worker that completed it. The split-teardown retention only buys time for the orphan-sweep TTL; a completed issue needs none of it, so its retained dirs (including this worker's just-closed one) go now. A live worker's active attempt — one whose own state file still carries a live `pid` — is always skipped, though the claim lock makes a live duplicate of a just-completed issue unlikely.
+    - **Completion sweep (issue #257).** Once an issue is closed and merged, the runtime reclaims **every** attempt dir for that issue across **all** workers via the canonical `.red/tmp/workers/*/{N}-a*` glob — not just the worker that completed it. The split-teardown retention only buys time for the orphan-sweep TTL; a completed issue needs none of it, so its retained dirs (including this worker's just-closed one) go now. A live worker's active attempt — one whose own state file still carries a live `pid` — is always skipped, though the claim lock makes a live duplicate of a just-completed issue unlikely.
 12. **Tick.** Update state file. Recompute ETA from rolling average of last 3 issue durations. Print one summary line: `finished {done}/{total} ({pct}%) — next: #{next}`.
 
 ## Runner Fallback
@@ -278,7 +280,7 @@ When swap happens mid-issue (only with `--fallback-runner`), the same worktree a
 
 ## Capability Dispatch (issue #202)
 
-Once the runner identity is resolved (detection cascade or `--runner` pin), `/afk` probes that runner's capability surface once per iteration and selects a **run mode**. The probe lives in [`scripts/lib/capabilities.sh`](scripts/lib/capabilities.sh) and reports a fixed set of axes — `native_agents`, `structured_output`, `resume_session`, `worktree_support`, `hooks_events`, `permission_modes`, `phased_mode` — derived from what the runner's `runner-*.md` already documents plus filesystem probes for the production phase artefacts (sub-agent files for Claude, inline phase prompts for Codex).
+Once the runner identity is resolved (detection cascade or `--runner` pin), `/afk` probes that runner's capability surface once per iteration and selects a **run mode**. The capability probe reports a fixed set of axes — `native_agents`, `structured_output`, `resume_session`, `worktree_support`, `hooks_events`, `permission_modes`, `phased_mode` — derived from what the runner's `runner-*.md` already documents plus filesystem probes for the production phase artefacts (sub-agent files for Claude, inline phase prompts for Codex).
 
 The selected mode is one of:
 
@@ -312,11 +314,11 @@ The `<promise>…</promise>` sentinel the inner agent emits is the **canonical "
 
 Failure mode it closes: the inner agent emits `<promise>DONE</promise>` (or `BLOCKED`) but then leaves a tool call / background subprocess running — typically `run_in_background` followed by a `bash -c 'until grep "test result" $out; do sleep 5; done'` polling loop without a timeout. The bg task holds the stream-json pipe open, and an orchestrator that waited for EOF would hang for hours.
 
-[`scripts/lib/attempt-reader.sh`](scripts/lib/attempt-reader.sh) owns the stream-read + sentinel-detection + bounded tear-down; `run_claude` / `run_codex` call `attempt_reader_watch` **in the foreground** instead of waiting on the bare pipe. The reader tails the runner's stream capture (line-anchored match, so the agent quoting the sentinel in planning prose does not false-positive) and, once it sees `<promise>DONE|BLOCKED|NO MORE TASKS</promise>`:
+The runtime owns the stream-read + sentinel-detection + bounded tear-down, watching the runner's output **in the foreground** instead of waiting on the bare pipe. It tails the runner's stream capture (line-anchored match, so the agent quoting the sentinel in planning prose does not false-positive) and, once it sees `<promise>DONE|BLOCKED|NO MORE TASKS</promise>`:
 
 1. records the normalized outcome (`done` / `blocked` / `no_more_tasks`) in `ATTEMPT_READER_OUTCOME`;
 2. gives the child `RED_AFK_ATTEMPT_GRACE_S` (default **30**) to exit cleanly;
-3. if still alive, `attempt_reader_kill_tree pid TERM` — recursively SIGTERM the pipeline pid and every descendant (claude / codex, jq, grep, tee, and any bash child stuck in a polling loop);
+3. if still alive, recursively SIGTERM the pipeline pid and every descendant (claude / codex, jq, grep, tee, and any bash child stuck in a polling loop);
 4. waits `RED_AFK_ATTEMPT_KILL_S` (default **10**), then SIGKILL anything still alive.
 
 The orchestrator proceeds with feedback loops / labelling **regardless of how the tear-down resolves** — the agent's commit work, sentinel, and result are all already on disk by the time tear-down fires, and `afk.log` still captures everything the runner printed after the sentinel (the `tee`/fan-out sits upstream of the kill). The legacy `RED_AFK_WATCHDOG_GRACE_S` is still honoured as a back-compat alias for the grace window. Setting the grace below ~5 s risks killing healthy pipelines that just haven't flushed jq's buffer; 30 s is conservative.
@@ -334,8 +336,8 @@ The issue-thread heartbeat (`:one:` / `:two:` / `:three:` / `:four:` cycling eve
 Local liveness is signalled by:
 
 - **Inner-agent stdout stream**, continuously tee'd into the iteration's `afk.log` by `run_inner` — forensic inspection of a running worker tails this file.
-- **Clean agent lane + firehose** (issue #250) — alongside `afk.log`, `run_claude`/`run_codex` fan each assistant turn out through `scripts/lib/agent-lane.sh` to a clean single-writer `agent.log.jsonl` (one `type=agent` record per turn, nothing synthetic — the true liveness signal, readable as a live transcript with `tail -f … | jq -r .msg`) and to a `log.jsonl` firehose that also carries the heartbeat vitals, hook dispatches, runner timings, and errors in the uniform JSONL envelope. The heartbeat writes its vitals to the firehose as a `type=heartbeat` record but never to the agent lane, so the agent lane's silence is real silence (the masking that defeated stall/reaper detection in #243). `afk.log` is unchanged and still carries the tee'd stdout + heartbeat lines below.
-- **State-file mtime**, bumped on every `state_set` call. The monitor combines orchestrator pid liveness with state-file freshness to render `🟢 live` vs `🟡 stale`.
+- **Clean agent lane + firehose** (issue #250) — alongside `afk.log`, the runtime fans each assistant turn out to a clean single-writer `agent.log.jsonl` (one `type=agent` record per turn, nothing synthetic — the true liveness signal, readable as a live transcript with `tail -f … | jq -r .msg`) and to a `log.jsonl` firehose that also carries the heartbeat vitals, hook dispatches, runner timings, and errors in the uniform JSONL envelope. The heartbeat writes its vitals to the firehose as a `type=heartbeat` record but never to the agent lane, so the agent lane's silence is real silence (the masking that defeated stall/reaper detection in #243). `afk.log` is unchanged and still carries the tee'd stdout + heartbeat lines below.
+- **State-file mtime**, bumped on every state update. The monitor combines orchestrator pid liveness with state-file freshness to render `🟢 live` vs `🟡 stale`.
 - **Iteration boundary markers** — `heartbeat_start` / `heartbeat_stop` write a single `[heartbeat] iteration started/stopped` line each to `afk.log` so forensic readers can see when an iteration entered and left the inner-agent stage.
 - **Periodic orchestrator heartbeat** (issue #194) — `heartbeat_start` also spawns a side-channel sub-shell that appends one line every `RED_AFK_HEARTBEAT_S` (default 60s) to `afk.log`:
 
@@ -343,7 +345,7 @@ Local liveness is signalled by:
   [heartbeat] stage:tests t+00:14:02 last_stream_line="..." cpu=12% rss=420M
   ```
 
-  Implemented in `scripts/lib/heartbeat.sh`. The loop re-reads `current.stage` and `current.last_stream_line` from `afk.state.json` on every tick (so a mid-iteration stage flip shows up in the next heartbeat) and reads cpu/rss from `ps` against the orchestrator pid. Because it lives in its own sub-shell — independent of the inner-agent stream tee that buffers inside the runner pipeline — a forcibly hung worker (`kill -STOP` on the inner agent, or a runner that never flushes) still produces one heartbeat line per minute with stage frozen and wall-clock advancing. The `no-sentinel` envelope's `data-section=log` carries these lines, so the issue thread alone is enough to diagnose where the hang occurred. Set `RED_AFK_HEARTBEAT_S=0` to disable the periodic loop (boundary markers still fire).
+  The loop re-reads `current.stage` and `current.last_stream_line` from `afk.state.json` on every tick (so a mid-iteration stage flip shows up in the next heartbeat) and reads cpu/rss from `ps` against the orchestrator pid. Because it lives in its own sub-shell — independent of the inner-agent stream tee that buffers inside the runner pipeline — a forcibly hung worker (`kill -STOP` on the inner agent, or a runner that never flushes) still produces one heartbeat line per minute with stage frozen and wall-clock advancing. The `no-sentinel` envelope's `data-section=log` carries these lines, so the issue thread alone is enough to diagnose where the hang occurred. Set `RED_AFK_HEARTBEAT_S=0` to disable the periodic loop (boundary markers still fire).
 
 The terminal header has its own independent 3 s redraw tick — see *Live Header* below. It is unrelated to (and survives the removal of) the GitHub-thread heartbeat.
 
@@ -504,7 +506,7 @@ Atomic write: write to `afk.state.json.tmp` inside the attempt directory, `mv` o
 
 When `/afk` is invoked **to spawn a worker** (i.e., not the `monitor` subcommand), the agent additionally schedules a recurring `/dev:afk monitor` cron inside the current Claude Code session so the user sees progress without re-typing. Death of every worker auto-cancels the cron.
 
-**Setup (runs immediately after `afk.sh` is launched in the background):**
+**Setup (runs immediately after the `run` worker is launched in the background):**
 
 1. Fetch `CronCreate` and `CronList` via `ToolSearch` if not already loaded (they are deferred tools).
 2. `CronList` — if any existing job has `prompt == "/dev:afk monitor"`, **skip step 3** (don't double-schedule when the user runs a second parallel `/afk` in the same session).
@@ -521,9 +523,9 @@ The monitor invocation handles its own teardown — see *Self-Cancel* under the 
 
 ## Fleet Mode (runner-portable — binding)
 
-`/dev:afk fleet [N]` and `/dev:afk fleet stop` are user-facing wrappers around [`scripts/supervisor.sh`](scripts/supervisor.sh). They let one terminal command spin up (or shut down) `N` concurrent `afk.sh` workers on the current checkout, with the supervisor handling respawn, the circuit breaker, the **passive stall detector** (samples each slot's per-attempt **agent lane** `agent.log.jsonl` mtime — the clean liveness signal — every `RED_AFK_STALL_POLL_S=30s`; flags any slot alive ≥ `RED_AFK_STALL_THRESHOLD_S=600` whose agent lane has been idle ≥ the same — surfaces as `⏸️ stalled` in `/dev:afk monitor`. It keys off the agent lane, never `afk.log`/`log.jsonl`, because the orchestrator heartbeat writes those every minute and would mask a real stall — the masking that defeated detection in #243), the **hard stall reaper** (a slot silent on the agent lane past `RED_AFK_STALL_KILL_THRESHOLD_S=1800` is only a *candidate*: the irreversible kill is gated behind the reaper-signal predicate [`lib/reaper-signal.sh`], so a worker mid-build/test — an active `vitest`/`tsc`/`cargo`/… descendant under its tree, or non-trivial aggregate cpu — is **busy** and left alone, while a genuinely stuck worker [idle past the threshold, no active descendant, flat cpu] is `kill_tree`d, a `data-attempt-status="no-sentinel"` envelope is posted with the attempt-dir `afk.log` tail, the issue label is rotated back to `ready-for-agent`, the worktree + attempt dir are removed, and the slot is freed for the next health-check respawn — `RED_AFK_STALL_KILL_THRESHOLD_S` must be strictly greater than `RED_AFK_STALL_THRESHOLD_S`, validated at supervisor boot), and per-slot build isolation (see [`scripts/supervisor.sh`](scripts/supervisor.sh) header for the env contract).
+`/dev:afk fleet [N]` and `/dev:afk fleet stop` are the user-facing fleet commands. They let one terminal command spin up (or shut down) `N` concurrent `run` workers on the current checkout, with the supervisor handling respawn, the circuit breaker, the **passive stall detector** (samples each slot's per-attempt **agent lane** `agent.log.jsonl` mtime — the clean liveness signal — every `RED_AFK_STALL_POLL_S=30s`; flags any slot alive ≥ `RED_AFK_STALL_THRESHOLD_S=600` whose agent lane has been idle ≥ the same — surfaces as `⏸️ stalled` in `/dev:afk monitor`. It keys off the agent lane, never `afk.log`/`log.jsonl`, because the orchestrator heartbeat writes those every minute and would mask a real stall — the masking that defeated detection in #243), the **hard stall reaper** (a slot silent on the agent lane past `RED_AFK_STALL_KILL_THRESHOLD_S=1800` is only a *candidate*: the irreversible kill is gated behind a reaper-signal predicate, so a worker mid-build/test — an active `vitest`/`tsc`/`cargo`/… descendant under its tree, or non-trivial aggregate cpu — is **busy** and left alone, while a genuinely stuck worker [idle past the threshold, no active descendant, flat cpu] is killed tree-wide, a `data-attempt-status="no-sentinel"` envelope is posted with the attempt-dir `afk.log` tail, the issue label is rotated back to `ready-for-agent`, the worktree + attempt dir are removed, and the slot is freed for the next health-check respawn — `RED_AFK_STALL_KILL_THRESHOLD_S` must be strictly greater than `RED_AFK_STALL_THRESHOLD_S`, validated at supervisor boot), and per-slot build isolation.
 
-**Worker env passthrough.** Any `RED_AFK_*` variable exported in the operator's shell before `/dev:afk fleet` is auto-forwarded to every worker the supervisor spawns. Use this for worker-side toggles like `RED_AFK_SKIP_PERF=1` or `RED_AFK_SKIP_COMPETITIVE_BASELINE=1` without writing a hook. Internal supervisor knobs (`RED_AFK_TARGET`, `RED_AFK_POLL_S`, `RED_AFK_STALL_*`, `RED_AFK_CIRCUIT_*`, `RED_AFK_RUNNER`, `RED_AFK_REQUEST`, `RED_AFK_PLUGIN_DIR`) and the per-slot `*_BASE` build-isolation vars are excluded — they have dedicated wiring. See `PASSTHROUGH_DENYLIST` in `supervisor.sh` for the canonical list.
+**Worker env passthrough.** Any `RED_AFK_*` variable exported in the operator's shell before `/dev:afk fleet` is auto-forwarded to every worker the supervisor spawns. Use this for worker-side toggles like `RED_AFK_SKIP_PERF=1` or `RED_AFK_SKIP_COMPETITIVE_BASELINE=1` without writing a hook. Internal supervisor knobs (`RED_AFK_TARGET`, `RED_AFK_POLL_S`, `RED_AFK_STALL_*`, `RED_AFK_CIRCUIT_*`, `RED_AFK_RUNNER`, `RED_AFK_REQUEST`, `RED_AFK_PLUGIN_DIR`) and the per-slot `*_BASE` build-isolation vars are excluded — they have dedicated wiring and the supervisor denylists them from passthrough.
 
 ```bash
 $ export RED_AFK_SKIP_PERF=1
@@ -531,7 +533,7 @@ $ export RED_AFK_SKIP_COMPETITIVE_BASELINE=1
 $ /dev:afk fleet 1   # every worker sees both vars
 ```
 
-Fleet mode is **runner-portable**: `supervisor.sh` is bash process orchestration, not a Claude Code primitive. Claude Code, Codex, and bare terminals may all launch and stop the supervisor when the normal AFK hard preconditions pass. Runner-specific observability degrades independently:
+Fleet mode is **runner-portable**: the supervisor is plain process orchestration, not a Claude Code primitive. Claude Code, Codex, and bare terminals may all launch and stop the supervisor when the normal AFK hard preconditions pass. Runner-specific observability degrades independently:
 
 - Claude Code: schedule the auto-monitor cron when `CronCreate`/`CronList` are available; if not, launch fleet anyway and print `monitor loop unavailable in this runner; run /dev:afk monitor or tail .red/tmp/afk-supervisor.log manually.`
 - Codex: launch fleet with `RED_AFK_RUNNER=codex`, skip cron, and spawn one read-only Codex monitor agent when a sub-agent primitive is available. If no sub-agent primitive is available, launch fleet anyway and print the same manual-monitor guidance.
@@ -547,17 +549,15 @@ Fleet mode is **runner-portable**: `supervisor.sh` is bash process orchestration
    ✗ fleet already running (supervisor pid=<pid>, log .red/tmp/afk-supervisor.log).
      to stop it: /dev:afk fleet stop
    ```
-   Do **not** touch the file or attempt to recover. A stale PID file (file exists but `kill -0` fails) is left alone — `supervisor.sh` clears it itself on its own `acquire_lock`.
-3. **Spawn the supervisor.** From the project root. If the user supplied `--request/-r`, carry it either as `RED_AFK_REQUEST=<text>` or as `--request <text>` to `supervisor.sh`; the supervisor forwards it to every worker it spawns.
+   Do **not** touch the file or attempt to recover. A stale PID file (file exists but `kill -0` fails) is left alone — the `fleet` command clears it itself when it acquires the supervisor lock.
+3. **Launch the fleet.** From the project root, run the bundle's `fleet` command with the target and any flags:
    ```bash
-   nohup env RED_AFK_TARGET=<N> RED_AFK_RUNNER=<runner> bash plugins/dev/skills/engineering/afk/scripts/supervisor.sh \
-     >> .red/tmp/afk-supervisor.log 2>&1 < /dev/null &
-   echo $!
+   node "$CLAUDE_PLUGIN_ROOT/skills/engineering/afk/bin/afk.mjs" fleet <N> [--runner <runner>] [--request <text>]
    ```
-   Capture the printed PID. Wait up to 3 s for `.red/tmp/afk-supervisor.pid` to exist and contain a live PID (read it back — the supervisor writes its own `$$`, which may differ from the shell-level `$!` if a wrapper is involved). If it never appears, treat as a launch failure: tail `.red/tmp/afk-supervisor.log` for the last error and report it; do not retry.
+   The command performs the PID-file pre-check from step 2 itself (refusing if a live supervisor already runs), detaches the supervisor, and forwards the resolved runner and the `--request/-r` text to every worker it spawns. It waits up to 3 s for `.red/tmp/afk-supervisor.pid` to appear and contain a live PID, then prints the launched supervisor PID and target; on failure it reports the tail of `.red/tmp/afk-supervisor.log`. Capture the reported PID for the *Report back* step. (`RED_AFK_LEGACY=1` runs the same launch against the bash `supervisor.sh` instead.)
 4. **Attach the best available monitor surface.**
    - Claude Code: same flow as *Auto-Monitor Loop* — `CronList` first to deduplicate, then `CronCreate(cron="*/10 * * * *", prompt="/dev:afk monitor", recurring=true)`. If cron tools are unavailable, skip and use the manual-monitor line.
-   - Codex: fetch a sub-agent spawn primitive via `ToolSearch` (query: `spawn agent background monitor`). If available, spawn exactly one read-only Codex monitor agent for this newly-launched supervisor. Its task: from the project root, periodically run `bash plugins/dev/skills/engineering/afk/scripts/monitor.sh --once`, report concise progress, and auto-close when `.red/tmp/afk-supervisor.pid` is missing/dead and no `[live]` workers remain. It must never edit files, claim issues, stop workers, or run merges. The user may close it manually; workers continue. If the primitive is unavailable, skip and use the manual-monitor line.
+   - Codex: fetch a sub-agent spawn primitive via `ToolSearch` (query: `spawn agent background monitor`). If available, spawn exactly one read-only Codex monitor agent for this newly-launched supervisor. Its task: from the project root, periodically run `/dev:afk monitor --once` (the bundle's `monitor --once`), report concise progress, and auto-close when `.red/tmp/afk-supervisor.pid` is missing/dead and no `[live]` workers remain. It must never edit files, claim issues, stop workers, or run merges. The user may close it manually; workers continue. If the primitive is unavailable, skip and use the manual-monitor line.
    - Bare/unknown: skip native monitor setup and use the manual-monitor line.
 5. **Report back.** Print:
    ```
@@ -592,7 +592,7 @@ Steps, in order:
 When the circuit breaker parks a slot (`CIRCUIT_K` fast deaths inside `CIRCUIT_WINDOW_S`) the supervisor — not a human — runs `sweep_parked_slot` to clean up after the burned workers. Three actions, in order, gated on the trip:
 
 1. **Sweep affected attempt dirs.** From the slot log (`afk-supervisor-slot-{slot}.log`) the supervisor parses every `[afk] worker: w…` boot stamp emitted while the slot was alive, globs `.red/tmp/workers/{wid}/*/` for each ID, and reads `afk.state.json`'s `.current.number` to identify the affected issues. Each attempt dir is `rm -rf`'d after its issue has been processed.
-2. **Post a discard envelope on each affected issue.** Same `<details data-attempt-status="…">` schema as `build_envelope` in `afk.sh`, with `status="discarded"` and a summary line that names the runner and the trip cause (`runner-broken, slot parked after K fast deaths`). The envelope's `data-section="summary"` block carries the slot index, comma-joined worker IDs, fast-death count, and the supervisor log path. No `notes`, `drop`, or `log` sections — the attempts produced no usable artefacts.
+2. **Post a discard envelope on each affected issue.** Same `<details data-attempt-status="…">` schema as the per-issue terminal envelope, with `status="discarded"` and a summary line that names the runner and the trip cause (`runner-broken, slot parked after K fast deaths`). The envelope's `data-section="summary"` block carries the slot index, comma-joined worker IDs, fast-death count, and the supervisor log path. No `notes`, `drop`, or `log` sections — the attempts produced no usable artefacts.
 3. **Restore label state on each affected issue.** Single `gh issue edit` adds `ready-for-agent` and `runner-error`, removes `ready-for-human` and (defensively) `running` — covers both the "issue had already been promoted to `ready-for-human`" path and the "issue was still `running` at the moment of trip" path.
 
 The `runner-error` label is created idempotently by `/setup-red-skills` (see [triage-labels.md](../setup-red-skills/triage-labels.md)). The supervisor still calls `gh label create runner-error` on the fly during a trip so cleanup never fails just because the label is missing.
@@ -601,7 +601,7 @@ Idempotency: `SLOT_SWEPT[slot]=1` blocks a second sweep within the same supervis
 
 ### Refs
 
-- [`scripts/supervisor.sh`](scripts/supervisor.sh) — the binary this section drives. Stop-file path, env contract, circuit breaker, and trip-sweep live there.
+- The bundle's `fleet` / `fleet stop` commands — the entrypoints this section drives. Stop-file path, env contract, circuit breaker, and trip-sweep are part of the supervisor behaviour described above.
 - *Auto-Monitor Loop* above — the cron lifecycle Fleet Mode hooks into.
 - *Self-Cancel* under Monitor — the dual teardown path (cron tears itself down when no workers remain; fleet stop tears it down immediately).
 
@@ -609,30 +609,28 @@ Idempotency: `SLOT_SWEPT[slot]=1` blocks a second sweep within the same supervis
 
 > **BINDING — every monitor tick must do BOTH of the following, in order. No shortcuts.**
 >
-> 1. **Render the dashboard** (`scripts/monitor.sh --once`).
+> 1. **Render the dashboard** (the bundle's `monitor --once`).
 > 2. **Mirror live workers onto the host runner's native task surface.** Per-runner mapping:
 >    - **Claude Code:** apply `mirror_plan` via `TaskCreate` (one task per live worker, titled `#<n> w<id> — <title>`) and `TaskUpdate` (description carries `stage:<x>`, terminal events flip `state` to `completed`/`failed`). See *Task Mirror* below for the full protocol.
 >    - **Codex:** call `mirror_sink_codex`. Today `codex_native_task_available` returns non-zero, so the sink falls back to the dashboard plus a one-line notice — that *is* the mirror under Codex; do not silently skip. If Codex grows a native surface, the sink emits the same `mirror_plan` descriptors against it.
->    - **Bare terminal / unknown runner:** skip the mirror silently — `monitor.sh` is the canonical view.
+>    - **Bare terminal / unknown runner:** skip the mirror silently — the `monitor` dashboard is the canonical view.
 >
 > The mirror is the only way the user sees per-worker progress advance in their native UI. Skipping it (because "nothing changed" or "just answering a status question") is a bug, not a shortcut — `mirror_plan` is idempotent and emits zero descriptors when nothing changed.
 
-`/afk monitor` is the readonly aggregated view across all live workers. **Implementation is `scripts/monitor.sh` — invoke it directly, do not reinvent the rendering in inline bash.** The script:
+`/afk monitor` is the readonly aggregated view across all live workers. **Run the bundle's `monitor` command — do not reinvent the rendering in inline bash.** It:
 
 1. Globs `.red/tmp/workers/*/*/afk.state.json` and renders one section per active attempt.
-2. Verifies liveness via the orchestrator PID recorded in `afk.state.json` (`.pid` field, read through the `state_is_live` helper) — attempts whose PID is dead are flagged `stale`/`gone` and excluded, not counted as running.
+2. Verifies liveness via the orchestrator PID recorded in `afk.state.json` (`.pid` field) — attempts whose PID is dead are flagged `stale`/`gone` and excluded, not counted as running.
 3. Optionally tails the sibling `afk.log` for the most recent line under each worker's header.
 4. Renders the 48h sparkline header (next subsection) on every refresh.
 
 To invoke, from the project root:
 
 ```bash
-bash plugins/dev/skills/engineering/afk/scripts/monitor.sh
-# or, from an installed plugin cache:
-bash ~/.claude/plugins/cache/red-skills/dev/<version>/skills/engineering/afk/scripts/monitor.sh
+node "$CLAUDE_PLUGIN_ROOT/skills/engineering/afk/bin/afk.mjs" monitor
 ```
 
-The script has **two modes**, auto-selected by stdout type:
+The command has **two modes**, auto-selected by stdout type:
 
 - **TTY (real terminal)**: full box-drawing layout, refreshes every 3 s, `clear` between frames. Ctrl-C to exit.
 - **Non-TTY (piped, captured by an agent, redirected)**: one-shot **compact dashboard** — one sparkline header + one line per worker, then exit 0. Force this with `--once` or `RED_AFK_MONITOR_COMPACT=1` even from a TTY.
@@ -663,7 +661,7 @@ Source data: `.red/state/afk-history.jsonl`, an append-only event log written by
 {"ts":"...","epoch":...,"worker":"wK7M2","issue":568,"event":"exhausted","duration_s":0,"runner":"claude","reason":"both-runners"}
 ```
 
-`.red/state/` is gitignored. The orchestrator creates it during bootstrap, parallel workers serialise appends via `flock`, and `prune_orphans` truncates the file to the last 10000 lines if it grows past that cap.
+`.red/state/` is gitignored. The orchestrator creates it during bootstrap, parallel workers serialise appends via `flock`, and the boot-time orphan sweep truncates the file to the last 10000 lines if it grows past that cap.
 
 The sparkline only counts `event == "done"`. Blockers and exhausted runs are recorded for forensics but excluded from the throughput view.
 
@@ -685,17 +683,13 @@ When `CronList` / `CronDelete` are unavailable (Codex runner, or `/afk monitor` 
 
 ### Task Mirror And Codex Monitor Agent (binding)
 
-Every `/dev:afk monitor` run also **mirrors each live worker onto the runner's native task list when that runner exposes one**, so a `/afk` session surfaces progress on the host's native UI — advancing through stages on its own, with no extra typing. This is a **read-only reflection of `afk.state.json`**; the mirror never writes state and never touches `afk.sh` orchestration.
+Every `/dev:afk monitor` run also **mirrors each live worker onto the runner's native task list when that runner exposes one**, so a `/afk` session surfaces progress on the host's native UI — advancing through stages on its own, with no extra typing. This is a **read-only reflection of `afk.state.json`**; the mirror never writes state and never touches the orchestration.
 
-The pure diff logic lives in [`scripts/lib/mirror.sh`](scripts/lib/mirror.sh). After rendering the dashboard, the agent (under Claude Code only) must:
+The mirror is a pure diff: it reconciles the live worker state files against the tasks already on the native surface and emits a **call plan**. After rendering the dashboard, the agent (under Claude Code only) must:
 
 1. Fetch `TaskCreate`, `TaskUpdate`, and `TaskList` via `ToolSearch` if not already loaded (deferred tools).
 2. **Build the tracked set.** `TaskList` → keep the mirror-owned tasks (those whose title matches `#<n> w<id> — …`). For each, emit one JSONL line `{"key":"<worker_id>:<issue>","stage":"<last stage>"}`, reading the key from the title and the stage from the description (`stage: <x>`). Keep a key→task_id map for step 4.
-3. **Compute the plan.** From the project root:
-   ```bash
-   bash plugins/dev/skills/engineering/afk/scripts/lib/mirror.sh  # sourced, not run
-   ```
-   Call `mirror_plan "$PWD" "$tracked_jsonl"`, where `$tracked_jsonl` is the newline-joined output of step 2. It globs the state files, reconciles against the tracked set (keyed by `worker_id:issue`, so parallel workers each get exactly one task and re-runs never duplicate), and prints a JSONL **call plan** — one descriptor per harness call:
+3. **Compute the plan.** The runtime globs the state files and reconciles them against the tracked set from step 2 (keyed by `worker_id:issue`, so parallel workers each get exactly one task and re-runs never duplicate), then prints a JSONL **call plan** — one descriptor per harness call:
    ```jsonl
    {"call":"TaskCreate","key":"wAAAA:22","title":"#22 wAAAA — extract state.sh","description":"stage: impl","state":"in_progress"}
    {"call":"TaskUpdate","key":"wAAAA:22","description":"stage: tests","state":"in_progress"}
@@ -709,14 +703,14 @@ An empty plan means nothing changed since the last tick — apply no calls. Beca
 
 **Re-hydration on session reopen.** A native task dies with the Claude Code session; the `nohup` AFK worker does not. When a session opens with workers still running, `TaskList` (step 2) returns no mirror-owned tasks, so the tracked set is **empty** and `mirror_plan` reconciles cold — emitting a `TaskCreate` for every live worker. The status bar recovers the per-worker tasks with no operator action. This is the same path as steady-state, not a new one: only workers whose orchestrator PID (the `.pid` field in `afk.state.json`, via `state_is_live`) is alive re-hydrate (dead workers are untracked-terminal on a cold tick → no ghost task), and the next tick is idempotent because the freshly-created tasks now form the tracked set.
 
-When `TaskCreate` / `TaskUpdate` are unavailable because the session is **outside any runner** (a bare terminal), **skip the mirror silently** — there is no native surface to drive, and `monitor.sh` is already the canonical view.
+When `TaskCreate` / `TaskUpdate` are unavailable because the session is **outside any runner** (a bare terminal), **skip the mirror silently** — there is no native surface to drive, and the `monitor` dashboard is already the canonical view.
 
-**Codex sink (runner-specific — binding).** The mirror is per-runner, mirroring the `runner-claude.md` / `runner-codex.md` split (ADR 0003). Under Codex the `state-reader` and `mirror-reconciler` are reused unchanged — only the sink differs. After rendering the dashboard, the Codex agent calls [`mirror_sink_codex "$PWD" "$tracked_jsonl"`](scripts/lib/mirror.sh) instead of the Claude `TaskCreate`/`TaskUpdate` loop:
+**Codex sink (runner-specific — binding).** The mirror is per-runner, mirroring the `runner-claude.md` / `runner-codex.md` split (ADR 0003). Under Codex the state reader and plan reconciler are reused unchanged — only the sink differs. After rendering the dashboard, the Codex agent drives the Codex sink instead of the Claude `TaskCreate`/`TaskUpdate` loop:
 
-- If Codex grows a native background-task surface, override `codex_native_task_available` to return 0 and the sink emits the **same `mirror_plan` call descriptors** the Claude sink applies — apply them against the Codex primitive.
-- Otherwise (today's reality), the sink falls back to the `monitor.sh` dashboard and emits a one-line notice. No native calls are emitted, so there is no half-rendered state, and a `monitor.sh` hiccup is swallowed so the tick never crashes.
+- If Codex grows a native background-task surface, the sink emits the **same call-plan descriptors** the Claude sink applies — apply them against the Codex primitive.
+- Otherwise (today's reality), the sink falls back to the `monitor` dashboard and emits a one-line notice. No native calls are emitted, so there is no half-rendered state, and a dashboard hiccup is swallowed so the tick never crashes.
 
-**Codex monitor agent (fleet-specific — binding).** Codex has a native sub-agent UI even though it does not expose the Claude-style `TaskCreate`/`TaskUpdate` task API. When `/dev:afk fleet N` launches a new supervisor under Codex, the agent should spawn exactly one read-only Codex monitor agent when the sub-agent primitive is available. That monitor agent periodically runs `monitor.sh --once`, reports concise progress, and exits once no supervisor or live workers remain. It is a presentation consumer only: it must not edit files, stop workers, claim issues, or merge anything. Closing it manually must not affect the fleet.
+**Codex monitor agent (fleet-specific — binding).** Codex has a native sub-agent UI even though it does not expose the Claude-style `TaskCreate`/`TaskUpdate` task API. When `/dev:afk fleet N` launches a new supervisor under Codex, the agent should spawn exactly one read-only Codex monitor agent when the sub-agent primitive is available. That monitor agent periodically runs `/dev:afk monitor --once`, reports concise progress, and exits once no supervisor or live workers remain. It is a presentation consumer only: it must not edit files, stop workers, claim issues, or merge anything. Closing it manually must not affect the fleet.
 
 Do **not** invent a cross-runner task abstraction (rejected in ADR 0003) — keep the adapter explicitly per-runner.
 
@@ -859,7 +853,7 @@ Currently shipped:
 | `gradle` | `pre_worktree`  | When `build.gradle*` exists at `$PROJECT_ROOT` **and** `RED_AFK_GRADLE_USER_HOME_BASE` is set, sets `GRADLE_USER_HOME=${RED_AFK_GRADLE_USER_HOME_BASE}/slot-${RED_AFK_SLOT}` so each slot's Gradle daemons / caches are isolated. The env-var opt-in is deliberate — AFK will not claim a path on your filesystem without consent. | `afk.hooks.defaults.gradle: false` |
 | `heartbeat` | `post_attempt`  | Stops the orchestrator's per-minute heartbeat sub-shell (`RED_AFK_HEARTBEAT_PID`) and appends the `iteration stopped` boundary marker to `RED_AFK_ITER_LOG`. Migrated from an inline `heartbeat_stop` call so the heartbeat now terminates *before* any user `post_attempt` hook runs. | `afk.hooks.defaults.heartbeat: false` |
 | `envelope`  | `post_attempt`  | Reconciles `result.status` onto the AFK state file (`current.result_status` in `RED_AFK_STATE_FILE`) so a user `post_attempt` notifier reading state sees the worker's terminal status without re-deriving it from the sentinel. | `afk.hooks.defaults.envelope: false` |
-| `validation` | `post_merge`  | Runs `pnpm test` / `typecheck` / `lint` / `build` against the merged primary checkout (when a `package.json` is present at the workspace root), then attaches `result.{validation_status, validation_summary}` to the post_merge context so user hooks see the CI/smoke outcome reconciled before they fire. Migrated from the inline post-merge CI/smoke call; the pre-merge `feedback()` step remains as the mechanism-owned safety gate (ADR 0008 — only mechanism can refuse a merge), so this default is observability + notification surface, not a gate. | `afk.hooks.defaults.validation: false` |
+| `validation` | `post_merge`  | Runs `pnpm test` / `typecheck` / `lint` / `build` against the merged primary checkout (when a `package.json` is present at the workspace root), then attaches `result.{validation_status, validation_summary}` to the post_merge context so user hooks see the CI/smoke outcome reconciled before they fire. Migrated from the inline post-merge CI/smoke call; the pre-merge feedback-validation step remains as the mechanism-owned safety gate (ADR 0008 — only mechanism can refuse a merge), so this default is observability + notification surface, not a gate. | `afk.hooks.defaults.validation: false` |
 
 Example configuration:
 

@@ -308,6 +308,8 @@ jobs:
             dist/code-nav.bundle.min.mjs
             dist/code-nav.manifest.json
             src/domains/memory/dist-bundle/memory-cli.mjs
+            src/domains/memory/dist-bundle/memory-mcp.mjs
+            src/domains/memory/dist-bundle/red-curate-skill.mjs
             src/domains/memory/memory-runtime-manifest.json
           )
           if [ -n "$PREVIOUS" ]; then

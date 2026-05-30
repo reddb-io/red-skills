@@ -1,7 +1,7 @@
 # afk detectors
 
-Shipped detectors invoked by the generic hook orchestrator
-(`scripts/hooks.sh::hooks_run`) at the `pre-spawn` hook point. Each
+Shipped detectors invoked by the AFK runtime's hook orchestrator
+at the `pre-spawn` hook point. Each
 detector is a self-contained shell script that decides, on its own,
 whether it applies to the current project; if so, it writes
 `KEY=value` exports into `$RED_AFK_HOOK_ENV_FILE` and exits 0. The
