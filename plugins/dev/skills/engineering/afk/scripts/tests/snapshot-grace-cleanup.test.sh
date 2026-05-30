@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Tests for issue #258 / #271 (PRD #244): remote-side grace-TTL cleanup of the
-# afk-attempts/{wid}/{n}-{slug} snapshot branches for completed or 404 issues.
+# Tests for issue #258 / #271 / #273 (PRD #244): remote-side cleanup of AFK
+# branches after issue completion.
 #
 #   prune_completed_attempt_branches [root]
 #     Lists the remote afk-attempts/* snapshot branches, groups them by issue,
@@ -9,6 +9,13 @@
 #     or whose issue 404s and whose branch commit predates the grace window.
 #     Open issues, within-grace branches, and transient API failures are left
 #     strictly untouched. Best-effort, always rc 0, never on the close path.
+#
+#   prune_completed_live_branches [root]
+#     Lists the remote afk/* live-iteration branches, groups them by issue,
+#     plans keep/reap decisions through the same pure decider, then deletes
+#     branches for closed issues immediately. Open issues and transient API
+#     failures are left strictly untouched. Best-effort, always rc 0, never on
+#     the close path.
 #
 # git and gh are mocked via PATH override:
 #   - `git ... ls-remote ...` prints a fixture ref list.
@@ -172,6 +179,24 @@ expect_contains "decider: reaps 404 branch past branch-age grace" "$plan" $'reap
 expect_contains "decider: keeps 404 branch within branch-age grace" "$plan" $'keep	afk-attempts/wAAA/404-fresh-missing	404	not-found'
 expect_contains "decider: keeps transient issue API failure" "$plan" $'keep	afk-attempts/wAAA/405-rate-limited	405	unresolved-transient'
 
+declare -A LIVE_DECIDER_CLASS=(
+  [500]=closed-past-grace
+  [501]=open
+  [502]=unresolved-transient
+)
+live_decider_classifier() { printf '%s\n' "${LIVE_DECIDER_CLASS[$1]:-unresolved-transient}"; }
+
+live_decider_refs="$(cat <<EOF
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa	refs/heads/afk/wAAA/500-done
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb	refs/heads/afk/wAAA/501-open
+cccccccccccccccccccccccccccccccccccccccc	refs/heads/afk/wAAA/502-rate-limited
+EOF
+)"
+live_plan="$(live_completion_cleanup_plan "$live_decider_refs" live_decider_classifier "$fixed_now" "$((7*DAY))")"
+expect_contains "live decider: reaps closed issue branch" "$live_plan" $'reap	afk/wAAA/500-done	500	closed-past-grace'
+expect_contains "live decider: keeps open issue branch" "$live_plan" $'keep	afk/wAAA/501-open	501	open'
+expect_contains "live decider: keeps transient issue API failure" "$live_plan" $'keep	afk/wAAA/502-rate-limited	502	unresolved-transient'
+
 # Remote ref fixture: six issues, two workers, two snapshots for #300.
 cat >"$LSREMOTE_FILE" <<EOF
 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa	refs/heads/afk-attempts/wAAA/300-old-completed	$(epoch_ago $((30*DAY)))
@@ -255,12 +280,37 @@ gh_fixture 300 CLOSED "$(iso_ago $((30*DAY)))"   # restore for any later use
 reset_calls
 : >"$LSREMOTE_FILE"
 RED_AFK_ATTEMPT_SNAPSHOT_GRACE_S=$((7*DAY)) \
-  expect_rc0 "prune: empty ref list is a rc-0 no-op" prune_completed_attempt_branches
+expect_rc0 "prune: empty ref list is a rc-0 no-op" prune_completed_attempt_branches
 expect_eq "prune: empty ref list issues no delete" "" "$(calls | grep -F -- '--delete' || true)"
+
+# ---------- live afk/* completion cleanup: closed deletes, open/transient survive ----------
+cat >"$LSREMOTE_FILE" <<EOF
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa	refs/heads/afk/wAAA/500-done
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb	refs/heads/afk/wAAA/501-open
+cccccccccccccccccccccccccccccccccccccccc	refs/heads/afk/wAAA/502-rate-limited
+EOF
+gh_fixture 500 CLOSED "$(iso_ago $DAY)"
+gh_fixture 501 OPEN ""
+gh_error 502 "rate limit"
+
+reset_calls
+expect_rc0 "live prune: returns 0" prune_completed_live_branches
+live_out="$(calls)"
+expect_contains "live prune: deletes closed #500 live branch" "$live_out" "push origin --delete afk/wAAA/500-done"
+expect_not_contains "live prune: keeps open #501 live branch" "$live_out" "--delete afk/wAAA/501-open"
+expect_not_contains "live prune: keeps transient #502 live branch" "$live_out" "--delete afk/wAAA/502-rate-limited"
+
+reset_calls
+rm -f "$GH_DIR/500.json"
+gh_error 500 "rate limit"
+expect_rc0 "live prune: transient lookup returns 0" prune_completed_live_branches
+expect_not_contains "live prune: transient closed-unknown #500 left untouched" "$(calls)" "--delete afk/wAAA/500-done"
 
 # ---------- static guard: boot wires the prune after cap_issue_attempts ----------
 expect_rc0 "guard: afk.sh boot calls prune_completed_attempt_branches" \
   grep -q 'prune_completed_attempt_branches' "$SCRIPTS/afk.sh"
+expect_rc0 "guard: afk.sh boot calls prune_completed_live_branches" \
+  grep -q 'prune_completed_live_branches' "$SCRIPTS/afk.sh"
 
 # ---------- summary ----------
 echo
