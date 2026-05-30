@@ -43,6 +43,9 @@ export interface SupervisorConfig {
   /** Runner name carried in the discard / no-sentinel envelopes
    * (RED_AFK_RUNNER, default "claude"). */
   runner: string;
+  /** RED_AFK_POLL_S — seconds the health-check loop sleeps between ticks
+   * (default 15, matching supervisor.sh). Prevents the loop from busy-spinning. */
+  pollIntervalS: number;
 }
 
 export const SUPERVISOR_DEFAULTS = {
@@ -53,6 +56,7 @@ export const SUPERVISOR_DEFAULTS = {
   stallThresholdS: 600,
   stallKillThresholdS: 1800,
   runner: "claude",
+  pollIntervalS: 15,
 } as const satisfies SupervisorConfig;
 
 /**
@@ -80,6 +84,7 @@ export function resolveSupervisorConfig(
       SUPERVISOR_DEFAULTS.stallKillThresholdS,
     ),
     runner: env.RED_AFK_RUNNER && env.RED_AFK_RUNNER.length > 0 ? env.RED_AFK_RUNNER : SUPERVISOR_DEFAULTS.runner,
+    pollIntervalS: num("RED_AFK_POLL_S", SUPERVISOR_DEFAULTS.pollIntervalS),
   };
 }
 
@@ -190,6 +195,10 @@ export interface SupervisorProc {
    * reduction consumes (deriveSnapshot). Mirrors sup_descendant_pids feeding
    * sup_active_descendant + sup_tree_cpu. */
   inspectTree(pid: number): readonly ProcessSnapshotEntry[];
+  /** Sleep for `ms` between health-check ticks — the poll cadence (RED_AFK_POLL_S).
+   * Injected so tests advance the loop without real time. Mirrors the bash
+   * `sleep "$POLL_S"` at the bottom of the supervisor `while :` loop. */
+  sleep(ms: number): Promise<void>;
 }
 
 /** Filesystem side effects. Best-effort, like the bash `|| true` cleanups. */
@@ -621,8 +630,8 @@ export async function terminateAll(state: SupervisorState, deps: SupervisorDeps)
  * The supervisor's startup + health-check loop, composing the steps above. This
  * is the testable shape of supervisor.sh's main body (~1109-1141): validate
  * thresholds, spawn the initial fleet to target, then tick until the stop-file
- * appears. The poll cadence / stagger sleeps are the caller's concern (injected
- * via the tick driver) — this owns only the ordering.
+ * appears. Between ticks it sleeps the poll cadence (config.pollIntervalS, via
+ * the injected deps.proc.sleep) so the loop never busy-spins.
  */
 export async function runSupervisor(
   state: SupervisorState,
@@ -640,9 +649,10 @@ export async function runSupervisor(
     slot.spawnEpoch = spawned.spawnEpoch;
   }
 
-  // Health-check loop until the stop-file.
+  // Health-check loop until the stop-file, sleeping the poll cadence each pass.
   for (;;) {
     const result = await superviseTick(state, deps, config, stopRequested);
     if (result.stopped) return;
+    await deps.proc.sleep(config.pollIntervalS * 1000);
   }
 }

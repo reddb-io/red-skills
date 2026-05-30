@@ -105,6 +105,25 @@ export async function comment(ctx: GhContext, issue: number, body: string): Prom
   await gh(["issue", "comment", String(issue), ...repoArgs(ctx), "--body", body], opts(ctx));
 }
 
+/** Idempotently create the `runner-error` label (best-effort). Mirrors
+ * supervisor.sh ensure_runner_error_label — a label that already exists exits
+ * non-zero and is swallowed. */
+export async function ensureRunnerErrorLabel(ctx: GhContext): Promise<void> {
+  await gh(
+    [
+      "label",
+      "create",
+      "runner-error",
+      ...repoArgs(ctx),
+      "--color",
+      "B60205",
+      "--description",
+      "AFK supervisor circuit-tripped; runner was misconfigured",
+    ],
+    opts(ctx),
+  );
+}
+
 /** `gh issue close --reason completed`. */
 export async function closeIssue(ctx: GhContext, issue: number): Promise<void> {
   await gh(["issue", "close", String(issue), ...repoArgs(ctx), "--reason", "completed"], opts(ctx));

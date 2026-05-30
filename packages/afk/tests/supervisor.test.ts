@@ -30,6 +30,7 @@ function config(over: Partial<SupervisorConfig> = {}): SupervisorConfig {
     stallThresholdS: 30,
     stallKillThresholdS: 90,
     runner: "claude",
+    pollIntervalS: 15,
     ...over,
   };
 }
@@ -39,6 +40,7 @@ interface FakeIo {
   isAlive: ReturnType<typeof vi.fn>;
   killTree: ReturnType<typeof vi.fn>;
   inspectTree: ReturnType<typeof vi.fn>;
+  sleep: ReturnType<typeof vi.fn>;
   agentLaneMtime: ReturnType<typeof vi.fn>;
   resolveIterDir: ReturnType<typeof vi.fn>;
   teardownIterDir: ReturnType<typeof vi.fn>;
@@ -60,6 +62,7 @@ function makeDeps(over: Partial<Record<keyof FakeIo, unknown>> = {}): {
     isAlive: vi.fn(() => true),
     killTree: vi.fn(async () => {}),
     inspectTree: vi.fn((): readonly ProcessSnapshotEntry[] => []),
+    sleep: vi.fn(async () => {}),
     agentLaneMtime: vi.fn(() => 0),
     resolveIterDir: vi.fn((): IterDirInfo | null => null),
     teardownIterDir: vi.fn(async () => {}),
@@ -79,6 +82,7 @@ function makeDeps(over: Partial<Record<keyof FakeIo, unknown>> = {}): {
       isAlive: io.isAlive,
       killTree: io.killTree,
       inspectTree: io.inspectTree,
+      sleep: io.sleep,
     },
     fs: {
       agentLaneMtime: io.agentLaneMtime,
@@ -417,6 +421,39 @@ describe("runSupervisor", () => {
     expect(io.spawnSlot).toHaveBeenCalledWith(1);
     // Stop-file honoured → workers terminated.
     expect(io.killTree).toHaveBeenCalled();
+    // Stopped on the first tick → no inter-tick sleep happened.
+    expect(io.sleep).not.toHaveBeenCalled();
+  });
+
+  it("sleeps the poll cadence between ticks before stopping on the 2nd", async () => {
+    const { deps, io } = makeDeps({ isAlive: vi.fn(() => true) });
+    const state = initSupervisorState(1);
+
+    // Stop on the SECOND stop-file probe: tick 1 runs (no stop), the loop
+    // sleeps the cadence, tick 2 sees the stop and returns.
+    let probes = 0;
+    const stop = () => {
+      probes += 1;
+      return probes >= 2;
+    };
+
+    await runSupervisor(state, deps, config({ target: 1, pollIntervalS: 15 }), stop);
+
+    // Exactly one inter-tick sleep, at the configured cadence (15s → 15000ms).
+    expect(io.sleep).toHaveBeenCalledTimes(1);
+    expect(io.sleep).toHaveBeenCalledWith(15000);
+  });
+
+  it("honours a non-default poll cadence", async () => {
+    const { deps, io } = makeDeps({ isAlive: vi.fn(() => true) });
+    const state = initSupervisorState(1);
+    let probes = 0;
+    const stop = () => (++probes >= 2);
+
+    await runSupervisor(state, deps, config({ target: 1, pollIntervalS: 7 }), stop);
+
+    expect(io.sleep).toHaveBeenCalledTimes(1);
+    expect(io.sleep).toHaveBeenCalledWith(7000);
   });
 });
 
