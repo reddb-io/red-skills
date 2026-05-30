@@ -70,6 +70,26 @@ export function refToNumber(ref: string): number | null {
   return m ? Number(m[1]) : null;
 }
 
+/** A `req:<N>` dependency label — the queryable edge that mirrors `prd:<N>`. An
+ * issue carrying `req:101` declares it "requires #101 to close before it can be
+ * worked"; multiple `req:*` labels stack (req:101, req:102, …). */
+const REQ_LABEL_RE = /^req:([0-9]+)$/;
+
+/**
+ * Extract the dependency issue numbers from a label set: each `req:<N>` label
+ * contributes `N`. Non-numeric (`req:foo`) and non-`req:` labels are ignored.
+ * The result is sorted-unique ascending NUMERICALLY (so #2 before #10) — these
+ * are real ids, not the lexical `## Blocked by` ref tokens. Pure.
+ */
+export function parseReqLabels(labels: readonly string[]): number[] {
+  const seen = new Set<number>();
+  for (const label of labels) {
+    const m = REQ_LABEL_RE.exec(label.trim());
+    if (m) seen.add(Number(m[1]));
+  }
+  return [...seen].sort((a, b) => a - b);
+}
+
 /** The S1 blocker-state vocabulary the promote rule consumes. CLOSED maps to
  * the literal `gh issue view --json state --jq .state` value; everything else
  * (OPEN, a 404, or a transient gh failure) is "not closed". */
@@ -93,10 +113,58 @@ export function auditComment(refs: readonly string[]): string {
   return `🤖 /afk promoted to ready-for-agent: all blockers closed (${refs.join(", ")}).`;
 }
 
-/** A `ready-for-human` candidate the sweep examines: its number and raw body. */
+/** Build the audit comment posted when an issue's `req:*` dependencies all
+ * close. The now-satisfied deps are named as `#N` tokens in ascending order,
+ * e.g. `🤖 /afk unblocked: all dependencies closed (#101, #102).` */
+export function cascadeAuditComment(reqs: readonly number[]): string {
+  return `🤖 /afk unblocked: all dependencies closed (${reqs.map((n) => `#${n}`).join(", ")}).`;
+}
+
+/** A dependent issue (carrying `req:*` labels) re-evaluated by the close
+ * cascade: its number plus each declared dependency's number and closed-state. */
+export interface DependentIssue {
+  number: number;
+  /** One entry per `req:<n>` label, with `n` resolved to its closed-state. */
+  reqs: { n: number; closed: boolean }[];
+}
+
+/**
+ * Plan the event-driven close cascade triggered when `closedIssue` closes. For
+ * each dependent issue carrying `req:closedIssue` (and possibly other `req:*`
+ * deps), promote it to `ready-for-agent` IFF EVERY one of its `req:*` deps is
+ * now CLOSED (and it has ≥1 dep) — the same all-closed semantics as
+ * `shouldPromote`. The audit comment names every now-satisfied dep in ascending
+ * order. `refs` holds the dep ids as `#N` strings for parity with the sweep's
+ * PromotionPlan. Pure — closed-states are resolved by the caller.
+ */
+export function planCloseCascade(
+  closedIssue: number,
+  dependents: readonly DependentIssue[],
+): PromotionPlan[] {
+  const plans: PromotionPlan[] = [];
+  for (const dep of dependents) {
+    const states: BlockerState[] = dep.reqs.map((r) => (r.closed ? "CLOSED" : "open-or-unknown"));
+    if (!shouldPromote(states)) continue;
+    const reqs = dep.reqs.map((r) => r.n).sort((a, b) => a - b);
+    plans.push({
+      number: dep.number,
+      refs: reqs.map((n) => `#${n}`),
+      comment: cascadeAuditComment(reqs),
+    });
+  }
+  return plans;
+}
+
+/** A `ready-for-human` / `blocked:dependency` candidate the boot sweep
+ * examines: its number, raw body, and (preferred) label set. When `labels`
+ * carries `req:*` deps the sweep keys off those; the `## Blocked by` body parse
+ * is the documented fallback for issues that predate the req:N convention. */
 export interface UnblockCandidate {
   number: number;
   body: string;
+  /** Full label set, used to read `req:*` deps. Optional for back-compat with
+   * callers that only know the body (legacy `## Blocked by` parse). */
+  labels?: string[];
 }
 
 /** Issue-state lookup, injected so the sweep stays pure. Given a blocker issue
@@ -116,11 +184,16 @@ export interface PromotionPlan {
 }
 
 /**
- * Plan the Unblock Sweep over `candidates`. For each candidate, parse its
- * `## Blocked by` refs, look up each referenced blocker's state via
- * `fetchBlockerState`, and emit a promotion plan only when every ref is CLOSED
- * (and there is at least one ref). Candidates with no refs are skipped, exactly
- * as the bash `[[ -z "$refs" ]] && continue`.
+ * Plan the Unblock Sweep over `candidates`. For each candidate the sweep PREFERS
+ * the structured `req:*` labels (the queryable dependency edge): when the
+ * candidate carries ≥1 `req:<N>` label, the deps are those N, each looked up via
+ * `fetchBlockerState`, and a promotion is planned only when EVERY one is CLOSED
+ * — the audit comment then uses the `cascadeAuditComment` "all dependencies
+ * closed" wording. When the candidate carries NO `req:*` label, the sweep FALLS
+ * BACK to the legacy `## Blocked by` body parse (documented fallback for issues
+ * that predate the req:N convention), using the original "all blockers closed"
+ * wording. Candidates with neither are skipped (bash `[[ -z "$refs" ]] &&
+ * continue`).
  *
  * Pure modulo the injected lookup: no gh/git/network I/O happens here.
  */
@@ -130,6 +203,26 @@ export async function planUnblockSweep(
 ): Promise<PromotionPlan[]> {
   const plans: PromotionPlan[] = [];
   for (const candidate of candidates) {
+    const reqIds = parseReqLabels(candidate.labels ?? []);
+
+    // Prefer the structured req:* dependency labels when present.
+    if (reqIds.length > 0) {
+      const states: BlockerState[] = [];
+      for (const id of reqIds) {
+        const raw = await fetchBlockerState(id);
+        states.push(raw === "CLOSED" ? "CLOSED" : "open-or-unknown");
+      }
+      if (shouldPromote(states)) {
+        plans.push({
+          number: candidate.number,
+          refs: reqIds.map((n) => `#${n}`),
+          comment: cascadeAuditComment(reqIds),
+        });
+      }
+      continue;
+    }
+
+    // Legacy fallback: the `## Blocked by` body parse.
     const refs = parseBlockedBy(candidate.body);
     if (refs.length === 0) continue;
 

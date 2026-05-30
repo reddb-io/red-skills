@@ -55,7 +55,7 @@ For each approved slice, publish a new issue. Use the issue template in `<suppor
 
 - Publish in **dependency order** (blockers first) so you can reference real issue identifiers in each "Blocked by" field
 - Tag only currently-unblocked AFK slices with the canonical `ready-for-agent` triage label (mapped string from `/setup-red-skills`).
-- If an AFK slice has open blockers, publish it as `ready-for-human` + `blocked` with the strict `## Blocked by` section; `/afk` will auto-promote it to `ready-for-agent` once every blocker closes.
+- If an AFK slice has open blockers, publish it as `blocked:dependency` + one `req:N` label **per blocker** (NOT `ready-for-human` — a dependency-blocked slice is healthy and must never page a human), keeping the strict `## Blocked by` task list in the body as the human-facing mirror. `req:N` labels are created on demand (`gh label create req:<n>` if missing). `/afk` auto-promotes the issue to `ready-for-agent` the moment its last dependency closes (event-driven close cascade, with the boot sweep as a safety net). See `/setup-red-skills` triage-labels *Dependency Edges*.
 - If a slice is HITL, publish it as `ready-for-human` (and `slice:hitl` when available). Do **not** include a literal `## Blocked by` section unless it should be auto-promoted to AFK after blockers close; use a non-parser heading such as `## Human decision needed` for informational dependencies.
 - If the parent is a PRD (carries `type:prd` + `needs-slicing`), tag every child with `prd:{N}` referencing the parent and, **after** all slices are published, remove `needs-slicing` from the parent PRD. Never remove `type:prd` — it is a permanent type marker. Never apply `ready-for-agent` to the parent PRD itself.
 

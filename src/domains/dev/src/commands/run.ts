@@ -214,6 +214,8 @@ function buildProcessDeps(
       editLabels: (issue, remove, add) => ghx.editLabels(ghCtx, issue, remove, add),
       comment: (issue, body) => ghx.comment(ghCtx, issue, body),
       close: (issue) => ghx.closeIssue(ghCtx, issue),
+      listByLabel: (label) => ghx.listByLabel(ghCtx, label),
+      issueClosed: (n) => ghx.issueClosed(ghCtx, n),
     },
     claimLock: {
       acquire: async (issue) => {

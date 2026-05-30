@@ -25,6 +25,8 @@ interface Trace {
   postedEnvelopes: Array<{ issue: number; status: string }>;
   released: number[];
   runAgentCalls: RunAgentInput[];
+  /** Labels queried via gh.listByLabel during the close cascade. */
+  listByLabelCalls: string[];
 }
 
 interface HarnessOptions {
@@ -49,6 +51,12 @@ interface HarnessOptions {
   conflictResolve?: "resolve" | "fail";
   /** Records calls into the conflict resolver dispatch. */
   resolverCalls?: string[];
+  /** Close-cascade fixture: open dependents returned by gh.listByLabel(req:N),
+   * keyed by the queried label (e.g. "req:7"). */
+  dependentsByLabel?: Record<string, { number: number; labels: string[] }[]>;
+  /** Close-cascade fixture: issues resolved as CLOSED by gh.issueClosed. The
+   * just-closed issue is treated as closed without consulting this set. */
+  closedIssues?: number[];
 }
 
 function harness(opts: HarnessOptions = {}): {
@@ -66,6 +74,7 @@ function harness(opts: HarnessOptions = {}): {
     postedEnvelopes: [],
     released: [],
     runAgentCalls: [],
+    listByLabelCalls: [],
   };
 
   const outcome = opts.outcome ?? "done";
@@ -88,6 +97,13 @@ function harness(opts: HarnessOptions = {}): {
       },
       async close(issue) {
         trace.closed.push(issue);
+      },
+      async listByLabel(label) {
+        trace.listByLabelCalls.push(label);
+        return opts.dependentsByLabel?.[label] ?? [];
+      },
+      async issueClosed(n) {
+        return (opts.closedIssues ?? []).includes(n);
       },
     },
     claimLock: {
@@ -582,5 +598,74 @@ describe("processIssue — merge-conflict one-shot self-resolve (gap 3)", () => 
     const result = await processIssue(deps, input);
     expect(result.outcome).toBe("merge-conflict");
     expect(trace.labelEdits.some((e) => e.add.includes("ready-for-human"))).toBe(true);
+  });
+});
+
+describe("close cascade (event-driven auto-unblock)", () => {
+  it("promotes a dependent whose req:* deps are all closed, leaves a still-blocked one", async () => {
+    // Issue 9 closes. Two open dependents carry req:9:
+    //   #20 has req:9 only → all closed → promote
+    //   #21 has req:9 + req:8 (8 still open) → stays blocked:dependency
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      dependentsByLabel: {
+        "req:9": [
+          { number: 20, labels: ["blocked:dependency", "req:9"] },
+          { number: 21, labels: ["blocked:dependency", "req:9", "req:8"] },
+        ],
+      },
+      closedIssues: [], // #8 is NOT closed; #9 is known-closed implicitly
+    });
+    const result = await processIssue(deps, input);
+    expect(result.outcome).toBe("done");
+    expect(trace.closed).toContain(9);
+    // queried the req:9 dependents exactly once.
+    expect(trace.listByLabelCalls).toEqual(["req:9"]);
+
+    const promote = trace.labelEdits.filter((e) => e.add.includes("ready-for-agent"));
+    expect(promote).toEqual([{ issue: 20, remove: ["blocked:dependency"], add: ["ready-for-agent"] }]);
+    expect(trace.comments).toContainEqual({
+      issue: 20,
+      body: "🤖 /afk unblocked: all dependencies closed (#9).",
+    });
+    // #21 is never promoted nor commented (req:8 still open).
+    expect(trace.labelEdits.some((e) => e.issue === 21)).toBe(false);
+    expect(trace.comments.some((c) => c.issue === 21)).toBe(false);
+  });
+
+  it("names every now-satisfied dep when a multi-req dependent fully unblocks", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      dependentsByLabel: {
+        "req:9": [{ number: 30, labels: ["blocked:dependency", "req:9", "req:8"] }],
+      },
+      closedIssues: [8], // both deps closed (#9 implicit, #8 explicit)
+    });
+    await processIssue(deps, input);
+    expect(trace.comments).toContainEqual({
+      issue: 30,
+      body: "🤖 /afk unblocked: all dependencies closed (#8, #9).",
+    });
+    expect(trace.labelEdits).toContainEqual({
+      issue: 30,
+      remove: ["blocked:dependency"],
+      add: ["ready-for-agent"],
+    });
+  });
+
+  it("does nothing when there are no req:N dependents", async () => {
+    const { deps, input, trace } = harness({ outcome: "done", feedbackOk: true });
+    await processIssue(deps, input);
+    expect(trace.listByLabelCalls).toEqual(["req:9"]);
+    expect(trace.labelEdits.some((e) => e.add.includes("ready-for-agent"))).toBe(false);
+  });
+
+  it("does not run the cascade on a non-done (blocked) close", async () => {
+    const { deps, input, trace } = harness({ outcome: "blocked" });
+    const result = await processIssue(deps, input);
+    expect(result.outcome).toBe("blocked");
+    expect(trace.listByLabelCalls).toEqual([]);
   });
 });

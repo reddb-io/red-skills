@@ -85,6 +85,7 @@ import { emitEnvelope, type EmitEnvelopeDeps, type SectionBodies } from "./envel
 import { dispatchHooks, type HookExec } from "./hook-dispatcher.js";
 import { resolveHooks, type ResolveHooksOptions, type ResolvedHooks, type HookName } from "./hook-config.js";
 import { formatStartedMarker } from "./heartbeat.js";
+import { parseReqLabels, planCloseCascade, type DependentIssue } from "./boot-sweep.js";
 import type { ConfigValues } from "./config.js";
 import type { AttemptStatus } from "./envelope.js";
 import type { Runner } from "../types/runner.js";
@@ -103,6 +104,12 @@ export interface ProcessGh {
   comment(issue: number, body: string): Promise<void>;
   /** gh issue close --reason completed. */
   close(issue: number): Promise<void>;
+  /** List open issues carrying `label` (number + label-name list). Backs the
+   * close cascade's `req:<closedIssue>` dependent lookup. */
+  listByLabel(label: string): Promise<{ number: number; labels: string[] }[]>;
+  /** Resolve whether issue `n` is CLOSED. Resolves the cascade's per-dependency
+   * `req:*` closed-states. A 404 / transient failure resolves to false. */
+  issueClosed(n: number): Promise<boolean>;
 }
 
 /** Claim-lock side effects (the local mkdir lock at .red/tmp/claims/{N}/). */
@@ -631,6 +638,14 @@ export async function processIssue(
   await deps.fs.completionSweep(issue);
   await deps.claimLock.release(issue);
 
+  // ---- 9. close cascade (event-driven auto-unblock) ----
+  // Issue N just closed; re-evaluate every open issue carrying `req:N`. Any
+  // whose `req:*` deps are now ALL closed sheds `blocked:dependency`, gains
+  // `ready-for-agent`, and gets an audit comment. Best-effort: a gh failure logs
+  // a warn and never fails the close — the boot Unblock Sweep catches it next
+  // run.
+  await runCloseCascade(deps, issue);
+
   return {
     outcome: "done",
     issue,
@@ -734,6 +749,59 @@ async function mergeFailed(c: StageCommon, _reason: string, locked = false): Pro
     preserved: true,
     swept: false,
   };
+}
+
+// ---------- close cascade (event-driven auto-unblock) ----------
+
+/**
+ * Re-evaluate the dependents of a just-closed issue and promote any whose
+ * `req:*` dependencies are now ALL closed. Fires only on the DONE close path.
+ *
+ * For each open issue carrying `req:<closedIssue>`, read its `req:*` labels,
+ * resolve each referenced issue's closed-state (the just-closed `closedIssue`
+ * is known-closed without a lookup; the rest are resolved via the injected,
+ * per-cascade-cached `issueClosed` lookup), run `planCloseCascade`, and apply
+ * each promotion: remove `blocked:dependency`, add `ready-for-agent`, post the
+ * audit comment.
+ *
+ * Entirely best-effort: any thrown gh error is swallowed (logged via the
+ * iteration log) so it can never fail the close — the boot Unblock Sweep is the
+ * safety net that re-attempts on the next run.
+ */
+async function runCloseCascade(deps: ProcessIssueDeps, closedIssue: number): Promise<void> {
+  try {
+    const dependentsRaw = await deps.gh.listByLabel(`req:${closedIssue}`);
+    if (dependentsRaw.length === 0) return;
+
+    // Cache closed-state resolutions across the cascade (a dependent set often
+    // shares deps). The just-closed issue is known-closed without a lookup.
+    const closedCache = new Map<number, boolean>([[closedIssue, true]]);
+    const resolveClosed = async (n: number): Promise<boolean> => {
+      const cached = closedCache.get(n);
+      if (cached !== undefined) return cached;
+      const closed = await deps.gh.issueClosed(n);
+      closedCache.set(n, closed);
+      return closed;
+    };
+
+    const dependents: DependentIssue[] = [];
+    for (const dep of dependentsRaw) {
+      const reqIds = parseReqLabels(dep.labels);
+      const reqs: { n: number; closed: boolean }[] = [];
+      for (const n of reqIds) reqs.push({ n, closed: await resolveClosed(n) });
+      dependents.push({ number: dep.number, reqs });
+    }
+
+    const plans = planCloseCascade(closedIssue, dependents);
+    for (const p of plans) {
+      await deps.gh.editLabels(p.number, ["blocked:dependency"], [LABEL_READY]);
+      await deps.gh.comment(p.number, p.comment);
+    }
+  } catch (err) {
+    deps.appendIterLog(
+      `🤖 /afk close-cascade for #${closedIssue} failed (best-effort; boot sweep will retry): ${String(err)}`,
+    );
+  }
 }
 
 // ---------- claim / hook-abort short-circuits ----------

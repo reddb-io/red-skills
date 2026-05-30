@@ -267,32 +267,96 @@ export function countNeedsInfo(ctx: GhContext): Promise<number> {
   return countIssues(ctx, ["--label", "needs-info"]);
 }
 
-/** List the `ready-for-human` unblock-sweep candidates (number + body). */
+/** List the unblock-sweep candidates (number + body + labels). The sweep keys
+ * off `blocked:dependency` issues via their `req:*` labels (preferred) and
+ * keeps the legacy `ready-for-human` + `## Blocked by` body parse as fallback,
+ * so both holding states are gathered and de-duplicated by issue number. */
 export async function listUnblockCandidates(ctx: GhContext): Promise<UnblockCandidate[]> {
+  const fetch = async (label: string): Promise<UnblockCandidate[]> => {
+    const r = await gh(
+      [
+        "issue",
+        "list",
+        ...repoArgs(ctx),
+        "--label",
+        label,
+        "--state",
+        "open",
+        "--limit",
+        "200",
+        "--json",
+        "number,body,labels",
+      ],
+      opts(ctx),
+    );
+    if (r.code !== 0) return [];
+    try {
+      const rows = JSON.parse(r.stdout) as Array<{
+        number?: number;
+        body?: string;
+        labels?: Array<{ name?: string }>;
+      }>;
+      if (!Array.isArray(rows)) return [];
+      return rows.map((row): UnblockCandidate => ({
+        number: Number(row.number ?? 0),
+        body: String(row.body ?? ""),
+        labels: Array.isArray(row.labels) ? row.labels.map((l) => String(l.name ?? "")) : [],
+      }));
+    } catch {
+      return [];
+    }
+  };
+  const [byDependency, byHuman] = await Promise.all([
+    fetch("blocked:dependency"),
+    fetch("ready-for-human"),
+  ]);
+  const merged = new Map<number, UnblockCandidate>();
+  for (const c of [...byDependency, ...byHuman]) {
+    if (!merged.has(c.number)) merged.set(c.number, c);
+  }
+  return [...merged.values()];
+}
+
+/** List open issues carrying `label` (number + label-name list). Backs the
+ * close cascade's `req:<N>` dependent lookup. A failed probe returns []. */
+export async function listByLabel(
+  ctx: GhContext,
+  label: string,
+): Promise<{ number: number; labels: string[] }[]> {
   const r = await gh(
     [
       "issue",
       "list",
       ...repoArgs(ctx),
       "--label",
-      "ready-for-human",
+      label,
       "--state",
       "open",
       "--limit",
       "200",
       "--json",
-      "number,body",
+      "number,labels",
     ],
     opts(ctx),
   );
   if (r.code !== 0) return [];
   try {
-    const rows = JSON.parse(r.stdout) as Array<{ number?: number; body?: string }>;
+    const rows = JSON.parse(r.stdout) as Array<{ number?: number; labels?: Array<{ name?: string }> }>;
     if (!Array.isArray(rows)) return [];
-    return rows.map((row): UnblockCandidate => ({ number: Number(row.number ?? 0), body: String(row.body ?? "") }));
+    return rows.map((row) => ({
+      number: Number(row.number ?? 0),
+      labels: Array.isArray(row.labels) ? row.labels.map((l) => String(l.name ?? "")) : [],
+    }));
   } catch {
     return [];
   }
+}
+
+/** Resolve whether issue `n` is CLOSED (gh issue view --json state). A 404 /
+ * transient gh failure resolves to false (not-closed), matching the
+ * conservative `blockerState !== "CLOSED"` treatment in the sweep. */
+export async function issueClosed(ctx: GhContext, n: number): Promise<boolean> {
+  return (await blockerState(ctx, n)) === "CLOSED";
 }
 
 /** Branch-cleanup IssueLookup payload: gh issue view --json state,closedAt.

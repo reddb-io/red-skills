@@ -13,6 +13,7 @@ The skills speak in terms of canonical triage roles. Map them here to the actual
 | `ready-for-agent`  | `ready-for-agent`    | `/triage`, `/to-issues`               | `/afk` (when claiming)              |
 | `running`          | `running`            | `/afk` (when claiming an issue)       | `/afk` (on close, blocker, or release) |
 | `ready-for-human`  | `ready-for-human`    | `/triage`, `/afk` (on blocker)        | maintainer                          |
+| `blocked:dependency` | `blocked:dependency` | `/to-issues` (slice with open deps)  | `/afk` auto-unblock when last dep closes |
 | `wontfix`          | `wontfix`            | `/triage` (then close)                | rarely — usually issue closes       |
 
 Edit the right-hand column to match whatever vocabulary you actually use.
@@ -97,6 +98,9 @@ The issue body contains a complete `## Agent brief` section (see `triage/AGENT-B
 ### `ready-for-human`
 The issue requires human implementation. Two sources: `/triage` decides it during evaluation (e.g. architectural call, design review needed), or `/afk` promotes it from `running` after a blocker (inner agent gave up, merge conflict couldn't be auto-resolved, both runners exhausted). When `/afk` promotes, the worktree is **preserved at the moment of blocker** so the human can pick up in place.
 
+### `blocked:dependency`
+The issue is **waiting on one or more other issues to close** — it is healthy, not broken, and **needs no human action**. This is deliberately distinct from `ready-for-human`: a dependency-blocked issue must **never page a human** (nothing for them to do but wait). The specific edges live in `req:N` labels (one per dependency, see below) — the queryable source of truth — mirrored by the human-facing `## Blocked by` task list in the body. When the **last** `req:N` dependency closes, `/afk` auto-promotes the issue to `ready-for-agent` (see *Dependency Edges* below). Applied by `/to-issues` when it publishes a slice whose blockers are still open.
+
 ### `wontfix`
 Will not be actioned. Applied by `/triage`. For bugs, paired with a polite explanation and close. For enhancements, paired with a `.out-of-scope/*.md` entry (see `triage/OUT-OF-SCOPE.md`).
 
@@ -130,6 +134,22 @@ These exist for filtering and don't drive lifecycle transitions:
 | `runner-error` | `/afk` fleet supervisor parked a slot after fast-death streak; affected issues were restored to `ready-for-agent` after the runner was discarded | `/afk` fleet supervisor on circuit trip |
 
 `runner-error` is the only auxiliary label `/afk` may create autonomously: the fleet supervisor calls `gh label create runner-error` when it trips the circuit breaker, so the cleanup never fails just because the label has not been provisioned.
+
+## Dependency Edges (`req:N`) + Auto-Unblock
+
+Dependencies between issues are **first-class queryable edges**, not buried in prose. They mirror the `prd:N` convention.
+
+| Label    | Meaning                                              | Applied by      |
+| -------- | ---------------------------------------------------- | --------------- |
+| `req:{N}` | This issue **requires** #N to close before it can run | `/to-issues` (one per blocker) |
+
+How the edge drives the lifecycle:
+
+- A slice published with open blockers carries **`blocked:dependency`** + one **`req:N`** label per blocker (and the human-facing `## Blocked by` task list in the body). It is **not** `ready-for-human` and never pages.
+- **Event-driven cascade (on close):** when `/afk` closes issue #N, it runs `gh issue list --label req:N --state open`; for every dependent whose **all** `req:*` referenced issues are now closed, it removes `blocked:dependency`, adds `ready-for-agent`, and posts `🤖 /afk unblocked: all dependencies closed (#…)`. The unblock happens **the moment the last dependency closes**, not on the next boot.
+- **Boot sweep (safety net):** at `/afk` boot, the *Unblock Sweep* re-scans `blocked:dependency` issues by their `req:*` labels (preferring labels; falling back to the legacy `## Blocked by` body parse for pre-`req:N` issues) and promotes any whose deps all closed — catching events the cascade missed.
+
+`req:N` labels, like `prd:N`, are created on demand (`gh label create req:<n>` when first applied); `blocked:dependency` is provisioned by `/setup-red-skills`.
 
 ## Naming Convention
 
