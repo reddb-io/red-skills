@@ -6,6 +6,17 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 
 ---
 
+## afk afk-attempts grace-TTL cleanup for completed issues (modified)
+
+- **status**: modified
+- **upstream**: —
+- **why**: Issue #258 (under PRD #244) — the **remote** side of completion cleanup, complementing the local sweep (#257). The `afk-attempts/{wid}/{N}-slug` snapshot branches that the failure-push net leaves on origin had no reaper: they accumulated on the remote forever, even for long-closed issues. They must survive a grace window after completion (so a reopened issue can still recover prior attempts) and then be deleted, while never touching a still-open issue's branches.
+- **what changed**:
+  - `plugins/dev/skills/engineering/afk/scripts/lib/remote-branch.sh`: new `prune_completed_attempt_branches` lists `afk-attempts/*` on origin (`git ls-remote`), groups branches by the issue number in the ref, classifies each issue via `gh issue view --json state,closedAt`, and deletes every snapshot branch for issues closed longer than the grace window ago — leaving open issues, within-grace issues, and any issue it cannot classify (gh error / missing `closedAt`) strictly untouched. Defensive reader `_attempt_snapshot_grace_s` (`RED_AFK_ATTEMPT_SNAPSHOT_GRACE_S`, default 7d) falls back to the default on a typo and honours `0` as immediate deletion. Best-effort, always rc 0. Header note updated to record that this is the one reaper of the `afk-attempts/*` namespace.
+  - `plugins/dev/skills/engineering/afk/scripts/afk.sh`: wired `prune_completed_attempt_branches` into main boot, after `cap_issue_attempts` — at boot, never on the close path, so it can never block a completion.
+  - `plugins/dev/skills/engineering/afk/scripts/tests/snapshot-grace-cleanup.test.sh` (new): 15 assertions with PATH-mocked `git`/`gh` — cross-worker delete past grace, within-grace survival, open-issue untouched, configurable grace (1y keeps all, 0 deletes immediately), typo grace falls back to default, best-effort tolerance of a failing delete, gh-error issue left untouched, empty-ref no-op, and a static guard that boot wires the prune.
+  - `plugins/dev/skills/engineering/afk/SKILL.md`: new *Snapshot Branch Grace Cleanup (boot-time)* section documenting the grace window, the env knob, and the open/within-grace/past-grace classification.
+
 ## afk completion sweep: cross-worker prune of an issue's attempts + age/count cap (modified)
 
 - **status**: modified
