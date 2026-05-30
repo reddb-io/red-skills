@@ -7,51 +7,65 @@
 // This module is PURE SEQUENCING. It owns only the ORDER of the per-issue
 // lifecycle and the compose-decider-then-apply pattern: every step composes one
 // of the already-ported pure modules (base-resolver / remote-branch / handoff /
-// runner-spawn / feedback / merge / envelope-emit / hook-dispatcher /
-// hook-config / heartbeat / state / attempt-ledger) and applies its side
-// effects through injected IO. No real gh, git, spawn, fs, or clock lives here —
-// the composed modules perform no ambient IO, and `processIssue` performs IO
-// only through the injected `deps`.
+// execution / feedback / merge / envelope-emit / hook-dispatcher / hook-config /
+// heartbeat / state / attempt-ledger) and applies its side effects through
+// injected IO. No real gh, git, spawn, fs, or clock lives here — the composed
+// modules perform no ambient IO, and `processIssue` performs IO only through the
+// injected `deps`.
 //
-// The lifecycle, mirroring SKILL.md "Per-Issue Loop" / "Issue Lifecycle":
+// ---------------------------------------------------------------------------
+// EXECUTION SUBSTRATE DELEGATED TO SANDCASTLE (ADR 0033)
+// ---------------------------------------------------------------------------
+// The "create a worktree + spawn the inner agent + stream/sentinel detect +
+// commit on the worker branch" middle is no longer hand-rolled here. It is a
+// single call to the injected `deps.runAgent` port (a closure over
+// execution.runAgent + defaultSandcastleDeps in the CLI; a fake in tests).
+// sandcastle now OWNS: worktree creation, agent spawn, stream/sentinel
+// detection, and committing on the worker branch via
+// branchStrategy {type:"branch", branch: afk/{id}/{N}-{slug}}.
 //
-//   1. claim          — local mkdir lock, then label ready-for-agent → running
-//                       + start comment (claim layers; a lost race short-circuits).
-//   2. attempt + state — attempt-ledger next number, attempt dir, state_init.
-//   3. worktree        — resolveBase (lock > pin > main), worktree off the base,
-//                        push_initial + post-commit hook (best-effort).
-//   4. handoff         — buildHandoff into the attempt dir + heartbeat start.
-//   5. inner agent     — runInner → DONE | BLOCKED | no-sentinel | exhausted.
-//   6a. on DONE        — feedback; fail → ready-for-human; pass → merge
-//                        (integrateOrigin then landMerge|landPr by lock state) →
-//                        close (gh close + remove running + delete remote) →
-//                        completion sweep.
-//   6b. on BLOCKED / no-sentinel / merge-fail — emitEnvelope(failure) →
-//                        ready-for-human, attempt dir preserved.
+// AFK STILL OWNS (unchanged): claim + labels, the attempt dir, handoff
+// materialisation, the feedback gate, the lock-toggled landing, envelope
+// emission, close, completion sweep, and the lifecycle hooks.
+//
+// PRAGMATIC INTEGRATION CHOICES (the seams where AFK's host-side modules meet a
+// sandcastle-owned worktree we never see a path to in-process):
+//   * The handoff is written to the HOST attempt dir (`<attemptDir>/handoff.md`)
+//     and passed to `runAgent` as the sandcastle `promptFile` (handoffPath). The
+//     AGENT-PROMPT contract is unchanged — the DONE/BLOCKED sentinels are the
+//     sandcastle completion signals.
+//   * `runAgent` returns the worker branch + its commits. AFK does NOT create or
+//     push the branch up-front any more (no push_initial / post-commit hook).
+//     After a DONE run, AFK makes the worker branch's origin state certain by
+//     pushing it (remote-branch.pushAttempt to origin/<branch>) BEFORE landing,
+//     so landMerge / landPr (which run from the primary checkout / a host
+//     worktree) have a remote ref to merge.
+//   * Feedback runs against a checkout/worktree of the returned branch through
+//     the injected pnpm/layout execs. We pass `result.branch` as the feedback
+//     `worktree` token; the concrete CLI closure resolves it to a real path
+//     (e.g. a sandcastle worktree handle or a host re-checkout). The unit tests
+//     inject a fake pnpm, so the token is opaque here — this is the one seam that
+//     cannot be fully resolved without a real sandcastle worktree handle.
+//   * `merge-conflict` is no longer a reachable inner-agent outcome (sandcastle
+//     either lands commits or not); the merge stage can still fail to integrate
+//     or land, and that path keeps the `merge-conflict` envelope/outcome.
+// ALL IO stays injected; nothing real is ever spawned from this module.
 //
 // Lifecycle hooks fire (via dispatchHooks over resolveHooks) at pre_worktree,
 // pre_attempt, post_attempt, pre_merge, post_merge, and on_attempt_error — the
 // canonical names; SKILL.md's pre_worker/post_worker/on_worker_error are the
-// deprecated aliases of pre_attempt/post_attempt/on_attempt_error. A terminal
-// envelope is emitted on every exit path.
+// deprecated aliases. A terminal envelope is emitted on every exit path.
 
 import { resolveBase, type ResolveBaseDeps, type ResolveBaseInput } from "./base-resolver.js";
 import {
   buildRefFromSlug,
-  pushInitial,
   deleteRemote,
+  pushAttempt,
   slugifyRef,
-  POST_COMMIT_HOOK_BODY,
   type GitExec,
 } from "./remote-branch.js";
 import { buildHandoff, type HandoffComment } from "./handoff.js";
-import {
-  buildInnerPrompt,
-  runInner,
-  type InnerSpawner,
-  type SpawnInvocation,
-  type InnerResult,
-} from "./runner-spawn.js";
+import { type RunAgentInput, type RunAgentResult } from "./execution.js";
 import {
   relevantScopes,
   runFeedback,
@@ -97,37 +111,30 @@ export interface ProcessClaimLock {
   release(issue: number): Promise<void>;
 }
 
-/** Filesystem side effects: the attempt dir, the post-commit hook, marker/
- * worktree teardown. All best-effort in afk.sh; the injected impl decides
- * real semantics. */
+/** Filesystem side effects: the attempt dir, the handoff file, marker teardown.
+ * Worktree creation/teardown is sandcastle's now (ADR 0033); AFK only retains
+ * the cheap host-side artifacts (attempt dir + handoff + completion sweep). */
 export interface ProcessFs {
   /** mkdir -p the attempt dir + open afk.log / lanes (iter_open). */
   ensureAttemptDir(dir: string): Promise<void>;
-  /** Write the handoff.md into the attempt dir. */
+  /** Write the handoff.md into the attempt dir (the sandcastle promptFile). */
   writeHandoff(path: string, content: string): Promise<void>;
-  /** Install the executable post-commit hook into the worktree's gitdir. */
-  installPostCommitHook(worktree: string, body: string): Promise<void>;
-  /** Drop the heavy worktree, retaining the cheap artifacts (iter_drop_worktree). */
-  dropWorktree(worktree: string): Promise<void>;
   /** Remove every attempt dir for a completed issue (completion_sweep_issue). */
   completionSweep(issue: number): Promise<string[]>;
 }
 
-/** git side effects beyond the merge/remote-branch primitives: worktree create
- * and the rev-parse the close path reads for the merge sha. */
+/** git side effects beyond the merge/remote-branch primitives: the rev-parse the
+ * close path reads for the merge sha + local branch cleanup. Worktree create is
+ * gone (sandcastle owns it). */
 export interface ProcessGit {
-  /** git -C primary fetch origin <base> --quiet (best-effort). */
-  fetchBase(base: string): Promise<void>;
-  /** git -C primary worktree add <wt> -b <branch> origin/<base> (false on fail). */
-  worktreeAdd(worktree: string, branch: string, base: string): Promise<boolean>;
   /** git -C primary rev-parse --short HEAD after a successful merge. */
   headShortSha(): Promise<string>;
-  /** git -C primary branch -d <branch> after the worktree is gone (best-effort). */
+  /** git -C primary branch -d <branch> after landing (best-effort). */
   deleteLocalBranch(branch: string): Promise<void>;
 }
 
 /** Injected lookups the composed deciders need (issue body for the pin, the
- * lock value for the base, the per-issue blocked cap inputs). */
+ * lock value for the base, the handoff projection, the feedback scope inputs). */
 export interface ProcessLookups {
   /** Resolve the effective base (lock > pin > main). */
   base: ResolveBaseDeps;
@@ -137,21 +144,12 @@ export interface ProcessLookups {
   comments(issue: number): Promise<HandoffComment[]>;
   /** Resolved gh issue url for the handoff `source:` line. */
   issueUrl(issue: number): Promise<string>;
-  /** `git log -n 5` block for the base — for buildInnerPrompt (unused argv here). */
-  recentCommits(): Promise<string>;
   /** Restart-informed retry block (issue #255); empty on a first attempt. */
   priorAttemptContext(issue: number): Promise<string | undefined>;
   /** Changed files of the worker branch vs the base, for feedback scope resolution. */
-  changedFiles(worktree: string, base: string): Promise<string[]>;
+  changedFiles(branch: string, base: string): Promise<string[]>;
   /** Diffstat line for the done envelope. */
-  diffstat(worktree: string, base: string): Promise<string>;
-}
-
-/** The injected spawner + invocation builder for the inner agent. */
-export interface ProcessRunner {
-  spawn: InnerSpawner;
-  /** Build the per-runner spawn invocation from the assembled prompt + worktree. */
-  buildInvocation(input: { prompt: string; worktree: string; runner: Runner }): SpawnInvocation;
+  diffstat(branch: string, base: string): Promise<string>;
 }
 
 /** The hook dispatch surface: the parsed config + the default resolver + the
@@ -172,13 +170,21 @@ export interface ProcessIssueDeps {
   git: ProcessGit;
   /** git executor for merge.ts (integrateOrigin / landMerge / landPr). */
   mergeExec: MergeExec;
-  /** git executor for remote-branch.ts (pushInitial / deleteRemote). */
+  /** git executor for remote-branch.ts (pushAttempt / deleteRemote). */
   remoteGit: GitExec;
   /** pnpm executor for feedback.ts. */
   pnpm: PnpmExec;
   /** Package layout probe for feedback scope resolution. */
   layout: PackageLayout;
-  runner: ProcessRunner;
+  /**
+   * The sandcastle execution port (ADR 0033): run the inner agent on a worktree,
+   * detect the DONE/BLOCKED sentinel, and commit on the worker branch. The CLI
+   * passes a closure over execution.runAgent + defaultSandcastleDeps; tests pass
+   * a fake returning a scripted RunAgentResult.
+   */
+  runAgent(input: RunAgentInput): Promise<RunAgentResult>;
+  /** Model id passed through to runAgent (provider-specific, e.g. "claude-opus-4-8"). */
+  model: string;
   hooks: ProcessHooks;
   lookups: ProcessLookups;
   /** Envelope-emit IO (poster / marker writer / posted writer / git push). */
@@ -188,8 +194,6 @@ export interface ProcessIssueDeps {
   nowIso(): string;
   /** Append one plain line to the iteration's afk.log (heartbeat boundary). */
   appendIterLog(line: string): void;
-  /** Env for the cap/grace resolvers and the agent-prompt body. */
-  agentPromptBody: string;
   /** History ledger path + clock for the terminal envelope (optional). */
   historyPath?: string;
   historyClock?: HistoryClock;
@@ -226,7 +230,6 @@ export type ProcessOutcome =
   | "blocked"
   | "no-sentinel"
   | "merge-conflict"
-  | "exhausted"
   | "feedback-failed"
   | "claim-lost"
   | "hook-aborted";
@@ -262,6 +265,8 @@ const LABEL_HUMAN = "ready-for-human";
  * Run the AFK per-issue lifecycle IN ORDER, composing each pure module and
  * applying its plan through injected IO. The SEQUENCE + the label transitions +
  * the lock-toggled landing are the parity target (process_issue + SKILL.md).
+ * Execution itself (worktree + agent spawn + commits) is delegated to the
+ * injected sandcastle `runAgent` port (ADR 0033).
  */
 export async function processIssue(
   deps: ProcessIssueDeps,
@@ -301,38 +306,27 @@ export async function processIssue(
   const branch = buildRefFromSlug("afk", input.workerId, issue, slug);
   if (branch === null) {
     // A malformed ref refuses the iteration; restore the claim like the bash
-    // "refusing malformed live branch ref" guard (return before any worktree).
+    // "refusing malformed live branch ref" guard (return before running).
     await deps.gh.editLabels(issue, [LABEL_RUNNING], [LABEL_READY]);
     await deps.claimLock.release(issue);
     return claimLost(issue, hooksFired);
   }
   const base = await resolveBase(input.baseInput, deps.lookups.base);
   const startedAt = deps.nowIso();
-  const worktree = `${input.attemptDir}/worktree`;
-  const worktreeRel = `${input.attemptDir}/worktree`;
 
   // ---- 2. attempt dir + state init ----
   await deps.fs.ensureAttemptDir(input.attemptDir);
   await deps.gh.comment(
     issue,
-    `🤖 /afk started at \`${startedAt}\` on runner \`${input.runner}\` (worker \`${input.workerId}\`). worktree: \`${worktreeRel}\``,
+    `🤖 /afk started at \`${startedAt}\` on runner \`${input.runner}\` (worker \`${input.workerId}\`). branch: \`${branch}\``,
   );
 
-  // ---- pre_worktree hook (after claim, before git worktree add) ----
-  if (!(await fireHook("pre_worktree", hookContext({ issue, title: input.title, target: worktree, branch })))) {
+  // ---- pre_worktree hook (after claim, before sandcastle provisions the run) ----
+  if (!(await fireHook("pre_worktree", hookContext({ issue, title: input.title, target: branch, branch })))) {
     return await abortAfterClaim(deps, input, branch, base, hooksFired, "pre_worktree");
   }
 
-  // ---- 3. worktree off the resolved base + remote mirror ----
-  await deps.git.fetchBase(base);
-  if (!(await deps.git.worktreeAdd(worktree, branch, base))) {
-    return await abortAfterClaim(deps, input, branch, base, hooksFired, "worktree-add");
-  }
-  // Continuous remote-branch push (issue #191): best-effort, never blocks.
-  await pushInitial(deps.remoteGit, worktree, branch);
-  await deps.fs.installPostCommitHook(worktree, POST_COMMIT_HOOK_BODY);
-
-  // ---- 4. handoff + heartbeat start ----
+  // ---- 3. handoff materialisation (the sandcastle promptFile) + heartbeat ----
   const comments = await deps.lookups.comments(issue);
   const url = await deps.lookups.issueUrl(issue);
   const priorAttemptContext = await deps.lookups.priorAttemptContext(issue);
@@ -348,76 +342,55 @@ export async function processIssue(
     priorAttemptContext,
     prdRef: input.prdRef,
   });
-  await deps.fs.writeHandoff(`${input.attemptDir}/handoff.md`, handoff);
+  const handoffPath = `${input.attemptDir}/handoff.md`;
+  await deps.fs.writeHandoff(handoffPath, handoff);
   deps.appendIterLog(formatStartedMarker(issue, startedAt));
 
-  // ---- pre_attempt hook (after the worktree exists, before the runner) ----
+  // ---- pre_attempt hook (after the prompt exists, before the run) ----
   if (
     !(await fireHook(
       "pre_attempt",
-      hookContext({ issue, title: input.title, workspace: worktree, runner: input.runner, attempt_n: input.attempt }),
+      hookContext({ issue, title: input.title, workspace: branch, runner: input.runner, attempt_n: input.attempt }),
     ))
   ) {
     return await abortAfterClaim(deps, input, branch, base, hooksFired, "pre_attempt");
   }
 
-  // ---- 5. inner agent ----
-  const prompt = buildInnerPrompt({
-    agentPromptBody: deps.agentPromptBody,
-    handoffPath: `${input.attemptDir}/handoff.md`,
-    recentCommits: await deps.lookups.recentCommits(),
+  // ---- 4. run the inner agent on sandcastle (ADR 0033) ----
+  // sandcastle creates the worktree off the host's active branch (driven to
+  // `base` by the base-resolver), spawns the agent with `handoffPath` as the
+  // prompt, detects the DONE/BLOCKED completion signal, and commits on `branch`.
+  const run: RunAgentResult = await deps.runAgent({
+    runner: input.runner === "codex" ? "codex" : "claude",
+    model: deps.model,
+    handoffPath,
+    branch,
   });
-  const inner: InnerResult = await runInner(deps.runner.spawn, {
-    runner: input.runner,
-    invocation: deps.runner.buildInvocation({ prompt, worktree, runner: input.runner }),
-  });
+  // The worker branch sandcastle landed commits on is authoritative.
+  const workerBranch = run.branch || branch;
 
   const common = {
     deps,
     input,
-    branch,
+    branch: workerBranch,
     base,
     slug,
-    worktree,
-    worktreeRel,
     hooksFired,
     startedEpoch,
   } satisfies StageCommon;
 
-  // ---- on_attempt_error: EOF without a sentinel (ADR 0028) or exhaustion ----
-  if (inner.exhausted) {
-    // Both runners conceptually exhausted here (the TS capstone does not model
-    // the fallback swap): restore ready-for-agent, preserve, emit a discarded
-    // envelope, and surface the exhausted outcome.
-    await deps.gh.editLabels(issue, [LABEL_RUNNING], [LABEL_READY]);
-    await fireHook("post_attempt", postAttemptContext(input, worktree, "fail", ""));
-    const posted = await emitFailure(common, "discarded", "exhausted", {});
-    await deps.fs.dropWorktree(worktree);
-    return {
-      outcome: "exhausted",
-      issue,
-      branch,
-      base,
-      hooksFired,
-      envelopePosted: posted,
-      preserved: true,
-      swept: false,
-    };
-  }
-
-  if (inner.outcome === null) {
-    // EOF-without-sentinel → on_attempt_error (no post_attempt for this firing).
-    await fireHook("on_attempt_error", onErrorContext(input, worktree, "no-sentinel", input.attempt));
+  // ---- on_attempt_error: the run ended without an AFK sentinel (ADR 0028) ----
+  if (run.outcome === "no-sentinel") {
+    await fireHook("on_attempt_error", onErrorContext(input, workerBranch, "no-sentinel", input.attempt));
     await deps.gh.editLabels(issue, [LABEL_RUNNING], [LABEL_HUMAN]);
     const posted = await emitFailure(common, "no-sentinel", "no-sentinel", {
       notes: "_(no Notes appended; inner agent exited without a sentinel)_",
-      log: inner.lastLine || "(no captured stdout)",
+      log: run.stdout ? run.stdout.split("\n").slice(-1)[0] || "(no captured stdout)" : "(no captured stdout)",
     });
-    await deps.fs.dropWorktree(worktree);
     return {
       outcome: "no-sentinel",
       issue,
-      branch,
+      branch: workerBranch,
       base,
       hooksFired,
       envelopePosted: posted,
@@ -427,20 +400,19 @@ export async function processIssue(
   }
 
   // ---- post_attempt hook (terminal invocation; sentinel-bearing) ----
-  const pwStatus = inner.outcome.kind === "done" ? "success" : "fail";
-  await fireHook("post_attempt", postAttemptContext(input, worktree, pwStatus, inner.outcome.kind));
+  const pwStatus = run.outcome === "done" ? "success" : "fail";
+  await fireHook("post_attempt", postAttemptContext(input, workerBranch, pwStatus, run.outcome));
 
   // ---- BLOCKED ----
-  if (inner.outcome.kind === "blocked") {
+  if (run.outcome === "blocked") {
     await deps.gh.editLabels(issue, [LABEL_RUNNING], [LABEL_HUMAN]);
     const posted = await emitFailure(common, "blocked", "blocked", {
       notes: `_(inner agent emitted BLOCKED — see iteration log at \`${input.attemptDir}\`)_`,
     });
-    await deps.fs.dropWorktree(worktree);
     return {
       outcome: "blocked",
       issue,
-      branch,
+      branch: workerBranch,
       base,
       hooksFired,
       envelopePosted: posted,
@@ -449,12 +421,14 @@ export async function processIssue(
     };
   }
 
-  // outcome.kind === "done" (no_more_tasks is ignored inside an iteration).
+  // run.outcome === "done".
 
-  // ---- 6a. feedback loops (the merge gate, ADR 0008) ----
-  const changedFiles = await deps.lookups.changedFiles(worktree, base);
+  // ---- 5. feedback loops (the merge gate, ADR 0008) ----
+  // Feedback runs against a checkout of the returned worker branch; the injected
+  // pnpm/layout execs resolve `workerBranch` to a concrete path in the CLI.
+  const changedFiles = await deps.lookups.changedFiles(workerBranch, base);
   const feedback: RunFeedbackResult = await runFeedback(deps.pnpm, {
-    worktree,
+    worktree: workerBranch,
     scopes: relevantScopes(deps.layout, changedFiles),
     layout: deps.layout,
     now: deps.nowEpoch,
@@ -465,11 +439,10 @@ export async function processIssue(
       notes: "Feedback validation failed after the inner agent emitted DONE. The worker branch was not merged.",
       validation: feedback.sidecar.join("\n"),
     });
-    await deps.fs.dropWorktree(worktree);
     return {
       outcome: "feedback-failed",
       issue,
-      branch,
+      branch: workerBranch,
       base,
       hooksFired,
       envelopePosted: posted,
@@ -478,10 +451,14 @@ export async function processIssue(
     };
   }
 
-  // ---- 6a. merge: integrate then land per lock state ----
+  // ---- 6. push the worker branch, integrate, then land per lock state ----
+  // sandcastle committed on the worker branch but does not push it; AFK makes
+  // its origin state certain before landing (so landMerge/landPr have a ref).
+  await pushAttempt(deps.remoteGit, input.repoDir, workerBranch, workerBranch);
+
   const locked = await deps.lookups.isLocked();
   if (
-    !(await fireHook("pre_merge", hookContext({ issue, title: input.title, workspace: input.repoDir, branch })))
+    !(await fireHook("pre_merge", hookContext({ issue, title: input.title, workspace: input.repoDir, branch: workerBranch })))
   ) {
     return await mergeFailed(common, "pre_merge-abort");
   }
@@ -503,7 +480,7 @@ export async function processIssue(
     const r = await landMerge(deps.mergeExec, {
       repo: input.repoDir,
       remote: input.remote,
-      branch,
+      branch: workerBranch,
       target: base,
       n: issue,
       title: input.title,
@@ -515,11 +492,10 @@ export async function processIssue(
       repo: input.repo,
       gitRepo: input.repoDir,
       remote: input.remote,
-      branch,
+      branch: workerBranch,
       target: base,
       n: issue,
       title: input.title,
-      worktree,
     });
     landed = r.ok;
   }
@@ -527,26 +503,25 @@ export async function processIssue(
     return await mergeFailed(common, "land-failed", locked);
   }
 
-  await fireHook("post_merge", hookContext({ issue, title: input.title, workspace: input.repoDir, branch }));
+  await fireHook("post_merge", hookContext({ issue, title: input.title, workspace: input.repoDir, branch: workerBranch }));
 
-  // ---- 6a. close: envelope(done) → gh close + remove running → delete remote ----
+  // ---- 7. close: envelope(done) → gh close + remove running → delete remote ----
   const mergeSha = await deps.git.headShortSha();
   const durationS = deps.nowEpoch() - startedEpoch;
   const posted = await emitDone(common, mergeSha, durationS, feedback);
   await deps.gh.close(issue);
   await deps.gh.editLabels(issue, [LABEL_RUNNING], []);
-  await deleteRemote(deps.remoteGit, input.repoDir, branch);
+  await deleteRemote(deps.remoteGit, input.repoDir, workerBranch);
 
-  // ---- 11. cleanup (split teardown) + completion sweep ----
-  await deps.fs.dropWorktree(worktree);
-  await deps.git.deleteLocalBranch(branch);
+  // ---- 8. cleanup (local branch) + completion sweep ----
+  await deps.git.deleteLocalBranch(workerBranch);
   await deps.fs.completionSweep(issue);
   await deps.claimLock.release(issue);
 
   return {
     outcome: "done",
     issue,
-    branch,
+    branch: workerBranch,
     base,
     locked,
     mergeSha,
@@ -565,14 +540,12 @@ interface StageCommon {
   branch: string;
   base: string;
   slug: string;
-  worktree: string;
-  worktreeRel: string;
   hooksFired: HookName[];
   startedEpoch: number;
 }
 
 /** Emit a failure-family envelope (blocked / no-sentinel / merge-conflict /
- * discarded), composing envelope-emit. Returns the posted flag. */
+ * feedback), composing envelope-emit. Returns the posted flag. */
 async function emitFailure(
   c: StageCommon,
   status: AttemptStatus,
@@ -593,7 +566,7 @@ async function emitFailure(
     remoteName,
     repo: input.repo,
     repoDir: input.repoDir,
-    worktreeRel: c.worktreeRel,
+    worktreeRel: input.attemptDir,
     diffstat: "",
     sections,
     historyPath: deps.historyPath,
@@ -636,7 +609,6 @@ async function mergeFailed(c: StageCommon, _reason: string, locked = false): Pro
   const posted = await emitFailure(c, "merge-conflict", "merge-conflict", {
     log: "(no merge log captured)",
   });
-  await deps.fs.dropWorktree(c.worktree);
   await deps.claimLock.release(input.issue);
   return {
     outcome: "merge-conflict",
@@ -657,9 +629,9 @@ function claimLost(issue: number, hooksFired: HookName[]): ProcessIssueResult {
   return { outcome: "claim-lost", issue, hooksFired, preserved: false, swept: false };
 }
 
-/** Abort after a successful claim (a pre_* hook aborted or the worktree add
- * failed): restore ready-for-agent, release the claim, return hook-aborted. The
- * attempt dir is preserved for inspection. */
+/** Abort after a successful claim (a pre_* hook aborted): restore
+ * ready-for-agent, release the claim, return hook-aborted. The attempt dir is
+ * preserved for inspection. */
 async function abortAfterClaim(
   deps: ProcessIssueDeps,
   input: ProcessIssueInput,
@@ -702,24 +674,23 @@ function hookContext(fields: Record<string, unknown>): string {
 
 function postAttemptContext(
   input: ProcessIssueInput,
-  worktree: string,
+  workspace: string,
   status: "success" | "fail",
   outcome: string,
 ): string {
   return JSON.stringify({
     issue: { number: input.issue, title: input.title },
-    workspace: worktree,
+    workspace,
     result: { status, outcome },
     attempt_n: input.attempt,
   });
 }
 
-function onErrorContext(input: ProcessIssueInput, worktree: string, errClass: string, attempt: number): string {
+function onErrorContext(input: ProcessIssueInput, workspace: string, errClass: string, attempt: number): string {
   return JSON.stringify({
     issue: { number: input.issue, title: input.title },
-    workspace: worktree,
+    workspace,
     error: { class: errClass, rc: 0 },
     attempt_n: attempt,
   });
 }
-

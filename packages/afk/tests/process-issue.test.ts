@@ -6,32 +6,33 @@ import {
 } from "../src/core/process-issue.js";
 import type { HookName } from "../src/core/hook-config.js";
 import type { ConfigValues } from "../src/core/config.js";
-import type { SpawnInvocation } from "../src/core/runner-spawn.js";
+import type { RunAgentInput, RunAgentResult } from "../src/core/execution.js";
 
-// Everything injected is a fake — no real gh / git / spawn / pnpm / fs ever
+// Everything injected is a fake — no real gh / git / sandcastle / pnpm / fs ever
 // runs. The harness records the side-effect sequence (label edits, comments,
-// close, sweep, hook order) so each test asserts the lifecycle as a trace
-// rather than reaching into the modules being composed.
+// close, sweep, hook order) so each test asserts the lifecycle as a trace rather
+// than reaching into the modules being composed. Execution itself is the
+// injected `runAgent` port (ADR 0033): a fake returning a scripted
+// RunAgentResult, replacing the old fake runner-spawn + worktree-create deps.
 
 interface Trace {
   labelEdits: Array<{ issue: number; remove: string[]; add: string[] }>;
   comments: Array<{ issue: number; body: string }>;
   closed: number[];
   swept: number[];
-  pushedInitial: string[][];
+  pushedAttempt: string[][];
   deletedRemote: string[][];
   postedEnvelopes: Array<{ issue: number; status: string }>;
-  worktreesDropped: string[];
   released: number[];
+  runAgentCalls: RunAgentInput[];
 }
 
 interface HarnessOptions {
   labels?: string[];
   acquire?: boolean;
-  sentinel?: "done" | "blocked" | "no-sentinel" | "exhausted";
+  outcome?: RunAgentResult["outcome"];
   feedbackOk?: boolean;
   locked?: boolean;
-  worktreeAddOk?: boolean;
   config?: ConfigValues;
   abortHook?: HookName;
   changedFiles?: string[];
@@ -47,27 +48,14 @@ function harness(opts: HarnessOptions = {}): {
     comments: [],
     closed: [],
     swept: [],
-    pushedInitial: [],
+    pushedAttempt: [],
     deletedRemote: [],
     postedEnvelopes: [],
-    worktreesDropped: [],
     released: [],
+    runAgentCalls: [],
   };
 
-  const sentinel = opts.sentinel ?? "done";
-  const scriptedLines = (() => {
-    switch (sentinel) {
-      case "done":
-        return ["Edit src/x.ts", "<promise>DONE</promise>"];
-      case "blocked":
-        return ["Edit src/x.ts", "<promise>BLOCKED</promise>"];
-      case "no-sentinel":
-        return ["Edit src/x.ts", "last line, no sentinel"];
-      case "exhausted":
-        return ["usage limit reached, try again later"];
-    }
-  })();
-
+  const outcome = opts.outcome ?? "done";
   const config: ConfigValues = opts.config ?? {};
 
   const deps: ProcessIssueDeps = {
@@ -97,20 +85,12 @@ function harness(opts: HarnessOptions = {}): {
     fs: {
       async ensureAttemptDir() {},
       async writeHandoff() {},
-      async installPostCommitHook() {},
-      async dropWorktree(worktree) {
-        trace.worktreesDropped.push(worktree);
-      },
       async completionSweep(issue) {
         trace.swept.push(issue);
         return [`/tmp/workers/w/${issue}-a1`];
       },
     },
     git: {
-      async fetchBase() {},
-      async worktreeAdd() {
-        return opts.worktreeAddOk ?? true;
-      },
       async headShortSha() {
         return "abc1234";
       },
@@ -126,7 +106,7 @@ function harness(opts: HarnessOptions = {}): {
     },
     remoteGit: async (argv) => {
       if (argv.includes("--delete")) trace.deletedRemote.push(argv);
-      else trace.pushedInitial.push(argv);
+      else trace.pushedAttempt.push(argv);
       return { code: 0, stdout: "", stderr: "" };
     },
     pnpm: async () => ({ code: opts.feedbackOk === false ? 1 : 0, stdout: "", stderr: "" }),
@@ -134,16 +114,24 @@ function harness(opts: HarnessOptions = {}): {
       hasPackage: (scope) => scope === ".",
       hasScript: () => true,
     },
-    runner: {
-      spawn: () => ({
-        lines: (async function* () {
-          for (const line of scriptedLines) yield line;
-        })(),
-      }),
-      buildInvocation(): SpawnInvocation {
-        return { command: "claude", args: ["--print", "x"] };
-      },
+    // The sandcastle execution port: a fake returning a scripted outcome on the
+    // worker branch sandcastle "committed" to.
+    async runAgent(input) {
+      trace.runAgentCalls.push(input);
+      return {
+        outcome,
+        branch: input.branch,
+        commits: [{ sha: "deadbee" }],
+        completionSignal:
+          outcome === "done"
+            ? "<promise>DONE</promise>"
+            : outcome === "blocked"
+              ? "<promise>BLOCKED</promise>"
+              : undefined,
+        stdout: outcome === "no-sentinel" ? "Edit src/x.ts\nlast line, no sentinel" : "",
+      };
     },
+    model: "claude-opus-4-8",
     hooks: {
       config,
       resolveOptions: {
@@ -177,9 +165,6 @@ function harness(opts: HarnessOptions = {}): {
       async issueUrl() {
         return "https://github.com/o/r/issues/9";
       },
-      async recentCommits() {
-        return "abc short log";
-      },
       async priorAttemptContext() {
         return undefined;
       },
@@ -203,7 +188,6 @@ function harness(opts: HarnessOptions = {}): {
     nowEpoch: () => 1000,
     nowIso: () => "2026-05-30T00:00:00Z",
     appendIterLog: () => {},
-    agentPromptBody: "AGENT BODY",
   };
 
   // Wire the hook config + abort marker so dispatchHooks has a command to run.
@@ -234,8 +218,8 @@ const labelTrace = (t: Trace): string[] =>
   t.labelEdits.map((e) => `-${e.remove.join("+")}|+${e.add.join("+")}`);
 
 describe("processIssue — DONE + green + merged (unlocked, admin-PR landing)", () => {
-  it("runs claim → … → close with the full label transition + completion sweep", async () => {
-    const { deps, input, trace } = harness({ sentinel: "done", feedbackOk: true, locked: false });
+  it("runs claim → runAgent → push → feedback → land → close with the full transition + sweep", async () => {
+    const { deps, input, trace } = harness({ outcome: "done", feedbackOk: true, locked: false });
     const result = await processIssue(deps, input);
 
     expect(result.outcome).toBe("done");
@@ -246,6 +230,12 @@ describe("processIssue — DONE + green + merged (unlocked, admin-PR landing)", 
     expect(result.mergeSha).toBe("abc1234");
     expect(result.swept).toBe(true);
 
+    // sandcastle ran once, on the worker branch, with the handoff as promptFile.
+    expect(trace.runAgentCalls.length).toBe(1);
+    expect(trace.runAgentCalls[0]?.branch).toBe("afk/wAAAA/9-fix-the-thing");
+    expect(trace.runAgentCalls[0]?.handoffPath).toBe("/tmp/afk/workers/wAAAA/9-a1/handoff.md");
+    expect(trace.runAgentCalls[0]?.runner).toBe("claude");
+
     // claim: ready-for-agent → running ; close: remove running.
     expect(labelTrace(trace)).toEqual(["-ready-for-agent|+running", "-running|+"]);
     expect(trace.closed).toEqual([9]);
@@ -253,13 +243,13 @@ describe("processIssue — DONE + green + merged (unlocked, admin-PR landing)", 
     // done envelope posted, live remote branch deleted on close.
     expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "done" }]);
     expect(trace.deletedRemote.length).toBe(1);
-    // worktree dropped, claim released.
-    expect(trace.worktreesDropped).toEqual(["/tmp/afk/workers/wAAAA/9-a1/worktree"]);
+    // worker branch pushed before landing; claim released.
+    expect(trace.pushedAttempt.length).toBe(1);
     expect(trace.released).toEqual([9]);
   });
 
   it("fires the lifecycle hook points in order", async () => {
-    const { deps, input } = harness({ sentinel: "done", feedbackOk: true });
+    const { deps, input } = harness({ outcome: "done", feedbackOk: true });
     const result = await processIssue(deps, input);
     expect(result.hooksFired).toEqual([
       "pre_worktree",
@@ -274,7 +264,7 @@ describe("processIssue — DONE + green + merged (unlocked, admin-PR landing)", 
 describe("processIssue — lock-toggled landing", () => {
   it("locked → landMerge (merge --no-ff into the locked branch + push)", async () => {
     const calls: string[][] = [];
-    const { deps, input } = harness({ sentinel: "done", feedbackOk: true, locked: true });
+    const { deps, input } = harness({ outcome: "done", feedbackOk: true, locked: true });
     const inner = deps.mergeExec;
     deps.mergeExec = async (argv) => {
       calls.push(argv);
@@ -293,7 +283,7 @@ describe("processIssue — lock-toggled landing", () => {
 
   it("unlocked → landPr (admin-merged PR into the pinned target)", async () => {
     const calls: string[][] = [];
-    const { deps, input } = harness({ sentinel: "done", feedbackOk: true, locked: false });
+    const { deps, input } = harness({ outcome: "done", feedbackOk: true, locked: false });
     const inner = deps.mergeExec;
     deps.mergeExec = async (argv) => {
       calls.push(argv);
@@ -314,7 +304,7 @@ describe("processIssue — lock-toggled landing", () => {
 
 describe("processIssue — BLOCKED", () => {
   it("flips to ready-for-human, posts a failure envelope, preserves the attempt dir", async () => {
-    const { deps, input, trace } = harness({ sentinel: "blocked" });
+    const { deps, input, trace } = harness({ outcome: "blocked" });
     const result = await processIssue(deps, input);
 
     expect(result.outcome).toBe("blocked");
@@ -324,22 +314,22 @@ describe("processIssue — BLOCKED", () => {
     expect(labelTrace(trace)).toEqual(["-ready-for-agent|+running", "-running|+ready-for-human"]);
     expect(trace.closed).toEqual([]);
     expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "blocked" }]);
-    // worktree dropped but no completion sweep, no remote delete.
-    expect(trace.worktreesDropped.length).toBe(1);
+    // no completion sweep, no remote delete, no land-push.
     expect(trace.swept).toEqual([]);
     expect(trace.deletedRemote).toEqual([]);
+    expect(trace.pushedAttempt).toEqual([]);
   });
 
   it("fires pre/post_attempt but never pre_merge on the BLOCKED path", async () => {
-    const { deps, input } = harness({ sentinel: "blocked" });
+    const { deps, input } = harness({ outcome: "blocked" });
     const result = await processIssue(deps, input);
     expect(result.hooksFired).toEqual(["pre_worktree", "pre_attempt", "post_attempt"]);
   });
 });
 
-describe("processIssue — no-sentinel (EOF without a <promise>)", () => {
+describe("processIssue — no-sentinel (run ended without a <promise>)", () => {
   it("routes through on_attempt_error → ready-for-human, no post_attempt", async () => {
-    const { deps, input, trace } = harness({ sentinel: "no-sentinel" });
+    const { deps, input, trace } = harness({ outcome: "no-sentinel" });
     const result = await processIssue(deps, input);
 
     expect(result.outcome).toBe("no-sentinel");
@@ -353,7 +343,7 @@ describe("processIssue — no-sentinel (EOF without a <promise>)", () => {
 
 describe("processIssue — feedback fail", () => {
   it("flips to ready-for-human with a failure envelope when validation fails", async () => {
-    const { deps, input, trace } = harness({ sentinel: "done", feedbackOk: false });
+    const { deps, input, trace } = harness({ outcome: "done", feedbackOk: false });
     const result = await processIssue(deps, input);
 
     expect(result.outcome).toBe("feedback-failed");
@@ -361,8 +351,10 @@ describe("processIssue — feedback fail", () => {
     expect(labelTrace(trace)).toEqual(["-ready-for-agent|+running", "-running|+ready-for-human"]);
     expect(trace.closed).toEqual([]);
     expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "blocked" }]);
-    // post_attempt fired (the runner authored DONE), pre_merge never reached.
+    // post_attempt fired (the run authored DONE), pre_merge never reached, and
+    // the worker branch was not pushed for landing.
     expect(result.hooksFired).toEqual(["pre_worktree", "pre_attempt", "post_attempt"]);
+    expect(trace.pushedAttempt).toEqual([]);
   });
 });
 
@@ -373,6 +365,8 @@ describe("processIssue — claim lost", () => {
     expect(result.outcome).toBe("claim-lost");
     expect(trace.labelEdits).toEqual([]);
     expect(result.hooksFired).toEqual([]);
+    // never reached sandcastle.
+    expect(trace.runAgentCalls).toEqual([]);
   });
 
   it("skips when ready-for-agent is no longer present (raced)", async () => {
@@ -385,27 +379,15 @@ describe("processIssue — claim lost", () => {
   });
 });
 
-describe("processIssue — exhausted", () => {
-  it("restores ready-for-agent and surfaces the exhausted outcome", async () => {
-    const { deps, input, trace } = harness({ sentinel: "exhausted" });
-    const result = await processIssue(deps, input);
-    expect(result.outcome).toBe("exhausted");
-    expect(result.preserved).toBe(true);
-    // running restored to ready-for-agent (not ready-for-human).
-    expect(labelTrace(trace)).toEqual(["-ready-for-agent|+running", "-running|+ready-for-agent"]);
-    expect(trace.closed).toEqual([]);
-  });
-});
-
 describe("processIssue — pre_worktree hook abort", () => {
-  it("restores ready-for-agent and never creates the worktree", async () => {
+  it("restores ready-for-agent and never runs the agent", async () => {
     const { deps, input, trace } = harness({ abortHook: "pre_worktree" });
     const result = await processIssue(deps, input);
     expect(result.outcome).toBe("hook-aborted");
     expect(result.preserved).toBe(true);
-    // claim then restore ready-for-agent; the worktree-add never ran (no push).
+    // claim then restore ready-for-agent; sandcastle was never invoked.
     expect(labelTrace(trace)).toEqual(["-ready-for-agent|+running", "-running|+ready-for-agent"]);
-    expect(trace.pushedInitial).toEqual([]);
+    expect(trace.runAgentCalls).toEqual([]);
     expect(result.hooksFired).toEqual(["pre_worktree"]);
   });
 });
