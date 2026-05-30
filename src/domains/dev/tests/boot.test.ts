@@ -440,6 +440,30 @@ describe("runBoot unblock sweep promotes + comments", () => {
     ]);
     expect(r.unblockSweep).toEqual({ promoted: [100] });
   });
+
+  it("promotes a blocked:dependency issue via its req:* labels, shedding blocked:dependency", async () => {
+    const blockerState: BootDeps["lookups"]["blockerState"] = async (issue) =>
+      issue === 10 || issue === 11 ? "CLOSED" : "OPEN";
+    const { deps, ghCalls } = makeDeps({ blockerState });
+    const unblockCandidates: UnblockCandidate[] = [
+      // req:* labels are preferred over the (here, contradictory) body parse.
+      {
+        number: 100,
+        labels: ["blocked:dependency", "req:10", "req:11"],
+        body: "## Blocked by\n\n- [ ] #999\n",
+      },
+      // still-open dep #99 → stays blocked.
+      { number: 200, labels: ["blocked:dependency", "req:10", "req:99"], body: "" },
+    ];
+    const r = await runBoot(deps, options({ unblockCandidates }));
+    expect(ghCalls.editLabels).toEqual([
+      { issue: 100, remove: ["blocked:dependency"], add: ["ready-for-agent"] },
+    ]);
+    expect(ghCalls.comment).toEqual([
+      { issue: 100, body: "🤖 /afk unblocked: all dependencies closed (#10, #11)." },
+    ]);
+    expect(r.unblockSweep).toEqual({ promoted: [100] });
+  });
 });
 
 describe("runBoot straggler check", () => {

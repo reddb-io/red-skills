@@ -1,13 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
   auditComment,
+  cascadeAuditComment,
   parseBlockedBy,
+  parseReqLabels,
+  planCloseCascade,
   planUnblockSweep,
   refToNumber,
   shouldPromote,
   shouldWarnStragglers,
   stragglerCounts,
   type BlockerState,
+  type DependentIssue,
   type StragglerCountLookup,
   type UnblockCandidate,
 } from "../src/core/boot-sweep.js";
@@ -70,6 +74,73 @@ describe("refToNumber", () => {
   it("returns null for garbage", () => {
     expect(refToNumber("#")).toBeNull();
     expect(refToNumber("abc")).toBeNull();
+  });
+});
+
+describe("parseReqLabels", () => {
+  it("extracts dependency ids from req:<N> labels, numeric-sorted-unique", () => {
+    expect(parseReqLabels(["req:10", "req:2", "req:10", "blocked:dependency"])).toEqual([2, 10]);
+  });
+
+  it("ignores non-numeric and non-req labels", () => {
+    expect(parseReqLabels(["req:foo", "prd:5", "ready-for-agent", "req:7"])).toEqual([7]);
+  });
+
+  it("returns [] for an empty / req-free label set", () => {
+    expect(parseReqLabels([])).toEqual([]);
+    expect(parseReqLabels(["blocked:dependency", "type:feature"])).toEqual([]);
+  });
+});
+
+describe("cascadeAuditComment", () => {
+  it("names the satisfied deps in #N form, comma-joined", () => {
+    expect(cascadeAuditComment([101, 102])).toBe(
+      "🤖 /afk unblocked: all dependencies closed (#101, #102).",
+    );
+  });
+  it("formats a single dep", () => {
+    expect(cascadeAuditComment([9])).toBe("🤖 /afk unblocked: all dependencies closed (#9).");
+  });
+});
+
+describe("planCloseCascade", () => {
+  it("promotes a dependent whose every req is closed", () => {
+    const deps: DependentIssue[] = [
+      { number: 20, reqs: [{ n: 9, closed: true }] },
+    ];
+    expect(planCloseCascade(9, deps)).toEqual([
+      { number: 20, refs: ["#9"], comment: "🤖 /afk unblocked: all dependencies closed (#9)." },
+    ]);
+  });
+
+  it("does not promote when one req is still open", () => {
+    const deps: DependentIssue[] = [
+      { number: 21, reqs: [{ n: 9, closed: true }, { n: 8, closed: false }] },
+    ];
+    expect(planCloseCascade(9, deps)).toEqual([]);
+  });
+
+  it("does not promote a dependent with no reqs", () => {
+    const deps: DependentIssue[] = [{ number: 22, reqs: [] }];
+    expect(planCloseCascade(9, deps)).toEqual([]);
+  });
+
+  it("names every satisfied dep in ascending order on a multi-req promote", () => {
+    const deps: DependentIssue[] = [
+      { number: 30, reqs: [{ n: 9, closed: true }, { n: 8, closed: true }] },
+    ];
+    expect(planCloseCascade(9, deps)).toEqual([
+      { number: 30, refs: ["#8", "#9"], comment: "🤖 /afk unblocked: all dependencies closed (#8, #9)." },
+    ]);
+  });
+
+  it("plans only the satisfied dependents across a mixed batch", () => {
+    const deps: DependentIssue[] = [
+      { number: 20, reqs: [{ n: 9, closed: true }] }, // promote
+      { number: 21, reqs: [{ n: 9, closed: true }, { n: 8, closed: false }] }, // skip
+      { number: 22, reqs: [] }, // skip
+    ];
+    expect(planCloseCascade(9, deps).map((p) => p.number)).toEqual([20]);
   });
 });
 
@@ -165,6 +236,52 @@ describe("planUnblockSweep", () => {
     const lookup = lookupFor({ 1: "CLOSED", 2: "OPEN" });
     const plans = await planUnblockSweep(candidates, lookup.fetch);
     expect(plans.map((p) => p.number)).toEqual([7]);
+  });
+
+  it("prefers req:* labels over the body parse and uses the dependency wording", async () => {
+    // The candidate carries BOTH a `req:*` label and a `## Blocked by` body.
+    // The structured label wins: deps come from req:*, not the body.
+    const candidates: UnblockCandidate[] = [
+      {
+        number: 7,
+        labels: ["blocked:dependency", "req:101", "req:102"],
+        body: "## Blocked by\n- [ ] #999\n", // ignored when req:* present
+      },
+    ];
+    const lookup = lookupFor({ 101: "CLOSED", 102: "CLOSED", 999: "OPEN" });
+    const plans = await planUnblockSweep(candidates, lookup.fetch);
+    expect(plans).toEqual([
+      {
+        number: 7,
+        refs: ["#101", "#102"],
+        comment: "🤖 /afk unblocked: all dependencies closed (#101, #102).",
+      },
+    ]);
+    // The body ref (#999) was never consulted — only the req:* deps.
+    expect(lookup.calls).toEqual([101, 102]);
+  });
+
+  it("does not promote a req:* candidate while a dep is still open", async () => {
+    const candidates: UnblockCandidate[] = [
+      { number: 7, labels: ["blocked:dependency", "req:101", "req:102"], body: "" },
+    ];
+    const lookup = lookupFor({ 101: "CLOSED", 102: "OPEN" });
+    expect(await planUnblockSweep(candidates, lookup.fetch)).toEqual([]);
+  });
+
+  it("falls back to the body parse when the candidate has no req:* label", async () => {
+    const candidates: UnblockCandidate[] = [
+      { number: 7, labels: ["ready-for-human"], body: "## Blocked by\n- [ ] #1\n" },
+    ];
+    const lookup = lookupFor({ 1: "CLOSED" });
+    const plans = await planUnblockSweep(candidates, lookup.fetch);
+    expect(plans).toEqual([
+      {
+        number: 7,
+        refs: ["#1"],
+        comment: "🤖 /afk promoted to ready-for-agent: all blockers closed (#1).",
+      },
+    ]);
   });
 });
 

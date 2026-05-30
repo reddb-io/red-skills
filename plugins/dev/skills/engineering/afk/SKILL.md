@@ -139,18 +139,26 @@ afk branch counts: remote-afk=N remote-afk-attempts=N local-afk=N
 
 It then applies the same three namespace reapers used during `/afk` boot: remote `afk-attempts/*`, remote `afk/*`, and local `afk/*`. Open issues and transiently unclassified issues are kept; local branches checked out by any worktree are kept. Each successful deletion logs the branch, issue number, and classification reason. Re-running is a natural no-op once stale refs are gone. Snapshot grace still comes from `RED_AFK_ATTEMPT_SNAPSHOT_GRACE_S`; live `afk/*` cleanup keeps the existing closed-vs-open policy.
 
-## Unblock Sweep (boot-time)
+## Dependency Unblock — `req:N` edges, close cascade + boot sweep
 
-After *Orphan Cleanup* and before *Straggler Check*, `/afk` scans every open issue labelled `ready-for-human` and checks whether its declared blockers have all closed. If yes, the issue is auto-promoted back to `ready-for-agent` for this run.
+Dependencies are first-class **`req:N` edge labels** (one per blocker), and a dependency-blocked issue holds the **`blocked:dependency`** state — *not* `ready-for-human` (it is healthy, waiting, and never pages). Two mechanisms promote it to `ready-for-agent`:
 
-How the sweep works:
+**1. Close cascade (event-driven, the fast path).** Immediately after `/afk` closes an issue #N on the DONE path (after the completion sweep), it re-evaluates every dependent of #N:
 
-1. `gh issue list --label ready-for-human --state open --json number,body`.
-2. For each candidate, extract refs (`#N`) under the literal `## Blocked by` heading in the body. Format is the GitHub task list emitted by `/to-issues`: `- [ ] #N` (one per line).
-3. For each ref, `gh issue view <N> --json state`. Auto-promote only when **every** ref resolves to `state == CLOSED`. Checkbox state in the body is human UX — the lookup is the source of truth.
-4. On promotion: `gh issue edit --remove-label ready-for-human --add-label ready-for-agent`, post an audit comment (`🤖 /afk promoted to ready-for-agent: all blockers closed (#X, #Y).`), and log a single orchestrator line `unblocked N issue(s): #A #B`.
+1. `gh issue list --label req:N --state open --json number,labels`.
+2. For each dependent, read its `req:*` labels and resolve each referenced issue's state (the just-closed #N is known closed; others via a cached lookup).
+3. When **every** `req:*` of a dependent is now closed: `gh issue edit --remove-label blocked:dependency --add-label ready-for-agent` + post `🤖 /afk unblocked: all dependencies closed (#…)`.
 
-Trade-off accepted: an issue may have hit `ready-for-human` for a reason unrelated to the listed blockers (test failure, spec ambiguity). Auto-promotion will then bounce it back to `ready-for-human` on the next attempt — cheap, and the fresh BLOCKED Notes the agent writes are more informative than stale ones.
+Best-effort: a `gh` failure here logs a `warn:` and never fails the close — the boot sweep below catches anything the cascade missed.
+
+**2. Unblock Sweep (boot-time, the safety net).** After *Orphan Cleanup* and before *Straggler Check*, `/afk` re-scans dependency-blocked issues by label and promotes any whose deps all closed:
+
+1. `gh issue list` for open `blocked:dependency` (and legacy `ready-for-human`) issues with `number,labels,body`.
+2. Deps come from the `req:*` labels (the source of truth); for pre-`req:N` issues with no such label, fall back to extracting `#N` refs under the literal `## Blocked by` body heading (`- [ ] #N`).
+3. Resolve each dep via `gh issue view <N> --json state`; promote only when **every** dep is `CLOSED`.
+4. On promotion: remove the holding label (`blocked:dependency`, or legacy `ready-for-human`), add `ready-for-agent`, post the audit comment, and log `unblocked N issue(s): #A #B`.
+
+Trade-off accepted: a legacy `ready-for-human` issue may have stopped for a reason unrelated to its listed blockers (test failure, spec ambiguity); auto-promotion bounces it back on the next attempt — cheap. `blocked:dependency` issues never have this ambiguity (the label *means* dependency-wait), which is the whole point of separating it from `ready-for-human`.
 
 ## Straggler Check
 

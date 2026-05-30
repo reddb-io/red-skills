@@ -50,6 +50,7 @@ The five canonical roles:
 - `needs-info` — waiting on reporter
 - `ready-for-agent` — fully specified, AFK-ready (an agent can pick it up with no human context)
 - `ready-for-human` — needs human implementation
+- `blocked:dependency` — waiting on other issues (via `req:N` edges); never pages a human; auto-unblocks when the last dep closes
 - `wontfix` — will not be actioned
 
 Default: each role's string equals its name. Ask the user if they want to override any. If their issue tracker has no existing labels, the defaults are fine.
@@ -72,6 +73,7 @@ Confirm with the user:
 - Install `red-issues-needs-triage.yml` into `.github/workflows/`? Default: yes.
 - Does the `needs-triage` label exist in the issue tracker? If not, create it (`gh label create needs-triage --description "Maintainer needs to evaluate"`).
 - Does the `runner-error` label exist? If not, create it (`gh label create runner-error --color B60205 --description "AFK supervisor circuit-tripped; runner was misconfigured"`). The `/afk` fleet supervisor falls back to creating it on the fly during a circuit trip, but provisioning it here keeps colour/description consistent across repos.
+- Does the `blocked:dependency` label exist? If not, create it (`gh label create blocked:dependency --color D4C5F9 --description "Waiting on other issues (req:N edges); auto-unblocks when the last dependency closes"`). `req:N` edge labels are created on demand by `/to-issues` (`gh label create req:<n>`) like `prd:N`, so they need no upfront provisioning.
 
 Future RedSkills workflows will land in this same step. Filename prefix `red-` is mandatory.
 
