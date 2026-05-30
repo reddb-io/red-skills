@@ -209,6 +209,15 @@ export interface BranchCleanupInput {
   localLiveRefs: readonly BranchRef[];
 }
 
+/** A `.red/tmp/claims/<N>/` lock dir whose recorded pid the caller already
+ * resolved as dead (or absent). The orphan step unconditionally reclaims these
+ * — the liveness check happens at discovery, not here. Mirrors the stale
+ * claim-lock sweep at the end of prune_orphans. */
+export interface StaleClaimDir {
+  /** Absolute path to the claim lock dir (`.red/tmp/claims/<N>`). */
+  path: string;
+}
+
 /** The full set of per-step inputs the caller resolves before `runBoot`. */
 export interface BootOptions {
   precheck: PrecheckFacts;
@@ -217,6 +226,13 @@ export interface BootOptions {
   attemptCap: AttemptCapInput;
   branches: BranchCleanupInput;
   unblockCandidates: readonly UnblockCandidate[];
+  /** Pre-cutover flat `.red/tmp/work-NNN` relic dirs whose orchestrator is dead.
+   * Unconditionally wiped (#252). The caller has already filtered to dead ones.
+   * Optional for back-compat with callers that predate the drain-wipe. */
+  legacyWorkDirs?: readonly string[];
+  /** `.red/tmp/claims/<N>/` lock dirs whose recorded pid is dead. Reclaimed
+   * unconditionally. Optional for back-compat. */
+  staleClaimDirs?: readonly StaleClaimDir[];
 }
 
 // ---------- per-step results (for parity assertions / logging) ----------
@@ -226,6 +242,10 @@ export interface OrphanCleanupResult {
   restored: number[];
   /** Dirs kept (keep-until TTL not yet exceeded). */
   kept: string[];
+  /** Pre-cutover `work-*` relic dirs wiped this run (#252). */
+  legacyWiped: string[];
+  /** Stale `claims/<N>` lock dirs reclaimed this run. */
+  claimsReleased: string[];
 }
 
 export interface AttemptCapResult {
@@ -296,7 +316,7 @@ export async function runBoot(deps: BootDeps, options: BootOptions): Promise<Boo
   await deps.fs.writeWorkerPid(b.workerPidFile, b.workerPid);
 
   // ---- 3. orphan cleanup ----
-  const orphanCleanup = await runOrphanCleanup(deps, options.orphans);
+  const orphanCleanup = await runOrphanCleanup(deps, options);
 
   // ---- 4. attempt cap ----
   const attemptCap = await runAttemptCap(deps, options.attemptCap);
@@ -329,11 +349,23 @@ export async function runBoot(deps: BootDeps, options: BootOptions): Promise<Boo
  *   - remove: rm -rf. */
 async function runOrphanCleanup(
   deps: BootDeps,
-  orphans: readonly OrphanDir[],
+  options: BootOptions,
 ): Promise<OrphanCleanupResult> {
+  const orphans = options.orphans;
   const removed: string[] = [];
   const restored: number[] = [];
   const kept: string[] = [];
+  const legacyWiped: string[] = [];
+  const claimsReleased: string[] = [];
+
+  // Drain-first cutover (#252): unconditionally wipe any leftover pre-cutover
+  // flat `work-*` dir whose orchestrator the caller already found dead. This
+  // mirrors the `rm -rf "$TMP_DIR"/work-*/` loop at the top of prune_orphans and
+  // runs BEFORE the nested attempt-dir sweep, exactly as bash does.
+  for (const path of options.legacyWorkDirs ?? []) {
+    await deps.fs.removeDir(path);
+    legacyWiped.push(path);
+  }
 
   for (const dir of orphans) {
     const hasStateFile = dir.issue !== null;
@@ -382,7 +414,16 @@ async function runOrphanCleanup(
     }
   }
 
-  return { removed, restored, kept };
+  // Stale claim-lock sweep: reclaim any `.red/tmp/claims/<N>/` lock whose
+  // recorded pid the caller already resolved as dead. Mirrors the trailing
+  // `for c in "$TMP_DIR"/claims/*/` loop in prune_orphans. Runs last, after the
+  // attempt-dir sweep, so a freshly-released claim is never re-examined.
+  for (const claim of options.staleClaimDirs ?? []) {
+    await deps.fs.removeDir(claim.path);
+    claimsReleased.push(claim.path);
+  }
+
+  return { removed, restored, kept, legacyWiped, claimsReleased };
 }
 
 /** Step 4: planAttemptCap per issue with the resolved age/count caps, then rm

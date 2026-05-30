@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import type { RunOptions, RunResult } from "@ai-hero/sandcastle";
 import {
   buildRunOptions,
+  buildContinuousPushHook,
   interpretOutcome,
   isExhaustionError,
   runAgent,
@@ -9,6 +10,7 @@ import {
   BLOCKED_SIGNAL,
   COMPLETION_SIGNALS,
   DEFAULT_IDLE_TIMEOUT_S,
+  DEFAULT_REMOTE,
   type SandcastleDeps,
   type RunAgentInput,
 } from "../src/core/execution.js";
@@ -98,6 +100,70 @@ describe("buildRunOptions", () => {
     );
     expect(opts.sandbox).toEqual({ __sandbox: "docker" });
     expect(opts.idleTimeoutSeconds).toBe(300);
+  });
+
+  it("does NOT inject any hooks when continuous push is not requested (default)", () => {
+    const opts = buildRunOptions(makeDeps(async () => fakeResult()), baseInput);
+    expect(opts.hooks).toBeUndefined();
+  });
+
+  it("injects an onWorktreeReady host hook with the initial push + post-commit install when continuousPush is on", () => {
+    const opts = buildRunOptions(
+      makeDeps(async () => fakeResult()),
+      { ...baseInput, continuousPush: true },
+    );
+    const hooks = opts.hooks?.host?.onWorktreeReady;
+    expect(hooks).toHaveLength(1);
+    const command = hooks?.[0]?.command ?? "";
+    // It is a single portable `sh -c '...'` host command.
+    expect(command.startsWith("sh -c ")).toBe(true);
+    // (a) initial force-with-lease push of the worker branch up-front.
+    expect(command).toContain("--force-with-lease");
+    expect(command).toContain("HEAD:refs/heads/afk/wZ2R4/42-fix-oauth");
+    expect(command).toContain(`git push ${DEFAULT_REMOTE} -u`);
+    // (b) post-commit hook install into the worktree's own gitdir.
+    expect(command).toContain("git rev-parse --git-dir");
+    expect(command).toContain("hooks/post-commit");
+    // The installed hook pushes HEAD after every commit (continuous push).
+    expect(command).toContain(`git push ${DEFAULT_REMOTE} HEAD --force-with-lease`);
+  });
+
+  it("targets a custom remote when one is supplied", () => {
+    const opts = buildRunOptions(
+      makeDeps(async () => fakeResult()),
+      { ...baseInput, continuousPush: true, remote: "backup" },
+    );
+    const command = opts.hooks?.host?.onWorktreeReady?.[0]?.command ?? "";
+    expect(command).toContain("git push backup -u");
+    expect(command).toContain("git push backup HEAD --force-with-lease");
+  });
+});
+
+describe("buildContinuousPushHook (issue #191)", () => {
+  it("is best-effort: every push tolerates failure and the script never aborts the run", () => {
+    const { command } = buildContinuousPushHook("afk/wZ2R4/42-fix-oauth", "origin");
+    // The initial push falls back to a warn (|| echo ... >&2), never a non-zero exit.
+    expect(command).toContain("|| echo");
+    // The whole host-hook script ends with `exit 0` so a push/auth failure
+    // cannot fail the onWorktreeReady hook and abort the iteration.
+    expect(command).toContain("exit 0");
+    // The installed post-commit hook is itself a pure side-effect (|| true).
+    expect(command).toContain("|| true");
+  });
+
+  it("scopes the hook to the worktree's linked gitdir, not a fixed .git path", () => {
+    const { command } = buildContinuousPushHook("afk/x/1-slug", "origin");
+    // Uses `git rev-parse --git-dir` so a linked worktree's hooks dir is used —
+    // the hook cannot leak into the primary checkout or a sibling worktree.
+    expect(command).toContain("git rev-parse --git-dir");
+    expect(command).not.toContain('.git/hooks/post-commit"');
+  });
+
+  it("is a single shell command string (the sandcastle host-hook shape)", () => {
+    const hook = buildContinuousPushHook("afk/x/1-slug", "origin");
+    expect(typeof hook.command).toBe("string");
+    // Host hooks accept only { command, timeoutMs? } — no sudo on the host lane.
+    expect(Object.keys(hook)).toEqual(["command"]);
   });
 });
 

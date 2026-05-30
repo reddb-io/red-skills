@@ -1,2 +1,0 @@
-{"type":"assistant","message":{"content":[{"type":"text","text":"Plan: I will read the handoff, implement the slice, then emit <promise>DONE</promise> when finished. On any blocker, I'd emit <promise>BLOCKED</promise> instead."}]}}
-{"type":"assistant","message":{"content":[{"type":"text","text":"Reading files now..."}]}}

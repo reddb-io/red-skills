@@ -109,7 +109,7 @@ Three things to verify after install:
 
 **Section F — `/afk` statusline (optional).**
 
-> Explainer: When `/afk` is draining the queue, the Claude Code statusline can surface live worker count, queue depth, and aggregated diffstat at a glance — so the user doesn't need to run `/dev:afk monitor` in a side terminal. The plugin ships a small `statusline.sh` script that reads each worker's `.red/tmp/work-*/afk.state.json`, filters by `kill -0` liveness, sums diffstats locally, and caches GitHub-derived counts for 60 s to stay under the ~100 ms refresh budget.
+> Explainer: When `/afk` is draining the queue, the Claude Code statusline can surface live worker count, queue depth, and aggregated diffstat at a glance — so the user doesn't need to run `/dev:afk monitor` in a side terminal. The plugin's AFK bundle exposes a `statusline` subcommand that reads each worker's `.red/tmp/workers/*/*/afk.state.json`, filters by `kill -0` liveness, sums diffstats locally, and caches GitHub-derived counts for 60 s to stay under the ~100 ms refresh budget.
 
 Decide whether to wire it up for this project:
 
@@ -121,7 +121,7 @@ Decide whether to wire it up for this project:
   {
     "statusLine": {
       "type": "command",
-      "command": "bash ${CLAUDE_PLUGIN_ROOT}/skills/engineering/afk/scripts/statusline.sh",
+      "command": "node \"$CLAUDE_PLUGIN_ROOT/skills/engineering/afk/bin/afk.mjs\" statusline \"$CLAUDE_PROJECT_DIR\"",
       "refreshInterval": 5
     }
   }

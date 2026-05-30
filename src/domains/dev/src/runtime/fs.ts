@@ -18,7 +18,7 @@ import {
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { FailureMarkers } from "../core/envelope-emit.js";
-import type { OrphanDir } from "../core/boot.js";
+import type { OrphanDir, StaleClaimDir } from "../core/boot.js";
 
 export async function ensureDir(path: string): Promise<void> {
   await mkdir(path, { recursive: true });
@@ -186,6 +186,81 @@ export async function listOrphanDirs(workersRoot: string, nowS: number): Promise
       }
       out.push({ path: dir, issue: m ? Number(m[1]) : null, ageS });
     }
+  }
+  return out;
+}
+
+/** Liveness probe (kill -0) for a recorded pid string. A blank/non-numeric pid
+ * counts as dead, matching the bash `[[ -z "$cp" ]] || ! kill -0` guard. */
+function pidAlive(raw: string | null): boolean {
+  if (raw === null) return false;
+  const trimmed = raw.trim();
+  if (!/^[1-9][0-9]*$/.test(trimmed)) return false;
+  try {
+    process.kill(Number(trimmed), 0);
+    return true;
+  } catch (err) {
+    // EPERM means the process exists but is owned by another user — still alive.
+    return (err as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/**
+ * Discover stale claim-lock dirs under `<tmpDir>/claims/`. Each `claims/<N>/`
+ * holds a `pid` file; the lock is stale (and reclaimable) when that pid is dead
+ * or unreadable. Mirrors the trailing claim-lock sweep in prune_orphans (the
+ * `for c in claims/...` loop: read `$c/pid`, `kill -0 $cp` else `rm -rf $c`).
+ * A missing claims dir yields `[]` (nothing to sweep).
+ */
+export async function listStaleClaimDirs(tmpDir: string): Promise<StaleClaimDir[]> {
+  const claimsRoot = join(tmpDir, "claims");
+  let entries: string[];
+  try {
+    entries = await readdir(claimsRoot);
+  } catch {
+    return [];
+  }
+  const out: StaleClaimDir[] = [];
+  for (const entry of entries) {
+    const dir = join(claimsRoot, entry);
+    try {
+      const st = await stat(dir);
+      if (!st.isDirectory()) continue;
+    } catch {
+      continue;
+    }
+    const raw = await readText(join(dir, "pid"));
+    if (!pidAlive(raw)) out.push({ path: dir });
+  }
+  return out;
+}
+
+/**
+ * Discover pre-cutover flat `<tmpDir>/work-NNN` relic dirs whose orchestrator is
+ * dead. Each carries an `afk.pid` file; a missing/dead pid marks the dir for the
+ * unconditional drain-wipe (#252). Mirrors the `for d in work-...` loop at the
+ * top of prune_orphans (minus the dangling-worktree removal, which the caller
+ * handles via git when needed). A missing tmp dir yields `[]`.
+ */
+export async function listLegacyWorkDirs(tmpDir: string): Promise<string[]> {
+  let entries: string[];
+  try {
+    entries = await readdir(tmpDir);
+  } catch {
+    return [];
+  }
+  const out: string[] = [];
+  for (const entry of entries) {
+    if (!entry.startsWith("work-")) continue;
+    const dir = join(tmpDir, entry);
+    try {
+      const st = await stat(dir);
+      if (!st.isDirectory()) continue;
+    } catch {
+      continue;
+    }
+    const raw = await readText(join(dir, "afk.pid"));
+    if (!pidAlive(raw)) out.push(dir);
   }
   return out;
 }

@@ -6,6 +6,19 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 
 ---
 
+## afk — native statusline + legacy bash orchestration removed (PRD #287)
+
+- **status**: modified
+- **upstream**: —
+- **why**: The native TypeScript runtime (`src/domains/dev`) reached full parity with the bash orchestrator, the last gap being the Claude Code statusline, which was still bash-only. With a native `statusline` command in place, the entire legacy shell orchestration layer under `plugins/dev/skills/engineering/afk/scripts/` (and the `RED_AFK_LEGACY=1` escape hatch) is dead weight.
+- **what changed**:
+  - Added a native `statusline` command to the bundle. `commands/statusline.ts` does the IO (reads the Claude Code payload on stdin, resolves the project root from `$1` / payload / cwd, honours the `.red/config.yaml` `statusline: false` and `afk.statusline: false` opt-out, reads the git branch/detached-sha, aggregates live `.red/tmp/workers/*/*/afk.state.json` workers with the worktree diffstat fallback, and caches the gh `ready-for-agent`/`ready-for-human` counts for 60 s in `.red/tmp/statusline-cache.json`) and renders via the existing pure `core/statusline.ts`. Wired into `cli.ts` (`node bin/afk.mjs statusline "<root>"`). New `runtime/wire.ts#collectStatuslineAfk`, `runtime/git.ts#diffstatShortstat`, `runtime/gh.ts#countReadyForAgent/countReadyForHuman`. Tests: `tests/statusline-command.test.ts`, plus a `statusline` route case in `tests/cli-routing.test.ts`; `core/statusline.ts`'s tests stay green.
+  - Deleted `plugins/dev/skills/engineering/afk/scripts/` entirely — all 86 `.sh` (the orchestrator `afk.sh`, `supervisor.sh`, `monitor.sh`, `statusline.sh`, `afk-reap.sh`, `hooks.sh`, `config.sh`, `once.sh`, `lib/*.sh`, and the 59 bash `*.test.sh`). KEPT `defaults/` (native hook-path scripts), `detectors/`, `examples/`, and all reference `*.md`.
+  - Stripped the legacy delegation from the TS: removed `platform/legacy.ts` (`runLegacy`/`legacyScriptPath`/`LegacyCommand`/`scriptNames`) and the now-unused `platform/command.ts` (`runInteractive`); moved the surviving `skillDirFromModule` into `platform/skill-paths.ts`, re-anchored on `defaults/` (its old `scripts/afk.sh` anchor is gone); dropped the `RED_AFK_LEGACY` branches in `commands/run.ts`, `commands/monitor.ts`, and the `spawn("bash", supervisor.sh)` branch in `commands/fleet.ts`. Native is now the only path.
+  - Repointed the statusline-wiring docs (`statusline/SKILL.md`, `setup-red-skills/SKILL.md`) from `bash …/scripts/statusline.sh` to `node "$CLAUDE_PLUGIN_ROOT/skills/engineering/afk/bin/afk.mjs" statusline "$CLAUDE_PROJECT_DIR"`, and removed the `RED_AFK_LEGACY` / "scripts remain present" transition notes from `afk/SKILL.md`.
+
+---
+
 ## code-nav (mcp) — relocated into the monorepo (ADR 0034)
 
 - **status**: modified

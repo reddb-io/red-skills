@@ -52,7 +52,30 @@ export interface RunAgentInput {
   /** Isolation: "none" (default, node-only) | "docker" | "podman". */
   sandboxMode?: SandboxMode;
   idleTimeoutSeconds?: number;
+  /**
+   * The git remote the worker branch is continuously pushed to (issue #191).
+   * Only consulted when `continuousPush` is true. Defaults to "origin" — the
+   * shell port hard-coded `origin`, so the remote name is the push target, not
+   * a `git -C` repo.
+   */
+  remote?: string;
+  /**
+   * Restore the AFK continuous-push guarantee (issue #191): when true,
+   * `buildRunOptions` injects a sandcastle `host.onWorktreeReady` hook that, in
+   * the freshly-created worktree ON THE HOST, (a) force-with-lease pushes the
+   * worker branch to the remote up-front and (b) installs a `post-commit` git
+   * hook that fire-and-forgets a push after every inner-agent commit — exactly
+   * the shell `push_initial` + `install_post_commit_hook` behaviour. So a
+   * SIGKILL anywhere mid-iteration preserves the diff on the remote.
+   *
+   * Off by default: the legacy path (push once after a DONE run) is preserved
+   * unless the caller opts in.
+   */
+  continuousPush?: boolean;
 }
+
+/** The git remote the continuous-push hook targets when none is supplied. */
+export const DEFAULT_REMOTE = "origin";
 
 export interface RunAgentResult {
   outcome: AgentOutcome;
@@ -76,6 +99,74 @@ export function interpretOutcome(signal: string | undefined): AgentOutcome {
   return "no-sentinel";
 }
 
+/** The sandcastle `host.onWorktreeReady` hook command shape. */
+type HostHookCommand = NonNullable<NonNullable<NonNullable<RunOptions["hooks"]>["host"]>["onWorktreeReady"]>[number];
+
+/**
+ * Build the single `host.onWorktreeReady` hook command that restores the AFK
+ * continuous-push guarantee (issue #191) for a host-visible worktree.
+ *
+ * sandcastle runs `host.onWorktreeReady` ON THE HOST with cwd = the worktree it
+ * just created (noSandbox worktree mode and bind-mount worktree mode), so this
+ * command, in that worktree:
+ *   (a) force-with-lease pushes the worker branch to the remote up-front
+ *       (`push_initial`), and
+ *   (b) installs a `post-commit` git hook that fire-and-forgets a push after
+ *       every inner-agent commit (`install_post_commit_hook`).
+ *
+ * Every step is best-effort: a network / auth failure logs to stderr (via the
+ * shell `||` fallbacks) but never returns non-zero, so the hook can NOT abort
+ * the run. The post-commit hook itself ends in `|| true` for the same reason
+ * (git ignores a post-commit exit status, but we belt-and-braces it).
+ *
+ * The hook is written with `git rev-parse --git-dir` so it lands in the linked
+ * worktree's own gitdir (`.git/hooks/`), never leaking into the primary
+ * checkout or a sibling worktree — exactly the shell behaviour.
+ */
+export function buildContinuousPushHook(branch: string, remote: string): HostHookCommand {
+  // Single-quoted heredoc body so the inner `$()` / `HEAD` are evaluated when
+  // the post-commit hook RUNS, not when it is written. The outer `sh -c` script
+  // is itself single-quoted at the call site, so embedded single quotes in the
+  // heredoc are avoided; we use printf with the literal hook text instead.
+  const initialPush = `git push ${remote} -u "HEAD:refs/heads/${branch}" --force-with-lease >/dev/null 2>&1 || echo "[afk] warn: initial push for ${branch} failed, continuing without remote backup" >&2`;
+  // The post-commit hook content (issue #191). Written via printf so we never
+  // depend on a heredoc surviving the sh -c quoting. The trailing `|| true`
+  // keeps the hook a pure side-effect.
+  const hookBody = [
+    "#!/usr/bin/env sh",
+    "# AFK continuous-push hook (issue #191)",
+    "# Fire-and-forget: push the worker branch to the remote after every commit so",
+    "# a SIGKILL of the orchestrator at any point preserves the diff on the remote.",
+    `git push ${remote} HEAD --force-with-lease 2>/dev/null || true`,
+    "",
+  ].join("\n");
+  // printf %s with the body passed as a single argument; escape only what `sh -c`
+  // and printf need. We pass the body through a shell variable assignment to keep
+  // the command portable and free of nested single quotes.
+  const installHook = [
+    'gd=$(git rev-parse --git-dir 2>/dev/null) || gd=""',
+    'if [ -n "$gd" ]; then',
+    '  mkdir -p "$gd/hooks" 2>/dev/null || true',
+    `  printf '%s' "$HOOK_BODY" > "$gd/hooks/post-commit" 2>/dev/null && chmod 0755 "$gd/hooks/post-commit" 2>/dev/null || echo "[afk] warn: could not install post-commit hook" >&2`,
+    "else",
+    '  echo "[afk] warn: could not resolve .git dir — post-commit hook not installed" >&2',
+    "fi",
+  ].join("\n");
+  // HOOK_BODY is exported inline so the heredoc-free printf above reads it. The
+  // whole script is wrapped in `sh -c` and always exits 0 (best-effort).
+  const script = [`HOOK_BODY=${shSingleQuote(hookBody)}`, "export HOOK_BODY", initialPush, installHook, "exit 0"].join(
+    "\n",
+  );
+  return { command: `sh -c ${shSingleQuote(script)}` };
+}
+
+/** POSIX single-quote escaping: wrap in single quotes, replacing each embedded
+ * single quote with the `'\''` idiom. Keeps the embedded git push / hook body
+ * intact through the `sh -c '<script>'` layer. */
+function shSingleQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
 /** Build the sandcastle `run` options for one issue iteration (pure). */
 export function buildRunOptions(deps: SandcastleDeps, input: RunAgentInput): RunOptions {
   // Fork the worker branch off the resolved base (ADR 0031) via sandcastle's
@@ -88,6 +179,15 @@ export function buildRunOptions(deps: SandcastleDeps, input: RunAgentInput): Run
     branch: input.branch,
     ...(input.base ? { baseBranch: input.base } : {}),
   };
+  // Continuous-push guarantee (issue #191): when enabled, inject a single
+  // host.onWorktreeReady hook that runs ON THE HOST in the new worktree to push
+  // the branch up-front and install the post-commit push hook. sandcastle only
+  // runs this for host-visible worktrees (noSandbox / bind-mount worktree mode);
+  // for fully-isolated providers the agent works in a synced copy the hook can't
+  // see, so continuous push simply does not fire there (final sync only).
+  const hooks: RunOptions["hooks"] | undefined = input.continuousPush
+    ? { host: { onWorktreeReady: [buildContinuousPushHook(input.branch, input.remote ?? DEFAULT_REMOTE)] } }
+    : undefined;
   return {
     agent: deps.agentFor(input.runner, input.model, { effort: input.effort }),
     sandbox: deps.sandboxFor(input.sandboxMode ?? "none"),
@@ -95,6 +195,7 @@ export function buildRunOptions(deps: SandcastleDeps, input: RunAgentInput): Run
     branchStrategy,
     completionSignal: [...COMPLETION_SIGNALS],
     idleTimeoutSeconds: input.idleTimeoutSeconds ?? DEFAULT_IDLE_TIMEOUT_S,
+    ...(hooks ? { hooks } : {}),
   };
 }
 

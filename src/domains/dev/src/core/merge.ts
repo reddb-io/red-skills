@@ -229,6 +229,109 @@ export async function landPr(exec: Exec, input: LandPrInput): Promise<LandPrResu
   return { ok: true, prNumber };
 }
 
+/** Inputs for the one-shot merge-conflict self-resolver, {@link resolveMergeConflict}. */
+export interface ResolveConflictInput {
+  /** Repo dir passed to `git -C` (the primary checkout where the merge stalled). */
+  repo: string;
+  /** Attempt branch whose `git merge --no-ff` left conflicts. */
+  branch: string;
+  /** Issue number, for the resolver prompt. */
+  n: number;
+  /** Issue title, for the resolver prompt. */
+  title: string;
+  /** Target branch the merge was into (e.g. `main`). */
+  target: string;
+}
+
+/** Dispatch the configured runner in the primary checkout with the conflict
+ * resolver prompt. Best-effort — a non-zero / thrown runner is swallowed, and
+ * the resolved-or-not verdict is decided afterwards by inspecting git state.
+ * Injected so the resolver stays testable over a fake. */
+export type ConflictResolver = (prompt: string) => Promise<void>;
+
+export interface ResolveConflictResult {
+  /** True iff no unmerged paths remain AND the merge was committed (MERGE_HEAD
+   * cleared). When false, the caller falls back to `git merge --abort`. */
+  resolved: boolean;
+  /** Reason the resolve was abandoned, for logging. */
+  reason?: "unmerged-paths" | "uncommitted-merge";
+}
+
+/**
+ * Build the resolver prompt. Mirrors the heredoc in merge_resolve_conflict:
+ * a strict instruction set (resolve every conflict, `git add`, `git commit
+ * --no-edit`, no branch switches / aborts / resets / pushes), with the
+ * `git status` + truncated `git diff` appended as context.
+ */
+export function buildConflictPrompt(
+  input: Pick<ResolveConflictInput, "branch" | "n" | "title" | "target">,
+  status: string,
+  diff: string,
+): string {
+  const { branch, n, title, target } = input;
+  const truncatedDiff = diff.split("\n").slice(0, 400).join("\n");
+  return [
+    `You are an AFK merge-conflict resolver. A \`git merge --no-ff ${branch}\` into \`${target}\` for issue #${n} ("${title}") hit conflicts in THIS checkout. Resolve every conflict, then commit the merge.`,
+    ``,
+    `Rules:`,
+    `- Work only in this checkout. Do NOT switch branches, \`git merge --abort\`, \`git reset\`, \`git rebase\`, or push.`,
+    `- Resolve each conflicted file by hand, honouring both sides' intent, then \`git add\` it.`,
+    `- When all conflicts are staged, run \`git commit --no-edit\` to complete the merge. Do not change the merge message or introduce unrelated edits.`,
+    `- When the merge is committed (or you have determined you cannot resolve it), emit \`<promise>DONE</promise>\` on a line by itself as your final output.`,
+    ``,
+    "`git status`:",
+    status,
+    ``,
+    "`git diff` (truncated to 400 lines):",
+    truncatedDiff,
+  ].join("\n");
+}
+
+/**
+ * One-shot inner-agent merge-conflict resolver (SKILL.md per-issue loop step 8,
+ * merge_resolve_conflict). A `git merge --no-ff <branch>` into `<target>` has
+ * left conflicts in the primary checkout. Capture `git status` + a truncated
+ * `git diff`, dispatch the configured runner once with the resolver prompt, then
+ * verify: the merge is resolved iff NO unmerged paths remain AND MERGE_HEAD has
+ * cleared (the merge was committed). On either failure the caller runs
+ * `git merge --abort` and flips the issue to ready-for-human.
+ *
+ * Pure modulo the two injected ports (`exec` for git reads, `resolve` for the
+ * runner). The runner dispatch is best-effort: a thrown resolver still falls
+ * through to the git-state verdict.
+ */
+export async function resolveMergeConflict(
+  exec: Exec,
+  resolve: ConflictResolver,
+  input: ResolveConflictInput,
+): Promise<ResolveConflictResult> {
+  const { repo } = input;
+
+  const statusRes = await exec(["git", "-C", repo, "status"]);
+  const diffRes = await exec(["git", "-C", repo, "diff"]);
+  // buildConflictPrompt truncates the diff to 400 lines.
+  const prompt = buildConflictPrompt(input, statusRes.stdout, diffRes.stdout);
+
+  try {
+    await resolve(prompt);
+  } catch {
+    // Best-effort: the git-state verdict below is the real gate.
+  }
+
+  const unmerged = await exec(["git", "-C", repo, "diff", "--name-only", "--diff-filter=U"]);
+  if (unmerged.stdout.trim() !== "") {
+    return { resolved: false, reason: "unmerged-paths" };
+  }
+
+  // `git rev-parse -q --verify MERGE_HEAD` exits 0 while a merge is pending.
+  const mergeHead = await exec(["git", "-C", repo, "rev-parse", "-q", "--verify", "MERGE_HEAD"]);
+  if (mergeHead.code === 0) {
+    return { resolved: false, reason: "uncommitted-merge" };
+  }
+
+  return { resolved: true };
+}
+
 /** Resolve the open PR number for `<branch>` → `<target>`, or undefined. */
 async function listOpenPr(
   exec: Exec,

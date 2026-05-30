@@ -7,6 +7,10 @@ describe("cli routing — native commands", () => {
     expect(parseCli(["__supervise", "3"])).toEqual({ command: "__supervise", args: ["3"] });
   });
 
+  it("routes statusline with the project-root arg preserved", () => {
+    expect(parseCli(["statusline", "/repo"])).toEqual({ command: "statusline", args: ["/repo"] });
+  });
+
   it("still defaults bare args to run", () => {
     expect(parseCli(["-n", "0"])).toEqual({ command: "run", args: ["-n", "0"] });
   });

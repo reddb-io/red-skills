@@ -41,6 +41,14 @@ interface HarnessOptions {
   fallbackRunner?: boolean;
   /** Records each git fetch-base call (the ADR 0031 start-point fetch). */
   fetchedBases?: string[];
+  /** When set, the locked `git merge --no-ff` returns this rc (1 → conflict). */
+  mergeNoFfCode?: number;
+  /** When true, register a one-shot conflict resolver that "resolves" the merge
+   * (no unmerged paths, MERGE_HEAD cleared). When "fail", it leaves the conflict
+   * unresolved. When undefined, no resolver is registered. */
+  conflictResolve?: "resolve" | "fail";
+  /** Records calls into the conflict resolver dispatch. */
+  resolverCalls?: string[];
 }
 
 function harness(opts: HarnessOptions = {}): {
@@ -62,6 +70,9 @@ function harness(opts: HarnessOptions = {}): {
 
   const outcome = opts.outcome ?? "done";
   const config: ConfigValues = opts.config ?? {};
+  // Flipped true once the conflict resolver dispatch runs; the mergeExec
+  // verification reads above key off it to model "the agent resolved the merge".
+  let mergeResolved = false;
 
   const deps: ProcessIssueDeps = {
     gh: {
@@ -105,10 +116,26 @@ function harness(opts: HarnessOptions = {}): {
       },
     },
     mergeExec: async (argv) => {
+      const j = argv.join(" ");
       // landPr reuses an open PR via `gh pr list`; reply with a number so it
       // resolves without a create round-trip.
       if (argv.includes("pr") && argv.includes("list")) {
         return { code: 0, stdout: "42\n", stderr: "" };
+      }
+      // Locked merge --no-ff conflict injection.
+      if (opts.mergeNoFfCode !== undefined && j.includes("merge --no-ff")) {
+        return { code: opts.mergeNoFfCode, stdout: "", stderr: "" };
+      }
+      // Conflict-resolver verification reads. `mergeResolved` flips once the
+      // resolver dispatch runs (see conflictResolver below).
+      if (j.includes("diff --name-only --diff-filter=U")) {
+        const unresolved = opts.conflictResolve === "fail" || !mergeResolved;
+        return { code: 0, stdout: unresolved ? "src/x.ts\n" : "", stderr: "" };
+      }
+      if (j.includes("rev-parse -q --verify MERGE_HEAD")) {
+        // rc 0 = a merge is still pending (uncommitted); rc 1 = cleared.
+        const pending = opts.conflictResolve === "fail" || !mergeResolved;
+        return { code: pending ? 0 : 1, stdout: "", stderr: "" };
       }
       return { code: 0, stdout: "", stderr: "" };
     },
@@ -144,6 +171,12 @@ function harness(opts: HarnessOptions = {}): {
     },
     model: "claude-opus-4-8",
     fallbackRunner: opts.fallbackRunner ?? false,
+    conflictResolver: opts.conflictResolve
+      ? async (prompt) => {
+          if (opts.resolverCalls) opts.resolverCalls.push(prompt);
+          if (opts.conflictResolve === "resolve") mergeResolved = true;
+        }
+      : undefined,
     hooks: {
       config,
       resolveOptions: {
@@ -496,5 +529,58 @@ describe("processIssue — base reaches sandcastle (ADR 0031)", () => {
     expect(fetchedBases).toEqual(["main"]);
     // runAgent receives the base as the branch start point.
     expect(trace.runAgentCalls[0]?.base).toBe("main");
+  });
+});
+
+describe("processIssue — merge-conflict one-shot self-resolve (gap 3)", () => {
+  it("recovers a locked merge conflict via the resolver and closes done", async () => {
+    const resolverCalls: string[] = [];
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      locked: true,
+      mergeNoFfCode: 1, // landMerge's merge --no-ff conflicts
+      conflictResolve: "resolve",
+      resolverCalls,
+    });
+    const result = await processIssue(deps, input);
+    // the resolver was dispatched with a conflict-resolver prompt.
+    expect(resolverCalls).toHaveLength(1);
+    expect(resolverCalls[0]).toContain("merge-conflict resolver");
+    // resolved → the issue lands done, not ready-for-human.
+    expect(result.outcome).toBe("done");
+    expect(trace.closed).toContain(9);
+    expect(trace.labelEdits.some((e) => e.add.includes("ready-for-human"))).toBe(false);
+  });
+
+  it("falls back to ready-for-human when the resolver cannot resolve the conflict", async () => {
+    const resolverCalls: string[] = [];
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      locked: true,
+      mergeNoFfCode: 1,
+      conflictResolve: "fail",
+      resolverCalls,
+    });
+    const result = await processIssue(deps, input);
+    expect(resolverCalls).toHaveLength(1);
+    expect(result.outcome).toBe("merge-conflict");
+    // unresolved → ready-for-human, issue not closed.
+    expect(trace.labelEdits.some((e) => e.add.includes("ready-for-human"))).toBe(true);
+    expect(trace.closed).not.toContain(9);
+  });
+
+  it("goes straight to ready-for-human when no resolver is registered", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      locked: true,
+      mergeNoFfCode: 1,
+      // conflictResolve undefined → deps.conflictResolver is undefined
+    });
+    const result = await processIssue(deps, input);
+    expect(result.outcome).toBe("merge-conflict");
+    expect(trace.labelEdits.some((e) => e.add.includes("ready-for-human"))).toBe(true);
   });
 });
