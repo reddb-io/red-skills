@@ -6,6 +6,15 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 
 ---
 
+## start (engineering) — upstream CONTEXT-FORMAT.md drift skipped (no cherry-pick)
+
+- **status**: modified
+- **upstream**: `e3b90b5`
+- **why**: Issue #259 — upstream advanced `0288510 → e3b90b5` with a single commit ("Refine rules in CONTEXT-FORMAT.md for clarity and consistency") touching only `grill-with-docs/CONTEXT-FORMAT.md`. That file is our `/start` skill's `CONTEXT-FORMAT.md` (renamed-from `grill-with-docs`), which has intentionally diverged.
+- **what changed**: Reviewed the diff; took nothing. Upstream removed three rules our `/start` flow actively relies on — *Flag conflicts explicitly* (we emit "Flagged ambiguities"), *Show relationships* (cardinality), and *Write an example dialogue* — and reworded *Be opinionated* / loosened *Keep definitions tight* to "one or two sentences" where we already diverged to "One sentence max". Adopting the simplification would regress our grilling session. Same call as the prior drift (#195, bump to `0288510`), which also skipped this file's cosmetic tweaks. Bumped `.upstream` to `e3b90b5`; no skill content changed.
+
+---
+
 ## afk afk-attempts grace-TTL cleanup for completed issues (modified)
 
 - **status**: modified
