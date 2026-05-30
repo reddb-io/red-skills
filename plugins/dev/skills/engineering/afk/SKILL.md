@@ -104,6 +104,16 @@ The *Completion sweep* (close step 11) only fires when an issue completes. Issue
 
 Both caps share the completion sweep's invariant: a **live** worker's active attempt (state file carrying a live `pid`) is never counted toward the cap nor removed. A non-numeric or zero env value falls back to the default so an operator typo can never disable a cap.
 
+## Snapshot Branch Grace Cleanup (boot-time, issue #258)
+
+The *Completion sweep* and *Attempt Cap* reclaim **local** attempt dirs; the failure-push `afk-attempts/{wid}/{N}-slug` **snapshot branches** live on origin and are the canonical record a terminal-failure envelope links to. After *Attempt Cap*, `prune_completed_attempt_branches` reaps those remote branches for issues that have **completed**: it lists `afk-attempts/*` on origin, groups branches by the issue number in the ref, classifies each issue with `gh issue view`, and:
+
+- **still-open** issues — every branch is left untouched;
+- **closed within the grace window** — kept, so a reopened issue can still recover its prior attempts from origin;
+- **closed longer than the grace window ago** — every snapshot branch for that issue is deleted from origin (cross-worker).
+
+The grace window is `RED_AFK_ATTEMPT_SNAPSHOT_GRACE_S` (default 7 days), measured from the issue's GitHub `closedAt`. A non-numeric value falls back to the default so an operator typo can never disable the grace; `0` is honoured as "delete immediately on completion". The pass is best-effort and runs at boot, **never** on the close path — a slow or failing `gh`/`git` can never block a completion, and an issue it cannot classify is left strictly in place.
+
 ## Unblock Sweep (boot-time)
 
 After *Orphan Cleanup* and before *Straggler Check*, `/afk` scans every open issue labelled `ready-for-human` and checks whether its declared blockers have all closed. If yes, the issue is auto-promoted back to `ready-for-agent` for this run.
