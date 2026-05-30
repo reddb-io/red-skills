@@ -31,11 +31,16 @@ interface HarnessOptions {
   labels?: string[];
   acquire?: boolean;
   outcome?: RunAgentResult["outcome"];
+  /** Scripted per-call outcomes (overrides `outcome`); one entry per runAgent call. */
+  outcomes?: RunAgentResult["outcome"][];
   feedbackOk?: boolean;
   locked?: boolean;
   config?: ConfigValues;
   abortHook?: HookName;
   changedFiles?: string[];
+  fallbackRunner?: boolean;
+  /** Records each git fetch-base call (the ADR 0031 start-point fetch). */
+  fetchedBases?: string[];
 }
 
 function harness(opts: HarnessOptions = {}): {
@@ -95,6 +100,9 @@ function harness(opts: HarnessOptions = {}): {
         return "abc1234";
       },
       async deleteLocalBranch() {},
+      async fetchBase(base) {
+        if (opts.fetchedBases) opts.fetchedBases.push(base);
+      },
     },
     mergeExec: async (argv) => {
       // landPr reuses an open PR via `gh pr list`; reply with a number so it
@@ -115,23 +123,27 @@ function harness(opts: HarnessOptions = {}): {
       hasScript: () => true,
     },
     // The sandcastle execution port: a fake returning a scripted outcome on the
-    // worker branch sandcastle "committed" to.
+    // worker branch sandcastle "committed" to. When `outcomes` is set, each call
+    // pops the next scripted outcome (for fallback-swap sequences).
     async runAgent(input) {
+      const callIdx = trace.runAgentCalls.length;
       trace.runAgentCalls.push(input);
+      const thisOutcome = opts.outcomes ? (opts.outcomes[callIdx] ?? outcome) : outcome;
       return {
-        outcome,
+        outcome: thisOutcome,
         branch: input.branch,
-        commits: [{ sha: "deadbee" }],
+        commits: thisOutcome === "exhausted" ? [] : [{ sha: "deadbee" }],
         completionSignal:
-          outcome === "done"
+          thisOutcome === "done"
             ? "<promise>DONE</promise>"
-            : outcome === "blocked"
+            : thisOutcome === "blocked"
               ? "<promise>BLOCKED</promise>"
               : undefined,
-        stdout: outcome === "no-sentinel" ? "Edit src/x.ts\nlast line, no sentinel" : "",
+        stdout: thisOutcome === "no-sentinel" ? "Edit src/x.ts\nlast line, no sentinel" : "",
       };
     },
     model: "claude-opus-4-8",
+    fallbackRunner: opts.fallbackRunner ?? false,
     hooks: {
       config,
       resolveOptions: {
@@ -389,5 +401,100 @@ describe("processIssue — pre_worktree hook abort", () => {
     expect(labelTrace(trace)).toEqual(["-ready-for-agent|+running", "-running|+ready-for-agent"]);
     expect(trace.runAgentCalls).toEqual([]);
     expect(result.hooksFired).toEqual(["pre_worktree"]);
+  });
+});
+
+describe("processIssue — runner exhaustion (no --fallback-runner)", () => {
+  it("a single exhaustion is terminal: outcome exhausted, ready-for-agent restored, claim released", async () => {
+    const { deps, input, trace } = harness({ outcome: "exhausted", fallbackRunner: false });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("exhausted");
+    expect(result.preserved).toBe(true);
+    expect(result.swept).toBe(false);
+    // only one run; no swap.
+    expect(trace.runAgentCalls.length).toBe(1);
+    // claim → running, then restore ready-for-agent (not ready-for-human).
+    expect(labelTrace(trace)).toEqual(["-ready-for-agent|+running", "-running|+ready-for-agent"]);
+    expect(trace.closed).toEqual([]);
+    expect(trace.released).toEqual([9]);
+    // no post_attempt fired (exhaustion is terminal before the sentinel branch).
+    expect(result.hooksFired).toEqual(["pre_worktree", "pre_attempt"]);
+  });
+});
+
+describe("processIssue — runner exhaustion → fallback swap → retry", () => {
+  it("swaps claude→codex on exhaustion, fires post_attempt(exhausted)+pre_attempt again, then succeeds", async () => {
+    const { deps, input, trace } = harness({
+      outcomes: ["exhausted", "done"],
+      fallbackRunner: true,
+      feedbackOk: true,
+    });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    // two runs: first claude (exhausted), second codex (done).
+    expect(trace.runAgentCalls.length).toBe(2);
+    expect(trace.runAgentCalls[0]?.runner).toBe("claude");
+    expect(trace.runAgentCalls[1]?.runner).toBe("codex");
+    // both runs target the same worker branch + handoff (reused mid-issue).
+    expect(trace.runAgentCalls[1]?.branch).toBe(trace.runAgentCalls[0]?.branch);
+    expect(trace.runAgentCalls[1]?.handoffPath).toBe(trace.runAgentCalls[0]?.handoffPath);
+    // per-runner cadence: pre_attempt fires twice, post_attempt twice
+    // (exhausted close + terminal success), bracketing pre_merge/post_merge.
+    expect(result.hooksFired).toEqual([
+      "pre_worktree",
+      "pre_attempt",
+      "post_attempt", // exhausted attempt cycle closes
+      "pre_attempt", // second firing for the swapped runner (#226)
+      "post_attempt", // terminal success
+      "pre_merge",
+      "post_merge",
+    ]);
+    // the issue closed green.
+    expect(trace.closed).toEqual([9]);
+  });
+
+  it("double-exhaustion (both runners) is terminal → outcome exhausted", async () => {
+    const { deps, input, trace } = harness({
+      outcomes: ["exhausted", "exhausted"],
+      fallbackRunner: true,
+    });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("exhausted");
+    expect(result.preserved).toBe(true);
+    expect(trace.runAgentCalls.length).toBe(2);
+    // ready-for-agent restored (both-runners comment posted), claim released.
+    expect(labelTrace(trace)).toEqual(["-ready-for-agent|+running", "-running|+ready-for-agent"]);
+    expect(trace.released).toEqual([9]);
+    expect(trace.closed).toEqual([]);
+    // both attempts closed their post_attempt cycle; no merge ever reached.
+    expect(result.hooksFired).toEqual([
+      "pre_worktree",
+      "pre_attempt",
+      "post_attempt",
+      "pre_attempt",
+      "post_attempt",
+    ]);
+  });
+});
+
+describe("processIssue — base reaches sandcastle (ADR 0031)", () => {
+  it("fetches the resolved base and forks the worker branch off it (not HEAD)", async () => {
+    const fetchedBases: string[] = [];
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      locked: true, // lock value "main" → base resolves to main
+      fetchedBases,
+    });
+    const result = await processIssue(deps, input);
+
+    expect(result.base).toBe("main");
+    // the base ref is fetched current before the run (ADR 0031 caller contract).
+    expect(fetchedBases).toEqual(["main"]);
+    // runAgent receives the base as the branch start point.
+    expect(trace.runAgentCalls[0]?.base).toBe("main");
   });
 });

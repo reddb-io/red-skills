@@ -51,6 +51,18 @@ interface ParsedRunFlags {
   once: boolean;
   runnerFlag?: string;
   request?: string;
+  /** --alternate: rotate the runner between consecutive issues (claude↔codex). */
+  alternate: boolean;
+  /** --fallback-runner: swap runners mid-issue on RUNNER_EXHAUSTED. */
+  fallbackRunner: boolean;
+}
+
+/** Raised when --alternate is combined with --runner (mutually exclusive). */
+export class RunFlagError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RunFlagError";
+  }
 }
 
 /** Parse a comma-separated issue list into an ordered, finite number list. */
@@ -72,6 +84,8 @@ const RUN_FLAG_SCHEMA = {
   once: { kind: "boolean" },
   runner: { kind: "value", coerce: (raw: string): string => raw },
   request: { kind: "value", aliases: ["r"], coerce: (raw: string): string => raw },
+  alternate: { kind: "boolean" },
+  "fallback-runner": { kind: "boolean" },
 } satisfies FlagSchema;
 
 /** Parse the `run` flags: --prd N / --issues a,b,c / -n N / --once / --request / --runner. */
@@ -93,12 +107,23 @@ export function parseRunFlags(args: readonly string[]): ParsedRunFlags {
     }
   }
 
+  const runnerFlag = values.runner as string | undefined;
+  const alternate = values.alternate === true;
+  // --alternate (round-robin rotation) is mutually exclusive with a pinned
+  // --runner: pinning fixes one backend, rotation cycles them — asking for both
+  // is contradictory (SKILL.md §Runner Fallback).
+  if (alternate && runnerFlag !== undefined) {
+    throw new RunFlagError("--alternate is mutually exclusive with --runner");
+  }
+
   return {
     filter,
     iterCap: values.n as number | undefined,
     once: values.once === true,
-    runnerFlag: values.runner as string | undefined,
+    runnerFlag,
     request: values.request as string | undefined,
+    alternate,
+    fallbackRunner: values["fallback-runner"] === true,
   };
 }
 
@@ -169,6 +194,7 @@ function buildProcessDeps(
   sandbox: ReturnType<typeof resolveRunSettings>["sandbox"],
   feedback: FeedbackWorktree,
   current: CurrentAttempt,
+  fallbackRunner: boolean,
 ): ProcessIssueDeps {
   const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo };
   const gitCtx: GitContext = { cwd: ctx.root };
@@ -208,6 +234,12 @@ function buildProcessDeps(
     git: {
       headShortSha: () => gitx.headShortSha(gitCtx),
       deleteLocalBranch: (branch) => gitx.deleteLocalBranch(gitCtx, branch),
+      // Make the resolved base ref current before sandcastle forks off it
+      // (ADR 0031). Best-effort: a fetch failure leaves sandcastle on the
+      // stale/HEAD default rather than aborting the iteration.
+      fetchBase: async (base) => {
+        await gitx.gitExec(gitCtx)(["fetch", ctx.remote, base]);
+      },
     },
     mergeExec: gitx.mergeExec(gitCtx),
     remoteGit: gitx.gitExec(gitCtx),
@@ -217,6 +249,7 @@ function buildProcessDeps(
     layout: feedback.layout,
     runAgent: makeRunAgent(sandbox),
     model,
+    fallbackRunner,
     hooks: {
       config,
       resolveOptions,
@@ -329,6 +362,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
     iterCap: flags.iterCap,
     once: flags.once,
     filter: flags.filter,
+    alternate: flags.alternate,
     issueTemplate: {
       tmpDir: paths.tmpDir,
       repo: ctx.repo,
@@ -370,7 +404,16 @@ export async function runCommand(options: RunOptions): Promise<number> {
     bootDeps,
     bootOptions,
     processIssue,
-    processDeps: buildProcessDeps(ctx, settings.model, settings.sandbox, feedback, current),
+    processDeps: buildProcessDeps(ctx, settings.model, settings.sandbox, feedback, current, flags.fallbackRunner),
+    // Session-scoped lifecycle hooks (PRD #207): compose the same config /
+    // resolver / exec / env the process deps use, so session + per-issue points
+    // share one dispatcher rather than duplicating the wiring.
+    hooks: {
+      config: loadConfig(afkPaths(ctx.root).configPath, { warn: () => undefined }),
+      resolveOptions: makeHookResolveOptions(ctx.root),
+      exec: makeHookExec(ctx.root),
+      env: hookEnv(ctx.repo, ctx.root),
+    },
     buildProcessInput: (candidate: IssueCandidate, c: SessionContext): ProcessIssueInput => {
       const attempt = nextAttemptSync(c.issueTemplate.tmpDir, candidate.number);
       const attemptDir = buildWorkerAttemptPath(c.issueTemplate.tmpDir, c.workerId, candidate.number, attempt);
@@ -408,6 +451,14 @@ export async function runCommand(options: RunOptions): Promise<number> {
     const failed = summary.boot.precheck.failed;
     process.stderr.write(`[afk] precheck failed: ${failed}\n`);
     return 1;
+  }
+
+  // Runner exhaustion (single without --fallback-runner, or both runners under
+  // it) ends the run with exit 75 (EX_TEMPFAIL) so a supervisor retries once the
+  // quota resets, rather than treating it as a clean drain (0) or hard fail (1).
+  if (summary.exhausted) {
+    process.stderr.write(`[afk] runner exhausted — exiting 75 (EX_TEMPFAIL); rerun when quota resets\n`);
+    return 75;
   }
 
   return 0;

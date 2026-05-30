@@ -131,6 +131,14 @@ export interface ProcessGit {
   headShortSha(): Promise<string>;
   /** git -C primary branch -d <branch> after landing (best-effort). */
   deleteLocalBranch(branch: string): Promise<void>;
+  /**
+   * git -C primary fetch origin <base> — make the resolved base ref current
+   * before sandcastle forks the worker branch off it (ADR 0031). Best-effort;
+   * sandcastle's NamedBranchStrategy.baseBranch start point reads the fetched
+   * ref. Optional so existing wiring/tests that predate the start point degrade
+   * to sandcastle's HEAD default.
+   */
+  fetchBase?(base: string): Promise<void>;
 }
 
 /** Injected lookups the composed deciders need (issue body for the pin, the
@@ -187,6 +195,13 @@ export interface ProcessIssueDeps {
   model: string;
   hooks: ProcessHooks;
   lookups: ProcessLookups;
+  /**
+   * Mid-issue runner fallback (--fallback-runner / FALLBACK_RUNNER). When true,
+   * a first exhaustion swaps to the other runner (claude↔codex) and re-runs the
+   * attempt once; double-exhaustion is terminal (outcome `exhausted`). When
+   * false (default), a single exhaustion is terminal.
+   */
+  fallbackRunner?: boolean;
   /** Envelope-emit IO (poster / marker writer / posted writer / git push). */
   envelope: EmitEnvelopeDeps;
   /** Clock: epoch seconds (date +%s) and an ISO timestamp (date -Iseconds). */
@@ -232,7 +247,8 @@ export type ProcessOutcome =
   | "merge-conflict"
   | "feedback-failed"
   | "claim-lost"
-  | "hook-aborted";
+  | "hook-aborted"
+  | "exhausted";
 
 export interface ProcessIssueResult {
   outcome: ProcessOutcome;
@@ -360,18 +376,63 @@ export async function processIssue(
   // sandcastle creates the worktree off the host's active branch (driven to
   // `base` by the base-resolver), spawns the agent with `handoffPath` as the
   // prompt, detects the DONE/BLOCKED completion signal, and commits on `branch`.
-  const run: RunAgentResult = await deps.runAgent({
-    runner: input.runner === "codex" ? "codex" : "claude",
+  // Make the resolved base ref current so sandcastle forks the worker branch off
+  // it (ADR 0031): the pinned/locked base becomes the branch's parent, not HEAD.
+  if (deps.git.fetchBase) await deps.git.fetchBase(base);
+  let activeRunner: Runner = input.runner === "codex" ? "codex" : "claude";
+  let attemptN = input.attempt;
+  let run: RunAgentResult = await deps.runAgent({
+    runner: activeRunner,
     model: deps.model,
     handoffPath,
     branch,
+    base,
   });
+
+  // ---- runner-fallback subsystem (--fallback-runner / RUNNER_EXHAUSTED) ----
+  // The active runner signalled quota / rate-limit exhaustion (execution.ts
+  // mapped a sandcastle throw / stdout to the `exhausted` outcome). Without
+  // --fallback-runner a single exhaustion is terminal. With it, close the
+  // exhausted attempt's cycle (post_attempt status=exhausted), swap to the
+  // other runner, fire pre_attempt again (the per-runner-invocation cadence,
+  // #226 / ADR 0026), and re-run once. Double-exhaustion is terminal.
+  if (run.outcome === "exhausted") {
+    if (!deps.fallbackRunner) {
+      return await exhausted(deps, input, branch, base, hooksFired, activeRunner, false);
+    }
+    // Close attempt N's cycle (status=exhausted) before swapping.
+    await fireHook("post_attempt", postAttemptContext({ ...input, attempt: attemptN }, branch, "fail", "exhausted"));
+    const other: Runner = activeRunner === "claude" ? "codex" : "claude";
+    activeRunner = other;
+    attemptN += 1;
+    // pre_attempt fires again for the fresh runner invocation (second firing).
+    if (
+      !(await fireHook(
+        "pre_attempt",
+        hookContext({ issue, title: input.title, workspace: branch, runner: activeRunner, attempt_n: attemptN }),
+      ))
+    ) {
+      return await abortAfterClaim(deps, input, branch, base, hooksFired, "pre_attempt");
+    }
+    run = await deps.runAgent({ runner: other, model: deps.model, handoffPath, branch, base });
+    if (run.outcome === "exhausted") {
+      // Both runners exhausted → close the fallback attempt's cycle, then it is
+      // terminal with the double-exhaustion (both-runners) history event.
+      await fireHook("post_attempt", postAttemptContext({ ...input, attempt: attemptN }, branch, "fail", "exhausted"));
+      return await exhausted(deps, input, branch, base, hooksFired, activeRunner, true);
+    }
+  }
+
   // The worker branch sandcastle landed commits on is authoritative.
   const workerBranch = run.branch || branch;
+  // The effective per-attempt identity after any fallback swap — the remaining
+  // hook contexts / envelopes label themselves with the runner that actually
+  // authored the exit and the attempt number it ran under.
+  const current: ProcessIssueInput = { ...input, runner: activeRunner, attempt: attemptN };
 
   const common = {
     deps,
-    input,
+    input: current,
     branch: workerBranch,
     base,
     slug,
@@ -381,7 +442,7 @@ export async function processIssue(
 
   // ---- on_attempt_error: the run ended without an AFK sentinel (ADR 0028) ----
   if (run.outcome === "no-sentinel") {
-    await fireHook("on_attempt_error", onErrorContext(input, workerBranch, "no-sentinel", input.attempt));
+    await fireHook("on_attempt_error", onErrorContext(current, workerBranch, "no-sentinel", current.attempt));
     await deps.gh.editLabels(issue, [LABEL_RUNNING], [LABEL_HUMAN]);
     const posted = await emitFailure(common, "no-sentinel", "no-sentinel", {
       notes: "_(no Notes appended; inner agent exited without a sentinel)_",
@@ -401,7 +462,7 @@ export async function processIssue(
 
   // ---- post_attempt hook (terminal invocation; sentinel-bearing) ----
   const pwStatus = run.outcome === "done" ? "success" : "fail";
-  await fireHook("post_attempt", postAttemptContext(input, workerBranch, pwStatus, run.outcome));
+  await fireHook("post_attempt", postAttemptContext(current, workerBranch, pwStatus, run.outcome));
 
   // ---- BLOCKED ----
   if (run.outcome === "blocked") {
@@ -648,6 +709,53 @@ async function abortAfterClaim(
   await deps.claimLock.release(input.issue);
   return {
     outcome: "hook-aborted",
+    issue: input.issue,
+    branch,
+    base,
+    hooksFired,
+    preserved: true,
+    swept: false,
+  };
+}
+
+/**
+ * Runner-exhaustion terminal path. The active runner (and, under
+ * --fallback-runner, the swapped runner too) hit a usage / quota limit. Mirrors
+ * the bash exhaustion branches: restore `ready-for-agent` (so a rerun once quota
+ * resets re-picks the issue), post the exhaustion comment, emit the exhausted /
+ * discarded history event, preserve the attempt dir, release the claim. The
+ * session loop turns this into the exit-75 (EX_TEMPFAIL) signal.
+ */
+async function exhausted(
+  deps: ProcessIssueDeps,
+  input: ProcessIssueInput,
+  branch: string,
+  base: string,
+  hooksFired: HookName[],
+  runner: Runner,
+  both: boolean,
+): Promise<ProcessIssueResult> {
+  await deps.gh.editLabels(input.issue, [LABEL_RUNNING], [LABEL_READY]);
+  await deps.gh.comment(
+    input.issue,
+    both
+      ? `🤖 /afk: both runners exhausted. Iteration preserved at \`${input.attemptDir}\`.`
+      : `🤖 /afk: runner \`${runner}\` exhausted; rerun /afk when quota resets, or pass \`--fallback-runner\` to swap to the other runner on exhaustion.`,
+  );
+  // History `exhausted` event — `reason` names the dead runner(s), mirroring the
+  // shell's `emit_history "exhausted" … "<runner>|both-runners"`.
+  if (deps.historyPath && deps.historyClock) {
+    const { historyAppend } = await import("./history.js");
+    await historyAppend(deps.historyPath, deps.historyClock, "exhausted", {
+      worker: input.workerId,
+      issue: input.issue,
+      runner,
+      reason: both ? "both-runners" : runner,
+    });
+  }
+  await deps.claimLock.release(input.issue);
+  return {
+    outcome: "exhausted",
     issue: input.issue,
     branch,
     base,

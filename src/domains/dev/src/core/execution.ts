@@ -13,11 +13,15 @@
 // unchanged.
 
 import type { RunOptions, RunResult } from "@ai-hero/sandcastle";
+import { isRunnerExhausted } from "./runner-spawn.js";
 
 export type AgentRunner = "claude" | "codex";
 export type SandboxMode = "none" | "docker" | "podman";
 export type AgentEffort = "low" | "medium" | "high" | "xhigh" | "max";
-export type AgentOutcome = "done" | "blocked" | "no-sentinel";
+// `exhausted` is surfaced when sandcastle's run() signals quota / rate-limit
+// (RUNNER_EXHAUSTED in the shell port) — see the runner-exhaustion detection in
+// `runAgent`. It rides the same outcome union so process-issue can branch on it.
+export type AgentOutcome = "done" | "blocked" | "no-sentinel" | "exhausted";
 
 /** AFK's canonical sentinels, registered as sandcastle completion signals. */
 export const DONE_SIGNAL = "<promise>DONE</promise>";
@@ -36,6 +40,15 @@ export interface RunAgentInput {
   handoffPath: string;
   /** The worker branch sandcastle commits land on (afk/{id}/{N}-{slug}). */
   branch: string;
+  /**
+   * The resolved base branch (lock > pin > main, ADR 0031) the worker branch is
+   * forked from. Passed to sandcastle's NamedBranchStrategy `baseBranch` start
+   * point so the branch's parent is the pinned/locked base, not HEAD. Sandcastle
+   * only honours it when the branch is created new and the caller has made the
+   * ref current (process-issue does a `git fetch origin <base>` first). Defaults
+   * to HEAD when omitted.
+   */
+  base?: string;
   /** Isolation: "none" (default, node-only) | "docker" | "podman". */
   sandboxMode?: SandboxMode;
   idleTimeoutSeconds?: number;
@@ -65,9 +78,15 @@ export function interpretOutcome(signal: string | undefined): AgentOutcome {
 
 /** Build the sandcastle `run` options for one issue iteration (pure). */
 export function buildRunOptions(deps: SandcastleDeps, input: RunAgentInput): RunOptions {
+  // Fork the worker branch off the resolved base (ADR 0031) via sandcastle's
+  // NamedBranchStrategy start point, so a pinned/locked base is the branch's
+  // parent rather than HEAD. `baseBranch` is only consulted when the branch is
+  // created new; the caller (process-issue) fetches the ref first so it is
+  // current. Omitting `base` reverts to sandcastle's HEAD default.
   const branchStrategy: NonNullable<RunOptions["branchStrategy"]> = {
     type: "branch",
     branch: input.branch,
+    ...(input.base ? { baseBranch: input.base } : {}),
   };
   return {
     agent: deps.agentFor(input.runner, input.model, { effort: input.effort }),
@@ -79,9 +98,51 @@ export function buildRunOptions(deps: SandcastleDeps, input: RunAgentInput): Run
   };
 }
 
-/** Run the inner agent on the issue via sandcastle and normalise the result. */
+/**
+ * True when a sandcastle failure carries one of the exhaustion strings (usage
+ * limit / quota / rate_limit_error / …). sandcastle signals quota / rate-limit
+ * by throwing — its error message (or any `.stdout`/`.stderr` it carries) is
+ * matched against the per-runner exhaustion regex reused from runner-spawn. This
+ * is the single seam where a thrown sandcastle error is reclassified as the
+ * non-fatal `exhausted` outcome instead of propagating.
+ */
+export function isExhaustionError(error: unknown): boolean {
+  if (error === null || error === undefined) return false;
+  const parts: string[] = [];
+  if (typeof error === "string") parts.push(error);
+  else if (typeof error === "object") {
+    const e = error as { message?: unknown; stdout?: unknown; stderr?: unknown };
+    if (typeof e.message === "string") parts.push(e.message);
+    if (typeof e.stdout === "string") parts.push(e.stdout);
+    if (typeof e.stderr === "string") parts.push(e.stderr);
+  }
+  return parts.some((p) => isRunnerExhausted(p));
+}
+
+/**
+ * Run the inner agent on the issue via sandcastle and normalise the result.
+ *
+ * sandcastle's `run()` can signal exhaustion two ways: by throwing an error
+ * whose message matches the exhaustion patterns (the common case — the provider
+ * raises on a 429 / usage-limit), or by completing with exhaustion text on
+ * stdout. Both map to the `exhausted` outcome (no commits, no sentinel). Any
+ * other thrown error propagates unchanged.
+ */
 export async function runAgent(deps: SandcastleDeps, input: RunAgentInput): Promise<RunAgentResult> {
-  const result = await deps.run(buildRunOptions(deps, input));
+  let result: RunResult;
+  try {
+    result = await deps.run(buildRunOptions(deps, input));
+  } catch (error) {
+    if (isExhaustionError(error)) {
+      return { outcome: "exhausted", branch: input.branch, commits: [], stdout: "" };
+    }
+    throw error;
+  }
+  // A run that completed but surfaced exhaustion text on stdout (rather than
+  // throwing) is also exhaustion — match the stdout the same way run_inner does.
+  if (result.completionSignal === undefined && isRunnerExhausted(result.stdout ?? "")) {
+    return { outcome: "exhausted", branch: result.branch, commits: result.commits, stdout: result.stdout };
+  }
   return {
     outcome: interpretOutcome(result.completionSignal),
     branch: result.branch,

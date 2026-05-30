@@ -3,6 +3,7 @@ import type { RunOptions, RunResult } from "@ai-hero/sandcastle";
 import {
   buildRunOptions,
   interpretOutcome,
+  isExhaustionError,
   runAgent,
   DONE_SIGNAL,
   BLOCKED_SIGNAL,
@@ -141,5 +142,55 @@ describe("runAgent", () => {
     expect(seen?.promptFile).toBe("/wt/handoff.md");
     expect(seen?.completionSignal).toEqual([DONE_SIGNAL, BLOCKED_SIGNAL]);
     expect(seen?.branchStrategy).toEqual({ type: "branch", branch: "afk/wZ2R4/42-fix-oauth" });
+  });
+});
+
+describe("isExhaustionError", () => {
+  it("matches the per-runner exhaustion strings on a thrown error message", () => {
+    expect(isExhaustionError(new Error("usage limit reached"))).toBe(true);
+    expect(isExhaustionError(new Error("rate_limit_error: slow down"))).toBe(true);
+    expect(isExhaustionError(new Error("session exhausted"))).toBe(true);
+    expect(isExhaustionError({ stderr: "weekly cap hit" })).toBe(true);
+    expect(isExhaustionError("please try again later")).toBe(true);
+  });
+
+  it("does not match an ordinary failure", () => {
+    expect(isExhaustionError(new Error("tests failed: 2 failing"))).toBe(false);
+    expect(isExhaustionError(undefined)).toBe(false);
+    expect(isExhaustionError(null)).toBe(false);
+  });
+});
+
+describe("runAgent — exhaustion", () => {
+  it("maps a thrown exhaustion error to the exhausted outcome (no commits, no sentinel)", async () => {
+    const r = await runAgent(
+      makeDeps(async () => {
+        throw new Error("Claude usage limit reached; try again later");
+      }),
+      baseInput,
+    );
+    expect(r.outcome).toBe("exhausted");
+    expect(r.branch).toBe("afk/wZ2R4/42-fix-oauth");
+    expect(r.commits).toEqual([]);
+    expect(r.completionSignal).toBeUndefined();
+  });
+
+  it("maps exhaustion text on stdout (no completion signal) to exhausted", async () => {
+    const r = await runAgent(
+      makeDeps(async () => fakeResult({ completionSignal: undefined, stdout: "quota exceeded for this org" })),
+      baseInput,
+    );
+    expect(r.outcome).toBe("exhausted");
+  });
+
+  it("re-throws a non-exhaustion sandcastle error unchanged", async () => {
+    await expect(
+      runAgent(
+        makeDeps(async () => {
+          throw new Error("worktree add failed: fatal");
+        }),
+        baseInput,
+      ),
+    ).rejects.toThrow("worktree add failed");
   });
 });

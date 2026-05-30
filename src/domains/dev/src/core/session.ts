@@ -20,6 +20,9 @@ import {
   type ProcessIssueInput,
   type ProcessIssueResult,
 } from "./process-issue.js";
+import { dispatchHooks, type HookExec } from "./hook-dispatcher.js";
+import { resolveHooks, type ResolveHooksOptions, type ResolvedHooks, type HookName } from "./hook-config.js";
+import type { ConfigValues } from "./config.js";
 import type { Runner } from "../types/runner.js";
 
 // ---------- pure helpers (slugify / gen_worker_id) ----------
@@ -191,6 +194,17 @@ export interface SessionContext {
   filter: SelectionFilter;
   /** Static per-issue input fields the caller resolves once (repo/remote/dirs). */
   issueTemplate: SessionIssueTemplate;
+  /**
+   * --alternate: rotate the runner between consecutive issues
+   * (claude → codex → claude → …). The first issue uses `runner`; each later
+   * issue toggles. Off by default (every issue uses `runner`).
+   */
+  alternate?: boolean;
+}
+
+/** Toggle a runner to the other backend (claude↔codex). */
+function otherRunner(r: Runner): Runner {
+  return r === "claude" ? "codex" : "claude";
 }
 
 /** The per-issue ProcessIssueInput fields that are identical across the drain.
@@ -238,6 +252,24 @@ export interface SessionDeps {
   buildProcessInput: BuildProcessInput;
   /** Emit one line of session output (progress lines + the NO MORE TASKS sentinel). */
   emit(line: string): void;
+  /**
+   * Session-scoped lifecycle hooks (PRD #207). When present, runSession fires
+   * the session-level points — pre_session / pre_pick / post_pick / on_idle /
+   * post_session / on_session_error — through the same dispatcher composed in
+   * commands/run.ts. Absent → no session hooks fire (back-compat for callers /
+   * tests that predate them).
+   */
+  hooks?: SessionHooks;
+}
+
+/** The session hook dispatch surface, mirroring ProcessHooks. resolveHooks runs
+ * once at the top of the drain; dispatchHooks fires per point. */
+export interface SessionHooks {
+  config: ConfigValues;
+  resolveOptions: ResolveHooksOptions;
+  exec: HookExec;
+  /** RED_AFK_* env handed to every hook command (defaults to {}). */
+  env?: Record<string, string>;
 }
 
 export const NO_MORE_TASKS = "<promise>NO MORE TASKS</promise>";
@@ -269,6 +301,14 @@ export interface SessionSummary {
   processed: SessionProcessed[];
   /** True when the queue was empty (NO MORE TASKS was emitted). */
   drained: boolean;
+  /**
+   * True when the drain stopped because an issue ended `exhausted` (both runners
+   * exhausted, or a single exhaustion without --fallback-runner). The CLI threads
+   * this into exit 75 (EX_TEMPFAIL) so a supervisor can retry once quota resets.
+   */
+  exhausted: boolean;
+  /** Session-scoped lifecycle points that fired, in order — the parity target. */
+  sessionHooksFired: HookName[];
 }
 
 /** `done` is the only success; blocked/no-sentinel/merge-conflict/feedback flip
@@ -287,19 +327,48 @@ function classify(outcome: ProcessIssueResult["outcome"]): "done" | "blocked" | 
 }
 
 /**
- * Run the AFK outer session: boot → select → drain → summary. The SEQUENCE +
- * the stop conditions are the parity target (afk.sh MAIN LOOP):
+ * Run the AFK outer session: boot → pre_session → select → drain → summary. The
+ * SEQUENCE + the stop conditions + the session-scoped lifecycle hooks are the
+ * parity target (afk.sh MAIN LOOP + PRD #207):
  *
  *   1. runBoot — the boot sequence runs once. A precheck FAILURE aborts the
  *      drain (the bash `die`): no listing, no NO MORE TASKS, an empty summary.
- *   2. selectIssues over the listed candidate pool.
- *   3. Empty queue → emit `<promise>NO MORE TASKS</promise>`, return drained.
- *   4. For each queued number (1-based index `I`), stop once `I > iterCap`
+ *   2. pre_session — fires before any queue work; an abort (pre_* policy) stops
+ *      the session before listing.
+ *   3. pre_pick → selectIssues → post_pick around issue selection.
+ *   4. Empty queue → on_idle, emit `<promise>NO MORE TASKS</promise>`, drained.
+ *   5. For each queued number (1-based index `I`), stop once `I > iterCap`
  *      (the `-n` cap), call processIssue, accumulate done/blocked/failed, and
  *      emit the per-issue progress line. `--once` breaks after the first issue.
- *   5. Return the session summary (counters + per-issue outcomes + boot result).
+ *   6. post_session on normal end; on_session_error on a crash (the error is
+ *      re-thrown after the notification so the CLI still sees the failure).
+ *
+ * Session hooks respect the exit-code policy: pre_ points abort, post_ / on_
+ * points log and continue. They fire only when `deps.hooks` is wired.
  */
 export async function runSession(deps: SessionDeps, ctx: SessionContext): Promise<SessionSummary> {
+  const sessionHooksFired: HookName[] = [];
+  const resolved: ResolvedHooks | undefined = deps.hooks
+    ? resolveHooks(deps.hooks.config, deps.hooks.resolveOptions)
+    : undefined;
+
+  /** Fire a session-scoped point. Returns false only when a pre_* point aborts. */
+  const fireSessionHook = async (name: HookName, context: string): Promise<boolean> => {
+    if (!deps.hooks || !resolved) return true;
+    sessionHooksFired.push(name);
+    const result = await dispatchHooks(name, resolved[name], context, deps.hooks.exec, {
+      env: deps.hooks.env ?? {},
+    });
+    return !result.aborted;
+  };
+
+  const statsContext = (done: number, blocked: number, total: number): string =>
+    JSON.stringify({
+      runner: ctx.runner,
+      worker_id: ctx.workerId,
+      stats: { done, blocked, total },
+    });
+
   const empty: SessionSummary = {
     runner: ctx.runner,
     workerId: ctx.workerId,
@@ -310,6 +379,8 @@ export async function runSession(deps: SessionDeps, ctx: SessionContext): Promis
     boot: { precheck: { ok: true, warnings: [] } },
     processed: [],
     drained: false,
+    exhausted: false,
+    sessionHooksFired,
   };
 
   // ---- 1. boot (precheck failure aborts the drain) ----
@@ -319,54 +390,96 @@ export async function runSession(deps: SessionDeps, ctx: SessionContext): Promis
     return empty;
   }
 
-  // ---- 2. select ----
-  const candidates = await deps.gh.listCandidates();
-  const queue = selectIssues(candidates, ctx.filter);
-  const total = queue.length;
+  try {
+    // ---- 2. pre_session (before any queue work) — pre_* abort stops here ----
+    if (!(await fireSessionHook("pre_session", statsContext(0, 0, 0)))) {
+      return { ...empty, boot };
+    }
 
-  // ---- 3. empty queue → NO MORE TASKS ----
-  if (total === 0) {
-    deps.emit(NO_MORE_TASKS);
-    return { ...empty, boot, total: 0, drained: true };
+    // ---- 3. pre_pick → select → post_pick ----
+    await fireSessionHook("pre_pick", JSON.stringify({ filter: ctx.filter }));
+    const candidates = await deps.gh.listCandidates();
+    const queue = selectIssues(candidates, ctx.filter);
+    const total = queue.length;
+    await fireSessionHook("post_pick", JSON.stringify({ issues: queue.map((c) => c.number) }));
+
+    // ---- 4. empty queue → on_idle → NO MORE TASKS ----
+    if (total === 0) {
+      await fireSessionHook("on_idle", statsContext(0, 0, 0));
+      deps.emit(NO_MORE_TASKS);
+      await fireSessionHook("post_session", statsContext(0, 0, 0));
+      return { ...empty, boot, total: 0, drained: true };
+    }
+
+    // ---- 5. drain under the -n cap ----
+    const cap = ctx.iterCap && ctx.iterCap > 0 ? ctx.iterCap : total;
+    const processed: SessionProcessed[] = [];
+    let done = 0;
+    let blocked = 0;
+    let failed = 0;
+    let exhaustedStop = false;
+    // --alternate: the runner rotates per issue. The first issue uses ctx.runner.
+    let activeRunner: Runner = ctx.runner;
+
+    for (let i = 0; i < queue.length; i++) {
+      if (i >= cap) break; // -n N reached → stop the drain (Stop Conditions).
+      const candidate = queue[i]!;
+      const input = deps.buildProcessInput(candidate, ctx);
+      // Override the per-issue runner when rotating (--alternate); without it
+      // every issue keeps the resolved session runner.
+      const perIssueInput = ctx.alternate ? { ...input, runner: activeRunner } : input;
+      const result = await deps.processIssue(deps.processDeps, perIssueInput);
+
+      const bucket = classify(result.outcome);
+      if (bucket === "done") done++;
+      else if (bucket === "blocked") blocked++;
+      else failed++;
+      processed.push({ issue: candidate.number, outcome: result.outcome });
+
+      // Per-issue progress line: `progress: I/TOTAL (PCT%) — REMAINING remaining`.
+      const idx = i + 1;
+      const pct = Math.floor((idx * 100) / total);
+      const remaining = total - idx;
+      deps.emit(`progress: ${idx}/${total} (${pct}%) — ${remaining} remaining`);
+
+      // Runner exhaustion (single without --fallback-runner, or both runners) ends
+      // the whole session: stop draining and signal exit 75 (EX_TEMPFAIL).
+      if (result.outcome === "exhausted") {
+        exhaustedStop = true;
+        break;
+      }
+
+      if (ctx.once) break;
+      if (ctx.alternate) activeRunner = otherRunner(activeRunner);
+    }
+
+    // ---- 6. post_session (normal end) ----
+    await fireSessionHook("post_session", statsContext(done, blocked, total));
+
+    return {
+      runner: ctx.runner,
+      workerId: ctx.workerId,
+      done,
+      blocked,
+      failed,
+      total,
+      boot,
+      processed,
+      drained: false,
+      exhausted: exhaustedStop,
+      sessionHooksFired,
+    };
+  } catch (error) {
+    // on_session_error death-notification path: fire the crash hook (log-and-
+    // continue policy) then re-throw so the CLI still surfaces the failure.
+    await fireSessionHook(
+      "on_session_error",
+      JSON.stringify({
+        runner: ctx.runner,
+        worker_id: ctx.workerId,
+        error: { message: error instanceof Error ? error.message : String(error) },
+      }),
+    );
+    throw error;
   }
-
-  // ---- 4. drain under the -n cap ----
-  const cap = ctx.iterCap && ctx.iterCap > 0 ? ctx.iterCap : total;
-  const processed: SessionProcessed[] = [];
-  let done = 0;
-  let blocked = 0;
-  let failed = 0;
-
-  for (let i = 0; i < queue.length; i++) {
-    if (i >= cap) break; // -n N reached → stop the drain (Stop Conditions).
-    const candidate = queue[i]!;
-    const input = deps.buildProcessInput(candidate, ctx);
-    const result = await deps.processIssue(deps.processDeps, input);
-
-    const bucket = classify(result.outcome);
-    if (bucket === "done") done++;
-    else if (bucket === "blocked") blocked++;
-    else failed++;
-    processed.push({ issue: candidate.number, outcome: result.outcome });
-
-    // Per-issue progress line: `progress: I/TOTAL (PCT%) — REMAINING remaining`.
-    const idx = i + 1;
-    const pct = Math.floor((idx * 100) / total);
-    const remaining = total - idx;
-    deps.emit(`progress: ${idx}/${total} (${pct}%) — ${remaining} remaining`);
-
-    if (ctx.once) break;
-  }
-
-  return {
-    runner: ctx.runner,
-    workerId: ctx.workerId,
-    done,
-    blocked,
-    failed,
-    total,
-    boot,
-    processed,
-    drained: false,
-  };
 }

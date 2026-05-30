@@ -155,6 +155,10 @@ interface SessionTrace {
   emitted: string[];
   processedOrder: number[];
   builtInputs: number[];
+  /** Runner seen on each processed issue, in order (for --alternate assertions). */
+  processedRunners: string[];
+  /** Session-scoped hook commands the fake exec ran, in order. */
+  hookCommands: string[];
 }
 
 interface RunHarnessOptions {
@@ -162,9 +166,16 @@ interface RunHarnessOptions {
   filter?: SelectionFilter;
   iterCap?: number;
   once?: boolean;
+  alternate?: boolean;
   /** Map an issue number → the outcome its fake processIssue returns. */
   outcomeFor?: (issue: number) => ProcessIssueResult["outcome"];
   bootResult?: BootResult;
+  /** Wire session hooks; the config maps each point to a marker command. */
+  withHooks?: boolean;
+  /** When set, this session point's hook command aborts (rc=1). */
+  abortHook?: string;
+  /** When true, the fake processIssue throws to exercise on_session_error. */
+  throwOnProcess?: boolean;
 }
 
 function makeSession(opts: RunHarnessOptions = {}): {
@@ -172,9 +183,41 @@ function makeSession(opts: RunHarnessOptions = {}): {
   ctx: SessionContext;
   trace: SessionTrace;
 } {
-  const trace: SessionTrace = { emitted: [], processedOrder: [], builtInputs: [] };
+  const trace: SessionTrace = {
+    emitted: [],
+    processedOrder: [],
+    builtInputs: [],
+    processedRunners: [],
+    hookCommands: [],
+  };
   const candidates = opts.candidates ?? [cand(1), cand(2), cand(3)];
   const boot: BootResult = opts.bootResult ?? { precheck: { ok: true, warnings: [] } };
+
+  // Session hooks: map every session-scoped point to a marker command the fake
+  // exec records; the canonical point names double as their command strings.
+  const sessionPoints = [
+    "pre_session",
+    "pre_pick",
+    "post_pick",
+    "on_idle",
+    "post_session",
+    "on_session_error",
+  ] as const;
+  const hookConfig: Record<string, string> = {};
+  for (const p of sessionPoints) hookConfig[`afk.hooks.${p}`] = `cmd:${p}`;
+  const hooks = opts.withHooks
+    ? {
+        config: hookConfig,
+        resolveOptions: { defaultCommand: () => undefined },
+        exec: async (command: string) => {
+          trace.hookCommands.push(command);
+          if (opts.abortHook && command === `cmd:${opts.abortHook}`) {
+            return { code: 1, stdout: "" };
+          }
+          return { code: 0, stdout: "" };
+        },
+      }
+    : undefined;
 
   // The composed boot/process deps are opaque to the loop — the fakes below
   // ignore them entirely, so we pass minimal stubs cast through `unknown`.
@@ -195,6 +238,8 @@ function makeSession(opts: RunHarnessOptions = {}): {
     bootOptions,
     async processIssue(_deps, input) {
       trace.processedOrder.push(input.issue);
+      trace.processedRunners.push(input.runner);
+      if (opts.throwOnProcess) throw new Error("boom in processIssue");
       const outcome = opts.outcomeFor ? opts.outcomeFor(input.issue) : "done";
       return {
         outcome,
@@ -225,6 +270,7 @@ function makeSession(opts: RunHarnessOptions = {}): {
     emit(line) {
       trace.emitted.push(line);
     },
+    hooks,
   };
 
   const ctx: SessionContext = {
@@ -232,6 +278,7 @@ function makeSession(opts: RunHarnessOptions = {}): {
     workerId: "wAAAA",
     iterCap: opts.iterCap,
     once: opts.once,
+    alternate: opts.alternate,
     filter: opts.filter ?? { kind: "all" },
     issueTemplate: {
       tmpDir: "/tmp/afk",
@@ -322,5 +369,91 @@ describe("runSession", () => {
     expect(summary.total).toBe(0);
     expect(summary.drained).toBe(false);
     expect(summary.boot).toBe(bootResult);
+  });
+});
+
+describe("runSession — --alternate runner rotation", () => {
+  it("rotates the runner between consecutive issues (claude → codex → claude)", async () => {
+    const { deps, ctx, trace } = makeSession({
+      candidates: [cand(1), cand(2), cand(3)],
+      alternate: true,
+    });
+    await runSession(deps, ctx);
+    expect(trace.processedRunners).toEqual(["claude", "codex", "claude"]);
+  });
+
+  it("keeps the session runner for every issue when --alternate is off", async () => {
+    const { deps, ctx, trace } = makeSession({ candidates: [cand(1), cand(2), cand(3)] });
+    await runSession(deps, ctx);
+    expect(trace.processedRunners).toEqual(["claude", "claude", "claude"]);
+  });
+});
+
+describe("runSession — exhaustion stops the drain (exit-75 signal)", () => {
+  it("stops draining and flags exhausted when an issue ends exhausted", async () => {
+    const outcomeFor = (issue: number): ProcessIssueResult["outcome"] =>
+      issue === 2 ? "exhausted" : "done";
+    const { deps, ctx, trace } = makeSession({
+      candidates: [cand(1), cand(2), cand(3)],
+      outcomeFor,
+    });
+    const summary = await runSession(deps, ctx);
+    // issue 3 is never processed — exhaustion on #2 breaks the loop.
+    expect(trace.processedOrder).toEqual([1, 2]);
+    expect(summary.exhausted).toBe(true);
+    expect(summary.done).toBe(1);
+  });
+
+  it("a clean drain leaves exhausted false", async () => {
+    const { deps, ctx } = makeSession({ candidates: [cand(1), cand(2)] });
+    const summary = await runSession(deps, ctx);
+    expect(summary.exhausted).toBe(false);
+  });
+});
+
+describe("runSession — session-level lifecycle hooks", () => {
+  it("fires pre_session → pre_pick → post_pick → post_session in order on a normal drain", async () => {
+    const { deps, ctx, trace } = makeSession({ candidates: [cand(1)], withHooks: true });
+    const summary = await runSession(deps, ctx);
+    expect(summary.sessionHooksFired).toEqual(["pre_session", "pre_pick", "post_pick", "post_session"]);
+    expect(trace.hookCommands).toEqual(["cmd:pre_session", "cmd:pre_pick", "cmd:post_pick", "cmd:post_session"]);
+  });
+
+  it("fires on_idle then post_session when the queue is empty", async () => {
+    const { deps, ctx, trace } = makeSession({ candidates: [], withHooks: true });
+    const summary = await runSession(deps, ctx);
+    expect(summary.sessionHooksFired).toEqual(["pre_session", "pre_pick", "post_pick", "on_idle", "post_session"]);
+    // NO MORE TASKS is still emitted between on_idle and post_session.
+    expect(trace.emitted).toContain(NO_MORE_TASKS);
+  });
+
+  it("pre_session abort stops the session before any issue is picked", async () => {
+    const { deps, ctx, trace } = makeSession({
+      candidates: [cand(1), cand(2)],
+      withHooks: true,
+      abortHook: "pre_session",
+    });
+    const summary = await runSession(deps, ctx);
+    expect(trace.processedOrder).toEqual([]);
+    expect(summary.sessionHooksFired).toEqual(["pre_session"]);
+    // no listing happened → no NO MORE TASKS, no progress lines.
+    expect(trace.emitted).toEqual([]);
+  });
+
+  it("fires on_session_error and re-throws when processIssue crashes", async () => {
+    const { deps, ctx, trace } = makeSession({
+      candidates: [cand(1)],
+      withHooks: true,
+      throwOnProcess: true,
+    });
+    await expect(runSession(deps, ctx)).rejects.toThrow("boom in processIssue");
+    expect(trace.hookCommands).toContain("cmd:on_session_error");
+  });
+
+  it("does not fire any session hook when hooks are not wired (back-compat)", async () => {
+    const { deps, ctx, trace } = makeSession({ candidates: [cand(1)] });
+    const summary = await runSession(deps, ctx);
+    expect(summary.sessionHooksFired).toEqual([]);
+    expect(trace.hookCommands).toEqual([]);
   });
 });
