@@ -38,8 +38,43 @@ source "$_HOOK_CONFIG_DIR/hook-dispatcher.sh"
 
 declare -gA HOOK_DEFAULTS_DISABLED=()
 
+# Deprecated hook names seen during the current load (issue #226). Populated by
+# `_hook_config_canonicalize`, drained into a single deprecation warning at the
+# end of `hook_config_load`. One element per distinct old name.
+declare -ga _HOOK_CONFIG_DEPRECATED_SEEN=()
+# Result slot for `_hook_config_canonicalize` — set instead of printing so the
+# function's bookkeeping side-effect (appending to _HOOK_CONFIG_DEPRECATED_SEEN)
+# is not lost to command-substitution subshell isolation.
+declare -g _HOOK_CONFIG_CANON=""
+
 _hook_config_log() {
   printf '[afk:hooks] %s\n' "$*" >&2
+}
+
+# _hook_config_canonicalize NAME
+#   Resolve a declared hook name to its canonical form, translating one of the
+#   deprecated `*_worker` aliases (issue #226, ADR 0026) and remembering that an
+#   alias was used so the loader can warn once. Writes the canonical name into
+#   the global `_HOOK_CONFIG_CANON` (NOT stdout — the caller must run this in
+#   the current shell so the deprecation bookkeeping survives). Returns 0 when
+#   NAME is canonical or a known alias, 1 when unknown.
+_hook_config_canonicalize() {
+  local raw="$1" canon
+  if hook_is_canonical "$raw"; then
+    _HOOK_CONFIG_CANON="$raw"
+    return 0
+  fi
+  if canon="$(hook_canonical_alias "$raw")"; then
+    local seen found=0
+    for seen in "${_HOOK_CONFIG_DEPRECATED_SEEN[@]:-}"; do
+      if [[ "$seen" == "$raw" ]]; then found=1; break; fi
+    done
+    (( found == 0 )) && _HOOK_CONFIG_DEPRECATED_SEEN+=("$raw")
+    _HOOK_CONFIG_CANON="$canon"
+    return 0
+  fi
+  _HOOK_CONFIG_CANON="$raw"
+  return 1
 }
 
 # Strip leading/trailing whitespace.
@@ -79,9 +114,9 @@ _hook_unquote() {
 #   pre_worktree:
 #     - cargo      → defaults/cargo-pre-worktree.sh
 #     - gradle     → defaults/gradle-pre-worktree.sh
-#   post_worker:
-#     - heartbeat  → defaults/heartbeat-post-worker.sh
-#     - envelope   → defaults/envelope-post-worker.sh
+#   post_attempt:
+#     - heartbeat  → defaults/heartbeat-post-attempt.sh
+#     - envelope   → defaults/envelope-post-attempt.sh
 #   post_merge:
 #     - validation → defaults/validation-post-merge.sh
 hook_config_register_defaults() {
@@ -108,12 +143,12 @@ hook_config_register_defaults() {
     HOOK_REGISTER_KIND=default hook_register pre_worktree "$defaults_dir/gradle-pre-worktree.sh"
   fi
   if [[ -z "${HOOK_DEFAULTS_DISABLED[heartbeat]:-}" \
-        && -x "$defaults_dir/heartbeat-post-worker.sh" ]]; then
-    HOOK_REGISTER_KIND=default hook_register post_worker "$defaults_dir/heartbeat-post-worker.sh"
+        && -x "$defaults_dir/heartbeat-post-attempt.sh" ]]; then
+    HOOK_REGISTER_KIND=default hook_register post_attempt "$defaults_dir/heartbeat-post-attempt.sh"
   fi
   if [[ -z "${HOOK_DEFAULTS_DISABLED[envelope]:-}" \
-        && -x "$defaults_dir/envelope-post-worker.sh" ]]; then
-    HOOK_REGISTER_KIND=default hook_register post_worker "$defaults_dir/envelope-post-worker.sh"
+        && -x "$defaults_dir/envelope-post-attempt.sh" ]]; then
+    HOOK_REGISTER_KIND=default hook_register post_attempt "$defaults_dir/envelope-post-attempt.sh"
   fi
   if [[ -z "${HOOK_DEFAULTS_DISABLED[validation]:-}" \
         && -x "$defaults_dir/validation-post-merge.sh" ]]; then
@@ -132,6 +167,7 @@ hook_config_load() {
   HOOK_LISTS=()
   HOOK_KINDS=()
   HOOK_DEFAULTS_DISABLED=()
+  _HOOK_CONFIG_DEPRECATED_SEEN=()
 
   if [[ ! -f "$file" ]]; then
     hook_config_register_defaults
@@ -165,13 +201,14 @@ hook_config_load() {
 
   _flush_list() {
     if [[ -n "$current_list_name" ]]; then
-      if ! hook_is_canonical "$current_list_name"; then
+      if ! _hook_config_canonicalize "$current_list_name"; then
         _hook_config_log "unknown hook name '$current_list_name' in $file"
         return 3
       fi
+      local _canon="$_HOOK_CONFIG_CANON"
       local _item
       for _item in "${current_list_items[@]}"; do
-        _stash_user_cmd "$current_list_name" "$_item"
+        _stash_user_cmd "$_canon" "$_item"
       done
     fi
     current_list_name=""
@@ -257,21 +294,22 @@ hook_config_load() {
         continue
       fi
 
-      if ! hook_is_canonical "$key"; then
+      if ! _hook_config_canonicalize "$key"; then
         _hook_config_log "unknown hook name '$key' in $file"
         return 3
       fi
+      local canon_key="$_HOOK_CONFIG_CANON"
 
       if [[ -z "$value" ]]; then
         # Block list opens.
-        current_list_name="$key"
+        current_list_name="$canon_key"
         current_list_items=()
         continue
       fi
 
       # Bare-string shorthand → one-element list.
       value="$(_hook_unquote "$value")"
-      _stash_user_cmd "$key" "$value"
+      _stash_user_cmd "$canon_key" "$value"
       continue
     fi
 
@@ -303,6 +341,19 @@ hook_config_load() {
       hook_register "$name" "$cmd"
     done <<< "${user_lists[$name]}"
   done
+
+  # One release window of back-compat (issue #226, ADR 0026): old `*_worker`
+  # hook names still fire — translated to their canonical `*_attempt` names
+  # above — but we log a single deprecation warning per session at load time.
+  # Drop both the alias map and this warning in the release after #226 lands.
+  if (( ${#_HOOK_CONFIG_DEPRECATED_SEEN[@]} > 0 )); then
+    local _dep _renames=""
+    for _dep in "${_HOOK_CONFIG_DEPRECATED_SEEN[@]}"; do
+      local _to; _to="$(hook_canonical_alias "$_dep")"
+      _renames+="${_renames:+, }${_dep}→${_to}"
+    done
+    _hook_config_log "deprecated hook name(s) in $file: ${_renames}; rename before the next release (back-compat will be dropped)"
+  fi
 
   return 0
 }
