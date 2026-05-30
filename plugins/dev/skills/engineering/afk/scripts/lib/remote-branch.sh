@@ -28,6 +28,12 @@
 #     0; if delete fails (branch protection, network) the close path still
 #     proceeds.
 #
+#   prune_completed_local_branches [repo-dir]   (issue #274)
+#     The boot-time local reaper for stale `afk/{wid}/{N}-slug` branches. It
+#     reuses the same S1 issue-state classifier as the snapshot reaper, deletes
+#     branches whose issue is CLOSED, keeps OPEN/unclassified branches, and
+#     refuses to touch any branch checked out by a git worktree.
+#
 # The live-push lifecycle above (push_initial / install_post_commit_hook /
 # delete_remote) deliberately touches ONLY the `afk/{wid}/{N}-slug` namespace.
 # The `afk-attempts/{wid}/{N}-slug` failure-push namespace stays the canonical
@@ -146,6 +152,86 @@ delete_remote() {
   if ! git -C "$repo_dir" push origin --delete "$branch" >/dev/null 2>&1; then
     _remote_branch_log "warn: failed to delete remote ${branch} after close, branch survives on origin for cleanup later"
   fi
+  return 0
+}
+
+# _local_afk_issue_from_branch <branch>
+#
+# Extract the issue number from a well-formed local live branch:
+# afk/{worker}/{N}-slug. Echoes nothing for malformed or non-live refs so the
+# cleanup cannot accidentally act on adjacent namespaces such as afk-attempts/*.
+_local_afk_issue_from_branch() {
+  local branch="$1" rest issue
+  [[ "$branch" =~ ^afk/[^/]+/[0-9]+-[a-z0-9-]+$ ]] || return 0
+  rest="${branch#afk/*/}"  # {N}-slug
+  issue="${rest%%-*}"      # {N}
+  [[ "$issue" =~ ^[0-9]+$ ]] || return 0
+  printf '%s\n' "$issue"
+}
+
+# _local_checked_out_branches <repo-dir>
+#
+# Print branch short names currently checked out by any registered worktree.
+# `git branch -d` would reject these too, but this explicit guard is the safety
+# contract for the boot reaper: checked-out branches are skipped before issue
+# classification or deletion.
+_local_checked_out_branches() {
+  local repo_dir="$1" line
+  git -C "$repo_dir" worktree list --porcelain 2>/dev/null | while IFS= read -r line; do
+    [[ "$line" == branch\ refs/heads/* ]] || continue
+    printf '%s\n' "${line#branch refs/heads/}"
+  done
+}
+
+# prune_completed_local_branches [repo-dir]
+#
+# Boot-time cleanup for local `afk/*` live-worker branches left behind after
+# their issue has already closed. Best-effort and always rc 0. Safety rules:
+#   - checked-out branches are skipped without classification.
+#   - OPEN, missing, and transiently unclassifiable issues are kept.
+#   - CLOSED issues are deleted with `git branch -d` only, so an unexpectedly
+#     unmerged branch survives for manual inspection instead of being forced.
+prune_completed_local_branches() {
+  local repo_dir="${1:-${PROJECT_ROOT:-$(pwd)}}"
+  local repo now_s
+  repo="$(gh_repo 2>/dev/null)" || return 0
+  [[ -n "$repo" ]] || return 0
+  now_s="$(date +%s)"
+
+  local branches
+  branches="$(git -C "$repo_dir" for-each-ref --format='%(refname:short)' refs/heads/afk 2>/dev/null)" || return 0
+  [[ -n "$branches" ]] || return 0
+
+  local -A checked=()
+  local b
+  while IFS= read -r b; do
+    [[ -n "$b" ]] && checked["$b"]=1
+  done < <(_local_checked_out_branches "$repo_dir")
+
+  local deleted=0 branch issue class
+  while IFS= read -r branch; do
+    [[ -n "$branch" ]] || continue
+    [[ -z "${checked[$branch]+set}" ]] || continue
+    issue="$(_local_afk_issue_from_branch "$branch")"
+    [[ -n "$issue" ]] || continue
+
+    class="$(_attempt_snapshot_issue_state_from_gh "$repo" "$issue" "$now_s" 0)"
+    case "$class" in
+      closed-within-grace|closed-past-grace)
+        if git -C "$repo_dir" branch -d "$branch" >/dev/null 2>&1; then
+          deleted=$((deleted + 1))
+        else
+          _remote_branch_log "warn: failed to delete local live branch ${branch}, survives for cleanup later"
+        fi
+        ;;
+      open|not-found|unresolved-transient)
+        ;;
+      *)
+        ;;
+    esac
+  done <<<"$branches"
+
+  [[ $deleted -gt 0 ]] && _remote_branch_log "local cleanup: deleted $deleted closed-issue afk branch(es)"
   return 0
 }
 

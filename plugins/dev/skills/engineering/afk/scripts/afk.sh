@@ -3384,6 +3384,10 @@ cap_issue_attempts
 # that closed more than the grace window ago. Within-grace and still-open issues
 # are left in place. Best-effort and never on the close path — runs here at boot.
 prune_completed_attempt_branches
+# Local live-branch cleanup (issue #274, PRD #244): drop stale local afk/*
+# branches for issues that are already closed while explicitly skipping any
+# branch checked out by a registered worktree. Best-effort boot hygiene only.
+prune_completed_local_branches
 sweep_unblocked
 
 # --- straggler check: warn about issues that never made it to ready-for-agent
