@@ -64,20 +64,50 @@ declare -gA HOOK_EXIT_POLICY=(
   [pre_pick]=abort
   [post_pick]=continue
   [pre_worktree]=abort
-  [pre_worker]=abort
-  [post_worker]=continue
+  [pre_attempt]=abort
+  [post_attempt]=continue
   [pre_merge]=abort
   [post_merge]=continue
-  [on_worker_error]=continue
+  [on_attempt_error]=continue
   [on_idle]=continue
   [post_session]=continue
   [on_session_error]=continue
 )
 
+# Deprecated lifecycle names → canonical replacement (issue #226, ADR 0026).
+# The attempt-level hooks were renamed off "worker" because that word already
+# names the AFK orchestrator process (RED_AFK_WORKER_ID) and ADR 0017 made
+# "attempt" the canonical unit of one runner invocation. One release window of
+# back-compat: a hook declared under an old name in `.red/config.yaml` is
+# translated to its canonical name at load time (with a single deprecation
+# warning) by hook_config_load — see `hook_canonical_alias`. Drop this map in
+# the release after #226 lands.
+declare -gA HOOK_DEPRECATED_ALIASES=(
+  [pre_worker]=pre_attempt
+  [post_worker]=post_attempt
+  [on_worker_error]=on_attempt_error
+)
+
 hook_canonical_names() {
   printf '%s\n' \
-    pre_session pre_pick post_pick pre_worktree pre_worker post_worker \
-    pre_merge post_merge on_worker_error on_idle post_session on_session_error
+    pre_session pre_pick post_pick pre_worktree pre_attempt post_attempt \
+    pre_merge post_merge on_attempt_error on_idle post_session on_session_error
+}
+
+# hook_canonical_alias NAME
+#   If NAME is a deprecated lifecycle name, print its canonical replacement and
+#   return 0 (signalling "this was an alias"). Otherwise print NAME unchanged
+#   and return 1. Lets the config loader translate old names while emitting a
+#   single deprecation warning, without polluting the canonical-name set.
+hook_canonical_alias() {
+  local name="$1"
+  local canon="${HOOK_DEPRECATED_ALIASES[$name]:-}"
+  if [[ -n "$canon" ]]; then
+    printf '%s' "$canon"
+    return 0
+  fi
+  printf '%s' "$name"
+  return 1
 }
 
 _hook_log() {
@@ -200,7 +230,7 @@ hook_dispatch() {
   # writes to `$HOOK_EXECUTIONS_FILE` when set — that path is the source
   # of truth across the `$(hook_dispatch …)` sites the orchestrator uses
   # to capture mutated context (pre_session / pre_pick / pre_worktree /
-  # pre_worker / post_pick), where the in-memory HOOK_USER_EXECUTIONS
+  # pre_attempt / post_pick), where the in-memory HOOK_USER_EXECUTIONS
   # array would be lost to subshell isolation. Direct-call sites populate
   # both the file and the array.
   local -a _kind_arr=()
