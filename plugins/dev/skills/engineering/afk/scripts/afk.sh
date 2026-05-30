@@ -2369,8 +2369,15 @@ feedback() {
 }
 
 # ---------- merge & push ----------
+# do_merge <branch> <n> <title> [<target>] [<worktree>]
+# Lands the winning attempt. The landing is lock-toggled (ADR 0030, #254):
+#   - locked   → the winning attempt is merged directly into the local locked
+#                branch (<target>, resolved with the lock in #253) for human
+#                review; promotion of <target> to main is left to the operator.
+#   - unlocked → the attempt lands via an admin-merged PR into <target> (the PR
+#                is the durable per-attempt history and survives branch deletion).
 do_merge() {
-  local branch="$1" n="$2" title="$3" target="${4:-main}"
+  local branch="$1" n="$2" title="$3" target="${4:-main}" worktree="${5:-}"
 
   # dirty primary → snapshot commit (on whatever branch is checked out — main).
   if [[ -n "$(git -C "$PROJECT_ROOT" status --porcelain)" ]]; then
@@ -2451,27 +2458,47 @@ do_merge() {
   local pre_merge_sha
   pre_merge_sha="$(git -C "$PROJECT_ROOT" rev-parse HEAD)"
 
-  git -C "$PROJECT_ROOT" merge --no-ff "$branch" -m "merge: #${n} ${title}" 2>&1 | tee /tmp/afk-merge.log
-  local rc=${PIPESTATUS[0]}
-  if [[ $rc -ne 0 ]]; then
-    # Conflict → one-shot inner-agent resolver (SKILL.md per-issue loop step 8)
-    # before giving up. On resolver success the merge is committed; fall
-    # through to push. On failure, abort cleanly.
-    if ! merge_resolve_conflict "$branch" "$n" "$title" "$target"; then
-      git -C "$PROJECT_ROOT" merge --abort 2>/dev/null || true
+  if afk_is_locked; then
+    # LOCKED landing (ADR 0030): merge the attempt directly into the local locked
+    # branch (<target>) and push it to origin. No PR, nothing reaches main —
+    # promoting <target> to main is the operator's call.
+    git -C "$PROJECT_ROOT" merge --no-ff "$branch" -m "merge: #${n} ${title}" 2>&1 | tee /tmp/afk-merge.log
+    local rc=${PIPESTATUS[0]}
+    if [[ $rc -ne 0 ]]; then
+      # Conflict → one-shot inner-agent resolver (SKILL.md per-issue loop step 8)
+      # before giving up. On resolver success the merge is committed; fall
+      # through to push. On failure, abort cleanly.
+      if ! merge_resolve_conflict "$branch" "$n" "$title" "$target"; then
+        git -C "$PROJECT_ROOT" merge --abort 2>/dev/null || true
+        [[ -n "$restore_branch" ]] && git -C "$PROJECT_ROOT" switch "$restore_branch" >/dev/null 2>&1 || true
+        return 1
+      fi
+    fi
+
+    if ! git -C "$PROJECT_ROOT" push origin "$target"; then
+      # Push rejected (origin moved again, or hook). Roll the merge commit back to
+      # the integrated tip so the locked branch carries no orphan merge commit
+      # before the issue is flipped to ready-for-human.
+      log "✗ #$n push to origin/$target rejected — rolling back merge commit to keep local $target clean"
+      merge_rollback "$PROJECT_ROOT" "$pre_merge_sha"
       [[ -n "$restore_branch" ]] && git -C "$PROJECT_ROOT" switch "$restore_branch" >/dev/null 2>&1 || true
       return 1
     fi
-  fi
-
-  if ! git -C "$PROJECT_ROOT" push origin "$target"; then
-    # Push rejected (origin moved again, or hook). Roll the merge commit back to
-    # the integrated tip so the target branch carries no orphan merge commit
-    # before the issue is flipped to ready-for-human.
-    log "✗ #$n push to origin/$target rejected — rolling back merge commit to keep local $target clean"
-    merge_rollback "$PROJECT_ROOT" "$pre_merge_sha"
-    [[ -n "$restore_branch" ]] && git -C "$PROJECT_ROOT" switch "$restore_branch" >/dev/null 2>&1 || true
-    return 1
+  else
+    # UNLOCKED landing (ADR 0030): open a per-issue PR into <target> and
+    # admin-merge it. The PR is the durable per-attempt history (it survives the
+    # branch deletion in the close path). No completed work reaches <target>
+    # except through this admin-merge.
+    if ! land_pr "$branch" "$n" "$title" "$target" "$worktree"; then
+      log "✗ #$n PR landing into $target failed — flipping to ready-for-human"
+      [[ -n "$restore_branch" ]] && git -C "$PROJECT_ROOT" switch "$restore_branch" >/dev/null 2>&1 || true
+      return 1
+    fi
+    # Fast-forward local <target> to the PR merge commit so HEAD carries the
+    # merge for the closing envelope's merge_sha. Best-effort — the merge is
+    # already durable on origin via the admin-merge.
+    git -C "$PROJECT_ROOT" fetch origin "$target" --quiet 2>/dev/null || true
+    git -C "$PROJECT_ROOT" merge --ff-only "origin/$target" >/dev/null 2>&1 || true
   fi
 
   # post-merge hook — after the push to origin/<target> succeeds. RED_AFK_MERGE_SHA
@@ -2511,6 +2538,46 @@ do_merge() {
   # Restore the primary checkout to its original branch (main), keeping the
   # precheck invariant intact for the next iteration.
   [[ -n "$restore_branch" ]] && git -C "$PROJECT_ROOT" switch "$restore_branch" >/dev/null 2>&1 || true
+}
+
+# land_pr <branch> <n> <title> [<target>] [<worktree>]
+# Unlocked landing path (ADR 0030, #254): open a PR from the attempt branch into
+# <target> and admin-merge it. Idempotent — reuses an open PR for the same head
+# instead of failing on a re-attempt. Returns 0 on a merged PR, 1 on any failure
+# (which routes through the merge-conflict envelope → ready-for-human).
+land_pr() {
+  local branch="$1" n="$2" title="$3" target="${4:-main}" worktree="${5:-}"
+  local repo; repo="$(gh_repo)"
+
+  # The attempt branch is mirrored on origin throughout the run (#191), but make
+  # the final state certain before opening the PR.
+  if [[ -n "$worktree" ]]; then
+    if ! git -C "$worktree" push origin "HEAD:refs/heads/$branch" --force-with-lease 2>&1 | tee -a /tmp/afk-merge.log; then
+      log "✗ #$n could not push attempt branch '$branch' to origin before PR"
+      return 1
+    fi
+  fi
+
+  # Reuse an open PR for this head/base; else create one.
+  local pr_num
+  pr_num="$(gh -R "$repo" pr list --head "$branch" --base "$target" --state open --json number --jq '.[0].number // empty' 2>/dev/null || true)"
+  if [[ -z "$pr_num" ]]; then
+    gh -R "$repo" pr create --base "$target" --head "$branch" \
+      --title "merge: #${n} ${title}" \
+      --body "Automated AFK landing for #${n}. Per-attempt history lives in the issue Envelopes, the JSONL logs, and the \`afk-attempts/*\` snapshot branches." \
+      2>&1 | tee -a /tmp/afk-merge.log || { log "✗ #$n gh pr create into $target failed"; return 1; }
+    pr_num="$(gh -R "$repo" pr list --head "$branch" --base "$target" --state open --json number --jq '.[0].number // empty' 2>/dev/null || true)"
+  fi
+  [[ -n "$pr_num" ]] || { log "✗ #$n no PR resolved for '$branch' → $target"; return 1; }
+
+  # Admin-merge: the worker is autonomous, so bypass required-review protection
+  # deliberately. The merge commit + PR are the durable history.
+  if ! gh -R "$repo" pr merge "$pr_num" --admin --merge 2>&1 | tee -a /tmp/afk-merge.log; then
+    log "✗ #$n gh pr merge --admin failed for PR #$pr_num"
+    return 1
+  fi
+  log "✓ #$n landed via admin-merged PR #$pr_num into $target"
+  return 0
 }
 
 # merge_resolve_conflict <branch> <n> <title> [<target>]
@@ -3026,7 +3093,7 @@ process_issue() {
 
   # merge
   state_write "$STATE_FILE" current.stage=merge
-  if ! do_merge "$branch" "$n" "$title" "$pinned"; then
+  if ! do_merge "$branch" "$n" "$title" "$pinned" "$worktree"; then
     log "✗ #$n merge failed (resolver exhausted or push rejected) — flipping to ready-for-human"
     local dur_mc=$(( $(date +%s) - started_epoch ))
     local log_file

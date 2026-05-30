@@ -39,7 +39,7 @@ A read-only reflection of AFK worker state onto a runner-native background-task 
 _Avoid_: native agent, subagent
 
 **Branch lock**:
-A local opt-in pin that blocks the interactive agent from switching away from one branch in the **Primary checkout**.
+A local opt-in pin (`.red/tmp/branch-lock.yaml`) that blocks the interactive agent from switching away from one branch in the **Primary checkout**, and — when set — overrides the **Pinned branch** as AFK's base/merge target (precedence lock > pin > main) and toggles the landing: locked work merges into the locked branch for human promotion, unlocked work lands via an admin-merged PR (ADR 0030/0031).
 _Avoid_: pinned branch
 
 **Pinned branch**:
@@ -106,7 +106,7 @@ _Avoid_: memory cleaner, silent curator
 - A **Fleet supervisor** maintains AFK workers; **Auto-monitor loop**, **Task mirror**, **Codex monitor agent**, and `monitor.sh` only observe.
 - A **Worker** owns many **Attempts**; each **Attempt** resolves exactly one **Issue** and holds one **Worktree**. The **Worker**'s `worker.pid` is the single liveness signal consumers read.
 - A **Branch lock** constrains the **Primary checkout**; AFK **Worktrees** remain exempt.
-- A **Pinned branch** constrains AFK base and merge target; it is independent of **Branch lock**.
+- A **Pinned branch** constrains AFK base and merge target; a **Branch lock**, when set, overrides it (precedence lock > pin > main) and additionally toggles how completed work lands (locked → local locked branch; unlocked → admin-merged PR).
 - The **Codebase understanding surface** may read Memory graph evidence, but it does not own graph storage or ingest.
 - The mutating **Skill curator** belongs to `dev`; telemetry evidence and reports belong to the Memory context.
 
@@ -118,4 +118,4 @@ _Avoid_: memory cleaner, silent curator
 ## Flagged ambiguities
 
 - "backlog" previously meant both the issue-hosting tool and the body of work; resolved: use **Issue tracker** for the tool and avoid "backlog" as a domain term.
-- "branch lock" and "pinned branch" were previously conflated; resolved: **Branch lock** is interactive-agent enforcement, while **Pinned branch** is AFK base/merge declaration.
+- "branch lock" and "pinned branch" were previously conflated; resolved: **Branch lock** is the operator's local opt-in (interactive enforcement *plus* the higher-precedence AFK base/landing toggle, ADR 0030/0031), while **Pinned branch** is the per-Issue/PRD base declaration the lock overrides when present.
