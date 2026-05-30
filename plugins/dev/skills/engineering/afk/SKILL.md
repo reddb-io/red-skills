@@ -1,7 +1,7 @@
 ---
 name: afk
 description: Autonomous loop that drains the `ready-for-agent` queue on the issue tracker. Each iteration claims an issue, runs it in an isolated worktree, executes with claude or codex, merges back to main, and closes the issue. Use when the user wants to run AFK execution, drain a PRD, hammer specific issues, or otherwise let agents grind through the backlog.
-argument-hint: "[--prd N | --issues N,N,N] [--runner claude|codex] [--alternate] [--fallback-runner] [--request TEXT] [-n N] [--once] | fleet [N] | fleet stop | monitor"
+argument-hint: "[--prd N | --issues N,N,N] [--runner claude|codex] [--alternate] [--fallback-runner] [--request TEXT] [-n N] [--once] | fleet [N] | fleet stop | monitor | reap"
 ---
 
 # /afk
@@ -22,6 +22,7 @@ Drain the agent-ready backlog. Single skill that owns issue selection, worktree 
 - `/afk monitor` — readonly status board, aggregates every `.red/tmp/workers/*/*/afk.state.json` so you see all live workers from another terminal. **Also (binding):** mirrors live workers onto the host runner's native task surface — `TaskCreate`/`TaskUpdate` under Claude Code, the sub-agent surface under Codex when present (falls back to the dashboard otherwise). See *Task Mirror* below — this is not optional and you must do it on every tick, even when the user only asked "como estamos?".
 - `/afk fleet [N]` — launch the supervisor maintaining `N` concurrent workers (default `2`). See *Fleet Mode* below.
 - `/afk fleet stop` — gracefully shut down a running fleet supervisor and cancel its auto-monitor cron.
+- `/afk reap` — run branch hygiene without starting a worker: one count line for remote `afk/*`, remote `afk-attempts/*`, and local `afk/*`, then the same safe reapers used at boot.
 
 ## Parallelization
 
@@ -113,6 +114,16 @@ The *Completion sweep* and *Attempt Cap* reclaim **local** attempt dirs; the fai
 - **closed longer than the grace window ago** — every snapshot branch for that issue is deleted from origin (cross-worker).
 
 The grace window is `RED_AFK_ATTEMPT_SNAPSHOT_GRACE_S` (default 7 days), measured from the issue's GitHub `closedAt`. A non-numeric value falls back to the default so an operator typo can never disable the grace; `0` is honoured as "delete immediately on completion". The pass is best-effort and runs at boot, **never** on the close path — a slow or failing `gh`/`git` can never block a completion, and an issue it cannot classify is left strictly in place.
+
+## On-Demand Branch Reaper (issue #275)
+
+Run `bash plugins/dev/skills/engineering/afk/scripts/afk-reap.sh [project_root]` to perform branch hygiene without starting a worker, claiming an issue, or firing lifecycle hooks. The command first prints one line:
+
+```text
+afk branch counts: remote-afk=N remote-afk-attempts=N local-afk=N
+```
+
+It then applies the same three namespace reapers used during `/afk` boot: remote `afk-attempts/*`, remote `afk/*`, and local `afk/*`. Open issues and transiently unclassified issues are kept; local branches checked out by any worktree are kept. Each successful deletion logs the branch, issue number, and classification reason. Re-running is a natural no-op once stale refs are gone. Snapshot grace still comes from `RED_AFK_ATTEMPT_SNAPSHOT_GRACE_S`; live `afk/*` cleanup keeps the existing closed-vs-open policy.
 
 ## Unblock Sweep (boot-time)
 

@@ -34,6 +34,12 @@
 #     branches whose issue is CLOSED, keeps OPEN/unclassified branches, and
 #     refuses to touch any branch checked out by a git worktree.
 #
+#   run_afk_branch_reaper [repo-dir]   (issue #275)
+#     On-demand branch hygiene entry point. Prints one line with current branch
+#     counts for remote afk/*, remote afk-attempts/*, and local afk/*, then runs
+#     the same three namespace reapers that boot uses. It creates no worker and
+#     is safe to repeat.
+#
 #   prune_completed_remote_live_branches [repo-dir]   (issue #273)
 #     The boot-time remote reaper for stale origin `afk/{wid}/{N}-slug` live
 #     branches. It reuses the same S1 issue-state classifier and pure decider as
@@ -65,6 +71,40 @@ _remote_branch_log() {
   else
     printf '[afk] %s\n' "$*" >&2
   fi
+}
+
+_afk_count_lines() {
+  awk 'NF { n++ } END { print n + 0 }'
+}
+
+# afk_branch_count_report [repo-dir]
+#
+# Emit a single human/script-readable count line for branch-sprawl visibility.
+# Remote count failures are reported as 0 because this is best-effort hygiene,
+# matching the reapers' failure policy.
+afk_branch_count_report() {
+  local repo_dir="${1:-${PROJECT_ROOT:-$(pwd)}}"
+  local remote_live remote_snapshots local_live
+  remote_live="$({ git -C "$repo_dir" ls-remote --heads origin 'refs/heads/afk/*' 2>/dev/null || true; } | _afk_count_lines)"
+  remote_snapshots="$({ git -C "$repo_dir" ls-remote --heads origin 'refs/heads/afk-attempts/*' 2>/dev/null || true; } | _afk_count_lines)"
+  local_live="$({ git -C "$repo_dir" for-each-ref --format='%(refname:short)' refs/heads/afk 2>/dev/null || true; } | _afk_count_lines)"
+  printf 'afk branch counts: remote-afk=%s remote-afk-attempts=%s local-afk=%s\n' \
+    "$remote_live" "$remote_snapshots" "$local_live"
+}
+
+# run_afk_branch_reaper [repo-dir]
+#
+# Single on-demand reaper invocation for issue #275. The boot path calls these
+# same reapers separately; this wrapper intentionally only reports counts and
+# delegates, so repeated/concurrent runs inherit the existing open-issue safety
+# and RED_AFK_ATTEMPT_SNAPSHOT_GRACE_S handling.
+run_afk_branch_reaper() {
+  local repo_dir="${1:-${PROJECT_ROOT:-$(pwd)}}"
+  afk_branch_count_report "$repo_dir"
+  prune_completed_attempt_branches "$repo_dir"
+  prune_completed_remote_live_branches "$repo_dir"
+  prune_completed_local_branches "$repo_dir"
+  return 0
 }
 
 # push_initial <worktree> <branch>
@@ -226,6 +266,7 @@ prune_completed_local_branches() {
       closed-within-grace|closed-past-grace)
         if git -C "$repo_dir" branch -d "$branch" >/dev/null 2>&1; then
           deleted=$((deleted + 1))
+          _remote_branch_log "reaper: deleted local live branch ${branch} (issue #${issue}: ${class})"
         else
           _remote_branch_log "warn: failed to delete local live branch ${branch}, survives for cleanup later"
         fi
@@ -458,7 +499,7 @@ _attempt_snapshot_issue_state_from_gh() {
 # never block a completion. `gh_repo` is provided by the orchestrator that
 # sources this lib.
 prune_completed_attempt_branches() {
-  local repo_dir="${PROJECT_ROOT:-$(pwd)}"
+  local repo_dir="${1:-${PROJECT_ROOT:-$(pwd)}}"
   local repo grace now_s
   repo="$(gh_repo 2>/dev/null)" || return 0
   [[ -n "$repo" ]] || return 0
@@ -483,6 +524,7 @@ prune_completed_attempt_branches() {
     [[ "$action" == "reap" && -n "$branch" ]] || continue
     if git -C "$repo_dir" push origin --delete "$branch" >/dev/null 2>&1; then
       deleted=$((deleted + 1))
+      _remote_branch_log "reaper: deleted remote snapshot branch ${branch} (issue #${issue}: ${class})"
     else
       _remote_branch_log "warn: failed to delete remote snapshot ${branch}, survives on origin for cleanup later"
     fi
@@ -500,7 +542,7 @@ prune_completed_attempt_branches() {
 # place so an active or ambiguous worker branch is never destroyed. Best-effort
 # and always rc 0: called at boot as a backstop for close-path delete_remote.
 prune_completed_remote_live_branches() {
-  local repo_dir="${PROJECT_ROOT:-$(pwd)}"
+  local repo_dir="${1:-${PROJECT_ROOT:-$(pwd)}}"
   local repo now_s
   repo="$(gh_repo 2>/dev/null)" || return 0
   [[ -n "$repo" ]] || return 0
@@ -522,6 +564,7 @@ prune_completed_remote_live_branches() {
     [[ "$action" == "reap" && -n "$branch" ]] || continue
     if git -C "$repo_dir" push origin --delete "$branch" >/dev/null 2>&1; then
       deleted=$((deleted + 1))
+      _remote_branch_log "reaper: deleted remote live branch ${branch} (issue #${issue}: ${class})"
     else
       _remote_branch_log "warn: failed to delete remote live branch ${branch}, survives on origin for cleanup later"
     fi
