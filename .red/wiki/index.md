@@ -18,6 +18,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [merge: #272 AFK reaper: well-formed branch refs + slug guard (kill double-nested names)](./pages/276-merge-272-afk-reaper-well-formed-branch-refs-slug-guard-kill.md)
 - [merge: #273 AFK reaper: completion reaper for the afk/* live-branch namespace](./pages/280-merge-273-afk-reaper-completion-reaper-for-the-afk-live-bran.md)
 - [merge: #274 AFK reaper: local afk/* branch GC at boot (closed/merged, never checked-out)](./pages/278-merge-274-afk-reaper-local-afk-branch-gc-at-boot-closed-merg.md)
+- [merge: #275 AFK reaper: on-demand invocation + branch-count visibility](./pages/281-merge-275-afk-reaper-on-demand-invocation-branch-count-visib.md)
 - [test(memory): split vitest suite into fast gate + integration project (#242)](./pages/264-test-memory-split-vitest-suite-into-fast-gate-integration-pr.md)
 
 ## Entities
