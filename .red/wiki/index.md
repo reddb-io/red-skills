@@ -12,6 +12,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [fix(memory): resolveRedBinary honours REDDB_BIN before the SDK package lookup](./pages/230-fix-memory-resolveredbinary-honours-reddb-bin-before-the-sdk.md)
 - [fix(memory): skills invoke scripts/bootstrap.mjs, not the absent dist/cli.js](./pages/231-fix-memory-skills-invoke-scripts-bootstrap-mjs-not-the-absen.md)
 - [merge: #226 AFK: rename hook events from worker/* to attempt/* across merged code](./pages/263-merge-226-afk-rename-hook-events-from-worker-to-attempt-acro.md)
+- [merge: #227 AFK: make <promise> sentinel the canonical attempt exit signal](./pages/265-merge-227-afk-make-promise-sentinel-the-canonical-attempt-ex.md)
 - [test(memory): split vitest suite into fast gate + integration project (#242)](./pages/264-test-memory-split-vitest-suite-into-fast-gate-integration-pr.md)
 
 ## Entities
