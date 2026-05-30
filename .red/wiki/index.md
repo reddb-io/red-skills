@@ -14,6 +14,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [fix(memory): remove backward-compat shims now that delivery + store are clean](./pages/232-fix-memory-remove-backward-compat-shims-now-that-delivery-st.md)
 - [fix(memory): resolveRedBinary honours REDDB_BIN before the SDK package lookup](./pages/230-fix-memory-resolveredbinary-honours-reddb-bin-before-the-sdk.md)
 - [fix(memory): skills invoke scripts/bootstrap.mjs, not the absent dist/cli.js](./pages/231-fix-memory-skills-invoke-scripts-bootstrap-mjs-not-the-absen.md)
+- [fix: final-review pass — broken CI, dangling refs, dynamic-fetch shipping](./pages/290-fix-final-review-pass-broken-ci-dangling-refs-dynamic-fetch.md)
 - [merge: #226 AFK: rename hook events from worker/* to attempt/* across merged code](./pages/263-merge-226-afk-rename-hook-events-from-worker-to-attempt-acro.md)
 - [merge: #227 AFK: make <promise> sentinel the canonical attempt exit signal](./pages/265-merge-227-afk-make-promise-sentinel-the-canonical-attempt-ex.md)
 - [merge: #271 AFK reaper: 404-aware grace cleanup for afk-attempts/* (pure keep/reap decider)](./pages/277-merge-271-afk-reaper-404-aware-grace-cleanup-for-afk-attempt.md)
