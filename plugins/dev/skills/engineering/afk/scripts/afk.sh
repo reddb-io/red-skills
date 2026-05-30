@@ -3384,6 +3384,10 @@ cap_issue_attempts
 # that closed more than the grace window ago. Within-grace and still-open issues
 # are left in place. Best-effort and never on the close path — runs here at boot.
 prune_completed_attempt_branches
+# Live-branch completion cleanup (issue #273): delete leftover afk/* refs for
+# CLOSED issues only. OPEN or unresolved issues are left untouched so active
+# workers are never disrupted by a boot sweep.
+prune_completed_live_branches
 sweep_unblocked
 
 # --- straggler check: warn about issues that never made it to ready-for-agent
