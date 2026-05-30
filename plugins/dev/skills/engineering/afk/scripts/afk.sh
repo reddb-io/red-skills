@@ -65,6 +65,11 @@ source "$SCRIPT_DIR/lib/capabilities.sh"
 source "$SCRIPT_DIR/lib/jsonl-log.sh"
 # shellcheck source=./lib/agent-lane.sh
 source "$SCRIPT_DIR/lib/agent-lane.sh"
+# Canonical attempt-exit reader (ADR 0028, issue #227): owns sentinel
+# detection + bounded tear-down so run_claude / run_codex stop trusting pipe
+# EOF as the end-of-attempt signal.
+# shellcheck source=./lib/attempt-reader.sh
+source "$SCRIPT_DIR/lib/attempt-reader.sh"
 
 MEMORY_BRIDGE_SH="$SKILL_DIR/../../../scripts/memory-bridge.sh"
 if [[ -f "$MEMORY_BRIDGE_SH" ]]; then
@@ -1990,53 +1995,20 @@ run_inner() {
   echo "$result"
 }
 
-# Recursively SIGTERM (then SIGKILL on grace) a pid and all its descendants.
-# Used by the inner-agent watchdog to kill claude / codex pipelines whose
-# child bash processes are stuck in a polling loop without a timeout — the
-# wheel-spin pattern where the inner agent emits <promise>DONE</promise>
-# but a pending tool call (typically `until grep "test result"`) keeps the
-# stream-json pipe open and the orchestrator stalls indefinitely.
-kill_tree() {
-  local pid="$1" sig="${2:-TERM}"
-  local k
-  for k in $(pgrep -P "$pid" 2>/dev/null); do
-    kill_tree "$k" "$sig"
-  done
-  kill -"$sig" "$pid" 2>/dev/null || true
-}
-
-# Watchdog spawned alongside an inner-agent pipeline. Extracts assistant
-# text from the stream-json capture file via the runner-specific jq filter
-# and matches the DONE/BLOCKED sentinel **line-anchored** — the contract in
-# AGENT-PROMPT.md is "<promise>DONE</promise> on a line by itself, last".
-# Un-anchored matching false-positives on the agent quoting the sentinel
-# inside intermediate planning output (issues #4, #6, #7). Once seen, gives
-# the pipeline RED_AFK_WATCHDOG_GRACE_S to close on its own, then kills the
-# whole subtree.
-RED_AFK_WATCHDOG_GRACE_S="${RED_AFK_WATCHDOG_GRACE_S:-30}"
+# Sentinel-detection predicate constants. The canonical reader now lives in
+# lib/attempt-reader.sh (ADR 0028); these mirror the predicate it applies and
+# are consumed below — JSON_EVENT_LINE_REGEX gates run_codex's event filter,
+# and the two jq filters are handed to attempt_reader_watch to extract
+# assistant text from each runner's stream-json shape. Matching is
+# line-anchored ("<promise>…</promise> on a line by itself, last") so the
+# agent quoting the sentinel in planning prose does not false-positive
+# (issues #4, #6, #7). attempt-reader.sh owns the stream-read + bounded
+# tear-down; run_claude / run_codex call attempt_reader_watch in the
+# foreground instead of waiting on the bare pipe.
 SENTINEL_LINE_REGEX='^<promise>(DONE|BLOCKED)</promise>$'
 JSON_EVENT_LINE_REGEX='^[[:space:]]*\{'
 CLAUDE_ASSISTANT_TEXT_JQ='select(.type == "assistant").message.content[]? | select(.type == "text").text // empty'
 CODEX_ASSISTANT_TEXT_JQ='select(.type == "item.completed") | .item.text // empty'
-
-run_sentinel_watchdog() {
-  local pipe_pid="$1" capture_file="$2" jq_filter="${3:-$CLAUDE_ASSISTANT_TEXT_JQ}"
-  while kill -0 "$pipe_pid" 2>/dev/null; do
-    if jq -r "$jq_filter" "$capture_file" 2>/dev/null \
-        | grep -qE "$SENTINEL_LINE_REGEX"; then
-      sleep "$RED_AFK_WATCHDOG_GRACE_S"
-      if kill -0 "$pipe_pid" 2>/dev/null; then
-        printf '[afk] watchdog: inner emitted sentinel but pipeline still open after %ss — killing tree (likely bash-hang from polling without timeout)\n' \
-          "$RED_AFK_WATCHDOG_GRACE_S" >&2
-        kill_tree "$pipe_pid" TERM
-        sleep 5
-        kill -0 "$pipe_pid" 2>/dev/null && kill_tree "$pipe_pid" KILL
-      fi
-      return 0
-    fi
-    sleep 2
-  done
-}
 
 run_claude() {
   local worktree="$1" prompt="$2"
@@ -2059,12 +2031,14 @@ run_claude() {
   ) &
   local pipe_pid=$!
 
-  run_sentinel_watchdog "$pipe_pid" "$tmp" &
-  local wd_pid=$!
-
+  # ADR 0028: the <promise> sentinel is the canonical attempt-exit signal.
+  # attempt_reader_watch reads $tmp until the sentinel is observed, then tears
+  # the pipeline down on a bounded grace → SIGTERM → SIGKILL timer; if the
+  # pipe closes first without a sentinel it returns with an empty outcome
+  # (EOF-without-sentinel, routed to on_attempt_error by process_issue). It
+  # runs in the foreground so we no longer trust the bare `wait` on the pipe.
+  attempt_reader_watch "$pipe_pid" "$tmp" "$CLAUDE_ASSISTANT_TEXT_JQ"
   wait "$pipe_pid" 2>/dev/null || true
-  kill "$wd_pid" 2>/dev/null || true
-  wait "$wd_pid" 2>/dev/null || true
 
   jq -r 'select(.type == "result").result // empty' "$tmp" 2>/dev/null || echo ""
   rm -f "$tmp"
@@ -2096,12 +2070,11 @@ run_codex() {
   ) &
   local pipe_pid=$!
 
-  run_sentinel_watchdog "$pipe_pid" "$json" "$CODEX_ASSISTANT_TEXT_JQ" &
-  local wd_pid=$!
-
+  # ADR 0028: read until the <promise> sentinel, then bounded tear-down — see
+  # the run_claude call site for the rationale. Codex's event stream is
+  # captured in $json; the sentinel predicate is the same line-anchored match.
+  attempt_reader_watch "$pipe_pid" "$json" "$CODEX_ASSISTANT_TEXT_JQ"
   wait "$pipe_pid" 2>/dev/null || true
-  kill "$wd_pid" 2>/dev/null || true
-  wait "$wd_pid" 2>/dev/null || true
 
   cat "$last" 2>/dev/null || echo ""
   rm -f "$last" "$raw" "$json"
@@ -2695,17 +2668,24 @@ _afk_fire_pre_attempt() {
 }
 
 _afk_fire_post_attempt() {
-  local _num="$1" _title="$2" _ws="$3" _status="$4" _an="$5"
+  local _num="$1" _title="$2" _ws="$3" _status="$4" _an="$5" _outcome="${6:-}"
   export RED_AFK_WORKSPACE="$_ws"
   export RED_AFK_ATTEMPT_N="$_an"
+  # ADR 0028 / issue #227: the parsed <promise> outcome (done / blocked /
+  # no_more_tasks, or "" for the exhausted firings that carry no sentinel)
+  # rides into the post_attempt mutable context as result.outcome and the
+  # RED_AFK_RESULT_OUTCOME env var, so hooks (and the Memory attempt.hooks
+  # record) see the agent-authored exit, not just success/fail.
+  export RED_AFK_RESULT_OUTCOME="$_outcome"
   local _ctx
   _ctx="$(jq -nc \
     --argjson num "$_num" \
     --arg title "$_title" \
     --arg ws "$_ws" \
     --arg status "$_status" \
+    --arg outcome "$_outcome" \
     --argjson an "$_an" \
-    '{issue:{number:$num, title:$title}, workspace:$ws, result:{status:$status}, attempt_n:$an}')"
+    '{issue:{number:$num, title:$title}, workspace:$ws, result:{status:$status, outcome:$outcome}, attempt_n:$an}')"
   hook_dispatch post_attempt "$_ctx" >/dev/null
 }
 
@@ -2929,30 +2909,58 @@ process_issue() {
   afk_firehose timing "runner $RUNNER returned rc=$_runner_rc" \
     elapsed_s="$(( $(date +%s) - _runner_t0 ))" rc="$_runner_rc"
 
+  # ---------- parse the canonical attempt-exit sentinel (ADR 0028) ----------
+  # The <promise>…</promise> the inner agent authored is the attempt's
+  # termination signal — not pipe EOF, not the child exiting. Map it to a
+  # normalized outcome up front; every lifecycle branch below keys off it
+  # instead of re-grepping ad hoc. Empty means EOF-without-sentinel: the agent
+  # never declared the attempt over (crash, kill, or a daemon that closed the
+  # pipe without speaking), which routes to on_attempt_error below.
+  local _sentinel_outcome=""
+  if echo "$result" | grep -q '<promise>DONE</promise>'; then
+    _sentinel_outcome="done"
+  elif echo "$result" | grep -q '<promise>BLOCKED</promise>'; then
+    _sentinel_outcome="blocked"
+  fi
+  local _eof_no_sentinel=0
+  if (( _runner_rc == 0 )) && [[ $RUNNER_EXHAUSTED -ne 1 && -z "$_sentinel_outcome" ]]; then
+    _eof_no_sentinel=1
+  fi
+
   # ---------- on_attempt_error lifecycle hook ----------
-  # Fires only on an unhandled exception in the worker path (run_inner
-  # exited non-zero in a way the orchestrator did not anticipate). Clean
-  # test/build failures still route through post_attempt with
-  # result.status=fail; quota exhaustion is its own pre-existing branch
-  # below and never lands here. Exit-code policy is `continue`, so a
-  # broken pager integration cannot wedge the loop.
-  if (( _runner_rc != 0 )) && [[ $RUNNER_EXHAUSTED -ne 1 ]]; then
+  # Fires when the attempt produced no authored exit: either run_inner exited
+  # non-zero (an unhandled exception in the worker path the orchestrator did
+  # not anticipate — runner crash), OR the runner's pipe closed with no
+  # <promise> sentinel (EOF-without-sentinel, ADR 0028). Clean test/build
+  # failures still route through post_attempt with result.status=fail; quota
+  # exhaustion is its own pre-existing branch below and never lands here.
+  # Exit-code policy is `continue`, so a broken pager integration cannot wedge
+  # the loop. One dispatch site serves both error classes.
+  if [[ $RUNNER_EXHAUSTED -ne 1 ]] && { (( _runner_rc != 0 )) || (( _eof_no_sentinel == 1 )); }; then
     heartbeat_stop
+    local _err_class="runner-crash"
+    (( _eof_no_sentinel == 1 )) && _err_class="no-sentinel"
     # Firehose error record (issue #250) — written before iter_close zeroes the
     # lane so the firehose carries the failure that ended the attempt.
-    afk_firehose error "runner $RUNNER crashed (rc=$_runner_rc)" \
-      class=runner-crash rc="$_runner_rc"
+    if (( _eof_no_sentinel == 1 )); then
+      afk_firehose error "runner $RUNNER closed the pipe without a <promise> sentinel" \
+        class="$_err_class" rc="$_runner_rc"
+    else
+      afk_firehose error "runner $RUNNER crashed (rc=$_runner_rc)" \
+        class="$_err_class" rc="$_runner_rc"
+    fi
     export RED_AFK_WORKSPACE="$worktree"
     export RED_AFK_ATTEMPT_N="$attempt"
-    export RED_AFK_ERROR_CLASS="runner-crash"
+    export RED_AFK_ERROR_CLASS="$_err_class"
     local _afk_owe_ctx _afk_owe_rc=0
     _afk_owe_ctx="$(jq -nc \
       --argjson num "$n" \
       --arg title "$title" \
       --arg ws "$worktree" \
       --arg rc "$_runner_rc" \
+      --arg class "$_err_class" \
       --argjson an "$attempt" \
-      '{issue:{number:$num, title:$title}, workspace:$ws, error:{class:"runner-crash", rc:($rc|tonumber? // 0)}, attempt_n:$an}')"
+      '{issue:{number:$num, title:$title}, workspace:$ws, error:{class:$class, rc:($rc|tonumber? // 0)}, attempt_n:$an}')"
     hook_dispatch on_attempt_error "$_afk_owe_ctx" >/dev/null \
       || _afk_owe_rc=$?
     if (( _afk_owe_rc != 0 )); then
@@ -2960,20 +2968,42 @@ process_issue() {
     fi
     unset RED_AFK_ERROR_CLASS
     local dur_err=$(( $(date +%s) - started_epoch ))
-    # Restart-informed retries (issue #255): the crash path posts a plain
-    # comment, not an envelope, so record the failure reason here so the next
-    # attempt still sees why this one died. No afk-attempts push happened, so
-    # there is no snapshot branch ref to record.
-    record_failure_markers "${ITER_DIR:-}" "" "runner-crash rc=${_runner_rc} (attempt ${attempt})"
-    log "✗ #$n runner crashed (rc=$_runner_rc) — flipping to ready-for-human"
-    gh -R "$(gh_repo)" issue edit "$n" --remove-label running --add-label ready-for-human >/dev/null 2>&1 || true
-    gh -R "$(gh_repo)" issue comment "$n" --body "🤖 /afk: runner crashed with rc=\`$_runner_rc\`. Iteration preserved at \`$ITER_DIR\`." >/dev/null 2>&1 || true
     AGG_BLOCKED=$((AGG_BLOCKED+1))
     state_write "$STATE_FILE" blocked:=$AGG_BLOCKED current:=null
-    emit_history "blocked" "$n" "$RUNNER" "$dur_err" "" "runner-crash"
-    snapshot_iter_for_hook
-    iter_close_preserve
-    fire_post_iteration "blocked" "$dur_err"
+    gh -R "$(gh_repo)" issue edit "$n" --remove-label running --add-label ready-for-human >/dev/null 2>&1 || true
+    if (( _eof_no_sentinel == 1 )); then
+      # EOF-without-sentinel: the agent never authored an end state. Preserve
+      # the richer no-sentinel envelope (handoff Notes + a tail of the captured
+      # stdout) so a reviewer can see what the agent left behind.
+      log "✗ #$n inner agent closed the pipe without a <promise> sentinel — on_attempt_error, ready-for-human"
+      local notes_file log_file
+      notes_file="$(mktemp)"; log_file="$(mktemp)"
+      extract_handoff_notes "$handoff" > "$notes_file" || true
+      [[ -s "$notes_file" ]] || printf '_(no Notes appended; inner agent exited without a sentinel)_' > "$notes_file"
+      tail_iter_log 50 > "$log_file" || true
+      [[ -s "$log_file" ]] || printf '(no captured stdout)' > "$log_file"
+      emit_envelope "no-sentinel" "$n" "$dur_err" "$branch" "$attempt" "" "$slug" "$worktree_rel" \
+        "notes" "$notes_file" \
+        "log"   "$log_file" || true
+      rm -f "$notes_file" "$log_file"
+      record_failure_markers "${ITER_DIR:-}" "" "no-sentinel (attempt ${attempt})"
+      emit_history "blocked" "$n" "$RUNNER" "$dur_err" "" "no-sentinel"
+      snapshot_iter_for_hook
+      iter_close_preserve
+      fire_post_iteration "no-sentinel" "$dur_err"
+    else
+      # Restart-informed retries (issue #255): the crash path posts a plain
+      # comment, not an envelope, so record the failure reason here so the next
+      # attempt still sees why this one died. No afk-attempts push happened, so
+      # there is no snapshot branch ref to record.
+      record_failure_markers "${ITER_DIR:-}" "" "runner-crash rc=${_runner_rc} (attempt ${attempt})"
+      log "✗ #$n runner crashed (rc=$_runner_rc) — flipping to ready-for-human"
+      gh -R "$(gh_repo)" issue comment "$n" --body "🤖 /afk: runner crashed with rc=\`$_runner_rc\`. Iteration preserved at \`$ITER_DIR\`." >/dev/null 2>&1 || true
+      emit_history "blocked" "$n" "$RUNNER" "$dur_err" "" "runner-crash"
+      snapshot_iter_for_hook
+      iter_close_preserve
+      fire_post_iteration "blocked" "$dur_err"
+    fi
     return 0
   fi
 
@@ -3047,6 +3077,11 @@ process_issue() {
   # result.status onto the state file so user hooks see a consistent
   # envelope. Exit-code policy is `continue` — a broken notifier must never
   # wedge the loop.
+  # Only sentinel-bearing attempts (done / blocked) reach here — the
+  # EOF-without-sentinel case already routed to on_attempt_error above, so
+  # post_attempt fires exactly once per runner invocation that authored an
+  # exit (Memory `attempt.hooks` contract, #216). result.status classifies
+  # success from the DONE sentinel; the parsed _sentinel_outcome rides along.
   local _pw_status="fail"
   if echo "$result" | grep -q '<promise>DONE</promise>'; then
     _pw_status="success"
@@ -3056,7 +3091,7 @@ process_issue() {
   export RED_AFK_ITER_LOG="${ITER_LOG:-}"
   export RED_AFK_STATE_FILE="${STATE_FILE:-}"
   local _afk_pow_rc=0
-  _afk_fire_post_attempt "$n" "$title" "$worktree" "$_pw_status" "$attempt" || _afk_pow_rc=$?
+  _afk_fire_post_attempt "$n" "$title" "$worktree" "$_pw_status" "$attempt" "$_sentinel_outcome" || _afk_pow_rc=$?
   if (( _afk_pow_rc != 0 )); then
     log "post_attempt hook chain exited rc=$_afk_pow_rc — continuing (policy=continue)"
   fi
@@ -3064,7 +3099,7 @@ process_issue() {
   # parent-shell pid so any later heartbeat_stop (e.g. via the INT/TERM
   # trap during cleanup) is a no-op rather than killing the wrong process.
   HEARTBEAT_PID=""
-  unset RED_AFK_RESULT_STATUS RED_AFK_HEARTBEAT_PID
+  unset RED_AFK_RESULT_STATUS RED_AFK_HEARTBEAT_PID RED_AFK_RESULT_OUTCOME
 
   # sentinel detection
   if echo "$result" | grep -q '<promise>BLOCKED</promise>'; then
@@ -3087,28 +3122,10 @@ process_issue() {
     return 0
   fi
 
-  if ! echo "$result" | grep -q '<promise>DONE</promise>'; then
-    log "✗ #$n inner agent ended without DONE sentinel — treating as blocker"
-    local dur_ns=$(( $(date +%s) - started_epoch ))
-    local notes_file log_file
-    notes_file="$(mktemp)"; log_file="$(mktemp)"
-    extract_handoff_notes "$handoff" > "$notes_file" || true
-    [[ -s "$notes_file" ]] || printf '_(no Notes appended; inner agent exited without a sentinel)_' > "$notes_file"
-    tail_iter_log 50 > "$log_file" || true
-    [[ -s "$log_file" ]] || printf '(no captured stdout)' > "$log_file"
-    emit_envelope "no-sentinel" "$n" "$dur_ns" "$branch" "$attempt" "" "$slug" "$worktree_rel" \
-      "notes" "$notes_file" \
-      "log"   "$log_file" || true
-    rm -f "$notes_file" "$log_file"
-    gh -R "$(gh_repo)" issue edit "$n" --remove-label running --add-label ready-for-human >/dev/null
-    AGG_BLOCKED=$((AGG_BLOCKED+1))
-    state_write "$STATE_FILE" blocked:=$AGG_BLOCKED current:=null
-    emit_history "blocked" "$n" "$RUNNER" "$dur_ns" "" "no-sentinel"
-    snapshot_iter_for_hook
-    iter_close_preserve
-    fire_post_iteration "no-sentinel" "$dur_ns"
-    return 0
-  fi
+  # No standalone no-sentinel branch here any more: EOF-without-sentinel is the
+  # on_attempt_error case (ADR 0028) and was already handled above before the
+  # terminal post_attempt fired. Reaching this point means the DONE sentinel
+  # was observed, so we proceed straight to the feedback loops.
 
   # feedback loops
   state_write "$STATE_FILE" current.stage=tests
