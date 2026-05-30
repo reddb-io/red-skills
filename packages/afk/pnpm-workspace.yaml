@@ -1,0 +1,12 @@
+# pnpm v11+ moved the "pnpm" field from package.json here.
+# Approving build scripts lets AFK feedback gates run pnpm install non-interactively.
+packages:
+  - .
+
+onlyBuiltDependencies:
+  - esbuild
+
+allowBuilds:
+  '@parcel/watcher': set this to true or false
+  esbuild: true
+  msgpackr-extract: set this to true or false
