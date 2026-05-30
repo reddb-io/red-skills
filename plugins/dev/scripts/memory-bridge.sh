@@ -43,10 +43,31 @@ _memory_resolve_cli() {
     return 0
   fi
 
-  # 3 & 4. Built dist of a sibling/in-repo memory plugin. CLAUDE_PLUGIN_ROOT
-  #    points at the *dev* plugin when a dev skill runs; the memory plugin is
-  #    installed alongside it. MEMORY_REPO_ROOT covers the in-repo checkout
-  #    (this monorepo) where both plugins live under plugins/.
+  # 3. Dynamic-fetch cache bundle. In a real (cache) install there is no built
+  #    dist; the memory plugin's bootstrap.mjs (ADR 0029) fetches the bundled CLI
+  #    into a version-keyed cache at <runtimeRoot>/<version>/memory-cli.mjs, where
+  #    runtimeRoot = <RED_MEMORY_CACHE_DIR | XDG_CACHE_HOME | ~/.cache>/reddb-memory.
+  #    Resolve the memory plugin's version from its manifest (sibling of dev or the
+  #    in-repo checkout) and use the cached bundle if present.
+  local mem_manifest mem_ver runtime_root cache_cli
+  for mem_manifest in \
+    "${CLAUDE_PLUGIN_ROOT:-}/../memory/.claude-plugin/plugin.json" \
+    "${MEMORY_REPO_ROOT:-}/plugins/memory/.claude-plugin/plugin.json"; do
+    [[ -f "$mem_manifest" ]] || continue
+    mem_ver="$(node -e "process.stdout.write(require(process.argv[1]).version)" "$mem_manifest" 2>/dev/null)"
+    [[ -n "$mem_ver" ]] || continue
+    runtime_root="${RED_MEMORY_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}}/reddb-memory"
+    cache_cli="$runtime_root/$mem_ver/memory-cli.mjs"
+    if [[ -f "$cache_cli" ]]; then
+      MEMORY_CLI=(node "$cache_cli")
+      return 0
+    fi
+  done
+
+  # 4 & 5. Built dist of a sibling/in-repo memory plugin (dev checkout only).
+  #    CLAUDE_PLUGIN_ROOT points at the *dev* plugin when a dev skill runs; the
+  #    memory plugin is installed alongside it. MEMORY_REPO_ROOT covers the
+  #    in-repo checkout (this monorepo) where both plugins live under plugins/.
   local cand
   for cand in \
     "${CLAUDE_PLUGIN_ROOT:-}/../memory/dist/cli.js" \

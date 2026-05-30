@@ -5,8 +5,11 @@ import { describe, expect, test } from "vitest";
 import { evaluateCompetitiveEvalV2 } from "../src/competitive-baseline.js";
 import { competitiveEvalFixture } from "../src/competitive-fixtures.js";
 
+// The README stayed at the plugin definition root (plugins/memory/README.md)
+// after the impl moved to src/domains/memory. Resolve it relative to this test
+// file: tests/ -> memory -> domains -> src -> repo root.
 const HERE = dirname(fileURLToPath(import.meta.url));
-const README = join(HERE, "..", "README.md");
+const README = join(HERE, "..", "..", "..", "..", "plugins", "memory", "README.md");
 
 describe("public Memory documentation claims", () => {
   test("quickstart documents useful source-only plugin behavior", async () => {
@@ -23,9 +26,9 @@ describe("public Memory documentation claims", () => {
     expect(readme).toContain("`memory recall \"topic\"`");
     expect(readme).toContain("pnpm --dir plugins/memory install");
     expect(readme).toContain("pnpm --dir plugins/memory build");
-    expect(readme).toContain("node plugins/memory/dist/cli.js init --mode markdown-only");
-    expect(readme).toContain("node plugins/memory/dist/cli.js init --mode graph --hooks --skill-telemetry");
-    expect(readme).toContain("node plugins/memory/dist/cli.js recall");
+    expect(readme).toContain("memory init --mode markdown-only --yes");
+    expect(readme).toContain("memory init --mode graph --hooks --skill-telemetry --yes");
+    expect(readme).toContain('memory recall "cache TTL"');
   });
 
   test("README public claims are backed by executable competitive eval evidence", async () => {

@@ -137,7 +137,7 @@ jobs:
           node-version: 22
 
       # ADR 0032: AFK ships as a committed, dependency-free bundle. Rebuild it
-      # from packages/afk (which lives outside the plugin tree) so the shipped
+      # from src/domains/dev (which lives outside the plugin tree) so the shipped
       # bin/afk.mjs is always byte-for-byte the build of the released source,
       # then stage it into the version-bump commit below. esbuild output is
       # deterministic, so unchanged source rebuilds to identical bytes and the
@@ -153,6 +153,16 @@ jobs:
           # `build` emits the canonical dist/dev.bundle.min.mjs (release asset,
           # ADR 0034) plus the transition bin/afk.mjs staged below.
           pnpm build
+          # The dynamic fetcher (src/shared/fetch-cli.ts) bootstraps every other
+          # bundle but cannot fetch itself, so it ships COMMITTED in the dev plugin
+          # (like memory's bootstrap.mjs). Rebuild it here from source so the shipped
+          # plugins/dev/hooks/red-fetch.mjs always matches src/shared/fetch-cli.ts,
+          # then stage it into the version-bump commit below (esbuild is
+          # deterministic, so an unchanged source rebuilds to identical bytes).
+          ./node_modules/.bin/esbuild ../../shared/fetch-cli.ts \
+            --bundle --minify --platform=node --format=esm --target=node22 \
+            --outfile=../../../plugins/dev/hooks/red-fetch.mjs \
+            --banner:js="import { createRequire as __cr } from 'node:module'; const require = __cr(import.meta.url);"
           # Checksum manifest the dynamic-fetch hook (src/shared/bundle-fetch.ts)
           # verifies before caching. Mirrors memory-runtime-manifest.json.
           node --input-type=module <<'EOF'
@@ -181,6 +191,7 @@ jobs:
             plugins/memory/.codex-plugin/plugin.json
           )
           afk_bundle=plugins/dev/skills/engineering/afk/bin/afk.mjs
+          fetch_bundle=plugins/dev/hooks/red-fetch.mjs
           new="${NEXT#v}"
           for manifest in "${manifests[@]}"; do
             tmp=$(mktemp)
@@ -189,10 +200,10 @@ jobs:
           done
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          if git diff --quiet -- "${manifests[@]}" "$afk_bundle"; then
-            echo "plugin manifests already at $new and AFK bundle unchanged"
+          if git diff --quiet -- "${manifests[@]}" "$afk_bundle" "$fetch_bundle"; then
+            echo "plugin manifests already at $new and AFK + red-fetch bundles unchanged"
           else
-            git add "${manifests[@]}" "$afk_bundle"
+            git add "${manifests[@]}" "$afk_bundle" "$fetch_bundle"
             git commit -m "chore(release): $NEXT [skip release]"
             # Rebase-resilient push: red-memory-wiki-extract.yml also pushes to
             # main on PR-merge (via GITHUB_TOKEN, which can't re-trigger this
@@ -225,6 +236,26 @@ jobs:
           # dist/memory.bundle.min.mjs (ADR 0034) is built by `pnpm bundle`; both
           # asset models coexist until the dynamic-fetch phase unifies them.
           pnpm bundle:legacy
+          # The /curate skill resolves red-curate-skill via the dynamic fetcher
+          # (red-fetch), which requests the canonical asset name
+          # red-curate-skill.bundle.min.mjs + a red-curate-skill.manifest.json
+          # (bundleAssetName/manifestAssetName('red-curate-skill')). Build that
+          # canonical bundle and its checksum manifest so the cache install can
+          # resolve it; the legacy dist-bundle/red-curate-skill.mjs stays for the
+          # published-bin path until both asset models unify.
+          pnpm bundle:curate-skill
+          node --input-type=module <<'EOF'
+          import { createHash } from 'node:crypto';
+          import { readFileSync, writeFileSync } from 'node:fs';
+          const bytes = readFileSync('../../../dist/red-curate-skill.bundle.min.mjs');
+          const manifest = {
+            plugin: 'red-curate-skill',
+            version: process.env.NEXT.replace(/^v/, ''),
+            sha256: createHash('sha256').update(bytes).digest('hex'),
+          };
+          writeFileSync('../../../dist/red-curate-skill.manifest.json', JSON.stringify(manifest, null, 2));
+          console.log('red-curate-skill bundle manifest:', JSON.stringify(manifest));
+          EOF
           node --input-type=module <<'EOF'
           import { createHash } from 'node:crypto';
           import { readFileSync, writeFileSync } from 'node:fs';
@@ -307,6 +338,8 @@ jobs:
             dist/dev.manifest.json
             dist/code-nav.bundle.min.mjs
             dist/code-nav.manifest.json
+            dist/red-curate-skill.bundle.min.mjs
+            dist/red-curate-skill.manifest.json
             src/domains/memory/dist-bundle/memory-cli.mjs
             src/domains/memory/dist-bundle/memory-mcp.mjs
             src/domains/memory/dist-bundle/red-curate-skill.mjs
