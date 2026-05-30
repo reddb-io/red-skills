@@ -402,6 +402,13 @@ spawn_slot() {
   if [[ -n "$SUPERVISOR_REQUEST" ]]; then
     worker_cmd+=(--request "$SUPERVISOR_REQUEST")
   fi
+  # Pin the runner explicitly so the worker's detection cascade cannot
+  # fall through to claude when the supervisor itself was launched from
+  # inside Claude Code (process-tree / path sniff would otherwise win
+  # over the weaker RED_AFK_RUNNER env fallback).
+  if [[ -n "$SUPERVISOR_RUNNER" ]]; then
+    worker_cmd+=(--runner "$SUPERVISOR_RUNNER")
+  fi
   worker_cmd+=("$PROJECT_ROOT")
 
   nohup env "${env_args[@]}" "${worker_cmd[@]}" >>"$slot_log" 2>&1 </dev/null &
