@@ -14,6 +14,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [fix(memory): skills invoke scripts/bootstrap.mjs, not the absent dist/cli.js](./pages/231-fix-memory-skills-invoke-scripts-bootstrap-mjs-not-the-absen.md)
 - [merge: #226 AFK: rename hook events from worker/* to attempt/* across merged code](./pages/263-merge-226-afk-rename-hook-events-from-worker-to-attempt-acro.md)
 - [merge: #227 AFK: make <promise> sentinel the canonical attempt exit signal](./pages/265-merge-227-afk-make-promise-sentinel-the-canonical-attempt-ex.md)
+- [merge: #271 AFK reaper: 404-aware grace cleanup for afk-attempts/* (pure keep/reap decider)](./pages/277-merge-271-afk-reaper-404-aware-grace-cleanup-for-afk-attempt.md)
 - [merge: #272 AFK reaper: well-formed branch refs + slug guard (kill double-nested names)](./pages/276-merge-272-afk-reaper-well-formed-branch-refs-slug-guard-kill.md)
 - [test(memory): split vitest suite into fast gate + integration project (#242)](./pages/264-test-memory-split-vitest-suite-into-fast-gate-integration-pr.md)
 
