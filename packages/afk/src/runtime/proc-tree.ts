@@ -1,0 +1,131 @@
+// runtime/proc-tree.ts — the real `ps`-backed worker-tree inspector.
+//
+// Mirrors supervisor.sh's sup_descendant_pids + sup_active_descendant +
+// sup_tree_cpu: collect a worker pid's descendant processes (pid + every
+// transitive child) and project each to a ProcessSnapshotEntry ({command, cpu})
+// the reaper-signal reduction (deriveSnapshot) consumes.
+//
+// This is the load-bearing SAFETY seam for the native fleet's hard-reaper. The
+// reaper only kills a stalled slot when the snapshot shows no active build/test
+// descendant AND flat cpu. An EMPTY snapshot therefore reads as "stuck" and
+// authorises a kill — so a transient `ps` failure must NEVER degrade to []. On
+// any inspection error we return a CONSERVATIVE BUSY snapshot (one synthetic
+// high-cpu entry) so a flaky `ps` can only ever spare a live worker, never reap
+// one.
+
+import { execFileSync } from "node:child_process";
+import type { ProcessSnapshotEntry } from "../core/reaper-signal.js";
+
+/** Synthetic entry returned when process inspection fails. Its cpu sits well
+ * above REAPER_SIGNAL_CPU_BUSY_PCT_DEFAULT (5) so deriveSnapshot →
+ * decideReaperSignal reads the tree as busy and refuses to kill. The command is
+ * deliberately not a recognised build/test tool — the cpu signal alone carries
+ * the conservative "busy" verdict, which is exactly the bash `ps` failure
+ * fallback intent (a failed ps must not authorise a reap). */
+export const CONSERVATIVE_BUSY_SNAPSHOT: readonly ProcessSnapshotEntry[] = [
+  { command: "unknown", cpu: 100 },
+];
+
+/** True when `pid` is a usable, non-foot-gun process id. Mirrors the
+ * sup_descendant_pids / sup_kill_tree guards: empty / non-numeric / <= 1 are
+ * refused. */
+function isInspectablePid(pid: number): boolean {
+  return Number.isInteger(pid) && pid > 1;
+}
+
+/**
+ * Parse the stdout of `ps -o pid=,ppid=,%cpu=,comm= -e` into a child→parent map
+ * plus per-pid {command, cpu}. Each line is whitespace-delimited:
+ *   `<pid> <ppid> <cpu> <comm…>`
+ * comm may contain spaces (rare, but `ps comm=` can emit a path) so everything
+ * past the third field is the command; we take its basename to mirror
+ * `ps -o comm=` semantics the busy regex expects. A malformed line is skipped.
+ */
+export function parsePsTree(stdout: string): {
+  children: Map<number, number[]>;
+  info: Map<number, ProcessSnapshotEntry>;
+} {
+  const children = new Map<number, number[]>();
+  const info = new Map<number, ProcessSnapshotEntry>();
+  for (const rawLine of stdout.split("\n")) {
+    const line = rawLine.trim();
+    if (line.length === 0) continue;
+    const parts = line.split(/\s+/);
+    if (parts.length < 4) continue;
+    const pid = Number(parts[0]);
+    const ppid = Number(parts[1]);
+    const cpu = Number(parts[2]);
+    if (!Number.isInteger(pid) || !Number.isInteger(ppid)) continue;
+    const commandRaw = parts.slice(3).join(" ");
+    const command = basename(commandRaw);
+    info.set(pid, { command, cpu: Number.isFinite(cpu) ? cpu : 0 });
+    const siblings = children.get(ppid);
+    if (siblings) siblings.push(pid);
+    else children.set(ppid, [pid]);
+  }
+  return { children, info };
+}
+
+/** Basename of a `ps comm` value (strip any directory + trailing args). */
+function basename(comm: string): string {
+  const firstWord = comm.split(/\s+/)[0] ?? comm;
+  const slash = firstWord.lastIndexOf("/");
+  return slash >= 0 ? firstWord.slice(slash + 1) : firstWord;
+}
+
+/**
+ * Walk the parsed tree from `pid` and collect `pid` + every transitive
+ * descendant as ProcessSnapshotEntry[]. Mirrors sup_descendant_pids feeding
+ * sup_active_descendant + sup_tree_cpu. A pid absent from `info` (raced away
+ * between snapshot and walk) contributes nothing.
+ */
+export function collectTree(
+  pid: number,
+  children: Map<number, number[]>,
+  info: Map<number, ProcessSnapshotEntry>,
+): ProcessSnapshotEntry[] {
+  const out: ProcessSnapshotEntry[] = [];
+  const seen = new Set<number>();
+  const stack = [pid];
+  while (stack.length > 0) {
+    const current = stack.pop()!;
+    if (seen.has(current)) continue;
+    seen.add(current);
+    const entry = info.get(current);
+    if (entry) out.push(entry);
+    const kids = children.get(current);
+    if (kids) for (const k of kids) stack.push(k);
+  }
+  return out;
+}
+
+/**
+ * Inspect the worker `pid`'s process tree into a ProcessSnapshotEntry[] via a
+ * single `ps` snapshot of all processes. Best-effort and SAFE BY DEFAULT:
+ *   - an un-inspectable pid (<=1, NaN) → [] (no tree, deriveSnapshot is empty;
+ *     a freed/garbage slot pid is genuinely not running anything).
+ *   - a `ps` spawn/parse failure → CONSERVATIVE_BUSY_SNAPSHOT so the reaper
+ *     never kills off the back of a transient inspection error.
+ *   - a successful `ps` that simply does not list the pid (already exited) → []
+ *     — that is a real, observed absence, not an inspection failure.
+ */
+export function inspectProcessTreeNative(pid: number): readonly ProcessSnapshotEntry[] {
+  if (!isInspectablePid(pid)) return [];
+  let stdout: string;
+  try {
+    stdout = execFileSync("ps", ["-e", "-o", "pid=,ppid=,%cpu=,comm="], {
+      encoding: "utf8",
+      maxBuffer: 16 * 1024 * 1024,
+    });
+  } catch {
+    // `ps` itself failed (missing binary, EAGAIN, buffer overflow, …). Failing
+    // to [] would read as "stuck" and authorise a kill — refuse: report busy.
+    return CONSERVATIVE_BUSY_SNAPSHOT;
+  }
+  try {
+    const { children, info } = parsePsTree(stdout);
+    return collectTree(pid, children, info);
+  } catch {
+    return CONSERVATIVE_BUSY_SNAPSHOT;
+  }
+}

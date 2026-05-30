@@ -1,0 +1,79 @@
+import { describe, expect, it } from "vitest";
+import {
+  CONSERVATIVE_BUSY_SNAPSHOT,
+  collectTree,
+  inspectProcessTreeNative,
+  parsePsTree,
+} from "../src/runtime/proc-tree.js";
+import { deriveSnapshot } from "../src/core/reaper-signal.js";
+
+// A `ps -e -o pid=,ppid=,%cpu=,comm=` style dump:
+//   1000 is the worker orchestrator; 1001 a pnpm-spawned node; 1002 vitest
+//   under 1001; 2000 is an unrelated process tree the walk must NOT pull in.
+const SAMPLE_PS = [
+  "    1 0 0.0 systemd",
+  " 1000 1 1.2 node",
+  " 1001 1000 3.4 node",
+  " 1002 1001 88.5 vitest",
+  " 2000 1 50.0 firefox",
+].join("\n");
+
+describe("parsePsTree", () => {
+  it("parses pid/ppid/cpu/comm and builds the child map + info", () => {
+    const { children, info } = parsePsTree(SAMPLE_PS);
+    expect(info.get(1000)).toEqual({ command: "node", cpu: 1.2 });
+    expect(info.get(1002)).toEqual({ command: "vitest", cpu: 88.5 });
+    expect(children.get(1000)).toEqual([1001]);
+    expect(children.get(1001)).toEqual([1002]);
+  });
+
+  it("takes the comm basename and skips malformed lines", () => {
+    const { info } = parsePsTree(
+      ["", "  garbage", " 50 1 0.0 /usr/bin/tsc --watch", " x y z foo"].join("\n"),
+    );
+    expect(info.get(50)).toEqual({ command: "tsc", cpu: 0 });
+    expect(info.size).toBe(1);
+  });
+});
+
+describe("collectTree", () => {
+  it("collects the pid + every transitive descendant, not siblings", () => {
+    const { children, info } = parsePsTree(SAMPLE_PS);
+    const tree = collectTree(1000, children, info);
+    const commands = tree.map((e) => e.command).sort();
+    expect(commands).toEqual(["node", "node", "vitest"]);
+    // The unrelated firefox tree is excluded.
+    expect(tree.some((e) => e.command === "firefox")).toBe(false);
+    // The reaper reduction sees the active vitest descendant.
+    const snap = deriveSnapshot(tree);
+    expect(snap.activeDescendant).toBe(true);
+  });
+
+  it("a pid absent from the snapshot yields an empty tree", () => {
+    const { children, info } = parsePsTree(SAMPLE_PS);
+    expect(collectTree(99999, children, info)).toEqual([]);
+  });
+});
+
+describe("inspectProcessTreeNative", () => {
+  it("an un-inspectable pid (<=1) returns [] without running ps", () => {
+    expect(inspectProcessTreeNative(0)).toEqual([]);
+    expect(inspectProcessTreeNative(1)).toEqual([]);
+    expect(inspectProcessTreeNative(Number.NaN)).toEqual([]);
+  });
+
+  it("the conservative busy fallback reads as busy (deriveSnapshot)", () => {
+    // The ps-failure fallback must NOT authorise a reap: its cpu sits above the
+    // busy line so the reaper-signal reduction reports the tree busy.
+    const snap = deriveSnapshot(CONSERVATIVE_BUSY_SNAPSHOT);
+    expect(snap.cpuPct).toBeGreaterThanOrEqual(5);
+  });
+
+  it("a real self-inspection returns this process in its own tree", () => {
+    // process.pid is inspectable; ps should list at least this node process.
+    const tree = inspectProcessTreeNative(process.pid);
+    // Either a real tree (length >= 1) or — on an exotic host where ps failed —
+    // the conservative busy fallback. Both are non-empty and SAFE.
+    expect(tree.length).toBeGreaterThanOrEqual(1);
+  });
+});

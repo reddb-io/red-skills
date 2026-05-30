@@ -15,7 +15,16 @@ import {
   runSupervisor,
   type SupervisorDeps,
 } from "../core/supervisor.js";
-import { afkPaths } from "../runtime/wire.js";
+import { afkPaths, resolveRepoSlug } from "../runtime/wire.js";
+import { inspectProcessTreeNative } from "../runtime/proc-tree.js";
+import {
+  agentLaneMtimeFor,
+  parkedSlotWorkFor,
+  resolveIterDirInfo,
+  teardownIterDirNative,
+} from "../runtime/supervisor-fs.js";
+import * as ghx from "../runtime/gh.js";
+import { removeDir as removeDirNative } from "../runtime/fs.js";
 
 function isAlive(pid: number): boolean {
   try {
@@ -26,14 +35,32 @@ function isAlive(pid: number): boolean {
   }
 }
 
-/** Build SupervisorDeps that spawn `run --once` of this bundle per slot. The
- * stall/teardown/gh surfaces are best-effort no-ops in this cutover — the
- * orchestration + circuit-breaker + respawn loop is the load-bearing part. */
-function buildSupervisorDeps(root: string, logFd: number, runner: string): SupervisorDeps {
+/**
+ * Build SupervisorDeps backed by REAL process / filesystem / gh IO. Every
+ * closure mirrors a supervisor.sh function (see runtime/proc-tree.ts +
+ * runtime/supervisor-fs.ts) and is best-effort: a failed ps / stat / gh degrades
+ * to the SAFE value and never throws out of the closure.
+ *
+ * Slot pids are tracked in a per-slot map keyed by slot index. `spawnSlot`
+ * records the pid; the fs/proc closures resolve the live worker through it
+ * (mirroring SLOT_PIDS[$slot] in bash, which is how find_slot_iter_dir /
+ * agentLaneMtime / inspectTree all reach the running worker tree).
+ */
+function buildSupervisorDeps(
+  root: string,
+  tmpDir: string,
+  logFd: number,
+  runner: string,
+  ghCtx: ghx.GhContext,
+): SupervisorDeps {
   const bundle = process.argv[1];
+  const now = () => Math.floor(Date.now() / 1000);
+  // slot index → live orchestrator pid (SLOT_PIDS parity).
+  const slotPids = new Map<number, number>();
+
   return {
     proc: {
-      spawnSlot: async () => {
+      spawnSlot: async (slot) => {
         const child = spawn(process.execPath, [bundle, "run", "--once", "--runner", runner], {
           cwd: root,
           env: { ...process.env, RED_AFK_RUNNER: runner },
@@ -41,7 +68,9 @@ function buildSupervisorDeps(root: string, logFd: number, runner: string): Super
           stdio: ["ignore", logFd, logFd],
         });
         child.unref();
-        return { pid: child.pid ?? 0, spawnEpoch: Math.floor(Date.now() / 1000) };
+        const pid = child.pid ?? 0;
+        slotPids.set(slot, pid);
+        return { pid, spawnEpoch: now() };
       },
       isAlive,
       killTree: async (pid) => {
@@ -55,21 +84,50 @@ function buildSupervisorDeps(root: string, logFd: number, runner: string): Super
           }
         }
       },
-      inspectTree: () => [],
+      // Real ps-backed tree sample. A ps failure returns a CONSERVATIVE BUSY
+      // snapshot (never []), so a transient ps error can never authorise a reap.
+      inspectTree: (pid) => inspectProcessTreeNative(pid),
+      sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     },
     fs: {
-      agentLaneMtime: () => 0,
-      resolveIterDir: () => null,
-      teardownIterDir: async () => undefined,
-      parkedSlotWork: () => ({ workers: [], fastDeaths: 0, supervisorLogPath: "" }),
-      removeDir: async () => undefined,
+      agentLaneMtime: (slot) => agentLaneMtimeFor(tmpDir, slotPids.get(slot) ?? null),
+      resolveIterDir: (slot) => resolveIterDirInfo(tmpDir, slotPids.get(slot) ?? null, now()),
+      teardownIterDir: async (info) => {
+        await teardownIterDirNative(info, root);
+      },
+      parkedSlotWork: (slot) => parkedSlotWorkFor(tmpDir, root, slot, 0),
+      removeDir: async (path) => {
+        try {
+          await removeDirNative(path);
+        } catch {
+          // best-effort
+        }
+      },
     },
     gh: {
-      comment: async () => undefined,
-      editLabels: async () => undefined,
-      ensureRunnerErrorLabel: async () => undefined,
+      comment: async (issue, body) => {
+        try {
+          await ghx.comment(ghCtx, issue, body);
+        } catch {
+          // best-effort
+        }
+      },
+      editLabels: async (issue, add, remove) => {
+        try {
+          await ghx.editLabels(ghCtx, issue, remove, add);
+        } catch {
+          // best-effort
+        }
+      },
+      ensureRunnerErrorLabel: async () => {
+        try {
+          await ghx.ensureRunnerErrorLabel(ghCtx);
+        } catch {
+          // best-effort
+        }
+      },
     },
-    now: () => Math.floor(Date.now() / 1000),
+    now,
   };
 }
 
@@ -105,7 +163,9 @@ export async function superviseCommand(args: string[], cwd = process.cwd()): Pro
   const logFd = openSync(logFile, "a");
   const config = resolveSupervisorConfig();
   const state = initSupervisorState(config.target);
-  const deps = buildSupervisorDeps(root, logFd, config.runner);
+  const repo = await resolveRepoSlug(root).catch(() => "");
+  const ghCtx = { cwd: root, repo };
+  const deps = buildSupervisorDeps(root, tmp, logFd, config.runner, ghCtx);
 
   const stopRequested = (): boolean => existsSync(stopFile);
 

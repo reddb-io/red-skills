@@ -38720,7 +38720,7 @@ var require_filesystem = __commonJS({
     var LDD_PATH = "/usr/bin/ldd";
     var SELF_PATH = "/proc/self/exe";
     var MAX_LENGTH = 2048;
-    var readFileSync2 = (path2) => {
+    var readFileSync3 = (path2) => {
       const fd = fs.openSync(path2, "r");
       const buffer3 = Buffer.alloc(MAX_LENGTH);
       const bytesRead = fs.readSync(fd, buffer3, 0, MAX_LENGTH, 0);
@@ -38745,7 +38745,7 @@ var require_filesystem = __commonJS({
     module.exports = {
       LDD_PATH,
       SELF_PATH,
-      readFileSync: readFileSync2,
+      readFileSync: readFileSync3,
       readFile: readFile8
     };
   }
@@ -38794,7 +38794,7 @@ var require_detect_libc = __commonJS({
     "use strict";
     var childProcess = __require("child_process");
     var { isLinux, getReport } = require_process();
-    var { LDD_PATH, SELF_PATH, readFile: readFile8, readFileSync: readFileSync2 } = require_filesystem();
+    var { LDD_PATH, SELF_PATH, readFile: readFile8, readFileSync: readFileSync3 } = require_filesystem();
     var { interpreterPath } = require_elf();
     var cachedFamilyInterpreter;
     var cachedFamilyFilesystem;
@@ -38886,7 +38886,7 @@ var require_detect_libc = __commonJS({
       }
       cachedFamilyFilesystem = null;
       try {
-        const lddContent = readFileSync2(LDD_PATH);
+        const lddContent = readFileSync3(LDD_PATH);
         cachedFamilyFilesystem = getFamilyFromLddContent(lddContent);
       } catch (e2) {
       }
@@ -38911,7 +38911,7 @@ var require_detect_libc = __commonJS({
       }
       cachedFamilyInterpreter = null;
       try {
-        const selfContent = readFileSync2(SELF_PATH);
+        const selfContent = readFileSync3(SELF_PATH);
         const path2 = interpreterPath(selfContent);
         cachedFamilyInterpreter = familyFromInterpreterPath(path2);
       } catch (e2) {
@@ -38975,7 +38975,7 @@ var require_detect_libc = __commonJS({
       }
       cachedVersionFilesystem = null;
       try {
-        const lddContent = readFileSync2(LDD_PATH);
+        const lddContent = readFileSync3(LDD_PATH);
         const versionMatch = lddContent.match(RE_GLIBC_VERSION);
         if (versionMatch) {
           cachedVersionFilesystem = versionMatch[1];
@@ -39119,19 +39119,19 @@ var require_node_gyp_build = __commonJS({
       }
       throw new Error(errMessage);
       function resolve6(dir2) {
-        var tuples = readdirSync(path2.join(dir2, "prebuilds")).map(parseTuple);
+        var tuples = readdirSync2(path2.join(dir2, "prebuilds")).map(parseTuple);
         var tuple4 = tuples.filter(matchTuple(platform, arch)).sort(compareTuples)[0];
         if (!tuple4) return;
         return resolveFile(path2.join(dir2, "prebuilds", tuple4.name));
       }
       function resolveFile(prebuilds) {
-        var parsed = readdirSync(prebuilds).map(parseTags);
+        var parsed = readdirSync2(prebuilds).map(parseTags);
         var candidates = parsed.filter(matchTags(runtime5, abi));
         var winner = candidates.sort(compareTags(runtime5))[0];
         if (winner) return path2.join(prebuilds, winner.file);
       }
     };
-    function readdirSync(dir) {
+    function readdirSync2(dir) {
       try {
         return fs.readdirSync(dir);
       } catch (err) {
@@ -39139,7 +39139,7 @@ var require_node_gyp_build = __commonJS({
       }
     }
     function getFirst(dir, filter12) {
-      var files = readdirSync(dir).filter(filter12);
+      var files = readdirSync2(dir).filter(filter12);
       return files[0] && path2.join(dir, files[0]);
     }
     function matchBuild(name) {
@@ -81938,6 +81938,21 @@ async function editLabels(ctx, issue, remove13, add6) {
 async function comment(ctx, issue, body) {
   await gh(["issue", "comment", String(issue), ...repoArgs(ctx), "--body", body], opts(ctx));
 }
+async function ensureRunnerErrorLabel(ctx) {
+  await gh(
+    [
+      "label",
+      "create",
+      "runner-error",
+      ...repoArgs(ctx),
+      "--color",
+      "B60205",
+      "--description",
+      "AFK supervisor circuit-tripped; runner was misconfigured"
+    ],
+    opts(ctx)
+  );
+}
 async function closeIssue(ctx, issue) {
   await gh(["issue", "close", String(issue), ...repoArgs(ctx), "--reason", "completed"], opts(ctx));
 }
@@ -84156,8 +84171,8 @@ async function reapCommand(_args, cwd = process.cwd(), stdout2 = process.stdout)
 
 // src/commands/supervise.ts
 import { spawn as spawn7 } from "node:child_process";
-import { existsSync as existsSync6, openSync, writeFileSync, rmSync } from "node:fs";
-import { join as join23 } from "node:path";
+import { existsSync as existsSync7, openSync, writeFileSync, rmSync } from "node:fs";
+import { join as join24 } from "node:path";
 
 // src/core/reaper-signal.ts
 var REAPER_SIGNAL_CPU_BUSY_PCT_DEFAULT = 5;
@@ -84196,7 +84211,8 @@ var SUPERVISOR_DEFAULTS = {
   circuitWindowS: 90,
   stallThresholdS: 600,
   stallKillThresholdS: 1800,
-  runner: "claude"
+  runner: "claude",
+  pollIntervalS: 15
 };
 function resolveSupervisorConfig(env2 = process.env) {
   const num = (key, fallback) => {
@@ -84214,7 +84230,8 @@ function resolveSupervisorConfig(env2 = process.env) {
       "RED_AFK_STALL_KILL_THRESHOLD_S",
       SUPERVISOR_DEFAULTS.stallKillThresholdS
     ),
-    runner: env2.RED_AFK_RUNNER && env2.RED_AFK_RUNNER.length > 0 ? env2.RED_AFK_RUNNER : SUPERVISOR_DEFAULTS.runner
+    runner: env2.RED_AFK_RUNNER && env2.RED_AFK_RUNNER.length > 0 ? env2.RED_AFK_RUNNER : SUPERVISOR_DEFAULTS.runner,
+    pollIntervalS: num("RED_AFK_POLL_S", SUPERVISOR_DEFAULTS.pollIntervalS)
   };
 }
 function validateStallThresholds(config) {
@@ -84433,10 +84450,249 @@ async function runSupervisor(state, deps, config, stopRequested) {
   for (; ; ) {
     const result = await superviseTick(state, deps, config, stopRequested);
     if (result.stopped) return;
+    await deps.proc.sleep(config.pollIntervalS * 1e3);
+  }
+}
+
+// src/runtime/proc-tree.ts
+import { execFileSync as execFileSync3 } from "node:child_process";
+var CONSERVATIVE_BUSY_SNAPSHOT = [
+  { command: "unknown", cpu: 100 }
+];
+function isInspectablePid(pid) {
+  return Number.isInteger(pid) && pid > 1;
+}
+function parsePsTree(stdout2) {
+  const children2 = /* @__PURE__ */ new Map();
+  const info = /* @__PURE__ */ new Map();
+  for (const rawLine of stdout2.split("\n")) {
+    const line = rawLine.trim();
+    if (line.length === 0) continue;
+    const parts2 = line.split(/\s+/);
+    if (parts2.length < 4) continue;
+    const pid = Number(parts2[0]);
+    const ppid = Number(parts2[1]);
+    const cpu = Number(parts2[2]);
+    if (!Number.isInteger(pid) || !Number.isInteger(ppid)) continue;
+    const commandRaw = parts2.slice(3).join(" ");
+    const command = basename2(commandRaw);
+    info.set(pid, { command, cpu: Number.isFinite(cpu) ? cpu : 0 });
+    const siblings = children2.get(ppid);
+    if (siblings) siblings.push(pid);
+    else children2.set(ppid, [pid]);
+  }
+  return { children: children2, info };
+}
+function basename2(comm) {
+  const firstWord = comm.split(/\s+/)[0] ?? comm;
+  const slash = firstWord.lastIndexOf("/");
+  return slash >= 0 ? firstWord.slice(slash + 1) : firstWord;
+}
+function collectTree(pid, children2, info) {
+  const out = [];
+  const seen = /* @__PURE__ */ new Set();
+  const stack = [pid];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (seen.has(current)) continue;
+    seen.add(current);
+    const entry = info.get(current);
+    if (entry) out.push(entry);
+    const kids = children2.get(current);
+    if (kids) for (const k2 of kids) stack.push(k2);
+  }
+  return out;
+}
+function inspectProcessTreeNative(pid) {
+  if (!isInspectablePid(pid)) return [];
+  let stdout2;
+  try {
+    stdout2 = execFileSync3("ps", ["-e", "-o", "pid=,ppid=,%cpu=,comm="], {
+      encoding: "utf8",
+      maxBuffer: 16 * 1024 * 1024
+    });
+  } catch {
+    return CONSERVATIVE_BUSY_SNAPSHOT;
+  }
+  try {
+    const { children: children2, info } = parsePsTree(stdout2);
+    return collectTree(pid, children2, info);
+  } catch {
+    return CONSERVATIVE_BUSY_SNAPSHOT;
+  }
+}
+
+// src/runtime/supervisor-fs.ts
+import { existsSync as existsSync6, readdirSync, readFileSync as readFileSync2, statSync as statSync2 } from "node:fs";
+import { join as join23 } from "node:path";
+function slotLogPath(tmpDir, slot) {
+  return join23(tmpDir, `afk-supervisor-slot-${slot}.log`);
+}
+function parseWorkerIdsFromLog(path2) {
+  let text3;
+  try {
+    text3 = readFileSync2(path2, "utf8");
+  } catch {
+    return [];
+  }
+  const out = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const line of text3.split("\n")) {
+    const m2 = line.match(/^\[afk\] worker: (w[A-Z0-9]+)$/);
+    if (!m2) continue;
+    const wid = m2[1];
+    if (!seen.has(wid)) {
+      seen.add(wid);
+      out.push(wid);
+    }
+  }
+  return out;
+}
+function iterDirsForWorker(root, wid) {
+  const wdir = workerDir(root, wid);
+  let entries2;
+  try {
+    entries2 = readdirSync(wdir);
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const entry of entries2) {
+    const dir = join23(wdir, entry);
+    try {
+      if (statSync2(dir).isDirectory()) out.push(dir);
+    } catch {
+    }
+  }
+  return out;
+}
+function iterDirIssueNumber(dir) {
+  try {
+    const parsed = JSON.parse(readFileSync2(join23(dir, "afk.state.json"), "utf8"));
+    const n = parsed.current?.number;
+    return typeof n === "number" && Number.isInteger(n) ? n : null;
+  } catch {
+    return null;
+  }
+}
+function findSlotIterDir(tmpDir, slotPid) {
+  if (slotPid === null || !Number.isInteger(slotPid) || slotPid <= 0) return null;
+  const workersRoot = join23(tmpDir, "workers");
+  let workerDirs;
+  try {
+    workerDirs = readdirSync(workersRoot);
+  } catch {
+    return null;
+  }
+  for (const wid of workerDirs) {
+    const wdir = join23(workersRoot, wid);
+    let pidText;
+    try {
+      pidText = readFileSync2(join23(wdir, "worker.pid"), "utf8").trim();
+    } catch {
+      continue;
+    }
+    if (Number(pidText) !== slotPid) continue;
+    let entries2;
+    try {
+      entries2 = readdirSync(wdir);
+    } catch {
+      return null;
+    }
+    let newest = null;
+    let newestMtime = -1;
+    for (const entry of entries2) {
+      const dir = join23(wdir, entry);
+      try {
+        const st2 = statSync2(dir);
+        if (!st2.isDirectory()) continue;
+        const m2 = st2.mtimeMs;
+        if (m2 > newestMtime) {
+          newestMtime = m2;
+          newest = dir;
+        }
+      } catch {
+      }
+    }
+    return newest;
+  }
+  return null;
+}
+function agentLaneMtimeFor(tmpDir, slotPid) {
+  const dir = findSlotIterDir(tmpDir, slotPid);
+  if (dir === null) return 0;
+  try {
+    return Math.floor(statSync2(join23(dir, "agent.log.jsonl")).mtimeMs / 1e3);
+  } catch {
+    return 0;
+  }
+}
+function tailFile(path2, n) {
+  let text3;
+  try {
+    text3 = readFileSync2(path2, "utf8");
+  } catch {
+    return "";
+  }
+  const lines2 = text3.split("\n");
+  if (lines2.length > 0 && lines2[lines2.length - 1] === "") lines2.pop();
+  return lines2.slice(-n).join("\n");
+}
+function resolveIterDirInfo(tmpDir, slotPid, now) {
+  const dir = findSlotIterDir(tmpDir, slotPid);
+  if (dir === null) return null;
+  let issue = null;
+  let workerId = "";
+  let startedAt = "";
+  try {
+    const parsed = JSON.parse(readFileSync2(join23(dir, "afk.state.json"), "utf8"));
+    const n = parsed.current?.number;
+    if (typeof n === "number" && Number.isInteger(n)) issue = n;
+    if (typeof parsed.worker_id === "string") workerId = parsed.worker_id;
+    if (typeof parsed.started_at === "string") startedAt = parsed.started_at;
+  } catch {
+  }
+  let durationS = 0;
+  if (startedAt.length > 0) {
+    const startedEpoch = Math.floor(Date.parse(startedAt) / 1e3);
+    if (Number.isFinite(startedEpoch) && startedEpoch > 0 && now > startedEpoch) {
+      durationS = now - startedEpoch;
+    }
+  }
+  const notes = tailFile(join23(dir, "handoff.md"), 200);
+  const logTail = tailFile(join23(dir, "afk.log"), 50);
+  return { path: dir, issue, workerId, logTail, notes, durationS };
+}
+function parkedSlotWorkFor(tmpDir, root, slot, fastDeaths) {
+  const supervisorLogPath = join23(tmpDir, "afk-supervisor.log");
+  const wids = parseWorkerIdsFromLog(slotLogPath(tmpDir, slot));
+  const workers = wids.map((wid) => ({
+    workerId: wid,
+    pairs: iterDirsForWorker(root, wid).map((dir) => ({
+      dir,
+      issue: iterDirIssueNumber(dir)
+    }))
+  }));
+  return { workers, fastDeaths, supervisorLogPath };
+}
+async function teardownIterDirNative(info, root) {
+  const fsp = await import("node:fs/promises");
+  const worktree = join23(info.path, "worktree");
+  if (existsSync6(worktree)) {
+    try {
+      const { git: git2 } = await Promise.resolve().then(() => (init_exec(), exec_exports));
+      await git2(["-C", root, "worktree", "remove", "--force", worktree]);
+    } catch {
+    }
+  }
+  try {
+    await fsp.rm(info.path, { recursive: true, force: true });
+  } catch {
   }
 }
 
 // src/commands/supervise.ts
+init_fs();
 function isAlive(pid) {
   try {
     process.kill(pid, 0);
@@ -84445,11 +84701,13 @@ function isAlive(pid) {
     return false;
   }
 }
-function buildSupervisorDeps(root, logFd, runner) {
+function buildSupervisorDeps(root, tmpDir, logFd, runner, ghCtx) {
   const bundle = process.argv[1];
+  const now = () => Math.floor(Date.now() / 1e3);
+  const slotPids = /* @__PURE__ */ new Map();
   return {
     proc: {
-      spawnSlot: async () => {
+      spawnSlot: async (slot) => {
         const child = spawn7(process.execPath, [bundle, "run", "--once", "--runner", runner], {
           cwd: root,
           env: { ...process.env, RED_AFK_RUNNER: runner },
@@ -84457,7 +84715,9 @@ function buildSupervisorDeps(root, logFd, runner) {
           stdio: ["ignore", logFd, logFd]
         });
         child.unref();
-        return { pid: child.pid ?? 0, spawnEpoch: Math.floor(Date.now() / 1e3) };
+        const pid = child.pid ?? 0;
+        slotPids.set(slot, pid);
+        return { pid, spawnEpoch: now() };
       },
       isAlive,
       killTree: async (pid) => {
@@ -84470,32 +84730,57 @@ function buildSupervisorDeps(root, logFd, runner) {
           }
         }
       },
-      inspectTree: () => []
+      // Real ps-backed tree sample. A ps failure returns a CONSERVATIVE BUSY
+      // snapshot (never []), so a transient ps error can never authorise a reap.
+      inspectTree: (pid) => inspectProcessTreeNative(pid),
+      sleep: (ms) => new Promise((resolve6) => setTimeout(resolve6, ms))
     },
     fs: {
-      agentLaneMtime: () => 0,
-      resolveIterDir: () => null,
-      teardownIterDir: async () => void 0,
-      parkedSlotWork: () => ({ workers: [], fastDeaths: 0, supervisorLogPath: "" }),
-      removeDir: async () => void 0
+      agentLaneMtime: (slot) => agentLaneMtimeFor(tmpDir, slotPids.get(slot) ?? null),
+      resolveIterDir: (slot) => resolveIterDirInfo(tmpDir, slotPids.get(slot) ?? null, now()),
+      teardownIterDir: async (info) => {
+        await teardownIterDirNative(info, root);
+      },
+      parkedSlotWork: (slot) => parkedSlotWorkFor(tmpDir, root, slot, 0),
+      removeDir: async (path2) => {
+        try {
+          await removeDir(path2);
+        } catch {
+        }
+      }
     },
     gh: {
-      comment: async () => void 0,
-      editLabels: async () => void 0,
-      ensureRunnerErrorLabel: async () => void 0
+      comment: async (issue, body) => {
+        try {
+          await comment(ghCtx, issue, body);
+        } catch {
+        }
+      },
+      editLabels: async (issue, add6, remove13) => {
+        try {
+          await editLabels(ghCtx, issue, remove13, add6);
+        } catch {
+        }
+      },
+      ensureRunnerErrorLabel: async () => {
+        try {
+          await ensureRunnerErrorLabel(ghCtx);
+        } catch {
+        }
+      }
     },
-    now: () => Math.floor(Date.now() / 1e3)
+    now
   };
 }
 async function superviseCommand(args2, cwd = process.cwd()) {
   const root = cwd;
   const paths = afkPaths(root);
   const tmp = paths.tmpDir;
-  const pidFile = join23(tmp, "afk-supervisor.pid");
-  const stopFile = join23(tmp, "afk-supervisor.stop");
-  const logFile = join23(tmp, "afk-supervisor.log");
+  const pidFile = join24(tmp, "afk-supervisor.pid");
+  const stopFile = join24(tmp, "afk-supervisor.stop");
+  const logFile = join24(tmp, "afk-supervisor.log");
   await Promise.resolve().then(() => (init_fs(), fs_exports)).then((m2) => m2.ensureDir(tmp));
-  if (existsSync6(pidFile)) {
+  if (existsSync7(pidFile)) {
     try {
       const prev = Number(__require("node:fs").readFileSync(pidFile, "utf8").trim());
       if (prev && isAlive(prev)) {
@@ -84507,12 +84792,14 @@ async function superviseCommand(args2, cwd = process.cwd()) {
     }
   }
   writeFileSync(pidFile, String(process.pid), "utf8");
-  if (existsSync6(stopFile)) rmSync(stopFile, { force: true });
+  if (existsSync7(stopFile)) rmSync(stopFile, { force: true });
   const logFd = openSync(logFile, "a");
   const config = resolveSupervisorConfig();
   const state = initSupervisorState(config.target);
-  const deps = buildSupervisorDeps(root, logFd, config.runner);
-  const stopRequested = () => existsSync6(stopFile);
+  const repo = await resolveRepoSlug(root).catch(() => "");
+  const ghCtx = { cwd: root, repo };
+  const deps = buildSupervisorDeps(root, tmp, logFd, config.runner, ghCtx);
+  const stopRequested = () => existsSync7(stopFile);
   try {
     await runSupervisor(state, deps, config, stopRequested);
   } finally {
