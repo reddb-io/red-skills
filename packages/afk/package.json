@@ -17,6 +17,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@ai-hero/sandcastle": "^0.6.5",
     "zod": "^3.23.8"
   },
   "devDependencies": {

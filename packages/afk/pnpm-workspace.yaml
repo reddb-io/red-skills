@@ -7,4 +7,6 @@ onlyBuiltDependencies:
   - esbuild
 
 allowBuilds:
+  '@parcel/watcher': set this to true or false
   esbuild: true
+  msgpackr-extract: set this to true or false
