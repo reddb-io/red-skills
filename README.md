@@ -764,7 +764,7 @@ Skill telemetry, and soft integrations used by `dev`.
 
 | Server | What it does |
 |--------|--------------|
-| **[code-nav](./plugins/dev/mcp/code-nav/README.md)** | LSP-backed semantic navigation. Spawns the language server for each file type and exposes `workspace_symbols`, `goto_definition`, `find_references`, `document_symbols`, `hover` as MCP tools — IDE-grade symbol navigation on top of the agent's default search. Presets for TS/Go/Rust/Python; extend via `CODE_NAV_SERVERS`. Loads automatically with the `dev` plugin. |
+| **[code-nav](./src/domains/dev/mcp/code-nav/README.md)** | LSP-backed semantic navigation. Spawns the language server for each file type and exposes `workspace_symbols`, `goto_definition`, `find_references`, `document_symbols`, `hover` as MCP tools — IDE-grade symbol navigation on top of the agent's default search. Presets for TS/Go/Rust/Python; extend via `CODE_NAV_SERVERS`. Loads automatically with the `dev` plugin. |
 
 </details>
 

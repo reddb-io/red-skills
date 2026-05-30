@@ -54,13 +54,22 @@ Code sets to the project directory).
 
 ## Build
 
-The plugin ships a pre-bundled `dist/index.js` (single self-contained file, no
-`node_modules` needed at runtime). To rebuild after changing `src/`:
+Following ADR 0034, this package is the *implementation* (it lives under
+`src/domains/dev/mcp/code-nav`, outside the plugin definition). `build` emits a
+single self-contained bundle to the repo-root `dist/` — no `node_modules` is
+needed at runtime. To rebuild after changing `src/`:
 
 ```bash
-pnpm install
-pnpm build      # typecheck + esbuild bundle
+pnpm install --ignore-workspace
+pnpm build      # typecheck + esbuild bundle -> ../../../../../dist/code-nav-mcp.bundle.min.mjs
 ```
+
+The dev plugin resolves the bundle dynamically (`plugins/dev/.mcp.json`): the
+dynamic-fetch cache (`<cache>/code-nav-<version>.bundle.min.mjs`, populated by the
+`SessionStart` hook calling `red-fetch.mjs code-nav <version>`) first, then the
+repo-root `dist/code-nav-mcp.bundle.min.mjs` for a dev checkout. On release it
+ships as the `code-nav.bundle.min.mjs` asset with a `code-nav.manifest.json`
+checksum.
 
 ## Verifying
 

@@ -6,6 +6,15 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 
 ---
 
+## code-nav (mcp) — relocated into the monorepo (ADR 0034)
+
+- **status**: modified
+- **upstream**: —
+- **why**: ADR 0034 splits plugin *definition* from *implementation* and ships one built bundle per artifact as a release asset fetched dynamically. The code-nav MCP server still lived under the plugin definition tree (`plugins/dev/mcp/code-nav`) with a committed `dist/index.js`, contradicting both principles.
+- **what changed**: Moved the whole self-contained package `plugins/dev/mcp/code-nav` → `src/domains/dev/mcp/code-nav` (relative imports unchanged). Build now emits a single minified bundle to the repo-root `dist/code-nav-mcp.bundle.min.mjs` (`esbuild --minify --target=node22` + the shared `createRequire` banner) instead of a package-local `dist/index.js`; the old `bin`/`prepare`/`start` scripts were dropped. `plugins/dev/.mcp.json` now resolves the bundle in order — dynamic-fetch cache (`<cache>/code-nav-<version>.bundle.min.mjs`), then repo-root `dist/code-nav-mcp.bundle.min.mjs`, then a clear failure. The dev `SessionStart` hook also fetches `code-nav` via `red-fetch.mjs`, and `red-release.yml` builds + publishes `code-nav.bundle.min.mjs` + `code-nav.manifest.json` as release assets. `plugins/dev/mcp/` no longer carries any source.
+
+---
+
 ## start (engineering) — upstream CONTEXT-FORMAT.md drift skipped (no cherry-pick)
 
 - **status**: modified
