@@ -12,5 +12,7 @@
     "resolveJsonModule": true,
     "types": ["node"]
   },
-  "include": ["src", "tests"]
+  "include": ["src", "tests", "../../shared/**/*.ts"],
+  "comment-exclude": "Shared source is typechecked here (dev imports it); shared *.test.ts run under vitest and resolve their own deps, so they are not compiled by dev's tsc.",
+  "exclude": ["../../shared/**/*.test.ts"]
 }

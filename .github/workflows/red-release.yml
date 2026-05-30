@@ -145,12 +145,28 @@ jobs:
       - name: Build AFK runtime bundle
         if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
         working-directory: src/domains/dev
+        env:
+          NEXT: ${{ steps.version.outputs.next }}
         run: |
           set -euo pipefail
           pnpm install --frozen-lockfile
           # `build` emits the canonical dist/dev.bundle.min.mjs (release asset,
           # ADR 0034) plus the transition bin/afk.mjs staged below.
           pnpm build
+          # Checksum manifest the dynamic-fetch hook (src/shared/bundle-fetch.ts)
+          # verifies before caching. Mirrors memory-runtime-manifest.json.
+          node --input-type=module <<'EOF'
+          import { createHash } from 'node:crypto';
+          import { readFileSync, writeFileSync } from 'node:fs';
+          const bytes = readFileSync('../../../dist/dev.bundle.min.mjs');
+          const manifest = {
+            plugin: 'dev',
+            version: process.env.NEXT.replace(/^v/, ''),
+            sha256: createHash('sha256').update(bytes).digest('hex'),
+          };
+          writeFileSync('../../../dist/dev.manifest.json', JSON.stringify(manifest, null, 2));
+          console.log('dev runtime manifest:', JSON.stringify(manifest));
+          EOF
 
       - name: Sync plugin manifest versions
         if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
@@ -247,6 +263,8 @@ jobs:
           git tag -a "$NEXT" -m "Release $NEXT"
           git push origin "$NEXT"
           assets=(
+            dist/dev.bundle.min.mjs
+            dist/dev.manifest.json
             src/domains/memory/dist-bundle/memory-cli.mjs
             src/domains/memory/memory-runtime-manifest.json
           )

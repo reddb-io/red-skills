@@ -21,6 +21,7 @@ import {
   type RepoContext,
 } from "../runtime/wire.js";
 import { workerDir as workerDirPath, workerPidFile } from "../core/worker-paths.js";
+import { parseFlags, type FlagSchema } from "../../../../shared/args.js";
 import * as ghx from "../runtime/gh.js";
 import * as gitx from "../runtime/git.js";
 import * as fsx from "../runtime/fs.js";
@@ -40,45 +41,53 @@ interface ParsedRunFlags {
   request?: string;
 }
 
+/** Parse a comma-separated issue list into an ordered, finite number list. */
+function parseIssueList(raw: string): number[] {
+  return raw.split(",").map((n) => Number(n.trim())).filter((n) => Number.isFinite(n));
+}
+
+/**
+ * Flag schema for the `run` command, expressed against the shared CLI layer
+ * (`src/shared/args.ts`, built over `cli-args-parser`). The coercions here
+ * reproduce the exact semantics the dev suite asserts: `--prd`/`-n` map through
+ * `Number`, `--issues` trims and filters to finite numbers, booleans are
+ * present-or-absent, and `--request` accepts the `-r` short alias.
+ */
+const RUN_FLAG_SCHEMA = {
+  prd: { kind: "value", coerce: (raw: string): SelectionFilter => ({ kind: "prd", prd: Number(raw) }) },
+  issues: { kind: "value", coerce: (raw: string): SelectionFilter => ({ kind: "issues", numbers: parseIssueList(raw) }) },
+  n: { kind: "value", coerce: (raw: string): number => Number(raw) },
+  once: { kind: "boolean" },
+  runner: { kind: "value", coerce: (raw: string): string => raw },
+  request: { kind: "value", aliases: ["r"], coerce: (raw: string): string => raw },
+} satisfies FlagSchema;
+
 /** Parse the `run` flags: --prd N / --issues a,b,c / -n N / --once / --request / --runner. */
 export function parseRunFlags(args: readonly string[]): ParsedRunFlags {
-  let filter: SelectionFilter = { kind: "all" };
-  let iterCap: number | undefined;
-  let once = false;
-  let runnerFlag: string | undefined;
-  let request: string | undefined;
+  const { values } = parseFlags(args, RUN_FLAG_SCHEMA);
 
+  // --prd and --issues both feed `filter`; the last of the two in argv wins,
+  // matching the original single-pass scan. Resolve order from the raw argv.
+  let filter: SelectionFilter = { kind: "all" };
+  let lastFilterPos = -1;
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i]!;
-    const take = (): string => {
-      const v = args[++i];
-      if (v === undefined) throw new Error(`${arg} requires a value`);
-      return v;
-    };
-    if (arg === "--prd") {
-      filter = { kind: "prd", prd: Number(take()) };
-    } else if (arg.startsWith("--prd=")) {
-      filter = { kind: "prd", prd: Number(arg.slice("--prd=".length)) };
-    } else if (arg === "--issues") {
-      filter = { kind: "issues", numbers: take().split(",").map((n) => Number(n.trim())).filter((n) => Number.isFinite(n)) };
-    } else if (arg.startsWith("--issues=")) {
-      filter = { kind: "issues", numbers: arg.slice("--issues=".length).split(",").map((n) => Number(n.trim())).filter((n) => Number.isFinite(n)) };
-    } else if (arg === "-n") {
-      iterCap = Number(take());
-    } else if (arg === "--once") {
-      once = true;
-    } else if (arg === "--runner") {
-      runnerFlag = take();
-    } else if (arg.startsWith("--runner=")) {
-      runnerFlag = arg.slice("--runner=".length);
-    } else if (arg === "--request" || arg === "-r") {
-      request = take();
-    } else if (arg.startsWith("--request=")) {
-      request = arg.slice("--request=".length);
+    if ((arg === "--prd" || arg.startsWith("--prd=")) && values.prd !== undefined && i > lastFilterPos) {
+      filter = values.prd as SelectionFilter;
+      lastFilterPos = i;
+    } else if ((arg === "--issues" || arg.startsWith("--issues=")) && values.issues !== undefined && i > lastFilterPos) {
+      filter = values.issues as SelectionFilter;
+      lastFilterPos = i;
     }
   }
 
-  return { filter, iterCap, once, runnerFlag, request };
+  return {
+    filter,
+    iterCap: values.n as number | undefined,
+    once: values.once === true,
+    runnerFlag: values.runner as string | undefined,
+    request: values.request as string | undefined,
+  };
 }
 
 /** Empty BootOptions step inputs — boot's discovery work (orphan dirs, attempt

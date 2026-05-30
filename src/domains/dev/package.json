@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@ai-hero/sandcastle": "^0.6.5",
+    "cli-args-parser": "^1.0.6",
     "zod": "^3.23.8"
   },
   "devDependencies": {

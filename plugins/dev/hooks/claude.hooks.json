@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'root=\"${CLAUDE_PLUGIN_ROOT}\"; ver=\"$(node -e \"process.stdout.write(require(process.argv[1]).version)\" \"$root/.claude-plugin/plugin.json\" 2>/dev/null)\"; for f in \"$root/dist/red-fetch.mjs\" \"$root/../../dist/red-fetch.mjs\"; do [ -f \"$f\" ] && { node \"$f\" dev \"$ver\" || true; break; }; done; printf \"{}\"'"
+          }
+        ]
+      }
+    ]
+  }
+}

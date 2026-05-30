@@ -1,0 +1,11 @@
+{
+  "name": "@reddb/shared",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Code shared across RedSkills plugin domains (ADR 0034): CLI arg parsing over cli-args-parser, and the dynamic plugin-bundle fetch. Imported by src/domains/* via relative path; deps resolve from this package's node_modules.",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "cli-args-parser": "^1.0.6"
+  }
+}
