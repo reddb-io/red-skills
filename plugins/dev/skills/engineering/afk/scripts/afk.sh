@@ -3384,6 +3384,10 @@ cap_issue_attempts
 # that closed more than the grace window ago. Within-grace and still-open issues
 # are left in place. Best-effort and never on the close path — runs here at boot.
 prune_completed_attempt_branches
+# Remote live-branch cleanup (issue #273, PRD #244): delete origin afk/*
+# branches for issues already closed. This is the boot-time backstop for the
+# DONE path's best-effort delete_remote; open/unclassified issues are kept.
+prune_completed_remote_live_branches
 # Local live-branch cleanup (issue #274, PRD #244): drop stale local afk/*
 # branches for issues that are already closed while explicitly skipping any
 # branch checked out by a registered worktree. Best-effort boot hygiene only.
