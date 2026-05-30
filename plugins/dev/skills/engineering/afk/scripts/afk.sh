@@ -2670,6 +2670,45 @@ afk_is_locked() {
   lock_store_read "$PROJECT_ROOT/.red/tmp/branch-lock.yaml" >/dev/null 2>&1
 }
 
+# ---------- attempt-level lifecycle hook helpers (issue #226, ADR 0026) ----------
+# The pre_attempt / post_attempt hooks fire *per runner invocation*, not per
+# issue: a --fallback-runner swap on one issue produces two pre_attempt →
+# post_attempt cycles, the second tagged attempt_n=2. These helpers centralise
+# the context-build + env-export + dispatch so every runner invocation brackets
+# identically; the orchestrator calls them once around the first runner and
+# again around the fallback swap. `attempt` is the counter AFK already tracks
+# for the Envelope (ITER_ATTEMPT / CURRENT_ATTEMPT), surfaced to hooks as both
+# the RED_AFK_ATTEMPT_N env var and the `attempt_n` JSON field.
+_afk_fire_pre_attempt() {
+  local _num="$1" _title="$2" _ws="$3" _runner="$4" _an="$5"
+  export RED_AFK_WORKSPACE="$_ws"
+  export RED_AFK_ATTEMPT_N="$_an"
+  local _ctx
+  _ctx="$(jq -nc \
+    --argjson num "$_num" \
+    --arg title "$_title" \
+    --arg ws "$_ws" \
+    --arg runner "$_runner" \
+    --argjson an "$_an" \
+    '{issue:{number:$num, title:$title}, workspace:$ws, runner:$runner, attempt_n:$an}')"
+  hook_dispatch pre_attempt "$_ctx" >/dev/null
+}
+
+_afk_fire_post_attempt() {
+  local _num="$1" _title="$2" _ws="$3" _status="$4" _an="$5"
+  export RED_AFK_WORKSPACE="$_ws"
+  export RED_AFK_ATTEMPT_N="$_an"
+  local _ctx
+  _ctx="$(jq -nc \
+    --argjson num "$_num" \
+    --arg title "$_title" \
+    --arg ws "$_ws" \
+    --arg status "$_status" \
+    --argjson an "$_an" \
+    '{issue:{number:$num, title:$title}, workspace:$ws, result:{status:$status}, attempt_n:$an}')"
+  hook_dispatch post_attempt "$_ctx" >/dev/null
+}
+
 # ---------- per-issue processing ----------
 process_issue() {
   local n="$1" title="$2" body="$3"
@@ -2863,27 +2902,21 @@ process_issue() {
   heartbeat_start "$n"
   state_write "$STATE_FILE" current.stage=impl
 
-  # ---------- pre_worker lifecycle hook ----------
-  # Fires after the worktree exists, before the runner is invoked. Mutable
-  # slice: `issue`, `workspace` (worktree path). `runner` is read-only
-  # context. Non-zero exit skips the runner invocation: heartbeat stops,
-  # the worktree is preserved on disk, and the claim is returned to
-  # `ready-for-agent` so the next iteration can pick it up — post-pick
-  # state is reconciled cleanly.
-  export RED_AFK_WORKSPACE="$worktree"
-  local _afk_pw_ctx _afk_pw_out _afk_pw_rc=0
-  _afk_pw_ctx="$(jq -nc \
-    --argjson num "$n" \
-    --arg title "$title" \
-    --arg ws "$worktree" \
-    --arg runner "${RUNNER:-}" \
-    '{issue:{number:$num, title:$title}, workspace:$ws, runner:$runner}')"
-  _afk_pw_out="$(hook_dispatch pre_worker "$_afk_pw_ctx")" || _afk_pw_rc=$?
+  # ---------- pre_attempt lifecycle hook (attempt 1) ----------
+  # Fires after the worktree exists, before each runner is invoked (issue
+  # #226: per runner invocation, not per issue — the fallback swap below
+  # fires it again with attempt_n=2). Mutable slice: `issue`, `workspace`
+  # (worktree path), `attempt_n`. `runner` is read-only context. Non-zero
+  # exit skips the runner invocation: heartbeat stops, the worktree is
+  # preserved on disk, and the claim is returned to `ready-for-agent` so the
+  # next iteration can pick it up — post-pick state is reconciled cleanly.
+  local _afk_pw_rc=0
+  _afk_fire_pre_attempt "$n" "$title" "$worktree" "${RUNNER:-}" "$attempt" || _afk_pw_rc=$?
   if (( _afk_pw_rc != 0 )); then
     heartbeat_stop
-    log "✗ pre_worker hook aborted (rc=$_afk_pw_rc) for #$n — skipping runner invocation, restoring ready-for-agent"
+    log "✗ pre_attempt hook aborted (rc=$_afk_pw_rc) for #$n — skipping runner invocation, restoring ready-for-agent"
     gh -R "$(gh_repo)" issue edit "$n" --remove-label running --add-label ready-for-agent >/dev/null 2>&1 || true
-    gh -R "$(gh_repo)" issue comment "$n" --body "🤖 /afk skipped runner invocation: pre_worker hook exited \`$_afk_pw_rc\`. Restored \`ready-for-agent\`." >/dev/null 2>&1 || true
+    gh -R "$(gh_repo)" issue comment "$n" --body "🤖 /afk skipped runner invocation: pre_attempt hook exited \`$_afk_pw_rc\`. Restored \`ready-for-agent\`." >/dev/null 2>&1 || true
     claim_lock_release "$n"
     CURRENT_ISSUE="" CURRENT_BRANCH=""
     return 0
@@ -2896,10 +2929,10 @@ process_issue() {
   afk_firehose timing "runner $RUNNER returned rc=$_runner_rc" \
     elapsed_s="$(( $(date +%s) - _runner_t0 ))" rc="$_runner_rc"
 
-  # ---------- on_worker_error lifecycle hook ----------
+  # ---------- on_attempt_error lifecycle hook ----------
   # Fires only on an unhandled exception in the worker path (run_inner
   # exited non-zero in a way the orchestrator did not anticipate). Clean
-  # test/build failures still route through post_worker with
+  # test/build failures still route through post_attempt with
   # result.status=fail; quota exhaustion is its own pre-existing branch
   # below and never lands here. Exit-code policy is `continue`, so a
   # broken pager integration cannot wedge the loop.
@@ -2910,6 +2943,7 @@ process_issue() {
     afk_firehose error "runner $RUNNER crashed (rc=$_runner_rc)" \
       class=runner-crash rc="$_runner_rc"
     export RED_AFK_WORKSPACE="$worktree"
+    export RED_AFK_ATTEMPT_N="$attempt"
     export RED_AFK_ERROR_CLASS="runner-crash"
     local _afk_owe_ctx _afk_owe_rc=0
     _afk_owe_ctx="$(jq -nc \
@@ -2917,11 +2951,12 @@ process_issue() {
       --arg title "$title" \
       --arg ws "$worktree" \
       --arg rc "$_runner_rc" \
-      '{issue:{number:$num, title:$title}, workspace:$ws, error:{class:"runner-crash", rc:($rc|tonumber? // 0)}}')"
-    hook_dispatch on_worker_error "$_afk_owe_ctx" >/dev/null \
+      --argjson an "$attempt" \
+      '{issue:{number:$num, title:$title}, workspace:$ws, error:{class:"runner-crash", rc:($rc|tonumber? // 0)}, attempt_n:$an}')"
+    hook_dispatch on_attempt_error "$_afk_owe_ctx" >/dev/null \
       || _afk_owe_rc=$?
     if (( _afk_owe_rc != 0 )); then
-      log "on_worker_error hook chain exited rc=$_afk_owe_rc — continuing (policy=continue)"
+      log "on_attempt_error hook chain exited rc=$_afk_owe_rc — continuing (policy=continue)"
     fi
     unset RED_AFK_ERROR_CLASS
     local dur_err=$(( $(date +%s) - started_epoch ))
@@ -2945,6 +2980,13 @@ process_issue() {
   if [[ $RUNNER_EXHAUSTED -eq 1 ]]; then
     heartbeat_stop
     if [[ $FALLBACK_RUNNER -eq 1 ]]; then
+      # Close attempt N's cycle before swapping: per ADR 0026 each runner
+      # invocation is bracketed by pre_attempt → post_attempt, so the
+      # exhausted attempt gets its own post_attempt (status=exhausted) with
+      # the current attempt_n. The heartbeat/envelope defaults stay inert
+      # here (their env vars are unset) — they belong to the terminal
+      # post_attempt below; this firing exists for the per-attempt 1:1 map.
+      _afk_fire_post_attempt "$n" "$title" "$worktree" "exhausted" "$attempt" || true
       local other="claude"; [[ "$RUNNER" == "claude" ]] && other="codex"
       log "runner $RUNNER exhausted — swapping to $other and retrying #$n (--fallback-runner)"
       RUNNER="$other"
@@ -2952,9 +2994,26 @@ process_issue() {
       CURRENT_ATTEMPT="$attempt"
       handoff="$(write_handoff "$n" "$title" "$slug" "$body" "$worktree" "$RUNNER" "$attempt")"
       heartbeat_start "$n"
+      # ---------- pre_attempt lifecycle hook (fallback attempt, attempt_n=2) ----------
+      # The swap is a fresh runner invocation, so pre_attempt fires again
+      # (issue #226) — this is the second firing the per-attempt cadence
+      # promises. Abort short-circuits the swap exactly like attempt 1.
+      local _afk_pw2_rc=0
+      _afk_fire_pre_attempt "$n" "$title" "$worktree" "$RUNNER" "$attempt" || _afk_pw2_rc=$?
+      if (( _afk_pw2_rc != 0 )); then
+        heartbeat_stop
+        log "✗ pre_attempt hook aborted (rc=$_afk_pw2_rc) for #$n fallback swap — skipping runner invocation, restoring ready-for-agent"
+        gh -R "$(gh_repo)" issue edit "$n" --remove-label running --add-label ready-for-agent >/dev/null 2>&1 || true
+        gh -R "$(gh_repo)" issue comment "$n" --body "🤖 /afk skipped fallback runner invocation: pre_attempt hook exited \`$_afk_pw2_rc\`. Restored \`ready-for-agent\`." >/dev/null 2>&1 || true
+        claim_lock_release "$n"
+        CURRENT_ISSUE="" CURRENT_BRANCH=""
+        return 0
+      fi
       result="$(run_inner "$worktree" "$handoff" "$RUNNER")"
       if [[ $RUNNER_EXHAUSTED -eq 1 ]]; then
         heartbeat_stop
+        # Both runners exhausted: close the fallback attempt's cycle too.
+        _afk_fire_post_attempt "$n" "$title" "$worktree" "exhausted" "$attempt" || true
         gh -R "$(gh_repo)" issue comment "$n" --body "Both runners exhausted. Iteration preserved at \`$ITER_DIR\`." >/dev/null
         gh -R "$(gh_repo)" issue edit "$n" --remove-label running --add-label ready-for-agent >/dev/null
         emit_history "exhausted" "$n" "$RUNNER" 0 "" "both-runners"
@@ -2977,33 +3036,29 @@ process_issue() {
     fi
   fi
 
-  # ---------- post_worker lifecycle hook ----------
-  # Fires when the runner returned — success or clean failure. The built-in
-  # `heartbeat` default (registered first) replaces the inline `heartbeat_stop`
-  # that used to live here, so the iteration's heartbeat side-channel
-  # terminates before any user post_worker hook runs; the `envelope` default
-  # then reconciles result.status onto the state file so user hooks see a
-  # consistent envelope. Exit-code policy is `continue` — a broken notifier
-  # must never wedge the loop.
+  # ---------- post_attempt lifecycle hook (terminal invocation) ----------
+  # Fires when the runner returned — success or clean failure — for the
+  # invocation that actually completed (issue #226: under --fallback-runner
+  # this is attempt_n=2; the swapped-away attempt fired its own
+  # post_attempt above). The built-in `heartbeat` default (registered first)
+  # replaces the inline `heartbeat_stop` that used to live here, so the
+  # iteration's heartbeat side-channel terminates before any user
+  # post_attempt hook runs; the `envelope` default then reconciles
+  # result.status onto the state file so user hooks see a consistent
+  # envelope. Exit-code policy is `continue` — a broken notifier must never
+  # wedge the loop.
   local _pw_status="fail"
   if echo "$result" | grep -q '<promise>DONE</promise>'; then
     _pw_status="success"
   fi
-  export RED_AFK_WORKSPACE="$worktree"
   export RED_AFK_RESULT_STATUS="$_pw_status"
   export RED_AFK_HEARTBEAT_PID="${HEARTBEAT_PID:-}"
   export RED_AFK_ITER_LOG="${ITER_LOG:-}"
   export RED_AFK_STATE_FILE="${STATE_FILE:-}"
-  local _afk_pow_ctx _afk_pow_rc=0
-  _afk_pow_ctx="$(jq -nc \
-    --argjson num "$n" \
-    --arg title "$title" \
-    --arg ws "$worktree" \
-    --arg status "$_pw_status" \
-    '{issue:{number:$num, title:$title}, workspace:$ws, result:{status:$status}}')"
-  hook_dispatch post_worker "$_afk_pow_ctx" >/dev/null || _afk_pow_rc=$?
+  local _afk_pow_rc=0
+  _afk_fire_post_attempt "$n" "$title" "$worktree" "$_pw_status" "$attempt" || _afk_pow_rc=$?
   if (( _afk_pow_rc != 0 )); then
-    log "post_worker hook chain exited rc=$_afk_pow_rc — continuing (policy=continue)"
+    log "post_attempt hook chain exited rc=$_afk_pow_rc — continuing (policy=continue)"
   fi
   # The heartbeat default has already killed the sub-shell; clear the
   # parent-shell pid so any later heartbeat_stop (e.g. via the INT/TERM
@@ -3195,7 +3250,7 @@ trap cleanup INT TERM
 # setting AFK_SESSION_CLEAN_EXIT — i.e. an unhandled exception, a `set -e`
 # kill of the orchestrator script, supervisor death, or any path that did
 # not run through `post_session` / `on_idle` / cleanup / a user-requested
-# abort. Distinct from `on_worker_error` (a single worker crashed; the loop
+# abort. Distinct from `on_attempt_error` (a single attempt crashed; the loop
 # kept running) and from `post_session` (clean shutdown). Exit-code policy
 # is `continue`: this hook cannot rescue the session, only announce its
 # death. The function is defined ABOVE the source guard so test harnesses

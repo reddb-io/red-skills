@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
-# Unit tests for pre_worktree / pre_worker lifecycle hooks and the built-in
-# default registration mechanism (issue #211, PRD #207).
+# Unit tests for pre_worktree / pre_attempt lifecycle hooks and the built-in
+# default registration mechanism (issue #211, PRD #207; pre_worker renamed to
+# pre_attempt in #226).
 #
 # Verifies:
-#   1. afk.sh wires pre_worktree before `git worktree add` and pre_worker
-#      before `run_inner`, with exactly one dispatch site each.
-#   2. dispatcher policies: pre_worktree=abort, pre_worker=abort, and both
+#   1. afk.sh wires pre_worktree before `git worktree add` and fires
+#      pre_attempt (via the _afk_fire_pre_attempt helper) before each
+#      run_inner. pre_attempt is per runner invocation (#226), so there are
+#      two call sites — the first runner and the --fallback-runner swap —
+#      but exactly one `hook_dispatch pre_attempt` literal (in the helper).
+#   2. dispatcher policies: pre_worktree=abort, pre_attempt=abort, and both
 #      are members of the canonical lifecycle name set.
 #   3. built-in defaults: `cargo` and `gradle` register at pre_worktree
 #      ahead of any user-declared command, in deterministic order, and the
@@ -19,10 +23,10 @@
 #   7. defaults-then-user: a user pre_worktree hook sees .env populated by
 #      the cargo default that ran before it.
 #   8. exit-code policy: a failing user pre_worktree hook aborts and the rc
-#      propagates to the caller; a failing user pre_worker hook does the
+#      propagates to the caller; a failing user pre_attempt hook does the
 #      same (both are abort-policy).
 #   9. declaration order is preserved within multi-command user lists.
-#  10. SKILL.md documents pre_worktree, pre_worker, the cargo + gradle
+#  10. SKILL.md documents pre_worktree, pre_attempt, the cargo + gradle
 #      defaults, and the disable-not-reorder rule.
 
 set -uo pipefail
@@ -72,37 +76,42 @@ expect_contains() {
   fi
 }
 
-# ---------- 1. afk.sh wires pre_worktree and pre_worker at the right sites ----------
+# ---------- 1. afk.sh wires pre_worktree and pre_attempt at the right sites ----------
 if grep -q 'hook_dispatch pre_worktree' "$AFK_SH"; then r=1; else r=0; fi
 expect_true "afk.sh wires pre_worktree" "$r"
-if grep -q 'hook_dispatch pre_worker'   "$AFK_SH"; then r=1; else r=0; fi
-expect_true "afk.sh wires pre_worker"   "$r"
+if grep -q '_afk_fire_pre_attempt ' "$AFK_SH"; then r=1; else r=0; fi
+expect_true "afk.sh fires pre_attempt (helper invoked)" "$r"
 
 expect_eq "exactly one pre_worktree dispatch site" \
   "$(grep -c 'hook_dispatch pre_worktree' "$AFK_SH")" "1"
-expect_eq "exactly one pre_worker dispatch site" \
-  "$(grep -c 'hook_dispatch pre_worker' "$AFK_SH")" "1"
+# Exactly one dispatch literal — it lives in the _afk_fire_pre_attempt helper.
+expect_eq "exactly one hook_dispatch pre_attempt literal" \
+  "$(grep -c 'hook_dispatch pre_attempt' "$AFK_SH")" "1"
+# Per-invocation cadence (#226): the helper is invoked twice — once for the
+# first runner, once for the --fallback-runner swap.
+expect_eq "pre_attempt fired per runner invocation (2 call sites)" \
+  "$(grep -c '_afk_fire_pre_attempt "\$n"' "$AFK_SH")" "2"
 
 pwt_line="$(grep -n 'hook_dispatch pre_worktree' "$AFK_SH" | head -1 | cut -d: -f1)"
-pw_line="$(grep -n  'hook_dispatch pre_worker'   "$AFK_SH" | head -1 | cut -d: -f1)"
+pa_line="$(grep -n  '_afk_fire_pre_attempt "\$n"' "$AFK_SH" | head -1 | cut -d: -f1)"
 worktree_add_line="$(grep -n 'worktree add "\$worktree"' "$AFK_SH" | head -1 | cut -d: -f1)"
 run_inner_line="$(grep -n 'run_inner "\$worktree" "\$handoff"' "$AFK_SH" | head -1 | cut -d: -f1)"
 
 if [[ -n "$pwt_line" && -n "$worktree_add_line" && "$pwt_line" -lt "$worktree_add_line" ]]; then r=1; else r=0; fi
 expect_true "pre_worktree fires BEFORE git worktree add" "$r"
 
-if [[ -n "$pw_line" && -n "$worktree_add_line" && -n "$run_inner_line" \
-      && "$pw_line" -gt "$worktree_add_line" && "$pw_line" -lt "$run_inner_line" ]]; then r=1; else r=0; fi
-expect_true "pre_worker fires AFTER worktree add, BEFORE run_inner" "$r"
+if [[ -n "$pa_line" && -n "$worktree_add_line" && -n "$run_inner_line" \
+      && "$pa_line" -gt "$worktree_add_line" && "$pa_line" -lt "$run_inner_line" ]]; then r=1; else r=0; fi
+expect_true "pre_attempt fires AFTER worktree add, BEFORE run_inner" "$r"
 
 # ---------- 2. dispatcher policies and canonical-name membership ----------
 # shellcheck disable=SC1091
 source "$DISP_SH"
 expect_eq "pre_worktree policy = abort" "${HOOK_EXIT_POLICY[pre_worktree]:-}" "abort"
-expect_eq "pre_worker policy   = abort" "${HOOK_EXIT_POLICY[pre_worker]:-}"   "abort"
+expect_eq "pre_attempt policy   = abort" "${HOOK_EXIT_POLICY[pre_attempt]:-}"   "abort"
 names="$(hook_canonical_names | sort | tr '\n' ',')"
 expect_contains "canonical names include pre_worktree" ",$names" ",pre_worktree,"
-expect_contains "canonical names include pre_worker"   ",$names" ",pre_worker,"
+expect_contains "canonical names include pre_attempt"   ",$names" ",pre_attempt,"
 
 # ---------- 3. defaults files exist and are executable ----------
 if [[ -f "$CARGO_DEF" ]]; then r=1; else r=0; fi
@@ -285,20 +294,20 @@ expect_eq "pre_worktree abort: rc propagated" "$rc" "23"
 expect_contains "pre_worktree abort: failure logged" "$(cat "$errlog")" "rc=23"
 rm -f "$errlog"
 
-# ---------- 14. exit-code policy: pre_worker abort propagates ----------
+# ---------- 14. exit-code policy: pre_attempt abort propagates ----------
 HOOK_LISTS=()
-hook_register pre_worker 'echo nope >&2; exit 31'
+hook_register pre_attempt 'echo nope >&2; exit 31'
 errlog="$(mktemp)"
-hook_dispatch pre_worker '{"workspace":"/tmp/ws"}' >/dev/null 2>"$errlog"
+hook_dispatch pre_attempt '{"workspace":"/tmp/ws"}' >/dev/null 2>"$errlog"
 rc=$?
-expect_eq "pre_worker abort: rc propagated" "$rc" "31"
-expect_contains "pre_worker abort: failure logged" "$(cat "$errlog")" "rc=31"
+expect_eq "pre_attempt abort: rc propagated" "$rc" "31"
+expect_contains "pre_attempt abort: failure logged" "$(cat "$errlog")" "rc=31"
 rm -f "$errlog"
 
 # ---------- 15. declaration order preserved within user list ----------
 f="$(mktmp_yaml 'afk:
   hooks:
-    pre_worker:
+    pre_attempt:
       - "first"
       - "second"
       - "third"
@@ -307,19 +316,19 @@ HOOK_LISTS=()
 HOOK_DEFAULTS_DISABLED=()
 hook_config_load "$f"
 expect_eq "user list order preserved" \
-  "$(printf '%s' "${HOOK_LISTS[pre_worker]}" | tr '\n' ',')" \
+  "$(printf '%s' "${HOOK_LISTS[pre_attempt]}" | tr '\n' ',')" \
   "first,second,third"
 rm -f "$f"
 
 # ---------- 16. SKILL.md documents both hooks + defaults + disable-not-reorder ----------
 if grep -q 'pre_worktree' "$SKILL_MD"; then r=1; else r=0; fi
 expect_true "SKILL.md mentions pre_worktree" "$r"
-if grep -q 'pre_worker'   "$SKILL_MD"; then r=1; else r=0; fi
-expect_true "SKILL.md mentions pre_worker"   "$r"
+if grep -q 'pre_attempt'   "$SKILL_MD"; then r=1; else r=0; fi
+expect_true "SKILL.md mentions pre_attempt"   "$r"
 if grep -A1 '`pre_worktree`' "$SKILL_MD" | grep -qi 'worktree\|claim\|target'; then r=1; else r=0; fi
 expect_true "SKILL.md explains when pre_worktree fires" "$r"
-if grep -A1 '`pre_worker`'   "$SKILL_MD" | grep -qi 'runner\|workspace\|worker'; then r=1; else r=0; fi
-expect_true "SKILL.md explains when pre_worker fires" "$r"
+if grep -A1 '`pre_attempt`'   "$SKILL_MD" | grep -qi 'runner\|workspace\|invocation'; then r=1; else r=0; fi
+expect_true "SKILL.md explains when pre_attempt fires" "$r"
 if grep -q 'afk.hooks.defaults.cargo'  "$SKILL_MD"; then r=1; else r=0; fi
 expect_true "SKILL.md documents cargo default disable" "$r"
 if grep -q 'afk.hooks.defaults.gradle' "$SKILL_MD"; then r=1; else r=0; fi

@@ -280,12 +280,12 @@ HOOK_LISTS=()
 HOOK_KINDS=()
 HOOK_DEFAULTS_DISABLED=()
 hook_config_register_defaults
-# Inspect HOOK_KINDS for post_worker — any registered defaults must be
+# Inspect HOOK_KINDS for post_attempt — any registered defaults must be
 # marked default (the test environment may or may not have all defaults
 # executable, but at least one of cargo/gradle/heartbeat/envelope/validation
 # should land in a real install).
 found_default=0
-for name in pre_worktree post_worker post_merge; do
+for name in pre_worktree post_attempt post_merge; do
   kinds="${HOOK_KINDS[$name]:-}"
   if [[ -n "$kinds" ]]; then
     while IFS= read -r k; do

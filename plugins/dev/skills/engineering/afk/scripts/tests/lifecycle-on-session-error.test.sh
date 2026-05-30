@@ -18,8 +18,8 @@
 #      treats a clean rc as a normal exit even if the sentinel was never
 #      set — defensive against an early-boot exit before any AFK code
 #      runs).
-#   6. The handler does NOT fire on a per-worker crash — per-worker
-#      crashes are caught by process_issue's on_worker_error branch which
+#   6. The handler does NOT fire on a per-attempt crash — per-attempt
+#      crashes are caught by process_issue's on_attempt_error branch which
 #      returns 0 from the function, so the outer loop is unaffected.
 #   7. A failing on_session_error hook does NOT prevent the process from
 #      terminating: the handler always returns 0, so the script's
@@ -29,7 +29,7 @@
 #      the end-of-script post_session site all set
 #      AFK_SESSION_CLEAN_EXIT=1 before their explicit `exit`.
 #   9. SKILL.md documents on_session_error and the distinction from
-#      on_worker_error / post_session.
+#      on_attempt_error / post_session.
 
 set -uo pipefail
 
@@ -161,17 +161,17 @@ expect_eq "no dispatch when rc=0 even without sentinel" \
   "$(wc -c < "$calls_file" | tr -d ' ')" "0"
 rm -f "$calls_file"
 
-# ---------- 6. per-worker crash path does not propagate to session error ----------
-# process_issue's on_worker_error branch handles run_inner non-zero exits
+# ---------- 6. per-attempt crash path does not propagate to session error ----------
+# process_issue's on_attempt_error branch handles run_inner non-zero exits
 # locally and returns 0 from the function — meaning the outer for-loop in
-# main does NOT see a non-zero status from a per-worker crash. We verify
-# the wiring contract: the on_worker_error block returns 0 (no `exit`)
+# main does NOT see a non-zero status from a per-attempt crash. We verify
+# the wiring contract: the on_attempt_error block returns 0 (no `exit`)
 # and the on_session_error handler is therefore never reached.
-owe_block="$(awk '/on_worker_error lifecycle hook/{flag=1} flag{print} flag && /return 0$/{exit}' "$AFK_SH")"
+owe_block="$(awk '/on_attempt_error lifecycle hook/{flag=1} flag{print} flag && /return 0$/{exit}' "$AFK_SH")"
 if echo "$owe_block" | grep -qE '^[[:space:]]*return 0$'; then r=1; else r=0; fi
-expect_true "on_worker_error branch returns 0 (does not propagate to session)" "$r"
+expect_true "on_attempt_error branch returns 0 (does not propagate to session)" "$r"
 if echo "$owe_block" | grep -qE '^[[:space:]]*exit '; then r=1; else r=0; fi
-expect_eq "on_worker_error branch does not exit (per-worker crash stays local)" "$r" "0"
+expect_eq "on_attempt_error branch does not exit (per-attempt crash stays local)" "$r" "0"
 
 # ---------- 7. failing on_session_error hook does NOT block process exit ----------
 # Even if the user hook exits 99, the handler must return 0 — the EXIT
@@ -224,11 +224,13 @@ expect_contains "end-of-script sets AFK_SESSION_CLEAN_EXIT=1 after post_session"
 # ---------- 9. SKILL.md documents on_session_error ----------
 if grep -q '`on_session_error`' "$SKILL_MD"; then r=1; else r=0; fi
 expect_true "SKILL.md mentions on_session_error" "$r"
-osec_row="$(grep -F '`on_session_error`' "$SKILL_MD" | head -1)"
+# Select the lifecycle *table row* (starts with `| `on_session_error``), not the
+# envelope-ordering prose that also name-drops the hook in backticks.
+osec_row="$(grep -F '| `on_session_error`' "$SKILL_MD" | head -1)"
 expect_contains "SKILL.md on_session_error documents session-crash class" \
   "$osec_row" "session-crash"
-expect_contains "SKILL.md on_session_error distinct from on_worker_error" \
-  "$osec_row" "on_worker_error"
+expect_contains "SKILL.md on_session_error distinct from on_attempt_error" \
+  "$osec_row" "on_attempt_error"
 expect_contains "SKILL.md on_session_error distinct from post_session" \
   "$osec_row" "post_session"
 expect_contains "SKILL.md on_session_error documents non-zero is logged" \

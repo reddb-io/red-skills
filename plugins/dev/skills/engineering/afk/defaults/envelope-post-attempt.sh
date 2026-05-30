@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# envelope-post-worker.sh — built-in post_worker default (PRD #207, issue #212).
+# envelope-post-attempt.sh — built-in post_attempt default (PRD #207, issue
+# #212; renamed from post_worker in #226).
 #
 # Reconciles the iteration's intermediate envelope state on the AFK state
-# file as soon as the runner returns — before any user `post_worker` hook
+# file as soon as the runner returns — before any user `post_attempt` hook
 # runs, so a user notifier/pager integration that reads state already sees
 # the worker's terminal result classified.
 #
 # Contract:
-#   stdin   — JSON object: post_worker context with `.result.status` of
+#   stdin   — JSON object: post_attempt context with `.result.status` of
 #             "success" or "fail".
 #   stdout  — empty (context unchanged). Pure side-effect on the state file.
 #   exit    — 0. Never aborts the chain.
