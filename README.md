@@ -356,7 +356,7 @@ Every `/afk` invocation gets its own 4-char worker ID (e.g. `wK7M2`), so opening
 
 RedSkills' product surface is `/afk` plus a runner-neutral **task contract** at [`.red/contracts/afk-task.md`](./.red/contracts/afk-task.md). The contract assumes nothing about the executor beyond reading the handoff file, doing the work, and emitting `<promise>DONE</promise>` or `<promise>BLOCKED</promise>`. Every backend below — Claude Code (native or basic), Codex CLI (phased or basic), and any custom fallback — fulfils the same contract. Claude Code-native sub-agents are an **acceleration path**, not a separate product; Codex gets workflow parity through phased `codex exec`.
 
-Once `/afk` resolves a runner identity (detection cascade or `--runner` pin), it probes that runner's capabilities and selects a **run mode**. Selection lives in [`scripts/lib/capabilities.sh`](./plugins/dev/skills/engineering/afk/scripts/lib/capabilities.sh) and is logged on every iteration as `dispatch: runner=<r> mode=<m> …`, persisted in `afk.state.json` at `current.run_mode`, and exported to children as `RED_AFK_RUN_MODE_RESOLVED`. **Degradation is always safe**: if the production artefacts for the optimised path are missing, dispatch silently falls back to the basic counterpart and the sentinel-driven lifecycle is unchanged.
+Once `/afk` resolves a runner identity (detection cascade or `--runner` pin), it probes that runner's capabilities and selects a **run mode**. Selection lives in [`src/domains/dev/src/core/capabilities.ts`](./src/domains/dev/src/core/capabilities.ts) and is logged on every iteration as `dispatch: runner=<r> mode=<m> …`, persisted in `afk.state.json` at `current.run_mode`, and exported to children as `RED_AFK_RUN_MODE_RESOLVED`. **Degradation is always safe**: if the production artefacts for the optimised path are missing, dispatch silently falls back to the basic counterpart and the sentinel-driven lifecycle is unchanged.
 
 | Run mode | Runner | Required artefacts | What the inner agent does |
 |----------|--------|--------------------|---------------------------|
@@ -366,7 +366,7 @@ Once `/afk` resolves a runner identity (detection cascade or `--runner` pin), it
 | `codex-basic` | Codex CLI | none — current default | One `codex exec` session with the inlined `AGENT-PROMPT.md`. |
 | `hermes-fallback` | Anything else | none | Treats the runner as an opaque executor of the prompt body; the sentinel contract still applies. See [`runner-hermes.md`](./plugins/dev/skills/engineering/afk/runner-hermes.md) for what fallback explicitly does *not* provide. |
 
-Operator overrides via `RED_AFK_RUN_MODE`: `basic` forces the basic path (parity testing); `fallback` forces `hermes-fallback`; `native` / `phased` request the optimised path and are honoured only when the environment can satisfy them. Mode is metadata about *how* the work happened — never authority over *what* counts as completion. Details, log shape, state field, and the full operator-override table live in the AFK [SKILL.md *Capability Dispatch* section](./plugins/dev/skills/engineering/afk/SKILL.md#capability-dispatch-issue-202); the dispatch table is covered by 22 hermetic test cases in [`scripts/tests/capabilities.test.sh`](./plugins/dev/skills/engineering/afk/scripts/tests/capabilities.test.sh).
+Operator overrides via `RED_AFK_RUN_MODE`: `basic` forces the basic path (parity testing); `fallback` forces `hermes-fallback`; `native` / `phased` request the optimised path and are honoured only when the environment can satisfy them. Mode is metadata about *how* the work happened — never authority over *what* counts as completion. Details, log shape, state field, and the full operator-override table live in the AFK [SKILL.md *Capability Dispatch* section](./plugins/dev/skills/engineering/afk/SKILL.md#capability-dispatch-issue-202); the dispatch table is covered by 22 hermetic test cases in [`src/domains/dev/tests/capabilities.test.ts`](./src/domains/dev/tests/capabilities.test.ts).
 
 **The expected user flow is runner-agnostic:**
 
@@ -684,6 +684,7 @@ Composable. Boring on purpose where boring is enough. Sharp where it matters.
 | **[zoom-out](./plugins/dev/skills/engineering/zoom-out/SKILL.md)** | Map-first Codebase understanding; graph-aware when Memory Graph mode is ready, read-only when it is not. |
 | **[prototype](./plugins/dev/skills/engineering/prototype/SKILL.md)** | Throwaway prototype — terminal app for state/logic, or UI variations toggleable from one route. |
 | **[setup-red-skills](./plugins/dev/skills/engineering/setup-red-skills/SKILL.md)** | Per-repo config: issue tracker, triage label vocab, domain doc layout, RedSkills workflows, RTK. |
+| **[statusline](./plugins/dev/skills/engineering/statusline/SKILL.md)** | Installs or inspects the RedSkills Claude Code statusline, rendering the live AFK block via `node bin/afk.mjs statusline`. |
 
 </details>
 

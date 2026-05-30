@@ -8,6 +8,32 @@ argument-hint: "[--restore <skill-name>] [--background] (no arg = interactive cu
 
 This skill **mutates skills on disk**. Run the loop below verbatim. Every mutation goes through `red-curate-skill`, the workflow engine the Memory plugin exposes — never invent shell commands that delete, overwrite, or rename skill files directly.
 
+### Resolve `red-curate-skill` first (always, before any `red-curate-skill` call)
+
+The curate engine ships as a release-asset bundle, not a globally-installed bin — in a cache install there is no bare `red-curate-skill` on `PATH`. Before the boot precondition, resolve the runnable bundle with the same cache → repo-root dist → legacy fallback cascade `.mcp.json` uses for code-nav, and treat the result as the `red-curate-skill` command (`red-curate-skill <cmd>` ≡ `node "$RED_CURATE_SKILL" <cmd>`):
+
+```bash
+RED_CURATE_SKILL="$(
+  root="${CLAUDE_PLUGIN_ROOT:-${CODEX_PLUGIN_ROOT:-}}"
+  ver="$(node -e "process.stdout.write(require(process.argv[1]).version)" "$root/.claude-plugin/plugin.json" 2>/dev/null)"
+  cache="${RED_SKILLS_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/red-skills/bundles}"
+  # 1. dynamic-fetch cache (populated by the dev SessionStart hook running red-fetch red-curate-skill <ver>)
+  if [ -n "$ver" ] && [ -f "$cache/red-curate-skill-$ver.bundle.min.mjs" ]; then
+    echo "$cache/red-curate-skill-$ver.bundle.min.mjs"; exit 0
+  fi
+  # 2. repo-root dist (dev checkout: pnpm --dir src/domains/memory bundle:curate-skill)
+  for repo in "$root/../.." "$PWD"; do
+    [ -f "$repo/dist/red-curate-skill.bundle.min.mjs" ] && { echo "$repo/dist/red-curate-skill.bundle.min.mjs"; exit 0; }
+  done
+  # 3. legacy published bin
+  for repo in "$root/../.." "$PWD"; do
+    [ -f "$repo/src/domains/memory/dist-bundle/red-curate-skill.mjs" ] && { echo "$repo/src/domains/memory/dist-bundle/red-curate-skill.mjs"; exit 0; }
+  done
+)"
+```
+
+If `RED_CURATE_SKILL` is empty (no bundle resolved), print one line telling the user to run a `red-skills` SessionStart (so red-fetch populates the cache) or build it with `pnpm --dir src/domains/memory bundle:curate-skill`, and **stop**. Otherwise invoke every `red-curate-skill <cmd>` below as `node "$RED_CURATE_SKILL" <cmd>`.
+
 ### Boot precondition (always, before anything else)
 
 Run `red-curate-skill check`. If it exits non-zero, print its stderr verbatim and **stop**. The error already names the exact `memory init --mode graph --skill-telemetry` command the user needs.
@@ -101,7 +127,7 @@ red-curate-skill archive --candidate '{"name":"foo","source_kind":"project","pat
 red-curate-skill restore foo
 ```
 
-The CLI ships as part of `@reddb/memory` (see `plugins/memory/src/curate-skill/cli.ts`). The Memory plugin's own `memory` CLI never invokes archive or restore — the mutation workflow lives in this skill.
+The CLI ships as part of `@reddb/memory` (see `src/domains/memory/src/curate-skill/cli.ts`). The Memory plugin's own `memory` CLI never invokes archive or restore — the mutation workflow lives in this skill.
 
 ### Archive layout
 

@@ -51,7 +51,7 @@ jobs:
           node-version: 22
 
       - name: Install and build memory plugin
-        working-directory: plugins/memory
+        working-directory: src/domains/memory
         run: |
           set -euo pipefail
           pnpm install --frozen-lockfile
@@ -69,7 +69,7 @@ jobs:
           git diff --name-only FETCH_HEAD...HEAD > changed-files.txt
           echo "changed files:"; cat changed-files.txt
 
-          if ! node plugins/memory/dist/cli.js drift-guard \
+          if ! node src/domains/memory/dist/cli.js drift-guard \
               --root "$GITHUB_WORKSPACE" \
               --changed-files "$GITHUB_WORKSPACE/changed-files.txt" \
               --pr-number "$PR_NUMBER" \
