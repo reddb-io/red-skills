@@ -1,8 +1,17 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { afterEach, describe, expect, test } from "vitest";
+
+// The hook manifests stayed at the plugin definition root
+// (plugins/memory/hooks/) after the impl moved to src/domains/memory.
+// Resolve them relative to this test file, independent of the run cwd:
+// tests/ -> memory -> domains -> src -> repo root.
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
+const hookManifest = (name: string): string =>
+  join(REPO_ROOT, "plugins", "memory", "hooks", name);
 
 type HookCommand = {
   command: string;
@@ -42,7 +51,7 @@ describe("hook manifests", () => {
   // ADR 0029: hooks invoke the committed bootstrap, which fetches the runtime.
   // No `dist/cli.js`, no build-on-machine fallback.
   test("every hook invokes scripts/bootstrap.mjs and never dist/cli.js", async () => {
-    for (const file of ["hooks/claude.hooks.json", "hooks/codex.hooks.json"]) {
+    for (const file of [hookManifest("claude.hooks.json"), hookManifest("codex.hooks.json")]) {
       const manifest = await loadManifest(file);
       const cmds = commands(manifest);
       expect(cmds.length).toBeGreaterThan(0);
@@ -54,7 +63,7 @@ describe("hook manifests", () => {
   });
 
   test("Codex hooks drain stdin before delegating", async () => {
-    const manifest = await loadManifest("hooks/codex.hooks.json");
+    const manifest = await loadManifest(hookManifest("codex.hooks.json"));
     for (const command of commands(manifest)) {
       expect(command).toContain('cat >"$tmp"');
     }
@@ -62,7 +71,7 @@ describe("hook manifests", () => {
 
   test("Claude hooks fail open to {} when the runtime cannot be resolved", async () => {
     const root = await tempRoot();
-    const manifest = await loadManifest("hooks/claude.hooks.json");
+    const manifest = await loadManifest(hookManifest("claude.hooks.json"));
 
     for (const command of commands(manifest)) {
       // A bogus plugin root has no scripts/bootstrap.mjs, so node errors and the
@@ -81,7 +90,7 @@ describe("hook manifests", () => {
 
   test("Codex hooks fail open to {} when the runtime cannot be resolved", async () => {
     const root = await tempRoot();
-    const manifest = await loadManifest("hooks/codex.hooks.json");
+    const manifest = await loadManifest(hookManifest("codex.hooks.json"));
 
     for (const command of commands(manifest)) {
       const result = spawnSync(command, {

@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -71,7 +72,36 @@ const EVENT_FLAG: Record<HookEvent, keyof HookConfig> = {
 };
 
 const MODULE_DIR = dirname(fileURLToPath(import.meta.url));
-const PLUGIN_ROOT = dirname(MODULE_DIR);
+
+/**
+ * Resolve the plugin root that holds `hooks/<runner>.hooks.json`.
+ *
+ * The hook manifests live with the plugin *definition* (plugins/memory/hooks/),
+ * not with the relocated implementation (src/domains/memory/src/). Mirror the
+ * resilient pattern in cli.ts::resolveBootstrapPath: prefer the installed
+ * plugin root from the environment (which ships `hooks/` alongside the bundled
+ * runtime), then fall back through the module-relative and source-tree layouts,
+ * picking the first candidate that actually contains a `hooks/` directory.
+ */
+function resolvePluginRoot(): string {
+  const env = process.env.CLAUDE_PLUGIN_ROOT ?? process.env.CODEX_PLUGIN_ROOT;
+  const candidates = [
+    env,
+    // Built/legacy layout: dist/hook-coverage.js sits next to a `hooks/` dir.
+    dirname(MODULE_DIR),
+    // Dev/source layout: this file is <repoRoot>/src/domains/memory/src/...,
+    // and the manifests stay at <repoRoot>/plugins/memory/hooks/.
+    join(MODULE_DIR, "..", "..", "..", "..", "plugins", "memory"),
+  ].filter((c): c is string => Boolean(c));
+  for (const candidate of candidates) {
+    if (existsSync(join(candidate, "hooks"))) return resolve(candidate);
+  }
+  // No candidate has hooks/ — return the module-relative root so the report
+  // still produces a deterministic (manifest_found=false) result.
+  return dirname(MODULE_DIR);
+}
+
+const PLUGIN_ROOT = resolvePluginRoot();
 
 export async function buildHookCoverageReport(
   rootDir: string,

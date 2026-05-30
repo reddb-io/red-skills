@@ -9,6 +9,9 @@
 import { gh, type ExecOptions } from "./exec.js";
 import type { IssueCandidate } from "../core/session.js";
 import type { IssueMeta } from "../core/branch-cleanup.js";
+import type { HandoffComment } from "../core/handoff.js";
+import type { IssueOpenState } from "../core/reclaim.js";
+import type { UnblockCandidate } from "../core/boot-sweep.js";
 
 export interface GhContext {
   /** owner/repo slug for `gh ... --repo`. */
@@ -148,6 +151,137 @@ export async function issueUrl(ctx: GhContext, issue: number): Promise<string> {
     return String((JSON.parse(r.stdout) as { url?: string }).url ?? "");
   } catch {
     return "";
+  }
+}
+
+/** `gh issue view --json comments` → handoff-projected comment list. Each
+ * comment carries the author login + body + createdAt the handoff renders. */
+export async function issueComments(ctx: GhContext, issue: number): Promise<HandoffComment[]> {
+  const r = await gh(["issue", "view", String(issue), ...repoArgs(ctx), "--json", "comments"], opts(ctx));
+  if (r.code !== 0) return [];
+  try {
+    const parsed = JSON.parse(r.stdout) as {
+      comments?: Array<{ body?: string; author?: { login?: string }; createdAt?: string }>;
+    };
+    if (!Array.isArray(parsed.comments)) return [];
+    return parsed.comments.map((c): HandoffComment => ({
+      body: String(c.body ?? ""),
+      author: c.author?.login ? String(c.author.login) : undefined,
+      createdAt: c.createdAt ? String(c.createdAt) : undefined,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+/** Orphan-cleanup per-dir lookup (prune_orphans): the issue's open/closed state
+ * + its single decision-bearing label (ready-for-human / running). A failed gh
+ * read returns ghOk=false so the decider falls back to the conservative TTL.
+ * The envelope.posted flag is read from the attempt state, not gh, so it is
+ * resolved by the caller — here it defaults to false. */
+export async function orphanState(
+  ctx: GhContext,
+  issue: number,
+): Promise<{ ghOk: boolean; state: IssueOpenState; label: string | null; envelopePosted: boolean }> {
+  const r = await gh(
+    ["issue", "view", String(issue), ...repoArgs(ctx), "--json", "state,labels"],
+    opts(ctx),
+  );
+  if (r.code !== 0) return { ghOk: false, state: "OPEN", label: null, envelopePosted: false };
+  try {
+    const parsed = JSON.parse(r.stdout) as { state?: string; labels?: Array<{ name?: string }> };
+    const labels = Array.isArray(parsed.labels) ? parsed.labels.map((l) => String(l.name ?? "")) : [];
+    // afk.sh checks ready-for-human first, then running.
+    const label = labels.includes("ready-for-human")
+      ? "ready-for-human"
+      : labels.includes("running")
+        ? "running"
+        : null;
+    return { ghOk: true, state: String(parsed.state ?? "OPEN"), label, envelopePosted: false };
+  } catch {
+    return { ghOk: false, state: "OPEN", label: null, envelopePosted: false };
+  }
+}
+
+/** Branch-cleanup/boot blocker-state lookup: gh issue view --json state → the
+ * raw state string ("OPEN" | "CLOSED"), or undefined on a 404/transient miss. */
+export async function blockerState(ctx: GhContext, issue: number): Promise<string | undefined> {
+  const r = await gh(["issue", "view", String(issue), ...repoArgs(ctx), "--json", "state"], opts(ctx));
+  if (r.code !== 0) return undefined;
+  try {
+    return String((JSON.parse(r.stdout) as { state?: string }).state ?? "") || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Count open issues matching a label expression (`--label`/`--search`). A
+ * failed probe returns 0, mirroring the bash `|| echo 0`. */
+async function countIssues(ctx: GhContext, args: string[]): Promise<number> {
+  const r = await gh(
+    ["issue", "list", ...repoArgs(ctx), "--state", "open", "--limit", "500", "--json", "number", ...args],
+    opts(ctx),
+  );
+  if (r.code !== 0) return 0;
+  try {
+    const parsed = JSON.parse(r.stdout) as unknown[];
+    return Array.isArray(parsed) ? parsed.length : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/** Count issues that carry NO labels (the unlabeled straggler bucket). */
+export async function countUnlabeled(ctx: GhContext): Promise<number> {
+  const r = await gh(
+    ["issue", "list", ...repoArgs(ctx), "--state", "open", "--limit", "500", "--json", "number,labels"],
+    opts(ctx),
+  );
+  if (r.code !== 0) return 0;
+  try {
+    const rows = JSON.parse(r.stdout) as Array<{ labels?: unknown[] }>;
+    if (!Array.isArray(rows)) return 0;
+    return rows.filter((row) => !Array.isArray(row.labels) || row.labels.length === 0).length;
+  } catch {
+    return 0;
+  }
+}
+
+/** Count `needs-triage` straggler issues. */
+export function countNeedsTriage(ctx: GhContext): Promise<number> {
+  return countIssues(ctx, ["--label", "needs-triage"]);
+}
+
+/** Count `needs-info` straggler issues. */
+export function countNeedsInfo(ctx: GhContext): Promise<number> {
+  return countIssues(ctx, ["--label", "needs-info"]);
+}
+
+/** List the `ready-for-human` unblock-sweep candidates (number + body). */
+export async function listUnblockCandidates(ctx: GhContext): Promise<UnblockCandidate[]> {
+  const r = await gh(
+    [
+      "issue",
+      "list",
+      ...repoArgs(ctx),
+      "--label",
+      "ready-for-human",
+      "--state",
+      "open",
+      "--limit",
+      "200",
+      "--json",
+      "number,body",
+    ],
+    opts(ctx),
+  );
+  if (r.code !== 0) return [];
+  try {
+    const rows = JSON.parse(r.stdout) as Array<{ number?: number; body?: string }>;
+    if (!Array.isArray(rows)) return [];
+    return rows.map((row): UnblockCandidate => ({ number: Number(row.number ?? 0), body: String(row.body ?? "") }));
+  } catch {
+    return [];
   }
 }
 

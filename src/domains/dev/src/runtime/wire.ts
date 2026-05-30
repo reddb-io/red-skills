@@ -216,7 +216,73 @@ export async function collectReapInputs(ctx: RepoContext): Promise<ReapInputs> {
 
 // ---------- precheck facts ----------
 
-import type { PrecheckFacts } from "../core/boot.js";
+import type { PrecheckFacts, BootOptions, BootstrapInput, OrphanDir } from "../core/boot.js";
+import type { AttemptDir } from "../core/reclaim.js";
+import { parseWorkerAttemptPath } from "../core/worker-paths.js";
+
+/**
+ * Discover every per-step input boot's sweeps consume, replacing the empty
+ * placeholders the native cutover shipped with:
+ *   - orphans: every attempt dir under the workers root with its age + issue.
+ *   - attemptCap: those same dirs grouped by issue, each stat'd for mtime +
+ *     liveness (live attempts are excluded from the cap).
+ *   - branches: the three afk/* / afk-attempts/* ref namespaces (snapshot
+ *     remote, live remote, live local minus checked-out) the reapers prune.
+ *   - unblockCandidates: the `ready-for-human` issues the unblock sweep scans.
+ * The straggler counts + per-issue gh state lookups are resolved lazily in the
+ * boot deps (buildBootDeps), so this only gathers the disk/branch facts.
+ */
+export async function collectBootOptions(
+  ctx: RepoContext,
+  facts: PrecheckFacts,
+  bootstrap: BootstrapInput,
+  nowS: number,
+): Promise<BootOptions> {
+  const paths = afkPaths(ctx.root);
+  const gitCtx: gitx.GitContext = { cwd: ctx.root };
+  const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo };
+
+  // Orphan dirs + the same dirs grouped by issue for the cap pass.
+  const orphans = await fsx.listOrphanDirs(paths.workersRoot, nowS);
+  const byIssue = new Map<number, AttemptDir[]>();
+  for (const o of orphans) {
+    const parsed = parseWorkerAttemptPath(o.path);
+    if (!parsed) continue;
+    const text = await fsx.readText(join(o.path, "afk.state.json"));
+    let live = false;
+    if (text !== null) {
+      try {
+        live = isStateLive(parseState(JSON.parse(text)));
+      } catch {
+        live = false;
+      }
+    }
+    const mtimeS = nowS - o.ageS;
+    const list = byIssue.get(parsed.issue) ?? [];
+    list.push({ path: o.path, mtimeS, live });
+    byIssue.set(parsed.issue, list);
+  }
+
+  // Branch namespaces for the three reapers.
+  const [snapshotRefs, remoteLiveRefs, localAll, checkedOut] = await Promise.all([
+    gitx.listRemoteBranches(gitCtx, "afk-attempts/"),
+    gitx.listRemoteBranches(gitCtx, "afk/"),
+    gitx.listLocalBranches(gitCtx, "afk/*"),
+    gitx.checkedOutBranches(gitCtx),
+  ]);
+  const localLiveRefs = localAll.filter((b) => !checkedOut.has(b)).map((b) => ({ branch: b }));
+
+  const unblockCandidates = await ghx.listUnblockCandidates(ghCtx);
+
+  return {
+    precheck: facts,
+    bootstrap,
+    orphans: orphans as readonly OrphanDir[],
+    attemptCap: { byIssue },
+    branches: { snapshotRefs, remoteLiveRefs, localLiveRefs },
+    unblockCandidates,
+  };
+}
 
 export async function collectPrecheckFacts(ctx: RepoContext): Promise<PrecheckFacts> {
   const gitCtx: gitx.GitContext = { cwd: ctx.root };

@@ -10,6 +10,14 @@ It **lives on top of the `dev` plugin** and is meant to improve dev's processes
 (`/afk` recall, `/triage` dedup, `/diagnose` root-cause history, `/zoom-out`
 orientation). Installing `memory` requires `dev`.
 
+> **Runtime model.** The implementation now lives in `src/domains/memory/`
+> (monorepo `domains/` layout); only the plugin *definition* (hooks, skills,
+> docs) stays under `plugins/memory/`. The built runtime ships as a GitHub
+> Release bundle (ADR 0034), not as committed `dist/` output. Examples below
+> invoke the published bins — `memory` (CLI), `memory-mcp` (MCP stdio server),
+> and `red-curate-skill` (the `/curate` engine) — instead of the old
+> `node plugins/memory/dist/cli.js …` paths, which no longer exist.
+
 ## What this plugin is
 
 Memory has one job: make future agents safer and faster by turning work evidence
@@ -74,9 +82,9 @@ For the smallest useful setup, initialize markdown-only mode in the repo whose
 work you want to remember:
 
 ```bash
-node plugins/memory/dist/cli.js init --mode markdown-only --yes
-node plugins/memory/dist/cli.js store "Decision: API cache TTL is 300 seconds because upstream rate limits."
-node plugins/memory/dist/cli.js recall "cache TTL"
+memory init --mode markdown-only --yes
+memory store "Decision: API cache TTL is 300 seconds because upstream rate limits."
+memory recall "cache TTL"
 ```
 
 That path writes plain notes under `.red/memory/notes/` and gives agents a
@@ -90,13 +98,13 @@ claim checks, readiness, event-log evidence, Skill telemetry, MCP read tools,
 and optional lifecycle hooks.
 
 ```bash
-node plugins/memory/dist/cli.js init --mode graph --hooks --skill-telemetry --yes
-node plugins/memory/dist/cli.js store "Decision: API cache TTL is 300 seconds because upstream rate limits."
-node plugins/memory/dist/cli.js claim-check "API cache TTL is 300 seconds." --json
-node plugins/memory/dist/cli.js readiness "prepare an AFK fix for cache expiry" --json
-node plugins/memory/dist/cli.js handoff "cache expiry" --json
-node plugins/memory/dist/cli.js context-pack "diagnose flaky cache expiry tests"
-node plugins/memory/dist/cli.js recall "cache TTL"
+memory init --mode graph --hooks --skill-telemetry --yes
+memory store "Decision: API cache TTL is 300 seconds because upstream rate limits."
+memory claim-check "API cache TTL is 300 seconds." --json
+memory readiness "prepare an AFK fix for cache expiry" --json
+memory handoff "cache expiry" --json
+memory context-pack "diagnose flaky cache expiry tests"
+memory recall "cache TTL"
 ```
 
 That is the canonical Init → Store → Recall → Verify → Handoff loop:
@@ -129,10 +137,10 @@ project's README, agent rules, docs, `.red/CONTEXT.md`, `.red/contexts/*.md`,
 and ADRs, with an optional recent git-log document:
 
 ```bash
-node plugins/memory/dist/cli.js bootstrap --root . --dry-run --json
-node plugins/memory/dist/cli.js bootstrap --root . --include-git-log
-node plugins/memory/dist/cli.js docs coverage --root . --json
-node plugins/memory/dist/cli.js backup create --root . --name before-refactor
+memory bootstrap --root . --dry-run --json
+memory bootstrap --root . --include-git-log
+memory docs coverage --root . --json
+memory backup create --root . --name before-refactor
 ```
 
 Bootstrap writes through the same markdown ingest path as `memory ingest`, so
@@ -217,7 +225,7 @@ The command operates on checked-in fixtures and the source tree — it does not
 mutate Memory state and does not make live-service competitor claims.
 
 ```bash
-node plugins/memory/dist/cli.js competitive-eval
+memory competitive-eval
 # memory competitive eval: 6/6 pass
 #   retrieval: 1/1 pass
 #   readiness: 1/1 pass
@@ -232,7 +240,7 @@ self-contained HTML viewer with embedded JSON. By default it writes to
 `/competitive-eval` and `/api/competitive-eval` when `memory serve` is running.
 
 ```bash
-node plugins/memory/dist/cli.js competitive-eval-viewer
+memory competitive-eval-viewer
 # memory: competitive eval viewer written .red/memory/competitive-eval.html
 #   composite: 6/6 pass
 #   contract: memory.competitive_eval.v2
@@ -441,10 +449,10 @@ For local-first graph freshness without a long-running daemon, graph mode also
 ships an explicit incremental refresh command:
 
 ```bash
-node plugins/memory/dist/cli.js refresh src/auth.ts docs/guide.md --root .
-node plugins/memory/dist/cli.js refresh --changed --root .      # git diff HEAD
-node plugins/memory/dist/cli.js refresh --staged --root .       # pre-commit friendly
-git diff --cached --name-only -z | node plugins/memory/dist/cli.js refresh --stdin --root .
+memory refresh src/auth.ts docs/guide.md --root .
+memory refresh --changed --root .      # git diff HEAD
+memory refresh --staged --root .       # pre-commit friendly
+git diff --cached --name-only -z | memory refresh --stdin --root .
 ```
 
 `refresh` stores a stable per-file content hash in the graph store's KV layer.
@@ -470,12 +478,12 @@ only when the hit maps by document hash to an ingested markdown root node.
 Ungrounded document hits remain ASK/readiness substrate.
 
 ```bash
-node plugins/memory/dist/cli.js vector status --root . --json
-node plugins/memory/dist/cli.js vector status-viewer --root .
-node plugins/memory/dist/cli.js vector maintain --root . --strict
-node plugins/memory/dist/cli.js vector search "auth session" --root . --json
-node plugins/memory/dist/cli.js vector maintain --root . --local --json
-node plugins/memory/dist/cli.js vector search "auth session" --root . --local --json
+memory vector status --root . --json
+memory vector status-viewer --root .
+memory vector maintain --root . --strict
+memory vector search "auth session" --root . --json
+memory vector maintain --root . --local --json
+memory vector search "auth session" --root . --local --json
 ```
 
 Projection uses RedDB `WITH AUTO EMBED` when `RED_MEMORY_VECTOR_PROVIDER` is
@@ -495,8 +503,8 @@ Graph mode can create an explicit RedDB VCS checkpoint for the versioned Memory
 graph:
 
 ```bash
-node plugins/memory/dist/cli.js commit --root . --message "manual memory checkpoint"
-node plugins/memory/dist/cli.js commit --root . --json
+memory commit --root . --message "manual memory checkpoint"
+memory commit --root . --json
 ```
 
 The command reapplies the Memory tier/versioning policy, reports included and
@@ -568,80 +576,80 @@ documentation maps stay refreshable through hooks. Pre-PR review uses graph
 edges to flag downstream call/type/reference risks:
 
 ```bash
-node plugins/memory/dist/cli.js search <query>          # full-text node search
-node plugins/memory/dist/cli.js docs search <query>     # zero-token document chunk search
-node plugins/memory/dist/cli.js docs search-viewer <query> # local HTML search results viewer
-node plugins/memory/dist/cli.js docs brief <query>      # cited docs evidence brief with gaps
-node plugins/memory/dist/cli.js docs brief-viewer <query> # local HTML brief viewer
-node plugins/memory/dist/cli.js docs bundle <query>     # top docs plus agent-ready evidence packs
-node plugins/memory/dist/cli.js docs bundle-viewer <query> # local HTML bundle viewer
-node plugins/memory/dist/cli.js docs read <path|rid>    # read an ingested document chunk
-node plugins/memory/dist/cli.js docs evidence-pack <path|rid> # agent-ready doc body/references/related pack
-node plugins/memory/dist/cli.js docs evidence-pack-viewer <path|rid> # local HTML evidence-pack viewer
-node plugins/memory/dist/cli.js docs backlinks <label|rid> # docs that reference a Memory node
-node plugins/memory/dist/cli.js docs backlinks-viewer <label|rid> # local HTML backlinks viewer
-node plugins/memory/dist/cli.js docs related <path|rid> # references and docs with shared references
-node plugins/memory/dist/cli.js docs related-viewer <path|rid> # local HTML related-docs viewer
-node plugins/memory/dist/cli.js docs restore [path|rid] --dry-run # plan file restore from RedDB docs
-node plugins/memory/dist/cli.js docs restore [path|rid] --in-place --yes # explicitly rewrite missing docs
-node plugins/memory/dist/cli.js docs coverage           # graph/vector coverage for docs
-node plugins/memory/dist/cli.js docs coverage-viewer    # local HTML coverage dashboard
-node plugins/memory/dist/cli.js docs reference-graph    # docs-to-reference graph report
-node plugins/memory/dist/cli.js docs reference-graph-viewer # local HTML docs graph viewer
-node plugins/memory/dist/cli.js assets --json           # binary/media asset inventory
-node plugins/memory/dist/cli.js assets-viewer           # local HTML asset inventory
-node plugins/memory/dist/cli.js bootstrap --dry-run     # discover seed docs before indexing
-node plugins/memory/dist/cli.js backup create --name before-change # local RedDB snapshot
-node plugins/memory/dist/cli.js backup restore before-change --yes # explicit restore with safety backup
-node plugins/memory/dist/cli.js serve --token-env MEMORY_HTTP_TOKEN # optional local HTTP UI/API
-node plugins/memory/dist/cli.js smart-search "auth session" --json # recall + docs + assets + vectors
-node plugins/memory/dist/cli.js smart-search-viewer "auth session" # local HTML smart-search viewer
-node plugins/memory/dist/cli.js context-pack-viewer "auth session" # local HTML context-pack viewer
-node plugins/memory/dist/cli.js capabilities --json     # capability catalog by agent surface
-node plugins/memory/dist/cli.js layers --json           # short-term/durable/reasoning/docs-code/vector layers
-node plugins/memory/dist/cli.js layers-viewer           # local HTML layered architecture viewer
-node plugins/memory/dist/cli.js frontier --json         # ready/blocked work frontier
-node plugins/memory/dist/cli.js frontier-viewer         # local HTML work frontier viewer
-node plugins/memory/dist/cli.js lint --json             # hygiene findings + rule suggestions
-node plugins/memory/dist/cli.js decay --json            # keep/review/deprecate/expire retention plan
-node plugins/memory/dist/cli.js decay-viewer            # local HTML decay plan viewer
-node plugins/memory/dist/cli.js governance --json       # provenance/privacy/lint/conflict governance report
-node plugins/memory/dist/cli.js governance-viewer       # local HTML governance viewer
-node plugins/memory/dist/cli.js learning-debt-viewer    # local HTML self-improvement debt viewer
-node plugins/memory/dist/cli.js health-viewer           # local HTML operational health viewer
-node plugins/memory/dist/cli.js onboarding-map-viewer   # local HTML map-first onboarding viewer
-node plugins/memory/dist/cli.js communities-viewer      # local HTML graph community analytics viewer
-node plugins/memory/dist/cli.js competitive-radar --json # internal competitor posture from catalog evidence
-node plugins/memory/dist/cli.js competitive-eval         # human-readable composite + per-dimension summary
-node plugins/memory/dist/cli.js competitive-eval --json  # machine-readable competitive eval report
-node plugins/memory/dist/cli.js competitive-eval-viewer  # local HTML competitive eval viewer (default: .red/memory/competitive-eval.html)
-node plugins/memory/dist/cli.js workbench               # local unified Memory UI
-node plugins/memory/dist/cli.js routing-guide --agent cursor --json # multi-agent MCP/HTTP integration guide
-node plugins/memory/dist/cli.js routing-guide-viewer --agent cursor # local HTML multi-agent routing guide
-node plugins/memory/dist/cli.js integration-status --json # audit agent rule files and hook coverage
-node plugins/memory/dist/cli.js integration-status-viewer # local HTML integration status
-node plugins/memory/dist/cli.js extraction status --json # deterministic/inferred extraction readiness
-node plugins/memory/dist/cli.js extraction status-viewer # local HTML extraction readiness viewer
-node plugins/memory/dist/cli.js extract transcript.md --local # provider-free structured transcript extraction
-node plugins/memory/dist/cli.js session timeline --json  # replay-style hook/skill event timeline
-node plugins/memory/dist/cli.js session timeline-viewer  # local HTML timeline viewer
-node plugins/memory/dist/cli.js handoff "auth work"     # cross-agent continuation brief
-node plugins/memory/dist/cli.js handoff-viewer "auth work" # local HTML cross-agent handoff
-node plugins/memory/dist/cli.js dashboard               # local operational dashboard
-node plugins/memory/dist/cli.js routing-guide --agent codex
-node plugins/memory/dist/cli.js neighbors <label>       # 1-hop neighborhood
-node plugins/memory/dist/cli.js traverse <label>        # BFS/DFS walk
-node plugins/memory/dist/cli.js path <from> <to>        # shortest path
-node plugins/memory/dist/cli.js path-explain <from> <to> --json
-node plugins/memory/dist/cli.js path-explain-viewer <from> <to>
-node plugins/memory/dist/cli.js structural-impact-viewer --file src/auth.ts
-node plugins/memory/dist/cli.js pre-pr-review-viewer --range HEAD
-node plugins/memory/dist/cli.js ask "what changed about auth?" --json # cited answer + gap analysis
-node plugins/memory/dist/cli.js conflicts               # unresolved CONTRADICTS edges
-node plugins/memory/dist/cli.js supersede <old> <new> --reason "policy changed"
-node plugins/memory/dist/cli.js resolve-conflict <active> <superseded>
-node plugins/memory/dist/cli.js timeline <topic> --include-audit
-node plugins/memory/dist/cli.js stats                   # node/edge counts
+memory search <query>          # full-text node search
+memory docs search <query>     # zero-token document chunk search
+memory docs search-viewer <query> # local HTML search results viewer
+memory docs brief <query>      # cited docs evidence brief with gaps
+memory docs brief-viewer <query> # local HTML brief viewer
+memory docs bundle <query>     # top docs plus agent-ready evidence packs
+memory docs bundle-viewer <query> # local HTML bundle viewer
+memory docs read <path|rid>    # read an ingested document chunk
+memory docs evidence-pack <path|rid> # agent-ready doc body/references/related pack
+memory docs evidence-pack-viewer <path|rid> # local HTML evidence-pack viewer
+memory docs backlinks <label|rid> # docs that reference a Memory node
+memory docs backlinks-viewer <label|rid> # local HTML backlinks viewer
+memory docs related <path|rid> # references and docs with shared references
+memory docs related-viewer <path|rid> # local HTML related-docs viewer
+memory docs restore [path|rid] --dry-run # plan file restore from RedDB docs
+memory docs restore [path|rid] --in-place --yes # explicitly rewrite missing docs
+memory docs coverage           # graph/vector coverage for docs
+memory docs coverage-viewer    # local HTML coverage dashboard
+memory docs reference-graph    # docs-to-reference graph report
+memory docs reference-graph-viewer # local HTML docs graph viewer
+memory assets --json           # binary/media asset inventory
+memory assets-viewer           # local HTML asset inventory
+memory bootstrap --dry-run     # discover seed docs before indexing
+memory backup create --name before-change # local RedDB snapshot
+memory backup restore before-change --yes # explicit restore with safety backup
+memory serve --token-env MEMORY_HTTP_TOKEN # optional local HTTP UI/API
+memory smart-search "auth session" --json # recall + docs + assets + vectors
+memory smart-search-viewer "auth session" # local HTML smart-search viewer
+memory context-pack-viewer "auth session" # local HTML context-pack viewer
+memory capabilities --json     # capability catalog by agent surface
+memory layers --json           # short-term/durable/reasoning/docs-code/vector layers
+memory layers-viewer           # local HTML layered architecture viewer
+memory frontier --json         # ready/blocked work frontier
+memory frontier-viewer         # local HTML work frontier viewer
+memory lint --json             # hygiene findings + rule suggestions
+memory decay --json            # keep/review/deprecate/expire retention plan
+memory decay-viewer            # local HTML decay plan viewer
+memory governance --json       # provenance/privacy/lint/conflict governance report
+memory governance-viewer       # local HTML governance viewer
+memory learning-debt-viewer    # local HTML self-improvement debt viewer
+memory health-viewer           # local HTML operational health viewer
+memory onboarding-map-viewer   # local HTML map-first onboarding viewer
+memory communities-viewer      # local HTML graph community analytics viewer
+memory competitive-radar --json # internal competitor posture from catalog evidence
+memory competitive-eval         # human-readable composite + per-dimension summary
+memory competitive-eval --json  # machine-readable competitive eval report
+memory competitive-eval-viewer  # local HTML competitive eval viewer (default: .red/memory/competitive-eval.html)
+memory workbench               # local unified Memory UI
+memory routing-guide --agent cursor --json # multi-agent MCP/HTTP integration guide
+memory routing-guide-viewer --agent cursor # local HTML multi-agent routing guide
+memory integration-status --json # audit agent rule files and hook coverage
+memory integration-status-viewer # local HTML integration status
+memory extraction status --json # deterministic/inferred extraction readiness
+memory extraction status-viewer # local HTML extraction readiness viewer
+memory extract transcript.md --local # provider-free structured transcript extraction
+memory session timeline --json  # replay-style hook/skill event timeline
+memory session timeline-viewer  # local HTML timeline viewer
+memory handoff "auth work"     # cross-agent continuation brief
+memory handoff-viewer "auth work" # local HTML cross-agent handoff
+memory dashboard               # local operational dashboard
+memory routing-guide --agent codex
+memory neighbors <label>       # 1-hop neighborhood
+memory traverse <label>        # BFS/DFS walk
+memory path <from> <to>        # shortest path
+memory path-explain <from> <to> --json
+memory path-explain-viewer <from> <to>
+memory structural-impact-viewer --file src/auth.ts
+memory pre-pr-review-viewer --range HEAD
+memory ask "what changed about auth?" --json # cited answer + gap analysis
+memory conflicts               # unresolved CONTRADICTS edges
+memory supersede <old> <new> --reason "policy changed"
+memory resolve-conflict <active> <superseded>
+memory timeline <topic> --include-audit
+memory stats                   # node/edge counts
 ```
 
 Contradiction and supersession commands never delete old guidance. `supersede`
@@ -745,7 +753,7 @@ reporting `precision@k` and `recall@k` at `k ∈ {1, 5, 10}`. The corpus
 reasoning chains where typed-graph signals should beat blind vector search.
 
 ```bash
-node plugins/memory/dist/cli.js bench recall \
+memory bench recall \
   --out plugins/memory/bench/results/<date>-recall.json \
   --report plugins/memory/bench/results/<date>-recall.md
 ```
@@ -763,7 +771,7 @@ response, client-side fan-out for graph hops). Workload is seeded
 (`mulberry32`); both paths do only real CPU work, no artificial sleeps.
 
 ```bash
-node plugins/memory/dist/cli.js bench latency \
+memory bench latency \
   --out plugins/memory/bench/results/<date>-latency.json \
   --report plugins/memory/bench/results/<date>-latency.md
 ```
@@ -786,10 +794,10 @@ signals from the current Memory graph.
 ## Maintenance & export (graph mode)
 
 ```bash
-node plugins/memory/dist/cli.js doctor                  # list stale nodes
-node plugins/memory/dist/cli.js doctor --prune          # prune (confirms first)
-node plugins/memory/dist/cli.js export [<out-dir>]      # graph.json + graph.html + audit.md
-node plugins/memory/dist/cli.js export [<out-dir>] --interop # + JSONL, GraphML, Neo4j Cypher
+memory doctor                  # list stale nodes
+memory doctor --prune          # prune (confirms first)
+memory export [<out-dir>]      # graph.json + graph.html + audit.md
+memory export [<out-dir>] --interop # + JSONL, GraphML, Neo4j Cypher
 ```
 
 `doctor` flags nodes unaccessed for 90+ days (`--stale-days N` to change) that
@@ -821,14 +829,14 @@ Skill telemetry can drive a reviewable improvement workflow without letting the
 agent silently rewrite its own instructions:
 
 ```bash
-node plugins/memory/dist/cli.js health --json
-node plugins/memory/dist/cli.js hooks coverage --json
-node plugins/memory/dist/cli.js hooks coverage-viewer
-node plugins/memory/dist/cli.js improve skills --write-proposal --json
-node plugins/memory/dist/cli.js improve proposals list --json
-node plugins/memory/dist/cli.js improve proposals show .red/memory/proposals/<proposal>.md --json
-node plugins/memory/dist/cli.js improve apply .red/memory/proposals/<proposal>.md --yes --json
-node plugins/memory/dist/cli.js improve proposals archive .red/memory/proposals/<proposal>.md --reason applied --yes --json
+memory health --json
+memory hooks coverage --json
+memory hooks coverage-viewer
+memory improve skills --write-proposal --json
+memory improve proposals list --json
+memory improve proposals show .red/memory/proposals/<proposal>.md --json
+memory improve apply .red/memory/proposals/<proposal>.md --yes --json
+memory improve proposals archive .red/memory/proposals/<proposal>.md --reason applied --yes --json
 ```
 
 `hooks coverage` is read-only: it reports Claude/Codex manifest wiring,
@@ -894,9 +902,9 @@ cwd or `$MEMORY_ROOT`, graph mode required), or from an explicit
 `RED_MEMORY_URI`:
 
 ```bash
-node plugins/memory/dist/mcp-server.js          # reads ./.red/memory/config.json
+memory-mcp          # reads ./.red/memory/config.json
 RED_MEMORY_URI=file:///abs/graph.rdb \
-  node plugins/memory/dist/mcp-server.js        # explicit store
+  memory-mcp        # explicit store
 ```
 
 ## Skills
@@ -928,9 +936,9 @@ pnpm --dir plugins/memory build
 Then drive it directly if you like (swap `--mode graph` for the graph store):
 
 ```bash
-node plugins/memory/dist/cli.js init --mode markdown-only
-node plugins/memory/dist/cli.js store the cache TTL is 300 seconds
-node plugins/memory/dist/cli.js recall cache TTL
+memory init --mode markdown-only
+memory store the cache TTL is 300 seconds
+memory recall cache TTL
 ```
 
 `graph` mode needs the install step above (it pulls `@reddb-io/sdk` and its

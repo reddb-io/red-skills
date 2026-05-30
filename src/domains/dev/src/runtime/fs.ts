@@ -13,9 +13,12 @@ import {
   readdir,
   readFile,
   rm,
+  stat,
   writeFile,
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import type { FailureMarkers } from "../core/envelope-emit.js";
+import type { OrphanDir } from "../core/boot.js";
 
 export async function ensureDir(path: string): Promise<void> {
   await mkdir(path, { recursive: true });
@@ -90,6 +93,98 @@ export async function globWorkerStates(workersRoot: string): Promise<string[]> {
     for (const attempt of attempts) {
       const stateFile = join(workerPath, attempt, "afk.state.json");
       if (await pathExists(stateFile)) out.push(stateFile);
+    }
+  }
+  return out;
+}
+
+/** Append one line (newline-terminated) to a file, creating the parent dir.
+ * Used for the per-iteration afk.log heartbeat boundary. */
+export async function appendLine(path: string, line: string): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
+  await appendFile(path, `${line}\n`, "utf8");
+}
+
+/** Persist the terminal failure marker files into an iteration dir
+ * (record_failure_markers): snapshot-branch.ref + failure.reason. Each value
+ * already carries its trailing newline; an absent field writes no file. */
+export async function writeFailureMarkers(attemptDir: string, markers: FailureMarkers): Promise<void> {
+  await mkdir(attemptDir, { recursive: true });
+  if (markers.snapshotBranchRef !== undefined) {
+    await writeFile(join(attemptDir, "snapshot-branch.ref"), markers.snapshotBranchRef, "utf8");
+  }
+  if (markers.failureReason !== undefined) {
+    await writeFile(join(attemptDir, "failure.reason"), markers.failureReason, "utf8");
+  }
+}
+
+/** Persist the `envelope.posted` signal into the iteration state file. Best
+ * effort: a malformed/absent state file degrades to writing a minimal object. */
+export async function writeEnvelopePosted(attemptDir: string, posted: boolean): Promise<void> {
+  const statePath = join(attemptDir, "afk.state.json");
+  let obj: Record<string, unknown> = {};
+  const text = await readText(statePath);
+  if (text !== null) {
+    try {
+      const parsed = JSON.parse(text);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) obj = parsed as Record<string, unknown>;
+    } catch {
+      obj = {};
+    }
+  }
+  const env = (obj.envelope && typeof obj.envelope === "object" ? obj.envelope : {}) as Record<string, unknown>;
+  env.posted = posted;
+  obj.envelope = env;
+  await mkdir(attemptDir, { recursive: true });
+  await writeFile(statePath, `${JSON.stringify(obj)}\n`, "utf8");
+}
+
+/** Read the `envelope.posted` flag from an attempt state file (false when
+ * absent/malformed). */
+export async function readEnvelopePosted(attemptDir: string): Promise<boolean> {
+  const text = await readText(join(attemptDir, "afk.state.json"));
+  if (text === null) return false;
+  try {
+    const parsed = JSON.parse(text) as { envelope?: { posted?: unknown } };
+    return parsed.envelope?.posted === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Enumerate orphaned attempt dirs under a workers root for boot's orphan
+ * cleanup. Each `workers/<worker>/<issue>-a<n>` dir is stat'd for its age, and
+ * its issue number is parsed from the basename (null when unparseable). The
+ * caller pairs these with gh state via boot's `lookups.orphanState`.
+ */
+export async function listOrphanDirs(workersRoot: string, nowS: number): Promise<OrphanDir[]> {
+  const out: OrphanDir[] = [];
+  let workers: string[];
+  try {
+    workers = await readdir(workersRoot);
+  } catch {
+    return out;
+  }
+  for (const worker of workers) {
+    const workerPath = join(workersRoot, worker);
+    let attempts: string[];
+    try {
+      attempts = await readdir(workerPath);
+    } catch {
+      continue;
+    }
+    for (const attempt of attempts) {
+      const dir = join(workerPath, attempt);
+      const m = /^([1-9][0-9]*)-a[1-9][0-9]*$/.exec(attempt);
+      let ageS = 0;
+      try {
+        const st = await stat(dir);
+        ageS = Math.max(0, nowS - Math.floor(st.mtimeMs / 1000));
+      } catch {
+        continue;
+      }
+      out.push({ path: dir, issue: m ? Number(m[1]) : null, ageS });
     }
   }
   return out;

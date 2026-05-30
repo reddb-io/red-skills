@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 // @ts-expect-error — dependency-free .mjs bootstrap ships without type declarations
-import { assetUrl, parseSha256File, platformKey, sha256Hex } from "../scripts/bootstrap.mjs";
+import { assetUrl, parseSha256File, platformKey, sha256Hex } from "../../../../plugins/memory/scripts/bootstrap.mjs";
 
 describe("bootstrap pure helpers (ADR 0029)", () => {
   describe("platformKey", () => {

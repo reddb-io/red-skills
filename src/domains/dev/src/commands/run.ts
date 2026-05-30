@@ -8,12 +8,13 @@ import {
   type IssueCandidate,
 } from "../core/session.js";
 import { genWorkerId } from "../core/session.js";
-import { runBoot, type BootDeps, type BootOptions } from "../core/boot.js";
+import { runBoot, type BootDeps, type BootOptions, type BootstrapInput } from "../core/boot.js";
 import { processIssue, type ProcessIssueDeps, type ProcessIssueInput } from "../core/process-issue.js";
 import { isRunner, type Runner } from "../types/runner.js";
 import {
   afkPaths,
   collectPrecheckFacts,
+  collectBootOptions,
   collectMonitorInputs,
   makeRunAgent,
   resolveRepoContext,
@@ -27,6 +28,17 @@ import * as gitx from "../runtime/git.js";
 import * as fsx from "../runtime/fs.js";
 import type { GhContext } from "../runtime/gh.js";
 import type { GitContext } from "../runtime/git.js";
+import { loadConfig } from "../core/config.js";
+import { resolveHooks } from "../core/hook-config.js";
+import { attemptLedgerContext, formatAttemptContext, highestAttempt, type AttemptDirEntry } from "../core/attempt-ledger.js";
+import { isValidWorkerId } from "../core/worker-paths.js";
+import { readdirSync } from "node:fs";
+import { specialUserRequestBlock } from "../core/runner-spawn.js";
+import { buildWorkerAttemptPath } from "../core/worker-paths.js";
+import { branchLockPath, readLockedBranch, isLocked } from "../runtime/lock.js";
+import { makeHookExec, makeHookResolveOptions, hookEnv } from "../runtime/hooks.js";
+import { makeFeedbackWorktree, type FeedbackWorktree } from "../runtime/feedback-worktree.js";
+import { join } from "node:path";
 
 export interface RunOptions {
   args: string[];
@@ -90,30 +102,31 @@ export function parseRunFlags(args: readonly string[]): ParsedRunFlags {
   };
 }
 
-/** Empty BootOptions step inputs — boot's discovery work (orphan dirs, attempt
- * cap groups, branch refs, unblock candidates) is left empty for the native run
- * cutover; the precheck + bootstrap steps are the load-bearing ones here. */
-function emptyBootOptions(facts: Awaited<ReturnType<typeof collectPrecheckFacts>>, paths: ReturnType<typeof afkPaths>, workerId: string, root: string): BootOptions {
-  return {
-    precheck: facts,
-    bootstrap: {
-      tmpDir: paths.tmpDir,
-      stateDir: paths.stateDir,
-      gitignorePath: paths.gitignorePath,
-      workerDir: workerDirPath(paths.tmpDir, workerId),
-      workerPidFile: workerPidFile(paths.tmpDir, workerId),
-      workerPid: process.pid,
-    },
-    orphans: [],
-    attemptCap: { byIssue: new Map() },
-    branches: { snapshotRefs: [], remoteLiveRefs: [], localLiveRefs: [] },
-    unblockCandidates: [],
-  };
+/** Pre-resolve the gh issue-state cache the branch-cleanup reapers + orphan
+ * lookup read synchronously. Mirrors collectReapInputs' eager resolution. */
+async function resolveBranchIssueCache(
+  ghCtx: GhContext,
+  options: BootOptions,
+): Promise<Map<number, import("../core/branch-cleanup.js").IssueMeta | null | undefined>> {
+  const { liveIssueFromBranch, attemptIssueFromBranch } = await import("../core/branch-cleanup.js");
+  const issues = new Set<number>();
+  for (const r of options.branches.snapshotRefs) {
+    const n = attemptIssueFromBranch(r.branch);
+    if (n !== null) issues.add(n);
+  }
+  for (const r of [...options.branches.remoteLiveRefs, ...options.branches.localLiveRefs]) {
+    const n = liveIssueFromBranch(r.branch);
+    if (n !== null) issues.add(n);
+  }
+  const cache = new Map<number, import("../core/branch-cleanup.js").IssueMeta | null | undefined>();
+  for (const n of issues) cache.set(n, await ghx.issueMeta(ghCtx, n));
+  return cache;
 }
 
-function buildBootDeps(ctx: RepoContext): BootDeps {
+async function buildBootDeps(ctx: RepoContext, options: BootOptions, nowS: number): Promise<BootDeps> {
   const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo };
   const gitCtx: GitContext = { cwd: ctx.root };
+  const branchCache = await resolveBranchIssueCache(ghCtx, options);
   return {
     fs: {
       ensureDir: fsx.ensureDir,
@@ -132,23 +145,42 @@ function buildBootDeps(ctx: RepoContext): BootDeps {
       deleteLocalBranch: (branch) => gitx.deleteLocalBranch(gitCtx, branch),
     },
     lookups: {
-      orphanState: async () => ({ ghOk: true, state: "OPEN", label: null, envelopePosted: false }),
-      branchIssue: () => undefined,
-      blockerState: async () => undefined,
+      // Orphan state pairs gh issue state/label with the attempt dir's
+      // envelope.posted flag (read from the state file, not gh).
+      orphanState: async (issue) => {
+        const r = await ghx.orphanState(ghCtx, issue);
+        return r;
+      },
+      branchIssue: (issue) => branchCache.get(issue),
+      blockerState: (issue) => ghx.blockerState(ghCtx, issue),
       straggler: {
-        unlabeled: async () => 0,
-        needsTriage: async () => 0,
-        needsInfo: async () => 0,
+        unlabeled: () => ghx.countUnlabeled(ghCtx),
+        needsTriage: () => ghx.countNeedsTriage(ghCtx),
+        needsInfo: () => ghx.countNeedsInfo(ghCtx),
       },
     },
-    nowS: Math.floor(Date.now() / 1000),
+    nowS,
   };
 }
 
-function buildProcessDeps(ctx: RepoContext, model: string, sandbox: ReturnType<typeof resolveRunSettings>["sandbox"]): ProcessIssueDeps {
+function buildProcessDeps(
+  ctx: RepoContext,
+  model: string,
+  sandbox: ReturnType<typeof resolveRunSettings>["sandbox"],
+  feedback: FeedbackWorktree,
+  current: CurrentAttempt,
+): ProcessIssueDeps {
   const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo };
   const gitCtx: GitContext = { cwd: ctx.root };
   const paths = afkPaths(ctx.root);
+  const lockPath = branchLockPath(ctx.root);
+
+  // ---- lifecycle hooks: load config + resolve built-in defaults + real exec ----
+  const config = loadConfig(paths.configPath, { warn: () => undefined });
+  const resolveOptions = makeHookResolveOptions(ctx.root);
+  // resolveHooks runs once here to surface a malformed-hook-name error early;
+  // process-issue re-resolves per run from the same config + options.
+  resolveHooks(config, resolveOptions);
 
   return {
     gh: {
@@ -179,40 +211,36 @@ function buildProcessDeps(ctx: RepoContext, model: string, sandbox: ReturnType<t
     },
     mergeExec: gitx.mergeExec(gitCtx),
     remoteGit: gitx.gitExec(gitCtx),
-    pnpm: async (args) => {
-      const { pnpm } = await import("../runtime/exec.js");
-      const head = args[0] === "pnpm" ? args.slice(1) : args;
-      const r = await pnpm(head, { cwd: ctx.root });
-      return { code: r.code, stdout: r.stdout, stderr: r.stderr };
-    },
-    layout: {
-      hasPackage: (scope) => {
-        try {
-          require("node:fs").accessSync(`${ctx.root}/${scope === "." ? "" : `${scope}/`}package.json`);
-          return true;
-        } catch {
-          return false;
-        }
-      },
-      hasScript: () => false,
-    },
+    // Feedback runs against a checkout of the worker branch — the feedback
+    // worktree manager materialises it and rebases pnpm/layout onto it.
+    pnpm: feedback.pnpm,
+    layout: feedback.layout,
     runAgent: makeRunAgent(sandbox),
     model,
     hooks: {
-      config: {},
-      resolveOptions: { defaultCommand: () => undefined },
-      exec: async () => ({ code: 0, stdout: "" }),
-      env: {},
+      config,
+      resolveOptions,
+      exec: makeHookExec(ctx.root),
+      env: hookEnv(ctx.repo, ctx.root),
     },
     lookups: {
       base: {
-        readLockedBranch: async () => undefined,
+        readLockedBranch: () => readLockedBranch(lockPath),
         fetchIssueBody: (n) => ghx.issueBody(ghCtx, n),
       },
-      isLocked: async () => false,
-      comments: async () => [],
+      isLocked: () => isLocked(lockPath),
+      comments: (issue) => ghx.issueComments(ghCtx, issue),
       issueUrl: (issue) => ghx.issueUrl(ghCtx, issue),
-      priorAttemptContext: async () => undefined,
+      // Restart-informed retry block (#255): read the prior attempt's markers
+      // (failure.reason / snapshot-branch.ref) via the attempt-ledger.
+      priorAttemptContext: async (issue) => {
+        try {
+          const context = await attemptLedgerContext(paths.tmpDir, issue);
+          return context ? formatAttemptContext(context) : undefined;
+        } catch {
+          return undefined;
+        }
+      },
       changedFiles: (branch, base) => gitx.changedFiles(gitCtx, branch, base),
       diffstat: (branch, base) => gitx.diffstat(gitCtx, branch, base),
     },
@@ -222,15 +250,52 @@ function buildProcessDeps(ctx: RepoContext, model: string, sandbox: ReturnType<t
         await ghx.comment(ghCtx, issue, body);
         return true;
       },
-      writeMarkers: async () => undefined,
-      writePosted: async () => undefined,
+      // Markers/posted land in the CURRENT attempt dir, set per issue by
+      // buildProcessInput before each processIssue call.
+      writeMarkers: (markers) => fsx.writeFailureMarkers(current.attemptDir, markers),
+      writePosted: (posted) => fsx.writeEnvelopePosted(current.attemptDir, posted),
     },
     nowEpoch: () => Math.floor(Date.now() / 1000),
     nowIso: () => new Date().toISOString(),
-    appendIterLog: () => undefined,
+    // The per-iteration afk.log heartbeat boundary lives in the attempt dir.
+    appendIterLog: (line) => {
+      void fsx.appendLine(join(current.attemptDir, "afk.log"), line);
+    },
     historyPath: paths.historyPath,
     historyClock: { ts: new Date().toISOString(), epoch: Math.floor(Date.now() / 1000) },
   };
+}
+
+/** Per-issue mutable context the session-scoped process deps close over — the
+ * attempt dir the envelope markers / iter-log write into. buildProcessInput
+ * resets it before each processIssue call. */
+interface CurrentAttempt {
+  attemptDir: string;
+}
+
+/** Synchronous next-attempt resolver over the attempt-ledger's pure core, so it
+ * can run inside the synchronous `buildProcessInput`. Walks `<tmp>/workers/*`
+ * with readdirSync and feeds the pure `highestAttempt`: the next attempt is the
+ * highest existing attempt for the issue + 1 (1 when none). Junk dirs never
+ * bump the counter. A missing tree yields attempt 1. */
+function nextAttemptSync(tmpDir: string, issue: number): number {
+  let workers: string[];
+  try {
+    workers = readdirSync(join(tmpDir, "workers"));
+  } catch {
+    return 1;
+  }
+  const entries: AttemptDirEntry[] = [];
+  for (const worker of workers) {
+    if (!isValidWorkerId(worker)) continue;
+    try {
+      entries.push({ worker, basenames: readdirSync(join(tmpDir, "workers", worker)) });
+    } catch {
+      // not a directory / unreadable
+    }
+  }
+  const best = highestAttempt(tmpDir, issue, entries);
+  return best ? best.attempt + 1 : 1;
 }
 
 export async function runCommand(options: RunOptions): Promise<number> {
@@ -256,6 +321,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
   const workerId = genWorkerId(Math.random, (id) => existing.has(id));
 
   const facts = await collectPrecheckFacts(ctx);
+  const nowS = Math.floor(Date.now() / 1000);
 
   const sessionCtx: SessionContext = {
     runner,
@@ -274,31 +340,69 @@ export async function runCommand(options: RunOptions): Promise<number> {
 
   const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo };
 
+  // Boot discovery: orphan dirs, attempt-cap groups, branch refs, unblock
+  // candidates. Resolved from disk/branches; gh state lookups stay lazy in the
+  // boot deps.
+  const bootstrap: BootstrapInput = {
+    tmpDir: paths.tmpDir,
+    stateDir: paths.stateDir,
+    gitignorePath: paths.gitignorePath,
+    workerDir: workerDirPath(paths.tmpDir, workerId),
+    workerPidFile: workerPidFile(paths.tmpDir, workerId),
+    workerPid: process.pid,
+  };
+  const bootOptions = await collectBootOptions(ctx, facts, bootstrap, nowS);
+  const bootDeps = await buildBootDeps(ctx, bootOptions, nowS);
+
+  // Feedback worktree manager — checks out the worker branch for the gate.
+  const feedback = makeFeedbackWorktree(ctx.root, join(paths.tmpDir, "feedback"));
+
+  // Per-issue mutable attempt context the process deps' envelope/iter-log close
+  // over; buildProcessInput resets it before each processIssue call.
+  const current: CurrentAttempt = { attemptDir: "" };
+
+  // --request/-r special block, threaded into the handoff the agent reads.
+  const requestBlock = specialUserRequestBlock(flags.request);
+
   const deps: SessionDeps = {
     gh: { listCandidates: () => ghx.listCandidates(ghCtx) },
     runBoot,
-    bootDeps: buildBootDeps(ctx),
-    bootOptions: emptyBootOptions(facts, paths, workerId, cwd),
+    bootDeps,
+    bootOptions,
     processIssue,
-    processDeps: buildProcessDeps(ctx, settings.model, settings.sandbox),
-    buildProcessInput: (candidate: IssueCandidate, c: SessionContext): ProcessIssueInput => ({
-      issue: candidate.number,
-      title: candidate.title,
-      body: candidate.body,
-      runner: c.runner,
-      workerId: c.workerId,
-      tmpDir: c.issueTemplate.tmpDir,
-      attempt: 1,
-      attemptDir: `${c.issueTemplate.tmpDir}/workers/${c.workerId}/${candidate.number}-a1`,
-      repo: c.issueTemplate.repo,
-      repoDir: c.issueTemplate.repoDir,
-      remote: c.issueTemplate.remote,
-      baseInput: { issueBody: candidate.body },
-    }),
+    processDeps: buildProcessDeps(ctx, settings.model, settings.sandbox, feedback, current),
+    buildProcessInput: (candidate: IssueCandidate, c: SessionContext): ProcessIssueInput => {
+      const attempt = nextAttemptSync(c.issueTemplate.tmpDir, candidate.number);
+      const attemptDir = buildWorkerAttemptPath(c.issueTemplate.tmpDir, c.workerId, candidate.number, attempt);
+      // Point the session-scoped envelope/iter-log closures at this attempt.
+      current.attemptDir = attemptDir;
+      // Append the --request block into the handoff body so the inner agent
+      // (which reads handoff.md as its prompt) sees the special request.
+      const body = requestBlock ? `${candidate.body}\n\n${requestBlock}` : candidate.body;
+      return {
+        issue: candidate.number,
+        title: candidate.title,
+        body,
+        runner: c.runner,
+        workerId: c.workerId,
+        tmpDir: c.issueTemplate.tmpDir,
+        attempt,
+        attemptDir,
+        repo: c.issueTemplate.repo,
+        repoDir: c.issueTemplate.repoDir,
+        remote: c.issueTemplate.remote,
+        baseInput: { issueBody: candidate.body },
+      };
+    },
     emit: (line: string) => process.stdout.write(`${line}\n`),
   };
 
-  const summary = await runSession(deps, sessionCtx);
+  let summary;
+  try {
+    summary = await runSession(deps, sessionCtx);
+  } finally {
+    await feedback.cleanup();
+  }
 
   if (!summary.boot.precheck.ok) {
     const failed = summary.boot.precheck.failed;

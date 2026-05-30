@@ -3,3 +3,6 @@ node_modules/
 dist/
 dist-bundle/
 *.tsbuildinfo
+
+# Per-project memory store / session scratch must never be committed.
+.red/

@@ -77,6 +77,33 @@ export async function diffstat(ctx: GitContext, branch: string, base: string): P
   return r.code === 0 ? r.stdout.trim() : "";
 }
 
+/** `git log -n <count>` one-line block for a ref (the inner-prompt recent
+ * commits block). Best-effort: empty string when the ref/log is unavailable. */
+export async function recentCommits(ctx: GitContext, ref = "main", count = 5): Promise<string> {
+  const r = await git(["log", "-n", String(count), "--oneline", ref], opts(ctx));
+  return r.code === 0 ? r.stdout.trim() : "";
+}
+
+/**
+ * Add a detached worktree for `branch` under `path` (fetching origin first so a
+ * sandcastle-pushed worker branch is visible locally). Returns true on success.
+ * Best-effort cleanup is the caller's via {@link worktreeRemove}.
+ */
+export async function worktreeAdd(ctx: GitContext, path: string, branch: string): Promise<boolean> {
+  await git(["fetch", "origin", branch], opts(ctx));
+  // Prefer the local branch if it exists, else the fetched origin ref.
+  const local = await git(["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`], opts(ctx));
+  const ref = local.code === 0 ? branch : `origin/${branch}`;
+  const r = await git(["worktree", "add", "--force", "--detach", path, ref], opts(ctx));
+  return r.code === 0;
+}
+
+/** Remove a worktree previously added by {@link worktreeAdd} (best-effort). */
+export async function worktreeRemove(ctx: GitContext, path: string): Promise<void> {
+  if (!path) return;
+  await git(["worktree", "remove", "--force", path], opts(ctx));
+}
+
 /** The GitExec executor for remote-branch.ts (pushAttempt / deleteRemote). */
 export function gitExec(ctx: GitContext): GitExec {
   return async (args: string[]): Promise<GitExecResult> => {
