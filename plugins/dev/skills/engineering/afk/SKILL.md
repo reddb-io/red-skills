@@ -8,6 +8,18 @@ argument-hint: "[--prd N | --issues N,N,N] [--runner claude|codex] [--alternate]
 
 Drain the agent-ready backlog. Single skill that owns issue selection, worktree isolation, inner-agent execution, GitHub state coordination, merge-back, and runner-fallback.
 
+## Runtime & Invocation
+
+> **Run this skill — do not read its code.** This `SKILL.md` is the complete behavioural contract. The `bin/` bundle and the `scripts/` shell files are **build/runtime artifacts**, not documentation: opening them to "understand what `/afk` does" wastes context and is never required. Everything an agent needs to operate `/afk` is in this file.
+
+The skill ships a single committed runtime bundle:
+
+```
+node "$CLAUDE_PLUGIN_ROOT/skills/engineering/afk/bin/afk.mjs" <run|monitor|fleet|reap> [args]
+```
+
+`bin/afk.mjs` is a dependency-free esbuild bundle (one file, no `node_modules`, no install step) built from the TypeScript source at the repo's `packages/afk/` — which lives **outside** the plugin tree so it never ships to the client cache and never appears in the skill directory (ADR 0032). The bundle is the public entrypoint; it executes natively where it has a typed implementation (e.g. `fleet`) and delegates to the legacy `scripts/*.sh` orchestrator for everything not yet ported. The shell entrypoints (`bash scripts/afk.sh …`) remain valid during the migration and are invoked identically by the bundle.
+
 ## When To Use
 
 - `/afk` — every issue currently labelled `ready-for-agent`.

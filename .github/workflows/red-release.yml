@@ -126,6 +126,30 @@ jobs:
           echo "next=$next" >> "$GITHUB_OUTPUT"
           echo "Releasing $next"
 
+      - uses: pnpm/action-setup@v4
+        if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
+        with:
+          node-version: 22
+
+      # ADR 0032: AFK ships as a committed, dependency-free bundle. Rebuild it
+      # from packages/afk (which lives outside the plugin tree) so the shipped
+      # bin/afk.mjs is always byte-for-byte the build of the released source,
+      # then stage it into the version-bump commit below. esbuild output is
+      # deterministic, so unchanged source rebuilds to identical bytes and the
+      # git add is a no-op.
+      - name: Build AFK runtime bundle
+        if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
+        working-directory: packages/afk
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile
+          pnpm bundle
+
       - name: Sync plugin manifest versions
         if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
         env:
@@ -138,6 +162,7 @@ jobs:
             plugins/memory/.claude-plugin/plugin.json
             plugins/memory/.codex-plugin/plugin.json
           )
+          afk_bundle=plugins/dev/skills/engineering/afk/bin/afk.mjs
           new="${NEXT#v}"
           for manifest in "${manifests[@]}"; do
             tmp=$(mktemp)
@@ -146,10 +171,10 @@ jobs:
           done
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          if git diff --quiet -- "${manifests[@]}"; then
-            echo "plugin manifests already at $new"
+          if git diff --quiet -- "${manifests[@]}" "$afk_bundle"; then
+            echo "plugin manifests already at $new and AFK bundle unchanged"
           else
-            git add "${manifests[@]}"
+            git add "${manifests[@]}" "$afk_bundle"
             git commit -m "chore(release): $NEXT [skip release]"
             # Rebase-resilient push: red-memory-wiki-extract.yml also pushes to
             # main on PR-merge (via GITHUB_TOKEN, which can't re-trigger this
@@ -168,17 +193,7 @@ jobs:
       # platform-independent file; a manifest pins its checksum + the reddb tag
       # whose per-platform `red` binaries the bootstrap reuses. Assets are
       # attached at `gh release create` so they exist the moment the Release
-      # publishes.
-      - uses: pnpm/action-setup@v4
-        if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
-        with:
-          version: 11
-
-      - uses: actions/setup-node@v4
-        if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
-        with:
-          node-version: 22
-
+      # publishes. pnpm/node are already set up above for the AFK bundle.
       - name: Build memory runtime bundle + manifest
         if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
         working-directory: plugins/memory

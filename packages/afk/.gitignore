@@ -1,0 +1,9 @@
+# AFK TypeScript source package. The SHIPPING artifact is the committed bundle at
+# plugins/dev/skills/engineering/afk/bin/afk.mjs (built by `pnpm bundle`), NOT
+# anything here. Source lives outside the plugin tree so it never reaches the
+# client cache and never tempts the agent into reading code instead of running
+# the skill (ADR 0032).
+node_modules/
+dist/
+*.tsbuildinfo
+.red/
