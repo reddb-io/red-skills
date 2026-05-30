@@ -3,14 +3,23 @@
 #
 # Reads the Claude Code statusline JSON payload from stdin (cwd, model,
 # effort, context window) and combines it with live /afk worker state
-# from $cwd/.red/tmp/workers/*/*/.
+# from <root>/.red/tmp/workers/*/*/.
+#
+# Root resolution (first match wins):
+#   1. $1 — an explicit project-root directory passed as the first argument.
+#          Wire it in .claude/settings.json as
+#            `bash …/statusline.sh "$CLAUDE_PROJECT_DIR"`
+#          so the statusline always reads the checkout Claude Code was started
+#          in, regardless of where the command itself runs.
+#   2. the stdin payload's .workspace.current_dir / .cwd.
+#   3. $PWD.
 #
 # Output example (no truncation, one line):
-#   red-skills · Opus·high · 47k 24% · 🤖4 📋1 🙋11 🚧10 +12 -3 #17
+#   red-skills · Opus·high · 47k 24% · 🤖4 📋1 🆘11 🚧10 +12 -3 #17
 #
 # Each block is optional and drops out silently when its data is absent
 # (e.g. invoked outside Claude Code → no model/context block;
-#  cwd without `.red/tmp/` → no AFK block).
+#  root without `.red/tmp/` → no AFK block).
 #
 # Stays under 100 ms via a 60 s cache on GitHub-derived counts.
 
@@ -26,9 +35,16 @@ if [[ ! -t 0 ]]; then
   [[ -z "$input" ]] && input='{}'
 fi
 
-# Resolve cwd: prefer payload, fall back to $PWD
-cwd=$(jq -r '.workspace.current_dir // .cwd // empty' <<<"$input" 2>/dev/null)
-[[ -z "$cwd" ]] && cwd="$PWD"
+# Resolve the project root: explicit first arg wins, then the stdin payload,
+# then $PWD. An empty / non-directory first arg falls through to the payload,
+# so `statusline.sh "$CLAUDE_PROJECT_DIR"` stays safe when the var is unset.
+root_arg="${1:-}"
+if [[ -n "$root_arg" && -d "$root_arg" ]]; then
+  cwd="$root_arg"
+else
+  cwd=$(jq -r '.workspace.current_dir // .cwd // empty' <<<"$input" 2>/dev/null)
+  [[ -z "$cwd" ]] && cwd="$PWD"
+fi
 cd "$cwd" 2>/dev/null || true
 
 # ---- Per-project opt-out -------------------------------------------------
@@ -199,7 +215,7 @@ if [[ -d .red/tmp ]]; then
     afk_tokens=()
     (( total_workers > 0 )) && afk_tokens+=("${GREEN}🤖${total_workers}${RESET}")
     (( queue > 0 ))         && afk_tokens+=("📋${queue}")
-    (( human > 0 ))         && afk_tokens+=("${YELLOW}🙋${human}${RESET}")
+    (( human > 0 ))         && afk_tokens+=("${YELLOW}🆘${human}${RESET}")
     (( total_blocked > 0 )) && afk_tokens+=("${RED}🚧${total_blocked}${RESET}")
     (( total_added > 0 ))   && afk_tokens+=("${GREEN}+${total_added}${RESET}")
     (( total_removed > 0 )) && afk_tokens+=("${RED}-${total_removed}${RESET}")
