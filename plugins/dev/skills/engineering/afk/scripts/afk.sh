@@ -36,6 +36,19 @@ source "$SCRIPT_DIR/lib/envelope.sh"
 source "$SCRIPT_DIR/lib/history.sh"
 # shellcheck source=./lib/pin-reader.sh
 source "$SCRIPT_DIR/lib/pin-reader.sh"
+# shellcheck source=./lib/base-resolver.sh
+source "$SCRIPT_DIR/lib/base-resolver.sh"
+# Branch-lock value reader (ADR 0031, issue #253). lock-store ships in the
+# sibling branch-lock skill of the same dev plugin, so the relative path is
+# stable. Guard the source — a partial install just behaves as unlocked
+# (lock_store_read absent → fall back to a no-op that reports "unlocked").
+_LOCK_STORE_SH="$SCRIPT_DIR/../../../misc/branch-lock/scripts/lib/lock-store.sh"
+if [[ -f "$_LOCK_STORE_SH" ]]; then
+  # shellcheck source=../../../misc/branch-lock/scripts/lib/lock-store.sh
+  source "$_LOCK_STORE_SH"
+else
+  lock_store_read() { return 1; }
+fi
 # shellcheck source=./lib/remote-branch.sh
 source "$SCRIPT_DIR/lib/remote-branch.sh"
 # shellcheck source=./lib/heartbeat.sh
@@ -2555,11 +2568,17 @@ EOF
   return 0
 }
 
-# ---------- pinned branch (issue #64) ----------
-# Resolve the branch this work item is pinned to: the issue's own `branch:`
-# line, else its parent PRD's, else `main`. Parsing is pure (lib/pin-reader.sh);
-# this wrapper owns the one side effect — fetching the parent PRD body over `gh`
-# only when the issue itself carries no pin.
+# ---------- base branch (issue #64 pin; issue #253 lock) ----------
+# Resolve the branch this work item is based on and merges back into, with
+# precedence lock > pin > main (ADR 0031, base_resolve in lib/base-resolver.sh):
+#   1. the branch-lock value — when the primary checkout is locked to a branch,
+#      the human pinned it on purpose and it overrides any per-issue pin;
+#   2. else the pinned branch — the issue's own `branch:` line, else its parent
+#      PRD's (lib/pin-reader.sh);
+#   3. else `main`.
+# Parsing is pure; this wrapper owns the two side effects — fetching the parent
+# PRD body over `gh` only when the issue itself carries no pin, and reading the
+# lock file in the primary checkout.
 resolve_pinned_branch() {
   local issue_body="$1"
   local prd_body="" prd_num
@@ -2569,7 +2588,19 @@ resolve_pinned_branch() {
       prd_body="$(gh -R "$(gh_repo)" issue view "$prd_num" --json body --jq .body 2>/dev/null || true)"
     fi
   fi
-  pin_resolve "$issue_body" "$prd_body"
+  local pin_value lock_value
+  pin_value="$(pin_resolve "$issue_body" "$prd_body")"
+  # Absent/unlocked → empty, so base_resolve falls through to pin then main.
+  lock_value="$(lock_store_read "$PROJECT_ROOT/.red/tmp/branch-lock.yaml" 2>/dev/null || true)"
+  base_resolve "$lock_value" "$pin_value" "main"
+}
+
+# afk_is_locked — 0 when the primary checkout carries a branch lock, else 1.
+# Drives the lock-toggled landing (ADR 0030, issue #254): locked work lands on
+# the local locked branch for human promotion; unlocked work lands via an
+# admin-merged PR into the base.
+afk_is_locked() {
+  lock_store_read "$PROJECT_ROOT/.red/tmp/branch-lock.yaml" >/dev/null 2>&1
 }
 
 # ---------- per-issue processing ----------
