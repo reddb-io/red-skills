@@ -1,0 +1,23 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    dependencies:
+      cli-args-parser:
+        specifier: ^1.0.6
+        version: 1.0.6
+
+packages:
+
+  cli-args-parser@1.0.6:
+    resolution: {integrity: sha512-c6dKqF8mo2Vq1gw9OUoYoEGnGi9uatHLJWEzbzBn55kXMJdWIFMfRld9NprOF02oco9+SU9E2AgobmdjXxLlBw==}
+    engines: {node: '>=18.0.0'}
+
+snapshots:
+
+  cli-args-parser@1.0.6: {}

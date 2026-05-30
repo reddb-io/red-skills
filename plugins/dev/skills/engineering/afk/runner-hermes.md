@@ -25,7 +25,7 @@ Any of those surfaces a real backend exposes should be wired through the `claude
 
 ## Spawn Contract
 
-The orchestrator does not ship a third spawn implementation today. When a user pins an unknown runner, `run_inner` falls through to whichever existing process backend (`run_claude` / `run_codex`) the `runner` parameter actually names, so the dispatch decision is purely advisory metadata. A real Hermes integration would slot in next to `run_claude` / `run_codex` in [`scripts/afk.sh`](scripts/afk.sh) and reuse the same prompt body, the same sentinel watchdog, and the same envelope writer.
+The runtime does not ship a third spawn backend today. When a user pins an unknown runner, the runtime falls through to whichever existing process backend (claude or codex) the `--runner` value actually names, so the dispatch decision is purely advisory metadata. A real Hermes integration would slot in next to the claude / codex backends and reuse the same prompt body, the same sentinel watchdog, and the same envelope writer.
 
 ## Working Directory
 

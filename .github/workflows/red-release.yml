@@ -144,11 +144,29 @@ jobs:
       # git add is a no-op.
       - name: Build AFK runtime bundle
         if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
-        working-directory: packages/afk
+        working-directory: src/domains/dev
+        env:
+          NEXT: ${{ steps.version.outputs.next }}
         run: |
           set -euo pipefail
           pnpm install --frozen-lockfile
-          pnpm bundle
+          # `build` emits the canonical dist/dev.bundle.min.mjs (release asset,
+          # ADR 0034) plus the transition bin/afk.mjs staged below.
+          pnpm build
+          # Checksum manifest the dynamic-fetch hook (src/shared/bundle-fetch.ts)
+          # verifies before caching. Mirrors memory-runtime-manifest.json.
+          node --input-type=module <<'EOF'
+          import { createHash } from 'node:crypto';
+          import { readFileSync, writeFileSync } from 'node:fs';
+          const bytes = readFileSync('../../../dist/dev.bundle.min.mjs');
+          const manifest = {
+            plugin: 'dev',
+            version: process.env.NEXT.replace(/^v/, ''),
+            sha256: createHash('sha256').update(bytes).digest('hex'),
+          };
+          writeFileSync('../../../dist/dev.manifest.json', JSON.stringify(manifest, null, 2));
+          console.log('dev runtime manifest:', JSON.stringify(manifest));
+          EOF
 
       - name: Sync plugin manifest versions
         if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
@@ -196,13 +214,17 @@ jobs:
       # publishes. pnpm/node are already set up above for the AFK bundle.
       - name: Build memory runtime bundle + manifest
         if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
-        working-directory: plugins/memory
+        working-directory: src/domains/memory
         env:
           NEXT: ${{ steps.version.outputs.next }}
         run: |
           set -euo pipefail
           pnpm install --frozen-lockfile
-          pnpm bundle
+          # bundle:legacy keeps emitting dist-bundle/memory-cli.mjs the manifest +
+          # current bootstrap expect (ADR 0029). The new canonical
+          # dist/memory.bundle.min.mjs (ADR 0034) is built by `pnpm bundle`; both
+          # asset models coexist until the dynamic-fetch phase unifies them.
+          pnpm bundle:legacy
           node --input-type=module <<'EOF'
           import { createHash } from 'node:crypto';
           import { readFileSync, writeFileSync } from 'node:fs';
@@ -230,6 +252,46 @@ jobs:
           console.log('runtime manifest:', JSON.stringify(manifest));
           EOF
 
+      # ADR 0034: the code-nav MCP server ships as a release-asset bundle, like
+      # the dev/memory runtimes. Its package lives inside the dev domain tree but
+      # is a self-contained package (own pnpm-lock), so it installs in isolation
+      # with --ignore-workspace. `build` (typecheck + bundle) emits the dev-checkout
+      # file dist/code-nav-mcp.bundle.min.mjs; the release asset the dynamic fetch
+      # resolves is named code-nav.bundle.min.mjs (bundleAssetName('code-nav')),
+      # with a code-nav.manifest.json mirroring dev.manifest.json.
+      - name: Build code-nav MCP bundle + manifest
+        if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
+        working-directory: src/domains/dev/mcp/code-nav
+        env:
+          NEXT: ${{ steps.version.outputs.next }}
+        run: |
+          set -euo pipefail
+          # code-nav is its own pnpm workspace root (packages: [.]), so a plain
+          # install isolates it from the parent dev workspace without
+          # --ignore-workspace. Build with direct binaries — `pnpm run` triggers a
+          # deps-status precheck that re-resolves the parent workspace and fails.
+          # strictDepBuilds=false: esbuild ships its platform binary via an optional
+          # dep, so its skipped postinstall must not fail the install under set -e.
+          pnpm install --frozen-lockfile --config.strictDepBuilds=false
+          ./node_modules/.bin/tsc -p tsconfig.json --noEmit
+          ./node_modules/.bin/esbuild src/index.ts --bundle --minify --platform=node --format=esm --target=node22 --outfile=../../../../../dist/code-nav-mcp.bundle.min.mjs --banner:js="import { createRequire as __cr } from 'node:module'; const require = __cr(import.meta.url);"
+          node --input-type=module <<'EOF'
+          import { createHash } from 'node:crypto';
+          import { readFileSync, writeFileSync, copyFileSync } from 'node:fs';
+          const built = '../../../../../dist/code-nav-mcp.bundle.min.mjs';
+          // Publish the fetch-resolvable asset name code-nav.bundle.min.mjs.
+          const asset = '../../../../../dist/code-nav.bundle.min.mjs';
+          copyFileSync(built, asset);
+          const bytes = readFileSync(asset);
+          const manifest = {
+            plugin: 'code-nav',
+            version: process.env.NEXT.replace(/^v/, ''),
+            sha256: createHash('sha256').update(bytes).digest('hex'),
+          };
+          writeFileSync('../../../../../dist/code-nav.manifest.json', JSON.stringify(manifest, null, 2));
+          console.log('code-nav bundle manifest:', JSON.stringify(manifest));
+          EOF
+
       - name: Tag + GitHub Release
         if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
         env:
@@ -241,8 +303,14 @@ jobs:
           git tag -a "$NEXT" -m "Release $NEXT"
           git push origin "$NEXT"
           assets=(
-            plugins/memory/dist-bundle/memory-cli.mjs
-            plugins/memory/memory-runtime-manifest.json
+            dist/dev.bundle.min.mjs
+            dist/dev.manifest.json
+            dist/code-nav.bundle.min.mjs
+            dist/code-nav.manifest.json
+            src/domains/memory/dist-bundle/memory-cli.mjs
+            src/domains/memory/dist-bundle/memory-mcp.mjs
+            src/domains/memory/dist-bundle/red-curate-skill.mjs
+            src/domains/memory/memory-runtime-manifest.json
           )
           if [ -n "$PREVIOUS" ]; then
             gh release create "$NEXT" "${assets[@]}" \
