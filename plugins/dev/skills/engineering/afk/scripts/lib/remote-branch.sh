@@ -151,13 +151,166 @@ delete_remote() {
 
 # _attempt_snapshot_grace_s  →  prints the resolved grace window in seconds
 # (default 7 days). A completed issue's snapshot branches survive this long after
-# the issue closed before they are deleted. Defensive: a non-numeric
+# the issue closed; a 404 issue's branch survives this long after the branch's
+# last commit. Defensive: a non-numeric
 # RED_AFK_ATTEMPT_SNAPSHOT_GRACE_S falls back to the default so an operator typo
 # can never silently disable the grace. 0 is honoured (delete immediately on
 # completion) — unlike the count/age caps, a zero grace is a meaningful config.
 _attempt_snapshot_grace_s() {
   local v="${RED_AFK_ATTEMPT_SNAPSHOT_GRACE_S:-$((7 * 86400))}"
   if [[ "$v" =~ ^[0-9]+$ ]]; then echo "$v"; else echo $((7 * 86400)); fi
+}
+
+# _attempt_snapshot_issue_from_branch <branch>
+#
+# Extract the issue number from afk-attempts/{worker}/{N}-slug. Echoes nothing
+# for malformed refs so callers can skip them without treating bad remote data as
+# fatal.
+_attempt_snapshot_issue_from_branch() {
+  local branch="$1" rest issue
+  [[ "$branch" == afk-attempts/*/* ]] || return 0
+  rest="${branch#afk-attempts/*/}"  # {N}-slug
+  issue="${rest%%-*}"               # {N}
+  [[ "$issue" =~ ^[0-9]+$ ]] || return 0
+  printf '%s\n' "$issue"
+}
+
+# attempt_snapshot_cleanup_plan <refs> <classifier-fn> <now-s> <grace-s>
+#
+# Pure keep/reap decider for the `afk-attempts/*` namespace. <refs> is a
+# synthetic ls-remote-shaped list:
+#
+#   <sha><TAB>refs/heads/afk-attempts/{worker}/{issue}-slug[<TAB><commit-s>]
+#
+# The optional third field is the branch's last-commit epoch and is required only
+# for `not-found`, where there is no issue closedAt timestamp to anchor grace.
+# <classifier-fn> is called as `<classifier-fn> <issue>` and must echo one of:
+# open, closed-within-grace, closed-past-grace, not-found, unresolved-transient.
+# The function performs no git/gh/date I/O and emits:
+#
+#   keep|reap<TAB><branch><TAB><issue><TAB><classification>
+attempt_snapshot_cleanup_plan() {
+  local refs="$1" classifier="$2" now_s="$3" grace_s="$4"
+  [[ "$now_s" =~ ^[0-9]+$ ]] || return 0
+  [[ "$grace_s" =~ ^[0-9]+$ ]] || grace_s=$((7 * 86400))
+  declare -F "$classifier" >/dev/null 2>&1 || return 0
+
+  local -A issue_class=()
+  local line sha ref branch commit_s issue class action
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    IFS=$'\t' read -r sha ref commit_s _ <<<"$line"
+    [[ "$ref" == refs/heads/afk-attempts/* ]] || continue
+    branch="${ref#refs/heads/}"
+    issue="$(_attempt_snapshot_issue_from_branch "$branch")"
+    [[ -n "$issue" ]] || continue
+
+    if [[ -n "${issue_class[$issue]+set}" ]]; then
+      class="${issue_class[$issue]}"
+    else
+      class="$("$classifier" "$issue" 2>/dev/null || true)"
+      case "$class" in
+        open|closed-within-grace|closed-past-grace|not-found|unresolved-transient) ;;
+        *) class="unresolved-transient" ;;
+      esac
+      issue_class["$issue"]="$class"
+    fi
+
+    action="keep"
+    case "$class" in
+      closed-past-grace)
+        action="reap"
+        ;;
+      not-found)
+        if [[ "$commit_s" =~ ^[0-9]+$ ]] && (( now_s - commit_s > grace_s )); then
+          action="reap"
+        fi
+        ;;
+      open|closed-within-grace|unresolved-transient)
+        action="keep"
+        ;;
+    esac
+
+    printf '%s\t%s\t%s\t%s\n' "$action" "$branch" "$issue" "$class"
+  done <<<"$refs"
+}
+
+# _attempt_snapshot_branch_commit_s <repo-dir> <sha> <branch>
+#
+# Best-effort branch last-commit epoch for 404 grace decisions. Prefer a local
+# object lookup, then shallow-fetch that one remote branch into a remote-tracking
+# ref. Echoes nothing if the date cannot be proved, which makes not-found refs
+# stay in the keep plan.
+_attempt_snapshot_branch_commit_s() {
+  local repo_dir="$1" sha="$2" branch="$3" remote_ref
+  if [[ -n "$sha" ]] && git -C "$repo_dir" cat-file -e "${sha}^{commit}" 2>/dev/null; then
+    git -C "$repo_dir" show -s --format=%ct "$sha" 2>/dev/null && return 0
+  fi
+  remote_ref="refs/remotes/origin/${branch}"
+  if git -C "$repo_dir" fetch --quiet --depth=1 origin "refs/heads/${branch}:${remote_ref}" >/dev/null 2>&1; then
+    git -C "$repo_dir" show -s --format=%ct "$remote_ref" 2>/dev/null && return 0
+  fi
+  return 0
+}
+
+# _attempt_snapshot_refs_with_commit_dates <repo-dir> <refs>
+#
+# Add a third `<commit-s>` field to ls-remote rows for the pure decider. Tests may
+# pass a synthetic third field already; production rows are augmented
+# best-effort.
+_attempt_snapshot_refs_with_commit_dates() {
+  local repo_dir="$1" refs="$2"
+  local line sha ref commit_s branch
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    IFS=$'\t' read -r sha ref commit_s _ <<<"$line"
+    [[ "$ref" == refs/heads/afk-attempts/* ]] || continue
+    branch="${ref#refs/heads/}"
+    if [[ ! "$commit_s" =~ ^[0-9]+$ ]]; then
+      commit_s="$(_attempt_snapshot_branch_commit_s "$repo_dir" "$sha" "$branch")"
+    fi
+    printf '%s\t%s\t%s\n' "$sha" "$ref" "$commit_s"
+  done <<<"$refs"
+}
+
+# _attempt_snapshot_issue_state_from_gh <repo> <issue> <now-s> <grace-s>
+#
+# Translate the side-effecting GitHub issue lookup into the small state vocabulary
+# consumed by the pure decider. A definitive 404 is `not-found`; every other
+# lookup/parsing problem is `unresolved-transient`, which the planner keeps.
+_attempt_snapshot_issue_state_from_gh() {
+  local repo="$1" issue="$2" now_s="$3" grace_s="$4"
+  local meta state closed_at closed_s lower
+  meta="$(gh -R "$repo" issue view "$issue" --json state,closedAt 2>&1)" || {
+    lower="${meta,,}"
+    if [[ "$lower" == *"404"* || "$lower" == *"not found"* || "$lower" == *"could not resolve"* ]]; then
+      printf 'not-found\n'
+    else
+      printf 'unresolved-transient\n'
+    fi
+    return 0
+  }
+
+  state="$(jq -r '.state // ""' <<<"$meta" 2>/dev/null)"
+  case "$state" in
+    OPEN)
+      printf 'open\n'
+      ;;
+    CLOSED)
+      closed_at="$(jq -r '.closedAt // ""' <<<"$meta" 2>/dev/null)"
+      [[ -n "$closed_at" ]] || { printf 'unresolved-transient\n'; return 0; }
+      closed_s="$(date -d "$closed_at" +%s 2>/dev/null)" || { printf 'unresolved-transient\n'; return 0; }
+      [[ "$closed_s" =~ ^[0-9]+$ ]] || { printf 'unresolved-transient\n'; return 0; }
+      if (( now_s - closed_s > grace_s )); then
+        printf 'closed-past-grace\n'
+      else
+        printf 'closed-within-grace\n'
+      fi
+      ;;
+    *)
+      printf 'unresolved-transient\n'
+      ;;
+  esac
 }
 
 # prune_completed_attempt_branches [root]
@@ -168,7 +321,8 @@ _attempt_snapshot_grace_s() {
 #   - still OPEN                          → never touched (leave every branch).
 #   - CLOSED, closed <= grace ago         → kept (a reopen can still recover it).
 #   - CLOSED, closed >  grace ago         → every snapshot branch deleted.
-#   - unclassifiable (gh error/no close)  → left strictly untouched.
+#   - issue API 404, branch age > grace   → that snapshot branch deleted.
+#   - unclassifiable/transient gh error   → left strictly untouched.
 # The grace window is _attempt_snapshot_grace_s. Best-effort and always rc 0:
 # called at boot, never on the close path, so a slow/failing `gh` or `git` can
 # never block a completion. `gh_repo` is provided by the orchestrator that
@@ -185,43 +339,25 @@ prune_completed_attempt_branches() {
   refs="$(git -C "$repo_dir" ls-remote --heads origin 'refs/heads/afk-attempts/*' 2>/dev/null)" || return 0
   [[ -n "$refs" ]] || return 0
 
-  # Group branch names by the issue number embedded in afk-attempts/{wid}/{N}-slug.
-  local -A issue_branches=()
-  local line ref branch issue rest
-  while IFS= read -r line; do
-    [[ -n "$line" ]] || continue
-    ref="${line#*$'\t'}"          # drop the leading "<sha><TAB>"
-    branch="${ref#refs/heads/}"   # afk-attempts/{wid}/{N}-slug
-    rest="${branch#afk-attempts/*/}"  # {N}-slug
-    issue="${rest%%-*}"               # {N}
-    [[ "$issue" =~ ^[0-9]+$ ]] || continue
-    issue_branches["$issue"]+="${branch}"$'\n'
-  done <<<"$refs"
+  local refs_with_dates plan
+  refs_with_dates="$(_attempt_snapshot_refs_with_commit_dates "$repo_dir" "$refs")"
 
-  local deleted=0 issue
-  for issue in "${!issue_branches[@]}"; do
-    local meta state closed_at closed_s
-    meta="$(gh -R "$repo" issue view "$issue" --json state,closedAt 2>/dev/null)" || continue
-    [[ -n "$meta" ]] || continue
-    state="$(jq -r '.state // ""' <<<"$meta" 2>/dev/null)"
-    # Only a provably-CLOSED issue is eligible; OPEN or unknown → never touched.
-    [[ "$state" == "CLOSED" ]] || continue
-    closed_at="$(jq -r '.closedAt // ""' <<<"$meta" 2>/dev/null)"
-    [[ -n "$closed_at" ]] || continue
-    closed_s="$(date -d "$closed_at" +%s 2>/dev/null)" || continue
-    [[ -n "$closed_s" ]] || continue
-    (( now_s - closed_s > grace )) || continue   # still within grace → keep
+  _attempt_snapshot_prune_classifier() {
+    _attempt_snapshot_issue_state_from_gh "$repo" "$1" "$now_s" "$grace"
+  }
+  plan="$(attempt_snapshot_cleanup_plan "$refs_with_dates" _attempt_snapshot_prune_classifier "$now_s" "$grace")"
+  unset -f _attempt_snapshot_prune_classifier 2>/dev/null || true
 
-    while IFS= read -r branch; do
-      [[ -n "$branch" ]] || continue
-      if git -C "$repo_dir" push origin --delete "$branch" >/dev/null 2>&1; then
-        deleted=$((deleted + 1))
-      else
-        _remote_branch_log "warn: failed to delete remote snapshot ${branch}, survives on origin for cleanup later"
-      fi
-    done <<<"${issue_branches[$issue]}"
-  done
+  local deleted=0 action branch issue class
+  while IFS=$'\t' read -r action branch issue class; do
+    [[ "$action" == "reap" && -n "$branch" ]] || continue
+    if git -C "$repo_dir" push origin --delete "$branch" >/dev/null 2>&1; then
+      deleted=$((deleted + 1))
+    else
+      _remote_branch_log "warn: failed to delete remote snapshot ${branch}, survives on origin for cleanup later"
+    fi
+  done <<<"$plan"
 
-  [[ $deleted -gt 0 ]] && _remote_branch_log "snapshot cleanup: deleted $deleted completed-issue attempt branch(es) past the grace window"
+  [[ $deleted -gt 0 ]] && _remote_branch_log "snapshot cleanup: deleted $deleted attempt snapshot branch(es) past the grace window"
   return 0
 }
