@@ -5,6 +5,11 @@ import { join } from "node:path";
 import { parseRunnerFlag, detectRunner } from "../core/runner-detection.js";
 import { legacyScriptPath } from "../platform/legacy.js";
 
+/** True when the legacy bash supervisor should be used instead of the native one. */
+function useLegacyFleet(): boolean {
+  return process.env.RED_AFK_LEGACY === "1";
+}
+
 export interface FleetLaunchResult {
   status: "launched";
   pid: number;
@@ -137,19 +142,27 @@ export async function launchFleet(args: readonly string[], root = process.cwd(),
   }
 
   const detection = detectRunner({ flag: parsed.runnerFlag ?? parseRunnerFlag(args), scriptPath: process.argv[1] });
-  const script = legacyScriptPath("supervisor");
   const childArgs = [...parsed.passthrough];
   if (parsed.request) childArgs.unshift("--request", parsed.request);
   const env: NodeJS.ProcessEnv = { ...process.env, RED_AFK_TARGET: String(parsed.target), RED_AFK_RUNNER: detection.runner };
   if (parsed.request) env.RED_AFK_REQUEST = parsed.request;
 
   const out = await import("node:fs").then((fs) => fs.openSync(logFile, "a"));
-  const child = spawn("bash", [script, ...childArgs], {
-    cwd: root,
-    env,
-    detached: true,
-    stdio: ["ignore", out, out],
-  });
+  // Native by default: spawn `node <this-bundle> __supervise`. RED_AFK_LEGACY=1
+  // falls back to the bash supervisor.sh.
+  const child = useLegacyFleet()
+    ? spawn("bash", [legacyScriptPath("supervisor"), ...childArgs], {
+        cwd: root,
+        env,
+        detached: true,
+        stdio: ["ignore", out, out],
+      })
+    : spawn(process.execPath, [process.argv[1]!, "__supervise", ...childArgs], {
+        cwd: root,
+        env,
+        detached: true,
+        stdio: ["ignore", out, out],
+      });
   child.unref();
 
   const supervisorPid = await waitForPidFile(pidFile, 3_000);
