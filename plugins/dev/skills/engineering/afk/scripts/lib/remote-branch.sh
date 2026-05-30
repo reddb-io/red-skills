@@ -34,6 +34,12 @@
 #     branches whose issue is CLOSED, keeps OPEN/unclassified branches, and
 #     refuses to touch any branch checked out by a git worktree.
 #
+#   prune_completed_remote_live_branches [repo-dir]   (issue #273)
+#     The boot-time remote reaper for stale origin `afk/{wid}/{N}-slug` live
+#     branches. It reuses the same S1 issue-state classifier and pure decider as
+#     the snapshot/local reapers with a live policy: CLOSED means delete, OPEN or
+#     unclassified means keep. Best-effort and never on the close path.
+#
 # The live-push lifecycle above (push_initial / install_post_commit_hook /
 # delete_remote) deliberately touches ONLY the `afk/{wid}/{N}-slug` namespace.
 # The `afk-attempts/{wid}/{N}-slug` failure-push namespace stays the canonical
@@ -261,34 +267,36 @@ _attempt_snapshot_issue_from_branch() {
   printf '%s\n' "$issue"
 }
 
-# attempt_snapshot_cleanup_plan <refs> <classifier-fn> <now-s> <grace-s>
+# _branch_cleanup_plan <refs> <ref-prefix> <issue-parser-fn> <classifier-fn> <policy-fn> <now-s> <grace-s>
 #
-# Pure keep/reap decider for the `afk-attempts/*` namespace. <refs> is a
-# synthetic ls-remote-shaped list:
+# Shared pure keep/reap decider for AFK branch namespaces. <refs> is a synthetic
+# ls-remote-shaped list:
 #
-#   <sha><TAB>refs/heads/afk-attempts/{worker}/{issue}-slug[<TAB><commit-s>]
+#   <sha><TAB>refs/heads/{namespace}/{worker}/{issue}-slug[<TAB><commit-s>]
 #
-# The optional third field is the branch's last-commit epoch and is required only
-# for `not-found`, where there is no issue closedAt timestamp to anchor grace.
-# <classifier-fn> is called as `<classifier-fn> <issue>` and must echo one of:
-# open, closed-within-grace, closed-past-grace, not-found, unresolved-transient.
-# The function performs no git/gh/date I/O and emits:
+# <classifier-fn> is called once per issue and must echo one of the S1 issue
+# states: open, closed-within-grace, closed-past-grace, not-found,
+# unresolved-transient. <policy-fn> maps that state plus optional commit/grace
+# context to keep/reap. The function performs no git/gh/date I/O and emits:
 #
 #   keep|reap<TAB><branch><TAB><issue><TAB><classification>
-attempt_snapshot_cleanup_plan() {
-  local refs="$1" classifier="$2" now_s="$3" grace_s="$4"
-  [[ "$now_s" =~ ^[0-9]+$ ]] || return 0
+_branch_cleanup_plan() {
+  local refs="$1" ref_prefix="$2" issue_parser="$3" classifier="$4" policy="$5" now_s="$6" grace_s="$7"
   [[ "$grace_s" =~ ^[0-9]+$ ]] || grace_s=$((7 * 86400))
+  [[ "$now_s" =~ ^[0-9]+$ ]] || now_s=0
+  [[ -n "$ref_prefix" ]] || return 0
+  declare -F "$issue_parser" >/dev/null 2>&1 || return 0
   declare -F "$classifier" >/dev/null 2>&1 || return 0
+  declare -F "$policy" >/dev/null 2>&1 || return 0
 
   local -A issue_class=()
   local line sha ref branch commit_s issue class action
   while IFS= read -r line; do
     [[ -n "$line" ]] || continue
     IFS=$'\t' read -r sha ref commit_s _ <<<"$line"
-    [[ "$ref" == refs/heads/afk-attempts/* ]] || continue
+    [[ "$ref" == "$ref_prefix"* ]] || continue
     branch="${ref#refs/heads/}"
-    issue="$(_attempt_snapshot_issue_from_branch "$branch")"
+    issue="$("$issue_parser" "$branch" 2>/dev/null || true)"
     [[ -n "$issue" ]] || continue
 
     if [[ -n "${issue_class[$issue]+set}" ]]; then
@@ -302,23 +310,59 @@ attempt_snapshot_cleanup_plan() {
       issue_class["$issue"]="$class"
     fi
 
-    action="keep"
-    case "$class" in
-      closed-past-grace)
-        action="reap"
-        ;;
-      not-found)
-        if [[ "$commit_s" =~ ^[0-9]+$ ]] && (( now_s - commit_s > grace_s )); then
-          action="reap"
-        fi
-        ;;
-      open|closed-within-grace|unresolved-transient)
-        action="keep"
-        ;;
-    esac
+    action="$("$policy" "$class" "$now_s" "$grace_s" "$commit_s" 2>/dev/null || true)"
+    [[ "$action" == "reap" || "$action" == "keep" ]] || action="keep"
 
     printf '%s\t%s\t%s\t%s\n' "$action" "$branch" "$issue" "$class"
   done <<<"$refs"
+}
+
+_attempt_snapshot_cleanup_policy() {
+  local class="$1" now_s="$2" grace_s="$3" commit_s="$4"
+  case "$class" in
+    closed-past-grace)
+      printf 'reap\n'
+      ;;
+    not-found)
+      if [[ "$commit_s" =~ ^[0-9]+$ && "$now_s" =~ ^[0-9]+$ && "$grace_s" =~ ^[0-9]+$ ]] && (( now_s - commit_s > grace_s )); then
+        printf 'reap\n'
+      else
+        printf 'keep\n'
+      fi
+      ;;
+    *)
+      printf 'keep\n'
+      ;;
+  esac
+}
+
+# attempt_snapshot_cleanup_plan <refs> <classifier-fn> <now-s> <grace-s>
+#
+# Compatibility wrapper for the `afk-attempts/*` snapshot namespace. Snapshot
+# policy keeps open/unresolved/within-grace issues and reaps closed-past-grace
+# issues or old 404s by branch commit age.
+attempt_snapshot_cleanup_plan() {
+  local refs="$1" classifier="$2" now_s="$3" grace_s="$4"
+  [[ "$now_s" =~ ^[0-9]+$ ]] || return 0
+  _branch_cleanup_plan "$refs" "refs/heads/afk-attempts/" _attempt_snapshot_issue_from_branch "$classifier" _attempt_snapshot_cleanup_policy "$now_s" "$grace_s"
+}
+
+_live_branch_cleanup_policy() {
+  local class="$1"
+  case "$class" in
+    closed-within-grace|closed-past-grace) printf 'reap\n' ;;
+    *) printf 'keep\n' ;;
+  esac
+}
+
+# live_branch_cleanup_plan <refs> <classifier-fn>
+#
+# Pure keep/reap decider for the remote `afk/*` live namespace. The live policy
+# has no grace window: once the issue is CLOSED the merge base has the work, so
+# the remote live branch is residue. OPEN/not-found/transient states are kept.
+live_branch_cleanup_plan() {
+  local refs="$1" classifier="$2"
+  _branch_cleanup_plan "$refs" "refs/heads/afk/" _local_afk_issue_from_branch "$classifier" _live_branch_cleanup_policy 0 0
 }
 
 # _attempt_snapshot_branch_commit_s <repo-dir> <sha> <branch>
@@ -445,5 +489,44 @@ prune_completed_attempt_branches() {
   done <<<"$plan"
 
   [[ $deleted -gt 0 ]] && _remote_branch_log "snapshot cleanup: deleted $deleted attempt snapshot branch(es) past the grace window"
+  return 0
+}
+
+# prune_completed_remote_live_branches [root]
+#
+# Remote-side live-branch completion cleanup (issue #273, PRD #244). Enumerate
+# origin `afk/{wid}/{N}-slug` live branches and delete only those whose issue is
+# CLOSED. OPEN, not-found, and transiently unclassifiable issues are left in
+# place so an active or ambiguous worker branch is never destroyed. Best-effort
+# and always rc 0: called at boot as a backstop for close-path delete_remote.
+prune_completed_remote_live_branches() {
+  local repo_dir="${PROJECT_ROOT:-$(pwd)}"
+  local repo now_s
+  repo="$(gh_repo 2>/dev/null)" || return 0
+  [[ -n "$repo" ]] || return 0
+  now_s="$(date +%s)"
+
+  local refs
+  refs="$(git -C "$repo_dir" ls-remote --heads origin 'refs/heads/afk/*' 2>/dev/null)" || return 0
+  [[ -n "$refs" ]] || return 0
+
+  _live_branch_prune_classifier() {
+    _attempt_snapshot_issue_state_from_gh "$repo" "$1" "$now_s" 0
+  }
+  local plan
+  plan="$(live_branch_cleanup_plan "$refs" _live_branch_prune_classifier)"
+  unset -f _live_branch_prune_classifier 2>/dev/null || true
+
+  local deleted=0 action branch issue class
+  while IFS=$'\t' read -r action branch issue class; do
+    [[ "$action" == "reap" && -n "$branch" ]] || continue
+    if git -C "$repo_dir" push origin --delete "$branch" >/dev/null 2>&1; then
+      deleted=$((deleted + 1))
+    else
+      _remote_branch_log "warn: failed to delete remote live branch ${branch}, survives on origin for cleanup later"
+    fi
+  done <<<"$plan"
+
+  [[ $deleted -gt 0 ]] && _remote_branch_log "remote live cleanup: deleted $deleted closed-issue afk branch(es)"
   return 0
 }
