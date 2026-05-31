@@ -232,6 +232,7 @@ __export(fs_exports, {
   writeEnvelopePosted: () => writeEnvelopePosted,
   writeFailureMarkers: () => writeFailureMarkers,
   writeHandoff: () => writeHandoff,
+  writeValidationSidecar: () => writeValidationSidecar,
   writeWorkerPid: () => writeWorkerPid
 });
 import { constants as constants2 } from "node:fs";
@@ -281,6 +282,11 @@ async function removeDir(path2) {
 async function writeHandoff(path2, content) {
   await mkdir3(dirname2(path2), { recursive: true });
   await writeFile3(path2, content, "utf8");
+}
+async function writeValidationSidecar(path2, lines2) {
+  await mkdir3(dirname2(path2), { recursive: true });
+  await writeFile3(path2, lines2.length > 0 ? `${lines2.join("\n")}
+` : "", "utf8");
 }
 async function readText(path2) {
   try {
@@ -34204,7 +34210,7 @@ var init_Multipart = __esm({
       });
       return loop3;
     });
-    toPersisted = (stream6, writeFile9 = defaultWriteFile) => gen3(function* () {
+    toPersisted = (stream6, writeFile10 = defaultWriteFile) => gen3(function* () {
       const fs = yield* FileSystem;
       const path_ = yield* Path2;
       const dir = yield* fs.makeTempDirectoryScoped();
@@ -34232,7 +34238,7 @@ var init_Multipart = __esm({
         } else {
           persisted[part.key] = [filePart];
         }
-        return writeFile9(path2, file2);
+        return writeFile10(path2, file2);
       });
       return persisted;
     }).pipe(catchTags2({
@@ -39030,7 +39036,7 @@ var require_filesystem = __commonJS({
     var LDD_PATH = "/usr/bin/ldd";
     var SELF_PATH = "/proc/self/exe";
     var MAX_LENGTH = 2048;
-    var readFileSync5 = (path2) => {
+    var readFileSync6 = (path2) => {
       const fd = fs.openSync(path2, "r");
       const buffer3 = Buffer.alloc(MAX_LENGTH);
       const bytesRead = fs.readSync(fd, buffer3, 0, MAX_LENGTH, 0);
@@ -39055,7 +39061,7 @@ var require_filesystem = __commonJS({
     module.exports = {
       LDD_PATH,
       SELF_PATH,
-      readFileSync: readFileSync5,
+      readFileSync: readFileSync6,
       readFile: readFile9
     };
   }
@@ -39104,7 +39110,7 @@ var require_detect_libc = __commonJS({
     "use strict";
     var childProcess = __require("child_process");
     var { isLinux, getReport } = require_process();
-    var { LDD_PATH, SELF_PATH, readFile: readFile9, readFileSync: readFileSync5 } = require_filesystem();
+    var { LDD_PATH, SELF_PATH, readFile: readFile9, readFileSync: readFileSync6 } = require_filesystem();
     var { interpreterPath } = require_elf();
     var cachedFamilyInterpreter;
     var cachedFamilyFilesystem;
@@ -39196,7 +39202,7 @@ var require_detect_libc = __commonJS({
       }
       cachedFamilyFilesystem = null;
       try {
-        const lddContent = readFileSync5(LDD_PATH);
+        const lddContent = readFileSync6(LDD_PATH);
         cachedFamilyFilesystem = getFamilyFromLddContent(lddContent);
       } catch (e2) {
       }
@@ -39221,7 +39227,7 @@ var require_detect_libc = __commonJS({
       }
       cachedFamilyInterpreter = null;
       try {
-        const selfContent = readFileSync5(SELF_PATH);
+        const selfContent = readFileSync6(SELF_PATH);
         const path2 = interpreterPath(selfContent);
         cachedFamilyInterpreter = familyFromInterpreterPath(path2);
       } catch (e2) {
@@ -39285,7 +39291,7 @@ var require_detect_libc = __commonJS({
       }
       cachedVersionFilesystem = null;
       try {
-        const lddContent = readFileSync5(LDD_PATH);
+        const lddContent = readFileSync6(LDD_PATH);
         const versionMatch = lddContent.match(RE_GLIBC_VERSION);
         if (versionMatch) {
           cachedVersionFilesystem = versionMatch[1];
@@ -57674,7 +57680,7 @@ var require_snapshot_utils = __commonJS({
 var require_snapshot_recorder = __commonJS({
   "node_modules/.pnpm/undici@7.26.0/node_modules/undici/lib/mock/snapshot-recorder.js"(exports, module) {
     "use strict";
-    var { writeFile: writeFile9, readFile: readFile9, mkdir: mkdir7 } = __require("node:fs/promises");
+    var { writeFile: writeFile10, readFile: readFile9, mkdir: mkdir7 } = __require("node:fs/promises");
     var { dirname: dirname9, resolve: resolve6 } = __require("node:path");
     var { setTimeout: setTimeout2, clearTimeout: clearTimeout2 } = __require("node:timers");
     var { InvalidArgumentError, UndiciError } = require_errors();
@@ -57911,7 +57917,7 @@ var require_snapshot_recorder = __commonJS({
           hash: hash3,
           snapshot
         }));
-        await writeFile9(resolvedPath, JSON.stringify(data, null, 2), { flush: true });
+        await writeFile10(resolvedPath, JSON.stringify(data, null, 2), { flush: true });
       }
       /**
        * Clears all recorded snapshots
@@ -84561,6 +84567,90 @@ function formatStartedMarker(issue, ts) {
   return `[heartbeat] iteration started for #${issue} at ${ts}`;
 }
 
+// src/core/attempt-record.ts
+var KNOWN_MEMORY_STATUS = /* @__PURE__ */ new Set(["done", "blocked", "no-sentinel", "merge-conflict"]);
+function nonEmpty(s) {
+  if (s === void 0) return void 0;
+  const t = s.trim();
+  return t.length > 0 ? s : void 0;
+}
+function buildAttemptRecordPayload(ctx) {
+  const status2 = KNOWN_MEMORY_STATUS.has(ctx.outcome) ? ctx.outcome : String(ctx.outcome);
+  const payload = {
+    repository: ctx.repo,
+    issueNumber: ctx.issue,
+    attemptNumber: ctx.attempt,
+    status: status2
+  };
+  const title = nonEmpty(ctx.title);
+  if (title !== void 0) payload.issueTitle = title;
+  const url = nonEmpty(ctx.url);
+  if (url !== void 0) payload.issueUrl = url;
+  const body = nonEmpty(ctx.body);
+  if (body !== void 0) payload.issueBody = body;
+  const workerId = nonEmpty(ctx.workerId);
+  if (workerId !== void 0) payload.workerId = workerId;
+  const branch = nonEmpty(ctx.branch);
+  if (branch !== void 0) payload.branch = branch;
+  if (ctx.durationS !== void 0 && Number.isFinite(ctx.durationS) && ctx.durationS >= 0) {
+    payload.durationMs = Math.round(ctx.durationS * 1e3);
+  }
+  const diffstat2 = nonEmpty(ctx.diffstat);
+  if (diffstat2 !== void 0) payload.diffstat = diffstat2;
+  const mergeSha = nonEmpty(ctx.mergeSha);
+  if (mergeSha !== void 0) payload.mergeCommit = mergeSha;
+  const envelopeRef = nonEmpty(ctx.envelopeRef);
+  if (envelopeRef !== void 0) payload.envelopeRef = envelopeRef;
+  const notes = nonEmpty(ctx.notes);
+  if (notes !== void 0) payload.notes = notes;
+  const validationSummary = nonEmpty(ctx.validationSummary);
+  if (validationSummary !== void 0) payload.validationSummary = validationSummary;
+  return payload;
+}
+function toMemoryPayload(payload) {
+  return JSON.stringify(payload);
+}
+function joinPath(...parts2) {
+  return parts2.filter((p2) => p2.length > 0).join("/").replace(/\/+/g, "/");
+}
+function resolveMemoryCli(gitRoot, env2, probes) {
+  if (!probes.exists(joinPath(gitRoot, ".red", "memory", "config.json"))) return void 0;
+  const override = env2.RED_MEMORY_CLI;
+  if (override !== void 0 && override.length > 0) {
+    return probes.exists(override) ? ["node", override] : void 0;
+  }
+  const pathVar = env2.PATH ?? "";
+  for (const dir of pathVar.split(":")) {
+    if (dir.length === 0) continue;
+    if (probes.exists(joinPath(dir, "memory"))) return ["memory"];
+  }
+  const pluginRoot = env2.CLAUDE_PLUGIN_ROOT ?? "";
+  const repoRoot = env2.MEMORY_REPO_ROOT ?? "";
+  const readVersion = probes.readJsonVersion;
+  if (readVersion) {
+    const manifests = [];
+    if (pluginRoot.length > 0)
+      manifests.push(joinPath(pluginRoot, "..", "memory", ".claude-plugin", "plugin.json"));
+    if (repoRoot.length > 0)
+      manifests.push(joinPath(repoRoot, "plugins", "memory", ".claude-plugin", "plugin.json"));
+    const cacheBase = env2.RED_MEMORY_CACHE_DIR ?? env2.XDG_CACHE_HOME ?? joinPath(env2.HOME ?? "", ".cache");
+    for (const manifest of manifests) {
+      if (!probes.exists(manifest)) continue;
+      const version = readVersion(manifest);
+      if (!version) continue;
+      const cacheCli = joinPath(cacheBase, "reddb-memory", version, "memory-cli.mjs");
+      if (probes.exists(cacheCli)) return ["node", cacheCli];
+    }
+  }
+  const distCandidates = [];
+  if (pluginRoot.length > 0) distCandidates.push(joinPath(pluginRoot, "..", "memory", "dist", "cli.js"));
+  if (repoRoot.length > 0) distCandidates.push(joinPath(repoRoot, "plugins", "memory", "dist", "cli.js"));
+  for (const cand of distCandidates) {
+    if (probes.exists(cand)) return ["node", cand];
+  }
+  return void 0;
+}
+
 // src/core/process-issue.ts
 var LABEL_READY = "ready-for-agent";
 var LABEL_RUNNING = "running";
@@ -84753,10 +84843,11 @@ async function processIssue(deps, input) {
     now: deps.nowEpoch
   });
   if (!feedback.ok) {
+    await writeValidationSidecar2(deps, input.attemptDir, feedback.sidecar);
     return await terminalFailure(common, "feedback-failed", "feedback", {
       notes: "Feedback validation failed after the inner agent emitted DONE. The worker branch was not merged.",
       validation: feedback.sidecar.join("\n")
-    });
+    }, { validationSummary: feedback.sidecar.join("\n") });
   }
   const locked = await deps.lookups.isLocked();
   const landing = await doLanding(
@@ -84787,7 +84878,13 @@ async function processIssue(deps, input) {
   }
   const mergeSha = await deps.git.headShortSha();
   const durationS = deps.nowEpoch() - startedEpoch;
+  await writeValidationSidecar2(deps, input.attemptDir, feedback.sidecar);
   const posted = await emitDone(common, mergeSha, durationS, feedback);
+  await recordAttemptBestEffort(common, "done", {
+    durationS,
+    mergeSha,
+    validationSummary: feedback.sidecar.join("\n")
+  });
   await deps.gh.close(issue);
   await deps.gh.editLabels(issue, [LABEL_RUNNING], []);
   await deleteRemote(deps.remoteGit, input.repoDir, workerBranch);
@@ -84807,6 +84904,40 @@ async function processIssue(deps, input) {
     preserved: true,
     swept: true
   };
+}
+async function writeValidationSidecar2(deps, attemptDir, lines2) {
+  if (!deps.fs.writeValidationSidecar) return;
+  if (lines2.length === 0) return;
+  try {
+    await deps.fs.writeValidationSidecar(`${attemptDir}/validation.jsonl`, lines2);
+  } catch {
+  }
+}
+async function recordAttemptBestEffort(c, outcome, fields = {}) {
+  const { deps, input } = c;
+  if (!deps.recordAttempt) return;
+  try {
+    const payload = buildAttemptRecordPayload({
+      repo: input.repo,
+      issue: input.issue,
+      attempt: input.attempt,
+      outcome,
+      title: input.title,
+      body: input.body,
+      workerId: input.workerId,
+      branch: c.branch,
+      durationS: fields.durationS,
+      diffstat: void 0,
+      mergeSha: fields.mergeSha,
+      notes: fields.notes,
+      validationSummary: fields.validationSummary
+    });
+    await deps.recordAttempt(payload);
+  } catch (err) {
+    deps.appendIterLog(
+      `\u{1F916} /afk memory attempt-record for #${input.issue} failed (best-effort; ignored): ${String(err)}`
+    );
+  }
 }
 async function emitFailure(c, status2, diffLabel, sections) {
   const { deps, input } = c;
@@ -84832,10 +84963,15 @@ async function emitFailure(c, status2, diffLabel, sections) {
   });
   return result.posted;
 }
-async function terminalFailure(c, outcome, sectionKey, sections) {
+async function terminalFailure(c, outcome, sectionKey, sections, record3 = {}) {
   const { deps, input } = c;
   await routeRecovery(deps, input.issue, outcome, input.attempt);
   const posted = await emitFailure(c, envelopeStatusFor(outcome), sectionKey, sections);
+  await recordAttemptBestEffort(c, outcome, {
+    durationS: deps.nowEpoch() - c.startedEpoch,
+    notes: record3.notes,
+    validationSummary: record3.validationSummary
+  });
   return {
     outcome,
     issue: input.issue,
@@ -84870,6 +85006,10 @@ async function mergeFailed(c, _reason, locked = false) {
   await routeRecovery(deps, input.issue, "merge-conflict", input.attempt);
   const posted = await emitFailure(c, envelopeStatusFor("merge-conflict"), "merge-conflict", {
     log: "(no merge log captured)"
+  });
+  await recordAttemptBestEffort(c, "merge-conflict", {
+    durationS: deps.nowEpoch() - c.startedEpoch,
+    notes: _reason
   });
   await deps.claimLock.release(input.issue);
   return {
@@ -85317,7 +85457,8 @@ var defaultReader2 = {
 
 // src/commands/run.ts
 init_runner_spawn();
-import { readdirSync } from "node:fs";
+import { readdirSync, existsSync as existsSync8, readFileSync as readFileSync4 } from "node:fs";
+import { writeFile as writeFile9 } from "node:fs/promises";
 
 // src/runtime/lock.ts
 init_fs();
@@ -85615,6 +85756,9 @@ function buildProcessDeps(ctx, model, sandbox3, feedback, current, fallbackRunne
     fs: {
       ensureAttemptDir: (dir) => ensureDir(dir),
       writeHandoff: (path2, content) => writeHandoff(path2, content),
+      // $ITER_DIR/validation.jsonl — the machine-readable feedback sidecar the
+      // Memory bridge consumes (SKILL.md §Validation Sidecar).
+      writeValidationSidecar: (path2, lines2) => writeValidationSidecar(path2, lines2),
       completionSweep: (issue) => completionSweep(paths.workersRoot, issue)
     },
     git: {
@@ -85700,7 +85844,50 @@ function buildProcessDeps(ctx, model, sandbox3, feedback, current, fallbackRunne
     historyPath: paths.historyPath,
     historyClock: { ts: (/* @__PURE__ */ new Date()).toISOString(), epoch: Math.floor(Date.now() / 1e3) },
     // BOUNDED auto-recovery reads its RED_AFK_RETRY_* caps from the process env.
-    recoveryEnv: process.env
+    recoveryEnv: process.env,
+    // ADR 0017: best-effort AFK→Memory "reasoning attempt" recording. Serialise
+    // the payload to a temp JSON file under the attempt dir, then exec the memory
+    // CLI DIRECTLY (`<memoryCli> attempt record --root <root>` with the payload on
+    // stdin). The resolver gates on memory availability (ADR 0009) — a silent
+    // no-op when memory is absent / not opted-in — replacing the old shell-bridge
+    // hop. ALL errors are swallowed (one warn line), so a memory failure can
+    // NEVER fail the close.
+    recordAttempt: makeRecordAttempt(ctx.root, current, exec4)
+  };
+}
+function readManifestVersion(path2) {
+  try {
+    const v2 = JSON.parse(readFileSync4(path2, "utf8")).version;
+    return typeof v2 === "string" && v2.length > 0 ? v2 : void 0;
+  } catch {
+    return void 0;
+  }
+}
+function makeRecordAttempt(gitRoot, current, exec4) {
+  return async (payload) => {
+    try {
+      const env2 = { ...process.env, MEMORY_REPO_ROOT: process.env.MEMORY_REPO_ROOT ?? gitRoot };
+      const memoryCli = resolveMemoryCli(gitRoot, env2, {
+        exists: existsSync8,
+        readJsonVersion: readManifestVersion
+      });
+      if (!memoryCli) return;
+      const dir = current.attemptDir || gitRoot;
+      const payloadFile = join27(dir, `memory-attempt-${payload.issueNumber}-a${payload.attemptNumber}.json`);
+      await ensureDir(dir);
+      const json4 = toMemoryPayload(payload);
+      await writeFile9(payloadFile, json4, "utf8");
+      const run8 = exec4 ?? (await Promise.resolve().then(() => (init_exec(), exec_exports))).execTool;
+      const [cmd, ...head7] = memoryCli;
+      await run8(cmd, [...head7, "attempt", "record", "--root", gitRoot], {
+        cwd: gitRoot,
+        env: env2,
+        input: json4
+      });
+    } catch (err) {
+      process.stderr.write(`[afk] memory attempt-record skipped (best-effort): ${String(err)}
+`);
+    }
   };
 }
 function nextAttemptSync(tmpDir, issue) {
@@ -85862,7 +86049,7 @@ async function reapCommand(_args, cwd = process.cwd(), stdout2 = process.stdout)
 }
 
 // src/commands/statusline.ts
-import { existsSync as existsSync8, statSync as statSync2 } from "node:fs";
+import { existsSync as existsSync9, statSync as statSync2 } from "node:fs";
 import { join as join28, basename as basename2 } from "node:path";
 
 // src/core/statusline.ts
@@ -85965,7 +86152,7 @@ function resolveRoot(rootArg, payload, fallback) {
 }
 function statuslineEnabled(root) {
   const configPath = join28(root, ".red", "config.yaml");
-  if (!existsSync8(configPath)) return true;
+  if (!existsSync9(configPath)) return true;
   const cfg = loadConfig(configPath, { warn: () => void 0 });
   if (getConfig(cfg, "statusline") === "false") return false;
   if (getConfig(cfg, "afk.statusline") === "false") return false;
@@ -86009,7 +86196,7 @@ async function statuslineCommand(args2, cwd = process.cwd(), stdout2 = process.s
 
 // src/commands/supervise.ts
 import { spawn as spawn6 } from "node:child_process";
-import { existsSync as existsSync10, openSync, writeFileSync as writeFileSync2, rmSync } from "node:fs";
+import { existsSync as existsSync11, openSync, writeFileSync as writeFileSync2, rmSync } from "node:fs";
 import { join as join30 } from "node:path";
 
 // src/core/reaper-signal.ts
@@ -86363,7 +86550,7 @@ function inspectProcessTreeNative(pid) {
 }
 
 // src/runtime/supervisor-fs.ts
-import { existsSync as existsSync9, readdirSync as readdirSync2, readFileSync as readFileSync4, statSync as statSync3 } from "node:fs";
+import { existsSync as existsSync10, readdirSync as readdirSync2, readFileSync as readFileSync5, statSync as statSync3 } from "node:fs";
 import { join as join29 } from "node:path";
 function slotLogPath(tmpDir, slot) {
   return join29(tmpDir, `afk-supervisor-slot-${slot}.log`);
@@ -86371,7 +86558,7 @@ function slotLogPath(tmpDir, slot) {
 function parseWorkerIdsFromLog(path2) {
   let text3;
   try {
-    text3 = readFileSync4(path2, "utf8");
+    text3 = readFileSync5(path2, "utf8");
   } catch {
     return [];
   }
@@ -86408,7 +86595,7 @@ function iterDirsForWorker(root, wid) {
 }
 function iterDirIssueNumber(dir) {
   try {
-    const parsed = JSON.parse(readFileSync4(join29(dir, "afk.state.json"), "utf8"));
+    const parsed = JSON.parse(readFileSync5(join29(dir, "afk.state.json"), "utf8"));
     const n = parsed.current?.number;
     return typeof n === "number" && Number.isInteger(n) ? n : null;
   } catch {
@@ -86428,7 +86615,7 @@ function findSlotIterDir(tmpDir, slotPid) {
     const wdir = join29(workersRoot, wid);
     let pidText;
     try {
-      pidText = readFileSync4(join29(wdir, "worker.pid"), "utf8").trim();
+      pidText = readFileSync5(join29(wdir, "worker.pid"), "utf8").trim();
     } catch {
       continue;
     }
@@ -86470,7 +86657,7 @@ function agentLaneMtimeFor(tmpDir, slotPid) {
 function tailFile(path2, n) {
   let text3;
   try {
-    text3 = readFileSync4(path2, "utf8");
+    text3 = readFileSync5(path2, "utf8");
   } catch {
     return "";
   }
@@ -86485,7 +86672,7 @@ function resolveIterDirInfo(tmpDir, slotPid, now) {
   let workerId = "";
   let startedAt = "";
   try {
-    const parsed = JSON.parse(readFileSync4(join29(dir, "afk.state.json"), "utf8"));
+    const parsed = JSON.parse(readFileSync5(join29(dir, "afk.state.json"), "utf8"));
     const n = parsed.current?.number;
     if (typeof n === "number" && Number.isInteger(n)) issue = n;
     if (typeof parsed.worker_id === "string") workerId = parsed.worker_id;
@@ -86518,7 +86705,7 @@ function parkedSlotWorkFor(tmpDir, root, slot, fastDeaths) {
 async function teardownIterDirNative(info, root) {
   const fsp = await import("node:fs/promises");
   const worktree = join29(info.path, "worktree");
-  if (existsSync9(worktree)) {
+  if (existsSync10(worktree)) {
     try {
       const { git: git2 } = await Promise.resolve().then(() => (init_exec(), exec_exports));
       await git2(["-C", root, "worktree", "remove", "--force", worktree]);
@@ -86691,7 +86878,7 @@ async function superviseCommand(args2, cwd = process.cwd()) {
   const stopFile = join30(tmp, "afk-supervisor.stop");
   const logFile = join30(tmp, "afk-supervisor.log");
   await Promise.resolve().then(() => (init_fs(), fs_exports)).then((m2) => m2.ensureDir(tmp));
-  if (existsSync10(pidFile)) {
+  if (existsSync11(pidFile)) {
     try {
       const prev = Number(__require("node:fs").readFileSync(pidFile, "utf8").trim());
       if (prev && isAlive(prev)) {
@@ -86703,7 +86890,7 @@ async function superviseCommand(args2, cwd = process.cwd()) {
     }
   }
   writeFileSync2(pidFile, String(process.pid), "utf8");
-  if (existsSync10(stopFile)) rmSync(stopFile, { force: true });
+  if (existsSync11(stopFile)) rmSync(stopFile, { force: true });
   const logFd = openSync(logFile, "a");
   const config = resolveSupervisorConfig();
   const state = initSupervisorState(config.target);
@@ -86711,7 +86898,7 @@ async function superviseCommand(args2, cwd = process.cwd()) {
   const ghCtx = { cwd: root, repo };
   const slotArgs = slotFilterArgs(args2);
   const deps = buildSupervisorDeps(root, tmp, logFd, config.runner, ghCtx, slotArgs);
-  const stopRequested = () => existsSync10(stopFile);
+  const stopRequested = () => existsSync11(stopFile);
   try {
     await runSupervisor(state, deps, config, stopRequested);
   } finally {

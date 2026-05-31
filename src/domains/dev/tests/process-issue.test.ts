@@ -7,6 +7,7 @@ import {
 import type { HookName } from "../src/core/hook-config.js";
 import type { ConfigValues } from "../src/core/config.js";
 import type { RunAgentInput, RunAgentResult } from "../src/core/execution.js";
+import type { AttemptRecordPayload } from "../src/core/attempt-record.js";
 
 // Everything injected is a fake — no real gh / git / sandcastle / pnpm / fs ever
 // runs. The harness records the side-effect sequence (label edits, comments,
@@ -29,6 +30,10 @@ interface Trace {
   listByLabelCalls: string[];
   /** Typed `blocked:<reason>` labels created on the fly via gh.ensureLabel. */
   ensuredLabels: string[];
+  /** validation.jsonl writes: (path, lines) per write. */
+  sidecarWrites: Array<{ path: string; lines: string[] }>;
+  /** Memory reasoning-attempt records fired after a terminal envelope. */
+  recordedAttempts: AttemptRecordPayload[];
 }
 
 interface HarnessOptions {
@@ -70,6 +75,13 @@ interface HarnessOptions {
   attempt?: number;
   /** Env view the recovery policy reads RED_AFK_RETRY_* caps from. Defaults to {}. */
   recoveryEnv?: Record<string, string>;
+  /** When set, register the ADR 0017 `recordAttempt` port. "throw" makes it
+   * reject (proving a memory failure never fails the close); "ok" records the
+   * payload; undefined omits the port entirely (older-caller safety). */
+  recordAttempt?: "ok" | "throw";
+  /** When false, omit the optional fs.writeValidationSidecar port (older-caller
+   * safety). Defaults to true (port present + recorded). */
+  withSidecarPort?: boolean;
 }
 
 function harness(opts: HarnessOptions = {}): {
@@ -89,6 +101,8 @@ function harness(opts: HarnessOptions = {}): {
     runAgentCalls: [],
     listByLabelCalls: [],
     ensuredLabels: [],
+    sidecarWrites: [],
+    recordedAttempts: [],
   };
 
   const outcome = opts.outcome ?? "done";
@@ -134,6 +148,14 @@ function harness(opts: HarnessOptions = {}): {
     fs: {
       async ensureAttemptDir() {},
       async writeHandoff() {},
+      // Optional sidecar port: present unless the test opts it out (older-caller
+      // safety). Records every (path, lines) write for assertion.
+      writeValidationSidecar:
+        opts.withSidecarPort === false
+          ? undefined
+          : async (path, lines) => {
+              trace.sidecarWrites.push({ path, lines });
+            },
       async completionSweep(issue) {
         trace.swept.push(issue);
         return [`/tmp/workers/w/${issue}-a1`];
@@ -275,6 +297,15 @@ function harness(opts: HarnessOptions = {}): {
     nowIso: () => "2026-05-30T00:00:00Z",
     appendIterLog: () => {},
     recoveryEnv: opts.recoveryEnv ?? {},
+    // ADR 0017 recording port: omitted by default (older-caller safety). "ok"
+    // records the payload; "throw" rejects, proving a memory failure never
+    // fails the close.
+    recordAttempt: opts.recordAttempt
+      ? async (payload) => {
+          if (opts.recordAttempt === "throw") throw new Error("memory exploded");
+          trace.recordedAttempts.push(payload);
+        }
+      : undefined,
   };
 
   // Wire the hook config + abort marker so dispatchHooks has a command to run.
@@ -945,5 +976,126 @@ describe("close cascade (event-driven auto-unblock)", () => {
     const result = await processIssue(deps, input);
     expect(result.outcome).toBe("blocked");
     expect(trace.listByLabelCalls).toEqual([]);
+  });
+});
+
+// ---------- ADR 0017: validation.jsonl sidecar + AFK→Memory recording ----------
+
+describe("processIssue — validation.jsonl sidecar (SKILL.md §Validation Sidecar)", () => {
+  it("writes the feedback sidecar to <attemptDir>/validation.jsonl on the DONE close", async () => {
+    const { deps, input, trace } = harness({ outcome: "done", feedbackOk: true });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(trace.sidecarWrites).toHaveLength(1);
+    const write = trace.sidecarWrites[0]!;
+    expect(write.path).toBe(`${input.attemptDir}/validation.jsonl`);
+    expect(write.lines.length).toBeGreaterThan(0);
+    // Each line is a red.afk.validation.v1 JSON record.
+    for (const line of write.lines) {
+      expect(JSON.parse(line).schema).toBe("red.afk.validation.v1");
+    }
+  });
+
+  it("writes the sidecar on the feedback-FAILED close too", async () => {
+    const { deps, input, trace } = harness({ outcome: "done", feedbackOk: false });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("feedback-failed");
+    expect(trace.sidecarWrites).toHaveLength(1);
+    expect(trace.sidecarWrites[0]!.path).toBe(`${input.attemptDir}/validation.jsonl`);
+    expect(trace.sidecarWrites[0]!.lines.length).toBeGreaterThan(0);
+  });
+
+  it("does NOT write a sidecar on a path with no feedback result (BLOCKED)", async () => {
+    const { deps, input, trace } = harness({ outcome: "blocked" });
+    await processIssue(deps, input);
+    expect(trace.sidecarWrites).toEqual([]);
+  });
+
+  it("is a no-op (and the close still succeeds) when the sidecar port is absent", async () => {
+    const { deps, input } = harness({ outcome: "done", feedbackOk: true, withSidecarPort: false });
+    const result = await processIssue(deps, input);
+    expect(result.outcome).toBe("done");
+    expect(result.envelopePosted).toBe(true);
+  });
+});
+
+describe("processIssue — AFK→Memory reasoning-attempt recording (ADR 0017)", () => {
+  it("records the attempt AFTER the DONE envelope with the mapped payload", async () => {
+    const { deps, input, trace } = harness({ outcome: "done", feedbackOk: true, recordAttempt: "ok" });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(trace.recordedAttempts).toHaveLength(1);
+    const p = trace.recordedAttempts[0]!;
+    expect(p.repository).toBe("o/r");
+    expect(p.issueNumber).toBe(9);
+    expect(p.attemptNumber).toBe(1);
+    expect(p.status).toBe("done");
+    expect(p.issueTitle).toBe("Fix the thing");
+    expect(p.branch).toBe("afk/wAAAA/9-fix-the-thing");
+    expect(p.mergeCommit).toBe("abc1234");
+    expect(p.workerId).toBe("wAAAA");
+    expect(p.validationSummary).toBeTruthy();
+  });
+
+  it("records the attempt on a terminal FAILURE (blocked) with the failure status", async () => {
+    const { deps, input, trace } = harness({ outcome: "blocked", recordAttempt: "ok" });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("blocked");
+    expect(trace.recordedAttempts).toHaveLength(1);
+    expect(trace.recordedAttempts[0]!.status).toBe("blocked");
+  });
+
+  it("records the attempt on the merge-conflict path", async () => {
+    // A locked merge --no-ff conflict with no resolver → merge-conflict terminal.
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      locked: true,
+      mergeNoFfCode: 1,
+      recordAttempt: "ok",
+    });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("merge-conflict");
+    expect(trace.recordedAttempts).toHaveLength(1);
+    expect(trace.recordedAttempts[0]!.status).toBe("merge-conflict");
+  });
+
+  // THE key ADR 0017 guarantee: a memory failure never fails the close.
+  it("completes the DONE close normally when recordAttempt is UNDEFINED", async () => {
+    const { deps, input, trace } = harness({ outcome: "done", feedbackOk: true });
+    // No recordAttempt opt → the port is undefined.
+    expect(deps.recordAttempt).toBeUndefined();
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(result.envelopePosted).toBe(true);
+    expect(result.swept).toBe(true);
+    expect(trace.closed).toEqual([9]);
+    expect(trace.recordedAttempts).toEqual([]);
+  });
+
+  it("completes the DONE close normally when recordAttempt THROWS", async () => {
+    const { deps, input, trace } = harness({ outcome: "done", feedbackOk: true, recordAttempt: "throw" });
+    const result = await processIssue(deps, input);
+
+    // The envelope + close + sweep are unaffected by the memory failure.
+    expect(result.outcome).toBe("done");
+    expect(result.envelopePosted).toBe(true);
+    expect(result.swept).toBe(true);
+    expect(trace.closed).toEqual([9]);
+    expect(trace.postedEnvelopes).toContainEqual({ issue: 9, status: "done" });
+  });
+
+  it("completes a FAILURE close normally when recordAttempt THROWS", async () => {
+    const { deps, input } = harness({ outcome: "blocked", recordAttempt: "throw" });
+    const result = await processIssue(deps, input);
+    expect(result.outcome).toBe("blocked");
+    expect(result.envelopePosted).toBe(true);
+    expect(result.preserved).toBe(true);
   });
 });

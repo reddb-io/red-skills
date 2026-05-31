@@ -56,6 +56,7 @@ import {
 import { resolveHooks, type ResolveHooksOptions, type ResolvedHooks, type HookName } from "./hook-config.js";
 import { formatStartedMarker } from "./heartbeat.js";
 import { parseReqLabels, planCloseCascade, type DependentIssue } from "./boot-sweep.js";
+import { buildAttemptRecordPayload, type AttemptRecordPayload } from "./attempt-record.js";
 import type { ConfigValues } from "./config.js";
 import type { AttemptStatus } from "./envelope.js";
 import type { Runner } from "../types/runner.js";
@@ -102,6 +103,15 @@ export interface ProcessFs {
   ensureAttemptDir(dir: string): Promise<void>;
   /** Write the handoff.md into the attempt dir (the sandcastle promptFile). */
   writeHandoff(path: string, content: string): Promise<void>;
+  /**
+   * Write the machine-readable validation sidecar (`$ITER_DIR/validation.jsonl`,
+   * SKILL.md §Validation Sidecar) — one `red.afk.validation.v1` JSON record per
+   * line. Consumed by the optional Memory bridge; NOT rendered into the issue
+   * comment. Best-effort: the caller swallows a write failure so it never fails
+   * the close. Optional so older callers/tests that predate the sidecar degrade
+   * to "do not write it".
+   */
+  writeValidationSidecar?(path: string, lines: string[]): Promise<void>;
   /** Remove every attempt dir for a completed issue (completion_sweep_issue). */
   completionSweep(issue: number): Promise<string[]>;
 }
@@ -220,6 +230,17 @@ export interface ProcessIssueDeps {
    * cap).
    */
   recoveryEnv?: RecoveryEnv;
+  /**
+   * AFK→Memory "reasoning attempt" recording (ADR 0017). Called best-effort
+   * AFTER each terminal Envelope is emitted, with the AFK-side attempt context.
+   * The wired implementation (run.ts) serialises the payload to a temp file and
+   * execs the memory CLI DIRECTLY (`attempt record --root <root>` with the
+   * payload on stdin), gating on memory availability (ADR 0009) — a no-op when
+   * memory is absent / not opted-in. The port
+   * SWALLOWS every error so a memory failure can NEVER fail the AFK close.
+   * Optional so tests/older callers omit it entirely (the call is `?.`-guarded).
+   */
+  recordAttempt?(payload: AttemptRecordPayload): Promise<void>;
 }
 
 /** Static per-issue inputs the caller resolves before `processIssue`. */
@@ -598,10 +619,13 @@ export async function processIssue(
     now: deps.nowEpoch,
   });
   if (!feedback.ok) {
+    // The feedback-failed path also has a structured sidecar — persist it for
+    // Memory (best-effort) just like the done path does.
+    await writeValidationSidecar(deps, input.attemptDir, feedback.sidecar);
     return await terminalFailure(common, "feedback-failed", "feedback", {
       notes: "Feedback validation failed after the inner agent emitted DONE. The worker branch was not merged.",
       validation: feedback.sidecar.join("\n"),
-    });
+    }, { validationSummary: feedback.sidecar.join("\n") });
   }
 
   // ---- 6. push the worker branch, integrate, then land per lock state ----
@@ -641,7 +665,17 @@ export async function processIssue(
   // ---- 7. close: envelope(done) → gh close + remove running → delete remote ----
   const mergeSha = await deps.git.headShortSha();
   const durationS = deps.nowEpoch() - startedEpoch;
+  // Write the machine-readable validation sidecar ($ITER_DIR/validation.jsonl,
+  // SKILL.md) the Memory bridge consumes. Best-effort: never fails the close.
+  await writeValidationSidecar(deps, input.attemptDir, feedback.sidecar);
   const posted = await emitDone(common, mergeSha, durationS, feedback);
+  // ADR 0017: record the reasoning attempt into Memory AFTER the terminal
+  // (done) envelope. Best-effort, gated, no-op when memory is absent.
+  await recordAttemptBestEffort(common, "done", {
+    durationS,
+    mergeSha,
+    validationSummary: feedback.sidecar.join("\n"),
+  });
   await deps.gh.close(issue);
   await deps.gh.editLabels(issue, [LABEL_RUNNING], []);
   await deleteRemote(deps.remoteGit, input.repoDir, workerBranch);
@@ -671,6 +705,71 @@ export async function processIssue(
     preserved: true,
     swept: true,
   };
+}
+
+// ---------- validation sidecar ($ITER_DIR/validation.jsonl) ----------
+
+/**
+ * Write the machine-readable validation sidecar (`$ITER_DIR/validation.jsonl`,
+ * SKILL.md §Validation Sidecar) — one `red.afk.validation.v1` record per line.
+ * The native path BUILDS these records (`feedback.sidecar`) but never wrote them
+ * to disk; this restores that write. ENTIRELY best-effort: the port is optional
+ * (older callers/tests skip it), an empty sidecar writes nothing, and ANY throw
+ * is swallowed so the sidecar write can never fail the close.
+ */
+async function writeValidationSidecar(
+  deps: ProcessIssueDeps,
+  attemptDir: string,
+  lines: string[],
+): Promise<void> {
+  if (!deps.fs.writeValidationSidecar) return;
+  if (lines.length === 0) return;
+  try {
+    await deps.fs.writeValidationSidecar(`${attemptDir}/validation.jsonl`, lines);
+  } catch {
+    // best-effort: the sidecar is an optimisation for Memory; never fail close.
+  }
+}
+
+// ---------- AFK→Memory reasoning-attempt recording (ADR 0017) ----------
+
+/**
+ * Fire the best-effort Memory "reasoning attempt" recording (ADR 0017) AFTER a
+ * terminal envelope was emitted. Builds the payload from the AFK-side context
+ * and hands it to the injected `recordAttempt` port. ENTIRELY best-effort and
+ * defensive: when the port is absent it is a no-op, and ANY throw from the port
+ * is swallowed (logged once to the iteration log) so a memory failure can never
+ * fail the close. ADR 0009: dev only soft-uses memory.
+ */
+async function recordAttemptBestEffort(
+  c: StageCommon,
+  outcome: ProcessOutcome,
+  fields: { durationS?: number; mergeSha?: string; notes?: string; validationSummary?: string } = {},
+): Promise<void> {
+  const { deps, input } = c;
+  if (!deps.recordAttempt) return;
+  try {
+    const payload = buildAttemptRecordPayload({
+      repo: input.repo,
+      issue: input.issue,
+      attempt: input.attempt,
+      outcome,
+      title: input.title,
+      body: input.body,
+      workerId: input.workerId,
+      branch: c.branch,
+      durationS: fields.durationS,
+      diffstat: undefined,
+      mergeSha: fields.mergeSha,
+      notes: fields.notes,
+      validationSummary: fields.validationSummary,
+    });
+    await deps.recordAttempt(payload);
+  } catch (err) {
+    deps.appendIterLog(
+      `🤖 /afk memory attempt-record for #${input.issue} failed (best-effort; ignored): ${String(err)}`,
+    );
+  }
 }
 
 // ---------- shared per-stage context ----------
@@ -733,10 +832,18 @@ async function terminalFailure(
   outcome: ProcessOutcome,
   sectionKey: string,
   sections: SectionBodies,
+  record: { notes?: string; validationSummary?: string } = {},
 ): Promise<ProcessIssueResult> {
   const { deps, input } = c;
   await routeRecovery(deps, input.issue, outcome, input.attempt);
   const posted = await emitFailure(c, envelopeStatusFor(outcome), sectionKey, sections);
+  // ADR 0017: record the reasoning attempt into Memory AFTER the terminal
+  // (failure) envelope. Best-effort, gated, no-op when memory is absent.
+  await recordAttemptBestEffort(c, outcome, {
+    durationS: deps.nowEpoch() - c.startedEpoch,
+    notes: record.notes,
+    validationSummary: record.validationSummary,
+  });
   return {
     outcome,
     issue: input.issue,
@@ -781,6 +888,12 @@ async function mergeFailed(c: StageCommon, _reason: string, locked = false): Pro
   await routeRecovery(deps, input.issue, "merge-conflict", input.attempt);
   const posted = await emitFailure(c, envelopeStatusFor("merge-conflict"), "merge-conflict", {
     log: "(no merge log captured)",
+  });
+  // ADR 0017: record the reasoning attempt into Memory AFTER the terminal
+  // (merge-conflict) envelope. Best-effort, gated, no-op when memory is absent.
+  await recordAttemptBestEffort(c, "merge-conflict", {
+    durationS: deps.nowEpoch() - c.startedEpoch,
+    notes: _reason,
   });
   await deps.claimLock.release(input.issue);
   return {

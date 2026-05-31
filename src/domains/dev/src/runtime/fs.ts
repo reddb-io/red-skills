@@ -62,6 +62,17 @@ export async function writeHandoff(path: string, content: string): Promise<void>
   await writeFile(path, content, "utf8");
 }
 
+/**
+ * Write the machine-readable validation sidecar `$ITER_DIR/validation.jsonl`
+ * (SKILL.md §Validation Sidecar) — one `red.afk.validation.v1` JSON record per
+ * line, newline-terminated. Consumed by the optional Memory bridge; not rendered
+ * into the issue comment. Creates the parent dir.
+ */
+export async function writeValidationSidecar(path: string, lines: string[]): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, lines.length > 0 ? `${lines.join("\n")}\n` : "", "utf8");
+}
+
 export async function readText(path: string): Promise<string | null> {
   try {
     return await readFile(path, "utf8");

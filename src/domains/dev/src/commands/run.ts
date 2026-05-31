@@ -9,6 +9,11 @@ import {
 import { genWorkerId } from "../core/session.js";
 import { runBoot, type BootDeps, type BootOptions, type BootstrapInput } from "../core/boot.js";
 import { processIssue, type ProcessIssueDeps, type ProcessIssueInput } from "../core/process-issue.js";
+import {
+  toMemoryPayload,
+  resolveMemoryCli,
+  type AttemptRecordPayload,
+} from "../core/attempt-record.js";
 import { isRunner, type Runner } from "../types/runner.js";
 import {
   afkPaths,
@@ -32,7 +37,8 @@ import { loadConfig } from "../core/config.js";
 import { resolveHooks } from "../core/hook-config.js";
 import { attemptLedgerContext, formatAttemptContext, highestAttempt, type AttemptDirEntry } from "../core/attempt-ledger.js";
 import { isValidWorkerId } from "../core/worker-paths.js";
-import { readdirSync } from "node:fs";
+import { readdirSync, existsSync, readFileSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import { specialUserRequestBlock, claudeSpawnArgs, codexSpawnArgs } from "../core/runner-spawn.js";
 import { buildWorkerAttemptPath } from "../core/worker-paths.js";
 import { branchLockPath, readLockedBranch, isLocked } from "../runtime/lock.js";
@@ -281,6 +287,9 @@ export function buildProcessDeps(
     fs: {
       ensureAttemptDir: (dir) => fsx.ensureDir(dir),
       writeHandoff: (path, content) => fsx.writeHandoff(path, content),
+      // $ITER_DIR/validation.jsonl — the machine-readable feedback sidecar the
+      // Memory bridge consumes (SKILL.md §Validation Sidecar).
+      writeValidationSidecar: (path, lines) => fsx.writeValidationSidecar(path, lines),
       completionSweep: (issue) => fsx.completionSweep(paths.workersRoot, issue),
     },
     git: {
@@ -370,6 +379,72 @@ export function buildProcessDeps(
     historyClock: { ts: new Date().toISOString(), epoch: Math.floor(Date.now() / 1000) },
     // BOUNDED auto-recovery reads its RED_AFK_RETRY_* caps from the process env.
     recoveryEnv: process.env,
+    // ADR 0017: best-effort AFK→Memory "reasoning attempt" recording. Serialise
+    // the payload to a temp JSON file under the attempt dir, then exec the memory
+    // CLI DIRECTLY (`<memoryCli> attempt record --root <root>` with the payload on
+    // stdin). The resolver gates on memory availability (ADR 0009) — a silent
+    // no-op when memory is absent / not opted-in — replacing the old shell-bridge
+    // hop. ALL errors are swallowed (one warn line), so a memory failure can
+    // NEVER fail the close.
+    recordAttempt: makeRecordAttempt(ctx.root, current, exec),
+  };
+}
+
+/** Read the `version` field of a JSON manifest file, or undefined when the file
+ * is missing / unparseable / has no version. The version-keyed cache-bundle
+ * candidate in {@link resolveMemoryCli} uses this to locate the fetched CLI. */
+function readManifestVersion(path: string): string | undefined {
+  try {
+    const v = (JSON.parse(readFileSync(path, "utf8")) as { version?: unknown }).version;
+    return typeof v === "string" && v.length > 0 ? v : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Build the best-effort `recordAttempt` port (ADR 0017). On each call it resolves
+ * the memory CLI ({@link resolveMemoryCli}, which gates on the ADR 0009 opt-in
+ * config + the bridge's candidate order), writes the payload to a temp JSON file
+ * under the current attempt dir, and execs the memory CLI DIRECTLY:
+ * `<memoryCli> attempt record --root <gitRoot>` with the payload piped on stdin
+ * — exactly what the bridge's `memory_record_attempt` did, minus the shell hop.
+ * `MEMORY_REPO_ROOT` is set in the child env (as the bridge expected) so an
+ * in-repo memory checkout resolves. When no CLI resolves the call is a silent
+ * no-op (memory not installed). Every error (write failure, non-zero exit, spawn
+ * error) is SWALLOWED — at most one warn line is written.
+ *
+ * `exec` is the test-injection seam (mirrors the rest of buildProcessDeps); in
+ * production it is undefined and the real `execTool` is used.
+ */
+function makeRecordAttempt(
+  gitRoot: string,
+  current: CurrentAttempt,
+  exec?: ExecFn,
+): (payload: AttemptRecordPayload) => Promise<void> {
+  return async (payload: AttemptRecordPayload): Promise<void> => {
+    try {
+      const env = { ...process.env, MEMORY_REPO_ROOT: process.env.MEMORY_REPO_ROOT ?? gitRoot };
+      const memoryCli = resolveMemoryCli(gitRoot, env, {
+        exists: existsSync,
+        readJsonVersion: readManifestVersion,
+      });
+      if (!memoryCli) return; // memory not opted-in / no CLI resolves — silent skip.
+      const dir = current.attemptDir || gitRoot;
+      const payloadFile = join(dir, `memory-attempt-${payload.issueNumber}-a${payload.attemptNumber}.json`);
+      await fsx.ensureDir(dir);
+      const json = toMemoryPayload(payload);
+      await writeFile(payloadFile, json, "utf8");
+      const run = exec ?? (await import("../runtime/exec.js")).execTool;
+      const [cmd, ...head] = memoryCli;
+      await run(cmd, [...head, "attempt", "record", "--root", gitRoot], {
+        cwd: gitRoot,
+        env,
+        input: json,
+      });
+    } catch (err) {
+      process.stderr.write(`[afk] memory attempt-record skipped (best-effort): ${String(err)}\n`);
+    }
   };
 }
 
