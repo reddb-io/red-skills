@@ -46,6 +46,10 @@ _Avoid_: pinned branch
 The branch an **Issue** or PRD declares that AFK must base work on and merge back into.
 _Avoid_: branch lock
 
+**Landing**:
+How a completed **Attempt**'s worker branch is integrated into its base, toggled by the **Branch lock** (ADR 0030/0031): a locked branch is merged locally into the locked branch for human promotion (`landMerge`, with a one-shot self-resolve of merge conflicts), an unlocked branch lands via an admin-merged PR carrying the attempt history (`landPr`). Owns the push → integrate → land → post-merge sequence as one operation.
+_Avoid_: merge, merge-back, integrate (these are sub-steps of Landing, not the operation)
+
 **Primary checkout**:
 The developer's main working clone of the repo, contrasted with an AFK **Worktree**.
 _Avoid_: main repo, root checkout
