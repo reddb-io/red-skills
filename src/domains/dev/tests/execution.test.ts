@@ -128,6 +128,21 @@ describe("buildRunOptions", () => {
     expect(command).toContain(`git push ${DEFAULT_REMOTE} HEAD --force-with-lease`);
   });
 
+  it("re-anchors sandcastle at the caller's cwd (the AFK attempt dir) when supplied", () => {
+    const opts = buildRunOptions(
+      makeDeps(async () => fakeResult()),
+      { ...baseInput, cwd: "/abs/attempt/dir" },
+    );
+    // cwd is forwarded verbatim so sandcastle puts `.sandcastle/` under the
+    // attempt dir (.red/tmp/...), never at the repo root.
+    expect(opts.cwd).toBe("/abs/attempt/dir");
+  });
+
+  it("leaves cwd undefined when omitted (sandcastle's process.cwd() default preserved)", () => {
+    const opts = buildRunOptions(makeDeps(async () => fakeResult()), baseInput);
+    expect(opts.cwd).toBeUndefined();
+  });
+
   it("targets a custom remote when one is supplied", () => {
     const opts = buildRunOptions(
       makeDeps(async () => fakeResult()),

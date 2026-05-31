@@ -442,12 +442,18 @@ export async function processIssue(
   if (deps.git.fetchBase) await deps.git.fetchBase(base);
   let activeRunner: Runner = input.runner === "codex" ? "codex" : "claude";
   let attemptN = input.attempt;
+  // Anchor sandcastle at the per-attempt dir so its `.sandcastle/` (worktrees,
+  // logs, .env, patches) + git ops land under .red/, never at the repo root.
+  // attemptDir is always absolute (built from `${root}/.red/tmp/...`), which is
+  // also why promptFile/handoffPath must stay absolute — sandcastle resolves
+  // promptFile against process.cwd(), not against this cwd.
   let run: RunAgentResult = await deps.runAgent({
     runner: activeRunner,
     model: deps.model,
     handoffPath,
     branch,
     base,
+    cwd: input.attemptDir,
     // Restore the issue #191 continuous-push guarantee: sandcastle pushes the
     // worker branch up-front + after every commit (host worktree hook), so a
     // SIGKILL mid-iteration preserves the diff on origin. Best-effort.
@@ -486,6 +492,7 @@ export async function processIssue(
       handoffPath,
       branch,
       base,
+      cwd: input.attemptDir,
       remote: input.remote,
       continuousPush: true,
     });
