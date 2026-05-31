@@ -141,6 +141,16 @@ export interface ProcessLookups {
   changedFiles(branch: string, base: string): Promise<string[]>;
   /** Diffstat line for the done envelope. */
   diffstat(branch: string, base: string): Promise<string>;
+  /**
+   * FIX E: confirm the worker branch actually reached the host before the
+   * feedback gate. `changedFiles` returns `[]` for a NON-EXISTENT branch (a
+   * three-dot diff against a missing ref), which would silently bypass the merge
+   * gate on unvalidated work if sandcastle's push never landed. The CLI binds
+   * this to `git rev-parse --verify` (with one fetch attempt). Optional so
+   * pre-existing wiring/tests that predate the check degrade to "assume present"
+   * (the legacy behaviour).
+   */
+  branchPresent?(branch: string): Promise<boolean>;
 }
 
 /** The hook dispatch surface: the parsed config + the default resolver + the
@@ -354,11 +364,25 @@ export async function processIssue(
   const startedEpoch = deps.nowEpoch();
   const resolved: ResolvedHooks = resolveHooks(deps.hooks.config, deps.hooks.resolveOptions);
 
+  // FIX J: the env slice the pre_worktree hook chain mutates (e.g. the cargo /
+  // gradle defaults inject CARGO_TARGET_DIR=.../slot-N for per-slot build
+  // isolation). dispatchHooks returns the mutated context; we capture its `env`
+  // here and thread it onto the runAgent input so the sandcastle-spawned agent
+  // inherits it (see execution.runAgent — applied to process.env for noSandbox).
+  let agentEnv: Record<string, string> | undefined;
+
   const fireHook = async (name: HookName, context: string): Promise<boolean> => {
     hooksFired.push(name);
     const result = await dispatchHooks(name, resolved[name], context, deps.hooks.exec, {
       env: deps.hooks.env ?? {},
     });
+    // Capture the pre_worktree env mutation (FIX J). Only this point computes the
+    // mutable `env` slice the runner must inherit; other points' mutations are
+    // not env-bearing, so we read it just here.
+    if (name === "pre_worktree" && !result.aborted) {
+      const parsed = parseHookEnv(result.context);
+      if (parsed) agentEnv = parsed;
+    }
     return !result.aborted;
   };
 
@@ -459,6 +483,9 @@ export async function processIssue(
     // SIGKILL mid-iteration preserves the diff on origin. Best-effort.
     remote: input.remote,
     continuousPush: true,
+    // FIX J: env computed by the pre_worktree hook (e.g. CARGO_TARGET_DIR per
+    // slot) — runAgent applies it to the spawned agent's environment.
+    env: agentEnv,
   });
 
   // ---- runner-fallback subsystem (--fallback-runner / RUNNER_EXHAUSTED) ----
@@ -495,6 +522,8 @@ export async function processIssue(
       cwd: input.attemptDir,
       remote: input.remote,
       continuousPush: true,
+      // FIX J: carry the pre_worktree env onto the fallback runner too.
+      env: agentEnv,
     });
     if (run.outcome === "exhausted") {
       // Both runners exhausted → close the fallback attempt's cycle, then it is
@@ -543,7 +572,22 @@ export async function processIssue(
 
   // run.outcome === "done".
 
-  // ---- 5. feedback loops (the merge gate, ADR 0008) ----
+  // ---- 5a. worker-branch presence gate (FIX E) ----
+  // changedFiles() does `git diff base...branch`, which returns [] on a MISSING
+  // branch (code 0) — indistinguishable from "no changes". If sandcastle's commits
+  // never reached the host (push failed), feedback would run against an EMPTY
+  // changed-file set → no validation scopes → the merge gate is bypassed on
+  // unvalidated work. Confirm the branch exists (the lookup attempts one fetch
+  // first); if it is still absent, do NOT proceed to feedback/merge — route to the
+  // merge-conflict / ready-for-human terminal path with a clear reason.
+  if (deps.lookups.branchPresent && !(await deps.lookups.branchPresent(workerBranch))) {
+    deps.appendIterLog(
+      `🤖 /afk: worker branch \`${workerBranch}\` absent on host — sandcastle commits did not reach the host; escalating.`,
+    );
+    return await mergeFailed(common, "worker branch absent — sandcastle commits did not reach the host");
+  }
+
+  // ---- 5b. feedback loops (the merge gate, ADR 0008) ----
   // Feedback runs against a checkout of the returned worker branch; the injected
   // pnpm/layout execs resolve `workerBranch` to a concrete path in the CLI.
   const changedFiles = await deps.lookups.changedFiles(workerBranch, base);
@@ -895,6 +939,29 @@ async function exhausted(
 }
 
 // ---------- context + prompt helpers ----------
+
+/**
+ * Extract the `{ env: { …string } }` slice from a hook's mutated context JSON
+ * (FIX J). Returns a sanitised string→string record, or `undefined` when the
+ * context has no usable env (no mutation, malformed JSON, or a non-object env).
+ * Non-string env values are dropped — the agent env must be string→string.
+ */
+function parseHookEnv(context: string): Record<string, string> | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(context);
+  } catch {
+    return undefined;
+  }
+  if (typeof parsed !== "object" || parsed === null) return undefined;
+  const env = (parsed as { env?: unknown }).env;
+  if (typeof env !== "object" || env === null || Array.isArray(env)) return undefined;
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(env as Record<string, unknown>)) {
+    if (typeof v === "string") out[k] = v;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
 
 /** Build the mutable hook context JSON, mirroring the `jq -nc` builders. */
 function hookContext(fields: Record<string, unknown>): string {

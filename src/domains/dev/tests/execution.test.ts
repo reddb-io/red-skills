@@ -6,13 +6,17 @@ import {
   interpretOutcome,
   isExhaustionError,
   runAgent,
+  effortForProvider,
   DONE_SIGNAL,
   BLOCKED_SIGNAL,
   COMPLETION_SIGNALS,
   DEFAULT_IDLE_TIMEOUT_S,
   DEFAULT_REMOTE,
   DEFAULT_MAX_ITERATIONS,
+  CODEX_EFFORTS,
+  CLAUDE_EFFORTS,
   parseMaxIterations,
+  parseIdleTimeout,
   type SandcastleDeps,
   type RunAgentInput,
 } from "../src/core/execution.js";
@@ -245,6 +249,39 @@ describe("runAgent", () => {
   });
 });
 
+describe("defaultSandcastleDeps agentFor (FIX D — degrade safely, never throw)", () => {
+  it("drops codex+max (omits effort) with a warn and still builds an agent", async () => {
+    const { defaultSandcastleDeps } = await import("../src/core/execution.js");
+    const deps = await defaultSandcastleDeps();
+    const warns: string[] = [];
+    const orig = console.warn;
+    console.warn = (...a: unknown[]) => void warns.push(a.join(" "));
+    try {
+      // codex + "max" must NOT throw — it degrades to the provider default.
+      const agent = deps.agentFor("codex", "gpt-5.4", { effort: "max" });
+      expect(agent).toBeDefined();
+      expect(warns.some((w) => w.includes("effort 'max' is not accepted by runner 'codex'"))).toBe(true);
+    } finally {
+      console.warn = orig;
+    }
+  });
+
+  it("keeps claude+max (no warn) — claude accepts the full union", async () => {
+    const { defaultSandcastleDeps } = await import("../src/core/execution.js");
+    const deps = await defaultSandcastleDeps();
+    const warns: string[] = [];
+    const orig = console.warn;
+    console.warn = (...a: unknown[]) => void warns.push(a.join(" "));
+    try {
+      const agent = deps.agentFor("claude", "claude-opus-4-8", { effort: "max" });
+      expect(agent).toBeDefined();
+      expect(warns).toEqual([]);
+    } finally {
+      console.warn = orig;
+    }
+  });
+});
+
 describe("parseMaxIterations (RED_AFK_MAX_ITERATIONS, issue #322)", () => {
   it("parses a positive integer", () => {
     expect(parseMaxIterations("50")).toBe(50);
@@ -263,6 +300,104 @@ describe("parseMaxIterations (RED_AFK_MAX_ITERATIONS, issue #322)", () => {
   });
 });
 
+describe("parseIdleTimeout (RED_AFK_IDLE_TIMEOUT_S, FIX G)", () => {
+  it("parses a positive integer", () => {
+    expect(parseIdleTimeout("900")).toBe(900);
+    expect(parseIdleTimeout("1")).toBe(1);
+  });
+
+  it("falls back to undefined for missing / non-numeric / zero / negative values", () => {
+    // undefined → buildRunOptions applies DEFAULT_IDLE_TIMEOUT_S; an operator
+    // typo must never disable the idle watchdog.
+    expect(parseIdleTimeout(undefined)).toBeUndefined();
+    expect(parseIdleTimeout("abc")).toBeUndefined();
+    expect(parseIdleTimeout("0")).toBeUndefined();
+    expect(parseIdleTimeout("-30")).toBeUndefined();
+    expect(parseIdleTimeout("5.5")).toBeUndefined();
+    expect(parseIdleTimeout("")).toBeUndefined();
+  });
+});
+
+describe("effortForProvider (FIX D — per-provider effort gating)", () => {
+  it("codex accepts low/medium/high/xhigh but NOT max", () => {
+    expect(CODEX_EFFORTS).toEqual(["low", "medium", "high", "xhigh"]);
+    expect(effortForProvider("codex", "high")).toBe("high");
+    expect(effortForProvider("codex", "xhigh")).toBe("xhigh");
+    // "max" is out-of-range for codex → dropped (undefined → provider default).
+    expect(effortForProvider("codex", "max")).toBeUndefined();
+  });
+
+  it("claude accepts the full union including max", () => {
+    expect(CLAUDE_EFFORTS).toEqual(["low", "medium", "high", "xhigh", "max"]);
+    expect(effortForProvider("claude", "max")).toBe("max");
+    expect(effortForProvider("claude", "high")).toBe("high");
+  });
+
+  it("passes undefined through unchanged (no effort requested)", () => {
+    expect(effortForProvider("codex", undefined)).toBeUndefined();
+    expect(effortForProvider("claude", undefined)).toBeUndefined();
+  });
+});
+
+describe("runAgent — FIX F continuous-push under isolation warning", () => {
+  function captureWarn(): { warn: (m: string) => void; lines: string[] } {
+    const lines: string[] = [];
+    return { warn: (m) => lines.push(m), lines };
+  }
+
+  it("warns when continuousPush is requested under docker isolation", async () => {
+    const { warn, lines } = captureWarn();
+    const deps = { ...makeDeps(async () => fakeResult()), warn };
+    await runAgent(deps, { ...baseInput, continuousPush: true, sandboxMode: "docker" });
+    expect(lines.some((l) => l.includes("continuous-push is unavailable under docker"))).toBe(true);
+  });
+
+  it("warns under podman isolation too", async () => {
+    const { warn, lines } = captureWarn();
+    const deps = { ...makeDeps(async () => fakeResult()), warn };
+    await runAgent(deps, { ...baseInput, continuousPush: true, sandboxMode: "podman" });
+    expect(lines.some((l) => l.includes("continuous-push is unavailable under podman"))).toBe(true);
+  });
+
+  it("does NOT warn for the default noSandbox mode (continuous-push works there)", async () => {
+    const { warn, lines } = captureWarn();
+    const deps = { ...makeDeps(async () => fakeResult()), warn };
+    await runAgent(deps, { ...baseInput, continuousPush: true, sandboxMode: "none" });
+    expect(lines).toEqual([]);
+  });
+});
+
+describe("runAgent — FIX J env application", () => {
+  it("applies input.env onto process.env before the run (noSandbox mechanism)", async () => {
+    const key = "RED_AFK_TEST_CARGO_TARGET_DIR";
+    const prior = process.env[key];
+    delete process.env[key];
+    let seenAtRunTime: string | undefined;
+    try {
+      await runAgent(
+        makeDeps(async () => {
+          // The agent inherits this worker process's env, so by run() time the
+          // env must already be applied.
+          seenAtRunTime = process.env[key];
+          return fakeResult();
+        }),
+        { ...baseInput, env: { [key]: "/opt/cargo-target/slot-3" } },
+      );
+      expect(seenAtRunTime).toBe("/opt/cargo-target/slot-3");
+      expect(process.env[key]).toBe("/opt/cargo-target/slot-3");
+    } finally {
+      if (prior === undefined) delete process.env[key];
+      else process.env[key] = prior;
+    }
+  });
+
+  it("is a no-op when no env is supplied", async () => {
+    // Just proves the empty-env path does not throw.
+    const r = await runAgent(makeDeps(async () => fakeResult()), baseInput);
+    expect(r.outcome).toBe("done");
+  });
+});
+
 describe("isExhaustionError", () => {
   it("matches the per-runner exhaustion strings on a thrown error message", () => {
     expect(isExhaustionError(new Error("usage limit reached"))).toBe(true);
@@ -276,6 +411,36 @@ describe("isExhaustionError", () => {
     expect(isExhaustionError(new Error("tests failed: 2 failing"))).toBe(false);
     expect(isExhaustionError(undefined)).toBe(false);
     expect(isExhaustionError(null)).toBe(false);
+  });
+
+  // FIX H: sandcastle rejects with Effect-style errors that may nest the quota
+  // text under .cause / .error rather than a top-level .message/.stdout/.stderr.
+  it("matches exhaustion text nested under a .cause chain", () => {
+    expect(isExhaustionError({ message: "agent failed", cause: { message: "usage limit reached" } })).toBe(true);
+  });
+
+  it("matches exhaustion text nested under an arbitrary structured field", () => {
+    expect(isExhaustionError({ _tag: "AgentError", detail: { reason: "rate_limit_error" } })).toBe(true);
+  });
+
+  it("matches a custom toString() carrying the quota text (no plain string field)", () => {
+    const effectLike = {
+      _tag: "ExecError",
+      toString() {
+        return "ExecError: weekly cap hit";
+      },
+    };
+    expect(isExhaustionError(effectLike)).toBe(true);
+  });
+
+  it("still does not match a nested ordinary failure (broadening cannot misclassify)", () => {
+    expect(isExhaustionError({ message: "build failed", cause: { message: "tsc: 3 errors" } })).toBe(false);
+  });
+
+  it("terminates on a cyclic error graph without looping", () => {
+    const a: Record<string, unknown> = { message: "boom" };
+    a.self = a;
+    expect(isExhaustionError(a)).toBe(false);
   });
 });
 

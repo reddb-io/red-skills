@@ -108,7 +108,9 @@ export function makeRunAgent(
 ): (input: RunAgentInput) => Promise<RunAgentResult> {
   let depsPromise: Promise<import("../core/execution.js").SandcastleDeps> | null = null;
   return async (input: RunAgentInput): Promise<RunAgentResult> => {
-    const { runAgent, defaultSandcastleDeps, parseMaxIterations } = await import("../core/execution.js");
+    const { runAgent, defaultSandcastleDeps, parseMaxIterations, parseIdleTimeout } = await import(
+      "../core/execution.js"
+    );
     if (!depsPromise) depsPromise = defaultSandcastleDeps();
     const deps = await depsPromise;
     // RED_AFK_MAX_ITERATIONS overrides the sandcastle re-invocation ceiling
@@ -116,10 +118,15 @@ export function makeRunAgent(
     // / non-positive value parses to undefined, so an operator typo can't disable
     // the cap or pin it to 1 — buildRunOptions then applies DEFAULT_MAX_ITERATIONS.
     const envMaxIterations = parseMaxIterations(env.RED_AFK_MAX_ITERATIONS);
+    // RED_AFK_IDLE_TIMEOUT_S overrides the per-iteration idle watchdog (FIX G),
+    // same typo-safe contract: a bad value parses to undefined so buildRunOptions
+    // applies DEFAULT_IDLE_TIMEOUT_S rather than disabling the watchdog.
+    const envIdleTimeout = parseIdleTimeout(env.RED_AFK_IDLE_TIMEOUT_S);
     return runAgent(deps, {
       ...input,
       sandboxMode: input.sandboxMode ?? sandbox,
       maxIterations: input.maxIterations ?? envMaxIterations,
+      idleTimeoutSeconds: input.idleTimeoutSeconds ?? envIdleTimeout,
     });
   };
 }

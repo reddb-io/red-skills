@@ -340,6 +340,14 @@ export function buildProcessDeps(
       },
       changedFiles: (branch, base) => gitx.changedFiles(gitCtx, branch, base),
       diffstat: (branch, base) => gitx.diffstat(gitCtx, branch, base),
+      // FIX E: confirm the sandcastle worker branch actually landed on the host
+      // before the merge gate. Try once, fetch on a miss, then re-check — a still
+      // -absent branch escalates instead of silently bypassing feedback.
+      branchPresent: async (branch) => {
+        if (await gitx.branchExists(gitCtx, branch)) return true;
+        await gitx.fetchBranch(gitCtx, branch);
+        return gitx.branchExists(gitCtx, branch);
+      },
     },
     envelope: {
       git: gitx.gitExec(gitCtx),

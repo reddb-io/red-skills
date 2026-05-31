@@ -77451,6 +77451,8 @@ var init_podman = __esm({
 var execution_exports = {};
 __export(execution_exports, {
   BLOCKED_SIGNAL: () => BLOCKED_SIGNAL,
+  CLAUDE_EFFORTS: () => CLAUDE_EFFORTS,
+  CODEX_EFFORTS: () => CODEX_EFFORTS,
   COMPLETION_SIGNALS: () => COMPLETION_SIGNALS,
   DEFAULT_IDLE_TIMEOUT_S: () => DEFAULT_IDLE_TIMEOUT_S,
   DEFAULT_MAX_ITERATIONS: () => DEFAULT_MAX_ITERATIONS2,
@@ -77459,8 +77461,10 @@ __export(execution_exports, {
   buildContinuousPushHook: () => buildContinuousPushHook,
   buildRunOptions: () => buildRunOptions,
   defaultSandcastleDeps: () => defaultSandcastleDeps,
+  effortForProvider: () => effortForProvider,
   interpretOutcome: () => interpretOutcome,
   isExhaustionError: () => isExhaustionError,
+  parseIdleTimeout: () => parseIdleTimeout,
   parseMaxIterations: () => parseMaxIterations,
   runAgent: () => runAgent
 });
@@ -77469,6 +77473,17 @@ function parseMaxIterations(raw3) {
   const parsed = Number(raw3);
   if (Number.isInteger(parsed) && parsed > 0) return parsed;
   return void 0;
+}
+function parseIdleTimeout(raw3) {
+  if (raw3 === void 0) return void 0;
+  const parsed = Number(raw3);
+  if (Number.isInteger(parsed) && parsed > 0) return parsed;
+  return void 0;
+}
+function effortForProvider(runner, effort) {
+  if (effort === void 0) return void 0;
+  const accepted = runner === "codex" ? CODEX_EFFORTS : CLAUDE_EFFORTS;
+  return accepted.includes(effort) ? effort : void 0;
 }
 function interpretOutcome(signal) {
   if (signal === DONE_SIGNAL) return "done";
@@ -77530,16 +77545,32 @@ function buildRunOptions(deps, input) {
 function isExhaustionError(error) {
   if (error === null || error === void 0) return false;
   const parts2 = [];
-  if (typeof error === "string") parts2.push(error);
-  else if (typeof error === "object") {
-    const e2 = error;
-    if (typeof e2.message === "string") parts2.push(e2.message);
-    if (typeof e2.stdout === "string") parts2.push(e2.stdout);
-    if (typeof e2.stderr === "string") parts2.push(e2.stderr);
-  }
+  collectErrorStrings(error, parts2, /* @__PURE__ */ new Set(), 0);
   return parts2.some((p2) => isRunnerExhausted(p2));
 }
+function collectErrorStrings(value2, out, seen, depth) {
+  if (depth > 5) return;
+  if (typeof value2 === "string") {
+    out.push(value2);
+    return;
+  }
+  if (typeof value2 !== "object" || value2 === null) return;
+  if (seen.has(value2)) return;
+  seen.add(value2);
+  const str = String(value2);
+  if (str && str !== "[object Object]") out.push(str);
+  for (const v2 of Object.values(value2)) {
+    collectErrorStrings(v2, out, seen, depth + 1);
+  }
+}
 async function runAgent(deps, input) {
+  const warn = deps.warn ?? ((m2) => console.warn(m2));
+  if (input.continuousPush && (input.sandboxMode === "docker" || input.sandboxMode === "podman")) {
+    warn(
+      `[afk] warn: continuous-push is unavailable under ${input.sandboxMode} isolation; intermediate commits are not backed up mid-run \u2014 final sync only.`
+    );
+  }
+  for (const [k2, v2] of Object.entries(input.env ?? {})) process.env[k2] = v2;
   let result;
   try {
     result = await deps.run(buildRunOptions(deps, input));
@@ -77567,15 +77598,25 @@ async function defaultSandcastleDeps() {
     Promise.resolve().then(() => (init_docker(), docker_exports)),
     Promise.resolve().then(() => (init_podman(), podman_exports))
   ]);
-  const agentFor = (runner, model, opts3) => runner === "codex" ? core.codex(model, opts3?.effort ? { effort: opts3.effort } : void 0) : core.claudeCode(model, opts3?.effort ? { effort: opts3.effort } : void 0);
+  const warn = (m2) => console.warn(m2);
+  const agentFor = (runner, model, opts3) => {
+    const requested = opts3?.effort;
+    const effort = effortForProvider(runner, requested);
+    if (requested !== void 0 && effort === void 0) {
+      warn(
+        `[afk] warn: effort '${requested}' is not accepted by runner '${runner}' (accepted: ${(runner === "codex" ? CODEX_EFFORTS : CLAUDE_EFFORTS).join(", ")}); falling back to the provider default.`
+      );
+    }
+    return runner === "codex" ? core.codex(model, effort ? { effort } : void 0) : core.claudeCode(model, effort ? { effort } : void 0);
+  };
   const sandboxFor = (mode) => {
     if (mode === "docker") return dockerMod.docker();
     if (mode === "podman") return podmanMod.podman();
     return noSandboxMod.noSandbox();
   };
-  return { run: core.run, agentFor, sandboxFor };
+  return { run: core.run, agentFor, sandboxFor, warn };
 }
-var DONE_SIGNAL, BLOCKED_SIGNAL, COMPLETION_SIGNALS, DEFAULT_IDLE_TIMEOUT_S, DEFAULT_MAX_ITERATIONS2, DEFAULT_REMOTE;
+var DONE_SIGNAL, BLOCKED_SIGNAL, COMPLETION_SIGNALS, DEFAULT_IDLE_TIMEOUT_S, DEFAULT_MAX_ITERATIONS2, DEFAULT_REMOTE, CODEX_EFFORTS, CLAUDE_EFFORTS;
 var init_execution = __esm({
   "src/core/execution.ts"() {
     "use strict";
@@ -77586,6 +77627,8 @@ var init_execution = __esm({
     DEFAULT_IDLE_TIMEOUT_S = 600;
     DEFAULT_MAX_ITERATIONS2 = 25;
     DEFAULT_REMOTE = "origin";
+    CODEX_EFFORTS = ["low", "medium", "high", "xhigh"];
+    CLAUDE_EFFORTS = ["low", "medium", "high", "xhigh", "max"];
   }
 });
 
@@ -82484,6 +82527,15 @@ async function deleteRemoteBranch(ctx, branch) {
   if (!branch) return;
   await runGit(ctx, ["push", "origin", "--delete", branch]);
 }
+async function branchExists(ctx, branch) {
+  if (!branch) return false;
+  const r = await runGit(ctx, ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`]);
+  return r.code === 0;
+}
+async function fetchBranch(ctx, branch) {
+  if (!branch) return;
+  await runGit(ctx, ["fetch", "origin", branch]);
+}
 async function changedFiles(ctx, branch, base) {
   const r = await runGit(ctx, ["diff", "--name-only", `${base}...${branch}`]);
   if (r.code !== 0) return [];
@@ -82692,14 +82744,16 @@ function resolveRunSettings(root, env2 = process.env) {
 function makeRunAgent(sandbox3, env2 = process.env) {
   let depsPromise = null;
   return async (input) => {
-    const { runAgent: runAgent2, defaultSandcastleDeps: defaultSandcastleDeps2, parseMaxIterations: parseMaxIterations2 } = await Promise.resolve().then(() => (init_execution(), execution_exports));
+    const { runAgent: runAgent2, defaultSandcastleDeps: defaultSandcastleDeps2, parseMaxIterations: parseMaxIterations2, parseIdleTimeout: parseIdleTimeout2 } = await Promise.resolve().then(() => (init_execution(), execution_exports));
     if (!depsPromise) depsPromise = defaultSandcastleDeps2();
     const deps = await depsPromise;
     const envMaxIterations = parseMaxIterations2(env2.RED_AFK_MAX_ITERATIONS);
+    const envIdleTimeout = parseIdleTimeout2(env2.RED_AFK_IDLE_TIMEOUT_S);
     return runAgent2(deps, {
       ...input,
       sandboxMode: input.sandboxMode ?? sandbox3,
-      maxIterations: input.maxIterations ?? envMaxIterations
+      maxIterations: input.maxIterations ?? envMaxIterations,
+      idleTimeoutSeconds: input.idleTimeoutSeconds ?? envIdleTimeout
     });
   };
 }
@@ -84545,11 +84599,16 @@ async function processIssue(deps, input) {
   const hooksFired = [];
   const startedEpoch = deps.nowEpoch();
   const resolved = resolveHooks(deps.hooks.config, deps.hooks.resolveOptions);
+  let agentEnv;
   const fireHook = async (name, context9) => {
     hooksFired.push(name);
     const result = await dispatchHooks(name, resolved[name], context9, deps.hooks.exec, {
       env: deps.hooks.env ?? {}
     });
+    if (name === "pre_worktree" && !result.aborted) {
+      const parsed = parseHookEnv(result.context);
+      if (parsed) agentEnv = parsed;
+    }
     return !result.aborted;
   };
   if (!await deps.claimLock.acquire(issue)) {
@@ -84619,7 +84678,10 @@ async function processIssue(deps, input) {
     // worker branch up-front + after every commit (host worktree hook), so a
     // SIGKILL mid-iteration preserves the diff on origin. Best-effort.
     remote: input.remote,
-    continuousPush: true
+    continuousPush: true,
+    // FIX J: env computed by the pre_worktree hook (e.g. CARGO_TARGET_DIR per
+    // slot) — runAgent applies it to the spawned agent's environment.
+    env: agentEnv
   });
   if (run8.outcome === "exhausted") {
     if (!deps.fallbackRunner) {
@@ -84643,7 +84705,9 @@ async function processIssue(deps, input) {
       base,
       cwd: input.attemptDir,
       remote: input.remote,
-      continuousPush: true
+      continuousPush: true,
+      // FIX J: carry the pre_worktree env onto the fallback runner too.
+      env: agentEnv
     });
     if (run8.outcome === "exhausted") {
       await fireHook("post_attempt", postAttemptContext({ ...input, attempt: attemptN }, branch, "fail", "exhausted"));
@@ -84674,6 +84738,12 @@ async function processIssue(deps, input) {
     return await terminalFailure(common, "blocked", "blocked", {
       notes: `_(inner agent emitted BLOCKED \u2014 see iteration log at \`${input.attemptDir}\`)_`
     });
+  }
+  if (deps.lookups.branchPresent && !await deps.lookups.branchPresent(workerBranch)) {
+    deps.appendIterLog(
+      `\u{1F916} /afk: worker branch \`${workerBranch}\` absent on host \u2014 sandcastle commits did not reach the host; escalating.`
+    );
+    return await mergeFailed(common, "worker branch absent \u2014 sandcastle commits did not reach the host");
   }
   const changedFiles2 = await deps.lookups.changedFiles(workerBranch, base);
   const feedback = await runFeedback(deps.pnpm, {
@@ -84891,6 +84961,22 @@ async function exhausted(deps, input, branch, base, hooksFired, runner, both2) {
     preserved: true,
     swept: false
   };
+}
+function parseHookEnv(context9) {
+  let parsed;
+  try {
+    parsed = JSON.parse(context9);
+  } catch {
+    return void 0;
+  }
+  if (typeof parsed !== "object" || parsed === null) return void 0;
+  const env2 = parsed.env;
+  if (typeof env2 !== "object" || env2 === null || Array.isArray(env2)) return void 0;
+  const out = {};
+  for (const [k2, v2] of Object.entries(env2)) {
+    if (typeof v2 === "string") out[k2] = v2;
+  }
+  return Object.keys(out).length > 0 ? out : void 0;
 }
 function hookContext(fields) {
   const issue = fields.issue;
@@ -85584,7 +85670,15 @@ function buildProcessDeps(ctx, model, sandbox3, feedback, current, fallbackRunne
         }
       },
       changedFiles: (branch, base) => changedFiles(gitCtx, branch, base),
-      diffstat: (branch, base) => diffstat(gitCtx, branch, base)
+      diffstat: (branch, base) => diffstat(gitCtx, branch, base),
+      // FIX E: confirm the sandcastle worker branch actually landed on the host
+      // before the merge gate. Try once, fetch on a miss, then re-check — a still
+      // -absent branch escalates instead of silently bypassing feedback.
+      branchPresent: async (branch) => {
+        if (await branchExists(gitCtx, branch)) return true;
+        await fetchBranch(gitCtx, branch);
+        return branchExists(gitCtx, branch);
+      }
     },
     envelope: {
       git: gitExec(gitCtx),

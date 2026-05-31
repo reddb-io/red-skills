@@ -80,6 +80,26 @@ export async function deleteRemoteBranch(ctx: GitContext, branch: string): Promi
   await runGit(ctx, ["push", "origin", "--delete", branch]);
 }
 
+/**
+ * True when `<branch>` exists as a LOCAL ref (git rev-parse --verify --quiet
+ * refs/heads/<branch>). FIX E: a three-dot `git diff base...branch` against a
+ * NON-EXISTENT branch returns empty with code 0 — indistinguishable from "no
+ * changes" — so the merge gate must first confirm the worker branch actually
+ * reached the host before resolving feedback scopes from `changedFiles`.
+ */
+export async function branchExists(ctx: GitContext, branch: string): Promise<boolean> {
+  if (!branch) return false;
+  const r = await runGit(ctx, ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`]);
+  return r.code === 0;
+}
+
+/** Best-effort `git fetch origin <branch>` (FIX E recovery: try once to pull a
+ * sandcastle-pushed worker branch onto the host before declaring it absent). */
+export async function fetchBranch(ctx: GitContext, branch: string): Promise<void> {
+  if (!branch) return;
+  await runGit(ctx, ["fetch", "origin", branch]);
+}
+
 /** Changed files of <branch> vs <base> (git diff --name-only base...branch). */
 export async function changedFiles(ctx: GitContext, branch: string, base: string): Promise<string[]> {
   const r = await runGit(ctx, ["diff", "--name-only", `${base}...${branch}`]);
