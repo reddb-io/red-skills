@@ -1,66 +1,28 @@
 // process-issue — the AFK per-issue lifecycle, ported from afk.sh's
-// process_issue (+ iter_open / iter_close_success / iter_close_preserve /
-// claim_lock_acquire / completion_sweep_issue / the _afk_fire_pre/post_attempt
-// helpers and the do_merge wiring), and the "Per-Issue Loop" / "Issue
-// Lifecycle" sections of SKILL.md.
+// process_issue (+ iter_open / iter_close_* / claim_lock_acquire /
+// completion_sweep_issue / the pre/post_attempt helpers), and the
+// "Per-Issue Loop" / "Issue Lifecycle" sections of SKILL.md.
 //
-// This module is PURE SEQUENCING. It owns only the ORDER of the per-issue
-// lifecycle and the compose-decider-then-apply pattern: every step composes one
-// of the already-ported pure modules (base-resolver / remote-branch / handoff /
-// execution / feedback / merge / envelope-emit / hook-dispatcher / hook-config /
-// heartbeat / state / attempt-ledger) and applies its side effects through
-// injected IO. No real gh, git, spawn, fs, or clock lives here — the composed
-// modules perform no ambient IO, and `processIssue` performs IO only through the
-// injected `deps`.
+// PURE SEQUENCING: it owns only the ORDER of the lifecycle and the
+// compose-decider-then-apply pattern — every step composes an already-ported
+// pure module and applies its side effects through injected IO. No real gh, git,
+// spawn, fs, or clock lives here; `processIssue` performs IO only through `deps`.
 //
-// ---------------------------------------------------------------------------
-// EXECUTION SUBSTRATE DELEGATED TO SANDCASTLE (ADR 0033)
-// ---------------------------------------------------------------------------
-// The "create a worktree + spawn the inner agent + stream/sentinel detect +
-// commit on the worker branch" middle is no longer hand-rolled here. It is a
-// single call to the injected `deps.runAgent` port (a closure over
-// execution.runAgent + defaultSandcastleDeps in the CLI; a fake in tests).
-// sandcastle now OWNS: worktree creation, agent spawn, stream/sentinel
-// detection, and committing on the worker branch via
-// branchStrategy {type:"branch", branch: afk/{id}/{N}-{slug}}.
-//
-// AFK STILL OWNS (unchanged): claim + labels, the attempt dir, handoff
-// materialisation, the feedback gate, the lock-toggled landing, envelope
+// Execution (worktree + agent spawn + sentinel detect + worker-branch commit) is
+// delegated to the injected sandcastle `runAgent` port (ADR 0033). The
+// lock-toggled landing (push → pre_merge → integrate → land → post_merge) is
+// delegated to `doLanding` (landing.ts, ADR 0030/0031). AFK STILL OWNS: claim +
+// labels, the attempt dir, handoff materialisation, the feedback gate, envelope
 // emission, close, completion sweep, and the lifecycle hooks.
 //
-// PRAGMATIC INTEGRATION CHOICES (the seams where AFK's host-side modules meet a
-// sandcastle-owned worktree we never see a path to in-process):
-//   * The handoff is written to the HOST attempt dir (`<attemptDir>/handoff.md`)
-//     and passed to `runAgent` as the sandcastle `promptFile` (handoffPath). The
-//     AGENT-PROMPT contract is unchanged — the DONE/BLOCKED sentinels are the
-//     sandcastle completion signals.
-//   * `runAgent` returns the worker branch + its commits. AFK does NOT create or
-//     push the branch up-front any more (no push_initial / post-commit hook).
-//     After a DONE run, AFK makes the worker branch's origin state certain by
-//     pushing it (remote-branch.pushAttempt to origin/<branch>) BEFORE landing,
-//     so landMerge / landPr (which run from the primary checkout / a host
-//     worktree) have a remote ref to merge.
-//   * Feedback runs against a checkout/worktree of the returned branch through
-//     the injected pnpm/layout execs. We pass `result.branch` as the feedback
-//     `worktree` token; the concrete CLI closure resolves it to a real path
-//     (e.g. a sandcastle worktree handle or a host re-checkout). The unit tests
-//     inject a fake pnpm, so the token is opaque here — this is the one seam that
-//     cannot be fully resolved without a real sandcastle worktree handle.
-//   * `merge-conflict` is no longer a reachable inner-agent outcome (sandcastle
-//     either lands commits or not); the merge stage can still fail to integrate
-//     or land, and that path keeps the `merge-conflict` envelope/outcome.
-// ALL IO stays injected; nothing real is ever spawned from this module.
-//
 // Lifecycle hooks fire (via dispatchHooks over resolveHooks) at pre_worktree,
-// pre_attempt, post_attempt, pre_merge, post_merge, and on_attempt_error — the
-// canonical names; SKILL.md's pre_worker/post_worker/on_worker_error are the
-// deprecated aliases. A terminal envelope is emitted on every exit path.
+// pre_attempt, post_attempt, pre_merge, post_merge, and on_attempt_error. A
+// terminal envelope is emitted on every exit path.
 
 import { resolveBase, type ResolveBaseDeps, type ResolveBaseInput } from "./base-resolver.js";
 import {
   buildRefFromSlug,
   deleteRemote,
-  pushAttempt,
   slugifyRef,
   type GitExec,
 } from "./remote-branch.js";
@@ -74,13 +36,10 @@ import {
   type RunFeedbackResult,
 } from "./feedback.js";
 import {
-  integrateOrigin,
-  landMerge,
-  landPr,
-  resolveMergeConflict,
   type Exec as MergeExec,
   type ConflictResolver,
 } from "./merge.js";
+import { doLanding } from "./landing.js";
 import {
   emitEnvelope,
   type EmitEnvelopeDeps,
@@ -88,7 +47,12 @@ import {
 } from "./envelope-emit.js";
 import { dispatchHooks, type HookExec } from "./hook-dispatcher.js";
 import { recoveryCap, recoveryDecision, type RecoveryEnv } from "./recovery.js";
-import { blockedLabelFor, recoveryReasonFor, type AttemptOutcome } from "./attempt-outcome.js";
+import {
+  blockedLabelFor,
+  envelopeStatusFor,
+  recoveryReasonFor,
+  type AttemptOutcome,
+} from "./attempt-outcome.js";
 import { resolveHooks, type ResolveHooksOptions, type ResolvedHooks, type HookName } from "./hook-config.js";
 import { formatStartedMarker } from "./heartbeat.js";
 import { parseReqLabels, planCloseCascade, type DependentIssue } from "./boot-sweep.js";
@@ -553,21 +517,10 @@ export async function processIssue(
   // ---- on_attempt_error: the run ended without an AFK sentinel (ADR 0028) ----
   if (run.outcome === "no-sentinel") {
     await fireHook("on_attempt_error", onErrorContext(current, workerBranch, "no-sentinel", current.attempt));
-    await routeRecovery(deps, issue, "no-sentinel", current.attempt);
-    const posted = await emitFailure(common, "no-sentinel", "no-sentinel", {
+    return await terminalFailure(common, "no-sentinel", "no-sentinel", {
       notes: "_(no Notes appended; inner agent exited without a sentinel)_",
       log: run.stdout ? run.stdout.split("\n").slice(-1)[0] || "(no captured stdout)" : "(no captured stdout)",
     });
-    return {
-      outcome: "no-sentinel",
-      issue,
-      branch: workerBranch,
-      base,
-      hooksFired,
-      envelopePosted: posted,
-      preserved: true,
-      swept: false,
-    };
   }
 
   // ---- post_attempt hook (terminal invocation; sentinel-bearing) ----
@@ -576,20 +529,9 @@ export async function processIssue(
 
   // ---- BLOCKED ----
   if (run.outcome === "blocked") {
-    await routeRecovery(deps, issue, "blocked", current.attempt);
-    const posted = await emitFailure(common, "blocked", "blocked", {
+    return await terminalFailure(common, "blocked", "blocked", {
       notes: `_(inner agent emitted BLOCKED — see iteration log at \`${input.attemptDir}\`)_`,
     });
-    return {
-      outcome: "blocked",
-      issue,
-      branch: workerBranch,
-      base,
-      hooksFired,
-      envelopePosted: posted,
-      preserved: true,
-      swept: false,
-    };
   }
 
   // run.outcome === "done".
@@ -605,105 +547,45 @@ export async function processIssue(
     now: deps.nowEpoch,
   });
   if (!feedback.ok) {
-    await routeRecovery(deps, issue, "feedback-failed", current.attempt);
-    const posted = await emitFailure(common, "blocked", "feedback", {
+    return await terminalFailure(common, "feedback-failed", "feedback", {
       notes: "Feedback validation failed after the inner agent emitted DONE. The worker branch was not merged.",
       validation: feedback.sidecar.join("\n"),
     });
-    return {
-      outcome: "feedback-failed",
-      issue,
-      branch: workerBranch,
-      base,
-      hooksFired,
-      envelopePosted: posted,
-      preserved: true,
-      swept: false,
-    };
   }
 
   // ---- 6. push the worker branch, integrate, then land per lock state ----
-  // sandcastle committed on the worker branch but does not push it; AFK makes
-  // its origin state certain before landing (so landMerge/landPr have a ref).
-  await pushAttempt(deps.remoteGit, input.repoDir, workerBranch, workerBranch);
-
+  // The entire lock-toggled landing (push → pre_merge → integrate → land →
+  // locked conflict self-resolve → post_merge) is owned by doLanding (landing.ts,
+  // ADR 0030/0031). A non-ok result maps to the merge-conflict terminal-failure
+  // path; on success the FINAL merge sha is read below (post post_merge), exactly
+  // as before, to drive the done close.
   const locked = await deps.lookups.isLocked();
-  if (
-    !(await fireHook("pre_merge", hookContext({ issue, title: input.title, workspace: input.repoDir, branch: workerBranch })))
-  ) {
-    return await mergeFailed(common, "pre_merge-abort");
-  }
-
-  const integrated = await integrateOrigin(deps.mergeExec, {
-    repo: input.repoDir,
-    remote: input.remote,
-    branch: base,
-    stillBehind: true,
-    inSync: false,
-  });
-  if (!integrated.ok) {
-    return await mergeFailed(common, "integrate-failed");
-  }
-  const preMergeSha = await deps.git.headShortSha();
-
-  let landed: boolean;
-  if (locked) {
-    const r = await landMerge(deps.mergeExec, {
-      repo: input.repoDir,
-      remote: input.remote,
-      branch: workerBranch,
-      target: base,
-      n: issue,
-      title: input.title,
-      preMergeSha,
-    });
-    landed = r.ok;
-  } else {
-    const r = await landPr(deps.mergeExec, {
+  const landing = await doLanding(
+    {
+      mergeExec: deps.mergeExec,
+      remoteGit: deps.remoteGit,
+      headShortSha: () => deps.git.headShortSha(),
+      fireHook,
+      conflictResolver: deps.conflictResolver,
+    },
+    {
+      locked,
       repo: input.repo,
-      gitRepo: input.repoDir,
+      repoDir: input.repoDir,
       remote: input.remote,
       branch: workerBranch,
-      target: base,
-      n: issue,
+      base,
+      issue,
       title: input.title,
-    });
-    landed = r.ok;
+    },
+    {
+      preMerge: () => hookContext({ issue, title: input.title, workspace: input.repoDir, branch: workerBranch }),
+      postMerge: () => hookContext({ issue, title: input.title, workspace: input.repoDir, branch: workerBranch }),
+    },
+  );
+  if (!landing.ok) {
+    return await mergeFailed(common, landing.reason, landing.locked);
   }
-  // One-shot self-resolve (merge_resolve_conflict, SKILL.md step 8): when the
-  // `git merge --no-ff` left conflicts, dispatch the configured runner once to
-  // resolve + commit the merge in the primary checkout. The resolver verifies
-  // git state (no unmerged paths, MERGE_HEAD cleared); on success the landing
-  // continues to close, otherwise we `git merge --abort` and fall through to the
-  // ready-for-human merge-conflict path. Only attempted on the LOCKED path,
-  // where the merge happens locally — the unlocked PR path never merges in this
-  // checkout (gh admin-merges remotely), so there is nothing to resolve here.
-  if (!landed && locked && deps.conflictResolver) {
-    const resolved = await resolveMergeConflict(deps.mergeExec, deps.conflictResolver, {
-      repo: input.repoDir,
-      branch: workerBranch,
-      n: issue,
-      title: input.title,
-      target: base,
-    });
-    if (resolved.resolved) {
-      const push = await deps.mergeExec(["git", "-C", input.repoDir, "push", input.remote, base]);
-      if (push.code === 0) {
-        landed = true;
-      } else {
-        await deps.mergeExec(["git", "-C", input.repoDir, "reset", "--hard", preMergeSha]);
-      }
-    } else {
-      // Still conflicting → abandon the merge so the checkout is clean for the
-      // next iteration, then surface ready-for-human below.
-      await deps.mergeExec(["git", "-C", input.repoDir, "merge", "--abort"]);
-    }
-  }
-  if (!landed) {
-    return await mergeFailed(common, "land-failed", locked);
-  }
-
-  await fireHook("post_merge", hookContext({ issue, title: input.title, workspace: input.repoDir, branch: workerBranch }));
 
   // ---- 7. close: envelope(done) → gh close + remove running → delete remote ----
   const mergeSha = await deps.git.headShortSha();
@@ -784,6 +666,38 @@ async function emitFailure(
   return result.posted;
 }
 
+/**
+ * The uniform terminal-FAILURE tail shared by no-sentinel, blocked, feedback,
+ * and merge-conflict: route the BOUNDED auto-recovery labels (routeRecovery),
+ * emit the failure envelope with the status derived from the outcome
+ * (envelopeStatusFor — the single owner), and build the uniform preserved /
+ * not-swept result. The section BODIES + the `sectionKey` (emitFailure's
+ * diffLabel) stay passed-in per call site; the `outcome`, `preserved:true`,
+ * `swept:false` shape is owned here. Paths whose result shape or side effects
+ * differ (abortAfterClaim, exhausted, mergeFailed's extra claim release) keep
+ * their own tails.
+ */
+async function terminalFailure(
+  c: StageCommon,
+  outcome: ProcessOutcome,
+  sectionKey: string,
+  sections: SectionBodies,
+): Promise<ProcessIssueResult> {
+  const { deps, input } = c;
+  await routeRecovery(deps, input.issue, outcome, input.attempt);
+  const posted = await emitFailure(c, envelopeStatusFor(outcome), sectionKey, sections);
+  return {
+    outcome,
+    issue: input.issue,
+    branch: c.branch,
+    base: c.base,
+    hooksFired: c.hooksFired,
+    envelopePosted: posted,
+    preserved: true,
+    swept: false,
+  };
+}
+
 /** Emit the done envelope with the merge sha + validation report. */
 async function emitDone(
   c: StageCommon,
@@ -814,7 +728,7 @@ async function emitDone(
 async function mergeFailed(c: StageCommon, _reason: string, locked = false): Promise<ProcessIssueResult> {
   const { deps, input } = c;
   await routeRecovery(deps, input.issue, "merge-conflict", input.attempt);
-  const posted = await emitFailure(c, "merge-conflict", "merge-conflict", {
+  const posted = await emitFailure(c, envelopeStatusFor("merge-conflict"), "merge-conflict", {
     log: "(no merge log captured)",
   });
   await deps.claimLock.release(input.issue);

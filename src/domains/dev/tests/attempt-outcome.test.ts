@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   blockedLabelFor,
+  envelopeStatusFor,
   recoveryReasonFor,
   type AttemptOutcome,
   type RecoveryReason,
 } from "../src/core/attempt-outcome.js";
+import type { AttemptStatus } from "../src/core/envelope.js";
 
 // attempt-outcome is the SINGLE OWNER of the AFK outcome vocabulary. This is an
 // EXHAUSTIVE table: every `AttemptOutcome` value → its expected `blockedLabelFor`
@@ -70,5 +72,53 @@ describe("attempt-outcome — exhaustive outcome → (label, recovery) table", (
       const r = recoveryReasonFor(row.outcome);
       if (r !== null) expect(valid.has(r)).toBe(true);
     }
+  });
+});
+
+// envelopeStatusFor is the THIRD facet of the outcome vocabulary: the terminal
+// Envelope `data-attempt-status` emitted for the outcome. This EXHAUSTIVE table
+// pins every member, so a drift away from the real emitFailure(common, <status>)
+// call sites in process-issue breaks here. The only non-identity rows are the
+// ones the lifecycle deliberately re-buckets: feedback-failed emits a `blocked`
+// envelope (not a `feedback-failed` one), and the non-emitting outcomes fold into
+// the generic `blocked` failure bucket.
+describe("attempt-outcome — exhaustive outcome → envelope status table", () => {
+  const STATUS_TABLE: Array<{ outcome: AttemptOutcome; status: AttemptStatus }> = [
+    { outcome: "done", status: "done" },
+    { outcome: "no-sentinel", status: "no-sentinel" },
+    { outcome: "merge-conflict", status: "merge-conflict" },
+    { outcome: "blocked", status: "blocked" },
+    // feedback-failed emits a `blocked` envelope, NOT a `feedback-failed` one.
+    { outcome: "feedback-failed", status: "blocked" },
+    // non-emitting outcomes (no live emitFailure call) fold into `blocked`.
+    { outcome: "hook-aborted", status: "blocked" },
+    { outcome: "exhausted", status: "blocked" },
+    { outcome: "claim-lost", status: "blocked" },
+    { outcome: "stalled", status: "blocked" },
+    { outcome: "infra", status: "blocked" },
+  ];
+
+  for (const row of STATUS_TABLE) {
+    it(`${row.outcome} → envelope status ${row.status}`, () => {
+      expect(envelopeStatusFor(row.outcome)).toBe(row.status);
+    });
+  }
+
+  it("covers every AttemptOutcome member exactly once", () => {
+    const ALL: AttemptOutcome[] = [
+      "done",
+      "blocked",
+      "no-sentinel",
+      "merge-conflict",
+      "feedback-failed",
+      "claim-lost",
+      "hook-aborted",
+      "exhausted",
+      "stalled",
+      "infra",
+    ];
+    const covered = STATUS_TABLE.map((r) => r.outcome).sort();
+    expect(covered).toEqual([...ALL].sort());
+    expect(STATUS_TABLE.length).toBe(ALL.length);
   });
 });

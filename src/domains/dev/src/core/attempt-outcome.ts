@@ -13,11 +13,15 @@
 //                            consumes this; its cap table is keyed on it).
 //   - `blockedLabelFor`    — outcome → DESCRIPTIVE `blocked:<reason>` label.
 //   - `recoveryReasonFor`  — outcome → BOUNDED-recovery policy key (or null).
+//   - `envelopeStatusFor`  — outcome → the terminal `data-attempt-status` facet
+//                            of the emitted Envelope (envelope-emit.ts).
 //
 // It is PURE (no IO) — decision/mapping only. Execution (editLabels, comment, the
-// cascade gh, routeRecovery) stays at the call sites. The two functions are the
-// canonical source for both the observability label and the recovery routing key,
-// so the 3-enum-desync bug class becomes impossible.
+// cascade gh, routeRecovery) stays at the call sites. The functions are the
+// canonical source for the observability label, the recovery routing key, and the
+// envelope status, so the multi-enum-desync bug class becomes impossible.
+
+import type { AttemptStatus } from "./envelope.js";
 
 /**
  * Every terminal ending an AFK iteration can have — the UNION of what
@@ -84,6 +88,47 @@ export function blockedLabelFor(o: AttemptOutcome): string | null {
     case "done":
     case "claim-lost":
       return null;
+  }
+}
+
+/**
+ * Pure mapping from a terminal outcome to the `data-attempt-status` facet of the
+ * Envelope emitted for it (envelope-emit.ts `AttemptStatus`). This is the THIRD
+ * facet of "what the outcome means", alongside the typed label and the recovery
+ * key, so it belongs with the single owner.
+ *
+ * The mapping mirrors EXACTLY the status passed at each `emitFailure(common,
+ * <status>, …)` call site in process-issue:
+ *   - no-sentinel     → "no-sentinel"
+ *   - blocked         → "blocked"
+ *   - feedback-failed → "blocked"        (a feedback failure emits a `blocked`
+ *                                          envelope, NOT a `feedback-failed` one)
+ *   - merge-conflict  → "merge-conflict"
+ *   - done            → "done"
+ *
+ * The remaining outcomes (`hook-aborted`, `exhausted`, `claim-lost`, `stalled`,
+ * `infra`) emit NO terminal failure envelope from the per-issue lifecycle (they
+ * route via routeRecovery / short-circuit only), so they have no live call site;
+ * they map to the generic `blocked` failure bucket — the same bucket
+ * envelope-emit's `defaultHistoryEvent` folds non-done terminals into — to keep
+ * the mapping total without inventing a new status.
+ */
+export function envelopeStatusFor(o: AttemptOutcome): AttemptStatus {
+  switch (o) {
+    case "done":
+      return "done";
+    case "no-sentinel":
+      return "no-sentinel";
+    case "merge-conflict":
+      return "merge-conflict";
+    case "blocked":
+    case "feedback-failed":
+    case "hook-aborted":
+    case "exhausted":
+    case "claim-lost":
+    case "stalled":
+    case "infra":
+      return "blocked";
   }
 }
 
