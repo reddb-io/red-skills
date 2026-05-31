@@ -44,12 +44,34 @@ describe("resolveRunSettings", () => {
     }
   });
 
+  it("RED_AFK_SANDBOX env overrides the config sandbox", () => {
+    const root = scratch();
+    try {
+      mkdirSync(join(root, ".red"), { recursive: true });
+      writeFileSync(join(root, ".red", "config.yaml"), "afk:\n  sandbox: none\n");
+      expect(resolveRunSettings(root, { RED_AFK_SANDBOX: "docker" }).sandbox).toBe("docker");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("an invalid RED_AFK_SANDBOX env falls back to the config sandbox", () => {
+    const root = scratch();
+    try {
+      mkdirSync(join(root, ".red"), { recursive: true });
+      writeFileSync(join(root, ".red", "config.yaml"), "afk:\n  sandbox: podman\n");
+      expect(resolveRunSettings(root, { RED_AFK_SANDBOX: "bogus" }).sandbox).toBe("podman");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("falls back to none for an unknown sandbox token", () => {
     const root = scratch();
     try {
       mkdirSync(join(root, ".red"), { recursive: true });
       writeFileSync(join(root, ".red", "config.yaml"), "afk:\n  sandbox: bogus\n");
-      expect(resolveRunSettings(root).sandbox).toBe("none");
+      expect(resolveRunSettings(root, {}).sandbox).toBe("none");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

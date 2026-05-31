@@ -155,7 +155,9 @@ else
     log="$(mktemp -t afk-e2e.XXXXXX.log)"
     echo "  running (live log → $log) ..."
     # Single supervised iteration on exactly this issue, pinned runner + sandbox.
-    if [ "$SANDBOX" != "none" ]; then export AFK_SANDBOX="$SANDBOX"; fi
+    # RED_AFK_SANDBOX overrides afk.sandbox in config (resolveRunSettings), so the
+    # docker/podman path is exercised without touching the target repo's config.
+    if [ "$SANDBOX" != "none" ]; then export RED_AFK_SANDBOX="$SANDBOX"; fi
     node "$BUNDLE" run --issues "$AFK_E2E_ISSUE" --once --runner "$RUNNER" 2>&1 | tee "$log"
     rc=${PIPESTATUS[0]}
     echo "  run exit: $rc"
