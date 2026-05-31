@@ -1,13 +1,15 @@
 # AFK landing is lock-toggled, and the PR carries the history
 
 Design-stage decision from a `/start` grilling on the worker-directory
-restructure (motivated by #243); not yet implemented. Today `/afk` merges a
-successful iteration directly into the target via `do_merge` (`afk.sh:1995`),
-opens no PR, and `iter_close_success` (`afk.sh:475`) `rm -rf`s the entire
-iteration directory — so successful runs leave **zero** local trail, while
-failures are preserved whole (fat worktree included) by `iter_close_preserve`.
-We want to maximise observability and learn across attempts without unbounded
-disk growth.
+restructure (motivated by #243).
+
+**Status: implemented** — PRD #244 (issues #253–#258), shipped in the native
+TS runtime (the `afk.sh` line references below are historical; the bash is
+gone, commit 3d92d56). Before this, `/afk` merged a successful iteration
+directly into the target via `do_merge`, opened no PR, and `rm -rf`'d the entire
+iteration directory on success — so successful runs left **zero** local trail,
+while failures were preserved whole (fat worktree included). We wanted to
+maximise observability and learn across attempts without unbounded disk growth.
 
 ## Decision
 
