@@ -1,7 +1,7 @@
 ---
 name: afk
 description: Autonomous loop that drains the `ready-for-agent` queue on the issue tracker. Each iteration claims an issue, runs it in an isolated worktree, executes with claude or codex, merges back to main, and closes the issue. Use when the user wants to run AFK execution, drain a PRD, hammer specific issues, or otherwise let agents grind through the backlog.
-argument-hint: "[--prd N | --issues N,N,N] [--runner claude|codex] [--alternate] [--fallback-runner] [--request TEXT] [-n N] [--once] | fleet [N] | fleet stop | monitor | reap"
+argument-hint: "[--prd N | --issues N,N,N] [--runner claude|codex] [--alternate] [--fallback-runner] [--request TEXT] [-n N] [--once] [--boot-only] | fleet [N] | fleet stop | monitor | reap"
 ---
 
 # /afk
@@ -31,8 +31,9 @@ The bundle is a dependency-free build (one file, no `node_modules`, no install s
 - `/afk --alternate` — opt in to round-robin runner rotation between issues (claude → codex → claude → …).
 - `/afk --fallback-runner` — opt in to swapping runners mid-issue when one returns `RUNNER_EXHAUSTED`. Without this flag, exhaustion exits with code 75.
 - `/afk --request "dont run cargo tests for this issue resolution"` or `/afk -r "..."` — add a special user request block to every inner-agent prompt for this run.
-- `/afk -n 5` — cap at five issues (default: drain until empty).
+- `/afk -n 5` — cap at five issues. `-n N` caps the run at `N` issues; `-n 0` (and omitting `-n`) drains the whole queue until it is empty (`0` means unlimited, not zero). For a no-agent dry-run use `--boot-only` instead.
 - `/afk --once` — single supervised iteration. Use for debugging the prompt.
+- `/afk --boot-only` — run the boot sweeps then exit without claiming or spawning an agent; a safe dry-run to inspect bootstrap / orphan-cleanup / unblock-sweep / precheck.
 - `/afk monitor` — readonly status board, aggregates every `.red/tmp/workers/*/*/afk.state.json` so you see all live workers from another terminal. **Also (binding):** mirrors live workers onto the host runner's native task surface — `TaskCreate`/`TaskUpdate` under Claude Code, the sub-agent surface under Codex when present (falls back to the dashboard otherwise). See *Task Mirror* below — this is not optional and you must do it on every tick, even when the user only asked "como estamos?".
 - `/afk fleet [N]` — launch the supervisor maintaining `N` concurrent workers (default `2`). See *Fleet Mode* below.
 - `/afk fleet stop` — gracefully shut down a running fleet supervisor and cancel its auto-monitor cron.
@@ -285,36 +286,6 @@ Default behaviour is **no rotation and no fallback** — the runner resolved by 
 Exhaustion detection lives in [`runner-claude.md`](runner-claude.md) and [`runner-codex.md`](runner-codex.md) — they own the per-runner error strings. The orchestrator only sees `RUNNER_EXHAUSTED` as a structured signal.
 
 When swap happens mid-issue (only with `--fallback-runner`), the same worktree and handoff file are reused; the new runner sees the previous agent's Notes appended.
-
-## Capability Dispatch (issue #202)
-
-Once the runner identity is resolved (detection cascade or `--runner` pin), `/afk` probes that runner's capability surface once per iteration and selects a **run mode**. The capability probe reports a fixed set of axes — `native_agents`, `structured_output`, `resume_session`, `worktree_support`, `hooks_events`, `permission_modes`, `phased_mode` — derived from what the runner's `runner-*.md` already documents plus filesystem probes for the production phase artefacts (sub-agent files for Claude, inline phase prompts for Codex).
-
-The selected mode is one of:
-
-| Mode | Used when | Behaviour |
-|---|---|---|
-| `claude-native` | Runner is `claude` AND `plugins/dev/agents/{issue-analyzer,task-executor,quality-gate}.md` all exist. | Single inner-agent spawn that delegates phases to native sub-agents via the Task tool. Highest fidelity to the cross-runner contract at [`.red/contracts/afk-task.md`](../../../../.red/contracts/afk-task.md). |
-| `claude-basic` | Runner is `claude` but the production sub-agent files are absent or incomplete (current default). | Today's behaviour: one `claude -p` session with the inlined `AGENT-PROMPT.md` body and sentinel completion. |
-| `codex-phased` | Runner is `codex` AND `phases/codex/{analyze,verify,finalize}.md` ship under the AFK skill. | One `codex exec` session with the phase prompts pre-concatenated (Option C+ from [`.red/research/204-codex-cli-surfaces.md`](../../../../.red/research/204-codex-cli-surfaces.md) §4). |
-| `codex-basic` | Runner is `codex` without the phase prompts (current default). | Today's behaviour: one `codex exec` session with the inlined `AGENT-PROMPT.md` body. |
-| `hermes-fallback` | Runner identity is something other than `claude` or `codex`, or operator forced `RED_AFK_RUN_MODE=fallback`. | Treats the runner as an opaque executor of the prompt body; sentinel contract still applies. |
-
-**Degradation is always safe.** Native and phased modes detect their required artefacts on disk and silently fall back to the basic counterpart when those artefacts are missing. This is what lets the dispatcher land ahead of the production sub-agents / phase prompts shipped by #199, #200, #201 — when those slices wire up, the mode automatically promotes without touching `/afk` code.
-
-The selected mode is:
-
-- **logged** once per iteration on the orchestrator's `afk.log`: `dispatch: runner=<r> mode=<m> native_agents=<0|1> ...`.
-- **persisted** in `afk.state.json` at `current.run_mode`, so `/afk monitor` and the state-reader functions surface it for live-vs-stale worker reporting alongside `current.stage` and `current.runner`.
-- **exported** to child processes as `RED_AFK_RUN_MODE_RESOLVED`, which a hook script (or a future inline-phase prompt builder) can read.
-
-Operator overrides:
-
-- `RED_AFK_RUN_MODE=basic` — force the basic path (`claude-basic` / `codex-basic`) even when native artefacts exist. Useful for parity testing.
-- `RED_AFK_RUN_MODE=fallback` — force `hermes-fallback` unconditionally. Useful for testing a custom-runner integration.
-- `RED_AFK_RUN_MODE=native` / `RED_AFK_RUN_MODE=phased` — request the optimised path; honoured only when the environment can satisfy it, otherwise the auto-selection branch runs.
-
-The blocked/escalation lifecycle is unchanged: `<promise>BLOCKED</promise>` on any mode flips the issue to `ready-for-human` through the existing envelope/comment path, and `<promise>DONE</promise>` still gates the merge/cleanup safeguards. The run mode is metadata about *how* the work happened, never authority over *what* counts as completion.
 
 ## The attempt-exit reader (`<promise>` is canonical — ADR 0028)
 
