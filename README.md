@@ -322,15 +322,15 @@ Point it at your `ready-for-agent` backlog and walk away. For each issue, `/afk`
 | Step | What happens | Why it matters |
 |------|--------------|----------------|
 | **Claim** | `ready-for-agent` → `running` via 3-layer lock (mkdir + gh pre-check + stale sweep) | Two parallel `/afk` runs never race on the same issue, even cross-checkout |
-| **Isolate** | Spawns worktree in `.red/tmp/work-{worker}-i{N}/worktree/` | Primary checkout stays clean on `main`, always; gitignored so nothing leaks |
+| **Isolate** | Spawns worktree in `.red/tmp/workers/{worker}/{N}-a{n}/worktree/` | Primary checkout stays clean on `main`, always; gitignored so nothing leaks |
 | **Brief** | Hands the issue's AGENT-BRIEF to Claude or Codex | The inner agent works from a contract, not the raw issue body |
 | **Hooks** | Runs `pre-iteration` / `pre-merge` / `post-merge` / `post-iteration` per `.red/config.yaml` | Detectors (`cargo`, `gradle`) auto-set per-slot env to avoid build-lock contention |
 | **Implement** | Inner agent codes via TDD inside the worktree | Failing test first, then code, then green |
 | **Verify** | `pnpm test && typecheck && lint && build` | Two retries before flagging blocker |
-| **Merge** | `git merge --no-ff` back into `main`, push over SSH | Auto-snapshot if primary is dirty; never `stash`/`reset`/`force` |
+| **Merge** | Lock-toggled landing (ADR 0030): unlocked opens a per-issue PR into the base and `gh pr merge --admin`-merges it; locked merges `--no-ff` into the lock branch. Base resolves `lock > pin > main` (ADR 0031) | Auto-snapshot if primary is dirty; never `stash`/`reset`/`force`/HTTPS |
 | **Envelope** | Posts a structured `<details data-attempt-status="…">` on the issue thread for every terminal event | Issue thread becomes the canonical ledger — retries on any machine see the full history |
 | **Branch push** | On non-DONE attempts, pushes the branch to `afk-attempts/{worker}/{N}-{slug}` | Forensic diff visible on GitHub's compare view, even when nothing landed on `main` |
-| **Close** | Validation comment, `gh issue close`, drop worktree | Per-issue summary; iter dir self-collects |
+| **Close** | Validation comment, `gh issue close`, always drop the worktree (success *and* fail), keep the cheap JSONL/handoff artifacts | Completion sweep then prunes the issue's attempt dirs across all workers; the merged PR carries the durable history |
 | **Watchdog** | Kills the pipeline tree if the inner agent emits a sentinel but the stream stays open | Survives the "bash polling loop hung the agent" failure mode |
 | **Survive** | Hits a rate limit? Swaps runner mid-issue. Both out? Releases claim, exits 75 | You resume tomorrow, no lost work |
 
@@ -389,7 +389,7 @@ A note on **JavaScript plugin workflows**: the cross-runner task engine ships as
 
 ### Live monitor
 
-Every iteration writes atomic state to `.red/tmp/work-{worker}-i{N}/afk.state.json` and tees the inner agent's stdout into `afk.log` alongside it. Open a second terminal:
+Every iteration writes atomic state to `.red/tmp/workers/{worker}/{N}-a{n}/afk.state.json` and tees the inner agent's stdout into `afk.log` alongside it. Open a second terminal:
 
 ```
 48h: ·▁··▁·▁·▁··█▁▁··▁·▁···▁·▁·▆▁▁··▁···▁▆·▁··▁▃▁·▃▁·  (35 closed, peak 5/h)
@@ -399,7 +399,7 @@ Every iteration writes atomic state to `.red/tmp/work-{worker}-i{N}/afk.state.js
 │ done: 3 / 12 (25%)     blocked: 0          merged: 3      │
 │                                                            │
 │ ▶ #142 wire OAuth callback                                 │
-│   worktree: .red/tmp/work-wK7M2-i142/worktree              │
+│   worktree: .red/tmp/workers/wK7M2/142-a1/worktree         │
 │   stage: impl                                              │
 │   last: writing tests for callback handler                 │
 │                                                            │
@@ -445,27 +445,25 @@ Designed for terminals you leave open while you do something else. Or sleep. Und
 `/setup-red-skills` wires a project-aware statusline into Claude Code's bottom bar. One line, always-on:
 
 ```
-red-skills (main) · Opus·high · 47k 24% · 🤖2 📋3 🙋1 +382 -45 #142
+red-skills (main) · Opus·high · 47k 24% · 🤖2 📋3 🆘1 +382 -45 #142
 ```
 
 Project basename, git branch, model + effort, context tokens with a percent colour-coded by threshold, then a zero-suppressed AFK block — workers running, queue depth, ready-for-human count, diff against `main`, current issue numbers as OSC 8 hyperlinks to the GitHub thread. Opt out per-project with `statusline: false` in `.red/config.yaml`.
 
 ### Hooks & detectors (`.red/config.yaml`)
 
-`/afk` runs four orchestrator phases (`pre-iteration`, `pre-merge`, `post-merge`, `post-iteration`) and two supervisor phases (`pre-spawn`, `post-exit`). Each phase fires three layers in order:
+`/afk` exposes a fixed set of lifecycle hooks under the ADR 0026 **interceptor contract** — `pre_session`, `pre_pick`, `post_pick`, `pre_worktree`, `pre_attempt`, `post_attempt`, `on_attempt_error`, `pre_merge`, `post_merge`, `on_idle`, `post_session`, `on_session_error` — declared in `.red/config.yaml` under `afk.hooks`. Each hook receives `RED_AFK_*` env vars plus the mutable context as JSON on stdin and may return a JSON object on stdout to replace its mutable slice; a `pre_*` non-zero exit aborts the step, a `post_*` / `on_*` non-zero is logged and continues so a broken notifier never wedges AFK. **Built-in defaults run first, user-declared hooks after.**
 
-1. **Shipped detectors** — `cargo`, `gradle` and friends ship with the skill. When `Cargo.toml` is present, `cargo` sets `CARGO_TARGET_DIR=/opt/cargo-target/slot-${RED_AFK_SLOT}` so parallel workers don't deadlock on the same target directory.
-2. **Project hooks** — drop a script under `.red/hooks/` and it runs after the shipped detectors. Same env-file protocol: write `KEY=value` lines to `$RED_AFK_HOOK_ENV_FILE` and the orchestrator inherits them for the next stage.
-3. **Main hook** — the actual git/test/merge action.
+Shipped defaults fire at `pre_worktree` for per-slot build isolation: `cargo` (sets `CARGO_TARGET_DIR=${RED_AFK_CARGO_TARGET_BASE:-/opt/cargo-target}/slot-${RED_AFK_SLOT}` when `Cargo.toml` is present) and `gradle` (opt-in via `RED_AFK_GRADLE_USER_HOME_BASE`). Full per-hook env / mutable-slice / exit-policy table: [AFK SKILL.md → *Lifecycle Hooks*](./plugins/dev/skills/engineering/afk/SKILL.md#lifecycle-hooks).
 
-Disable any of it with `.red/config.yaml`:
+Disable a shipped default or quiet the statusline via `.red/config.yaml`:
 
 ```yaml
 afk:
   hooks:
-    cargo: false           # disable the shipped cargo detector
-    gradle: true
-statusline: false           # quiet the bottom-bar AFK block
+    defaults:
+      cargo: false           # disable the shipped cargo detector
+statusline: false             # quiet the bottom-bar AFK block
 ```
 
 ### Environment variables
@@ -493,6 +491,8 @@ Every env var the skill reads or exports is prefixed `RED_AFK_*`. Operator knobs
 | `RED_AFK_GRADLE_USER_HOME_BASE` | *(unset = detector off)* | Opt-in. When set, the shipped `gradle` detector exports `GRADLE_USER_HOME=${BASE}/slot-${RED_AFK_SLOT}`. Unset = no-op (deliberate — never claim a path on the host without consent). |
 
 **Hook/detector contract** (exported into each worker subshell — read these from inside your `detectors/*.sh` or `.red/hooks/*.sh`):
+
+> ℹ️ The authoritative per-hook env/context contract is the [AFK SKILL.md → *Lifecycle Hooks*](./plugins/dev/skills/engineering/afk/SKILL.md#lifecycle-hooks) table (ADR 0026 interceptor model — `RED_AFK_WORKSPACE` + mutable context as JSON on stdin). Some rows below predate that rename and are being reconciled.
 
 | Variable | When set | What it carries |
 |---|---|---|
