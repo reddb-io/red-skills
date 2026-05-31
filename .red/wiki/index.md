@@ -29,6 +29,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [refactor(afk): delete legacy bash, native-only runtime + parity recovery + zero-dep logger](./pages/289-refactor-afk-delete-legacy-bash-native-only-runtime-parity-r.md)
 - [refactor(afk): single-owner Attempt Outcome module](./pages/295-refactor-afk-single-owner-attempt-outcome-module.md)
 - [refactor: monorepo (src/domains + shared + per-plugin bundles + dynamic fetch) + functionality recovery](./pages/288-refactor-monorepo-src-domains-shared-per-plugin-bundles-dyna.md)
+- [test(afk): injectable exec seam makes the runtime wiring testable](./pages/296-test-afk-injectable-exec-seam-makes-the-runtime-wiring-testa.md)
 - [test(memory): split vitest suite into fast gate + integration project (#242)](./pages/264-test-memory-split-vitest-suite-into-fast-gate-integration-pr.md)
 
 ## Entities
