@@ -422,6 +422,34 @@ _Avoid_: stored evidence, hand-authored clusters
 The self-contained HTML artifact that renders **Memory graph communities** for local inspection, including community summaries, assigned nodes, graph hash, cache state, and embedded JSON.
 _Avoid_: graph editor, durable cluster evidence
 
+**Community digest**:
+The derived per-community summary over **Memory graph communities** — a deterministic top-label baseline always, optionally upgraded to a provider-generated narrative — cached by graph hash and treated as analytics, never written back as a **Memory node** or edge.
+_Avoid_: durable summary node, recall corpus entry
+
+**Memory global search**:
+The read-only sibling surface (alongside `memory architecture-overview`) that answers broad, zoom-out queries from **Community digest** evidence; opt-in and explicit, it never mutates or routes the canonical governed recall path.
+_Avoid_: vector-first recall, automatic recall blending
+
+**Extraction schema**:
+The two-axis schema that governs provider-backed `memory extract`: a closed **Structural type** axis (strict-write validated) and an open, indexed **Engineering code** axis. It shares the structural vocabulary with the lossless-read graph contract, so export stays permissive while inference stays consistent — and an out-of-vocabulary classification lands as a free code on a valid structural node rather than being rejected.
+_Avoid_: per-project custom ontology, single conflated type axis
+
+**Structural type**:
+The closed axis of a **Memory node**'s kind — the small set with distinct edge/query/storage behaviour (`file`, `symbol`, `concept`, `issue`, `prd`, `attempt`, `validation`, …) — validated by the **Extraction schema** strict-write profile. A fact whose proposed kind is not structural lands on a base structural type and carries its classification as an **Engineering code**.
+_Avoid_: semantic flavour, fine-grained fact kind
+
+**Engineering code**:
+The open, indexed axis that carries a **Memory node**'s fine-grained semantic classification (the "why"/kind: decision, gotcha, risk, root-cause, …), modelled on TigerBeetle's `code`/`user_data`. Unknown codes are accepted and never rejected; recall, community digests, and clusters may use the code as a first-class dimension.
+_Avoid_: free-text tag, recall-invisible metadata
+
+**Code drift report**:
+The read-only report that aggregates unknown **Engineering code** values by recurrence so a recurring code can be promoted into the suggested vocabulary (or aliased) while one-off noise is aliased or left; it replaces the former out-of-vocabulary quarantine.
+_Avoid_: write gate, recall exclusion
+
+**Soft-merge edge**:
+The `SAME_AS`/`MERGED_INTO` edge that represents an approved post-hoc entity merge by hiding the duplicate **Memory node** from canonical recall without deleting it or its provenance; reversing the merge removes the edge.
+_Avoid_: physical node collapse, destructive dedup
+
 **RedDB Statistics**:
 The RedDB analytical surface for aggregate counts, rankings, and rollups derived from project data.
 _Avoid_: stats, metrics store
@@ -507,6 +535,12 @@ _Avoid_: memory rollback, historical search
 - The **Handoff viewer** consumes a **Memory handoff report** instead of recomputing cross-agent continuation evidence.
 - **Memory graph communities** are analytics over the graph, not durable evidence written back into graph nodes or edges.
 - The **Communities viewer** consumes **Memory graph communities** evidence for local HTML inspection without writing derived clusters into the Memory graph.
+- A **Community digest** is derived from **Memory graph communities** and inherits their analytics-only stance: it is cached by graph hash and regenerated when the graph moves, never written back as durable evidence.
+- **Memory global search** consumes **Community digest** evidence as a sibling of `memory architecture-overview`; it never enters the canonical governed recall ranking, preserving "recall is canonical, vectors are optional contributors".
+- The **Extraction schema** strict-write profile validates only the **Structural type** of provider-backed `INFERRED` facts; the deterministic zero-token extractors are typed by construction and share the structural vocabulary as a CI lint rather than a runtime gate.
+- An out-of-vocabulary classification is never rejected: it lands as an **Engineering code** on a base **Structural type**, and the **Code drift report** surfaces recurring codes for promotion or aliasing — there is no quarantine state.
+- The **Engineering code** axis is first-class: recall may filter/rank by code (alongside tier and type), and **Community digest** / **Memory graph communities** may group and label by it.
+- A **Soft-merge edge** reuses the supersession mechanic (hide-not-delete) that already keeps superseded guidance out of recall, and is produced only by an approval-gated, reversible post-hoc merge pass — never by silent auto-merge.
 - **Memory vector projection** covers **Memory nodes**, asset metadata nodes, and `memory_docs` chunks; governed recall accepts direct node hits and document hits that can be grounded by hash to applicable **Memory nodes**.
 - **Memory local vector projection** is a development fallback (`RED_MEMORY_VECTOR_PROVIDER=local` or `--local`), not a public semantic embedding benchmark.
 - **Memory vector search diagnostic** reports grounded vector candidates, preserving asset metadata for binary/media hits; **Memory recall** remains the canonical governed context surface.
