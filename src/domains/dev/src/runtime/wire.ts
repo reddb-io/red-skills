@@ -76,10 +76,16 @@ export interface RunSettings {
 
 const SANDBOX_MODES: readonly SandboxMode[] = ["none", "docker", "podman"];
 
-export function resolveRunSettings(root: string): RunSettings {
+export function resolveRunSettings(root: string, env: NodeJS.ProcessEnv = process.env): RunSettings {
   const paths = afkPaths(root);
   const cfg = loadConfig(paths.configPath, { warn: () => undefined });
-  const rawSandbox = getConfig(cfg, "afk.sandbox");
+  // Precedence: RED_AFK_SANDBOX env override > afk.sandbox config > "none".
+  // The env knob lets an E2E/CI run pick the isolation backend without mutating
+  // the target repo's .red/config.yaml, consistent with the other RED_AFK_* knobs.
+  const envSandbox = (env.RED_AFK_SANDBOX ?? "").trim();
+  const rawSandbox = (SANDBOX_MODES as readonly string[]).includes(envSandbox)
+    ? envSandbox
+    : getConfig(cfg, "afk.sandbox");
   const sandbox = (SANDBOX_MODES as readonly string[]).includes(rawSandbox)
     ? (rawSandbox as SandboxMode)
     : "none";
