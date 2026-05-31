@@ -102,13 +102,25 @@ export function resolveRunSettings(root: string, env: NodeJS.ProcessEnv = proces
  * empty-queue path never imports sandcastle. The sandbox mode is fixed from
  * config at construction time.
  */
-export function makeRunAgent(sandbox: SandboxMode): (input: RunAgentInput) => Promise<RunAgentResult> {
+export function makeRunAgent(
+  sandbox: SandboxMode,
+  env: NodeJS.ProcessEnv = process.env,
+): (input: RunAgentInput) => Promise<RunAgentResult> {
   let depsPromise: Promise<import("../core/execution.js").SandcastleDeps> | null = null;
   return async (input: RunAgentInput): Promise<RunAgentResult> => {
-    const { runAgent, defaultSandcastleDeps } = await import("../core/execution.js");
+    const { runAgent, defaultSandcastleDeps, parseMaxIterations } = await import("../core/execution.js");
     if (!depsPromise) depsPromise = defaultSandcastleDeps();
     const deps = await depsPromise;
-    return runAgent(deps, { ...input, sandboxMode: input.sandboxMode ?? sandbox });
+    // RED_AFK_MAX_ITERATIONS overrides the sandcastle re-invocation ceiling
+    // (issue #322), mirroring the other RED_AFK_* knobs. A missing / non-numeric
+    // / non-positive value parses to undefined, so an operator typo can't disable
+    // the cap or pin it to 1 — buildRunOptions then applies DEFAULT_MAX_ITERATIONS.
+    const envMaxIterations = parseMaxIterations(env.RED_AFK_MAX_ITERATIONS);
+    return runAgent(deps, {
+      ...input,
+      sandboxMode: input.sandboxMode ?? sandbox,
+      maxIterations: input.maxIterations ?? envMaxIterations,
+    });
   };
 }
 

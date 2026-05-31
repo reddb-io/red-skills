@@ -30,6 +30,35 @@ export const COMPLETION_SIGNALS: readonly string[] = [DONE_SIGNAL, BLOCKED_SIGNA
 
 export const DEFAULT_IDLE_TIMEOUT_S = 600;
 
+/**
+ * The re-invocation ceiling handed to sandcastle's Orchestrator (issue #322).
+ *
+ * sandcastle's own DEFAULT_MAX_ITERATIONS is 1 (run.js), which cuts the inner
+ * agent off after a SINGLE agentic invocation — it explores / writes files but
+ * exhausts that one iteration's budget BEFORE it can emit `<promise>DONE</promise>`,
+ * so AFK sees no completionSignal → no-sentinel → blocked:crashed and never
+ * merges. The completionSignal (DONE/BLOCKED) is the REAL terminator; this is
+ * only the safety ceiling for "the agent never signals". 25 is generous vs the
+ * broken 1 yet bounded vs runaway: each iteration is itself bounded by
+ * `idleTimeoutSeconds`, and DONE/BLOCKED stops the loop early, so a normal issue
+ * finishes in 1-3 iterations and 25 is purely the cap. Env-tunable via
+ * RED_AFK_MAX_ITERATIONS (parsed by `parseMaxIterations`).
+ */
+export const DEFAULT_MAX_ITERATIONS = 25;
+
+/**
+ * Parse a RED_AFK_MAX_ITERATIONS override into a positive integer, or
+ * `undefined` when the value is missing / non-numeric / zero / negative — so an
+ * operator typo cannot disable the cap or pin it to a value below the default.
+ * `undefined` lets `buildRunOptions` fall back to {@link DEFAULT_MAX_ITERATIONS}.
+ */
+export function parseMaxIterations(raw: string | undefined): number | undefined {
+  if (raw === undefined) return undefined;
+  const parsed = Number(raw);
+  if (Number.isInteger(parsed) && parsed > 0) return parsed;
+  return undefined;
+}
+
 export interface RunAgentInput {
   /** Which agent provider to drive. */
   runner: AgentRunner;
@@ -81,6 +110,14 @@ export interface RunAgentInput {
    * unless the caller opts in.
    */
   continuousPush?: boolean;
+  /**
+   * The sandcastle Orchestrator re-invocation ceiling (issue #322). sandcastle
+   * defaults this to 1, which stops the inner agent before it can emit DONE;
+   * AFK overrides it so the agent iterates until its completionSignal. Omitted →
+   * `buildRunOptions` applies {@link DEFAULT_MAX_ITERATIONS}. `makeRunAgent`
+   * threads the RED_AFK_MAX_ITERATIONS env override in here when set.
+   */
+  maxIterations?: number;
 }
 
 /** The git remote the continuous-push hook targets when none is supplied. */
@@ -207,6 +244,10 @@ export function buildRunOptions(deps: SandcastleDeps, input: RunAgentInput): Run
     promptFile: input.handoffPath,
     branchStrategy,
     completionSignal: [...COMPLETION_SIGNALS],
+    // sandcastle defaults maxIterations to 1, which stops the agent before it
+    // can emit DONE (issue #322). Set a generous, env-tunable ceiling so the
+    // completionSignal stays the real terminator.
+    maxIterations: input.maxIterations ?? DEFAULT_MAX_ITERATIONS,
     idleTimeoutSeconds: input.idleTimeoutSeconds ?? DEFAULT_IDLE_TIMEOUT_S,
     ...(hooks ? { hooks } : {}),
   };

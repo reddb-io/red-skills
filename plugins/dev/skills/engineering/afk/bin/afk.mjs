@@ -77453,6 +77453,7 @@ __export(execution_exports, {
   BLOCKED_SIGNAL: () => BLOCKED_SIGNAL,
   COMPLETION_SIGNALS: () => COMPLETION_SIGNALS,
   DEFAULT_IDLE_TIMEOUT_S: () => DEFAULT_IDLE_TIMEOUT_S,
+  DEFAULT_MAX_ITERATIONS: () => DEFAULT_MAX_ITERATIONS2,
   DEFAULT_REMOTE: () => DEFAULT_REMOTE,
   DONE_SIGNAL: () => DONE_SIGNAL,
   buildContinuousPushHook: () => buildContinuousPushHook,
@@ -77460,8 +77461,15 @@ __export(execution_exports, {
   defaultSandcastleDeps: () => defaultSandcastleDeps,
   interpretOutcome: () => interpretOutcome,
   isExhaustionError: () => isExhaustionError,
+  parseMaxIterations: () => parseMaxIterations,
   runAgent: () => runAgent
 });
+function parseMaxIterations(raw3) {
+  if (raw3 === void 0) return void 0;
+  const parsed = Number(raw3);
+  if (Number.isInteger(parsed) && parsed > 0) return parsed;
+  return void 0;
+}
 function interpretOutcome(signal) {
   if (signal === DONE_SIGNAL) return "done";
   if (signal === BLOCKED_SIGNAL) return "blocked";
@@ -77511,6 +77519,10 @@ function buildRunOptions(deps, input) {
     promptFile: input.handoffPath,
     branchStrategy,
     completionSignal: [...COMPLETION_SIGNALS],
+    // sandcastle defaults maxIterations to 1, which stops the agent before it
+    // can emit DONE (issue #322). Set a generous, env-tunable ceiling so the
+    // completionSignal stays the real terminator.
+    maxIterations: input.maxIterations ?? DEFAULT_MAX_ITERATIONS2,
     idleTimeoutSeconds: input.idleTimeoutSeconds ?? DEFAULT_IDLE_TIMEOUT_S,
     ...hooks ? { hooks } : {}
   };
@@ -77563,7 +77575,7 @@ async function defaultSandcastleDeps() {
   };
   return { run: core.run, agentFor, sandboxFor };
 }
-var DONE_SIGNAL, BLOCKED_SIGNAL, COMPLETION_SIGNALS, DEFAULT_IDLE_TIMEOUT_S, DEFAULT_REMOTE;
+var DONE_SIGNAL, BLOCKED_SIGNAL, COMPLETION_SIGNALS, DEFAULT_IDLE_TIMEOUT_S, DEFAULT_MAX_ITERATIONS2, DEFAULT_REMOTE;
 var init_execution = __esm({
   "src/core/execution.ts"() {
     "use strict";
@@ -77572,6 +77584,7 @@ var init_execution = __esm({
     BLOCKED_SIGNAL = "<promise>BLOCKED</promise>";
     COMPLETION_SIGNALS = [DONE_SIGNAL, BLOCKED_SIGNAL];
     DEFAULT_IDLE_TIMEOUT_S = 600;
+    DEFAULT_MAX_ITERATIONS2 = 25;
     DEFAULT_REMOTE = "origin";
   }
 });
@@ -82676,13 +82689,18 @@ function resolveRunSettings(root, env2 = process.env) {
   const model = getConfig(cfg, "afk.model") || "claude-opus-4-8";
   return { sandbox: sandbox3, defaultRunner, model };
 }
-function makeRunAgent(sandbox3) {
+function makeRunAgent(sandbox3, env2 = process.env) {
   let depsPromise = null;
   return async (input) => {
-    const { runAgent: runAgent2, defaultSandcastleDeps: defaultSandcastleDeps2 } = await Promise.resolve().then(() => (init_execution(), execution_exports));
+    const { runAgent: runAgent2, defaultSandcastleDeps: defaultSandcastleDeps2, parseMaxIterations: parseMaxIterations2 } = await Promise.resolve().then(() => (init_execution(), execution_exports));
     if (!depsPromise) depsPromise = defaultSandcastleDeps2();
     const deps = await depsPromise;
-    return runAgent2(deps, { ...input, sandboxMode: input.sandboxMode ?? sandbox3 });
+    const envMaxIterations = parseMaxIterations2(env2.RED_AFK_MAX_ITERATIONS);
+    return runAgent2(deps, {
+      ...input,
+      sandboxMode: input.sandboxMode ?? sandbox3,
+      maxIterations: input.maxIterations ?? envMaxIterations
+    });
   };
 }
 async function collectMonitorInputs(root = process.cwd()) {
