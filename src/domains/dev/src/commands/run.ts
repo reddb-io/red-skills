@@ -128,10 +128,15 @@ export function parseRunFlags(args: readonly string[]): ParsedRunFlags {
 }
 
 /** Pre-resolve the gh issue-state cache the branch-cleanup reapers + orphan
- * lookup read synchronously. Mirrors collectReapInputs' eager resolution. */
+ * lookup read synchronously. Mirrors collectReapInputs' eager resolution, but
+ * sources every issue's meta from the SINGLE batched `listIssueStates` map
+ * instead of a per-issue `gh issue view` storm. A map miss (issue beyond the
+ * --limit window / just-created / transient list failure) falls back to the
+ * live `ghx.issueMeta` so closedAt-grace classification stays exact. */
 async function resolveBranchIssueCache(
   ghCtx: GhContext,
   options: BootOptions,
+  states: Map<number, import("../runtime/gh.js").IssueStateRow>,
 ): Promise<Map<number, import("../core/branch-cleanup.js").IssueMeta | null | undefined>> {
   const { liveIssueFromBranch, attemptIssueFromBranch } = await import("../core/branch-cleanup.js");
   const issues = new Set<number>();
@@ -144,14 +149,20 @@ async function resolveBranchIssueCache(
     if (n !== null) issues.add(n);
   }
   const cache = new Map<number, import("../core/branch-cleanup.js").IssueMeta | null | undefined>();
-  for (const n of issues) cache.set(n, await ghx.issueMeta(ghCtx, n));
+  for (const n of issues) {
+    const row = states.get(n);
+    if (row) cache.set(n, { state: row.state, closedAt: row.closedAt });
+    else cache.set(n, await ghx.issueMeta(ghCtx, n));
+  }
   return cache;
 }
 
 async function buildBootDeps(ctx: RepoContext, options: BootOptions, nowS: number): Promise<BootDeps> {
   const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo };
   const gitCtx: GitContext = { cwd: ctx.root };
-  const branchCache = await resolveBranchIssueCache(ghCtx, options);
+  // ONE batched issue-state fetch backs every per-issue boot lookup below.
+  const issueStates = await ghx.listIssueStates(ghCtx);
+  const branchCache = await resolveBranchIssueCache(ghCtx, options, issueStates);
   return {
     fs: {
       ensureDir: fsx.ensureDir,
@@ -171,13 +182,27 @@ async function buildBootDeps(ctx: RepoContext, options: BootOptions, nowS: numbe
     },
     lookups: {
       // Orphan state pairs gh issue state/label with the attempt dir's
-      // envelope.posted flag (read from the state file, not gh).
+      // envelope.posted flag (read from the state file, not gh). Derived from
+      // the batched map, preserving ghx.orphanState's exact label/state →
+      // verdict mapping (ready-for-human > running > null). On a map MISS the
+      // issue isn't in the list window — fall back to the live read so a
+      // truncated/just-created/transient issue still classifies correctly.
       orphanState: async (issue) => {
-        const r = await ghx.orphanState(ghCtx, issue);
-        return r;
+        const row = issueStates.get(issue);
+        if (!row) return ghx.orphanState(ghCtx, issue);
+        const label = row.labels.includes("ready-for-human")
+          ? "ready-for-human"
+          : row.labels.includes("running")
+            ? "running"
+            : null;
+        return { ghOk: true, state: row.state, label, envelopePosted: false };
       },
       branchIssue: (issue) => branchCache.get(issue),
-      blockerState: (issue) => ghx.blockerState(ghCtx, issue),
+      // Blocker state from the batched map: row.state ("OPEN"/"CLOSED") or
+      // undefined on a miss. undefined-on-miss exactly matches the prior
+      // 404→undefined→not-closed semantics — a missing blocker stays
+      // "open-or-unknown" and the dependent issue is NOT promoted.
+      blockerState: async (issue) => issueStates.get(issue)?.state,
       straggler: {
         unlabeled: () => ghx.countUnlabeled(ghCtx),
         needsTriage: () => ghx.countNeedsTriage(ghCtx),

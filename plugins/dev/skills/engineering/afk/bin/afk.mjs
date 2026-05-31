@@ -82150,6 +82150,42 @@ async function listCandidates(ctx) {
     };
   });
 }
+async function listIssueStates(ctx) {
+  const map26 = /* @__PURE__ */ new Map();
+  const r = await runGh(
+    ctx,
+    [
+      "issue",
+      "list",
+      ...repoArgs(ctx),
+      "--state",
+      "all",
+      "--limit",
+      "500",
+      "--json",
+      "number,state,labels,closedAt"
+    ]
+  );
+  if (r.code !== 0) return map26;
+  let raw3;
+  try {
+    raw3 = JSON.parse(r.stdout || "[]");
+  } catch {
+    return map26;
+  }
+  if (!Array.isArray(raw3)) return map26;
+  for (const row of raw3) {
+    const item = row;
+    const n = Number(item.number ?? 0);
+    if (!n) continue;
+    map26.set(n, {
+      state: String(item.state ?? "OPEN"),
+      labels: Array.isArray(item.labels) ? item.labels.map((l) => String(l.name ?? "")) : [],
+      closedAt: item.closedAt ?? null
+    });
+  }
+  return map26;
+}
 async function viewLabels(ctx, issue) {
   const r = await runGh(ctx, ["issue", "view", String(issue), ...repoArgs(ctx), "--json", "labels"]);
   if (r.code !== 0) return [];
@@ -82777,8 +82813,13 @@ async function collectReapInputs(ctx) {
     const n = liveIssueFromBranch2(r.branch);
     if (n !== null) issues.add(n);
   }
+  const states = await listIssueStates(ghCtx);
   const cache = /* @__PURE__ */ new Map();
-  for (const n of issues) cache.set(n, await issueMeta(ghCtx, n));
+  for (const n of issues) {
+    const row = states.get(n);
+    if (row) cache.set(n, { state: row.state, closedAt: row.closedAt });
+    else cache.set(n, await issueMeta(ghCtx, n));
+  }
   return {
     snapshotRefs,
     remoteLiveRefs,
@@ -85353,7 +85394,7 @@ function parseRunFlags(args2) {
     fallbackRunner: values3["fallback-runner"] === true
   };
 }
-async function resolveBranchIssueCache(ghCtx, options2) {
+async function resolveBranchIssueCache(ghCtx, options2, states) {
   const { liveIssueFromBranch: liveIssueFromBranch2, attemptIssueFromBranch: attemptIssueFromBranch2 } = await Promise.resolve().then(() => (init_branch_cleanup(), branch_cleanup_exports));
   const issues = /* @__PURE__ */ new Set();
   for (const r of options2.branches.snapshotRefs) {
@@ -85365,13 +85406,18 @@ async function resolveBranchIssueCache(ghCtx, options2) {
     if (n !== null) issues.add(n);
   }
   const cache = /* @__PURE__ */ new Map();
-  for (const n of issues) cache.set(n, await issueMeta(ghCtx, n));
+  for (const n of issues) {
+    const row = states.get(n);
+    if (row) cache.set(n, { state: row.state, closedAt: row.closedAt });
+    else cache.set(n, await issueMeta(ghCtx, n));
+  }
   return cache;
 }
 async function buildBootDeps(ctx, options2, nowS) {
   const ghCtx = { cwd: ctx.root, repo: ctx.repo };
   const gitCtx = { cwd: ctx.root };
-  const branchCache = await resolveBranchIssueCache(ghCtx, options2);
+  const issueStates = await listIssueStates(ghCtx);
+  const branchCache = await resolveBranchIssueCache(ghCtx, options2, issueStates);
   return {
     fs: {
       ensureDir,
@@ -85391,13 +85437,23 @@ async function buildBootDeps(ctx, options2, nowS) {
     },
     lookups: {
       // Orphan state pairs gh issue state/label with the attempt dir's
-      // envelope.posted flag (read from the state file, not gh).
+      // envelope.posted flag (read from the state file, not gh). Derived from
+      // the batched map, preserving ghx.orphanState's exact label/state →
+      // verdict mapping (ready-for-human > running > null). On a map MISS the
+      // issue isn't in the list window — fall back to the live read so a
+      // truncated/just-created/transient issue still classifies correctly.
       orphanState: async (issue) => {
-        const r = await orphanState(ghCtx, issue);
-        return r;
+        const row = issueStates.get(issue);
+        if (!row) return orphanState(ghCtx, issue);
+        const label = row.labels.includes("ready-for-human") ? "ready-for-human" : row.labels.includes("running") ? "running" : null;
+        return { ghOk: true, state: row.state, label, envelopePosted: false };
       },
       branchIssue: (issue) => branchCache.get(issue),
-      blockerState: (issue) => blockerState(ghCtx, issue),
+      // Blocker state from the batched map: row.state ("OPEN"/"CLOSED") or
+      // undefined on a miss. undefined-on-miss exactly matches the prior
+      // 404→undefined→not-closed semantics — a missing blocker stays
+      // "open-or-unknown" and the dependent issue is NOT promoted.
+      blockerState: async (issue) => issueStates.get(issue)?.state,
       straggler: {
         unlabeled: () => countUnlabeled(ghCtx),
         needsTriage: () => countNeedsTriage(ghCtx),

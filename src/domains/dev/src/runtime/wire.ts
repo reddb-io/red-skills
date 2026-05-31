@@ -288,7 +288,7 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
 
 // ---------- reap inputs ----------
 
-import { issueMeta, type GhContext } from "./gh.js";
+import { issueMeta, listIssueStates, type GhContext } from "./gh.js";
 import type { IssueMeta } from "../core/branch-cleanup.js";
 
 export interface ReapInputs {
@@ -330,8 +330,16 @@ export async function collectReapInputs(ctx: RepoContext): Promise<ReapInputs> {
     const n = liveIssueFromBranch(r.branch);
     if (n !== null) issues.add(n);
   }
+  // ONE batched issue-state fetch replaces the per-issue `gh issue view` storm.
+  // A map miss (issue beyond the --limit window / just-created / transient list
+  // failure) falls back to the live `issueMeta` so closedAt-grace stays exact.
+  const states = await listIssueStates(ghCtx);
   const cache = new Map<number, IssueMeta | null | undefined>();
-  for (const n of issues) cache.set(n, await issueMeta(ghCtx, n));
+  for (const n of issues) {
+    const row = states.get(n);
+    if (row) cache.set(n, { state: row.state, closedAt: row.closedAt });
+    else cache.set(n, await issueMeta(ghCtx, n));
+  }
 
   return {
     snapshotRefs,
