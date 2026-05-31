@@ -7,6 +7,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [#252 cutover: AFK workers move to nested workers/{wid}/{issue}-a{n}/ + worker.pid](./pages/260-252-cutover-afk-workers-move-to-nested-workers-wid-issue-a-n.md)
 - [#253/#254: lock-driven base + lock-toggled landing (ADR 0030/0031)](./pages/261-253-254-lock-driven-base-lock-toggled-landing-adr-0030-0031.md)
 - [chore(afk): native + sandcastle E2E smoke test (#284 gate)](./pages/291-chore-afk-native-sandcastle-e2e-smoke-test-284-gate.md)
+- [chore(afk): rebuild committed bin/afk.mjs from current source](./pages/320-chore-afk-rebuild-committed-bin-afk-mjs-from-current-source.md)
 - [chore(upstream): bump pin to e3b90b5 (no cherry-picks)](./pages/262-chore-upstream-bump-pin-to-e3b90b5-no-cherry-picks.md)
 - [feat(afk): RED_AFK_SANDBOX env override + fix E2E smoke docker path](./pages/310-feat-afk-red-afk-sandbox-env-override-fix-e2e-smoke-docker-p.md)
 - [feat(afk): TypeScript runtime — committed bundle, release pipeline, 21 ported modules](./pages/282-feat-afk-typescript-runtime-committed-bundle-release-pipelin.md)
