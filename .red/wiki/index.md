@@ -15,6 +15,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [feat(afk): RED_AFK_SANDBOX env override + fix E2E smoke docker path](./pages/310-feat-afk-red-afk-sandbox-env-override-fix-e2e-smoke-docker-p.md)
 - [feat(afk): TypeScript runtime — committed bundle, release pipeline, 21 ported modules](./pages/282-feat-afk-typescript-runtime-committed-bundle-release-pipelin.md)
 - [feat(afk): bounded auto-recovery for recoverable blocks](./pages/294-feat-afk-bounded-auto-recovery-for-recoverable-blocks.md)
+- [feat(afk): record reasoning attempts into memory (ADR 0017), CLI-to-CLI direct](./pages/330-feat-afk-record-reasoning-attempts-into-memory-adr-0017-cli.md)
 - [feat(afk): req:N dependency labels + event-driven auto-unblock](./pages/292-feat-afk-req-n-dependency-labels-event-driven-auto-unblock.md)
 - [feat(afk): statusline reads project root from first arg; 🙋→🆘](./pages/266-feat-afk-statusline-reads-project-root-from-first-arg.md)
 - [feat(afk): typed blocked:<reason> labels (descriptive, auto-classified)](./pages/293-feat-afk-typed-blocked-reason-labels-descriptive-auto-classi.md)
