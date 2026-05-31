@@ -51,6 +51,15 @@ export interface RunAgentInput {
   base?: string;
   /** Isolation: "none" (default, node-only) | "docker" | "podman". */
   sandboxMode?: SandboxMode;
+  /**
+   * Absolute host anchor for sandcastle's `.sandcastle/` dir + git operations.
+   * AFK sets this to the attempt dir so nothing lands at the repo root
+   * (everything under .red/). Defaults to process.cwd() in sandcastle when
+   * omitted. NOTE: sandcastle resolves `promptFile` against process.cwd(), NOT
+   * against `cwd` — so `handoffPath` must stay absolute whenever this is set
+   * (AFK's attempt dir is always absolute, so the handoff path already is).
+   */
+  cwd?: string;
   idleTimeoutSeconds?: number;
   /**
    * The git remote the worker branch is continuously pushed to (issue #191).
@@ -191,6 +200,10 @@ export function buildRunOptions(deps: SandcastleDeps, input: RunAgentInput): Run
   return {
     agent: deps.agentFor(input.runner, input.model, { effort: input.effort }),
     sandbox: deps.sandboxFor(input.sandboxMode ?? "none"),
+    // Re-anchor sandcastle's `.sandcastle/` dir + git ops at the caller's cwd
+    // (AFK's per-attempt dir under .red/) so nothing is generated at the repo
+    // root. Omitted → sandcastle defaults to process.cwd().
+    ...(input.cwd ? { cwd: input.cwd } : {}),
     promptFile: input.handoffPath,
     branchStrategy,
     completionSignal: [...COMPLETION_SIGNALS],

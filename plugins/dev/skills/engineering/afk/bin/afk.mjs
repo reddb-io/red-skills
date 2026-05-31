@@ -77504,6 +77504,10 @@ function buildRunOptions(deps, input) {
   return {
     agent: deps.agentFor(input.runner, input.model, { effort: input.effort }),
     sandbox: deps.sandboxFor(input.sandboxMode ?? "none"),
+    // Re-anchor sandcastle's `.sandcastle/` dir + git ops at the caller's cwd
+    // (AFK's per-attempt dir under .red/) so nothing is generated at the repo
+    // root. Omitted → sandcastle defaults to process.cwd().
+    ...input.cwd ? { cwd: input.cwd } : {},
     promptFile: input.handoffPath,
     branchStrategy,
     completionSignal: [...COMPLETION_SIGNALS],
@@ -84592,6 +84596,7 @@ async function processIssue(deps, input) {
     handoffPath,
     branch,
     base,
+    cwd: input.attemptDir,
     // Restore the issue #191 continuous-push guarantee: sandcastle pushes the
     // worker branch up-front + after every commit (host worktree hook), so a
     // SIGKILL mid-iteration preserves the diff on origin. Best-effort.
@@ -84618,6 +84623,7 @@ async function processIssue(deps, input) {
       handoffPath,
       branch,
       base,
+      cwd: input.attemptDir,
       remote: input.remote,
       continuousPush: true
     });

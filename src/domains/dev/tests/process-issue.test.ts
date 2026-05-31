@@ -308,6 +308,9 @@ describe("processIssue — DONE + green + merged (unlocked, admin-PR landing)", 
     expect(trace.runAgentCalls[0]?.branch).toBe("afk/wAAAA/9-fix-the-thing");
     expect(trace.runAgentCalls[0]?.handoffPath).toBe("/tmp/afk/workers/wAAAA/9-a1/handoff.md");
     expect(trace.runAgentCalls[0]?.runner).toBe("claude");
+    // cwd is anchored at the attempt dir so sandcastle's `.sandcastle/` lands
+    // under .red/ (the attempt dir), never at the repo root.
+    expect(trace.runAgentCalls[0]?.cwd).toBe("/tmp/afk/workers/wAAAA/9-a1");
 
     // claim: ready-for-agent → running ; close: remove running.
     expect(labelTrace(trace)).toEqual(["-ready-for-agent|+running", "-running|+"]);
@@ -552,6 +555,9 @@ describe("processIssue — runner exhaustion → fallback swap → retry", () =>
     // both runs target the same worker branch + handoff (reused mid-issue).
     expect(trace.runAgentCalls[1]?.branch).toBe(trace.runAgentCalls[0]?.branch);
     expect(trace.runAgentCalls[1]?.handoffPath).toBe(trace.runAgentCalls[0]?.handoffPath);
+    // the fallback run re-anchors at the same attempt dir cwd.
+    expect(trace.runAgentCalls[1]?.cwd).toBe(trace.runAgentCalls[0]?.cwd);
+    expect(trace.runAgentCalls[1]?.cwd).toBe("/tmp/afk/workers/wAAAA/9-a1");
     // per-runner cadence: pre_attempt fires twice, post_attempt twice
     // (exhausted close + terminal success), bracketing pre_merge/post_merge.
     expect(result.hooksFired).toEqual([
