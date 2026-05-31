@@ -124,13 +124,13 @@ Decide whether to wire it up for this project:
   {
     "statusLine": {
       "type": "command",
-      "command": "node \"$CLAUDE_PLUGIN_ROOT/skills/engineering/afk/bin/afk.mjs\" statusline \"$CLAUDE_PROJECT_DIR\"",
+      "command": "sh -c 'b=$(ls -t \"$HOME\"/.claude/plugins/cache/red-skills/dev/*/skills/engineering/afk/bin/afk.mjs 2>/dev/null | head -1); [ -n \"$b\" ] && exec node \"$b\" statusline'",
       "refreshInterval": 5
     }
   }
   ```
 
-  `${CLAUDE_PLUGIN_ROOT}` is resolved by Claude Code at refresh time to the plugin install dir, so the path stays valid wherever the plugin is mounted.
+  Do **not** use `$CLAUDE_PLUGIN_ROOT` here: Claude Code does not export it (nor `$CLAUDE_PROJECT_DIR`) to a `statusLine` command — only to plugin hooks and MCP/LSP subprocesses — so that form expands to an empty path and renders blank. The command above resolves the newest installed AFK bundle from the plugin cache itself, staying valid across updates without pinning a version. The project root is read from `workspace.project_dir` in the JSON Claude Code pipes on stdin (no argument needed). This is **Claude Code only**; Codex has no command-backed statusline — see the `statusline` skill for the Codex `tui.status_line` path.
 
 The script is no-op outside `/afk` sessions (it prints nothing when no live workers exist), so leaving the statusline wired up in non-AFK projects is harmless.
 
