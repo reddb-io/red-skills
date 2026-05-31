@@ -55,6 +55,8 @@ interface ParsedRunFlags {
   alternate: boolean;
   /** --fallback-runner: swap runners mid-issue on RUNNER_EXHAUSTED. */
   fallbackRunner: boolean;
+  /** --boot-only: run the boot sweeps then exit without selecting/claiming/processing. */
+  bootOnly: boolean;
 }
 
 /** Raised when --alternate is combined with --runner (mutually exclusive). */
@@ -86,6 +88,7 @@ const RUN_FLAG_SCHEMA = {
   request: { kind: "value", aliases: ["r"], coerce: (raw: string): string => raw },
   alternate: { kind: "boolean" },
   "fallback-runner": { kind: "boolean" },
+  "boot-only": { kind: "boolean" },
 } satisfies FlagSchema;
 
 /** Parse the `run` flags: --prd N / --issues a,b,c / -n N / --once / --request / --runner. */
@@ -124,6 +127,7 @@ export function parseRunFlags(args: readonly string[]): ParsedRunFlags {
     request: values.request as string | undefined,
     alternate,
     fallbackRunner: values["fallback-runner"] === true,
+    bootOnly: values["boot-only"] === true,
   };
 }
 
@@ -418,6 +422,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
     once: flags.once,
     filter: flags.filter,
     alternate: flags.alternate,
+    bootOnly: flags.bootOnly,
     issueTemplate: {
       tmpDir: paths.tmpDir,
       repo: ctx.repo,

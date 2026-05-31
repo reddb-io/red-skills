@@ -106,16 +106,19 @@ fi
 # ===========================================================================
 hdr "Phase 2 — empty-queue drain (boot + select + precheck, no agent)"
 
-# -n 0 caps the drain at zero issues: exercises bootstrap, selection and the
-# precheck without ever spawning an agent. Expect the NO MORE TASKS sentinel
-# (or a clean precheck message such as 'not-on-main' when run off main).
-out="$(node "$BUNDLE" run -n 0 2>&1)"; rc=$?
-if echo "$out" | grep -q 'NO MORE TASKS'; then
-  pass "run -n 0 → NO MORE TASKS (boot+select OK, no agent)"
+# --boot-only is the honest no-agent dry-run: it runs bootstrap + every boot
+# sweep (orphan cleanup, attempt cap, snapshot grace, unblock, straggler) +
+# precheck, then exits BEFORE selecting/claiming/spawning. It never reaches
+# selection, so it does NOT print NO MORE TASKS — a clean exit 0 with no claim
+# is success. (Do NOT use `-n 0` here: in session.ts `-n 0` means unlimited
+# drain — 0/undefined caps to the full queue — so it would spawn agents.)
+out="$(node "$BUNDLE" run --boot-only 2>&1)"; rc=$?
+if [ $rc -eq 0 ]; then
+  pass "run --boot-only → clean exit 0 (boot+sweeps+precheck OK, no agent)"
 elif echo "$out" | grep -qi 'precheck'; then
-  warn "run -n 0 → precheck gate: $(echo "$out" | tail -1) (expected off main / outside a repo)"
+  warn "run --boot-only → precheck gate: $(echo "$out" | tail -1) (expected off main / outside a repo)"
 else
-  fail "run -n 0 unexpected (exit $rc): $(echo "$out" | tail -2)"
+  fail "run --boot-only unexpected (exit $rc): $(echo "$out" | tail -2)"
 fi
 
 # ===========================================================================

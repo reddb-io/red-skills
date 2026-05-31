@@ -400,23 +400,21 @@ export async function collectBootOptions(
     byIssue.set(parsed.issue, list);
   }
 
-  // Branch namespaces for the three reapers.
-  const [snapshotRefs, remoteLiveRefs, localAll, checkedOut] = await Promise.all([
-    gitx.listRemoteBranches(gitCtx, "afk-attempts/"),
-    gitx.listRemoteBranches(gitCtx, "afk/"),
-    gitx.listLocalBranches(gitCtx, "afk/*"),
-    gitx.checkedOutBranches(gitCtx),
-  ]);
+  // Branch namespaces for the three reapers, the unblock-candidate listing, and
+  // the stale claim-lock / pre-cutover work-* sweeps are mutually independent
+  // reads — run them concurrently. (Stale-claim + legacy-work both probe pid
+  // liveness at discovery so boot's orphan step stays a pure removal, #252.)
+  const [snapshotRefs, remoteLiveRefs, localAll, checkedOut, unblockCandidates, staleClaimDirs, legacyWorkDirs] =
+    await Promise.all([
+      gitx.listRemoteBranches(gitCtx, "afk-attempts/"),
+      gitx.listRemoteBranches(gitCtx, "afk/"),
+      gitx.listLocalBranches(gitCtx, "afk/*"),
+      gitx.checkedOutBranches(gitCtx),
+      ghx.listUnblockCandidates(ghCtx),
+      fsx.listStaleClaimDirs(paths.tmpDir),
+      fsx.listLegacyWorkDirs(paths.tmpDir),
+    ]);
   const localLiveRefs = localAll.filter((b) => !checkedOut.has(b)).map((b) => ({ branch: b }));
-
-  const unblockCandidates = await ghx.listUnblockCandidates(ghCtx);
-
-  // Stale claim-lock sweep + pre-cutover work-* drain-wipe (#252). Both probe
-  // pid liveness at discovery so boot's orphan step stays a pure removal.
-  const [staleClaimDirs, legacyWorkDirs] = await Promise.all([
-    fsx.listStaleClaimDirs(paths.tmpDir),
-    fsx.listLegacyWorkDirs(paths.tmpDir),
-  ]);
 
   return {
     precheck: facts,
@@ -433,15 +431,16 @@ export async function collectBootOptions(
 export async function collectPrecheckFacts(ctx: RepoContext): Promise<PrecheckFacts> {
   const gitCtx: gitx.GitContext = { cwd: ctx.root };
   const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo };
-  const [ghInstalled, ghAuthenticated, isRepo, remoteUrls, hasMain, currentBranch] = await Promise.all([
+  const [ghInstalled, ghAuthenticated, isRepo, remoteUrls, hasMain, currentBranch, pnpmProbe] = await Promise.all([
     ghx.ghInstalled(ghCtx),
     ghx.ghAuthenticated(ghCtx),
     gitx.isGitRepo(gitCtx),
     gitx.remoteUrls(gitCtx),
     gitx.hasMainBranch(gitCtx),
     gitx.currentBranch(gitCtx),
+    import("./exec.js").then((m) => m.pnpm(["--version"], { cwd: ctx.root })),
   ]);
-  const pnpmInstalled = (await import("./exec.js").then((m) => m.pnpm(["--version"], { cwd: ctx.root }))).code !== 127;
+  const pnpmInstalled = pnpmProbe.code !== 127;
   return {
     ghInstalled,
     ghAuthenticated,

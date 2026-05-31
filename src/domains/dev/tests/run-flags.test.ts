@@ -11,7 +11,13 @@ describe("parseRunFlags", () => {
       request: undefined,
       alternate: false,
       fallbackRunner: false,
+      bootOnly: false,
     });
+  });
+
+  it("parses --boot-only as a boolean, defaulting to false", () => {
+    expect(parseRunFlags(["--boot-only"]).bootOnly).toBe(true);
+    expect(parseRunFlags([]).bootOnly).toBe(false);
   });
 
   it("parses --alternate and --fallback-runner as booleans", () => {

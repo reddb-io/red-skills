@@ -159,6 +159,10 @@ interface SessionTrace {
   processedRunners: string[];
   /** Session-scoped hook commands the fake exec ran, in order. */
   hookCommands: string[];
+  /** How many times the fake runBoot was invoked. */
+  runBootCalls: number;
+  /** How many times the fake gh.listCandidates was invoked. */
+  listCandidatesCalls: number;
 }
 
 interface RunHarnessOptions {
@@ -176,6 +180,8 @@ interface RunHarnessOptions {
   abortHook?: string;
   /** When true, the fake processIssue throws to exercise on_session_error. */
   throwOnProcess?: boolean;
+  /** --boot-only: run the boot then return before selection/processing. */
+  bootOnly?: boolean;
 }
 
 function makeSession(opts: RunHarnessOptions = {}): {
@@ -189,6 +195,8 @@ function makeSession(opts: RunHarnessOptions = {}): {
     builtInputs: [],
     processedRunners: [],
     hookCommands: [],
+    runBootCalls: 0,
+    listCandidatesCalls: 0,
   };
   const candidates = opts.candidates ?? [cand(1), cand(2), cand(3)];
   const boot: BootResult = opts.bootResult ?? { precheck: { ok: true, warnings: [] } };
@@ -228,10 +236,12 @@ function makeSession(opts: RunHarnessOptions = {}): {
   const deps: SessionDeps = {
     gh: {
       async listCandidates() {
+        trace.listCandidatesCalls += 1;
         return candidates;
       },
     },
     async runBoot() {
+      trace.runBootCalls += 1;
       return boot;
     },
     bootDeps,
@@ -279,6 +289,7 @@ function makeSession(opts: RunHarnessOptions = {}): {
     iterCap: opts.iterCap,
     once: opts.once,
     alternate: opts.alternate,
+    bootOnly: opts.bootOnly,
     filter: opts.filter ?? { kind: "all" },
     issueTemplate: {
       tmpDir: "/tmp/afk",
@@ -369,6 +380,33 @@ describe("runSession", () => {
     expect(summary.total).toBe(0);
     expect(summary.drained).toBe(false);
     expect(summary.boot).toBe(bootResult);
+  });
+});
+
+describe("runSession — --boot-only dry-run", () => {
+  it("runs the boot then returns before selecting/claiming/processing — never spawns an agent", async () => {
+    const bootResult: BootResult = { precheck: { ok: true, warnings: ["a-warning"] } };
+    const { deps, ctx, trace } = makeSession({
+      candidates: [cand(1), cand(2), cand(3)],
+      bootResult,
+      bootOnly: true,
+    });
+    const summary = await runSession(deps, ctx);
+    // The boot sweeps ran exactly once...
+    expect(trace.runBootCalls).toBe(1);
+    // ...but selection and per-issue processing were skipped entirely.
+    expect(trace.listCandidatesCalls).toBe(0);
+    expect(trace.processedOrder).toEqual([]);
+    expect(trace.builtInputs).toEqual([]);
+    // No drain happened: zero counters, not flagged as a drained empty queue.
+    expect(summary.total).toBe(0);
+    expect(summary.done).toBe(0);
+    expect(summary.drained).toBe(false);
+    // The boot result still surfaces on the summary.
+    expect(summary.boot).toBe(bootResult);
+    // A single informational line is emitted, never the NO MORE TASKS sentinel.
+    expect(trace.emitted).not.toContain(NO_MORE_TASKS);
+    expect(trace.emitted).toEqual(["boot complete (--boot-only): sweeps ran, no issues processed"]);
   });
 });
 
