@@ -16,7 +16,7 @@
 
 import { decideReaperSignal, deriveSnapshot, type ProcessSnapshotEntry } from "./reaper-signal.js";
 import { buildEnvelope } from "./envelope.js";
-import { blockedReasonLabel } from "./envelope-emit.js";
+import { blockedLabelFor } from "./attempt-outcome.js";
 
 // ---------- tunables ----------
 
@@ -472,7 +472,7 @@ export async function reapStalledSlot(
   // created on the fly so a missing label never fails the reap.
   if (info && info.issue !== null) {
     await deps.gh.comment(info.issue, buildReaperEnvelope(info));
-    const typed = blockedReasonLabel("stalled");
+    const typed = blockedLabelFor("stalled");
     if (typed !== null) await deps.gh.ensureLabel(typed);
     await deps.gh.editLabels(info.issue, typed !== null ? ["ready-for-agent", typed] : ["ready-for-agent"], ["running"]);
   }

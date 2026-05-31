@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { recoveryDecision, recoveryCap, type RecoveryReason } from "../src/core/recovery.js";
+import { recoveryDecision, recoveryCap } from "../src/core/recovery.js";
+import { type RecoveryReason } from "../src/core/attempt-outcome.js";
 
 // recoveryDecision is a PURE policy: (reason, attemptN, env) → retry | escalate.
 // Recoverable reasons retry while attemptN < cap, then escalate. Non-recoverable
@@ -30,7 +31,7 @@ describe("recoveryDecision — recoverable reasons honour the cap", () => {
 });
 
 describe("recoveryDecision — non-recoverable reasons always escalate", () => {
-  for (const reason of ["spec", "validation"] as RecoveryReason[]) {
+  for (const reason of ["spec", "validation"]) {
     it(`${reason} escalates at every attempt`, () => {
       expect(recoveryDecision(reason, 1, {})).toBe("escalate");
       expect(recoveryDecision(reason, 99, {})).toBe("escalate");

@@ -82,14 +82,13 @@ import {
   type ConflictResolver,
 } from "./merge.js";
 import {
-  blockedReasonLabel,
   emitEnvelope,
-  type BlockedReason,
   type EmitEnvelopeDeps,
   type SectionBodies,
 } from "./envelope-emit.js";
 import { dispatchHooks, type HookExec } from "./hook-dispatcher.js";
-import { recoveryCap, recoveryDecision, type RecoveryEnv, type RecoveryReason } from "./recovery.js";
+import { recoveryCap, recoveryDecision, type RecoveryEnv } from "./recovery.js";
+import { blockedLabelFor, recoveryReasonFor, type AttemptOutcome } from "./attempt-outcome.js";
 import { resolveHooks, type ResolveHooksOptions, type ResolvedHooks, type HookName } from "./hook-config.js";
 import { formatStartedMarker } from "./heartbeat.js";
 import { parseReqLabels, planCloseCascade, type DependentIssue } from "./boot-sweep.js";
@@ -275,15 +274,12 @@ export interface ProcessIssueInput {
 
 // ---------- result ----------
 
-export type ProcessOutcome =
-  | "done"
-  | "blocked"
-  | "no-sentinel"
-  | "merge-conflict"
-  | "feedback-failed"
-  | "claim-lost"
-  | "hook-aborted"
-  | "exhausted";
+// The subset of `AttemptOutcome` that the per-issue lifecycle itself can return.
+// `stalled` (supervisor reaper) and `infra` (boot setup) originate outside
+// processIssue, so they are excluded here while the shared owner (attempt-outcome)
+// keeps the full union. Exclude<> ties this to the single owner so the two can
+// never drift.
+export type ProcessOutcome = Exclude<AttemptOutcome, "stalled" | "infra">;
 
 export interface ProcessIssueResult {
   outcome: ProcessOutcome;
@@ -325,38 +321,12 @@ async function editLabelsTagged(
   issue: number,
   remove: string[],
   add: string[],
-  reason: BlockedReason,
+  reason: AttemptOutcome,
 ): Promise<boolean> {
-  const typed = blockedReasonLabel(reason);
+  const typed = blockedLabelFor(reason);
   if (typed === null) return deps.gh.editLabels(issue, remove, add);
   await deps.gh.ensureLabel(typed);
   return deps.gh.editLabels(issue, remove, [...add, typed]);
-}
-
-/**
- * Map an envelope-emit `BlockedReason` to its BOUNDED-recovery policy reason
- * (recovery.ts). The six terminal failure paths route through `routeRecovery`
- * using these names; the reasons not listed here never reach the recovery
- * router (`done` / `claim-lost` carry no typed label; `stalled` / `infra` are
- * the supervisor / boot paths, out of scope).
- */
-function recoveryReasonOf(reason: BlockedReason): RecoveryReason | null {
-  switch (reason) {
-    case "merge-conflict":
-      return "merge-conflict";
-    case "no-sentinel":
-      return "crashed";
-    case "exhausted":
-      return "quota";
-    case "hook-aborted":
-      return "policy";
-    case "blocked":
-      return "spec";
-    case "feedback-failed":
-      return "validation";
-    default:
-      return null;
-  }
 }
 
 /**
@@ -373,10 +343,10 @@ function recoveryReasonOf(reason: BlockedReason): RecoveryReason | null {
 async function routeRecovery(
   deps: ProcessIssueDeps,
   issue: number,
-  reason: BlockedReason,
+  reason: AttemptOutcome,
   attemptN: number,
 ): Promise<"retry" | "escalate"> {
-  const policyReason = recoveryReasonOf(reason);
+  const policyReason = recoveryReasonFor(reason);
   // A reason with no policy mapping is treated as escalate (page a human),
   // preserving the pre-recovery default for any unexpected reason.
   if (policyReason === null) {
@@ -395,7 +365,7 @@ async function routeRecovery(
   if (cap !== null) {
     // A previously-auto-recoverable reason whose retry budget is exhausted —
     // announce the page so it is not mistaken for a first-attempt human block.
-    const typed = blockedReasonLabel(reason) ?? `blocked:${policyReason}`;
+    const typed = blockedLabelFor(reason) ?? `blocked:${policyReason}`;
     await deps.gh.comment(
       issue,
       `🤖 /afk escalating to ready-for-human: ${typed} retry budget exhausted (attempt ${attemptN}/${cap}).`,

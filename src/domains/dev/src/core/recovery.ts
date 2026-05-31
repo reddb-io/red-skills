@@ -24,19 +24,14 @@
 // follow-up. Time-based backoff (vs the immediate re-queue) is also future work —
 // the cap is what prevents the runaway loop today.
 
-/**
- * The recovery-policy view of a terminal failure reason. These are the *policy*
- * names (what kind of failure happened), distinct from the routing labels and
- * from envelope-emit's `BlockedReason`. Recoverable reasons carry a cap;
- * `spec` / `validation` are terminal-for-a-human.
- */
-export type RecoveryReason =
-  | "merge-conflict"
-  | "crashed"
-  | "quota"
-  | "policy"
-  | "spec"
-  | "validation";
+import type { RecoveryReason } from "./attempt-outcome.js";
+
+// `RecoveryReason` (the recoverable policy keys) is now owned by attempt-outcome,
+// the single owner of the outcome vocabulary. recovery.ts CONSUMES it: its cap
+// table is keyed on those policy names. The lookup functions accept any string
+// so a non-recoverable name (absent from RECOVERABLE) resolves to null/escalate
+// exactly as before — this is what keeps the policy "exactly as-is".
+export type { RecoveryReason };
 
 export type RecoveryDecision = "retry" | "escalate";
 
@@ -64,7 +59,7 @@ export type RecoveryEnv = Record<string, string | undefined>;
  * non-recoverable. Used both by `recoveryDecision` and by the caller's
  * escalation comment ("attempt N/cap").
  */
-export function recoveryCap(reason: RecoveryReason, env: RecoveryEnv): number | null {
+export function recoveryCap(reason: RecoveryReason | (string & {}), env: RecoveryEnv): number | null {
   const spec = RECOVERABLE[reason];
   if (!spec) return null;
   const raw = env[spec.knob];
@@ -80,7 +75,7 @@ export function recoveryCap(reason: RecoveryReason, env: RecoveryEnv): number | 
  * `attemptN < cap`, else escalate; non-recoverable reasons always escalate.
  */
 export function recoveryDecision(
-  reason: RecoveryReason,
+  reason: RecoveryReason | (string & {}),
   attemptN: number,
   env: RecoveryEnv,
 ): RecoveryDecision {
