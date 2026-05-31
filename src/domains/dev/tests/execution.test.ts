@@ -11,6 +11,8 @@ import {
   COMPLETION_SIGNALS,
   DEFAULT_IDLE_TIMEOUT_S,
   DEFAULT_REMOTE,
+  DEFAULT_MAX_ITERATIONS,
+  parseMaxIterations,
   type SandcastleDeps,
   type RunAgentInput,
 } from "../src/core/execution.js";
@@ -91,6 +93,23 @@ describe("buildRunOptions", () => {
     const opts = buildRunOptions(makeDeps(async () => fakeResult()), baseInput);
     expect(opts.sandbox).toEqual({ __sandbox: "none" });
     expect(opts.idleTimeoutSeconds).toBe(DEFAULT_IDLE_TIMEOUT_S);
+  });
+
+  it("sets maxIterations to DEFAULT_MAX_ITERATIONS when unset (issue #322 regression guard)", () => {
+    // sandcastle defaults maxIterations to 1, cutting the agent off before DONE.
+    // buildRunOptions MUST set a generous ceiling — this guard would have caught
+    // the missing setting that made every issue end no-sentinel → blocked:crashed.
+    const opts = buildRunOptions(makeDeps(async () => fakeResult()), baseInput);
+    expect(opts.maxIterations).toBe(DEFAULT_MAX_ITERATIONS);
+    expect(DEFAULT_MAX_ITERATIONS).toBeGreaterThan(1);
+  });
+
+  it("honours an explicit input.maxIterations override", () => {
+    const opts = buildRunOptions(
+      makeDeps(async () => fakeResult()),
+      { ...baseInput, maxIterations: 7 },
+    );
+    expect(opts.maxIterations).toBe(7);
   });
 
   it("honours an opt-in docker sandbox and a custom idle timeout", () => {
@@ -223,6 +242,24 @@ describe("runAgent", () => {
     expect(seen?.promptFile).toBe("/wt/handoff.md");
     expect(seen?.completionSignal).toEqual([DONE_SIGNAL, BLOCKED_SIGNAL]);
     expect(seen?.branchStrategy).toEqual({ type: "branch", branch: "afk/wZ2R4/42-fix-oauth" });
+  });
+});
+
+describe("parseMaxIterations (RED_AFK_MAX_ITERATIONS, issue #322)", () => {
+  it("parses a positive integer", () => {
+    expect(parseMaxIterations("50")).toBe(50);
+    expect(parseMaxIterations("1")).toBe(1);
+  });
+
+  it("falls back to undefined for missing / non-numeric / zero / negative values", () => {
+    // undefined → buildRunOptions applies DEFAULT_MAX_ITERATIONS; an operator
+    // typo must never disable the cap.
+    expect(parseMaxIterations(undefined)).toBeUndefined();
+    expect(parseMaxIterations("abc")).toBeUndefined();
+    expect(parseMaxIterations("0")).toBeUndefined();
+    expect(parseMaxIterations("-3")).toBeUndefined();
+    expect(parseMaxIterations("2.5")).toBeUndefined();
+    expect(parseMaxIterations("")).toBeUndefined();
   });
 });
 
