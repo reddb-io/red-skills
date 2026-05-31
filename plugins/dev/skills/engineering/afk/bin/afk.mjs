@@ -474,13 +474,6 @@ var init_fs = __esm({
   }
 });
 
-// src/core/attempt-reader.ts
-var init_attempt_reader = __esm({
-  "src/core/attempt-reader.ts"() {
-    "use strict";
-  }
-});
-
 // src/core/runner-spawn.ts
 function specialUserRequestBlock(specialRequest) {
   if (!specialRequest) return null;
@@ -528,7 +521,6 @@ var exhaustionPattern;
 var init_runner_spawn = __esm({
   "src/core/runner-spawn.ts"() {
     "use strict";
-    init_attempt_reader();
     exhaustionPattern = /usage limit|weekly (limit|cap)|session (limit|exhausted)|quota|rate_limit_error|try again later/i;
   }
 });
@@ -82109,19 +82101,23 @@ init_exec();
 function opts(ctx) {
   return { cwd: ctx.cwd };
 }
+function runGh(ctx, args2) {
+  return (ctx.exec ?? execTool)("gh", args2, opts(ctx));
+}
 function repoArgs(ctx) {
   return ctx.repo ? ["--repo", ctx.repo] : [];
 }
 async function ghInstalled(ctx) {
-  const r = await gh(["--version"], opts(ctx));
+  const r = await runGh(ctx, ["--version"]);
   return r.code !== 127;
 }
 async function ghAuthenticated(ctx) {
-  const r = await gh(["auth", "status"], opts(ctx));
+  const r = await runGh(ctx, ["auth", "status"]);
   return r.code === 0;
 }
 async function listCandidates(ctx) {
-  const r = await gh(
+  const r = await runGh(
+    ctx,
     [
       "issue",
       "list",
@@ -82134,8 +82130,7 @@ async function listCandidates(ctx) {
       "200",
       "--json",
       "number,title,labels,body"
-    ],
-    opts(ctx)
+    ]
   );
   if (r.code !== 0) return [];
   let raw3;
@@ -82156,7 +82151,7 @@ async function listCandidates(ctx) {
   });
 }
 async function viewLabels(ctx, issue) {
-  const r = await gh(["issue", "view", String(issue), ...repoArgs(ctx), "--json", "labels"], opts(ctx));
+  const r = await runGh(ctx, ["issue", "view", String(issue), ...repoArgs(ctx), "--json", "labels"]);
   if (r.code !== 0) return [];
   try {
     const parsed = JSON.parse(r.stdout);
@@ -82169,14 +82164,15 @@ async function editLabels(ctx, issue, remove13, add6) {
   const args2 = ["issue", "edit", String(issue), ...repoArgs(ctx)];
   for (const label of remove13) args2.push("--remove-label", label);
   for (const label of add6) args2.push("--add-label", label);
-  const r = await gh(args2, opts(ctx));
+  const r = await runGh(ctx, args2);
   return r.code === 0;
 }
 async function comment(ctx, issue, body) {
-  await gh(["issue", "comment", String(issue), ...repoArgs(ctx), "--body", body], opts(ctx));
+  await runGh(ctx, ["issue", "comment", String(issue), ...repoArgs(ctx), "--body", body]);
 }
 async function ensureRunnerErrorLabel(ctx) {
-  await gh(
+  await runGh(
+    ctx,
     [
       "label",
       "create",
@@ -82186,15 +82182,29 @@ async function ensureRunnerErrorLabel(ctx) {
       "B60205",
       "--description",
       "AFK supervisor circuit-tripped; runner was misconfigured"
-    ],
-    opts(ctx)
+    ]
+  );
+}
+async function ensureLabel(ctx, name) {
+  await runGh(
+    ctx,
+    [
+      "label",
+      "create",
+      name,
+      ...repoArgs(ctx),
+      "--color",
+      "5319E7",
+      "--description",
+      "AFK terminal-failure reason (observability)"
+    ]
   );
 }
 async function closeIssue(ctx, issue) {
-  await gh(["issue", "close", String(issue), ...repoArgs(ctx), "--reason", "completed"], opts(ctx));
+  await runGh(ctx, ["issue", "close", String(issue), ...repoArgs(ctx), "--reason", "completed"]);
 }
 async function issueBody(ctx, issue) {
-  const r = await gh(["issue", "view", String(issue), ...repoArgs(ctx), "--json", "body"], opts(ctx));
+  const r = await runGh(ctx, ["issue", "view", String(issue), ...repoArgs(ctx), "--json", "body"]);
   if (r.code !== 0) return void 0;
   try {
     return String(JSON.parse(r.stdout).body ?? "");
@@ -82203,7 +82213,7 @@ async function issueBody(ctx, issue) {
   }
 }
 async function issueUrl(ctx, issue) {
-  const r = await gh(["issue", "view", String(issue), ...repoArgs(ctx), "--json", "url"], opts(ctx));
+  const r = await runGh(ctx, ["issue", "view", String(issue), ...repoArgs(ctx), "--json", "url"]);
   if (r.code !== 0) return "";
   try {
     return String(JSON.parse(r.stdout).url ?? "");
@@ -82212,7 +82222,7 @@ async function issueUrl(ctx, issue) {
   }
 }
 async function issueComments(ctx, issue) {
-  const r = await gh(["issue", "view", String(issue), ...repoArgs(ctx), "--json", "comments"], opts(ctx));
+  const r = await runGh(ctx, ["issue", "view", String(issue), ...repoArgs(ctx), "--json", "comments"]);
   if (r.code !== 0) return [];
   try {
     const parsed = JSON.parse(r.stdout);
@@ -82227,9 +82237,9 @@ async function issueComments(ctx, issue) {
   }
 }
 async function orphanState(ctx, issue) {
-  const r = await gh(
-    ["issue", "view", String(issue), ...repoArgs(ctx), "--json", "state,labels"],
-    opts(ctx)
+  const r = await runGh(
+    ctx,
+    ["issue", "view", String(issue), ...repoArgs(ctx), "--json", "state,labels"]
   );
   if (r.code !== 0) return { ghOk: false, state: "OPEN", label: null, envelopePosted: false };
   try {
@@ -82242,7 +82252,7 @@ async function orphanState(ctx, issue) {
   }
 }
 async function blockerState(ctx, issue) {
-  const r = await gh(["issue", "view", String(issue), ...repoArgs(ctx), "--json", "state"], opts(ctx));
+  const r = await runGh(ctx, ["issue", "view", String(issue), ...repoArgs(ctx), "--json", "state"]);
   if (r.code !== 0) return void 0;
   try {
     return String(JSON.parse(r.stdout).state ?? "") || void 0;
@@ -82251,9 +82261,9 @@ async function blockerState(ctx, issue) {
   }
 }
 async function countIssues(ctx, args2) {
-  const r = await gh(
-    ["issue", "list", ...repoArgs(ctx), "--state", "open", "--limit", "500", "--json", "number", ...args2],
-    opts(ctx)
+  const r = await runGh(
+    ctx,
+    ["issue", "list", ...repoArgs(ctx), "--state", "open", "--limit", "500", "--json", "number", ...args2]
   );
   if (r.code !== 0) return 0;
   try {
@@ -82264,9 +82274,9 @@ async function countIssues(ctx, args2) {
   }
 }
 async function countUnlabeled(ctx) {
-  const r = await gh(
-    ["issue", "list", ...repoArgs(ctx), "--state", "open", "--limit", "500", "--json", "number,labels"],
-    opts(ctx)
+  const r = await runGh(
+    ctx,
+    ["issue", "list", ...repoArgs(ctx), "--state", "open", "--limit", "500", "--json", "number,labels"]
   );
   if (r.code !== 0) return 0;
   try {
@@ -82290,35 +82300,82 @@ function countNeedsInfo(ctx) {
   return countIssues(ctx, ["--label", "needs-info"]);
 }
 async function listUnblockCandidates(ctx) {
-  const r = await gh(
+  const fetch = async (label) => {
+    const r = await runGh(
+      ctx,
+      [
+        "issue",
+        "list",
+        ...repoArgs(ctx),
+        "--label",
+        label,
+        "--state",
+        "open",
+        "--limit",
+        "200",
+        "--json",
+        "number,body,labels"
+      ]
+    );
+    if (r.code !== 0) return [];
+    try {
+      const rows = JSON.parse(r.stdout);
+      if (!Array.isArray(rows)) return [];
+      return rows.map((row) => ({
+        number: Number(row.number ?? 0),
+        body: String(row.body ?? ""),
+        labels: Array.isArray(row.labels) ? row.labels.map((l) => String(l.name ?? "")) : []
+      }));
+    } catch {
+      return [];
+    }
+  };
+  const [byDependency, byHuman] = await Promise.all([
+    fetch("blocked:dependency"),
+    fetch("ready-for-human")
+  ]);
+  const merged = /* @__PURE__ */ new Map();
+  for (const c of [...byDependency, ...byHuman]) {
+    if (!merged.has(c.number)) merged.set(c.number, c);
+  }
+  return [...merged.values()];
+}
+async function listByLabel(ctx, label) {
+  const r = await runGh(
+    ctx,
     [
       "issue",
       "list",
       ...repoArgs(ctx),
       "--label",
-      "ready-for-human",
+      label,
       "--state",
       "open",
       "--limit",
       "200",
       "--json",
-      "number,body"
-    ],
-    opts(ctx)
+      "number,labels"
+    ]
   );
   if (r.code !== 0) return [];
   try {
     const rows = JSON.parse(r.stdout);
     if (!Array.isArray(rows)) return [];
-    return rows.map((row) => ({ number: Number(row.number ?? 0), body: String(row.body ?? "") }));
+    return rows.map((row) => ({
+      number: Number(row.number ?? 0),
+      labels: Array.isArray(row.labels) ? row.labels.map((l) => String(l.name ?? "")) : []
+    }));
   } catch {
     return [];
   }
 }
+async function issueClosed(ctx, n) {
+  return await blockerState(ctx, n) === "CLOSED";
+}
 async function issueMeta(ctx, issue) {
-  const r = await gh(
-    ["issue", "view", String(issue), ...repoArgs(ctx), "--json", "state,closedAt"],
-    opts(ctx)
+  const r = await runGh(
+    ctx,
+    ["issue", "view", String(issue), ...repoArgs(ctx), "--json", "state,closedAt"]
   );
   if (r.code !== 0) {
     if (/not found|could not resolve|no issues? match/i.test(r.stderr)) return null;
@@ -82337,12 +82394,15 @@ init_exec();
 function opts2(ctx) {
   return { cwd: ctx.cwd };
 }
+function runGit(ctx, args2) {
+  return (ctx.exec ?? execTool)("git", args2, opts2(ctx));
+}
 async function isGitRepo(ctx) {
-  const r = await git(["rev-parse", "--is-inside-work-tree"], opts2(ctx));
+  const r = await runGit(ctx, ["rev-parse", "--is-inside-work-tree"]);
   return r.code === 0 && r.stdout.trim() === "true";
 }
 async function remoteUrls(ctx) {
-  const r = await git(["remote", "-v"], opts2(ctx));
+  const r = await runGit(ctx, ["remote", "-v"]);
   if (r.code !== 0) return [];
   const urls = /* @__PURE__ */ new Set();
   for (const line of r.stdout.split("\n")) {
@@ -82352,74 +82412,74 @@ async function remoteUrls(ctx) {
   return [...urls];
 }
 async function hasMainBranch(ctx) {
-  const r = await git(["rev-parse", "--verify", "--quiet", "refs/heads/main"], opts2(ctx));
+  const r = await runGit(ctx, ["rev-parse", "--verify", "--quiet", "refs/heads/main"]);
   return r.code === 0;
 }
 async function currentBranch(ctx) {
-  const r = await git(["branch", "--show-current"], opts2(ctx));
+  const r = await runGit(ctx, ["branch", "--show-current"]);
   return r.code === 0 ? r.stdout.trim() : "";
 }
 async function headShortSha(ctx) {
-  const r = await git(["rev-parse", "--short", "HEAD"], opts2(ctx));
+  const r = await runGit(ctx, ["rev-parse", "--short", "HEAD"]);
   return r.code === 0 ? r.stdout.trim() : "";
 }
 async function deleteLocalBranch(ctx, branch) {
   if (!branch) return;
-  await git(["branch", "-D", branch], opts2(ctx));
+  await runGit(ctx, ["branch", "-D", branch]);
 }
 async function deleteRemoteBranch(ctx, branch) {
   if (!branch) return;
-  await git(["push", "origin", "--delete", branch], opts2(ctx));
+  await runGit(ctx, ["push", "origin", "--delete", branch]);
 }
 async function changedFiles(ctx, branch, base) {
-  const r = await git(["diff", "--name-only", `${base}...${branch}`], opts2(ctx));
+  const r = await runGit(ctx, ["diff", "--name-only", `${base}...${branch}`]);
   if (r.code !== 0) return [];
   return r.stdout.split("\n").map((l) => l.trim()).filter(Boolean);
 }
 async function diffstat(ctx, branch, base) {
-  const r = await git(["diff", "--shortstat", `${base}...${branch}`], opts2(ctx));
+  const r = await runGit(ctx, ["diff", "--shortstat", `${base}...${branch}`]);
   return r.code === 0 ? r.stdout.trim() : "";
 }
 async function diffstatShortstat(ctx, base) {
-  const r = await git(["diff", "--shortstat", base], opts2(ctx));
+  const r = await runGit(ctx, ["diff", "--shortstat", base]);
   if (r.code !== 0) return { added: 0, removed: 0 };
   const ins = /(\d+) insertion/.exec(r.stdout);
   const del2 = /(\d+) deletion/.exec(r.stdout);
   return { added: ins ? Number(ins[1]) : 0, removed: del2 ? Number(del2[1]) : 0 };
 }
 async function worktreeAdd(ctx, path2, branch) {
-  await git(["fetch", "origin", branch], opts2(ctx));
-  const local = await git(["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`], opts2(ctx));
+  await runGit(ctx, ["fetch", "origin", branch]);
+  const local = await runGit(ctx, ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`]);
   const ref = local.code === 0 ? branch : `origin/${branch}`;
-  const r = await git(["worktree", "add", "--force", "--detach", path2, ref], opts2(ctx));
+  const r = await runGit(ctx, ["worktree", "add", "--force", "--detach", path2, ref]);
   return r.code === 0;
 }
 async function worktreeRemove(ctx, path2) {
   if (!path2) return;
-  await git(["worktree", "remove", "--force", path2], opts2(ctx));
+  await runGit(ctx, ["worktree", "remove", "--force", path2]);
 }
 function gitExec(ctx) {
   return async (args2) => {
-    const r = await git(args2, opts2(ctx));
+    const r = await runGit(ctx, args2);
     return { code: r.code, stdout: r.stdout, stderr: r.stderr };
   };
 }
 function mergeExec(ctx) {
   return async (args2) => {
     const [head7, ...rest] = args2;
-    const { execTool: execTool2 } = await Promise.resolve().then(() => (init_exec(), exec_exports));
-    const r = await execTool2(head7 ?? "git", rest, opts2(ctx));
+    const exec4 = ctx.exec ?? execTool;
+    const r = await exec4(head7 ?? "git", rest, opts2(ctx));
     return { code: r.code, stdout: r.stdout, stderr: r.stderr };
   };
 }
 async function listLocalBranches(ctx, pattern2) {
-  const r = await git(["branch", "--list", pattern2, "--format=%(refname:short)"], opts2(ctx));
+  const r = await runGit(ctx, ["branch", "--list", pattern2, "--format=%(refname:short)"]);
   if (r.code !== 0) return [];
   return r.stdout.split("\n").map((l) => l.trim()).filter(Boolean);
 }
 async function checkedOutBranches(ctx) {
   const out = /* @__PURE__ */ new Set();
-  const r = await git(["worktree", "list", "--porcelain"], opts2(ctx));
+  const r = await runGit(ctx, ["worktree", "list", "--porcelain"]);
   if (r.code === 0) {
     for (const line of r.stdout.split("\n")) {
       const m2 = /^branch\s+refs\/heads\/(.+)$/.exec(line.trim());
@@ -82431,7 +82491,7 @@ async function checkedOutBranches(ctx) {
   return out;
 }
 async function listRemoteBranches(ctx, namespace) {
-  const r = await git(["ls-remote", "--heads", "origin", `refs/heads/${namespace}*`], opts2(ctx));
+  const r = await runGit(ctx, ["ls-remote", "--heads", "origin", `refs/heads/${namespace}*`]);
   if (r.code !== 0) return [];
   const refs = [];
   for (const line of r.stdout.split("\n")) {
@@ -82566,10 +82626,11 @@ function afkPaths(root) {
   };
 }
 var SANDBOX_MODES = ["none", "docker", "podman"];
-function resolveRunSettings(root) {
+function resolveRunSettings(root, env2 = process.env) {
   const paths = afkPaths(root);
   const cfg = loadConfig(paths.configPath, { warn: () => void 0 });
-  const rawSandbox = getConfig(cfg, "afk.sandbox");
+  const envSandbox = (env2.RED_AFK_SANDBOX ?? "").trim();
+  const rawSandbox = SANDBOX_MODES.includes(envSandbox) ? envSandbox : getConfig(cfg, "afk.sandbox");
   const sandbox3 = SANDBOX_MODES.includes(rawSandbox) ? rawSandbox : "none";
   const defaultRunner = getConfig(cfg, "afk.default_runner") || "claude";
   const model = getConfig(cfg, "afk.model") || "claude-opus-4-8";
@@ -83301,6 +83362,15 @@ function refToNumber(ref) {
   const m2 = /^#?([0-9]+)$/.exec(ref.trim());
   return m2 ? Number(m2[1]) : null;
 }
+var REQ_LABEL_RE = /^req:([0-9]+)$/;
+function parseReqLabels(labels) {
+  const seen = /* @__PURE__ */ new Set();
+  for (const label of labels) {
+    const m2 = REQ_LABEL_RE.exec(label.trim());
+    if (m2) seen.add(Number(m2[1]));
+  }
+  return [...seen].sort((a, b2) => a - b2);
+}
 function shouldPromote(blockerStates) {
   if (blockerStates.length === 0) return false;
   return blockerStates.every((s) => s === "CLOSED");
@@ -83308,9 +83378,42 @@ function shouldPromote(blockerStates) {
 function auditComment(refs) {
   return `\u{1F916} /afk promoted to ready-for-agent: all blockers closed (${refs.join(", ")}).`;
 }
+function cascadeAuditComment(reqs) {
+  return `\u{1F916} /afk unblocked: all dependencies closed (${reqs.map((n) => `#${n}`).join(", ")}).`;
+}
+function planCloseCascade(closedIssue, dependents) {
+  const plans = [];
+  for (const dep of dependents) {
+    const states = dep.reqs.map((r) => r.closed ? "CLOSED" : "open-or-unknown");
+    if (!shouldPromote(states)) continue;
+    const reqs = dep.reqs.map((r) => r.n).sort((a, b2) => a - b2);
+    plans.push({
+      number: dep.number,
+      refs: reqs.map((n) => `#${n}`),
+      comment: cascadeAuditComment(reqs)
+    });
+  }
+  return plans;
+}
 async function planUnblockSweep(candidates, fetchBlockerState) {
   const plans = [];
   for (const candidate of candidates) {
+    const reqIds = parseReqLabels(candidate.labels ?? []);
+    if (reqIds.length > 0) {
+      const states2 = [];
+      for (const id2 of reqIds) {
+        const raw3 = await fetchBlockerState(id2);
+        states2.push(raw3 === "CLOSED" ? "CLOSED" : "open-or-unknown");
+      }
+      if (shouldPromote(states2)) {
+        plans.push({
+          number: candidate.number,
+          refs: reqIds.map((n) => `#${n}`),
+          comment: cascadeAuditComment(reqIds)
+        });
+      }
+      continue;
+    }
     const refs = parseBlockedBy(candidate.body);
     if (refs.length === 0) continue;
     const states = [];
@@ -83491,9 +83594,13 @@ async function runBranchCleanup(deps, input) {
 }
 async function runUnblockSweep(deps, candidates) {
   const plans = await planUnblockSweep(candidates, deps.lookups.blockerState);
+  const labelsByIssue = /* @__PURE__ */ new Map();
+  for (const c of candidates) labelsByIssue.set(c.number, c.labels ?? []);
   const promoted = [];
   for (const p2 of plans) {
-    await deps.gh.editLabels(p2.number, ["ready-for-human"], ["ready-for-agent"]);
+    const held = labelsByIssue.get(p2.number) ?? [];
+    const remove13 = held.includes("blocked:dependency") ? "blocked:dependency" : "ready-for-human";
+    await deps.gh.editLabels(p2.number, [remove13], ["ready-for-agent"]);
     await deps.gh.comment(p2.number, p2.comment);
     promoted.push(p2.number);
   }
@@ -84034,6 +84141,74 @@ async function listOpenPr(exec4, repo, branch, target2) {
   return Number.isInteger(num) ? num : void 0;
 }
 
+// src/core/landing.ts
+async function doLanding(deps, input, hooks) {
+  const { locked } = input;
+  await pushAttempt(deps.remoteGit, input.repoDir, input.branch, input.branch);
+  if (!await deps.fireHook("pre_merge", hooks.preMerge())) {
+    return { ok: false, reason: "pre_merge-abort", locked };
+  }
+  const integrated = await integrateOrigin(deps.mergeExec, {
+    repo: input.repoDir,
+    remote: input.remote,
+    branch: input.base,
+    stillBehind: true,
+    inSync: false
+  });
+  if (!integrated.ok) {
+    return { ok: false, reason: "integrate-failed", locked };
+  }
+  const preMergeSha = await deps.headShortSha();
+  let landed;
+  if (locked) {
+    const r = await landMerge(deps.mergeExec, {
+      repo: input.repoDir,
+      remote: input.remote,
+      branch: input.branch,
+      target: input.base,
+      n: input.issue,
+      title: input.title,
+      preMergeSha
+    });
+    landed = r.ok;
+  } else {
+    const r = await landPr(deps.mergeExec, {
+      repo: input.repo,
+      gitRepo: input.repoDir,
+      remote: input.remote,
+      branch: input.branch,
+      target: input.base,
+      n: input.issue,
+      title: input.title
+    });
+    landed = r.ok;
+  }
+  if (!landed && locked && deps.conflictResolver) {
+    const resolved = await resolveMergeConflict(deps.mergeExec, deps.conflictResolver, {
+      repo: input.repoDir,
+      branch: input.branch,
+      n: input.issue,
+      title: input.title,
+      target: input.base
+    });
+    if (resolved.resolved) {
+      const push = await deps.mergeExec(["git", "-C", input.repoDir, "push", input.remote, input.base]);
+      if (push.code === 0) {
+        landed = true;
+      } else {
+        await deps.mergeExec(["git", "-C", input.repoDir, "reset", "--hard", preMergeSha]);
+      }
+    } else {
+      await deps.mergeExec(["git", "-C", input.repoDir, "merge", "--abort"]);
+    }
+  }
+  if (!landed) {
+    return { ok: false, reason: "land-failed", locked };
+  }
+  await deps.fireHook("post_merge", hooks.postMerge());
+  return { ok: true, locked };
+}
+
 // src/core/envelope.ts
 function escapeHtml(value2) {
   return value2.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -84176,6 +84351,91 @@ function defaultHistoryEvent(status2) {
   return status2 === "done" ? "done" : "blocked";
 }
 
+// src/core/recovery.ts
+var RECOVERABLE = {
+  "merge-conflict": { knob: "RED_AFK_RETRY_MERGE", defaultCap: 3 },
+  crashed: { knob: "RED_AFK_RETRY_CRASH", defaultCap: 1 },
+  quota: { knob: "RED_AFK_RETRY_QUOTA", defaultCap: 3 },
+  policy: { knob: "RED_AFK_RETRY_POLICY", defaultCap: 1 }
+};
+function recoveryCap(reason, env2) {
+  const spec = RECOVERABLE[reason];
+  if (!spec) return null;
+  const raw3 = env2[spec.knob];
+  if (raw3 !== void 0) {
+    const parsed = Number(raw3);
+    if (Number.isInteger(parsed) && parsed > 0) return parsed;
+  }
+  return spec.defaultCap;
+}
+function recoveryDecision(reason, attemptN, env2) {
+  const cap = recoveryCap(reason, env2);
+  if (cap === null) return "escalate";
+  return attemptN < cap ? "retry" : "escalate";
+}
+
+// src/core/attempt-outcome.ts
+function blockedLabelFor(o) {
+  switch (o) {
+    case "exhausted":
+      return "blocked:quota";
+    case "merge-conflict":
+      return "blocked:merge-conflict";
+    case "blocked":
+      return "blocked:spec";
+    case "feedback-failed":
+      return "blocked:validation";
+    case "no-sentinel":
+      return "blocked:crashed";
+    case "hook-aborted":
+      return "blocked:policy";
+    case "stalled":
+      return "blocked:stalled";
+    case "infra":
+      return "blocked:infra";
+    case "done":
+    case "claim-lost":
+      return null;
+  }
+}
+function envelopeStatusFor(o) {
+  switch (o) {
+    case "done":
+      return "done";
+    case "no-sentinel":
+      return "no-sentinel";
+    case "merge-conflict":
+      return "merge-conflict";
+    case "blocked":
+    case "feedback-failed":
+    case "hook-aborted":
+    case "exhausted":
+    case "claim-lost":
+    case "stalled":
+    case "infra":
+      return "blocked";
+  }
+}
+function recoveryReasonFor(o) {
+  switch (o) {
+    case "exhausted":
+      return "quota";
+    case "no-sentinel":
+      return "crashed";
+    case "hook-aborted":
+      return "policy";
+    case "merge-conflict":
+      return "merge-conflict";
+    case "blocked":
+    case "feedback-failed":
+    case "stalled":
+    case "infra":
+    case "done":
+    case "claim-lost":
+      return null;
+  }
+}
+
 // src/core/heartbeat.ts
 function formatStartedMarker(issue, ts) {
   return `[heartbeat] iteration started for #${issue} at ${ts}`;
@@ -84185,6 +84445,35 @@ function formatStartedMarker(issue, ts) {
 var LABEL_READY = "ready-for-agent";
 var LABEL_RUNNING = "running";
 var LABEL_HUMAN = "ready-for-human";
+async function editLabelsTagged(deps, issue, remove13, add6, reason) {
+  const typed = blockedLabelFor(reason);
+  if (typed === null) return deps.gh.editLabels(issue, remove13, add6);
+  await deps.gh.ensureLabel(typed);
+  return deps.gh.editLabels(issue, remove13, [...add6, typed]);
+}
+async function routeRecovery(deps, issue, reason, attemptN) {
+  const policyReason = recoveryReasonFor(reason);
+  if (policyReason === null) {
+    await editLabelsTagged(deps, issue, [LABEL_RUNNING], [LABEL_HUMAN], reason);
+    return "escalate";
+  }
+  const env2 = deps.recoveryEnv ?? {};
+  const decision = recoveryDecision(policyReason, attemptN, env2);
+  if (decision === "retry") {
+    await editLabelsTagged(deps, issue, [LABEL_RUNNING], [LABEL_READY], reason);
+    return "retry";
+  }
+  await editLabelsTagged(deps, issue, [LABEL_RUNNING], [LABEL_HUMAN], reason);
+  const cap = recoveryCap(policyReason, env2);
+  if (cap !== null) {
+    const typed = blockedLabelFor(reason) ?? `blocked:${policyReason}`;
+    await deps.gh.comment(
+      issue,
+      `\u{1F916} /afk escalating to ready-for-human: ${typed} retry budget exhausted (attempt ${attemptN}/${cap}).`
+    );
+  }
+  return "escalate";
+}
 async function processIssue(deps, input) {
   const { issue } = input;
   const hooksFired = [];
@@ -84306,39 +84595,17 @@ async function processIssue(deps, input) {
   };
   if (run8.outcome === "no-sentinel") {
     await fireHook("on_attempt_error", onErrorContext(current, workerBranch, "no-sentinel", current.attempt));
-    await deps.gh.editLabels(issue, [LABEL_RUNNING], [LABEL_HUMAN]);
-    const posted2 = await emitFailure(common, "no-sentinel", "no-sentinel", {
+    return await terminalFailure(common, "no-sentinel", "no-sentinel", {
       notes: "_(no Notes appended; inner agent exited without a sentinel)_",
       log: run8.stdout ? run8.stdout.split("\n").slice(-1)[0] || "(no captured stdout)" : "(no captured stdout)"
     });
-    return {
-      outcome: "no-sentinel",
-      issue,
-      branch: workerBranch,
-      base,
-      hooksFired,
-      envelopePosted: posted2,
-      preserved: true,
-      swept: false
-    };
   }
   const pwStatus = run8.outcome === "done" ? "success" : "fail";
   await fireHook("post_attempt", postAttemptContext(current, workerBranch, pwStatus, run8.outcome));
   if (run8.outcome === "blocked") {
-    await deps.gh.editLabels(issue, [LABEL_RUNNING], [LABEL_HUMAN]);
-    const posted2 = await emitFailure(common, "blocked", "blocked", {
+    return await terminalFailure(common, "blocked", "blocked", {
       notes: `_(inner agent emitted BLOCKED \u2014 see iteration log at \`${input.attemptDir}\`)_`
     });
-    return {
-      outcome: "blocked",
-      issue,
-      branch: workerBranch,
-      base,
-      hooksFired,
-      envelopePosted: posted2,
-      preserved: true,
-      swept: false
-    };
   }
   const changedFiles2 = await deps.lookups.changedFiles(workerBranch, base);
   const feedback = await runFeedback(deps.pnpm, {
@@ -84348,85 +84615,38 @@ async function processIssue(deps, input) {
     now: deps.nowEpoch
   });
   if (!feedback.ok) {
-    await deps.gh.editLabels(issue, [LABEL_RUNNING], [LABEL_HUMAN]);
-    const posted2 = await emitFailure(common, "blocked", "feedback", {
+    return await terminalFailure(common, "feedback-failed", "feedback", {
       notes: "Feedback validation failed after the inner agent emitted DONE. The worker branch was not merged.",
       validation: feedback.sidecar.join("\n")
     });
-    return {
-      outcome: "feedback-failed",
-      issue,
+  }
+  const locked = await deps.lookups.isLocked();
+  const landing = await doLanding(
+    {
+      mergeExec: deps.mergeExec,
+      remoteGit: deps.remoteGit,
+      headShortSha: () => deps.git.headShortSha(),
+      fireHook,
+      conflictResolver: deps.conflictResolver
+    },
+    {
+      locked,
+      repo: input.repo,
+      repoDir: input.repoDir,
+      remote: input.remote,
       branch: workerBranch,
       base,
-      hooksFired,
-      envelopePosted: posted2,
-      preserved: true,
-      swept: false
-    };
-  }
-  await pushAttempt(deps.remoteGit, input.repoDir, workerBranch, workerBranch);
-  const locked = await deps.lookups.isLocked();
-  if (!await fireHook("pre_merge", hookContext({ issue, title: input.title, workspace: input.repoDir, branch: workerBranch }))) {
-    return await mergeFailed(common, "pre_merge-abort");
-  }
-  const integrated = await integrateOrigin(deps.mergeExec, {
-    repo: input.repoDir,
-    remote: input.remote,
-    branch: base,
-    stillBehind: true,
-    inSync: false
-  });
-  if (!integrated.ok) {
-    return await mergeFailed(common, "integrate-failed");
-  }
-  const preMergeSha = await deps.git.headShortSha();
-  let landed;
-  if (locked) {
-    const r = await landMerge(deps.mergeExec, {
-      repo: input.repoDir,
-      remote: input.remote,
-      branch: workerBranch,
-      target: base,
-      n: issue,
-      title: input.title,
-      preMergeSha
-    });
-    landed = r.ok;
-  } else {
-    const r = await landPr(deps.mergeExec, {
-      repo: input.repo,
-      gitRepo: input.repoDir,
-      remote: input.remote,
-      branch: workerBranch,
-      target: base,
-      n: issue,
+      issue,
       title: input.title
-    });
-    landed = r.ok;
-  }
-  if (!landed && locked && deps.conflictResolver) {
-    const resolved2 = await resolveMergeConflict(deps.mergeExec, deps.conflictResolver, {
-      repo: input.repoDir,
-      branch: workerBranch,
-      n: issue,
-      title: input.title,
-      target: base
-    });
-    if (resolved2.resolved) {
-      const push = await deps.mergeExec(["git", "-C", input.repoDir, "push", input.remote, base]);
-      if (push.code === 0) {
-        landed = true;
-      } else {
-        await deps.mergeExec(["git", "-C", input.repoDir, "reset", "--hard", preMergeSha]);
-      }
-    } else {
-      await deps.mergeExec(["git", "-C", input.repoDir, "merge", "--abort"]);
+    },
+    {
+      preMerge: () => hookContext({ issue, title: input.title, workspace: input.repoDir, branch: workerBranch }),
+      postMerge: () => hookContext({ issue, title: input.title, workspace: input.repoDir, branch: workerBranch })
     }
+  );
+  if (!landing.ok) {
+    return await mergeFailed(common, landing.reason, landing.locked);
   }
-  if (!landed) {
-    return await mergeFailed(common, "land-failed", locked);
-  }
-  await fireHook("post_merge", hookContext({ issue, title: input.title, workspace: input.repoDir, branch: workerBranch }));
   const mergeSha = await deps.git.headShortSha();
   const durationS = deps.nowEpoch() - startedEpoch;
   const posted = await emitDone(common, mergeSha, durationS, feedback);
@@ -84436,6 +84656,7 @@ async function processIssue(deps, input) {
   await deps.git.deleteLocalBranch(workerBranch);
   await deps.fs.completionSweep(issue);
   await deps.claimLock.release(issue);
+  await runCloseCascade(deps, issue);
   return {
     outcome: "done",
     issue,
@@ -84473,6 +84694,21 @@ async function emitFailure(c, status2, diffLabel, sections) {
   });
   return result.posted;
 }
+async function terminalFailure(c, outcome, sectionKey, sections) {
+  const { deps, input } = c;
+  await routeRecovery(deps, input.issue, outcome, input.attempt);
+  const posted = await emitFailure(c, envelopeStatusFor(outcome), sectionKey, sections);
+  return {
+    outcome,
+    issue: input.issue,
+    branch: c.branch,
+    base: c.base,
+    hooksFired: c.hooksFired,
+    envelopePosted: posted,
+    preserved: true,
+    swept: false
+  };
+}
 async function emitDone(c, mergeSha, durationS, feedback) {
   const { deps, input } = c;
   const result = await emitEnvelope(deps.envelope, {
@@ -84493,8 +84729,8 @@ async function emitDone(c, mergeSha, durationS, feedback) {
 }
 async function mergeFailed(c, _reason, locked = false) {
   const { deps, input } = c;
-  await deps.gh.editLabels(input.issue, [LABEL_RUNNING], [LABEL_HUMAN]);
-  const posted = await emitFailure(c, "merge-conflict", "merge-conflict", {
+  await routeRecovery(deps, input.issue, "merge-conflict", input.attempt);
+  const posted = await emitFailure(c, envelopeStatusFor("merge-conflict"), "merge-conflict", {
     log: "(no merge log captured)"
   });
   await deps.claimLock.release(input.issue);
@@ -84510,15 +84746,47 @@ async function mergeFailed(c, _reason, locked = false) {
     swept: false
   };
 }
+async function runCloseCascade(deps, closedIssue) {
+  try {
+    const dependentsRaw = await deps.gh.listByLabel(`req:${closedIssue}`);
+    if (dependentsRaw.length === 0) return;
+    const closedCache = /* @__PURE__ */ new Map([[closedIssue, true]]);
+    const resolveClosed = async (n) => {
+      const cached4 = closedCache.get(n);
+      if (cached4 !== void 0) return cached4;
+      const closed = await deps.gh.issueClosed(n);
+      closedCache.set(n, closed);
+      return closed;
+    };
+    const dependents = [];
+    for (const dep of dependentsRaw) {
+      const reqIds = parseReqLabels(dep.labels);
+      const reqs = [];
+      for (const n of reqIds) reqs.push({ n, closed: await resolveClosed(n) });
+      dependents.push({ number: dep.number, reqs });
+    }
+    const plans = planCloseCascade(closedIssue, dependents);
+    for (const p2 of plans) {
+      await deps.gh.editLabels(p2.number, ["blocked:dependency"], [LABEL_READY]);
+      await deps.gh.comment(p2.number, p2.comment);
+    }
+  } catch (err) {
+    deps.appendIterLog(
+      `\u{1F916} /afk close-cascade for #${closedIssue} failed (best-effort; boot sweep will retry): ${String(err)}`
+    );
+  }
+}
 function claimLost(issue, hooksFired) {
   return { outcome: "claim-lost", issue, hooksFired, preserved: false, swept: false };
 }
 async function abortAfterClaim(deps, input, branch, base, hooksFired, _reason) {
-  await deps.gh.editLabels(input.issue, [LABEL_RUNNING], [LABEL_READY]);
-  await deps.gh.comment(
-    input.issue,
-    `\u{1F916} /afk aborted before runner invocation (${_reason}). Restored \`${LABEL_READY}\`.`
-  );
+  const decision = await routeRecovery(deps, input.issue, "hook-aborted", input.attempt);
+  if (decision === "retry") {
+    await deps.gh.comment(
+      input.issue,
+      `\u{1F916} /afk aborted before runner invocation (${_reason}). Restored \`${LABEL_READY}\`.`
+    );
+  }
   await deps.claimLock.release(input.issue);
   return {
     outcome: "hook-aborted",
@@ -84531,7 +84799,7 @@ async function abortAfterClaim(deps, input, branch, base, hooksFired, _reason) {
   };
 }
 async function exhausted(deps, input, branch, base, hooksFired, runner, both2) {
-  await deps.gh.editLabels(input.issue, [LABEL_RUNNING], [LABEL_READY]);
+  await routeRecovery(deps, input.issue, "exhausted", input.attempt);
   await deps.gh.comment(
     input.issue,
     both2 ? `\u{1F916} /afk: both runners exhausted. Iteration preserved at \`${input.attemptDir}\`.` : `\u{1F916} /afk: runner \`${runner}\` exhausted; rerun /afk when quota resets, or pass \`--fallback-runner\` to swap to the other runner on exhaustion.`
@@ -85139,9 +85407,9 @@ async function buildBootDeps(ctx, options2, nowS) {
     nowS
   };
 }
-function buildProcessDeps(ctx, model, sandbox3, feedback, current, fallbackRunner, runner) {
-  const ghCtx = { cwd: ctx.root, repo: ctx.repo };
-  const gitCtx = { cwd: ctx.root };
+function buildProcessDeps(ctx, model, sandbox3, feedback, current, fallbackRunner, runner, exec4) {
+  const ghCtx = { cwd: ctx.root, repo: ctx.repo, exec: exec4 };
+  const gitCtx = { cwd: ctx.root, exec: exec4 };
   const paths = afkPaths(ctx.root);
   const lockPath = branchLockPath(ctx.root);
   const config = loadConfig(paths.configPath, { warn: () => void 0 });
@@ -85151,8 +85419,16 @@ function buildProcessDeps(ctx, model, sandbox3, feedback, current, fallbackRunne
     gh: {
       viewLabels: (issue) => viewLabels(ghCtx, issue),
       editLabels: (issue, remove13, add6) => editLabels(ghCtx, issue, remove13, add6),
+      ensureLabel: async (name) => {
+        try {
+          await ensureLabel(ghCtx, name);
+        } catch {
+        }
+      },
       comment: (issue, body) => comment(ghCtx, issue, body),
-      close: (issue) => closeIssue(ghCtx, issue)
+      close: (issue) => closeIssue(ghCtx, issue),
+      listByLabel: (label) => listByLabel(ghCtx, label),
+      issueClosed: (n) => issueClosed(ghCtx, n)
     },
     claimLock: {
       acquire: async (issue) => {
@@ -85243,7 +85519,9 @@ function buildProcessDeps(ctx, model, sandbox3, feedback, current, fallbackRunne
       void appendLine(join27(current.attemptDir, "afk.log"), line);
     },
     historyPath: paths.historyPath,
-    historyClock: { ts: (/* @__PURE__ */ new Date()).toISOString(), epoch: Math.floor(Date.now() / 1e3) }
+    historyClock: { ts: (/* @__PURE__ */ new Date()).toISOString(), epoch: Math.floor(Date.now() / 1e3) },
+    // BOUNDED auto-recovery reads its RED_AFK_RETRY_* caps from the process env.
+    recoveryEnv: process.env
   };
 }
 function nextAttemptSync(tmpDir, issue) {
@@ -85726,7 +86004,9 @@ async function reapStalledSlot(slot, state, deps) {
   state.stallSinceEpoch = 0;
   if (info && info.issue !== null) {
     await deps.gh.comment(info.issue, buildReaperEnvelope(info));
-    await deps.gh.editLabels(info.issue, ["ready-for-agent"], ["running"]);
+    const typed = blockedLabelFor("stalled");
+    if (typed !== null) await deps.gh.ensureLabel(typed);
+    await deps.gh.editLabels(info.issue, typed !== null ? ["ready-for-agent", typed] : ["ready-for-agent"], ["running"]);
   }
   if (info) await deps.fs.teardownIterDir(info);
 }
@@ -86212,6 +86492,12 @@ function buildSupervisorDeps(root, tmpDir, logFd, runner, ghCtx, slotArgs) {
           await ensureRunnerErrorLabel(ghCtx);
         } catch {
         }
+      },
+      ensureLabel: async (name) => {
+        try {
+          await ensureLabel(ghCtx, name);
+        } catch {
+        }
       }
     },
     now
@@ -86255,6 +86541,50 @@ async function superviseCommand(args2, cwd = process.cwd()) {
   return 0;
 }
 
+// ../../shared/log.ts
+var LEVEL_ORDER = { debug: 10, info: 20, warn: 30, error: 40 };
+var COLOR = { debug: "\x1B[2m", info: "\x1B[36m", warn: "\x1B[33m", error: "\x1B[31m" };
+var RESET = "\x1B[0m";
+function normalize3(a, b2) {
+  if (typeof a === "string") return { msg: a, fields: {} };
+  const fields = { ...a };
+  const msg = typeof b2 === "string" ? b2 : "";
+  for (const k2 of ["err", "error"]) {
+    const v2 = fields[k2];
+    if (v2 instanceof Error) fields[k2] = { message: v2.message, stack: v2.stack };
+  }
+  return { msg, fields };
+}
+function createLogger(options2) {
+  const isProd = globalThis.process?.env?.NODE_ENV === "production";
+  const level = options2.level ?? (isProd ? "info" : "debug");
+  const pretty4 = options2.pretty ?? !isProd;
+  const write4 = options2.write ?? ((line) => process.stderr.write(`${line}
+`));
+  const now = options2.now ?? (() => (/* @__PURE__ */ new Date()).toISOString());
+  const base = { service: options2.serviceName, ...options2.bindings ?? {} };
+  const threshold = LEVEL_ORDER[level];
+  const emit = (lvl, a, b2) => {
+    if (LEVEL_ORDER[lvl] < threshold) return;
+    const ts = now();
+    const { msg, fields } = normalize3(a, b2);
+    const record3 = { ...base, ...fields };
+    if (pretty4) {
+      const extra = Object.keys(record3).length ? ` ${JSON.stringify(record3)}` : "";
+      write4(`${COLOR[lvl]}${ts} ${lvl.toUpperCase().padEnd(5)}${RESET} ${msg}${extra}`);
+    } else {
+      write4(JSON.stringify({ ts, level: lvl, msg, ...record3 }));
+    }
+  };
+  return {
+    debug: (a, b2) => emit("debug", a, b2),
+    info: (a, b2) => emit("info", a, b2),
+    warn: (a, b2) => emit("warn", a, b2),
+    error: (a, b2) => emit("error", a, b2),
+    child: (bindings) => createLogger({ ...options2, level, pretty: pretty4, bindings: { ...base, ...bindings } })
+  };
+}
+
 // src/cli.ts
 var CLI_ROUTER = {
   commands: {
@@ -86280,10 +86610,11 @@ async function main(argv = process.argv.slice(2)) {
   if (parsed.command === "__supervise") return superviseCommand(parsed.args);
   return runCommand2({ args: parsed.args });
 }
+var __log = createLogger({ serviceName: "afk" });
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().then((code) => process.exit(code)).catch((error) => {
     const message = error instanceof Error ? error.message : String(error);
-    console.error(`[afk-ts] ${message}`);
+    __log.error({ err: error }, message);
     process.exit(1);
   });
 }
