@@ -82852,18 +82852,16 @@ async function collectBootOptions(ctx, facts, bootstrap, nowS) {
     list.push({ path: o.path, mtimeS, live });
     byIssue.set(parsed.issue, list);
   }
-  const [snapshotRefs, remoteLiveRefs, localAll, checkedOut] = await Promise.all([
+  const [snapshotRefs, remoteLiveRefs, localAll, checkedOut, unblockCandidates, staleClaimDirs, legacyWorkDirs] = await Promise.all([
     listRemoteBranches(gitCtx, "afk-attempts/"),
     listRemoteBranches(gitCtx, "afk/"),
     listLocalBranches(gitCtx, "afk/*"),
-    checkedOutBranches(gitCtx)
-  ]);
-  const localLiveRefs = localAll.filter((b2) => !checkedOut.has(b2)).map((b2) => ({ branch: b2 }));
-  const unblockCandidates = await listUnblockCandidates(ghCtx);
-  const [staleClaimDirs, legacyWorkDirs] = await Promise.all([
+    checkedOutBranches(gitCtx),
+    listUnblockCandidates(ghCtx),
     listStaleClaimDirs(paths.tmpDir),
     listLegacyWorkDirs(paths.tmpDir)
   ]);
+  const localLiveRefs = localAll.filter((b2) => !checkedOut.has(b2)).map((b2) => ({ branch: b2 }));
   return {
     precheck: facts,
     bootstrap,
@@ -82878,15 +82876,16 @@ async function collectBootOptions(ctx, facts, bootstrap, nowS) {
 async function collectPrecheckFacts(ctx) {
   const gitCtx = { cwd: ctx.root };
   const ghCtx = { cwd: ctx.root, repo: ctx.repo };
-  const [ghInstalled2, ghAuthenticated2, isRepo, remoteUrls2, hasMain, currentBranch2] = await Promise.all([
+  const [ghInstalled2, ghAuthenticated2, isRepo, remoteUrls2, hasMain, currentBranch2, pnpmProbe] = await Promise.all([
     ghInstalled(ghCtx),
     ghAuthenticated(ghCtx),
     isGitRepo(gitCtx),
     remoteUrls(gitCtx),
     hasMainBranch(gitCtx),
-    currentBranch(gitCtx)
+    currentBranch(gitCtx),
+    Promise.resolve().then(() => (init_exec(), exec_exports)).then((m2) => m2.pnpm(["--version"], { cwd: ctx.root }))
   ]);
-  const pnpmInstalled = (await Promise.resolve().then(() => (init_exec(), exec_exports)).then((m2) => m2.pnpm(["--version"], { cwd: ctx.root }))).code !== 127;
+  const pnpmInstalled = pnpmProbe.code !== 127;
   return {
     ghInstalled: ghInstalled2,
     ghAuthenticated: ghAuthenticated2,
@@ -83239,6 +83238,10 @@ async function runSession(deps, ctx) {
   empty43.boot = boot;
   if (!boot.precheck.ok) {
     return empty43;
+  }
+  if (ctx.bootOnly) {
+    deps.emit("boot complete (--boot-only): sweeps ran, no issues processed");
+    return { ...empty43, boot };
   }
   try {
     if (!await fireSessionHook("pre_session", statsContext(0, 0, 0))) {
@@ -85363,7 +85366,8 @@ var RUN_FLAG_SCHEMA = {
   runner: { kind: "value", coerce: (raw3) => raw3 },
   request: { kind: "value", aliases: ["r"], coerce: (raw3) => raw3 },
   alternate: { kind: "boolean" },
-  "fallback-runner": { kind: "boolean" }
+  "fallback-runner": { kind: "boolean" },
+  "boot-only": { kind: "boolean" }
 };
 function parseRunFlags(args2) {
   const { values: values3 } = parseFlags(args2, RUN_FLAG_SCHEMA);
@@ -85391,7 +85395,8 @@ function parseRunFlags(args2) {
     runnerFlag,
     request: values3.request,
     alternate,
-    fallbackRunner: values3["fallback-runner"] === true
+    fallbackRunner: values3["fallback-runner"] === true,
+    bootOnly: values3["boot-only"] === true
   };
 }
 async function resolveBranchIssueCache(ghCtx, options2, states) {
@@ -85617,6 +85622,7 @@ async function runCommand2(options2) {
     once: flags.once,
     filter: flags.filter,
     alternate: flags.alternate,
+    bootOnly: flags.bootOnly,
     issueTemplate: {
       tmpDir: paths.tmpDir,
       repo: ctx.repo,
