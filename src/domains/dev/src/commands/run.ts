@@ -212,6 +212,13 @@ function buildProcessDeps(
     gh: {
       viewLabels: (issue) => ghx.viewLabels(ghCtx, issue),
       editLabels: (issue, remove, add) => ghx.editLabels(ghCtx, issue, remove, add),
+      ensureLabel: async (name) => {
+        try {
+          await ghx.ensureLabel(ghCtx, name);
+        } catch {
+          // best-effort: a missing typed label must never fail the close.
+        }
+      },
       comment: (issue, body) => ghx.comment(ghCtx, issue, body),
       close: (issue) => ghx.closeIssue(ghCtx, issue),
       listByLabel: (label) => ghx.listByLabel(ghCtx, label),

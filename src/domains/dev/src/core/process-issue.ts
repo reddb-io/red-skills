@@ -81,7 +81,13 @@ import {
   type Exec as MergeExec,
   type ConflictResolver,
 } from "./merge.js";
-import { emitEnvelope, type EmitEnvelopeDeps, type SectionBodies } from "./envelope-emit.js";
+import {
+  blockedReasonLabel,
+  emitEnvelope,
+  type BlockedReason,
+  type EmitEnvelopeDeps,
+  type SectionBodies,
+} from "./envelope-emit.js";
 import { dispatchHooks, type HookExec } from "./hook-dispatcher.js";
 import { resolveHooks, type ResolveHooksOptions, type ResolvedHooks, type HookName } from "./hook-config.js";
 import { formatStartedMarker } from "./heartbeat.js";
@@ -100,6 +106,10 @@ export interface ProcessGh {
   viewLabels(issue: number): Promise<string[]>;
   /** gh issue edit --remove-label … --add-label … (returns false on failure). */
   editLabels(issue: number, remove: string[], add: string[]): Promise<boolean>;
+  /** Idempotently create a label on the fly (best-effort) so a missing typed
+   * `blocked:<reason>` label never fails the close. Mirrors the runner-error
+   * label-create pattern. */
+  ensureLabel(name: string): Promise<void>;
   /** gh issue comment --body … */
   comment(issue: number, body: string): Promise<void>;
   /** gh issue close --reason completed. */
@@ -295,6 +305,27 @@ const LABEL_RUNNING = "running";
 const LABEL_HUMAN = "ready-for-human";
 
 /**
+ * ADDITIVE typed-blocked observability tag. Apply the routing label transition
+ * (remove → add) and, ALONGSIDE it in the SAME editLabels call, the DESCRIPTIVE
+ * `blocked:<reason>` label for the terminal failure. The typed label is created
+ * on the fly (best-effort) so a missing label never fails the close — routing is
+ * unchanged: the caller's `add` (e.g. ready-for-human / ready-for-agent) is
+ * preserved exactly, the typed label is merely appended.
+ */
+async function editLabelsTagged(
+  deps: ProcessIssueDeps,
+  issue: number,
+  remove: string[],
+  add: string[],
+  reason: BlockedReason,
+): Promise<boolean> {
+  const typed = blockedReasonLabel(reason);
+  if (typed === null) return deps.gh.editLabels(issue, remove, add);
+  await deps.gh.ensureLabel(typed);
+  return deps.gh.editLabels(issue, remove, [...add, typed]);
+}
+
+/**
  * Run the AFK per-issue lifecycle IN ORDER, composing each pure module and
  * applying its plan through injected IO. The SEQUENCE + the label transitions +
  * the lock-toggled landing are the parity target (process_issue + SKILL.md).
@@ -473,7 +504,7 @@ export async function processIssue(
   // ---- on_attempt_error: the run ended without an AFK sentinel (ADR 0028) ----
   if (run.outcome === "no-sentinel") {
     await fireHook("on_attempt_error", onErrorContext(current, workerBranch, "no-sentinel", current.attempt));
-    await deps.gh.editLabels(issue, [LABEL_RUNNING], [LABEL_HUMAN]);
+    await editLabelsTagged(deps, issue, [LABEL_RUNNING], [LABEL_HUMAN], "no-sentinel");
     const posted = await emitFailure(common, "no-sentinel", "no-sentinel", {
       notes: "_(no Notes appended; inner agent exited without a sentinel)_",
       log: run.stdout ? run.stdout.split("\n").slice(-1)[0] || "(no captured stdout)" : "(no captured stdout)",
@@ -496,7 +527,7 @@ export async function processIssue(
 
   // ---- BLOCKED ----
   if (run.outcome === "blocked") {
-    await deps.gh.editLabels(issue, [LABEL_RUNNING], [LABEL_HUMAN]);
+    await editLabelsTagged(deps, issue, [LABEL_RUNNING], [LABEL_HUMAN], "blocked");
     const posted = await emitFailure(common, "blocked", "blocked", {
       notes: `_(inner agent emitted BLOCKED — see iteration log at \`${input.attemptDir}\`)_`,
     });
@@ -525,7 +556,7 @@ export async function processIssue(
     now: deps.nowEpoch,
   });
   if (!feedback.ok) {
-    await deps.gh.editLabels(issue, [LABEL_RUNNING], [LABEL_HUMAN]);
+    await editLabelsTagged(deps, issue, [LABEL_RUNNING], [LABEL_HUMAN], "feedback-failed");
     const posted = await emitFailure(common, "blocked", "feedback", {
       notes: "Feedback validation failed after the inner agent emitted DONE. The worker branch was not merged.",
       validation: feedback.sidecar.join("\n"),
@@ -733,7 +764,7 @@ async function emitDone(
  * ready-for-human, preserve the attempt dir. Mirrors the do_merge-false branch. */
 async function mergeFailed(c: StageCommon, _reason: string, locked = false): Promise<ProcessIssueResult> {
   const { deps, input } = c;
-  await deps.gh.editLabels(input.issue, [LABEL_RUNNING], [LABEL_HUMAN]);
+  await editLabelsTagged(deps, input.issue, [LABEL_RUNNING], [LABEL_HUMAN], "merge-conflict");
   const posted = await emitFailure(c, "merge-conflict", "merge-conflict", {
     log: "(no merge log captured)",
   });
@@ -821,7 +852,7 @@ async function abortAfterClaim(
   hooksFired: HookName[],
   _reason: string,
 ): Promise<ProcessIssueResult> {
-  await deps.gh.editLabels(input.issue, [LABEL_RUNNING], [LABEL_READY]);
+  await editLabelsTagged(deps, input.issue, [LABEL_RUNNING], [LABEL_READY], "hook-aborted");
   await deps.gh.comment(
     input.issue,
     `🤖 /afk aborted before runner invocation (${_reason}). Restored \`${LABEL_READY}\`.`,
@@ -855,7 +886,7 @@ async function exhausted(
   runner: Runner,
   both: boolean,
 ): Promise<ProcessIssueResult> {
-  await deps.gh.editLabels(input.issue, [LABEL_RUNNING], [LABEL_READY]);
+  await editLabelsTagged(deps, input.issue, [LABEL_RUNNING], [LABEL_READY], "exhausted");
   await deps.gh.comment(
     input.issue,
     both

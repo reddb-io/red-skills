@@ -247,6 +247,13 @@ function buildSupervisorDeps(
           // best-effort
         }
       },
+      ensureLabel: async (name) => {
+        try {
+          await ghx.ensureLabel(ghCtx, name);
+        } catch {
+          // best-effort
+        }
+      },
     },
     now,
   };

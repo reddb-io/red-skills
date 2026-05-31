@@ -4,6 +4,7 @@ import {
   buildEnvelopeSummary,
   buildFailureMarkers,
   buildSections,
+  blockedReasonLabel,
   emitEnvelope,
   fmtDuration,
   type EmitEnvelopeDeps,
@@ -396,5 +397,23 @@ describe("emitEnvelope — failure push/markers/posted flow", () => {
     expect(posted.writes).toEqual([false]);
     expect(historyAppend).not.toHaveBeenCalled();
     expect(res.warnings.some((w) => w.includes("failed to post envelope for #11"))).toBe(true);
+  });
+});
+
+describe("blockedReasonLabel — DESCRIPTIVE typed-blocked mapping", () => {
+  it("maps each terminal failure reason to its blocked:<reason> label", () => {
+    expect(blockedReasonLabel("exhausted")).toBe("blocked:quota");
+    expect(blockedReasonLabel("merge-conflict")).toBe("blocked:merge-conflict");
+    expect(blockedReasonLabel("blocked")).toBe("blocked:spec");
+    expect(blockedReasonLabel("feedback-failed")).toBe("blocked:validation");
+    expect(blockedReasonLabel("no-sentinel")).toBe("blocked:crashed");
+    expect(blockedReasonLabel("hook-aborted")).toBe("blocked:policy");
+    expect(blockedReasonLabel("stalled")).toBe("blocked:stalled");
+    expect(blockedReasonLabel("infra")).toBe("blocked:infra");
+  });
+
+  it("returns null for non-blocked outcomes (done / claim-lost)", () => {
+    expect(blockedReasonLabel("done")).toBeNull();
+    expect(blockedReasonLabel("claim-lost")).toBeNull();
   });
 });

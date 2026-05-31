@@ -127,6 +127,25 @@ export async function ensureRunnerErrorLabel(ctx: GhContext): Promise<void> {
   );
 }
 
+/** Idempotently create an arbitrary label (best-effort), generalising
+ * ensureRunnerErrorLabel for the typed `blocked:<reason>` observability layer. A
+ * label that already exists exits non-zero and is swallowed by the caller. */
+export async function ensureLabel(ctx: GhContext, name: string): Promise<void> {
+  await gh(
+    [
+      "label",
+      "create",
+      name,
+      ...repoArgs(ctx),
+      "--color",
+      "5319E7",
+      "--description",
+      "AFK terminal-failure reason (observability)",
+    ],
+    opts(ctx),
+  );
+}
+
 /** `gh issue close --reason completed`. */
 export async function closeIssue(ctx: GhContext, issue: number): Promise<void> {
   await gh(["issue", "close", String(issue), ...repoArgs(ctx), "--reason", "completed"], opts(ctx));
