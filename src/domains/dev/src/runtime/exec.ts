@@ -26,6 +26,15 @@ export interface ExecOptions {
   input?: string;
 }
 
+/**
+ * The injectable exec boundary. `execTool` is the production implementation; the
+ * gh/git Contexts carry an OPTIONAL field of this shape so tests can drive the
+ * REAL gh/git closure assembly over a recording fake instead of the OS. When
+ * unset (production), the gh/git helpers fall through to the real `execTool`, so
+ * behaviour is identical to a static import.
+ */
+export type ExecFn = (cmd: string, args: readonly string[], opts?: ExecOptions) => Promise<ExecOutput>;
+
 const DEFAULT_MAX_BUFFER = 16 * 1024 * 1024;
 
 /**
