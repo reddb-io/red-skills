@@ -59,6 +59,11 @@ interface HarnessOptions {
   /** Close-cascade fixture: issues resolved as CLOSED by gh.issueClosed. The
    * just-closed issue is treated as closed without consulting this set. */
   closedIssues?: number[];
+  /** Attempt number (1-based) the issue runs under — drives the BOUNDED
+   * auto-recovery cap (recovery.ts). Defaults to 1. */
+  attempt?: number;
+  /** Env view the recovery policy reads RED_AFK_RETRY_* caps from. Defaults to {}. */
+  recoveryEnv?: Record<string, string>;
 }
 
 function harness(opts: HarnessOptions = {}): {
@@ -255,6 +260,7 @@ function harness(opts: HarnessOptions = {}): {
     nowEpoch: () => 1000,
     nowIso: () => "2026-05-30T00:00:00Z",
     appendIterLog: () => {},
+    recoveryEnv: opts.recoveryEnv ?? {},
   };
 
   // Wire the hook config + abort marker so dispatchHooks has a command to run.
@@ -269,7 +275,7 @@ function harness(opts: HarnessOptions = {}): {
     runner: "claude",
     workerId: "wAAAA",
     tmpDir: "/tmp/afk",
-    attempt: 1,
+    attempt: opts.attempt ?? 1,
     attemptDir: "/tmp/afk/workers/wAAAA/9-a1",
     repo: "o/r",
     repoDir: "/repo",
@@ -459,14 +465,19 @@ describe("processIssue — claim lost", () => {
   });
 });
 
-describe("processIssue — pre_worktree hook abort", () => {
-  it("restores ready-for-agent and never runs the agent", async () => {
-    const { deps, input, trace } = harness({ abortHook: "pre_worktree" });
+describe("processIssue — pre_worktree hook abort (BOUNDED-recoverable: policy)", () => {
+  it("under the cap → RETRY: restores ready-for-agent and never runs the agent", async () => {
+    // policy cap is 1 by default; raise it so attempt 1 is under-cap and retries.
+    const { deps, input, trace } = harness({
+      abortHook: "pre_worktree",
+      attempt: 1,
+      recoveryEnv: { RED_AFK_RETRY_POLICY: "2" },
+    });
     const result = await processIssue(deps, input);
     expect(result.outcome).toBe("hook-aborted");
     expect(result.preserved).toBe(true);
-    // claim then restore ready-for-agent + the typed blocked:policy tag (routing
-    // unchanged); sandcastle was never invoked.
+    // claim then restore ready-for-agent + the typed blocked:policy tag;
+    // sandcastle was never invoked.
     expect(labelTrace(trace)).toEqual(["-ready-for-agent|+running", "-running|+ready-for-agent+blocked:policy"]);
     const haEdit = trace.labelEdits.at(-1)!;
     expect(haEdit.add).toContain("ready-for-agent");
@@ -474,6 +485,29 @@ describe("processIssue — pre_worktree hook abort", () => {
     expect(trace.ensuredLabels).toContain("blocked:policy");
     expect(trace.runAgentCalls).toEqual([]);
     expect(result.hooksFired).toEqual(["pre_worktree"]);
+    // the restore comment is posted on retry; no budget-exhausted page.
+    expect(trace.comments.some((c) => /Restored `ready-for-agent`/.test(c.body))).toBe(true);
+    expect(trace.comments.some((c) => /retry budget exhausted/.test(c.body))).toBe(false);
+  });
+
+  it("at the cap → ESCALATE: routes to ready-for-human + posts the budget-exhausted page", async () => {
+    // default policy cap is 1, so attempt 1 is at-cap → escalate.
+    const { deps, input, trace } = harness({ abortHook: "pre_worktree", attempt: 1 });
+    const result = await processIssue(deps, input);
+    expect(result.outcome).toBe("hook-aborted");
+    expect(labelTrace(trace)).toEqual(["-ready-for-agent|+running", "-running|+ready-for-human+blocked:policy"]);
+    const haEdit = trace.labelEdits.at(-1)!;
+    expect(haEdit.add).toContain("ready-for-human");
+    expect(haEdit.add).toContain("blocked:policy");
+    expect(trace.ensuredLabels).toContain("blocked:policy");
+    expect(trace.runAgentCalls).toEqual([]);
+    // the budget-exhausted page is posted; the restore comment is not.
+    expect(
+      trace.comments.some((c) =>
+        /escalating to ready-for-human: blocked:policy retry budget exhausted \(attempt 1\/1\)/.test(c.body),
+      ),
+    ).toBe(true);
+    expect(trace.comments.some((c) => /Restored `ready-for-agent`/.test(c.body))).toBe(false);
   });
 });
 
@@ -600,7 +634,9 @@ describe("processIssue — merge-conflict one-shot self-resolve (gap 3)", () => 
     expect(trace.labelEdits.some((e) => e.add.includes("ready-for-human"))).toBe(false);
   });
 
-  it("falls back to ready-for-human when the resolver cannot resolve the conflict", async () => {
+  it("falls back to ready-for-human when the resolver cannot resolve the conflict (at the cap)", async () => {
+    // merge-conflict cap is 3; run at attempt 3 (at-cap) so the unresolved
+    // conflict ESCALATES to a human rather than re-queuing.
     const resolverCalls: string[] = [];
     const { deps, input, trace } = harness({
       outcome: "done",
@@ -609,29 +645,140 @@ describe("processIssue — merge-conflict one-shot self-resolve (gap 3)", () => 
       mergeNoFfCode: 1,
       conflictResolve: "fail",
       resolverCalls,
+      attempt: 3,
     });
     const result = await processIssue(deps, input);
     expect(resolverCalls).toHaveLength(1);
     expect(result.outcome).toBe("merge-conflict");
-    // unresolved → ready-for-human + the typed blocked:merge-conflict tag
-    // (routing unchanged), issue not closed.
+    // unresolved + at-cap → ready-for-human + the typed blocked:merge-conflict tag,
+    // issue not closed.
     expect(trace.labelEdits.some((e) => e.add.includes("ready-for-human"))).toBe(true);
     expect(trace.labelEdits.some((e) => e.add.includes("blocked:merge-conflict"))).toBe(true);
     expect(trace.ensuredLabels).toContain("blocked:merge-conflict");
     expect(trace.closed).not.toContain(9);
   });
 
-  it("goes straight to ready-for-human when no resolver is registered", async () => {
+  it("escalates to ready-for-human when no resolver is registered (at the cap)", async () => {
     const { deps, input, trace } = harness({
       outcome: "done",
       feedbackOk: true,
       locked: true,
       mergeNoFfCode: 1,
+      attempt: 3, // at the merge-conflict cap → escalate
       // conflictResolve undefined → deps.conflictResolver is undefined
     });
     const result = await processIssue(deps, input);
     expect(result.outcome).toBe("merge-conflict");
     expect(trace.labelEdits.some((e) => e.add.includes("ready-for-human"))).toBe(true);
+  });
+});
+
+describe("processIssue — BOUNDED auto-recovery routing (the policy wired in)", () => {
+  it("merge-conflict at attempt 1 (< cap 3) → RETRY: ready-for-agent + blocked:merge-conflict, no page", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      locked: true,
+      mergeNoFfCode: 1, // merge --no-ff conflicts; no resolver registered
+      attempt: 1,
+    });
+    const result = await processIssue(deps, input);
+    expect(result.outcome).toBe("merge-conflict");
+    const edit = trace.labelEdits.at(-1)!;
+    expect(edit.add).toContain("ready-for-agent");
+    expect(edit.add).toContain("blocked:merge-conflict");
+    expect(edit.add).not.toContain("ready-for-human");
+    expect(trace.ensuredLabels).toContain("blocked:merge-conflict");
+    // a retry never pages; no budget-exhausted comment.
+    expect(trace.comments.some((c) => /retry budget exhausted/.test(c.body))).toBe(false);
+    expect(trace.closed).not.toContain(9);
+  });
+
+  it("merge-conflict at attempt = cap (3) → ESCALATE: ready-for-human + blocked:merge-conflict + budget-exhausted page", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      locked: true,
+      mergeNoFfCode: 1,
+      attempt: 3,
+    });
+    const result = await processIssue(deps, input);
+    expect(result.outcome).toBe("merge-conflict");
+    const edit = trace.labelEdits.at(-1)!;
+    expect(edit.add).toContain("ready-for-human");
+    expect(edit.add).toContain("blocked:merge-conflict");
+    expect(
+      trace.comments.some((c) =>
+        /escalating to ready-for-human: blocked:merge-conflict retry budget exhausted \(attempt 3\/3\)/.test(c.body),
+      ),
+    ).toBe(true);
+  });
+
+  it("quota (exhausted) at attempt < cap → RETRY: ready-for-agent + blocked:quota", async () => {
+    const { deps, input, trace } = harness({ outcome: "exhausted", fallbackRunner: false, attempt: 2 });
+    const result = await processIssue(deps, input);
+    expect(result.outcome).toBe("exhausted");
+    const edit = trace.labelEdits.at(-1)!;
+    expect(edit.add).toContain("ready-for-agent");
+    expect(edit.add).toContain("blocked:quota");
+    expect(edit.add).not.toContain("ready-for-human");
+    expect(trace.comments.some((c) => /retry budget exhausted/.test(c.body))).toBe(false);
+  });
+
+  it("quota (exhausted) at attempt = cap (3) → ESCALATE: ready-for-human + blocked:quota + budget-exhausted page", async () => {
+    const { deps, input, trace } = harness({ outcome: "exhausted", fallbackRunner: false, attempt: 3 });
+    const result = await processIssue(deps, input);
+    expect(result.outcome).toBe("exhausted");
+    const edit = trace.labelEdits.at(-1)!;
+    expect(edit.add).toContain("ready-for-human");
+    expect(edit.add).toContain("blocked:quota");
+    expect(
+      trace.comments.some((c) =>
+        /escalating to ready-for-human: blocked:quota retry budget exhausted \(attempt 3\/3\)/.test(c.body),
+      ),
+    ).toBe(true);
+  });
+
+  it("crashed (no-sentinel) RETRIES once then escalates (cap 1)", async () => {
+    // cap 1: attempt 1 is at-cap → escalate. Raise to 2 to see the single retry.
+    const retry = harness({ outcome: "no-sentinel", attempt: 1, recoveryEnv: { RED_AFK_RETRY_CRASH: "2" } });
+    const r1 = await processIssue(retry.deps, retry.input);
+    expect(r1.outcome).toBe("no-sentinel");
+    expect(retry.trace.labelEdits.at(-1)!.add).toContain("ready-for-agent");
+    expect(retry.trace.labelEdits.at(-1)!.add).toContain("blocked:crashed");
+
+    const escalate = harness({ outcome: "no-sentinel", attempt: 1 }); // default cap 1 → escalate
+    const r2 = await processIssue(escalate.deps, escalate.input);
+    expect(r2.outcome).toBe("no-sentinel");
+    expect(escalate.trace.labelEdits.at(-1)!.add).toContain("ready-for-human");
+    expect(escalate.trace.labelEdits.at(-1)!.add).toContain("blocked:crashed");
+  });
+
+  it("spec (BLOCKED) ALWAYS escalates to ready-for-human, even at attempt 1 and high attempts", async () => {
+    for (const attempt of [1, 5, 99]) {
+      const { deps, input, trace } = harness({ outcome: "blocked", attempt });
+      const result = await processIssue(deps, input);
+      expect(result.outcome).toBe("blocked");
+      const edit = trace.labelEdits.at(-1)!;
+      expect(edit.add).toContain("ready-for-human");
+      expect(edit.add).toContain("blocked:spec");
+      expect(edit.add).not.toContain("ready-for-agent");
+      // non-recoverable → no budget-exhausted page (it was never auto-recovering).
+      expect(trace.comments.some((c) => /retry budget exhausted/.test(c.body))).toBe(false);
+    }
+  });
+
+  it("validation (feedback-failed) ALWAYS escalates to ready-for-human", async () => {
+    for (const attempt of [1, 5, 99]) {
+      const { deps, input, trace } = harness({ outcome: "done", feedbackOk: false, attempt });
+      const result = await processIssue(deps, input);
+      expect(result.outcome).toBe("feedback-failed");
+      const edit = trace.labelEdits.at(-1)!;
+      expect(edit.add).toContain("ready-for-human");
+      expect(edit.add).toContain("blocked:validation");
+      expect(edit.add).not.toContain("ready-for-agent");
+      expect(trace.comments.some((c) => /retry budget exhausted/.test(c.body))).toBe(false);
+    }
   });
 });
 
