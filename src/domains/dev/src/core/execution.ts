@@ -59,6 +59,20 @@ export function parseMaxIterations(raw: string | undefined): number | undefined 
   return undefined;
 }
 
+/**
+ * Parse a RED_AFK_IDLE_TIMEOUT_S override (FIX G) into a positive integer, or
+ * `undefined` when missing / non-numeric / zero / negative — typo-safe, mirroring
+ * {@link parseMaxIterations}. `undefined` lets `buildRunOptions` fall back to
+ * {@link DEFAULT_IDLE_TIMEOUT_S}, so an operator typo cannot disable the idle
+ * watchdog or pin it to a nonsensical value.
+ */
+export function parseIdleTimeout(raw: string | undefined): number | undefined {
+  if (raw === undefined) return undefined;
+  const parsed = Number(raw);
+  if (Number.isInteger(parsed) && parsed > 0) return parsed;
+  return undefined;
+}
+
 export interface RunAgentInput {
   /** Which agent provider to drive. */
   runner: AgentRunner;
@@ -118,6 +132,23 @@ export interface RunAgentInput {
    * threads the RED_AFK_MAX_ITERATIONS env override in here when set.
    */
   maxIterations?: number;
+  /**
+   * Extra environment variables the spawned agent must inherit (FIX J). The
+   * `pre_worktree` lifecycle hook (process-issue) computes a mutable `env` slice
+   * — the built-in cargo/gradle defaults set `CARGO_TARGET_DIR=.../slot-N` for
+   * per-slot build isolation so parallel fleet workers don't deadlock on one
+   * target dir. `RunOptions` has NO `env` field, so AFK applies this onto its own
+   * `process.env` immediately before the sandcastle `run()` call.
+   *
+   * MECHANISM / LIMITATION: this is correct ONLY for the default `noSandbox`
+   * mode, where the sandcastle-spawned agent inherits the AFK worker process's
+   * `process.env` (each fleet worker is its own process, so the mutation is
+   * isolated per-worker). Under docker/podman isolation the agent runs in a
+   * container that does NOT inherit `process.env`; delivering this env into the
+   * container (the sandbox env lane) is out of scope here. Runtime confirmation
+   * that the agent's build actually sees CARGO_TARGET_DIR is pending #284.
+   */
+  env?: Record<string, string>;
 }
 
 /** The git remote the continuous-push hook targets when none is supplied. */
@@ -136,6 +167,37 @@ export interface SandcastleDeps {
   run: (options: RunOptions) => Promise<RunResult>;
   agentFor: (runner: AgentRunner, model: string, opts?: { effort?: AgentEffort }) => RunOptions["agent"];
   sandboxFor: (mode: SandboxMode) => RunOptions["sandbox"];
+  /**
+   * Optional warn sink for degrade-safe diagnostics (FIX D effort drop, FIX F
+   * continuous-push-under-isolation notice). Defaults to `console.warn` in the
+   * real wiring; tests inject a recorder. Never throws — these are advisories.
+   */
+  warn?: (message: string) => void;
+}
+
+/**
+ * The reasoning-effort values each provider's option type accepts. codex tops
+ * out at "xhigh" (no "max"); claude accepts the full union (see the sandcastle
+ * AgentProvider d.ts — CodexOptions.effort vs ClaudeCodeOptions.effort). The
+ * effort is gated per provider in `agentFor` (FIX D): an out-of-range value is
+ * DROPPED (provider default) with a warn rather than cast through to a runtime
+ * provider rejection / infra crash.
+ */
+export const CODEX_EFFORTS: readonly AgentEffort[] = ["low", "medium", "high", "xhigh"];
+export const CLAUDE_EFFORTS: readonly AgentEffort[] = ["low", "medium", "high", "xhigh", "max"];
+
+/**
+ * Validate a requested effort against a provider's accepted set. Returns the
+ * effort when accepted, or `undefined` when it must be dropped (degrade to the
+ * provider default). Pure — the warn is emitted by the caller (`agentFor`).
+ */
+export function effortForProvider(
+  runner: AgentRunner,
+  effort: AgentEffort | undefined,
+): AgentEffort | undefined {
+  if (effort === undefined) return undefined;
+  const accepted = runner === "codex" ? CODEX_EFFORTS : CLAUDE_EFFORTS;
+  return accepted.includes(effort) ? effort : undefined;
 }
 
 /** Map an AFK completion signal back to an iteration outcome. */
@@ -263,15 +325,38 @@ export function buildRunOptions(deps: SandcastleDeps, input: RunAgentInput): Run
  */
 export function isExhaustionError(error: unknown): boolean {
   if (error === null || error === undefined) return false;
+  // FIX H: sandcastle's run() rejects with Effect-style errors (AgentError /
+  // ExecError, see errors.d.ts) whose quota / usage-limit text usually lands on
+  // `.message`, but may be nested under `.cause`, `.error`, or only reachable via
+  // `toString()`. Recursively collect every reachable string field (bounded
+  // depth + a visited set, so a cyclic Cause can't loop) and match the exhaustion
+  // regex against any of them. This only ever BROADENS detection — a non-quota
+  // error still has no matching string anywhere — so it cannot reclassify a real
+  // failure as exhaustion.
   const parts: string[] = [];
-  if (typeof error === "string") parts.push(error);
-  else if (typeof error === "object") {
-    const e = error as { message?: unknown; stdout?: unknown; stderr?: unknown };
-    if (typeof e.message === "string") parts.push(e.message);
-    if (typeof e.stdout === "string") parts.push(e.stdout);
-    if (typeof e.stderr === "string") parts.push(e.stderr);
-  }
+  collectErrorStrings(error, parts, new Set(), 0);
   return parts.some((p) => isRunnerExhausted(p));
+}
+
+/** Recursively gather string values reachable from an error-ish value, bounded
+ * by depth and a visited set so cyclic Effect `Cause` graphs terminate. */
+function collectErrorStrings(value: unknown, out: string[], seen: Set<object>, depth: number): void {
+  if (depth > 5) return;
+  if (typeof value === "string") {
+    out.push(value);
+    return;
+  }
+  if (typeof value !== "object" || value === null) return;
+  if (seen.has(value)) return;
+  seen.add(value);
+  // Capture a custom toString() (Effect errors render the quota text here even
+  // when no plain string field carries it). Skip the default Object.prototype
+  // tag, which is pure noise ("[object Object]").
+  const str = String(value);
+  if (str && str !== "[object Object]") out.push(str);
+  for (const v of Object.values(value as Record<string, unknown>)) {
+    collectErrorStrings(v, out, seen, depth + 1);
+  }
 }
 
 /**
@@ -284,6 +369,26 @@ export function isExhaustionError(error: unknown): boolean {
  * other thrown error propagates unchanged.
  */
 export async function runAgent(deps: SandcastleDeps, input: RunAgentInput): Promise<RunAgentResult> {
+  const warn = deps.warn ?? ((m: string) => console.warn(m));
+  // FIX F: continuous-push is a host.onWorktreeReady hook, which sandcastle only
+  // runs for host-visible worktrees (noSandbox / bind-mount). Under docker/podman
+  // the agent works in an isolated copy the hook can't see, so the push silently
+  // never fires — a SIGKILL mid-run loses every intermediate commit with no
+  // backup. Surface that the resilience guarantee does not apply (behaviour
+  // unchanged; advisory only).
+  if (input.continuousPush && (input.sandboxMode === "docker" || input.sandboxMode === "podman")) {
+    warn(
+      `[afk] warn: continuous-push is unavailable under ${input.sandboxMode} isolation; ` +
+        "intermediate commits are not backed up mid-run — final sync only.",
+    );
+  }
+  // FIX J: deliver the pre_worktree hook env (e.g. CARGO_TARGET_DIR=.../slot-N)
+  // to the sandcastle-spawned agent. RunOptions has no `env` field, so for the
+  // default noSandbox mode — where the agent inherits this worker process's
+  // env — we apply it to process.env right before the run. Each fleet worker is
+  // its own process, so this is isolated per-worker. Under docker/podman the env
+  // must enter the container instead (sandbox env lane) — out of scope (#284).
+  for (const [k, v] of Object.entries(input.env ?? {})) process.env[k] = v;
   let result: RunResult;
   try {
     result = await deps.run(buildRunOptions(deps, input));
@@ -319,17 +424,32 @@ export async function defaultSandcastleDeps(): Promise<SandcastleDeps> {
     import("@ai-hero/sandcastle/sandboxes/docker"),
     import("@ai-hero/sandcastle/sandboxes/podman"),
   ]);
-  // The effort unions differ per provider (codex has no "max"); the operator's
-  // configured effort is cast to each provider's accepted option shape, so an
-  // out-of-range value is the provider's concern rather than a compile error.
-  const agentFor: SandcastleDeps["agentFor"] = (runner, model, opts) =>
-    runner === "codex"
-      ? core.codex(model, opts?.effort ? ({ effort: opts.effort } as Parameters<typeof core.codex>[1]) : undefined)
-      : core.claudeCode(model, opts?.effort ? ({ effort: opts.effort } as Parameters<typeof core.claudeCode>[1]) : undefined);
+  // FIX D: the effort unions differ per provider (codex tops out at "xhigh", no
+  // "max"). Gate the requested effort against the provider's accepted set BEFORE
+  // building the agent: an out-of-range value (e.g. codex + "max") is DROPPED
+  // (provider default) with a warn rather than cast through to a runtime provider
+  // rejection / infra crash. Degrade safely — never throw on a misconfig.
+  const warn = (m: string) => console.warn(m);
+  const agentFor: SandcastleDeps["agentFor"] = (runner, model, opts) => {
+    const requested = opts?.effort;
+    const effort = effortForProvider(runner, requested);
+    if (requested !== undefined && effort === undefined) {
+      warn(
+        `[afk] warn: effort '${requested}' is not accepted by runner '${runner}' ` +
+          `(accepted: ${(runner === "codex" ? CODEX_EFFORTS : CLAUDE_EFFORTS).join(", ")}); ` +
+          "falling back to the provider default.",
+      );
+    }
+    // `effort` is now guaranteed to be in the provider's accepted union; the cast
+    // narrows the shared AgentEffort union to each provider's option literal.
+    return runner === "codex"
+      ? core.codex(model, effort ? ({ effort } as Parameters<typeof core.codex>[1]) : undefined)
+      : core.claudeCode(model, effort ? ({ effort } as Parameters<typeof core.claudeCode>[1]) : undefined);
+  };
   const sandboxFor: SandcastleDeps["sandboxFor"] = (mode) => {
     if (mode === "docker") return dockerMod.docker();
     if (mode === "podman") return podmanMod.podman();
     return noSandboxMod.noSandbox();
   };
-  return { run: core.run as SandcastleDeps["run"], agentFor, sandboxFor };
+  return { run: core.run as SandcastleDeps["run"], agentFor, sandboxFor, warn };
 }

@@ -41,7 +41,13 @@ interface HarnessOptions {
   locked?: boolean;
   config?: ConfigValues;
   abortHook?: HookName;
+  /** FIX J: when set, a pre_worktree hook command emits this env as the mutated
+   * context's `{env:{…}}` slice — proving it threads onto the runAgent input. */
+  preWorktreeEnv?: Record<string, string>;
   changedFiles?: string[];
+  /** FIX E: result of the worker-branch presence check. Defaults to true
+   * (present). Set false to model "sandcastle commits never reached the host". */
+  branchPresent?: boolean;
   fallbackRunner?: boolean;
   /** Records each git fetch-base call (the ADR 0031 start-point fetch). */
   fetchedBases?: string[];
@@ -216,6 +222,11 @@ function harness(opts: HarnessOptions = {}): {
         if (opts.abortHook && command === `abort:${opts.abortHook}`) {
           return { code: 1, stdout: "" };
         }
+        // FIX J: a pre_worktree hook that mutates the context with an env slice
+        // (mirrors cargo-pre-worktree.sh emitting {env:{CARGO_TARGET_DIR:…}}).
+        if (opts.preWorktreeEnv && command === "emit-env") {
+          return { code: 0, stdout: JSON.stringify({ env: opts.preWorktreeEnv }) };
+        }
         return { code: 0, stdout: "" };
       },
     },
@@ -246,6 +257,9 @@ function harness(opts: HarnessOptions = {}): {
       async diffstat() {
         return "+1 -0 files=1";
       },
+      async branchPresent() {
+        return opts.branchPresent ?? true;
+      },
     },
     envelope: {
       git: async () => ({ code: 0, stdout: "", stderr: "" }),
@@ -266,6 +280,10 @@ function harness(opts: HarnessOptions = {}): {
   // Wire the hook config + abort marker so dispatchHooks has a command to run.
   if (opts.abortHook) {
     config[`afk.hooks.${opts.abortHook}`] = `abort:${opts.abortHook}`;
+  }
+  // FIX J: register the env-emitting pre_worktree hook command.
+  if (opts.preWorktreeEnv) {
+    config["afk.hooks.pre_worktree"] = "emit-env";
   }
 
   const input: ProcessIssueInput = {
@@ -444,6 +462,79 @@ describe("processIssue — feedback fail", () => {
     // the worker branch was not pushed for landing.
     expect(result.hooksFired).toEqual(["pre_worktree", "pre_attempt", "post_attempt"]);
     expect(trace.pushedAttempt).toEqual([]);
+  });
+});
+
+describe("processIssue — worker branch absent (FIX E: merge-gate bypass guard)", () => {
+  it("escalates to the merge-conflict terminal path when the branch never reached the host", async () => {
+    // DONE + green would normally merge, but the worker branch is absent on the
+    // host (sandcastle push failed). The presence gate must STOP before feedback
+    // so an empty changed-file set can't silently bypass validation + merge.
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      branchPresent: false,
+    });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("merge-conflict");
+    expect(result.preserved).toBe(true);
+    // The issue was NOT closed and NOT merged — the gate held on unvalidated work.
+    expect(trace.closed).toEqual([]);
+    expect(trace.pushedAttempt).toEqual([]);
+    // Routed through the merge-conflict BOUNDED-recovery reason: the terminal
+    // edit carries the typed blocked:merge-conflict tag (retry-vs-escalate is the
+    // recovery policy's call; what matters here is the gate diverted off merge).
+    const finalEdit = trace.labelEdits.at(-1)!;
+    expect(finalEdit.add).toContain("blocked:merge-conflict");
+    expect(trace.ensuredLabels).toContain("blocked:merge-conflict");
+    expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "merge-conflict" }]);
+    // The claim was released on this terminal path.
+    expect(trace.released).toEqual([9]);
+    // post_attempt fired (DONE authored), but pre_merge/post_merge never ran.
+    expect(result.hooksFired).toEqual(["pre_worktree", "pre_attempt", "post_attempt"]);
+  });
+
+  it("proceeds normally to merge when the branch IS present (default)", async () => {
+    const { deps, input, trace } = harness({ outcome: "done", feedbackOk: true, branchPresent: true });
+    const result = await processIssue(deps, input);
+    expect(result.outcome).toBe("done");
+    expect(trace.closed).toEqual([9]);
+  });
+});
+
+describe("processIssue — pre_worktree env threading (FIX J)", () => {
+  it("threads the pre_worktree hook's env slice onto the runAgent input", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      preWorktreeEnv: { CARGO_TARGET_DIR: "/opt/cargo-target/slot-2" },
+    });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(trace.runAgentCalls).toHaveLength(1);
+    // The env computed by pre_worktree reached the sandcastle execution port.
+    expect(trace.runAgentCalls[0]?.env).toEqual({ CARGO_TARGET_DIR: "/opt/cargo-target/slot-2" });
+  });
+
+  it("leaves runAgent.env undefined when no pre_worktree hook mutates env", async () => {
+    const { deps, input, trace } = harness({ outcome: "done", feedbackOk: true });
+    await processIssue(deps, input);
+    expect(trace.runAgentCalls[0]?.env).toBeUndefined();
+  });
+
+  it("carries the pre_worktree env onto the fallback runner after an exhaustion swap", async () => {
+    const { deps, input, trace } = harness({
+      outcomes: ["exhausted", "done"],
+      feedbackOk: true,
+      fallbackRunner: true,
+      preWorktreeEnv: { CARGO_TARGET_DIR: "/opt/cargo-target/slot-5" },
+    });
+    await processIssue(deps, input);
+    expect(trace.runAgentCalls).toHaveLength(2);
+    expect(trace.runAgentCalls[0]?.env).toEqual({ CARGO_TARGET_DIR: "/opt/cargo-target/slot-5" });
+    expect(trace.runAgentCalls[1]?.env).toEqual({ CARGO_TARGET_DIR: "/opt/cargo-target/slot-5" });
   });
 });
 
