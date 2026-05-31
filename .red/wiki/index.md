@@ -18,6 +18,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [feat(afk): statusline reads project root from first arg; 🙋→🆘](./pages/266-feat-afk-statusline-reads-project-root-from-first-arg.md)
 - [feat(afk): typed blocked:<reason> labels (descriptive, auto-classified)](./pages/293-feat-afk-typed-blocked-reason-labels-descriptive-auto-classi.md)
 - [feat(memory): ship runtime as bundled release asset + bootstrap fetch (ADR 0029)](./pages/229-feat-memory-ship-runtime-as-bundled-release-asset-bootstrap.md)
+- [fix(afk): anchor sandcastle under the attempt dir, not the repo root](./pages/326-fix-afk-anchor-sandcastle-under-the-attempt-dir-not-the-repo.md)
 - [fix(afk): native fleet supervisor — poll cadence + real stall-reaper IO](./pages/285-fix-afk-native-fleet-supervisor-poll-cadence-real-stall-reap.md)
 - [fix(memory): remove backward-compat shims now that delivery + store are clean](./pages/232-fix-memory-remove-backward-compat-shims-now-that-delivery-st.md)
 - [fix(memory): resolveRedBinary honours REDDB_BIN before the SDK package lookup](./pages/230-fix-memory-resolveredbinary-honours-reddb-bin-before-the-sdk.md)
