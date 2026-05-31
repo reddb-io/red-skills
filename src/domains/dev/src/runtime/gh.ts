@@ -6,7 +6,7 @@
 // call routes through runtime/exec.ts's `gh` helper — the single process seam.
 // Best-effort writes swallow failures (the bash orchestrator's `|| true`).
 
-import { gh, type ExecOptions } from "./exec.js";
+import { execTool, type ExecOptions, type ExecFn, type ExecOutput } from "./exec.js";
 import type { IssueCandidate } from "../core/session.js";
 import type { IssueMeta } from "../core/branch-cleanup.js";
 import type { HandoffComment } from "../core/handoff.js";
@@ -18,10 +18,25 @@ export interface GhContext {
   repo: string;
   /** Working dir gh runs from (the primary checkout). */
   cwd: string;
+  /**
+   * Optional injected exec boundary. Unset in production (the real `execTool`
+   * via the `gh` helper runs). Set in tests to a recording fake so the REAL gh
+   * closure assembly can be driven without touching the OS. See exec.ts::ExecFn.
+   */
+  exec?: ExecFn;
 }
 
 function opts(ctx: GhContext): ExecOptions {
   return { cwd: ctx.cwd };
+}
+
+/**
+ * Dispatch a `gh <args>` invocation through the injected exec when present, else
+ * the real `gh` helper. This is the single seam every gh closure in this module
+ * routes through; the default path is byte-for-byte the prior static `gh` call.
+ */
+function runGh(ctx: GhContext, args: readonly string[]): Promise<ExecOutput> {
+  return (ctx.exec ?? execTool)("gh", args, opts(ctx));
 }
 
 function repoArgs(ctx: GhContext): string[] {
@@ -30,19 +45,19 @@ function repoArgs(ctx: GhContext): string[] {
 
 /** Check `gh` is installed (any exit but 127 = present). */
 export async function ghInstalled(ctx: GhContext): Promise<boolean> {
-  const r = await gh(["--version"], opts(ctx));
+  const r = await runGh(ctx, ["--version"]);
   return r.code !== 127;
 }
 
 /** Check `gh auth status` succeeds. */
 export async function ghAuthenticated(ctx: GhContext): Promise<boolean> {
-  const r = await gh(["auth", "status"], opts(ctx));
+  const r = await runGh(ctx, ["auth", "status"]);
   return r.code === 0;
 }
 
 /** List the ready-for-agent candidate pool projected to IssueCandidate[]. */
 export async function listCandidates(ctx: GhContext): Promise<IssueCandidate[]> {
-  const r = await gh(
+  const r = await runGh(ctx, 
     [
       "issue",
       "list",
@@ -56,7 +71,6 @@ export async function listCandidates(ctx: GhContext): Promise<IssueCandidate[]> 
       "--json",
       "number,title,labels,body",
     ],
-    opts(ctx),
   );
   if (r.code !== 0) return [];
   let raw: unknown;
@@ -79,7 +93,7 @@ export async function listCandidates(ctx: GhContext): Promise<IssueCandidate[]> 
 
 /** `gh issue view --json labels` → flat label-name list. */
 export async function viewLabels(ctx: GhContext, issue: number): Promise<string[]> {
-  const r = await gh(["issue", "view", String(issue), ...repoArgs(ctx), "--json", "labels"], opts(ctx));
+  const r = await runGh(ctx, ["issue", "view", String(issue), ...repoArgs(ctx), "--json", "labels"]);
   if (r.code !== 0) return [];
   try {
     const parsed = JSON.parse(r.stdout) as { labels?: Array<{ name?: string }> };
@@ -99,20 +113,20 @@ export async function editLabels(
   const args = ["issue", "edit", String(issue), ...repoArgs(ctx)];
   for (const label of remove) args.push("--remove-label", label);
   for (const label of add) args.push("--add-label", label);
-  const r = await gh(args, opts(ctx));
+  const r = await runGh(ctx, args);
   return r.code === 0;
 }
 
 /** `gh issue comment --body …` (best-effort). */
 export async function comment(ctx: GhContext, issue: number, body: string): Promise<void> {
-  await gh(["issue", "comment", String(issue), ...repoArgs(ctx), "--body", body], opts(ctx));
+  await runGh(ctx, ["issue", "comment", String(issue), ...repoArgs(ctx), "--body", body]);
 }
 
 /** Idempotently create the `runner-error` label (best-effort). Mirrors
  * supervisor.sh ensure_runner_error_label — a label that already exists exits
  * non-zero and is swallowed. */
 export async function ensureRunnerErrorLabel(ctx: GhContext): Promise<void> {
-  await gh(
+  await runGh(ctx, 
     [
       "label",
       "create",
@@ -123,7 +137,6 @@ export async function ensureRunnerErrorLabel(ctx: GhContext): Promise<void> {
       "--description",
       "AFK supervisor circuit-tripped; runner was misconfigured",
     ],
-    opts(ctx),
   );
 }
 
@@ -131,7 +144,7 @@ export async function ensureRunnerErrorLabel(ctx: GhContext): Promise<void> {
  * ensureRunnerErrorLabel for the typed `blocked:<reason>` observability layer. A
  * label that already exists exits non-zero and is swallowed by the caller. */
 export async function ensureLabel(ctx: GhContext, name: string): Promise<void> {
-  await gh(
+  await runGh(ctx, 
     [
       "label",
       "create",
@@ -142,18 +155,17 @@ export async function ensureLabel(ctx: GhContext, name: string): Promise<void> {
       "--description",
       "AFK terminal-failure reason (observability)",
     ],
-    opts(ctx),
   );
 }
 
 /** `gh issue close --reason completed`. */
 export async function closeIssue(ctx: GhContext, issue: number): Promise<void> {
-  await gh(["issue", "close", String(issue), ...repoArgs(ctx), "--reason", "completed"], opts(ctx));
+  await runGh(ctx, ["issue", "close", String(issue), ...repoArgs(ctx), "--reason", "completed"]);
 }
 
 /** `gh issue view --json body` → raw body, or undefined when absent. */
 export async function issueBody(ctx: GhContext, issue: number): Promise<string | undefined> {
-  const r = await gh(["issue", "view", String(issue), ...repoArgs(ctx), "--json", "body"], opts(ctx));
+  const r = await runGh(ctx, ["issue", "view", String(issue), ...repoArgs(ctx), "--json", "body"]);
   if (r.code !== 0) return undefined;
   try {
     return String((JSON.parse(r.stdout) as { body?: string }).body ?? "");
@@ -164,7 +176,7 @@ export async function issueBody(ctx: GhContext, issue: number): Promise<string |
 
 /** `gh issue view --json url` → the resolved issue url. */
 export async function issueUrl(ctx: GhContext, issue: number): Promise<string> {
-  const r = await gh(["issue", "view", String(issue), ...repoArgs(ctx), "--json", "url"], opts(ctx));
+  const r = await runGh(ctx, ["issue", "view", String(issue), ...repoArgs(ctx), "--json", "url"]);
   if (r.code !== 0) return "";
   try {
     return String((JSON.parse(r.stdout) as { url?: string }).url ?? "");
@@ -176,7 +188,7 @@ export async function issueUrl(ctx: GhContext, issue: number): Promise<string> {
 /** `gh issue view --json comments` → handoff-projected comment list. Each
  * comment carries the author login + body + createdAt the handoff renders. */
 export async function issueComments(ctx: GhContext, issue: number): Promise<HandoffComment[]> {
-  const r = await gh(["issue", "view", String(issue), ...repoArgs(ctx), "--json", "comments"], opts(ctx));
+  const r = await runGh(ctx, ["issue", "view", String(issue), ...repoArgs(ctx), "--json", "comments"]);
   if (r.code !== 0) return [];
   try {
     const parsed = JSON.parse(r.stdout) as {
@@ -202,9 +214,8 @@ export async function orphanState(
   ctx: GhContext,
   issue: number,
 ): Promise<{ ghOk: boolean; state: IssueOpenState; label: string | null; envelopePosted: boolean }> {
-  const r = await gh(
+  const r = await runGh(ctx, 
     ["issue", "view", String(issue), ...repoArgs(ctx), "--json", "state,labels"],
-    opts(ctx),
   );
   if (r.code !== 0) return { ghOk: false, state: "OPEN", label: null, envelopePosted: false };
   try {
@@ -225,7 +236,7 @@ export async function orphanState(
 /** Branch-cleanup/boot blocker-state lookup: gh issue view --json state → the
  * raw state string ("OPEN" | "CLOSED"), or undefined on a 404/transient miss. */
 export async function blockerState(ctx: GhContext, issue: number): Promise<string | undefined> {
-  const r = await gh(["issue", "view", String(issue), ...repoArgs(ctx), "--json", "state"], opts(ctx));
+  const r = await runGh(ctx, ["issue", "view", String(issue), ...repoArgs(ctx), "--json", "state"]);
   if (r.code !== 0) return undefined;
   try {
     return String((JSON.parse(r.stdout) as { state?: string }).state ?? "") || undefined;
@@ -237,9 +248,8 @@ export async function blockerState(ctx: GhContext, issue: number): Promise<strin
 /** Count open issues matching a label expression (`--label`/`--search`). A
  * failed probe returns 0, mirroring the bash `|| echo 0`. */
 async function countIssues(ctx: GhContext, args: string[]): Promise<number> {
-  const r = await gh(
+  const r = await runGh(ctx, 
     ["issue", "list", ...repoArgs(ctx), "--state", "open", "--limit", "500", "--json", "number", ...args],
-    opts(ctx),
   );
   if (r.code !== 0) return 0;
   try {
@@ -252,9 +262,8 @@ async function countIssues(ctx: GhContext, args: string[]): Promise<number> {
 
 /** Count issues that carry NO labels (the unlabeled straggler bucket). */
 export async function countUnlabeled(ctx: GhContext): Promise<number> {
-  const r = await gh(
+  const r = await runGh(ctx, 
     ["issue", "list", ...repoArgs(ctx), "--state", "open", "--limit", "500", "--json", "number,labels"],
-    opts(ctx),
   );
   if (r.code !== 0) return 0;
   try {
@@ -292,7 +301,7 @@ export function countNeedsInfo(ctx: GhContext): Promise<number> {
  * so both holding states are gathered and de-duplicated by issue number. */
 export async function listUnblockCandidates(ctx: GhContext): Promise<UnblockCandidate[]> {
   const fetch = async (label: string): Promise<UnblockCandidate[]> => {
-    const r = await gh(
+    const r = await runGh(ctx, 
       [
         "issue",
         "list",
@@ -306,7 +315,6 @@ export async function listUnblockCandidates(ctx: GhContext): Promise<UnblockCand
         "--json",
         "number,body,labels",
       ],
-      opts(ctx),
     );
     if (r.code !== 0) return [];
     try {
@@ -342,7 +350,7 @@ export async function listByLabel(
   ctx: GhContext,
   label: string,
 ): Promise<{ number: number; labels: string[] }[]> {
-  const r = await gh(
+  const r = await runGh(ctx, 
     [
       "issue",
       "list",
@@ -356,7 +364,6 @@ export async function listByLabel(
       "--json",
       "number,labels",
     ],
-    opts(ctx),
   );
   if (r.code !== 0) return [];
   try {
@@ -381,9 +388,8 @@ export async function issueClosed(ctx: GhContext, n: number): Promise<boolean> {
 /** Branch-cleanup IssueLookup payload: gh issue view --json state,closedAt.
  * Returns null for a definitive 404, undefined for a transient failure. */
 export async function issueMeta(ctx: GhContext, issue: number): Promise<IssueMeta | null | undefined> {
-  const r = await gh(
+  const r = await runGh(ctx, 
     ["issue", "view", String(issue), ...repoArgs(ctx), "--json", "state,closedAt"],
-    opts(ctx),
   );
   if (r.code !== 0) {
     // gh prints a 404 "Could not resolve" / "not found" on a real miss.

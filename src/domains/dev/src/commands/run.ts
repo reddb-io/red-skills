@@ -27,6 +27,7 @@ import * as gitx from "../runtime/git.js";
 import * as fsx from "../runtime/fs.js";
 import type { GhContext } from "../runtime/gh.js";
 import type { GitContext } from "../runtime/git.js";
+import type { ExecFn } from "../runtime/exec.js";
 import { loadConfig } from "../core/config.js";
 import { resolveHooks } from "../core/hook-config.js";
 import { attemptLedgerContext, formatAttemptContext, highestAttempt, type AttemptDirEntry } from "../core/attempt-ledger.js";
@@ -187,7 +188,19 @@ async function buildBootDeps(ctx: RepoContext, options: BootOptions, nowS: numbe
   };
 }
 
-function buildProcessDeps(
+/**
+ * Assemble the per-issue {@link ProcessIssueDeps} — the hand-written binding of
+ * ~21 real gh/git/fs/clock closures the audit flagged as untested. Exported so
+ * the wiring integration test can drive the REAL assembly over a recording exec
+ * fake (see tests/wiring-integration.test.ts).
+ *
+ * `exec` is the sole test-injection point: when supplied it is threaded into the
+ * gh/git Contexts so every gh/git closure assembled here routes through the fake
+ * instead of the OS. PRODUCTION leaves it undefined (see {@link runCommand}),
+ * so the gh/git helpers fall through to the real `execTool` — byte-for-byte the
+ * prior behaviour. Nothing else about the assembly changes.
+ */
+export function buildProcessDeps(
   ctx: RepoContext,
   model: string,
   sandbox: ReturnType<typeof resolveRunSettings>["sandbox"],
@@ -195,9 +208,10 @@ function buildProcessDeps(
   current: CurrentAttempt,
   fallbackRunner: boolean,
   runner: Runner,
+  exec?: ExecFn,
 ): ProcessIssueDeps {
-  const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo };
-  const gitCtx: GitContext = { cwd: ctx.root };
+  const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo, exec };
+  const gitCtx: GitContext = { cwd: ctx.root, exec };
   const paths = afkPaths(ctx.root);
   const lockPath = branchLockPath(ctx.root);
 
