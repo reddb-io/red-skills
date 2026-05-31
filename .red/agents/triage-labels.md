@@ -155,18 +155,20 @@ How the edge drives the lifecycle:
 
 `/afk` already computes a precise terminal outcome for every iteration; instead of flattening every failure to one `blocked`, it tags the issue with the matching **`blocked:<reason>`** label so the backlog is filterable by *what kind* of block it is. The reason is derived automatically from the outcome — **no human classification**.
 
-| Outcome (runtime) | Label | Next action |
-| ----------------- | ----- | ----------- |
-| runner quota / both exhausted | `blocked:quota` | transient — retried / runner-swapped |
-| couldn't integrate or land | `blocked:merge-conflict` | base moved; re-attempt after main settles |
-| agent emitted `<promise>BLOCKED</promise>` | `blocked:spec` | a human must **decide / clarify** |
-| feedback gate failed (test/lint/build) | `blocked:validation` | review the diff on the branch |
-| agent exited without a sentinel | `blocked:crashed` | investigate (likely infra/bug) |
-| a user `pre_*` guard hook rejected it | `blocked:policy` | the policy owner looks |
-| stall-reaper killed a hung worker | `blocked:stalled` | task too big / looping |
-| worktree/base/push setup failed | `blocked:infra` | environment, not issue content — ops |
+| Outcome (runtime) | Label | Recovery | Retry cap (env) |
+| ----------------- | ----- | -------- | --------------- |
+| runner quota / both exhausted | `blocked:quota` | **auto-retry** → ready-for-agent | 3 (`RED_AFK_RETRY_QUOTA`) |
+| couldn't integrate or land | `blocked:merge-conflict` | **auto-retry** (base settles) | 3 (`RED_AFK_RETRY_MERGE`) |
+| agent exited without a sentinel | `blocked:crashed` | **auto-retry once** (transient) | 1 (`RED_AFK_RETRY_CRASH`) |
+| a user `pre_*` guard hook rejected it | `blocked:policy` | **auto-retry once** | 1 (`RED_AFK_RETRY_POLICY`) |
+| agent emitted `<promise>BLOCKED</promise>` | `blocked:spec` | **pages** → ready-for-human (decide/clarify) | — (never auto) |
+| feedback gate failed (test/lint/build) | `blocked:validation` | **pages** → ready-for-human (review diff) | — (never auto) |
+| stall-reaper killed a hung worker | `blocked:stalled` | restores ready-for-agent (uncapped — follow-up) | — |
+| worktree/base/push setup failed | `blocked:infra` | pages → ready-for-human (ops) | — |
 
-These are **descriptive today**: the typed label is added *alongside* the routing label (e.g. `ready-for-human`, or the restored `ready-for-agent` for quota/policy/stalled), so routing is unchanged — you gain observability (`gh issue list --label blocked:validation`) without any behaviour change. The recoverable reasons (`blocked:quota`, `blocked:merge-conflict`) are the natural candidates for a future **auto-recovery** step (loop back to `ready-for-agent` with bounded backoff instead of paging) — deliberately deferred until opted into. `blocked:dependency` (above) is the only reason already wired to non-paging behaviour.
+**Bounded auto-recovery (live).** The four recoverable reasons loop back to `ready-for-agent` and are retried, up to their per-reason cap (counting real attempt-ledger attempts); on the cap they **escalate** to `ready-for-human` with a `🤖 /afk escalating … retry budget exhausted (attempt N/cap)` comment. So a transient hiccup self-heals and never pages, but a persistent one still surfaces — bounded, no runaway loop. Caps are env-tunable (non-numeric/0 → default). `spec` and `validation` **always page** (a human must decide / review the diff); `dependency` waits on its `req:N` edges (never pages). The typed `blocked:<reason>` label is added in every case, so the backlog stays filterable by reason regardless of routing.
+
+> Not yet wired: time-based backoff (today the re-queue is immediate; the cap is what prevents runaway) and a cap on the supervisor stall-reaper's `blocked:stalled` restore.
 
 All `blocked:*` labels are created on the fly when first applied (mirroring `runner-error`) and provisioned by `/setup-red-skills`.
 

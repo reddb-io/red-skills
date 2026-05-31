@@ -89,6 +89,7 @@ import {
   type SectionBodies,
 } from "./envelope-emit.js";
 import { dispatchHooks, type HookExec } from "./hook-dispatcher.js";
+import { recoveryCap, recoveryDecision, type RecoveryEnv, type RecoveryReason } from "./recovery.js";
 import { resolveHooks, type ResolveHooksOptions, type ResolvedHooks, type HookName } from "./hook-config.js";
 import { formatStartedMarker } from "./heartbeat.js";
 import { parseReqLabels, planCloseCascade, type DependentIssue } from "./boot-sweep.js";
@@ -239,6 +240,13 @@ export interface ProcessIssueDeps {
   /** History ledger path + clock for the terminal envelope (optional). */
   historyPath?: string;
   historyClock?: HistoryClock;
+  /**
+   * Env view the BOUNDED auto-recovery policy reads the RED_AFK_RETRY_* caps
+   * from (recovery.ts). Defaults to `process.env` in the CLI; tests inject a
+   * record. Absent → an empty env (every recoverable reason uses its default
+   * cap).
+   */
+  recoveryEnv?: RecoveryEnv;
 }
 
 /** Static per-issue inputs the caller resolves before `processIssue`. */
@@ -323,6 +331,77 @@ async function editLabelsTagged(
   if (typed === null) return deps.gh.editLabels(issue, remove, add);
   await deps.gh.ensureLabel(typed);
   return deps.gh.editLabels(issue, remove, [...add, typed]);
+}
+
+/**
+ * Map an envelope-emit `BlockedReason` to its BOUNDED-recovery policy reason
+ * (recovery.ts). The six terminal failure paths route through `routeRecovery`
+ * using these names; the reasons not listed here never reach the recovery
+ * router (`done` / `claim-lost` carry no typed label; `stalled` / `infra` are
+ * the supervisor / boot paths, out of scope).
+ */
+function recoveryReasonOf(reason: BlockedReason): RecoveryReason | null {
+  switch (reason) {
+    case "merge-conflict":
+      return "merge-conflict";
+    case "no-sentinel":
+      return "crashed";
+    case "exhausted":
+      return "quota";
+    case "hook-aborted":
+      return "policy";
+    case "blocked":
+      return "spec";
+    case "feedback-failed":
+      return "validation";
+    default:
+      return null;
+  }
+}
+
+/**
+ * Apply the BOUNDED auto-recovery routing for a terminal failure. The policy
+ * (recovery.ts) decides retry vs escalate from the reason + the real attempt
+ * number + the env caps:
+ *   - "retry"    → remove [running], add [ready-for-agent, blocked:<reason>]
+ *   - "escalate" → remove [running], add [ready-for-human,  blocked:<reason>]
+ * The typed `blocked:<reason>` label is added in BOTH cases (descriptive). When
+ * we ESCALATE a reason that was recoverable (its retry budget ran out), post a
+ * one-line comment so the human page is self-explanatory. Returns the decision
+ * so the caller can log / shape its terminal result if it cares.
+ */
+async function routeRecovery(
+  deps: ProcessIssueDeps,
+  issue: number,
+  reason: BlockedReason,
+  attemptN: number,
+): Promise<"retry" | "escalate"> {
+  const policyReason = recoveryReasonOf(reason);
+  // A reason with no policy mapping is treated as escalate (page a human),
+  // preserving the pre-recovery default for any unexpected reason.
+  if (policyReason === null) {
+    await editLabelsTagged(deps, issue, [LABEL_RUNNING], [LABEL_HUMAN], reason);
+    return "escalate";
+  }
+  const env = deps.recoveryEnv ?? {};
+  const decision = recoveryDecision(policyReason, attemptN, env);
+  if (decision === "retry") {
+    await editLabelsTagged(deps, issue, [LABEL_RUNNING], [LABEL_READY], reason);
+    return "retry";
+  }
+  // escalate
+  await editLabelsTagged(deps, issue, [LABEL_RUNNING], [LABEL_HUMAN], reason);
+  const cap = recoveryCap(policyReason, env);
+  if (cap !== null) {
+    // A previously-auto-recoverable reason whose retry budget is exhausted —
+    // announce the page so it is not mistaken for a first-attempt human block.
+    const typed = blockedReasonLabel(reason) ?? `blocked:${policyReason}`;
+    await deps.gh.comment(
+      issue,
+      `🤖 /afk escalating to ready-for-human: ${typed} retry budget exhausted (attempt ${attemptN}/${cap}).`,
+    );
+  }
+  return "escalate";
 }
 
 /**
@@ -504,7 +583,7 @@ export async function processIssue(
   // ---- on_attempt_error: the run ended without an AFK sentinel (ADR 0028) ----
   if (run.outcome === "no-sentinel") {
     await fireHook("on_attempt_error", onErrorContext(current, workerBranch, "no-sentinel", current.attempt));
-    await editLabelsTagged(deps, issue, [LABEL_RUNNING], [LABEL_HUMAN], "no-sentinel");
+    await routeRecovery(deps, issue, "no-sentinel", current.attempt);
     const posted = await emitFailure(common, "no-sentinel", "no-sentinel", {
       notes: "_(no Notes appended; inner agent exited without a sentinel)_",
       log: run.stdout ? run.stdout.split("\n").slice(-1)[0] || "(no captured stdout)" : "(no captured stdout)",
@@ -527,7 +606,7 @@ export async function processIssue(
 
   // ---- BLOCKED ----
   if (run.outcome === "blocked") {
-    await editLabelsTagged(deps, issue, [LABEL_RUNNING], [LABEL_HUMAN], "blocked");
+    await routeRecovery(deps, issue, "blocked", current.attempt);
     const posted = await emitFailure(common, "blocked", "blocked", {
       notes: `_(inner agent emitted BLOCKED — see iteration log at \`${input.attemptDir}\`)_`,
     });
@@ -556,7 +635,7 @@ export async function processIssue(
     now: deps.nowEpoch,
   });
   if (!feedback.ok) {
-    await editLabelsTagged(deps, issue, [LABEL_RUNNING], [LABEL_HUMAN], "feedback-failed");
+    await routeRecovery(deps, issue, "feedback-failed", current.attempt);
     const posted = await emitFailure(common, "blocked", "feedback", {
       notes: "Feedback validation failed after the inner agent emitted DONE. The worker branch was not merged.",
       validation: feedback.sidecar.join("\n"),
@@ -764,7 +843,7 @@ async function emitDone(
  * ready-for-human, preserve the attempt dir. Mirrors the do_merge-false branch. */
 async function mergeFailed(c: StageCommon, _reason: string, locked = false): Promise<ProcessIssueResult> {
   const { deps, input } = c;
-  await editLabelsTagged(deps, input.issue, [LABEL_RUNNING], [LABEL_HUMAN], "merge-conflict");
+  await routeRecovery(deps, input.issue, "merge-conflict", input.attempt);
   const posted = await emitFailure(c, "merge-conflict", "merge-conflict", {
     log: "(no merge log captured)",
   });
@@ -852,11 +931,16 @@ async function abortAfterClaim(
   hooksFired: HookName[],
   _reason: string,
 ): Promise<ProcessIssueResult> {
-  await editLabelsTagged(deps, input.issue, [LABEL_RUNNING], [LABEL_READY], "hook-aborted");
-  await deps.gh.comment(
-    input.issue,
-    `🤖 /afk aborted before runner invocation (${_reason}). Restored \`${LABEL_READY}\`.`,
-  );
+  // A policy-hook abort is BOUNDED-recoverable (recovery.ts, reason "policy"):
+  // retry under the cap (restore ready-for-agent) else escalate (ready-for-human
+  // + the budget-exhausted comment routeRecovery posts).
+  const decision = await routeRecovery(deps, input.issue, "hook-aborted", input.attempt);
+  if (decision === "retry") {
+    await deps.gh.comment(
+      input.issue,
+      `🤖 /afk aborted before runner invocation (${_reason}). Restored \`${LABEL_READY}\`.`,
+    );
+  }
   await deps.claimLock.release(input.issue);
   return {
     outcome: "hook-aborted",
@@ -886,7 +970,10 @@ async function exhausted(
   runner: Runner,
   both: boolean,
 ): Promise<ProcessIssueResult> {
-  await editLabelsTagged(deps, input.issue, [LABEL_RUNNING], [LABEL_READY], "exhausted");
+  // Quota exhaustion is BOUNDED-recoverable (recovery.ts, reason "quota"):
+  // restore ready-for-agent while under the cap, else escalate to
+  // ready-for-human (routeRecovery posts the budget-exhausted comment).
+  await routeRecovery(deps, input.issue, "exhausted", input.attempt);
   await deps.gh.comment(
     input.issue,
     both
