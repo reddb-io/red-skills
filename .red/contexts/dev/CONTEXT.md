@@ -58,6 +58,10 @@ _Avoid_: agent, slot, runner
 One numbered AFK execution of an **Issue**, materialised at `.red/tmp/workers/{wid}/{issue}-a{n}/`. The `a{n}` counter is per-**Issue** across all **Workers**, so each retry — even by a different worker — is a fresh attempt directory.
 _Avoid_: iteration, run, retry dir
 
+**Attempt Outcome**:
+How an **Attempt** ended, and what that ending *means* for the **Issue**: the single concept that owns the mapping from a terminal result to its `blocked:<reason>` label and its recovery disposition (retry vs page). Today this concept is smeared across three parallel enums (`ProcessOutcome`, `BlockedReason`, `RecoveryReason`); the deepening consolidates them so the outcome model has one owner.
+_Avoid_: process outcome, blocked reason, recovery reason (these are the three views being unified, not separate concepts)
+
 **Worktree**:
 An isolated `git worktree` created by AFK per **Attempt** under `.red/tmp/workers/{wid}/{issue}-a{n}/worktree/`.
 _Avoid_: afk clone, sandbox checkout
