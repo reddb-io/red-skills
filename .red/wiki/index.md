@@ -20,6 +20,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [feat(memory): ship runtime as bundled release asset + bootstrap fetch (ADR 0029)](./pages/229-feat-memory-ship-runtime-as-bundled-release-asset-bootstrap.md)
 - [fix(afk): anchor sandcastle under the attempt dir, not the repo root](./pages/326-fix-afk-anchor-sandcastle-under-the-attempt-dir-not-the-repo.md)
 - [fix(afk): native fleet supervisor — poll cadence + real stall-reaper IO](./pages/285-fix-afk-native-fleet-supervisor-poll-cadence-real-stall-reap.md)
+- [fix(afk): uncap sandcastle inner agent maxIterations (fixes #322)](./pages/327-fix-afk-uncap-sandcastle-inner-agent-maxiterations-fixes-322.md)
 - [fix(memory): remove backward-compat shims now that delivery + store are clean](./pages/232-fix-memory-remove-backward-compat-shims-now-that-delivery-st.md)
 - [fix(memory): resolveRedBinary honours REDDB_BIN before the SDK package lookup](./pages/230-fix-memory-resolveredbinary-honours-reddb-bin-before-the-sdk.md)
 - [fix(memory): skills invoke scripts/bootstrap.mjs, not the absent dist/cli.js](./pages/231-fix-memory-skills-invoke-scripts-bootstrap-mjs-not-the-absen.md)
