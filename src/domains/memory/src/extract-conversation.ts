@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { EXTRACTION_PROFILES } from "./extraction-schema.js";
 import { contentHash } from "./hash.js";
 import type { EdgeLabel, MemoryNode, NodeType } from "./schema.js";
 
@@ -421,18 +422,27 @@ export interface InferredExtraction {
  * `extractCode`'s `CodeExtraction`).
  */
 export function factsToGraph(facts: ExtractedFact[], source = "conversation"): InferredExtraction {
-  const nodes: MemoryNode[] = facts.map((f) => ({
-    label: f.label,
-    node_type: f.node_type,
-    properties: {
-      title: f.title,
-      summary: f.summary,
-      tags: f.tags,
-      source,
-      confidence: "INFERRED",
-      hash: contentHash(f.label, f.node_type, f.title, f.summary ?? ""),
-    },
-  }));
+  const nodes: MemoryNode[] = facts.map((f) => {
+    // Two-axis resolution (ADR 0035): the strict-write profile assigns a valid
+    // structural home and preserves the proposed kind as an open engineering
+    // code. `node_type` is kept for backward compatibility; the two axes are
+    // recorded additively so recall/clustering can use them downstream.
+    const resolution = EXTRACTION_PROFILES.strictWrite.resolve(f.node_type);
+    return {
+      label: f.label,
+      node_type: f.node_type,
+      properties: {
+        title: f.title,
+        summary: f.summary,
+        tags: f.tags,
+        source,
+        confidence: "INFERRED" as const,
+        structural_type: resolution.structuralType,
+        engineering_code: resolution.engineeringCode ?? f.node_type,
+        hash: contentHash(f.label, f.node_type, f.title, f.summary ?? ""),
+      },
+    };
+  });
 
   const edges: InferredExtraction["edges"] = [];
   for (const f of facts) {
