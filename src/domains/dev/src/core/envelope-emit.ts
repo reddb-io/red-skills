@@ -23,6 +23,59 @@ import { buildEnvelope, type AttemptStatus, type EnvelopeSection } from "./envel
 import { pushAttempt, type GitExec } from "./remote-branch.js";
 import { historyAppend, type HistoryAppendFields, type HistoryClock, type HistoryEvent, type HistoryIO } from "./history.js";
 
+/**
+ * The terminal-failure reasons the AFK runtime distinguishes. A superset of the
+ * `ProcessOutcome` failure values (process-issue.ts) plus two reasons sourced
+ * from outside the per-issue lifecycle:
+ *   - `stalled` — the supervisor stall-reaper hard-killed the slot.
+ *   - `infra`   — worktree/base/push setup failed before the agent ran.
+ *
+ * Successful or abandoned outcomes (`done`, `claim-lost`) are included so the
+ * mapping is total, but they carry no typed label (null).
+ */
+export type BlockedReason =
+  | "exhausted"
+  | "merge-conflict"
+  | "blocked"
+  | "feedback-failed"
+  | "no-sentinel"
+  | "hook-aborted"
+  | "stalled"
+  | "infra"
+  | "done"
+  | "claim-lost";
+
+/**
+ * Pure mapping from a terminal failure reason to its DESCRIPTIVE `blocked:<…>`
+ * observability label, or null when the outcome carries no typed label
+ * (`done` / `claim-lost`). OBSERVABILITY ONLY — this never changes where an
+ * issue routes; the caller adds the returned label ALONGSIDE the existing
+ * routing label (ready-for-human / ready-for-agent).
+ */
+export function blockedReasonLabel(reason: BlockedReason): string | null {
+  switch (reason) {
+    case "exhausted":
+      return "blocked:quota";
+    case "merge-conflict":
+      return "blocked:merge-conflict";
+    case "blocked":
+      return "blocked:spec";
+    case "feedback-failed":
+      return "blocked:validation";
+    case "no-sentinel":
+      return "blocked:crashed";
+    case "hook-aborted":
+      return "blocked:policy";
+    case "stalled":
+      return "blocked:stalled";
+    case "infra":
+      return "blocked:infra";
+    case "done":
+    case "claim-lost":
+      return null;
+  }
+}
+
 /** Render N seconds as `<m>m<s>s`. Mirrors envelope_fmt_duration. */
 export function fmtDuration(seconds: number): string {
   const s = Number.isFinite(seconds) ? Math.trunc(seconds) : 0;

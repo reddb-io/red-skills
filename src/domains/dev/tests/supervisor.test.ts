@@ -49,6 +49,7 @@ interface FakeIo {
   comment: ReturnType<typeof vi.fn>;
   editLabels: ReturnType<typeof vi.fn>;
   ensureRunnerErrorLabel: ReturnType<typeof vi.fn>;
+  ensureLabel: ReturnType<typeof vi.fn>;
   now: ReturnType<typeof vi.fn>;
 }
 
@@ -73,6 +74,7 @@ function makeDeps(over: Partial<Record<keyof FakeIo, unknown>> = {}): {
     comment: vi.fn(async () => {}),
     editLabels: vi.fn(async () => {}),
     ensureRunnerErrorLabel: vi.fn(async () => {}),
+    ensureLabel: vi.fn(async () => {}),
     now: vi.fn(() => NOW),
     ...(over as Partial<FakeIo>),
   };
@@ -95,6 +97,7 @@ function makeDeps(over: Partial<Record<keyof FakeIo, unknown>> = {}): {
       comment: io.comment,
       editLabels: io.editLabels,
       ensureRunnerErrorLabel: io.ensureRunnerErrorLabel,
+      ensureLabel: io.ensureLabel,
     },
     now: io.now,
   };
@@ -311,7 +314,10 @@ describe("pollStallDetector reaper gating", () => {
     expect(issue).toBe(190);
     expect(body).toContain('data-attempt-status="no-sentinel"');
     expect(body).toContain("stalled tool call");
-    expect(io.editLabels).toHaveBeenCalledWith(190, ["ready-for-agent"], ["running"]);
+    // ADDITIVE typed-blocked tag: routing unchanged (ready-for-agent restored)
+    // with blocked:stalled appended; the typed label is created on the fly.
+    expect(io.ensureLabel).toHaveBeenCalledWith("blocked:stalled");
+    expect(io.editLabels).toHaveBeenCalledWith(190, ["ready-for-agent", "blocked:stalled"], ["running"]);
     expect(io.teardownIterDir).toHaveBeenCalledOnce();
     // Slot freed + idempotency guard set.
     const slot = state.slots[0]!;

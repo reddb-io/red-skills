@@ -27,6 +27,8 @@ interface Trace {
   runAgentCalls: RunAgentInput[];
   /** Labels queried via gh.listByLabel during the close cascade. */
   listByLabelCalls: string[];
+  /** Typed `blocked:<reason>` labels created on the fly via gh.ensureLabel. */
+  ensuredLabels: string[];
 }
 
 interface HarnessOptions {
@@ -75,6 +77,7 @@ function harness(opts: HarnessOptions = {}): {
     released: [],
     runAgentCalls: [],
     listByLabelCalls: [],
+    ensuredLabels: [],
   };
 
   const outcome = opts.outcome ?? "done";
@@ -91,6 +94,9 @@ function harness(opts: HarnessOptions = {}): {
       async editLabels(issue, remove, add) {
         trace.labelEdits.push({ issue, remove, add });
         return true;
+      },
+      async ensureLabel(name) {
+        trace.ensuredLabels.push(name);
       },
       async comment(issue, body) {
         trace.comments.push({ issue, body });
@@ -371,8 +377,13 @@ describe("processIssue — BLOCKED", () => {
     expect(result.outcome).toBe("blocked");
     expect(result.preserved).toBe(true);
     expect(result.swept).toBe(false);
-    // claim then ready-for-human; never closed.
-    expect(labelTrace(trace)).toEqual(["-ready-for-agent|+running", "-running|+ready-for-human"]);
+    // claim then ready-for-human + the typed blocked:spec tag; never closed.
+    expect(labelTrace(trace)).toEqual(["-ready-for-agent|+running", "-running|+ready-for-human+blocked:spec"]);
+    // routing unchanged: ready-for-human still applied; typed label added alongside.
+    const blockedEdit = trace.labelEdits.at(-1)!;
+    expect(blockedEdit.add).toContain("ready-for-human");
+    expect(blockedEdit.add).toContain("blocked:spec");
+    expect(trace.ensuredLabels).toContain("blocked:spec");
     expect(trace.closed).toEqual([]);
     expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "blocked" }]);
     // no completion sweep, no remote delete, no land-push.
@@ -395,7 +406,11 @@ describe("processIssue — no-sentinel (run ended without a <promise>)", () => {
 
     expect(result.outcome).toBe("no-sentinel");
     expect(result.preserved).toBe(true);
-    expect(labelTrace(trace)).toEqual(["-ready-for-agent|+running", "-running|+ready-for-human"]);
+    expect(labelTrace(trace)).toEqual(["-ready-for-agent|+running", "-running|+ready-for-human+blocked:crashed"]);
+    const nsEdit = trace.labelEdits.at(-1)!;
+    expect(nsEdit.add).toContain("ready-for-human");
+    expect(nsEdit.add).toContain("blocked:crashed");
+    expect(trace.ensuredLabels).toContain("blocked:crashed");
     expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "no-sentinel" }]);
     // on_attempt_error fires; post_attempt does NOT (ADR 0028).
     expect(result.hooksFired).toEqual(["pre_worktree", "pre_attempt", "on_attempt_error"]);
@@ -409,7 +424,11 @@ describe("processIssue — feedback fail", () => {
 
     expect(result.outcome).toBe("feedback-failed");
     expect(result.preserved).toBe(true);
-    expect(labelTrace(trace)).toEqual(["-ready-for-agent|+running", "-running|+ready-for-human"]);
+    expect(labelTrace(trace)).toEqual(["-ready-for-agent|+running", "-running|+ready-for-human+blocked:validation"]);
+    const fbEdit = trace.labelEdits.at(-1)!;
+    expect(fbEdit.add).toContain("ready-for-human");
+    expect(fbEdit.add).toContain("blocked:validation");
+    expect(trace.ensuredLabels).toContain("blocked:validation");
     expect(trace.closed).toEqual([]);
     expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "blocked" }]);
     // post_attempt fired (the run authored DONE), pre_merge never reached, and
@@ -446,8 +465,13 @@ describe("processIssue — pre_worktree hook abort", () => {
     const result = await processIssue(deps, input);
     expect(result.outcome).toBe("hook-aborted");
     expect(result.preserved).toBe(true);
-    // claim then restore ready-for-agent; sandcastle was never invoked.
-    expect(labelTrace(trace)).toEqual(["-ready-for-agent|+running", "-running|+ready-for-agent"]);
+    // claim then restore ready-for-agent + the typed blocked:policy tag (routing
+    // unchanged); sandcastle was never invoked.
+    expect(labelTrace(trace)).toEqual(["-ready-for-agent|+running", "-running|+ready-for-agent+blocked:policy"]);
+    const haEdit = trace.labelEdits.at(-1)!;
+    expect(haEdit.add).toContain("ready-for-agent");
+    expect(haEdit.add).toContain("blocked:policy");
+    expect(trace.ensuredLabels).toContain("blocked:policy");
     expect(trace.runAgentCalls).toEqual([]);
     expect(result.hooksFired).toEqual(["pre_worktree"]);
   });
@@ -463,8 +487,13 @@ describe("processIssue — runner exhaustion (no --fallback-runner)", () => {
     expect(result.swept).toBe(false);
     // only one run; no swap.
     expect(trace.runAgentCalls.length).toBe(1);
-    // claim → running, then restore ready-for-agent (not ready-for-human).
-    expect(labelTrace(trace)).toEqual(["-ready-for-agent|+running", "-running|+ready-for-agent"]);
+    // claim → running, then restore ready-for-agent (not ready-for-human) + the
+    // typed blocked:quota tag (routing unchanged).
+    expect(labelTrace(trace)).toEqual(["-ready-for-agent|+running", "-running|+ready-for-agent+blocked:quota"]);
+    const exEdit = trace.labelEdits.at(-1)!;
+    expect(exEdit.add).toContain("ready-for-agent");
+    expect(exEdit.add).toContain("blocked:quota");
+    expect(trace.ensuredLabels).toContain("blocked:quota");
     expect(trace.closed).toEqual([]);
     expect(trace.released).toEqual([9]);
     // no post_attempt fired (exhaustion is terminal before the sentinel branch).
@@ -514,8 +543,10 @@ describe("processIssue — runner exhaustion → fallback swap → retry", () =>
     expect(result.outcome).toBe("exhausted");
     expect(result.preserved).toBe(true);
     expect(trace.runAgentCalls.length).toBe(2);
-    // ready-for-agent restored (both-runners comment posted), claim released.
-    expect(labelTrace(trace)).toEqual(["-ready-for-agent|+running", "-running|+ready-for-agent"]);
+    // ready-for-agent restored (both-runners comment posted) + the typed
+    // blocked:quota tag (routing unchanged), claim released.
+    expect(labelTrace(trace)).toEqual(["-ready-for-agent|+running", "-running|+ready-for-agent+blocked:quota"]);
+    expect(trace.ensuredLabels).toContain("blocked:quota");
     expect(trace.released).toEqual([9]);
     expect(trace.closed).toEqual([]);
     // both attempts closed their post_attempt cycle; no merge ever reached.
@@ -582,8 +613,11 @@ describe("processIssue — merge-conflict one-shot self-resolve (gap 3)", () => 
     const result = await processIssue(deps, input);
     expect(resolverCalls).toHaveLength(1);
     expect(result.outcome).toBe("merge-conflict");
-    // unresolved → ready-for-human, issue not closed.
+    // unresolved → ready-for-human + the typed blocked:merge-conflict tag
+    // (routing unchanged), issue not closed.
     expect(trace.labelEdits.some((e) => e.add.includes("ready-for-human"))).toBe(true);
+    expect(trace.labelEdits.some((e) => e.add.includes("blocked:merge-conflict"))).toBe(true);
+    expect(trace.ensuredLabels).toContain("blocked:merge-conflict");
     expect(trace.closed).not.toContain(9);
   });
 

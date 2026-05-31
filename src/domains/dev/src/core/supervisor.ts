@@ -16,6 +16,7 @@
 
 import { decideReaperSignal, deriveSnapshot, type ProcessSnapshotEntry } from "./reaper-signal.js";
 import { buildEnvelope } from "./envelope.js";
+import { blockedReasonLabel } from "./envelope-emit.js";
 
 // ---------- tunables ----------
 
@@ -234,6 +235,10 @@ export interface SupervisorGh {
   /** Idempotently ensure the runner-error label exists. Mirrors
    * ensure_runner_error_label. */
   ensureRunnerErrorLabel(): Promise<void>;
+  /** Idempotently create an arbitrary label on the fly (best-effort) so a
+   * missing typed `blocked:<reason>` observability label never fails the reap.
+   * Mirrors the runner-error label-create pattern. */
+  ensureLabel(name: string): Promise<void>;
 }
 
 /** The slot's current iteration, resolved from the filesystem. Mirrors the
@@ -461,10 +466,15 @@ export async function reapStalledSlot(
   state.stalled = false;
   state.stallSinceEpoch = 0;
 
-  // 3. Envelope + label rotation (only with a recovered issue number).
+  // 3. Envelope + label rotation (only with a recovered issue number). ADDITIVE
+  // typed-blocked tag: the routing is unchanged (still rotates back to
+  // ready-for-agent); `blocked:stalled` is appended alongside for observability,
+  // created on the fly so a missing label never fails the reap.
   if (info && info.issue !== null) {
     await deps.gh.comment(info.issue, buildReaperEnvelope(info));
-    await deps.gh.editLabels(info.issue, ["ready-for-agent"], ["running"]);
+    const typed = blockedReasonLabel("stalled");
+    if (typed !== null) await deps.gh.ensureLabel(typed);
+    await deps.gh.editLabels(info.issue, typed !== null ? ["ready-for-agent", typed] : ["ready-for-agent"], ["running"]);
   }
 
   // 4. Teardown.
