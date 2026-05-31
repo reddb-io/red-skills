@@ -150,6 +150,11 @@ jobs:
         run: |
           set -euo pipefail
           pnpm install --frozen-lockfile
+          # The dev bundle imports ../../shared/args.ts, and esbuild resolves its
+          # `cli-args-parser` dep from src/shared's OWN node_modules (ADR 0034
+          # self-contained shared package), not from src/domains/dev. Install it too,
+          # or the bundle fails with "Could not resolve cli-args-parser".
+          pnpm -C ../../shared install --frozen-lockfile
           # `build` emits the canonical dist/dev.bundle.min.mjs (release asset,
           # ADR 0034) plus the transition bin/afk.mjs staged below.
           pnpm build
