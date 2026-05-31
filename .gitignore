@@ -24,3 +24,6 @@ dist/
 
 # nested per-skill local state (session pointers)
 **/.red/memory/sessions/
+
+# sandcastle runtime scratch (ADR 0033)
+.sandcastle/
