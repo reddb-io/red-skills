@@ -82979,8 +82979,151 @@ async function collectPrecheckFacts(ctx) {
   };
 }
 
+// src/core/mirror.ts
+function mirrorKey(worker_id, issue) {
+  return `${worker_id}:${issue}`;
+}
+function mirrorReconcile(desired, tracked) {
+  const trackedMap = /* @__PURE__ */ new Map();
+  for (const t of tracked) trackedMap.set(t.key, t);
+  const desiredKeys = new Set(desired.map((w3) => mirrorKey(w3.worker_id, w3.issue)));
+  const ops = [];
+  for (const w3 of desired) {
+    const key = mirrorKey(w3.worker_id, w3.issue);
+    const cur = trackedMap.get(key);
+    if (w3.status === "running") {
+      if (cur === void 0) {
+        ops.push({
+          op: "create",
+          key,
+          worker_id: w3.worker_id,
+          issue: w3.issue,
+          title: w3.title,
+          stage: w3.stage,
+          status: "running"
+        });
+      } else if (cur.stage !== w3.stage) {
+        ops.push({
+          op: "update",
+          key,
+          worker_id: w3.worker_id,
+          issue: w3.issue,
+          title: w3.title,
+          stage: w3.stage,
+          status: "running"
+        });
+      }
+    } else if (cur !== void 0) {
+      ops.push({
+        op: "complete",
+        key,
+        worker_id: w3.worker_id,
+        issue: w3.issue,
+        result: w3.status === "blocked" ? "failed" : "completed"
+      });
+    }
+  }
+  for (const t of tracked) {
+    if (!desiredKeys.has(t.key)) {
+      ops.push({ op: "complete", key: t.key, result: "completed" });
+    }
+  }
+  return ops;
+}
+function mirrorPlan(desired, tracked) {
+  const calls = [];
+  for (const op of mirrorReconcile(desired, tracked)) {
+    if (op.op === "create") {
+      calls.push({
+        call: "TaskCreate",
+        key: op.key,
+        title: `#${op.issue} ${op.worker_id} \u2014 ${op.title}`,
+        description: `stage: ${op.stage}`,
+        state: "in_progress"
+      });
+    } else if (op.op === "update") {
+      calls.push({
+        call: "TaskUpdate",
+        key: op.key,
+        description: `stage: ${op.stage}`,
+        state: "in_progress"
+      });
+    } else {
+      calls.push({ call: "TaskUpdate", key: op.key, state: op.result });
+    }
+  }
+  return calls;
+}
+var CODEX_NO_NATIVE_NOTICE = "afk: Codex has no native task surface \u2014 mirroring via the monitor.sh dashboard instead.";
+function codexSinkPlan(desired, tracked, options2 = {}) {
+  if (options2.nativeTaskAvailable) {
+    return { plan: mirrorPlan(desired, tracked) };
+  }
+  return { plan: [], notice: CODEX_NO_NATIVE_NOTICE };
+}
+
 // src/commands/monitor.ts
-async function monitorCommand(args2, cwd = process.cwd(), stdout2 = process.stdout) {
+function workersToDesired(workers) {
+  const out = [];
+  for (const w3 of workers) {
+    const number4 = w3.state.current.number;
+    if (number4 === "" || number4 === null || number4 === void 0) continue;
+    const issue = typeof number4 === "number" ? number4 : Number(number4);
+    if (!Number.isFinite(issue)) continue;
+    out.push({
+      worker_id: w3.state.worker_id,
+      issue,
+      title: w3.state.current.title,
+      stage: w3.state.current.stage,
+      started_at: w3.state.current.started_at || w3.state.started_at,
+      status: w3.live ? "running" : "gone"
+    });
+  }
+  return out;
+}
+function parseTrackedJsonl(text3) {
+  const out = [];
+  for (const raw3 of text3.split("\n")) {
+    const line = raw3.trim();
+    if (line === "") continue;
+    let parsed;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (parsed === null || typeof parsed !== "object") continue;
+    const rec = parsed;
+    if (typeof rec.key !== "string") continue;
+    out.push({ key: rec.key, stage: typeof rec.stage === "string" ? rec.stage : "" });
+  }
+  return out;
+}
+function runMirrorPlan(workers, trackedJsonl, options2 = {}) {
+  const desired = workersToDesired(workers);
+  const tracked = parseTrackedJsonl(trackedJsonl);
+  const calls = options2.codex ? codexSinkPlan(desired, tracked).plan : mirrorPlan(desired, tracked);
+  if (calls.length === 0) return "";
+  return `${calls.map((c) => JSON.stringify(c)).join("\n")}
+`;
+}
+async function readStdin(stdin3) {
+  const chunks2 = [];
+  for await (const chunk3 of stdin3) {
+    chunks2.push(typeof chunk3 === "string" ? Buffer.from(chunk3) : chunk3);
+  }
+  return Buffer.concat(chunks2).toString("utf8");
+}
+async function monitorCommand(args2, cwd = process.cwd(), stdout2 = process.stdout, stdin3 = process.stdin) {
+  if (args2.includes("--mirror-plan")) {
+    const runnerIdx = args2.indexOf("--runner");
+    const codex2 = args2.includes("--codex") || args2.includes("--runner=codex") || runnerIdx !== -1 && args2[runnerIdx + 1] === "codex";
+    const { workers: workers2 } = await collectMonitorInputs(cwd);
+    const trackedJsonl = await readStdin(stdin3);
+    const out = runMirrorPlan(workers2, trackedJsonl, { codex: codex2 });
+    if (out !== "") stdout2.write(out);
+    return 0;
+  }
   const { workers, events } = await collectMonitorInputs(cwd);
   const now = Math.floor(Date.now() / 1e3);
   const dashboard = renderCompactDashboard(workers, events, now);
@@ -86106,7 +86249,7 @@ function renderStatusline(input) {
 }
 
 // src/commands/statusline.ts
-function readStdin(stdin3) {
+function readStdin2(stdin3) {
   return new Promise((resolve6) => {
     if (stdin3.isTTY) {
       resolve6("");
@@ -86181,7 +86324,7 @@ function resolveClaude(payload) {
 }
 async function statuslineCommand(args2, cwd = process.cwd(), stdout2 = process.stdout, stdin3 = process.stdin) {
   const rootArg = args2[0];
-  const text3 = await readStdin(stdin3);
+  const text3 = await readStdin2(stdin3);
   const payload = parsePayload(text3);
   const root = resolveRoot(rootArg, payload, cwd);
   if (!statuslineEnabled(root)) return 0;
