@@ -66,7 +66,7 @@ Every issue moves through this state machine. Arrows show the transitions; the a
                   ┌──────────────────────┐
                   │       running        │
                   │  (worktree active,   │
-                  │   heartbeats post)   │
+                  │   timeline-only)     │
                   └──────────┬───────────┘
                              │
               ┌──────────────┼──────────────┐
@@ -93,7 +93,7 @@ The triage agent or maintainer needs more information from the reporter before a
 The issue body contains a complete `## Agent brief` section (see `triage/AGENT-BRIEF.md`) that forms a contract sufficient for an AFK agent to implement without human context. **This is the only state `/afk` consumes.** Applied by `/triage` (after grilling) or `/to-issues` (on creation when the slice is AFK-safe).
 
 ### `running`
-`/afk` has claimed the issue and is actively executing it. Applied atomically with the removal of `ready-for-agent` so two parallel `/afk` runs cannot race on the same issue. The orchestrator's heartbeat sub-shell posts `:one:` → `:four:` comments every 10 min while this label is present. Removed on close (success), on blocker (replaced with `ready-for-human`), or on graceful release (if the user interrupts the loop).
+`/afk` has claimed the issue and is actively executing it. Applied atomically with the removal of `ready-for-agent` so two parallel `/afk` runs cannot race on the same issue. The issue thread stays **timeline-only** while this label is present (boot stamp, attempt envelopes, human guidance, closing envelope) — there is no periodic heartbeat comment; liveness is signalled locally (inner-agent stream, agent-lane JSONL, state-file mtime), not on the thread (Slice D). Removed on close (success), on blocker (replaced with `ready-for-human`), or on graceful release (if the user interrupts the loop).
 
 ### `ready-for-human`
 The issue requires human implementation. Two sources: `/triage` decides it during evaluation (e.g. architectural call, design review needed), or `/afk` promotes it from `running` after a blocker (inner agent gave up, merge conflict couldn't be auto-resolved, both runners exhausted). When `/afk` promotes, the worktree is **preserved at the moment of blocker** so the human can pick up in place.
@@ -104,19 +104,17 @@ The issue is **waiting on one or more other issues to close** — it is healthy,
 ### `wontfix`
 Will not be actioned. Applied by `/triage`. For bugs, paired with a polite explanation and close. For enhancements, paired with a `.out-of-scope/*.md` entry (see `triage/OUT-OF-SCOPE.md`).
 
-## Heartbeat Comments
+## Liveness While `running` (timeline-only)
 
-While `running`, `/afk` posts a heartbeat comment every 10 minutes so the issue is never silent during long executions:
+The periodic issue-thread heartbeat (`:one:` → `:four:` cycling every 10 min) was **removed in Slice D**. The issue thread is now **timeline-only**: it carries the boot stamp, the per-attempt terminal envelopes, human-guidance directives, and the closing envelope — no periodic noise.
 
-```
-t=10 min  →  :one:
-t=20 min  →  :two:
-t=30 min  →  :three:
-t=40 min  →  :four:
-t=50 min  →  :one:   (cycle resets)
-```
+Worker liveness during a long execution is signalled **locally**, not on the thread:
 
-Stops on any terminal transition out of `running`.
+- the inner-agent stdout stream tee'd into the attempt's `afk.log`;
+- the clean agent-lane `agent.log.jsonl` (one record per assistant turn — the true liveness signal) plus the `log.jsonl` firehose;
+- the state-file mtime, combined with orchestrator-PID liveness, which `/afk monitor` renders as `🟢 live` vs `🟡 stale`.
+
+See the AFK `SKILL.md` *Heartbeat (local-only, post-Slice-D)* section for the authoritative description.
 
 ## Optional Auxiliary Labels
 
