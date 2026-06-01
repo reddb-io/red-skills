@@ -87,12 +87,20 @@ lives outside the plugin tree.**
 
 ## Status
 
-Accepted.
+**Superseded by ADR 0038.** This ADR's load-bearing premise — that the dev bundle
+is "tiny (single-digit KB to low tens of KB)" — stopped holding once the shell→TS
+port completed: the committed `bin/afk.mjs` grew to ~2.6 MB and, rebuilt per
+release, became the dominant source of git-history bloat. ADR 0038 flips the dev
+runtime to the ADR 0034 fetched-asset model (the fetch path and SessionStart
+pre-warm that did not exist when this ADR was written now do), replacing the
+committed bundle with a small hand-written launcher.
 
 ## Related
 
+- ADR 0038 — dev runtime ships as a fetched Release asset, not a committed bundle
+  (supersedes this ADR).
 - ADR 0029 — Memory runtime ships as a bundled asset fetched by a bootstrap (the
-  model AFK deliberately diverges from, and the source of the dist-noop trap this
-  ADR avoids).
+  model AFK deliberately diverged from here, and the source of the dist-noop trap
+  this ADR avoided).
 - ADR 0003 — runner adapters are explicitly per-runner (the `runner-*.md` split the
   TS `runner-detection` module mirrors).
