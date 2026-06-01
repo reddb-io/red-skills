@@ -4,6 +4,12 @@ import {
   renderWorkerCompactLine,
   type CompactWorker,
 } from "../src/core/monitor.js";
+import {
+  runMirrorPlan,
+  parseTrackedJsonl,
+  workersToDesired,
+} from "../src/commands/monitor.js";
+import type { MirrorCall } from "../src/core/mirror.js";
 
 const baseWorker = (over: Partial<CompactWorker> = {}): CompactWorker => ({
   state: {
@@ -159,5 +165,116 @@ describe("monitor — compact dashboard", () => {
     const lines = out.split("\n");
     expect(lines[0].startsWith("48h:")).toBe(true);
     expect(out).toContain("workers: (none");
+  });
+});
+
+describe("monitor — mirror plan", () => {
+  const liveWorker = (
+    worker_id: string,
+    number: number,
+    title: string,
+    stage: string,
+    live = true,
+  ): CompactWorker =>
+    baseWorker({
+      state: {
+        ...baseWorker().state,
+        worker_id,
+        current: { number, title, stage, started_at: "2026-05-30T11:00:00Z" },
+      },
+      live,
+    });
+
+  const parse = (out: string): MirrorCall[] =>
+    out
+      .split("\n")
+      .filter((l) => l.trim() !== "")
+      .map((l) => JSON.parse(l) as MirrorCall);
+
+  it("cold reconcile: a new live worker emits a TaskCreate", () => {
+    const out = runMirrorPlan([liveWorker("wAAAA", 42, "do thing", "impl")], "");
+    const calls = parse(out);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      call: "TaskCreate",
+      key: "wAAAA:42",
+      title: "#42 wAAAA — do thing",
+      description: "stage: impl",
+      state: "in_progress",
+    });
+  });
+
+  it("stage change emits a TaskUpdate carrying the new stage", () => {
+    const tracked = JSON.stringify({ key: "wAAAA:42", stage: "impl" });
+    const out = runMirrorPlan([liveWorker("wAAAA", 42, "t", "tests")], tracked);
+    const calls = parse(out);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      call: "TaskUpdate",
+      key: "wAAAA:42",
+      description: "stage: tests",
+      state: "in_progress",
+    });
+  });
+
+  it("terminal (non-live) tracked worker completes", () => {
+    const tracked = JSON.stringify({ key: "wAAAA:42", stage: "impl" });
+    const out = runMirrorPlan(
+      [liveWorker("wAAAA", 42, "t", "impl", false)],
+      tracked,
+    );
+    const calls = parse(out);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      call: "TaskUpdate",
+      key: "wAAAA:42",
+      state: "completed",
+    });
+  });
+
+  it("tracked worker absent from desired completes", () => {
+    const tracked = JSON.stringify({ key: "wAAAA:42", stage: "impl" });
+    const out = runMirrorPlan([], tracked);
+    const calls = parse(out);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ call: "TaskUpdate", key: "wAAAA:42", state: "completed" });
+  });
+
+  it("no change emits no output (idempotent)", () => {
+    const tracked = JSON.stringify({ key: "wAAAA:42", stage: "impl" });
+    const out = runMirrorPlan([liveWorker("wAAAA", 42, "t", "impl")], tracked);
+    expect(out).toBe("");
+  });
+
+  it("codex runner falls back to an empty plan (no native surface)", () => {
+    const out = runMirrorPlan([liveWorker("wAAAA", 42, "t", "impl")], "", {
+      codex: true,
+    });
+    expect(out).toBe("");
+  });
+
+  it("workersToDesired omits idle workers and maps liveness", () => {
+    const desired = workersToDesired([
+      liveWorker("wAAAA", 42, "t", "impl"),
+      baseWorker({
+        state: {
+          ...baseWorker().state,
+          worker_id: "wIDLE",
+          current: { number: "", title: "", stage: "", started_at: "" },
+        },
+      }),
+      liveWorker("wDEAD", 7, "t", "impl", false),
+    ]);
+    expect(desired.map((d) => d.worker_id)).toEqual(["wAAAA", "wDEAD"]);
+    expect(desired[0]!.status).toBe("running");
+    expect(desired[1]!.status).toBe("gone");
+  });
+
+  it("parseTrackedJsonl skips blank/garbage lines and tolerates missing stage", () => {
+    const text = '\n{"key":"a:1","stage":"impl"}\nnot json\n{"stage":"x"}\n{"key":"b:2"}\n';
+    expect(parseTrackedJsonl(text)).toEqual([
+      { key: "a:1", stage: "impl" },
+      { key: "b:2", stage: "" },
+    ]);
   });
 });
