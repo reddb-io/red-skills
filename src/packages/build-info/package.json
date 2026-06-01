@@ -1,6 +1,6 @@
 {
   "name": "@reddb-io/build-info",
-  "version": "1.147.6",
+  "version": "1.148.0",
   "private": true,
   "type": "module",
   "description": "Shared runtime build metadata helpers for RedSkills bundled apps.",
