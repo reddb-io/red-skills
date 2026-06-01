@@ -27,7 +27,7 @@ import {
   type GitExec,
 } from "./remote-branch.js";
 import { buildHandoff, type HandoffComment } from "./handoff.js";
-import { type AgentStreamEvent, type RunAgentInput, type RunAgentResult } from "./execution.js";
+import { type AgentOutcome, type AgentStreamEvent, type RunAgentInput, type RunAgentResult } from "./execution.js";
 import {
   relevantScopes,
   runFeedback,
@@ -523,19 +523,19 @@ export async function processIssue(
     env: agentEnv,
   });
 
-  // ---- runner-fallback subsystem (--fallback-runner / RUNNER_EXHAUSTED) ----
-  // The active runner signalled quota / rate-limit exhaustion (execution.ts
-  // mapped a sandcastle throw / stdout to the `exhausted` outcome). Without
-  // --fallback-runner a single exhaustion is terminal. With it, close the
-  // exhausted attempt's cycle (post_attempt status=exhausted), swap to the
+  // ---- runner-fallback subsystem (--fallback-runner / runner failure) ----
+  // The active runner signalled quota / rate-limit exhaustion OR a transient
+  // runner transport/setup failure (for example Codex websocket 502 /
+  // thread-start). Without --fallback-runner the runner failure is terminal
+  // through bounded recovery. With it, close this runner's cycle, swap to the
   // other runner, fire pre_attempt again (the per-runner-invocation cadence,
-  // #226 / ADR 0026), and re-run once. Double-exhaustion is terminal.
-  if (run.outcome === "exhausted") {
+  // #226 / ADR 0026), and re-run once. A second runner failure is terminal.
+  if (isRunnerRecoverableOutcome(run.outcome)) {
     if (!deps.fallbackRunner) {
-      return await exhausted(deps, input, branch, base, hooksFired, activeRunner, false);
+      return await runnerRecoverable(deps, input, branch, base, hooksFired, activeRunner, run.outcome, false);
     }
-    // Close attempt N's cycle (status=exhausted) before swapping.
-    await fireHook("post_attempt", postAttemptContext({ ...input, attempt: attemptN }, branch, "fail", "exhausted"));
+    // Close attempt N's cycle before swapping.
+    await fireHook("post_attempt", postAttemptContext({ ...input, attempt: attemptN }, branch, "fail", run.outcome));
     const other: Runner = activeRunner === "claude" ? "codex" : "claude";
     activeRunner = other;
     attemptN += 1;
@@ -562,11 +562,11 @@ export async function processIssue(
       // FIX J: carry the pre_worktree env onto the fallback runner too.
       env: agentEnv,
     });
-    if (run.outcome === "exhausted") {
-      // Both runners exhausted → close the fallback attempt's cycle, then it is
-      // terminal with the double-exhaustion (both-runners) history event.
-      await fireHook("post_attempt", postAttemptContext({ ...input, attempt: attemptN }, branch, "fail", "exhausted"));
-      return await exhausted(deps, input, branch, base, hooksFired, activeRunner, true);
+    if (isRunnerRecoverableOutcome(run.outcome)) {
+      // Both runner invocations failed in a recoverable runner class → close the
+      // fallback attempt's cycle, then terminate through the bounded policy.
+      await fireHook("post_attempt", postAttemptContext({ ...input, attempt: attemptN }, branch, "fail", run.outcome));
+      return await runnerRecoverable(deps, input, branch, base, hooksFired, activeRunner, run.outcome, true);
     }
   }
 
@@ -1058,6 +1058,57 @@ async function exhausted(
   await deps.claimLock.release(input.issue);
   return {
     outcome: "exhausted",
+    issue: input.issue,
+    branch,
+    base,
+    hooksFired,
+    preserved: true,
+    swept: false,
+  };
+}
+
+function isRunnerRecoverableOutcome(outcome: AgentOutcome): outcome is "exhausted" | "runner-transient" {
+  return outcome === "exhausted" || outcome === "runner-transient";
+}
+
+/**
+ * Terminal path for runner-side failures that should be bounded by AFK policy
+ * rather than surfacing as raw worker crashes. Quota exhaustion keeps its legacy
+ * history/comment shape; transport/setup failures get their own typed label and
+ * retry cap (`blocked:runner-transient`, RED_AFK_RETRY_RUNNER_TRANSIENT).
+ */
+async function runnerRecoverable(
+  deps: ProcessIssueDeps,
+  input: ProcessIssueInput,
+  branch: string,
+  base: string,
+  hooksFired: HookName[],
+  runner: Runner,
+  outcome: "exhausted" | "runner-transient",
+  both: boolean,
+): Promise<ProcessIssueResult> {
+  if (outcome === "exhausted") {
+    return exhausted(deps, input, branch, base, hooksFired, runner, both);
+  }
+  await routeRecovery(deps, input.issue, "runner-transient", input.attempt);
+  await deps.gh.comment(
+    input.issue,
+    both
+      ? `🤖 /afk: both runner invocations hit a transient runner transport/setup failure. Iteration preserved at \`${input.attemptDir}\`.`
+      : `🤖 /afk: runner \`${runner}\` hit a transient transport/setup failure; bounded recovery will retry or page a human when the retry budget is exhausted.`,
+  );
+  if (deps.historyPath && deps.historyClock) {
+    const { historyAppend } = await import("./history.js");
+    await historyAppend(deps.historyPath, deps.historyClock, "runner-transient", {
+      worker: input.workerId,
+      issue: input.issue,
+      runner,
+      reason: both ? "both-runners" : runner,
+    });
+  }
+  await deps.claimLock.release(input.issue);
+  return {
+    outcome: "runner-transient",
     issue: input.issue,
     branch,
     base,
