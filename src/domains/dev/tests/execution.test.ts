@@ -19,6 +19,7 @@ import {
   parseIdleTimeout,
   type SandcastleDeps,
   type RunAgentInput,
+  type AgentStreamEvent,
 } from "../src/core/execution.js";
 
 // Sentinel provider objects — the adapter only forwards them to `run`, so a
@@ -164,6 +165,46 @@ describe("buildRunOptions", () => {
   it("leaves cwd undefined when omitted (sandcastle's process.cwd() default preserved)", () => {
     const opts = buildRunOptions(makeDeps(async () => fakeResult()), baseInput);
     expect(opts.cwd).toBeUndefined();
+  });
+
+  it("leaves logging unset when no logPath is supplied (sandcastle default preserved)", () => {
+    const opts = buildRunOptions(makeDeps(async () => fakeResult()), baseInput);
+    expect(opts.logging).toBeUndefined();
+  });
+
+  it("drains sandcastle's file-log to the supplied logPath (#284 observability)", () => {
+    const opts = buildRunOptions(
+      makeDeps(async () => fakeResult()),
+      { ...baseInput, logPath: "/abs/attempt/dir/sandcastle.log" },
+    );
+    expect(opts.logging).toEqual({ type: "file", path: "/abs/attempt/dir/sandcastle.log" });
+  });
+
+  it("wires onAgentEvent into logging.onAgentStreamEvent for native-path liveness", () => {
+    const seen: string[] = [];
+    const opts = buildRunOptions(
+      makeDeps(async () => fakeResult()),
+      {
+        ...baseInput,
+        logPath: "/abs/attempt/dir/sandcastle.log",
+        onAgentEvent: (ev) => seen.push(ev.type),
+      },
+    );
+    expect(opts.logging?.type).toBe("file");
+    // The callback rides alongside the path so AFK can forward each stream
+    // event to the agent lane the stall detector / monitor read.
+    const cb = (opts.logging as { onAgentStreamEvent?: (e: AgentStreamEvent) => void }).onAgentStreamEvent;
+    expect(cb).toBeTypeOf("function");
+    cb?.({ type: "text", message: "hi", iteration: 1, timestamp: new Date(0) });
+    expect(seen).toEqual(["text"]);
+  });
+
+  it("ignores onAgentEvent when no logPath is given (sandcastle only streams in file mode)", () => {
+    const opts = buildRunOptions(
+      makeDeps(async () => fakeResult()),
+      { ...baseInput, onAgentEvent: () => {} },
+    );
+    expect(opts.logging).toBeUndefined();
   });
 
   it("targets a custom remote when one is supplied", () => {
