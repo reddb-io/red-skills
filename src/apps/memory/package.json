@@ -14,7 +14,8 @@
   ],
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "build": "tsc -p tsconfig.build.json && pnpm bundle && pnpm bundle:legacy",
+    "lint:deterministic-extractors": "tsx src/deterministic-extractor-vocabulary-lint.ts",
+    "build": "pnpm lint:deterministic-extractors && tsc -p tsconfig.build.json && pnpm bundle && pnpm bundle:legacy",
     "bundle": "pnpm bundle:cli && pnpm bundle:mcp",
     "bundle:cli": "node ../../../scripts/bundle-app.mjs --entry src/cli.ts --outfile ../../../dist/memory.bundle.min.mjs --asset memory.bundle.min.mjs --minify --reddb-from-package",
     "bundle:mcp": "node ../../../scripts/bundle-app.mjs --entry src/mcp-server.ts --outfile ../../../dist/memory-mcp.bundle.min.mjs --asset memory-mcp.bundle.min.mjs --minify --reddb-from-package",

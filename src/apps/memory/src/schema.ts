@@ -62,70 +62,76 @@ export type MemoryScope =
   | "session"
   | "agent-run";
 
-export type NodeType =
-  | "file"
-  | "import"
-  | "symbol"
-  | "concept"
-  | "decision"
-  | "problem"
-  | "solution"
-  | "fix"
-  | "workflow"
-  | "person"
-  | "why_note"
-  | "session"
-  | "task"
-  | "goal"
+export const NODE_TYPES = [
+  "file",
+  "import",
+  "symbol",
+  "concept",
+  "decision",
+  "problem",
+  "solution",
+  "fix",
+  "workflow",
+  "person",
+  "why_note",
+  "session",
+  "task",
+  "goal",
   // Engineering semantic graph (PRD #95): AFK execution history.
-  | "attempt"
-  | "issue"
-  | "prd"
-  | "validation"
+  "attempt",
+  "issue",
+  "prd",
+  "validation",
   // AFK lifecycle (PRD #174, issue #187): archived raw L2 transcript blob
   // copied into L3 as a durable artifact so re-extraction with a better
   // prompt stays possible after the worktree is gone.
-  | "transcript";
+  "transcript",
+] as const;
 
-export type EdgeLabel =
+export type NodeType = (typeof NODE_TYPES)[number];
+
+export const EDGE_LABELS = [
   // Causal
-  | "CAUSES"
-  | "PREVENTS"
-  | "BLOCKS"
-  | "ENABLES"
+  "CAUSES",
+  "PREVENTS",
+  "BLOCKS",
+  "ENABLES",
   // Solution
-  | "SOLVES"
-  | "FIXES"
-  | "MITIGATES"
-  | "SUPERSEDED_BY"
-  | "DEPRECATED_BY"
+  "SOLVES",
+  "FIXES",
+  "MITIGATES",
+  "SUPERSEDED_BY",
+  "DEPRECATED_BY",
   // Context
-  | "MENTIONS"
-  | "REFERENCES"
-  | "DESCRIBES"
-  | "CONTAINS"
-  | "DEFINED_IN"
+  "MENTIONS",
+  "REFERENCES",
+  "DESCRIBES",
+  "CONTAINS",
+  "DEFINED_IN",
   // Code
-  | "CALLS"
-  | "IMPORTS"
-  | "IMPLEMENTS"
-  | "EXTENDS"
-  | "USES_TYPE"
+  "CALLS",
+  "IMPORTS",
+  "IMPLEMENTS",
+  "EXTENDS",
+  "USES_TYPE",
   // Learning
-  | "LEARNED_FROM"
-  | "CONTRADICTS"
-  | "CONFIRMS"
-  | "EXAMPLE_OF"
+  "LEARNED_FROM",
+  "CONTRADICTS",
+  "CONFIRMS",
+  "EXAMPLE_OF",
   // Workflow
-  | "PRECEDES"
-  | "TRIGGERS"
-  | "RUNS_AFTER"
+  "PRECEDES",
+  "TRIGGERS",
+  "RUNS_AFTER",
   // Quality
-  | "TESTED_BY"
-  | "REVIEWED_BY"
-  | "OWNED_BY"
+  "TESTED_BY",
+  "REVIEWED_BY",
+  "OWNED_BY",
   // Audit — a reasoning trace (why_note) → the entities it affected (issue #72).
-  | "TOUCHED";
+  "TOUCHED",
+] as const;
+
+export type EdgeLabel = (typeof EDGE_LABELS)[number];
 
 export interface MemoryNodeProps {
   title: string;

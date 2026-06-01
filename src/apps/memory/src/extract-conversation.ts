@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { EXTRACTION_PROFILES, STRUCTURAL_TYPES } from "./extraction-schema.js";
 import { contentHash } from "./hash.js";
-import type { EdgeLabel, MemoryNode, NodeType } from "./schema.js";
+import { EDGE_LABELS, NODE_TYPES, type EdgeLabel, type MemoryNode, type NodeType } from "./schema.js";
 
 /**
  * LLM conversation extraction — the `INFERRED` path.
@@ -111,59 +111,7 @@ export interface ExtractedFact {
   relations: Array<{ label: EdgeLabel; target: string }>;
 }
 
-/** Runtime allowlist of node types (mirrors `NodeType` in schema.ts). */
-export const NODE_TYPES: readonly NodeType[] = [
-  "file",
-  "symbol",
-  "concept",
-  "decision",
-  "problem",
-  "solution",
-  "fix",
-  "workflow",
-  "person",
-  "why_note",
-  "session",
-  "task",
-  "goal",
-  "attempt",
-  "issue",
-  "prd",
-  "validation",
-];
-
-/** Runtime allowlist of edge labels (mirrors `EdgeLabel` in schema.ts). */
-export const EDGE_LABELS: readonly EdgeLabel[] = [
-  "CAUSES",
-  "PREVENTS",
-  "BLOCKS",
-  "ENABLES",
-  "SOLVES",
-  "FIXES",
-  "MITIGATES",
-  "SUPERSEDED_BY",
-  "DEPRECATED_BY",
-  "MENTIONS",
-  "REFERENCES",
-  "DESCRIBES",
-  "CONTAINS",
-  "DEFINED_IN",
-  "CALLS",
-  "IMPORTS",
-  "IMPLEMENTS",
-  "EXTENDS",
-  "USES_TYPE",
-  "LEARNED_FROM",
-  "CONTRADICTS",
-  "CONFIRMS",
-  "EXAMPLE_OF",
-  "PRECEDES",
-  "TRIGGERS",
-  "RUNS_AFTER",
-  "TESTED_BY",
-  "REVIEWED_BY",
-  "OWNED_BY",
-];
+export { EDGE_LABELS, NODE_TYPES };
 
 // Loopback hosts that keep inference on the machine.
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "0.0.0.0"]);
@@ -255,8 +203,10 @@ export function buildExtractionPrompt(transcript: string): ProviderRequest {
   };
 }
 
+const EDGE_LABEL_ENUM = [...EDGE_LABELS] as [EdgeLabel, ...EdgeLabel[]];
+
 const RelationSchema = z.object({
-  label: z.enum(EDGE_LABELS as [EdgeLabel, ...EdgeLabel[]]),
+  label: z.enum(EDGE_LABEL_ENUM),
   target: z.string().min(1),
 });
 
