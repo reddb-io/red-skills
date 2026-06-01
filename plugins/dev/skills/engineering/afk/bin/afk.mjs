@@ -76646,7 +76646,7 @@ __export(docker_exports, {
   defaultImageName: () => defaultImageName,
   docker: () => docker
 });
-import { execFile as execFile4, execFileSync, spawn as spawn4 } from "node:child_process";
+import { execFile as execFile4, execFileSync as execFileSync2, spawn as spawn4 } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createInterface as createInterface4 } from "node:readline";
 var docker, checkImageUid;
@@ -76719,7 +76719,7 @@ var init_docker = __esm({
           }
           const removeContainerSync = () => {
             try {
-              execFileSync("docker", ["rm", "-f", containerName], {
+              execFileSync2("docker", ["rm", "-f", containerName], {
                 stdio: "ignore"
               });
             } catch {
@@ -76871,7 +76871,7 @@ __export(podman_exports, {
   defaultImageName: () => defaultImageName,
   podman: () => podman
 });
-import { execFile as execFile5, execFileSync as execFileSync2, spawn as spawn5 } from "node:child_process";
+import { execFile as execFile5, execFileSync as execFileSync3, spawn as spawn5 } from "node:child_process";
 import { randomUUID as randomUUID2 } from "node:crypto";
 import { createInterface as createInterface5 } from "node:readline";
 var podman, checkImageExists, podmanMachineError, checkPodmanMachine;
@@ -76976,7 +76976,7 @@ var init_podman = __esm({
           }
           const removeContainerSync = () => {
             try {
-              execFileSync2("podman", ["rm", "-f", containerName], {
+              execFileSync3("podman", ["rm", "-f", containerName], {
                 stdio: "ignore",
                 timeout: 5e3
               });
@@ -77152,6 +77152,7 @@ __export(execution_exports, {
   effortForProvider: () => effortForProvider,
   interpretOutcome: () => interpretOutcome,
   isExhaustionError: () => isExhaustionError,
+  isTransientRunnerError: () => isTransientRunnerError,
   parseIdleTimeout: () => parseIdleTimeout,
   parseMaxIterations: () => parseMaxIterations,
   runAgent: () => runAgent
@@ -77242,6 +77243,12 @@ function isExhaustionError(error) {
   collectErrorStrings(error, parts2, /* @__PURE__ */ new Set(), 0);
   return parts2.some((p2) => isRunnerExhausted(p2));
 }
+function isTransientRunnerError(error) {
+  if (error === null || error === void 0) return false;
+  const parts2 = [];
+  collectErrorStrings(error, parts2, /* @__PURE__ */ new Set(), 0);
+  return parts2.some((p2) => runnerTransientPattern.test(p2));
+}
 function collectErrorStrings(value2, out, seen, depth) {
   if (depth > 5) return;
   if (typeof value2 === "string") {
@@ -77271,6 +77278,14 @@ async function runAgent(deps, input) {
   } catch (error) {
     if (isExhaustionError(error)) {
       return { outcome: "exhausted", branch: input.branch, commits: [], stdout: "" };
+    }
+    if (isTransientRunnerError(error)) {
+      return {
+        outcome: "runner-transient",
+        branch: input.branch,
+        commits: [],
+        stdout: error instanceof Error ? error.message : String(error)
+      };
     }
     throw error;
   }
@@ -77310,7 +77325,7 @@ async function defaultSandcastleDeps() {
   };
   return { run: core.run, agentFor, sandboxFor, warn };
 }
-var DONE_SIGNAL, BLOCKED_SIGNAL, COMPLETION_SIGNALS, DEFAULT_IDLE_TIMEOUT_S, DEFAULT_MAX_ITERATIONS2, DEFAULT_REMOTE, CODEX_EFFORTS, CLAUDE_EFFORTS;
+var DONE_SIGNAL, BLOCKED_SIGNAL, COMPLETION_SIGNALS, DEFAULT_IDLE_TIMEOUT_S, DEFAULT_MAX_ITERATIONS2, DEFAULT_REMOTE, CODEX_EFFORTS, CLAUDE_EFFORTS, runnerTransientPattern;
 var init_execution = __esm({
   "src/core/execution.ts"() {
     "use strict";
@@ -77323,6 +77338,7 @@ var init_execution = __esm({
     DEFAULT_REMOTE = "origin";
     CODEX_EFFORTS = ["low", "medium", "high", "xhigh"];
     CLAUDE_EFFORTS = ["low", "medium", "high", "xhigh", "max"];
+    runnerTransientPattern = /failed to connect to websocket|HTTP error:\s*502 Bad Gateway|wss:\/\/chatgpt\.com\/backend-api\/codex\/responses|thread\/start failed|failed to load configuration|spawn sh ENOENT|cwd does not exist/i;
   }
 });
 
@@ -77802,6 +77818,42 @@ function parseRunnerFlag(args2) {
   return void 0;
 }
 
+// src/runtime/caller-process.ts
+import { execFileSync } from "node:child_process";
+function parsePsAncestorLine(stdout2) {
+  const line = stdout2.trim();
+  if (line.length === 0) return null;
+  const parts2 = line.split(/\s+/);
+  if (parts2.length < 3) return null;
+  const pid = Number(parts2[0]);
+  const ppid = Number(parts2[1]);
+  if (!Number.isInteger(pid) || !Number.isInteger(ppid)) return null;
+  return { pid, ppid, command: parts2.slice(2).join(" ") };
+}
+function callerProcessTree(startPid, inspect2, maxDepth = 12) {
+  const commands2 = [];
+  const seen = /* @__PURE__ */ new Set();
+  let pid = startPid;
+  for (let depth = 0; depth < maxDepth; depth += 1) {
+    if (!Number.isInteger(pid) || pid <= 1 || seen.has(pid)) break;
+    seen.add(pid);
+    const parsed = parsePsAncestorLine(inspect2(pid));
+    if (!parsed) break;
+    if (parsed.command) commands2.push(parsed.command);
+    pid = parsed.ppid;
+  }
+  return commands2.join("\n");
+}
+function callerProcessTreeNative(startPid = process.ppid) {
+  return callerProcessTree(
+    startPid,
+    (pid) => execFileSync("ps", ["-o", "pid=,ppid=,comm=", "-p", String(pid)], {
+      encoding: "utf8",
+      maxBuffer: 64 * 1024
+    })
+  );
+}
+
 // src/commands/fleet.ts
 var sleep = (ms) => new Promise((resolve6) => setTimeout(resolve6, ms));
 function isLivePid(pid) {
@@ -77917,7 +77969,11 @@ async function launchFleet(args2, root = process.cwd(), stdout2 = process.stdout
     throw new Error(`fleet already running (supervisor pid=${existing}, log .red/tmp/afk-supervisor.log).
   to stop it: /dev:afk fleet stop`);
   }
-  const detection = detectRunner({ flag: parsed.runnerFlag ?? parseRunnerFlag(args2), scriptPath: process.argv[1] });
+  const detection = detectRunner({
+    flag: parsed.runnerFlag ?? parseRunnerFlag(args2),
+    processTree: callerProcessTreeNative(),
+    scriptPath: process.argv[1]
+  });
   const childArgs = [...parsed.passthrough];
   if (parsed.request) childArgs.unshift("--request", parsed.request);
   const env2 = { ...process.env, RED_AFK_TARGET: String(parsed.target), RED_AFK_RUNNER: detection.runner };
@@ -84683,6 +84739,7 @@ var RECOVERABLE = {
   "merge-conflict": { knob: "RED_AFK_RETRY_MERGE", defaultCap: 3 },
   crashed: { knob: "RED_AFK_RETRY_CRASH", defaultCap: 1 },
   quota: { knob: "RED_AFK_RETRY_QUOTA", defaultCap: 3 },
+  "runner-transient": { knob: "RED_AFK_RETRY_RUNNER_TRANSIENT", defaultCap: 3 },
   policy: { knob: "RED_AFK_RETRY_POLICY", defaultCap: 1 }
 };
 function recoveryCap(reason, env2) {
@@ -84706,6 +84763,8 @@ function blockedLabelFor(o) {
   switch (o) {
     case "exhausted":
       return "blocked:quota";
+    case "runner-transient":
+      return "blocked:runner-transient";
     case "merge-conflict":
       return "blocked:merge-conflict";
     case "blocked":
@@ -84737,6 +84796,7 @@ function envelopeStatusFor(o) {
     case "feedback-failed":
     case "hook-aborted":
     case "exhausted":
+    case "runner-transient":
     case "claim-lost":
     case "stalled":
     case "infra":
@@ -84747,6 +84807,8 @@ function recoveryReasonFor(o) {
   switch (o) {
     case "exhausted":
       return "quota";
+    case "runner-transient":
+      return "runner-transient";
     case "no-sentinel":
       return "crashed";
     case "hook-aborted":
@@ -85068,11 +85130,11 @@ async function processIssue(deps, input) {
     // slot) — runAgent applies it to the spawned agent's environment.
     env: agentEnv
   });
-  if (run8.outcome === "exhausted") {
+  if (isRunnerRecoverableOutcome(run8.outcome)) {
     if (!deps.fallbackRunner) {
-      return await exhausted(deps, input, branch, base, hooksFired, activeRunner, false);
+      return await runnerRecoverable(deps, input, branch, base, hooksFired, activeRunner, run8.outcome, false);
     }
-    await fireHook("post_attempt", postAttemptContext({ ...input, attempt: attemptN }, branch, "fail", "exhausted"));
+    await fireHook("post_attempt", postAttemptContext({ ...input, attempt: attemptN }, branch, "fail", run8.outcome));
     const other = activeRunner === "claude" ? "codex" : "claude";
     activeRunner = other;
     attemptN += 1;
@@ -85096,9 +85158,9 @@ async function processIssue(deps, input) {
       // FIX J: carry the pre_worktree env onto the fallback runner too.
       env: agentEnv
     });
-    if (run8.outcome === "exhausted") {
-      await fireHook("post_attempt", postAttemptContext({ ...input, attempt: attemptN }, branch, "fail", "exhausted"));
-      return await exhausted(deps, input, branch, base, hooksFired, activeRunner, true);
+    if (isRunnerRecoverableOutcome(run8.outcome)) {
+      await fireHook("post_attempt", postAttemptContext({ ...input, attempt: attemptN }, branch, "fail", run8.outcome));
+      return await runnerRecoverable(deps, input, branch, base, hooksFired, activeRunner, run8.outcome, true);
     }
   }
   const workerBranch = run8.branch || branch;
@@ -85391,6 +85453,38 @@ async function exhausted(deps, input, branch, base, hooksFired, runner, both2) {
   await deps.claimLock.release(input.issue);
   return {
     outcome: "exhausted",
+    issue: input.issue,
+    branch,
+    base,
+    hooksFired,
+    preserved: true,
+    swept: false
+  };
+}
+function isRunnerRecoverableOutcome(outcome) {
+  return outcome === "exhausted" || outcome === "runner-transient";
+}
+async function runnerRecoverable(deps, input, branch, base, hooksFired, runner, outcome, both2) {
+  if (outcome === "exhausted") {
+    return exhausted(deps, input, branch, base, hooksFired, runner, both2);
+  }
+  await routeRecovery(deps, input.issue, "runner-transient", input.attempt);
+  await deps.gh.comment(
+    input.issue,
+    both2 ? `\u{1F916} /afk: both runner invocations hit a transient runner transport/setup failure. Iteration preserved at \`${input.attemptDir}\`.` : `\u{1F916} /afk: runner \`${runner}\` hit a transient transport/setup failure; bounded recovery will retry or page a human when the retry budget is exhausted.`
+  );
+  if (deps.historyPath && deps.historyClock) {
+    const { historyAppend: historyAppend2 } = await Promise.resolve().then(() => (init_history(), history_exports));
+    await historyAppend2(deps.historyPath, deps.historyClock, "runner-transient", {
+      worker: input.workerId,
+      issue: input.issue,
+      runner,
+      reason: both2 ? "both-runners" : runner
+    });
+  }
+  await deps.claimLock.release(input.issue);
+  return {
+    outcome: "runner-transient",
     issue: input.issue,
     branch,
     base,
@@ -86249,7 +86343,11 @@ function nextAttemptSync(tmpDir, issue) {
 async function runCommand2(options2) {
   const cwd = options2.cwd ?? process.cwd();
   const flags = parseRunFlags(options2.args);
-  const detection = detectRunner({ flag: flags.runnerFlag ?? parseRunnerFlag(options2.args), scriptPath: process.argv[1] });
+  const detection = detectRunner({
+    flag: flags.runnerFlag ?? parseRunnerFlag(options2.args),
+    processTree: callerProcessTreeNative(),
+    scriptPath: process.argv[1]
+  });
   const runner = isRunner(detection.runner) ? detection.runner : "claude";
   const ctx = await resolveRepoContext(cwd);
   const settings = resolveRunSettings(cwd);
@@ -86849,7 +86947,7 @@ async function runSupervisor(state, deps, config, stopRequested) {
 }
 
 // src/runtime/proc-tree.ts
-import { execFileSync as execFileSync3 } from "node:child_process";
+import { execFileSync as execFileSync4 } from "node:child_process";
 var CONSERVATIVE_BUSY_SNAPSHOT = [
   { command: "unknown", cpu: 100 }
 ];
@@ -86901,7 +86999,7 @@ function inspectProcessTreeNative(pid) {
   if (!isInspectablePid(pid)) return [];
   let stdout2;
   try {
-    stdout2 = execFileSync3("ps", ["-e", "-o", "pid=,ppid=,%cpu=,comm="], {
+    stdout2 = execFileSync4("ps", ["-e", "-o", "pid=,ppid=,%cpu=,comm="], {
       encoding: "utf8",
       maxBuffer: 16 * 1024 * 1024
     });
