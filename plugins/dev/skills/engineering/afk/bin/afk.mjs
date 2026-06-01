@@ -56773,7 +56773,7 @@ var init_execution = __esm({
     BLOCKED_SIGNAL = "<promise>BLOCKED</promise>";
     COMPLETION_SIGNALS = [DONE_SIGNAL, BLOCKED_SIGNAL];
     DEFAULT_IDLE_TIMEOUT_S = 600;
-    DEFAULT_MAX_ITERATIONS2 = 50;
+    DEFAULT_MAX_ITERATIONS2 = 12;
     DEFAULT_REMOTE = "origin";
     CODEX_EFFORTS = ["low", "medium", "high", "xhigh"];
     CLAUDE_EFFORTS = ["low", "medium", "high", "xhigh", "max"];
@@ -61787,6 +61787,10 @@ async function editLabels(ctx, issue, remove6, add5) {
 async function comment(ctx, issue, body) {
   await runGh(ctx, ["issue", "comment", String(issue), ...repoArgs(ctx), "--body", body]);
 }
+async function editBody(ctx, issue, body) {
+  const r = await runGh(ctx, ["issue", "edit", String(issue), ...repoArgs(ctx), "--body", body]);
+  return r.code === 0;
+}
 async function ensureRunnerErrorLabel(ctx) {
   await runGh(
     ctx,
@@ -61917,45 +61921,34 @@ function countNeedsInfo(ctx) {
   return countIssues(ctx, ["--label", "needs-info"]);
 }
 async function listUnblockCandidates(ctx) {
-  const fetch = async (label) => {
-    const r = await runGh(
-      ctx,
-      [
-        "issue",
-        "list",
-        ...repoArgs(ctx),
-        "--label",
-        label,
-        "--state",
-        "open",
-        "--limit",
-        "200",
-        "--json",
-        "number,body,labels"
-      ]
-    );
-    if (r.code !== 0) return [];
-    try {
-      const rows = JSON.parse(r.stdout);
-      if (!Array.isArray(rows)) return [];
-      return rows.map((row) => ({
-        number: Number(row.number ?? 0),
-        body: String(row.body ?? ""),
-        labels: Array.isArray(row.labels) ? row.labels.map((l) => String(l.name ?? "")) : []
-      }));
-    } catch {
-      return [];
-    }
-  };
-  const [byDependency, byHuman] = await Promise.all([
-    fetch("blocked:dependency"),
-    fetch("ready-for-human")
-  ]);
-  const merged = /* @__PURE__ */ new Map();
-  for (const c of [...byDependency, ...byHuman]) {
-    if (!merged.has(c.number)) merged.set(c.number, c);
+  const r = await runGh(
+    ctx,
+    [
+      "issue",
+      "list",
+      ...repoArgs(ctx),
+      "--label",
+      "blocked:dependency",
+      "--state",
+      "open",
+      "--limit",
+      "200",
+      "--json",
+      "number,body,labels"
+    ]
+  );
+  if (r.code !== 0) return [];
+  try {
+    const rows = JSON.parse(r.stdout);
+    if (!Array.isArray(rows)) return [];
+    return rows.map((row) => ({
+      number: Number(row.number ?? 0),
+      body: String(row.body ?? ""),
+      labels: Array.isArray(row.labels) ? row.labels.map((l) => String(l.name ?? "")) : []
+    }));
+  } catch {
+    return [];
   }
-  return [...merged.values()];
 }
 async function listByLabel(ctx, label) {
   const r = await runGh(
@@ -63248,7 +63241,9 @@ function planCloseCascade(closedIssue, dependents) {
 async function planUnblockSweep(candidates, fetchBlockerState) {
   const plans = [];
   for (const candidate of candidates) {
-    const reqIds = parseReqLabels(candidate.labels ?? []);
+    const labels = candidate.labels ?? [];
+    if (!labels.includes("blocked:dependency")) continue;
+    const reqIds = parseReqLabels(labels);
     if (reqIds.length > 0) {
       const states2 = [];
       for (const id3 of reqIds) {
@@ -64470,6 +64465,94 @@ function resolveMemoryCli(gitRoot, env, probes) {
   return void 0;
 }
 
+// src/core/blocker-state.ts
+var BLOCKER_HEADING = "Current blocker";
+var BLOCKER_OPEN = "<!-- red:blocker-state v1 -->";
+var BLOCKER_CLOSE = "<!-- /red:blocker-state -->";
+function normalizeLine(value) {
+  return value.replace(/\s+/g, " ").trim();
+}
+function safeField(value, fallback = "") {
+  const line = normalizeLine(value ?? "");
+  return line.length > 0 ? line : fallback;
+}
+function parseFields(block) {
+  const out = {};
+  for (const line of block.split("\n")) {
+    const m2 = /^([a-z_]+):\s*(.*)$/.exec(line.trim());
+    if (!m2) continue;
+    out[m2[1]] = m2[2].trim();
+  }
+  return out;
+}
+function parseCurrentBlocker(markdown) {
+  const start3 = markdown.indexOf(BLOCKER_OPEN);
+  if (start3 === -1) return null;
+  const bodyStart = start3 + BLOCKER_OPEN.length;
+  const end5 = markdown.indexOf(BLOCKER_CLOSE, bodyStart);
+  if (end5 === -1) return null;
+  const fields = parseFields(markdown.slice(bodyStart, end5));
+  if (fields.status !== "blocked") return null;
+  const summary = safeField(fields.summary);
+  const next4 = safeField(fields.next);
+  if (!summary || !next4) return null;
+  return {
+    status: "blocked",
+    kind: safeField(fields.kind, "unknown"),
+    ...fields.ref ? { ref: safeField(fields.ref) } : {},
+    summary,
+    next: next4
+  };
+}
+function formatCurrentBlocker(blocker) {
+  const lines = [
+    BLOCKER_OPEN,
+    `status: ${blocker.status}`,
+    `kind: ${safeField(blocker.kind, "unknown")}`
+  ];
+  if (blocker.ref) lines.push(`ref: ${safeField(blocker.ref)}`);
+  lines.push(`summary: ${safeField(blocker.summary, "Unspecified blocker.")}`);
+  lines.push(`next: ${safeField(blocker.next, "Human guidance required.")}`);
+  lines.push(BLOCKER_CLOSE);
+  return lines.join("\n");
+}
+function currentBlockerSectionRange(markdown) {
+  const lines = markdown.split("\n");
+  let offset = 0;
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (new RegExp(`^##\\s+${BLOCKER_HEADING}\\s*$`, "i").test(line.trim())) {
+      const start3 = offset;
+      let end5 = markdown.length;
+      let innerOffset = offset + line.length + 1;
+      for (let j2 = i + 1; j2 < lines.length; j2 += 1) {
+        const next4 = lines[j2];
+        if (/^##\s+/.test(next4)) {
+          end5 = innerOffset;
+          break;
+        }
+        innerOffset += next4.length + 1;
+      }
+      return { start: start3, end: end5 };
+    }
+    offset += line.length + 1;
+  }
+  return null;
+}
+function upsertCurrentBlocker(markdown, blocker) {
+  const replacement = `## ${BLOCKER_HEADING}
+
+${formatCurrentBlocker(blocker)}
+`;
+  const range = currentBlockerSectionRange(markdown);
+  if (range) {
+    return `${markdown.slice(0, range.start)}${replacement}
+${markdown.slice(range.end).trimStart()}`.trimEnd() + "\n";
+  }
+  const prefix = markdown.trimEnd();
+  return `${prefix}${prefix.length > 0 ? "\n\n" : ""}${replacement}`;
+}
+
 // src/core/process-issue.ts
 var LABEL_READY = "ready-for-agent";
 var LABEL_RUNNING = "running";
@@ -64527,6 +64610,22 @@ async function processIssue(deps, input) {
   if (!labels.includes(LABEL_READY) || labels.includes(LABEL_RUNNING)) {
     await deps.claimLock.release(issue);
     return claimLost(issue, hooksFired);
+  }
+  const activeBlocker = parseCurrentBlocker(input.body);
+  if (activeBlocker) {
+    await editLabelsTagged(deps, issue, [LABEL_READY], [LABEL_HUMAN], "blocked");
+    await deps.gh.comment(
+      issue,
+      `\u{1F916} /afk preflight stopped: active Current blocker (${activeBlocker.kind}) still requires human input: ${activeBlocker.next}`
+    );
+    await deps.claimLock.release(issue);
+    return {
+      outcome: "blocked",
+      issue,
+      hooksFired,
+      preserved: false,
+      swept: false
+    };
   }
   if (!await deps.gh.editLabels(issue, [LABEL_READY], [LABEL_RUNNING])) {
     await deps.claimLock.release(issue);
@@ -64789,9 +64888,57 @@ async function emitFailure(c, status3, diffLabel, sections) {
   });
   return result.posted;
 }
+function oneLine(value, fallback) {
+  const line = (value ?? "").split("\n").map((part) => part.replace(/^[-*]\s*(?:\[[^\]]+\]\s*)?/, "").replace(/\s+/g, " ").trim()).find((part) => part.length > 0);
+  return line ?? fallback;
+}
+function blockerForFailure(outcome, sections) {
+  switch (outcome) {
+    case "blocked":
+      return {
+        status: "blocked",
+        kind: "spec",
+        summary: oneLine(sections.notes, "Inner agent emitted BLOCKED."),
+        next: "Review the blocker envelope and add human guidance."
+      };
+    case "feedback-failed":
+      return {
+        status: "blocked",
+        kind: "validation",
+        summary: oneLine(sections.validation ?? sections.log, "Validation failed after implementation."),
+        next: "Decide whether to fix forward, change scope, or adjust the acceptance criteria."
+      };
+    case "no-sentinel":
+      return {
+        status: "blocked",
+        kind: "runner",
+        summary: oneLine(sections.log, "Inner agent exited without an AFK completion sentinel."),
+        next: "Review the attempt log and decide whether to retry or revise the issue brief."
+      };
+    case "merge-conflict":
+      return {
+        status: "blocked",
+        kind: "merge-conflict",
+        summary: oneLine(sections.log, "Worker branch could not be merged cleanly."),
+        next: "Resolve the merge conflict or add guidance for the next agent attempt."
+      };
+    default:
+      return null;
+  }
+}
+async function writeCurrentBlockerBestEffort(deps, input, blocker) {
+  if (!blocker || !deps.gh.editBody) return;
+  try {
+    await deps.gh.editBody(input.issue, upsertCurrentBlocker(input.body, blocker));
+  } catch {
+  }
+}
 async function terminalFailure(c, outcome, sectionKey, sections, record2 = {}) {
   const { deps, input } = c;
-  await routeRecovery(deps, input.issue, outcome, input.attempt);
+  const decision = await routeRecovery(deps, input.issue, outcome, input.attempt);
+  if (decision === "escalate") {
+    await writeCurrentBlockerBestEffort(deps, input, blockerForFailure(outcome, sections));
+  }
   const posted = await emitFailure(c, envelopeStatusFor(outcome), sectionKey, sections);
   await recordAttemptBestEffort(c, outcome, {
     durationS: deps.nowEpoch() - c.startedEpoch,
@@ -64829,7 +64976,14 @@ async function emitDone(c, mergeSha, durationS, feedback) {
 }
 async function mergeFailed(c, _reason, locked = false) {
   const { deps, input } = c;
-  await routeRecovery(deps, input.issue, "merge-conflict", input.attempt);
+  const decision = await routeRecovery(deps, input.issue, "merge-conflict", input.attempt);
+  if (decision === "escalate") {
+    await writeCurrentBlockerBestEffort(
+      deps,
+      input,
+      blockerForFailure("merge-conflict", { log: _reason || "(no merge log captured)" })
+    );
+  }
   const posted = await emitFailure(c, envelopeStatusFor("merge-conflict"), "merge-conflict", {
     log: "(no merge log captured)"
   });
@@ -65606,6 +65760,7 @@ function buildProcessDeps(ctx, model, sandbox3, feedback, current, fallbackRunne
         }
       },
       comment: (issue, body) => comment(ghCtx, issue, body),
+      editBody: (issue, body) => editBody(ghCtx, issue, body),
       close: (issue) => closeIssue(ghCtx, issue),
       listByLabel: (label) => listByLabel(ghCtx, label),
       issueClosed: (n) => issueClosed(ghCtx, n)
@@ -66895,9 +67050,9 @@ async function superviseCommand(args2, cwd = process.cwd()) {
 function readBuildInfo(app) {
   const info = {
     app,
-    version: stripTagPrefix(readInjected("__RED_BUILD_VERSION__", () => "1.147.5") ?? "0.0.0-dev"),
-    gitSha: readInjected("__RED_BUILD_GIT_SHA__", () => "105cb0c9e1b9c8201ee813e5af1f27a7877a61f8") ?? "unknown",
-    buildTime: readInjected("__RED_BUILD_TIME__", () => "2026-06-01T14:15:56-03:00") ?? "unknown",
+    version: stripTagPrefix(readInjected("__RED_BUILD_VERSION__", () => "1.147.6") ?? "0.0.0-dev"),
+    gitSha: readInjected("__RED_BUILD_GIT_SHA__", () => "656c320eda00bbf117e4e276db726f4e33bdfcd8") ?? "unknown",
+    buildTime: readInjected("__RED_BUILD_TIME__", () => "2026-06-01T15:18:10-03:00") ?? "unknown",
     bundleAsset: readInjected("__RED_BUNDLE_ASSET__", () => "dev.bundle.min.mjs") ?? "unknown"
   };
   const reddbSdkVersion = readInjected("__REDDB_SDK_VERSION__", () => "");
