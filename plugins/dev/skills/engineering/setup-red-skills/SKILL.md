@@ -9,7 +9,7 @@ disable-model-invocation: true
 Scaffold the per-repo configuration that the engineering skills assume:
 
 - **Issue tracker** — GitHub Issues (the only supported option, reddb.io policy)
-- **Triage labels** — the strings used for the five canonical triage roles
+- **Triage labels** — the strings used for the canonical triage roles and label families
 - **Domain docs** — where `.red/CONTEXT.md` and ADRs live, and the consumer rules for reading them
 - **Workflows** — GitHub Actions shipped by RedSkills (all prefixed `red-`), e.g. auto-label fresh issues with `needs-triage` so nothing slips past `/triage` and `/afk`
 - **Token efficiency** — strongly recommend installing [RTK](https://github.com/rtk-ai/rtk) to cut 60–90% of dev-operation tokens via a transparent CLI proxy
@@ -42,16 +42,18 @@ Confirm that `git remote` points to a GitHub repo, then proceed with the `issue-
 
 **Section B — Triage label vocabulary.**
 
-> Explainer: When the `triage` skill processes an incoming issue, it moves it through a state machine — needs evaluation, waiting on reporter, ready for an AFK agent to pick up, ready for a human, or won't fix. To do that, it needs to apply labels (or the equivalent in your issue tracker) that match strings *you've actually configured*. If your repo already uses different label names (e.g. `bug:triage` instead of `needs-triage`), map them here so the skill applies the right ones instead of creating duplicates.
+> Explainer: When the `triage` skill processes an incoming issue, it moves it through a state machine — needs evaluation, waiting on reporter, ready for an AFK agent to pick up, ready for human decision/resolution, dependency-blocked, or won't fix. To do that, it needs to apply labels (or the equivalent in your issue tracker) that match strings *you've actually configured*. If your repo already uses different label names (e.g. `bug:triage` instead of `needs-triage`), map them here so the skill applies the right ones instead of creating duplicates. Labels should belong to a clear family: current state, permanent type, priority, relationship/dependency, or operational diagnostic.
 
-The five canonical roles:
+The canonical state roles:
 
 - `needs-triage` — maintainer needs to evaluate
 - `needs-info` — waiting on reporter
 - `ready-for-agent` — fully specified, AFK-ready (an agent can pick it up with no human context)
-- `ready-for-human` — needs human implementation
+- `ready-for-human` — needs human decision/resolution before it can proceed or be delegated
 - `blocked:dependency` — waiting on other issues (via `req:N` edges); never pages a human; auto-unblocks when the last dep closes
 - `wontfix` — will not be actioned
+
+Do not provision or preserve labels outside the accepted label families; HITL/AFK routing is represented by `ready-for-human` / `ready-for-agent`.
 
 Default: each role's string equals its name. Ask the user if they want to override any. If their issue tracker has no existing labels, the defaults are fine.
 
@@ -74,7 +76,7 @@ Confirm with the user:
 - Does the `needs-triage` label exist in the issue tracker? If not, create it (`gh label create needs-triage --description "Maintainer needs to evaluate"`).
 - Does the `runner-error` label exist? If not, create it (`gh label create runner-error --color B60205 --description "AFK supervisor circuit-tripped; runner was misconfigured"`). The `/afk` fleet supervisor falls back to creating it on the fly during a circuit trip, but provisioning it here keeps colour/description consistent across repos.
 - Does the `blocked:dependency` label exist? If not, create it (`gh label create blocked:dependency --color D4C5F9 --description "Waiting on other issues (req:N edges); auto-unblocks when the last dependency closes"`). `req:N` edge labels are created on demand by `/to-issues` (`gh label create req:<n>`) like `prd:N`, so they need no upfront provisioning.
-- Provision the typed **blocked-reason** labels `/afk` applies to describe *why* an iteration stopped (it falls back to creating each on the fly, so this only keeps colour/description consistent): `gh label create blocked:quota`, `blocked:merge-conflict`, `blocked:spec`, `blocked:validation`, `blocked:crashed`, `blocked:policy`, `blocked:stalled`, `blocked:infra` (suggested colour `E99695`, descriptions per the *Blocked Reasons* table in triage-labels). These are descriptive (added alongside the routing label) — see triage-labels.
+- Provision the typed **blocked-reason** labels `/afk` applies to describe *why* an iteration stopped (it falls back to creating each on the fly, so this only keeps colour/description consistent): `gh label create blocked:quota`, `blocked:runner-transient`, `blocked:merge-conflict`, `blocked:spec`, `blocked:validation`, `blocked:crashed`, `blocked:policy`, `blocked:stalled`, `blocked:infra` (suggested colour `E99695`, descriptions per the *Blocked Reasons* table in triage-labels). These are descriptive (added alongside the routing label) — see triage-labels.
 
 Future RedSkills workflows will land in this same step. Filename prefix `red-` is mandatory.
 
@@ -207,6 +209,7 @@ Run `gh issue list --state open --limit 200 --json number,title,labels` and grou
 
 - **Unlabelled / missing triage role** — candidates for `needs-triage`
 - **Labelled with legacy names** — map to the canonical vocabulary from Section B
+- **Labels outside the accepted families** — remove them; do not map historical routing labels to another label
 - **Already correct** — skip
 
 Skip the sweep entirely if `gh issue list` returns 0 open issues.
