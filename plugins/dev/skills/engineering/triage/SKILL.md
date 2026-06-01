@@ -103,7 +103,7 @@ Five **state** roles:
 - `needs-triage` — maintainer needs to evaluate
 - `needs-info` — waiting on reporter for more information
 - `ready-for-agent` — fully specified, ready for an AFK agent
-- `ready-for-human` — needs human implementation
+- `ready-for-human` — needs human decision/resolution before it can proceed or be delegated
 - `wontfix` — will not be actioned
 
 These are canonical role names — the actual label strings used in the issue tracker may differ. The mapping should have been provided to you by `/setup-red-skills`.
