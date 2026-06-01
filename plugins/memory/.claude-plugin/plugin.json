@@ -6,6 +6,7 @@
     "dev"
   ],
   "hooks": "./hooks/claude.hooks.json",
+  "mcpServers": "./.mcp.json",
   "skills": [
     "./skills/core/init",
     "./skills/core/store",

@@ -10,7 +10,7 @@ It **lives on top of the `dev` plugin** and is meant to improve dev's processes
 (`/afk` recall, `/triage` dedup, `/diagnose` root-cause history, `/zoom-out`
 orientation). Installing `memory` requires `dev`.
 
-> **Runtime model.** The implementation now lives in `src/domains/memory/`
+> **Runtime model.** The implementation now lives in `src/apps/memory/`
 > (monorepo `domains/` layout); only the plugin *definition* (hooks, skills,
 > docs) stays under `plugins/memory/`. The built runtime ships as a GitHub
 > Release bundle (ADR 0034), not as committed `dist/` output. Examples below
@@ -32,7 +32,7 @@ into governed context. The core path is intentionally small:
 | Handoff | `context-pack`, `handoff`, Workbench panels | Cited context that another agent/session can inject without replaying the whole history. |
 
 Everything else exists to support that loop. MCP/HTTP, Workbench pages, graph
-reads, smart search, vector diagnostics, competitive evals, and export commands
+reads, smart search, vector diagnostics, reference evals, and export commands
 are operator and integration surfaces over the same evidence store; they should
 not become a second source of truth.
 
@@ -65,7 +65,7 @@ Use this map before reaching for the full command list:
 
 The rule of thumb: agents should use `recall` for action context, `readiness`
 for go/no-go decisions, and `context-pack`/`handoff` for continuation. Broader
-search, Workbench, vector, docs, and competitive surfaces are diagnostics or
+search, Workbench, vector, docs, and reference surfaces are diagnostics or
 operator views over the same evidence.
 
 ## Golden path: governed operational memory
@@ -74,8 +74,8 @@ The plugin ships source-only. From a checkout of `red-skills`, build the local
 CLI first; `dist/` and `node_modules/` are intentionally not committed.
 
 ```bash
-pnpm --dir plugins/memory install
-pnpm --dir plugins/memory build
+pnpm --dir src/apps/memory install
+pnpm --dir src/apps/memory build
 ```
 
 For the smallest useful setup, initialize markdown-only mode in the repo whose
@@ -182,7 +182,7 @@ For optional browser/API inspection, `memory serve` starts a loopback-only
 read-only HTTP surface over the same RedDB store. It serves the Memory Workbench
 and dashboard HTML, prints the docs reference graph viewer URL at
 `/docs/reference-graph`, plus JSON endpoints for health, OpenAPI
-(`/openapi.json`), workbench, dashboard, competitive radar, context packs,
+(`/openapi.json`), workbench, dashboard, references radar, context packs,
 work frontier, memory layers, governance, decay, memory health, hook coverage,
 agent integration status, session timeline, extraction status,
 docs search/read/coverage/reference-graph, smart search, and recall; use
@@ -210,40 +210,39 @@ docs/code graph evidence, and vector projection into one RedDB-backed contract.
 This makes Neo4j-style layered memory inspectable without introducing a graph
 daemon or separate persistence service.
 `memory layers-viewer` writes the same contract as a self-contained HTML
-viewer with embedded JSON, layer counts, RedDB collections, competitor
+viewer with embedded JSON, layer counts, RedDB collections, reference
 alignment, and recommended next actions.
 
-`memory competitive-radar` is an internal planning report that maps capability
-catalog evidence to named competitor axes and next actions. It is intentionally
+`memory references-radar` is an internal planning report that maps capability
+catalog evidence to named reference axes and next actions. It is intentionally
 read-only and does not create public benchmark claims.
 
-`memory competitive-eval` runs the checked-in competitive eval harness and
+`memory-benchmark references eval` runs the checked-in reference eval harness and
 prints a human-readable summary of the composite score, each dimension status,
-and any unsupported public claims. `memory competitive-eval --json` emits the
-same report as machine-readable JSON for CI and `eval:competitive:v2` consumers.
+and any unsupported public claims. `memory-benchmark references eval --json` emits the
+same report as machine-readable JSON for CI and `references:eval:v2` consumers.
 The command operates on checked-in fixtures and the source tree — it does not
-mutate Memory state and does not make live-service competitor claims.
+mutate Memory state and does not make live-service reference claims.
 
 ```bash
-memory competitive-eval
-# memory competitive eval: 6/6 pass
+memory-benchmark references eval
+# memory reference eval: 6/6 pass
 #   retrieval: 1/1 pass
 #   readiness: 1/1 pass
 #   operator-surface: 1/1 pass
 #   multi-agent-integration: 1/1 pass
 ```
 
-`memory competitive-eval-viewer` writes the same eval contract as a
+`memory-benchmark references viewer` writes the same eval contract as a
 self-contained HTML viewer with embedded JSON. By default it writes to
-`.red/memory/competitive-eval.html` under the current root; pass
-`--out <file>` to override the destination. The viewer is also served at
-`/competitive-eval` and `/api/competitive-eval` when `memory serve` is running.
+`.red/memory/reference-eval.html` under the current root; pass
+`--out <file>` to override the destination.
 
 ```bash
-memory competitive-eval-viewer
-# memory: competitive eval viewer written .red/memory/competitive-eval.html
+memory-benchmark references viewer
+# memory-benchmark: reference eval viewer written .red/memory/reference-eval.html
 #   composite: 6/6 pass
-#   contract: memory.competitive_eval.v2
+#   contract: memory.reference_eval.v2
 ```
 
 The local **Memory Workbench** is the umbrella for the browser-facing operator
@@ -619,10 +618,10 @@ memory learning-debt-viewer    # local HTML self-improvement debt viewer
 memory health-viewer           # local HTML operational health viewer
 memory onboarding-map-viewer   # local HTML map-first onboarding viewer
 memory communities-viewer      # local HTML graph community analytics viewer
-memory competitive-radar --json # internal competitor posture from catalog evidence
-memory competitive-eval         # human-readable composite + per-dimension summary
-memory competitive-eval --json  # machine-readable competitive eval report
-memory competitive-eval-viewer  # local HTML competitive eval viewer (default: .red/memory/competitive-eval.html)
+memory references-radar --json # internal reference posture from catalog evidence
+memory-benchmark references eval         # human-readable composite + per-dimension summary
+memory-benchmark references eval --json  # machine-readable reference eval report
+memory-benchmark references viewer       # local HTML reference eval viewer (default: .red/memory/reference-eval.html)
 memory workbench               # local unified Memory UI
 memory routing-guide --agent cursor --json # multi-agent MCP/HTTP integration guide
 memory routing-guide-viewer --agent cursor # local HTML multi-agent routing guide
@@ -658,55 +657,55 @@ normal recall promotes the active head of the chain, while `recall
 --include-superseded`, `conflicts --include-resolved`, and `timeline
 --include-audit` preserve the full audit history.
 
-## Competitive baseline
+## Reference baseline
 
-`memory` carries a checked-in competitive eval harness so the README comparison
+`memory-benchmark` carries a checked-in reference eval harness so the README comparison
 is backed by executable assertions instead of marketing copy:
 
 ```bash
-pnpm --dir plugins/memory eval:competitive
-pnpm --dir plugins/memory interop:competitive
-pnpm --dir plugins/memory baseline:competitive
-pnpm --dir plugins/memory test -- competitive-baseline
+pnpm --filter @reddb-io/memory-benchmark references:eval
+pnpm --filter @reddb-io/memory-benchmark references:interop
+pnpm --filter @reddb-io/memory-benchmark references:baseline
+pnpm --dir src/apps/memory test -- competitive-baseline
 ```
 
-`eval:competitive` runs entirely against checked-in fixtures and emits JSON plus
+`references:eval` runs entirely against checked-in fixtures and emits JSON plus
 a human-readable report. The fixture currently measures recall quality/latency,
 context-pack size reduction, candidate-memory classification, lint policy
-findings, and claim guards for live-service competitors. A representative local
+findings, and claim guards for live-service references. A representative local
 run reports recall@k `1`, p50 recall latency under `2 ms`, context-pack size
 reduction around `0.59`, classification accuracy `1`, policy findings for
 imperative memories / likely secrets / stale progress, and no unsupported live
-competitor claims. Latency is machine-local, so CI should compare the JSON
+reference claims. Latency is machine-local, so CI should compare the JSON
 shape and thresholds rather than treating the exact milliseconds as a public
 benchmark.
 
 Executable public claims are listed in
-`src/competitive-fixtures.ts` and checked by `eval:competitive:v2`. README copy
+`src/competitive-fixtures.ts` and checked by `references:eval:v2`. README copy
 should cite these evidence IDs when it makes a public comparison or product
 claim:
 
 | Public claim ID | README claim | Executable evidence IDs |
 |-----------------|--------------|-------------------------|
-| `checked-fixture-retrieval` | The competitive eval reports retrieval quality from checked-in fixtures. | `dimension:retrieval`, `fixture:recall` |
-| `readiness-envelope-consumer` | The readiness envelope is available for `eval:competitive:v2` consumers. | `dimension:readiness`, `foundation:readiness-envelope` |
+| `checked-fixture-retrieval` | The reference eval reports retrieval quality from checked-in fixtures. | `dimension:retrieval`, `fixture:recall` |
+| `readiness-envelope-consumer` | The readiness envelope is available for `references:eval:v2` consumers. | `dimension:readiness`, `foundation:readiness-envelope` |
 | `session-lifecycle-comparison` | Memory has native agent session lifecycle integration in the comparison table. | `baseline:memory-lifecycle-beats-agent-memory` |
-| `operator-surface-dashboard` | The competitive eval measures docs, hooks, dashboard, and capability catalog operator surfaces. | `dimension:operator-surface`, `foundation:doc-coverage`, `foundation:hook-coverage`, `foundation:operational-dashboard`, `foundation:capability-catalog` |
-| `multi-agent-integration-status` | The competitive eval measures multi-agent Memory routing and integration status across supported coding agents. | `dimension:multi-agent-integration`, `foundation:routing-guide`, `foundation:agent-integration-status`, `foundation:mcp-agent-tools`, `foundation:hook-backed-agent-integration` |
+| `operator-surface-dashboard` | The reference eval measures docs, hooks, dashboard, and capability catalog operator surfaces. | `dimension:operator-surface`, `foundation:doc-coverage`, `foundation:hook-coverage`, `foundation:operational-dashboard`, `foundation:capability-catalog` |
+| `multi-agent-integration-status` | The reference eval measures multi-agent Memory routing and integration status across supported coding agents. | `dimension:multi-agent-integration`, `foundation:routing-guide`, `foundation:agent-integration-status`, `foundation:mcp-agent-tools`, `foundation:hook-backed-agent-integration` |
 | `intelligent-memory-five-surfaces` | Memory is intelligent: composed confidence, reasoning-replay, federation, what-if, and autocure each ship as a measured surface (#173). | `dimension:intelligence`, `foundation:confidence-scoring`, `foundation:reasoning-replay`, `foundation:federation`, `foundation:whatif`, `foundation:autocure` |
 
-The same guard intentionally leaves live-service competitor wins unclaimed
+The same guard intentionally leaves live-service reference wins unclaimed
 unless the required live baseline is measured. In particular, the checked-in
 fixture may compare against `graphify-out` path latency, but it does not claim a
 latency win over `neo4j-labs/agent-memory` without an opt-in live Neo4j
 baseline.
 
-`eval:competitive:v2` can also opt in to a live `rohitg00/agentmemory` CLI
+`references:eval:v2` can also opt in to a live `rohitg00/agentmemory` CLI
 baseline without making normal tests or fixture runs depend on Agentmemory:
 
 ```bash
 MEMORY_AGENTMEMORY_BASELINE_CMD='["node","scripts/agentmemory-baseline.mjs"]' \
-  pnpm --dir plugins/memory exec tsx src/competitive-baseline.ts --v2 --json --human --live-agentmemory
+  pnpm --filter @reddb-io/memory-benchmark dev -- references eval --v2 --json --human --live-agentmemory
 ```
 
 The same harness can opt in to a `neo4j-labs/agent-memory` recall-latency
@@ -714,15 +713,15 @@ baseline when a local wrapper for the Neo4j-backed service is available:
 
 ```bash
 MEMORY_NEO4J_AGENT_MEMORY_BASELINE_CMD='["node","scripts/neo4j-agent-memory-baseline.mjs"]' \
-  pnpm --dir plugins/memory exec tsx src/competitive-baseline.ts --v2 --json --human --live-agent-memory
+  pnpm --filter @reddb-io/memory-benchmark dev -- references eval --v2 --json --human --live-agent-memory
 ```
 
-The configured commands are local wrappers around the available competitor
+The configured commands are local wrappers around the available reference
 install or service. They must print JSON with optional `summary`, numeric
 `metrics`, and string `evidence` fields. Missing commands are reported as
 unavailable live baselines, not as fixture failures.
 
-`interop:competitive` also runs entirely against checked-in fixtures. It emits
+`references:interop` also runs entirely against checked-in fixtures. It emits
 JSON and a human-readable mapping report for Graphify-like and
 Neo4j-agent-memory-like artifact shapes, including preserved, approximated, and
 dropped concepts. The report is intentionally limited to fixture interop and
@@ -785,7 +784,7 @@ numbers, because wall-clock percentiles vary with host noise. Latest results:
 ## Readiness envelope
 
 `memory readiness <goal> --json` emits the stable `memory.readiness.v1`
-envelope for future UI and `eval:competitive:v2` consumers. The envelope
+envelope for future UI and `references:eval:v2` consumers. The envelope
 combines task preflight evidence, vector projection status, provenance,
 supersession, contradictions, privacy and claim-check summaries, RedDB
 VCS/time-travel collection status, event-log telemetry, and graph community
@@ -871,7 +870,7 @@ raw operational events age out of event-log reads.
 readiness viewer HTML, operational dashboard HTML, unified workbench HTML, structural impact viewer HTML, pre-PR review viewer HTML,
 context packs and context pack viewer HTML, work frontiers and work frontier viewer HTML, handoff briefs and handoff viewer HTML, session timelines and session timeline viewer HTML, document search/read/coverage, doc coverage viewer HTML, path explanations and path explanation viewer HTML, pre-PR reviews, multi-agent routing guides for Codex/Claude/Cursor/Gemini/Aider/OpenCode/generic MCP or HTTP agents, claim checks,
 agent integration status and agent integration status viewer HTML, provenance, privacy, governance and governance viewer HTML, lint, decay plans and decay viewer HTML, skill recommendations, learning debt and learning debt viewer HTML, health and health viewer HTML,
-capability catalogs, memory layers, competitive radar, hook coverage, communities, onboarding maps, structural impact,
+capability catalogs, memory layers, references radar, hook coverage, communities, onboarding maps, structural impact,
 extraction status, vector search diagnostics, and vector projection status.
 `memory_recall` returns a
 ready-to-inject markdown context block plus ranked nodes; `memory_ask` is the
@@ -929,8 +928,8 @@ The plugin ships **source only**; `dist/` and `node_modules/` are gitignored and
 built on your machine at init time (needs only node + pnpm):
 
 ```bash
-pnpm --dir plugins/memory install
-pnpm --dir plugins/memory build
+pnpm --dir src/apps/memory install
+pnpm --dir src/apps/memory build
 ```
 
 Then drive it directly if you like (swap `--mode graph` for the graph store):
@@ -947,10 +946,10 @@ bundled `red` binary); markdown-only needs only node.
 ## Develop
 
 ```bash
-pnpm --dir plugins/memory test              # fast, deterministic vitest gate
-pnpm --dir plugins/memory test:integration  # heavy RedDB real-server / CLI suite
-pnpm --dir plugins/memory typecheck         # tsc --noEmit
-pnpm --dir plugins/memory build             # tsc → dist/
+pnpm --dir src/apps/memory test              # fast, deterministic vitest gate
+pnpm --dir src/apps/memory test:integration  # heavy RedDB real-server / CLI suite
+pnpm --dir src/apps/memory typecheck         # tsc --noEmit
+pnpm --dir src/apps/memory build             # tsc → dist/
 ```
 
 `test` is the AFK feedback gate: in-process tests only, run with file

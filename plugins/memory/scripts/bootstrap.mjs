@@ -6,10 +6,11 @@
  * Codex never run a build or install, so the compiled CLI and its 137 MB of
  * deps cannot live in the checkout. Instead the release publishes a single
  * esbuild bundle (`memory-cli.mjs`, all JS deps inlined) plus a runtime
- * manifest, and the native `red` engine binary is reused from reddb-io/reddb's
- * own releases. This script — invoked by every lifecycle hook in place of the
- * old `dist/cli.js` — fetches those artifacts once per plugin version into a
- * version-keyed cache that survives `autoUpdate`, then delegates the hook call.
+ * manifest, and the native `red` engine binary is pinned by that manifest and
+ * reused from reddb-io/reddb's own releases. This script — invoked by lifecycle
+ * hooks and MCP launchers in place of built output — fetches those artifacts
+ * once per plugin version into a version-keyed cache that survives `autoUpdate`,
+ * then delegates the call.
  *
  * It uses only `node:` builtins because it runs before any dependency exists.
  * See ADR 0029.
@@ -123,12 +124,14 @@ async function ensureFile(url, dest, expectedSha, { mode } = {}) {
 }
 
 /**
- * Ensure {cli.mjs, red} exist for `version` in the version-keyed cache and
- * return their absolute paths. Throws (caught by main) on any fetch failure.
+ * Ensure {cli.mjs, memory-mcp.mjs, red} exist for `version` in the version-keyed
+ * cache and return their absolute paths. Throws (caught by main) on any fetch
+ * failure.
  */
 async function ensureRuntime(version) {
   const dir = join(runtimeRoot(), version);
   const cliPath = join(dir, "memory-cli.mjs");
+  const mcpPath = join(dir, "memory-mcp.mjs");
   const redPath = join(dir, process.platform === "win32" ? "red.exe" : "red");
 
   // 1. manifest — names + checksums for this exact plugin version.
@@ -148,34 +151,45 @@ async function ensureRuntime(version) {
     manifest.cli.sha256,
   );
 
-  // 3. native `red` binary (per-platform), reused from reddb-io/reddb releases.
+  // 3. bundled MCP server (platform-independent).
+  if (manifest.mcp) {
+    await ensureFile(
+      assetUrl(RED_SKILLS_REPO, tag, manifest.mcp.asset),
+      mcpPath,
+      manifest.mcp.sha256,
+    );
+  }
+
+  // 4. native `red` binary (per-platform), reused from reddb-io/reddb releases.
   const key = platformKey();
-  const redAsset = key && manifest.reddb?.assets?.[key];
+  const redAsset = key && normalizeRedAsset(manifest.reddb?.assets?.[key]);
   if (!redAsset) {
     throw new Error(`no red binary for platform ${key ?? "unknown"}`);
   }
-  const redSha = parseSha256File(
-    (
-      await fetchBuffer(
-        assetUrl(manifest.reddb.repo, manifest.reddb.tag, `${redAsset}.sha256`),
-      )
-    ).toString("utf8"),
-  );
   await ensureFile(
-    assetUrl(manifest.reddb.repo, manifest.reddb.tag, redAsset),
+    assetUrl(manifest.reddb.repo, manifest.reddb.tag, redAsset.asset),
     redPath,
-    redSha,
+    redAsset.sha256,
     { mode: 0o755 },
   );
 
-  return { cliPath, redPath };
+  return { cliPath, mcpPath, redPath };
 }
 
-function delegate(cliPath, redPath, argv) {
+function normalizeRedAsset(value) {
+  if (!value || typeof value !== "object") return null;
+  if (typeof value.asset !== "string") return null;
+  if (typeof value.sha256 !== "string" || !/^[0-9a-f]{64}$/i.test(value.sha256)) return null;
+  return { asset: value.asset, sha256: value.sha256.toLowerCase() };
+}
+
+function delegate(runtime, argv) {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [cliPath, ...argv], {
+    const target = argv[0] === "mcp" || argv[0] === "memory-mcp" ? runtime.mcpPath : runtime.cliPath;
+    const targetArgv = target === runtime.mcpPath ? argv.slice(1) : argv;
+    const child = spawn(process.execPath, [target, ...targetArgv], {
       stdio: "inherit",
-      env: { ...process.env, REDDB_BIN: redPath },
+      env: { ...process.env, REDDB_BIN: runtime.redPath },
     });
     child.on("exit", (code) => resolve(code ?? 0));
     child.on("error", () => resolve(1));
@@ -187,8 +201,8 @@ async function main() {
   try {
     const version = await pluginVersion();
     if (!version) throw new Error("could not resolve plugin version");
-    const { cliPath, redPath } = await ensureRuntime(version);
-    const code = await delegate(cliPath, redPath, argv);
+    const runtime = await ensureRuntime(version);
+    const code = await delegate(runtime, argv);
     process.exit(code);
   } catch (err) {
     // Preserve the hooks' no-op contract; make the failure diagnosable.

@@ -274,7 +274,7 @@ Two modes ship today:
 | `markdown-only` | Plain notes in `.red/memory/notes/` with explicit store/recall. No RedDB engine, no hooks, no background process. | Cautious rollout in any repo. |
 | `graph` | Project-local `.red/memory/graph.rdb` with provenance, supersession, claim checks, readiness, context packs, hooks, MCP/HTTP, Workbench, and export. | Serious agent workflows where memory has to be trusted, inspected, and handed off. |
 
-The useful path is Init -> Store -> Recall -> Verify -> Handoff. Everything else, vectors, docs search, Workbench panels, HTTP endpoints, competitive evals, exists to support that path instead of becoming another source of truth.
+The useful path is Init -> Store -> Recall -> Verify -> Handoff. Everything else, vectors, docs search, Workbench panels, HTTP endpoints, and reference evals, exists to support that path instead of becoming another source of truth.
 
 Start here: [plugins/memory/README.md](./plugins/memory/README.md).
 
@@ -460,8 +460,8 @@ access, Workbench diagnostics, and graph export; markdown-only remains
 explicit-only with no engine. Install `memory` alongside `dev`, then use the
 [Memory golden path](./plugins/memory/README.md#golden-path-governed-operational-memory).
 
-The detailed Memory README also carries the competitive comparison and the
-claim-to-eval evidence map used by `eval:competitive:v2`, so public claims stay
+The detailed Memory README also carries the reference comparison and the
+claim-to-eval evidence map used by `references:eval:v2`, so public claims stay
 tied to executable checks instead of unsupported marketing copy.
 
 | Skill | What it does |
@@ -490,7 +490,7 @@ Skill telemetry, and soft integrations used by `dev`.
 
 | Server | What it does |
 |--------|--------------|
-| **[code-nav](./src/domains/dev/mcp/code-nav/README.md)** | LSP-backed semantic navigation. Spawns the language server for each file type and exposes `workspace_symbols`, `goto_definition`, `find_references`, `document_symbols`, `hover` as MCP tools — IDE-grade symbol navigation on top of the agent's default search. Presets for TS/Go/Rust/Python; extend via `CODE_NAV_SERVERS`. Loads automatically with the `dev` plugin. |
+| **[code-nav](./src/apps/code-nav/README.md)** | LSP-backed semantic navigation. Spawns the language server for each file type and exposes `workspace_symbols`, `goto_definition`, `find_references`, `document_symbols`, `hover` as MCP tools — IDE-grade symbol navigation on top of the agent's default search. Presets for TS/Go/Rust/Python; extend via `CODE_NAV_SERVERS`. Loads automatically with the `dev` plugin. |
 
 </details>
 

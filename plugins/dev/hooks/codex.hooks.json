@@ -1,5 +1,15 @@
 {
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'tmp=\"$(mktemp)\"; trap \"rm -f \\\"$tmp\\\"\" EXIT; cat >\"$tmp\" 2>/dev/null || true; root=\"${CODEX_PLUGIN_ROOT}\"; ver=\"$(node -e \"process.stdout.write(require(process.argv[1]).version)\" \"$root/.codex-plugin/plugin.json\" 2>/dev/null)\"; if [ -n \"$ver\" ]; then for f in \"$root/hooks/red-fetch.mjs\" \"$root/dist/red-fetch.mjs\" \"$root/../../dist/red-fetch.mjs\"; do [ -f \"$f\" ] && { node \"$f\" dev \"$ver\" >/dev/null 2>&1 || true; node \"$f\" code-nav \"$ver\" >/dev/null 2>&1 || true; node \"$f\" red-curate-skill \"$ver\" >/dev/null 2>&1 || true; break; }; done; fi; printf \"{}\"'"
+          }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "hooks": [

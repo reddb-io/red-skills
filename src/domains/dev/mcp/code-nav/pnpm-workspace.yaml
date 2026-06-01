@@ -1,9 +1,0 @@
-# Self-contained package (ADR 0034): its own pnpm workspace root so it does not
-# join the parent dev-domain workspace. esbuild ships its platform binary via the
-# @esbuild/<platform> optional dependency, so the bundle builds even when pnpm
-# skips esbuild's postinstall; listed here to approve it when pnpm does run it.
-packages:
-  - .
-
-onlyBuiltDependencies:
-  - esbuild

@@ -21,18 +21,18 @@ RED_CURATE_SKILL="$(
   if [ -n "$ver" ] && [ -f "$cache/red-curate-skill-$ver.bundle.min.mjs" ]; then
     echo "$cache/red-curate-skill-$ver.bundle.min.mjs"; exit 0
   fi
-  # 2. repo-root dist (dev checkout: pnpm --dir src/domains/memory bundle:curate-skill)
+  # 2. repo-root dist (dev checkout: pnpm --dir src/apps/memory bundle:curate-skill)
   for repo in "$root/../.." "$PWD"; do
     [ -f "$repo/dist/red-curate-skill.bundle.min.mjs" ] && { echo "$repo/dist/red-curate-skill.bundle.min.mjs"; exit 0; }
   done
   # 3. legacy published bin
   for repo in "$root/../.." "$PWD"; do
-    [ -f "$repo/src/domains/memory/dist-bundle/red-curate-skill.mjs" ] && { echo "$repo/src/domains/memory/dist-bundle/red-curate-skill.mjs"; exit 0; }
+    [ -f "$repo/src/apps/memory/dist-bundle/red-curate-skill.mjs" ] && { echo "$repo/src/apps/memory/dist-bundle/red-curate-skill.mjs"; exit 0; }
   done
 )"
 ```
 
-If `RED_CURATE_SKILL` is empty (no bundle resolved), print one line telling the user to run a `red-skills` SessionStart (so red-fetch populates the cache) or build it with `pnpm --dir src/domains/memory bundle:curate-skill`, and **stop**. Otherwise invoke every `red-curate-skill <cmd>` below as `node "$RED_CURATE_SKILL" <cmd>`.
+If `RED_CURATE_SKILL` is empty (no bundle resolved), print one line telling the user to run a `red-skills` SessionStart (so red-fetch populates the cache) or build it with `pnpm --dir src/apps/memory bundle:curate-skill`, and **stop**. Otherwise invoke every `red-curate-skill <cmd>` below as `node "$RED_CURATE_SKILL" <cmd>`.
 
 ### Boot precondition (always, before anything else)
 
@@ -127,7 +127,7 @@ red-curate-skill archive --candidate '{"name":"foo","source_kind":"project","pat
 red-curate-skill restore foo
 ```
 
-The CLI ships as part of `@reddb/memory` (see `src/domains/memory/src/curate-skill/cli.ts`). The Memory plugin's own `memory` CLI never invokes archive or restore — the mutation workflow lives in this skill.
+The CLI ships as part of `@reddb-io/memory` (see `src/apps/memory/src/curate-skill/cli.ts`). The Memory plugin's own `memory` CLI never invokes archive or restore — the mutation workflow lives in this skill.
 
 ### Archive layout
 

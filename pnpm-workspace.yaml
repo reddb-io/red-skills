@@ -1,0 +1,17 @@
+# Root workspace for all RedSkills runtime apps and shared packages.
+packages:
+  - "src/apps/*"
+  - "src/packages/*"
+
+onlyBuiltDependencies:
+  - "@reddb-io/sdk"
+  - esbuild
+
+allowBuilds:
+  "@reddb-io/sdk": true
+  esbuild: true
+  "@parcel/watcher": false
+  msgpackr-extract: false
+
+minimumReleaseAgeExclude:
+  - "@reddb-io/sdk@1.7.0"

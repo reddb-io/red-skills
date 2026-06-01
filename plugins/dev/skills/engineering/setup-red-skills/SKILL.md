@@ -192,7 +192,7 @@ If the user accepted Section D, copy each `workflows/red-*.yml` template from th
 Scaffold `.red/config.yaml` (Section G, no user decision):
 
 1. If `.red/config.yaml` already exists at the repo root, leave it untouched and log a one-line notice (`.red/config.yaml already present — leaving as-is`). Do **not** diff, merge, or overwrite — any existing content is project state.
-2. Otherwise, ensure `.red/` exists and copy [config-template.yaml](./config-template.yaml) verbatim to `.red/config.yaml`. The template is a fully-commented snapshot of every v1 knob the AFK config loader (`src/domains/dev/src/core/config.ts`) reads from `.red/config.yaml`, so the file is a no-op until the user uncomments a line.
+2. Otherwise, ensure `.red/` exists and copy [config-template.yaml](./config-template.yaml) verbatim to `.red/config.yaml`. The template is a fully-commented snapshot of every v1 knob the AFK config loader (`src/apps/dev/src/core/config.ts`) reads from `.red/config.yaml`, so the file is a no-op until the user uncomments a line.
 3. Do **not** `git add` or commit the file — the user controls when it lands in git.
 
 If the user accepted Section F, wire the statusline:

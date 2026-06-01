@@ -88,6 +88,37 @@ validate_plugin() {
 validate_plugin dev
 validate_plugin memory
 
+validate_dev_fetch_hooks() {
+  local root="$tmp/dev-plugin-root"
+  mkdir -p "$root/.claude-plugin" "$root/.codex-plugin" "$root/hooks"
+
+  printf '{"version":"9.9.9"}\n' > "$root/.claude-plugin/plugin.json"
+  printf '{"version":"9.9.9"}\n' > "$root/.codex-plugin/plugin.json"
+  cat > "$root/hooks/red-fetch.mjs" <<'EOF'
+#!/usr/bin/env node
+console.log(`red-fetch stdout ${process.argv.slice(2).join(" ")}`);
+console.error("red-fetch stderr");
+EOF
+  chmod +x "$root/hooks/red-fetch.mjs"
+
+  local payload='{"hook_event_name":"SessionStart"}'
+  local cmd out
+
+  cmd="$(jq -r '.hooks.SessionStart[0].hooks[0].command // empty' plugins/dev/hooks/claude.hooks.json)"
+  [[ -n "$cmd" ]] || fail "dev: Claude hooks must run red-fetch on SessionStart"
+  out="$(CLAUDE_PLUGIN_ROOT="$root" bash -lc "$cmd" <<<"$payload")"
+  [[ "$out" == "{}" ]] \
+    || fail "dev: Claude SessionStart hook must print exactly {} after red-fetch"
+
+  cmd="$(jq -r '.hooks.SessionStart[0].hooks[0].command // empty' plugins/dev/hooks/codex.hooks.json)"
+  [[ -n "$cmd" ]] || fail "dev: Codex hooks must run red-fetch on SessionStart"
+  out="$(CODEX_PLUGIN_ROOT="$root" bash -lc "$cmd" <<<"$payload")"
+  [[ "$out" == "{}" ]] \
+    || fail "dev: Codex SessionStart hook must print exactly {} after red-fetch"
+}
+
+validate_dev_fetch_hooks
+
 # Packaged Claude Code agents (plugins/<plugin>/agents/) — only Claude loads
 # them, so we validate frontmatter and ensure the Codex side does not
 # advertise them. The script no-ops when no plugin ships an agents/ dir.

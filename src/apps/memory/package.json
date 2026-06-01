@@ -1,0 +1,52 @@
+{
+  "name": "@reddb-io/memory",
+  "version": "1.146.1",
+  "private": true,
+  "description": "reddb.io memory plugin — governed operational memory for code agents: markdown notes, RedDB graph memory, governed recall, lifecycle hooks, MCP/HTTP read surfaces, Workbench diagnostics, and Skill telemetry for self-improvement.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "bin": {
+    "memory": "dist/cli.js",
+    "memory-mcp": "dist/mcp-server.js",
+    "red-curate-skill": "dist/curate-skill/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build": "tsc -p tsconfig.build.json && pnpm bundle && pnpm bundle:legacy",
+    "bundle": "pnpm bundle:cli && pnpm bundle:mcp && pnpm bundle:curate-skill",
+    "bundle:cli": "node ../../../scripts/bundle-app.mjs --entry src/cli.ts --outfile ../../../dist/memory.bundle.min.mjs --asset memory.bundle.min.mjs --minify --reddb-from-package",
+    "bundle:mcp": "node ../../../scripts/bundle-app.mjs --entry src/mcp-server.ts --outfile ../../../dist/memory-mcp.bundle.min.mjs --asset memory-mcp.bundle.min.mjs --minify --reddb-from-package",
+    "bundle:curate-skill": "node ../../../scripts/bundle-app.mjs --entry src/curate-skill/cli.ts --outfile ../../../dist/red-curate-skill.bundle.min.mjs --asset red-curate-skill.bundle.min.mjs --minify",
+    "bundle:legacy": "pnpm bundle:legacy:cli && pnpm bundle:legacy:mcp && pnpm bundle:legacy:curate-skill",
+    "bundle:legacy:cli": "node ../../../scripts/bundle-app.mjs --entry src/cli.ts --outfile dist-bundle/memory-cli.mjs --asset memory-cli.mjs --reddb-from-package",
+    "bundle:legacy:mcp": "node ../../../scripts/bundle-app.mjs --entry src/mcp-server.ts --outfile dist-bundle/memory-mcp.mjs --asset memory-mcp.mjs --reddb-from-package",
+    "bundle:legacy:curate-skill": "node ../../../scripts/bundle-app.mjs --entry src/curate-skill/cli.ts --outfile dist-bundle/red-curate-skill.mjs --asset red-curate-skill.mjs",
+    "test": "vitest run",
+    "test:integration": "RED_MEMORY_RECALL_P50_TARGET_MS=250 vitest run --config vitest.integration.config.ts",
+    "dev": "node --import tsx src/cli.ts"
+  },
+  "dependencies": {
+    "@reddb-io/build-info": "workspace:*",
+    "@reddb-io/shared": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "@reddb-io/sdk": "1.7.0",
+    "fast-glob": "^3.3.2",
+    "gray-matter": "^4.0.3",
+    "zod": "^3.23.8"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@reddb-io/sdk"
+    ]
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "esbuild": "^0.24.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}

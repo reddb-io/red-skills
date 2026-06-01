@@ -136,39 +136,37 @@ jobs:
         with:
           node-version: 22
 
+      - name: Install workspace dependencies
+        if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
+        run: pnpm install --frozen-lockfile
+
       # ADR 0032: AFK ships as a committed, dependency-free bundle. Rebuild it
-      # from src/domains/dev (which lives outside the plugin tree) so the shipped
+      # from src/apps/dev (which lives outside the plugin tree) so the shipped
       # bin/afk.mjs is always byte-for-byte the build of the released source,
       # then stage it into the version-bump commit below. esbuild output is
       # deterministic, so unchanged source rebuilds to identical bytes and the
       # git add is a no-op.
       - name: Build AFK runtime bundle
         if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
-        working-directory: src/domains/dev
+        working-directory: src/apps/dev
         env:
           NEXT: ${{ steps.version.outputs.next }}
+          RED_BUILD_VERSION: ${{ steps.version.outputs.next }}
+          RED_BUILD_GIT_SHA: ${{ github.sha }}
+          RED_BUILD_TIME: ${{ github.event.head_commit.timestamp }}
         run: |
           set -euo pipefail
-          pnpm install --frozen-lockfile
-          # The dev bundle imports ../../shared/args.ts, and esbuild resolves its
-          # `cli-args-parser` dep from src/shared's OWN node_modules (ADR 0034
-          # self-contained shared package), not from src/domains/dev. Install it too,
-          # or the bundle fails with "Could not resolve cli-args-parser".
-          pnpm -C ../../shared install --frozen-lockfile
           # `build` emits the canonical dist/dev.bundle.min.mjs (release asset,
           # ADR 0034) plus the transition bin/afk.mjs staged below.
           pnpm build
-          # The dynamic fetcher (src/shared/fetch-cli.ts) bootstraps every other
+          # The dynamic fetcher (src/packages/shared/fetch-cli.ts) bootstraps every other
           # bundle but cannot fetch itself, so it ships COMMITTED in the dev plugin
           # (like memory's bootstrap.mjs). Rebuild it here from source so the shipped
-          # plugins/dev/hooks/red-fetch.mjs always matches src/shared/fetch-cli.ts,
+          # plugins/dev/hooks/red-fetch.mjs always matches src/packages/shared/fetch-cli.ts,
           # then stage it into the version-bump commit below (esbuild is
           # deterministic, so an unchanged source rebuilds to identical bytes).
-          ./node_modules/.bin/esbuild ../../shared/fetch-cli.ts \
-            --bundle --minify --platform=node --format=esm --target=node22 \
-            --outfile=../../../plugins/dev/hooks/red-fetch.mjs \
-            --banner:js="import { createRequire as __cr } from 'node:module'; const require = __cr(import.meta.url);"
-          # Checksum manifest the dynamic-fetch hook (src/shared/bundle-fetch.ts)
+          pnpm bundle:red-fetch
+          # Checksum manifest the dynamic-fetch hook (src/packages/shared/bundle-fetch.ts)
           # verifies before caching. Mirrors memory-runtime-manifest.json.
           node --input-type=module <<'EOF'
           import { createHash } from 'node:crypto';
@@ -187,6 +185,9 @@ jobs:
         if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
         env:
           NEXT: ${{ steps.version.outputs.next }}
+          RED_BUILD_VERSION: ${{ steps.version.outputs.next }}
+          RED_BUILD_GIT_SHA: ${{ github.sha }}
+          RED_BUILD_TIME: ${{ github.event.head_commit.timestamp }}
         run: |
           set -euo pipefail
           manifests=(
@@ -194,6 +195,15 @@ jobs:
             plugins/dev/.codex-plugin/plugin.json
             plugins/memory/.claude-plugin/plugin.json
             plugins/memory/.codex-plugin/plugin.json
+          )
+          package_jsons=(
+            package.json
+            src/apps/dev/package.json
+            src/apps/memory/package.json
+            src/apps/memory-benchmark/package.json
+            src/apps/code-nav/package.json
+            src/packages/shared/package.json
+            src/packages/build-info/package.json
           )
           afk_bundle=plugins/dev/skills/engineering/afk/bin/afk.mjs
           fetch_bundle=plugins/dev/hooks/red-fetch.mjs
@@ -203,12 +213,17 @@ jobs:
             jq --arg v "$new" '.version = $v' "$manifest" > "$tmp"
             mv "$tmp" "$manifest"
           done
+          for package_json in "${package_jsons[@]}"; do
+            tmp=$(mktemp)
+            jq --arg v "$new" '.version = $v' "$package_json" > "$tmp"
+            mv "$tmp" "$package_json"
+          done
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          if git diff --quiet -- "${manifests[@]}" "$afk_bundle" "$fetch_bundle"; then
-            echo "plugin manifests already at $new and AFK + red-fetch bundles unchanged"
+          if git diff --quiet -- "${manifests[@]}" "${package_jsons[@]}" "$afk_bundle" "$fetch_bundle"; then
+            echo "plugin/package manifests already at $new and AFK + red-fetch bundles unchanged"
           else
-            git add "${manifests[@]}" "$afk_bundle" "$fetch_bundle"
+            git add "${manifests[@]}" "${package_jsons[@]}" "$afk_bundle" "$fetch_bundle"
             git commit -m "chore(release): $NEXT [skip release]"
             # Rebase-resilient push: red-memory-wiki-extract.yml also pushes to
             # main on PR-merge (via GITHUB_TOKEN, which can't re-trigger this
@@ -230,12 +245,14 @@ jobs:
       # publishes. pnpm/node are already set up above for the AFK bundle.
       - name: Build memory runtime bundle + manifest
         if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
-        working-directory: src/domains/memory
+        working-directory: src/apps/memory
         env:
           NEXT: ${{ steps.version.outputs.next }}
+          RED_BUILD_VERSION: ${{ steps.version.outputs.next }}
+          RED_BUILD_GIT_SHA: ${{ github.sha }}
+          RED_BUILD_TIME: ${{ github.event.head_commit.timestamp }}
         run: |
           set -euo pipefail
-          pnpm install --frozen-lockfile
           # bundle:legacy keeps emitting dist-bundle/memory-cli.mjs the manifest +
           # current bootstrap expect (ADR 0029). The new canonical
           # dist/memory.bundle.min.mjs (ADR 0034) is built by `pnpm bundle`; both
@@ -266,57 +283,64 @@ jobs:
           import { readFileSync, writeFileSync } from 'node:fs';
           const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
           const sdk = pkg.dependencies['@reddb-io/sdk'];
+          const reddb = {
+            repo: 'reddb-io/reddb',
+            tag: `v${sdk}`,
+          };
+          const assetNames = {
+            'linux-x86_64': 'red-linux-x86_64',
+            'linux-aarch64': 'red-linux-aarch64',
+            'linux-armv7': 'red-linux-armv7',
+            'macos-x86_64': 'red-macos-x86_64',
+            'macos-aarch64': 'red-macos-aarch64',
+            'windows-x86_64': 'red-windows-x86_64.exe',
+          };
+          const redAssets = {};
+          for (const [platform, asset] of Object.entries(assetNames)) {
+            const url = `https://github.com/${reddb.repo}/releases/download/${reddb.tag}/${asset}.sha256`;
+            const response = await fetch(url, { redirect: 'follow' });
+            if (!response.ok) throw new Error(`GET ${url} -> ${response.status}`);
+            const sha256 = (await response.text()).trim().match(/^[0-9a-f]{64}/i)?.[0]?.toLowerCase();
+            if (!sha256) throw new Error(`invalid sha256 file for ${asset}`);
+            redAssets[platform] = { asset, sha256 };
+          }
           const cli = readFileSync('dist-bundle/memory-cli.mjs');
+          const mcp = readFileSync('dist-bundle/memory-mcp.mjs');
           const manifest = {
             schema: 'red.memory.runtime.v1',
             version: process.env.NEXT.replace(/^v/, ''),
             cli: { asset: 'memory-cli.mjs', sha256: createHash('sha256').update(cli).digest('hex') },
-            reddb: {
-              repo: 'reddb-io/reddb',
-              tag: `v${sdk}`,
-              assets: {
-                'linux-x86_64': 'red-linux-x86_64',
-                'linux-aarch64': 'red-linux-aarch64',
-                'linux-armv7': 'red-linux-armv7',
-                'macos-x86_64': 'red-macos-x86_64',
-                'macos-aarch64': 'red-macos-aarch64',
-                'windows-x86_64': 'red-windows-x86_64.exe',
-              },
-            },
+            mcp: { asset: 'memory-mcp.mjs', sha256: createHash('sha256').update(mcp).digest('hex') },
+            reddb: { ...reddb, sdk, assets: redAssets },
           };
           writeFileSync('memory-runtime-manifest.json', JSON.stringify(manifest, null, 2));
           console.log('runtime manifest:', JSON.stringify(manifest));
           EOF
 
       # ADR 0034: the code-nav MCP server ships as a release-asset bundle, like
-      # the dev/memory runtimes. Its package lives inside the dev domain tree but
-      # is a self-contained package (own pnpm-lock), so it installs in isolation
-      # with --ignore-workspace. `build` (typecheck + bundle) emits the dev-checkout
+      # the dev/memory runtimes. Its package lives under src/apps/code-nav.
+      # `build` (typecheck + bundle) emits the dev-checkout
       # file dist/code-nav-mcp.bundle.min.mjs; the release asset the dynamic fetch
       # resolves is named code-nav.bundle.min.mjs (bundleAssetName('code-nav')),
       # with a code-nav.manifest.json mirroring dev.manifest.json.
       - name: Build code-nav MCP bundle + manifest
         if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
-        working-directory: src/domains/dev/mcp/code-nav
+        working-directory: src/apps/code-nav
         env:
           NEXT: ${{ steps.version.outputs.next }}
+          RED_BUILD_VERSION: ${{ steps.version.outputs.next }}
+          RED_BUILD_GIT_SHA: ${{ github.sha }}
+          RED_BUILD_TIME: ${{ github.event.head_commit.timestamp }}
         run: |
           set -euo pipefail
-          # code-nav is its own pnpm workspace root (packages: [.]), so a plain
-          # install isolates it from the parent dev workspace without
-          # --ignore-workspace. Build with direct binaries — `pnpm run` triggers a
-          # deps-status precheck that re-resolves the parent workspace and fails.
-          # strictDepBuilds=false: esbuild ships its platform binary via an optional
-          # dep, so its skipped postinstall must not fail the install under set -e.
-          pnpm install --frozen-lockfile --config.strictDepBuilds=false
-          ./node_modules/.bin/tsc -p tsconfig.json --noEmit
-          ./node_modules/.bin/esbuild src/index.ts --bundle --minify --platform=node --format=esm --target=node22 --outfile=../../../../../dist/code-nav-mcp.bundle.min.mjs --banner:js="import { createRequire as __cr } from 'node:module'; const require = __cr(import.meta.url);"
+          pnpm typecheck
+          pnpm bundle
           node --input-type=module <<'EOF'
           import { createHash } from 'node:crypto';
           import { readFileSync, writeFileSync, copyFileSync } from 'node:fs';
-          const built = '../../../../../dist/code-nav-mcp.bundle.min.mjs';
+          const built = '../../../dist/code-nav-mcp.bundle.min.mjs';
           // Publish the fetch-resolvable asset name code-nav.bundle.min.mjs.
-          const asset = '../../../../../dist/code-nav.bundle.min.mjs';
+          const asset = '../../../dist/code-nav.bundle.min.mjs';
           copyFileSync(built, asset);
           const bytes = readFileSync(asset);
           const manifest = {
@@ -324,9 +348,55 @@ jobs:
             version: process.env.NEXT.replace(/^v/, ''),
             sha256: createHash('sha256').update(bytes).digest('hex'),
           };
-          writeFileSync('../../../../../dist/code-nav.manifest.json', JSON.stringify(manifest, null, 2));
+          writeFileSync('../../../dist/code-nav.manifest.json', JSON.stringify(manifest, null, 2));
           console.log('code-nav bundle manifest:', JSON.stringify(manifest));
           EOF
+
+      - name: Build memory benchmark bundle + manifest
+        if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
+        working-directory: src/apps/memory-benchmark
+        env:
+          NEXT: ${{ steps.version.outputs.next }}
+          RED_BUILD_VERSION: ${{ steps.version.outputs.next }}
+          RED_BUILD_GIT_SHA: ${{ github.sha }}
+          RED_BUILD_TIME: ${{ github.event.head_commit.timestamp }}
+        run: |
+          set -euo pipefail
+          pnpm build
+          node --input-type=module <<'EOF'
+          import { createHash } from 'node:crypto';
+          import { readFileSync, writeFileSync } from 'node:fs';
+          const asset = '../../../dist/memory-benchmark.bundle.min.mjs';
+          const bytes = readFileSync(asset);
+          const manifest = {
+            plugin: 'memory-benchmark',
+            version: process.env.NEXT.replace(/^v/, ''),
+            sha256: createHash('sha256').update(bytes).digest('hex'),
+          };
+          writeFileSync('../../../dist/memory-benchmark.manifest.json', JSON.stringify(manifest, null, 2));
+          console.log('memory-benchmark bundle manifest:', JSON.stringify(manifest));
+          EOF
+
+      - name: Build release manifest
+        if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
+        env:
+          RED_RELEASE_VERSION: ${{ steps.version.outputs.next }}
+          RED_RELEASE_GIT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          node scripts/release-manifest.mjs \
+            dist/dev.bundle.min.mjs \
+            dist/dev.manifest.json \
+            dist/code-nav.bundle.min.mjs \
+            dist/code-nav.manifest.json \
+            dist/memory-benchmark.bundle.min.mjs \
+            dist/memory-benchmark.manifest.json \
+            dist/red-curate-skill.bundle.min.mjs \
+            dist/red-curate-skill.manifest.json \
+            src/apps/memory/dist-bundle/memory-cli.mjs \
+            src/apps/memory/dist-bundle/memory-mcp.mjs \
+            src/apps/memory/dist-bundle/red-curate-skill.mjs \
+            src/apps/memory/memory-runtime-manifest.json
 
       - name: Tag + GitHub Release
         if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
@@ -343,12 +413,15 @@ jobs:
             dist/dev.manifest.json
             dist/code-nav.bundle.min.mjs
             dist/code-nav.manifest.json
+            dist/memory-benchmark.bundle.min.mjs
+            dist/memory-benchmark.manifest.json
             dist/red-curate-skill.bundle.min.mjs
             dist/red-curate-skill.manifest.json
-            src/domains/memory/dist-bundle/memory-cli.mjs
-            src/domains/memory/dist-bundle/memory-mcp.mjs
-            src/domains/memory/dist-bundle/red-curate-skill.mjs
-            src/domains/memory/memory-runtime-manifest.json
+            src/apps/memory/dist-bundle/memory-cli.mjs
+            src/apps/memory/dist-bundle/memory-mcp.mjs
+            src/apps/memory/dist-bundle/red-curate-skill.mjs
+            src/apps/memory/memory-runtime-manifest.json
+            dist/release-manifest.json
           )
           if [ -n "$PREVIOUS" ]; then
             gh release create "$NEXT" "${assets[@]}" \

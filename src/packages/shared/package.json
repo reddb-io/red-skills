@@ -1,0 +1,18 @@
+{
+  "name": "@reddb-io/shared",
+  "version": "1.146.1",
+  "private": true,
+  "type": "module",
+  "description": "Code shared across RedSkills runtime apps (ADR 0034): CLI arg parsing over cli-args-parser, and the dynamic plugin-bundle fetch.",
+  "license": "Apache-2.0",
+  "exports": {
+    ".": "./index.ts",
+    "./args.js": "./args.ts",
+    "./bundle-fetch.js": "./bundle-fetch.ts",
+    "./fetch-cli.js": "./fetch-cli.ts",
+    "./log.js": "./log.ts"
+  },
+  "dependencies": {
+    "cli-args-parser": "^1.0.6"
+  }
+}
