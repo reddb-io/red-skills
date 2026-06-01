@@ -18,6 +18,18 @@ _Avoid_: lite mode, no-engine mode
 The RedDB-backed Memory storage mode using typed nodes and edges through `MemoryStore`.
 _Avoid_: db mode, sql mode
 
+**Memory operation**:
+A single read-only Memory surface registered once as a `MemoryOperation<Input, Output>` — id, input/output schema, `execute`, and the declarative facets a transport needs to bind it (input binding, output kind, renderer metadata). The report+viewer pairs are Memory operations.
+_Avoid_: command, endpoint, handler
+
+**Memory operation registry**:
+The transport-neutral seam over all read-only **Memory operations** (`createReadOnlyMemoryOperationRegistry`). It is the single place an operation is defined; CLI, MCP, and HTTP are **Transport adapters** that consume it rather than re-declaring dispatch. Mutating and infra surfaces (autocure, OpenAPI, health, workbench) stay outside the registry by design.
+_Avoid_: dispatch table, router, operation map
+
+**Transport adapter**:
+A thin consumer of the **Memory operation registry** for one runner-facing transport: it binds input from its transport (argv/flags, MCP arguments, HTTP query) and routes output to its sink (stdout markdown/JSON, file artifact, HTTP response). MCP is already a pure Transport adapter; CLI and HTTP still hand-wire per operation.
+_Avoid_: transport layer, gateway, controller
+
 **Memory note**:
 A single fact stored as one markdown file in **Markdown-only mode**.
 _Avoid_: memory record, entry
