@@ -10,6 +10,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [chore(afk): rebuild committed bin/afk.mjs from current source](./pages/320-chore-afk-rebuild-committed-bin-afk-mjs-from-current-source.md)
 - [chore(upstream): bump pin to e3b90b5 (no cherry-picks)](./pages/262-chore-upstream-bump-pin-to-e3b90b5-no-cherry-picks.md)
 - [docs(afk): remove dead Capability Dispatch + document --boot-only](./pages/329-docs-afk-remove-dead-capability-dispatch-document-boot-only.md)
+- [docs(memory): ADR 0036 — transports are adapters over the operation registry](./pages/375-docs-memory-adr-0036-transports-are-adapters-over-the-operat.md)
 - [docs(readme): redact AFK usage from public README + fix dev bundle CI build](./pages/321-docs-readme-redact-afk-usage-from-public-readme-fix-dev-bund.md)
 - [docs(triage-labels): align running-state liveness with Slice D (timeline-only)](./pages/361-docs-triage-labels-align-running-state-liveness-with-slice-d.md)
 - [feat(afk): --boot-only dry-run + parallelize boot reads + fix smoke](./pages/324-feat-afk-boot-only-dry-run-parallelize-boot-reads-fix-smoke.md)
