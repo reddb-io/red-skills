@@ -10,7 +10,7 @@
  *
  * This module holds ZERO real IO: every side effect (download, file read/write,
  * existence check, hashing) is injected via {@link BundleIO}. The launcher
- * (`fetch-cli.ts`) wires these to node built-ins (`fetch`, `node:fs`,
+ * (`entrypoint-cli.ts`) wires these to node built-ins (`fetch`, `node:fs`,
  * `node:crypto`); the test wires them to in-memory fakes. That keeps the fetch
  * logic deterministic and unit-testable with no real network.
  */

@@ -1,115 +1,31 @@
 #!/usr/bin/env node
-/**
- * afk.mjs — committed launcher bootstrap for the AFK runtime. NOT the implementation.
- *
- * The dev runtime ships as a single esbuild bundle (`dev.bundle.min.mjs`) attached
- * to each GitHub Release as an asset (ADR 0034), NOT committed to git. This file is
- * the small, dependency-free entrypoint the SKILL.md and statusline hooks invoke
- * (`node bin/afk.mjs <cmd>`). It resolves the runtime bundle and delegates to it.
- *
- * Resolution order:
- *   1. version-keyed cache — `<cacheRoot>/dev-<version>.bundle.min.mjs`
- *      (populated by red-fetch on SessionStart; mirrors bundle-fetch.ts)
- *   2. repo-root `dist/dev.bundle.min.mjs` (local dev: `pnpm -C src/apps/dev bundle`)
- *   3. cold cache → trigger `red-fetch dev <version>` once (best-effort), re-check
- *
- * Only `node:` built-ins — ships verbatim in the plugin cache, runs with no install.
- * See bin/README.md and ADR 0038.
- */
+import { createRequire as __cr } from 'node:module'; const require = __cr(import.meta.url);
+import{spawnSync as L}from"node:child_process";import{createHash as U}from"node:crypto";import{existsSync as m,readFileSync as N}from"node:fs";import{appendFile as T,mkdir as k,readFile as H,writeFile as j}from"node:fs/promises";import{homedir as M}from"node:os";import{dirname as w,join as u}from"node:path";import{fileURLToPath as G}from"node:url";var c=class extends Error{kind;cause;constructor(n,t,r){super(t),this.name="BundleFetchError",this.kind=n,this.cause=r}};function h(e,n){return`${e}-${n}.bundle.min.mjs`}function d(e){let{plugin:n,version:t,cacheDir:r}=e;return C(r,h(n,t))}function v(e,n,t){return`https://github.com/${e}/releases/download/v${n}/${t}`}function O(e){return`${e}.bundle.min.mjs`}function I(e){return`${e}.manifest.json`}async function g(e,n){let{plugin:t,version:r,repo:i,cacheDir:o}=n,s=d({plugin:t,version:r,cacheDir:o}),a=await A(e,i,t,r);if(await e.exists(s))try{if(e.sha256(await e.readFile(s))===a.sha256.toLowerCase())return s}catch{}let l=O(t),f;try{f=await e.download(v(i,r,l))}catch($){throw b($,l)}let y=e.sha256(f);if(y!==a.sha256.toLowerCase())throw new c("checksum-mismatch",`checksum mismatch for ${l}: ${y} != ${a.sha256}`);return await e.writeFile(s,f),s}async function A(e,n,t,r){let i=I(t),o;try{o=await e.download(v(n,r,i))}catch(a){throw b(a,i)}let s;try{s=JSON.parse(new TextDecoder().decode(o))}catch(a){throw new c("manifest-invalid",`manifest ${i} is not valid JSON`,a)}if(!S(s))throw new c("manifest-invalid",`manifest ${i} missing required fields {plugin, version, sha256}`);return{...s,sha256:s.sha256.toLowerCase()}}function S(e){if(typeof e!="object"||e===null)return!1;let n=e;return typeof n.plugin=="string"&&typeof n.version=="string"&&typeof n.sha256=="string"&&/^[0-9a-f]{64}$/i.test(n.sha256)}function b(e,n){let t=e instanceof Error?e.message:String(e);return/\b404\b|not found|missing/i.test(t)?new c("asset-missing",`release asset ${n} not found: ${t}`,e):new c("network",`failed to download ${n}: ${t}`,e)}function C(e,n){return e.endsWith("/")?`${e}${n}`:`${e}/${n}`}var p="reddb-io/red-skills";function J(){try{return"run:dev"}catch{return""}}function F(e){return e||(process.env.RED_SKILLS_CACHE_DIR?process.env.RED_SKILLS_CACHE_DIR:process.env.XDG_CACHE_HOME?u(process.env.XDG_CACHE_HOME,"red-skills","bundles"):u(M(),".cache","red-skills","bundles"))}var _={async download(e){let n=await fetch(e,{redirect:"follow"});if(!n.ok)throw new Error(`GET ${e} -> ${n.status}`);return new Uint8Array(await n.arrayBuffer())},async readFile(e){return new Uint8Array(await H(e))},async writeFile(e,n){await k(w(e),{recursive:!0}),await j(e,n)},async exists(e){return m(e)},sha256(e){return U("sha256").update(e).digest("hex")}};async function B(e,n){try{await k(e,{recursive:!0}),await T(u(e,"red-fetch.log"),`[${new Date().toISOString()}] ${n}
+`)}catch{}process.stderr.write(`entrypoint: ${n}
+`)}function x(e){let n={mode:"fetch",repo:p,help:!1},t=[];for(let r=0;r<e.length;r++){let i=e[r];i==="--help"||i==="-h"?n.help=!0:i==="--repo"?n.repo=e[++r]??n.repo:i==="--cache-dir"?n.cacheDir=e[++r]:i.startsWith("-")||t.push(i)}return n.plugin=t[0],n.version=t[1],n}function W(e,n){return e[0]==="run"?{mode:"run",plugin:e[1],rest:e.slice(2),repo:p}:e[0]==="fetch"?x(e.slice(1)):n.startsWith("run:")?{mode:"run",plugin:n.slice(4),rest:[...e],repo:p}:x(e)}var R=(()=>{try{return w(G(import.meta.url))}catch{return process.cwd()}})();function D(e,n){let t=e;for(let r=0;r<16;r++){let i=u(t,n);if(m(i))return i;let o=w(t);if(o===t)break;t=o}return null}function Y(){let e=D(R,u(".claude-plugin","plugin.json"));if(!e)return"";try{return JSON.parse(N(e,"utf8")).version||""}catch{return""}}function E(e,n,t){if(!n)return null;let r=d({plugin:e,version:n,cacheDir:t});return m(r)?r:null}function P(e){return D(R,u("dist",`${e}.bundle.min.mjs`))}async function q(e){let{plugin:n}=e;n||(process.stderr.write("entrypoint: `run` requires a <plugin> name.\n"),process.exit(1));let t=F(e.cacheDir),r=Y(),i=E(n,r,t)??P(n);if(!i&&r)try{i=await g(_,{plugin:n,version:r,repo:e.repo,cacheDir:t})}catch(s){let a=s instanceof c?s.kind:"unknown",l=s instanceof Error?s.message:String(s);await B(t,`${a}: ${l} (run plugin=${n} version=${r})`),i=E(n,r,t)??P(n)}if(!i){let s=r?h(n,r):`${n}-<version>.bundle.min.mjs`;process.stderr.write(`entrypoint: could not resolve the ${n} runtime bundle (${s}).
+  Looked in cache ${t} and repo-root dist/.
+  The bundle ships as a GitHub Release asset (ADR 0034) fetched by red-fetch;
+  ensure network access on first run, or build it locally:
+    pnpm -C src/apps/${n} run bundle
+`),process.exit(1)}let o=L(process.execPath,[i,...e.rest],{stdio:"inherit"});o.signal&&process.kill(process.pid,o.signal),process.exit(o.status??1)}var K=`entrypoint (fetch) \u2014 resolve a plugin's built bundle from its GitHub Release into a local cache.
 
-import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+Usage:
+  node <entrypoint> fetch <plugin> <version> [--repo owner/name] [--cache-dir DIR]
+  node red-fetch.mjs       <plugin> <version> [--repo owner/name] [--cache-dir DIR]
 
-const here = dirname(fileURLToPath(import.meta.url));
+Arguments:
+  <plugin>     plugin name (e.g. dev, memory)
+  <version>    plugin version without the leading v (e.g. 1.140.0)
 
-/** Walk up from `start` to the plugin root holding `.claude-plugin/plugin.json`. */
-function findPluginRoot(start) {
-  let dir = start;
-  for (let i = 0; i < 16; i++) {
-    if (existsSync(join(dir, ".claude-plugin", "plugin.json"))) return dir;
-    const parent = dirname(dir);
-    if (parent === dir) break;
-    dir = parent;
-  }
-  return null;
-}
+Options:
+  --repo       GitHub repo publishing the release (default: ${p})
+  --cache-dir  override the bundle cache dir
+  -h, --help   show this help
 
-const pluginRoot = findPluginRoot(here);
-let version = "";
-if (pluginRoot) {
-  try {
-    version =
-      JSON.parse(readFileSync(join(pluginRoot, ".claude-plugin", "plugin.json"), "utf8")).version ||
-      "";
-  } catch {
-    /* fall through to dist fallback */
-  }
-}
-
-/** Bundle cache root — must match fetch-cli.ts (`cacheRoot`). */
-function cacheRoot() {
-  if (process.env.RED_SKILLS_CACHE_DIR) return process.env.RED_SKILLS_CACHE_DIR;
-  if (process.env.XDG_CACHE_HOME) return join(process.env.XDG_CACHE_HOME, "red-skills", "bundles");
-  return join(homedir(), ".cache", "red-skills", "bundles");
-}
-
-/** version-keyed cache path — must match bundle-fetch.ts (`bundleFileName`). */
-function cachedBundle() {
-  if (!version) return null;
-  const p = join(cacheRoot(), `dev-${version}.bundle.min.mjs`);
-  return existsSync(p) ? p : null;
-}
-
-/** Repo-root `dist/dev.bundle.min.mjs` fallback for local development. */
-function distBundle() {
-  let dir = here;
-  for (let i = 0; i < 16; i++) {
-    const p = join(dir, "dist", "dev.bundle.min.mjs");
-    if (existsSync(p)) return p;
-    const parent = dirname(dir);
-    if (parent === dir) break;
-    dir = parent;
-  }
-  return null;
-}
-
-/** Cold cache: run the committed red-fetch once (best-effort, exits 0 on failure). */
-function tryFetch() {
-  if (!pluginRoot || !version) return;
-  const fetcher = [
-    join(pluginRoot, "hooks", "red-fetch.mjs"),
-    join(pluginRoot, "dist", "red-fetch.mjs"),
-  ].find(existsSync);
-  if (!fetcher) return;
-  spawnSync(process.execPath, [fetcher, "dev", version], { stdio: "ignore" });
-}
-
-let bundle = cachedBundle() || distBundle();
-if (!bundle) {
-  tryFetch();
-  bundle = cachedBundle() || distBundle();
-}
-
-if (!bundle) {
-  process.stderr.write(
-    `afk: could not resolve the dev runtime bundle (dev-${version || "?"}.bundle.min.mjs).\n` +
-      `  Looked in cache ${cacheRoot()} and repo-root dist/.\n` +
-      `  The bundle ships as a GitHub Release asset (ADR 0034) fetched by red-fetch;\n` +
-      `  ensure network access on first run, or build it locally:\n` +
-      `    pnpm -C src/apps/dev run bundle\n`,
-  );
-  process.exit(1);
-}
-
-// Delegate to the resolved bundle as a subprocess (argv[1] = bundle, so its
-// `import.meta.url === file://process.argv[1]` self-exec guard fires). Inherit
-// stdio; forward the child's exit code and terminating signal.
-const res = spawnSync(process.execPath, [bundle, ...process.argv.slice(2)], { stdio: "inherit" });
-if (res.signal) {
-  process.kill(process.pid, res.signal);
-} else {
-  process.exit(res.status ?? 1);
-}
+Best-effort: never blocks session start. On any failure it logs to
+<cache-dir>/red-fetch.log and exits 0.`;async function X(e){let n=F(e.cacheDir);(e.help||!e.plugin||!e.version)&&(process.stdout.write(`${K}
+`),!e.help&&(!e.plugin||!e.version)&&process.stdout.write(`
+entrypoint: missing <plugin> and/or <version>; nothing to do.
+`),process.exit(0));let{plugin:t,version:r}=e,i=d({plugin:t,version:r,cacheDir:n});try{let o=await g(_,{plugin:t,version:r,repo:e.repo,cacheDir:n});process.stdout.write(`entrypoint: bundle ready at ${o}
+`)}catch(o){let s=o instanceof c?o.kind:"unknown",a=o instanceof Error?o.message:String(o);await B(n,`${s}: ${a} (fetch plugin=${t} version=${r})`),process.stdout.write(`entrypoint: could not fetch ${t}@${r} (${s}); expected cache path ${i}. Continuing \u2014 fetch is best-effort.
+`)}process.exit(0)}async function V(){let e=W(process.argv.slice(2),J());e.mode==="run"?await q(e):await X(e)}import.meta.url===`file://${process.argv[1]}`&&V();export{W as parseEntrypoint};

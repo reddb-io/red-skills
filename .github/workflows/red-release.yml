@@ -154,14 +154,14 @@ jobs:
           RED_BUILD_TIME: ${{ github.event.head_commit.timestamp }}
         run: |
           set -euo pipefail
-          # ADR 0035: the dev runtime ships as a Release asset (dev.bundle.min.mjs),
-          # NOT a committed bundle. `build` emits dist/dev.bundle.min.mjs (the asset,
-          # ADR 0034) and rebuilds the committed plugins/dev/hooks/red-fetch.mjs from
-          # src/packages/shared/fetch-cli.ts. The fetcher bootstraps every bundle but
-          # cannot fetch itself, so it ships COMMITTED (like memory's bootstrap.mjs);
-          # esbuild is deterministic, so an unchanged source rebuilds to identical
-          # bytes and the git add below is a no-op. The committed bin/afk.mjs launcher
-          # is hand-written, not generated — `build` never touches it.
+          # ADR 0038: the dev runtime ships as a Release asset (dev.bundle.min.mjs),
+          # NOT a committed bundle. ADR 0039: the two committed, dependency-free
+          # entrypoints — plugins/dev/hooks/red-fetch.mjs (fetch role) and
+          # plugins/dev/skills/engineering/afk/bin/afk.mjs (run:dev role) — are built
+          # from ONE source, src/packages/shared/entrypoint-cli.ts. `build` emits the
+          # dist/dev.bundle.min.mjs asset (ADR 0034) plus both entrypoints. They carry
+          # no version, so esbuild's deterministic output rebuilds to identical bytes
+          # and the git add below is a no-op unless the source actually changed.
           pnpm build
           # Checksum manifest the dynamic-fetch hook (src/packages/shared/bundle-fetch.ts)
           # verifies before caching. Mirrors memory-runtime-manifest.json.
@@ -203,9 +203,11 @@ jobs:
             src/packages/shared/package.json
             src/packages/build-info/package.json
           )
-          # bin/afk.mjs is a hand-written launcher (ADR 0035), not a per-release
-          # artifact, so it is NOT staged here. Only red-fetch.mjs is rebuilt+staged.
+          # ADR 0039: both committed entrypoints are built from entrypoint-cli.ts by
+          # `pnpm build` above. Stage both so a source change ships; they carry no
+          # version, so an unchanged source leaves them byte-identical (git add no-op).
           fetch_bundle=plugins/dev/hooks/red-fetch.mjs
+          afk_bundle=plugins/dev/skills/engineering/afk/bin/afk.mjs
           new="${NEXT#v}"
           for manifest in "${manifests[@]}"; do
             tmp=$(mktemp)
@@ -219,10 +221,10 @@ jobs:
           done
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          if git diff --quiet -- "${manifests[@]}" "${package_jsons[@]}" "$fetch_bundle"; then
-            echo "plugin/package manifests already at $new and red-fetch bundle unchanged"
+          if git diff --quiet -- "${manifests[@]}" "${package_jsons[@]}" "$fetch_bundle" "$afk_bundle"; then
+            echo "plugin/package manifests already at $new and entrypoints unchanged"
           else
-            git add "${manifests[@]}" "${package_jsons[@]}" "$fetch_bundle"
+            git add "${manifests[@]}" "${package_jsons[@]}" "$fetch_bundle" "$afk_bundle"
             git commit -m "chore(release): $NEXT [skip release]"
             # Rebase-resilient push: red-memory-wiki-extract.yml also pushes to
             # main on PR-merge (via GITHUB_TOKEN, which can't re-trigger this

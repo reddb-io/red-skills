@@ -38,11 +38,18 @@ The committed `bin/afk.mjs` was, in the release workflow's own words, the
 **"transition"** artifact: everything needed to fetch the dev bundle was in place
 except the entrypoint, which still *was* the 2.6 MB bundle instead of resolving it.
 
+> **Refined by ADR 0039.** This ADR introduced `bin/afk.mjs` as a *hand-written*
+> launcher. ADR 0039 then unified it with `red-fetch.mjs` into one source
+> (`entrypoint-cli.ts`) selected by a build role, so `bin/afk.mjs` is again a
+> deterministic build output (~6 KB, versionless) that the release stages — the
+> "hand-written, build never touches it" wording below is superseded. The
+> fetched-asset decision itself stands unchanged.
+
 ## Decision
 
 **The dev runtime ships as a fetched Release asset; the committed entrypoint is a
-small hand-written launcher, not the bundle.** This completes the ADR 0034
-migration for the dev domain and supersedes ADR 0032.
+small launcher, not the bundle.** This completes the ADR 0034 migration for the dev
+domain and supersedes ADR 0032.
 
 1. **`bin/afk.mjs` becomes a ~3 KB hand-written launcher** (node built-ins only).
    It resolves the dev runtime bundle and delegates (`node bin/afk.mjs <cmd>` →
