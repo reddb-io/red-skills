@@ -6,6 +6,20 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 
 ---
 
+## hitl (engineering) — dedicated human-decision queue workflow (PRD #364)
+
+- **status**: added
+- **upstream**: —
+- **why**: PRD #364. `ready-for-human` had become an informal residue of triage and AFK blockers, while the obsolete `slice:hitl` / `slice:afk` labels duplicated live queue state and made label meaning drift. The maintainer wanted a dedicated `$hitl` vertical for resolving pending human decisions and promoting issues back to autonomous execution when possible.
+- **what changed**:
+  - Added `plugins/dev/skills/engineering/hitl/SKILL.md`, a workflow that selects open non-PRD `ready-for-human` issues, supports skip, extracts the pending decision, records the maintainer answer as a Directive block, and either keeps the issue in the HITL queue with the next pending decision or moves it to `ready-for-agent` with a refreshed `## Agent brief`.
+  - Added pure HITL core modules in `src/domains/dev/src/core/`: queue selection, pending-decision extraction, and resolution planning. GitHub access stays at the runtime boundary via `runtime/gh.ts`.
+  - Removed `slice:hitl` and `slice:afk` from the taught label vocabulary, setup docs, triage/to-issues/report-bug guidance, examples, and tests. HITL slices now publish directly as `ready-for-human`; AFK-safe slices publish directly as `ready-for-agent`.
+  - Registered the skill in the dev plugin documentation and Claude manifest so released installations expose `$hitl`.
+  - Added regression tests for label vocabulary, HITL selection, decision extraction, and resolution planning. Refs #365, #366, #367, #368, #369.
+
+---
+
 ## afk — AGENT-PROMPT forbids backgrounding the feedback suite + the self-matching pgrep poller (#362)
 
 - **status**: modified
