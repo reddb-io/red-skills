@@ -196,7 +196,7 @@ describe("recordReasoningAttempt", () => {
       const withHooks = await recordReasoningAttempt(store, {
         ...samplePayload,
         hooks: [
-          { lifecycle: "pre_pick", command: "scripts/filter.sh --label slice:afk", exit_code: 0 },
+          { lifecycle: "pre_pick", command: "scripts/filter.sh --label ready-for-agent", exit_code: 0 },
           { lifecycle: "post_pick", command: "scripts/audit.sh", exit_code: 1 },
           // Junk entries are dropped instead of forwarded so the node never
           // carries half-filled triples.
@@ -206,7 +206,7 @@ describe("recordReasoningAttempt", () => {
       });
       const node = await store.getNode(withHooks.attemptRid);
       expect(node?.properties.hooks).toEqual([
-        { lifecycle: "pre_pick", command: "scripts/filter.sh --label slice:afk", exit_code: 0 },
+        { lifecycle: "pre_pick", command: "scripts/filter.sh --label ready-for-agent", exit_code: 0 },
         { lifecycle: "post_pick", command: "scripts/audit.sh", exit_code: 1 },
       ]);
 
