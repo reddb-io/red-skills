@@ -1,4 +1,5 @@
 import { parseRunnerFlag, detectRunner } from "../core/runner-detection.js";
+import { callerProcessTreeNative } from "../runtime/caller-process.js";
 import {
   runSession,
   type SessionContext,
@@ -542,7 +543,11 @@ export async function runCommand(options: RunOptions): Promise<number> {
   const cwd = options.cwd ?? process.cwd();
 
   const flags = parseRunFlags(options.args);
-  const detection = detectRunner({ flag: flags.runnerFlag ?? parseRunnerFlag(options.args), scriptPath: process.argv[1] });
+  const detection = detectRunner({
+    flag: flags.runnerFlag ?? parseRunnerFlag(options.args),
+    processTree: callerProcessTreeNative(),
+    scriptPath: process.argv[1],
+  });
   const runner: Runner = isRunner(detection.runner) ? detection.runner : "claude";
 
   const ctx = await resolveRepoContext(cwd);
