@@ -5,6 +5,7 @@ import {
   buildContinuousPushHook,
   interpretOutcome,
   isExhaustionError,
+  isTransientRunnerError,
   runAgent,
   effortForProvider,
   DONE_SIGNAL,
@@ -485,6 +486,28 @@ describe("isExhaustionError", () => {
   });
 });
 
+describe("isTransientRunnerError", () => {
+  it("matches Codex transport/setup failures that should not crash the worker", () => {
+    expect(
+      isTransientRunnerError(
+        new Error("failed to connect to websocket: HTTP error: 502 Bad Gateway, url: wss://chatgpt.com/backend-api/codex/responses"),
+      ),
+    ).toBe(true);
+    expect(
+      isTransientRunnerError(
+        new Error("Error: thread/start: thread/start failed: failed to load configuration: No such file or directory (os error 2)"),
+      ),
+    ).toBe(true);
+    expect(isTransientRunnerError(new Error("exec failed: exec failed: spawn sh ENOENT"))).toBe(true);
+    expect(isTransientRunnerError(new Error("cwd does not exist: /tmp/.red/tmp/workers/wAAAA/17-a1"))).toBe(true);
+  });
+
+  it("does not match ordinary agent/work failures", () => {
+    expect(isTransientRunnerError(new Error("worktree add failed: fatal"))).toBe(false);
+    expect(isTransientRunnerError(new Error("tests failed: 2 failing"))).toBe(false);
+  });
+});
+
 describe("runAgent — exhaustion", () => {
   it("maps a thrown exhaustion error to the exhausted outcome (no commits, no sentinel)", async () => {
     const r = await runAgent(
@@ -516,5 +539,20 @@ describe("runAgent — exhaustion", () => {
         baseInput,
       ),
     ).rejects.toThrow("worktree add failed");
+  });
+});
+
+describe("runAgent — runner transient failures", () => {
+  it("maps a thrown Codex websocket 502 to runner-transient instead of rethrowing", async () => {
+    const r = await runAgent(
+      makeDeps(async () => {
+        throw new Error("failed to connect to websocket: HTTP error: 502 Bad Gateway, url: wss://chatgpt.com/backend-api/codex/responses");
+      }),
+      { ...baseInput, runner: "codex", model: "gpt-5.4" },
+    );
+    expect(r.outcome).toBe("runner-transient");
+    expect(r.branch).toBe("afk/wZ2R4/42-fix-oauth");
+    expect(r.commits).toEqual([]);
+    expect(r.stdout).toContain("failed to connect to websocket");
   });
 });
