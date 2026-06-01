@@ -8,6 +8,7 @@
 
 import { execTool, type ExecOptions, type ExecFn, type ExecOutput } from "./exec.js";
 import type { IssueCandidate } from "../core/session.js";
+import type { HitlCandidate } from "../core/hitl-selection.js";
 import type { IssueMeta } from "../core/branch-cleanup.js";
 import type { HandoffComment } from "../core/handoff.js";
 import type { IssueOpenState } from "../core/reclaim.js";
@@ -86,6 +87,49 @@ export async function listCandidates(ctx: GhContext): Promise<IssueCandidate[]> 
       number: Number(item.number ?? 0),
       title: String(item.title ?? ""),
       body: String(item.body ?? ""),
+      labels: Array.isArray(item.labels) ? item.labels.map((l) => String(l.name ?? "")) : [],
+    };
+  });
+}
+
+/** List the ready-for-human candidate pool projected to HitlCandidate[]. */
+export async function listHitlCandidates(ctx: GhContext): Promise<HitlCandidate[]> {
+  const r = await runGh(ctx, 
+    [
+      "issue",
+      "list",
+      ...repoArgs(ctx),
+      "--label",
+      "ready-for-human",
+      "--state",
+      "open",
+      "--limit",
+      "200",
+      "--json",
+      "number,title,labels,body,createdAt",
+    ],
+  );
+  if (r.code !== 0) return [];
+  let raw: unknown;
+  try {
+    raw = JSON.parse(r.stdout || "[]");
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(raw)) return [];
+  return raw.map((row): HitlCandidate => {
+    const item = row as {
+      number?: number;
+      title?: string;
+      body?: string;
+      createdAt?: string | null;
+      labels?: Array<{ name?: string }>;
+    };
+    return {
+      number: Number(item.number ?? 0),
+      title: String(item.title ?? ""),
+      body: String(item.body ?? ""),
+      createdAt: item.createdAt ?? null,
       labels: Array.isArray(item.labels) ? item.labels.map((l) => String(l.name ?? "")) : [],
     };
   });
