@@ -66816,9 +66816,9 @@ async function superviseCommand(args2, cwd = process.cwd()) {
 function readBuildInfo(app) {
   const info = {
     app,
-    version: stripTagPrefix(readInjected("__RED_BUILD_VERSION__", () => "1.146.1") ?? "0.0.0-dev"),
-    gitSha: readInjected("__RED_BUILD_GIT_SHA__", () => "unknown") ?? "unknown",
-    buildTime: readInjected("__RED_BUILD_TIME__", () => "2026-06-01T14:06:10.200Z") ?? "unknown",
+    version: stripTagPrefix(readInjected("__RED_BUILD_VERSION__", () => "1.147.0") ?? "0.0.0-dev"),
+    gitSha: readInjected("__RED_BUILD_GIT_SHA__", () => "1b2dc192cee3dec5d69d2ad2bba86ff326ce1d42") ?? "unknown",
+    buildTime: readInjected("__RED_BUILD_TIME__", () => "2026-06-01T11:19:44-03:00") ?? "unknown",
     bundleAsset: readInjected("__RED_BUNDLE_ASSET__", () => "dev.bundle.min.mjs") ?? "unknown"
   };
   const reddbSdkVersion = readInjected("__REDDB_SDK_VERSION__", () => "");
@@ -66936,10 +66936,10 @@ export {
 
 @ai-hero/sandcastle/dist/chunk-Q5W3WQVU.js:
   (*! Bundled license information:
-
+  
   undici/lib/web/fetch/body.js:
     (*! formdata-polyfill. MIT License. Jimmy Wärting <https://jimmy.warting.se/opensource> *)
-
+  
   undici/lib/web/websocket/frame.js:
     (*! ws. MIT License. Einar Otto Stangvik <einaros@gmail.com> *)
   *)
