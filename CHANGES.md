@@ -6,6 +6,18 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 
 ---
 
+## afk — AGENT-PROMPT forbids backgrounding the feedback suite + the self-matching pgrep poller (#362)
+
+- **status**: modified
+- **upstream**: —
+- **why**: Issue #362. The inner agent could write a self-deadlocking poller that hangs the worker forever. Observed live on #302 (worker wKXWG): the agent ran vitest in the background, then polled with `until ! pgrep -f vitest; do sleep 3; done`. `pgrep -f vitest` matches the polling shell's *own* argv (which contains the string `vitest`), so the negated condition is never true → infinite loop. vitest had long finished; a solo `run` worker has no idle reaper, so it would hang indefinitely. Same family as #216 / #322. This fixes the source — the orchestrator-side backstop is #363.
+- **what changed**: Rewrote the *Background Tasks and Polling (binding)* section of `AGENT-PROMPT.md`:
+  - Added a binding rule that the inner agent must **never background the feedback suite (`test`/`typecheck`/`lint`/`build`) to poll for it** — the orchestrator runs those gates itself in the Feedback-loops step after the agent commits; the agent edits and commits, validation is the orchestrator's mechanism.
+  - For any other `run_in_background` wait loop, mandated that it (1) never match by a literal string that appears in the loop's own command line — match by the captured job PID or use the bracket trick (`pgrep -f '[v]itest'`), citing the #302 self-match trap — and (2) carry a hard wall-clock deadline. Updated the worked example to capture the job PID and `kill -0` it instead of `pgrep`-ing the tool name.
+  - `AGENT-PROMPT.md` is read from disk by the runtime (not baked into `bin/afk.mjs` — grep of the bundle for the section text returns nothing), so no bundle rebuild was needed.
+
+---
+
 ## afk — native statusline + legacy bash orchestration removed (PRD #287)
 
 - **status**: modified

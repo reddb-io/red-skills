@@ -170,6 +170,8 @@ Surgical precision. If you find an unrelated bug, mention it in Notes — don't 
 
 Several `/afk` iterations have been killed by inner agents writing untimed polling loops around `run_in_background` tasks — the bg task crashes silently or never writes the expected string, the polling loop runs forever, and even after you emit `<promise>DONE</promise>` the orchestrator's pipe stays open because your `until` loop is still alive. The orchestrator now has a watchdog (kills the inner pipeline 30 s after seeing the sentinel if it doesn't close on its own) **and a `pnpm` PATH shim** that wraps `pnpm test` / `pnpm test:*` invocations with `timeout ${RED_AFK_TEST_TIMEOUT_S:-300}s` so a hung test runner cannot keep your polling loop alive past the deadline. You are still responsible for not building the trap in the first place — the shim is a safety net, not the design.
 
+**Never background the feedback suite to poll for it.** The orchestrator runs the feedback gates — `test`, `typecheck`, `lint`, `build` — itself in the Feedback-loops step *after* you commit (see *Workflow* step 4). Validation is the orchestrator's mechanism; your job is to edit and commit. Do **not** spawn a background `pnpm test` (or any other gate) and wait on it — backgrounding a gate and polling for it is the single most common way an inner agent deadlocks the worker. When you need a gate's result while iterating, run it in the **foreground with `timeout`** (below) and read the exit code directly. Never `run_in_background` a feedback gate.
+
 **Forbidden — the wheel-spin pattern:**
 
 ```bash
@@ -188,12 +190,17 @@ timeout --kill-after=30 600 pnpm test 2>&1 | tee /tmp/test.log
 
 `pnpm test` runs in the foreground with a 10-minute hard cap. No polling. The exit code is meaningful (0 success, 124 timeout, other = test failure). This is the default.
 
-**If you must use `run_in_background`** (e.g. to do other work in parallel), every wait loop **must** carry a deadline and signal `BLOCKED` if the deadline trips:
+**If you must use `run_in_background`** for something that is *not* a feedback gate (e.g. a dev server you need running while you do other work), every wait loop **must** satisfy both of these:
+
+1. **Never match by a literal string that appears in the wait loop's own command line.** A plain `pgrep -f vitest` matches the polling shell's *own* argv — which contains the word `vitest` — so `until ! pgrep -f vitest; do sleep 3; done` never exits: the condition is self-true forever, even though the test finished seconds in. This self-match trap hung worker wKXWG on #302 for 7+ minutes until it was reaped. Instead, match by the **captured job PID** — `pnpm dev & pid=$!; … kill -0 "$pid" 2>/dev/null` — or, if you must match by name, use the **bracket trick** so the pattern cannot match itself: put the first character inside a character class, e.g. `pgrep -f '[v]itest'` (the regex `[v]itest` matches `vitest` but the literal argv `[v]itest` does not).
+2. **Carry a hard wall-clock deadline** — a `timeout` wrapper or a `SECONDS`-based bound — so it can never loop forever, and signal `BLOCKED` if the deadline trips.
 
 ```bash
+pnpm dev & pid=$!              # capture the job PID — never pgrep the tool name
 deadline=$((SECONDS + 600))   # 10 min — tune per task class
 while [ "$SECONDS" -lt "$deadline" ]; do
-  if [ -s "$out" ] && grep -q "test result" "$out"; then
+  kill -0 "$pid" 2>/dev/null || break   # process gone → done
+  if [ -s "$out" ] && grep -q "ready" "$out"; then
     break
   fi
   sleep 5
@@ -204,7 +211,7 @@ if [ "$SECONDS" -ge "$deadline" ]; then
 fi
 ```
 
-The rule: **no polling loop without a deadline**, ever. The orchestrator watchdog is the safety net, not the design.
+The rules: **never background the feedback suite to poll it**, **never match a wait loop against a string that appears in its own argv** (use the captured job PID or the bracket trick), and **no polling loop without a deadline**, ever. The orchestrator watchdog is the safety net, not the design.
 
 ## Wiki Awareness
 
