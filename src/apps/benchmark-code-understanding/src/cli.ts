@@ -1,6 +1,7 @@
 #!/usr/bin/env node
+import { existsSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { readBuildInfo, renderVersion } from "@reddb-io/build-info";
 import { parseLooseArgs, type LooseParsedArgs } from "@reddb-io/shared/args.js";
 import { buildReport, loadRunRecords, renderReportMarkdown } from "./report.js";
@@ -45,13 +46,15 @@ async function runDoctor(args: LooseParsedArgs): Promise<number> {
 }
 
 async function runRun(args: LooseParsedArgs): Promise<number> {
-  const out = stringFlag(args, "out") ?? ".red/bench/code-understanding/runs.jsonl";
+  const workspace = workspaceRoot(process.cwd());
+  const benchRoot = join(workspace, ".red", "tmp", "bench", "code-understanding");
+  const out = stringFlag(args, "out") ?? join(benchRoot, "runs.jsonl");
   const records = await runBenchmark({
     runner: runnerFlag(args),
     corpus: "overlap",
     arms: armsFlag(args),
     runs: positiveIntFlag(args, "runs") ?? 1,
-    workdir: stringFlag(args, "workdir") ?? ".red/tmp/benchmark-code-understanding",
+    workdir: stringFlag(args, "workdir") ?? benchRoot,
     out,
     dryRun: args.flags["dry-run"] === true,
   });
@@ -119,6 +122,16 @@ async function maybeWrite(path: string | undefined, body: string): Promise<void>
 
 function failOnUnsupportedClaims(args: LooseParsedArgs, unsupportedCount: number): number {
   return args.flags["fail-on-unsupported-claims"] === true && unsupportedCount > 0 ? 1 : 0;
+}
+
+function workspaceRoot(start: string): string {
+  let current = resolve(start);
+  while (true) {
+    if (existsSync(join(current, "pnpm-workspace.yaml"))) return current;
+    const parent = dirname(current);
+    if (parent === current) return resolve(start);
+    current = parent;
+  }
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
