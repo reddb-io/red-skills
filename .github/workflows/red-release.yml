@@ -298,7 +298,7 @@ jobs:
             const url = `https://github.com/${reddb.repo}/releases/download/${reddb.tag}/${asset}.sha256`;
             const response = await fetch(url, { redirect: 'follow' });
             if (!response.ok) throw new Error(`GET ${url} -> ${response.status}`);
-            const sha256 = (await response.text()).trim().match(/^[0-9a-f]{64}/i)?.[0]?.toLowerCase();
+            const sha256 = (await response.text()).match(/\b[0-9a-f]{64}\b/i)?.[0]?.toLowerCase();
             if (!sha256) throw new Error(`invalid sha256 file for ${asset}`);
             redAssets[platform] = { asset, sha256 };
           }

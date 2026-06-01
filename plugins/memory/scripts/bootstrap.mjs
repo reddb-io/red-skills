@@ -52,7 +52,7 @@ export function assetUrl(repo, tag, name) {
 
 /** Parse the first hex token out of a `*.sha256` file body (`<hex>  <name>`). */
 export function parseSha256File(body) {
-  const m = String(body).trim().match(/^[0-9a-f]{64}/i);
+  const m = String(body).match(/\b[0-9a-f]{64}\b/i);
   return m ? m[0].toLowerCase() : null;
 }
 
