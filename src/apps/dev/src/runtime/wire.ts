@@ -19,6 +19,7 @@ import type { RunAgentInput, RunAgentResult } from "../core/execution.js";
 // max-iterations knob from env/config without importing the runtime.
 import { parseMaxIterations } from "../core/execution.js";
 import type { BranchRef } from "../core/branch-cleanup.js";
+import { isRunner, type Runner } from "../types/runner.js";
 import * as ghx from "./gh.js";
 import * as gitx from "./git.js";
 import * as fsx from "./fs.js";
@@ -86,7 +87,15 @@ export interface RunSettings {
 
 const SANDBOX_MODES: readonly SandboxMode[] = ["none", "docker", "podman"];
 
-export function resolveRunSettings(root: string, env: NodeJS.ProcessEnv = process.env): RunSettings {
+function defaultModelForRunner(runner: string): string {
+  return runner === "codex" ? "gpt-5.5" : "claude-opus-4-8";
+}
+
+export function resolveRunSettings(
+  root: string,
+  env: NodeJS.ProcessEnv = process.env,
+  runner?: Runner,
+): RunSettings {
   const paths = afkPaths(root);
   const cfg = loadConfig(paths.configPath, { warn: () => undefined });
   // Precedence: RED_AFK_SANDBOX env override > afk.sandbox config > "none".
@@ -100,7 +109,11 @@ export function resolveRunSettings(root: string, env: NodeJS.ProcessEnv = proces
     ? (rawSandbox as SandboxMode)
     : "none";
   const defaultRunner = getConfig(cfg, "afk.default_runner") || "claude";
-  const model = getConfig(cfg, "afk.model") || "claude-opus-4-8";
+  const activeRunner = runner ?? (isRunner(defaultRunner) ? defaultRunner : "claude");
+  const model =
+    getConfig(cfg, `afk.models.${activeRunner}`) ||
+    getConfig(cfg, "afk.model") ||
+    defaultModelForRunner(activeRunner);
   // Precedence: RED_AFK_MAX_ITERATIONS env > afk.max_iterations config >
   // undefined (→ DEFAULT_MAX_ITERATIONS). parseMaxIterations rejects a
   // non-numeric / zero / negative value from EITHER source, so a typo in the

@@ -797,7 +797,9 @@ Scalar run settings live in `.red/config.yaml` under the `afk:` key (alongside t
 | Config key | Env override | Default | Meaning |
 |---|---|---|---|
 | `afk.default_runner` | `RED_AFK_RUNNER` | `claude` | Caller runner identity/default backend consumed before ambient sniffing. |
-| `afk.model` | — | `claude-opus-4-8` | Model id passed to the runner. |
+| `afk.model` | — | runner-specific | Legacy global model override. Prefer `afk.models.<runner>` so Codex never receives a Claude-only model. |
+| `afk.models.claude` | — | `claude-opus-4-8` | Claude Code model id. |
+| `afk.models.codex` | — | `gpt-5.5` | Codex model id. |
 | `afk.sandbox` | `RED_AFK_SANDBOX` | `none` | Isolation backend (`none` \| `docker` \| `podman`, ADR 0033). |
 | `afk.max_iterations` | `RED_AFK_MAX_ITERATIONS` | `50` | Sandcastle re-invocation ceiling (issue #322) — the safety cap for "the agent never emits `<promise>DONE</promise>`". The completion sentinel is the real terminator, so a normal issue finishes in 1–3 iterations; this is headroom for a thorough agent that keeps refining/testing. A non-numeric / zero / negative value in either the env or the config is ignored (falls through to the default) so a typo can never disable the cap or pin the agent to 1. |
 

@@ -62301,14 +62301,18 @@ function afkPaths(root) {
   };
 }
 var SANDBOX_MODES = ["none", "docker", "podman"];
-function resolveRunSettings(root, env = process.env) {
+function defaultModelForRunner(runner) {
+  return runner === "codex" ? "gpt-5.5" : "claude-opus-4-8";
+}
+function resolveRunSettings(root, env = process.env, runner) {
   const paths = afkPaths(root);
   const cfg = loadConfig(paths.configPath, { warn: () => void 0 });
   const envSandbox = (env.RED_AFK_SANDBOX ?? "").trim();
   const rawSandbox = SANDBOX_MODES.includes(envSandbox) ? envSandbox : getConfig(cfg, "afk.sandbox");
   const sandbox3 = SANDBOX_MODES.includes(rawSandbox) ? rawSandbox : "none";
   const defaultRunner = getConfig(cfg, "afk.default_runner") || "claude";
-  const model = getConfig(cfg, "afk.model") || "claude-opus-4-8";
+  const activeRunner = runner ?? (isRunner(defaultRunner) ? defaultRunner : "claude");
+  const model = getConfig(cfg, `afk.models.${activeRunner}`) || getConfig(cfg, "afk.model") || defaultModelForRunner(activeRunner);
   const maxIterations = parseMaxIterations(env.RED_AFK_MAX_ITERATIONS) ?? parseMaxIterations(getConfig(cfg, "afk.max_iterations"));
   return { sandbox: sandbox3, defaultRunner, model, maxIterations };
 }
@@ -65852,7 +65856,7 @@ async function runCommand2(options) {
   });
   const runner = isRunner(detection.runner) ? detection.runner : "claude";
   const ctx = await resolveRepoContext(cwd);
-  const settings = resolveRunSettings(cwd);
+  const settings = resolveRunSettings(cwd, process.env, runner);
   const paths = afkPaths(cwd);
   const existing = new Set((await collectMonitorInputs(cwd)).workers.map((w3) => w3.state.worker_id));
   const workerId = genWorkerId(Math.random, (id3) => existing.has(id3));
@@ -66892,8 +66896,8 @@ function readBuildInfo(app) {
   const info = {
     app,
     version: stripTagPrefix(readInjected("__RED_BUILD_VERSION__", () => "1.147.4") ?? "0.0.0-dev"),
-    gitSha: readInjected("__RED_BUILD_GIT_SHA__", () => "6e09948526e48addd9bc9b74a9aee4bb705dbc84") ?? "unknown",
-    buildTime: readInjected("__RED_BUILD_TIME__", () => "2026-06-01T13:43:12-03:00") ?? "unknown",
+    gitSha: readInjected("__RED_BUILD_GIT_SHA__", () => "unknown") ?? "unknown",
+    buildTime: readInjected("__RED_BUILD_TIME__", () => "2026-06-01T17:15:16.992Z") ?? "unknown",
     bundleAsset: readInjected("__RED_BUNDLE_ASSET__", () => "dev.bundle.min.mjs") ?? "unknown"
   };
   const reddbSdkVersion = readInjected("__REDDB_SDK_VERSION__", () => "");

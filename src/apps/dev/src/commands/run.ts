@@ -604,7 +604,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
   const runner: Runner = isRunner(detection.runner) ? detection.runner : "claude";
 
   const ctx = await resolveRepoContext(cwd);
-  const settings = resolveRunSettings(cwd);
+  const settings = resolveRunSettings(cwd, process.env, runner);
   const paths = afkPaths(cwd);
 
   // Worker id — probe the workers root for collisions.

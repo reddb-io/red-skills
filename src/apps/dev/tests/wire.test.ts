@@ -26,6 +26,17 @@ describe("resolveRunSettings", () => {
       const s = resolveRunSettings(root);
       expect(s.sandbox).toBe("none");
       expect(s.defaultRunner).toBe("claude");
+      expect(s.model).toBe("claude-opus-4-8");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("defaults the model from the active runner", () => {
+    const root = scratch();
+    try {
+      expect(resolveRunSettings(root, {}, "codex").model).toBe("gpt-5.5");
+      expect(resolveRunSettings(root, {}, "claude").model).toBe("claude-opus-4-8");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -39,6 +50,21 @@ describe("resolveRunSettings", () => {
       const s = resolveRunSettings(root);
       expect(s.sandbox).toBe("docker");
       expect(s.defaultRunner).toBe("codex");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("reads runner-specific model overrides before legacy afk.model", () => {
+    const root = scratch();
+    try {
+      mkdirSync(join(root, ".red"), { recursive: true });
+      writeFileSync(
+        join(root, ".red", "config.yaml"),
+        "afk:\n  model: shared-model\n  models:\n    codex: gpt-custom\n    claude: claude-custom\n",
+      );
+      expect(resolveRunSettings(root, {}, "codex").model).toBe("gpt-custom");
+      expect(resolveRunSettings(root, {}, "claude").model).toBe("claude-custom");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
