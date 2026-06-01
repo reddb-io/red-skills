@@ -4,6 +4,8 @@
 # Per-repo agent ephemera (never committed)
 .red/tmp/
 .red/wiki/
+**/.red/tmp/
+**/.red/bench/
 
 # Memory plugin — per-project graph store + session pointer (local state, like node_modules)
 .red/memory/graph.rdb*

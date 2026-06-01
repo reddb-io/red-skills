@@ -217,15 +217,15 @@ alignment, and recommended next actions.
 catalog evidence to named reference axes and next actions. It is intentionally
 read-only and does not create public benchmark claims.
 
-`memory-benchmark references eval` runs the checked-in reference eval harness and
+`benchmark-memory references eval` runs the checked-in reference eval harness and
 prints a human-readable summary of the composite score, each dimension status,
-and any unsupported public claims. `memory-benchmark references eval --json` emits the
+and any unsupported public claims. `benchmark-memory references eval --json` emits the
 same report as machine-readable JSON for CI and `references:eval:v2` consumers.
 The command operates on checked-in fixtures and the source tree — it does not
 mutate Memory state and does not make live-service reference claims.
 
 ```bash
-memory-benchmark references eval
+benchmark-memory references eval
 # memory reference eval: 6/6 pass
 #   retrieval: 1/1 pass
 #   readiness: 1/1 pass
@@ -233,14 +233,14 @@ memory-benchmark references eval
 #   multi-agent-integration: 1/1 pass
 ```
 
-`memory-benchmark references viewer` writes the same eval contract as a
+`benchmark-memory references viewer` writes the same eval contract as a
 self-contained HTML viewer with embedded JSON. By default it writes to
 `.red/memory/reference-eval.html` under the current root; pass
 `--out <file>` to override the destination.
 
 ```bash
-memory-benchmark references viewer
-# memory-benchmark: reference eval viewer written .red/memory/reference-eval.html
+benchmark-memory references viewer
+# benchmark-memory: reference eval viewer written .red/memory/reference-eval.html
 #   composite: 6/6 pass
 #   contract: memory.reference_eval.v2
 ```
@@ -619,9 +619,9 @@ memory health-viewer           # local HTML operational health viewer
 memory onboarding-map-viewer   # local HTML map-first onboarding viewer
 memory communities-viewer      # local HTML graph community analytics viewer
 memory references-radar --json # internal reference posture from catalog evidence
-memory-benchmark references eval         # human-readable composite + per-dimension summary
-memory-benchmark references eval --json  # machine-readable reference eval report
-memory-benchmark references viewer       # local HTML reference eval viewer (default: .red/memory/reference-eval.html)
+benchmark-memory references eval         # human-readable composite + per-dimension summary
+benchmark-memory references eval --json  # machine-readable reference eval report
+benchmark-memory references viewer       # local HTML reference eval viewer (default: .red/memory/reference-eval.html)
 memory workbench               # local unified Memory UI
 memory routing-guide --agent cursor --json # multi-agent MCP/HTTP integration guide
 memory routing-guide-viewer --agent cursor # local HTML multi-agent routing guide
@@ -659,13 +659,13 @@ normal recall promotes the active head of the chain, while `recall
 
 ## Reference baseline
 
-`memory-benchmark` carries a checked-in reference eval harness so the README comparison
+`benchmark-memory` carries a checked-in reference eval harness so the README comparison
 is backed by executable assertions instead of marketing copy:
 
 ```bash
-pnpm --filter @reddb-io/memory-benchmark references:eval
-pnpm --filter @reddb-io/memory-benchmark references:interop
-pnpm --filter @reddb-io/memory-benchmark references:baseline
+pnpm --filter @reddb-io/benchmark-memory references:eval
+pnpm --filter @reddb-io/benchmark-memory references:interop
+pnpm --filter @reddb-io/benchmark-memory references:baseline
 pnpm --dir src/apps/memory test -- competitive-baseline
 ```
 
@@ -705,7 +705,7 @@ baseline without making normal tests or fixture runs depend on Agentmemory:
 
 ```bash
 MEMORY_AGENTMEMORY_BASELINE_CMD='["node","scripts/agentmemory-baseline.mjs"]' \
-  pnpm --filter @reddb-io/memory-benchmark dev -- references eval --v2 --json --human --live-agentmemory
+  pnpm --filter @reddb-io/benchmark-memory dev -- references eval --v2 --json --human --live-agentmemory
 ```
 
 The same harness can opt in to a `neo4j-labs/agent-memory` recall-latency
@@ -713,7 +713,7 @@ baseline when a local wrapper for the Neo4j-backed service is available:
 
 ```bash
 MEMORY_NEO4J_AGENT_MEMORY_BASELINE_CMD='["node","scripts/neo4j-agent-memory-baseline.mjs"]' \
-  pnpm --filter @reddb-io/memory-benchmark dev -- references eval --v2 --json --human --live-agent-memory
+  pnpm --filter @reddb-io/benchmark-memory dev -- references eval --v2 --json --human --live-agent-memory
 ```
 
 The configured commands are local wrappers around the available reference

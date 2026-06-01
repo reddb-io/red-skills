@@ -1,5 +1,5 @@
 {
-  "name": "@reddb-io/memory-benchmark",
+  "name": "@reddb-io/benchmark-memory",
   "version": "1.147.0",
   "private": true,
   "description": "Internal benchmark and reference-eval app for RedSkills Memory.",
@@ -7,7 +7,7 @@
   "type": "module",
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "bundle": "node ../../../scripts/bundle-app.mjs --entry src/cli.ts --outfile ../../../dist/memory-benchmark.bundle.min.mjs --asset memory-benchmark.bundle.min.mjs --minify",
+    "bundle": "node ../../../scripts/bundle-app.mjs --entry src/cli.ts --outfile ../../../dist/benchmark-memory.bundle.min.mjs --asset benchmark-memory.bundle.min.mjs --minify",
     "build": "pnpm run typecheck && pnpm run bundle",
     "references:baseline": "tsx src/cli.ts references baseline --json --human",
     "references:eval": "tsx src/cli.ts references eval --json --human",

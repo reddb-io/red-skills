@@ -411,7 +411,7 @@ Usage:
   agent-memory-server JSON dumps. See \`docs/migrating-from-ams.md\`.
   memory import ams <dump.json>     [--root <dir>] [--json]
 
-  Benchmarks and reference eval live in the embedded app \`memory-benchmark\`.
+  Benchmarks and reference eval live in the embedded app \`benchmark-memory\`.
 
 Two storage modes: markdown-only (plain notes, no engine) and graph (a typed
 knowledge graph over a per-project RedDB store). Run \`memory init\` once to pick

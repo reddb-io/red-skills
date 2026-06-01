@@ -142,7 +142,7 @@ export interface FoundationGateAxis {
 }
 
 export interface FoundationEvidenceGateReport {
-  command: "pnpm --filter @reddb-io/memory-benchmark references:eval";
+  command: "pnpm --filter @reddb-io/benchmark-memory references:eval";
   evidenceBase: {
     name: string;
     source: "checked-in";
@@ -771,7 +771,7 @@ async function evaluateFoundationEvidenceGate(
     const maxScore = axes.reduce((sum, axis) => sum + axis.maxScore, 0);
 
     return {
-      command: "pnpm --filter @reddb-io/memory-benchmark references:eval",
+      command: "pnpm --filter @reddb-io/benchmark-memory references:eval",
       evidenceBase: {
         name: fixture.name,
         source: fixture.source,

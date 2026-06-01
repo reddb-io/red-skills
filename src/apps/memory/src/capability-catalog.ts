@@ -442,7 +442,7 @@ function capabilityDefinitions(facts: CapabilityFacts): MemoryCapability[] {
         "memory pre-pr-review-viewer",
         "memory routing-guide-viewer --agent codex",
         "memory integration-status-viewer",
-        "memory-benchmark references viewer",
+        "benchmark-memory references viewer",
       ],
       mcp: [
         "memory_workbench",
@@ -659,7 +659,7 @@ function capabilityDefinitions(facts: CapabilityFacts): MemoryCapability[] {
       category: "interop",
       status: "ready",
       red_db_backed: false,
-      cli: ["memory-benchmark references eval --json", "memory-benchmark references viewer", "pnpm --filter @reddb-io/memory-benchmark references:eval:v2", "pnpm --filter @reddb-io/memory-benchmark references:interop"],
+      cli: ["benchmark-memory references eval --json", "benchmark-memory references viewer", "pnpm --filter @reddb-io/benchmark-memory references:eval:v2", "pnpm --filter @reddb-io/benchmark-memory references:interop"],
       mcp: [],
       evidence: ["dimension:operator-surface", "dimension:multi-agent-integration", "fixture:recall"],
       reference_relevance: ["agentmemory", "neo4j-agent-memory", "graphify"],

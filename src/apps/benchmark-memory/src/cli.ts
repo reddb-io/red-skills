@@ -38,22 +38,22 @@ import {
 
 type ParsedArgs = LooseParsedArgs;
 
-const USAGE = `memory-benchmark
+const USAGE = `benchmark-memory
 
 Usage:
-  memory-benchmark --version [--json]
-  memory-benchmark bench recall      [--root <dir>] [--corpus <dir>] [--k 1,5,10] [--out <file>] [--report <file>] [--json]
-  memory-benchmark bench latency     [--root <dir>] [--workload <dir>] [--iterations N] [--warmup N] [--seed N] [--ops working-get,session-recall,long-term-recall] [--out <file>] [--report <file>] [--json]
-  memory-benchmark references eval    [--v2] [--json] [--human] [--out <file>]
-  memory-benchmark references viewer  [--out <file>]
-  memory-benchmark references baseline [--json] [--human]
-  memory-benchmark references interop [--json] [--human]
+  benchmark-memory --version [--json]
+  benchmark-memory bench recall      [--root <dir>] [--corpus <dir>] [--k 1,5,10] [--out <file>] [--report <file>] [--json]
+  benchmark-memory bench latency     [--root <dir>] [--workload <dir>] [--iterations N] [--warmup N] [--seed N] [--ops working-get,session-recall,long-term-recall] [--out <file>] [--report <file>] [--json]
+  benchmark-memory references eval    [--v2] [--json] [--human] [--out <file>]
+  benchmark-memory references viewer  [--out <file>]
+  benchmark-memory references baseline [--json] [--human]
+  benchmark-memory references interop [--json] [--human]
 `;
 
 async function main(argv = process.argv.slice(2)): Promise<number> {
   const args = parseLooseArgs(argv);
   if (args.command === "--version" || args.command === "-v" || args.command === "version" || args.flags.version === true) {
-    const info = readBuildInfo("memory-benchmark");
+    const info = readBuildInfo("benchmark-memory");
     process.stdout.write(args.flags.json ? `${JSON.stringify(info)}\n` : `${renderVersion(info)}\n`);
     return 0;
   }
@@ -81,7 +81,7 @@ async function runReferences(args: ParsedArgs): Promise<number> {
   if (subcommand === "eval") return runEval(nested);
   if (subcommand === "viewer") return runEvalViewer(nested);
   if (subcommand === "interop") return runInterop(nested);
-  throw new Error(`usage: memory-benchmark references (baseline|eval|viewer|interop) ...`);
+  throw new Error(`usage: benchmark-memory references (baseline|eval|viewer|interop) ...`);
 }
 
 async function runBaseline(args: ParsedArgs): Promise<number> {
@@ -154,7 +154,7 @@ async function runEvalViewer(args: ParsedArgs): Promise<number> {
   const artifact = buildCompetitiveEvalViewerArtifact(report);
   await mkdir(dirname(outPath), { recursive: true });
   await writeFile(outPath, artifact.html, "utf8");
-  process.stdout.write(`memory-benchmark: reference eval viewer written ${outPath}\n`);
+  process.stdout.write(`benchmark-memory: reference eval viewer written ${outPath}\n`);
   return 0;
 }
 
@@ -175,7 +175,7 @@ async function runBench(args: ParsedArgs): Promise<number> {
   const sub = args.positional[0];
   if (sub === "recall") return runBenchRecallCmd(args);
   if (sub === "latency") return runBenchLatencyCmd(args);
-  throw new Error(`usage: memory-benchmark bench (recall|latency) ...`);
+  throw new Error(`usage: benchmark-memory bench (recall|latency) ...`);
 }
 
 async function runBenchRecallCmd(args: ParsedArgs): Promise<number> {
@@ -186,12 +186,12 @@ async function runBenchRecallCmd(args: ParsedArgs): Promise<number> {
     ? kRaw.split(",").map((part) => Number(part.trim())).filter((value) => Number.isFinite(value) && value > 0)
     : undefined;
   if (kRaw && (!kValues || kValues.length === 0)) {
-    throw new Error("memory-benchmark bench recall: --k must be a comma-separated list of positive integers");
+    throw new Error("benchmark-memory bench recall: --k must be a comma-separated list of positive integers");
   }
   const report = await runBenchRecall({ corpusDir, kValues });
   await writeOutputs(args, report, formatMarkdownReport(report));
   if (args.flags.json === true) process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
-  else process.stdout.write(`memory-benchmark bench recall: corpus=${report.corpus_size} queries=${report.query_count}\n`);
+  else process.stdout.write(`benchmark-memory bench recall: corpus=${report.corpus_size} queries=${report.query_count}\n`);
   return 0;
 }
 
@@ -204,7 +204,7 @@ async function runBenchLatencyCmd(args: ParsedArgs): Promise<number> {
   if (opsRaw !== undefined) {
     const allowed: OpClass[] = ["working-get", "session-recall", "long-term-recall"];
     const picked = opsRaw.split(",").map((part) => part.trim()).filter((part): part is OpClass => (allowed as string[]).includes(part));
-    if (picked.length === 0) throw new Error(`memory-benchmark bench latency: --ops must include one of ${allowed.join(", ")}`);
+    if (picked.length === 0) throw new Error(`benchmark-memory bench latency: --ops must include one of ${allowed.join(", ")}`);
     cliOverrides.op_classes = picked;
   }
   setPositiveInteger(args, cliOverrides, "iterations");
@@ -214,7 +214,7 @@ async function runBenchLatencyCmd(args: ParsedArgs): Promise<number> {
   const report = await runBenchLatency({ workload });
   await writeOutputs(args, report, formatLatencyReport(report));
   if (args.flags.json === true) process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
-  else process.stdout.write(`memory-benchmark bench latency: results=${report.results.length}\n`);
+  else process.stdout.write(`benchmark-memory bench latency: results=${report.results.length}\n`);
   return 0;
 }
 
@@ -245,7 +245,7 @@ function setPositiveInteger(
   if (raw === undefined) return;
   const value = Number(raw);
   if (!Number.isFinite(value) || value < (options.allowZero ? 0 : 1)) {
-    throw new Error(`memory-benchmark bench latency: --${name} must be a ${options.allowZero ? "non-negative" : "positive"} integer`);
+    throw new Error(`benchmark-memory bench latency: --${name} must be a ${options.allowZero ? "non-negative" : "positive"} integer`);
   }
   out[name] = Math.floor(value);
 }
@@ -259,7 +259,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   main().then((code) => {
     process.exitCode = code;
   }).catch((err: unknown) => {
-    process.stderr.write(`memory-benchmark: ${err instanceof Error ? err.message : String(err)}\n`);
+    process.stderr.write(`benchmark-memory: ${err instanceof Error ? err.message : String(err)}\n`);
     process.exitCode = 1;
   });
 }
