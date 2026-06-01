@@ -34210,7 +34210,7 @@ var init_Multipart = __esm({
       });
       return loop3;
     });
-    toPersisted = (stream6, writeFile10 = defaultWriteFile) => gen3(function* () {
+    toPersisted = (stream6, writeFile11 = defaultWriteFile) => gen3(function* () {
       const fs = yield* FileSystem;
       const path_ = yield* Path2;
       const dir = yield* fs.makeTempDirectoryScoped();
@@ -34238,7 +34238,7 @@ var init_Multipart = __esm({
         } else {
           persisted[part.key] = [filePart];
         }
-        return writeFile10(path2, file2);
+        return writeFile11(path2, file2);
       });
       return persisted;
     }).pipe(catchTags2({
@@ -39044,7 +39044,7 @@ var require_filesystem = __commonJS({
       });
       return buffer3.subarray(0, bytesRead);
     };
-    var readFile9 = (path2) => new Promise((resolve6, reject) => {
+    var readFile10 = (path2) => new Promise((resolve6, reject) => {
       fs.open(path2, "r", (err, fd) => {
         if (err) {
           reject(err);
@@ -39062,7 +39062,7 @@ var require_filesystem = __commonJS({
       LDD_PATH,
       SELF_PATH,
       readFileSync: readFileSync6,
-      readFile: readFile9
+      readFile: readFile10
     };
   }
 });
@@ -39110,7 +39110,7 @@ var require_detect_libc = __commonJS({
     "use strict";
     var childProcess = __require("child_process");
     var { isLinux, getReport } = require_process();
-    var { LDD_PATH, SELF_PATH, readFile: readFile9, readFileSync: readFileSync6 } = require_filesystem();
+    var { LDD_PATH, SELF_PATH, readFile: readFile10, readFileSync: readFileSync6 } = require_filesystem();
     var { interpreterPath } = require_elf();
     var cachedFamilyInterpreter;
     var cachedFamilyFilesystem;
@@ -39190,7 +39190,7 @@ var require_detect_libc = __commonJS({
       }
       cachedFamilyFilesystem = null;
       try {
-        const lddContent = await readFile9(LDD_PATH);
+        const lddContent = await readFile10(LDD_PATH);
         cachedFamilyFilesystem = getFamilyFromLddContent(lddContent);
       } catch (e2) {
       }
@@ -39214,7 +39214,7 @@ var require_detect_libc = __commonJS({
       }
       cachedFamilyInterpreter = null;
       try {
-        const selfContent = await readFile9(SELF_PATH);
+        const selfContent = await readFile10(SELF_PATH);
         const path2 = interpreterPath(selfContent);
         cachedFamilyInterpreter = familyFromInterpreterPath(path2);
       } catch (e2) {
@@ -39276,7 +39276,7 @@ var require_detect_libc = __commonJS({
       }
       cachedVersionFilesystem = null;
       try {
-        const lddContent = await readFile9(LDD_PATH);
+        const lddContent = await readFile10(LDD_PATH);
         const versionMatch = lddContent.match(RE_GLIBC_VERSION);
         if (versionMatch) {
           cachedVersionFilesystem = versionMatch[1];
@@ -43572,7 +43572,7 @@ import * as Crypto from "node:crypto";
 import * as NFS from "node:fs";
 import * as OS from "node:os";
 import * as Path3 from "node:path";
-var handleBadArgument, access4, copy3, copyFile2, chmod2, chown2, link2, makeDirectory, makeTempDirectoryFactory, makeTempDirectory, removeFactory, remove11, makeTempDirectoryScoped, openFactory, open2, makeFile, makeTempFileFactory, makeTempFile, makeTempFileScoped, readDirectory, readFile5, readLink, realPath, rename3, makeFileInfo, stat4, symlink2, truncate2, utimes2, watchNode, watch2, writeFile5, makeFileSystem, layer2;
+var handleBadArgument, access4, copy3, copyFile2, chmod2, chown2, link2, makeDirectory, makeTempDirectoryFactory, makeTempDirectory, removeFactory, remove11, makeTempDirectoryScoped, openFactory, open2, makeFile, makeTempFileFactory, makeTempFile, makeTempFileScoped, readDirectory, readFile6, readLink, realPath, rename4, makeFileInfo, stat4, symlink2, truncate2, utimes2, watchNode, watch2, writeFile6, makeFileSystem, layer2;
 var init_fileSystem2 = __esm({
   "../../../../../../src/domains/dev/node_modules/.pnpm/@effect+platform-node-shared@0.58.0_@effect+cluster@0.57.0_@effect+platform@0.95.0_effe_0d14ac55f3005c2dcb8dae960f151a34/node_modules/@effect/platform-node-shared/dist/esm/internal/fileSystem.js"() {
     init_Effectify();
@@ -43791,7 +43791,7 @@ var init_fileSystem2 = __esm({
       try: () => NFS.promises.readdir(path2, options2),
       catch: (err) => handleErrnoException("FileSystem", "readDirectory")(err, [path2])
     });
-    readFile5 = (path2) => async2((resume2, signal) => {
+    readFile6 = (path2) => async2((resume2, signal) => {
       try {
         NFS.readFile(path2, {
           signal
@@ -43814,7 +43814,7 @@ var init_fileSystem2 = __esm({
       const nodeRealPath = /* @__PURE__ */ effectify2(NFS.realpath, /* @__PURE__ */ handleErrnoException("FileSystem", "realPath"), /* @__PURE__ */ handleBadArgument("realPath"));
       return (path2) => nodeRealPath(path2);
     })();
-    rename3 = /* @__PURE__ */ (() => {
+    rename4 = /* @__PURE__ */ (() => {
       const nodeRename = /* @__PURE__ */ effectify2(NFS.rename, /* @__PURE__ */ handleErrnoException("FileSystem", "rename"), /* @__PURE__ */ handleBadArgument("rename"));
       return (oldPath, newPath) => nodeRename(oldPath, newPath);
     })();
@@ -43890,7 +43890,7 @@ var init_fileSystem2 = __esm({
       return watcher;
     }), (watcher) => sync6(() => watcher.close())));
     watch2 = (backend, path2, options2) => stat4(path2).pipe(map19((stat6) => backend.pipe(flatMap((_) => _.register(path2, stat6, options2)), getOrElse(() => watchNode(path2, options2)))), unwrap3);
-    writeFile5 = (path2, data, options2) => async2((resume2, signal) => {
+    writeFile6 = (path2, data, options2) => async2((resume2, signal) => {
       try {
         NFS.writeFile(path2, data, {
           signal,
@@ -43921,11 +43921,11 @@ var init_fileSystem2 = __esm({
       makeTempFileScoped,
       open: open2,
       readDirectory,
-      readFile: readFile5,
+      readFile: readFile6,
       readLink,
       realPath,
       remove: remove11,
-      rename: rename3,
+      rename: rename4,
       stat: stat4,
       symlink: symlink2,
       truncate: truncate2,
@@ -43933,7 +43933,7 @@ var init_fileSystem2 = __esm({
       watch(path2, options2) {
         return watch2(backend, path2, options2);
       },
-      writeFile: writeFile5
+      writeFile: writeFile6
     }));
     layer2 = /* @__PURE__ */ effect(FileSystem, makeFileSystem);
   }
@@ -57680,8 +57680,8 @@ var require_snapshot_utils = __commonJS({
 var require_snapshot_recorder = __commonJS({
   "../../../../../../src/domains/dev/node_modules/.pnpm/undici@7.26.0/node_modules/undici/lib/mock/snapshot-recorder.js"(exports, module) {
     "use strict";
-    var { writeFile: writeFile10, readFile: readFile9, mkdir: mkdir8 } = __require("node:fs/promises");
-    var { dirname: dirname10, resolve: resolve6 } = __require("node:path");
+    var { writeFile: writeFile11, readFile: readFile10, mkdir: mkdir9 } = __require("node:fs/promises");
+    var { dirname: dirname11, resolve: resolve6 } = __require("node:path");
     var { setTimeout: setTimeout2, clearTimeout: clearTimeout2 } = __require("node:timers");
     var { InvalidArgumentError, UndiciError } = require_errors();
     var { hashId, isUrlExcludedFactory, normalizeHeaders, createHeaderFilters } = require_snapshot_utils();
@@ -57882,7 +57882,7 @@ var require_snapshot_recorder = __commonJS({
           throw new InvalidArgumentError("Snapshot path is required");
         }
         try {
-          const data = await readFile9(resolve6(path2), "utf8");
+          const data = await readFile10(resolve6(path2), "utf8");
           const parsed = JSON.parse(data);
           if (Array.isArray(parsed)) {
             this.#snapshots.clear();
@@ -57912,12 +57912,12 @@ var require_snapshot_recorder = __commonJS({
           throw new InvalidArgumentError("Snapshot path is required");
         }
         const resolvedPath = resolve6(path2);
-        await mkdir8(dirname10(resolvedPath), { recursive: true });
+        await mkdir9(dirname11(resolvedPath), { recursive: true });
         const data = Array.from(this.#snapshots.entries()).map(([hash3, snapshot]) => ({
           hash: hash3,
           snapshot
         }));
-        await writeFile10(resolvedPath, JSON.stringify(data, null, 2), { flush: true });
+        await writeFile11(resolvedPath, JSON.stringify(data, null, 2), { flush: true });
       }
       /**
        * Clears all recorded snapshots
@@ -72300,7 +72300,7 @@ ${c}
 });
 
 // ../../../../../../src/domains/dev/node_modules/.pnpm/@ai-hero+sandcastle@0.6.5_@effect+cluster@0.57.0_@effect+platform@0.95.0_effect@3.21.2__2fa8178ee2d3f5b36174a7c3081b14be/node_modules/@ai-hero/sandcastle/dist/Display.js
-import { dirname as dirname4 } from "node:path";
+import { dirname as dirname5 } from "node:path";
 import { styleText } from "node:util";
 var Display, SilentDisplay, FileDisplay, severityToClack, terminalStyle, ClackDisplay;
 var init_Display = __esm({
@@ -72352,7 +72352,7 @@ var init_Display = __esm({
     FileDisplay = {
       layer: (filePath) => Layer_exports.effect(Display, Effect_exports.gen(function* () {
         const fs = yield* FileSystem_exports.FileSystem;
-        yield* fs.makeDirectory(dirname4(filePath), { recursive: true }).pipe(Effect_exports.orDie);
+        yield* fs.makeDirectory(dirname5(filePath), { recursive: true }).pipe(Effect_exports.orDie);
         const delimiter = `
 --- Run started: ${(/* @__PURE__ */ new Date()).toISOString()} ---
 `;
@@ -73116,8 +73116,8 @@ ${result.stderr}`
 // ../../../../../../src/domains/dev/node_modules/.pnpm/@ai-hero+sandcastle@0.6.5_@effect+cluster@0.57.0_@effect+platform@0.95.0_effect@3.21.2__2fa8178ee2d3f5b36174a7c3081b14be/node_modules/@ai-hero/sandcastle/dist/mountUtils.js
 import { existsSync as existsSync2, statSync } from "node:fs";
 import { tmpdir as tmpdir3, homedir } from "node:os";
-import { isAbsolute, resolve as resolve4, join as join11, dirname as dirname5 } from "node:path";
-import { mkdtemp as mkdtemp3, writeFile as writeFile6 } from "node:fs/promises";
+import { isAbsolute, resolve as resolve4, join as join11, dirname as dirname6 } from "node:path";
+import { mkdtemp as mkdtemp3, writeFile as writeFile7 } from "node:fs/promises";
 var PARENT_GIT_SANDBOX_DIR, defaultImageName, expandTilde, resolveHostPath, resolveSandboxPath, resolveUserMounts, normalizeMounts, parseGitdirPath, patchGitMountsForWindows, formatVolumeMount, processFileMountParents;
 var init_mountUtils = __esm({
   "../../../../../../src/domains/dev/node_modules/.pnpm/@ai-hero+sandcastle@0.6.5_@effect+cluster@0.57.0_@effect+platform@0.95.0_effect@3.21.2__2fa8178ee2d3f5b36174a7c3081b14be/node_modules/@ai-hero/sandcastle/dist/mountUtils.js"() {
@@ -73188,10 +73188,10 @@ var init_mountUtils = __esm({
       const parentGitDir = segments.join("/");
       return { worktreeName, parentGitDir };
     };
-    patchGitMountsForWindows = async (gitMounts, worktreeHostPath, sandboxRepoDir, readFile9, statFile, platform = process.platform) => {
+    patchGitMountsForWindows = async (gitMounts, worktreeHostPath, sandboxRepoDir, readFile10, statFile, platform = process.platform) => {
       if (platform !== "win32")
         return gitMounts;
-      const _readFile = readFile9 ?? (async (p2) => {
+      const _readFile = readFile10 ?? (async (p2) => {
         const { readFile: rf } = await import("node:fs/promises");
         return rf(p2, "utf-8");
       });
@@ -73223,7 +73223,7 @@ var init_mountUtils = __esm({
       const correctedGitdir = `${PARENT_GIT_SANDBOX_DIR}/worktrees/${worktreeName}`;
       const tempDir = await mkdtemp3(join11(tmpdir3(), "sandcastle-git-"));
       const tempGitFile = join11(tempDir, "git-override");
-      await writeFile6(tempGitFile, `gitdir: ${correctedGitdir}
+      await writeFile7(tempGitFile, `gitdir: ${correctedGitdir}
 `);
       const normalizedParentGitDir = parentGitDir.replace(/\\/g, "/");
       const gitFileHostPath = gitEntryPath.replace(/\\/g, "/");
@@ -73268,7 +73268,7 @@ var init_mountUtils = __esm({
         }
         if (!isFile2)
           continue;
-        const parentDir = dirname5(mount2.sandboxPath);
+        const parentDir = dirname6(mount2.sandboxPath);
         if (parentDir === sandboxHomedir)
           continue;
         if (!parentDir.startsWith(sandboxHomedir + "/")) {
@@ -73463,8 +73463,8 @@ var init_RecoveryMessage = __esm({
 
 // ../../../../../../src/domains/dev/node_modules/.pnpm/@ai-hero+sandcastle@0.6.5_@effect+cluster@0.57.0_@effect+platform@0.95.0_effect@3.21.2__2fa8178ee2d3f5b36174a7c3081b14be/node_modules/@ai-hero/sandcastle/dist/syncOut.js
 import { existsSync as existsSync4 } from "node:fs";
-import { mkdir as mkdir5, readdir as readdir2, readFile as readFile6, rm as rm5, stat as stat5, writeFile as writeFile7 } from "node:fs/promises";
-import { basename, dirname as dirname6, join as join13 } from "node:path";
+import { mkdir as mkdir6, readdir as readdir2, readFile as readFile7, rm as rm5, stat as stat5, writeFile as writeFile8 } from "node:fs/promises";
+import { basename, dirname as dirname7, join as join13 } from "node:path";
 var execHost2, execOk3, execSandbox, isEmptyPatch, createPatchDir, syncOut;
 var init_syncOut = __esm({
   "../../../../../../src/domains/dev/node_modules/.pnpm/@ai-hero+sandcastle@0.6.5_@effect+cluster@0.57.0_@effect+platform@0.95.0_effect@3.21.2__2fa8178ee2d3f5b36174a7c3081b14be/node_modules/@ai-hero/sandcastle/dist/syncOut.js"() {
@@ -73509,7 +73509,7 @@ ${e2 instanceof Error ? e2.message : String(e2)}`
         const info = await stat5(patchPath);
         if (info.size === 0)
           return true;
-        const content = await readFile6(patchPath, "utf-8");
+        const content = await readFile7(patchPath, "utf-8");
         return !content.includes("diff --git");
       },
       catch: (e2) => new SyncError({
@@ -73522,7 +73522,7 @@ ${e2 instanceof Error ? e2.message : String(e2)}`
         const pad2 = (n) => String(n).padStart(2, "0");
         const base = `${now.getFullYear()}${pad2(now.getMonth() + 1)}${pad2(now.getDate())}-${pad2(now.getHours())}${pad2(now.getMinutes())}${pad2(now.getSeconds())}`;
         const patchesRoot = join13(hostRepoDir, ".sandcastle", "patches");
-        await mkdir5(patchesRoot, { recursive: true });
+        await mkdir6(patchesRoot, { recursive: true });
         let dirName = base;
         let counter6 = 0;
         while (existsSync4(join13(patchesRoot, dirName))) {
@@ -73530,7 +73530,7 @@ ${e2 instanceof Error ? e2.message : String(e2)}`
           dirName = `${base}-${counter6}`;
         }
         const patchDir = join13(patchesRoot, dirName);
-        await mkdir5(patchDir, { recursive: true });
+        await mkdir6(patchDir, { recursive: true });
         return patchDir;
       },
       catch: (e2) => new SyncError({
@@ -73584,7 +73584,7 @@ ${e2 instanceof Error ? e2.message : String(e2)}`
       if (hasDiff) {
         const diffPath = join13(patchDir, "changes.patch");
         yield* Effect_exports.tryPromise({
-          try: () => writeFile7(diffPath, diffResult.stdout),
+          try: () => writeFile8(diffPath, diffResult.stdout),
           catch: (e2) => new SyncError({
             message: `Failed to write diff patch: ${e2 instanceof Error ? e2.message : String(e2)}`
           })
@@ -73597,7 +73597,7 @@ ${e2 instanceof Error ? e2.message : String(e2)}`
           const hostFilePath = join13(untrackedDir, relPath);
           yield* Effect_exports.tryPromise({
             try: async () => {
-              await mkdir5(dirname6(hostFilePath), { recursive: true });
+              await mkdir6(dirname7(hostFilePath), { recursive: true });
               await handle.copyFileOut(sandboxFilePath, hostFilePath);
             },
             catch: (e2) => new SyncError({
@@ -73629,9 +73629,9 @@ ${e2 instanceof Error ? e2.message : String(e2)}`
             for (const relPath of untrackedFiles) {
               const srcPath = join13(untrackedDir, relPath);
               const destPath = join13(hostRepoDir, relPath);
-              await mkdir5(dirname6(destPath), { recursive: true });
-              const content = await readFile6(srcPath);
-              await writeFile7(destPath, content);
+              await mkdir6(dirname7(destPath), { recursive: true });
+              const content = await readFile7(srcPath);
+              await writeFile8(destPath, content);
             }
           },
           catch: (e2) => new SyncError({
@@ -76072,9 +76072,9 @@ var init_createWorktree = __esm({
 });
 
 // ../../../../../../src/domains/dev/node_modules/.pnpm/@ai-hero+sandcastle@0.6.5_@effect+cluster@0.57.0_@effect+platform@0.95.0_effect@3.21.2__2fa8178ee2d3f5b36174a7c3081b14be/node_modules/@ai-hero/sandcastle/dist/SessionStore.js
-import { access as access5, mkdir as mkdir6, readdir as readdir3, readFile as readFile7, rm as rm6, writeFile as writeFile8 } from "node:fs/promises";
+import { access as access5, mkdir as mkdir7, readdir as readdir3, readFile as readFile8, rm as rm6, writeFile as writeFile9 } from "node:fs/promises";
 import { tmpdir as tmpdir4 } from "node:os";
-import { dirname as dirname7, join as join20, posix as posix3, relative } from "node:path";
+import { dirname as dirname8, join as join20, posix as posix3, relative } from "node:path";
 var pathExists2, encodeProjectPath, hostSessionStore, findClaudeSessionOnHost, sandboxSessionStore, transferClaudeSession, isCodexSessionFilename, codexIdFromFilename, findCodexSessionPath, findCodexSessionOnHost, codexHostSessionStore, codexSandboxSessionStore, rewriteSessionCwd, transferCodexSession;
 var init_SessionStore = __esm({
   "../../../../../../src/domains/dev/node_modules/.pnpm/@ai-hero+sandcastle@0.6.5_@effect+cluster@0.57.0_@effect+platform@0.95.0_effect@3.21.2__2fa8178ee2d3f5b36174a7c3081b14be/node_modules/@ai-hero/sandcastle/dist/SessionStore.js"() {
@@ -76100,11 +76100,11 @@ var init_SessionStore = __esm({
         sessionFilePath: (id2) => join20(projectDir, `${id2}.jsonl`),
         exists: async (id2) => pathExists2(join20(projectDir, `${id2}.jsonl`)),
         readSession: async (id2) => {
-          return await readFile7(join20(projectDir, `${id2}.jsonl`), "utf-8");
+          return await readFile8(join20(projectDir, `${id2}.jsonl`), "utf-8");
         },
         writeSession: async (id2, content) => {
-          await mkdir6(projectDir, { recursive: true });
-          await writeFile8(join20(projectDir, `${id2}.jsonl`), content);
+          await mkdir7(projectDir, { recursive: true });
+          await writeFile9(join20(projectDir, `${id2}.jsonl`), content);
         }
       };
     };
@@ -76141,7 +76141,7 @@ var init_SessionStore = __esm({
           const tmpPath = join20(tmpdir4(), `sandcastle-session-${id2}-${Date.now()}.jsonl`);
           await handle.copyFileOut(sandboxPath, tmpPath);
           try {
-            return await readFile7(tmpPath, "utf-8");
+            return await readFile8(tmpPath, "utf-8");
           } finally {
             await rm6(tmpPath, { force: true }).catch(() => {
             });
@@ -76150,7 +76150,7 @@ var init_SessionStore = __esm({
         writeSession: async (id2, content) => {
           const sandboxPath = posix3.join(projectDir, `${id2}.jsonl`);
           const tmpPath = join20(tmpdir4(), `sandcastle-session-${id2}-${Date.now()}.jsonl`);
-          await writeFile8(tmpPath, content);
+          await writeFile9(tmpPath, content);
           try {
             await handle.exec(`mkdir -p ${JSON.stringify(projectDir)}`);
             await handle.copyFileIn(tmpPath, sandboxPath);
@@ -76223,19 +76223,19 @@ var init_SessionStore = __esm({
         },
         readSession: async (id2) => {
           const located = await locateSession(id2);
-          return readFile7(located.path, "utf-8");
+          return readFile8(located.path, "utf-8");
         },
         writeSession: async (id2, content) => {
           const existing = await findCodexSessionPath(rootDir, id2);
           const target2 = existing ?? join20(rootDir, "unknown-date", `rollout-${Date.now()}-${id2}.jsonl`);
-          await mkdir6(dirname7(target2), { recursive: true });
-          await writeFile8(target2, content);
+          await mkdir7(dirname8(target2), { recursive: true });
+          await writeFile9(target2, content);
           locatedPaths.set(id2, target2);
         },
         writeSessionAt: async (relativePath, content) => {
           const target2 = join20(rootDir, relativePath);
-          await mkdir6(dirname7(target2), { recursive: true });
-          await writeFile8(target2, content);
+          await mkdir7(dirname8(target2), { recursive: true });
+          await writeFile9(target2, content);
           const id2 = codexIdFromFilename(posix3.basename(relativePath));
           if (id2)
             locatedPaths.set(id2, target2);
@@ -76247,7 +76247,7 @@ var init_SessionStore = __esm({
       const writeSessionAt = async (relativePath, content) => {
         const sandboxPath = posix3.join(sessionsDir, relativePath);
         const tmpPath = join20(tmpdir4(), `sandcastle-codex-session-${Date.now()}.jsonl`);
-        await writeFile8(tmpPath, content);
+        await writeFile9(tmpPath, content);
         try {
           await handle.exec(`mkdir -p ${JSON.stringify(posix3.dirname(sandboxPath))}`);
           await handle.copyFileIn(tmpPath, sandboxPath);
@@ -76281,7 +76281,7 @@ var init_SessionStore = __esm({
           const tmpPath = join20(tmpdir4(), `sandcastle-codex-session-${id2}-${Date.now()}.jsonl`);
           await handle.copyFileOut(located.path, tmpPath);
           try {
-            return await readFile7(tmpPath, "utf-8");
+            return await readFile8(tmpPath, "utf-8");
           } finally {
             await rm6(tmpPath, { force: true }).catch(() => {
             });
@@ -82621,6 +82621,10 @@ async function listRemoteBranches(ctx, namespace) {
 // src/runtime/wire.ts
 init_fs();
 
+// src/core/state.ts
+import { mkdir as mkdir4, readFile as readFile4, rename, writeFile as writeFile4 } from "node:fs/promises";
+import { dirname as dirname3 } from "node:path";
+
 // src/types/state.ts
 var AfkFilterSchema = external_exports.object({
   kind: external_exports.string().default(""),
@@ -82663,8 +82667,53 @@ var AfkStateSchema = external_exports.object({
 });
 
 // src/core/state.ts
+function defaultState() {
+  return AfkStateSchema.parse({});
+}
 function parseState(data) {
   return AfkStateSchema.parse(data ?? {});
+}
+async function readState(path2) {
+  try {
+    const text3 = await readFile4(path2, "utf8");
+    return parseState(JSON.parse(text3));
+  } catch {
+    return defaultState();
+  }
+}
+function setDotted(target2, key, value2) {
+  const parts2 = key.split(".").filter(Boolean);
+  if (parts2.length === 0) throw new Error("empty state field");
+  let cursor2 = target2;
+  for (const part of parts2.slice(0, -1)) {
+    const existing = cursor2[part];
+    if (!existing || typeof existing !== "object" || Array.isArray(existing)) cursor2[part] = {};
+    cursor2 = cursor2[part];
+  }
+  cursor2[parts2[parts2.length - 1]] = value2;
+}
+async function writeStateAtomic(path2, state) {
+  await mkdir4(dirname3(path2), { recursive: true });
+  const tmp = `${path2}.tmp.${process.pid}.${Date.now()}`;
+  await writeFile4(tmp, `${JSON.stringify(AfkStateSchema.parse(state))}
+`, "utf8");
+  await rename(tmp, path2);
+}
+async function initState(path2, updates = {}) {
+  const state = defaultState();
+  state.version = 1;
+  state.envelope = { posted: false };
+  for (const [key, value2] of Object.entries(updates)) setDotted(state, key, value2);
+  const parsed = parseState(state);
+  await writeStateAtomic(path2, parsed);
+  return parsed;
+}
+async function updateState(path2, updates) {
+  const state = await readState(path2);
+  for (const [key, value2] of Object.entries(updates)) setDotted(state, key, value2);
+  const parsed = parseState(state);
+  await writeStateAtomic(path2, parsed);
+  return parsed;
 }
 function isStateLive(state, kill = defaultKill0) {
   return Number.isInteger(state.pid) && state.pid > 0 && kill(state.pid, 0);
@@ -84712,8 +84761,8 @@ function recoveryReasonFor(o) {
 }
 
 // src/core/jsonl-log.ts
-import { mkdir as mkdir7, appendFile as appendFile3 } from "node:fs/promises";
-import { dirname as dirname8 } from "node:path";
+import { mkdir as mkdir8, appendFile as appendFile3 } from "node:fs/promises";
+import { dirname as dirname9 } from "node:path";
 var RESERVED_KEYS = /* @__PURE__ */ new Set(["type", "msg", "ts"]);
 var JsonlLogError = class extends Error {
   constructor(message, code) {
@@ -84770,10 +84819,17 @@ function formatRecordLine(record3) {
   return JSON.stringify(record3);
 }
 var fsAppendSink = async (path2, line) => {
-  await mkdir7(dirname8(path2), { recursive: true });
+  await mkdir8(dirname9(path2), { recursive: true });
   await appendFile3(path2, `${line}
 `, "utf8");
 };
+async function appendRecord(path2, type, msg, options2) {
+  if (!path2) throw new JsonlLogError("[jsonl-log] appendRecord: need <path>", 2);
+  if (!type) throw new JsonlLogError("[jsonl-log] appendRecord: need <type>", 2);
+  const record3 = buildRecord(type, msg, options2.ts, options2.fields);
+  await (options2.sink ?? fsAppendSink)(path2, formatRecordLine(record3));
+  return record3;
+}
 async function appendAgentRecord(path2, msg, options2) {
   if (!path2) throw new JsonlLogError("[jsonl-log] appendAgentRecord: need <path>", 2);
   const requestedType = options2.fields?.extra?.type;
@@ -85617,7 +85673,7 @@ function routeCommand(argv, schema) {
 init_fs();
 
 // src/core/attempt-ledger.ts
-import { readFile as readFile8, readdir as readdir4 } from "node:fs/promises";
+import { readFile as readFile9, readdir as readdir4 } from "node:fs/promises";
 import { join as join22 } from "node:path";
 var SNAPSHOT_BRANCH_FILE = "snapshot-branch.ref";
 var FAILURE_REASON_FILE = "failure.reason";
@@ -85685,7 +85741,7 @@ var defaultReader2 = {
   },
   async readMarker(attemptDir, file2) {
     try {
-      const text3 = await readFile8(join22(attemptDir, file2), "utf8");
+      const text3 = await readFile9(join22(attemptDir, file2), "utf8");
       return text3.length > 0 ? text3 : null;
     } catch {
       return null;
@@ -85696,7 +85752,7 @@ var defaultReader2 = {
 // src/commands/run.ts
 init_runner_spawn();
 import { readdirSync, existsSync as existsSync8, readFileSync as readFileSync4 } from "node:fs";
-import { writeFile as writeFile9 } from "node:fs/promises";
+import { writeFile as writeFile10 } from "node:fs/promises";
 
 // src/runtime/lock.ts
 init_fs();
@@ -85722,13 +85778,13 @@ import { join as join25 } from "node:path";
 
 // src/platform/skill-paths.ts
 import { existsSync as existsSync6 } from "node:fs";
-import { dirname as dirname9, join as join24 } from "node:path";
+import { dirname as dirname10, join as join24 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 function skillDirFromModule(metaUrl = import.meta.url) {
-  let cursor2 = dirname9(fileURLToPath2(metaUrl));
+  let cursor2 = dirname10(fileURLToPath2(metaUrl));
   for (let i = 0; i < 8; i += 1) {
     if (existsSync6(join24(cursor2, "defaults", "cargo-pre-worktree.sh"))) return cursor2;
-    const next4 = dirname9(cursor2);
+    const next4 = dirname10(cursor2);
     if (next4 === cursor2) break;
     cursor2 = next4;
   }
@@ -85957,6 +86013,16 @@ async function buildBootDeps(ctx, options2, nowS) {
     nowS
   };
 }
+function deriveStage(event) {
+  if (event.type !== "toolCall") return void 0;
+  const name = event.name.toLowerCase();
+  const args2 = event.formattedArgs.toLowerCase();
+  if (/\bgit\s+commit\b/.test(args2)) return "commit";
+  if (/\b(vitest|jest|pnpm[^|]*\btest\b|\btest\b)\b/.test(args2)) return "tests";
+  if (/^(edit|write|multiedit|notebookedit)$/.test(name)) return "impl";
+  if (/^(read|grep|glob)$/.test(name) || /\bgit\s+ls-files\b|\bfind\b/.test(args2)) return "explore";
+  return void 0;
+}
 function buildProcessDeps(ctx, model, sandbox3, feedback, current, fallbackRunner, runner, exec4) {
   const ghCtx = { cwd: ctx.root, repo: ctx.repo, exec: exec4 };
   const gitCtx = { cwd: ctx.root, exec: exec4 };
@@ -86095,7 +86161,20 @@ function buildProcessDeps(ctx, model, sandbox3, feedback, current, fallbackRunne
         fields: { extra: { iteration: String(event.iteration), kind: event.type } }
       }).catch(() => {
       });
+      void appendRecord(join27(current.attemptDir, "log.jsonl"), "agent", msg, {
+        ts,
+        fields: { extra: { iteration: String(event.iteration), kind: event.type } }
+      }).catch(() => {
+      });
       void appendLine(join27(current.attemptDir, "afk.log"), `[agent] ${msg}`);
+      const stage = deriveStage(event);
+      if (stage) {
+        void updateState(join27(current.attemptDir, "afk.state.json"), {
+          "current.stage": stage,
+          "current.last_stream_line": msg.slice(0, 200)
+        }).catch(() => {
+        });
+      }
     },
     historyPath: paths.historyPath,
     historyClock: { ts: (/* @__PURE__ */ new Date()).toISOString(), epoch: Math.floor(Date.now() / 1e3) },
@@ -86132,7 +86211,7 @@ function makeRecordAttempt(gitRoot, current, exec4) {
       const payloadFile = join27(dir, `memory-attempt-${payload.issueNumber}-a${payload.attemptNumber}.json`);
       await ensureDir(dir);
       const json4 = toMemoryPayload(payload);
-      await writeFile9(payloadFile, json4, "utf8");
+      await writeFile10(payloadFile, json4, "utf8");
       const run8 = exec4 ?? (await Promise.resolve().then(() => (init_exec(), exec_exports))).execTool;
       const [cmd, ...head7] = memoryCli;
       await run8(cmd, [...head7, "attempt", "record", "--root", gitRoot], {
@@ -86211,7 +86290,19 @@ async function runCommand2(options2) {
     runBoot,
     bootDeps,
     bootOptions,
-    processIssue,
+    // Wrap the per-issue orchestrator so the attempt's state file is marked
+    // not-live once it returns. Without this a terminal-but-preserved attempt
+    // (e.g. blocked → dir kept) would keep showing the still-live orchestrator
+    // pid and read as a live worker in `monitor`. Guarded by pathExists: on the
+    // DONE path the completion sweep already removed the dir, and updateState
+    // would mkdir it back, resurrecting a reaped attempt — so skip when gone.
+    processIssue: async (pd, pi2) => {
+      const result = await processIssue(pd, pi2);
+      const sp = join27(pi2.attemptDir, "afk.state.json");
+      if (await pathExists(sp)) await updateState(sp, { pid: 0 }).catch(() => {
+      });
+      return result;
+    },
     processDeps: buildProcessDeps(ctx, settings.model, settings.sandbox, feedback, current, flags.fallbackRunner, runner),
     // Session-scoped lifecycle hooks (PRD #207): compose the same config /
     // resolver / exec / env the process deps use, so session + per-issue points
@@ -86226,6 +86317,23 @@ async function runCommand2(options2) {
       const attempt = nextAttemptSync(c.issueTemplate.tmpDir, candidate.number);
       const attemptDir = buildWorkerAttemptPath(c.issueTemplate.tmpDir, c.workerId, candidate.number, attempt);
       current.attemptDir = attemptDir;
+      const statePath = join27(attemptDir, "afk.state.json");
+      const startedAt = (/* @__PURE__ */ new Date()).toISOString();
+      void initState(statePath, {
+        worker_id: c.workerId,
+        pid: process.pid,
+        runner: c.runner,
+        log: join27(attemptDir, "afk.log"),
+        started_at: startedAt,
+        "current.number": candidate.number,
+        "current.title": candidate.title,
+        "current.worktree": join27(attemptDir, "worktree"),
+        "current.handoff": join27(attemptDir, "handoff.md"),
+        "current.started_at": startedAt,
+        "current.runner": c.runner,
+        "current.stage": "setup"
+      }).catch(() => {
+      });
       const body = requestBlock ? `${candidate.body}
 
 ${requestBlock}` : candidate.body;
