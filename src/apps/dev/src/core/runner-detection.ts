@@ -15,6 +15,12 @@ function envHasAny(env: NodeJS.ProcessEnv, keys: string[]): string | undefined {
   return keys.find((key) => env[key] !== undefined && env[key] !== "");
 }
 
+function runnerFromExplicitEnv(value: string | undefined): Runner | undefined {
+  if (value === undefined || value === "") return undefined;
+  if (!isRunner(value)) throw new Error(`unsupported runner: ${value}`);
+  return value;
+}
+
 function runnerFromFallback(value: string | undefined): Runner {
   return value && isRunner(value) ? value : "claude";
 }
@@ -25,6 +31,9 @@ export function detectRunner(input: DetectRunnerInput = {}): RunnerDetection {
     if (!isRunner(input.flag)) throw new Error(`unsupported runner: ${input.flag}`);
     return { runner: input.flag, method: "flag", detail: "--runner" };
   }
+
+  const explicitEnvRunner = runnerFromExplicitEnv(env.RED_AFK_RUNNER);
+  if (explicitEnvRunner) return { runner: explicitEnvRunner, method: "env-var", detail: "RED_AFK_RUNNER" };
 
   const claudeKey = envHasAny(env, CLAUDE_ENV_KEYS);
   if (claudeKey) return { runner: "claude", method: "env-var", detail: claudeKey };
@@ -39,7 +48,7 @@ export function detectRunner(input: DetectRunnerInput = {}): RunnerDetection {
   if (scriptPath.includes("/.claude/")) return { runner: "claude", method: "path" };
   if (scriptPath.includes("/.codex/")) return { runner: "codex", method: "path" };
 
-  const fallback = input.fallback ?? env.RED_AFK_RUNNER;
+  const fallback = input.fallback;
   return { runner: runnerFromFallback(fallback), method: "env-fallback", detail: fallback ?? "claude" };
 }
 

@@ -15,8 +15,10 @@ Drain the agent-ready backlog. Single skill that owns issue selection, worktree 
 The skill ships a single committed runtime bundle. Invoke it as:
 
 ```
-node "$CLAUDE_PLUGIN_ROOT/skills/engineering/afk/bin/afk.mjs" <command> [params]
+RED_AFK_RUNNER=<claude|codex> node "$CLAUDE_PLUGIN_ROOT/skills/engineering/afk/bin/afk.mjs" <command> [params]
 ```
+
+The invoking LLM is responsible for setting `RED_AFK_RUNNER` to its own host runner (`codex` from Codex, `claude` from Claude Code). Do not infer a different runner from binaries on `PATH`; use `--runner` only when the user explicitly pinned one.
 
 Commands and their parameters are documented in *When To Use* below — that section is authoritative for the CLI surface. The commands are `run` (the default — a bare token routes here with argv preserved), `monitor`, `fleet`, `reap`, `statusline` (the Claude Code statusline aggregator; reads the payload on stdin and takes the project root as its one argument), and the hidden `__supervise` (the fleet supervisor entrypoint; never invoked by hand). `run` accepts `--prd`, `--issues`, `--runner`, `--alternate`, `--fallback-runner`, `--request`/`-r`, `-n`, and `--once`; `monitor` accepts `--once`; `fleet` accepts an optional numeric target `N`, the `stop` subcommand, `--request`/`-r`, and `--runner`; `reap` takes no flags; `statusline` takes the project-root path as `$1`.
 
@@ -84,11 +86,13 @@ Run before the first iteration:
 3. **Generate the worker ID.** Literal `w` + 4 random characters from `[A-Z0-9]` (e.g. `wZ2R4`). On the astronomically unlikely chance the chosen ID already maps to a live worker directory `.red/tmp/workers/{id}` (its `worker.pid` alive), regenerate. Print the ID on the first line of the run: `worker: {id}`. All per-attempt paths interpolate `{id}`, the issue number `{N}`, and the attempt number `{n}`.
 4. Resolve the runner via the detection cascade:
    1. `--runner X` flag (pin) — wins over everything, logged as `detected via --runner pin`.
-   2. **Env-var sniff** — `CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`, or `CLAUDE_CODE_SSE_PORT` → `claude`; `CODEX_HOME`, `CODEX_SANDBOX`, `CODEX_SANDBOX_NETWORK_DISABLED`, or `CODEX_MANAGED_BY_NPM` → `codex`. Logged as `detected via env-var`.
-   3. **Process-tree sniff** — if the invoking process tree contains Claude Code, use `claude`; if it contains Codex, use `codex`. Logged as `detected via process`. This is the normal path for repo-local skill copies whose filesystem path is neutral.
-   4. **`$BASH_SOURCE` path sniff** — script lives under `~/.claude/...` → `claude`; under `~/.codex/...` → `codex`. Logged as `detected via path`.
-   5. **Env fallback** — `${RED_AFK_RUNNER:-claude}`. Logged as `detected via env-fallback`.
+   2. **Caller runner env** — `RED_AFK_RUNNER=claude|codex|hermes` is the host-session identity and wins over ambient env/process/path sniffing. Under Codex, invoke the bundle as `RED_AFK_RUNNER=codex ...`; under Claude Code, invoke it as `RED_AFK_RUNNER=claude ...`. Logged as `detected via env-var`.
+   3. **Env-var sniff** — `CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`, or `CLAUDE_CODE_SSE_PORT` → `claude`; `CODEX_HOME`, `CODEX_SANDBOX`, `CODEX_SANDBOX_NETWORK_DISABLED`, or `CODEX_MANAGED_BY_NPM` → `codex`. Logged as `detected via env-var`.
+   4. **Process-tree sniff** — if the invoking process tree contains Claude Code, use `claude`; if it contains Codex, use `codex`. Logged as `detected via process`. This is the normal path for repo-local skill copies whose filesystem path is neutral.
+   5. **`$BASH_SOURCE` path sniff** — script lives under `~/.claude/...` → `claude`; under `~/.codex/...` → `codex`. Logged as `detected via path`.
+   6. **Default fallback** — `claude`. Logged as `detected via env-fallback`.
    The boot log prints one line per invocation: `runner: <runner> (detected via <method>)`. Load [`runner-claude.md`](runner-claude.md) or [`runner-codex.md`](runner-codex.md) so the spawn command is ready.
+   Do not probe `command -v claude` / `command -v codex` to choose a different runner after a transport failure. Installed binaries are capabilities, not caller identity. A runner swap is allowed only when the user explicitly passes `--fallback-runner`.
 5. Read [`SAFETY.md`](SAFETY.md). It is binding for every shell action the loop takes.
 6. **Write the per-worker pid file.** Create `.red/tmp/workers/{id}/` and write `worker.pid` (current `$$`) **once** — this is the worker's single liveness anchor for its whole lifetime.
 7. Install signal handlers — SIGINT, SIGTERM, and normal exit all release any in-flight issue claim, preserve the active `workers/{id}/{N}-a{n}/` attempt directory, and on the EXIT trap remove `worker.pid` (and rmdir the empty worker dir) before terminating.
@@ -504,7 +508,7 @@ The monitor invocation handles its own teardown — see *Self-Cancel* under the 
 
 `/dev:afk fleet [N]` and `/dev:afk fleet stop` are the user-facing fleet commands. They let one terminal command spin up (or shut down) `N` concurrent `run` workers on the current checkout, with the supervisor handling respawn, the circuit breaker, the **passive stall detector** (samples each slot's per-attempt **agent lane** `agent.log.jsonl` mtime — the clean liveness signal — every `RED_AFK_STALL_POLL_S=30s`; flags any slot alive ≥ `RED_AFK_STALL_THRESHOLD_S=600` whose agent lane has been idle ≥ the same — surfaces as `⏸️ stalled` in `/dev:afk monitor`. It keys off the agent lane, never `afk.log`/`log.jsonl`, because the orchestrator heartbeat writes those every minute and would mask a real stall — the masking that defeated detection in #243), the **hard stall reaper** (a slot silent on the agent lane past `RED_AFK_STALL_KILL_THRESHOLD_S=1800` is only a *candidate*: the irreversible kill is gated behind a reaper-signal predicate, so a worker mid-build/test — an active `vitest`/`tsc`/`cargo`/… descendant under its tree, or non-trivial aggregate cpu — is **busy** and left alone, while a genuinely stuck worker [idle past the threshold, no active descendant, flat cpu] is killed tree-wide, a `data-attempt-status="no-sentinel"` envelope is posted with the attempt-dir `afk.log` tail, the issue label is rotated back to `ready-for-agent`, the worktree + attempt dir are removed, and the slot is freed for the next health-check respawn — `RED_AFK_STALL_KILL_THRESHOLD_S` must be strictly greater than `RED_AFK_STALL_THRESHOLD_S`, validated at supervisor boot), and per-slot build isolation.
 
-**Worker env passthrough.** Any `RED_AFK_*` variable exported in the operator's shell before `/dev:afk fleet` is auto-forwarded to every worker the supervisor spawns. Use this for worker-side toggles like `RED_AFK_SKIP_PERF=1` or `RED_AFK_SKIP_COMPETITIVE_BASELINE=1` without writing a hook. Internal supervisor knobs (`RED_AFK_TARGET`, `RED_AFK_POLL_S`, `RED_AFK_STALL_*`, `RED_AFK_CIRCUIT_*`, `RED_AFK_RUNNER`, `RED_AFK_REQUEST`, `RED_AFK_PLUGIN_DIR`) and the per-slot `*_BASE` build-isolation vars are excluded — they have dedicated wiring and the supervisor denylists them from passthrough.
+**Worker env passthrough.** Any `RED_AFK_*` variable exported in the operator's shell before `/dev:afk fleet` is auto-forwarded to every worker the supervisor spawns. Use this for worker-side toggles like `RED_AFK_SKIP_PERF=1` or `RED_AFK_SKIP_COMPETITIVE_BASELINE=1` without writing a hook. Internal supervisor knobs (`RED_AFK_TARGET`, `RED_AFK_POLL_S`, `RED_AFK_STALL_*`, `RED_AFK_CIRCUIT_*`, `RED_AFK_RUNNER`, `RED_AFK_REQUEST`, `RED_AFK_PLUGIN_DIR`) and the per-slot `*_BASE` build-isolation vars are excluded — they have dedicated wiring and the supervisor denylists them from passthrough. The supervisor re-pins `RED_AFK_RUNNER=<runner>` for each worker.
 
 ```bash
 $ export RED_AFK_SKIP_PERF=1
@@ -522,7 +526,7 @@ Fleet mode is **runner-portable**: the supervisor is plain process orchestration
 
 `N` is optional and defaults to `2`. Parse it as a non-negative integer; reject anything else (including `stop`, which is the other subcommand and routes below). Steps the agent must perform, in order:
 
-1. **Resolve runner.** Determine the active runner using the same intent as the normal AFK cascade: explicit `--runner` if present, else runner env/process/path signals, else `${RED_AFK_RUNNER:-claude}`. The resolved value is carried into the supervisor as `RED_AFK_RUNNER=<runner>` so detached workers do not fall through to the supervisor's historical `claude` fallback. Under Codex, this must be `RED_AFK_RUNNER=codex`.
+1. **Resolve runner.** Determine the active runner using the same intent as the normal AFK cascade: explicit user `--runner` if present, else `RED_AFK_RUNNER`, else runner env/process/path signals, else `claude`. The resolved value is carried into the supervisor as `RED_AFK_RUNNER=<runner>` so detached workers do not fall through to the supervisor's historical `claude` fallback. Under Codex, this must resolve to `codex`.
 2. **PID-file pre-check.** Read `.red/tmp/afk-supervisor.pid`. If it exists and `kill -0 <pid>` succeeds, refuse the launch:
    ```
    ✗ fleet already running (supervisor pid=<pid>, log .red/tmp/afk-supervisor.log).
@@ -531,7 +535,7 @@ Fleet mode is **runner-portable**: the supervisor is plain process orchestration
    Do **not** touch the file or attempt to recover. A stale PID file (file exists but `kill -0` fails) is left alone — the `fleet` command clears it itself when it acquires the supervisor lock.
 3. **Launch the fleet.** From the project root, run the bundle's `fleet` command with the target and any flags:
    ```bash
-   node "$CLAUDE_PLUGIN_ROOT/skills/engineering/afk/bin/afk.mjs" fleet <N> [--runner <runner>] [--request <text>]
+   RED_AFK_RUNNER=<runner> node "$CLAUDE_PLUGIN_ROOT/skills/engineering/afk/bin/afk.mjs" fleet <N> [--request <text>]
    ```
    The command performs the PID-file pre-check from step 2 itself (refusing if a live supervisor already runs), detaches the supervisor, and forwards the resolved runner and the `--request/-r` text to every worker it spawns. It waits up to 3 s for `.red/tmp/afk-supervisor.pid` to appear and contain a live PID, then prints the launched supervisor PID and target; on failure it reports the tail of `.red/tmp/afk-supervisor.log`. Capture the reported PID for the *Report back* step. The launched supervisor is the native `__supervise` entrypoint of the same bundle.
 4. **Attach the best available monitor surface.**
@@ -606,7 +610,7 @@ Idempotency: `SLOT_SWEPT[slot]=1` blocks a second sweep within the same supervis
 To invoke, from the project root:
 
 ```bash
-node "$CLAUDE_PLUGIN_ROOT/skills/engineering/afk/bin/afk.mjs" monitor
+RED_AFK_RUNNER=<runner> node "$CLAUDE_PLUGIN_ROOT/skills/engineering/afk/bin/afk.mjs" monitor
 ```
 
 The command has **two modes**, auto-selected by stdout type:
@@ -792,7 +796,7 @@ Scalar run settings live in `.red/config.yaml` under the `afk:` key (alongside t
 
 | Config key | Env override | Default | Meaning |
 |---|---|---|---|
-| `afk.default_runner` | `RED_AFK_RUNNER` | `claude` | Backend the detection cascade falls back to. |
+| `afk.default_runner` | `RED_AFK_RUNNER` | `claude` | Caller runner identity/default backend consumed before ambient sniffing. |
 | `afk.model` | — | `claude-opus-4-8` | Model id passed to the runner. |
 | `afk.sandbox` | `RED_AFK_SANDBOX` | `none` | Isolation backend (`none` \| `docker` \| `podman`, ADR 0033). |
 | `afk.max_iterations` | `RED_AFK_MAX_ITERATIONS` | `50` | Sandcastle re-invocation ceiling (issue #322) — the safety cap for "the agent never emits `<promise>DONE</promise>`". The completion sentinel is the real terminator, so a normal issue finishes in 1–3 iterations; this is headroom for a thorough agent that keeps refining/testing. A non-numeric / zero / negative value in either the env or the config is ignored (falls through to the default) so a typo can never disable the cap or pin the agent to 1. |

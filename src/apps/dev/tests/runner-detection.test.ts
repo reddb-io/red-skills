@@ -12,10 +12,19 @@ describe("runner detection", () => {
     expect(detectRunner({ env: { CODEX_SANDBOX: "workspace-write" } })).toMatchObject({ runner: "codex", method: "env-var" });
   });
 
-  it("falls back through process tree, path, and RED_AFK_RUNNER", () => {
+  it("honours RED_AFK_RUNNER before ambient runner sniffing", () => {
+    expect(detectRunner({ env: { RED_AFK_RUNNER: "codex", CLAUDECODE: "1" } })).toMatchObject({
+      runner: "codex",
+      method: "env-var",
+      detail: "RED_AFK_RUNNER",
+    });
+    expect(() => detectRunner({ env: { RED_AFK_RUNNER: "bogus" } })).toThrow("unsupported runner: bogus");
+  });
+
+  it("falls back through process tree, path, and injected fallback", () => {
     expect(detectRunner({ env: {}, processTree: "node /opt/openai-codex/bin/codex" })).toMatchObject({ runner: "codex", method: "process" });
     expect(detectRunner({ env: {}, scriptPath: "/home/me/.claude/plugins/dev/afk.sh" })).toMatchObject({ runner: "claude", method: "path" });
-    expect(detectRunner({ env: { RED_AFK_RUNNER: "hermes" } })).toMatchObject({ runner: "hermes", method: "env-fallback" });
+    expect(detectRunner({ env: {}, fallback: "hermes" })).toMatchObject({ runner: "hermes", method: "env-fallback" });
   });
 
   it("parses both runner flag forms", () => {

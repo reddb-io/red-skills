@@ -143,7 +143,11 @@ export async function launchFleet(args: readonly string[], root = process.cwd(),
   });
   const childArgs = [...parsed.passthrough];
   if (parsed.request) childArgs.unshift("--request", parsed.request);
-  const env: NodeJS.ProcessEnv = { ...process.env, RED_AFK_TARGET: String(parsed.target), RED_AFK_RUNNER: detection.runner };
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    RED_AFK_TARGET: String(parsed.target),
+    RED_AFK_RUNNER: detection.runner,
+  };
   if (parsed.request) env.RED_AFK_REQUEST = parsed.request;
 
   const out = await import("node:fs").then((fs) => fs.openSync(logFile, "a"));

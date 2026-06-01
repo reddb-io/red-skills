@@ -57226,6 +57226,11 @@ var CODEX_ENV_KEYS = ["CODEX_HOME", "CODEX_SANDBOX", "CODEX_SANDBOX_NETWORK_DISA
 function envHasAny(env, keys3) {
   return keys3.find((key) => env[key] !== void 0 && env[key] !== "");
 }
+function runnerFromExplicitEnv(value) {
+  if (value === void 0 || value === "") return void 0;
+  if (!isRunner(value)) throw new Error(`unsupported runner: ${value}`);
+  return value;
+}
 function runnerFromFallback(value) {
   return value && isRunner(value) ? value : "claude";
 }
@@ -57235,6 +57240,8 @@ function detectRunner(input = {}) {
     if (!isRunner(input.flag)) throw new Error(`unsupported runner: ${input.flag}`);
     return { runner: input.flag, method: "flag", detail: "--runner" };
   }
+  const explicitEnvRunner = runnerFromExplicitEnv(env.RED_AFK_RUNNER);
+  if (explicitEnvRunner) return { runner: explicitEnvRunner, method: "env-var", detail: "RED_AFK_RUNNER" };
   const claudeKey = envHasAny(env, CLAUDE_ENV_KEYS);
   if (claudeKey) return { runner: "claude", method: "env-var", detail: claudeKey };
   const codexKey = envHasAny(env, CODEX_ENV_KEYS);
@@ -57245,7 +57252,7 @@ function detectRunner(input = {}) {
   const scriptPath = input.scriptPath ?? "";
   if (scriptPath.includes("/.claude/")) return { runner: "claude", method: "path" };
   if (scriptPath.includes("/.codex/")) return { runner: "codex", method: "path" };
-  const fallback = input.fallback ?? env.RED_AFK_RUNNER;
+  const fallback = input.fallback;
   return { runner: runnerFromFallback(fallback), method: "env-fallback", detail: fallback ?? "claude" };
 }
 function parseRunnerFlag(args2) {
@@ -57415,7 +57422,11 @@ async function launchFleet(args2, root = process.cwd(), stdout = process.stdout)
   });
   const childArgs = [...parsed.passthrough];
   if (parsed.request) childArgs.unshift("--request", parsed.request);
-  const env = { ...process.env, RED_AFK_TARGET: String(parsed.target), RED_AFK_RUNNER: detection.runner };
+  const env = {
+    ...process.env,
+    RED_AFK_TARGET: String(parsed.target),
+    RED_AFK_RUNNER: detection.runner
+  };
   if (parsed.request) env.RED_AFK_REQUEST = parsed.request;
   const out = await import("node:fs").then((fs) => fs.openSync(logFile, "a"));
   const child = spawn(process.execPath, [process.argv[1], "__supervise", ...childArgs], {
@@ -66881,8 +66892,8 @@ function readBuildInfo(app) {
   const info = {
     app,
     version: stripTagPrefix(readInjected("__RED_BUILD_VERSION__", () => "1.147.2") ?? "0.0.0-dev"),
-    gitSha: readInjected("__RED_BUILD_GIT_SHA__", () => "d9c57c975403e8470b332fe6d58151a6957790d6") ?? "unknown",
-    buildTime: readInjected("__RED_BUILD_TIME__", () => "2026-06-01T12:33:18-03:00") ?? "unknown",
+    gitSha: readInjected("__RED_BUILD_GIT_SHA__", () => "unknown") ?? "unknown",
+    buildTime: readInjected("__RED_BUILD_TIME__", () => "2026-06-01T16:37:03.552Z") ?? "unknown",
     bundleAsset: readInjected("__RED_BUNDLE_ASSET__", () => "dev.bundle.min.mjs") ?? "unknown"
   };
   const reddbSdkVersion = readInjected("__REDDB_SDK_VERSION__", () => "");

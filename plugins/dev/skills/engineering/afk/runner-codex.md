@@ -74,8 +74,8 @@ monitor agent only for presentation.
 
 When a Codex session launches `/dev:afk fleet N`:
 
-- launch `/dev:afk fleet N --runner codex` (which carries `RED_AFK_RUNNER=codex`
-  into the supervisor) so detached workers stay on the Codex runner
+- launch `/dev:afk fleet N --runner codex` or invoke the bundle with
+  `RED_AFK_RUNNER=codex` so detached workers stay on the Codex runner
   deterministically;
 - spawn at most one read-only monitor agent for the newly-started supervisor
   when the sub-agent primitive is available;

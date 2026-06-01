@@ -2,7 +2,7 @@
 
 Skills I use daily for code work.
 
-- **[afk](./afk/SKILL.md)** — Autonomous loop that drains the `ready-for-agent` queue. Claims an issue, runs it in an isolated worktree via claude/codex, merges back to main, closes. Filters by PRD or explicit issue list; alternates runners on rate-limit; heartbeat + monitor + live progress.
+- **[afk](./afk/SKILL.md)** — Autonomous loop that drains the `ready-for-agent` queue. Claims an issue, runs it in an isolated worktree via claude/codex, merges back to main, closes. Filters by PRD or explicit issue list; pins caller identity with `RED_AFK_RUNNER`; swaps runners only when explicitly requested; heartbeat + monitor + live progress.
 - **[curate](./curate/SKILL.md)** — Interactive, archive-only Skill curator. Lists `archive` candidates from `memory curate skills --json`, requires explicit approval, archives approved Curatable skills (recoverable atomic move + SHA-256 manifest), and reverses with `/curate --restore <name>`. Tracer slice for the mutating curator.
 - **[context](./context/SKILL.md)** — Compose the RedSkills context stack before non-trivial work: domain docs, ADRs, LLM Wiki, Memory graph/recall, graph-aware zoom-out, and self-improvement telemetry.
 - **[diagnose](./diagnose/SKILL.md)** — Disciplined diagnosis loop for hard bugs and performance regressions: reproduce → minimise → hypothesise → instrument → fix → regression-test.
