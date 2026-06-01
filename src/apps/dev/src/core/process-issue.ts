@@ -57,6 +57,7 @@ import { resolveHooks, type ResolveHooksOptions, type ResolvedHooks, type HookNa
 import { formatStartedMarker } from "./heartbeat.js";
 import { parseReqLabels, planCloseCascade, type DependentIssue } from "./boot-sweep.js";
 import { buildAttemptRecordPayload, type AttemptRecordPayload } from "./attempt-record.js";
+import { parseCurrentBlocker, upsertCurrentBlocker, type CurrentBlocker } from "./blocker-state.js";
 import type { ConfigValues } from "./config.js";
 import type { AttemptStatus } from "./envelope.js";
 import type { Runner } from "../types/runner.js";
@@ -77,6 +78,8 @@ export interface ProcessGh {
   ensureLabel(name: string): Promise<void>;
   /** gh issue comment --body … */
   comment(issue: number, body: string): Promise<void>;
+  /** gh issue edit --body … (best-effort; optional for older callers/tests). */
+  editBody?(issue: number, body: string): Promise<boolean>;
   /** gh issue close --reason completed. */
   close(issue: number): Promise<void>;
   /** List open issues carrying `label` (number + label-name list). Backs the
@@ -427,6 +430,24 @@ export async function processIssue(
     await deps.claimLock.release(issue);
     return claimLost(issue, hooksFired);
   }
+
+  const activeBlocker = parseCurrentBlocker(input.body);
+  if (activeBlocker) {
+    await editLabelsTagged(deps, issue, [LABEL_READY], [LABEL_HUMAN], "blocked");
+    await deps.gh.comment(
+      issue,
+      `🤖 /afk preflight stopped: active Current blocker (${activeBlocker.kind}) still requires human input: ${activeBlocker.next}`,
+    );
+    await deps.claimLock.release(issue);
+    return {
+      outcome: "blocked",
+      issue,
+      hooksFired,
+      preserved: false,
+      swept: false,
+    };
+  }
+
   if (!(await deps.gh.editLabels(issue, [LABEL_READY], [LABEL_RUNNING]))) {
     await deps.claimLock.release(issue);
     return claimLost(issue, hooksFired);
@@ -832,6 +853,63 @@ async function emitFailure(
   return result.posted;
 }
 
+function oneLine(value: string | undefined, fallback: string): string {
+  const line = (value ?? "")
+    .split("\n")
+    .map((part) => part.replace(/^[-*]\s*(?:\[[^\]]+\]\s*)?/, "").replace(/\s+/g, " ").trim())
+    .find((part) => part.length > 0);
+  return line ?? fallback;
+}
+
+function blockerForFailure(outcome: ProcessOutcome, sections: SectionBodies): CurrentBlocker | null {
+  switch (outcome) {
+    case "blocked":
+      return {
+        status: "blocked",
+        kind: "spec",
+        summary: oneLine(sections.notes, "Inner agent emitted BLOCKED."),
+        next: "Review the blocker envelope and add human guidance.",
+      };
+    case "feedback-failed":
+      return {
+        status: "blocked",
+        kind: "validation",
+        summary: oneLine(sections.validation ?? sections.log, "Validation failed after implementation."),
+        next: "Decide whether to fix forward, change scope, or adjust the acceptance criteria.",
+      };
+    case "no-sentinel":
+      return {
+        status: "blocked",
+        kind: "runner",
+        summary: oneLine(sections.log, "Inner agent exited without an AFK completion sentinel."),
+        next: "Review the attempt log and decide whether to retry or revise the issue brief.",
+      };
+    case "merge-conflict":
+      return {
+        status: "blocked",
+        kind: "merge-conflict",
+        summary: oneLine(sections.log, "Worker branch could not be merged cleanly."),
+        next: "Resolve the merge conflict or add guidance for the next agent attempt.",
+      };
+    default:
+      return null;
+  }
+}
+
+async function writeCurrentBlockerBestEffort(
+  deps: ProcessIssueDeps,
+  input: ProcessIssueInput,
+  blocker: CurrentBlocker | null,
+): Promise<void> {
+  if (!blocker || !deps.gh.editBody) return;
+  try {
+    await deps.gh.editBody(input.issue, upsertCurrentBlocker(input.body, blocker));
+  } catch {
+    // Best-effort: issue-body state improves resumability, but label routing and
+    // the failure envelope remain the canonical fallback if the edit fails.
+  }
+}
+
 /**
  * The uniform terminal-FAILURE tail shared by no-sentinel, blocked, feedback,
  * and merge-conflict: route the BOUNDED auto-recovery labels (routeRecovery),
@@ -851,7 +929,10 @@ async function terminalFailure(
   record: { notes?: string; validationSummary?: string } = {},
 ): Promise<ProcessIssueResult> {
   const { deps, input } = c;
-  await routeRecovery(deps, input.issue, outcome, input.attempt);
+  const decision = await routeRecovery(deps, input.issue, outcome, input.attempt);
+  if (decision === "escalate") {
+    await writeCurrentBlockerBestEffort(deps, input, blockerForFailure(outcome, sections));
+  }
   const posted = await emitFailure(c, envelopeStatusFor(outcome), sectionKey, sections);
   // ADR 0017: record the reasoning attempt into Memory AFTER the terminal
   // (failure) envelope. Best-effort, gated, no-op when memory is absent.
@@ -901,7 +982,14 @@ async function emitDone(
  * ready-for-human, preserve the attempt dir. Mirrors the do_merge-false branch. */
 async function mergeFailed(c: StageCommon, _reason: string, locked = false): Promise<ProcessIssueResult> {
   const { deps, input } = c;
-  await routeRecovery(deps, input.issue, "merge-conflict", input.attempt);
+  const decision = await routeRecovery(deps, input.issue, "merge-conflict", input.attempt);
+  if (decision === "escalate") {
+    await writeCurrentBlockerBestEffort(
+      deps,
+      input,
+      blockerForFailure("merge-conflict", { log: _reason || "(no merge log captured)" }),
+    );
+  }
   const posted = await emitFailure(c, envelopeStatusFor("merge-conflict"), "merge-conflict", {
     log: "(no merge log captured)",
   });

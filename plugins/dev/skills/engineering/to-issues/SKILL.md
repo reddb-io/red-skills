@@ -56,7 +56,7 @@ For each approved slice, publish a new issue. Use the issue template in `<suppor
 - Publish in **dependency order** (blockers first) so you can reference real issue identifiers in each "Blocked by" field
 - Tag only currently-unblocked AFK slices with the canonical `ready-for-agent` triage label (mapped string from `/setup-red-skills`).
 - If an AFK slice has open blockers, publish it as `blocked:dependency` + one `req:N` label **per blocker** (NOT `ready-for-human` — a dependency-blocked slice is healthy and must never page a human), keeping the strict `## Blocked by` task list in the body as the human-facing mirror. `req:N` labels are created on demand (`gh label create req:<n>` if missing). `/afk` auto-promotes the issue to `ready-for-agent` the moment its last dependency closes (event-driven close cascade, with the boot sweep as a safety net). See `/setup-red-skills` triage-labels *Dependency Edges*.
-- If a slice is HITL, publish it as `ready-for-human`. Do **not** include a literal `## Blocked by` section unless it should be auto-promoted to AFK after blockers close; use a non-parser heading such as `## Human decision needed` for informational dependencies.
+- If a slice is HITL, publish it as `ready-for-human`. Do **not** include a literal `## Blocked by` section unless it should be auto-promoted to AFK after blockers close; use `## Current blocker` / `## Human decision needed` for gates, measurements, and decisions where closing a referenced issue is not enough to make the slice delegable.
 - If the parent is a PRD (carries `type:prd` + `needs-slicing`), tag every child with `prd:{N}` referencing the parent and, **after** all slices are published, remove `needs-slicing` from the parent PRD. Never remove `type:prd` — it is a permanent type marker. Never apply `ready-for-agent` to the parent PRD itself.
 
 ### Hard rules — do not break these
@@ -110,6 +110,20 @@ Avoid specific file paths or code snippets — they go stale fast. **Exception**
 Format: one GitHub task list entry per blocker, `- [ ] #N`. GitHub renders this as a native dependency widget ("Tracked by 0/N"), checkboxes auto-mark when the referenced issue closes. The `/afk` boot sweep parses this exact section to auto-promote issues whose blockers have all closed — keep the heading literal (`## Blocked by`, capitalised, no extra punctuation) and the format strict.
 
 Omit the section entirely (do not write "None") if the slice has no blockers.
+
+For a human gate, use this shape instead:
+
+```markdown
+## Current blocker
+
+<!-- red:blocker-state v1 -->
+status: blocked
+kind: decision
+ref: #123
+summary: The dependency closed, but the measurement did not prove the required win.
+next: Human must decide whether to stop, redesign, or continue anyway.
+<!-- /red:blocker-state -->
+```
 
 </issue-template>
 

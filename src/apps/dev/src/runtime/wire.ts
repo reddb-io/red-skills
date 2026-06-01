@@ -412,7 +412,7 @@ import { parseWorkerAttemptPath } from "../core/worker-paths.js";
  *     liveness (live attempts are excluded from the cap).
  *   - branches: the three afk/* / afk-attempts/* ref namespaces (snapshot
  *     remote, live remote, live local minus checked-out) the reapers prune.
- *   - unblockCandidates: the `ready-for-human` issues the unblock sweep scans.
+ *   - unblockCandidates: the `blocked:dependency` issues the unblock sweep scans.
  * The straggler counts + per-issue gh state lookups are resolved lazily in the
  * boot deps (buildBootDeps), so this only gathers the disk/branch facts.
  */

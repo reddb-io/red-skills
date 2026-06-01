@@ -158,12 +158,34 @@ Best-effort: a `gh` failure here logs a `warn:` and never fails the close — th
 
 **2. Unblock Sweep (boot-time, the safety net).** After *Orphan Cleanup* and before *Straggler Check*, `/afk` re-scans dependency-blocked issues by label and promotes any whose deps all closed:
 
-1. `gh issue list` for open `blocked:dependency` (and legacy `ready-for-human`) issues with `number,labels,body`.
-2. Deps come from the `req:*` labels (the source of truth); for pre-`req:N` issues with no such label, fall back to extracting `#N` refs under the literal `## Blocked by` body heading (`- [ ] #N`).
+1. `gh issue list` for open `blocked:dependency` issues with `number,labels,body`.
+2. Deps come from the `req:*` labels (the source of truth); for pre-`req:N` issues with no such label, fall back to extracting `#N` refs under the literal `## Blocked by` body heading (`- [ ] #N`) only when the issue is still labelled `blocked:dependency`.
 3. Resolve each dep via `gh issue view <N> --json state`; promote only when **every** dep is `CLOSED`.
-4. On promotion: remove the holding label (`blocked:dependency`, or legacy `ready-for-human`), add `ready-for-agent`, post the audit comment, and log `unblocked N issue(s): #A #B`.
+4. On promotion: remove the holding label (`blocked:dependency`), add `ready-for-agent`, post the audit comment, and log `unblocked N issue(s): #A #B`.
 
-Trade-off accepted: a legacy `ready-for-human` issue may have stopped for a reason unrelated to its listed blockers (test failure, spec ambiguity); auto-promotion bounces it back on the next attempt — cheap. `blocked:dependency` issues never have this ambiguity (the label *means* dependency-wait), which is the whole point of separating it from `ready-for-human`.
+`ready-for-human` is a human gate, not dependency-wait. The boot sweep must not promote it from a legacy `## Blocked by` body parse, because a closed blocker can still encode a failed measurement or a no-go decision. `blocked:dependency` issues do not have that ambiguity: the label *means* dependency-wait, which is the whole point of separating it from `ready-for-human`.
+
+## Current Blocker State
+
+Human gates are first-class issue-body state, not implicit thread archaeology. Before claiming an issue, `/afk` checks for an active `## Current blocker` block:
+
+```md
+## Current blocker
+
+<!-- red:blocker-state v1 -->
+status: blocked
+kind: decision
+ref: #856
+summary: Phase 2 measured no columnar read win.
+next: Human must decide whether to stop, redesign, or continue anyway.
+<!-- /red:blocker-state -->
+```
+
+If this block is present with `status: blocked`, `/afk` does not create an attempt. It removes `ready-for-agent`, adds `ready-for-human` plus the typed blocker label, leaves the issue open, and waits for `/hitl`.
+
+When an attempt reaches a terminal human page (BLOCKED, validation failure, merge conflict, or no-sentinel after retry budget exhaustion), the runtime writes or replaces this block so the next `/hitl` turn can start from the current blocker instead of re-reading every old envelope. `/hitl` clears the block to `None`, records it under `## Resolved blockers`, refreshes `## Agent brief`, and moves the issue back to `ready-for-agent` only when the next agent can continue without guessing.
+
+Use `## Blocked by` only for mechanical dependencies that should auto-promote on close. Use `## Current blocker` / `## Human decision needed` for gates, measurements, product calls, or any state where "the referenced issue closed" is not enough to prove the work is delegable.
 
 ## Straggler Check
 
@@ -801,12 +823,12 @@ Scalar run settings live in `.red/config.yaml` under the `afk:` key (alongside t
 | `afk.models.claude` | — | `claude-opus-4-8` | Claude Code model id. |
 | `afk.models.codex` | — | `gpt-5.5` | Codex model id. |
 | `afk.sandbox` | `RED_AFK_SANDBOX` | `none` | Isolation backend (`none` \| `docker` \| `podman`, ADR 0033). |
-| `afk.max_iterations` | `RED_AFK_MAX_ITERATIONS` | `50` | Sandcastle re-invocation ceiling (issue #322) — the safety cap for "the agent never emits `<promise>DONE</promise>`". The completion sentinel is the real terminator, so a normal issue finishes in 1–3 iterations; this is headroom for a thorough agent that keeps refining/testing. A non-numeric / zero / negative value in either the env or the config is ignored (falls through to the default) so a typo can never disable the cap or pin the agent to 1. |
+| `afk.max_iterations` | `RED_AFK_MAX_ITERATIONS` | `12` | Sandcastle re-invocation ceiling (issue #322) — the safety cap for "the agent never emits `<promise>DONE</promise>` or `<promise>BLOCKED</promise>`". The completion sentinel is the real terminator, so a normal issue finishes in 1–3 iterations; this leaves headroom without letting repeated no-sentinel failures run for too long. A non-numeric / zero / negative value in either the env or the config is ignored (falls through to the default) so a typo can never disable the cap or pin the agent to 1. |
 
 ```yaml
 afk:
   sandbox: none
-  max_iterations: 50      # override the default ceiling here
+  max_iterations: 12      # override the default ceiling here
 ```
 
 ## Lifecycle Hooks

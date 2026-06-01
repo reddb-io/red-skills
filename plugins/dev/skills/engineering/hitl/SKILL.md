@@ -50,7 +50,7 @@ gh issue view N --json number,title,body,labels,comments,url
 Use existing RedSkills precedence:
 
 1. **Human guidance** from `<details data-kind="directive">` comments is authoritative.
-2. The issue body, including `## Agent brief`, is next.
+2. The issue body is next. If `## Current blocker` contains a `red:blocker-state v1` block with `status: blocked`, treat its `next:` field as the active pending decision.
 3. Previous AFK **Envelopes** explain why the Issue entered `ready-for-human`.
 4. Thread discussion without a Directive block is advisory only.
 
@@ -59,6 +59,7 @@ Use existing RedSkills precedence:
 Try to identify a single pending decision from:
 
 - explicit issue-body sections such as `## Human decision needed`, `## Decision needed`, `## Pending decision`, or `## HITL decision`;
+- the machine-readable `## Current blocker` block (`<!-- red:blocker-state v1 --> ... <!-- /red:blocker-state -->`);
 - `## Agent brief` language explaining why the Issue cannot yet be delegated;
 - latest Directive block comment;
 - latest AFK Envelope with status `blocked`, `no-sentinel`, or `merge-conflict`;
@@ -121,15 +122,17 @@ Next pending decision:
 
 If delegable:
 
-1. Update or create the issue-body `## Agent brief` section.
-2. Remove `ready-for-human`.
-3. Add `ready-for-agent`.
+1. Clear the issue-body `## Current blocker` section to `None` and add a checked entry under `## Resolved blockers`.
+2. Update or create the issue-body `## Agent brief` section.
+3. Remove `ready-for-human`.
+4. Add `ready-for-agent`.
 
 If non-delegable:
 
 1. Keep or add `ready-for-human`.
 2. Do not add `ready-for-agent`.
-3. Make sure the Directive block names the next pending decision.
+3. Update or create `## Current blocker` with the next pending decision.
+4. Make sure the Directive block names the next pending decision.
 
 ## Hard rules
 

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { parseCurrentBlocker, upsertCurrentBlocker } from "../src/core/blocker-state.js";
 import { planHitlResolution, type HitlResolutionInput } from "../src/core/hitl-resolution-plan.js";
 
 const decision: HitlResolutionInput["decision"] = {
@@ -38,6 +39,26 @@ describe("planHitlResolution", () => {
     expect(plan.removeLabels).toEqual(["ready-for-human"]);
   });
 
+  it("clears Current blocker and records it when the answer makes the issue delegable", () => {
+    const body = upsertCurrentBlocker("## Summary\nExisting summary.\n", {
+      status: "blocked",
+      kind: "decision",
+      summary: "Choose the API shape.",
+      next: "Pick REST or RPC.",
+    });
+    const plan = planHitlResolution(
+      base({
+        issue: { number: 42, title: "Resolve HITL blocker", body },
+        answer: "Use RPC.",
+      }),
+    );
+
+    expect(parseCurrentBlocker(plan.bodyUpdate ?? "")).toBeNull();
+    expect(plan.bodyUpdate).toContain("## Current blocker\n\nNone");
+    expect(plan.bodyUpdate).toContain("## Resolved blockers");
+    expect(plan.bodyUpdate).toContain("- [x] Choose the API shape. - Use RPC.");
+  });
+
   it("replaces a stale Agent brief instead of duplicating it", () => {
     const plan = planHitlResolution(
       base({
@@ -68,7 +89,13 @@ describe("planHitlResolution", () => {
       }),
     );
 
-    expect(plan.bodyUpdate).toBeUndefined();
+    expect(plan.bodyUpdate).toContain("## Current blocker");
+    expect(parseCurrentBlocker(plan.bodyUpdate ?? "")).toEqual({
+      status: "blocked",
+      kind: "decision",
+      summary: "Choose whether `$hitl` should update the brief.",
+      next: "Decide which API shape the command should expose.",
+    });
     expect(plan.addLabels).toEqual(["ready-for-human"]);
     expect(plan.removeLabels).toEqual([]);
     expect(plan.commentBody).toContain("Disposition:\nnon-delegable");

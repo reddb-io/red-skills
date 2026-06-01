@@ -5,6 +5,7 @@ import {
   type Comment,
 } from "./comment-classification.js";
 import type { HandoffComment } from "./handoff.js";
+import { parseCurrentBlocker } from "./blocker-state.js";
 
 export interface HitlDecisionIssue {
   number: number;
@@ -13,7 +14,13 @@ export interface HitlDecisionIssue {
   comments: HandoffComment[];
 }
 
-export type HitlDecisionSource = "issue-body" | "agent-brief" | "human-guidance" | "envelope" | "thread-discussion";
+export type HitlDecisionSource =
+  | "current-blocker"
+  | "issue-body"
+  | "agent-brief"
+  | "human-guidance"
+  | "envelope"
+  | "thread-discussion";
 
 export type HitlDecisionExtraction =
   | {
@@ -95,6 +102,25 @@ function issueBodySignal(issue: HitlDecisionIssue): DecisionSignal | null {
     source: "issue-body",
     prompt: line,
     evidence: body,
+    authoritative: true,
+  };
+}
+
+function currentBlockerSignal(issue: HitlDecisionIssue): DecisionSignal | null {
+  const blocker = parseCurrentBlocker(issue.body);
+  if (!blocker) return null;
+  const evidence = [
+    `kind: ${blocker.kind}`,
+    blocker.ref ? `ref: ${blocker.ref}` : "",
+    `summary: ${blocker.summary}`,
+    `next: ${blocker.next}`,
+  ]
+    .filter((line) => line.length > 0)
+    .join("\n");
+  return {
+    source: "current-blocker",
+    prompt: blocker.next,
+    evidence,
     authoritative: true,
   };
 }
@@ -215,6 +241,8 @@ function pending(signal: DecisionSignal): HitlDecisionExtraction {
  * ambiguity instead of a guessed decision. */
 export function extractPendingHitlDecision(issue: HitlDecisionIssue): HitlDecisionExtraction {
   const signals: DecisionSignal[] = [];
+  const currentBlocker = currentBlockerSignal(issue);
+  if (currentBlocker) signals.push(currentBlocker);
   const body = issueBodySignal(issue);
   if (body) signals.push(body);
   const brief = agentBriefSignal(issue);
@@ -223,6 +251,7 @@ export function extractPendingHitlDecision(issue: HitlDecisionIssue): HitlDecisi
   signals.push(...directives);
 
   if (directives.length > 0) return pending(directives[directives.length - 1]!);
+  if (currentBlocker) return pending(currentBlocker);
   if (body) return pending(body);
   if (brief) return pending(brief);
 

@@ -148,6 +148,16 @@ Append an entry inside `<agent-notes>` in the handoff file describing exactly:
 - What error or contradiction you hit.
 - What information or decision would unblock you.
 
+Use this shape so the orchestrator/HITL flow can turn it into issue-body state:
+
+```markdown
+## Current blocker
+
+kind: decision | spec | validation | merge-conflict | runner
+summary: <one-line blocker>
+next: <one-line human decision or action required>
+```
+
 Then emit `<promise>BLOCKED</promise>`. The orchestrator will re-label the issue `ready-for-human` and move on. Do not push forward on a guess.
 
 ## Git Safety (binding)

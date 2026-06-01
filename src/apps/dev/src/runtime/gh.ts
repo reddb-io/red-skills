@@ -227,6 +227,12 @@ export async function comment(ctx: GhContext, issue: number, body: string): Prom
   await runGh(ctx, ["issue", "comment", String(issue), ...repoArgs(ctx), "--body", body]);
 }
 
+/** `gh issue edit --body …`. */
+export async function editBody(ctx: GhContext, issue: number, body: string): Promise<boolean> {
+  const r = await runGh(ctx, ["issue", "edit", String(issue), ...repoArgs(ctx), "--body", body]);
+  return r.code === 0;
+}
+
 /** Idempotently create the `runner-error` label (best-effort). Mirrors
  * supervisor.sh ensure_runner_error_label — a label that already exists exits
  * non-zero and is swallowed. */
@@ -400,53 +406,41 @@ export function countNeedsInfo(ctx: GhContext): Promise<number> {
   return countIssues(ctx, ["--label", "needs-info"]);
 }
 
-/** List the unblock-sweep candidates (number + body + labels). The sweep keys
- * off `blocked:dependency` issues via their `req:*` labels (preferred) and
- * keeps the legacy `ready-for-human` + `## Blocked by` body parse as fallback,
- * so both holding states are gathered and de-duplicated by issue number. */
+/** List the unblock-sweep candidates (number + body + labels). The sweep only
+ * consumes `blocked:dependency`; `ready-for-human` is a human gate and must not
+ * be auto-promoted from dependency closure. */
 export async function listUnblockCandidates(ctx: GhContext): Promise<UnblockCandidate[]> {
-  const fetch = async (label: string): Promise<UnblockCandidate[]> => {
-    const r = await runGh(ctx, 
-      [
-        "issue",
-        "list",
-        ...repoArgs(ctx),
-        "--label",
-        label,
-        "--state",
-        "open",
-        "--limit",
-        "200",
-        "--json",
-        "number,body,labels",
-      ],
-    );
-    if (r.code !== 0) return [];
-    try {
-      const rows = JSON.parse(r.stdout) as Array<{
-        number?: number;
-        body?: string;
-        labels?: Array<{ name?: string }>;
-      }>;
-      if (!Array.isArray(rows)) return [];
-      return rows.map((row): UnblockCandidate => ({
-        number: Number(row.number ?? 0),
-        body: String(row.body ?? ""),
-        labels: Array.isArray(row.labels) ? row.labels.map((l) => String(l.name ?? "")) : [],
-      }));
-    } catch {
-      return [];
-    }
-  };
-  const [byDependency, byHuman] = await Promise.all([
-    fetch("blocked:dependency"),
-    fetch("ready-for-human"),
-  ]);
-  const merged = new Map<number, UnblockCandidate>();
-  for (const c of [...byDependency, ...byHuman]) {
-    if (!merged.has(c.number)) merged.set(c.number, c);
+  const r = await runGh(ctx,
+    [
+      "issue",
+      "list",
+      ...repoArgs(ctx),
+      "--label",
+      "blocked:dependency",
+      "--state",
+      "open",
+      "--limit",
+      "200",
+      "--json",
+      "number,body,labels",
+    ],
+  );
+  if (r.code !== 0) return [];
+  try {
+    const rows = JSON.parse(r.stdout) as Array<{
+      number?: number;
+      body?: string;
+      labels?: Array<{ name?: string }>;
+    }>;
+    if (!Array.isArray(rows)) return [];
+    return rows.map((row): UnblockCandidate => ({
+      number: Number(row.number ?? 0),
+      body: String(row.body ?? ""),
+      labels: Array.isArray(row.labels) ? row.labels.map((l) => String(l.name ?? "")) : [],
+    }));
+  } catch {
+    return [];
   }
-  return [...merged.values()];
 }
 
 /** List open issues carrying `label` (number + label-name list). Backs the

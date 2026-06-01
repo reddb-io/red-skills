@@ -492,17 +492,16 @@ async function runBranchCleanup(
 }
 
 /** Step 6: planUnblockSweep, then promote each planned issue (remove its holding
- * label — `blocked:dependency` for req:* deps, else `ready-for-human` for the
- * legacy body-parse path — add ready-for-agent) and post its audit comment.
+ * `blocked:dependency` label, add ready-for-agent) and post its audit comment.
  * Mirrors sweep_unblocked. */
 async function runUnblockSweep(
   deps: BootDeps,
   candidates: readonly UnblockCandidate[],
 ): Promise<UnblockSweepResult> {
   const plans = await planUnblockSweep(candidates, deps.lookups.blockerState);
-  // Resolve each promoted issue's holding label from its candidate label set:
-  // a `blocked:dependency` issue sheds that label, a legacy `ready-for-human`
-  // issue sheds `ready-for-human`.
+  // Resolve each promoted issue's holding label from its candidate label set.
+  // The planner only promotes true dependency waits, but keep the fallback
+  // defensive for older callers.
   const labelsByIssue = new Map<number, string[]>();
   for (const c of candidates) labelsByIssue.set(c.number, c.labels ?? []);
   const promoted: number[] = [];

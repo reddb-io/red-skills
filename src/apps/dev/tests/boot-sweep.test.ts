@@ -188,7 +188,7 @@ describe("planUnblockSweep", () => {
 
   it("promotes a candidate whose blockers are all CLOSED", async () => {
     const candidates: UnblockCandidate[] = [
-      { number: 7, body: "## Blocked by\n- [ ] #1\n- [ ] #2\n" },
+      { number: 7, labels: ["blocked:dependency"], body: "## Blocked by\n- [ ] #1\n- [ ] #2\n" },
     ];
     const lookup = lookupFor({ 1: "CLOSED", 2: "CLOSED" });
     const plans = await planUnblockSweep(candidates, lookup.fetch);
@@ -204,7 +204,7 @@ describe("planUnblockSweep", () => {
 
   it("does not promote when one blocker is still OPEN", async () => {
     const candidates: UnblockCandidate[] = [
-      { number: 7, body: "## Blocked by\n- [ ] #1\n- [ ] #2\n" },
+      { number: 7, labels: ["blocked:dependency"], body: "## Blocked by\n- [ ] #1\n- [ ] #2\n" },
     ];
     const lookup = lookupFor({ 1: "CLOSED", 2: "OPEN" });
     expect(await planUnblockSweep(candidates, lookup.fetch)).toEqual([]);
@@ -212,7 +212,7 @@ describe("planUnblockSweep", () => {
 
   it("treats a 404 / transient lookup (undefined) as not-closed", async () => {
     const candidates: UnblockCandidate[] = [
-      { number: 7, body: "## Blocked by\n- [ ] #1\n" },
+      { number: 7, labels: ["blocked:dependency"], body: "## Blocked by\n- [ ] #1\n" },
     ];
     const lookup = lookupFor({ 1: undefined });
     expect(await planUnblockSweep(candidates, lookup.fetch)).toEqual([]);
@@ -229,8 +229,8 @@ describe("planUnblockSweep", () => {
 
   it("plans each promotable candidate across a mixed batch", async () => {
     const candidates: UnblockCandidate[] = [
-      { number: 7, body: "## Blocked by\n- [ ] #1\n" }, // closed → promote
-      { number: 8, body: "## Blocked by\n- [ ] #2\n" }, // open → skip
+      { number: 7, labels: ["blocked:dependency"], body: "## Blocked by\n- [ ] #1\n" }, // closed → promote
+      { number: 8, labels: ["blocked:dependency"], body: "## Blocked by\n- [ ] #2\n" }, // open → skip
       { number: 9, body: "## What to build\nno refs" }, // none → skip
     ];
     const lookup = lookupFor({ 1: "CLOSED", 2: "OPEN" });
@@ -269,9 +269,9 @@ describe("planUnblockSweep", () => {
     expect(await planUnblockSweep(candidates, lookup.fetch)).toEqual([]);
   });
 
-  it("falls back to the body parse when the candidate has no req:* label", async () => {
+  it("falls back to the body parse for legacy blocked:dependency candidates with no req:* label", async () => {
     const candidates: UnblockCandidate[] = [
-      { number: 7, labels: ["ready-for-human"], body: "## Blocked by\n- [ ] #1\n" },
+      { number: 7, labels: ["blocked:dependency"], body: "## Blocked by\n- [ ] #1\n" },
     ];
     const lookup = lookupFor({ 1: "CLOSED" });
     const plans = await planUnblockSweep(candidates, lookup.fetch);
@@ -282,6 +282,24 @@ describe("planUnblockSweep", () => {
         comment: "🤖 /afk promoted to ready-for-agent: all blockers closed (#1).",
       },
     ]);
+  });
+
+  it("does not use legacy body blockers to promote ready-for-human gates", async () => {
+    const candidates: UnblockCandidate[] = [
+      { number: 7, labels: ["ready-for-human"], body: "## Blocked by\n- [ ] #1\n" },
+    ];
+    const lookup = lookupFor({ 1: "CLOSED" });
+    expect(await planUnblockSweep(candidates, lookup.fetch)).toEqual([]);
+    expect(lookup.calls).toEqual([]);
+  });
+
+  it("does not promote ready-for-human even when stale req:* labels are present", async () => {
+    const candidates: UnblockCandidate[] = [
+      { number: 7, labels: ["ready-for-human", "req:1"], body: "" },
+    ];
+    const lookup = lookupFor({ 1: "CLOSED" });
+    expect(await planUnblockSweep(candidates, lookup.fetch)).toEqual([]);
+    expect(lookup.calls).toEqual([]);
   });
 });
 

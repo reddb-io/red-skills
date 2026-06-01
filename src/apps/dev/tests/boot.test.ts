@@ -420,17 +420,25 @@ describe("runBoot branch cleanup deletes the planned refs", () => {
 });
 
 describe("runBoot unblock sweep promotes + comments", () => {
-  it("promotes a fully-unblocked issue and posts the audit comment", async () => {
+  it("promotes a legacy blocked:dependency issue and posts the audit comment", async () => {
     const blockerState: BootDeps["lookups"]["blockerState"] = async (issue) =>
       issue === 10 || issue === 11 ? "CLOSED" : "OPEN";
     const { deps, ghCalls } = makeDeps({ blockerState });
     const unblockCandidates: UnblockCandidate[] = [
-      { number: 100, body: "## Blocked by\n\n- [ ] #10\n- [ ] #11\n" },
-      { number: 200, body: "## Blocked by\n\n- [ ] #10\n- [ ] #99\n" }, // #99 open → stays
+      {
+        number: 100,
+        labels: ["blocked:dependency"],
+        body: "## Blocked by\n\n- [ ] #10\n- [ ] #11\n",
+      },
+      {
+        number: 200,
+        labels: ["blocked:dependency"],
+        body: "## Blocked by\n\n- [ ] #10\n- [ ] #99\n",
+      }, // #99 open → stays
     ];
     const r = await runBoot(deps, options({ unblockCandidates }));
     expect(ghCalls.editLabels).toEqual([
-      { issue: 100, remove: ["ready-for-human"], add: ["ready-for-agent"] },
+      { issue: 100, remove: ["blocked:dependency"], add: ["ready-for-agent"] },
     ]);
     expect(ghCalls.comment).toEqual([
       {
@@ -513,7 +521,9 @@ describe("runBoot step ORDER", () => {
         remoteLiveRefs: [{ branch: "afk/wAAA/9-r" }],
         localLiveRefs: [{ branch: "afk/wAAA/9-l" }],
       },
-      unblockCandidates: [{ number: 100, body: "## Blocked by\n\n- [ ] #10\n" }],
+      unblockCandidates: [
+        { number: 100, labels: ["blocked:dependency"], body: "## Blocked by\n\n- [ ] #10\n" },
+      ],
     });
 
     await runBoot(deps, opts);

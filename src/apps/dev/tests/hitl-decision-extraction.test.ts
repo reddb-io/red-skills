@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildEnvelope } from "../src/core/envelope.js";
+import { upsertCurrentBlocker } from "../src/core/blocker-state.js";
 import { extractPendingHitlDecision, type HitlDecisionIssue } from "../src/core/hitl-decision-extraction.js";
 
 function directive(content: string): string {
@@ -17,6 +18,27 @@ function issue(input: Partial<HitlDecisionIssue>): HitlDecisionIssue {
 }
 
 describe("extractPendingHitlDecision", () => {
+  it("uses the structured Current blocker before older issue-body hints", () => {
+    const body = upsertCurrentBlocker(
+      "## Summary\nBuild the thing.\n\n## Human decision needed\nOld question.",
+      {
+        status: "blocked",
+        kind: "decision",
+        ref: "#856",
+        summary: "Phase 2 measurement did not prove a win.",
+        next: "Decide whether to stop, redesign, or continue anyway.",
+      },
+    );
+
+    const result = extractPendingHitlDecision(issue({ body }));
+
+    expect(result).toMatchObject({
+      kind: "pending-decision",
+      source: "current-blocker",
+      prompt: "Decide whether to stop, redesign, or continue anyway.",
+    });
+  });
+
   it("uses an explicit issue-body human decision section", () => {
     const result = extractPendingHitlDecision(
       issue({

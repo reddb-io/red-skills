@@ -294,6 +294,7 @@ export function buildProcessDeps(
         }
       },
       comment: (issue, body) => ghx.comment(ghCtx, issue, body),
+      editBody: (issue, body) => ghx.editBody(ghCtx, issue, body),
       close: (issue) => ghx.closeIssue(ghCtx, issue),
       listByLabel: (label) => ghx.listByLabel(ghCtx, label),
       issueClosed: (n) => ghx.issueClosed(ghCtx, n),

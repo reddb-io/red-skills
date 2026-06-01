@@ -8,6 +8,7 @@ import type { HookName } from "../src/core/hook-config.js";
 import type { ConfigValues } from "../src/core/config.js";
 import type { RunAgentInput, RunAgentResult } from "../src/core/execution.js";
 import type { AttemptRecordPayload } from "../src/core/attempt-record.js";
+import { parseCurrentBlocker, upsertCurrentBlocker } from "../src/core/blocker-state.js";
 
 // Everything injected is a fake — no real gh / git / sandcastle / pnpm / fs ever
 // runs. The harness records the side-effect sequence (label edits, comments,
@@ -19,6 +20,7 @@ import type { AttemptRecordPayload } from "../src/core/attempt-record.js";
 interface Trace {
   labelEdits: Array<{ issue: number; remove: string[]; add: string[] }>;
   comments: Array<{ issue: number; body: string }>;
+  bodyEdits: Array<{ issue: number; body: string }>;
   closed: number[];
   swept: number[];
   pushedAttempt: string[][];
@@ -82,6 +84,8 @@ interface HarnessOptions {
   /** When false, omit the optional fs.writeValidationSidecar port (older-caller
    * safety). Defaults to true (port present + recorded). */
   withSidecarPort?: boolean;
+  /** Issue body threaded into processIssue. */
+  body?: string;
 }
 
 function harness(opts: HarnessOptions = {}): {
@@ -92,6 +96,7 @@ function harness(opts: HarnessOptions = {}): {
   const trace: Trace = {
     labelEdits: [],
     comments: [],
+    bodyEdits: [],
     closed: [],
     swept: [],
     pushedAttempt: [],
@@ -125,6 +130,10 @@ function harness(opts: HarnessOptions = {}): {
       },
       async comment(issue, body) {
         trace.comments.push({ issue, body });
+      },
+      async editBody(issue, body) {
+        trace.bodyEdits.push({ issue, body });
+        return true;
       },
       async close(issue) {
         trace.closed.push(issue);
@@ -320,7 +329,7 @@ function harness(opts: HarnessOptions = {}): {
   const input: ProcessIssueInput = {
     issue: 9,
     title: "Fix the thing",
-    body: "## Agent brief\nDo it.",
+    body: opts.body ?? "## Agent brief\nDo it.",
     runner: "claude",
     workerId: "wAAAA",
     tmpDir: "/tmp/afk",
@@ -329,7 +338,7 @@ function harness(opts: HarnessOptions = {}): {
     repo: "o/r",
     repoDir: "/repo",
     remote: "origin",
-    baseInput: { issueBody: "## Agent brief\nDo it." },
+    baseInput: { issueBody: opts.body ?? "## Agent brief\nDo it." },
     prdRef: undefined,
   };
 
@@ -450,6 +459,18 @@ describe("processIssue — BLOCKED", () => {
     expect(trace.pushedAttempt).toEqual([]);
   });
 
+  it("writes Current blocker state when a terminal blocker pages a human", async () => {
+    const { deps, input, trace } = harness({ outcome: "blocked" });
+    await processIssue(deps, input);
+
+    expect(trace.bodyEdits).toHaveLength(1);
+    expect(parseCurrentBlocker(trace.bodyEdits[0]!.body)).toMatchObject({
+      status: "blocked",
+      kind: "spec",
+      next: "Review the blocker envelope and add human guidance.",
+    });
+  });
+
   it("fires pre/post_attempt but never pre_merge on the BLOCKED path", async () => {
     const { deps, input } = harness({ outcome: "blocked" });
     const result = await processIssue(deps, input);
@@ -472,6 +493,29 @@ describe("processIssue — no-sentinel (run ended without a <promise>)", () => {
     expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "no-sentinel" }]);
     // on_attempt_error fires; post_attempt does NOT (ADR 0028).
     expect(result.hooksFired).toEqual(["pre_worktree", "pre_attempt", "on_attempt_error"]);
+  });
+});
+
+describe("processIssue — active Current blocker preflight", () => {
+  it("moves the issue back to ready-for-human without starting an attempt", async () => {
+    const body = upsertCurrentBlocker("## Agent brief\nDo it.", {
+      status: "blocked",
+      kind: "decision",
+      ref: "#856",
+      summary: "Measurement did not prove a win.",
+      next: "Decide whether to stop, redesign, or continue anyway.",
+    });
+    const { deps, input, trace } = harness({ body });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("blocked");
+    expect(result.preserved).toBe(false);
+    expect(result.swept).toBe(false);
+    expect(trace.runAgentCalls).toEqual([]);
+    expect(trace.postedEnvelopes).toEqual([]);
+    expect(labelTrace(trace)).toEqual(["-ready-for-agent|+ready-for-human+blocked:spec"]);
+    expect(trace.comments[0]?.body).toContain("active Current blocker (decision)");
+    expect(trace.released).toEqual([9]);
   });
 });
 

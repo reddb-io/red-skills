@@ -1,4 +1,5 @@
 import type { HitlDecisionExtraction } from "./hitl-decision-extraction.js";
+import { clearCurrentBlocker, parseCurrentBlocker, upsertCurrentBlocker } from "./blocker-state.js";
 
 export interface HitlResolutionIssue {
   number: number;
@@ -83,9 +84,15 @@ function upsertMarkdownSection(markdown: string, heading: string, body: string):
 
 export function planHitlResolution(input: HitlResolutionInput): HitlResolutionPlan {
   if (input.disposition.kind === "delegable") {
+    const cleared = clearCurrentBlocker(input.issue.body, {
+      summary:
+        parseCurrentBlocker(input.issue.body)?.summary ??
+        (input.decision.kind === "pending-decision" ? input.decision.prompt : input.decision.prompt),
+      resolution: input.answer,
+    });
     return {
       commentBody: directiveComment(input),
-      bodyUpdate: upsertMarkdownSection(input.issue.body, "Agent brief", input.disposition.agentBrief),
+      bodyUpdate: upsertMarkdownSection(cleared, "Agent brief", input.disposition.agentBrief),
       addLabels: ["ready-for-agent"],
       removeLabels: ["ready-for-human"],
     };
@@ -93,6 +100,12 @@ export function planHitlResolution(input: HitlResolutionInput): HitlResolutionPl
 
   return {
     commentBody: directiveComment(input),
+    bodyUpdate: upsertCurrentBlocker(input.issue.body, {
+      status: "blocked",
+      kind: "decision",
+      summary: input.decision.kind === "pending-decision" ? input.decision.prompt : input.decision.prompt,
+      next: input.disposition.nextPendingDecision,
+    }),
     addLabels: ["ready-for-human"],
     removeLabels: [],
   };

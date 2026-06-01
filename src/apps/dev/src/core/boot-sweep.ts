@@ -2,13 +2,13 @@
 // the Unblock Sweep and the Straggler Check (afk.sh sweep_unblocked /
 // straggler_check; SKILL.md "Unblock Sweep" / "Straggler Check").
 //
-// UNBLOCK SWEEP: for every open issue labelled `ready-for-human`, extract the
-// `#N` blocker refs under the literal `## Blocked by` heading in the body and
-// look up each blocker's state. Promote the issue back to `ready-for-agent`
-// (remove ready-for-human, add ready-for-agent, post an audit comment) ONLY
-// when EVERY referenced blocker is CLOSED. The GitHub task-list checkbox state
-// (`- [ ] #N` / `- [x] #N`) in the body is human UX — the injected state lookup
-// is the source of truth.
+// UNBLOCK SWEEP: for every open issue labelled `blocked:dependency`, resolve
+// its `req:*` dependency edges and promote it to `ready-for-agent` ONLY when
+// every referenced blocker is CLOSED. For pre-`req:*` dependency issues, the
+// sweep can fall back to refs under a literal `## Blocked by` heading, but only
+// while the issue is still explicitly marked `blocked:dependency`. Plain
+// `ready-for-human` issues are HITL/spec gates and must never be reanimated just
+// because an informational blocker issue closed.
 //
 // STRAGGLER CHECK: count open issues in states /afk cannot consume (unlabeled,
 // needs-triage, needs-info); warn (and on a TTY prompt) when any is non-zero.
@@ -155,10 +155,10 @@ export function planCloseCascade(
   return plans;
 }
 
-/** A `ready-for-human` / `blocked:dependency` candidate the boot sweep
- * examines: its number, raw body, and (preferred) label set. When `labels`
- * carries `req:*` deps the sweep keys off those; the `## Blocked by` body parse
- * is the documented fallback for issues that predate the req:N convention. */
+/** A candidate the boot sweep examines: its number, raw body, and label set.
+ * When `labels` carries `req:*` deps the sweep keys off those; the `## Blocked
+ * by` body parse is the documented fallback only for `blocked:dependency`
+ * issues that predate the req:N convention. */
 export interface UnblockCandidate {
   number: number;
   body: string;
@@ -175,7 +175,7 @@ export type BlockerStateLookup = (issue: number) => Promise<string | undefined>;
 
 /** One planned promotion: the issue to flip plus its audit comment. */
 export interface PromotionPlan {
-  /** The `ready-for-human` issue to promote to `ready-for-agent`. */
+  /** The dependency-blocked issue to promote to `ready-for-agent`. */
   number: number;
   /** The sorted-unique blocker refs that resolved to CLOSED. */
   refs: string[];
@@ -189,11 +189,11 @@ export interface PromotionPlan {
  * candidate carries ≥1 `req:<N>` label, the deps are those N, each looked up via
  * `fetchBlockerState`, and a promotion is planned only when EVERY one is CLOSED
  * — the audit comment then uses the `cascadeAuditComment` "all dependencies
- * closed" wording. When the candidate carries NO `req:*` label, the sweep FALLS
- * BACK to the legacy `## Blocked by` body parse (documented fallback for issues
- * that predate the req:N convention), using the original "all blockers closed"
- * wording. Candidates with neither are skipped (bash `[[ -z "$refs" ]] &&
- * continue`).
+ * closed" wording. When the candidate carries NO `req:*` label but is explicitly
+ * labelled `blocked:dependency`, the sweep FALLS BACK to the legacy `## Blocked
+ * by` body parse for old dependency issues. Plain `ready-for-human` issues do
+ * not use the fallback; that state means a human gate, not dependency-wait.
+ * Candidates with neither are skipped (bash `[[ -z "$refs" ]] && continue`).
  *
  * Pure modulo the injected lookup: no gh/git/network I/O happens here.
  */
@@ -203,7 +203,10 @@ export async function planUnblockSweep(
 ): Promise<PromotionPlan[]> {
   const plans: PromotionPlan[] = [];
   for (const candidate of candidates) {
-    const reqIds = parseReqLabels(candidate.labels ?? []);
+    const labels = candidate.labels ?? [];
+    if (!labels.includes("blocked:dependency")) continue;
+
+    const reqIds = parseReqLabels(labels);
 
     // Prefer the structured req:* dependency labels when present.
     if (reqIds.length > 0) {
@@ -222,7 +225,8 @@ export async function planUnblockSweep(
       continue;
     }
 
-    // Legacy fallback: the `## Blocked by` body parse.
+    // Legacy fallback: the `## Blocked by` body parse, restricted to issues
+    // whose label state still says "dependency wait".
     const refs = parseBlockedBy(candidate.body);
     if (refs.length === 0) continue;
 
