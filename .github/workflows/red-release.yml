@@ -128,8 +128,6 @@ jobs:
 
       - uses: pnpm/action-setup@v4
         if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
-        with:
-          version: 11
 
       - uses: actions/setup-node@v4
         if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
