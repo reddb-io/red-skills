@@ -63048,8 +63048,14 @@ async function runSession(deps, ctx) {
     for (let i = 0; i < queue.length; i++) {
       if (i >= cap) break;
       const candidate = queue[i];
+      const issueRunner = ctx.alternate ? activeRunner : ctx.runner;
+      if (deps.runnerCircuit && await deps.runnerCircuit.isOpen(issueRunner)) {
+        runnerTransientStop = true;
+        deps.emit(`runner ${issueRunner} circuit open \u2014 stopping before claiming more issues`);
+        break;
+      }
       const input = deps.buildProcessInput(candidate, ctx);
-      const perIssueInput = ctx.alternate ? { ...input, runner: activeRunner } : input;
+      const perIssueInput = ctx.alternate ? { ...input, runner: issueRunner } : input;
       const result = await deps.processIssue(deps.processDeps, perIssueInput);
       const bucket = classify(result.outcome);
       if (bucket === "done") done10++;
@@ -65295,7 +65301,7 @@ var defaultReader2 = {
 // src/commands/run.ts
 init_runner_spawn();
 import { readdirSync, existsSync as existsSync5, readFileSync as readFileSync4 } from "node:fs";
-import { writeFile as writeFile8 } from "node:fs/promises";
+import { readFile as readFile9, writeFile as writeFile8 } from "node:fs/promises";
 
 // src/runtime/lock.ts
 init_fs();
@@ -65768,6 +65774,45 @@ function makeRecordAttempt(gitRoot, current, exec4) {
     }
   };
 }
+var DEFAULT_RUNNER_TRANSIENT_COOLDOWN_S = 300;
+function runnerCircuitDir(tmpDir) {
+  return join14(tmpDir, "runner-circuit");
+}
+function runnerCircuitPath(tmpDir, runner) {
+  return join14(runnerCircuitDir(tmpDir), `${runner}.json`);
+}
+function runnerTransientCooldownS(env) {
+  const raw = env.RED_AFK_RUNNER_TRANSIENT_COOLDOWN_S;
+  if (raw !== void 0) {
+    const parsed = Number(raw);
+    if (Number.isInteger(parsed) && parsed > 0) return parsed;
+  }
+  return DEFAULT_RUNNER_TRANSIENT_COOLDOWN_S;
+}
+async function openRunnerCircuit(tmpDir, runner, nowS, env) {
+  const cooldownS = runnerTransientCooldownS(env);
+  await ensureDir(runnerCircuitDir(tmpDir));
+  await writeFile8(
+    runnerCircuitPath(tmpDir, runner),
+    `${JSON.stringify({
+      runner,
+      opened_at: nowS,
+      expires_at: nowS + cooldownS,
+      reason: "runner-transient"
+    })}
+`,
+    "utf8"
+  );
+}
+async function runnerCircuitOpen(tmpDir, runner, nowS) {
+  try {
+    const raw = await readFile9(runnerCircuitPath(tmpDir, runner), "utf8");
+    const parsed = JSON.parse(raw);
+    return typeof parsed.expires_at === "number" && parsed.expires_at > nowS;
+  } catch {
+    return false;
+  }
+}
 function nextAttemptSync(tmpDir, issue) {
   let workers;
   try {
@@ -65845,6 +65890,10 @@ async function runCommand2(options) {
     // would mkdir it back, resurrecting a reaped attempt — so skip when gone.
     processIssue: async (pd, pi2) => {
       const result = await processIssue(pd, pi2);
+      if (result.outcome === "runner-transient") {
+        await openRunnerCircuit(paths.tmpDir, pi2.runner, Math.floor(Date.now() / 1e3), process.env).catch(() => {
+        });
+      }
       const sp = join14(pi2.attemptDir, "afk.state.json");
       if (await pathExists2(sp)) await updateState(sp, { pid: 0 }).catch(() => {
       });
@@ -65859,6 +65908,9 @@ async function runCommand2(options) {
       resolveOptions: makeHookResolveOptions(ctx.root),
       exec: makeHookExec(ctx.root),
       env: hookEnv(ctx.repo, ctx.root)
+    },
+    runnerCircuit: {
+      isOpen: (r) => runnerCircuitOpen(paths.tmpDir, r, Math.floor(Date.now() / 1e3))
     },
     buildProcessInput: (candidate, c) => {
       const attempt = nextAttemptSync(c.issueTemplate.tmpDir, candidate.number);
@@ -66829,8 +66881,8 @@ function readBuildInfo(app) {
   const info = {
     app,
     version: stripTagPrefix(readInjected("__RED_BUILD_VERSION__", () => "1.147.1") ?? "0.0.0-dev"),
-    gitSha: readInjected("__RED_BUILD_GIT_SHA__", () => "f131ae33bb1d22cf0572f89b877e7b93c77dd44d") ?? "unknown",
-    buildTime: readInjected("__RED_BUILD_TIME__", () => "2026-06-01T12:28:16-03:00") ?? "unknown",
+    gitSha: readInjected("__RED_BUILD_GIT_SHA__", () => "unknown") ?? "unknown",
+    buildTime: readInjected("__RED_BUILD_TIME__", () => "2026-06-01T15:33:01.408Z") ?? "unknown",
     bundleAsset: readInjected("__RED_BUNDLE_ASSET__", () => "dev.bundle.min.mjs") ?? "unknown"
   };
   const reddbSdkVersion = readInjected("__REDDB_SDK_VERSION__", () => "");

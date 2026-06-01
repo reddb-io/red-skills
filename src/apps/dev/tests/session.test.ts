@@ -14,6 +14,7 @@ import {
 import type { BootResult } from "../src/core/boot.js";
 import type { ProcessIssueDeps, ProcessIssueInput, ProcessIssueResult } from "../src/core/process-issue.js";
 import type { BootDeps, BootOptions } from "../src/core/boot.js";
+import type { Runner } from "../src/types/runner.js";
 
 // ---------- candidate builder ----------
 
@@ -182,6 +183,8 @@ interface RunHarnessOptions {
   throwOnProcess?: boolean;
   /** --boot-only: run the boot then return before selection/processing. */
   bootOnly?: boolean;
+  /** Runners whose shared circuit is already open before the next claim. */
+  circuitOpenFor?: Runner[];
 }
 
 function makeSession(opts: RunHarnessOptions = {}): {
@@ -260,6 +263,11 @@ function makeSession(opts: RunHarnessOptions = {}): {
       };
     },
     processDeps,
+    runnerCircuit: opts.circuitOpenFor
+      ? {
+          isOpen: async (runner) => opts.circuitOpenFor!.includes(runner),
+        }
+      : undefined,
     buildProcessInput(candidate, ctx) {
       trace.builtInputs.push(candidate.number);
       return {
@@ -457,6 +465,21 @@ describe("runSession — exhaustion stops the drain (exit-75 signal)", () => {
     expect(summary.exhausted).toBe(false);
     expect(summary.done).toBe(1);
     expect(summary.blocked).toBe(1);
+  });
+
+  it("honors a shared runner circuit before claiming another issue", async () => {
+    const { deps, ctx, trace } = makeSession({
+      candidates: [cand(1), cand(2), cand(3)],
+      circuitOpenFor: ["claude"],
+    });
+    const summary = await runSession(deps, ctx);
+    expect(trace.builtInputs).toEqual([]);
+    expect(trace.processedOrder).toEqual([]);
+    expect(summary.runnerTransient).toBe(true);
+    expect(summary.blocked).toBe(0);
+    expect(trace.emitted).toEqual([
+      "runner claude circuit open — stopping before claiming more issues",
+    ]);
   });
 
   it("a clean drain leaves exhausted false", async () => {

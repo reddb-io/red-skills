@@ -39,7 +39,7 @@ import { resolveHooks } from "../core/hook-config.js";
 import { attemptLedgerContext, formatAttemptContext, highestAttempt, type AttemptDirEntry } from "../core/attempt-ledger.js";
 import { isValidWorkerId } from "../core/worker-paths.js";
 import { readdirSync, existsSync, readFileSync } from "node:fs";
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { specialUserRequestBlock, claudeSpawnArgs, codexSpawnArgs } from "../core/runner-spawn.js";
 import { buildWorkerAttemptPath } from "../core/worker-paths.js";
 import { branchLockPath, readLockedBranch, isLocked } from "../runtime/lock.js";
@@ -514,6 +514,59 @@ interface CurrentAttempt {
   attemptDir: string;
 }
 
+const DEFAULT_RUNNER_TRANSIENT_COOLDOWN_S = 300;
+
+function runnerCircuitDir(tmpDir: string): string {
+  return join(tmpDir, "runner-circuit");
+}
+
+function runnerCircuitPath(tmpDir: string, runner: Runner): string {
+  return join(runnerCircuitDir(tmpDir), `${runner}.json`);
+}
+
+function runnerTransientCooldownS(env: Record<string, string | undefined>): number {
+  const raw = env.RED_AFK_RUNNER_TRANSIENT_COOLDOWN_S;
+  if (raw !== undefined) {
+    const parsed = Number(raw);
+    if (Number.isInteger(parsed) && parsed > 0) return parsed;
+  }
+  return DEFAULT_RUNNER_TRANSIENT_COOLDOWN_S;
+}
+
+async function openRunnerCircuit(
+  tmpDir: string,
+  runner: Runner,
+  nowS: number,
+  env: Record<string, string | undefined>,
+): Promise<void> {
+  const cooldownS = runnerTransientCooldownS(env);
+  await fsx.ensureDir(runnerCircuitDir(tmpDir));
+  await writeFile(
+    runnerCircuitPath(tmpDir, runner),
+    `${JSON.stringify({
+      runner,
+      opened_at: nowS,
+      expires_at: nowS + cooldownS,
+      reason: "runner-transient",
+    })}\n`,
+    "utf8",
+  );
+}
+
+async function runnerCircuitOpen(
+  tmpDir: string,
+  runner: Runner,
+  nowS: number,
+): Promise<boolean> {
+  try {
+    const raw = await readFile(runnerCircuitPath(tmpDir, runner), "utf8");
+    const parsed = JSON.parse(raw) as { expires_at?: unknown };
+    return typeof parsed.expires_at === "number" && parsed.expires_at > nowS;
+  } catch {
+    return false;
+  }
+}
+
 /** Synchronous next-attempt resolver over the attempt-ledger's pure core, so it
  * can run inside the synchronous `buildProcessInput`. Walks `<tmp>/workers/*`
  * with readdirSync and feeds the pure `highestAttempt`: the next attempt is the
@@ -617,6 +670,9 @@ export async function runCommand(options: RunOptions): Promise<number> {
     // would mkdir it back, resurrecting a reaped attempt — so skip when gone.
     processIssue: async (pd, pi) => {
       const result = await processIssue(pd, pi);
+      if (result.outcome === "runner-transient") {
+        await openRunnerCircuit(paths.tmpDir, pi.runner, Math.floor(Date.now() / 1000), process.env).catch(() => {});
+      }
       const sp = join(pi.attemptDir, "afk.state.json");
       if (await fsx.pathExists(sp)) await updateState(sp, { pid: 0 }).catch(() => {});
       return result;
@@ -630,6 +686,9 @@ export async function runCommand(options: RunOptions): Promise<number> {
       resolveOptions: makeHookResolveOptions(ctx.root),
       exec: makeHookExec(ctx.root),
       env: hookEnv(ctx.repo, ctx.root),
+    },
+    runnerCircuit: {
+      isOpen: (r) => runnerCircuitOpen(paths.tmpDir, r, Math.floor(Date.now() / 1000)),
     },
     buildProcessInput: (candidate: IssueCandidate, c: SessionContext): ProcessIssueInput => {
       const attempt = nextAttemptSync(c.issueTemplate.tmpDir, candidate.number);

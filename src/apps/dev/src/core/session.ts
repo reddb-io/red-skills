@@ -255,6 +255,13 @@ export interface SessionDeps {
   processDeps: ProcessIssueDeps;
   /** Build the per-issue ProcessIssueInput for a queued candidate. */
   buildProcessInput: BuildProcessInput;
+  /**
+   * Shared runner circuit breaker. When another worker already observed a
+   * runner transport/setup outage, stop before claiming the next issue.
+   */
+  runnerCircuit?: {
+    isOpen(runner: Runner): Promise<boolean>;
+  };
   /** Emit one line of session output (progress lines + the NO MORE TASKS sentinel). */
   emit(line: string): void;
   /**
@@ -445,10 +452,16 @@ export async function runSession(deps: SessionDeps, ctx: SessionContext): Promis
     for (let i = 0; i < queue.length; i++) {
       if (i >= cap) break; // -n N reached → stop the drain (Stop Conditions).
       const candidate = queue[i]!;
+      const issueRunner = ctx.alternate ? activeRunner : ctx.runner;
+      if (deps.runnerCircuit && (await deps.runnerCircuit.isOpen(issueRunner))) {
+        runnerTransientStop = true;
+        deps.emit(`runner ${issueRunner} circuit open — stopping before claiming more issues`);
+        break;
+      }
       const input = deps.buildProcessInput(candidate, ctx);
       // Override the per-issue runner when rotating (--alternate); without it
       // every issue keeps the resolved session runner.
-      const perIssueInput = ctx.alternate ? { ...input, runner: activeRunner } : input;
+      const perIssueInput = ctx.alternate ? { ...input, runner: issueRunner } : input;
       const result = await deps.processIssue(deps.processDeps, perIssueInput);
 
       const bucket = classify(result.outcome);
