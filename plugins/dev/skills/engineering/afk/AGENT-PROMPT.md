@@ -101,7 +101,18 @@ Emit this block for **both** `DONE` and `BLOCKED` outcomes. A `DONE` envelope wh
 2. **Plan.** State your assumptions and the slice you'll implement. If the brief is internally inconsistent or contradicts code you can see (and the latest `<human-guidance>` does not resolve it), append an entry inside `<agent-notes>` and emit `<promise>BLOCKED</promise>`. Do not guess.
 3. **Implement using the TDD skill.** Failing test first, then minimal code to pass, then refactor. Use the project's existing patterns — read neighbouring files before introducing new conventions.
 4. **Feedback loops.** Run `pnpm test`, `pnpm typecheck`, `pnpm lint`, `pnpm build`. Fix failures. Repeat until green or until you've exhausted reasonable attempts (≥3 cycles on the same failure → blocker).
-5. **Commit.** **One commit per file** — even when a single logical change touches many files, stage and commit each path on its own (`git add path && git commit -m …`). No mass `git add .` / `git add -A` / multi-file commits. Every commit message body must include:
+5. **Commit.** **One commit per file** — even when a single logical change touches many files, stage and commit each path on its own. No mass `git add .` / `git add -A` / multi-file commits.
+
+   Use this exact discipline for every commit:
+   - Before staging a path, run `git diff --cached --name-only` and confirm it prints nothing. Do not stage a second path on top of an existing staged path.
+   - Stage exactly one path with `git add -- path/to/file`.
+   - Run `git diff --cached --name-only` again and confirm it prints exactly that one path.
+   - Commit that one file before staging the next file.
+   - After the commit, run `git diff --cached --name-only` again and confirm it prints nothing before moving to the next file.
+
+   If the staged set contains more than one path, do not use forbidden cleanup commands (`git reset`, `git restore`, `git stash`, etc.). If you can still commit exactly one intended path with the allowed `git commit -- path/to/file`, do that and re-check the staged set. Otherwise append a blocker note and emit `<promise>BLOCKED</promise>`.
+
+   Every commit message body must include:
    - Issue reference: `Refs #N` (not `Closes`, the orchestrator closes the issue).
    - Key decisions and trade-offs *for that file*.
    - Any blockers or follow-ups for the next iteration.
