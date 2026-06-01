@@ -163,16 +163,29 @@ describe("parseExtraction", () => {
     expect(parseExtraction("I could not find anything to extract.")).toEqual([]);
   });
 
-  test("drops individual malformed facts but keeps valid ones", () => {
+  test("keeps an out-of-vocab kind (strict-write resolves, never rejects) but drops structural malformation", () => {
     const raw = JSON.stringify({
       facts: [
         { label: "ok", node_type: "concept", title: "Valid" },
-        { label: "bad-type", node_type: "not-a-type", title: "Invalid type" },
+        { label: "bad-type", node_type: "not-a-type", title: "Out-of-vocab kind" },
         { node_type: "concept", title: "missing label" },
       ],
     });
     const facts = parseExtraction(raw);
-    expect(facts.map((f) => f.label)).toEqual(["ok"]);
+    // ADR 0035: an out-of-vocab classification is admitted at parse (its proposed
+    // kind round-trips on `node_type`); only structural malformation (the missing
+    // label) is dropped.
+    expect(facts.map((f) => f.label)).toEqual(["ok", "bad-type"]);
+    expect(facts.find((f) => f.label === "bad-type")?.node_type).toBe("not-a-type");
+
+    // …and downstream, `factsToGraph` lands it on the base structural type while
+    // preserving the proposed kind as an indexed engineering code — not rejected,
+    // not flattened-with-loss, not a NodeType-violating string on `node_type`.
+    const { nodes } = factsToGraph(facts);
+    const resolved = nodes.find((n) => n.label === "bad-type")!;
+    expect(resolved.node_type).toBe("concept");
+    expect(resolved.properties.structural_type).toBe("concept");
+    expect(resolved.properties.engineering_code).toBe("not-a-type");
   });
 
   test("dedupes facts by label within one response", () => {
@@ -321,5 +334,39 @@ describe("factsToGraph", () => {
   test("source is overridable for the explicit /memory:store path", () => {
     const { nodes } = factsToGraph([GOLDEN[0]], "manual");
     expect(nodes[0].properties.source).toBe("manual");
+  });
+
+  test("an in-vocabulary structural kind maps to itself on both axes", () => {
+    const [node] = factsToGraph([
+      { label: "issue-302", node_type: "issue", title: "Strict-write gate", relations: [] },
+    ]).nodes;
+    expect(node.node_type).toBe("issue");
+    expect(node.properties.structural_type).toBe("issue");
+    // No separate classification for a structural kind: the code mirrors the kind
+    // so the axis is still populated and queryable.
+    expect(node.properties.engineering_code).toBe("issue");
+  });
+
+  test("a valid-but-non-structural kind keeps node_type but lands on the base structural axis", () => {
+    // `decision` is a legal NodeType but a semantic classification, not a
+    // structural type — so it stays on `node_type` (backward compat) while the
+    // structural axis resolves to the base home and the code carries the kind.
+    const [node] = factsToGraph([
+      { label: "deploy-tuesdays", node_type: "decision", title: "Deploy on Tuesdays", relations: [] },
+    ]).nodes;
+    expect(node.node_type).toBe("decision");
+    expect(node.properties.structural_type).toBe("concept");
+    expect(node.properties.engineering_code).toBe("decision");
+  });
+
+  test("an out-of-vocab kind never writes an invalid NodeType, and preserves the classification", () => {
+    const [node] = factsToGraph([
+      { label: "p95-latency", node_type: "Benchmark Result", title: "p95 under load", relations: [] },
+    ]).nodes;
+    // node_type must stay a legal NodeType — falls back to the structural home.
+    expect(node.node_type).toBe("concept");
+    expect(node.properties.structural_type).toBe("concept");
+    // The proposed kind is preserved as a normalized engineering code, not lost.
+    expect(node.properties.engineering_code).toBe("benchmark-result");
   });
 });

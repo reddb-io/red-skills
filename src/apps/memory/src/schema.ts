@@ -6,6 +6,8 @@
  * the proven shape behind ADR 0007. Keep aligned with PRD #49's data model.
  */
 
+import type { StructuralType } from "./extraction-schema.js";
+
 export const COLLECTIONS = {
   nodes: "memory_nodes",
   edges: "memory_edges",
@@ -159,6 +161,20 @@ export interface MemoryNodeProps {
    */
   expires_at?: number;
   supersedes_rid?: number;
+  /**
+   * Closed structural-type axis (ADR 0035). Set by the strict-write gate on the
+   * provider/`INFERRED` path: the valid structural home a proposed kind resolved
+   * to (in-vocabulary kinds map to themselves; everything else to the base type).
+   * Indexed so recall can filter/rank by it alongside `tier`/`type`.
+   */
+  structural_type?: StructuralType;
+  /**
+   * Open engineering-code axis (ADR 0035): the fine-grained "why"/kind
+   * classification (`decision`, `gotcha`, `root-cause`, …) carried losslessly
+   * even when the proposed kind is out of the structural vocabulary. Indexed —
+   * a real recall filter/rank dimension, not opaque metadata.
+   */
+  engineering_code?: string;
   /** dedupe hash (stable per source+content) */
   hash?: string;
   [extra: string]: unknown;

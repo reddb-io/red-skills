@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { EXTRACTION_PROFILES } from "./extraction-schema.js";
+import { EXTRACTION_PROFILES, STRUCTURAL_TYPES } from "./extraction-schema.js";
 import { contentHash } from "./hash.js";
 import type { EdgeLabel, MemoryNode, NodeType } from "./schema.js";
 
@@ -98,7 +98,13 @@ export interface ProviderClient {
 export interface ExtractedFact {
   /** Stable, slug-like graph node label. */
   label: string;
-  node_type: NodeType;
+  /**
+   * The kind the model *proposed* — a free string, not validated against the
+   * structural vocabulary at parse (ADR 0035 strict-write: classification is
+   * never rejected). `factsToGraph` resolves it to a valid structural home and
+   * preserves the proposed kind as an open engineering code.
+   */
+  node_type: string;
   title: string;
   summary?: string;
   tags?: string[];
@@ -256,7 +262,10 @@ const RelationSchema = z.object({
 
 const FactSchema = z.object({
   label: z.string().min(1),
-  node_type: z.enum(NODE_TYPES as [NodeType, ...NodeType[]]),
+  // The proposed kind is a free string. ADR 0035 strict-write: an out-of-vocab
+  // classification is resolved (in `factsToGraph`), never rejected at parse — so
+  // only structural malformation (a missing label/kind/title) drops a fact here.
+  node_type: z.string().min(1),
   title: z.string().min(1),
   summary: z.string().optional(),
   tags: z.array(z.string()).optional(),
@@ -409,6 +418,18 @@ export function extractStructuredTranscript(transcript: string): ExtractedFact[]
   return facts;
 }
 
+/**
+ * Every kind that is a legal {@link NodeType} field value — the runtime
+ * allowlist plus the structural vocabulary (which carries `import`/`transcript`,
+ * absent from {@link NODE_TYPES}). A proposed kind in this set is preserved on
+ * `node_type` as-is; anything else falls back to its structural home so the
+ * `NodeType` field is never an out-of-vocab string (ADR 0035 type-safety).
+ */
+const KNOWN_NODE_TYPES: ReadonlySet<string> = new Set<string>([
+  ...NODE_TYPES,
+  ...STRUCTURAL_TYPES,
+]);
+
 /** A graph fragment ready for the ingest indexer: nodes + label-keyed edges. */
 export interface InferredExtraction {
   nodes: MemoryNode[];
@@ -423,14 +444,20 @@ export interface InferredExtraction {
  */
 export function factsToGraph(facts: ExtractedFact[], source = "conversation"): InferredExtraction {
   const nodes: MemoryNode[] = facts.map((f) => {
-    // Two-axis resolution (ADR 0035): the strict-write profile assigns a valid
-    // structural home and preserves the proposed kind as an open engineering
-    // code. `node_type` is kept for backward compatibility; the two axes are
-    // recorded additively so recall/clustering can use them downstream.
+    // Two-axis resolution (ADR 0035 strict-write). The structural axis is gated:
+    // `structural_type` is always a valid structural home (in-vocab kinds map to
+    // themselves; everything else to the base type), and the proposed kind is
+    // preserved losslessly on the open `engineering_code` axis — never rejected,
+    // never discarded. `node_type` keeps the proposed kind when it is itself a
+    // legal NodeType (backward compat) and only falls back to the structural home
+    // when the kind is out of vocabulary, so the typed field stays valid.
     const resolution = EXTRACTION_PROFILES.strictWrite.resolve(f.node_type);
+    const node_type: NodeType = KNOWN_NODE_TYPES.has(f.node_type)
+      ? (f.node_type as NodeType)
+      : resolution.structuralType;
     return {
       label: f.label,
-      node_type: f.node_type,
+      node_type,
       properties: {
         title: f.title,
         summary: f.summary,

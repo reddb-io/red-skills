@@ -123,6 +123,61 @@ describe("recall", () => {
   );
 
   test(
+    "codes filter restricts results to an engineering code (ADR 0035 queryable axis)",
+    async () => {
+      const store = await openStore();
+      await seed(store);
+      // Two nodes sharing query terms but different engineering codes: only the
+      // `root-cause`-coded one should survive a code-filtered recall.
+      await store.upsertNode({
+        label: "jwt-expiry-root-cause",
+        node_type: "concept",
+        properties: {
+          title: "jwt expiry root cause",
+          content: "jwt tokens expired early because the clock skew was unbounded",
+          engineering_code: "root-cause",
+        },
+      });
+      await store.upsertNode({
+        label: "jwt-rotation-decision",
+        node_type: "concept",
+        properties: {
+          title: "jwt rotation decision",
+          content: "we decided to rotate jwt signing keys every quarter",
+          engineering_code: "decision",
+        },
+      });
+
+      const { nodes } = await recall(store, "jwt", { codes: ["root-cause"] });
+      expect(nodes.length).toBeGreaterThanOrEqual(1);
+      expect(nodes.every((n) => n.properties.engineering_code === "root-cause")).toBe(true);
+      expect(nodes.some((n) => n.label === "jwt-expiry-root-cause")).toBe(true);
+      expect(nodes.some((n) => n.label === "jwt-rotation-decision")).toBe(false);
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "codes filter normalizes the caller's input (Root Cause ≡ root-cause)",
+    async () => {
+      const store = await openStore();
+      await store.upsertNode({
+        label: "jwt-expiry-root-cause",
+        node_type: "concept",
+        properties: {
+          title: "jwt expiry root cause",
+          content: "jwt tokens expired because of clock skew",
+          engineering_code: "root-cause",
+        },
+      });
+
+      const { nodes } = await recall(store, "jwt", { codes: ["Root Cause"] });
+      expect(nodes.some((n) => n.label === "jwt-expiry-root-cause")).toBe(true);
+    },
+    TIMEOUT,
+  );
+
+  test(
     "hides a superseded node behind its successor",
     async () => {
       const store = await openStore();

@@ -13,6 +13,7 @@ import type {
   ShortestPathResult,
   StoredNode,
 } from "./graph-store.js";
+import { normalizeEngineeringCode } from "./extraction-schema.js";
 import { tokenize } from "./recall.js";
 import {
   type Confidence,
@@ -81,6 +82,13 @@ export interface RecallOptions {
   depth?: number;
   /** Restrict results to these node types. */
   types?: string[];
+  /**
+   * Restrict results to these engineering codes — the open semantic axis
+   * (ADR 0035). Codes are normalized before comparison, so `root-cause`,
+   * `Root Cause`, and `root_cause` all match. This is the axis being a real
+   * query dimension rather than opaque metadata.
+   */
+  codes?: string[];
   /**
    * Return the full `SUPERSEDED_BY` chain instead of just its head. Default
    * `false`: a superseded node is hidden behind its successor (issue #72 /
@@ -574,10 +582,15 @@ export async function recall(
     k = 8,
     depth = 1,
     types,
+    codes,
     includeSuperseded = false,
     scope = DEFAULT_RECALL_SCOPE,
     now = Date.now(),
   } = opts;
+  // Pre-normalize the engineering-code filter once (ADR 0035): the stored code is
+  // already a normalized slug, so the caller's input is normalized to match.
+  const codeFilter =
+    codes && codes.length > 0 ? new Set(codes.map(normalizeEngineeringCode)) : null;
   const terms = tokenize(query);
   const index = await loadIndex(store, scope);
   if (terms.length === 0) {
@@ -668,6 +681,10 @@ export async function recall(
     const node = index.get(rid);
     if (!node) continue;
     if (types && types.length > 0 && !types.includes(node.node_type)) continue;
+    if (codeFilter) {
+      const code = node.properties.engineering_code;
+      if (!code || !codeFilter.has(normalizeEngineeringCode(code))) continue;
+    }
     // Tier-aware composite score: relevance keeps the strongest text match on
     // top; importance/recency/centrality/tier-weight order comparable nodes.
     const score = rankScore({
