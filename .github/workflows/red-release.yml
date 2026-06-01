@@ -144,7 +144,7 @@ jobs:
       # then stage it into the version-bump commit below. esbuild output is
       # deterministic, so unchanged source rebuilds to identical bytes and the
       # git add is a no-op.
-      - name: Build AFK runtime bundle
+      - name: Build dev runtime bundle
         if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
         working-directory: src/apps/dev
         env:
@@ -154,16 +154,15 @@ jobs:
           RED_BUILD_TIME: ${{ github.event.head_commit.timestamp }}
         run: |
           set -euo pipefail
-          # `build` emits the canonical dist/dev.bundle.min.mjs (release asset,
-          # ADR 0034) plus the transition bin/afk.mjs staged below.
+          # ADR 0035: the dev runtime ships as a Release asset (dev.bundle.min.mjs),
+          # NOT a committed bundle. `build` emits dist/dev.bundle.min.mjs (the asset,
+          # ADR 0034) and rebuilds the committed plugins/dev/hooks/red-fetch.mjs from
+          # src/packages/shared/fetch-cli.ts. The fetcher bootstraps every bundle but
+          # cannot fetch itself, so it ships COMMITTED (like memory's bootstrap.mjs);
+          # esbuild is deterministic, so an unchanged source rebuilds to identical
+          # bytes and the git add below is a no-op. The committed bin/afk.mjs launcher
+          # is hand-written, not generated — `build` never touches it.
           pnpm build
-          # The dynamic fetcher (src/packages/shared/fetch-cli.ts) bootstraps every other
-          # bundle but cannot fetch itself, so it ships COMMITTED in the dev plugin
-          # (like memory's bootstrap.mjs). Rebuild it here from source so the shipped
-          # plugins/dev/hooks/red-fetch.mjs always matches src/packages/shared/fetch-cli.ts,
-          # then stage it into the version-bump commit below (esbuild is
-          # deterministic, so an unchanged source rebuilds to identical bytes).
-          pnpm bundle:red-fetch
           # Checksum manifest the dynamic-fetch hook (src/packages/shared/bundle-fetch.ts)
           # verifies before caching. Mirrors memory-runtime-manifest.json.
           node --input-type=module <<'EOF'
@@ -204,7 +203,8 @@ jobs:
             src/packages/shared/package.json
             src/packages/build-info/package.json
           )
-          afk_bundle=plugins/dev/skills/engineering/afk/bin/afk.mjs
+          # bin/afk.mjs is a hand-written launcher (ADR 0035), not a per-release
+          # artifact, so it is NOT staged here. Only red-fetch.mjs is rebuilt+staged.
           fetch_bundle=plugins/dev/hooks/red-fetch.mjs
           new="${NEXT#v}"
           for manifest in "${manifests[@]}"; do
@@ -219,10 +219,10 @@ jobs:
           done
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          if git diff --quiet -- "${manifests[@]}" "${package_jsons[@]}" "$afk_bundle" "$fetch_bundle"; then
-            echo "plugin/package manifests already at $new and AFK + red-fetch bundles unchanged"
+          if git diff --quiet -- "${manifests[@]}" "${package_jsons[@]}" "$fetch_bundle"; then
+            echo "plugin/package manifests already at $new and red-fetch bundle unchanged"
           else
-            git add "${manifests[@]}" "${package_jsons[@]}" "$afk_bundle" "$fetch_bundle"
+            git add "${manifests[@]}" "${package_jsons[@]}" "$fetch_bundle"
             git commit -m "chore(release): $NEXT [skip release]"
             # Rebase-resilient push: red-memory-wiki-extract.yml also pushes to
             # main on PR-merge (via GITHUB_TOKEN, which can't re-trigger this
