@@ -66817,8 +66817,8 @@ function readBuildInfo(app) {
   const info = {
     app,
     version: stripTagPrefix(readInjected("__RED_BUILD_VERSION__", () => "1.147.0") ?? "0.0.0-dev"),
-    gitSha: readInjected("__RED_BUILD_GIT_SHA__", () => "1b2dc192cee3dec5d69d2ad2bba86ff326ce1d42") ?? "unknown",
-    buildTime: readInjected("__RED_BUILD_TIME__", () => "2026-06-01T11:19:44-03:00") ?? "unknown",
+    gitSha: readInjected("__RED_BUILD_GIT_SHA__", () => "69f4b49d07ce8ab54625e39b7ae8f1a041a0cca1") ?? "unknown",
+    buildTime: readInjected("__RED_BUILD_TIME__", () => "2026-06-01T11:22:27-03:00") ?? "unknown",
     bundleAsset: readInjected("__RED_BUNDLE_ASSET__", () => "dev.bundle.min.mjs") ?? "unknown"
   };
   const reddbSdkVersion = readInjected("__REDDB_SDK_VERSION__", () => "");
