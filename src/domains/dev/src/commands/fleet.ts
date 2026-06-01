@@ -3,6 +3,7 @@ import { constants } from "node:fs";
 import { access, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { parseRunnerFlag, detectRunner } from "../core/runner-detection.js";
+import { callerProcessTreeNative } from "../runtime/caller-process.js";
 
 export interface FleetLaunchResult {
   status: "launched";
@@ -135,7 +136,11 @@ export async function launchFleet(args: readonly string[], root = process.cwd(),
     throw new Error(`fleet already running (supervisor pid=${existing}, log .red/tmp/afk-supervisor.log).\n  to stop it: /dev:afk fleet stop`);
   }
 
-  const detection = detectRunner({ flag: parsed.runnerFlag ?? parseRunnerFlag(args), scriptPath: process.argv[1] });
+  const detection = detectRunner({
+    flag: parsed.runnerFlag ?? parseRunnerFlag(args),
+    processTree: callerProcessTreeNative(),
+    scriptPath: process.argv[1],
+  });
   const childArgs = [...parsed.passthrough];
   if (parsed.request) childArgs.unshift("--request", parsed.request);
   const env: NodeJS.ProcessEnv = { ...process.env, RED_AFK_TARGET: String(parsed.target), RED_AFK_RUNNER: detection.runner };
