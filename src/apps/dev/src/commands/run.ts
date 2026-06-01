@@ -701,6 +701,10 @@ export async function runCommand(options: RunOptions): Promise<number> {
     process.stderr.write(`[afk] runner exhausted — exiting 75 (EX_TEMPFAIL); rerun when quota resets\n`);
     return 75;
   }
+  if (summary.runnerTransient) {
+    process.stderr.write(`[afk] runner transport/setup failed — exiting 75 (EX_TEMPFAIL); rerun when the runner backend is healthy\n`);
+    return 75;
+  }
 
   return 0;
 }

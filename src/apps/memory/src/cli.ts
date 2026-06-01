@@ -231,6 +231,8 @@ import {
   type SkillRollup,
 } from "./skill-events.js";
 import { curateSkills, isCuratable, rollupsToCuratorInput } from "./skill-curator.js";
+import { runCurateWorkflow } from "./curate-skill/workflow.js";
+import type { CuratorReportEnvelope } from "./curate-skill/types.js";
 import type { Confidence, MemoryLayer, MemoryProvenance, MemoryScope } from "./schema.js";
 import { slugify, storeNote } from "./store.js";
 import { readBuildInfo, renderVersion } from "@reddb-io/build-info";
@@ -342,6 +344,7 @@ Usage:
   memory extraction status-viewer    [--root <dir>] [--out <file>]
   memory event skill                [--root <dir>] [--event-type ...] ... (or JSON/JSONL on stdin)
   memory curate skills              [--root <dir>] [--stale-days N] [--json]   (report-only)
+  memory curate check|list|background|archive|restore [--root <dir>]   (/curate workflow)
   memory improve skills             [--root <dir>] [--write-proposal] [--json]   (proposal-gated)
   memory improve proposals list      [--root <dir>] [--json]
   memory improve proposals show <proposal> [--root <dir>] [--json]
@@ -3300,10 +3303,45 @@ async function runSkillEvent(args: ParsedArgs): Promise<void> {
  * / model-based review is intentionally absent — this is deterministic and runs
  * only when explicitly invoked.
  */
+async function readSkillCuratorReport(
+  rootDir: string,
+  staleDays?: number,
+): Promise<CuratorReportEnvelope> {
+  const config = await readConfig(rootDir);
+  if (!config) {
+    throw new Error("memory is not initialized here");
+  }
+  if (config.mode !== "graph") {
+    throw new Error(`needs graph mode, this project is "${config.mode}"`);
+  }
+  if (!skillTelemetryEnabled(config)) {
+    throw new Error("skill telemetry is not enabled");
+  }
+
+  const store = await MemoryStore.open({ uri: resolveStoreUri(rootDir, config) });
+  try {
+    const rollups = await readSkillRollups(store);
+    return curateSkills(rollupsToCuratorInput(rollups), { staleDays });
+  } finally {
+    await store.close();
+  }
+}
+
 async function runCurate(args: ParsedArgs): Promise<void> {
   const kind = args.positional[0];
   if (kind !== "skills") {
-    throw new Error("curate needs a kind — supported: memory curate skills");
+    process.exitCode = await runCurateWorkflow(
+      {
+        command: kind,
+        positional: args.positional.slice(1),
+        flags: args.flags,
+      },
+      {
+        usageCommand: "memory curate",
+        loadCuratorReport: readSkillCuratorReport,
+      },
+    );
+    return;
   }
 
   const rootDir = rootOf(args.flags);
@@ -3323,16 +3361,7 @@ async function runCurate(args: ParsedArgs): Promise<void> {
     return;
   }
 
-  const store = await MemoryStore.open({ uri: resolveStoreUri(rootDir, config) });
-  let report;
-  try {
-    const rollups = await readSkillRollups(store);
-    report = curateSkills(rollupsToCuratorInput(rollups), {
-      staleDays: intFlag(args.flags, "stale-days"),
-    });
-  } finally {
-    await store.close();
-  }
+  const report = await readSkillCuratorReport(rootDir, intFlag(args.flags, "stale-days"));
 
   if (args.flags.json === true) {
     console.log(JSON.stringify(report, null, 2));

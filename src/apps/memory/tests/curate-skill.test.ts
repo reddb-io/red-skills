@@ -22,7 +22,7 @@ import type { ArchiveCandidate, CuratorReportEnvelope } from "../src/curate-skil
 const TIMEOUT = 30_000;
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = join(HERE, "..");
-const CLI_PATH = join(PLUGIN_ROOT, "src", "curate-skill", "cli.ts");
+const CLI_PATH = join(PLUGIN_ROOT, "src", "cli.ts");
 
 const roots: string[] = [];
 
@@ -37,7 +37,7 @@ afterEach(async () => {
 });
 
 function runCurate(args: string[]): ReturnType<typeof spawnSync> {
-  return spawnSync(process.execPath, ["--import", "tsx", CLI_PATH, ...args], {
+  return spawnSync(process.execPath, ["--import", "tsx", CLI_PATH, "curate", ...args], {
     cwd: PLUGIN_ROOT,
     encoding: "utf8",
     timeout: TIMEOUT,
@@ -332,7 +332,7 @@ describe("archive-engine — archive + restore round-trip", () => {
   );
 });
 
-describe("/curate CLI", () => {
+describe("memory curate workflow CLI", () => {
   test(
     "check fails fast with the exact `memory init` command when telemetry is off",
     async () => {

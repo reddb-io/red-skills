@@ -312,6 +312,13 @@ export interface SessionSummary {
    * this into exit 75 (EX_TEMPFAIL) so a supervisor can retry once quota resets.
    */
   exhausted: boolean;
+  /**
+   * True when the drain stopped because the runner transport/setup path failed
+   * before the inner agent could work. This is session-level backpressure: once
+   * Codex/Claude is unavailable, do not keep claiming unrelated issues and
+   * marking them transient.
+   */
+  runnerTransient: boolean;
   /** Session-scoped lifecycle points that fired, in order — the parity target. */
   sessionHooksFired: HookName[];
 }
@@ -385,6 +392,7 @@ export async function runSession(deps: SessionDeps, ctx: SessionContext): Promis
     processed: [],
     drained: false,
     exhausted: false,
+    runnerTransient: false,
     sessionHooksFired,
   };
 
@@ -430,6 +438,7 @@ export async function runSession(deps: SessionDeps, ctx: SessionContext): Promis
     let blocked = 0;
     let failed = 0;
     let exhaustedStop = false;
+    let runnerTransientStop = false;
     // --alternate: the runner rotates per issue. The first issue uses ctx.runner.
     let activeRunner: Runner = ctx.runner;
 
@@ -454,10 +463,15 @@ export async function runSession(deps: SessionDeps, ctx: SessionContext): Promis
       const remaining = total - idx;
       deps.emit(`progress: ${idx}/${total} (${pct}%) — ${remaining} remaining`);
 
-      // Runner exhaustion (single without --fallback-runner, or both runners) ends
-      // the whole session: stop draining and signal exit 75 (EX_TEMPFAIL).
+      // Runner availability failures end the whole session: stop draining and
+      // signal exit 75 (EX_TEMPFAIL). A dead backend is global enough that
+      // claiming more issues just spreads blocked:runner-transient labels.
       if (result.outcome === "exhausted") {
         exhaustedStop = true;
+        break;
+      }
+      if (result.outcome === "runner-transient") {
+        runnerTransientStop = true;
         break;
       }
 
@@ -479,6 +493,7 @@ export async function runSession(deps: SessionDeps, ctx: SessionContext): Promis
       processed,
       drained: false,
       exhausted: exhaustedStop,
+      runnerTransient: runnerTransientStop,
       sessionHooksFired,
     };
   } catch (error) {

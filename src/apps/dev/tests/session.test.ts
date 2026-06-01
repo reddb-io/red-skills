@@ -439,13 +439,31 @@ describe("runSession — exhaustion stops the drain (exit-75 signal)", () => {
     // issue 3 is never processed — exhaustion on #2 breaks the loop.
     expect(trace.processedOrder).toEqual([1, 2]);
     expect(summary.exhausted).toBe(true);
+    expect(summary.runnerTransient).toBe(false);
     expect(summary.done).toBe(1);
+  });
+
+  it("stops draining and flags runnerTransient when runner transport fails", async () => {
+    const outcomeFor = (issue: number): ProcessIssueResult["outcome"] =>
+      issue === 2 ? "runner-transient" : "done";
+    const { deps, ctx, trace } = makeSession({
+      candidates: [cand(1), cand(2), cand(3)],
+      outcomeFor,
+    });
+    const summary = await runSession(deps, ctx);
+    // issue 3 is never claimed while the runner backend is unhealthy.
+    expect(trace.processedOrder).toEqual([1, 2]);
+    expect(summary.runnerTransient).toBe(true);
+    expect(summary.exhausted).toBe(false);
+    expect(summary.done).toBe(1);
+    expect(summary.blocked).toBe(1);
   });
 
   it("a clean drain leaves exhausted false", async () => {
     const { deps, ctx } = makeSession({ candidates: [cand(1), cand(2)] });
     const summary = await runSession(deps, ctx);
     expect(summary.exhausted).toBe(false);
+    expect(summary.runnerTransient).toBe(false);
   });
 });
 

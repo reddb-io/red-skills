@@ -63010,6 +63010,7 @@ async function runSession(deps, ctx) {
     processed: [],
     drained: false,
     exhausted: false,
+    runnerTransient: false,
     sessionHooksFired
   };
   const boot = await deps.runBoot(deps.bootDeps, deps.bootOptions);
@@ -63042,6 +63043,7 @@ async function runSession(deps, ctx) {
     let blocked3 = 0;
     let failed = 0;
     let exhaustedStop = false;
+    let runnerTransientStop = false;
     let activeRunner = ctx.runner;
     for (let i = 0; i < queue.length; i++) {
       if (i >= cap) break;
@@ -63062,6 +63064,10 @@ async function runSession(deps, ctx) {
         exhaustedStop = true;
         break;
       }
+      if (result.outcome === "runner-transient") {
+        runnerTransientStop = true;
+        break;
+      }
       if (ctx.once) break;
       if (ctx.alternate) activeRunner = otherRunner(activeRunner);
     }
@@ -63077,6 +63083,7 @@ async function runSession(deps, ctx) {
       processed,
       drained: false,
       exhausted: exhaustedStop,
+      runnerTransient: runnerTransientStop,
       sessionHooksFired
     };
   } catch (error) {
@@ -65912,6 +65919,11 @@ ${requestBlock}` : candidate.body;
 `);
     return 75;
   }
+  if (summary.runnerTransient) {
+    process.stderr.write(`[afk] runner transport/setup failed \u2014 exiting 75 (EX_TEMPFAIL); rerun when the runner backend is healthy
+`);
+    return 75;
+  }
   return 0;
 }
 
@@ -66817,8 +66829,8 @@ function readBuildInfo(app) {
   const info = {
     app,
     version: stripTagPrefix(readInjected("__RED_BUILD_VERSION__", () => "1.147.0") ?? "0.0.0-dev"),
-    gitSha: readInjected("__RED_BUILD_GIT_SHA__", () => "69f4b49d07ce8ab54625e39b7ae8f1a041a0cca1") ?? "unknown",
-    buildTime: readInjected("__RED_BUILD_TIME__", () => "2026-06-01T11:22:27-03:00") ?? "unknown",
+    gitSha: readInjected("__RED_BUILD_GIT_SHA__", () => "unknown") ?? "unknown",
+    buildTime: readInjected("__RED_BUILD_TIME__", () => "2026-06-01T15:27:11.819Z") ?? "unknown",
     bundleAsset: readInjected("__RED_BUNDLE_ASSET__", () => "dev.bundle.min.mjs") ?? "unknown"
   };
   const reddbSdkVersion = readInjected("__REDDB_SDK_VERSION__", () => "");

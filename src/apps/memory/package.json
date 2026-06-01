@@ -7,8 +7,7 @@
   "type": "module",
   "bin": {
     "memory": "dist/cli.js",
-    "memory-mcp": "dist/mcp-server.js",
-    "red-curate-skill": "dist/curate-skill/cli.js"
+    "memory-mcp": "dist/mcp-server.js"
   },
   "files": [
     "dist"
@@ -16,14 +15,12 @@
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "build": "tsc -p tsconfig.build.json && pnpm bundle && pnpm bundle:legacy",
-    "bundle": "pnpm bundle:cli && pnpm bundle:mcp && pnpm bundle:curate-skill",
+    "bundle": "pnpm bundle:cli && pnpm bundle:mcp",
     "bundle:cli": "node ../../../scripts/bundle-app.mjs --entry src/cli.ts --outfile ../../../dist/memory.bundle.min.mjs --asset memory.bundle.min.mjs --minify --reddb-from-package",
     "bundle:mcp": "node ../../../scripts/bundle-app.mjs --entry src/mcp-server.ts --outfile ../../../dist/memory-mcp.bundle.min.mjs --asset memory-mcp.bundle.min.mjs --minify --reddb-from-package",
-    "bundle:curate-skill": "node ../../../scripts/bundle-app.mjs --entry src/curate-skill/cli.ts --outfile ../../../dist/red-curate-skill.bundle.min.mjs --asset red-curate-skill.bundle.min.mjs --minify",
-    "bundle:legacy": "pnpm bundle:legacy:cli && pnpm bundle:legacy:mcp && pnpm bundle:legacy:curate-skill",
+    "bundle:legacy": "pnpm bundle:legacy:cli && pnpm bundle:legacy:mcp",
     "bundle:legacy:cli": "node ../../../scripts/bundle-app.mjs --entry src/cli.ts --outfile dist-bundle/memory-cli.mjs --asset memory-cli.mjs --reddb-from-package",
     "bundle:legacy:mcp": "node ../../../scripts/bundle-app.mjs --entry src/mcp-server.ts --outfile dist-bundle/memory-mcp.mjs --asset memory-mcp.mjs --reddb-from-package",
-    "bundle:legacy:curate-skill": "node ../../../scripts/bundle-app.mjs --entry src/curate-skill/cli.ts --outfile dist-bundle/red-curate-skill.mjs --asset red-curate-skill.mjs",
     "test": "vitest run",
     "test:integration": "RED_MEMORY_RECALL_P50_TARGET_MS=250 vitest run --config vitest.integration.config.ts",
     "dev": "node --import tsx src/cli.ts"

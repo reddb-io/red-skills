@@ -7,15 +7,16 @@ import type { SkillResultStatus, SkillRollup } from "./skill-events.js";
  * recommendations: stale, abandoned, frequently-failing, consolidation,
  * archive, and restore candidates. It is *pure* — it takes rollups and returns
  * a report. It never reads or writes a skill file, never opens the store, and
- * never calls a model. Mutating Curatable-skill workflows (patch / delete /
- * archive / restore / consolidate) stay out of the Memory plugin entirely; this
- * surface only describes what the evidence supports (CONTEXT.md: a Skill curator
- * "does not mutate skills itself").
+ * never calls a model. The mutating `memory curate ...` workflow is separate
+ * from this pure surface and only acts after explicit approval (CONTEXT.md: a
+ * Skill curator "does not mutate skills itself").
  *
  * Bundled, read-only skills (`source_kind` of `plugin`/`hub`) can still surface
  * *observational* signals (stale / abandoned / frequently-failing), but never a
  * *mutation* recommendation (archive / consolidation / restore) — those only
- * make sense for Curatable skills, which are user-owned or agent-created.
+ * make sense for Curatable skills, which are user-owned or agent-created. The
+ * report stays pure; the explicit `memory curate ...` workflow decides whether
+ * to act on approved candidates.
  */
 
 const MS_PER_DAY = 86_400_000;

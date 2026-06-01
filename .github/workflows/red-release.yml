@@ -198,7 +198,8 @@ jobs:
             package.json
             src/apps/dev/package.json
             src/apps/memory/package.json
-            src/apps/memory-benchmark/package.json
+            src/apps/benchmark-memory/package.json
+            src/apps/benchmark-code-understanding/package.json
             src/apps/code-nav/package.json
             src/packages/shared/package.json
             src/packages/build-info/package.json
@@ -256,26 +257,6 @@ jobs:
           # dist/memory.bundle.min.mjs (ADR 0034) is built by `pnpm bundle`; both
           # asset models coexist until the dynamic-fetch phase unifies them.
           pnpm bundle:legacy
-          # The /curate skill resolves red-curate-skill via the dynamic fetcher
-          # (red-fetch), which requests the canonical asset name
-          # red-curate-skill.bundle.min.mjs + a red-curate-skill.manifest.json
-          # (bundleAssetName/manifestAssetName('red-curate-skill')). Build that
-          # canonical bundle and its checksum manifest so the cache install can
-          # resolve it; the legacy dist-bundle/red-curate-skill.mjs stays for the
-          # published-bin path until both asset models unify.
-          pnpm bundle:curate-skill
-          node --input-type=module <<'EOF'
-          import { createHash } from 'node:crypto';
-          import { readFileSync, writeFileSync } from 'node:fs';
-          const bytes = readFileSync('../../../dist/red-curate-skill.bundle.min.mjs');
-          const manifest = {
-            plugin: 'red-curate-skill',
-            version: process.env.NEXT.replace(/^v/, ''),
-            sha256: createHash('sha256').update(bytes).digest('hex'),
-          };
-          writeFileSync('../../../dist/red-curate-skill.manifest.json', JSON.stringify(manifest, null, 2));
-          console.log('red-curate-skill bundle manifest:', JSON.stringify(manifest));
-          EOF
           node --input-type=module <<'EOF'
           import { createHash } from 'node:crypto';
           import { readFileSync, writeFileSync } from 'node:fs';
@@ -350,9 +331,9 @@ jobs:
           console.log('code-nav bundle manifest:', JSON.stringify(manifest));
           EOF
 
-      - name: Build memory benchmark bundle + manifest
+      - name: Build benchmark-memory bundle + manifest
         if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
-        working-directory: src/apps/memory-benchmark
+        working-directory: src/apps/benchmark-memory
         env:
           NEXT: ${{ steps.version.outputs.next }}
           RED_BUILD_VERSION: ${{ steps.version.outputs.next }}
@@ -364,15 +345,40 @@ jobs:
           node --input-type=module <<'EOF'
           import { createHash } from 'node:crypto';
           import { readFileSync, writeFileSync } from 'node:fs';
-          const asset = '../../../dist/memory-benchmark.bundle.min.mjs';
+          const asset = '../../../dist/benchmark-memory.bundle.min.mjs';
           const bytes = readFileSync(asset);
           const manifest = {
-            plugin: 'memory-benchmark',
+            plugin: 'benchmark-memory',
             version: process.env.NEXT.replace(/^v/, ''),
             sha256: createHash('sha256').update(bytes).digest('hex'),
           };
-          writeFileSync('../../../dist/memory-benchmark.manifest.json', JSON.stringify(manifest, null, 2));
-          console.log('memory-benchmark bundle manifest:', JSON.stringify(manifest));
+          writeFileSync('../../../dist/benchmark-memory.manifest.json', JSON.stringify(manifest, null, 2));
+          console.log('benchmark-memory bundle manifest:', JSON.stringify(manifest));
+          EOF
+
+      - name: Build benchmark-code-understanding bundle + manifest
+        if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
+        working-directory: src/apps/benchmark-code-understanding
+        env:
+          NEXT: ${{ steps.version.outputs.next }}
+          RED_BUILD_VERSION: ${{ steps.version.outputs.next }}
+          RED_BUILD_GIT_SHA: ${{ github.sha }}
+          RED_BUILD_TIME: ${{ github.event.head_commit.timestamp }}
+        run: |
+          set -euo pipefail
+          pnpm build
+          node --input-type=module <<'EOF'
+          import { createHash } from 'node:crypto';
+          import { readFileSync, writeFileSync } from 'node:fs';
+          const asset = '../../../dist/benchmark-code-understanding.bundle.min.mjs';
+          const bytes = readFileSync(asset);
+          const manifest = {
+            plugin: 'benchmark-code-understanding',
+            version: process.env.NEXT.replace(/^v/, ''),
+            sha256: createHash('sha256').update(bytes).digest('hex'),
+          };
+          writeFileSync('../../../dist/benchmark-code-understanding.manifest.json', JSON.stringify(manifest, null, 2));
+          console.log('benchmark-code-understanding bundle manifest:', JSON.stringify(manifest));
           EOF
 
       - name: Build release manifest
@@ -387,13 +393,12 @@ jobs:
             dist/dev.manifest.json \
             dist/code-nav.bundle.min.mjs \
             dist/code-nav.manifest.json \
-            dist/memory-benchmark.bundle.min.mjs \
-            dist/memory-benchmark.manifest.json \
-            dist/red-curate-skill.bundle.min.mjs \
-            dist/red-curate-skill.manifest.json \
+            dist/benchmark-memory.bundle.min.mjs \
+            dist/benchmark-memory.manifest.json \
+            dist/benchmark-code-understanding.bundle.min.mjs \
+            dist/benchmark-code-understanding.manifest.json \
             src/apps/memory/dist-bundle/memory-cli.mjs \
             src/apps/memory/dist-bundle/memory-mcp.mjs \
-            src/apps/memory/dist-bundle/red-curate-skill.mjs \
             src/apps/memory/memory-runtime-manifest.json
 
       - name: Tag + GitHub Release
@@ -411,13 +416,12 @@ jobs:
             dist/dev.manifest.json
             dist/code-nav.bundle.min.mjs
             dist/code-nav.manifest.json
-            dist/memory-benchmark.bundle.min.mjs
-            dist/memory-benchmark.manifest.json
-            dist/red-curate-skill.bundle.min.mjs
-            dist/red-curate-skill.manifest.json
+            dist/benchmark-memory.bundle.min.mjs
+            dist/benchmark-memory.manifest.json
+            dist/benchmark-code-understanding.bundle.min.mjs
+            dist/benchmark-code-understanding.manifest.json
             src/apps/memory/dist-bundle/memory-cli.mjs
             src/apps/memory/dist-bundle/memory-mcp.mjs
-            src/apps/memory/dist-bundle/red-curate-skill.mjs
             src/apps/memory/memory-runtime-manifest.json
             dist/release-manifest.json
           )

@@ -14,8 +14,8 @@ orientation). Installing `memory` requires `dev`.
 > (monorepo `domains/` layout); only the plugin *definition* (hooks, skills,
 > docs) stays under `plugins/memory/`. The built runtime ships as a GitHub
 > Release bundle (ADR 0034), not as committed `dist/` output. Examples below
-> invoke the published bins — `memory` (CLI), `memory-mcp` (MCP stdio server),
-> and `red-curate-skill` (the `/curate` engine) — instead of the old
+> invoke the published bins — `memory` (CLI, including the `/curate` workflow)
+> and `memory-mcp` (MCP stdio server) — instead of the old
 > `node plugins/memory/dist/cli.js …` paths, which no longer exist.
 
 ## What this plugin is
