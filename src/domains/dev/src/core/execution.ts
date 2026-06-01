@@ -24,9 +24,12 @@ export type AgentRunner = "claude" | "codex";
 export type SandboxMode = "none" | "docker" | "podman";
 export type AgentEffort = "low" | "medium" | "high" | "xhigh" | "max";
 // `exhausted` is surfaced when sandcastle's run() signals quota / rate-limit
-// (RUNNER_EXHAUSTED in the shell port) — see the runner-exhaustion detection in
-// `runAgent`. It rides the same outcome union so process-issue can branch on it.
-export type AgentOutcome = "done" | "blocked" | "no-sentinel" | "exhausted";
+// (RUNNER_EXHAUSTED in the shell port). `runner-transient` is surfaced when the
+// runner transport/setup path failed before AFK got a usable agent result (for
+// example Codex websocket 502 / thread-start failures). Both ride the same
+// outcome union so process-issue can branch on them without treating the worker
+// as crashed.
+export type AgentOutcome = "done" | "blocked" | "no-sentinel" | "exhausted" | "runner-transient";
 
 /** AFK's canonical sentinels, registered as sandcastle completion signals. */
 export const DONE_SIGNAL = "<promise>DONE</promise>";
@@ -380,6 +383,21 @@ export function isExhaustionError(error: unknown): boolean {
   return parts.some((p) => isRunnerExhausted(p));
 }
 
+/**
+ * True when a sandcastle failure looks like a transient runner transport/setup
+ * failure rather than agent-authored work. These should be bounded by AFK's
+ * retry policy, not escape as raw worker crashes.
+ */
+export function isTransientRunnerError(error: unknown): boolean {
+  if (error === null || error === undefined) return false;
+  const parts: string[] = [];
+  collectErrorStrings(error, parts, new Set(), 0);
+  return parts.some((p) => runnerTransientPattern.test(p));
+}
+
+const runnerTransientPattern =
+  /failed to connect to websocket|HTTP error:\s*502 Bad Gateway|wss:\/\/chatgpt\.com\/backend-api\/codex\/responses|thread\/start failed|failed to load configuration|spawn sh ENOENT|cwd does not exist/i;
+
 /** Recursively gather string values reachable from an error-ish value, bounded
  * by depth and a visited set so cyclic Effect `Cause` graphs terminate. */
 function collectErrorStrings(value: unknown, out: string[], seen: Set<object>, depth: number): void {
@@ -437,6 +455,14 @@ export async function runAgent(deps: SandcastleDeps, input: RunAgentInput): Prom
   } catch (error) {
     if (isExhaustionError(error)) {
       return { outcome: "exhausted", branch: input.branch, commits: [], stdout: "" };
+    }
+    if (isTransientRunnerError(error)) {
+      return {
+        outcome: "runner-transient",
+        branch: input.branch,
+        commits: [],
+        stdout: error instanceof Error ? error.message : String(error),
+      };
     }
     throw error;
   }
