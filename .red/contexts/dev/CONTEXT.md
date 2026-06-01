@@ -14,6 +14,38 @@ _Avoid_: backlog manager, backlog backend, issue host, local-markdown tracker
 A single tracked unit of work inside the **Issue tracker**: bug, task, PRD, or implementation slice.
 _Avoid_: ticket, except when quoting external systems
 
+**Label family**:
+A coherent class of **Issue** labels with one job: current state, permanent type, priority, relationship/dependency, or operational diagnostic.
+_Avoid_: loose label, tag bucket
+
+**HITL queue**:
+The operator-facing set of non-PRD **Issues** that need human decision resolution, selected by `ready-for-human`.
+_Avoid_: human backlog, HITL backlog
+
+**HITL resolution**:
+A maintainer-led session that resolves the human decision pending on an **Issue** and, when delegation becomes safe, moves it to `ready-for-agent` with an updated `## Agent brief`.
+_Avoid_: manual implementation, human fix session
+
+**HITL selection**:
+The hybrid rule for choosing a **HITL queue** item: recommend the next Issue automatically by priority/age, while allowing the maintainer to `skip` to another candidate.
+_Avoid_: random pick, manual-only shortlist
+
+**HITL decision extraction**:
+The rule for finding the human decision pending on a selected **Issue**: infer it from the issue body, `## Agent brief`, comments, and latest **Envelope** when possible; ask the maintainer to state it when the pending decision is ambiguous.
+_Avoid_: decision mining, implicit blocker
+
+**HITL decision recording**:
+The rule for persisting a resolved human decision: write an auditable **Directive block** comment, and update `## Agent brief` when the **Issue** becomes delegable to an agent.
+_Avoid_: silent brief edit, unaudited decision
+
+**HITL unresolved disposition**:
+The final state after a **HITL resolution** that records a decision but still leaves the **Issue** non-delegable: keep `ready-for-human` and record the next pending decision clearly.
+_Avoid_: quiet limbo, unpaged human follow-up
+
+**HITL delegable disposition**:
+The final state after a **HITL resolution** that makes the **Issue** delegable: add `ready-for-agent` and remove `ready-for-human` so the Issue leaves the **HITL queue**.
+_Avoid_: dual-queued issue, stale HITL tag
+
 **Triage role**:
 A canonical state-machine label applied to an **Issue** during triage.
 _Avoid_: status label, workflow stage
@@ -110,6 +142,14 @@ _Avoid_: memory cleaner, silent curator
 
 - An **Issue tracker** holds many **Issues**.
 - An **Issue** carries one **Triage role** at a time.
+- Every **Issue** label should belong to a clear **Label family**; labels outside state, type, priority, relationship/dependency, or operational diagnostic families are candidates for removal or deprecation.
+- The **HITL queue** contains non-PRD **Issues** selected by the `ready-for-human` state.
+- **HITL selection** chooses one recommended **Issue** from the **HITL queue** and lets the maintainer `skip` when that Issue is not the right decision target.
+- **HITL decision extraction** identifies the pending decision for the selected **Issue** before **HITL resolution** begins.
+- **HITL decision recording** preserves the maintainer's answer as **Human guidance** and prepares the **Issue** for delegation when possible.
+- A **HITL resolution** consumes one **Issue** from the **HITL queue** and may produce a `ready-for-agent` **Issue**.
+- A non-delegable **HITL resolution** keeps the **Issue** in `ready-for-human` with the next pending decision stated explicitly.
+- A delegable **HITL resolution** moves the **Issue** to `ready-for-agent` and removes all labels that keep it in the **HITL queue**.
 - An **Issue** accumulates **Envelopes**, **Directive blocks**, **Human guidance**, and **Thread discussion**.
 - A **Fleet supervisor** maintains AFK workers; **Auto-monitor loop**, **Task mirror**, **Codex monitor agent**, and `monitor.sh` only observe.
 - A **Worker** owns many **Attempts**; each **Attempt** resolves exactly one **Issue** and holds one **Worktree**. The **Worker**'s `worker.pid` is the single liveness signal consumers read.
