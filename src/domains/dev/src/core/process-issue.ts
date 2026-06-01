@@ -521,13 +521,31 @@ export async function processIssue(
     startedEpoch,
   } satisfies StageCommon;
 
-  // ---- on_attempt_error: the run ended without an AFK sentinel (ADR 0028) ----
+  // ---- no-sentinel: the run ended without an AFK sentinel (ADR 0028) ----
+  // ADR 0028 keeps `<promise>` canonical: a missing sentinel is a CRASH signal,
+  // not a "nothing to do" signal. But a worker branch can already carry a
+  // COMPLETE commit from a prior attempt (the agent finished the work, then
+  // crashed before re-emitting the sentinel — issue #332). Abandoning such a
+  // branch never converges. So we SALVAGE a no-sentinel attempt IF its branch is
+  // ahead of base — but only THROUGH the feedback gate (typecheck + tests). The
+  // gate is load-bearing: it is the only thing distinguishing "complete prior
+  // work" from a half-baked crash-edit. A branch with no work, or one that fails
+  // feedback, keeps today's terminal behaviour.
   if (run.outcome === "no-sentinel") {
-    await fireHook("on_attempt_error", onErrorContext(current, workerBranch, "no-sentinel", current.attempt));
-    return await terminalFailure(common, "no-sentinel", "no-sentinel", {
-      notes: "_(no Notes appended; inner agent exited without a sentinel)_",
-      log: run.stdout ? run.stdout.split("\n").slice(-1)[0] || "(no captured stdout)" : "(no captured stdout)",
-    });
+    const branchHasWork = (await deps.lookups.changedFiles(workerBranch, base)).length > 0;
+    if (!branchHasWork) {
+      await fireHook("on_attempt_error", onErrorContext(current, workerBranch, "no-sentinel", current.attempt));
+      return await terminalFailure(common, "no-sentinel", "no-sentinel", {
+        notes: "_(no Notes appended; inner agent exited without a sentinel and the branch carries no work)_",
+        log: run.stdout ? run.stdout.split("\n").slice(-1)[0] || "(no captured stdout)" : "(no captured stdout)",
+      });
+    }
+    // Salvage path: the branch is ahead of base. Treat the attempt as a success
+    // for hook purposes (we are about to land it, not error it) and route it
+    // through the SAME feedback+land tail the DONE path uses. on_attempt_error
+    // is NOT fired — a salvaged-and-landed attempt is not an error.
+    await fireHook("post_attempt", postAttemptContext(current, workerBranch, "success", "no-sentinel"));
+    return await landAndClose(common, fireHook, { salvaged: true });
   }
 
   // ---- post_attempt hook (terminal invocation; sentinel-bearing) ----
@@ -542,6 +560,30 @@ export async function processIssue(
   }
 
   // run.outcome === "done".
+  return await landAndClose(common, fireHook, { salvaged: false });
+}
+
+/**
+ * The shared DONE / salvage tail: run the feedback gate, then (if green) push +
+ * integrate + land per lock state, emit the done envelope, close the issue,
+ * clean up, and run the close cascade. Extracted verbatim from the inline DONE
+ * path so the DONE path behaves byte-for-byte as before; the no-sentinel salvage
+ * path (issue #332) reuses it so a branch carrying complete prior work lands
+ * exactly like a DONE attempt would.
+ *
+ * The feedback gate is load-bearing on the salvage path: a feedback failure on a
+ * salvaged attempt is reported as `feedback-failed` (the most accurate reason —
+ * the branch carried work but it did not pass validation), not `no-sentinel`.
+ */
+async function landAndClose(
+  c: StageCommon,
+  fireHook: (name: HookName, context: string) => Promise<boolean>,
+  opts: { salvaged: boolean },
+): Promise<ProcessIssueResult> {
+  const { deps, input } = c;
+  const { issue } = input;
+  const workerBranch = c.branch;
+  const base = c.base;
 
   // ---- 5. feedback loops (the merge gate, ADR 0008) ----
   // Feedback runs against a checkout of the returned worker branch; the injected
@@ -554,8 +596,10 @@ export async function processIssue(
     now: deps.nowEpoch,
   });
   if (!feedback.ok) {
-    return await terminalFailure(common, "feedback-failed", "feedback", {
-      notes: "Feedback validation failed after the inner agent emitted DONE. The worker branch was not merged.",
+    return await terminalFailure(c, "feedback-failed", "feedback", {
+      notes: opts.salvaged
+        ? "Feedback validation failed on a salvaged no-sentinel branch. The worker branch was not merged."
+        : "Feedback validation failed after the inner agent emitted DONE. The worker branch was not merged.",
       validation: feedback.sidecar.join("\n"),
     });
   }
@@ -591,13 +635,13 @@ export async function processIssue(
     },
   );
   if (!landing.ok) {
-    return await mergeFailed(common, landing.reason, landing.locked);
+    return await mergeFailed(c, landing.reason, landing.locked);
   }
 
   // ---- 7. close: envelope(done) → gh close + remove running → delete remote ----
   const mergeSha = await deps.git.headShortSha();
-  const durationS = deps.nowEpoch() - startedEpoch;
-  const posted = await emitDone(common, mergeSha, durationS, feedback);
+  const durationS = deps.nowEpoch() - c.startedEpoch;
+  const posted = await emitDone(c, mergeSha, durationS, feedback);
   await deps.gh.close(issue);
   await deps.gh.editLabels(issue, [LABEL_RUNNING], []);
   await deleteRemote(deps.remoteGit, input.repoDir, workerBranch);
@@ -622,7 +666,7 @@ export async function processIssue(
     base,
     locked,
     mergeSha,
-    hooksFired,
+    hooksFired: c.hooksFired,
     envelopePosted: posted,
     preserved: true,
     swept: true,
