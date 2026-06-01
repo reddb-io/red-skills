@@ -1,10 +1,11 @@
 // recovery — the BOUNDED auto-recovery policy for AFK terminal failures.
 //
 // A terminal failure is either RECOVERABLE (a transient class that often clears
-// on a fresh attempt — a merge conflict, a crash, a quota wall, a policy-hook
-// abort) or NON-RECOVERABLE (a class that needs a human to change something — a
-// spec block, a validation failure). This module is PURE: it maps a failure
-// reason + the current attempt number + the env to a single decision —
+// on a fresh attempt — a merge conflict, a crash, a quota wall, a transient
+// runner transport/setup failure, a policy-hook abort) or NON-RECOVERABLE (a
+// class that needs a human to change something — a spec block, a validation
+// failure). This module is PURE: it maps a failure reason + the current attempt
+// number + the env to a single decision —
 //
 //   "retry"    → re-queue the issue (route back to ready-for-agent)
 //   "escalate" → page a human (route to ready-for-human)
@@ -48,6 +49,7 @@ const RECOVERABLE: Record<string, RecoverableSpec> = {
   "merge-conflict": { knob: "RED_AFK_RETRY_MERGE", defaultCap: 3 },
   crashed: { knob: "RED_AFK_RETRY_CRASH", defaultCap: 1 },
   quota: { knob: "RED_AFK_RETRY_QUOTA", defaultCap: 3 },
+  "runner-transient": { knob: "RED_AFK_RETRY_RUNNER_TRANSIENT", defaultCap: 3 },
   policy: { knob: "RED_AFK_RETRY_POLICY", defaultCap: 1 },
 };
 
