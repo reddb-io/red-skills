@@ -12,6 +12,7 @@ describe("recoveryDecision — recoverable reasons honour the cap", () => {
     { reason: "merge-conflict", knob: "RED_AFK_RETRY_MERGE", cap: 3 },
     { reason: "crashed", knob: "RED_AFK_RETRY_CRASH", cap: 1 },
     { reason: "quota", knob: "RED_AFK_RETRY_QUOTA", cap: 3 },
+    { reason: "runner-transient", knob: "RED_AFK_RETRY_RUNNER_TRANSIENT", cap: 3 },
     { reason: "policy", knob: "RED_AFK_RETRY_POLICY", cap: 1 },
   ];
 
@@ -72,6 +73,7 @@ describe("recoveryCap — resolves the effective cap for the escalation comment"
     expect(recoveryCap("merge-conflict", {})).toBe(3);
     expect(recoveryCap("crashed", {})).toBe(1);
     expect(recoveryCap("quota", {})).toBe(3);
+    expect(recoveryCap("runner-transient", {})).toBe(3);
     expect(recoveryCap("policy", {})).toBe(1);
   });
 
