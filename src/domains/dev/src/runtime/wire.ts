@@ -14,6 +14,10 @@ import { join } from "node:path";
 import { loadConfig, getConfig } from "../core/config.js";
 import type { SandboxMode } from "../core/execution.js";
 import type { RunAgentInput, RunAgentResult } from "../core/execution.js";
+// Value import (pure, no sandcastle pull — the providers load lazily via
+// defaultSandcastleDeps' dynamic import) so resolveRunSettings can parse the
+// max-iterations knob from env/config without importing the runtime.
+import { parseMaxIterations } from "../core/execution.js";
 import type { BranchRef } from "../core/branch-cleanup.js";
 import * as ghx from "./gh.js";
 import * as gitx from "./git.js";
@@ -72,6 +76,12 @@ export interface RunSettings {
   sandbox: SandboxMode;
   defaultRunner: string;
   model: string;
+  /**
+   * Sandcastle re-invocation ceiling (issue #322), resolved with precedence
+   * RED_AFK_MAX_ITERATIONS env > `afk.max_iterations` config > undefined. When
+   * undefined, buildRunOptions applies DEFAULT_MAX_ITERATIONS.
+   */
+  maxIterations?: number;
 }
 
 const SANDBOX_MODES: readonly SandboxMode[] = ["none", "docker", "podman"];
@@ -91,7 +101,13 @@ export function resolveRunSettings(root: string, env: NodeJS.ProcessEnv = proces
     : "none";
   const defaultRunner = getConfig(cfg, "afk.default_runner") || "claude";
   const model = getConfig(cfg, "afk.model") || "claude-opus-4-8";
-  return { sandbox, defaultRunner, model };
+  // Precedence: RED_AFK_MAX_ITERATIONS env > afk.max_iterations config >
+  // undefined (→ DEFAULT_MAX_ITERATIONS). parseMaxIterations rejects a
+  // non-numeric / zero / negative value from EITHER source, so a typo in the
+  // env or the config can never disable the cap or pin the agent to 1 iteration.
+  const maxIterations =
+    parseMaxIterations(env.RED_AFK_MAX_ITERATIONS) ?? parseMaxIterations(getConfig(cfg, "afk.max_iterations"));
+  return { sandbox, defaultRunner, model, maxIterations };
 }
 
 // ---------- lazy sandcastle runAgent binding ----------
@@ -105,27 +121,26 @@ export function resolveRunSettings(root: string, env: NodeJS.ProcessEnv = proces
 export function makeRunAgent(
   sandbox: SandboxMode,
   env: NodeJS.ProcessEnv = process.env,
+  maxIterations?: number,
 ): (input: RunAgentInput) => Promise<RunAgentResult> {
   let depsPromise: Promise<import("../core/execution.js").SandcastleDeps> | null = null;
   return async (input: RunAgentInput): Promise<RunAgentResult> => {
-    const { runAgent, defaultSandcastleDeps, parseMaxIterations, parseIdleTimeout } = await import(
-      "../core/execution.js"
-    );
+    const { runAgent, defaultSandcastleDeps, parseIdleTimeout } = await import("../core/execution.js");
     if (!depsPromise) depsPromise = defaultSandcastleDeps();
     const deps = await depsPromise;
-    // RED_AFK_MAX_ITERATIONS overrides the sandcastle re-invocation ceiling
-    // (issue #322), mirroring the other RED_AFK_* knobs. A missing / non-numeric
-    // / non-positive value parses to undefined, so an operator typo can't disable
-    // the cap or pin it to 1 — buildRunOptions then applies DEFAULT_MAX_ITERATIONS.
-    const envMaxIterations = parseMaxIterations(env.RED_AFK_MAX_ITERATIONS);
+    // Sandcastle re-invocation ceiling (issue #322). Precedence: per-call
+    // input.maxIterations > the resolved `maxIterations` (RED_AFK_MAX_ITERATIONS
+    // env > afk.max_iterations config, computed by resolveRunSettings) > a direct
+    // env read for any caller that constructed this without a resolved value. A
+    // missing / non-numeric / non-positive value parses to undefined so a typo
+    // can't disable the cap — buildRunOptions then applies DEFAULT_MAX_ITERATIONS.
     // RED_AFK_IDLE_TIMEOUT_S overrides the per-iteration idle watchdog (FIX G),
-    // same typo-safe contract: a bad value parses to undefined so buildRunOptions
-    // applies DEFAULT_IDLE_TIMEOUT_S rather than disabling the watchdog.
+    // same typo-safe contract.
     const envIdleTimeout = parseIdleTimeout(env.RED_AFK_IDLE_TIMEOUT_S);
     return runAgent(deps, {
       ...input,
       sandboxMode: input.sandboxMode ?? sandbox,
-      maxIterations: input.maxIterations ?? envMaxIterations,
+      maxIterations: input.maxIterations ?? maxIterations ?? parseMaxIterations(env.RED_AFK_MAX_ITERATIONS),
       idleTimeoutSeconds: input.idleTimeoutSeconds ?? envIdleTimeout,
     });
   };

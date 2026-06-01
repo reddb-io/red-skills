@@ -76,6 +76,59 @@ describe("resolveRunSettings", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it("leaves maxIterations undefined with no env and no config (→ DEFAULT_MAX_ITERATIONS)", () => {
+    const root = scratch();
+    try {
+      expect(resolveRunSettings(root, {}).maxIterations).toBeUndefined();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("reads afk.max_iterations from .red/config.yaml", () => {
+    const root = scratch();
+    try {
+      mkdirSync(join(root, ".red"), { recursive: true });
+      writeFileSync(join(root, ".red", "config.yaml"), "afk:\n  max_iterations: 50\n");
+      expect(resolveRunSettings(root, {}).maxIterations).toBe(50);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("RED_AFK_MAX_ITERATIONS env overrides the config max_iterations", () => {
+    const root = scratch();
+    try {
+      mkdirSync(join(root, ".red"), { recursive: true });
+      writeFileSync(join(root, ".red", "config.yaml"), "afk:\n  max_iterations: 50\n");
+      expect(resolveRunSettings(root, { RED_AFK_MAX_ITERATIONS: "80" }).maxIterations).toBe(80);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("an invalid env value falls back to the config max_iterations", () => {
+    const root = scratch();
+    try {
+      mkdirSync(join(root, ".red"), { recursive: true });
+      writeFileSync(join(root, ".red", "config.yaml"), "afk:\n  max_iterations: 42\n");
+      expect(resolveRunSettings(root, { RED_AFK_MAX_ITERATIONS: "0" }).maxIterations).toBe(42);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("an invalid config value leaves maxIterations undefined (→ DEFAULT, never disabled)", () => {
+    const root = scratch();
+    try {
+      mkdirSync(join(root, ".red"), { recursive: true });
+      writeFileSync(join(root, ".red", "config.yaml"), "afk:\n  max_iterations: nope\n");
+      expect(resolveRunSettings(root, {}).maxIterations).toBeUndefined();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("collectMonitorInputs", () => {

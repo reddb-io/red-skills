@@ -43,13 +43,15 @@ export const DEFAULT_IDLE_TIMEOUT_S = 600;
  * exhausts that one iteration's budget BEFORE it can emit `<promise>DONE</promise>`,
  * so AFK sees no completionSignal → no-sentinel → blocked:crashed and never
  * merges. The completionSignal (DONE/BLOCKED) is the REAL terminator; this is
- * only the safety ceiling for "the agent never signals". 25 is generous vs the
+ * only the safety ceiling for "the agent never signals". 50 is generous vs the
  * broken 1 yet bounded vs runaway: each iteration is itself bounded by
  * `idleTimeoutSeconds`, and DONE/BLOCKED stops the loop early, so a normal issue
- * finishes in 1-3 iterations and 25 is purely the cap. Env-tunable via
- * RED_AFK_MAX_ITERATIONS (parsed by `parseMaxIterations`).
+ * finishes in 1-3 iterations and 50 is purely the cap — headroom for a thorough
+ * agent that keeps refining/testing across many internal iterations before it
+ * signals DONE. Env-tunable via RED_AFK_MAX_ITERATIONS (parsed by
+ * `parseMaxIterations`).
  */
-export const DEFAULT_MAX_ITERATIONS = 25;
+export const DEFAULT_MAX_ITERATIONS = 50;
 
 /**
  * Parse a RED_AFK_MAX_ITERATIONS override into a positive integer, or
