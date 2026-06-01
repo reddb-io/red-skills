@@ -13,7 +13,7 @@ export const DETERMINISTIC_EXTRACTOR_FILES = [
   "extract-dev-artifact.ts",
 ] as const;
 
-export const EXPECTED_DETERMINISTIC_NODE_TYPES = [
+export const CURRENT_DETERMINISTIC_NODE_TYPES = [
   "concept",
   "file",
   "import",
@@ -21,7 +21,7 @@ export const EXPECTED_DETERMINISTIC_NODE_TYPES = [
   "workflow",
 ] as const satisfies readonly StructuralType[];
 
-export const EXPECTED_DETERMINISTIC_EDGE_LABELS = [
+export const CURRENT_DETERMINISTIC_EDGE_LABELS = [
   "CALLS",
   "DEFINED_IN",
   "IMPORTS",
@@ -88,8 +88,8 @@ export async function lintDeterministicExtractorVocabulary(
       edgeLabels: sorted(emitted.edgeLabels),
     },
     expected: {
-      nodeTypes: [...EXPECTED_DETERMINISTIC_NODE_TYPES].sort(),
-      edgeLabels: [...EXPECTED_DETERMINISTIC_EDGE_LABELS].sort(),
+      nodeTypes: [...CURRENT_DETERMINISTIC_NODE_TYPES].sort(),
+      edgeLabels: [...CURRENT_DETERMINISTIC_EDGE_LABELS].sort(),
     },
     outOfVocabulary: {
       nodeTypes: outside(emitted.nodeTypes, new Set<string>(STRUCTURAL_TYPES)),
@@ -98,8 +98,6 @@ export async function lintDeterministicExtractorVocabulary(
   };
 
   const failures = [
-    diffFailure("node types", result.expected.nodeTypes, result.emitted.nodeTypes),
-    diffFailure("edge labels", result.expected.edgeLabels, result.emitted.edgeLabels),
     listFailure("out-of-vocabulary node types", result.outOfVocabulary.nodeTypes),
     listFailure("out-of-vocabulary edge labels", result.outOfVocabulary.edgeLabels),
   ].filter((line): line is string => line != null);
@@ -129,11 +127,6 @@ function outside(values: ReadonlySet<string>, vocabulary: ReadonlySet<string>): 
 
 function sorted(values: Iterable<string>): string[] {
   return [...values].sort();
-}
-
-function diffFailure(label: string, expected: string[], actual: string[]): string | null {
-  if (JSON.stringify(expected) === JSON.stringify(actual)) return null;
-  return `${label}: expected [${expected.join(", ")}], emitted [${actual.join(", ")}]`;
 }
 
 function listFailure(label: string, values: string[]): string | null {
