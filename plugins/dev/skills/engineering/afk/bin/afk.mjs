@@ -66828,9 +66828,9 @@ async function superviseCommand(args2, cwd = process.cwd()) {
 function readBuildInfo(app) {
   const info = {
     app,
-    version: stripTagPrefix(readInjected("__RED_BUILD_VERSION__", () => "1.147.0") ?? "0.0.0-dev"),
-    gitSha: readInjected("__RED_BUILD_GIT_SHA__", () => "unknown") ?? "unknown",
-    buildTime: readInjected("__RED_BUILD_TIME__", () => "2026-06-01T15:27:11.819Z") ?? "unknown",
+    version: stripTagPrefix(readInjected("__RED_BUILD_VERSION__", () => "1.147.1") ?? "0.0.0-dev"),
+    gitSha: readInjected("__RED_BUILD_GIT_SHA__", () => "f131ae33bb1d22cf0572f89b877e7b93c77dd44d") ?? "unknown",
+    buildTime: readInjected("__RED_BUILD_TIME__", () => "2026-06-01T12:28:16-03:00") ?? "unknown",
     bundleAsset: readInjected("__RED_BUNDLE_ASSET__", () => "dev.bundle.min.mjs") ?? "unknown"
   };
   const reddbSdkVersion = readInjected("__REDDB_SDK_VERSION__", () => "");
