@@ -1372,7 +1372,7 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 - **upstream**: —
 - **why**: consistent vocab makes labels easy to scan in the UI, easy to grep, and easy to filter with `gh issue list --label`. No uppercase/Camel/snake/space-separated labels.
 - **what changed**:
-  - `triage-labels.md` auxiliary labels: `prd-{N}` → `prd:{N}`, `HITL` → `slice:hitl`, `AFK` → `slice:afk`
+  - `triage-labels.md` auxiliary labels: `prd-{N}` → `prd:{N}`; HITL/AFK routing is represented by lifecycle labels instead
   - `afk/scripts/afk.sh` PRD filter updated to match `prd:N`
   - naming convention section added to `setup-red-skills/triage-labels.md`
 
@@ -1401,7 +1401,7 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 
 - **status**: modified
 - **upstream**: `e74f006`
-- **why**: `setup-red-skills/triage-labels.md` is the single source of truth for the label vocab — added a full lifecycle (ASCII state machine), the `running` label (consumed only by `/afk`), the heartbeat protocol, and auxiliary labels (`bug`, `enhancement`, `priority:high|low`, `prd:N`, `slice:hitl`, `slice:afk`). `/afk` SKILL.md references the canonical doc and only shows its own slice. Priorities reduced to two (`high`/`low`) — less hesitation in triage.
+- **why**: `setup-red-skills/triage-labels.md` is the single source of truth for the label vocab — added a full lifecycle (ASCII state machine), the `running` label (consumed only by `/afk`), the heartbeat protocol, and auxiliary labels (`bug`, `enhancement`, `priority:high|low`, `prd:N`). `/afk` SKILL.md references the canonical doc and only shows its own slice. Priorities reduced to two (`high`/`low`) — less hesitation in triage.
 - **what changed**:
   - `setup-red-skills/triage-labels.md`: rewritten with mapping table + ASCII state machine + state definitions + heartbeat protocol + auxiliary labels + naming convention note
   - `afk/SKILL.md`: new section "Issue Lifecycle (the `/afk` slice)" with a focused diagram; references the canonical doc
