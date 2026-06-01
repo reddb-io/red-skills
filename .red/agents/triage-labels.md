@@ -96,7 +96,7 @@ The issue body contains a complete `## Agent brief` section (see `triage/AGENT-B
 `/afk` has claimed the issue and is actively executing it. Applied atomically with the removal of `ready-for-agent` so two parallel `/afk` runs cannot race on the same issue. The issue thread stays **timeline-only** while this label is present (boot stamp, attempt envelopes, human guidance, closing envelope) — there is no periodic heartbeat comment; liveness is signalled locally (inner-agent stream, agent-lane JSONL, state-file mtime), not on the thread (Slice D). Removed on close (success), on blocker (replaced with `ready-for-human`), or on graceful release (if the user interrupts the loop).
 
 ### `ready-for-human`
-The issue requires human implementation. Two sources: `/triage` decides it during evaluation (e.g. architectural call, design review needed), or `/afk` promotes it from `running` after a blocker (inner agent gave up, merge conflict couldn't be auto-resolved, both runners exhausted). When `/afk` promotes, the worktree is **preserved at the moment of blocker** so the human can pick up in place.
+The issue requires human decision or resolution before it can proceed or be delegated. Two sources: `/triage` decides it during evaluation (e.g. architectural call, design review needed), or `/afk` promotes it from `running` after a blocker (inner agent gave up, merge conflict couldn't be auto-resolved, both runners exhausted). When `/afk` promotes, the worktree is **preserved at the moment of blocker** so the human can inspect or resolve the blocker in place.
 
 ### `blocked:dependency`
 The issue is **waiting on one or more other issues to close** — it is healthy, not broken, and **needs no human action**. This is deliberately distinct from `ready-for-human`: a dependency-blocked issue must **never page a human** (nothing for them to do but wait). The specific edges live in `req:N` labels (one per dependency, see below) — the queryable source of truth — mirrored by the human-facing `## Blocked by` task list in the body. When the **last** `req:N` dependency closes, `/afk` auto-promotes the issue to `ready-for-agent` (see *Dependency Edges* below). Applied by `/to-issues` when it publishes a slice whose blockers are still open.
@@ -127,8 +127,6 @@ These exist for filtering and don't drive lifecycle transitions:
 | `priority:high` | Urgent / high-impact — `/afk` drains these first | `/triage` or maintainer        |
 | `priority:low`  | Everything else                                  | `/triage` or maintainer        |
 | `prd:{N}`      | Issue belongs to PRD #N                         | `/to-issues` when splitting a PRD |
-| `slice:hitl`   | Slice that needs human-in-the-loop              | `/to-issues`                     |
-| `slice:afk`    | Slice that can run unattended                   | `/to-issues`                     |
 | `runner-error` | `/afk` fleet supervisor parked a slot after fast-death streak; affected issues were restored to `ready-for-agent` after the runner was discarded | `/afk` fleet supervisor on circuit trip |
 
 `runner-error` is the only auxiliary label `/afk` may create autonomously: the fleet supervisor calls `gh label create runner-error` when it trips the circuit breaker, so the cleanup never fails just because the label has not been provisioned.
@@ -156,6 +154,7 @@ How the edge drives the lifecycle:
 | Outcome (runtime) | Label | Recovery | Retry cap (env) |
 | ----------------- | ----- | -------- | --------------- |
 | runner quota / both exhausted | `blocked:quota` | **auto-retry** → ready-for-agent | 3 (`RED_AFK_RETRY_QUOTA`) |
+| runner transport/setup failed | `blocked:runner-transient` | **auto-retry** → ready-for-agent | 3 (`RED_AFK_RETRY_RUNNER_TRANSIENT`) |
 | couldn't integrate or land | `blocked:merge-conflict` | **auto-retry** (base settles) | 3 (`RED_AFK_RETRY_MERGE`) |
 | agent exited without a sentinel | `blocked:crashed` | **auto-retry once** (transient) | 1 (`RED_AFK_RETRY_CRASH`) |
 | a user `pre_*` guard hook rejected it | `blocked:policy` | **auto-retry once** | 1 (`RED_AFK_RETRY_POLICY`) |
@@ -164,7 +163,7 @@ How the edge drives the lifecycle:
 | stall-reaper killed a hung worker | `blocked:stalled` | restores ready-for-agent (uncapped — follow-up) | — |
 | worktree/base/push setup failed | `blocked:infra` | pages → ready-for-human (ops) | — |
 
-**Bounded auto-recovery (live).** The four recoverable reasons loop back to `ready-for-agent` and are retried, up to their per-reason cap (counting real attempt-ledger attempts); on the cap they **escalate** to `ready-for-human` with a `🤖 /afk escalating … retry budget exhausted (attempt N/cap)` comment. So a transient hiccup self-heals and never pages, but a persistent one still surfaces — bounded, no runaway loop. Caps are env-tunable (non-numeric/0 → default). `spec` and `validation` **always page** (a human must decide / review the diff); `dependency` waits on its `req:N` edges (never pages). The typed `blocked:<reason>` label is added in every case, so the backlog stays filterable by reason regardless of routing.
+**Bounded auto-recovery (live).** The five recoverable reasons loop back to `ready-for-agent` and are retried, up to their per-reason cap (counting real attempt-ledger attempts); on the cap they **escalate** to `ready-for-human` with a `🤖 /afk escalating … retry budget exhausted (attempt N/cap)` comment. So a transient hiccup self-heals and never pages, but a persistent one still surfaces — bounded, no runaway loop. Caps are env-tunable (non-numeric/0 → default). `spec` and `validation` **always page** (a human must decide / review the diff); `dependency` waits on its `req:N` edges (never pages). The typed `blocked:<reason>` label is added in every case, so the backlog stays filterable by reason regardless of routing.
 
 > Not yet wired: time-based backoff (today the re-queue is immediate; the cap is what prevents runaway) and a cap on the supervisor stall-reaper's `blocked:stalled` restore.
 
@@ -175,6 +174,6 @@ All `blocked:*` labels are created on the fly when first applied (mirroring `run
 All labels follow one of two shapes:
 
 - **kebab-case** — `needs-triage`, `ready-for-agent`, `running`, `wontfix`, `bug`.
-- **`prefix:value`** — `priority:high`, `slice:afk`, `prd:42`.
+- **`prefix:value`** — `priority:high`, `prd:42`.
 
 No uppercase, CamelCase, snake_case, or spaces. GitHub matches labels case-insensitively for filtering but stores the case you create them with — keep the tracker clean by normalising on creation. `/setup-red-skills` surfaces non-conforming labels and offers to rename via `gh label edit "Old Name" --name "new-name"`.
