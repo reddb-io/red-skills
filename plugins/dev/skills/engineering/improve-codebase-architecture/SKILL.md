@@ -30,23 +30,32 @@ This skill is _informed_ by the project's domain model. The domain language give
 
 ## Process
 
-### 1. Explore
+### 1. Explore (fan out across lenses)
 
 Read the project's domain glossary and any ADRs in the area you're touching first.
 
-Then use the Agent tool with `subagent_type=Explore` to walk the codebase. Don't follow rigid heuristics — explore organically and note where you experience friction:
+Then fan out **one Explore subagent per lens** (Agent tool, `subagent_type=Explore`). Each agent walks the same target tree but hunts for one kind of friction. Don't follow rigid heuristics — explore organically within the lens:
 
-- Where does understanding one concept require bouncing between many small modules?
-- Where are modules **shallow** — interface nearly as complex as the implementation?
-- Where have pure functions been extracted just for testability, but the real bugs hide in how they're called (no **locality**)?
-- Where do tightly-coupled modules leak across their seams?
-- Which parts of the codebase are untested, or hard to test through their current interface?
+- **shallow-modules** — modules where the interface is nearly as complex as the implementation; pass-throughs and thin wrappers.
+- **concept-scatter** — where understanding one concept requires bouncing between many small modules; logic that should have **locality** but is smeared across files.
+- **testability** — pure functions extracted just for testability while the real bugs hide in how they're called; parts untested or hard to test through their current interface.
+- **seam-leakage** — tightly-coupled modules that leak across their seams; callers depending on implementation details.
 
-Apply the **deletion test** to anything you suspect is shallow: would deleting it concentrate complexity, or just move it? A "yes, concentrates" is the signal you want.
+Tell each agent to apply the **deletion test** itself before surfacing anything, and to return only its strongest candidates (cap ~2 per lens) — fewer, or none, beats weak ones. A "deleting it concentrates complexity" is the signal you want.
 
-### 2. Present candidates
+> **Acceleration (optional).** If dynamic workflows are available in this environment, run steps 1–2 as a workflow instead — fan the lenses out in parallel and run the vet in the background, then read back the vetted list. A reference script lives at `.claude/workflows/improve-arch-explore.js` in the RedSkills repo (saved as the `/improve-arch-explore` command for contributors); in any other repo, author the equivalent inline. **This is only a speed/parallelism win — the result is identical to the Agent-tool path, which is the baseline and must work with no workflow support at all.** Never gate the skill on workflows being on.
 
-Present a numbered list of deepening opportunities. For each candidate:
+### 2. Vet — adversarially refute every candidate (do not skip)
+
+Before showing the user anything, pool the candidates and put each through an **adversarial deletion-test review**: spawn a skeptic (Agent tool, `subagent_type=Explore`) whose job is to **refute** the candidate — argue that deleting/merging the modules would merely *move* complexity rather than concentrate it, that an existing ADR already settles it, or that the friction is not real. The candidate is kept **only if the refactor withstands refutation**; default to dropping it when the skeptic is uncertain.
+
+Keep this cheap: one batched skeptic over the whole pool is enough — you do not need one agent per candidate. This stage is the quality gate; a single-pass exploration without it floods the user with plausible-but-wrong refactors. The AFK core, for instance, refuted most candidates because its "shallow" modules are deliberate seams backed by ADRs.
+
+Discard refuted candidates silently (or mention the count). Only survivors advance.
+
+### 3. Present surviving candidates
+
+Present a numbered list of the deepening opportunities that survived the vet. For each candidate:
 
 - **Files** — which files/modules are involved
 - **Problem** — why the current architecture is causing friction
@@ -59,7 +68,7 @@ Present a numbered list of deepening opportunities. For each candidate:
 
 Do NOT propose interfaces yet. Ask the user: "Which of these would you like to explore?"
 
-### 3. Grilling loop
+### 4. Grilling loop
 
 Once the user picks a candidate, drop into a grilling conversation. Walk the design tree with them — constraints, dependencies, the shape of the deepened module, what sits behind the seam, what tests survive.
 

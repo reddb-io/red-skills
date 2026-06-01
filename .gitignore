@@ -1,5 +1,7 @@
 # Claude Code local state
-.claude/
+.claude/*
+# …except shared dogfood workflows (saved as /commands for repo contributors)
+!.claude/workflows/
 
 # Per-repo agent ephemera (never committed)
 .red/tmp/
