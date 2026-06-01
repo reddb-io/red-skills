@@ -185,6 +185,21 @@ Run this before a release or after upgrading either CLI:
 
 It validates the install metadata, checks shell syntax, verifies the Claude and Codex runner flags that `/afk` depends on, tests Codex marketplace registration in a temporary home directory, and checks manual symlink installs for all local agent skill directories.
 
+### AFK runner and model config
+
+`/afk` is runner-portable, but the invoking LLM must identify its own host runner when it calls the bundle: Codex uses `RED_AFK_RUNNER=codex`; Claude Code uses `RED_AFK_RUNNER=claude`. Do not choose a different runner just because another CLI exists on `PATH`.
+
+Project-local AFK settings live in `.red/config.yaml`. Prefer per-runner model config so Codex never receives a Claude-only model:
+
+```yaml
+afk:
+  models:
+    codex: gpt-5.5
+    claude: claude-opus-4-8
+```
+
+Defaults are runner-specific: Codex defaults to `gpt-5.5`; Claude Code defaults to `claude-opus-4-8`. The legacy `afk.model` key is still accepted as a global override, but per-runner `afk.models.<runner>` is safer for mixed Claude/Codex fleets.
+
 <details>
 <summary><strong>Alternatives — no auto-update</strong></summary>
 
