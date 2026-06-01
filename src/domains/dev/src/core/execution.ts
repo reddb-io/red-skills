@@ -12,8 +12,13 @@
 // as sandcastle completion signals, so the existing AGENT-PROMPT contract is
 // unchanged.
 
-import type { RunOptions, RunResult } from "@ai-hero/sandcastle";
+import type { AgentStreamEvent, RunOptions, RunResult } from "@ai-hero/sandcastle";
 import { isRunnerExhausted } from "./runner-spawn.js";
+
+// Re-exported so process-issue / run can type their agent-event sink without
+// importing the sandcastle package directly (execution.ts is the single seam
+// coupled to sandcastle, ADR 0033).
+export type { AgentStreamEvent } from "@ai-hero/sandcastle";
 
 export type AgentRunner = "claude" | "codex";
 export type SandboxMode = "none" | "docker" | "podman";
@@ -149,6 +154,27 @@ export interface RunAgentInput {
    * that the agent's build actually sees CARGO_TARGET_DIR is pending #284.
    */
   env?: Record<string, string>;
+  /**
+   * Absolute path sandcastle drains its own file-log to (the `logging.path` of
+   * the "file" mode). AFK points this at the attempt dir's `sandcastle.log` so
+   * the inner agent's formatted stream lands under `.red/` next to the lanes.
+   * Required to enable {@link onAgentEvent}: sandcastle only surfaces the stream
+   * callback in log-to-file mode. Omitted → `buildRunOptions` leaves `logging`
+   * unset and sandcastle uses its default location.
+   */
+  logPath?: string;
+  /**
+   * Observability seam restoring the agent-lane liveness signal on the native
+   * path (the shell era tee'd inner-agent stdout into the lanes; sandcastle now
+   * captures the stream itself). When set together with {@link logPath},
+   * `buildRunOptions` wires it into sandcastle's `logging.onAgentStreamEvent`,
+   * yielding one callback per text chunk / tool call. process-issue forwards
+   * each event to `agent.log.jsonl` (the clean lane `reaper-signal` /
+   * `supervisor-fs` read for liveness) + the firehose — without it the lanes'
+   * mtime freezes at iteration start and the stall detector / monitor go blind
+   * to a live agent. sandcastle swallows any error this callback throws.
+   */
+  onAgentEvent?: (event: AgentStreamEvent) => void;
 }
 
 /** The git remote the continuous-push hook targets when none is supplied. */
@@ -296,6 +322,19 @@ export function buildRunOptions(deps: SandcastleDeps, input: RunAgentInput): Run
   const hooks: RunOptions["hooks"] | undefined = input.continuousPush
     ? { host: { onWorktreeReady: [buildContinuousPushHook(input.branch, input.remote ?? DEFAULT_REMOTE)] } }
     : undefined;
+  // Observability lane (native-path liveness): point sandcastle's file-log at
+  // the attempt dir's sandcastle.log and, when a sink is provided, forward each
+  // agent stream event to it via `logging.onAgentStreamEvent`. sandcastle only
+  // exposes the stream callback in "file" logging mode, so the callback rides
+  // alongside the path. Omitting `logPath` leaves `logging` unset (sandcastle
+  // default) — backward-compatible for callers/tests that don't observe.
+  const logging: RunOptions["logging"] | undefined = input.logPath
+    ? {
+        type: "file",
+        path: input.logPath,
+        ...(input.onAgentEvent ? { onAgentStreamEvent: input.onAgentEvent } : {}),
+      }
+    : undefined;
   return {
     agent: deps.agentFor(input.runner, input.model, { effort: input.effort }),
     sandbox: deps.sandboxFor(input.sandboxMode ?? "none"),
@@ -312,6 +351,7 @@ export function buildRunOptions(deps: SandcastleDeps, input: RunAgentInput): Run
     maxIterations: input.maxIterations ?? DEFAULT_MAX_ITERATIONS,
     idleTimeoutSeconds: input.idleTimeoutSeconds ?? DEFAULT_IDLE_TIMEOUT_S,
     ...(hooks ? { hooks } : {}),
+    ...(logging ? { logging } : {}),
   };
 }
 

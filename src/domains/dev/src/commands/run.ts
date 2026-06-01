@@ -45,6 +45,7 @@ import { branchLockPath, readLockedBranch, isLocked } from "../runtime/lock.js";
 import { makeHookExec, makeHookResolveOptions, hookEnv } from "../runtime/hooks.js";
 import { makeFeedbackWorktree, type FeedbackWorktree } from "../runtime/feedback-worktree.js";
 import { join } from "node:path";
+import { appendAgentRecord } from "../core/jsonl-log.js";
 
 export interface RunOptions {
   args: string[];
@@ -374,6 +375,23 @@ export function buildProcessDeps(
     // The per-iteration afk.log heartbeat boundary lives in the attempt dir.
     appendIterLog: (line) => {
       void fsx.appendLine(join(current.attemptDir, "afk.log"), line);
+    },
+    // Native-path liveness (#284 observability gap): sandcastle captures the
+    // inner agent's stream itself, so on the native path nothing advances the
+    // agent lane and its mtime freezes at iteration start — the stall detector
+    // (reaper-signal) and monitor then read a live agent as silent. Forward
+    // each sandcastle stream event to the clean agent lane (the liveness signal
+    // supervisor-fs / reaper key off) and mirror it into the firehose afk.log.
+    // Best-effort: lane-write failures are swallowed so observability can never
+    // break a run (sandcastle also swallows any throw from this callback).
+    recordAgentEvent: (event) => {
+      const ts = new Date().toISOString();
+      const msg = event.type === "text" ? event.message : `→ ${event.name} ${event.formattedArgs}`;
+      void appendAgentRecord(join(current.attemptDir, "agent.log.jsonl"), msg, {
+        ts,
+        fields: { extra: { iteration: String(event.iteration), kind: event.type } },
+      }).catch(() => {});
+      void fsx.appendLine(join(current.attemptDir, "afk.log"), `[agent] ${msg}`);
     },
     historyPath: paths.historyPath,
     historyClock: { ts: new Date().toISOString(), epoch: Math.floor(Date.now() / 1000) },

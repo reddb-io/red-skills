@@ -27,7 +27,7 @@ import {
   type GitExec,
 } from "./remote-branch.js";
 import { buildHandoff, type HandoffComment } from "./handoff.js";
-import { type RunAgentInput, type RunAgentResult } from "./execution.js";
+import { type AgentStreamEvent, type RunAgentInput, type RunAgentResult } from "./execution.js";
 import {
   relevantScopes,
   runFeedback,
@@ -220,6 +220,15 @@ export interface ProcessIssueDeps {
   nowIso(): string;
   /** Append one plain line to the iteration's afk.log (heartbeat boundary). */
   appendIterLog(line: string): void;
+  /**
+   * Best-effort observability sink for the inner agent's output stream, passed
+   * to runAgent as `onAgentEvent`. The CLI wires it to append a `type=agent`
+   * record to the attempt's `agent.log.jsonl` (the liveness lane the stall
+   * detector / monitor read) plus a firehose line, so the lane advances while
+   * the agent works instead of freezing at iteration start. Optional: when
+   * absent, runAgent runs without stream forwarding (tests, legacy callers).
+   */
+  recordAgentEvent?(event: AgentStreamEvent): void;
   /** History ledger path + clock for the terminal envelope (optional). */
   historyPath?: string;
   historyClock?: HistoryClock;
@@ -499,6 +508,11 @@ export async function processIssue(
     branch,
     base,
     cwd: input.attemptDir,
+    // Native-path liveness: drain sandcastle's file-log to the attempt dir and
+    // forward each agent stream event to the lanes (agent.log.jsonl + firehose)
+    // so the stall detector / monitor see a live agent instead of a frozen lane.
+    logPath: `${input.attemptDir}/sandcastle.log`,
+    onAgentEvent: deps.recordAgentEvent,
     // Restore the issue #191 continuous-push guarantee: sandcastle pushes the
     // worker branch up-front + after every commit (host worktree hook), so a
     // SIGKILL mid-iteration preserves the diff on origin. Best-effort.
@@ -541,6 +555,8 @@ export async function processIssue(
       branch,
       base,
       cwd: input.attemptDir,
+      logPath: `${input.attemptDir}/sandcastle.log`,
+      onAgentEvent: deps.recordAgentEvent,
       remote: input.remote,
       continuousPush: true,
       // FIX J: carry the pre_worktree env onto the fallback runner too.
