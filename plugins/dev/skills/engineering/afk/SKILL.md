@@ -786,6 +786,23 @@ processed : 4 closed, 0 blocked, 0 failed
 remaining : 8 still ready-for-agent
 ```
 
+## Configuration
+
+Scalar run settings live in `.red/config.yaml` under the `afk:` key (alongside the `afk.hooks` block documented below). Each one has a matching `RED_AFK_*` env override that wins over the config value, so an E2E/CI run can pick a setting without mutating the target repo's config.
+
+| Config key | Env override | Default | Meaning |
+|---|---|---|---|
+| `afk.default_runner` | `RED_AFK_RUNNER` | `claude` | Backend the detection cascade falls back to. |
+| `afk.model` | — | `claude-opus-4-8` | Model id passed to the runner. |
+| `afk.sandbox` | `RED_AFK_SANDBOX` | `none` | Isolation backend (`none` \| `docker` \| `podman`, ADR 0033). |
+| `afk.max_iterations` | `RED_AFK_MAX_ITERATIONS` | `50` | Sandcastle re-invocation ceiling (issue #322) — the safety cap for "the agent never emits `<promise>DONE</promise>`". The completion sentinel is the real terminator, so a normal issue finishes in 1–3 iterations; this is headroom for a thorough agent that keeps refining/testing. A non-numeric / zero / negative value in either the env or the config is ignored (falls through to the default) so a typo can never disable the cap or pin the agent to 1. |
+
+```yaml
+afk:
+  sandbox: none
+  max_iterations: 50      # override the default ceiling here
+```
+
 ## Lifecycle Hooks
 
 `/afk` exposes a fixed set of lifecycle points declared in `.red/config.yaml` under `afk.hooks` and resolved as ordered lists of shell commands. Every hook follows a single interceptor contract:

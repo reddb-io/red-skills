@@ -162,324 +162,6 @@ var init_history = __esm({
   }
 });
 
-// src/runtime/exec.ts
-var exec_exports = {};
-__export(exec_exports, {
-  execTool: () => execTool,
-  gh: () => gh,
-  git: () => git,
-  pnpm: () => pnpm
-});
-import { execFile } from "node:child_process";
-function execTool(cmd, args2, opts3 = {}) {
-  return new Promise((resolve6) => {
-    const child = execFile(
-      cmd,
-      [...args2],
-      {
-        cwd: opts3.cwd,
-        env: opts3.env ?? process.env,
-        timeout: opts3.timeoutMs ?? 0,
-        maxBuffer: opts3.maxBuffer ?? DEFAULT_MAX_BUFFER,
-        encoding: "utf8"
-      },
-      (error, stdout2, stderr2) => {
-        if (error && typeof error.code === "string") {
-          resolve6({ code: 127, stdout: String(stdout2 ?? ""), stderr: String(error.message) });
-          return;
-        }
-        const code = error && typeof error.code === "number" ? error.code : 0;
-        resolve6({ code, stdout: String(stdout2 ?? ""), stderr: String(stderr2 ?? "") });
-      }
-    );
-    if (opts3.input !== void 0 && child.stdin) {
-      child.stdin.end(opts3.input);
-    }
-  });
-}
-function git(args2, opts3 = {}) {
-  return execTool("git", args2, opts3);
-}
-function gh(args2, opts3 = {}) {
-  return execTool("gh", args2, opts3);
-}
-function pnpm(args2, opts3 = {}) {
-  return execTool("pnpm", args2, opts3);
-}
-var DEFAULT_MAX_BUFFER;
-var init_exec = __esm({
-  "src/runtime/exec.ts"() {
-    "use strict";
-    DEFAULT_MAX_BUFFER = 16 * 1024 * 1024;
-  }
-});
-
-// src/runtime/fs.ts
-var fs_exports = {};
-__export(fs_exports, {
-  appendLine: () => appendLine,
-  completionSweep: () => completionSweep,
-  ensureDir: () => ensureDir,
-  ensureGitignoreLine: () => ensureGitignoreLine,
-  globWorkerStates: () => globWorkerStates,
-  listLegacyWorkDirs: () => listLegacyWorkDirs,
-  listOrphanDirs: () => listOrphanDirs,
-  listStaleClaimDirs: () => listStaleClaimDirs,
-  pathExists: () => pathExists,
-  readEnvelopePosted: () => readEnvelopePosted,
-  readText: () => readText,
-  removeDir: () => removeDir,
-  writeEnvelopePosted: () => writeEnvelopePosted,
-  writeFailureMarkers: () => writeFailureMarkers,
-  writeHandoff: () => writeHandoff,
-  writeValidationSidecar: () => writeValidationSidecar,
-  writeWorkerPid: () => writeWorkerPid
-});
-import { constants as constants2 } from "node:fs";
-import {
-  access as access2,
-  appendFile as appendFile2,
-  mkdir as mkdir3,
-  readdir,
-  readFile as readFile3,
-  rm as rm2,
-  stat as stat2,
-  writeFile as writeFile3
-} from "node:fs/promises";
-import { dirname as dirname2, join as join2 } from "node:path";
-async function ensureDir(path2) {
-  await mkdir3(path2, { recursive: true });
-}
-async function pathExists(path2) {
-  try {
-    await access2(path2, constants2.F_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}
-async function ensureGitignoreLine(gitignorePath, line) {
-  let current = "";
-  try {
-    current = await readFile3(gitignorePath, "utf8");
-  } catch {
-    current = "";
-  }
-  const lines2 = current.split("\n").map((l) => l.replace(/\r$/, ""));
-  if (lines2.includes(line)) return;
-  const sep = current.length === 0 || current.endsWith("\n") ? "" : "\n";
-  await mkdir3(dirname2(gitignorePath), { recursive: true });
-  await appendFile2(gitignorePath, `${sep}${line}
-`, "utf8");
-}
-async function writeWorkerPid(pidFile, pid) {
-  await mkdir3(dirname2(pidFile), { recursive: true });
-  await writeFile3(pidFile, String(pid), "utf8");
-}
-async function removeDir(path2) {
-  await rm2(path2, { recursive: true, force: true });
-}
-async function writeHandoff(path2, content) {
-  await mkdir3(dirname2(path2), { recursive: true });
-  await writeFile3(path2, content, "utf8");
-}
-async function writeValidationSidecar(path2, lines2) {
-  await mkdir3(dirname2(path2), { recursive: true });
-  await writeFile3(path2, lines2.length > 0 ? `${lines2.join("\n")}
-` : "", "utf8");
-}
-async function readText(path2) {
-  try {
-    return await readFile3(path2, "utf8");
-  } catch {
-    return null;
-  }
-}
-async function globWorkerStates(workersRoot) {
-  const out = [];
-  let workerDirs;
-  try {
-    workerDirs = await readdir(workersRoot);
-  } catch {
-    return out;
-  }
-  for (const worker of workerDirs) {
-    const workerPath = join2(workersRoot, worker);
-    let attempts;
-    try {
-      attempts = await readdir(workerPath);
-    } catch {
-      continue;
-    }
-    for (const attempt of attempts) {
-      const stateFile = join2(workerPath, attempt, "afk.state.json");
-      if (await pathExists(stateFile)) out.push(stateFile);
-    }
-  }
-  return out;
-}
-async function appendLine(path2, line) {
-  await mkdir3(dirname2(path2), { recursive: true });
-  await appendFile2(path2, `${line}
-`, "utf8");
-}
-async function writeFailureMarkers(attemptDir, markers) {
-  await mkdir3(attemptDir, { recursive: true });
-  if (markers.snapshotBranchRef !== void 0) {
-    await writeFile3(join2(attemptDir, "snapshot-branch.ref"), markers.snapshotBranchRef, "utf8");
-  }
-  if (markers.failureReason !== void 0) {
-    await writeFile3(join2(attemptDir, "failure.reason"), markers.failureReason, "utf8");
-  }
-}
-async function writeEnvelopePosted(attemptDir, posted) {
-  const statePath = join2(attemptDir, "afk.state.json");
-  let obj = {};
-  const text3 = await readText(statePath);
-  if (text3 !== null) {
-    try {
-      const parsed = JSON.parse(text3);
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) obj = parsed;
-    } catch {
-      obj = {};
-    }
-  }
-  const env2 = obj.envelope && typeof obj.envelope === "object" ? obj.envelope : {};
-  env2.posted = posted;
-  obj.envelope = env2;
-  await mkdir3(attemptDir, { recursive: true });
-  await writeFile3(statePath, `${JSON.stringify(obj)}
-`, "utf8");
-}
-async function readEnvelopePosted(attemptDir) {
-  const text3 = await readText(join2(attemptDir, "afk.state.json"));
-  if (text3 === null) return false;
-  try {
-    const parsed = JSON.parse(text3);
-    return parsed.envelope?.posted === true;
-  } catch {
-    return false;
-  }
-}
-async function listOrphanDirs(workersRoot, nowS) {
-  const out = [];
-  let workers;
-  try {
-    workers = await readdir(workersRoot);
-  } catch {
-    return out;
-  }
-  for (const worker of workers) {
-    const workerPath = join2(workersRoot, worker);
-    let attempts;
-    try {
-      attempts = await readdir(workerPath);
-    } catch {
-      continue;
-    }
-    for (const attempt of attempts) {
-      const dir = join2(workerPath, attempt);
-      const m2 = /^([1-9][0-9]*)-a[1-9][0-9]*$/.exec(attempt);
-      let ageS = 0;
-      try {
-        const st2 = await stat2(dir);
-        ageS = Math.max(0, nowS - Math.floor(st2.mtimeMs / 1e3));
-      } catch {
-        continue;
-      }
-      out.push({ path: dir, issue: m2 ? Number(m2[1]) : null, ageS });
-    }
-  }
-  return out;
-}
-function pidAlive(raw3) {
-  if (raw3 === null) return false;
-  const trimmed = raw3.trim();
-  if (!/^[1-9][0-9]*$/.test(trimmed)) return false;
-  try {
-    process.kill(Number(trimmed), 0);
-    return true;
-  } catch (err) {
-    return err.code === "EPERM";
-  }
-}
-async function listStaleClaimDirs(tmpDir) {
-  const claimsRoot = join2(tmpDir, "claims");
-  let entries2;
-  try {
-    entries2 = await readdir(claimsRoot);
-  } catch {
-    return [];
-  }
-  const out = [];
-  for (const entry of entries2) {
-    const dir = join2(claimsRoot, entry);
-    try {
-      const st2 = await stat2(dir);
-      if (!st2.isDirectory()) continue;
-    } catch {
-      continue;
-    }
-    const raw3 = await readText(join2(dir, "pid"));
-    if (!pidAlive(raw3)) out.push({ path: dir });
-  }
-  return out;
-}
-async function listLegacyWorkDirs(tmpDir) {
-  let entries2;
-  try {
-    entries2 = await readdir(tmpDir);
-  } catch {
-    return [];
-  }
-  const out = [];
-  for (const entry of entries2) {
-    if (!entry.startsWith("work-")) continue;
-    const dir = join2(tmpDir, entry);
-    try {
-      const st2 = await stat2(dir);
-      if (!st2.isDirectory()) continue;
-    } catch {
-      continue;
-    }
-    const raw3 = await readText(join2(dir, "afk.pid"));
-    if (!pidAlive(raw3)) out.push(dir);
-  }
-  return out;
-}
-async function completionSweep(workersRoot, issue) {
-  const removed = [];
-  let workerDirs;
-  try {
-    workerDirs = await readdir(workersRoot);
-  } catch {
-    return removed;
-  }
-  const prefix = `${issue}-a`;
-  for (const worker of workerDirs) {
-    const workerPath = join2(workersRoot, worker);
-    let attempts;
-    try {
-      attempts = await readdir(workerPath);
-    } catch {
-      continue;
-    }
-    for (const attempt of attempts) {
-      if (attempt.startsWith(prefix)) {
-        const dir = join2(workerPath, attempt);
-        await rm2(dir, { recursive: true, force: true });
-        removed.push(dir);
-      }
-    }
-  }
-  return removed;
-}
-var init_fs = __esm({
-  "src/runtime/fs.ts"() {
-    "use strict";
-  }
-});
-
 // src/core/runner-spawn.ts
 function specialUserRequestBlock(specialRequest) {
   if (!specialRequest) return null;
@@ -2071,7 +1753,7 @@ var init_Record = __esm({
 });
 
 // ../../../../../../src/domains/dev/node_modules/.pnpm/effect@3.21.2/node_modules/effect/dist/esm/Array.js
-var allocate, makeBy, fromIterable2, ensure, matchLeft, prepend, append, appendAll, isArray, isEmptyArray, isEmptyReadonlyArray, isNonEmptyArray2, isNonEmptyReadonlyArray, isOutOfBounds, clamp2, get, unsafeGet, head, headNonEmpty, last, lastNonEmpty, tailNonEmpty, spanIndex, span, drop, reverse, sort, zip, zipWith2, _equivalence2, splitAt, splitNonEmptyAt, copy, unionWith, union, empty2, of, map5, flatMap2, flatten2, filterMap2, partitionMap2, getSomes, filter2, reduce, reduceRight, unfold, getEquivalence2, dedupeWith, dedupe, join3;
+var allocate, makeBy, fromIterable2, ensure, matchLeft, prepend, append, appendAll, isArray, isEmptyArray, isEmptyReadonlyArray, isNonEmptyArray2, isNonEmptyReadonlyArray, isOutOfBounds, clamp2, get, unsafeGet, head, headNonEmpty, last, lastNonEmpty, tailNonEmpty, spanIndex, span, drop, reverse, sort, zip, zipWith2, _equivalence2, splitAt, splitNonEmptyAt, copy, unionWith, union, empty2, of, map5, flatMap2, flatten2, filterMap2, partitionMap2, getSomes, filter2, reduce, reduceRight, unfold, getEquivalence2, dedupeWith, dedupe, join2;
 var init_Array = __esm({
   "../../../../../../src/domains/dev/node_modules/.pnpm/effect@3.21.2/node_modules/effect/dist/esm/Array.js"() {
     init_Either();
@@ -2269,7 +1951,7 @@ var init_Array = __esm({
       return [];
     });
     dedupe = (self) => dedupeWith(self, equivalence());
-    join3 = /* @__PURE__ */ dual(2, (self, sep) => fromIterable2(self).join(sep));
+    join2 = /* @__PURE__ */ dual(2, (self, sep) => fromIterable2(self).join(sep));
   }
 });
 
@@ -7402,7 +7084,7 @@ var init_configError2 = __esm({
       Object.defineProperty(error, "toString", {
         enumerable: false,
         value() {
-          const path3 = pipe(this.path, join3(options2.pathDelim));
+          const path3 = pipe(this.path, join2(options2.pathDelim));
           return `(Invalid data at ${path3}: "${this.message}")`;
         }
       });
@@ -7418,7 +7100,7 @@ var init_configError2 = __esm({
       Object.defineProperty(error, "toString", {
         enumerable: false,
         value() {
-          const path3 = pipe(this.path, join3(options2.pathDelim));
+          const path3 = pipe(this.path, join2(options2.pathDelim));
           return `(Missing data at ${path3}: "${this.message}")`;
         }
       });
@@ -7435,7 +7117,7 @@ var init_configError2 = __esm({
       Object.defineProperty(error, "toString", {
         enumerable: false,
         value() {
-          const path3 = pipe(this.path, join3(options2.pathDelim));
+          const path3 = pipe(this.path, join2(options2.pathDelim));
           return `(Source unavailable at ${path3}: "${this.message}")`;
         }
       });
@@ -7451,7 +7133,7 @@ var init_configError2 = __esm({
       Object.defineProperty(error, "toString", {
         enumerable: false,
         value() {
-          const path3 = pipe(this.path, join3(options2.pathDelim));
+          const path3 = pipe(this.path, join2(options2.pathDelim));
           return `(Unsupported operation at ${path3}: "${this.message}")`;
         }
       });
@@ -7606,7 +7288,7 @@ var init_configProvider = __esm({
         pathDelim: "_",
         seqDelim: ","
       }, options2);
-      const makePathString = (path2) => pipe(path2, join3(pathDelim));
+      const makePathString = (path2) => pipe(path2, join2(pathDelim));
       const unmakePathString = (pathString) => pathString.split(pathDelim);
       const getEnv = () => typeof process !== "undefined" && "env" in process && typeof process.env === "object" ? process.env : {};
       const load = (path2, primitive, split2 = true) => {
@@ -7730,7 +7412,7 @@ var init_configProvider = __esm({
               return fail2(right3.left);
             }
             if (isRight2(left3) && isRight2(right3)) {
-              const path2 = pipe(prefix, join3("."));
+              const path2 = pipe(prefix, join2("."));
               const fail17 = fromFlatLoopFail(prefix, path2);
               const [lefts, rights] = extend(fail17, fail17, pipe(left3.right, map5(right2)), pipe(right3.right, map5(right2)));
               return pipe(lefts, zip(rights), forEachSequential(([left4, right4]) => pipe(zip2(left4, right4), map12(([left5, right5]) => op.zip(left5, right5)))));
@@ -10605,7 +10287,7 @@ var init_fiberScope = __esm({
 });
 
 // ../../../../../../src/domains/dev/node_modules/.pnpm/effect@3.21.2/node_modules/effect/dist/esm/internal/fiber.js
-var FiberSymbolKey, FiberTypeId, fiberVariance2, fiberProto, RuntimeFiberSymbolKey, RuntimeFiberTypeId, Order4, isRuntimeFiber, _await, inheritAll, interruptAllAs, interruptAsFork, join4, _never, currentFiberURI;
+var FiberSymbolKey, FiberTypeId, fiberVariance2, fiberProto, RuntimeFiberSymbolKey, RuntimeFiberTypeId, Order4, isRuntimeFiber, _await, inheritAll, interruptAllAs, interruptAsFork, join3, _never, currentFiberURI;
 var init_fiber = __esm({
   "../../../../../../src/domains/dev/node_modules/.pnpm/effect@3.21.2/node_modules/effect/dist/esm/internal/fiber.js"() {
     init_FiberId();
@@ -10652,11 +10334,11 @@ var init_fiber = __esm({
       }
     }));
     interruptAsFork = /* @__PURE__ */ dual(2, (self, fiberId3) => self.interruptAsFork(fiberId3));
-    join4 = (self) => zipLeft2(flatten5(self.await), self.inheritAll);
+    join3 = (self) => zipLeft2(flatten5(self.await), self.inheritAll);
     _never = {
       ...CommitPrototype,
       commit() {
-        return join4(this);
+        return join3(this);
       },
       ...fiberProto,
       id: () => none4,
@@ -13297,7 +12979,7 @@ var init_fiberRuntime = __esm({
         this.refreshRefCache();
       }
       commit() {
-        return join4(this);
+        return join3(this);
       }
       /**
        * The identity of the fiber.
@@ -14538,7 +14220,7 @@ var init_fiberRuntime = __esm({
           next4();
         }
       }));
-      return asVoid2(onExit(flatten5(restore(join4(processingFiber))), exitMatch({
+      return asVoid2(onExit(flatten5(restore(join3(processingFiber))), exitMatch({
         onFailure: (cause3) => {
           onInterruptSignal();
           const target3 = residual.length + 1;
@@ -14863,7 +14545,7 @@ var init_fiberRuntime = __esm({
       const _fiberAll = {
         ...CommitPrototype2,
         commit() {
-          return join4(this);
+          return join3(this);
         },
         [FiberTypeId]: fiberVariance2,
         id: () => fromIterable2(fibers2).reduce((id2, fiber) => combine3(id2, fiber.id()), none4),
@@ -14916,14 +14598,14 @@ var init_fiberRuntime = __esm({
         }
       })
     }));
-    disconnect = (self) => uninterruptibleMask((restore) => fiberIdWith((fiberId3) => flatMap7(forkDaemon(restore(self)), (fiber) => pipe(restore(join4(fiber)), onInterrupt(() => pipe(fiber, interruptAsFork(fiberId3)))))));
+    disconnect = (self) => uninterruptibleMask((restore) => fiberIdWith((fiberId3) => flatMap7(forkDaemon(restore(self)), (fiber) => pipe(restore(join3(fiber)), onInterrupt(() => pipe(fiber, interruptAsFork(fiberId3)))))));
     race = /* @__PURE__ */ dual(2, (self, that) => fiberIdWith((parentFiberId) => raceWith(self, that, {
       onSelfDone: (exit4, right3) => exitMatchEffect(exit4, {
-        onFailure: (cause3) => pipe(join4(right3), mapErrorCause((cause22) => parallel(cause3, cause22))),
+        onFailure: (cause3) => pipe(join3(right3), mapErrorCause((cause22) => parallel(cause3, cause22))),
         onSuccess: (value2) => pipe(right3, interruptAsFiber(parentFiberId), as2(value2))
       }),
       onOtherDone: (exit4, left3) => exitMatchEffect(exit4, {
-        onFailure: (cause3) => pipe(join4(left3), mapErrorCause((cause22) => parallel(cause22, cause3))),
+        onFailure: (cause3) => pipe(join3(left3), mapErrorCause((cause22) => parallel(cause22, cause3))),
         onSuccess: (value2) => pipe(left3, interruptAsFiber(parentFiberId), as2(value2))
       })
     })));
@@ -15473,8 +15155,8 @@ var init_circular = __esm({
       return succeed(fiber);
     }));
     forkScoped = (self) => scopeWith((scope5) => forkIn(self, scope5));
-    fromFiber = (fiber) => join4(fiber);
-    fromFiberEffect = (fiber) => suspend(() => flatMap7(fiber, join4));
+    fromFiber = (fiber) => join3(fiber);
+    fromFiberEffect = (fiber) => suspend(() => flatMap7(fiber, join3));
     memoKeySymbol = /* @__PURE__ */ Symbol.for("effect/Effect/memoizeFunction.key");
     Key = class {
       a;
@@ -15634,7 +15316,7 @@ var init_layer = __esm({
 });
 
 // ../../../../../../src/domains/dev/node_modules/.pnpm/effect@3.21.2/node_modules/effect/dist/esm/Fiber.js
-var _await2, inheritAll2, interrupt5, interruptAs, interruptAllAs2, join5;
+var _await2, inheritAll2, interrupt5, interruptAs, interruptAllAs2, join4;
 var init_Fiber = __esm({
   "../../../../../../src/domains/dev/node_modules/.pnpm/effect@3.21.2/node_modules/effect/dist/esm/Fiber.js"() {
     init_core();
@@ -15644,7 +15326,7 @@ var init_Fiber = __esm({
     interrupt5 = interruptFiber;
     interruptAs = interruptAsFiber;
     interruptAllAs2 = interruptAllAs;
-    join5 = join4;
+    join4 = join3;
   }
 });
 
@@ -22386,8 +22068,8 @@ var init_channel2 = __esm({
           function go2(state) {
             switch (state._tag) {
               case OP_BOTH_RUNNING: {
-                const leftJoin = interruptible4(join5(state.left));
-                const rightJoin = interruptible4(join5(state.right));
+                const leftJoin = interruptible4(join4(state.left));
+                const rightJoin = interruptible4(join4(state.right));
                 return unwrap(raceWith2(leftJoin, rightJoin, {
                   onSelfDone: (leftExit, rf) => zipRight5(interrupt5(rf), handleSide(leftExit, state.right, pullL)(options2.onSelfDone, BothRunning, (f) => LeftDone(f))),
                   onOtherDone: (rightExit, lf) => zipRight5(interrupt5(lf), handleSide(rightExit, state.left, pullR)(options2.onOtherDone, (left3, right3) => BothRunning(right3, left3), (f) => RightDone(f)))
@@ -34295,7 +33977,7 @@ var init_Multipart = __esm({
 });
 
 // ../../../../../../src/domains/dev/node_modules/.pnpm/effect@3.21.2/node_modules/effect/dist/esm/FiberSet.js
-var TypeId35, isFiberSet, Proto5, unsafeMake13, make61, internalFiberIdId, internalFiberId, isInternalInterruption, unsafeAdd, join6;
+var TypeId35, isFiberSet, Proto5, unsafeMake13, make61, internalFiberIdId, internalFiberId, isInternalInterruption, unsafeAdd, join5;
 var init_FiberSet = __esm({
   "../../../../../../src/domains/dev/node_modules/.pnpm/effect@3.21.2/node_modules/effect/dist/esm/FiberSet.js"() {
     init_Cause();
@@ -34382,7 +34064,7 @@ var init_FiberSet = __esm({
         }
       });
     });
-    join6 = (self) => _await3(self.deferred);
+    join5 = (self) => _await3(self.deferred);
   }
 });
 
@@ -36035,7 +35717,7 @@ var init_worker = __esm({
               }
               buffer3.length = 0;
             }
-            return yield* restore(join6(fiberSet));
+            return yield* restore(join5(fiberSet));
           }).pipe(scoped2));
           const send = (message, transfers) => try_2({
             try: () => {
@@ -43572,7 +43254,7 @@ import * as Crypto from "node:crypto";
 import * as NFS from "node:fs";
 import * as OS from "node:os";
 import * as Path3 from "node:path";
-var handleBadArgument, access4, copy3, copyFile2, chmod2, chown2, link2, makeDirectory, makeTempDirectoryFactory, makeTempDirectory, removeFactory, remove11, makeTempDirectoryScoped, openFactory, open2, makeFile, makeTempFileFactory, makeTempFile, makeTempFileScoped, readDirectory, readFile6, readLink, realPath, rename4, makeFileInfo, stat4, symlink2, truncate2, utimes2, watchNode, watch2, writeFile6, makeFileSystem, layer2;
+var handleBadArgument, access3, copy3, copyFile2, chmod2, chown2, link2, makeDirectory, makeTempDirectoryFactory, makeTempDirectory, removeFactory, remove11, makeTempDirectoryScoped, openFactory, open2, makeFile, makeTempFileFactory, makeTempFile, makeTempFileScoped, readDirectory, readFile4, readLink, realPath, rename3, makeFileInfo, stat3, symlink2, truncate2, utimes2, watchNode, watch2, writeFile4, makeFileSystem, layer2;
 var init_fileSystem2 = __esm({
   "../../../../../../src/domains/dev/node_modules/.pnpm/@effect+platform-node-shared@0.58.0_@effect+cluster@0.57.0_@effect+platform@0.95.0_effe_0d14ac55f3005c2dcb8dae960f151a34/node_modules/@effect/platform-node-shared/dist/esm/internal/fileSystem.js"() {
     init_Effectify();
@@ -43589,7 +43271,7 @@ var init_fileSystem2 = __esm({
       method,
       cause: cause3
     });
-    access4 = /* @__PURE__ */ (() => {
+    access3 = /* @__PURE__ */ (() => {
       const nodeAccess = /* @__PURE__ */ effectify2(NFS.access, /* @__PURE__ */ handleErrnoException("FileSystem", "access"), /* @__PURE__ */ handleBadArgument("access"));
       return (path2, options2) => {
         let mode = NFS.constants.F_OK;
@@ -43791,7 +43473,7 @@ var init_fileSystem2 = __esm({
       try: () => NFS.promises.readdir(path2, options2),
       catch: (err) => handleErrnoException("FileSystem", "readDirectory")(err, [path2])
     });
-    readFile6 = (path2) => async2((resume2, signal) => {
+    readFile4 = (path2) => async2((resume2, signal) => {
       try {
         NFS.readFile(path2, {
           signal
@@ -43814,7 +43496,7 @@ var init_fileSystem2 = __esm({
       const nodeRealPath = /* @__PURE__ */ effectify2(NFS.realpath, /* @__PURE__ */ handleErrnoException("FileSystem", "realPath"), /* @__PURE__ */ handleBadArgument("realPath"));
       return (path2) => nodeRealPath(path2);
     })();
-    rename4 = /* @__PURE__ */ (() => {
+    rename3 = /* @__PURE__ */ (() => {
       const nodeRename = /* @__PURE__ */ effectify2(NFS.rename, /* @__PURE__ */ handleErrnoException("FileSystem", "rename"), /* @__PURE__ */ handleBadArgument("rename"));
       return (oldPath, newPath) => nodeRename(oldPath, newPath);
     })();
@@ -43834,7 +43516,7 @@ var init_fileSystem2 = __esm({
       blksize: map2(fromNullable(stat6.blksize), Size2),
       blocks: fromNullable(stat6.blocks)
     });
-    stat4 = /* @__PURE__ */ (() => {
+    stat3 = /* @__PURE__ */ (() => {
       const nodeStat = /* @__PURE__ */ effectify2(NFS.stat, /* @__PURE__ */ handleErrnoException("FileSystem", "stat"), /* @__PURE__ */ handleBadArgument("stat"));
       return (path2) => map19(nodeStat(path2), makeFileInfo);
     })();
@@ -43857,7 +43539,7 @@ var init_fileSystem2 = __esm({
         if (!path3) return;
         switch (event) {
           case "rename": {
-            emit.fromEffect(matchEffect3(stat4(path3), {
+            emit.fromEffect(matchEffect3(stat3(path3), {
               onSuccess: (_) => succeed9(WatchEventCreate({
                 path: path3
               })),
@@ -43889,8 +43571,8 @@ var init_fileSystem2 = __esm({
       });
       return watcher;
     }), (watcher) => sync6(() => watcher.close())));
-    watch2 = (backend, path2, options2) => stat4(path2).pipe(map19((stat6) => backend.pipe(flatMap((_) => _.register(path2, stat6, options2)), getOrElse(() => watchNode(path2, options2)))), unwrap3);
-    writeFile6 = (path2, data, options2) => async2((resume2, signal) => {
+    watch2 = (backend, path2, options2) => stat3(path2).pipe(map19((stat6) => backend.pipe(flatMap((_) => _.register(path2, stat6, options2)), getOrElse(() => watchNode(path2, options2)))), unwrap3);
+    writeFile4 = (path2, data, options2) => async2((resume2, signal) => {
       try {
         NFS.writeFile(path2, data, {
           signal,
@@ -43908,7 +43590,7 @@ var init_fileSystem2 = __esm({
       }
     });
     makeFileSystem = /* @__PURE__ */ map19(/* @__PURE__ */ serviceOption2(WatchBackend), (backend) => make54({
-      access: access4,
+      access: access3,
       chmod: chmod2,
       chown: chown2,
       copy: copy3,
@@ -43921,19 +43603,19 @@ var init_fileSystem2 = __esm({
       makeTempFileScoped,
       open: open2,
       readDirectory,
-      readFile: readFile6,
+      readFile: readFile4,
       readLink,
       realPath,
       remove: remove11,
-      rename: rename4,
-      stat: stat4,
+      rename: rename3,
+      stat: stat3,
       symlink: symlink2,
       truncate: truncate2,
       utimes: utimes2,
       watch(path2, options2) {
         return watch2(backend, path2, options2);
       },
-      writeFile: writeFile6
+      writeFile: writeFile4
     }));
     layer2 = /* @__PURE__ */ effect(FileSystem, makeFileSystem);
   }
@@ -72300,7 +71982,7 @@ ${c}
 });
 
 // ../../../../../../src/domains/dev/node_modules/.pnpm/@ai-hero+sandcastle@0.6.5_@effect+cluster@0.57.0_@effect+platform@0.95.0_effect@3.21.2__2fa8178ee2d3f5b36174a7c3081b14be/node_modules/@ai-hero/sandcastle/dist/Display.js
-import { dirname as dirname5 } from "node:path";
+import { dirname as dirname3 } from "node:path";
 import { styleText } from "node:util";
 var Display, SilentDisplay, FileDisplay, severityToClack, terminalStyle, ClackDisplay;
 var init_Display = __esm({
@@ -72352,7 +72034,7 @@ var init_Display = __esm({
     FileDisplay = {
       layer: (filePath) => Layer_exports.effect(Display, Effect_exports.gen(function* () {
         const fs = yield* FileSystem_exports.FileSystem;
-        yield* fs.makeDirectory(dirname5(filePath), { recursive: true }).pipe(Effect_exports.orDie);
+        yield* fs.makeDirectory(dirname3(filePath), { recursive: true }).pipe(Effect_exports.orDie);
         const delimiter = `
 --- Run started: ${(/* @__PURE__ */ new Date()).toISOString()} ---
 `;
@@ -72563,8 +72245,8 @@ var init_PromptPreprocessor = __esm({
 });
 
 // ../../../../../../src/domains/dev/node_modules/.pnpm/@ai-hero+sandcastle@0.6.5_@effect+cluster@0.57.0_@effect+platform@0.95.0_effect@3.21.2__2fa8178ee2d3f5b36174a7c3081b14be/node_modules/@ai-hero/sandcastle/dist/WorktreeManager.js
-import { execFile as execFile2 } from "node:child_process";
-import { join as join8, normalize as normalize2 } from "node:path";
+import { execFile } from "node:child_process";
+import { join as join7, normalize as normalize2 } from "node:path";
 var WORKTREE_TIMEOUT_MS, NO_CONFIG_LOCK_FLAGS, formatTimestamp, sanitizeName, execGit, generateTempBranchName, getCurrentBranch, normalizePath, findCollidingWorktree, isManagedWorktreePath, isOrphanedWorktreePath, listWorktrees, create, hasUncommittedChanges, remove12, pruneStale;
 var init_WorktreeManager = __esm({
   "../../../../../../src/domains/dev/node_modules/.pnpm/@ai-hero+sandcastle@0.6.5_@effect+cluster@0.57.0_@effect+platform@0.95.0_effect@3.21.2__2fa8178ee2d3f5b36174a7c3081b14be/node_modules/@ai-hero/sandcastle/dist/WorktreeManager.js"() {
@@ -72584,7 +72266,7 @@ var init_WorktreeManager = __esm({
     };
     sanitizeName = (name) => name.toLowerCase().replace(/[^a-z0-9]/g, "-");
     execGit = (args2, cwd) => Effect_exports.async((resume2) => {
-      execFile2("git", args2, { cwd, env: { ...process.env, LC_ALL: "C" } }, (error, stdout2, stderr2) => {
+      execFile("git", args2, { cwd, env: { ...process.env, LC_ALL: "C" } }, (error, stdout2, stderr2) => {
         if (error) {
           resume2(Effect_exports.fail(new WorktreeError({
             message: stderr2?.trim() || error.message
@@ -72635,7 +72317,7 @@ var init_WorktreeManager = __esm({
     }));
     create = (repoDir, opts3) => Effect_exports.gen(function* () {
       const fs = yield* FileSystem_exports.FileSystem;
-      const worktreesDir = join8(repoDir, ".sandcastle", "worktrees");
+      const worktreesDir = join7(repoDir, ".sandcastle", "worktrees");
       yield* fs.makeDirectory(worktreesDir, { recursive: true }).pipe(Effect_exports.mapError((e2) => new WorktreeError({ message: e2.message })));
       let branch;
       let worktreeName;
@@ -72653,7 +72335,7 @@ var init_WorktreeManager = __esm({
           worktreeName = `sandcastle-${timestamp}`;
         }
       }
-      const worktreePath = join8(worktreesDir, worktreeName);
+      const worktreePath = join7(worktreesDir, worktreeName);
       if (opts3?.branch) {
         const existing = yield* listWorktrees(repoDir);
         const collision = findCollidingWorktree(existing, branch, worktreePath);
@@ -72712,13 +72394,13 @@ var init_WorktreeManager = __esm({
     })));
     hasUncommittedChanges = (worktreePath) => execGit(["status", "--porcelain"], worktreePath).pipe(Effect_exports.map((output) => output.trim().length > 0));
     remove12 = (worktreePath) => {
-      const repoDir = join8(worktreePath, "..", "..", "..");
+      const repoDir = join7(worktreePath, "..", "..", "..");
       return execGit(["worktree", "remove", "--force", worktreePath], repoDir).pipe(Effect_exports.asVoid);
     };
     pruneStale = (repoDir) => Effect_exports.gen(function* () {
       const fs = yield* FileSystem_exports.FileSystem;
       yield* execGit(["worktree", "prune"], repoDir);
-      const worktreesDir = join8(repoDir, ".sandcastle", "worktrees");
+      const worktreesDir = join7(repoDir, ".sandcastle", "worktrees");
       const entries2 = yield* fs.readDirectory(worktreesDir).pipe(Effect_exports.map((es) => es), Effect_exports.catchSome((e2) => e2._tag === "SystemError" && e2.reason === "NotFound" ? Option_exports.some(Effect_exports.succeed(null)) : Option_exports.none()), Effect_exports.mapError((e2) => new WorktreeError({ message: e2.message })));
       if (entries2 === null)
         return;
@@ -72726,7 +72408,7 @@ var init_WorktreeManager = __esm({
       const worktreeList = yield* execGit(["worktree", "list", "--porcelain"], repoDir);
       const activeWorktreePaths = new Set(worktreeList.split("\n").filter((line) => line.startsWith("worktree ")).map((line) => line.slice("worktree ".length).trim()));
       for (const entry of entries2) {
-        const entryPath = join8(realWorktreesDir, entry);
+        const entryPath = join7(realWorktreesDir, entry);
         const isDir2 = yield* fs.stat(entryPath).pipe(Effect_exports.map((s) => s.type === "Directory"), Effect_exports.catchAll(() => Effect_exports.succeed(false)));
         if (isDir2 && isOrphanedWorktreePath(entryPath, activeWorktreePaths)) {
           yield* fs.remove(entryPath, { recursive: true, force: true }).pipe(Effect_exports.mapError((e2) => new WorktreeError({
@@ -72744,9 +72426,9 @@ var init_WorktreeManager = __esm({
 });
 
 // ../../../../../../src/domains/dev/node_modules/.pnpm/@ai-hero+sandcastle@0.6.5_@effect+cluster@0.57.0_@effect+platform@0.95.0_effect@3.21.2__2fa8178ee2d3f5b36174a7c3081b14be/node_modules/@ai-hero/sandcastle/dist/CopyToWorktree.js
-import { execFile as execFile3 } from "node:child_process";
+import { execFile as execFile2 } from "node:child_process";
 import { existsSync } from "node:fs";
-import { join as join9 } from "node:path";
+import { join as join8 } from "node:path";
 var COPY_TO_WORKTREE_TIMEOUT_MS, getCopyOnWriteFlags, copyToWorktree;
 var init_CopyToWorktree = __esm({
   "../../../../../../src/domains/dev/node_modules/.pnpm/@ai-hero+sandcastle@0.6.5_@effect+cluster@0.57.0_@effect+platform@0.95.0_effect@3.21.2__2fa8178ee2d3f5b36174a7c3081b14be/node_modules/@ai-hero/sandcastle/dist/CopyToWorktree.js"() {
@@ -72759,15 +72441,15 @@ var init_CopyToWorktree = __esm({
       return Effect_exports.gen(function* () {
         const cowFlags = getCopyOnWriteFlags(process.platform);
         for (const relativePath of paths) {
-          const src2 = join9(hostRepoDir, relativePath);
+          const src2 = join8(hostRepoDir, relativePath);
           if (!existsSync(src2)) {
             continue;
           }
-          const dest = join9(worktreePath, relativePath);
+          const dest = join8(worktreePath, relativePath);
           yield* Effect_exports.async((resume2) => {
-            execFile3("cp", [...cowFlags, src2, dest], (error) => {
+            execFile2("cp", [...cowFlags, src2, dest], (error) => {
               if (error) {
-                execFile3("cp", ["-R", src2, dest], (fallbackError, _, stderr2) => {
+                execFile2("cp", ["-R", src2, dest], (fallbackError, _, stderr2) => {
                   if (fallbackError) {
                     resume2(Effect_exports.fail(new CopyToWorktreeError({
                       message: `Failed to copy ${relativePath} to worktree: ${stderr2 || fallbackError.message}`,
@@ -73030,9 +72712,9 @@ ${err instanceof Error ? err.message : String(err)}`
 });
 
 // ../../../../../../src/domains/dev/node_modules/.pnpm/@ai-hero+sandcastle@0.6.5_@effect+cluster@0.57.0_@effect+platform@0.95.0_effect@3.21.2__2fa8178ee2d3f5b36174a7c3081b14be/node_modules/@ai-hero/sandcastle/dist/syncIn.js
-import { mkdtemp as mkdtemp2, rm as rm4 } from "node:fs/promises";
+import { mkdtemp as mkdtemp2, rm as rm3 } from "node:fs/promises";
 import { tmpdir as tmpdir2 } from "node:os";
-import { join as join10 } from "node:path";
+import { join as join9 } from "node:path";
 var execHost, execOk2, syncIn;
 var init_syncIn = __esm({
   "../../../../../../src/domains/dev/node_modules/.pnpm/@ai-hero+sandcastle@0.6.5_@effect+cluster@0.57.0_@effect+platform@0.95.0_effect@3.21.2__2fa8178ee2d3f5b36174a7c3081b14be/node_modules/@ai-hero/sandcastle/dist/syncIn.js"() {
@@ -73067,12 +72749,12 @@ ${result.stderr}`
     syncIn = (hostRepoDir, handle) => Effect_exports.gen(function* () {
       const branch = (yield* execHost("git rev-parse --abbrev-ref HEAD", hostRepoDir)).trim();
       const bundleDir = yield* Effect_exports.tryPromise({
-        try: () => mkdtemp2(join10(tmpdir2(), "sandcastle-bundle-")),
+        try: () => mkdtemp2(join9(tmpdir2(), "sandcastle-bundle-")),
         catch: (e2) => new SyncError({
           message: `Failed to create temp dir: ${e2 instanceof Error ? e2.message : String(e2)}`
         })
       });
-      const bundleHostPath = join10(bundleDir, "repo.bundle");
+      const bundleHostPath = join9(bundleDir, "repo.bundle");
       yield* Effect_exports.ensuring(
         Effect_exports.gen(function* () {
           yield* execHost(`git bundle create "${bundleHostPath}" --all`, hostRepoDir);
@@ -73106,7 +72788,7 @@ ${result.stderr}`
           }
         }),
         // Clean up host-side bundle temp dir (runs regardless of success/failure)
-        Effect_exports.promise(() => rm4(bundleDir, { recursive: true, force: true }))
+        Effect_exports.promise(() => rm3(bundleDir, { recursive: true, force: true }))
       );
       return { branch };
     });
@@ -73116,8 +72798,8 @@ ${result.stderr}`
 // ../../../../../../src/domains/dev/node_modules/.pnpm/@ai-hero+sandcastle@0.6.5_@effect+cluster@0.57.0_@effect+platform@0.95.0_effect@3.21.2__2fa8178ee2d3f5b36174a7c3081b14be/node_modules/@ai-hero/sandcastle/dist/mountUtils.js
 import { existsSync as existsSync2, statSync } from "node:fs";
 import { tmpdir as tmpdir3, homedir } from "node:os";
-import { isAbsolute, resolve as resolve4, join as join11, dirname as dirname6 } from "node:path";
-import { mkdtemp as mkdtemp3, writeFile as writeFile7 } from "node:fs/promises";
+import { isAbsolute, resolve as resolve4, join as join10, dirname as dirname4 } from "node:path";
+import { mkdtemp as mkdtemp3, writeFile as writeFile5 } from "node:fs/promises";
 var PARENT_GIT_SANDBOX_DIR, defaultImageName, expandTilde, resolveHostPath, resolveSandboxPath, resolveUserMounts, normalizeMounts, parseGitdirPath, patchGitMountsForWindows, formatVolumeMount, processFileMountParents;
 var init_mountUtils = __esm({
   "../../../../../../src/domains/dev/node_modules/.pnpm/@ai-hero+sandcastle@0.6.5_@effect+cluster@0.57.0_@effect+platform@0.95.0_effect@3.21.2__2fa8178ee2d3f5b36174a7c3081b14be/node_modules/@ai-hero/sandcastle/dist/mountUtils.js"() {
@@ -73200,7 +72882,7 @@ var init_mountUtils = __esm({
         const s = await stat6(p2);
         return s.isDirectory() ? "directory" : "file";
       });
-      const gitEntryPath = join11(worktreeHostPath, ".git");
+      const gitEntryPath = join10(worktreeHostPath, ".git");
       let gitEntryType;
       try {
         gitEntryType = await _statFile(gitEntryPath);
@@ -73221,9 +72903,9 @@ var init_mountUtils = __esm({
       const gitdirPath = match17[1];
       const { parentGitDir, worktreeName } = parseGitdirPath(gitdirPath);
       const correctedGitdir = `${PARENT_GIT_SANDBOX_DIR}/worktrees/${worktreeName}`;
-      const tempDir = await mkdtemp3(join11(tmpdir3(), "sandcastle-git-"));
-      const tempGitFile = join11(tempDir, "git-override");
-      await writeFile7(tempGitFile, `gitdir: ${correctedGitdir}
+      const tempDir = await mkdtemp3(join10(tmpdir3(), "sandcastle-git-"));
+      const tempGitFile = join10(tempDir, "git-override");
+      await writeFile5(tempGitFile, `gitdir: ${correctedGitdir}
 `);
       const normalizedParentGitDir = parentGitDir.replace(/\\/g, "/");
       const gitFileHostPath = gitEntryPath.replace(/\\/g, "/");
@@ -73268,7 +72950,7 @@ var init_mountUtils = __esm({
         }
         if (!isFile2)
           continue;
-        const parentDir = dirname6(mount2.sandboxPath);
+        const parentDir = dirname4(mount2.sandboxPath);
         if (parentDir === sandboxHomedir)
           continue;
         if (!parentDir.startsWith(sandboxHomedir + "/")) {
@@ -73283,7 +72965,7 @@ var init_mountUtils = __esm({
 
 // ../../../../../../src/domains/dev/node_modules/.pnpm/@ai-hero+sandcastle@0.6.5_@effect+cluster@0.57.0_@effect+platform@0.95.0_effect@3.21.2__2fa8178ee2d3f5b36174a7c3081b14be/node_modules/@ai-hero/sandcastle/dist/startSandbox.js
 import { existsSync as existsSync3 } from "node:fs";
-import { join as join12, posix as posix2 } from "node:path";
+import { join as join11, posix as posix2 } from "node:path";
 var CONTAINER_START_TIMEOUT_MS, SYNC_IN_TIMEOUT_MS, COPY_PATHS_TIMEOUT_MS, startSandbox, startNoSandbox, startBindMountSandbox, startIsolatedSandbox;
 var init_startSandbox = __esm({
   "../../../../../../src/domains/dev/node_modules/.pnpm/@ai-hero+sandcastle@0.6.5_@effect+cluster@0.57.0_@effect+platform@0.95.0_effect@3.21.2__2fa8178ee2d3f5b36174a7c3081b14be/node_modules/@ai-hero/sandcastle/dist/startSandbox.js"() {
@@ -73364,7 +73046,7 @@ var init_startSandbox = __esm({
         const pathsToCopy = options2.copyPaths;
         yield* Effect_exports.gen(function* () {
           for (const relativePath of pathsToCopy) {
-            const hostPath = join12(options2.hostRepoDir, relativePath);
+            const hostPath = join11(options2.hostRepoDir, relativePath);
             if (!existsSync3(hostPath)) {
               continue;
             }
@@ -73463,8 +73145,8 @@ var init_RecoveryMessage = __esm({
 
 // ../../../../../../src/domains/dev/node_modules/.pnpm/@ai-hero+sandcastle@0.6.5_@effect+cluster@0.57.0_@effect+platform@0.95.0_effect@3.21.2__2fa8178ee2d3f5b36174a7c3081b14be/node_modules/@ai-hero/sandcastle/dist/syncOut.js
 import { existsSync as existsSync4 } from "node:fs";
-import { mkdir as mkdir6, readdir as readdir2, readFile as readFile7, rm as rm5, stat as stat5, writeFile as writeFile8 } from "node:fs/promises";
-import { basename, dirname as dirname7, join as join13 } from "node:path";
+import { mkdir as mkdir4, readdir, readFile as readFile5, rm as rm4, stat as stat4, writeFile as writeFile6 } from "node:fs/promises";
+import { basename, dirname as dirname5, join as join12 } from "node:path";
 var execHost2, execOk3, execSandbox, isEmptyPatch, createPatchDir, syncOut;
 var init_syncOut = __esm({
   "../../../../../../src/domains/dev/node_modules/.pnpm/@ai-hero+sandcastle@0.6.5_@effect+cluster@0.57.0_@effect+platform@0.95.0_effect@3.21.2__2fa8178ee2d3f5b36174a7c3081b14be/node_modules/@ai-hero/sandcastle/dist/syncOut.js"() {
@@ -73506,10 +73188,10 @@ ${e2 instanceof Error ? e2.message : String(e2)}`
     });
     isEmptyPatch = (patchPath) => Effect_exports.tryPromise({
       try: async () => {
-        const info = await stat5(patchPath);
+        const info = await stat4(patchPath);
         if (info.size === 0)
           return true;
-        const content = await readFile7(patchPath, "utf-8");
+        const content = await readFile5(patchPath, "utf-8");
         return !content.includes("diff --git");
       },
       catch: (e2) => new SyncError({
@@ -73521,16 +73203,16 @@ ${e2 instanceof Error ? e2.message : String(e2)}`
         const now = /* @__PURE__ */ new Date();
         const pad2 = (n) => String(n).padStart(2, "0");
         const base = `${now.getFullYear()}${pad2(now.getMonth() + 1)}${pad2(now.getDate())}-${pad2(now.getHours())}${pad2(now.getMinutes())}${pad2(now.getSeconds())}`;
-        const patchesRoot = join13(hostRepoDir, ".sandcastle", "patches");
-        await mkdir6(patchesRoot, { recursive: true });
+        const patchesRoot = join12(hostRepoDir, ".sandcastle", "patches");
+        await mkdir4(patchesRoot, { recursive: true });
         let dirName = base;
         let counter6 = 0;
-        while (existsSync4(join13(patchesRoot, dirName))) {
+        while (existsSync4(join12(patchesRoot, dirName))) {
           counter6++;
           dirName = `${base}-${counter6}`;
         }
-        const patchDir = join13(patchesRoot, dirName);
-        await mkdir6(patchDir, { recursive: true });
+        const patchDir = join12(patchesRoot, dirName);
+        await mkdir4(patchDir, { recursive: true });
         return patchDir;
       },
       catch: (e2) => new SyncError({
@@ -73555,7 +73237,7 @@ ${e2 instanceof Error ? e2.message : String(e2)}`
         return;
       }
       const patchDir = yield* createPatchDir(hostRepoDir);
-      const relativePatchDir = join13(".sandcastle", "patches", basename(patchDir));
+      const relativePatchDir = join12(".sandcastle", "patches", basename(patchDir));
       const nonEmptyPatches = [];
       if (hasCommits) {
         const mkTempResult = yield* execOk3(handle, "mktemp -d -t sandcastle-patches-XXXXXX");
@@ -73566,7 +73248,7 @@ ${e2 instanceof Error ? e2.message : String(e2)}`
           const patchNames = lsResult.stdout.trim().split("\n").filter((name) => name.length > 0);
           for (const patchName of patchNames) {
             const sandboxPatchPath = `${sandboxPatchDir}/${patchName}`;
-            const hostPatchPath = join13(patchDir, patchName);
+            const hostPatchPath = join12(patchDir, patchName);
             yield* Effect_exports.tryPromise({
               try: () => handle.copyFileOut(sandboxPatchPath, hostPatchPath),
               catch: (e2) => new SyncError({
@@ -73582,22 +73264,22 @@ ${e2 instanceof Error ? e2.message : String(e2)}`
         }
       }
       if (hasDiff) {
-        const diffPath = join13(patchDir, "changes.patch");
+        const diffPath = join12(patchDir, "changes.patch");
         yield* Effect_exports.tryPromise({
-          try: () => writeFile8(diffPath, diffResult.stdout),
+          try: () => writeFile6(diffPath, diffResult.stdout),
           catch: (e2) => new SyncError({
             message: `Failed to write diff patch: ${e2 instanceof Error ? e2.message : String(e2)}`
           })
         });
       }
       if (hasUntracked) {
-        const untrackedDir = join13(patchDir, "untracked");
+        const untrackedDir = join12(patchDir, "untracked");
         for (const relPath of untrackedFiles) {
           const sandboxFilePath = `${worktreePath}/${relPath}`;
-          const hostFilePath = join13(untrackedDir, relPath);
+          const hostFilePath = join12(untrackedDir, relPath);
           yield* Effect_exports.tryPromise({
             try: async () => {
-              await mkdir6(dirname7(hostFilePath), { recursive: true });
+              await mkdir4(dirname5(hostFilePath), { recursive: true });
               await handle.copyFileOut(sandboxFilePath, hostFilePath);
             },
             catch: (e2) => new SyncError({
@@ -73616,7 +73298,7 @@ ${e2 instanceof Error ? e2.message : String(e2)}`
         }
       }
       if (!failedStep && hasDiff) {
-        const diffPath = join13(patchDir, "changes.patch");
+        const diffPath = join12(patchDir, "changes.patch");
         const applyResult = yield* Effect_exports.either(execHost2(`git apply "${diffPath}"`, hostRepoDir));
         if (applyResult._tag === "Left") {
           failedStep = "diff";
@@ -73625,13 +73307,13 @@ ${e2 instanceof Error ? e2.message : String(e2)}`
       if (!failedStep && hasUntracked) {
         const copyResult = yield* Effect_exports.either(Effect_exports.tryPromise({
           try: async () => {
-            const untrackedDir = join13(patchDir, "untracked");
+            const untrackedDir = join12(patchDir, "untracked");
             for (const relPath of untrackedFiles) {
-              const srcPath = join13(untrackedDir, relPath);
-              const destPath = join13(hostRepoDir, relPath);
-              await mkdir6(dirname7(destPath), { recursive: true });
-              const content = await readFile7(srcPath);
-              await writeFile8(destPath, content);
+              const srcPath = join12(untrackedDir, relPath);
+              const destPath = join12(hostRepoDir, relPath);
+              await mkdir4(dirname5(destPath), { recursive: true });
+              const content = await readFile5(srcPath);
+              await writeFile6(destPath, content);
             }
           },
           catch: (e2) => new SyncError({
@@ -73655,12 +73337,12 @@ ${msg}`);
       } else {
         yield* Effect_exports.tryPromise({
           try: async () => {
-            await rm5(patchDir, { recursive: true, force: true });
-            const patchesRoot = join13(hostRepoDir, ".sandcastle", "patches");
+            await rm4(patchDir, { recursive: true, force: true });
+            const patchesRoot = join12(hostRepoDir, ".sandcastle", "patches");
             try {
-              const remaining = await readdir2(patchesRoot);
+              const remaining = await readdir(patchesRoot);
               if (remaining.length === 0) {
-                await rm5(patchesRoot, {
+                await rm4(patchesRoot, {
                   recursive: true,
                   force: true
                 });
@@ -73676,7 +73358,7 @@ ${msg}`);
 });
 
 // ../../../../../../src/domains/dev/node_modules/.pnpm/@ai-hero+sandcastle@0.6.5_@effect+cluster@0.57.0_@effect+platform@0.95.0_effect@3.21.2__2fa8178ee2d3f5b36174a7c3081b14be/node_modules/@ai-hero/sandcastle/dist/SandboxFactory.js
-import { join as join14, resolve as resolve5 } from "node:path";
+import { join as join13, resolve as resolve5 } from "node:path";
 var Sandbox, getCopyIn, makeSandboxLayerFromHandle, SANDBOX_REPO_DIR, SandboxFactory, SandboxConfig, printWorktreePreservedMessage, cleanupWorktree, attachPreservedPath, resolveGitMounts, WorktreeDockerSandboxFactory;
 var init_SandboxFactory = __esm({
   "../../../../../../src/domains/dev/node_modules/.pnpm/@ai-hero+sandcastle@0.6.5_@effect+cluster@0.57.0_@effect+platform@0.95.0_effect@3.21.2__2fa8178ee2d3f5b36174a7c3081b14be/node_modules/@ai-hero/sandcastle/dist/SandboxFactory.js"() {
@@ -73861,7 +73543,7 @@ Worktree removed (no uncommitted changes)`);
               })), Effect_exports.mapError((e2) => attachPreservedPath(preservedPath, e2)));
             }
             if (isHeadMode) {
-              const gitPath = join14(hostRepoDir, ".git");
+              const gitPath = join13(hostRepoDir, ".git");
               return (hooks?.host?.onWorktreeReady?.length ? runHostHooks(hooks.host.onWorktreeReady, hostRepoDir, signal) : Effect_exports.void).pipe(Effect_exports.andThen(resolveGitMounts(gitPath)), Effect_exports.provideService(FileSystem_exports.FileSystem, fileSystem), Effect_exports.mapError((e2) => new WorktreeError({
                 message: `Failed to resolve git mounts: ${e2}`
               })), Effect_exports.flatMap((gitMounts) => (
@@ -73905,7 +73587,7 @@ Worktree removed (no uncommitted changes)`);
               // the sandbox under a nested acquireUseRelease.
               (worktreeInfo) => (copyPaths && copyPaths.length > 0 ? display.spinner("Copying to worktree", copyToWorktree(copyPaths, hostRepoDir, worktreeInfo.path, timeouts?.copyToWorktreeMs)) : Effect_exports.succeed(void 0)).pipe(
                 Effect_exports.andThen(hooks?.host?.onWorktreeReady?.length ? runHostHooks(hooks.host.onWorktreeReady, worktreeInfo.path, signal) : Effect_exports.void),
-                Effect_exports.andThen(resolveGitMounts(join14(hostRepoDir, ".git")).pipe(Effect_exports.provideService(FileSystem_exports.FileSystem, fileSystem), Effect_exports.mapError((e2) => new WorktreeError({
+                Effect_exports.andThen(resolveGitMounts(join13(hostRepoDir, ".git")).pipe(Effect_exports.provideService(FileSystem_exports.FileSystem, fileSystem), Effect_exports.mapError((e2) => new WorktreeError({
                   message: `Failed to resolve git mounts: ${e2}`
                 })))),
                 // Patch git mounts for Windows worktree compatibility (ADR-0006)
@@ -74313,7 +73995,7 @@ var init_PromptResolver = __esm({
 });
 
 // ../../../../../../src/domains/dev/node_modules/.pnpm/@ai-hero+sandcastle@0.6.5_@effect+cluster@0.57.0_@effect+platform@0.95.0_effect@3.21.2__2fa8178ee2d3f5b36174a7c3081b14be/node_modules/@ai-hero/sandcastle/dist/EnvResolver.js
-import { join as join15 } from "node:path";
+import { join as join14 } from "node:path";
 var parseEnvFile, resolveEnv;
 var init_EnvResolver = __esm({
   "../../../../../../src/domains/dev/node_modules/.pnpm/@ai-hero+sandcastle@0.6.5_@effect+cluster@0.57.0_@effect+platform@0.95.0_effect@3.21.2__2fa8178ee2d3f5b36174a7c3081b14be/node_modules/@ai-hero/sandcastle/dist/EnvResolver.js"() {
@@ -74355,7 +74037,7 @@ var init_EnvResolver = __esm({
       return vars;
     });
     resolveEnv = (repoDir) => Effect_exports.gen(function* () {
-      const sandcastleEnv = yield* parseEnvFile(join15(repoDir, ".sandcastle", ".env"));
+      const sandcastleEnv = yield* parseEnvFile(join14(repoDir, ".sandcastle", ".env"));
       const result = {};
       for (const key of Object.keys(sandcastleEnv)) {
         const value2 = sandcastleEnv[key] || process.env[key];
@@ -74640,7 +74322,7 @@ var init_extractStructuredOutput = __esm({
 });
 
 // ../../../../../../src/domains/dev/node_modules/.pnpm/@ai-hero+sandcastle@0.6.5_@effect+cluster@0.57.0_@effect+platform@0.95.0_effect@3.21.2__2fa8178ee2d3f5b36174a7c3081b14be/node_modules/@ai-hero/sandcastle/dist/run.js
-import path, { join as join16 } from "node:path";
+import path, { join as join15 } from "node:path";
 import { styleText as styleText2 } from "node:util";
 async function run7(options2) {
   options2.signal?.throwIfAborted();
@@ -74690,7 +74372,7 @@ async function run7(options2) {
   const targetBranch = effectiveBranchType === "merge-to-head" ? currentHostBranch : void 0;
   const resolvedLogging = options2.logging ?? {
     type: "file",
-    path: join16(hostRepoDir, ".sandcastle", "logs", buildLogFilename(resolvedBranch, targetBranch, options2.name))
+    path: join15(hostRepoDir, ".sandcastle", "logs", buildLogFilename(resolvedBranch, targetBranch, options2.name))
   };
   const displayLayer = resolvedLogging.type === "file" ? (() => {
     printFileDisplayStartup({
@@ -75034,7 +74716,7 @@ var init_raceAbortSignal = __esm({
 });
 
 // ../../../../../../src/domains/dev/node_modules/.pnpm/@ai-hero+sandcastle@0.6.5_@effect+cluster@0.57.0_@effect+platform@0.95.0_effect@3.21.2__2fa8178ee2d3f5b36174a7c3081b14be/node_modules/@ai-hero/sandcastle/dist/interactive.js
-import { join as join17 } from "node:path";
+import { join as join16 } from "node:path";
 var interactive;
 var init_interactive = __esm({
   "../../../../../../src/domains/dev/node_modules/.pnpm/@ai-hero+sandcastle@0.6.5_@effect+cluster@0.57.0_@effect+platform@0.95.0_effect@3.21.2__2fa8178ee2d3f5b36174a7c3081b14be/node_modules/@ai-hero/sandcastle/dist/interactive.js"() {
@@ -75159,7 +74841,7 @@ var init_interactive = __esm({
             }));
             return startResult.handle;
           } else {
-            const gitPath = join17(hostRepoDir, ".git");
+            const gitPath = join16(hostRepoDir, ".git");
             const gitMounts = yield* resolveGitMounts(gitPath);
             const startResult = yield* d.taskLog("Starting sandbox", () => startSandbox({
               provider: sandboxProvider,
@@ -75301,7 +74983,7 @@ var init_shutdownRegistry = __esm({
 });
 
 // ../../../../../../src/domains/dev/node_modules/.pnpm/@ai-hero+sandcastle@0.6.5_@effect+cluster@0.57.0_@effect+platform@0.95.0_effect@3.21.2__2fa8178ee2d3f5b36174a7c3081b14be/node_modules/@ai-hero/sandcastle/dist/createSandbox.js
-import { join as join18 } from "node:path";
+import { join as join17 } from "node:path";
 var buildSandboxHandle, createSandboxFromWorktree, createSandbox;
 var init_createSandbox = __esm({
   "../../../../../../src/domains/dev/node_modules/.pnpm/@ai-hero+sandcastle@0.6.5_@effect+cluster@0.57.0_@effect+platform@0.95.0_effect@3.21.2__2fa8178ee2d3f5b36174a7c3081b14be/node_modules/@ai-hero/sandcastle/dist/createSandbox.js"() {
@@ -75356,7 +75038,7 @@ var init_createSandbox = __esm({
           }).pipe(Effect_exports.provide(silentDisplayLayer)));
           const resolvedLogging = runOptions.logging ?? {
             type: "file",
-            path: join18(hostRepoDir, ".sandcastle", "logs", buildLogFilename(branch, void 0, runOptions.name))
+            path: join17(hostRepoDir, ".sandcastle", "logs", buildLogFilename(branch, void 0, runOptions.name))
           };
           const runDisplayLayer = resolvedLogging.type === "file" ? (() => {
             printFileDisplayStartup({
@@ -75536,7 +75218,7 @@ var init_createSandbox = __esm({
             worktreeOrRepoPath: worktreePath
           });
         } else {
-          startEffect = resolveGitMounts(join18(hostRepoDir, ".git")).pipe(
+          startEffect = resolveGitMounts(join17(hostRepoDir, ".git")).pipe(
             Effect_exports.provide(NodeFileSystem_exports.layer),
             Effect_exports.catchAll(() => Effect_exports.succeed([])),
             // Patch git mounts for Windows worktree compatibility (ADR-0006)
@@ -75637,7 +75319,7 @@ var init_createSandbox = __esm({
               hostRepoDir: hostRepoDir2,
               env: env2,
               worktreeOrRepoPath: worktreePath2
-            }) : resolveGitMounts(join18(hostRepoDir2, ".git")).pipe(
+            }) : resolveGitMounts(join17(hostRepoDir2, ".git")).pipe(
               Effect_exports.provide(NodeFileSystem_exports.layer),
               Effect_exports.catchAll(() => Effect_exports.succeed([])),
               // Patch git mounts for Windows worktree compatibility (ADR-0006)
@@ -75723,7 +75405,7 @@ Worktree preserved at ${worktreePath}`);
 });
 
 // ../../../../../../src/domains/dev/node_modules/.pnpm/@ai-hero+sandcastle@0.6.5_@effect+cluster@0.57.0_@effect+platform@0.95.0_effect@3.21.2__2fa8178ee2d3f5b36174a7c3081b14be/node_modules/@ai-hero/sandcastle/dist/createWorktree.js
-import { join as join19 } from "node:path";
+import { join as join18 } from "node:path";
 var createWorktree;
 var init_createWorktree = __esm({
   "../../../../../../src/domains/dev/node_modules/.pnpm/@ai-hero+sandcastle@0.6.5_@effect+cluster@0.57.0_@effect+platform@0.95.0_effect@3.21.2__2fa8178ee2d3f5b36174a7c3081b14be/node_modules/@ai-hero/sandcastle/dist/createWorktree.js"() {
@@ -75835,7 +75517,7 @@ var init_createWorktree = __esm({
             }));
             handle = startResult.handle;
           } else {
-            const gitPath = join19(hostRepoDir, ".git");
+            const gitPath = join18(hostRepoDir, ".git");
             const gitMounts = yield* resolveGitMounts(gitPath);
             const startResult = yield* d.taskLog("Starting sandbox", () => startSandbox({
               provider: resolvedSandbox,
@@ -75965,7 +75647,7 @@ var init_createWorktree = __esm({
             handle = startResult.handle;
             sandboxRepoDir = startResult.worktreePath;
           } else {
-            const gitPath = join19(hostRepoDir, ".git");
+            const gitPath = join18(hostRepoDir, ".git");
             const gitMounts = yield* resolveGitMounts(gitPath);
             const startResult = yield* startSandbox({
               provider: sandboxProvider,
@@ -75982,7 +75664,7 @@ var init_createWorktree = __esm({
           const applyToHost = sandboxProvider.tag === "isolated" ? () => syncOut(worktreeInfo.path, handle) : () => Effect_exports.void;
           const resolvedLogging = opts3.logging ?? {
             type: "file",
-            path: join19(hostRepoDir, ".sandcastle", "logs", buildLogFilename(worktreeInfo.branch, void 0, opts3.name))
+            path: join18(hostRepoDir, ".sandcastle", "logs", buildLogFilename(worktreeInfo.branch, void 0, opts3.name))
           };
           const runDisplayLayer = resolvedLogging.type === "file" ? (() => {
             printFileDisplayStartup({
@@ -76072,15 +75754,15 @@ var init_createWorktree = __esm({
 });
 
 // ../../../../../../src/domains/dev/node_modules/.pnpm/@ai-hero+sandcastle@0.6.5_@effect+cluster@0.57.0_@effect+platform@0.95.0_effect@3.21.2__2fa8178ee2d3f5b36174a7c3081b14be/node_modules/@ai-hero/sandcastle/dist/SessionStore.js
-import { access as access5, mkdir as mkdir7, readdir as readdir3, readFile as readFile8, rm as rm6, writeFile as writeFile9 } from "node:fs/promises";
+import { access as access4, mkdir as mkdir5, readdir as readdir2, readFile as readFile6, rm as rm5, writeFile as writeFile7 } from "node:fs/promises";
 import { tmpdir as tmpdir4 } from "node:os";
-import { dirname as dirname8, join as join20, posix as posix3, relative } from "node:path";
-var pathExists2, encodeProjectPath, hostSessionStore, findClaudeSessionOnHost, sandboxSessionStore, transferClaudeSession, isCodexSessionFilename, codexIdFromFilename, findCodexSessionPath, findCodexSessionOnHost, codexHostSessionStore, codexSandboxSessionStore, rewriteSessionCwd, transferCodexSession;
+import { dirname as dirname6, join as join19, posix as posix3, relative } from "node:path";
+var pathExists, encodeProjectPath, hostSessionStore, findClaudeSessionOnHost, sandboxSessionStore, transferClaudeSession, isCodexSessionFilename, codexIdFromFilename, findCodexSessionPath, findCodexSessionOnHost, codexHostSessionStore, codexSandboxSessionStore, rewriteSessionCwd, transferCodexSession;
 var init_SessionStore = __esm({
   "../../../../../../src/domains/dev/node_modules/.pnpm/@ai-hero+sandcastle@0.6.5_@effect+cluster@0.57.0_@effect+platform@0.95.0_effect@3.21.2__2fa8178ee2d3f5b36174a7c3081b14be/node_modules/@ai-hero/sandcastle/dist/SessionStore.js"() {
-    pathExists2 = async (path2) => {
+    pathExists = async (path2) => {
       try {
-        await access5(path2);
+        await access4(path2);
         return true;
       } catch {
         return false;
@@ -76092,35 +75774,35 @@ var init_SessionStore = __esm({
       return normalized.replace(/^([A-Za-z]):/, "$1").replace(/[\\/]/g, "-");
     };
     hostSessionStore = (cwd, projectsDir) => {
-      const baseDir = projectsDir ?? join20(process.env.HOME ?? "~", ".claude", "projects");
+      const baseDir = projectsDir ?? join19(process.env.HOME ?? "~", ".claude", "projects");
       const encoded = encodeProjectPath(cwd);
-      const projectDir = join20(baseDir, encoded);
+      const projectDir = join19(baseDir, encoded);
       return {
         cwd,
-        sessionFilePath: (id2) => join20(projectDir, `${id2}.jsonl`),
-        exists: async (id2) => pathExists2(join20(projectDir, `${id2}.jsonl`)),
+        sessionFilePath: (id2) => join19(projectDir, `${id2}.jsonl`),
+        exists: async (id2) => pathExists(join19(projectDir, `${id2}.jsonl`)),
         readSession: async (id2) => {
-          return await readFile8(join20(projectDir, `${id2}.jsonl`), "utf-8");
+          return await readFile6(join19(projectDir, `${id2}.jsonl`), "utf-8");
         },
         writeSession: async (id2, content) => {
-          await mkdir7(projectDir, { recursive: true });
-          await writeFile9(join20(projectDir, `${id2}.jsonl`), content);
+          await mkdir5(projectDir, { recursive: true });
+          await writeFile7(join19(projectDir, `${id2}.jsonl`), content);
         }
       };
     };
     findClaudeSessionOnHost = async (id2, projectsDir) => {
-      const root = projectsDir ?? join20(process.env.HOME ?? "~", ".claude", "projects");
+      const root = projectsDir ?? join19(process.env.HOME ?? "~", ".claude", "projects");
       let entries2;
       try {
-        entries2 = await readdir3(root, { withFileTypes: true });
+        entries2 = await readdir2(root, { withFileTypes: true });
       } catch {
         return { path: void 0, searchedRoot: root };
       }
       for (const entry of entries2) {
         if (!entry.isDirectory())
           continue;
-        const candidate = join20(root, entry.name, `${id2}.jsonl`);
-        if (await pathExists2(candidate)) {
+        const candidate = join19(root, entry.name, `${id2}.jsonl`);
+        if (await pathExists(candidate)) {
           return { path: candidate, searchedRoot: root };
         }
       }
@@ -76138,24 +75820,24 @@ var init_SessionStore = __esm({
         },
         readSession: async (id2) => {
           const sandboxPath = posix3.join(projectDir, `${id2}.jsonl`);
-          const tmpPath = join20(tmpdir4(), `sandcastle-session-${id2}-${Date.now()}.jsonl`);
+          const tmpPath = join19(tmpdir4(), `sandcastle-session-${id2}-${Date.now()}.jsonl`);
           await handle.copyFileOut(sandboxPath, tmpPath);
           try {
-            return await readFile8(tmpPath, "utf-8");
+            return await readFile6(tmpPath, "utf-8");
           } finally {
-            await rm6(tmpPath, { force: true }).catch(() => {
+            await rm5(tmpPath, { force: true }).catch(() => {
             });
           }
         },
         writeSession: async (id2, content) => {
           const sandboxPath = posix3.join(projectDir, `${id2}.jsonl`);
-          const tmpPath = join20(tmpdir4(), `sandcastle-session-${id2}-${Date.now()}.jsonl`);
-          await writeFile9(tmpPath, content);
+          const tmpPath = join19(tmpdir4(), `sandcastle-session-${id2}-${Date.now()}.jsonl`);
+          await writeFile7(tmpPath, content);
           try {
             await handle.exec(`mkdir -p ${JSON.stringify(projectDir)}`);
             await handle.copyFileIn(tmpPath, sandboxPath);
           } finally {
-            await rm6(tmpPath, { force: true }).catch(() => {
+            await rm5(tmpPath, { force: true }).catch(() => {
             });
           }
         }
@@ -76179,12 +75861,12 @@ var init_SessionStore = __esm({
       const visit = async (dir) => {
         let entries2;
         try {
-          entries2 = await readdir3(dir, { withFileTypes: true });
+          entries2 = await readdir2(dir, { withFileTypes: true });
         } catch {
           return void 0;
         }
         for (const entry of entries2) {
-          const child = join20(dir, entry.name);
+          const child = join19(dir, entry.name);
           if (entry.isFile() && isCodexSessionFilename(entry.name, id2)) {
             return child;
           }
@@ -76199,12 +75881,12 @@ var init_SessionStore = __esm({
       return visit(rootDir);
     };
     findCodexSessionOnHost = async (id2, sessionsDir) => {
-      const root = sessionsDir ?? join20(process.env.HOME ?? "~", ".codex", "sessions");
+      const root = sessionsDir ?? join19(process.env.HOME ?? "~", ".codex", "sessions");
       const path2 = await findCodexSessionPath(root, id2);
       return { path: path2, searchedRoot: root };
     };
     codexHostSessionStore = (cwd, sessionsDir) => {
-      const rootDir = sessionsDir ?? join20(process.env.HOME ?? "~", ".codex", "sessions");
+      const rootDir = sessionsDir ?? join19(process.env.HOME ?? "~", ".codex", "sessions");
       const locatedPaths = /* @__PURE__ */ new Map();
       const locateSession = async (id2) => {
         const path2 = await findCodexSessionPath(rootDir, id2);
@@ -76223,19 +75905,19 @@ var init_SessionStore = __esm({
         },
         readSession: async (id2) => {
           const located = await locateSession(id2);
-          return readFile8(located.path, "utf-8");
+          return readFile6(located.path, "utf-8");
         },
         writeSession: async (id2, content) => {
           const existing = await findCodexSessionPath(rootDir, id2);
-          const target2 = existing ?? join20(rootDir, "unknown-date", `rollout-${Date.now()}-${id2}.jsonl`);
-          await mkdir7(dirname8(target2), { recursive: true });
-          await writeFile9(target2, content);
+          const target2 = existing ?? join19(rootDir, "unknown-date", `rollout-${Date.now()}-${id2}.jsonl`);
+          await mkdir5(dirname6(target2), { recursive: true });
+          await writeFile7(target2, content);
           locatedPaths.set(id2, target2);
         },
         writeSessionAt: async (relativePath, content) => {
-          const target2 = join20(rootDir, relativePath);
-          await mkdir7(dirname8(target2), { recursive: true });
-          await writeFile9(target2, content);
+          const target2 = join19(rootDir, relativePath);
+          await mkdir5(dirname6(target2), { recursive: true });
+          await writeFile7(target2, content);
           const id2 = codexIdFromFilename(posix3.basename(relativePath));
           if (id2)
             locatedPaths.set(id2, target2);
@@ -76246,8 +75928,8 @@ var init_SessionStore = __esm({
       const locatedPaths = /* @__PURE__ */ new Map();
       const writeSessionAt = async (relativePath, content) => {
         const sandboxPath = posix3.join(sessionsDir, relativePath);
-        const tmpPath = join20(tmpdir4(), `sandcastle-codex-session-${Date.now()}.jsonl`);
-        await writeFile9(tmpPath, content);
+        const tmpPath = join19(tmpdir4(), `sandcastle-codex-session-${Date.now()}.jsonl`);
+        await writeFile7(tmpPath, content);
         try {
           await handle.exec(`mkdir -p ${JSON.stringify(posix3.dirname(sandboxPath))}`);
           await handle.copyFileIn(tmpPath, sandboxPath);
@@ -76255,7 +75937,7 @@ var init_SessionStore = __esm({
           if (id2)
             locatedPaths.set(id2, sandboxPath);
         } finally {
-          await rm6(tmpPath, { force: true }).catch(() => {
+          await rm5(tmpPath, { force: true }).catch(() => {
           });
         }
       };
@@ -76278,12 +75960,12 @@ var init_SessionStore = __esm({
         },
         readSession: async (id2) => {
           const located = await locateSession(id2);
-          const tmpPath = join20(tmpdir4(), `sandcastle-codex-session-${id2}-${Date.now()}.jsonl`);
+          const tmpPath = join19(tmpdir4(), `sandcastle-codex-session-${id2}-${Date.now()}.jsonl`);
           await handle.copyFileOut(located.path, tmpPath);
           try {
-            return await readFile8(tmpPath, "utf-8");
+            return await readFile6(tmpPath, "utf-8");
           } finally {
-            await rm6(tmpPath, { force: true }).catch(() => {
+            await rm5(tmpPath, { force: true }).catch(() => {
             });
           }
         },
@@ -76881,7 +76563,7 @@ var init_dist5 = __esm({
 });
 
 // ../../../../../../src/domains/dev/node_modules/.pnpm/@ai-hero+sandcastle@0.6.5_@effect+cluster@0.57.0_@effect+platform@0.95.0_effect@3.21.2__2fa8178ee2d3f5b36174a7c3081b14be/node_modules/@ai-hero/sandcastle/dist/DockerLifecycle.js
-import { execFile as execFile4 } from "node:child_process";
+import { execFile as execFile3 } from "node:child_process";
 var dockerExec, startContainer, removeContainer;
 var init_DockerLifecycle = __esm({
   "../../../../../../src/domains/dev/node_modules/.pnpm/@ai-hero+sandcastle@0.6.5_@effect+cluster@0.57.0_@effect+platform@0.95.0_effect@3.21.2__2fa8178ee2d3f5b36174a7c3081b14be/node_modules/@ai-hero/sandcastle/dist/DockerLifecycle.js"() {
@@ -76889,7 +76571,7 @@ var init_DockerLifecycle = __esm({
     init_errors3();
     init_mountUtils();
     dockerExec = (args2) => Effect_exports.async((resume2) => {
-      execFile4("docker", args2, { maxBuffer: 10 * 1024 * 1024 }, (error, stdout2, stderr2) => {
+      execFile3("docker", args2, { maxBuffer: 10 * 1024 * 1024 }, (error, stdout2, stderr2) => {
         if (error) {
           resume2(Effect_exports.fail(new DockerError({
             message: `docker ${args2[0]} failed: ${stderr2?.toString() || error.message}`
@@ -76964,7 +76646,7 @@ __export(docker_exports, {
   defaultImageName: () => defaultImageName,
   docker: () => docker
 });
-import { execFile as execFile5, execFileSync, spawn as spawn4 } from "node:child_process";
+import { execFile as execFile4, execFileSync, spawn as spawn4 } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createInterface as createInterface4 } from "node:readline";
 var docker, checkImageUid;
@@ -77015,7 +76697,7 @@ var init_docker = __esm({
           }));
           for (const dir of parentDirsToCreate) {
             await new Promise((resolve6, reject) => {
-              execFile5("docker", [
+              execFile4("docker", [
                 "exec",
                 "--user",
                 "0:0",
@@ -77130,7 +76812,7 @@ var init_docker = __esm({
               });
             },
             copyFileIn: (hostPath, sandboxPath) => new Promise((resolve6, reject) => {
-              execFile5("docker", ["cp", hostPath, `${containerName}:${sandboxPath}`], (error) => {
+              execFile4("docker", ["cp", hostPath, `${containerName}:${sandboxPath}`], (error) => {
                 if (error) {
                   reject(new Error(`docker cp (in) failed: ${error.message}`));
                 } else {
@@ -77139,7 +76821,7 @@ var init_docker = __esm({
               });
             }),
             copyFileOut: (sandboxPath, hostPath) => new Promise((resolve6, reject) => {
-              execFile5("docker", ["cp", `${containerName}:${sandboxPath}`, hostPath], (error) => {
+              execFile4("docker", ["cp", `${containerName}:${sandboxPath}`, hostPath], (error) => {
                 if (error) {
                   reject(new Error(`docker cp (out) failed: ${error.message}`));
                 } else {
@@ -77157,7 +76839,7 @@ var init_docker = __esm({
       });
     };
     checkImageUid = (imageName, expectedUid) => new Promise((resolve6, reject) => {
-      execFile5("docker", ["image", "inspect", imageName, "--format", "{{.Config.User}}"], (error, stdout2) => {
+      execFile4("docker", ["image", "inspect", imageName, "--format", "{{.Config.User}}"], (error, stdout2) => {
         if (error) {
           reject(new Error(`Image '${imageName}' not found locally. Build it first with 'sandcastle docker build-image'.`));
           return;
@@ -77189,7 +76871,7 @@ __export(podman_exports, {
   defaultImageName: () => defaultImageName,
   podman: () => podman
 });
-import { execFile as execFile6, execFileSync as execFileSync2, spawn as spawn5 } from "node:child_process";
+import { execFile as execFile5, execFileSync as execFileSync2, spawn as spawn5 } from "node:child_process";
 import { randomUUID as randomUUID2 } from "node:crypto";
 import { createInterface as createInterface5 } from "node:readline";
 var podman, checkImageExists, podmanMachineError, checkPodmanMachine;
@@ -77243,7 +76925,7 @@ var init_podman = __esm({
           ]);
           const cpusArgs = options2?.cpus !== void 0 ? ["--cpus", String(options2.cpus)] : [];
           await new Promise((resolve6, reject) => {
-            execFile6("podman", [
+            execFile5("podman", [
               "run",
               "-d",
               "--name",
@@ -77272,7 +76954,7 @@ var init_podman = __esm({
           });
           for (const dir of parentDirsToCreate) {
             await new Promise((resolve6, reject) => {
-              execFile6("podman", [
+              execFile5("podman", [
                 "exec",
                 "--user",
                 "0:0",
@@ -77388,7 +77070,7 @@ var init_podman = __esm({
               });
             },
             copyFileIn: (hostPath, sandboxPath) => new Promise((resolve6, reject) => {
-              execFile6("podman", ["cp", hostPath, `${containerName}:${sandboxPath}`], (error) => {
+              execFile5("podman", ["cp", hostPath, `${containerName}:${sandboxPath}`], (error) => {
                 if (error) {
                   reject(new Error(`podman cp (in) failed: ${error.message}`));
                 } else {
@@ -77397,7 +77079,7 @@ var init_podman = __esm({
               });
             }),
             copyFileOut: (sandboxPath, hostPath) => new Promise((resolve6, reject) => {
-              execFile6("podman", ["cp", `${containerName}:${sandboxPath}`, hostPath], (error) => {
+              execFile5("podman", ["cp", `${containerName}:${sandboxPath}`, hostPath], (error) => {
                 if (error) {
                   reject(new Error(`podman cp (out) failed: ${error.message}`));
                 } else {
@@ -77408,7 +77090,7 @@ var init_podman = __esm({
             close: async () => {
               unregisterShutdown();
               await new Promise((resolve6, reject) => {
-                execFile6("podman", ["rm", "-f", containerName], (error) => {
+                execFile5("podman", ["rm", "-f", containerName], (error) => {
                   if (error) {
                     reject(new Error(`podman rm failed: ${error.message}`));
                   } else {
@@ -77423,7 +77105,7 @@ var init_podman = __esm({
       });
     };
     checkImageExists = (imageName) => new Promise((resolve6, reject) => {
-      execFile6("podman", ["image", "inspect", imageName], (error) => {
+      execFile5("podman", ["image", "inspect", imageName], (error) => {
         if (error) {
           reject(new Error(`Image '${imageName}' not found locally. Build it first with 'podman build -t ${imageName} .'`));
         } else {
@@ -77433,7 +77115,7 @@ var init_podman = __esm({
     });
     podmanMachineError = () => new Error("Podman Machine is not running. Run 'podman machine init && podman machine start' first.");
     checkPodmanMachine = () => new Promise((resolve6, reject) => {
-      execFile6("podman", ["machine", "list", "--format", "json"], (error, stdout2) => {
+      execFile5("podman", ["machine", "list", "--format", "json"], (error, stdout2) => {
         if (error) {
           reject(podmanMachineError());
           return;
@@ -77637,10 +77319,328 @@ var init_execution = __esm({
     BLOCKED_SIGNAL = "<promise>BLOCKED</promise>";
     COMPLETION_SIGNALS = [DONE_SIGNAL, BLOCKED_SIGNAL];
     DEFAULT_IDLE_TIMEOUT_S = 600;
-    DEFAULT_MAX_ITERATIONS2 = 25;
+    DEFAULT_MAX_ITERATIONS2 = 50;
     DEFAULT_REMOTE = "origin";
     CODEX_EFFORTS = ["low", "medium", "high", "xhigh"];
     CLAUDE_EFFORTS = ["low", "medium", "high", "xhigh", "max"];
+  }
+});
+
+// src/runtime/exec.ts
+var exec_exports = {};
+__export(exec_exports, {
+  execTool: () => execTool,
+  gh: () => gh,
+  git: () => git,
+  pnpm: () => pnpm
+});
+import { execFile as execFile6 } from "node:child_process";
+function execTool(cmd, args2, opts3 = {}) {
+  return new Promise((resolve6) => {
+    const child = execFile6(
+      cmd,
+      [...args2],
+      {
+        cwd: opts3.cwd,
+        env: opts3.env ?? process.env,
+        timeout: opts3.timeoutMs ?? 0,
+        maxBuffer: opts3.maxBuffer ?? DEFAULT_MAX_BUFFER,
+        encoding: "utf8"
+      },
+      (error, stdout2, stderr2) => {
+        if (error && typeof error.code === "string") {
+          resolve6({ code: 127, stdout: String(stdout2 ?? ""), stderr: String(error.message) });
+          return;
+        }
+        const code = error && typeof error.code === "number" ? error.code : 0;
+        resolve6({ code, stdout: String(stdout2 ?? ""), stderr: String(stderr2 ?? "") });
+      }
+    );
+    if (opts3.input !== void 0 && child.stdin) {
+      child.stdin.end(opts3.input);
+    }
+  });
+}
+function git(args2, opts3 = {}) {
+  return execTool("git", args2, opts3);
+}
+function gh(args2, opts3 = {}) {
+  return execTool("gh", args2, opts3);
+}
+function pnpm(args2, opts3 = {}) {
+  return execTool("pnpm", args2, opts3);
+}
+var DEFAULT_MAX_BUFFER;
+var init_exec = __esm({
+  "src/runtime/exec.ts"() {
+    "use strict";
+    DEFAULT_MAX_BUFFER = 16 * 1024 * 1024;
+  }
+});
+
+// src/runtime/fs.ts
+var fs_exports = {};
+__export(fs_exports, {
+  appendLine: () => appendLine,
+  completionSweep: () => completionSweep,
+  ensureDir: () => ensureDir,
+  ensureGitignoreLine: () => ensureGitignoreLine,
+  globWorkerStates: () => globWorkerStates,
+  listLegacyWorkDirs: () => listLegacyWorkDirs,
+  listOrphanDirs: () => listOrphanDirs,
+  listStaleClaimDirs: () => listStaleClaimDirs,
+  pathExists: () => pathExists2,
+  readEnvelopePosted: () => readEnvelopePosted,
+  readText: () => readText,
+  removeDir: () => removeDir,
+  writeEnvelopePosted: () => writeEnvelopePosted,
+  writeFailureMarkers: () => writeFailureMarkers,
+  writeHandoff: () => writeHandoff,
+  writeValidationSidecar: () => writeValidationSidecar,
+  writeWorkerPid: () => writeWorkerPid
+});
+import { constants as constants3 } from "node:fs";
+import {
+  access as access5,
+  appendFile as appendFile2,
+  mkdir as mkdir6,
+  readdir as readdir3,
+  readFile as readFile7,
+  rm as rm6,
+  stat as stat5,
+  writeFile as writeFile8
+} from "node:fs/promises";
+import { dirname as dirname7, join as join20 } from "node:path";
+async function ensureDir(path2) {
+  await mkdir6(path2, { recursive: true });
+}
+async function pathExists2(path2) {
+  try {
+    await access5(path2, constants3.F_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+async function ensureGitignoreLine(gitignorePath, line) {
+  let current = "";
+  try {
+    current = await readFile7(gitignorePath, "utf8");
+  } catch {
+    current = "";
+  }
+  const lines2 = current.split("\n").map((l) => l.replace(/\r$/, ""));
+  if (lines2.includes(line)) return;
+  const sep = current.length === 0 || current.endsWith("\n") ? "" : "\n";
+  await mkdir6(dirname7(gitignorePath), { recursive: true });
+  await appendFile2(gitignorePath, `${sep}${line}
+`, "utf8");
+}
+async function writeWorkerPid(pidFile, pid) {
+  await mkdir6(dirname7(pidFile), { recursive: true });
+  await writeFile8(pidFile, String(pid), "utf8");
+}
+async function removeDir(path2) {
+  await rm6(path2, { recursive: true, force: true });
+}
+async function writeHandoff(path2, content) {
+  await mkdir6(dirname7(path2), { recursive: true });
+  await writeFile8(path2, content, "utf8");
+}
+async function writeValidationSidecar(path2, lines2) {
+  await mkdir6(dirname7(path2), { recursive: true });
+  await writeFile8(path2, lines2.length > 0 ? `${lines2.join("\n")}
+` : "", "utf8");
+}
+async function readText(path2) {
+  try {
+    return await readFile7(path2, "utf8");
+  } catch {
+    return null;
+  }
+}
+async function globWorkerStates(workersRoot) {
+  const out = [];
+  let workerDirs;
+  try {
+    workerDirs = await readdir3(workersRoot);
+  } catch {
+    return out;
+  }
+  for (const worker of workerDirs) {
+    const workerPath = join20(workersRoot, worker);
+    let attempts;
+    try {
+      attempts = await readdir3(workerPath);
+    } catch {
+      continue;
+    }
+    for (const attempt of attempts) {
+      const stateFile = join20(workerPath, attempt, "afk.state.json");
+      if (await pathExists2(stateFile)) out.push(stateFile);
+    }
+  }
+  return out;
+}
+async function appendLine(path2, line) {
+  await mkdir6(dirname7(path2), { recursive: true });
+  await appendFile2(path2, `${line}
+`, "utf8");
+}
+async function writeFailureMarkers(attemptDir, markers) {
+  await mkdir6(attemptDir, { recursive: true });
+  if (markers.snapshotBranchRef !== void 0) {
+    await writeFile8(join20(attemptDir, "snapshot-branch.ref"), markers.snapshotBranchRef, "utf8");
+  }
+  if (markers.failureReason !== void 0) {
+    await writeFile8(join20(attemptDir, "failure.reason"), markers.failureReason, "utf8");
+  }
+}
+async function writeEnvelopePosted(attemptDir, posted) {
+  const statePath = join20(attemptDir, "afk.state.json");
+  let obj = {};
+  const text3 = await readText(statePath);
+  if (text3 !== null) {
+    try {
+      const parsed = JSON.parse(text3);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) obj = parsed;
+    } catch {
+      obj = {};
+    }
+  }
+  const env2 = obj.envelope && typeof obj.envelope === "object" ? obj.envelope : {};
+  env2.posted = posted;
+  obj.envelope = env2;
+  await mkdir6(attemptDir, { recursive: true });
+  await writeFile8(statePath, `${JSON.stringify(obj)}
+`, "utf8");
+}
+async function readEnvelopePosted(attemptDir) {
+  const text3 = await readText(join20(attemptDir, "afk.state.json"));
+  if (text3 === null) return false;
+  try {
+    const parsed = JSON.parse(text3);
+    return parsed.envelope?.posted === true;
+  } catch {
+    return false;
+  }
+}
+async function listOrphanDirs(workersRoot, nowS) {
+  const out = [];
+  let workers;
+  try {
+    workers = await readdir3(workersRoot);
+  } catch {
+    return out;
+  }
+  for (const worker of workers) {
+    const workerPath = join20(workersRoot, worker);
+    let attempts;
+    try {
+      attempts = await readdir3(workerPath);
+    } catch {
+      continue;
+    }
+    for (const attempt of attempts) {
+      const dir = join20(workerPath, attempt);
+      const m2 = /^([1-9][0-9]*)-a[1-9][0-9]*$/.exec(attempt);
+      let ageS = 0;
+      try {
+        const st2 = await stat5(dir);
+        ageS = Math.max(0, nowS - Math.floor(st2.mtimeMs / 1e3));
+      } catch {
+        continue;
+      }
+      out.push({ path: dir, issue: m2 ? Number(m2[1]) : null, ageS });
+    }
+  }
+  return out;
+}
+function pidAlive(raw3) {
+  if (raw3 === null) return false;
+  const trimmed = raw3.trim();
+  if (!/^[1-9][0-9]*$/.test(trimmed)) return false;
+  try {
+    process.kill(Number(trimmed), 0);
+    return true;
+  } catch (err) {
+    return err.code === "EPERM";
+  }
+}
+async function listStaleClaimDirs(tmpDir) {
+  const claimsRoot = join20(tmpDir, "claims");
+  let entries2;
+  try {
+    entries2 = await readdir3(claimsRoot);
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const entry of entries2) {
+    const dir = join20(claimsRoot, entry);
+    try {
+      const st2 = await stat5(dir);
+      if (!st2.isDirectory()) continue;
+    } catch {
+      continue;
+    }
+    const raw3 = await readText(join20(dir, "pid"));
+    if (!pidAlive(raw3)) out.push({ path: dir });
+  }
+  return out;
+}
+async function listLegacyWorkDirs(tmpDir) {
+  let entries2;
+  try {
+    entries2 = await readdir3(tmpDir);
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const entry of entries2) {
+    if (!entry.startsWith("work-")) continue;
+    const dir = join20(tmpDir, entry);
+    try {
+      const st2 = await stat5(dir);
+      if (!st2.isDirectory()) continue;
+    } catch {
+      continue;
+    }
+    const raw3 = await readText(join20(dir, "afk.pid"));
+    if (!pidAlive(raw3)) out.push(dir);
+  }
+  return out;
+}
+async function completionSweep(workersRoot, issue) {
+  const removed = [];
+  let workerDirs;
+  try {
+    workerDirs = await readdir3(workersRoot);
+  } catch {
+    return removed;
+  }
+  const prefix = `${issue}-a`;
+  for (const worker of workerDirs) {
+    const workerPath = join20(workersRoot, worker);
+    let attempts;
+    try {
+      attempts = await readdir3(workerPath);
+    } catch {
+      continue;
+    }
+    for (const attempt of attempts) {
+      if (attempt.startsWith(prefix)) {
+        const dir = join20(workerPath, attempt);
+        await rm6(dir, { recursive: true, force: true });
+        removed.push(dir);
+      }
+    }
+  }
+  return removed;
+}
+var init_fs = __esm({
+  "src/runtime/fs.ts"() {
+    "use strict";
   }
 });
 
@@ -82168,6 +82168,9 @@ function getConfig(values3, key) {
   return values3[key] ?? "";
 }
 
+// src/runtime/wire.ts
+init_execution();
+
 // src/runtime/gh.ts
 init_exec();
 function opts(ctx) {
@@ -82622,8 +82625,8 @@ async function listRemoteBranches(ctx, namespace) {
 init_fs();
 
 // src/core/state.ts
-import { mkdir as mkdir4, readFile as readFile4, rename, writeFile as writeFile4 } from "node:fs/promises";
-import { dirname as dirname3 } from "node:path";
+import { mkdir as mkdir7, readFile as readFile8, rename as rename4, writeFile as writeFile9 } from "node:fs/promises";
+import { dirname as dirname8 } from "node:path";
 
 // src/types/state.ts
 var AfkFilterSchema = external_exports.object({
@@ -82675,7 +82678,7 @@ function parseState(data) {
 }
 async function readState(path2) {
   try {
-    const text3 = await readFile4(path2, "utf8");
+    const text3 = await readFile8(path2, "utf8");
     return parseState(JSON.parse(text3));
   } catch {
     return defaultState();
@@ -82693,11 +82696,11 @@ function setDotted(target2, key, value2) {
   cursor2[parts2[parts2.length - 1]] = value2;
 }
 async function writeStateAtomic(path2, state) {
-  await mkdir4(dirname3(path2), { recursive: true });
+  await mkdir7(dirname8(path2), { recursive: true });
   const tmp = `${path2}.tmp.${process.pid}.${Date.now()}`;
-  await writeFile4(tmp, `${JSON.stringify(AfkStateSchema.parse(state))}
+  await writeFile9(tmp, `${JSON.stringify(AfkStateSchema.parse(state))}
 `, "utf8");
-  await rename(tmp, path2);
+  await rename4(tmp, path2);
 }
 async function initState(path2, updates = {}) {
   const state = defaultState();
@@ -82800,20 +82803,20 @@ function resolveRunSettings(root, env2 = process.env) {
   const sandbox3 = SANDBOX_MODES.includes(rawSandbox) ? rawSandbox : "none";
   const defaultRunner = getConfig(cfg, "afk.default_runner") || "claude";
   const model = getConfig(cfg, "afk.model") || "claude-opus-4-8";
-  return { sandbox: sandbox3, defaultRunner, model };
+  const maxIterations = parseMaxIterations(env2.RED_AFK_MAX_ITERATIONS) ?? parseMaxIterations(getConfig(cfg, "afk.max_iterations"));
+  return { sandbox: sandbox3, defaultRunner, model, maxIterations };
 }
-function makeRunAgent(sandbox3, env2 = process.env) {
+function makeRunAgent(sandbox3, env2 = process.env, maxIterations) {
   let depsPromise = null;
   return async (input) => {
-    const { runAgent: runAgent2, defaultSandcastleDeps: defaultSandcastleDeps2, parseMaxIterations: parseMaxIterations2, parseIdleTimeout: parseIdleTimeout2 } = await Promise.resolve().then(() => (init_execution(), execution_exports));
+    const { runAgent: runAgent2, defaultSandcastleDeps: defaultSandcastleDeps2, parseIdleTimeout: parseIdleTimeout2 } = await Promise.resolve().then(() => (init_execution(), execution_exports));
     if (!depsPromise) depsPromise = defaultSandcastleDeps2();
     const deps = await depsPromise;
-    const envMaxIterations = parseMaxIterations2(env2.RED_AFK_MAX_ITERATIONS);
     const envIdleTimeout = parseIdleTimeout2(env2.RED_AFK_IDLE_TIMEOUT_S);
     return runAgent2(deps, {
       ...input,
       sandboxMode: input.sandboxMode ?? sandbox3,
-      maxIterations: input.maxIterations ?? envMaxIterations,
+      maxIterations: input.maxIterations ?? maxIterations ?? parseMaxIterations(env2.RED_AFK_MAX_ITERATIONS),
       idleTimeoutSeconds: input.idleTimeoutSeconds ?? envIdleTimeout
     });
   };
@@ -86023,7 +86026,7 @@ function deriveStage(event) {
   if (/^(read|grep|glob)$/.test(name) || /\bgit\s+ls-files\b|\bfind\b/.test(args2)) return "explore";
   return void 0;
 }
-function buildProcessDeps(ctx, model, sandbox3, feedback, current, fallbackRunner, runner, exec4) {
+function buildProcessDeps(ctx, model, sandbox3, feedback, current, fallbackRunner, runner, exec4, maxIterations) {
   const ghCtx = { cwd: ctx.root, repo: ctx.repo, exec: exec4 };
   const gitCtx = { cwd: ctx.root, exec: exec4 };
   const paths = afkPaths(ctx.root);
@@ -86049,7 +86052,7 @@ function buildProcessDeps(ctx, model, sandbox3, feedback, current, fallbackRunne
     claimLock: {
       acquire: async (issue) => {
         const dir = `${paths.tmpDir}/claims/${issue}`;
-        if (await pathExists(dir)) return false;
+        if (await pathExists2(dir)) return false;
         await ensureDir(dir);
         return true;
       },
@@ -86081,7 +86084,7 @@ function buildProcessDeps(ctx, model, sandbox3, feedback, current, fallbackRunne
     // worktree manager materialises it and rebases pnpm/layout onto it.
     pnpm: feedback.pnpm,
     layout: feedback.layout,
-    runAgent: makeRunAgent(sandbox3),
+    runAgent: makeRunAgent(sandbox3, process.env, maxIterations),
     model,
     fallbackRunner,
     // One-shot merge-conflict resolver (merge_resolve_conflict): re-enter the
@@ -86299,11 +86302,11 @@ async function runCommand2(options2) {
     processIssue: async (pd, pi2) => {
       const result = await processIssue(pd, pi2);
       const sp = join27(pi2.attemptDir, "afk.state.json");
-      if (await pathExists(sp)) await updateState(sp, { pid: 0 }).catch(() => {
+      if (await pathExists2(sp)) await updateState(sp, { pid: 0 }).catch(() => {
       });
       return result;
     },
-    processDeps: buildProcessDeps(ctx, settings.model, settings.sandbox, feedback, current, flags.fallbackRunner, runner),
+    processDeps: buildProcessDeps(ctx, settings.model, settings.sandbox, feedback, current, flags.fallbackRunner, runner, void 0, settings.maxIterations),
     // Session-scoped lifecycle hooks (PRD #207): compose the same config /
     // resolver / exec / env the process deps use, so session + per-issue points
     // share one dispatcher rather than duplicating the wiring.

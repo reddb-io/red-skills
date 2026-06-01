@@ -267,6 +267,7 @@ export function buildProcessDeps(
   fallbackRunner: boolean,
   runner: Runner,
   exec?: ExecFn,
+  maxIterations?: number,
 ): ProcessIssueDeps {
   const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo, exec };
   const gitCtx: GitContext = { cwd: ctx.root, exec };
@@ -331,7 +332,7 @@ export function buildProcessDeps(
     // worktree manager materialises it and rebases pnpm/layout onto it.
     pnpm: feedback.pnpm,
     layout: feedback.layout,
-    runAgent: makeRunAgent(sandbox),
+    runAgent: makeRunAgent(sandbox, process.env, maxIterations),
     model,
     fallbackRunner,
     // One-shot merge-conflict resolver (merge_resolve_conflict): re-enter the
@@ -615,7 +616,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
       if (await fsx.pathExists(sp)) await updateState(sp, { pid: 0 }).catch(() => {});
       return result;
     },
-    processDeps: buildProcessDeps(ctx, settings.model, settings.sandbox, feedback, current, flags.fallbackRunner, runner),
+    processDeps: buildProcessDeps(ctx, settings.model, settings.sandbox, feedback, current, flags.fallbackRunner, runner, undefined, settings.maxIterations),
     // Session-scoped lifecycle hooks (PRD #207): compose the same config /
     // resolver / exec / env the process deps use, so session + per-issue points
     // share one dispatcher rather than duplicating the wiring.
