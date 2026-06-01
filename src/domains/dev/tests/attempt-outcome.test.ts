@@ -25,6 +25,7 @@ interface Row {
 const TABLE: Row[] = [
   // recoverable: carry both a typed label and a recovery policy key
   { outcome: "exhausted", label: "blocked:quota", recovery: "quota" },
+  { outcome: "runner-transient", label: "blocked:runner-transient", recovery: "runner-transient" },
   { outcome: "no-sentinel", label: "blocked:crashed", recovery: "crashed" },
   { outcome: "hook-aborted", label: "blocked:policy", recovery: "policy" },
   { outcome: "merge-conflict", label: "blocked:merge-conflict", recovery: "merge-conflict" },
@@ -58,6 +59,7 @@ describe("attempt-outcome — exhaustive outcome → (label, recovery) table", (
       "claim-lost",
       "hook-aborted",
       "exhausted",
+      "runner-transient",
       "stalled",
       "infra",
     ];
@@ -67,7 +69,7 @@ describe("attempt-outcome — exhaustive outcome → (label, recovery) table", (
   });
 
   it("recoveryReasonFor only ever returns the four recoverable policy keys (or null)", () => {
-    const valid = new Set<RecoveryReason>(["quota", "merge-conflict", "crashed", "policy"]);
+    const valid = new Set<RecoveryReason>(["quota", "runner-transient", "merge-conflict", "crashed", "policy"]);
     for (const row of TABLE) {
       const r = recoveryReasonFor(row.outcome);
       if (r !== null) expect(valid.has(r)).toBe(true);
@@ -93,6 +95,7 @@ describe("attempt-outcome — exhaustive outcome → envelope status table", () 
     // non-emitting outcomes (no live emitFailure call) fold into `blocked`.
     { outcome: "hook-aborted", status: "blocked" },
     { outcome: "exhausted", status: "blocked" },
+    { outcome: "runner-transient", status: "blocked" },
     { outcome: "claim-lost", status: "blocked" },
     { outcome: "stalled", status: "blocked" },
     { outcome: "infra", status: "blocked" },
@@ -114,6 +117,7 @@ describe("attempt-outcome — exhaustive outcome → envelope status table", () 
       "claim-lost",
       "hook-aborted",
       "exhausted",
+      "runner-transient",
       "stalled",
       "infra",
     ];
