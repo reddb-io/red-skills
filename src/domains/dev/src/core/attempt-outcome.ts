@@ -42,6 +42,7 @@ export type AttemptOutcome =
   | "claim-lost"
   | "hook-aborted"
   | "exhausted"
+  | "runner-transient"
   | "stalled"
   | "infra";
 
@@ -49,6 +50,7 @@ export type AttemptOutcome =
  * The recovery-policy view of a terminal failure — the RECOVERABLE subset of the
  * outcomes, under their policy names (what *kind* of transient failure happened):
  *   - exhausted     → `quota`
+ *   - runner-transient → `runner-transient`
  *   - no-sentinel   → `crashed`
  *   - hook-aborted  → `policy`
  *   - merge-conflict→ `merge-conflict`
@@ -56,7 +58,7 @@ export type AttemptOutcome =
  * recovery.ts keys its bounded retry-cap table on these. Outcomes outside this
  * subset are NON-recoverable (always escalate, see `recoveryReasonFor`).
  */
-export type RecoveryReason = "quota" | "merge-conflict" | "crashed" | "policy";
+export type RecoveryReason = "quota" | "runner-transient" | "merge-conflict" | "crashed" | "policy";
 
 /**
  * Pure mapping from a terminal outcome to its DESCRIPTIVE `blocked:<…>`
@@ -71,6 +73,8 @@ export function blockedLabelFor(o: AttemptOutcome): string | null {
   switch (o) {
     case "exhausted":
       return "blocked:quota";
+    case "runner-transient":
+      return "blocked:runner-transient";
     case "merge-conflict":
       return "blocked:merge-conflict";
     case "blocked":
@@ -106,8 +110,8 @@ export function blockedLabelFor(o: AttemptOutcome): string | null {
  *   - merge-conflict  → "merge-conflict"
  *   - done            → "done"
  *
- * The remaining outcomes (`hook-aborted`, `exhausted`, `claim-lost`, `stalled`,
- * `infra`) emit NO terminal failure envelope from the per-issue lifecycle (they
+ * The remaining outcomes (`hook-aborted`, `exhausted`, `runner-transient`,
+ * `claim-lost`, `stalled`, `infra`) emit NO terminal failure envelope from the per-issue lifecycle (they
  * route via routeRecovery / short-circuit only), so they have no live call site;
  * they map to the generic `blocked` failure bucket — the same bucket
  * envelope-emit's `defaultHistoryEvent` folds non-done terminals into — to keep
@@ -125,6 +129,7 @@ export function envelopeStatusFor(o: AttemptOutcome): AttemptStatus {
     case "feedback-failed":
     case "hook-aborted":
     case "exhausted":
+    case "runner-transient":
     case "claim-lost":
     case "stalled":
     case "infra":
@@ -135,8 +140,9 @@ export function envelopeStatusFor(o: AttemptOutcome): AttemptStatus {
 /**
  * Pure mapping from a terminal outcome to its BOUNDED auto-recovery policy key,
  * or null when the outcome is NOT auto-recoverable. The recoverable outcomes are
- * exactly the four transient classes that often clear on a fresh attempt:
+ * exactly the transient classes that often clear on a fresh attempt:
  *   - exhausted     → `quota`
+ *   - runner-transient → `runner-transient`
  *   - no-sentinel   → `crashed`
  *   - hook-aborted  → `policy`
  *   - merge-conflict→ `merge-conflict`
@@ -149,6 +155,8 @@ export function recoveryReasonFor(o: AttemptOutcome): RecoveryReason | null {
   switch (o) {
     case "exhausted":
       return "quota";
+    case "runner-transient":
+      return "runner-transient";
     case "no-sentinel":
       return "crashed";
     case "hook-aborted":
