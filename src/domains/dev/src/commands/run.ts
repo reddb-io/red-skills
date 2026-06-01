@@ -45,7 +45,9 @@ import { branchLockPath, readLockedBranch, isLocked } from "../runtime/lock.js";
 import { makeHookExec, makeHookResolveOptions, hookEnv } from "../runtime/hooks.js";
 import { makeFeedbackWorktree, type FeedbackWorktree } from "../runtime/feedback-worktree.js";
 import { join } from "node:path";
-import { appendAgentRecord } from "../core/jsonl-log.js";
+import { appendAgentRecord, appendRecord } from "../core/jsonl-log.js";
+import { initState, updateState } from "../core/state.js";
+import type { AgentStreamEvent } from "../core/execution.js";
 
 export interface RunOptions {
   args: string[];
@@ -236,6 +238,26 @@ async function buildBootDeps(ctx: RepoContext, options: BootOptions, nowS: numbe
  * so the gh/git helpers fall through to the real `execTool` — byte-for-byte the
  * prior behaviour. Nothing else about the assembly changes.
  */
+/**
+ * Map a sandcastle agent stream event to an AFK pipeline stage, or `undefined`
+ * when the event carries no stage signal (a text chunk, or an unrecognised
+ * tool). Mirrors the shell *Stage Detection* table against tool calls: a git
+ * commit → `commit`, a vitest/`pnpm test` run → `tests`, an Edit/Write → `impl`,
+ * a Read/Grep/`git ls-files`/`find` → `explore`. Used by `recordAgentEvent` to
+ * advance `current.stage` in afk.state.json so the monitor reflects progress;
+ * keyed off tool calls (not every text chunk) to bound the state-write rate.
+ */
+export function deriveStage(event: AgentStreamEvent): string | undefined {
+  if (event.type !== "toolCall") return undefined;
+  const name = event.name.toLowerCase();
+  const args = event.formattedArgs.toLowerCase();
+  if (/\bgit\s+commit\b/.test(args)) return "commit";
+  if (/\b(vitest|jest|pnpm[^|]*\btest\b|\btest\b)\b/.test(args)) return "tests";
+  if (/^(edit|write|multiedit|notebookedit)$/.test(name)) return "impl";
+  if (/^(read|grep|glob)$/.test(name) || /\bgit\s+ls-files\b|\bfind\b/.test(args)) return "explore";
+  return undefined;
+}
+
 export function buildProcessDeps(
   ctx: RepoContext,
   model: string,
@@ -391,7 +413,24 @@ export function buildProcessDeps(
         ts,
         fields: { extra: { iteration: String(event.iteration), kind: event.type } },
       }).catch(() => {});
+      // Firehose lane (issue #250): every record in the uniform envelope. The
+      // native port left this unopened; restore it so the post-mortem firehose
+      // carries the agent turns alongside the (future) heartbeat/hook records.
+      void appendRecord(join(current.attemptDir, "log.jsonl"), "agent", msg, {
+        ts,
+        fields: { extra: { iteration: String(event.iteration), kind: event.type } },
+      }).catch(() => {});
       void fsx.appendLine(join(current.attemptDir, "afk.log"), `[agent] ${msg}`);
+      // Advance the monitor's state view on recognised tool-call transitions
+      // (bounded write rate vs every text chunk — the lane mtime above is the
+      // stall-detector's liveness signal; this is the dashboard's stage/last).
+      const stage = deriveStage(event);
+      if (stage) {
+        void updateState(join(current.attemptDir, "afk.state.json"), {
+          "current.stage": stage,
+          "current.last_stream_line": msg.slice(0, 200),
+        }).catch(() => {});
+      }
     },
     historyPath: paths.historyPath,
     historyClock: { ts: new Date().toISOString(), epoch: Math.floor(Date.now() / 1000) },
@@ -564,7 +603,18 @@ export async function runCommand(options: RunOptions): Promise<number> {
     runBoot,
     bootDeps,
     bootOptions,
-    processIssue,
+    // Wrap the per-issue orchestrator so the attempt's state file is marked
+    // not-live once it returns. Without this a terminal-but-preserved attempt
+    // (e.g. blocked → dir kept) would keep showing the still-live orchestrator
+    // pid and read as a live worker in `monitor`. Guarded by pathExists: on the
+    // DONE path the completion sweep already removed the dir, and updateState
+    // would mkdir it back, resurrecting a reaped attempt — so skip when gone.
+    processIssue: async (pd, pi) => {
+      const result = await processIssue(pd, pi);
+      const sp = join(pi.attemptDir, "afk.state.json");
+      if (await fsx.pathExists(sp)) await updateState(sp, { pid: 0 }).catch(() => {});
+      return result;
+    },
     processDeps: buildProcessDeps(ctx, settings.model, settings.sandbox, feedback, current, flags.fallbackRunner, runner),
     // Session-scoped lifecycle hooks (PRD #207): compose the same config /
     // resolver / exec / env the process deps use, so session + per-issue points
@@ -580,6 +630,30 @@ export async function runCommand(options: RunOptions): Promise<number> {
       const attemptDir = buildWorkerAttemptPath(c.issueTemplate.tmpDir, c.workerId, candidate.number, attempt);
       // Point the session-scoped envelope/iter-log closures at this attempt.
       current.attemptDir = attemptDir;
+      // Native-path observability (sibling of #350): the shell era's iter_open
+      // initialised afk.state.json here; the TS port's ensureAttemptDir is
+      // mkdir-only, so every live native worker was invisible to `monitor` /
+      // `statusline` and the fleet stall-detector (which key off this file's
+      // pid + current.{number,stage} and its mtime). Restore it: write the
+      // initial state with the live orchestrator pid so the worker shows up;
+      // recordAgentEvent advances current.stage, and the processIssue wrapper
+      // marks it not-live (pid:0) on terminal. Best-effort — never blocks work.
+      const statePath = join(attemptDir, "afk.state.json");
+      const startedAt = new Date().toISOString();
+      void initState(statePath, {
+        worker_id: c.workerId,
+        pid: process.pid,
+        runner: c.runner,
+        log: join(attemptDir, "afk.log"),
+        started_at: startedAt,
+        "current.number": candidate.number,
+        "current.title": candidate.title,
+        "current.worktree": join(attemptDir, "worktree"),
+        "current.handoff": join(attemptDir, "handoff.md"),
+        "current.started_at": startedAt,
+        "current.runner": c.runner,
+        "current.stage": "setup",
+      }).catch(() => {});
       // Append the --request block into the handoff body so the inner agent
       // (which reads handoff.md as its prompt) sees the special request.
       const body = requestBlock ? `${candidate.body}\n\n${requestBlock}` : candidate.body;

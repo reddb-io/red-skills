@@ -1,5 +1,45 @@
 import { describe, expect, it } from "vitest";
-import { parseRunFlags, RunFlagError } from "../src/commands/run.js";
+import { parseRunFlags, RunFlagError, deriveStage } from "../src/commands/run.js";
+import type { AgentStreamEvent } from "../src/core/execution.js";
+
+describe("deriveStage (native-path monitor stage detection)", () => {
+  const tool = (name: string, formattedArgs: string): AgentStreamEvent => ({
+    type: "toolCall",
+    name,
+    formattedArgs,
+    iteration: 1,
+    timestamp: new Date(0),
+  });
+
+  it("returns undefined for text chunks (no stage signal)", () => {
+    expect(deriveStage({ type: "text", message: "thinking…", iteration: 1, timestamp: new Date(0) })).toBeUndefined();
+  });
+
+  it("maps Edit/Write tools to impl", () => {
+    expect(deriveStage(tool("Edit", "src/foo.ts"))).toBe("impl");
+    expect(deriveStage(tool("Write", "src/bar.ts"))).toBe("impl");
+  });
+
+  it("maps a git commit to commit (before the generic test/explore checks)", () => {
+    expect(deriveStage(tool("Bash", "git commit -m 'feat: x'"))).toBe("commit");
+  });
+
+  it("maps a vitest / pnpm test run to tests", () => {
+    expect(deriveStage(tool("Bash", "pnpm -C pkg test"))).toBe("tests");
+    expect(deriveStage(tool("Bash", "./node_modules/.bin/vitest run"))).toBe("tests");
+  });
+
+  it("maps Read/Grep and git ls-files/find to explore", () => {
+    expect(deriveStage(tool("Read", "src/foo.ts"))).toBe("explore");
+    expect(deriveStage(tool("Grep", "needle"))).toBe("explore");
+    expect(deriveStage(tool("Bash", "git ls-files"))).toBe("explore");
+    expect(deriveStage(tool("Bash", "find . -name '*.ts'"))).toBe("explore");
+  });
+
+  it("returns undefined for an unrecognised tool with no stage signal", () => {
+    expect(deriveStage(tool("WebFetch", "https://example.com"))).toBeUndefined();
+  });
+});
 
 describe("parseRunFlags", () => {
   it("defaults to the all filter with no cap", () => {
