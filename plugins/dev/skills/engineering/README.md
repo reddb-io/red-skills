@@ -7,6 +7,7 @@ Skills I use daily for code work.
 - **[context](./context/SKILL.md)** — Compose the RedSkills context stack before non-trivial work: domain docs, ADRs, LLM Wiki, Memory graph/recall, graph-aware zoom-out, and self-improvement telemetry.
 - **[diagnose](./diagnose/SKILL.md)** — Disciplined diagnosis loop for hard bugs and performance regressions: reproduce → minimise → hypothesise → instrument → fix → regression-test.
 - **[start](./start/SKILL.md)** — Grilling session that challenges your plan against the existing domain model, sharpens terminology, and updates `.red/CONTEXT.md` and ADRs inline.
+- **[hitl](./hitl/SKILL.md)** — Resolve one `ready-for-human` issue by extracting the pending human decision, recording the answer as Human guidance, and promoting back to `ready-for-agent` when delegable.
 - **[triage](./triage/SKILL.md)** — Triage issues through a state machine of triage roles.
 - **[report-bug](./report-bug/SKILL.md)** — Interview the user about a bug they hit, then file a `type:bug needs-triage` issue on the project tracker. Seeds from conversation context when invoked with no argument.
 - **[urgent](./urgent/SKILL.md)** — File a `priority:urgent` issue that bypasses `/triage` and jumps the head of the `/afk` queue, ahead of any `--prd N` / `--issues a,b,c` filter. Use when something is on fire.
