@@ -214,7 +214,7 @@ function harness(opts: HarnessOptions = {}): {
       return {
         outcome: thisOutcome,
         branch: input.branch,
-        commits: thisOutcome === "exhausted" ? [] : [{ sha: "deadbee" }],
+        commits: thisOutcome === "exhausted" || thisOutcome === "runner-transient" ? [] : [{ sha: "deadbee" }],
         completionSignal:
           thisOutcome === "done"
             ? "<promise>DONE</promise>"
@@ -719,6 +719,47 @@ describe("processIssue — runner exhaustion → fallback swap → retry", () =>
       "pre_attempt",
       "post_attempt",
     ]);
+  });
+});
+
+describe("processIssue — runner transient transport/setup failure", () => {
+  it("routes through bounded recovery without throwing a worker crash", async () => {
+    const { deps, input, trace } = harness({ outcome: "runner-transient", fallbackRunner: false });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("runner-transient");
+    expect(result.preserved).toBe(true);
+    expect(trace.runAgentCalls.length).toBe(1);
+    expect(labelTrace(trace)).toEqual(["-ready-for-agent|+running", "-running|+ready-for-agent+blocked:runner-transient"]);
+    expect(trace.ensuredLabels).toContain("blocked:runner-transient");
+    expect(trace.released).toEqual([9]);
+    expect(trace.closed).toEqual([]);
+    expect(trace.comments.some((c) => /transient transport\/setup failure/.test(c.body))).toBe(true);
+    expect(result.hooksFired).toEqual(["pre_worktree", "pre_attempt"]);
+  });
+
+  it("uses --fallback-runner once before terminating the issue", async () => {
+    const { deps, input, trace } = harness({
+      outcomes: ["runner-transient", "done"],
+      fallbackRunner: true,
+      feedbackOk: true,
+    });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(trace.runAgentCalls.length).toBe(2);
+    expect(trace.runAgentCalls[0]?.runner).toBe("claude");
+    expect(trace.runAgentCalls[1]?.runner).toBe("codex");
+    expect(result.hooksFired).toEqual([
+      "pre_worktree",
+      "pre_attempt",
+      "post_attempt",
+      "pre_attempt",
+      "post_attempt",
+      "pre_merge",
+      "post_merge",
+    ]);
+    expect(trace.closed).toEqual([9]);
   });
 });
 
