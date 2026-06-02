@@ -59,12 +59,6 @@ export function formatElapsed(seconds: number): string {
   return `${pad(hh)}:${pad(mm)}:${pad(ss)}`;
 }
 
-/** Integer-division percent, matching `done * 100 / total` (0 when total<=0). */
-export function percentDone(done: number, total: number): number {
-  if (total <= 0) return 0;
-  return Math.floor((done * 100) / total);
-}
-
 function isNoIssue(n: number | string): boolean {
   return n === "" || n === "-" || n === "null" || n === 0;
 }
@@ -81,11 +75,17 @@ function elapsedSeconds(state: CompactState, now: number): number {
  * Renders one compact worker line, ANSI-stripped, byte-for-byte matching
  * render_worker_compact's plain text:
  *
- *   w<id> [live|stale] <runner>  <done>/<total> (<pct>%)<flags><cur>
+ *   w<id> [live|stale] <runner>  issues <done>/<total><flags><cur>
  *
- * where <flags> is ` blk:N` / ` fail:N` (each present only when > 0) and <cur>
- * is `  #<n> <title>  stage:<x>  HH:MM:SS<  +A -R>` when an issue is in
- * progress, or `  idle` otherwise. `now` is an epoch in seconds.
+ * The progress counter is labelled `issues <done>/<total>` — issues *closed*
+ * over the queue total, NOT lines changed or a completion percentage. The bare
+ * `<done>/<total> (<pct>%)` form read as "0% done / no code" while a worker had
+ * already committed thousands of lines; lines live in the `+A -R` diff suffix
+ * of <cur>, which is the real "is there work" signal.
+ *
+ * <flags> is ` blk:N` / ` fail:N` (each present only when > 0) and <cur> is
+ * `  #<n> <title>  stage:<x>  HH:MM:SS<  +A -R>` when an issue is in progress,
+ * or `  idle` otherwise. `now` is an epoch in seconds.
  */
 export function renderWorkerCompactLine(worker: CompactWorker, now: number): string {
   const { state } = worker;
@@ -94,7 +94,6 @@ export function renderWorkerCompactLine(worker: CompactWorker, now: number): str
   const runner = state.runner || "-";
   const total = state.total;
   const done = state.done;
-  const pct = percentDone(done, total);
 
   let flags = "";
   if (state.blocked > 0) flags += ` blk:${state.blocked}`;
@@ -110,7 +109,7 @@ export function renderWorkerCompactLine(worker: CompactWorker, now: number): str
     cur = "  idle";
   }
 
-  return `${workerId} [${tag}] ${runner}  ${done}/${total} (${pct}%)${flags}${cur}`;
+  return `${workerId} [${tag}] ${runner}  issues ${done}/${total}${flags}${cur}`;
 }
 
 /** Stable sort key — the worker-process start, oldest first (the bash glob is

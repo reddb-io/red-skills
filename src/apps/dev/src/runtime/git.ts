@@ -114,13 +114,23 @@ export async function diffstat(ctx: GitContext, branch: string, base: string): P
 }
 
 /**
- * Parsed `git diff --shortstat <base>` from the working tree at `ctx.cwd`.
- * Mirrors statusline.sh's worktree diffstat fallback: extracts the
- * `N insertion` / `N deletion` integers, defaulting each to 0 when absent or
- * on any failure.
+ * Parsed diffstat of the attempt's work at `ctx.cwd` — **committed plus
+ * uncommitted** — measured from where the branch left `<base>`.
+ *
+ * Resolves `merge-base(<base>, HEAD)` and diffs that against the working tree
+ * (`git diff --shortstat <merge-base>`), so the count reflects every commit the
+ * inner agent has made on the branch as well as any uncommitted edits. The
+ * previous `git diff --shortstat <base>` only saw the *uncommitted* worktree, so
+ * it collapsed to 0 the moment the agent committed — the monitor's "live but
+ * empty diff" lie. Falls back to a plain `<base>` diff when no merge-base
+ * resolves (e.g. an unborn branch). Extracts the `N insertion` / `N deletion`
+ * integers, defaulting each to 0 when absent or on any failure.
  */
 export async function diffstatShortstat(ctx: GitContext, base: string): Promise<{ added: number; removed: number }> {
-  const r = await runGit(ctx, ["diff", "--shortstat", base]);
+  let ref = base;
+  const mb = await runGit(ctx, ["merge-base", base, "HEAD"]);
+  if (mb.code === 0 && mb.stdout.trim() !== "") ref = mb.stdout.trim();
+  const r = await runGit(ctx, ["diff", "--shortstat", ref]);
   if (r.code !== 0) return { added: 0, removed: 0 };
   const ins = /(\d+) insertion/.exec(r.stdout);
   const del = /(\d+) deletion/.exec(r.stdout);
