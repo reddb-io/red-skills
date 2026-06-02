@@ -28,7 +28,8 @@ fix-home for each gap**; it never applies a fix.
 3. **`blocked:*` hygiene** — list open issues carrying `ready-for-agent` **or** `running` **together with** any `blocked:*` label (stale reason not rotated on re-queue). Count them.
 4. **AGENTS ≡ CLAUDE parity** — both files exist **and** both carry the `## Agent skills` block. Report `C/A` (e.g. `1/0` = block in CLAUDE only).
 5. **Statusline drift** — the installed `.claude/settings.json` `statusLine` command resolves the **cached bundle** (`~/.cache/red-skills/bundles/dev-*.bundle.min.mjs`), not the OLD launcher form (`…/plugins/cache/red-skills/dev/*/…/afk.mjs`) which blanks on every plugin update.
-6. **MCP wiring** — is `code-nav` / `red-memory` wired for this repo's **own** dev (root `.mcp.json` or an agent-doc reference)?
+6. **MCP wiring** — does the repo wire the expected MCPs? The `dev` plugin should expose `code-nav`; the `memory` plugin should expose **`red-memory` + `red-ui` as consumers** (fetched from the red-memory / red-ui releases per ADR 0039) — **flag a single standalone-local `memory` server** (running an in-repo `bootstrap.mjs`/build) as the pre-migration state. Also check whether the repo wires `code-nav`/`red-memory` for its **own** dev (root `.mcp.json` or agent-doc reference).
+7. **Version coherence** — every plugin manifest pair is on the same version: for each `plugins/*/`, `.claude-plugin/plugin.json` `version` **==** `.codex-plugin/plugin.json` `version`. A mismatch is what `validate-install-metadata.sh` rejects and what fails `red-release` (e.g. a stale manifest landed manually). Fix-home = `→ release` (the single-writer version script, ADR 0040).
 
 ### Output
 
@@ -57,6 +58,7 @@ Canonical families live in the target repo's `.red/agents/triage-labels.md`: sta
 | `→ /setup-red-skills` | AGENTS≡CLAUDE parity, statusline drift, MCP wiring, label provisioning. **Note:** `/setup-red-skills` Section F currently still emits the OLD statusline command — flag it as itself drifted until patched. |
 | `→ AFK runtime` | `blocked:*` accumulation (labels must be rotated/cleared on re-queue, plus the re-claim cap) — a bundle change, not a config edit. |
 | `→ manual / maintainer` | label renames (`gh label edit`), retiring legacy labels — the operator decides, the doctor never runs it. |
+| `→ release` | cross-manifest version mismatch — owned by the single-writer version script + `validate-install-metadata.sh` gate (ADR 0040); never hand-edit one manifest. |
 
 ### Scope & boundaries
 
