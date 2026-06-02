@@ -35,6 +35,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [feat(review-adrs): reconcile findings through a /start-style interview](./pages/389-feat-review-adrs-reconcile-findings-through-a-start-style-in.md)
 - [fix(afk): anchor sandcastle under the attempt dir, not the repo root](./pages/326-fix-afk-anchor-sandcastle-under-the-attempt-dir-not-the-repo.md)
 - [fix(afk): feed the agent lane on the native path so liveness isn't blind](./pages/350-fix-afk-feed-the-agent-lane-on-the-native-path-so-liveness-i.md)
+- [fix(afk): guard each supervise tick + per-tick heartbeat — unwedgeable fleet supervisor](./pages/408-fix-afk-guard-each-supervise-tick-per-tick-heartbeat-unwedge.md)
 - [fix(afk): harden sandcastle integration (pre-mortem J/E/D/F/G/H)](./pages/328-fix-afk-harden-sandcastle-integration-pre-mortem-j-e-d-f-g-h.md)
 - [fix(afk): monitor diff column counts committed work + relabel issue ratio](./pages/392-fix-afk-monitor-diff-column-counts-committed-work-relabel-is.md)
 - [fix(afk): native fleet supervisor — poll cadence + real stall-reaper IO](./pages/285-fix-afk-native-fleet-supervisor-poll-cadence-real-stall-reap.md)
