@@ -6,7 +6,7 @@ The plugin version is duplicated across many files: `plugins/<plugin>/.claude-pl
 
 The gate works — but there is **no single committed writer**, so any flow *outside* the release can drift one file. This bit us on 2026-06-02: landing `/dev:doctor` and `/dev:review-adrs` via worktrees copied a stale local `plugins/dev/.claude-plugin/plugin.json` (version `1.147.6`) over `main`'s `1.148.2` while `.codex-plugin` stayed `1.148.2`; `validate-install-metadata.sh` then failed `red-release` on three consecutive pushes, so the skills did not publish until the version was resynced (#384 → v1.149.0). The gate caught it loudly (good) but the drift was avoidable.
 
-Separately, the runtime bundles must be **version-aware**: the ADR 0038 launcher already resolves `dev-<version>.bundle.min.mjs` by the plugin version, and the memory plugin will fetch `red-memory` + `red-ui` by version too (ADR 0039). Version is therefore the coordination key across manifests, bundles, and the fetch — it must come from one place.
+Separately, the runtime bundles must be **version-aware**: the ADR 0038 launcher already resolves `dev-<version>.bundle.min.mjs` by the plugin version, and the memory plugin will fetch `red-memory` + `red-ui` by version too (ADR 0041). Version is therefore the coordination key across manifests, bundles, and the fetch — it must come from one place.
 
 ## Decision
 
@@ -31,6 +31,6 @@ Accepted (direction); implementation pending. The validator gate and the version
 ## Related
 
 - ADR 0038 — version-keyed fetch launcher (the runtime's version-awareness).
-- ADR 0039 — memory plugin fetches `red-memory` + `red-ui` by version.
+- ADR 0041 — memory plugin fetches `red-memory` + `red-ui` by version.
 - ADR 0029 — release-asset bundle fetch.
 - `scripts/validate-install-metadata.sh` — the CI gate this decision keeps.
