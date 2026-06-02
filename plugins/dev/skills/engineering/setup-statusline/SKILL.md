@@ -1,5 +1,5 @@
 ---
-name: statusline
+name: setup-statusline
 description: Install or inspect the RedSkills statusline for the current repo. On Claude Code, wires `.claude/settings.json` to a command that runs the AFK bundle's `statusline` subcommand (resolving the installed bundle itself — Claude Code does not expose `$CLAUDE_PLUGIN_ROOT` to a statusLine). On Codex, configures the built-in `tui.status_line` footer. Preserves existing config unless replacement is explicitly requested.
 ---
 
@@ -110,5 +110,5 @@ at the same AFK bundle so the line matches Claude Code's.
 
 ## Notes
 
-- Invoke as `/statusline` (Claude Code) or `$statusline` (Codex). Wire the host you are running under — the AFK bundle's `statusline` subcommand is the shared producer of the line; only the host integration differs.
+- Invoke as `/setup-statusline` (Claude Code) or `$setup-statusline` (Codex). Wire the host you are running under — the AFK bundle's `statusline` subcommand is the shared producer of the line; only the host integration differs.
 - `/setup-red-skills` also offers to wire the Claude Code statusline as part of project bootstrap (Section F).

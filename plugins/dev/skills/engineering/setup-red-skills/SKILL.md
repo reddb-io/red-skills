@@ -132,7 +132,7 @@ Decide whether to wire it up for this project:
   }
   ```
 
-  Do **not** use `$CLAUDE_PLUGIN_ROOT` here: Claude Code does not export it (nor `$CLAUDE_PROJECT_DIR`) to a `statusLine` command — only to plugin hooks and MCP/LSP subprocesses — so that form expands to an empty path and renders blank. The command above resolves the newest installed AFK bundle from the plugin cache itself, staying valid across updates without pinning a version. The project root is read from `workspace.project_dir` in the JSON Claude Code pipes on stdin (no argument needed). This is **Claude Code only**; Codex has no command-backed statusline — see the `statusline` skill for the Codex `tui.status_line` path.
+  Do **not** use `$CLAUDE_PLUGIN_ROOT` here: Claude Code does not export it (nor `$CLAUDE_PROJECT_DIR`) to a `statusLine` command — only to plugin hooks and MCP/LSP subprocesses — so that form expands to an empty path and renders blank. The command above resolves the newest installed AFK bundle from the plugin cache itself, staying valid across updates without pinning a version. The project root is read from `workspace.project_dir` in the JSON Claude Code pipes on stdin (no argument needed). This is **Claude Code only**; Codex has no command-backed statusline — see the `setup-statusline` skill for the Codex `tui.status_line` path.
 
 The script is no-op outside `/afk` sessions (it prints nothing when no live workers exist), so leaving the statusline wired up in non-AFK projects is harmless.
 
