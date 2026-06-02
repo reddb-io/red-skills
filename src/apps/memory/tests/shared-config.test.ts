@@ -25,12 +25,12 @@ describe("parsePluginsMemory", () => {
     });
   });
 
-  test("reads a graph block with hooks, deriving reddb=true", () => {
+  test("reads a graph block with autohooks, deriving reddb=true", () => {
     const text = [
       "plugins:",
       "  memory:",
       "    mode: graph",
-      "    hooks:",
+      "    autohooks:",
       "      sessionStart: true",
       "      stop: true",
       "    skillTelemetry: true",
@@ -71,8 +71,9 @@ describe("emitMemoryBlockLines (sparse)", () => {
     const lines = emitMemoryBlockLines(graphConfig({ hooks: { sessionStart: true } }));
     expect(lines).toContain("  memory:");
     expect(lines).toContain("    mode: graph");
-    expect(lines).toContain("    hooks:");
+    expect(lines).toContain("    autohooks:");
     expect(lines).toContain("      sessionStart: true");
+    expect(lines.join("\n")).not.toContain("    hooks:"); // never the user-hook key
     expect(lines.join("\n")).not.toContain("reddb:");
     expect(lines.join("\n")).not.toContain("version:");
     expect(lines.join("\n")).not.toContain("storePath:"); // default → omitted

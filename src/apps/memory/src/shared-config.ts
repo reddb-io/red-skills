@@ -94,11 +94,14 @@ export function parsePluginsMemory(text: string): MemoryConfig | null {
   const mode = flat[`${p}mode`];
   if (!mode || !STORAGE_MODES.includes(mode as StorageMode)) return null;
 
+  // `autohooks` toggles memory's built-in auto-firing handlers (ADR 0042 refine):
+  // they are OURS, not user-authored shell hooks, so they live under `autohooks`,
+  // never under `hooks:` (which the file reserves for user shell interceptors).
   const hooks: HookConfig = { ...HOOKS_OFF };
-  if (asBool(flat[`${p}hooks.sessionStart`])) hooks.sessionStart = true;
-  if (asBool(flat[`${p}hooks.postToolUse`])) hooks.postToolUse = true;
-  if (asBool(flat[`${p}hooks.stop`])) hooks.stop = true;
-  if (asBool(flat[`${p}hooks.preCompact`])) hooks.preCompact = true;
+  if (asBool(flat[`${p}autohooks.sessionStart`])) hooks.sessionStart = true;
+  if (asBool(flat[`${p}autohooks.postToolUse`])) hooks.postToolUse = true;
+  if (asBool(flat[`${p}autohooks.stop`])) hooks.stop = true;
+  if (asBool(flat[`${p}autohooks.preCompact`])) hooks.preCompact = true;
 
   const config: MemoryConfig = {
     version: CONFIG_VERSION,
@@ -153,7 +156,9 @@ export function emitMemoryBlockLines(config: MemoryConfig): string[] {
 
   const onHooks = (Object.keys(config.hooks) as (keyof HookConfig)[]).filter((h) => config.hooks[h]);
   if (onHooks.length > 0) {
-    lines.push("    hooks:");
+    // `autohooks`, not `hooks` — these enable our built-in handlers, not the
+    // user's shell hooks (ADR 0042 refine).
+    lines.push("    autohooks:");
     for (const h of onHooks) lines.push(`      ${h}: true`);
   }
 
