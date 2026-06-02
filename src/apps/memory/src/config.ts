@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { AiProviderConfig } from "./extract-conversation.js";
+import { mergeMemoryBlock, parsePluginsMemory } from "./shared-config.js";
 
 /** Storage backends the `memory init` wizard can configure. */
 export type StorageMode = "markdown-only" | "graph" | "hybrid";
@@ -159,8 +160,19 @@ export const DEFAULT_NOTES_DIR = ".red/memory/notes";
 /** Default location for the per-project RedDB graph store, under `.red/`. */
 export const DEFAULT_STORE_PATH = ".red/memory/graph.rdb";
 
-/** Absolute path to the memory config file for a given repo root. */
+/**
+ * Absolute path to the unified config file for a given repo root (ADR 0042).
+ * Memory config lives under the `plugins.memory` block of this file.
+ */
 export function configPath(rootDir: string): string {
+  return resolve(rootDir, ".red/config.yaml");
+}
+
+/**
+ * Absolute path to the legacy standalone memory config. Read as a back-compat
+ * fallback (ADR 0042); never written. Removable once repos have re-initialized.
+ */
+export function legacyConfigPath(rootDir: string): string {
   return resolve(rootDir, ".red/memory/config.json");
 }
 
@@ -178,21 +190,45 @@ export function resolveStoreUri(rootDir: string, config: MemoryConfig): string {
   return `file://${abs}`;
 }
 
-/** Write the config to `<root>/.red/memory/config.json`, creating parents. */
+/**
+ * Write the memory config into the `plugins.memory` block of
+ * `<root>/.red/config.yaml` (ADR 0042), merging into any existing file and
+ * preserving the rest of it (global keys, a `plugins.dev` sibling, comments).
+ * The block is sparse — only non-default fields are emitted.
+ */
 export async function writeConfig(
   rootDir: string,
   config: MemoryConfig,
 ): Promise<string> {
   const path = configPath(rootDir);
+  let existing = "";
+  try {
+    existing = await readFile(path, "utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+  }
   await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+  await writeFile(path, mergeMemoryBlock(existing, config), "utf8");
   return path;
 }
 
-/** Read the config, or return null if memory was never initialized here. */
+/**
+ * Read the memory config, or return null if memory was never initialized here.
+ * Canonical source is the `plugins.memory` block of `.red/config.yaml`
+ * (ADR 0042); falls back to the legacy standalone `.red/memory/config.json`
+ * so repos that have not re-initialized keep working.
+ */
 export async function readConfig(rootDir: string): Promise<MemoryConfig | null> {
   try {
-    const raw = await readFile(configPath(rootDir), "utf8");
+    const yaml = await readFile(configPath(rootDir), "utf8");
+    const fromYaml = parsePluginsMemory(yaml);
+    if (fromYaml) return fromYaml;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+  }
+
+  try {
+    const raw = await readFile(legacyConfigPath(rootDir), "utf8");
     return JSON.parse(raw) as MemoryConfig;
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;

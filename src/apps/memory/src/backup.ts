@@ -67,12 +67,22 @@ export async function createMemoryBackup(
   const files = await listMemoryFiles(memoryDir);
   const copied: MemoryBackupFile[] = [];
   for (const file of files) {
+    // The config now lives in `.red/config.yaml` (ADR 0042), not under
+    // `.red/memory`. We synthesize a self-contained `config.json` snapshot
+    // below from the resolved config, so skip any legacy in-tree copy to avoid
+    // a duplicate manifest entry.
+    if (file === "config.json") continue;
     const src = join(memoryDir, file);
     const dest = join(dataDir, file);
     await mkdir(dirname(dest), { recursive: true });
     await copyFile(src, dest);
     copied.push(await fileManifest(dataDir, file));
   }
+
+  // Embed a normalized config snapshot so the backup is self-contained and the
+  // manifest is stable regardless of where the live config is stored.
+  await writeFile(join(dataDir, "config.json"), `${JSON.stringify(config, null, 2)}\n`, "utf8");
+  copied.push(await fileManifest(dataDir, "config.json"));
 
   const manifest: MemoryBackupManifest = {
     schema_version: "memory.backup.v1",

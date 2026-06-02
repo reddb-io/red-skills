@@ -53,15 +53,19 @@ describe("markdown-only init", () => {
     expect(config.reddb).toBe(false);
   });
 
-  test("writes config to .red/memory/config.json and creates notes dir", async () => {
+  test("writes the plugins.memory block to .red/config.yaml and creates notes dir", async () => {
     const root = await tempRoot();
     const result = await initMarkdownOnly(root);
 
     expect(result.configPath).toBe(configPath(root));
-    const written = JSON.parse(await readFile(result.configPath, "utf8"));
-    expect(written.mode).toBe("markdown-only");
-    expect(written.hooks.sessionStart).toBe(false);
-    expect(written.mcp).toBe(false);
+    expect(result.configPath.endsWith("/.red/config.yaml")).toBe(true);
+    const written = await readFile(result.configPath, "utf8");
+    expect(written).toContain("plugins:");
+    expect(written).toContain("  memory:");
+    expect(written).toContain("    mode: markdown-only");
+    // sparse: derived/default fields are not persisted
+    expect(written).not.toContain("reddb:");
+    expect(written).not.toContain("version:");
 
     const notesStat = await stat(result.notesDir);
     expect(notesStat.isDirectory()).toBe(true);

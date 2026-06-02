@@ -80,7 +80,7 @@ If prior triage notes exist on the issue: read them, check whether the reporter 
 This is **best-effort and never a gate** — if `memory` is not installed, skip it silently; triage proceeds exactly as today (the `.out-of-scope/*.md` scan remains the always-on dedup path).
 
 ```bash
-if [ -f .red/memory/config.json ]; then
+if { [ -f .red/config.yaml ] && grep -qE '^[[:space:]]+memory:' .red/config.yaml; } || [ -f .red/memory/config.json ]; then
   _bridge="${CLAUDE_PLUGIN_ROOT:-}/scripts/memory-bridge.sh"
   [ -f "$_bridge" ] || _bridge="$(git rev-parse --show-toplevel 2>/dev/null)/plugins/dev/scripts/memory-bridge.sh"
   [ -f "$_bridge" ] && source "$_bridge" \

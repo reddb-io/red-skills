@@ -18,7 +18,7 @@ _zoom_out_path_from="<first explicitly named skill/module/file/concept, or empty
 _zoom_out_path_to="<second explicitly named skill/module/file/concept, or empty>"
 _zoom_out_target_file="<focused file path when the user's request names one, or empty>"
 _zoom_out_target_symbol="<focused symbol name when the user's request names one, or empty>"
-if [ -f .red/memory/config.json ]; then
+if { [ -f .red/config.yaml ] && grep -qE '^[[:space:]]+memory:' .red/config.yaml; } || [ -f .red/memory/config.json ]; then
   _bridge="${CLAUDE_PLUGIN_ROOT:-}/scripts/memory-bridge.sh"
   [ -f "$_bridge" ] || _bridge="$(git rev-parse --show-toplevel 2>/dev/null)/plugins/dev/scripts/memory-bridge.sh"
   if [ -f "$_bridge" ] && source "$_bridge"; then

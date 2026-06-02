@@ -125,7 +125,7 @@ Graph mode provisions a per-project embedded RedDB file at
 `.red/memory/graph.rdb` through the bundled SDK binary; there is no daemon to
 administer, but the build/install step is required. LLM-backed extraction and
 `memory ask` need a configured provider (`provider` in
-`.red/memory/config.json`, with any referenced API-key env var exported before
+the `plugins.memory` block of `.red/config.yaml`, with any referenced API-key env var exported before
 use). Without a provider key, deterministic store/recall, graph reads, claim
 checks, readiness, exports, and most hooks still run; ASK reports unavailable,
 and `memory extract --local` can still ingest explicit structured transcript
@@ -349,7 +349,7 @@ transcripts.
 
 `memory init` picks one storage mode. Two ship today:
 
-- **markdown-only** — zero engine dependency. Writes `.red/memory/config.json`
+- **markdown-only** — zero engine dependency. Writes the `plugins.memory` block of `.red/config.yaml`
   and `.red/memory/notes/`; `/memory:store` writes a plain markdown note,
   `/memory:recall` full-text-searches the notes.
 - **graph** — governed operational memory over a per-project embedded RedDB store
@@ -408,7 +408,7 @@ sentences. Recall and re-indexing are always zero-token.
 ### Pointing extraction at a local or in-account model
 
 The `INFERRED` extraction path (`memory extract`, the Stop hook) routes through
-whatever you put under `provider` in `.red/memory/config.json`. Export itself
+whatever you put under `provider` in the `plugins.memory` block of `.red/config.yaml`. Export itself
 never needs an LLM — this only governs extraction. For privacy-sensitive
 projects where code must not leave your environment, point `provider` at a
 local or in-account model:
@@ -855,7 +855,7 @@ serving path for status, curation, and recommendations; the event log is the
 raw audit substrate for future readiness and self-improvement views. Raw event
 readers apply a configurable retention horizon: graph init defaults to 30 days,
 and `memory init --mode graph --event-retention-days N` writes a different
-project horizon into `.red/memory/config.json`. The `memory_events` collection
+project horizon into the `plugins.memory` block of `.red/config.yaml`. The `memory_events` collection
 is always non-versioned and skipped by `memory commit`; promoted durable or
 reasoning graph evidence, rollups, and recallable facts survive even when old
 raw operational events age out of event-log reads.
@@ -896,12 +896,12 @@ error with `"no active memory session — call memory_session_start first (or
 rely on the SessionStart hook to mint one)"` so the agent can self-correct
 without a human in the loop.
 
-It resolves its store from the project config (`.red/memory/config.json` in the
+It resolves its store from the project config (the `plugins.memory` block of `.red/config.yaml` in the
 cwd or `$MEMORY_ROOT`, graph mode required), or from an explicit
 `RED_MEMORY_URI`:
 
 ```bash
-memory-mcp          # reads ./.red/memory/config.json
+memory-mcp          # reads ./.red/config.yaml (plugins.memory)
 RED_MEMORY_URI=file:///abs/graph.rdb \
   memory-mcp        # explicit store
 ```

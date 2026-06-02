@@ -17,7 +17,7 @@ way the fact is recallable later with `/memory:recall`.
 
 ## 1. Require init
 
-If `.red/memory/config.json` is missing, memory was never initialized — run
+If memory is not configured (no `plugins.memory` block in `.red/config.yaml`, nor a legacy `.red/memory/config.json`), memory was never initialized — run
 `/memory:init` (or tell the user to) before storing.
 
 ## 2. Store the fact

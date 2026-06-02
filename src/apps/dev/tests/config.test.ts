@@ -141,3 +141,24 @@ describe("config", () => {
     expect(getConfig(values, "afk.fleet.target")).toBe("9");
   });
 });
+
+describe("config — plugins.dev namespace (ADR 0042)", () => {
+  it("folds plugins.dev.afk.* down to the bare afk.* accessor keys", () => {
+    const text = "plugins:\n  dev:\n    afk:\n      default_runner: codex\n      fleet:\n        target: 4\n";
+    const values = loadConfig("/x/.red/config.yaml", { read: () => text });
+    expect(getConfig(values, "afk.default_runner")).toBe("codex");
+    expect(getConfig(values, "afk.fleet.target")).toBe("4");
+  });
+
+  it("still reads the legacy top-level afk.* block (back-compat)", () => {
+    const text = "afk:\n  default_runner: codex\n";
+    const values = loadConfig("/x/.red/config.yaml", { read: () => text });
+    expect(getConfig(values, "afk.default_runner")).toBe("codex");
+  });
+
+  it("lets the namespaced location win over a legacy top-level key", () => {
+    const text = "afk:\n  default_runner: claude\nplugins:\n  dev:\n    afk:\n      default_runner: codex\n";
+    const values = loadConfig("/x/.red/config.yaml", { read: () => text });
+    expect(getConfig(values, "afk.default_runner")).toBe("codex");
+  });
+});

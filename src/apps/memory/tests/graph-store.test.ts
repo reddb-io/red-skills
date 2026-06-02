@@ -1,4 +1,5 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
@@ -660,9 +661,12 @@ describe("init graph mode + round-trip", () => {
       });
       expect(config?.mcp).toBe(false);
 
-      // The store file was created under .red/memory/.
-      const raw = await readFile(result.configPath, "utf8");
-      expect(raw).toContain('"storePath"');
+      // Config is the unified yaml (ADR 0042); the default store path is sparse
+      // (omitted) but still resolves, and the store file was provisioned.
+      expect(result.configPath.endsWith("/.red/config.yaml")).toBe(true);
+      const storePath = result.storeUri.replace(/^file:\/\//, "");
+      expect(storePath.endsWith("/.red/memory/graph.rdb")).toBe(true);
+      expect(existsSync(storePath)).toBe(true);
     },
     TIMEOUT,
   );

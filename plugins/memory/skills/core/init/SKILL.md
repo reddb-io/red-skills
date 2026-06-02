@@ -53,7 +53,7 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap.mjs" init --mode graph
 node "${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap.mjs" init --mode graph --hooks
 ```
 
-markdown-only writes `.red/memory/config.json` (all hooks off, MCP off, RedDB
+markdown-only writes a `plugins.memory` block to `.red/config.yaml` (all hooks off, MCP off, RedDB
 not required) and creates `.red/memory/notes/`. graph writes the same config
 shape with `mode: "graph"`, `reddb: true`, a `storePath`, and provisions the
 RedDB store at `.red/memory/graph.rdb` (graph mode needs step 1's build to have
@@ -83,7 +83,7 @@ context pack when needed.
 - ✅ Ask before passing `--hooks`; the config flag, not the manifest, is what makes a hook active vs dormant.
 - ❌ Don't require, install, or connect to RedDB in markdown-only mode.
 - ❌ Don't commit `.red/memory/graph.rdb*` — the store is per-project local state, like `node_modules/`.
-- ❌ Don't hand-write `.red/memory/config.json` — go through the CLI so the schema stays valid.
+- ❌ Don't hand-write the `plugins.memory` block in `.red/config.yaml` — go through the CLI so the schema stays valid.
 
 </what-to-do>
 
