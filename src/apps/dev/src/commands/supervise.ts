@@ -7,7 +7,7 @@
 // native — no bash anywhere in the loop.
 
 import { spawn } from "node:child_process";
-import { existsSync, openSync, writeFileSync, rmSync } from "node:fs";
+import { existsSync, openSync, writeFileSync, writeSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import {
   initSupervisorState,
@@ -256,6 +256,15 @@ function buildSupervisorDeps(
       },
     },
     now,
+    // Per-tick liveness line into afk-supervisor.log (best-effort). Makes a
+    // healthy fleet's heartbeat — and a wedged one's silence — observable.
+    log: (line) => {
+      try {
+        writeSync(logFd, `[${new Date().toISOString()}] ${line}\n`);
+      } catch {
+        // best-effort: a log-write failure must never affect the loop.
+      }
+    },
   };
 }
 

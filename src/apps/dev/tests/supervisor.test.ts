@@ -12,6 +12,7 @@ import {
   sweepParkedSlot,
   superviseTick,
   validateStallThresholds,
+  guardedTick,
   type IterDirInfo,
   type SupervisorConfig,
   type SupervisorDeps,
@@ -31,6 +32,7 @@ function config(over: Partial<SupervisorConfig> = {}): SupervisorConfig {
     stallKillThresholdS: 90,
     runner: "claude",
     pollIntervalS: 15,
+    tickTimeoutS: 120,
     ...over,
   };
 }
@@ -492,5 +494,52 @@ describe("envelope builders", () => {
     expect(body).toContain('data-section="notes"');
     expect(body).toContain('data-section="log"');
     expect(body).toContain("stalled tool call");
+  });
+});
+
+describe("guardedTick — per-tick wall-clock ceiling (unwedgeable loop)", () => {
+  const never = (): Promise<void> => new Promise<void>(() => {});
+  const immediate = (): Promise<void> => Promise.resolve();
+  const okResult = { respawned: [1], deaths: [], parked: [], reaped: [], stopped: false };
+  const CONTINUE = { respawned: [], deaths: [], parked: [], reaped: [], stopped: false };
+
+  it("returns the tick result when it completes before the ceiling", async () => {
+    const logs: string[] = [];
+    const r = await guardedTick(async () => okResult, 1000, never, (l) => logs.push(l));
+    expect(r).toEqual(okResult);
+    expect(logs).toEqual([]); // no timeout / throw log on the happy path
+  });
+
+  it("abandons a hung tick after the ceiling and continues (non-stop result)", async () => {
+    const logs: string[] = [];
+    const r = await guardedTick(() => new Promise<typeof okResult>(() => {}), 5000, immediate, (l) =>
+      logs.push(l),
+    );
+    expect(r).toEqual(CONTINUE);
+    expect(r.stopped).toBe(false);
+    expect(logs.some((l) => l.includes("exceeded") && l.includes("abandoning"))).toBe(true);
+  });
+
+  it("isolates a throwing tick — logged, loop continues", async () => {
+    const logs: string[] = [];
+    const r = await guardedTick(
+      async () => {
+        throw new Error("gh boom");
+      },
+      1000,
+      never,
+      (l) => logs.push(l),
+    );
+    expect(r).toEqual(CONTINUE);
+    expect(logs.some((l) => l.includes("threw") && l.includes("gh boom"))).toBe(true);
+  });
+});
+
+describe("resolveSupervisorConfig — tick timeout knob", () => {
+  it("defaults tickTimeoutS and floors a 0 back to the default (never silently disabled)", () => {
+    expect(resolveSupervisorConfig({}).tickTimeoutS).toBe(120);
+    expect(resolveSupervisorConfig({ RED_AFK_TICK_TIMEOUT_S: "0" }).tickTimeoutS).toBe(120);
+    expect(resolveSupervisorConfig({ RED_AFK_TICK_TIMEOUT_S: "45" }).tickTimeoutS).toBe(45);
+    expect(resolveSupervisorConfig({ RED_AFK_TICK_TIMEOUT_S: "abc" }).tickTimeoutS).toBe(120);
   });
 });
