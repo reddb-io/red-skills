@@ -171,7 +171,8 @@ export interface MonitorInputs {
 }
 
 /** Read every worker state file + the history ledger into the pure renderer's
- * inputs. No process spawn — pure disk reads. */
+ * inputs, plus one `git diff --shortstat` per live worktree for the diff column
+ * (small fleet → a handful of cheap git calls, like the statusline does). */
 export async function collectMonitorInputs(root = process.cwd()): Promise<MonitorInputs> {
   const paths = afkPaths(root);
   const stateFiles = await fsx.globWorkerStates(paths.workersRoot);
@@ -185,6 +186,16 @@ export async function collectMonitorInputs(root = process.cwd()): Promise<Monito
     } catch {
       continue;
     }
+    // Diff column: committed + uncommitted work for the attempt, measured from
+    // the branch's merge-base with origin/main (gitx.diffstatShortstat). Without
+    // this the board showed nothing — `diff` was never populated, and even the
+    // statusline's fallback only saw the uncommitted worktree (→ 0 after commit).
+    let diff: string | undefined;
+    if (state.current.worktree) {
+      const stat = await gitx.diffstatShortstat({ cwd: state.current.worktree }, "origin/main");
+      if (stat.added > 0 || stat.removed > 0) diff = `+${stat.added} -${stat.removed}`;
+    }
+
     workers.push({
       state: {
         worker_id: state.worker_id,
@@ -203,6 +214,7 @@ export async function collectMonitorInputs(root = process.cwd()): Promise<Monito
         },
       },
       live: isStateLive(state),
+      ...(diff ? { diff } : {}),
     });
   }
 

@@ -38,7 +38,7 @@ describe("monitor — compact line", () => {
     // started 2026-05-30T11:00:00Z = 1780138800; now +1800s (30 min)
     const line = renderWorkerCompactLine(baseWorker(), 1780140600);
     expect(line).toBe(
-      "wAAAA [live] claude  1/4 (25%)  #42 do the thing  stage:impl  00:30:00  +10 -3",
+      "wAAAA [live] claude  issues 1/4  #42 do the thing  stage:impl  00:30:00  +10 -3",
     );
   });
 
@@ -51,12 +51,13 @@ describe("monitor — compact line", () => {
     expect(line).not.toContain("[live]");
   });
 
-  it("rounds percent down via integer division like bash", () => {
+  it("labels the counter as issues closed/total, with no misleading percent", () => {
     const w = baseWorker({
       state: { ...baseWorker().state, total: 3, done: 1 },
     });
     const line = renderWorkerCompactLine(w, 1780140600);
-    expect(line).toContain("1/3 (33%)");
+    expect(line).toContain("issues 1/3");
+    expect(line).not.toContain("%");
   });
 
   it("formats elapsed as zero-padded HH:MM:SS from current.started_at", () => {
