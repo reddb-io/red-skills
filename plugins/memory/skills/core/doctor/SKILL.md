@@ -16,7 +16,7 @@ fresh; one that nobody reads goes cold and surfaces here.
 
 ## 1. Require graph mode
 
-`doctor` needs `.red/memory/config.json` with `mode: "graph"`. If memory is not
+`doctor` needs a `plugins.memory` block in `.red/config.yaml` with `mode: "graph"`. If memory is not
 initialized or is markdown-only, say so and stop — there is no graph to inspect.
 
 ## 2. Diagnose (read-only first)

@@ -26,7 +26,7 @@ Do not ask the user to repeat information that is already present in those files
 
 ### 2. Recall prior memory before re-deriving
 
-If `.red/memory/config.json` exists, run a targeted recall before deep investigation:
+If memory is configured here (a `plugins.memory` block in `.red/config.yaml`, or the legacy `.red/memory/config.json`), run a targeted recall before deep investigation:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/../memory/scripts/bootstrap.mjs" recall "<topic terms>"

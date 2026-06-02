@@ -155,6 +155,32 @@ export interface MemoryCliProbes {
   exists: (path: string) => boolean;
   /** The `version` field of the JSON manifest at `path`, or undefined. */
   readJsonVersion?: (path: string) => string | undefined;
+  /** Raw text of a file at `path`, or undefined if absent. Used by the ADR 0042
+   * gate to detect a `plugins.memory` block in `.red/config.yaml`. */
+  readText?: (path: string) => string | undefined;
+}
+
+/**
+ * Whether `.red/config.yaml` text declares a `plugins.memory` block — the
+ * ADR 0042 memory opt-in signal that replaces the legacy
+ * `.red/memory/config.json` existence gate. A pure, dependency-free scan over
+ * the same constrained-subset grammar `dev`'s config parser uses: find the
+ * top-level `plugins:` mapping, then a `memory:` child indented exactly two
+ * spaces under it. Comment/blank lines are ignored; a `memory:` key elsewhere
+ * (not nested under `plugins:`) does not count.
+ */
+export function memoryConfiguredInYaml(text: string | undefined): boolean {
+  if (!text) return false;
+  let inPlugins = false;
+  for (const rawLine of text.split("\n")) {
+    const line = rawLine.replace(/\r$/, "");
+    if (line.trim() === "" || line.trim().startsWith("#")) continue;
+    const indent = (line.match(/^ */)?.[0] ?? "").length;
+    const key = line.slice(indent).replace(/:.*$/, "").trim();
+    if (indent === 0) inPlugins = key === "plugins";
+    else if (inPlugins && indent === 2 && key === "memory") return true;
+  }
+  return false;
 }
 
 /** POSIX-style path join that does not depend on node:path, so the resolver is
@@ -173,7 +199,9 @@ function joinPath(...parts: string[]): string {
  * native dev-CLI record-attempt path no longer shells out to the bridge.
  *
  * Returns `undefined` (→ silent no-op, memory not installed/opted-in) when:
- *   - Gate 1: `<gitRoot>/.red/memory/config.json` is absent (ADR 0009 opt-in), or
+ *   - Gate 1: memory is not opted in for this root — neither a `plugins.memory`
+ *     block in `<gitRoot>/.red/config.yaml` (ADR 0042) nor the legacy
+ *     `<gitRoot>/.red/memory/config.json` (ADR 0009 back-compat) is present, or
  *   - Gate 2: no usable CLI resolves through the candidate chain.
  *
  * Candidate order (faithful to `_memory_resolve_cli`):
@@ -198,8 +226,14 @@ export function resolveMemoryCli(
   env: NodeJS.ProcessEnv,
   probes: MemoryCliProbes,
 ): string[] | undefined {
-  // Gate 1 (ADR 0009 opt-in): memory must be configured for this root.
-  if (!probes.exists(joinPath(gitRoot, ".red", "memory", "config.json"))) return undefined;
+  // Gate 1 (opt-in): memory must be configured for this root. Canonical signal
+  // is a `plugins.memory` block in `.red/config.yaml` (ADR 0042); the legacy
+  // `.red/memory/config.json` existence is still honoured (ADR 0009 back-compat).
+  const yamlText = probes.readText?.(joinPath(gitRoot, ".red", "config.yaml"));
+  const optedIn =
+    memoryConfiguredInYaml(yamlText) ||
+    probes.exists(joinPath(gitRoot, ".red", "memory", "config.json"));
+  if (!optedIn) return undefined;
 
   // 1. Explicit override.
   const override = env.RED_MEMORY_CLI;

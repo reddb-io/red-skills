@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildAttemptRecordPayload,
+  memoryConfiguredInYaml,
   toMemoryPayload,
   resolveMemoryCli,
   type AttemptContext,
@@ -9,6 +10,7 @@ import {
 
 const ROOT = "/repo";
 const CONFIG = "/repo/.red/memory/config.json";
+const YAML = "/repo/.red/config.yaml";
 
 /** Build an exists-probe over an explicit allow-set of existing paths. */
 function existsOver(present: Iterable<string>): (p: string) => boolean {
@@ -185,5 +187,41 @@ describe("toMemoryPayload — wire format", () => {
     expect(parsed.attemptNumber).toBe(2);
     expect(parsed.status).toBe("done");
     expect(parsed.mergeCommit).toBe("abc1234");
+  });
+});
+
+describe("memoryConfiguredInYaml — ADR 0042 opt-in detection", () => {
+  it("detects a plugins.memory block", () => {
+    expect(memoryConfiguredInYaml("plugins:\n  memory:\n    mode: graph\n")).toBe(true);
+    expect(memoryConfiguredInYaml("plugins:\n  dev:\n    afk:\n      x: y\n  memory:\n    mode: graph\n")).toBe(true);
+  });
+  it("ignores a plugins block without memory, and a non-nested memory key", () => {
+    expect(memoryConfiguredInYaml("plugins:\n  dev:\n    afk:\n      x: y\n")).toBe(false);
+    expect(memoryConfiguredInYaml("memory:\n  mode: graph\n")).toBe(false);
+    expect(memoryConfiguredInYaml("")).toBe(false);
+    expect(memoryConfiguredInYaml(undefined)).toBe(false);
+  });
+});
+
+describe("resolveMemoryCli — Gate 1 via .red/config.yaml (ADR 0042)", () => {
+  const env = { PATH: "" } as NodeJS.ProcessEnv;
+
+  it("opts in from a plugins.memory yaml block even when the legacy json is absent", () => {
+    const p: MemoryCliProbes = {
+      exists: existsOver(["/abs/cli.js"]), // note: CONFIG json NOT present
+      readText: (path) => (path === YAML ? "plugins:\n  memory:\n    mode: graph\n" : undefined),
+    };
+    expect(resolveMemoryCli(ROOT, { ...env, RED_MEMORY_CLI: "/abs/cli.js" }, p)).toEqual([
+      "node",
+      "/abs/cli.js",
+    ]);
+  });
+
+  it("stays opted-out when neither the yaml block nor the legacy json is present", () => {
+    const p: MemoryCliProbes = {
+      exists: existsOver(["/abs/cli.js"]),
+      readText: (path) => (path === YAML ? "plugins:\n  dev:\n    afk:\n      x: y\n" : undefined),
+    };
+    expect(resolveMemoryCli(ROOT, { ...env, RED_MEMORY_CLI: "/abs/cli.js" }, p)).toBeUndefined();
   });
 });

@@ -28,7 +28,7 @@ Use `--root <dir>` when checking a repository other than the current working dir
 
 Read these JSON fields before deciding the next action:
 
-- `initialized` — whether `.red/memory/config.json` exists.
+- `initialized` — whether memory is configured (a `plugins.memory` block in `.red/config.yaml`, or the legacy `.red/memory/config.json`).
 - `graphMode` — whether graph mode is configured and the graph store exists.
 - `skillTelemetry` — `enabled` or `unavailable`.
 - `graphFreshness` — freshness of the graph store versus project files.

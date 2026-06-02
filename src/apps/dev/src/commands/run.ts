@@ -488,6 +488,13 @@ function makeRecordAttempt(
       const memoryCli = resolveMemoryCli(gitRoot, env, {
         exists: existsSync,
         readJsonVersion: readManifestVersion,
+        readText: (path) => {
+          try {
+            return readFileSync(path, "utf8");
+          } catch {
+            return undefined;
+          }
+        },
       });
       if (!memoryCli) return; // memory not opted-in / no CLI resolves — silent skip.
       const dir = current.attemptDir || gitRoot;

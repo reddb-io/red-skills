@@ -1,6 +1,6 @@
 ---
 name: extract
-description: Extract durable facts from a transcript into the Memory graph through the configured AI provider. Use when the user wants to preserve decisions, gotchas, root causes, or reasoning traces from a conversation or log. Graph mode only; requires `provider` in `.red/memory/config.json`.
+description: Extract durable facts from a transcript into the Memory graph through the configured AI provider. Use when the user wants to preserve decisions, gotchas, root causes, or reasoning traces from a conversation or log. Graph mode only; requires `provider` in the `plugins.memory` block of `.red/config.yaml`.
 ---
 
 # memory extract
@@ -11,7 +11,7 @@ Turns a transcript into `INFERRED` memory graph facts. This is the LLM-backed wr
 
 ## 1. Require graph mode and provider
 
-`extract` needs `.red/memory/config.json` with:
+`extract` needs a `plugins.memory` block in `.red/config.yaml` with:
 
 - `mode: "graph"`
 - a configured `provider` block

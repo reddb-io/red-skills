@@ -141,7 +141,7 @@ Do **not** proceed to hypothesise without a loop.
 `memory` is a sibling plugin that, when present, holds root causes from past diagnoses. Recalling at the top of Phase 3 means a recurring or related bug arrives with its previously-found cause already on the table — the single biggest accelerator for "we've seen this before". **Best-effort, never a gate**: if `memory` is not installed, skip it and diagnose exactly as today.
 
 ```bash
-if [ -f .red/memory/config.json ]; then
+if { [ -f .red/config.yaml ] && grep -qE '^[[:space:]]+memory:' .red/config.yaml; } || [ -f .red/memory/config.json ]; then
   _bridge="${CLAUDE_PLUGIN_ROOT:-}/scripts/memory-bridge.sh"
   [ -f "$_bridge" ] || _bridge="$(git rev-parse --show-toplevel 2>/dev/null)/plugins/dev/scripts/memory-bridge.sh"
   [ -f "$_bridge" ] && source "$_bridge" \

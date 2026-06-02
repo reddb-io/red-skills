@@ -27,6 +27,7 @@ describe("renderHookScript", () => {
   test("post-commit script no-ops fast and calls vcs refresh", () => {
     const s = renderHookScript("post-commit");
     expect(s).toContain(HOOK_MARKER);
+    expect(s).toContain('grep -qE \'^[[:space:]]+memory:\' "$root/.red/config.yaml"');
     expect(s).toContain('[ -f "$root/.red/memory/config.json" ] || exit 0');
     expect(s).toContain("vcs refresh --event post-commit");
     // No bootstrap path embedded → no embedded-bootstrap branch.

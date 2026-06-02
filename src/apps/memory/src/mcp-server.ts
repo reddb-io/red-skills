@@ -9,7 +9,9 @@
  *
  * Store resolution (first match wins):
  *   RED_MEMORY_URI       — explicit RedDB URI (used by tests and advanced setups)
- *   MEMORY_ROOT / cwd    — read `.red/memory/config.json`; requires graph mode
+ *   MEMORY_ROOT / cwd    — read the `plugins.memory` block of `.red/config.yaml`
+ *                          (legacy `.red/memory/config.json` as fallback);
+ *                          requires graph mode
  *
  *   RED_MEMORY_PROJECT   — project tag stamped on stored nodes (defaults to the
  *                          config's project or the root dir name)

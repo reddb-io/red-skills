@@ -128,7 +128,7 @@ Detect and recall in one step from inside the worktree:
 
 ```bash
 # repo root is the worktree you are in
-if [ -f .red/memory/config.json ]; then
+if { [ -f .red/config.yaml ] && grep -qE '^[[:space:]]+memory:' .red/config.yaml; } || [ -f .red/memory/config.json ]; then
   _bridge="${CLAUDE_PLUGIN_ROOT:-}/scripts/memory-bridge.sh"
   [ -f "$_bridge" ] || _bridge="$(git rev-parse --show-toplevel 2>/dev/null)/plugins/dev/scripts/memory-bridge.sh"
   [ -f "$_bridge" ] && source "$_bridge" \

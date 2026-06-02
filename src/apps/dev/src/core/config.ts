@@ -4,8 +4,12 @@ import { z } from "zod";
 /**
  * config.ts — TypeScript port of scripts/config.sh.
  *
- * Loads the `afk.*` block of `.red/config.yaml`. Mirrors the shell loader's
- * semantics exactly:
+ * Loads the dev config from `.red/config.yaml`. Per ADR 0042 the canonical
+ * location is the namespaced `plugins.dev.afk.*` block; the legacy top-level
+ * `afk.*` block is still read as a back-compat fallback. `loadConfig` folds the
+ * namespaced keys down to the bare `afk.*` accessor keys (the namespaced
+ * location wins when both are present), so every `getConfig(cfg, "afk.…")`
+ * caller is unchanged. Mirrors the shell loader's semantics exactly:
  *   - documented v1 defaults seed the map;
  *   - a missing file leaves all defaults;
  *   - malformed YAML emits one warning and falls back to all defaults;
@@ -159,7 +163,14 @@ export function loadConfig(path: string, options: LoadConfigOptions = {}): Confi
     return configDefaults();
   }
 
+  // Copy raw parsed keys (forward compatibility), then fold the namespaced
+  // `plugins.dev.*` block down to the bare accessor keys so the new location
+  // wins over the legacy top-level one (ADR 0042).
   for (const [key, value] of Object.entries(parsed)) values[key] = value;
+  for (const [key, value] of Object.entries(parsed)) {
+    const m = /^plugins\.dev\.(.+)$/.exec(key);
+    if (m) values[m[1]!] = value;
+  }
   return values;
 }
 

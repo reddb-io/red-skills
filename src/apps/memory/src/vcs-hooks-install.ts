@@ -47,7 +47,9 @@ export function renderHookScript(event: VcsEvent, bootstrapPath?: string): strin
 # \`memory vcs uninstall-hooks\`. Keeps the memory graph fresh via an incremental
 # re-ingest/export. No-ops silently when memory is not initialized here.
 ${captureArgs}root="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
-[ -f "$root/.red/memory/config.json" ] || exit 0
+# Opt-in gate: a \`plugins.memory\` block in .red/config.yaml (ADR 0042), or the
+# legacy .red/memory/config.json (back-compat). No-op when neither is present.
+{ [ -f "$root/.red/config.yaml" ] && grep -qE '^[[:space:]]+memory:' "$root/.red/config.yaml"; } || [ -f "$root/.red/memory/config.json" ] || exit 0
 if [ -n "$RED_MEMORY_CLI" ]; then
   # shellcheck disable=SC2086
   set -- $RED_MEMORY_CLI
