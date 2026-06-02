@@ -10,6 +10,7 @@
     "./skills/engineering/context",
     "./skills/engineering/diagnose",
     "./skills/engineering/doctor",
+    "./skills/engineering/review-adrs",
     "./skills/engineering/start",
     "./skills/engineering/triage",
     "./skills/engineering/hitl",
