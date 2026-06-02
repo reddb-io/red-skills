@@ -47,6 +47,16 @@ export interface SupervisorConfig {
   /** RED_AFK_POLL_S — seconds the health-check loop sleeps between ticks
    * (default 15, matching supervisor.sh). Prevents the loop from busy-spinning. */
   pollIntervalS: number;
+  /**
+   * RED_AFK_TICK_TIMEOUT_S — per-tick wall-clock ceiling (default 120). A single
+   * supervise tick should complete in well under a second; if one exceeds this
+   * (a gh / ps / git call hung with no timeout), the tick is abandoned and the
+   * loop continues to the next pass instead of freezing forever. This is what
+   * keeps the supervisor from going alive-but-quiescent — a live PID that stops
+   * spawning, never recovers, and emits no signal. 0 / non-numeric falls back to
+   * the default so a typo can never disable the guard.
+   */
+  tickTimeoutS: number;
 }
 
 export const SUPERVISOR_DEFAULTS = {
@@ -58,6 +68,7 @@ export const SUPERVISOR_DEFAULTS = {
   stallKillThresholdS: 1800,
   runner: "claude",
   pollIntervalS: 15,
+  tickTimeoutS: 120,
 } as const satisfies SupervisorConfig;
 
 /**
@@ -86,6 +97,10 @@ export function resolveSupervisorConfig(
     ),
     runner: env.RED_AFK_RUNNER && env.RED_AFK_RUNNER.length > 0 ? env.RED_AFK_RUNNER : SUPERVISOR_DEFAULTS.runner,
     pollIntervalS: num("RED_AFK_POLL_S", SUPERVISOR_DEFAULTS.pollIntervalS),
+    // 0 is a valid /^[0-9]+$/ match but would abandon every tick instantly, so
+    // floor it back to the default — the guard can never be silently disabled.
+    tickTimeoutS:
+      num("RED_AFK_TICK_TIMEOUT_S", SUPERVISOR_DEFAULTS.tickTimeoutS) || SUPERVISOR_DEFAULTS.tickTimeoutS,
   };
 }
 
@@ -279,6 +294,13 @@ export interface SupervisorDeps {
   gh: SupervisorGh;
   /** Current epoch seconds (date +%s), injected for determinism. */
   now(): number;
+  /**
+   * Optional liveness sink: one line per supervise tick (the CLI appends it to
+   * afk-supervisor.log). Makes a healthy fleet's heartbeat — and a wedged one's
+   * silence — observable, so an operator never has to guess fleet state from a
+   * stale log. Best-effort; never throws.
+   */
+  log?(line: string): void;
 }
 
 // ---------- per-slot runtime state ----------
@@ -660,9 +682,58 @@ export async function runSupervisor(
   }
 
   // Health-check loop until the stop-file, sleeping the poll cadence each pass.
+  // Every tick is bounded by `guardedTick`: a hung tick (gh/ps/git await with no
+  // timeout) is abandoned after tickTimeoutS and the loop continues — the
+  // supervisor can no longer go alive-but-quiescent. Each pass logs a heartbeat
+  // so the fleet's liveness is observable.
   for (;;) {
-    const result = await superviseTick(state, deps, config, stopRequested);
+    const result = await guardedTick(
+      () => superviseTick(state, deps, config, stopRequested),
+      config.tickTimeoutS * 1000,
+      deps.proc.sleep,
+      deps.log,
+    );
+    deps.log?.(
+      `tick: slots=${state.slots.length} respawned=${result.respawned.length} ` +
+        `deaths=${result.deaths.length} parked=${result.parked.length} reaped=${result.reaped.length}`,
+    );
     if (result.stopped) return;
     await deps.proc.sleep(config.pollIntervalS * 1000);
+  }
+}
+
+/** A non-stop tick result (the abandon/error fallback). */
+function continueResult(): TickResult {
+  return { respawned: [], deaths: [], parked: [], reaped: [], stopped: false };
+}
+
+/**
+ * Run one supervise tick under a wall-clock ceiling. A tick that exceeds
+ * `timeoutMs` (a hung gh/ps/git await) or throws is abandoned — logged, and a
+ * non-stop result returned — so the supervisor loop continues to the next pass
+ * instead of freezing forever on the await. Pure over an injected `sleep`
+ * (the timeout clock) so it is deterministically testable with no real timers.
+ * The abandoned tick promise is left to settle on its own; the loop moves on.
+ */
+export async function guardedTick(
+  tick: () => Promise<TickResult>,
+  timeoutMs: number,
+  sleep: (ms: number) => Promise<void>,
+  log?: (line: string) => void,
+): Promise<TickResult> {
+  const TIMEOUT = Symbol("tick-timeout");
+  try {
+    const raced = await Promise.race<TickResult | typeof TIMEOUT>([
+      tick(),
+      sleep(timeoutMs).then(() => TIMEOUT),
+    ]);
+    if (raced === TIMEOUT) {
+      log?.(`tick exceeded ${Math.round(timeoutMs / 1000)}s — abandoning this pass, loop continues`);
+      return continueResult();
+    }
+    return raced;
+  } catch (err) {
+    log?.(`tick threw: ${err instanceof Error ? err.message : String(err)} — loop continues`);
+    return continueResult();
   }
 }
