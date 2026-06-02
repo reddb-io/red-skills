@@ -17,7 +17,7 @@ import type { RunAgentInput, RunAgentResult } from "../core/execution.js";
 // Value import (pure, no sandcastle pull — the providers load lazily via
 // defaultSandcastleDeps' dynamic import) so resolveRunSettings can parse the
 // max-iterations knob from env/config without importing the runtime.
-import { parseMaxIterations } from "../core/execution.js";
+import { parseAttemptTimeout, parseMaxIterations } from "../core/execution.js";
 import type { BranchRef } from "../core/branch-cleanup.js";
 import { isRunner, type Runner } from "../types/runner.js";
 import * as ghx from "./gh.js";
@@ -83,6 +83,13 @@ export interface RunSettings {
    * undefined, buildRunOptions applies DEFAULT_MAX_ITERATIONS.
    */
   maxIterations?: number;
+  /**
+   * Attempt progress-guard cap (seconds), resolved with precedence
+   * RED_AFK_ATTEMPT_TIMEOUT_S env > `afk.attempt_timeout` config > undefined
+   * (→ DEFAULT_ATTEMPT_TIMEOUT_S). The guard aborts a run that produces no new
+   * commit within the cap (proof-of-progress) → blocked:stalled / ready-for-human.
+   */
+  attemptTimeoutSeconds?: number;
 }
 
 const SANDBOX_MODES: readonly SandboxMode[] = ["none", "docker", "podman"];
@@ -120,7 +127,13 @@ export function resolveRunSettings(
   // env or the config can never disable the cap or pin the agent to 1 iteration.
   const maxIterations =
     parseMaxIterations(env.RED_AFK_MAX_ITERATIONS) ?? parseMaxIterations(getConfig(cfg, "afk.max_iterations"));
-  return { sandbox, defaultRunner, model, maxIterations };
+  // Precedence mirrors maxIterations: RED_AFK_ATTEMPT_TIMEOUT_S env >
+  // afk.attempt_timeout config > undefined (→ DEFAULT_ATTEMPT_TIMEOUT_S in
+  // makeRunAgent). Typo-safe: a non-numeric / zero / negative value parses to
+  // undefined from either source.
+  const attemptTimeoutSeconds =
+    parseAttemptTimeout(env.RED_AFK_ATTEMPT_TIMEOUT_S) ?? parseAttemptTimeout(getConfig(cfg, "afk.attempt_timeout"));
+  return { sandbox, defaultRunner, model, maxIterations, attemptTimeoutSeconds };
 }
 
 // ---------- lazy sandcastle runAgent binding ----------
@@ -135,10 +148,13 @@ export function makeRunAgent(
   sandbox: SandboxMode,
   env: NodeJS.ProcessEnv = process.env,
   maxIterations?: number,
+  attemptTimeoutSeconds?: number,
 ): (input: RunAgentInput) => Promise<RunAgentResult> {
   let depsPromise: Promise<import("../core/execution.js").SandcastleDeps> | null = null;
   return async (input: RunAgentInput): Promise<RunAgentResult> => {
-    const { runAgent, defaultSandcastleDeps, parseIdleTimeout } = await import("../core/execution.js");
+    const { runAgent, defaultSandcastleDeps, parseIdleTimeout, DEFAULT_ATTEMPT_TIMEOUT_S } = await import(
+      "../core/execution.js"
+    );
     if (!depsPromise) depsPromise = defaultSandcastleDeps();
     const deps = await depsPromise;
     // Sandcastle re-invocation ceiling (issue #322). Precedence: per-call
@@ -150,11 +166,29 @@ export function makeRunAgent(
     // RED_AFK_IDLE_TIMEOUT_S overrides the per-iteration idle watchdog (FIX G),
     // same typo-safe contract.
     const envIdleTimeout = parseIdleTimeout(env.RED_AFK_IDLE_TIMEOUT_S);
+    const effectiveSandbox = input.sandboxMode ?? sandbox;
+    // Attempt progress guard (proof-of-progress). Armed only under no-sandbox
+    // isolation: there the worker branch's commits land in the shared `.git`, so
+    // `branchHead` sees HEAD advance. Under docker/podman the agent commits in an
+    // isolated copy not host-visible until final sync, so a commit-anchored guard
+    // would false-fire — skip it there (idle timeout + maxIterations still apply).
+    const attemptTimeout =
+      input.attemptTimeoutSeconds ??
+      attemptTimeoutSeconds ??
+      parseAttemptTimeout(env.RED_AFK_ATTEMPT_TIMEOUT_S) ??
+      DEFAULT_ATTEMPT_TIMEOUT_S;
+    const guardArmed = effectiveSandbox === "none" && !!input.branch;
     return runAgent(deps, {
       ...input,
-      sandboxMode: input.sandboxMode ?? sandbox,
+      sandboxMode: effectiveSandbox,
       maxIterations: input.maxIterations ?? maxIterations ?? parseMaxIterations(env.RED_AFK_MAX_ITERATIONS),
       idleTimeoutSeconds: input.idleTimeoutSeconds ?? envIdleTimeout,
+      ...(guardArmed
+        ? {
+            attemptTimeoutSeconds: attemptTimeout,
+            headProbe: () => gitx.branchHead({ cwd: input.cwd ?? process.cwd() }, input.branch),
+          }
+        : {}),
     });
   };
 }

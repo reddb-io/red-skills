@@ -1184,3 +1184,24 @@ describe("processIssue — AFK→Memory reasoning-attempt recording (ADR 0017)",
     expect(result.preserved).toBe(true);
   });
 });
+
+describe("processIssue — timeout (attempt progress guard fired)", () => {
+  it("routes through on_attempt_error → ready-for-human + blocked:stalled, no post_attempt", async () => {
+    const { deps, input, trace } = harness({ outcome: "timeout" });
+    const result = await processIssue(deps, input);
+
+    // The execution-layer `timeout` maps to the `stalled` terminal outcome.
+    expect(result.outcome).toBe("stalled");
+    expect(result.preserved).toBe(true);
+    // Escalates to a human (non-recoverable) with the typed blocked:stalled tag.
+    expect(labelTrace(trace)).toEqual(["-ready-for-agent|+running", "-running|+ready-for-human+blocked:stalled"]);
+    const edit = trace.labelEdits.at(-1)!;
+    expect(edit.add).toContain("ready-for-human");
+    expect(edit.add).toContain("blocked:stalled");
+    expect(trace.ensuredLabels).toContain("blocked:stalled");
+    // The failure envelope rides the generic `blocked` status bucket.
+    expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "blocked" }]);
+    // on_attempt_error fires; post_attempt does NOT (same as no-sentinel).
+    expect(result.hooksFired).toEqual(["pre_worktree", "pre_attempt", "on_attempt_error"]);
+  });
+});

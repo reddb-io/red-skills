@@ -18,6 +18,9 @@ import {
   CLAUDE_EFFORTS,
   parseMaxIterations,
   parseIdleTimeout,
+  parseAttemptTimeout,
+  startAttemptGuard,
+  DEFAULT_ATTEMPT_TIMEOUT_S,
   type SandcastleDeps,
   type RunAgentInput,
   type AgentStreamEvent,
@@ -554,5 +557,163 @@ describe("runAgent — runner transient failures", () => {
     expect(r.branch).toBe("afk/wZ2R4/42-fix-oauth");
     expect(r.commits).toEqual([]);
     expect(r.stdout).toContain("failed to connect to websocket");
+  });
+});
+
+// ---- attempt progress guard (proof-of-progress, PR-A) ----
+
+const flush = () => new Promise<void>((r) => setTimeout(r, 0));
+
+/** A manual scheduler: captures the periodic fn so the test pumps ticks. */
+function manualScheduler() {
+  const fns: Array<() => void> = [];
+  const schedule = (fn: () => void, _ms: number) => {
+    fns.push(fn);
+    return () => {
+      const i = fns.indexOf(fn);
+      if (i >= 0) fns.splice(i, 1);
+    };
+  };
+  const tick = async () => {
+    for (const fn of [...fns]) fn();
+    await flush();
+  };
+  return { schedule, tick };
+}
+
+describe("parseAttemptTimeout", () => {
+  it("accepts a positive integer, rejects 0 / negative / non-numeric / undefined", () => {
+    expect(parseAttemptTimeout("2700")).toBe(2700);
+    expect(parseAttemptTimeout("0")).toBeUndefined();
+    expect(parseAttemptTimeout("-5")).toBeUndefined();
+    expect(parseAttemptTimeout("abc")).toBeUndefined();
+    expect(parseAttemptTimeout(undefined)).toBeUndefined();
+  });
+  it("documents a sane default", () => {
+    expect(DEFAULT_ATTEMPT_TIMEOUT_S).toBeGreaterThan(0);
+  });
+});
+
+describe("startAttemptGuard — commit-anchored progress watchdog", () => {
+  it("aborts once the cap elapses with no new commit", async () => {
+    let clock = 1000;
+    const sched = manualScheduler();
+    let aborted = false;
+    const g = startAttemptGuard({
+      capMs: 100,
+      intervalMs: 50,
+      headProbe: async () => "sha-static",
+      now: () => clock,
+      schedule: sched.schedule,
+      abort: () => {
+        aborted = true;
+      },
+    });
+    await sched.tick(); // t=1000 anchor: head observed, deadline = 1000
+    expect(aborted).toBe(false);
+    clock = 1050;
+    await sched.tick(); // 50ms < cap → alive
+    expect(aborted).toBe(false);
+    clock = 1100;
+    await sched.tick(); // 100ms >= cap, head unchanged → abort
+    expect(aborted).toBe(true);
+    expect(g.firedTimeout()).toBe(true);
+    g.stop();
+  });
+
+  it("resets the deadline when HEAD advances (a new commit is real progress)", async () => {
+    let clock = 0;
+    let head = "sha1";
+    const sched = manualScheduler();
+    let aborted = false;
+    startAttemptGuard({
+      capMs: 100,
+      intervalMs: 50,
+      headProbe: async () => head,
+      now: () => clock,
+      schedule: sched.schedule,
+      abort: () => {
+        aborted = true;
+      },
+    });
+    clock = 10;
+    await sched.tick(); // anchor at sha1, deadline=10
+    clock = 90;
+    head = "sha2";
+    await sched.tick(); // commit advanced → deadline resets to 90
+    clock = 150;
+    await sched.tick(); // 150-90=60 < cap → alive
+    expect(aborted).toBe(false);
+    clock = 200;
+    await sched.tick(); // 200-90=110 >= cap, no further commit → abort
+    expect(aborted).toBe(true);
+  });
+
+  it("treats an unresolved HEAD (no commit yet) as no progress and still caps", async () => {
+    let clock = 0;
+    const sched = manualScheduler();
+    let aborted = false;
+    startAttemptGuard({
+      capMs: 100,
+      intervalMs: 50,
+      headProbe: async () => undefined,
+      now: () => clock,
+      schedule: sched.schedule,
+      abort: () => {
+        aborted = true;
+      },
+    });
+    clock = 50;
+    await sched.tick();
+    expect(aborted).toBe(false);
+    clock = 100;
+    await sched.tick(); // 100 >= cap from start → abort
+    expect(aborted).toBe(true);
+  });
+});
+
+describe("runAgent — attempt guard wiring", () => {
+  it("returns the 'timeout' outcome when the guard aborts a stalled run", async () => {
+    let clock = 0;
+    const sched = manualScheduler();
+    const controller = new AbortController();
+    const deps: SandcastleDeps = {
+      ...makeDeps(
+        (o) =>
+          new Promise<RunResult>((_resolve, reject) => {
+            o.signal?.addEventListener("abort", () => reject(o.signal?.reason ?? new Error("aborted")));
+          }),
+      ),
+      now: () => clock,
+      schedule: sched.schedule,
+      makeAbortController: () => controller,
+    };
+    const p = runAgent(deps, { ...baseInput, attemptTimeoutSeconds: 1, headProbe: async () => "static" });
+    await sched.tick(); // anchor (capMs = 1000, deadline = 0)
+    clock = 1000;
+    await sched.tick(); // 1000 >= cap → abort → run rejects
+    const res = await p;
+    expect(res.outcome).toBe("timeout");
+    expect(res.branch).toBe(baseInput.branch);
+    expect(res.commits).toEqual([]);
+  });
+
+  it("does not arm the guard (normal completion) when no timeout/headProbe is supplied", async () => {
+    const deps = makeDeps(async () => fakeResult({ completionSignal: DONE_SIGNAL }));
+    const res = await runAgent(deps, baseInput); // no attemptTimeoutSeconds / headProbe
+    expect(res.outcome).toBe("done");
+  });
+
+  it("passes the abort signal through to sandcastle's run options when armed", async () => {
+    let seenSignal: AbortSignal | undefined;
+    const deps: SandcastleDeps = {
+      ...makeDeps(async (o) => {
+        seenSignal = o.signal;
+        return fakeResult({ completionSignal: DONE_SIGNAL });
+      }),
+      schedule: manualScheduler().schedule,
+    };
+    await runAgent(deps, { ...baseInput, attemptTimeoutSeconds: 60, headProbe: async () => "x" });
+    expect(seenSignal).toBeInstanceOf(AbortSignal);
   });
 });

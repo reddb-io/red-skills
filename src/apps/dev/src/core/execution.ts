@@ -29,7 +29,12 @@ export type AgentEffort = "low" | "medium" | "high" | "xhigh" | "max";
 // example Codex websocket 502 / thread-start failures). Both ride the same
 // outcome union so process-issue can branch on them without treating the worker
 // as crashed.
-export type AgentOutcome = "done" | "blocked" | "no-sentinel" | "exhausted" | "runner-transient";
+// `timeout` is surfaced when AFK's attempt wall-clock guard aborts a run that is
+// alive but making no progress (no new commit within the cap) — the "productive
+// infinite loop" the idle / max-iteration / stall guards all miss. It maps to the
+// `stalled` terminal outcome downstream (→ blocked:stalled, ready-for-human),
+// preserving the worktree/PR.
+export type AgentOutcome = "done" | "blocked" | "no-sentinel" | "exhausted" | "runner-transient" | "timeout";
 
 /** AFK's canonical sentinels, registered as sandcastle completion signals. */
 export const DONE_SIGNAL = "<promise>DONE</promise>";
@@ -37,6 +42,28 @@ export const BLOCKED_SIGNAL = "<promise>BLOCKED</promise>";
 export const COMPLETION_SIGNALS: readonly string[] = [DONE_SIGNAL, BLOCKED_SIGNAL];
 
 export const DEFAULT_IDLE_TIMEOUT_S = 600;
+
+/**
+ * Attempt wall-clock guard (proof-of-PROGRESS): the inner agent is aborted when
+ * no NEW commit has landed on the worker branch within this many seconds.
+ * `idleTimeoutSeconds` catches *silence* (no output) and `maxIterations` caps
+ * *re-invocations*, but a single iteration that stays busy — re-exploring,
+ * re-running tests — without ever committing or signalling slips past both and
+ * burns cycle indefinitely (the 1h41m #834 hang). The clock resets on every new
+ * commit, so a steadily-committing agent is never killed; only one that spins
+ * without producing work is. Env-tunable via `RED_AFK_ATTEMPT_TIMEOUT_S`.
+ */
+export const DEFAULT_ATTEMPT_TIMEOUT_S = 2700;
+
+/** Parse `RED_AFK_ATTEMPT_TIMEOUT_S` / `afk.attempt_timeout`: a positive integer,
+ * else undefined (caller falls back to {@link DEFAULT_ATTEMPT_TIMEOUT_S}). `0`
+ * is rejected (use a large value to effectively disable; never silently off). */
+export function parseAttemptTimeout(raw: string | undefined): number | undefined {
+  if (raw === undefined) return undefined;
+  const parsed = Number(raw);
+  if (Number.isInteger(parsed) && parsed > 0) return parsed;
+  return undefined;
+}
 
 /**
  * The re-invocation ceiling handed to sandcastle's Orchestrator (issue #322).
@@ -180,6 +207,21 @@ export interface RunAgentInput {
    * to a live agent. sandcastle swallows any error this callback throws.
    */
   onAgentEvent?: (event: AgentStreamEvent) => void;
+  /**
+   * Attempt wall-clock guard cap in seconds (proof-of-progress). When set,
+   * `runAgent` aborts the sandcastle run if no NEW commit appears on the worker
+   * branch within this window, resetting on each commit. Omitted → no guard
+   * (back-compat for callers/tests that don't opt in). `makeRunAgent` threads
+   * `RED_AFK_ATTEMPT_TIMEOUT_S` / `afk.attempt_timeout` here. See
+   * {@link DEFAULT_ATTEMPT_TIMEOUT_S}.
+   */
+  attemptTimeoutSeconds?: number;
+  /**
+   * Returns the current HEAD sha of the worker branch (the progress signal the
+   * guard watches). Best-effort: resolves `undefined` on any git failure, which
+   * the guard treats as "no progress observed". Required for the guard to arm.
+   */
+  headProbe?: () => Promise<string | undefined>;
 }
 
 /** The git remote the continuous-push hook targets when none is supplied. */
@@ -204,6 +246,17 @@ export interface SandcastleDeps {
    * real wiring; tests inject a recorder. Never throws — these are advisories.
    */
   warn?: (message: string) => void;
+  /** Injectable clock (ms) for the attempt guard. Defaults to `Date.now`. */
+  now?: () => number;
+  /**
+   * Injectable periodic scheduler for the attempt guard — runs `fn` every `ms`
+   * and returns a cancel function. Defaults to a `setInterval` wrapper (with
+   * `unref` so it never keeps the process alive). Tests inject a manual pump.
+   */
+  schedule?: (fn: () => void, ms: number) => () => void;
+  /** Injectable `AbortController` factory for the attempt guard. Defaults to
+   * `() => new AbortController()`. */
+  makeAbortController?: () => AbortController;
 }
 
 /**
@@ -419,6 +472,60 @@ function collectErrorStrings(value: unknown, out: string[], seen: Set<object>, d
   }
 }
 
+/** Default periodic scheduler: a `setInterval` that never keeps the event loop
+ * alive (so a hung guard can't block process exit). */
+function defaultSchedule(fn: () => void, ms: number): () => void {
+  const t = setInterval(fn, ms);
+  (t as { unref?: () => void }).unref?.();
+  return () => clearInterval(t);
+}
+
+/**
+ * Arm the attempt progress guard. Polls `headProbe` every `intervalMs`; the
+ * deadline resets whenever the HEAD sha ADVANCES (a new commit = real progress),
+ * and `abort` fires once `capMs` elapses with no advance. Pure over its injected
+ * clock / scheduler — no real timers, no git — so it is fully unit-testable. The
+ * first observed head anchors the clock (≈ from spawn). A `headProbe` rejection
+ * is treated as "no progress observed" (never resets), so a flaky git read
+ * cannot keep a hung agent alive.
+ */
+export function startAttemptGuard(opts: {
+  capMs: number;
+  intervalMs: number;
+  headProbe: () => Promise<string | undefined>;
+  now: () => number;
+  schedule: (fn: () => void, ms: number) => () => void;
+  abort: () => void;
+}): { stop: () => void; firedTimeout: () => boolean } {
+  let lastProgress = opts.now();
+  let lastHead: string | undefined;
+  let fired = false;
+  const cancel = opts.schedule(() => {
+    void opts
+      .headProbe()
+      .then((head) => {
+        if (fired) return;
+        if (head !== undefined && head !== lastHead) {
+          lastHead = head;
+          lastProgress = opts.now();
+          return;
+        }
+        if (opts.now() - lastProgress >= opts.capMs) {
+          fired = true;
+          opts.abort();
+        }
+      })
+      .catch(() => {
+        // headProbe failure = no progress observed; let the deadline run.
+        if (!fired && opts.now() - lastProgress >= opts.capMs) {
+          fired = true;
+          opts.abort();
+        }
+      });
+  }, opts.intervalMs);
+  return { stop: cancel, firedTimeout: () => fired };
+}
+
 /**
  * Run the inner agent on the issue via sandcastle and normalise the result.
  *
@@ -427,6 +534,11 @@ function collectErrorStrings(value: unknown, out: string[], seen: Set<object>, d
  * raises on a 429 / usage-limit), or by completing with exhaustion text on
  * stdout. Both map to the `exhausted` outcome (no commits, no sentinel). Any
  * other thrown error propagates unchanged.
+ *
+ * When `attemptTimeoutSeconds` + `headProbe` are supplied, an attempt progress
+ * guard runs alongside: if no new commit lands within the cap, the run is
+ * aborted (sandcastle kills the in-flight agent, preserving the worktree) and
+ * the result is the `timeout` outcome.
  */
 export async function runAgent(deps: SandcastleDeps, input: RunAgentInput): Promise<RunAgentResult> {
   const warn = deps.warn ?? ((m: string) => console.warn(m));
@@ -449,10 +561,42 @@ export async function runAgent(deps: SandcastleDeps, input: RunAgentInput): Prom
   // its own process, so this is isolated per-worker. Under docker/podman the env
   // must enter the container instead (sandbox env lane) — out of scope (#284).
   for (const [k, v] of Object.entries(input.env ?? {})) process.env[k] = v;
+
+  // Attempt progress guard (proof-of-progress): abort the run if no new commit
+  // lands within the cap. Armed only when both the cap and a headProbe are
+  // supplied; otherwise behaviour is unchanged.
+  const now = deps.now ?? (() => Date.now());
+  let guard: { stop: () => void; firedTimeout: () => boolean } | undefined;
+  let controller: AbortController | undefined;
+  if (input.attemptTimeoutSeconds && input.attemptTimeoutSeconds > 0 && input.headProbe) {
+    const capMs = input.attemptTimeoutSeconds * 1000;
+    controller = (deps.makeAbortController ?? (() => new AbortController()))();
+    const cap = input.attemptTimeoutSeconds;
+    guard = startAttemptGuard({
+      capMs,
+      intervalMs: Math.min(capMs, 60_000),
+      headProbe: input.headProbe,
+      now,
+      schedule: deps.schedule ?? defaultSchedule,
+      abort: () =>
+        controller?.abort(new Error(`afk: attempt aborted — no new commit within ${cap}s (stalled)`)),
+    });
+  }
+
   let result: RunResult;
   try {
-    result = await deps.run(buildRunOptions(deps, input));
+    const options = buildRunOptions(deps, input);
+    result = await deps.run(controller ? { ...options, signal: controller.signal } : options);
   } catch (error) {
+    // The progress guard aborted: alive but not committing → stalled.
+    if (guard?.firedTimeout()) {
+      return {
+        outcome: "timeout",
+        branch: input.branch,
+        commits: [],
+        stdout: `afk: attempt aborted — no new commit within ${input.attemptTimeoutSeconds}s (stalled)`,
+      };
+    }
     if (isExhaustionError(error)) {
       return { outcome: "exhausted", branch: input.branch, commits: [], stdout: "" };
     }
@@ -465,6 +609,8 @@ export async function runAgent(deps: SandcastleDeps, input: RunAgentInput): Prom
       };
     }
     throw error;
+  } finally {
+    guard?.stop();
   }
   // A run that completed but surfaced exhaustion text on stdout (rather than
   // throwing) is also exhaustion — match the stdout the same way run_inner does.

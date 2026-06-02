@@ -282,11 +282,13 @@ export interface ProcessIssueInput {
 // ---------- result ----------
 
 // The subset of `AttemptOutcome` that the per-issue lifecycle itself can return.
-// `stalled` (supervisor reaper) and `infra` (boot setup) originate outside
-// processIssue, so they are excluded here while the shared owner (attempt-outcome)
-// keeps the full union. Exclude<> ties this to the single owner so the two can
-// never drift.
-export type ProcessOutcome = Exclude<AttemptOutcome, "stalled" | "infra">;
+// `infra` (boot setup) originates outside processIssue, so it is excluded here
+// while the shared owner (attempt-outcome) keeps the full union. `stalled` is
+// now ALSO a processIssue terminal: the attempt progress guard (execution.ts)
+// surfaces a `timeout` agent-outcome which processIssue maps to `stalled` (→
+// blocked:stalled, ready-for-human). Exclude<> ties this to the single owner so
+// the two can never drift.
+export type ProcessOutcome = Exclude<AttemptOutcome, "infra">;
 
 export interface ProcessIssueResult {
   outcome: ProcessOutcome;
@@ -617,6 +619,17 @@ export async function processIssue(
     });
   }
 
+  // ---- attempt progress guard fired: alive but no new commit within the cap.
+  // Park to ready-for-human (blocked:stalled), preserving the pushed branch/PR
+  // — never auto-retry (recoveryReasonFor("stalled") = null → always escalate). ----
+  if (run.outcome === "timeout") {
+    await fireHook("on_attempt_error", onErrorContext(current, workerBranch, "stalled", current.attempt));
+    return await terminalFailure(common, "stalled", "stalled", {
+      notes: "_(no Notes appended; attempt aborted — inner agent made no progress within the wall-clock guard)_",
+      log: run.stdout || "(attempt progress guard fired)",
+    });
+  }
+
   // ---- post_attempt hook (terminal invocation; sentinel-bearing) ----
   const pwStatus = run.outcome === "done" ? "success" : "fail";
   await fireHook("post_attempt", postAttemptContext(current, workerBranch, pwStatus, run.outcome));
@@ -883,6 +896,13 @@ function blockerForFailure(outcome: ProcessOutcome, sections: SectionBodies): Cu
         kind: "runner",
         summary: oneLine(sections.log, "Inner agent exited without an AFK completion sentinel."),
         next: "Review the attempt log and decide whether to retry or revise the issue brief.",
+      };
+    case "stalled":
+      return {
+        status: "blocked",
+        kind: "stalled",
+        summary: oneLine(sections.log, "Inner agent made no progress (no new commit) within the attempt wall-clock."),
+        next: "Review the work already pushed (branch/PR) and decide whether to continue, re-scope, or stop.",
       };
     case "merge-conflict":
       return {
