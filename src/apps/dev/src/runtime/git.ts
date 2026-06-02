@@ -93,6 +93,20 @@ export async function branchExists(ctx: GitContext, branch: string): Promise<boo
   return r.code === 0;
 }
 
+/**
+ * The current commit sha of a LOCAL branch ref, or undefined when the branch
+ * has no ref yet / git fails. The attempt progress guard (execution.ts) polls
+ * this: the worker branch's HEAD advances on every inner-agent commit (the ref
+ * lives in the shared `.git`, visible from any cwd in the repo), giving a clean
+ * "is the agent producing work?" signal independent of liveness.
+ */
+export async function branchHead(ctx: GitContext, branch: string): Promise<string | undefined> {
+  if (!branch) return undefined;
+  const r = await runGit(ctx, ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`]);
+  const sha = r.stdout.trim();
+  return r.code === 0 && sha !== "" ? sha : undefined;
+}
+
 /** Best-effort `git fetch origin <branch>` (FIX E recovery: try once to pull a
  * sandcastle-pushed worker branch onto the host before declaring it absent). */
 export async function fetchBranch(ctx: GitContext, branch: string): Promise<void> {
