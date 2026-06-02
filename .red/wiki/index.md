@@ -14,6 +14,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [docs(adr): 0040 version single-source + version-aware; 0039 two-MCP memory plugin; doctor checks 6/7](./pages/385-docs-adr-0040-version-single-source-version-aware-0039-two-m.md)
 - [docs(adr): resolve 0039 collision (consume→0041) + add ADR INDEX.md](./pages/386-docs-adr-resolve-0039-collision-consume-0041-add-adr-index-m.md)
 - [docs(afk): remove dead Capability Dispatch + document --boot-only](./pages/329-docs-afk-remove-dead-capability-dispatch-document-boot-only.md)
+- [docs(context): add the brain product context (glossary + map pointer)](./pages/409-docs-context-add-the-brain-product-context-glossary-map-poin.md)
 - [docs(memory): ADR 0036 — transports are adapters over the operation registry](./pages/375-docs-memory-adr-0036-transports-are-adapters-over-the-operat.md)
 - [docs(readme): redact AFK usage from public README + fix dev bundle CI build](./pages/321-docs-readme-redact-afk-usage-from-public-readme-fix-dev-bund.md)
 - [docs(triage-labels): align running-state liveness with Slice D (timeline-only)](./pages/361-docs-triage-labels-align-running-state-liveness-with-slice-d.md)
