@@ -13,6 +13,7 @@ Skills I use daily for code work.
 - **[urgent](./urgent/SKILL.md)** — File a `priority:urgent` issue that bypasses `/triage` and jumps the head of the `/afk` queue, ahead of any `--prd N` / `--issues a,b,c` filter. Use when something is on fire.
 - **[improve-codebase-architecture](./improve-codebase-architecture/SKILL.md)** — Find deepening opportunities in a codebase, informed by the domain language in `.red/CONTEXT.md` and the decisions in `.red/adr/`.
 - **[setup-red-skills](./setup-red-skills/SKILL.md)** — Scaffold the per-repo config (issue tracker, triage label vocabulary, domain doc layout) that the other engineering skills consume.
+- **[doctor](./doctor/SKILL.md)** — Read-only adoption/process doctor. Reports how fully a repo adopted the stack (label vocabulary, AGENTS≡CLAUDE parity, statusline form, MCP wiring, `blocked:*` hygiene) and names each fix's home — never applies it. The recurring counterpart to `/setup-red-skills`.
 - **[statusline](./statusline/SKILL.md)** — Install or inspect the RedSkills Claude Code statusline for the current repo, rendering the live AFK block via `node bin/afk.mjs statusline`.
 - **[tdd](./tdd/SKILL.md)** — Test-driven development with a red-green-refactor loop. Builds features or fixes bugs one vertical slice at a time.
 - **[to-issues](./to-issues/SKILL.md)** — Break any plan, spec, or PRD into independently-grabbable GitHub issues using vertical slices.
