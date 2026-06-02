@@ -9,6 +9,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [#302 Memory extraction: strict-write structural-type gate (provider path)](./pages/377-302-memory-extraction-strict-write-structural-type-gate-prov.md)
 - [chore(afk): native + sandcastle E2E smoke test (#284 gate)](./pages/291-chore-afk-native-sandcastle-e2e-smoke-test-284-gate.md)
 - [chore(afk): rebuild committed bin/afk.mjs from current source](./pages/320-chore-afk-rebuild-committed-bin-afk-mjs-from-current-source.md)
+- [chore(dev): remove the scaffold-exercises skill (upstream course tooling)](./pages/411-chore-dev-remove-the-scaffold-exercises-skill-upstream-cours.md)
 - [chore(upstream): bump pin to e3b90b5 (no cherry-picks)](./pages/262-chore-upstream-bump-pin-to-e3b90b5-no-cherry-picks.md)
 - [docs(adr): 0039 — red-skills consumes red-memory + red-ui MCPs (ecosystem split)](./pages/383-docs-adr-0039-red-skills-consumes-red-memory-red-ui-mcps-eco.md)
 - [docs(adr): 0040 version single-source + version-aware; 0039 two-MCP memory plugin; doctor checks 6/7](./pages/385-docs-adr-0040-version-single-source-version-aware-0039-two-m.md)
