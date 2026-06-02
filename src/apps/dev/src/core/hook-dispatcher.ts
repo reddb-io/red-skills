@@ -53,6 +53,7 @@ export const HOOK_EXIT_POLICY: Record<HookName, HookExitPolicy> = {
   post_merge: "continue",
   on_attempt_error: "continue",
   on_idle: "continue",
+  on_heartbeat: "continue",
   post_session: "continue",
   on_session_error: "continue",
 };

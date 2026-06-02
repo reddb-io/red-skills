@@ -27,7 +27,13 @@ import {
   type GitExec,
 } from "./remote-branch.js";
 import { buildHandoff, type HandoffComment } from "./handoff.js";
-import { type AgentOutcome, type AgentStreamEvent, type RunAgentInput, type RunAgentResult } from "./execution.js";
+import {
+  type AgentOutcome,
+  type AgentStreamEvent,
+  type AttemptProgressInfo,
+  type RunAgentInput,
+  type RunAgentResult,
+} from "./execution.js";
 import {
   relevantScopes,
   runFeedback,
@@ -232,6 +238,15 @@ export interface ProcessIssueDeps {
    * absent, runAgent runs without stream forwarding (tests, legacy callers).
    */
   recordAgentEvent?(event: AgentStreamEvent): void;
+  /**
+   * Externalized proof-of-life sink (PR-B): called once per attempt-guard poll
+   * with the progress signal. The CLI (run.ts) wires it to append an enriched
+   * `type=heartbeat` firehose record and update `current.last_progress_at` in
+   * afk.state.json, so external integrators can tail/read the agent's liveness +
+   * progress. The `on_heartbeat` user hook fires alongside it (in processIssue,
+   * which owns the hook dispatcher). Optional → tests/legacy callers omit it.
+   */
+  emitHeartbeat?(info: AttemptProgressInfo): void;
   /** History ledger path + clock for the terminal envelope (optional). */
   historyPath?: string;
   historyClock?: HistoryClock;
@@ -536,6 +551,23 @@ export async function processIssue(
     // so the stall detector / monitor see a live agent instead of a frozen lane.
     logPath: `${input.attemptDir}/sandcastle.log`,
     onAgentEvent: deps.recordAgentEvent,
+    // Externalized proof-of-life (PR-B): the attempt-guard poll fires this each
+    // tick. processIssue owns the hook dispatcher, so it fires the `on_heartbeat`
+    // user hook here (fire-and-forget) AND forwards the progress signal to the
+    // CLI-wired sink (firehose record + state.last_progress_at). Never throws.
+    onHeartbeat: (info) => {
+      void fireHook(
+        "on_heartbeat",
+        hookContext({
+          issue,
+          title: input.title,
+          workspace: branch,
+          runner: input.runner,
+          attempt_n: input.attempt,
+        }),
+      );
+      deps.emitHeartbeat?.(info);
+    },
     // Restore the issue #191 continuous-push guarantee: sandcastle pushes the
     // worker branch up-front + after every commit (host worktree hook), so a
     // SIGKILL mid-iteration preserves the diff on origin. Best-effort.

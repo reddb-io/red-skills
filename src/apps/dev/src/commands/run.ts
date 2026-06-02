@@ -436,6 +436,28 @@ export function buildProcessDeps(
         }).catch(() => {});
       }
     },
+    // Externalized proof-of-life sink (PR-B): the attempt-guard fires this each
+    // poll (~60s) with the progress signal. Append an enriched `type=heartbeat`
+    // firehose record AND mirror `current.last_progress_at` into the state file,
+    // so external integrators can tail the firehose or read afk.state.json for
+    // the agent's liveness + progress. Best-effort — failures are swallowed.
+    emitHeartbeat: (info) => {
+      const ts = new Date().toISOString();
+      const secs = Math.max(0, Math.floor((info.nowMs - info.lastProgressMs) / 1000));
+      const lastProgressAt = new Date(info.lastProgressMs).toISOString();
+      const head = info.head ?? "";
+      const msg = `progress: ${secs}s since last commit${head ? ` @ ${head.slice(0, 8)}` : ""}`;
+      void appendRecord(join(current.attemptDir, "log.jsonl"), "heartbeat", msg, {
+        ts,
+        fields: {
+          extra: { secs_since_progress: String(secs), last_progress_at: lastProgressAt, head },
+        },
+      }).catch(() => {});
+      void fsx.appendLine(join(current.attemptDir, "afk.log"), `[heartbeat] ${msg}`);
+      void updateState(join(current.attemptDir, "afk.state.json"), {
+        "current.last_progress_at": lastProgressAt,
+      }).catch(() => {});
+    },
     historyPath: paths.historyPath,
     historyClock: { ts: new Date().toISOString(), epoch: Math.floor(Date.now() / 1000) },
     // BOUNDED auto-recovery reads its RED_AFK_RETRY_* caps from the process env.

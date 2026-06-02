@@ -222,6 +222,13 @@ export interface RunAgentInput {
    * the guard treats as "no progress observed". Required for the guard to arm.
    */
   headProbe?: () => Promise<string | undefined>;
+  /**
+   * Externalized proof-of-life sink (PR-B): invoked once per attempt-guard poll
+   * with the progress signal. Opaque to execution.ts — the caller (processIssue)
+   * uses it to fire the `on_heartbeat` hook + emit the heartbeat record/state.
+   * Only fires when the guard is armed (cap + headProbe present).
+   */
+  onHeartbeat?: (info: AttemptProgressInfo) => void;
 }
 
 /** The git remote the continuous-push hook targets when none is supplied. */
@@ -489,6 +496,15 @@ function defaultSchedule(fn: () => void, ms: number): () => void {
  * is treated as "no progress observed" (never resets), so a flaky git read
  * cannot keep a hung agent alive.
  */
+export interface AttemptProgressInfo {
+  /** The worker branch HEAD observed this tick (undefined when unresolved). */
+  head: string | undefined;
+  /** Epoch ms of the last observed progress (last new commit, or spawn). */
+  lastProgressMs: number;
+  /** The guard's clock (epoch ms) at this tick. */
+  nowMs: number;
+}
+
 export function startAttemptGuard(opts: {
   capMs: number;
   intervalMs: number;
@@ -496,6 +512,10 @@ export function startAttemptGuard(opts: {
   now: () => number;
   schedule: (fn: () => void, ms: number) => () => void;
   abort: () => void;
+  /** Fired once per poll (proof-of-life externalization): the externalized
+   * heartbeat + on_heartbeat hook ride this same cadence (PR-B). Never throws —
+   * the caller wraps its own IO. */
+  onTick?: (info: AttemptProgressInfo) => void;
 }): { stop: () => void; firedTimeout: () => boolean } {
   let lastProgress = opts.now();
   let lastHead: string | undefined;
@@ -506,14 +526,14 @@ export function startAttemptGuard(opts: {
       .then((head) => {
         if (fired) return;
         if (head !== undefined && head !== lastHead) {
+          // A new commit landed — real progress; reset the deadline.
           lastHead = head;
           lastProgress = opts.now();
-          return;
-        }
-        if (opts.now() - lastProgress >= opts.capMs) {
+        } else if (opts.now() - lastProgress >= opts.capMs) {
           fired = true;
           opts.abort();
         }
+        opts.onTick?.({ head: head ?? lastHead, lastProgressMs: lastProgress, nowMs: opts.now() });
       })
       .catch(() => {
         // headProbe failure = no progress observed; let the deadline run.
@@ -521,6 +541,7 @@ export function startAttemptGuard(opts: {
           fired = true;
           opts.abort();
         }
+        opts.onTick?.({ head: lastHead, lastProgressMs: lastProgress, nowMs: opts.now() });
       });
   }, opts.intervalMs);
   return { stop: cancel, firedTimeout: () => fired };
@@ -580,6 +601,10 @@ export async function runAgent(deps: SandcastleDeps, input: RunAgentInput): Prom
       schedule: deps.schedule ?? defaultSchedule,
       abort: () =>
         controller?.abort(new Error(`afk: attempt aborted — no new commit within ${cap}s (stalled)`)),
+      // Externalized proof-of-life (PR-B): each poll fires the caller's opaque
+      // heartbeat sink (firehose record + state.last_progress_at + on_heartbeat
+      // hook). execution.ts stays ignorant of what it does.
+      ...(input.onHeartbeat ? { onTick: input.onHeartbeat } : {}),
     });
   }
 
