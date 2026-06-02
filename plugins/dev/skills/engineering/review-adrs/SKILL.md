@@ -54,7 +54,7 @@ A report: lint findings (contradictions / missing-supersession / stale / numberi
 
 ### Why each pass exists (worked examples)
 
-- **Contradiction / missing supersession:** ADR 0034 placed memory under `src/apps`; ADR 0039 moves it out to the `red-memory` repo — 0034 should carry a "partially superseded by 0039" note. ADR 0032 → superseded by 0034.
+- **Contradiction / missing supersession:** ADR 0034 placed memory under `src/apps`; ADR 0041 moves it out to the `red-memory` repo — 0034 should carry a "partially superseded by 0041" note. ADR 0032 → superseded by 0034.
 - **Stale reference:** an ADR whose body says `src/domains/{dev,memory}` after the tree became `src/apps/` is out of date even though the *decision* still stands — flag the prose, not the decision.
 - **Numbering collision:** two PRs each grabbed "next = 0038" (one merged as the afk-bundle-fetch ADR; a second was authored locally and had to renumber to 0039). The lint catches duplicate NNNN before they both land.
 
