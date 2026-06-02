@@ -33,7 +33,7 @@ Codex's footer; track AFK under Codex with `/afk monitor` instead.
 {
   "statusLine": {
     "type": "command",
-    "command": "sh -c 'b=$(ls -t \"$HOME\"/.claude/plugins/cache/red-skills/dev/*/skills/engineering/afk/bin/afk.mjs 2>/dev/null | head -1); [ -n \"$b\" ] && exec node \"$b\" statusline'",
+    "command": "sh -c 'b=$(ls -t \"$HOME\"/.cache/red-skills/bundles/dev-*.bundle.min.mjs 2>/dev/null | head -1); [ -z \"$b\" ] && b=$(ls -t \"$HOME\"/.claude/plugins/cache/red-skills/dev/*/skills/engineering/afk/bin/afk.mjs 2>/dev/null | head -1); [ -n \"$b\" ] && exec node \"$b\" statusline'",
     "refreshInterval": 5
   }
 }
@@ -43,10 +43,22 @@ Codex's footer; track AFK under Codex with `/afk monitor` instead.
 `CLAUDE_PLUGIN_ROOT` (nor `CLAUDE_PROJECT_DIR`) to a `statusLine` command — those
 are only set for plugin hooks and MCP/LSP subprocesses. A statusLine that
 references `$CLAUDE_PLUGIN_ROOT` expands it to an empty string and fails with
-`Cannot find module` — the statusline then silently renders blank. The command
-above instead resolves the newest installed AFK bundle straight from the plugin
-cache (`ls -t … | head -1`), so it stays valid across plugin updates without
-pinning a `…/cache/<version>/…` path. The project root is **not** passed as an
+`Cannot find module` — the statusline then silently renders blank.
+
+**Why the cached bundle, not `afk.mjs` directly.** Since ADR 0038, the installed
+`afk.mjs` is a tiny **launcher that fetches** the real runtime bundle from the
+GitHub release on first use (caching it at
+`~/.cache/red-skills/bundles/dev-<version>.bundle.min.mjs`). Pointing the
+statusLine straight at the launcher means **every plugin update** lands a new
+version whose bundle is not cached yet, so the launcher tries a **synchronous
+network download inside the statusline render** — which blows the render's tight
+timeout (blank statusline), or fails outright if that version's release asset is
+not published yet. The command above instead runs the **newest already-fetched
+bundle** (`ls -t …/.cache/red-skills/bundles/dev-*.bundle.min.mjs | head -1`) —
+no network in the hot path, so an update never blanks the line; it keeps showing
+the last good bundle until a normal `afk` run (or a SessionStart pre-fetch)
+caches the new one. It falls back to the launcher only when the cache is empty
+(first-ever install), to bootstrap. The project root is **not** passed as an
 argument: the AFK `statusline` subcommand reads it from `workspace.project_dir`
 in the JSON Claude Code pipes on stdin, which the `sh -c` wrapper forwards
 intact.
@@ -58,7 +70,7 @@ and a fresh file when it is missing. Keep unrelated settings intact.
 
 ```bash
 printf '{"workspace":{"project_dir":"%s"},"model":{"display_name":"Opus"}}' "$PWD" \
-  | sh -c 'b=$(ls -t "$HOME"/.claude/plugins/cache/red-skills/dev/*/skills/engineering/afk/bin/afk.mjs 2>/dev/null | head -1); [ -n "$b" ] && exec node "$b" statusline'
+  | sh -c 'b=$(ls -t "$HOME"/.cache/red-skills/bundles/dev-*.bundle.min.mjs 2>/dev/null | head -1); [ -z "$b" ] && b=$(ls -t "$HOME"/.claude/plugins/cache/red-skills/dev/*/skills/engineering/afk/bin/afk.mjs 2>/dev/null | head -1); [ -n "$b" ] && exec node "$b" statusline'
 ```
 
 It should print a line like `red-skills (main) · Opus`.
