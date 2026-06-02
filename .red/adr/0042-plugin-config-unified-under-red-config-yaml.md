@@ -26,9 +26,12 @@ Two facts make unification cheap and safe:
      dev:
        afk:
          default_runner: codex
+         hooks:                      # user-authored shell hooks (see point 6)
+           pre_session:
+             - ./.red/hooks/boot.sh
      memory:
        mode: graph
-       hooks:
+       autohooks:                    # enable our built-in handlers (see point 6)
          sessionStart: true
    ```
 
@@ -43,6 +46,12 @@ Two facts make unification cheap and safe:
    - `memory` reads `plugins.memory` from `.red/config.yaml` first, falling back to a legacy `.red/memory/config.json` (older repos keep working until they re-init).
    - the gate accepts **either** signal.
    No automatic migration is forced; a repo upgrades the moment it re-runs `memory init` (or hand-edits the yaml). The legacy fallbacks are a deprecation lane, removable later.
+
+6. **`hooks:` is reserved, file-wide, for user-authored shell hooks; built-in plugin hooks are code, exposed at most as an enable toggle.** Two distinct concepts must not share the `hooks:` key:
+   - **User hooks** — shell interceptors the user *writes and controls*, as an ordered list of inline commands or script paths. This is the AFK lifecycle-hook model (ADR 0026), now the meaning of `hooks:` under **any** plugin namespace.
+   - **Built-in hooks** — handlers the plugin *ships and owns* (memory's four auto-firing Claude Code event handlers; AFK's cargo/gradle defaults). These are not user config; where the user may toggle them, the toggle is a plain enable under a **different** key — for memory, `plugins.memory.autohooks.<event>: true` (per-event booleans), never `plugins.memory.hooks`.
+
+   So `autohooks` (enable our handlers) and `hooks` (the user's shell) are deliberately different keys with different value shapes (booleans vs command lists). Memory writes only `autohooks`; it has no user-hook surface today.
 
 ## Consequences
 
