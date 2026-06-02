@@ -29,6 +29,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [feat(dev): read-only adoption/process doctor (/dev:doctor)](./pages/381-feat-dev-read-only-adoption-process-doctor-dev-doctor.md)
 - [feat(dev): review-adrs skill — decision-record doctor (lint + group + propagate)](./pages/382-feat-dev-review-adrs-skill-decision-record-doctor-lint-group.md)
 - [feat(memory): ship runtime as bundled release asset + bootstrap fetch (ADR 0029)](./pages/229-feat-memory-ship-runtime-as-bundled-release-asset-bootstrap.md)
+- [feat(review-adrs): reconcile findings through a /start-style interview](./pages/389-feat-review-adrs-reconcile-findings-through-a-start-style-in.md)
 - [fix(afk): anchor sandcastle under the attempt dir, not the repo root](./pages/326-fix-afk-anchor-sandcastle-under-the-attempt-dir-not-the-repo.md)
 - [fix(afk): feed the agent lane on the native path so liveness isn't blind](./pages/350-fix-afk-feed-the-agent-lane-on-the-native-path-so-liveness-i.md)
 - [fix(afk): harden sandcastle integration (pre-mortem J/E/D/F/G/H)](./pages/328-fix-afk-harden-sandcastle-integration-pre-mortem-j-e-d-f-g-h.md)
