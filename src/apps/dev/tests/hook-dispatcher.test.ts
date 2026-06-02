@@ -66,6 +66,7 @@ describe("hook-dispatcher exit-code policy table", () => {
       post_merge: "continue",
       on_attempt_error: "continue",
       on_idle: "continue",
+      on_heartbeat: "continue",
       post_session: "continue",
       on_session_error: "continue",
     });

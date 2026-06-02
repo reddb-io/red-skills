@@ -24,6 +24,7 @@ import {
   type SandcastleDeps,
   type RunAgentInput,
   type AgentStreamEvent,
+  type AttemptProgressInfo,
 } from "../src/core/execution.js";
 
 // Sentinel provider objects — the adapter only forwards them to `run`, so a
@@ -715,5 +716,57 @@ describe("runAgent — attempt guard wiring", () => {
     };
     await runAgent(deps, { ...baseInput, attemptTimeoutSeconds: 60, headProbe: async () => "x" });
     expect(seenSignal).toBeInstanceOf(AbortSignal);
+  });
+});
+
+// ---- externalized proof-of-life (PR-B): onTick / onHeartbeat ----
+
+describe("startAttemptGuard — onTick (externalized heartbeat cadence)", () => {
+  it("fires onTick every poll with the progress info, independent of aborting", async () => {
+    let clock = 1000;
+    const sched = manualScheduler();
+    const ticks: AttemptProgressInfo[] = [];
+    startAttemptGuard({
+      capMs: 100_000, // large → never aborts in this test
+      intervalMs: 50,
+      headProbe: async () => "sha1",
+      now: () => clock,
+      schedule: sched.schedule,
+      abort: () => {},
+      onTick: (i) => ticks.push(i),
+    });
+    await sched.tick();
+    clock = 1050;
+    await sched.tick();
+    expect(ticks.length).toBe(2);
+    expect(ticks[0]!.head).toBe("sha1");
+    expect(typeof ticks[0]!.lastProgressMs).toBe("number");
+    expect(typeof ticks[0]!.nowMs).toBe("number");
+  });
+});
+
+describe("runAgent — forwards onHeartbeat to the guard tick", () => {
+  it("invokes onHeartbeat per poll while the run is in flight (armed)", async () => {
+    let clock = 0;
+    const sched = manualScheduler();
+    const ticks: AttemptProgressInfo[] = [];
+    let resolveRun: ((r: RunResult) => void) | undefined;
+    const deps: SandcastleDeps = {
+      ...makeDeps(() => new Promise<RunResult>((res) => (resolveRun = res))),
+      now: () => clock,
+      schedule: sched.schedule,
+      makeAbortController: () => new AbortController(),
+    };
+    const p = runAgent(deps, {
+      ...baseInput,
+      attemptTimeoutSeconds: 600,
+      headProbe: async () => "static",
+      onHeartbeat: (i) => ticks.push(i),
+    });
+    await sched.tick(); // one poll while the run hangs → onHeartbeat fires
+    expect(ticks.length).toBeGreaterThanOrEqual(1);
+    resolveRun?.(fakeResult({ completionSignal: DONE_SIGNAL }));
+    const res = await p;
+    expect(res.outcome).toBe("done");
   });
 });

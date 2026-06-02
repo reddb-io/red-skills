@@ -21,6 +21,11 @@ export const AfkCurrentSchema = z.object({
   diff_removed: z.number().default(0),
   last_stream_line: z.string().default(""),
   run_mode: z.string().default(""),
+  /** ISO timestamp of the last observed progress — the last new commit on the
+   * worker branch, or attempt start. Written each attempt-guard poll (PR-B) so an
+   * external monitor reading afk.state.json sees liveness/progress, not just a
+   * stale stream line. Empty until the guard arms (no-sandbox runs). */
+  last_progress_at: z.string().default(""),
 });
 
 export const AfkStateSchema = z.object({

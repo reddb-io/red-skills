@@ -40,6 +40,11 @@ export const CANONICAL_HOOK_NAMES = [
   "post_merge",
   "on_attempt_error",
   "on_idle",
+  // Periodic proof-of-life (PR-B): fired once per attempt-guard poll (~60s)
+  // during an inner-agent run, NOT a once-per-lifecycle point. A user shell
+  // command here receives the heartbeat context (issue/branch/runner) so an
+  // external monitor can be pinged. No built-in default; absent config → no-op.
+  "on_heartbeat",
   "post_session",
   "on_session_error",
 ] as const;
