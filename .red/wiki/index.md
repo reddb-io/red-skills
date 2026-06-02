@@ -38,6 +38,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [fix(afk): restore Task Mirror via monitor --mirror-plan](./pages/331-fix-afk-restore-task-mirror-via-monitor-mirror-plan.md)
 - [fix(afk): uncap sandcastle inner agent maxIterations (fixes #322)](./pages/327-fix-afk-uncap-sandcastle-inner-agent-maxiterations-fixes-322.md)
 - [fix(afk): write afk.state.json + lanes on the native path (monitor/statusline/stall-detector were blind)](./pages/359-fix-afk-write-afk-state-json-lanes-on-the-native-path-monito.md)
+- [fix(config): memory built-in handlers use autohooks, not hooks (ADR 0042 refine)](./pages/391-fix-config-memory-built-in-handlers-use-autohooks-not-hooks.md)
 - [fix(dev): resync dev claude plugin.json version (unblock red-release)](./pages/384-fix-dev-resync-dev-claude-plugin-json-version-unblock-red-re.md)
 - [fix(memory): remove backward-compat shims now that delivery + store are clean](./pages/232-fix-memory-remove-backward-compat-shims-now-that-delivery-st.md)
 - [fix(memory): resolveRedBinary honours REDDB_BIN before the SDK package lookup](./pages/230-fix-memory-resolveredbinary-honours-reddb-bin-before-the-sdk.md)
