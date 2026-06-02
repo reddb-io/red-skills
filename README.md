@@ -425,7 +425,7 @@ Composable. Boring on purpose where boring is enough. Sharp where it matters.
 | **[prototype](./plugins/dev/skills/engineering/prototype/SKILL.md)** | Throwaway prototype — terminal app for state/logic, or UI variations toggleable from one route. |
 | **[setup-red-skills](./plugins/dev/skills/engineering/setup-red-skills/SKILL.md)** | Per-repo config: issue tracker, triage label vocab, domain doc layout, RedSkills workflows, RTK. |
 | **[doctor](./plugins/dev/skills/engineering/doctor/SKILL.md)** | Read-only adoption/process doctor — reports label-vocab conformance, AGENTS≡CLAUDE parity, statusline drift, MCP wiring, and `blocked:*` hygiene, tagging each gap with its fix-home. The recurring counterpart to `/setup-red-skills`. |
-| **[review-adrs](./plugins/dev/skills/engineering/review-adrs/SKILL.md)** | Decision-record doctor — lints `.red/adr/` for contradictions, missing supersession, stale references, and number collisions; clusters into a thematic index; propagates decision changes into the Wiki + Memory graph (gated). |
+| **[review-adrs](./plugins/dev/skills/engineering/review-adrs/SKILL.md)** | Decision-record doctor — lints `.red/adr/` for contradictions, missing supersession, stale references, and number collisions, then reconciles each finding through a one-question-at-a-time interview (like `/start`); the agreement drives renumbering, supersession notes, the thematic index, and gated propagation into the Wiki + Memory graph. |
 | **[statusline](./plugins/dev/skills/engineering/statusline/SKILL.md)** | Installs or inspects the RedSkills Claude Code statusline, rendering the live AFK block via `node bin/afk.mjs statusline`. |
 
 </details>
