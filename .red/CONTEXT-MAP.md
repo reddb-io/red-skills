@@ -1,6 +1,6 @@
 # Context Map
 
-RedSkills is a plugin marketplace with two product contexts that share one repo
+RedSkills is a plugin marketplace with three product contexts that share one repo
 and one issue tracker. Use this map to pick the right glossary before editing
 domain language or writing ADRs.
 
@@ -12,6 +12,9 @@ domain language or writing ADRs.
 - [Memory](./contexts/memory/CONTEXT.md) - persistent project memory plugin:
   markdown notes, RedDB graph mode, reasoning attempts, validation evidence,
   skill telemetry evidence, and codebase mapping substrate.
+- [Brain](./contexts/brain/CONTEXT.md) - project-local knowledge repository:
+  freeform captures, project brain files, cross-note connections, and
+  GBrain-style knowledge dumping for human-facing recall.
 
 ## Relationships
 
@@ -21,6 +24,13 @@ domain language or writing ADRs.
 - **Memory -> Dev**: `memory` hard-depends on `dev` for repo setup conventions,
   issue workflow vocabulary, and operator-facing workflows that consume memory
   evidence.
+- **Brain -> Memory**: `brain` is a separate plugin and separate directory
+  surface. It may optionally reuse Memory capabilities, but its mission is
+  human-facing knowledge capture and connection rather than agent-performance
+  memory.
+- **Brain -> Dev**: `brain` follows the same marketplace and repo setup
+  conventions as other RedSkills plugins, but owns its `.red/brain/*` knowledge
+  repository semantics.
 - **AFK Envelope -> Reasoning attempt**: `dev` posts the issue-thread
   Envelope; `memory` may record the same terminal attempt as graph evidence.
 - **AFK validation sidecar -> Validation node**: `dev` writes structured
