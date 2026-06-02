@@ -12,6 +12,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [chore(upstream): bump pin to e3b90b5 (no cherry-picks)](./pages/262-chore-upstream-bump-pin-to-e3b90b5-no-cherry-picks.md)
 - [docs(adr): 0039 — red-skills consumes red-memory + red-ui MCPs (ecosystem split)](./pages/383-docs-adr-0039-red-skills-consumes-red-memory-red-ui-mcps-eco.md)
 - [docs(adr): 0040 version single-source + version-aware; 0039 two-MCP memory plugin; doctor checks 6/7](./pages/385-docs-adr-0040-version-single-source-version-aware-0039-two-m.md)
+- [docs(adr): resolve 0039 collision (consume→0041) + add ADR INDEX.md](./pages/386-docs-adr-resolve-0039-collision-consume-0041-add-adr-index-m.md)
 - [docs(afk): remove dead Capability Dispatch + document --boot-only](./pages/329-docs-afk-remove-dead-capability-dispatch-document-boot-only.md)
 - [docs(memory): ADR 0036 — transports are adapters over the operation registry](./pages/375-docs-memory-adr-0036-transports-are-adapters-over-the-operat.md)
 - [docs(readme): redact AFK usage from public README + fix dev bundle CI build](./pages/321-docs-readme-redact-afk-usage-from-public-readme-fix-dev-bund.md)
