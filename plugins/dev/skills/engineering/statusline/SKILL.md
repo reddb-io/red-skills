@@ -92,6 +92,16 @@ per-repo like the Claude path):
 status_line = ["project", "git-branch", "model-with-reasoning", "context-remaining", "task-progress"]
 ```
 
+**Surviving Codex config resets.** That global `tui.status_line` gets dropped
+whenever Codex rewrites `~/.codex/config.toml` (e.g. re-syncing plugin
+`[hooks.state]` on update), blanking the footer "every update". The dev plugin's
+Codex `SessionStart` hook re-asserts it: `hooks/ensure-codex-statusline.mjs`
+inserts `status_line` **only when absent** (never clobbers an operator's own
+value) via an **atomic** write (temp + rename — a race with Codex's writer can
+lose the update but never corrupt the file). So a reset self-heals on the next
+session start. The hook is additive and idempotent; disable it by removing the
+second `SessionStart` entry in `hooks/codex.hooks.json`.
+
 For live AFK visibility under Codex, point the user at `/afk monitor` (fleet
 spawns a read-only monitor agent; otherwise it falls back to the monitor
 dashboard). When Codex ships a command-backed statusline (openai/codex#17827 /
