@@ -24,7 +24,19 @@ There are two distinct MCPs in play, repeatedly conflated:
    - **`red-ui`** — the visualizer MCP App (was `ui-mcp` / `@reddb-io/ui-mcp`).
    - **`code-nav`** — unchanged; stays built in red-skills under the `dev` plugin. The brand-prefix asymmetry (`code-nav` not `red-code-nav`) is accepted.
 
-3. **red-skills pulls both as bundles from their repos' GitHub releases** (the fetch model of ADR 0029) — one fetch mechanism across the ecosystem, no npm-registry runtime dependency. The memory plugin's `.mcp.json` references `red-memory` (data) and `red-ui` (visualizer); red-skills builds neither.
+3. **red-skills pulls both as bundles from their repos' GitHub releases** (the fetch model of ADR 0029) — one fetch mechanism across the ecosystem, no npm-registry runtime dependency. **Both MCPs live in the memory plugin's `.mcp.json`** — `red-memory` (data) *and* `red-ui` (visualizer) — as consumers; red-skills builds neither. This replaces today's single, standalone-local `memory` server (which runs `scripts/bootstrap.mjs` against the in-repo `src/apps/memory` build). Target shape:
+
+   ```jsonc
+   // plugins/memory/.mcp.json (end state)
+   {
+     "mcpServers": {
+       "red-memory": { /* version-aware launcher: fetch dev-style bundle from the red-memory release */ },
+       "red-ui":     { /* version-aware launcher: fetch @reddb-io/ui-mcp bundle from the red-ui release */ }
+     }
+   }
+   ```
+
+   Both resolve their bundle by **version** (the same version-keyed launcher pattern as `dev`/`code-nav`, ADR 0038), so the fetch coordinates on one version id (see ADR 0040). The `dev` plugin keeps only `code-nav`.
 
 4. **Prerequisites in the owning repos:**
    - `red-memory` receives the migrated implementation and publishes a self-contained bundle as a GitHub release asset.
