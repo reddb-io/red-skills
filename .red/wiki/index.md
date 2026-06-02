@@ -26,6 +26,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [feat(afk): req:N dependency labels + event-driven auto-unblock](./pages/292-feat-afk-req-n-dependency-labels-event-driven-auto-unblock.md)
 - [feat(afk): statusline reads project root from first arg; 🙋→🆘](./pages/266-feat-afk-statusline-reads-project-root-from-first-arg.md)
 - [feat(afk): typed blocked:<reason> labels (descriptive, auto-classified)](./pages/293-feat-afk-typed-blocked-reason-labels-descriptive-auto-classi.md)
+- [feat(config): unify plugin config under .red/config.yaml (plugins.<name>)](./pages/390-feat-config-unify-plugin-config-under-red-config-yaml-plugin.md)
 - [feat(dev): read-only adoption/process doctor (/dev:doctor)](./pages/381-feat-dev-read-only-adoption-process-doctor-dev-doctor.md)
 - [feat(dev): review-adrs skill — decision-record doctor (lint + group + propagate)](./pages/382-feat-dev-review-adrs-skill-decision-record-doctor-lint-group.md)
 - [feat(memory): ship runtime as bundled release asset + bootstrap fetch (ADR 0029)](./pages/229-feat-memory-ship-runtime-as-bundled-release-asset-bootstrap.md)
