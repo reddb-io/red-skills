@@ -27,7 +27,6 @@
     "./skills/misc/branch-lock",
     "./skills/misc/git-guardrails-claude-code",
     "./skills/misc/migrate-to-shoehorn",
-    "./skills/misc/scaffold-exercises",
     "./skills/misc/setup-pre-commit",
     "./skills/knowledge/wiki-init",
     "./skills/knowledge/wiki",

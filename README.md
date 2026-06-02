@@ -459,7 +459,6 @@ Composable. Boring on purpose where boring is enough. Sharp where it matters.
 | **[branch-lock](./plugins/dev/skills/misc/branch-lock/SKILL.md)** | Locks the agent to a branch and blocks it from switching away (agent-only pre-tool hook for Claude Code and Codex). |
 | **[git-guardrails-claude-code](./plugins/dev/skills/misc/git-guardrails-claude-code/SKILL.md)** | Claude Code hooks that block destructive git commands. |
 | **[migrate-to-shoehorn](./plugins/dev/skills/misc/migrate-to-shoehorn/SKILL.md)** | Migrates test files from `as` type assertions to `@total-typescript/shoehorn`. |
-| **[scaffold-exercises](./plugins/dev/skills/misc/scaffold-exercises/SKILL.md)** | Creates exercise scaffolds with sections, problems, solutions. |
 | **[setup-pre-commit](./plugins/dev/skills/misc/setup-pre-commit/SKILL.md)** | Configures Husky pre-commit with lint-staged, Prettier, type-check, tests. |
 
 </details>

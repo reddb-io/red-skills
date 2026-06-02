@@ -1523,3 +1523,10 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 - **upstream**: `e74f006`
 - **why**: skills tied to Matt's personal setup, not applicable to reddb.io
 - **what changed**: removed all of `skills/personal/` (edit-article, obsidian-vault)
+
+## scaffold-exercises (misc)
+
+- **status**: removed
+- **upstream**: `e3b90b5`
+- **why**: upstream AI Hero / Total TypeScript course-exercise scaffolder (targets `pnpm ai-hero-cli internal lint` + an `exercises/` tree); irrelevant to reddb.io engineering.
+- **what changed**: deleted `plugins/dev/skills/misc/scaffold-exercises/`; removed from `plugins/dev/.claude-plugin/plugin.json`, the root `README.md` table, and the `misc/` bucket README. `.codex-plugin` drops it via its `./skills/` wildcard.
