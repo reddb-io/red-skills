@@ -642,38 +642,63 @@ export async function processIssue(
     startedEpoch,
   } satisfies StageCommon;
 
-  // ---- on_attempt_error: the run ended without an AFK sentinel (ADR 0028) ----
+  // ---- no-sentinel: the run ended without an AFK sentinel (ADR 0028) ----
+  // ADR 0028 keeps `<promise>` canonical: a missing sentinel is a CRASH signal,
+  // not a "nothing to do" signal. But a worker branch can already carry a COMPLETE
+  // commit from a prior iteration — the agent finished the work, then exited
+  // without re-emitting the sentinel (issue #332; the live #300 loop: done at
+  // iteration 1, re-invoked to 4/20, never closed). Abandoning such a branch never
+  // converges. So we SALVAGE a no-sentinel attempt IFF its branch is ahead of base
+  // AND present on the host — but only THROUGH the same feedback gate + landing
+  // tail the DONE path uses. The feedback gate is load-bearing: it is the only
+  // thing that distinguishes "complete prior work" from a half-baked crash-edit.
+  // A branch with no work keeps today's terminal `no-sentinel` behaviour.
+  let salvaged = false;
   if (run.outcome === "no-sentinel") {
-    await fireHook("on_attempt_error", onErrorContext(current, workerBranch, "no-sentinel", current.attempt));
-    return await terminalFailure(common, "no-sentinel", "no-sentinel", {
-      notes: "_(no Notes appended; inner agent exited without a sentinel)_",
-      log: run.stdout ? run.stdout.split("\n").slice(-1)[0] || "(no captured stdout)" : "(no captured stdout)",
-    });
-  }
-
-  // ---- attempt progress guard fired: alive but no new commit within the cap.
-  // Park to ready-for-human (blocked:stalled), preserving the pushed branch/PR
-  // — never auto-retry (recoveryReasonFor("stalled") = null → always escalate). ----
-  if (run.outcome === "timeout") {
+    const branchHasWork =
+      (await deps.lookups.changedFiles(workerBranch, base)).length > 0 &&
+      (!deps.lookups.branchPresent || (await deps.lookups.branchPresent(workerBranch)));
+    if (!branchHasWork) {
+      await fireHook("on_attempt_error", onErrorContext(current, workerBranch, "no-sentinel", current.attempt));
+      return await terminalFailure(common, "no-sentinel", "no-sentinel", {
+        notes: "_(no Notes appended; inner agent exited without a sentinel and the branch carries no work)_",
+        log: run.stdout ? run.stdout.split("\n").slice(-1)[0] || "(no captured stdout)" : "(no captured stdout)",
+      });
+    }
+    // Salvage path: the branch is ahead of base and present. Treat the attempt as
+    // a success for hook purposes (we are about to LAND it, not error it) and fall
+    // through to the shared feedback + land + close tail. `on_attempt_error` is NOT
+    // fired — a salvaged-and-landed attempt is not an error.
+    salvaged = true;
+    deps.appendIterLog(
+      `🤖 /afk: no-sentinel exit but worker branch \`${workerBranch}\` carries work — salvaging through the feedback gate (issue #332).`,
+    );
+    await fireHook("post_attempt", postAttemptContext(current, workerBranch, "success", "no-sentinel"));
+  } else if (run.outcome === "timeout") {
+    // ---- attempt progress guard fired: alive but no new commit within the cap.
+    // Park to ready-for-human (blocked:stalled), preserving the pushed branch/PR
+    // — never auto-retry (recoveryReasonFor("stalled") = null → always escalate). ----
     await fireHook("on_attempt_error", onErrorContext(current, workerBranch, "stalled", current.attempt));
     return await terminalFailure(common, "stalled", "stalled", {
       notes: "_(no Notes appended; attempt aborted — inner agent made no progress within the wall-clock guard)_",
       log: run.stdout || "(attempt progress guard fired)",
     });
+  } else {
+    // ---- post_attempt hook (terminal invocation; sentinel-bearing) ----
+    const pwStatus = run.outcome === "done" ? "success" : "fail";
+    await fireHook("post_attempt", postAttemptContext(current, workerBranch, pwStatus, run.outcome));
+
+    // ---- BLOCKED ----
+    if (run.outcome === "blocked") {
+      return await terminalFailure(common, "blocked", "blocked", {
+        notes: `_(inner agent emitted BLOCKED — see iteration log at \`${input.attemptDir}\`)_`,
+      });
+    }
+    // run.outcome === "done" → fall through to the shared land + close tail.
   }
 
-  // ---- post_attempt hook (terminal invocation; sentinel-bearing) ----
-  const pwStatus = run.outcome === "done" ? "success" : "fail";
-  await fireHook("post_attempt", postAttemptContext(current, workerBranch, pwStatus, run.outcome));
-
-  // ---- BLOCKED ----
-  if (run.outcome === "blocked") {
-    return await terminalFailure(common, "blocked", "blocked", {
-      notes: `_(inner agent emitted BLOCKED — see iteration log at \`${input.attemptDir}\`)_`,
-    });
-  }
-
-  // run.outcome === "done".
+  // run.outcome === "done" OR a salvaged no-sentinel branch: shared feedback +
+  // land + close tail (the salvage path lands exactly like a DONE attempt).
 
   // ---- 5a. worker-branch presence gate (FIX E) ----
   // changedFiles() does `git diff base...branch`, which returns [] on a MISSING
@@ -705,7 +730,9 @@ export async function processIssue(
     // Memory (best-effort) just like the done path does.
     await writeValidationSidecar(deps, input.attemptDir, feedback.sidecar);
     return await terminalFailure(common, "feedback-failed", "feedback", {
-      notes: "Feedback validation failed after the inner agent emitted DONE. The worker branch was not merged.",
+      notes: salvaged
+        ? "Salvaged a no-sentinel branch (it carried work), but feedback validation failed — the branch was not merged."
+        : "Feedback validation failed after the inner agent emitted DONE. The worker branch was not merged.",
       validation: feedback.sidecar.join("\n"),
     }, { validationSummary: feedback.sidecar.join("\n") });
   }
