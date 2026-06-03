@@ -6,6 +6,7 @@ import {
   emitHeartbeatTick,
   escapeStreamLine,
   formatElapsed,
+  formatIterationMarker,
   formatStartedMarker,
   formatStoppedMarker,
   formatVitalsLine,
@@ -171,5 +172,21 @@ describe("heartbeat tick emit", () => {
     expect(isPeriodicEnabled("0")).toBe(false);
     expect(formatStartedMarker(194, TS)).toContain("iteration started");
     expect(formatStoppedMarker(TS)).toContain("iteration stopped");
+  });
+});
+
+describe("formatIterationMarker — per-agentic-iteration boundary", () => {
+  it("renders N/max with the phase when max is known", () => {
+    expect(formatIterationMarker(3, "started", 20)).toBe("[afk] agent iteration 3/20 started");
+    expect(formatIterationMarker(12, "ended", 20)).toBe("[afk] agent iteration 12/20 ended");
+  });
+  it("omits the /max when unknown or non-positive", () => {
+    expect(formatIterationMarker(1, "started")).toBe("[afk] agent iteration 1 started");
+    expect(formatIterationMarker(1, "started", 0)).toBe("[afk] agent iteration 1 started");
+  });
+  it("is distinct from the attempt-level heartbeat marker", () => {
+    // attempt boundary uses [heartbeat] iteration started for #N; this is [afk] agent iteration N
+    expect(formatIterationMarker(1, "started", 20)).not.toContain("[heartbeat]");
+    expect(formatIterationMarker(1, "started", 20).startsWith("[afk] agent iteration")).toBe(true);
   });
 });

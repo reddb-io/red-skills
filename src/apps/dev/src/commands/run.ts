@@ -48,6 +48,8 @@ import { makeFeedbackWorktree, type FeedbackWorktree } from "../runtime/feedback
 import { join } from "node:path";
 import { appendAgentRecord, appendRecord } from "../core/jsonl-log.js";
 import { initState, updateState } from "../core/state.js";
+import { formatIterationMarker } from "../core/heartbeat.js";
+import { DEFAULT_MAX_ITERATIONS } from "../core/execution.js";
 import type { AgentStreamEvent } from "../core/execution.js";
 
 export interface RunOptions {
@@ -275,6 +277,13 @@ export function buildProcessDeps(
   const gitCtx: GitContext = { cwd: ctx.root, exec };
   const paths = afkPaths(ctx.root);
   const lockPath = branchLockPath(ctx.root);
+  // Per-agentic-iteration boundary tracking (observability): when sandcastle's
+  // re-invocation count (event.iteration) ticks, emit "iteration N ended/started"
+  // markers. Reset per attempt — a new attempt's run restarts at iteration 1
+  // (detected by the attempt dir changing or the count going backwards).
+  const iterMax = maxIterations ?? DEFAULT_MAX_ITERATIONS;
+  let lastIter = 0;
+  let lastIterDir = "";
 
   // ---- lifecycle hooks: load config + resolve built-in defaults + real exec ----
   const config = loadConfig(paths.configPath, { warn: () => undefined });
@@ -412,6 +421,28 @@ export function buildProcessDeps(
     // break a run (sandcastle also swallows any throw from this callback).
     recordAgentEvent: (event) => {
       const ts = new Date().toISOString();
+      // Agentic-iteration boundary markers (synthetic — afk.log + firehose, NEVER
+      // the agent lane). Emit "iteration N ended" + "iteration N+1 started" when
+      // sandcastle's re-invocation count advances, so a run burning through
+      // iterations (re-validating instead of emitting DONE) is visible.
+      const dir0 = current.attemptDir;
+      if (dir0 !== lastIterDir) {
+        lastIterDir = dir0;
+        lastIter = 0; // new attempt → fresh iteration count
+      }
+      if (event.iteration !== lastIter) {
+        const emit = (line: string, phase: string, n: number): void => {
+          void fsx.appendLine(join(dir0, "afk.log"), line);
+          void appendRecord(join(dir0, "log.jsonl"), "iteration", line, {
+            ts,
+            fields: { extra: { iteration: String(n), phase } },
+          }).catch(() => {});
+        };
+        if (lastIter > 0) emit(formatIterationMarker(lastIter, "ended", iterMax), "ended", lastIter);
+        lastIter = event.iteration;
+        emit(formatIterationMarker(lastIter, "started", iterMax), "started", lastIter);
+        void updateState(join(dir0, "afk.state.json"), { "current.iteration": String(lastIter) }).catch(() => {});
+      }
       const msg = event.type === "text" ? event.message : `→ ${event.name} ${event.formattedArgs}`;
       void appendAgentRecord(join(current.attemptDir, "agent.log.jsonl"), msg, {
         ts,
