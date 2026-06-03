@@ -37,6 +37,7 @@ stale notes inline.
 - **0048** AFK merges without advice; in-process backpressure (`drift-guard` + feedback) is the guardrail — opt into waiting with `afk.merge.wait_for_review` *(refines 0030, 0008)*
 - **0049** Model-tier routing embedded in the plugin (single config source), enforced by the shared skill + hooks + sandcastle trio, per runner *(relates 0003, 0033)*
 - **0050** AFK salvages an uncommitted worktree when the inner agent emits DONE without committing (codex non-compliance net) *(complements 0047, 0028)*
+- **0051** AFK attempt-progress guard resets on worktree edits, not just commits — stops false-stalling the productive-but-not-committing codex runner *(refines 0044, 0045)*
 
 ## Branch lock
 - **0006** Branch lock enforces on the agent only, not the human terminal
