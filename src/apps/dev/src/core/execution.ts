@@ -228,6 +228,17 @@ export interface RunAgentInput {
    */
   headProbe?: () => Promise<string | undefined>;
   /**
+   * Returns a monotone-ish "work volume" for the worker's worktree — the total
+   * changed lines (added + removed) vs the merge-base, committed AND uncommitted.
+   * The guard treats a CHANGE in this value between polls as progress and resets
+   * the deadline, so a runner that edits without committing (codex emits DONE
+   * only at the end) is not falsely stalled while it is actively producing code.
+   * Best-effort: resolves `undefined` on any failure (no edit signal → the guard
+   * falls back to the commit-anchored `headProbe` alone — the prior behaviour).
+   * Optional: when absent, the guard is purely commit-anchored (ADR 0044).
+   */
+  progressProbe?: () => Promise<number | undefined>;
+  /**
    * Externalized proof-of-life sink (PR-B): invoked once per attempt-guard poll
    * with the progress signal. Opaque to execution.ts — the caller (processIssue)
    * uses it to fire the `on_heartbeat` hook + emit the heartbeat record/state.
@@ -517,6 +528,10 @@ export function startAttemptGuard(opts: {
   now: () => number;
   schedule: (fn: () => void, ms: number) => () => void;
   abort: () => void;
+  /** Worktree line-volume probe (ADR 0051): a CHANGE between polls counts as
+   * progress and resets the deadline, so an editing-but-not-committing runner
+   * (codex) is not falsely stalled. Optional → guard stays commit-anchored. */
+  progressProbe?: () => Promise<number | undefined>;
   /** Fired once per poll (proof-of-life externalization): the externalized
    * heartbeat + on_heartbeat hook ride this same cadence (PR-B). Never throws —
    * the caller wraps its own IO. */
@@ -524,30 +539,45 @@ export function startAttemptGuard(opts: {
 }): { stop: () => void; firedTimeout: () => boolean } {
   let lastProgress = opts.now();
   let lastHead: string | undefined;
+  let lastVolume: number | undefined;
   let fired = false;
   const cancel = opts.schedule(() => {
-    void opts
-      .headProbe()
-      .then((head) => {
-        if (fired) return;
-        if (head !== undefined && head !== lastHead) {
-          // A new commit landed — real progress; reset the deadline.
-          lastHead = head;
-          lastProgress = opts.now();
-        } else if (opts.now() - lastProgress >= opts.capMs) {
-          fired = true;
-          opts.abort();
+    void (async () => {
+      if (fired) return;
+      // Commit signal (always present). A headProbe rejection = no progress
+      // observed (let the deadline run), matching the prior commit-anchored
+      // behaviour exactly when no progressProbe is supplied.
+      let head: string | undefined;
+      let headOk = true;
+      try {
+        head = await opts.headProbe();
+      } catch {
+        headOk = false;
+      }
+      if (fired) return;
+      // Edit signal (optional). A new commit OR a change in the worktree's
+      // line-volume since the last poll is real progress → reset the deadline.
+      let volume: number | undefined;
+      if (opts.progressProbe) {
+        try {
+          volume = await opts.progressProbe();
+        } catch {
+          volume = undefined;
         }
-        opts.onTick?.({ head: head ?? lastHead, lastProgressMs: lastProgress, nowMs: opts.now() });
-      })
-      .catch(() => {
-        // headProbe failure = no progress observed; let the deadline run.
-        if (!fired && opts.now() - lastProgress >= opts.capMs) {
-          fired = true;
-          opts.abort();
-        }
-        opts.onTick?.({ head: lastHead, lastProgressMs: lastProgress, nowMs: opts.now() });
-      });
+      }
+      if (fired) return;
+      const committed = headOk && head !== undefined && head !== lastHead;
+      const edited = volume !== undefined && lastVolume !== undefined && volume !== lastVolume;
+      if (committed || edited) {
+        lastProgress = opts.now();
+      } else if (opts.now() - lastProgress >= opts.capMs) {
+        fired = true;
+        opts.abort();
+      }
+      if (headOk && head !== undefined) lastHead = head;
+      if (volume !== undefined) lastVolume = volume;
+      opts.onTick?.({ head: head ?? lastHead, lastProgressMs: lastProgress, nowMs: opts.now() });
+    })();
   }, opts.intervalMs);
   return { stop: cancel, firedTimeout: () => fired };
 }
@@ -602,6 +632,7 @@ export async function runAgent(deps: SandcastleDeps, input: RunAgentInput): Prom
       capMs,
       intervalMs: Math.min(capMs, 60_000),
       headProbe: input.headProbe,
+      ...(input.progressProbe ? { progressProbe: input.progressProbe } : {}),
       now,
       schedule: deps.schedule ?? defaultSchedule,
       abort: () =>

@@ -719,6 +719,113 @@ describe("runAgent — attempt guard wiring", () => {
   });
 });
 
+describe("startAttemptGuard — diff-anchored progress (ADR 0051, codex false-stall fix)", () => {
+  it("resets the deadline when the worktree diff GROWS even with no new commit (the #895 case)", async () => {
+    // codex edits without committing: head static, but changed-line volume climbs
+    // each poll. The guard must treat that as progress and never false-stall.
+    let clock = 0;
+    let volume = 10;
+    const sched = manualScheduler();
+    let aborted = false;
+    startAttemptGuard({
+      capMs: 100,
+      intervalMs: 50,
+      headProbe: async () => "sha-static",
+      progressProbe: async () => volume,
+      now: () => clock,
+      schedule: sched.schedule,
+      abort: () => {
+        aborted = true;
+      },
+    });
+    await sched.tick(); // t=0 anchor (volume=10)
+    for (const [t, v] of [
+      [50, 60],
+      [120, 140],
+      [220, 300],
+      [400, 497],
+    ] as const) {
+      clock = t;
+      volume = v;
+      await sched.tick(); // volume changed since last poll → deadline resets
+      expect(aborted).toBe(false);
+    }
+  });
+
+  it("still aborts when neither a commit NOR an edit lands within the cap (a genuine stall)", async () => {
+    let clock = 1000;
+    const sched = manualScheduler();
+    let aborted = false;
+    const g = startAttemptGuard({
+      capMs: 100,
+      intervalMs: 50,
+      headProbe: async () => "sha-static",
+      progressProbe: async () => 42, // volume frozen → no edit signal
+      now: () => clock,
+      schedule: sched.schedule,
+      abort: () => {
+        aborted = true;
+      },
+    });
+    await sched.tick(); // anchor
+    clock = 1050;
+    await sched.tick();
+    expect(aborted).toBe(false);
+    clock = 1100;
+    await sched.tick(); // cap elapsed, no commit + frozen volume → abort
+    expect(aborted).toBe(true);
+    expect(g.firedTimeout()).toBe(true);
+  });
+
+  it("treats a volume change in EITHER direction as progress (edits then a partial revert)", async () => {
+    let clock = 0;
+    let volume = 100;
+    const sched = manualScheduler();
+    let aborted = false;
+    startAttemptGuard({
+      capMs: 100,
+      intervalMs: 50,
+      headProbe: async () => "sha-static",
+      progressProbe: async () => volume,
+      now: () => clock,
+      schedule: sched.schedule,
+      abort: () => {
+        aborted = true;
+      },
+    });
+    await sched.tick(); // anchor (100)
+    clock = 80;
+    volume = 60; // a revert is still activity
+    await sched.tick();
+    clock = 160;
+    await sched.tick(); // only 80ms since the last change → alive
+    expect(aborted).toBe(false);
+  });
+
+  it("degrades to commit-anchored when progressProbe rejects (never the cause of a false reset)", async () => {
+    let clock = 1000;
+    const sched = manualScheduler();
+    let aborted = false;
+    startAttemptGuard({
+      capMs: 100,
+      intervalMs: 50,
+      headProbe: async () => "sha-static",
+      progressProbe: async () => {
+        throw new Error("worktree gone");
+      },
+      now: () => clock,
+      schedule: sched.schedule,
+      abort: () => {
+        aborted = true;
+      },
+    });
+    await sched.tick();
+    clock = 1100;
+    await sched.tick(); // probe throws → no edit signal → commit-anchored abort
+    expect(aborted).toBe(true);
+  });
+});
+
 // ---- externalized proof-of-life (PR-B): onTick / onHeartbeat ----
 
 describe("startAttemptGuard — onTick (externalized heartbeat cadence)", () => {

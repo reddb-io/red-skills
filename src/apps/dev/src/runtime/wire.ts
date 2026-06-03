@@ -187,6 +187,18 @@ export function makeRunAgent(
         ? {
             attemptTimeoutSeconds: attemptTimeout,
             headProbe: () => gitx.branchHead({ cwd: input.cwd ?? process.cwd() }, input.branch),
+            // Edit signal (ADR 0051): the changed-line volume of the agent's real
+            // worktree (committed + uncommitted). A change between polls resets
+            // the deadline, so a runner that edits without committing (codex) is
+            // not falsely stalled. Resolve the worktree off the worker branch, and
+            // return undefined on any failure (guard degrades to commit-anchored).
+            progressProbe: async () => {
+              const gitCtx = { cwd: input.cwd ?? process.cwd() };
+              const worktree = await gitx.worktreePathForBranch(gitCtx, input.branch);
+              if (!worktree) return undefined;
+              const { added, removed } = await gitx.diffstatShortstat({ cwd: worktree }, "origin/main");
+              return added + removed;
+            },
           }
         : {}),
     });
