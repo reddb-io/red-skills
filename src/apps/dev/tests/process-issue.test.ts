@@ -542,6 +542,52 @@ describe("processIssue — no-sentinel (run ended without a <promise>)", () => {
     expect(trace.closed).toEqual([]);
     expect(result.hooksFired).not.toContain("on_attempt_error");
   });
+
+  it("salvaged branch passes feedback but FAILS backpressure → parked like a feedback fail, never merged (#432)", async () => {
+    // #432: a no-sentinel attempt salvaged through the gate (branch carries work +
+    // feedback green) is held to the SAME backpressure bar as a DONE attempt — a
+    // failing operator command blocks the merge and parks to ready-for-human, and
+    // it is NOT an error. The gate already lives in the shared DONE/salvage tail
+    // (#430); this locks that coverage in.
+    const { deps, input, trace } = harness({
+      outcome: "no-sentinel",
+      changedFiles: ["packages/x/src/a.ts"],
+      feedbackOk: true,
+      backpressureCommands: ["npm run e2e"],
+      backpressureOk: false,
+      locked: false,
+    });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("feedback-failed");
+    expect(trace.closed).toEqual([]);
+    expect(labelTrace(trace)).toEqual([
+      "-ready-for-agent|+running",
+      "-running|+ready-for-human+blocked:validation",
+    ]);
+    expect(trace.pushedAttempt).toEqual([]);
+    expect(result.hooksFired).not.toContain("on_attempt_error");
+    const lastSidecar = trace.sidecarWrites.at(-1)!;
+    const bp = lastSidecar.lines
+      .map((l) => JSON.parse(l) as { name: string; status: string })
+      .find((r) => r.name === "backpressure:npm run e2e")!;
+    expect(bp.status).toBe("failed");
+  });
+
+  it("salvaged branch merges + closes when feedback AND backpressure both pass (#432)", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "no-sentinel",
+      changedFiles: ["packages/x/src/a.ts"],
+      feedbackOk: true,
+      backpressureCommands: ["npm run e2e"],
+      backpressureOk: true,
+      locked: false,
+    });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done"); // salvaged + both gates green → lands like DONE
+    expect(trace.closed).toEqual([9]);
+  });
 });
 
 describe("processIssue — active Current blocker preflight", () => {
