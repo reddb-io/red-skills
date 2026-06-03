@@ -203,6 +203,13 @@ export async function listOrphanDirs(workersRoot: string, nowS: number): Promise
   }
   for (const worker of workers) {
     const workerPath = join(workersRoot, worker);
+    // #444: only reap attempt dirs whose parent worker is DEAD. A live worker
+    // (its `worker.pid` is alive) owns its attempts; a newly-booted parallel
+    // worker's orphan sweep MUST skip them — otherwise it reaps a live sibling's
+    // running issue (restores it to ready-for-agent + rm -rf's the live worktree).
+    // A missing/blank/dead pid → treated as dead (the conservative orphan path),
+    // matching listStaleClaimDirs / listLegacyWorkDirs.
+    if (pidAlive(await readText(join(workerPath, "worker.pid")))) continue;
     let attempts: string[];
     try {
       attempts = await readdir(workerPath);
@@ -215,6 +222,10 @@ export async function listOrphanDirs(workersRoot: string, nowS: number): Promise
       let ageS = 0;
       try {
         const st = await stat(dir);
+        // Only attempt DIRECTORIES are orphans — skip the per-worker `worker.pid`
+        // file (the liveness anchor) and any stray file, so they are never listed
+        // as orphans (and never `removeDir`'d via the orphan path).
+        if (!st.isDirectory()) continue;
         ageS = Math.max(0, nowS - Math.floor(st.mtimeMs / 1000));
       } catch {
         continue;
