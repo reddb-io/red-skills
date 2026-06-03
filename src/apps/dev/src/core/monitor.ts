@@ -43,8 +43,21 @@ export interface CompactWorker {
   state: CompactState;
   /** Liveness from state_is_live(pid) + freshness, decided by the caller. */
   live: boolean;
-  /** worktree_diff_stats output ("+A -R"); omitted when unavailable. */
-  diff?: string;
+  /** Added lines of the attempt's diff (committed + uncommitted, from the
+   * branch's merge-base with origin/main). Defaults to 0 when unavailable —
+   * the diff volume is rendered unconditionally, so this is never omitted. */
+  diffAdded?: number;
+  /** Removed lines of the attempt's diff. Defaults to 0 — see {@link diffAdded}. */
+  diffRemoved?: number;
+}
+
+/** Formats a diff volume as the `+A -R` suffix the dashboard renders on every
+ * worker line (and aggregates into the header). Always produced, even for a
+ * zero diff (`+0 -0`) — the volume is shown unconditionally. */
+export function formatDiff(added: number, removed: number): string {
+  const a = added > 0 ? added : 0;
+  const r = removed > 0 ? removed : 0;
+  return `+${a} -${r}`;
 }
 
 const TITLE_MAX = 48;
@@ -80,12 +93,13 @@ function elapsedSeconds(state: CompactState, now: number): number {
  * The progress counter is labelled `issues <done>/<total>` — issues *closed*
  * over the queue total, NOT lines changed or a completion percentage. The bare
  * `<done>/<total> (<pct>%)` form read as "0% done / no code" while a worker had
- * already committed thousands of lines; lines live in the `+A -R` diff suffix
- * of <cur>, which is the real "is there work" signal.
+ * already committed thousands of lines; lines live in the `+A -R` diff suffix,
+ * which is the real "is there work" signal.
  *
  * <flags> is ` blk:N` / ` fail:N` (each present only when > 0) and <cur> is
- * `  #<n> <title>  stage:<x>  HH:MM:SS<  +A -R>` when an issue is in progress,
- * or `  idle` otherwise. `now` is an epoch in seconds.
+ * `  #<n> <title>  stage:<x>  HH:MM:SS` when an issue is in progress, or `  idle`
+ * otherwise. The `  +A -R` diff suffix is **always** appended (even idle, even
+ * `+0 -0`) so the diff volume is never hidden. `now` is an epoch in seconds.
  */
 export function renderWorkerCompactLine(worker: CompactWorker, now: number): string {
   const { state } = worker;
@@ -99,14 +113,15 @@ export function renderWorkerCompactLine(worker: CompactWorker, now: number): str
   if (state.blocked > 0) flags += ` blk:${state.blocked}`;
   if (state.failed > 0) flags += ` fail:${state.failed}`;
 
+  const diff = `  ${formatDiff(worker.diffAdded ?? 0, worker.diffRemoved ?? 0)}`;
+
   let cur: string;
   if (!isNoIssue(state.current.number)) {
     const title = state.current.title.slice(0, TITLE_MAX);
     const elapsed = formatElapsed(elapsedSeconds(state, now));
-    const diff = worker.diff ? `  ${worker.diff}` : "";
     cur = `  #${state.current.number} ${title}  stage:${state.current.stage}  ${elapsed}${diff}`;
   } else {
-    cur = "  idle";
+    cur = `  idle${diff}`;
   }
 
   return `${workerId} [${tag}] ${runner}  issues ${done}/${total}${flags}${cur}`;
@@ -120,9 +135,11 @@ function startedAtKey(worker: CompactWorker): string {
 
 /**
  * Renders the whole compact one-shot dashboard: the 48h sparkline header line
- * (reused from history.buildSparkline) followed by one line per worker, sorted
- * by started_at. With zero workers it emits the documented "(none …)" line
- * after the header, matching render_compact's
+ * (reused from history.buildSparkline) — suffixed with the fleet-wide diff total
+ * `   Δ fleet +A -R` (summed over every worker, **always** present, even with
+ * zero workers / a zero diff) — followed by one line per worker, sorted by
+ * started_at. With zero workers it emits the documented "(none …)" line after
+ * the header, matching render_compact's
  * `echo "workers: (none — /afk not running here)"`.
  */
 export function renderCompactDashboard(
@@ -130,7 +147,13 @@ export function renderCompactDashboard(
   events: ReadonlyArray<Pick<HistoryRecord, "event" | "epoch">>,
   now: number,
 ): string {
-  const header = buildSparkline(events, now).line;
+  let added = 0;
+  let removed = 0;
+  for (const w of workers) {
+    added += w.diffAdded ?? 0;
+    removed += w.diffRemoved ?? 0;
+  }
+  const header = `${buildSparkline(events, now).line}   Δ fleet ${formatDiff(added, removed)}`;
   if (workers.length === 0) {
     return `${header}\nworkers: (none — /afk not running here)`;
   }

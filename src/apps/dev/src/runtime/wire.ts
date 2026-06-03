@@ -220,14 +220,18 @@ export async function collectMonitorInputs(root = process.cwd()): Promise<Monito
     } catch {
       continue;
     }
-    // Diff column: committed + uncommitted work for the attempt, measured from
-    // the branch's merge-base with origin/main (gitx.diffstatShortstat). Without
-    // this the board showed nothing — `diff` was never populated, and even the
-    // statusline's fallback only saw the uncommitted worktree (→ 0 after commit).
-    let diff: string | undefined;
-    if (state.current.worktree) {
+    // Diff volume: committed + uncommitted work for the attempt, measured from
+    // the branch's merge-base with origin/main. Prefer the state file's persisted
+    // counts; fall back to a live `git diff --shortstat` of the worktree when both
+    // are 0 (same logic as collectStatuslineAfk). Always populated — the dashboard
+    // renders the +A -R volume unconditionally (idle / zero included) and sums it
+    // into the fleet header, so it is never suppressed.
+    let added = state.current.diff_added;
+    let removed = state.current.diff_removed;
+    if (added === 0 && removed === 0 && state.current.worktree) {
       const stat = await gitx.diffstatShortstat({ cwd: state.current.worktree }, "origin/main");
-      if (stat.added > 0 || stat.removed > 0) diff = `+${stat.added} -${stat.removed}`;
+      added = stat.added;
+      removed = stat.removed;
     }
 
     workers.push({
@@ -248,7 +252,8 @@ export async function collectMonitorInputs(root = process.cwd()): Promise<Monito
         },
       },
       live: isStateLive(state),
-      ...(diff ? { diff } : {}),
+      diffAdded: added,
+      diffRemoved: removed,
     });
   }
 
