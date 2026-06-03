@@ -36,6 +36,8 @@ interface Trace {
   sidecarWrites: Array<{ path: string; lines: string[] }>;
   /** Memory reasoning-attempt records fired after a terminal envelope. */
   recordedAttempts: AttemptRecordPayload[];
+  /** Worker branches passed to the commit-leftovers salvage port. */
+  salvageCalls: string[];
 }
 
 interface HarnessOptions {
@@ -90,6 +92,14 @@ interface HarnessOptions {
   /** When false, omit the optional fs.writeValidationSidecar port (older-caller
    * safety). Defaults to true (port present + recorded). */
   withSidecarPort?: boolean;
+  /** Commits sandcastle reports runAgent landed on the worker branch. Defaults
+   * to one commit on a real outcome / none on exhaustion. Set `[]` to model the
+   * codex DONE-without-commit case the salvage port rescues. */
+  commits?: { sha: string }[];
+  /** When set, register the commit-leftovers `salvageUncommitted` port and have
+   * it return this count (files committed). undefined omits the port (legacy
+   * caller — no salvage). */
+  salvage?: number;
   /** Issue body threaded into processIssue. */
   body?: string;
 }
@@ -114,6 +124,7 @@ function harness(opts: HarnessOptions = {}): {
     ensuredLabels: [],
     sidecarWrites: [],
     recordedAttempts: [],
+    salvageCalls: [],
   };
 
   const outcome = opts.outcome ?? "done";
@@ -237,7 +248,9 @@ function harness(opts: HarnessOptions = {}): {
       return {
         outcome: thisOutcome,
         branch: input.branch,
-        commits: thisOutcome === "exhausted" || thisOutcome === "runner-transient" ? [] : [{ sha: "deadbee" }],
+        commits:
+          opts.commits ??
+          (thisOutcome === "exhausted" || thisOutcome === "runner-transient" ? [] : [{ sha: "deadbee" }]),
         completionSignal:
           thisOutcome === "done"
             ? "<promise>DONE</promise>"
@@ -329,6 +342,15 @@ function harness(opts: HarnessOptions = {}): {
           trace.recordedAttempts.push(payload);
         }
       : undefined,
+    // Commit-leftovers salvage port (codex DONE-without-commit). Omitted unless
+    // opted in, so legacy-shaped tests keep today's behaviour.
+    salvageUncommitted:
+      opts.salvage === undefined
+        ? undefined
+        : async (branch) => {
+            trace.salvageCalls.push(branch);
+            return opts.salvage as number;
+          },
   };
 
   // Wire the hook config + abort marker so dispatchHooks has a command to run.
@@ -587,6 +609,68 @@ describe("processIssue — no-sentinel (run ended without a <promise>)", () => {
 
     expect(result.outcome).toBe("done"); // salvaged + both gates green → lands like DONE
     expect(trace.closed).toEqual([9]);
+  });
+});
+
+describe("processIssue — commit-leftovers salvage (codex DONE-without-commit)", () => {
+  it("DONE but zero commits → salvages the dirty worktree, then lands + closes like a normal DONE", async () => {
+    // The codex symptom: the inner agent edits, passes the gates, emits DONE, but
+    // never commits — sandcastle collects zero commits. Salvage commits the
+    // worktree so the feedback gate + landing see the work.
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      commits: [],
+      salvage: 5,
+      changedFiles: ["packages/x/src/a.ts"],
+      feedbackOk: true,
+      locked: false,
+    });
+    const result = await processIssue(deps, input);
+
+    // The salvage port was asked to commit the worktree of the live worker branch.
+    expect(trace.salvageCalls).toHaveLength(1);
+    expect(trace.salvageCalls[0]).toMatch(/^afk\/wAAAA\//);
+    expect(trace.salvageCalls[0]).toBe(result.branch);
+    expect(result.outcome).toBe("done"); // salvaged → lands + closes like DONE
+    expect(trace.closed).toContain(9);
+  });
+
+  it("DONE WITH commits → never calls the salvage port (no double-commit)", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      commits: [{ sha: "deadbee" }],
+      salvage: 3,
+      feedbackOk: true,
+    });
+    await processIssue(deps, input);
+    expect(trace.salvageCalls).toEqual([]);
+  });
+
+  it("no-sentinel + zero commits → salvage runs; a clean worktree (0 files) stays the empty-branch terminal", async () => {
+    // Salvage returns 0 (clean worktree) → the no-sentinel branch carries no work
+    // → today's terminal no-sentinel behaviour is preserved (ready-for-human).
+    const { deps, input, trace } = harness({
+      outcome: "no-sentinel",
+      commits: [],
+      salvage: 0,
+      changedFiles: [],
+    });
+    const result = await processIssue(deps, input);
+    expect(trace.salvageCalls).toHaveLength(1);
+    expect(result.outcome).toBe("no-sentinel");
+  });
+
+  it("legacy caller (no salvage port) keeps today's behaviour on a zero-commit DONE", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      commits: [],
+      // salvage omitted → port absent
+      changedFiles: ["packages/x/src/a.ts"],
+      feedbackOk: true,
+    });
+    const result = await processIssue(deps, input);
+    expect(trace.salvageCalls).toEqual([]);
+    expect(result.outcome).toBe("done");
   });
 });
 

@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { branchExists, fetchBranch, changedFiles } from "../src/runtime/git.js";
+import {
+  branchExists,
+  fetchBranch,
+  changedFiles,
+  worktreePathForBranch,
+  salvageUncommitted,
+} from "../src/runtime/git.js";
 import type { GitContext } from "../src/runtime/git.js";
 import type { ExecFn, ExecOutput } from "../src/runtime/exec.js";
 
@@ -74,5 +80,96 @@ describe("changedFiles — the silent-empty hazard FIX E guards against", () => 
       "packages/x/src/a.ts",
       "packages/y/b.ts",
     ]);
+  });
+});
+
+describe("worktreePathForBranch", () => {
+  const porcelain = [
+    "worktree /repo",
+    "HEAD aaaaaaa",
+    "branch refs/heads/main",
+    "",
+    "worktree /repo/.red/tmp/wt",
+    "HEAD bbbbbbb",
+    "branch refs/heads/afk/w/1-x",
+    "",
+  ].join("\n");
+
+  it("resolves the worktree path checked out on the branch", async () => {
+    const { exec, calls } = recordingExec(() => ok(porcelain));
+    const ctx: GitContext = { cwd: "/repo", exec };
+    expect(await worktreePathForBranch(ctx, "afk/w/1-x")).toBe("/repo/.red/tmp/wt");
+    expect(calls[0]).toEqual(["git", "worktree", "list", "--porcelain"]);
+  });
+
+  it("returns undefined when no worktree holds the branch", async () => {
+    const { exec } = recordingExec(() => ok(porcelain));
+    const ctx: GitContext = { cwd: "/repo", exec };
+    expect(await worktreePathForBranch(ctx, "afk/w/9-absent")).toBeUndefined();
+  });
+});
+
+describe("salvageUncommitted (codex DONE-without-commit)", () => {
+  const porcelain = "worktree /repo/.red/tmp/wt\nHEAD bbb\nbranch refs/heads/afk/w/1-x\n";
+
+  it("commits each dirty path one-per-file (scoped) and pushes once", async () => {
+    const { exec, calls } = recordingExec((_c, args) => {
+      if (args.includes("list")) return ok(porcelain);
+      if (args.includes("status")) return ok(" M src/a.ts\n?? src/b.ts\n");
+      return ok();
+    });
+    const ctx: GitContext = { cwd: "/repo", exec };
+    expect(await salvageUncommitted(ctx, "afk/w/1-x")).toBe(2);
+
+    const adds = calls.filter((c) => c[1] === "add");
+    const commits = calls.filter((c) => c[1] === "commit");
+    const pushes = calls.filter((c) => c[1] === "push");
+    // one add + one commit per file, each scoped with `-- <path>`.
+    expect(adds.map((c) => c[c.length - 1])).toEqual(["src/a.ts", "src/b.ts"]);
+    expect(commits).toHaveLength(2);
+    for (const c of commits) expect(c[c.length - 2]).toBe("--");
+    // a single force-with-lease push of HEAD to the branch ref.
+    expect(pushes).toHaveLength(1);
+    expect(pushes[0]).toEqual([
+      "git",
+      "push",
+      "--force-with-lease",
+      "origin",
+      "HEAD:refs/heads/afk/w/1-x",
+    ]);
+  });
+
+  it("commits the destination path of a rename", async () => {
+    const { exec, calls } = recordingExec((_c, args) => {
+      if (args.includes("list")) return ok(porcelain);
+      if (args.includes("status")) return ok("R  old.ts -> new.ts\n");
+      return ok();
+    });
+    expect(await salvageUncommitted({ cwd: "/repo", exec }, "afk/w/1-x")).toBe(1);
+    const add = calls.find((c) => c[1] === "add")!;
+    expect(add[add.length - 1]).toBe("new.ts");
+  });
+
+  it("no-ops (returns 0, no commit, no push) for a clean worktree", async () => {
+    const { exec, calls } = recordingExec((_c, args) => (args.includes("list") ? ok(porcelain) : ok("")));
+    expect(await salvageUncommitted({ cwd: "/repo", exec }, "afk/w/1-x")).toBe(0);
+    expect(calls.some((c) => c[1] === "commit")).toBe(false);
+    expect(calls.some((c) => c[1] === "push")).toBe(false);
+  });
+
+  it("returns 0 when no live worktree holds the branch", async () => {
+    const { exec } = recordingExec(() => ok("worktree /repo\nbranch refs/heads/main\n"));
+    expect(await salvageUncommitted({ cwd: "/repo", exec }, "afk/w/1-x")).toBe(0);
+  });
+
+  it("honours a custom remote in the push refspec", async () => {
+    const { exec, calls } = recordingExec((_c, args) => {
+      if (args.includes("list")) return ok(porcelain);
+      if (args.includes("status")) return ok(" M src/a.ts\n");
+      return ok();
+    });
+    await salvageUncommitted({ cwd: "/repo", exec }, "afk/w/1-x", "upstream");
+    const push = calls.find((c) => c[1] === "push")!;
+    expect(push[3]).toBe("upstream");
   });
 });

@@ -294,6 +294,19 @@ export interface ProcessIssueDeps {
    * Optional so tests/older callers omit it entirely (the call is `?.`-guarded).
    */
   recordAttempt?(payload: AttemptRecordPayload): Promise<void>;
+  /**
+   * Salvage uncommitted work the inner agent left in its worktree. The codex
+   * runner sometimes edits, passes the gates, and emits `<promise>DONE</promise>`
+   * WITHOUT ever running `git commit`, so sandcastle collects zero commits and
+   * the worker branch is empty — a DONE attempt then lands an empty merge and the
+   * issue is never really resolved. When `runAgent` reports zero commits on a
+   * done / no-sentinel outcome, processIssue calls this to commit the dirty
+   * worktree (one commit per file) onto `branch` and push, so the SAME feedback
+   * gate + landing tail see the work. Returns the count of files committed (0 =
+   * clean worktree, nothing salvaged). Best-effort; MUST NOT throw. Optional →
+   * tests/legacy callers omit it (no salvage, today's behaviour).
+   */
+  salvageUncommitted?(branch: string): Promise<number>;
 }
 
 /** Static per-issue inputs the caller resolves before `processIssue`. */
@@ -667,6 +680,29 @@ export async function processIssue(
     hooksFired,
     startedEpoch,
   } satisfies StageCommon;
+
+  // ---- commit-leftovers salvage (codex DONE-without-commit, ADR 0050) ----
+  // The inner agent (observed: codex) can edit, pass the gates, and emit
+  // `<promise>DONE</promise>` WITHOUT ever running `git commit`. sandcastle then
+  // collects zero commits → the worker branch is empty → a DONE attempt lands an
+  // empty merge and the issue is never really resolved (the no-sentinel salvage
+  // below misses it too: the branch carries no commits). When runAgent reports
+  // zero commits on a sentinel-bearing (done) or no-sentinel outcome, commit the
+  // dirty worktree onto the worker branch (one commit per file) so the SAME
+  // feedback gate + landing tail validate and merge the real work. A clean
+  // worktree salvages nothing (count 0) → today's behaviour is unchanged.
+  if (
+    deps.salvageUncommitted &&
+    run.commits.length === 0 &&
+    (run.outcome === "done" || run.outcome === "no-sentinel")
+  ) {
+    const salvagedFiles = await deps.salvageUncommitted(workerBranch).catch(() => 0);
+    if (salvagedFiles > 0) {
+      deps.appendIterLog(
+        `🤖 /afk: inner agent emitted ${run.outcome} but committed nothing — salvaged ${salvagedFiles} uncommitted file(s) onto \`${workerBranch}\` so the feedback gate + landing see the work.`,
+      );
+    }
+  }
 
   // ---- no-sentinel: the run ended without an AFK sentinel (ADR 0028) ----
   // ADR 0028 keeps `<promise>` canonical: a missing sentinel is a CRASH signal,

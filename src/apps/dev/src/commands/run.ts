@@ -351,6 +351,11 @@ export function buildProcessDeps(
     },
     mergeExec: gitx.mergeExec(gitCtx),
     remoteGit: gitx.gitExec(gitCtx),
+    // Commit-leftovers salvage: when the inner agent emits DONE / exits without
+    // committing (observed with codex), commit its dirty worktree onto the worker
+    // branch so the feedback gate + landing see the work instead of an empty
+    // merge. No-op when the worktree is clean. Best-effort.
+    salvageUncommitted: (branch) => gitx.salvageUncommitted(gitCtx, branch, ctx.remote),
     // Feedback runs against a checkout of the worker branch — the feedback
     // worktree manager materialises it and rebases pnpm/layout onto it.
     pnpm: feedback.pnpm,
