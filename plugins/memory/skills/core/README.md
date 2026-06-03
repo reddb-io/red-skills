@@ -25,3 +25,4 @@ Two modes exist:
 | **[context-status](./context-status/SKILL.md)** | Report context stack readiness: agent rules, domain docs, ADRs, Memory mode/graph/freshness/telemetry, Wiki state, score, and recommendations. |
 | **[doctor](./doctor/SKILL.md)** | List stale nodes (long-unaccessed, never recalled) and prune them after confirmation (graph mode). |
 | **[export](./export/SKILL.md)** | Export the graph to a navigable graph.html + graph.json + audit.md (graph mode). |
+| **[view](./view/SKILL.md)** | Open the graph store visually in red-ui (cluster/query/collections) via the red-ui MCP App, with a browser Workbench fallback in terminal hosts (graph mode). |

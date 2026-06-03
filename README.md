@@ -366,6 +366,7 @@ Boundaries:
 |---------|------------|
 | `/zoom-out` | Map-first orientation over unfamiliar code; graph-aware when Memory Graph mode is ready. |
 | `/memory:recall` | Search stored Memory notes or graph memory for relevant prior facts. |
+| `/memory:view` | Open the Memory graph visually in red-ui (cluster/query/collections), with a browser Workbench fallback in terminal hosts. |
 | `/wiki query` | Ask over the private `.red/wiki/` knowledge cache and optionally save a synthesis page. |
 | Future Ask surface | Direct question-first answers over project knowledge. This remains out of scope here. |
 
