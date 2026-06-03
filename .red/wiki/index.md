@@ -14,6 +14,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [docs(adr): 0039 — red-skills consumes red-memory + red-ui MCPs (ecosystem split)](./pages/383-docs-adr-0039-red-skills-consumes-red-memory-red-ui-mcps-eco.md)
 - [docs(adr): 0040 version single-source + version-aware; 0039 two-MCP memory plugin; doctor checks 6/7](./pages/385-docs-adr-0040-version-single-source-version-aware-0039-two-m.md)
 - [docs(adr): resolve 0039 collision (consume→0041) + add ADR INDEX.md](./pages/386-docs-adr-resolve-0039-collision-consume-0041-add-adr-index-m.md)
+- [docs(afk): describe the Task Mirror as a `monitor --mirror-plan` subcommand](./pages/349-docs-afk-describe-the-task-mirror-as-a-monitor-mirror-plan-s.md)
 - [docs(afk): remove dead Capability Dispatch + document --boot-only](./pages/329-docs-afk-remove-dead-capability-dispatch-document-boot-only.md)
 - [docs(context): add the brain product context (glossary + map pointer)](./pages/409-docs-context-add-the-brain-product-context-glossary-map-poin.md)
 - [docs(memory): ADR 0036 — transports are adapters over the operation registry](./pages/375-docs-memory-adr-0036-transports-are-adapters-over-the-operat.md)
