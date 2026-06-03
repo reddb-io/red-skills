@@ -62,6 +62,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [fix(afk): require the DONE sentinel even when work is already complete (Defeito 1)](./pages/427-fix-afk-require-the-done-sentinel-even-when-work-is-already.md)
 - [fix(afk): restore Task Mirror via monitor --mirror-plan](./pages/331-fix-afk-restore-task-mirror-via-monitor-mirror-plan.md)
 - [fix(afk): salvage a no-sentinel branch that passes feedback (Defeito 2 / issue #332)](./pages/428-fix-afk-salvage-a-no-sentinel-branch-that-passes-feedback-de.md)
+- [fix(afk): supervisor.test runSupervisor tests spin → OOM, false-failing every gate (#446)](./pages/464-fix-afk-supervisor-test-runsupervisor-tests-spin-oom-false-f.md)
 - [fix(afk): uncap sandcastle inner agent maxIterations (fixes #322)](./pages/327-fix-afk-uncap-sandcastle-inner-agent-maxiterations-fixes-322.md)
 - [fix(afk): write afk.state.json + lanes on the native path (monitor/statusline/stall-detector were blind)](./pages/359-fix-afk-write-afk-state-json-lanes-on-the-native-path-monito.md)
 - [fix(config): memory built-in handlers use autohooks, not hooks (ADR 0042 refine)](./pages/391-fix-config-memory-built-in-handlers-use-autohooks-not-hooks.md)
