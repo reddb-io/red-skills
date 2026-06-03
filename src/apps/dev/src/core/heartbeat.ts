@@ -94,6 +94,19 @@ export function formatStoppedMarker(ts: string): string {
   return `[heartbeat] iteration stopped at ${ts}`;
 }
 
+/**
+ * Per-agentic-iteration boundary marker — the sandcastle Orchestrator's
+ * re-invocation count (1..maxIterations), NOT the attempt boundary above. Emitted
+ * to afk.log + the firehose when the iteration advances, so a run burning through
+ * iterations (e.g. an agent re-running the full test suite each turn instead of
+ * emitting DONE) is visible. `max` is the resolved ceiling, shown as `N/max` when
+ * known.
+ */
+export function formatIterationMarker(n: number, phase: "started" | "ended", max?: number): string {
+  const of = max !== undefined && max > 0 ? `/${max}` : "";
+  return `[afk] agent iteration ${n}${of} ${phase}`;
+}
+
 export interface FirehoseIdentity {
   worker?: string;
   issue?: number | string;

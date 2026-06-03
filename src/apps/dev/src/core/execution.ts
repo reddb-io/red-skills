@@ -73,15 +73,20 @@ export function parseAttemptTimeout(raw: string | undefined): number | undefined
  * exhausts that one iteration's budget BEFORE it can emit `<promise>DONE</promise>`,
  * so AFK sees no completionSignal → no-sentinel → blocked:crashed and never
  * merges. The completionSignal (DONE/BLOCKED) is the REAL terminator; this is
- * only the safety ceiling for "the agent never signals". 12 is generous vs the
+ * only the safety ceiling for "the agent never signals". 20 is generous vs the
  * broken 1 yet bounded vs runaway: each iteration is itself bounded by
  * `idleTimeoutSeconds`, and DONE/BLOCKED stops the loop early, so a normal issue
- * finishes in 1-3 iterations and 12 is purely the cap — enough headroom for a
+ * finishes in 1-3 iterations and 20 is purely the cap — enough headroom for a
  * thorough agent without turning repeated no-sentinel failures into long loops.
- * Env-tunable via RED_AFK_MAX_ITERATIONS (parsed by
- * `parseMaxIterations`).
+ * Raised 12 → 20 because heavy issues (e.g. Rust replication that re-runs the
+ * full `cargo test` suite to re-validate) legitimately spend more agentic turns
+ * and were hitting the cap with a complete, mergeable branch but no sentinel.
+ * The cap is the symptom-bound, not the cure — the real fix is the agent
+ * emitting DONE as soon as the gate is green (AGENT-PROMPT) + a runtime salvage
+ * of a no-sentinel-but-mergeable branch. Env-tunable via RED_AFK_MAX_ITERATIONS
+ * (parsed by `parseMaxIterations`).
  */
-export const DEFAULT_MAX_ITERATIONS = 12;
+export const DEFAULT_MAX_ITERATIONS = 20;
 
 /**
  * Parse a RED_AFK_MAX_ITERATIONS override into a positive integer, or

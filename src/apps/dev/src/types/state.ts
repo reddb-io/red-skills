@@ -26,6 +26,10 @@ export const AfkCurrentSchema = z.object({
    * external monitor reading afk.state.json sees liveness/progress, not just a
    * stale stream line. Empty until the guard arms (no-sandbox runs). */
   last_progress_at: z.string().default(""),
+  /** Current sandcastle agentic-iteration number (1..maxIterations), advanced
+   * each time the inner agent's re-invocation count ticks. Lets the monitor show
+   * "iter N/max" and surfaces a run burning through iterations re-validating. */
+  iteration: z.union([z.number(), z.string()]).optional().default(""),
 });
 
 export const AfkStateSchema = z.object({

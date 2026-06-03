@@ -29,7 +29,7 @@ export const ENVELOPE_FIELD_ORDER = ["ts", "lvl", "worker", "issue", "attempt", 
  * Synthetic record types: orchestrator-authored kinds that must never appear on
  * the agent lane (which carries inner-agent output only).
  */
-export const SYNTHETIC_TYPES = ["boot", "heartbeat", "promotion", "envelope", "audit", "stamp"] as const;
+export const SYNTHETIC_TYPES = ["boot", "heartbeat", "iteration", "promotion", "envelope", "audit", "stamp"] as const;
 
 /** Keys the caller may never set via the `extra` fields map; the module owns them. */
 const RESERVED_KEYS = new Set(["type", "msg", "ts"]);
