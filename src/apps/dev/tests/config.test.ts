@@ -214,3 +214,27 @@ describe("config — block sequences (afk.backpressure, #430)", () => {
     expect(readBackpressure(values)).toEqual([]);
   });
 });
+
+describe("config — afk.merge.wait_for_review (ADR 0048)", () => {
+  it("defaults to false (merge-without-advice) with CodeRabbit as the review check", () => {
+    const values = loadConfig("/nonexistent/.red/config.yaml", { warn: () => {} });
+    expect(getConfig(values, "afk.merge.wait_for_review")).toBe("false");
+    expect(getConfig(values, "afk.merge.review_check")).toBe("CodeRabbit");
+  });
+
+  it("reads the namespaced plugins.dev.afk.merge.* block", () => {
+    const text =
+      "plugins:\n  dev:\n    afk:\n      merge:\n        wait_for_review: true\n        review_check: my-reviewer\n";
+    const values = loadConfig("/x/.red/config.yaml", { read: () => text });
+    expect(getConfig(values, "afk.merge.wait_for_review")).toBe("true");
+    expect(getConfig(values, "afk.merge.review_check")).toBe("my-reviewer");
+  });
+
+  it("reads the legacy top-level afk.merge.* block (back-compat)", () => {
+    const text = "afk:\n  merge:\n    wait_for_review: true\n";
+    const values = loadConfig("/x/.red/config.yaml", { read: () => text });
+    expect(getConfig(values, "afk.merge.wait_for_review")).toBe("true");
+    // review_check keeps its default when unset.
+    expect(getConfig(values, "afk.merge.review_check")).toBe("CodeRabbit");
+  });
+});

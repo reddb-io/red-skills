@@ -27,6 +27,7 @@ import {
   resolveMergeConflict,
   type ConflictResolver,
   type Exec as MergeExec,
+  type WaitForReviewInput,
 } from "./merge.js";
 import { pushAttempt, type GitExec } from "./remote-branch.js";
 
@@ -48,6 +49,14 @@ export interface LandingDeps {
   /** One-shot inner-agent merge-conflict resolver (locked path only). Absent →
    * a locked merge conflict goes straight to the failure path. */
   conflictResolver?: ConflictResolver;
+  /**
+   * Opt-in advisory-review wait for the UNLOCKED admin-PR landing
+   * (`afk.merge.wait_for_review`, ADR 0048). Present → landPr holds until the
+   * named review check concludes before the admin-merge, then merges regardless
+   * of the verdict. Absent (the default) → admin-merge ignores advisory checks.
+   * Ignored on the locked path, which never opens a PR.
+   */
+  waitForReview?: WaitForReviewInput;
 }
 
 /** Static per-landing inputs the caller already resolved. */
@@ -152,6 +161,7 @@ export async function doLanding(
       target: input.base,
       n: input.issue,
       title: input.title,
+      waitForReview: deps.waitForReview,
     });
     landed = r.ok;
   }

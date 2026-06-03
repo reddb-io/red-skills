@@ -29,6 +29,8 @@ interface Opts {
   conflictResolve?: "resolve" | "fail";
   /** rc the post-resolve `push <remote> <base>` returns (1 → reject → reset). */
   resolvePushCode?: number;
+  /** Enable the opt-in advisory-review wait (afk.merge.wait_for_review). */
+  waitForReview?: boolean;
 }
 
 function harness(opts: Opts = {}): Harness {
@@ -62,6 +64,9 @@ function harness(opts: Opts = {}): Harness {
         const pending = opts.conflictResolve === "fail" || !mergeResolved;
         return { code: pending ? 0 : 1, stdout: "", stderr: "" };
       }
+      if (j.includes("pr checks")) {
+        return { code: 0, stdout: JSON.stringify([{ name: "CodeRabbit", state: "SUCCESS" }]), stderr: "" };
+      }
       return { code: 0, stdout: "", stderr: "" };
     },
     remoteGit: async (argv) => {
@@ -80,6 +85,7 @@ function harness(opts: Opts = {}): Harness {
           if (opts.conflictResolve === "resolve") mergeResolved = true;
         }
       : undefined,
+    waitForReview: opts.waitForReview ? { check: "CodeRabbit", sleep: async () => {} } : undefined,
   };
 
   const input: LandingInput = {
@@ -117,6 +123,24 @@ describe("doLanding — happy paths", () => {
     expect(j.some((c) => c.includes("pr merge 42 --admin --merge"))).toBe(true);
     // unlocked never merges the attempt branch locally.
     expect(j.some((c) => c.includes("merge --no-ff afk/"))).toBe(false);
+  });
+
+  it("unlocked + wait_for_review → polls the review check before the admin-merge", async () => {
+    const h = harness({ locked: false, waitForReview: true });
+    const r = await doLanding(h.deps, h.input, h.hooks);
+    expect(r).toEqual({ ok: true, locked: false });
+    const j = joined(h.mergeCalls);
+    const checksIdx = j.findIndex((c) => c.includes("pr checks"));
+    const mergeIdx = j.findIndex((c) => c.includes("pr merge 42 --admin --merge"));
+    expect(checksIdx).toBeGreaterThanOrEqual(0);
+    expect(mergeIdx).toBeGreaterThan(checksIdx);
+  });
+
+  it("unlocked, default (no wait_for_review) → never polls review checks", async () => {
+    const h = harness({ locked: false });
+    const r = await doLanding(h.deps, h.input, h.hooks);
+    expect(r).toEqual({ ok: true, locked: false });
+    expect(joined(h.mergeCalls).some((c) => c.includes("pr checks"))).toBe(false);
   });
 
   it("locked → lands via merge --no-ff into the locked branch + push", async () => {

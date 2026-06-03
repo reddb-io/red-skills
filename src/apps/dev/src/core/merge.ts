@@ -139,6 +139,97 @@ export async function landMerge(exec: Exec, input: LandMergeInput): Promise<Land
   return { ok: true, rolledBack: false };
 }
 
+/** Injected sleep between review-check polls. Tests pass a no-op so the wait
+ * loop runs synchronously with no real timers. */
+export type Sleep = (ms: number) => Promise<void>;
+
+/**
+ * Opt-in wait for an advisory review check to conclude before the admin-merge
+ * (`afk.merge.wait_for_review`, ADR 0048). The review stays ADVISORY: AFK waits
+ * for the named check to reach a terminal state, then merges regardless of its
+ * verdict — `drift-guard` (the pre_merge hook) + in-process backpressure remain
+ * the binding gates. Absent on {@link LandPrInput} → the merge proceeds
+ * immediately (the default; current behaviour, now intentional).
+ */
+export interface WaitForReviewInput {
+  /** Name (or substring, case-insensitive) of the review check to wait on, e.g. `CodeRabbit`. */
+  check: string;
+  /** Injected sleep between polls. */
+  sleep: Sleep;
+  /** Max poll attempts before proceeding fail-open. Default 30. */
+  maxPolls?: number;
+  /** Delay between polls, in ms. Default 10000. */
+  intervalMs?: number;
+}
+
+/** Why {@link waitForReviewCheck} stopped waiting. All three proceed to merge —
+ * the wait never blocks on the verdict (advisory). */
+export type ReviewWaitOutcome = "concluded" | "absent" | "timeout";
+
+interface PrCheck {
+  name: string;
+  state: string;
+}
+
+/** Parse `gh pr checks --json name,state` stdout. Tolerant: any parse failure
+ * (non-JSON, partial output) yields an empty list so the caller polls again. */
+function parsePrChecks(stdout: string): PrCheck[] {
+  const text = stdout.trim();
+  if (text === "") return [];
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.flatMap((entry): PrCheck[] => {
+      if (typeof entry !== "object" || entry === null) return [];
+      const name = (entry as { name?: unknown }).name;
+      const state = (entry as { state?: unknown }).state;
+      if (typeof name !== "string") return [];
+      return [{ name, state: typeof state === "string" ? state : "" }];
+    });
+  } catch {
+    return [];
+  }
+}
+
+/** A gh check `state` is terminal once it leaves the pending family. gh
+ * normalises in-flight runs to `PENDING`; everything else (SUCCESS, FAILURE,
+ * SKIPPED, ERROR, …) has concluded. */
+function isTerminalState(state: string): boolean {
+  const s = state.trim().toUpperCase();
+  return s !== "" && s !== "PENDING";
+}
+
+/**
+ * Poll `gh pr checks <num>` until the configured review check reaches a terminal
+ * state, the budget is exhausted, or the check never registers. Returns the
+ * reason it stopped — but the caller proceeds to merge in every case: this waits
+ * for *conclusion*, never gating on the verdict (the review is advisory, ADR
+ * 0048). Fail-open by design — a missing/never-concluding reviewer must not wedge
+ * the autonomous landing.
+ */
+export async function waitForReviewCheck(
+  exec: Exec,
+  repo: string,
+  prNumber: number,
+  input: WaitForReviewInput,
+): Promise<ReviewWaitOutcome> {
+  const maxPolls = input.maxPolls ?? 30;
+  const intervalMs = input.intervalMs ?? 10_000;
+  const needle = input.check.trim().toLowerCase();
+  let everSeen = false;
+
+  for (let attempt = 0; attempt < maxPolls; attempt++) {
+    const res = await exec(["gh", "-R", repo, "pr", "checks", String(prNumber), "--json", "name,state"]);
+    const match = parsePrChecks(res.stdout).find((c) => c.name.toLowerCase().includes(needle));
+    if (match !== undefined) {
+      everSeen = true;
+      if (isTerminalState(match.state)) return "concluded";
+    }
+    if (attempt + 1 < maxPolls) await input.sleep(intervalMs);
+  }
+  return everSeen ? "timeout" : "absent";
+}
+
 /** Inputs for the UNLOCKED landing path, {@link landPr}. */
 export interface LandPrInput {
   /** `owner/repo` slug passed to `gh -R`. */
@@ -157,6 +248,13 @@ export interface LandPrInput {
   title: string;
   /** Worktree dir to force-push the attempt branch from; skipped when absent. */
   worktree?: string;
+  /**
+   * Opt-in advisory-review wait (`afk.merge.wait_for_review`, ADR 0048). When
+   * present, the PR is held until the named review check concludes before the
+   * admin-merge; the merge then proceeds regardless of the verdict. Absent (the
+   * default) → admin-merge immediately, ignoring advisory checks.
+   */
+  waitForReview?: WaitForReviewInput;
 }
 
 export interface LandPrResult {
@@ -179,7 +277,7 @@ const PR_BODY_PREFIX = "Automated AFK landing for #";
  * Idempotent: a re-attempt reuses the open PR rather than creating a second.
  */
 export async function landPr(exec: Exec, input: LandPrInput): Promise<LandPrResult> {
-  const { repo, gitRepo, remote, branch, target, n, title, worktree } = input;
+  const { repo, gitRepo, remote, branch, target, n, title, worktree, waitForReview } = input;
 
   // 1. Make the attempt branch's origin state certain before opening the PR.
   if (worktree) {
@@ -217,6 +315,14 @@ export async function landPr(exec: Exec, input: LandPrInput): Promise<LandPrResu
     prNumber = await listOpenPr(exec, repo, branch, target);
   }
   if (prNumber === undefined) return { ok: false };
+
+  // 2b. Opt-in advisory-review wait (afk.merge.wait_for_review, ADR 0048). Hold
+  // until the configured review check concludes, then fall through to merge
+  // regardless of its verdict — the review is advisory; drift-guard (pre_merge)
+  // + in-process backpressure stay the binding gates. Default (absent) → no wait.
+  if (waitForReview) {
+    await waitForReviewCheck(exec, repo, prNumber, waitForReview);
+  }
 
   // 3. Admin-merge: the worker is autonomous, so bypass required-review checks.
   const merge = await exec(["gh", "-R", repo, "pr", "merge", String(prNumber), "--admin", "--merge"]);

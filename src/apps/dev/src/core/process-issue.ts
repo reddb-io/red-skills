@@ -45,6 +45,7 @@ import { runBackpressure, type BackpressureExec } from "./backpressure.js";
 import {
   type Exec as MergeExec,
   type ConflictResolver,
+  type WaitForReviewInput,
 } from "./merge.js";
 import { doLanding } from "./landing.js";
 import {
@@ -237,6 +238,16 @@ export interface ProcessIssueDeps {
    * conflict goes straight to ready-for-human (the pre-recovery behaviour).
    */
   conflictResolver?: ConflictResolver;
+  /**
+   * Opt-in advisory-review wait for the UNLOCKED admin-PR landing
+   * (`afk.merge.wait_for_review`, ADR 0048). Resolved from config by the CLI:
+   * present → the landing holds until the configured review check concludes
+   * before the admin-merge, then merges regardless of the verdict (the review
+   * stays advisory — drift-guard + in-process backpressure are the binding
+   * gates). Absent (the default) → admin-merge ignores advisory checks. Tests
+   * omit it.
+   */
+  waitForReview?: WaitForReviewInput;
   /** Envelope-emit IO (poster / marker writer / posted writer / git push). */
   envelope: EmitEnvelopeDeps;
   /** Clock: epoch seconds (date +%s) and an ISO timestamp (date -Iseconds). */
@@ -797,6 +808,7 @@ export async function processIssue(
       headShortSha: () => deps.git.headShortSha(),
       fireHook,
       conflictResolver: deps.conflictResolver,
+      waitForReview: deps.waitForReview,
     },
     {
       locked,
