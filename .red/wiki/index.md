@@ -58,6 +58,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [fix(afk): launcher no longer shadows AFK commands + atomic issue claim (#434)](./pages/435-fix-afk-launcher-no-longer-shadows-afk-commands-atomic-issue.md)
 - [fix(afk): monitor diff column counts committed work + relabel issue ratio](./pages/392-fix-afk-monitor-diff-column-counts-committed-work-relabel-is.md)
 - [fix(afk): native fleet supervisor — poll cadence + real stall-reaper IO](./pages/285-fix-afk-native-fleet-supervisor-poll-cadence-real-stall-reap.md)
+- [fix(afk): orphan sweep skips LIVE sibling workers — no more reaping a running attempt (#444)](./pages/465-fix-afk-orphan-sweep-skips-live-sibling-workers-no-more-reap.md)
 - [fix(afk): pnpm install the feedback worktree before validating (#458)](./pages/459-fix-afk-pnpm-install-the-feedback-worktree-before-validating.md)
 - [fix(afk): require the DONE sentinel even when work is already complete (Defeito 1)](./pages/427-fix-afk-require-the-done-sentinel-even-when-work-is-already.md)
 - [fix(afk): restore Task Mirror via monitor --mirror-plan](./pages/331-fix-afk-restore-task-mirror-via-monitor-mirror-plan.md)
