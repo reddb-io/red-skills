@@ -110,6 +110,25 @@ describe("buildDiffSection", () => {
     expect(body).toContain("+12 -3 files=2");
     expect(body).not.toContain("compare/main...");
   });
+
+  it("renders a clickable live-branch tree link when liveBranch is set (#443)", () => {
+    const body = buildDiffSection({
+      repo: "reddb-io/red-skills",
+      remoteBranch: "afk-attempts/wTEST/9-foo",
+      worktreeRel: ".red/tmp/w",
+      diffstat: "+12 -3 files=2",
+      liveBranch: "afk/wTEST/9-foo",
+    });
+    expect(body).toContain("live branch:");
+    expect(body).toContain("https://github.com/reddb-io/red-skills/tree/afk/wTEST/9-foo");
+    // both links present: the live tree link AND the afk-attempts compare link
+    expect(body).toContain("compare/main...afk-attempts/wTEST/9-foo");
+  });
+
+  it("omits the live-branch link when liveBranch is absent", () => {
+    const body = buildDiffSection({ repo: "reddb-io/red-skills", remoteBranch: "afk-attempts/wTEST/9-foo", worktreeRel: ".red/tmp/w", diffstat: "+0 -0" });
+    expect(body).not.toContain("live branch:");
+  });
 });
 
 describe("buildFailureMarkers", () => {

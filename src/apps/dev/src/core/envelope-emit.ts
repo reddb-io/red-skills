@@ -54,12 +54,20 @@ export function buildDiffSection(input: {
   remoteBranch: string;
   worktreeRel: string;
   diffstat: string;
+  /** The live `afk/{id}/{N}-slug` branch. On a terminal failure it survives on
+   *  origin, so a clickable `tree/` link lets a human check it out to inspect or
+   *  continue the work (#443). Empty/absent ⇒ no live link rendered. */
+  liveBranch?: string;
 }): string {
+  const liveLink =
+    input.liveBranch && input.repo
+      ? `live branch: <a href="https://github.com/${input.repo}/tree/${input.liveBranch}">${input.liveBranch}</a>\n`
+      : "";
   if (input.remoteBranch) {
     const url = `https://github.com/${input.repo}/compare/main...${input.remoteBranch}`;
-    return `<a href="${url}">compare/main...${input.remoteBranch}</a>\n\n${input.diffstat}\n`;
+    return `${liveLink}<a href="${url}">compare/main...${input.remoteBranch}</a>\n\n${input.diffstat}\n`;
   }
-  return `push to \`afk-attempts/\` failed — local worktree: \`${input.worktreeRel}\`\n\n${input.diffstat}\n`;
+  return `${liveLink}push to \`afk-attempts/\` failed — local worktree: \`${input.worktreeRel}\`\n\n${input.diffstat}\n`;
 }
 
 /** The two attempt-ledger marker file paths a terminal FAILURE persists into
@@ -103,6 +111,8 @@ export interface DiffInputs {
   repo: string;
   worktreeRel: string;
   diffstat: string;
+  /** Live `afk/{id}/{N}-slug` branch, rendered as a clickable tree link (#443). */
+  liveBranch?: string;
 }
 
 /** Assemble the ordered section list for a status. PURE — no push, no IO. The
@@ -118,7 +128,13 @@ export function buildSections(
 ): EnvelopeSection[] {
   const out: EnvelopeSection[] = [];
   const diffBody = (): string =>
-    buildDiffSection({ repo: diff.repo, remoteBranch, worktreeRel: diff.worktreeRel, diffstat: diff.diffstat });
+    buildDiffSection({
+      repo: diff.repo,
+      remoteBranch,
+      worktreeRel: diff.worktreeRel,
+      diffstat: diff.diffstat,
+      liveBranch: diff.liveBranch,
+    });
 
   if (status === "done") {
     if (sections.validation !== undefined) out.push({ name: "validation", body: sections.validation });
@@ -276,7 +292,12 @@ export async function emitEnvelope(
   const sectionList = buildSections(
     input.status,
     input.sections ?? {},
-    { repo: input.repo ?? "", worktreeRel: input.worktreeRel ?? "", diffstat: input.diffstat ?? "" },
+    {
+      repo: input.repo ?? "",
+      worktreeRel: input.worktreeRel ?? "",
+      diffstat: input.diffstat ?? "",
+      liveBranch: input.branch,
+    },
     remoteBranch,
   );
   const body = buildEnvelope({
