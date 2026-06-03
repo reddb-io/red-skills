@@ -45,6 +45,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [feat(memory): expose red-memory + red-ui MCP servers (ADR 0041)](./pages/423-feat-memory-expose-red-memory-red-ui-mcp-servers-adr-0041.md)
 - [feat(memory): ship runtime as bundled release asset + bootstrap fetch (ADR 0029)](./pages/229-feat-memory-ship-runtime-as-bundled-release-asset-bootstrap.md)
 - [feat(review-adrs): reconcile findings through a /start-style interview](./pages/389-feat-review-adrs-reconcile-findings-through-a-start-style-in.md)
+- [feat(setup): scaffold afk.backpressure in /setup-red-skills (#433)](./pages/440-feat-setup-scaffold-afk-backpressure-in-setup-red-skills-433.md)
 - [fix(afk): anchor sandcastle under the attempt dir, not the repo root](./pages/326-fix-afk-anchor-sandcastle-under-the-attempt-dir-not-the-repo.md)
 - [fix(afk): feed the agent lane on the native path so liveness isn't blind](./pages/350-fix-afk-feed-the-agent-lane-on-the-native-path-so-liveness-i.md)
 - [fix(afk): feedback gate resolves multi-slash afk/* branches (#437)](./pages/438-fix-afk-feedback-gate-resolves-multi-slash-afk-branches-437.md)
