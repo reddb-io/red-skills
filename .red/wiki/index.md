@@ -36,6 +36,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [feat(config): unify plugin config under .red/config.yaml (plugins.<name>)](./pages/390-feat-config-unify-plugin-config-under-red-config-yaml-plugin.md)
 - [feat(dev): read-only adoption/process doctor (/dev:doctor)](./pages/381-feat-dev-read-only-adoption-process-doctor-dev-doctor.md)
 - [feat(dev): review-adrs skill — decision-record doctor (lint + group + propagate)](./pages/382-feat-dev-review-adrs-skill-decision-record-doctor-lint-group.md)
+- [feat(memory): add /memory:view — open the graph in red-ui (ADR 0041)](./pages/424-feat-memory-add-memory-view-open-the-graph-in-red-ui-adr-004.md)
 - [feat(memory): expose red-memory + red-ui MCP servers (ADR 0041)](./pages/423-feat-memory-expose-red-memory-red-ui-mcp-servers-adr-0041.md)
 - [feat(memory): ship runtime as bundled release asset + bootstrap fetch (ADR 0029)](./pages/229-feat-memory-ship-runtime-as-bundled-release-asset-bootstrap.md)
 - [feat(review-adrs): reconcile findings through a /start-style interview](./pages/389-feat-review-adrs-reconcile-findings-through-a-start-style-in.md)
