@@ -55,6 +55,8 @@ Done = all of:
 
 If a script doesn't exist in `package.json`, skip it silently. Don't invent test runners.
 
+**"Already done" still requires the sentinel.** If you inspect the branch and conclude the issue's work is *already* complete and correct — a prior attempt finished it, or the change was a no-op — you MUST still emit `<promise>DONE</promise>` as your final line. Exiting without a sentinel is read by the orchestrator as a **crash**, not as "nothing to do": a sentinel-less exit on a branch that already carries valid work used to abandon that work entirely and re-invoke you (burning iterations re-verifying the same finished commit). There is no silent "nothing to do" exit — confirm the acceptance criteria hold, then emit `DONE`. If the work is genuinely impossible or contradictory, emit `<promise>BLOCKED</promise>`. One of the two sentinels is always your final line.
+
 ## Task Adherence (binding)
 
 You execute exactly one issue. Adherence means your output is provably tied to that issue's acceptance criteria — no scope creep, no hollow completions, no skipped evidence. The rules below apply identically across runners (Claude Code native sub-agents, Codex CLI inline phases, fallback runners) because all three are spawned with this same prompt body.
