@@ -82,6 +82,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [refactor(dev): rename the statusline skill to setup-statusline](./pages/410-refactor-dev-rename-the-statusline-skill-to-setup-statusline.md)
 - [refactor(dev): ship dev runtime as fetched asset, not committed bundle (ADR 0038)](./pages/376-refactor-dev-ship-dev-runtime-as-fetched-asset-not-committed.md)
 - [refactor: monorepo (src/domains + shared + per-plugin bundles + dynamic fetch) + functionality recovery](./pages/288-refactor-monorepo-src-domains-shared-per-plugin-bundles-dyna.md)
+- [test(afk): backpressure gate covers the salvaged no-sentinel path (#432)](./pages/439-test-afk-backpressure-gate-covers-the-salvaged-no-sentinel-p.md)
 - [test(afk): injectable exec seam makes the runtime wiring testable](./pages/296-test-afk-injectable-exec-seam-makes-the-runtime-wiring-testa.md)
 - [test(memory): split vitest suite into fast gate + integration project (#242)](./pages/264-test-memory-split-vitest-suite-into-fast-gate-integration-pr.md)
 
