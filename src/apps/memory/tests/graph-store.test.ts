@@ -11,6 +11,7 @@ import { slugify } from "../src/store.js";
 
 // RedDB connects by spawning the bundled `red` binary; give each test room.
 const TIMEOUT = 30_000;
+const SOFT_MERGE_LABELS = ["SAME_AS", "MERGED_INTO"] as const;
 
 const roots: string[] = [];
 const stores: MemoryStore[] = [];
@@ -607,6 +608,74 @@ describe("MemoryStore over a file:// RedDB", () => {
       const rids = hits.map((h) => h.rid);
       expect(rids).toContain(current);
       expect(rids).toContain(old);
+    },
+    TIMEOUT,
+  );
+
+  test.each(SOFT_MERGE_LABELS)(
+    "soft merge %s: recall hides the duplicate until the edge is removed",
+    async (label) => {
+      const store = await openStore(await tempRoot());
+      const duplicate = await store.upsertNode(
+        factToNode("jwt rotation duplicate carries original provenance", slugify, {
+          provenance: {
+            source_kind: "manual",
+            writer: "agent-a",
+            evidence: ["transcript:duplicate-node"],
+          },
+        }),
+      );
+      const canonical = await store.upsertNode(
+        factToNode("jwt rotation canonical target keeps active guidance", slugify),
+      );
+
+      const edge = await store.upsertEdge({
+        label,
+        from_rid: duplicate,
+        to_rid: canonical,
+        properties: { reason: "approved entity merge" },
+      });
+
+      expect(edge).toBeGreaterThan(0);
+      expect(await store.findEdge(duplicate, canonical, label)).toBe(edge);
+
+      const hiddenHits = await graphRecall(
+        store,
+        "jwt rotation duplicate provenance canonical guidance",
+        10,
+      );
+      const hiddenRids = hiddenHits.map((h) => h.rid);
+      expect(hiddenRids).toContain(canonical);
+      expect(hiddenRids).not.toContain(duplicate);
+
+      await expect(store.getNode(duplicate)).resolves.toMatchObject({
+        rid: duplicate,
+        properties: {
+          provenance: {
+            source_kind: "manual",
+            writer: "agent-a",
+            evidence: ["transcript:duplicate-node"],
+          },
+        },
+      });
+
+      await expect(store.removeEdge(duplicate, canonical, label)).resolves.toBe(true);
+      expect(await store.findEdge(duplicate, canonical, label)).toBeNull();
+      expect(
+        (await store.listEdges()).some(
+          (e) =>
+            e.label === label &&
+            Number(e.from_rid ?? e.from) === duplicate &&
+            Number(e.to_rid ?? e.to) === canonical,
+        ),
+      ).toBe(false);
+
+      const visibleHits = await graphRecall(
+        store,
+        "jwt rotation duplicate original provenance",
+        10,
+      );
+      expect(visibleHits.map((h) => h.rid)).toContain(duplicate);
     },
     TIMEOUT,
   );
