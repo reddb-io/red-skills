@@ -28,6 +28,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [feat(afk): TypeScript runtime — committed bundle, release pipeline, 21 ported modules](./pages/282-feat-afk-typescript-runtime-committed-bundle-release-pipelin.md)
 - [feat(afk): add afk.merge.wait_for_review knob + document merge-without-advice policy (#431)](./pages/441-feat-afk-add-afk-merge-wait-for-review-knob-document-merge-w.md)
 - [feat(afk): always show diff volume in monitor + fleet total](./pages/421-feat-afk-always-show-diff-volume-in-monitor-fleet-total.md)
+- [feat(afk): attempt envelopes link the live worker branch as a clickable tree link (#443)](./pages/466-feat-afk-attempt-envelopes-link-the-live-worker-branch-as-a.md)
 - [feat(afk): attempt progress guard — abort a stalled agent, park to ready-for-human (ADR 0044)](./pages/400-feat-afk-attempt-progress-guard-abort-a-stalled-agent-park-t.md)
 - [feat(afk): backpressure gate on the DONE path (#430)](./pages/436-feat-afk-backpressure-gate-on-the-done-path-430.md)
 - [feat(afk): bounded auto-recovery for recoverable blocks](./pages/294-feat-afk-bounded-auto-recovery-for-recoverable-blocks.md)
