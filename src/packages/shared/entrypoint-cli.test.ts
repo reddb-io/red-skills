@@ -14,10 +14,10 @@ describe("parseEntrypoint", () => {
     });
   });
 
-  it("routes an explicit `fetch <plugin> <version>` with flags", () => {
+  it("routes an explicit `fetch <plugin> <version>` with flags under the generic role", () => {
     const plan = parseEntrypoint(
       ["fetch", "memory", "1.2.3", "--repo", "o/n", "--cache-dir", "/c"],
-      "run:dev",
+      "fetch",
     );
     expect(plan).toEqual<EntrypointPlan>({
       mode: "fetch",
@@ -26,6 +26,43 @@ describe("parseEntrypoint", () => {
       repo: "o/n",
       cacheDir: "/c",
       help: false,
+    });
+  });
+
+  // #434 Defect 1: a run-pinned launcher (afk.mjs, role "run:dev") is a dedicated
+  // forwarder — the generic `run`/`fetch` verbs must NOT shadow the pinned
+  // plugin's own command surface. The pin is honoured before argv[0].
+  it("does NOT let `run` shadow a run-pinned launcher: `afk.mjs run --boot-only` forwards to dev", () => {
+    const plan = parseEntrypoint(["run", "--boot-only"], "run:dev");
+    expect(plan).toEqual<EntrypointPlan>({
+      mode: "run",
+      plugin: "dev",
+      rest: ["run", "--boot-only"],
+      repo: DEFAULT_REPO,
+    });
+  });
+
+  it("forwards a bare AFK command (`monitor`) to the pinned bundle under run:dev", () => {
+    expect(parseEntrypoint(["monitor"], "run:dev")).toMatchObject({
+      mode: "run",
+      plugin: "dev",
+      rest: ["monitor"],
+    });
+  });
+
+  it("forwards AFK's own `run` command (with flags) to the pinned bundle, not the plugin slot", () => {
+    expect(parseEntrypoint(["run", "--issues", "430", "-n", "1"], "run:dev")).toMatchObject({
+      mode: "run",
+      plugin: "dev",
+      rest: ["run", "--issues", "430", "-n", "1"],
+    });
+  });
+
+  it("forwards a literal `fetch` token to the pinned bundle under run:dev (red-fetch.mjs owns real fetch)", () => {
+    expect(parseEntrypoint(["fetch", "memory", "1.2.3"], "run:dev")).toMatchObject({
+      mode: "run",
+      plugin: "dev",
+      rest: ["fetch", "memory", "1.2.3"],
     });
   });
 

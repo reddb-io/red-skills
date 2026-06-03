@@ -127,19 +127,29 @@ function parseFetchArgs(argv: readonly string[]): FetchPlan {
 }
 
 /**
- * Route argv into a fetch or run plan. Explicit `fetch`/`run` subcommands win;
- * otherwise the build `role` decides — `run:<plugin>` forwards all argv to that
- * plugin's bundle, anything else is the legacy positional fetch.
+ * Route argv into a fetch or run plan.
+ *
+ * A run-pinned build (`role === "run:<plugin>"`, e.g. the `afk.mjs` launcher) is
+ * a *dedicated forwarder*: every arg goes to the pinned plugin's bundle, which
+ * owns its own command surface (`run`, `monitor`, `fleet`, …). So the pin is
+ * honoured FIRST — the generic `run`/`fetch` entrypoint verbs must not shadow a
+ * dedicated launcher's own commands. Before #434 the `argv[0] === "run"` check
+ * ran first, so `afk.mjs run --boot-only` parsed `--boot-only` as a *plugin
+ * name* and 404'd; only the bare form happened to work.
+ *
+ * For the generic / fetch-role entrypoint (`red-fetch.mjs`, no run-pin) the
+ * explicit `fetch`/`run <plugin>` subcommands still win, and the no-subcommand
+ * form is the legacy positional fetch.
  */
 export function parseEntrypoint(argv: readonly string[], role: string): EntrypointPlan {
+  if (role.startsWith("run:")) {
+    return { mode: "run", plugin: role.slice(4), rest: [...argv], repo: DEFAULT_REPO };
+  }
   if (argv[0] === "run") {
     return { mode: "run", plugin: argv[1], rest: argv.slice(2), repo: DEFAULT_REPO };
   }
   if (argv[0] === "fetch") {
     return parseFetchArgs(argv.slice(1));
-  }
-  if (role.startsWith("run:")) {
-    return { mode: "run", plugin: role.slice(4), rest: [...argv], repo: DEFAULT_REPO };
   }
   return parseFetchArgs(argv);
 }

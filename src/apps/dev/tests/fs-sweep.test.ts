@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { listStaleClaimDirs, listLegacyWorkDirs } from "../src/runtime/fs.js";
+import { readFileSync } from "node:fs";
+import { listStaleClaimDirs, listLegacyWorkDirs, tryAcquireClaimDir } from "../src/runtime/fs.js";
 
 function scratch(): string {
   return mkdtempSync(join(tmpdir(), "afk-sweep-"));
@@ -58,6 +59,55 @@ describe("listStaleClaimDirs", () => {
       writeFileSync(join(blank, "pid"), "   ");
       const stale = (await listStaleClaimDirs(root)).map((s) => s.path).sort();
       expect(stale).toEqual([noPid, blank].sort());
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("tryAcquireClaimDir (#434 atomic claim)", () => {
+  it("grants the claim once and writes the holder pid", async () => {
+    const root = scratch();
+    try {
+      const dir = join(root, "claims", "430");
+      expect(await tryAcquireClaimDir(dir, process.pid)).toBe(true);
+      expect(readFileSync(join(dir, "pid"), "utf8")).toBe(String(process.pid));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("denies a second claim on the same issue (EEXIST → false)", async () => {
+    const root = scratch();
+    try {
+      const dir = join(root, "claims", "430");
+      expect(await tryAcquireClaimDir(dir, process.pid)).toBe(true);
+      expect(await tryAcquireClaimDir(dir, process.pid)).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("lets exactly ONE of N concurrent claimers win the same issue (the dup-PR race)", async () => {
+    const root = scratch();
+    try {
+      const dir = join(root, "claims", "936");
+      const results = await Promise.all(
+        Array.from({ length: 8 }, () => tryAcquireClaimDir(dir, process.pid)),
+      );
+      expect(results.filter((won) => won)).toHaveLength(1);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not overwrite the original holder's pid when a later claim loses", async () => {
+    const root = scratch();
+    try {
+      const dir = join(root, "claims", "430");
+      expect(await tryAcquireClaimDir(dir, 4242)).toBe(true);
+      expect(await tryAcquireClaimDir(dir, 9999)).toBe(false);
+      expect(readFileSync(join(dir, "pid"), "utf8")).toBe("4242");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
