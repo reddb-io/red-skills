@@ -681,7 +681,7 @@ export async function processIssue(
     startedEpoch,
   } satisfies StageCommon;
 
-  // ---- commit-leftovers salvage (codex DONE-without-commit) ----
+  // ---- commit-leftovers salvage (codex DONE-without-commit, ADR 0050) ----
   // The inner agent (observed: codex) can edit, pass the gates, and emit
   // `<promise>DONE</promise>` WITHOUT ever running `git commit`. sandcastle then
   // collects zero commits → the worker branch is empty → a DONE attempt lands an
