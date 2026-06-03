@@ -11,6 +11,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [chore(afk): rebuild committed bin/afk.mjs from current source](./pages/320-chore-afk-rebuild-committed-bin-afk-mjs-from-current-source.md)
 - [chore(dev): remove the scaffold-exercises skill (upstream course tooling)](./pages/411-chore-dev-remove-the-scaffold-exercises-skill-upstream-cours.md)
 - [chore(upstream): bump pin to e3b90b5 (no cherry-picks)](./pages/262-chore-upstream-bump-pin-to-e3b90b5-no-cherry-picks.md)
+- [chore: gitignore .turbo build cache](./pages/461-chore-gitignore-turbo-build-cache.md)
 - [docs(adr): 0039 — red-skills consumes red-memory + red-ui MCPs (ecosystem split)](./pages/383-docs-adr-0039-red-skills-consumes-red-memory-red-ui-mcps-eco.md)
 - [docs(adr): 0040 version single-source + version-aware; 0039 two-MCP memory plugin; doctor checks 6/7](./pages/385-docs-adr-0040-version-single-source-version-aware-0039-two-m.md)
 - [docs(adr): 0043 — RedSkills teaches and enforces an interactive development loop](./pages/393-docs-adr-0043-redskills-teaches-and-enforces-an-interactive.md)
