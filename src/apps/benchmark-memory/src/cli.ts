@@ -27,6 +27,7 @@ import {
   type LiveBaselineRunResult,
 } from "../../memory/src/live-baseline-adapters.js";
 import { formatMarkdownReport, runBenchRecall } from "../../memory/src/bench-recall.js";
+import { formatEvalReport, runBenchEval, toJsonl } from "../../memory/src/bench-eval.js";
 import {
   DEFAULT_WORKLOAD,
   formatLatencyReport,
@@ -42,6 +43,7 @@ const USAGE = `benchmark-memory
 
 Usage:
   benchmark-memory --version [--json]
+  benchmark-memory bench eval        [--corpus <dir>] [--pack N] [--substrate <name>] [--records <file>] [--out <file>] [--report <file>] [--json]
   benchmark-memory bench recall      [--root <dir>] [--corpus <dir>] [--k 1,5,10] [--out <file>] [--report <file>] [--json]
   benchmark-memory bench latency     [--root <dir>] [--workload <dir>] [--iterations N] [--warmup N] [--seed N] [--ops working-get,session-recall,long-term-recall] [--out <file>] [--report <file>] [--json]
   benchmark-memory references eval    [--v2] [--json] [--human] [--out <file>]
@@ -173,9 +175,37 @@ async function runInterop(args: ParsedArgs): Promise<number> {
 
 async function runBench(args: ParsedArgs): Promise<number> {
   const sub = args.positional[0];
+  if (sub === "eval") return runBenchEvalCmd(args);
   if (sub === "recall") return runBenchRecallCmd(args);
   if (sub === "latency") return runBenchLatencyCmd(args);
-  throw new Error(`usage: benchmark-memory bench (recall|latency) ...`);
+  throw new Error(`usage: benchmark-memory bench (eval|recall|latency) ...`);
+}
+
+async function runBenchEvalCmd(args: ParsedArgs): Promise<number> {
+  const rootDir = resolve(String(process.cwd()));
+  const corpusDir = stringFlag(args, "corpus") ?? join(rootDir, "src/apps/memory/bench/eval/single-hop");
+  const substrate = stringFlag(args, "substrate") ?? "reddb";
+  const packRaw = stringFlag(args, "pack");
+  let packSize: number | undefined;
+  if (packRaw !== undefined) {
+    const value = Number(packRaw);
+    if (!Number.isFinite(value) || value < 1) {
+      throw new Error("benchmark-memory bench eval: --pack must be a positive integer");
+    }
+    packSize = Math.floor(value);
+  }
+  const report = await runBenchEval({ corpusDir, packSize, substrate });
+  await writeOutputs(args, report, formatEvalReport(report));
+  const recordsPath = stringFlag(args, "records");
+  if (recordsPath) await writeFileEnsured(recordsPath, toJsonl(report.records));
+  if (args.flags.json === true) {
+    process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+  } else {
+    process.stdout.write(
+      `benchmark-memory bench eval: substrate=${report.substrate} category=${report.category} questions=${report.question_count} exact_match=${report.aggregate.exact_match.toFixed(3)} f1=${report.aggregate.f1.toFixed(3)}\n`,
+    );
+  }
+  return 0;
 }
 
 async function runBenchRecallCmd(args: ParsedArgs): Promise<number> {
