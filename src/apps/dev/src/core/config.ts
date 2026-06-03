@@ -60,6 +60,10 @@ export function parseConfigYaml(text: string): ConfigValues {
   const out: ConfigValues = {};
   const stack: string[] = [];
   const indents: number[] = [];
+  // Per-parent running index for block-sequence items (`- value`). A sequence
+  // under the dotted parent path `p` materialises as `p.0`, `p.1`, … so the
+  // flat config map keeps its `dotted.key -> value` shape (see readBackpressure).
+  const seqCounters: Record<string, number> = {};
 
   for (let raw of text.split("\n")) {
     // strip a trailing CR (CRLF tolerance)
@@ -80,6 +84,34 @@ export function parseConfigYaml(text: string): ConfigValues {
     if (indent % 2 !== 0) throw new MalformedConfigError();
 
     let rest = stripped.slice(indent).replace(/\s+$/, "");
+
+    // Block-sequence item: `- value` under the current mapping key. Pop parents
+    // whose indent is >= this line's, exactly like the mapping branch, then
+    // append the scalar at `<parent>.<index>`. A sequence with no enclosing
+    // mapping key (empty stack) or an empty item is malformed.
+    if (/^-(\s|$)/.test(rest)) {
+      while (indents.length > 0 && indents[indents.length - 1]! >= indent) {
+        stack.pop();
+        indents.pop();
+      }
+      if (stack.length === 0) throw new MalformedConfigError();
+
+      let item = rest.slice(1).replace(/^\s+/, "");
+      if (item === "") throw new MalformedConfigError();
+      if (item.startsWith('"')) {
+        if (!item.endsWith('"') || item.length < 2) throw new MalformedConfigError();
+        item = item.slice(1, -1);
+      } else if (item.startsWith("'")) {
+        if (!item.endsWith("'") || item.length < 2) throw new MalformedConfigError();
+        item = item.slice(1, -1);
+      }
+
+      const parent = stack.join(".");
+      const idx = seqCounters[parent] ?? 0;
+      seqCounters[parent] = idx + 1;
+      out[`${parent}.${idx}`] = item;
+      continue;
+    }
 
     if (!/^[a-zA-Z_][a-zA-Z0-9_-]*:/.test(rest)) throw new MalformedConfigError();
 
@@ -177,4 +209,33 @@ export function loadConfig(path: string, options: LoadConfigOptions = {}): Confi
 /** Read a dotted key. Empty string when unset — same contract as `config_get`. */
 export function getConfig(values: ConfigValues, key: string): string {
   return values[key] ?? "";
+}
+
+/**
+ * Read the operator-declared backpressure command list (`afk.backpressure`),
+ * in declaration order (issue #430). The list form
+ *
+ *   afk:
+ *     backpressure:
+ *       - npm run test
+ *       - npm run lint
+ *
+ * materialises as the indexed keys `afk.backpressure.0`, `afk.backpressure.1`, …
+ * which this reads back in order until the first gap. The namespaced
+ * `plugins.dev.afk.backpressure.*` location already folds down to the bare keys
+ * in {@link loadConfig} (ADR 0042), so both locations are honoured with the
+ * namespaced one winning. A single-line scalar (`afk.backpressure: npm run test`)
+ * is accepted as a one-command list. Absent/empty → `[]` (the gate is a no-op).
+ * Blank entries are dropped.
+ */
+export function readBackpressure(values: ConfigValues): string[] {
+  const indexed: string[] = [];
+  for (let i = 0; ; i++) {
+    const v = values[`afk.backpressure.${i}`];
+    if (v === undefined) break;
+    if (v.trim() !== "") indexed.push(v);
+  }
+  if (indexed.length > 0) return indexed;
+  const scalar = values["afk.backpressure"];
+  return scalar && scalar.trim() !== "" ? [scalar] : [];
 }

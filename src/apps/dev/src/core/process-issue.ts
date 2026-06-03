@@ -41,6 +41,7 @@ import {
   type PackageLayout,
   type RunFeedbackResult,
 } from "./feedback.js";
+import { runBackpressure, type BackpressureExec } from "./backpressure.js";
 import {
   type Exec as MergeExec,
   type ConflictResolver,
@@ -196,6 +197,20 @@ export interface ProcessIssueDeps {
   pnpm: PnpmExec;
   /** Package layout probe for feedback scope resolution. */
   layout: PackageLayout;
+  /**
+   * Shell executor for the operator-declared backpressure gate (#430, PRD #429).
+   * Runs each `afk.backpressure` command against the worker-branch checkout.
+   * Optional → when absent (or `backpressureCommands` is empty) the gate is a
+   * no-op (today's behaviour). The CLI binds it to the feedback worktree's
+   * `sh -c` executor rebased onto the materialised worker-branch checkout.
+   */
+  backpressure?: BackpressureExec;
+  /**
+   * Operator-declared backpressure commands (`afk.backpressure`), in order.
+   * Empty/absent → the backpressure gate is skipped. SUPPLEMENTS the
+   * scope-derived feedback gate; it does not replace it.
+   */
+  backpressureCommands?: readonly string[];
   /**
    * The sandcastle execution port (ADR 0033): run the inner agent on a worktree,
    * detect the DONE/BLOCKED sentinel, and commit on the worker branch. The CLI
@@ -737,6 +752,37 @@ export async function processIssue(
     }, { validationSummary: feedback.sidecar.join("\n") });
   }
 
+  // ---- 5c. backpressure gate (the operator-declared merge gate, #430/PRD #429) ----
+  // After the scope-derived feedback gate passes, run the operator's
+  // `afk.backpressure` commands in order against the same worker-branch checkout.
+  // Backpressure SUPPLEMENTS feedback (it never replaces it). Any command exiting
+  // non-zero blocks the merge and parks the issue to ready-for-human EXACTLY like
+  // a feedback failure (same `feedback-failed` outcome → blocked:validation): its
+  // records distinguish it by their `backpressure:<cmd>` names + failing-command
+  // output. An absent executor or an empty command list is a no-op.
+  const backpressureCommands = deps.backpressureCommands ?? [];
+  let backpressureSidecar: string[] = [];
+  if (deps.backpressure && backpressureCommands.length > 0) {
+    const backpressure = await runBackpressure(deps.backpressure, {
+      worktree: workerBranch,
+      commands: backpressureCommands,
+      now: deps.nowEpoch,
+    });
+    backpressureSidecar = backpressure.sidecar;
+    if (!backpressure.ok) {
+      // Persist BOTH gates' records (feedback passed, backpressure failed) for
+      // Memory, but surface only the failing backpressure records in the envelope.
+      await writeValidationSidecar(deps, input.attemptDir, [...feedback.sidecar, ...backpressure.sidecar]);
+      return await terminalFailure(common, "feedback-failed", "feedback", {
+        notes:
+          "Backpressure validation failed after the feedback gate passed. The worker branch was not merged.",
+        validation: backpressure.sidecar.join("\n"),
+      }, { validationSummary: backpressure.sidecar.join("\n") });
+    }
+  }
+  // Both gates passed — the close path's sidecar/envelope carries their union.
+  const validationSidecar = [...feedback.sidecar, ...backpressureSidecar];
+
   // ---- 6. push the worker branch, integrate, then land per lock state ----
   // The entire lock-toggled landing (push → pre_merge → integrate → land →
   // locked conflict self-resolve → post_merge) is owned by doLanding (landing.ts,
@@ -776,14 +822,14 @@ export async function processIssue(
   const durationS = deps.nowEpoch() - startedEpoch;
   // Write the machine-readable validation sidecar ($ITER_DIR/validation.jsonl,
   // SKILL.md) the Memory bridge consumes. Best-effort: never fails the close.
-  await writeValidationSidecar(deps, input.attemptDir, feedback.sidecar);
-  const posted = await emitDone(common, mergeSha, durationS, feedback);
+  await writeValidationSidecar(deps, input.attemptDir, validationSidecar);
+  const posted = await emitDone(common, mergeSha, durationS, validationSidecar);
   // ADR 0017: record the reasoning attempt into Memory AFTER the terminal
   // (done) envelope. Best-effort, gated, no-op when memory is absent.
   await recordAttemptBestEffort(common, "done", {
     durationS,
     mergeSha,
-    validationSummary: feedback.sidecar.join("\n"),
+    validationSummary: validationSidecar.join("\n"),
   });
   await deps.gh.close(issue);
   await deps.gh.editLabels(issue, [LABEL_RUNNING], []);
@@ -1032,12 +1078,14 @@ async function terminalFailure(
   };
 }
 
-/** Emit the done envelope with the merge sha + validation report. */
+/** Emit the done envelope with the merge sha + validation report. The
+ * `validationSidecar` is the union of the feedback gate's records and any
+ * backpressure-gate records (#430). */
 async function emitDone(
   c: StageCommon,
   mergeSha: string,
   durationS: number,
-  feedback: RunFeedbackResult,
+  validationSidecar: string[],
 ): Promise<boolean> {
   const { deps, input } = c;
   const result = await emitEnvelope(deps.envelope, {
@@ -1049,7 +1097,7 @@ async function emitDone(
     attempt: input.attempt,
     mergeSha,
     diff: "merged",
-    sections: { validation: feedback.sidecar.join("\n") },
+    sections: { validation: validationSidecar.join("\n") },
     historyPath: deps.historyPath,
     historyClock: deps.historyClock,
     historyFields: { runner: input.runner, merge_sha: mergeSha },

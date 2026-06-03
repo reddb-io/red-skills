@@ -34,7 +34,7 @@ import * as fsx from "../runtime/fs.js";
 import type { GhContext } from "../runtime/gh.js";
 import type { GitContext } from "../runtime/git.js";
 import type { ExecFn } from "../runtime/exec.js";
-import { loadConfig } from "../core/config.js";
+import { loadConfig, readBackpressure } from "../core/config.js";
 import { resolveHooks } from "../core/hook-config.js";
 import { attemptLedgerContext, formatAttemptContext, highestAttempt, type AttemptDirEntry } from "../core/attempt-ledger.js";
 import { isValidWorkerId } from "../core/worker-paths.js";
@@ -342,6 +342,10 @@ export function buildProcessDeps(
     // worktree manager materialises it and rebases pnpm/layout onto it.
     pnpm: feedback.pnpm,
     layout: feedback.layout,
+    // Backpressure gate (#430, PRD #429): operator-declared `afk.backpressure`
+    // shell commands run against the same worker-branch checkout after feedback.
+    backpressure: feedback.backpressure,
+    backpressureCommands: readBackpressure(config),
     runAgent: makeRunAgent(sandbox, process.env, maxIterations, attemptTimeoutSeconds),
     model,
     fallbackRunner,

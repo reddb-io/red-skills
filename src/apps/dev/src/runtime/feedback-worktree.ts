@@ -20,7 +20,8 @@
 import { accessSync, constants, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Exec as PnpmExec, PackageLayout } from "../core/feedback.js";
-import { pnpm as runPnpm } from "./exec.js";
+import type { BackpressureExec } from "../core/backpressure.js";
+import { execTool, pnpm as runPnpm } from "./exec.js";
 import * as gitx from "./git.js";
 
 function slugForBranch(branch: string): string {
@@ -32,6 +33,12 @@ export interface FeedbackWorktree {
   pnpm: PnpmExec;
   /** Package layout probe rebased onto the materialised checkout. */
   layout: PackageLayout;
+  /**
+   * Shell executor for the backpressure gate (#430): runs an operator-declared
+   * command via `sh -c` at the materialised worker-branch checkout root. `cwd`
+   * is the branch token, materialised the same way the pnpm executor does.
+   */
+  backpressure: BackpressureExec;
   /** Remove every worktree this manager created (best-effort). */
   cleanup(): Promise<void>;
 }
@@ -112,9 +119,20 @@ export function makeFeedbackWorktree(root: string, feedbackRoot: string): Feedba
     },
   };
 
+  // Backpressure commands are operator-declared shell strings (e.g. `npm run
+  // test`) that run at the worker-branch checkout ROOT. `cwd` is the branch
+  // token; materialise it the same way the pnpm executor does, then run the
+  // command through `sh -c`, mirroring the lifecycle-hook executor.
+  const backpressure: BackpressureExec = async ({ command, cwd }) => {
+    const dir = await pathFor(cwd);
+    const r = await execTool("sh", ["-c", command], { cwd: dir });
+    return { code: r.code, stdout: r.stdout, stderr: r.stderr };
+  };
+
   return {
     pnpm,
     layout,
+    backpressure,
     async cleanup() {
       for (const dest of created) {
         await gitx.worktreeRemove(gitCtx, dest);
