@@ -36,6 +36,7 @@ export const INTEGRATION_TESTS: readonly string[] = [
   "claim-check-cli.test.ts",
   "classify-cli.test.ts",
   "communities-cli.test.ts",
+  "community-digest-cli.test.ts",
   "competitive-baseline.test.ts",
   "competitive-eval-v2.test.ts",
   "competitive-radar.test.ts",

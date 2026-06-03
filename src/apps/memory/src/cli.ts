@@ -29,6 +29,7 @@ import { buildMemoryAgentIntegrationStatusViewerArtifact } from "./agent-integra
 import { buildMemoryReferenceRadar } from "./references-radar.js";
 import type { CommunityAnalyticsReport } from "./communities.js";
 import { buildCommunitiesViewerArtifact } from "./communities-viewer.js";
+import type { CommunityDigestReport } from "./community-digest.js";
 import { buildContextPack } from "./context-pack.js";
 import { buildContextPackViewerArtifact } from "./context-pack-viewer.js";
 import { claimCheck, type ClaimCheckResult } from "./claim-check.js";
@@ -377,6 +378,7 @@ Usage:
   memory timeline <topic|rid>       [--root <dir>] [--include-audit] [--json]
   memory communities                [--root <dir>] [--no-cache] [--json]
   memory communities-viewer         [--root <dir>] [--no-cache] [--out <file>]
+  memory community-digest           [--root <dir>] [--no-cache] [--json]
   memory structural-impact          [--root <dir>] [--file <path>] [--symbol <name>]
   memory structural-impact-viewer   [--root <dir>] [--file <path>] [--symbol <name>] [--out <file>]
   memory pre-pr-review              [--root <dir>] [--range <git-range>] [--json]
@@ -5261,6 +5263,29 @@ async function runCommunitiesViewer(args: ParsedArgs): Promise<void> {
   }
 }
 
+async function runCommunityDigest(args: ParsedArgs): Promise<void> {
+  const { store } = await openGraphStore(args);
+  try {
+    const report = (await executeReadOnlyMemoryOperation("memory.community-digest", { store }, {
+      cache: args.flags["no-cache"] === true ? "off" : "read-write",
+    })) as CommunityDigestReport;
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(report, null, 2));
+      return;
+    }
+    console.log(`memory: ${report.community_count} community digest(s)`);
+    console.log(`  graph hash: ${report.graph_hash}`);
+    console.log(`  cache: ${report.cached ? "hit" : "miss"}`);
+    for (const digest of report.digests) {
+      console.log(`  ${digest.community_id}: ${digest.size} node(s)`);
+      console.log(`        top label: ${digest.top_label}`);
+      console.log(`        top type: ${digest.top_node_type}`);
+    }
+  } finally {
+    await store.close();
+  }
+}
+
 function parseRid(value: string, name: string): number {
   const rid = Number(value);
   if (!Number.isInteger(rid) || rid <= 0) throw new Error(`${name} must be a positive integer`);
@@ -6355,6 +6380,8 @@ async function main(): Promise<void> {
       return runCommunities(args);
     case "communities-viewer":
       return runCommunitiesViewer(args);
+    case "community-digest":
+      return runCommunityDigest(args);
     case "structural-impact":
       return runStructuralImpact(args);
     case "structural-impact-viewer":
