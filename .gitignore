@@ -14,6 +14,10 @@
 # Node
 node_modules/
 
+# Turbo build cache (regenerated locally; never committed)
+.turbo/
+**/.turbo/
+
 # OS
 .DS_Store
 .red/state/
