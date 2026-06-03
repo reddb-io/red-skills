@@ -479,8 +479,9 @@ describe("processIssue — BLOCKED", () => {
 });
 
 describe("processIssue — no-sentinel (run ended without a <promise>)", () => {
-  it("routes through on_attempt_error → ready-for-human, no post_attempt", async () => {
-    const { deps, input, trace } = harness({ outcome: "no-sentinel" });
+  it("EMPTY branch → on_attempt_error → ready-for-human, no post_attempt", async () => {
+    // No work on the branch: a real crash, kept as today's terminal no-sentinel.
+    const { deps, input, trace } = harness({ outcome: "no-sentinel", changedFiles: [] });
     const result = await processIssue(deps, input);
 
     expect(result.outcome).toBe("no-sentinel");
@@ -493,6 +494,39 @@ describe("processIssue — no-sentinel (run ended without a <promise>)", () => {
     expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "no-sentinel" }]);
     // on_attempt_error fires; post_attempt does NOT (ADR 0028).
     expect(result.hooksFired).toEqual(["pre_worktree", "pre_attempt", "on_attempt_error"]);
+  });
+
+  it("branch carries work + passes feedback → SALVAGE: lands like DONE, closes (issue #332)", async () => {
+    // The agent finished + committed but exited without the sentinel (the #300
+    // loop). Branch is ahead of base and green → salvage through the same gate.
+    const { deps, input, trace } = harness({
+      outcome: "no-sentinel",
+      changedFiles: ["packages/x/src/a.ts"],
+      feedbackOk: true,
+      locked: false,
+    });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done"); // salvaged → lands exactly like a DONE attempt
+    expect(result.mergeSha).toBe("abc1234");
+    expect(result.swept).toBe(true);
+    expect(trace.closed).toEqual([9]);
+    expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "done" }]);
+    // post_attempt(success) + the full land tail fire; on_attempt_error does NOT.
+    expect(result.hooksFired).toEqual(["pre_worktree", "pre_attempt", "post_attempt", "pre_merge", "post_merge"]);
+  });
+
+  it("branch carries work but FAILS feedback → feedback-failed, never merged, not an error", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "no-sentinel",
+      changedFiles: ["packages/x/src/a.ts"],
+      feedbackOk: false,
+    });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("feedback-failed");
+    expect(trace.closed).toEqual([]);
+    expect(result.hooksFired).not.toContain("on_attempt_error");
   });
 });
 
@@ -954,13 +988,15 @@ describe("processIssue — BOUNDED auto-recovery routing (the policy wired in)",
 
   it("crashed (no-sentinel) RETRIES once then escalates (cap 1)", async () => {
     // cap 1: attempt 1 is at-cap → escalate. Raise to 2 to see the single retry.
-    const retry = harness({ outcome: "no-sentinel", attempt: 1, recoveryEnv: { RED_AFK_RETRY_CRASH: "2" } });
+    // changedFiles:[] = a real crash (empty branch), so the no-sentinel salvage
+    // (issue #332) does NOT apply and the crash-retry path is exercised.
+    const retry = harness({ outcome: "no-sentinel", attempt: 1, changedFiles: [], recoveryEnv: { RED_AFK_RETRY_CRASH: "2" } });
     const r1 = await processIssue(retry.deps, retry.input);
     expect(r1.outcome).toBe("no-sentinel");
     expect(retry.trace.labelEdits.at(-1)!.add).toContain("ready-for-agent");
     expect(retry.trace.labelEdits.at(-1)!.add).toContain("blocked:crashed");
 
-    const escalate = harness({ outcome: "no-sentinel", attempt: 1 }); // default cap 1 → escalate
+    const escalate = harness({ outcome: "no-sentinel", attempt: 1, changedFiles: [] }); // default cap 1 → escalate
     const r2 = await processIssue(escalate.deps, escalate.input);
     expect(r2.outcome).toBe("no-sentinel");
     expect(escalate.trace.labelEdits.at(-1)!.add).toContain("ready-for-human");
