@@ -246,6 +246,28 @@ export async function worktreePathForBranch(ctx: GitContext, branch: string): Pr
 }
 
 /**
+ * Resolve the worktree path registered under `dirPrefix` (the attempt dir),
+ * parsed from `git worktree list --porcelain`. sandcastle creates the agent's
+ * worktree at `{attemptDir}/.sandcastle/worktrees/{slug}`, but the state file's
+ * `current.worktree` is seeded to the legacy `{attemptDir}/worktree` path that
+ * never exists — so a `git diff` there fails and the heartbeat / monitor read a
+ * permanent `+0 -0` even with a dirty worktree (the sandcastle-blind hazard). An
+ * attempt has exactly one worktree, so the first match under `dirPrefix` is it.
+ * Returns undefined when none is registered yet (pre-worktree ticks). Routed
+ * through the same `runGit` seam so tests drive it without an OS git.
+ */
+export async function worktreePathUnder(ctx: GitContext, dirPrefix: string): Promise<string | undefined> {
+  const r = await runGit(ctx, ["worktree", "list", "--porcelain"]);
+  if (r.code !== 0) return undefined;
+  const prefix = dirPrefix.replace(/\/+$/, "");
+  for (const line of r.stdout.split("\n")) {
+    const w = /^worktree\s+(.+)$/.exec(line.trim());
+    if (w && w[1] && (w[1] === prefix || w[1].startsWith(`${prefix}/`))) return w[1];
+  }
+  return undefined;
+}
+
+/**
  * Salvage uncommitted work an inner agent left in its worktree without
  * committing. Observed with the codex runner: the agent edits files, passes the
  * gates, and emits `<promise>DONE</promise>`, but never runs `git commit` — so

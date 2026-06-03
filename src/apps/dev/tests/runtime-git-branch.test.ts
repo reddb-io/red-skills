@@ -4,6 +4,7 @@ import {
   fetchBranch,
   changedFiles,
   worktreePathForBranch,
+  worktreePathUnder,
   salvageUncommitted,
 } from "../src/runtime/git.js";
 import type { GitContext } from "../src/runtime/git.js";
@@ -106,6 +107,48 @@ describe("worktreePathForBranch", () => {
     const { exec } = recordingExec(() => ok(porcelain));
     const ctx: GitContext = { cwd: "/repo", exec };
     expect(await worktreePathForBranch(ctx, "afk/w/9-absent")).toBeUndefined();
+  });
+});
+
+describe("worktreePathUnder (sandcastle-blind heartbeat fix)", () => {
+  // sandcastle registers its worktree under the attempt dir; the legacy
+  // `{attemptDir}/worktree` path the state seeds never exists.
+  const porcelain = [
+    "worktree /repo",
+    "HEAD aaaaaaa",
+    "branch refs/heads/main",
+    "",
+    "worktree /repo/.red/tmp/workers/wQDOR/894-a1/.sandcastle/worktrees/afk-wQDOR-894-x",
+    "HEAD bbbbbbb",
+    "branch refs/heads/afk/wQDOR/894-x",
+    "",
+  ].join("\n");
+
+  it("resolves the real sandcastle worktree registered under the attempt dir", async () => {
+    const { exec, calls } = recordingExec(() => ok(porcelain));
+    const ctx: GitContext = { cwd: "/repo", exec };
+    expect(await worktreePathUnder(ctx, "/repo/.red/tmp/workers/wQDOR/894-a1")).toBe(
+      "/repo/.red/tmp/workers/wQDOR/894-a1/.sandcastle/worktrees/afk-wQDOR-894-x",
+    );
+    expect(calls[0]).toEqual(["git", "worktree", "list", "--porcelain"]);
+  });
+
+  it("tolerates a trailing slash on the prefix", async () => {
+    const { exec } = recordingExec(() => ok(porcelain));
+    expect(await worktreePathUnder({ cwd: "/repo", exec }, "/repo/.red/tmp/workers/wQDOR/894-a1/")).toBe(
+      "/repo/.red/tmp/workers/wQDOR/894-a1/.sandcastle/worktrees/afk-wQDOR-894-x",
+    );
+  });
+
+  it("does not match a sibling attempt dir that only shares a prefix string", async () => {
+    // `894-a1` must not match `894-a10` (guards the `startsWith(prefix + '/')` form).
+    const { exec } = recordingExec(() => ok(porcelain));
+    expect(await worktreePathUnder({ cwd: "/repo", exec }, "/repo/.red/tmp/workers/wQDOR/894-a")).toBeUndefined();
+  });
+
+  it("returns undefined when no worktree is registered under the prefix yet", async () => {
+    const { exec } = recordingExec(() => ok("worktree /repo\nbranch refs/heads/main\n"));
+    expect(await worktreePathUnder({ cwd: "/repo", exec }, "/repo/.red/tmp/workers/wQDOR/894-a1")).toBeUndefined();
   });
 });
 
