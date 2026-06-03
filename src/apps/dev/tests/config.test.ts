@@ -8,6 +8,7 @@ import {
   loadConfig,
   MalformedConfigError,
   parseConfigYaml,
+  readBackpressure,
 } from "../src/core/config.js";
 
 async function writeConfig(yaml: string): Promise<string> {
@@ -160,5 +161,56 @@ describe("config — plugins.dev namespace (ADR 0042)", () => {
     const text = "afk:\n  default_runner: claude\nplugins:\n  dev:\n    afk:\n      default_runner: codex\n";
     const values = loadConfig("/x/.red/config.yaml", { read: () => text });
     expect(getConfig(values, "afk.default_runner")).toBe("codex");
+  });
+});
+
+describe("config — block sequences (afk.backpressure, #430)", () => {
+  it("parses a `- item` sequence into ordered indexed keys", () => {
+    const text = "afk:\n  backpressure:\n    - npm run test\n    - npm run lint\n";
+    expect(parseConfigYaml(text)).toEqual({
+      "afk.backpressure.0": "npm run test",
+      "afk.backpressure.1": "npm run lint",
+    });
+  });
+
+  it("keeps a sibling scalar key alongside a sequence", () => {
+    const text = "afk:\n  default_runner: codex\n  backpressure:\n    - npm test\n";
+    const values = loadConfig("/x/.red/config.yaml", { read: () => text });
+    expect(getConfig(values, "afk.default_runner")).toBe("codex");
+    expect(readBackpressure(values)).toEqual(["npm test"]);
+  });
+
+  it("strips quotes from sequence items", () => {
+    const text = 'afk:\n  backpressure:\n    - "npm run test -- --reporter=dot"\n';
+    expect(parseConfigYaml(text)).toEqual({
+      "afk.backpressure.0": "npm run test -- --reporter=dot",
+    });
+  });
+
+  it("throws on a top-level sequence with no enclosing mapping", () => {
+    expect(() => parseConfigYaml("- npm test\n")).toThrow(MalformedConfigError);
+  });
+
+  it("readBackpressure reads the list in order", () => {
+    const text = "afk:\n  backpressure:\n    - npm run test\n    - npm run lint\n    - npm run build\n";
+    const values = loadConfig("/x/.red/config.yaml", { read: () => text });
+    expect(readBackpressure(values)).toEqual(["npm run test", "npm run lint", "npm run build"]);
+  });
+
+  it("readBackpressure reads the namespaced location (ADR 0042)", () => {
+    const text = "plugins:\n  dev:\n    afk:\n      backpressure:\n        - npm run test\n        - npm run lint\n";
+    const values = loadConfig("/x/.red/config.yaml", { read: () => text });
+    expect(readBackpressure(values)).toEqual(["npm run test", "npm run lint"]);
+  });
+
+  it("readBackpressure accepts a single-line scalar as a one-command list", () => {
+    const text = "afk:\n  backpressure: npm run test\n";
+    const values = loadConfig("/x/.red/config.yaml", { read: () => text });
+    expect(readBackpressure(values)).toEqual(["npm run test"]);
+  });
+
+  it("readBackpressure returns [] when absent (the gate is a no-op)", () => {
+    const values = loadConfig("/x/.red/config.yaml", { read: () => "afk:\n  default_runner: codex\n" });
+    expect(readBackpressure(values)).toEqual([]);
   });
 });

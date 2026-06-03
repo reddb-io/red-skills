@@ -45,6 +45,12 @@ interface HarnessOptions {
   /** Scripted per-call outcomes (overrides `outcome`); one entry per runAgent call. */
   outcomes?: RunAgentResult["outcome"][];
   feedbackOk?: boolean;
+  /** Operator-declared backpressure commands (afk.backpressure, #430). When set,
+   * the backpressure gate runs after feedback against the worker branch. */
+  backpressureCommands?: string[];
+  /** When false, the backpressure exec returns a non-zero code (a failing gate).
+   * Defaults to passing. Only consulted when `backpressureCommands` is set. */
+  backpressureOk?: boolean;
   locked?: boolean;
   config?: ConfigValues;
   abortHook?: HookName;
@@ -213,6 +219,14 @@ function harness(opts: HarnessOptions = {}): {
       hasPackage: (scope) => scope === ".",
       hasScript: () => true,
     },
+    // Backpressure gate (#430): a fake shell exec that fails when opted out. The
+    // failing-command output is captured so the envelope/sidecar carry the tail.
+    backpressure: async ({ command }) => ({
+      code: opts.backpressureOk === false ? 1 : 0,
+      stdout: opts.backpressureOk === false ? `${command} exploded\nstack trace here\n` : "",
+      stderr: "",
+    }),
+    backpressureCommands: opts.backpressureCommands,
     // The sandcastle execution port: a fake returning a scripted outcome on the
     // worker branch sandcastle "committed" to. When `outcomes` is set, each call
     // pops the next scripted outcome (for fallback-swap sequences).
@@ -571,6 +585,56 @@ describe("processIssue — feedback fail", () => {
     // the worker branch was not pushed for landing.
     expect(result.hooksFired).toEqual(["pre_worktree", "pre_attempt", "post_attempt"]);
     expect(trace.pushedAttempt).toEqual([]);
+  });
+});
+
+describe("processIssue — backpressure fail (#430)", () => {
+  it("flips to ready-for-human exactly like a feedback fail when a backpressure command fails", async () => {
+    // Feedback passes; the operator-declared backpressure command fails AFTER it.
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      backpressureCommands: ["npm run e2e"],
+      backpressureOk: false,
+    });
+    const result = await processIssue(deps, input);
+
+    // Parks exactly like a feedback failure (same outcome + labels + envelope).
+    expect(result.outcome).toBe("feedback-failed");
+    expect(result.preserved).toBe(true);
+    expect(labelTrace(trace)).toEqual(["-ready-for-agent|+running", "-running|+ready-for-human+blocked:validation"]);
+    expect(trace.ensuredLabels).toContain("blocked:validation");
+    expect(trace.closed).toEqual([]);
+    expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "blocked" }]);
+    // The worker branch was NOT pushed for landing (the gate blocked the merge).
+    expect(trace.pushedAttempt).toEqual([]);
+
+    // The validation sidecar carries the failing backpressure command + output
+    // tail, named `backpressure:<cmd>`.
+    const lastSidecar = trace.sidecarWrites.at(-1)!;
+    const records = lastSidecar.lines.map((l) => JSON.parse(l) as { schema: string; name: string; status: string; command?: string; summary?: string });
+    const bp = records.find((r) => r.name === "backpressure:npm run e2e")!;
+    expect(bp.schema).toBe("red.afk.validation.v1");
+    expect(bp.status).toBe("failed");
+    expect(bp.command).toBe("npm run e2e");
+    expect(bp.summary).toBe("npm run e2e exploded stack trace here");
+  });
+
+  it("merges + closes when feedback and backpressure both pass, sidecar carrying both", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      backpressureCommands: ["npm run e2e"],
+      backpressureOk: true,
+    });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(trace.closed).toEqual([9]);
+    // The DONE-path sidecar union includes the passed backpressure record.
+    const sidecar = trace.sidecarWrites.at(-1)!;
+    const names = sidecar.lines.map((l) => (JSON.parse(l) as { name: string }).name);
+    expect(names).toContain("backpressure:npm run e2e");
   });
 });
 
