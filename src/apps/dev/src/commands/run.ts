@@ -310,12 +310,10 @@ export function buildProcessDeps(
       issueClosed: (n) => ghx.issueClosed(ghCtx, n),
     },
     claimLock: {
-      acquire: async (issue) => {
-        const dir = `${paths.tmpDir}/claims/${issue}`;
-        if (await fsx.pathExists(dir)) return false;
-        await fsx.ensureDir(dir);
-        return true;
-      },
+      // Atomic POSIX mkdir lock (#434): a non-recursive mkdir that fails EEXIST,
+      // so two simultaneous boots cannot both claim the same issue. The prior
+      // pathExists+ensureDir form was check-then-act and raced into dup PRs.
+      acquire: (issue) => fsx.tryAcquireClaimDir(`${paths.tmpDir}/claims/${issue}`, process.pid),
       release: async (issue) => {
         await fsx.removeDir(`${paths.tmpDir}/claims/${issue}`);
       },

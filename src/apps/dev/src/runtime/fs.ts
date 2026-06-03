@@ -53,6 +53,30 @@ export async function writeWorkerPid(pidFile: string, pid: number): Promise<void
   await writeFile(pidFile, String(pid), "utf8");
 }
 
+/**
+ * Atomically claim `dir` as a fresh lock directory. A plain `mkdir` (NOT
+ * recursive) is the POSIX-atomic primitive: it fails with `EEXIST` when another
+ * caller already holds the lock, so exactly one of N racing callers wins. The
+ * recursive `ensureDir` (`mkdir -p`) is idempotent and CANNOT serve as a lock —
+ * the prior check-then-act `pathExists` + `ensureDir` claim let two simultaneous
+ * boots both pass the existence check and both create the dir, claiming the same
+ * issue and opening duplicate PRs (#434). Only the leaf is exclusive; the parent
+ * (`<tmpDir>/claims`) is created recursively first. On a win the holder's `pid`
+ * is written to `<dir>/pid` so the boot-time stale-claim sweep can reclaim the
+ * lock if the holder dies (the sweep reads exactly this file).
+ */
+export async function tryAcquireClaimDir(dir: string, pid: number): Promise<boolean> {
+  await mkdir(dirname(dir), { recursive: true });
+  try {
+    await mkdir(dir); // non-recursive → EEXIST when already held
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "EEXIST") return false;
+    throw err;
+  }
+  await writeFile(join(dir, "pid"), String(pid), "utf8");
+  return true;
+}
+
 export async function removeDir(path: string): Promise<void> {
   await rm(path, { recursive: true, force: true });
 }
