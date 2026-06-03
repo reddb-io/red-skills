@@ -296,6 +296,8 @@ function buildSupervisorDeps(
       },
     },
     now,
+    // Env for the bounded stalled re-claim cap (#402): RED_AFK_RETRY_STALLED.
+    recoveryEnv: process.env,
     // Per-tick liveness line into afk-supervisor.log (best-effort). Makes a
     // healthy fleet's heartbeat — and a wedged one's silence — observable.
     log: (line) => {
