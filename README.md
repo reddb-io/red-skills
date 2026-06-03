@@ -13,20 +13,21 @@
 
 RedSkills is reddb.io's agent workflow kit for Claude Code, Codex, and any agent that can read `SKILL.md` files.
 
-It ships as two plugins:
+It ships as three plugins:
 
 | Plugin | Job | Use it when... |
 |--------|-----|----------------|
 | **`dev`** | Turns plans and GitHub issues into reviewed, tested PRs. | You want `/start`, `/to-prd`, `/to-issues`, `/triage`, `/tdd`, `/diagnose`, `/wiki`, and the autonomous `/afk` loop. |
 | **`memory`** | Gives those agents governed operational memory. | You want decisions, gotchas, validations, provenance, claim checks, readiness, context packs, and handoffs to survive `/clear`. |
+| **`brain`** | Gives the workspace a RedDB knowledge repository. | You want to dump notes, ideas, decisions, references, questions, and other knowledge into `.red/brain/*` and connect it later. |
 
-**Install both in Claude Code:**
+**Install all three in Claude Code:**
 
 ```
-/plugin marketplace add reddb-io/red-skills && /plugin install dev@red-skills && /plugin install memory@red-skills
+/plugin marketplace add reddb-io/red-skills && /plugin install dev@red-skills && /plugin install memory@red-skills && /plugin install brain@red-skills
 ```
 
-[Install](#install) · [Two plugins](#two-plugins-one-workflow) · [Memory](#memory--governed-operational-memory) · [Pipeline](#-the-pipeline-that-feeds-it) · [Reference](#reference)
+[Install](#install) · [Three plugins](#three-plugins-one-workflow) · [Memory](#memory--governed-operational-memory) · [Pipeline](#-the-pipeline-that-feeds-it) · [Reference](#reference)
 
 ```
    dev plugin                                      memory plugin
@@ -37,15 +38,21 @@ It ships as two plugins:
      └────────────── stores what mattered ─────────▶│
                                                     ▼
                        init ─▶ store ─▶ recall ─▶ verify ─▶ handoff
+
+   brain plugin
+   ────────────
+
+   SessionStart ─▶ .red/brain ─▶ capture ─▶ search ─▶ think
 ```
 
-**The punchline:** `dev` does the work. `memory` keeps the next agent from starting cold.
+**The punchline:** `dev` does the work. `memory` keeps the next agent from starting cold. `brain` stores the knowledge the human wants to keep.
 
 **Highlights**
 
 - Fleet mode for draining real GitHub issue queues with Claude or Codex.
 - Safe git guardrails, live monitors, statusline, and `.red/config.yaml` detectors.
 - Governed memory over markdown notes or a project-local RedDB graph.
+- Project-local Brain over a separate RedDB store under `.red/brain/*`.
 - Recall, claim-check, readiness, context-pack, handoff, Workbench, MCP, and HTTP surfaces.
 
 </div>
@@ -54,7 +61,7 @@ It ships as two plugins:
 
 ---
 
-## Two plugins, one workflow
+## Three plugins, one workflow
 
 RedSkills is not a bag of prompts. It is a small operating system for agentic engineering work.
 
@@ -62,8 +69,14 @@ RedSkills is not a bag of prompts. It is a small operating system for agentic en
 |-------|--------|--------------|---------------|
 | Work execution | `dev` | Planning, PRDs, issue slicing, triage, TDD, diagnosis, wiki, codebase orientation, and `/afk` workers. | `/setup-red-skills` |
 | Work memory | `memory` | Durable decisions, gotchas, reasoning traces, validations, provenance, supersession, claim checks, readiness, and handoff context. | `memory init` or `$init` |
+| Knowledge repository | `brain` | Freeform knowledge captures, typed artifacts, graph connections, and human-facing recall under `.red/brain/*`. | `$capture` or `brain capture` |
 
-Use `dev` when you want an agent to move the repo forward. Add `memory` when you want that movement to compound instead of evaporating after every session.
+Brain skills: [`capture`](./plugins/brain/skills/core/capture/SKILL.md),
+[`search`](./plugins/brain/skills/core/search/SKILL.md),
+[`think`](./plugins/brain/skills/core/think/SKILL.md), and
+[`status`](./plugins/brain/skills/core/status/SKILL.md).
+
+Use `dev` when you want an agent to move the repo forward. Add `memory` when you want that movement to compound instead of evaporating after every session. Add `brain` when you want a workspace knowledge repository for arbitrary dumps and later synthesis.
 
 The intended loop is simple:
 
@@ -82,7 +95,7 @@ Remember with memory store -> recall -> claim-check/readiness -> handoff
 
 ### Claude Code — marketplace install
 
-RedSkills ships as a Claude Code **plugin marketplace** with two plugins. Install `dev` for the engineering workflow. Install `memory` as well when you want governed memory, lifecycle hooks, Workbench diagnostics, and context handoff.
+RedSkills ships as a Claude Code **plugin marketplace** with three plugins. Install `dev` for the engineering workflow. Install `memory` as well when you want governed memory, lifecycle hooks, Workbench diagnostics, and context handoff. Install `brain` when you want a project-local knowledge repository under `.red/brain/*`.
 
 Inside Claude Code:
 
@@ -90,6 +103,7 @@ Inside Claude Code:
 /plugin marketplace add reddb-io/red-skills
 /plugin install dev@red-skills
 /plugin install memory@red-skills
+/plugin install brain@red-skills
 ```
 
 Use `dev` skills as native slash commands:
@@ -128,7 +142,7 @@ Remove:
 
 ### Codex CLI — marketplace install
 
-RedSkills also ships Codex plugin metadata for both `dev` and `memory`. Codex reads `.agents/plugins/marketplace.json`, then loads the plugin trees through `plugins/*/.codex-plugin/plugin.json`. `dev` is installed by default; `memory` is available and declares a dependency on `dev`.
+RedSkills also ships Codex plugin metadata for `dev`, `memory`, and `brain`. Codex reads `.agents/plugins/marketplace.json`, then loads the plugin trees through `plugins/*/.codex-plugin/plugin.json`. `dev` is installed by default; `memory` and `brain` are available.
 
 ```bash
 codex plugin marketplace add reddb-io/red-skills
@@ -231,7 +245,7 @@ The script links into `~/.claude/skills`, `~/.agents/skills`, and `~/.codex/skil
 
 | Agent | Invocation | Notes |
 |-------|------------|-------|
-| **Claude Code** | `/afk`, `/wiki`, `/triage`, `$init`, `$recall`, ... | Native `dev` slash commands after `/plugin install dev@red-skills`; install `memory@red-skills` for governed memory skills. |
+| **Claude Code** | `/afk`, `/wiki`, `/triage`, `$init`, `$recall`, `$capture`, ... | Native `dev` slash commands after `/plugin install dev@red-skills`; install `memory@red-skills` for governed memory skills and `brain@red-skills` for project Brain skills. |
 | **Codex CLI** | `$afk`, `$wiki`, `$triage`, `$init`, `$recall`, ... | Skill-name convention after `codex plugin marketplace add reddb-io/red-skills`. |
 | **Gemini CLI / others** | `$afk`, `$recall`, etc. | Same `$<name>` convention. Works with any agent that can read local `SKILL.md` files and run bash. |
 

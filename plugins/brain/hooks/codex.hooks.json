@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'tmp=\"$(mktemp)\"; trap \"rm -f \\\"$tmp\\\"\" EXIT; cat >\"$tmp\" 2>/dev/null || true; node \"${CODEX_PLUGIN_ROOT}/scripts/bootstrap.mjs\" hook SessionStart --runner codex <\"$tmp\" || printf \"{}\"'"
+          }
+        ]
+      }
+    ]
+  }
+}

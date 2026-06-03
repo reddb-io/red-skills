@@ -91,6 +91,12 @@ The initial GBrain-like operation set exposed by the Brain plugin: `init`,
 `capture`, `search`, `get`, `link`, `backlinks`, `query`/`think`, and `status`.
 _Avoid_: transcript recorder, memory operation
 
+**Brain transport surfaces**:
+The Brain plugin exposes one operation contract through CLI, MCP, and thin
+skills. CLI is the local/testable surface, MCP is the agent tool surface, and
+skills route human language to the operation contract.
+_Avoid_: skill-only brain, duplicate command logic
+
 **Brain connection pipeline**:
 The two-stage process for creating Brain connections. Capture writes run fast
 deterministic extraction first; optional asynchronous enrichment jobs may use an
