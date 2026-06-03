@@ -643,14 +643,16 @@ The command has **two modes**, auto-selected by stdout type:
 Compact output shape (≈3 lines total for 2 workers — fits inline without truncation in an agent transcript):
 
 ```
-48h: ···············································█  (4 closed, peak 4/h, all workers)
-wZ2R4 [live] claude  4/5 (80%)  #150 [blog/D] Agent SDK on RedDB  stage:impl  00:23:01  +382 -45
-wK7M2 [stale] codex  0/16 (0%)  #521 Blockchain Collection Kind   stage:impl  02:00:01
+48h: ···············································█  (4 closed, peak 4/h, all workers)   Δ fleet +382 -45
+wZ2R4 [live] claude  issues 4/5  #150 [blog/D] Agent SDK on RedDB  stage:impl  00:23:01  +382 -45
+wK7M2 [live] codex   issues 0/16  idle  +0 -0
 ```
+
+The progress counter is `issues <done>/<total>` — issues *closed* over the queue total, **not** a completion percentage (the old `(80%)` form read as "no work done" while a worker had already committed thousands of lines). The real volume signal is the `+A -R` **diff** (committed + uncommitted, measured from the branch's merge-base with `origin/main`), which is rendered on **every** worker line unconditionally — idle and `+0 -0` included — and **summed across the fleet** into the `Δ fleet +A -R` suffix on the sparkline header, so the total diff volume is always visible at a glance.
 
 When invoking from inside another agent session (Claude Code, Codex), prefer `--once` even if stdin is a pipe — explicit beats inference. Don't use the full TTY mode in agent transcripts; the 3 s refresh loop floods the captured stream and gets truncated to garbage.
 
-Single-worker operation shows one section/line. Multi-worker adds one section/line per live worker, sorted by `started_at`. The sparkline aggregates **all workers** in this checkout's `.red/state/afk-history.jsonl` — not fractured per-worker.
+Single-worker operation shows one section/line. Multi-worker adds one section/line per live worker, sorted by `started_at`. The sparkline aggregates **all workers** in this checkout's `.red/state/afk-history.jsonl` — not fractured per-worker; the `Δ fleet` diff total likewise sums every worker.
 
 The header of every render shows a **48h sparkline** of issues closed, one glyph per hour, scaled to the peak hour:
 

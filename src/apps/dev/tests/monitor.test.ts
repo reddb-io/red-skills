@@ -29,7 +29,8 @@ const baseWorker = (over: Partial<CompactWorker> = {}): CompactWorker => ({
     },
   },
   live: true,
-  diff: "+10 -3",
+  diffAdded: 10,
+  diffRemoved: 3,
   ...over,
 });
 
@@ -77,43 +78,44 @@ describe("monitor — compact line", () => {
     expect(line).toContain("01:01:01");
   });
 
-  it("appends the +A -R diff verbatim when provided", () => {
+  it("renders the +A -R diff volume from the numeric fields", () => {
     const line = renderWorkerCompactLine(
-      baseWorker({ diff: "+0 -0" }),
+      baseWorker({ diffAdded: 320, diffRemoved: 47 }),
+      1780140600,
+    );
+    expect(line.endsWith("+320 -47")).toBe(true);
+  });
+
+  it("always renders the diff volume, defaulting to +0 -0 when absent", () => {
+    const line = renderWorkerCompactLine(
+      baseWorker({ diffAdded: undefined, diffRemoved: undefined }),
       1780140600,
     );
     expect(line.endsWith("+0 -0")).toBe(true);
   });
 
-  it("omits the diff suffix when no diff is given", () => {
-    const line = renderWorkerCompactLine(
-      baseWorker({ diff: undefined }),
-      1780140600,
-    );
-    expect(line).not.toContain("+");
-  });
-
   it("appends blk: and fail: flags when present", () => {
     const w = baseWorker({
       state: { ...baseWorker().state, blocked: 2, failed: 1 },
-      diff: undefined,
     });
     const line = renderWorkerCompactLine(w, 1780140600);
     expect(line).toContain("blk:2");
     expect(line).toContain("fail:1");
   });
 
-  it("renders idle when there is no current issue", () => {
+  it("renders idle when there is no current issue, still carrying the diff volume", () => {
     const w = baseWorker({
       state: {
         ...baseWorker().state,
         current: { number: "", title: "", stage: "", started_at: "" },
       },
-      diff: undefined,
+      diffAdded: 18,
+      diffRemoved: 2,
     });
     const line = renderWorkerCompactLine(w, 1780140600);
     expect(line).toContain("idle");
     expect(line).not.toContain("#");
+    expect(line.endsWith("+18 -2")).toBe(true);
   });
 });
 
@@ -130,6 +132,25 @@ describe("monitor — compact dashboard", () => {
     const lines = out.split("\n");
     expect(lines[0].startsWith("48h:")).toBe(true);
     expect(lines[0]).toContain("(2 closed");
+  });
+
+  it("suffixes the header with the fleet-wide diff total, summed over workers", () => {
+    const a = baseWorker({ diffAdded: 320, diffRemoved: 47 });
+    const b = baseWorker({
+      state: { ...baseWorker().state, worker_id: "wBBBB" },
+      diffAdded: 18,
+      diffRemoved: 2,
+    });
+    const out = renderCompactDashboard([a, b], events, 1780140600);
+    const lines = out.split("\n");
+    expect(lines[0]).toContain("Δ fleet +338 -49");
+  });
+
+  it("renders the fleet total as +0 -0 even with zero workers", () => {
+    const out = renderCompactDashboard([], events, 1780140600);
+    const lines = out.split("\n");
+    expect(lines[0]).toContain("Δ fleet +0 -0");
+    expect(out).toContain("workers: (none");
   });
 
   it("renders one line per worker, sorted by started_at", () => {
