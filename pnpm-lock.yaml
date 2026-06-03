@@ -15,6 +15,84 @@ importers:
         specifier: ^5.6.0
         version: 5.9.3
 
+  src/apps/benchmark-code-understanding:
+    dependencies:
+      '@reddb-io/build-info':
+        specifier: workspace:*
+        version: link:../../packages/build-info
+      '@reddb-io/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.19
+      esbuild:
+        specifier: ^0.24.0
+        version: 0.24.2
+      tsx:
+        specifier: ^4.19.0
+        version: 4.22.4
+      typescript:
+        specifier: ^5.6.0
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.0
+        version: 2.1.9(@types/node@22.19.19)
+
+  src/apps/benchmark-memory:
+    dependencies:
+      '@reddb-io/build-info':
+        specifier: workspace:*
+        version: link:../../packages/build-info
+      '@reddb-io/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.19
+      esbuild:
+        specifier: ^0.24.0
+        version: 0.24.2
+      tsx:
+        specifier: ^4.19.0
+        version: 4.22.4
+      typescript:
+        specifier: ^5.6.0
+        version: 5.9.3
+
+  src/apps/brain:
+    dependencies:
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.0.0
+        version: 1.29.0(zod@3.25.76)
+      '@reddb-io/build-info':
+        specifier: workspace:*
+        version: link:../../packages/build-info
+      '@reddb-io/sdk':
+        specifier: 1.7.0
+        version: 1.7.0
+      zod:
+        specifier: ^3.23.8
+        version: 3.25.76
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.19
+      esbuild:
+        specifier: ^0.24.0
+        version: 0.24.2
+      tsx:
+        specifier: ^4.19.0
+        version: 4.22.4
+      typescript:
+        specifier: ^5.6.0
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.0
+        version: 2.1.9(@types/node@22.19.19)
+
   src/apps/code-nav:
     dependencies:
       '@modelcontextprotocol/sdk':
@@ -45,31 +123,6 @@ importers:
       typescript:
         specifier: ^5.6.0
         version: 5.9.3
-
-  src/apps/benchmark-code-understanding:
-    dependencies:
-      '@reddb-io/build-info':
-        specifier: workspace:*
-        version: link:../../packages/build-info
-      '@reddb-io/shared':
-        specifier: workspace:*
-        version: link:../../packages/shared
-    devDependencies:
-      '@types/node':
-        specifier: ^22.0.0
-        version: 22.19.19
-      esbuild:
-        specifier: ^0.24.0
-        version: 0.24.2
-      tsx:
-        specifier: ^4.19.0
-        version: 4.22.4
-      typescript:
-        specifier: ^5.6.0
-        version: 5.9.3
-      vitest:
-        specifier: ^2.1.0
-        version: 2.1.9(@types/node@22.19.19)
 
   src/apps/dev:
     dependencies:
@@ -141,28 +194,6 @@ importers:
       vitest:
         specifier: ^2.1.0
         version: 2.1.9(@types/node@22.19.19)
-
-  src/apps/benchmark-memory:
-    dependencies:
-      '@reddb-io/build-info':
-        specifier: workspace:*
-        version: link:../../packages/build-info
-      '@reddb-io/shared':
-        specifier: workspace:*
-        version: link:../../packages/shared
-    devDependencies:
-      '@types/node':
-        specifier: ^22.0.0
-        version: 22.19.19
-      esbuild:
-        specifier: ^0.24.0
-        version: 0.24.2
-      tsx:
-        specifier: ^4.19.0
-        version: 4.22.4
-      typescript:
-        specifier: ^5.6.0
-        version: 5.9.3
 
   src/packages/build-info: {}
 
