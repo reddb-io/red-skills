@@ -48,6 +48,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [fix(afk): feed the agent lane on the native path so liveness isn't blind](./pages/350-fix-afk-feed-the-agent-lane-on-the-native-path-so-liveness-i.md)
 - [fix(afk): guard each supervise tick + per-tick heartbeat — unwedgeable fleet supervisor](./pages/408-fix-afk-guard-each-supervise-tick-per-tick-heartbeat-unwedge.md)
 - [fix(afk): harden sandcastle integration (pre-mortem J/E/D/F/G/H)](./pages/328-fix-afk-harden-sandcastle-integration-pre-mortem-j-e-d-f-g-h.md)
+- [fix(afk): launcher no longer shadows AFK commands + atomic issue claim (#434)](./pages/435-fix-afk-launcher-no-longer-shadows-afk-commands-atomic-issue.md)
 - [fix(afk): monitor diff column counts committed work + relabel issue ratio](./pages/392-fix-afk-monitor-diff-column-counts-committed-work-relabel-is.md)
 - [fix(afk): native fleet supervisor — poll cadence + real stall-reaper IO](./pages/285-fix-afk-native-fleet-supervisor-poll-cadence-real-stall-reap.md)
 - [fix(afk): require the DONE sentinel even when work is already complete (Defeito 1)](./pages/427-fix-afk-require-the-done-sentinel-even-when-work-is-already.md)
