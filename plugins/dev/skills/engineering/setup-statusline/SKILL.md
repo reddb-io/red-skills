@@ -33,7 +33,7 @@ Codex's footer; track AFK under Codex with `/afk monitor` instead.
 {
   "statusLine": {
     "type": "command",
-    "command": "sh -c 'b=$(ls -t \"$HOME\"/.cache/red-skills/bundles/dev-*.bundle.min.mjs 2>/dev/null | head -1); [ -z \"$b\" ] && b=$(ls -t \"$HOME\"/.claude/plugins/cache/red-skills/dev/*/skills/engineering/afk/bin/afk.mjs 2>/dev/null | head -1); [ -n \"$b\" ] && exec node \"$b\" statusline'",
+    "command": "sh -c 'b=$(ls -1 \"$HOME\"/.cache/red-skills/bundles/dev-*.bundle.min.mjs 2>/dev/null | sort -V | tail -1); [ -z \"$b\" ] && b=$(ls -1 \"$HOME\"/.claude/plugins/cache/red-skills/dev/*/skills/engineering/afk/bin/afk.mjs 2>/dev/null | sort -V | tail -1); [ -n \"$b\" ] && exec node \"$b\" statusline'",
     "refreshInterval": 5
   }
 }
@@ -53,8 +53,10 @@ statusLine straight at the launcher means **every plugin update** lands a new
 version whose bundle is not cached yet, so the launcher tries a **synchronous
 network download inside the statusline render** — which blows the render's tight
 timeout (blank statusline), or fails outright if that version's release asset is
-not published yet. The command above instead runs the **newest already-fetched
-bundle** (`ls -t …/.cache/red-skills/bundles/dev-*.bundle.min.mjs | head -1`) —
+not published yet. The command above instead runs the **highest-version
+already-fetched bundle** (`ls -1 …/.cache/red-skills/bundles/dev-*.bundle.min.mjs | sort -V | tail -1`
+— `sort -V` picks the highest semver, NOT `ls -t` which picks newest-by-mtime and
+can resolve an OLD version when an older dir was touched/re-extracted more recently) —
 no network in the hot path, so an update never blanks the line; it keeps showing
 the last good bundle until a normal `afk` run (or a SessionStart pre-fetch)
 caches the new one. It falls back to the launcher only when the cache is empty
@@ -70,7 +72,7 @@ and a fresh file when it is missing. Keep unrelated settings intact.
 
 ```bash
 printf '{"workspace":{"project_dir":"%s"},"model":{"display_name":"Opus"}}' "$PWD" \
-  | sh -c 'b=$(ls -t "$HOME"/.cache/red-skills/bundles/dev-*.bundle.min.mjs 2>/dev/null | head -1); [ -z "$b" ] && b=$(ls -t "$HOME"/.claude/plugins/cache/red-skills/dev/*/skills/engineering/afk/bin/afk.mjs 2>/dev/null | head -1); [ -n "$b" ] && exec node "$b" statusline'
+  | sh -c 'b=$(ls -1 "$HOME"/.cache/red-skills/bundles/dev-*.bundle.min.mjs 2>/dev/null | sort -V | tail -1); [ -z "$b" ] && b=$(ls -1 "$HOME"/.claude/plugins/cache/red-skills/dev/*/skills/engineering/afk/bin/afk.mjs 2>/dev/null | sort -V | tail -1); [ -n "$b" ] && exec node "$b" statusline'
 ```
 
 It should print a line like `red-skills (main) · Opus`.
