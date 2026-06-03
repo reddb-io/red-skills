@@ -51,6 +51,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [fix(memory): skills invoke scripts/bootstrap.mjs, not the absent dist/cli.js](./pages/231-fix-memory-skills-invoke-scripts-bootstrap-mjs-not-the-absen.md)
 - [fix(statusline): re-assert Codex tui.status_line on session_start (survives config resets)](./pages/380-fix-statusline-re-assert-codex-tui-status-line-on-session-st.md)
 - [fix(statusline): render from cached bundle, not the fetch-launcher (survives plugin updates)](./pages/379-fix-statusline-render-from-cached-bundle-not-the-fetch-launc.md)
+- [fix(statusline): resolve the AFK bundle by version (sort -V), not mtime](./pages/412-fix-statusline-resolve-the-afk-bundle-by-version-sort-v-not.md)
 - [fix: final-review pass — broken CI, dangling refs, dynamic-fetch shipping](./pages/290-fix-final-review-pass-broken-ci-dangling-refs-dynamic-fetch.md)
 - [merge: #226 AFK: rename hook events from worker/* to attempt/* across merged code](./pages/263-merge-226-afk-rename-hook-events-from-worker-to-attempt-acro.md)
 - [merge: #227 AFK: make <promise> sentinel the canonical attempt exit signal](./pages/265-merge-227-afk-make-promise-sentinel-the-canonical-attempt-ex.md)
