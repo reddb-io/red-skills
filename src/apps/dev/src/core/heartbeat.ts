@@ -113,6 +113,67 @@ export interface FirehoseIdentity {
   attempt?: number | string;
 }
 
+/** Format a line-diff volume as `+A -R`, clamping negatives to 0. */
+export function formatDiffVolume(added: number, removed: number): string {
+  const a = added > 0 ? added : 0;
+  const r = removed > 0 ? removed : 0;
+  return `+${a} -${r}`;
+}
+
+export interface ProgressHeartbeatInput {
+  /** Seconds since the last observed commit (or spawn). */
+  secsSinceProgress: number;
+  /** ISO timestamp of the last observed progress. */
+  lastProgressAt: string;
+  /** Worker-branch HEAD this tick ("" when unresolved). */
+  head: string;
+  /** Added lines vs the merge-base with origin/main (committed + uncommitted). */
+  added: number;
+  /** Removed lines vs the same base. */
+  removed: number;
+}
+
+export interface ProgressHeartbeat {
+  /** Human line for both the firehose `msg` and the `[heartbeat] …` afk.log line. */
+  msg: string;
+  /** Firehose record `extra` map (all string-valued, like the bash builder). */
+  extra: Record<string, string>;
+  /** Dotted state-file patch persisting progress + the live diff volume so the
+   * monitor's `+A -R` reflects evolution between its 10-min ticks (#448). */
+  statePatch: Record<string, string | number>;
+}
+
+/**
+ * Build the externalized proof-of-life heartbeat the attempt-progress guard
+ * emits each ~60s poll (ADR 0045). Unlike the bare liveness record it carries
+ * the **line-diff volume** (`+A -R`) so each tick shows how the attempt is
+ * evolving, and persists that volume into `current.diff_{added,removed}` — the
+ * fields the monitor/statusline prefer over a live `git diff` — so the
+ * dashboard's diff stays fresh between its sparse ticks (#448). Pure: the diff
+ * counts and timestamps are computed/read by the caller and passed in.
+ */
+export function buildProgressHeartbeat(input: ProgressHeartbeatInput): ProgressHeartbeat {
+  const diff = formatDiffVolume(input.added, input.removed);
+  const headShort = input.head ? ` @ ${input.head.slice(0, 8)}` : "";
+  const msg = `progress: ${input.secsSinceProgress}s since last commit${headShort} · ${diff}`;
+  return {
+    msg,
+    extra: {
+      secs_since_progress: String(input.secsSinceProgress),
+      last_progress_at: input.lastProgressAt,
+      head: input.head,
+      diff_added: String(input.added > 0 ? input.added : 0),
+      diff_removed: String(input.removed > 0 ? input.removed : 0),
+      diff: diff,
+    },
+    statePatch: {
+      "current.last_progress_at": input.lastProgressAt,
+      "current.diff_added": input.added > 0 ? input.added : 0,
+      "current.diff_removed": input.removed > 0 ? input.removed : 0,
+    },
+  };
+}
+
 /**
  * Build the `type=heartbeat` firehose envelope, composing jsonl-log's
  * {@link buildRecord}. Mirrors the bash `jsonl_log_append_shared` call: the
