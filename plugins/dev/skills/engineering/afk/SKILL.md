@@ -616,11 +616,11 @@ Idempotency: `SLOT_SWEPT[slot]=1` blocks a second sweep within the same supervis
 >
 > 1. **Render the dashboard** (the bundle's `monitor --once`).
 > 2. **Mirror live workers onto the host runner's native task surface.** Per-runner mapping:
->    - **Claude Code:** apply `mirror_plan` via `TaskCreate` (one task per live worker, titled `#<n> w<id> — <title>`) and `TaskUpdate` (description carries `stage:<x>`, terminal events flip `state` to `completed`/`failed`). See *Task Mirror* below for the full protocol.
->    - **Codex:** call `mirror_sink_codex`. Today `codex_native_task_available` returns non-zero, so the sink falls back to the dashboard plus a one-line notice — that *is* the mirror under Codex; do not silently skip. If Codex grows a native surface, the sink emits the same `mirror_plan` descriptors against it.
+>    - **Claude Code:** pipe the tracked-task JSONL into the bundle's `monitor --mirror-plan` and apply the emitted call plan via `TaskCreate` (one task per live worker, titled `#<n> w<id> — <title>`) and `TaskUpdate` (description carries `stage:<x>`, terminal events flip `state` to `completed`/`failed`). See *Task Mirror* below for the full protocol.
+>    - **Codex:** run `monitor --mirror-plan --runner codex`. Today Codex exposes no native task surface, so the sink emits an empty plan and the mirror falls back to the dashboard plus a one-line notice — that *is* the mirror under Codex; do not silently skip. If Codex grows a native surface, the sink emits the same call-plan descriptors against it.
 >    - **Bare terminal / unknown runner:** skip the mirror silently — the `monitor` dashboard is the canonical view.
 >
-> The mirror is the only way the user sees per-worker progress advance in their native UI. Skipping it (because "nothing changed" or "just answering a status question") is a bug, not a shortcut — `mirror_plan` is idempotent and emits zero descriptors when nothing changed.
+> The mirror is the only way the user sees per-worker progress advance in their native UI. Skipping it (because "nothing changed" or "just answering a status question") is a bug, not a shortcut — `monitor --mirror-plan` is idempotent and emits zero descriptors when nothing changed.
 
 `/afk monitor` is the readonly aggregated view across all live workers. **Run the bundle's `monitor` command — do not reinvent the rendering in inline bash.** It:
 
@@ -696,7 +696,11 @@ The mirror is a pure diff: it reconciles the live worker state files against the
 
 1. Fetch `TaskCreate`, `TaskUpdate`, and `TaskList` via `ToolSearch` if not already loaded (deferred tools).
 2. **Build the tracked set.** `TaskList` → keep the mirror-owned tasks (those whose title matches `#<n> w<id> — …`). For each, emit one JSONL line `{"key":"<worker_id>:<issue>","stage":"<last stage>"}`, reading the key from the title and the stage from the description (`stage: <x>`). Keep a key→task_id map for step 4.
-3. **Compute the plan.** The runtime globs the state files and reconciles them against the tracked set from step 2 (keyed by `worker_id:issue`, so parallel workers each get exactly one task and re-runs never duplicate), then prints a JSONL **call plan** — one descriptor per harness call:
+3. **Compute the plan.** Pipe the tracked JSONL from step 2 into the bundle's `monitor --mirror-plan` subcommand:
+   ```bash
+   printf '%s\n' "$tracked" | node "$CLAUDE_PLUGIN_ROOT/skills/engineering/afk/bin/afk.mjs" monitor --mirror-plan
+   ```
+   The command globs the state files and reconciles them against the tracked set on stdin (keyed by `worker_id:issue`, so parallel workers each get exactly one task and re-runs never duplicate), then prints a JSONL **call plan** to stdout — one descriptor per harness call (empty stdin → cold reconcile; empty plan → no output):
    ```jsonl
    {"call":"TaskCreate","key":"wAAAA:22","title":"#22 wAAAA — extract state.sh","description":"stage: impl","state":"in_progress"}
    {"call":"TaskUpdate","key":"wAAAA:22","description":"stage: tests","state":"in_progress"}
@@ -708,14 +712,14 @@ The mirror is a pure diff: it reconciles the live worker state files against the
 
 An empty plan means nothing changed since the last tick — apply no calls. Because the plan is keyed by `worker_id:issue`, an idempotent re-run with no stage advance emits zero descriptors.
 
-**Re-hydration on session reopen.** A native task dies with the Claude Code session; the `nohup` AFK worker does not. When a session opens with workers still running, `TaskList` (step 2) returns no mirror-owned tasks, so the tracked set is **empty** and `mirror_plan` reconciles cold — emitting a `TaskCreate` for every live worker. The status bar recovers the per-worker tasks with no operator action. This is the same path as steady-state, not a new one: only workers whose orchestrator PID (the `.pid` field in `afk.state.json`, via `state_is_live`) is alive re-hydrate (dead workers are untracked-terminal on a cold tick → no ghost task), and the next tick is idempotent because the freshly-created tasks now form the tracked set.
+**Re-hydration on session reopen.** A native task dies with the Claude Code session; the `nohup` AFK worker does not. When a session opens with workers still running, `TaskList` (step 2) returns no mirror-owned tasks, so the tracked set is **empty** and `monitor --mirror-plan` reconciles cold — emitting a `TaskCreate` for every live worker. The status bar recovers the per-worker tasks with no operator action. This is the same path as steady-state, not a new one: only workers whose orchestrator PID (the `.pid` field in `afk.state.json`, via `state_is_live`) is alive re-hydrate (dead workers are untracked-terminal on a cold tick → no ghost task), and the next tick is idempotent because the freshly-created tasks now form the tracked set.
 
 When `TaskCreate` / `TaskUpdate` are unavailable because the session is **outside any runner** (a bare terminal), **skip the mirror silently** — there is no native surface to drive, and the `monitor` dashboard is already the canonical view.
 
-**Codex sink (runner-specific — binding).** The mirror is per-runner, mirroring the `runner-claude.md` / `runner-codex.md` split (ADR 0003). Under Codex the state reader and plan reconciler are reused unchanged — only the sink differs. After rendering the dashboard, the Codex agent drives the Codex sink instead of the Claude `TaskCreate`/`TaskUpdate` loop:
+**Codex sink (runner-specific — binding).** The mirror is per-runner, mirroring the `runner-claude.md` / `runner-codex.md` split (ADR 0003). Under Codex the state reader and plan reconciler are reused unchanged — only the sink differs. After rendering the dashboard, the Codex agent runs `monitor --mirror-plan --runner codex` instead of the Claude `TaskCreate`/`TaskUpdate` loop:
 
 - If Codex grows a native background-task surface, the sink emits the **same call-plan descriptors** the Claude sink applies — apply them against the Codex primitive.
-- Otherwise (today's reality), the sink falls back to the `monitor` dashboard and emits a one-line notice. No native calls are emitted, so there is no half-rendered state, and a dashboard hiccup is swallowed so the tick never crashes.
+- Otherwise (today's reality), `--runner codex` emits an **empty plan**, so the mirror falls back to the `monitor` dashboard and a one-line notice. No native calls are emitted, so there is no half-rendered state, and a dashboard hiccup is swallowed so the tick never crashes.
 
 **Codex monitor agent (fleet-specific — binding).** Codex has a native sub-agent UI even though it does not expose the Claude-style `TaskCreate`/`TaskUpdate` task API. When `/dev:afk fleet N` launches a new supervisor under Codex, the agent should spawn exactly one read-only Codex monitor agent when the sub-agent primitive is available. That monitor agent periodically runs `/dev:afk monitor --once`, reports concise progress, and exits once no supervisor or live workers remain. It is a presentation consumer only: it must not edit files, stop workers, claim issues, or merge anything. Closing it manually must not affect the fleet.
 
