@@ -48,7 +48,7 @@ import { makeFeedbackWorktree, type FeedbackWorktree } from "../runtime/feedback
 import { join } from "node:path";
 import { appendAgentRecord, appendRecord } from "../core/jsonl-log.js";
 import { initState, updateState } from "../core/state.js";
-import { formatIterationMarker } from "../core/heartbeat.js";
+import { buildProgressHeartbeat, formatIterationMarker } from "../core/heartbeat.js";
 import { DEFAULT_MAX_ITERATIONS } from "../core/execution.js";
 import type { AgentStreamEvent } from "../core/execution.js";
 
@@ -485,25 +485,33 @@ export function buildProcessDeps(
     },
     // Externalized proof-of-life sink (PR-B): the attempt-guard fires this each
     // poll (~60s) with the progress signal. Append an enriched `type=heartbeat`
-    // firehose record AND mirror `current.last_progress_at` into the state file,
-    // so external integrators can tail the firehose or read afk.state.json for
-    // the agent's liveness + progress. Best-effort — failures are swallowed.
+    // firehose record carrying the live LINE-DIFF (+A -R) AND mirror
+    // `current.{last_progress_at,diff_added,diff_removed}` into the state file, so
+    // each tick shows how the attempt is evolving and the monitor's +A -R stays
+    // fresh between its sparse 10-min ticks (#448). Best-effort — swallowed.
     emitHeartbeat: (info) => {
       const ts = new Date().toISOString();
       const secs = Math.max(0, Math.floor((info.nowMs - info.lastProgressMs) / 1000));
       const lastProgressAt = new Date(info.lastProgressMs).toISOString();
       const head = info.head ?? "";
-      const msg = `progress: ${secs}s since last commit${head ? ` @ ${head.slice(0, 8)}` : ""}`;
-      void appendRecord(join(current.attemptDir, "log.jsonl"), "heartbeat", msg, {
-        ts,
-        fields: {
-          extra: { secs_since_progress: String(secs), last_progress_at: lastProgressAt, head },
-        },
-      }).catch(() => {});
-      void fsx.appendLine(join(current.attemptDir, "afk.log"), `[heartbeat] ${msg}`);
-      void updateState(join(current.attemptDir, "afk.state.json"), {
-        "current.last_progress_at": lastProgressAt,
-      }).catch(() => {});
+      void (async () => {
+        const { added, removed } = await gitx
+          .diffstatShortstat({ cwd: join(current.attemptDir, "worktree") }, "origin/main")
+          .catch(() => ({ added: 0, removed: 0 }));
+        const hb = buildProgressHeartbeat({
+          secsSinceProgress: secs,
+          lastProgressAt,
+          head,
+          added,
+          removed,
+        });
+        await appendRecord(join(current.attemptDir, "log.jsonl"), "heartbeat", hb.msg, {
+          ts,
+          fields: { extra: hb.extra },
+        }).catch(() => {});
+        await fsx.appendLine(join(current.attemptDir, "afk.log"), `[heartbeat] ${hb.msg}`);
+        await updateState(join(current.attemptDir, "afk.state.json"), hb.statePatch).catch(() => {});
+      })();
     },
     historyPath: paths.historyPath,
     historyClock: { ts: new Date().toISOString(), epoch: Math.floor(Date.now() / 1000) },

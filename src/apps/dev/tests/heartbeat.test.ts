@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 import type { JsonlLogRecord } from "../src/core/jsonl-log.js";
 import {
   buildHeartbeatRecord,
+  buildProgressHeartbeat,
   DEFAULT_HEARTBEAT_S,
   emitHeartbeatTick,
   escapeStreamLine,
+  formatDiffVolume,
   formatElapsed,
   formatIterationMarker,
   formatStartedMarker,
@@ -188,5 +190,51 @@ describe("formatIterationMarker — per-agentic-iteration boundary", () => {
     // attempt boundary uses [heartbeat] iteration started for #N; this is [afk] agent iteration N
     expect(formatIterationMarker(1, "started", 20)).not.toContain("[heartbeat]");
     expect(formatIterationMarker(1, "started", 20).startsWith("[afk] agent iteration")).toBe(true);
+  });
+});
+
+describe("formatDiffVolume", () => {
+  it("renders +A -R and clamps negatives to 0", () => {
+    expect(formatDiffVolume(42, 10)).toBe("+42 -10");
+    expect(formatDiffVolume(0, 0)).toBe("+0 -0");
+    expect(formatDiffVolume(-5, -3)).toBe("+0 -0");
+  });
+});
+
+describe("buildProgressHeartbeat (#448)", () => {
+  it("carries the line-diff in the msg, the firehose extra, and the state patch", () => {
+    const hb = buildProgressHeartbeat({
+      secsSinceProgress: 75,
+      lastProgressAt: "2026-06-03T12:00:00.000Z",
+      head: "40ac9326abcdef",
+      added: 382,
+      removed: 45,
+    });
+    // msg surfaces evolution at a glance: short head + +A -R.
+    expect(hb.msg).toBe("progress: 75s since last commit @ 40ac9326 · +382 -45");
+    // firehose extra carries the diff fields (string-valued like the bash builder).
+    expect(hb.extra.diff).toBe("+382 -45");
+    expect(hb.extra.diff_added).toBe("382");
+    expect(hb.extra.diff_removed).toBe("45");
+    expect(hb.extra.secs_since_progress).toBe("75");
+    // state patch persists the volume the monitor prefers over a live git diff.
+    expect(hb.statePatch).toEqual({
+      "current.last_progress_at": "2026-06-03T12:00:00.000Z",
+      "current.diff_added": 382,
+      "current.diff_removed": 45,
+    });
+  });
+
+  it("omits the head fragment when HEAD is unresolved and clamps the diff", () => {
+    const hb = buildProgressHeartbeat({
+      secsSinceProgress: 0,
+      lastProgressAt: "2026-06-03T12:00:00.000Z",
+      head: "",
+      added: -1,
+      removed: -2,
+    });
+    expect(hb.msg).toBe("progress: 0s since last commit · +0 -0");
+    expect(hb.statePatch["current.diff_added"]).toBe(0);
+    expect(hb.statePatch["current.diff_removed"]).toBe(0);
   });
 });
