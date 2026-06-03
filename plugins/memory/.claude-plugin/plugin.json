@@ -18,6 +18,7 @@
     "./skills/core/improve-skills",
     "./skills/core/health",
     "./skills/core/doctor",
-    "./skills/core/export"
+    "./skills/core/export",
+    "./skills/core/view"
   ]
 }
