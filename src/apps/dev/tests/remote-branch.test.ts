@@ -45,6 +45,15 @@ describe("remote-branch ref construction", () => {
     expect(slugifyRef("Fix the Thing!!")).toBe("fix-the-thing");
     expect(buildRef("afk", "wABC", 7, "Fix the Thing!!")).toBe("afk/wABC/7-fix-the-thing");
   });
+
+  it("never ends in a trailing dash even when the 40-char slice lands mid-word (#442)", () => {
+    // This exact title sliced to "…hide-a-duplicate-" → the malformed worktree
+    // name behind `fatal: … is not a working tree`.
+    const slug = slugifyRef("Memory soft-merge edge: hide a duplicate node from recall without deleting it");
+    expect(slug.endsWith("-")).toBe(false);
+    expect(slug).toBe("memory-soft-merge-edge-hide-a-duplicate");
+    expect(slug.length).toBeLessThanOrEqual(40);
+  });
 });
 
 describe("pushInitial (live namespace)", () => {
