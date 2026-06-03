@@ -26,6 +26,7 @@ import {
   resolveRunSettings,
   type RepoContext,
 } from "../runtime/wire.js";
+import type { LaneIdleStallConfig } from "../core/lane-idle-reaper.js";
 import { workerDir as workerDirPath, workerPidFile } from "../core/worker-paths.js";
 import { parseFlags, type FlagSchema } from "@reddb-io/shared/args.js";
 import * as ghx from "../runtime/gh.js";
@@ -276,6 +277,7 @@ export function buildProcessDeps(
   exec?: ExecFn,
   maxIterations?: number,
   attemptTimeoutSeconds?: number,
+  laneIdle?: LaneIdleStallConfig,
 ): ProcessIssueDeps {
   const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo, exec };
   const gitCtx: GitContext = { cwd: ctx.root, exec };
@@ -368,7 +370,7 @@ export function buildProcessDeps(
     // shell commands run against the same worker-branch checkout after feedback.
     backpressure: feedback.backpressure,
     backpressureCommands: readBackpressure(config),
-    runAgent: makeRunAgent(sandbox, process.env, maxIterations, attemptTimeoutSeconds),
+    runAgent: makeRunAgent(sandbox, process.env, maxIterations, attemptTimeoutSeconds, laneIdle),
     model,
     classifyIssue: makeIssueClassifier(config, runner, ctx.root, exec),
     resolveTier: (activeRunner, taskClass = "think") => resolveTier(config, activeRunner, taskClass),
@@ -845,7 +847,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
       if (await fsx.pathExists(sp)) await updateState(sp, { pid: 0 }).catch(() => {});
       return result;
     },
-    processDeps: buildProcessDeps(ctx, settings.model, settings.sandbox, feedback, current, flags.fallbackRunner, runner, undefined, settings.maxIterations, settings.attemptTimeoutSeconds),
+    processDeps: buildProcessDeps(ctx, settings.model, settings.sandbox, feedback, current, flags.fallbackRunner, runner, undefined, settings.maxIterations, settings.attemptTimeoutSeconds, settings.laneIdle),
     // Session-scoped lifecycle hooks (PRD #207): compose the same config /
     // resolver / exec / env the process deps use, so session + per-issue points
     // share one dispatcher rather than duplicating the wiring.
