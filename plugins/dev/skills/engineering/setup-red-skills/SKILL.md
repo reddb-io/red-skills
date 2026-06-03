@@ -126,13 +126,13 @@ Decide whether to wire it up for this project:
   {
     "statusLine": {
       "type": "command",
-      "command": "sh -c 'b=$(ls -t \"$HOME\"/.claude/plugins/cache/red-skills/dev/*/skills/engineering/afk/bin/afk.mjs 2>/dev/null | head -1); [ -n \"$b\" ] && exec node \"$b\" statusline'",
+      "command": "sh -c 'b=$(ls -1 \"$HOME\"/.claude/plugins/cache/red-skills/dev/*/skills/engineering/afk/bin/afk.mjs 2>/dev/null | sort -V | tail -1); [ -n \"$b\" ] && exec node \"$b\" statusline'",
       "refreshInterval": 5
     }
   }
   ```
 
-  Do **not** use `$CLAUDE_PLUGIN_ROOT` here: Claude Code does not export it (nor `$CLAUDE_PROJECT_DIR`) to a `statusLine` command — only to plugin hooks and MCP/LSP subprocesses — so that form expands to an empty path and renders blank. The command above resolves the newest installed AFK bundle from the plugin cache itself, staying valid across updates without pinning a version. The project root is read from `workspace.project_dir` in the JSON Claude Code pipes on stdin (no argument needed). This is **Claude Code only**; Codex has no command-backed statusline — see the `setup-statusline` skill for the Codex `tui.status_line` path.
+  Do **not** use `$CLAUDE_PLUGIN_ROOT` here: Claude Code does not export it (nor `$CLAUDE_PROJECT_DIR`) to a `statusLine` command — only to plugin hooks and MCP/LSP subprocesses — so that form expands to an empty path and renders blank. The command above resolves the **highest-version** installed AFK bundle from the plugin cache itself (`sort -V | tail -1`, NOT `ls -t | head -1` — version order, not mtime, so a re-touched/re-extracted old dir can't win), staying valid across updates without pinning a version. The project root is read from `workspace.project_dir` in the JSON Claude Code pipes on stdin (no argument needed). This is **Claude Code only**; Codex has no command-backed statusline — see the `setup-statusline` skill for the Codex `tui.status_line` path.
 
 The script is no-op outside `/afk` sessions (it prints nothing when no live workers exist), so leaving the statusline wired up in non-AFK projects is harmless.
 
