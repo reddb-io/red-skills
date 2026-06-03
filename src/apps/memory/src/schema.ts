@@ -101,6 +101,8 @@ export const EDGE_LABELS = [
   "FIXES",
   "MITIGATES",
   "SUPERSEDED_BY",
+  "SAME_AS",
+  "MERGED_INTO",
   "DEPRECATED_BY",
   // Context
   "MENTIONS",
@@ -132,6 +134,14 @@ export const EDGE_LABELS = [
 ] as const;
 
 export type EdgeLabel = (typeof EDGE_LABELS)[number];
+
+export const HIDDEN_BY_EDGE_LABELS = [
+  "SUPERSEDED_BY",
+  "SAME_AS",
+  "MERGED_INTO",
+] as const satisfies readonly EdgeLabel[];
+
+export type HiddenByEdgeLabel = (typeof HIDDEN_BY_EDGE_LABELS)[number];
 
 export interface MemoryNodeProps {
   title: string;
