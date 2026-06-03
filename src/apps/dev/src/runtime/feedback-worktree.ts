@@ -28,6 +28,36 @@ function slugForBranch(branch: string): string {
   return branch.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "wt";
 }
 
+/**
+ * Split a feedback `-C` token into its worker branch and package scope.
+ *
+ * The feedback gate builds the token via `scopeDir(branch, scope)`: the branch
+ * alone for the root scope, or `branch/<scope>` otherwise. AFK worker branches
+ * are `afk/<id>/<N>-<slug>` — they contain slashes — so splitting at the FIRST
+ * slash mis-parses them (#437: branch became `afk`, scope `<id>/<N>-<slug>`, and
+ * `pnpm -C <root>/<id>/...` ENOENT'd, failing the gate on every afk/* branch).
+ *
+ * Instead peel the scope off the END: the scope is the shortest trailing path
+ * suffix that is an existing package dir (`hasPackage`), and the branch is
+ * everything before it. A token with no package suffix is a pure branch at the
+ * root scope ("."). Package paths are full root-relative paths (e.g.
+ * `src/apps/dev`), so only the genuine suffix matches — a branch slug segment
+ * never collides.
+ */
+export function splitBranchDir(
+  dir: string,
+  hasPackage: (scope: string) => boolean,
+): { branch: string; scope: string } {
+  const parts = dir.split("/");
+  for (let i = 1; i < parts.length; i++) {
+    const scope = parts.slice(parts.length - i).join("/");
+    if (hasPackage(scope)) {
+      return { branch: parts.slice(0, parts.length - i).join("/"), scope };
+    }
+  }
+  return { branch: dir, scope: "." };
+}
+
 export interface FeedbackWorktree {
   /** pnpm executor rebased onto the materialised worker-branch checkout. */
   pnpm: PnpmExec;
@@ -67,35 +97,11 @@ export function makeFeedbackWorktree(root: string, feedbackRoot: string): Feedba
     return path;
   }
 
-  // feedback hands pnpm a `-C <token>` arg where <token> is
-  // `<branch>` or `<branch>/<scope>`. Split the leading branch off, materialise
-  // it, and rewrite the dir onto the real checkout path.
-  function splitBranchDir(dir: string): { branch: string; scope: string } {
-    const slash = dir.indexOf("/");
-    if (slash < 0) return { branch: dir, scope: "." };
-    return { branch: dir.slice(0, slash), scope: dir.slice(slash + 1) };
-  }
-
-  const pnpm: PnpmExec = async (args) => {
-    // args === ["pnpm", "-C", dir, script]
-    const cIdx = args.indexOf("-C");
-    if (cIdx >= 0 && args[cIdx + 1] !== undefined) {
-      const { branch, scope } = splitBranchDir(args[cIdx + 1]!);
-      const base = await pathFor(branch);
-      const rewritten = scope === "." ? base : join(base, scope);
-      const rest = args.filter((_, i) => i !== 0 && i !== cIdx && i !== cIdx + 1);
-      const r = await runPnpm(["-C", rewritten, ...rest], { cwd: root });
-      return { code: r.code, stdout: r.stdout, stderr: r.stderr };
-    }
-    const head = args[0] === "pnpm" ? args.slice(1) : args;
-    const r = await runPnpm(head, { cwd: root });
-    return { code: r.code, stdout: r.stdout, stderr: r.stderr };
-  };
-
   // The layout probe only needs the package topology, which is identical across
   // branches (a worker rarely adds/removes packages); resolving it against the
   // primary checkout keeps `relevantScopes` synchronous as the interface
-  // requires while still reflecting the real monorepo layout.
+  // requires while still reflecting the real monorepo layout. It also drives
+  // `splitBranchDir`'s scope-suffix detection below.
   const layout: PackageLayout = {
     hasPackage: (scope) => {
       const dir = scope === "." ? root : join(root, scope);
@@ -117,6 +123,25 @@ export function makeFeedbackWorktree(root: string, feedbackRoot: string): Feedba
         return false;
       }
     },
+  };
+
+  // feedback hands pnpm a `-C <token>` arg where <token> is `<branch>` or
+  // `<branch>/<scope>`. Peel the scope off the end (via the package layout),
+  // materialise the branch, and rewrite the dir onto the real checkout path.
+  const pnpm: PnpmExec = async (args) => {
+    // args === ["pnpm", "-C", dir, script]
+    const cIdx = args.indexOf("-C");
+    if (cIdx >= 0 && args[cIdx + 1] !== undefined) {
+      const { branch, scope } = splitBranchDir(args[cIdx + 1]!, layout.hasPackage);
+      const base = await pathFor(branch);
+      const rewritten = scope === "." ? base : join(base, scope);
+      const rest = args.filter((_, i) => i !== 0 && i !== cIdx && i !== cIdx + 1);
+      const r = await runPnpm(["-C", rewritten, ...rest], { cwd: root });
+      return { code: r.code, stdout: r.stdout, stderr: r.stderr };
+    }
+    const head = args[0] === "pnpm" ? args.slice(1) : args;
+    const r = await runPnpm(head, { cwd: root });
+    return { code: r.code, stdout: r.stdout, stderr: r.stderr };
   };
 
   // Backpressure commands are operator-declared shell strings (e.g. `npm run
