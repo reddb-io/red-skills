@@ -12,6 +12,7 @@ import {
   DEFAULT_EPHEMERAL_TTL_MS,
   DEFAULT_IMPORTANCE,
   type EdgeLabel,
+  HIDDEN_BY_EDGE_LABELS,
   type MemoryDoc,
   type MemoryEdge,
   type MemoryNode,
@@ -204,6 +205,7 @@ export class MemoryStore {
   private readonly ephemeralTtlMs: number;
   private nodeCache: StoredNode[] | null = null;
   private edgeCache: Record<string, unknown>[] | null = null;
+  private removedEdgeCache: { rids: Set<number>; keys: Set<string> } | null = null;
 
   private constructor(
     private readonly opts: MemoryStoreOptions,
@@ -523,6 +525,44 @@ export class MemoryStore {
   }
 
   /**
+   * Remove an edge from Memory read paths. The bundled graph engine has narrow
+   * DELETE support on graph collections, so the reliable reversal mechanism is
+   * a KV tombstone over the edge rid plus removal of the dedupe marker. If the
+   * engine can physically delete the edge too, that is best-effort cleanup.
+   */
+  async removeEdge(from: number, to: number, label: EdgeLabel): Promise<boolean> {
+    const rid = await this.findEdge(from, to, label);
+    if (rid == null) return false;
+
+    try {
+      await this.db.query(
+        `DELETE FROM ${COLLECTIONS.edges} WHERE label = $1 AND from = $2 AND to = $3`,
+        label,
+        from,
+        to,
+      );
+    } catch {
+      // Logical removal below is the source of truth for Memory read paths.
+    }
+
+    await this.kv().delete(edgeKey(from, to, label));
+    const removed = await this.readRemovedEdgeMap();
+    removed[rid] = true;
+    removed[edgeKey(from, to, label)] = true;
+    await this.kv().put(REMOVED_EDGES_KEY, removed);
+    if (isHiddenByEdgeLabel(label)) {
+      const sup = await this.readSupersededMap();
+      if (Number(sup[from]) === to) {
+        delete sup[from];
+        await this.kv().put(SUPERSEDED_KEY, sup);
+      }
+    }
+    this.invalidateEdgeCache();
+    this.invalidateRemovedEdgeCache();
+    return true;
+  }
+
+  /**
    * Store a reasoning trace and link it to the entities it affected with
    * `TOUCHED` audit edges (issue #72). The trace defaults to a `why_note` (→
    * `reasoning` tier) so recall can replay past reasoning and rank it below
@@ -596,10 +636,18 @@ export class MemoryStore {
   async supersededByMany(rids: number[]): Promise<Map<number, number>> {
     const out = new Map<number, number>();
     if (rids.length === 0) return out;
+    const wanted = new Set(rids);
     const map = await this.readSupersededMap();
     for (const rid of rids) {
       const v = map[rid];
       if (v != null) out.set(rid, Number(v));
+    }
+    for (const edge of await this.listEdges()) {
+      const label = edgeLabel(edge);
+      if (!isHiddenByEdgeLabel(label)) continue;
+      const from = edgeFrom(edge);
+      const to = edgeTo(edge);
+      if (wanted.has(from) && Number.isFinite(to)) out.set(from, to);
     }
     return out;
   }
@@ -1421,7 +1469,8 @@ export class MemoryStore {
     try {
       if (this.edgeCache != null) return this.edgeCache;
       const r = await this.db.query(`SELECT * FROM ${COLLECTIONS.edges}`);
-      this.edgeCache = r.rows;
+      const removed = await this.removedEdges();
+      this.edgeCache = r.rows.filter((edge) => !isRemovedEdge(edge, removed));
       return this.edgeCache;
     } catch {
       return [];
@@ -1430,6 +1479,31 @@ export class MemoryStore {
 
   private invalidateEdgeCache(): void {
     this.edgeCache = null;
+  }
+
+  private invalidateRemovedEdgeCache(): void {
+    this.removedEdgeCache = null;
+  }
+
+  private async removedEdges(): Promise<{ rids: Set<number>; keys: Set<string> }> {
+    if (this.removedEdgeCache != null) return this.removedEdgeCache;
+    const map = await this.readRemovedEdgeMap();
+    const rids = new Set<number>();
+    const keys = new Set<string>();
+    for (const [key, removed] of Object.entries(map)) {
+      if (!removed) continue;
+      const rid = Number(key);
+      if (Number.isFinite(rid)) rids.add(rid);
+      else keys.add(key);
+    }
+    this.removedEdgeCache = { rids, keys };
+    return this.removedEdgeCache;
+  }
+
+  private async readRemovedEdgeMap(): Promise<Record<string, boolean>> {
+    const raw = await this.kv().get(REMOVED_EDGES_KEY);
+    if (raw == null) return {};
+    return (typeof raw === "string" ? JSON.parse(raw) : raw) as Record<string, boolean>;
   }
 
   async stats(): Promise<{ nodes: number; edges: number }> {
@@ -1555,9 +1629,52 @@ function edgeKey(from: number, to: number, label: string): string {
   return `edge:${from}:${to}:${label}`;
 }
 
+function isRemovedEdge(
+  edge: Record<string, unknown>,
+  removed: { rids: Set<number>; keys: Set<string> },
+): boolean {
+  const rid = edgeRid(edge);
+  if (Number.isFinite(rid) && removed.rids.has(rid)) return true;
+  const from = edgeFrom(edge);
+  const to = edgeTo(edge);
+  const label = edgeLabel(edge);
+  return (
+    Number.isFinite(from) &&
+    Number.isFinite(to) &&
+    removed.keys.has(edgeKey(from, to, label))
+  );
+}
+
+function isHiddenByEdgeLabel(label: string): label is (typeof HIDDEN_BY_EDGE_LABELS)[number] {
+  return (HIDDEN_BY_EDGE_LABELS as readonly string[]).includes(label);
+}
+
+function edgeRid(edge: Record<string, unknown>): number {
+  return Number(
+    edge.rid ?? edge.red_entity_id ?? edge.RED_ENTITY_ID ?? edge.edge_id ?? edge.EDGE_ID,
+  );
+}
+
+function edgeLabel(edge: Record<string, unknown>): string {
+  return String(edge.label ?? edge.edge_label ?? edge.LABEL ?? "");
+}
+
+function edgeFrom(edge: Record<string, unknown>): number {
+  return Number(
+    edge.from_rid ?? edge.from ?? edge.FROM ?? edge.from_id ?? edge.source ?? edge.source_id,
+  );
+}
+
+function edgeTo(edge: Record<string, unknown>): number {
+  return Number(edge.to_rid ?? edge.to ?? edge.TO ?? edge.to_id ?? edge.target ?? edge.target_id);
+}
+
 /** Aggregate head-of-chain map: oldRid → newRid. One KV key for the whole
  *  graph, not one per node — see `supersede`. */
 const SUPERSEDED_KEY = "node:superseded:all";
+
+/** Aggregate logical edge-deletion map: edge rid → removed. */
+const REMOVED_EDGES_KEY = "edge:removed:all";
 
 /** KV key carrying an ephemeral node's TTL horizon (forward-compat reaping). */
 function nodeExpiryKey(rid: number): string {
