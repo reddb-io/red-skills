@@ -500,8 +500,20 @@ export function buildProcessDeps(
       const lastProgressAt = new Date(info.lastProgressMs).toISOString();
       const head = info.head ?? "";
       void (async () => {
+        // sandcastle creates the agent's worktree at
+        // `{attemptDir}/.sandcastle/worktrees/{slug}`, NOT the legacy
+        // `{attemptDir}/worktree` the state seeds — diffing the latter fails
+        // (it never exists) and every tick read a permanent `+0 -0` even with a
+        // dirty worktree, which also starved the attempt-progress guard's
+        // proof-of-life. Resolve the real worktree from `git worktree list`,
+        // and persist it into `current.worktree` so the monitor (which reads
+        // that field for its own diffstat) gets the live path too. Fall back to
+        // the legacy path only when no worktree is registered yet.
+        const worktree =
+          (await gitx.worktreePathUnder(gitCtx, current.attemptDir).catch(() => undefined)) ??
+          join(current.attemptDir, "worktree");
         const { added, removed } = await gitx
-          .diffstatShortstat({ cwd: join(current.attemptDir, "worktree") }, "origin/main")
+          .diffstatShortstat({ cwd: worktree }, "origin/main")
           .catch(() => ({ added: 0, removed: 0 }));
         const hb = buildProgressHeartbeat({
           secsSinceProgress: secs,
@@ -515,7 +527,10 @@ export function buildProcessDeps(
           fields: { extra: hb.extra },
         }).catch(() => {});
         await fsx.appendLine(join(current.attemptDir, "afk.log"), `[heartbeat] ${hb.msg}`);
-        await updateState(join(current.attemptDir, "afk.state.json"), hb.statePatch).catch(() => {});
+        await updateState(join(current.attemptDir, "afk.state.json"), {
+          ...hb.statePatch,
+          "current.worktree": worktree,
+        }).catch(() => {});
       })();
     },
     historyPath: paths.historyPath,
