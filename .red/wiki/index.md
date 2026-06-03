@@ -26,6 +26,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [feat(afk): TypeScript runtime — committed bundle, release pipeline, 21 ported modules](./pages/282-feat-afk-typescript-runtime-committed-bundle-release-pipelin.md)
 - [feat(afk): always show diff volume in monitor + fleet total](./pages/421-feat-afk-always-show-diff-volume-in-monitor-fleet-total.md)
 - [feat(afk): attempt progress guard — abort a stalled agent, park to ready-for-human (ADR 0044)](./pages/400-feat-afk-attempt-progress-guard-abort-a-stalled-agent-park-t.md)
+- [feat(afk): backpressure gate on the DONE path (#430)](./pages/436-feat-afk-backpressure-gate-on-the-done-path-430.md)
 - [feat(afk): bounded auto-recovery for recoverable blocks](./pages/294-feat-afk-bounded-auto-recovery-for-recoverable-blocks.md)
 - [feat(afk): default maxIterations to 50 + make it configurable via .red/config.yaml](./pages/360-feat-afk-default-maxiterations-to-50-make-it-configurable-vi.md)
 - [feat(afk): externalize proof-of-life — heartbeat record, state field, on_heartbeat hook (ADR 0045)](./pages/401-feat-afk-externalize-proof-of-life-heartbeat-record-state-fi.md)
