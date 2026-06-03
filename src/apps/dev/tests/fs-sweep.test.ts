@@ -3,7 +3,12 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readFileSync } from "node:fs";
-import { listStaleClaimDirs, listLegacyWorkDirs, tryAcquireClaimDir } from "../src/runtime/fs.js";
+import {
+  listStaleClaimDirs,
+  listLegacyWorkDirs,
+  tryAcquireClaimDir,
+  listOrphanDirs,
+} from "../src/runtime/fs.js";
 
 function scratch(): string {
   return mkdtempSync(join(tmpdir(), "afk-sweep-"));
@@ -153,6 +158,51 @@ describe("listLegacyWorkDirs", () => {
       const orphan = join(root, "work-cccc");
       mkdirSync(orphan, { recursive: true });
       expect(await listLegacyWorkDirs(root)).toEqual([orphan]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("listOrphanDirs (#444 — skip live siblings)", () => {
+  it("returns a dead worker's attempt dir as an orphan", async () => {
+    const root = scratch();
+    try {
+      const att = join(root, "wDEAD", "190-a1");
+      mkdirSync(att, { recursive: true });
+      writeFileSync(join(root, "wDEAD", "worker.pid"), DEAD_PID);
+      const orphans = await listOrphanDirs(root, Math.floor(Date.now() / 1000));
+      expect(orphans.map((o) => o.path)).toEqual([att]);
+      expect(orphans[0]!.issue).toBe(190);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("treats a worker with no worker.pid as dead (its attempts are orphans)", async () => {
+    const root = scratch();
+    try {
+      const att = join(root, "wNOPID", "7-a1");
+      mkdirSync(att, { recursive: true });
+      const orphans = await listOrphanDirs(root, Math.floor(Date.now() / 1000));
+      expect(orphans.map((o) => o.path)).toEqual([att]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("SKIPS a LIVE worker's attempt dirs — never reaps a live sibling", async () => {
+    const root = scratch();
+    try {
+      const live = join(root, "wLIVE", "363-a1");
+      mkdirSync(live, { recursive: true });
+      writeFileSync(join(root, "wLIVE", "worker.pid"), ALIVE_PID);
+      // a dead sibling alongside the live one is still collected
+      const dead = join(root, "wDEAD", "9-a1");
+      mkdirSync(dead, { recursive: true });
+      writeFileSync(join(root, "wDEAD", "worker.pid"), DEAD_PID);
+      const orphans = await listOrphanDirs(root, Math.floor(Date.now() / 1000));
+      expect(orphans.map((o) => o.path)).toEqual([dead]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
