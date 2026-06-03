@@ -224,6 +224,78 @@ export async function checkedOutBranches(ctx: GitContext): Promise<Set<string>> 
 }
 
 /**
+ * Resolve the worktree path currently checked out on `branch`, parsed from
+ * `git worktree list --porcelain`. Returns undefined when no live worktree holds
+ * the branch. Used by {@link salvageUncommitted} to reach a worktree the inner
+ * agent edited but never committed.
+ */
+export async function worktreePathForBranch(ctx: GitContext, branch: string): Promise<string | undefined> {
+  const r = await runGit(ctx, ["worktree", "list", "--porcelain"]);
+  if (r.code !== 0) return undefined;
+  let current: string | undefined;
+  for (const line of r.stdout.split("\n")) {
+    const w = /^worktree\s+(.+)$/.exec(line.trim());
+    if (w && w[1]) {
+      current = w[1];
+      continue;
+    }
+    const b = /^branch\s+refs\/heads\/(.+)$/.exec(line.trim());
+    if (b && b[1] === branch) return current;
+  }
+  return undefined;
+}
+
+/**
+ * Salvage uncommitted work an inner agent left in its worktree without
+ * committing. Observed with the codex runner: the agent edits files, passes the
+ * gates, and emits `<promise>DONE</promise>`, but never runs `git commit` — so
+ * sandcastle collects zero commits, the worker branch is empty, and the diff is
+ * stranded (a DONE attempt then lands an empty merge; the no-sentinel salvage
+ * misses it because the branch carries no commits).
+ *
+ * Locates the worktree checked out on `branch` and, when it is dirty, commits
+ * each changed path on ITS OWN COMMIT — the one-commit-per-file discipline
+ * AGENT-PROMPT mandates — then pushes the branch so the host ref carries the
+ * work. Returns the number of files committed (0 = clean worktree / nothing to
+ * salvage). Routed through the same `runGit` seam so tests drive it without an OS
+ * git. Best-effort: a failing stage/commit on one path is skipped, never thrown.
+ */
+export async function salvageUncommitted(ctx: GitContext, branch: string, remote = "origin"): Promise<number> {
+  const wt = await worktreePathForBranch(ctx, branch);
+  if (!wt) return 0;
+  const wctx: GitContext = { cwd: wt, exec: ctx.exec };
+  const status = await runGit(wctx, ["status", "--porcelain"]);
+  if (status.code !== 0) return 0;
+  const paths: string[] = [];
+  for (const line of status.stdout.split("\n")) {
+    const t = line.replace(/\s+$/, "");
+    if (!t) continue;
+    // porcelain v1: "XY path" — the path begins at column 3. A rename is
+    // "old -> new"; take the destination. Quoted paths (spaces/unicode) are
+    // unwrapped to the literal path `git add --` accepts.
+    let p = t.slice(3);
+    const arrow = p.indexOf(" -> ");
+    if (arrow !== -1) p = p.slice(arrow + 4);
+    p = p.replace(/^"(.*)"$/, "$1");
+    if (p) paths.push(p);
+  }
+  let committed = 0;
+  for (const p of paths) {
+    const add = await runGit(wctx, ["add", "--", p]);
+    if (add.code !== 0) continue;
+    const message = `afk: salvage uncommitted change to ${p}\n\nInner agent emitted a completion sentinel without committing this file; AFK committed it so the feedback gate and landing see the work.`;
+    const commit = await runGit(wctx, ["commit", "-m", message, "--", p]);
+    if (commit.code === 0) committed += 1;
+  }
+  if (committed > 0) {
+    // The continuous-push post-commit hook may already have pushed each commit;
+    // force-with-lease guarantees the host ref matches the salvaged worktree.
+    await runGit(wctx, ["push", "--force-with-lease", remote, `HEAD:refs/heads/${branch}`]);
+  }
+  return committed;
+}
+
+/**
  * List origin refs under a namespace ("afk/" | "afk-attempts/") via ls-remote,
  * shaped as BranchRef[]. The optional last-commit epoch is left unset (the
  * snapshot 404 grace falls back to "keep" without it).
