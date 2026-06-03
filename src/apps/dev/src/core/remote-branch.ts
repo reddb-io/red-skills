@@ -38,11 +38,19 @@ const REF_RE = /^afk(-attempts)?\/[A-Za-z0-9._-]+\/[0-9]+-[a-z0-9-]+$/;
 /** Lowercase / collapse-to-dash / trim-dashes / cap-40 title slug. Mirrors
  * afk_ref_slugify in lib/branch-ref.sh. */
 export function slugifyRef(title: string): string {
-  return title
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 40);
+  return (
+    title
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 40)
+      // The slice can land mid-word and re-introduce a TRAILING dash after the
+      // earlier trim (e.g. "…hide-a-duplicate-"). That trailing-dash slug feeds
+      // the branch ref and the sandcastle worktree name, which gets normalised
+      // inconsistently downstream → `fatal: … is not a working tree` (#442).
+      // Re-trim trailing dashes after the slice so the slug is always clean.
+      .replace(/-+$/g, "")
+  );
 }
 
 /** True for a well-formed live or attempt ref. Mirrors afk_ref_validate. */
