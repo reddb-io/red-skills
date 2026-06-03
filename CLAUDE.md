@@ -17,18 +17,20 @@ red-skills/                         ← repo root + marketplace
 ├── .agents/
 │   └── plugins/marketplace.json    ← Codex marketplace manifest
 └── plugins/
-    └── dev/                        ← the `dev` plugin (current)
-        ├── .claude-plugin/plugin.json
-        ├── .codex-plugin/plugin.json
-        └── skills/
-            ├── engineering/        ← day-to-day code work
-            ├── knowledge/          ← knowledge accumulation and curation (LLM Wiki pattern)
-            ├── productivity/       ← general workflow, not code-specific
-            ├── misc/               ← kept but rarely used
-            └── in-progress/        ← drafts, do not publish yet
+    ├── dev/                        ← the `dev` plugin
+    │   ├── .claude-plugin/plugin.json
+    │   ├── .codex-plugin/plugin.json
+    │   └── skills/
+    │       ├── engineering/        ← day-to-day code work
+    │       ├── knowledge/          ← knowledge accumulation and curation (LLM Wiki pattern)
+    │       ├── productivity/       ← general workflow, not code-specific
+    │       ├── misc/               ← kept but rarely used
+    │       └── in-progress/        ← drafts, do not publish yet
+    ├── memory/                     ← the `memory` plugin
+    └── brain/                      ← the `brain` plugin
 ```
 
-Future plugins (e.g. `data`, `ops`) live as siblings under `plugins/` with their own `.claude-plugin/plugin.json`, `.codex-plugin/plugin.json`, and their own `skills/` tree. Each plugin appears as a separate entry in both marketplace manifests.
+Future plugins (e.g. `data`, `ops`) live as additional siblings under `plugins/` with their own `.claude-plugin/plugin.json`, `.codex-plugin/plugin.json`, and their own `skills/` tree. Each plugin appears as a separate entry in both marketplace manifests.
 
 `personal/` and `deprecated/` were removed from upstream and **must not be recreated**.
 

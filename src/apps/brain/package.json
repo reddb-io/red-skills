@@ -1,0 +1,45 @@
+{
+  "name": "@reddb-io/brain",
+  "version": "1.153.0",
+  "private": true,
+  "description": "reddb.io brain plugin — project-local RedDB knowledge repository for freeform captures and graph connections.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "bin": {
+    "brain": "dist/cli.js",
+    "brain-mcp": "dist/mcp-server.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build": "tsc -p tsconfig.build.json && pnpm bundle && pnpm bundle:legacy",
+    "bundle": "pnpm bundle:cli && pnpm bundle:mcp",
+    "bundle:cli": "node ../../../scripts/bundle-app.mjs --entry src/cli.ts --outfile ../../../dist/brain.bundle.min.mjs --asset brain.bundle.min.mjs --minify --reddb-from-package",
+    "bundle:mcp": "node ../../../scripts/bundle-app.mjs --entry src/mcp-server.ts --outfile ../../../dist/brain-mcp.bundle.min.mjs --asset brain-mcp.bundle.min.mjs --minify --reddb-from-package",
+    "bundle:legacy": "pnpm bundle:legacy:cli && pnpm bundle:legacy:mcp",
+    "bundle:legacy:cli": "node ../../../scripts/bundle-app.mjs --entry src/cli.ts --outfile dist-bundle/brain-cli.mjs --asset brain-cli.mjs --reddb-from-package",
+    "bundle:legacy:mcp": "node ../../../scripts/bundle-app.mjs --entry src/mcp-server.ts --outfile dist-bundle/brain-mcp.mjs --asset brain-mcp.mjs --reddb-from-package",
+    "test": "vitest run",
+    "dev": "node --import tsx src/cli.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "@reddb-io/build-info": "workspace:*",
+    "@reddb-io/sdk": "1.7.0",
+    "zod": "^3.23.8"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@reddb-io/sdk"
+    ]
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "esbuild": "^0.24.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}

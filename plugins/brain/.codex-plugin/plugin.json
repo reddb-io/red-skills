@@ -1,0 +1,44 @@
+{
+  "name": "brain",
+  "version": "1.153.0",
+  "description": "reddb.io brain plugin - project-local RedDB knowledge repository for freeform captures and graph connections.",
+  "author": {
+    "name": "reddb.io",
+    "url": "https://github.com/reddb-io"
+  },
+  "homepage": "https://github.com/reddb-io/red-skills",
+  "repository": "https://github.com/reddb-io/red-skills",
+  "license": "Apache-2.0",
+  "keywords": [
+    "codex",
+    "claude-code",
+    "skills",
+    "agents",
+    "brain",
+    "knowledge",
+    "reddb"
+  ],
+  "skills": "./skills/",
+  "hooks": "./hooks/codex.hooks.json",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "RedSkills Brain",
+    "shortDescription": "Project-local RedDB knowledge repository.",
+    "longDescription": "RedSkills Brain creates a project-local RedDB knowledge repository under .red/brain. It captures typed artifacts, stores graph connections, exposes CLI and MCP operations, and initializes automatically when supported agent sessions start in a workspace.",
+    "developerName": "reddb.io",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write",
+      "Shell"
+    ],
+    "websiteURL": "https://github.com/reddb-io/red-skills",
+    "defaultPrompt": [
+      "Use $capture to save this into the project Brain.",
+      "Search Brain before answering a project-history question.",
+      "Run $status to inspect the project Brain store."
+    ],
+    "brandColor": "#2563EB"
+  }
+}

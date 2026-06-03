@@ -30,6 +30,18 @@
         "dev"
       ],
       "category": "Developer Tools"
+    },
+    {
+      "name": "brain",
+      "source": {
+        "source": "local",
+        "path": "./plugins/brain"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_USE"
+      },
+      "category": "Developer Tools"
     }
   ]
 }

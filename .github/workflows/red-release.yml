@@ -192,11 +192,14 @@ jobs:
             plugins/dev/.codex-plugin/plugin.json
             plugins/memory/.claude-plugin/plugin.json
             plugins/memory/.codex-plugin/plugin.json
+            plugins/brain/.claude-plugin/plugin.json
+            plugins/brain/.codex-plugin/plugin.json
           )
           package_jsons=(
             package.json
             src/apps/dev/package.json
             src/apps/memory/package.json
+            src/apps/brain/package.json
             src/apps/benchmark-memory/package.json
             src/apps/benchmark-code-understanding/package.json
             src/apps/code-nav/package.json
@@ -296,6 +299,61 @@ jobs:
           };
           writeFileSync('memory-runtime-manifest.json', JSON.stringify(manifest, null, 2));
           console.log('runtime manifest:', JSON.stringify(manifest));
+          EOF
+
+      # ADR 0029/0038: the Brain runtime ships as release assets, not committed
+      # build output (mirrors memory). esbuild bundles the CLI + MCP (all JS deps
+      # inlined); a manifest pins their checksums + the reddb tag whose
+      # per-platform `red` binaries the bootstrap reuses. Attached at
+      # `gh release create`; fetched by plugins/brain/scripts/bootstrap.mjs.
+      - name: Build brain runtime bundle + manifest
+        if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
+        working-directory: src/apps/brain
+        env:
+          NEXT: ${{ steps.version.outputs.next }}
+          RED_BUILD_VERSION: ${{ steps.version.outputs.next }}
+          RED_BUILD_GIT_SHA: ${{ github.sha }}
+          RED_BUILD_TIME: ${{ github.event.head_commit.timestamp }}
+        run: |
+          set -euo pipefail
+          pnpm bundle:legacy
+          node --input-type=module <<'EOF'
+          import { createHash } from 'node:crypto';
+          import { readFileSync, writeFileSync } from 'node:fs';
+          const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
+          const sdk = pkg.dependencies['@reddb-io/sdk'];
+          const reddb = {
+            repo: 'reddb-io/reddb',
+            tag: `v${sdk}`,
+          };
+          const assetNames = {
+            'linux-x86_64': 'red-linux-x86_64',
+            'linux-aarch64': 'red-linux-aarch64',
+            'linux-armv7': 'red-linux-armv7',
+            'macos-x86_64': 'red-macos-x86_64',
+            'macos-aarch64': 'red-macos-aarch64',
+            'windows-x86_64': 'red-windows-x86_64.exe',
+          };
+          const redAssets = {};
+          for (const [platform, asset] of Object.entries(assetNames)) {
+            const url = `https://github.com/${reddb.repo}/releases/download/${reddb.tag}/${asset}.sha256`;
+            const response = await fetch(url, { redirect: 'follow' });
+            if (!response.ok) throw new Error(`GET ${url} -> ${response.status}`);
+            const sha256 = (await response.text()).match(/\b[0-9a-f]{64}\b/i)?.[0]?.toLowerCase();
+            if (!sha256) throw new Error(`invalid sha256 file for ${asset}`);
+            redAssets[platform] = { asset, sha256 };
+          }
+          const cli = readFileSync('dist-bundle/brain-cli.mjs');
+          const mcp = readFileSync('dist-bundle/brain-mcp.mjs');
+          const manifest = {
+            schema: 'red.brain.runtime.v1',
+            version: process.env.NEXT.replace(/^v/, ''),
+            cli: { asset: 'brain-cli.mjs', sha256: createHash('sha256').update(cli).digest('hex') },
+            mcp: { asset: 'brain-mcp.mjs', sha256: createHash('sha256').update(mcp).digest('hex') },
+            reddb: { ...reddb, sdk, assets: redAssets },
+          };
+          writeFileSync('brain-runtime-manifest.json', JSON.stringify(manifest, null, 2));
+          console.log('brain runtime manifest:', JSON.stringify(manifest));
           EOF
 
       # ADR 0034: the code-nav MCP server ships as a release-asset bundle, like
@@ -401,7 +459,10 @@ jobs:
             dist/benchmark-code-understanding.manifest.json \
             src/apps/memory/dist-bundle/memory-cli.mjs \
             src/apps/memory/dist-bundle/memory-mcp.mjs \
-            src/apps/memory/memory-runtime-manifest.json
+            src/apps/memory/memory-runtime-manifest.json \
+            src/apps/brain/dist-bundle/brain-cli.mjs \
+            src/apps/brain/dist-bundle/brain-mcp.mjs \
+            src/apps/brain/brain-runtime-manifest.json
 
       - name: Tag + GitHub Release
         if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
@@ -425,6 +486,9 @@ jobs:
             src/apps/memory/dist-bundle/memory-cli.mjs
             src/apps/memory/dist-bundle/memory-mcp.mjs
             src/apps/memory/memory-runtime-manifest.json
+            src/apps/brain/dist-bundle/brain-cli.mjs
+            src/apps/brain/dist-bundle/brain-mcp.mjs
+            src/apps/brain/brain-runtime-manifest.json
             dist/release-manifest.json
           )
           if [ -n "$PREVIOUS" ]; then

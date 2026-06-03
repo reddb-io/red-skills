@@ -1,0 +1,156 @@
+#!/usr/bin/env node
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { z } from "zod";
+import { readBuildInfo } from "@reddb-io/build-info";
+import { withBrainRuntime } from "./runtime.js";
+import { ARTIFACT_KINDS, CONNECTION_KINDS } from "./schema.js";
+
+const CaptureInput = z.object({
+  title: z.string().min(1),
+  content: z.string().min(1),
+  kind: z.enum(ARTIFACT_KINDS).default("note"),
+  tags: z.array(z.string()).default([]),
+  source_agent: z.string().optional(),
+  source_session: z.string().optional(),
+  metadata: z.record(z.unknown()).optional(),
+});
+
+const SearchInput = z.object({
+  query: z.string().min(1),
+  limit: z.number().int().min(1).max(50).default(10),
+});
+
+const GetInput = z.object({
+  id: z.union([z.string(), z.number()]),
+});
+
+const LinkInput = z.object({
+  from: z.union([z.string(), z.number()]),
+  to: z.union([z.string(), z.number()]),
+  kind: z.enum(CONNECTION_KINDS).default("related_to"),
+  reason: z.string().optional(),
+});
+
+const TOOLS = [
+  {
+    name: "brain_init",
+    description: "Initialize the project Brain store and return resolved configuration.",
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "brain_status",
+    description: "Return project Brain status.",
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "brain_capture",
+    description: "Capture a durable artifact in the project Brain.",
+    inputSchema: zodShape(CaptureInput),
+  },
+  {
+    name: "brain_search",
+    description: "Search Brain artifacts.",
+    inputSchema: zodShape(SearchInput),
+  },
+  {
+    name: "brain_think",
+    description: "Return a deterministic synthesis over Brain search hits.",
+    inputSchema: zodShape(SearchInput),
+  },
+  {
+    name: "brain_get",
+    description: "Read a Brain artifact by rid or id.",
+    inputSchema: zodShape(GetInput),
+  },
+  {
+    name: "brain_link",
+    description: "Create a typed connection between Brain artifacts.",
+    inputSchema: zodShape(LinkInput),
+  },
+  {
+    name: "brain_backlinks",
+    description: "List incoming connections for a Brain artifact.",
+    inputSchema: zodShape(GetInput),
+  },
+];
+
+const buildInfo = readBuildInfo("brain-mcp");
+
+async function main(): Promise<void> {
+  const server = new Server(
+    { name: "brain", version: buildInfo.version },
+    { capabilities: { tools: {} } },
+  );
+
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
+
+  server.setRequestHandler(CallToolRequestSchema, async (req) => {
+    const args = req.params.arguments ?? {};
+    switch (req.params.name) {
+      case "brain_init":
+      case "brain_status":
+        return text(await withBrainRuntime(async ({ config, store }) => ({
+          rootDir: config.rootDir,
+          configPath: config.configPath,
+          ...(await store.status()),
+        })));
+      case "brain_capture": {
+        const input = CaptureInput.parse(args);
+        return text(await withBrainRuntime(async ({ store }) => store.capture({
+          title: input.title,
+          content: input.content,
+          kind: input.kind,
+          tags: input.tags,
+          sourceAgent: input.source_agent,
+          sourceSession: input.source_session,
+          sourcePath: process.cwd(),
+          metadata: input.metadata,
+        })));
+      }
+      case "brain_search": {
+        const input = SearchInput.parse(args);
+        return text(await withBrainRuntime(async ({ store }) => store.search(input.query, input.limit)));
+      }
+      case "brain_think": {
+        const input = SearchInput.parse(args);
+        const result = await withBrainRuntime(async ({ store }) => store.think(input.query, input.limit));
+        return text(result.answer, result);
+      }
+      case "brain_get": {
+        const input = GetInput.parse(args);
+        return text(await withBrainRuntime(async ({ store }) => store.getArtifact(input.id)));
+      }
+      case "brain_link": {
+        const input = LinkInput.parse(args);
+        return text(await withBrainRuntime(async ({ store }) => store.link(input)));
+      }
+      case "brain_backlinks": {
+        const input = GetInput.parse(args);
+        return text(await withBrainRuntime(async ({ store }) => store.backlinks(input.id)));
+      }
+      default:
+        throw new Error(`unknown Brain tool: ${req.params.name}`);
+    }
+  });
+
+  await server.connect(new StdioServerTransport());
+}
+
+function text(content: unknown, structuredContent: unknown = content) {
+  const rendered = typeof content === "string" ? content : JSON.stringify(content, null, 2);
+  return {
+    content: [{ type: "text" as const, text: rendered }],
+    structuredContent,
+  };
+}
+
+function zodShape(_schema: z.ZodTypeAny): Record<string, unknown> {
+  return { type: "object", additionalProperties: true };
+}
+
+main().catch((err) => {
+  console.error(err instanceof Error ? err.message : String(err));
+  process.exit(1);
+});
