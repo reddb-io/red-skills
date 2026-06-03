@@ -21,7 +21,7 @@ import { accessSync, constants, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Exec as PnpmExec, PackageLayout } from "../core/feedback.js";
 import type { BackpressureExec } from "../core/backpressure.js";
-import { execTool, pnpm as runPnpm } from "./exec.js";
+import { execTool, pnpm as runPnpm, type ExecOptions, type ExecOutput } from "./exec.js";
 import * as gitx from "./git.js";
 
 function slugForBranch(branch: string): string {
@@ -58,6 +58,29 @@ export function splitBranchDir(
   return { branch: dir, scope: "." };
 }
 
+/**
+ * Injectable real-process surface for {@link makeFeedbackWorktree}. Production
+ * wiring binds the real git worktree closures + the `pnpm`/`sh` executors from
+ * exec.ts; tests substitute fakes so the whole manager — materialise, install,
+ * script run, backpressure — exercises with zero subprocesses. (Spawning a real
+ * `pnpm` from inside a vitest worker destabilised the tinypool worker pool.)
+ */
+export interface FeedbackWorktreeIO {
+  worktreeAdd(ctx: gitx.GitContext, dest: string, branch: string): Promise<boolean>;
+  worktreeRemove(ctx: gitx.GitContext, dest: string): Promise<void>;
+  /** Run `pnpm <args>` with the given cwd. */
+  pnpm(args: readonly string[], opts: ExecOptions): Promise<ExecOutput>;
+  /** Run an arbitrary tool (used by the backpressure `sh -c` executor). */
+  exec(cmd: string, args: readonly string[], opts: ExecOptions): Promise<ExecOutput>;
+}
+
+const defaultIO: FeedbackWorktreeIO = {
+  worktreeAdd: gitx.worktreeAdd,
+  worktreeRemove: gitx.worktreeRemove,
+  pnpm: runPnpm,
+  exec: execTool,
+};
+
 export interface FeedbackWorktree {
   /** pnpm executor rebased onto the materialised worker-branch checkout. */
   pnpm: PnpmExec;
@@ -79,7 +102,11 @@ export interface FeedbackWorktree {
  * `.red/tmp/feedback`). Worktrees are created on demand keyed by branch and
  * reused; `cleanup()` removes them all.
  */
-export function makeFeedbackWorktree(root: string, feedbackRoot: string): FeedbackWorktree {
+export function makeFeedbackWorktree(
+  root: string,
+  feedbackRoot: string,
+  io: FeedbackWorktreeIO = defaultIO,
+): FeedbackWorktree {
   const gitCtx: gitx.GitContext = { cwd: root };
   // branch -> resolved checkout path (the worktree, or root on fallback).
   const resolved = new Map<string, string>();
@@ -90,9 +117,27 @@ export function makeFeedbackWorktree(root: string, feedbackRoot: string): Feedba
     const cached = resolved.get(branch);
     if (cached !== undefined) return cached;
     const dest = join(feedbackRoot, slugForBranch(branch));
-    const ok = await gitx.worktreeAdd(gitCtx, dest, branch);
+    const ok = await io.worktreeAdd(gitCtx, dest, branch);
+    if (ok) {
+      // A freshly added worktree has NO node_modules. Without an install here,
+      // the feedback gate's `pnpm -C <dest> test/build` calls fail with
+      // `tsc/vite/svelte-kit: not found` — a FALSE validation failure that parks
+      // otherwise-green work as blocked:validation (#458). Install before any
+      // check can run.
+      const ins = await io.pnpm(["install", "--frozen-lockfile"], { cwd: dest });
+      if (ins.code !== 0) {
+        // Lockfile drift on the branch, or a transient registry error. Keep the
+        // checkout so validation still reflects the branch's real state instead
+        // of silently validating `main` from the primary checkout — but warn so
+        // the cause is visible in the attempt log.
+        process.stderr.write(
+          `warn: feedback worktree install failed for ${branch} (exit ${ins.code}); ` +
+            `validation may report missing binaries\n${ins.stderr.trim()}\n`,
+        );
+      }
+      created.add(dest);
+    }
     const path = ok ? dest : root;
-    if (ok) created.add(dest);
     resolved.set(branch, path);
     return path;
   }
@@ -136,11 +181,11 @@ export function makeFeedbackWorktree(root: string, feedbackRoot: string): Feedba
       const base = await pathFor(branch);
       const rewritten = scope === "." ? base : join(base, scope);
       const rest = args.filter((_, i) => i !== 0 && i !== cIdx && i !== cIdx + 1);
-      const r = await runPnpm(["-C", rewritten, ...rest], { cwd: root });
+      const r = await io.pnpm(["-C", rewritten, ...rest], { cwd: root });
       return { code: r.code, stdout: r.stdout, stderr: r.stderr };
     }
     const head = args[0] === "pnpm" ? args.slice(1) : args;
-    const r = await runPnpm(head, { cwd: root });
+    const r = await io.pnpm(head, { cwd: root });
     return { code: r.code, stdout: r.stdout, stderr: r.stderr };
   };
 
@@ -150,7 +195,7 @@ export function makeFeedbackWorktree(root: string, feedbackRoot: string): Feedba
   // command through `sh -c`, mirroring the lifecycle-hook executor.
   const backpressure: BackpressureExec = async ({ command, cwd }) => {
     const dir = await pathFor(cwd);
-    const r = await execTool("sh", ["-c", command], { cwd: dir });
+    const r = await io.exec("sh", ["-c", command], { cwd: dir });
     return { code: r.code, stdout: r.stdout, stderr: r.stderr };
   };
 
@@ -160,7 +205,7 @@ export function makeFeedbackWorktree(root: string, feedbackRoot: string): Feedba
     backpressure,
     async cleanup() {
       for (const dest of created) {
-        await gitx.worktreeRemove(gitCtx, dest);
+        await io.worktreeRemove(gitCtx, dest);
       }
       created.clear();
       resolved.clear();
