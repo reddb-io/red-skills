@@ -5,6 +5,7 @@ import {
   landPr,
   resolveMergeConflict,
   buildConflictPrompt,
+  waitForReviewCheck,
   type Exec,
   type ExecResult,
 } from "../src/core/merge.js";
@@ -261,6 +262,127 @@ describe("landPr (unlocked path)", () => {
       title: "t",
     });
     expect(result.ok).toBe(false);
+  });
+});
+
+describe("waitForReviewCheck (afk.merge.wait_for_review)", () => {
+  // gh pr checks --json name,state stdout per attempt, replayed in order.
+  function pollExec(stdouts: string[]): { exec: Exec; calls: string[][] } {
+    const calls: string[][] = [];
+    let i = 0;
+    const exec: Exec = async (argv) => {
+      calls.push(argv);
+      const out = stdouts[Math.min(i, stdouts.length - 1)] ?? "[]";
+      i++;
+      return { code: 0, stdout: out, stderr: "" };
+    };
+    return { exec, calls };
+  }
+  const noSleep = async () => {};
+
+  it("returns once the named check reaches a terminal state, no further polls", async () => {
+    const { exec, calls } = pollExec([
+      JSON.stringify([{ name: "CodeRabbit", state: "PENDING" }]),
+      JSON.stringify([{ name: "CodeRabbit", state: "SUCCESS" }]),
+    ]);
+    const r = await waitForReviewCheck(exec, "o/r", 77, { check: "CodeRabbit", sleep: noSleep });
+    expect(r).toBe("concluded");
+    // two polls: pending then success; no third poll after conclusion.
+    expect(calls.filter((c) => c.join(" ").includes("pr checks 77")).length).toBe(2);
+  });
+
+  it("concludes on a FAILURE state too — the wait never gates on the verdict", async () => {
+    const { exec } = pollExec([JSON.stringify([{ name: "CodeRabbit", state: "FAILURE" }])]);
+    const r = await waitForReviewCheck(exec, "o/r", 77, { check: "coderabbit", sleep: noSleep });
+    expect(r).toBe("concluded");
+  });
+
+  it("matches the check name case-insensitively as a substring", async () => {
+    const { exec } = pollExec([
+      JSON.stringify([{ name: "CodeRabbit / review", state: "SUCCESS" }]),
+    ]);
+    const r = await waitForReviewCheck(exec, "o/r", 1, { check: "coderabbit", sleep: noSleep });
+    expect(r).toBe("concluded");
+  });
+
+  it("times out (fail-open) when the check stays pending past maxPolls", async () => {
+    let sleeps = 0;
+    const { exec, calls } = pollExec([JSON.stringify([{ name: "CodeRabbit", state: "PENDING" }])]);
+    const r = await waitForReviewCheck(exec, "o/r", 9, {
+      check: "CodeRabbit",
+      sleep: async () => { sleeps++; },
+      maxPolls: 3,
+    });
+    expect(r).toBe("timeout");
+    expect(calls.filter((c) => c.join(" ").includes("pr checks")).length).toBe(3);
+    // sleeps between polls only (one fewer than polls).
+    expect(sleeps).toBe(2);
+  });
+
+  it("reports absent when the check never registers", async () => {
+    const { exec } = pollExec([JSON.stringify([{ name: "other-ci", state: "PENDING" }])]);
+    const r = await waitForReviewCheck(exec, "o/r", 9, { check: "CodeRabbit", sleep: noSleep, maxPolls: 2 });
+    expect(r).toBe("absent");
+  });
+
+  it("tolerates non-JSON / empty stdout and keeps polling", async () => {
+    const { exec } = pollExec(["", "not json", JSON.stringify([{ name: "CodeRabbit", state: "SUCCESS" }])]);
+    const r = await waitForReviewCheck(exec, "o/r", 9, { check: "CodeRabbit", sleep: noSleep });
+    expect(r).toBe("concluded");
+  });
+});
+
+describe("landPr wait_for_review wiring", () => {
+  it("polls the review check before admin-merge when waitForReview is set", async () => {
+    let checksPolled = false;
+    let mergedAfterPoll = false;
+    const calls: string[][] = [];
+    const exec: Exec = async (argv) => {
+      calls.push(argv);
+      const cmd = argv.join(" ");
+      if (cmd.includes("pr list")) return { code: 0, stdout: "77\n", stderr: "" };
+      if (cmd.includes("pr checks")) {
+        checksPolled = true;
+        return { code: 0, stdout: JSON.stringify([{ name: "CodeRabbit", state: "SUCCESS" }]), stderr: "" };
+      }
+      if (cmd.includes("pr merge")) {
+        mergedAfterPoll = checksPolled; // merge must come AFTER the poll
+        return { code: 0, stdout: "", stderr: "" };
+      }
+      return { code: 0, stdout: "", stderr: "" };
+    };
+    const result = await landPr(exec, {
+      repo: "o/r",
+      gitRepo: "/repo",
+      remote: "origin",
+      branch: "afk/wX/9-x",
+      target: "main",
+      n: 9,
+      title: "t",
+      waitForReview: { check: "CodeRabbit", sleep: async () => {} },
+    });
+    expect(result.ok).toBe(true);
+    expect(checksPolled).toBe(true);
+    expect(mergedAfterPoll).toBe(true);
+    expect(calls.some((c) => c.join(" ").includes("pr merge 77 --admin --merge"))).toBe(true);
+  });
+
+  it("does NOT poll review checks by default (waitForReview absent)", async () => {
+    const { exec, calls } = fakeExec([
+      { match: (a) => a.join(" ").includes("pr list"), result: { stdout: "42\n" } },
+    ]);
+    const result = await landPr(exec, {
+      repo: "o/r",
+      gitRepo: "/repo",
+      remote: "origin",
+      branch: "afk/wX/9-x",
+      target: "main",
+      n: 9,
+      title: "t",
+    });
+    expect(result.ok).toBe(true);
+    expect(joined(calls).some((c) => c.includes("pr checks"))).toBe(false);
+    expect(joined(calls).some((c) => c.includes("pr merge 42 --admin --merge"))).toBe(true);
   });
 });
 

@@ -833,6 +833,8 @@ Scalar run settings live in `.red/config.yaml` under the `afk:` key (alongside t
 | `afk.sandbox` | `RED_AFK_SANDBOX` | `none` | Isolation backend (`none` \| `docker` \| `podman`, ADR 0033). |
 | `afk.max_iterations` | `RED_AFK_MAX_ITERATIONS` | `12` | Sandcastle re-invocation ceiling (issue #322) — the safety cap for "the agent never emits `<promise>DONE</promise>` or `<promise>BLOCKED</promise>`". The completion sentinel is the real terminator, so a normal issue finishes in 1–3 iterations; this leaves headroom without letting repeated no-sentinel failures run for too long. A non-numeric / zero / negative value in either the env or the config is ignored (falls through to the default) so a typo can never disable the cap or pin the agent to 1. |
 | `afk.backpressure` | — | _(empty)_ | Ordered list of shell commands run as an extra pre-merge gate on the DONE path (issue #430, PRD #429). |
+| `afk.merge.wait_for_review` | — | `false` | Merge-gate policy (ADR 0048). When `false` (default), the unlocked admin-merge proceeds **ignoring advisory review checks** (e.g. CodeRabbit) — the binding gates are `drift-guard` (the `pre_merge` hook) + in-process backpressure/feedback. When `true`, the unlocked landing **waits** for the configured review check to conclude before merging, then merges regardless of its verdict (the review stays advisory). `drift-guard` is a hard gate either way. |
+| `afk.merge.review_check` | — | `CodeRabbit` | Name (case-insensitive substring) of the advisory review check `wait_for_review` polls via `gh pr checks`. Only consulted when `afk.merge.wait_for_review` is `true`. |
 
 ```yaml
 afk:
@@ -841,11 +843,23 @@ afk:
   backpressure:           # extra pre-merge gate, runs after the feedback gate
     - npm run test
     - npm run lint
+  merge:
+    wait_for_review: false   # true → hold the unlocked admin-merge until the review check concludes
+    review_check: CodeRabbit
 ```
 
 ### Backpressure gate
 
 `afk.backpressure` is an operator-declared, ordered list of shell commands that **supplements** the auto-derived feedback gate (it does not replace it). On a successful DONE attempt — after the scope-derived `test`/`typecheck`/`lint`/`build` feedback gate passes, before landing — AFK runs each backpressure command in order (`sh -c <command>`) against a checkout of the worker branch. If **any** command exits non-zero the merge is blocked and the issue is parked to `ready-for-human` with `blocked:validation`, exactly like a feedback failure: the failing command and its output tail land in the terminal envelope and in the `red.afk.validation.v1` validation sidecar (records named `backpressure:<command>`). An absent or empty block is a no-op (today's behaviour). The namespaced `plugins.dev.afk.backpressure` location is honoured with the legacy bare `afk.backpressure` fallback (ADR 0042).
+
+### Merge-gate policy
+
+The unlocked admin-merge (`gh pr merge --admin --merge`, ADR 0030) **ignores advisory review checks by default** — this is intentional, not an oversight. The binding gates on a landing are:
+
+1. **`drift-guard`** — the `pre_merge` hook, a hard gate that aborts the merge for this issue (→ `ready-for-human`).
+2. **In-process backpressure / feedback** — the pre-merge feedback-validation step (typecheck/tests, ADR 0008) that only mechanism can refuse a merge on.
+
+External advisory reviewers (CodeRabbit and the like) are **not** binding: the worker is autonomous, and gating an autonomous loop on a human-paced external reviewer would stall the queue (ADR 0048). Opt into waiting with `afk.merge.wait_for_review: true` — the unlocked landing then polls `afk.merge.review_check` until it concludes and merges regardless of the verdict (so its comments are posted before the merge, but the review never blocks the land). The wait is **fail-open**: a reviewer that never registers or never concludes within the poll budget does not wedge the landing.
 
 ## Lifecycle Hooks
 

@@ -34,7 +34,7 @@ import * as fsx from "../runtime/fs.js";
 import type { GhContext } from "../runtime/gh.js";
 import type { GitContext } from "../runtime/git.js";
 import type { ExecFn } from "../runtime/exec.js";
-import { loadConfig, readBackpressure } from "../core/config.js";
+import { getConfig, loadConfig, readBackpressure } from "../core/config.js";
 import { resolveHooks } from "../core/hook-config.js";
 import { attemptLedgerContext, formatAttemptContext, highestAttempt, type AttemptDirEntry } from "../core/attempt-ledger.js";
 import { isValidWorkerId } from "../core/worker-paths.js";
@@ -292,6 +292,19 @@ export function buildProcessDeps(
   // process-issue re-resolves per run from the same config + options.
   resolveHooks(config, resolveOptions);
 
+  // Merge-gate policy (ADR 0048). Default off → the unlocked admin-merge ignores
+  // advisory review checks (drift-guard + in-process backpressure stay the
+  // binding gates). When `afk.merge.wait_for_review` is true, the unlocked
+  // landing holds until the configured review check (`afk.merge.review_check`)
+  // concludes, then merges regardless of the verdict.
+  const waitForReview =
+    getConfig(config, "afk.merge.wait_for_review") === "true"
+      ? {
+          check: getConfig(config, "afk.merge.review_check") || "CodeRabbit",
+          sleep: (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
+        }
+      : undefined;
+
   return {
     gh: {
       viewLabels: (issue) => ghx.viewLabels(ghCtx, issue),
@@ -349,6 +362,7 @@ export function buildProcessDeps(
     runAgent: makeRunAgent(sandbox, process.env, maxIterations, attemptTimeoutSeconds),
     model,
     fallbackRunner,
+    waitForReview,
     // One-shot merge-conflict resolver (merge_resolve_conflict): re-enter the
     // configured runner in the primary checkout with the resolver prompt. The
     // merge primitive verifies git state afterwards, so a non-zero / thrown

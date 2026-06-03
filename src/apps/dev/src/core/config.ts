@@ -28,6 +28,13 @@ export const CONFIG_DEFAULTS = {
   "afk.fleet.target": "2",
   "afk.hooks.defaults.cargo": "true",
   "afk.hooks.defaults.gradle": "true",
+  // Merge-gate policy (ADR 0048). The unlocked admin-merge ignores advisory
+  // review checks by default — the binding gates are `drift-guard` (the
+  // pre_merge hook) + in-process backpressure/feedback. Opt into waiting for an
+  // advisory reviewer to conclude (it stays advisory: AFK waits, then merges
+  // regardless of the verdict) with `afk.merge.wait_for_review: true`.
+  "afk.merge.wait_for_review": "false",
+  "afk.merge.review_check": "CodeRabbit",
 } as const;
 
 export type ConfigKey = keyof typeof CONFIG_DEFAULTS;
