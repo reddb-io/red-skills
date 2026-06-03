@@ -140,7 +140,9 @@ The script is no-op outside `/afk` sessions (it prints nothing when no live work
 
 > Explainer: `.red/config.yaml` is the per-project knob file that `/afk` and friends read at runtime. It holds the project's fallback runner, default fleet target, and per-detector opt-outs. The schema is documented by the loader shipped in PRD #16 and is forward-compatible (unknown keys are ignored). A fresh repo should land with a *commented* template of every v1 knob so the user discovers the available settings without reading docs — the file is a no-op until lines are uncommented.
 
-No user decision here — the skill scaffolds the template whenever the file is missing. If `.red/config.yaml` already exists, leave it alone (any prior edits are project state — never clobbered). See step 4 for the write rule.
+No user decision here for the template itself — the skill scaffolds it whenever the file is missing. If `.red/config.yaml` already exists, leave it alone (any prior edits are project state — never clobbered). See step 4 for the write rule.
+
+The template carries a **commented `afk.backpressure`** block (#430 / PRD #429): an ordered list of shell commands (`npm run test`, `npm run lint`, …) AFK runs after the built-in feedback gate on every successful iteration — DONE and salvaged no-sentinel alike — where any non-zero exit blocks the merge and parks the issue to `ready-for-human`. It ships commented (a no-op until uncommented). **One optional offer:** when scaffolding a fresh template into a repo whose root (or a clearly primary package) `package.json` declares `test` and/or `lint` scripts, surface them and ask whether to pre-fill the block with the matching `npm run <script>` (or `pnpm`) lines — uncommented — instead of the commented placeholder. Only pre-fill on explicit confirmation; otherwise leave the block commented. Never touch an existing `.red/config.yaml` (the clobber rule wins over this offer).
 
 ### 3. Confirm and edit
 
@@ -192,8 +194,9 @@ If the user accepted Section D, copy each `workflows/red-*.yml` template from th
 Scaffold `.red/config.yaml` (Section G, no user decision):
 
 1. If `.red/config.yaml` already exists at the repo root, leave it untouched and log a one-line notice (`.red/config.yaml already present — leaving as-is`). Do **not** diff, merge, or overwrite — any existing content is project state.
-2. Otherwise, ensure `.red/` exists and copy [config-template.yaml](./config-template.yaml) verbatim to `.red/config.yaml`. The template is a fully-commented snapshot of every v1 knob the AFK config loader (`src/apps/dev/src/core/config.ts`) reads from `.red/config.yaml`, so the file is a no-op until the user uncomments a line.
-3. Do **not** `git add` or commit the file — the user controls when it lands in git.
+2. Otherwise, ensure `.red/` exists and copy [config-template.yaml](./config-template.yaml) verbatim to `.red/config.yaml`. The template is a fully-commented snapshot of every v1 knob the AFK config loader (`src/apps/dev/src/core/config.ts`) reads from `.red/config.yaml`, so the file is a no-op until the user uncomments a line — including the commented `afk.backpressure` block.
+3. **Backpressure pre-fill offer (only on a fresh scaffold).** Read the repo-root (or primary package) `package.json`; if it declares `test` and/or `lint` scripts, surface them and ask whether to pre-fill `afk.backpressure` with the matching `npm run <script>` (or `pnpm run <script>`) lines, uncommented. On explicit yes, replace the commented `backpressure:` placeholder with the confirmed list; otherwise leave it commented. Skip silently when no such scripts exist. This step never runs when `.red/config.yaml` already existed (step 1 wins).
+4. Do **not** `git add` or commit the file — the user controls when it lands in git.
 
 If the user accepted Section F, wire the statusline:
 

@@ -5,6 +5,12 @@
 #   default_runner: claude        # fallback runner when no explicit signal
 #   fleet:
 #     target: 2                   # default supervisor worker target
+#   backpressure:                 # extra merge gates run on every successful
+#     - npm run test              # iteration (DONE + salvaged no-sentinel), after
+#     - npm run lint              # the built-in feedback gate. Any non-zero exit
+#                                 # blocks the merge and parks to ready-for-human,
+#                                 # exactly like a feedback failure. Optional;
+#                                 # absent/empty = no-op. (#430 / PRD #429)
 #   hooks:
 #     defaults:
 #       cargo: true               # ship cargo isolation on Rust projects
