@@ -49,6 +49,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [fix(afk): harden sandcastle integration (pre-mortem J/E/D/F/G/H)](./pages/328-fix-afk-harden-sandcastle-integration-pre-mortem-j-e-d-f-g-h.md)
 - [fix(afk): monitor diff column counts committed work + relabel issue ratio](./pages/392-fix-afk-monitor-diff-column-counts-committed-work-relabel-is.md)
 - [fix(afk): native fleet supervisor — poll cadence + real stall-reaper IO](./pages/285-fix-afk-native-fleet-supervisor-poll-cadence-real-stall-reap.md)
+- [fix(afk): require the DONE sentinel even when work is already complete (Defeito 1)](./pages/427-fix-afk-require-the-done-sentinel-even-when-work-is-already.md)
 - [fix(afk): restore Task Mirror via monitor --mirror-plan](./pages/331-fix-afk-restore-task-mirror-via-monitor-mirror-plan.md)
 - [fix(afk): uncap sandcastle inner agent maxIterations (fixes #322)](./pages/327-fix-afk-uncap-sandcastle-inner-agent-maxiterations-fixes-322.md)
 - [fix(afk): write afk.state.json + lanes on the native path (monitor/statusline/stall-detector were blind)](./pages/359-fix-afk-write-afk-state-json-lanes-on-the-native-path-monito.md)
