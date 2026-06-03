@@ -65,7 +65,14 @@ function makeDeps(over: Partial<Record<keyof FakeIo, unknown>> = {}): {
     isAlive: vi.fn(() => true),
     killTree: vi.fn(async () => {}),
     inspectTree: vi.fn((): readonly ProcessSnapshotEntry[] => []),
-    sleep: vi.fn(async () => {}),
+    // Resolve on a macrotask (not immediately): runSupervisor wraps each tick in
+    // guardedTick, which RACES the tick against `sleep(ceiling)`. An
+    // immediately-resolving sleep makes the ceiling win every race, so the real
+    // `{stopped:true}` is discarded and the `for(;;)` loop spins forever (→ OOM,
+    // #446). A `setTimeout(…, 0)` resolves after the tick's microtasks, so the
+    // tick wins and `stopped` propagates — matching production, where `sleep` is a
+    // real timer that never beats a sub-second tick.
+    sleep: vi.fn((_ms: number) => new Promise<void>((resolve) => setTimeout(resolve, 0))),
     agentLaneMtime: vi.fn(() => 0),
     resolveIterDir: vi.fn((): IterDirInfo | null => null),
     teardownIterDir: vi.fn(async () => {}),
@@ -429,8 +436,10 @@ describe("runSupervisor", () => {
     expect(io.spawnSlot).toHaveBeenCalledWith(1);
     // Stop-file honoured → workers terminated.
     expect(io.killTree).toHaveBeenCalled();
-    // Stopped on the first tick → no inter-tick sleep happened.
-    expect(io.sleep).not.toHaveBeenCalled();
+    // Stopped on the first tick: guardedTick calls sleep(ceiling) once per tick,
+    // but the inter-tick CADENCE sleep is never reached (the loop returns first).
+    expect(io.sleep).toHaveBeenCalledTimes(1);
+    expect(io.sleep).toHaveBeenCalledWith(120000);
   });
 
   it("sleeps the poll cadence between ticks before stopping on the 2nd", async () => {
@@ -447,9 +456,10 @@ describe("runSupervisor", () => {
 
     await runSupervisor(state, deps, config({ target: 1, pollIntervalS: 15 }), stop);
 
-    // Exactly one inter-tick sleep, at the configured cadence (15s → 15000ms).
-    expect(io.sleep).toHaveBeenCalledTimes(1);
+    // Exactly one inter-tick CADENCE sleep at 15s (filtering out the per-tick
+    // guardedTick ceiling sleeps, which use config.tickTimeoutS).
     expect(io.sleep).toHaveBeenCalledWith(15000);
+    expect(io.sleep.mock.calls.filter((c) => c[0] === 15000)).toHaveLength(1);
   });
 
   it("honours a non-default poll cadence", async () => {
@@ -460,8 +470,8 @@ describe("runSupervisor", () => {
 
     await runSupervisor(state, deps, config({ target: 1, pollIntervalS: 7 }), stop);
 
-    expect(io.sleep).toHaveBeenCalledTimes(1);
     expect(io.sleep).toHaveBeenCalledWith(7000);
+    expect(io.sleep.mock.calls.filter((c) => c[0] === 7000)).toHaveLength(1);
   });
 });
 
