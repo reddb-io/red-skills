@@ -35,6 +35,7 @@ stale notes inline.
 - **0031** Branch-lock value drives AFK base/merge; enforcement stays agent-only
 - **0033** AFK agent execution runs on `@ai-hero/sandcastle`
 - **0048** AFK merges without advice; in-process backpressure (`drift-guard` + feedback) is the guardrail — opt into waiting with `afk.merge.wait_for_review` *(refines 0030, 0008)*
+- **0049** Model-tier routing embedded in the plugin (single config source), enforced by the shared skill + hooks + sandcastle trio, per runner *(relates 0003, 0033)*
 
 ## Branch lock
 - **0006** Branch lock enforces on the agent only, not the human terminal
