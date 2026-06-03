@@ -1,7 +1,7 @@
 import { type RedDB, connect } from "@reddb-io/sdk";
 import type { GraphRow, SearchRow, StoredNode } from "./graph-store.js";
 import { rowToNode } from "./graph-store.js";
-import { COLLECTIONS } from "./schema.js";
+import { COLLECTIONS, HIDDEN_BY_EDGE_LABELS } from "./schema.js";
 
 export interface HistoricalMemoryStoreOptions {
   uri: string;
@@ -73,7 +73,7 @@ export class HistoricalMemoryStore {
     if (wanted.size === 0) return out;
 
     for (const edge of await this.listEdges()) {
-      if (String(edge.label ?? edge.LABEL ?? "") !== "SUPERSEDED_BY") continue;
+      if (!isHiddenByEdgeLabel(String(edge.label ?? edge.LABEL ?? ""))) continue;
       const from = edgeRid(edge, "from");
       const to = edgeRid(edge, "to");
       if (wanted.has(from) && Number.isFinite(to)) out.set(from, to);
@@ -104,6 +104,10 @@ function asOfClauses(ref: string): string[] {
     ? ["COMMIT", "BRANCH", "TAG"]
     : ["BRANCH", "TAG", "COMMIT"];
   return candidates.map((kind) => `AS OF ${kind} ${escaped}`);
+}
+
+function isHiddenByEdgeLabel(label: string): boolean {
+  return (HIDDEN_BY_EDGE_LABELS as readonly string[]).includes(label);
 }
 
 function quoteRef(ref: string): string {
