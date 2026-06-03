@@ -173,6 +173,7 @@ describe("MCP server over stdio", () => {
           "memory_conflicts",
           "memory_communities",
           "memory_communities_viewer",
+          "memory_community_digest",
           "memory_references_radar",
           "memory_confidence",
           "memory_context_pack",

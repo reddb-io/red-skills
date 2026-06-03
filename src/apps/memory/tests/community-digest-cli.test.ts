@@ -1,0 +1,214 @@
+import { spawnSync } from "node:child_process";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { afterEach, describe, expect, test } from "vitest";
+import { MemoryStore } from "../src/graph-store.js";
+import { initGraph } from "../src/init.js";
+import { getReadOnlyMemoryOperation } from "../src/operations.js";
+import { buildCommunityDigest } from "../src/community-digest.js";
+
+const TIMEOUT = 40_000;
+const pkgRoot = resolve(__dirname, "..");
+const roots: string[] = [];
+const stores: MemoryStore[] = [];
+
+afterEach(async () => {
+  await Promise.all(stores.splice(0).map((s) => s.close().catch(() => {})));
+  await Promise.all(roots.splice(0).map((d) => rm(d, { recursive: true, force: true })));
+});
+
+function runMemory(args: string[]) {
+  return spawnSync(process.execPath, ["--import", "tsx", "src/cli.ts", ...args], {
+    cwd: pkgRoot,
+    encoding: "utf8",
+    timeout: TIMEOUT,
+  });
+}
+
+async function initRoot(): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), "memory-community-digest-cli-"));
+  roots.push(root);
+  await initGraph(root);
+  return root;
+}
+
+async function openStore(root: string): Promise<MemoryStore> {
+  const store = await MemoryStore.open({
+    uri: `file://${join(root, ".red/memory/graph.rdb")}`,
+    project: "test",
+  });
+  stores.push(store);
+  return store;
+}
+
+async function seedTwoCommunities(root: string): Promise<void> {
+  const store = await openStore(root);
+  const mk = (label: string, title: string) =>
+    store.upsertNode({
+      label,
+      node_type: "concept",
+      properties: { title, content: title },
+    });
+  const [a, b, c, x, y, z] = await Promise.all([
+    mk("auth-login", "auth login flow"),
+    mk("auth-token", "auth token rotation"),
+    mk("auth-session", "auth session policy"),
+    mk("cache-index", "cache index"),
+    mk("cache-ttl", "cache ttl"),
+    mk("cache-warmup", "cache warmup"),
+  ]);
+  const e = (from: number, to: number) =>
+    store.upsertEdge({ label: "REFERENCES", from_rid: from, to_rid: to });
+  await e(a, b);
+  await e(b, c);
+  await e(c, a);
+  await e(x, y);
+  await e(y, z);
+  await e(z, x);
+  await e(c, x);
+  await store.close();
+}
+
+interface DigestBody {
+  schema_version: string;
+  read_only: boolean;
+  cached: boolean;
+  graph_hash: string;
+  cache_key: string;
+  community_count: number;
+  digests: Array<{
+    community_id: string;
+    size: number;
+    top_label: string;
+    top_node_type: string;
+    labels: Array<{ value: string; count: number }>;
+    node_types: Array<{ value: string; count: number }>;
+  }>;
+}
+
+describe("memory community-digest CLI", () => {
+  test(
+    "computes a deterministic top-label digest, caches by graph hash, invalidates on change, and never mutates the graph",
+    async () => {
+      const root = await initRoot();
+      await seedTwoCommunities(root);
+
+      expect(
+        getReadOnlyMemoryOperation("memory.community-digest").renderer.cli,
+      ).toMatchObject({ command: "community-digest", supportsJson: true });
+
+      const before = await openStore(root);
+      const beforeStats = await before.stats();
+      await before.close();
+
+      // First run: cache miss, deterministic digest.
+      const first = runMemory(["community-digest", "--root", root, "--json"]);
+      expect(first.status).toBe(0);
+      const firstBody = JSON.parse(first.stdout) as DigestBody;
+
+      expect(firstBody.schema_version).toBe("memory.community-digest.v1");
+      expect(firstBody.read_only).toBe(true);
+      expect(firstBody.cached).toBe(false);
+      expect(firstBody.graph_hash).toMatch(/^[a-f0-9]{64}$/);
+      expect(firstBody.cache_key).toBe(`cache:community-digest:${firstBody.graph_hash}`);
+      expect(firstBody.community_count).toBe(2);
+      expect(firstBody.digests).toHaveLength(2);
+      expect(firstBody.digests.map((d) => d.size).sort()).toEqual([3, 3]);
+      for (const digest of firstBody.digests) {
+        // Top label is the alphabetically-first member here (each label unique → count 1).
+        expect(digest.top_label).toBe(digest.labels[0]?.value);
+        expect(digest.top_node_type).toBe("concept");
+        expect(digest.labels).toHaveLength(3);
+        expect(digest.node_types).toEqual([{ value: "concept", count: 3 }]);
+        // Label histogram is ranked count-desc then value-asc — deterministic.
+        const values = digest.labels.map((l) => l.value);
+        expect([...values].sort()).toEqual(values);
+      }
+      expect(firstBody.digests.some((d) => d.top_label === "auth-login")).toBe(true);
+      expect(firstBody.digests.some((d) => d.top_label === "cache-index")).toBe(true);
+
+      // Second run on an unchanged graph: cache hit, identical content.
+      const second = runMemory(["community-digest", "--root", root, "--json"]);
+      expect(second.status).toBe(0);
+      const secondBody = JSON.parse(second.stdout) as DigestBody;
+      expect(secondBody.cached).toBe(true);
+      expect(secondBody.graph_hash).toBe(firstBody.graph_hash);
+      expect(secondBody.digests).toEqual(firstBody.digests);
+
+      // Changing the graph invalidates the cache and recomputes.
+      const mutate = await openStore(root);
+      const newNode = await mutate.upsertNode({
+        label: "billing-invoice",
+        node_type: "concept",
+        properties: { title: "billing invoice", content: "billing invoice" },
+      });
+      const target = (await mutate.listNodes()).find((n) => n.label === "cache-index");
+      expect(target).toBeDefined();
+      await mutate.upsertEdge({ label: "REFERENCES", from_rid: newNode, to_rid: target!.rid });
+      await mutate.close();
+
+      const third = runMemory(["community-digest", "--root", root, "--json"]);
+      expect(third.status).toBe(0);
+      const thirdBody = JSON.parse(third.stdout) as DigestBody;
+      expect(thirdBody.graph_hash).not.toBe(firstBody.graph_hash);
+      expect(thirdBody.cached).toBe(false);
+
+      // Analytics only: the digest is never written back as a node or edge.
+      const after = await openStore(root);
+      const afterStats = await after.stats();
+      await after.close();
+      expect(afterStats.nodes).toBe(beforeStats.nodes + 1); // only our explicit mutation
+      expect(afterStats.edges).toBe(beforeStats.edges + 1);
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "cache modes: read-write populates, read-only hits without writing, off never caches",
+    async () => {
+      const root = await initRoot();
+      await seedTwoCommunities(root);
+      const fixedNow = new Date("2026-01-01T00:00:00.000Z");
+
+      // read-write + off modes, on one store opened sequentially.
+      const store = await openStore(root);
+      // read-write: first call is a miss and populates the cache.
+      const rw1 = await buildCommunityDigest(store, { cache: "read-write", now: fixedNow });
+      expect(rw1.cached).toBe(false);
+      expect(rw1.community_count).toBe(2);
+      // Second read-write call is a hit and preserves the original generated_at.
+      const rw2 = await buildCommunityDigest(store, {
+        cache: "read-write",
+        now: new Date("2026-02-02T00:00:00.000Z"),
+      });
+      expect(rw2.cached).toBe(true);
+      expect(rw2.generated_at).toBe(rw1.generated_at);
+      expect(rw2.digests).toEqual(rw1.digests);
+      // off: never reads or writes the cache — always a miss, same deterministic content.
+      const offRun = await buildCommunityDigest(store, { cache: "off", now: fixedNow });
+      expect(offRun.cached).toBe(false);
+      expect(offRun.digests).toEqual(rw1.digests);
+      await store.close();
+
+      // Move the graph to a fresh, uncached hash.
+      const mutate = await openStore(root);
+      await mutate.upsertNode({
+        label: "ops-runbook",
+        node_type: "concept",
+        properties: { title: "ops runbook", content: "ops runbook" },
+      });
+      await mutate.close();
+
+      // read-only against the fresh hash: a miss that must NOT populate the cache,
+      // so a second read-only call is still a miss.
+      const reopened = await openStore(root);
+      const ro1 = await buildCommunityDigest(reopened, { cache: "read-only", now: fixedNow });
+      expect(ro1.cached).toBe(false);
+      const ro2 = await buildCommunityDigest(reopened, { cache: "read-only", now: fixedNow });
+      expect(ro2.cached).toBe(false);
+      await reopened.close();
+    },
+    TIMEOUT,
+  );
+});

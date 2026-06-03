@@ -133,7 +133,7 @@ function summarizeCommunities(assignments: CommunityAssignment[]): CommunitySumm
     .sort((a, b) => b.count - a.count || a.id.localeCompare(b.id));
 }
 
-function graphStateHash(nodes: StoredNode[], edges: Record<string, unknown>[]): string {
+export function graphStateHash(nodes: StoredNode[], edges: Record<string, unknown>[]): string {
   const normalized = {
     nodes: nodes
       .map((node) => ({
