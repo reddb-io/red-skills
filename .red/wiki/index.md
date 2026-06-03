@@ -22,6 +22,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [feat(afk): --boot-only dry-run + parallelize boot reads + fix smoke](./pages/324-feat-afk-boot-only-dry-run-parallelize-boot-reads-fix-smoke.md)
 - [feat(afk): RED_AFK_SANDBOX env override + fix E2E smoke docker path](./pages/310-feat-afk-red-afk-sandbox-env-override-fix-e2e-smoke-docker-p.md)
 - [feat(afk): TypeScript runtime — committed bundle, release pipeline, 21 ported modules](./pages/282-feat-afk-typescript-runtime-committed-bundle-release-pipelin.md)
+- [feat(afk): always show diff volume in monitor + fleet total](./pages/421-feat-afk-always-show-diff-volume-in-monitor-fleet-total.md)
 - [feat(afk): attempt progress guard — abort a stalled agent, park to ready-for-human (ADR 0044)](./pages/400-feat-afk-attempt-progress-guard-abort-a-stalled-agent-park-t.md)
 - [feat(afk): bounded auto-recovery for recoverable blocks](./pages/294-feat-afk-bounded-auto-recovery-for-recoverable-blocks.md)
 - [feat(afk): default maxIterations to 50 + make it configurable via .red/config.yaml](./pages/360-feat-afk-default-maxiterations-to-50-make-it-configurable-vi.md)
