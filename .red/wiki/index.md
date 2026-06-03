@@ -26,6 +26,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [feat(afk): bounded auto-recovery for recoverable blocks](./pages/294-feat-afk-bounded-auto-recovery-for-recoverable-blocks.md)
 - [feat(afk): default maxIterations to 50 + make it configurable via .red/config.yaml](./pages/360-feat-afk-default-maxiterations-to-50-make-it-configurable-vi.md)
 - [feat(afk): externalize proof-of-life — heartbeat record, state field, on_heartbeat hook (ADR 0045)](./pages/401-feat-afk-externalize-proof-of-life-heartbeat-record-state-fi.md)
+- [feat(afk): raise max iterations to 20 + per-iteration boundary markers](./pages/413-feat-afk-raise-max-iterations-to-20-per-iteration-boundary-m.md)
 - [feat(afk): record reasoning attempts into memory (ADR 0017), CLI-to-CLI direct](./pages/330-feat-afk-record-reasoning-attempts-into-memory-adr-0017-cli.md)
 - [feat(afk): req:N dependency labels + event-driven auto-unblock](./pages/292-feat-afk-req-n-dependency-labels-event-driven-auto-unblock.md)
 - [feat(afk): statusline reads project root from first arg; 🙋→🆘](./pages/266-feat-afk-statusline-reads-project-root-from-first-arg.md)
