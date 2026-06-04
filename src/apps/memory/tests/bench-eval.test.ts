@@ -4,6 +4,7 @@ import {
   EVAL_SCHEMA_VERSION,
   answerFromPack,
   buildContextPack,
+  createNeo4jSubstrateAdapter,
   countBenchTokens,
   evaluateSubstrateAdapter,
   exactMatch,
@@ -14,6 +15,7 @@ import {
   runBenchEval,
   toJsonl,
   tokenF1,
+  type Neo4jSubstrateCommand,
   type SubstrateAdapter,
 } from "../src/bench-eval.js";
 
@@ -139,6 +141,50 @@ describe("memory bench eval — substrate + answerer", () => {
     expect(answerFromPack(pack)).toBe("pnpm");
   });
 
+  test("neo4j adapter runs native traversal through an injectable executor", async () => {
+    const corpus = await loadCorpus(CORPUS_DIR);
+    const questions = await loadQuestions(CORPUS_DIR);
+    const q = questions.find((x) => x.id === "q-001")!;
+    const commands: Neo4jSubstrateCommand[] = [];
+    const adapter = createNeo4jSubstrateAdapter({
+      executor(command) {
+        commands.push(command);
+        if (command.operation === "retrieve") {
+          expect(command.cypher).toContain("MATCH (question)-[qTerm:HAS_TERM]->");
+          expect(command.cypher).toContain("<-[mention:MENTIONS]-(memory:BenchMemory)");
+          expect(command.cypher).toContain("ORDER BY score DESC, id ASC");
+          expect(command.params).toMatchObject({ questionId: "q-001", limit: 2 });
+          return {
+            rows: [
+              { id: "doc-001", score: 7 },
+              { id: "doc-002", score: 1 },
+            ],
+          };
+        }
+        expect(command.cypher).toContain("CREATE (memory:BenchMemory");
+        expect(command.cypher).toContain("MERGE (memory)-[mention:MENTIONS]->");
+        expect(command.params).toMatchObject({ runId: "memory-bench-eval:neo4j" });
+        expect(Array.isArray(command.params.entries)).toBe(true);
+        return { rows: [] };
+      },
+    });
+
+    const report = await evaluateSubstrateAdapter(adapter, corpus, [q], {
+      packSize: 2,
+      now: () => FIXED_NOW,
+    });
+
+    expect(commands.map((command) => command.operation)).toEqual(["ingest", "retrieve"]);
+    expect(report.substrate).toBe("neo4j");
+    expect(report.substrates[0]?.label).toBe("Neo4j native graph traversal");
+    expect(report.records[0]).toMatchObject({
+      question_id: "q-001",
+      pack_ids: ["doc-001", "doc-002"],
+      predicted_answer: "pnpm",
+      exact_match: 1,
+    });
+  });
+
   test("answerer abstains (empty string) on an empty pack", () => {
     expect(answerFromPack({ question_id: "x", substrate: "reddb", entries: [] })).toBe("");
   });
@@ -158,15 +204,17 @@ describe("memory bench eval — runner", () => {
     expect(report.aggregate.f1).toBeGreaterThanOrEqual(report.aggregate.exact_match);
   });
 
-  test("default run compares RedDB against markdown embedding-RAG with quality per token", async () => {
+  test("default run compares RedDB, markdown embedding-RAG, and Neo4j traversal", async () => {
     const report = await runBenchEval({ corpusDir: CORPUS_DIR, now: () => FIXED_NOW });
-    expect(report.substrates.map((summary) => summary.substrate)).toEqual(["reddb", "markdown-rag"]);
-    expect(report.comparisons).toHaveLength(1);
-    expect(report.comparisons[0]).toMatchObject({
-      id: "reddb_vs_markdown-rag",
-      candidate: "reddb",
-      baseline: "markdown-rag",
-    });
+    expect(report.substrates.map((summary) => summary.substrate)).toEqual([
+      "reddb",
+      "markdown-rag",
+      "neo4j",
+    ]);
+    expect(report.comparisons.map((comparison) => comparison.id)).toEqual([
+      "reddb_vs_markdown-rag",
+      "reddb_vs_neo4j",
+    ]);
     for (const summary of report.substrates) {
       expect(summary.records).toHaveLength(report.question_count);
       expect(summary.aggregate.tokens.input).toBeGreaterThan(0);
@@ -174,6 +222,18 @@ describe("memory bench eval — runner", () => {
       expect(summary.aggregate.quality_per_1k_tokens).toBeGreaterThan(0);
     }
     expect(countBenchTokens("hello world")).toBeLessThan("hello world".length);
+  });
+
+  test("explicit neo4j substrate runs only the Neo4j adapter", async () => {
+    const report = await runBenchEval({
+      corpusDir: CORPUS_DIR,
+      substrate: "neo4j",
+      now: () => FIXED_NOW,
+    });
+    expect(report.substrate).toBe("neo4j");
+    expect(report.substrates.map((summary) => summary.substrate)).toEqual(["neo4j"]);
+    expect(report.comparisons).toEqual([]);
+    expect(report.aggregate.f1).toBeGreaterThan(0);
   });
 
   test("each record carries the stable per-question schema", async () => {
