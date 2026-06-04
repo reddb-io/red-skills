@@ -24,6 +24,8 @@ source "$HERE/lib/lock-store.sh"
 source "$HERE/lib/scope-resolver.sh"
 # shellcheck source=lib/git-command-classifier.sh
 source "$HERE/lib/git-command-classifier.sh"
+# shellcheck source=lib/dev-config.sh
+source "$HERE/lib/dev-config.sh"
 
 INPUT="$(cat)"
 COMMAND="$(jq -r '.tool_input.command // empty' <<<"$INPUT" 2>/dev/null)"
@@ -38,6 +40,19 @@ fi
 
 # Scope: /afk worktrees are exempt even when a lock is active.
 scope_should_enforce "$ROOT" || exit 0
+
+if dev_config_lock_primary_branch_enabled "$ROOT/.red/config.yaml" &&
+  [[ "$(classify_primary_branch_switch_guard "$COMMAND")" == "block" ]]; then
+  cat >&2 <<EOF
+BLOCKED by primary branch guard: dev.lock-primary-branch is true.
+The command '$COMMAND' would switch the agent's primary checkout branch.
+
+Allowed in the primary checkout: git commit, git worktree add, read-only git,
+and non-branch-changing commands. To work on another branch, create/use a
+worktree under .red/tmp/work-*/ or ask the user to change the primary branch.
+EOF
+  exit 2
+fi
 
 LOCKFILE="$ROOT/.red/tmp/branch-lock.yaml"
 LOCK_BRANCH="$(lock_store_read "$LOCKFILE")" || exit 0   # absent => unlocked
