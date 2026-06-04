@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@reddb-io/build-info": "workspace:*",
+    "@reddb-io/sdk": "1.7.0",
     "@reddb-io/shared": "workspace:*"
   },
   "devDependencies": {
