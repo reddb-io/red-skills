@@ -17,7 +17,7 @@ It ships as three plugins:
 
 | Plugin | Job | Use it when... |
 |--------|-----|----------------|
-| **`dev`** | Turns plans and GitHub issues into reviewed, tested PRs. | You want `/start`, `/to-prd`, `/to-issues`, `/triage`, `/tdd`, `/diagnose`, `/wiki`, and the autonomous `/afk` loop. |
+| **`dev`** | Turns plans and GitHub issues into reviewed, tested PRs. | You want `/start`, `/to-prd`, `/to-issues`, `/triage`, `/tdd`, `/diagnose`, `/wiki`, the autonomous `/afk` loop, and the interactive `/ship` finalizer. |
 | **`memory`** | Gives those agents governed operational memory. | You want decisions, gotchas, validations, provenance, claim checks, readiness, context packs, and handoffs to survive `/clear`. |
 | **`brain`** | Gives the workspace a RedDB knowledge repository. | You want to dump notes, ideas, decisions, references, questions, and other knowledge into `.red/brain/*` and connect it later. |
 
@@ -245,8 +245,8 @@ The script links into `~/.claude/skills`, `~/.agents/skills`, and `~/.codex/skil
 
 | Agent | Invocation | Notes |
 |-------|------------|-------|
-| **Claude Code** | `/afk`, `/wiki`, `/triage`, `$init`, `$recall`, `$capture`, ... | Native `dev` slash commands after `/plugin install dev@red-skills`; install `memory@red-skills` for governed memory skills and `brain@red-skills` for project Brain skills. |
-| **Codex CLI** | `$afk`, `$wiki`, `$triage`, `$init`, `$recall`, ... | Skill-name convention after `codex plugin marketplace add reddb-io/red-skills`. |
+| **Claude Code** | `/afk`, `/ship`, `/wiki`, `/triage`, `$init`, `$recall`, `$capture`, ... | Native `dev` slash commands after `/plugin install dev@red-skills`; install `memory@red-skills` for governed memory skills and `brain@red-skills` for project Brain skills. |
+| **Codex CLI** | `$afk`, `$ship`, `$wiki`, `$triage`, `$init`, `$recall`, ... | Skill-name convention after `codex plugin marketplace add reddb-io/red-skills`. |
 | **Gemini CLI / others** | `$afk`, `$recall`, etc. | Same `$<name>` convention. Works with any agent that can read local `SKILL.md` files and run bash. |
 
 Teach Codex (or any non-Claude-Code agent) the convention by appending to `~/.codex/AGENTS.md`:
@@ -411,6 +411,7 @@ Small, sharp skills. They work with any model. Each one targets a specific failu
 | Code doesn't work | [`/tdd`](./plugins/dev/skills/engineering/tdd/SKILL.md), [`/diagnose`](./plugins/dev/skills/engineering/diagnose/SKILL.md) |
 | Codebase turned into a mud ball | [`/to-prd`](./plugins/dev/skills/engineering/to-prd/SKILL.md), [`/zoom-out`](./plugins/dev/skills/engineering/zoom-out/SKILL.md), [`/improve-codebase-architecture`](./plugins/dev/skills/engineering/improve-codebase-architecture/SKILL.md) |
 | I want it to run while I sleep | [`/afk`](./plugins/dev/skills/engineering/afk/SKILL.md) |
+| I have committed work and want a review-respecting landing | [`/ship`](./plugins/dev/skills/engineering/ship/SKILL.md) |
 
 Composable. Boring on purpose where boring is enough. Sharp where it matters.
 
@@ -424,6 +425,7 @@ Composable. Boring on purpose where boring is enough. Sharp where it matters.
 | Skill | What it does |
 |-------|--------------|
 | **[afk](./plugins/dev/skills/engineering/afk/SKILL.md)** | Drains `ready-for-agent` issues in isolated worktrees. Claude/Codex runner cascade, fleet mode (`/afk fleet N`), pluggable detectors via `.red/config.yaml`, canonical attempt envelopes on the issue thread, 48h sparkline monitor, statusline integration. |
+| **[ship](./plugins/dev/skills/engineering/ship/SKILL.md)** | Interactive finalizer for committed work in `.red/tmp/work-ship-*/` worktrees. Pushes early, opens or reuses a PR, monitors checks and reviews with a time cap, then approves/merges or parks the linked issue and PR in `ready-for-human`. |
 | **[curate](./plugins/dev/skills/engineering/curate/SKILL.md)** | Interactive, archive-only Skill curator. Lists `archive` candidates from `memory curate skills --json`, requires explicit approval, performs a recoverable archive of Curatable skills (atomic `rename` + SHA-256 manifest), and reverses it with `/curate --restore <name>`. Tracer slice — only the `archive` category is wired. |
 | **[context](./plugins/dev/skills/engineering/context/SKILL.md)** | Compose the RedSkills context stack before non-trivial work: domain docs, ADRs, LLM Wiki, Memory graph/recall, graph-aware zoom-out, durable learning capture, and self-improvement telemetry. |
 | **[diagnose](./plugins/dev/skills/engineering/diagnose/SKILL.md)** | Disciplined diagnosis: reproduce → minimise → hypothesise → instrument → fix → regression-test. |

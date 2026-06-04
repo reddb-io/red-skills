@@ -19,7 +19,7 @@ The hook logic is self-contained: it depends on neither the
 `git-guardrails-claude-code` skill nor anything else, and the two stack
 harmlessly if both are installed.
 
-`/afk` worktrees under `.red/tmp/work-*/` are always exempt — the lock protects
+`/afk` and `/ship` worktrees under `.red/tmp/work-*/` are always exempt — the lock protects
 the interactive primary checkout, never the autonomous loop.
 
 <what-to-do>
