@@ -2,12 +2,16 @@ import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import {
   EVAL_SCHEMA_VERSION,
+  FROZEN_JUDGE_J_CONFIG,
   abstentionScore,
   answerFromPack,
+  buildJudgeJPrompt,
   buildContextPack,
+  createFrozenLlmJudgeJAdapter,
   createFullContextAdapter,
   createGraphifySubstrateAdapter,
   createNeo4jSubstrateAdapter,
+  createRedDbSubstrateAdapter,
   countBenchTokens,
   evaluateSubstrateAdapter,
   exactMatch,
@@ -16,10 +20,12 @@ import {
   loadQuestions,
   isAbstentionAnswer,
   normalizeAnswer,
+  parseJudgeJResponse,
   runBenchEval,
   toJsonl,
   tokenF1,
   type GraphifySubstrateCommand,
+  type JudgeJAdapter,
   type Neo4jSubstrateCommand,
   type SubstrateAdapter,
 } from "../src/bench-eval.js";
@@ -119,6 +125,59 @@ describe("memory bench eval — scorer (pure)", () => {
     expect(abstentionScore(unanswerable, "atlas-runner")).toBe(-1);
     expect(abstentionScore(answerable, "")).toBe(-1);
     expect(abstentionScore(answerable, "pnpm")).toBe(0);
+  });
+
+  test("Judge J parser accepts the frozen JSON shape and rejects invalid scores", () => {
+    expect(parseJudgeJResponse('{"score":0.5,"verdict":"partial","rationale":"missing one support"}')).toEqual({
+      score: 0.5,
+      verdict: "partial",
+      rationale: "missing one support",
+    });
+    expect(parseJudgeJResponse("```json\n{\"score\":1,\"verdict\":\"correct\",\"rationale\":\"ok\"}\n```")).toMatchObject({
+      score: 1,
+      verdict: "correct",
+    });
+    expect(() => parseJudgeJResponse('{"score":2,"verdict":"correct"}')).toThrow(/between 0 and 1/);
+  });
+
+  test("frozen Judge J adapter pins model + prompt version and delegates to a provider client", async () => {
+    const calls: Array<{ system: string; user: string }> = [];
+    const adapter = createFrozenLlmJudgeJAdapter({
+      async complete(req) {
+        calls.push(req);
+        return '{"score":1,"verdict":"correct","rationale":"semantically equivalent"}';
+      },
+    });
+    const corpus = await loadCorpus(STRUCTURED_CORPUS_DIR);
+    const questions = await loadQuestions(STRUCTURED_CORPUS_DIR);
+    const q = questions.find((question) => question.id === "q-mh-001")!;
+    const pack = buildContextPack(corpus, q, 5, "reddb");
+
+    const result = await adapter.score({
+      question: q,
+      predicted_answer: "us-east-1",
+      gold_answer: q.gold_answer,
+      context_pack: pack,
+      exact_match: 1,
+      f1: 1,
+    });
+
+    expect(adapter.config).toMatchObject({
+      scorer: "J",
+      model: "gpt-4o-2024-08-06",
+      prompt_version: "memory-bench-judge-j.v1",
+    });
+    expect(result.score).toBe(1);
+    expect(calls[0]?.system).toContain("memory-bench-judge-j.v1");
+    expect(calls[0]?.user).toContain("q-mh-001");
+    expect(buildJudgeJPrompt({
+      question: q,
+      predicted_answer: "us-east-1",
+      gold_answer: q.gold_answer,
+      context_pack: pack,
+      exact_match: 1,
+      f1: 1,
+    }).system).toContain("frozen Memory benchmark LLM judge J");
   });
 });
 
@@ -314,9 +373,56 @@ describe("memory bench eval — substrate + answerer", () => {
 });
 
 describe("memory bench eval — runner", () => {
+  test("fake Judge J scores only open-ended questions and is reported beside exact-match", async () => {
+    const calls: string[] = [];
+    const fakeJudge: JudgeJAdapter = {
+      config: FROZEN_JUDGE_J_CONFIG,
+      score(input) {
+        calls.push(input.question.id);
+        return {
+          score: input.exact_match === 1 ? 1 : 0.25,
+          verdict: input.exact_match === 1 ? "correct" : "partial",
+          rationale: `fake judge for ${input.question.id}`,
+        };
+      },
+    };
+
+    const report = await runBenchEval({
+      corpusDir: STRUCTURED_CORPUS_DIR,
+      adapters: [createRedDbSubstrateAdapter("reddb")],
+      judge: fakeJudge,
+      now: () => FIXED_NOW,
+    });
+
+    expect(report.judge).toMatchObject({
+      scorer: "J",
+      model: "gpt-4o-2024-08-06",
+      prompt_version: "memory-bench-judge-j.v1",
+    });
+    expect(calls).toEqual(["q-mh-001", "q-mh-002", "q-t-001", "q-t-002"]);
+    expect(report.aggregate.exact_match).toBe(1);
+    expect(report.aggregate.judge_j).toMatchObject({
+      scorer: "J",
+      score: 1,
+      judged_question_count: 4,
+      open_ended_question_count: 4,
+    });
+    expect(report.records.find((record) => record.question_id === "q-001")?.judge_j).toBeNull();
+    expect(report.records.find((record) => record.question_id === "q-mh-001")?.judge_j).toMatchObject({
+      score: 1,
+      prompt_version: "memory-bench-judge-j.v1",
+    });
+    expect(report.records.find((record) => record.question_id === "q-mh-001")?.open_ended).toBe(true);
+  });
+
   test("report shape matches schema v1 and carries an aggregate score", async () => {
     const report = await runBenchEval({ corpusDir: CORPUS_DIR, now: () => FIXED_NOW });
     expect(report.schema_version).toBe(EVAL_SCHEMA_VERSION);
+    expect(report.judge).toMatchObject({
+      scorer: "J",
+      model: "gpt-4o-2024-08-06",
+      prompt_version: "memory-bench-judge-j.v1",
+    });
     expect(report.generated_at).toBe(FIXED_NOW.toISOString());
     expect(report.substrate).toBe("reddb");
     expect(report.category).toBe("single-hop");
@@ -458,6 +564,8 @@ describe("memory bench eval — runner", () => {
       expect(typeof r.predicted_answer).toBe("string");
       expect(Array.isArray(r.gold_doc_ids)).toBe(true);
       expect(Array.isArray(r.pack_ids)).toBe(true);
+      expect(typeof r.open_ended).toBe("boolean");
+      expect(r.judge_j === null || typeof r.judge_j.score === "number").toBe(true);
       expect([0, 1]).toContain(r.exact_match);
       expect(r.f1).toBeGreaterThanOrEqual(0);
       expect(r.f1).toBeLessThanOrEqual(1);
