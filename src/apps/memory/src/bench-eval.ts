@@ -205,6 +205,30 @@ export interface Neo4jSubstrateAdapterOptions {
   executor?: Neo4jSubstrateExecutor;
 }
 
+export interface GraphifySubstrateCommand {
+  operation: "ingest" | "retrieve";
+  argv: string[];
+  params: Record<string, unknown>;
+}
+
+export interface GraphifySubstrateResult {
+  rows?: Array<Record<string, unknown>>;
+  stdout?: string;
+  stderr?: string;
+  status?: number | null;
+}
+
+export type GraphifySubstrateExecutor =
+  (command: GraphifySubstrateCommand) => Promise<GraphifySubstrateResult> | GraphifySubstrateResult;
+
+export interface GraphifySubstrateAdapterOptions {
+  id?: string;
+  binary?: string;
+  graphPath?: string;
+  sourcePath?: string;
+  executor?: GraphifySubstrateExecutor;
+}
+
 function asQuestion(value: unknown): Question {
   if (!value || typeof value !== "object") throw new Error("question entry must be an object");
   const r = value as Record<string, unknown>;
@@ -434,6 +458,82 @@ export function createNeo4jSubstrateAdapter(
   };
 }
 
+interface GraphifyDocument {
+  id: string;
+  title: string;
+  text: string;
+  metadata: {
+    structural_type: string;
+    engineering_code: string;
+    tags: string[];
+    fact: string;
+  };
+  terms: Neo4jTerm[];
+}
+
+interface GraphifyIndex {
+  byId: Map<string, CorpusEntry>;
+  executor: GraphifySubstrateExecutor;
+  graphPath: string;
+  sourcePath: string;
+  binary: string;
+}
+
+export function createGraphifySubstrateAdapter(
+  opts: GraphifySubstrateAdapterOptions = {},
+): SubstrateAdapter<GraphifyIndex> {
+  const id = opts.id ?? "graphify";
+  const binary = opts.binary ?? "graphify";
+  const sourcePath = opts.sourcePath ?? `memory-bench-eval/${id}/corpus`;
+  const graphPath = opts.graphPath ?? `graphify-out/${id}/graph.json`;
+  const executor = opts.executor ?? createInMemoryGraphifySubstrateExecutor();
+  return {
+    id,
+    label: "Graphify CLI graph query",
+    async ingestCorpus(corpus) {
+      const documents = corpus.map(graphifyDocument);
+      await executor({
+        operation: "ingest",
+        argv: [binary, "extract", sourcePath, "--no-viz", "--force"],
+        params: { sourcePath, graphPath, documents },
+      });
+      return {
+        byId: new Map(corpus.map((entry) => [entry.id, entry])),
+        executor,
+        graphPath,
+        sourcePath,
+        binary,
+      };
+    },
+    async retrieveQuery(index, question, limit) {
+      const result = await index.executor({
+        operation: "retrieve",
+        argv: [index.binary, "query", question.question, "--graph", index.graphPath, "--json"],
+        params: {
+          sourcePath: index.sourcePath,
+          graphPath: index.graphPath,
+          questionId: question.id,
+          question: question.question,
+          terms: graphifyQuestionTerms(question),
+          limit,
+        },
+      });
+      return graphifyResultRows(result)
+        .map((row) => ({
+          id: graphifyRowId(row),
+          score: graphifyRowScore(row),
+        }))
+        .filter((hit) => hit.id.length > 0 && Number.isFinite(hit.score) && hit.score > 0)
+        .sort((a, b) => b.score - a.score || a.id.localeCompare(b.id))
+        .slice(0, limit)
+        .map((hit) => ({ ...hit, score: round4(hit.score) }));
+    },
+    buildContextPack(index, question, hits, packSize) {
+      return hitsToContextPack(index.byId, question, id, hits.slice(0, packSize));
+    },
+  };
+}
+
 export function createInMemoryNeo4jSubstrateExecutor(): Neo4jSubstrateExecutor {
   const memories = new Map<string, Map<string, number>>();
   return (command) => {
@@ -456,6 +556,38 @@ export function createInMemoryNeo4jSubstrateExecutor(): Neo4jSubstrateExecutor {
       let score = 0;
       for (const [term, qWeight] of questionTerms) {
         const weight = entryTerms.get(term);
+        if (weight !== undefined) score += qWeight * weight;
+      }
+      if (score > 0) rows.push({ id, score: round4(score) });
+    }
+    rows.sort((a, b) => Number(b.score) - Number(a.score) || String(a.id).localeCompare(String(b.id)));
+    const limit = typeof command.params.limit === "number" ? command.params.limit : rows.length;
+    return { rows: rows.slice(0, limit) };
+  };
+}
+
+export function createInMemoryGraphifySubstrateExecutor(): GraphifySubstrateExecutor {
+  const documents = new Map<string, Map<string, number>>();
+  return (command) => {
+    if (command.operation === "ingest") {
+      documents.clear();
+      const rawDocuments = Array.isArray(command.params.documents) ? command.params.documents : [];
+      for (const raw of rawDocuments) {
+        if (!raw || typeof raw !== "object") continue;
+        const r = raw as Record<string, unknown>;
+        const id = typeof r.id === "string" ? r.id : "";
+        if (!id) continue;
+        documents.set(id, neo4jTermsToMap(r.terms));
+      }
+      return { rows: [] };
+    }
+
+    const questionTerms = neo4jTermsToMap(command.params.terms);
+    const rows: Array<Record<string, unknown>> = [];
+    for (const [id, documentTerms] of documents) {
+      let score = 0;
+      for (const [term, qWeight] of questionTerms) {
+        const weight = documentTerms.get(term);
         if (weight !== undefined) score += qWeight * weight;
       }
       if (score > 0) rows.push({ id, score: round4(score) });
@@ -510,10 +642,41 @@ function neo4jQuestionTerms(question: Question): Neo4jTerm[] {
   return uniqueTerms(tokenize(question.question), 1);
 }
 
+function graphifyQuestionTerms(question: Question): Neo4jTerm[] {
+  return uniqueTerms(tokenize(question.question), 1);
+}
+
 function neo4jEntryTerms(entry: CorpusEntry): Neo4jTerm[] {
   const weighted = new Map<string, number>();
   addWeightedTerms(weighted, tokenize(entry.text), 1);
   for (const tag of entry.tags) addWeightedTerms(weighted, tokenize(tag), 0.5);
+  addWeightedTerms(weighted, tokenize(entry.engineering_code), 0.5);
+  return [...weighted]
+    .map(([value, weight]) => ({ value, weight: round4(weight) }))
+    .sort((a, b) => a.value.localeCompare(b.value));
+}
+
+function graphifyDocument(entry: CorpusEntry): GraphifyDocument {
+  return {
+    id: entry.id,
+    title: entry.id,
+    text: entry.text,
+    metadata: {
+      structural_type: entry.structural_type,
+      engineering_code: entry.engineering_code,
+      tags: [...entry.tags],
+      fact: entry.fact,
+    },
+    terms: graphifyDocumentTerms(entry),
+  };
+}
+
+function graphifyDocumentTerms(entry: CorpusEntry): Neo4jTerm[] {
+  const weighted = new Map<string, number>();
+  addWeightedTerms(weighted, tokenize(entry.text), 1);
+  addWeightedTerms(weighted, tokenize(entry.fact), 1);
+  for (const tag of entry.tags) addWeightedTerms(weighted, tokenize(tag), 0.5);
+  addWeightedTerms(weighted, tokenize(entry.structural_type), 0.5);
   addWeightedTerms(weighted, tokenize(entry.engineering_code), 0.5);
   return [...weighted]
     .map(([value, weight]) => ({ value, weight: round4(weight) }))
@@ -539,6 +702,36 @@ function neo4jTermsToMap(value: unknown): Map<string, number> {
     if (term && Number.isFinite(weight) && weight > 0) out.set(term, weight);
   }
   return out;
+}
+
+function graphifyResultRows(result: GraphifySubstrateResult): Array<Record<string, unknown>> {
+  if (Array.isArray(result.rows)) return result.rows;
+  if (!result.stdout?.trim()) return [];
+  try {
+    const parsed = JSON.parse(result.stdout);
+    if (Array.isArray(parsed)) return parsed.filter(isRecord);
+    if (isRecord(parsed)) {
+      const rows = parsed.rows ?? parsed.hits ?? parsed.matches ?? parsed.results;
+      if (Array.isArray(rows)) return rows.filter(isRecord);
+    }
+  } catch {
+    return [];
+  }
+  return [];
+}
+
+function graphifyRowId(row: Record<string, unknown>): string {
+  const id = row.id ?? row.doc_id ?? row.document_id ?? row.node_id;
+  return typeof id === "string" ? id : "";
+}
+
+function graphifyRowScore(row: Record<string, unknown>): number {
+  const score = row.score ?? row.relevance ?? row.rank_score;
+  return typeof score === "number" ? score : Number(score);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
 /**
@@ -801,10 +994,12 @@ function defaultSubstrateAdapters(substrate?: string): SubstrateAdapter[] {
       createRedDbSubstrateAdapter("reddb"),
       createMarkdownRagAdapter("markdown-rag"),
       createNeo4jSubstrateAdapter({ id: "neo4j" }),
+      createGraphifySubstrateAdapter({ id: "graphify" }),
     ];
   }
   if (substrate === "markdown-rag") return [createMarkdownRagAdapter("markdown-rag")];
   if (substrate === "neo4j") return [createNeo4jSubstrateAdapter({ id: "neo4j" })];
+  if (substrate === "graphify") return [createGraphifySubstrateAdapter({ id: "graphify" })];
   throw new Error(`unknown memory bench eval substrate: ${substrate}`);
 }
 
