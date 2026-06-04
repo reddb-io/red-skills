@@ -1,4 +1,4 @@
-import { dirname, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { mkdir, writeFile } from "node:fs/promises";
 import { ZodError } from "zod";
 import {
@@ -25,13 +25,13 @@ export function bindMemoryOperationInput(
 ): Record<string, unknown> {
   const input: Record<string, unknown> = {};
 
-  if (operation.inputBinding.customBind) {
-    Object.assign(input, operation.inputBinding.customBind.bind(transportInput));
-  }
-
   for (const field of operation.inputBinding.fields) {
     const value = bindField(field, transportInput);
     if (value !== undefined) input[field.field] = value;
+  }
+
+  if (operation.inputBinding.customBind) {
+    Object.assign(input, operation.inputBinding.customBind.bind(transportInput));
   }
 
   for (const field of operation.inputBinding.fields) {
@@ -122,6 +122,8 @@ function bindField(
   field: MemoryOperationInputFieldBinding,
   input: MemoryOperationTransportInput,
 ): unknown {
+  if (field.field === "cache" && input.flags["no-cache"] === true) return "off";
+
   if (field.sources.includes("flag")) {
     const value = firstDefined(input.flags, fieldKeyCandidates(field.field, "flag"));
     if (value !== undefined) return coerce(value, field.type);
@@ -158,19 +160,27 @@ function resolveViewerOutPath(
     },
     fieldKeyCandidates(sink.field, "flag"),
   );
-  return typeof raw === "string" && raw.length > 0 ? raw : undefined;
+  if (typeof raw === "string" && raw.length > 0) return raw;
+  return join(
+    input.rootDir ?? process.cwd(),
+    ".red/memory",
+    `${operation.renderer.cli.command.replaceAll(" ", "-")}.html`,
+  );
 }
 
 function fieldKeyCandidates(field: string, source: "flag" | "query"): string[] {
   const kebab = field.replaceAll("_", "-");
   const candidates = [field, kebab];
+  if (field === "budget_chars") candidates.push("budget");
+  if (field === "session_id") candidates.push("session");
+  if (field === "comparison") candidates.push("range");
+  if (field === "changed_files") candidates.push("changed-file", "changed-files");
+  if (field === "node") candidates.push("rid");
+  if (field === "changes") candidates.push("change");
   if (source === "query" && field === "query") candidates.push("q");
   if (source === "query" && ["goal", "focus", "task"].includes(field)) {
     candidates.push("query", "q");
   }
-  if (source === "query" && field === "session_id") candidates.push("session");
-  if (source === "query" && field === "node") candidates.push("rid");
-  if (source === "query" && field === "changes") candidates.push("change");
   return [...new Set(candidates)];
 }
 
@@ -194,7 +204,7 @@ function coerce(value: unknown, type: MemoryOperationInputFieldBinding["type"]):
     if (typeof value === "number") return value;
     if (typeof value === "string") {
       const parsed = Number(value);
-      return Number.isFinite(parsed) ? parsed : value;
+      return Number.isFinite(parsed) ? parsed : undefined;
     }
   }
   if (type === "boolean") {
@@ -206,7 +216,8 @@ function coerce(value: unknown, type: MemoryOperationInputFieldBinding["type"]):
 }
 
 function cliViewerLabel(operation: ReadOnlyMemoryOperation): string {
-  return operation.renderer.cli.command.replace(/^docs /, "doc ").replaceAll("-", " ");
+  if (operation.id === "memory.smart-search-viewer") return "smart-search viewer";
+  return operation.title.replace(/^Memory /, "").replace(/^Doc /, "doc ");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
