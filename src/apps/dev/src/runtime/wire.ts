@@ -54,6 +54,8 @@ export interface AfkPaths {
   stateDir: string;
   workersRoot: string;
   historyPath: string;
+  fleetStatePath: string;
+  fleetFirehosePath: string;
   gitignorePath: string;
   configPath: string;
 }
@@ -66,6 +68,8 @@ export function afkPaths(root: string): AfkPaths {
     stateDir,
     workersRoot: join(tmpDir, "workers"),
     historyPath: join(stateDir, "afk-history.jsonl"),
+    fleetStatePath: join(tmpDir, "afk-supervisor.state.json"),
+    fleetFirehosePath: join(tmpDir, "afk-supervisor.log.jsonl"),
     gitignorePath: join(root, ".gitignore"),
     configPath: join(root, ".red", "config.yaml"),
   };
@@ -207,13 +211,47 @@ export function makeRunAgent(
 
 // ---------- monitor inputs ----------
 
-import type { CompactWorker } from "../core/monitor.js";
+import type { CompactWorker, FleetState } from "../core/monitor.js";
 import { parseState, isStateLive } from "../core/state.js";
 import { parseHistoryLines, type HistoryRecord } from "../core/history.js";
 
 export interface MonitorInputs {
   workers: CompactWorker[];
   events: Array<Pick<HistoryRecord, "event" | "epoch">>;
+  fleet: FleetState | null;
+}
+
+function parseFleetState(raw: unknown): FleetState | null {
+  if (raw === null || typeof raw !== "object") return null;
+  const rec = raw as {
+    ts?: unknown;
+    epoch?: unknown;
+    ready_for_agent?: unknown;
+    slots?: { busy?: unknown; free?: unknown; total?: unknown; parked?: unknown };
+    spawns_this_tick?: unknown;
+  };
+  const epoch = Number(rec.epoch ?? 0);
+  if (!Number.isFinite(epoch) || epoch <= 0) return null;
+  return {
+    ts: typeof rec.ts === "string" ? rec.ts : "",
+    epoch,
+    readyForAgent: Number(rec.ready_for_agent ?? 0) || 0,
+    slotsBusy: Number(rec.slots?.busy ?? 0) || 0,
+    slotsFree: Number(rec.slots?.free ?? 0) || 0,
+    slotsTotal: Number(rec.slots?.total ?? 0) || 0,
+    slotsParked: Number(rec.slots?.parked ?? 0) || 0,
+    spawnsThisTick: Number(rec.spawns_this_tick ?? 0) || 0,
+  };
+}
+
+export async function readFleetState(path: string): Promise<FleetState | null> {
+  const text = await fsx.readText(path);
+  if (text === null) return null;
+  try {
+    return parseFleetState(JSON.parse(text));
+  } catch {
+    return null;
+  }
 }
 
 /** Read every worker state file + the history ledger into the pure renderer's
@@ -271,7 +309,8 @@ export async function collectMonitorInputs(root = process.cwd()): Promise<Monito
 
   const histText = await fsx.readText(paths.historyPath);
   const events = histText === null ? [] : parseHistoryLines(histText).map((r) => ({ event: r.event, epoch: r.epoch }));
-  return { workers, events };
+  const fleet = await readFleetState(paths.fleetStatePath);
+  return { workers, events, fleet };
 }
 
 // ---------- statusline inputs ----------

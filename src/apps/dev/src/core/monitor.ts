@@ -51,6 +51,19 @@ export interface CompactWorker {
   diffRemoved?: number;
 }
 
+export interface FleetState {
+  ts: string;
+  epoch: number;
+  readyForAgent: number;
+  slotsBusy: number;
+  slotsFree: number;
+  slotsTotal: number;
+  slotsParked: number;
+  spawnsThisTick: number;
+}
+
+export const FLEET_STALE_AFTER_S = 180;
+
 /** Formats a diff volume as the `+A -R` suffix the dashboard renders on every
  * worker line (and aggregates into the header). Always produced, even for a
  * zero diff (`+0 -0`) — the volume is shown unconditionally. */
@@ -70,6 +83,22 @@ export function formatElapsed(seconds: number): string {
   const ss = s % 60;
   const pad = (n: number): string => String(n).padStart(2, "0");
   return `${pad(hh)}:${pad(mm)}:${pad(ss)}`;
+}
+
+export function renderFleetLine(fleet: FleetState, now: number): string {
+  const age = now - fleet.epoch;
+  const stale = age >= FLEET_STALE_AFTER_S;
+  const status = stale
+    ? "wedged"
+    : fleet.readyForAgent === 0 && fleet.slotsBusy === 0
+      ? "idle"
+      : "draining";
+  return (
+    `fleet [${status}] last ticked ${formatElapsed(age)} ago` +
+    `  ready:${fleet.readyForAgent}` +
+    `  slots busy:${fleet.slotsBusy} free:${fleet.slotsFree}` +
+    `  spawns:${fleet.spawnsThisTick}`
+  );
 }
 
 function isNoIssue(n: number | string): boolean {
@@ -146,6 +175,7 @@ export function renderCompactDashboard(
   workers: ReadonlyArray<CompactWorker>,
   events: ReadonlyArray<Pick<HistoryRecord, "event" | "epoch">>,
   now: number,
+  fleet?: FleetState | null,
 ): string {
   let added = 0;
   let removed = 0;
@@ -154,12 +184,13 @@ export function renderCompactDashboard(
     removed += w.diffRemoved ?? 0;
   }
   const header = `${buildSparkline(events, now).line}   Δ fleet ${formatDiff(added, removed)}`;
+  const prefix = fleet ? `${header}\n${renderFleetLine(fleet, now)}` : header;
   if (workers.length === 0) {
-    return `${header}\nworkers: (none — /afk not running here)`;
+    return `${prefix}\nworkers: (none — /afk not running here)`;
   }
   const sorted = [...workers].sort((a, b) =>
     startedAtKey(a) < startedAtKey(b) ? -1 : startedAtKey(a) > startedAtKey(b) ? 1 : 0,
   );
   const lines = sorted.map((w) => renderWorkerCompactLine(w, now));
-  return `${header}\n${lines.join("\n")}`;
+  return `${prefix}\n${lines.join("\n")}`;
 }

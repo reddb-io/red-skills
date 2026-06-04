@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afkPaths, resolveRunSettings, collectMonitorInputs } from "../src/runtime/wire.js";
+import { afkPaths, resolveRunSettings, collectMonitorInputs, readFleetState } from "../src/runtime/wire.js";
 
 function scratch(): string {
   return mkdtempSync(join(tmpdir(), "afk-wire-"));
@@ -15,6 +15,8 @@ describe("afkPaths", () => {
     expect(p.stateDir).toBe("/repo/.red/state");
     expect(p.workersRoot).toBe("/repo/.red/tmp/workers");
     expect(p.historyPath).toBe("/repo/.red/state/afk-history.jsonl");
+    expect(p.fleetStatePath).toBe("/repo/.red/tmp/afk-supervisor.state.json");
+    expect(p.fleetFirehosePath).toBe("/repo/.red/tmp/afk-supervisor.log.jsonl");
     expect(p.configPath).toBe("/repo/.red/config.yaml");
   });
 });
@@ -161,9 +163,10 @@ describe("collectMonitorInputs", () => {
   it("returns no workers and no events on an empty root", async () => {
     const root = scratch();
     try {
-      const { workers, events } = await collectMonitorInputs(root);
+      const { workers, events, fleet } = await collectMonitorInputs(root);
       expect(workers).toEqual([]);
       expect(events).toEqual([]);
+      expect(fleet).toBeNull();
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -184,6 +187,37 @@ describe("collectMonitorInputs", () => {
       expect(workers[0]!.state.done).toBe(1);
       // pid 999999 is almost certainly dead → not live
       expect(workers[0]!.live).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("reads the supervisor fleet state file for monitor rendering", async () => {
+    const root = scratch();
+    try {
+      const path = afkPaths(root).fleetStatePath;
+      mkdirSync(join(root, ".red", "tmp"), { recursive: true });
+      writeFileSync(
+        path,
+        JSON.stringify({
+          ts: "2026-05-30T11:00:00Z",
+          epoch: 1780138800,
+          ready_for_agent: 9,
+          slots: { busy: 1, free: 2, total: 3, parked: 0 },
+          spawns_this_tick: 1,
+        }),
+      );
+
+      await expect(readFleetState(path)).resolves.toMatchObject({
+        epoch: 1780138800,
+        readyForAgent: 9,
+        slotsBusy: 1,
+        slotsFree: 2,
+        slotsTotal: 3,
+        spawnsThisTick: 1,
+      });
+      const { fleet } = await collectMonitorInputs(root);
+      expect(fleet?.readyForAgent).toBe(9);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

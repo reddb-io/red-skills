@@ -7,14 +7,16 @@
 // native — no bash anywhere in the loop.
 
 import { spawn } from "node:child_process";
-import { existsSync, openSync, writeFileSync, writeSync, rmSync } from "node:fs";
+import { existsSync, openSync, writeFileSync, writeSync, rmSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import {
+  type FleetHeartbeat,
   initSupervisorState,
   resolveSupervisorConfig,
   runSupervisor,
   type SupervisorDeps,
 } from "../core/supervisor.js";
+import { appendRecord } from "../core/jsonl-log.js";
 import { afkPaths, resolveRepoSlug } from "../runtime/wire.js";
 import { inspectProcessTreeNative } from "../runtime/proc-tree.js";
 import {
@@ -33,6 +35,35 @@ function isAlive(pid: number): boolean {
   } catch {
     return false;
   }
+}
+
+function fleetHeartbeatMessage(hb: FleetHeartbeat): string {
+  return `fleet tick ready=${hb.readyForAgent} busy=${hb.slotsBusy} free=${hb.slotsFree} spawns=${hb.spawnsThisTick}`;
+}
+
+function fleetHeartbeatState(hb: FleetHeartbeat): string {
+  return JSON.stringify(
+    {
+      ts: hb.ts,
+      epoch: hb.epoch,
+      ready_for_agent: hb.readyForAgent,
+      slots: {
+        busy: hb.slotsBusy,
+        free: hb.slotsFree,
+        total: hb.slotsTotal,
+        parked: hb.slotsParked,
+      },
+      spawns_this_tick: hb.spawnsThisTick,
+    },
+    null,
+    2,
+  );
+}
+
+function writeFleetStateAtomic(path: string, hb: FleetHeartbeat): void {
+  const tmp = `${path}.tmp`;
+  writeFileSync(tmp, fleetHeartbeatState(hb), "utf8");
+  renameSync(tmp, path);
 }
 
 /**
@@ -160,6 +191,8 @@ function buildSupervisorDeps(
   root: string,
   tmpDir: string,
   logFd: number,
+  firehosePath: string,
+  statePath: string,
   runner: string,
   ghCtx: ghx.GhContext,
   slotArgs: readonly string[],
@@ -254,6 +287,13 @@ function buildSupervisorDeps(
           // best-effort
         }
       },
+      readyQueueDepth: async () => {
+        try {
+          return await ghx.countReadyForAgent(ghCtx);
+        } catch {
+          return 0;
+        }
+      },
     },
     now,
     // Per-tick liveness line into afk-supervisor.log (best-effort). Makes a
@@ -263,6 +303,32 @@ function buildSupervisorDeps(
         writeSync(logFd, `[${new Date().toISOString()}] ${line}\n`);
       } catch {
         // best-effort: a log-write failure must never affect the loop.
+      }
+    },
+    emitFleetHeartbeat: async (hb) => {
+      try {
+        writeFleetStateAtomic(statePath, hb);
+      } catch {
+        // best-effort: state-file failure must not affect the supervisor.
+      }
+      try {
+        await appendRecord(firehosePath, "heartbeat", fleetHeartbeatMessage(hb), {
+          ts: hb.ts,
+          fields: {
+            worker: "fleet",
+            extra: {
+              scope: "fleet",
+              ready_for_agent: String(hb.readyForAgent),
+              slots_busy: String(hb.slotsBusy),
+              slots_free: String(hb.slotsFree),
+              slots_total: String(hb.slotsTotal),
+              slots_parked: String(hb.slotsParked),
+              spawns_this_tick: String(hb.spawnsThisTick),
+            },
+          },
+        });
+      } catch {
+        // best-effort: firehose failure must not affect the supervisor.
       }
     },
   };
@@ -279,6 +345,8 @@ export async function superviseCommand(args: string[], cwd = process.cwd()): Pro
   const pidFile = join(tmp, "afk-supervisor.pid");
   const stopFile = join(tmp, "afk-supervisor.stop");
   const logFile = join(tmp, "afk-supervisor.log");
+  const firehoseFile = paths.fleetFirehosePath;
+  const stateFile = paths.fleetStatePath;
 
   await import("../runtime/fs.js").then((m) => m.ensureDir(tmp));
   // single-supervisor lock
@@ -305,7 +373,7 @@ export async function superviseCommand(args: string[], cwd = process.cwd()): Pro
   // The filter/policy flags fleet.ts forwarded (--prd/--issues/--alternate/
   // --fallback-runner/--request), threaded into every slot's `run --once`.
   const slotArgs = slotFilterArgs(args);
-  const deps = buildSupervisorDeps(root, tmp, logFd, config.runner, ghCtx, slotArgs);
+  const deps = buildSupervisorDeps(root, tmp, logFd, firehoseFile, stateFile, config.runner, ghCtx, slotArgs);
 
   const stopRequested = (): boolean => existsSync(stopFile);
 

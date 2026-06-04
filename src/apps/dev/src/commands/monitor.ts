@@ -121,9 +121,9 @@ export async function monitorCommand(
     return 0;
   }
 
-  const { workers, events } = await collectMonitorInputs(cwd);
+  const { workers, events, fleet } = await collectMonitorInputs(cwd);
   const now = Math.floor(Date.now() / 1000);
-  const dashboard = renderCompactDashboard(workers, events, now);
+  const dashboard = renderCompactDashboard(workers, events, now, fleet);
   stdout.write(`${dashboard}\n`);
   return 0;
 }

@@ -52,6 +52,8 @@ interface FakeIo {
   editLabels: ReturnType<typeof vi.fn>;
   ensureRunnerErrorLabel: ReturnType<typeof vi.fn>;
   ensureLabel: ReturnType<typeof vi.fn>;
+  readyQueueDepth: ReturnType<typeof vi.fn>;
+  emitFleetHeartbeat: ReturnType<typeof vi.fn>;
   now: ReturnType<typeof vi.fn>;
 }
 
@@ -84,6 +86,8 @@ function makeDeps(over: Partial<Record<keyof FakeIo, unknown>> = {}): {
     editLabels: vi.fn(async () => {}),
     ensureRunnerErrorLabel: vi.fn(async () => {}),
     ensureLabel: vi.fn(async () => {}),
+    readyQueueDepth: vi.fn(async () => 0),
+    emitFleetHeartbeat: vi.fn(async () => {}),
     now: vi.fn(() => NOW),
     ...(over as Partial<FakeIo>),
   };
@@ -107,8 +111,10 @@ function makeDeps(over: Partial<Record<keyof FakeIo, unknown>> = {}): {
       editLabels: io.editLabels,
       ensureRunnerErrorLabel: io.ensureRunnerErrorLabel,
       ensureLabel: io.ensureLabel,
+      readyQueueDepth: io.readyQueueDepth,
     },
     now: io.now,
+    emitFleetHeartbeat: io.emitFleetHeartbeat,
   };
   return { deps, io };
 }
@@ -472,6 +478,33 @@ describe("runSupervisor", () => {
 
     expect(io.sleep).toHaveBeenCalledWith(7000);
     expect(io.sleep.mock.calls.filter((c) => c[0] === 7000)).toHaveLength(1);
+  });
+
+  it("emits one structured fleet heartbeat per supervise tick with queue and slot counts", async () => {
+    const { deps, io } = makeDeps({
+      isAlive: vi.fn((pid: number) => pid !== 1001),
+      readyQueueDepth: vi.fn().mockResolvedValueOnce(5).mockResolvedValueOnce(4),
+      now: vi.fn().mockReturnValueOnce(NOW).mockReturnValueOnce(NOW).mockReturnValueOnce(NOW).mockReturnValueOnce(NOW + 15),
+    });
+    const state = initSupervisorState(1);
+    let probes = 0;
+    const stop = () => (++probes >= 2);
+
+    await runSupervisor(state, deps, config({ target: 1, pollIntervalS: 15 }), stop);
+
+    expect(io.emitFleetHeartbeat).toHaveBeenCalledTimes(2);
+    expect(io.emitFleetHeartbeat.mock.calls[0]![0]).toMatchObject({
+      ts: new Date(NOW * 1000).toISOString(),
+      readyForAgent: 5,
+      slotsBusy: 1,
+      slotsFree: 0,
+      spawnsThisTick: 1,
+    });
+    expect(io.emitFleetHeartbeat.mock.calls[1]![0]).toMatchObject({
+      ts: new Date((NOW + 15) * 1000).toISOString(),
+      readyForAgent: 4,
+      spawnsThisTick: 0,
+    });
   });
 });
 
