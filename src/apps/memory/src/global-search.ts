@@ -17,8 +17,10 @@ export interface GlobalSearchDigestEvidence {
   size: number;
   top_label: string;
   top_node_type: string;
+  top_engineering_code: string | null;
   labels: Array<{ value: string; count: number }>;
   node_types: Array<{ value: string; count: number }>;
+  engineering_codes: Array<{ value: string; count: number }>;
   narrative_summary: string | null;
 }
 
@@ -120,6 +122,15 @@ function scoreDigest(
     }
   }
 
+  for (const code of digest.engineering_codes) {
+    const codeTokens = uniqueTokens(code.value);
+    for (const term of terms) {
+      if (!tokensMatch(term, codeTokens)) continue;
+      matched.add(term);
+      score += code.count * 2;
+    }
+  }
+
   if (digest.narrative_summary) {
     const narrativeTokens = uniqueTokens(digest.narrative_summary);
     for (const term of terms) {
@@ -138,8 +149,10 @@ function scoreDigest(
     size: digest.size,
     top_label: digest.top_label,
     top_node_type: digest.top_node_type,
+    top_engineering_code: digest.top_engineering_code,
     labels: digest.labels.slice(0, 8),
     node_types: digest.node_types,
+    engineering_codes: digest.engineering_codes,
     narrative_summary: digest.narrative_summary,
   };
 }

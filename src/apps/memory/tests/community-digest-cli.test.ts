@@ -7,6 +7,11 @@ import { MemoryStore } from "../src/graph-store.js";
 import { initGraph } from "../src/init.js";
 import { getReadOnlyMemoryOperation } from "../src/operations.js";
 import { buildCommunityDigest } from "../src/community-digest.js";
+import {
+  EMPTY_ENGINEERING_CODE_CURATION,
+  aliasEngineeringCode,
+  saveEngineeringCodeCuration,
+} from "../src/code-curation.js";
 import type { ProviderRequest } from "../src/extract-conversation.js";
 
 const TIMEOUT = 40_000;
@@ -90,8 +95,10 @@ interface DigestBody {
     size: number;
     top_label: string;
     top_node_type: string;
+    top_engineering_code: string | null;
     labels: Array<{ value: string; count: number }>;
     node_types: Array<{ value: string; count: number }>;
+    engineering_codes: Array<{ value: string; count: number }>;
     narrative_summary: string | null;
   }>;
 }
@@ -120,8 +127,8 @@ describe("memory community-digest CLI", () => {
       expect(firstBody.read_only).toBe(true);
       expect(firstBody.cached).toBe(false);
       expect(firstBody.graph_hash).toMatch(/^[a-f0-9]{64}$/);
-      expect(firstBody.cache_key).toBe(
-        `cache:community-digest:${firstBody.graph_hash}:provider:none`,
+      expect(firstBody.cache_key).toMatch(
+        new RegExp(`^cache:community-digest:${firstBody.graph_hash}:codes:[a-f0-9]{12}:provider:none$`),
       );
       expect(firstBody.provider).toMatchObject({
         status: "unavailable",
@@ -137,8 +144,10 @@ describe("memory community-digest CLI", () => {
         // Top label is the alphabetically-first member here (each label unique → count 1).
         expect(digest.top_label).toBe(digest.labels[0]?.value);
         expect(digest.top_node_type).toBe("concept");
+        expect(digest.top_engineering_code).toBeNull();
         expect(digest.labels).toHaveLength(3);
         expect(digest.node_types).toEqual([{ value: "concept", count: 3 }]);
+        expect(digest.engineering_codes).toEqual([]);
         expect(digest.narrative_summary).toBeNull();
         // Label histogram is ranked count-desc then value-asc — deterministic.
         const values = digest.labels.map((l) => l.value);
@@ -273,8 +282,10 @@ describe("memory community-digest CLI", () => {
         model: "llama3.1",
         egress: "local",
       });
-      expect(first.cache_key).toBe(
-        `cache:community-digest:${first.graph_hash}:provider:openai-compat:llama3.1`,
+      expect(first.cache_key).toMatch(
+        new RegExp(
+          `^cache:community-digest:${first.graph_hash}:codes:[a-f0-9]{12}:provider:openai-compat:llama3\\.1$`,
+        ),
       );
       expect(calls).toHaveLength(1);
       expect(first.digests).toHaveLength(2);
@@ -292,6 +303,50 @@ describe("memory community-digest CLI", () => {
       expect(second.digests).toEqual(first.digests);
       expect(calls).toHaveLength(1);
       await store.close();
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "groups engineering-code aliases into canonical digest histograms",
+    async () => {
+      const root = await initRoot();
+      const store = await openStore(root);
+      const a = await store.upsertNode({
+        label: "auth-footgun",
+        node_type: "concept",
+        properties: {
+          title: "auth clock skew",
+          content: "auth clock skew",
+          engineering_code: "footgun",
+        },
+      });
+      const b = await store.upsertNode({
+        label: "auth-gotcha",
+        node_type: "concept",
+        properties: {
+          title: "auth session gotcha",
+          content: "auth session gotcha",
+          engineering_code: "gotcha",
+        },
+      });
+      await store.upsertEdge({ label: "REFERENCES", from_rid: a, to_rid: b });
+      const curation = aliasEngineeringCode(
+        EMPTY_ENGINEERING_CODE_CURATION,
+        "footgun",
+        "gotcha",
+      ).state;
+      await saveEngineeringCodeCuration(store, curation);
+
+      const report = await buildCommunityDigest(store, {
+        cache: "off",
+        now: new Date("2026-01-01T00:00:00.000Z"),
+      });
+      await store.close();
+
+      expect(report.digests).toHaveLength(1);
+      expect(report.digests[0]?.top_engineering_code).toBe("gotcha");
+      expect(report.digests[0]?.engineering_codes).toEqual([{ value: "gotcha", count: 2 }]);
     },
     TIMEOUT,
   );

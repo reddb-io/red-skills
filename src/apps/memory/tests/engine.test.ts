@@ -3,6 +3,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { ask, neighbors, path, recall, search, traverse } from "../src/engine.js";
+import {
+  EMPTY_ENGINEERING_CODE_CURATION,
+  aliasEngineeringCode,
+  resolveEngineeringCodeAlias,
+} from "../src/code-curation.js";
 import { MemoryStore } from "../src/graph-store.js";
 
 // RedDB connects by spawning the bundled `red` binary; give each test room.
@@ -173,6 +178,36 @@ describe("recall", () => {
 
       const { nodes } = await recall(store, "jwt", { codes: ["Root Cause"] });
       expect(nodes.some((n) => n.label === "jwt-expiry-root-cause")).toBe(true);
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "codes and query terms resolve explicit engineering-code aliases without rewriting stored codes",
+    async () => {
+      const store = await openStore();
+      const curation = aliasEngineeringCode(
+        EMPTY_ENGINEERING_CODE_CURATION,
+        "footgun",
+        "gotcha",
+      ).state;
+      await store.upsertNode({
+        label: "jwt-clock-skew-footgun",
+        node_type: "concept",
+        properties: {
+          title: "jwt clock skew",
+          content: "tokens expired early because clock skew was unbounded",
+          engineering_code: "footgun",
+        },
+      });
+
+      const { nodes } = await recall(store, "gotcha", {
+        codes: ["gotcha"],
+        codeCanonicalize: (code) => resolveEngineeringCodeAlias(code, curation),
+      });
+
+      expect(nodes.some((n) => n.label === "jwt-clock-skew-footgun")).toBe(true);
+      expect(nodes.every((n) => n.properties.engineering_code === "footgun")).toBe(true);
     },
     TIMEOUT,
   );

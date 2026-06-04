@@ -89,6 +89,8 @@ export interface RecallOptions {
    * query dimension rather than opaque metadata.
    */
   codes?: string[];
+  /** Resolve explicit code aliases for recall/filter grouping. */
+  codeCanonicalize?: (code: string) => string;
   /**
    * Return the full `SUPERSEDED_BY` chain instead of just its head. Default
    * `false`: a superseded node is hidden behind its successor (issue #72 /
@@ -280,10 +282,14 @@ const SCOPE_RANK: Record<MemoryScope, number> = {
 };
 
 /** The text fields of a node that recall scores against. */
-function nodeText(node: StoredNode): string {
+function nodeText(node: StoredNode, codeCanonicalize: (code: string) => string = normalizeEngineeringCode): string {
   const p = node.properties;
   const tags = Array.isArray(p.tags) ? p.tags.join(" ") : "";
-  return [node.label, p.title, p.summary, p.content, tags].filter(Boolean).join(" ");
+  const code = typeof p.engineering_code === "string" ? normalizeEngineeringCode(p.engineering_code) : "";
+  const canonicalCode = code ? codeCanonicalize(code) : "";
+  return [node.label, p.title, p.summary, p.content, tags, code, canonicalCode]
+    .filter(Boolean)
+    .join(" ");
 }
 
 function excerptOf(node: StoredNode): string {
@@ -539,10 +545,14 @@ function resolveSupersessionHead(
 }
 
 /** Token-overlap score: how many distinct query terms appear in the node. */
-function termScore(node: StoredNode, terms: string[]): number {
+function termScore(
+  node: StoredNode,
+  terms: string[],
+  codeCanonicalize: (code: string) => string = normalizeEngineeringCode,
+): number {
   let score = 0;
   const seen = new Set<string>();
-  for (const token of tokenize(nodeText(node))) {
+  for (const token of tokenize(nodeText(node, codeCanonicalize))) {
     if (terms.includes(token) && !seen.has(token)) {
       seen.add(token);
       score += 1;
@@ -583,6 +593,7 @@ export async function recall(
     depth = 1,
     types,
     codes,
+    codeCanonicalize = normalizeEngineeringCode,
     includeSuperseded = false,
     scope = DEFAULT_RECALL_SCOPE,
     now = Date.now(),
@@ -590,7 +601,7 @@ export async function recall(
   // Pre-normalize the engineering-code filter once (ADR 0035): the stored code is
   // already a normalized slug, so the caller's input is normalized to match.
   const codeFilter =
-    codes && codes.length > 0 ? new Set(codes.map(normalizeEngineeringCode)) : null;
+    codes && codes.length > 0 ? new Set(codes.map(codeCanonicalize)) : null;
   const terms = tokenize(query);
   const index = await loadIndex(store, scope);
   if (terms.length === 0) {
@@ -603,7 +614,7 @@ export async function recall(
   // index happens to cover.
   const scored = new Map<number, number>();
   for (const node of index.values()) {
-    const s = termScore(node, terms);
+    const s = termScore(node, terms, codeCanonicalize);
     if (s > 0) scored.set(node.rid, s);
   }
 
@@ -683,7 +694,7 @@ export async function recall(
     if (types && types.length > 0 && !types.includes(node.node_type)) continue;
     if (codeFilter) {
       const code = node.properties.engineering_code;
-      if (!code || !codeFilter.has(normalizeEngineeringCode(code))) continue;
+      if (!code || !codeFilter.has(codeCanonicalize(code))) continue;
     }
     // Tier-aware composite score: relevance keeps the strongest text match on
     // top; importance/recency/centrality/tier-weight order comparable nodes.

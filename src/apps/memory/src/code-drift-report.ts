@@ -15,6 +15,7 @@ import {
   isSuggestedEngineeringCode,
   normalizeEngineeringCode,
 } from "./extraction-schema.js";
+import type { EngineeringCodeCurationState } from "./code-curation.js";
 
 /** Two or more occurrences make a code recurring rather than one-off. */
 export const DEFAULT_RECURRING_THRESHOLD = 2;
@@ -43,6 +44,8 @@ export interface CodeDriftCountGroup {
 export interface CodeDriftReport {
   /** Version of the extraction schema whose suggested vocabulary was used. */
   schemaVersion: string;
+  /** Version of the suggested engineering-code vocabulary, including curation. */
+  suggestedVersion: string;
   /** Recurrence threshold used to split recurring from one-off. */
   recurringThreshold: number;
   /** Number of nodes carrying a non-blank engineering code. */
@@ -68,6 +71,10 @@ export interface CodeDriftOptions {
   recurringThreshold?: number;
   /** Override the suggested-vocabulary predicate for tests or future callers. */
   isSuggested?: (code: string) => boolean;
+  /** Resolve aliases before known/unknown grouping. Aliasing is explicit curation. */
+  canonicalize?: (code: string) => string;
+  /** Curation metadata used to report the suggested vocabulary version. */
+  curation?: EngineeringCodeCurationState;
 }
 
 /**
@@ -83,6 +90,7 @@ export function buildCodeDriftReport(
 ): CodeDriftReport {
   const threshold = Math.max(2, options.recurringThreshold ?? DEFAULT_RECURRING_THRESHOLD);
   const isSuggested = options.isSuggested ?? isSuggestedEngineeringCode;
+  const canonicalize = options.canonicalize ?? normalizeEngineeringCode;
 
   let totalCoded = 0;
   let knownCount = 0;
@@ -90,7 +98,7 @@ export function buildCodeDriftReport(
 
   for (const raw of codes) {
     if (typeof raw !== "string") continue;
-    const code = normalizeEngineeringCode(raw);
+    const code = canonicalize(raw);
     if (!code) continue;
     totalCoded += 1;
     if (isSuggested(code)) {
@@ -113,6 +121,7 @@ export function buildCodeDriftReport(
 
   return {
     schemaVersion: EXTRACTION_SCHEMA_VERSION,
+    suggestedVersion: options.curation?.suggestedVersion ?? EXTRACTION_SCHEMA_VERSION,
     recurringThreshold: threshold,
     totalCoded,
     knownCount,

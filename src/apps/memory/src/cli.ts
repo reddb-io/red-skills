@@ -70,6 +70,16 @@ import {
 import { buildMemoryExtractionStatus } from "./extraction-status.js";
 import { buildMemoryExtractionStatusViewerArtifact } from "./extraction-status-viewer.js";
 import { buildCodeDriftReport, type CodeDriftCountGroup } from "./code-drift-report.js";
+import {
+  aliasEngineeringCode,
+  isCuratedSuggestedEngineeringCode,
+  loadEngineeringCodeCuration,
+  promoteEngineeringCode,
+  resolveEngineeringCodeAlias,
+  saveEngineeringCodeCuration,
+  suggestedEngineeringCodes,
+  type EngineeringCodeCurationState,
+} from "./code-curation.js";
 import { formatOutput, parseInput, type RawPayload } from "./hook-adapters.js";
 import { dispatch, type HookEvent, type Runner } from "./hook-runtime.js";
 import { refreshFromGit, type VcsEvent } from "./vcs-refresh.js";
@@ -355,6 +365,7 @@ Usage:
   memory extraction status           [--root <dir>] [--json]
   memory extraction status-viewer    [--root <dir>] [--out <file>]
   memory code-drift                  [--root <dir>] [--recurring-threshold N] [--json]   (read-only)
+  memory code-curate list|promote|alias [args] [--root <dir>] [--json]
   memory event skill                [--root <dir>] [--event-type ...] ... (or JSON/JSONL on stdin)
   memory curate skills              [--root <dir>] [--stale-days N] [--json]   (report-only)
   memory curate check|list|background|archive|restore [--root <dir>]   (/curate workflow)
@@ -5078,10 +5089,16 @@ async function runExtractionStatusViewer(args: ParsedArgs): Promise<void> {
 async function runCodeDrift(args: ParsedArgs): Promise<void> {
   const { store } = await openGraphStore(args);
   try {
+    const curation = await loadEngineeringCodeCuration(store);
     const nodes = await store.listNodes();
     const report = buildCodeDriftReport(
       nodes.map((node) => node.properties.engineering_code),
-      { recurringThreshold: intFlag(args.flags, "recurring-threshold") },
+      {
+        recurringThreshold: intFlag(args.flags, "recurring-threshold"),
+        curation,
+        canonicalize: (code) => resolveEngineeringCodeAlias(code, curation),
+        isSuggested: (code) => isCuratedSuggestedEngineeringCode(code, curation),
+      },
     );
 
     if (args.flags.json === true) {
@@ -5104,6 +5121,72 @@ async function runCodeDrift(args: ParsedArgs): Promise<void> {
   } finally {
     await store.close();
   }
+}
+
+async function runCodeCurate(args: ParsedArgs): Promise<void> {
+  const action = args.positional[0] ?? "list";
+  const { store } = await openGraphStore(args);
+  try {
+    const before = await loadEngineeringCodeCuration(store);
+    let state = before;
+    let changed = false;
+
+    switch (action) {
+      case "list":
+        break;
+      case "promote": {
+        const code = args.positional[1];
+        if (!code) throw new Error("usage: memory code-curate promote <code>");
+        const result = promoteEngineeringCode(before, code);
+        state = result.state;
+        changed = result.changed;
+        if (changed) await saveEngineeringCodeCuration(store, state);
+        break;
+      }
+      case "alias": {
+        const from = args.positional[1];
+        const to = args.positional[2];
+        if (!from || !to) throw new Error("usage: memory code-curate alias <from> <to>");
+        const result = aliasEngineeringCode(before, from, to);
+        state = result.state;
+        changed = result.changed;
+        if (changed) await saveEngineeringCodeCuration(store, state);
+        break;
+      }
+      default:
+        throw new Error("usage: memory code-curate list|promote <code>|alias <from> <to>");
+    }
+
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(codeCurationOutput(state, changed), null, 2));
+      return;
+    }
+
+    console.log(
+      `memory code-curate: suggested vocabulary ${state.suggestedVersion} (${suggestedEngineeringCodes(state).length} code(s))${changed ? " updated" : ""}`,
+    );
+    if (state.promoted.length > 0) console.log(`  promoted: ${state.promoted.join(", ")}`);
+    else console.log("  promoted: (none)");
+    if (state.aliases.length > 0) {
+      console.log("  aliases:");
+      for (const alias of state.aliases) console.log(`    ${alias.from} -> ${alias.to}`);
+    } else {
+      console.log("  aliases: (none)");
+    }
+  } finally {
+    await store.close();
+  }
+}
+
+function codeCurationOutput(state: EngineeringCodeCurationState, changed: boolean) {
+  return {
+    changed,
+    schemaVersion: state.schemaVersion,
+    suggestedVersion: state.suggestedVersion,
+    suggested: suggestedEngineeringCodes(state),
+    promoted: state.promoted,
+    aliases: state.aliases,
+  };
 }
 
 function renderCodeDriftGroups(groups: CodeDriftCountGroup[]): void {
@@ -5466,6 +5549,9 @@ async function runCommunityDigest(args: ParsedArgs): Promise<void> {
       console.log(`  ${digest.community_id}: ${digest.size} node(s)`);
       console.log(`        top label: ${digest.top_label}`);
       console.log(`        top type: ${digest.top_node_type}`);
+      if (digest.top_engineering_code) {
+        console.log(`        top code: ${digest.top_engineering_code}`);
+      }
       if (digest.narrative_summary) {
         console.log(`        summary: ${digest.narrative_summary}`);
       }
@@ -6592,6 +6678,8 @@ async function main(): Promise<void> {
       return runExtraction(args);
     case "code-drift":
       return runCodeDrift(args);
+    case "code-curate":
+      return runCodeCurate(args);
     case "search":
       return runSearch(args);
     case "neighbors":

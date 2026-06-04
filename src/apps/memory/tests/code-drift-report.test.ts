@@ -4,6 +4,12 @@ import {
   buildCodeDriftReport,
 } from "../src/code-drift-report.js";
 import { EXTRACTION_SCHEMA_VERSION } from "../src/extraction-schema.js";
+import {
+  EMPTY_ENGINEERING_CODE_CURATION,
+  aliasEngineeringCode,
+  isCuratedSuggestedEngineeringCode,
+  resolveEngineeringCodeAlias,
+} from "../src/code-curation.js";
 
 describe("code drift report (ADR 0035, #307)", () => {
   test("groups unknown codes by recurrence count and separates recurring from one-off", () => {
@@ -36,6 +42,7 @@ describe("code drift report (ADR 0035, #307)", () => {
     expect(report.oneOff.map((entry) => entry.code)).toEqual(["yak-shave"]);
     expect(report.recurringThreshold).toBe(DEFAULT_RECURRING_THRESHOLD);
     expect(report.schemaVersion).toBe(EXTRACTION_SCHEMA_VERSION);
+    expect(report.suggestedVersion).toBe(EXTRACTION_SCHEMA_VERSION);
   });
 
   test("normalizes codes before counting so variants collapse onto one entry", () => {
@@ -82,5 +89,21 @@ describe("code drift report (ADR 0035, #307)", () => {
     });
     expect(report.knownCount).toBe(2);
     expect(report.entries).toEqual([{ code: "beta", count: 1, recurrence: "one-off" }]);
+  });
+
+  test("explicit aliases resolve synonyms before drift grouping", () => {
+    const curation = aliasEngineeringCode(
+      EMPTY_ENGINEERING_CODE_CURATION,
+      "footgun",
+      "gotcha",
+    ).state;
+    const report = buildCodeDriftReport(["footgun", "footgun", "gotcha", "smell"], {
+      curation,
+      canonicalize: (code) => resolveEngineeringCodeAlias(code, curation),
+      isSuggested: (code) => isCuratedSuggestedEngineeringCode(code, curation),
+    });
+
+    expect(report.knownCount).toBe(3);
+    expect(report.entries).toEqual([{ code: "smell", count: 1, recurrence: "one-off" }]);
   });
 });
