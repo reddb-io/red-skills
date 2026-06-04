@@ -6,6 +6,56 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 
 ---
 
+## afk — post-3d92d56 in-window runtime backfill (#358)
+
+- **status**: modified
+- **upstream**: —
+- **why**: `CHANGES.md` last recorded the native statusline / legacy-shell removal at `3d92d56`, but the next in-window AFK runtime cuts were missing from the audit trail.
+- **what changed**:
+  - `f3213c3`: structured dependencies as `req:N` edge labels, kept dependency waits on `blocked:dependency` instead of `ready-for-human`, and added both event-driven close-cascade unblocking and the boot-time unblock sweep.
+  - `ee680c6`: added typed `blocked:<reason>` labels to every terminal blocked route, with automatic label creation and outcome-derived reasons such as `blocked:quota`, `blocked:validation`, `blocked:spec`, `blocked:stalled`, and `blocked:infra`.
+  - `0a0c35d`: batched boot issue-state lookups so `/afk` performs one `gh issue list` pass for open issue state instead of N per-dependency `gh issue view` calls.
+  - `953f332`: made `--boot-only` an honest dry-run that executes boot sweeps/prechecks and exits before issue selection or agent spawn; boot reads were parallelized and the smoke harness adjusted to that contract.
+  - `1517abe`: anchored sandcastle's `.sandcastle/` runtime under the per-attempt directory (`.red/tmp/workers/{id}/{N}-a{n}/`) instead of the repository root, keeping execution scratch out of the primary checkout.
+  - `9ab3d27`: fixed the statusline installer to resolve the installed AFK bundle from the plugin cache instead of relying on `$CLAUDE_PLUGIN_ROOT`, which Claude Code does not expose to `statusLine` commands.
+  - `a32c3a2`: raised the sandcastle inner-agent `maxIterations` ceiling from sandcastle's effective one-turn default, added `RED_AFK_MAX_ITERATIONS` / config overrides, and guarded the setting with tests.
+  - `1f6c235` / `6283403`: cut and documented v1.142.0 for the #322 maxIterations fix plus the session fixes above (`--boot-only`, boot batching, and sandcastle-under-attempt-dir).
+
+---
+
+## setup-statusline (engineering) — host statusline installer provenance + rework
+
+- **status**: renamed-from-statusline
+- **upstream**: —
+- **why**: The statusline installer is original to reddb.io and was heavily reworked in the v1.142-era window, but it had no standalone change record separate from the AFK runtime statusline command.
+- **what changed**:
+  - Added provenance for the original-to-reddb statusline installer skill: it wires host-specific statusline support around the AFK bundle's `statusline` producer rather than adapting an upstream Matt Pocock skill.
+  - `9ab3d27` reworked the Claude Code path to use an installed-bundle lookup (`sort -V | tail -1`) instead of `$CLAUDE_PLUGIN_ROOT`, preserving renderability inside Claude Code's restricted `statusLine` environment.
+  - `0e8c648` / `51ffc71` renamed the skill from `statusline` to `setup-statusline` and updated README, plugin manifest, engineering bucket docs, and `/setup-red-skills` references. Current disk path: `plugins/dev/skills/engineering/setup-statusline/SKILL.md`.
+  - The current skill also documents the Codex limitation: Codex has built-in footer items but no command-backed statusline, so the AFK worker block remains Claude Code only until Codex supports command hooks.
+
+---
+
+## migrate-to-shoehorn (misc) — upstream provenance
+
+- **status**: added (upstream-derived)
+- **upstream**: `e74f006`
+- **provenance**: inherited from `mattpocock/skills` during the marketplace/plugin restructuring (`7792235`), retained under `plugins/dev/skills/misc/migrate-to-shoehorn/`.
+- **why**: Keep the upstream-derived misc skill visible in the RedSkills audit trail, even though this repo has not materially reworked the body beyond relocation into the dev plugin.
+- **what changed**: No RedSkills behavioural divergence recorded in this window; the skill remains the test-only guide for replacing TypeScript `as` assertions with `@total-typescript/shoehorn`.
+
+---
+
+## setup-pre-commit (misc) — upstream provenance
+
+- **status**: added (upstream-derived)
+- **upstream**: `e74f006`
+- **provenance**: inherited from `mattpocock/skills` during the marketplace/plugin restructuring (`7792235`), retained under `plugins/dev/skills/misc/setup-pre-commit/`.
+- **why**: Keep the upstream-derived misc skill visible in the RedSkills audit trail, even though this repo has not materially reworked the body beyond relocation into the dev plugin.
+- **what changed**: No RedSkills behavioural divergence recorded in this window; the skill remains the Husky/lint-staged/Prettier pre-commit setup guide.
+
+---
+
 ## hitl (engineering) — dedicated human-decision queue workflow (PRD #364)
 
 - **status**: added
@@ -1528,5 +1578,6 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 
 - **status**: removed
 - **upstream**: `e3b90b5`
+- **provenance**: upstream-derived from `mattpocock/skills`; imported during the dev-plugin marketplace restructuring (`7792235`) and later removed in `8e02ac2` / `a49666c`.
 - **why**: upstream AI Hero / Total TypeScript course-exercise scaffolder (targets `pnpm ai-hero-cli internal lint` + an `exercises/` tree); irrelevant to reddb.io engineering.
 - **what changed**: deleted `plugins/dev/skills/misc/scaffold-exercises/`; removed from `plugins/dev/.claude-plugin/plugin.json`, the root `README.md` table, and the `misc/` bucket README. `.codex-plugin` drops it via its `./skills/` wildcard.
