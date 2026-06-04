@@ -132,6 +132,9 @@ export async function writeBenchEvalAnalytics(
       { name: "f1", value: report.aggregate.f1, unit: "score" },
       { name: "abstention_score", value: report.aggregate.abstention_score, unit: "score" },
       { name: "quality_per_1k_tokens", value: report.aggregate.quality_per_1k_tokens, unit: "score_per_1k_tokens" },
+      ...(report.aggregate.judge_j?.score !== null && report.aggregate.judge_j?.score !== undefined
+        ? [{ name: "judge_j", value: report.aggregate.judge_j.score, unit: "score" }]
+        : []),
     ],
     raw: {
       source: opts.source ?? "benchmark-memory bench eval",
@@ -514,7 +517,7 @@ async function refreshRegressionAggregate(db: BenchAnalyticsDb, ts: TimestampNs,
 }
 
 function evalRecordMetrics(record: QuestionRecord): Array<{ name: string; value: number; unit: string }> {
-  return [
+  const metrics = [
     { name: "exact_match", value: record.exact_match, unit: "score" },
     { name: "f1", value: record.f1, unit: "score" },
     { name: "abstention_score", value: record.abstention_score, unit: "score" },
@@ -523,6 +526,8 @@ function evalRecordMetrics(record: QuestionRecord): Array<{ name: string; value:
     { name: "tokens_total", value: record.tokens.total, unit: "tokens" },
     { name: "quality_per_1k_tokens", value: record.quality_per_1k_tokens, unit: "score_per_1k_tokens" },
   ];
+  if (record.judge_j) metrics.push({ name: "judge_j", value: record.judge_j.score, unit: "score" });
+  return metrics;
 }
 
 function recordsByCategory(records: QuestionRecord[]): Map<string, QuestionRecord[]> {

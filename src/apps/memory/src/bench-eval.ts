@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { getEncoding } from "js-tiktoken";
+import type { ProviderClient, ProviderRequest } from "./extract-conversation.js";
 
 /* ----------------------------------------------------------------------------
  * memory bench eval — the deterministic eval spine (#334, parent #333, ADR 0037)
@@ -105,6 +106,65 @@ export interface TokenCounts {
 
 export const EVAL_SCHEMA_VERSION = "memory.bench.eval.v1" as const;
 
+export const JUDGE_J_SCORER = "J" as const;
+export const JUDGE_J_MODEL = "gpt-4o-2024-08-06" as const;
+export const JUDGE_J_PROMPT_VERSION = "memory-bench-judge-j.v1" as const;
+export const JUDGE_J_OPEN_ENDED_CATEGORIES = ["multi-hop", "temporal-as-of"] as const;
+
+export interface JudgeJConfig {
+  scorer: typeof JUDGE_J_SCORER;
+  model: typeof JUDGE_J_MODEL | string;
+  prompt_version: typeof JUDGE_J_PROMPT_VERSION | string;
+  open_ended_categories: readonly string[];
+  score_range: readonly [0, 1];
+}
+
+export const FROZEN_JUDGE_J_CONFIG: JudgeJConfig = {
+  scorer: JUDGE_J_SCORER,
+  model: JUDGE_J_MODEL,
+  prompt_version: JUDGE_J_PROMPT_VERSION,
+  open_ended_categories: JUDGE_J_OPEN_ENDED_CATEGORIES,
+  score_range: [0, 1],
+};
+
+export interface JudgeJInput {
+  question: Question;
+  predicted_answer: string;
+  gold_answer: string;
+  context_pack: ContextPack;
+  exact_match: number;
+  f1: number;
+}
+
+export interface JudgeJResult {
+  score: number;
+  verdict: "correct" | "partial" | "incorrect";
+  rationale: string;
+}
+
+export interface JudgeJAdapter {
+  config: JudgeJConfig;
+  score(input: JudgeJInput): Promise<JudgeJResult> | JudgeJResult;
+}
+
+export interface JudgeJRecord {
+  scorer: typeof JUDGE_J_SCORER;
+  model: string;
+  prompt_version: string;
+  score: number;
+  verdict: JudgeJResult["verdict"];
+  rationale: string;
+}
+
+export interface JudgeJAggregate {
+  scorer: typeof JUDGE_J_SCORER;
+  model: string;
+  prompt_version: string;
+  score: number | null;
+  judged_question_count: number;
+  open_ended_question_count: number;
+}
+
 /** One raw per-question record. Written verbatim as a JSONL line; the schema is
  * stable and versioned so downstream readers (the RedDB analytics hypertable,
  * CI regression diffing) can rely on it. */
@@ -120,8 +180,10 @@ export interface QuestionRecord {
   gold_answer: string;
   predicted_answer: string;
   unanswerable: boolean;
+  open_ended: boolean;
   abstained: boolean;
   abstention_score: number;
+  judge_j: JudgeJRecord | null;
   pack_ids: string[];
   gold_in_pack: boolean;
   gold_rank: number | null;
@@ -137,6 +199,7 @@ export interface SubstrateSummary {
   aggregate: {
     exact_match: number;
     f1: number;
+    judge_j: JudgeJAggregate | null;
     abstention_score: number;
     gold_in_pack_rate: number;
     tokens: TokenCounts;
@@ -187,6 +250,7 @@ export interface CategorySummary {
 export interface EvalAggregate {
   exact_match: number;
   f1: number;
+  judge_j: JudgeJAggregate | null;
   abstention_score: number;
   gold_in_pack_rate: number;
   tokens: TokenCounts;
@@ -212,9 +276,11 @@ export interface EvalReport {
   corpus_size: number;
   question_count: number;
   pack_size: number;
+  judge: JudgeJConfig;
   aggregate: {
     exact_match: number;
     f1: number;
+    judge_j: JudgeJAggregate | null;
     abstention_score: number;
     gold_in_pack_rate: number;
     tokens: TokenCounts;
@@ -1046,6 +1112,80 @@ export function abstentionScore(question: Question, predicted: string): number {
   return abstained ? -1 : 0;
 }
 
+export function isOpenEndedJudgeQuestion(
+  question: Question,
+  config: JudgeJConfig = FROZEN_JUDGE_J_CONFIG,
+): boolean {
+  return !isUnanswerableQuestion(question) &&
+    config.open_ended_categories.some((category) => category === question.category);
+}
+
+export function createFrozenLlmJudgeJAdapter(
+  client: ProviderClient,
+  config: JudgeJConfig = FROZEN_JUDGE_J_CONFIG,
+): JudgeJAdapter {
+  return {
+    config,
+    async score(input) {
+      const response = await client.complete(buildJudgeJPrompt(input, config));
+      return parseJudgeJResponse(response);
+    },
+  };
+}
+
+export function buildJudgeJPrompt(input: JudgeJInput, config: JudgeJConfig = FROZEN_JUDGE_J_CONFIG): ProviderRequest {
+  return {
+    system: [
+      `You are the frozen Memory benchmark LLM judge ${config.scorer}.`,
+      `Prompt version: ${config.prompt_version}.`,
+      "Score whether the predicted answer correctly answers the question using the gold answer as ground truth.",
+      "Return only JSON: {\"score\": number between 0 and 1, \"verdict\": \"correct\"|\"partial\"|\"incorrect\", \"rationale\": string}.",
+      "Use 1 for fully correct, 0.5 for materially partial, and 0 for incorrect or unsupported.",
+    ].join("\n"),
+    user: JSON.stringify({
+      question_id: input.question.id,
+      category: input.question.category,
+      question: input.question.question,
+      as_of: input.question.as_of ?? null,
+      gold_answer: input.gold_answer,
+      predicted_answer: input.predicted_answer,
+      deterministic_scores: {
+        exact_match: input.exact_match,
+        token_f1: input.f1,
+      },
+      context_pack: input.context_pack.entries.map((entry) => ({
+        id: entry.id,
+        rank: entry.rank,
+        fact: entry.fact,
+      })),
+    }),
+  };
+}
+
+export function parseJudgeJResponse(response: string): JudgeJResult {
+  const parsed = JSON.parse(stripJsonFence(response));
+  if (!isRecord(parsed)) throw new Error("Judge J response must be a JSON object");
+  const score = typeof parsed.score === "number" ? parsed.score : Number(parsed.score);
+  if (!Number.isFinite(score) || score < 0 || score > 1) {
+    throw new Error("Judge J response score must be a number between 0 and 1");
+  }
+  const verdict = parsed.verdict;
+  if (verdict !== "correct" && verdict !== "partial" && verdict !== "incorrect") {
+    throw new Error("Judge J response verdict must be correct, partial, or incorrect");
+  }
+  return {
+    score,
+    verdict,
+    rationale: typeof parsed.rationale === "string" ? parsed.rationale : "",
+  };
+}
+
+function stripJsonFence(response: string): string {
+  const trimmed = response.trim();
+  const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  return fenced?.[1]?.trim() ?? trimmed;
+}
+
 /* ----------------------------------------------------------------------------
  * Token accounting — real tokenizer, not character counts
  * --------------------------------------------------------------------------*/
@@ -1095,6 +1235,7 @@ export interface RunEvalOptions {
   packSize?: number;
   substrate?: string;
   adapters?: SubstrateAdapter[];
+  judge?: JudgeJAdapter;
   now?: () => Date;
 }
 
@@ -1107,6 +1248,7 @@ export async function runBenchEval(opts: RunEvalOptions): Promise<EvalReport> {
   for (const adapter of adapters) {
     reports.push(await evaluateSubstrateAdapter(adapter, corpus, questions, {
       packSize,
+      judge: opts.judge,
       now: opts.now,
     }));
   }
@@ -1115,6 +1257,7 @@ export async function runBenchEval(opts: RunEvalOptions): Promise<EvalReport> {
     questions,
     packSize,
     substrate: opts.substrate ?? "reddb",
+    judge: opts.judge,
     now: opts.now,
   });
   const substrates = reports.map(toSubstrateSummary);
@@ -1126,6 +1269,7 @@ export async function runBenchEval(opts: RunEvalOptions): Promise<EvalReport> {
 
 export interface EvaluateSubstrateOptions {
   packSize?: number;
+  judge?: JudgeJAdapter;
   now?: () => Date;
 }
 
@@ -1152,6 +1296,17 @@ export async function evaluateSubstrateAdapter<TIndex>(
     const predicted = answerFromPack(pack, q);
     const em = exactMatch(predicted, q.gold_answer);
     const f1 = tokenF1(predicted, q.gold_answer);
+    const openEnded = isOpenEndedJudgeQuestion(q, opts.judge?.config ?? FROZEN_JUDGE_J_CONFIG);
+    const judgeJ = openEnded && opts.judge
+      ? await scoreJudgeJ(opts.judge, {
+        question: q,
+        predicted_answer: predicted,
+        gold_answer: q.gold_answer,
+        context_pack: pack,
+        exact_match: em,
+        f1,
+      })
+      : null;
     const qAbstentionScore = abstentionScore(q, predicted);
     const unanswerable = isUnanswerableQuestion(q);
     const abstained = isAbstentionAnswer(predicted);
@@ -1179,8 +1334,10 @@ export async function evaluateSubstrateAdapter<TIndex>(
       gold_answer: q.gold_answer,
       predicted_answer: predicted,
       unanswerable,
+      open_ended: openEnded,
       abstained,
       abstention_score: qAbstentionScore,
+      judge_j: judgeJ,
       pack_ids: packIds,
       gold_in_pack: goldInPack,
       gold_rank: goldInPack && q.gold_doc_ids.length > 0 ? goldIdx + 1 : null,
@@ -1197,6 +1354,7 @@ export async function evaluateSubstrateAdapter<TIndex>(
   const aggregate = {
     exact_match: round4(emSum / n),
     f1: round4(f1Sum / n),
+    judge_j: aggregateJudgeJ(records, opts.judge?.config ?? FROZEN_JUDGE_J_CONFIG),
     abstention_score: round4(abstentionScoreSum / n),
     gold_in_pack_rate: round4(goldInPackCount / n),
     tokens,
@@ -1210,6 +1368,7 @@ export async function evaluateSubstrateAdapter<TIndex>(
     corpus_size: corpus.length,
     question_count: questions.length,
     pack_size: packSize,
+    judge: opts.judge?.config ?? FROZEN_JUDGE_J_CONFIG,
     aggregate,
     records,
     substrates: [{
@@ -1246,12 +1405,14 @@ function emptyEvalReport(opts: {
   questions: Question[];
   packSize: number;
   substrate: string;
+  judge?: JudgeJAdapter;
   now?: () => Date;
 }): EvalReport {
   const now = (opts.now ?? (() => new Date()))();
   const aggregate = {
     exact_match: 0,
     f1: 0,
+    judge_j: null,
     abstention_score: 0,
     gold_in_pack_rate: 0,
     tokens: { input: 0, output: 0, total: 0 },
@@ -1265,6 +1426,7 @@ function emptyEvalReport(opts: {
     corpus_size: opts.corpus.length,
     question_count: opts.questions.length,
     pack_size: opts.packSize,
+    judge: opts.judge?.config ?? FROZEN_JUDGE_J_CONFIG,
     aggregate,
     records: [],
     substrates: [],
@@ -1288,6 +1450,35 @@ function reportCategory(questions: Question[]): string {
   if (categories.size === 0) return "single-hop";
   if (categories.size === 1) return questions[0]?.category ?? "single-hop";
   return "mixed";
+}
+
+async function scoreJudgeJ(judge: JudgeJAdapter, input: JudgeJInput): Promise<JudgeJRecord> {
+  const result = await judge.score(input);
+  if (!Number.isFinite(result.score) || result.score < 0 || result.score > 1) {
+    throw new Error("Judge J adapter returned a score outside [0, 1]");
+  }
+  return {
+    scorer: JUDGE_J_SCORER,
+    model: judge.config.model,
+    prompt_version: judge.config.prompt_version,
+    score: round4(result.score),
+    verdict: result.verdict,
+    rationale: result.rationale,
+  };
+}
+
+function aggregateJudgeJ(records: QuestionRecord[], config: JudgeJConfig): JudgeJAggregate | null {
+  const openEndedCount = records.filter((record) => record.open_ended).length;
+  const judged = records.map((record) => record.judge_j).filter((record): record is JudgeJRecord => record !== null);
+  if (openEndedCount === 0 && judged.length === 0) return null;
+  return {
+    scorer: JUDGE_J_SCORER,
+    model: judged[0]?.model ?? config.model,
+    prompt_version: judged[0]?.prompt_version ?? config.prompt_version,
+    score: judged.length > 0 ? round4(judged.reduce((sum, record) => sum + record.score, 0) / judged.length) : null,
+    judged_question_count: judged.length,
+    open_ended_question_count: openEndedCount,
+  };
 }
 
 function buildSubstrateComparisons(summaries: SubstrateSummary[]): SubstrateComparison[] {
@@ -1420,6 +1611,7 @@ function aggregateRecords(records: QuestionRecord[]): EvalAggregate {
   return {
     exact_match: round4(records.reduce((sum, record) => sum + record.exact_match, 0) / n),
     f1: round4(f1Sum / n),
+    judge_j: aggregateJudgeJ(records, FROZEN_JUDGE_J_CONFIG),
     abstention_score: round4(abstentionScoreSum / n),
     gold_in_pack_rate: round4(records.filter((record) => record.gold_in_pack).length / n),
     tokens,
@@ -1454,15 +1646,18 @@ export function formatEvalReport(report: EvalReport): string {
   lines.push(
     `Substrate: \`${report.substrate}\` · category: \`${report.category}\` · corpus: ${report.corpus_size} entries · questions: ${report.question_count} · pack size: ${report.pack_size}.`,
   );
+  lines.push(
+    `Judge J: model \`${report.judge.model}\` · prompt \`${report.judge.prompt_version}\` · open-ended categories: ${report.judge.open_ended_categories.map((category) => `\`${category}\``).join(", ")}.`,
+  );
   lines.push("");
   if (report.substrates.length > 1) {
     lines.push("## Substrates");
     lines.push("");
-    lines.push("| substrate | EM | F1 | abstention | gold-in-pack | input tokens | output tokens | total tokens | F1 / 1k tokens |");
-    lines.push("| --- | --- | --- | ---: | --- | ---: | ---: | ---: | ---: |");
+    lines.push("| substrate | EM | F1 | J | abstention | gold-in-pack | input tokens | output tokens | total tokens | F1 / 1k tokens |");
+    lines.push("| --- | --- | --- | --- | ---: | --- | ---: | ---: | ---: | ---: |");
     for (const summary of report.substrates) {
       lines.push(
-        `| ${summary.substrate} | ${summary.aggregate.exact_match.toFixed(3)} | ${summary.aggregate.f1.toFixed(3)} | ${summary.aggregate.abstention_score.toFixed(3)} | ${summary.aggregate.gold_in_pack_rate.toFixed(3)} | ${summary.aggregate.tokens.input} | ${summary.aggregate.tokens.output} | ${summary.aggregate.tokens.total} | ${summary.aggregate.quality_per_1k_tokens.toFixed(3)} |`,
+        `| ${summary.substrate} | ${summary.aggregate.exact_match.toFixed(3)} | ${summary.aggregate.f1.toFixed(3)} | ${formatJudgeJAggregate(summary.aggregate.judge_j)} | ${summary.aggregate.abstention_score.toFixed(3)} | ${summary.aggregate.gold_in_pack_rate.toFixed(3)} | ${summary.aggregate.tokens.input} | ${summary.aggregate.tokens.output} | ${summary.aggregate.tokens.total} | ${summary.aggregate.quality_per_1k_tokens.toFixed(3)} |`,
       );
     }
     if (report.comparisons.length > 0) {
@@ -1499,6 +1694,7 @@ export function formatEvalReport(report: EvalReport): string {
   lines.push("| --- | --- |");
   lines.push(`| exact-match | ${report.aggregate.exact_match.toFixed(3)} |`);
   lines.push(`| token-F1 | ${report.aggregate.f1.toFixed(3)} |`);
+  lines.push(`| LLM-judge J | ${formatJudgeJAggregate(report.aggregate.judge_j)} |`);
   lines.push(`| abstention score | ${report.aggregate.abstention_score.toFixed(3)} |`);
   lines.push(`| gold-in-pack rate | ${report.aggregate.gold_in_pack_rate.toFixed(3)} |`);
   lines.push(`| input tokens | ${report.aggregate.tokens.input} |`);
@@ -1508,15 +1704,15 @@ export function formatEvalReport(report: EvalReport): string {
   if (report.categories.length > 0) {
     lines.push("## Per-category");
     lines.push("");
-    lines.push("| category | substrate | questions | EM | F1 | abstention | gold-in-pack | F1 / 1k tokens | note |");
-    lines.push("| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |");
+    lines.push("| category | substrate | questions | EM | F1 | J | abstention | gold-in-pack | F1 / 1k tokens | note |");
+    lines.push("| --- | --- | ---: | ---: | ---: | --- | ---: | ---: | ---: | --- |");
     for (const category of report.categories) {
       for (const summary of category.substrates) {
         const note = category.requires_as_of_reasoning && summary.substrate === "neo4j"
           ? "no as-of filter"
           : "";
         lines.push(
-          `| ${category.category} | ${summary.substrate} | ${summary.records.length} | ${summary.aggregate.exact_match.toFixed(3)} | ${summary.aggregate.f1.toFixed(3)} | ${summary.aggregate.abstention_score.toFixed(3)} | ${summary.aggregate.gold_in_pack_rate.toFixed(3)} | ${summary.aggregate.quality_per_1k_tokens.toFixed(3)} | ${note} |`,
+          `| ${category.category} | ${summary.substrate} | ${summary.records.length} | ${summary.aggregate.exact_match.toFixed(3)} | ${summary.aggregate.f1.toFixed(3)} | ${formatJudgeJAggregate(summary.aggregate.judge_j)} | ${summary.aggregate.abstention_score.toFixed(3)} | ${summary.aggregate.gold_in_pack_rate.toFixed(3)} | ${summary.aggregate.quality_per_1k_tokens.toFixed(3)} | ${note} |`,
         );
       }
     }
@@ -1529,11 +1725,11 @@ export function formatEvalReport(report: EvalReport): string {
   }
   lines.push("## Per-question");
   lines.push("");
-  lines.push("| question_id | category | as_of | gold_rank | EM | F1 | abstention | tokens | F1 / 1k tokens | predicted |");
-  lines.push("| --- | --- | --- | --- | --- | --- | ---: | ---: | ---: | --- |");
+  lines.push("| question_id | category | as_of | gold_rank | EM | F1 | J | abstention | tokens | F1 / 1k tokens | predicted |");
+  lines.push("| --- | --- | --- | --- | --- | --- | --- | ---: | ---: | ---: | --- |");
   for (const r of report.records) {
     lines.push(
-      `| ${r.question_id} | ${r.category} | ${r.as_of ?? ""} | ${r.gold_rank ?? "—"} | ${r.exact_match} | ${r.f1.toFixed(3)} | ${r.abstention_score.toFixed(3)} | ${r.tokens.total} | ${r.quality_per_1k_tokens.toFixed(3)} | ${r.predicted_answer || "(abstain)"} |`,
+      `| ${r.question_id} | ${r.category} | ${r.as_of ?? ""} | ${r.gold_rank ?? "—"} | ${r.exact_match} | ${r.f1.toFixed(3)} | ${r.judge_j ? r.judge_j.score.toFixed(3) : ""} | ${r.abstention_score.toFixed(3)} | ${r.tokens.total} | ${r.quality_per_1k_tokens.toFixed(3)} | ${r.predicted_answer || "(abstain)"} |`,
     );
   }
   lines.push("");
@@ -1578,4 +1774,10 @@ function formatNullableSignedNumber(value: number | null): string {
 
 function formatPct(value: number | null): string {
   return value === null ? "n/a" : `${value > 0 ? "+" : ""}${value.toFixed(1)}%`;
+}
+
+function formatJudgeJAggregate(value: JudgeJAggregate | null): string {
+  if (!value) return "n/a";
+  const score = value.score === null ? "n/a" : value.score.toFixed(3);
+  return `${score} (${value.judged_question_count}/${value.open_ended_question_count})`;
 }

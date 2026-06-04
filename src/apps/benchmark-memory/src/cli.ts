@@ -209,8 +209,11 @@ async function runBenchEvalCmd(args: ParsedArgs): Promise<number> {
   if (args.flags.json === true) {
     process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
   } else {
+    const judgeJ = report.aggregate.judge_j?.score === null || report.aggregate.judge_j?.score === undefined
+      ? "n/a"
+      : report.aggregate.judge_j.score.toFixed(3);
     process.stdout.write(
-      `benchmark-memory bench eval: substrate=${report.substrate} category=${report.category} categories=${report.categories.length} questions=${report.question_count} exact_match=${report.aggregate.exact_match.toFixed(3)} f1=${report.aggregate.f1.toFixed(3)}\n`,
+      `benchmark-memory bench eval: substrate=${report.substrate} category=${report.category} categories=${report.categories.length} questions=${report.question_count} exact_match=${report.aggregate.exact_match.toFixed(3)} f1=${report.aggregate.f1.toFixed(3)} judge_j=${judgeJ}\n`,
     );
   }
   return 0;
