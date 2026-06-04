@@ -264,6 +264,7 @@ import {
 } from "./structural-impact-reader.js";
 import {
   buildWhatifReport,
+  parseWhatifChange,
   type WhatifChange,
   type WhatifReport,
 } from "./whatif.js";
@@ -307,6 +308,7 @@ export interface MemoryOperationTransportInput {
   positional: readonly string[];
   flags: Readonly<Record<string, unknown>>;
   query: Readonly<Record<string, unknown>>;
+  body?: unknown;
   rootDir?: string;
 }
 
@@ -372,6 +374,7 @@ export interface MemoryOperationRendererMetadata {
 export interface MemoryOperationContext {
   store: MemoryStore;
   rootDir?: string;
+  now?: number;
   providerConfig?: AiProviderConfig;
 }
 
@@ -452,6 +455,8 @@ const DocSearchInputSchema = z.object({
 type DocSearchInput = z.infer<typeof DocSearchInputSchema>;
 const AssetInventoryInputSchema = z.object({
   kind: z.string().min(1).optional(),
+  query: z.string().min(1).optional(),
+  limit: z.number().int().min(1).max(100).optional(),
 });
 type AssetInventoryInput = z.infer<typeof AssetInventoryInputSchema>;
 const DocBundleInputSchema = z.object({
@@ -964,7 +969,11 @@ const MEMORY_OPERATION_FACETS: Record<string, MemoryOperationFacets> = {
   ),
   ...operationFacets(
     ["memory.asset-inventory", "memory.asset-inventory-viewer"],
-    inputBinding([flagField("kind", "string")]),
+    inputBinding([
+      flagField("kind", "string"),
+      flagField("query", "string"),
+      flagField("limit", "number"),
+    ]),
     undefined,
     {
       "memory.asset-inventory": JSON_REPORT_OUTPUT,
@@ -1293,10 +1302,21 @@ const MEMORY_OPERATION_FACETS: Record<string, MemoryOperationFacets> = {
   ),
   ...operationFacets(
     ["memory.whatif"],
-    inputBinding([
-      flagField("changes", "object-array", { required: true }),
-      flagField("limit", "number"),
-    ]),
+    inputBinding(
+      [
+        flagField("changes", "object-array", { required: true }),
+        flagField("limit", "number"),
+      ],
+      {
+        id: "http-whatif-changes",
+        description:
+          "Bind HTTP what-if changes from repeated change query parameters or a JSON body with a changes array.",
+        bind: (input) => {
+          const changes = whatifChangesFromTransport(input);
+          return changes.length > 0 ? { changes } : {};
+        },
+      },
+    ),
     JSON_REPORT_OUTPUT,
   ),
   ...operationFacets(
@@ -1409,6 +1429,7 @@ const READINESS_OPERATION: MemoryOperationDefinition<ReadinessInput, MemoryReadi
       limit: input.limit,
       minEvidence: input.min_evidence,
       staleDays: input.stale_days,
+      now: ctx.now,
       scope: scopeFromInput(input),
     }),
 };
@@ -1435,6 +1456,7 @@ const CONTEXT_PACK_OPERATION: MemoryOperationDefinition<ContextPackInput, Contex
       budgetChars: input.budget_chars,
       limit: input.limit,
       depth: input.depth,
+      now: ctx.now,
       scope: scopeFromInput(input),
     }),
 };
@@ -1465,6 +1487,7 @@ const CONTEXT_PACK_VIEWER_OPERATION: MemoryOperationDefinition<
         budgetChars: input.budget_chars,
         limit: input.limit,
         depth: input.depth,
+        now: ctx.now,
         scope: scopeFromInput(input),
       }),
     ),
@@ -1534,7 +1557,7 @@ const REFERENCE_RADAR_OPERATION: MemoryOperationDefinition<
         "Read-only internal references radar. Maps capability catalog evidence to respectful reference axes, highlights degraded/not-configured gaps, and returns next actions without making public benchmark claims.",
     },
   },
-  execute: (ctx) => buildMemoryReferenceRadar(ctx.store, ctx.rootDir ?? process.cwd()),
+  execute: (ctx) => buildMemoryReferenceRadar(ctx.store, ctx.rootDir ?? process.cwd(), { now: ctx.now }),
 };
 
 const HANDOFF_OPERATION: MemoryOperationDefinition<HandoffInput, MemoryHandoffReport> = {
@@ -1558,6 +1581,7 @@ const HANDOFF_OPERATION: MemoryOperationDefinition<HandoffInput, MemoryHandoffRe
     buildMemoryHandoff(ctx.store, {
       focus: input.focus,
       limit: input.limit,
+      now: ctx.now,
     }),
 };
 
@@ -1586,6 +1610,7 @@ const HANDOFF_VIEWER_OPERATION: MemoryOperationDefinition<
       await buildMemoryHandoff(ctx.store, {
         focus: input.focus,
         limit: input.limit,
+        now: ctx.now,
       }),
     ),
 };
@@ -1614,6 +1639,7 @@ const WORK_FRONTIER_OPERATION: MemoryOperationDefinition<
     buildWorkFrontier(ctx.store, {
       focus: input.focus,
       limit: input.limit,
+      now: ctx.now,
     }),
 };
 
@@ -1642,6 +1668,7 @@ const WORK_FRONTIER_VIEWER_OPERATION: MemoryOperationDefinition<
       await buildWorkFrontier(ctx.store, {
         focus: input.focus,
         limit: input.limit,
+        now: ctx.now,
       }),
     ),
 };
@@ -2043,6 +2070,7 @@ const SMART_SEARCH_OPERATION: MemoryOperationDefinition<
         scope: scopeFromInput(input),
         includeSuperseded: input.include_superseded,
       },
+      now: ctx.now,
     }),
 };
 
@@ -2075,6 +2103,7 @@ const SMART_SEARCH_VIEWER_OPERATION: MemoryOperationDefinition<
           scope: scopeFromInput(input),
           includeSuperseded: input.include_superseded,
         },
+        now: ctx.now,
       }),
     ),
 };
@@ -2294,6 +2323,7 @@ const GOVERNANCE_OPERATION: MemoryOperationDefinition<GovernanceInput, MemoryGov
   execute: (ctx, input) =>
     buildMemoryGovernanceReport(ctx.store, {
       staleProgressDays: input.stale_progress_days,
+      now: ctx.now,
     }),
 };
 
@@ -2321,6 +2351,7 @@ const GOVERNANCE_VIEWER_OPERATION: MemoryOperationDefinition<
     buildMemoryGovernanceViewerArtifact(
       await buildMemoryGovernanceReport(ctx.store, {
         staleProgressDays: input.stale_progress_days,
+        now: ctx.now,
       }),
     ),
 };
@@ -2346,6 +2377,7 @@ const LINT_OPERATION: MemoryOperationDefinition<LintInput, LintReport> = {
     const records = (await ctx.store.listNodes()).map(graphNodeToLintRecord);
     const findings = lintMemoryRecords(records, {
       staleProgressDays: input.stale_progress_days,
+      now: ctx.now,
     });
     return {
       status: "ok",
@@ -2383,6 +2415,7 @@ const SKILL_RECOMMENDATIONS_OPERATION: MemoryOperationDefinition<
     buildSkillRecommendations(ctx.store, input.task, {
       limit: input.limit,
       depth: input.depth,
+      now: ctx.now,
       scope: scopeFromInput(input),
       skillRollups: await safeSkillRollups(ctx.store),
     }),
@@ -2463,7 +2496,7 @@ const MEMORY_LAYERS_OPERATION: MemoryOperationDefinition<MemoryLayersInput, Memo
         "Read-only Memory layers report. Summarizes short-term session events, long-term durable graph facts, reasoning traces, docs/code graph evidence, and vector projection over the embedded RedDB store.",
     },
   },
-  execute: (ctx) => buildMemoryLayersReport(ctx.store),
+  execute: (ctx) => buildMemoryLayersReport(ctx.store, { now: ctx.now }),
 };
 
 const MEMORY_LAYERS_VIEWER_OPERATION: MemoryOperationDefinition<
@@ -2488,7 +2521,7 @@ const MEMORY_LAYERS_VIEWER_OPERATION: MemoryOperationDefinition<
     },
   },
   execute: async (ctx) =>
-    buildMemoryLayersViewerArtifact(await buildMemoryLayersReport(ctx.store)),
+    buildMemoryLayersViewerArtifact(await buildMemoryLayersReport(ctx.store, { now: ctx.now })),
 };
 
 const HEALTH_OPERATION: MemoryOperationDefinition<HealthInput, MemoryHealthReport> = {
@@ -2556,7 +2589,7 @@ const MEMORY_DECAY_OPERATION: MemoryOperationDefinition<
         "Read-only Memory decay/retention plan. Classifies nodes as keep, review, deprecate, or expire using access evidence, stale thresholds, supersession, contradictions, TTL horizons, and pinned importance without deleting anything.",
     },
   },
-  execute: (ctx, input) => buildMemoryDecayReport(ctx.store, input),
+  execute: (ctx, input) => buildMemoryDecayReport(ctx.store, { ...input, now: ctx.now }),
 };
 
 const MEMORY_DECAY_VIEWER_OPERATION: MemoryOperationDefinition<
@@ -2580,7 +2613,7 @@ const MEMORY_DECAY_VIEWER_OPERATION: MemoryOperationDefinition<
     },
   },
   execute: async (ctx, input) =>
-    buildMemoryDecayViewerArtifact(await buildMemoryDecayReport(ctx.store, input)),
+    buildMemoryDecayViewerArtifact(await buildMemoryDecayReport(ctx.store, { ...input, now: ctx.now })),
 };
 
 const MEMORY_MERGE_PASS_OPERATION: MemoryOperationDefinition<
@@ -2855,6 +2888,7 @@ const WORKBENCH_OPERATION: MemoryOperationDefinition<WorkbenchInput, MemoryWorkb
         staleDays: input.stale_days,
         sessionId: input.session_id,
         limit: input.limit,
+        now: ctx.now,
       }),
     ),
 };
@@ -2885,6 +2919,7 @@ const READINESS_VIEWER_OPERATION: MemoryOperationDefinition<
         limit: input.limit,
         minEvidence: input.min_evidence,
         staleDays: input.stale_days,
+        now: ctx.now,
         scope: scopeFromInput(input),
       }),
     ),
@@ -2960,6 +2995,7 @@ const AGENT_INTEGRATION_STATUS_OPERATION: MemoryOperationDefinition<
   execute: (ctx, input) =>
     buildMemoryAgentIntegrationStatus(ctx.rootDir ?? process.cwd(), {
       agent: input.agent as MemoryRoutingAgent | undefined,
+      now: ctx.now,
     }),
 };
 
@@ -2987,6 +3023,7 @@ const AGENT_INTEGRATION_STATUS_VIEWER_OPERATION: MemoryOperationDefinition<
     buildMemoryAgentIntegrationStatusViewerArtifact(
       await buildMemoryAgentIntegrationStatus(ctx.rootDir ?? process.cwd(), {
         agent: input.agent as MemoryRoutingAgent | undefined,
+        now: ctx.now,
       }),
     ),
 };
@@ -3012,6 +3049,7 @@ const SESSION_TIMELINE_OPERATION: MemoryOperationDefinition<SessionTimelineInput
     buildSessionTimeline(ctx.store, {
       sessionId: input.session_id,
       limit: input.limit,
+      now: ctx.now,
     }),
 };
 
@@ -3040,6 +3078,7 @@ const SESSION_TIMELINE_VIEWER_OPERATION: MemoryOperationDefinition<
       await buildSessionTimeline(ctx.store, {
         sessionId: input.session_id,
         limit: input.limit,
+        now: ctx.now,
       }),
     ),
 };
@@ -3122,7 +3161,7 @@ const EXTRACTION_STATUS_OPERATION: MemoryOperationDefinition<
     },
   },
   execute: (ctx) =>
-    buildMemoryExtractionStatus(ctx.store, ctx.rootDir ?? process.cwd()),
+    buildMemoryExtractionStatus(ctx.store, ctx.rootDir ?? process.cwd(), { now: ctx.now }),
 };
 
 const EXTRACTION_STATUS_VIEWER_OPERATION: MemoryOperationDefinition<
@@ -3147,7 +3186,7 @@ const EXTRACTION_STATUS_VIEWER_OPERATION: MemoryOperationDefinition<
   },
   execute: async (ctx) =>
     buildMemoryExtractionStatusViewerArtifact(
-      await buildMemoryExtractionStatus(ctx.store, ctx.rootDir ?? process.cwd()),
+      await buildMemoryExtractionStatus(ctx.store, ctx.rootDir ?? process.cwd(), { now: ctx.now }),
     ),
 };
 
@@ -3237,7 +3276,7 @@ const REASONING_REPLAY_OPERATION: MemoryOperationDefinition<
     },
   },
   execute: (ctx, input) =>
-    buildReasoningReplay(ctx.store, input.task, { limit: input.limit }),
+    buildReasoningReplay(ctx.store, input.task, { limit: input.limit, now: ctx.now }),
 };
 
 const WHATIF_OPERATION: MemoryOperationDefinition<WhatifInput, WhatifReport> = {
@@ -3259,7 +3298,7 @@ const WHATIF_OPERATION: MemoryOperationDefinition<WhatifInput, WhatifReport> = {
     },
   },
   execute: (ctx, input) =>
-    buildWhatifReport(ctx.store, input.changes, { limit: input.limit }),
+    buildWhatifReport(ctx.store, input.changes, { limit: input.limit, now: ctx.now }),
 };
 
 const FEDERATION_OPERATION: MemoryOperationDefinition<FederationInput, FederationReport> = {
@@ -3284,6 +3323,7 @@ const FEDERATION_OPERATION: MemoryOperationDefinition<FederationInput, Federatio
     buildFederationReport(ctx.rootDir ?? process.cwd(), input.query, {
       limit: input.limit,
       perRootLimit: input.per_root_limit,
+      now: ctx.now,
     }),
 };
 
@@ -3650,6 +3690,39 @@ function firstString(...values: readonly unknown[]): string | undefined {
     if (typeof value === "string" && value.length > 0) return value;
   }
   return undefined;
+}
+
+function whatifChangesFromTransport(input: MemoryOperationTransportInput): WhatifChange[] {
+  const changes: WhatifChange[] = [];
+  const queryChanges = input.query.change ?? input.query.changes;
+  for (const entry of Array.isArray(queryChanges) ? queryChanges : [queryChanges]) {
+    appendWhatifChange(changes, entry);
+  }
+  if (input.body && typeof input.body === "object") {
+    const bodyChanges = (input.body as { changes?: unknown }).changes;
+    for (const entry of Array.isArray(bodyChanges) ? bodyChanges : [bodyChanges]) {
+      appendWhatifChange(changes, entry);
+    }
+  }
+  return changes;
+}
+
+function appendWhatifChange(changes: WhatifChange[], value: unknown): void {
+  if (typeof value === "string" && value.trim()) {
+    changes.push(parseWhatifChange(value));
+    return;
+  }
+  if (!value || typeof value !== "object") return;
+  const candidate = value as Partial<WhatifChange>;
+  if (candidate.kind && (candidate.file || candidate.symbol || candidate.description)) {
+    changes.push({
+      kind: candidate.kind,
+      file: candidate.file,
+      symbol: candidate.symbol,
+      with: candidate.with,
+      description: candidate.description,
+    });
+  }
 }
 
 function scopeFromInput(input: {
