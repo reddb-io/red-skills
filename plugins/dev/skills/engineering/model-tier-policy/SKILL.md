@@ -1,0 +1,57 @@
+---
+description: Use when choosing or explaining the RedSkills dev model tier for validation, simple code, complex code, design, or AFK execution across Claude Code and Codex.
+---
+
+# model-tier-policy
+
+This is the dev plugin's cross-host policy for why a task uses a given model tier and which tier should run it. It is the human-readable policy from ADR 0049.
+
+The machine source for model ids and effort values is `src/apps/dev/src/core/config.ts` (`CONFIG_DEFAULTS`), overridden per repository by `.red/config.yaml` at `plugins.dev.afk.models.{claude,codex}.{validate,simple,complex,think}`. The legacy top-level `afk.models...` location remains a fallback. Do not copy this table into executor prompts; point executors here so the classification criterion stays in one place.
+
+## Tier table
+
+| tier | default Claude model / effort | default Codex model / effort | use |
+|---|---|---|---|
+| `validate` | `claude-haiku-4-5` / `low` | `gpt-5.5` / `low` | Fuzzy or semantic validation, contract review, fixture sanity checks, and AFK task classification after deterministic checks have run. |
+| `simple` | `claude-sonnet-4-6` / `high` | `gpt-5.5` / `high` | Well-specified, single-scope code where expected files and behavior are clear and blast radius is small. |
+| `complex` | `claude-opus-4-8` / `medium` | `gpt-5.5` / `medium` | Cross-module, architectural, public-contract, migration, security-sensitive, data-risky, concurrency-sensitive, or otherwise high-blast-radius code. |
+| `think` | `claude-opus-4-8` / `high` | `gpt-5.5` / `high` | Design, planning, issue routing, broad diagnosis, and cases where the right execution tier is not yet clear. |
+
+## Deterministic-first validation
+
+Use deterministic tools before the `validate` tier whenever the question is structural: schema validation, JSON/YAML parsing, shell syntax, type checks, lint, tests, contract fixtures, and exact file or metadata checks. Those checks should spend zero model tokens first. Use `validate` only for fuzzy/semantic judgment, such as whether prose satisfies a spec, whether a fixture is coherent, or which AFK execution tier an issue should receive after cheap evidence is gathered.
+
+## Simple vs complex
+
+Classify as `simple` only when all of these are true:
+
+- The request is well specified and the expected behavior is concrete.
+- The change is single-scope: one component, one workflow, or a small set of tightly related files.
+- It does not alter architecture, public APIs, persisted data shape, release/build machinery, auth, permissions, secrets, destructive operations, or cross-runner contracts.
+- The likely validation path is narrow and deterministic.
+- A failed attempt would not leave ambiguous partial state or require a redesign.
+
+Classify as `complex` when any of these are true:
+
+- The change crosses module, package, service, runner, or host boundaries.
+- It changes architecture, public contracts, schemas, migrations, security posture, data-loss behavior, concurrency, merge/branch policy, or autonomous execution safety.
+- The blast radius is uncertain, the code path is unfamiliar, or the validation evidence must be interpreted across multiple subsystems.
+- A `simple` attempt failed the feedback gate, exposed hidden scope, or needed assumptions that were not in the original task.
+
+Use `think` before coding when the work is mostly design, planning, routing, diagnosis, or deciding between competing approaches.
+
+## Escalation
+
+Start with the cheapest capable tier, but escalate immediately when evidence shows the tier is wrong.
+
+- `validate` returns a verdict with evidence; uncertainty routes to `simple`, `complex`, or `think` instead of stretching validation into implementation.
+- `simple` escalates to `complex` when it crosses a boundary, changes a contract, hits security/data-risk, fails feedback validation, or discovers the task was under-scoped.
+- `complex` escalates to `think` when implementation should pause for design, product clarification, or routing.
+- AFK may retry a failed `simple` execution as `complex`; the intended cost of misclassification is one cheap miss, not a stuck loop.
+
+## Executors
+
+- Claude interactive executors live in `plugins/dev/agents/validate.md`, `plugins/dev/agents/simple-code.md`, and `plugins/dev/agents/complex-code.md`. They are Claude-only wrappers over this policy.
+- Codex receives this same skill through `plugins/dev/.codex-plugin/plugin.json` (`"skills": "./skills/"`). Codex does not ship the Claude `agents/` wrappers.
+- AFK sandcastle execution lives in `plugins/dev/skills/engineering/afk/SKILL.md`, with host adapters in `runner-claude.md` and `runner-codex.md`. Runtime tier resolution flows through `resolveTier` in `src/apps/dev/src/core/process-issue.ts` and the config resolver in `src/apps/dev/src/core/config.ts`.
+- Host hooks live in `plugins/dev/hooks/claude.hooks.json` and `plugins/dev/hooks/codex.hooks.json`; they are host-specific enforcement surfaces, not places to duplicate the policy.
