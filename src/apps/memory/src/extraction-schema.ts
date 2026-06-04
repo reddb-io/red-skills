@@ -32,8 +32,8 @@ import { GRAPH_CONTRACT_VERSION } from "./graph-contract.js";
  * future edit could quietly violate.
  */
 
-/** Schema version of the closed structural-type vocabulary. */
-export const EXTRACTION_SCHEMA_VERSION = "1.0.0";
+/** Schema version of the extraction vocabulary contract. */
+export const EXTRACTION_SCHEMA_VERSION = "1.1.0";
 
 /**
  * The closed structural-type vocabulary — node kinds with distinct
@@ -78,8 +78,8 @@ export const BASE_STRUCTURAL_TYPE: StructuralType = "concept";
 /**
  * The *suggested* engineering-code vocabulary: the open, growable axis carrying
  * the fine-grained "why"/kind. It is guidance, not a gate — unknown codes are
- * admitted. A recurring unknown code can later be promoted into this list (or
- * aliased) by the Code drift report (downstream slice).
+ * admitted. Recurring unknown codes can be promoted into this list through the
+ * explicit code-curation overlay, or aliased to a canonical code.
  */
 export const SUGGESTED_ENGINEERING_CODES = [
   "decision",
