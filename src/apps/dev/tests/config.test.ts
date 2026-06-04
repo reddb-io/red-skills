@@ -266,6 +266,14 @@ describe("config — AFK model tier table (ADR 0049)", () => {
     expect(resolveTier(values, "claude", "think")).toEqual({ model: "claude-opus-4-8", effort: "high" });
   });
 
+  it("resolves every Codex tier from the default gpt-5.x table", () => {
+    const values = loadConfig("/nonexistent/.red/config.yaml", { warn: () => {} });
+    expect(resolveTier(values, "codex", "validate")).toEqual({ model: "gpt-5.5", effort: "low" });
+    expect(resolveTier(values, "codex", "simple")).toEqual({ model: "gpt-5.5", effort: "high" });
+    expect(resolveTier(values, "codex", "complex")).toEqual({ model: "gpt-5.5", effort: "medium" });
+    expect(resolveTier(values, "codex", "think")).toEqual({ model: "gpt-5.5", effort: "high" });
+  });
+
   it("lets explicit tier entries override legacy scalar model keys", () => {
     const text =
       "afk:\n  model: shared-model\n  models:\n    claude:\n      think:\n        model: claude-tier-model\n        effort: max\n";
