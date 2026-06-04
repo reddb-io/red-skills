@@ -1,7 +1,7 @@
 {
   "name": "dev",
   "version": "1.166.0",
-  "description": "reddb.io dev plugin - engineering skills for code agents (autonomous /afk loop, triage, tdd, diagnose, graph-aware codebase understanding, wiki, ...)",
+  "description": "reddb.io dev plugin - engineering skills for code agents (autonomous /afk loop, interactive /ship finalizer, triage, tdd, diagnose, graph-aware codebase understanding, wiki, ...)",
   "author": {
     "name": "reddb.io",
     "url": "https://github.com/reddb-io"
@@ -23,7 +23,7 @@
   "interface": {
     "displayName": "RedSkills Dev",
     "shortDescription": "Engineering workflow skills for code agents.",
-    "longDescription": "RedSkills Dev provides small, composable engineering skills for planning, triage, TDD, diagnosis, graph-aware codebase understanding with /zoom-out, local knowledge wikis, and autonomous GitHub issue execution through /afk.",
+    "longDescription": "RedSkills Dev provides small, composable engineering skills for planning, triage, TDD, diagnosis, graph-aware codebase understanding with /zoom-out, local knowledge wikis, autonomous GitHub issue execution through /afk, and interactive review-respecting PR finalization through /ship.",
     "developerName": "reddb.io",
     "category": "Developer Tools",
     "capabilities": [
@@ -36,7 +36,8 @@
     "defaultPrompt": [
       "Run $setup-red-skills for this repo.",
       "Use $triage on open issues.",
-      "Drain ready issues with $afk."
+      "Drain ready issues with $afk.",
+      "Finalize reviewed work with $ship."
     ],
     "brandColor": "#D92D20"
   }
