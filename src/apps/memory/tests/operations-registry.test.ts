@@ -5,8 +5,15 @@ import {
   executeReadOnlyMemoryOperation,
   getReadOnlyMemoryOperation,
   listReadOnlyMemoryOperations,
+  type MemoryOperationFacets,
+  type MemoryOperationDefinition,
   type MemoryOperation,
 } from "../src/operations.js";
+
+const TEST_JSON_FACETS: MemoryOperationFacets = {
+  inputBinding: { fields: [] },
+  outputKind: { kind: "report", format: "json" },
+};
 
 describe("read-only Memory operations registry", () => {
   test("declares contract metadata for the communities operation", () => {
@@ -21,6 +28,16 @@ describe("read-only Memory operations registry", () => {
         cli: { command: "communities", supportsJson: true },
         mcp: { toolName: "memory_communities" },
       },
+      inputBinding: {
+        fields: [
+          {
+            field: "cache",
+            sources: ["flag", "query"],
+            type: "string",
+          },
+        ],
+      },
+      outputKind: { kind: "report", format: "json" },
     });
     expect(listReadOnlyMemoryOperations().map((op) => op.id)).toContain("memory.communities");
   });
@@ -205,6 +222,45 @@ describe("read-only Memory operations registry", () => {
     expect(getReadOnlyMemoryOperation("memory.ask").outputSchema.parse).toBeTypeOf("function");
   });
 
+  test("declares input bindings and output kinds for every registry entry", () => {
+    const operations = listReadOnlyMemoryOperations();
+
+    expect(
+      operations.every((operation) => Array.isArray(operation.inputBinding.fields)),
+    ).toBe(true);
+    expect(operations.every((operation) => operation.outputKind.kind.length > 0)).toBe(true);
+
+    expect(getReadOnlyMemoryOperation("memory.ask").inputBinding).toMatchObject({
+      fields: [
+        {
+          field: "question",
+          sources: ["positional", "query"],
+          type: "string",
+          variadic: true,
+        },
+      ],
+      customBind: {
+        id: "joined-positional-question",
+      },
+    });
+    expect(getReadOnlyMemoryOperation("memory.dashboard").outputKind).toMatchObject({
+      kind: "viewer",
+      artifact: "self-contained-html",
+      fileSink: { field: "out", sources: ["flag", "query"], type: "path" },
+    });
+    expect(
+      getReadOnlyMemoryOperation("memory.smart-search-viewer").outputKind,
+    ).toMatchObject({
+      kind: "viewer",
+      fileSink: {
+        customBind: {
+          id: "hashed-viewer-output-path",
+        },
+      },
+    });
+    expect(getReadOnlyMemoryOperation("memory.communities").inputBinding.customBind).toBeUndefined();
+  });
+
   test("validates operation input before execution", async () => {
     await expect(
       executeReadOnlyMemoryOperation(
@@ -229,11 +285,51 @@ describe("read-only Memory operations registry", () => {
         cli: { command: "store", supportsJson: false },
         mcp: { toolName: "memory_store", description: "Store memory" },
       },
+      inputBinding: { fields: [] },
+      outputKind: { kind: "report", format: "json" },
       execute: async () => ({}),
     } satisfies MemoryOperation<object, object>;
 
-    expect(() => createReadOnlyMemoryOperationRegistry([mutating])).toThrow(
+    expect(() => createReadOnlyMemoryOperationRegistry([mutating], { [mutating.id]: TEST_JSON_FACETS })).toThrow(
       /not read-only/i,
     );
+  });
+
+  test("rejects malformed operation facets at registration time", () => {
+    const operation = {
+      id: "memory.test",
+      title: "Test operation",
+      description: "Test operation.",
+      inputSchema: z.object({}),
+      outputSchema: z.object({}),
+      safetyClass: "read-only",
+      sideEffectClass: "none",
+      capabilities: ["graph-store"],
+      renderer: {
+        cli: { command: "test", supportsJson: true },
+        mcp: { toolName: "memory_test", description: "Test operation" },
+      },
+      execute: async () => ({}),
+    } satisfies MemoryOperationDefinition<object, object>;
+
+    expect(() =>
+      createReadOnlyMemoryOperationRegistry([operation], {
+        [operation.id]: {
+          inputBinding: {
+            fields: [{ field: "", sources: ["flag"], type: "string" }],
+          },
+          outputKind: { kind: "report", format: "json" },
+        } as MemoryOperationFacets,
+      }),
+    ).toThrow(/input binding/i);
+
+    expect(() =>
+      createReadOnlyMemoryOperationRegistry([operation], {
+        [operation.id]: {
+          inputBinding: { fields: [] },
+          outputKind: { kind: "report", format: "xml" },
+        } as unknown as MemoryOperationFacets,
+      }),
+    ).toThrow(/output kind|report/i);
   });
 });
