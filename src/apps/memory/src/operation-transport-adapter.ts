@@ -165,6 +165,12 @@ function fieldKeyCandidates(field: string, source: "flag" | "query"): string[] {
   const kebab = field.replaceAll("_", "-");
   const candidates = [field, kebab];
   if (source === "query" && field === "query") candidates.push("q");
+  if (source === "query" && ["goal", "focus", "task"].includes(field)) {
+    candidates.push("query", "q");
+  }
+  if (source === "query" && field === "session_id") candidates.push("session");
+  if (source === "query" && field === "node") candidates.push("rid");
+  if (source === "query" && field === "changes") candidates.push("change");
   return [...new Set(candidates)];
 }
 
