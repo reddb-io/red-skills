@@ -8,6 +8,7 @@ import {
   buildMemoryMergePassReport,
   type MemoryMergePassStore,
 } from "../src/memory-merge-pass.js";
+import { graphRecall } from "../src/graph-recall.js";
 import { MemoryStore, type StoredNode } from "../src/graph-store.js";
 import { initGraph } from "../src/init.js";
 
@@ -201,5 +202,134 @@ describe("Memory merge pass", () => {
     const afterEdges = await after.listEdges();
     expect(afterEdges).toHaveLength(beforeEdges.length);
     expect(afterEdges.some((edge) => edge.label === "SAME_AS")).toBe(false);
+  }, TIMEOUT);
+
+  test("CLI executes an approval-gated merge batch and unmerges it without deleting nodes", async () => {
+    const root = await tempRoot();
+    await initGraph(root, { hooks: true });
+    const store = await openStore(root);
+    const duplicate = await store.upsertNode({
+      label: "jwt-rotation-policy-copy",
+      node_type: "decision",
+      properties: {
+        title: "JWT rotation policy",
+        content: "JWT rotation tokens stay server side and never log signing keys.",
+        tier: "durable",
+        importance: 0.2,
+        provenance: {
+          source_kind: "manual",
+          writer: "agent-a",
+          evidence: ["transcript:duplicate-node"],
+        },
+      },
+    });
+    const canonical = await store.upsertNode({
+      label: "jwt-rotation-policy",
+      node_type: "decision",
+      properties: {
+        title: "JWT rotation policy",
+        content: "JWT rotation tokens stay server-side and never log signing keys.",
+        tier: "durable",
+        importance: 0.9,
+        provenance: {
+          source_kind: "manual",
+          writer: "agent-b",
+          evidence: ["transcript:canonical-node"],
+        },
+      },
+    });
+    await store.close();
+
+    const blocked = runMemory([
+      "merge-pass",
+      "execute",
+      "--root",
+      root,
+      "--candidate-ranks",
+      "1",
+      "--approver",
+      "agent:test",
+      "--json",
+    ]);
+    expect(blocked.status).not.toBe(0);
+    expect(blocked.stderr).toContain("requires explicit --yes approval");
+
+    const afterBlocked = await openStore(root);
+    await expect(afterBlocked.findEdge(duplicate, canonical, "SAME_AS")).resolves.toBeNull();
+    await afterBlocked.close();
+
+    const executed = runMemory([
+      "merge-pass",
+      "execute",
+      "--root",
+      root,
+      "--candidate-ranks",
+      "1",
+      "--approver",
+      "agent:test",
+      "--batch-id",
+      "batch-jwt-rotation",
+      "--yes",
+      "--json",
+    ]);
+    expect(executed.status, executed.stderr).toBe(0);
+    const executeBody = JSON.parse(executed.stdout) as {
+      batch_id: string;
+      summary: { merged: number };
+      merged_edges: Array<{ duplicate_rid: number; canonical_rid: number; label: string }>;
+    };
+    expect(executeBody.batch_id).toBe("batch-jwt-rotation");
+    expect(executeBody.summary.merged).toBe(1);
+    expect(executeBody.merged_edges[0]).toMatchObject({
+      duplicate_rid: duplicate,
+      canonical_rid: canonical,
+      label: "SAME_AS",
+    });
+
+    const merged = await openStore(root);
+    await expect(merged.findEdge(duplicate, canonical, "SAME_AS")).resolves.toBeGreaterThan(0);
+    const hiddenHits = await graphRecall(
+      merged,
+      "jwt rotation duplicate provenance canonical guidance",
+      10,
+    );
+    expect(hiddenHits.map((hit) => hit.rid)).toContain(canonical);
+    expect(hiddenHits.map((hit) => hit.rid)).not.toContain(duplicate);
+    await expect(merged.getNode(duplicate)).resolves.toMatchObject({
+      rid: duplicate,
+      properties: {
+        provenance: {
+          source_kind: "manual",
+          writer: "agent-a",
+          evidence: ["transcript:duplicate-node"],
+        },
+      },
+    });
+    await merged.close();
+
+    const unmerged = runMemory([
+      "merge-pass",
+      "unmerge",
+      "--root",
+      root,
+      "--batch-id",
+      "batch-jwt-rotation",
+      "--yes",
+      "--json",
+    ]);
+    expect(unmerged.status, unmerged.stderr).toBe(0);
+    const unmergeBody = JSON.parse(unmerged.stdout) as {
+      summary: { found: number; removed: number };
+    };
+    expect(unmergeBody.summary).toEqual({ found: 1, removed: 1 });
+
+    const visible = await openStore(root);
+    await expect(visible.findEdge(duplicate, canonical, "SAME_AS")).resolves.toBeNull();
+    const visibleHits = await graphRecall(
+      visible,
+      "jwt rotation duplicate original provenance",
+      10,
+    );
+    expect(visibleHits.map((hit) => hit.rid)).toContain(duplicate);
   }, TIMEOUT);
 });
