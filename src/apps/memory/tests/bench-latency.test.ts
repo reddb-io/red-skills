@@ -41,6 +41,7 @@ describe("memory bench latency — percentile arithmetic", () => {
     expect(s.p50_us).toBeGreaterThanOrEqual(50);
     expect(s.p99_us).toBeGreaterThanOrEqual(99);
     expect(s.mean_us).toBeCloseTo(50.5, 1);
+    expect(s.histogram.at(-1)).toEqual({ le_us: "+Inf", count: 100 });
   });
 });
 
