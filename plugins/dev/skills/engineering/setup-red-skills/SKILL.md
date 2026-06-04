@@ -1,6 +1,6 @@
 ---
 name: setup-red-skills
-description: Sets up an `## Agent skills` block in AGENTS.md/CLAUDE.md and `.red/agents/` so the engineering skills know this repo's GitHub Issues setup, triage label vocabulary, and domain doc layout. Run before first use of `to-issues`, `to-prd`, `triage`, `diagnose`, `tdd`, `improve-codebase-architecture`, or `zoom-out` — or if those skills appear to be missing context about the issue tracker, triage labels, or domain docs.
+description: Sets up `## Agent skills` and `## Development workflow` blocks in AGENTS.md/CLAUDE.md plus `.red/agents/` and `.red/config.yaml`, so the engineering skills know this repo's GitHub Issues setup, triage label vocabulary, domain doc layout, and interactive dev-loop rules. Run before first use of `to-issues`, `to-prd`, `triage`, `diagnose`, `tdd`, `improve-codebase-architecture`, `zoom-out`, or `/ship` — or if those skills appear to be missing context about the issue tracker, triage labels, domain docs, or dev workflow.
 disable-model-invocation: true
 ---
 
@@ -13,6 +13,7 @@ Scaffold the per-repo configuration that the engineering skills assume:
 - **Domain docs** — where `.red/CONTEXT.md` and ADRs live, and the consumer rules for reading them
 - **Workflows** — GitHub Actions shipped by RedSkills (all prefixed `red-`), e.g. auto-label fresh issues with `needs-triage` so nothing slips past `/triage` and `/afk`
 - **Token efficiency** — strongly recommend installing [RTK](https://github.com/rtk-ai/rtk) to cut 60–90% of dev-operation tokens via a transparent CLI proxy
+- **Development workflow** — activate the primary-branch guard, teach agents the isolated-worktree rules, and route interactive landing through `/ship`
 
 This is a prompt-driven skill, not a deterministic script. Explore, present what you found, confirm with the user, then write.
 
@@ -27,10 +28,12 @@ Look at the current repo to understand its starting state. Read whatever exists;
 - `.red/CONTEXT.md` and `.red/CONTEXT-MAP.md` at the repo root
 - `.red/adr/` and any `src/*/.red/adr/` directories
 - `.red/agents/` — does this skill's prior output already exist?
+- `.red/config.yaml` — is `dev.lock-primary-branch` already set?
+- `AGENTS.md` and `CLAUDE.md` — does either already have a `## Development workflow` section?
 
 ### 2. Present findings and ask
 
-Summarise what's present and what's missing. Then walk the user through the three decisions **one at a time** — present a section, get the user's answer, then move to the next. Don't dump all three at once.
+Summarise what's present and what's missing. Then walk the user through the sections **one at a time** — present a section, get the user's answer, then move to the next. Don't dump all sections at once.
 
 Assume the user does not know what these terms mean. Each section starts with a short explainer (what it is, why these skills need it, what changes if they pick differently). Then show the choices and the default.
 
@@ -144,12 +147,24 @@ No user decision here for the template itself — the skill scaffolds it wheneve
 
 The template carries a **commented `afk.backpressure`** block (#430 / PRD #429): an ordered list of shell commands (`npm run test`, `npm run lint`, …) AFK runs after the built-in feedback gate on every successful iteration — DONE and salvaged no-sentinel alike — where any non-zero exit blocks the merge and parks the issue to `ready-for-human`. It ships commented (a no-op until uncommented). **One optional offer:** when scaffolding a fresh template into a repo whose root (or a clearly primary package) `package.json` declares `test` and/or `lint` scripts, surface them and ask whether to pre-fill the block with the matching `npm run <script>` (or `pnpm`) lines — uncommented — instead of the commented placeholder. Only pre-fill on explicit confirmation; otherwise leave the block commented. Never touch an existing `.red/config.yaml` (the clobber rule wins over this offer).
 
+**Section H — Development workflow.**
+
+> Explainer: RedSkills' interactive dev loop assumes agents work from isolated worktrees, leave the primary checkout's branch alone, push their branch early, and hand landing to `/ship`. The primary-branch guard already ships dormant; turning on `dev.lock-primary-branch: true` in `.red/config.yaml` activates it. The shared development-workflow injector writes the same `## Development workflow` rules into both `AGENTS.md` and `CLAUDE.md`, updating an existing block in place on rerun.
+
+Confirm with the user:
+
+- Activate the development workflow? Default: yes.
+- This sets `dev.lock-primary-branch: true` in `.red/config.yaml`.
+- This writes or updates `## Development workflow` in both `AGENTS.md` and `CLAUDE.md` via the shared injector.
+- Recap that `/ship` is the landing command for interactive work after the branch is pushed.
+
 ### 3. Confirm and edit
 
 Show the user a draft of:
 
 - The `## Agent skills` block to add to whichever of `CLAUDE.md` / `AGENTS.md` is being edited (see step 4 for selection rules)
 - The contents of `.red/agents/issue-tracker.md`, `.red/agents/triage-labels.md`, `.red/agents/domain.md`
+- The Section H development-workflow changes: `dev.lock-primary-branch: true` plus the canonical `## Development workflow` block for `AGENTS.md` and `CLAUDE.md`
 
 Let them edit before writing.
 
@@ -198,6 +213,12 @@ Scaffold `.red/config.yaml` (Section G, no user decision):
 3. **Backpressure pre-fill offer (only on a fresh scaffold).** Read the repo-root (or primary package) `package.json`; if it declares `test` and/or `lint` scripts, surface them and ask whether to pre-fill `afk.backpressure` with the matching `npm run <script>` (or `pnpm run <script>`) lines, uncommented. On explicit yes, replace the commented `backpressure:` placeholder with the confirmed list; otherwise leave it commented. Skip silently when no such scripts exist. This step never runs when `.red/config.yaml` already existed (step 1 wins).
 4. Do **not** `git add` or commit the file — the user controls when it lands in git.
 
+If the user accepted Section H, activate the development workflow:
+
+1. Invoke the shared injector rather than hand-editing the rules block. From a source checkout, run `pnpm --filter @reddb-io/dev dev inject-development-workflow --root <repo-root>`. From an installed plugin, run the bundled AFK entrypoint with `inject-development-workflow --root <repo-root>` (for example, `node ../afk/bin/afk.mjs inject-development-workflow --root <repo-root>` from this skill folder). The command writes both `AGENTS.md` and `CLAUDE.md`, creates `.red/config.yaml` if still missing, and sets `dev.lock-primary-branch: true`.
+2. If the command is unavailable, make the same changes manually: add or update the top-level `dev:` block in `.red/config.yaml` with `lock-primary-branch: true`, then upsert the canonical `## Development workflow` block in both `AGENTS.md` and `CLAUDE.md`. Never append a duplicate block; update the existing section in place.
+3. In the recap, explicitly point the user at `/ship` as the landing command after an interactive worktree branch has been committed and pushed.
+
 If the user accepted Section F, wire the statusline:
 
 1. Check the opt-out: if `.red/config.yaml` exists and contains an `afk:` block with `statusline: false`, log `afk.statusline: false in .red/config.yaml — skipping statusline wiring` and skip the rest of this step.
@@ -223,4 +244,4 @@ Never close, reassign, or edit issue bodies in this step — labels only.
 
 ### 6. Done
 
-Tell the user the setup is complete and which engineering skills will now read from these files. Mention they can edit `.red/agents/*.md` directly later — re-running this skill is only necessary if they want to switch issue trackers or restart from scratch.
+Tell the user the setup is complete and which engineering skills will now read from these files. Mention they can edit `.red/agents/*.md` directly later, and that interactive work should land through `/ship`. Re-running this skill is only necessary if they want to switch issue trackers or restart from scratch.
