@@ -1,8 +1,6 @@
 # Implementation package. Built bundle ships as a GitHub Release asset (ADR 0034).
 node_modules/
 dist/
-dist-bundle/
-memory-runtime-manifest.json
 *.tsbuildinfo
 
 # Per-project memory store / session scratch must never be committed.
