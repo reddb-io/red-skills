@@ -23,13 +23,14 @@ into **one PRD** on the tracker, which `/to-issues` + `/afk` execute afterwards.
 - ❌ Do **not** edit ADR bodies, renumber files, write the INDEX, supersede a Memory node, or re-ingest a wiki page directly. This skill ends in a **PRD on the tracker**, not in applied edits. Every agreed fix becomes a PRD work item, executed later by `/to-issues` + `/afk` or a human.
 - ❌ Do **not** auto-resolve a finding or controversial decision. Surface it in the interview; the maintainer's answer is what gets recorded as the agreed action.
 - ❌ Do **not** stack questions. **One `Q##` per turn.** Wait for the reply, re-evaluate the tree, then ask the next. Do not preempt the next question, and do not summarise the user's answers back at them.
+- ✅ Before Pass 1, run `git fetch origin`, resolve `origin/HEAD` to the remote default branch, and lint from that Git ref (`origin/<default-branch>`). Read ADR/context files with Git plumbing such as `git ls-tree` / `git show`; do **not** inspect `.red/adr/` from the working tree. Use local `HEAD` only when no `origin` remote/ref exists, and state that fallback in the report.
 - ✅ Compose existing surfaces to detect: `/wiki lint` for wiki claims, Memory supersession/contradiction reads for graph claims. Do not reimplement them.
 - ✅ Compose `/to-prd` to publish — do not hand-roll the PRD format. Every interview agreement is a **Human Decision** in that PRD (load-bearing judgement the agent could not infer).
 - ✅ Honour ADR conventions in `start/ADR-FORMAT.md` (Status frontmatter, "superseded by ADR-NNNN", Related links).
 
 ### Pass 1 — Lint (detect, read-only)
 
-Read every `.red/adr/*.md` (and `.red/CONTEXT-MAP.md` / contexts if present). Lint **against the committed tree** (`origin/HEAD`), not a dirty local working copy, so a stale local file is never mistaken for a real finding. Report:
+Fetch first: `git fetch origin`. Resolve `origin/HEAD` to the remote default branch, set the lint ref to `origin/<default-branch>`, and read every `.red/adr/*.md` (and `.red/CONTEXT-MAP.md` / contexts if present) from that ref. Use `git ls-tree -r --name-only "$lint_ref" -- .red/adr .red/CONTEXT-MAP.md .red/contexts` to discover files and `git show "$lint_ref:$path"` to read them; path-existence checks for stale references must also query the same ref. Lint **against the fetched committed tree**, not a dirty or stale local working copy, so a lagging checkout is never mistaken for a real finding. If there is no `origin` remote/ref, fall back to local `HEAD` and say so before reporting findings. Report:
 
 - **Contradictions** — two ADRs whose decisions oppose on the same topic (e.g. "memory lives in `src/apps`" vs "memory moves to `red-memory`"). Flag pairs that should cross-reference but don't.
 - **Missing supersession** — a later ADR reverses/supersedes an earlier one, but the earlier still reads `Status: accepted` with no "superseded by ADR-NNNN" / Related note.
