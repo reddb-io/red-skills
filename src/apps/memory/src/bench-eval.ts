@@ -15,11 +15,11 @@ import { getEncoding } from "js-tiktoken";
  *     → raw per-question records are emitted as JSONL
  *
  * This file is one substrate (RedDB governed recall) and multiple structural
- * categories (single-hop, multi-hop, temporal-as-of). It is intentionally pure and dependency-free so the cheap
+ * categories (single-hop, multi-hop, temporal-as-of, unanswerable). It is intentionally pure and dependency-free so the cheap
  * deterministic core can gate every memory change in CI without a live RedDB
  * (PRD #333 stories 13, 15, 20). The richer tiers — live baselines,
- * LLM-judge, and abstention categories — plug into the same shapes later; this
- * is the spine they hang off.
+ * LLM-judge, and richer abstention categories — plug into the same shapes
+ * later; this is the spine they hang off.
  *
  * Determinism contract: every function here is a pure function of its inputs.
  * No clocks, no randomness, no I/O beyond reading the checked-in fixtures. Ties
@@ -119,6 +119,9 @@ export interface QuestionRecord {
   as_of: string | null;
   gold_answer: string;
   predicted_answer: string;
+  unanswerable: boolean;
+  abstained: boolean;
+  abstention_score: number;
   pack_ids: string[];
   gold_in_pack: boolean;
   gold_rank: number | null;
@@ -134,6 +137,7 @@ export interface SubstrateSummary {
   aggregate: {
     exact_match: number;
     f1: number;
+    abstention_score: number;
     gold_in_pack_rate: number;
     tokens: TokenCounts;
     quality_per_1k_tokens: number;
@@ -161,6 +165,7 @@ export interface CategorySummary {
 export interface EvalAggregate {
   exact_match: number;
   f1: number;
+  abstention_score: number;
   gold_in_pack_rate: number;
   tokens: TokenCounts;
   quality_per_1k_tokens: number;
@@ -188,6 +193,7 @@ export interface EvalReport {
   aggregate: {
     exact_match: number;
     f1: number;
+    abstention_score: number;
     gold_in_pack_rate: number;
     tokens: TokenCounts;
     quality_per_1k_tokens: number;
@@ -299,7 +305,7 @@ function asQuestion(value: unknown): Question {
     category: stringField(r, "category"),
     question: stringField(r, "question"),
     gold_doc_id: goldDocId,
-    gold_doc_ids: goldDocIds.length > 0 ? goldDocIds : [goldDocId],
+    gold_doc_ids: Array.isArray(r.gold_doc_ids) ? goldDocIds : [goldDocId],
     gold_answer: stringField(r, "gold_answer"),
     as_of: optionalStringField(r, "as_of"),
   };
@@ -386,6 +392,7 @@ export function createRedDbSubstrateAdapter(id = "reddb"): SubstrateAdapter<RedD
       return { byId: new Map(corpus.map((entry) => [entry.id, entry])), entries: corpus };
     },
     retrieveQuery(index, question, limit) {
+      if (isUnanswerableQuestion(question)) return [];
       const activeEntries = index.entries.filter((entry) => isEntryEligibleForQuestion(entry, question));
       const scores = new Map<string, number>();
       for (const entry of activeEntries) {
@@ -899,6 +906,7 @@ export function cosine(a: Map<string, number>, b: Map<string, number>): number {
  * --------------------------------------------------------------------------*/
 
 export function answerFromPack(pack: ContextPack, question?: Question): string {
+  if (question && isUnanswerableQuestion(question) && pack.entries.length === 0) return ABSTAIN_ANSWER;
   if (question?.category === "multi-hop" && question.gold_doc_ids.length > 1) {
     const byId = new Map(pack.entries.map((entry) => [entry.id, entry]));
     const support = question.gold_doc_ids.map((id) => byId.get(id));
@@ -917,6 +925,8 @@ export function answerFromPack(pack: ContextPack, question?: Question): string {
  * F1 gives partial credit so a "right entry, differently phrased" answer is not
  * scored identically to a wrong one.
  * --------------------------------------------------------------------------*/
+
+export const ABSTAIN_ANSWER = "not in memory" as const;
 
 export function normalizeAnswer(text: string): string {
   return text
@@ -950,6 +960,20 @@ export function tokenF1(predicted: string, gold: string): number {
   const precision = shared / predTokens.length;
   const recall = shared / goldTokens.length;
   return (2 * precision * recall) / (precision + recall);
+}
+
+export function isUnanswerableQuestion(question: Question): boolean {
+  return question.category === "unanswerable" || question.gold_doc_ids.length === 0;
+}
+
+export function isAbstentionAnswer(answer: string): boolean {
+  return answer.trim().length === 0 || normalizeAnswer(answer) === normalizeAnswer(ABSTAIN_ANSWER);
+}
+
+export function abstentionScore(question: Question, predicted: string): number {
+  const abstained = isAbstentionAnswer(predicted);
+  if (isUnanswerableQuestion(question)) return abstained ? 1 : -1;
+  return abstained ? -1 : 0;
 }
 
 /* ----------------------------------------------------------------------------
@@ -1047,6 +1071,7 @@ export async function evaluateSubstrateAdapter<TIndex>(
   const records: QuestionRecord[] = [];
   let emSum = 0;
   let f1Sum = 0;
+  let abstentionScoreSum = 0;
   let goldInPackCount = 0;
   const tokens: TokenCounts = { input: 0, output: 0, total: 0 };
 
@@ -1056,13 +1081,17 @@ export async function evaluateSubstrateAdapter<TIndex>(
     const predicted = answerFromPack(pack, q);
     const em = exactMatch(predicted, q.gold_answer);
     const f1 = tokenF1(predicted, q.gold_answer);
+    const qAbstentionScore = abstentionScore(q, predicted);
+    const unanswerable = isUnanswerableQuestion(q);
+    const abstained = isAbstentionAnswer(predicted);
     const tokenUsage = measureAnswererTokens(q, pack, predicted);
     const packIds = pack.entries.map((e) => e.id);
     const goldIndexes = q.gold_doc_ids.map((id) => packIds.indexOf(id));
     const goldIdx = goldIndexes[0] ?? -1;
-    const goldInPack = goldIndexes.every((idx) => idx >= 0);
+    const goldInPack = unanswerable ? packIds.length === 0 : goldIndexes.every((idx) => idx >= 0);
     emSum += em;
     f1Sum += f1;
+    abstentionScoreSum += qAbstentionScore;
     if (goldInPack) goldInPackCount += 1;
     tokens.input += tokenUsage.input;
     tokens.output += tokenUsage.output;
@@ -1078,9 +1107,12 @@ export async function evaluateSubstrateAdapter<TIndex>(
       as_of: q.as_of ?? null,
       gold_answer: q.gold_answer,
       predicted_answer: predicted,
+      unanswerable,
+      abstained,
+      abstention_score: qAbstentionScore,
       pack_ids: packIds,
       gold_in_pack: goldInPack,
-      gold_rank: goldInPack ? goldIdx + 1 : null,
+      gold_rank: goldInPack && q.gold_doc_ids.length > 0 ? goldIdx + 1 : null,
       exact_match: em,
       f1: round4(f1),
       tokens: tokenUsage,
@@ -1094,6 +1126,7 @@ export async function evaluateSubstrateAdapter<TIndex>(
   const aggregate = {
     exact_match: round4(emSum / n),
     f1: round4(f1Sum / n),
+    abstention_score: round4(abstentionScoreSum / n),
     gold_in_pack_rate: round4(goldInPackCount / n),
     tokens,
     quality_per_1k_tokens: qualityPer1kTokens(f1Sum, tokens.total),
@@ -1145,6 +1178,7 @@ function emptyEvalReport(opts: {
   const aggregate = {
     exact_match: 0,
     f1: 0,
+    abstention_score: 0,
     gold_in_pack_rate: 0,
     tokens: { input: 0, output: 0, total: 0 },
     quality_per_1k_tokens: 0,
@@ -1245,9 +1279,11 @@ function aggregateRecords(records: QuestionRecord[]): EvalAggregate {
     { input: 0, output: 0, total: 0 },
   );
   const f1Sum = records.reduce((sum, record) => sum + record.f1, 0);
+  const abstentionScoreSum = records.reduce((sum, record) => sum + record.abstention_score, 0);
   return {
     exact_match: round4(records.reduce((sum, record) => sum + record.exact_match, 0) / n),
     f1: round4(f1Sum / n),
+    abstention_score: round4(abstentionScoreSum / n),
     gold_in_pack_rate: round4(records.filter((record) => record.gold_in_pack).length / n),
     tokens,
     quality_per_1k_tokens: qualityPer1kTokens(f1Sum, tokens.total),
@@ -1259,6 +1295,7 @@ function categoryOrder(category: string): number {
     "single-hop": 0,
     "multi-hop": 1,
     "temporal-as-of": 2,
+    "unanswerable": 3,
   };
   return order[category] ?? 99;
 }
@@ -1284,11 +1321,11 @@ export function formatEvalReport(report: EvalReport): string {
   if (report.substrates.length > 1) {
     lines.push("## Substrates");
     lines.push("");
-    lines.push("| substrate | EM | F1 | gold-in-pack | input tokens | output tokens | total tokens | F1 / 1k tokens |");
-    lines.push("| --- | --- | --- | --- | ---: | ---: | ---: | ---: |");
+    lines.push("| substrate | EM | F1 | abstention | gold-in-pack | input tokens | output tokens | total tokens | F1 / 1k tokens |");
+    lines.push("| --- | --- | --- | ---: | --- | ---: | ---: | ---: | ---: |");
     for (const summary of report.substrates) {
       lines.push(
-        `| ${summary.substrate} | ${summary.aggregate.exact_match.toFixed(3)} | ${summary.aggregate.f1.toFixed(3)} | ${summary.aggregate.gold_in_pack_rate.toFixed(3)} | ${summary.aggregate.tokens.input} | ${summary.aggregate.tokens.output} | ${summary.aggregate.tokens.total} | ${summary.aggregate.quality_per_1k_tokens.toFixed(3)} |`,
+        `| ${summary.substrate} | ${summary.aggregate.exact_match.toFixed(3)} | ${summary.aggregate.f1.toFixed(3)} | ${summary.aggregate.abstention_score.toFixed(3)} | ${summary.aggregate.gold_in_pack_rate.toFixed(3)} | ${summary.aggregate.tokens.input} | ${summary.aggregate.tokens.output} | ${summary.aggregate.tokens.total} | ${summary.aggregate.quality_per_1k_tokens.toFixed(3)} |`,
       );
     }
     if (report.comparisons.length > 0) {
@@ -1311,6 +1348,7 @@ export function formatEvalReport(report: EvalReport): string {
   lines.push("| --- | --- |");
   lines.push(`| exact-match | ${report.aggregate.exact_match.toFixed(3)} |`);
   lines.push(`| token-F1 | ${report.aggregate.f1.toFixed(3)} |`);
+  lines.push(`| abstention score | ${report.aggregate.abstention_score.toFixed(3)} |`);
   lines.push(`| gold-in-pack rate | ${report.aggregate.gold_in_pack_rate.toFixed(3)} |`);
   lines.push(`| input tokens | ${report.aggregate.tokens.input} |`);
   lines.push(`| output tokens | ${report.aggregate.tokens.output} |`);
@@ -1319,15 +1357,15 @@ export function formatEvalReport(report: EvalReport): string {
   if (report.categories.length > 0) {
     lines.push("## Per-category");
     lines.push("");
-    lines.push("| category | substrate | questions | EM | F1 | gold-in-pack | F1 / 1k tokens | note |");
-    lines.push("| --- | --- | ---: | ---: | ---: | ---: | ---: | --- |");
+    lines.push("| category | substrate | questions | EM | F1 | abstention | gold-in-pack | F1 / 1k tokens | note |");
+    lines.push("| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |");
     for (const category of report.categories) {
       for (const summary of category.substrates) {
         const note = category.requires_as_of_reasoning && summary.substrate === "neo4j"
           ? "no as-of filter"
           : "";
         lines.push(
-          `| ${category.category} | ${summary.substrate} | ${summary.records.length} | ${summary.aggregate.exact_match.toFixed(3)} | ${summary.aggregate.f1.toFixed(3)} | ${summary.aggregate.gold_in_pack_rate.toFixed(3)} | ${summary.aggregate.quality_per_1k_tokens.toFixed(3)} | ${note} |`,
+          `| ${category.category} | ${summary.substrate} | ${summary.records.length} | ${summary.aggregate.exact_match.toFixed(3)} | ${summary.aggregate.f1.toFixed(3)} | ${summary.aggregate.abstention_score.toFixed(3)} | ${summary.aggregate.gold_in_pack_rate.toFixed(3)} | ${summary.aggregate.quality_per_1k_tokens.toFixed(3)} | ${note} |`,
         );
       }
     }
@@ -1340,11 +1378,11 @@ export function formatEvalReport(report: EvalReport): string {
   }
   lines.push("## Per-question");
   lines.push("");
-  lines.push("| question_id | category | as_of | gold_rank | EM | F1 | tokens | F1 / 1k tokens | predicted |");
-  lines.push("| --- | --- | --- | --- | --- | --- | ---: | ---: | --- |");
+  lines.push("| question_id | category | as_of | gold_rank | EM | F1 | abstention | tokens | F1 / 1k tokens | predicted |");
+  lines.push("| --- | --- | --- | --- | --- | --- | ---: | ---: | ---: | --- |");
   for (const r of report.records) {
     lines.push(
-      `| ${r.question_id} | ${r.category} | ${r.as_of ?? ""} | ${r.gold_rank ?? "—"} | ${r.exact_match} | ${r.f1.toFixed(3)} | ${r.tokens.total} | ${r.quality_per_1k_tokens.toFixed(3)} | ${r.predicted_answer || "(abstain)"} |`,
+      `| ${r.question_id} | ${r.category} | ${r.as_of ?? ""} | ${r.gold_rank ?? "—"} | ${r.exact_match} | ${r.f1.toFixed(3)} | ${r.abstention_score.toFixed(3)} | ${r.tokens.total} | ${r.quality_per_1k_tokens.toFixed(3)} | ${r.predicted_answer || "(abstain)"} |`,
     );
   }
   lines.push("");

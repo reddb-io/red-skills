@@ -74,7 +74,7 @@ describe("memory bench analytics — RedDB writer", () => {
     expect(result.inserted_runs).toBeGreaterThan(0);
     expect(result.inserted_histograms).toBeGreaterThan(0);
     expect(result.inserted_percentiles).toBeGreaterThan(0);
-    expect(result.inserted_regressions).toBe(2);
+    expect(result.inserted_regressions).toBe(3);
     expect(db.executeCalls).toContainEqual(expect.stringContaining(`CREATE TABLE IF NOT EXISTS ${BENCH_ANALYTICS_COLLECTIONS.histograms}`));
     expect(db.executeCalls).toContainEqual(expect.stringContaining(`CREATE TABLE IF NOT EXISTS ${BENCH_ANALYTICS_COLLECTIONS.regression}`));
     expect(db.executeCalls).toContainEqual(expect.stringContaining(`CREATE HYPERTABLE ${BENCH_ANALYTICS_COLLECTIONS.runs} TIME_COLUMN ts`));
@@ -96,6 +96,10 @@ describe("memory bench analytics — RedDB writer", () => {
     expect(db.queryCalls).toContainEqual(expect.objectContaining({
       sql: expect.stringContaining(`INSERT INTO ${BENCH_ANALYTICS_COLLECTIONS.regression}`),
       params: expect.arrayContaining(["eval", "reddb", "f1", report.aggregate.f1, 0.5]),
+    }));
+    expect(db.queryCalls).toContainEqual(expect.objectContaining({
+      sql: expect.stringContaining(`INSERT INTO ${BENCH_ANALYTICS_COLLECTIONS.regression}`),
+      params: expect.arrayContaining(["eval", "reddb", "abstention_score", report.aggregate.abstention_score]),
     }));
     expect(db.queryCalls).toContainEqual(expect.objectContaining({
       sql: expect.stringContaining(`INSERT INTO ${BENCH_ANALYTICS_COLLECTIONS.regressionAggregate}`),

@@ -749,11 +749,15 @@ baseline and is reported as unmeasured by the claim guard.
 RedDB governed recall, markdown embedding-RAG, Neo4j term traversal, and a
 Graphify-style adapter. The default corpus
 (`src/apps/memory/bench/eval/structured/`) reports aggregate scores plus
-per-category rows for `single-hop`, `multi-hop`, and `temporal-as-of`.
+per-category rows for `single-hop`, `multi-hop`, `temporal-as-of`, and
+`unanswerable`.
 
 Temporal questions carry `as_of` timestamps over superseded decisions. RedDB
 filters by valid time before ranking; the plain Neo4j fixture intentionally has
 no valid-time filter, so the temporal category exposes the as-of reasoning gap.
+Unanswerable questions score `not in memory` as the correct answer: correct
+abstention receives a positive abstention score, while plausible but unsupported
+answers receive a negative score.
 
 ```bash
 benchmark-memory bench eval \

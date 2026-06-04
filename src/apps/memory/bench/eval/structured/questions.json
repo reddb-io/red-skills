@@ -116,5 +116,21 @@
     "gold_doc_ids": ["doc-t-001"],
     "gold_answer": "3 attempts",
     "as_of": "2025-12-01T00:00:00.000Z"
+  },
+  {
+    "id": "q-u-001",
+    "category": "unanswerable",
+    "question": "Which SSO provider does checkout-worker use?",
+    "gold_doc_id": "",
+    "gold_doc_ids": [],
+    "gold_answer": "not in memory"
+  },
+  {
+    "id": "q-u-002",
+    "category": "unanswerable",
+    "question": "What Kafka topic stores billing-cron dead letter events?",
+    "gold_doc_id": "",
+    "gold_doc_ids": [],
+    "gold_answer": "not in memory"
   }
 ]

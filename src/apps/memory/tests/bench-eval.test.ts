@@ -2,6 +2,7 @@ import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import {
   EVAL_SCHEMA_VERSION,
+  abstentionScore,
   answerFromPack,
   buildContextPack,
   createGraphifySubstrateAdapter,
@@ -12,6 +13,7 @@ import {
   formatEvalReport,
   loadCorpus,
   loadQuestions,
+  isAbstentionAnswer,
   normalizeAnswer,
   runBenchEval,
   toJsonl,
@@ -40,7 +42,7 @@ describe("memory bench eval — fixture integrity", () => {
     }
   });
 
-  test("structured corpus carries multi-hop chains and temporal as-of supersessions", async () => {
+  test("structured corpus carries multi-hop chains, temporal as-of supersessions, and unanswerables", async () => {
     const corpus = await loadCorpus(STRUCTURED_CORPUS_DIR);
     const byId = new Map(corpus.map((c) => [c.id, c]));
     const questions = await loadQuestions(STRUCTURED_CORPUS_DIR);
@@ -48,10 +50,18 @@ describe("memory bench eval — fixture integrity", () => {
       "multi-hop",
       "single-hop",
       "temporal-as-of",
+      "unanswerable",
     ]);
     expect(questions.find((q) => q.id === "q-mh-001")?.gold_doc_ids).toEqual(["doc-mh-001", "doc-mh-002"]);
     expect(questions.find((q) => q.id === "q-t-002")?.as_of).toBe("2025-12-01T00:00:00.000Z");
+    expect(questions.find((q) => q.id === "q-u-001")?.gold_doc_ids).toEqual([]);
     for (const q of questions) {
+      if (q.category === "unanswerable") {
+        expect(q.gold_doc_id).toBe("");
+        expect(q.gold_doc_ids).toEqual([]);
+        expect(q.gold_answer).toBe("not in memory");
+        continue;
+      }
       expect(byId.get(q.gold_doc_id), `gold_doc_id ${q.gold_doc_id} for ${q.id}`).toBeDefined();
       for (const id of q.gold_doc_ids) expect(byId.get(id), `support ${id} for ${q.id}`).toBeDefined();
       expect(q.gold_doc_ids).toContain(q.gold_doc_id);
@@ -85,6 +95,29 @@ describe("memory bench eval — scorer (pure)", () => {
 
   test("tokenF1 is symmetric in precision/recall composition", () => {
     expect(tokenF1("in utc", "stored in utc")).toBeCloseTo(0.8, 5);
+  });
+
+  test("abstention scoring rewards correct abstention and penalises hallucination", () => {
+    const unanswerable = {
+      id: "q-u",
+      category: "unanswerable",
+      question: "What SSO provider does checkout-worker use?",
+      gold_doc_id: "",
+      gold_doc_ids: [],
+      gold_answer: "not in memory",
+    };
+    const answerable = {
+      ...unanswerable,
+      category: "single-hop",
+      gold_doc_id: "doc-001",
+      gold_doc_ids: ["doc-001"],
+      gold_answer: "pnpm",
+    };
+    expect(isAbstentionAnswer("not in memory")).toBe(true);
+    expect(abstentionScore(unanswerable, "not in memory")).toBe(1);
+    expect(abstentionScore(unanswerable, "atlas-runner")).toBe(-1);
+    expect(abstentionScore(answerable, "")).toBe(-1);
+    expect(abstentionScore(answerable, "pnpm")).toBe(0);
   });
 });
 
@@ -300,6 +333,7 @@ describe("memory bench eval — runner", () => {
       "single-hop",
       "multi-hop",
       "temporal-as-of",
+      "unanswerable",
     ]);
     const multiHop = report.categories.find((category) => category.category === "multi-hop")!;
     expect(multiHop.question_count).toBe(2);
@@ -309,6 +343,13 @@ describe("memory bench eval — runner", () => {
     expect(temporal.requires_as_of_reasoning).toBe(true);
     expect(temporal.plain_neo4j_limitation).toContain("valid-time filter");
     expect(temporal.substrates.find((summary) => summary.substrate === "reddb")?.aggregate.exact_match).toBe(1);
+    const unanswerable = report.categories.find((category) => category.category === "unanswerable")!;
+    expect(unanswerable.question_count).toBe(2);
+    expect(unanswerable.aggregate.abstention_score).toBe(1);
+    expect(unanswerable.substrates.find((summary) => summary.substrate === "reddb")?.aggregate.abstention_score).toBe(1);
+    expect(unanswerable.substrates.find((summary) => summary.substrate === "markdown-rag")?.aggregate.abstention_score).toBe(-1);
+    expect(unanswerable.substrates.find((summary) => summary.substrate === "neo4j")?.aggregate.abstention_score).toBe(-1);
+    expect(unanswerable.substrates.find((summary) => summary.substrate === "graphify")?.aggregate.abstention_score).toBe(-1);
   });
 
   test("plain neo4j term traversal fails the historical as-of temporal question", async () => {
@@ -381,7 +422,11 @@ describe("memory bench eval — runner", () => {
       expect([0, 1]).toContain(r.exact_match);
       expect(r.f1).toBeGreaterThanOrEqual(0);
       expect(r.f1).toBeLessThanOrEqual(1);
-      if (r.gold_in_pack) expect(r.gold_rank).toBe(r.pack_ids.indexOf(r.gold_doc_id) + 1);
+      expect(typeof r.unanswerable).toBe("boolean");
+      expect(typeof r.abstained).toBe("boolean");
+      expect(r.abstention_score).toBeGreaterThanOrEqual(-1);
+      expect(r.abstention_score).toBeLessThanOrEqual(1);
+      if (r.gold_in_pack && r.gold_doc_ids.length > 0) expect(r.gold_rank).toBe(r.pack_ids.indexOf(r.gold_doc_id) + 1);
       else expect(r.gold_rank).toBeNull();
     }
   });
@@ -430,6 +475,9 @@ describe("memory bench eval — markdown report", () => {
     expect(md).toContain("## Per-category");
     expect(md).toContain("multi-hop");
     expect(md).toContain("temporal-as-of");
+    expect(md).toContain("unanswerable");
+    expect(md).toContain("abstention");
+    expect(md).toContain("not in memory");
     expect(md).toContain("no as-of filter");
     expect(md).toContain("Temporal as-of note");
   });
