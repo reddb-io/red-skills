@@ -1,3 +1,4 @@
+import { escapeHtmlNoSingleQuote as escapeHtml, jsonForScriptEscapedLessThan as jsonForScript, metricWithMetaSpan as metric } from "./viewer-utils.js";
 import type {
   MemoryAgentIntegrationItem,
   MemoryAgentIntegrationStatus,
@@ -90,9 +91,6 @@ function render(report: MemoryAgentIntegrationStatus): string {
 </html>`;
 }
 
-function metric(label: string, value: number): string {
-  return `<div class="metric"><strong>${value}</strong><span class="meta">${escapeHtml(label)}</span></div>`;
-}
 
 function agentItem(agent: MemoryAgentIntegrationItem): string {
   const files = agent.target_files
@@ -107,16 +105,4 @@ function agentItem(agent: MemoryAgentIntegrationItem): string {
     <p><code>${escapeHtml(files)}</code></p>
     <p class="meta">${escapeHtml(hooks)} - ${agent.mcp_tools} MCP tool(s), ${agent.cli_fallbacks} CLI fallback(s)</p>
   </li>`;
-}
-
-function jsonForScript(value: unknown): string {
-  return JSON.stringify(value, null, 2).replace(/</g, "\\u003c");
-}
-
-function escapeHtml(value: unknown): string {
-  return String(value)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
 }
