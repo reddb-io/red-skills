@@ -5,6 +5,7 @@ import {
   abstentionScore,
   answerFromPack,
   buildContextPack,
+  createFullContextAdapter,
   createGraphifySubstrateAdapter,
   createNeo4jSubstrateAdapter,
   countBenchTokens,
@@ -350,6 +351,7 @@ describe("memory bench eval — runner", () => {
     expect(unanswerable.substrates.find((summary) => summary.substrate === "markdown-rag")?.aggregate.abstention_score).toBe(-1);
     expect(unanswerable.substrates.find((summary) => summary.substrate === "neo4j")?.aggregate.abstention_score).toBe(-1);
     expect(unanswerable.substrates.find((summary) => summary.substrate === "graphify")?.aggregate.abstention_score).toBe(-1);
+    expect(unanswerable.substrates.find((summary) => summary.substrate === "full-context")?.aggregate.abstention_score).toBe(1);
   });
 
   test("plain neo4j term traversal fails the historical as-of temporal question", async () => {
@@ -365,19 +367,26 @@ describe("memory bench eval — runner", () => {
     expect(oldPolicy.exact_match).toBe(0);
   });
 
-  test("default run compares RedDB, markdown embedding-RAG, Neo4j traversal, and Graphify CLI", async () => {
+  test("default run compares RedDB, markdown embedding-RAG, Neo4j traversal, Graphify CLI, and full-context", async () => {
     const report = await runBenchEval({ corpusDir: CORPUS_DIR, now: () => FIXED_NOW });
     expect(report.substrates.map((summary) => summary.substrate)).toEqual([
       "reddb",
       "markdown-rag",
       "neo4j",
       "graphify",
+      "full-context",
     ]);
     expect(report.comparisons.map((comparison) => comparison.id)).toEqual([
       "reddb_vs_markdown-rag",
       "reddb_vs_neo4j",
       "reddb_vs_graphify",
+      "reddb_vs_full-context",
     ]);
+    expect(report.pareto.x_axis).toBe("total_tokens");
+    expect(report.pareto.y_axis).toBe("f1");
+    expect(report.pareto.points.map((point) => point.substrate)).toContain("full-context");
+    expect(report.pareto.points.find((point) => point.substrate === "full-context")?.token_fraction_of_full_context).toBe(1);
+    expect(report.pareto.tradeoff).toContain("vs full-context");
     for (const summary of report.substrates) {
       expect(summary.records).toHaveLength(report.question_count);
       expect(summary.aggregate.tokens.input).toBeGreaterThan(0);
@@ -397,6 +406,36 @@ describe("memory bench eval — runner", () => {
     expect(report.substrates.map((summary) => summary.substrate)).toEqual(["neo4j"]);
     expect(report.comparisons).toEqual([]);
     expect(report.aggregate.f1).toBeGreaterThan(0);
+  });
+
+  test("explicit full-context substrate measures every question against the whole corpus", async () => {
+    const report = await runBenchEval({
+      corpusDir: STRUCTURED_CORPUS_DIR,
+      substrate: "full-context",
+      now: () => FIXED_NOW,
+    });
+    expect(report.substrate).toBe("full-context");
+    expect(report.substrates.map((summary) => summary.substrate)).toEqual(["full-context"]);
+    expect(report.records).toHaveLength(report.question_count);
+    expect(report.aggregate.f1).toBe(1);
+    const answerable = report.records.find((record) => record.question_id === "q-001")!;
+    expect(answerable.pack_ids).toHaveLength(report.corpus_size);
+    expect(answerable.gold_rank).toBe(1);
+    const unanswerable = report.records.find((record) => record.question_id === "q-u-001")!;
+    expect(unanswerable.pack_ids).toHaveLength(report.corpus_size);
+    expect(unanswerable.predicted_answer).toBe("not in memory");
+  });
+
+  test("full-context adapter still uses the substrate interface", async () => {
+    const corpus = await loadCorpus(CORPUS_DIR);
+    const questions = await loadQuestions(CORPUS_DIR);
+    const report = await evaluateSubstrateAdapter(createFullContextAdapter(), corpus, [questions[0]!], {
+      packSize: 2,
+      now: () => FIXED_NOW,
+    });
+    expect(report.records[0]?.pack_ids).toHaveLength(corpus.length);
+    expect(report.records[0]?.tokens.total).toBeGreaterThan(countBenchTokens(corpus[0]!.text));
+    expect(report.aggregate.f1).toBe(1);
   });
 
   test("explicit graphify substrate runs only the Graphify adapter", async () => {
@@ -463,6 +502,10 @@ describe("memory bench eval — markdown report", () => {
     const md = formatEvalReport(report);
     expect(md).toContain("# memory bench eval — 2026-06-02");
     expect(md).toContain("markdown-rag");
+    expect(md).toContain("full-context");
+    expect(md).toContain("## Quality-vs-token Pareto");
+    expect(md).toContain("Trade-off:");
+    expect(md).toContain("tokens vs full-context");
     expect(md).toContain("F1 / 1k tokens");
     expect(md).toContain("exact-match");
     expect(md).toContain("token-F1");
