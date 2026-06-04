@@ -69,6 +69,7 @@ import {
 } from "./extract-conversation.js";
 import { buildMemoryExtractionStatus } from "./extraction-status.js";
 import { buildMemoryExtractionStatusViewerArtifact } from "./extraction-status-viewer.js";
+import { buildCodeDriftReport, type CodeDriftCountGroup } from "./code-drift-report.js";
 import { formatOutput, parseInput, type RawPayload } from "./hook-adapters.js";
 import { dispatch, type HookEvent, type Runner } from "./hook-runtime.js";
 import { refreshFromGit, type VcsEvent } from "./vcs-refresh.js";
@@ -347,6 +348,7 @@ Usage:
   memory extract [<transcript-file>] [--root <dir>] [--local]   (reads stdin if no file)
   memory extraction status           [--root <dir>] [--json]
   memory extraction status-viewer    [--root <dir>] [--out <file>]
+  memory code-drift                  [--root <dir>] [--recurring-threshold N] [--json]   (read-only)
   memory event skill                [--root <dir>] [--event-type ...] ... (or JSON/JSONL on stdin)
   memory curate skills              [--root <dir>] [--stale-days N] [--json]   (report-only)
   memory curate check|list|background|archive|restore [--root <dir>]   (/curate workflow)
@@ -4996,6 +4998,51 @@ async function runExtractionStatusViewer(args: ParsedArgs): Promise<void> {
   }
 }
 
+/**
+ * Read-only Code drift report (ADR 0035). It surfaces unknown engineering codes
+ * by recurrence count for curation and never mutates the graph or recall path.
+ */
+async function runCodeDrift(args: ParsedArgs): Promise<void> {
+  const { store } = await openGraphStore(args);
+  try {
+    const nodes = await store.listNodes();
+    const report = buildCodeDriftReport(
+      nodes.map((node) => node.properties.engineering_code),
+      { recurringThreshold: intFlag(args.flags, "recurring-threshold") },
+    );
+
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(report, null, 2));
+      return;
+    }
+
+    console.log(
+      `memory code-drift: ${report.distinctUnknown} unknown code(s) across ${report.unknownCount} node(s) (${report.knownCount} in suggested vocabulary)`,
+    );
+    if (report.distinctUnknown === 0) {
+      console.log("  no unknown engineering codes; nothing to curate");
+      return;
+    }
+
+    console.log(`  recurring (count >= ${report.recurringThreshold}) - promotion/alias candidates:`);
+    renderCodeDriftGroups(report.groups.filter((group) => group.recurrence === "recurring"));
+    console.log("  one-off - noise:");
+    renderCodeDriftGroups(report.groups.filter((group) => group.recurrence === "one-off"));
+  } finally {
+    await store.close();
+  }
+}
+
+function renderCodeDriftGroups(groups: CodeDriftCountGroup[]): void {
+  if (groups.length === 0) {
+    console.log("    (none)");
+    return;
+  }
+  for (const group of groups) {
+    console.log(`    count ${group.count}: ${group.codes.join(", ")}`);
+  }
+}
+
 /** Open the graph store for a read verb, erroring clearly outside graph mode. */
 async function openGraphStore(args: ParsedArgs): Promise<{
   store: MemoryStore;
@@ -6456,6 +6503,8 @@ async function main(): Promise<void> {
       return runExtract(args);
     case "extraction":
       return runExtraction(args);
+    case "code-drift":
+      return runCodeDrift(args);
     case "search":
       return runSearch(args);
     case "neighbors":
