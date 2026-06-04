@@ -7,6 +7,7 @@ import { MemoryStore } from "../src/graph-store.js";
 import { initGraph } from "../src/init.js";
 import { getReadOnlyMemoryOperation } from "../src/operations.js";
 import { buildCommunityDigest } from "../src/community-digest.js";
+import type { ProviderRequest } from "../src/extract-conversation.js";
 
 const TIMEOUT = 40_000;
 const pkgRoot = resolve(__dirname, "..");
@@ -76,6 +77,13 @@ interface DigestBody {
   cached: boolean;
   graph_hash: string;
   cache_key: string;
+  provider: {
+    status: "available" | "unavailable";
+    mode: string | null;
+    model: string | null;
+    egress: "local" | "external" | null;
+    error?: string;
+  };
   community_count: number;
   digests: Array<{
     community_id: string;
@@ -84,6 +92,7 @@ interface DigestBody {
     top_node_type: string;
     labels: Array<{ value: string; count: number }>;
     node_types: Array<{ value: string; count: number }>;
+    narrative_summary: string | null;
   }>;
 }
 
@@ -111,7 +120,16 @@ describe("memory community-digest CLI", () => {
       expect(firstBody.read_only).toBe(true);
       expect(firstBody.cached).toBe(false);
       expect(firstBody.graph_hash).toMatch(/^[a-f0-9]{64}$/);
-      expect(firstBody.cache_key).toBe(`cache:community-digest:${firstBody.graph_hash}`);
+      expect(firstBody.cache_key).toBe(
+        `cache:community-digest:${firstBody.graph_hash}:provider:none`,
+      );
+      expect(firstBody.provider).toMatchObject({
+        status: "unavailable",
+        mode: null,
+        model: null,
+        egress: null,
+        error: "no AI provider configured",
+      });
       expect(firstBody.community_count).toBe(2);
       expect(firstBody.digests).toHaveLength(2);
       expect(firstBody.digests.map((d) => d.size).sort()).toEqual([3, 3]);
@@ -121,6 +139,7 @@ describe("memory community-digest CLI", () => {
         expect(digest.top_node_type).toBe("concept");
         expect(digest.labels).toHaveLength(3);
         expect(digest.node_types).toEqual([{ value: "concept", count: 3 }]);
+        expect(digest.narrative_summary).toBeNull();
         // Label histogram is ranked count-desc then value-asc — deterministic.
         const values = digest.labels.map((l) => l.value);
         expect([...values].sort()).toEqual(values);
@@ -135,6 +154,7 @@ describe("memory community-digest CLI", () => {
       expect(secondBody.cached).toBe(true);
       expect(secondBody.graph_hash).toBe(firstBody.graph_hash);
       expect(secondBody.digests).toEqual(firstBody.digests);
+      expect(secondBody.provider).toEqual(firstBody.provider);
 
       // Changing the graph invalidates the cache and recomputes.
       const mutate = await openStore(root);
@@ -208,6 +228,70 @@ describe("memory community-digest CLI", () => {
       const ro2 = await buildCommunityDigest(reopened, { cache: "read-only", now: fixedNow });
       expect(ro2.cached).toBe(false);
       await reopened.close();
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "provider enrichment writes one narrative per community and reuses the graph-hash cache",
+    async () => {
+      const root = await initRoot();
+      await seedTwoCommunities(root);
+      const calls: ProviderRequest[] = [];
+      const providerClient = {
+        async complete(req: ProviderRequest): Promise<string> {
+          calls.push(req);
+          const body = JSON.parse(req.user) as {
+            communities: Array<{ community_id: string; top_label: string }>;
+          };
+          return JSON.stringify({
+            summaries: body.communities.map((community) => ({
+              community_id: community.community_id,
+              summary: `Narrative for ${community.top_label}`,
+            })),
+          });
+        },
+      };
+
+      const store = await openStore(root);
+      const providerConfig = {
+        mode: "openai-compat" as const,
+        model: "llama3.1",
+        baseUrl: "http://localhost:11434/v1",
+      };
+      const first = await buildCommunityDigest(store, {
+        cache: "read-write",
+        providerConfig,
+        providerClient,
+        now: new Date("2026-01-01T00:00:00.000Z"),
+      });
+
+      expect(first.cached).toBe(false);
+      expect(first.provider).toMatchObject({
+        status: "available",
+        mode: "openai-compat",
+        model: "llama3.1",
+        egress: "local",
+      });
+      expect(first.cache_key).toBe(
+        `cache:community-digest:${first.graph_hash}:provider:openai-compat:llama3.1`,
+      );
+      expect(calls).toHaveLength(1);
+      expect(first.digests).toHaveLength(2);
+      expect(first.digests.every((digest) => digest.narrative_summary)).toBe(true);
+
+      const second = await buildCommunityDigest(store, {
+        cache: "read-write",
+        providerConfig,
+        providerClient,
+        now: new Date("2026-02-02T00:00:00.000Z"),
+      });
+      expect(second.cached).toBe(true);
+      expect(second.graph_hash).toBe(first.graph_hash);
+      expect(second.generated_at).toBe(first.generated_at);
+      expect(second.digests).toEqual(first.digests);
+      expect(calls).toHaveLength(1);
+      await store.close();
     },
     TIMEOUT,
   );

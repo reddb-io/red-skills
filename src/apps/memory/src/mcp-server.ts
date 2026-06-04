@@ -26,10 +26,11 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { readBuildInfo, renderVersion } from "@reddb-io/build-info";
-import { readConfig, resolveStoreUri } from "./config.js";
+import { type MemoryConfig, readConfig, resolveStoreUri } from "./config.js";
 import { diagnose } from "./doctor.js";
 import { runAutoCure } from "./auto-curation.js";
 import { neighbors, path, recall, search, traverse } from "./engine.js";
+import { resolveProvider } from "./extract-conversation.js";
 import { exportGraph } from "./export.js";
 import { MemoryStore, factToNode } from "./graph-store.js";
 import { HistoricalMemoryStore } from "./historical-memory-store.js";
@@ -51,6 +52,7 @@ import {
   appendEvent as workingAppendEvent,
   listEvents as workingListEvents,
 } from "./working-memory.js";
+import { applyProviderEnv } from "./provider-client.js";
 
 // ---------- tool input schemas ----------
 
@@ -198,7 +200,7 @@ async function requireActiveSession(rootDir: string): Promise<string> {
 const buildInfo = readBuildInfo("memory-mcp");
 
 async function main(): Promise<void> {
-  const { uri, project, root } = await resolveStore();
+  const { uri, project, root, config } = await resolveStore();
   const store = await MemoryStore.open({ uri, project });
 
   const server = new Server(
@@ -213,7 +215,11 @@ async function main(): Promise<void> {
     const args = req.params.arguments ?? {};
     const operation = OPERATION_BY_TOOL_NAME.get(name);
     if (operation) {
-      const output = await executeReadOnlyMemoryOperation(operation.id, { store, rootDir: root }, args);
+      const output = await executeReadOnlyMemoryOperation(
+        operation.id,
+        { store, rootDir: root, providerConfig: config?.provider },
+        args,
+      );
       return text(
         JSON.stringify(output, null, 2),
         await operationStructuredContent(operation.id, output, store),
@@ -449,7 +455,12 @@ async function main(): Promise<void> {
 }
 
 /** Resolve which RedDB store the server speaks to, and the project tag. */
-async function resolveStore(): Promise<{ uri: string; project: string; root: string }> {
+async function resolveStore(): Promise<{
+  uri: string;
+  project: string;
+  root: string;
+  config?: MemoryConfig;
+}> {
   if (process.env.RED_MEMORY_URI) {
     return {
       uri: process.env.RED_MEMORY_URI,
@@ -469,11 +480,23 @@ async function resolveStore(): Promise<{ uri: string; project: string; root: str
       `the MCP server needs graph mode — ${root} is "${config.mode}". Re-run \`memory init --mode graph\``,
     );
   }
+  applyConfiguredProviderEnv(config.provider);
   return {
     uri: resolveStoreUri(root, config),
     project: process.env.RED_MEMORY_PROJECT ?? basename(root),
     root,
+    config,
   };
+}
+
+function applyConfiguredProviderEnv(provider: MemoryConfig["provider"]): void {
+  if (!provider) return;
+  try {
+    applyProviderEnv(resolveProvider(provider), provider.apiKeyEnv);
+  } catch {
+    // Keep deterministic MCP read surfaces available; provider-aware tools
+    // surface invalid provider config in their own result payload.
+  }
 }
 
 function text(body: string, structured?: Record<string, unknown>) {
@@ -911,6 +934,30 @@ async function operationStructuredContent(
         cached: output.cached,
         nodes: stats.nodes,
         edges: stats.edges,
+      };
+    }
+    case "memory.community-digest": {
+      const provider = isRecord(output.provider) ? output.provider : {};
+      const digests = Array.isArray(output.digests) ? output.digests : [];
+      const narrativeSummaries = digests.filter(
+        (digest) =>
+          isRecord(digest) &&
+          typeof digest.narrative_summary === "string" &&
+          digest.narrative_summary.length > 0,
+      ).length;
+      return {
+        operation_id: operationId,
+        schema_version: output.schema_version,
+        read_only: output.read_only,
+        community_count: output.community_count,
+        digests: digests.length,
+        narrative_summaries: narrativeSummaries,
+        provider_status: provider.status ?? null,
+        provider_mode: provider.mode ?? null,
+        provider_model: provider.model ?? null,
+        provider_error: provider.error ?? null,
+        graph_hash: output.graph_hash,
+        cached: output.cached,
       };
     }
     case "memory.communities-viewer": {

@@ -1533,6 +1533,30 @@ describe("MCP server over stdio", () => {
         edges: 2,
       });
 
+      const digestResult = (await client.callTool({
+        name: "memory_community_digest",
+        arguments: {},
+      })) as ToolResult;
+      const digest = JSON.parse(digestResult.content[0]?.text ?? "{}") as {
+        schema_version: string;
+        provider: { status: string; error?: string };
+        digests: Array<{ narrative_summary: string | null }>;
+      };
+      expect(digest.schema_version).toBe("memory.community-digest.v1");
+      expect(digest.provider).toMatchObject({
+        status: "unavailable",
+        error: "no AI provider configured",
+      });
+      expect(digest.digests.length).toBeGreaterThan(0);
+      expect(digest.digests.every((item) => item.narrative_summary === null)).toBe(true);
+      expect(digestResult.structuredContent).toMatchObject({
+        operation_id: "memory.community-digest",
+        schema_version: "memory.community-digest.v1",
+        provider_status: "unavailable",
+        provider_error: "no AI provider configured",
+        narrative_summaries: 0,
+      });
+
       const viewerResult = (await client.callTool({
         name: "memory_communities_viewer",
         arguments: {},

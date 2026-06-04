@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import {
   DEFAULT_MEMORY_EVENT_RETENTION_DAYS,
+  type MemoryConfig,
   readConfig,
   resolveL2Policy,
   resolveNotesDir,
@@ -4975,7 +4976,10 @@ async function runExtractionStatusViewer(args: ParsedArgs): Promise<void> {
 }
 
 /** Open the graph store for a read verb, erroring clearly outside graph mode. */
-async function openGraphStore(args: ParsedArgs): Promise<{ store: MemoryStore }> {
+async function openGraphStore(args: ParsedArgs): Promise<{
+  store: MemoryStore;
+  config: MemoryConfig;
+}> {
   const rootDir = rootOf(args.flags);
   const config = await requireConfig(rootDir);
   if (config.mode !== "graph") {
@@ -4983,7 +4987,18 @@ async function openGraphStore(args: ParsedArgs): Promise<{ store: MemoryStore }>
       `this verb needs graph mode — this project is "${config.mode}". Re-run \`memory init --mode graph\` first`,
     );
   }
-  return { store: await MemoryStore.open({ uri: resolveStoreUri(rootDir, config) }) };
+  applyConfiguredProviderEnv(config.provider);
+  return { store: await MemoryStore.open({ uri: resolveStoreUri(rootDir, config) }), config };
+}
+
+function applyConfiguredProviderEnv(provider: MemoryConfig["provider"]): void {
+  if (!provider) return;
+  try {
+    applyProviderEnv(resolveProvider(provider), provider.apiKeyEnv);
+  } catch {
+    // Provider-aware commands report invalid config. Deterministic graph reads
+    // should still be able to open the store and degrade locally.
+  }
 }
 
 function intFlag(flags: Record<string, string | boolean>, key: string): number | undefined {
@@ -5264,11 +5279,15 @@ async function runCommunitiesViewer(args: ParsedArgs): Promise<void> {
 }
 
 async function runCommunityDigest(args: ParsedArgs): Promise<void> {
-  const { store } = await openGraphStore(args);
+  const { store, config } = await openGraphStore(args);
   try {
-    const report = (await executeReadOnlyMemoryOperation("memory.community-digest", { store }, {
-      cache: args.flags["no-cache"] === true ? "off" : "read-write",
-    })) as CommunityDigestReport;
+    const report = (await executeReadOnlyMemoryOperation(
+      "memory.community-digest",
+      { store, providerConfig: config.provider },
+      {
+        cache: args.flags["no-cache"] === true ? "off" : "read-write",
+      },
+    )) as CommunityDigestReport;
     if (args.flags.json === true) {
       console.log(JSON.stringify(report, null, 2));
       return;
@@ -5276,10 +5295,18 @@ async function runCommunityDigest(args: ParsedArgs): Promise<void> {
     console.log(`memory: ${report.community_count} community digest(s)`);
     console.log(`  graph hash: ${report.graph_hash}`);
     console.log(`  cache: ${report.cached ? "hit" : "miss"}`);
+    console.log(
+      `  provider: ${report.provider.status}${
+        report.provider.error ? ` (${report.provider.error})` : ""
+      }`,
+    );
     for (const digest of report.digests) {
       console.log(`  ${digest.community_id}: ${digest.size} node(s)`);
       console.log(`        top label: ${digest.top_label}`);
       console.log(`        top type: ${digest.top_node_type}`);
+      if (digest.narrative_summary) {
+        console.log(`        summary: ${digest.narrative_summary}`);
+      }
     }
   } finally {
     await store.close();

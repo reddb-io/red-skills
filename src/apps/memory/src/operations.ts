@@ -35,6 +35,7 @@ import {
 } from "./communities-viewer.js";
 import {
   buildCommunityDigest,
+  type CommunityDigestProviderStatus,
   type CommunityDigestReport,
 } from "./community-digest.js";
 import { buildContextPack, type ContextPack } from "./context-pack.js";
@@ -100,6 +101,7 @@ import {
   type DocSearchViewerArtifact,
 } from "./doc-search-viewer.js";
 import { ask, type AskResult } from "./engine.js";
+import type { AiProviderConfig } from "./extract-conversation.js";
 import {
   buildMemoryExtractionStatus,
   type MemoryExtractionStatus,
@@ -296,6 +298,7 @@ export interface MemoryOperationRendererMetadata {
 export interface MemoryOperationContext {
   store: MemoryStore;
   rootDir?: string;
+  providerConfig?: AiProviderConfig;
 }
 
 export interface MemoryOperation<Input, Output> {
@@ -645,7 +648,21 @@ const CommunityDigestEntrySchema = z.object({
   top_node_type: z.string(),
   labels: z.array(CommunityDigestCountSchema),
   node_types: z.array(CommunityDigestCountSchema),
+  narrative_summary: z.string().nullable(),
 });
+const CommunityDigestProviderSchema = z.object({
+  status: z.enum(["available", "unavailable"]),
+  mode: z.union([
+    z.literal("openai-compat"),
+    z.literal("openai-native"),
+    z.literal("anthropic-native"),
+    z.literal("bedrock"),
+    z.null(),
+  ]),
+  model: z.string().nullable(),
+  egress: z.union([z.literal("local"), z.literal("external"), z.null()]),
+  error: z.string().optional(),
+}) satisfies z.ZodType<CommunityDigestProviderStatus>;
 const CommunityDigestOutputSchema = z.object({
   schema_version: z.literal("memory.community-digest.v1"),
   read_only: z.literal(true),
@@ -653,6 +670,7 @@ const CommunityDigestOutputSchema = z.object({
   cache_key: z.string(),
   cached: z.boolean(),
   generated_at: z.string(),
+  provider: CommunityDigestProviderSchema,
   community_count: z.number(),
   digests: z.array(CommunityDigestEntrySchema),
 }) satisfies z.ZodType<CommunityDigestReport>;
@@ -2111,7 +2129,7 @@ const COMMUNITY_DIGEST_OPERATION: MemoryOperation<
   id: "memory.community-digest",
   title: "Memory community digest",
   description:
-    "Read-only deterministic per-community top-label digest over RedDB graph community assignments.",
+    "Read-only per-community digest over RedDB graph community assignments, with deterministic baseline and optional provider narrative enrichment.",
   inputSchema: CommunityDigestInputSchema,
   outputSchema: CommunityDigestOutputSchema,
   safetyClass: "read-only",
@@ -2122,10 +2140,11 @@ const COMMUNITY_DIGEST_OPERATION: MemoryOperation<
     mcp: {
       toolName: "memory_community_digest",
       description:
-        "Read-only deterministic per-community digest over RedDB native Louvain community assignments: top label, dominant node_type, ranked label/node_type histograms, and graph-hash cache metadata. Analytics only — never writes the digest back into Memory graph evidence as a node or edge.",
+        "Read-only per-community digest over RedDB native Louvain community assignments: deterministic top label, dominant node_type, ranked label/node_type histograms, provider availability, optional natural-language narrative summaries, and graph-hash cache metadata. Analytics only — never writes the digest back into Memory graph evidence as a node or edge.",
     },
   },
-  execute: (ctx, input) => buildCommunityDigest(ctx.store, { cache: input.cache }),
+  execute: (ctx, input) =>
+    buildCommunityDigest(ctx.store, { cache: input.cache, providerConfig: ctx.providerConfig }),
 };
 
 const ONBOARDING_MAP_OPERATION: MemoryOperation<OnboardingMapInput, OnboardingMap> = {
