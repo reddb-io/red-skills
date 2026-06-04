@@ -7,6 +7,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [#252 cutover: AFK workers move to nested workers/{wid}/{issue}-a{n}/ + worker.pid](./pages/260-252-cutover-afk-workers-move-to-nested-workers-wid-issue-a-n.md)
 - [#253/#254: lock-driven base + lock-toggled landing (ADR 0030/0031)](./pages/261-253-254-lock-driven-base-lock-toggled-landing-adr-0030-0031.md)
 - [#302 Memory extraction: strict-write structural-type gate (provider path)](./pages/377-302-memory-extraction-strict-write-structural-type-gate-prov.md)
+- [build(release): one bundle-naming convention, all assets under ./dist/ (ADR 0052)](./pages/480-build-release-one-bundle-naming-convention-all-assets-under.md)
 - [chore(afk): native + sandcastle E2E smoke test (#284 gate)](./pages/291-chore-afk-native-sandcastle-e2e-smoke-test-284-gate.md)
 - [chore(afk): rebuild committed bin/afk.mjs from current source](./pages/320-chore-afk-rebuild-committed-bin-afk-mjs-from-current-source.md)
 - [chore(dev): remove the scaffold-exercises skill (upstream course tooling)](./pages/411-chore-dev-remove-the-scaffold-exercises-skill-upstream-cours.md)
