@@ -14,7 +14,7 @@ import type { StoredNode } from "../src/graph-store.js";
 
 describe("structural vocabulary (single source of truth)", () => {
   test("is versioned and closed, with the base type a member", () => {
-    expect(EXTRACTION_SCHEMA_VERSION).toBe("1.0.0");
+    expect(EXTRACTION_SCHEMA_VERSION).toBe("1.1.0");
     expect(STRUCTURAL_TYPES).toContain(BASE_STRUCTURAL_TYPE);
     expect(new Set(STRUCTURAL_TYPES).size).toBe(STRUCTURAL_TYPES.length); // no dupes
   });
