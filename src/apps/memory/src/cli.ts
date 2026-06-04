@@ -186,6 +186,7 @@ import {
 import { buildMemoryHealthViewerArtifact } from "./memory-health-viewer.js";
 import { buildMemoryDecayReport } from "./memory-decay.js";
 import { buildMemoryDecayViewerArtifact } from "./memory-decay-viewer.js";
+import { buildMemoryMergePassReport } from "./memory-merge-pass.js";
 import { recall } from "./recall.js";
 import { buildFederationReport } from "./federation.js";
 import { runAutoCure } from "./auto-curation.js";
@@ -304,6 +305,7 @@ Usage:
   memory learning-debt-viewer       [--root <dir>] [--stale-days N] [--out <file>]
   memory decay                      [--root <dir>] [--stale-days N] [--deprecate-days N] [--limit N] [--json]
   memory decay-viewer               [--root <dir>] [--stale-days N] [--deprecate-days N] [--limit N] [--out <file>]
+  memory merge-pass                 [--root <dir>] [--min-score N] [--limit N] [--json]
   memory health-viewer              [--root <dir>] [--stale-days N] [--out <file>]
   memory onboarding-map             [--root <dir>] [--stale-days N] [--json]
   memory onboarding-map-viewer      [--root <dir>] [--stale-days N] [--out <file>]
@@ -1586,6 +1588,23 @@ async function runMemoryDecayViewer(args: ParsedArgs): Promise<void> {
     console.log(`memory: decay viewer written ${outPath}`);
     console.log(`  status: ${report.status}`);
     console.log(`  contract: ${artifact.contract.consumes}`);
+  } finally {
+    await store.close();
+  }
+}
+
+async function runMemoryMergePass(args: ParsedArgs): Promise<void> {
+  const { store } = await openGraphStore(args);
+  try {
+    const report = await buildMemoryMergePassReport(store, {
+      min_score: numberFlag(args.flags, "min-score"),
+      limit: intFlag(args.flags, "limit"),
+    });
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(report, null, 2));
+      return;
+    }
+    console.log(report.markdown);
   } finally {
     await store.close();
   }
@@ -5007,6 +5026,13 @@ function intFlag(flags: Record<string, string | boolean>, key: string): number |
   return typeof flags[key] === "string" ? Number(flags[key]) : undefined;
 }
 
+function numberFlag(flags: Record<string, string | boolean>, key: string): number | undefined {
+  if (typeof flags[key] !== "string") return undefined;
+  const value = Number(flags[key]);
+  if (!Number.isFinite(value)) throw new Error(`--${key} must be a finite number`);
+  return value;
+}
+
 function stringFlag(flags: Record<string, string | boolean>, key: string): string | undefined {
   return typeof flags[key] === "string" ? flags[key] : undefined;
 }
@@ -6360,6 +6386,8 @@ async function main(): Promise<void> {
       return runMemoryDecay(args);
     case "decay-viewer":
       return runMemoryDecayViewer(args);
+    case "merge-pass":
+      return runMemoryMergePass(args);
     case "dashboard":
       return runDashboard(args);
     case "workbench":

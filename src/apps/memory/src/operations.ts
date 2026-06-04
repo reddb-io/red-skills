@@ -163,6 +163,10 @@ import {
   buildMemoryDecayViewerArtifact,
   type MemoryDecayViewerArtifact,
 } from "./memory-decay-viewer.js";
+import {
+  buildMemoryMergePassReport,
+  type MemoryMergePassReport,
+} from "./memory-merge-pass.js";
 import { buildMemoryLayersReport, type MemoryLayersReport } from "./memory-layers.js";
 import {
   buildMemoryLayersViewerArtifact,
@@ -490,6 +494,12 @@ const MemoryDecayInputSchema = z.object({
 });
 type MemoryDecayInput = z.infer<typeof MemoryDecayInputSchema>;
 
+const MemoryMergePassInputSchema = z.object({
+  min_score: z.number().min(0).max(1).optional(),
+  limit: z.number().int().min(1).max(100).optional(),
+});
+type MemoryMergePassInput = z.infer<typeof MemoryMergePassInputSchema>;
+
 const GovernanceInputSchema = z.object({
   stale_progress_days: z.number().int().min(1).optional(),
 });
@@ -793,6 +803,7 @@ const HealthViewerOutputSchema = objectOutputSchema<MemoryHealthViewerArtifact>(
 const MemoryDecayOutputSchema = objectOutputSchema<MemoryDecayReport>();
 const MemoryDecayViewerOutputSchema =
   objectOutputSchema<MemoryDecayViewerArtifact>();
+const MemoryMergePassOutputSchema = objectOutputSchema<MemoryMergePassReport>();
 const GovernanceOutputSchema = objectOutputSchema<MemoryGovernanceReport>();
 const GovernanceViewerOutputSchema =
   objectOutputSchema<MemoryGovernanceViewerArtifact>();
@@ -2072,6 +2083,30 @@ const MEMORY_DECAY_VIEWER_OPERATION: MemoryOperation<
     buildMemoryDecayViewerArtifact(await buildMemoryDecayReport(ctx.store, input)),
 };
 
+const MEMORY_MERGE_PASS_OPERATION: MemoryOperation<
+  MemoryMergePassInput,
+  MemoryMergePassReport
+> = {
+  id: "memory.merge-pass",
+  title: "Memory merge pass",
+  description:
+    "Read-only advisory report of near-duplicate Memory node pairs proposed for human-approved merge.",
+  inputSchema: MemoryMergePassInputSchema,
+  outputSchema: MemoryMergePassOutputSchema,
+  safetyClass: "read-only",
+  sideEffectClass: "none",
+  capabilities: ["graph-store"],
+  renderer: {
+    cli: { command: "merge-pass", supportsJson: true },
+    mcp: {
+      toolName: "memory_merge_pass",
+      description:
+        "Read-only advisory report of near-duplicate Memory node pairs. Returns ranked candidate pairs, similarity scores, evidence terms, proposed SAME_AS direction, and recommendations without mutating Memory.",
+    },
+  },
+  execute: (ctx, input) => buildMemoryMergePassReport(ctx.store, input),
+};
+
 const HOOK_COVERAGE_OPERATION: MemoryOperation<HookCoverageInput, HookCoverageReport> = {
   id: "memory.hook-coverage",
   title: "Memory hook coverage",
@@ -2797,6 +2832,7 @@ const READ_ONLY_OPERATIONS = createReadOnlyMemoryOperationRegistry([
   HEALTH_VIEWER_OPERATION,
   MEMORY_DECAY_OPERATION,
   MEMORY_DECAY_VIEWER_OPERATION,
+  MEMORY_MERGE_PASS_OPERATION,
   HOOK_COVERAGE_OPERATION,
   HOOK_COVERAGE_VIEWER_OPERATION,
   LEARNING_DEBT_OPERATION,
