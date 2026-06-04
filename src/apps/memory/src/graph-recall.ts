@@ -5,6 +5,11 @@ import {
   type RecallScope,
   type RecallStore,
 } from "./engine.js";
+import {
+  loadEngineeringCodeCuration,
+  resolveEngineeringCodeAlias,
+} from "./code-curation.js";
+import { normalizeEngineeringCode } from "./extraction-schema.js";
 import type { MemoryStore } from "./graph-store.js";
 import { hybridRecall, type Ranking } from "./hybrid-recall.js";
 import { appendEngineOpEvent } from "./memory-events.js";
@@ -72,12 +77,14 @@ export async function graphRecallResult(
   limit = 10,
   opts: { includeSuperseded?: boolean; scope?: RecallScope; now?: number } = {},
 ): Promise<GraphRecallResult> {
+  const codeCanonicalize = await loadCodeCanonicalizer(store);
   const { nodes, diagnostics } = await recall(store, query, {
     k: limit,
     depth: 1,
     includeSuperseded: opts.includeSuperseded,
     scope: opts.scope,
     now: opts.now,
+    codeCanonicalize,
   });
 
   if (isMemoryStore(store)) {
@@ -122,6 +129,14 @@ export async function graphRecallResult(
   }
 
   return { hits, diagnostics };
+}
+
+async function loadCodeCanonicalizer(store: RecallStore): Promise<(code: string) => string> {
+  if (!isMemoryStore(store)) return normalizeEngineeringCode;
+  const curation = await loadEngineeringCodeCuration(store).catch(() => null);
+  return curation
+    ? (code: string) => resolveEngineeringCodeAlias(code, curation)
+    : normalizeEngineeringCode;
 }
 
 function extractHookEntries(raw: unknown): GraphRecallHookEntry[] | null {
