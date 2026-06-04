@@ -28,7 +28,7 @@ import {
   type LiveBaselineRunResult,
 } from "../../memory/src/live-baseline-adapters.js";
 import { formatMarkdownReport, runBenchRecall } from "../../memory/src/bench-recall.js";
-import { formatEvalReport, runBenchEval, toJsonl } from "../../memory/src/bench-eval.js";
+import { formatEvalReport, runBenchEval, tierRecords, toJsonl } from "../../memory/src/bench-eval.js";
 import {
   DEFAULT_WORKLOAD,
   formatLatencyReport,
@@ -204,7 +204,7 @@ async function runBenchEvalCmd(args: ParsedArgs): Promise<number> {
   const report = await runBenchEval({ corpusDir, packSize, substrate });
   await writeOutputs(args, report, formatEvalReport(report));
   const recordsPath = stringFlag(args, "records");
-  if (recordsPath) await writeFileEnsured(recordsPath, toJsonl(report.records));
+  if (recordsPath) await writeFileEnsured(recordsPath, toJsonl(tierRecords(report)));
   await writeEvalAnalyticsIfRequested(args, report);
   if (args.flags.json === true) {
     process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
@@ -213,7 +213,7 @@ async function runBenchEvalCmd(args: ParsedArgs): Promise<number> {
       ? "n/a"
       : report.aggregate.judge_j.score.toFixed(3);
     process.stdout.write(
-      `benchmark-memory bench eval: substrate=${report.substrate} category=${report.category} categories=${report.categories.length} questions=${report.question_count} exact_match=${report.aggregate.exact_match.toFixed(3)} f1=${report.aggregate.f1.toFixed(3)} judge_j=${judgeJ}\n`,
+      `benchmark-memory bench eval: substrate=${report.substrate} tiers=${report.tiers.length} category=${report.category} categories=${report.categories.length} questions=${report.question_count} exact_match=${report.aggregate.exact_match.toFixed(3)} f1=${report.aggregate.f1.toFixed(3)} judge_j=${judgeJ}\n`,
     );
   }
   return 0;
