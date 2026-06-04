@@ -1,5 +1,6 @@
 import type { DocBacklinkDoc, DocBacklinksReport } from "./doc-backlinks.js";
 import type { DocReferenceGraphNode } from "./doc-reference-graph.js";
+import { escapeHtml, jsonForScript, metric, warningsSection } from "./viewer-utils.js";
 
 export interface DocBacklinksViewerArtifact {
   contract: {
@@ -129,7 +130,7 @@ function renderDocBacklinksViewer(report: DocBacklinksReport): string {
       </div>
       <div class="stack">
         ${referencesSection(report.references)}
-        ${warningsSection(report.warnings)}
+        ${warningsSection(report.warnings, "No backlink warnings.")}
       </div>
     </div>
     <script id="doc-backlinks-data" type="application/json">${jsonForScript(report)}</script>
@@ -168,32 +169,4 @@ function referencesSection(references: DocReferenceGraphNode[]): string {
         : `<ul>${references.slice(0, 80).map((ref) => `<li><strong>${escapeHtml(ref.title)}</strong><p class="meta"><code>${escapeHtml(ref.label)}</code> - ${escapeHtml(ref.node_type)}</p></li>`).join("")}</ul>`
     }
   </section>`;
-}
-
-function warningsSection(warnings: string[]): string {
-  return `<section>
-    <h2>Warnings</h2>
-    ${
-      warnings.length === 0
-        ? `<p class="empty">No backlink warnings.</p>`
-        : `<ul>${warnings.map((warning) => `<li class="warn">${escapeHtml(warning)}</li>`).join("")}</ul>`
-    }
-  </section>`;
-}
-
-function metric(label: string, value: number | string): string {
-  return `<div class="metric"><strong>${escapeHtml(String(value))}</strong><span>${escapeHtml(label)}</span></div>`;
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
-
-function jsonForScript(value: unknown): string {
-  return JSON.stringify(value, null, 2).replaceAll("</", "<\\/");
 }
