@@ -1,6 +1,6 @@
 ---
 name: doctor
-description: Read-only adoption/process doctor — report how fully a repo has adopted the RedSkills engineering stack (triage label vocabulary, AGENTS≡CLAUDE parity, statusline form, MCP wiring, blocked-label hygiene) and recommend fixes without applying any. The recurring counterpart to the one-time `/setup-red-skills`. Use when asked "is our process round / is this repo set up right", "red doctor", "check adoption", before a large `/afk` drain, or to audit `reddb`/`red-ui`/`red-skills`-style repos against the canonical conventions.
+description: Read-only adoption/process doctor — report how fully a repo has adopted the RedSkills engineering stack (triage label vocabulary, AGENTS≡CLAUDE parity, Development-workflow adoption, statusline form, MCP wiring, blocked-label hygiene) and recommend fixes without applying any. The recurring counterpart to the one-time `/setup-red-skills`. Use when asked "is our process round / is this repo set up right", "red doctor", "check adoption", before a large `/afk` drain, or to audit `reddb`/`red-ui`/`red-skills`-style repos against the canonical conventions.
 ---
 
 # Doctor (adoption / process)
@@ -26,10 +26,12 @@ fix-home for each gap**; it never applies a fix.
 1. **Local context stack** — invoke `memory context-status` (or its CLI) and fold its result in. Do not duplicate its checks (CLAUDE/AGENTS, `.red/CONTEXT(-MAP)`, `.red/adr/*`, memory, wiki).
 2. **Label conformance** — `gh label list` vs the canonical families in `triage-labels.md`. Classify every label per the *Label classes* table in `<supporting-info>`. Report `❌ synonym` / `⚠️ legacy` / `⚠️ naming` with the suggested rename; never apply it.
 3. **`blocked:*` hygiene** — list open issues carrying `ready-for-agent` **or** `running` **together with** any `blocked:*` label (stale reason not rotated on re-queue). Count them.
-4. **AGENTS ≡ CLAUDE parity** — both files exist **and** both carry the `## Agent skills` block. Report `C/A` (e.g. `1/0` = block in CLAUDE only).
-5. **Statusline drift** — the installed `.claude/settings.json` `statusLine` command resolves the **cached bundle** (`~/.cache/red-skills/bundles/dev-*.bundle.min.mjs`), not the OLD launcher form (`…/plugins/cache/red-skills/dev/*/…/afk.mjs`) which blanks on every plugin update.
-6. **MCP wiring** — does the repo wire the expected MCPs? The `dev` plugin should expose `code-nav`; the `memory` plugin should expose **`red-memory` + `red-ui` as consumers** (fetched from the red-memory / red-ui releases per ADR 0041) — **flag a single standalone-local `memory` server** (running an in-repo `bootstrap.mjs`/build) as the pre-migration state. Also check whether the repo wires `code-nav`/`red-memory` for its **own** dev (root `.mcp.json` or agent-doc reference).
-7. **Version coherence** — every plugin manifest pair is on the same version: for each `plugins/*/`, `.claude-plugin/plugin.json` `version` **==** `.codex-plugin/plugin.json` `version`. A mismatch is what `validate-install-metadata.sh` rejects and what fails `red-release` (e.g. a stale manifest landed manually). Fix-home = `→ release` (the single-writer version script, ADR 0040).
+4. **AGENTS ≡ CLAUDE Agent-skills parity** — both files exist **and** both carry the `## Agent skills` block. Report `C/A` (e.g. `1/0` = block in CLAUDE only). Missing files, missing blocks, or unequal treatment are findings tagged `→ /setup-red-skills`.
+5. **AGENTS ≡ CLAUDE Development-workflow parity** — both files exist **and** both carry the `## Development workflow` block with the same treatment. Report `C/A` for presence (e.g. `1/0` = block in CLAUDE only), and report any missing file, missing block, or out-of-parity block as a finding tagged `→ /setup-red-skills`. This is read-only: do not run `inject-development-workflow`, do not create files, and do not edit either agent rules file.
+6. **Primary-branch guard flag** — read `.red/config.yaml` and report whether `dev.lock-primary-branch` is set. Treat an absent config file, absent `dev` block, absent key, or key set to anything other than `true` as "unset" and recommend enabling it via `→ /setup-red-skills`; report `true` as adopted. This is read-only: never write `.red/config.yaml`.
+7. **Statusline drift** — the installed `.claude/settings.json` `statusLine` command resolves the **cached bundle** (`~/.cache/red-skills/bundles/dev-*.bundle.min.mjs`), not the OLD launcher form (`…/plugins/cache/red-skills/dev/*/…/afk.mjs`) which blanks on every plugin update.
+8. **MCP wiring** — does the repo wire the expected MCPs? The `dev` plugin should expose `code-nav`; the `memory` plugin should expose **`red-memory` + `red-ui` as consumers** (fetched from the red-memory / red-ui releases per ADR 0041) — **flag a single standalone-local `memory` server** (running an in-repo `bootstrap.mjs`/build) as the pre-migration state. Also check whether the repo wires `code-nav`/`red-memory` for its **own** dev (root `.mcp.json` or agent-doc reference).
+9. **Version coherence** — every plugin manifest pair is on the same version: for each `plugins/*/`, `.claude-plugin/plugin.json` `version` **==** `.codex-plugin/plugin.json` `version`. A mismatch is what `validate-install-metadata.sh` rejects and what fails `red-release` (e.g. a stale manifest landed manually). Fix-home = `→ release` (the single-writer version script, ADR 0040).
 
 ### Output
 
@@ -55,7 +57,7 @@ Canonical families live in the target repo's `.red/agents/triage-labels.md`: sta
 
 | Fix-home | Findings it owns |
 |---|---|
-| `→ /setup-red-skills` | AGENTS≡CLAUDE parity, statusline drift, MCP wiring, label provisioning. **Note:** `/setup-red-skills` Section F currently still emits the OLD statusline command — flag it as itself drifted until patched. |
+| `→ /setup-red-skills` | AGENTS≡CLAUDE `## Agent skills` parity, AGENTS≡CLAUDE `## Development workflow` parity, `dev.lock-primary-branch` adoption, statusline drift, MCP wiring, label provisioning. **Note:** `/setup-red-skills` Section F currently still emits the OLD statusline command — flag it as itself drifted until patched. |
 | `→ AFK runtime` | `blocked:*` accumulation (labels must be rotated/cleared on re-queue, plus the re-claim cap) — a bundle change, not a config edit. |
 | `→ manual / maintainer` | label renames (`gh label edit`), retiring legacy labels — the operator decides, the doctor never runs it. |
 | `→ release` | cross-manifest version mismatch — owned by the single-writer version script + `validate-install-metadata.sh` gate (ADR 0040); never hand-edit one manifest. |
