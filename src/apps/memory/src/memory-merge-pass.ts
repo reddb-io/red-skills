@@ -9,6 +9,16 @@ export interface MemoryMergePassStore {
   supersededByMany(rids: number[]): Promise<Map<number, number>>;
 }
 
+export interface MemoryMergeExecutionStore extends MemoryMergePassStore {
+  upsertEdge(edge: {
+    label: HiddenByEdgeLabel;
+    from_rid: number;
+    to_rid: number;
+    properties?: Record<string, unknown>;
+  }): Promise<number>;
+  removeEdge(from: number, to: number, label: HiddenByEdgeLabel): Promise<boolean>;
+}
+
 export interface MemoryMergePassInput {
   min_score?: number;
   limit?: number;
@@ -67,9 +77,57 @@ export interface MemoryMergePassReport {
   recommended_next_actions: string[];
 }
 
+export interface MemoryMergeBatchExecuteInput extends MemoryMergePassInput {
+  candidate_ranks: number[];
+  approver: string;
+  batch_id?: string;
+  reason?: string;
+}
+
+export interface MemoryMergeBatchEdge {
+  edge_rid: number;
+  duplicate_rid: number;
+  canonical_rid: number;
+  label: HiddenByEdgeLabel;
+  candidate_rank: number;
+  score: number;
+}
+
+export interface MemoryMergeBatchExecutionResult {
+  schema_version: "memory.merge_pass_batch.v1";
+  action: "execute";
+  batch_id: string;
+  approved_by: string;
+  executed_at: string;
+  selected_candidate_ranks: number[];
+  merged_edges: MemoryMergeBatchEdge[];
+  summary: {
+    requested: number;
+    merged: number;
+  };
+}
+
+export interface MemoryMergeBatchUnmergeResult {
+  schema_version: "memory.merge_pass_batch.v1";
+  action: "unmerge";
+  batch_id: string;
+  unmerged_at: string;
+  removed_edges: Array<{
+    duplicate_rid: number;
+    canonical_rid: number;
+    label: HiddenByEdgeLabel;
+    removed: boolean;
+  }>;
+  summary: {
+    found: number;
+    removed: number;
+  };
+}
+
 const DEFAULT_MIN_SCORE = 0.72;
 const DEFAULT_LIMIT = 20;
 const MAX_SHARED_TERMS = 12;
+const MERGE_BATCH_SCHEMA_VERSION = "memory.merge_pass_batch.v1";
 
 export async function buildMemoryMergePassReport(
   store: MemoryMergePassStore,
@@ -130,6 +188,109 @@ export async function buildMemoryMergePassReport(
     recommended_next_actions: nextActions(candidates.length),
   } satisfies Omit<MemoryMergePassReport, "markdown">;
   return { ...report, markdown: renderMarkdown(report) };
+}
+
+export async function executeMemoryMergeBatch(
+  store: MemoryMergeExecutionStore,
+  input: MemoryMergeBatchExecuteInput,
+): Promise<MemoryMergeBatchExecutionResult> {
+  const approver = input.approver.trim();
+  if (!approver) throw new Error("memory merge-pass execute requires --approver");
+  const requestedRanks = uniquePositiveIntegers(input.candidate_ranks);
+  if (requestedRanks.length === 0) {
+    throw new Error("memory merge-pass execute requires --candidate-ranks");
+  }
+
+  const executedAtMs = input.now ?? Date.now();
+  const executedAt = new Date(executedAtMs).toISOString();
+  const report = await buildMemoryMergePassReport(store, input);
+  const byRank = new Map(report.candidates.map((candidate) => [candidate.rank, candidate]));
+  const missing = requestedRanks.filter((rank) => !byRank.has(rank));
+  if (missing.length > 0) {
+    throw new Error(`candidate rank(s) not present in current merge pass: ${missing.join(", ")}`);
+  }
+
+  const batchId = input.batch_id?.trim() || defaultBatchId(executedAtMs, requestedRanks);
+  const mergedEdges: MemoryMergeBatchEdge[] = [];
+  for (const rank of requestedRanks) {
+    const candidate = byRank.get(rank)!;
+    const edgeRid = await store.upsertEdge({
+      label: candidate.proposed_edge_label,
+      from_rid: candidate.duplicate_rid,
+      to_rid: candidate.canonical_rid,
+      properties: {
+        reason: input.reason ?? "approved memory merge pass",
+        merge_pass_batch_id: batchId,
+        merge_pass_candidate_rank: rank,
+        merge_pass_candidate_score: candidate.score,
+        approved_by: approver,
+        approved_at: executedAtMs,
+        approval_source: "memory merge-pass execute",
+        schema_version: MERGE_BATCH_SCHEMA_VERSION,
+      },
+    });
+    mergedEdges.push({
+      edge_rid: edgeRid,
+      duplicate_rid: candidate.duplicate_rid,
+      canonical_rid: candidate.canonical_rid,
+      label: candidate.proposed_edge_label,
+      candidate_rank: rank,
+      score: candidate.score,
+    });
+  }
+
+  return {
+    schema_version: MERGE_BATCH_SCHEMA_VERSION,
+    action: "execute",
+    batch_id: batchId,
+    approved_by: approver,
+    executed_at: executedAt,
+    selected_candidate_ranks: requestedRanks,
+    merged_edges: mergedEdges,
+    summary: {
+      requested: requestedRanks.length,
+      merged: mergedEdges.length,
+    },
+  };
+}
+
+export async function unmergeMemoryMergeBatch(
+  store: MemoryMergeExecutionStore,
+  batchId: string,
+  now = Date.now(),
+): Promise<MemoryMergeBatchUnmergeResult> {
+  const normalizedBatchId = batchId.trim();
+  if (!normalizedBatchId) throw new Error("memory merge-pass unmerge requires --batch-id");
+
+  const removedEdges: MemoryMergeBatchUnmergeResult["removed_edges"] = [];
+  for (const edge of await store.listEdges()) {
+    const props = edgeProperties(edge);
+    if (props.merge_pass_batch_id !== normalizedBatchId) continue;
+    const label = edgeLabel(edge);
+    if (!isMergeEdgeLabel(label)) continue;
+    const duplicateRid = edgeRid(edge, "from");
+    const canonicalRid = edgeRid(edge, "to");
+    if (!Number.isFinite(duplicateRid) || !Number.isFinite(canonicalRid)) continue;
+    const removed = await store.removeEdge(duplicateRid, canonicalRid, label);
+    removedEdges.push({
+      duplicate_rid: duplicateRid,
+      canonical_rid: canonicalRid,
+      label,
+      removed,
+    });
+  }
+
+  return {
+    schema_version: MERGE_BATCH_SCHEMA_VERSION,
+    action: "unmerge",
+    batch_id: normalizedBatchId,
+    unmerged_at: new Date(now).toISOString(),
+    removed_edges: removedEdges,
+    summary: {
+      found: removedEdges.length,
+      removed: removedEdges.filter((edge) => edge.removed).length,
+    },
+  };
 }
 
 function scorePair(left: StoredNode, right: StoredNode): MemoryMergeCandidate | null {
@@ -370,6 +531,10 @@ function edgeLabel(edge: Record<string, unknown>): string {
   return String(edge.label ?? edge.edge_label ?? edge.LABEL ?? "");
 }
 
+function isMergeEdgeLabel(label: string): label is HiddenByEdgeLabel {
+  return label === "SAME_AS" || label === "MERGED_INTO";
+}
+
 function edgeRid(edge: Record<string, unknown>, side: "from" | "to"): number {
   const upper = side.toUpperCase();
   return Number(
@@ -379,6 +544,24 @@ function edgeRid(edge: Record<string, unknown>, side: "from" | "to"): number {
       edge[side === "from" ? "source" : "target"] ??
       edge[upper],
   );
+}
+
+function edgeProperties(edge: Record<string, unknown>): Record<string, unknown> {
+  const props = edge.properties ?? edge.PROPERTIES ?? {};
+  if (props != null && typeof props === "object" && !Array.isArray(props)) {
+    return props as Record<string, unknown>;
+  }
+  if (typeof props === "string") {
+    try {
+      const parsed = JSON.parse(props) as unknown;
+      return parsed != null && typeof parsed === "object" && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : {};
+    } catch {
+      return {};
+    }
+  }
+  return {};
 }
 
 function numberValue(value: unknown): number {
@@ -399,4 +582,22 @@ function round4(value: number): number {
 
 function compareCandidates(a: MemoryMergeCandidate, b: MemoryMergeCandidate): number {
   return b.score - a.score || a.duplicate_rid - b.duplicate_rid || a.canonical_rid - b.canonical_rid;
+}
+
+function uniquePositiveIntegers(values: number[]): number[] {
+  const out: number[] = [];
+  const seen = new Set<number>();
+  for (const value of values) {
+    if (!Number.isInteger(value) || value < 1) {
+      throw new Error(`candidate rank must be a positive integer: ${value}`);
+    }
+    if (seen.has(value)) continue;
+    seen.add(value);
+    out.push(value);
+  }
+  return out;
+}
+
+function defaultBatchId(now: number, ranks: number[]): string {
+  return `merge-pass-${new Date(now).toISOString().replace(/[^0-9]/g, "").slice(0, 14)}-${ranks.join("-")}`;
 }
