@@ -36,6 +36,12 @@ import {
   type OpClass,
   type WorkloadConfig,
 } from "../../memory/src/bench-latency.js";
+import {
+  openBenchAnalyticsDb,
+  resolveBenchAnalyticsUri,
+  writeBenchEvalAnalytics,
+  writeBenchLatencyAnalytics,
+} from "../../memory/src/bench-analytics.js";
 
 type ParsedArgs = LooseParsedArgs;
 
@@ -43,9 +49,9 @@ const USAGE = `benchmark-memory
 
 Usage:
   benchmark-memory --version [--json]
-  benchmark-memory bench eval        [--corpus <dir>] [--pack N] [--substrate <name>] [--records <file>] [--out <file>] [--report <file>] [--json]
+  benchmark-memory bench eval        [--corpus <dir>] [--pack N] [--substrate <name>] [--records <file>] [--analytics <uri|file>] [--out <file>] [--report <file>] [--json]
   benchmark-memory bench recall      [--root <dir>] [--corpus <dir>] [--k 1,5,10] [--out <file>] [--report <file>] [--json]
-  benchmark-memory bench latency     [--root <dir>] [--workload <dir>] [--iterations N] [--warmup N] [--seed N] [--ops working-get,session-recall,long-term-recall] [--out <file>] [--report <file>] [--json]
+  benchmark-memory bench latency     [--root <dir>] [--workload <dir>] [--iterations N] [--warmup N] [--seed N] [--ops working-get,session-recall,long-term-recall] [--analytics <uri|file>] [--out <file>] [--report <file>] [--json]
   benchmark-memory references eval    [--v2] [--json] [--human] [--out <file>]
   benchmark-memory references viewer  [--out <file>]
   benchmark-memory references baseline [--json] [--human]
@@ -198,6 +204,7 @@ async function runBenchEvalCmd(args: ParsedArgs): Promise<number> {
   await writeOutputs(args, report, formatEvalReport(report));
   const recordsPath = stringFlag(args, "records");
   if (recordsPath) await writeFileEnsured(recordsPath, toJsonl(report.records));
+  await writeEvalAnalyticsIfRequested(args, report);
   if (args.flags.json === true) {
     process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
   } else {
@@ -243,9 +250,46 @@ async function runBenchLatencyCmd(args: ParsedArgs): Promise<number> {
   const workload = { ...DEFAULT_WORKLOAD, ...fileOverrides, ...cliOverrides };
   const report = await runBenchLatency({ workload });
   await writeOutputs(args, report, formatLatencyReport(report));
+  await writeLatencyAnalyticsIfRequested(args, report);
   if (args.flags.json === true) process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
   else process.stdout.write(`benchmark-memory bench latency: results=${report.results.length}\n`);
   return 0;
+}
+
+async function writeEvalAnalyticsIfRequested(
+  args: ParsedArgs,
+  report: Awaited<ReturnType<typeof runBenchEval>>,
+): Promise<void> {
+  const raw = analyticsUriFlag(args);
+  if (!raw) return;
+  const uri = resolveBenchAnalyticsUri(raw);
+  const db = await openBenchAnalyticsDb(uri);
+  try {
+    const result = await writeBenchEvalAnalytics(report, { db });
+    process.stderr.write(
+      `benchmark-memory bench eval: analytics=${uri} run_id=${result.run_id} rows=${result.inserted_runs}\n`,
+    );
+  } finally {
+    await db.close?.();
+  }
+}
+
+async function writeLatencyAnalyticsIfRequested(
+  args: ParsedArgs,
+  report: Awaited<ReturnType<typeof runBenchLatency>>,
+): Promise<void> {
+  const raw = analyticsUriFlag(args);
+  if (!raw) return;
+  const uri = resolveBenchAnalyticsUri(raw);
+  const db = await openBenchAnalyticsDb(uri);
+  try {
+    const result = await writeBenchLatencyAnalytics(report, { db });
+    process.stderr.write(
+      `benchmark-memory bench latency: analytics=${uri} run_id=${result.run_id} rows=${result.inserted_runs}\n`,
+    );
+  } finally {
+    await db.close?.();
+  }
 }
 
 async function writeOutputs(args: ParsedArgs, json: unknown, markdown: string): Promise<void> {
@@ -283,6 +327,10 @@ function setPositiveInteger(
 function stringFlag(args: ParsedArgs, name: string): string | undefined {
   const value = args.flags[name];
   return typeof value === "string" ? value : undefined;
+}
+
+function analyticsUriFlag(args: ParsedArgs): string | undefined {
+  return stringFlag(args, "analytics") ?? process.env.RED_MEMORY_BENCH_ANALYTICS_URI;
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

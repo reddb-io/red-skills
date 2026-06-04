@@ -40,6 +40,12 @@ export interface PercentileStats {
   p999_us: number;
   max_us: number;
   mean_us: number;
+  histogram: HistogramBucket[];
+}
+
+export interface HistogramBucket {
+  le_us: number | "+Inf";
+  count: number;
 }
 
 export interface OpClassResult {
@@ -242,7 +248,21 @@ export function statsFromSamplesNs(samplesNs: BigInt64Array): PercentileStats {
     p999_us: round3(percentile(us, 0.999)),
     max_us: round3(us[us.length - 1] ?? 0),
     mean_us: round3(sum / Math.max(us.length, 1)),
+    histogram: histogramFromSamples(us, LATENCY_BUCKETS_US),
   };
+}
+
+const LATENCY_BUCKETS_US = [0.1, 0.25, 0.5, 1, 2.5, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000];
+
+function histogramFromSamples(sortedAsc: number[], buckets: number[]): HistogramBucket[] {
+  const histogram: HistogramBucket[] = [];
+  let cursor = 0;
+  for (const bucket of buckets) {
+    while (cursor < sortedAsc.length && sortedAsc[cursor]! <= bucket) cursor += 1;
+    histogram.push({ le_us: bucket, count: cursor });
+  }
+  histogram.push({ le_us: "+Inf", count: sortedAsc.length });
+  return histogram;
 }
 
 function round3(n: number): number {
