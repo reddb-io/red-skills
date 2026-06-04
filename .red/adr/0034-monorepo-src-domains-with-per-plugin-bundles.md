@@ -1,4 +1,4 @@
-# Repo splits plugin DEFINITIONS from IMPLEMENTATION: `src/domains/{dev,memory}` + shared `src/`, one built bundle per plugin
+# Repo splits plugin DEFINITIONS from IMPLEMENTATION: `src/apps/{dev,memory}` + shared `src/`, one built bundle per plugin
 
 ## Context
 
@@ -29,10 +29,10 @@ under a top-level `src/`, and ship one built bundle per plugin.**
 ```
 red-skills/
 ├── src/
-│   ├── domains/
+│   ├── apps/
 │   │   ├── dev/         ← the dev plugin's implementation (was packages/afk/src)
 │   │   └── memory/      ← the memory plugin's implementation (was plugins/memory/src)
-│   ├── shared/          ← code common to ≥2 domains (config, handoff, exec, bundle
+│   ├── shared/          ← code common to ≥2 apps (config, handoff, exec, bundle
 │   │                       recipe, cli-arg parsing) — local extractions and/or the
 │   │                       author's published packages (e.g. `cli-args-parser`)
 │   ├── dev.ts           ← entrypoint for the dev plugin → dev.bundle.min.mjs
@@ -45,12 +45,14 @@ red-skills/
                            fetched dynamically (see below)
 ```
 
-1. **`src/domains/<plugin>/`** holds each plugin's implementation. The dev domain is
+1. **`src/apps/<plugin>/`** holds each plugin's implementation. The dev app is
    the former `packages/afk/src` (superseding ADR 0032's `packages/afk` location);
-   the memory domain is the former `plugins/memory/src`.
+   the memory app is the former `plugins/memory/src`. The implemented tree was
+   later renamed from the original domains naming to
+   `src/apps/<plugin>/` without changing the definition/implementation split.
 
-2. **`src/shared/`** holds anything used by two or more domains. Extraction is
-   demand-driven (extract when the second domain needs it, not speculatively). Where
+2. **`src/shared/`** holds anything used by two or more apps. Extraction is
+   demand-driven (extract when the second app needs it, not speculatively). Where
    the author already ships a published package that fits (`cli-args-parser`, a TUI
    lib, env/secrets), prefer adopting it over a bespoke local copy.
 
@@ -82,21 +84,23 @@ red-skills/
   author's published packages removes bespoke re-implementations.
 - **Uniform build/ship.** Every plugin builds the same way (entrypoint → minified
   bundle) and ships the same way (release asset + dynamic fetch). Adding a third
-  plugin is a new `src/domains/<x>` + `src/<x>.ts` + a `plugins/<x>/` definition.
-- **Supersedes ADR 0032's location** (`packages/afk` → `src/domains/dev`) and the
+  plugin is a new `src/apps/<x>` + an entrypoint role + a `plugins/<x>/` definition.
+- **Supersedes ADR 0032's location** (`packages/afk` → `src/apps/dev`) and the
   committed-`bin/afk.mjs` shipping detail (now a release asset like memory). The
   *bundle-is-the-runtime* and *source-outside-the-skill-dir* principles of 0032 are
   retained and generalised.
 - **Migration cost is real.** Moving memory's 151 files + rewiring two builds, the
   release workflow, and every skill/hook invocation path is a multi-step migration;
-  it proceeds domain-by-domain with each domain's tests kept green.
+  it proceeds app-by-app with each app's tests kept green.
 - **One transition risk: dynamic fetch availability.** A hook/skill that fetches from
   a release needs network + the release to exist. The fetch is best-effort with a
   clear error, and a committed fallback may be retained per plugin during transition.
 
-## Status
+## Status: partially superseded by 0039 (entrypoints fused) + 0041 (memory moves out)
 
-Accepted; migrating incrementally (dev domain first — it has full test coverage).
+Accepted; the monorepo-`src/apps` implementation principle still stands for `dev`.
+ADR 0039 refines the entrypoint shape, and ADR 0041 partially supersedes this ADR
+for memory by moving memory's canonical home out of red-skills.
 
 ## Related
 
@@ -104,4 +108,9 @@ Accepted; migrating incrementally (dev domain first — it has full test coverag
   superseded; principles retained).
 - ADR 0029 — memory runtime ships as a release-asset bundle fetched by a bootstrap
   (the dynamic-fetch model, now generalised to all plugins).
-- ADR 0033 — AFK execution on sandcastle (unaffected; lives in `src/domains/dev`).
+- ADR 0033 — AFK execution on sandcastle (unaffected; lives in `src/apps/dev`).
+- ADR 0039 — plugin entrypoints share one source, selected by a build role
+  (partially supersedes the separate `src/dev.ts` and `src/memory.ts` entrypoint
+  shape).
+- ADR 0041 — red-skills consumes `red-memory` and `red-ui` MCPs; memory moves out
+  of this repo while `dev` stays under `src/apps/dev`.

@@ -10,7 +10,7 @@ stale notes inline.
 
 ## Repo structure & contexts
 - **0021** Multi-context plugin glossaries — *accepted*
-- **0034** Repo splits DEFINITIONS from IMPLEMENTATION (`src/domains/…`) — ⚠️ prose path stale (tree is `src/apps/`); partially superseded by **0041** (memory leaves)
+- **0034** Repo splits DEFINITIONS from IMPLEMENTATION (`src/apps/…`) — partially superseded by **0039** (entrypoints fused) and **0041** (memory leaves)
 - **0041** red-skills consumes `red-memory` + `red-ui` MCPs; stops building memory — partially supersedes 0034 *(renumbered from 0039)*
 - **0046** A single global `.red/` shared by all plugins — *superseded by 0021*
 
