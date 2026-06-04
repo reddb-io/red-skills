@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { performance } from "node:perf_hooks";
 import { join } from "node:path";
 import { getEncoding } from "js-tiktoken";
 import type { ProviderClient, ProviderRequest } from "./extract-conversation.js";
@@ -22,9 +23,10 @@ import type { ProviderClient, ProviderRequest } from "./extract-conversation.js"
  * LLM-judge, and richer abstention categories — plug into the same shapes
  * later; this is the spine they hang off.
  *
- * Determinism contract: every function here is a pure function of its inputs.
- * No clocks, no randomness, no I/O beyond reading the checked-in fixtures. Ties
- * always break on entry id. Same fixture + same git ref ⇒ byte-identical output.
+ * Determinism contract: fixed-pack evaluation is a pure function of its inputs.
+ * The agent-tools tier measures wall-clock response time in normal CLI runs and
+ * uses deterministic timing when tests pass a fixed `now`. Ties always break on
+ * entry id. Same fixture + same git ref + fixed time ⇒ byte-identical output.
  * --------------------------------------------------------------------------*/
 
 /** A curated engineering-memory entry. The two axes follow ADR 0035: a closed
@@ -98,6 +100,24 @@ export interface SubstrateAdapter<TIndex = unknown> {
   ): Promise<ContextPack> | ContextPack;
 }
 
+export interface AgentToolCallInput {
+  question: Question;
+  limit: number;
+}
+
+export interface AgentToolCallOutput {
+  hits: RetrievalHit[];
+  context_pack: ContextPack;
+}
+
+export interface AgentSubstrateTool {
+  name: string;
+  substrate: string;
+  description: string;
+  input_schema: Record<string, unknown>;
+  call(input: AgentToolCallInput): Promise<AgentToolCallOutput>;
+}
+
 export interface TokenCounts {
   input: number;
   output: number;
@@ -105,6 +125,7 @@ export interface TokenCounts {
 }
 
 export const EVAL_SCHEMA_VERSION = "memory.bench.eval.v1" as const;
+export type EvalTierId = "fixed-pack" | "agent-tools";
 
 export const JUDGE_J_SCORER = "J" as const;
 export const JUDGE_J_MODEL = "gpt-4o-2024-08-06" as const;
@@ -170,6 +191,7 @@ export interface JudgeJAggregate {
  * CI regression diffing) can rely on it. */
 export interface QuestionRecord {
   schema_version: typeof EVAL_SCHEMA_VERSION;
+  tier: EvalTierId;
   substrate: string;
   category: string;
   question_id: string;
@@ -191,20 +213,17 @@ export interface QuestionRecord {
   f1: number;
   tokens: TokenCounts;
   quality_per_1k_tokens: number;
+  tools_used: number;
+  prompt_tokens: number;
+  reasoning_tokens: number;
+  reasoning_prompt_ratio: number;
+  time_to_response_ms: number;
 }
 
 export interface SubstrateSummary {
   substrate: string;
   label: string;
-  aggregate: {
-    exact_match: number;
-    f1: number;
-    judge_j: JudgeJAggregate | null;
-    abstention_score: number;
-    gold_in_pack_rate: number;
-    tokens: TokenCounts;
-    quality_per_1k_tokens: number;
-  };
+  aggregate: EvalAggregate;
   records: QuestionRecord[];
 }
 
@@ -255,6 +274,21 @@ export interface EvalAggregate {
   gold_in_pack_rate: number;
   tokens: TokenCounts;
   quality_per_1k_tokens: number;
+  tools_used: number;
+  prompt_tokens: number;
+  reasoning_tokens: number;
+  reasoning_prompt_ratio: number;
+  time_to_response_ms: number;
+}
+
+export interface EvalTierSummary {
+  tier: EvalTierId;
+  label: string;
+  aggregate: EvalAggregate;
+  substrates: SubstrateSummary[];
+  comparisons: SubstrateComparison[];
+  pareto: ParetoSummary;
+  categories: CategorySummary[];
 }
 
 export interface SubstrateComparison {
@@ -277,20 +311,13 @@ export interface EvalReport {
   question_count: number;
   pack_size: number;
   judge: JudgeJConfig;
-  aggregate: {
-    exact_match: number;
-    f1: number;
-    judge_j: JudgeJAggregate | null;
-    abstention_score: number;
-    gold_in_pack_rate: number;
-    tokens: TokenCounts;
-    quality_per_1k_tokens: number;
-  };
+  aggregate: EvalAggregate;
   records: QuestionRecord[];
   substrates: SubstrateSummary[];
   comparisons: SubstrateComparison[];
   pareto: ParetoSummary;
   categories: CategorySummary[];
+  tiers: EvalTierSummary[];
 }
 
 /* ----------------------------------------------------------------------------
@@ -1202,6 +1229,26 @@ export function measureAnswererTokens(question: Question, pack: ContextPack, pre
   return { input, output, total: input + output };
 }
 
+export function measureAgentToolTokens(
+  question: Question,
+  tool: AgentSubstrateTool,
+  result: AgentToolCallOutput,
+  reasoningTrace: string,
+  predictedAnswer: string,
+): { tokens: TokenCounts; prompt_tokens: number; reasoning_tokens: number; reasoning_prompt_ratio: number } {
+  const promptTokens = countBenchTokens(renderAgentToolPrompt(question, tool));
+  const toolResultTokens = countBenchTokens(renderAgentToolResult(result));
+  const reasoningTokens = countBenchTokens(reasoningTrace);
+  const output = countBenchTokens(predictedAnswer);
+  const input = promptTokens + toolResultTokens + reasoningTokens;
+  return {
+    tokens: { input, output, total: input + output },
+    prompt_tokens: promptTokens,
+    reasoning_tokens: reasoningTokens,
+    reasoning_prompt_ratio: ratio(reasoningTokens, promptTokens) ?? 0,
+  };
+}
+
 function renderAnswererInput(question: Question, pack: ContextPack): string {
   const lines = [
     "Answer the question using only the provided Memory context pack.",
@@ -1221,6 +1268,66 @@ function renderAnswererInput(question: Question, pack: ContextPack): string {
   return lines.join("\n");
 }
 
+function renderAgentToolPrompt(question: Question, tool: AgentSubstrateTool): string {
+  return [
+    "You are an eval agent answering from Memory tools only.",
+    "Call the substrate tool before answering. Abstain with \"not in memory\" when the tool returns no support.",
+    "",
+    `Question id: ${question.id}`,
+    `Category: ${question.category}`,
+    `Question: ${question.question}`,
+    question.as_of ? `As of: ${question.as_of}` : "",
+    "",
+    "Available tool:",
+    JSON.stringify({
+      name: tool.name,
+      substrate: tool.substrate,
+      description: tool.description,
+      input_schema: tool.input_schema,
+    }),
+  ].filter(Boolean).join("\n");
+}
+
+function renderAgentToolResult(result: AgentToolCallOutput): string {
+  return JSON.stringify({
+    hits: result.hits.map((hit) => ({ id: hit.id, score: hit.score })),
+    context_pack: result.context_pack.entries.map((entry) => ({
+      id: entry.id,
+      rank: entry.rank,
+      score: entry.score,
+      fact: entry.fact,
+    })),
+  });
+}
+
+function renderAgentReasoningTrace(question: Question, result: AgentToolCallOutput, predictedAnswer: string): string {
+  const packIds = result.context_pack.entries.map((entry) => entry.id);
+  const supportIds = question.gold_doc_ids.filter((id) => packIds.includes(id));
+  return [
+    `Called ${result.context_pack.substrate} recall tool for ${question.id}.`,
+    `Tool returned ${result.context_pack.entries.length} context entr${result.context_pack.entries.length === 1 ? "y" : "ies"}.`,
+    supportIds.length > 0 ? `Visible support ids: ${supportIds.join(", ")}.` : "No gold support ids were visible in the returned pack.",
+    `Answer decision: ${predictedAnswer || "(abstain)"}.`,
+  ].join(" ");
+}
+
+function estimateTimeToResponseMs(input: {
+  tools_used: number;
+  prompt_tokens: number;
+  reasoning_tokens: number;
+  output_tokens: number;
+  returned_entries: number;
+}): number {
+  return round4(
+    2 +
+    input.tools_used * 4 +
+    input.returned_entries * 0.75 +
+    input.prompt_tokens * 0.015 +
+    input.reasoning_tokens * 0.03 +
+    input.output_tokens * 0.02,
+  );
+}
+
 function qualityPer1kTokens(quality: number, totalTokens: number): number {
   if (totalTokens <= 0) return 0;
   return round4((quality / totalTokens) * 1000);
@@ -1237,6 +1344,7 @@ export interface RunEvalOptions {
   adapters?: SubstrateAdapter[];
   judge?: JudgeJAdapter;
   now?: () => Date;
+  clock?: () => number;
 }
 
 export async function runBenchEval(opts: RunEvalOptions): Promise<EvalReport> {
@@ -1245,11 +1353,18 @@ export async function runBenchEval(opts: RunEvalOptions): Promise<EvalReport> {
   const questions = await loadQuestions(opts.corpusDir);
   const adapters = opts.adapters ?? defaultSubstrateAdapters(opts.substrate);
   const reports: EvalReport[] = [];
+  const agentReports: EvalReport[] = [];
   for (const adapter of adapters) {
     reports.push(await evaluateSubstrateAdapter(adapter, corpus, questions, {
       packSize,
       judge: opts.judge,
       now: opts.now,
+    }));
+    agentReports.push(await evaluateAgentToolSubstrateAdapter(adapter, corpus, questions, {
+      packSize,
+      judge: opts.judge,
+      now: opts.now,
+      clock: opts.clock,
     }));
   }
   const primary = reports[0] ?? emptyEvalReport({
@@ -1264,13 +1379,19 @@ export async function runBenchEval(opts: RunEvalOptions): Promise<EvalReport> {
   const comparisons = buildSubstrateComparisons(substrates);
   const pareto = buildParetoSummary(substrates);
   const categories = buildCategorySummaries(substrates);
-  return { ...primary, substrates, comparisons, pareto, categories };
+  const agentSubstrates = agentReports.map(toSubstrateSummary);
+  const tiers = [
+    buildTierSummary("fixed-pack", "Fixed context pack", substrates),
+    buildTierSummary("agent-tools", "Agent calls substrate tools", agentSubstrates),
+  ];
+  return { ...primary, substrates, comparisons, pareto, categories, tiers };
 }
 
 export interface EvaluateSubstrateOptions {
   packSize?: number;
   judge?: JudgeJAdapter;
   now?: () => Date;
+  clock?: () => number;
 }
 
 export async function evaluateSubstrateAdapter<TIndex>(
@@ -1289,6 +1410,7 @@ export async function evaluateSubstrateAdapter<TIndex>(
   let abstentionScoreSum = 0;
   let goldInPackCount = 0;
   const tokens: TokenCounts = { input: 0, output: 0, total: 0 };
+  let promptTokens = 0;
 
   for (const q of questions) {
     const hits = await adapter.retrieveQuery(index, q, packSize);
@@ -1322,8 +1444,10 @@ export async function evaluateSubstrateAdapter<TIndex>(
     tokens.input += tokenUsage.input;
     tokens.output += tokenUsage.output;
     tokens.total += tokenUsage.total;
+    promptTokens += tokenUsage.input;
     records.push({
       schema_version: EVAL_SCHEMA_VERSION,
+      tier: "fixed-pack",
       substrate,
       category: q.category,
       question_id: q.id,
@@ -1345,6 +1469,11 @@ export async function evaluateSubstrateAdapter<TIndex>(
       f1: round4(f1),
       tokens: tokenUsage,
       quality_per_1k_tokens: qualityPer1kTokens(f1, tokenUsage.total),
+      tools_used: 0,
+      prompt_tokens: tokenUsage.input,
+      reasoning_tokens: 0,
+      reasoning_prompt_ratio: 0,
+      time_to_response_ms: 0,
     });
   }
 
@@ -1359,6 +1488,11 @@ export async function evaluateSubstrateAdapter<TIndex>(
     gold_in_pack_rate: round4(goldInPackCount / n),
     tokens,
     quality_per_1k_tokens: qualityPer1kTokens(f1Sum, tokens.total),
+    tools_used: 0,
+    prompt_tokens: promptTokens,
+    reasoning_tokens: 0,
+    reasoning_prompt_ratio: 0,
+    time_to_response_ms: 0,
   };
   return {
     schema_version: EVAL_SCHEMA_VERSION,
@@ -1380,6 +1514,180 @@ export async function evaluateSubstrateAdapter<TIndex>(
     comparisons: [],
     pareto: buildParetoSummary([]),
     categories: [],
+    tiers: [],
+  };
+}
+
+export async function evaluateAgentToolSubstrateAdapter<TIndex>(
+  adapter: SubstrateAdapter<TIndex>,
+  corpus: CorpusEntry[],
+  questions: Question[],
+  opts: EvaluateSubstrateOptions = {},
+): Promise<EvalReport> {
+  const packSize = opts.packSize ?? PACK_SIZE_DEFAULT;
+  const substrate = adapter.id;
+  const index = await adapter.ingestCorpus(corpus);
+  const tool = createAgentSubstrateTool(adapter, index, packSize);
+  const clock = opts.clock ?? (() => performance.now());
+  const useMeasuredTime = opts.clock !== undefined || opts.now === undefined;
+
+  const records: QuestionRecord[] = [];
+  let emSum = 0;
+  let f1Sum = 0;
+  let abstentionScoreSum = 0;
+  let goldInPackCount = 0;
+  const tokens: TokenCounts = { input: 0, output: 0, total: 0 };
+  let toolsUsed = 0;
+  let promptTokens = 0;
+  let reasoningTokens = 0;
+  let responseMs = 0;
+
+  for (const q of questions) {
+    const startedAt = clock();
+    const result = await tool.call({ question: q, limit: packSize });
+    const pack = result.context_pack;
+    const predicted = answerFromPack(pack, q);
+    const reasoningTrace = renderAgentReasoningTrace(q, result, predicted);
+    const tokenUsage = measureAgentToolTokens(q, tool, result, reasoningTrace, predicted);
+    const em = exactMatch(predicted, q.gold_answer);
+    const f1 = tokenF1(predicted, q.gold_answer);
+    const openEnded = isOpenEndedJudgeQuestion(q, opts.judge?.config ?? FROZEN_JUDGE_J_CONFIG);
+    const judgeJ = openEnded && opts.judge
+      ? await scoreJudgeJ(opts.judge, {
+        question: q,
+        predicted_answer: predicted,
+        gold_answer: q.gold_answer,
+        context_pack: pack,
+        exact_match: em,
+        f1,
+      })
+      : null;
+    const qAbstentionScore = abstentionScore(q, predicted);
+    const unanswerable = isUnanswerableQuestion(q);
+    const abstained = isAbstentionAnswer(predicted);
+    const packIds = pack.entries.map((e) => e.id);
+    const goldIndexes = q.gold_doc_ids.map((id) => packIds.indexOf(id));
+    const goldIdx = goldIndexes[0] ?? -1;
+    const goldInPack = unanswerable ? packIds.length === 0 : goldIndexes.every((idx) => idx >= 0);
+    const qToolsUsed = 1;
+    const measuredResponseMs = round4(Math.max(0, clock() - startedAt));
+    const qResponseMs = useMeasuredTime
+      ? measuredResponseMs
+      : estimateTimeToResponseMs({
+        tools_used: qToolsUsed,
+        prompt_tokens: tokenUsage.prompt_tokens,
+        reasoning_tokens: tokenUsage.reasoning_tokens,
+        output_tokens: tokenUsage.tokens.output,
+        returned_entries: pack.entries.length,
+      });
+    emSum += em;
+    f1Sum += f1;
+    abstentionScoreSum += qAbstentionScore;
+    if (goldInPack) goldInPackCount += 1;
+    tokens.input += tokenUsage.tokens.input;
+    tokens.output += tokenUsage.tokens.output;
+    tokens.total += tokenUsage.tokens.total;
+    toolsUsed += qToolsUsed;
+    promptTokens += tokenUsage.prompt_tokens;
+    reasoningTokens += tokenUsage.reasoning_tokens;
+    responseMs += qResponseMs;
+    records.push({
+      schema_version: EVAL_SCHEMA_VERSION,
+      tier: "agent-tools",
+      substrate,
+      category: q.category,
+      question_id: q.id,
+      question: q.question,
+      gold_doc_id: q.gold_doc_id,
+      gold_doc_ids: q.gold_doc_ids,
+      as_of: q.as_of ?? null,
+      gold_answer: q.gold_answer,
+      predicted_answer: predicted,
+      unanswerable,
+      open_ended: openEnded,
+      abstained,
+      abstention_score: qAbstentionScore,
+      judge_j: judgeJ,
+      pack_ids: packIds,
+      gold_in_pack: goldInPack,
+      gold_rank: goldInPack && q.gold_doc_ids.length > 0 ? goldIdx + 1 : null,
+      exact_match: em,
+      f1: round4(f1),
+      tokens: tokenUsage.tokens,
+      quality_per_1k_tokens: qualityPer1kTokens(f1, tokenUsage.tokens.total),
+      tools_used: qToolsUsed,
+      prompt_tokens: tokenUsage.prompt_tokens,
+      reasoning_tokens: tokenUsage.reasoning_tokens,
+      reasoning_prompt_ratio: tokenUsage.reasoning_prompt_ratio,
+      time_to_response_ms: qResponseMs,
+    });
+  }
+
+  const n = Math.max(questions.length, 1);
+  const category = reportCategory(questions);
+  const now = (opts.now ?? (() => new Date()))();
+  const aggregate = {
+    exact_match: round4(emSum / n),
+    f1: round4(f1Sum / n),
+    judge_j: aggregateJudgeJ(records, opts.judge?.config ?? FROZEN_JUDGE_J_CONFIG),
+    abstention_score: round4(abstentionScoreSum / n),
+    gold_in_pack_rate: round4(goldInPackCount / n),
+    tokens,
+    quality_per_1k_tokens: qualityPer1kTokens(f1Sum, tokens.total),
+    tools_used: round4(toolsUsed / n),
+    prompt_tokens: promptTokens,
+    reasoning_tokens: reasoningTokens,
+    reasoning_prompt_ratio: ratio(reasoningTokens, promptTokens) ?? 0,
+    time_to_response_ms: round4(responseMs / n),
+  };
+  return {
+    schema_version: EVAL_SCHEMA_VERSION,
+    generated_at: now.toISOString(),
+    substrate,
+    category,
+    corpus_size: corpus.length,
+    question_count: questions.length,
+    pack_size: packSize,
+    judge: opts.judge?.config ?? FROZEN_JUDGE_J_CONFIG,
+    aggregate,
+    records,
+    substrates: [{
+      substrate,
+      label: adapter.label,
+      aggregate,
+      records,
+    }],
+    comparisons: [],
+    pareto: buildParetoSummary([]),
+    categories: [],
+    tiers: [],
+  };
+}
+
+function createAgentSubstrateTool<TIndex>(
+  adapter: SubstrateAdapter<TIndex>,
+  index: TIndex,
+  packSize: number,
+): AgentSubstrateTool {
+  return {
+    name: `memory_${adapter.id.replace(/[^a-z0-9]+/gi, "_")}_recall`,
+    substrate: adapter.id,
+    description: `Retrieve a bounded Memory context pack from the ${adapter.label} substrate.`,
+    input_schema: {
+      type: "object",
+      required: ["question_id", "question", "limit"],
+      properties: {
+        question_id: { type: "string" },
+        question: { type: "string" },
+        as_of: { type: ["string", "null"] },
+        limit: { type: "integer", minimum: 1, maximum: packSize },
+      },
+    },
+    async call(input) {
+      const hits = await adapter.retrieveQuery(index, input.question, input.limit);
+      const contextPack = await adapter.buildContextPack(index, input.question, hits.slice(0, input.limit), input.limit);
+      return { hits: hits.slice(0, input.limit), context_pack: contextPack };
+    },
   };
 }
 
@@ -1417,6 +1725,11 @@ function emptyEvalReport(opts: {
     gold_in_pack_rate: 0,
     tokens: { input: 0, output: 0, total: 0 },
     quality_per_1k_tokens: 0,
+    tools_used: 0,
+    prompt_tokens: 0,
+    reasoning_tokens: 0,
+    reasoning_prompt_ratio: 0,
+    time_to_response_ms: 0,
   };
   return {
     schema_version: EVAL_SCHEMA_VERSION,
@@ -1433,6 +1746,7 @@ function emptyEvalReport(opts: {
     comparisons: [],
     pareto: buildParetoSummary([]),
     categories: [],
+    tiers: [],
   };
 }
 
@@ -1442,6 +1756,18 @@ function toSubstrateSummary(report: EvalReport): SubstrateSummary {
     label: report.substrates[0]?.label ?? report.substrate,
     aggregate: report.aggregate,
     records: report.records,
+  };
+}
+
+function buildTierSummary(tier: EvalTierId, label: string, substrates: SubstrateSummary[]): EvalTierSummary {
+  return {
+    tier,
+    label,
+    aggregate: aggregateRecords(substrates.flatMap((summary) => summary.records)),
+    substrates,
+    comparisons: buildSubstrateComparisons(substrates),
+    pareto: buildParetoSummary(substrates),
+    categories: buildCategorySummaries(substrates),
   };
 }
 
@@ -1608,6 +1934,8 @@ function aggregateRecords(records: QuestionRecord[]): EvalAggregate {
   );
   const f1Sum = records.reduce((sum, record) => sum + record.f1, 0);
   const abstentionScoreSum = records.reduce((sum, record) => sum + record.abstention_score, 0);
+  const promptTokens = records.reduce((sum, record) => sum + record.prompt_tokens, 0);
+  const reasoningTokens = records.reduce((sum, record) => sum + record.reasoning_tokens, 0);
   return {
     exact_match: round4(records.reduce((sum, record) => sum + record.exact_match, 0) / n),
     f1: round4(f1Sum / n),
@@ -1616,6 +1944,11 @@ function aggregateRecords(records: QuestionRecord[]): EvalAggregate {
     gold_in_pack_rate: round4(records.filter((record) => record.gold_in_pack).length / n),
     tokens,
     quality_per_1k_tokens: qualityPer1kTokens(f1Sum, tokens.total),
+    tools_used: round4(records.reduce((sum, record) => sum + record.tools_used, 0) / n),
+    prompt_tokens: promptTokens,
+    reasoning_tokens: reasoningTokens,
+    reasoning_prompt_ratio: ratio(reasoningTokens, promptTokens) ?? 0,
+    time_to_response_ms: round4(records.reduce((sum, record) => sum + record.time_to_response_ms, 0) / n),
   };
 }
 
@@ -1639,6 +1972,11 @@ export function toJsonl(records: QuestionRecord[]): string {
   return records.map((r) => JSON.stringify(r)).join("\n") + (records.length > 0 ? "\n" : "");
 }
 
+export function tierRecords(report: EvalReport): QuestionRecord[] {
+  if (report.tiers.length === 0) return report.records;
+  return report.tiers.flatMap((tier) => tier.substrates.flatMap((summary) => summary.records));
+}
+
 export function formatEvalReport(report: EvalReport): string {
   const lines: string[] = [];
   lines.push(`# memory bench eval — ${report.generated_at.slice(0, 10)}`);
@@ -1650,6 +1988,20 @@ export function formatEvalReport(report: EvalReport): string {
     `Judge J: model \`${report.judge.model}\` · prompt \`${report.judge.prompt_version}\` · open-ended categories: ${report.judge.open_ended_categories.map((category) => `\`${category}\``).join(", ")}.`,
   );
   lines.push("");
+  if (report.tiers.length > 0) {
+    lines.push("## Tiers");
+    lines.push("");
+    lines.push("| tier | substrate | EM | F1 | tools/q | reasoning/prompt | avg response ms | prompt tokens | reasoning tokens | total tokens |");
+    lines.push("| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |");
+    for (const tier of report.tiers) {
+      for (const summary of tier.substrates) {
+        lines.push(
+          `| ${tier.tier} | ${summary.substrate} | ${summary.aggregate.exact_match.toFixed(3)} | ${summary.aggregate.f1.toFixed(3)} | ${summary.aggregate.tools_used.toFixed(3)} | ${summary.aggregate.reasoning_prompt_ratio.toFixed(3)} | ${summary.aggregate.time_to_response_ms.toFixed(3)} | ${summary.aggregate.prompt_tokens} | ${summary.aggregate.reasoning_tokens} | ${summary.aggregate.tokens.total} |`,
+        );
+      }
+    }
+    lines.push("");
+  }
   if (report.substrates.length > 1) {
     lines.push("## Substrates");
     lines.push("");
@@ -1700,6 +2052,9 @@ export function formatEvalReport(report: EvalReport): string {
   lines.push(`| input tokens | ${report.aggregate.tokens.input} |`);
   lines.push(`| output tokens | ${report.aggregate.tokens.output} |`);
   lines.push(`| quality per 1k tokens | ${report.aggregate.quality_per_1k_tokens.toFixed(3)} |`);
+  lines.push(`| tools used / question | ${report.aggregate.tools_used.toFixed(3)} |`);
+  lines.push(`| reasoning / prompt | ${report.aggregate.reasoning_prompt_ratio.toFixed(3)} |`);
+  lines.push(`| time to response ms | ${report.aggregate.time_to_response_ms.toFixed(3)} |`);
   lines.push("");
   if (report.categories.length > 0) {
     lines.push("## Per-category");
@@ -1725,18 +2080,18 @@ export function formatEvalReport(report: EvalReport): string {
   }
   lines.push("## Per-question");
   lines.push("");
-  lines.push("| question_id | category | as_of | gold_rank | EM | F1 | J | abstention | tokens | F1 / 1k tokens | predicted |");
-  lines.push("| --- | --- | --- | --- | --- | --- | --- | ---: | ---: | ---: | --- |");
-  for (const r of report.records) {
+  lines.push("| tier | substrate | question_id | category | as_of | gold_rank | tools | reasoning/prompt | response ms | EM | F1 | J | abstention | tokens | F1 / 1k tokens | predicted |");
+  lines.push("| --- | --- | --- | --- | --- | --- | ---: | ---: | ---: | --- | --- | --- | ---: | ---: | ---: | --- |");
+  for (const r of tierRecords(report)) {
     lines.push(
-      `| ${r.question_id} | ${r.category} | ${r.as_of ?? ""} | ${r.gold_rank ?? "—"} | ${r.exact_match} | ${r.f1.toFixed(3)} | ${r.judge_j ? r.judge_j.score.toFixed(3) : ""} | ${r.abstention_score.toFixed(3)} | ${r.tokens.total} | ${r.quality_per_1k_tokens.toFixed(3)} | ${r.predicted_answer || "(abstain)"} |`,
+      `| ${r.tier} | ${r.substrate} | ${r.question_id} | ${r.category} | ${r.as_of ?? ""} | ${r.gold_rank ?? "—"} | ${r.tools_used} | ${r.reasoning_prompt_ratio.toFixed(3)} | ${r.time_to_response_ms.toFixed(3)} | ${r.exact_match} | ${r.f1.toFixed(3)} | ${r.judge_j ? r.judge_j.score.toFixed(3) : ""} | ${r.abstention_score.toFixed(3)} | ${r.tokens.total} | ${r.quality_per_1k_tokens.toFixed(3)} | ${r.predicted_answer || "(abstain)"} |`,
     );
   }
   lines.push("");
   lines.push("## Reproducibility");
   lines.push("");
   lines.push(
-    "Deterministic by construction: recall, the fixed-pack answerer, and the exact-match/F1 scorer are pure functions of the checked-in corpus and questions. Same git ref ⇒ identical scores and identical JSONL bytes (the test suite asserts byte-equality across runs).",
+    "Deterministic by construction for fixed-date CI runs: recall, fixed-pack answering, agent tool calls, deterministic time-to-response fallback, and the exact-match/F1 scorer are pure functions of the checked-in corpus and questions. Normal CLI runs measure agent-tier wall-clock response time.",
   );
   lines.push("");
   return lines.join("\n");

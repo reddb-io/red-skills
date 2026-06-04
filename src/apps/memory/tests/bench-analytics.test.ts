@@ -83,7 +83,15 @@ describe("memory bench analytics — RedDB writer", () => {
     }));
     expect(db.queryCalls).toContainEqual(expect.objectContaining({
       sql: expect.stringContaining(`INSERT INTO ${BENCH_ANALYTICS_COLLECTIONS.runs}`),
-      params: expect.arrayContaining(["eval", "reddb", "tokens_total"]),
+      params: expect.arrayContaining(["eval", "reddb", "fixed-pack", "tokens_total"]),
+    }));
+    expect(db.queryCalls).toContainEqual(expect.objectContaining({
+      sql: expect.stringContaining(`INSERT INTO ${BENCH_ANALYTICS_COLLECTIONS.runs}`),
+      params: expect.arrayContaining(["eval", "reddb", "agent-tools", "tools_used", 1]),
+    }));
+    expect(db.queryCalls).toContainEqual(expect.objectContaining({
+      sql: expect.stringContaining(`INSERT INTO ${BENCH_ANALYTICS_COLLECTIONS.runs}`),
+      params: expect.arrayContaining(["eval", "reddb", "agent-tools", "time_to_response_ms"]),
     }));
     expect(db.queryCalls).toContainEqual(expect.objectContaining({
       sql: expect.stringContaining(`INSERT INTO ${BENCH_ANALYTICS_COLLECTIONS.histograms}`),
