@@ -169,13 +169,13 @@ async function ensureRuntime(version) {
   return { cliPath, mcpPath, redPath };
 }
 
-/** Local repo-checkout fallback: built dist-bundle, else run the TS source via
+/** Local repo-checkout fallback: built ./dist bundle, else run the TS source via
  * tsx. Returns a spawn spec; `null` when nothing local is runnable. */
 function localCandidate(kind) {
-  const file = kind === "mcp" ? "brain-mcp.mjs" : "brain-cli.mjs";
+  const file = kind === "mcp" ? "brain-mcp.bundle.min.mjs" : "brain.bundle.min.mjs";
   const source = kind === "mcp" ? "src/mcp-server.ts" : "src/cli.ts";
   const candidates = [
-    { command: process.execPath, args: [join(REPO_ROOT, "src/apps/brain/dist-bundle", file)] },
+    { command: process.execPath, args: [join(REPO_ROOT, "dist", file)] },
     { command: process.execPath, args: ["--import", "tsx", join(REPO_ROOT, "src/apps/brain", source)] },
   ];
   for (const c of candidates) {
