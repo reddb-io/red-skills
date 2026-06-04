@@ -827,9 +827,12 @@ Scalar run settings live in `.red/config.yaml` under the `afk:` key (alongside t
 | Config key | Env override | Default | Meaning |
 |---|---|---|---|
 | `afk.default_runner` | `RED_AFK_RUNNER` | `claude` | Caller runner identity/default backend consumed before ambient sniffing. |
-| `afk.model` | — | runner-specific | Legacy global model override. Prefer `afk.models.<runner>` so Codex never receives a Claude-only model. |
-| `afk.models.claude` | — | `claude-opus-4-8` | Claude Code model id. |
-| `afk.models.codex` | — | `gpt-5.5` | Codex model id. |
+| `afk.model` | — | runner-specific | Legacy global model override. Prefer tiered `afk.models.<runner>.<tier>.model` so Codex never receives a Claude-only model. |
+| `afk.models.<runner>` | — | runner-specific | Legacy per-runner scalar model override. Used only when no explicit tier model is set. |
+| `afk.models.claude.<tier>.model` | — | tier-specific | Claude Code model id for `validate`, `simple`, `complex`, or `think`. |
+| `afk.models.claude.<tier>.effort` | — | tier-specific | Claude Code effort for that tier. |
+| `afk.models.codex.<tier>.model` | — | tier-specific | Codex model id for `validate`, `simple`, `complex`, or `think`. |
+| `afk.models.codex.<tier>.effort` | — | tier-specific | Codex effort for that tier. |
 | `afk.sandbox` | `RED_AFK_SANDBOX` | `none` | Isolation backend (`none` \| `docker` \| `podman`, ADR 0033). |
 | `afk.max_iterations` | `RED_AFK_MAX_ITERATIONS` | `12` | Sandcastle re-invocation ceiling (issue #322) — the safety cap for "the agent never emits `<promise>DONE</promise>` or `<promise>BLOCKED</promise>`". The completion sentinel is the real terminator, so a normal issue finishes in 1–3 iterations; this leaves headroom without letting repeated no-sentinel failures run for too long. A non-numeric / zero / negative value in either the env or the config is ignored (falls through to the default) so a typo can never disable the cap or pin the agent to 1. |
 | `afk.backpressure` | — | _(empty)_ | Ordered list of shell commands run as an extra pre-merge gate on the DONE path (issue #430, PRD #429). |
@@ -838,6 +841,15 @@ Scalar run settings live in `.red/config.yaml` under the `afk:` key (alongside t
 
 ```yaml
 afk:
+  models:
+    claude:
+      think:
+        model: claude-opus-4-8
+        effort: high
+    codex:
+      think:
+        model: gpt-5.5
+        effort: high
   sandbox: none
   max_iterations: 12      # override the default ceiling here
   backpressure:           # extra pre-merge gate, runs after the feedback gate

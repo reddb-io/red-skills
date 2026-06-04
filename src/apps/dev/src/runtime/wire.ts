@@ -11,9 +11,9 @@
 
 import { readFileSync, writeFileSync, renameSync } from "node:fs";
 import { join } from "node:path";
-import { loadConfig, getConfig } from "../core/config.js";
+import { loadConfig, getConfig, resolveTier } from "../core/config.js";
 import type { SandboxMode } from "../core/execution.js";
-import type { RunAgentInput, RunAgentResult } from "../core/execution.js";
+import type { AgentEffort, RunAgentInput, RunAgentResult } from "../core/execution.js";
 // Value import (pure, no sandcastle pull — the providers load lazily via
 // defaultSandcastleDeps' dynamic import) so resolveRunSettings can parse the
 // max-iterations knob from env/config without importing the runtime.
@@ -81,6 +81,7 @@ export interface RunSettings {
   sandbox: SandboxMode;
   defaultRunner: string;
   model: string;
+  effort: AgentEffort;
   /**
    * Sandcastle re-invocation ceiling (issue #322), resolved with precedence
    * RED_AFK_MAX_ITERATIONS env > `afk.max_iterations` config > undefined. When
@@ -97,10 +98,6 @@ export interface RunSettings {
 }
 
 const SANDBOX_MODES: readonly SandboxMode[] = ["none", "docker", "podman"];
-
-function defaultModelForRunner(runner: string): string {
-  return runner === "codex" ? "gpt-5.5" : "claude-opus-4-8";
-}
 
 export function resolveRunSettings(
   root: string,
@@ -121,10 +118,7 @@ export function resolveRunSettings(
     : "none";
   const defaultRunner = getConfig(cfg, "afk.default_runner") || "claude";
   const activeRunner = runner ?? (isRunner(defaultRunner) ? defaultRunner : "claude");
-  const model =
-    getConfig(cfg, `afk.models.${activeRunner}`) ||
-    getConfig(cfg, "afk.model") ||
-    defaultModelForRunner(activeRunner);
+  const tier = resolveTier(cfg, activeRunner, "think");
   // Precedence: RED_AFK_MAX_ITERATIONS env > afk.max_iterations config >
   // undefined (→ DEFAULT_MAX_ITERATIONS). parseMaxIterations rejects a
   // non-numeric / zero / negative value from EITHER source, so a typo in the
@@ -137,7 +131,7 @@ export function resolveRunSettings(
   // undefined from either source.
   const attemptTimeoutSeconds =
     parseAttemptTimeout(env.RED_AFK_ATTEMPT_TIMEOUT_S) ?? parseAttemptTimeout(getConfig(cfg, "afk.attempt_timeout"));
-  return { sandbox, defaultRunner, model, maxIterations, attemptTimeoutSeconds };
+  return { sandbox, defaultRunner, model: tier.model, effort: tier.effort, maxIterations, attemptTimeoutSeconds };
 }
 
 // ---------- lazy sandcastle runAgent binding ----------

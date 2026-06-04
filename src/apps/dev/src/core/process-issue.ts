@@ -29,6 +29,7 @@ import {
 import { buildHandoff, type HandoffComment } from "./handoff.js";
 import {
   type AgentOutcome,
+  type AgentEffort,
   type AgentStreamEvent,
   type AttemptProgressInfo,
   type RunAgentInput,
@@ -221,6 +222,17 @@ export interface ProcessIssueDeps {
   runAgent(input: RunAgentInput): Promise<RunAgentResult>;
   /** Model id passed through to runAgent (provider-specific, e.g. "claude-opus-4-8"). */
   model: string;
+  /** Reasoning effort passed through to runAgent; undefined preserves legacy callers. */
+  effort?: AgentEffort;
+  /**
+   * Resolve the per-runner AFK tier table (ADR 0049). The default task class is
+   * `think` until the classifier lands, so every inner-agent spawn receives the
+   * configured model+effort pair for its runner.
+   */
+  resolveTier?(runner: Runner, taskClass?: "validate" | "simple" | "complex" | "think"): {
+    model: string;
+    effort: AgentEffort;
+  };
   hooks: ProcessHooks;
   lookups: ProcessLookups;
   /**
@@ -307,6 +319,10 @@ export interface ProcessIssueDeps {
    * tests/legacy callers omit it (no salvage, today's behaviour).
    */
   salvageUncommitted?(branch: string): Promise<number>;
+}
+
+function resolveSpawnTier(deps: ProcessIssueDeps, runner: Runner): { model: string; effort?: AgentEffort } {
+  return deps.resolveTier?.(runner, "think") ?? { model: deps.model, effort: deps.effort };
 }
 
 /** Static per-issue inputs the caller resolves before `processIssue`. */
@@ -578,9 +594,11 @@ export async function processIssue(
   // attemptDir is always absolute (built from `${root}/.red/tmp/...`), which is
   // also why promptFile/handoffPath must stay absolute — sandcastle resolves
   // promptFile against process.cwd(), not against this cwd.
+  const initialTier = resolveSpawnTier(deps, activeRunner);
   let run: RunAgentResult = await deps.runAgent({
     runner: activeRunner,
-    model: deps.model,
+    model: initialTier.model,
+    effort: initialTier.effort,
     handoffPath,
     branch,
     base,
@@ -642,9 +660,11 @@ export async function processIssue(
     ) {
       return await abortAfterClaim(deps, input, branch, base, hooksFired, "pre_attempt");
     }
+    const fallbackTier = resolveSpawnTier(deps, other);
     run = await deps.runAgent({
       runner: other,
-      model: deps.model,
+      model: fallbackTier.model,
+      effort: fallbackTier.effort,
       handoffPath,
       branch,
       base,

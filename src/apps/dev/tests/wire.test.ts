@@ -29,6 +29,7 @@ describe("resolveRunSettings", () => {
       expect(s.sandbox).toBe("none");
       expect(s.defaultRunner).toBe("claude");
       expect(s.model).toBe("claude-opus-4-8");
+      expect(s.effort).toBe("high");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -39,6 +40,8 @@ describe("resolveRunSettings", () => {
     try {
       expect(resolveRunSettings(root, {}, "codex").model).toBe("gpt-5.5");
       expect(resolveRunSettings(root, {}, "claude").model).toBe("claude-opus-4-8");
+      expect(resolveRunSettings(root, {}, "codex").effort).toBe("high");
+      expect(resolveRunSettings(root, {}, "claude").effort).toBe("high");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

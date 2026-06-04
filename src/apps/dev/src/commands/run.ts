@@ -34,7 +34,7 @@ import * as fsx from "../runtime/fs.js";
 import type { GhContext } from "../runtime/gh.js";
 import type { GitContext } from "../runtime/git.js";
 import type { ExecFn } from "../runtime/exec.js";
-import { getConfig, loadConfig, readBackpressure } from "../core/config.js";
+import { getConfig, loadConfig, readBackpressure, resolveTier } from "../core/config.js";
 import { resolveHooks } from "../core/hook-config.js";
 import { attemptLedgerContext, formatAttemptContext, highestAttempt, type AttemptDirEntry } from "../core/attempt-ledger.js";
 import { isValidWorkerId } from "../core/worker-paths.js";
@@ -366,6 +366,7 @@ export function buildProcessDeps(
     backpressureCommands: readBackpressure(config),
     runAgent: makeRunAgent(sandbox, process.env, maxIterations, attemptTimeoutSeconds),
     model,
+    resolveTier: (activeRunner, taskClass = "think") => resolveTier(config, activeRunner, taskClass),
     fallbackRunner,
     waitForReview,
     // One-shot merge-conflict resolver (merge_resolve_conflict): re-enter the
