@@ -1,3 +1,4 @@
+import { escapeHtml, jsonForScript, metric, warningsSection } from "./viewer-utils.js";
 import type {
   DocReferenceGraphEdge,
   DocReferenceGraphNode,
@@ -153,7 +154,7 @@ function renderDocReferenceGraphViewer(report: DocReferenceGraphReport): string 
       </div>
       <div class="stack">
         ${topReferencesSection(report)}
-        ${warningSection(report.warnings)}
+        ${warningsSection(report.warnings, "No reference graph warnings.")}
       </div>
     </div>
     <script id="doc-reference-graph-data" type="application/json">${jsonForScript(report)}</script>
@@ -238,34 +239,8 @@ function topReferencesSection(report: DocReferenceGraphReport): string {
   </section>`;
 }
 
-function warningSection(warnings: string[]): string {
-  return `<section>
-    <h2>Warnings</h2>
-    ${
-      warnings.length === 0
-        ? `<p class="empty">No reference graph warnings.</p>`
-        : `<ul>${warnings.map((warning) => `<li class="warn">${escapeHtml(warning)}</li>`).join("")}</ul>`
-    }
-  </section>`;
-}
 
-function metric(label: string, value: number | string): string {
-  return `<div class="metric"><strong>${escapeHtml(String(value))}</strong><span>${escapeHtml(label)}</span></div>`;
-}
 
 function truncate(value: string, max: number): string {
   return value.length <= max ? value : `${value.slice(0, max - 3)}...`;
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
-
-function jsonForScript(value: unknown): string {
-  return JSON.stringify(value, null, 2).replaceAll("</", "<\\/");
 }
