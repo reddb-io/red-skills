@@ -1,4 +1,11 @@
+import { createHash } from "node:crypto";
 import { graphStateHash } from "./communities.js";
+import {
+  loadEngineeringCodeCuration,
+  resolveEngineeringCodeAlias,
+  type EngineeringCodeCurationState,
+} from "./code-curation.js";
+import { normalizeEngineeringCode } from "./extraction-schema.js";
 import {
   type AiProviderConfig,
   type Egress,
@@ -42,10 +49,14 @@ export interface CommunityDigest {
   top_label: string;
   /** Dominant node_type: most frequent node_type, ties broken alphabetically. */
   top_node_type: string;
+  /** Dominant canonical engineering code, when community members carry codes. */
+  top_engineering_code: string | null;
   /** Ranked label histogram for the community. */
   labels: CommunityDigestCount[];
   /** Ranked node_type histogram for the community. */
   node_types: CommunityDigestCount[];
+  /** Ranked canonical engineering-code histogram for the community. */
+  engineering_codes: CommunityDigestCount[];
   /** Provider-written natural-language summary; null when provider enrichment is unavailable. */
   narrative_summary: string | null;
 }
@@ -93,9 +104,13 @@ export async function buildCommunityDigest(
   const cacheMode = opts.cache ?? "read-write";
   const providerConfig = opts.providerConfig;
   const provider = resolveProviderStatus(providerConfig);
-  const [nodes, edges] = await Promise.all([store.listNodes(), store.listEdges()]);
+  const [nodes, edges, curation] = await Promise.all([
+    store.listNodes(),
+    store.listEdges(),
+    loadEngineeringCodeCuration(store),
+  ]);
   const graphHash = graphStateHash(nodes, edges);
-  const cacheKey = `cache:community-digest:${graphHash}:${providerCachePart(provider)}`;
+  const cacheKey = `cache:community-digest:${graphHash}:codes:${curationHash(curation)}:${providerCachePart(provider)}`;
   const cached =
     cacheMode === "off" ? null : parseCached(await store.kvGet<CachedDigest | string>(cacheKey));
   const isHit =
@@ -119,7 +134,7 @@ export async function buildCommunityDigest(
   }
 
   const assignments = await store.communities();
-  let digests = computeDigests(nodes, assignments);
+  let digests = computeDigests(nodes, assignments, curation);
   let finalProvider = provider;
   if (provider.status === "available" && providerConfig) {
     const enriched = await enrichDigestsWithNarratives({
@@ -171,6 +186,7 @@ function parseCached(raw: CachedDigest | string | null): CachedDigest | null {
 function computeDigests(
   nodes: StoredNode[],
   assignments: Map<number, string>,
+  curation: EngineeringCodeCurationState,
 ): CommunityDigest[] {
   const byRid = new Map(nodes.map((node) => [node.rid, node]));
   const groups = new Map<string, StoredNode[]>();
@@ -186,17 +202,35 @@ function computeDigests(
     .map(([communityId, members]) => {
       const labels = rankCounts(members.map((node) => node.label));
       const nodeTypes = rankCounts(members.map((node) => String(node.node_type)));
+      const engineeringCodes = rankCounts(
+        members
+          .map((node) => canonicalEngineeringCode(node, curation))
+          .filter((code): code is string => code != null),
+      );
       return {
         community_id: communityId,
         size: members.length,
         top_label: labels[0]?.value ?? "",
         top_node_type: nodeTypes[0]?.value ?? "",
+        top_engineering_code: engineeringCodes[0]?.value ?? null,
         labels,
         node_types: nodeTypes,
+        engineering_codes: engineeringCodes,
         narrative_summary: null,
       };
     })
     .sort((a, b) => b.size - a.size || a.community_id.localeCompare(b.community_id));
+}
+
+function canonicalEngineeringCode(
+  node: StoredNode,
+  curation: EngineeringCodeCurationState,
+): string | null {
+  const raw = node.properties.engineering_code;
+  if (typeof raw !== "string") return null;
+  const code = normalizeEngineeringCode(raw);
+  if (!code) return null;
+  return resolveEngineeringCodeAlias(code, curation);
 }
 
 /** Frequency histogram ranked count-desc then value-asc — deterministic. */
@@ -308,8 +342,10 @@ function buildNarrativePrompt(
         size: digest.size,
         top_label: digest.top_label,
         top_node_type: digest.top_node_type,
+        top_engineering_code: digest.top_engineering_code,
         labels: digest.labels.slice(0, 10),
         node_types: digest.node_types,
+        engineering_codes: digest.engineering_codes,
         members: (members.get(digest.community_id) ?? [])
           .slice()
           .sort((a, b) => a.label.localeCompare(b.label))
@@ -326,6 +362,10 @@ function buildNarrativePrompt(
       })),
     }),
   };
+}
+
+function curationHash(curation: EngineeringCodeCurationState): string {
+  return createHash("sha256").update(JSON.stringify(curation)).digest("hex").slice(0, 12);
 }
 
 function parseNarrativeSummaries(raw: string): Map<string, string> {
