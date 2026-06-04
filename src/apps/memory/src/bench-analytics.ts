@@ -130,6 +130,7 @@ export async function writeBenchEvalAnalytics(
     substrate: report.substrate,
     metrics: [
       { name: "f1", value: report.aggregate.f1, unit: "score" },
+      { name: "abstention_score", value: report.aggregate.abstention_score, unit: "score" },
       { name: "quality_per_1k_tokens", value: report.aggregate.quality_per_1k_tokens, unit: "score_per_1k_tokens" },
     ],
     raw: {
@@ -516,6 +517,7 @@ function evalRecordMetrics(record: QuestionRecord): Array<{ name: string; value:
   return [
     { name: "exact_match", value: record.exact_match, unit: "score" },
     { name: "f1", value: record.f1, unit: "score" },
+    { name: "abstention_score", value: record.abstention_score, unit: "score" },
     { name: "tokens_input", value: record.tokens.input, unit: "tokens" },
     { name: "tokens_output", value: record.tokens.output, unit: "tokens" },
     { name: "tokens_total", value: record.tokens.total, unit: "tokens" },
