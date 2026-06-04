@@ -28,7 +28,14 @@ import {
   type LiveBaselineRunResult,
 } from "../../memory/src/live-baseline-adapters.js";
 import { formatMarkdownReport, runBenchRecall } from "../../memory/src/bench-recall.js";
-import { formatEvalReport, runBenchEval, tierRecords, toJsonl } from "../../memory/src/bench-eval.js";
+import {
+  formatEvalReport,
+  runBenchEval,
+  runBenchEvalCore,
+  runBenchEvalShowcase,
+  tierRecords,
+  toJsonl,
+} from "../../memory/src/bench-eval.js";
 import {
   DEFAULT_WORKLOAD,
   formatLatencyReport,
@@ -39,6 +46,7 @@ import {
 } from "../../memory/src/bench-latency.js";
 import {
   openBenchAnalyticsDb,
+  gateBenchEvalCoreRegression,
   resolveBenchAnalyticsUri,
   writeBenchEvalAnalytics,
   writeBenchLatencyAnalytics,
@@ -50,6 +58,8 @@ const USAGE = `benchmark-memory
 
 Usage:
   benchmark-memory --version [--json]
+  benchmark-memory bench eval core   [--corpus <dir>] [--pack N] [--substrate reddb] [--records <file>] [--analytics <uri|file>] [--gate] [--out <file>] [--report <file>] [--json]
+  benchmark-memory bench eval showcase [--corpus <dir>] [--pack N] [--substrate <name>] [--runs N] [--records <file>] [--analytics <uri|file>] [--out <file>] [--report <file>] [--json]
   benchmark-memory bench eval        [--corpus <dir>] [--pack N] [--substrate <name>] [--records <file>] [--analytics <uri|file>] [--out <file>] [--report <file>] [--json]
   benchmark-memory bench recall      [--root <dir>] [--corpus <dir>] [--k 1,5,10] [--out <file>] [--report <file>] [--json]
   benchmark-memory bench latency     [--root <dir>] [--workload <dir>] [--iterations N] [--warmup N] [--seed N] [--ops working-get,session-recall,long-term-recall] [--analytics <uri|file>] [--out <file>] [--report <file>] [--json]
@@ -191,7 +201,11 @@ async function runBench(args: ParsedArgs): Promise<number> {
 async function runBenchEvalCmd(args: ParsedArgs): Promise<number> {
   const rootDir = resolveRepoRoot(String(process.cwd()));
   const corpusDir = stringFlag(args, "corpus") ?? join(rootDir, "src/apps/memory/bench/eval/structured");
-  const substrate = stringFlag(args, "substrate") ?? "reddb";
+  const mode = args.positional[1];
+  if (mode && mode !== "core" && mode !== "showcase") {
+    throw new Error("benchmark-memory bench eval: mode must be core or showcase");
+  }
+  const substrate = stringFlag(args, "substrate") ?? (mode === "core" ? "reddb" : "reddb");
   const packRaw = stringFlag(args, "pack");
   let packSize: number | undefined;
   if (packRaw !== undefined) {
@@ -201,11 +215,21 @@ async function runBenchEvalCmd(args: ParsedArgs): Promise<number> {
     }
     packSize = Math.floor(value);
   }
-  const report = await runBenchEval({ corpusDir, packSize, substrate });
+  const report = mode === "core"
+    ? await runBenchEvalCore({ corpusDir, packSize, substrate })
+    : mode === "showcase"
+      ? await runBenchEvalShowcase({
+        corpusDir,
+        packSize,
+        substrate,
+        repetitions: positiveIntegerFlag(args, "runs"),
+      })
+      : await runBenchEval({ corpusDir, packSize, substrate });
   await writeOutputs(args, report, formatEvalReport(report));
   const recordsPath = stringFlag(args, "records");
   if (recordsPath) await writeFileEnsured(recordsPath, toJsonl(tierRecords(report)));
-  await writeEvalAnalyticsIfRequested(args, report);
+  const gate = args.flags.gate === true || process.env.RED_MEMORY_BENCH_REGRESSION_GATE === "1";
+  const gateResult = await writeEvalAnalyticsIfRequested(args, report, { gate });
   if (args.flags.json === true) {
     process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
   } else {
@@ -213,10 +237,10 @@ async function runBenchEvalCmd(args: ParsedArgs): Promise<number> {
       ? "n/a"
       : report.aggregate.judge_j.score.toFixed(3);
     process.stdout.write(
-      `benchmark-memory bench eval: substrate=${report.substrate} tiers=${report.tiers.length} category=${report.category} categories=${report.categories.length} questions=${report.question_count} exact_match=${report.aggregate.exact_match.toFixed(3)} f1=${report.aggregate.f1.toFixed(3)} judge_j=${judgeJ}\n`,
+      `benchmark-memory bench eval: mode=${report.mode} repetitions=${report.repetitions} substrate=${report.substrate} tiers=${report.tiers.length} category=${report.category} categories=${report.categories.length} questions=${report.question_count} exact_match=${report.aggregate.exact_match.toFixed(3)} f1=${report.aggregate.f1.toFixed(3)} judge_j=${judgeJ}\n`,
     );
   }
-  return 0;
+  return gateResult?.status === "fail" ? 1 : 0;
 }
 
 async function runBenchRecallCmd(args: ParsedArgs): Promise<number> {
@@ -263,9 +287,13 @@ async function runBenchLatencyCmd(args: ParsedArgs): Promise<number> {
 async function writeEvalAnalyticsIfRequested(
   args: ParsedArgs,
   report: Awaited<ReturnType<typeof runBenchEval>>,
-): Promise<void> {
+  opts: { gate?: boolean } = {},
+): Promise<Awaited<ReturnType<typeof gateBenchEvalCoreRegression>> | null> {
   const raw = analyticsUriFlag(args);
-  if (!raw) return;
+  if (!raw) {
+    if (opts.gate) throw new Error("benchmark-memory bench eval: --gate requires --analytics or RED_MEMORY_BENCH_ANALYTICS_URI");
+    return null;
+  }
   const uri = resolveBenchAnalyticsUri(raw);
   const db = await openBenchAnalyticsDb(uri);
   try {
@@ -273,6 +301,15 @@ async function writeEvalAnalyticsIfRequested(
     process.stderr.write(
       `benchmark-memory bench eval: analytics=${uri} run_id=${result.run_id} rows=${result.inserted_runs}\n`,
     );
+    if (!opts.gate) return null;
+    const gate = await gateBenchEvalCoreRegression({ db, substrate: report.substrate });
+    process.stderr.write(`benchmark-memory bench eval: regression_gate=${gate.status} checked=${gate.checked_metrics.join(",")}\n`);
+    for (const failure of gate.failures) {
+      process.stderr.write(
+        `benchmark-memory bench eval: regression ${failure.metric_name} delta=${failure.delta} previous=${failure.previous_value ?? "n/a"} current=${failure.metric_value}\n`,
+      );
+    }
+    return gate;
   } finally {
     await db.close?.();
   }
@@ -331,6 +368,16 @@ function setPositiveInteger(
 function stringFlag(args: ParsedArgs, name: string): string | undefined {
   const value = args.flags[name];
   return typeof value === "string" ? value : undefined;
+}
+
+function positiveIntegerFlag(args: ParsedArgs, name: string): number | undefined {
+  const raw = stringFlag(args, name);
+  if (raw === undefined) return undefined;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < 1) {
+    throw new Error(`benchmark-memory bench eval: --${name} must be a positive integer`);
+  }
+  return Math.floor(value);
 }
 
 function resolveRepoRoot(cwd: string): string {
