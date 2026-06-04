@@ -8,7 +8,8 @@ Adapted from [`mattpocock/skills`](https://github.com/mattpocock/skills) (MIT). 
 
 ## Structure
 
-The repo is a Claude Code **plugin marketplace** that hosts one or more plugins. Layout:
+The repo is a Claude Code **plugin marketplace** that hosts shipped plugin
+definitions plus a top-level TypeScript implementation workspace. Layout:
 
 ```
 red-skills/                         ← repo root + marketplace
@@ -16,8 +17,24 @@ red-skills/                         ← repo root + marketplace
 │   └── marketplace.json            ← marketplace manifest, lists every plugin
 ├── .agents/
 │   └── plugins/marketplace.json    ← Codex marketplace manifest
+├── .red/
+│   ├── CONTEXT.md                  ← compatibility pointer; start at CONTEXT-MAP.md
+│   ├── CONTEXT-MAP.md              ← multi-context glossary entry point
+│   └── contexts/
+│       ├── dev/CONTEXT.md          ← `dev` plugin glossary
+│       ├── memory/CONTEXT.md       ← `memory` plugin glossary
+│       └── brain/CONTEXT.md        ← `brain` plugin glossary
+├── src/                            ← implementation workspace (ADR 0034)
+│   ├── apps/
+│   │   ├── dev/                    ← `dev` runtime implementation
+│   │   ├── memory/                 ← `memory` runtime implementation
+│   │   ├── brain/                  ← `brain` runtime implementation
+│   │   └── code-nav/               ← code navigation runtime implementation
+│   └── packages/
+│       └── shared/                 ← code shared by multiple runtimes
+├── dist/                           ← generated release bundles and manifests
 └── plugins/
-    ├── dev/                        ← the `dev` plugin
+    ├── dev/                        ← shipped `dev` plugin definition
     │   ├── .claude-plugin/plugin.json
     │   ├── .codex-plugin/plugin.json
     │   └── skills/
@@ -26,11 +43,22 @@ red-skills/                         ← repo root + marketplace
     │       ├── productivity/       ← general workflow, not code-specific
     │       ├── misc/               ← kept but rarely used
     │       └── in-progress/        ← drafts, do not publish yet
-    ├── memory/                     ← the `memory` plugin
-    └── brain/                      ← the `brain` plugin
+    ├── memory/                     ← shipped `memory` plugin definition
+    └── brain/                      ← shipped `brain` plugin definition
 ```
 
-Future plugins (e.g. `data`, `ops`) live as additional siblings under `plugins/` with their own `.claude-plugin/plugin.json`, `.codex-plugin/plugin.json`, and their own `skills/` tree. Each plugin appears as a separate entry in both marketplace manifests.
+`plugins/` is the agent-facing definition surface: manifests, skills, hooks, and
+docs. Runtime implementation belongs under `src/`, and generated bundles belong
+under `dist/` when bundle/release builds run. ADR 0034 describes these as
+implementation domains (`src/domains/<plugin>/`) plus a shared layer
+(`src/shared/`); the current filesystem realizes that split as
+`src/apps/<plugin>/` and `src/packages/shared/`.
+
+Future plugins (e.g. `data`, `ops`) live as additional siblings under
+`plugins/` with their own `.claude-plugin/plugin.json`,
+`.codex-plugin/plugin.json`, and their own `skills/` tree. Each plugin appears
+as a separate entry in both marketplace manifests, and any runtime code for it
+lives under `src/apps/<plugin>/`.
 
 `personal/` and `deprecated/` were removed from upstream and **must not be recreated**.
 
@@ -40,7 +68,10 @@ Future plugins (e.g. `data`, `ops`) live as additional siblings under `plugins/`
 2. Each entry in `README.md` links the skill name to its `SKILL.md`.
 3. Each bucket has its own `README.md` listing the bucket's skills with a one-line description.
 4. `LICENSE` is Apache-2.0. The `NOTICE` file preserves Matt Pocock's original MIT copyright for the upstream-derived skills under `plugins/dev/skills/` — **do not remove or alter that attribution**. See ADR 0004.
-5. `.red/CONTEXT.md` is a domain glossary, not a spec or changelog.
+5. Glossary docs use the ADR 0021 multi-context model: `.red/CONTEXT.md` is only
+   a compatibility pointer to `.red/CONTEXT-MAP.md`; live glossary terms belong
+   in `.red/contexts/{dev,memory,brain}/CONTEXT.md`, in the context that owns
+   the term.
 6. **All repo content is in English.** No Portuguese (or any other language) in committed files — SKILL.md, README, CHANGES, ADRs, comments, frontmatter descriptions. Chat with the user can stay Portuguese; the repo cannot.
 
 ## Token-efficient terminal work
@@ -101,4 +132,7 @@ Canonical kebab-case / `prefix:value` vocab — labels match their canonical rol
 
 ### Domain docs
 
-Single-context — `.red/CONTEXT.md` + `.red/adr/` at the repo root. See `.red/agents/domain.md`.
+Multi-context — start at `.red/CONTEXT-MAP.md`, then read the owning glossary in
+`.red/contexts/{dev,memory,brain}/CONTEXT.md`. `.red/CONTEXT.md` is a
+compatibility pointer only. ADRs remain in the single root `.red/adr/` sequence
+for now. See `.red/agents/domain.md`.
