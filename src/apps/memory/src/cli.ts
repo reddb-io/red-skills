@@ -182,7 +182,7 @@ import {
 import { evictL2 } from "./working-memory-evict.js";
 import {
   executeReadOnlyMemoryOperation,
-  getReadOnlyMemoryOperation,
+  listReadOnlyMemoryOperations,
   type ReadOnlyMemoryOperation,
 } from "./operations.js";
 import {
@@ -457,15 +457,16 @@ to whichever mode init configured.`;
 type ParsedArgs = LooseParsedArgs;
 
 const execFileAsync = promisify(execFile);
-const REGISTRY_CLI_OPERATION_IDS = [
-  "memory.doc-brief",
-  "memory.doc-brief-viewer",
-] as const;
+const LEGACY_CLI_OPERATION_IDS = new Set(["memory.health"]);
+const LEGACY_SUBCOMMANDS_BY_REGISTRY_COMMAND: Readonly<Record<string, readonly string[]>> = {
+  "merge-pass": ["execute", "unmerge"],
+  "onboarding-map": ["export"],
+};
+const PROOF_REGISTRY_CLI_COMMANDS = new Set(["docs brief", "docs brief-viewer"]);
 const REGISTRY_CLI_OPERATIONS = new Map<string, ReadOnlyMemoryOperation>(
-  REGISTRY_CLI_OPERATION_IDS.map((id) => {
-    const operation = getReadOnlyMemoryOperation(id);
-    return [operation.renderer.cli.command, operation];
-  }),
+  listReadOnlyMemoryOperations()
+    .filter((operation) => !LEGACY_CLI_OPERATION_IDS.has(operation.id))
+    .map((operation) => [operation.renderer.cli.command, operation]),
 );
 
 function rootOf(flags: Record<string, string | boolean>): string {
@@ -2357,7 +2358,12 @@ async function runAsk(args: ParsedArgs): Promise<void> {
 async function runDocs(args: ParsedArgs): Promise<void> {
   const action = args.positional[0];
   const registryOperation = registryCliOperationFor("docs", args.positional);
-  if (registryOperation) return runRegistryCliOperation(registryOperation, args);
+  if (
+    registryOperation &&
+    PROOF_REGISTRY_CLI_COMMANDS.has(registryOperation.renderer.cli.command)
+  ) {
+    return runRegistryCliOperation(registryOperation, args);
+  }
   if (action === "bundle") return runDocsBundle(args);
   if (action === "bundle-viewer") return runDocsBundleViewer(args);
   if (action === "read") return runDocsRead(args);
@@ -2406,20 +2412,27 @@ async function runRegistryCliOperation(
   const rootDir = rootOf(args.flags);
   const commandParts = operation.renderer.cli.command.split(" ");
   const positional = args.positional.slice(commandParts.length - 1);
-  const { store } = await openGraphStore(args);
+  const transportInput = {
+    positional,
+    flags: flagsForRegistryTransport(args),
+    query: {},
+    rootDir,
+  };
+  const previousProvider = process.env.RED_MEMORY_VECTOR_PROVIDER;
+  if (args.flags.local === true && operation.id.startsWith("memory.vector-")) {
+    process.env.RED_MEMORY_VECTOR_PROVIDER = "local";
+  }
+  const graphContext = operationNeedsGraphStore(operation)
+    ? await openGraphStore(args)
+    : { store: undefined as unknown as MemoryStore, config: undefined };
   try {
     const output = await executeMemoryOperationFromTransport(
       operation,
-      { store, rootDir },
-      { positional, flags: args.flags, query: {}, rootDir },
+      { store: graphContext.store, rootDir, providerConfig: graphContext.config?.provider },
+      transportInput,
     );
     if (operation.outputKind.kind === "viewer") {
-      const outPath = await writeViewerArtifact(operation, output, {
-        positional,
-        flags: args.flags,
-        query: {},
-        rootDir,
-      });
+      const outPath = await writeViewerArtifact(operation, output, transportInput);
       process.stdout.write(viewerCliSummary(operation, output, outPath));
       return;
     }
@@ -2433,8 +2446,61 @@ async function runRegistryCliOperation(
     }
     console.log(JSON.stringify(output, null, 2));
   } finally {
-    await store.close();
+    if (operationNeedsGraphStore(operation)) await graphContext.store.close();
+    if (args.flags.local === true && operation.id.startsWith("memory.vector-")) {
+      if (previousProvider == null) delete process.env.RED_MEMORY_VECTOR_PROVIDER;
+      else process.env.RED_MEMORY_VECTOR_PROVIDER = previousProvider;
+    }
   }
+}
+
+function operationNeedsGraphStore(operation: ReadOnlyMemoryOperation): boolean {
+  return !new Set([
+    "memory.agent-integration-status",
+    "memory.agent-integration-status-viewer",
+    "memory.hook-coverage",
+    "memory.hook-coverage-viewer",
+    "memory.routing-guide",
+    "memory.routing-guide-viewer",
+  ]).has(operation.id);
+}
+
+function flagsForRegistryTransport(args: ParsedArgs): Record<string, unknown> {
+  const flags: Record<string, unknown> = { ...args.flags };
+  for (const [key, values] of Object.entries(repeatedFlags(process.argv.slice(2)))) {
+    if (values.length > 1) flags[key] = values;
+  }
+  const operation = registryCliOperationFor(args.command, args.positional);
+  if (
+    operation &&
+    ["memory.communities", "memory.communities-viewer", "memory.community-digest"].includes(
+      operation.id,
+    ) &&
+    flags["no-cache"] !== true &&
+    flags.cache === undefined
+  ) {
+    flags.cache = "read-write";
+  }
+  return flags;
+}
+
+function repeatedFlags(argv: readonly string[]): Record<string, string[]> {
+  const repeated: Record<string, string[]> = {};
+  for (let i = 0; i < argv.length; i++) {
+    const token = argv[i];
+    if (!token?.startsWith("--") || token === "--") continue;
+    const raw = token.slice(2);
+    const eq = raw.indexOf("=");
+    const key = eq >= 0 ? raw.slice(0, eq) : raw;
+    const inlineValue = eq >= 0 ? raw.slice(eq + 1) : undefined;
+    if (key.startsWith("no-")) continue;
+    const value =
+      inlineValue ??
+      (argv[i + 1] !== undefined && !argv[i + 1]!.startsWith("--") ? argv[++i] : undefined);
+    if (value === undefined) continue;
+    (repeated[key] ??= []).push(value);
+  }
+  return repeated;
 }
 
 function registryCliOperationFor(
@@ -2446,6 +2512,11 @@ function registryCliOperationFor(
     const parts = registeredCommand.split(" ");
     if (parts[0] !== command) continue;
     const rest = parts.slice(1);
+    if (rest.length === 0) {
+      const legacySubcommands = LEGACY_SUBCOMMANDS_BY_REGISTRY_COMMAND[registeredCommand] ?? [];
+      if (legacySubcommands.includes(positional[0] ?? "")) continue;
+      return operation;
+    }
     if (rest.every((part, index) => positional[index] === part)) return operation;
   }
   return undefined;
@@ -6566,6 +6637,14 @@ async function main(): Promise<void> {
     const info = readBuildInfo("memory");
     process.stdout.write(args.flags.json ? `${JSON.stringify(info)}\n` : `${renderVersion(info)}\n`);
     return;
+  }
+  const registryOperation = registryCliOperationFor(args.command, args.positional);
+  if (
+    registryOperation &&
+    registryOperation.outputKind.kind === "viewer" &&
+    args.flags.json !== true
+  ) {
+    return runRegistryCliOperation(registryOperation, args);
   }
   switch (args.command) {
     case "init":
