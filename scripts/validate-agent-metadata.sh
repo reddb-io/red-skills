@@ -103,6 +103,47 @@ validate_plugin_agents() {
     jq -e 'has("agents") | not' "$codex_manifest" >/dev/null \
       || fail "$codex_manifest: Codex plugin must not declare 'agents' (Claude-only surface; see .red/research/204-…)"
   fi
+
+  if [ "$(basename "$plugin_dir")" = "dev" ]; then
+    validate_dev_tier_agents "$plugin_dir"
+  fi
+}
+
+frontmatter_value() {
+  local file="$1"
+  local key="$2"
+  awk -F: -v key="$key" '
+    NR == 1 && $0 == "---" { in_frontmatter = 1; next }
+    in_frontmatter && $0 == "---" { exit }
+    in_frontmatter && $1 == key {
+      sub(/^[[:space:]]+/, "", $2)
+      sub(/[[:space:]]+$/, "", $2)
+      print $2
+      exit
+    }
+  ' "$file"
+}
+
+require_agent() {
+  local plugin_dir="$1"
+  local file_name="$2"
+  local model="$3"
+  local effort="$4"
+  local file="$plugin_dir/agents/$file_name"
+
+  [ -f "$file" ] || fail "$plugin_dir: missing required tier agent agents/$file_name"
+  [ "$(frontmatter_value "$file" model)" = "$model" ] \
+    || fail "$file: model frontmatter must be '$model'"
+  grep -Eq "effort:[[:space:]]*$effort" "$file" \
+    || fail "$file: body must carry the '$effort' effort prompt convention"
+}
+
+validate_dev_tier_agents() {
+  local plugin_dir="$1"
+
+  require_agent "$plugin_dir" validate.md haiku low
+  require_agent "$plugin_dir" simple-code.md sonnet high
+  require_agent "$plugin_dir" complex-code.md opus medium
 }
 
 for plugin_dir in "${PLUGIN_DIRS[@]}"; do
