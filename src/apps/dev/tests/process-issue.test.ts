@@ -8,6 +8,7 @@ import type { HookName } from "../src/core/hook-config.js";
 import type { ConfigValues } from "../src/core/config.js";
 import type { AgentEffort, RunAgentInput, RunAgentResult } from "../src/core/execution.js";
 import type { AttemptRecordPayload } from "../src/core/attempt-record.js";
+import type { IssueClassificationMetadata } from "../src/core/issue-classifier.js";
 import { parseCurrentBlocker, upsertCurrentBlocker } from "../src/core/blocker-state.js";
 
 // Everything injected is a fake — no real gh / git / sandcastle / pnpm / fs ever
@@ -38,6 +39,8 @@ interface Trace {
   recordedAttempts: AttemptRecordPayload[];
   /** Worker branches passed to the commit-leftovers salvage port. */
   salvageCalls: string[];
+  /** Metadata handed to the per-issue classifier before runAgent. */
+  classifierCalls: IssueClassificationMetadata[];
 }
 
 interface HarnessOptions {
@@ -104,6 +107,8 @@ interface HarnessOptions {
   body?: string;
   /** Optional ADR 0049 tier resolver injected by the production wiring. */
   resolveTier?: ProcessIssueDeps["resolveTier"];
+  /** Optional ADR 0049 issue classifier injected by the production wiring. */
+  classifyIssue?: ProcessIssueDeps["classifyIssue"];
 }
 
 function harness(opts: HarnessOptions = {}): {
@@ -127,6 +132,7 @@ function harness(opts: HarnessOptions = {}): {
     sidecarWrites: [],
     recordedAttempts: [],
     salvageCalls: [],
+    classifierCalls: [],
   };
 
   const outcome = opts.outcome ?? "done";
@@ -264,6 +270,12 @@ function harness(opts: HarnessOptions = {}): {
     },
     model: "claude-opus-4-8",
     effort: "high" as AgentEffort,
+    classifyIssue: opts.classifyIssue
+      ? async (metadata) => {
+          trace.classifierCalls.push(metadata);
+          return opts.classifyIssue!(metadata);
+        }
+      : undefined,
     resolveTier: opts.resolveTier,
     fallbackRunner: opts.fallbackRunner ?? false,
     conflictResolver: opts.conflictResolve
@@ -448,6 +460,28 @@ describe("processIssue — DONE + green + merged (unlocked, admin-PR landing)", 
     expect(trace.runAgentCalls).toHaveLength(1);
     expect(trace.runAgentCalls[0]?.model).toBe("claude-tier-model");
     expect(trace.runAgentCalls[0]?.effort).toBe("max");
+  });
+
+  it("passes the classified task class into model/effort resolution before runAgent", async () => {
+    const tiers: Array<{ runner: string; taskClass: string | undefined }> = [];
+    const { deps, input, trace } = harness({
+      body: "## What to build\nTouch src/apps/dev/src/core/process-issue.ts and src/apps/dev/tests/process-issue.test.ts.",
+      outcome: "done",
+      feedbackOk: true,
+      classifyIssue: async () => "complex",
+      resolveTier: (runner, taskClass) => {
+        tiers.push({ runner, taskClass });
+        return { model: `${runner}-${taskClass}-model`, effort: "medium" };
+      },
+    });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(trace.classifierCalls).toHaveLength(1);
+    expect(trace.classifierCalls[0]?.extensions).toEqual(["ts"]);
+    expect(tiers).toEqual([{ runner: "claude", taskClass: "complex" }]);
+    expect(trace.runAgentCalls[0]?.model).toBe("claude-complex-model");
+    expect(trace.runAgentCalls[0]?.effort).toBe("medium");
   });
 });
 
@@ -1014,18 +1048,26 @@ describe("processIssue — runner exhaustion → fallback swap → retry", () =>
   });
 
   it("resolves a fresh model and effort for the fallback runner", async () => {
+    const tiers: Array<{ runner: string; taskClass: string | undefined }> = [];
     const { deps, input, trace } = harness({
       outcomes: ["exhausted", "done"],
       fallbackRunner: true,
       feedbackOk: true,
-      resolveTier: (runner) =>
-        runner === "codex"
+      classifyIssue: async () => "simple",
+      resolveTier: (runner, taskClass) => {
+        tiers.push({ runner, taskClass });
+        return runner === "codex"
           ? { model: "gpt-fallback", effort: "medium" }
-          : { model: "claude-primary", effort: "high" },
+          : { model: "claude-primary", effort: "high" };
+      },
     });
     const result = await processIssue(deps, input);
 
     expect(result.outcome).toBe("done");
+    expect(tiers).toEqual([
+      { runner: "claude", taskClass: "simple" },
+      { runner: "codex", taskClass: "simple" },
+    ]);
     expect(trace.runAgentCalls[0]?.model).toBe("claude-primary");
     expect(trace.runAgentCalls[0]?.effort).toBe("high");
     expect(trace.runAgentCalls[1]?.model).toBe("gpt-fallback");

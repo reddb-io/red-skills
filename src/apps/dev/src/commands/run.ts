@@ -35,6 +35,10 @@ import type { GhContext } from "../runtime/gh.js";
 import type { GitContext } from "../runtime/git.js";
 import type { ExecFn } from "../runtime/exec.js";
 import { getConfig, loadConfig, readBackpressure, resolveTier } from "../core/config.js";
+import {
+  classifyIssue,
+  type IssueClassificationMetadata,
+} from "../core/issue-classifier.js";
 import { resolveHooks } from "../core/hook-config.js";
 import { attemptLedgerContext, formatAttemptContext, highestAttempt, type AttemptDirEntry } from "../core/attempt-ledger.js";
 import { isValidWorkerId } from "../core/worker-paths.js";
@@ -366,6 +370,7 @@ export function buildProcessDeps(
     backpressureCommands: readBackpressure(config),
     runAgent: makeRunAgent(sandbox, process.env, maxIterations, attemptTimeoutSeconds),
     model,
+    classifyIssue: makeIssueClassifier(config, runner, ctx.root, exec),
     resolveTier: (activeRunner, taskClass = "think") => resolveTier(config, activeRunner, taskClass),
     fallbackRunner,
     waitForReview,
@@ -546,6 +551,53 @@ export function buildProcessDeps(
     // hop. ALL errors are swallowed (one warn line), so a memory failure can
     // NEVER fail the close.
     recordAttempt: makeRecordAttempt(ctx.root, current, exec),
+  };
+}
+
+function makeIssueClassifier(
+  config: import("../core/config.js").ConfigValues,
+  runner: Runner,
+  cwd: string,
+  exec?: ExecFn,
+): (metadata: IssueClassificationMetadata) => Promise<import("../core/config.js").AfkModelTier> {
+  return async (metadata) => {
+    const validateTier = resolveTier(config, runner, "validate");
+    return classifyIssue(metadata, async ({ prompt }) => {
+      const run = exec ?? (await import("../runtime/exec.js")).execTool;
+      const common = { cwd, timeoutMs: 45_000, maxBuffer: 1024 * 1024 };
+      const result =
+        runner === "codex"
+          ? await run(
+              "codex",
+              [
+                "exec",
+                "--model",
+                validateTier.model,
+                "-C",
+                cwd,
+                "--sandbox",
+                "read-only",
+                "--skip-git-repo-check",
+                prompt,
+              ],
+              common,
+            )
+          : await run(
+              "claude",
+              [
+                "--model",
+                validateTier.model,
+                "--effort",
+                validateTier.effort,
+                "--permission-mode",
+                "bypassPermissions",
+                "--print",
+                prompt,
+              ],
+              common,
+            );
+      return result.code === 0 ? result.stdout.trim() : undefined;
+    });
   };
 }
 
