@@ -273,7 +273,7 @@ It walks you through five short decisions:
 
 1. **Issue tracker.** GitHub Issues only — confirms `git remote -v` shows the right repo.
 2. **Triage labels.** Maps the canonical state roles (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `blocked:dependency`, `wontfix`) to actual label strings.
-3. **Domain docs.** Single-context (`.red/CONTEXT.md` + `.red/adr/`) or multi-context (`.red/CONTEXT-MAP.md` for monorepos).
+3. **Domain docs.** Consumer repos choose single-context (`.red/CONTEXT.md` + `.red/adr/`) or multi-context (`.red/CONTEXT-MAP.md` with glossaries under `.red/contexts/`). This repo uses the multi-context layout; its root `.red/CONTEXT.md` is only a compatibility pointer.
 4. **Workflows.** Installs `red-issues-needs-triage.yml` (auto-applies `needs-triage` so nothing slips past `/afk`).
 5. **Token efficiency.** Strong recommendation to install [RTK](https://github.com/rtk-ai/rtk) before running `/afk` (details below).
 
@@ -407,7 +407,7 @@ Small, sharp skills. They work with any model. Each one targets a specific failu
 | Failure mode | Use |
 |--------------|-----|
 | Agent didn't do what I want | [`/reflect`](./plugins/dev/skills/productivity/reflect/SKILL.md), [`/start`](./plugins/dev/skills/engineering/start/SKILL.md) |
-| Agent is verbose, no shared vocabulary | `.red/CONTEXT.md` + [`/start`](./plugins/dev/skills/engineering/start/SKILL.md) |
+| Agent is verbose, no shared vocabulary | Active glossary (`.red/CONTEXT-MAP.md` + `.red/contexts/**`, or `.red/CONTEXT.md` in single-context repos) + [`/start`](./plugins/dev/skills/engineering/start/SKILL.md) |
 | Code doesn't work | [`/tdd`](./plugins/dev/skills/engineering/tdd/SKILL.md), [`/diagnose`](./plugins/dev/skills/engineering/diagnose/SKILL.md) |
 | Codebase turned into a mud ball | [`/to-prd`](./plugins/dev/skills/engineering/to-prd/SKILL.md), [`/zoom-out`](./plugins/dev/skills/engineering/zoom-out/SKILL.md), [`/improve-codebase-architecture`](./plugins/dev/skills/engineering/improve-codebase-architecture/SKILL.md) |
 | I want it to run while I sleep | [`/afk`](./plugins/dev/skills/engineering/afk/SKILL.md) |
@@ -427,12 +427,12 @@ Composable. Boring on purpose where boring is enough. Sharp where it matters.
 | **[curate](./plugins/dev/skills/engineering/curate/SKILL.md)** | Interactive, archive-only Skill curator. Lists `archive` candidates from `memory curate skills --json`, requires explicit approval, performs a recoverable archive of Curatable skills (atomic `rename` + SHA-256 manifest), and reverses it with `/curate --restore <name>`. Tracer slice — only the `archive` category is wired. |
 | **[context](./plugins/dev/skills/engineering/context/SKILL.md)** | Compose the RedSkills context stack before non-trivial work: domain docs, ADRs, LLM Wiki, Memory graph/recall, graph-aware zoom-out, durable learning capture, and self-improvement telemetry. |
 | **[diagnose](./plugins/dev/skills/engineering/diagnose/SKILL.md)** | Disciplined diagnosis: reproduce → minimise → hypothesise → instrument → fix → regression-test. |
-| **[start](./plugins/dev/skills/engineering/start/SKILL.md)** | Grilling session that challenges your plan against the domain model; updates `.red/CONTEXT.md` and ADRs inline. |
+| **[start](./plugins/dev/skills/engineering/start/SKILL.md)** | Grilling session that challenges your plan against the domain model; updates the active glossary (`.red/contexts/**` in multi-context repos) and ADRs inline. |
 | **[hitl](./plugins/dev/skills/engineering/hitl/SKILL.md)** | Resolves one `ready-for-human` issue by extracting the pending decision, recording Human guidance, and promoting it back to `ready-for-agent` when delegable. |
 | **[triage](./plugins/dev/skills/engineering/triage/SKILL.md)** | Moves issues through the triage state machine; writes the AGENT-BRIEF that `/afk` will consume. |
 | **[report-bug](./plugins/dev/skills/engineering/report-bug/SKILL.md)** | Interview the user about a bug, then file a `type:bug needs-triage` issue on the tracker. Seeds from conversation context when invoked with no argument. |
 | **[urgent](./plugins/dev/skills/engineering/urgent/SKILL.md)** | File a `priority:urgent` issue that bypasses `/triage` and jumps the head of the `/afk` queue, ahead of any `--prd N` / `--issues a,b,c` filter. Use when something is on fire. |
-| **[improve-codebase-architecture](./plugins/dev/skills/engineering/improve-codebase-architecture/SKILL.md)** | Finds deepening opportunities in the codebase, informed by `.red/CONTEXT.md` and `.red/adr/`. |
+| **[improve-codebase-architecture](./plugins/dev/skills/engineering/improve-codebase-architecture/SKILL.md)** | Finds deepening opportunities in the codebase, informed by the active glossary (`.red/contexts/**` in multi-context repos) and `.red/adr/`. |
 | **[tdd](./plugins/dev/skills/engineering/tdd/SKILL.md)** | Red-green-refactor loop; one vertical slice at a time. |
 | **[to-issues](./plugins/dev/skills/engineering/to-issues/SKILL.md)** | Breaks a plan, spec, or PRD into independently-grabbable issues via vertical slices. |
 | **[to-prd](./plugins/dev/skills/engineering/to-prd/SKILL.md)** | Turns the current conversation into a PRD; publishes as a GitHub issue. |
@@ -532,7 +532,7 @@ Skill telemetry, and soft integrations used by `dev`.
 - 🏷 **Labels are kebab-case or `prefix:value`.** `needs-triage`, `ready-for-agent`, `running`, `priority:high`, `prd:42`. No uppercase, no spaces.
 - 🤖 **Workflows shipped by RedSkills start with `red-`.** `red-issues-needs-triage.yml`, `red-upstream-watch.yml`.
 - 🐙 **Issues and PRDs live on GitHub.** No local-markdown tracker, no GitLab/Jira/Linear fallback.
-- 📁 **Artefacts live under `.red/`.** Context glossary, ADRs, agent docs, the wiki, the `/afk` state file. Keeps consumer repos clean.
+- 📁 **Artefacts live under `.red/`.** Context glossaries, ADRs, agent docs, the wiki, the `/afk` state file. Keeps consumer repos clean.
 - 🔒 **SSH for git, every time.** No HTTPS remotes. `/afk` refuses to start otherwise.
 
 ---
