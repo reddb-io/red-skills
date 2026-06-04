@@ -1,5 +1,9 @@
 # AFK records Reasoning attempts into Memory Graph best-effort
 
+## Status
+
+accepted.
+
 RedSkills already has two partially overlapping audit surfaces:
 
 - AFK **Envelopes** on GitHub Issues, which are the canonical human-visible

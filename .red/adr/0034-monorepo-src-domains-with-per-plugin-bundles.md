@@ -96,7 +96,10 @@ red-skills/
   a release needs network + the release to exist. The fetch is best-effort with a
   clear error, and a committed fallback may be retained per plugin during transition.
 
-## Status: partially superseded by 0039 (entrypoints fused) + 0041 (memory moves out)
+## Status
+
+accepted; partially superseded by ADR 0039 (entrypoints fused) and partially
+superseded by ADR 0041 (memory moves out).
 
 Accepted; the monorepo-`src/apps` implementation principle still stands for `dev`.
 ADR 0039 refines the entrypoint shape, and ADR 0041 partially supersedes this ADR

@@ -1,5 +1,9 @@
 # Memory plugin operates as a closed loop via Claude Code hooks, PR-merge automation, and CI drift guards
 
+## Status
+
+accepted.
+
 The Memory plugin ships with rich surfaces — the RedDB graph
 (`.red/memory/graph.rdb`), the LLM Wiki (`.red/wiki/`), the domain glossary
 (`.red/CONTEXT.md`), the context map (`.red/CONTEXT-MAP.md`), the ADR set

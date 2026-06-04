@@ -1,5 +1,9 @@
 # /afk merges into the pinned branch, not always main
 
+## Status
+
+accepted.
+
 `/afk` historically based every worktree on `origin/main` and merged every
 finished issue back into `main`. PRD #59 (issue #64) introduces the **pinned
 branch**: a PRD or issue may declare a `branch:` line, and `/afk` must honour

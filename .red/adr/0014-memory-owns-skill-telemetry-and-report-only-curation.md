@@ -1,5 +1,9 @@
 # Memory owns skill telemetry and report-only curation
 
+## Status
+
+accepted.
+
 Skill usage needs durable local evidence, but the `dev` plugin must not learn
 about RedDB persistence. **Skill telemetry** is therefore a Graph-mode Memory
 capability: runner-specific Claude Code and Codex adapters emit a high-level

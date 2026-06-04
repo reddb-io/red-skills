@@ -1,5 +1,9 @@
 # Handoff precedence ladder and the two-channel directive protocol
 
+## Status
+
+accepted.
+
 The `/afk` orchestrator rebuilds a handoff file from the live issue on every
 attempt and feeds it to an inner agent. The handoff carries the issue body, the
 history of previous attempts, and the comment thread. The thread is the problem:

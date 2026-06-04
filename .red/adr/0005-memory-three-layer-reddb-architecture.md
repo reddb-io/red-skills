@@ -1,5 +1,9 @@
 # Memory plugin: three-layer RedDB architecture, local-first per-repo, MCP+CLI without REST
 
+## Status
+
+accepted.
+
 ## Context
 
 The `memory` plugin (`plugins/memory/`) gives Claude / Codex / AFK agents

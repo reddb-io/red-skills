@@ -1,5 +1,9 @@
 # Memory graph is the substrate for codebase mapping
 
+## Status
+
+accepted.
+
 ## Context
 
 PRD #103 chose RedSkills' **Engineering semantic graph** as the moat for

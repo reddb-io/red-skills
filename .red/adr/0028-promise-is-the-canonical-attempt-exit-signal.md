@@ -1,5 +1,9 @@
 # The `<promise>` sentinel is the canonical attempt-exit signal; pipe EOF and process exit are only crash detectors
 
+## Status
+
+accepted.
+
 ## Context
 
 `/afk` invokes the inner agent (claude/codex) as a child process and reads its

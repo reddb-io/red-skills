@@ -1,5 +1,9 @@
 # `dev` owns the mutating Skill curator
 
+## Status
+
+accepted.
+
 ADR 0014 keeps the **Skill curator** inside the **Memory plugin** as evidence
 and report-only recommendations, and states that any mutation of **Curatable
 skills** "remains a separate workflow outside the Memory plugin." This ADR

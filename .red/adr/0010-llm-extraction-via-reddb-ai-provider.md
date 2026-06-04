@@ -1,5 +1,9 @@
 # LLM conversation extraction routes through RedDB's AI provider, INFERRED-only
 
+## Status
+
+accepted.
+
 PRD #66 needs entity / relationship / decision extraction from finished
 sessions at a quality the deterministic regex/markdown paths cannot reach. The
 reference design (red-memory) used a Python ML stack — spaCy + GLiNER + GLiREL.

@@ -1,5 +1,9 @@
 # Memory benchmark measures substrate superiority on a curated engineering corpus, not LOCOMO
 
+## Status
+
+accepted.
+
 ## Context
 
 The market benchmarks agent memory on **LOCOMO** (long-term *conversational* QA),

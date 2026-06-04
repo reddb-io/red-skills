@@ -1,5 +1,9 @@
 # AS OF recall is read-only over RedDB VCS
 
+## Status
+
+accepted.
+
 ## Context
 
 The Memory moat foundation includes VCS/time-travel memory so a coding agent can

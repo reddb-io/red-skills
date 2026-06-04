@@ -1,6 +1,9 @@
 # Multi-context plugin glossaries
 
-Status: accepted
+## Status
+
+accepted.
+
 Supersedes: [ADR 0046](0046-single-global-red-dir.md)
 
 ## Context

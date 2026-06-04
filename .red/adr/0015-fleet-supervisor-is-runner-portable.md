@@ -1,5 +1,9 @@
 # Fleet supervisor is runner-portable; session observability degrades per runner
 
+## Status
+
+accepted.
+
 `/afk fleet` is implemented by `supervisor.sh`: a bash process manager that
 maintains a target number of independent `/afk` workers, writes PID/stop/circuit
 state under `.red/tmp/`, and lets normal workers own issue claiming, worktrees,

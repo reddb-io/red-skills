@@ -1,5 +1,9 @@
 # Branch lock enforces on the agent only, not the human terminal
 
+## Status
+
+accepted.
+
 The `branch-lock` skill (PRD #59) lets a developer pin work to one branch and
 block switching away. The enforcement question is *whose* git operations the
 lock should constrain: the agent's, the human's own terminal, or both.
