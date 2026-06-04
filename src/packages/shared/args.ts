@@ -175,6 +175,10 @@ export function parseLooseArgs(argv: readonly string[]): LooseParsedArgs {
       if (tok.type === "positional" || tok.type === "separator") positional.push(tok.raw);
       continue;
     }
+    if (!tok.raw.startsWith("-")) {
+      positional.push(tok.raw);
+      continue;
+    }
 
     let value: string | boolean | undefined = tok.value;
     if (value === undefined) {
