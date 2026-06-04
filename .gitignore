@@ -33,4 +33,3 @@ dist/
 
 # sandcastle runtime scratch (ADR 0033)
 .sandcastle/
-dist-bundle/
