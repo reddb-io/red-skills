@@ -3,6 +3,7 @@ import { describe, expect, test } from "vitest";
 import {
   BENCH_ANALYTICS_COLLECTIONS,
   BENCH_REGRESSION_AGGREGATES,
+  gateBenchEvalCoreRegression,
   resolveBenchAnalyticsUri,
   writeBenchEvalAnalytics,
   writeBenchLatencyAnalytics,
@@ -49,6 +50,11 @@ class FakeBenchAnalyticsDb implements BenchAnalyticsDb {
       return { rows: this.regressionRows };
     }
     if (sql.includes(`FROM ${BENCH_ANALYTICS_COLLECTIONS.regression}`) && sql.startsWith("SELECT")) {
+      if (params?.[0] === "eval" && params?.[1] === "reddb" && params.length === 2) {
+        return {
+          rows: [...this.regressionRows].sort((a, b) => Number(b.ts) - Number(a.ts)),
+        };
+      }
       const key = `${params?.[0]}:${params?.[1]}:${params?.[2]}`;
       const value = this.previousValues.get(key);
       return { rows: value === undefined ? [] : [{ metric_value: value }] };
@@ -74,7 +80,7 @@ describe("memory bench analytics — RedDB writer", () => {
     expect(result.inserted_runs).toBeGreaterThan(0);
     expect(result.inserted_histograms).toBeGreaterThan(0);
     expect(result.inserted_percentiles).toBeGreaterThan(0);
-    expect(result.inserted_regressions).toBe(3);
+    expect(result.inserted_regressions).toBe(4);
     expect(db.executeCalls).toContainEqual(expect.stringContaining(`CREATE TABLE IF NOT EXISTS ${BENCH_ANALYTICS_COLLECTIONS.histograms}`));
     expect(db.executeCalls).toContainEqual(expect.stringContaining(`CREATE TABLE IF NOT EXISTS ${BENCH_ANALYTICS_COLLECTIONS.regression}`));
     expect(db.executeCalls).toContainEqual(expect.stringContaining(`CREATE HYPERTABLE ${BENCH_ANALYTICS_COLLECTIONS.runs} TIME_COLUMN ts`));
@@ -100,6 +106,10 @@ describe("memory bench analytics — RedDB writer", () => {
     expect(db.queryCalls).toContainEqual(expect.objectContaining({
       sql: expect.stringContaining(`INSERT INTO ${BENCH_ANALYTICS_COLLECTIONS.percentiles}`),
       params: expect.arrayContaining(["eval", "tokens_total", 0.95]),
+    }));
+    expect(db.queryCalls).toContainEqual(expect.objectContaining({
+      sql: expect.stringContaining(`INSERT INTO ${BENCH_ANALYTICS_COLLECTIONS.regression}`),
+      params: expect.arrayContaining(["eval", "reddb", "exact_match", report.aggregate.exact_match]),
     }));
     expect(db.queryCalls).toContainEqual(expect.objectContaining({
       sql: expect.stringContaining(`INSERT INTO ${BENCH_ANALYTICS_COLLECTIONS.regression}`),
@@ -140,6 +150,41 @@ describe("memory bench analytics — RedDB writer", () => {
     expect(db.queryCalls).toContainEqual(expect.objectContaining({
       sql: expect.stringContaining(`INSERT INTO ${BENCH_ANALYTICS_COLLECTIONS.percentiles}`),
       params: expect.arrayContaining(["latency", "working-get", "ours", "latency_us", 0.5]),
+    }));
+  });
+
+  test("gates core eval regressions from the regression hypertable", async () => {
+    const db = new FakeBenchAnalyticsDb();
+    db.regressionRows.push(
+      {
+        ts: 10,
+        bench: "eval",
+        substrate: "reddb",
+        metric_name: "exact_match",
+        metric_value: 0.9,
+        previous_value: 1,
+        delta: -0.1,
+        delta_pct: -10,
+      },
+      {
+        ts: 10,
+        bench: "eval",
+        substrate: "reddb",
+        metric_name: "f1",
+        metric_value: 0.95,
+        previous_value: 1,
+        delta: -0.05,
+        delta_pct: -5,
+      },
+    );
+
+    const result = await gateBenchEvalCoreRegression({ db });
+
+    expect(result.status).toBe("fail");
+    expect(result.failures.map((failure) => failure.metric_name)).toEqual(["exact_match", "f1"]);
+    expect(db.queryCalls).toContainEqual(expect.objectContaining({
+      sql: expect.stringContaining(`FROM ${BENCH_ANALYTICS_COLLECTIONS.regression}`),
+      params: ["eval", "reddb"],
     }));
   });
 });
