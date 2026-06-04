@@ -24,12 +24,13 @@
     "dev": "node --import tsx src/cli.ts"
   },
   "dependencies": {
-    "@reddb-io/build-info": "workspace:*",
-    "@reddb-io/shared": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.0.0",
+    "@reddb-io/build-info": "workspace:*",
     "@reddb-io/sdk": "1.7.0",
+    "@reddb-io/shared": "workspace:*",
     "fast-glob": "^3.3.2",
     "gray-matter": "^4.0.3",
+    "js-tiktoken": "^1.0.21",
     "zod": "^3.23.8"
   },
   "pnpm": {
