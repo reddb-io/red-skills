@@ -13,6 +13,7 @@ import {
   createNeo4jSubstrateAdapter,
   createRedDbSubstrateAdapter,
   countBenchTokens,
+  evaluateAgentToolSubstrateAdapter,
   evaluateSubstrateAdapter,
   exactMatch,
   formatEvalReport,
@@ -22,6 +23,7 @@ import {
   normalizeAnswer,
   parseJudgeJResponse,
   runBenchEval,
+  tierRecords,
   toJsonl,
   tokenF1,
   type GraphifySubstrateCommand,
@@ -238,6 +240,32 @@ describe("memory bench eval — substrate + answerer", () => {
     expect(report.records[0]!.quality_per_1k_tokens).toBeGreaterThan(0);
   });
 
+  test("agent-tools tier exposes the substrate as a callable tool and records per-question telemetry", async () => {
+    const corpus = await loadCorpus(CORPUS_DIR);
+    const questions = await loadQuestions(CORPUS_DIR);
+    const q = questions.find((x) => x.id === "q-001")!;
+    const report = await evaluateAgentToolSubstrateAdapter(createRedDbSubstrateAdapter("reddb"), corpus, [q], {
+      packSize: 2,
+      now: () => FIXED_NOW,
+    });
+    const record = report.records[0]!;
+
+    expect(record).toMatchObject({
+      tier: "agent-tools",
+      substrate: "reddb",
+      question_id: "q-001",
+      tools_used: 1,
+      predicted_answer: "pnpm",
+      exact_match: 1,
+    });
+    expect(record.prompt_tokens).toBeGreaterThan(0);
+    expect(record.reasoning_tokens).toBeGreaterThan(0);
+    expect(record.reasoning_prompt_ratio).toBeGreaterThan(0);
+    expect(record.time_to_response_ms).toBeGreaterThan(0);
+    expect(report.aggregate.tools_used).toBe(1);
+    expect(report.aggregate.reasoning_prompt_ratio).toBe(record.reasoning_prompt_ratio);
+  });
+
   test("the fixed pack is bounded, ranked, and tie-broken by id", async () => {
     const corpus = await loadCorpus(CORPUS_DIR);
     const questions = await loadQuestions(CORPUS_DIR);
@@ -399,7 +427,16 @@ describe("memory bench eval — runner", () => {
       model: "gpt-4o-2024-08-06",
       prompt_version: "memory-bench-judge-j.v1",
     });
-    expect(calls).toEqual(["q-mh-001", "q-mh-002", "q-t-001", "q-t-002"]);
+    expect(calls).toEqual([
+      "q-mh-001",
+      "q-mh-002",
+      "q-t-001",
+      "q-t-002",
+      "q-mh-001",
+      "q-mh-002",
+      "q-t-001",
+      "q-t-002",
+    ]);
     expect(report.aggregate.exact_match).toBe(1);
     expect(report.aggregate.judge_j).toMatchObject({
       scorer: "J",
@@ -431,6 +468,11 @@ describe("memory bench eval — runner", () => {
     expect(report.aggregate.exact_match).toBeGreaterThan(0);
     expect(report.aggregate.exact_match).toBeLessThanOrEqual(1);
     expect(report.aggregate.f1).toBeGreaterThanOrEqual(report.aggregate.exact_match);
+    expect(report.tiers.map((tier) => tier.tier)).toEqual(["fixed-pack", "agent-tools"]);
+    expect(report.tiers.find((tier) => tier.tier === "fixed-pack")?.substrates.map((summary) => summary.substrate)).toEqual(report.substrates.map((summary) => summary.substrate));
+    expect(report.tiers.find((tier) => tier.tier === "agent-tools")?.aggregate.tools_used).toBe(1);
+    expect(report.tiers.find((tier) => tier.tier === "agent-tools")?.aggregate.reasoning_prompt_ratio).toBeGreaterThan(0);
+    expect(report.tiers.find((tier) => tier.tier === "agent-tools")?.aggregate.time_to_response_ms).toBeGreaterThan(0);
   });
 
   test("structured run reports metrics per category", async () => {
@@ -560,6 +602,7 @@ describe("memory bench eval — runner", () => {
     const report = await runBenchEval({ corpusDir: CORPUS_DIR, now: () => FIXED_NOW });
     for (const r of report.records) {
       expect(r.schema_version).toBe(EVAL_SCHEMA_VERSION);
+      expect(r.tier).toBe("fixed-pack");
       expect(typeof r.question_id).toBe("string");
       expect(typeof r.predicted_answer).toBe("string");
       expect(Array.isArray(r.gold_doc_ids)).toBe(true);
@@ -573,6 +616,11 @@ describe("memory bench eval — runner", () => {
       expect(typeof r.abstained).toBe("boolean");
       expect(r.abstention_score).toBeGreaterThanOrEqual(-1);
       expect(r.abstention_score).toBeLessThanOrEqual(1);
+      expect(r.tools_used).toBe(0);
+      expect(r.prompt_tokens).toBeGreaterThan(0);
+      expect(r.reasoning_tokens).toBe(0);
+      expect(r.reasoning_prompt_ratio).toBe(0);
+      expect(r.time_to_response_ms).toBe(0);
       if (r.gold_in_pack && r.gold_doc_ids.length > 0) expect(r.gold_rank).toBe(r.pack_ids.indexOf(r.gold_doc_id) + 1);
       else expect(r.gold_rank).toBeNull();
     }
@@ -583,19 +631,24 @@ describe("memory bench eval — runner", () => {
     const b = await runBenchEval({ corpusDir: CORPUS_DIR, now: () => FIXED_NOW });
     expect(JSON.stringify(a)).toBe(JSON.stringify(b));
     expect(toJsonl(a.records)).toBe(toJsonl(b.records));
+    expect(toJsonl(tierRecords(a))).toBe(toJsonl(tierRecords(b)));
   });
 });
 
 describe("memory bench eval — JSONL emission", () => {
   test("toJsonl emits one parseable object per line with a trailing newline", async () => {
     const report = await runBenchEval({ corpusDir: CORPUS_DIR, now: () => FIXED_NOW });
-    const jsonl = toJsonl(report.records);
+    const jsonl = toJsonl(tierRecords(report));
     expect(jsonl.endsWith("\n")).toBe(true);
     const lines = jsonl.trimEnd().split("\n");
-    expect(lines.length).toBe(report.records.length);
+    expect(lines.length).toBe(report.question_count * report.substrates.length * report.tiers.length);
     for (const line of lines) {
       const parsed = JSON.parse(line);
       expect(parsed.schema_version).toBe(EVAL_SCHEMA_VERSION);
+      expect(["fixed-pack", "agent-tools"]).toContain(parsed.tier);
+      expect(typeof parsed.tools_used).toBe("number");
+      expect(typeof parsed.reasoning_prompt_ratio).toBe("number");
+      expect(typeof parsed.time_to_response_ms).toBe("number");
     }
   });
 
@@ -611,6 +664,10 @@ describe("memory bench eval — markdown report", () => {
     expect(md).toContain("# memory bench eval — 2026-06-02");
     expect(md).toContain("markdown-rag");
     expect(md).toContain("full-context");
+    expect(md).toContain("## Tiers");
+    expect(md).toContain("agent-tools");
+    expect(md).toContain("reasoning/prompt");
+    expect(md).toContain("avg response ms");
     expect(md).toContain("## Quality-vs-token Pareto");
     expect(md).toContain("Trade-off:");
     expect(md).toContain("tokens vs full-context");
