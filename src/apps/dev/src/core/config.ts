@@ -35,6 +35,7 @@ export const CONFIG_DEFAULTS = {
   // regardless of the verdict) with `afk.merge.wait_for_review: true`.
   "afk.merge.wait_for_review": "false",
   "afk.merge.review_check": "CodeRabbit",
+  "dev.lock-primary-branch": "false",
 } as const;
 
 export type ConfigKey = keyof typeof CONFIG_DEFAULTS;

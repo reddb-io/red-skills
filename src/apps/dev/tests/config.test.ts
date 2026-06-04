@@ -29,6 +29,7 @@ describe("config", () => {
     expect(getConfig(values, "afk.fleet.target")).toBe("2");
     expect(getConfig(values, "afk.hooks.defaults.cargo")).toBe("true");
     expect(getConfig(values, "afk.hooks.defaults.gradle")).toBe("true");
+    expect(getConfig(values, "dev.lock-primary-branch")).toBe("false");
     expect(warnings).toHaveLength(0);
   });
 
@@ -83,6 +84,16 @@ describe("config", () => {
     for (const key of Object.keys(CONFIG_DEFAULTS)) {
       expect(getConfig(values, key)).not.toBe("");
     }
+  });
+
+  it("reads dev.lock-primary-branch and defaults it off", () => {
+    const defaults = loadConfig("/nonexistent/.red/config.yaml", { warn: () => {} });
+    expect(getConfig(defaults, "dev.lock-primary-branch")).toBe("false");
+
+    const values = loadConfig("/x/.red/config.yaml", {
+      read: () => "dev:\n  lock-primary-branch: true\n",
+    });
+    expect(getConfig(values, "dev.lock-primary-branch")).toBe("true");
   });
 
   it("nested override leaves siblings untouched", async () => {

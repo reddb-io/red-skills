@@ -6,6 +6,18 @@ Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see
 
 ---
 
+## branch-lock / git-guardrails-claude-code (misc) — primary checkout branch guard (#396)
+
+- **status**: modified
+- **upstream**: —
+- **why**: ADR 0043 needs the interactive dev loop enforced by the existing agent-only guardrail path, dormant until a repo opts into `dev.lock-primary-branch`.
+- **what changed**:
+  - Added a `dev.lock-primary-branch` runtime flag reader and primary-branch-switch classifier. With the flag true in the primary checkout, agent `git switch <branch>`, `git checkout <branch>`, and `git switch -b <new>` are denied without requiring a branch-lock file.
+  - Kept `git commit`, `git worktree add`, read-only git, and `.red/tmp/work-*/` worktrees allowed; missing config/key stays off.
+  - Wired the Claude dev plugin hook manifest with dormant `PreToolUse(Bash)` enforcement and reused the existing Codex plugin hook.
+  - Extended standalone `git-guardrails-claude-code` independently, preserving its no-dependency-on-branch-lock contract.
+  - Added shell tests for the classifier table, config flag reader, Claude/Codex plugin hooks, and git-guardrails coverage; added the TypeScript config default/test.
+
 ## afk — post-3d92d56 in-window runtime backfill (#358)
 
 - **status**: modified

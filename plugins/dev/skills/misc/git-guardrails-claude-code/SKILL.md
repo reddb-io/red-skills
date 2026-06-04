@@ -17,6 +17,21 @@ Sets up a PreToolUse hook that intercepts and blocks dangerous git commands befo
 
 When blocked, Claude sees a message telling it that it does not have authority to access these commands.
 
+## Primary branch guard
+
+If `.red/config.yaml` sets:
+
+```yaml
+dev:
+  lock-primary-branch: true
+```
+
+this hook also blocks the agent from switching the primary checkout's branch
+(`git switch <branch>`, `git checkout <branch>`, `git switch -b <new>`), even
+without a branch-lock file. The key is read at runtime; missing file/key means
+off. `git commit`, `git worktree add`, read-only git, and `.red/tmp/work-*/`
+worktrees stay allowed. The human terminal is not intercepted.
+
 ## Branch-lock awareness
 
 If a branch lock is active — an opt-in `./.red/tmp/branch-lock.yaml` whose content

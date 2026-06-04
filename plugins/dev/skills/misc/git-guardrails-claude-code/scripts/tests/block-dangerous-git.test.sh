@@ -68,6 +68,27 @@ expect_eq "no-lock/checkout -b allowed"             "0" "$(run_hook "$RU" "git c
 expect_eq "no-lock/stash allowed"                   "0" "$(run_hook "$RU" "git stash")"
 
 # ===========================================================================
+# Primary branch guard — config flag on, no branch-lock file required.
+# ===========================================================================
+mkdir -p "$RU/.red"
+cat > "$RU/.red/config.yaml" <<'EOF'
+dev:
+  lock-primary-branch: true
+EOF
+expect_eq "primary-guard/switch other blocked"      "2" "$(run_hook "$RU" "git switch feature")"
+expect_eq "primary-guard/checkout other blocked"    "2" "$(run_hook "$RU" "git checkout feature")"
+expect_eq "primary-guard/switch -b blocked"         "2" "$(run_hook "$RU" "git switch -b shiny")"
+expect_eq "primary-guard/commit allowed"            "0" "$(run_hook "$RU" "git commit -m wip")"
+expect_eq "primary-guard/worktree add allowed"      "0" "$(run_hook "$RU" "git worktree add ../wt feature")"
+expect_eq "primary-guard/status allowed"            "0" "$(run_hook "$RU" "git status")"
+
+cat > "$RU/.red/config.yaml" <<'EOF'
+dev:
+  lock-primary-branch: false
+EOF
+expect_eq "primary-guard/flag off allows switch"    "0" "$(run_hook "$RU" "git switch feature")"
+
+# ===========================================================================
 # AC1 — lock active in the primary checkout: branch-leaving / work-loss blocked.
 # ===========================================================================
 RL="$(mktemp -d)/red-skills"; mk_repo "$RL" main       # locked to main
@@ -93,6 +114,12 @@ WT="$(mktemp -d)/red-skills/.red/tmp/work-abc-i1/worktree"
 mkdir -p "$(dirname "$WT")"
 mk_repo "$WT" main                                     # lockfile present, but it's a worktree path
 expect_eq "scope/worktree switch other allowed"     "0" "$(run_hook "$WT" "git switch feature")"
+mkdir -p "$WT/.red"
+cat > "$WT/.red/config.yaml" <<'EOF'
+dev:
+  lock-primary-branch: true
+EOF
+expect_eq "scope/worktree primary guard allowed"     "0" "$(run_hook "$WT" "git switch feature")"
 # …but a worktree's own dangerous patterns still fire (guardrail is scope-independent).
 expect_eq "scope/worktree push still blocked"       "2" "$(run_hook "$WT" "git push")"
 

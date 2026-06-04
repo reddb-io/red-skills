@@ -115,12 +115,61 @@ result="$(run_hook "$primary" "$(payload "$primary" "git switch feature")")"
 rc="$(sed -n '1p' <<<"$result")"
 expect_eq "unlocked: switch is allowed" "0" "$rc"
 
+mkdir -p "$primary/.red"
+cat > "$primary/.red/config.yaml" <<'EOF'
+dev:
+  lock-primary-branch: true
+EOF
+
+result="$(run_hook "$primary" "$(payload "$primary" "git switch feature")")"
+rc="$(sed -n '1p' <<<"$result")"
+stderr="$(sed -n '/---stderr---/,$p' <<<"$result")"
+expect_eq "primary guard: switch is blocked when flag is on" "2" "$rc"
+expect_contains "primary guard: error names config flag" "dev.lock-primary-branch is true" "$stderr"
+
+result="$(run_hook "$primary" "$(payload "$primary" "git checkout feature")")"
+rc="$(sed -n '1p' <<<"$result")"
+expect_eq "primary guard: checkout branch is blocked when flag is on" "2" "$rc"
+
+result="$(run_hook "$primary" "$(payload "$primary" "git switch -b new")")"
+rc="$(sed -n '1p' <<<"$result")"
+expect_eq "primary guard: switch -b is blocked when flag is on" "2" "$rc"
+
+result="$(run_hook "$primary" "$(payload "$primary" "git commit -m wip")")"
+rc="$(sed -n '1p' <<<"$result")"
+expect_eq "primary guard: commit is allowed" "0" "$rc"
+
+result="$(run_hook "$primary" "$(payload "$primary" "git worktree add ../wt feature")")"
+rc="$(sed -n '1p' <<<"$result")"
+expect_eq "primary guard: worktree add is allowed" "0" "$rc"
+
+result="$(run_hook "$primary" "$(payload "$primary" "git status")")"
+rc="$(sed -n '1p' <<<"$result")"
+expect_eq "primary guard: read-only git is allowed" "0" "$rc"
+
+cat > "$primary/.red/config.yaml" <<'EOF'
+dev:
+  lock-primary-branch: false
+EOF
+result="$(run_hook "$primary" "$(payload "$primary" "git switch feature")")"
+rc="$(sed -n '1p' <<<"$result")"
+expect_eq "primary guard: switch is allowed when flag is off" "0" "$rc"
+
 worktree="$primary/.red/tmp/work-wAAAA-i1/worktree"
 mkdir -p "$worktree" "$primary/.red/tmp"
 printf 'main\n' > "$primary/.red/tmp/branch-lock.yaml"
 result="$(run_hook "$worktree" "$(payload "$worktree" "git switch feature")")"
 rc="$(sed -n '1p' <<<"$result")"
 expect_eq "worktree: branch lock is exempt" "0" "$rc"
+
+mkdir -p "$worktree/.red"
+cat > "$worktree/.red/config.yaml" <<'EOF'
+dev:
+  lock-primary-branch: true
+EOF
+result="$(run_hook "$worktree" "$(payload "$worktree" "git switch feature")")"
+rc="$(sed -n '1p' <<<"$result")"
+expect_eq "worktree: primary guard is exempt" "0" "$rc"
 
 result="$(run_hook "$primary" "$(jq -nc --arg cwd "$primary" '{hook_event_name:"PreToolUse", cwd:$cwd, tool_input:{file:"x"}}')")"
 rc="$(sed -n '1p' <<<"$result")"
