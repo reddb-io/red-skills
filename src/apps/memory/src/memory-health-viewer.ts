@@ -1,4 +1,5 @@
 import type { MemoryHealthReport } from "./memory-health.js";
+import { escapeHtml, jsonForScript, metric } from "./viewer-utils.js";
 
 export interface MemoryHealthViewerArtifact {
   contract: {
@@ -173,25 +174,9 @@ function signalItem(title: string, detail: string, status: string): string {
   </li>`;
 }
 
-function metric(label: string, value: number | string): string {
-  return `<div class="metric"><strong>${escapeHtml(String(value))}</strong><span>${escapeHtml(label)}</span></div>`;
-}
 
 function stateClass(status: string): string {
   if (status === "ready" || status === "available") return "";
   if (status === "attention" || status === "stale" || status === "unavailable") return "attention";
   return "degraded";
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
-
-function jsonForScript(value: unknown): string {
-  return JSON.stringify(value, null, 2).replaceAll("</", "<\\/");
 }
