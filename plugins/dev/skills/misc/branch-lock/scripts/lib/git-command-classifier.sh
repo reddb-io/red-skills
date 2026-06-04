@@ -29,6 +29,12 @@
 # Public surface:
 #   classify_git_command <lock_branch> <command>
 #     Echoes exactly "block" or "allow" and returns 0.
+#
+#   classify_primary_branch_switch_guard <command>
+#     Echoes exactly "block" for commands that would switch/create/checkout a
+#     branch in the primary checkout, and "allow" otherwise. This is the
+#     config-flag guard from ADR 0043: unlike classify_git_command it has no
+#     lock branch and only cares about branch movement, not work-loss commands.
 
 # classify_git_command <lock_branch> <command>
 classify_git_command() {
@@ -93,6 +99,40 @@ classify_git_command() {
         if (( sawdoubledash )); then echo "allow"; return 0; fi   # file restore
         if [[ -z "$target" ]]; then echo "allow"; return 0; fi    # bare checkout
         if [[ "$target" == "$_lock" ]]; then echo "allow"; return 0; fi # back to lock
+        echo "block"; return 0
+        ;;
+    esac
+  done
+
+  echo "allow"; return 0
+}
+
+# classify_primary_branch_switch_guard <command>
+classify_primary_branch_switch_guard() {
+  local _cmd="$1"
+  local -a toks
+  read -ra toks <<<"$_cmd"
+  local n=${#toks[@]} i j
+
+  for ((i = 0; i < n; i++)); do
+    [[ "${toks[i]}" == "git" ]] || continue
+    local sub="${toks[i + 1]:-}"
+    case "$sub" in
+      worktree)
+        echo "allow"; return 0
+        ;;
+      checkout|switch)
+        local target="" sawdoubledash=0
+        for ((j = i + 2; j < n; j++)); do
+          local t="${toks[j]}"
+          if [[ "$t" == "--" ]]; then sawdoubledash=1; continue; fi
+          if [[ "$t" == "-" ]]; then target="-"; break; fi
+          [[ "$t" == -* ]] && continue
+          target="$t"; break
+        done
+        if (( sawdoubledash )); then echo "allow"; return 0; fi
+        if [[ -z "$target" ]]; then echo "allow"; return 0; fi
+        if [[ "$target" == "." ]]; then echo "allow"; return 0; fi
         echo "block"; return 0
         ;;
     esac
