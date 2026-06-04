@@ -6,6 +6,7 @@
   "hooks": "./hooks/claude.hooks.json",
   "skills": [
     "./skills/engineering/afk",
+    "./skills/engineering/model-tier-policy",
     "./skills/engineering/curate",
     "./skills/engineering/context",
     "./skills/engineering/diagnose",

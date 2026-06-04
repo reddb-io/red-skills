@@ -3,6 +3,7 @@
 Skills I use daily for code work.
 
 - **[afk](./afk/SKILL.md)** — Autonomous loop that drains the `ready-for-agent` queue. Claims an issue, runs it in an isolated worktree via claude/codex, merges back to main, closes. Filters by PRD or explicit issue list; pins caller identity with `RED_AFK_RUNNER`; swaps runners only when explicitly requested; heartbeat + monitor + live progress.
+- **[model-tier-policy](./model-tier-policy/SKILL.md)** — Cross-host model tier policy for Claude Code, Codex, and AFK: tier table, deterministic-first validation, simple-vs-complex classification, escalation, and executor/config pointers.
 - **[ship](./ship/SKILL.md)** — Interactive, review-respecting finalizer for committed work in `.red/tmp/work-ship-*/` worktrees. Pushes early, opens or reuses a PR, monitors checks and reviews with a time cap, then approves/merges or parks the linked issue and PR for `/hitl`.
 - **[curate](./curate/SKILL.md)** — Interactive, archive-only Skill curator. Lists `archive` candidates from `memory curate skills --json`, requires explicit approval, archives approved Curatable skills (recoverable atomic move + SHA-256 manifest), and reverses with `/curate --restore <name>`. Tracer slice for the mutating curator.
 - **[context](./context/SKILL.md)** — Compose the RedSkills context stack before non-trivial work: domain docs, ADRs, LLM Wiki, Memory graph/recall, graph-aware zoom-out, and self-improvement telemetry.

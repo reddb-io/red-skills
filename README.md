@@ -220,6 +220,8 @@ afk:
 
 Defaults are runner- and tier-specific. Until classification lands, AFK uses the `think` tier by default: Codex defaults to `gpt-5.5`/`high`; Claude Code defaults to `claude-opus-4-8`/`high`. The legacy `afk.model` and `afk.models.<runner>` scalar keys are still accepted as fallback model overrides, but tiered `afk.models.<runner>.<tier>.{model,effort}` is safer for mixed Claude/Codex fleets.
 
+The cross-host tier table, deterministic-first validation rule, simple-vs-complex criterion, escalation policy, and executor map live in [`model-tier-policy`](./plugins/dev/skills/engineering/model-tier-policy/SKILL.md). The single machine source for defaults remains `CONFIG_DEFAULTS` in [`config.ts`](./src/apps/dev/src/core/config.ts).
+
 <details>
 <summary><strong>Alternatives — no auto-update</strong></summary>
 
@@ -434,6 +436,7 @@ Composable. Boring on purpose where boring is enough. Sharp where it matters.
 | Skill | What it does |
 |-------|--------------|
 | **[afk](./plugins/dev/skills/engineering/afk/SKILL.md)** | Drains `ready-for-agent` issues in isolated worktrees. Claude/Codex runner cascade, fleet mode (`/afk fleet N`), pluggable detectors via `.red/config.yaml`, canonical attempt envelopes on the issue thread, 48h sparkline monitor, statusline integration. |
+| **[model-tier-policy](./plugins/dev/skills/engineering/model-tier-policy/SKILL.md)** | Cross-host model tier policy for Claude Code, Codex, and AFK: tier table, deterministic-first validation, simple-vs-complex classification, escalation, and executor/config pointers. |
 | **[ship](./plugins/dev/skills/engineering/ship/SKILL.md)** | Interactive finalizer for committed work in `.red/tmp/work-ship-*/` worktrees. Pushes early, opens or reuses a PR, monitors checks and reviews with a time cap, then approves/merges or parks the linked issue and PR in `ready-for-human`. |
 | **[curate](./plugins/dev/skills/engineering/curate/SKILL.md)** | Interactive, archive-only Skill curator. Lists `archive` candidates from `memory curate skills --json`, requires explicit approval, performs a recoverable archive of Curatable skills (atomic `rename` + SHA-256 manifest), and reverses it with `/curate --restore <name>`. Tracer slice — only the `archive` category is wired. |
 | **[context](./plugins/dev/skills/engineering/context/SKILL.md)** | Compose the RedSkills context stack before non-trivial work: domain docs, ADRs, LLM Wiki, Memory graph/recall, graph-aware zoom-out, durable learning capture, and self-improvement telemetry. |
