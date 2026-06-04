@@ -67,7 +67,11 @@ import { formatStartedMarker } from "./heartbeat.js";
 import { parseReqLabels, planCloseCascade, type DependentIssue } from "./boot-sweep.js";
 import { buildAttemptRecordPayload, type AttemptRecordPayload } from "./attempt-record.js";
 import { parseCurrentBlocker, upsertCurrentBlocker, type CurrentBlocker } from "./blocker-state.js";
-import type { ConfigValues } from "./config.js";
+import type { AfkModelTier, ConfigValues } from "./config.js";
+import {
+  buildIssueClassificationMetadata,
+  type IssueClassificationMetadata,
+} from "./issue-classifier.js";
 import type { AttemptStatus } from "./envelope.js";
 import type { Runner } from "../types/runner.js";
 import type { HistoryClock } from "./history.js";
@@ -224,12 +228,11 @@ export interface ProcessIssueDeps {
   model: string;
   /** Reasoning effort passed through to runAgent; undefined preserves legacy callers. */
   effort?: AgentEffort;
-  /**
-   * Resolve the per-runner AFK tier table (ADR 0049). The default task class is
-   * `think` until the classifier lands, so every inner-agent spawn receives the
-   * configured model+effort pair for its runner.
-   */
-  resolveTier?(runner: Runner, taskClass?: "validate" | "simple" | "complex" | "think"): {
+  /** Cheap per-issue classifier (ADR 0049): model call injected by the runtime
+   * and mocked in tests. Absent callers preserve the prior `think` default. */
+  classifyIssue?(metadata: IssueClassificationMetadata): Promise<AfkModelTier>;
+  /** Resolve the per-runner AFK tier table (ADR 0049). */
+  resolveTier?(runner: Runner, taskClass?: AfkModelTier): {
     model: string;
     effort: AgentEffort;
   };
@@ -321,8 +324,12 @@ export interface ProcessIssueDeps {
   salvageUncommitted?(branch: string): Promise<number>;
 }
 
-function resolveSpawnTier(deps: ProcessIssueDeps, runner: Runner): { model: string; effort?: AgentEffort } {
-  return deps.resolveTier?.(runner, "think") ?? { model: deps.model, effort: deps.effort };
+function resolveSpawnTier(
+  deps: ProcessIssueDeps,
+  runner: Runner,
+  taskClass: AfkModelTier,
+): { model: string; effort?: AgentEffort } {
+  return deps.resolveTier?.(runner, taskClass) ?? { model: deps.model, effort: deps.effort };
 }
 
 /** Static per-issue inputs the caller resolves before `processIssue`. */
@@ -570,6 +577,18 @@ export async function processIssue(
   await deps.fs.writeHandoff(handoffPath, handoff);
   deps.appendIterLog(formatStartedMarker(issue, startedAt));
 
+  const taskClass =
+    (await deps
+      .classifyIssue?.(
+        buildIssueClassificationMetadata({
+          issue,
+          title: input.title,
+          body: input.body,
+          labels,
+        }),
+      )
+      .catch(() => undefined)) ?? "think";
+
   // ---- pre_attempt hook (after the prompt exists, before the run) ----
   if (
     !(await fireHook(
@@ -594,7 +613,7 @@ export async function processIssue(
   // attemptDir is always absolute (built from `${root}/.red/tmp/...`), which is
   // also why promptFile/handoffPath must stay absolute — sandcastle resolves
   // promptFile against process.cwd(), not against this cwd.
-  const initialTier = resolveSpawnTier(deps, activeRunner);
+  const initialTier = resolveSpawnTier(deps, activeRunner, taskClass);
   let run: RunAgentResult = await deps.runAgent({
     runner: activeRunner,
     model: initialTier.model,
@@ -660,7 +679,7 @@ export async function processIssue(
     ) {
       return await abortAfterClaim(deps, input, branch, base, hooksFired, "pre_attempt");
     }
-    const fallbackTier = resolveSpawnTier(deps, other);
+    const fallbackTier = resolveSpawnTier(deps, other, taskClass);
     run = await deps.runAgent({
       runner: other,
       model: fallbackTier.model,
