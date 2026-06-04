@@ -187,7 +187,11 @@ import {
 import { buildMemoryHealthViewerArtifact } from "./memory-health-viewer.js";
 import { buildMemoryDecayReport } from "./memory-decay.js";
 import { buildMemoryDecayViewerArtifact } from "./memory-decay-viewer.js";
-import { buildMemoryMergePassReport } from "./memory-merge-pass.js";
+import {
+  buildMemoryMergePassReport,
+  executeMemoryMergeBatch,
+  unmergeMemoryMergeBatch,
+} from "./memory-merge-pass.js";
 import { recall } from "./recall.js";
 import { buildFederationReport } from "./federation.js";
 import { runAutoCure } from "./auto-curation.js";
@@ -307,6 +311,8 @@ Usage:
   memory decay                      [--root <dir>] [--stale-days N] [--deprecate-days N] [--limit N] [--json]
   memory decay-viewer               [--root <dir>] [--stale-days N] [--deprecate-days N] [--limit N] [--out <file>]
   memory merge-pass                 [--root <dir>] [--min-score N] [--limit N] [--json]
+  memory merge-pass execute         --candidate-ranks 1,2 --approver <id> --yes [--root <dir>] [--min-score N] [--limit N] [--batch-id ID] [--json]
+  memory merge-pass unmerge         --batch-id ID --yes [--root <dir>] [--json]
   memory health-viewer              [--root <dir>] [--stale-days N] [--out <file>]
   memory onboarding-map             [--root <dir>] [--stale-days N] [--json]
   memory onboarding-map-viewer      [--root <dir>] [--stale-days N] [--out <file>]
@@ -1596,6 +1602,15 @@ async function runMemoryDecayViewer(args: ParsedArgs): Promise<void> {
 }
 
 async function runMemoryMergePass(args: ParsedArgs): Promise<void> {
+  const action = args.positional[0];
+  if (action === "execute") return runMemoryMergePassExecute(args);
+  if (action === "unmerge") return runMemoryMergePassUnmerge(args);
+  if (action && action !== "report") {
+    throw new Error(
+      "memory merge-pass action must be one of: report, execute, unmerge",
+    );
+  }
+
   const { store } = await openGraphStore(args);
   try {
     const report = await buildMemoryMergePassReport(store, {
@@ -1607,6 +1622,64 @@ async function runMemoryMergePass(args: ParsedArgs): Promise<void> {
       return;
     }
     console.log(report.markdown);
+  } finally {
+    await store.close();
+  }
+}
+
+async function runMemoryMergePassExecute(args: ParsedArgs): Promise<void> {
+  if (args.flags.yes !== true) {
+    throw new Error("memory merge-pass execute requires explicit --yes approval");
+  }
+  const { store } = await openGraphStore(args);
+  try {
+    const result = await executeMemoryMergeBatch(store, {
+      candidate_ranks: commaIntegerFlag(args.flags, "candidate-ranks"),
+      approver: stringFlag(args.flags, "approver") ?? "",
+      batch_id: stringFlag(args.flags, "batch-id"),
+      reason: stringFlag(args.flags, "reason"),
+      min_score: numberFlag(args.flags, "min-score"),
+      limit: intFlag(args.flags, "limit"),
+    });
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
+    console.log(
+      `memory merge-pass execute: batch ${result.batch_id} merged ${result.summary.merged}/${result.summary.requested} candidate(s)`,
+    );
+    for (const edge of result.merged_edges) {
+      console.log(
+        `  ${edge.label} memory_nodes:${edge.duplicate_rid} -> memory_nodes:${edge.canonical_rid} rank=${edge.candidate_rank} score=${edge.score.toFixed(4)}`,
+      );
+    }
+  } finally {
+    await store.close();
+  }
+}
+
+async function runMemoryMergePassUnmerge(args: ParsedArgs): Promise<void> {
+  if (args.flags.yes !== true) {
+    throw new Error("memory merge-pass unmerge requires explicit --yes approval");
+  }
+  const { store } = await openGraphStore(args);
+  try {
+    const result = await unmergeMemoryMergeBatch(
+      store,
+      stringFlag(args.flags, "batch-id") ?? "",
+    );
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
+    console.log(
+      `memory merge-pass unmerge: batch ${result.batch_id} removed ${result.summary.removed}/${result.summary.found} edge(s)`,
+    );
+    for (const edge of result.removed_edges) {
+      console.log(
+        `  ${edge.removed ? "removed" : "missing"} ${edge.label} memory_nodes:${edge.duplicate_rid} -> memory_nodes:${edge.canonical_rid}`,
+      );
+    }
   } finally {
     await store.close();
   }
@@ -5078,6 +5151,20 @@ function numberFlag(flags: Record<string, string | boolean>, key: string): numbe
   const value = Number(flags[key]);
   if (!Number.isFinite(value)) throw new Error(`--${key} must be a finite number`);
   return value;
+}
+
+function commaIntegerFlag(flags: Record<string, string | boolean>, key: string): number[] {
+  const raw = stringFlag(flags, key);
+  if (!raw) return [];
+  return raw
+    .split(",")
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0)
+    .map((part) => {
+      const value = Number(part);
+      if (!Number.isInteger(value)) throw new Error(`--${key} must contain integer values`);
+      return value;
+    });
 }
 
 function stringFlag(flags: Record<string, string | boolean>, key: string): string | undefined {
