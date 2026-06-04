@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { fleetCommand } from "./commands/fleet.js";
+import { injectDevelopmentWorkflowCommand } from "./commands/inject-development-workflow.js";
 import { monitorCommand } from "./commands/monitor.js";
 import { runCommand } from "./commands/run.js";
 import { reapCommand } from "./commands/reap.js";
@@ -9,7 +10,16 @@ import { superviseCommand } from "./commands/supervise.js";
 import { readBuildInfo, renderVersion } from "@reddb-io/build-info";
 import { routeCommand, type RouterSchema } from "@reddb-io/shared/args.js";
 
-export type CliCommand = "run" | "monitor" | "fleet" | "reap" | "ship" | "statusline" | "version" | "__supervise";
+export type CliCommand =
+  | "run"
+  | "monitor"
+  | "fleet"
+  | "reap"
+  | "ship"
+  | "statusline"
+  | "inject-development-workflow"
+  | "version"
+  | "__supervise";
 
 export interface ParsedCli {
   command: CliCommand;
@@ -30,6 +40,7 @@ const CLI_ROUTER: RouterSchema<CliCommand> = {
     reap: {},
     ship: {},
     statusline: {},
+    "inject-development-workflow": {},
     version: {},
     __supervise: {},
   },
@@ -54,6 +65,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   if (parsed.command === "reap") return reapCommand(parsed.args);
   if (parsed.command === "ship") return shipCommand(parsed.args);
   if (parsed.command === "statusline") return statuslineCommand(parsed.args);
+  if (parsed.command === "inject-development-workflow") return injectDevelopmentWorkflowCommand(parsed.args);
   if (parsed.command === "__supervise") return superviseCommand(parsed.args);
   return runCommand({ args: parsed.args });
 }
