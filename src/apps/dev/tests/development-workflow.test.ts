@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  activatePrimaryBranchLockConfig,
   DEVELOPMENT_WORKFLOW_BLOCK,
   DEVELOPMENT_WORKFLOW_HEADING,
   extractMarkdownSection,
@@ -56,26 +57,58 @@ describe("development workflow rules block", () => {
     const first = injectDevelopmentWorkflowRules(root);
     const agents = await readFile(join(root, "AGENTS.md"), "utf8");
     const claude = await readFile(join(root, "CLAUDE.md"), "utf8");
+    const config = await readFile(join(root, ".red", "config.yaml"), "utf8");
 
     expect(first.agentsChanged).toBe(true);
     expect(first.claudeChanged).toBe(true);
+    expect(first.configChanged).toBe(true);
     expect(extractMarkdownSection(agents, DEVELOPMENT_WORKFLOW_HEADING)).toBe(DEVELOPMENT_WORKFLOW_BLOCK);
     expect(extractMarkdownSection(claude, DEVELOPMENT_WORKFLOW_HEADING)).toBe(DEVELOPMENT_WORKFLOW_BLOCK);
+    expect(config).toBe("dev:\n  lock-primary-branch: true\n");
 
     const second = injectDevelopmentWorkflowRules(root);
     expect(second.agentsChanged).toBe(false);
     expect(second.claudeChanged).toBe(false);
+    expect(second.configChanged).toBe(false);
     expect(await readFile(join(root, "AGENTS.md"), "utf8")).toBe(agents);
     expect(await readFile(join(root, "CLAUDE.md"), "utf8")).toBe(claude);
+    expect(await readFile(join(root, ".red", "config.yaml"), "utf8")).toBe(config);
   });
 
   it("plans parity without filesystem access", () => {
     const plan = planDevelopmentWorkflowInjection({
       agentsMarkdown: "# Agents\n",
       claudeMarkdown: "# Claude\n\n## Development workflow\n\nOld.\n",
+      configYaml: "afk:\n  default_runner: codex\n",
     });
 
     expect(extractMarkdownSection(plan.agentsMarkdown, DEVELOPMENT_WORKFLOW_HEADING)).toBe(DEVELOPMENT_WORKFLOW_BLOCK);
     expect(extractMarkdownSection(plan.claudeMarkdown, DEVELOPMENT_WORKFLOW_HEADING)).toBe(DEVELOPMENT_WORKFLOW_BLOCK);
+    expect(plan.configYaml).toBe("afk:\n  default_runner: codex\n\ndev:\n  lock-primary-branch: true\n");
+  });
+
+  it("activates dev.lock-primary-branch in existing config without duplicating it", () => {
+    const once = activatePrimaryBranchLockConfig(
+      [
+        "afk:",
+        "  fleet:",
+        "    target: 3",
+        "",
+        "dev:",
+        "  lock-primary-branch: false",
+        "",
+      ].join("\n"),
+    );
+    const twice = activatePrimaryBranchLockConfig(once);
+
+    expect(once).toBe(twice);
+    expect(once).toContain("dev:\n  lock-primary-branch: true\n");
+    expect((once.match(/^  lock-primary-branch:/gm) ?? [])).toHaveLength(1);
+  });
+
+  it("adds the primary-branch lock setting to an existing dev config block", () => {
+    expect(activatePrimaryBranchLockConfig("dev:\n  other: yes\nafk:\n  default_runner: codex\n")).toBe(
+      "dev:\n  lock-primary-branch: true\n  other: yes\nafk:\n  default_runner: codex\n",
+    );
   });
 });
