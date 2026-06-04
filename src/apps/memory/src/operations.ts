@@ -902,6 +902,10 @@ const VIEWER_OUTPUT: MemoryOperationOutputKind = {
   artifact: "self-contained-html",
   fileSink: DEFAULT_VIEWER_FILE_SINK,
 };
+const DOC_BRIEF_VIEWER_OUTPUT: MemoryOperationOutputKind = hashedQueryViewerOutput(
+  "doc-brief",
+  "Derive the doc brief viewer sink from a stable hash of the query when no explicit out path is provided.",
+);
 const SMART_SEARCH_VIEWER_OUTPUT: MemoryOperationOutputKind = {
   kind: "viewer",
   artifact: "self-contained-html",
@@ -1028,7 +1032,7 @@ const MEMORY_OPERATION_FACETS: Record<string, MemoryOperationFacets> = {
     undefined,
     {
       "memory.doc-brief": JSON_REPORT_OUTPUT,
-      "memory.doc-brief-viewer": VIEWER_OUTPUT,
+      "memory.doc-brief-viewer": DOC_BRIEF_VIEWER_OUTPUT,
       "memory.doc-bundle": JSON_REPORT_OUTPUT,
       "memory.doc-bundle-viewer": VIEWER_OUTPUT,
     },
@@ -3617,6 +3621,28 @@ function joinedPositionalInput(
 
 function joinedPositionalValue(input: MemoryOperationTransportInput): string {
   return input.positional.join(" ").trim();
+}
+
+function hashedQueryViewerOutput(fileStem: string, description: string): MemoryOperationOutputKind {
+  return {
+    kind: "viewer",
+    artifact: "self-contained-html",
+    fileSink: {
+      ...DEFAULT_VIEWER_FILE_SINK,
+      customBind: {
+        id: `${fileStem}-viewer-output-path`,
+        description,
+        bind: (input) => {
+          const explicitOut = firstString(input.flags.out, input.query.out);
+          if (explicitOut) return explicitOut;
+          const query = firstString(input.query.query, input.query.q, joinedPositionalValue(input));
+          if (!query) return undefined;
+          const safeName = createHash("sha256").update(query).digest("hex").slice(0, 12);
+          return join(input.rootDir ?? process.cwd(), `.red/memory/${fileStem}-${safeName}.html`);
+        },
+      },
+    },
+  };
 }
 
 function firstString(...values: readonly unknown[]): string | undefined {

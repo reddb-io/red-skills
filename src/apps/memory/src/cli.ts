@@ -35,8 +35,6 @@ import type { MemoryGlobalSearchReport } from "./global-search.js";
 import { buildContextPack } from "./context-pack.js";
 import { buildContextPackViewerArtifact } from "./context-pack-viewer.js";
 import { claimCheck, type ClaimCheckResult } from "./claim-check.js";
-import { buildDocBrief } from "./doc-brief.js";
-import { buildDocBriefViewerArtifact } from "./doc-brief-viewer.js";
 import { buildDocBundle } from "./doc-bundle.js";
 import { buildDocBundleViewerArtifact } from "./doc-bundle-viewer.js";
 import { buildDocBacklinksReport } from "./doc-backlinks.js";
@@ -182,7 +180,16 @@ import {
   setRawTranscript as workingSetRaw,
 } from "./working-memory.js";
 import { evictL2 } from "./working-memory-evict.js";
-import { executeReadOnlyMemoryOperation } from "./operations.js";
+import {
+  executeReadOnlyMemoryOperation,
+  getReadOnlyMemoryOperation,
+  type ReadOnlyMemoryOperation,
+} from "./operations.js";
+import {
+  executeMemoryOperationFromTransport,
+  writeViewerArtifact,
+  viewerCliSummary,
+} from "./operation-transport-adapter.js";
 import { buildMemoryHandoff } from "./handoff.js";
 import { buildMemoryHandoffViewerArtifact } from "./handoff-viewer.js";
 import { buildWorkFrontier } from "./work-frontier.js";
@@ -450,9 +457,23 @@ to whichever mode init configured.`;
 type ParsedArgs = LooseParsedArgs;
 
 const execFileAsync = promisify(execFile);
+const REGISTRY_CLI_OPERATION_IDS = [
+  "memory.doc-brief",
+  "memory.doc-brief-viewer",
+] as const;
+const REGISTRY_CLI_OPERATIONS = new Map<string, ReadOnlyMemoryOperation>(
+  REGISTRY_CLI_OPERATION_IDS.map((id) => {
+    const operation = getReadOnlyMemoryOperation(id);
+    return [operation.renderer.cli.command, operation];
+  }),
+);
 
 function rootOf(flags: Record<string, string | boolean>): string {
   return typeof flags.root === "string" ? flags.root : process.cwd();
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 const MEMORY_SCOPES: readonly MemoryScope[] = [
@@ -2335,8 +2356,8 @@ async function runAsk(args: ParsedArgs): Promise<void> {
 
 async function runDocs(args: ParsedArgs): Promise<void> {
   const action = args.positional[0];
-  if (action === "brief") return runDocsBrief(args);
-  if (action === "brief-viewer") return runDocsBriefViewer(args);
+  const registryOperation = registryCliOperationFor("docs", args.positional);
+  if (registryOperation) return runRegistryCliOperation(registryOperation, args);
   if (action === "bundle") return runDocsBundle(args);
   if (action === "bundle-viewer") return runDocsBundleViewer(args);
   if (action === "read") return runDocsRead(args);
@@ -2376,6 +2397,58 @@ async function runDocs(args: ParsedArgs): Promise<void> {
   } finally {
     await store.close();
   }
+}
+
+async function runRegistryCliOperation(
+  operation: ReadOnlyMemoryOperation,
+  args: ParsedArgs,
+): Promise<void> {
+  const rootDir = rootOf(args.flags);
+  const commandParts = operation.renderer.cli.command.split(" ");
+  const positional = args.positional.slice(commandParts.length - 1);
+  const { store } = await openGraphStore(args);
+  try {
+    const output = await executeMemoryOperationFromTransport(
+      operation,
+      { store, rootDir },
+      { positional, flags: args.flags, query: {}, rootDir },
+    );
+    if (operation.outputKind.kind === "viewer") {
+      const outPath = await writeViewerArtifact(operation, output, {
+        positional,
+        flags: args.flags,
+        query: {},
+        rootDir,
+      });
+      process.stdout.write(viewerCliSummary(operation, output, outPath));
+      return;
+    }
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(output, null, 2));
+      return;
+    }
+    if (isRecord(output) && typeof output.markdown === "string") {
+      process.stdout.write(output.markdown);
+      return;
+    }
+    console.log(JSON.stringify(output, null, 2));
+  } finally {
+    await store.close();
+  }
+}
+
+function registryCliOperationFor(
+  command: string | undefined,
+  positional: readonly string[],
+): ReadOnlyMemoryOperation | undefined {
+  if (!command) return undefined;
+  for (const [registeredCommand, operation] of REGISTRY_CLI_OPERATIONS) {
+    const parts = registeredCommand.split(" ");
+    if (parts[0] !== command) continue;
+    const rest = parts.slice(1);
+    if (rest.every((part, index) => positional[index] === part)) return operation;
+  }
+  return undefined;
 }
 
 async function runAssets(args: ParsedArgs): Promise<void> {
@@ -2472,55 +2545,6 @@ async function runDocsSearchViewer(args: ParsedArgs): Promise<void> {
     await writeFile(outPath, artifact.html, "utf8");
     console.log(`memory: doc search viewer written ${outPath}`);
     console.log(`  hits: ${report.hits.length}/${report.total_docs}`);
-    console.log(`  contract: ${artifact.contract.consumes}`);
-  } finally {
-    await store.close();
-  }
-}
-
-async function runDocsBrief(args: ParsedArgs): Promise<void> {
-  const query = args.positional.slice(1).join(" ").trim();
-  if (!query) throw new Error("nothing to brief — pass a query: memory docs brief <query>");
-  const { store } = await openGraphStore(args);
-  try {
-    const brief = await buildDocBrief(store, {
-      query,
-      limit: intFlag(args.flags, "limit"),
-      max_bytes: intFlag(args.flags, "max-bytes"),
-    });
-    if (args.flags.json === true) {
-      console.log(JSON.stringify(brief, null, 2));
-      return;
-    }
-    process.stdout.write(brief.markdown);
-  } finally {
-    await store.close();
-  }
-}
-
-async function runDocsBriefViewer(args: ParsedArgs): Promise<void> {
-  const query = args.positional.slice(1).join(" ").trim();
-  if (!query) {
-    throw new Error("nothing to render — pass a query: memory docs brief-viewer <query>");
-  }
-  const rootDir = rootOf(args.flags);
-  const safeName = createHash("sha256").update(query).digest("hex").slice(0, 12);
-  const outPath = resolve(
-    stringFlag(args.flags, "out") ?? join(rootDir, `.red/memory/doc-brief-${safeName}.html`),
-  );
-  const { store } = await openGraphStore(args);
-  try {
-    const brief = await buildDocBrief(store, {
-      query,
-      limit: intFlag(args.flags, "limit"),
-      max_bytes: intFlag(args.flags, "max-bytes"),
-    });
-    const artifact = buildDocBriefViewerArtifact(brief);
-    await mkdir(dirname(outPath), { recursive: true });
-    await writeFile(outPath, artifact.html, "utf8");
-    console.log(`memory: doc brief viewer written ${outPath}`);
-    console.log(`  status: ${brief.status}`);
-    console.log(`  citations: ${brief.citations.length}`);
     console.log(`  contract: ${artifact.contract.consumes}`);
   } finally {
     await store.close();

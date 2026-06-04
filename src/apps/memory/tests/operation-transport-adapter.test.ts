@@ -1,0 +1,72 @@
+import { createHash } from "node:crypto";
+import { join } from "node:path";
+import { describe, expect, test } from "vitest";
+import { getReadOnlyMemoryOperation } from "../src/operations.js";
+import {
+  bindMemoryOperationInput,
+  queryObjectFromSearchParams,
+} from "../src/operation-transport-adapter.js";
+
+describe("Memory operation transport adapter", () => {
+  test("binds doc brief CLI argv from registry input facets", () => {
+    const operation = getReadOnlyMemoryOperation("memory.doc-brief");
+
+    expect(
+      bindMemoryOperationInput(operation, {
+        positional: ["jwt", "rotation"],
+        flags: { limit: "2", "max-bytes": "160" },
+        query: {},
+      }),
+    ).toEqual({
+      query: "jwt rotation",
+      limit: 2,
+      max_bytes: 160,
+    });
+  });
+
+  test("binds doc brief HTTP query params from registry input facets", () => {
+    const operation = getReadOnlyMemoryOperation("memory.doc-brief");
+    const query = queryObjectFromSearchParams(
+      new URLSearchParams("q=jwt%20fixtures&limit=2&max_bytes=160"),
+    );
+
+    expect(
+      bindMemoryOperationInput(operation, {
+        positional: [],
+        flags: {},
+        query,
+      }),
+    ).toEqual({
+      query: "jwt fixtures",
+      limit: 2,
+      max_bytes: 160,
+    });
+  });
+
+  test("declares doc brief viewer default file sink in the output facet", () => {
+    const operation = getReadOnlyMemoryOperation("memory.doc-brief-viewer");
+    const query = "jwt rotation";
+    const rootDir = "/tmp/memory-root";
+    const safeName = createHash("sha256").update(query).digest("hex").slice(0, 12);
+
+    expect(operation.outputKind).toMatchObject({
+      kind: "viewer",
+      artifact: "self-contained-html",
+      fileSink: {
+        field: "out",
+        sources: ["flag", "query"],
+        customBind: { id: "doc-brief-viewer-output-path" },
+      },
+    });
+    expect(
+      operation.outputKind.kind === "viewer"
+        ? operation.outputKind.fileSink?.customBind?.bind({
+            positional: ["jwt", "rotation"],
+            flags: {},
+            query: {},
+            rootDir,
+          })
+        : undefined,
+    ).toBe(join(rootDir, `.red/memory/doc-brief-${safeName}.html`));
+  });
+});

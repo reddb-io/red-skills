@@ -10,8 +10,6 @@ import { buildContextPack } from "./context-pack.js";
 import { buildContextPackViewerArtifact } from "./context-pack-viewer.js";
 import { readDoc, searchDocs } from "./doc-search.js";
 import { buildDocSearchViewerArtifact } from "./doc-search-viewer.js";
-import { buildDocBrief } from "./doc-brief.js";
-import { buildDocBriefViewerArtifact } from "./doc-brief-viewer.js";
 import { buildDocBundle } from "./doc-bundle.js";
 import { buildDocBundleViewerArtifact } from "./doc-bundle-viewer.js";
 import { buildDocBacklinksReport, type DocBacklinksInput } from "./doc-backlinks.js";
@@ -71,6 +69,16 @@ import {
   type MemoryRoutingAgent,
 } from "./routing-guide.js";
 import { buildMemoryRoutingGuideViewerArtifact } from "./routing-guide-viewer.js";
+import {
+  getReadOnlyMemoryOperation,
+  type ReadOnlyMemoryOperation,
+} from "./operations.js";
+import {
+  executeMemoryOperationFromTransport,
+  MemoryOperationTransportError,
+  queryObjectFromSearchParams,
+  viewerHtml,
+} from "./operation-transport-adapter.js";
 
 export interface MemoryHttpServerOptions {
   rootDir: string;
@@ -180,6 +188,17 @@ const ENDPOINTS = [
   "GET /api/autocure (dry-run) | POST /api/autocure (apply)",
 ];
 
+const REGISTRY_HTTP_OPERATION_IDS = [
+  "memory.doc-brief",
+  "memory.doc-brief-viewer",
+] as const;
+const REGISTRY_HTTP_ROUTES = new Map<string, ReadOnlyMemoryOperation>(
+  REGISTRY_HTTP_OPERATION_IDS.map((id) => {
+    const operation = getReadOnlyMemoryOperation(id);
+    return [httpRouteForOperation(operation), operation];
+  }),
+);
+
 export function createMemoryHttpServer(opts: MemoryHttpServerOptions): Server {
   return createServer(async (req, res) => {
     try {
@@ -233,6 +252,12 @@ async function handleRequest(
 
   if (url.pathname === "/api/health") {
     sendJson(res, 200, health(opts));
+    return;
+  }
+
+  const registryOperation = REGISTRY_HTTP_ROUTES.get(url.pathname);
+  if (registryOperation) {
+    await handleRegistryHttpOperation(registryOperation, url, res, opts);
     return;
   }
 
@@ -298,21 +323,6 @@ async function handleRequest(
     }
     const report = await buildDocBacklinksReport(opts.store, input);
     sendHtml(res, buildDocBacklinksViewerArtifact(report).html);
-    return;
-  }
-
-  if (url.pathname === "/docs/brief") {
-    const query = url.searchParams.get("query") ?? url.searchParams.get("q") ?? "";
-    if (!query.trim()) {
-      sendJson(res, 400, { error: "query is required" });
-      return;
-    }
-    const brief = await buildDocBrief(opts.store, {
-      query,
-      limit: numberParam(url.searchParams.get("limit")),
-      max_bytes: numberParam(url.searchParams.get("max_bytes")),
-    });
-    sendHtml(res, buildDocBriefViewerArtifact(brief).html);
     return;
   }
 
@@ -738,24 +748,6 @@ async function handleRequest(
     return;
   }
 
-  if (url.pathname === "/api/docs/brief") {
-    const query = url.searchParams.get("query") ?? url.searchParams.get("q") ?? "";
-    if (!query.trim()) {
-      sendJson(res, 400, { error: "query is required" });
-      return;
-    }
-    sendJson(
-      res,
-      200,
-      await buildDocBrief(opts.store, {
-        query,
-        limit: numberParam(url.searchParams.get("limit")),
-        max_bytes: numberParam(url.searchParams.get("max_bytes")),
-      }),
-    );
-    return;
-  }
-
   if (url.pathname === "/api/docs/bundle") {
     const query = url.searchParams.get("query") ?? url.searchParams.get("q") ?? "";
     if (!query.trim()) {
@@ -986,6 +978,50 @@ async function handleRequest(
   }
 
   sendJson(res, 404, { error: "not found", endpoints: ENDPOINTS });
+}
+
+async function handleRegistryHttpOperation(
+  operation: ReadOnlyMemoryOperation,
+  url: URL,
+  res: ServerResponse,
+  opts: MemoryHttpServerOptions,
+): Promise<void> {
+  try {
+    const output = await executeMemoryOperationFromTransport(
+      operation,
+      { store: opts.store, rootDir: opts.rootDir },
+      {
+        positional: [],
+        flags: {},
+        query: queryObjectFromSearchParams(url.searchParams),
+        rootDir: opts.rootDir,
+      },
+    );
+    if (operation.outputKind.kind === "viewer") {
+      sendHtml(res, viewerHtml(output));
+      return;
+    }
+    sendJson(res, 200, output);
+  } catch (err) {
+    if (err instanceof MemoryOperationTransportError) {
+      sendJson(res, err.status, { error: err.message });
+      return;
+    }
+    throw err;
+  }
+}
+
+function httpRouteForOperation(operation: ReadOnlyMemoryOperation): string {
+  const parts = operation.renderer.cli.command.split(" ");
+  if (operation.outputKind.kind === "viewer") {
+    const routeParts = [...parts];
+    routeParts[routeParts.length - 1] = routeParts[routeParts.length - 1]!.replace(
+      /-viewer$/,
+      "",
+    );
+    return `/${routeParts.join("/")}`;
+  }
+  return `/api/${parts.join("/")}`;
 }
 
 function health(opts: MemoryHttpServerOptions): MemoryHttpHealth {
