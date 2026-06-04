@@ -90,6 +90,40 @@ expect_verdict "allow/reset mixed default"   "$LOCK" "git reset HEAD file.txt"  
 expect_verdict "allow/restore staged"        "$LOCK" "git restore --staged f.txt"  "allow"
 expect_verdict "allow/restore single file"   "$LOCK" "git restore src/app.ts"       "allow"
 
+# ===========================================================================
+# PRIMARY BRANCH GUARD — dev.lock-primary-branch (issue #396 / ADR 0043)
+# Table: command, cwd-is-primary, flag-state => allow/block.
+# ===========================================================================
+expect_primary_guard() {
+  local label="$1" cmd="$2" primary="$3" flag="$4" expected="$5"
+  local actual="allow"
+  if [[ "$primary" == "primary" && "$flag" == "on" ]]; then
+    actual="$(classify_primary_branch_switch_guard "$cmd")"
+  fi
+  if [[ "$actual" == "$expected" ]]; then
+    echo "PASS  $label"; pass=$((pass + 1))
+  else
+    printf 'FAIL  %s\n      cmd:      %q\n      primary:  %q\n      flag:     %q\n      expected: %q\n      actual:   %q\n' \
+      "$label" "$cmd" "$primary" "$flag" "$expected" "$actual"
+    fail=$((fail + 1))
+  fi
+}
+
+expect_primary_guard "primary/on/switch other blocked"       "git switch other"              primary  on  block
+expect_primary_guard "primary/on/checkout other blocked"     "git checkout other"            primary  on  block
+expect_primary_guard "primary/on/switch -b new blocked"      "git switch -b new"             primary  on  block
+expect_primary_guard "primary/on/checkout -b new blocked"    "git checkout -b new"           primary  on  block
+expect_primary_guard "primary/on/compound switch blocked"    "cd repo && git switch other"   primary  on  block
+expect_primary_guard "primary/on/switch dash blocked"        "git switch -"                  primary  on  block
+expect_primary_guard "primary/on/commit allowed"             "git commit -m wip"             primary  on  allow
+expect_primary_guard "primary/on/worktree add allowed"       "git worktree add ../wt other"  primary  on  allow
+expect_primary_guard "primary/on/status allowed"             "git status"                    primary  on  allow
+expect_primary_guard "primary/on/checkout path allowed"      "git checkout -- src/app.ts"    primary  on  allow
+expect_primary_guard "primary/on/checkout dot allowed"       "git checkout ."                primary  on  allow
+expect_primary_guard "primary/off/switch allowed"            "git switch other"              primary  off allow
+expect_primary_guard "worktree/on/switch allowed"            "git switch other"              worktree on  allow
+expect_primary_guard "worktree/off/switch allowed"           "git switch other"              worktree off allow
+
 echo
 echo "summary: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
