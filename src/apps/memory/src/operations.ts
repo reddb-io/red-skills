@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { join } from "node:path";
 import { z } from "zod";
 import {
   buildMemoryAssetInventory,
@@ -291,6 +293,70 @@ import {
 export type MemoryOperationSafetyClass = "read-only" | "mutating";
 export type MemoryOperationSideEffectClass = "none" | "cache-write" | "writes-memory";
 export type MemoryOperationCapability = "graph-store";
+export type MemoryOperationInputSource = "positional" | "flag" | "query";
+export type MemoryOperationInputType =
+  | "string"
+  | "number"
+  | "boolean"
+  | "string-array"
+  | "object-array"
+  | "path";
+export type MemoryOperationReportFormat = "json" | "markdown";
+
+export interface MemoryOperationTransportInput {
+  positional: readonly string[];
+  flags: Readonly<Record<string, unknown>>;
+  query: Readonly<Record<string, unknown>>;
+  rootDir?: string;
+}
+
+export interface MemoryOperationInputFieldBinding {
+  field: string;
+  sources: readonly MemoryOperationInputSource[];
+  type: MemoryOperationInputType;
+  required?: boolean;
+  position?: number;
+  variadic?: boolean;
+}
+
+export interface MemoryOperationCustomInputBind {
+  id: string;
+  description: string;
+  bind: (input: MemoryOperationTransportInput) => Record<string, unknown>;
+}
+
+export interface MemoryOperationInputBinding {
+  fields: readonly MemoryOperationInputFieldBinding[];
+  customBind?: MemoryOperationCustomInputBind;
+}
+
+export interface MemoryOperationFileSinkBinding {
+  field: string;
+  sources: readonly ("flag" | "query")[];
+  type: "path";
+  required?: boolean;
+  customBind?: {
+    id: string;
+    description: string;
+    bind: (input: MemoryOperationTransportInput) => string | undefined;
+  };
+}
+
+export type MemoryOperationOutputKind =
+  | {
+      kind: "report";
+      format: MemoryOperationReportFormat;
+    }
+  | {
+      kind: "viewer";
+      artifact: "self-contained-html";
+      fileSink?: MemoryOperationFileSinkBinding;
+    };
+
+export interface MemoryOperationFacets {
+  inputBinding: MemoryOperationInputBinding;
+  outputKind: MemoryOperationOutputKind;
+}
 
 export interface MemoryOperationRendererMetadata {
   cli: {
@@ -309,7 +375,7 @@ export interface MemoryOperationContext {
   providerConfig?: AiProviderConfig;
 }
 
-export interface MemoryOperation<Input, Output> {
+export interface MemoryOperationDefinition<Input, Output> {
   id: string;
   title: string;
   description: string;
@@ -321,6 +387,9 @@ export interface MemoryOperation<Input, Output> {
   renderer: MemoryOperationRendererMetadata;
   execute: (ctx: MemoryOperationContext, input: Input) => Promise<Output>;
 }
+
+export type MemoryOperation<Input, Output> = MemoryOperationDefinition<Input, Output> &
+  MemoryOperationFacets;
 
 export type ReadOnlyMemoryOperation<Input = unknown, Output = unknown> = MemoryOperation<
   Input,
@@ -821,7 +890,430 @@ const HookCoverageViewerOutputSchema = objectOutputSchema<HookCoverageViewerArti
 const CapabilityCatalogOutputSchema = objectOutputSchema<MemoryCapabilityCatalog>();
 const ReferenceRadarOutputSchema = objectOutputSchema<MemoryReferenceRadar>();
 
-const ASK_OPERATION: MemoryOperation<AskInput, AskResult> = {
+const JSON_REPORT_OUTPUT = { kind: "report", format: "json" } as const;
+const MARKDOWN_REPORT_OUTPUT = { kind: "report", format: "markdown" } as const;
+const DEFAULT_VIEWER_FILE_SINK: MemoryOperationFileSinkBinding = {
+  field: "out",
+  sources: ["flag", "query"],
+  type: "path",
+};
+const VIEWER_OUTPUT: MemoryOperationOutputKind = {
+  kind: "viewer",
+  artifact: "self-contained-html",
+  fileSink: DEFAULT_VIEWER_FILE_SINK,
+};
+const SMART_SEARCH_VIEWER_OUTPUT: MemoryOperationOutputKind = {
+  kind: "viewer",
+  artifact: "self-contained-html",
+  fileSink: {
+    ...DEFAULT_VIEWER_FILE_SINK,
+    customBind: {
+      id: "hashed-viewer-output-path",
+      description:
+        "When no explicit out path is provided, derive the smart-search viewer sink from a stable hash of the joined query.",
+      bind: (input) => {
+        const explicitOut = firstString(input.flags.out, input.query.out);
+        if (explicitOut) return explicitOut;
+        const query = joinedPositionalValue(input);
+        if (!query) return undefined;
+        const safeName = createHash("sha256").update(query).digest("hex").slice(0, 12);
+        return join(input.rootDir ?? process.cwd(), `.red/memory/smart-search-${safeName}.html`);
+      },
+    },
+  },
+};
+
+const NO_INPUT = inputBinding([]);
+const SCOPE_INPUT_FIELDS = [
+  flagField("scope", "string"),
+  flagField("scope_id", "string"),
+  flagField("include_narrower_scopes", "boolean"),
+] as const;
+
+const MEMORY_OPERATION_FACETS: Record<string, MemoryOperationFacets> = {
+  ...operationFacets(
+    [
+      "memory.capability-catalog",
+      "memory.references-radar",
+      "memory.doc-coverage",
+      "memory.doc-reference-graph",
+      "memory.privacy-scan",
+      "memory.layers",
+      "memory.hook-coverage",
+      "memory.extraction-status",
+      "memory.vector-status",
+    ],
+    NO_INPUT,
+    JSON_REPORT_OUTPUT,
+  ),
+  ...operationFacets(
+    [
+      "memory.doc-coverage-viewer",
+      "memory.doc-reference-graph-viewer",
+      "memory.layers-viewer",
+      "memory.hook-coverage-viewer",
+      "memory.extraction-status-viewer",
+      "memory.vector-status-viewer",
+    ],
+    NO_INPUT,
+    VIEWER_OUTPUT,
+  ),
+  ...operationFacets(
+    ["memory.asset-inventory", "memory.asset-inventory-viewer"],
+    inputBinding([flagField("kind", "string")]),
+    undefined,
+    {
+      "memory.asset-inventory": JSON_REPORT_OUTPUT,
+      "memory.asset-inventory-viewer": VIEWER_OUTPUT,
+    },
+  ),
+  ...operationFacets(
+    ["memory.ask"],
+    joinedPositionalInput("question"),
+    JSON_REPORT_OUTPUT,
+  ),
+  ...operationFacets(
+    ["memory.claim-check"],
+    joinedPositionalInput("assertion"),
+    JSON_REPORT_OUTPUT,
+  ),
+  ...operationFacets(
+    ["memory.readiness", "memory.readiness-viewer"],
+    joinedPositionalInput("goal", [
+      flagField("limit", "number"),
+      flagField("min_evidence", "number"),
+      flagField("stale_days", "number"),
+      ...SCOPE_INPUT_FIELDS,
+    ]),
+    undefined,
+    {
+      "memory.readiness": JSON_REPORT_OUTPUT,
+      "memory.readiness-viewer": VIEWER_OUTPUT,
+    },
+  ),
+  ...operationFacets(
+    ["memory.context-pack", "memory.context-pack-viewer"],
+    joinedPositionalInput("goal", [
+      flagField("budget_chars", "number"),
+      flagField("limit", "number"),
+      flagField("depth", "number"),
+      ...SCOPE_INPUT_FIELDS,
+    ]),
+    undefined,
+    {
+      "memory.context-pack": JSON_REPORT_OUTPUT,
+      "memory.context-pack-viewer": VIEWER_OUTPUT,
+    },
+  ),
+  ...operationFacets(
+    ["memory.doc-search", "memory.doc-search-viewer"],
+    joinedPositionalInput("query", [flagField("limit", "number")]),
+    undefined,
+    {
+      "memory.doc-search": JSON_REPORT_OUTPUT,
+      "memory.doc-search-viewer": VIEWER_OUTPUT,
+    },
+  ),
+  ...operationFacets(
+    [
+      "memory.doc-brief",
+      "memory.doc-brief-viewer",
+      "memory.doc-bundle",
+      "memory.doc-bundle-viewer",
+    ],
+    joinedPositionalInput("query", [
+      flagField("limit", "number"),
+      flagField("max_bytes", "number"),
+    ]),
+    undefined,
+    {
+      "memory.doc-brief": JSON_REPORT_OUTPUT,
+      "memory.doc-brief-viewer": VIEWER_OUTPUT,
+      "memory.doc-bundle": JSON_REPORT_OUTPUT,
+      "memory.doc-bundle-viewer": VIEWER_OUTPUT,
+    },
+  ),
+  ...operationFacets(
+    ["memory.doc-read", "memory.doc-evidence-pack", "memory.doc-evidence-pack-viewer"],
+    inputBinding([
+      positionalField("path", "path", { required: false }),
+      positionalField("rid", "number", { required: false }),
+      flagField("max_bytes", "number"),
+    ]),
+    undefined,
+    {
+      "memory.doc-read": JSON_REPORT_OUTPUT,
+      "memory.doc-evidence-pack": JSON_REPORT_OUTPUT,
+      "memory.doc-evidence-pack-viewer": VIEWER_OUTPUT,
+    },
+  ),
+  ...operationFacets(
+    ["memory.doc-backlinks", "memory.doc-backlinks-viewer"],
+    inputBinding([
+      positionalField("label", "string", { required: false }),
+      positionalField("rid", "number", { required: false }),
+      flagField("title", "string"),
+      flagField("query", "string"),
+    ]),
+    undefined,
+    {
+      "memory.doc-backlinks": JSON_REPORT_OUTPUT,
+      "memory.doc-backlinks-viewer": VIEWER_OUTPUT,
+    },
+  ),
+  ...operationFacets(
+    ["memory.doc-related", "memory.doc-related-viewer"],
+    inputBinding([
+      positionalField("path", "path", { required: false }),
+      positionalField("rid", "number", { required: false }),
+    ]),
+    undefined,
+    {
+      "memory.doc-related": JSON_REPORT_OUTPUT,
+      "memory.doc-related-viewer": VIEWER_OUTPUT,
+    },
+  ),
+  ...operationFacets(
+    ["memory.smart-search"],
+    joinedPositionalInput("query", [
+      flagField("limit", "number"),
+      flagField("depth", "number"),
+      flagField("include_superseded", "boolean"),
+      ...SCOPE_INPUT_FIELDS,
+    ]),
+    JSON_REPORT_OUTPUT,
+  ),
+  ...operationFacets(
+    ["memory.smart-search-viewer"],
+    joinedPositionalInput("query", [
+      flagField("limit", "number"),
+      flagField("depth", "number"),
+      flagField("include_superseded", "boolean"),
+      ...SCOPE_INPUT_FIELDS,
+    ]),
+    SMART_SEARCH_VIEWER_OUTPUT,
+  ),
+  ...operationFacets(
+    ["memory.pre-pr-review", "memory.pre-pr-review-viewer"],
+    inputBinding([
+      flagField("changed_files", "string-array", { required: true }),
+      flagField("comparison", "string"),
+    ]),
+    undefined,
+    {
+      "memory.pre-pr-review": JSON_REPORT_OUTPUT,
+      "memory.pre-pr-review-viewer": VIEWER_OUTPUT,
+    },
+  ),
+  ...operationFacets(
+    ["memory.provenance"],
+    joinedPositionalInput("target"),
+    JSON_REPORT_OUTPUT,
+  ),
+  ...operationFacets(
+    ["memory.governance", "memory.governance-viewer"],
+    inputBinding([flagField("stale_progress_days", "number")]),
+    undefined,
+    {
+      "memory.governance": JSON_REPORT_OUTPUT,
+      "memory.governance-viewer": VIEWER_OUTPUT,
+    },
+  ),
+  ...operationFacets(
+    ["memory.lint"],
+    inputBinding([flagField("stale_progress_days", "number")]),
+    JSON_REPORT_OUTPUT,
+  ),
+  ...operationFacets(
+    ["memory.skill-recommendations"],
+    joinedPositionalInput("task", [
+      flagField("limit", "number"),
+      flagField("depth", "number"),
+      ...SCOPE_INPUT_FIELDS,
+    ]),
+    JSON_REPORT_OUTPUT,
+  ),
+  ...operationFacets(
+    ["memory.learning-debt", "memory.learning-debt-viewer"],
+    inputBinding([
+      flagField("stale_days", "number"),
+      flagField("min_repeated_failures", "number"),
+    ]),
+    undefined,
+    {
+      "memory.learning-debt": JSON_REPORT_OUTPUT,
+      "memory.learning-debt-viewer": VIEWER_OUTPUT,
+    },
+  ),
+  ...operationFacets(
+    ["memory.health", "memory.health-viewer"],
+    inputBinding([flagField("stale_days", "number")]),
+    undefined,
+    {
+      "memory.health": JSON_REPORT_OUTPUT,
+      "memory.health-viewer": VIEWER_OUTPUT,
+    },
+  ),
+  ...operationFacets(
+    ["memory.decay", "memory.decay-viewer"],
+    inputBinding([
+      flagField("stale_days", "number"),
+      flagField("deprecate_days", "number"),
+      flagField("limit", "number"),
+    ]),
+    undefined,
+    {
+      "memory.decay": JSON_REPORT_OUTPUT,
+      "memory.decay-viewer": VIEWER_OUTPUT,
+    },
+  ),
+  ...operationFacets(
+    ["memory.merge-pass"],
+    inputBinding([flagField("min_score", "number"), flagField("limit", "number")]),
+    JSON_REPORT_OUTPUT,
+  ),
+  ...operationFacets(
+    ["memory.communities", "memory.communities-viewer", "memory.community-digest"],
+    inputBinding([flagField("cache", "string")]),
+    undefined,
+    {
+      "memory.communities": JSON_REPORT_OUTPUT,
+      "memory.communities-viewer": VIEWER_OUTPUT,
+      "memory.community-digest": JSON_REPORT_OUTPUT,
+    },
+  ),
+  ...operationFacets(
+    ["memory.global-search"],
+    joinedPositionalInput("query", [
+      flagField("limit", "number"),
+      flagField("cache", "string"),
+    ]),
+    JSON_REPORT_OUTPUT,
+  ),
+  ...operationFacets(
+    ["memory.onboarding-map", "memory.onboarding-map-viewer"],
+    inputBinding([flagField("stale_days", "number")]),
+    undefined,
+    {
+      "memory.onboarding-map": JSON_REPORT_OUTPUT,
+      "memory.onboarding-map-viewer": VIEWER_OUTPUT,
+    },
+  ),
+  ...operationFacets(
+    ["memory.dashboard"],
+    inputBinding([flagField("stale_days", "number")]),
+    VIEWER_OUTPUT,
+  ),
+  ...operationFacets(
+    ["memory.workbench"],
+    inputBinding([
+      flagField("stale_days", "number"),
+      flagField("session_id", "string"),
+      flagField("limit", "number"),
+    ]),
+    VIEWER_OUTPUT,
+  ),
+  ...operationFacets(
+    [
+      "memory.routing-guide",
+      "memory.routing-guide-viewer",
+      "memory.agent-integration-status",
+      "memory.agent-integration-status-viewer",
+    ],
+    inputBinding([flagField("agent", "string")]),
+    undefined,
+    {
+      "memory.routing-guide": JSON_REPORT_OUTPUT,
+      "memory.routing-guide-viewer": VIEWER_OUTPUT,
+      "memory.agent-integration-status": JSON_REPORT_OUTPUT,
+      "memory.agent-integration-status-viewer": VIEWER_OUTPUT,
+    },
+  ),
+  ...operationFacets(
+    ["memory.handoff", "memory.handoff-viewer", "memory.work-frontier", "memory.work-frontier-viewer"],
+    joinedPositionalInput("focus", [flagField("limit", "number")], { required: false }),
+    undefined,
+    {
+      "memory.handoff": JSON_REPORT_OUTPUT,
+      "memory.handoff-viewer": VIEWER_OUTPUT,
+      "memory.work-frontier": JSON_REPORT_OUTPUT,
+      "memory.work-frontier-viewer": VIEWER_OUTPUT,
+    },
+  ),
+  ...operationFacets(
+    ["memory.session-timeline", "memory.session-timeline-viewer"],
+    inputBinding([flagField("session_id", "string"), flagField("limit", "number")]),
+    undefined,
+    {
+      "memory.session-timeline": JSON_REPORT_OUTPUT,
+      "memory.session-timeline-viewer": VIEWER_OUTPUT,
+    },
+  ),
+  ...operationFacets(
+    ["memory.path-explain", "memory.path-explain-viewer"],
+    inputBinding([
+      positionalField("from", "string", { position: 0, required: true }),
+      positionalField("to", "string", { position: 1, required: true }),
+      flagField("max_depth", "number"),
+    ]),
+    undefined,
+    {
+      "memory.path-explain": JSON_REPORT_OUTPUT,
+      "memory.path-explain-viewer": VIEWER_OUTPUT,
+    },
+  ),
+  ...operationFacets(
+    ["memory.confidence"],
+    inputBinding([flagField("node", "string", { required: true })]),
+    JSON_REPORT_OUTPUT,
+  ),
+  ...operationFacets(
+    ["memory.structural-impact"],
+    inputBinding([flagField("file", "path"), flagField("symbol", "string")]),
+    MARKDOWN_REPORT_OUTPUT,
+  ),
+  ...operationFacets(
+    ["memory.structural-impact-viewer"],
+    inputBinding([flagField("file", "path"), flagField("symbol", "string")]),
+    VIEWER_OUTPUT,
+  ),
+  ...operationFacets(
+    ["memory.vector-search"],
+    joinedPositionalInput("query", [flagField("limit", "number")]),
+    JSON_REPORT_OUTPUT,
+  ),
+  ...operationFacets(
+    ["memory.reasoning-replay"],
+    joinedPositionalInput("task", [flagField("limit", "number")]),
+    JSON_REPORT_OUTPUT,
+  ),
+  ...operationFacets(
+    ["memory.whatif"],
+    inputBinding([
+      flagField("changes", "object-array", { required: true }),
+      flagField("limit", "number"),
+    ]),
+    JSON_REPORT_OUTPUT,
+  ),
+  ...operationFacets(
+    ["memory.federation"],
+    inputBinding([
+      {
+        field: "query",
+        sources: ["positional", "flag", "query"],
+        type: "string",
+        required: true,
+        position: 0,
+        variadic: true,
+      },
+      flagField("limit", "number"),
+      flagField("per_root_limit", "number"),
+    ]),
+    JSON_REPORT_OUTPUT,
+  ),
+};
+
+const ASK_OPERATION: MemoryOperationDefinition<AskInput, AskResult> = {
   id: "memory.ask",
   title: "Evidence-backed Memory ask",
   description:
@@ -842,7 +1334,7 @@ const ASK_OPERATION: MemoryOperation<AskInput, AskResult> = {
   execute: (ctx, input) => ask(ctx.store, input.question, { rootDir: ctx.rootDir }),
 };
 
-const ASSET_INVENTORY_OPERATION: MemoryOperation<
+const ASSET_INVENTORY_OPERATION: MemoryOperationDefinition<
   AssetInventoryInput,
   MemoryAssetInventoryReport
 > = {
@@ -865,7 +1357,7 @@ const ASSET_INVENTORY_OPERATION: MemoryOperation<
   execute: (ctx, input) => buildMemoryAssetInventory(ctx.store, input),
 };
 
-const ASSET_INVENTORY_VIEWER_OPERATION: MemoryOperation<
+const ASSET_INVENTORY_VIEWER_OPERATION: MemoryOperationDefinition<
   AssetInventoryInput,
   MemoryAssetInventoryViewerArtifact
 > = {
@@ -891,7 +1383,7 @@ const ASSET_INVENTORY_VIEWER_OPERATION: MemoryOperation<
     ),
 };
 
-const READINESS_OPERATION: MemoryOperation<ReadinessInput, MemoryReadinessEnvelope> = {
+const READINESS_OPERATION: MemoryOperationDefinition<ReadinessInput, MemoryReadinessEnvelope> = {
   id: "memory.readiness",
   title: "Memory readiness",
   description: "Stable readiness envelope for an implementation goal.",
@@ -917,7 +1409,7 @@ const READINESS_OPERATION: MemoryOperation<ReadinessInput, MemoryReadinessEnvelo
     }),
 };
 
-const CONTEXT_PACK_OPERATION: MemoryOperation<ContextPackInput, ContextPack> = {
+const CONTEXT_PACK_OPERATION: MemoryOperationDefinition<ContextPackInput, ContextPack> = {
   id: "memory.context-pack",
   title: "Memory context pack",
   description: "Agent-ready context pack for a goal from active Memory evidence.",
@@ -943,7 +1435,7 @@ const CONTEXT_PACK_OPERATION: MemoryOperation<ContextPackInput, ContextPack> = {
     }),
 };
 
-const CONTEXT_PACK_VIEWER_OPERATION: MemoryOperation<
+const CONTEXT_PACK_VIEWER_OPERATION: MemoryOperationDefinition<
   ContextPackInput,
   ContextPackViewerArtifact
 > = {
@@ -974,7 +1466,7 @@ const CONTEXT_PACK_VIEWER_OPERATION: MemoryOperation<
     ),
 };
 
-const CLAIM_CHECK_OPERATION: MemoryOperation<ClaimCheckInput, ClaimCheckResult> = {
+const CLAIM_CHECK_OPERATION: MemoryOperationDefinition<ClaimCheckInput, ClaimCheckResult> = {
   id: "memory.claim-check",
   title: "Memory claim-check",
   description: "Verify an assertion against local Memory evidence.",
@@ -994,7 +1486,7 @@ const CLAIM_CHECK_OPERATION: MemoryOperation<ClaimCheckInput, ClaimCheckResult> 
   execute: (ctx, input) => claimCheck(ctx.store, input.assertion),
 };
 
-const CAPABILITY_CATALOG_OPERATION: MemoryOperation<
+const CAPABILITY_CATALOG_OPERATION: MemoryOperationDefinition<
   CapabilityCatalogInput,
   MemoryCapabilityCatalog
 > = {
@@ -1017,7 +1509,7 @@ const CAPABILITY_CATALOG_OPERATION: MemoryOperation<
   execute: (ctx) => buildMemoryCapabilityCatalog(ctx.store, ctx.rootDir ?? process.cwd()),
 };
 
-const REFERENCE_RADAR_OPERATION: MemoryOperation<
+const REFERENCE_RADAR_OPERATION: MemoryOperationDefinition<
   ReferenceRadarInput,
   MemoryReferenceRadar
 > = {
@@ -1041,7 +1533,7 @@ const REFERENCE_RADAR_OPERATION: MemoryOperation<
   execute: (ctx) => buildMemoryReferenceRadar(ctx.store, ctx.rootDir ?? process.cwd()),
 };
 
-const HANDOFF_OPERATION: MemoryOperation<HandoffInput, MemoryHandoffReport> = {
+const HANDOFF_OPERATION: MemoryOperationDefinition<HandoffInput, MemoryHandoffReport> = {
   id: "memory.handoff",
   title: "Memory handoff",
   description: "Read-only cross-agent handoff brief generated from recent Memory graph evidence.",
@@ -1065,7 +1557,7 @@ const HANDOFF_OPERATION: MemoryOperation<HandoffInput, MemoryHandoffReport> = {
     }),
 };
 
-const HANDOFF_VIEWER_OPERATION: MemoryOperation<
+const HANDOFF_VIEWER_OPERATION: MemoryOperationDefinition<
   HandoffInput,
   MemoryHandoffViewerArtifact
 > = {
@@ -1094,7 +1586,7 @@ const HANDOFF_VIEWER_OPERATION: MemoryOperation<
     ),
 };
 
-const WORK_FRONTIER_OPERATION: MemoryOperation<
+const WORK_FRONTIER_OPERATION: MemoryOperationDefinition<
   WorkFrontierInput,
   WorkFrontierReport
 > = {
@@ -1121,7 +1613,7 @@ const WORK_FRONTIER_OPERATION: MemoryOperation<
     }),
 };
 
-const WORK_FRONTIER_VIEWER_OPERATION: MemoryOperation<
+const WORK_FRONTIER_VIEWER_OPERATION: MemoryOperationDefinition<
   WorkFrontierInput,
   WorkFrontierViewerArtifact
 > = {
@@ -1150,7 +1642,7 @@ const WORK_FRONTIER_VIEWER_OPERATION: MemoryOperation<
     ),
 };
 
-const CONFIDENCE_OPERATION: MemoryOperation<ConfidenceInput, ConfidenceReport> = {
+const CONFIDENCE_OPERATION: MemoryOperationDefinition<ConfidenceInput, ConfidenceReport> = {
   id: "memory.confidence",
   title: "Memory confidence breakdown",
   description:
@@ -1175,7 +1667,7 @@ const CONFIDENCE_OPERATION: MemoryOperation<ConfidenceInput, ConfidenceReport> =
   },
 };
 
-const PATH_EXPLAIN_OPERATION: MemoryOperation<PathExplainInput, PathExplainReport> = {
+const PATH_EXPLAIN_OPERATION: MemoryOperationDefinition<PathExplainInput, PathExplainReport> = {
   id: "memory.path-explain",
   title: "Memory path explanation",
   description: "Read-only explained graph path between two Memory labels.",
@@ -1200,7 +1692,7 @@ const PATH_EXPLAIN_OPERATION: MemoryOperation<PathExplainInput, PathExplainRepor
     }),
 };
 
-const PATH_EXPLAIN_VIEWER_OPERATION: MemoryOperation<
+const PATH_EXPLAIN_VIEWER_OPERATION: MemoryOperationDefinition<
   PathExplainInput,
   PathExplainViewerArtifact
 > = {
@@ -1230,7 +1722,7 @@ const PATH_EXPLAIN_VIEWER_OPERATION: MemoryOperation<
     ),
 };
 
-const DOC_SEARCH_OPERATION: MemoryOperation<DocSearchInput, DocSearchReport> = {
+const DOC_SEARCH_OPERATION: MemoryOperationDefinition<DocSearchInput, DocSearchReport> = {
   id: "memory.doc-search",
   title: "Memory doc search",
   description: "Zero-token search over ingested Memory document chunks.",
@@ -1250,7 +1742,7 @@ const DOC_SEARCH_OPERATION: MemoryOperation<DocSearchInput, DocSearchReport> = {
   execute: (ctx, input) => searchDocs(ctx.store, input.query, { limit: input.limit }),
 };
 
-const DOC_SEARCH_VIEWER_OPERATION: MemoryOperation<
+const DOC_SEARCH_VIEWER_OPERATION: MemoryOperationDefinition<
   DocSearchInput,
   DocSearchViewerArtifact
 > = {
@@ -1276,7 +1768,7 @@ const DOC_SEARCH_VIEWER_OPERATION: MemoryOperation<
     ),
 };
 
-const DOC_BUNDLE_OPERATION: MemoryOperation<DocBundleInput, DocBundle> = {
+const DOC_BUNDLE_OPERATION: MemoryOperationDefinition<DocBundleInput, DocBundle> = {
   id: "memory.doc-bundle",
   title: "Memory doc bundle",
   description: "Agent-ready bundle of top docs for a query with evidence packs.",
@@ -1296,7 +1788,7 @@ const DOC_BUNDLE_OPERATION: MemoryOperation<DocBundleInput, DocBundle> = {
   execute: (ctx, input) => buildDocBundle(ctx.store, input),
 };
 
-const DOC_BRIEF_OPERATION: MemoryOperation<DocBundleInput, DocBrief> = {
+const DOC_BRIEF_OPERATION: MemoryOperationDefinition<DocBundleInput, DocBrief> = {
   id: "memory.doc-brief",
   title: "Memory doc brief",
   description: "Citation-first docs evidence brief with gap analysis.",
@@ -1316,7 +1808,7 @@ const DOC_BRIEF_OPERATION: MemoryOperation<DocBundleInput, DocBrief> = {
   execute: (ctx, input) => buildDocBrief(ctx.store, input),
 };
 
-const DOC_BRIEF_VIEWER_OPERATION: MemoryOperation<
+const DOC_BRIEF_VIEWER_OPERATION: MemoryOperationDefinition<
   DocBundleInput,
   DocBriefViewerArtifact
 > = {
@@ -1340,7 +1832,7 @@ const DOC_BRIEF_VIEWER_OPERATION: MemoryOperation<
     buildDocBriefViewerArtifact(await buildDocBrief(ctx.store, input)),
 };
 
-const DOC_BUNDLE_VIEWER_OPERATION: MemoryOperation<
+const DOC_BUNDLE_VIEWER_OPERATION: MemoryOperationDefinition<
   DocBundleInput,
   DocBundleViewerArtifact
 > = {
@@ -1364,7 +1856,7 @@ const DOC_BUNDLE_VIEWER_OPERATION: MemoryOperation<
     buildDocBundleViewerArtifact(await buildDocBundle(ctx.store, input)),
 };
 
-const DOC_READ_OPERATION: MemoryOperation<DocReadInput, DocReadResult> = {
+const DOC_READ_OPERATION: MemoryOperationDefinition<DocReadInput, DocReadResult> = {
   id: "memory.doc-read",
   title: "Memory doc read",
   description: "Read an ingested Memory document chunk by path or rid.",
@@ -1384,7 +1876,7 @@ const DOC_READ_OPERATION: MemoryOperation<DocReadInput, DocReadResult> = {
   execute: (ctx, input) => readDoc(ctx.store, input),
 };
 
-const DOC_EVIDENCE_PACK_OPERATION: MemoryOperation<
+const DOC_EVIDENCE_PACK_OPERATION: MemoryOperationDefinition<
   DocEvidencePackInput,
   DocEvidencePack
 > = {
@@ -1407,7 +1899,7 @@ const DOC_EVIDENCE_PACK_OPERATION: MemoryOperation<
   execute: (ctx, input) => buildDocEvidencePack(ctx.store, input),
 };
 
-const DOC_EVIDENCE_PACK_VIEWER_OPERATION: MemoryOperation<
+const DOC_EVIDENCE_PACK_VIEWER_OPERATION: MemoryOperationDefinition<
   DocEvidencePackInput,
   DocEvidencePackViewerArtifact
 > = {
@@ -1431,7 +1923,7 @@ const DOC_EVIDENCE_PACK_VIEWER_OPERATION: MemoryOperation<
     buildDocEvidencePackViewerArtifact(await buildDocEvidencePack(ctx.store, input)),
 };
 
-const DOC_BACKLINKS_OPERATION: MemoryOperation<DocBacklinksInput, DocBacklinksReport> = {
+const DOC_BACKLINKS_OPERATION: MemoryOperationDefinition<DocBacklinksInput, DocBacklinksReport> = {
   id: "memory.doc-backlinks",
   title: "Memory doc backlinks",
   description: "Find indexed docs that reference one Memory node.",
@@ -1451,7 +1943,7 @@ const DOC_BACKLINKS_OPERATION: MemoryOperation<DocBacklinksInput, DocBacklinksRe
   execute: (ctx, input) => buildDocBacklinksReport(ctx.store, input),
 };
 
-const DOC_BACKLINKS_VIEWER_OPERATION: MemoryOperation<
+const DOC_BACKLINKS_VIEWER_OPERATION: MemoryOperationDefinition<
   DocBacklinksInput,
   DocBacklinksViewerArtifact
 > = {
@@ -1475,7 +1967,7 @@ const DOC_BACKLINKS_VIEWER_OPERATION: MemoryOperation<
     buildDocBacklinksViewerArtifact(await buildDocBacklinksReport(ctx.store, input)),
 };
 
-const DOC_RELATED_OPERATION: MemoryOperation<DocRelatedInput, DocRelatedReport> = {
+const DOC_RELATED_OPERATION: MemoryOperationDefinition<DocRelatedInput, DocRelatedReport> = {
   id: "memory.doc-related",
   title: "Memory doc related",
   description: "Find references and related docs for one ingested Memory document.",
@@ -1495,7 +1987,7 @@ const DOC_RELATED_OPERATION: MemoryOperation<DocRelatedInput, DocRelatedReport> 
   execute: (ctx, input) => buildDocRelatedReport(ctx.store, input),
 };
 
-const DOC_RELATED_VIEWER_OPERATION: MemoryOperation<
+const DOC_RELATED_VIEWER_OPERATION: MemoryOperationDefinition<
   DocRelatedInput,
   DocRelatedViewerArtifact
 > = {
@@ -1519,7 +2011,7 @@ const DOC_RELATED_VIEWER_OPERATION: MemoryOperation<
     buildDocRelatedViewerArtifact(await buildDocRelatedReport(ctx.store, input)),
 };
 
-const SMART_SEARCH_OPERATION: MemoryOperation<
+const SMART_SEARCH_OPERATION: MemoryOperationDefinition<
   SmartSearchInput,
   MemorySmartSearchReport
 > = {
@@ -1550,7 +2042,7 @@ const SMART_SEARCH_OPERATION: MemoryOperation<
     }),
 };
 
-const SMART_SEARCH_VIEWER_OPERATION: MemoryOperation<
+const SMART_SEARCH_VIEWER_OPERATION: MemoryOperationDefinition<
   SmartSearchInput,
   MemorySmartSearchViewerArtifact
 > = {
@@ -1583,7 +2075,7 @@ const SMART_SEARCH_VIEWER_OPERATION: MemoryOperation<
     ),
 };
 
-const DOC_COVERAGE_OPERATION: MemoryOperation<
+const DOC_COVERAGE_OPERATION: MemoryOperationDefinition<
   DocCoverageInput,
   DocCoverageReport
 > = {
@@ -1606,7 +2098,7 @@ const DOC_COVERAGE_OPERATION: MemoryOperation<
   execute: (ctx) => buildDocCoverageReport(ctx.store),
 };
 
-const DOC_COVERAGE_VIEWER_OPERATION: MemoryOperation<
+const DOC_COVERAGE_VIEWER_OPERATION: MemoryOperationDefinition<
   DocCoverageInput,
   DocCoverageViewerArtifact
 > = {
@@ -1630,7 +2122,7 @@ const DOC_COVERAGE_VIEWER_OPERATION: MemoryOperation<
     buildDocCoverageViewerArtifact(await buildDocCoverageReport(ctx.store)),
 };
 
-const DOC_REFERENCE_GRAPH_OPERATION: MemoryOperation<
+const DOC_REFERENCE_GRAPH_OPERATION: MemoryOperationDefinition<
   DocReferenceGraphInput,
   DocReferenceGraphReport
 > = {
@@ -1653,7 +2145,7 @@ const DOC_REFERENCE_GRAPH_OPERATION: MemoryOperation<
   execute: (ctx) => buildDocReferenceGraphReport(ctx.store),
 };
 
-const DOC_REFERENCE_GRAPH_VIEWER_OPERATION: MemoryOperation<
+const DOC_REFERENCE_GRAPH_VIEWER_OPERATION: MemoryOperationDefinition<
   DocReferenceGraphInput,
   DocReferenceGraphViewerArtifact
 > = {
@@ -1677,7 +2169,7 @@ const DOC_REFERENCE_GRAPH_VIEWER_OPERATION: MemoryOperation<
     buildDocReferenceGraphViewerArtifact(await buildDocReferenceGraphReport(ctx.store)),
 };
 
-const PRE_PR_REVIEW_OPERATION: MemoryOperation<PrePrReviewInput, PrePrMemoryReview> = {
+const PRE_PR_REVIEW_OPERATION: MemoryOperationDefinition<PrePrReviewInput, PrePrMemoryReview> = {
   id: "memory.pre-pr-review",
   title: "Memory pre-PR review",
   description: "Read-only pre-PR review over changed files using graph evidence.",
@@ -1701,7 +2193,7 @@ const PRE_PR_REVIEW_OPERATION: MemoryOperation<PrePrReviewInput, PrePrMemoryRevi
     }),
 };
 
-const PRE_PR_REVIEW_VIEWER_OPERATION: MemoryOperation<
+const PRE_PR_REVIEW_VIEWER_OPERATION: MemoryOperationDefinition<
   PrePrReviewInput,
   PrePrReviewViewerArtifact
 > = {
@@ -1730,7 +2222,7 @@ const PRE_PR_REVIEW_VIEWER_OPERATION: MemoryOperation<
     ),
 };
 
-const PROVENANCE_OPERATION: MemoryOperation<ProvenanceInput, ProvenanceReport> = {
+const PROVENANCE_OPERATION: MemoryOperationDefinition<ProvenanceInput, ProvenanceReport> = {
   id: "memory.provenance",
   title: "Memory provenance",
   description: "Inspect provenance for a Memory node.",
@@ -1754,7 +2246,7 @@ const PROVENANCE_OPERATION: MemoryOperation<ProvenanceInput, ProvenanceReport> =
   },
 };
 
-const PRIVACY_OPERATION: MemoryOperation<object, PrivacyReport> = {
+const PRIVACY_OPERATION: MemoryOperationDefinition<object, PrivacyReport> = {
   id: "memory.privacy-scan",
   title: "Memory privacy scan",
   description: "Read-only sensitive-data scan over graph Memory records.",
@@ -1777,7 +2269,7 @@ const PRIVACY_OPERATION: MemoryOperation<object, PrivacyReport> = {
   },
 };
 
-const GOVERNANCE_OPERATION: MemoryOperation<GovernanceInput, MemoryGovernanceReport> = {
+const GOVERNANCE_OPERATION: MemoryOperationDefinition<GovernanceInput, MemoryGovernanceReport> = {
   id: "memory.governance",
   title: "Memory governance",
   description:
@@ -1801,7 +2293,7 @@ const GOVERNANCE_OPERATION: MemoryOperation<GovernanceInput, MemoryGovernanceRep
     }),
 };
 
-const GOVERNANCE_VIEWER_OPERATION: MemoryOperation<
+const GOVERNANCE_VIEWER_OPERATION: MemoryOperationDefinition<
   GovernanceInput,
   MemoryGovernanceViewerArtifact
 > = {
@@ -1829,7 +2321,7 @@ const GOVERNANCE_VIEWER_OPERATION: MemoryOperation<
     ),
 };
 
-const LINT_OPERATION: MemoryOperation<LintInput, LintReport> = {
+const LINT_OPERATION: MemoryOperationDefinition<LintInput, LintReport> = {
   id: "memory.lint",
   title: "Memory lint",
   description: "Read-only policy hygiene lint over graph Memory records.",
@@ -1863,7 +2355,7 @@ const LINT_OPERATION: MemoryOperation<LintInput, LintReport> = {
   },
 };
 
-const SKILL_RECOMMENDATIONS_OPERATION: MemoryOperation<
+const SKILL_RECOMMENDATIONS_OPERATION: MemoryOperationDefinition<
   SkillRecommendationsInput,
   SkillRecommendationReport
 > = {
@@ -1892,7 +2384,7 @@ const SKILL_RECOMMENDATIONS_OPERATION: MemoryOperation<
     }),
 };
 
-const LEARNING_DEBT_OPERATION: MemoryOperation<LearningDebtInput, LearningDebtReport> = {
+const LEARNING_DEBT_OPERATION: MemoryOperationDefinition<LearningDebtInput, LearningDebtReport> = {
   id: "memory.learning-debt",
   title: "Memory learning debt",
   description: "Read-only report of repeated failures, stale guidance, validation gaps, and telemetry gaps.",
@@ -1918,7 +2410,7 @@ const LEARNING_DEBT_OPERATION: MemoryOperation<LearningDebtInput, LearningDebtRe
     }),
 };
 
-const LEARNING_DEBT_VIEWER_OPERATION: MemoryOperation<
+const LEARNING_DEBT_VIEWER_OPERATION: MemoryOperationDefinition<
   LearningDebtInput,
   LearningDebtViewerArtifact
 > = {
@@ -1949,7 +2441,7 @@ const LEARNING_DEBT_VIEWER_OPERATION: MemoryOperation<
     ),
 };
 
-const MEMORY_LAYERS_OPERATION: MemoryOperation<MemoryLayersInput, MemoryLayersReport> = {
+const MEMORY_LAYERS_OPERATION: MemoryOperationDefinition<MemoryLayersInput, MemoryLayersReport> = {
   id: "memory.layers",
   title: "Memory layers",
   description:
@@ -1970,7 +2462,7 @@ const MEMORY_LAYERS_OPERATION: MemoryOperation<MemoryLayersInput, MemoryLayersRe
   execute: (ctx) => buildMemoryLayersReport(ctx.store),
 };
 
-const MEMORY_LAYERS_VIEWER_OPERATION: MemoryOperation<
+const MEMORY_LAYERS_VIEWER_OPERATION: MemoryOperationDefinition<
   MemoryLayersInput,
   MemoryLayersViewerArtifact
 > = {
@@ -1995,7 +2487,7 @@ const MEMORY_LAYERS_VIEWER_OPERATION: MemoryOperation<
     buildMemoryLayersViewerArtifact(await buildMemoryLayersReport(ctx.store)),
 };
 
-const HEALTH_OPERATION: MemoryOperation<HealthInput, MemoryHealthReport> = {
+const HEALTH_OPERATION: MemoryOperationDefinition<HealthInput, MemoryHealthReport> = {
   id: "memory.health",
   title: "Memory health",
   description: "Read-only graph health summary for MCP agents.",
@@ -2015,7 +2507,7 @@ const HEALTH_OPERATION: MemoryOperation<HealthInput, MemoryHealthReport> = {
   execute: (ctx, input) => buildMemoryHealthReport(ctx.store, input),
 };
 
-const HEALTH_VIEWER_OPERATION: MemoryOperation<
+const HEALTH_VIEWER_OPERATION: MemoryOperationDefinition<
   HealthInput,
   MemoryHealthViewerArtifact
 > = {
@@ -2039,7 +2531,7 @@ const HEALTH_VIEWER_OPERATION: MemoryOperation<
     buildMemoryHealthViewerArtifact(await buildMemoryHealthReport(ctx.store, input)),
 };
 
-const MEMORY_DECAY_OPERATION: MemoryOperation<
+const MEMORY_DECAY_OPERATION: MemoryOperationDefinition<
   MemoryDecayInput,
   MemoryDecayReport
 > = {
@@ -2063,7 +2555,7 @@ const MEMORY_DECAY_OPERATION: MemoryOperation<
   execute: (ctx, input) => buildMemoryDecayReport(ctx.store, input),
 };
 
-const MEMORY_DECAY_VIEWER_OPERATION: MemoryOperation<
+const MEMORY_DECAY_VIEWER_OPERATION: MemoryOperationDefinition<
   MemoryDecayInput,
   MemoryDecayViewerArtifact
 > = {
@@ -2087,7 +2579,7 @@ const MEMORY_DECAY_VIEWER_OPERATION: MemoryOperation<
     buildMemoryDecayViewerArtifact(await buildMemoryDecayReport(ctx.store, input)),
 };
 
-const MEMORY_MERGE_PASS_OPERATION: MemoryOperation<
+const MEMORY_MERGE_PASS_OPERATION: MemoryOperationDefinition<
   MemoryMergePassInput,
   MemoryMergePassReport
 > = {
@@ -2111,7 +2603,7 @@ const MEMORY_MERGE_PASS_OPERATION: MemoryOperation<
   execute: (ctx, input) => buildMemoryMergePassReport(ctx.store, input),
 };
 
-const HOOK_COVERAGE_OPERATION: MemoryOperation<HookCoverageInput, HookCoverageReport> = {
+const HOOK_COVERAGE_OPERATION: MemoryOperationDefinition<HookCoverageInput, HookCoverageReport> = {
   id: "memory.hook-coverage",
   title: "Memory hook coverage",
   description: "Read-only hook manifest and project config coverage report.",
@@ -2131,7 +2623,7 @@ const HOOK_COVERAGE_OPERATION: MemoryOperation<HookCoverageInput, HookCoverageRe
   execute: (ctx) => buildHookCoverageReport(ctx.rootDir ?? process.cwd()),
 };
 
-const HOOK_COVERAGE_VIEWER_OPERATION: MemoryOperation<
+const HOOK_COVERAGE_VIEWER_OPERATION: MemoryOperationDefinition<
   HookCoverageInput,
   HookCoverageViewerArtifact
 > = {
@@ -2155,7 +2647,7 @@ const HOOK_COVERAGE_VIEWER_OPERATION: MemoryOperation<
     buildHookCoverageViewerArtifact(await buildHookCoverageReport(ctx.rootDir ?? process.cwd())),
 };
 
-const COMMUNITIES_OPERATION: MemoryOperation<CommunitiesInput, CommunityAnalyticsReport> = {
+const COMMUNITIES_OPERATION: MemoryOperationDefinition<CommunitiesInput, CommunityAnalyticsReport> = {
   id: "memory.communities",
   title: "Memory communities",
   description: "Read-only Memory graph community analytics.",
@@ -2175,7 +2667,7 @@ const COMMUNITIES_OPERATION: MemoryOperation<CommunitiesInput, CommunityAnalytic
   execute: (ctx, input) => buildCommunityAnalytics(ctx.store, { cache: input.cache }),
 };
 
-const COMMUNITIES_VIEWER_OPERATION: MemoryOperation<
+const COMMUNITIES_VIEWER_OPERATION: MemoryOperationDefinition<
   CommunitiesInput,
   CommunitiesViewerArtifact
 > = {
@@ -2201,7 +2693,7 @@ const COMMUNITIES_VIEWER_OPERATION: MemoryOperation<
     ),
 };
 
-const COMMUNITY_DIGEST_OPERATION: MemoryOperation<
+const COMMUNITY_DIGEST_OPERATION: MemoryOperationDefinition<
   CommunityDigestInput,
   CommunityDigestReport
 > = {
@@ -2226,7 +2718,7 @@ const COMMUNITY_DIGEST_OPERATION: MemoryOperation<
     buildCommunityDigest(ctx.store, { cache: input.cache, providerConfig: ctx.providerConfig }),
 };
 
-const GLOBAL_SEARCH_OPERATION: MemoryOperation<
+const GLOBAL_SEARCH_OPERATION: MemoryOperationDefinition<
   GlobalSearchInput,
   MemoryGlobalSearchReport
 > = {
@@ -2255,7 +2747,7 @@ const GLOBAL_SEARCH_OPERATION: MemoryOperation<
     }),
 };
 
-const ONBOARDING_MAP_OPERATION: MemoryOperation<OnboardingMapInput, OnboardingMap> = {
+const ONBOARDING_MAP_OPERATION: MemoryOperationDefinition<OnboardingMapInput, OnboardingMap> = {
   id: "memory.onboarding-map",
   title: "Memory onboarding map",
   description: "Read-only map-first onboarding summary from the Memory graph.",
@@ -2279,7 +2771,7 @@ const ONBOARDING_MAP_OPERATION: MemoryOperation<OnboardingMapInput, OnboardingMa
     }),
 };
 
-const ONBOARDING_MAP_VIEWER_OPERATION: MemoryOperation<
+const ONBOARDING_MAP_VIEWER_OPERATION: MemoryOperationDefinition<
   OnboardingMapInput,
   OnboardingMapViewerArtifact
 > = {
@@ -2308,7 +2800,7 @@ const ONBOARDING_MAP_VIEWER_OPERATION: MemoryOperation<
     ),
 };
 
-const DASHBOARD_OPERATION: MemoryOperation<
+const DASHBOARD_OPERATION: MemoryOperationDefinition<
   DashboardInput,
   MemoryOperationalDashboardArtifact
 > = {
@@ -2336,7 +2828,7 @@ const DASHBOARD_OPERATION: MemoryOperation<
     ),
 };
 
-const WORKBENCH_OPERATION: MemoryOperation<WorkbenchInput, MemoryWorkbenchArtifact> = {
+const WORKBENCH_OPERATION: MemoryOperationDefinition<WorkbenchInput, MemoryWorkbenchArtifact> = {
   id: "memory.workbench",
   title: "Memory workbench",
   description: "Self-contained HTML workbench combining Memory dashboard, capabilities, and session timeline.",
@@ -2363,7 +2855,7 @@ const WORKBENCH_OPERATION: MemoryOperation<WorkbenchInput, MemoryWorkbenchArtifa
     ),
 };
 
-const READINESS_VIEWER_OPERATION: MemoryOperation<
+const READINESS_VIEWER_OPERATION: MemoryOperationDefinition<
   ReadinessInput,
   ReadinessViewerArtifact
 > = {
@@ -2394,7 +2886,7 @@ const READINESS_VIEWER_OPERATION: MemoryOperation<
     ),
 };
 
-const ROUTING_GUIDE_OPERATION: MemoryOperation<RoutingGuideInput, MemoryRoutingGuide> = {
+const ROUTING_GUIDE_OPERATION: MemoryOperationDefinition<RoutingGuideInput, MemoryRoutingGuide> = {
   id: "memory.routing-guide",
   title: "Memory routing guide",
   description: "Agent-ready Memory routing instructions for AGENTS.md or CLAUDE.md.",
@@ -2415,7 +2907,7 @@ const ROUTING_GUIDE_OPERATION: MemoryOperation<RoutingGuideInput, MemoryRoutingG
     buildMemoryRoutingGuide({ agent: input.agent as MemoryRoutingAgent | undefined }),
 };
 
-const ROUTING_GUIDE_VIEWER_OPERATION: MemoryOperation<
+const ROUTING_GUIDE_VIEWER_OPERATION: MemoryOperationDefinition<
   RoutingGuideInput,
   MemoryRoutingGuideViewerArtifact
 > = {
@@ -2441,7 +2933,7 @@ const ROUTING_GUIDE_VIEWER_OPERATION: MemoryOperation<
     ),
 };
 
-const AGENT_INTEGRATION_STATUS_OPERATION: MemoryOperation<
+const AGENT_INTEGRATION_STATUS_OPERATION: MemoryOperationDefinition<
   RoutingGuideInput,
   MemoryAgentIntegrationStatus
 > = {
@@ -2467,7 +2959,7 @@ const AGENT_INTEGRATION_STATUS_OPERATION: MemoryOperation<
     }),
 };
 
-const AGENT_INTEGRATION_STATUS_VIEWER_OPERATION: MemoryOperation<
+const AGENT_INTEGRATION_STATUS_VIEWER_OPERATION: MemoryOperationDefinition<
   RoutingGuideInput,
   MemoryAgentIntegrationStatusViewerArtifact
 > = {
@@ -2495,7 +2987,7 @@ const AGENT_INTEGRATION_STATUS_VIEWER_OPERATION: MemoryOperation<
     ),
 };
 
-const SESSION_TIMELINE_OPERATION: MemoryOperation<SessionTimelineInput, SessionTimeline> = {
+const SESSION_TIMELINE_OPERATION: MemoryOperationDefinition<SessionTimelineInput, SessionTimeline> = {
   id: "memory.session-timeline",
   title: "Memory session timeline",
   description: "Read-only replay-style timeline over Memory hook and skill telemetry events.",
@@ -2519,7 +3011,7 @@ const SESSION_TIMELINE_OPERATION: MemoryOperation<SessionTimelineInput, SessionT
     }),
 };
 
-const SESSION_TIMELINE_VIEWER_OPERATION: MemoryOperation<
+const SESSION_TIMELINE_VIEWER_OPERATION: MemoryOperationDefinition<
   SessionTimelineInput,
   SessionTimelineViewerArtifact
 > = {
@@ -2548,7 +3040,7 @@ const SESSION_TIMELINE_VIEWER_OPERATION: MemoryOperation<
     ),
 };
 
-const STRUCTURAL_IMPACT_OPERATION: MemoryOperation<
+const STRUCTURAL_IMPACT_OPERATION: MemoryOperationDefinition<
   StructuralImpactInput,
   StructuralImpact
 > = {
@@ -2575,7 +3067,7 @@ const STRUCTURAL_IMPACT_OPERATION: MemoryOperation<
     }),
 };
 
-const STRUCTURAL_IMPACT_VIEWER_OPERATION: MemoryOperation<
+const STRUCTURAL_IMPACT_VIEWER_OPERATION: MemoryOperationDefinition<
   StructuralImpactInput,
   StructuralImpactViewerArtifact
 > = {
@@ -2605,7 +3097,7 @@ const STRUCTURAL_IMPACT_VIEWER_OPERATION: MemoryOperation<
     ),
 };
 
-const EXTRACTION_STATUS_OPERATION: MemoryOperation<
+const EXTRACTION_STATUS_OPERATION: MemoryOperationDefinition<
   ExtractionStatusInput,
   MemoryExtractionStatus
 > = {
@@ -2629,7 +3121,7 @@ const EXTRACTION_STATUS_OPERATION: MemoryOperation<
     buildMemoryExtractionStatus(ctx.store, ctx.rootDir ?? process.cwd()),
 };
 
-const EXTRACTION_STATUS_VIEWER_OPERATION: MemoryOperation<
+const EXTRACTION_STATUS_VIEWER_OPERATION: MemoryOperationDefinition<
   ExtractionStatusInput,
   MemoryExtractionStatusViewerArtifact
 > = {
@@ -2655,7 +3147,7 @@ const EXTRACTION_STATUS_VIEWER_OPERATION: MemoryOperation<
     ),
 };
 
-const VECTOR_STATUS_OPERATION: MemoryOperation<VectorStatusInput, VectorStatusReport> = {
+const VECTOR_STATUS_OPERATION: MemoryOperationDefinition<VectorStatusInput, VectorStatusReport> = {
   id: "memory.vector-status",
   title: "Memory vector status",
   description: "Read-only vector projection readiness for hybrid recall.",
@@ -2675,7 +3167,7 @@ const VECTOR_STATUS_OPERATION: MemoryOperation<VectorStatusInput, VectorStatusRe
   execute: (ctx) => ctx.store.vectorStatus(),
 };
 
-const VECTOR_STATUS_VIEWER_OPERATION: MemoryOperation<
+const VECTOR_STATUS_VIEWER_OPERATION: MemoryOperationDefinition<
   VectorStatusInput,
   VectorStatusViewerArtifact
 > = {
@@ -2698,7 +3190,7 @@ const VECTOR_STATUS_VIEWER_OPERATION: MemoryOperation<
   execute: async (ctx) => buildVectorStatusViewerArtifact(await ctx.store.vectorStatus()),
 };
 
-const VECTOR_SEARCH_OPERATION: MemoryOperation<VectorSearchInput, VectorSearchReport> = {
+const VECTOR_SEARCH_OPERATION: MemoryOperationDefinition<VectorSearchInput, VectorSearchReport> = {
   id: "memory.vector-search",
   title: "Memory vector search",
   description: "Read-only diagnostic search over grounded vector candidates.",
@@ -2719,7 +3211,7 @@ const VECTOR_SEARCH_OPERATION: MemoryOperation<VectorSearchInput, VectorSearchRe
     buildVectorSearchReport(ctx.store, input.query, { limit: input.limit }),
 };
 
-const REASONING_REPLAY_OPERATION: MemoryOperation<
+const REASONING_REPLAY_OPERATION: MemoryOperationDefinition<
   ReasoningReplayInput,
   ReasoningReplayReport
 > = {
@@ -2744,7 +3236,7 @@ const REASONING_REPLAY_OPERATION: MemoryOperation<
     buildReasoningReplay(ctx.store, input.task, { limit: input.limit }),
 };
 
-const WHATIF_OPERATION: MemoryOperation<WhatifInput, WhatifReport> = {
+const WHATIF_OPERATION: MemoryOperationDefinition<WhatifInput, WhatifReport> = {
   id: "memory.whatif",
   title: "Memory what-if (pre-action blast radius)",
   description:
@@ -2766,7 +3258,7 @@ const WHATIF_OPERATION: MemoryOperation<WhatifInput, WhatifReport> = {
     buildWhatifReport(ctx.store, input.changes, { limit: input.limit }),
 };
 
-const FEDERATION_OPERATION: MemoryOperation<FederationInput, FederationReport> = {
+const FEDERATION_OPERATION: MemoryOperationDefinition<FederationInput, FederationReport> = {
   id: "memory.federation",
   title: "Memory federation",
   description:
@@ -2874,13 +3366,18 @@ const READ_ONLY_OPERATIONS = createReadOnlyMemoryOperationRegistry([
 ]);
 
 export function createReadOnlyMemoryOperationRegistry(
-  operations: readonly MemoryOperation<any, any>[],
+  operations: readonly MemoryOperationDefinition<any, any>[],
+  facetsByOperationId: Readonly<Record<string, MemoryOperationFacets>> = MEMORY_OPERATION_FACETS,
 ): ReadOnlyMemoryOperationRegistry {
   const byId = new Map<string, ReadOnlyMemoryOperation>();
   for (const operation of operations) {
-    assertReadOnlyOperation(operation);
+    const operationWithFacets = attachMemoryOperationFacets(
+      operation,
+      facetsByOperationId[operation.id],
+    );
+    assertReadOnlyOperation(operationWithFacets);
     if (byId.has(operation.id)) throw new Error(`duplicate Memory operation: ${operation.id}`);
-    byId.set(operation.id, operation);
+    byId.set(operation.id, operationWithFacets);
   }
 
   return {
@@ -2927,8 +3424,206 @@ function assertReadOnlyOperation(
   }
 }
 
+function attachMemoryOperationFacets<Input, Output>(
+  operation: MemoryOperationDefinition<Input, Output>,
+  facets: MemoryOperationFacets | undefined,
+): MemoryOperation<Input, Output> {
+  if (!facets) throw new Error(`Memory operation ${operation.id} is missing facets`);
+  assertMemoryOperationFacets(operation.id, facets);
+  return {
+    ...operation,
+    inputBinding: facets.inputBinding,
+    outputKind: facets.outputKind,
+  };
+}
+
+function assertMemoryOperationFacets(
+  operationId: string,
+  facets: MemoryOperationFacets,
+): void {
+  if (!facets || typeof facets !== "object") {
+    throw new Error(`Memory operation ${operationId} has malformed facets`);
+  }
+  assertInputBinding(operationId, facets.inputBinding);
+  assertOutputKind(operationId, facets.outputKind);
+}
+
+function assertInputBinding(operationId: string, inputBinding: MemoryOperationInputBinding): void {
+  if (!inputBinding || !Array.isArray(inputBinding.fields)) {
+    throw new Error(`Memory operation ${operationId} has malformed input binding`);
+  }
+  const seenFields = new Set<string>();
+  for (const field of inputBinding.fields) {
+    if (!field || typeof field.field !== "string" || field.field.length === 0) {
+      throw new Error(`Memory operation ${operationId} has malformed input binding field`);
+    }
+    if (seenFields.has(field.field)) {
+      throw new Error(
+        `Memory operation ${operationId} has duplicate input binding field ${field.field}`,
+      );
+    }
+    seenFields.add(field.field);
+    if (!Array.isArray(field.sources) || field.sources.length === 0) {
+      throw new Error(
+        `Memory operation ${operationId} input binding field ${field.field} has no sources`,
+      );
+    }
+    for (const source of field.sources) {
+      if (!["positional", "flag", "query"].includes(source)) {
+        throw new Error(
+          `Memory operation ${operationId} input binding field ${field.field} has invalid source`,
+        );
+      }
+    }
+    if (!["string", "number", "boolean", "string-array", "object-array", "path"].includes(field.type)) {
+      throw new Error(
+        `Memory operation ${operationId} input binding field ${field.field} has invalid type`,
+      );
+    }
+    if (field.position != null && (!Number.isInteger(field.position) || field.position < 0)) {
+      throw new Error(
+        `Memory operation ${operationId} input binding field ${field.field} has invalid position`,
+      );
+    }
+  }
+  if (inputBinding.customBind) {
+    assertCustomBind(operationId, "input binding", inputBinding.customBind);
+  }
+}
+
+function assertOutputKind(operationId: string, outputKind: MemoryOperationOutputKind): void {
+  if (!outputKind || typeof outputKind !== "object") {
+    throw new Error(`Memory operation ${operationId} has malformed output kind`);
+  }
+  if (outputKind.kind === "report") {
+    if (!["json", "markdown"].includes(outputKind.format)) {
+      throw new Error(`Memory operation ${operationId} has malformed report output kind`);
+    }
+    return;
+  }
+  if (outputKind.kind !== "viewer" || outputKind.artifact !== "self-contained-html") {
+    throw new Error(`Memory operation ${operationId} has malformed output kind`);
+  }
+  if (!outputKind.fileSink) return;
+  if (
+    outputKind.fileSink.field.length === 0 ||
+    outputKind.fileSink.type !== "path" ||
+    !Array.isArray(outputKind.fileSink.sources) ||
+    outputKind.fileSink.sources.length === 0
+  ) {
+    throw new Error(`Memory operation ${operationId} has malformed viewer file sink`);
+  }
+  for (const source of outputKind.fileSink.sources) {
+    if (!["flag", "query"].includes(source)) {
+      throw new Error(`Memory operation ${operationId} has malformed viewer file sink source`);
+    }
+  }
+  if (outputKind.fileSink.customBind) {
+    assertCustomBind(operationId, "viewer file sink", outputKind.fileSink.customBind);
+  }
+}
+
+function assertCustomBind(
+  operationId: string,
+  label: string,
+  customBind: { id: string; description: string; bind: (...args: any[]) => unknown },
+): void {
+  if (
+    typeof customBind.id !== "string" ||
+    customBind.id.length === 0 ||
+    typeof customBind.description !== "string" ||
+    customBind.description.length === 0 ||
+    typeof customBind.bind !== "function"
+  ) {
+    throw new Error(`Memory operation ${operationId} has malformed custom ${label}`);
+  }
+}
+
 function objectOutputSchema<T>(): z.ZodType<T> {
   return z.custom<T>((value) => value !== null && typeof value === "object");
+}
+
+function operationFacets(
+  ids: readonly string[],
+  inputBinding: MemoryOperationInputBinding,
+  outputKind?: MemoryOperationOutputKind,
+  outputKindsById: Readonly<Record<string, MemoryOperationOutputKind>> = {},
+): Record<string, MemoryOperationFacets> {
+  const facets: Record<string, MemoryOperationFacets> = {};
+  for (const id of ids) {
+    const resolvedOutputKind = outputKindsById[id] ?? outputKind;
+    if (!resolvedOutputKind) {
+      throw new Error(`Memory operation ${id} facet declaration is missing output kind`);
+    }
+    facets[id] = { inputBinding, outputKind: resolvedOutputKind };
+  }
+  return facets;
+}
+
+function inputBinding(
+  fields: readonly MemoryOperationInputFieldBinding[],
+  customBind?: MemoryOperationCustomInputBind,
+): MemoryOperationInputBinding {
+  return customBind ? { fields, customBind } : { fields };
+}
+
+function flagField(
+  field: string,
+  type: MemoryOperationInputType,
+  options: Pick<MemoryOperationInputFieldBinding, "required"> = {},
+): MemoryOperationInputFieldBinding {
+  return {
+    field,
+    sources: ["flag", "query"],
+    type,
+    ...options,
+  };
+}
+
+function positionalField(
+  field: string,
+  type: MemoryOperationInputType,
+  options: Pick<
+    MemoryOperationInputFieldBinding,
+    "position" | "required" | "variadic"
+  > = {},
+): MemoryOperationInputFieldBinding {
+  return {
+    field,
+    sources: ["positional", "query"],
+    type,
+    position: options.position ?? 0,
+    ...options,
+  };
+}
+
+function joinedPositionalInput(
+  field: string,
+  fields: readonly MemoryOperationInputFieldBinding[] = [],
+  options: Pick<MemoryOperationInputFieldBinding, "required"> = { required: true },
+): MemoryOperationInputBinding {
+  return inputBinding(
+    [positionalField(field, "string", { required: options.required, variadic: true }), ...fields],
+    {
+      id: `joined-positional-${field}`,
+      description: `Bind ${field} from all positional tokens joined by spaces when the transport presents split argv-style input.`,
+      bind: (input) => {
+        const value = joinedPositionalValue(input);
+        return value ? { [field]: value } : {};
+      },
+    },
+  );
+}
+
+function joinedPositionalValue(input: MemoryOperationTransportInput): string {
+  return input.positional.join(" ").trim();
+}
+
+function firstString(...values: readonly unknown[]): string | undefined {
+  for (const value of values) {
+    if (typeof value === "string" && value.length > 0) return value;
+  }
+  return undefined;
 }
 
 function scopeFromInput(input: {
