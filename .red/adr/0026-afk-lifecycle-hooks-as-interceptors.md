@@ -1,5 +1,9 @@
 # AFK exposes lifecycle hooks as shell interceptors
 
+## Status
+
+accepted.
+
 `/afk` already runs project-specific shell scripts at a few baked-in points
 (e.g. the cargo/gradle isolation defaults under `afk.hooks.defaults` in
 `.red/config.yaml`). Those are hardcoded behaviours owned by the AFK code,

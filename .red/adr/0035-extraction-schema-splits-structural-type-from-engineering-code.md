@@ -1,5 +1,9 @@
 # Extraction schema splits a closed structural type from an open engineering code
 
+## Status
+
+accepted.
+
 ## Context
 
 Studying `neo4j-labs/llm-graph-builder` surfaced schema-guided extraction: a

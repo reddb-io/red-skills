@@ -1,5 +1,9 @@
 # Memory tier maps directly to VERSIONED collection policy
 
+## Status
+
+accepted.
+
 ## Context
 
 PRD #103 chose RedDB's native git-for-data layer as the substrate for the

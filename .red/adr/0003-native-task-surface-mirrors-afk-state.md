@@ -1,5 +1,9 @@
 # Native task surface mirrors AFK worker state
 
+## Status
+
+accepted.
+
 `/afk` parallelises as independent OS processes (`afk.sh` launched with `nohup`,
 optionally fanned out by `supervisor.sh`), coordinated through GitHub labels and
 filesystem locks under `.red/tmp/`. Each (worker, issue) iteration writes an

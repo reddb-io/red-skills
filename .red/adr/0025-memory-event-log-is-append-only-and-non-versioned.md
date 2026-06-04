@@ -1,5 +1,9 @@
 # Memory event log is append-only and non-versioned
 
+## Status
+
+accepted.
+
 ## Context
 
 The Memory moat foundation includes operational telemetry so Memory can reason

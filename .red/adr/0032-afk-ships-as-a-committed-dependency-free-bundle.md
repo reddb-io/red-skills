@@ -87,7 +87,7 @@ lives outside the plugin tree.**
 
 ## Status
 
-**Superseded by ADR 0038.** This ADR's load-bearing premise — that the dev bundle
+**superseded by ADR 0038.** This ADR's load-bearing premise — that the dev bundle
 is "tiny (single-digit KB to low tens of KB)" — stopped holding once the shell→TS
 port completed: the committed `bin/afk.mjs` grew to ~2.6 MB and, rebuilt per
 release, became the dominant source of git-history bloat. ADR 0038 flips the dev

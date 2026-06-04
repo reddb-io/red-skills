@@ -1,5 +1,9 @@
 # Memory moat foundation before surface expansion
 
+## Status
+
+accepted.
+
 ## Context
 
 The Memory plugin competes with several adjacent products:

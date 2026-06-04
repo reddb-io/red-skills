@@ -1,5 +1,9 @@
 # Memory runtime ships as an esbuild bundle + `red` binary, fetched post-install by a dependency-free bootstrap
 
+## Status
+
+accepted; legacy memory/brain release-asset output partially superseded by ADR 0052.
+
 ## Context
 
 The Memory plugin's Claude lifecycle hooks (`SessionStart`, `PostToolUse` on

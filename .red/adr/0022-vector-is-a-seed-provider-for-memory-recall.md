@@ -1,5 +1,9 @@
 # Vector is a seed provider for Memory recall
 
+## Status
+
+accepted.
+
 ## Context
 
 The Memory moat foundation includes vector/hybrid recall so the Memory plugin

@@ -1,5 +1,9 @@
 # Dev owns the codebase understanding surface; memory owns the graph
 
+## Status
+
+accepted.
+
 We want RedSkills to learn from external codebase-understanding systems without
 copying their naming or creating a competing graph store. The existing
 **Memory plugin** already has **Graph mode**, graph traversal/read verbs,

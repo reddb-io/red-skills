@@ -1,5 +1,9 @@
 # Ephemeral-tier expiry is enforced client-side, not by engine TTL
 
+## Status
+
+accepted.
+
 Issue #68 (PRD #66) adds a **Memory tier** to graph nodes
 (`ephemeral | durable | reasoning`) so transient session memory expires
 automatically while durable knowledge never auto-deletes — resolving the

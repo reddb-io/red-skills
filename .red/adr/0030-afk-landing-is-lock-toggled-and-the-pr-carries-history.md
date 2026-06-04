@@ -1,11 +1,15 @@
 # AFK landing is lock-toggled, and the PR carries the history
 
+## Status
+
+accepted.
+
 Design-stage decision from a `/start` grilling on the worker-directory
 restructure (motivated by #243).
 
-**Status: implemented** — PRD #244 (issues #253–#258), shipped in the native
-TS runtime (the `afk.sh` line references below are historical; the bash is
-gone, commit 3d92d56). Before this, `/afk` merged a successful iteration
+Implemented by PRD #244 (issues #253–#258), shipped in the native TS runtime
+(the `afk.sh` line references below are historical; the bash is gone, commit
+3d92d56). Before this, `/afk` merged a successful iteration
 directly into the target via `do_merge`, opened no PR, and `rm -rf`'d the entire
 iteration directory on success — so successful runs left **zero** local trail,
 while failures were preserved whole (fat worktree included). We wanted to

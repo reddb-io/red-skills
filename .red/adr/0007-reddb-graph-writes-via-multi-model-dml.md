@@ -1,5 +1,9 @@
 # RedDB graph writes go through multi-model DML, not table inserts
 
+## Status
+
+accepted.
+
 The `memory` plugin's graph store (`MemoryStore`, ported from red-memory's
 `packages/core`) writes typed nodes and edges to embedded RedDB graph
 collections. The store was first written with table-collection idioms

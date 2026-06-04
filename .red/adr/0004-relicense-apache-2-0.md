@@ -1,5 +1,9 @@
 # Relicense red-skills to Apache-2.0 with a NOTICE for upstream MIT
 
+## Status
+
+accepted.
+
 red-skills began as an adaptation of [`mattpocock/skills`](https://github.com/mattpocock/skills)
 (MIT) and carried `LICENSE` = MIT with Matt Pocock's copyright, plus a `CLAUDE.md`
 rule forbidding any change to that attribution. We are now absorbing the

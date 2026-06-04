@@ -1,7 +1,11 @@
 # RedSkills teaches and enforces an interactive development loop
 
-Design-stage decision from a `/start` grilling. **Status: proposed** — the
-implementation is sliced in a follow-up PRD.
+## Status
+
+accepted.
+
+Design-stage decision from a `/start` grilling. The implementation is sliced in
+a follow-up PRD.
 
 `/setup-red-skills` (Sections A–G) wires a consumer repo's *catalogue and
 config* — tracker, triage labels, domain docs, statusline, `.red/config.yaml` —

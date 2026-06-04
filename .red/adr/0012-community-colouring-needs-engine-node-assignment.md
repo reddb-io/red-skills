@@ -1,5 +1,9 @@
 # Community-coloured graph needs a per-node assignment from the engine
 
+## Status
+
+accepted.
+
 `/memory:graph --communities` (#70, PRD #66) must colour each node in the
 exported `graph.html` by the community it belongs to. The competitive point is
 that RedDB does this with a **native** Louvain — no separate graph-algorithms

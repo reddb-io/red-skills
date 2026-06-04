@@ -1,11 +1,15 @@
 # Branch lock value drives AFK base and merge; enforcement stays agent-only
 
+## Status
+
+accepted.
+
 Original design-stage decision from a `/start` grilling on the worker-directory
-restructure. **Status: implemented** — PRD #244 (issue #253), shipped in the
-native TS runtime. ADR 0006 made the Branch lock agent-only and
-exempted `/afk` worktrees from it; ADR 0008 made `/afk` base and merge target
-the **Pinned branch** (default `main`), declared *independent* of the Branch
-lock (`contexts/dev/CONTEXT.md:100`, `:112`). The user now needs everything —
+restructure. Implemented by PRD #244 (issue #253), shipped in the native TS
+runtime. ADR 0006 made the Branch lock agent-only and exempted `/afk` worktrees
+from it; ADR 0008 made `/afk` base and merge target the **Pinned branch**
+(default `main`), declared *independent* of the Branch lock
+(`contexts/dev/CONTEXT.md:100`, `:112`). The user now needs everything —
 interactive *and* AFK — to ground on the single branch they are working on
 locally, as both origin and destination.
 

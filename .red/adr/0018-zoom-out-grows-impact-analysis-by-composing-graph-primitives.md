@@ -1,5 +1,9 @@
 # Zoom-out grows impact analysis by composing graph primitives
 
+## Status
+
+accepted.
+
 Graphify and Understand Anything make codebase maps useful by answering
 change-impact and path questions over a project graph. RedSkills already has a
 **Codebase understanding surface** in `dev` and graph primitives in the Memory

@@ -1,6 +1,8 @@
 # A single global `.red/` shared by all plugins
 
-## Status: superseded by ADR 0021
+## Status
+
+superseded by ADR 0021.
 
 Related: [ADR 0021](0021-multi-context-plugin-glossaries.md)
 
