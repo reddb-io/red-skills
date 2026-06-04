@@ -203,4 +203,51 @@ describe("wiring integration — real buildProcessDeps over a fake exec", () => 
     expect(typeof deps.remoteGit).toBe("function");
     expect(typeof deps.mergeExec).toBe("function");
   });
+
+  it("runs the Codex issue classifier on the validate gpt tier with reasoning effort", async () => {
+    const root = mkdtempSync(join(tmpdir(), "afk-wiring-codex-classifier-"));
+    const ctx: RepoContext = { root, repo: "acme/widgets", remote: "origin" };
+    const { exec, trace } = makeFakeExec(root);
+    const feedback = makeFeedbackWorktree(root, join(root, ".red", "tmp", "feedback"));
+    const current = { attemptDir: join(root, ".red", "tmp", "workers", "w1", "42-a1") };
+
+    const deps = buildProcessDeps(ctx, "gpt-5.5", "none", feedback, current, false, "codex", exec);
+
+    await expect(
+      deps.classifyIssue?.({
+        issue: 42,
+        title: "Implement small formatter fix",
+        summary: "Implement small formatter fix",
+        labels: ["ready-for-agent"],
+        referencedPaths: ["src/apps/dev/src/core/config.ts"],
+        extensions: ["ts"],
+        scopePaths: ["src/apps"],
+        referencedFileCount: 1,
+        diffSize: "small",
+        bodyChars: 120,
+        hasTests: true,
+        riskKeywords: [],
+      }),
+    ).resolves.toBe("simple");
+
+    expect(trace).toEqual([
+      {
+        cmd: "codex",
+        args: [
+          "exec",
+          "--model",
+          "gpt-5.5",
+          "-c",
+          "model_reasoning_effort=low",
+          "-C",
+          root,
+          "--sandbox",
+          "read-only",
+          "--skip-git-repo-check",
+          expect.stringContaining("Return only JSON"),
+        ],
+        cwd: root,
+      },
+    ]);
+  });
 });
