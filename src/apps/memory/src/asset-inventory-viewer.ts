@@ -1,4 +1,5 @@
 import type { MemoryAssetInventoryReport } from "./asset-inventory.js";
+import { escapeHtmlNoSingleQuote as escapeHtml } from "./viewer-utils.js";
 
 export interface MemoryAssetInventoryViewerArtifact {
   contract: {
@@ -174,12 +175,4 @@ function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
 }
