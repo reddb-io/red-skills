@@ -33,11 +33,21 @@ describe("claudeSpawnArgs / codexSpawnArgs (runner-*.md argv parity)", () => {
     ]);
   });
 
-  it("builds the codex exec --json argv with -C worktree and last-message sink", () => {
-    const inv = codexSpawnArgs({ prompt: "PROMPT", worktree: "/wt", lastMessagePath: "/tmp/last" });
+  it("builds the codex exec --json argv with model, reasoning effort, worktree, and last-message sink", () => {
+    const inv = codexSpawnArgs({
+      prompt: "PROMPT",
+      worktree: "/wt",
+      lastMessagePath: "/tmp/last",
+      model: "gpt-5.5",
+      effort: "high",
+    });
     expect(inv.command).toBe("codex");
     expect(inv.args).toEqual([
       "exec",
+      "--model",
+      "gpt-5.5",
+      "-c",
+      "model_reasoning_effort=high",
       "--json",
       "-C",
       "/wt",

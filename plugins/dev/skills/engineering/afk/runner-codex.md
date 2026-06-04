@@ -6,6 +6,8 @@ How `/afk` invokes Codex as the inner agent for one issue.
 
 ```bash
 codex exec \
+  --model "$model" \
+  -c "model_reasoning_effort=$effort" \
   --json \
   -C "$WORKTREE" \
   --sandbox danger-full-access \
@@ -15,7 +17,12 @@ codex exec \
   </dev/null
 ```
 
-`$full_prompt` matches the Claude runner — handoff file path + recent commits + AGENT-PROMPT.md body. `$last_msg_file` is a temp file the orchestrator reads after the process exits.
+`$model` and `$effort` come from the resolved `afk.models.codex.<tier>` entry.
+Codex receives effort through its `model_reasoning_effort` config override
+because the CLI exposes model as a direct flag and reasoning effort as config.
+`$full_prompt` matches the Claude runner — handoff file path + recent commits +
+AGENT-PROMPT.md body. `$last_msg_file` is a temp file the orchestrator reads
+after the process exits.
 
 The bypass flags are required because the inner agent must run unattended; the policy enforcement comes from [`SAFETY.md`](SAFETY.md), not from Codex's interactive approvals.
 

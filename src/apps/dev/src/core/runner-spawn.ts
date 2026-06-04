@@ -24,6 +24,10 @@ export interface SpawnArgsInput {
   prompt: string;
   /** Absolute worktree path the inner agent runs in. */
   worktree: string;
+  /** Optional provider model id resolved from the AFK tier table. */
+  model?: string;
+  /** Optional provider reasoning effort resolved from the AFK tier table. */
+  effort?: "low" | "medium" | "high" | "xhigh" | "max";
 }
 
 /** A spawn invocation: the binary plus its argv (no shell). */
@@ -60,16 +64,22 @@ export function claudeSpawnArgs(input: SpawnArgsInput): SpawnInvocation {
 
 /**
  * Build the codex argv, mirroring run_codex in afk.sh:
- *   codex exec --json -C "$worktree" --sandbox danger-full-access
+ *   codex exec --model "$model" -c model_reasoning_effort="$effort"
+ *        --json -C "$worktree" --sandbox danger-full-access
  *        --dangerously-bypass-approvals-and-sandbox
  *        --output-last-message "$last" "$prompt"
  * The `--output-last-message` sink path is passed in via `lastMessagePath`.
  */
 export function codexSpawnArgs(input: SpawnArgsInput & { lastMessagePath: string }): SpawnInvocation {
+  const tierArgs = [
+    ...(input.model ? ["--model", input.model] : []),
+    ...(input.effort ? ["-c", `model_reasoning_effort=${input.effort}`] : []),
+  ];
   return {
     command: "codex",
     args: [
       "exec",
+      ...tierArgs,
       "--json",
       "-C",
       input.worktree,
