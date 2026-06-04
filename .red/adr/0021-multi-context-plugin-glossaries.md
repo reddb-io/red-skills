@@ -1,11 +1,11 @@
 # Multi-context plugin glossaries
 
 Status: accepted
-Supersedes: [ADR 0005](0005-single-global-red-dir.md)
+Supersedes: [ADR 0046](0046-single-global-red-dir.md)
 
 ## Context
 
-ADR 0005 deliberately kept one root `.red/CONTEXT.md` while `memory` was being
+ADR 0046 deliberately kept one root `.red/CONTEXT.md` while `memory` was being
 absorbed into the RedSkills marketplace. That kept the initial merge simple, but
 the glossary has since become a coupling point between two product contexts:
 `dev` owns engineering workflow language, while `memory` owns persistent memory,
@@ -53,5 +53,5 @@ Use a multi-context glossary layout:
 
 - New terms must be added to the owning context, not the compatibility pointer.
 - Cross-plugin relationships belong in `.red/CONTEXT-MAP.md`.
-- ADR 0005 remains useful history but is no longer the active context-layout
+- ADR 0046 remains useful history but is no longer the active context-layout
   decision.
