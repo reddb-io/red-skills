@@ -743,6 +743,24 @@ baseline and is reported as unmeasured by the claim guard.
 | Recall latency on agent-scale graph | Repo gate targets <100 ms p50 on a ~1k-node graph. | graphify-out fixture: 551 nodes / 1329 edges / 34 communities; path p50 841 ms. | Not asserted here; apples-to-apples latency requires a live Neo4j baseline. | Advantage over checked graphify-out path latency only; no latency claim against agent-memory in this harness. |
 | NER extraction quality | Deterministic structural/entity extractors plus optional LLM provider for inferred facts. | 491 inferred fixture edges; strong static-code graph output. | spaCy / GLiNER / GLiREL / LLM extraction pipeline. | Conceded gap: Python ML stack is ahead for turnkey NER. |
 
+## Structured eval bench
+
+`benchmark-memory bench eval` runs a checked-in deterministic QA corpus through
+RedDB governed recall, markdown embedding-RAG, Neo4j term traversal, and a
+Graphify-style adapter. The default corpus
+(`src/apps/memory/bench/eval/structured/`) reports aggregate scores plus
+per-category rows for `single-hop`, `multi-hop`, and `temporal-as-of`.
+
+Temporal questions carry `as_of` timestamps over superseded decisions. RedDB
+filters by valid time before ranking; the plain Neo4j fixture intentionally has
+no valid-time filter, so the temporal category exposes the as-of reasoning gap.
+
+```bash
+benchmark-memory bench eval \
+  --records plugins/memory/bench/results/<date>-eval.jsonl \
+  --report plugins/memory/bench/results/<date>-eval.md
+```
+
 ## Recall-quality bench (vs AMS)
 
 `memory bench recall` runs a checked-in labeled operational corpus through our

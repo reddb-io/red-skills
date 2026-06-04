@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { existsSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { readBuildInfo, renderVersion } from "@reddb-io/build-info";
@@ -188,8 +189,8 @@ async function runBench(args: ParsedArgs): Promise<number> {
 }
 
 async function runBenchEvalCmd(args: ParsedArgs): Promise<number> {
-  const rootDir = resolve(String(process.cwd()));
-  const corpusDir = stringFlag(args, "corpus") ?? join(rootDir, "src/apps/memory/bench/eval/single-hop");
+  const rootDir = resolveRepoRoot(String(process.cwd()));
+  const corpusDir = stringFlag(args, "corpus") ?? join(rootDir, "src/apps/memory/bench/eval/structured");
   const substrate = stringFlag(args, "substrate") ?? "reddb";
   const packRaw = stringFlag(args, "pack");
   let packSize: number | undefined;
@@ -209,14 +210,14 @@ async function runBenchEvalCmd(args: ParsedArgs): Promise<number> {
     process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
   } else {
     process.stdout.write(
-      `benchmark-memory bench eval: substrate=${report.substrate} category=${report.category} questions=${report.question_count} exact_match=${report.aggregate.exact_match.toFixed(3)} f1=${report.aggregate.f1.toFixed(3)}\n`,
+      `benchmark-memory bench eval: substrate=${report.substrate} category=${report.category} categories=${report.categories.length} questions=${report.question_count} exact_match=${report.aggregate.exact_match.toFixed(3)} f1=${report.aggregate.f1.toFixed(3)}\n`,
     );
   }
   return 0;
 }
 
 async function runBenchRecallCmd(args: ParsedArgs): Promise<number> {
-  const rootDir = resolve(String(process.cwd()));
+  const rootDir = resolveRepoRoot(String(process.cwd()));
   const corpusDir = stringFlag(args, "corpus") ?? join(rootDir, "src/apps/memory/bench/recall");
   const kRaw = stringFlag(args, "k");
   const kValues = kRaw
@@ -233,7 +234,7 @@ async function runBenchRecallCmd(args: ParsedArgs): Promise<number> {
 }
 
 async function runBenchLatencyCmd(args: ParsedArgs): Promise<number> {
-  const rootDir = resolve(String(process.cwd()));
+  const rootDir = resolveRepoRoot(String(process.cwd()));
   const workloadDir = stringFlag(args, "workload") ?? join(rootDir, "src/apps/memory/bench/latency");
   const fileOverrides = await loadWorkloadOverrides(workloadDir);
   const cliOverrides: Partial<WorkloadConfig> = {};
@@ -327,6 +328,16 @@ function setPositiveInteger(
 function stringFlag(args: ParsedArgs, name: string): string | undefined {
   const value = args.flags[name];
   return typeof value === "string" ? value : undefined;
+}
+
+function resolveRepoRoot(cwd: string): string {
+  let cursor = resolve(cwd);
+  while (true) {
+    if (existsSync(join(cursor, "src/apps/memory/bench"))) return cursor;
+    const parent = dirname(cursor);
+    if (parent === cursor) return resolve(cwd);
+    cursor = parent;
+  }
 }
 
 function analyticsUriFlag(args: ParsedArgs): string | undefined {

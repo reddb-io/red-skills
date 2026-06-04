@@ -68,7 +68,7 @@ export async function writeBenchEvalAnalytics(
           run_id: runId,
           bench: "eval",
           substrate: summary.substrate,
-          category: report.category,
+          category: record.category,
           op: null,
           strategy: null,
           record_id: record.question_id,
@@ -82,41 +82,43 @@ export async function writeBenchEvalAnalytics(
       }
     }
 
-    const tokenSamples = summary.records.map((record) => record.tokens.total);
-    for (const bucket of histogramFromSamples(tokenSamples, TOKEN_BUCKETS)) {
-      await insertHistogram(opts.db, {
-        ts,
-        run_id: runId,
-        bench: "eval",
-        substrate: summary.substrate,
-        category: report.category,
-        op: null,
-        strategy: null,
-        metric: "tokens_total",
-        bucket_le: bucket.le,
-        count: bucket.count,
-        sample_count: tokenSamples.length,
-        unit: "tokens",
-      });
-      insertedHistograms += 1;
-    }
+    for (const [category, records] of recordsByCategory(summary.records)) {
+      const tokenSamples = records.map((record) => record.tokens.total);
+      for (const bucket of histogramFromSamples(tokenSamples, TOKEN_BUCKETS)) {
+        await insertHistogram(opts.db, {
+          ts,
+          run_id: runId,
+          bench: "eval",
+          substrate: summary.substrate,
+          category,
+          op: null,
+          strategy: null,
+          metric: "tokens_total",
+          bucket_le: bucket.le,
+          count: bucket.count,
+          sample_count: tokenSamples.length,
+          unit: "tokens",
+        });
+        insertedHistograms += 1;
+      }
 
-    for (const p of [0.5, 0.95]) {
-      await insertPercentile(opts.db, {
-        ts,
-        run_id: runId,
-        bench: "eval",
-        substrate: summary.substrate,
-        category: report.category,
-        op: null,
-        strategy: null,
-        metric: "tokens_total",
-        quantile: p,
-        value: percentile(tokenSamples, p),
-        sample_count: tokenSamples.length,
-        unit: "tokens",
-      });
-      insertedPercentiles += 1;
+      for (const p of [0.5, 0.95]) {
+        await insertPercentile(opts.db, {
+          ts,
+          run_id: runId,
+          bench: "eval",
+          substrate: summary.substrate,
+          category,
+          op: null,
+          strategy: null,
+          metric: "tokens_total",
+          quantile: p,
+          value: percentile(tokenSamples, p),
+          sample_count: tokenSamples.length,
+          unit: "tokens",
+        });
+        insertedPercentiles += 1;
+      }
     }
   }
 
@@ -519,6 +521,16 @@ function evalRecordMetrics(record: QuestionRecord): Array<{ name: string; value:
     { name: "tokens_total", value: record.tokens.total, unit: "tokens" },
     { name: "quality_per_1k_tokens", value: record.quality_per_1k_tokens, unit: "score_per_1k_tokens" },
   ];
+}
+
+function recordsByCategory(records: QuestionRecord[]): Map<string, QuestionRecord[]> {
+  const out = new Map<string, QuestionRecord[]>();
+  for (const record of records) {
+    const bucket = out.get(record.category) ?? [];
+    bucket.push(record);
+    out.set(record.category, bucket);
+  }
+  return out;
 }
 
 function latencyStatsMetrics(stats: PercentileStats): Array<{ name: string; value: number }> {

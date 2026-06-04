@@ -1,0 +1,154 @@
+[
+  {
+    "id": "doc-001",
+    "structural_type": "decision",
+    "engineering_code": "decision",
+    "tags": ["package-manager", "tooling"],
+    "text": "Decision: the team standardised on pnpm as the package manager for every workspace in the monorepo. npm and yarn lockfiles are forbidden and must be deleted on sight.",
+    "fact": "pnpm"
+  },
+  {
+    "id": "doc-002",
+    "structural_type": "decision",
+    "engineering_code": "decision",
+    "tags": ["auth", "session", "cookies"],
+    "text": "Decision: session tokens are stored only in HttpOnly, Secure, SameSite=Lax cookies. Storing a session token in localStorage is a security defect and fails review.",
+    "fact": "HttpOnly Secure SameSite=Lax cookies"
+  },
+  {
+    "id": "doc-003",
+    "structural_type": "validation",
+    "engineering_code": "gotcha",
+    "tags": ["pnpm", "hoisting", "dependencies"],
+    "text": "Gotcha: pnpm does not hoist transitive dependencies into the root node_modules by default. Code that imported a package it never declared must add it as a direct dependency.",
+    "fact": "pnpm does not hoist transitive dependencies by default"
+  },
+  {
+    "id": "doc-004",
+    "structural_type": "decision",
+    "engineering_code": "decision",
+    "tags": ["logging", "observability"],
+    "text": "Decision: all backend services log through the shared @tetis-lair/tetis-logger library. It pretty-prints in development and emits structured JSON in production for log aggregation.",
+    "fact": "@tetis-lair/tetis-logger"
+  },
+  {
+    "id": "doc-005",
+    "structural_type": "validation",
+    "engineering_code": "root-cause",
+    "tags": ["ci", "flaky", "timeout"],
+    "text": "Root cause: the nightly CI job flaked because the integration suite bound a fixed port and a leftover process held it. Fix: allocate an ephemeral port per run and wait for readiness before driving the server.",
+    "fact": "a leftover process holding a fixed port"
+  },
+  {
+    "id": "doc-006",
+    "structural_type": "decision",
+    "engineering_code": "decision",
+    "tags": ["database", "migrations"],
+    "text": "Decision: database migrations are forward-only. Rolling back is done by writing a new forward migration, never by editing or reverting an applied one.",
+    "fact": "forward-only"
+  },
+  {
+    "id": "doc-007",
+    "structural_type": "concept",
+    "engineering_code": "constraint",
+    "tags": ["api", "versioning"],
+    "text": "Constraint: the public HTTP API is versioned in the URL path under /v1. Breaking changes require a new version prefix; the old prefix stays live for two release cycles.",
+    "fact": "in the URL path under /v1"
+  },
+  {
+    "id": "doc-008",
+    "structural_type": "validation",
+    "engineering_code": "gotcha",
+    "tags": ["timezone", "dates"],
+    "text": "Gotcha: all timestamps are stored and compared in UTC. A bug where reports were off by a day traced to a server that formatted dates in local time before persisting them.",
+    "fact": "UTC"
+  },
+  {
+    "id": "doc-009",
+    "structural_type": "decision",
+    "engineering_code": "decision",
+    "tags": ["testing", "framework"],
+    "text": "Decision: the repository runs its unit and integration test suite on the vitest test runner. Jest was removed to avoid maintaining two runners and two config dialects.",
+    "fact": "vitest"
+  },
+  {
+    "id": "doc-010",
+    "structural_type": "concept",
+    "engineering_code": "decision",
+    "tags": ["cache", "ttl", "redis"],
+    "text": "Decision: the recall cache uses a 300 second TTL in Redis. The value was chosen to match the prompt-cache window so a warm context survives a typical agent turn.",
+    "fact": "300 seconds"
+  },
+  {
+    "id": "doc-011",
+    "structural_type": "decision",
+    "engineering_code": "decision",
+    "tags": ["language", "repo-policy"],
+    "text": "Decision: all committed repository content is written in English. Code comments, docs, and commit messages must be English; chat with the maintainer may use other languages, the repo may not.",
+    "fact": "English"
+  },
+  {
+    "id": "doc-012",
+    "structural_type": "concept",
+    "engineering_code": "constraint",
+    "tags": ["secrets", "config"],
+    "text": "Constraint: secrets are injected only through environment variables at deploy time. Committing a secret to the repository, even in a test fixture, is a hard failure of the security gate.",
+    "fact": "environment variables"
+  },
+  {
+    "id": "doc-mh-001",
+    "structural_type": "decision",
+    "engineering_code": "service-platform",
+    "tags": ["checkout-worker", "deploys-on", "atlas-runner"],
+    "text": "Decision: checkout-worker deploys on the atlas-runner platform. The service record names only the platform, not the production region.",
+    "fact": "atlas-runner",
+    "relations": [{ "type": "DEPLOYS_ON", "target_id": "doc-mh-002" }]
+  },
+  {
+    "id": "doc-mh-002",
+    "structural_type": "decision",
+    "engineering_code": "platform-region",
+    "tags": ["atlas-runner", "locality"],
+    "text": "Decision: atlas-runner locality code is us-east-1. Locality codes are maintained separately from named services.",
+    "fact": "us-east-1"
+  },
+  {
+    "id": "doc-mh-003",
+    "structural_type": "decision",
+    "engineering_code": "service-platform",
+    "tags": ["billing-cron", "deploys-on", "harbor-runner"],
+    "text": "Decision: billing-cron deploys on the harbor-runner platform. The service record names only the platform, not the production region.",
+    "fact": "harbor-runner",
+    "relations": [{ "type": "DEPLOYS_ON", "target_id": "doc-mh-004" }]
+  },
+  {
+    "id": "doc-mh-004",
+    "structural_type": "decision",
+    "engineering_code": "platform-region",
+    "tags": ["harbor-runner", "locality"],
+    "text": "Decision: harbor-runner locality code is eu-west-1. Locality codes are maintained separately from named services.",
+    "fact": "eu-west-1"
+  },
+  {
+    "id": "doc-t-001",
+    "structural_type": "decision",
+    "engineering_code": "retry-policy",
+    "tags": ["retry", "attempt", "checkout-api"],
+    "text": "Original decision: the checkout API retry attempt limit was 3 attempts. This policy was active before the January 2026 reliability review.",
+    "fact": "3 attempts",
+    "valid_from": "2025-09-01T00:00:00.000Z",
+    "valid_until": "2026-01-15T00:00:00.000Z",
+    "superseded_by": "doc-t-002"
+  },
+  {
+    "id": "doc-t-002",
+    "structural_type": "decision",
+    "engineering_code": "retry-policy",
+    "tags": ["current", "as-of", "retry", "attempt", "limit", "checkout-api"],
+    "text": "Current decision: the checkout API retry attempt limit is 5 attempts as of the January 2026 reliability review. This supersedes the old retry limit.",
+    "fact": "5 attempts",
+    "valid_from": "2026-01-15T00:00:00.000Z",
+    "valid_until": null,
+    "supersedes": "doc-t-001"
+  }
+]

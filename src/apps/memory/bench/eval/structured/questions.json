@@ -1,0 +1,120 @@
+[
+  {
+    "id": "q-001",
+    "category": "single-hop",
+    "question": "Which package manager did the team standardise on for the monorepo?",
+    "gold_doc_id": "doc-001",
+    "gold_answer": "pnpm"
+  },
+  {
+    "id": "q-002",
+    "category": "single-hop",
+    "question": "Where are session tokens stored?",
+    "gold_doc_id": "doc-002",
+    "gold_answer": "HttpOnly Secure SameSite=Lax cookies"
+  },
+  {
+    "id": "q-003",
+    "category": "single-hop",
+    "question": "Does pnpm hoist transitive dependencies into the root node_modules?",
+    "gold_doc_id": "doc-003",
+    "gold_answer": "pnpm does not hoist transitive dependencies by default"
+  },
+  {
+    "id": "q-004",
+    "category": "single-hop",
+    "question": "Which logging library do backend services use?",
+    "gold_doc_id": "doc-004",
+    "gold_answer": "@tetis-lair/tetis-logger"
+  },
+  {
+    "id": "q-005",
+    "category": "single-hop",
+    "question": "What was the root cause of the nightly CI flake?",
+    "gold_doc_id": "doc-005",
+    "gold_answer": "a leftover process holding a fixed port"
+  },
+  {
+    "id": "q-006",
+    "category": "single-hop",
+    "question": "What is the database migration policy?",
+    "gold_doc_id": "doc-006",
+    "gold_answer": "forward-only"
+  },
+  {
+    "id": "q-007",
+    "category": "single-hop",
+    "question": "How is the public HTTP API versioned?",
+    "gold_doc_id": "doc-007",
+    "gold_answer": "in the URL path under /v1"
+  },
+  {
+    "id": "q-008",
+    "category": "single-hop",
+    "question": "In which timezone are timestamps stored and compared?",
+    "gold_doc_id": "doc-008",
+    "gold_answer": "UTC"
+  },
+  {
+    "id": "q-009",
+    "category": "single-hop",
+    "question": "Which test runner does the repository use?",
+    "gold_doc_id": "doc-009",
+    "gold_answer": "vitest"
+  },
+  {
+    "id": "q-010",
+    "category": "single-hop",
+    "question": "What TTL does the recall cache use in Redis?",
+    "gold_doc_id": "doc-010",
+    "gold_answer": "300 seconds"
+  },
+  {
+    "id": "q-011",
+    "category": "single-hop",
+    "question": "What language must all committed repository content be written in?",
+    "gold_doc_id": "doc-011",
+    "gold_answer": "English"
+  },
+  {
+    "id": "q-012",
+    "category": "single-hop",
+    "question": "How are secrets injected into deployed services?",
+    "gold_doc_id": "doc-012",
+    "gold_answer": "environment variables"
+  },
+  {
+    "id": "q-mh-001",
+    "category": "multi-hop",
+    "question": "Which production region hosts checkout-worker through its deployment platform?",
+    "gold_doc_id": "doc-mh-002",
+    "gold_doc_ids": ["doc-mh-001", "doc-mh-002"],
+    "gold_answer": "us-east-1"
+  },
+  {
+    "id": "q-mh-002",
+    "category": "multi-hop",
+    "question": "Which production region hosts billing-cron through its deployment platform?",
+    "gold_doc_id": "doc-mh-004",
+    "gold_doc_ids": ["doc-mh-003", "doc-mh-004"],
+    "gold_answer": "eu-west-1"
+  },
+  {
+    "id": "q-t-001",
+    "category": "temporal-as-of",
+    "question": "As of 2026-03-01, what is the checkout API retry attempt limit?",
+    "gold_doc_id": "doc-t-002",
+    "gold_doc_ids": ["doc-t-002"],
+    "gold_answer": "5 attempts",
+    "as_of": "2026-03-01T00:00:00.000Z"
+  },
+  {
+    "id": "q-t-002",
+    "category": "temporal-as-of",
+    "question": "As of 2025-12-01, what was the checkout API retry attempt limit?",
+    "gold_doc_id": "doc-t-001",
+    "gold_doc_ids": ["doc-t-001"],
+    "gold_answer": "3 attempts",
+    "as_of": "2025-12-01T00:00:00.000Z"
+  }
+]

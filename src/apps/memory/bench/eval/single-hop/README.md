@@ -20,11 +20,10 @@ Corpus entries carry the two ADR 0035 axes (`structural_type`, the closed axis;
 on, not just body text — that is the structure plain flat notes lack.
 
 The whole path is a pure function of the checked-in fixtures: same git ref ⇒
-identical scores and identical JSONL bytes. This is the cheap deterministic core
-that gates every memory change in CI (PRD stories 13, 15, 20). The heavier tiers
-— live baselines, an LLM answerer + judge, and the multi-hop / temporal /
-abstention categories — plug into the same `ContextPack` and `QuestionRecord`
-shapes later; this is the spine they hang off.
+identical scores and identical JSONL bytes. This remains the single-hop control
+fixture. The default eval corpus now lives in `../structured/` and adds
+multi-hop chains plus temporal as-of supersessions on the same `ContextPack` and
+`QuestionRecord` shapes.
 
 Run it:
 
