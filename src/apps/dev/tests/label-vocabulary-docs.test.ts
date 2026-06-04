@@ -42,3 +42,18 @@ describe("label vocabulary docs", () => {
     expect(canonical).not.toContain(manualImplNeeds);
   });
 });
+
+describe("setup-red-skills docs", () => {
+  it("documents Section H as the development-workflow activation on-ramp", async () => {
+    const skill = await readRepoFile("plugins/dev/skills/engineering/setup-red-skills/SKILL.md");
+    const template = await readRepoFile("plugins/dev/skills/engineering/setup-red-skills/config-template.yaml");
+
+    expect(skill).toContain("**Section H — Development workflow.**");
+    expect(skill).toContain("dev.lock-primary-branch: true");
+    expect(skill).toContain("inject-development-workflow --root");
+    expect(skill).toContain("both `AGENTS.md` and `CLAUDE.md`");
+    expect(skill).toContain("`/ship` as the landing command");
+    expect(template).toContain("# dev:");
+    expect(template).toContain("#   lock-primary-branch: true");
+  });
+});
