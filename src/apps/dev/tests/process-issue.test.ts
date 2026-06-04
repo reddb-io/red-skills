@@ -6,7 +6,7 @@ import {
 } from "../src/core/process-issue.js";
 import type { HookName } from "../src/core/hook-config.js";
 import type { ConfigValues } from "../src/core/config.js";
-import type { RunAgentInput, RunAgentResult } from "../src/core/execution.js";
+import type { AgentEffort, RunAgentInput, RunAgentResult } from "../src/core/execution.js";
 import type { AttemptRecordPayload } from "../src/core/attempt-record.js";
 import { parseCurrentBlocker, upsertCurrentBlocker } from "../src/core/blocker-state.js";
 
@@ -102,6 +102,8 @@ interface HarnessOptions {
   salvage?: number;
   /** Issue body threaded into processIssue. */
   body?: string;
+  /** Optional ADR 0049 tier resolver injected by the production wiring. */
+  resolveTier?: ProcessIssueDeps["resolveTier"];
 }
 
 function harness(opts: HarnessOptions = {}): {
@@ -261,6 +263,8 @@ function harness(opts: HarnessOptions = {}): {
       };
     },
     model: "claude-opus-4-8",
+    effort: "high" as AgentEffort,
+    resolveTier: opts.resolveTier,
     fallbackRunner: opts.fallbackRunner ?? false,
     conflictResolver: opts.conflictResolve
       ? async (prompt) => {
@@ -402,6 +406,8 @@ describe("processIssue — DONE + green + merged (unlocked, admin-PR landing)", 
     expect(trace.runAgentCalls[0]?.branch).toBe("afk/wAAAA/9-fix-the-thing");
     expect(trace.runAgentCalls[0]?.handoffPath).toBe("/tmp/afk/workers/wAAAA/9-a1/handoff.md");
     expect(trace.runAgentCalls[0]?.runner).toBe("claude");
+    expect(trace.runAgentCalls[0]?.model).toBe("claude-opus-4-8");
+    expect(trace.runAgentCalls[0]?.effort).toBe("high");
     // cwd is anchored at the attempt dir so sandcastle's `.sandcastle/` lands
     // under .red/ (the attempt dir), never at the repo root.
     expect(trace.runAgentCalls[0]?.cwd).toBe("/tmp/afk/workers/wAAAA/9-a1");
@@ -428,6 +434,20 @@ describe("processIssue — DONE + green + merged (unlocked, admin-PR landing)", 
       "pre_merge",
       "post_merge",
     ]);
+  });
+
+  it("passes the resolved default think tier model and effort into runAgent", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      resolveTier: () => ({ model: "claude-tier-model", effort: "max" }),
+    });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(trace.runAgentCalls).toHaveLength(1);
+    expect(trace.runAgentCalls[0]?.model).toBe("claude-tier-model");
+    expect(trace.runAgentCalls[0]?.effort).toBe("max");
   });
 });
 
@@ -991,6 +1011,25 @@ describe("processIssue — runner exhaustion → fallback swap → retry", () =>
       "pre_attempt",
       "post_attempt",
     ]);
+  });
+
+  it("resolves a fresh model and effort for the fallback runner", async () => {
+    const { deps, input, trace } = harness({
+      outcomes: ["exhausted", "done"],
+      fallbackRunner: true,
+      feedbackOk: true,
+      resolveTier: (runner) =>
+        runner === "codex"
+          ? { model: "gpt-fallback", effort: "medium" }
+          : { model: "claude-primary", effort: "high" },
+    });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(trace.runAgentCalls[0]?.model).toBe("claude-primary");
+    expect(trace.runAgentCalls[0]?.effort).toBe("high");
+    expect(trace.runAgentCalls[1]?.model).toBe("gpt-fallback");
+    expect(trace.runAgentCalls[1]?.effort).toBe("medium");
   });
 });
 

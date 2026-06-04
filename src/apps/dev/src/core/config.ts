@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { z } from "zod";
+import type { AgentEffort } from "./execution.js";
 
 /**
  * config.ts — TypeScript port of scripts/config.sh.
@@ -26,6 +27,25 @@ import { z } from "zod";
 export const CONFIG_DEFAULTS = {
   "afk.default_runner": "claude",
   "afk.fleet.target": "2",
+  // AFK model-tier table (ADR 0049). The default task class is `think`, so a
+  // repo with no config still runs Claude Code on opus/high, matching today's
+  // behaviour while making the model+effort pair overrideable per runner/tier.
+  "afk.models.claude.validate.model": "claude-haiku-4-5",
+  "afk.models.claude.validate.effort": "low",
+  "afk.models.claude.simple.model": "claude-sonnet-4-6",
+  "afk.models.claude.simple.effort": "high",
+  "afk.models.claude.complex.model": "claude-opus-4-8",
+  "afk.models.claude.complex.effort": "medium",
+  "afk.models.claude.think.model": "claude-opus-4-8",
+  "afk.models.claude.think.effort": "high",
+  "afk.models.codex.validate.model": "gpt-5.5",
+  "afk.models.codex.validate.effort": "low",
+  "afk.models.codex.simple.model": "gpt-5.5",
+  "afk.models.codex.simple.effort": "high",
+  "afk.models.codex.complex.model": "gpt-5.5",
+  "afk.models.codex.complex.effort": "medium",
+  "afk.models.codex.think.model": "gpt-5.5",
+  "afk.models.codex.think.effort": "high",
   "afk.hooks.defaults.cargo": "true",
   "afk.hooks.defaults.gradle": "true",
   // Merge-gate policy (ADR 0048). The unlocked admin-merge ignores advisory
@@ -39,6 +59,16 @@ export const CONFIG_DEFAULTS = {
 } as const;
 
 export type ConfigKey = keyof typeof CONFIG_DEFAULTS;
+
+export const AFK_MODEL_TIERS = ["validate", "simple", "complex", "think"] as const;
+export type AfkModelTier = (typeof AFK_MODEL_TIERS)[number];
+
+export interface ResolvedTier {
+  model: string;
+  effort: AgentEffort;
+}
+
+const AGENT_EFFORTS: readonly AgentEffort[] = ["low", "medium", "high", "xhigh", "max"];
 
 /** Every value in the flat config map is a raw string, like the shell's `config_get`. */
 export const ConfigValuesSchema = z.record(z.string());
@@ -217,6 +247,51 @@ export function loadConfig(path: string, options: LoadConfigOptions = {}): Confi
 /** Read a dotted key. Empty string when unset — same contract as `config_get`. */
 export function getConfig(values: ConfigValues, key: string): string {
   return values[key] ?? "";
+}
+
+function defaultTierKey(runner: string, tier: AfkModelTier, field: "model" | "effort"): ConfigKey | undefined {
+  const key = `afk.models.${runner}.${tier}.${field}`;
+  return Object.prototype.hasOwnProperty.call(CONFIG_DEFAULTS, key) ? (key as ConfigKey) : undefined;
+}
+
+function readEffort(raw: string, fallback: AgentEffort): AgentEffort {
+  return (AGENT_EFFORTS as readonly string[]).includes(raw) ? (raw as AgentEffort) : fallback;
+}
+
+/**
+ * Resolve AFK's per-runner model tier (ADR 0049).
+ *
+ * Precedence for the model:
+ *   1. explicit tier table entry: `afk.models.<runner>.<tier>.model`
+ *   2. legacy runner scalar: `afk.models.<runner>`
+ *   3. legacy global scalar: `afk.model`
+ *   4. tier-table default
+ *
+ * `loadConfig` already folds `plugins.dev.afk.*` over the legacy top-level
+ * `afk.*` keys (ADR 0042), so the same reader honours both locations.
+ */
+export function resolveTier(
+  values: ConfigValues,
+  runner: string,
+  taskClass: AfkModelTier = "think",
+): ResolvedTier {
+  const fallbackRunner = runner === "codex" ? "codex" : "claude";
+  const tier = (AFK_MODEL_TIERS as readonly string[]).includes(taskClass) ? taskClass : "think";
+  const modelKey = defaultTierKey(fallbackRunner, tier, "model")!;
+  const effortKey = defaultTierKey(fallbackRunner, tier, "effort")!;
+  const defaultModel = CONFIG_DEFAULTS[modelKey];
+  const defaultEffort = CONFIG_DEFAULTS[effortKey] as AgentEffort;
+  const tierModel = getConfig(values, modelKey);
+  const scalarRunnerModel = getConfig(values, `afk.models.${fallbackRunner}`);
+  const scalarGlobalModel = getConfig(values, "afk.model");
+
+  return {
+    model:
+      tierModel && tierModel !== defaultModel
+        ? tierModel
+        : scalarRunnerModel || scalarGlobalModel || tierModel || defaultModel,
+    effort: readEffort(getConfig(values, effortKey), defaultEffort),
+  };
 }
 
 /**

@@ -3,6 +3,33 @@
 
 # afk:
 #   default_runner: claude        # fallback runner when no explicit signal
+#   models:                       # per-runner AFK tier table (ADR 0049)
+#     claude:
+#       validate:
+#         model: claude-haiku-4-5
+#         effort: low
+#       simple:
+#         model: claude-sonnet-4-6
+#         effort: high
+#       complex:
+#         model: claude-opus-4-8
+#         effort: medium
+#       think:                    # default until the AFK classifier lands
+#         model: claude-opus-4-8
+#         effort: high
+#     codex:
+#       validate:
+#         model: gpt-5.5
+#         effort: low
+#       simple:
+#         model: gpt-5.5
+#         effort: high
+#       complex:
+#         model: gpt-5.5
+#         effort: medium
+#       think:
+#         model: gpt-5.5
+#         effort: high
 #   fleet:
 #     target: 2                   # default supervisor worker target
 #   backpressure:                 # extra merge gates run on every successful

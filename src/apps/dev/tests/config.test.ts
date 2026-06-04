@@ -9,6 +9,7 @@ import {
   MalformedConfigError,
   parseConfigYaml,
   readBackpressure,
+  resolveTier,
 } from "../src/core/config.js";
 
 async function writeConfig(yaml: string): Promise<string> {
@@ -247,5 +248,43 @@ describe("config — afk.merge.wait_for_review (ADR 0048)", () => {
     expect(getConfig(values, "afk.merge.wait_for_review")).toBe("true");
     // review_check keeps its default when unset.
     expect(getConfig(values, "afk.merge.review_check")).toBe("CodeRabbit");
+  });
+});
+
+describe("config — AFK model tier table (ADR 0049)", () => {
+  it("defaults the unclassified AFK tier to think per runner", () => {
+    const values = loadConfig("/nonexistent/.red/config.yaml", { warn: () => {} });
+    expect(resolveTier(values, "claude")).toEqual({ model: "claude-opus-4-8", effort: "high" });
+    expect(resolveTier(values, "codex")).toEqual({ model: "gpt-5.5", effort: "high" });
+  });
+
+  it("resolves every Claude tier from the default table", () => {
+    const values = loadConfig("/nonexistent/.red/config.yaml", { warn: () => {} });
+    expect(resolveTier(values, "claude", "validate")).toEqual({ model: "claude-haiku-4-5", effort: "low" });
+    expect(resolveTier(values, "claude", "simple")).toEqual({ model: "claude-sonnet-4-6", effort: "high" });
+    expect(resolveTier(values, "claude", "complex")).toEqual({ model: "claude-opus-4-8", effort: "medium" });
+    expect(resolveTier(values, "claude", "think")).toEqual({ model: "claude-opus-4-8", effort: "high" });
+  });
+
+  it("lets explicit tier entries override legacy scalar model keys", () => {
+    const text =
+      "afk:\n  model: shared-model\n  models:\n    claude:\n      think:\n        model: claude-tier-model\n        effort: max\n";
+    const values = loadConfig("/x/.red/config.yaml", { read: () => text });
+    expect(resolveTier(values, "claude", "think")).toEqual({ model: "claude-tier-model", effort: "max" });
+  });
+
+  it("falls back to legacy per-runner and global scalar model keys", () => {
+    const values = loadConfig("/x/.red/config.yaml", {
+      read: () => "afk:\n  model: shared-model\n  models:\n    codex: gpt-custom\n",
+    });
+    expect(resolveTier(values, "codex", "think")).toEqual({ model: "gpt-custom", effort: "high" });
+    expect(resolveTier(values, "claude", "think")).toEqual({ model: "shared-model", effort: "high" });
+  });
+
+  it("lets the namespaced plugins.dev tier table win over the legacy top-level table", () => {
+    const text =
+      "afk:\n  models:\n    claude:\n      think:\n        model: legacy-tier\n        effort: low\nplugins:\n  dev:\n    afk:\n      models:\n        claude:\n          think:\n            model: namespaced-tier\n            effort: high\n";
+    const values = loadConfig("/x/.red/config.yaml", { read: () => text });
+    expect(resolveTier(values, "claude", "think")).toEqual({ model: "namespaced-tier", effort: "high" });
   });
 });
