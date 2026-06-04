@@ -269,15 +269,18 @@ Run once per target repo (from inside the repo):
 /setup-red-skills
 ```
 
-It walks you through five short decisions:
+It walks you through the setup sections:
 
 1. **Issue tracker.** GitHub Issues only — confirms `git remote -v` shows the right repo.
 2. **Triage labels.** Maps the canonical state roles (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `blocked:dependency`, `wontfix`) to actual label strings.
 3. **Domain docs.** Consumer repos choose single-context (`.red/CONTEXT.md` + `.red/adr/`) or multi-context (`.red/CONTEXT-MAP.md` with glossaries under `.red/contexts/`). This repo uses the multi-context layout; its root `.red/CONTEXT.md` is only a compatibility pointer.
 4. **Workflows.** Installs `red-issues-needs-triage.yml` (auto-applies `needs-triage` so nothing slips past `/afk`).
 5. **Token efficiency.** Strong recommendation to install [RTK](https://github.com/rtk-ai/rtk) before running `/afk` (details below).
+6. **AFK statusline.** Optionally wires the Claude Code statusline to the RedSkills AFK status renderer.
+7. **Config template.** Scaffolds `.red/config.yaml` when missing so the runtime knobs are discoverable.
+8. **Development workflow.** Sets `dev.lock-primary-branch: true`, writes `## Development workflow` into `AGENTS.md` and `CLAUDE.md`, and points interactive landing at `/ship`.
 
-Output: `.red/agents/*.md`, an `## Agent skills` block in `CLAUDE.md`/`AGENTS.md`, and `.github/workflows/red-*.yml`. All git-tracked. Re-run only to reconfigure from scratch.
+Output: `.red/agents/*.md`, `.red/config.yaml`, an `## Agent skills` block, a `## Development workflow` block in `CLAUDE.md`/`AGENTS.md`, and `.github/workflows/red-*.yml`. All git-tracked. Safe to rerun; managed blocks update in place and the development-workflow flag stays set.
 
 ---
 
@@ -440,7 +443,7 @@ Composable. Boring on purpose where boring is enough. Sharp where it matters.
 | **[to-prd](./plugins/dev/skills/engineering/to-prd/SKILL.md)** | Turns the current conversation into a PRD; publishes as a GitHub issue. |
 | **[zoom-out](./plugins/dev/skills/engineering/zoom-out/SKILL.md)** | Map-first Codebase understanding; graph-aware when Memory Graph mode is ready, read-only when it is not. |
 | **[prototype](./plugins/dev/skills/engineering/prototype/SKILL.md)** | Throwaway prototype — terminal app for state/logic, or UI variations toggleable from one route. |
-| **[setup-red-skills](./plugins/dev/skills/engineering/setup-red-skills/SKILL.md)** | Per-repo config: issue tracker, triage label vocab, domain doc layout, RedSkills workflows, RTK. |
+| **[setup-red-skills](./plugins/dev/skills/engineering/setup-red-skills/SKILL.md)** | Per-repo config: issue tracker, triage label vocab, domain doc layout, RedSkills workflows, RTK, and the `/ship` development loop. |
 | **[doctor](./plugins/dev/skills/engineering/doctor/SKILL.md)** | Read-only adoption/process doctor — reports label-vocab conformance, AGENTS≡CLAUDE parity, statusline drift, MCP wiring, and `blocked:*` hygiene, tagging each gap with its fix-home. The recurring counterpart to `/setup-red-skills`. |
 | **[review-adrs](./plugins/dev/skills/engineering/review-adrs/SKILL.md)** | Decision-record doctor — lints `.red/adr/` for contradictions, missing supersession, stale references, number collisions, and controversial decisions, then reconciles each finding through a one-question-at-a-time interview (like `/start`) and consolidates every agreement into a single actionable PRD on the tracker via `/to-prd`. |
 | **[setup-statusline](./plugins/dev/skills/engineering/setup-statusline/SKILL.md)** | Installs or inspects the RedSkills Claude Code statusline, rendering the live AFK block via `node bin/afk.mjs statusline`. |
