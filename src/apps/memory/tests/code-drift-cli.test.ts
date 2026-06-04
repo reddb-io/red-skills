@@ -85,6 +85,43 @@ describe("memory code-drift CLI (ADR 0035, #307)", () => {
   );
 
   test(
+    "code-curate promotes recurring codes and aliases synonyms for drift and recall",
+    async () => {
+      const root = await seedRoot();
+
+      const promote = runMemory(["code-curate", "promote", "smell", "--root", root, "--json"]);
+      expect(promote.status).toBe(0);
+      const promoted = JSON.parse(promote.stdout);
+      expect(promoted.changed).toBe(true);
+      expect(promoted.promoted).toEqual(["smell"]);
+
+      const alias = runMemory([
+        "code-curate",
+        "alias",
+        "footgun",
+        "gotcha",
+        "--root",
+        root,
+        "--json",
+      ]);
+      expect(alias.status).toBe(0);
+      const aliased = JSON.parse(alias.stdout);
+      expect(aliased.aliases).toEqual([{ from: "footgun", to: "gotcha" }]);
+
+      const drift = runMemory(["code-drift", "--root", root, "--json"]);
+      expect(drift.status).toBe(0);
+      const report = JSON.parse(drift.stdout);
+      expect(report.knownCount).toBe(7);
+      expect(report.entries).toEqual([{ code: "yak-shave", count: 1, recurrence: "one-off" }]);
+
+      const recall = runMemory(["recall", "gotcha", "--root", root]);
+      expect(recall.status).toBe(0);
+      expect(recall.stdout).toContain("concept:n0");
+    },
+    TIMEOUT,
+  );
+
+  test(
     "human-readable output distinguishes recurring from one-off",
     async () => {
       const root = await seedRoot();
