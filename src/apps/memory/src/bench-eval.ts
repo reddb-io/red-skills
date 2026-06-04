@@ -187,6 +187,24 @@ function asCorpusEntry(value: unknown): CorpusEntry {
   };
 }
 
+export interface Neo4jSubstrateCommand {
+  operation: "ingest" | "retrieve";
+  cypher: string;
+  params: Record<string, unknown>;
+}
+
+export interface Neo4jSubstrateResult {
+  rows: Array<Record<string, unknown>>;
+}
+
+export type Neo4jSubstrateExecutor =
+  (command: Neo4jSubstrateCommand) => Promise<Neo4jSubstrateResult> | Neo4jSubstrateResult;
+
+export interface Neo4jSubstrateAdapterOptions {
+  id?: string;
+  executor?: Neo4jSubstrateExecutor;
+}
+
 function asQuestion(value: unknown): Question {
   if (!value || typeof value !== "object") throw new Error("question entry must be an object");
   const r = value as Record<string, unknown>;
@@ -314,6 +332,140 @@ export function createMarkdownRagAdapter(id = "markdown-rag"): SubstrateAdapter<
   };
 }
 
+interface Neo4jTerm {
+  value: string;
+  weight: number;
+}
+
+interface Neo4jIndex {
+  byId: Map<string, CorpusEntry>;
+  executor: Neo4jSubstrateExecutor;
+  runId: string;
+}
+
+const NEO4J_INGEST_CORPUS_CYPHER = `
+OPTIONAL MATCH (old:BenchMemory {bench_run: $runId})
+DETACH DELETE old
+WITH 1 AS _
+UNWIND $entries AS entry
+CREATE (memory:BenchMemory {id: entry.id, bench_run: $runId})
+SET memory.structural_type = entry.structural_type,
+    memory.engineering_code = entry.engineering_code,
+    memory.fact = entry.fact,
+    memory.text = entry.text
+WITH memory, entry
+UNWIND entry.terms AS term
+MERGE (termNode:BenchTerm {value: term.value})
+MERGE (memory)-[mention:MENTIONS]->(termNode)
+SET mention.weight = term.weight
+`;
+
+const NEO4J_RETRIEVE_QUERY_CYPHER = `
+MERGE (question:BenchQuestion {id: $questionId})
+SET question.text = $question
+WITH question
+OPTIONAL MATCH (question)-[oldTerm:HAS_TERM]->()
+DELETE oldTerm
+WITH question
+UNWIND $terms AS term
+MERGE (termNode:BenchTerm {value: term.value})
+MERGE (question)-[qTerm:HAS_TERM]->(termNode)
+SET qTerm.weight = term.weight
+WITH question
+MATCH (question)-[qTerm:HAS_TERM]->(term:BenchTerm)<-[mention:MENTIONS]-(memory:BenchMemory)
+WHERE memory.bench_run = $runId
+WITH memory, sum(qTerm.weight * mention.weight) AS score
+WHERE score > 0
+RETURN memory.id AS id, score
+ORDER BY score DESC, id ASC
+LIMIT $limit
+`;
+
+export function createNeo4jSubstrateAdapter(
+  opts: Neo4jSubstrateAdapterOptions = {},
+): SubstrateAdapter<Neo4jIndex> {
+  const id = opts.id ?? "neo4j";
+  const executor = opts.executor ?? createInMemoryNeo4jSubstrateExecutor();
+  const runId = `memory-bench-eval:${id}`;
+  return {
+    id,
+    label: "Neo4j native graph traversal",
+    async ingestCorpus(corpus) {
+      const entries = corpus.map((entry) => ({
+        id: entry.id,
+        structural_type: entry.structural_type,
+        engineering_code: entry.engineering_code,
+        fact: entry.fact,
+        text: entry.text,
+        terms: neo4jEntryTerms(entry),
+      }));
+      await executor({
+        operation: "ingest",
+        cypher: NEO4J_INGEST_CORPUS_CYPHER,
+        params: { runId, entries },
+      });
+      return { byId: new Map(corpus.map((entry) => [entry.id, entry])), executor, runId };
+    },
+    async retrieveQuery(index, question, limit) {
+      const result = await index.executor({
+        operation: "retrieve",
+        cypher: NEO4J_RETRIEVE_QUERY_CYPHER,
+        params: {
+          runId: index.runId,
+          questionId: question.id,
+          question: question.question,
+          terms: neo4jQuestionTerms(question),
+          limit,
+        },
+      });
+      return result.rows
+        .map((row) => ({
+          id: String(row.id ?? ""),
+          score: typeof row.score === "number" ? row.score : Number(row.score),
+        }))
+        .filter((hit) => hit.id.length > 0 && Number.isFinite(hit.score) && hit.score > 0)
+        .sort((a, b) => b.score - a.score || a.id.localeCompare(b.id))
+        .slice(0, limit)
+        .map((hit) => ({ ...hit, score: round4(hit.score) }));
+    },
+    buildContextPack(index, question, hits, packSize) {
+      return hitsToContextPack(index.byId, question, id, hits.slice(0, packSize));
+    },
+  };
+}
+
+export function createInMemoryNeo4jSubstrateExecutor(): Neo4jSubstrateExecutor {
+  const memories = new Map<string, Map<string, number>>();
+  return (command) => {
+    if (command.operation === "ingest") {
+      memories.clear();
+      const entries = Array.isArray(command.params.entries) ? command.params.entries : [];
+      for (const entry of entries) {
+        if (!entry || typeof entry !== "object") continue;
+        const r = entry as Record<string, unknown>;
+        const id = typeof r.id === "string" ? r.id : "";
+        if (!id) continue;
+        memories.set(id, neo4jTermsToMap(r.terms));
+      }
+      return { rows: [] };
+    }
+
+    const questionTerms = neo4jTermsToMap(command.params.terms);
+    const rows: Array<Record<string, unknown>> = [];
+    for (const [id, entryTerms] of memories) {
+      let score = 0;
+      for (const [term, qWeight] of questionTerms) {
+        const weight = entryTerms.get(term);
+        if (weight !== undefined) score += qWeight * weight;
+      }
+      if (score > 0) rows.push({ id, score: round4(score) });
+    }
+    rows.sort((a, b) => Number(b.score) - Number(a.score) || String(a.id).localeCompare(String(b.id)));
+    const limit = typeof command.params.limit === "number" ? command.params.limit : rows.length;
+    return { rows: rows.slice(0, limit) };
+  };
+}
+
 function hitsToContextPack(
   byId: Map<string, CorpusEntry>,
   question: Question,
@@ -352,6 +504,41 @@ function corpusEntryToMarkdown(entry: CorpusEntry): string {
     entry.text,
     "",
   ].join("\n");
+}
+
+function neo4jQuestionTerms(question: Question): Neo4jTerm[] {
+  return uniqueTerms(tokenize(question.question), 1);
+}
+
+function neo4jEntryTerms(entry: CorpusEntry): Neo4jTerm[] {
+  const weighted = new Map<string, number>();
+  addWeightedTerms(weighted, tokenize(entry.text), 1);
+  for (const tag of entry.tags) addWeightedTerms(weighted, tokenize(tag), 0.5);
+  addWeightedTerms(weighted, tokenize(entry.engineering_code), 0.5);
+  return [...weighted]
+    .map(([value, weight]) => ({ value, weight: round4(weight) }))
+    .sort((a, b) => a.value.localeCompare(b.value));
+}
+
+function uniqueTerms(tokens: string[], weight: number): Neo4jTerm[] {
+  return [...new Set(tokens)].sort().map((value) => ({ value, weight }));
+}
+
+function addWeightedTerms(weighted: Map<string, number>, tokens: string[], weight: number): void {
+  for (const token of new Set(tokens)) weighted.set(token, (weighted.get(token) ?? 0) + weight);
+}
+
+function neo4jTermsToMap(value: unknown): Map<string, number> {
+  const out = new Map<string, number>();
+  if (!Array.isArray(value)) return out;
+  for (const item of value) {
+    if (!item || typeof item !== "object") continue;
+    const r = item as Record<string, unknown>;
+    const term = typeof r.value === "string" ? r.value : "";
+    const weight = typeof r.weight === "number" ? r.weight : Number(r.weight);
+    if (term && Number.isFinite(weight) && weight > 0) out.set(term, weight);
+  }
+  return out;
 }
 
 /**
@@ -609,8 +796,16 @@ export async function evaluateSubstrateAdapter<TIndex>(
 }
 
 function defaultSubstrateAdapters(substrate?: string): SubstrateAdapter[] {
-  if (substrate && substrate !== "reddb") return [createRedDbSubstrateAdapter(substrate)];
-  return [createRedDbSubstrateAdapter("reddb"), createMarkdownRagAdapter("markdown-rag")];
+  if (!substrate || substrate === "reddb") {
+    return [
+      createRedDbSubstrateAdapter("reddb"),
+      createMarkdownRagAdapter("markdown-rag"),
+      createNeo4jSubstrateAdapter({ id: "neo4j" }),
+    ];
+  }
+  if (substrate === "markdown-rag") return [createMarkdownRagAdapter("markdown-rag")];
+  if (substrate === "neo4j") return [createNeo4jSubstrateAdapter({ id: "neo4j" })];
+  throw new Error(`unknown memory bench eval substrate: ${substrate}`);
 }
 
 function emptyEvalReport(opts: {
@@ -654,21 +849,22 @@ function toSubstrateSummary(report: EvalReport): SubstrateSummary {
 
 function buildSubstrateComparisons(summaries: SubstrateSummary[]): SubstrateComparison[] {
   const reddb = summaries.find((summary) => summary.substrate === "reddb");
-  const markdown = summaries.find((summary) => summary.substrate === "markdown-rag");
-  if (!reddb || !markdown) return [];
-  return [{
-    id: "reddb_vs_markdown-rag",
-    candidate: reddb.substrate,
-    baseline: markdown.substrate,
-    f1_delta: round4(reddb.aggregate.f1 - markdown.aggregate.f1),
-    input_token_delta_pct: pctDelta(reddb.aggregate.tokens.input, markdown.aggregate.tokens.input),
-    output_token_delta_pct: pctDelta(reddb.aggregate.tokens.output, markdown.aggregate.tokens.output),
-    total_token_delta_pct: pctDelta(reddb.aggregate.tokens.total, markdown.aggregate.tokens.total),
-    quality_per_token_delta_pct: pctDelta(
-      reddb.aggregate.quality_per_1k_tokens,
-      markdown.aggregate.quality_per_1k_tokens,
-    ),
-  }];
+  if (!reddb) return [];
+  return summaries
+    .filter((summary) => summary.substrate !== reddb.substrate)
+    .map((baseline) => ({
+      id: `reddb_vs_${baseline.substrate}`,
+      candidate: reddb.substrate,
+      baseline: baseline.substrate,
+      f1_delta: round4(reddb.aggregate.f1 - baseline.aggregate.f1),
+      input_token_delta_pct: pctDelta(reddb.aggregate.tokens.input, baseline.aggregate.tokens.input),
+      output_token_delta_pct: pctDelta(reddb.aggregate.tokens.output, baseline.aggregate.tokens.output),
+      total_token_delta_pct: pctDelta(reddb.aggregate.tokens.total, baseline.aggregate.tokens.total),
+      quality_per_token_delta_pct: pctDelta(
+        reddb.aggregate.quality_per_1k_tokens,
+        baseline.aggregate.quality_per_1k_tokens,
+      ),
+    }));
 }
 
 /* ----------------------------------------------------------------------------
