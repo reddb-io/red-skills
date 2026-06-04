@@ -61,14 +61,50 @@ export function upsertDevelopmentWorkflowBlock(markdown: string): string {
   return upsertMarkdownSection(markdown, DEVELOPMENT_WORKFLOW_HEADING, DEVELOPMENT_WORKFLOW_BODY);
 }
 
+export function activatePrimaryBranchLockConfig(yaml: string): string {
+  const normalised = yaml.replace(/\r\n/g, "\n");
+  const lines = normalised.split("\n");
+  if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
+
+  const devStart = lines.findIndex((line) => /^dev:\s*(?:#.*)?$/.test(line));
+  const activeLine = "  lock-primary-branch: true";
+
+  if (devStart === -1) {
+    const prefix = lines.join("\n").trimEnd();
+    return `${prefix}${prefix.length > 0 ? "\n\n" : ""}dev:\n${activeLine}\n`;
+  }
+
+  let devEnd = lines.length;
+  for (let i = devStart + 1; i < lines.length; i += 1) {
+    const line = lines[i]!;
+    if (line.trim() === "") continue;
+    if (/^\S/.test(line)) {
+      devEnd = i;
+      break;
+    }
+  }
+
+  for (let i = devStart + 1; i < devEnd; i += 1) {
+    if (/^  lock-primary-branch:\s*/.test(lines[i]!)) {
+      lines[i] = activeLine;
+      return `${lines.join("\n").trimEnd()}\n`;
+    }
+  }
+
+  lines.splice(devStart + 1, 0, activeLine);
+  return `${lines.join("\n").trimEnd()}\n`;
+}
+
 export interface DevelopmentWorkflowInjectionInput {
   agentsMarkdown?: string;
   claudeMarkdown?: string;
+  configYaml?: string;
 }
 
 export interface DevelopmentWorkflowInjectionPlan {
   agentsMarkdown: string;
   claudeMarkdown: string;
+  configYaml: string;
   block: string;
 }
 
@@ -78,6 +114,7 @@ export function planDevelopmentWorkflowInjection(
   return {
     agentsMarkdown: upsertDevelopmentWorkflowBlock(input.agentsMarkdown ?? ""),
     claudeMarkdown: upsertDevelopmentWorkflowBlock(input.claudeMarkdown ?? ""),
+    configYaml: activatePrimaryBranchLockConfig(input.configYaml ?? ""),
     block: DEVELOPMENT_WORKFLOW_BLOCK,
   };
 }
