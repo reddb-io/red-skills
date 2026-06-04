@@ -50,6 +50,9 @@ interface HarnessOptions {
   /** Scripted per-call outcomes (overrides `outcome`); one entry per runAgent call. */
   outcomes?: RunAgentResult["outcome"][];
   feedbackOk?: boolean;
+  /** Scripted per-feedback-gate outcomes. Each feedback run executes the four
+   * standard scripts; this controls the aggregate pass/fail for each run. */
+  feedbackResults?: boolean[];
   /** Operator-declared backpressure commands (afk.backpressure, #430). When set,
    * the backpressure gate runs after feedback against the worker branch. */
   backpressureCommands?: string[];
@@ -140,6 +143,7 @@ function harness(opts: HarnessOptions = {}): {
   // Flipped true once the conflict resolver dispatch runs; the mergeExec
   // verification reads above key off it to model "the agent resolved the merge".
   let mergeResolved = false;
+  let pnpmCalls = 0;
 
   const deps: ProcessIssueDeps = {
     gh: {
@@ -233,7 +237,14 @@ function harness(opts: HarnessOptions = {}): {
       else trace.pushedAttempt.push(argv);
       return { code: 0, stdout: "", stderr: "" };
     },
-    pnpm: async () => ({ code: opts.feedbackOk === false ? 1 : 0, stdout: "", stderr: "" }),
+    pnpm: async () => {
+      const feedbackRun = Math.floor(pnpmCalls / 4);
+      pnpmCalls += 1;
+      const ok = opts.feedbackResults
+        ? (opts.feedbackResults[feedbackRun] ?? opts.feedbackResults.at(-1) ?? true)
+        : opts.feedbackOk !== false;
+      return { code: ok ? 0 : 1, stdout: "", stderr: "" };
+    },
     layout: {
       hasPackage: (scope) => scope === ".",
       hasScript: () => true,
@@ -769,6 +780,85 @@ describe("processIssue — feedback fail", () => {
     // the worker branch was not pushed for landing.
     expect(result.hooksFired).toEqual(["pre_worktree", "pre_attempt", "post_attempt"]);
     expect(trace.pushedAttempt).toEqual([]);
+  });
+
+  it("retries a simple-classified feedback failure once on the complex tier, then lands when green", async () => {
+    const tiers: Array<{ runner: string; taskClass: string | undefined }> = [];
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackResults: [false, true],
+      classifyIssue: async () => "simple",
+      resolveTier: (runner, taskClass) => {
+        tiers.push({ runner, taskClass });
+        return { model: `${runner}-${taskClass}-model`, effort: taskClass === "complex" ? "medium" : "high" };
+      },
+    });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(trace.runAgentCalls).toHaveLength(2);
+    expect(tiers).toEqual([
+      { runner: "claude", taskClass: "simple" },
+      { runner: "claude", taskClass: "complex" },
+    ]);
+    expect(trace.runAgentCalls[0]?.model).toBe("claude-simple-model");
+    expect(trace.runAgentCalls[1]?.model).toBe("claude-complex-model");
+    expect(trace.runAgentCalls[1]?.effort).toBe("medium");
+    expect(labelTrace(trace)).toEqual(["-ready-for-agent|+running", "-running|+"]);
+    expect(trace.closed).toEqual([9]);
+    expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "done" }]);
+    expect(result.hooksFired).toEqual([
+      "pre_worktree",
+      "pre_attempt",
+      "post_attempt",
+      "pre_attempt",
+      "post_attempt",
+      "pre_merge",
+      "post_merge",
+    ]);
+  });
+
+  it("does not escalate a simple-classified attempt when feedback passes", async () => {
+    const tiers: Array<{ runner: string; taskClass: string | undefined }> = [];
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      classifyIssue: async () => "simple",
+      resolveTier: (runner, taskClass) => {
+        tiers.push({ runner, taskClass });
+        return { model: `${runner}-${taskClass}-model`, effort: "high" };
+      },
+    });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(trace.runAgentCalls).toHaveLength(1);
+    expect(tiers).toEqual([{ runner: "claude", taskClass: "simple" }]);
+    expect(trace.runAgentCalls[0]?.model).toBe("claude-simple-model");
+  });
+
+  it("bounds simple feedback escalation to one complex retry", async () => {
+    const tiers: Array<{ runner: string; taskClass: string | undefined }> = [];
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackResults: [false, false, true],
+      classifyIssue: async () => "simple",
+      resolveTier: (runner, taskClass) => {
+        tiers.push({ runner, taskClass });
+        return { model: `${runner}-${taskClass}-model`, effort: "high" };
+      },
+    });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("feedback-failed");
+    expect(trace.runAgentCalls).toHaveLength(2);
+    expect(tiers).toEqual([
+      { runner: "claude", taskClass: "simple" },
+      { runner: "claude", taskClass: "complex" },
+    ]);
+    expect(labelTrace(trace)).toEqual(["-ready-for-agent|+running", "-running|+ready-for-human+blocked:validation"]);
+    expect(trace.closed).toEqual([]);
+    expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "blocked" }]);
   });
 });
 
