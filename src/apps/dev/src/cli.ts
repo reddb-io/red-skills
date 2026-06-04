@@ -3,12 +3,13 @@ import { fleetCommand } from "./commands/fleet.js";
 import { monitorCommand } from "./commands/monitor.js";
 import { runCommand } from "./commands/run.js";
 import { reapCommand } from "./commands/reap.js";
+import { shipCommand } from "./commands/ship.js";
 import { statuslineCommand } from "./commands/statusline.js";
 import { superviseCommand } from "./commands/supervise.js";
 import { readBuildInfo, renderVersion } from "@reddb-io/build-info";
 import { routeCommand, type RouterSchema } from "@reddb-io/shared/args.js";
 
-export type CliCommand = "run" | "monitor" | "fleet" | "reap" | "statusline" | "version" | "__supervise";
+export type CliCommand = "run" | "monitor" | "fleet" | "reap" | "ship" | "statusline" | "version" | "__supervise";
 
 export interface ParsedCli {
   command: CliCommand;
@@ -27,6 +28,7 @@ const CLI_ROUTER: RouterSchema<CliCommand> = {
     monitor: {},
     fleet: {},
     reap: {},
+    ship: {},
     statusline: {},
     version: {},
     __supervise: {},
@@ -50,6 +52,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   if (parsed.command === "monitor") return monitorCommand(parsed.args);
   if (parsed.command === "fleet") return fleetCommand(parsed.args);
   if (parsed.command === "reap") return reapCommand(parsed.args);
+  if (parsed.command === "ship") return shipCommand(parsed.args);
   if (parsed.command === "statusline") return statuslineCommand(parsed.args);
   if (parsed.command === "__supervise") return superviseCommand(parsed.args);
   return runCommand({ args: parsed.args });
