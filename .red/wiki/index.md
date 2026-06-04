@@ -55,6 +55,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [fix(afk): anchor sandcastle under the attempt dir, not the repo root](./pages/326-fix-afk-anchor-sandcastle-under-the-attempt-dir-not-the-repo.md)
 - [fix(afk): attempt-progress guard resets on worktree edits, not just commits (ADR 0051)](./pages/479-fix-afk-attempt-progress-guard-resets-on-worktree-edits-not.md)
 - [fix(afk): carry the line-diff in the heartbeat + persist it for the monitor (#448)](./pages/462-fix-afk-carry-the-line-diff-in-the-heartbeat-persist-it-for.md)
+- [fix(afk): don't read gh rate-limit as an auth failure (Mode B fast-death)](./pages/482-fix-afk-don-t-read-gh-rate-limit-as-an-auth-failure-mode-b-f.md)
 - [fix(afk): feed the agent lane on the native path so liveness isn't blind](./pages/350-fix-afk-feed-the-agent-lane-on-the-native-path-so-liveness-i.md)
 - [fix(afk): feedback gate resolves multi-slash afk/* branches (#437)](./pages/438-fix-afk-feedback-gate-resolves-multi-slash-afk-branches-437.md)
 - [fix(afk): guard each supervise tick + per-tick heartbeat — unwedgeable fleet supervisor](./pages/408-fix-afk-guard-each-supervise-tick-per-tick-heartbeat-unwedge.md)
