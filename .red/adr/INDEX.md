@@ -23,6 +23,7 @@ stale notes inline.
 - **0038** Dev runtime ships as a fetched Release asset, not a committed bundle — supersedes 0032's committed-bundle model
 - **0039** Plugin entrypoints share one source, selected by a build role (unifies red-fetch/afk/code-nav/memory launchers)
 - **0040** Version is a single source, written by one script; CLIs & MCP launchers version-aware
+- **0052** One bundle-naming convention — all release assets under `./dist/` as `<app>[-<role>].bundle.min.mjs`; legacy `dist-bundle/*-cli.mjs` removed *(supersedes 0029's dual output for memory/brain)*
 
 ## AFK execution & lifecycle
 - **0003** Native task surface mirrors AFK worker state

@@ -14,13 +14,10 @@
   ],
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "build": "tsc -p tsconfig.build.json && pnpm bundle && pnpm bundle:legacy",
+    "build": "tsc -p tsconfig.build.json && pnpm bundle",
     "bundle": "pnpm bundle:cli && pnpm bundle:mcp",
     "bundle:cli": "node ../../../scripts/bundle-app.mjs --entry src/cli.ts --outfile ../../../dist/brain.bundle.min.mjs --asset brain.bundle.min.mjs --minify --reddb-from-package",
     "bundle:mcp": "node ../../../scripts/bundle-app.mjs --entry src/mcp-server.ts --outfile ../../../dist/brain-mcp.bundle.min.mjs --asset brain-mcp.bundle.min.mjs --minify --reddb-from-package",
-    "bundle:legacy": "pnpm bundle:legacy:cli && pnpm bundle:legacy:mcp",
-    "bundle:legacy:cli": "node ../../../scripts/bundle-app.mjs --entry src/cli.ts --outfile dist-bundle/brain-cli.mjs --asset brain-cli.mjs --reddb-from-package",
-    "bundle:legacy:mcp": "node ../../../scripts/bundle-app.mjs --entry src/mcp-server.ts --outfile dist-bundle/brain-mcp.mjs --asset brain-mcp.mjs --reddb-from-package",
     "test": "vitest run",
     "dev": "node --import tsx src/cli.ts"
   },

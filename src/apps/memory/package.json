@@ -15,13 +15,10 @@
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint:deterministic-extractors": "tsx src/deterministic-extractor-vocabulary-lint.ts",
-    "build": "pnpm lint:deterministic-extractors && tsc -p tsconfig.build.json && pnpm bundle && pnpm bundle:legacy",
+    "build": "pnpm lint:deterministic-extractors && tsc -p tsconfig.build.json && pnpm bundle",
     "bundle": "pnpm bundle:cli && pnpm bundle:mcp",
     "bundle:cli": "node ../../../scripts/bundle-app.mjs --entry src/cli.ts --outfile ../../../dist/memory.bundle.min.mjs --asset memory.bundle.min.mjs --minify --reddb-from-package",
     "bundle:mcp": "node ../../../scripts/bundle-app.mjs --entry src/mcp-server.ts --outfile ../../../dist/memory-mcp.bundle.min.mjs --asset memory-mcp.bundle.min.mjs --minify --reddb-from-package",
-    "bundle:legacy": "pnpm bundle:legacy:cli && pnpm bundle:legacy:mcp",
-    "bundle:legacy:cli": "node ../../../scripts/bundle-app.mjs --entry src/cli.ts --outfile dist-bundle/memory-cli.mjs --asset memory-cli.mjs --reddb-from-package",
-    "bundle:legacy:mcp": "node ../../../scripts/bundle-app.mjs --entry src/mcp-server.ts --outfile dist-bundle/memory-mcp.mjs --asset memory-mcp.mjs --reddb-from-package",
     "test": "vitest run",
     "test:integration": "RED_MEMORY_RECALL_P50_TARGET_MS=250 vitest run --config vitest.integration.config.ts",
     "dev": "node --import tsx src/cli.ts"
