@@ -20,6 +20,8 @@ source "$BRANCH_LOCK_DIR/lib/lock-store.sh"
 source "$BRANCH_LOCK_DIR/lib/scope-resolver.sh"
 # shellcheck source=../skills/misc/branch-lock/scripts/lib/git-command-classifier.sh
 source "$BRANCH_LOCK_DIR/lib/git-command-classifier.sh"
+# shellcheck source=../skills/misc/branch-lock/scripts/lib/dev-config.sh
+source "$BRANCH_LOCK_DIR/lib/dev-config.sh"
 
 COMMAND="$(
   jq -r '
@@ -40,6 +42,19 @@ fi
 [[ -z "$ROOT" ]] && { printf '{}'; exit 0; }
 
 scope_should_enforce "$ROOT" || { printf '{}'; exit 0; }
+
+if dev_config_lock_primary_branch_enabled "$ROOT/.red/config.yaml" &&
+  [[ "$(classify_primary_branch_switch_guard "$COMMAND")" == "block" ]]; then
+  cat >&2 <<EOF
+BLOCKED by primary branch guard: dev.lock-primary-branch is true.
+The command '$COMMAND' would switch the agent's primary checkout branch.
+
+Allowed in the primary checkout: git commit, git worktree add, read-only git,
+and non-branch-changing commands. To work on another branch, create/use a
+worktree under .red/tmp/work-*/ or ask the user to change the primary branch.
+EOF
+  exit 2
+fi
 
 LOCKFILE="$ROOT/.red/tmp/branch-lock.yaml"
 LOCK_BRANCH="$(lock_store_read "$LOCKFILE")" || { printf '{}'; exit 0; }
