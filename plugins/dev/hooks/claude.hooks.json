@@ -9,6 +9,17 @@
           }
         ]
       }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'tmp=\"$(mktemp)\"; trap \"rm -f \\\"$tmp\\\"\" EXIT; cat >\"$tmp\" 2>/dev/null || true; hook=\"${CLAUDE_PLUGIN_ROOT}/skills/misc/branch-lock/scripts/branch-lock-hook.sh\"; if [ -f \"$hook\" ]; then bash \"$hook\" <\"$tmp\"; else printf \"{}\"; fi'"
+          }
+        ]
+      }
     ]
   }
 }
