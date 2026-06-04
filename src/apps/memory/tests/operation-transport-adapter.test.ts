@@ -1,7 +1,11 @@
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
-import { getReadOnlyMemoryOperation } from "../src/operations.js";
+import { listMemoryHttpRegistryRoutes } from "../src/http-server.js";
+import {
+  getReadOnlyMemoryOperation,
+  listReadOnlyMemoryOperations,
+} from "../src/operations.js";
 import {
   bindMemoryOperationInput,
   queryObjectFromSearchParams,
@@ -68,5 +72,34 @@ describe("Memory operation transport adapter", () => {
           })
         : undefined,
     ).toBe(join(rootDir, `.red/memory/doc-brief-${safeName}.html`));
+  });
+
+  test("builds generic HTTP routes for every non-infra read-only registry operation", () => {
+    const routes = listMemoryHttpRegistryRoutes();
+    const operationIds = new Set(routes.map((route) => route.operationId));
+    const excludedInfraOperations = new Set(["memory.workbench"]);
+
+    for (const operation of listReadOnlyMemoryOperations()) {
+      if (excludedInfraOperations.has(operation.id)) continue;
+      expect(operationIds.has(operation.id), operation.id).toBe(true);
+    }
+
+    expect(routes).toContainEqual({
+      route: "/api/docs/brief",
+      operationId: "memory.doc-brief",
+    });
+    expect(routes).toContainEqual({
+      route: "/docs/brief",
+      operationId: "memory.doc-brief-viewer",
+    });
+    expect(routes).toContainEqual({
+      route: "/api/context-pack",
+      operationId: "memory.context-pack",
+    });
+    expect(routes).toContainEqual({
+      route: "/memory/health",
+      operationId: "memory.health-viewer",
+    });
+    expect(operationIds.has("memory.workbench")).toBe(false);
   });
 });
