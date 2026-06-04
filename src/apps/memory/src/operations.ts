@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
+import { execFile } from "node:child_process";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import { z } from "zod";
 import {
   buildMemoryAssetInventory,
@@ -291,6 +293,8 @@ import {
   type MemoryWorkbenchArtifact,
 } from "./workbench.js";
 
+const execFileAsync = promisify(execFile);
+
 export type MemoryOperationSafetyClass = "read-only" | "mutating";
 export type MemoryOperationSideEffectClass = "none" | "cache-write" | "writes-memory";
 export type MemoryOperationCapability = "graph-store";
@@ -513,7 +517,7 @@ const SmartSearchInputSchema = ScopeInputSchema.extend({
 type SmartSearchInput = z.infer<typeof SmartSearchInputSchema>;
 
 const PrePrReviewInputSchema = z.object({
-  changed_files: z.array(z.string().min(1)).min(1),
+  changed_files: z.array(z.string().min(1)).optional(),
   comparison: z.string().optional(),
 });
 type PrePrReviewInput = z.infer<typeof PrePrReviewInputSchema>;
@@ -1063,10 +1067,10 @@ const MEMORY_OPERATION_FACETS: Record<string, MemoryOperationFacets> = {
   ...operationFacets(
     ["memory.doc-backlinks", "memory.doc-backlinks-viewer"],
     inputBinding([
-      positionalField("label", "string", { required: false }),
+      positionalField("query", "string", { required: false }),
       positionalField("rid", "number", { required: false }),
       flagField("title", "string"),
-      flagField("query", "string"),
+      flagField("label", "string"),
     ]),
     undefined,
     {
@@ -1109,7 +1113,7 @@ const MEMORY_OPERATION_FACETS: Record<string, MemoryOperationFacets> = {
   ...operationFacets(
     ["memory.pre-pr-review", "memory.pre-pr-review-viewer"],
     inputBinding([
-      flagField("changed_files", "string-array", { required: true }),
+      flagField("changed_files", "string-array"),
       flagField("comparison", "string"),
     ]),
     undefined,
@@ -1444,7 +1448,7 @@ const CONTEXT_PACK_OPERATION: MemoryOperationDefinition<ContextPackInput, Contex
   sideEffectClass: "cache-write",
   capabilities: ["graph-store"],
   renderer: {
-    cli: { command: "context pack", supportsJson: true },
+    cli: { command: "context-pack", supportsJson: true },
     mcp: {
       toolName: "memory_context_pack",
       description:
@@ -2219,9 +2223,10 @@ const PRE_PR_REVIEW_OPERATION: MemoryOperationDefinition<PrePrReviewInput, PrePr
         "Read-only pre-PR review over explicit changed files. Returns impacted concepts, related decisions, known failures, suggested validations, risks, and evidence markers without invoking git or mutating Memory.",
     },
   },
-  execute: (ctx, input) =>
+  execute: async (ctx, input) =>
     buildPrePrMemoryReview(ctx.store, {
-      changedFiles: input.changed_files,
+      changedFiles:
+        input.changed_files ?? (await readChangedFiles(ctx.rootDir ?? process.cwd(), input.comparison)),
       comparison: input.comparison,
     }),
 };
@@ -2249,7 +2254,8 @@ const PRE_PR_REVIEW_VIEWER_OPERATION: MemoryOperationDefinition<
   execute: async (ctx, input) =>
     buildPrePrReviewViewerArtifact(
       await buildPrePrMemoryReview(ctx.store, {
-        changedFiles: input.changed_files,
+        changedFiles:
+          input.changed_files ?? (await readChangedFiles(ctx.rootDir ?? process.cwd(), input.comparison)),
         comparison: input.comparison,
       }),
     ),
@@ -3692,8 +3698,38 @@ function firstString(...values: readonly unknown[]): string | undefined {
   return undefined;
 }
 
+async function readChangedFiles(rootDir: string, comparison?: string): Promise<string[]> {
+  const args = comparison
+    ? ["diff", "--name-only", "--diff-filter=ACMRTUXB", comparison, "--"]
+    : ["diff", "--name-only", "--diff-filter=ACMRTUXB", "HEAD", "--"];
+  try {
+    const { stdout } = await execFileAsync("git", args, { cwd: rootDir });
+    return parseChangedFiles(stdout);
+  } catch (err) {
+    if (comparison) throw err;
+    const { stdout } = await execFileAsync(
+      "git",
+      ["diff", "--name-only", "--diff-filter=ACMRTUXB", "--"],
+      { cwd: rootDir },
+    );
+    return parseChangedFiles(stdout);
+  }
+}
+
+function parseChangedFiles(stdout: string): string[] {
+  return stdout
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
 function whatifChangesFromTransport(input: MemoryOperationTransportInput): WhatifChange[] {
   const changes: WhatifChange[] = [];
+  const flagChanges = input.flags.change ?? input.flags.changes;
+  for (const entry of Array.isArray(flagChanges) ? flagChanges : [flagChanges]) {
+    appendWhatifChange(changes, entry);
+  }
+  for (const entry of input.positional) appendWhatifChange(changes, entry);
   const queryChanges = input.query.change ?? input.query.changes;
   for (const entry of Array.isArray(queryChanges) ? queryChanges : [queryChanges]) {
     appendWhatifChange(changes, entry);

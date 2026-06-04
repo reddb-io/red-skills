@@ -102,4 +102,31 @@ describe("Memory operation transport adapter", () => {
     });
     expect(operationIds.has("memory.workbench")).toBe(false);
   });
+
+  test("declares one generic CLI command surface for every read-only registry operation", () => {
+    const commands = listReadOnlyMemoryOperations().map((operation) => ({
+      id: operation.id,
+      command: operation.renderer.cli.command,
+      outputKind: operation.outputKind.kind,
+      fields: operation.inputBinding.fields.map((field) => field.field),
+    }));
+
+    expect(commands.every((entry) => entry.command.length > 0)).toBe(true);
+    expect(new Set(commands.map((entry) => entry.command)).size).toBe(commands.length);
+    expect(commands.filter((entry) => entry.outputKind === "viewer").length).toBeGreaterThan(10);
+    expect(commands).toContainEqual(
+      expect.objectContaining({
+        id: "memory.context-pack",
+        command: "context-pack",
+        fields: expect.arrayContaining(["goal", "budget_chars"]),
+      }),
+    );
+    expect(commands).toContainEqual(
+      expect.objectContaining({
+        id: "memory.vector-status-viewer",
+        command: "vector status-viewer",
+        outputKind: "viewer",
+      }),
+    );
+  });
 });
