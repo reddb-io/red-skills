@@ -667,8 +667,10 @@ const CommunityDigestEntrySchema = z.object({
   size: z.number(),
   top_label: z.string(),
   top_node_type: z.string(),
+  top_engineering_code: z.string().nullable(),
   labels: z.array(CommunityDigestCountSchema),
   node_types: z.array(CommunityDigestCountSchema),
+  engineering_codes: z.array(CommunityDigestCountSchema),
   narrative_summary: z.string().nullable(),
 });
 const CommunityDigestProviderSchema = z.object({
@@ -703,8 +705,10 @@ const GlobalSearchEvidenceSchema = z.object({
   size: z.number(),
   top_label: z.string(),
   top_node_type: z.string(),
+  top_engineering_code: z.string().nullable(),
   labels: z.array(CommunityDigestCountSchema),
   node_types: z.array(CommunityDigestCountSchema),
+  engineering_codes: z.array(CommunityDigestCountSchema),
   narrative_summary: z.string().nullable(),
 });
 const GlobalSearchOutputSchema = z.object({
