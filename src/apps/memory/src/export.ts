@@ -5,6 +5,7 @@ import { buildGraphContract } from "./graph-contract.js";
 import type { MemoryStore, StoredNode, VectorStatusReport } from "./graph-store.js";
 import { redactGraphData, type PrivacyFinding } from "./privacy.js";
 import type { Confidence, MemoryDoc } from "./schema.js";
+import { escapeHtmlNoSingleQuote as escapeHtml } from "./viewer-utils.js";
 
 /**
  * memory export — dump the whole graph to a self-contained, navigable bundle.
@@ -754,14 +755,6 @@ function renderAudit(
  *  see a stray `</script>`. */
 function inlineJson(data: unknown): string {
   return JSON.stringify(data).replace(/</g, "\\u003c");
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
 }
 
 /**
