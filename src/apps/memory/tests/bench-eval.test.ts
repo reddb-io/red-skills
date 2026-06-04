@@ -22,6 +22,7 @@ import {
 } from "../src/bench-eval.js";
 
 const CORPUS_DIR = join(__dirname, "../bench/eval/single-hop");
+const STRUCTURED_CORPUS_DIR = join(__dirname, "../bench/eval/structured");
 const FIXED_NOW = new Date("2026-06-02T00:00:00.000Z");
 
 describe("memory bench eval — fixture integrity", () => {
@@ -37,6 +38,26 @@ describe("memory bench eval — fixture integrity", () => {
       // Single-hop exact gold: the authoritative answer is the gold entry's fact.
       expect(exactMatch(q.gold_answer, gold!.fact)).toBe(1);
     }
+  });
+
+  test("structured corpus carries multi-hop chains and temporal as-of supersessions", async () => {
+    const corpus = await loadCorpus(STRUCTURED_CORPUS_DIR);
+    const byId = new Map(corpus.map((c) => [c.id, c]));
+    const questions = await loadQuestions(STRUCTURED_CORPUS_DIR);
+    expect([...new Set(questions.map((q) => q.category))].sort()).toEqual([
+      "multi-hop",
+      "single-hop",
+      "temporal-as-of",
+    ]);
+    expect(questions.find((q) => q.id === "q-mh-001")?.gold_doc_ids).toEqual(["doc-mh-001", "doc-mh-002"]);
+    expect(questions.find((q) => q.id === "q-t-002")?.as_of).toBe("2025-12-01T00:00:00.000Z");
+    for (const q of questions) {
+      expect(byId.get(q.gold_doc_id), `gold_doc_id ${q.gold_doc_id} for ${q.id}`).toBeDefined();
+      for (const id of q.gold_doc_ids) expect(byId.get(id), `support ${id} for ${q.id}`).toBeDefined();
+      expect(q.gold_doc_ids).toContain(q.gold_doc_id);
+    }
+    expect(byId.get("doc-t-001")?.superseded_by).toBe("doc-t-002");
+    expect(byId.get("doc-t-002")?.supersedes).toBe("doc-t-001");
   });
 });
 
@@ -272,6 +293,37 @@ describe("memory bench eval — runner", () => {
     expect(report.aggregate.f1).toBeGreaterThanOrEqual(report.aggregate.exact_match);
   });
 
+  test("structured run reports metrics per category", async () => {
+    const report = await runBenchEval({ corpusDir: STRUCTURED_CORPUS_DIR, now: () => FIXED_NOW });
+    expect(report.category).toBe("mixed");
+    expect(report.categories.map((category) => category.category)).toEqual([
+      "single-hop",
+      "multi-hop",
+      "temporal-as-of",
+    ]);
+    const multiHop = report.categories.find((category) => category.category === "multi-hop")!;
+    expect(multiHop.question_count).toBe(2);
+    expect(multiHop.substrates.find((summary) => summary.substrate === "reddb")?.aggregate.exact_match).toBe(1);
+    expect(multiHop.substrates.find((summary) => summary.substrate === "neo4j")?.aggregate.exact_match).toBe(0);
+    const temporal = report.categories.find((category) => category.category === "temporal-as-of")!;
+    expect(temporal.requires_as_of_reasoning).toBe(true);
+    expect(temporal.plain_neo4j_limitation).toContain("valid-time filter");
+    expect(temporal.substrates.find((summary) => summary.substrate === "reddb")?.aggregate.exact_match).toBe(1);
+  });
+
+  test("plain neo4j term traversal fails the historical as-of temporal question", async () => {
+    const report = await runBenchEval({
+      corpusDir: STRUCTURED_CORPUS_DIR,
+      substrate: "neo4j",
+      now: () => FIXED_NOW,
+    });
+    const oldPolicy = report.records.find((record) => record.question_id === "q-t-002")!;
+    expect(oldPolicy.as_of).toBe("2025-12-01T00:00:00.000Z");
+    expect(oldPolicy.predicted_answer).toBe("5 attempts");
+    expect(oldPolicy.gold_answer).toBe("3 attempts");
+    expect(oldPolicy.exact_match).toBe(0);
+  });
+
   test("default run compares RedDB, markdown embedding-RAG, Neo4j traversal, and Graphify CLI", async () => {
     const report = await runBenchEval({ corpusDir: CORPUS_DIR, now: () => FIXED_NOW });
     expect(report.substrates.map((summary) => summary.substrate)).toEqual([
@@ -324,6 +376,7 @@ describe("memory bench eval — runner", () => {
       expect(r.schema_version).toBe(EVAL_SCHEMA_VERSION);
       expect(typeof r.question_id).toBe("string");
       expect(typeof r.predicted_answer).toBe("string");
+      expect(Array.isArray(r.gold_doc_ids)).toBe(true);
       expect(Array.isArray(r.pack_ids)).toBe(true);
       expect([0, 1]).toContain(r.exact_match);
       expect(r.f1).toBeGreaterThanOrEqual(0);
@@ -369,5 +422,15 @@ describe("memory bench eval — markdown report", () => {
     expect(md).toContain("exact-match");
     expect(md).toContain("token-F1");
     for (const r of report.records) expect(md).toContain(r.question_id);
+  });
+
+  test("renders per-category rows and the temporal Neo4j limitation", async () => {
+    const report = await runBenchEval({ corpusDir: STRUCTURED_CORPUS_DIR, now: () => FIXED_NOW });
+    const md = formatEvalReport(report);
+    expect(md).toContain("## Per-category");
+    expect(md).toContain("multi-hop");
+    expect(md).toContain("temporal-as-of");
+    expect(md).toContain("no as-of filter");
+    expect(md).toContain("Temporal as-of note");
   });
 });
