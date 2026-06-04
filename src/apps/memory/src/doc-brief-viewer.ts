@@ -1,4 +1,5 @@
 import type { DocBrief, DocBriefCitation } from "./doc-brief.js";
+import { escapeHtml, jsonForScript, metric } from "./viewer-utils.js";
 
 export interface DocBriefViewerArtifact {
   contract: {
@@ -205,21 +206,4 @@ function nextActionsSection(actions: string[]): string {
         : `<ul>${actions.map((action) => `<li>${escapeHtml(action)}</li>`).join("")}</ul>`
     }
   </section>`;
-}
-
-function metric(label: string, value: number | string): string {
-  return `<div class="metric"><strong>${escapeHtml(String(value))}</strong><span>${escapeHtml(label)}</span></div>`;
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
-
-function jsonForScript(value: unknown): string {
-  return JSON.stringify(value, null, 2).replaceAll("</", "<\\/");
 }
