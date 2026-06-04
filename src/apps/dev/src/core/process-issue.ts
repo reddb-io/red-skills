@@ -613,104 +613,11 @@ export async function processIssue(
   // attemptDir is always absolute (built from `${root}/.red/tmp/...`), which is
   // also why promptFile/handoffPath must stay absolute — sandcastle resolves
   // promptFile against process.cwd(), not against this cwd.
-  const initialTier = resolveSpawnTier(deps, activeRunner, taskClass);
-  let run: RunAgentResult = await deps.runAgent({
-    runner: activeRunner,
-    model: initialTier.model,
-    effort: initialTier.effort,
-    handoffPath,
-    branch,
-    base,
-    cwd: input.attemptDir,
-    // Native-path liveness: drain sandcastle's file-log to the attempt dir and
-    // forward each agent stream event to the lanes (agent.log.jsonl + firehose)
-    // so the stall detector / monitor see a live agent instead of a frozen lane.
-    logPath: `${input.attemptDir}/sandcastle.log`,
-    onAgentEvent: deps.recordAgentEvent,
-    // Externalized proof-of-life (PR-B): the attempt-guard poll fires this each
-    // tick. processIssue owns the hook dispatcher, so it fires the `on_heartbeat`
-    // user hook here (fire-and-forget) AND forwards the progress signal to the
-    // CLI-wired sink (firehose record + state.last_progress_at). Never throws.
-    onHeartbeat: (info) => {
-      void fireHook(
-        "on_heartbeat",
-        hookContext({
-          issue,
-          title: input.title,
-          workspace: branch,
-          runner: input.runner,
-          attempt_n: input.attempt,
-        }),
-      );
-      deps.emitHeartbeat?.(info);
-    },
-    // Restore the issue #191 continuous-push guarantee: sandcastle pushes the
-    // worker branch up-front + after every commit (host worktree hook), so a
-    // SIGKILL mid-iteration preserves the diff on origin. Best-effort.
-    remote: input.remote,
-    continuousPush: true,
-    // FIX J: env computed by the pre_worktree hook (e.g. CARGO_TARGET_DIR per
-    // slot) — runAgent applies it to the spawned agent's environment.
-    env: agentEnv,
-  });
-
-  // ---- runner-fallback subsystem (--fallback-runner / runner failure) ----
-  // The active runner signalled quota / rate-limit exhaustion OR a transient
-  // runner transport/setup failure (for example Codex websocket 502 /
-  // thread-start). Without --fallback-runner the runner failure is terminal
-  // through bounded recovery. With it, close this runner's cycle, swap to the
-  // other runner, fire pre_attempt again (the per-runner-invocation cadence,
-  // #226 / ADR 0026), and re-run once. A second runner failure is terminal.
-  if (isRunnerRecoverableOutcome(run.outcome)) {
-    if (!deps.fallbackRunner) {
-      return await runnerRecoverable(deps, input, branch, base, hooksFired, activeRunner, run.outcome, false);
-    }
-    // Close attempt N's cycle before swapping.
-    await fireHook("post_attempt", postAttemptContext({ ...input, attempt: attemptN }, branch, "fail", run.outcome));
-    const other: Runner = activeRunner === "claude" ? "codex" : "claude";
-    activeRunner = other;
-    attemptN += 1;
-    // pre_attempt fires again for the fresh runner invocation (second firing).
-    if (
-      !(await fireHook(
-        "pre_attempt",
-        hookContext({ issue, title: input.title, workspace: branch, runner: activeRunner, attempt_n: attemptN }),
-      ))
-    ) {
-      return await abortAfterClaim(deps, input, branch, base, hooksFired, "pre_attempt");
-    }
-    const fallbackTier = resolveSpawnTier(deps, other, taskClass);
-    run = await deps.runAgent({
-      runner: other,
-      model: fallbackTier.model,
-      effort: fallbackTier.effort,
-      handoffPath,
-      branch,
-      base,
-      cwd: input.attemptDir,
-      logPath: `${input.attemptDir}/sandcastle.log`,
-      onAgentEvent: deps.recordAgentEvent,
-      remote: input.remote,
-      continuousPush: true,
-      // FIX J: carry the pre_worktree env onto the fallback runner too.
-      env: agentEnv,
-    });
-    if (isRunnerRecoverableOutcome(run.outcome)) {
-      // Both runner invocations failed in a recoverable runner class → close the
-      // fallback attempt's cycle, then terminate through the bounded policy.
-      await fireHook("post_attempt", postAttemptContext({ ...input, attempt: attemptN }, branch, "fail", run.outcome));
-      return await runnerRecoverable(deps, input, branch, base, hooksFired, activeRunner, run.outcome, true);
-    }
-  }
-
-  // The worker branch sandcastle landed commits on is authoritative.
-  const workerBranch = run.branch || branch;
-  // The effective per-attempt identity after any fallback swap — the remaining
-  // hook contexts / envelopes label themselves with the runner that actually
-  // authored the exit and the attempt number it ran under.
-  const current: ProcessIssueInput = { ...input, runner: activeRunner, attempt: attemptN };
-
-  const common = {
+  let activeTaskClass: AfkModelTier = taskClass;
+  let escalatedSimpleFeedback = false;
+  let workerBranch = branch;
+  let current: ProcessIssueInput = { ...input, runner: activeRunner, attempt: attemptN };
+  let common: StageCommon = {
     deps,
     input: current,
     branch: workerBranch,
@@ -718,156 +625,284 @@ export async function processIssue(
     slug,
     hooksFired,
     startedEpoch,
-  } satisfies StageCommon;
+  };
+  let validationSidecar: string[] = [];
 
-  // ---- commit-leftovers salvage (codex DONE-without-commit, ADR 0050) ----
-  // The inner agent (observed: codex) can edit, pass the gates, and emit
-  // `<promise>DONE</promise>` WITHOUT ever running `git commit`. sandcastle then
-  // collects zero commits → the worker branch is empty → a DONE attempt lands an
-  // empty merge and the issue is never really resolved (the no-sentinel salvage
-  // below misses it too: the branch carries no commits). When runAgent reports
-  // zero commits on a sentinel-bearing (done) or no-sentinel outcome, commit the
-  // dirty worktree onto the worker branch (one commit per file) so the SAME
-  // feedback gate + landing tail validate and merge the real work. A clean
-  // worktree salvages nothing (count 0) → today's behaviour is unchanged.
-  if (
-    deps.salvageUncommitted &&
-    run.commits.length === 0 &&
-    (run.outcome === "done" || run.outcome === "no-sentinel")
-  ) {
-    const salvagedFiles = await deps.salvageUncommitted(workerBranch).catch(() => 0);
-    if (salvagedFiles > 0) {
-      deps.appendIterLog(
-        `🤖 /afk: inner agent emitted ${run.outcome} but committed nothing — salvaged ${salvagedFiles} uncommitted file(s) onto \`${workerBranch}\` so the feedback gate + landing see the work.`,
-      );
-    }
-  }
-
-  // ---- no-sentinel: the run ended without an AFK sentinel (ADR 0028) ----
-  // ADR 0028 keeps `<promise>` canonical: a missing sentinel is a CRASH signal,
-  // not a "nothing to do" signal. But a worker branch can already carry a COMPLETE
-  // commit from a prior iteration — the agent finished the work, then exited
-  // without re-emitting the sentinel (issue #332; the live #300 loop: done at
-  // iteration 1, re-invoked to 4/20, never closed). Abandoning such a branch never
-  // converges. So we SALVAGE a no-sentinel attempt IFF its branch is ahead of base
-  // AND present on the host — but only THROUGH the same feedback gate + landing
-  // tail the DONE path uses. The feedback gate is load-bearing: it is the only
-  // thing that distinguishes "complete prior work" from a half-baked crash-edit.
-  // A branch with no work keeps today's terminal `no-sentinel` behaviour.
-  let salvaged = false;
-  if (run.outcome === "no-sentinel") {
-    const branchHasWork =
-      (await deps.lookups.changedFiles(workerBranch, base)).length > 0 &&
-      (!deps.lookups.branchPresent || (await deps.lookups.branchPresent(workerBranch)));
-    if (!branchHasWork) {
-      await fireHook("on_attempt_error", onErrorContext(current, workerBranch, "no-sentinel", current.attempt));
-      return await terminalFailure(common, "no-sentinel", "no-sentinel", {
-        notes: "_(no Notes appended; inner agent exited without a sentinel and the branch carries no work)_",
-        log: run.stdout ? run.stdout.split("\n").slice(-1)[0] || "(no captured stdout)" : "(no captured stdout)",
-      });
-    }
-    // Salvage path: the branch is ahead of base and present. Treat the attempt as
-    // a success for hook purposes (we are about to LAND it, not error it) and fall
-    // through to the shared feedback + land + close tail. `on_attempt_error` is NOT
-    // fired — a salvaged-and-landed attempt is not an error.
-    salvaged = true;
-    deps.appendIterLog(
-      `🤖 /afk: no-sentinel exit but worker branch \`${workerBranch}\` carries work — salvaging through the feedback gate (issue #332).`,
-    );
-    await fireHook("post_attempt", postAttemptContext(current, workerBranch, "success", "no-sentinel"));
-  } else if (run.outcome === "timeout") {
-    // ---- attempt progress guard fired: alive but no new commit within the cap.
-    // Park to ready-for-human (blocked:stalled), preserving the pushed branch/PR
-    // — never auto-retry (recoveryReasonFor("stalled") = null → always escalate). ----
-    await fireHook("on_attempt_error", onErrorContext(current, workerBranch, "stalled", current.attempt));
-    return await terminalFailure(common, "stalled", "stalled", {
-      notes: "_(no Notes appended; attempt aborted — inner agent made no progress within the wall-clock guard)_",
-      log: run.stdout || "(attempt progress guard fired)",
+  while (true) {
+    const initialTier = resolveSpawnTier(deps, activeRunner, activeTaskClass);
+    let run: RunAgentResult = await deps.runAgent({
+      runner: activeRunner,
+      model: initialTier.model,
+      effort: initialTier.effort,
+      handoffPath,
+      branch,
+      base,
+      cwd: input.attemptDir,
+      // Native-path liveness: drain sandcastle's file-log to the attempt dir and
+      // forward each agent stream event to the lanes (agent.log.jsonl + firehose)
+      // so the stall detector / monitor see a live agent instead of a frozen lane.
+      logPath: `${input.attemptDir}/sandcastle.log`,
+      onAgentEvent: deps.recordAgentEvent,
+      // Externalized proof-of-life (PR-B): the attempt-guard poll fires this each
+      // tick. processIssue owns the hook dispatcher, so it fires the `on_heartbeat`
+      // user hook here (fire-and-forget) AND forwards the progress signal to the
+      // CLI-wired sink (firehose record + state.last_progress_at). Never throws.
+      onHeartbeat: (info) => {
+        void fireHook(
+          "on_heartbeat",
+          hookContext({
+            issue,
+            title: input.title,
+            workspace: branch,
+            runner: activeRunner,
+            attempt_n: attemptN,
+          }),
+        );
+        deps.emitHeartbeat?.(info);
+      },
+      // Restore the issue #191 continuous-push guarantee: sandcastle pushes the
+      // worker branch up-front + after every commit (host worktree hook), so a
+      // SIGKILL mid-iteration preserves the diff on origin. Best-effort.
+      remote: input.remote,
+      continuousPush: true,
+      // FIX J: env computed by the pre_worktree hook (e.g. CARGO_TARGET_DIR per
+      // slot) — runAgent applies it to the spawned agent's environment.
+      env: agentEnv,
     });
-  } else {
-    // ---- post_attempt hook (terminal invocation; sentinel-bearing) ----
-    const pwStatus = run.outcome === "done" ? "success" : "fail";
-    await fireHook("post_attempt", postAttemptContext(current, workerBranch, pwStatus, run.outcome));
 
-    // ---- BLOCKED ----
-    if (run.outcome === "blocked") {
-      return await terminalFailure(common, "blocked", "blocked", {
-        notes: `_(inner agent emitted BLOCKED — see iteration log at \`${input.attemptDir}\`)_`,
+    // ---- runner-fallback subsystem (--fallback-runner / runner failure) ----
+    // The active runner signalled quota / rate-limit exhaustion OR a transient
+    // runner transport/setup failure (for example Codex websocket 502 /
+    // thread-start). Without --fallback-runner the runner failure is terminal
+    // through bounded recovery. With it, close this runner's cycle, swap to the
+    // other runner, fire pre_attempt again (the per-runner-invocation cadence,
+    // #226 / ADR 0026), and re-run once. A second runner failure is terminal.
+    if (isRunnerRecoverableOutcome(run.outcome)) {
+      if (!deps.fallbackRunner) {
+        return await runnerRecoverable(deps, input, branch, base, hooksFired, activeRunner, run.outcome, false);
+      }
+      // Close attempt N's cycle before swapping.
+      await fireHook("post_attempt", postAttemptContext({ ...input, attempt: attemptN }, branch, "fail", run.outcome));
+      const other: Runner = activeRunner === "claude" ? "codex" : "claude";
+      activeRunner = other;
+      attemptN += 1;
+      // pre_attempt fires again for the fresh runner invocation (second firing).
+      if (
+        !(await fireHook(
+          "pre_attempt",
+          hookContext({ issue, title: input.title, workspace: branch, runner: activeRunner, attempt_n: attemptN }),
+        ))
+      ) {
+        return await abortAfterClaim(deps, input, branch, base, hooksFired, "pre_attempt");
+      }
+      const fallbackTier = resolveSpawnTier(deps, other, activeTaskClass);
+      run = await deps.runAgent({
+        runner: other,
+        model: fallbackTier.model,
+        effort: fallbackTier.effort,
+        handoffPath,
+        branch,
+        base,
+        cwd: input.attemptDir,
+        logPath: `${input.attemptDir}/sandcastle.log`,
+        onAgentEvent: deps.recordAgentEvent,
+        remote: input.remote,
+        continuousPush: true,
+        // FIX J: carry the pre_worktree env onto the fallback runner too.
+        env: agentEnv,
       });
+      if (isRunnerRecoverableOutcome(run.outcome)) {
+        // Both runner invocations failed in a recoverable runner class → close the
+        // fallback attempt's cycle, then terminate through the bounded policy.
+        await fireHook("post_attempt", postAttemptContext({ ...input, attempt: attemptN }, branch, "fail", run.outcome));
+        return await runnerRecoverable(deps, input, branch, base, hooksFired, activeRunner, run.outcome, true);
+      }
     }
-    // run.outcome === "done" → fall through to the shared land + close tail.
-  }
 
-  // run.outcome === "done" OR a salvaged no-sentinel branch: shared feedback +
-  // land + close tail (the salvage path lands exactly like a DONE attempt).
+    // The worker branch sandcastle landed commits on is authoritative.
+    workerBranch = run.branch || branch;
+    // The effective per-attempt identity after any fallback swap — the remaining
+    // hook contexts / envelopes label themselves with the runner that actually
+    // authored the exit and the attempt number it ran under.
+    current = { ...input, runner: activeRunner, attempt: attemptN };
 
-  // ---- 5a. worker-branch presence gate (FIX E) ----
-  // changedFiles() does `git diff base...branch`, which returns [] on a MISSING
-  // branch (code 0) — indistinguishable from "no changes". If sandcastle's commits
-  // never reached the host (push failed), feedback would run against an EMPTY
-  // changed-file set → no validation scopes → the merge gate is bypassed on
-  // unvalidated work. Confirm the branch exists (the lookup attempts one fetch
-  // first); if it is still absent, do NOT proceed to feedback/merge — route to the
-  // merge-conflict / ready-for-human terminal path with a clear reason.
-  if (deps.lookups.branchPresent && !(await deps.lookups.branchPresent(workerBranch))) {
-    deps.appendIterLog(
-      `🤖 /afk: worker branch \`${workerBranch}\` absent on host — sandcastle commits did not reach the host; escalating.`,
-    );
-    return await mergeFailed(common, "worker branch absent — sandcastle commits did not reach the host");
-  }
+    common = {
+      deps,
+      input: current,
+      branch: workerBranch,
+      base,
+      slug,
+      hooksFired,
+      startedEpoch,
+    } satisfies StageCommon;
 
-  // ---- 5b. feedback loops (the merge gate, ADR 0008) ----
-  // Feedback runs against a checkout of the returned worker branch; the injected
-  // pnpm/layout execs resolve `workerBranch` to a concrete path in the CLI.
-  const changedFiles = await deps.lookups.changedFiles(workerBranch, base);
-  const feedback: RunFeedbackResult = await runFeedback(deps.pnpm, {
-    worktree: workerBranch,
-    scopes: relevantScopes(deps.layout, changedFiles),
-    layout: deps.layout,
-    now: deps.nowEpoch,
-  });
-  if (!feedback.ok) {
-    // The feedback-failed path also has a structured sidecar — persist it for
-    // Memory (best-effort) just like the done path does.
-    await writeValidationSidecar(deps, input.attemptDir, feedback.sidecar);
-    return await terminalFailure(common, "feedback-failed", "feedback", {
-      notes: salvaged
-        ? "Salvaged a no-sentinel branch (it carried work), but feedback validation failed — the branch was not merged."
-        : "Feedback validation failed after the inner agent emitted DONE. The worker branch was not merged.",
-      validation: feedback.sidecar.join("\n"),
-    }, { validationSummary: feedback.sidecar.join("\n") });
-  }
+    // ---- commit-leftovers salvage (codex DONE-without-commit, ADR 0050) ----
+    // The inner agent (observed: codex) can edit, pass the gates, and emit
+    // `<promise>DONE</promise>` WITHOUT ever running `git commit`. sandcastle then
+    // collects zero commits → the worker branch is empty → a DONE attempt lands an
+    // empty merge and the issue is never really resolved (the no-sentinel salvage
+    // below misses it too: the branch carries no commits). When runAgent reports
+    // zero commits on a sentinel-bearing (done) or no-sentinel outcome, commit the
+    // dirty worktree onto the worker branch (one commit per file) so the SAME
+    // feedback gate + landing tail validate and merge the real work. A clean
+    // worktree salvages nothing (count 0) → today's behaviour is unchanged.
+    if (
+      deps.salvageUncommitted &&
+      run.commits.length === 0 &&
+      (run.outcome === "done" || run.outcome === "no-sentinel")
+    ) {
+      const salvagedFiles = await deps.salvageUncommitted(workerBranch).catch(() => 0);
+      if (salvagedFiles > 0) {
+        deps.appendIterLog(
+          `🤖 /afk: inner agent emitted ${run.outcome} but committed nothing — salvaged ${salvagedFiles} uncommitted file(s) onto \`${workerBranch}\` so the feedback gate + landing see the work.`,
+        );
+      }
+    }
 
-  // ---- 5c. backpressure gate (the operator-declared merge gate, #430/PRD #429) ----
-  // After the scope-derived feedback gate passes, run the operator's
-  // `afk.backpressure` commands in order against the same worker-branch checkout.
-  // Backpressure SUPPLEMENTS feedback (it never replaces it). Any command exiting
-  // non-zero blocks the merge and parks the issue to ready-for-human EXACTLY like
-  // a feedback failure (same `feedback-failed` outcome → blocked:validation): its
-  // records distinguish it by their `backpressure:<cmd>` names + failing-command
-  // output. An absent executor or an empty command list is a no-op.
-  const backpressureCommands = deps.backpressureCommands ?? [];
-  let backpressureSidecar: string[] = [];
-  if (deps.backpressure && backpressureCommands.length > 0) {
-    const backpressure = await runBackpressure(deps.backpressure, {
+    // ---- no-sentinel: the run ended without an AFK sentinel (ADR 0028) ----
+    // ADR 0028 keeps `<promise>` canonical: a missing sentinel is a CRASH signal,
+    // not a "nothing to do" signal. But a worker branch can already carry a COMPLETE
+    // commit from a prior iteration — the agent finished the work, then exited
+    // without re-emitting the sentinel (issue #332; the live #300 loop: done at
+    // iteration 1, re-invoked to 4/20, never closed). Abandoning such a branch never
+    // converges. So we SALVAGE a no-sentinel attempt IFF its branch is ahead of base
+    // AND present on the host — but only THROUGH the same feedback gate + landing
+    // tail the DONE path uses. The feedback gate is load-bearing: it is the only
+    // thing that distinguishes "complete prior work" from a half-baked crash-edit.
+    // A branch with no work keeps today's terminal `no-sentinel` behaviour.
+    let salvaged = false;
+    if (run.outcome === "no-sentinel") {
+      const branchHasWork =
+        (await deps.lookups.changedFiles(workerBranch, base)).length > 0 &&
+        (!deps.lookups.branchPresent || (await deps.lookups.branchPresent(workerBranch)));
+      if (!branchHasWork) {
+        await fireHook("on_attempt_error", onErrorContext(current, workerBranch, "no-sentinel", current.attempt));
+        return await terminalFailure(common, "no-sentinel", "no-sentinel", {
+          notes: "_(no Notes appended; inner agent exited without a sentinel and the branch carries no work)_",
+          log: run.stdout ? run.stdout.split("\n").slice(-1)[0] || "(no captured stdout)" : "(no captured stdout)",
+        });
+      }
+      // Salvage path: the branch is ahead of base and present. Treat the attempt as
+      // a success for hook purposes (we are about to LAND it, not error it) and fall
+      // through to the shared feedback + land + close tail. `on_attempt_error` is NOT
+      // fired — a salvaged-and-landed attempt is not an error.
+      salvaged = true;
+      deps.appendIterLog(
+        `🤖 /afk: no-sentinel exit but worker branch \`${workerBranch}\` carries work — salvaging through the feedback gate (issue #332).`,
+      );
+      await fireHook("post_attempt", postAttemptContext(current, workerBranch, "success", "no-sentinel"));
+    } else if (run.outcome === "timeout") {
+      // ---- attempt progress guard fired: alive but no new commit within the cap.
+      // Park to ready-for-human (blocked:stalled), preserving the pushed branch/PR
+      // — never auto-retry (recoveryReasonFor("stalled") = null → always escalate). ----
+      await fireHook("on_attempt_error", onErrorContext(current, workerBranch, "stalled", current.attempt));
+      return await terminalFailure(common, "stalled", "stalled", {
+        notes: "_(no Notes appended; attempt aborted — inner agent made no progress within the wall-clock guard)_",
+        log: run.stdout || "(attempt progress guard fired)",
+      });
+    } else {
+      // ---- post_attempt hook (terminal invocation; sentinel-bearing) ----
+      const pwStatus = run.outcome === "done" ? "success" : "fail";
+      await fireHook("post_attempt", postAttemptContext(current, workerBranch, pwStatus, run.outcome));
+
+      // ---- BLOCKED ----
+      if (run.outcome === "blocked") {
+        return await terminalFailure(common, "blocked", "blocked", {
+          notes: `_(inner agent emitted BLOCKED — see iteration log at \`${input.attemptDir}\`)_`,
+        });
+      }
+      // run.outcome === "done" → fall through to the shared land + close tail.
+    }
+
+    // run.outcome === "done" OR a salvaged no-sentinel branch: shared feedback +
+    // land + close tail (the salvage path lands exactly like a DONE attempt).
+
+    // ---- 5a. worker-branch presence gate (FIX E) ----
+    // changedFiles() does `git diff base...branch`, which returns [] on a MISSING
+    // branch (code 0) — indistinguishable from "no changes". If sandcastle's commits
+    // never reached the host (push failed), feedback would run against an EMPTY
+    // changed-file set → no validation scopes → the merge gate is bypassed on
+    // unvalidated work. Confirm the branch exists (the lookup attempts one fetch
+    // first); if it is still absent, do NOT proceed to feedback/merge — route to the
+    // merge-conflict / ready-for-human terminal path with a clear reason.
+    if (deps.lookups.branchPresent && !(await deps.lookups.branchPresent(workerBranch))) {
+      deps.appendIterLog(
+        `🤖 /afk: worker branch \`${workerBranch}\` absent on host — sandcastle commits did not reach the host; escalating.`,
+      );
+      return await mergeFailed(common, "worker branch absent — sandcastle commits did not reach the host");
+    }
+
+    // ---- 5b. feedback loops (the merge gate, ADR 0008) ----
+    // Feedback runs against a checkout of the returned worker branch; the injected
+    // pnpm/layout execs resolve `workerBranch` to a concrete path in the CLI.
+    const changedFiles = await deps.lookups.changedFiles(workerBranch, base);
+    const feedback: RunFeedbackResult = await runFeedback(deps.pnpm, {
       worktree: workerBranch,
-      commands: backpressureCommands,
+      scopes: relevantScopes(deps.layout, changedFiles),
+      layout: deps.layout,
       now: deps.nowEpoch,
     });
-    backpressureSidecar = backpressure.sidecar;
-    if (!backpressure.ok) {
-      // Persist BOTH gates' records (feedback passed, backpressure failed) for
-      // Memory, but surface only the failing backpressure records in the envelope.
-      await writeValidationSidecar(deps, input.attemptDir, [...feedback.sidecar, ...backpressure.sidecar]);
+    if (!feedback.ok) {
+      // The feedback-failed path also has a structured sidecar — persist it for
+      // Memory (best-effort) just like the done path does.
+      await writeValidationSidecar(deps, input.attemptDir, feedback.sidecar);
+      if (activeTaskClass === "simple" && !escalatedSimpleFeedback) {
+        escalatedSimpleFeedback = true;
+        activeTaskClass = "complex";
+        attemptN += 1;
+        deps.appendIterLog(
+          `🤖 /afk: simple-tier feedback failed for #${issue}; retrying once on the complex tier before terminal validation routing.`,
+        );
+        if (
+          !(await fireHook(
+            "pre_attempt",
+            hookContext({ issue, title: input.title, workspace: branch, runner: activeRunner, attempt_n: attemptN }),
+          ))
+        ) {
+          return await abortAfterClaim(deps, input, branch, base, hooksFired, "pre_attempt");
+        }
+        continue;
+      }
       return await terminalFailure(common, "feedback-failed", "feedback", {
-        notes:
-          "Backpressure validation failed after the feedback gate passed. The worker branch was not merged.",
-        validation: backpressure.sidecar.join("\n"),
-      }, { validationSummary: backpressure.sidecar.join("\n") });
+        notes: salvaged
+          ? "Salvaged a no-sentinel branch (it carried work), but feedback validation failed — the branch was not merged."
+          : "Feedback validation failed after the inner agent emitted DONE. The worker branch was not merged.",
+        validation: feedback.sidecar.join("\n"),
+      }, { validationSummary: feedback.sidecar.join("\n") });
     }
+
+    // ---- 5c. backpressure gate (the operator-declared merge gate, #430/PRD #429) ----
+    // After the scope-derived feedback gate passes, run the operator's
+    // `afk.backpressure` commands in order against the same worker-branch checkout.
+    // Backpressure SUPPLEMENTS feedback (it never replaces it). Any command exiting
+    // non-zero blocks the merge and parks the issue to ready-for-human EXACTLY like
+    // a feedback failure (same `feedback-failed` outcome → blocked:validation): its
+    // records distinguish it by their `backpressure:<cmd>` names + failing-command
+    // output. An absent executor or an empty command list is a no-op.
+    const backpressureCommands = deps.backpressureCommands ?? [];
+    let backpressureSidecar: string[] = [];
+    if (deps.backpressure && backpressureCommands.length > 0) {
+      const backpressure = await runBackpressure(deps.backpressure, {
+        worktree: workerBranch,
+        commands: backpressureCommands,
+        now: deps.nowEpoch,
+      });
+      backpressureSidecar = backpressure.sidecar;
+      if (!backpressure.ok) {
+        // Persist BOTH gates' records (feedback passed, backpressure failed) for
+        // Memory, but surface only the failing backpressure records in the envelope.
+        await writeValidationSidecar(deps, input.attemptDir, [...feedback.sidecar, ...backpressure.sidecar]);
+        return await terminalFailure(common, "feedback-failed", "feedback", {
+          notes:
+            "Backpressure validation failed after the feedback gate passed. The worker branch was not merged.",
+          validation: backpressure.sidecar.join("\n"),
+        }, { validationSummary: backpressure.sidecar.join("\n") });
+      }
+    }
+    // Both gates passed — the close path's sidecar/envelope carries their union.
+    validationSidecar = [...feedback.sidecar, ...backpressureSidecar];
+    break;
   }
-  // Both gates passed — the close path's sidecar/envelope carries their union.
-  const validationSidecar = [...feedback.sidecar, ...backpressureSidecar];
 
   // ---- 6. push the worker branch, integrate, then land per lock state ----
   // The entire lock-toggled landing (push → pre_merge → integrate → land →
