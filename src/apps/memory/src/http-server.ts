@@ -1,76 +1,20 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { MemoryStore } from "./graph-store.js";
-import { buildMemoryAssetInventory } from "./asset-inventory.js";
-import { buildMemoryAssetInventoryViewerArtifact } from "./asset-inventory-viewer.js";
-import { buildMemoryAgentIntegrationStatus } from "./agent-integration-status.js";
-import { buildMemoryAgentIntegrationStatusViewerArtifact } from "./agent-integration-status-viewer.js";
-import { buildCommunityAnalytics } from "./communities.js";
-import { buildCommunitiesViewerArtifact } from "./communities-viewer.js";
-import { buildContextPack } from "./context-pack.js";
-import { buildContextPackViewerArtifact } from "./context-pack-viewer.js";
-import { readDoc, searchDocs } from "./doc-search.js";
-import { buildDocSearchViewerArtifact } from "./doc-search-viewer.js";
-import { buildDocBundle } from "./doc-bundle.js";
-import { buildDocBundleViewerArtifact } from "./doc-bundle-viewer.js";
-import { buildDocBacklinksReport, type DocBacklinksInput } from "./doc-backlinks.js";
-import { buildDocBacklinksViewerArtifact } from "./doc-backlinks-viewer.js";
-import { buildDocCoverageReport } from "./doc-coverage.js";
-import { buildDocEvidencePack } from "./doc-evidence-pack.js";
-import { buildDocEvidencePackViewerArtifact } from "./doc-evidence-pack-viewer.js";
-import { buildDocReferenceGraphReport } from "./doc-reference-graph.js";
-import { buildDocReferenceGraphViewerArtifact } from "./doc-reference-graph-viewer.js";
-import { buildDocRelatedReport } from "./doc-related.js";
-import { buildDocRelatedViewerArtifact } from "./doc-related-viewer.js";
-import { buildConfidenceReport } from "./confidence.js";
 import { recall } from "./engine.js";
-import { buildMemoryHandoff } from "./handoff.js";
-import { buildMemoryHandoffViewerArtifact } from "./handoff-viewer.js";
-import { buildWorkFrontier } from "./work-frontier.js";
-import { buildWorkFrontierViewerArtifact } from "./work-frontier-viewer.js";
 import {
   buildMemoryOperationalDashboard,
   buildMemoryOperationalDashboardArtifact,
 } from "./operational-dashboard.js";
-import { buildPathExplainReport } from "./path-explain.js";
-import { buildHookCoverageReport } from "./hook-coverage.js";
-import { buildHookCoverageViewerArtifact } from "./hook-coverage-viewer.js";
-import { buildMemoryExtractionStatus } from "./extraction-status.js";
-import { buildMemoryExtractionStatusViewerArtifact } from "./extraction-status-viewer.js";
-import { buildMemoryGovernanceReport } from "./governance.js";
-import { buildMemoryGovernanceViewerArtifact } from "./governance-viewer.js";
-import { buildLearningDebtReport } from "./learning-debt.js";
-import { buildLearningDebtViewerArtifact } from "./learning-debt-viewer.js";
-import { buildMemoryHealthReport } from "./memory-health.js";
-import { buildMemoryHealthViewerArtifact } from "./memory-health-viewer.js";
-import { buildMemoryDecayReport } from "./memory-decay.js";
-import { buildMemoryDecayViewerArtifact } from "./memory-decay-viewer.js";
-import { buildMemoryLayersReport } from "./memory-layers.js";
-import { buildMemoryLayersViewerArtifact } from "./memory-layers-viewer.js";
-import { buildMemoryReferenceRadar } from "./references-radar.js";
-import { buildOnboardingMap } from "./onboarding-map.js";
-import { buildOnboardingMapViewerArtifact } from "./onboarding-map-viewer.js";
-import { buildSessionTimeline } from "./session-timeline.js";
-import { readSkillRollups } from "./skill-events.js";
-import { buildReasoningReplay } from "./reasoning/reasoning-replay.js";
-import { buildWhatifReport, parseWhatifChange, type WhatifChange } from "./whatif.js";
-import { buildFederationReport } from "./federation.js";
 import { runAutoCure, readAutoCureRunLog } from "./auto-curation.js";
-import { buildMemorySmartSearch } from "./smart-search.js";
-import { buildMemorySmartSearchViewerArtifact } from "./smart-search-viewer.js";
-import { buildVectorSearchReport } from "./vector-search.js";
-import { buildVectorStatusViewerArtifact } from "./vector-status-viewer.js";
 import {
   buildMemoryWorkbench,
   buildMemoryWorkbenchArtifact,
 } from "./workbench.js";
 import {
-  buildMemoryRoutingGuide,
   SUPPORTED_ROUTING_AGENTS,
-  type MemoryRoutingAgent,
 } from "./routing-guide.js";
-import { buildMemoryRoutingGuideViewerArtifact } from "./routing-guide-viewer.js";
 import {
-  getReadOnlyMemoryOperation,
+  listReadOnlyMemoryOperations,
   type ReadOnlyMemoryOperation,
 } from "./operations.js";
 import {
@@ -188,16 +132,14 @@ const ENDPOINTS = [
   "GET /api/autocure (dry-run) | POST /api/autocure (apply)",
 ];
 
-const REGISTRY_HTTP_OPERATION_IDS = [
-  "memory.doc-brief",
-  "memory.doc-brief-viewer",
-] as const;
-const REGISTRY_HTTP_ROUTES = new Map<string, ReadOnlyMemoryOperation>(
-  REGISTRY_HTTP_OPERATION_IDS.map((id) => {
-    const operation = getReadOnlyMemoryOperation(id);
-    return [httpRouteForOperation(operation), operation];
-  }),
-);
+const REGISTRY_HTTP_EXCLUDED_OPERATION_IDS = new Set(["memory.workbench"]);
+const REGISTRY_HTTP_ROUTES = buildRegistryHttpRoutes();
+
+export function listMemoryHttpRegistryRoutes(): Array<{ route: string; operationId: string }> {
+  return [...REGISTRY_HTTP_ROUTES.entries()]
+    .map(([route, operation]) => ({ route, operationId: operation.id }))
+    .sort((a, b) => a.route.localeCompare(b.route));
+}
 
 export function createMemoryHttpServer(opts: MemoryHttpServerOptions): Server {
   return createServer(async (req, res) => {
@@ -217,8 +159,9 @@ async function handleRequest(
 ): Promise<void> {
   const url = new URL(req.url ?? "/", "http://127.0.0.1");
   const isAutocurePost = req.method === "POST" && url.pathname === "/api/autocure";
-  const isWhatifPost = req.method === "POST" && url.pathname === "/api/whatif";
-  if (req.method !== "GET" && req.method !== "HEAD" && !isAutocurePost && !isWhatifPost) {
+  const registryOperation = REGISTRY_HTTP_ROUTES.get(url.pathname);
+  const isRegistryPost = req.method === "POST" && registryOperation?.id === "memory.whatif";
+  if (req.method !== "GET" && req.method !== "HEAD" && !isAutocurePost && !isRegistryPost) {
     sendJson(res, 405, { error: "method not allowed" });
     return;
   }
@@ -255,148 +198,14 @@ async function handleRequest(
     return;
   }
 
-  const registryOperation = REGISTRY_HTTP_ROUTES.get(url.pathname);
   if (registryOperation) {
-    await handleRegistryHttpOperation(registryOperation, url, res, opts);
+    await handleRegistryHttpOperation(registryOperation, req, url, res, opts);
     return;
   }
 
   if (url.pathname === "/" || url.pathname === "/workbench") {
     const workbench = await buildMemoryWorkbench(opts.store, opts.rootDir, { now: opts.now });
     sendHtml(res, buildMemoryWorkbenchArtifact(workbench).html);
-    return;
-  }
-
-  if (url.pathname === "/dashboard") {
-    const dashboard = await buildMemoryOperationalDashboard(opts.store, opts.rootDir, {
-      now: opts.now,
-    });
-    sendHtml(res, buildMemoryOperationalDashboardArtifact(dashboard).html);
-    return;
-  }
-
-  if (url.pathname === "/assets") {
-    const report = await buildMemoryAssetInventory(opts.store, {
-      kind: url.searchParams.get("kind") ?? undefined,
-      query: url.searchParams.get("query") ?? url.searchParams.get("q") ?? undefined,
-    });
-    sendHtml(res, buildMemoryAssetInventoryViewerArtifact(report).html);
-    return;
-  }
-
-  if (url.pathname === "/search" || url.pathname === "/smart-search") {
-    const query = url.searchParams.get("query") ?? url.searchParams.get("q") ?? "";
-    if (!query.trim()) {
-      sendJson(res, 400, { error: "query is required" });
-      return;
-    }
-    const report = await buildMemorySmartSearch(opts.store, query, {
-      limit: numberParam(url.searchParams.get("limit")),
-      depth: numberParam(url.searchParams.get("depth")),
-      now: opts.now,
-    });
-    sendHtml(res, buildMemorySmartSearchViewerArtifact(report).html);
-    return;
-  }
-
-  if (url.pathname === "/context-pack") {
-    const goal = url.searchParams.get("goal") ?? url.searchParams.get("query") ?? "";
-    if (!goal.trim()) {
-      sendJson(res, 400, { error: "goal is required" });
-      return;
-    }
-    const pack = await buildContextPack(opts.store, goal, {
-      budgetChars: numberParam(url.searchParams.get("budget_chars")),
-      limit: numberParam(url.searchParams.get("limit")),
-      depth: numberParam(url.searchParams.get("depth")),
-      now: opts.now,
-    });
-    sendHtml(res, buildContextPackViewerArtifact(pack).html);
-    return;
-  }
-
-  if (url.pathname === "/docs/backlinks") {
-    const input = docBacklinksInput(url);
-    if (!input) {
-      sendJson(res, 400, { error: "rid, label, title, or query is required" });
-      return;
-    }
-    const report = await buildDocBacklinksReport(opts.store, input);
-    sendHtml(res, buildDocBacklinksViewerArtifact(report).html);
-    return;
-  }
-
-  if (url.pathname === "/docs/bundle") {
-    const query = url.searchParams.get("query") ?? url.searchParams.get("q") ?? "";
-    if (!query.trim()) {
-      sendJson(res, 400, { error: "query is required" });
-      return;
-    }
-    const bundle = await buildDocBundle(opts.store, {
-      query,
-      limit: numberParam(url.searchParams.get("limit")),
-      max_bytes: numberParam(url.searchParams.get("max_bytes")),
-    });
-    sendHtml(res, buildDocBundleViewerArtifact(bundle).html);
-    return;
-  }
-
-  if (url.pathname === "/docs/evidence-pack") {
-    const path = url.searchParams.get("path") ?? undefined;
-    const rid = positiveIntParam(url.searchParams.get("rid"));
-    if (!path && rid == null) {
-      sendJson(res, 400, { error: "path or rid is required" });
-      return;
-    }
-    const pack = await buildDocEvidencePack(opts.store, {
-      path,
-      rid,
-      max_bytes: numberParam(url.searchParams.get("max_bytes")),
-    });
-    sendHtml(res, buildDocEvidencePackViewerArtifact(pack).html);
-    return;
-  }
-
-  if (url.pathname === "/docs/search") {
-    const query = url.searchParams.get("query") ?? url.searchParams.get("q") ?? "";
-    if (!query.trim()) {
-      sendJson(res, 400, { error: "query is required" });
-      return;
-    }
-    const report = await searchDocs(opts.store, query, {
-      limit: numberParam(url.searchParams.get("limit")),
-    });
-    sendHtml(res, buildDocSearchViewerArtifact(report).html);
-    return;
-  }
-
-  if (url.pathname === "/docs/reference-graph") {
-    const report = await buildDocReferenceGraphReport(opts.store);
-    sendHtml(res, buildDocReferenceGraphViewerArtifact(report).html);
-    return;
-  }
-
-  if (url.pathname === "/docs/related") {
-    const path = url.searchParams.get("path") ?? undefined;
-    const rid = positiveIntParam(url.searchParams.get("rid"));
-    if (!path && rid == null) {
-      sendJson(res, 400, { error: "path or rid is required" });
-      return;
-    }
-    const report = await buildDocRelatedReport(opts.store, { path, rid });
-    sendHtml(res, buildDocRelatedViewerArtifact(report).html);
-    return;
-  }
-
-  if (url.pathname === "/hooks/coverage") {
-    const report = await buildHookCoverageReport(opts.rootDir);
-    sendHtml(res, buildHookCoverageViewerArtifact(report).html);
-    return;
-  }
-
-  if (url.pathname === "/extraction/status") {
-    const status = await buildMemoryExtractionStatus(opts.store, opts.rootDir, { now: opts.now });
-    sendHtml(res, buildMemoryExtractionStatusViewerArtifact(status).html);
     return;
   }
 
@@ -414,493 +223,6 @@ async function handleRequest(
     return;
   }
 
-  if (url.pathname === "/api/communities") {
-    sendJson(res, 200, await buildCommunityAnalytics(opts.store, { cache: "read-only" }));
-    return;
-  }
-
-  if (url.pathname === "/api/context-pack") {
-    const goal = url.searchParams.get("goal") ?? url.searchParams.get("query") ?? "";
-    if (!goal.trim()) {
-      sendJson(res, 400, { error: "goal is required" });
-      return;
-    }
-    sendJson(
-      res,
-      200,
-      await buildContextPack(opts.store, goal, {
-        budgetChars: numberParam(url.searchParams.get("budget_chars")),
-        limit: numberParam(url.searchParams.get("limit")),
-        depth: numberParam(url.searchParams.get("depth")),
-        now: opts.now,
-      }),
-    );
-    return;
-  }
-
-  if (url.pathname === "/communities") {
-    sendHtml(
-      res,
-      buildCommunitiesViewerArtifact(
-        await buildCommunityAnalytics(opts.store, { cache: "read-only" }),
-      ).html,
-    );
-    return;
-  }
-
-  if (url.pathname === "/api/references-radar") {
-    sendJson(
-      res,
-      200,
-      await buildMemoryReferenceRadar(opts.store, opts.rootDir, { now: opts.now }),
-    );
-    return;
-  }
-
-  if (url.pathname === "/api/extraction/status") {
-    sendJson(
-      res,
-      200,
-      await buildMemoryExtractionStatus(opts.store, opts.rootDir, { now: opts.now }),
-    );
-    return;
-  }
-
-  if (url.pathname === "/api/governance") {
-    sendJson(
-      res,
-      200,
-      await buildMemoryGovernanceReport(opts.store, {
-        staleProgressDays: numberParam(url.searchParams.get("stale_progress_days")),
-        now: opts.now,
-      }),
-    );
-    return;
-  }
-
-  if (url.pathname === "/governance") {
-    sendHtml(
-      res,
-      buildMemoryGovernanceViewerArtifact(
-        await buildMemoryGovernanceReport(opts.store, {
-          staleProgressDays: numberParam(url.searchParams.get("stale_progress_days")),
-          now: opts.now,
-        }),
-      ).html,
-    );
-    return;
-  }
-
-  if (url.pathname === "/api/handoff") {
-    sendJson(
-      res,
-      200,
-      await buildMemoryHandoff(opts.store, {
-        focus: url.searchParams.get("focus") ?? url.searchParams.get("query") ?? undefined,
-        limit: numberParam(url.searchParams.get("limit")),
-        now: opts.now,
-      }),
-    );
-    return;
-  }
-
-  if (url.pathname === "/handoff") {
-    sendHtml(
-      res,
-      buildMemoryHandoffViewerArtifact(
-        await buildMemoryHandoff(opts.store, {
-          focus: url.searchParams.get("focus") ?? url.searchParams.get("query") ?? undefined,
-          limit: numberParam(url.searchParams.get("limit")),
-          now: opts.now,
-        }),
-      ).html,
-    );
-    return;
-  }
-
-  if (url.pathname === "/api/frontier") {
-    sendJson(
-      res,
-      200,
-      await buildWorkFrontier(opts.store, {
-        focus: url.searchParams.get("focus") ?? url.searchParams.get("query") ?? undefined,
-        limit: numberParam(url.searchParams.get("limit")),
-        now: opts.now,
-      }),
-    );
-    return;
-  }
-
-  if (url.pathname === "/frontier") {
-    sendHtml(
-      res,
-      buildWorkFrontierViewerArtifact(
-        await buildWorkFrontier(opts.store, {
-          focus: url.searchParams.get("focus") ?? url.searchParams.get("query") ?? undefined,
-          limit: numberParam(url.searchParams.get("limit")),
-          now: opts.now,
-        }),
-      ).html,
-    );
-    return;
-  }
-
-  if (url.pathname === "/api/decay") {
-    sendJson(
-      res,
-      200,
-      await buildMemoryDecayReport(opts.store, {
-        stale_days: numberParam(url.searchParams.get("stale_days")),
-        deprecate_days: numberParam(url.searchParams.get("deprecate_days")),
-        limit: numberParam(url.searchParams.get("limit")),
-        now: opts.now,
-      }),
-    );
-    return;
-  }
-
-  if (url.pathname === "/decay") {
-    sendHtml(
-      res,
-      buildMemoryDecayViewerArtifact(
-        await buildMemoryDecayReport(opts.store, {
-          stale_days: numberParam(url.searchParams.get("stale_days")),
-          deprecate_days: numberParam(url.searchParams.get("deprecate_days")),
-          limit: numberParam(url.searchParams.get("limit")),
-          now: opts.now,
-        }),
-      ).html,
-    );
-    return;
-  }
-
-  if (url.pathname === "/api/routing-guide") {
-    sendJson(
-      res,
-      200,
-      buildMemoryRoutingGuide({ agent: routingAgentParam(url.searchParams.get("agent")) }),
-    );
-    return;
-  }
-
-  if (url.pathname === "/routing-guide") {
-    sendHtml(
-      res,
-      buildMemoryRoutingGuideViewerArtifact(
-        buildMemoryRoutingGuide({ agent: routingAgentParam(url.searchParams.get("agent")) }),
-      ).html,
-    );
-    return;
-  }
-
-  if (url.pathname === "/api/integration-status") {
-    sendJson(
-      res,
-      200,
-      await buildMemoryAgentIntegrationStatus(opts.rootDir, {
-        agent: routingAgentParam(url.searchParams.get("agent")),
-        now: opts.now,
-      }),
-    );
-    return;
-  }
-
-  if (url.pathname === "/integration-status") {
-    sendHtml(
-      res,
-      buildMemoryAgentIntegrationStatusViewerArtifact(
-        await buildMemoryAgentIntegrationStatus(opts.rootDir, {
-          agent: routingAgentParam(url.searchParams.get("agent")),
-          now: opts.now,
-        }),
-      ).html,
-    );
-    return;
-  }
-
-  if (url.pathname === "/api/layers") {
-    sendJson(res, 200, await buildMemoryLayersReport(opts.store, { now: opts.now }));
-    return;
-  }
-
-  if (url.pathname === "/api/memory/health") {
-    sendJson(
-      res,
-      200,
-      await buildMemoryHealthReport(opts.store, {
-        stale_days: numberParam(url.searchParams.get("stale_days")),
-      }),
-    );
-    return;
-  }
-
-  if (url.pathname === "/memory/health") {
-    sendHtml(
-      res,
-      buildMemoryHealthViewerArtifact(
-        await buildMemoryHealthReport(opts.store, {
-          stale_days: numberParam(url.searchParams.get("stale_days")),
-        }),
-      ).html,
-    );
-    return;
-  }
-
-  if (url.pathname === "/layers") {
-    sendHtml(
-      res,
-      buildMemoryLayersViewerArtifact(
-        await buildMemoryLayersReport(opts.store, { now: opts.now }),
-      ).html,
-    );
-    return;
-  }
-
-  if (url.pathname === "/api/learning-debt") {
-    sendJson(
-      res,
-      200,
-      await buildLearningDebtReport(opts.store, {
-        staleDays: numberParam(url.searchParams.get("stale_days")),
-        minRepeatedFailures: numberParam(url.searchParams.get("min_repeated_failures")),
-        rollups: await safeSkillRollups(opts.store),
-        skillTelemetryEnabled: true,
-      }),
-    );
-    return;
-  }
-
-  if (url.pathname === "/learning-debt") {
-    sendHtml(
-      res,
-      buildLearningDebtViewerArtifact(
-        await buildLearningDebtReport(opts.store, {
-          staleDays: numberParam(url.searchParams.get("stale_days")),
-          minRepeatedFailures: numberParam(url.searchParams.get("min_repeated_failures")),
-          rollups: await safeSkillRollups(opts.store),
-          skillTelemetryEnabled: true,
-        }),
-      ).html,
-    );
-    return;
-  }
-
-  if (url.pathname === "/api/onboarding-map") {
-    sendJson(
-      res,
-      200,
-      await buildOnboardingMap(opts.store, {
-        staleDays: numberParam(url.searchParams.get("stale_days")),
-        rollups: await safeSkillRollups(opts.store),
-      }),
-    );
-    return;
-  }
-
-  if (url.pathname === "/onboarding-map") {
-    sendHtml(
-      res,
-      buildOnboardingMapViewerArtifact(
-        await buildOnboardingMap(opts.store, {
-          staleDays: numberParam(url.searchParams.get("stale_days")),
-          rollups: await safeSkillRollups(opts.store),
-        }),
-      ).html,
-    );
-    return;
-  }
-
-  if (url.pathname === "/api/hooks/coverage") {
-    sendJson(res, 200, await buildHookCoverageReport(opts.rootDir));
-    return;
-  }
-
-  if (url.pathname === "/api/session/timeline") {
-    sendJson(
-      res,
-      200,
-      await buildSessionTimeline(opts.store, {
-        sessionId:
-          url.searchParams.get("session") ??
-          url.searchParams.get("session_id") ??
-          undefined,
-        limit: numberParam(url.searchParams.get("limit")),
-        now: opts.now,
-      }),
-    );
-    return;
-  }
-
-  if (url.pathname === "/api/assets") {
-    sendJson(
-      res,
-      200,
-      await buildMemoryAssetInventory(opts.store, {
-        kind: url.searchParams.get("kind") ?? undefined,
-        query: url.searchParams.get("query") ?? url.searchParams.get("q") ?? undefined,
-      }),
-    );
-    return;
-  }
-
-  if (url.pathname === "/api/docs/coverage") {
-    sendJson(res, 200, await buildDocCoverageReport(opts.store));
-    return;
-  }
-
-  if (url.pathname === "/api/docs/bundle") {
-    const query = url.searchParams.get("query") ?? url.searchParams.get("q") ?? "";
-    if (!query.trim()) {
-      sendJson(res, 400, { error: "query is required" });
-      return;
-    }
-    sendJson(
-      res,
-      200,
-      await buildDocBundle(opts.store, {
-        query,
-        limit: numberParam(url.searchParams.get("limit")),
-        max_bytes: numberParam(url.searchParams.get("max_bytes")),
-      }),
-    );
-    return;
-  }
-
-  if (url.pathname === "/api/docs/backlinks") {
-    const input = docBacklinksInput(url);
-    if (!input) {
-      sendJson(res, 400, { error: "rid, label, title, or query is required" });
-      return;
-    }
-    sendJson(res, 200, await buildDocBacklinksReport(opts.store, input));
-    return;
-  }
-
-  if (url.pathname === "/api/docs/evidence-pack") {
-    const path = url.searchParams.get("path") ?? undefined;
-    const rid = positiveIntParam(url.searchParams.get("rid"));
-    if (!path && rid == null) {
-      sendJson(res, 400, { error: "path or rid is required" });
-      return;
-    }
-    sendJson(
-      res,
-      200,
-      await buildDocEvidencePack(opts.store, {
-        path,
-        rid,
-        max_bytes: numberParam(url.searchParams.get("max_bytes")),
-      }),
-    );
-    return;
-  }
-
-  if (url.pathname === "/api/docs/reference-graph") {
-    sendJson(res, 200, await buildDocReferenceGraphReport(opts.store));
-    return;
-  }
-
-  if (url.pathname === "/api/docs/related") {
-    const path = url.searchParams.get("path") ?? undefined;
-    const rid = positiveIntParam(url.searchParams.get("rid"));
-    if (!path && rid == null) {
-      sendJson(res, 400, { error: "path or rid is required" });
-      return;
-    }
-    sendJson(res, 200, await buildDocRelatedReport(opts.store, { path, rid }));
-    return;
-  }
-
-  if (url.pathname === "/api/docs/search") {
-    const query = url.searchParams.get("query") ?? url.searchParams.get("q") ?? "";
-    if (!query.trim()) {
-      sendJson(res, 400, { error: "query is required" });
-      return;
-    }
-    const limit = numberParam(url.searchParams.get("limit"));
-    sendJson(res, 200, await searchDocs(opts.store, query, { limit }));
-    return;
-  }
-
-  if (url.pathname === "/api/docs/read") {
-    const path = url.searchParams.get("path") ?? undefined;
-    const rid = positiveIntParam(url.searchParams.get("rid"));
-    if (!path && rid == null) {
-      sendJson(res, 400, { error: "path or rid is required" });
-      return;
-    }
-    sendJson(
-      res,
-      200,
-      await readDoc(opts.store, {
-        path,
-        rid,
-        max_bytes: boundedIntParam(url.searchParams.get("max_bytes"), 200_000),
-      }),
-    );
-    return;
-  }
-
-  if (url.pathname === "/api/confidence") {
-    const nodeParam = url.searchParams.get("node") ?? url.searchParams.get("rid") ?? "";
-    if (!nodeParam.trim()) {
-      sendJson(res, 400, { error: "node is required" });
-      return;
-    }
-    const report = await buildConfidenceReport(opts.store, nodeParam);
-    if (!report) {
-      sendJson(res, 404, { error: `no node with rid=${nodeParam}` });
-      return;
-    }
-    sendJson(res, 200, report);
-    return;
-  }
-
-  if (url.pathname === "/api/path-explain") {
-    const from = url.searchParams.get("from") ?? "";
-    const to = url.searchParams.get("to") ?? "";
-    if (!from.trim() || !to.trim()) {
-      sendJson(res, 400, { error: "from and to are required" });
-      return;
-    }
-    sendJson(
-      res,
-      200,
-      await buildPathExplainReport(opts.store, {
-        from,
-        to,
-        maxDepth: boundedIntParam(url.searchParams.get("max_depth"), 20),
-      }),
-    );
-    return;
-  }
-
-  if (url.pathname === "/api/vector/status") {
-    sendJson(res, 200, await opts.store.vectorStatus());
-    return;
-  }
-
-  if (url.pathname === "/vector/status") {
-    sendHtml(res, buildVectorStatusViewerArtifact(await opts.store.vectorStatus()).html);
-    return;
-  }
-
-  if (url.pathname === "/api/vector/search") {
-    const query = url.searchParams.get("query") ?? url.searchParams.get("q") ?? "";
-    if (!query.trim()) {
-      sendJson(res, 400, { error: "query is required" });
-      return;
-    }
-    sendJson(
-      res,
-      200,
-      await buildVectorSearchReport(opts.store, query, {
-        limit: numberParam(url.searchParams.get("limit")),
-      }),
-    );
-    return;
-  }
-
   if (url.pathname === "/api/recall") {
     const query = url.searchParams.get("query") ?? url.searchParams.get("q") ?? "";
     if (!query.trim()) {
@@ -912,93 +234,35 @@ async function handleRequest(
     return;
   }
 
-  if (url.pathname === "/api/federate") {
-    const query = url.searchParams.get("query") ?? url.searchParams.get("q") ?? "";
-    if (!query.trim()) {
-      sendJson(res, 400, { error: "query is required" });
-      return;
-    }
-    sendJson(
-      res,
-      200,
-      await buildFederationReport(opts.rootDir, query, {
-        limit: numberParam(url.searchParams.get("limit")),
-        perRootLimit: numberParam(url.searchParams.get("per_root_limit")),
-        now: opts.now,
-      }),
-    );
-    return;
-  }
-
-  if (url.pathname === "/api/reasoning-replay") {
-    const task = url.searchParams.get("task") ?? url.searchParams.get("query") ?? "";
-    if (!task.trim()) {
-      sendJson(res, 400, { error: "task is required" });
-      return;
-    }
-    sendJson(
-      res,
-      200,
-      await buildReasoningReplay(opts.store, task, {
-        limit: numberParam(url.searchParams.get("limit")),
-        now: opts.now,
-      }),
-    );
-    return;
-  }
-
-  if (url.pathname === "/api/whatif") {
-    const changes = await collectWhatifChanges(req, url);
-    if (changes.length === 0) {
-      sendJson(res, 400, {
-        error: "at least one change is required (GET ?change=<descriptor> or POST {changes:[...]})",
-      });
-      return;
-    }
-    sendJson(
-      res,
-      200,
-      await buildWhatifReport(opts.store, changes, {
-        limit: numberParam(url.searchParams.get("limit")),
-        now: opts.now,
-      }),
-    );
-    return;
-  }
-
-  if (url.pathname === "/api/search" || url.pathname === "/api/smart-search") {
-    const query = url.searchParams.get("query") ?? url.searchParams.get("q") ?? "";
-    if (!query.trim()) {
-      sendJson(res, 400, { error: "query is required" });
-      return;
-    }
-    const limit = numberParam(url.searchParams.get("limit"));
-    sendJson(res, 200, await buildMemorySmartSearch(opts.store, query, { limit, now: opts.now }));
-    return;
-  }
-
   sendJson(res, 404, { error: "not found", endpoints: ENDPOINTS });
 }
 
 async function handleRegistryHttpOperation(
   operation: ReadOnlyMemoryOperation,
+  req: IncomingMessage,
   url: URL,
   res: ServerResponse,
   opts: MemoryHttpServerOptions,
 ): Promise<void> {
   try {
+    const body = req.method === "POST" ? await readJsonBody(req) : undefined;
     const output = await executeMemoryOperationFromTransport(
       operation,
-      { store: opts.store, rootDir: opts.rootDir },
+      { store: opts.store, rootDir: opts.rootDir, now: opts.now },
       {
         positional: [],
         flags: {},
         query: queryObjectFromSearchParams(url.searchParams),
+        body,
         rootDir: opts.rootDir,
       },
     );
     if (operation.outputKind.kind === "viewer") {
       sendHtml(res, viewerHtml(output));
+      return;
+    }
+    if (operation.outputKind.format === "markdown") {
+      sendMarkdown(res, markdownReport(output));
       return;
     }
     sendJson(res, 200, output);
@@ -1011,7 +275,36 @@ async function handleRegistryHttpOperation(
   }
 }
 
-function httpRouteForOperation(operation: ReadOnlyMemoryOperation): string {
+function buildRegistryHttpRoutes(): Map<string, ReadOnlyMemoryOperation> {
+  const routes = new Map<string, ReadOnlyMemoryOperation>();
+  for (const operation of listReadOnlyMemoryOperations()) {
+    if (REGISTRY_HTTP_EXCLUDED_OPERATION_IDS.has(operation.id)) continue;
+    for (const route of httpRoutesForOperation(operation)) {
+      const existing = routes.get(route);
+      if (existing && existing.id !== operation.id) {
+        throw new Error(
+          `duplicate Memory HTTP operation route ${route}: ${existing.id} and ${operation.id}`,
+        );
+      }
+      routes.set(route, operation);
+    }
+  }
+  return routes;
+}
+
+function httpRoutesForOperation(operation: ReadOnlyMemoryOperation): string[] {
+  const routes = [defaultHttpRouteForOperation(operation)];
+  if (operation.id === "memory.context-pack") routes.push("/api/context-pack");
+  if (operation.id === "memory.context-pack-viewer") routes.push("/context-pack");
+  if (operation.id === "memory.smart-search") routes.push("/api/search");
+  if (operation.id === "memory.smart-search-viewer") routes.push("/search");
+  return routes;
+}
+
+function defaultHttpRouteForOperation(operation: ReadOnlyMemoryOperation): string {
+  if (operation.id === "memory.health") return "/api/memory/health";
+  if (operation.id === "memory.health-viewer") return "/memory/health";
+
   const parts = operation.renderer.cli.command.split(" ");
   if (operation.outputKind.kind === "viewer") {
     const routeParts = [...parts];
@@ -1622,48 +915,21 @@ function authorized(req: IncomingMessage, token?: string): boolean {
 }
 
 function publicEndpoint(pathname: string): boolean {
-  return pathname === "/api/health" || pathname === "/openapi.json" || pathname === "/api/openapi.json";
+  return (
+    pathname === "/api/health" ||
+    pathname === "/openapi.json" ||
+    pathname === "/api/openapi.json"
+  );
 }
 
-async function collectWhatifChanges(
-  req: IncomingMessage,
-  url: URL,
-): Promise<WhatifChange[]> {
-  const out: WhatifChange[] = [];
-  for (const raw of url.searchParams.getAll("change")) {
-    if (typeof raw === "string" && raw.trim()) out.push(parseWhatifChange(raw));
+async function readJsonBody(req: IncomingMessage): Promise<unknown> {
+  const body = await readBody(req);
+  if (!body.trim()) return undefined;
+  try {
+    return JSON.parse(body);
+  } catch {
+    throw new MemoryOperationTransportError("invalid JSON body");
   }
-  if (req.method === "POST") {
-    const body = await readBody(req);
-    if (body.trim()) {
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(body);
-      } catch {
-        return [];
-      }
-      const candidate = (parsed as { changes?: unknown }).changes;
-      if (Array.isArray(candidate)) {
-        for (const entry of candidate) {
-          if (typeof entry === "string" && entry.trim()) {
-            out.push(parseWhatifChange(entry));
-          } else if (entry && typeof entry === "object") {
-            const c = entry as Partial<WhatifChange>;
-            if (c.kind && (c.file || c.symbol || c.description)) {
-              out.push({
-                kind: c.kind,
-                file: c.file,
-                symbol: c.symbol,
-                with: c.with,
-                description: c.description,
-              });
-            }
-          }
-        }
-      }
-    }
-  }
-  return out;
 }
 
 function readBody(req: IncomingMessage): Promise<string> {
@@ -1677,30 +943,6 @@ function readBody(req: IncomingMessage): Promise<string> {
   });
 }
 
-async function safeSkillRollups(store: MemoryStore) {
-  try {
-    return await readSkillRollups(store);
-  } catch {
-    return [];
-  }
-}
-
-function docBacklinksInput(url: URL): DocBacklinksInput | null {
-  const rid = positiveIntParam(url.searchParams.get("rid"));
-  const label = url.searchParams.get("label") ?? undefined;
-  const title = url.searchParams.get("title") ?? undefined;
-  const query = url.searchParams.get("query") ?? url.searchParams.get("q") ?? undefined;
-  if (rid == null && !label && !title && !query) return null;
-  return { rid, label, title, query };
-}
-
-function routingAgentParam(value: string | null): MemoryRoutingAgent | undefined {
-  if (!value) return undefined;
-  return SUPPORTED_ROUTING_AGENTS.includes(value as MemoryRoutingAgent)
-    ? (value as MemoryRoutingAgent)
-    : undefined;
-}
-
 function numberParam(value: string | null): number | undefined {
   return boundedIntParam(value, 100);
 }
@@ -1710,13 +952,6 @@ function boundedIntParam(value: string | null, max: number): number | undefined 
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed < 1) return undefined;
   return Math.min(max, Math.floor(parsed));
-}
-
-function positiveIntParam(value: string | null): number | undefined {
-  if (!value) return undefined;
-  const parsed = Number(value);
-  if (!Number.isSafeInteger(parsed) || parsed < 1) return undefined;
-  return parsed;
 }
 
 function sendHtml(res: ServerResponse, html: string): void {
@@ -1729,10 +964,27 @@ function sendHtml(res: ServerResponse, html: string): void {
   res.end(html);
 }
 
+function sendMarkdown(res: ServerResponse, markdown: string): void {
+  res.writeHead(200, {
+    "content-type": "text/markdown; charset=utf-8",
+    "cache-control": "no-store",
+  });
+  res.end(markdown.endsWith("\n") ? markdown : `${markdown}\n`);
+}
+
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, {
     "content-type": "application/json; charset=utf-8",
     "cache-control": "no-store",
   });
   res.end(`${JSON.stringify(body, null, 2)}\n`);
+}
+
+function markdownReport(output: unknown): string {
+  if (typeof output === "string") return output;
+  if (output && typeof output === "object" && "markdown" in output) {
+    const markdown = (output as { markdown?: unknown }).markdown;
+    if (typeof markdown === "string") return markdown;
+  }
+  return `${JSON.stringify(output, null, 2)}\n`;
 }
