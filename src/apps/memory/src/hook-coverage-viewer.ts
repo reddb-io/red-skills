@@ -1,3 +1,4 @@
+import { escapeHtml, jsonForScript, metric } from "./viewer-utils.js";
 import type {
   HookCoverageEvent,
   HookCoverageReport,
@@ -189,21 +190,4 @@ function eventItem(event: HookCoverageEvent): string {
     </div>
     <span class="pill ${stateClass}">${escapeHtml(state)}</span>
   </li>`;
-}
-
-function metric(label: string, value: number | string): string {
-  return `<div class="metric"><strong>${escapeHtml(String(value))}</strong><span>${escapeHtml(label)}</span></div>`;
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
-
-function jsonForScript(value: unknown): string {
-  return JSON.stringify(value, null, 2).replaceAll("</", "<\\/");
 }
