@@ -4,6 +4,7 @@ import {
   EVAL_SCHEMA_VERSION,
   answerFromPack,
   buildContextPack,
+  createGraphifySubstrateAdapter,
   createNeo4jSubstrateAdapter,
   countBenchTokens,
   evaluateSubstrateAdapter,
@@ -15,6 +16,7 @@ import {
   runBenchEval,
   toJsonl,
   tokenF1,
+  type GraphifySubstrateCommand,
   type Neo4jSubstrateCommand,
   type SubstrateAdapter,
 } from "../src/bench-eval.js";
@@ -185,6 +187,72 @@ describe("memory bench eval — substrate + answerer", () => {
     });
   });
 
+  test("graphify adapter runs CLI extract and query through an injectable executor", async () => {
+    const corpus = await loadCorpus(CORPUS_DIR);
+    const questions = await loadQuestions(CORPUS_DIR);
+    const q = questions.find((x) => x.id === "q-001")!;
+    const commands: GraphifySubstrateCommand[] = [];
+    const adapter = createGraphifySubstrateAdapter({
+      binary: "graphify",
+      sourcePath: "tmp/memory-bench/corpus",
+      graphPath: "tmp/memory-bench/graphify-out/graph.json",
+      executor(command) {
+        commands.push(command);
+        if (command.operation === "retrieve") {
+          expect(command.argv).toEqual([
+            "graphify",
+            "query",
+            q.question,
+            "--graph",
+            "tmp/memory-bench/graphify-out/graph.json",
+            "--json",
+          ]);
+          expect(command.params).toMatchObject({
+            questionId: "q-001",
+            limit: 2,
+            graphPath: "tmp/memory-bench/graphify-out/graph.json",
+          });
+          return {
+            stdout: JSON.stringify({
+              hits: [
+                { node_id: "doc-001", relevance: 7 },
+                { node_id: "doc-002", relevance: 1 },
+              ],
+            }),
+          };
+        }
+        expect(command.argv).toEqual([
+          "graphify",
+          "extract",
+          "tmp/memory-bench/corpus",
+          "--no-viz",
+          "--force",
+        ]);
+        expect(command.params).toMatchObject({
+          sourcePath: "tmp/memory-bench/corpus",
+          graphPath: "tmp/memory-bench/graphify-out/graph.json",
+        });
+        expect(Array.isArray(command.params.documents)).toBe(true);
+        return { rows: [] };
+      },
+    });
+
+    const report = await evaluateSubstrateAdapter(adapter, corpus, [q], {
+      packSize: 2,
+      now: () => FIXED_NOW,
+    });
+
+    expect(commands.map((command) => command.operation)).toEqual(["ingest", "retrieve"]);
+    expect(report.substrate).toBe("graphify");
+    expect(report.substrates[0]?.label).toBe("Graphify CLI graph query");
+    expect(report.records[0]).toMatchObject({
+      question_id: "q-001",
+      pack_ids: ["doc-001", "doc-002"],
+      predicted_answer: "pnpm",
+      exact_match: 1,
+    });
+  });
+
   test("answerer abstains (empty string) on an empty pack", () => {
     expect(answerFromPack({ question_id: "x", substrate: "reddb", entries: [] })).toBe("");
   });
@@ -204,16 +272,18 @@ describe("memory bench eval — runner", () => {
     expect(report.aggregate.f1).toBeGreaterThanOrEqual(report.aggregate.exact_match);
   });
 
-  test("default run compares RedDB, markdown embedding-RAG, and Neo4j traversal", async () => {
+  test("default run compares RedDB, markdown embedding-RAG, Neo4j traversal, and Graphify CLI", async () => {
     const report = await runBenchEval({ corpusDir: CORPUS_DIR, now: () => FIXED_NOW });
     expect(report.substrates.map((summary) => summary.substrate)).toEqual([
       "reddb",
       "markdown-rag",
       "neo4j",
+      "graphify",
     ]);
     expect(report.comparisons.map((comparison) => comparison.id)).toEqual([
       "reddb_vs_markdown-rag",
       "reddb_vs_neo4j",
+      "reddb_vs_graphify",
     ]);
     for (const summary of report.substrates) {
       expect(summary.records).toHaveLength(report.question_count);
@@ -232,6 +302,18 @@ describe("memory bench eval — runner", () => {
     });
     expect(report.substrate).toBe("neo4j");
     expect(report.substrates.map((summary) => summary.substrate)).toEqual(["neo4j"]);
+    expect(report.comparisons).toEqual([]);
+    expect(report.aggregate.f1).toBeGreaterThan(0);
+  });
+
+  test("explicit graphify substrate runs only the Graphify adapter", async () => {
+    const report = await runBenchEval({
+      corpusDir: CORPUS_DIR,
+      substrate: "graphify",
+      now: () => FIXED_NOW,
+    });
+    expect(report.substrate).toBe("graphify");
+    expect(report.substrates.map((summary) => summary.substrate)).toEqual(["graphify"]);
     expect(report.comparisons).toEqual([]);
     expect(report.aggregate.f1).toBeGreaterThan(0);
   });
