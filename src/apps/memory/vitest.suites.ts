@@ -60,6 +60,7 @@ export const INTEGRATION_TESTS: readonly string[] = [
   "lint-cli.test.ts",
   "mcp-server.test.ts",
   "memory-decay.test.ts",
+  "memory-merge-pass.test.ts",
   "memory-layers.test.ts",
   "onboarding-map-cli.test.ts",
   "operational-dashboard.test.ts",
