@@ -31,6 +31,7 @@ import { buildMemoryReferenceRadar } from "./references-radar.js";
 import type { CommunityAnalyticsReport } from "./communities.js";
 import { buildCommunitiesViewerArtifact } from "./communities-viewer.js";
 import type { CommunityDigestReport } from "./community-digest.js";
+import type { MemoryGlobalSearchReport } from "./global-search.js";
 import { buildContextPack } from "./context-pack.js";
 import { buildContextPackViewerArtifact } from "./context-pack-viewer.js";
 import { claimCheck, type ClaimCheckResult } from "./claim-check.js";
@@ -380,6 +381,7 @@ Usage:
   memory communities                [--root <dir>] [--no-cache] [--json]
   memory communities-viewer         [--root <dir>] [--no-cache] [--out <file>]
   memory community-digest           [--root <dir>] [--no-cache] [--json]
+  memory global-search <query...>   [--root <dir>] [--limit N] [--no-cache] [--json]
   memory structural-impact          [--root <dir>] [--file <path>] [--symbol <name>]
   memory structural-impact-viewer   [--root <dir>] [--file <path>] [--symbol <name>] [--out <file>]
   memory pre-pr-review              [--root <dir>] [--range <git-range>] [--json]
@@ -5794,6 +5796,51 @@ async function runExport(args: ParsedArgs): Promise<void> {
   }
 }
 
+async function runGlobalSearch(args: ParsedArgs): Promise<void> {
+  const query = args.positional.join(" ").trim();
+  if (!query) {
+    throw new Error("nothing to search — pass a query: memory global-search <query>");
+  }
+  const limit = typeof args.flags.limit === "string" ? Number(args.flags.limit) : undefined;
+  const { store, config } = await openGraphStore(args);
+  try {
+    const report = (await executeReadOnlyMemoryOperation(
+      "memory.global-search",
+      { store, providerConfig: config.provider },
+      {
+        query,
+        limit,
+        cache: args.flags["no-cache"] === true ? "off" : "read-only",
+      },
+    )) as MemoryGlobalSearchReport;
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(report, null, 2));
+      return;
+    }
+    console.log(`memory: ${report.total_hits} global-search hit(s) for "${report.query}"`);
+    console.log(`  source: ${report.generated_from.operation_id}`);
+    console.log(`  graph hash: ${report.generated_from.graph_hash}`);
+    console.log(
+      `  provider: ${report.generated_from.provider.status}${
+        report.generated_from.provider.error
+          ? ` (${report.generated_from.provider.error})`
+          : ""
+      }`,
+    );
+    for (const item of report.evidence) {
+      console.log(`  ${item.community_id}: score ${item.score}, ${item.size} node(s)`);
+      console.log(`        matched: ${item.matched_terms.join(", ")}`);
+      console.log(`        top label: ${item.top_label}`);
+      console.log(`        top type: ${item.top_node_type}`);
+      if (item.narrative_summary) {
+        console.log(`        summary: ${item.narrative_summary}`);
+      }
+    }
+  } finally {
+    await store.close();
+  }
+}
+
 /**
  * Resolve the graph contract for the architecture overview. Prefers an existing
  * `graph.json` (`--from`) so the overview is provably built from the #234
@@ -6409,6 +6456,8 @@ async function main(): Promise<void> {
       return runCommunitiesViewer(args);
     case "community-digest":
       return runCommunityDigest(args);
+    case "global-search":
+      return runGlobalSearch(args);
     case "structural-impact":
       return runStructuralImpact(args);
     case "structural-impact-viewer":

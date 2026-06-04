@@ -38,6 +38,10 @@ import {
   type CommunityDigestProviderStatus,
   type CommunityDigestReport,
 } from "./community-digest.js";
+import {
+  buildMemoryGlobalSearch,
+  type MemoryGlobalSearchReport,
+} from "./global-search.js";
 import { buildContextPack, type ContextPack } from "./context-pack.js";
 import {
   buildContextPackViewerArtifact,
@@ -540,6 +544,13 @@ const CommunityDigestInputSchema = z.object({
 });
 type CommunityDigestInput = z.infer<typeof CommunityDigestInputSchema>;
 
+const GlobalSearchInputSchema = z.object({
+  query: z.string().min(1),
+  limit: z.number().int().min(1).max(50).optional(),
+  cache: CommunityCacheSchema,
+});
+type GlobalSearchInput = z.infer<typeof GlobalSearchInputSchema>;
+
 const OnboardingMapInputSchema = z.object({
   stale_days: z.number().int().min(1).optional(),
 });
@@ -674,6 +685,35 @@ const CommunityDigestOutputSchema = z.object({
   community_count: z.number(),
   digests: z.array(CommunityDigestEntrySchema),
 }) satisfies z.ZodType<CommunityDigestReport>;
+const GlobalSearchEvidenceSchema = z.object({
+  source: z.literal("community-digest"),
+  community_id: z.string(),
+  score: z.number(),
+  matched_terms: z.array(z.string()),
+  size: z.number(),
+  top_label: z.string(),
+  top_node_type: z.string(),
+  labels: z.array(CommunityDigestCountSchema),
+  node_types: z.array(CommunityDigestCountSchema),
+  narrative_summary: z.string().nullable(),
+});
+const GlobalSearchOutputSchema = z.object({
+  schema_version: z.literal("memory.global-search.v1"),
+  read_only: z.literal(true),
+  surface: z.literal("memory.global-search"),
+  query: z.string(),
+  generated_from: z.object({
+    operation_id: z.literal("memory.community-digest"),
+    schema_version: z.literal("memory.community-digest.v1"),
+    graph_hash: z.string(),
+    cache_key: z.string(),
+    cached: z.boolean(),
+    provider: CommunityDigestProviderSchema,
+  }),
+  total_hits: z.number(),
+  evidence: z.array(GlobalSearchEvidenceSchema),
+  markdown: z.string(),
+}) satisfies z.ZodType<MemoryGlobalSearchReport>;
 
 const AskOutputSchema = objectOutputSchema<AskResult>();
 const ReadinessOutputSchema = objectOutputSchema<MemoryReadinessEnvelope>();
@@ -2147,6 +2187,35 @@ const COMMUNITY_DIGEST_OPERATION: MemoryOperation<
     buildCommunityDigest(ctx.store, { cache: input.cache, providerConfig: ctx.providerConfig }),
 };
 
+const GLOBAL_SEARCH_OPERATION: MemoryOperation<
+  GlobalSearchInput,
+  MemoryGlobalSearchReport
+> = {
+  id: "memory.global-search",
+  title: "Memory global search",
+  description:
+    "Read-only opt-in broad search over Community digest evidence; never enters or re-ranks canonical memory recall.",
+  inputSchema: GlobalSearchInputSchema,
+  outputSchema: GlobalSearchOutputSchema,
+  safetyClass: "read-only",
+  sideEffectClass: "none",
+  capabilities: ["graph-store"],
+  renderer: {
+    cli: { command: "global-search", supportsJson: true },
+    mcp: {
+      toolName: "memory_global_search",
+      description:
+        "Read-only opt-in broad search over Community digest evidence for zoom-out questions. Returns digest-level evidence, matched terms, source graph hash/provider metadata, and markdown. It is separate from canonical governed recall and never alters recall ranking.",
+    },
+  },
+  execute: (ctx, input) =>
+    buildMemoryGlobalSearch(ctx.store, input.query, {
+      cache: input.cache,
+      limit: input.limit,
+      providerConfig: ctx.providerConfig,
+    }),
+};
+
 const ONBOARDING_MAP_OPERATION: MemoryOperation<OnboardingMapInput, OnboardingMap> = {
   id: "memory.onboarding-map",
   title: "Memory onboarding map",
@@ -2694,6 +2763,7 @@ const READ_ONLY_OPERATIONS = createReadOnlyMemoryOperationRegistry([
   COMMUNITIES_OPERATION,
   COMMUNITIES_VIEWER_OPERATION,
   COMMUNITY_DIGEST_OPERATION,
+  GLOBAL_SEARCH_OPERATION,
   REFERENCE_RADAR_OPERATION,
   CONTEXT_PACK_OPERATION,
   CONTEXT_PACK_VIEWER_OPERATION,

@@ -205,6 +205,7 @@ describe("MCP server over stdio", () => {
           "memory_federate",
           "memory_governance",
           "memory_governance_viewer",
+          "memory_global_search",
           "memory_health",
           "memory_health_viewer",
           "memory_handoff",
@@ -1555,6 +1556,27 @@ describe("MCP server over stdio", () => {
         provider_status: "unavailable",
         provider_error: "no AI provider configured",
         narrative_summaries: 0,
+      });
+
+      const globalSearchResult = (await client.callTool({
+        name: "memory_global_search",
+        arguments: { query: "jwt cache" },
+      })) as ToolResult;
+      const globalSearch = JSON.parse(globalSearchResult.content[0]?.text ?? "{}") as {
+        schema_version: string;
+        surface: string;
+        generated_from: { operation_id: string };
+        evidence: unknown[];
+      };
+      expect(globalSearch.schema_version).toBe("memory.global-search.v1");
+      expect(globalSearch.surface).toBe("memory.global-search");
+      expect(globalSearch.generated_from.operation_id).toBe("memory.community-digest");
+      expect(globalSearch.evidence.length).toBeGreaterThan(0);
+      expect(globalSearchResult.structuredContent).toMatchObject({
+        operation_id: "memory.global-search",
+        schema_version: "memory.global-search.v1",
+        surface: "memory.global-search",
+        source_operation: "memory.community-digest",
       });
 
       const viewerResult = (await client.callTool({
