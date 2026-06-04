@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   renderCompactDashboard,
+  renderFleetLine,
   renderWorkerCompactLine,
+  type FleetState,
   type CompactWorker,
 } from "../src/core/monitor.js";
 import {
@@ -31,6 +33,18 @@ const baseWorker = (over: Partial<CompactWorker> = {}): CompactWorker => ({
   live: true,
   diffAdded: 10,
   diffRemoved: 3,
+  ...over,
+});
+
+const baseFleet = (over: Partial<FleetState> = {}): FleetState => ({
+  ts: "2026-05-30T11:00:00Z",
+  epoch: 1780138800,
+  readyForAgent: 0,
+  slotsBusy: 0,
+  slotsFree: 2,
+  slotsTotal: 2,
+  slotsParked: 0,
+  spawnsThisTick: 0,
   ...over,
 });
 
@@ -187,6 +201,27 @@ describe("monitor — compact dashboard", () => {
     const lines = out.split("\n");
     expect(lines[0].startsWith("48h:")).toBe(true);
     expect(out).toContain("workers: (none");
+  });
+
+  it("surfaces a healthy idle fleet last-tick line", () => {
+    const out = renderCompactDashboard([], events, 1780138815, baseFleet());
+    expect(out.split("\n")[1]).toBe(
+      "fleet [idle] last ticked 00:00:15 ago  ready:0  slots busy:0 free:2  spawns:0",
+    );
+  });
+
+  it("flags a stale fleet as wedged, distinct from healthy idle", () => {
+    const line = renderFleetLine(baseFleet({ readyForAgent: 7, slotsBusy: 0, slotsFree: 2 }), 1780139001);
+    expect(line).toContain("fleet [wedged]");
+    expect(line).toContain("last ticked 00:03:21 ago");
+    expect(line).toContain("ready:7");
+  });
+
+  it("shows a non-stale fleet with queued or busy work as draining", () => {
+    const line = renderFleetLine(baseFleet({ readyForAgent: 7, slotsBusy: 1, slotsFree: 1, spawnsThisTick: 1 }), 1780138815);
+    expect(line).toBe(
+      "fleet [draining] last ticked 00:00:15 ago  ready:7  slots busy:1 free:1  spawns:1",
+    );
   });
 });
 

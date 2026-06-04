@@ -254,6 +254,21 @@ export interface SupervisorGh {
    * missing typed `blocked:<reason>` observability label never fails the reap.
    * Mirrors the runner-error label-create pattern. */
   ensureLabel(name: string): Promise<void>;
+  /** Current open `ready-for-agent` queue depth for the fleet heartbeat. */
+  readyQueueDepth?(): Promise<number>;
+}
+
+export interface FleetHeartbeat {
+  /** ISO-8601 timestamp for the supervisor tick. */
+  ts: string;
+  /** Epoch seconds for cheap age calculations in monitor/statusline. */
+  epoch: number;
+  readyForAgent: number;
+  slotsBusy: number;
+  slotsFree: number;
+  slotsTotal: number;
+  slotsParked: number;
+  spawnsThisTick: number;
 }
 
 /** The slot's current iteration, resolved from the filesystem. Mirrors the
@@ -301,6 +316,12 @@ export interface SupervisorDeps {
    * stale log. Best-effort; never throws.
    */
   log?(line: string): void;
+  /**
+   * Structured fleet proof-of-life sink: one record per supervise tick. The CLI
+   * writes it to the supervisor firehose and state file. Best-effort; never
+   * throws out of the loop.
+   */
+  emitFleetHeartbeat?(heartbeat: FleetHeartbeat): void | Promise<void>;
 }
 
 // ---------- per-slot runtime state ----------
@@ -406,6 +427,53 @@ export interface TickResult {
   reaped: number[];
   /** True when the stop-file was honoured and all workers terminated. */
   stopped: boolean;
+}
+
+function fleetSlotCounts(state: SupervisorState): Pick<FleetHeartbeat, "slotsBusy" | "slotsFree" | "slotsTotal" | "slotsParked"> {
+  let slotsBusy = 0;
+  let slotsFree = 0;
+  let slotsParked = 0;
+  for (const slot of state.slots) {
+    if (slot.parked) {
+      slotsParked += 1;
+    } else if (slot.pid === null) {
+      slotsFree += 1;
+    } else {
+      slotsBusy += 1;
+    }
+  }
+  return { slotsBusy, slotsFree, slotsTotal: state.slots.length, slotsParked };
+}
+
+function isoFromEpoch(epoch: number): string {
+  return new Date(epoch * 1000).toISOString();
+}
+
+async function emitFleetHeartbeat(
+  state: SupervisorState,
+  deps: SupervisorDeps,
+  result: TickResult,
+): Promise<FleetHeartbeat> {
+  let readyForAgent = 0;
+  try {
+    readyForAgent = (await deps.gh.readyQueueDepth?.()) ?? 0;
+  } catch {
+    readyForAgent = 0;
+  }
+  const epoch = deps.now();
+  const heartbeat: FleetHeartbeat = {
+    ts: isoFromEpoch(epoch),
+    epoch,
+    readyForAgent,
+    ...fleetSlotCounts(state),
+    spawnsThisTick: result.respawned.length,
+  };
+  try {
+    await deps.emitFleetHeartbeat?.(heartbeat);
+  } catch {
+    // best-effort: heartbeat IO must never affect supervisor scheduling.
+  }
+  return heartbeat;
 }
 
 /**
@@ -693,9 +761,11 @@ export async function runSupervisor(
       deps.proc.sleep,
       deps.log,
     );
+    const heartbeat = await emitFleetHeartbeat(state, deps, result);
     deps.log?.(
       `tick: slots=${state.slots.length} respawned=${result.respawned.length} ` +
-        `deaths=${result.deaths.length} parked=${result.parked.length} reaped=${result.reaped.length}`,
+        `deaths=${result.deaths.length} parked=${result.parked.length} reaped=${result.reaped.length} ` +
+        `ready=${heartbeat.readyForAgent} busy=${heartbeat.slotsBusy} free=${heartbeat.slotsFree}`,
     );
     if (result.stopped) return;
     await deps.proc.sleep(config.pollIntervalS * 1000);
