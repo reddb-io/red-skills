@@ -1,4 +1,5 @@
 import type { PrePrMemoryReview, PrePrReviewSection } from "./pre-pr-review.js";
+import { escapeHtml, jsonForScript, metric } from "./viewer-utils.js";
 
 export interface PrePrReviewViewerArtifact {
   contract: {
@@ -136,9 +137,6 @@ function renderPrePrReviewViewer(review: PrePrMemoryReview): string {
 `;
 }
 
-function metric(label: string, value: number): string {
-  return `<div class="metric"><strong>${value}</strong><span>${escapeHtml(label)}</span></div>`;
-}
 
 function section(title: string, section: PrePrReviewSection): string {
   return `<section>
@@ -182,17 +180,4 @@ function evidenceSection(review: PrePrMemoryReview): string {
         : `<ul>${review.evidence.map((ref) => `<li><h3>${escapeHtml(`${ref.marker} ${ref.title}`)}</h3><p>${escapeHtml(ref.excerpt)}</p><p class="meta"><code>${escapeHtml(ref.urn)}</code> - ${escapeHtml(ref.nodeType)} - ${escapeHtml(ref.confidence)}</p></li>`).join("")}</ul>`
     }
   </section>`;
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
-
-function jsonForScript(value: unknown): string {
-  return JSON.stringify(value, null, 2).replaceAll("</", "<\\/");
 }
