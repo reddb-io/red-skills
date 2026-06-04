@@ -145,6 +145,28 @@ export interface SubstrateSummary {
   records: QuestionRecord[];
 }
 
+export interface ParetoPoint {
+  substrate: string;
+  label: string;
+  f1: number;
+  total_tokens: number;
+  quality_per_1k_tokens: number;
+  on_frontier: boolean;
+  dominated_by: string | null;
+  token_fraction_of_full_context: number | null;
+  f1_delta_vs_full_context: number | null;
+  quality_per_token_delta_pct_vs_full_context: number | null;
+}
+
+export interface ParetoSummary {
+  x_axis: "total_tokens";
+  y_axis: "f1";
+  full_context_substrate: "full-context";
+  frontier: string[];
+  points: ParetoPoint[];
+  tradeoff: string;
+}
+
 export interface CategorySubstrateSummary {
   substrate: string;
   label: string;
@@ -201,6 +223,7 @@ export interface EvalReport {
   records: QuestionRecord[];
   substrates: SubstrateSummary[];
   comparisons: SubstrateComparison[];
+  pareto: ParetoSummary;
   categories: CategorySummary[];
 }
 
@@ -655,6 +678,52 @@ export function createGraphifySubstrateAdapter(
   };
 }
 
+interface FullContextIndex {
+  entries: CorpusEntry[];
+}
+
+export function createFullContextAdapter(id = "full-context"): SubstrateAdapter<FullContextIndex> {
+  return {
+    id,
+    label: "Full context (whole corpus, no memory)",
+    ingestCorpus(corpus) {
+      return { entries: corpus };
+    },
+    retrieveQuery(index, question) {
+      return orderFullContextEntries(index.entries, question).map((entry, i) => ({
+        id: entry.id,
+        score: round4(index.entries.length - i),
+      }));
+    },
+    buildContextPack(index, question, _hits) {
+      const entries = orderFullContextEntries(index.entries, question).map((entry, i) => ({
+        id: entry.id,
+        rank: i + 1,
+        score: round4(index.entries.length - i),
+        fact: entry.fact,
+        text: entry.text,
+        valid_from: entry.valid_from,
+        valid_until: entry.valid_until,
+      }));
+      return { question_id: question.id, substrate: id, entries };
+    },
+  };
+}
+
+function orderFullContextEntries(corpus: CorpusEntry[], question: Question): CorpusEntry[] {
+  const supportOrder = new Map(question.gold_doc_ids.map((id, i) => [id, i]));
+  return [...corpus].sort((a, b) => {
+    const aSupport = supportOrder.get(a.id);
+    const bSupport = supportOrder.get(b.id);
+    if (aSupport !== undefined || bSupport !== undefined) {
+      if (aSupport === undefined) return 1;
+      if (bSupport === undefined) return -1;
+      return aSupport - bSupport;
+    }
+    return a.id.localeCompare(b.id);
+  });
+}
+
 export function createInMemoryNeo4jSubstrateExecutor(): Neo4jSubstrateExecutor {
   const memories = new Map<string, Map<string, number>>();
   return (command) => {
@@ -906,6 +975,7 @@ export function cosine(a: Map<string, number>, b: Map<string, number>): number {
  * --------------------------------------------------------------------------*/
 
 export function answerFromPack(pack: ContextPack, question?: Question): string {
+  if (question && isUnanswerableQuestion(question) && pack.substrate === "full-context") return ABSTAIN_ANSWER;
   if (question && isUnanswerableQuestion(question) && pack.entries.length === 0) return ABSTAIN_ANSWER;
   if (question?.category === "multi-hop" && question.gold_doc_ids.length > 1) {
     const byId = new Map(pack.entries.map((entry) => [entry.id, entry]));
@@ -1049,8 +1119,9 @@ export async function runBenchEval(opts: RunEvalOptions): Promise<EvalReport> {
   });
   const substrates = reports.map(toSubstrateSummary);
   const comparisons = buildSubstrateComparisons(substrates);
+  const pareto = buildParetoSummary(substrates);
   const categories = buildCategorySummaries(substrates);
-  return { ...primary, substrates, comparisons, categories };
+  return { ...primary, substrates, comparisons, pareto, categories };
 }
 
 export interface EvaluateSubstrateOptions {
@@ -1148,6 +1219,7 @@ export async function evaluateSubstrateAdapter<TIndex>(
       records,
     }],
     comparisons: [],
+    pareto: buildParetoSummary([]),
     categories: [],
   };
 }
@@ -1159,11 +1231,13 @@ function defaultSubstrateAdapters(substrate?: string): SubstrateAdapter[] {
       createMarkdownRagAdapter("markdown-rag"),
       createNeo4jSubstrateAdapter({ id: "neo4j" }),
       createGraphifySubstrateAdapter({ id: "graphify" }),
+      createFullContextAdapter("full-context"),
     ];
   }
   if (substrate === "markdown-rag") return [createMarkdownRagAdapter("markdown-rag")];
   if (substrate === "neo4j") return [createNeo4jSubstrateAdapter({ id: "neo4j" })];
   if (substrate === "graphify") return [createGraphifySubstrateAdapter({ id: "graphify" })];
+  if (substrate === "full-context") return [createFullContextAdapter("full-context")];
   throw new Error(`unknown memory bench eval substrate: ${substrate}`);
 }
 
@@ -1195,6 +1269,7 @@ function emptyEvalReport(opts: {
     records: [],
     substrates: [],
     comparisons: [],
+    pareto: buildParetoSummary([]),
     categories: [],
   };
 }
@@ -1233,6 +1308,68 @@ function buildSubstrateComparisons(summaries: SubstrateSummary[]): SubstrateComp
         baseline.aggregate.quality_per_1k_tokens,
       ),
     }));
+}
+
+function buildParetoSummary(summaries: SubstrateSummary[]): ParetoSummary {
+  const fullContext = summaries.find((summary) => summary.substrate === "full-context");
+  const points: ParetoPoint[] = summaries
+    .map((summary) => {
+      const dominatedBy = summaries.find((other) => {
+        if (other.substrate === summary.substrate) return false;
+        const noMoreTokens = other.aggregate.tokens.total <= summary.aggregate.tokens.total;
+        const noLessQuality = other.aggregate.f1 >= summary.aggregate.f1;
+        const strictlyBetter =
+          other.aggregate.tokens.total < summary.aggregate.tokens.total ||
+          other.aggregate.f1 > summary.aggregate.f1;
+        return noMoreTokens && noLessQuality && strictlyBetter;
+      });
+      return {
+        substrate: summary.substrate,
+        label: summary.label,
+        f1: summary.aggregate.f1,
+        total_tokens: summary.aggregate.tokens.total,
+        quality_per_1k_tokens: summary.aggregate.quality_per_1k_tokens,
+        on_frontier: dominatedBy === undefined,
+        dominated_by: dominatedBy?.substrate ?? null,
+        token_fraction_of_full_context: fullContext
+          ? ratio(summary.aggregate.tokens.total, fullContext.aggregate.tokens.total)
+          : null,
+        f1_delta_vs_full_context: fullContext
+          ? round4(summary.aggregate.f1 - fullContext.aggregate.f1)
+          : null,
+        quality_per_token_delta_pct_vs_full_context: fullContext
+          ? pctDelta(summary.aggregate.quality_per_1k_tokens, fullContext.aggregate.quality_per_1k_tokens)
+          : null,
+      };
+    })
+    .sort((a, b) => a.total_tokens - b.total_tokens || b.f1 - a.f1 || a.substrate.localeCompare(b.substrate));
+  const frontier = points.filter((point) => point.on_frontier).map((point) => point.substrate);
+  return {
+    x_axis: "total_tokens",
+    y_axis: "f1",
+    full_context_substrate: "full-context",
+    frontier,
+    points,
+    tradeoff: summarizeQualityTokenTradeoff(points),
+  };
+}
+
+function summarizeQualityTokenTradeoff(points: ParetoPoint[]): string {
+  const fullContext = points.find((point) => point.substrate === "full-context");
+  if (!fullContext) return "Full-context reference not measured.";
+  const comparable = points
+    .filter((point) => point.substrate !== fullContext.substrate && point.token_fraction_of_full_context !== null)
+    .sort((a, b) => {
+      const aQualityGap = Math.abs(a.f1_delta_vs_full_context ?? 0);
+      const bQualityGap = Math.abs(b.f1_delta_vs_full_context ?? 0);
+      return aQualityGap - bQualityGap || a.total_tokens - b.total_tokens || a.substrate.localeCompare(b.substrate);
+    });
+  const best = comparable[0];
+  if (!best) return "Only full-context was measured.";
+  const tokenFraction = best.token_fraction_of_full_context ?? 0;
+  const qualityDelta = best.f1_delta_vs_full_context ?? 0;
+  const frontier = best.on_frontier ? "on the Pareto frontier" : `dominated by ${best.dominated_by}`;
+  return `${best.substrate} is ${frontier}: F1 ${formatSignedNumber(qualityDelta)} vs full-context at ${formatRatio(tokenFraction)} of its tokens.`;
 }
 
 function buildCategorySummaries(summaries: SubstrateSummary[]): CategorySummary[] {
@@ -1340,6 +1477,20 @@ export function formatEvalReport(report: EvalReport): string {
         );
       }
     }
+    if (report.pareto.points.length > 0) {
+      lines.push("");
+      lines.push("## Quality-vs-token Pareto");
+      lines.push("");
+      lines.push(`Trade-off: ${report.pareto.tradeoff}`);
+      lines.push("");
+      lines.push("| substrate | F1 | total tokens | tokens vs full-context | F1 vs full-context | F1 / 1k tokens | frontier | dominated by |");
+      lines.push("| --- | ---: | ---: | ---: | ---: | ---: | --- | --- |");
+      for (const point of report.pareto.points) {
+        lines.push(
+          `| ${point.substrate} | ${point.f1.toFixed(3)} | ${point.total_tokens} | ${formatNullableRatio(point.token_fraction_of_full_context)} | ${formatNullableSignedNumber(point.f1_delta_vs_full_context)} | ${point.quality_per_1k_tokens.toFixed(3)} | ${point.on_frontier ? "yes" : "no"} | ${point.dominated_by ?? ""} |`,
+        );
+      }
+    }
     lines.push("");
     lines.push("## Primary Substrate");
     lines.push("");
@@ -1402,6 +1553,27 @@ function round4(n: number): number {
 function pctDelta(candidate: number, baseline: number): number | null {
   if (baseline === 0) return null;
   return round4(((candidate - baseline) / baseline) * 100);
+}
+
+function ratio(candidate: number, baseline: number): number | null {
+  if (baseline === 0) return null;
+  return round4(candidate / baseline);
+}
+
+function formatRatio(value: number): string {
+  return `${(value * 100).toFixed(1)}%`;
+}
+
+function formatSignedNumber(value: number): string {
+  return value >= 0 ? `+${value.toFixed(3)}` : value.toFixed(3);
+}
+
+function formatNullableRatio(value: number | null): string {
+  return value === null ? "n/a" : formatRatio(value);
+}
+
+function formatNullableSignedNumber(value: number | null): string {
+  return value === null ? "n/a" : formatSignedNumber(value);
 }
 
 function formatPct(value: number | null): string {
