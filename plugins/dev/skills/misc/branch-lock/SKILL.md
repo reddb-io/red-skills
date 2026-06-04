@@ -11,9 +11,24 @@ content is the branch name — under the gitignored `.red/tmp/`, so every checko
 and machine locks independently and nothing is committed. Absence of the file
 means unlocked: protection is strictly opt-in.
 
+The dev plugin also ships a dormant primary-checkout branch guard for the
+interactive development loop (ADR 0043). When `.red/config.yaml` contains:
+
+```yaml
+dev:
+  lock-primary-branch: true
+```
+
+the same pre-tool hook blocks the agent from changing the primary checkout's
+branch (`git switch <branch>`, `git checkout <branch>`, `git switch -b <new>`)
+even without a `branch-lock.yaml` file. Missing config or a missing key means
+off. `git commit`, `git worktree add`, read-only git, and `.red/tmp/work-*/`
+worktrees stay allowed.
+
 Enforcement is **agent-only**, via runner pre-tool hooks — Claude Code
 `PreToolUse(Bash)` and Codex plugin `PreToolUse` — that intercept the agent's own
-tool calls, not the human's terminal. See
+tool calls, not the human's terminal. The plugin-level hook is dormant until a
+lock file exists or `dev.lock-primary-branch` is true. See
 [ADR 0006](../../../../../.red/adr/0006-branch-lock-agent-only-enforcement.md).
 The hook logic is self-contained: it depends on neither the
 `git-guardrails-claude-code` skill nor anything else, and the two stack
@@ -61,43 +76,21 @@ disabled, the lock file may exist but Codex will not enforce it.
 
 ### Claude Code
 
-1. Copy [scripts/branch-lock-hook.sh](scripts/branch-lock-hook.sh),
-   [scripts/branch-lock-session-start.sh](scripts/branch-lock-session-start.sh),
-   **and the `scripts/lib/` directory** to `.claude/hooks/branch-lock/` (both
-   hooks source the modules from `lib/` relative to themselves — keep them
-   together).
-2. `chmod +x` both hooks.
-3. Register them in `.claude/settings.json` (merge into any existing arrays —
-   don't overwrite other hooks). `branch-lock-hook.sh` enforces the lock under
-   `PreToolUse`/matcher `Bash`; `branch-lock-session-start.sh` offers the lock
-   under `SessionStart`:
+The `dev` plugin ships Claude wiring in
+`plugins/dev/.claude-plugin/plugin.json` (`"hooks": "./hooks/claude.hooks.json"`).
+That manifest registers `branch-lock-hook.sh` under `PreToolUse`/matcher `Bash`
+at the plugin level, so no per-repo `.claude/settings.json` copy is needed for
+the dormant primary-branch guard. The hook reads `.red/config.yaml` at runtime
+and stays silent until `dev.lock-primary-branch: true` or a branch-lock file is
+present.
 
-   ```json
-   {
-     "hooks": {
-       "PreToolUse": [
-         {
-           "matcher": "Bash",
-           "hooks": [
-             { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/branch-lock/branch-lock-hook.sh" }
-           ]
-         }
-       ],
-       "SessionStart": [
-         {
-           "hooks": [
-             { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/branch-lock/branch-lock-session-start.sh" }
-           ]
-         }
-       ]
-     }
-   }
-   ```
-
-   The SessionStart hook only injects an instruction asking whether to lock — it
-   never writes the lock itself. On a `yes` the agent runs `branch-lock.sh set`;
-   a `no` leaves the repo unlocked. It stays silent inside `/afk` worktrees, when
-   a lock is already present, and on a detached HEAD.
+Manual per-repo installation is only needed for older/pluginless Claude setups:
+copy [scripts/branch-lock-hook.sh](scripts/branch-lock-hook.sh),
+[scripts/branch-lock-session-start.sh](scripts/branch-lock-session-start.sh),
+and `scripts/lib/` together into `.claude/hooks/branch-lock/`, make the scripts
+executable, and register `branch-lock-hook.sh` under `PreToolUse`/matcher `Bash`.
+The optional SessionStart hook only injects an instruction asking whether to
+lock; it never writes the lock itself.
 
 ## DOs / DON'Ts
 
@@ -123,6 +116,7 @@ branch-lock/
     ├── branch-lock-hook.sh       ← Claude PreToolUse(Bash) hook
     ├── branch-lock-session-start.sh ← SessionStart hook (offers to lock at start)
     ├── lib/
+    │   ├── dev-config.sh          ← read dev.lock-primary-branch from .red/config.yaml
     │   ├── lock-store.sh          ← read/write/clear branch-lock.yaml
     │   ├── scope-resolver.sh      ← primary enforces, .red/tmp/work-*/ exempt
     │   └── git-command-classifier.sh ← branch-switch + work-loss family = block
@@ -130,7 +124,9 @@ branch-lock/
         ├── lock-store.test.sh
         ├── scope-resolver.test.sh
         ├── git-command-classifier.test.sh
+        ├── dev-config.test.sh
         ├── session-start.test.sh
+        ├── claude-plugin-hook.test.sh
         ├── codex-hook.test.sh
         └── branch-lock-cli.test.sh    ← /branch-lock set: atomic relock-then-switch
 ```
@@ -156,6 +152,14 @@ It allows (exit 0, silent):
 - `git reset --soft` / mixed reset, `git restore --staged <path>` — no working-tree loss
 - `git worktree add …` — worktrees are how `/afk` works
 - any other command
+
+With `dev.lock-primary-branch: true` and no branch-lock file, the primary guard
+blocks only branch-changing commands in the primary checkout:
+
+- blocks `git switch <branch>`, `git checkout <branch>`, `git switch -b <new>`,
+  `git checkout -b <new>`, and `git switch -`
+- allows `git commit`, `git worktree add`, `git status` / read-only git,
+  targeted path checkout, and every `.red/tmp/work-*/` worktree
 
 ## Tests
 
