@@ -1,4 +1,5 @@
 import type { MemoryLayer, MemoryLayersReport } from "./memory-layers.js";
+import { escapeHtml, jsonForScript, metric } from "./viewer-utils.js";
 
 export interface MemoryLayersViewerArtifact {
   contract: {
@@ -194,25 +195,9 @@ function alignmentItem(
   </li>`;
 }
 
-function metric(label: string, value: number | string): string {
-  return `<div class="metric"><strong>${escapeHtml(String(value))}</strong><span>${escapeHtml(label)}</span></div>`;
-}
 
 function statusClass(status: MemoryLayer["status"]): string {
   if (status === "degraded") return "degraded";
   if (status === "empty") return "empty-status";
   return "";
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
-
-function jsonForScript(value: unknown): string {
-  return JSON.stringify(value, null, 2).replaceAll("</", "<\\/");
 }

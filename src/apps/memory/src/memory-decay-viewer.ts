@@ -1,4 +1,5 @@
 import type { MemoryDecayItem, MemoryDecayReport } from "./memory-decay.js";
+import { escapeHtmlNoSingleQuote as escapeHtml, jsonForScriptEscapedLessThan as jsonForScript, metricWithMetaSpan as metric } from "./viewer-utils.js";
 
 export interface MemoryDecayViewerArtifact {
   name: "memory.decay.viewer";
@@ -90,9 +91,6 @@ function render(report: MemoryDecayReport): string {
 </html>`;
 }
 
-function metric(label: string, value: number): string {
-  return `<div class="metric"><strong>${value}</strong><span class="meta">${escapeHtml(label)}</span></div>`;
-}
 
 function section(title: string, items: MemoryDecayItem[]): string {
   const body =
@@ -112,16 +110,4 @@ function item(entry: MemoryDecayItem): string {
   </div>
   <span class="pill">${entry.score.toFixed(2)}</span>
 </li>`;
-}
-
-function jsonForScript(value: unknown): string {
-  return JSON.stringify(value, null, 2).replace(/</g, "\\u003c");
-}
-
-function escapeHtml(value: unknown): string {
-  return String(value)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
 }

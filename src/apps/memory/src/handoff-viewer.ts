@@ -1,4 +1,5 @@
 import type { MemoryHandoffReport } from "./handoff.js";
+import { escapeHtml, jsonForScript, metric } from "./viewer-utils.js";
 
 export interface MemoryHandoffViewerArtifact {
   contract: {
@@ -170,21 +171,4 @@ function sectionHtml(section: MemoryHandoffReport["sections"][number]): string {
     <h2>${escapeHtml(section.title)}</h2>
     <ul>${section.items.map((item) => `<li><div><h3>${escapeHtml(item.title)}</h3><p>${escapeHtml(item.summary)}</p><p class="meta"><code>${escapeHtml(item.citation)}</code>${item.age_days == null ? "" : ` - ${item.age_days}d old`}${item.source ? ` - ${escapeHtml(item.source)}` : ""}</p></div><span class="pill">${escapeHtml(item.node_type)}</span></li>`).join("")}</ul>
   </section>`;
-}
-
-function metric(label: string, value: number | string): string {
-  return `<div class="metric"><strong>${escapeHtml(String(value))}</strong><span>${escapeHtml(label)}</span></div>`;
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
-
-function jsonForScript(value: unknown): string {
-  return JSON.stringify(value, null, 2).replaceAll("</", "<\\/");
 }

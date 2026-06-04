@@ -60,6 +60,7 @@ import {
 import { buildMemoryRoutingGuide, type MemoryRoutingGuide } from "./routing-guide.js";
 import { buildSessionTimeline, type SessionTimeline } from "./session-timeline.js";
 import { readSkillRollups } from "./skill-events.js";
+import { escapeHtml, jsonForScript, metric } from "./viewer-utils.js";
 
 export interface MemoryWorkbench {
   schema_version: "memory.workbench.v1";
@@ -526,9 +527,6 @@ function referencesRadarSection(workbench: MemoryWorkbench): string {
   </section>`;
 }
 
-function metric(label: string, value: number | string): string {
-  return `<div class="metric"><strong>${escapeHtml(String(value))}</strong><span>${escapeHtml(label)}</span></div>`;
-}
 
 function workflowCard(title: string, command: string, description: string): string {
   return `<div class="workflow-card"><strong>${escapeHtml(title)}</strong><code>${escapeHtml(command)}</code><p class="meta">${escapeHtml(description)}</p></div>`;
@@ -1033,18 +1031,7 @@ function statusClass(status: string): string {
   return "warn";
 }
 
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
 
-function jsonForScript(value: unknown): string {
-  return JSON.stringify(value, null, 2).replaceAll("</", "<\\/");
-}
 
 function searchConsoleScript(): string {
   return `(() => {

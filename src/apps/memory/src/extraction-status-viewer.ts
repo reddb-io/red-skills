@@ -1,4 +1,5 @@
 import type { MemoryExtractionStatus } from "./extraction-status.js";
+import { escapeHtml, jsonForScript, metric } from "./viewer-utils.js";
 
 export interface MemoryExtractionStatusViewerArtifact {
   contract: {
@@ -186,21 +187,4 @@ function readyDeterministic(status: MemoryExtractionStatus): number {
 
 function label(key: string): string {
   return key.replaceAll("_", " ");
-}
-
-function metric(labelText: string, value: number | string): string {
-  return `<div class="metric"><strong>${escapeHtml(String(value))}</strong><span>${escapeHtml(labelText)}</span></div>`;
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
-
-function jsonForScript(value: unknown): string {
-  return JSON.stringify(value, null, 2).replaceAll("</", "<\\/");
 }

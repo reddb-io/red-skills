@@ -1,3 +1,4 @@
+import { escapeHtmlNoSingleQuote as escapeHtml, jsonForScriptEscapedLessThan as jsonForScript, metricWithMetaSpan as metric } from "./viewer-utils.js";
 import type {
   MemoryAgentIntegration,
   MemoryConfigSnippet,
@@ -94,9 +95,6 @@ function render(guide: MemoryRoutingGuide): string {
 </html>`;
 }
 
-function metric(label: string, value: number): string {
-  return `<div class="metric"><strong>${value}</strong><span class="meta">${escapeHtml(label)}</span></div>`;
-}
 
 function integrationSection(integration: MemoryAgentIntegration): string {
   return `<section>
@@ -149,16 +147,4 @@ function snippetSection(snippets: MemoryConfigSnippet[]): string {
         .join("")}
     </div>
   </section>`;
-}
-
-function jsonForScript(value: unknown): string {
-  return JSON.stringify(value, null, 2).replace(/</g, "\\u003c");
-}
-
-function escapeHtml(value: unknown): string {
-  return String(value)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
 }

@@ -7,6 +7,7 @@ import {
 import type { MemoryStore, VectorStatusReport } from "./graph-store.js";
 import { buildHookCoverageReport, type HookCoverageReport } from "./hook-coverage.js";
 import { buildMemoryDecayReport, type MemoryDecayReport } from "./memory-decay.js";
+import { escapeHtml, jsonForScript, metricWithRequiredMeta as metric, warningsSection } from "./viewer-utils.js";
 
 export interface MemoryOperationalDashboard {
   schema_version: "memory.operational_dashboard.v1";
@@ -318,7 +319,7 @@ function renderOperationalDashboard(dashboard: MemoryOperationalDashboard): stri
     <div class="layout">
       <div class="stack">
         ${summarySection(dashboard)}
-        ${warningSection(dashboard.warnings)}
+        ${warningsSection(dashboard.warnings, "No operational warnings.")}
       </div>
       <div class="stack">
         ${actionsSection(dashboard.recommended_next_actions)}
@@ -331,9 +332,6 @@ function renderOperationalDashboard(dashboard: MemoryOperationalDashboard): stri
 </html>`;
 }
 
-function metric(label: string, value: number | string, meta: string): string {
-  return `<div class="metric"><strong>${escapeHtml(String(value))}</strong><span>${escapeHtml(label)} - ${escapeHtml(meta)}</span></div>`;
-}
 
 function summarySection(dashboard: MemoryOperationalDashboard): string {
   return `<section>
@@ -349,16 +347,6 @@ function summarySection(dashboard: MemoryOperationalDashboard): string {
   </section>`;
 }
 
-function warningSection(warnings: string[]): string {
-  return `<section>
-    <h2>Warnings</h2>
-    ${
-      warnings.length === 0
-        ? `<p class="empty">No operational warnings.</p>`
-        : `<ul>${warnings.map((warning) => `<li class="warn">${escapeHtml(warning)}</li>`).join("")}</ul>`
-    }
-  </section>`;
-}
 
 function actionsSection(actions: string[]): string {
   return `<section>
@@ -381,17 +369,4 @@ function sourceSection(dashboard: MemoryOperationalDashboard): string {
       <li><strong>${escapeHtml(dashboard.sources.decay_plan.schema_version)}</strong><p class="meta">decay plan contract</p></li>
     </ul>
   </section>`;
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
-
-function jsonForScript(value: unknown): string {
-  return JSON.stringify(value, null, 2).replaceAll("</", "<\\/");
 }

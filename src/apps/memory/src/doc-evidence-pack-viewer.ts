@@ -1,4 +1,5 @@
 import type { DocEvidencePack } from "./doc-evidence-pack.js";
+import { escapeHtml, jsonForScript, metric, warningsSection } from "./viewer-utils.js";
 
 export interface DocEvidencePackViewerArtifact {
   contract: {
@@ -138,7 +139,7 @@ function renderDocEvidencePackViewer(pack: DocEvidencePack): string {
       <div class="stack">
         ${referencesSection(pack)}
         ${relatedDocsSection(pack)}
-        ${warningsSection(pack.warnings)}
+        ${warningsSection(pack.warnings, "No evidence-pack warnings.")}
       </div>
       <div class="stack">
         <section>
@@ -174,32 +175,4 @@ function relatedDocsSection(pack: DocEvidencePack): string {
         : `<ul>${pack.related.related_docs.map((doc) => `<li><strong>${escapeHtml(doc.title)}</strong><p class="meta"><code>${escapeHtml(doc.path)}</code></p><p class="meta">${doc.shared_references} shared reference(s)</p></li>`).join("")}</ul>`
     }
   </section>`;
-}
-
-function warningsSection(warnings: string[]): string {
-  return `<section>
-    <h2>Warnings</h2>
-    ${
-      warnings.length === 0
-        ? `<p class="empty">No evidence-pack warnings.</p>`
-        : `<ul>${warnings.map((warning) => `<li class="warn">${escapeHtml(warning)}</li>`).join("")}</ul>`
-    }
-  </section>`;
-}
-
-function metric(label: string, value: number | string): string {
-  return `<div class="metric"><strong>${escapeHtml(String(value))}</strong><span>${escapeHtml(label)}</span></div>`;
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
-
-function jsonForScript(value: unknown): string {
-  return JSON.stringify(value, null, 2).replaceAll("</", "<\\/");
 }

@@ -1,0 +1,679 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`Memory viewer rendering > keeps doc coverage viewer HTML stable 1`] = `
+"<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Memory doc coverage viewer</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f7f4;
+      --ink: #202421;
+      --muted: #626d66;
+      --line: #d5dad2;
+      --panel: #ffffff;
+      --accent: #0c6f68;
+      --warn: #8c5d16;
+      --bad: #a43a3a;
+      --code: #242923;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.45;
+    }
+    main { width: min(1180px, calc(100vw - 32px)); margin: 0 auto; padding: 28px 0 42px; }
+    header {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 16px;
+      align-items: start;
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 20px;
+    }
+    h1, h2, h3, p { margin: 0; }
+    h1 { font-size: 28px; letter-spacing: 0; }
+    h2 { font-size: 16px; margin-bottom: 10px; }
+    h3 { font-size: 13px; margin-bottom: 4px; overflow-wrap: anywhere; }
+    .meta, .empty { color: var(--muted); font-size: 13px; }
+    .badge {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 8px 12px;
+      background: var(--panel);
+      color: var(--accent);
+      font-weight: 700;
+      font-size: 12px;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin: 20px 0;
+    }
+    .metric, section, .doc {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 14px;
+    }
+    .metric strong { display: block; font-size: 22px; }
+    .metric span { color: var(--muted); font-size: 13px; }
+    .layout { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(300px, .75fr); gap: 14px; }
+    .stack { display: grid; gap: 12px; }
+    .doc-header {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: start;
+    }
+    ul { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; }
+    li { border-top: 1px solid var(--line); padding-top: 10px; }
+    li:first-child { border-top: 0; padding-top: 0; }
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+      overflow-wrap: anywhere;
+      color: var(--code);
+    }
+    .status {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 2px 8px;
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .ok { color: var(--accent); }
+    .warn { color: var(--warn); }
+    .bad { color: var(--bad); }
+    @media (max-width: 880px) {
+      header, .metrics, .layout, .doc-header { grid-template-columns: 1fr; }
+      .badge, .status { white-space: normal; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>Documentation Coverage</h1>
+        <p class="meta">Generated from memory.doc_coverage.v1 graph and vector evidence.</p>
+      </div>
+      <div class="badge">read-only</div>
+    </header>
+    <div class="metrics">
+      <div class="metric"><strong>1</strong><span>Documents</span></div>
+      <div class="metric"><strong>1/1</strong><span>Grounded - 100%</span></div>
+      <div class="metric"><strong>1</strong><span>References - 1 doc(s)</span></div>
+      <div class="metric"><strong>1</strong><span>Vectors - ready / 1 total</span></div>
+    </div>
+    <div class="layout">
+      <div class="stack"><article class="doc">
+    <div class="doc-header">
+      <div>
+        <h2>docs/security.md - Security &lt;Guide&gt;</h2>
+        <p class="meta"><code>memory_docs:7</code> - 42 bytes</p>
+      </div>
+      <div class="status ok">grounded</div>
+    </div>
+    <p class="meta">Root: Security Guide - Vector: <span class="ok">ready</span></p>
+    <section>
+    <h3>1 extracted reference(s)</h3>
+    <ul><li><strong>Auth Decision</strong><p class="meta"><code>auth</code> - decision</p></li></ul>
+  </section>
+  </article></div>
+      <div class="stack">
+        <section>
+    <h2>Warnings</h2>
+    <ul><li class="warn">review &lt;references&gt;</li></ul>
+  </section>
+        <section>
+    <h2>Vector Projection</h2>
+    <ul>
+      <li><strong>ready</strong><p class="meta">1/1 ready</p></li>
+      <li><strong>0</strong><p class="meta">stale</p></li>
+      <li><strong>0</strong><p class="meta">unavailable</p></li>
+      <li><strong>0</strong><p class="meta">failed</p></li>
+    </ul>
+  </section>
+      </div>
+    </div>
+    <script id="doc-coverage-data" type="application/json">{
+  "schema_version": "memory.doc_coverage.v1",
+  "read_only": true,
+  "total_docs": 1,
+  "grounded_docs": 1,
+  "ungrounded_docs": 0,
+  "docs_with_references": 1,
+  "total_references": 1,
+  "vector": {
+    "overall": "ready",
+    "total": 1,
+    "ready": 1,
+    "stale": 0,
+    "unavailable": 0,
+    "failed": 0
+  },
+  "docs": [
+    {
+      "rid": 7,
+      "path": "docs/security.md",
+      "title": "Security <Guide>",
+      "hash": "abc123",
+      "body_bytes": 42,
+      "truncated": false,
+      "graph_status": "grounded",
+      "root_node": {
+        "rid": 11,
+        "label": "security-guide",
+        "node_type": "concept",
+        "title": "Security Guide"
+      },
+      "references": {
+        "count": 1,
+        "examples": [
+          {
+            "rid": 12,
+            "label": "auth",
+            "node_type": "decision",
+            "title": "Auth Decision"
+          }
+        ]
+      },
+      "vector_status": "ready"
+    }
+  ],
+  "warnings": [
+    "review <references>"
+  ]
+}</script>
+  </main>
+</body>
+</html>
+"
+`;
+
+exports[`Memory viewer rendering > keeps path explanation viewer HTML stable 1`] = `
+"<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Memory path explanation viewer</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f7f4;
+      --ink: #202421;
+      --muted: #626d66;
+      --line: #d5dad2;
+      --panel: #ffffff;
+      --accent: #0c6f68;
+      --warn: #8c5d16;
+      --bad: #a43a3a;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.45;
+    }
+    main { width: min(1180px, calc(100vw - 32px)); margin: 0 auto; padding: 28px 0 42px; }
+    header {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 16px;
+      align-items: start;
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 20px;
+    }
+    h1, h2, h3, p { margin: 0; }
+    h1 { font-size: 28px; letter-spacing: 0; }
+    h2 { font-size: 16px; margin-bottom: 10px; }
+    h3 { font-size: 13px; margin-bottom: 4px; overflow-wrap: anywhere; }
+    .meta, .empty { color: var(--muted); font-size: 13px; }
+    .badge {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 8px 12px;
+      background: var(--panel);
+      color: var(--accent);
+      font-weight: 700;
+      font-size: 12px;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin: 20px 0;
+    }
+    .metric, section {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 14px;
+    }
+    .metric strong { display: block; font-size: 22px; }
+    .metric span { color: var(--muted); font-size: 13px; }
+    .layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, .7fr); gap: 14px; }
+    .stack { display: grid; gap: 12px; }
+    ol, ul { margin: 0; padding-left: 20px; }
+    li { margin: 8px 0; }
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+      overflow-wrap: anywhere;
+    }
+    .path-step {
+      border-top: 1px solid var(--line);
+      padding-top: 10px;
+    }
+    .path-step:first-child { border-top: 0; padding-top: 0; }
+    .ok { color: var(--accent); }
+    .bad { color: var(--bad); }
+    @media (max-width: 880px) {
+      header, .metrics, .layout { grid-template-columns: 1fr; }
+      .badge { white-space: normal; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>Path Explanation</h1>
+        <p class="meta">From <code>auth-service</code> to <code>jwt-rotation</code></p>
+        <p class="meta">Generated from memory.path_explain.v1 graph evidence.</p>
+      </div>
+      <div class="badge">read-only</div>
+    </header>
+    <div class="metrics">
+      <div class="metric"><strong class="ok">yes</strong><span>Reachable</span></div>
+      <div class="metric"><strong class="">1</strong><span>Hop count</span></div>
+      <div class="metric"><strong class="">2</strong><span>Path nodes</span></div>
+      <div class="metric"><strong class="">1</strong><span>Path edges</span></div>
+    </div>
+    <div class="layout">
+      <div class="stack">
+        <section>
+    <h2>Path</h2>
+    <div class="stack"><div class="path-step">
+    <h3>Auth service → JWT rotation</h3>
+    <p class="meta"><code>auth-service</code> --REFERENCES--> <code>jwt-rotation</code></p>
+  </div></div>
+  </section>
+      </div>
+      <div class="stack">
+        <section>
+    <h2>Request</h2>
+    <ul>
+      <li><code>from=auth-service</code></li>
+      <li><code>to=jwt-rotation</code></li>
+      <li><code>max_depth=4</code></li>
+    </ul>
+  </section>
+        <section>
+    <h2>Next Actions</h2>
+    <ul><li>Inspect related evidence</li></ul>
+  </section>
+      </div>
+    </div>
+    <script id="path-explain-data" type="application/json">{
+  "schema_version": "memory.path_explain.v1",
+  "read_only": true,
+  "request": {
+    "from": "auth-service",
+    "to": "jwt-rotation",
+    "max_depth": 4
+  },
+  "reachable": true,
+  "hop_count": 1,
+  "path": [
+    {
+      "rid": 1,
+      "label": "auth-service",
+      "node_type": "concept",
+      "title": "Auth service",
+      "confidence": 0.9
+    },
+    {
+      "rid": 2,
+      "label": "jwt-rotation",
+      "node_type": "decision",
+      "title": "JWT rotation",
+      "confidence": 0.8
+    }
+  ],
+  "edges": [
+    {
+      "from": {
+        "rid": 1,
+        "label": "auth-service",
+        "node_type": "concept",
+        "title": "Auth service",
+        "confidence": 0.9
+      },
+      "to": {
+        "rid": 2,
+        "label": "jwt-rotation",
+        "node_type": "decision",
+        "title": "JWT rotation",
+        "confidence": 0.8
+      },
+      "label": "REFERENCES"
+    }
+  ],
+  "markdown": "Auth service references JWT rotation.",
+  "recommended_next_actions": [
+    "Inspect related evidence"
+  ],
+  "path_confidence": 0.8
+}</script>
+  </main>
+</body>
+</html>
+"
+`;
+
+exports[`Memory viewer rendering > keeps routing guide viewer HTML stable 1`] = `
+"<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Memory Routing Guide</title>
+  <style>
+    :root { color-scheme: light dark; font-family: ui-sans-serif, system-ui, sans-serif; background: #f6f7f8; color: #1d232a; }
+    body { margin: 0; }
+    main { max-width: 1180px; margin: 0 auto; padding: 28px; }
+    header { display: flex; justify-content: space-between; gap: 18px; align-items: flex-start; border-bottom: 1px solid #d8dee4; padding-bottom: 18px; }
+    h1, h2, h3, p { margin: 0; }
+    h1 { font-size: 28px; }
+    h2 { font-size: 18px; margin-bottom: 10px; }
+    h3 { font-size: 15px; margin-bottom: 4px; }
+    code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    pre { white-space: pre-wrap; overflow: auto; background: #fff; border: 1px solid #d8dee4; border-radius: 8px; padding: 14px; }
+    section { margin-top: 20px; }
+    .meta { color: #667085; font-size: 13px; }
+    .pill { border: 1px solid #b8c0cc; border-radius: 999px; padding: 4px 9px; font-size: 12px; background: #fff; white-space: nowrap; }
+    .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin: 20px 0; }
+    .metric, li, .snippet { background: #fff; border: 1px solid #d8dee4; border-radius: 8px; padding: 12px; }
+    .metric strong { display: block; font-size: 23px; }
+    ul { display: grid; gap: 10px; list-style: none; padding: 0; margin: 0; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+    .snippet { display: grid; gap: 8px; }
+    @media (prefers-color-scheme: dark) {
+      :root { background: #111418; color: #e6edf3; }
+      header { border-color: #30363d; }
+      .metric, li, .snippet, pre, .pill { background: #161b22; border-color: #30363d; }
+      .meta { color: #9ba7b4; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>Memory Routing Guide</h1>
+        <p class="meta"><code>memory.routing_guide.v1</code> - Codex CLI</p>
+      </div>
+      <span class="pill">codex</span>
+    </header>
+    <section class="metrics">
+      <div class="metric"><strong>4</strong><span class="meta">Transports</span></div>
+      <div class="metric"><strong>12</strong><span class="meta">MCP Tools</span></div>
+      <div class="metric"><strong>7</strong><span class="meta">Rules</span></div>
+      <div class="metric"><strong>1</strong><span class="meta">Target Files</span></div>
+    </section>
+    <section>
+    <h2>Integration</h2>
+    <ul>
+      <li><strong>Codex CLI</strong><p class="meta">Transports: agent-rules, mcp, hooks, http</p></li>
+      <li><strong>Target files</strong><p class="meta">AGENTS.md</p></li>
+      <li><strong>Connect commands</strong><p class="meta">memory init --mode graph --hooks --skill-telemetry --yes · memory routing-guide --agent codex · memory-mcp</p></li>
+      <li><strong>Note</strong><p class="meta">Codex can use AGENTS.md routing, the Memory MCP server, and bundled Codex hook manifest when plugin hooks are enabled.</p></li>
+    </ul>
+  </section>
+    <section>
+    <h2>Routing Rules</h2>
+    <ul>
+      <li>
+        <strong>Before architecture, migration, or multi-file implementation work</strong>
+        <p><code>memory_context_pack with the concrete goal</code></p>
+        <p class="meta">Load prior decisions, validations, warnings, and citations before planning.</p>
+      </li><li>
+        <strong>Before claiming a design or rule is current</strong>
+        <p><code>memory_claim_check with the exact assertion</code></p>
+        <p class="meta">Check active, superseded, and contradictory evidence instead of trusting memory.</p>
+      </li><li>
+        <strong>When the task asks what changed, what can break, or what a PR needs</strong>
+        <p><code>memory_pre_pr_review with explicit changed_files</code></p>
+        <p class="meta">Connect changed files to concepts, decisions, known failures, and validations.</p>
+      </li><li>
+        <strong>When touching an unfamiliar file or symbol</strong>
+        <p><code>memory_structural_impact with file/symbol; use memory_path_explain when two labels need a relationship explanation</code></p>
+        <p class="meta">Find graph-backed imports, call/type/schema relationships, and cited paths between concepts.</p>
+      </li><li>
+        <strong>When the user asks about project history, prior discussion, docs, or decisions</strong>
+        <p><code>memory_recall first; use memory_doc_search and memory_doc_read for ingested document chunks</code></p>
+        <p class="meta">Prefer zero-token retrieval and local source reads before asking an LLM to synthesize.</p>
+      </li><li>
+        <strong>When starting in an unfamiliar repo or after a long gap</strong>
+        <p><code>memory_handoff, then memory_onboarding_map and memory_readiness for the immediate goal</code></p>
+        <p class="meta">Get where-we-left-off context, map-first orientation, and a readiness score with missing-evidence warnings.</p>
+      </li><li>
+        <strong>When preserving a durable fact, decision, fix, or user preference</strong>
+        <p><code>memory_store only when the user asked to remember it or the fact is clearly durable</code></p>
+        <p class="meta">Keep memory useful without polluting it with transient reasoning.</p>
+      </li>
+    </ul>
+  </section>
+    <section>
+    <h2>MCP Tools</h2>
+    <ul><li><code>memory_recall</code></li><li><code>memory_context_pack</code></li><li><code>memory_handoff</code></li><li><code>memory_readiness</code></li><li><code>memory_claim_check</code></li><li><code>memory_doc_search</code></li><li><code>memory_doc_read</code></li><li><code>memory_pre_pr_review</code></li><li><code>memory_path_explain</code></li><li><code>memory_structural_impact</code></li><li><code>memory_onboarding_map</code></li><li><code>memory_store</code></li></ul>
+  </section>
+    <section>
+    <h2>CLI Fallbacks</h2>
+    <ul><li><code>memory recall &lt;query&gt;</code></li><li><code>memory context-pack &lt;goal&gt; --json</code></li><li><code>memory handoff [focus] --json</code></li><li><code>memory readiness &lt;goal&gt; --json</code></li><li><code>memory claim-check &lt;assertion&gt; --json</code></li><li><code>memory docs search &lt;query&gt; --json</code></li><li><code>memory docs read &lt;path|rid&gt; --json</code></li><li><code>memory docs restore [path|rid] --dry-run --json</code></li><li><code>memory pre-pr-review --json</code></li><li><code>memory path-explain &lt;from&gt; &lt;to&gt; --json</code></li><li><code>memory structural-impact --file &lt;path&gt;</code></li><li><code>memory onboarding-map --json</code></li><li><code>memory store &lt;fact&gt;</code></li></ul>
+  </section>
+    <section>
+    <h2>Config Snippets</h2>
+    <div class="grid">
+      <div class="snippet">
+        <h3>MCP stdio server</h3>
+        <p class="meta">agent MCP server configuration</p>
+        <pre>{
+  &quot;mcpServers&quot;: {
+    &quot;reddb-memory&quot;: {
+      &quot;command&quot;: &quot;memory-mcp&quot;,
+      &quot;env&quot;: {
+        &quot;MEMORY_ROOT&quot;: &quot;\${workspaceFolder}&quot;
+      }
+    }
+  }
+}</pre>
+      </div><div class="snippet">
+        <h3>Loopback HTTP API</h3>
+        <p class="meta">shell</p>
+        <pre>memory serve --host 127.0.0.1 --port 3113 --token-env MEMORY_HTTP_TOKEN</pre>
+      </div><div class="snippet">
+        <h3>codex lifecycle hooks</h3>
+        <p class="meta">plugins/memory/hooks/codex.hooks.json</p>
+        <pre>memory hook &lt;SessionStart|PostToolUse|Stop|PreCompact&gt; --runner codex</pre>
+      </div>
+    </div>
+  </section>
+    <section>
+      <h2>Install Snippet</h2>
+      <pre>## Memory Routing
+
+Use the Memory MCP tools proactively when prior project knowledge could change the answer.
+
+Integration:
+- Agent: Codex CLI
+- Transports: agent-rules, mcp, hooks, http
+- MCP server command: \`memory-mcp\`
+- Optional HTTP workbench/API: \`memory serve --host 127.0.0.1 --port 3113\`
+
+Rules:
+- Before architecture, migration, or multi-file implementation work: call \`memory_context_pack with the concrete goal\` - Load prior decisions, validations, warnings, and citations before planning.
+- Before claiming a design or rule is current: call \`memory_claim_check with the exact assertion\` - Check active, superseded, and contradictory evidence instead of trusting memory.
+- When the task asks what changed, what can break, or what a PR needs: call \`memory_pre_pr_review with explicit changed_files\` - Connect changed files to concepts, decisions, known failures, and validations.
+- When touching an unfamiliar file or symbol: call \`memory_structural_impact with file/symbol; use memory_path_explain when two labels need a relationship explanation\` - Find graph-backed imports, call/type/schema relationships, and cited paths between concepts.
+- When the user asks about project history, prior discussion, docs, or decisions: call \`memory_recall first; use memory_doc_search and memory_doc_read for ingested document chunks\` - Prefer zero-token retrieval and local source reads before asking an LLM to synthesize.
+- When starting in an unfamiliar repo or after a long gap: call \`memory_handoff, then memory_onboarding_map and memory_readiness for the immediate goal\` - Get where-we-left-off context, map-first orientation, and a readiness score with missing-evidence warnings.
+- When preserving a durable fact, decision, fix, or user preference: call \`memory_store only when the user asked to remember it or the fact is clearly durable\` - Keep memory useful without polluting it with transient reasoning.
+
+Safety:
+- Read-only tools are preferred before mutating Memory.
+- memory_store is durable; do not store secrets, raw credentials, or transient chain-of-thought.
+- memory_supersede and conflict-resolution tools are mutating; use them only with explicit user intent.
+- Citations such as memory_nodes:&lt;rid&gt; should be kept in summaries when they support an important claim.
+
+Target file: AGENTS.md
+Agent: codex
+</pre>
+    </section>
+    <script id="memory-routing-guide-data" type="application/json">{
+  "schemaVersion": "memory.routing_guide.v1",
+  "agent": "codex",
+  "supportedAgents": [
+    "codex",
+    "claude",
+    "cursor",
+    "gemini",
+    "aider",
+    "opencode",
+    "generic"
+  ],
+  "integration": {
+    "displayName": "Codex CLI",
+    "transports": [
+      "agent-rules",
+      "mcp",
+      "hooks",
+      "http"
+    ],
+    "targetFiles": [
+      "AGENTS.md"
+    ],
+    "configSnippets": [
+      {
+        "label": "MCP stdio server",
+        "path": "agent MCP server configuration",
+        "body": "{\\n  \\"mcpServers\\": {\\n    \\"reddb-memory\\": {\\n      \\"command\\": \\"memory-mcp\\",\\n      \\"env\\": {\\n        \\"MEMORY_ROOT\\": \\"\${workspaceFolder}\\"\\n      }\\n    }\\n  }\\n}"
+      },
+      {
+        "label": "Loopback HTTP API",
+        "path": "shell",
+        "body": "memory serve --host 127.0.0.1 --port 3113 --token-env MEMORY_HTTP_TOKEN"
+      },
+      {
+        "label": "codex lifecycle hooks",
+        "path": "plugins/memory/hooks/codex.hooks.json",
+        "body": "memory hook \\u003cSessionStart|PostToolUse|Stop|PreCompact> --runner codex"
+      }
+    ],
+    "connectCommands": [
+      "memory init --mode graph --hooks --skill-telemetry --yes",
+      "memory routing-guide --agent codex",
+      "memory-mcp"
+    ],
+    "notes": [
+      "Codex can use AGENTS.md routing, the Memory MCP server, and bundled Codex hook manifest when plugin hooks are enabled."
+    ]
+  },
+  "targetFiles": [
+    "AGENTS.md"
+  ],
+  "mcpTools": [
+    "memory_recall",
+    "memory_context_pack",
+    "memory_handoff",
+    "memory_readiness",
+    "memory_claim_check",
+    "memory_doc_search",
+    "memory_doc_read",
+    "memory_pre_pr_review",
+    "memory_path_explain",
+    "memory_structural_impact",
+    "memory_onboarding_map",
+    "memory_store"
+  ],
+  "cliFallbacks": [
+    "memory recall \\u003cquery>",
+    "memory context-pack \\u003cgoal> --json",
+    "memory handoff [focus] --json",
+    "memory readiness \\u003cgoal> --json",
+    "memory claim-check \\u003cassertion> --json",
+    "memory docs search \\u003cquery> --json",
+    "memory docs read \\u003cpath|rid> --json",
+    "memory docs restore [path|rid] --dry-run --json",
+    "memory pre-pr-review --json",
+    "memory path-explain \\u003cfrom> \\u003cto> --json",
+    "memory structural-impact --file \\u003cpath>",
+    "memory onboarding-map --json",
+    "memory store \\u003cfact>"
+  ],
+  "rules": [
+    {
+      "when": "Before architecture, migration, or multi-file implementation work",
+      "call": "memory_context_pack with the concrete goal",
+      "reason": "Load prior decisions, validations, warnings, and citations before planning."
+    },
+    {
+      "when": "Before claiming a design or rule is current",
+      "call": "memory_claim_check with the exact assertion",
+      "reason": "Check active, superseded, and contradictory evidence instead of trusting memory."
+    },
+    {
+      "when": "When the task asks what changed, what can break, or what a PR needs",
+      "call": "memory_pre_pr_review with explicit changed_files",
+      "reason": "Connect changed files to concepts, decisions, known failures, and validations."
+    },
+    {
+      "when": "When touching an unfamiliar file or symbol",
+      "call": "memory_structural_impact with file/symbol; use memory_path_explain when two labels need a relationship explanation",
+      "reason": "Find graph-backed imports, call/type/schema relationships, and cited paths between concepts."
+    },
+    {
+      "when": "When the user asks about project history, prior discussion, docs, or decisions",
+      "call": "memory_recall first; use memory_doc_search and memory_doc_read for ingested document chunks",
+      "reason": "Prefer zero-token retrieval and local source reads before asking an LLM to synthesize."
+    },
+    {
+      "when": "When starting in an unfamiliar repo or after a long gap",
+      "call": "memory_handoff, then memory_onboarding_map and memory_readiness for the immediate goal",
+      "reason": "Get where-we-left-off context, map-first orientation, and a readiness score with missing-evidence warnings."
+    },
+    {
+      "when": "When preserving a durable fact, decision, fix, or user preference",
+      "call": "memory_store only when the user asked to remember it or the fact is clearly durable",
+      "reason": "Keep memory useful without polluting it with transient reasoning."
+    }
+  ],
+  "safetyNotes": [
+    "Read-only tools are preferred before mutating Memory.",
+    "memory_store is durable; do not store secrets, raw credentials, or transient chain-of-thought.",
+    "memory_supersede and conflict-resolution tools are mutating; use them only with explicit user intent.",
+    "Citations such as memory_nodes:\\u003crid> should be kept in summaries when they support an important claim."
+  ],
+  "installSnippet": "## Memory Routing\\n\\nUse the Memory MCP tools proactively when prior project knowledge could change the answer.\\n\\nIntegration:\\n- Agent: Codex CLI\\n- Transports: agent-rules, mcp, hooks, http\\n- MCP server command: \`memory-mcp\`\\n- Optional HTTP workbench/API: \`memory serve --host 127.0.0.1 --port 3113\`\\n\\nRules:\\n- Before architecture, migration, or multi-file implementation work: call \`memory_context_pack with the concrete goal\` - Load prior decisions, validations, warnings, and citations before planning.\\n- Before claiming a design or rule is current: call \`memory_claim_check with the exact assertion\` - Check active, superseded, and contradictory evidence instead of trusting memory.\\n- When the task asks what changed, what can break, or what a PR needs: call \`memory_pre_pr_review with explicit changed_files\` - Connect changed files to concepts, decisions, known failures, and validations.\\n- When touching an unfamiliar file or symbol: call \`memory_structural_impact with file/symbol; use memory_path_explain when two labels need a relationship explanation\` - Find graph-backed imports, call/type/schema relationships, and cited paths between concepts.\\n- When the user asks about project history, prior discussion, docs, or decisions: call \`memory_recall first; use memory_doc_search and memory_doc_read for ingested document chunks\` - Prefer zero-token retrieval and local source reads before asking an LLM to synthesize.\\n- When starting in an unfamiliar repo or after a long gap: call \`memory_handoff, then memory_onboarding_map and memory_readiness for the immediate goal\` - Get where-we-left-off context, map-first orientation, and a readiness score with missing-evidence warnings.\\n- When preserving a durable fact, decision, fix, or user preference: call \`memory_store only when the user asked to remember it or the fact is clearly durable\` - Keep memory useful without polluting it with transient reasoning.\\n\\nSafety:\\n- Read-only tools are preferred before mutating Memory.\\n- memory_store is durable; do not store secrets, raw credentials, or transient chain-of-thought.\\n- memory_supersede and conflict-resolution tools are mutating; use them only with explicit user intent.\\n- Citations such as memory_nodes:\\u003crid> should be kept in summaries when they support an important claim.\\n\\nTarget file: AGENTS.md\\nAgent: codex\\n"
+}</script>
+  </main>
+</body>
+</html>"
+`;

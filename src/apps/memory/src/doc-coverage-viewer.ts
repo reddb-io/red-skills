@@ -1,4 +1,5 @@
 import type { DocCoverageItem, DocCoverageReport } from "./doc-coverage.js";
+import { escapeHtml, jsonForScript, metricWithMeta as metric, warningsSection } from "./viewer-utils.js";
 
 export interface DocCoverageViewerArtifact {
   contract: {
@@ -147,7 +148,7 @@ function renderDocCoverageViewer(report: DocCoverageReport): string {
     <div class="layout">
       <div class="stack">${report.docs.length === 0 ? emptyDocs() : report.docs.map(docItem).join("")}</div>
       <div class="stack">
-        ${warningSection(report.warnings)}
+        ${warningsSection(report.warnings, "No coverage warnings.")}
         ${vectorSection(report)}
       </div>
     </div>
@@ -158,9 +159,6 @@ function renderDocCoverageViewer(report: DocCoverageReport): string {
 `;
 }
 
-function metric(label: string, value: number | string, meta: string = ""): string {
-  return `<div class="metric"><strong>${escapeHtml(String(value))}</strong><span>${escapeHtml(label)}${meta ? ` - ${escapeHtml(meta)}` : ""}</span></div>`;
-}
 
 function emptyDocs(): string {
   return `<section><h2>Documents</h2><p class="empty">No ingested documents available.</p></section>`;
@@ -193,16 +191,6 @@ function references(doc: DocCoverageItem): string {
   </section>`;
 }
 
-function warningSection(warnings: string[]): string {
-  return `<section>
-    <h2>Warnings</h2>
-    ${
-      warnings.length === 0
-        ? `<p class="empty">No coverage warnings.</p>`
-        : `<ul>${warnings.map((warning) => `<li class="warn">${escapeHtml(warning)}</li>`).join("")}</ul>`
-    }
-  </section>`;
-}
 
 function vectorSection(report: DocCoverageReport): string {
   return `<section>
@@ -214,17 +202,4 @@ function vectorSection(report: DocCoverageReport): string {
       <li><strong>${report.vector.failed}</strong><p class="meta">failed</p></li>
     </ul>
   </section>`;
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
-
-function jsonForScript(value: unknown): string {
-  return JSON.stringify(value, null, 2).replaceAll("</", "<\\/");
 }

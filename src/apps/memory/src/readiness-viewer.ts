@@ -1,5 +1,6 @@
 import type { MemoryReadinessEnvelope } from "./readiness.js";
 import type { PreflightEvidence, PreflightWarning } from "./preflight.js";
+import { escapeHtml, jsonForScript, metricWithRequiredMeta as metric } from "./viewer-utils.js";
 
 export interface ReadinessViewerArtifact {
   contract: {
@@ -158,7 +159,7 @@ function renderReadinessViewer(envelope: MemoryReadinessEnvelope): string {
       </div>
       <div class="stack">
         ${missingSection(envelope)}
-        ${warningSection("Contradictions", envelope.evidence.contradictions, "bad")}
+        ${preflightWarningSection("Contradictions", envelope.evidence.contradictions, "bad")}
         ${nextActionsSection(envelope.next_actions)}
         ${contractSection(envelope)}
       </div>
@@ -170,9 +171,6 @@ function renderReadinessViewer(envelope: MemoryReadinessEnvelope): string {
 `;
 }
 
-function metric(label: string, value: string, meta: string): string {
-  return `<div class="metric"><strong>${escapeHtml(value)}</strong><span>${escapeHtml(label)} - ${escapeHtml(meta)}</span></div>`;
-}
 
 function evidenceSection(title: string, evidence: PreflightEvidence[]): string {
   return `<section>
@@ -203,7 +201,7 @@ function missingSection(envelope: MemoryReadinessEnvelope): string {
   </section>`;
 }
 
-function warningSection(
+function preflightWarningSection(
   title: string,
   warnings: PreflightWarning[],
   severityClass: "bad" | "warn",
@@ -242,17 +240,4 @@ function contractSection(envelope: MemoryReadinessEnvelope): string {
     <p class="meta">${escapeHtml(envelope.contract.name)} ${escapeHtml(envelope.contract.version)}</p>
     <pre>${escapeHtml(JSON.stringify(envelope.contract, null, 2))}</pre>
   </section>`;
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
-
-function jsonForScript(value: unknown): string {
-  return JSON.stringify(value, null, 2).replaceAll("</", "<\\/");
 }

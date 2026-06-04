@@ -1,3 +1,4 @@
+import { escapeHtml, jsonForScript, metric } from "./viewer-utils.js";
 import type {
   VectorDocStatus,
   VectorNodeStatus,
@@ -182,25 +183,9 @@ function detail(item: VectorNodeStatus | VectorDocStatus): string {
   return parts.length === 0 ? "" : `<p class="meta">${escapeHtml(parts.join(" - "))}</p>`;
 }
 
-function metric(label: string, value: number | string): string {
-  return `<div class="metric"><strong>${escapeHtml(String(value))}</strong><span>${escapeHtml(label)}</span></div>`;
-}
 
 function statusClass(status: string): string {
   if (status === "ready") return "";
   if (status === "stale" || status === "unavailable") return "warn";
   return "bad";
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
-
-function jsonForScript(value: unknown): string {
-  return JSON.stringify(value, null, 2).replaceAll("</", "<\\/");
 }

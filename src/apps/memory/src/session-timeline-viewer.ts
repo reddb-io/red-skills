@@ -1,4 +1,5 @@
 import type { SessionTimeline, SessionTimelineEntry } from "./session-timeline.js";
+import { escapeHtml, jsonForScript, metric } from "./viewer-utils.js";
 
 export interface SessionTimelineViewerArtifact {
   contract: {
@@ -154,9 +155,6 @@ function renderSessionTimelineViewer(timeline: SessionTimeline): string {
 </html>`;
 }
 
-function metric(label: string, value: number | string): string {
-  return `<div class="metric"><strong>${escapeHtml(String(value))}</strong><span>${escapeHtml(label)}</span></div>`;
-}
 
 function entriesSection(entries: SessionTimelineEntry[]): string {
   return `<section>
@@ -201,17 +199,4 @@ function actionsSection(actions: string[]): string {
         : `<ul>${actions.map((action) => `<li>${escapeHtml(action)}</li>`).join("")}</ul>`
     }
   </section>`;
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
-
-function jsonForScript(value: unknown): string {
-  return JSON.stringify(value, null, 2).replaceAll("</", "<\\/");
 }
