@@ -960,6 +960,21 @@ async function operationStructuredContent(
         cached: output.cached,
       };
     }
+    case "memory.global-search": {
+      const source = isRecord(output.generated_from) ? output.generated_from : {};
+      return {
+        operation_id: operationId,
+        schema_version: output.schema_version,
+        read_only: output.read_only,
+        surface: output.surface,
+        query: output.query,
+        total_hits: output.total_hits,
+        evidence: arrayLength(output.evidence),
+        source_operation: source.operation_id ?? null,
+        graph_hash: source.graph_hash ?? null,
+        cached: source.cached ?? null,
+      };
+    }
     case "memory.communities-viewer": {
       const report = isRecord(output.report) ? output.report : {};
       return {
