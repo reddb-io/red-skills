@@ -379,9 +379,16 @@ export function buildProcessDeps(
     // merge primitive verifies git state afterwards, so a non-zero / thrown
     // runner here is swallowed. Mirrors run_claude / run_codex on $PROJECT_ROOT.
     conflictResolver: async (prompt: string) => {
+      const conflictTier = resolveTier(config, runner, "think");
       const invocation =
         runner === "codex"
-          ? codexSpawnArgs({ prompt, worktree: ctx.root, lastMessagePath: join(paths.tmpDir, "merge-resolve.last") })
+          ? codexSpawnArgs({
+              prompt,
+              worktree: ctx.root,
+              lastMessagePath: join(paths.tmpDir, "merge-resolve.last"),
+              model: conflictTier.model,
+              effort: conflictTier.effort,
+            })
           : claudeSpawnArgs({ prompt, worktree: ctx.root });
       const { execTool } = await import("../runtime/exec.js");
       await execTool(invocation.command, invocation.args, { cwd: ctx.root });
@@ -573,6 +580,8 @@ function makeIssueClassifier(
                 "exec",
                 "--model",
                 validateTier.model,
+                "-c",
+                `model_reasoning_effort=${validateTier.effort}`,
                 "-C",
                 cwd,
                 "--sandbox",
