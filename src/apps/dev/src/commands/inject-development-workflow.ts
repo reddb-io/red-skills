@@ -1,12 +1,14 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { planDevelopmentWorkflowInjection } from "../core/development-workflow.js";
 
 export interface DevelopmentWorkflowInjectionResult {
   agentsPath: string;
   claudePath: string;
+  configPath: string;
   agentsChanged: boolean;
   claudeChanged: boolean;
+  configChanged: boolean;
 }
 
 function rootFromArgs(args: readonly string[], cwd: string): string {
@@ -36,16 +38,22 @@ function writeIfChanged(path: string, next: string): boolean {
 export function injectDevelopmentWorkflowRules(root: string): DevelopmentWorkflowInjectionResult {
   const agentsPath = join(root, "AGENTS.md");
   const claudePath = join(root, "CLAUDE.md");
+  const configPath = join(root, ".red", "config.yaml");
   const plan = planDevelopmentWorkflowInjection({
     agentsMarkdown: readIfExists(agentsPath),
     claudeMarkdown: readIfExists(claudePath),
+    configYaml: readIfExists(configPath),
   });
+
+  mkdirSync(join(root, ".red"), { recursive: true });
 
   return {
     agentsPath,
     claudePath,
+    configPath,
     agentsChanged: writeIfChanged(agentsPath, plan.agentsMarkdown),
     claudeChanged: writeIfChanged(claudePath, plan.claudeMarkdown),
+    configChanged: writeIfChanged(configPath, plan.configYaml),
   };
 }
 
@@ -60,6 +68,7 @@ export async function injectDevelopmentWorkflowCommand(
     [
       `inject-development-workflow: AGENTS.md ${result.agentsChanged ? "updated" : "unchanged"}`,
       `inject-development-workflow: CLAUDE.md ${result.claudeChanged ? "updated" : "unchanged"}`,
+      `inject-development-workflow: .red/config.yaml ${result.configChanged ? "updated" : "unchanged"}`,
     ].join("\n") + "\n",
   );
   return 0;
