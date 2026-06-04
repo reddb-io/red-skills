@@ -4,6 +4,8 @@ import {
   EVAL_SCHEMA_VERSION,
   answerFromPack,
   buildContextPack,
+  countBenchTokens,
+  evaluateSubstrateAdapter,
   exactMatch,
   formatEvalReport,
   loadCorpus,
@@ -12,6 +14,7 @@ import {
   runBenchEval,
   toJsonl,
   tokenF1,
+  type SubstrateAdapter,
 } from "../src/bench-eval.js";
 
 const CORPUS_DIR = join(__dirname, "../bench/eval/single-hop");
@@ -61,6 +64,62 @@ describe("memory bench eval — scorer (pure)", () => {
 });
 
 describe("memory bench eval — substrate + answerer", () => {
+  test("adapter interface evaluates ingest, retrieval, and context pack through a fake adapter", async () => {
+    const corpus = await loadCorpus(CORPUS_DIR);
+    const questions = await loadQuestions(CORPUS_DIR);
+    const q = questions.find((x) => x.id === "q-001")!;
+    const calls: string[] = [];
+    const fake: SubstrateAdapter<{ byId: Map<string, (typeof corpus)[number]> }> = {
+      id: "fake",
+      label: "Fake substrate",
+      async ingestCorpus(entries) {
+        calls.push(`ingest:${entries.length}`);
+        return { byId: new Map(entries.map((entry) => [entry.id, entry])) };
+      },
+      async retrieveQuery(_index, question, limit) {
+        calls.push(`retrieve:${question.id}:${limit}`);
+        return [
+          { id: "doc-001", score: 9 },
+          { id: "doc-002", score: 1 },
+        ].slice(0, limit);
+      },
+      async buildContextPack(index, question, hits) {
+        calls.push(`pack:${question.id}:${hits.map((hit) => hit.id).join(",")}`);
+        return {
+          question_id: question.id,
+          substrate: "fake",
+          entries: hits.map((hit, i) => {
+            const entry = index.byId.get(hit.id)!;
+            return {
+              id: entry.id,
+              rank: i + 1,
+              score: hit.score,
+              fact: entry.fact,
+              text: entry.text,
+            };
+          }),
+        };
+      },
+    };
+
+    const report = await evaluateSubstrateAdapter(fake, corpus, [q], {
+      packSize: 2,
+      now: () => FIXED_NOW,
+    });
+
+    expect(calls).toEqual(["ingest:12", "retrieve:q-001:2", "pack:q-001:doc-001,doc-002"]);
+    expect(report.substrate).toBe("fake");
+    expect(report.records[0]).toMatchObject({
+      question_id: "q-001",
+      pack_ids: ["doc-001", "doc-002"],
+      predicted_answer: "pnpm",
+      exact_match: 1,
+    });
+    expect(report.records[0]!.tokens.input).toBeGreaterThan(0);
+    expect(report.records[0]!.tokens.output).toBeGreaterThan(0);
+    expect(report.records[0]!.quality_per_1k_tokens).toBeGreaterThan(0);
+  });
+
   test("the fixed pack is bounded, ranked, and tie-broken by id", async () => {
     const corpus = await loadCorpus(CORPUS_DIR);
     const questions = await loadQuestions(CORPUS_DIR);
@@ -97,6 +156,24 @@ describe("memory bench eval — runner", () => {
     expect(report.aggregate.exact_match).toBeGreaterThan(0);
     expect(report.aggregate.exact_match).toBeLessThanOrEqual(1);
     expect(report.aggregate.f1).toBeGreaterThanOrEqual(report.aggregate.exact_match);
+  });
+
+  test("default run compares RedDB against markdown embedding-RAG with quality per token", async () => {
+    const report = await runBenchEval({ corpusDir: CORPUS_DIR, now: () => FIXED_NOW });
+    expect(report.substrates.map((summary) => summary.substrate)).toEqual(["reddb", "markdown-rag"]);
+    expect(report.comparisons).toHaveLength(1);
+    expect(report.comparisons[0]).toMatchObject({
+      id: "reddb_vs_markdown-rag",
+      candidate: "reddb",
+      baseline: "markdown-rag",
+    });
+    for (const summary of report.substrates) {
+      expect(summary.records).toHaveLength(report.question_count);
+      expect(summary.aggregate.tokens.input).toBeGreaterThan(0);
+      expect(summary.aggregate.tokens.output).toBeGreaterThan(0);
+      expect(summary.aggregate.quality_per_1k_tokens).toBeGreaterThan(0);
+    }
+    expect(countBenchTokens("hello world")).toBeLessThan("hello world".length);
   });
 
   test("each record carries the stable per-question schema", async () => {
@@ -145,6 +222,8 @@ describe("memory bench eval — markdown report", () => {
     const report = await runBenchEval({ corpusDir: CORPUS_DIR, now: () => FIXED_NOW });
     const md = formatEvalReport(report);
     expect(md).toContain("# memory bench eval — 2026-06-02");
+    expect(md).toContain("markdown-rag");
+    expect(md).toContain("F1 / 1k tokens");
     expect(md).toContain("exact-match");
     expect(md).toContain("token-F1");
     for (const r of report.records) expect(md).toContain(r.question_id);
