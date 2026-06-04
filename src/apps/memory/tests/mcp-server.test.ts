@@ -219,6 +219,7 @@ describe("MCP server over stdio", () => {
           "memory_layers",
           "memory_layers_viewer",
           "memory_lint",
+          "memory_merge_pass",
           "memory_neighbors",
           "memory_onboarding_map",
           "memory_onboarding_map_viewer",
