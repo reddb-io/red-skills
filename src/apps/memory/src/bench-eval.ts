@@ -131,6 +131,9 @@ export const JUDGE_J_SCORER = "J" as const;
 export const JUDGE_J_MODEL = "gpt-4o-2024-08-06" as const;
 export const JUDGE_J_PROMPT_VERSION = "memory-bench-judge-j.v1" as const;
 export const JUDGE_J_OPEN_ENDED_CATEGORIES = ["multi-hop", "temporal-as-of"] as const;
+export const ANSWERER_MODEL = "memory-fixed-pack-answerer-2026-06-02" as const;
+export const ANSWERER_PROMPT_VERSION = "memory-bench-answerer.v1" as const;
+export type EvalMode = "one-shot" | "deterministic-core" | "showcase";
 
 export interface JudgeJConfig {
   scorer: typeof JUDGE_J_SCORER;
@@ -146,6 +149,18 @@ export const FROZEN_JUDGE_J_CONFIG: JudgeJConfig = {
   prompt_version: JUDGE_J_PROMPT_VERSION,
   open_ended_categories: JUDGE_J_OPEN_ENDED_CATEGORIES,
   score_range: [0, 1],
+};
+
+export interface AnswererConfig {
+  id: "fixed-pack-answerer";
+  model: typeof ANSWERER_MODEL | string;
+  prompt_version: typeof ANSWERER_PROMPT_VERSION | string;
+}
+
+export const FROZEN_ANSWERER_CONFIG: AnswererConfig = {
+  id: "fixed-pack-answerer",
+  model: ANSWERER_MODEL,
+  prompt_version: ANSWERER_PROMPT_VERSION,
 };
 
 export interface JudgeJInput {
@@ -291,6 +306,27 @@ export interface EvalTierSummary {
   categories: CategorySummary[];
 }
 
+export interface EvalVarianceMetric {
+  metric: string;
+  samples: number;
+  mean: number;
+  std_dev: number;
+  ci95_low: number;
+  ci95_high: number;
+}
+
+export interface EvalVarianceBucket {
+  tier: EvalTierId;
+  substrate: string;
+  metrics: EvalVarianceMetric[];
+}
+
+export interface EvalVarianceSummary {
+  repetitions: number;
+  metrics: EvalVarianceMetric[];
+  by_tier_substrate: EvalVarianceBucket[];
+}
+
 export interface SubstrateComparison {
   id: "reddb_vs_markdown-rag" | string;
   candidate: string;
@@ -304,12 +340,15 @@ export interface SubstrateComparison {
 
 export interface EvalReport {
   schema_version: typeof EVAL_SCHEMA_VERSION;
+  mode: EvalMode;
+  repetitions: number;
   generated_at: string;
   substrate: string;
   category: string;
   corpus_size: number;
   question_count: number;
   pack_size: number;
+  answerer: AnswererConfig;
   judge: JudgeJConfig;
   aggregate: EvalAggregate;
   records: QuestionRecord[];
@@ -318,6 +357,7 @@ export interface EvalReport {
   pareto: ParetoSummary;
   categories: CategorySummary[];
   tiers: EvalTierSummary[];
+  variance: EvalVarianceSummary | null;
 }
 
 /* ----------------------------------------------------------------------------
@@ -1343,6 +1383,8 @@ export interface RunEvalOptions {
   substrate?: string;
   adapters?: SubstrateAdapter[];
   judge?: JudgeJAdapter;
+  mode?: EvalMode;
+  tiers?: EvalTierId[];
   now?: () => Date;
   clock?: () => number;
 }
@@ -1352,44 +1394,101 @@ export async function runBenchEval(opts: RunEvalOptions): Promise<EvalReport> {
   const corpus = await loadCorpus(opts.corpusDir);
   const questions = await loadQuestions(opts.corpusDir);
   const adapters = opts.adapters ?? defaultSubstrateAdapters(opts.substrate);
+  const tiersToRun = opts.tiers ?? ["fixed-pack", "agent-tools"];
   const reports: EvalReport[] = [];
   const agentReports: EvalReport[] = [];
   for (const adapter of adapters) {
-    reports.push(await evaluateSubstrateAdapter(adapter, corpus, questions, {
-      packSize,
-      judge: opts.judge,
-      now: opts.now,
-    }));
-    agentReports.push(await evaluateAgentToolSubstrateAdapter(adapter, corpus, questions, {
-      packSize,
-      judge: opts.judge,
-      now: opts.now,
-      clock: opts.clock,
-    }));
+    if (tiersToRun.includes("fixed-pack")) {
+      reports.push(await evaluateSubstrateAdapter(adapter, corpus, questions, {
+        packSize,
+        judge: opts.judge,
+        now: opts.now,
+        mode: opts.mode,
+      }));
+    }
+    if (tiersToRun.includes("agent-tools")) {
+      agentReports.push(await evaluateAgentToolSubstrateAdapter(adapter, corpus, questions, {
+        packSize,
+        judge: opts.judge,
+        now: opts.now,
+        clock: opts.clock,
+        mode: opts.mode,
+      }));
+    }
   }
-  const primary = reports[0] ?? emptyEvalReport({
+  const primary = reports[0] ?? agentReports[0] ?? emptyEvalReport({
     corpus,
     questions,
     packSize,
     substrate: opts.substrate ?? "reddb",
     judge: opts.judge,
     now: opts.now,
+    mode: opts.mode,
   });
   const substrates = reports.map(toSubstrateSummary);
   const comparisons = buildSubstrateComparisons(substrates);
   const pareto = buildParetoSummary(substrates);
   const categories = buildCategorySummaries(substrates);
   const agentSubstrates = agentReports.map(toSubstrateSummary);
-  const tiers = [
-    buildTierSummary("fixed-pack", "Fixed context pack", substrates),
-    buildTierSummary("agent-tools", "Agent calls substrate tools", agentSubstrates),
-  ];
-  return { ...primary, substrates, comparisons, pareto, categories, tiers };
+  const tiers: EvalTierSummary[] = [];
+  if (tiersToRun.includes("fixed-pack")) tiers.push(buildTierSummary("fixed-pack", "Fixed context pack", substrates));
+  if (tiersToRun.includes("agent-tools")) tiers.push(buildTierSummary("agent-tools", "Agent calls substrate tools", agentSubstrates));
+  return {
+    ...primary,
+    mode: opts.mode ?? "one-shot",
+    repetitions: 1,
+    substrates,
+    comparisons,
+    pareto,
+    categories,
+    tiers,
+    variance: null,
+  };
+}
+
+export function runBenchEvalCore(opts: Omit<RunEvalOptions, "mode" | "tiers">): Promise<EvalReport> {
+  const coreAdapters = opts.adapters ?? (
+    opts.substrate && opts.substrate !== "reddb"
+      ? defaultSubstrateAdapters(opts.substrate)
+      : [createRedDbSubstrateAdapter("reddb")]
+  );
+  return runBenchEval({
+    ...opts,
+    mode: "deterministic-core",
+    substrate: opts.substrate ?? "reddb",
+    adapters: coreAdapters,
+    tiers: ["fixed-pack"],
+  });
+}
+
+export interface RunEvalShowcaseOptions extends Omit<RunEvalOptions, "mode" | "tiers"> {
+  repetitions?: number;
+}
+
+export async function runBenchEvalShowcase(opts: RunEvalShowcaseOptions): Promise<EvalReport> {
+  const repetitions = opts.repetitions ?? 10;
+  if (repetitions < 10) throw new Error("memory bench eval showcase requires at least 10 repetitions");
+  const reports: EvalReport[] = [];
+  for (let i = 0; i < repetitions; i += 1) {
+    reports.push(await runBenchEval({
+      ...opts,
+      mode: "showcase",
+      tiers: ["fixed-pack", "agent-tools"],
+    }));
+  }
+  const primary = reports[0]!;
+  return {
+    ...primary,
+    mode: "showcase",
+    repetitions,
+    variance: buildEvalVarianceSummary(reports),
+  };
 }
 
 export interface EvaluateSubstrateOptions {
   packSize?: number;
   judge?: JudgeJAdapter;
+  mode?: EvalMode;
   now?: () => Date;
   clock?: () => number;
 }
@@ -1496,12 +1595,15 @@ export async function evaluateSubstrateAdapter<TIndex>(
   };
   return {
     schema_version: EVAL_SCHEMA_VERSION,
+    mode: opts.mode ?? "one-shot",
+    repetitions: 1,
     generated_at: now.toISOString(),
     substrate,
     category,
     corpus_size: corpus.length,
     question_count: questions.length,
     pack_size: packSize,
+    answerer: FROZEN_ANSWERER_CONFIG,
     judge: opts.judge?.config ?? FROZEN_JUDGE_J_CONFIG,
     aggregate,
     records,
@@ -1515,6 +1617,7 @@ export async function evaluateSubstrateAdapter<TIndex>(
     pareto: buildParetoSummary([]),
     categories: [],
     tiers: [],
+    variance: null,
   };
 }
 
@@ -1642,12 +1745,15 @@ export async function evaluateAgentToolSubstrateAdapter<TIndex>(
   };
   return {
     schema_version: EVAL_SCHEMA_VERSION,
+    mode: opts.mode ?? "one-shot",
+    repetitions: 1,
     generated_at: now.toISOString(),
     substrate,
     category,
     corpus_size: corpus.length,
     question_count: questions.length,
     pack_size: packSize,
+    answerer: FROZEN_ANSWERER_CONFIG,
     judge: opts.judge?.config ?? FROZEN_JUDGE_J_CONFIG,
     aggregate,
     records,
@@ -1661,6 +1767,7 @@ export async function evaluateAgentToolSubstrateAdapter<TIndex>(
     pareto: buildParetoSummary([]),
     categories: [],
     tiers: [],
+    variance: null,
   };
 }
 
@@ -1714,6 +1821,7 @@ function emptyEvalReport(opts: {
   packSize: number;
   substrate: string;
   judge?: JudgeJAdapter;
+  mode?: EvalMode;
   now?: () => Date;
 }): EvalReport {
   const now = (opts.now ?? (() => new Date()))();
@@ -1733,12 +1841,15 @@ function emptyEvalReport(opts: {
   };
   return {
     schema_version: EVAL_SCHEMA_VERSION,
+    mode: opts.mode ?? "one-shot",
+    repetitions: 1,
     generated_at: now.toISOString(),
     substrate: opts.substrate,
     category: reportCategory(opts.questions),
     corpus_size: opts.corpus.length,
     question_count: opts.questions.length,
     pack_size: opts.packSize,
+    answerer: FROZEN_ANSWERER_CONFIG,
     judge: opts.judge?.config ?? FROZEN_JUDGE_J_CONFIG,
     aggregate,
     records: [],
@@ -1747,6 +1858,7 @@ function emptyEvalReport(opts: {
     pareto: buildParetoSummary([]),
     categories: [],
     tiers: [],
+    variance: null,
   };
 }
 
@@ -1952,6 +2064,86 @@ function aggregateRecords(records: QuestionRecord[]): EvalAggregate {
   };
 }
 
+function buildEvalVarianceSummary(reports: EvalReport[]): EvalVarianceSummary {
+  const buckets = new Map<string, { tier: EvalTierId; substrate: string; values: Map<string, number[]> }>();
+  const aggregateValues = new Map<string, number[]>();
+
+  for (const report of reports) {
+    for (const [metric, value] of aggregateVarianceValues(report.aggregate)) {
+      pushMetric(aggregateValues, metric, value);
+    }
+    for (const tier of report.tiers) {
+      for (const summary of tier.substrates) {
+        const key = `${tier.tier}:${summary.substrate}`;
+        const bucket = buckets.get(key) ?? {
+          tier: tier.tier,
+          substrate: summary.substrate,
+          values: new Map<string, number[]>(),
+        };
+        for (const [metric, value] of aggregateVarianceValues(summary.aggregate)) {
+          pushMetric(bucket.values, metric, value);
+        }
+        buckets.set(key, bucket);
+      }
+    }
+  }
+
+  return {
+    repetitions: reports.length,
+    metrics: varianceMetrics(aggregateValues),
+    by_tier_substrate: [...buckets.values()]
+      .map((bucket) => ({
+        tier: bucket.tier,
+        substrate: bucket.substrate,
+        metrics: varianceMetrics(bucket.values),
+      }))
+      .sort((a, b) => a.tier.localeCompare(b.tier) || a.substrate.localeCompare(b.substrate)),
+  };
+}
+
+function aggregateVarianceValues(aggregate: EvalAggregate): Array<[string, number]> {
+  return [
+    ["exact_match", aggregate.exact_match],
+    ["f1", aggregate.f1],
+    ["abstention_score", aggregate.abstention_score],
+    ["quality_per_1k_tokens", aggregate.quality_per_1k_tokens],
+    ["tokens_total", aggregate.tokens.total],
+    ["reasoning_prompt_ratio", aggregate.reasoning_prompt_ratio],
+    ["time_to_response_ms", aggregate.time_to_response_ms],
+  ];
+}
+
+function pushMetric(values: Map<string, number[]>, metric: string, value: number): void {
+  if (!Number.isFinite(value)) return;
+  const bucket = values.get(metric) ?? [];
+  bucket.push(value);
+  values.set(metric, bucket);
+}
+
+function varianceMetrics(values: Map<string, number[]>): EvalVarianceMetric[] {
+  return [...values.entries()]
+    .map(([metric, samples]) => varianceMetric(metric, samples))
+    .sort((a, b) => a.metric.localeCompare(b.metric));
+}
+
+function varianceMetric(metric: string, samples: number[]): EvalVarianceMetric {
+  const n = samples.length;
+  const mean = n > 0 ? samples.reduce((sum, value) => sum + value, 0) / n : 0;
+  const variance = n > 1
+    ? samples.reduce((sum, value) => sum + (value - mean) ** 2, 0) / (n - 1)
+    : 0;
+  const stdDev = Math.sqrt(variance);
+  const margin = n > 0 ? 1.96 * (stdDev / Math.sqrt(n)) : 0;
+  return {
+    metric,
+    samples: n,
+    mean: round4(mean),
+    std_dev: round4(stdDev),
+    ci95_low: round4(mean - margin),
+    ci95_high: round4(mean + margin),
+  };
+}
+
 function categoryOrder(category: string): number {
   const order: Record<string, number> = {
     "single-hop": 0,
@@ -1982,12 +2174,37 @@ export function formatEvalReport(report: EvalReport): string {
   lines.push(`# memory bench eval — ${report.generated_at.slice(0, 10)}`);
   lines.push("");
   lines.push(
-    `Substrate: \`${report.substrate}\` · category: \`${report.category}\` · corpus: ${report.corpus_size} entries · questions: ${report.question_count} · pack size: ${report.pack_size}.`,
+    `Mode: \`${report.mode}\` · repetitions: ${report.repetitions} · substrate: \`${report.substrate}\` · category: \`${report.category}\` · corpus: ${report.corpus_size} entries · questions: ${report.question_count} · pack size: ${report.pack_size}.`,
+  );
+  lines.push(
+    `Answerer: model \`${report.answerer.model}\` · prompt \`${report.answerer.prompt_version}\`.`,
   );
   lines.push(
     `Judge J: model \`${report.judge.model}\` · prompt \`${report.judge.prompt_version}\` · open-ended categories: ${report.judge.open_ended_categories.map((category) => `\`${category}\``).join(", ")}.`,
   );
   lines.push("");
+  if (report.variance) {
+    lines.push("## Repeated-run variance");
+    lines.push("");
+    lines.push("| metric | samples | mean | std dev | 95% CI |");
+    lines.push("| --- | ---: | ---: | ---: | --- |");
+    for (const metric of report.variance.metrics) {
+      lines.push(
+        `| ${metric.metric} | ${metric.samples} | ${metric.mean.toFixed(3)} | ${metric.std_dev.toFixed(3)} | [${metric.ci95_low.toFixed(3)}, ${metric.ci95_high.toFixed(3)}] |`,
+      );
+    }
+    lines.push("");
+    lines.push("| tier | substrate | metric | samples | mean | std dev | 95% CI |");
+    lines.push("| --- | --- | --- | ---: | ---: | ---: | --- |");
+    for (const bucket of report.variance.by_tier_substrate) {
+      for (const metric of bucket.metrics) {
+        lines.push(
+          `| ${bucket.tier} | ${bucket.substrate} | ${metric.metric} | ${metric.samples} | ${metric.mean.toFixed(3)} | ${metric.std_dev.toFixed(3)} | [${metric.ci95_low.toFixed(3)}, ${metric.ci95_high.toFixed(3)}] |`,
+        );
+      }
+    }
+    lines.push("");
+  }
   if (report.tiers.length > 0) {
     lines.push("## Tiers");
     lines.push("");

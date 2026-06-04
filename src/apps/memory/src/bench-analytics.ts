@@ -39,6 +39,25 @@ export interface BenchAnalyticsWriteResult {
   inserted_regressions: number;
 }
 
+export interface BenchRegressionGateFailure {
+  bench: string;
+  substrate: string;
+  metric_name: string;
+  metric_value: number;
+  previous_value: number | null;
+  delta: number;
+  delta_pct: number | null;
+  allowed_delta: number;
+}
+
+export interface BenchRegressionGateResult {
+  status: "pass" | "fail";
+  bench: string;
+  substrate: string;
+  checked_metrics: string[];
+  failures: BenchRegressionGateFailure[];
+}
+
 export async function openBenchAnalyticsDb(uri: string): Promise<BenchAnalyticsDb> {
   return connect(uri);
 }
@@ -135,6 +154,7 @@ export async function writeBenchEvalAnalytics(
     bench: "eval",
     substrate: report.substrate,
     metrics: [
+      { name: "exact_match", value: report.aggregate.exact_match, unit: "score" },
       { name: "f1", value: report.aggregate.f1, unit: "score" },
       { name: "abstention_score", value: report.aggregate.abstention_score, unit: "score" },
       { name: "quality_per_1k_tokens", value: report.aggregate.quality_per_1k_tokens, unit: "score_per_1k_tokens" },
@@ -278,6 +298,54 @@ export async function ensureBenchAnalyticsSchema(db: BenchAnalyticsDb): Promise<
 export async function ensureBenchRegressionAggregates(db: BenchAnalyticsDb): Promise<void> {
   await ensureContinuousAggregate(db, BENCH_REGRESSION_AGGREGATES.value, "metric_value", "avg_value");
   await ensureContinuousAggregate(db, BENCH_REGRESSION_AGGREGATES.delta, "delta", "avg_delta");
+}
+
+export async function gateBenchEvalCoreRegression(opts: {
+  db: BenchAnalyticsDb;
+  substrate?: string;
+  metrics?: string[];
+  allowedNegativeDelta?: number;
+}): Promise<BenchRegressionGateResult> {
+  const bench = "eval";
+  const substrate = opts.substrate ?? "reddb";
+  const checkedMetrics = opts.metrics ?? ["exact_match", "f1", "abstention_score", "quality_per_1k_tokens"];
+  const allowedDelta = opts.allowedNegativeDelta ?? 0;
+  const result = await opts.db.query(
+    `SELECT * FROM ${BENCH_ANALYTICS_COLLECTIONS.regression} WHERE bench = $1 AND substrate = $2 ORDER BY ts DESC`,
+    [bench, substrate],
+  );
+  const latestByMetric = new Map<string, Record<string, unknown>>();
+  for (const row of [...result.rows].sort((a, b) => (numberField(b.ts) ?? 0) - (numberField(a.ts) ?? 0))) {
+    const metricName = stringValue(row.metric_name);
+    if (!checkedMetrics.includes(metricName) || latestByMetric.has(metricName)) continue;
+    latestByMetric.set(metricName, row);
+  }
+
+  const failures: BenchRegressionGateFailure[] = [];
+  for (const metricName of checkedMetrics) {
+    const row = latestByMetric.get(metricName);
+    if (!row) continue;
+    const delta = numberField(row.delta);
+    if (delta === null || delta >= -allowedDelta) continue;
+    failures.push({
+      bench,
+      substrate,
+      metric_name: metricName,
+      metric_value: numberField(row.metric_value) ?? 0,
+      previous_value: numberField(row.previous_value),
+      delta,
+      delta_pct: numberField(row.delta_pct),
+      allowed_delta: -allowedDelta,
+    });
+  }
+
+  return {
+    status: failures.length > 0 ? "fail" : "pass",
+    bench,
+    substrate,
+    checked_metrics: checkedMetrics,
+    failures,
+  };
 }
 
 async function ensureHypertable(db: BenchAnalyticsDb, name: string): Promise<void> {

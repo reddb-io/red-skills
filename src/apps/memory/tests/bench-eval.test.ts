@@ -23,6 +23,8 @@ import {
   normalizeAnswer,
   parseJudgeJResponse,
   runBenchEval,
+  runBenchEvalCore,
+  runBenchEvalShowcase,
   tierRecords,
   toJsonl,
   tokenF1,
@@ -401,6 +403,59 @@ describe("memory bench eval — substrate + answerer", () => {
 });
 
 describe("memory bench eval — runner", () => {
+  test("deterministic core runs one fixed-pack RedDB pass for CI gating", async () => {
+    const report = await runBenchEvalCore({ corpusDir: STRUCTURED_CORPUS_DIR, now: () => FIXED_NOW });
+
+    expect(report.mode).toBe("deterministic-core");
+    expect(report.repetitions).toBe(1);
+    expect(report.answerer).toMatchObject({
+      model: "memory-fixed-pack-answerer-2026-06-02",
+      prompt_version: "memory-bench-answerer.v1",
+    });
+    expect(report.judge).toMatchObject({
+      model: "gpt-4o-2024-08-06",
+      prompt_version: "memory-bench-judge-j.v1",
+    });
+    expect(report.substrates.map((summary) => summary.substrate)).toEqual(["reddb"]);
+    expect(report.tiers.map((tier) => tier.tier)).toEqual(["fixed-pack"]);
+    expect(tierRecords(report).every((record) => record.tier === "fixed-pack")).toBe(true);
+    expect(report.variance).toBeNull();
+  });
+
+  test("showcase runs at least ten repeated all-substrate passes and reports variance", async () => {
+    const report = await runBenchEvalShowcase({
+      corpusDir: CORPUS_DIR,
+      repetitions: 10,
+      now: () => FIXED_NOW,
+    });
+
+    expect(report.mode).toBe("showcase");
+    expect(report.repetitions).toBe(10);
+    expect(report.substrates.map((summary) => summary.substrate)).toEqual([
+      "reddb",
+      "markdown-rag",
+      "neo4j",
+      "graphify",
+      "full-context",
+    ]);
+    expect(report.tiers.map((tier) => tier.tier)).toEqual(["fixed-pack", "agent-tools"]);
+    expect(report.variance).toMatchObject({ repetitions: 10 });
+    expect(report.variance?.metrics.map((metric) => metric.metric)).toContain("time_to_response_ms");
+    const agentReddb = report.variance?.by_tier_substrate.find(
+      (bucket) => bucket.tier === "agent-tools" && bucket.substrate === "reddb",
+    );
+    expect(agentReddb?.metrics.find((metric) => metric.metric === "time_to_response_ms")).toMatchObject({
+      samples: 10,
+      std_dev: expect.any(Number),
+      ci95_low: expect.any(Number),
+      ci95_high: expect.any(Number),
+    });
+  });
+
+  test("showcase rejects fewer than ten repetitions", async () => {
+    await expect(runBenchEvalShowcase({ corpusDir: CORPUS_DIR, repetitions: 9 })).rejects.toThrow(/at least 10/);
+  });
+
   test("fake Judge J scores only open-ended questions and is reported beside exact-match", async () => {
     const calls: string[] = [];
     const fakeJudge: JudgeJAdapter = {
