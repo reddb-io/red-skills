@@ -3,6 +3,8 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
 export const DEFAULT_CONNECTION_STRING = "file://./.red/brain/brain.rdb";
+export const BRAIN_ROOT_ENV = "RED_BRAIN_ROOT";
+export const BRAIN_ROOT_MARKER = "brain.root";
 
 export interface BrainConfig {
   connection_string: string;
@@ -15,14 +17,107 @@ export interface ResolvedBrainConfig {
   rawConnectionString: string;
 }
 
-export async function findBrainRoot(startDir = process.cwd()): Promise<string> {
+export interface BrainRootResolutionOptions {
+  env?: Record<string, string | undefined>;
+}
+
+export async function findBrainRoot(
+  startDir = process.cwd(),
+  options: BrainRootResolutionOptions = {},
+): Promise<string> {
+  const env = options.env ?? process.env;
+  const envRoot = env[BRAIN_ROOT_ENV];
+  if (envRoot) return resolve(startDir, envRoot);
+
+  const configRoot = await findConfiguredBrainRoot(startDir);
+  if (configRoot) return configRoot;
+
   let current = resolve(startDir);
+  let fallbackRedRoot: string | null = null;
   while (true) {
-    if (existsSync(join(current, ".red"))) return current;
+    const redDir = join(current, ".red");
+    if (existsSync(redDir)) {
+      fallbackRedRoot ??= current;
+      if (existsSync(join(redDir, "brain")) || existsSync(join(redDir, BRAIN_ROOT_MARKER))) {
+        return current;
+      }
+    }
     const parent = dirname(current);
-    if (parent === current) return resolve(startDir);
+    if (parent === current) return fallbackRedRoot ?? resolve(startDir);
     current = parent;
   }
+}
+
+async function findConfiguredBrainRoot(startDir: string): Promise<string | null> {
+  let current = resolve(startDir);
+  while (true) {
+    const configPath = join(current, ".red", "config.yaml");
+    try {
+      const text = await readFile(configPath, "utf8");
+      const root = parseBrainRootOverride(text);
+      if (root) return resolve(current, root);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    }
+
+    const parent = dirname(current);
+    if (parent === current) return null;
+    current = parent;
+  }
+}
+
+export function parseBrainRootOverride(text: string): string | null {
+  const flat = parseYamlFlat(text);
+  return (
+    flat["plugins.brain.rootDir"] ??
+    flat["plugins.brain.root"] ??
+    flat["plugins.brain.root_dir"] ??
+    flat["brain.rootDir"] ??
+    flat["brain.root"] ??
+    flat["brain.root_dir"] ??
+    null
+  );
+}
+
+function parseYamlFlat(text: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  const stack: string[] = [];
+  const indents: number[] = [];
+
+  for (const rawLine of text.split("\n")) {
+    let line = rawLine.replace(/\r$/, "");
+    if (!/".*"/.test(line) && !/'.*'/.test(line)) {
+      const hash = line.indexOf("#");
+      if (hash >= 0) line = line.slice(0, hash);
+    }
+    if (line.replace(/\s/g, "") === "") continue;
+
+    const indent = line.match(/^ */)?.[0].length ?? 0;
+    if (indent % 2 !== 0) continue;
+    const rest = line.slice(indent).replace(/\s+$/, "");
+    const colon = rest.indexOf(":");
+    if (colon < 0 || !/^[a-zA-Z_][a-zA-Z0-9_-]*$/.test(rest.slice(0, colon))) continue;
+
+    const key = rest.slice(0, colon);
+    let value = rest.slice(colon + 1).replace(/^\s+/, "");
+    if (value.startsWith('"') && value.endsWith('"') && value.length >= 2) value = value.slice(1, -1);
+    else if (value.startsWith("'") && value.endsWith("'") && value.length >= 2) value = value.slice(1, -1);
+
+    while (indents.length > 0 && indents[indents.length - 1]! >= indent) {
+      stack.pop();
+      indents.pop();
+    }
+
+    const full = stack.length > 0 ? `${stack.join(".")}.${key}` : key;
+    if (value === "") {
+      stack.push(key);
+      indents.push(indent);
+    } else {
+      out[full] = value;
+    }
+  }
+
+  return out;
 }
 
 export function brainConfigPath(rootDir: string): string {
