@@ -14,12 +14,12 @@ import { getEncoding } from "js-tiktoken";
  *     → an exact-match / token-F1 scorer scores against exact gold
  *     → raw per-question records are emitted as JSONL
  *
- * This file is one substrate (RedDB governed recall) and one category
- * (single-hop). It is intentionally pure and dependency-free so the cheap
+ * This file is one substrate (RedDB governed recall) and multiple structural
+ * categories (single-hop, multi-hop, temporal-as-of). It is intentionally pure and dependency-free so the cheap
  * deterministic core can gate every memory change in CI without a live RedDB
- * (PRD #333 stories 13, 15, 20). The richer tiers — live baselines, LLM-judge,
- * multi-hop / temporal / abstention categories — plug into the same shapes
- * later; this is the spine they hang off.
+ * (PRD #333 stories 13, 15, 20). The richer tiers — live baselines,
+ * LLM-judge, and abstention categories — plug into the same shapes later; this
+ * is the spine they hang off.
  *
  * Determinism contract: every function here is a pure function of its inputs.
  * No clocks, no randomness, no I/O beyond reading the checked-in fixtures. Ties
@@ -36,17 +36,30 @@ export interface CorpusEntry {
   tags: string[];
   text: string;
   fact: string;
+  relations: CorpusRelation[];
+  valid_from?: string;
+  valid_until?: string | null;
+  supersedes?: string;
+  superseded_by?: string;
 }
 
-/** A single-hop question with exact gold. `gold_answer` is the authoritative
- * string the answer is scored against; `gold_doc_id` is the one corpus entry
- * that supports it (single-hop ⇒ exactly one). */
+export interface CorpusRelation {
+  type: string;
+  target_id: string;
+}
+
+/** A bench question with exact gold. `gold_answer` is the authoritative string
+ * the answer is scored against. `gold_doc_id` remains the primary supporting
+ * entry for v1 readers; `gold_doc_ids` carries full support chains for
+ * multi-hop and temporal questions. */
 export interface Question {
   id: string;
   category: string;
   question: string;
   gold_doc_id: string;
+  gold_doc_ids: string[];
   gold_answer: string;
+  as_of?: string;
 }
 
 export interface ContextPackEntry {
@@ -55,6 +68,8 @@ export interface ContextPackEntry {
   score: number;
   fact: string;
   text: string;
+  valid_from?: string;
+  valid_until?: string | null;
 }
 
 /** The fixed context pack a substrate hands to the answerer for one question. */
@@ -100,6 +115,8 @@ export interface QuestionRecord {
   question_id: string;
   question: string;
   gold_doc_id: string;
+  gold_doc_ids: string[];
+  as_of: string | null;
   gold_answer: string;
   predicted_answer: string;
   pack_ids: string[];
@@ -122,6 +139,31 @@ export interface SubstrateSummary {
     quality_per_1k_tokens: number;
   };
   records: QuestionRecord[];
+}
+
+export interface CategorySubstrateSummary {
+  substrate: string;
+  label: string;
+  aggregate: EvalAggregate;
+  records: QuestionRecord[];
+}
+
+export interface CategorySummary {
+  category: string;
+  question_count: number;
+  aggregate: EvalAggregate;
+  substrates: CategorySubstrateSummary[];
+  comparisons: SubstrateComparison[];
+  requires_as_of_reasoning: boolean;
+  plain_neo4j_limitation: string | null;
+}
+
+export interface EvalAggregate {
+  exact_match: number;
+  f1: number;
+  gold_in_pack_rate: number;
+  tokens: TokenCounts;
+  quality_per_1k_tokens: number;
 }
 
 export interface SubstrateComparison {
@@ -153,6 +195,7 @@ export interface EvalReport {
   records: QuestionRecord[];
   substrates: SubstrateSummary[];
   comparisons: SubstrateComparison[];
+  categories: CategorySummary[];
 }
 
 /* ----------------------------------------------------------------------------
@@ -177,6 +220,7 @@ function asCorpusEntry(value: unknown): CorpusEntry {
   if (!value || typeof value !== "object") throw new Error("corpus entry must be an object");
   const r = value as Record<string, unknown>;
   const tags = Array.isArray(r.tags) ? r.tags.filter((t): t is string => typeof t === "string") : [];
+  const relations = Array.isArray(r.relations) ? r.relations.map(asCorpusRelation) : [];
   return {
     id: stringField(r, "id"),
     structural_type: stringField(r, "structural_type"),
@@ -184,6 +228,20 @@ function asCorpusEntry(value: unknown): CorpusEntry {
     tags,
     text: stringField(r, "text"),
     fact: stringField(r, "fact"),
+    relations,
+    valid_from: optionalStringField(r, "valid_from"),
+    valid_until: optionalNullableStringField(r, "valid_until"),
+    supersedes: optionalStringField(r, "supersedes"),
+    superseded_by: optionalStringField(r, "superseded_by"),
+  };
+}
+
+function asCorpusRelation(value: unknown): CorpusRelation {
+  if (!value || typeof value !== "object") throw new Error("corpus relation must be an object");
+  const r = value as Record<string, unknown>;
+  return {
+    type: stringField(r, "type"),
+    target_id: stringField(r, "target_id"),
   };
 }
 
@@ -232,18 +290,39 @@ export interface GraphifySubstrateAdapterOptions {
 function asQuestion(value: unknown): Question {
   if (!value || typeof value !== "object") throw new Error("question entry must be an object");
   const r = value as Record<string, unknown>;
+  const goldDocId = stringField(r, "gold_doc_id");
+  const goldDocIds = Array.isArray(r.gold_doc_ids)
+    ? r.gold_doc_ids.filter((id): id is string => typeof id === "string")
+    : [goldDocId];
   return {
     id: stringField(r, "id"),
     category: stringField(r, "category"),
     question: stringField(r, "question"),
-    gold_doc_id: stringField(r, "gold_doc_id"),
+    gold_doc_id: goldDocId,
+    gold_doc_ids: goldDocIds.length > 0 ? goldDocIds : [goldDocId],
     gold_answer: stringField(r, "gold_answer"),
+    as_of: optionalStringField(r, "as_of"),
   };
 }
 
 function stringField(r: Record<string, unknown>, key: string): string {
   const v = r[key];
   if (typeof v !== "string") throw new Error(`field "${key}" must be a string`);
+  return v;
+}
+
+function optionalStringField(r: Record<string, unknown>, key: string): string | undefined {
+  const v = r[key];
+  if (v === undefined) return undefined;
+  if (typeof v !== "string") throw new Error(`field "${key}" must be a string`);
+  return v;
+}
+
+function optionalNullableStringField(r: Record<string, unknown>, key: string): string | null | undefined {
+  const v = r[key];
+  if (v === undefined) return undefined;
+  if (v === null) return null;
+  if (typeof v !== "string") throw new Error(`field "${key}" must be a string or null`);
   return v;
 }
 
@@ -307,8 +386,25 @@ export function createRedDbSubstrateAdapter(id = "reddb"): SubstrateAdapter<RedD
       return { byId: new Map(corpus.map((entry) => [entry.id, entry])), entries: corpus };
     },
     retrieveQuery(index, question, limit) {
-      return index.entries
-        .map((entry) => ({ id: entry.id, score: scoreEntry(question, entry) }))
+      const activeEntries = index.entries.filter((entry) => isEntryEligibleForQuestion(entry, question));
+      const scores = new Map<string, number>();
+      for (const entry of activeEntries) {
+        const score = scoreEntry(question, entry);
+        if (score > 0) scores.set(entry.id, (scores.get(entry.id) ?? 0) + score);
+      }
+      if (question.category === "multi-hop") {
+        for (const entry of activeEntries) {
+          const sourceScore = scores.get(entry.id);
+          if (!sourceScore) continue;
+          for (const relation of entry.relations) {
+            const target = index.byId.get(relation.target_id);
+            if (!target || !isEntryEligibleForQuestion(target, question)) continue;
+            scores.set(target.id, (scores.get(target.id) ?? 0) + sourceScore + relationTypeBonus(relation.type));
+          }
+        }
+      }
+      return activeEntries
+        .map((entry) => ({ id: entry.id, score: scores.get(entry.id) ?? 0 }))
         .filter((hit) => hit.score > 0)
         .sort((a, b) => b.score - a.score || a.id.localeCompare(b.id))
         .slice(0, limit)
@@ -318,6 +414,24 @@ export function createRedDbSubstrateAdapter(id = "reddb"): SubstrateAdapter<RedD
       return hitsToContextPack(index.byId, question, id, hits.slice(0, packSize));
     },
   };
+}
+
+function isEntryEligibleForQuestion(entry: CorpusEntry, question: Question): boolean {
+  if (!question.as_of) return true;
+  return isEntryActiveAt(entry, question.as_of);
+}
+
+function isEntryActiveAt(entry: CorpusEntry, asOf: string): boolean {
+  const at = Date.parse(asOf);
+  if (!Number.isFinite(at)) return true;
+  const from = entry.valid_from ? Date.parse(entry.valid_from) : Number.NEGATIVE_INFINITY;
+  const until = entry.valid_until ? Date.parse(entry.valid_until) : Number.POSITIVE_INFINITY;
+  return at >= from && at < until;
+}
+
+function relationTypeBonus(type: string): number {
+  const tokenCount = tokenize(type).length;
+  return 2 + tokenCount * 0.25;
 }
 
 interface MarkdownNote {
@@ -614,6 +728,8 @@ function hitsToContextPack(
       score: round4(hit.score),
       fact: entry.fact,
       text: entry.text,
+      valid_from: entry.valid_from,
+      valid_until: entry.valid_until,
     });
   }
   return { question_id: question.id, substrate, entries };
@@ -626,6 +742,9 @@ function corpusEntryToMarkdown(entry: CorpusEntry): string {
     `Structural type: ${entry.structural_type}`,
     `Engineering code: ${entry.engineering_code}`,
     `Tags: ${entry.tags.join(", ")}`,
+    entry.relations.length > 0 ? `Relations: ${entry.relations.map((r) => `${r.type}->${r.target_id}`).join(", ")}` : "",
+    entry.valid_from ? `Valid from: ${entry.valid_from}` : "",
+    entry.valid_until ? `Valid until: ${entry.valid_until}` : "",
     "",
     "## Fact",
     "",
@@ -779,7 +898,14 @@ export function cosine(a: Map<string, number>, b: Map<string, number>): number {
  * (pack) → string signature.
  * --------------------------------------------------------------------------*/
 
-export function answerFromPack(pack: ContextPack): string {
+export function answerFromPack(pack: ContextPack, question?: Question): string {
+  if (question?.category === "multi-hop" && question.gold_doc_ids.length > 1) {
+    const byId = new Map(pack.entries.map((entry) => [entry.id, entry]));
+    const support = question.gold_doc_ids.map((id) => byId.get(id));
+    if (support.every((entry): entry is ContextPackEntry => entry !== undefined)) {
+      return support[support.length - 1]?.fact ?? "";
+    }
+  }
   return pack.entries[0]?.fact ?? "";
 }
 
@@ -899,7 +1025,8 @@ export async function runBenchEval(opts: RunEvalOptions): Promise<EvalReport> {
   });
   const substrates = reports.map(toSubstrateSummary);
   const comparisons = buildSubstrateComparisons(substrates);
-  return { ...primary, substrates, comparisons };
+  const categories = buildCategorySummaries(substrates);
+  return { ...primary, substrates, comparisons, categories };
 }
 
 export interface EvaluateSubstrateOptions {
@@ -926,13 +1053,14 @@ export async function evaluateSubstrateAdapter<TIndex>(
   for (const q of questions) {
     const hits = await adapter.retrieveQuery(index, q, packSize);
     const pack = await adapter.buildContextPack(index, q, hits.slice(0, packSize), packSize);
-    const predicted = answerFromPack(pack);
+    const predicted = answerFromPack(pack, q);
     const em = exactMatch(predicted, q.gold_answer);
     const f1 = tokenF1(predicted, q.gold_answer);
     const tokenUsage = measureAnswererTokens(q, pack, predicted);
     const packIds = pack.entries.map((e) => e.id);
-    const goldIdx = packIds.indexOf(q.gold_doc_id);
-    const goldInPack = goldIdx >= 0;
+    const goldIndexes = q.gold_doc_ids.map((id) => packIds.indexOf(id));
+    const goldIdx = goldIndexes[0] ?? -1;
+    const goldInPack = goldIndexes.every((idx) => idx >= 0);
     emSum += em;
     f1Sum += f1;
     if (goldInPack) goldInPackCount += 1;
@@ -946,6 +1074,8 @@ export async function evaluateSubstrateAdapter<TIndex>(
       question_id: q.id,
       question: q.question,
       gold_doc_id: q.gold_doc_id,
+      gold_doc_ids: q.gold_doc_ids,
+      as_of: q.as_of ?? null,
       gold_answer: q.gold_answer,
       predicted_answer: predicted,
       pack_ids: packIds,
@@ -959,7 +1089,7 @@ export async function evaluateSubstrateAdapter<TIndex>(
   }
 
   const n = Math.max(questions.length, 1);
-  const category = questions[0]?.category ?? "single-hop";
+  const category = reportCategory(questions);
   const now = (opts.now ?? (() => new Date()))();
   const aggregate = {
     exact_match: round4(emSum / n),
@@ -985,6 +1115,7 @@ export async function evaluateSubstrateAdapter<TIndex>(
       records,
     }],
     comparisons: [],
+    categories: [],
   };
 }
 
@@ -1022,7 +1153,7 @@ function emptyEvalReport(opts: {
     schema_version: EVAL_SCHEMA_VERSION,
     generated_at: now.toISOString(),
     substrate: opts.substrate,
-    category: opts.questions[0]?.category ?? "single-hop",
+    category: reportCategory(opts.questions),
     corpus_size: opts.corpus.length,
     question_count: opts.questions.length,
     pack_size: opts.packSize,
@@ -1030,6 +1161,7 @@ function emptyEvalReport(opts: {
     records: [],
     substrates: [],
     comparisons: [],
+    categories: [],
   };
 }
 
@@ -1040,6 +1172,13 @@ function toSubstrateSummary(report: EvalReport): SubstrateSummary {
     aggregate: report.aggregate,
     records: report.records,
   };
+}
+
+function reportCategory(questions: Question[]): string {
+  const categories = new Set(questions.map((question) => question.category));
+  if (categories.size === 0) return "single-hop";
+  if (categories.size === 1) return questions[0]?.category ?? "single-hop";
+  return "mixed";
 }
 
 function buildSubstrateComparisons(summaries: SubstrateSummary[]): SubstrateComparison[] {
@@ -1060,6 +1199,68 @@ function buildSubstrateComparisons(summaries: SubstrateSummary[]): SubstrateComp
         baseline.aggregate.quality_per_1k_tokens,
       ),
     }));
+}
+
+function buildCategorySummaries(summaries: SubstrateSummary[]): CategorySummary[] {
+  const categoryNames = [...new Set(summaries.flatMap((summary) => summary.records.map((record) => record.category)))]
+    .sort((a, b) => categoryOrder(a) - categoryOrder(b) || a.localeCompare(b));
+  const primary = summaries[0];
+  return categoryNames.map((category) => {
+    const substrates: CategorySubstrateSummary[] = summaries
+      .map((summary) => {
+        const records = summary.records.filter((record) => record.category === category);
+        return {
+          substrate: summary.substrate,
+          label: summary.label,
+          aggregate: aggregateRecords(records),
+          records,
+        };
+      })
+      .filter((summary) => summary.records.length > 0);
+    const comparisons = buildSubstrateComparisons(substrates);
+    const primaryRecords = primary?.records.filter((record) => record.category === category) ?? [];
+    const requiresAsOf = primaryRecords.some((record) => record.as_of !== null);
+    return {
+      category,
+      question_count: primaryRecords.length,
+      aggregate: aggregateRecords(primaryRecords),
+      substrates,
+      comparisons,
+      requires_as_of_reasoning: requiresAsOf,
+      plain_neo4j_limitation: requiresAsOf
+        ? "Plain term traversal has no valid-time filter, so it can rank a superseding decision ahead of the decision active at the requested as_of time."
+        : null,
+    };
+  });
+}
+
+function aggregateRecords(records: QuestionRecord[]): EvalAggregate {
+  const n = Math.max(records.length, 1);
+  const tokens = records.reduce<TokenCounts>(
+    (acc, record) => ({
+      input: acc.input + record.tokens.input,
+      output: acc.output + record.tokens.output,
+      total: acc.total + record.tokens.total,
+    }),
+    { input: 0, output: 0, total: 0 },
+  );
+  const f1Sum = records.reduce((sum, record) => sum + record.f1, 0);
+  return {
+    exact_match: round4(records.reduce((sum, record) => sum + record.exact_match, 0) / n),
+    f1: round4(f1Sum / n),
+    gold_in_pack_rate: round4(records.filter((record) => record.gold_in_pack).length / n),
+    tokens,
+    quality_per_1k_tokens: qualityPer1kTokens(f1Sum, tokens.total),
+  };
+}
+
+function categoryOrder(category: string): number {
+  const order: Record<string, number> = {
+    "single-hop": 0,
+    "multi-hop": 1,
+    "temporal-as-of": 2,
+  };
+  return order[category] ?? 99;
 }
 
 /* ----------------------------------------------------------------------------
@@ -1115,13 +1316,35 @@ export function formatEvalReport(report: EvalReport): string {
   lines.push(`| output tokens | ${report.aggregate.tokens.output} |`);
   lines.push(`| quality per 1k tokens | ${report.aggregate.quality_per_1k_tokens.toFixed(3)} |`);
   lines.push("");
+  if (report.categories.length > 0) {
+    lines.push("## Per-category");
+    lines.push("");
+    lines.push("| category | substrate | questions | EM | F1 | gold-in-pack | F1 / 1k tokens | note |");
+    lines.push("| --- | --- | ---: | ---: | ---: | ---: | ---: | --- |");
+    for (const category of report.categories) {
+      for (const summary of category.substrates) {
+        const note = category.requires_as_of_reasoning && summary.substrate === "neo4j"
+          ? "no as-of filter"
+          : "";
+        lines.push(
+          `| ${category.category} | ${summary.substrate} | ${summary.records.length} | ${summary.aggregate.exact_match.toFixed(3)} | ${summary.aggregate.f1.toFixed(3)} | ${summary.aggregate.gold_in_pack_rate.toFixed(3)} | ${summary.aggregate.quality_per_1k_tokens.toFixed(3)} | ${note} |`,
+        );
+      }
+    }
+    const temporal = report.categories.find((category) => category.requires_as_of_reasoning);
+    if (temporal?.plain_neo4j_limitation) {
+      lines.push("");
+      lines.push(`Temporal as-of note: ${temporal.plain_neo4j_limitation}`);
+    }
+    lines.push("");
+  }
   lines.push("## Per-question");
   lines.push("");
-  lines.push("| question_id | gold_rank | EM | F1 | tokens | F1 / 1k tokens | predicted |");
-  lines.push("| --- | --- | --- | --- | ---: | ---: | --- |");
+  lines.push("| question_id | category | as_of | gold_rank | EM | F1 | tokens | F1 / 1k tokens | predicted |");
+  lines.push("| --- | --- | --- | --- | --- | --- | ---: | ---: | --- |");
   for (const r of report.records) {
     lines.push(
-      `| ${r.question_id} | ${r.gold_rank ?? "—"} | ${r.exact_match} | ${r.f1.toFixed(3)} | ${r.tokens.total} | ${r.quality_per_1k_tokens.toFixed(3)} | ${r.predicted_answer || "(abstain)"} |`,
+      `| ${r.question_id} | ${r.category} | ${r.as_of ?? ""} | ${r.gold_rank ?? "—"} | ${r.exact_match} | ${r.f1.toFixed(3)} | ${r.tokens.total} | ${r.quality_per_1k_tokens.toFixed(3)} | ${r.predicted_answer || "(abstain)"} |`,
     );
   }
   lines.push("");
