@@ -22,7 +22,7 @@ merge_sha: f19be57060706245d82fa857f488e0b8cf8aae9e
 
 - Renumber the **consume** ADR `0039 → 0041` (0040 taken); the entrypoints ADR keeps 0039.
 - Disambiguate refs: consume-meaning `0039`→`0041` in ADR 0040 + `/dev:doctor` + `/dev:review-adrs`; launcher-meaning `0038/0039` left intact.
-- Add **`.red/adr/INDEX.md`** — thematic decision map (Pass 2 of review-adrs), flagging the still-open **0005** double-number for a maintainer call.
+- Add **`.red/adr/INDEX.md`** — thematic decision map (Pass 2 of review-adrs); the later **0005** double-number was resolved by renumbering `single-global-red-dir` to **0046**.
 
 Docs + skill text only.
 
@@ -45,4 +45,3 @@ Docs + skill text only.
 - `.red/adr/INDEX.md`
 - `plugins/dev/skills/engineering/doctor/SKILL.md`
 - `plugins/dev/skills/engineering/review-adrs/SKILL.md`
-

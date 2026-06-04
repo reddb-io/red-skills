@@ -4,18 +4,15 @@ Decision map for `.red/adr/` — the decision-record analogue of `CONTEXT-MAP.md
 Generated/maintained via `/dev:review-adrs`. Grouped by theme; supersession and
 stale notes inline.
 
-> ⚠️ **Open numbering collision:** two ADRs share **0005**
-> (`0005-memory-three-layer-reddb-architecture` and
-> `0005-single-global-red-dir`, the latter superseded by 0021). Needs a
-> maintainer decision on which renumbers. (The earlier `0039` collision —
-> consume vs entrypoints — was resolved by renumbering the consume ADR to
-> **0041**.)
+> Resolved numbering collisions: the earlier `0039` consume ADR was renumbered
+> to **0041**, and the superseded single-global `.red/` ADR was renumbered from
+> **0005** to **0046**.
 
 ## Repo structure & contexts
 - **0021** Multi-context plugin glossaries — *accepted*
 - **0034** Repo splits DEFINITIONS from IMPLEMENTATION (`src/domains/…`) — ⚠️ prose path stale (tree is `src/apps/`); partially superseded by **0041** (memory leaves)
 - **0041** red-skills consumes `red-memory` + `red-ui` MCPs; stops building memory — partially supersedes 0034 *(renumbered from 0039)*
-- **0005** A single global `.red/` shared by all plugins — *superseded by 0021* ⚠️ shares number 0005
+- **0046** A single global `.red/` shared by all plugins — *superseded by 0021*
 
 ## Bundle / fetch / release / version
 - **0029** Runtime ships as esbuild bundle + `red` binary, fetched post-install by a bootstrap
@@ -45,7 +42,7 @@ stale notes inline.
 - *(see also 0030, 0031)*
 
 ## Memory architecture & graph
-- **0005** Memory plugin: three-layer RedDB architecture, local-first per-repo, MCP+CLI ⚠️ shares number 0005
+- **0005** Memory plugin: three-layer RedDB architecture, local-first per-repo, MCP+CLI
 - **0007** RedDB graph writes go through multi-model DML, not table inserts
 - **0009** `dev` soft-uses `memory`, one-directional
 - **0011** Ephemeral-tier expiry enforced client-side, not engine TTL
