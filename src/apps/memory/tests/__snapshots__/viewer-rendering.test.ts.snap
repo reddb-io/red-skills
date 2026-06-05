@@ -475,9 +475,9 @@ exports[`Memory viewer rendering > keeps routing guide viewer HTML stable 1`] = 
         <p><code>memory_handoff, then memory_onboarding_map and memory_readiness for the immediate goal</code></p>
         <p class="meta">Get where-we-left-off context, map-first orientation, and a readiness score with missing-evidence warnings.</p>
       </li><li>
-        <strong>When preserving a durable fact, decision, fix, or user preference</strong>
-        <p><code>memory_store only when the user asked to remember it or the fact is clearly durable</code></p>
-        <p class="meta">Keep memory useful without polluting it with transient reasoning.</p>
+        <strong>When preserving a durable operational decision, fix, gotcha, or agent-work preference</strong>
+        <p><code>memory_store only for operational evidence; route Personal facts and human-facing context to Brain</code></p>
+        <p class="meta">Keep Memory useful without turning it into a Personal fact store.</p>
       </li>
     </ul>
   </section>
@@ -535,11 +535,12 @@ Rules:
 - When touching an unfamiliar file or symbol: call \`memory_structural_impact with file/symbol; use memory_path_explain when two labels need a relationship explanation\` - Find graph-backed imports, call/type/schema relationships, and cited paths between concepts.
 - When the user asks about project history, prior discussion, docs, or decisions: call \`memory_recall first; use memory_doc_search and memory_doc_read for ingested document chunks\` - Prefer zero-token retrieval and local source reads before asking an LLM to synthesize.
 - When starting in an unfamiliar repo or after a long gap: call \`memory_handoff, then memory_onboarding_map and memory_readiness for the immediate goal\` - Get where-we-left-off context, map-first orientation, and a readiness score with missing-evidence warnings.
-- When preserving a durable fact, decision, fix, or user preference: call \`memory_store only when the user asked to remember it or the fact is clearly durable\` - Keep memory useful without polluting it with transient reasoning.
+- When preserving a durable operational decision, fix, gotcha, or agent-work preference: call \`memory_store only for operational evidence; route Personal facts and human-facing context to Brain\` - Keep Memory useful without turning it into a Personal fact store.
 
 Safety:
 - Read-only tools are preferred before mutating Memory.
-- memory_store is durable; do not store secrets, raw credentials, or transient chain-of-thought.
+- memory_store is durable; do not store secrets, raw credentials, Personal facts, human-facing context, or transient chain-of-thought.
+- Personal facts, biographical details, identity context, and durable human preferences belong in Brain, not Memory.
 - memory_supersede and conflict-resolution tools are mutating; use them only with explicit user intent.
 - Citations such as memory_nodes:&lt;rid&gt; should be kept in summaries when they support an important claim.
 
@@ -660,18 +661,19 @@ Agent: codex
       "reason": "Get where-we-left-off context, map-first orientation, and a readiness score with missing-evidence warnings."
     },
     {
-      "when": "When preserving a durable fact, decision, fix, or user preference",
-      "call": "memory_store only when the user asked to remember it or the fact is clearly durable",
-      "reason": "Keep memory useful without polluting it with transient reasoning."
+      "when": "When preserving a durable operational decision, fix, gotcha, or agent-work preference",
+      "call": "memory_store only for operational evidence; route Personal facts and human-facing context to Brain",
+      "reason": "Keep Memory useful without turning it into a Personal fact store."
     }
   ],
   "safetyNotes": [
     "Read-only tools are preferred before mutating Memory.",
-    "memory_store is durable; do not store secrets, raw credentials, or transient chain-of-thought.",
+    "memory_store is durable; do not store secrets, raw credentials, Personal facts, human-facing context, or transient chain-of-thought.",
+    "Personal facts, biographical details, identity context, and durable human preferences belong in Brain, not Memory.",
     "memory_supersede and conflict-resolution tools are mutating; use them only with explicit user intent.",
     "Citations such as memory_nodes:\\u003crid> should be kept in summaries when they support an important claim."
   ],
-  "installSnippet": "## Memory Routing\\n\\nUse the Memory MCP tools proactively when prior project knowledge could change the answer.\\n\\nIntegration:\\n- Agent: Codex CLI\\n- Transports: agent-rules, mcp, hooks, http\\n- MCP server command: \`memory-mcp\`\\n- Optional HTTP workbench/API: \`memory serve --host 127.0.0.1 --port 3113\`\\n\\nRules:\\n- Before architecture, migration, or multi-file implementation work: call \`memory_context_pack with the concrete goal\` - Load prior decisions, validations, warnings, and citations before planning.\\n- Before claiming a design or rule is current: call \`memory_claim_check with the exact assertion\` - Check active, superseded, and contradictory evidence instead of trusting memory.\\n- When the task asks what changed, what can break, or what a PR needs: call \`memory_pre_pr_review with explicit changed_files\` - Connect changed files to concepts, decisions, known failures, and validations.\\n- When touching an unfamiliar file or symbol: call \`memory_structural_impact with file/symbol; use memory_path_explain when two labels need a relationship explanation\` - Find graph-backed imports, call/type/schema relationships, and cited paths between concepts.\\n- When the user asks about project history, prior discussion, docs, or decisions: call \`memory_recall first; use memory_doc_search and memory_doc_read for ingested document chunks\` - Prefer zero-token retrieval and local source reads before asking an LLM to synthesize.\\n- When starting in an unfamiliar repo or after a long gap: call \`memory_handoff, then memory_onboarding_map and memory_readiness for the immediate goal\` - Get where-we-left-off context, map-first orientation, and a readiness score with missing-evidence warnings.\\n- When preserving a durable fact, decision, fix, or user preference: call \`memory_store only when the user asked to remember it or the fact is clearly durable\` - Keep memory useful without polluting it with transient reasoning.\\n\\nSafety:\\n- Read-only tools are preferred before mutating Memory.\\n- memory_store is durable; do not store secrets, raw credentials, or transient chain-of-thought.\\n- memory_supersede and conflict-resolution tools are mutating; use them only with explicit user intent.\\n- Citations such as memory_nodes:\\u003crid> should be kept in summaries when they support an important claim.\\n\\nTarget file: AGENTS.md\\nAgent: codex\\n"
+  "installSnippet": "## Memory Routing\\n\\nUse the Memory MCP tools proactively when prior project knowledge could change the answer.\\n\\nIntegration:\\n- Agent: Codex CLI\\n- Transports: agent-rules, mcp, hooks, http\\n- MCP server command: \`memory-mcp\`\\n- Optional HTTP workbench/API: \`memory serve --host 127.0.0.1 --port 3113\`\\n\\nRules:\\n- Before architecture, migration, or multi-file implementation work: call \`memory_context_pack with the concrete goal\` - Load prior decisions, validations, warnings, and citations before planning.\\n- Before claiming a design or rule is current: call \`memory_claim_check with the exact assertion\` - Check active, superseded, and contradictory evidence instead of trusting memory.\\n- When the task asks what changed, what can break, or what a PR needs: call \`memory_pre_pr_review with explicit changed_files\` - Connect changed files to concepts, decisions, known failures, and validations.\\n- When touching an unfamiliar file or symbol: call \`memory_structural_impact with file/symbol; use memory_path_explain when two labels need a relationship explanation\` - Find graph-backed imports, call/type/schema relationships, and cited paths between concepts.\\n- When the user asks about project history, prior discussion, docs, or decisions: call \`memory_recall first; use memory_doc_search and memory_doc_read for ingested document chunks\` - Prefer zero-token retrieval and local source reads before asking an LLM to synthesize.\\n- When starting in an unfamiliar repo or after a long gap: call \`memory_handoff, then memory_onboarding_map and memory_readiness for the immediate goal\` - Get where-we-left-off context, map-first orientation, and a readiness score with missing-evidence warnings.\\n- When preserving a durable operational decision, fix, gotcha, or agent-work preference: call \`memory_store only for operational evidence; route Personal facts and human-facing context to Brain\` - Keep Memory useful without turning it into a Personal fact store.\\n\\nSafety:\\n- Read-only tools are preferred before mutating Memory.\\n- memory_store is durable; do not store secrets, raw credentials, Personal facts, human-facing context, or transient chain-of-thought.\\n- Personal facts, biographical details, identity context, and durable human preferences belong in Brain, not Memory.\\n- memory_supersede and conflict-resolution tools are mutating; use them only with explicit user intent.\\n- Citations such as memory_nodes:\\u003crid> should be kept in summaries when they support an important claim.\\n\\nTarget file: AGENTS.md\\nAgent: codex\\n"
 }</script>
   </main>
 </body>

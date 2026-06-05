@@ -4,6 +4,10 @@ RedSkills Brain is a project-local knowledge repository. It creates `.red/brain/
 for the workspace, treats RedDB as the source of truth, and stores typed
 artifacts plus graph connections for later search and synthesis.
 
+Brain owns Personal facts: biographical details, identity context, durable human
+preferences, relationship notes, and other human-facing context the user wants
+available later. Capture those as Brain artifacts rather than Memory facts.
+
 Brain root resolution prefers explicit overrides first, then walks up from the
 current directory until it finds a real `.red/brain` directory or a
 `.red/brain.root` marker. If neither exists, it falls back to the nearest
@@ -38,7 +42,8 @@ connection_string: $RED_BRAIN_CONNECTION_STRING
 
 Brain is separate from the Memory plugin. Memory exists to make agents work
 better; Brain exists to hold knowledge the user wants to dump, connect, search,
-and synthesize.
+and synthesize. If the content is about the person or their context rather than
+operational evidence from agent work, route it to Brain.
 
 Core skills: [capture](./skills/core/capture/SKILL.md),
 [search](./skills/core/search/SKILL.md), [think](./skills/core/think/SKILL.md),
