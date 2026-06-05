@@ -592,6 +592,16 @@ function confidenceBadge(score: number | undefined): string {
   return ` <span class="pill ${cls}" data-confidence="${score.toFixed(3)}" title="Composed confidence (memory.confidence.v1)">conf ${score.toFixed(2)}</span>`;
 }
 
+function contextPackPreviewEntries(pack: ContextPack): Array<{ entry: ContextPack["entries"][number]; core: boolean }> {
+  const coreContext = pack.coreContext ?? [];
+  const coreRids = new Set(coreContext.map((entry) => entry.citation.rid));
+  const ordinary = pack.entries.filter((entry) => !coreRids.has(entry.citation.rid));
+  return [
+    ...coreContext.map((entry) => ({ entry, core: true })),
+    ...ordinary.map((entry) => ({ entry, core: false })),
+  ];
+}
+
 function contextPackSection(workbench: MemoryWorkbench): string {
   const pack = workbench.context_pack;
   return `<section>
@@ -602,8 +612,8 @@ function contextPackSection(workbench: MemoryWorkbench): string {
       <button type="submit">Build Pack</button>
     </form>
     <a id="memory-context-pack-link" class="button-link" href="/context-pack?goal=${encodeURIComponent(pack.goal)}">Open Context Pack</a>
-    <p id="memory-context-pack-status" class="meta">${pack.entries.length} context item(s), status ${escapeHtml(pack.status)}.</p>
-    <ul id="memory-context-pack-results">${pack.entries.slice(0, 4).map((entry) => `<li><strong>${escapeHtml(entry.title)}</strong><p class="meta">${escapeHtml(entry.section)} - <code>${escapeHtml(entry.citation.urn)}</code>${confidenceBadge(entry.confidence_score)}</p></li>`).join("")}</ul>
+    <p id="memory-context-pack-status" class="meta">${pack.entries.length} context item(s), ${pack.coreContext.length} core, status ${escapeHtml(pack.status)}.</p>
+    <ul id="memory-context-pack-results">${contextPackPreviewEntries(pack).slice(0, 4).map(({ entry, core }) => `<li><strong>${escapeHtml(entry.title)}</strong><p class="meta">${core ? "core_context" : escapeHtml(entry.section)} - <code>${escapeHtml(entry.citation.urn)}</code>${confidenceBadge(entry.confidence_score)}</p></li>`).join("")}</ul>
     <pre id="memory-context-pack-markdown" class="doc-body">${escapeHtml(pack.markdown)}</pre>
   </section>`;
 }
@@ -1416,15 +1426,20 @@ function contextPackScript(): string {
       if (!response.ok) throw new Error("HTTP " + response.status);
       const pack = await response.json();
       const entries = Array.isArray(pack.entries) ? pack.entries : [];
-      status.textContent = String(entries.length) + " context item(s), status " + String(pack.status || "unknown") + ".";
-      for (const entry of entries.slice(0, 8)) {
+      const coreContext = Array.isArray(pack.coreContext) ? pack.coreContext : [];
+      const coreRids = new Set(coreContext.map((entry) => entry && entry.citation ? entry.citation.rid : null));
+      const ordinary = entries.filter((entry) => !(entry && entry.citation && coreRids.has(entry.citation.rid)));
+      const previewEntries = coreContext.map((entry) => ({ entry, core: true })).concat(ordinary.map((entry) => ({ entry, core: false })));
+      status.textContent = String(entries.length) + " context item(s), " + String(coreContext.length) + " core, status " + String(pack.status || "unknown") + ".";
+      for (const preview of previewEntries.slice(0, 8)) {
+        const entry = preview.entry || {};
         const item = document.createElement("li");
         const title = document.createElement("h3");
         title.textContent = String(entry.title || "Context entry");
         const meta = document.createElement("p");
         meta.className = "meta";
         const citation = entry.citation || {};
-        meta.textContent = String(entry.section || "evidence") + " - " + String(citation.urn || "");
+        meta.textContent = (preview.core ? "core_context" : String(entry.section || "evidence")) + " - " + String(citation.urn || "");
         item.append(title, meta);
         results.append(item);
       }
