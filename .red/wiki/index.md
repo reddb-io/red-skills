@@ -106,6 +106,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [refactor(dev): rename the statusline skill to setup-statusline](./pages/410-refactor-dev-rename-the-statusline-skill-to-setup-statusline.md)
 - [refactor(dev): ship dev runtime as fetched asset, not committed bundle (ADR 0038)](./pages/376-refactor-dev-ship-dev-runtime-as-fetched-asset-not-committed.md)
 - [refactor: monorepo (src/domains + shared + per-plugin bundles + dynamic fetch) + functionality recovery](./pages/288-refactor-monorepo-src-domains-shared-per-plugin-bundles-dyna.md)
+- [ship: #499 Brain hybrid search foundation](./pages/500-ship-499-brain-hybrid-search-foundation.md)
 - [ship: #501 Release v1.169.1](./pages/502-ship-501-release-v1-169-1.md)
 - [ship: #503 Add /ff, /research, and /dashboard skills](./pages/504-ship-503-add-ff-research-and-dashboard-skills.md)
 - [test(afk): backpressure gate covers the salvaged no-sentinel path (#432)](./pages/439-test-afk-backpressure-gate-covers-the-salvaged-no-sentinel-p.md)
