@@ -1,6 +1,17 @@
 import { type QueryParam, type RedDB, connect } from "@reddb-io/sdk";
 import { contentHash, slugify } from "./hash.js";
 import {
+  AUTO_LINK_CONNECTION_KINDS,
+  artifactToAutoLinkArtifact,
+  autoLinkThinkQuery,
+  isAutoLinkConnectionKind,
+  isDerivedArtifact,
+  type AppliedBrainAutoLink,
+  type BrainAutoLinkCandidate,
+  type BrainAutoLinkProvider,
+  type BrainAutoLinkRequest,
+} from "./auto-linker.js";
+import {
   ARTIFACT_KINDS,
   COLLECTIONS,
   CONNECTION_KINDS,
@@ -15,6 +26,8 @@ import {
 
 export interface BrainStoreOptions {
   uri: string;
+  autoLinker?: BrainAutoLinkProvider;
+  autoLinkErrors?: "ignore" | "throw";
 }
 
 export interface CaptureInput {
@@ -34,6 +47,12 @@ export interface SearchHit {
   score: number;
   excerpt: string;
 }
+
+export interface SearchOptions {
+  excludeRids?: Iterable<number>;
+}
+
+export interface ThinkOptions extends SearchOptions {}
 
 export class BrainStore {
   private db!: RedDB;
@@ -83,6 +102,7 @@ export class BrainStore {
       const existing = await this.getArtifact(existingRid);
       if (existing) return existing;
     }
+    const existingArtifacts = await this.listArtifacts();
 
     const id = `${slugify(input.title)}-${hash.slice(0, 8)}`;
     const properties = {
@@ -117,6 +137,7 @@ export class BrainStore {
     await this.kv().put(artifactHashKey(hash), rid);
     this.artifactCache = null;
     const stored = { ...artifact, rid };
+    await this.autoLinkArtifact(stored, existingArtifacts);
     await this.materializeTagConnections(stored);
     return stored;
   }
@@ -137,10 +158,12 @@ export class BrainStore {
     return this.artifactCache;
   }
 
-  async search(query: string, limit = 10): Promise<SearchHit[]> {
+  async search(query: string, limit = 10, options: SearchOptions = {}): Promise<SearchHit[]> {
     const terms = tokenize(query);
+    const excluded = new Set(options.excludeRids ?? []);
     const artifacts = await this.listArtifacts();
     const hits = artifacts
+      .filter((artifact) => !excluded.has(artifact.rid))
       .map((artifact) => {
         const haystack = [
           artifact.properties.title,
@@ -221,18 +244,16 @@ export class BrainStore {
     };
   }
 
-  async think(query: string, limit = 8): Promise<{ answer: string; hits: SearchHit[] }> {
-    const hits = await this.search(query, limit);
-    const lines = hits.map((hit, index) => {
-      const artifact = hit.artifact;
-      return `[${index + 1}] ${artifact.properties.title} (${artifact.kind}, rid ${artifact.rid}): ${hit.excerpt}`;
-    });
+  async think(query: string, limit = 8, options: ThinkOptions = {}): Promise<{ answer: string; hits: SearchHit[] }> {
+    const hits = await this.search(query, limit, options);
     return {
       hits,
-      answer: lines.length > 0
-        ? `Deterministic Brain synthesis for "${query}":\n\n${lines.join("\n")}`
-        : `No Brain artifacts matched "${query}".`,
+      answer: renderThinkAnswer(query, hits),
     };
+  }
+
+  async deriveAutoLinks(artifact: StoredBrainArtifact): Promise<AppliedBrainAutoLink[]> {
+    return this.autoLinkArtifact(artifact, await this.listArtifacts());
   }
 
   private async findArtifactByHash(hash: string): Promise<number | null> {
@@ -261,6 +282,70 @@ export class BrainStore {
         kind: "tagged",
         confidence: "derived",
       });
+    }
+  }
+
+  private async autoLinkArtifact(
+    artifact: StoredBrainArtifact,
+    existingArtifacts: StoredBrainArtifact[],
+  ): Promise<AppliedBrainAutoLink[]> {
+    if (!this.opts.autoLinker || isDerivedArtifact(artifact)) return [];
+    const existingRids = new Set(
+      existingArtifacts
+        .filter((candidate) => candidate.rid !== artifact.rid)
+        .map((candidate) => candidate.rid),
+    );
+    if (existingRids.size === 0) return [];
+
+    try {
+      const query = autoLinkThinkQuery(artifact);
+      const excluded = new Set<number>([artifact.rid]);
+      for (const existing of existingArtifacts) {
+        if (isDerivedArtifact(existing)) excluded.add(existing.rid);
+      }
+      const think = await this.think(query, 8, { excludeRids: excluded });
+      const candidates = think.hits
+        .filter((hit) => existingRids.has(hit.artifact.rid) && !isDerivedArtifact(hit.artifact))
+        .map((hit): BrainAutoLinkCandidate => ({
+          artifact: artifactToAutoLinkArtifact(hit.artifact),
+          score: hit.score,
+          excerpt: hit.excerpt,
+        }));
+      if (candidates.length === 0) return [];
+      const request: BrainAutoLinkRequest = {
+        newArtifact: artifactToAutoLinkArtifact(artifact),
+        candidates,
+        think: { query, answer: renderThinkAnswer(query, think.hits) },
+        allowedKinds: AUTO_LINK_CONNECTION_KINDS,
+      };
+      const proposals = await this.opts.autoLinker.deriveConnections(request);
+      const applied: AppliedBrainAutoLink[] = [];
+      for (const proposal of proposals) {
+        if (!isAutoLinkConnectionKind(proposal.kind)) continue;
+        const from = await this.getArtifact(proposal.from);
+        const to = await this.getArtifact(proposal.to);
+        if (!from || !to) continue;
+        const connectsNew = from.rid === artifact.rid || to.rid === artifact.rid;
+        const connectsExisting = existingRids.has(from.rid) || existingRids.has(to.rid);
+        if (!connectsNew || !connectsExisting || from.rid === to.rid) continue;
+        const connection = await this.link({
+          from: from.rid,
+          to: to.rid,
+          kind: proposal.kind,
+          reason: proposal.reason,
+          confidence: "derived",
+          metadata: {
+            ...(proposal.metadata ?? {}),
+            derived_by: "brain.autolink.afk-headless",
+            source_artifact_rid: artifact.rid,
+          },
+        });
+        applied.push({ proposal, connection });
+      }
+      return applied;
+    } catch (err) {
+      if (this.opts.autoLinkErrors === "throw") throw err;
+      return [];
     }
   }
 }
@@ -358,6 +443,16 @@ function excerpt(content: string, terms: string[]): string {
   const first = terms.map((term) => lower.indexOf(term)).filter((idx) => idx >= 0).sort((a, b) => a - b)[0] ?? 0;
   const start = Math.max(0, first - 80);
   return `${start > 0 ? "..." : ""}${content.slice(start, start + 220)}${start + 220 < content.length ? "..." : ""}`;
+}
+
+function renderThinkAnswer(query: string, hits: SearchHit[]): string {
+  const lines = hits.map((hit, index) => {
+    const artifact = hit.artifact;
+    return `[${index + 1}] ${artifact.properties.title} (${artifact.kind}, rid ${artifact.rid}): ${hit.excerpt}`;
+  });
+  return lines.length > 0
+    ? `Deterministic Brain synthesis for "${query}":\n\n${lines.join("\n")}`
+    : `No Brain artifacts matched "${query}".`;
 }
 
 function artifactHashKey(hash: string): string {
