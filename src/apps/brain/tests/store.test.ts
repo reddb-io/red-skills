@@ -22,6 +22,95 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
+describe("BrainStore hybrid search", () => {
+  it("returns score breakdowns for lexical, tag, and kind matches", async () => {
+    const root = await tempRoot();
+    const store = await BrainStore.open({ uri: `file://${join(root, "brain.rdb")}` });
+    try {
+      const artifact = await store.capture({
+        title: "OAuth rollout",
+        kind: "decision",
+        tags: ["auth"],
+        content: "Use OAuth for browser sign-in.",
+      });
+
+      const hits = await store.search("auth decision oauth");
+
+      expect(hits[0]).toEqual(expect.objectContaining({
+        artifact: expect.objectContaining({ rid: artifact.rid }),
+        score_breakdown: expect.objectContaining({
+          lexical: expect.any(Number),
+          tags: expect.any(Number),
+          kind: expect.any(Number),
+          connections: 0,
+          vector: 0,
+        }),
+      }));
+      expect(hits[0]?.score_breakdown.lexical).toBeGreaterThan(0);
+      expect(hits[0]?.score_breakdown.tags).toBeGreaterThan(0);
+      expect(hits[0]?.score_breakdown.kind).toBeGreaterThan(0);
+      expect(hits[0]?.score).toBe(hits[0]?.score_breakdown.total);
+    } finally {
+      await store.close();
+    }
+  });
+
+  it("boosts artifacts connected to matching artifacts", async () => {
+    const root = await tempRoot();
+    const store = await BrainStore.open({ uri: `file://${join(root, "brain.rdb")}` });
+    try {
+      const decision = await store.capture({
+        title: "Use bearer auth",
+        kind: "decision",
+        content: "Authenticated requests should use bearer tokens.",
+      });
+      const mobileEvidence = await store.capture({
+        title: "Mobile app login",
+        kind: "fact",
+        content: "The mobile app depends on the same authenticated request path.",
+      });
+      await store.link({
+        from: mobileEvidence.rid,
+        to: decision.rid,
+        kind: "supports",
+      });
+
+      const hits = await store.search("mobile", 10);
+      const decisionHit = hits.find((hit) => hit.artifact.rid === decision.rid);
+      const evidenceHit = hits.find((hit) => hit.artifact.rid === mobileEvidence.rid);
+
+      expect(evidenceHit?.score_breakdown.lexical).toBeGreaterThan(0);
+      expect(decisionHit?.score_breakdown.lexical).toBe(0);
+      expect(decisionHit?.score_breakdown.connections).toBeGreaterThan(0);
+    } finally {
+      await store.close();
+    }
+  });
+
+  it("renders think answers with evidence scores and ranking signals", async () => {
+    const root = await tempRoot();
+    const store = await BrainStore.open({ uri: `file://${join(root, "brain.rdb")}` });
+    try {
+      await store.capture({
+        title: "Use local Brain",
+        kind: "decision",
+        tags: ["brain"],
+        content: "Keep Brain storage local by default.",
+      });
+
+      const result = await store.think("brain decision");
+
+      expect(result.answer).toContain("score");
+      expect(result.answer).toContain("lexical");
+      expect(result.answer).toContain("tags");
+      expect(result.answer).toContain("kind");
+      expect(result.hits[0]?.score_breakdown.total).toBe(result.hits[0]?.score);
+    } finally {
+      await store.close();
+    }
+  });
+});
+
 describe("BrainStore autolinking", () => {
   it("derives and persists typed edges through an injected provider", async () => {
     const root = await tempRoot();

@@ -45,7 +45,17 @@ export interface CaptureInput {
 export interface SearchHit {
   artifact: StoredBrainArtifact;
   score: number;
+  score_breakdown: SearchScoreBreakdown;
   excerpt: string;
+}
+
+export interface SearchScoreBreakdown {
+  lexical: number;
+  tags: number;
+  kind: number;
+  connections: number;
+  vector: number;
+  total: number;
 }
 
 export interface SearchOptions {
@@ -162,17 +172,23 @@ export class BrainStore {
     const terms = tokenize(query);
     const excluded = new Set(options.excludeRids ?? []);
     const artifacts = await this.listArtifacts();
+    const connections = await this.listConnections();
+    const artifactsByRid = new Map(artifacts.map((artifact) => [artifact.rid, artifact]));
     const hits = artifacts
       .filter((artifact) => !excluded.has(artifact.rid))
       .map((artifact) => {
-        const haystack = [
-          artifact.properties.title,
-          artifact.properties.content,
-          artifact.kind,
-          ...(artifact.properties.tags ?? []),
-        ].join(" ").toLowerCase();
-        const score = terms.reduce((sum, term) => sum + occurrences(haystack, term), 0);
-        return { artifact, score, excerpt: excerpt(artifact.properties.content, terms) };
+        const base = scoreArtifact(artifact, terms);
+        const breakdown = withTotal({
+          ...base,
+          connections: scoreConnections(artifact, terms, connections, artifactsByRid),
+          vector: 0,
+        });
+        return {
+          artifact,
+          score: breakdown.total,
+          score_breakdown: breakdown,
+          excerpt: excerpt(artifact.properties.content, terms),
+        };
       })
       .filter((hit) => hit.score > 0)
       .sort((a, b) => b.score - a.score || b.artifact.properties.updated_at - a.artifact.properties.updated_at);
@@ -437,6 +453,93 @@ function occurrences(haystack: string, needle: string): number {
   return count;
 }
 
+function scoreArtifact(
+  artifact: StoredBrainArtifact,
+  terms: string[],
+): Omit<SearchScoreBreakdown, "connections" | "vector" | "total"> {
+  const title = artifact.properties.title.toLowerCase();
+  const content = artifact.properties.content.toLowerCase();
+  const tags = artifact.properties.tags.map((tag) => tag.toLowerCase());
+  const kind = artifact.kind.toLowerCase();
+  return {
+    lexical: terms.reduce(
+      (sum, term) => sum + occurrences(title, term) * 3 + occurrences(content, term),
+      0,
+    ),
+    tags: terms.reduce((sum, term) => {
+      const tagScore = tags.reduce((tagSum, tag) => {
+        if (tag === term) return tagSum + 4;
+        if (tag.includes(term) || term.includes(tag)) return tagSum + 2;
+        return tagSum;
+      }, 0);
+      return sum + tagScore;
+    }, 0),
+    kind: terms.reduce((sum, term) => {
+      if (kind === term) return sum + 3;
+      return kind.includes(term) || term.includes(kind) ? sum + 1 : sum;
+    }, 0),
+  };
+}
+
+function scoreConnections(
+  artifact: StoredBrainArtifact,
+  terms: string[],
+  connections: StoredBrainConnection[],
+  artifactsByRid: Map<number, StoredBrainArtifact>,
+): number {
+  let score = 0;
+  for (const connection of connections) {
+    const otherRid =
+      connection.from_rid === artifact.rid
+        ? connection.to_rid
+        : connection.to_rid === artifact.rid
+          ? connection.from_rid
+          : null;
+    if (otherRid == null) continue;
+    const other = artifactsByRid.get(otherRid);
+    if (!other || isDerivedArtifact(other)) continue;
+    const otherScore = withTotal({ ...scoreArtifact(other, terms), connections: 0, vector: 0 }).total;
+    if (otherScore <= 0) continue;
+    score += Math.min(otherScore, 12) * connectionKindWeight(connection.kind);
+  }
+  return roundScore(score * 0.35);
+}
+
+function connectionKindWeight(kind: ConnectionKind): number {
+  switch (kind) {
+    case "supports":
+    case "contradicts":
+    case "depends_on":
+    case "derived_from":
+    case "part_of":
+      return 1;
+    case "related_to":
+    case "authored":
+      return 0.75;
+    case "preceded_by":
+    case "followed_by":
+      return 0.5;
+    case "tagged":
+      return 0.2;
+  }
+}
+
+function withTotal(parts: Omit<SearchScoreBreakdown, "total">): SearchScoreBreakdown {
+  return {
+    ...parts,
+    lexical: roundScore(parts.lexical),
+    tags: roundScore(parts.tags),
+    kind: roundScore(parts.kind),
+    connections: roundScore(parts.connections),
+    vector: roundScore(parts.vector),
+    total: roundScore(parts.lexical + parts.tags + parts.kind + parts.connections + parts.vector),
+  };
+}
+
+function roundScore(value: number): number {
+  return Math.round(value * 1000) / 1000;
+}
+
 function excerpt(content: string, terms: string[]): string {
   if (content.length <= 220) return content;
   const lower = content.toLowerCase();
@@ -448,7 +551,11 @@ function excerpt(content: string, terms: string[]): string {
 function renderThinkAnswer(query: string, hits: SearchHit[]): string {
   const lines = hits.map((hit, index) => {
     const artifact = hit.artifact;
-    return `[${index + 1}] ${artifact.properties.title} (${artifact.kind}, rid ${artifact.rid}): ${hit.excerpt}`;
+    const signals = Object.entries(hit.score_breakdown)
+      .filter(([key, value]) => key !== "total" && value > 0)
+      .map(([key, value]) => `${key} ${value}`)
+      .join(", ");
+    return `[${index + 1}] ${artifact.properties.title} (${artifact.kind}, rid ${artifact.rid}, score ${hit.score})${signals ? ` [${signals}]` : ""}: ${hit.excerpt}`;
   });
   return lines.length > 0
     ? `Deterministic Brain synthesis for "${query}":\n\n${lines.join("\n")}`
