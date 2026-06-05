@@ -14,6 +14,7 @@ import {
   listProviderReviewArtifacts,
   providerReviewArtifactId,
   providerReviewRecommendationId,
+  type ProviderReviewArtifact,
   type ProviderReviewPairEvidence,
   type ProviderReviewRecommendationInput,
   type ProviderReviewStatus,
@@ -121,9 +122,15 @@ export async function buildMemoryGovernanceTidyRecommendations(
   });
   const candidates = mergePass.candidates;
   if (candidates.length === 0) {
+    const reviewed = await reviewedGovernanceRecommendations(store);
     return {
       ...emptyTidyRecommendations(policy, "available", null),
-      summary: { candidate_pairs: 0, recommended_pairs: 0, dropped_recommendations: 0 },
+      summary: {
+        candidate_pairs: 0,
+        recommended_pairs: reviewed.length,
+        dropped_recommendations: 0,
+      },
+      recommendations: reviewed,
     };
   }
 
@@ -156,6 +163,11 @@ export async function buildMemoryGovernanceTidyRecommendations(
   const recommendations = bounded.map((rec) =>
     toGovernanceRecommendation(rec, candidates, provider, statusByArtifact),
   );
+  const reviewed = await reviewedGovernanceRecommendations(
+    store,
+    new Set(recommendations.map((rec) => rec.artifact_id)),
+  );
+  recommendations.push(...reviewed);
   const dropped = parsed.dropped + Math.max(0, parsed.recommendations.length - bounded.length);
   return {
     schema_version: "memory.governance_tidy_recommendations.v1",
@@ -171,6 +183,93 @@ export async function buildMemoryGovernanceTidyRecommendations(
     },
     warnings,
     recommendations,
+  };
+}
+
+async function reviewedGovernanceRecommendations(
+  store: Pick<MemoryStore, "kvGet">,
+  skipArtifactIds: Set<string> = new Set(),
+): Promise<MemoryGovernanceTidyRecommendation[]> {
+  const reviewed: MemoryGovernanceTidyRecommendation[] = [];
+  for (const artifact of await listProviderReviewArtifacts(store, {
+    operation: GOVERNANCE_TIDY_OPERATION,
+  })) {
+    if (skipArtifactIds.has(artifact.artifact_id)) continue;
+    if (artifact.status !== "accepted" && artifact.status !== "dismissed") continue;
+    const recommendation = governanceRecommendationFromArtifact(artifact);
+    if (recommendation) reviewed.push(recommendation);
+  }
+  return reviewed.sort((a, b) => a.artifact_id.localeCompare(b.artifact_id));
+}
+
+function governanceRecommendationFromArtifact(
+  artifact: ProviderReviewArtifact,
+): MemoryGovernanceTidyRecommendation | null {
+  const relation = tidyRelation(artifact.pair_evidence[0]?.relation);
+  const proposal = softMergeProposalFromPairEvidence(artifact.pair_evidence);
+  if (!relation || !proposal) return null;
+  const providerOutput = artifact.recommendation.provider_output;
+  const confidence = isRecord(providerOutput) ? confidenceValue(providerOutput.confidence) : null;
+  return {
+    id: artifact.recommendation_id,
+    artifact_id: artifact.artifact_id,
+    recommendation_id: artifact.recommendation_id,
+    recommendation_key: artifact.recommendation_key,
+    operation: GOVERNANCE_TIDY_OPERATION,
+    review_status: artifact.status,
+    relation,
+    confidence: confidence ?? 0,
+    rationale: artifact.recommendation.rationale ?? "",
+    proposed_soft_merge: {
+      action: "SOFT_MERGE",
+      edge_label: proposal.label,
+      duplicate_rid: proposal.duplicate_rid,
+      canonical_rid: proposal.canonical_rid,
+      direction: `${proposal.label} memory_nodes:${proposal.duplicate_rid} -> memory_nodes:${proposal.canonical_rid}`,
+    },
+    pair_evidence: artifact.pair_evidence,
+    provider: artifact.provider,
+  };
+}
+
+function softMergeProposalFromPairEvidence(
+  pairEvidence: ProviderReviewPairEvidence[],
+): { label: "SAME_AS"; duplicate_rid: number; canonical_rid: number } | null {
+  for (const pair of pairEvidence) {
+    for (const evidence of pair.evidence ?? []) {
+      if (!isSameAsEdge(evidence.proposed_edge_label ?? evidence.edge_label)) continue;
+      const duplicateRid = numberValue(evidence.duplicate_rid);
+      const canonicalRid = numberValue(evidence.canonical_rid);
+      if (duplicateRid != null && canonicalRid != null) {
+        return { label: "SAME_AS", duplicate_rid: duplicateRid, canonical_rid: canonicalRid };
+      }
+    }
+  }
+  return null;
+}
+
+export function providerReviewInputFromGovernanceTidyRecommendation(
+  recommendation: MemoryGovernanceTidyRecommendation,
+): ProviderReviewRecommendationInput {
+  const candidateId =
+    recommendation.pair_evidence[0]?.pair_id ??
+    recommendation.recommendation_key.replace(/^[^:]+:/, "");
+  return {
+    operation: GOVERNANCE_TIDY_OPERATION,
+    policyVersion: DEFAULT_TIDY_REVIEW_POLICY_VERSION,
+    recommendationKey: recommendation.recommendation_key,
+    pairEvidence: recommendation.pair_evidence,
+    recommendation: {
+      title: `Review ${recommendation.relation.replace("_", "-")} Memory Soft-merge candidate`,
+      rationale: recommendation.rationale,
+      suggested_action: `Review and, if approved outside governance, create ${recommendation.proposed_soft_merge.direction}`,
+      provider_output: {
+        candidate_id: candidateId,
+        relation: recommendation.relation,
+        confidence: recommendation.confidence,
+      },
+    },
+    provider: recommendation.provider,
   };
 }
 
@@ -488,6 +587,10 @@ function isSameAsEdge(value: unknown): boolean {
 function matchesOptionalRid(value: unknown, expected: number): boolean {
   if (value == null) return true;
   return typeof value === "number" && Number.isFinite(value) && value === expected;
+}
+
+function numberValue(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 function confidenceValue(value: unknown): number | null {

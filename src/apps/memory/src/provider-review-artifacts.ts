@@ -74,6 +74,15 @@ export interface ProviderReviewArtifact {
   pair_evidence: ProviderReviewPairEvidence[];
   recommendation: ProviderReviewRecommendationInput["recommendation"];
   provider?: ProviderReviewRecommendationInput["provider"];
+  review?: ProviderReviewActionMetadata;
+}
+
+export interface ProviderReviewActionMetadata {
+  action: "accepted" | "dismissed";
+  approver: string;
+  reviewed_at: number;
+  source: string;
+  reason?: string;
 }
 
 export interface ProviderReviewArtifactState {
@@ -174,6 +183,9 @@ export async function persistProviderReviewArtifacts(
       provider: rec.provider
         ? (cloneJson(rec.provider) as ProviderReviewRecommendationInput["provider"])
         : undefined,
+      review: existing?.review
+        ? (cloneJson(existing.review) as ProviderReviewActionMetadata)
+        : undefined,
     };
   });
 
@@ -215,12 +227,13 @@ export async function updateProviderReviewArtifactStatus(
   store: Pick<MemoryStore, "kvGet" | "kvPut">,
   artifactId: string,
   status: ProviderReviewStatus,
-  opts: { now?: number } = {},
+  opts: { now?: number; approver?: string; reason?: string; source?: string } = {},
 ): Promise<ProviderReviewArtifact> {
   const now = opts.now ?? Date.now();
   const state = await readProviderReviewArtifactState(store);
   const artifact = state.artifacts[artifactId];
   if (!artifact) throw new Error(`provider review artifact not found: ${artifactId}`);
+  const action = status === "accepted" || status === "dismissed" ? status : null;
   const next: ProviderReviewArtifact = {
     ...artifact,
     status,
@@ -229,11 +242,25 @@ export async function updateProviderReviewArtifactStatus(
     dismissed_at: status === "dismissed" ? now : artifact.dismissed_at,
     accepted_at: status === "accepted" ? now : artifact.accepted_at,
     stale_at: status === "stale" ? now : artifact.stale_at,
+    review: action
+      ? {
+          action,
+          approver: opts.approver ?? artifact.review?.approver ?? "unknown",
+          reviewed_at: now,
+          source: opts.source ?? artifact.review?.source ?? "provider review artifact status update",
+          ...(opts.reason
+            ? { reason: opts.reason }
+            : artifact.review?.reason
+              ? { reason: artifact.review.reason }
+              : {}),
+        }
+      : artifact.review,
   };
   if (status === "open") {
     delete next.dismissed_at;
     delete next.accepted_at;
     delete next.stale_at;
+    delete next.review;
   }
   state.artifacts[artifactId] = next;
   await writeProviderReviewArtifactState(store, state);

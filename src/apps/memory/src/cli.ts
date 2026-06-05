@@ -213,6 +213,11 @@ import {
   executeMemoryMergeBatch,
   unmergeMemoryMergeBatch,
 } from "./memory-merge-pass.js";
+import {
+  acceptGovernanceTidyRecommendation,
+  dismissGovernanceTidyRecommendation,
+  refreshGovernanceTidyReviewArtifacts,
+} from "./governance-tidy-review.js";
 import { recall } from "./recall.js";
 import { buildFederationReport } from "./federation.js";
 import { runAutoCure } from "./auto-curation.js";
@@ -334,6 +339,9 @@ Usage:
   memory merge-pass                 [--root <dir>] [--min-score N] [--limit N] [--json]
   memory merge-pass execute         --candidate-ranks 1,2 --approver <id> --yes [--root <dir>] [--min-score N] [--limit N] [--batch-id ID] [--json]
   memory merge-pass unmerge         --batch-id ID --yes [--root <dir>] [--json]
+  memory tidy-review refresh        [--root <dir>] [--json]
+  memory tidy-review accept <id>    --approver <id> --yes [--root <dir>] [--reason <text>] [--json]
+  memory tidy-review dismiss <id>   --approver <id> --yes [--root <dir>] [--reason <text>] [--json]
   memory health-viewer              [--root <dir>] [--stale-days N] [--out <file>]
   memory onboarding-map             [--root <dir>] [--stale-days N] [--json]
   memory onboarding-map-viewer      [--root <dir>] [--stale-days N] [--out <file>]
@@ -465,6 +473,7 @@ const LEGACY_CLI_OPERATION_IDS = new Set(["memory.health"]);
 const LEGACY_SUBCOMMANDS_BY_REGISTRY_COMMAND: Readonly<Record<string, readonly string[]>> = {
   "merge-pass": ["execute", "unmerge"],
   "onboarding-map": ["export"],
+  "tidy-review": ["refresh", "accept", "dismiss"],
 };
 const PROOF_REGISTRY_CLI_COMMANDS = new Set(["docs brief", "docs brief-viewer"]);
 const REGISTRY_CLI_OPERATIONS = new Map<string, ReadOnlyMemoryOperation>(
@@ -1727,6 +1736,85 @@ async function runMemoryMergePassUnmerge(args: ParsedArgs): Promise<void> {
         `  ${edge.removed ? "removed" : "missing"} ${edge.label} memory_nodes:${edge.duplicate_rid} -> memory_nodes:${edge.canonical_rid}`,
       );
     }
+  } finally {
+    await store.close();
+  }
+}
+
+async function runTidyReview(args: ParsedArgs): Promise<void> {
+  const action = args.positional[0];
+  if (action === "refresh") return runTidyReviewRefresh(args);
+  if (action === "accept") return runTidyReviewAccept(args);
+  if (action === "dismiss") return runTidyReviewDismiss(args);
+  throw new Error("memory tidy-review action must be one of: refresh, accept, dismiss");
+}
+
+async function runTidyReviewRefresh(args: ParsedArgs): Promise<void> {
+  const { store, config } = await openGraphStore(args);
+  try {
+    const result = await refreshGovernanceTidyReviewArtifacts(store, {
+      providerConfig: config.provider,
+    });
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
+    console.log(
+      `memory tidy-review refresh: ${result.summary.recommendations} open/current recommendation(s), ${result.summary.stale} stale`,
+    );
+    for (const artifact of result.artifacts) {
+      console.log(`  ${artifact.status} ${artifact.artifact_id}`);
+    }
+    for (const artifact of result.stale_artifacts) {
+      console.log(`  stale ${artifact.artifact_id}`);
+    }
+  } finally {
+    await store.close();
+  }
+}
+
+async function runTidyReviewAccept(args: ParsedArgs): Promise<void> {
+  if (args.flags.yes !== true) {
+    throw new Error("memory tidy-review accept requires explicit --yes approval");
+  }
+  const id = args.positional[1] ?? "";
+  const { store } = await openGraphStore(args);
+  try {
+    const result = await acceptGovernanceTidyRecommendation(store, {
+      id,
+      approver: stringFlag(args.flags, "approver") ?? "",
+      reason: stringFlag(args.flags, "reason"),
+    });
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
+    console.log(
+      `memory tidy-review accept: ${result.edge.label} memory_nodes:${result.edge.from_rid} -> memory_nodes:${result.edge.to_rid}`,
+    );
+    console.log(`  artifact: ${result.artifact_id}`);
+  } finally {
+    await store.close();
+  }
+}
+
+async function runTidyReviewDismiss(args: ParsedArgs): Promise<void> {
+  if (args.flags.yes !== true) {
+    throw new Error("memory tidy-review dismiss requires explicit --yes approval");
+  }
+  const id = args.positional[1] ?? "";
+  const { store } = await openGraphStore(args);
+  try {
+    const result = await dismissGovernanceTidyRecommendation(store, {
+      id,
+      approver: stringFlag(args.flags, "approver") ?? "",
+      reason: stringFlag(args.flags, "reason"),
+    });
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
+    console.log(`memory tidy-review dismiss: ${result.artifact_id}`);
   } finally {
     await store.close();
   }
@@ -6741,6 +6829,8 @@ async function main(): Promise<void> {
       return runMemoryDecayViewer(args);
     case "merge-pass":
       return runMemoryMergePass(args);
+    case "tidy-review":
+      return runTidyReview(args);
     case "dashboard":
       return runDashboard(args);
     case "workbench":
