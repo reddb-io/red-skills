@@ -1,4 +1,5 @@
 import type { MemoryStore } from "./graph-store.js";
+import { readConfig } from "./config.js";
 import {
   buildMemoryAgentIntegrationStatus,
   type MemoryAgentIntegrationStatus,
@@ -124,6 +125,7 @@ export async function buildMemoryWorkbench(
   rootDir: string,
   opts: { staleDays?: number; sessionId?: string; limit?: number; now?: number } = {},
 ): Promise<MemoryWorkbench> {
+  const config = await readConfig(rootDir);
   const [
     dashboard,
     capabilities,
@@ -159,7 +161,7 @@ export async function buildMemoryWorkbench(
       now: opts.now,
     }),
     buildMemoryExtractionStatus(store, rootDir, { now: opts.now }),
-    buildMemoryGovernanceReport(store, { now: opts.now }),
+    buildMemoryGovernanceReport(store, { now: opts.now, providerConfig: config?.provider }),
     buildMemoryHandoff(store, { limit: 12, now: opts.now }),
     buildWorkFrontier(store, { limit: 12, now: opts.now }),
     buildLearningDebtReport(store, {
@@ -775,6 +777,7 @@ function governanceSection(workbench: MemoryWorkbench): string {
       <li><strong>${escapeHtml(governance.status)}</strong><p class="meta">${governance.summary.nodes_with_provenance}/${governance.summary.total_nodes} with provenance, ${governance.summary.missing_provenance} missing</p></li>
       <li><strong>Privacy and lint</strong><p class="meta">${governance.summary.privacy_findings} privacy finding(s), ${governance.summary.lint_findings} lint finding(s)</p></li>
       <li><strong>Contradictions</strong><p class="meta">${governance.summary.unresolved_contradictions} unresolved, ${governance.summary.superseded_nodes} superseded node(s)</p></li>
+      <li><strong>Tidy availability</strong><p class="meta">${escapeHtml(governance.tidy_availability.status)} - ${escapeHtml(governance.tidy_availability.reason ?? governance.tidy_availability.next_action)}</p></li>
     </ul>
     <button id="memory-governance-refresh" type="button">Refresh Governance</button>
     <a class="button-link" href="/governance">Open Governance</a>
@@ -1895,6 +1898,8 @@ function governanceScript(): string {
       addItem(String(report.status || "unknown"), String(summary.nodes_with_provenance ?? 0) + "/" + String(summary.total_nodes ?? 0) + " with provenance, " + String(summary.missing_provenance ?? 0) + " missing");
       addItem("Privacy and lint", String(summary.privacy_findings ?? 0) + " privacy finding(s), " + String(summary.lint_findings ?? 0) + " lint finding(s)");
       addItem("Contradictions", String(summary.unresolved_contradictions ?? 0) + " unresolved, " + String(summary.superseded_nodes ?? 0) + " superseded node(s)");
+      const tidy = report.tidy_availability || {};
+      addItem("Tidy availability", String(tidy.status || "unknown") + " - " + String(tidy.reason || tidy.next_action || "no tidy status reported"));
       const actions = Array.isArray(report.recommended_next_actions) ? report.recommended_next_actions : [];
       status.textContent = actions[0] || "Governance report is clean.";
     } catch (err) {

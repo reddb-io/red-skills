@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, test } from "vitest";
 import { buildMemoryGovernanceReport } from "../src/governance.js";
 import { buildMemoryGovernanceViewerArtifact } from "../src/governance-viewer.js";
+import { readConfig, writeConfig } from "../src/config.js";
 import { MemoryStore } from "../src/graph-store.js";
 import { initGraph } from "../src/init.js";
 
@@ -91,10 +92,17 @@ describe("Memory governance", () => {
     expect(report.summary.resolved_contradictions).toBe(1);
     expect(report.summary.superseded_nodes).toBe(1);
     expect(report.provenance.by_source_kind).toContainEqual({ source_kind: "manual", count: 1 });
+    expect(report.tidy_availability).toMatchObject({
+      status: "unavailable",
+      configured: false,
+      reason: "no AI provider configured for governance tidy",
+      next_action: expect.stringContaining("deterministic governance remains available"),
+    });
     expect(report.recommended_next_actions).toEqual(
       expect.arrayContaining([
         expect.stringContaining("memory privacy scan"),
         expect.stringContaining("memory lint"),
+        expect.stringContaining("deterministic governance remains available"),
       ]),
     );
 
@@ -107,7 +115,55 @@ describe("Memory governance", () => {
     expect(artifact.html).toContain("Memory Governance");
     expect(artifact.html).toContain('id="memory-governance-data"');
     expect(artifact.html).toContain("Deploys happen on Friday");
+    expect(artifact.html).toContain("Tidy availability");
+    expect(artifact.html).toContain("no AI provider configured for governance tidy");
   });
+
+  test("CLI JSON reports provider-unavailable tidy status without dropping deterministic evidence", async () => {
+    const root = await tempRoot();
+    await initGraph(root, { hooks: true });
+    const store = await openStore(root);
+    await store.upsertNode({
+      label: "provider-unavailable-governance",
+      node_type: "decision",
+      properties: {
+        title: "Provider unavailable governance",
+        content: "Governance must remain deterministic.",
+        scope: "project",
+        tier: "durable",
+        provenance: { source_kind: "manual", writer: "test", confidence: "EXTRACTED" },
+      },
+    });
+    await store.close();
+    const config = await readConfig(root);
+    if (!config) throw new Error("missing test config");
+    await writeConfig(root, {
+      ...config,
+      provider: {
+        mode: "openai-compat",
+        model: "llama3.1",
+      },
+    });
+
+    const result = runMemory(["governance", "--root", root, "--json"]);
+
+    expect(result.status, result.stderr).toBe(0);
+    const report = JSON.parse(result.stdout) as {
+      read_only: boolean;
+      summary: { total_nodes: number; nodes_with_provenance: number };
+      tidy_availability: { status: string; reason: string; next_action: string };
+    };
+    expect(report.read_only).toBe(true);
+    expect(report.summary).toMatchObject({
+      total_nodes: 1,
+      nodes_with_provenance: 1,
+    });
+    expect(report.tidy_availability).toMatchObject({
+      status: "degraded",
+      reason: "openai-compat provider requires a baseUrl",
+      next_action: "fix the configured Memory AI provider before running governance tidy",
+    });
+  }, TIMEOUT);
 
   test("writes a self-contained CLI governance viewer", async () => {
     const root = await tempRoot();
@@ -134,5 +190,6 @@ describe("Memory governance", () => {
     const html = await readFile(out, "utf8");
     expect(html).toContain("Memory Governance");
     expect(html).toContain('id="memory-governance-data"');
+    expect(html).toContain("Tidy availability");
   }, TIMEOUT);
 });

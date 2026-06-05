@@ -92,6 +92,10 @@ describe("Memory workbench", () => {
       governance: {
         schema_version: "memory.governance.v1",
         read_only: true,
+        tidy_availability: {
+          status: "unavailable",
+          reason: "no AI provider configured for governance tidy",
+        },
       },
       memory_decay: {
         schema_version: "memory.decay_plan.v1",
@@ -265,6 +269,8 @@ describe("Memory workbench", () => {
     expect(artifact.html).toContain("Open Extraction Status");
     expect(artifact.html).toContain('fetch("/api/extraction/status"');
     expect(artifact.html).toContain("Governance");
+    expect(artifact.html).toContain("Tidy availability");
+    expect(artifact.html).toContain("no AI provider configured for governance tidy");
     expect(artifact.html).toContain('id="memory-governance-refresh"');
     expect(artifact.html).toContain('href="/governance"');
     expect(artifact.html).toContain("Open Governance");

@@ -674,11 +674,15 @@ async function operationStructuredContent(
       };
     case "memory.governance": {
       const summary = isRecord(output.summary) ? output.summary : {};
+      const tidy = isRecord(output.tidy_availability) ? output.tidy_availability : {};
       return {
         operation_id: operationId,
         schema_version: output.schema_version,
         read_only: output.read_only,
         status: output.status,
+        tidy_status: tidy.status ?? null,
+        tidy_reason: tidy.reason ?? null,
+        tidy_next_action: tidy.next_action ?? null,
         total_nodes: summary.total_nodes ?? null,
         missing_provenance: summary.missing_provenance ?? null,
         privacy_findings: summary.privacy_findings ?? null,
@@ -691,11 +695,15 @@ async function operationStructuredContent(
     case "memory.governance-viewer": {
       const report = isRecord(output.report) ? output.report : {};
       const summary = isRecord(report.summary) ? report.summary : {};
+      const tidy = isRecord(report.tidy_availability) ? report.tidy_availability : {};
       return {
         operation_id: operationId,
         contract: isRecord(output.contract) ? output.contract.version : undefined,
         consumes: isRecord(output.contract) ? output.contract.consumes : undefined,
         status: report.status,
+        tidy_status: tidy.status ?? null,
+        tidy_reason: tidy.reason ?? null,
+        tidy_next_action: tidy.next_action ?? null,
         missing_provenance: summary.missing_provenance ?? null,
         privacy_findings: summary.privacy_findings ?? null,
         lint_findings: summary.lint_findings ?? null,

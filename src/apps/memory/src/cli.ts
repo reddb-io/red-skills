@@ -3065,8 +3065,8 @@ async function runServe(args: ParsedArgs): Promise<void> {
   const token = tokenEnv ? process.env[tokenEnv] : undefined;
   if (tokenEnv && !token) throw new Error(`--token-env ${tokenEnv} is not set`);
 
-  const { store } = await openGraphStore(args);
-  const server = createMemoryHttpServer({ rootDir, store, token });
+  const { store, config } = await openGraphStore(args);
+  const server = createMemoryHttpServer({ rootDir, store, token, providerConfig: config.provider });
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
     server.listen(port, host, () => {
@@ -4382,10 +4382,11 @@ async function runHealthViewer(args: ParsedArgs): Promise<void> {
 }
 
 async function runGovernance(args: ParsedArgs): Promise<void> {
-  const { store } = await openGraphStore(args);
+  const { store, config } = await openGraphStore(args);
   try {
     const report = await buildMemoryGovernanceReport(store, {
       staleProgressDays: intFlag(args.flags, "stale-progress-days"),
+      providerConfig: config.provider,
     });
     if (args.flags.json === true) {
       console.log(JSON.stringify(report, null, 2));
@@ -4399,10 +4400,11 @@ async function runGovernance(args: ParsedArgs): Promise<void> {
 
 async function runGovernanceViewer(args: ParsedArgs): Promise<void> {
   const rootDir = rootOf(args.flags);
-  const { store } = await openGraphStore(args);
+  const { store, config } = await openGraphStore(args);
   try {
     const report = await buildMemoryGovernanceReport(store, {
       staleProgressDays: intFlag(args.flags, "stale-progress-days"),
+      providerConfig: config.provider,
     });
     const artifact = buildMemoryGovernanceViewerArtifact(report);
     const outPath = resolve(
@@ -4424,6 +4426,10 @@ function printGovernance(report: MemoryGovernanceReport): void {
     `  provenance=${report.summary.nodes_with_provenance}/${report.summary.total_nodes} ` +
       `privacy=${report.summary.privacy_findings} lint=${report.summary.lint_findings} ` +
       `conflicts=${report.summary.unresolved_contradictions} superseded=${report.summary.superseded_nodes}`,
+  );
+  console.log(
+    `  tidy=${report.tidy_availability.status}` +
+      (report.tidy_availability.reason ? ` (${report.tidy_availability.reason})` : ""),
   );
   for (const item of report.provenance.missing.slice(0, 5)) {
     console.log(`  missing provenance: memory_nodes:${item.rid} ${item.title}`);
