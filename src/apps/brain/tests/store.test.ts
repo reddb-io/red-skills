@@ -1,0 +1,134 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  createAfkHeadlessAutoLinkProvider,
+  parseAutoLinkProviderResponse,
+  type BrainAutoLinkProvider,
+  type BrainAutoLinkRequest,
+} from "../src/auto-linker.js";
+import { BrainStore } from "../src/store.js";
+
+const roots: string[] = [];
+
+async function tempRoot(): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), "brain-store-"));
+  roots.push(root);
+  return root;
+}
+
+afterEach(async () => {
+  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+});
+
+describe("BrainStore autolinking", () => {
+  it("derives and persists typed edges through an injected provider", async () => {
+    const root = await tempRoot();
+    const requests: BrainAutoLinkRequest[] = [];
+    const provider: BrainAutoLinkProvider = {
+      async deriveConnections(request) {
+        requests.push(request);
+        const target = request.candidates[0]?.artifact;
+        if (!target) return [];
+        return [{
+          from: request.newArtifact.rid,
+          to: target.rid,
+          kind: "supports",
+          reason: "The new artifact reinforces the earlier decision.",
+        }];
+      },
+    };
+    const uri = `file://${join(root, "brain.rdb")}`;
+    const store = await BrainStore.open({ uri, autoLinker: provider, autoLinkErrors: "throw" });
+    try {
+      const decision = await store.capture({
+        title: "Use bearer auth",
+        kind: "decision",
+        content: "The API should use bearer tokens for authenticated requests.",
+      });
+      const evidence = await store.capture({
+        title: "Bearer token evidence",
+        kind: "fact",
+        content: "Production clients already send bearer tokens, supporting the bearer auth decision.",
+      });
+
+      expect(requests).toHaveLength(1);
+      expect(requests[0]?.newArtifact.rid).toBe(evidence.rid);
+      expect(requests[0]?.candidates.map((candidate) => candidate.artifact.rid)).toContain(decision.rid);
+      expect(requests[0]?.think.answer).toContain("Use bearer auth");
+
+      const edges = await store.listConnections();
+      expect(edges).toEqual([
+        expect.objectContaining({
+          kind: "supports",
+          from_rid: evidence.rid,
+          to_rid: decision.rid,
+          properties: expect.objectContaining({
+            confidence: "derived",
+            reason: "The new artifact reinforces the earlier decision.",
+            metadata: expect.objectContaining({
+              derived_by: "brain.autolink.afk-headless",
+              source_artifact_rid: evidence.rid,
+            }),
+          }),
+        }),
+      ]);
+    } finally {
+      await store.close();
+    }
+
+    const reopened = await BrainStore.open({ uri });
+    try {
+      expect((await reopened.listConnections()).map((edge) => edge.kind)).toEqual(["supports"]);
+    } finally {
+      await reopened.close();
+    }
+  });
+
+  it("parses proposals from an AFK headless command adapter", async () => {
+    const provider = createAfkHeadlessAutoLinkProvider({
+      command: process.execPath,
+      args: [
+        "-e",
+        [
+          "let body='';",
+          "process.stdin.on('data', c => body += c);",
+          "process.stdin.on('end', () => {",
+          " const req = JSON.parse(body);",
+          " process.stdout.write(JSON.stringify({ connections: [{",
+          "   from: req.newArtifact.rid,",
+          "   to: req.candidates[0].artifact.rid,",
+          "   kind: 'related_to',",
+          "   reason: 'headless command derived this edge'",
+          " }] }));",
+          "});",
+        ].join(""),
+      ],
+      timeoutMs: 5_000,
+    });
+
+    await expect(provider.deriveConnections({
+      newArtifact: { rid: 2, id: "two", title: "Two", kind: "fact", content: "two", tags: [] },
+      candidates: [{
+        artifact: { rid: 1, id: "one", title: "One", kind: "fact", content: "one", tags: [] },
+        score: 1,
+        excerpt: "one",
+      }],
+      think: { query: "two", answer: "One" },
+      allowedKinds: ["supports", "contradicts", "related_to"],
+    })).resolves.toEqual([{
+      from: 2,
+      to: 1,
+      kind: "related_to",
+      reason: "headless command derived this edge",
+      metadata: undefined,
+    }]);
+  });
+
+  it("accepts fenced JSON from headless agent output", () => {
+    expect(parseAutoLinkProviderResponse("```json\n[{\"from\":2,\"to\":1,\"kind\":\"contradicts\"}]\n```")).toEqual([
+      { from: 2, to: 1, kind: "contradicts", reason: undefined, metadata: undefined },
+    ]);
+  });
+});

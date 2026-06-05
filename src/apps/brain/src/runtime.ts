@@ -1,4 +1,5 @@
 import { basename } from "node:path";
+import { createConfiguredAfkHeadlessAutoLinkProvider } from "./auto-linker.js";
 import { resolveBrainConfig, type ResolvedBrainConfig } from "./config.js";
 import { BrainStore } from "./store.js";
 
@@ -10,7 +11,10 @@ export interface BrainRuntime {
 
 export async function openBrainRuntime(startDir = process.cwd()): Promise<BrainRuntime> {
   const config = await resolveBrainConfig(startDir);
-  const store = await BrainStore.open({ uri: config.connectionString });
+  const store = await BrainStore.open({
+    uri: config.connectionString,
+    autoLinker: createConfiguredAfkHeadlessAutoLinkProvider(),
+  });
   return {
     config,
     store,
