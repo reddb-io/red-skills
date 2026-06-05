@@ -3,6 +3,9 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
+import { readConfig, resolveStoreUri } from "../src/config.js";
+import { MemoryStore } from "../src/graph-store.js";
+import { readMemoryEvents } from "../src/memory-events.js";
 
 const TIMEOUT = 40_000;
 const pkgRoot = resolve(__dirname, "..");
@@ -64,6 +67,17 @@ describe("memory context-pack CLI", () => {
       expect(body.markdown).toContain("urn: memory_nodes:");
       expect(body.entries[0].reason).toContain("matched the goal");
       expect(body.entries[0].citation.source).toBe("manual");
+
+      const config = await readConfig(root);
+      if (!config) throw new Error("config missing after init");
+      const store = await MemoryStore.open({ uri: resolveStoreUri(root, config) });
+      try {
+        const events = await readMemoryEvents(store);
+        expect(events.filter((event) => event.kind === "memory.context-pack.generated")).toHaveLength(1);
+        expect(events.filter((event) => event.kind === "memory.injection.delivered")).toHaveLength(0);
+      } finally {
+        await store.close();
+      }
     },
     TIMEOUT,
   );

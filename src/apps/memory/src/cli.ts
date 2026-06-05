@@ -107,7 +107,11 @@ import { HistoricalMemoryStore } from "./historical-memory-store.js";
 import { createMemoryHttpServer } from "./http-server.js";
 import { ingestGuidance } from "./audit-marker.js";
 import { evaluateDriftGuard } from "./drift-guard.js";
-import { appendMemoryEvent, driftCaughtToMemoryEvent } from "./memory-events.js";
+import {
+  appendContextPackGenerationEvent,
+  appendMemoryEvent,
+  driftCaughtToMemoryEvent,
+} from "./memory-events.js";
 import { collectCandidates, ingestProject, refreshFiles } from "./ingest.js";
 import {
   defaultIgnorePatterns,
@@ -1228,6 +1232,11 @@ async function runContextPack(args: ParsedArgs): Promise<void> {
       scope: scopeFlags(args.flags),
       skillRollups,
     });
+    await appendContextPackGenerationEvent(store, {
+      pack,
+      surface: "cli",
+      metadata: { command: "context-pack", json: args.flags.json === true },
+    });
     if (args.flags.json === true) {
       console.log(JSON.stringify(pack, null, 2));
       return;
@@ -1262,6 +1271,11 @@ async function runContextPackViewer(args: ParsedArgs): Promise<void> {
     );
     await mkdir(dirname(outPath), { recursive: true });
     await writeFile(outPath, artifact.html, "utf8");
+    await appendContextPackGenerationEvent(store, {
+      pack,
+      surface: "cli-viewer",
+      metadata: { command: "context-pack-viewer", out_path: outPath },
+    });
     console.log(`memory: context pack viewer written ${outPath}`);
     console.log(`  status: ${pack.status}`);
     console.log(`  contract: ${artifact.contract.consumes}`);
@@ -2428,7 +2442,12 @@ async function runRegistryCliOperation(
   try {
     const output = await executeMemoryOperationFromTransport(
       operation,
-      { store: graphContext.store, rootDir, providerConfig: graphContext.config?.provider },
+      {
+        store: graphContext.store,
+        rootDir,
+        providerConfig: graphContext.config?.provider,
+        transportSurface: "cli",
+      },
       transportInput,
     );
     if (operation.outputKind.kind === "viewer") {

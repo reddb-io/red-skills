@@ -51,6 +51,7 @@ import {
   buildContextPackViewerArtifact,
   type ContextPackViewerArtifact,
 } from "./context-pack-viewer.js";
+import { appendContextPackGenerationEvent } from "./memory-events.js";
 import { buildDocBrief, type DocBrief } from "./doc-brief.js";
 import {
   buildDocBriefViewerArtifact,
@@ -380,6 +381,7 @@ export interface MemoryOperationContext {
   rootDir?: string;
   now?: number;
   providerConfig?: AiProviderConfig;
+  transportSurface?: string;
 }
 
 export interface MemoryOperationDefinition<Input, Output> {
@@ -1455,14 +1457,21 @@ const CONTEXT_PACK_OPERATION: MemoryOperationDefinition<ContextPackInput, Contex
         "Read-only agent context pack for a goal. Returns grouped evidence, warnings, citations, markdown, and skill recommendations without writing graph facts.",
     },
   },
-  execute: (ctx, input) =>
-    buildContextPack(ctx.store, input.goal, {
+  execute: async (ctx, input) => {
+    const pack = await buildContextPack(ctx.store, input.goal, {
       budgetChars: input.budget_chars,
       limit: input.limit,
       depth: input.depth,
       now: ctx.now,
       scope: scopeFromInput(input),
-    }),
+    });
+    await appendContextPackGenerationEvent(ctx.store, {
+      pack,
+      surface: ctx.transportSurface ?? "operation",
+      metadata: { operation_id: "memory.context-pack" },
+    });
+    return pack;
+  },
 };
 
 const CONTEXT_PACK_VIEWER_OPERATION: MemoryOperationDefinition<
@@ -1485,16 +1494,21 @@ const CONTEXT_PACK_VIEWER_OPERATION: MemoryOperationDefinition<
         "Read-only self-contained HTML viewer for agent context packs. Returns grouped evidence, warnings, citations, skill recommendations, ready-to-inject markdown, embedded JSON, and HTML.",
     },
   },
-  execute: async (ctx, input) =>
-    buildContextPackViewerArtifact(
-      await buildContextPack(ctx.store, input.goal, {
-        budgetChars: input.budget_chars,
-        limit: input.limit,
-        depth: input.depth,
-        now: ctx.now,
-        scope: scopeFromInput(input),
-      }),
-    ),
+  execute: async (ctx, input) => {
+    const pack = await buildContextPack(ctx.store, input.goal, {
+      budgetChars: input.budget_chars,
+      limit: input.limit,
+      depth: input.depth,
+      now: ctx.now,
+      scope: scopeFromInput(input),
+    });
+    await appendContextPackGenerationEvent(ctx.store, {
+      pack,
+      surface: ctx.transportSurface ?? "operation-viewer",
+      metadata: { operation_id: "memory.context-pack-viewer" },
+    });
+    return buildContextPackViewerArtifact(pack);
+  },
 };
 
 const CLAIM_CHECK_OPERATION: MemoryOperationDefinition<ClaimCheckInput, ClaimCheckResult> = {

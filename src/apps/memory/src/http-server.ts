@@ -255,6 +255,7 @@ async function handleRegistryHttpOperation(
         rootDir: opts.rootDir,
         now: opts.now,
         providerConfig: opts.providerConfig,
+        transportSurface: "http",
       },
       {
         positional: [],
