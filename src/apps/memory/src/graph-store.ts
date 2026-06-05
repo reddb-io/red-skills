@@ -678,9 +678,8 @@ export class MemoryStore {
    * counts are advisory (decay bookkeeping for `doctor`), so the read-modify-
    * write race between concurrent recalls is acceptable.
    */
-  async recordAccess(rids: number[]): Promise<void> {
+  async recordAccess(rids: number[], now: number = Date.now()): Promise<void> {
     if (rids.length === 0) return;
-    const now = Date.now();
     const map = await this.readAccessMap();
     for (const rid of rids) {
       const prev = map[rid];
