@@ -1000,16 +1000,23 @@ describe("MCP server over stdio", () => {
         schema_version: string;
         read_only: boolean;
         summary: { total_nodes: number };
+        tidy_availability: { status: string; reason: string };
       };
       expect(governance).toMatchObject({
         schema_version: "memory.governance.v1",
         read_only: true,
         summary: { total_nodes: 3 },
+        tidy_availability: {
+          status: "unavailable",
+          reason: "no AI provider configured for governance tidy",
+        },
       });
       expect(governanceRes.structuredContent).toMatchObject({
         operation_id: "memory.governance",
         schema_version: "memory.governance.v1",
         read_only: true,
+        tidy_status: "unavailable",
+        tidy_reason: "no AI provider configured for governance tidy",
       });
 
       const decayRes = (await client.callTool({
@@ -1041,9 +1048,12 @@ describe("MCP server over stdio", () => {
       });
       expect(governanceViewer.html).toContain("Memory Governance");
       expect(governanceViewer.html).toContain('id="memory-governance-data"');
+      expect(governanceViewer.html).toContain("Tidy availability");
       expect(governanceViewerRes.structuredContent).toMatchObject({
         operation_id: "memory.governance-viewer",
         consumes: "memory.governance.v1",
+        tidy_status: "unavailable",
+        tidy_reason: "no AI provider configured for governance tidy",
         html_bytes: expect.any(Number),
       });
 

@@ -2330,6 +2330,7 @@ const GOVERNANCE_OPERATION: MemoryOperationDefinition<GovernanceInput, MemoryGov
     buildMemoryGovernanceReport(ctx.store, {
       staleProgressDays: input.stale_progress_days,
       now: ctx.now,
+      providerConfig: ctx.providerConfig,
     }),
 };
 
@@ -2358,6 +2359,7 @@ const GOVERNANCE_VIEWER_OPERATION: MemoryOperationDefinition<
       await buildMemoryGovernanceReport(ctx.store, {
         staleProgressDays: input.stale_progress_days,
         now: ctx.now,
+        providerConfig: ctx.providerConfig,
       }),
     ),
 };

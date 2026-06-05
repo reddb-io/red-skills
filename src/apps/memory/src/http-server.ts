@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { MemoryStore } from "./graph-store.js";
+import type { AiProviderConfig } from "./extract-conversation.js";
 import { recall } from "./engine.js";
 import {
   buildMemoryOperationalDashboard,
@@ -29,6 +30,7 @@ export interface MemoryHttpServerOptions {
   store: MemoryStore;
   token?: string;
   now?: number;
+  providerConfig?: AiProviderConfig;
 }
 
 export interface MemoryHttpHealth {
@@ -248,7 +250,12 @@ async function handleRegistryHttpOperation(
     const body = req.method === "POST" ? await readJsonBody(req) : undefined;
     const output = await executeMemoryOperationFromTransport(
       operation,
-      { store: opts.store, rootDir: opts.rootDir, now: opts.now },
+      {
+        store: opts.store,
+        rootDir: opts.rootDir,
+        now: opts.now,
+        providerConfig: opts.providerConfig,
+      },
       {
         positional: [],
         flags: {},

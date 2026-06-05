@@ -15,8 +15,25 @@ import {
   listContradictions,
   type ContradictionSummary,
 } from "./supersession.js";
+import {
+  resolveProvider,
+  type AiProviderConfig,
+  type Egress,
+  type ProviderMode,
+} from "./extract-conversation.js";
 
 export type MemoryGovernanceStatus = "ok" | "attention" | "degraded";
+export type MemoryGovernanceTidyStatus = "available" | "degraded" | "unavailable";
+
+export interface MemoryGovernanceTidyAvailability {
+  status: MemoryGovernanceTidyStatus;
+  configured: boolean;
+  provider_mode: ProviderMode | null;
+  provider_model: string | null;
+  egress: Egress | null;
+  reason: string | null;
+  next_action: string;
+}
 
 export interface MemoryGovernanceReport {
   schema_version: "memory.governance.v1";
@@ -44,6 +61,7 @@ export interface MemoryGovernanceReport {
   lint: LintReport;
   contradictions: ContradictionSummary[];
   supersession: Array<{ rid: number; active_rid: number }>;
+  tidy_availability: MemoryGovernanceTidyAvailability;
   recommended_next_actions: string[];
 }
 
@@ -57,7 +75,7 @@ interface GovernanceEdge {
 
 export async function buildMemoryGovernanceReport(
   store: MemoryStore,
-  opts: { staleProgressDays?: number; now?: number } = {},
+  opts: { staleProgressDays?: number; now?: number; providerConfig?: AiProviderConfig } = {},
 ): Promise<MemoryGovernanceReport> {
   const [nodes, rawEdges] = await Promise.all([store.listNodes(opts.now), store.listEdges()]);
   const edges = rawEdges.map(toGovernanceEdge);
@@ -95,6 +113,7 @@ export async function buildMemoryGovernanceReport(
     superseded_nodes: superseded.size,
     audit_edges: auditEdges,
   };
+  const tidyAvailability = governanceTidyAvailability(opts.providerConfig);
   return {
     schema_version: "memory.governance.v1",
     read_only: true,
@@ -108,7 +127,8 @@ export async function buildMemoryGovernanceReport(
     supersession: [...superseded.entries()]
       .map(([rid, activeRid]) => ({ rid, active_rid: activeRid }))
       .sort((a, b) => a.rid - b.rid),
-    recommended_next_actions: recommendations(summary, privacy, lint),
+    tidy_availability: tidyAvailability,
+    recommended_next_actions: recommendations(summary, privacy, lint, tidyAvailability),
   };
 }
 
@@ -135,6 +155,7 @@ function recommendations(
   summary: MemoryGovernanceReport["summary"],
   privacy: PrivacyReport,
   lint: LintReport,
+  tidyAvailability: MemoryGovernanceTidyAvailability,
 ): string[] {
   const out: string[] = [];
   if (summary.privacy_findings > 0) {
@@ -152,7 +173,50 @@ function recommendations(
   if (privacy.warnings.length > 0 || lint.warnings.length > 0) {
     out.push("investigate governance warnings before treating the report as complete");
   }
+  if (tidyAvailability.status !== "available") {
+    out.push(tidyAvailability.next_action);
+  }
   return [...new Set(out)];
+}
+
+function governanceTidyAvailability(
+  providerConfig: AiProviderConfig | undefined,
+): MemoryGovernanceTidyAvailability {
+  if (!providerConfig) {
+    return {
+      status: "unavailable",
+      configured: false,
+      provider_mode: null,
+      provider_model: null,
+      egress: null,
+      reason: "no AI provider configured for governance tidy",
+      next_action:
+        "configure `provider` to enable provider-backed governance tidy; deterministic governance remains available",
+    };
+  }
+  try {
+    const provider = resolveProvider(providerConfig);
+    return {
+      status: "available",
+      configured: true,
+      provider_mode: provider.mode,
+      provider_model: provider.model,
+      egress: provider.egress,
+      reason: null,
+      next_action:
+        "governance tidy provider is available; run mutating tidy operations only when explicitly requested",
+    };
+  } catch (err) {
+    return {
+      status: "degraded",
+      configured: true,
+      provider_mode: providerConfig.mode,
+      provider_model: providerConfig.model,
+      egress: null,
+      reason: err instanceof Error ? err.message : String(err),
+      next_action: "fix the configured Memory AI provider before running governance tidy",
+    };
+  }
 }
 
 function provenanceCoverage(nodes: StoredNode[]): MemoryGovernanceReport["provenance"] {
