@@ -73,8 +73,9 @@ RedSkills is not a bag of prompts. It is a small operating system for agentic en
 
 Brain skills: [`capture`](./plugins/brain/skills/core/capture/SKILL.md),
 [`search`](./plugins/brain/skills/core/search/SKILL.md),
-[`think`](./plugins/brain/skills/core/think/SKILL.md), and
-[`status`](./plugins/brain/skills/core/status/SKILL.md).
+[`think`](./plugins/brain/skills/core/think/SKILL.md),
+[`status`](./plugins/brain/skills/core/status/SKILL.md), and
+[`view`](./plugins/brain/skills/core/view/SKILL.md).
 
 Use `dev` when you want an agent to move the repo forward. Add `memory` when you want that movement to compound instead of evaporating after every session. Add `brain` when you want a workspace knowledge repository for arbitrary dumps and later synthesis.
 
@@ -378,6 +379,7 @@ Boundaries:
 | `/zoom-out` | Map-first orientation over unfamiliar code; graph-aware when Memory Graph mode is ready. |
 | `/memory:recall` | Search stored Memory notes or graph memory for relevant prior facts. |
 | `/memory:view` | Open the Memory graph visually in red-ui (cluster/query/collections), with a browser Workbench fallback in terminal hosts. |
+| `/brain:view` | Open Brain artifacts and typed connections visually in red-ui (cluster/query/collections/home), with a browser fallback in terminal hosts. |
 | `/wiki query` | Ask over the private `.red/wiki/` knowledge cache and optionally save a synthesis page. |
 | Future Ask surface | Direct question-first answers over project knowledge. This remains out of scope here. |
 
