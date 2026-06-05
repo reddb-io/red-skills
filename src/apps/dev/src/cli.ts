@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { fleetCommand } from "./commands/fleet.js";
+import { dashboardCommand } from "./commands/dashboard.js";
 import { injectDevelopmentWorkflowCommand } from "./commands/inject-development-workflow.js";
 import { monitorCommand } from "./commands/monitor.js";
 import { runCommand } from "./commands/run.js";
@@ -14,6 +15,7 @@ export type CliCommand =
   | "run"
   | "monitor"
   | "fleet"
+  | "dashboard"
   | "reap"
   | "ship"
   | "statusline"
@@ -37,6 +39,7 @@ const CLI_ROUTER: RouterSchema<CliCommand> = {
     run: {},
     monitor: {},
     fleet: {},
+    dashboard: {},
     reap: {},
     ship: {},
     statusline: {},
@@ -62,6 +65,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   }
   if (parsed.command === "monitor") return monitorCommand(parsed.args);
   if (parsed.command === "fleet") return fleetCommand(parsed.args);
+  if (parsed.command === "dashboard") return dashboardCommand(parsed.args);
   if (parsed.command === "reap") return reapCommand(parsed.args);
   if (parsed.command === "ship") return shipCommand(parsed.args);
   if (parsed.command === "statusline") return statuslineCommand(parsed.args);

@@ -9,6 +9,7 @@
     "./skills/engineering/model-tier-policy",
     "./skills/engineering/curate",
     "./skills/engineering/context",
+    "./skills/engineering/dashboard",
     "./skills/engineering/diagnose",
     "./skills/engineering/doctor",
     "./skills/engineering/review-adrs",
@@ -32,6 +33,8 @@
     "./skills/misc/setup-pre-commit",
     "./skills/knowledge/wiki-init",
     "./skills/knowledge/wiki",
+    "./skills/knowledge/research",
+    "./skills/productivity/ff",
     "./skills/productivity/reflect",
     "./skills/productivity/handoff",
     "./skills/productivity/write-a-skill"
