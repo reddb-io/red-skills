@@ -11,12 +11,22 @@ runtime command; do not hand-calculate the metrics.
 
 ## Run
 
+Resolve the plugin root before running the dashboard. Use the first available
+source:
+
+1. `$CLAUDE_PLUGIN_ROOT` under Claude Code.
+2. `$CODEX_PLUGIN_ROOT` under Codex when the host exposes it.
+3. The loaded `SKILL.md` path: from `skills/engineering/dashboard/SKILL.md`,
+   the plugin root is `../../..`.
+
+Then run:
+
 ```bash
-node "$CLAUDE_PLUGIN_ROOT/skills/engineering/afk/bin/afk.mjs" dashboard [--period 30d] [--json]
+node "$PLUGIN_ROOT/skills/engineering/afk/bin/afk.mjs" dashboard [--period 30d] [--json]
 ```
 
-Under Codex, when `$CLAUDE_PLUGIN_ROOT` is unavailable, run the repo-local built
-entrypoint from the plugin copy:
+When developing inside the red-skills source checkout, this repo-local path is
+also valid:
 
 ```bash
 node plugins/dev/skills/engineering/afk/bin/afk.mjs dashboard [--period 30d] [--json]
