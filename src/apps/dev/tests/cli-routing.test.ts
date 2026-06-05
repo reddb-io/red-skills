@@ -15,6 +15,13 @@ describe("cli routing — native commands", () => {
     expect(parseCli(["statusline", "/repo"])).toEqual({ command: "statusline", args: ["/repo"] });
   });
 
+  it("routes dashboard with reporting flags preserved", () => {
+    expect(parseCli(["dashboard", "--period", "14d", "--json"])).toEqual({
+      command: "dashboard",
+      args: ["--period", "14d", "--json"],
+    });
+  });
+
   it("routes the development-workflow injector with its args preserved", () => {
     expect(parseCli(["inject-development-workflow", "--root", "/repo"])).toEqual({
       command: "inject-development-workflow",
