@@ -45,6 +45,11 @@ better; Brain exists to hold knowledge the user wants to dump, connect, search,
 and synthesize. If the content is about the person or their context rather than
 operational evidence from agent work, route it to Brain.
 
+Search is deterministic hybrid ranking: lexical title/content matches, tag
+matches, artifact kind matches, and graph connections all contribute to each
+hit's `score_breakdown`. The contract already reserves a `vector` score slot, but
+embeddings are not required for the local Brain MVP.
+
 Core skills: [capture](./skills/core/capture/SKILL.md),
 [search](./skills/core/search/SKILL.md), [think](./skills/core/think/SKILL.md),
 [status](./skills/core/status/SKILL.md), and
