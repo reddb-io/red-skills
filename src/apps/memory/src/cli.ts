@@ -4431,6 +4431,11 @@ function printGovernance(report: MemoryGovernanceReport): void {
     `  tidy=${report.tidy_availability.status}` +
       (report.tidy_availability.reason ? ` (${report.tidy_availability.reason})` : ""),
   );
+  console.log(
+    `  tidy recommendations=${report.tidy_recommendations.summary.recommended_pairs}/` +
+      `${report.tidy_recommendations.summary.candidate_pairs}` +
+      (report.tidy_recommendations.reason ? ` (${report.tidy_recommendations.reason})` : ""),
+  );
   for (const item of report.provenance.missing.slice(0, 5)) {
     console.log(`  missing provenance: memory_nodes:${item.rid} ${item.title}`);
   }

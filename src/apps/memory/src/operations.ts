@@ -2312,7 +2312,7 @@ const GOVERNANCE_OPERATION: MemoryOperationDefinition<GovernanceInput, MemoryGov
   id: "memory.governance",
   title: "Memory governance",
   description:
-    "Read-only governance report over provenance, privacy, lint, contradictions, and supersession.",
+    "Read-only governance report over provenance, privacy, lint, contradictions, supersession, and provider-backed tidy recommendations.",
   inputSchema: GovernanceInputSchema,
   outputSchema: GovernanceOutputSchema,
   safetyClass: "read-only",
@@ -2323,7 +2323,7 @@ const GOVERNANCE_OPERATION: MemoryOperationDefinition<GovernanceInput, MemoryGov
     mcp: {
       toolName: "memory_governance",
       description:
-        "Read-only governance report over local Memory evidence. Returns provenance coverage, privacy findings, lint findings, contradiction/supersession counts, and recommended next actions without mutating Memory.",
+        "Read-only governance report over local Memory evidence. Returns provenance coverage, privacy findings, lint findings, contradiction/supersession counts, provider-backed duplicate or near-duplicate tidy recommendations, and recommended next actions without mutating Memory.",
     },
   },
   execute: (ctx, input) =>
@@ -2340,7 +2340,7 @@ const GOVERNANCE_VIEWER_OPERATION: MemoryOperationDefinition<
 > = {
   id: "memory.governance-viewer",
   title: "Memory governance viewer",
-  description: "Self-contained HTML viewer for Memory governance evidence.",
+  description: "Self-contained HTML viewer for Memory governance evidence and provider tidy recommendations.",
   inputSchema: GovernanceInputSchema,
   outputSchema: GovernanceViewerOutputSchema,
   safetyClass: "read-only",
@@ -2351,7 +2351,7 @@ const GOVERNANCE_VIEWER_OPERATION: MemoryOperationDefinition<
     mcp: {
       toolName: "memory_governance_viewer",
       description:
-        "Read-only self-contained HTML viewer for provenance, privacy, lint, contradictions, supersession, recommended actions, and embedded governance JSON.",
+        "Read-only self-contained HTML viewer for provenance, privacy, lint, contradictions, supersession, provider tidy recommendations, recommended actions, and embedded governance JSON.",
     },
   },
   execute: async (ctx, input) =>

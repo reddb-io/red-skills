@@ -788,6 +788,7 @@ function governanceSection(workbench: MemoryWorkbench): string {
       <li><strong>Privacy and lint</strong><p class="meta">${governance.summary.privacy_findings} privacy finding(s), ${governance.summary.lint_findings} lint finding(s)</p></li>
       <li><strong>Contradictions</strong><p class="meta">${governance.summary.unresolved_contradictions} unresolved, ${governance.summary.superseded_nodes} superseded node(s)</p></li>
       <li><strong>Tidy availability</strong><p class="meta">${escapeHtml(governance.tidy_availability.status)} - ${escapeHtml(governance.tidy_availability.reason ?? governance.tidy_availability.next_action)}</p></li>
+      <li><strong>Provider tidy recommendations</strong><p class="meta">${governance.tidy_recommendations.summary.recommended_pairs}/${governance.tidy_recommendations.summary.candidate_pairs} duplicate or near-duplicate Soft-merge recommendation(s)</p></li>
     </ul>
     <button id="memory-governance-refresh" type="button">Refresh Governance</button>
     <a class="button-link" href="/governance">Open Governance</a>
@@ -1915,6 +1916,9 @@ function governanceScript(): string {
       addItem("Contradictions", String(summary.unresolved_contradictions ?? 0) + " unresolved, " + String(summary.superseded_nodes ?? 0) + " superseded node(s)");
       const tidy = report.tidy_availability || {};
       addItem("Tidy availability", String(tidy.status || "unknown") + " - " + String(tidy.reason || tidy.next_action || "no tidy status reported"));
+      const tidyRecommendations = report.tidy_recommendations || {};
+      const tidySummary = tidyRecommendations.summary || {};
+      addItem("Provider tidy recommendations", String(tidySummary.recommended_pairs ?? 0) + "/" + String(tidySummary.candidate_pairs ?? 0) + " duplicate or near-duplicate Soft-merge recommendation(s)");
       const actions = Array.isArray(report.recommended_next_actions) ? report.recommended_next_actions : [];
       status.textContent = actions[0] || "Governance report is clean.";
     } catch (err) {

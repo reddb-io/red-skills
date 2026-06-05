@@ -152,6 +152,11 @@ function renderMemoryGovernanceViewer(report: MemoryGovernanceReport): string {
           ${report.contradictions.length === 0 ? `<p class="empty">No contradiction edges found.</p>` : `<ul>${report.contradictions.slice(0, 12).map((item) => `<li><div><h3>${escapeHtml(item.from.title)} -> ${escapeHtml(item.to.title)}</h3><p class="meta">${escapeHtml(item.reason ?? "no reason")} - ${item.resolved ? "resolved" : "unresolved"}</p></div><span class="pill ${item.resolved ? "" : "warn"}">${item.resolved ? "resolved" : "open"}</span></li>`).join("")}</ul>`}
         </section>
         <section>
+          <h2>Provider Tidy Recommendations</h2>
+          <p class="meta">Read-only duplicate and near-duplicate Soft-merge inspection output. Governance does not apply these recommendations.</p>
+          ${report.tidy_recommendations.recommendations.length === 0 ? `<p class="empty">${escapeHtml(report.tidy_recommendations.reason ?? "No provider tidy recommendations.")}</p>` : `<ul>${report.tidy_recommendations.recommendations.map((item) => `<li><div><h3>${escapeHtml(item.proposed_soft_merge.direction)}</h3><p class="meta">${escapeHtml(item.relation)} - confidence ${item.confidence.toFixed(2)} - ${escapeHtml(item.rationale)}</p><p class="meta"><code>${escapeHtml(item.id)}</code></p></div><span class="pill">${escapeHtml(item.review_status)}</span></li>`).join("")}</ul>`}
+        </section>
+        <section>
           <h2>Missing Provenance</h2>
           ${report.provenance.missing.length === 0 ? `<p class="empty">All visible nodes have provenance metadata.</p>` : `<ul>${report.provenance.missing.slice(0, 12).map((item) => `<li><div><h3>${escapeHtml(item.title)}</h3><p class="meta"><code>memory_nodes:${item.rid}</code> - ${escapeHtml(item.node_type)} - ${escapeHtml(item.label)}</p></div></li>`).join("")}</ul>`}
         </section>
