@@ -11,6 +11,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [Context packs render pinned core context](./pages/494-context-packs-render-pinned-core-context.md)
 - [Document Brain ownership of personal facts](./pages/495-document-brain-ownership-of-personal-facts.md)
 - [Memory governance reports tidy availability](./pages/492-memory-governance-reports-tidy-availability.md)
+- [Memory: make recall clock-injected](./pages/509-memory-make-recall-clock-injected.md)
 - [Provider review artifacts persist tidy state outside the graph](./pages/493-provider-review-artifacts-persist-tidy-state-outside-the-gra.md)
 - [Provider tidy recommendations appear in read-only governance](./pages/496-provider-tidy-recommendations-appear-in-read-only-governance.md)
 - [Record context-pack and Memory injection observations](./pages/497-record-context-pack-and-memory-injection-observations.md)
