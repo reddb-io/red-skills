@@ -56,7 +56,7 @@ function node(
       content,
       confidence: "EXTRACTED",
       source: "manual",
-      importance: 0.8,
+      importance: 0.5,
       tier: "durable",
       created_at: NOW,
       ...extra,
@@ -80,6 +80,7 @@ describe("context packs", () => {
     });
 
     expect(pack.status).toBe("ok");
+    expect(pack.coreContext).toEqual([]);
     expect(pack.markdown.length).toBeLessThanOrEqual(2_000);
     expect(pack.markdown).toContain("## Hard constraints");
     expect(pack.markdown).toContain("## Prior decisions");
@@ -88,6 +89,8 @@ describe("context packs", () => {
     expect(pack.markdown).toContain("## Do-not-do guidance");
     expect(pack.markdown).toContain("[M1]");
     expect(pack.markdown).toContain("urn: memory_nodes:1");
+    expect(pack.markdown).toContain("trust: 1.00");
+    expect(pack.markdown).toContain("importance: 0.50");
     expect(pack.markdown).toContain("Reason:");
     expect(pack.entries.map((entry) => entry.citation.urn)).toEqual([
       "memory_nodes:1",
@@ -106,6 +109,53 @@ describe("context packs", () => {
     expect(artifact.html).toContain("Memory Context Pack");
     expect(artifact.html).toContain("Auth token constraint");
     expect(artifact.html).toContain('id="memory-context-pack-data"');
+  });
+
+  test("renders pinned eligible nodes as cited core context before ordinary sections", async () => {
+    const store = new MockStore([
+      node(1, "decision", "Pinned JWT invariant", "Decision: JWT token work must update docs/security.md.", {
+        importance: 0.9,
+        confidence: "INFERRED",
+        provenance: {
+          source_kind: "hook",
+          writer: "codex",
+          command: "memory extract",
+          evidence: ["issue #42"],
+        },
+      }),
+      node(2, "problem", "JWT rollout pitfall", "Pitfall: JWT rollout failed when signed fixtures were stale."),
+    ]);
+
+    const pack = await buildContextPack(store, "jwt token work", {
+      budgetChars: 2_000,
+      now: NOW,
+    });
+
+    expect(pack.coreContext.map((entry) => entry.citation.rid)).toEqual([1]);
+    expect(pack.entries.map((entry) => entry.citation.rid)).toEqual([1, 2]);
+    expect(pack.coreContext[0]).toMatchObject({
+      citation: { marker: "[M1]", urn: "memory_nodes:1" },
+      confidence: "INFERRED",
+      confidence_score: expect.any(Number),
+      trust: 0.85,
+      importance: 0.9,
+      provenance: { source_kind: "hook", writer: "codex" },
+    });
+    expect(pack.markdown.indexOf("## Core context")).toBeGreaterThan(-1);
+    expect(pack.markdown.indexOf("## Core context")).toBeLessThan(
+      pack.markdown.indexOf("## Known pitfalls"),
+    );
+    expect(pack.markdown).toContain("[M1] Pinned JWT invariant");
+    expect(pack.markdown).toContain("provenance: hook/codex");
+    expect(pack.markdown).toContain("trust: 0.85");
+    expect(pack.markdown).toContain("[M2] JWT rollout pitfall");
+
+    const artifact = buildContextPackViewerArtifact(pack);
+    expect(artifact.html.indexOf("Core Context")).toBeLessThan(
+      artifact.html.indexOf("Known Pitfalls"),
+    );
+    expect(artifact.html).toContain("[M1] Pinned JWT invariant");
+    expect(artifact.html).toContain("provenance hook/codex");
   });
 
   test("can include shared skill recommendation data", async () => {
@@ -196,6 +246,53 @@ describe("context packs", () => {
     expect(pack.markdown).toContain("contradicts memory_nodes:3");
   });
 
+  test("excludes superseded pinned nodes from core context while warning about them", async () => {
+    const store = new MockStore(
+      [
+        node(1, "decision", "Old pinned JWT decision", "Decision: jwt deploys on Fridays.", {
+          importance: 0.95,
+        }),
+        node(2, "decision", "Current JWT decision", "Decision: jwt deploys on Tuesdays.", {
+          importance: 0.6,
+        }),
+      ],
+      new Map([[1, 2]]),
+    );
+
+    const pack = await buildContextPack(store, "jwt deploy", { budgetChars: 2_000, now: NOW });
+
+    expect(pack.coreContext.map((entry) => entry.citation.rid)).not.toContain(1);
+    expect(pack.entries.map((entry) => entry.citation.rid)).not.toContain(1);
+    expect(pack.warnings).toEqual([
+      expect.objectContaining({ kind: "superseded", rids: [1, 2] }),
+    ]);
+    expect(pack.markdown).toContain("memory_nodes:1 is superseded by memory_nodes:2");
+  });
+
+  test("does not let pinned nodes bypass recall scope eligibility", async () => {
+    const store = new MockStore([
+      node(1, "decision", "Pinned session JWT secret", "Decision: jwt session-only secret.", {
+        importance: 0.95,
+        scope: "session",
+        scope_id: "session-a",
+      }),
+      node(2, "decision", "Project JWT decision", "Decision: jwt project work uses signed fixtures.", {
+        importance: 0.6,
+      }),
+    ]);
+
+    const projectPack = await buildContextPack(store, "jwt", { budgetChars: 2_000, now: NOW });
+    expect(projectPack.entries.map((entry) => entry.citation.rid)).toEqual([2]);
+    expect(projectPack.coreContext).toEqual([]);
+
+    const sessionPack = await buildContextPack(store, "jwt", {
+      budgetChars: 2_000,
+      now: NOW,
+      scope: { level: "session", id: "session-a" },
+    });
+    expect(sessionPack.coreContext.map((entry) => entry.citation.rid)).toEqual([1]);
+  });
+
   test("keeps deterministic ranking order while enforcing the caller budget", async () => {
     const store = new MockStore([
       node(1, "decision", "High rank decision", "Decision: jwt deploy jwt rollout uses canaries."),
@@ -213,6 +310,33 @@ describe("context packs", () => {
       now: NOW,
     });
     expect(budgeted.markdown.length).toBeLessThanOrEqual(360);
+    expect(budgeted.entries.map((entry) => entry.citation.rid)).toEqual([1]);
+    expect(budgeted.omittedEntries).toBe(1);
+    expect(budgeted.warnings).toEqual([
+      expect.objectContaining({ kind: "budget", rids: [2] }),
+    ]);
+  });
+
+  test("accounts for core context before ordinary recalled sections in the budget", async () => {
+    const store = new MockStore([
+      node(1, "decision", "Pinned budget JWT decision", "Decision: jwt budget must preserve core context.", {
+        importance: 0.95,
+      }),
+      node(2, "decision", "Ordinary budget JWT decision", "Decision: jwt budget may omit ordinary context."),
+    ]);
+    const fullPack = await buildContextPack(store, "jwt budget", {
+      budgetChars: 2_000,
+      now: NOW,
+    });
+    const budget = fullPack.markdown.indexOf("[M2]") - 1;
+
+    const budgeted = await buildContextPack(store, "jwt budget", {
+      budgetChars: budget,
+      now: NOW,
+    });
+
+    expect(budgeted.markdown.length).toBeLessThanOrEqual(budget);
+    expect(budgeted.coreContext.map((entry) => entry.citation.rid)).toEqual([1]);
     expect(budgeted.entries.map((entry) => entry.citation.rid)).toEqual([1]);
     expect(budgeted.omittedEntries).toBe(1);
     expect(budgeted.warnings).toEqual([

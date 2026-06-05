@@ -1,5 +1,11 @@
-import { recall, type RecallOptions, type RecallStore, type RecalledNode } from "./engine.js";
-import type { Confidence } from "./schema.js";
+import {
+  recall,
+  TRUST_WEIGHT,
+  type RecallOptions,
+  type RecallStore,
+  type RecalledNode,
+} from "./engine.js";
+import type { Confidence, MemoryProvenance } from "./schema.js";
 import {
   buildSkillRecommendationsFromEvidence,
   renderSkillRecommendationsSection,
@@ -29,7 +35,10 @@ export interface ContextPackEntry {
   section: ContextPackSection;
   title: string;
   nodeType: string;
+  importance: number;
   confidence: Confidence;
+  trust: number;
+  provenance: MemoryProvenance | null;
   citation: ContextPackCitation;
   reason: string;
   excerpt: string;
@@ -50,6 +59,9 @@ export interface ContextPack {
   budgetChars: number;
   usedChars: number;
   markdown: string;
+  /** Pinned Memory nodes (`importance >= 0.8`) that passed governed recall and budget. */
+  coreContext: ContextPackEntry[];
+  /** Combined included context in render order. Kept for existing consumers. */
   entries: ContextPackEntry[];
   skillRecommendations: SkillRecommendationReport;
   warnings: ContextPackWarning[];
@@ -65,6 +77,7 @@ export interface ContextPackOptions extends Pick<RecallOptions, "scope" | "now">
 
 const DEFAULT_BUDGET_CHARS = 4_000;
 const DEFAULT_LIMIT = 12;
+const PINNED_IMPORTANCE_THRESHOLD = 0.8;
 const SECTION_ORDER: ContextPackSection[] = [
   "hard_constraints",
   "prior_decisions",
@@ -126,6 +139,7 @@ export async function buildContextPack(
       budgetChars,
       usedChars: markdown.length,
       markdown,
+      coreContext: [],
       entries: [],
       skillRecommendations,
       warnings,
@@ -146,6 +160,7 @@ export async function buildContextPack(
     budgetChars,
     usedChars: rendered.markdown.length,
     markdown: rendered.markdown,
+    coreContext: rendered.coreContext,
     entries: rendered.included,
     skillRecommendations,
     warnings: rendered.warnings,
@@ -194,11 +209,15 @@ function toEntry(node: RecalledNode, marker: number, goal: string): ContextPackE
   const section = classifySection(node);
   const title = node.properties.title ?? node.label;
   const source = typeof node.properties.source === "string" ? node.properties.source : null;
+  const confidence = node.properties.confidence ?? "AMBIGUOUS";
   return {
     section,
     title,
     nodeType: node.node_type,
-    confidence: node.properties.confidence ?? "AMBIGUOUS",
+    importance: node.properties.importance ?? 0.5,
+    confidence,
+    trust: TRUST_WEIGHT[confidence],
+    provenance: node.properties.provenance ?? null,
     citation: {
       marker: `[M${marker}]`,
       urn: `memory_nodes:${node.rid}`,
@@ -251,13 +270,39 @@ function renderPack(
   warnings: ContextPackWarning[],
   budgetChars: number,
   skillRecommendations: SkillRecommendationReport,
-): { markdown: string; included: ContextPackEntry[]; warnings: ContextPackWarning[] } {
+): {
+  markdown: string;
+  coreContext: ContextPackEntry[];
+  included: ContextPackEntry[];
+  warnings: ContextPackWarning[];
+} {
+  const coreCandidates = entries
+    .filter((entry) => entry.importance >= PINNED_IMPORTANCE_THRESHOLD)
+    .sort((a, b) => b.score - a.score || a.citation.rid - b.citation.rid);
+  const ordinaryEntries = entries.filter((entry) => entry.importance < PINNED_IMPORTANCE_THRESHOLD);
+  const coreContext: ContextPackEntry[] = [];
   const included: ContextPackEntry[] = [];
   const renderedWarnings = [...warnings];
   let markdown = header(goal, "ok", renderedWarnings);
 
+  if (coreCandidates.length > 0) {
+    let nextMarkdown = `${markdown}## Core context\n`;
+    const acceptedCore: ContextPackEntry[] = [];
+    for (const entry of coreCandidates) {
+      const candidate = `${nextMarkdown}${renderEntry(entry)}\n`;
+      if (candidate.length > budgetChars) break;
+      nextMarkdown = candidate;
+      acceptedCore.push(entry);
+    }
+    if (acceptedCore.length > 0) {
+      markdown = `${nextMarkdown}\n`;
+      coreContext.push(...acceptedCore);
+      included.push(...acceptedCore);
+    }
+  }
+
   for (const section of SECTION_ORDER) {
-    const sectionEntries = entries
+    const sectionEntries = ordinaryEntries
       .filter((entry) => entry.section === section)
       .sort((a, b) => b.score - a.score || a.citation.rid - b.citation.rid);
     if (sectionEntries.length === 0) continue;
@@ -277,15 +322,16 @@ function renderPack(
   }
 
   if (included.length < entries.length) {
+    const includedRids = new Set(included.map((entry) => entry.citation.rid));
     renderedWarnings.push({
       kind: "budget",
       message: `${entries.length - included.length} recalled item(s) omitted to stay within budget.`,
       rids: entries
-        .filter((entry) => !included.includes(entry))
+        .filter((entry) => !includedRids.has(entry.citation.rid))
         .map((entry) => entry.citation.rid),
     });
     const status = included.length > 0 ? "ok" : "insufficient-context";
-    const rerendered = `${header(goal, status, renderedWarnings)}${renderSections(included)}`;
+    const rerendered = `${header(goal, status, renderedWarnings)}${renderBody(coreContext, included.filter((entry) => entry.importance < PINNED_IMPORTANCE_THRESHOLD))}`;
     if (rerendered.length <= budgetChars) {
       markdown = rerendered;
     } else if (included.length === 0) {
@@ -299,7 +345,7 @@ function renderPack(
     if (candidate.length <= budgetChars) markdown = candidate;
   }
 
-  return { markdown: fitToBudget(markdown, budgetChars), included, warnings: renderedWarnings };
+  return { markdown: fitToBudget(markdown, budgetChars), coreContext, included, warnings: renderedWarnings };
 }
 
 function header(
@@ -313,6 +359,20 @@ function header(
     for (const warning of warnings) lines.push(`- ${warning.kind}: ${warning.message}`);
     lines.push("");
   }
+  return lines.join("\n");
+}
+
+function renderBody(
+  coreContext: ContextPackEntry[],
+  ordinaryEntries: ContextPackEntry[],
+): string {
+  const lines: string[] = [];
+  if (coreContext.length > 0) {
+    lines.push("## Core context");
+    for (const entry of coreContext) lines.push(renderEntry(entry));
+    lines.push("");
+  }
+  lines.push(renderSections(ordinaryEntries));
   return lines.join("\n");
 }
 
@@ -330,8 +390,11 @@ function renderSections(entries: ContextPackEntry[]): string {
 
 function renderEntry(entry: ContextPackEntry): string {
   const source = entry.citation.source ? `; source: ${entry.citation.source}` : "";
+  const provenance = entry.provenance
+    ? `; provenance: ${entry.provenance.source_kind}${entry.provenance.writer ? `/${entry.provenance.writer}` : ""}`
+    : "";
   return [
-    `- ${entry.citation.marker} ${entry.title} (${entry.nodeType}, ${entry.confidence}; urn: ${entry.citation.urn}${source})`,
+    `- ${entry.citation.marker} ${entry.title} (${entry.nodeType}, ${entry.confidence}; trust: ${entry.trust.toFixed(2)}; importance: ${entry.importance.toFixed(2)}; urn: ${entry.citation.urn}${source}${provenance})`,
     `  Reason: ${entry.reason}`,
     `  Evidence: ${entry.excerpt}`,
   ].join("\n");
