@@ -37,7 +37,8 @@
     "defaultPrompt": [
       "Use $capture to save this into the project Brain.",
       "Search Brain before answering a project-history question.",
-      "Run $status to inspect the project Brain store."
+      "Run $status to inspect the project Brain store.",
+      "Run $view to open Brain artifacts and typed connections in red-ui."
     ],
     "brandColor": "#2563EB"
   }

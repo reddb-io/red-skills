@@ -8,6 +8,7 @@
     "./skills/core/capture",
     "./skills/core/search",
     "./skills/core/think",
-    "./skills/core/status"
+    "./skills/core/status",
+    "./skills/core/view"
   ]
 }
