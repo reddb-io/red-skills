@@ -19,7 +19,7 @@ It ships as three plugins:
 |--------|-----|----------------|
 | **`dev`** | Turns plans and GitHub issues into reviewed, tested PRs. | You want `/start`, `/to-prd`, `/to-issues`, `/triage`, `/tdd`, `/diagnose`, `/wiki`, the autonomous `/afk` loop, and the interactive `/ship` finalizer. |
 | **`memory`** | Gives those agents governed operational memory. | You want decisions, gotchas, validations, provenance, claim checks, readiness, context packs, and handoffs to survive `/clear`. |
-| **`brain`** | Gives the workspace a RedDB knowledge repository. | You want to dump notes, ideas, decisions, references, questions, and other knowledge into `.red/brain/*` and connect it later. |
+| **`brain`** | Gives the workspace a RedDB knowledge repository. | You want to dump notes, ideas, Personal facts, decisions, references, questions, and other human-facing knowledge into `.red/brain/*` and connect it later. |
 
 **Install all three in Claude Code:**
 
@@ -45,7 +45,7 @@ It ships as three plugins:
    SessionStart ─▶ .red/brain ─▶ capture ─▶ search ─▶ think
 ```
 
-**The punchline:** `dev` does the work. `memory` keeps the next agent from starting cold. `brain` stores the knowledge the human wants to keep.
+**The punchline:** `dev` does the work. `memory` keeps the next agent from starting cold. `brain` stores the knowledge the human wants to keep. Personal facts belong in Brain, not Memory.
 
 **Highlights**
 
@@ -68,8 +68,8 @@ RedSkills is not a bag of prompts. It is a small operating system for agentic en
 | Layer | Plugin | What it owns | First command |
 |-------|--------|--------------|---------------|
 | Work execution | `dev` | Planning, PRDs, issue slicing, triage, TDD, diagnosis, wiki, codebase orientation, and `/afk` workers. | `/setup-red-skills` |
-| Work memory | `memory` | Durable decisions, gotchas, reasoning traces, validations, provenance, supersession, claim checks, readiness, and handoff context. | `memory init` or `$init` |
-| Knowledge repository | `brain` | Freeform knowledge captures, typed artifacts, graph connections, and human-facing recall under `.red/brain/*`. | `$capture` or `brain capture` |
+| Work memory | `memory` | Durable operational decisions, gotchas, reasoning traces, validations, provenance, supersession, claim checks, readiness, and handoff context. | `memory init` or `$init` |
+| Knowledge repository | `brain` | Freeform knowledge captures, Personal facts, typed artifacts, graph connections, and human-facing recall under `.red/brain/*`. | `$capture` or `brain capture` |
 
 Brain skills: [`capture`](./plugins/brain/skills/core/capture/SKILL.md),
 [`search`](./plugins/brain/skills/core/search/SKILL.md),
@@ -77,7 +77,7 @@ Brain skills: [`capture`](./plugins/brain/skills/core/capture/SKILL.md),
 [`status`](./plugins/brain/skills/core/status/SKILL.md), and
 [`view`](./plugins/brain/skills/core/view/SKILL.md).
 
-Use `dev` when you want an agent to move the repo forward. Add `memory` when you want that movement to compound instead of evaporating after every session. Add `brain` when you want a workspace knowledge repository for arbitrary dumps and later synthesis.
+Use `dev` when you want an agent to move the repo forward. Add `memory` when you want that movement to compound instead of evaporating after every session. Add `brain` when you want a workspace knowledge repository for arbitrary dumps and later synthesis, including Personal facts that provide human-facing context.
 
 The intended loop is simple:
 
@@ -296,6 +296,11 @@ Output: `.red/agents/*.md`, `.red/config.yaml`, an `## Agent skills` block, a `#
 ## Memory — governed operational memory
 
 Agents forget the exact things you need them to remember: why a decision was made, which workaround failed, what the last validation proved, and which warning is stale. The `memory` plugin turns that into a governed local memory surface.
+
+Memory is not the Personal-fact store. Store Odysseus-style biographical facts,
+preferences, identity details, and other human-facing context in Brain via
+`brain capture`; Memory keeps operational evidence that helps agents do repo
+work.
 
 The loop is deliberately boring:
 

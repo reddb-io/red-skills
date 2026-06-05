@@ -41,11 +41,19 @@ describe("Memory routing guide", () => {
       expect.arrayContaining([
         expect.stringContaining("memory_claim_check"),
         expect.stringContaining("memory_structural_impact"),
+        expect.stringContaining("route Personal facts and human-facing context to Brain"),
+      ]),
+    );
+    expect(guide.safetyNotes).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("Personal facts, human-facing context"),
+        expect.stringContaining("belong in Brain, not Memory"),
       ]),
     );
     expect(guide.installSnippet).toContain("## Memory Routing");
     expect(guide.installSnippet).toContain("MCP server command");
     expect(guide.installSnippet).toContain("Target file: AGENTS.md");
+    expect(guide.installSnippet).toContain("route Personal facts and human-facing context to Brain");
   });
 
   test("builds multi-agent integration metadata for MCP-first agents", () => {

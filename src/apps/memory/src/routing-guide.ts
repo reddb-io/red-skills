@@ -89,9 +89,9 @@ const RULES: MemoryRoutingRule[] = [
     reason: "Get where-we-left-off context, map-first orientation, and a readiness score with missing-evidence warnings.",
   },
   {
-    when: "When preserving a durable fact, decision, fix, or user preference",
-    call: "memory_store only when the user asked to remember it or the fact is clearly durable",
-    reason: "Keep memory useful without polluting it with transient reasoning.",
+    when: "When preserving a durable operational decision, fix, gotcha, or agent-work preference",
+    call: "memory_store only for operational evidence; route Personal facts and human-facing context to Brain",
+    reason: "Keep Memory useful without turning it into a Personal fact store.",
   },
 ];
 
@@ -134,7 +134,8 @@ export function buildMemoryRoutingGuide(
   const targetFiles = integration.targetFiles;
   const safetyNotes = [
     "Read-only tools are preferred before mutating Memory.",
-    "memory_store is durable; do not store secrets, raw credentials, or transient chain-of-thought.",
+    "memory_store is durable; do not store secrets, raw credentials, Personal facts, human-facing context, or transient chain-of-thought.",
+    "Personal facts, biographical details, identity context, and durable human preferences belong in Brain, not Memory.",
     "memory_supersede and conflict-resolution tools are mutating; use them only with explicit user intent.",
     "Citations such as memory_nodes:<rid> should be kept in summaries when they support an important claim.",
   ];
