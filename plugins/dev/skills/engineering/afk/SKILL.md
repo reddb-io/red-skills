@@ -24,7 +24,18 @@ The invoking LLM is responsible for setting `RED_AFK_RUNNER` to its own host run
 
 Commands and their parameters are documented in *When To Use* below — that section is authoritative for the CLI surface. The commands are `run` (the default — a bare token routes here with argv preserved), `monitor`, `dashboard`, `fleet`, `reap`, `statusline` (the Claude Code statusline aggregator; reads the payload on stdin and takes the project root as its one argument), and the hidden `__supervise` (the fleet supervisor entrypoint; never invoked by hand). `run` accepts `--prd`, `--issues`, `--runner`, `--alternate`, `--fallback-runner`, `--request`/`-r`, `-n`, and `--once`; `monitor` accepts `--once`; `dashboard` accepts `--period N|Nd` and `--json`; `fleet` accepts an optional numeric target `N`, the `stop` subcommand, `--request`/`-r`, and `--runner`; `reap` takes no flags; `statusline` takes the project-root path as `$1`.
 
-The bundle is a dependency-free build (one file, no `node_modules`, no install step) and is the public entrypoint. Every command — orchestration, supervisor, statusline, and hooks — executes natively in the bundle; the legacy shell orchestrator under `scripts/` has been removed (ADR 0032, ADR 0034). Treat this `SKILL.md` as the contract: run the bundle, don't read its source.
+The bundle is a single self-contained build (one file, one inlined runtime dependency, no `node_modules`, no install step) and is the public entrypoint. Every command — orchestration, supervisor, statusline, and hooks — executes natively in the bundle; the legacy shell orchestrator under `scripts/` has been removed (ADR 0032, ADR 0034). Treat this `SKILL.md` as the contract: run the bundle, don't read its source.
+
+## Execution Substrate (ADR 0033)
+
+The per-issue **agent run** executes on [`@ai-hero/sandcastle`](https://github.com/mattpocock/sandcastle), not on a hand-rolled `claude -p` / `codex exec` session whose stdout is grepped for stage transitions. The boundary is clean: **sandcastle owns the execution substrate, AFK owns the issue policy**.
+
+- **sandcastle** (one `run()` call per attempt) spawns the inner agent, creates and manages the git worktree, runs the configured sandbox, captures the agent's stream, detects the completion signal, and lands the agent's commits on the worker branch.
+- **AFK** keeps everything around that call: issue selection, the three-layer claim, the handoff file, the package-aware feedback gate, lock-toggled landing (ADR 0030), base resolution (ADR 0031), the terminal-event envelope, close, and the boot/monitor/mirror sweeps.
+
+AFK drives the sandcastle Orchestrator through **injected providers** (`SandcastleDeps`: `run`, `agentFor`, `sandboxFor`) so the single adapter module is the only code coupled to the package. The pure mapping (`buildRunOptions` → `RunOptions`, `interpretOutcome` → outcome) is unit-tested with `run` injected; the real providers are wired lazily once, on the first agent run, so a `monitor` / `reap` / empty-queue path never imports sandcastle. AFK's canonical sentinels `<promise>DONE</promise>` and `<promise>BLOCKED</promise>` are registered as sandcastle `completionSignal`s, so the [`AGENT-PROMPT.md`](AGENT-PROMPT.md) contract is unchanged — the agent still authors its own exit.
+
+`run()` returns `{ branch, commits, completionSignal }`; AFK maps `completionSignal` to an outcome (`done` / `blocked` / `no-sentinel`) and proceeds with its own feedback → landing → envelope → close. Execution is a **single `runAgent` call**, not a multi-mode dispatch over named run-modes.
 
 ## When To Use
 
@@ -285,7 +296,7 @@ For each issue `N`:
 3. **Handoff file.** Materialise the handoff into `.red/tmp/workers/{id}/{N}-a{n}/handoff.md` using the template below — top-level XML wrappers (`<issue-body>`, `<previous-attempts>`, `<prior-attempt-context>`, `<human-guidance-thread>`, `<agent-notes>`) keep the issue body, orchestrator-authored prior attempts, the restart-informed retry block, human comments, and the inner-agent scratchpad unambiguous. `<issue-body>` carries the issue body verbatim (including the `## Agent brief` section written by `/triage`). The handoff file lives one level above the worktree so the inner agent reads it via `../handoff.md` from inside the worktree, and so it survives a worktree wipe on retry.
    - **Restart-informed retries (PRD #244, issue #255).** On a terminal failure the orchestrator writes two marker files into the failing attempt dir: `snapshot-branch.ref` (the `afk-attempts/{id}/{N}-{slug}` ref it pushed to) and `failure.reason` (the envelope summary). On the **next** attempt — the runtime reads those markers *before* the current attempt dir is created, so it sees the prior attempt's state — the handoff builder fetches that snapshot branch into the worktree under the local ref `refs/afk/prior-attempt` and emits a `<prior-attempt-context>` element carrying `prev-snapshot-branch`, the verbatim `prev-failure-reason`, and `prev-fetched-ref`. The retry still branches **fresh off the base** (step 2 is unchanged), so a wrong prior approach never compounds; the fetched ref is read-only history for the inner agent to inspect. First attempts skip all of this and are byte-for-byte unchanged.
 4. **Local heartbeat marker.** Write one `[heartbeat] iteration started for #N` line to `afk.log`. Slice D retired the periodic GitHub-comment heartbeat (`:one: :two: :three: :four:`) — local liveness is now signalled by the inner-agent stdout stream tee'd into `afk.log` plus state-file mtime, both of which already exist.
-5. **Inner agent.** Invoke claude/codex per [`runner-*.md`](runner-claude.md) with [`AGENT-PROMPT.md`](AGENT-PROMPT.md) + the handoff file + last 5 commits of `main` + the optional `--request/-r` special user request block. Stream stdout into the loop's header tail. Detect stages by grep on the stream — see *Stage Detection* below.
+5. **Inner agent.** Drive the inner agent via the single sandcastle `runAgent` call (ADR 0033, *Execution Substrate* above): the handoff file is the `promptFile`, the resolved runner/model selects the provider, the resolved sandbox mode selects the isolation backend, and the worker branch is the `branchStrategy` target forked off the base resolved in step 2. The optional `--request/-r` special user request block is materialised into the handoff. sandcastle captures the agent's stream (surfaced through the `onAgentStreamEvent` callback, which AFK fans out to `agent.log.jsonl` + the firehose) and detects the `<promise>DONE|BLOCKED</promise>` completion signal; AFK reads stages off that stream — see *Stage Detection* below. The call's termination bounds (`idleTimeoutSeconds`, `maxIterations`, and the commit-anchored attempt guard) are documented under *Attempt Completion & Termination Bounds*.
 6. **Inner result.**
    - Inner committed and emits `<promise>DONE</promise>` → continue to feedback loops.
    - Inner emits `<promise>BLOCKED</promise>` plus notes appended to the handoff file → comment the blocker on the issue, re-label `ready-for-human`, drop the worktree, go to next issue.
@@ -316,26 +327,21 @@ Exhaustion detection lives in [`runner-claude.md`](runner-claude.md) and [`runne
 
 When swap happens mid-issue (only with `--fallback-runner`), the same worktree and handoff file are reused; the new runner sees the previous agent's Notes appended.
 
-## The attempt-exit reader (`<promise>` is canonical — ADR 0028)
+## Attempt Completion & Termination Bounds (`<promise>` is canonical — ADR 0028)
 
-The `<promise>…</promise>` sentinel the inner agent emits is the **canonical "attempt is over" signal** — not pipe EOF, not the child process exiting. Pipe EOF and process exit are demoted to **crash detectors**: they only matter when the agent never authored its own exit. This is the architecture fix flagged during the #216 bash-hang diagnosis ("a gente tem que ser mais sensível ao resultado da promise").
+The `<promise>…</promise>` sentinel the inner agent emits is the **canonical "attempt is over" signal**. AFK registers `<promise>DONE</promise>` and `<promise>BLOCKED</promise>` as sandcastle `completionSignal`s, so sandcastle stops re-invoking the agent the moment one is observed (line-anchored, so the agent quoting the sentinel in planning prose does not false-positive). sandcastle owns the stream read and signal detection — there is no hand-rolled foreground pipe reader, no recursive SIGTERM/SIGKILL of a `claude | jq | grep | tee` pipeline, and no `RED_AFK_ATTEMPT_GRACE_S` / `RED_AFK_ATTEMPT_KILL_S` / `RED_AFK_WATCHDOG_GRACE_S` tear-down knobs. This is the architecture fix flagged during the #216 bash-hang diagnosis ("a gente tem que ser mais sensível ao resultado da promise"): the completion signal is the terminator, and the substrate enforces it.
 
-Failure mode it closes: the inner agent emits `<promise>DONE</promise>` (or `BLOCKED`) but then leaves a tool call / background subprocess running — typically `run_in_background` followed by a `bash -c 'until grep "test result" $out; do sleep 5; done'` polling loop without a timeout. The bg task holds the stream-json pipe open, and an orchestrator that waited for EOF would hang for hours.
+`runAgent` maps the returned `completionSignal` to an outcome: `<promise>DONE</promise>` → `done`, `<promise>BLOCKED</promise>` → `blocked`, no signal → `no-sentinel`. The completion signal is the **real** terminator — a normal issue finishes in 1-3 iterations — but three independent bounds cap a run that never signals so a stuck agent cannot burn cycles forever:
 
-The runtime owns the stream-read + sentinel-detection + bounded tear-down, watching the runner's output **in the foreground** instead of waiting on the bare pipe. It tails the runner's stream capture (line-anchored match, so the agent quoting the sentinel in planning prose does not false-positive) and, once it sees `<promise>DONE|BLOCKED|NO MORE TASKS</promise>`:
+- **`idleTimeoutSeconds`** (default **600 s**, env `RED_AFK_IDLE_TIMEOUT_S`) — sandcastle's per-iteration **silence** watchdog: an iteration producing no stream output for this long is aborted. This is the actual termination bound on a quiet hang.
+- **`maxIterations`** (default **12**, env `RED_AFK_MAX_ITERATIONS`) — the sandcastle Orchestrator **re-invocation** ceiling (issue #322). sandcastle's own default is 1, which would cut the agent off after a single agentic invocation before it can emit `DONE`; AFK raises it so the completion signal stays the terminator while bounding repeated no-sentinel failures. A non-numeric / zero / negative value (env or config) is ignored and falls back to the default, so a typo can never disable the cap or pin the agent to 1.
+- **Commit-anchored attempt guard** (default **2700 s**, env `RED_AFK_ATTEMPT_TIMEOUT_S` / `afk.attempt_timeout`, ADR 0044/0045) — proof-of-**progress**: a run that stays *busy* (re-exploring, re-running tests) without landing a **new commit** within the cap is aborted, resetting on every commit. This catches the "productive infinite loop" that `idleTimeoutSeconds` misses because the agent is never silent. It maps to a `timeout` outcome → `blocked:stalled` / `ready-for-human`, preserving the worktree/PR. Armed **only under `none` (no-sandbox) isolation**, where the worker branch's commits land in the shared `.git` so HEAD advance is observable; under docker/podman the commits are not host-visible until final sync, so a commit-anchored guard would false-fire and is skipped (idle timeout + maxIterations still apply). The fleet hard **stall reaper** (see *Fleet Mode*) is separately gated by the active-`vitest`/`tsc`/`cargo`-descendant + flat-cpu predicate, so a worker mid-build/test is never killed for being idle on the agent lane.
 
-1. records the normalized outcome (`done` / `blocked` / `no_more_tasks`) in `ATTEMPT_READER_OUTCOME`;
-2. gives the child `RED_AFK_ATTEMPT_GRACE_S` (default **30**) to exit cleanly;
-3. if still alive, recursively SIGTERM the pipeline pid and every descendant (claude / codex, jq, grep, tee, and any bash child stuck in a polling loop);
-4. waits `RED_AFK_ATTEMPT_KILL_S` (default **10**), then SIGKILL anything still alive.
-
-The orchestrator proceeds with feedback loops / labelling **regardless of how the tear-down resolves** — the agent's commit work, sentinel, and result are all already on disk by the time tear-down fires, and `afk.log` still captures everything the runner printed after the sentinel (the `tee`/fan-out sits upstream of the kill). The legacy `RED_AFK_WATCHDOG_GRACE_S` is still honoured as a back-compat alias for the grace window. Setting the grace below ~5 s risks killing healthy pipelines that just haven't flushed jq's buffer; 30 s is conservative.
-
-**EOF without a sentinel is `on_attempt_error`.** If the pipe closes before any `<promise>` is observed, the agent never declared the attempt over (crash, kill, or a daemon that closed the pipe without speaking): the attempt is recorded as errored (`on_attempt_error` fires, error class `no-sentinel`), the issue lands in `ready-for-human`, and `post_attempt` does **not** fire for that invocation. **Runner exhaustion** (`RUNNER_EXHAUSTED`) stays out of the sentinel channel — it keeps its own branch and the fallback-runner swap.
+**No sentinel is `on_attempt_error`.** When sandcastle's run completes with no completion signal, the agent never declared the attempt over (crash, kill, or a daemon that ended without speaking): the outcome is `no-sentinel`, the issue lands in `ready-for-human`, `on_attempt_error` fires (error class `no-sentinel`), and `post_attempt` does **not** fire for that invocation. **Runner exhaustion** (`RUNNER_EXHAUSTED`, detected by matching the per-runner quota/rate-limit strings against the thrown sandcastle error) stays out of the sentinel channel — it keeps its own `exhausted` outcome and the `--fallback-runner` swap. A **transient runner transport/setup** failure maps to `runner-transient` and is bounded by AFK's retry policy rather than escaping as a crash.
 
 The parsed outcome rides into the `post_attempt` mutable context as `result.outcome` and the `RED_AFK_RESULT_OUTCOME` env var, so hooks (and the Memory `attempt.hooks` record, #216) see the agent-authored exit, not just `success`/`fail`.
 
-Preventive counterpart lives in [`AGENT-PROMPT.md`](AGENT-PROMPT.md) under *Background Tasks and Polling* — inner agents are required to cap every polling loop with a deadline. The bounded tear-down is the safety net; the prompt rule is the design.
+Preventive counterpart lives in [`AGENT-PROMPT.md`](AGENT-PROMPT.md) under *Background Tasks and Polling* — inner agents are required to cap every polling loop with a deadline. The termination bounds are the safety net; the prompt rule is the design.
 
 ## Heartbeat (local-only, post-Slice-D)
 
@@ -343,7 +349,7 @@ The issue-thread heartbeat (`:one:` / `:two:` / `:three:` / `:four:` cycling eve
 
 Local liveness is signalled by:
 
-- **Inner-agent stdout stream**, continuously tee'd into the iteration's `afk.log` by `run_inner` — forensic inspection of a running worker tails this file.
+- **Inner-agent stream**, captured by sandcastle (drained to the attempt dir's `sandcastle.log` via the `logging.path` lane) and surfaced through the `onAgentStreamEvent` callback AFK forwards into `afk.log` + the JSONL lanes — forensic inspection of a running worker tails these files.
 - **Clean agent lane + firehose** (issue #250) — alongside `afk.log`, the runtime fans each assistant turn out to a clean single-writer `agent.log.jsonl` (one `type=agent` record per turn, nothing synthetic — the true liveness signal, readable as a live transcript with `tail -f … | jq -r .msg`) and to a `log.jsonl` firehose that also carries the heartbeat vitals, hook dispatches, runner timings, and errors in the uniform JSONL envelope. The heartbeat writes its vitals to the firehose as a `type=heartbeat` record but never to the agent lane, so the agent lane's silence is real silence (the masking that defeated stall/reaper detection in #243). `afk.log` is unchanged and still carries the tee'd stdout + heartbeat lines below.
 - **State-file mtime**, bumped on every state update. The monitor combines orchestrator pid liveness with state-file freshness to render `🟢 live` vs `🟡 stale`.
 - **Iteration boundary markers** — `heartbeat_start` / `heartbeat_stop` write a single `[heartbeat] iteration started/stopped` line each to `afk.log` so forensic readers can see when an iteration entered and left the inner-agent stage.
@@ -435,7 +441,7 @@ The Slice D heartbeat-glyph cleanup has landed — there is no periodic `:one: :
 
 ## Stage Detection
 
-Inner agent stages, detected from stdout stream of the runner:
+Inner agent stages, derived from the sandcastle agent stream (the `onAgentStreamEvent` callback AFK fans into `agent.log.jsonl` + the firehose), not from a raw runner stdout pipe:
 
 | stage | signal |
 |-------|--------|
@@ -836,6 +842,8 @@ Scalar run settings live in `.red/config.yaml` under the `afk:` key (alongside t
 | `afk.models.codex.<tier>.effort` | — | tier-specific | Codex effort for that tier. |
 | `afk.sandbox` | `RED_AFK_SANDBOX` | `none` | Isolation backend (`none` \| `docker` \| `podman`, ADR 0033). |
 | `afk.max_iterations` | `RED_AFK_MAX_ITERATIONS` | `12` | Sandcastle re-invocation ceiling (issue #322) — the safety cap for "the agent never emits `<promise>DONE</promise>` or `<promise>BLOCKED</promise>`". The completion sentinel is the real terminator, so a normal issue finishes in 1–3 iterations; this leaves headroom without letting repeated no-sentinel failures run for too long. A non-numeric / zero / negative value in either the env or the config is ignored (falls through to the default) so a typo can never disable the cap or pin the agent to 1. |
+| — | `RED_AFK_IDLE_TIMEOUT_S` | `600` | Sandcastle's per-iteration **silence** watchdog (seconds): an iteration that produces no stream output for this long is aborted. The actual termination bound on a quiet hang. Env-only; typo-safe (non-numeric / zero / negative is ignored → default). |
+| `afk.attempt_timeout` | `RED_AFK_ATTEMPT_TIMEOUT_S` | `2700` | Commit-anchored attempt **progress** guard (seconds, ADR 0044/0045): a busy run that lands no new commit within the cap is aborted (`timeout` → `blocked:stalled` / `ready-for-human`, worktree/PR preserved), resetting on every commit. Armed only under `none` isolation. Typo-safe (env > config > default). |
 | `afk.backpressure` | — | _(empty)_ | Ordered list of shell commands run as an extra pre-merge gate on the DONE path (issue #430, PRD #429). |
 | `afk.merge.wait_for_review` | — | `false` | Merge-gate policy (ADR 0048). When `false` (default), the unlocked admin-merge proceeds **ignoring advisory review checks** (e.g. CodeRabbit) — the binding gates are `drift-guard` (the `pre_merge` hook) + in-process backpressure/feedback. When `true`, the unlocked landing **waits** for the configured review check to conclude before merging, then merges regardless of its verdict (the review stays advisory). `drift-guard` is a hard gate either way. |
 | `afk.merge.review_check` | — | `CodeRabbit` | Name (case-insensitive substring) of the advisory review check `wait_for_review` polls via `gh pr checks`. Only consulted when `afk.merge.wait_for_review` is `true`. |
@@ -852,7 +860,8 @@ afk:
         model: gpt-5.5
         effort: high
   sandbox: none
-  max_iterations: 12      # override the default ceiling here
+  max_iterations: 12      # override the default re-invocation ceiling here
+  attempt_timeout: 2700   # commit-anchored progress guard (seconds)
   backpressure:           # extra pre-merge gate, runs after the feedback gate
     - npm run test
     - npm run lint
@@ -860,6 +869,8 @@ afk:
     wait_for_review: false   # true → hold the unlocked admin-merge until the review check concludes
     review_check: CodeRabbit
 ```
+
+`RED_AFK_IDLE_TIMEOUT_S` is env-only (no `afk.*` config key); `sandbox`, `max_iterations`, and `attempt_timeout` resolve env > config > default. The three runtime bounds — silence (`idleTimeoutSeconds`), re-invocation count (`maxIterations`), and no-commit-progress (attempt guard) — are detailed under *Attempt Completion & Termination Bounds*.
 
 ### Backpressure gate
 

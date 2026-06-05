@@ -17,6 +17,7 @@
 import { decideReaperSignal, deriveSnapshot, type ProcessSnapshotEntry } from "./reaper-signal.js";
 import { buildEnvelope } from "./envelope.js";
 import { blockedLabelFor } from "./attempt-outcome.js";
+import { recoveryCap, recoveryDecision, type RecoveryEnv } from "./recovery.js";
 
 // ---------- tunables ----------
 
@@ -284,6 +285,10 @@ export interface IterDirInfo {
   notes: string;
   /** Worker lifetime in seconds for the envelope duration, or 0 when unknown. */
   durationS: number;
+  /** Real attempt number for this iteration, parsed from the `<issue>-a<N>` iter
+   * dir, or 1 when it cannot be derived. Drives the bounded stalled re-claim cap
+   * (#402) so a worker that keeps stalling escalates instead of looping forever. */
+  attempt: number;
 }
 
 /** One worker's claimed iter dirs for the trip sweep. */
@@ -309,6 +314,12 @@ export interface SupervisorDeps {
   gh: SupervisorGh;
   /** Current epoch seconds (date +%s), injected for determinism. */
   now(): number;
+  /**
+   * Env view for the bounded stalled re-claim cap (#402). Read by the stall-reaper
+   * to resolve `RED_AFK_RETRY_STALLED` via recovery.ts. Defaults to {} (the
+   * built-in cap) when absent, so tests can omit it.
+   */
+  recoveryEnv?: RecoveryEnv;
   /**
    * Optional liveness sink: one line per supervise tick (the CLI appends it to
    * afk-supervisor.log). Makes a healthy fleet's heartbeat — and a wedged one's
@@ -408,7 +419,7 @@ export function buildReaperEnvelope(info: IterDirInfo): string {
     worker: info.workerId.length > 0 ? info.workerId : "unknown",
     duration: `${info.durationS}s · stall-reaped`,
     diff: "stall-reaped",
-    attempt: 1,
+    attempt: info.attempt,
     sections: [
       { name: "notes", body: info.notes.length > 0 ? info.notes : "(no agent notes recorded before stall-reap)" },
       { name: "log", body: info.logTail, fenced: true },
@@ -556,15 +567,36 @@ export async function reapStalledSlot(
   state.stalled = false;
   state.stallSinceEpoch = 0;
 
-  // 3. Envelope + label rotation (only with a recovered issue number). ADDITIVE
-  // typed-blocked tag: the routing is unchanged (still rotates back to
-  // ready-for-agent); `blocked:stalled` is appended alongside for observability,
-  // created on the fly so a missing label never fails the reap.
+  // 3. Envelope + BOUNDED re-claim routing (only with a recovered issue number).
+  // The stall-reaper is now capped (#402): it asks recovery.ts whether this
+  // attempt may retry. While under the `stalled` cap it rotates back to
+  // ready-for-agent CLEAN — no `blocked:*` label rides along, so a re-queued issue
+  // never trips the adoption-doctor's "ready-for-agent + blocked:*" hygiene check.
+  // Once the cap is exhausted it escalates to ready-for-human carrying
+  // `blocked:stalled` (created on the fly) plus a self-explanatory page comment,
+  // exactly like the per-issue routeRecovery escalation.
   if (info && info.issue !== null) {
     await deps.gh.comment(info.issue, buildReaperEnvelope(info));
-    const typed = blockedLabelFor("stalled");
-    if (typed !== null) await deps.gh.ensureLabel(typed);
-    await deps.gh.editLabels(info.issue, typed !== null ? ["ready-for-agent", typed] : ["ready-for-agent"], ["running"]);
+    const env = deps.recoveryEnv ?? {};
+    const decision = recoveryDecision("stalled", info.attempt, env);
+    if (decision === "retry") {
+      await deps.gh.editLabels(info.issue, ["ready-for-agent"], ["running"]);
+    } else {
+      const typed = blockedLabelFor("stalled");
+      if (typed !== null) await deps.gh.ensureLabel(typed);
+      await deps.gh.editLabels(
+        info.issue,
+        typed !== null ? ["ready-for-human", typed] : ["ready-for-human"],
+        ["running", "ready-for-agent"],
+      );
+      const cap = recoveryCap("stalled", env);
+      if (cap !== null) {
+        await deps.gh.comment(
+          info.issue,
+          `🤖 /afk escalating to ready-for-human: blocked:stalled retry budget exhausted (attempt ${info.attempt}/${cap}).`,
+        );
+      }
+    }
   }
 
   // 4. Teardown.

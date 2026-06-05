@@ -151,3 +151,16 @@ bundle, never `dist/` or `node_modules`.
   end-to-end against the published release, not just `--help`.
 - This is the operational-delivery half of ADR 0027 / PRD #217: with it, hooks
   fire the CLI in installed copies for the first time.
+
+## Status
+
+Accepted; post-0041 scope note. The release-asset fetch strategy remains the
+memory-runtime delivery model, but after the ADR 0041 migration the runtime it
+fetches is owned and published by the `red-memory` repo. In red-skills, the
+memory plugin becomes a consumer/launcher for that `red-memory` bundle rather
+than the build source for `plugins/memory/dist/` or an in-repo Memory CLI.
+
+## Related
+
+- ADR 0041 — red-skills consumes the `red-memory` and `red-ui` MCPs instead of
+  building the memory plugin in this repo.

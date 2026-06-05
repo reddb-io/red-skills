@@ -16,13 +16,16 @@ nothing through the engine the plugin already embeds (issue #69, slice #69).
 Extraction is done by an **LLM, routed through RedDB's engine-side AI provider
 modes**, selected from user config — not a bundled ML stack.
 
-- **Provider modes.** `MemoryConfig.provider` selects one of `openai-compat`
-  (a local Ollama or any OpenAI-compatible endpoint), `openai-native`, or
-  `anthropic-native`. `resolveProvider` turns that config into a concrete
-  endpoint and classifies egress: an `openai-compat` `baseUrl` on a loopback
-  host is `local` (no external network egress); everything else is `external`.
-  The engine reads the resolved endpoint/model/key from environment
-  (`applyProviderEnv`), the same way it reads the rest of its provider config.
+- **Provider modes.** `MemoryConfig.provider` selects one of four modes:
+  `openai-compat` (a local Ollama or any OpenAI-compatible endpoint),
+  `openai-native`, `anthropic-native`, or `bedrock` (an AWS-account-hosted
+  model, endpoint derived from `region` as `bedrock-runtime.<region>` unless an
+  explicit `baseUrl` is given). `resolveProvider` turns that config into a
+  concrete endpoint and classifies egress: an `openai-compat` `baseUrl` on a
+  loopback host is `local` (no external network egress); everything else,
+  `bedrock` included, is `external`. The engine reads the resolved
+  endpoint/model/key from environment (`applyProviderEnv`), the same way it
+  reads the rest of its provider config.
 
 - **A single mockable seam.** All model access goes through the `ProviderClient`
   interface (`complete(req) → string`). Production wires `redDbProviderClient`
@@ -35,7 +38,10 @@ modes**, selected from user config — not a bundled ML stack.
   `confidence: "INFERRED"`. The deterministic tree-sitter/markdown paths
   (`extractCode`, `extractMarkdown`) are untouched and keep emitting `EXTRACTED`.
   Confidence is the durable signal that separates a parsed fact from an inferred
-  one (ADR 0007's schema).
+  one (ADR 0007's schema). ADR 0035 later extended this INFERRED path:
+  extracted facts now carry a two-axis stamp — a closed structural `node_type`
+  plus an open `engineering_code` — so an out-of-vocabulary inferred type is
+  preserved rather than rejected or flattened.
 
 - **Write-path-only.** Extraction fires only from the Stop hook and explicit
   `/memory:store` (the `memory extract` CLI verb) — never on recall/search. The
@@ -52,7 +58,9 @@ modes**, selected from user config — not a bundled ML stack.
   configured; without one, `ASK` degrades and extraction yields no facts —
   best-effort, exactly like `engine.ask`. It is therefore not unit-tested; the
   deterministic stub behind the same interface is what the suite exercises.
-- `@reddb-io/sdk@1.2.5` exposes only `ASK` as an LLM entrypoint, so the
-  production client folds the system+user turns into one `ASK` prompt. A raw
-  chat-completion entrypoint on the SDK would let the client drop that fold; the
-  `ProviderClient` seam absorbs that change without touching extraction.
+- `@reddb-io/sdk@1.7.0` exposes `ASK` as its single LLM/SQL surface, so the
+  plugin never imports an LLM SDK directly: the production client passes a
+  two-turn (system + user) chat to the `ProviderBridge`, which routes it through
+  `ASK`. A raw chat-completion entrypoint on the SDK would let the bridge drop
+  that routing; the `ProviderClient` seam absorbs that change without touching
+  extraction.
