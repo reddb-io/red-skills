@@ -18,9 +18,14 @@ import {
 import {
   resolveProvider,
   type AiProviderConfig,
+  type ProviderClient,
   type Egress,
   type ProviderMode,
 } from "./extract-conversation.js";
+import {
+  buildMemoryGovernanceTidyRecommendations,
+  type MemoryGovernanceTidyRecommendations,
+} from "./governance-tidy.js";
 
 export type MemoryGovernanceStatus = "ok" | "attention" | "degraded";
 export type MemoryGovernanceTidyStatus = "available" | "degraded" | "unavailable";
@@ -62,6 +67,7 @@ export interface MemoryGovernanceReport {
   contradictions: ContradictionSummary[];
   supersession: Array<{ rid: number; active_rid: number }>;
   tidy_availability: MemoryGovernanceTidyAvailability;
+  tidy_recommendations: MemoryGovernanceTidyRecommendations;
   recommended_next_actions: string[];
 }
 
@@ -75,7 +81,15 @@ interface GovernanceEdge {
 
 export async function buildMemoryGovernanceReport(
   store: MemoryStore,
-  opts: { staleProgressDays?: number; now?: number; providerConfig?: AiProviderConfig } = {},
+  opts: {
+    staleProgressDays?: number;
+    now?: number;
+    providerConfig?: AiProviderConfig;
+    providerClient?: ProviderClient;
+    tidyRecommendationCap?: number;
+    tidyCandidateLimit?: number;
+    tidyMaxRecommendationRatio?: number;
+  } = {},
 ): Promise<MemoryGovernanceReport> {
   const [nodes, rawEdges] = await Promise.all([store.listNodes(opts.now), store.listEdges()]);
   const edges = rawEdges.map(toGovernanceEdge);
@@ -113,7 +127,19 @@ export async function buildMemoryGovernanceReport(
     superseded_nodes: superseded.size,
     audit_edges: auditEdges,
   };
-  const tidyAvailability = governanceTidyAvailability(opts.providerConfig);
+  const baseTidyAvailability = governanceTidyAvailability(opts.providerConfig);
+  const tidyRecommendations = await buildMemoryGovernanceTidyRecommendations(store, {
+    providerConfig: opts.providerConfig,
+    providerClient: opts.providerClient,
+    now: opts.now,
+    recommendationCap: opts.tidyRecommendationCap,
+    candidateLimit: opts.tidyCandidateLimit,
+    maxRecommendationRatio: opts.tidyMaxRecommendationRatio,
+  });
+  const tidyAvailability = tidyAvailabilityWithRecommendationStatus(
+    baseTidyAvailability,
+    tidyRecommendations,
+  );
   return {
     schema_version: "memory.governance.v1",
     read_only: true,
@@ -128,6 +154,7 @@ export async function buildMemoryGovernanceReport(
       .map(([rid, activeRid]) => ({ rid, active_rid: activeRid }))
       .sort((a, b) => a.rid - b.rid),
     tidy_availability: tidyAvailability,
+    tidy_recommendations: tidyRecommendations,
     recommended_next_actions: recommendations(summary, privacy, lint, tidyAvailability),
   };
 }
@@ -217,6 +244,21 @@ function governanceTidyAvailability(
       next_action: "fix the configured Memory AI provider before running governance tidy",
     };
   }
+}
+
+function tidyAvailabilityWithRecommendationStatus(
+  availability: MemoryGovernanceTidyAvailability,
+  tidyRecommendations: MemoryGovernanceTidyRecommendations,
+): MemoryGovernanceTidyAvailability {
+  if (availability.status !== "available" || tidyRecommendations.status !== "degraded") {
+    return availability;
+  }
+  return {
+    ...availability,
+    status: "degraded",
+    reason: tidyRecommendations.reason,
+    next_action: "inspect provider tidy warnings; deterministic governance remains available",
+  };
 }
 
 function provenanceCoverage(nodes: StoredNode[]): MemoryGovernanceReport["provenance"] {
