@@ -217,7 +217,7 @@ async function main(): Promise<void> {
     if (operation) {
       const output = await executeReadOnlyMemoryOperation(
         operation.id,
-        { store, rootDir: root, providerConfig: config?.provider },
+        { store, rootDir: root, providerConfig: config?.provider, transportSurface: "mcp" },
         args,
       );
       return text(

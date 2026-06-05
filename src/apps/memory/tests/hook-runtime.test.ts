@@ -79,6 +79,31 @@ describe("PreCompact flush → SessionStart recall across /clear (AC1, AC2)", ()
       const recall = await dispatch(input("SessionStart", { goal: "zigzag caching" }), root);
       expect(recall.noop).toBe(false);
       expect(recall.inject).toMatch(/zigzag caching/i);
+      expect(recall.injection?.deliveredNodeIds.length).toBeGreaterThan(0);
+
+      const config = await readConfig(root);
+      if (!config) throw new Error("config missing after init");
+      const store = await MemoryStore.open({ uri: resolveStoreUri(root, config) });
+      try {
+        const events = await readMemoryEvents(store);
+        expect(events).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              kind: "memory.injection.delivered",
+              payload: expect.objectContaining({
+                delivery_surface: "hook",
+                hook_event: "SessionStart",
+                delivered_citation_ids: expect.arrayContaining([
+                  expect.stringMatching(/^memory_nodes:/),
+                ]),
+                delivered_node_ids: expect.arrayContaining([expect.any(Number)]),
+              }),
+            }),
+          ]),
+        );
+      } finally {
+        await store.close();
+      }
     },
     TIMEOUT,
   );
