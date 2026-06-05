@@ -11,6 +11,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [Document Brain ownership of personal facts](./pages/495-document-brain-ownership-of-personal-facts.md)
 - [Memory governance reports tidy availability](./pages/492-memory-governance-reports-tidy-availability.md)
 - [Provider review artifacts persist tidy state outside the graph](./pages/493-provider-review-artifacts-persist-tidy-state-outside-the-gra.md)
+- [Provider tidy recommendations appear in read-only governance](./pages/496-provider-tidy-recommendations-appear-in-read-only-governance.md)
 - [build(release): one bundle-naming convention, all assets under ./dist/ (ADR 0052)](./pages/480-build-release-one-bundle-naming-convention-all-assets-under.md)
 - [chore(afk): native + sandcastle E2E smoke test (#284 gate)](./pages/291-chore-afk-native-sandcastle-e2e-smoke-test-284-gate.md)
 - [chore(afk): rebuild committed bin/afk.mjs from current source](./pages/320-chore-afk-rebuild-committed-bin-afk-mjs-from-current-source.md)
