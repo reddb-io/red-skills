@@ -118,6 +118,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [ship: #499 Brain hybrid search foundation](./pages/500-ship-499-brain-hybrid-search-foundation.md)
 - [ship: #501 Release v1.169.1](./pages/502-ship-501-release-v1-169-1.md)
 - [ship: #503 Add /ff, /research, and /dashboard skills](./pages/504-ship-503-add-ff-research-and-dashboard-skills.md)
+- [ship: #517 Add /daily-review and /weekly-review skills](./pages/518-ship-517-add-daily-review-and-weekly-review-skills.md)
 - [test(afk): backpressure gate covers the salvaged no-sentinel path (#432)](./pages/439-test-afk-backpressure-gate-covers-the-salvaged-no-sentinel-p.md)
 - [test(afk): injectable exec seam makes the runtime wiring testable](./pages/296-test-afk-injectable-exec-seam-makes-the-runtime-wiring-testa.md)
 - [test(memory): split vitest suite into fast gate + integration project (#242)](./pages/264-test-memory-split-vitest-suite-into-fast-gate-integration-pr.md)
