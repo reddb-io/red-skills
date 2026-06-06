@@ -99,6 +99,7 @@ describe("read-only Memory operations registry", () => {
         "memory.layers",
         "memory.layers-viewer",
         "memory.lint",
+        "memory.map-context",
         "memory.merge-pass",
         "memory.onboarding-map",
         "memory.onboarding-map-viewer",
@@ -182,6 +183,7 @@ describe("read-only Memory operations registry", () => {
         "memory_layers",
         "memory_layers_viewer",
         "memory_lint",
+        "memory_map_context",
         "memory_merge_pass",
         "memory_onboarding_map",
         "memory_onboarding_map_viewer",
@@ -247,6 +249,19 @@ describe("read-only Memory operations registry", () => {
       kind: "viewer",
       artifact: "self-contained-html",
       fileSink: { field: "out", sources: ["flag", "query"], type: "path" },
+    });
+    expect(getReadOnlyMemoryOperation("memory.map-context")).toMatchObject({
+      renderer: {
+        cli: { command: "map-context", supportsJson: true },
+        mcp: { toolName: "memory_map_context" },
+      },
+      inputBinding: {
+        fields: expect.arrayContaining([
+          expect.objectContaining({ field: "query", variadic: true }),
+          expect.objectContaining({ field: "context", sources: ["flag", "query"] }),
+        ]),
+      },
+      outputKind: { kind: "report", format: "json" },
     });
     expect(
       getReadOnlyMemoryOperation("memory.smart-search-viewer").outputKind,

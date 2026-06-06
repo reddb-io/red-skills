@@ -59,6 +59,11 @@ export const SUPPORTED_ROUTING_AGENTS: MemoryRoutingAgent[] = [
 
 const RULES: MemoryRoutingRule[] = [
   {
+    when: "Before broad grep, recursive file reads, or opening many source files to understand code structure",
+    call: "memory_map_context with the concrete code question; use context filters such as call, import, type, validation, decision, work, or reference when known",
+    reason: "Route through the RedDB graph first so the agent gets a compact cited NODE/EDGE slice with weights, salience, confidence, and sources before spending tokens on raw code.",
+  },
+  {
     when: "Before architecture, migration, or multi-file implementation work",
     call: "memory_context_pack with the concrete goal",
     reason: "Load prior decisions, validations, warnings, and citations before planning.",
@@ -96,6 +101,7 @@ const RULES: MemoryRoutingRule[] = [
 ];
 
 const MCP_TOOLS = [
+  "memory_map_context",
   "memory_recall",
   "memory_context_pack",
   "memory_handoff",
@@ -111,6 +117,7 @@ const MCP_TOOLS = [
 ];
 
 const CLI_FALLBACKS = [
+  "memory map-context <query> --json",
   "memory recall <query>",
   "memory context-pack <goal> --json",
   "memory handoff [focus] --json",

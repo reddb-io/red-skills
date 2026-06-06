@@ -104,6 +104,7 @@ import {
 import { buildMemoryGovernanceViewerArtifact } from "./governance-viewer.js";
 import { MemoryStore, factToNode } from "./graph-store.js";
 import { HistoricalMemoryStore } from "./historical-memory-store.js";
+import { buildMemoryMapContextSlice } from "./map-context.js";
 import { createMemoryHttpServer } from "./http-server.js";
 import { ingestGuidance } from "./audit-marker.js";
 import { evaluateDriftGuard } from "./drift-guard.js";
@@ -278,6 +279,7 @@ const USAGE = `memory — governed operational memory for code agents
 Common workflows:
   remember one fact          memory store "Decision: ..."
   get context before acting  memory recall "topic"
+  map code before reading    memory map-context "who calls token refresh?"
   prepare another agent      memory context-pack "goal"  | memory handoff "focus"
   decide if safe to proceed  memory readiness "goal"     | memory claim-check "assertion"
   search every surface       memory smart-search "query"
@@ -408,6 +410,7 @@ Usage:
 
   Graph-mode read verbs (require \`memory init --mode graph\`):
   memory search <query...>          [--root <dir>] [--limit N]
+  memory map-context <query...>     [--root <dir>] [--depth N] [--mode bfs|dfs] [--context call,import,type,validation,decision,work,reference] [--budget N] [--json]
   memory neighbors <label>          [--root <dir>] [--depth N] [--direction outgoing|incoming|both]
   memory traverse <label>           [--root <dir>] [--depth N] [--strategy bfs|dfs] [--direction ...]
   memory path <from> <to>           [--root <dir>] [--algorithm bfs|dijkstra]
@@ -5496,6 +5499,36 @@ async function runSearch(args: ParsedArgs): Promise<void> {
   }
 }
 
+async function runMapContext(args: ParsedArgs): Promise<void> {
+  const query = args.positional.join(" ").trim();
+  if (!query) throw new Error("nothing to map — pass a query: memory map-context <query>");
+  const { store } = await openGraphStore(args);
+  try {
+    const contextRaw = stringFlag(args.flags, "context");
+    const slice = await buildMemoryMapContextSlice(store, query, {
+      depth: intFlag(args.flags, "depth") ?? 2,
+      mode: mapContextModeFlag(args.flags),
+      tokenBudget: intFlag(args.flags, "budget") ?? 1800,
+      contextFilters: contextRaw
+        ? contextRaw.split(",").map((part) => part.trim()).filter(Boolean)
+        : undefined,
+    });
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(slice, null, 2));
+      return;
+    }
+    console.log(slice.context_md);
+  } finally {
+    await store.close();
+  }
+}
+
+function mapContextModeFlag(flags: Record<string, string | boolean>): "bfs" | "dfs" {
+  const mode = strFlag(flags, "mode", "bfs");
+  if (mode === "bfs" || mode === "dfs") return mode;
+  throw new Error("map-context --mode must be bfs or dfs");
+}
+
 async function runNeighbors(args: ParsedArgs): Promise<void> {
   const label = args.positional[0];
   if (!label) throw new Error("pass a node label: memory neighbors <label>");
@@ -6905,6 +6938,8 @@ async function main(): Promise<void> {
       return runCodeCurate(args);
     case "search":
       return runSearch(args);
+    case "map-context":
+      return runMapContext(args);
     case "neighbors":
       return runNeighbors(args);
     case "traverse":

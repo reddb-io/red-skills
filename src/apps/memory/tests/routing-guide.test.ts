@@ -111,12 +111,14 @@ describe("Memory routing guide", () => {
     expect(body.supportedAgents).toContain("cursor");
     expect(body.integration.transports).toContain("mcp");
     expect(body.integration.configSnippets[0]?.body).toContain("memory-mcp");
+    expect(body.installSnippet).toContain("memory_map_context");
     expect(body.installSnippet).toContain("memory_pre_pr_review");
 
     const text = runMemory(["routing-guide", "--agent", "codex"]);
     expect(text.status, text.stderr).toBe(0);
     expect(text.stdout).toContain("memory: routing guide");
     expect(text.stdout).toContain("Target file: AGENTS.md");
+    expect(text.stdout).toContain("memory_map_context");
 
     const root = await mkdtemp(join(tmpdir(), "memory-routing-guide-"));
     roots.push(root);
