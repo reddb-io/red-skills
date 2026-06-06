@@ -110,9 +110,49 @@ describe("tryAcquireClaimDir (#434 atomic claim)", () => {
     const root = scratch();
     try {
       const dir = join(root, "claims", "430");
-      expect(await tryAcquireClaimDir(dir, 4242)).toBe(true);
+      expect(await tryAcquireClaimDir(dir, process.pid)).toBe(true);
       expect(await tryAcquireClaimDir(dir, 9999)).toBe(false);
-      expect(readFileSync(join(dir, "pid"), "utf8")).toBe("4242");
+      expect(readFileSync(join(dir, "pid"), "utf8")).toBe(String(process.pid));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("self-heals a stale existing claim before acquiring", async () => {
+    const root = scratch();
+    try {
+      const dir = join(root, "claims", "431");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "pid"), DEAD_PID);
+      expect(await tryAcquireClaimDir(dir, process.pid)).toBe(true);
+      expect(readFileSync(join(dir, "pid"), "utf8")).toBe(String(process.pid));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not remove a live existing claim while self-healing", async () => {
+    const root = scratch();
+    try {
+      const dir = join(root, "claims", "432");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "pid"), ALIVE_PID);
+      expect(await tryAcquireClaimDir(dir, 4242)).toBe(false);
+      expect(readFileSync(join(dir, "pid"), "utf8")).toBe(ALIVE_PID);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("quarantines a poisoned non-directory claim path by replacing it", async () => {
+    const root = scratch();
+    try {
+      const claims = join(root, "claims");
+      mkdirSync(claims, { recursive: true });
+      const dir = join(claims, "433");
+      writeFileSync(dir, "not a claim directory");
+      expect(await tryAcquireClaimDir(dir, process.pid)).toBe(true);
+      expect(readFileSync(join(dir, "pid"), "utf8")).toBe(String(process.pid));
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
