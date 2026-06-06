@@ -3,7 +3,7 @@ title: feat(afk): externalize proof-of-life — heartbeat record, state field, o
 type: source
 tags: [pr, merged]
 created: 2026-06-02
-updated: 2026-06-02
+updated: 2026-06-06
 sources: [pr-401]
 pr: 401
 merge_sha: 21b4e53683a0b12cde2b574916f6e6ee3c39c770
@@ -18,7 +18,7 @@ merge_sha: 21b4e53683a0b12cde2b574916f6e6ee3c39c770
 
 ## Summary
 
-Follow-up to #400 (ADR 0044's attempt progress guard). Externalizes the proof-of-life signal **"pra quem quiser integrar"**.
+Follow-up to #400 (ADR 0044's attempt progress guard). Externalizes the proof-of-life signal for any external integration that wants to consume it.
 
 ## Two findings that shaped it
 - The ported periodic `emitHeartbeatTick` was **never wired** in the native runtime — no periodic heartbeat fired during a run.
@@ -33,6 +33,13 @@ Follow-up to #400 (ADR 0044's attempt progress guard). Externalizes the proof-of
   - **push** → `on_heartbeat` user-shell hook (new canonical hook, `continue` policy; the first **periodic** one, ADR 0026 model)
 
 Armed where the guard is armed (no-sandbox); under docker/podman neither fires (commits not host-visible mid-run). No second loop — the guard poll is the single cadence.
+
+## Current ADR record (2026-06-06)
+
+ADR 0045 is accepted as the externalized proof-of-life layer for ADR 0044. ADR
+0026 now records `on_heartbeat` as the first periodic lifecycle hook with a
+`continue` policy, distinct from once-per-point interceptors. ADR 0042 locates
+the hook config under `plugins.dev.afk`.
 
 ## Tests
 dev suite **855 pass** (+ `startAttemptGuard` onTick, `runAgent` onHeartbeat forwarding; updated hook-dispatcher policy table). typecheck clean.
@@ -62,4 +69,3 @@ drift-guard: `Memory-NoIngest` (ADR 0027).
 - `src/apps/dev/src/types/state.ts`
 - `src/apps/dev/tests/execution.test.ts`
 - `src/apps/dev/tests/hook-dispatcher.test.ts`
-
