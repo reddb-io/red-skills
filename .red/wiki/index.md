@@ -38,6 +38,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [docs(readme): redact AFK usage from public README + fix dev bundle CI build](./pages/321-docs-readme-redact-afk-usage-from-public-readme-fix-dev-bund.md)
 - [docs(triage-labels): align running-state liveness with Slice D (timeline-only)](./pages/361-docs-triage-labels-align-running-state-liveness-with-slice-d.md)
 - [docs: align AFK failure recovery contract](./pages/512-docs-align-afk-failure-recovery-contract.md)
+- [docs: propagate ADR record to wiki and Memory](./pages/514-docs-propagate-adr-record-to-wiki-and-memory.md)
 - [feat(afk): --boot-only dry-run + parallelize boot reads + fix smoke](./pages/324-feat-afk-boot-only-dry-run-parallelize-boot-reads-fix-smoke.md)
 - [feat(afk): RED_AFK_SANDBOX env override + fix E2E smoke docker path](./pages/310-feat-afk-red-afk-sandbox-env-override-fix-e2e-smoke-docker-p.md)
 - [feat(afk): TypeScript runtime — committed bundle, release pipeline, 21 ported modules](./pages/282-feat-afk-typescript-runtime-committed-bundle-release-pipelin.md)
@@ -130,4 +131,5 @@ _(no concepts yet)_
 
 ## Syntheses
 
-- [ADR record propagation receipt for issue 420](./pages/420-adr-record-propagation-receipt.md) - wiki and Memory propagation receipt for PRD #414 pass 4. 2 sources.
+- [ADR record propagation receipt for issue 420](./pages/420-adr-record-propagation-receipt.md)
+
