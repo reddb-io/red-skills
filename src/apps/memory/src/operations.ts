@@ -228,6 +228,10 @@ import {
   type MemoryRoutingGuide,
 } from "./routing-guide.js";
 import {
+  buildMemoryMapContextSlice,
+  type MemoryMapContextSlice,
+} from "./map-context.js";
+import {
   buildMemoryRoutingGuideViewerArtifact,
   type MemoryRoutingGuideViewerArtifact,
 } from "./routing-guide-viewer.js";
@@ -450,6 +454,15 @@ const ContextPackInputSchema = ScopeInputSchema.extend({
   depth: z.number().int().min(0).max(5).optional(),
 });
 type ContextPackInput = z.infer<typeof ContextPackInputSchema>;
+
+const MapContextInputSchema = z.object({
+  query: z.string().min(1),
+  depth: z.number().int().min(0).max(5).optional(),
+  mode: z.enum(["bfs", "dfs"]).optional(),
+  budget: z.number().int().min(100).max(20_000).optional(),
+  context: z.union([z.string(), z.array(z.string())]).optional(),
+});
+type MapContextInput = z.infer<typeof MapContextInputSchema>;
 
 const ClaimCheckInputSchema = z.object({ assertion: z.string().min(1) });
 type ClaimCheckInput = z.infer<typeof ClaimCheckInputSchema>;
@@ -812,6 +825,7 @@ const GlobalSearchOutputSchema = z.object({
 const AskOutputSchema = objectOutputSchema<AskResult>();
 const ReadinessOutputSchema = objectOutputSchema<MemoryReadinessEnvelope>();
 const ContextPackOutputSchema = objectOutputSchema<ContextPack>();
+const MapContextOutputSchema = objectOutputSchema<MemoryMapContextSlice>();
 const ContextPackViewerOutputSchema = objectOutputSchema<ContextPackViewerArtifact>();
 const ClaimCheckOutputSchema = objectOutputSchema<ClaimCheckResult>();
 const DocBriefOutputSchema = objectOutputSchema<DocBrief>();
@@ -1023,6 +1037,16 @@ const MEMORY_OPERATION_FACETS: Record<string, MemoryOperationFacets> = {
       "memory.context-pack": JSON_REPORT_OUTPUT,
       "memory.context-pack-viewer": VIEWER_OUTPUT,
     },
+  ),
+  ...operationFacets(
+    ["memory.map-context"],
+    joinedPositionalInput("query", [
+      flagField("depth", "number"),
+      flagField("mode", "string"),
+      flagField("context", "string"),
+      flagField("budget", "number"),
+    ]),
+    JSON_REPORT_OUTPUT,
   ),
   ...operationFacets(
     ["memory.doc-search", "memory.doc-search-viewer"],
@@ -1509,6 +1533,40 @@ const CONTEXT_PACK_VIEWER_OPERATION: MemoryOperationDefinition<
     });
     return buildContextPackViewerArtifact(pack);
   },
+};
+
+const MAP_CONTEXT_OPERATION: MemoryOperationDefinition<
+  MapContextInput,
+  MemoryMapContextSlice
+> = {
+  id: "memory.map-context",
+  title: "Memory map context",
+  description:
+    "Graphify-style compact graph slice for orienting code agents before broad source reads.",
+  inputSchema: MapContextInputSchema,
+  outputSchema: MapContextOutputSchema,
+  safetyClass: "read-only",
+  sideEffectClass: "none",
+  capabilities: ["graph-store"],
+  renderer: {
+    cli: { command: "map-context", supportsJson: true },
+    mcp: {
+      toolName: "memory_map_context",
+      description:
+        "Read-only RedDB graph context slice for code agents. Scores node seeds from a query, traverses typed edges, returns compact NODE/EDGE markdown plus JSON metadata with edge weight, salience, confidence, and diagnostics.",
+    },
+  },
+  execute: (ctx, input) =>
+    buildMemoryMapContextSlice(ctx.store, input.query, {
+      depth: input.depth,
+      mode: input.mode,
+      tokenBudget: input.budget,
+      contextFilters:
+        typeof input.context === "string"
+          ? input.context.split(",").map((part) => part.trim()).filter(Boolean)
+          : input.context,
+      now: ctx.now,
+    }),
 };
 
 const CLAIM_CHECK_OPERATION: MemoryOperationDefinition<ClaimCheckInput, ClaimCheckResult> = {
@@ -3364,6 +3422,7 @@ const READ_ONLY_OPERATIONS = createReadOnlyMemoryOperationRegistry([
   REFERENCE_RADAR_OPERATION,
   CONTEXT_PACK_OPERATION,
   CONTEXT_PACK_VIEWER_OPERATION,
+  MAP_CONTEXT_OPERATION,
   DASHBOARD_OPERATION,
   DOC_COVERAGE_OPERATION,
   DOC_COVERAGE_VIEWER_OPERATION,

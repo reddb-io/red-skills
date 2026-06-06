@@ -1500,6 +1500,23 @@ async function operationStructuredContent(
         html_bytes: typeof output.html === "string" ? Buffer.byteLength(output.html, "utf8") : 0,
       };
     }
+    case "memory.map-context": {
+      const diagnostics = isRecord(output.diagnostics) ? output.diagnostics : {};
+      const traversal = isRecord(output.traversal) ? output.traversal : {};
+      return {
+        operation_id: operationId,
+        schema_version: output.schema_version,
+        query: output.query,
+        mode: traversal.mode,
+        depth: traversal.depth,
+        context_filters: arrayLength(traversal.context_filters),
+        seeds: arrayLength(output.seeds),
+        nodes: arrayLength(output.nodes),
+        edges: arrayLength(output.edges),
+        truncated: diagnostics.truncated,
+        omitted_nodes: diagnostics.omitted_nodes,
+      };
+    }
     case "memory.routing-guide":
       return {
         operation_id: operationId,

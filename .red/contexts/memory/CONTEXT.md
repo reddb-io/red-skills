@@ -589,11 +589,11 @@ The semantic and analytic attributes Memory provides as decision inputs for data
 _Avoid_: Memory UI projection, graph layout contract, red-ui implementation detail
 
 **Memory map context slice**:
-A compact, cited answer-shaped subgraph selected from **Memory map** evidence for Claude Code/Codex before broad source-file reading, containing the relevant files, symbols, relations, source locations, connected decisions, validations, risks, and recommended next reads within a token budget.
+A compact, cited subgraph selected from **Memory map** evidence for Claude Code/Codex before broad source-file reading, containing the relevant files, symbols, relations, source locations, connected decisions, validations, risks, and recommended next reads within a token budget.
 _Avoid_: raw graph dump, visual map, generated prose answer
 
 **Memory map edge weight**:
-The topological strength of a Memory map edge, usually the count or aggregate strength of concrete relationships between two vertices or two communities.
+The topological strength of a Memory map edge, usually the count or aggregate strength of concrete relationships between two vertices or two communities, independent of how any UI chooses to draw the edge.
 _Avoid_: confidence score, UI opacity, importance score
 
 **Memory map edge salience**:
@@ -718,6 +718,12 @@ _Avoid_: memory rollback, historical search
 - **Memory ask gap analysis** makes GBrain-style answer gaps explicit while staying grounded in Memory evidence, supersession, contradictions, and confidence.
 - A **Memory backup snapshot** preserves the local RedDB/notes/config persistence surface for restore; graph export remains the read-only inspection bundle.
 - **Memory interop export** emits Graphify/Neo4j-style exchange artifacts while preserving RedDB as the canonical persistence layer.
+- **Memory map** uses RedDB as the canonical destination; Graphify-style HTML/JSON/GraphML outputs are optional interop projections, not Memory's source of truth.
+- **Memory map context slice** is the Graphify-style agent-routing surface: agents query the graph before broad grep or recursive file reads to reduce tokens and sharpen source inspection.
+- **Memory map metadata** may include weight, salience, confidence, provenance, community, source location, and freshness, but graph layout, color palettes, labels, opacity, filtering interactions, and other UI/UX decisions belong to red-ui or another frontend consumer.
+- **Memory map edge weight** and **Memory map edge salience** are separate signals: weight names relationship strength, salience names navigation priority.
+- **Memory map analytic cache** may persist expensive RedDB analytics results such as communities, while cheap metrics may be computed on read.
+- **Memory map boundary** keeps **Brain** totally disconnected from **Memory map**; complementary sources can feed Memory map only when they ground project code, docs, assets, or operational evidence in RedDB.
 - The **Memory local HTTP server** is optional UI/API transport over existing read-only Memory contracts, not the canonical persistence process.
 - The **Memory local HTTP server** exposes docs search/brief/bundle/read/related/coverage/reference-graph and the **Doc brief viewer**, **Doc bundle viewer**, **Doc evidence pack viewer**, **Doc search viewer**, plus **Doc reference graph viewer** from `memory_docs` and graph evidence; it does not read arbitrary filesystem paths.
 - The **Memory multi-agent integration guide** routes multiple coding agents to the same project-local RedDB Memory store through MCP, loopback HTTP, agent rules, and hooks where a runner supports them.

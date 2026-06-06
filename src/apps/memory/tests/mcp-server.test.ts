@@ -59,8 +59,19 @@ async function seedStore(): Promise<string> {
       hash: "jwt-doc",
       updated_at: 123,
     });
-    await store.upsertEdge({ label: "REFERENCES", from_rid: auth, to_rid: jwt });
-    await store.upsertEdge({ label: "REFERENCES", from_rid: jwt, to_rid: cache });
+    await store.upsertEdge({
+      label: "REFERENCES",
+      from_rid: auth,
+      to_rid: jwt,
+      weight: 2,
+      properties: { confidence: "EXTRACTED" },
+    });
+    await store.upsertEdge({
+      label: "REFERENCES",
+      from_rid: jwt,
+      to_rid: cache,
+      properties: { confidence: "INFERRED" },
+    });
   } finally {
     await store.close();
   }
@@ -219,6 +230,7 @@ describe("MCP server over stdio", () => {
           "memory_layers",
           "memory_layers_viewer",
           "memory_lint",
+          "memory_map_context",
           "memory_merge_pass",
           "memory_neighbors",
           "memory_onboarding_map",
@@ -1705,6 +1717,40 @@ describe("MCP server over stdio", () => {
       expect(nodes.some((n) => n.label === "auth-service")).toBe(true);
       expect(result.structuredContent?.diagnostics).toMatchObject({
         vector: { status: "unavailable" },
+      });
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "memory_map_context returns a compact graph slice for code-agent routing",
+    async () => {
+      const client = await connect(await seedStore());
+      const result = (await client.callTool({
+        name: "memory_map_context",
+        arguments: { query: "jwt rotation references", depth: 1, context: "reference" },
+      })) as ToolResult;
+
+      const slice = JSON.parse(result.content[0]?.text ?? "{}") as {
+        schema_version: string;
+        context_md: string;
+        nodes: Array<{ label: string; source: string | null }>;
+        edges: Array<{ label: string; weight: number; salience: number }>;
+        diagnostics: { selected_nodes: number; selected_edges: number };
+      };
+      expect(slice.schema_version).toBe("memory.map_context.v1");
+      expect(slice.context_md).toContain("NODE");
+      expect(slice.context_md).toContain("EDGE");
+      expect(slice.nodes.some((node) => node.label === "jwt-rotation")).toBe(true);
+      expect(slice.edges.some((edge) => edge.weight === 2 && edge.salience === 2)).toBe(true);
+      expect(result.structuredContent).toMatchObject({
+        operation_id: "memory.map-context",
+        schema_version: "memory.map_context.v1",
+        query: "jwt rotation references",
+        mode: "bfs",
+        depth: 1,
+        nodes: slice.diagnostics.selected_nodes,
+        edges: slice.diagnostics.selected_edges,
       });
     },
     TIMEOUT,
