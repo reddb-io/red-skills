@@ -29,6 +29,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [docs(adr): 0040 version single-source + version-aware; 0039 two-MCP memory plugin; doctor checks 6/7](./pages/385-docs-adr-0040-version-single-source-version-aware-0039-two-m.md)
 - [docs(adr): 0043 — RedSkills teaches and enforces an interactive development loop](./pages/393-docs-adr-0043-redskills-teaches-and-enforces-an-interactive.md)
 - [docs(adr): 0049 — model-tier routing embedded in the plugin, enforced by the shared trio (per runner)](./pages/445-docs-adr-0049-model-tier-routing-embedded-in-the-plugin-enfo.md)
+- [docs(adr): refresh ADR index edges](./pages/513-docs-adr-refresh-adr-index-edges.md)
 - [docs(adr): resolve 0039 collision (consume→0041) + add ADR INDEX.md](./pages/386-docs-adr-resolve-0039-collision-consume-0041-add-adr-index-m.md)
 - [docs(afk): describe the Task Mirror as a `monitor --mirror-plan` subcommand](./pages/349-docs-afk-describe-the-task-mirror-as-a-monitor-mirror-plan-s.md)
 - [docs(afk): remove dead Capability Dispatch + document --boot-only](./pages/329-docs-afk-remove-dead-capability-dispatch-document-boot-only.md)
