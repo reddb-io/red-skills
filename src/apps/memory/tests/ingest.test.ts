@@ -86,11 +86,23 @@ describe("ingestProject over a TS+MD fixture repo", () => {
       expect(issueToken).toBeDefined();
       expect(verifyToken).toBeDefined();
       expect(userId).toBeDefined();
-      expect(edges).toContainEqual(
+      const callEdge = edges.find(
+        (edge) =>
+          edge.from_rid === issueToken?.rid &&
+          edge.to_rid === verifyToken?.rid &&
+          edge.label === "CALLS",
+      );
+      expect(callEdge).toBeDefined();
+      expect(Number(callEdge?.weight ?? callEdge?.WEIGHT)).toBeGreaterThan(0);
+      expect(callEdge?.properties ?? callEdge?.PROPERTIES).toEqual(
         expect.objectContaining({
-          from_rid: issueToken?.rid,
-          to_rid: verifyToken?.rid,
-          label: "CALLS",
+          confidence: "EXTRACTED",
+          extraction_backend: "typescript-compiler",
+          topological_weight: expect.any(Number),
+          provenance: expect.objectContaining({
+            source_kind: "derived",
+            writer: "extract-code",
+          }),
         }),
       );
       expect(edges).toContainEqual(

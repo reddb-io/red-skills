@@ -53,21 +53,67 @@ describe("extractCode", () => {
   test("emits conservative intra-file CALLS edges for TS/JS symbols", async () => {
     const { edges } = await extractCode(TS_FIXTURE);
 
-    expect(edges).toContainEqual({
-      fromLabel: `sym:${TS_FIXTURE}#issueToken`,
-      toLabel: `sym:${TS_FIXTURE}#verifyToken`,
-      label: "CALLS",
-    });
+    expect(edges).toContainEqual(
+      expect.objectContaining({
+        fromLabel: `sym:${TS_FIXTURE}#issueToken`,
+        toLabel: `sym:${TS_FIXTURE}#verifyToken`,
+        label: "CALLS",
+      }),
+    );
   });
 
   test("emits conservative intra-file USES_TYPE edges for TS/JS symbols", async () => {
     const { edges } = await extractCode(TS_FIXTURE);
 
-    expect(edges).toContainEqual({
-      fromLabel: `sym:${TS_FIXTURE}#issueToken`,
-      toLabel: `sym:${TS_FIXTURE}#UserId`,
-      label: "USES_TYPE",
+    expect(edges).toContainEqual(
+      expect.objectContaining({
+        fromLabel: `sym:${TS_FIXTURE}#issueToken`,
+        toLabel: `sym:${TS_FIXTURE}#UserId`,
+        label: "USES_TYPE",
+      }),
+    );
+  });
+
+  test("uses compiler-backed TypeScript extraction with locations and edge metadata", async () => {
+    const { nodes, edges } = await extractCode(TS_FIXTURE);
+
+    const file = nodes.find((n) => n.node_type === "file");
+    const issueToken = nodes.find((n) => n.label === `sym:${TS_FIXTURE}#issueToken`);
+    const call = edges.find((e) => e.label === "CALLS");
+
+    expect(file?.properties.extraction_backend).toBe("typescript-compiler");
+    expect(issueToken?.properties.source_location).toMatch(/auth\.ts:\d+:\d+$/);
+    expect(call).toEqual(
+      expect.objectContaining({
+        weight: expect.any(Number),
+        properties: expect.objectContaining({
+          confidence: "EXTRACTED",
+          extraction_backend: "typescript-compiler",
+          topological_weight: expect.any(Number),
+          provenance: expect.objectContaining({
+            source_kind: "derived",
+            writer: "extract-code",
+            confidence: "EXTRACTED",
+          }),
+        }),
+      }),
+    );
+  });
+
+  test("marks TypeScript extraction as degraded when compiler extraction is unavailable", async () => {
+    const { nodes, edges } = await extractCode(TS_FIXTURE, {
+      loadTypeScript: async () => null,
     });
+
+    const file = nodes.find((n) => n.node_type === "file");
+    const call = edges.find((e) => e.label === "CALLS");
+
+    expect(file?.properties.extraction_backend).toBe("regex-fallback");
+    expect(file?.properties.extraction_degraded).toBe(true);
+    expect(file?.properties.extraction_degradation_reason).toBe(
+      "typescript compiler unavailable",
+    );
+    expect(call?.properties?.extraction_backend).toBe("regex-fallback");
   });
 
   test("emits IMPORTS edges from the file node to import specifier nodes", async () => {
