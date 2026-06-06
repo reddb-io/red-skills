@@ -680,6 +680,32 @@ describe("MemoryStore over a file:// RedDB", () => {
     TIMEOUT,
   );
 
+  test.each(SOFT_MERGE_LABELS)(
+    "soft merge %s: re-adding a removed merge hides the duplicate again",
+    async (label) => {
+      const store = await openStore(await tempRoot());
+      const duplicate = await store.upsertNode(
+        factToNode("api key duplicate remerge marker", slugify),
+      );
+      const canonical = await store.upsertNode(
+        factToNode("api key canonical remerge target", slugify),
+      );
+
+      await store.upsertEdge({ label, from_rid: duplicate, to_rid: canonical });
+      await expect(store.removeEdge(duplicate, canonical, label)).resolves.toBe(true);
+
+      const readded = await store.upsertEdge({ label, from_rid: duplicate, to_rid: canonical });
+      expect(readded).toBeGreaterThan(0);
+      expect(await store.findEdge(duplicate, canonical, label)).toBe(readded);
+
+      const hits = await graphRecall(store, "api key duplicate remerge marker", 10);
+      const rids = hits.map((hit) => hit.rid);
+      expect(rids).toContain(canonical);
+      expect(rids).not.toContain(duplicate);
+    },
+    TIMEOUT,
+  );
+
   test(
     "recordReasoning: a trace links to the entities it TOUCHED",
     async () => {
