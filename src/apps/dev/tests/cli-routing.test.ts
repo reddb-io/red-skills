@@ -22,6 +22,11 @@ describe("cli routing — native commands", () => {
     });
   });
 
+  it("routes daily and weekly review commands", () => {
+    expect(parseCli(["daily-review", "--json"])).toEqual({ command: "daily-review", args: ["--json"] });
+    expect(parseCli(["weekly-review"])).toEqual({ command: "weekly-review", args: [] });
+  });
+
   it("routes the development-workflow injector with its args preserved", () => {
     expect(parseCli(["inject-development-workflow", "--root", "/repo"])).toEqual({
       command: "inject-development-workflow",
