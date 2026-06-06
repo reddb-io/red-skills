@@ -686,6 +686,20 @@ interface CurrentAttempt {
 
 const DEFAULT_RUNNER_TRANSIENT_COOLDOWN_S = 300;
 
+async function recordBootError(workerDir: string, type: "boot-error" | "session-error", err: unknown): Promise<void> {
+  const message = err instanceof Error ? err.message : String(err);
+  const stack = err instanceof Error ? err.stack : undefined;
+  const payload = {
+    type,
+    at: new Date().toISOString(),
+    message,
+    stack,
+  };
+  await fsx.ensureDir(workerDir);
+  await writeFile(join(workerDir, `${type}.log`), `${JSON.stringify(payload)}\n`, "utf8");
+  process.stderr.write(`[afk] ${type}: ${message}\n`);
+}
+
 function runnerCircuitDir(tmpDir: string): string {
   return join(tmpDir, "runner-circuit");
 }
@@ -814,8 +828,17 @@ export async function runCommand(options: RunOptions): Promise<number> {
     workerPidFile: workerPidFile(paths.tmpDir, workerId),
     workerPid: process.pid,
   };
-  const bootOptions = await collectBootOptions(ctx, facts, bootstrap, nowS);
-  const bootDeps = await buildBootDeps(ctx, bootOptions, nowS);
+  let bootOptions: BootOptions;
+  let bootDeps: BootDeps;
+  try {
+    bootOptions = await collectBootOptions(ctx, facts, bootstrap, nowS);
+    bootDeps = await buildBootDeps(ctx, bootOptions, nowS);
+  } catch (err) {
+    await recordBootError(bootstrap.workerDir, "boot-error", err).catch(() => {
+      process.stderr.write(`[afk] boot-error: ${err instanceof Error ? err.message : String(err)}\n`);
+    });
+    return 1;
+  }
 
   // Feedback worktree manager — checks out the worker branch for the gate.
   const feedback = makeFeedbackWorktree(ctx.root, join(paths.tmpDir, "feedback"));
@@ -913,6 +936,11 @@ export async function runCommand(options: RunOptions): Promise<number> {
   let summary;
   try {
     summary = await runSession(deps, sessionCtx);
+  } catch (err) {
+    await recordBootError(bootstrap.workerDir, "session-error", err).catch(() => {
+      process.stderr.write(`[afk] session-error: ${err instanceof Error ? err.message : String(err)}\n`);
+    });
+    return 1;
   } finally {
     await feedback.cleanup();
   }
