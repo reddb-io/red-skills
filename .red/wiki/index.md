@@ -112,5 +112,4 @@ _(no concepts yet)_
 
 ## Syntheses
 
-_(no syntheses yet)_
-
+- [ADR record propagation receipt for issue 420](./pages/420-adr-record-propagation-receipt.md) - wiki and Memory propagation receipt for PRD #414 pass 4. 2 sources.

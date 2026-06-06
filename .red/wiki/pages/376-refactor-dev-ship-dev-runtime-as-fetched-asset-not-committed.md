@@ -3,7 +3,7 @@ title: refactor(dev): ship dev runtime as fetched asset, not committed bundle (A
 type: source
 tags: [pr, merged]
 created: 2026-06-01
-updated: 2026-06-01
+updated: 2026-06-06
 sources: [pr-376]
 pr: 376
 merge_sha: 2123b8ab78a39f6376bc74f5460e7fa09c3c0a29
@@ -35,6 +35,11 @@ Completes the **ADR 0034** dynamic-fetch migration for the `dev` domain — the 
 move `code-nav` already made. The runtime ships as the `dev.bundle.min.mjs` GitHub
 Release asset (already uploaded + sha256-pinned via `dev.manifest.json`), fetched
 into a version-keyed cache by `red-fetch` on SessionStart.
+
+Current ADR record (2026-06-06): ADR 0034 names `src/apps/dev` as the live dev
+implementation location. ADR 0039 refines the entrypoint model, and ADR 0041
+removes memory as an in-repo implementation while leaving the dev runtime fetch
+model intact.
 
 - **`bin/afk.mjs`: 2.6 MB committed bundle → ~4 KB hand-written launcher** that
   resolves the bundle (`cache → repo-root dist → red-fetch`) and delegates. Every
@@ -108,4 +113,3 @@ stops the bleeding going forward.
 - `plugins/dev/skills/engineering/afk/bin/README.md`
 - `plugins/dev/skills/engineering/afk/bin/afk.mjs`
 - `src/apps/dev/package.json`
-

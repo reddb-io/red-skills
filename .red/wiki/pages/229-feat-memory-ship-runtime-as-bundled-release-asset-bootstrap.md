@@ -3,7 +3,7 @@ title: feat(memory): ship runtime as bundled release asset + bootstrap fetch (AD
 type: source
 tags: [pr, merged]
 created: 2026-05-29
-updated: 2026-05-29
+updated: 2026-06-06
 sources: [pr-229]
 pr: 229
 merge_sha: 8905f106a9e99cc78ddfdb47f9d77979fc814bdd
@@ -31,6 +31,14 @@ Deliver the runtime as **fetched artifacts**, never committed build output, neve
 - **`scripts/bootstrap.mjs`** (only `node:` builtins): resolves/fetches both into `~/.cache/reddb-memory/<ver>/` (version-keyed, **survives autoUpdate**, re-fetched only on version change), verifies checksums, exports `REDDB_BIN`, delegates the hook. On failure → preserves the no-op contract **and logs to `bootstrap.log`** (no more silent death). `REDDB_BIN` being set means `import.meta.resolve` never fires — no source refactor needed.
 - **hooks** (`claude`/`codex`) now invoke the bootstrap instead of `dist/cli.js`.
 - **`red-release.yml`** builds the bundle + manifest and attaches them at `gh release create`.
+
+## Current ADR record (2026-06-06)
+
+ADR 0029 remains the fetched-runtime model for Memory. After ADR 0041, that model
+belongs to the `red-memory` repo for Memory while red-skills consumes the
+published MCP/runtime. ADR 0052 later standardizes release asset names under
+`dist/<app>[-<role>].bundle.min.mjs`, superseding ADR 0029's older dual-output
+memory naming detail.
 
 ## Validation
 - Spike proven locally: bundle runs **standalone with no `node_modules`**; an engine command fails only at `red binary not found` (overridable via `REDDB_BIN`), not at module resolution.
@@ -68,4 +76,3 @@ Closes the operational-delivery half of PRD #217 / ADR 0027.
 - `plugins/memory/pnpm-lock.yaml`
 - `plugins/memory/scripts/bootstrap.mjs`
 - `plugins/memory/tests/bootstrap.test.ts`
-
