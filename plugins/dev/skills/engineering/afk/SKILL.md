@@ -22,7 +22,7 @@ The invoking LLM is responsible for setting `RED_AFK_RUNNER` to its own host run
 
 `afk.mjs` is a **dedicated forwarder** (ADR 0039 entrypoint, build role `run:dev`): every argument is passed straight to the `dev` bundle, whose own command surface (`run`, `monitor`, `fleet`, …) is documented below. So `… afk.mjs run --once`, `… afk.mjs monitor`, and the bare `… afk.mjs --issues 42` all reach the orchestrator. The generic entrypoint verbs (`run <plugin>` / `fetch`) belong to `red-fetch.mjs`, not to this launcher — they do **not** shadow the bundle's commands (#434).
 
-Commands and their parameters are documented in *When To Use* below — that section is authoritative for the CLI surface. The commands are `run` (the default — a bare token routes here with argv preserved), `monitor`, `dashboard`, `fleet`, `reap`, `statusline` (the Claude Code statusline aggregator; reads the payload on stdin and takes the project root as its one argument), and the hidden `__supervise` (the fleet supervisor entrypoint; never invoked by hand). `run` accepts `--prd`, `--issues`, `--runner`, `--alternate`, `--fallback-runner`, `--request`/`-r`, `-n`, and `--once`; `monitor` accepts `--once`; `dashboard` accepts `--period N|Nd` and `--json`; `fleet` accepts an optional numeric target `N`, the `stop` subcommand, `--request`/`-r`, and `--runner`; `reap` takes no flags; `statusline` takes the project-root path as `$1`.
+Commands and their parameters are documented in *When To Use* below — that section is authoritative for the CLI surface. The commands are `run` (the default — a bare token routes here with argv preserved), `monitor`, `dashboard`, `fleet`, `reap`, `statusline` (the Claude Code statusline aggregator; reads the payload on stdin and takes the project root as its one argument), and the hidden `__supervise` (the fleet supervisor entrypoint; never invoked by hand). `run` accepts `--prd`, `--issues`, `--runner`, `--alternate`, `--fallback-runner`, `--request`/`-r`, `-n`, `--once`, and `--boot-only`; `monitor` accepts `--once`; `dashboard` accepts `--period N|Nd` and `--json`; `fleet` accepts an optional numeric target `N`, the `stop` subcommand, `--request`/`-r`, and `--runner`; `reap` takes no flags; `statusline` takes the project-root path as `$1`.
 
 The bundle is a single self-contained build (one file, one inlined runtime dependency, no `node_modules`, no install step) and is the public entrypoint. Every command — orchestration, supervisor, statusline, and hooks — executes natively in the bundle; the legacy shell orchestrator under `scripts/` has been removed (ADR 0032, ADR 0034). Treat this `SKILL.md` as the contract: run the bundle, don't read its source.
 
@@ -44,7 +44,7 @@ AFK drives the sandcastle Orchestrator through **injected providers** (`Sandcast
 - `/afk --issues 356,359,362` — explicit list, in that order.
 - `/afk --runner codex` — pin a backend (disables detection cascade; mutually exclusive with `--alternate`).
 - `/afk --alternate` — opt in to round-robin runner rotation between issues (claude → codex → claude → …).
-- `/afk --fallback-runner` — opt in to swapping runners mid-issue when one returns `RUNNER_EXHAUSTED`. Without this flag, exhaustion exits with code 75.
+- `/afk --fallback-runner` — opt in to swapping runners mid-issue when one returns `RUNNER_EXHAUSTED`. Without this flag, exhaustion routes the issue through bounded `blocked:quota` recovery and stops the outer run with exit 75.
 - `/afk --request "dont run cargo tests for this issue resolution"` or `/afk -r "..."` — add a special user request block to every inner-agent prompt for this run.
 - `/afk -n 5` — cap at five issues. `-n N` caps the run at `N` issues; `-n 0` (and omitting `-n`) drains the whole queue until it is empty (`0` means unlimited, not zero). For a no-agent dry-run use `--boot-only` instead.
 - `/afk --once` — single supervised iteration. Use for debugging the prompt.
@@ -197,7 +197,7 @@ next: Human must decide whether to stop, redesign, or continue anyway.
 
 If this block is present with `status: blocked`, `/afk` does not create an attempt. It removes `ready-for-agent`, adds `ready-for-human` plus the typed blocker label, leaves the issue open, and waits for `/hitl`.
 
-When an attempt reaches a terminal human page (BLOCKED, validation failure, merge conflict, or no-sentinel after retry budget exhaustion), the runtime writes or replaces this block so the next `/hitl` turn can start from the current blocker instead of re-reading every old envelope. `/hitl` clears the block to `None`, records it under `## Resolved blockers`, refreshes `## Agent brief`, and moves the issue back to `ready-for-agent` only when the next agent can continue without guessing.
+When an attempt escalates to a terminal human page (for example BLOCKED, validation failure, non-recoverable stall/infra, or a recoverable reason after retry-budget exhaustion), the runtime writes or replaces this block so the next `/hitl` turn can start from the current blocker instead of re-reading every old envelope. `/hitl` clears the block to `None`, records it under `## Resolved blockers`, refreshes `## Agent brief`, and moves the issue back to `ready-for-agent` only when the next agent can continue without guessing.
 
 Use `## Blocked by` only for mechanical dependencies that should auto-promote on close. Use `## Current blocker` / `## Human decision needed` for gates, measurements, product calls, or any state where "the referenced issue closed" is not enough to prove the work is delegable.
 
@@ -258,15 +258,26 @@ Canonical state machine lives in [`setup-red-skills/triage-labels.md`](../setup-
    │       │           ▼
    │       │        closed
    │       │
-   │       └──── BLOCKED, or merge conflict, or both runners exhausted
+   │       └──── terminal failure
    │                   │
-   │              (4b) release
-   │              remove running
-   │              add ready-for-human
-   │              post blocker comment with worktree path
+   │              classify Attempt Outcome
+   │              add typed blocked:<reason>
    │                   │
-   │                   ▼
-   │              ready-for-human  (worktree preserved at moment of blocker)
+   │          ┌────────┴────────┐
+   │          │                 │
+   │          │ recoverable and │ non-recoverable, or
+   │          │ attempt < cap   │ recoverable at/over cap
+   │          │                 │
+   │          ▼                 ▼
+   │     remove running    remove running
+   │     add               add
+   │     ready-for-agent   ready-for-human
+   │     post/retry        post blocker/budget
+   │     audit             exhausted comment
+   │          │                 │
+   │          ▼                 ▼
+   │     ready-for-agent   ready-for-human
+   │     (fresh attempt)   (human gate)
    │
    └──── orchestrator interrupted (SIGINT/SIGTERM)
                      │
@@ -287,6 +298,25 @@ Label transitions are **not** atomic at the gh level — `gh issue edit --remove
 
 Residual gap: two clones of the same repo on the same host (or different hosts) do not share `.red/tmp/`, so each holds its own mkdir lock and the gh edit race re-opens for the brief window the pre-check leaves uncovered. Acceptable for the intended scale (a few terminals, one checkout). If you need cross-host claim safety, gate `/afk` on a proper coordinator instead of GitHub labels.
 
+### Typed Failure Labels And Recovery Caps
+
+AFK labels terminal failures with a descriptive `blocked:<reason>` label in addition to the routing label. The typed label is observability: a retry path still adds `ready-for-agent`, and an escalated path still adds `ready-for-human`.
+
+| Attempt Outcome | typed label | recovery policy | default cap |
+|---|---|---|---|
+| `exhausted` | `blocked:quota` | `quota` | `RED_AFK_RETRY_QUOTA=3` |
+| `runner-transient` | `blocked:runner-transient` | `runner-transient` | `RED_AFK_RETRY_RUNNER_TRANSIENT=3` |
+| `merge-conflict` | `blocked:merge-conflict` | `merge-conflict` | `RED_AFK_RETRY_MERGE=3` |
+| `no-sentinel` | `blocked:crashed` | `crashed` | `RED_AFK_RETRY_CRASH=1` |
+| `hook-aborted` | `blocked:policy` | `policy` | `RED_AFK_RETRY_POLICY=1` |
+| `blocked` | `blocked:spec` | none — escalates immediately | n/a |
+| `feedback-failed` | `blocked:validation` | none — escalates immediately | n/a |
+| `stalled` | `blocked:stalled` | none — escalates immediately in the per-issue path | n/a |
+| `infra` | `blocked:infra` | none — escalates immediately | n/a |
+| `done` / `claim-lost` | none | none | n/a |
+
+Recoverable reasons retry while the 1-based attempt number is less than the cap. At the cap and above, the same reason escalates to `ready-for-human`, keeps the typed `blocked:<reason>` label, and posts a retry-budget-exhausted comment. Missing, non-numeric, zero, or negative `RED_AFK_RETRY_*` values fall back to the default cap.
+
 ## Per-Issue Loop
 
 For each issue `N`:
@@ -301,15 +331,15 @@ For each issue `N`:
    - Inner committed and emits `<promise>DONE</promise>` → continue to feedback loops.
    - Inner emits `<promise>BLOCKED</promise>` plus notes appended to the handoff file → comment the blocker on the issue, re-label `ready-for-human`, drop the worktree, go to next issue.
    - Inner emits `<promise>NO MORE TASKS</promise>` from inside one iteration → ignored. That sentinel is for the outer loop.
-   - Runner-exhausted signal (rate limit / quota error string per runner) → keep the worktree, swap runner, retry the same issue once. If both runners exhaust, exit 75 (`EX_TEMPFAIL`).
+   - Runner-exhausted signal (rate limit / quota error string per runner) → without `--fallback-runner`, terminate this issue as Attempt Outcome `exhausted`; route it through bounded recovery (`blocked:quota`, retry under `RED_AFK_RETRY_QUOTA`, escalate at/over cap). With `--fallback-runner`, keep the same worktree and handoff, swap runner once, and only route `exhausted` if the swapped runner also exhausts.
 7. **Feedback loops.** In the worktree, derive relevant package scopes from the worker branch diff against the pinned base, then run `test`, `typecheck`, `lint`, and `build` with `pnpm -C <scope>` for each touched package that declares the script. Root-only repos keep using the root package. Any missing script is reported as an explicit per-scope skip in the validation section. Any failure blocks the merge and flips the issue to `ready-for-human` with the validation report in the blocker envelope.
 8. **Merge.** All steps target the **base branch** resolved in step 2 (`{pinned}`, defaults to `main`). The integration prelude is shared; **landing is lock-toggled** by the branch-lock state (ADR 0030).
    - Primary dirty? Auto-stage and commit `chore(afk): pre-merge snapshot for #N` in primary. Never `git stash`. Never `git checkout -- .`.
    - `git -C primary fetch origin {pinned}`. The primary checkout is pinned to `main` by the precheck; when `{pinned}` is not `main`, switch the primary checkout onto it for the merge (creating the local branch from `origin/{pinned}` if needed) and **restore it to `main` on every exit path**.
-   - **Integrate the fetched tip into local `{pinned}` before merging**: fast-forward when local is strictly behind, otherwise rebase local commits onto `origin/{pinned}`. Without this the worker branch merges onto the stale boot-time HEAD and the push is rejected non-fast-forward whenever origin moved mid-run. If integration fails (diverged history that won't rebase), abort the merge → `ready-for-human`.
+   - **Integrate the fetched tip into local `{pinned}` before merging**: fast-forward when local is strictly behind, otherwise rebase local commits onto `origin/{pinned}`. Without this the worker branch merges onto the stale boot-time HEAD and the push is rejected non-fast-forward whenever origin moved mid-run. If integration fails (diverged history that won't rebase), abort the merge and route the `merge-conflict` outcome through bounded recovery.
    - Capture the integrated tip (`pre_merge_sha`) for rollback, then land per lock state:
-     - **Locked** (`.red/tmp/branch-lock.yaml` present — `{pinned}` *is* the locked branch): `git -C primary merge --no-ff afk/{id}/{N}-{slug} -m "merge: #{N} {title}"` directly into the local locked branch, then `git -C primary push origin {pinned}`. **Nothing reaches `main`** — promoting the locked branch to `main` is the operator's call. Conflict → one-shot self-resolve; still-conflicting → `git merge --abort` → `ready-for-human`. Push rejected → roll back to `pre_merge_sha` → `ready-for-human`.
-     - **Unlocked**: land via an **admin-merged PR**. Force-push the attempt branch's final state to origin, open (or reuse) a PR `--base {pinned} --head afk/{id}/{N}-{slug}`, then `gh pr merge --admin --merge`. The **PR is the durable per-attempt history** — it survives the branch deletion in step 11. No completed work reaches `{pinned}` except through this admin-merge. Any failure (push, create, or admin-merge) → `ready-for-human`. Then fast-forward local `{pinned}` to the PR merge commit so the closing envelope's `merge_sha` is correct.
+     - **Locked** (`.red/tmp/branch-lock.yaml` present — `{pinned}` *is* the locked branch): `git -C primary merge --no-ff afk/{id}/{N}-{slug} -m "merge: #{N} {title}"` directly into the local locked branch, then `git -C primary push origin {pinned}`. **Nothing reaches `main`** — promoting the locked branch to `main` is the operator's call. Conflict → one-shot self-resolve; still-conflicting → `git merge --abort` → bounded `merge-conflict` recovery. Push rejected → roll back to `pre_merge_sha` → bounded `merge-conflict` recovery.
+     - **Unlocked**: land via an **admin-merged PR**. Force-push the attempt branch's final state to origin, open (or reuse) a PR `--base {pinned} --head afk/{id}/{N}-{slug}`, then `gh pr merge --admin --merge`. The **PR is the durable per-attempt history** — it survives the branch deletion in step 11. No completed work reaches `{pinned}` except through this admin-merge. Any failure (push, create, or admin-merge) routes through bounded `merge-conflict` recovery. Then fast-forward local `{pinned}` to the PR merge commit so the closing envelope's `merge_sha` is correct.
 9. **Push.** Folded into step 8: the **locked** path pushes the locked branch over SSH (rollback on reject); the **unlocked** path's push *is* the admin-merge of the PR. Either way, do not retry-loop indefinitely.
 10. **Close.** Validation comment on the issue: tests pass/fail, lint, typecheck, build, commits added, files touched. Then `gh issue close N --reason completed`. Remove `running` label. Once the close succeeds, delete the live remote branch (`git push origin --delete afk/{id}/{N}-{slug}`) so the remote graveyard stays tidy — the merge commit on `{pinned}` already carries the diff. Best-effort: a failed delete (branch protection, network) logs a `warn:` line and the close still completes; the orphan `afk/*` branch can be cleaned up later.
 11. **Cleanup (split teardown, issue #256).** Every close path — success **and** failure/blocker — always drops the heavy worktree (`git worktree remove .red/tmp/workers/{id}/{N}-a{n}/worktree`) while **retaining** the cheap artifacts (the JSONL lanes `log.jsonl` / `agent.log.jsonl` and the `handoff.md`) in the attempt directory for post-mortem. On DONE the merged branch is also deleted (`git branch -d afk/{id}/{N}-{slug}`, after the worktree is gone). The retained attempt's state file is marked not-live (`pid: 0`) so monitor / mirror / statusline read it as finished. No worktree survives a close; the attempt dir itself is reclaimed later by the boot-time orphan sweep's TTL **or, on DONE, immediately by the completion sweep below**. The remote `afk/{id}/{N}-{slug}` ref was deleted in step 10 on DONE; failure paths leave the remote ref intact and instead push the canonical `afk-attempts/{id}/{N}-{slug}` ref (see *Terminal-Event Envelope*).
@@ -318,10 +348,10 @@ For each issue `N`:
 
 ## Runner Fallback
 
-Default behaviour is **no rotation and no fallback** — the runner resolved by the detection cascade (see *Bootstrap* step 4) is used for every issue in the run, and `RUNNER_EXHAUSTED` exits the loop with code 75 and a log line naming the dead runner. Both behaviours are opt-in:
+Default behaviour is **no rotation and no fallback** — the runner resolved by the detection cascade (see *Bootstrap* step 4) is used for every issue in the run. `RUNNER_EXHAUSTED` is first handled as the per-issue Attempt Outcome `exhausted`: the issue gets `blocked:quota`, returns to `ready-for-agent` while under `RED_AFK_RETRY_QUOTA`, and escalates to `ready-for-human` at/over the cap. The outer session then stops the drain and returns exit 75 (`EX_TEMPFAIL`) so a supervisor can retry later instead of treating runner quota as a clean queue drain. Both rotation/fallback behaviours are opt-in:
 
 - `--alternate` re-enables round-robin rotation between consecutive issues (claude → codex → claude → …). Mutually exclusive with `--runner`.
-- `--fallback-runner` re-enables mid-issue swap when the active runner returns `RUNNER_EXHAUSTED`. Without it, exhaustion is terminal for the run.
+- `--fallback-runner` re-enables mid-issue swap when the active runner returns `RUNNER_EXHAUSTED`. Without it, exhaustion is terminal for the current runner invocation and routes through bounded recovery as `blocked:quota`.
 
 Exhaustion detection lives in [`runner-claude.md`](runner-claude.md) and [`runner-codex.md`](runner-codex.md) — they own the per-runner error strings. The orchestrator only sees `RUNNER_EXHAUSTED` as a structured signal.
 
@@ -337,7 +367,7 @@ The `<promise>…</promise>` sentinel the inner agent emits is the **canonical "
 - **`maxIterations`** (default **12**, env `RED_AFK_MAX_ITERATIONS`) — the sandcastle Orchestrator **re-invocation** ceiling (issue #322). sandcastle's own default is 1, which would cut the agent off after a single agentic invocation before it can emit `DONE`; AFK raises it so the completion signal stays the terminator while bounding repeated no-sentinel failures. A non-numeric / zero / negative value (env or config) is ignored and falls back to the default, so a typo can never disable the cap or pin the agent to 1.
 - **Commit-anchored attempt guard** (default **2700 s**, env `RED_AFK_ATTEMPT_TIMEOUT_S` / `afk.attempt_timeout`, ADR 0044/0045) — proof-of-**progress**: a run that stays *busy* (re-exploring, re-running tests) without landing a **new commit** within the cap is aborted, resetting on every commit. This catches the "productive infinite loop" that `idleTimeoutSeconds` misses because the agent is never silent. It maps to a `timeout` outcome → `blocked:stalled` / `ready-for-human`, preserving the worktree/PR. Armed **only under `none` (no-sandbox) isolation**, where the worker branch's commits land in the shared `.git` so HEAD advance is observable; under docker/podman the commits are not host-visible until final sync, so a commit-anchored guard would false-fire and is skipped (idle timeout + maxIterations still apply). The fleet hard **stall reaper** (see *Fleet Mode*) is separately gated by the active-`vitest`/`tsc`/`cargo`-descendant + flat-cpu predicate, so a worker mid-build/test is never killed for being idle on the agent lane.
 
-**No sentinel is `on_attempt_error`.** When sandcastle's run completes with no completion signal, the agent never declared the attempt over (crash, kill, or a daemon that ended without speaking): the outcome is `no-sentinel`, the issue lands in `ready-for-human`, `on_attempt_error` fires (error class `no-sentinel`), and `post_attempt` does **not** fire for that invocation. **Runner exhaustion** (`RUNNER_EXHAUSTED`, detected by matching the per-runner quota/rate-limit strings against the thrown sandcastle error) stays out of the sentinel channel — it keeps its own `exhausted` outcome and the `--fallback-runner` swap. A **transient runner transport/setup** failure maps to `runner-transient` and is bounded by AFK's retry policy rather than escaping as a crash.
+**No sentinel is `on_attempt_error`.** When sandcastle's run completes with no completion signal, the agent never declared the attempt over (crash, kill, or a daemon that ended without speaking): the outcome is `no-sentinel`, `on_attempt_error` fires (error class `no-sentinel`), and `post_attempt` does **not** fire for that invocation. The issue routes through bounded `blocked:crashed` recovery. With the default `RED_AFK_RETRY_CRASH=1`, the first such failure escalates to `ready-for-human`; a higher cap can requeue it first. **Runner exhaustion** (`RUNNER_EXHAUSTED`, detected by matching the per-runner quota/rate-limit strings against the thrown sandcastle error) stays out of the sentinel channel — it keeps its own `exhausted` outcome and the `--fallback-runner` swap. A **transient runner transport/setup** failure maps to `runner-transient` and is bounded by AFK's retry policy rather than escaping as a crash.
 
 The parsed outcome rides into the `post_attempt` mutable context as `result.outcome` and the `RED_AFK_RESULT_OUTCOME` env var, so hooks (and the Memory `attempt.hooks` record, #216) see the agent-authored exit, not just `success`/`fail`.
 
@@ -378,14 +408,31 @@ The two layers share the run's `AbortController`: progress watches commits, lane
 
 Every terminal event of an iteration posts **exactly one** structured comment on the issue. The comment is the canonical record of what the worker saw and did, and a future Slice C parser will reconstruct iteration history by walking these envelopes in a thread.
 
-Statuses (one per envelope, mutually exclusive):
+Envelope statuses are the wire-level `data-attempt-status` facet. They are intentionally coarser than the full Attempt Outcome vocabulary below: several outcomes emit a `blocked` envelope, and some short-circuit outcomes record labels/history without a per-issue terminal envelope.
 
 | `data-attempt-status` | trigger |
 |---|---|
-| `blocked` | inner agent emitted `<promise>BLOCKED</promise>` |
-| `no-sentinel` | inner agent exited without `DONE` or `BLOCKED` |
+| `blocked` | generic failure envelope: spec block, validation failure, or another failure folded into the blocked bucket |
+| `no-sentinel` | inner agent exited without `DONE` or `BLOCKED` and the path emits the crash envelope |
 | `merge-conflict` | orchestrator could not merge to `main` |
 | `done` | success — merged, closing envelope |
+| `discarded` | supervisor slot/circuit discard envelope |
+
+Attempt Outcome is the runtime's terminal vocabulary. It owns the typed `blocked:<reason>` label, recovery policy key, and envelope-status mapping:
+
+| Attempt Outcome | `data-attempt-status` | typed label | recovery |
+|---|---|---|---|
+| `done` | `done` | none | none |
+| `blocked` | `blocked` | `blocked:spec` | none |
+| `no-sentinel` | `no-sentinel` | `blocked:crashed` | `crashed` |
+| `merge-conflict` | `merge-conflict` | `blocked:merge-conflict` | `merge-conflict` |
+| `feedback-failed` | `blocked` | `blocked:validation` | none |
+| `hook-aborted` | `blocked` | `blocked:policy` | `policy` |
+| `exhausted` | `blocked` | `blocked:quota` | `quota` |
+| `runner-transient` | `blocked` | `blocked:runner-transient` | `runner-transient` |
+| `stalled` | `blocked` | `blocked:stalled` | none |
+| `infra` | `blocked` | `blocked:infra` | none |
+| `claim-lost` | `blocked` | none | none |
 
 Schema (deterministic — Slice C depends on this shape):
 
@@ -408,7 +455,7 @@ Per-status body sections:
 - `merge-conflict` → one `data-section="log"` block carrying the merge-conflict diff tail (last 50 lines of `git merge` output), fenced. Mirrors the no-sentinel log shape.
 - `done` → one `data-section="validation"` block carrying the package-aware feedback report. Summary carries `diff: merged` and `merge: ` `<sha>` (GitHub auto-links bare SHAs to the commit on `main`). The merge commit on `main` *is* the diff — no need to duplicate it inline.
 
-**User-hook executions section (issue #215).** Every terminal Envelope (any of the four statuses above) also carries a trailing `data-section="hooks"` block when at least one **user-declared** lifecycle hook ran during the issue's lifecycle. Built-in defaults (`cargo`, `gradle`, `heartbeat`, `envelope`, `validation` — see the *Lifecycle Hooks* table) are deliberately excluded; the block exists to surface the policy the operator wrote in `.red/config.yaml`, not the skill's own machinery. Each line has the deterministic shape `<lifecycle_name> <command> exit=<rc>`, in execution order across the entire lifecycle (`pre_session` → `pre_pick` → `post_pick` → `pre_worktree` → `pre_attempt` → `post_attempt` → `pre_merge` → `post_merge` → `on_attempt_error` → `on_idle` → `post_session` / `on_session_error`). Non-zero exits are listed with their exit code — never omitted — so a reviewer can see which user-declared policy guarded the merge or mutated the queue, and whether it failed. When no user hook ran (the common case for projects without an `afk.hooks` block in `.red/config.yaml`), the section is omitted entirely rather than rendered empty. The `discarded` supervisor envelope never carries this section: discards record a slot-park decision made above the per-issue lifecycle, so no per-issue hook chain exists to enumerate.
+**User-hook executions section (issue #215).** Every non-`discarded` terminal Envelope also carries a trailing `data-section="hooks"` block when at least one **user-declared** lifecycle hook ran during the issue's lifecycle. Built-in defaults (`cargo`, `gradle`, `heartbeat`, `envelope`, `validation` — see the *Lifecycle Hooks* table) are deliberately excluded; the block exists to surface the policy the operator wrote in `.red/config.yaml`, not the skill's own machinery. Each line has the deterministic shape `<lifecycle_name> <command> exit=<rc>`, in execution order across the entire lifecycle (`pre_session` → `pre_pick` → `post_pick` → `pre_worktree` → `pre_attempt` → `post_attempt` → `pre_merge` → `post_merge` → `on_attempt_error` → `on_idle` → `post_session` / `on_session_error`). Non-zero exits are listed with their exit code — never omitted — so a reviewer can see which user-declared policy guarded the merge or mutated the queue, and whether it failed. When no user hook ran (the common case for projects without an `afk.hooks` block in `.red/config.yaml`), the section is omitted entirely rather than rendered empty. The `discarded` supervisor envelope never carries this section: discards record a slot-park decision made above the per-issue lifecycle, so no per-issue hook chain exists to enumerate.
 
 **Branch namespaces — `afk/*` vs `afk-attempts/*` (issue #191).** Two distinct remote namespaces, never overlapping:
 
@@ -814,7 +861,7 @@ The handoff file follows the same minimalism as the `/handoff` skill — referen
 
 - Queue drained → `<promise>NO MORE TASKS</promise>` → exit 0.
 - `-n N` reached → summary + exit 0.
-- Both runners exhausted → exit 75.
+- Runner exhaustion / runner transport failure → route the current issue through bounded recovery (`blocked:quota` or `blocked:runner-transient`), then stop the outer run with exit 75.
 - Uncaught error in orchestrator → leave worktree in place, exit 1, print recovery hint. (No heartbeat sub-shell to kill since Slice D.)
 
 ## Reporting
@@ -889,7 +936,7 @@ afk:
 
 The unlocked admin-merge (`gh pr merge --admin --merge`, ADR 0030) **ignores advisory review checks by default** — this is intentional, not an oversight. The binding gates on a landing are:
 
-1. **`drift-guard`** — the `pre_merge` hook, a hard gate that aborts the merge for this issue (→ `ready-for-human`).
+1. **`drift-guard`** — the `pre_merge` hook, a hard gate that aborts the merge for this issue and routes through bounded `blocked:merge-conflict` recovery.
 2. **In-process backpressure / feedback** — the pre-merge feedback-validation step (typecheck/tests, ADR 0008) that only mechanism can refuse a merge on.
 
 External advisory reviewers (CodeRabbit and the like) are **not** binding: the worker is autonomous, and gating an autonomous loop on a human-paced external reviewer would stall the queue (ADR 0048). Opt into waiting with `afk.merge.wait_for_review: true` — the unlocked landing then polls `afk.merge.review_check` until it concludes and merges regardless of the verdict (so its comments are posted before the merge, but the review never blocks the land). The wait is **fail-open**: a reviewer that never registers or never concludes within the poll budget does not wedge the landing.
@@ -914,8 +961,8 @@ The full lifecycle table is defined in PRD #207. The hooks shipped so far:
 | `pre_worktree`  | After claim, before `git worktree add`     | `RED_AFK_RUNNER`, `RED_AFK_WORKSPACE`, `RED_AFK_ISSUE`, `RED_AFK_SLOT` | `issue`, `target` (worktree path), `env` (k/v map merged into the parent shell so `CARGO_TARGET_DIR` etc. propagate to the runner) — `branch` is read-only context | non-zero **aborts**: the claim is restored to `ready-for-agent`, the iteration tear-down runs, and the worktree is **not** created |
 | `pre_attempt`    | After worktree exists, **before each runner invocation** (per attempt, not per issue — re-fires on a `--fallback-runner` swap with `attempt_n=2`) | `RED_AFK_RUNNER`, `RED_AFK_WORKSPACE` (now the worktree), `RED_AFK_ISSUE`, `RED_AFK_ATTEMPT_N` | `issue`, `workspace` (worktree path), `attempt_n` — `runner` is read-only context | non-zero **skips runner invocation**: the worktree is preserved, the heartbeat stops, and the claim is restored to `ready-for-agent` so post-pick state is reconciled cleanly |
 | `post_attempt`   | After the runner returned **with an authored `<promise>` exit** — DONE or BLOCKED — for that attempt. Does **not** fire on runner crash or EOF-without-sentinel (see `on_attempt_error`). Under `--fallback-runner` it fires once per runner invocation (the swapped-away attempt closes with `result.status=exhausted`). The parsed sentinel outcome (`done` / `blocked` / `no_more_tasks`, or `""` for the exhausted firings) rides in `result.outcome` (ADR 0028). | `RED_AFK_RUNNER`, `RED_AFK_WORKSPACE` (the worktree), `RED_AFK_ISSUE`, `RED_AFK_RESULT_STATUS` (`success` \| `fail`), `RED_AFK_RESULT_OUTCOME` (`done` \| `blocked` \| `no_more_tasks` \| empty), `RED_AFK_ATTEMPT_N` | `issue`, `workspace`, `result` (`{status, outcome}`), `attempt_n` | non-zero is **logged** and the loop continues — a broken notifier/pager must never wedge AFK |
-| `on_attempt_error` | When the attempt produced **no authored exit**: either an unhandled exception in the worker path (`run_inner` exited non-zero outside the quota branch — `runner-crash`), or the runner's pipe closed with **no `<promise>` sentinel** (EOF-without-sentinel — `no-sentinel`, ADR 0028; the issue lands in `ready-for-human`). Distinct from `post_attempt` with `result.status=fail`, so hook authors do not have to demultiplex. | `RED_AFK_RUNNER`, `RED_AFK_WORKSPACE` (the worktree), `RED_AFK_ISSUE`, `RED_AFK_ERROR_CLASS` (`runner-crash` \| `no-sentinel`), `RED_AFK_ATTEMPT_N` | `issue`, `workspace`, `error` (`{class, rc}`), `attempt_n` | non-zero is **logged** and the loop continues |
-| `pre_merge`     | Before the merge mechanism (`git merge --no-ff` into the pinned base). The diff between the merge base and the worker branch is on stdin so a guard hook can reject changes by size, file pattern, etc. The merge itself plus conflict resolution remain **mechanism** (ADR 0008) and sit between `pre_merge` and `post_merge` — never dispatched as a hook. | `RED_AFK_RUNNER`, `RED_AFK_WORKSPACE` (primary checkout), `RED_AFK_ISSUE`, `RED_AFK_MERGE_BASE` | `issue`, `workspace`, `diff` — `branch` is read-only context | non-zero **aborts the merge** for this issue; the failure surfaces as a worker-failure (merge-conflict envelope, issue flipped to `ready-for-human`) |
+| `on_attempt_error` | When the attempt produced **no authored exit**: either an unhandled exception in the worker path (`run_inner` exited non-zero outside the quota branch — `runner-crash`), or the runner's pipe closed with **no `<promise>` sentinel** (EOF-without-sentinel — `no-sentinel`, ADR 0028; the issue routes through bounded `blocked:crashed` recovery). Distinct from `post_attempt` with `result.status=fail`, so hook authors do not have to demultiplex. | `RED_AFK_RUNNER`, `RED_AFK_WORKSPACE` (the worktree), `RED_AFK_ISSUE`, `RED_AFK_ERROR_CLASS` (`runner-crash` \| `no-sentinel`), `RED_AFK_ATTEMPT_N` | `issue`, `workspace`, `error` (`{class, rc}`), `attempt_n` | non-zero is **logged** and the loop continues |
+| `pre_merge`     | Before the merge mechanism (`git merge --no-ff` into the pinned base). The diff between the merge base and the worker branch is on stdin so a guard hook can reject changes by size, file pattern, etc. The merge itself plus conflict resolution remain **mechanism** (ADR 0008) and sit between `pre_merge` and `post_merge` — never dispatched as a hook. | `RED_AFK_RUNNER`, `RED_AFK_WORKSPACE` (primary checkout), `RED_AFK_ISSUE`, `RED_AFK_MERGE_BASE` | `issue`, `workspace`, `diff` — `branch` is read-only context | non-zero **aborts the merge** for this issue; the failure surfaces as a worker-failure and routes through bounded `blocked:merge-conflict` recovery |
 | `post_merge`    | After a successful merge and push to origin/`{pinned}`. The merge commit already exists, so user notifiers can include the real merge commit URL. Does **not** fire when the merge was aborted (`pre_merge` rejection, conflict resolver exhausted, push rejected). | `RED_AFK_RUNNER`, `RED_AFK_WORKSPACE` (primary checkout), `RED_AFK_ISSUE`, `RED_AFK_MERGE_COMMIT` (full sha), `RED_AFK_MERGE_SHA` (short sha) | `issue`, `workspace`, `merge_commit` (`{sha, short}`) — extended by the built-in `validation` default with `result.{validation_status, validation_summary}` | non-zero is **logged** and the loop continues — the merge has already landed; a broken notifier or a flaky smoke test must never roll it back |
 | `on_idle`       | Queue drained at top of loop iteration, before sleep/exit. Distinct from `post_session` — this is "between drains" maintenance (e.g. cache cleanup), not session termination. Does **not** fire on session exit. | `RED_AFK_RUNNER`, `RED_AFK_WORKSPACE` | none in this slice — `stats.{done,blocked,total}` are read-only context | non-zero is **logged** and the loop continues |
 | `post_session`  | Normal session termination                 | `RED_AFK_RUNNER`, `RED_AFK_WORKSPACE` | session stats (`runner`, `worker_id`, `stats.{done,blocked,total}`) | non-zero is **logged** and the session ends as `NO MORE TASKS` |
