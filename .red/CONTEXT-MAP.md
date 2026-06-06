@@ -25,9 +25,10 @@ domain language or writing ADRs.
   issue workflow vocabulary, and operator-facing workflows that consume memory
   evidence.
 - **Brain -> Memory**: `brain` is a separate plugin and separate directory
-  surface. It may optionally reuse Memory capabilities, but its mission is
-  human-facing knowledge capture and connection rather than agent-performance
-  memory.
+  surface. Its mission is human-facing knowledge capture and connection rather
+  than agent-performance memory, but Memory recall/context-pack may rank cited
+  Brain hits in the same result and trust model without sharing a canonical
+  store.
 - **Brain -> Dev**: `brain` follows the same marketplace and repo setup
   conventions as other RedSkills plugins, but owns its `.red/brain/*` knowledge
   repository semantics.

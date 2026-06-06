@@ -8,7 +8,39 @@ workflows.
 
 **Memory plugin**:
 The RedSkills plugin that gives agents persistent, queryable per-project memory.
-_Avoid_: memory skill, harness memory
+_Avoid_: memory skill, harness memory, personal fact store, Brain interface
+
+**Operational evidence**:
+A durable fact about agent work, validation, decisions, risks, attempts, or codebase reasoning that can improve future agent execution.
+_Avoid_: personal knowledge, freeform dump, second brain note
+
+**Evidence card**:
+A YAML review unit distilled from one or more raw signals, carrying source, cited evidence, proposed lesson, confidence, privacy posture, routing target, and blast radius before any durable Memory or Skill proposal is written.
+_Avoid_: raw transcript, proposal file, JSON inbox item, unstructured inbox note
+
+**Hermes-like refinement loop**:
+A governed Memory workflow inspired by Hermes-style self-improvement, where captured signals become routed evidence and approval-gated proposals rather than automatic Skill creation or silent instruction rewrites.
+_Avoid_: Hermes runner, automatic skill factory, self-rewriting agent
+
+**Internal refinement signal**:
+A Memory-visible agent signal, such as Skill telemetry, hook observations, reasoning attempts, validations, or explicit user rejection feedback, that can seed an **Evidence card** without external-system integration.
+_Avoid_: third-party webhook, raw SaaS transcript, arbitrary import
+
+**User rejection signal**:
+An internal refinement signal where the user rejects, corrects, or constrains agent behavior; command/button feedback is high-confidence, while natural-language rejection is captured as lower-confidence evidence that cannot autopromote.
+_Avoid_: casual preference, inferred mood, silent edit
+
+**Evidence route**:
+The destination verdict on an **Evidence card**: durable Memory fact, Skill improvement proposal, Red context update, issue/PRD candidate, or discard.
+_Avoid_: automatic write target, ADR decision, unreviewed patch
+
+**Low-risk autopromotion**:
+Automatic promotion of high-confidence, internal, low-blast-radius evidence such as validation outcomes or telemetry rollups into governed Memory, excluding Skill behavior changes and Red context updates.
+_Avoid_: autorefine, silent patch, automatic context rewrite
+
+**Refinement blast-radius gate**:
+The review gate that blocks autopromotion when an evidence route could affect an external audience, customer/commercial/security outcomes, or shared workflow/context semantics.
+_Avoid_: gut-check, trust score, generic risk
 
 **Markdown-only mode**:
 The lightest Memory storage mode: plain markdown facts, no RedDB, hooks, or MCP server.
@@ -37,6 +69,10 @@ _Avoid_: memory record, entry
 **Memory node**:
 The graph-mode unit for a stored fact, work item, attempt, file, symbol, validation, or other typed entity.
 _Avoid_: note, row
+
+**Pinned Memory node**:
+A **Memory node** whose `importance >= 0.8`; it is protected from stale-node pruning and treated as core context by context-pack policy when it is applicable to the current goal, not globally injected into every prompt. Recall ranking may learn from the same signal later, but context-pack is the first validation surface.
+_Avoid_: pinned field, separate always-include flag
 
 **Memory tier**:
 The retention class on a **Memory node**: `ephemeral`, `durable`, or `reasoning`.
@@ -69,6 +105,18 @@ _Avoid_: envelope hook dump, hook log
 **Memory event log**:
 The RedDB-backed operational telemetry stream for Memory-visible agent events, including skill events, attempt validations, hook events, and derived lifecycle observations.
 _Avoid_: separate telemetry tables, raw logs
+
+**Memory injection observation**:
+A Memory event-log observation that a recalled **Memory node** or **Memory context pack** citation was actually placed into agent context by a Memory-controlled hook or transport; event-log records are the source of truth, while node-level injection counters or timestamps are derived rollups for cheap doctor/decay queries. Manual recall display does not create an injection observation. Distinct from recall access bookkeeping such as `access_count`.
+_Avoid_: recall hit, access count, prompt transcript, rollup source of truth
+
+**Memory context pack generation observation**:
+A Memory event-log observation that a **Memory context pack** was produced for a goal; distinct from a **Memory injection observation**, because generating ready-to-inject Markdown does not prove that an integration or hook delivered it to an agent.
+_Avoid_: injection observation, recall access, prompt delivery
+
+**Brain federated context**:
+Cited Brain hits that Memory recall or context-pack may rank in the same result and trust model as Memory evidence, while preserving Brain as the canonical source for those artifacts rather than treating Brain as a Memory store.
+_Avoid_: shared store, uncited Brain injection, separate supplemental section
 
 **Memory readiness envelope**:
 The shared JSON contract consumed by future UI and competitive evaluation, combining task readiness, trust evidence, operational telemetry, VCS/time-travel status, and graph-community signals for a requested goal.
@@ -354,6 +402,12 @@ _Avoid_: HTTP server health endpoint, mutating repair wizard
 The read-only trust report over graph provenance coverage, privacy scan findings, lint findings, contradiction state, supersession state, and recommended next actions.
 _Avoid_: compliance certification, auto-fix workflow
 
+**Memory tidy recommendation**:
+A read-only duplicate or near-duplicate recommendation to merge Memory evidence through an approval-gated **Soft-merge edge**; the first provider-backed tidy scope does not decide supersession, deprecation, or contradiction resolution. Memory does not apply tidy recommendations automatically. Each provider tidy run is bounded by an absolute recommendation cap and a proportional guard against collapsing too much of the candidate set.
+The first product surface for provider-backed tidy recommendations is **Memory governance**. When no provider is configured or provider tidy is unavailable, Memory governance remains deterministic and reports tidy as unavailable with the reason and next action.
+A tidy recommendation's review status is `open`, `accepted`, `dismissed`, or `stale`; `accepted` means a human approved it through an explicit mutating workflow and Memory created the corresponding **Soft-merge edge**, while `stale` means the recommendation's **Provider review fingerprint** no longer matches current evidence or policy. `memory governance` only reports recommendations and never applies them. Graph supersession vocabulary is not used for provider review artifacts.
+_Avoid_: automatic tidy, auto-merge, destructive cleanup, supersession decision, contradiction resolution, retention recommendation
+
 **Memory lint rule suggestion**:
 The read-only recommendation emitted by Memory lint when hygiene findings imply a reusable agent rule or Red context update, including target files, evidence IDs, rationale, and ready-to-paste markdown.
 _Avoid_: automatic rule writer, Memory mutation
@@ -373,6 +427,10 @@ _Avoid_: mutating governance dashboard, public benchmark claim
 **Memory context pack viewer**:
 The self-contained HTML artifact that renders **Memory context pack** evidence for local agent-context inspection, including embedded JSON, grouped citations, warnings, skill recommendations, and ready-to-inject Markdown.
 _Avoid_: model-generated summary, separate prompt artifact store
+
+**Memory context pack core context**:
+The cited, provenance-preserving section of a **Memory context pack** for applicable **Pinned Memory nodes**; pinned nodes must still pass the same governed eligibility filters as ordinary context, then appear before ordinary recalled context without removing citations or trust metadata.
+_Avoid_: uncited always-include preface, ranking-only boost, governance bypass
 
 **Path explanation viewer**:
 The self-contained HTML artifact that renders a **Memory path explanation** for local inspection.
@@ -405,6 +463,14 @@ _Avoid_: CI runner, container build parser
 **Memory extraction status**:
 The read-only operator report that shows deterministic extractor coverage, local structured-transcript fallback readiness, inferred provider mode/model/egress, Stop hook readiness, and stored `INFERRED` fact count.
 _Avoid_: provider installer, extraction quality benchmark
+
+**Provider review fingerprint**:
+A stable hash over the relevant Memory nodes/edges plus the Memory operation id and provider-review policy/prompt version; used to skip repeated provider-backed review work only when both evidence and review policy are unchanged. Deterministic readers still recompute their reports rather than trusting the fingerprint.
+_Avoid_: report cache, governance cache, deterministic skip
+
+**Provider review artifact**:
+A persisted, non-canonical review result keyed by **Provider review fingerprint**, such as stable **Memory tidy recommendation** ids and pair-level evidence for reviewers. It lives in Memory persistence outside the canonical graph, such as RedDB KV or a side collection. It is not a **Memory node** or edge and does not change governed recall until an approved action creates canonical graph evidence.
+_Avoid_: Memory node, Soft-merge edge, recall evidence, markdown review file
 
 **Extraction status viewer**:
 The self-contained HTML artifact that renders **Memory extraction status** for local inspection, including deterministic extractor coverage, inferred provider readiness, Stop hook readiness, inferred fact counts, recommendations, and embedded JSON.
@@ -502,6 +568,42 @@ _Avoid_: demo project, synthetic showcase
 The goal of covering practical repository-understanding capabilities: ingestion, graph construction, impact queries, context maps, and exportable artifacts.
 _Avoid_: Understand clone, Graphify clone
 
+**Memory map**:
+A RedDB-backed, rebuildable projection of codebase-map evidence used by Memory to sharpen agent context between Claude Code/Codex and the repository while reducing unnecessary token use. It is derived from canonical Memory graph evidence and complementary ingest sources without becoming a second source of truth. It includes structural codebase entities plus operational evidence such as ADRs, decisions, validations, issues, PRDs, and attempts only when they are explicitly connected to files, symbols, docs, or assets. red-ui can inspect the same data as a database visualization client, but the primary product loop is agent context selection.
+_Avoid_: graphify-out clone, static map artifact, separate map database
+
+**Memory map versioning**:
+The rule that **Memory map** does not maintain its own snapshot/versioning system; it is recomputed from the queried RedDB graph state and relies on RedDB VCS/time-travel for historical reads.
+_Avoid_: map snapshot store, parallel graph history, committed map version
+
+**Memory map analytic cache**:
+The rebuildable RedDB-backed cache for expensive **Memory map metadata** such as community assignments and cohesion, computed through RedDB analytics capabilities for database visualization clients. Cheap metrics such as edge weight or salience may be computed on read unless materialization is proven necessary.
+_Avoid_: map snapshot, canonical evidence, UI cache
+
+**Memory map boundary**:
+The rule that **Memory map** and Brain remain disconnected surfaces. Brain artifacts do not participate as Memory map vertices, edges, citations, or federated context.
+_Avoid_: Brain-enriched map, federated Brain map context, shared project graph
+
+**Memory map metadata**:
+The semantic and analytic attributes Memory provides as decision inputs for database graph visualization, such as entity type, relation kind, edge weight, edge salience, confidence, provenance, community assignment, cohesion, and source freshness. It does not encode UI/UX decisions such as color palettes, layout, label visibility, opacity, interaction behavior, or visual hierarchy; those belong to red-ui or another frontend consumer.
+_Avoid_: Memory UI projection, graph layout contract, red-ui implementation detail
+
+**Memory map context slice**:
+A compact, cited answer-shaped subgraph selected from **Memory map** evidence for Claude Code/Codex before broad source-file reading, containing the relevant files, symbols, relations, source locations, connected decisions, validations, risks, and recommended next reads within a token budget.
+_Avoid_: raw graph dump, visual map, generated prose answer
+
+**Memory map edge weight**:
+The topological strength of a Memory map edge, usually the count or aggregate strength of concrete relationships between two vertices or two communities.
+_Avoid_: confidence score, UI opacity, importance score
+
+**Memory map edge salience**:
+A navigation-oriented ranking score derived from **Memory map edge weight** plus evidence quality, relation kind, recency, and centrality signals.
+_Avoid_: raw edge weight, visual style, confidence field
+
+**TypeScript map source**:
+The first complementary source for **Memory map** structural code evidence, using TypeScript compiler API or `tsserver` data to derive symbols, imports, exports, and call/type relationships before writing them into RedDB-backed map evidence.
+_Avoid_: Graphify dependency, separate TypeScript index, tsserver as source of truth
+
 **Onboarding map viewer**:
 The self-contained HTML artifact that renders **Memory onboarding map** evidence for local inspection, including concepts, workflows, decisions, risks, validations, suggested skills, warnings, markdown, and embedded JSON.
 _Avoid_: documentation generator, replacement README
@@ -542,6 +644,13 @@ _Avoid_: memory rollback, historical search
 - A **Validation sidecar** feeds **Validation nodes** and `TESTED_BY` edges; `validation_summary` remains a quick aggregate property.
 - **Reasoning attempt hooks** live as a property on the **Reasoning attempt** node; absent when the project declared no user hooks, never represented as an edge or separate node.
 - The **Memory event log** is the shared telemetry substrate for skill, attempt, and hook observations before specialized rollups are produced.
+- A **Hermes-like refinement loop** distills raw signals into **Evidence cards**, routes them into **Operational evidence** or proposal artifacts, and keeps mutation behind proposal review gates.
+- An **Evidence card** can cite **Memory event log** records, hook observations, rejection notes, validation nodes, or external-system summaries without making the raw source itself the durable Memory fact.
+- The first **Hermes-like refinement loop** is seeded by **Internal refinement signals**; external customer, SaaS, or webhook sources are later inputs that must pass the same evidence and privacy gates.
+- A **User rejection signal** can seed an **Evidence card**, but only explicit command or UI feedback should be treated as high-confidence rejection evidence.
+- An **Evidence route** determines what review artifact is proposed from an **Evidence card**; ADR candidates are outside the first routing set and remain governed by architecture-decision criteria.
+- **Low-risk autopromotion** may store internal operational evidence, but **Skill improvement proposal** and Red context updates remain approval-gated.
+- The **Refinement blast-radius gate** decides whether an **Evidence route** is eligible for **Low-risk autopromotion** or must become a human-reviewed proposal.
 - The **Memory readiness envelope** is the contract shared by UI and `eval:competitive:v2`, so product views and benchmarks are backed by the same evidence.
 - A **Memory handoff report** composes live graph evidence for cross-agent continuation; it does not read or expose raw transcripts.
 - The **Handoff viewer** consumes a **Memory handoff report** instead of recomputing cross-agent continuation evidence.
