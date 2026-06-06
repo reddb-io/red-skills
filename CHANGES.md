@@ -2,7 +2,18 @@
 
 Records every change made to skills inherited from [`mattpocock/skills`](https://github.com/mattpocock/skills), plus new skills created by reddb.io. See the rules in [CLAUDE.md](./CLAUDE.md).
 
-Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see `.upstream`).
+Upstream base: `mattpocock/skills@aaf2453fbdfe7a15c07f11d861224f34ab4b53cb` (see `.upstream`).
+
+---
+
+## to-prd (engineering) — upstream testing seam wording (#325)
+
+- **status**: modified
+- **upstream**: `aaf2453`
+- **why**: upstream shifted PRD planning away from extracting deep modules by default and toward agreeing on the highest useful testing seams.
+- **what changed**:
+  - Replaced the deep-module extraction prompt in step 2 with testing-seam planning language while preserving RedSkills' HITL capture and PRD label guardrails.
+  - Updated the PRD testing-decision prompt to allow seams as well as modules.
 
 ---
 
