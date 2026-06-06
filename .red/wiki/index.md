@@ -8,6 +8,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [#253/#254: lock-driven base + lock-toggled landing (ADR 0030/0031)](./pages/261-253-254-lock-driven-base-lock-toggled-landing-adr-0030-0031.md)
 - [#302 Memory extraction: strict-write structural-type gate (provider path)](./pages/377-302-memory-extraction-strict-write-structural-type-gate-prov.md)
 - [Add Memory map context slices](./pages/519-add-memory-map-context-slices.md)
+- [Add compiler-backed TypeScript memory extraction](./pages/529-add-compiler-backed-typescript-memory-extraction.md)
 - [Add tidy recommendation review workflow](./pages/498-add-tidy-recommendation-review-workflow.md)
 - [Context packs render pinned core context](./pages/494-context-packs-render-pinned-core-context.md)
 - [Document Brain ownership of personal facts](./pages/495-document-brain-ownership-of-personal-facts.md)
