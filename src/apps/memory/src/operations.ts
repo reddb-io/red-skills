@@ -125,6 +125,10 @@ import {
   buildMemoryExtractionStatusViewerArtifact,
   type MemoryExtractionStatusViewerArtifact,
 } from "./extraction-status-viewer.js";
+import {
+  buildMemoryMapFreshnessReport,
+  type MemoryMapFreshnessReport,
+} from "./map-freshness.js";
 import type { MemoryStore, StoredNode, VectorStatusReport } from "./graph-store.js";
 import { buildMemoryHandoff, type MemoryHandoffReport } from "./handoff.js";
 import {
@@ -698,6 +702,9 @@ type VectorStatusInput = z.infer<typeof VectorStatusInputSchema>;
 const ExtractionStatusInputSchema = z.object({});
 type ExtractionStatusInput = z.infer<typeof ExtractionStatusInputSchema>;
 
+const MapFreshnessInputSchema = z.object({});
+type MapFreshnessInput = z.infer<typeof MapFreshnessInputSchema>;
+
 const VectorSearchInputSchema = z.object({
   query: z.string().min(1),
   limit: z.number().int().min(1).max(50).optional(),
@@ -923,6 +930,7 @@ const StructuralImpactViewerOutputSchema =
 const ExtractionStatusOutputSchema = objectOutputSchema<MemoryExtractionStatus>();
 const ExtractionStatusViewerOutputSchema =
   objectOutputSchema<MemoryExtractionStatusViewerArtifact>();
+const MapFreshnessOutputSchema = objectOutputSchema<MemoryMapFreshnessReport>();
 const VectorStatusOutputSchema = objectOutputSchema<VectorStatusReport>();
 const VectorStatusViewerOutputSchema = objectOutputSchema<VectorStatusViewerArtifact>();
 const VectorSearchOutputSchema = objectOutputSchema<VectorSearchReport>();
@@ -1281,6 +1289,7 @@ const MEMORY_OPERATION_FACETS: Record<string, MemoryOperationFacets> = {
       "memory.onboarding-map-viewer": VIEWER_OUTPUT,
     },
   ),
+  ...operationFacets(["memory.map-freshness"], inputBinding([]), JSON_REPORT_OUTPUT),
   ...operationFacets(
     ["memory.dashboard"],
     inputBinding([flagField("stale_days", "number")]),
@@ -3330,6 +3339,31 @@ const EXTRACTION_STATUS_VIEWER_OPERATION: MemoryOperationDefinition<
     ),
 };
 
+const MAP_FRESHNESS_OPERATION: MemoryOperationDefinition<
+  MapFreshnessInput,
+  MemoryMapFreshnessReport
+> = {
+  id: "memory.map-freshness",
+  title: "Memory map freshness",
+  description:
+    "Read-only diagnostic report for whether the Memory map is fresh enough to trust.",
+  inputSchema: MapFreshnessInputSchema,
+  outputSchema: MapFreshnessOutputSchema,
+  safetyClass: "read-only",
+  sideEffectClass: "none",
+  capabilities: ["graph-store"],
+  renderer: {
+    cli: { command: "map freshness", supportsJson: true },
+    mcp: {
+      toolName: "memory_map_freshness",
+      description:
+        "Read-only Memory map freshness diagnostic. Returns source revision identity, changed/stale source inputs, extraction coverage by language/source kind, low-confidence or missing relationship classes, and concise next actions. Does not generate a visualization.",
+    },
+  },
+  execute: (ctx) =>
+    buildMemoryMapFreshnessReport(ctx.store, ctx.rootDir ?? process.cwd(), { now: ctx.now }),
+};
+
 const VECTOR_STATUS_OPERATION: MemoryOperationDefinition<VectorStatusInput, VectorStatusReport> = {
   id: "memory.vector-status",
   title: "Memory vector status",
@@ -3520,6 +3554,7 @@ const READ_ONLY_OPERATIONS = createReadOnlyMemoryOperationRegistry([
   LEARNING_DEBT_OPERATION,
   LEARNING_DEBT_VIEWER_OPERATION,
   LINT_OPERATION,
+  MAP_FRESHNESS_OPERATION,
   MEMORY_LAYERS_OPERATION,
   MEMORY_LAYERS_VIEWER_OPERATION,
   ONBOARDING_MAP_OPERATION,

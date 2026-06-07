@@ -111,6 +111,7 @@ const ENDPOINTS = [
   "GET /api/layers",
   "GET /api/learning-debt",
   "GET /api/map-contract",
+  "GET /api/map/freshness",
   "GET /api/onboarding-map",
   "GET /api/hooks/coverage",
   "GET /api/session/timeline?session=<id>",
@@ -703,6 +704,12 @@ function openApiDocument(opts: MemoryHttpServerOptions): MemoryOpenApiDocument {
         get: {
           summary: "Memory learning debt",
           responses: { "200": jsonResponse("Learning debt report") },
+        },
+      },
+      "/api/map/freshness": {
+        get: {
+          summary: "Memory map freshness report",
+          responses: { "200": jsonResponse("Memory map freshness report") },
         },
       },
       "/learning-debt": {
