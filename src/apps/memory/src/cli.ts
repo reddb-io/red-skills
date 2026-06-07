@@ -154,6 +154,7 @@ import { buildLearningDebtReport } from "./learning-debt.js";
 import { buildLearningDebtViewerArtifact } from "./learning-debt-viewer.js";
 import { buildOnboardingMap } from "./onboarding-map.js";
 import { buildOnboardingMapViewerArtifact } from "./onboarding-map-viewer.js";
+import { buildMemoryMapFreshnessReport } from "./map-freshness.js";
 import {
   buildMemoryOperationalDashboard,
   buildMemoryOperationalDashboardArtifact,
@@ -345,6 +346,7 @@ Usage:
   memory tidy-review accept <id>    --approver <id> --yes [--root <dir>] [--reason <text>] [--json]
   memory tidy-review dismiss <id>   --approver <id> --yes [--root <dir>] [--reason <text>] [--json]
   memory health-viewer              [--root <dir>] [--stale-days N] [--out <file>]
+  memory map freshness              [--root <dir>] [--json]   (map freshness and extraction diagnostic, read-only)
   memory onboarding-map             [--root <dir>] [--stale-days N] [--json]
   memory onboarding-map-viewer      [--root <dir>] [--stale-days N] [--out <file>]
   memory onboarding-map export <out-dir> --public-safe [--strict] [--root <dir>] [--json]
@@ -5299,6 +5301,25 @@ async function runExtractionStatusViewer(args: ParsedArgs): Promise<void> {
   }
 }
 
+async function runMap(args: ParsedArgs): Promise<void> {
+  const action = args.positional[0];
+  if (action !== "freshness") {
+    throw new Error("memory map supports: freshness");
+  }
+  const rootDir = resolve(rootOf(args.flags));
+  const { store } = await openGraphStore(args);
+  try {
+    const report = await buildMemoryMapFreshnessReport(store, rootDir);
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(report, null, 2));
+      return;
+    }
+    process.stdout.write(report.markdown);
+  } finally {
+    await store.close();
+  }
+}
+
 /**
  * Read-only Code drift report (ADR 0035). It surfaces unknown engineering codes
  * by recurrence count for curation and never mutates the graph or recall path.
@@ -6938,6 +6959,8 @@ async function main(): Promise<void> {
       return runExtract(args);
     case "extraction":
       return runExtraction(args);
+    case "map":
+      return runMap(args);
     case "code-drift":
       return runCodeDrift(args);
     case "code-curate":

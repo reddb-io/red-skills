@@ -270,7 +270,7 @@ export interface RefreshOptions {
   rootDir?: string;
 }
 
-interface FileManifestEntry {
+export interface FileManifestEntry {
   hash: string;
   format?: "element-hashes" | "element-hash-chunks";
   elements: string[];
@@ -410,7 +410,7 @@ const INDEXABLE_EXT = new Set([
   ".xlsx",
 ]);
 
-async function readIndexHash(path: string): Promise<string> {
+export async function readIndexHash(path: string): Promise<string> {
   if (isAssetFile(path)) {
     return contentHash(path, await readFile(path, "base64"));
   }
@@ -423,7 +423,7 @@ async function readLegacyFileManifest(store: MemoryStore): Promise<FileManifest>
   return typeof raw === "string" ? (JSON.parse(raw) as FileManifest) : raw;
 }
 
-async function readFileManifestEntry(
+export async function readFileManifestEntry(
   store: MemoryStore,
   path: string,
   legacyEntry?: FileManifestEntry,
