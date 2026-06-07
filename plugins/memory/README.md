@@ -59,14 +59,18 @@ Use this map before reaching for the full command list:
 | Remember one durable work fact | `memory store "Decision: ..."` | Captures scoped evidence for later recall. |
 | Get context before acting | `memory recall "topic"` | Canonical governed context path; hides superseded guidance by default. |
 | Prepare another agent/session | `memory context-pack "goal"` or `memory handoff "focus"` | Produces cited, budgeted context instead of dumping search results. |
+| Narrow code reads before broad grep | `memory onboarding-map --json`, `memory structural-impact --file <path>`, `memory path-explain <from> <to> --json` | Produces RedDB-backed map context so the agent can inspect the most relevant files, symbols, tests, decisions, and references first. |
 | Decide whether it is safe to proceed | `memory readiness "goal"` or `memory claim-check "assertion"` | Surfaces stale, missing, contradicted, or unsupported evidence. |
 | Search across every indexed surface | `memory smart-search "query"` | Broad discovery across recall, docs, assets, and vector diagnostics. |
 | Operate/debug Memory itself | `memory workbench`, `memory health-viewer`, `memory governance` | Inspects capability status, freshness, hooks, trust, and retention. |
 
 The rule of thumb: agents should use `recall` for action context, `readiness`
-for go/no-go decisions, and `context-pack`/`handoff` for continuation. Broader
-search, Workbench, vector, docs, and reference surfaces are diagnostics or
-operator views over the same evidence.
+for go/no-go decisions, `context-pack`/`handoff` for continuation, and map
+context before broad source reads. Code-structure map context is agent context:
+it narrows the next source files to inspect and must be verified against the
+current worktree before the agent makes a code claim. Broader search, Workbench,
+vector, docs, and reference surfaces are diagnostics or operator views over the
+same evidence.
 
 ## Golden path: governed operational memory
 
@@ -204,6 +208,20 @@ skill recommendations, and ready-to-inject Markdown. The same viewer is
 available through MCP and `/context-pack?goal=<text>` when `memory serve` is
 running.
 
+`memory onboarding-map`, `memory structural-impact`, `memory path-explain`, and
+`memory pre-pr-review` form the code-structure map context path. Agents should
+call these before broad `grep`, recursive file reads, or opening many source
+files when the question is about implementation shape or blast radius. The map
+is not a generated answer; it is a RedDB context slice for deciding which files,
+symbols, tests, prior decisions, active work, and references to inspect next.
+Use relation filters while reading the map:
+
+| Code question | Relation filters | Start with |
+|---------------|------------------|------------|
+| Which files should I inspect before changing this symbol? | `call`, `import`, `type`, `validation` | `memory structural-impact --file <path>` or MCP `memory_structural_impact` |
+| Why does this handler depend on this schema or concept? | `call`, `type`, `reference`, `decision` | `memory path-explain <from> <to> --json` or MCP `memory_path_explain` |
+| What work and validation evidence touches these changed files? | `work`, `validation`, `decision`, `reference` | `memory pre-pr-review --json` or MCP `memory_pre_pr_review` |
+
 `memory layers --json` is the architecture-level readiness report: it maps
 short-term session events, long-term durable graph facts, reasoning traces,
 docs/code graph evidence, and vector projection into one RedDB-backed contract.
@@ -325,13 +343,17 @@ as a self-contained HTML viewer.
 For agent interop, `memory routing-guide --agent
 codex|claude|cursor|gemini|aider|opencode|generic --json` emits the target
 rule file, MCP stdio config shape, loopback HTTP command, hook notes where
-supported, and CLI fallbacks. This is intentionally a local-dev adoption
+supported, CLI fallbacks, and the map-context rule for calling Memory before
+broad grep, recursive file reads, or many-file source opens. This is
+intentionally a local-dev adoption
 surface: every agent points at the same project-local RedDB store through
 `memory-mcp`, `memory serve`, or bundled lifecycle hooks rather than a cloud
 memory service. `memory routing-guide-viewer --agent <name>` writes the same
 contract as a self-contained HTML viewer, `/routing-guide?agent=<name>` serves
 it over loopback HTTP, and the Workbench includes an Agent Routing panel backed
-by `/api/routing-guide`. `memory integration-status --json` audits whether
+by `/api/routing-guide`. The MCP and CLI routing-guide output describes map
+context as agent context for choosing the next reads, not as a generated answer.
+`memory integration-status --json` audits whether
 supported agents have Memory routing snippets and hook coverage in place, while
 `memory integration-status-viewer`, `/integration-status`, `/api/integration-status`,
 and the Workbench Agent Integration Status panel render the same read-only

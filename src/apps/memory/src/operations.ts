@@ -2934,7 +2934,8 @@ const READINESS_VIEWER_OPERATION: MemoryOperationDefinition<
 const ROUTING_GUIDE_OPERATION: MemoryOperationDefinition<RoutingGuideInput, MemoryRoutingGuide> = {
   id: "memory.routing-guide",
   title: "Memory routing guide",
-  description: "Agent-ready Memory routing instructions for AGENTS.md or CLAUDE.md.",
+  description:
+    "Agent-ready Memory routing instructions for AGENTS.md or CLAUDE.md, including map context that narrows source reads before broad grep.",
   inputSchema: RoutingGuideInputSchema,
   outputSchema: RoutingGuideOutputSchema,
   safetyClass: "read-only",
@@ -2945,7 +2946,7 @@ const ROUTING_GUIDE_OPERATION: MemoryOperationDefinition<RoutingGuideInput, Memo
     mcp: {
       toolName: "memory_routing_guide",
       description:
-        "Read-only Memory routing guide for agent rule files. Returns target files, recommended MCP tools, CLI fallbacks, safety notes, and an installable AGENTS.md/CLAUDE.md snippet.",
+        "Read-only Memory routing guide for agent rule files. Returns target files, recommended MCP tools, CLI fallbacks, map-context examples for relation-filtered source-read routing, safety notes, and an installable AGENTS.md/CLAUDE.md snippet. The map context is agent context, not a generated answer.",
     },
   },
   execute: async (_ctx, input) =>
@@ -3095,7 +3096,8 @@ const STRUCTURAL_IMPACT_OPERATION: MemoryOperationDefinition<
 > = {
   id: "memory.structural-impact",
   title: "Memory structural impact",
-  description: "Read-only file/symbol impact query over ingested code graph evidence.",
+  description:
+    "Read-only file/symbol impact query over ingested code graph evidence for agent map context before broad source reads.",
   inputSchema: StructuralImpactInputSchema,
   outputSchema: StructuralImpactOutputSchema,
   safetyClass: "read-only",
@@ -3106,7 +3108,7 @@ const STRUCTURAL_IMPACT_OPERATION: MemoryOperationDefinition<
     mcp: {
       toolName: "memory_structural_impact",
       description:
-        "Read-only file/symbol impact query over ingested code graph evidence. Returns imports, imported-by edges, call/called-by edges, type-use edges, symbols defined by a file, and the file defining a symbol.",
+        "Read-only file/symbol impact query over ingested code graph evidence. Returns agent context for imports, imported-by edges, call/called-by edges, type-use edges, references, symbols defined by a file, and the file defining a symbol; use it to choose source reads, not as a generated answer.",
     },
   },
   execute: (ctx, input) =>

@@ -15,6 +15,22 @@ export interface MemoryRoutingRule {
   reason: string;
 }
 
+export type MemoryMapRelationFilter =
+  | "call"
+  | "import"
+  | "type"
+  | "validation"
+  | "decision"
+  | "work"
+  | "reference";
+
+export interface MemoryMapContextExample {
+  question: string;
+  relationFilters: MemoryMapRelationFilter[];
+  call: string;
+  followUp: string;
+}
+
 export interface MemoryRoutingGuide {
   schemaVersion: "memory.routing_guide.v1";
   agent: MemoryRoutingAgent;
@@ -24,6 +40,12 @@ export interface MemoryRoutingGuide {
   mcpTools: string[];
   cliFallbacks: string[];
   rules: MemoryRoutingRule[];
+  mapContext: {
+    kind: "agent_context";
+    description: string;
+    relationFilters: MemoryMapRelationFilter[];
+    examples: MemoryMapContextExample[];
+  };
   safetyNotes: string[];
   installSnippet: string;
 }
@@ -59,6 +81,11 @@ export const SUPPORTED_ROUTING_AGENTS: MemoryRoutingAgent[] = [
 
 const RULES: MemoryRoutingRule[] = [
   {
+    when: "Before broad grep, recursive file reads, or opening many source files for a code-structure question",
+    call: "memory_onboarding_map for repo orientation, then memory_structural_impact or memory_path_explain with relation filters: call, import, type, validation, decision, work, reference",
+    reason: "Use the RedDB map context as an agent context slice that narrows which files, symbols, tests, and decisions to inspect next.",
+  },
+  {
     when: "Before architecture, migration, or multi-file implementation work",
     call: "memory_context_pack with the concrete goal",
     reason: "Load prior decisions, validations, warnings, and citations before planning.",
@@ -92,6 +119,37 @@ const RULES: MemoryRoutingRule[] = [
     when: "When preserving a durable fact, decision, fix, or user preference",
     call: "memory_store only when the user asked to remember it or the fact is clearly durable",
     reason: "Keep memory useful without polluting it with transient reasoning.",
+  },
+];
+
+const MAP_RELATION_FILTERS: MemoryMapRelationFilter[] = [
+  "call",
+  "import",
+  "type",
+  "validation",
+  "decision",
+  "work",
+  "reference",
+];
+
+const MAP_CONTEXT_EXAMPLES: MemoryMapContextExample[] = [
+  {
+    question: "Which auth files should I inspect before changing token refresh?",
+    relationFilters: ["import", "call", "type", "validation"],
+    call: "memory_structural_impact with the known file or symbol, then inspect only the returned imports, calls, type-use edges, and validation nodes first",
+    followUp: "Open the smallest set of cited files/tests from the map before falling back to grep.",
+  },
+  {
+    question: "Why does this API handler depend on the session schema?",
+    relationFilters: ["call", "type", "reference", "decision"],
+    call: "memory_path_explain from the handler label to the schema/session label",
+    followUp: "Use the returned path as context for source reads; verify the current code after reading the mapped files.",
+  },
+  {
+    question: "What work and validation evidence touches this migration?",
+    relationFilters: ["work", "validation", "decision", "reference"],
+    call: "memory_pre_pr_review with changed_files or memory_onboarding_map for repo-level evidence",
+    followUp: "Treat the result as triage context for the next reads, not as a final generated answer.",
   },
 ];
 
@@ -134,6 +192,7 @@ export function buildMemoryRoutingGuide(
   const targetFiles = integration.targetFiles;
   const safetyNotes = [
     "Read-only tools are preferred before mutating Memory.",
+    "Map context is agent context for routing source reads; verify the current worktree before making code claims.",
     "memory_store is durable; do not store secrets, raw credentials, or transient chain-of-thought.",
     "memory_supersede and conflict-resolution tools are mutating; use them only with explicit user intent.",
     "Citations such as memory_nodes:<rid> should be kept in summaries when they support an important claim.",
@@ -147,6 +206,13 @@ export function buildMemoryRoutingGuide(
     mcpTools: MCP_TOOLS,
     cliFallbacks: CLI_FALLBACKS,
     rules: RULES,
+    mapContext: {
+      kind: "agent_context",
+      description:
+        "RedDB-backed code-structure context used to choose the next source reads before broad grep or recursive file opens. It is not a generated answer and does not replace checking the current worktree.",
+      relationFilters: MAP_RELATION_FILTERS,
+      examples: MAP_CONTEXT_EXAMPLES,
+    },
     safetyNotes,
     installSnippet: renderMemoryRoutingSnippet({ agent, targetFiles, safetyNotes }),
   };
@@ -288,6 +354,15 @@ function renderMemoryRoutingSnippet(input: {
     `- Transports: ${integration.transports.join(", ")}`,
     "- MCP server command: `memory-mcp`",
     "- Optional HTTP workbench/API: `memory serve --host 127.0.0.1 --port 3113`",
+    "",
+    "Map context before broad source reads:",
+    "- For code-structure questions, call `memory_onboarding_map`, `memory_structural_impact`, `memory_path_explain`, or `memory_pre_pr_review` before broad grep, recursive file reads, or opening many source files.",
+    "- Treat the returned map as agent context for choosing the next files, symbols, tests, and decisions to inspect; it is not a generated answer.",
+    `- Relation filters to apply while reading map context: ${MAP_RELATION_FILTERS.join(", ")}.`,
+    ...MAP_CONTEXT_EXAMPLES.map(
+      (example) =>
+        `- ${example.question}: ${example.call}; filters=${example.relationFilters.join(", ")}; ${example.followUp}`,
+    ),
     "",
     "Rules:",
     ...RULES.map((rule) => `- ${rule.when}: call \`${rule.call}\` - ${rule.reason}`),
