@@ -48,6 +48,19 @@ export interface RetakeRecommendation {
   command?: string;
 }
 
+export interface RetakeApplyOperation {
+  cmd: "git";
+  args: readonly string[];
+  cwd?: string;
+  label: string;
+}
+
+export interface RetakeApplyPlan {
+  summary: string;
+  operations: readonly RetakeApplyOperation[];
+  nextCommand?: string;
+}
+
 export interface RetakeFacts {
   issue: RetakeIssue;
   pullRequests: readonly RetakePullRequest[];
@@ -85,8 +98,9 @@ export function worktreeMatchesIssue(worktree: RetakeWorktree, issue: number): b
 }
 
 export function pullRequestMatchesIssue(pr: RetakePullRequest, issue: number): boolean {
-  return (pr.headRefName !== undefined && branchMatchesIssue(pr.headRefName, issue)) ||
-    new RegExp(`(?:^|[^0-9#])#?${issue}(?:[^0-9]|$)`).test(`${pr.title}\n${pr.body ?? ""}`);
+  if (pr.headRefName !== undefined && branchMatchesIssue(pr.headRefName, issue)) return true;
+  if (new RegExp(`(?:^|[^0-9#])#?${issue}(?:[^0-9]|$)`).test(pr.title)) return true;
+  return new RegExp(`(?:^|[^0-9])#${issue}(?:[^0-9]|$)|/issues/${issue}(?:[^0-9]|$)`).test(pr.body ?? "");
 }
 
 export function summarizeChecks(rawChecks: readonly unknown[]): RetakeChecksState {
@@ -122,6 +136,19 @@ function worktreeCommandForPr(issue: number, pr: RetakePullRequest): string {
   return `git fetch origin ${branch}:${branch} && git worktree add .red/tmp/work-ship-${issue} ${branch}`;
 }
 
+function matchingWorktreeForPr(
+  worktrees: readonly RetakeWorktree[],
+  issue: number,
+  pr: RetakePullRequest,
+): RetakeWorktree | undefined {
+  const matchingWorktrees = worktrees.filter((worktree) => worktreeMatchesIssue(worktree, issue));
+  return matchingWorktrees.find((candidate) =>
+    candidate.branch !== undefined &&
+    pr.headRefName !== undefined &&
+    normalizeBranchName(candidate.branch) === normalizeBranchName(pr.headRefName)
+  );
+}
+
 export function recommendRetake(facts: RetakeFacts): RetakeRecommendation {
   const labels = new Set(facts.issue.labels);
   const openPrs = facts.pullRequests.filter((pr) => pr.state.toUpperCase() === "OPEN");
@@ -142,11 +169,7 @@ export function recommendRetake(facts: RetakeFacts): RetakeRecommendation {
     pr.checksState === "pending"
   );
   if (blockedPr !== undefined) {
-    const worktree = matchingWorktrees.find((candidate) =>
-      candidate.branch !== undefined &&
-      blockedPr.headRefName !== undefined &&
-      normalizeBranchName(candidate.branch) === normalizeBranchName(blockedPr.headRefName)
-    );
+    const worktree = matchingWorktreeForPr(facts.worktrees, facts.issue.number, blockedPr);
     return {
       kind: "fix-pr",
       summary: `PR #${blockedPr.number} is open but not ready to ship.`,
@@ -166,11 +189,7 @@ export function recommendRetake(facts: RetakeFacts): RetakeRecommendation {
 
   const shippablePr = openPrs.find((pr) => pr.checksState === "green" || pr.checksState === "unknown") ?? openPrs[0];
   if (shippablePr !== undefined) {
-    const worktree = matchingWorktrees.find((candidate) =>
-      candidate.branch !== undefined &&
-      shippablePr.headRefName !== undefined &&
-      normalizeBranchName(candidate.branch) === normalizeBranchName(shippablePr.headRefName)
-    );
+    const worktree = matchingWorktreeForPr(facts.worktrees, facts.issue.number, shippablePr);
     return {
       kind: "ship-pr",
       summary: `PR #${shippablePr.number} is open; hand it to /ship once the branch worktree is clean.`,
@@ -200,5 +219,81 @@ export function recommendRetake(facts: RetakeFacts): RetakeRecommendation {
     kind: "create-branch",
     summary: "No matching local state was found; start a fresh ship worktree for this issue.",
     command: `git worktree add .red/tmp/work-ship-${facts.issue.number} -b codex/${facts.issue.number}-retake origin/main`,
+  };
+}
+
+export function planRetakeApply(facts: RetakeFacts): RetakeApplyPlan {
+  const recommendation = recommendRetake(facts);
+  const issue = facts.issue.number;
+  const worktreePath = `.red/tmp/work-ship-${issue}`;
+
+  if (recommendation.kind === "create-branch") {
+    const branch = `codex/${issue}-retake`;
+    return {
+      summary: `Create ${worktreePath} on ${branch}.`,
+      operations: [{
+        cmd: "git",
+        args: ["worktree", "add", worktreePath, "-b", branch, "origin/main"],
+        label: "create fresh ship worktree",
+      }],
+      nextCommand: `cd ${worktreePath}`,
+    };
+  }
+
+  if (recommendation.kind === "create-worktree") {
+    const branch = facts.branches.find((candidate) => !candidate.remote) ?? facts.branches[0];
+    if (branch === undefined) {
+      return { summary: "No matching branch is available to recreate a worktree.", operations: [] };
+    }
+    const args = branch.remote
+      ? ["worktree", "add", worktreePath, "-b", normalizeBranchName(branch.name), branch.name]
+      : ["worktree", "add", worktreePath, branch.name];
+    return {
+      summary: `Create ${worktreePath} from ${branch.name}.`,
+      operations: [{ cmd: "git", args, label: "create ship worktree from matching branch" }],
+      nextCommand: `cd ${worktreePath}`,
+    };
+  }
+
+  if (recommendation.kind === "fix-pr" || recommendation.kind === "ship-pr") {
+    const openPrs = facts.pullRequests.filter((pr) => pr.state.toUpperCase() === "OPEN");
+    const pr = recommendation.kind === "fix-pr"
+      ? openPrs.find((candidate) =>
+        candidate.reviewDecision?.toUpperCase() === "CHANGES_REQUESTED" ||
+        candidate.checksState === "failing" ||
+        candidate.checksState === "pending"
+      )
+      : openPrs.find((candidate) => candidate.checksState === "green" || candidate.checksState === "unknown") ?? openPrs[0];
+    if (pr === undefined) return { summary: "No open PR is available to apply.", operations: [] };
+    const worktree = matchingWorktreeForPr(facts.worktrees, issue, pr);
+    if (worktree !== undefined) {
+      return {
+        summary: `Matching worktree already exists for PR #${pr.number}.`,
+        operations: [],
+        nextCommand: recommendation.kind === "ship-pr"
+          ? `cd ${worktree.path} && /ship --issue ${issue}`
+          : `cd ${worktree.path}`,
+      };
+    }
+    if (pr.headRefName === undefined || pr.headRefName.trim() === "") {
+      return { summary: `PR #${pr.number} has no head branch name; cannot apply safely.`, operations: [] };
+    }
+    const branch = normalizeBranchName(pr.headRefName);
+    return {
+      summary: `Create ${worktreePath} for PR #${pr.number}.`,
+      operations: [
+        { cmd: "git", args: ["fetch", "origin", `${branch}:${branch}`], label: "fetch PR head branch" },
+        { cmd: "git", args: ["worktree", "add", worktreePath, branch], label: "create ship worktree for PR" },
+      ],
+      nextCommand: recommendation.kind === "ship-pr"
+        ? `cd ${worktreePath} && /ship --issue ${issue}`
+        : `cd ${worktreePath}`,
+    };
+  }
+
+  return {
+    summary: `Nothing safe to apply automatically for ${recommendation.kind}.`,
+    operations: [],
+    nextCommand: recommendation.command,
   };
 }
