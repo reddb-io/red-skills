@@ -3,7 +3,7 @@ import {
   ARCHITECTURE_OVERVIEW_SCHEMA_VERSION,
   buildArchitectureOverview,
 } from "../src/architecture-overview.js";
-import { buildGraphContract } from "../src/graph-contract.js";
+import { GRAPH_CONTRACT_VERSION, buildGraphContract } from "../src/graph-contract.js";
 import type { ExportEdge } from "../src/export.js";
 import type { StoredNode } from "../src/graph-store.js";
 
@@ -62,7 +62,7 @@ describe("buildArchitectureOverview", () => {
   test("carries a schema version and echoes the source contract version", () => {
     const overview = buildArchitectureOverview(fixtureContract());
     expect(overview.schema_version).toBe(ARCHITECTURE_OVERVIEW_SCHEMA_VERSION);
-    expect(overview.generated_from.contract_version).toBe("1.0.0");
+    expect(overview.generated_from.contract_version).toBe(GRAPH_CONTRACT_VERSION);
   });
 
   test("summarises totals from the contract stats", () => {
@@ -137,7 +137,7 @@ describe("buildArchitectureOverview", () => {
     expect(overview.markdown).toContain("L3");
     expect(overview.markdown).toContain("c0");
     // Generated from the contract version, surfaced for traceability.
-    expect(overview.markdown).toContain("1.0.0");
+    expect(overview.markdown).toContain(GRAPH_CONTRACT_VERSION);
   });
 
   test("handles an empty graph without throwing", () => {

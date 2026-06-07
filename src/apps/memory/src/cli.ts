@@ -437,6 +437,7 @@ Usage:
   memory doctor                     [--root <dir>] [--stale-days N] [--prune] [--yes]
   memory export [<out-dir>]         [--root <dir>] [--communities] [--interop]
   memory graph  [<out-dir>]         [--root <dir>] [--communities]   (alias of export)
+  memory map-contract               [--root <dir>] [--communities] [--json]
   memory architecture-overview      [--root <dir>] [--from <graph.json>] [--out <file>] [--stdout] [--json]
 
   Auto-firing hooks (invoked by the plugin manifest, reads payload on stdin):

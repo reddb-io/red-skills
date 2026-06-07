@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, test } from "vitest";
 import { MemoryStore } from "../src/graph-store.js";
+import { GRAPH_CONTRACT_VERSION } from "../src/graph-contract.js";
 import { initGraph } from "../src/init.js";
 
 const TIMEOUT = 40_000;
@@ -92,7 +93,7 @@ describe("memory architecture-overview CLI", () => {
 
       expect(body.schema_version).toBe("memory.architecture_overview.v1");
       expect(body.read_only).toBe(true);
-      expect(body.generated_from.contract_version).toBe("1.0.0");
+      expect(body.generated_from.contract_version).toBe(GRAPH_CONTRACT_VERSION);
       expect(body.totals.nodes).toBe(4);
       expect(body.totals.edges).toBe(3);
 

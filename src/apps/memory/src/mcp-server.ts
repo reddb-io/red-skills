@@ -31,7 +31,8 @@ import { diagnose } from "./doctor.js";
 import { runAutoCure } from "./auto-curation.js";
 import { neighbors, path, recall, search, traverse } from "./engine.js";
 import { resolveProvider } from "./extract-conversation.js";
-import { exportGraph } from "./export.js";
+import { exportGraph, toEdge } from "./export.js";
+import { buildGraphContract } from "./graph-contract.js";
 import { MemoryStore, factToNode } from "./graph-store.js";
 import { HistoricalMemoryStore } from "./historical-memory-store.js";
 import {
@@ -334,7 +335,8 @@ async function main(): Promise<void> {
           store.listEdges(),
           store.stats(),
         ]);
-        return text(JSON.stringify({ nodes, edges, stats }, null, 2), stats);
+        const contract = buildGraphContract({ nodes, edges: edges.map(toEdge) });
+        return text(JSON.stringify({ contract, nodes, edges, stats }, null, 2), stats);
       }
       case "memory_doctor": {
         const input = DoctorInput.parse(args);

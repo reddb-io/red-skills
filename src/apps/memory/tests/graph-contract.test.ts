@@ -36,6 +36,18 @@ function fixture(): { nodes: StoredNode[]; edges: ExportEdge[]; communities: Map
       description: "auth module",
       exports: ["issueToken", "TokenStore"],
       layer: "L3",
+      confidence: "EXTRACTED",
+      source: "src/auth.ts",
+      salience: 0.83,
+      created_at: 1_700_000_000_000,
+      updated_at: 1_700_000_100_000,
+      accessed_at: 1_700_000_200_000,
+      provenance: {
+        source_kind: "derived",
+        writer: "memory ingest",
+        confidence: "EXTRACTED",
+        evidence: ["src/auth.ts:1"],
+      },
     }),
     node(2, "symbol", "sym:/repo/src/auth.ts#issueToken", {
       title: "issueToken",
@@ -50,17 +62,38 @@ function fixture(): { nodes: StoredNode[]; edges: ExportEdge[]; communities: Map
     node(5, "concept", "lonely-note", { title: "lonely note", content: "no inbound edges" }),
   ];
 
-  const edge = (rid: number, label: string, from: number, to: number): ExportEdge => ({
+  const edge = (
+    rid: number,
+    label: string,
+    from: number,
+    to: number,
+    properties: Record<string, unknown> = {},
+    weight = 1,
+  ): ExportEdge => ({
     rid,
     label,
     from,
     to,
-    weight: 1,
-    properties: {},
+    weight,
+    properties,
   });
 
   const edges: ExportEdge[] = [
-    edge(10, "DEFINED_IN", 2, 1), // symbol defined in file (child→parent as stored)
+    edge(
+      10,
+      "DEFINED_IN",
+      2,
+      1,
+      {
+        confidence: "EXTRACTED",
+        source: "src/auth.ts:1",
+        salience: 0.71,
+        created_at: 1_700_000_300_000,
+        reason: "code extraction",
+        provenance: { source_kind: "derived", evidence: ["src/auth.ts:1"] },
+      },
+      2.5,
+    ), // symbol defined in file (child→parent as stored)
     edge(11, "IMPORTS", 1, 3), // file imports specifier
     edge(12, "CALLS", 2, 4), // symbol references symbol
   ];
@@ -99,7 +132,7 @@ describe("buildGraphContract", () => {
     expect(contract.version).toBe(GRAPH_CONTRACT_VERSION);
   });
 
-  test("nodes round-trip id/type/label, description, exports, layer, community", () => {
+  test("nodes round-trip canonical fields and consumer metadata", () => {
     const contract = buildGraphContract(fixture());
     const file = contract.nodes.find((n) => n.id === 1)!;
     expect(file).toMatchObject({
@@ -110,7 +143,23 @@ describe("buildGraphContract", () => {
       exports: ["issueToken", "TokenStore"],
       layer: "L3",
       community: "c0",
+      confidence: "EXTRACTED",
+      source_location: "src/auth.ts",
+      salience: 0.83,
+      freshness: {
+        created_at: 1_700_000_000_000,
+        updated_at: 1_700_000_100_000,
+        accessed_at: 1_700_000_200_000,
+      },
+      provenance: {
+        source_kind: "derived",
+        writer: "memory ingest",
+        confidence: "EXTRACTED",
+        evidence: ["src/auth.ts:1"],
+      },
     });
+    expect(file.metadata).toMatchObject({ title: "/repo/src/auth.ts", language: "typescript" });
+    expect(file.metadata).not.toHaveProperty("provenance");
     // A symbol's description falls back to its `summary` captured by ingest.
     const sym = contract.nodes.find((n) => n.id === 2)!;
     expect(sym.description).toBe("function");
@@ -125,6 +174,22 @@ describe("buildGraphContract", () => {
     expect(imports).toMatchObject({ source: 1, target: 3, kind: "imports" });
     const references = contract.edges.find((e) => e.kind === "references")!;
     expect(references).toMatchObject({ source: 2, target: 4, kind: "references" });
+  });
+
+  test("edges carry separate weight and salience plus provenance metadata", () => {
+    const contract = buildGraphContract(fixture());
+    const defines = contract.edges.find((e) => e.kind === "defines")!;
+    expect(defines).toMatchObject({
+      id: 10,
+      weight: 2.5,
+      salience: 0.71,
+      confidence: "EXTRACTED",
+      source_location: "src/auth.ts:1",
+      freshness: { created_at: 1_700_000_300_000, updated_at: null },
+      provenance: { source_kind: "derived", evidence: ["src/auth.ts:1"] },
+      metadata: { reason: "code extraction" },
+    });
+    expect(defines.metadata).not.toHaveProperty("salience");
   });
 
   test("flags orphans by absence of inbound edges", () => {
