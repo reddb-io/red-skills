@@ -19,6 +19,7 @@
     "./skills/engineering/triage",
     "./skills/engineering/hitl",
     "./skills/engineering/report-bug",
+    "./skills/engineering/retake",
     "./skills/engineering/urgent",
     "./skills/engineering/weekly-review",
     "./skills/engineering/improve-codebase-architecture",
