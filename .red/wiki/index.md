@@ -11,6 +11,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [Add compiler-backed TypeScript memory extraction](./pages/529-add-compiler-backed-typescript-memory-extraction.md)
 - [Add tidy recommendation review workflow](./pages/498-add-tidy-recommendation-review-workflow.md)
 - [Context packs render pinned core context](./pages/494-context-packs-render-pinned-core-context.md)
+- [Define RedDB Memory map consumer contract](./pages/535-define-reddb-memory-map-consumer-contract.md)
 - [Document Brain ownership of personal facts](./pages/495-document-brain-ownership-of-personal-facts.md)
 - [Memory governance reports tidy availability](./pages/492-memory-governance-reports-tidy-availability.md)
 - [Memory: deterministic invariant fuzzer](./pages/510-memory-deterministic-invariant-fuzzer.md)
