@@ -83,6 +83,10 @@ import { dispatch, type HookEvent, type Runner } from "./hook-runtime.js";
 import { refreshFromGit, type VcsEvent } from "./vcs-refresh.js";
 import { installGitHooks, uninstallGitHooks } from "./vcs-hooks-install.js";
 import { importAmsDump } from "./import-ams.js";
+import {
+  importComplementaryMapFile,
+  type ComplementaryMapSourceKind,
+} from "./import-complementary-map.js";
 import { runPromote } from "./promote.js";
 import { runAfkLifecycle } from "./afk-lifecycle.js";
 import {
@@ -464,6 +468,7 @@ Usage:
   AMS migration (PRD #174, issue #184) — one-shot offline importer for Redis
   agent-memory-server JSON dumps. See \`docs/migrating-from-ams.md\`.
   memory import ams <dump.json>     [--root <dir>] [--json]
+  memory import map <artifact.json> [--kind graphify|scip|lsp|static-analysis] [--root <dir>] [--json]
 
   Benchmarks and reference eval live in the embedded app \`benchmark-memory\`.
 
@@ -537,6 +542,7 @@ const SOURCE_KINDS: readonly MemoryProvenance["source_kind"][] = [
   "hook",
   "derived",
   "system",
+  "external-map",
 ];
 
 function parseSourceKind(
@@ -6725,15 +6731,34 @@ async function runAttemptLearnApply(args: ParsedArgs): Promise<void> {
 async function runImport(args: ParsedArgs): Promise<void> {
   const source = args.positional[0];
   const file = args.positional[1];
-  if (source !== "ams") {
-    throw new Error(`usage: memory import ams <dump.json> [--root <dir>] [--json]`);
-  }
   if (!file) {
-    throw new Error("memory import ams: missing <dump.json> path");
+    throw new Error("usage: memory import ams <dump.json> | memory import map <artifact.json>");
   }
   const rootDir = rootOf(args.flags);
   const { store } = await openGraphStore(args);
   try {
+    if (source === "map") {
+      const report = await importComplementaryMapFile(store, file, {
+        rootDir,
+        sourceKind: parseComplementaryMapKind(stringFlag(args.flags, "kind")),
+        command: "memory import map",
+      });
+      if (args.flags.json === true) {
+        console.log(JSON.stringify(report, null, 2));
+        return;
+      }
+      console.log(
+        `memory import map: ${report.source_kind} nodes=${report.nodes.imported} imported/${report.nodes.overlapped} overlapped edges=${report.edges.imported} imported/${report.edges.overlapped} overlapped`,
+      );
+      console.log(`  destination: ${report.destination}`);
+      for (const warning of report.warnings.slice(0, 5)) console.log(`  warning: ${warning}`);
+      return;
+    }
+    if (source !== "ams") {
+      throw new Error(
+        `usage: memory import ams <dump.json> | memory import map <artifact.json> [--kind graphify|scip|lsp|static-analysis]`,
+      );
+    }
     const report = await importAmsDump(store, rootDir, file);
     if (args.flags.json === true) {
       console.log(JSON.stringify(report, null, 2));
@@ -6748,6 +6773,22 @@ async function runImport(args: ParsedArgs): Promise<void> {
   } finally {
     await store.close();
   }
+}
+
+function parseComplementaryMapKind(
+  value: string | undefined,
+): ComplementaryMapSourceKind | undefined {
+  if (value == null) return undefined;
+  const normalized = value.trim().toLowerCase();
+  if (
+    normalized === "graphify" ||
+    normalized === "scip" ||
+    normalized === "lsp" ||
+    normalized === "static-analysis"
+  ) {
+    return normalized;
+  }
+  throw new Error(`invalid complementary map kind "${value}"`);
 }
 
 async function runPromoteCmd(args: ParsedArgs): Promise<void> {

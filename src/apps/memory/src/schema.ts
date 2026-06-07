@@ -197,7 +197,7 @@ export interface MemoryNodeProps {
 }
 
 export interface MemoryProvenance {
-  source_kind: "manual" | "hook" | "derived" | "system";
+  source_kind: "manual" | "hook" | "derived" | "system" | "external-map";
   writer?: string;
   command?: string;
   hook?: string;
