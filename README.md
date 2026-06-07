@@ -270,6 +270,20 @@ When the user types `$<name>` (e.g. `$afk`, `$wiki`, `$triage`), look up
 Each SKILL.md is self-documenting; read it before invoking.
 ```
 
+### New operator surfaces
+
+Several recent `dev` skills are meant to make the queue easier to see, resume,
+and explain:
+
+| Skill | Use it when... |
+|-------|----------------|
+| [`/dashboard`](./plugins/dev/skills/engineering/dashboard/SKILL.md) | You want a live process dashboard: open PRDs/issues, global `running` issues, local AFK workers, flow metrics, and DORA proxies. |
+| [`/daily-review`](./plugins/dev/skills/engineering/daily-review/SKILL.md) | You want yesterday-local-midnight through now: delivery big numbers, worker attempts/time, token spend when available, HITL/blocker challenges, and issue/PR cycle times. |
+| [`/weekly-review`](./plugins/dev/skills/engineering/weekly-review/SKILL.md) | You want the same operational review over the six-day window ending now. |
+| [`/retake`](./plugins/dev/skills/engineering/retake/SKILL.md) | You want to resume issue `#123`: find linked PRs, matching branches, local worktrees, HITL state, and the next command. Add `--apply` to run only safe local setup steps such as creating a missing ship worktree. |
+| [`/research`](./plugins/dev/skills/knowledge/research/SKILL.md) | You need official-source technical research captured under `.red/tmp/researches/`. |
+| [`/ff`](./plugins/dev/skills/productivity/ff/SKILL.md) | You want fast-forward clarity: several possible interpretations or future replies for the latest user message, with a recommendation. |
+
 ### Bootstrap a repo
 
 Run once per target repo (from inside the repo):
@@ -447,6 +461,7 @@ Composable. Boring on purpose where boring is enough. Sharp where it matters.
 | **[daily-review](./plugins/dev/skills/engineering/daily-review/SKILL.md)** | Daily operational review from yesterday local midnight to now: delivery big numbers, local worker attempts/time, token spend when available, HITL/blocker challenges, and issue/PR cycle times. |
 | **[weekly-review](./plugins/dev/skills/engineering/weekly-review/SKILL.md)** | Six-day operational review from six-days-ago local midnight to now, with the same delivery, worker, challenge, and cycle-time sections as `/daily-review`. |
 | **[model-tier-policy](./plugins/dev/skills/engineering/model-tier-policy/SKILL.md)** | Cross-host model tier policy for Claude Code, Codex, and AFK: tier table, deterministic-first validation, simple-vs-complex classification, escalation, and executor/config pointers. |
+| **[retake](./plugins/dev/skills/engineering/retake/SKILL.md)** | Issue resumption command. Finds the issue, linked PRs, matching branches, local worktrees, HITL state, and the next command to continue, fix, create a ship worktree, or hand the branch to `/ship`. `--apply` executes only safe local setup steps. |
 | **[ship](./plugins/dev/skills/engineering/ship/SKILL.md)** | Interactive finalizer for committed work in `.red/tmp/work-ship-*/` worktrees. Pushes early, opens or reuses a PR, monitors checks and reviews with a time cap, then approves/merges or parks the linked issue and PR in `ready-for-human`. |
 | **[curate](./plugins/dev/skills/engineering/curate/SKILL.md)** | Interactive, archive-only Skill curator. Lists `archive` candidates from `memory curate skills --json`, requires explicit approval, performs a recoverable archive of Curatable skills (atomic `rename` + SHA-256 manifest), and reverses it with `/curate --restore <name>`. Tracer slice — only the `archive` category is wired. |
 | **[context](./plugins/dev/skills/engineering/context/SKILL.md)** | Compose the RedSkills context stack before non-trivial work: domain docs, ADRs, LLM Wiki, Memory graph/recall, graph-aware zoom-out, durable learning capture, and self-improvement telemetry. |
@@ -476,6 +491,7 @@ Composable. Boring on purpose where boring is enough. Sharp where it matters.
 |-------|--------------|
 | **[wiki-init](./plugins/dev/skills/knowledge/wiki-init/SKILL.md)** | Bootstrap `.red/wiki/`, write the schema, gitignore artefacts, register under `## Agent skills`. |
 | **[wiki](./plugins/dev/skills/knowledge/wiki/SKILL.md)** | `ingest` / `query` / `lint` — operate on the wiki. |
+| **[research](./plugins/dev/skills/knowledge/research/SKILL.md)** | Deep official-source technical research saved to `.red/tmp/researches/<slug>.md`; use when answers need current primary-source grounding and durable notes. |
 
 </details>
 
@@ -485,6 +501,7 @@ Composable. Boring on purpose where boring is enough. Sharp where it matters.
 | Skill | What it does |
 |-------|--------------|
 | **[reflect](./plugins/dev/skills/productivity/reflect/SKILL.md)** | Interviews you until every branch of the decision tree is resolved. |
+| **[ff](./plugins/dev/skills/productivity/ff/SKILL.md)** | Fast-forward clarity: reframes the latest user message into multiple plausible interpretations or next replies, then recommends one. |
 | **[handoff](./plugins/dev/skills/productivity/handoff/SKILL.md)** | Compacts the current conversation into a handoff doc for the next agent. |
 | **[write-a-skill](./plugins/dev/skills/productivity/write-a-skill/SKILL.md)** | Scaffolds new skills with proper structure and progressive disclosure. |
 
