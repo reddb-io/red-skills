@@ -61,6 +61,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [feat(bench): memory bench eval spine — single-hop, fixed-pack, exact-match/F1, JSONL (#334)](./pages/425-feat-bench-memory-bench-eval-spine-single-hop-fixed-pack-exa.md)
 - [feat(brain): add the brain plugin (project-local knowledge repository)](./pages/422-feat-brain-add-the-brain-plugin-project-local-knowledge-repo.md)
 - [feat(config): unify plugin config under .red/config.yaml (plugins.<name>)](./pages/390-feat-config-unify-plugin-config-under-red-config-yaml-plugin.md)
+- [feat(dev): add retake apply mode](./pages/533-feat-dev-add-retake-apply-mode.md)
 - [feat(dev): add retake issue resumption command](./pages/531-feat-dev-add-retake-issue-resumption-command.md)
 - [feat(dev): read-only adoption/process doctor (/dev:doctor)](./pages/381-feat-dev-read-only-adoption-process-doctor-dev-doctor.md)
 - [feat(dev): review-adrs skill — decision-record doctor (lint + group + propagate)](./pages/382-feat-dev-review-adrs-skill-decision-record-doctor-lint-group.md)
