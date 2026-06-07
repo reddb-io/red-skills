@@ -5735,10 +5735,15 @@ async function runCommunities(args: ParsedArgs): Promise<void> {
     console.log(
       `memory: ${report.communities.length} community(ies), ${report.assignments.length} assigned node(s)`,
     );
+    console.log(
+      `  navigation: ${report.node_analytics.length} ranked node(s), ${report.inter_community_edges.length} inter-community edge(s)`,
+    );
     console.log(`  graph hash: ${report.graph_hash}`);
     console.log(`  cache: ${report.cached ? "hit" : "miss"}`);
     for (const community of report.communities) {
-      console.log(`  ${community.id}: ${community.count} node(s)`);
+      console.log(
+        `  ${community.id}: ${community.count} node(s), degree ${community.total_degree}, centrality ${community.avg_centrality}`,
+      );
       if (community.titles.length > 0) {
         console.log(`        top titles: ${community.titles.join(", ")}`);
       }
