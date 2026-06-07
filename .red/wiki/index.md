@@ -13,6 +13,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [Context packs render pinned core context](./pages/494-context-packs-render-pinned-core-context.md)
 - [Define RedDB Memory map consumer contract](./pages/535-define-reddb-memory-map-consumer-contract.md)
 - [Document Brain ownership of personal facts](./pages/495-document-brain-ownership-of-personal-facts.md)
+- [Extract cross-file TypeScript map edges](./pages/534-extract-cross-file-typescript-map-edges.md)
 - [Memory governance reports tidy availability](./pages/492-memory-governance-reports-tidy-availability.md)
 - [Memory: deterministic invariant fuzzer](./pages/510-memory-deterministic-invariant-fuzzer.md)
 - [Memory: make recall clock-injected](./pages/509-memory-make-recall-clock-injected.md)
