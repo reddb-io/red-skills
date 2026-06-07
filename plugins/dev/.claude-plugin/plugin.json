@@ -1,6 +1,6 @@
 {
   "name": "dev",
-  "version": "1.166.0",
+  "version": "1.173.1",
   "description": "reddb.io dev plugin — engineering skills for code agents (autonomous /afk loop, interactive /ship finalizer, triage, tdd, diagnose, graph-aware codebase understanding, wiki, …)",
   "mcpServers": "./.mcp.json",
   "hooks": "./hooks/claude.hooks.json",
@@ -9,6 +9,8 @@
     "./skills/engineering/model-tier-policy",
     "./skills/engineering/curate",
     "./skills/engineering/context",
+    "./skills/engineering/daily-review",
+    "./skills/engineering/dashboard",
     "./skills/engineering/diagnose",
     "./skills/engineering/doctor",
     "./skills/engineering/review-adrs",
@@ -18,6 +20,7 @@
     "./skills/engineering/hitl",
     "./skills/engineering/report-bug",
     "./skills/engineering/urgent",
+    "./skills/engineering/weekly-review",
     "./skills/engineering/improve-codebase-architecture",
     "./skills/engineering/setup-red-skills",
     "./skills/engineering/setup-statusline",
@@ -32,6 +35,8 @@
     "./skills/misc/setup-pre-commit",
     "./skills/knowledge/wiki-init",
     "./skills/knowledge/wiki",
+    "./skills/knowledge/research",
+    "./skills/productivity/ff",
     "./skills/productivity/reflect",
     "./skills/productivity/handoff",
     "./skills/productivity/write-a-skill"

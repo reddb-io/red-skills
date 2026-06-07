@@ -216,7 +216,11 @@ export interface MemoryEdgeProps {
   confidence?: Confidence;
   source?: string;
   weight?: number;
+  topological_weight?: number;
   reason?: string;
+  provenance?: MemoryProvenance;
+  extraction_backend?: string;
+  source_location?: string;
   created_at?: number;
   [extra: string]: unknown;
 }

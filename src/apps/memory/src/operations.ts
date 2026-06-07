@@ -3,6 +3,7 @@ import { execFile } from "node:child_process";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod";
+import { toEdge } from "./export.js";
 import {
   buildMemoryAssetInventory,
   type MemoryAssetInventoryReport,
@@ -46,11 +47,17 @@ import {
   buildMemoryGlobalSearch,
   type MemoryGlobalSearchReport,
 } from "./global-search.js";
+import {
+  buildGraphContract,
+  GraphContractZ,
+  type GraphContract,
+} from "./graph-contract.js";
 import { buildContextPack, type ContextPack } from "./context-pack.js";
 import {
   buildContextPackViewerArtifact,
   type ContextPackViewerArtifact,
 } from "./context-pack-viewer.js";
+import { appendContextPackGenerationEvent } from "./memory-events.js";
 import { buildDocBrief, type DocBrief } from "./doc-brief.js";
 import {
   buildDocBriefViewerArtifact,
@@ -118,6 +125,10 @@ import {
   buildMemoryExtractionStatusViewerArtifact,
   type MemoryExtractionStatusViewerArtifact,
 } from "./extraction-status-viewer.js";
+import {
+  buildMemoryMapFreshnessReport,
+  type MemoryMapFreshnessReport,
+} from "./map-freshness.js";
 import type { MemoryStore, StoredNode, VectorStatusReport } from "./graph-store.js";
 import { buildMemoryHandoff, type MemoryHandoffReport } from "./handoff.js";
 import {
@@ -226,6 +237,10 @@ import {
   type MemoryRoutingAgent,
   type MemoryRoutingGuide,
 } from "./routing-guide.js";
+import {
+  buildMemoryMapContextSlice,
+  type MemoryMapContextSlice,
+} from "./map-context.js";
 import {
   buildMemoryRoutingGuideViewerArtifact,
   type MemoryRoutingGuideViewerArtifact,
@@ -380,6 +395,7 @@ export interface MemoryOperationContext {
   rootDir?: string;
   now?: number;
   providerConfig?: AiProviderConfig;
+  transportSurface?: string;
 }
 
 export interface MemoryOperationDefinition<Input, Output> {
@@ -449,8 +465,22 @@ const ContextPackInputSchema = ScopeInputSchema.extend({
 });
 type ContextPackInput = z.infer<typeof ContextPackInputSchema>;
 
+const MapContextInputSchema = z.object({
+  query: z.string().min(1),
+  depth: z.number().int().min(0).max(5).optional(),
+  mode: z.enum(["bfs", "dfs"]).optional(),
+  budget: z.number().int().min(100).max(20_000).optional(),
+  context: z.union([z.string(), z.array(z.string())]).optional(),
+});
+type MapContextInput = z.infer<typeof MapContextInputSchema>;
+
 const ClaimCheckInputSchema = z.object({ assertion: z.string().min(1) });
 type ClaimCheckInput = z.infer<typeof ClaimCheckInputSchema>;
+
+const MapContractInputSchema = z.object({
+  communities: z.boolean().default(false),
+});
+type MapContractInput = z.infer<typeof MapContractInputSchema>;
 
 const DocSearchInputSchema = z.object({
   query: z.string().min(1),
@@ -672,6 +702,9 @@ type VectorStatusInput = z.infer<typeof VectorStatusInputSchema>;
 const ExtractionStatusInputSchema = z.object({});
 type ExtractionStatusInput = z.infer<typeof ExtractionStatusInputSchema>;
 
+const MapFreshnessInputSchema = z.object({});
+type MapFreshnessInput = z.infer<typeof MapFreshnessInputSchema>;
+
 const VectorSearchInputSchema = z.object({
   query: z.string().min(1),
   limit: z.number().int().min(1).max(50).optional(),
@@ -712,6 +745,9 @@ type FederationInput = z.infer<typeof FederationInputSchema>;
 const CommunitySummarySchema = z.object({
   id: z.string(),
   count: z.number(),
+  total_degree: z.number(),
+  avg_centrality: z.number(),
+  external_edge_weight: z.number(),
   labels: z.array(z.string()),
   titles: z.array(z.string()),
 });
@@ -724,6 +760,23 @@ const CommunityAssignmentSchema = z.object({
   title: z.string(),
 });
 
+const CommunityNodeAnalyticsSchema = z.object({
+  rid: z.number(),
+  community_id: z.string(),
+  degree: z.number(),
+  in_degree: z.number(),
+  out_degree: z.number(),
+  weighted_degree: z.number(),
+  centrality: z.number(),
+});
+
+const InterCommunityEdgeSchema = z.object({
+  from_community_id: z.string(),
+  to_community_id: z.string(),
+  weight: z.number(),
+  edge_count: z.number(),
+});
+
 const CommunitiesOutputSchema = z.object({
   schema_version: z.literal("memory.communities.v1"),
   read_only: z.literal(true),
@@ -733,6 +786,8 @@ const CommunitiesOutputSchema = z.object({
   generated_at: z.string(),
   communities: z.array(CommunitySummarySchema),
   assignments: z.array(CommunityAssignmentSchema),
+  node_analytics: z.array(CommunityNodeAnalyticsSchema),
+  inter_community_edges: z.array(InterCommunityEdgeSchema),
 }) satisfies z.ZodType<CommunityAnalyticsReport>;
 const CommunitiesViewerOutputSchema = objectOutputSchema<CommunitiesViewerArtifact>();
 
@@ -810,8 +865,10 @@ const GlobalSearchOutputSchema = z.object({
 const AskOutputSchema = objectOutputSchema<AskResult>();
 const ReadinessOutputSchema = objectOutputSchema<MemoryReadinessEnvelope>();
 const ContextPackOutputSchema = objectOutputSchema<ContextPack>();
+const MapContextOutputSchema = objectOutputSchema<MemoryMapContextSlice>();
 const ContextPackViewerOutputSchema = objectOutputSchema<ContextPackViewerArtifact>();
 const ClaimCheckOutputSchema = objectOutputSchema<ClaimCheckResult>();
+const MapContractOutputSchema = GraphContractZ;
 const DocBriefOutputSchema = objectOutputSchema<DocBrief>();
 const DocBriefViewerOutputSchema = objectOutputSchema<DocBriefViewerArtifact>();
 const DocBundleOutputSchema = objectOutputSchema<DocBundle>();
@@ -873,6 +930,7 @@ const StructuralImpactViewerOutputSchema =
 const ExtractionStatusOutputSchema = objectOutputSchema<MemoryExtractionStatus>();
 const ExtractionStatusViewerOutputSchema =
   objectOutputSchema<MemoryExtractionStatusViewerArtifact>();
+const MapFreshnessOutputSchema = objectOutputSchema<MemoryMapFreshnessReport>();
 const VectorStatusOutputSchema = objectOutputSchema<VectorStatusReport>();
 const VectorStatusViewerOutputSchema = objectOutputSchema<VectorStatusViewerArtifact>();
 const VectorSearchOutputSchema = objectOutputSchema<VectorSearchReport>();
@@ -1023,6 +1081,16 @@ const MEMORY_OPERATION_FACETS: Record<string, MemoryOperationFacets> = {
     },
   ),
   ...operationFacets(
+    ["memory.map-context"],
+    joinedPositionalInput("query", [
+      flagField("depth", "number"),
+      flagField("mode", "string"),
+      flagField("context", "string"),
+      flagField("budget", "number"),
+    ]),
+    JSON_REPORT_OUTPUT,
+  ),
+  ...operationFacets(
     ["memory.doc-search", "memory.doc-search-viewer"],
     joinedPositionalInput("query", [flagField("limit", "number")]),
     undefined,
@@ -1128,6 +1196,11 @@ const MEMORY_OPERATION_FACETS: Record<string, MemoryOperationFacets> = {
     JSON_REPORT_OUTPUT,
   ),
   ...operationFacets(
+    ["memory.map-contract"],
+    inputBinding([flagField("communities", "boolean")]),
+    JSON_REPORT_OUTPUT,
+  ),
+  ...operationFacets(
     ["memory.governance", "memory.governance-viewer"],
     inputBinding([flagField("stale_progress_days", "number")]),
     undefined,
@@ -1216,6 +1289,7 @@ const MEMORY_OPERATION_FACETS: Record<string, MemoryOperationFacets> = {
       "memory.onboarding-map-viewer": VIEWER_OUTPUT,
     },
   ),
+  ...operationFacets(["memory.map-freshness"], inputBinding([]), JSON_REPORT_OUTPUT),
   ...operationFacets(
     ["memory.dashboard"],
     inputBinding([flagField("stale_days", "number")]),
@@ -1455,14 +1529,21 @@ const CONTEXT_PACK_OPERATION: MemoryOperationDefinition<ContextPackInput, Contex
         "Read-only agent context pack for a goal. Returns grouped evidence, warnings, citations, markdown, and skill recommendations without writing graph facts.",
     },
   },
-  execute: (ctx, input) =>
-    buildContextPack(ctx.store, input.goal, {
+  execute: async (ctx, input) => {
+    const pack = await buildContextPack(ctx.store, input.goal, {
       budgetChars: input.budget_chars,
       limit: input.limit,
       depth: input.depth,
       now: ctx.now,
       scope: scopeFromInput(input),
-    }),
+    });
+    await appendContextPackGenerationEvent(ctx.store, {
+      pack,
+      surface: ctx.transportSurface ?? "operation",
+      metadata: { operation_id: "memory.context-pack" },
+    });
+    return pack;
+  },
 };
 
 const CONTEXT_PACK_VIEWER_OPERATION: MemoryOperationDefinition<
@@ -1485,16 +1566,55 @@ const CONTEXT_PACK_VIEWER_OPERATION: MemoryOperationDefinition<
         "Read-only self-contained HTML viewer for agent context packs. Returns grouped evidence, warnings, citations, skill recommendations, ready-to-inject markdown, embedded JSON, and HTML.",
     },
   },
-  execute: async (ctx, input) =>
-    buildContextPackViewerArtifact(
-      await buildContextPack(ctx.store, input.goal, {
-        budgetChars: input.budget_chars,
-        limit: input.limit,
-        depth: input.depth,
-        now: ctx.now,
-        scope: scopeFromInput(input),
-      }),
-    ),
+  execute: async (ctx, input) => {
+    const pack = await buildContextPack(ctx.store, input.goal, {
+      budgetChars: input.budget_chars,
+      limit: input.limit,
+      depth: input.depth,
+      now: ctx.now,
+      scope: scopeFromInput(input),
+    });
+    await appendContextPackGenerationEvent(ctx.store, {
+      pack,
+      surface: ctx.transportSurface ?? "operation-viewer",
+      metadata: { operation_id: "memory.context-pack-viewer" },
+    });
+    return buildContextPackViewerArtifact(pack);
+  },
+};
+
+const MAP_CONTEXT_OPERATION: MemoryOperationDefinition<
+  MapContextInput,
+  MemoryMapContextSlice
+> = {
+  id: "memory.map-context",
+  title: "Memory map context",
+  description:
+    "Graphify-style compact graph slice for orienting code agents before broad source reads.",
+  inputSchema: MapContextInputSchema,
+  outputSchema: MapContextOutputSchema,
+  safetyClass: "read-only",
+  sideEffectClass: "none",
+  capabilities: ["graph-store"],
+  renderer: {
+    cli: { command: "map-context", supportsJson: true },
+    mcp: {
+      toolName: "memory_map_context",
+      description:
+        "Read-only RedDB graph context slice for code agents. Scores node seeds from a query, traverses typed edges, returns compact NODE/EDGE markdown plus JSON metadata with edge weight, salience, confidence, and diagnostics.",
+    },
+  },
+  execute: (ctx, input) =>
+    buildMemoryMapContextSlice(ctx.store, input.query, {
+      depth: input.depth,
+      mode: input.mode,
+      tokenBudget: input.budget,
+      contextFilters:
+        typeof input.context === "string"
+          ? input.context.split(",").map((part) => part.trim()).filter(Boolean)
+          : input.context,
+      now: ctx.now,
+    }),
 };
 
 const CLAIM_CHECK_OPERATION: MemoryOperationDefinition<ClaimCheckInput, ClaimCheckResult> = {
@@ -1515,6 +1635,27 @@ const CLAIM_CHECK_OPERATION: MemoryOperationDefinition<ClaimCheckInput, ClaimChe
     },
   },
   execute: (ctx, input) => claimCheck(ctx.store, input.assertion),
+};
+
+const MAP_CONTRACT_OPERATION: MemoryOperationDefinition<MapContractInput, GraphContract> = {
+  id: "memory.map-contract",
+  title: "Memory map consumer contract",
+  description:
+    "Read-only RedDB Memory map contract for graph consumers. Returns canonical nodes, edges, stats, provenance, confidence, source location, freshness, weight, and salience without UI layout or styling decisions.",
+  inputSchema: MapContractInputSchema,
+  outputSchema: MapContractOutputSchema,
+  safetyClass: "read-only",
+  sideEffectClass: "none",
+  capabilities: ["graph-store"],
+  renderer: {
+    cli: { command: "map-contract", supportsJson: true },
+    mcp: {
+      toolName: "memory_map_contract",
+      description:
+        "Read-only Memory map consumer contract over RedDB. Returns the versioned graph contract with canonical node/edge data, provenance, confidence, source locations, freshness, edge weight, and edge salience. It intentionally excludes layout, palette, opacity, label visibility, and interaction decisions.",
+    },
+  },
+  execute: (ctx, input) => buildMemoryMapContract(ctx.store, input),
 };
 
 const CAPABILITY_CATALOG_OPERATION: MemoryOperationDefinition<
@@ -2312,7 +2453,7 @@ const GOVERNANCE_OPERATION: MemoryOperationDefinition<GovernanceInput, MemoryGov
   id: "memory.governance",
   title: "Memory governance",
   description:
-    "Read-only governance report over provenance, privacy, lint, contradictions, and supersession.",
+    "Read-only governance report over provenance, privacy, lint, contradictions, supersession, and provider-backed tidy recommendations.",
   inputSchema: GovernanceInputSchema,
   outputSchema: GovernanceOutputSchema,
   safetyClass: "read-only",
@@ -2323,13 +2464,14 @@ const GOVERNANCE_OPERATION: MemoryOperationDefinition<GovernanceInput, MemoryGov
     mcp: {
       toolName: "memory_governance",
       description:
-        "Read-only governance report over local Memory evidence. Returns provenance coverage, privacy findings, lint findings, contradiction/supersession counts, and recommended next actions without mutating Memory.",
+        "Read-only governance report over local Memory evidence. Returns provenance coverage, privacy findings, lint findings, contradiction/supersession counts, provider-backed duplicate or near-duplicate tidy recommendations, and recommended next actions without mutating Memory.",
     },
   },
   execute: (ctx, input) =>
     buildMemoryGovernanceReport(ctx.store, {
       staleProgressDays: input.stale_progress_days,
       now: ctx.now,
+      providerConfig: ctx.providerConfig,
     }),
 };
 
@@ -2339,7 +2481,7 @@ const GOVERNANCE_VIEWER_OPERATION: MemoryOperationDefinition<
 > = {
   id: "memory.governance-viewer",
   title: "Memory governance viewer",
-  description: "Self-contained HTML viewer for Memory governance evidence.",
+  description: "Self-contained HTML viewer for Memory governance evidence and provider tidy recommendations.",
   inputSchema: GovernanceInputSchema,
   outputSchema: GovernanceViewerOutputSchema,
   safetyClass: "read-only",
@@ -2350,7 +2492,7 @@ const GOVERNANCE_VIEWER_OPERATION: MemoryOperationDefinition<
     mcp: {
       toolName: "memory_governance_viewer",
       description:
-        "Read-only self-contained HTML viewer for provenance, privacy, lint, contradictions, supersession, recommended actions, and embedded governance JSON.",
+        "Read-only self-contained HTML viewer for provenance, privacy, lint, contradictions, supersession, provider tidy recommendations, recommended actions, and embedded governance JSON.",
     },
   },
   execute: async (ctx, input) =>
@@ -2358,6 +2500,7 @@ const GOVERNANCE_VIEWER_OPERATION: MemoryOperationDefinition<
       await buildMemoryGovernanceReport(ctx.store, {
         staleProgressDays: input.stale_progress_days,
         now: ctx.now,
+        providerConfig: ctx.providerConfig,
       }),
     ),
 };
@@ -2704,7 +2847,7 @@ const COMMUNITIES_OPERATION: MemoryOperationDefinition<CommunitiesInput, Communi
     mcp: {
       toolName: "memory_communities",
       description:
-        "Read-only Memory graph community analytics: native Louvain assignments, community counts, top labels/titles, and graph-hash cache metadata. Does not write derived clusters into Memory graph evidence.",
+        "Read-only Memory graph community analytics: native Louvain assignments, node degree/centrality ranking metadata, weighted inter-community edges, community counts, top labels/titles, and graph-hash cache metadata. Does not write derived clusters into Memory graph evidence.",
     },
   },
   execute: (ctx, input) => buildCommunityAnalytics(ctx.store, { cache: input.cache }),
@@ -2727,7 +2870,7 @@ const COMMUNITIES_VIEWER_OPERATION: MemoryOperationDefinition<
     mcp: {
       toolName: "memory_communities_viewer",
       description:
-        "Read-only self-contained HTML viewer for RedDB graph community analytics. Returns native Louvain community summaries, assignments, cache metadata, embedded JSON, and HTML without writing derived clusters into Memory evidence.",
+        "Read-only self-contained HTML viewer for RedDB graph community analytics. Returns native Louvain community summaries, assignments, degree/centrality ranking metadata, weighted inter-community edges, cache metadata, embedded JSON, and HTML without writing derived clusters into Memory evidence.",
     },
   },
   execute: async (ctx, input) =>
@@ -3198,6 +3341,31 @@ const EXTRACTION_STATUS_VIEWER_OPERATION: MemoryOperationDefinition<
     ),
 };
 
+const MAP_FRESHNESS_OPERATION: MemoryOperationDefinition<
+  MapFreshnessInput,
+  MemoryMapFreshnessReport
+> = {
+  id: "memory.map-freshness",
+  title: "Memory map freshness",
+  description:
+    "Read-only diagnostic report for whether the Memory map is fresh enough to trust.",
+  inputSchema: MapFreshnessInputSchema,
+  outputSchema: MapFreshnessOutputSchema,
+  safetyClass: "read-only",
+  sideEffectClass: "none",
+  capabilities: ["graph-store"],
+  renderer: {
+    cli: { command: "map freshness", supportsJson: true },
+    mcp: {
+      toolName: "memory_map_freshness",
+      description:
+        "Read-only Memory map freshness diagnostic. Returns source revision identity, changed/stale source inputs, extraction coverage by language/source kind, low-confidence or missing relationship classes, and concise next actions. Does not generate a visualization.",
+    },
+  },
+  execute: (ctx) =>
+    buildMemoryMapFreshnessReport(ctx.store, ctx.rootDir ?? process.cwd(), { now: ctx.now }),
+};
+
 const VECTOR_STATUS_OPERATION: MemoryOperationDefinition<VectorStatusInput, VectorStatusReport> = {
   id: "memory.vector-status",
   title: "Memory vector status",
@@ -3343,6 +3511,7 @@ const READ_ONLY_OPERATIONS = createReadOnlyMemoryOperationRegistry([
   AGENT_INTEGRATION_STATUS_VIEWER_OPERATION,
   CAPABILITY_CATALOG_OPERATION,
   CLAIM_CHECK_OPERATION,
+  MAP_CONTRACT_OPERATION,
   COMMUNITIES_OPERATION,
   COMMUNITIES_VIEWER_OPERATION,
   COMMUNITY_DIGEST_OPERATION,
@@ -3350,6 +3519,7 @@ const READ_ONLY_OPERATIONS = createReadOnlyMemoryOperationRegistry([
   REFERENCE_RADAR_OPERATION,
   CONTEXT_PACK_OPERATION,
   CONTEXT_PACK_VIEWER_OPERATION,
+  MAP_CONTEXT_OPERATION,
   DASHBOARD_OPERATION,
   DOC_COVERAGE_OPERATION,
   DOC_COVERAGE_VIEWER_OPERATION,
@@ -3386,6 +3556,7 @@ const READ_ONLY_OPERATIONS = createReadOnlyMemoryOperationRegistry([
   LEARNING_DEBT_OPERATION,
   LEARNING_DEBT_VIEWER_OPERATION,
   LINT_OPERATION,
+  MAP_FRESHNESS_OPERATION,
   MEMORY_LAYERS_OPERATION,
   MEMORY_LAYERS_VIEWER_OPERATION,
   ONBOARDING_MAP_OPERATION,
@@ -3788,6 +3959,23 @@ async function safeSkillRollups(store: MemoryStore): Promise<SkillRollup[]> {
   } catch {
     return [];
   }
+}
+
+async function buildMemoryMapContract(
+  store: MemoryStore,
+  input: MapContractInput,
+): Promise<GraphContract> {
+  const [nodes, rawEdges, communities] = await Promise.all([
+    store.listNodes(),
+    store.listEdges(),
+    input.communities ? store.communities() : Promise.resolve(new Map<number, string>()),
+  ]);
+
+  return buildGraphContract({
+    nodes,
+    edges: rawEdges.map((edge) => toEdge(edge as Record<string, unknown>)),
+    communities,
+  });
 }
 
 async function graphPrivacyRecords(store: MemoryStore): Promise<PrivacyMemoryRecord[]> {

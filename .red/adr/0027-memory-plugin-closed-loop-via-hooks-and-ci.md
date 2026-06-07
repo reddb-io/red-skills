@@ -15,8 +15,9 @@ those surfaces is **passive in two directions**:
   `plugins/memory/hooks/{claude,codex}.hooks.json` declare `SessionStart`,
   `PostToolUse` (matcher `Edit|Write` for Claude, `apply_patch` for Codex),
   `Stop`, and `PreCompact` entries that each invoke
-  `dist/cli.js hook <event> --runner <r>` with best-effort failure handling
-  (`|| printf "{}"`). The dispatcher in `plugins/memory/src/hook-runtime.ts`
+  `scripts/bootstrap.mjs hook <event> --runner <r>` with best-effort failure
+  handling (`|| printf "{}"`). The dispatcher in
+  `src/apps/memory/src/hook-runtime.ts`
   routes them to `handleSessionStart` (engine `recall`), `handlePostToolUse`
   (`reindexFiles`), and `handleFlush` (`extractStructuredTranscript` +
   `factsToGraph`, then `PromotionEngine`). `recordLifecycle` writes each
@@ -33,6 +34,21 @@ The result is uneven: ADRs are well-maintained (27 files), the graph holds
 35 MB of older state, the wiki index is 60 bytes, and
 `MEMORY.md` lives outside the repo so it is per-machine rather than
 per-project. The plumbing exists, the loop is open.
+
+## Supersession note — hook entrypoint and source path (2026-06-02)
+
+Two mechanisms cited above were later superseded:
+
+- **Hook entrypoint.** Hooks no longer invoke `dist/cli.js`; **ADR 0029** moved
+  the runtime to a bundled asset fetched by a dependency-free bootstrap, so the
+  `.hooks.json` entries now call `scripts/bootstrap.mjs hook <event> --runner <r>`
+  (resolved under `${CLAUDE_PLUGIN_ROOT}`).
+- **Source location.** **ADR 0034** moved each plugin's implementation out of
+  `plugins/<x>/src/` and under a top-level monorepo `src/`; the hook dispatcher
+  now lives at `src/apps/memory/src/hook-runtime.ts` (`plugins/memory/src/` no
+  longer holds source). The references below have been updated in place to the
+  current paths; ADR 0041 records the pending migration of this code to a
+  separate `red-memory` repo.
 
 ## Amendment — the three real gaps (2026-05-28)
 
@@ -83,7 +99,7 @@ symmetrically catches Codex contributors and the human-only
 ### Already implemented or merged
 
 - SessionStart recall, PostToolUse reindex, Stop / PreCompact flush, and
-  lifecycle logging: shipped in `plugins/memory/src/hook-runtime.ts`
+  lifecycle logging: shipped in `src/apps/memory/src/hook-runtime.ts`
   (issues #221 and #223 closed as already done).
 - PR-merge → wiki extract Action (#219 — merged).
 - Repo-versioned `MEMORY.md` migration (#220 — merged).

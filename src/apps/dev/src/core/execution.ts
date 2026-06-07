@@ -14,6 +14,7 @@
 
 import type { AgentStreamEvent, RunOptions, RunResult } from "@ai-hero/sandcastle";
 import { isRunnerExhausted } from "./runner-spawn.js";
+import { startLaneIdleReaper, DEFAULT_STALL_POLL_S } from "./lane-idle-reaper.js";
 
 // Re-exported so process-issue / run can type their agent-event sink without
 // importing the sandcastle package directly (execution.ts is the single seam
@@ -245,6 +246,41 @@ export interface RunAgentInput {
    * Only fires when the guard is armed (cap + headProbe present).
    */
   onHeartbeat?: (info: AttemptProgressInfo) => void;
+  /**
+   * Lane-idle stall reaper (issue #363) — the solo-path port of the fleet's
+   * passive stall detector + hard stall reaper. COMPLEMENTARY to the #400
+   * attempt PROGRESS guard above (which is commit-anchored and caps the whole
+   * attempt): this cuts an *idle* hang at the stall threshold (minutes) rather
+   * than only at the progress cap, gated on the same busy-predicate so a worker
+   * mid-build/test is never killed. Armed only when all of `laneIdleThresholdSeconds`,
+   * `laneIdleKillThresholdSeconds`, `laneMtimeProbe`, and `inspectTree` are
+   * supplied (no-sandbox only — see `makeRunAgent`). On a kill verdict the run is
+   * aborted (sandcastle SIGTERM/SIGKILLs the inner tree) and the outcome is
+   * `no-sentinel`, flowing through the existing no-sentinel terminal policy
+   * (envelope + label rotation + worktree teardown).
+   */
+  laneIdleThresholdSeconds?: number;
+  /** Lane-idle hard-reap threshold (RED_AFK_STALL_KILL_THRESHOLD_S). Must be
+   * strictly greater than `laneIdleThresholdSeconds` — validated at boot by the
+   * caller (resolveLaneIdleStallConfig). */
+  laneIdleKillThresholdSeconds?: number;
+  /** Lane-idle poll cadence in seconds (RED_AFK_STALL_POLL_S). Omitted →
+   * DEFAULT_STALL_POLL_S. */
+  laneIdlePollSeconds?: number;
+  /**
+   * Agent-lane (`agent.log.jsonl`) mtime probe in epoch SECONDS, 0 when absent.
+   * The clean liveness signal — never afk.log / the firehose, which the
+   * heartbeat keeps fresh and would mask a real stall (#243). Required to arm
+   * the lane-idle reaper.
+   */
+  laneMtimeProbe?: () => number;
+  /**
+   * Inner-agent process-tree snapshot for the lane-idle reaper's busy-predicate
+   * (reduced by deriveSnapshot). Required to arm the reaper. The real wiring
+   * (runtime/proc-tree.ts) is safe-by-default — a failed `ps` reports busy, so a
+   * flaky inspection can never authorise a kill.
+   */
+  inspectTree?: () => readonly import("./reaper-signal.js").ProcessSnapshotEntry[];
 }
 
 /** The git remote the continuous-push hook targets when none is supplied. */
@@ -622,11 +658,14 @@ export async function runAgent(deps: SandcastleDeps, input: RunAgentInput): Prom
   // lands within the cap. Armed only when both the cap and a headProbe are
   // supplied; otherwise behaviour is unchanged.
   const now = deps.now ?? (() => Date.now());
+  const makeController = deps.makeAbortController ?? (() => new AbortController());
+  const schedule = deps.schedule ?? defaultSchedule;
   let guard: { stop: () => void; firedTimeout: () => boolean } | undefined;
+  let laneReaper: { stop: () => void; firedReap: () => boolean } | undefined;
   let controller: AbortController | undefined;
   if (input.attemptTimeoutSeconds && input.attemptTimeoutSeconds > 0 && input.headProbe) {
     const capMs = input.attemptTimeoutSeconds * 1000;
-    controller = (deps.makeAbortController ?? (() => new AbortController()))();
+    controller = makeController();
     const cap = input.attemptTimeoutSeconds;
     guard = startAttemptGuard({
       capMs,
@@ -634,7 +673,7 @@ export async function runAgent(deps: SandcastleDeps, input: RunAgentInput): Prom
       headProbe: input.headProbe,
       ...(input.progressProbe ? { progressProbe: input.progressProbe } : {}),
       now,
-      schedule: deps.schedule ?? defaultSchedule,
+      schedule,
       abort: () =>
         controller?.abort(new Error(`afk: attempt aborted — no new commit within ${cap}s (stalled)`)),
       // Externalized proof-of-life (PR-B): each poll fires the caller's opaque
@@ -644,11 +683,61 @@ export async function runAgent(deps: SandcastleDeps, input: RunAgentInput): Prom
     });
   }
 
+  // Lane-idle stall reaper (issue #363): the solo-path port of the fleet's
+  // passive stall detector + hard stall reaper. COMPLEMENTARY to the progress
+  // guard above (commit-anchored) — this cuts an *idle* hang at the stall
+  // threshold, gated on the same busy-predicate. Armed when both thresholds plus
+  // the lane probe + tree inspector are supplied. Shares the run's
+  // AbortController so a kill tears down the same inner tree; runs on its own
+  // side-channel poll (independent of the inner-agent stream) so a fully-hung
+  // runner is still observed.
+  if (
+    input.laneIdleThresholdSeconds &&
+    input.laneIdleThresholdSeconds > 0 &&
+    input.laneIdleKillThresholdSeconds &&
+    input.laneIdleKillThresholdSeconds > 0 &&
+    input.laneMtimeProbe &&
+    input.inspectTree
+  ) {
+    if (!controller) controller = makeController();
+    const killController = controller;
+    const pollS = input.laneIdlePollSeconds && input.laneIdlePollSeconds > 0 ? input.laneIdlePollSeconds : DEFAULT_STALL_POLL_S;
+    laneReaper = startLaneIdleReaper({
+      spawnEpoch: Math.floor(now() / 1000),
+      stallThresholdS: input.laneIdleThresholdSeconds,
+      stallKillThresholdS: input.laneIdleKillThresholdSeconds,
+      intervalMs: pollS * 1000,
+      laneMtime: input.laneMtimeProbe,
+      inspectTree: input.inspectTree,
+      // The lane reaper reasons in epoch SECONDS (lane mtime is seconds); the
+      // shared clock `now` is ms, so divide here.
+      now: () => Math.floor(now() / 1000),
+      schedule,
+      abort: () =>
+        killController.abort(
+          new Error(`afk: attempt reaped — agent lane idle past ${input.laneIdleKillThresholdSeconds}s with no active build/test (stalled)`),
+        ),
+    });
+  }
+
   let result: RunResult;
   try {
     const options = buildRunOptions(deps, input);
     result = await deps.run(controller ? { ...options, signal: controller.signal } : options);
   } catch (error) {
+    // The lane-idle reaper aborted: agent lane silent past the kill threshold
+    // with no active build/test descendant + flat cpu → genuinely stuck. Map to
+    // no-sentinel so it flows through the existing no-sentinel terminal policy.
+    // Checked before the progress guard: an idle hang trips the faster lane layer
+    // first, and "no-sentinel" is the issue-mandated outcome for a lane-idle reap.
+    if (laneReaper?.firedReap()) {
+      return {
+        outcome: "no-sentinel",
+        branch: input.branch,
+        commits: [],
+        stdout: `afk: attempt reaped — agent lane idle past ${input.laneIdleKillThresholdSeconds}s with no active build/test (stalled)`,
+      };
+    }
     // The progress guard aborted: alive but not committing → stalled.
     if (guard?.firedTimeout()) {
       return {
@@ -672,6 +761,7 @@ export async function runAgent(deps: SandcastleDeps, input: RunAgentInput): Prom
     throw error;
   } finally {
     guard?.stop();
+    laneReaper?.stop();
   }
   // A run that completed but surfaced exhaustion text on stdout (rather than
   // throwing) is also exhaustion — match the stdout the same way run_inner does.

@@ -5,6 +5,9 @@ memory: scoped decisions, gotchas, reasoning traces, provenance, supersession,
 and trust checks that survive `/clear` and cross sessions. It is not a generic
 graph clone or a note bucket; the useful unit is agent work evidence that can be
 recalled, verified, aged, superseded, exported, and used by RedSkills workflows.
+It is also not a Personal-fact store: Odysseus-style biographical facts,
+identity details, long-lived human preferences, and other human-facing context
+belong in Brain artifacts under `.red/brain/*`.
 
 It **lives on top of the `dev` plugin** and is meant to improve dev's processes
 (`/afk` recall, `/triage` dedup, `/diagnose` root-cause history, `/zoom-out`
@@ -26,7 +29,7 @@ into governed context. The core path is intentionally small:
 | Step | Command surface | What good output looks like |
 |------|-----------------|-----------------------------|
 | Initialize | `memory init` / `$init` | A project-local `.red/memory` surface with either markdown-only notes or graph-backed governed memory. |
-| Capture | `memory store` / `$store`, hooks, `memory extract` | One scoped decision, gotcha, validation, risk, or root-cause fact with enough provenance to verify later. |
+| Capture | `memory store` / `$store`, hooks, `memory extract` | One scoped operational decision, gotcha, validation, risk, or root-cause fact with enough provenance to verify later. |
 | Recall | `memory recall` / `$recall`, SessionStart hooks | A compact set of relevant claims/evidence, ranked by usefulness and hiding superseded guidance by default. |
 | Verify | `claim-check`, `readiness`, `governance`, `lint`, `decay`, `health` | Stale, contradicted, unsupported, or risky claims are visible before an agent acts on them. |
 | Handoff | `context-pack`, `handoff`, Workbench panels | Cited context that another agent/session can inject without replaying the whole history. |

@@ -19,11 +19,13 @@
 // `attemptN` is the caller's `input.attempt` (1-based, sourced from the
 // attempt-ledger), so the cap counts REAL attempts, not retries-within-an-attempt.
 //
-// NOTE (out of scope): the supervisor stall-reaper (core/supervisor.ts,
-// blocked:stalled) restores ready-for-agent WITHOUT a cap — it lacks the attempt
-// count cheaply. That path is intentionally left uncapped here; capping it is a
-// follow-up. Time-based backoff (vs the immediate re-queue) is also future work —
-// the cap is what prevents the runaway loop today.
+// The supervisor stall-reaper (core/supervisor.ts) is ALSO bounded by this same
+// policy now (#402): it sources the real attempt number from the reaped iter-dir
+// path and asks `recoveryDecision("stalled", …)`, so a worker that keeps stalling
+// can no longer be re-claimed forever — once the `stalled` cap is exhausted it
+// escalates to ready-for-human like every other terminal class. Time-based
+// backoff (vs the immediate re-queue) is still future work — the cap is what
+// prevents the runaway loop today.
 
 import type { RecoveryReason } from "./attempt-outcome.js";
 
@@ -51,6 +53,12 @@ const RECOVERABLE: Record<string, RecoverableSpec> = {
   quota: { knob: "RED_AFK_RETRY_QUOTA", defaultCap: 3 },
   "runner-transient": { knob: "RED_AFK_RETRY_RUNNER_TRANSIENT", defaultCap: 3 },
   policy: { knob: "RED_AFK_RETRY_POLICY", defaultCap: 1 },
+  // The supervisor stall-reaper's bounded re-claim cap (#402). A stall is a
+  // transient class (a wedged worker that usually clears on a fresh attempt), so
+  // it sits with the other transient defaults at 3. It is NOT in the per-issue
+  // `RecoveryReason` subset (recoveryReasonFor never returns "stalled"); only the
+  // reaper asks for it, by the literal string.
+  stalled: { knob: "RED_AFK_RETRY_STALLED", defaultCap: 3 },
 };
 
 /** A loose env view so the policy stays pure and trivially testable. */

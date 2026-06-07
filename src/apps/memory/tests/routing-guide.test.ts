@@ -65,7 +65,15 @@ describe("Memory routing guide", () => {
       expect.arrayContaining([
         expect.stringContaining("memory_claim_check"),
         expect.stringContaining("memory_structural_impact"),
-        expect.stringContaining("memory_onboarding_map"),
+        expect.stringContaining("memory_map_context"),
+        expect.stringContaining("route Personal facts and human-facing context to Brain"),
+      ]),
+    );
+    expect(guide.safetyNotes).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("Map context is agent context"),
+        expect.stringContaining("Personal facts, human-facing context"),
+        expect.stringContaining("belong in Brain, not Memory"),
       ]),
     );
     expect(guide.installSnippet).toContain("## Memory Routing");
@@ -73,6 +81,7 @@ describe("Memory routing guide", () => {
     expect(guide.installSnippet).toContain("Map context before broad source reads");
     expect(guide.installSnippet).toContain("Relation filters to apply");
     expect(guide.installSnippet).toContain("Target file: AGENTS.md");
+    expect(guide.installSnippet).toContain("route Personal facts and human-facing context to Brain");
   });
 
   test("builds multi-agent integration metadata for MCP-first agents", () => {
@@ -147,6 +156,7 @@ describe("Memory routing guide", () => {
       ]),
     );
     expect(body.mapContext.description).toContain("not a generated answer");
+    expect(body.installSnippet).toContain("memory_map_context");
     expect(body.installSnippet).toContain("memory_pre_pr_review");
 
     const text = runMemory(["routing-guide", "--agent", "codex"]);
@@ -155,6 +165,7 @@ describe("Memory routing guide", () => {
     expect(text.stdout).toContain("before broad grep");
     expect(text.stdout).toContain("filters=work, validation, decision, reference");
     expect(text.stdout).toContain("Target file: AGENTS.md");
+    expect(text.stdout).toContain("memory_map_context");
 
     const root = await mkdtemp(join(tmpdir(), "memory-routing-guide-"));
     roots.push(root);

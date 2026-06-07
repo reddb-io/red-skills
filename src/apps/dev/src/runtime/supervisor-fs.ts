@@ -16,7 +16,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { IterDirInfo, SweepWork, SweepWorker } from "../core/supervisor.js";
-import { workerDir } from "../core/worker-paths.js";
+import { parseWorkerAttemptPath, workerDir } from "../core/worker-paths.js";
 
 /** Absolute path of a slot's per-worker stdout/stderr log
  * (`afk-supervisor-slot-{slot}.log`). Mirrors spawn_slot's slot_log. */
@@ -213,7 +213,11 @@ export function resolveIterDirInfo(
   const notes = tailFile(join(dir, "handoff.md"), 200);
   const logTail = tailFile(join(dir, "afk.log"), 50);
 
-  return { path: dir, issue, workerId, logTail, notes, durationS };
+  // Real attempt number from the `<issue>-a<N>` iter dir, for the bounded stalled
+  // re-claim cap (#402). Degrades to attempt 1 when the path is non-canonical.
+  const attempt = parseWorkerAttemptPath(dir)?.attempt ?? 1;
+
+  return { path: dir, issue, workerId, logTail, notes, durationS, attempt };
 }
 
 /**

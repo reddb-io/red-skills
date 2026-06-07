@@ -302,7 +302,7 @@ describe("pollStallDetector reaper gating", () => {
     expect(state.slots[0]!.pid).toBe(4242);
   });
 
-  it("DOES reap a genuinely-stalled slot (kill + envelope + label rotate)", async () => {
+  it("retries a genuinely-stalled slot UNDER the cap (kill + envelope + CLEAN re-queue)", async () => {
     const { deps, io } = makeDeps({
       agentLaneMtime: vi.fn(() => NOW - 120),
       // No build/test descendant, flat cpu → genuinely stuck.
@@ -315,6 +315,8 @@ describe("pollStallDetector reaper gating", () => {
           logTail: "[afk] inner: stalled tool call — never returns",
           notes: "mid-iteration progress note",
           durationS: 200,
+          // attempt 1 < cap (3) → retry.
+          attempt: 1,
         }),
       ),
     });
@@ -329,10 +331,11 @@ describe("pollStallDetector reaper gating", () => {
     expect(issue).toBe(190);
     expect(body).toContain('data-attempt-status="no-sentinel"');
     expect(body).toContain("stalled tool call");
-    // ADDITIVE typed-blocked tag: routing unchanged (ready-for-agent restored)
-    // with blocked:stalled appended; the typed label is created on the fly.
-    expect(io.ensureLabel).toHaveBeenCalledWith("blocked:stalled");
-    expect(io.editLabels).toHaveBeenCalledWith(190, ["ready-for-agent", "blocked:stalled"], ["running"]);
+    // #402: a re-queue UNDER the cap routes back to ready-for-agent CLEAN — no
+    // blocked:stalled rides along, so the adoption-doctor hygiene check stays at
+    // zero offenders. The typed label is NOT created on retry.
+    expect(io.ensureLabel).not.toHaveBeenCalled();
+    expect(io.editLabels).toHaveBeenCalledWith(190, ["ready-for-agent"], ["running"]);
     expect(io.teardownIterDir).toHaveBeenCalledOnce();
     // Slot freed + idempotency guard set.
     const slot = state.slots[0]!;
@@ -360,6 +363,7 @@ describe("pollStallDetector reaper gating", () => {
           logTail: "",
           notes: "",
           durationS: 0,
+          attempt: 1,
         }),
       ),
     });
@@ -372,6 +376,67 @@ describe("pollStallDetector reaper gating", () => {
     expect(io.comment).not.toHaveBeenCalled();
     expect(io.editLabels).not.toHaveBeenCalled();
     expect(io.teardownIterDir).toHaveBeenCalledOnce();
+  });
+
+  it("escalates to ready-for-human once the stalled re-claim cap is exhausted (#402)", async () => {
+    const { deps, io } = makeDeps({
+      agentLaneMtime: vi.fn(() => NOW - 120),
+      inspectTree: vi.fn((): readonly ProcessSnapshotEntry[] => [{ command: "node", cpu: 0 }]),
+      resolveIterDir: vi.fn(
+        (): IterDirInfo => ({
+          path: "/w/wTEST/190-a3",
+          issue: 190,
+          workerId: "wTEST",
+          logTail: "[afk] inner: stalled again",
+          notes: "",
+          durationS: 200,
+          // attempt 3 == default cap (3) → escalate, no more retries.
+          attempt: 3,
+        }),
+      ),
+    });
+    const state = stalledState();
+
+    const reaped = await pollStallDetector(state, deps, config());
+
+    expect(reaped).toEqual([0]);
+    expect(io.killTree).toHaveBeenCalledWith(4242);
+    // The reap envelope plus a self-explanatory "budget exhausted" page comment.
+    expect(io.comment).toHaveBeenCalledTimes(2);
+    const pageBody = io.comment.mock.calls[1]![1] as string;
+    expect(pageBody).toContain("ready-for-human");
+    expect(pageBody).toContain("attempt 3/3");
+    // Escalation carries blocked:stalled (allowed alongside ready-for-human) and
+    // removes both running and any ready-for-agent — never re-queued.
+    expect(io.ensureLabel).toHaveBeenCalledWith("blocked:stalled");
+    expect(io.editLabels).toHaveBeenCalledWith(190, ["ready-for-human", "blocked:stalled"], ["running", "ready-for-agent"]);
+    expect(io.teardownIterDir).toHaveBeenCalledOnce();
+  });
+
+  it("honours RED_AFK_RETRY_STALLED to extend the re-claim budget (#402)", async () => {
+    const { deps, io } = makeDeps({
+      agentLaneMtime: vi.fn(() => NOW - 120),
+      inspectTree: vi.fn((): readonly ProcessSnapshotEntry[] => [{ command: "node", cpu: 0 }]),
+      resolveIterDir: vi.fn(
+        (): IterDirInfo => ({
+          path: "/w/wTEST/190-a3",
+          issue: 190,
+          workerId: "wTEST",
+          logTail: "stall",
+          notes: "",
+          durationS: 200,
+          attempt: 3,
+        }),
+      ),
+    });
+    // Cap raised to 5 → attempt 3 is back under budget → CLEAN re-queue.
+    deps.recoveryEnv = { RED_AFK_RETRY_STALLED: "5" };
+    const state = stalledState();
+
+    await pollStallDetector(state, deps, config());
+
+    expect(io.ensureLabel).not.toHaveBeenCalled();
+    expect(io.editLabels).toHaveBeenCalledWith(190, ["ready-for-agent"], ["running"]);
   });
 });
 
@@ -531,6 +596,7 @@ describe("envelope builders", () => {
       logTail: "stalled tool call",
       notes: "progress note",
       durationS: 200,
+      attempt: 2,
     });
     expect(body).toContain('data-attempt-status="no-sentinel"');
     expect(body).toContain("worker `wTEST`");

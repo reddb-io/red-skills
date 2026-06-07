@@ -85,6 +85,8 @@ describe("buildExtractionPrompt", () => {
     expect(a.system).toContain("node_type is one of");
     expect(a.system).toContain("problem");
     expect(a.system).toContain("FIXES");
+    expect(a.system).toContain("Do not extract Odysseus-style Personal facts");
+    expect(a.system).toContain("belong in Brain, not Memory");
     expect(a.user).toContain("the deploy kept failing on cold start");
   });
 

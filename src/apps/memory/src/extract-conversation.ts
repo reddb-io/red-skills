@@ -186,6 +186,8 @@ const SYSTEM_PROMPT = [
   `- relation label is one of: ${EDGE_LABELS.join(", ")}.`,
   "- Extract decisions, problems, solutions, fixes, and the concepts/people they",
   "  involve. Skip transient chatter and anything already obvious from the code.",
+  "- Do not extract Odysseus-style Personal facts, biographical details, identity",
+  "  context, or long-lived human preferences; those belong in Brain, not Memory.",
   "- Prefer fewer, higher-signal facts. Return an empty array when nothing is",
   "  worth remembering.",
 ].join("\n");

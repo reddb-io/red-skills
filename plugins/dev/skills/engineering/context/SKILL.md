@@ -78,7 +78,7 @@ After a non-trivial investigation, store one fact per durable lesson:
 node "${CLAUDE_PLUGIN_ROOT}/../memory/scripts/bootstrap.mjs" store "<decision, gotcha, or why-note>"
 ```
 
-Store durable facts, decisions, root causes, and gotchas. Do not store secrets, transient progress, issue numbers, PR numbers, commit SHAs, or "task done" logs that will be stale in a week. If the learning is procedural and reusable, update or create a skill instead of storing it as memory.
+Store durable operational decisions, root causes, and gotchas. Do not store secrets, Personal facts, biographical details, durable human preferences, transient progress, issue numbers, PR numbers, commit SHAs, or "task done" logs that will be stale in a week. Route human-facing context to Brain with `brain capture`. If the learning is procedural and reusable, update or create a skill instead of storing it as memory.
 
 ### 7. Use token-efficient terminal surfaces
 
@@ -145,7 +145,8 @@ Keep this summary concise. The goal is to prove the agent is grounded, not to du
 | Prior decisions/gotchas | `/memory:recall` |
 | Code structure and impact | `/memory:ingest`, graph reads, `/zoom-out` |
 | External docs/research/source synthesis | `/wiki ingest`, `/wiki query` |
-| Durable new fact | `/memory:store` |
+| Durable operational work fact | `/memory:store` |
+| Personal fact or human-facing context | `brain capture` / `/brain:capture` |
 | Reusable procedure | update/create a `SKILL.md` |
 | Skill lifecycle maintenance | `memory status skills`, `memory curate skills`, `/curate` |
 
@@ -154,6 +155,6 @@ Keep this summary concise. The goal is to prove the agent is grounded, not to du
 - **Cold repo:** run `/setup-red-skills`, then `/wiki-init` only if the repo needs a private knowledge base, then `memory init --mode graph` when persistent graph recall is worth the local RedDB store.
 - **Large code change:** recall prior decisions, ingest if graph is stale, zoom out around the target, then drill down.
 - **Repeated agent failures:** recall prior attempts/root causes, inspect Skill telemetry, update the failing skill or file a human-ready curator issue.
-- **Research-heavy project:** ingest sources into the wiki, create synthesis pages, store only stable decisions/gotchas in Memory.
+- **Research-heavy project:** ingest sources into the wiki, create synthesis pages, store only stable operational decisions/gotchas in Memory, and capture Personal facts or human-facing context in Brain.
 
 </supporting-info>

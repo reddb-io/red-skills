@@ -225,8 +225,20 @@ describe("export", () => {
       const kinds = json.contract.edges.map((e: { source: number; target: number; kind: string }) => e);
       expect(kinds).toEqual(
         expect.arrayContaining([
-          { source: file, target: sym, kind: "defines", label: "DEFINED_IN", direction: "directed" },
-          { source: file, target: dep, kind: "imports", label: "IMPORTS", direction: "directed" },
+          expect.objectContaining({
+            source: file,
+            target: sym,
+            kind: "defines",
+            label: "DEFINED_IN",
+            direction: "directed",
+          }),
+          expect.objectContaining({
+            source: file,
+            target: dep,
+            kind: "imports",
+            label: "IMPORTS",
+            direction: "directed",
+          }),
         ]),
       );
 

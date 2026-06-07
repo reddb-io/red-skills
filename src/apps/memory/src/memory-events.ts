@@ -1,5 +1,7 @@
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { QueryParam } from "@reddb-io/sdk";
+import type { ContextPack } from "./context-pack.js";
 import type { MemoryStore } from "./graph-store.js";
 import { COLLECTIONS } from "./schema.js";
 import type { SkillEvent } from "./skill-events.js";
@@ -137,6 +139,60 @@ const driftCaughtPayloadSchema = z
   })
   .strict();
 
+const contextPackGenerationPayloadSchema = z
+  .object({
+    event_type: z.literal("memory.context-pack.generated"),
+    event_id: safeString("payload.event_id", 200),
+    timestamp: z
+      .string()
+      .datetime({ offset: true })
+      .or(z.string().datetime({ offset: false })),
+    goal: safeString("payload.goal", SAFE_TEXT_MAX),
+    pack_id: safeString("payload.pack_id", 240),
+    surface: safeString("payload.surface", 120),
+    status: z.enum(["ok", "insufficient-context"]),
+    citation_ids: z.array(safeString("payload.citation_ids", 240)).max(1_000),
+    node_ids: z.array(z.number().int().positive()).max(1_000),
+    budget_chars: z.number().int().nonnegative().max(10_000_000),
+    used_chars: z.number().int().nonnegative().max(10_000_000),
+    entry_count: z.number().int().nonnegative().max(1_000_000),
+    core_context_count: z.number().int().nonnegative().max(1_000_000),
+    warning_count: z.number().int().nonnegative().max(1_000_000),
+    omitted_entries: z.number().int().nonnegative().max(1_000_000),
+    metadata: z.record(z.unknown()).optional(),
+  })
+  .strict();
+
+const memoryInjectionPayloadSchema = z
+  .object({
+    event_type: z.literal("memory.injection.delivered"),
+    event_id: safeString("payload.event_id", 200),
+    timestamp: z
+      .string()
+      .datetime({ offset: true })
+      .or(z.string().datetime({ offset: false })),
+    delivery_surface: safeString("payload.delivery_surface", 120),
+    delivered_citation_ids: z.array(safeString("payload.delivered_citation_ids", 240)).max(1_000),
+    delivered_node_ids: z.array(z.number().int().positive()).max(1_000),
+    goal: safeString("payload.goal", SAFE_TEXT_MAX).optional(),
+    pack_id: safeString("payload.pack_id", 240).optional(),
+    session_id: safeString("payload.session_id", 200).optional(),
+    runner: safeString("payload.runner", 80).optional(),
+    hook_event: safeString("payload.hook_event", 120).optional(),
+    injected_chars: z.number().int().nonnegative().max(10_000_000).optional(),
+    metadata: z.record(z.unknown()).optional(),
+  })
+  .strict()
+  .superRefine((payload, ctx) => {
+    if (payload.delivered_citation_ids.length === 0 && payload.delivered_node_ids.length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["delivered_citation_ids"],
+        message: "memory injection observations require delivered citation or node ids",
+      });
+    }
+  });
+
 const provenanceSchema = z
   .object({
     source_kind: z.enum(["manual", "hook", "derived", "system"]),
@@ -154,7 +210,14 @@ const memoryEventSchema = z
       .string()
       .datetime({ offset: true })
       .or(z.string().datetime({ offset: false })),
-    kind: z.enum(["skill.telemetry", "hook.lifecycle", "engine.op", "memory.drift.caught"]),
+    kind: z.enum([
+      "skill.telemetry",
+      "hook.lifecycle",
+      "engine.op",
+      "memory.drift.caught",
+      "memory.context-pack.generated",
+      "memory.injection.delivered",
+    ]),
     source: envelopeObject("source"),
     actor: envelopeObject("actor"),
     scope: z
@@ -169,6 +232,8 @@ const memoryEventSchema = z
       hookLifecyclePayloadSchema,
       engineOpPayloadSchema,
       driftCaughtPayloadSchema,
+      contextPackGenerationPayloadSchema,
+      memoryInjectionPayloadSchema,
     ]),
     provenance: provenanceSchema,
   })
@@ -181,6 +246,8 @@ export type EngineOpPayload = z.infer<typeof engineOpPayloadSchema>;
 export type EngineOp = EngineOpPayload["op"];
 export type EngineOpOutcome = EngineOpPayload["outcome"];
 export type DriftCaughtPayload = z.infer<typeof driftCaughtPayloadSchema>;
+export type ContextPackGenerationPayload = z.infer<typeof contextPackGenerationPayloadSchema>;
+export type MemoryInjectionPayload = z.infer<typeof memoryInjectionPayloadSchema>;
 
 export interface DriftCaughtInput {
   /** Watched paths that changed without an audit marker. Must be non-empty. */
@@ -205,6 +272,38 @@ export interface EngineOpInput {
   error?: string;
   timestamp?: string | Date;
   eventId?: string;
+}
+
+export interface ContextPackGenerationInput {
+  pack: ContextPack;
+  surface: string;
+  timestamp?: string | Date;
+  eventId?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface MemoryInjectionInput {
+  deliveredCitationIds?: readonly string[];
+  deliveredNodeIds?: readonly (string | number)[];
+  deliverySurface: string;
+  goal?: string;
+  packId?: string;
+  sessionId?: string;
+  runner?: string;
+  hookEvent?: string;
+  injectedChars?: number;
+  timestamp?: string | Date;
+  eventId?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface MemoryInjectionRollup {
+  id: string;
+  delivered_count: number;
+  last_injected_at: string;
+  delivery_surfaces: string[];
+  citation_id?: string;
+  node_id?: number;
 }
 
 export interface MemoryEventReadOptions {
@@ -335,6 +434,115 @@ export function engineOpToMemoryEvent(input: EngineOpInput): MemoryEvent {
   });
 }
 
+export function contextPackIdentity(pack: ContextPack): string {
+  const citationIds = pack.entries.map((entry) => entry.citation.urn).sort();
+  const hash = createHash("sha256")
+    .update(
+      JSON.stringify({
+        goal: pack.goal,
+        status: pack.status,
+        budgetChars: pack.budgetChars,
+        usedChars: pack.usedChars,
+        citationIds,
+      }),
+    )
+    .digest("hex")
+    .slice(0, 16);
+  return `context-pack:${hash}`;
+}
+
+export function contextPackGenerationToMemoryEvent(
+  input: ContextPackGenerationInput,
+): MemoryEvent {
+  const timestamp =
+    input.timestamp instanceof Date
+      ? input.timestamp.toISOString()
+      : input.timestamp ?? new Date().toISOString();
+  const packId = contextPackIdentity(input.pack);
+  const eventId =
+    input.eventId ?? `context-pack:${input.surface}:${packId}:${Date.parse(timestamp) || timestamp}`;
+  const citationIds = input.pack.entries.map((entry) => entry.citation.urn);
+  const nodeIds = input.pack.entries.map((entry) => entry.citation.rid);
+  return parseMemoryEvent({
+    id: eventId,
+    occurred_at: timestamp,
+    kind: "memory.context-pack.generated",
+    source: { kind: "memory", name: "memory.context-pack" },
+    actor: { kind: "agent", id: input.surface },
+    scope: { level: "goal", id: input.pack.goal },
+    subject: { kind: "context-pack", id: packId },
+    payload: {
+      event_type: "memory.context-pack.generated",
+      event_id: eventId,
+      timestamp,
+      goal: input.pack.goal,
+      pack_id: packId,
+      surface: input.surface,
+      status: input.pack.status,
+      citation_ids: citationIds,
+      node_ids: nodeIds,
+      budget_chars: input.pack.budgetChars,
+      used_chars: input.pack.usedChars,
+      entry_count: input.pack.entries.length,
+      core_context_count: input.pack.coreContext.length,
+      warning_count: input.pack.warnings.length,
+      omitted_entries: input.pack.omittedEntries,
+      ...(input.metadata ? { metadata: input.metadata } : {}),
+    },
+    provenance: {
+      source_kind: "system",
+      writer: "memory",
+      command: "memory context-pack",
+      evidence: [`event_id:${eventId}`, `pack_id:${packId}`],
+    },
+  });
+}
+
+export function memoryInjectionToMemoryEvent(input: MemoryInjectionInput): MemoryEvent {
+  const timestamp =
+    input.timestamp instanceof Date
+      ? input.timestamp.toISOString()
+      : input.timestamp ?? new Date().toISOString();
+  const deliveredCitationIds = [...(input.deliveredCitationIds ?? [])];
+  const deliveredNodeIds = [...(input.deliveredNodeIds ?? [])].map((id) => Number(id));
+  const identity =
+    input.packId ?? deliveredCitationIds[0] ?? deliveredNodeIds[0]?.toString() ?? "unknown";
+  const eventId =
+    input.eventId ??
+    `injection:${input.deliverySurface}:${identity}:${Date.parse(timestamp) || timestamp}`;
+  return parseMemoryEvent({
+    id: eventId,
+    occurred_at: timestamp,
+    kind: "memory.injection.delivered",
+    source: { kind: "memory", name: "memory.injection" },
+    actor: { kind: "agent", id: input.runner ?? input.deliverySurface },
+    scope: { level: input.sessionId ? "session" : "delivery", id: input.sessionId ?? input.deliverySurface },
+    subject: { kind: "memory-injection", id: identity },
+    payload: {
+      event_type: "memory.injection.delivered",
+      event_id: eventId,
+      timestamp,
+      delivery_surface: input.deliverySurface,
+      delivered_citation_ids: deliveredCitationIds,
+      delivered_node_ids: deliveredNodeIds,
+      ...(input.goal ? { goal: input.goal } : {}),
+      ...(input.packId ? { pack_id: input.packId } : {}),
+      ...(input.sessionId ? { session_id: input.sessionId } : {}),
+      ...(input.runner ? { runner: input.runner } : {}),
+      ...(input.hookEvent ? { hook_event: input.hookEvent } : {}),
+      ...(input.injectedChars != null ? { injected_chars: input.injectedChars } : {}),
+      ...(input.metadata ? { metadata: input.metadata } : {}),
+    },
+    provenance: {
+      source_kind: input.deliverySurface === "hook" ? "hook" : "system",
+      writer: "memory",
+      command: "memory injection",
+      ...(input.hookEvent ? { hook: input.hookEvent } : {}),
+      evidence: [`event_id:${eventId}`],
+    },
+  });
+}
+
 /**
  * Build a `memory.drift.caught` event (ADR 0025) for the CI drift guard (#224).
  * The guard emits one of these when it fails a PR so the maintainer can see how
@@ -389,6 +597,51 @@ export async function appendEngineOpEvent(
   } catch {
     // Swallowed by design — see function docs.
   }
+}
+
+export async function appendContextPackGenerationEvent(
+  store: MemoryStore,
+  input: ContextPackGenerationInput,
+): Promise<void> {
+  await appendMemoryEvent(store, contextPackGenerationToMemoryEvent(input));
+}
+
+export async function appendMemoryInjectionEvent(
+  store: MemoryStore,
+  input: MemoryInjectionInput,
+): Promise<void> {
+  await appendMemoryEvent(store, memoryInjectionToMemoryEvent(input));
+}
+
+export function deriveMemoryInjectionRollups(events: readonly MemoryEvent[]): MemoryInjectionRollup[] {
+  const rollups = new Map<string, MemoryInjectionRollup>();
+  for (const event of events) {
+    if (event.kind !== "memory.injection.delivered") continue;
+    const payload = event.payload as MemoryInjectionPayload;
+    const touched = new Map<string, { citation_id?: string; node_id?: number }>();
+    for (const citationId of payload.delivered_citation_ids) {
+      touched.set(`citation:${citationId}`, { citation_id: citationId });
+    }
+    for (const nodeId of payload.delivered_node_ids) {
+      touched.set(`node:${nodeId}`, { node_id: nodeId });
+    }
+    for (const [id, ids] of touched) {
+      const prev = rollups.get(id);
+      const surfaces = new Set(prev?.delivery_surfaces ?? []);
+      surfaces.add(payload.delivery_surface);
+      rollups.set(id, {
+        id,
+        ...ids,
+        delivered_count: (prev?.delivered_count ?? 0) + 1,
+        last_injected_at:
+          !prev || Date.parse(payload.timestamp) >= Date.parse(prev.last_injected_at)
+            ? payload.timestamp
+            : prev.last_injected_at,
+        delivery_surfaces: [...surfaces].sort(),
+      });
+    }
+  }
+  return [...rollups.values()].sort((a, b) => a.id.localeCompare(b.id));
 }
 
 export async function appendMemoryEvent(

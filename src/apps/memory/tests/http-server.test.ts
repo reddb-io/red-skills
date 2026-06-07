@@ -327,6 +327,11 @@ describe.skipIf(skipPerf)("Memory local HTTP server", () => {
         schema_version: "memory.governance.v1",
         read_only: true,
         summary: expect.any(Object),
+        tidy_availability: {
+          status: "unavailable",
+          reason: "no AI provider configured for governance tidy",
+          next_action: expect.stringContaining("deterministic governance remains available"),
+        },
       });
 
       const governanceViewer = await fetch(`${base}/governance`);
@@ -335,6 +340,7 @@ describe.skipIf(skipPerf)("Memory local HTTP server", () => {
       const governanceViewerHtml = await governanceViewer.text();
       expect(governanceViewerHtml).toContain("Memory Governance");
       expect(governanceViewerHtml).toContain('id="memory-governance-data"');
+      expect(governanceViewerHtml).toContain("Tidy availability");
 
       const decay = await fetch(`${base}/api/decay`);
       expect(decay.status).toBe(200);

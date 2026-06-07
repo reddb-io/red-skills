@@ -81,7 +81,7 @@ function renderMemoryGovernanceViewer(report: MemoryGovernanceReport): string {
     .bad { color: var(--bad); }
     .metrics {
       display: grid;
-      grid-template-columns: repeat(6, minmax(0, 1fr));
+      grid-template-columns: repeat(7, minmax(0, 1fr));
       gap: 12px;
       margin: 20px 0;
     }
@@ -133,6 +133,7 @@ function renderMemoryGovernanceViewer(report: MemoryGovernanceReport): string {
       ${metric("Lint", report.summary.lint_findings)}
       ${metric("Conflicts", report.summary.unresolved_contradictions)}
       ${metric("Superseded", report.summary.superseded_nodes)}
+      ${metric("Tidy", report.tidy_availability.status)}
     </div>
     <div class="layout">
       <div class="stack">
@@ -143,11 +144,17 @@ function renderMemoryGovernanceViewer(report: MemoryGovernanceReport): string {
             ${signal("Privacy scan", `${report.privacy.findings.length} sensitive-looking finding(s), ${report.privacy.warnings.length} warning(s)`, report.privacy.findings.length > 0 ? "attention" : "ok")}
             ${signal("Memory lint", `${report.lint.findings.length} policy finding(s)`, report.lint.findings.length > 0 ? "attention" : "ok")}
             ${signal("Contradictions", `${report.summary.unresolved_contradictions} unresolved, ${report.summary.resolved_contradictions} resolved`, report.summary.unresolved_contradictions > 0 ? "attention" : "ok")}
+            ${signal("Tidy availability", `${report.tidy_availability.status}${report.tidy_availability.reason ? ` - ${report.tidy_availability.reason}` : ""}`, report.tidy_availability.status === "available" ? "ok" : "attention")}
           </ul>
         </section>
         <section>
           <h2>Contradictions</h2>
           ${report.contradictions.length === 0 ? `<p class="empty">No contradiction edges found.</p>` : `<ul>${report.contradictions.slice(0, 12).map((item) => `<li><div><h3>${escapeHtml(item.from.title)} -> ${escapeHtml(item.to.title)}</h3><p class="meta">${escapeHtml(item.reason ?? "no reason")} - ${item.resolved ? "resolved" : "unresolved"}</p></div><span class="pill ${item.resolved ? "" : "warn"}">${item.resolved ? "resolved" : "open"}</span></li>`).join("")}</ul>`}
+        </section>
+        <section>
+          <h2>Provider Tidy Recommendations</h2>
+          <p class="meta">Read-only duplicate and near-duplicate Soft-merge inspection output. Governance does not apply these recommendations.</p>
+          ${report.tidy_recommendations.recommendations.length === 0 ? `<p class="empty">${escapeHtml(report.tidy_recommendations.reason ?? "No provider tidy recommendations.")}</p>` : `<ul>${report.tidy_recommendations.recommendations.map((item) => `<li><div><h3>${escapeHtml(item.proposed_soft_merge.direction)}</h3><p class="meta">${escapeHtml(item.relation)} - confidence ${item.confidence.toFixed(2)} - ${escapeHtml(item.rationale)}</p><p class="meta"><code>${escapeHtml(item.id)}</code></p></div><span class="pill">${escapeHtml(item.review_status)}</span></li>`).join("")}</ul>`}
         </section>
         <section>
           <h2>Missing Provenance</h2>

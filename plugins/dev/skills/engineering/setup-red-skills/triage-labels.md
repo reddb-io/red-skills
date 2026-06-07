@@ -150,12 +150,12 @@ These exist for filtering and don't drive lifecycle transitions:
 | a user `pre_*` guard hook rejected it | `blocked:policy` | **auto-retry once** | 1 (`RED_AFK_RETRY_POLICY`) |
 | agent emitted `<promise>BLOCKED</promise>` | `blocked:spec` | **pages** → ready-for-human (decide/clarify) | — (never auto) |
 | feedback gate failed (test/lint/build) | `blocked:validation` | **pages** → ready-for-human (review diff) | — (never auto) |
-| stall-reaper killed a hung worker | `blocked:stalled` | restores ready-for-agent (uncapped — follow-up) | — |
+| stall-reaper killed a hung worker | `blocked:stalled` | **auto-retry** → ready-for-agent (clean) | 3 (`RED_AFK_RETRY_STALLED`) |
 | worktree/base/push setup failed | `blocked:infra` | pages → ready-for-human (ops) | — |
 
-**Bounded auto-recovery (live).** The five recoverable reasons loop back to `ready-for-agent` and are retried, up to their per-reason cap (counting real attempt-ledger attempts); on the cap they **escalate** to `ready-for-human` with a `🤖 /afk escalating … retry budget exhausted (attempt N/cap)` comment. So a transient hiccup self-heals and never pages, but a persistent one still surfaces — bounded, no runaway loop. Caps are env-tunable (non-numeric/0 → default). `spec` and `validation` **always page** (a human must decide / review the diff); `dependency` waits on its `req:N` edges (never pages). The typed `blocked:<reason>` label is added in every case, so the backlog stays filterable by reason regardless of routing.
+**Bounded auto-recovery (live).** The recoverable reasons loop back to `ready-for-agent` and are retried, up to their per-reason cap (counting real attempt-ledger attempts); on the cap they **escalate** to `ready-for-human` with a `🤖 /afk escalating … retry budget exhausted (attempt N/cap)` comment. So a transient hiccup self-heals and never pages, but a persistent one still surfaces — bounded, no runaway loop. The supervisor stall-reaper's `blocked:stalled` re-queue is bounded by the **same** policy (`RED_AFK_RETRY_STALLED`, default 3). Caps are env-tunable (non-numeric/0 → default). `spec` and `validation` **always page** (a human must decide / review the diff); `dependency` waits on its `req:N` edges (never pages). **A re-queue is hygienic:** promoting an issue to `ready-for-agent` (auto-retry) or `running` (claim) sheds any `blocked:*` label in the same edit, so no live/queued issue ever carries `ready-for-agent`/`running` together with `blocked:*`. The typed `blocked:<reason>` label rides only the `ready-for-human` escalation.
 
-> Not yet wired: time-based backoff (today the re-queue is immediate; the cap is what prevents runaway) and a cap on the supervisor stall-reaper's `blocked:stalled` restore.
+> Not yet wired: time-based backoff (today the re-queue is immediate; the cap is what prevents runaway).
 
 All `blocked:*` labels are created on the fly when first applied (mirroring `runner-error`) and provisioned by `/setup-red-skills`.
 

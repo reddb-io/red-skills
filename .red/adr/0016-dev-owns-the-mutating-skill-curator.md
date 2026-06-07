@@ -68,3 +68,18 @@ Constraints on the mutation:
 - "A Skill curator does not mutate skills itself" remains true **for the Memory
   plugin**; the mutation now has a named home in `dev` rather than being an
   unowned "separate workflow."
+
+## Status
+
+Accepted; post-0041 supersession applies **on migration**. The surviving
+decision is that the mutating curator remains a `dev` workflow and never reads
+Memory's RedDB/graph internals directly. What is obsoleted on migration is the
+assumption that `/curate` consumes Memory's report-only output through an
+in-repo `memory curate skills --json` CLI. After ADR 0041 lands, `dev` should
+consume that report through the `red-memory` MCP contract. The implementation
+rewiring is intentionally outside this record.
+
+## Related
+
+- ADR 0041 — red-skills consumes the `red-memory` and `red-ui` MCPs instead of
+  building the memory plugin in this repo.
