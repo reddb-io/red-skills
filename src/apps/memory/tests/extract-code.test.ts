@@ -6,6 +6,7 @@ import { extractCode } from "../src/extract-code.js";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const TS_FIXTURE = join(HERE, "fixtures/repo/src/auth.ts");
 const IMPORT_FIXTURE = join(HERE, "fixtures/imports/src/app.ts");
+const IMPORT_LOCAL_FIXTURE = join(HERE, "fixtures/imports/src/local.ts");
 
 describe("extractCode", () => {
   test("extracts a file node plus one symbol per top-level declaration", async () => {
@@ -137,6 +138,47 @@ describe("extractCode", () => {
       expect(edge.fromLabel).toBe(fileNode?.label);
       expect(imports.some((n) => n.label === edge.toLabel)).toBe(true);
     }
+  });
+
+  test("emits compiler-resolved cross-file CALLS and USES_TYPE edges", async () => {
+    const { nodes, edges } = await extractCode(IMPORT_FIXTURE);
+
+    expect(nodes).toContainEqual(
+      expect.objectContaining({
+        label: `sym:${IMPORT_LOCAL_FIXTURE}#localValue`,
+        node_type: "symbol",
+        properties: expect.objectContaining({
+          title: "localValue",
+          source_location: expect.stringContaining(`${IMPORT_LOCAL_FIXTURE}:`),
+          extraction_backend: "typescript-compiler",
+        }),
+      }),
+    );
+    expect(nodes).toContainEqual(
+      expect.objectContaining({
+        label: `sym:${IMPORT_LOCAL_FIXTURE}#LocalOptions`,
+        node_type: "symbol",
+      }),
+    );
+    expect(edges).toContainEqual(
+      expect.objectContaining({
+        fromLabel: `sym:${IMPORT_FIXTURE}#render`,
+        toLabel: `sym:${IMPORT_LOCAL_FIXTURE}#localValue`,
+        label: "CALLS",
+        properties: expect.objectContaining({
+          confidence: "EXTRACTED",
+          extraction_backend: "typescript-compiler",
+          topological_weight: expect.any(Number),
+        }),
+      }),
+    );
+    expect(edges).toContainEqual(
+      expect.objectContaining({
+        fromLabel: `sym:${IMPORT_FIXTURE}#render`,
+        toLabel: `sym:${IMPORT_LOCAL_FIXTURE}#LocalOptions`,
+        label: "USES_TYPE",
+      }),
+    );
   });
 
   test("ignores unsupported file extensions", async () => {

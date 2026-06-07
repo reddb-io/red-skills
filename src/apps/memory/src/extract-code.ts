@@ -110,18 +110,17 @@ async function extractTypeScriptMap(
     const symbols = compilerSymbols(ts, checker, sourceFile);
     const exports = compilerExportedNames(ts, checker, sourceFile, source);
     const imports = importLineMap(ts, sourceFile);
+    const compilerRelations = compilerRelationEdges(ts, checker, sourceFile, path, symbols);
     const extraction = buildExtraction({
       path,
       source,
       lang,
       symbols,
+      externalSymbols: compilerRelations.externalSymbols,
       exports,
       backend: "typescript-compiler",
       importLines: imports,
-      extraEdges: [
-        ...compilerCallEdges(ts, checker, sourceFile, path, symbols),
-        ...compilerTypeEdges(ts, checker, sourceFile, path, symbols),
-      ],
+      extraEdges: compilerRelations.edges,
     });
     return { extraction };
   } catch (error) {
@@ -202,6 +201,7 @@ interface BuildExtractionInput {
   source: string;
   lang: string;
   symbols: SymbolHit[];
+  externalSymbols?: SymbolHit[];
   exports: string[];
   backend: string;
   fallbackReason?: string;
@@ -235,18 +235,19 @@ function buildExtraction(input: BuildExtractionInput): CodeExtraction {
     },
   };
 
-  const symbols = symbolHits.map<MemoryNode>((sym) => ({
-    label: `sym:${path}#${sym.name}`,
+  const allSymbols = dedupeSymbols([...symbolHits, ...(input.externalSymbols ?? [])], path);
+  const symbolNodes = allSymbols.map<MemoryNode>((sym) => ({
+    label: symbolLabel(sym, path),
     node_type: "symbol",
     properties: {
       title: sym.name,
       summary: sym.kind,
-      source: sourceLocation(path, sym.line),
-      source_location: sourceLocation(path, sym.line, sym.column),
+      source: sourceLocation(symbolPath(sym, path), sym.line),
+      source_location: sourceLocation(symbolPath(sym, path), sym.line, sym.column),
       ...(sym.endLine
         ? {
             source_span: {
-              path,
+              path: symbolPath(sym, path),
               start_line: sym.line,
               start_column: sym.column,
               end_line: sym.endLine,
@@ -260,12 +261,13 @@ function buildExtraction(input: BuildExtractionInput): CodeExtraction {
         source_kind: "derived",
         writer: "extract-code",
         confidence: "EXTRACTED",
-        evidence: [sourceLocation(path, sym.line)],
+        evidence: [sourceLocation(symbolPath(sym, path), sym.line)],
       },
-      hash: contentHash(path, sym.name, sym.kind),
+      hash: contentHash(symbolPath(sym, path), sym.name, sym.kind),
       extraction_backend: backend,
     },
   }));
+  const localSymbolLabels = new Set(symbolHits.map((sym) => symbolLabel(sym, path)));
 
   const imports = extractImportsForFile(path, null, source).map<MemoryNode>((imp) => {
     const line = input.importLines?.get(imp.specifier);
@@ -294,17 +296,19 @@ function buildExtraction(input: BuildExtractionInput): CodeExtraction {
     };
   });
 
-  const edges: CodeExtraction["edges"] = symbols.map((s) =>
-    codeEdge({
-      path,
-      fromLabel: s.label,
-      toLabel: fileNode.label,
-      label: "DEFINED_IN",
-      backend,
-      source: stringValue(s.properties.source) ?? path,
-      reason: "symbol is declared in file",
-    }),
-  );
+  const edges: CodeExtraction["edges"] = symbolNodes
+    .filter((s) => localSymbolLabels.has(s.label))
+    .map((s) =>
+      codeEdge({
+        path,
+        fromLabel: s.label,
+        toLabel: fileNode.label,
+        label: "DEFINED_IN",
+        backend,
+        source: stringValue(s.properties.source) ?? path,
+        reason: "symbol is declared in file",
+      }),
+    );
   edges.push(
     ...imports.map((imp) =>
       codeEdge({
@@ -320,7 +324,7 @@ function buildExtraction(input: BuildExtractionInput): CodeExtraction {
     ...(input.extraEdges ?? []),
   );
 
-  return { nodes: [fileNode, ...symbols, ...imports], edges };
+  return { nodes: [fileNode, ...symbolNodes, ...imports], edges };
 }
 
 interface CodeEdgeInput {
@@ -369,6 +373,7 @@ interface SymbolHit {
   endLine?: number;
   endColumn?: number;
   index: number;
+  sourcePath?: string;
   tsSymbol?: TypeScript.Symbol;
   node?: TypeScript.Node;
 }
@@ -477,6 +482,23 @@ function symbolHitForNode(
   };
 }
 
+function symbolPath(sym: SymbolHit, fallbackPath: string): string {
+  return sym.sourcePath ?? fallbackPath;
+}
+
+function symbolLabel(sym: SymbolHit, fallbackPath: string): string {
+  return `sym:${symbolPath(sym, fallbackPath)}#${sym.name}`;
+}
+
+function dedupeSymbols(symbols: SymbolHit[], fallbackPath: string): SymbolHit[] {
+  const byLabel = new Map<string, SymbolHit>();
+  for (const symbol of symbols) {
+    const label = symbolLabel(symbol, fallbackPath);
+    if (!byLabel.has(label)) byLabel.set(label, symbol);
+  }
+  return [...byLabel.values()];
+}
+
 function sortSymbols(hits: SymbolHit[]): SymbolHit[] {
   return hits.sort((a, b) => a.index - b.index || a.name.localeCompare(b.name));
 }
@@ -538,25 +560,120 @@ function importLineMap(
   return lines;
 }
 
+interface CompilerRelationExtraction {
+  edges: CodeExtraction["edges"];
+  externalSymbols: SymbolHit[];
+}
+
+function compilerRelationEdges(
+  ts: typeof TypeScript,
+  checker: TypeScript.TypeChecker,
+  sourceFile: TypeScript.SourceFile,
+  path: string,
+  symbols: SymbolHit[],
+): CompilerRelationExtraction {
+  const externals = new Map<string, SymbolHit>();
+  const externalSymbol = (symbol: TypeScript.Symbol | undefined): SymbolHit | undefined => {
+    const hit = compilerExternalSymbol(ts, checker, sourceFile, symbol);
+    if (!hit) return undefined;
+    const label = symbolLabel(hit, path);
+    const existing = externals.get(label);
+    if (existing) return existing;
+    externals.set(label, hit);
+    return hit;
+  };
+  return {
+    edges: [
+      ...compilerCallEdges(ts, checker, sourceFile, path, symbols, externalSymbol),
+      ...compilerTypeEdges(ts, checker, sourceFile, path, symbols, externalSymbol),
+    ],
+    externalSymbols: [...externals.values()],
+  };
+}
+
+function compilerExternalSymbol(
+  ts: typeof TypeScript,
+  checker: TypeScript.TypeChecker,
+  currentSourceFile: TypeScript.SourceFile,
+  symbol: TypeScript.Symbol | undefined,
+): SymbolHit | undefined {
+  const resolved = resolveAlias(checker, symbol);
+  const declaration = resolved?.declarations?.find((candidate) => {
+    const declarationSource = candidate.getSourceFile();
+    return (
+      declarationSource.fileName !== currentSourceFile.fileName &&
+      !declarationSource.isDeclarationFile &&
+      declarationKind(ts, candidate) != null
+    );
+  });
+  if (!declaration) return undefined;
+
+  const sourceFile = declaration.getSourceFile();
+  const nameNode = declarationNameNode(ts, declaration);
+  const kind = declarationKind(ts, declaration);
+  if (!nameNode || !kind) return undefined;
+
+  return {
+    ...symbolHitForNode(ts, checker, sourceFile, nameNode, declaration, kind),
+    sourcePath: sourceFile.fileName,
+  };
+}
+
+function declarationNameNode(
+  ts: typeof TypeScript,
+  node: TypeScript.Declaration,
+): TypeScript.Identifier | undefined {
+  if (
+    (ts.isFunctionDeclaration(node) ||
+      ts.isClassDeclaration(node) ||
+      ts.isInterfaceDeclaration(node) ||
+      ts.isTypeAliasDeclaration(node) ||
+      ts.isEnumDeclaration(node) ||
+      ts.isVariableDeclaration(node)) &&
+    node.name &&
+    ts.isIdentifier(node.name)
+  ) {
+    return node.name;
+  }
+  return undefined;
+}
+
+function declarationKind(
+  ts: typeof TypeScript,
+  node: TypeScript.Declaration,
+): SymbolHit["kind"] | undefined {
+  if (ts.isFunctionDeclaration(node)) return "function";
+  if (ts.isClassDeclaration(node)) return "class";
+  if (ts.isInterfaceDeclaration(node)) return "interface";
+  if (ts.isTypeAliasDeclaration(node)) return "type";
+  if (ts.isEnumDeclaration(node)) return "enum";
+  if (ts.isVariableDeclaration(node)) return "const";
+  return undefined;
+}
+
+function isCallableKind(kind: SymbolHit["kind"]): boolean {
+  return kind === "function" || kind === "const" || kind === "class";
+}
+
+function isTypeKind(kind: SymbolHit["kind"]): boolean {
+  return kind === "type" || kind === "interface" || kind === "class" || kind === "enum";
+}
+
 function compilerCallEdges(
   ts: typeof TypeScript,
   checker: TypeScript.TypeChecker,
   sourceFile: TypeScript.SourceFile,
   path: string,
   symbols: SymbolHit[],
+  externalSymbol?: (symbol: TypeScript.Symbol | undefined) => SymbolHit | undefined,
 ): CodeExtraction["edges"] {
   const bySymbol = localSymbolMap(checker, symbols);
   const byName = new Map(symbols.map((symbol) => [symbol.name, symbol]));
-  const callable = new Set(
-    symbols
-      .filter((symbol) => symbol.kind === "function" || symbol.kind === "const" || symbol.kind === "class")
-      .map((symbol) => symbol.name),
-  );
   const edges: CodeExtraction["edges"] = [];
 
   for (const from of symbols) {
-    if (!from.node || !callable.has(from.name)) continue;
-    const called = new Map<string, number>();
+    if (!from.node || !isCallableKind(from.kind)) continue;
+    const called = new Map<string, { symbol: SymbolHit; line: number }>();
     visit(from.node, (node) => {
       if (!ts.isCallExpression(node) && !ts.isNewExpression(node)) return;
       const expression = node.expression;
@@ -564,21 +681,31 @@ function compilerCallEdges(
         ts.isPropertyAccessExpression(expression) ? expression.name : expression,
       );
       const resolved = resolveAlias(checker, symbol);
-      const to = (resolved ? bySymbol.get(resolved) : undefined) ?? byName.get(symbol?.name ?? "");
-      if (!to || to.name === from.name || !callable.has(to.name)) return;
-      const line = ts.getLineAndCharacterOfPosition(sourceFile, expression.getStart(sourceFile)).line + 1;
-      called.set(to.name, line);
+      const to =
+        (resolved ? bySymbol.get(resolved) : undefined) ??
+        byName.get(symbol?.name ?? "") ??
+        externalSymbol?.(resolved ?? symbol);
+      if (
+        !to ||
+        symbolLabel(to, path) === symbolLabel(from, path) ||
+        !isCallableKind(to.kind)
+      ) {
+        return;
+      }
+      const line =
+        ts.getLineAndCharacterOfPosition(sourceFile, expression.getStart(sourceFile)).line + 1;
+      called.set(symbolLabel(to, path), { symbol: to, line });
     });
-    for (const [name, line] of called) {
+    for (const { symbol, line } of called.values()) {
       edges.push(
         codeEdge({
           path,
-          fromLabel: `sym:${path}#${from.name}`,
-          toLabel: `sym:${path}#${name}`,
+          fromLabel: symbolLabel(from, path),
+          toLabel: symbolLabel(symbol, path),
           label: "CALLS",
           backend: "typescript-compiler",
           source: sourceLocation(path, line),
-          reason: "checker resolved call expression to local symbol",
+          reason: "checker resolved call expression to symbol",
         }),
       );
     }
@@ -592,39 +719,41 @@ function compilerTypeEdges(
   sourceFile: TypeScript.SourceFile,
   path: string,
   symbols: SymbolHit[],
+  externalSymbol?: (symbol: TypeScript.Symbol | undefined) => SymbolHit | undefined,
 ): CodeExtraction["edges"] {
   const bySymbol = localSymbolMap(checker, symbols);
   const byName = new Map(symbols.map((symbol) => [symbol.name, symbol]));
-  const typeNames = new Set(
-    symbols
-      .filter((symbol) => symbol.kind === "type" || symbol.kind === "interface" || symbol.kind === "class" || symbol.kind === "enum")
-      .map((symbol) => symbol.name),
-  );
   const edges: CodeExtraction["edges"] = [];
 
   for (const from of symbols) {
     if (!from.node) continue;
-    const used = new Map<string, number>();
+    const used = new Map<string, { symbol: SymbolHit; line: number }>();
     visit(from.node, (node) => {
       const targetNode = typeReferenceNameNode(ts, node);
       if (!targetNode) return;
       const symbol = checker.getSymbolAtLocation(targetNode);
       const resolved = resolveAlias(checker, symbol);
-      const to = (resolved ? bySymbol.get(resolved) : undefined) ?? byName.get(targetNode.getText(sourceFile));
-      if (!to || to.name === from.name || !typeNames.has(to.name)) return;
-      const line = ts.getLineAndCharacterOfPosition(sourceFile, targetNode.getStart(sourceFile)).line + 1;
-      used.set(to.name, line);
+      const to =
+        (resolved ? bySymbol.get(resolved) : undefined) ??
+        byName.get(targetNode.getText(sourceFile)) ??
+        externalSymbol?.(resolved ?? symbol);
+      if (!to || symbolLabel(to, path) === symbolLabel(from, path) || !isTypeKind(to.kind)) {
+        return;
+      }
+      const line =
+        ts.getLineAndCharacterOfPosition(sourceFile, targetNode.getStart(sourceFile)).line + 1;
+      used.set(symbolLabel(to, path), { symbol: to, line });
     });
-    for (const [name, line] of used) {
+    for (const { symbol, line } of used.values()) {
       edges.push(
         codeEdge({
           path,
-          fromLabel: `sym:${path}#${from.name}`,
-          toLabel: `sym:${path}#${name}`,
+          fromLabel: symbolLabel(from, path),
+          toLabel: symbolLabel(symbol, path),
           label: "USES_TYPE",
           backend: "typescript-compiler",
           source: sourceLocation(path, line),
-          reason: "checker resolved type reference to local symbol",
+          reason: "checker resolved type reference to symbol",
         }),
       );
     }

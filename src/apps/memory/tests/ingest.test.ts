@@ -247,6 +247,19 @@ describe("ingestProject over a TS+MD fixture repo", () => {
       const after = await store.stats();
       expect(after.edges).toBe(before.edges);
       expect(after.nodes).toBe(before.nodes);
+
+      const render = nodes.find((n) => n.label.endsWith("/src/app.ts#render"));
+      const localValue = nodes.find((n) => n.label.endsWith("/src/local.ts#localValue"));
+      const localOptions = nodes.find((n) => n.label.endsWith("/src/local.ts#LocalOptions"));
+      expect(render).toBeDefined();
+      expect(localValue).toBeDefined();
+      expect(localOptions).toBeDefined();
+      await expect(store.findEdge(render!.rid, localValue!.rid, "CALLS")).resolves.toBeTypeOf(
+        "number",
+      );
+      await expect(store.findEdge(render!.rid, localOptions!.rid, "USES_TYPE")).resolves.toBeTypeOf(
+        "number",
+      );
     },
     TIMEOUT,
   );

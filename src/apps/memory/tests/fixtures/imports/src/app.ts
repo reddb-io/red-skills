@@ -1,6 +1,6 @@
 import { join } from "node:path";
-import { localValue } from "./local.js";
+import { localValue, type LocalOptions } from "./local.js";
 
-export function render(): string {
-  return join("fixture", localValue);
+export function render(options: LocalOptions): string {
+  return join("fixture", localValue(options));
 }
