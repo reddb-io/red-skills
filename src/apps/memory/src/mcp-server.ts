@@ -930,6 +930,8 @@ async function operationStructuredContent(
         read_only: output.read_only,
         communities: arrayLength(output.communities),
         assignments: arrayLength(output.assignments),
+        node_analytics: arrayLength(output.node_analytics),
+        inter_community_edges: arrayLength(output.inter_community_edges),
         graph_hash: output.graph_hash,
         cached: output.cached,
         nodes: stats.nodes,
@@ -983,6 +985,8 @@ async function operationStructuredContent(
         consumes: isRecord(output.contract) ? output.contract.consumes : undefined,
         communities: arrayLength(report.communities),
         assignments: arrayLength(report.assignments),
+        node_analytics: arrayLength(report.node_analytics),
+        inter_community_edges: arrayLength(report.inter_community_edges),
         graph_hash: report.graph_hash,
         cached: report.cached,
         html_bytes:

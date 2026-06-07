@@ -342,6 +342,8 @@ async function communitySummary(
       generated_at: now.toISOString(),
       communities: [],
       assignments: [],
+      node_analytics: [],
+      inter_community_edges: [],
       error: err instanceof Error ? err.message : String(err),
     };
   }

@@ -712,6 +712,9 @@ type FederationInput = z.infer<typeof FederationInputSchema>;
 const CommunitySummarySchema = z.object({
   id: z.string(),
   count: z.number(),
+  total_degree: z.number(),
+  avg_centrality: z.number(),
+  external_edge_weight: z.number(),
   labels: z.array(z.string()),
   titles: z.array(z.string()),
 });
@@ -724,6 +727,23 @@ const CommunityAssignmentSchema = z.object({
   title: z.string(),
 });
 
+const CommunityNodeAnalyticsSchema = z.object({
+  rid: z.number(),
+  community_id: z.string(),
+  degree: z.number(),
+  in_degree: z.number(),
+  out_degree: z.number(),
+  weighted_degree: z.number(),
+  centrality: z.number(),
+});
+
+const InterCommunityEdgeSchema = z.object({
+  from_community_id: z.string(),
+  to_community_id: z.string(),
+  weight: z.number(),
+  edge_count: z.number(),
+});
+
 const CommunitiesOutputSchema = z.object({
   schema_version: z.literal("memory.communities.v1"),
   read_only: z.literal(true),
@@ -733,6 +753,8 @@ const CommunitiesOutputSchema = z.object({
   generated_at: z.string(),
   communities: z.array(CommunitySummarySchema),
   assignments: z.array(CommunityAssignmentSchema),
+  node_analytics: z.array(CommunityNodeAnalyticsSchema),
+  inter_community_edges: z.array(InterCommunityEdgeSchema),
 }) satisfies z.ZodType<CommunityAnalyticsReport>;
 const CommunitiesViewerOutputSchema = objectOutputSchema<CommunitiesViewerArtifact>();
 
@@ -2704,7 +2726,7 @@ const COMMUNITIES_OPERATION: MemoryOperationDefinition<CommunitiesInput, Communi
     mcp: {
       toolName: "memory_communities",
       description:
-        "Read-only Memory graph community analytics: native Louvain assignments, community counts, top labels/titles, and graph-hash cache metadata. Does not write derived clusters into Memory graph evidence.",
+        "Read-only Memory graph community analytics: native Louvain assignments, node degree/centrality ranking metadata, weighted inter-community edges, community counts, top labels/titles, and graph-hash cache metadata. Does not write derived clusters into Memory graph evidence.",
     },
   },
   execute: (ctx, input) => buildCommunityAnalytics(ctx.store, { cache: input.cache }),
@@ -2727,7 +2749,7 @@ const COMMUNITIES_VIEWER_OPERATION: MemoryOperationDefinition<
     mcp: {
       toolName: "memory_communities_viewer",
       description:
-        "Read-only self-contained HTML viewer for RedDB graph community analytics. Returns native Louvain community summaries, assignments, cache metadata, embedded JSON, and HTML without writing derived clusters into Memory evidence.",
+        "Read-only self-contained HTML viewer for RedDB graph community analytics. Returns native Louvain community summaries, assignments, degree/centrality ranking metadata, weighted inter-community edges, cache metadata, embedded JSON, and HTML without writing derived clusters into Memory evidence.",
     },
   },
   execute: async (ctx, input) =>

@@ -3,6 +3,7 @@ import type {
   CommunityAnalyticsReport,
   CommunityAssignment,
   CommunitySummary,
+  InterCommunityEdge,
 } from "./communities.js";
 
 export interface CommunitiesViewerArtifact {
@@ -136,14 +137,18 @@ function renderCommunitiesViewer(report: CommunityAnalyticsReport): string {
     <div class="metrics">
       ${metric("Communities", report.communities.length)}
       ${metric("Assigned Nodes", report.assignments.length)}
+      ${metric("Inter-community Edges", report.inter_community_edges.length)}
       ${metric("Largest", report.communities[0]?.count ?? 0)}
-      ${metric("Generated", report.generated_at)}
     </div>
     <div class="layout">
       <div class="stack">
         <section>
           <h2>Communities</h2>
           ${report.communities.length === 0 ? `<p class="empty">No community assignments available.</p>` : `<ul>${report.communities.map((community) => communityItem(community, assignmentsByCommunity.get(community.id) ?? [])).join("")}</ul>`}
+        </section>
+        <section>
+          <h2>Community Links</h2>
+          ${report.inter_community_edges.length === 0 ? `<p class="empty">No inter-community relationships.</p>` : `<ul>${report.inter_community_edges.slice(0, 40).map(interCommunityEdgeItem).join("")}</ul>`}
         </section>
       </div>
       <div class="stack">
@@ -174,6 +179,7 @@ function communityItem(
       <h3>${escapeHtml(community.id)}</h3>
       <p class="meta">${escapeHtml(community.titles.join(", ") || "No titles")}</p>
       <p class="meta">${escapeHtml(nodeTypes.join(", ") || "unknown node types")}</p>
+      <p class="meta">degree ${community.total_degree} - centrality ${community.avg_centrality} - external weight ${community.external_edge_weight}</p>
     </div>
     <span class="pill">${community.count} node(s)</span>
   </li>`;
@@ -186,5 +192,15 @@ function assignmentItem(assignment: CommunityAssignment): string {
       <p class="meta"><code>memory_nodes:${assignment.rid}</code> - ${escapeHtml(assignment.label)} - ${escapeHtml(assignment.node_type)}</p>
     </div>
     <span class="pill">${escapeHtml(assignment.community_id)}</span>
+  </li>`;
+}
+
+function interCommunityEdgeItem(edge: InterCommunityEdge): string {
+  return `<li>
+    <div>
+      <h3>${escapeHtml(edge.from_community_id)} -> ${escapeHtml(edge.to_community_id)}</h3>
+      <p class="meta">${edge.edge_count} edge(s), weight ${edge.weight}</p>
+    </div>
+    <span class="pill">${edge.weight}</span>
   </li>`;
 }
