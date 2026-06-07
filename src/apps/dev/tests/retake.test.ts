@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   branchMatchesIssue,
   parseIssueSpecifier,
+  planRetakeApply,
   recommendRetake,
   summarizeChecks,
 } from "../src/core/retake.js";
@@ -33,6 +34,15 @@ describe("retake helpers", () => {
       branches: [],
       worktrees: [],
     })).toMatchObject({ kind: "ship-pr" });
+  });
+
+  it("does not match body prose that only mentions the number", () => {
+    expect(recommendRetake({
+      issue,
+      pullRequests: [{ number: 10, title: "Finish work", body: "Validated with retake 123", state: "MERGED", checksState: "green" }],
+      branches: [],
+      worktrees: [],
+    })).toMatchObject({ kind: "create-branch" });
   });
 
   it("summarizes check rollups", () => {
@@ -98,6 +108,48 @@ describe("recommendRetake", () => {
     })).toMatchObject({
       kind: "create-worktree",
       command: "git worktree add .red/tmp/work-ship-123 -b codex/123-retake origin/codex/123-retake",
+    });
+  });
+
+  it("plans a safe apply for a fresh issue with no local state", () => {
+    expect(planRetakeApply({
+      issue,
+      pullRequests: [],
+      branches: [],
+      worktrees: [],
+    })).toMatchObject({
+      operations: [{
+        cmd: "git",
+        args: ["worktree", "add", ".red/tmp/work-ship-123", "-b", "codex/123-retake", "origin/main"],
+      }],
+      nextCommand: "cd .red/tmp/work-ship-123",
+    });
+  });
+
+  it("plans a safe apply that recreates a worktree for an open PR", () => {
+    expect(planRetakeApply({
+      issue,
+      pullRequests: [{ number: 10, title: "ship: #123", state: "OPEN", headRefName: "codex/123-retake", checksState: "green" }],
+      branches: [],
+      worktrees: [],
+    })).toMatchObject({
+      operations: [
+        { cmd: "git", args: ["fetch", "origin", "codex/123-retake:codex/123-retake"] },
+        { cmd: "git", args: ["worktree", "add", ".red/tmp/work-ship-123", "codex/123-retake"] },
+      ],
+      nextCommand: "cd .red/tmp/work-ship-123 && /ship --issue 123",
+    });
+  });
+
+  it("does not run git when the next step is HITL", () => {
+    expect(planRetakeApply({
+      issue: { ...issue, labels: ["ready-for-human"] },
+      pullRequests: [],
+      branches: [],
+      worktrees: [],
+    })).toMatchObject({
+      operations: [],
+      nextCommand: "/hitl #123",
     });
   });
 });

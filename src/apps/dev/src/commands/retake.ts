@@ -3,9 +3,11 @@ import {
   branchMatchesIssue,
   normalizeBranchName,
   parseIssueSpecifier,
+  planRetakeApply,
   pullRequestMatchesIssue,
   recommendRetake,
   summarizeChecks,
+  type RetakeApplyPlan,
   type RetakeBranch,
   type RetakeFacts,
   type RetakeIssue,
@@ -15,6 +17,7 @@ import {
 
 interface RetakeFlags {
   issue: number;
+  apply: boolean;
   json: boolean;
   repo?: string;
   prLimit: number;
@@ -27,6 +30,7 @@ interface WorktreeRecord {
 
 function parseRetakeFlags(args: readonly string[]): RetakeFlags {
   let issue: number | undefined;
+  let apply = false;
   let json = false;
   let repo: string | undefined;
   let prLimit = 200;
@@ -35,6 +39,10 @@ function parseRetakeFlags(args: readonly string[]): RetakeFlags {
     const arg = args[i]!;
     if (arg === "--json") {
       json = true;
+      continue;
+    }
+    if (arg === "--apply") {
+      apply = true;
       continue;
     }
     if (arg === "--repo" || arg === "-R") {
@@ -63,7 +71,7 @@ function parseRetakeFlags(args: readonly string[]): RetakeFlags {
   }
 
   if (issue === undefined) throw new Error("/retake requires an issue number like #123");
-  return { issue, json, repo, prLimit };
+  return { issue, apply, json, repo, prLimit };
 }
 
 function parseLimit(raw: string): number {
@@ -279,6 +287,29 @@ function renderRetakeReport(facts: RetakeFacts): string {
   return lines.join("\n");
 }
 
+async function applyRetakePlan(
+  exec: ExecFn,
+  cwd: string,
+  plan: RetakeApplyPlan,
+  stdout?: NodeJS.WritableStream,
+): Promise<string[]> {
+  const applied: string[] = [];
+  stdout?.write(`apply: ${plan.summary}\n`);
+  if (plan.operations.length === 0) {
+    stdout?.write("apply: no operation executed\n");
+  }
+  for (const operation of plan.operations) {
+    stdout?.write(`apply: ${operation.label}: ${operation.cmd} ${operation.args.join(" ")}\n`);
+    const out = await exec(operation.cmd, operation.args, { cwd: operation.cwd ?? cwd, maxBuffer: 32 * 1024 * 1024 });
+    if (out.code !== 0) {
+      throw new Error(`${operation.label} failed: ${out.stderr.trim() || out.stdout.trim() || `${operation.cmd} ${operation.args.join(" ")}`}`);
+    }
+    applied.push(operation.label);
+  }
+  if (plan.nextCommand !== undefined) stdout?.write(`next: ${plan.nextCommand}\n`);
+  return applied;
+}
+
 export async function retakeCommand(
   args: string[],
   cwd = process.cwd(),
@@ -288,10 +319,15 @@ export async function retakeCommand(
   const flags = parseRetakeFlags(args);
   const facts = await collectRetakeFacts(exec, cwd, flags);
   const recommendation = recommendRetake(facts);
+  const applyPlan = flags.apply ? planRetakeApply(facts) : undefined;
+  const appliedOperations = flags.apply && flags.json && applyPlan !== undefined
+    ? await applyRetakePlan(exec, cwd, applyPlan)
+    : undefined;
   if (flags.json) {
-    stdout.write(`${JSON.stringify({ ...facts, recommendation }, null, 2)}\n`);
+    stdout.write(`${JSON.stringify({ ...facts, recommendation, applyPlan, appliedOperations }, null, 2)}\n`);
   } else {
     stdout.write(`${renderRetakeReport(facts)}\n`);
   }
+  if (applyPlan !== undefined && !flags.json) await applyRetakePlan(exec, cwd, applyPlan, stdout);
   return 0;
 }
