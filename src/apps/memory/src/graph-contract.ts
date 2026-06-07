@@ -3,13 +3,15 @@ import type { ExportEdge } from "./export.js";
 import type { StoredNode } from "./graph-store.js";
 
 /**
- * Graph contract v1 — the versioned integration seam between `memory:export`
- * and any consumer (red-ui, scripts, future tools).
+ * Graph contract v2 — the versioned integration seam between RedDB-backed
+ * Memory state and any consumer (red-ui, scripts, future tools).
  *
- * `memory:export` emits this object under `graph.json#contract`. The contract
- * carries a `version` so producers and consumers can negotiate, and is the only
- * part of `graph.json` that consumers should treat as stable. The surrounding
- * dashboard fields (health, evidence, …) are diagnostic and may change.
+ * `memory map-contract` and the MCP `memory_map_contract` tool return this
+ * object directly. `memory:export` also emits it under `graph.json#contract`.
+ * The contract carries a `version` so producers and consumers can negotiate,
+ * and is the only part of `graph.json` that consumers should treat as stable.
+ * The surrounding dashboard fields (health, evidence, …) are diagnostic and
+ * may change.
  *
  * Design notes:
  *  - Every stored edge label collapses onto one of three directional **kinds**

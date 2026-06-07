@@ -1,6 +1,8 @@
 # Graph contract v2
 
-`memory:export` writes a self-contained bundle (`graph.json`, `graph.html`, `audit.md`). Inside `graph.json` it embeds a **versioned contract** under the `contract` key — the stable integration seam between `memory:export` and any consumer (red-ui, scripts, future tools).
+`memory map-contract --json` returns a **versioned contract** directly from the RedDB graph store — the stable integration seam between Memory state and any consumer (red-ui, scripts, future tools). The MCP tool `memory_map_contract` returns the same object for MCP clients.
+
+`memory:export` also writes a self-contained bundle (`graph.json`, `graph.html`, `audit.md`). Inside `graph.json` it embeds the same contract under the `contract` key.
 
 Everything else in `graph.json` (`health`, `evidence`, `contradictions`, `supersession`, `context_pack_preview`, the raw `nodes`/`edges` arrays, …) is diagnostic and may change between releases. **Consumers should read `graph.json#contract` and nothing else.**
 
@@ -11,6 +13,8 @@ The contract is deliberately data-only. It does **not** carry layout positions, 
 ## Consumers
 
 `memory architecture-overview` is the first in-tree consumer: it reads the contract (from the store or, with `--from <graph.json>`, straight off `graph.json#contract`) and renders a single onboarding file summarising layers and communities by node count and connection count. It is built only from the contract above — no bespoke shape — so it stays consistent with any other tool reading the same seam, and it complements (rather than replaces) the wiki's C4/entity pages.
+
+`memory map-contract --json` returns representative contract data from the configured RedDB store without writing files. `memory map-contract --communities --json` includes RedDB community ids when the store can compute them.
 
 `memory export <out-dir>` writes representative contract data to `<out-dir>/graph.json`. The MCP tool `memory_export` returns the same contract inline when called without `out_dir`, or writes the bundle when `out_dir` is provided.
 

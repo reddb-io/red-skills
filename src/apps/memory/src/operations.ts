@@ -3,6 +3,7 @@ import { execFile } from "node:child_process";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod";
+import { toEdge } from "./export.js";
 import {
   buildMemoryAssetInventory,
   type MemoryAssetInventoryReport,
@@ -46,6 +47,11 @@ import {
   buildMemoryGlobalSearch,
   type MemoryGlobalSearchReport,
 } from "./global-search.js";
+import {
+  buildGraphContract,
+  GraphContractZ,
+  type GraphContract,
+} from "./graph-contract.js";
 import { buildContextPack, type ContextPack } from "./context-pack.js";
 import {
   buildContextPackViewerArtifact,
@@ -467,6 +473,11 @@ type MapContextInput = z.infer<typeof MapContextInputSchema>;
 const ClaimCheckInputSchema = z.object({ assertion: z.string().min(1) });
 type ClaimCheckInput = z.infer<typeof ClaimCheckInputSchema>;
 
+const MapContractInputSchema = z.object({
+  communities: z.boolean().default(false),
+});
+type MapContractInput = z.infer<typeof MapContractInputSchema>;
+
 const DocSearchInputSchema = z.object({
   query: z.string().min(1),
   limit: z.number().int().min(1).max(50).optional(),
@@ -828,6 +839,7 @@ const ContextPackOutputSchema = objectOutputSchema<ContextPack>();
 const MapContextOutputSchema = objectOutputSchema<MemoryMapContextSlice>();
 const ContextPackViewerOutputSchema = objectOutputSchema<ContextPackViewerArtifact>();
 const ClaimCheckOutputSchema = objectOutputSchema<ClaimCheckResult>();
+const MapContractOutputSchema = GraphContractZ;
 const DocBriefOutputSchema = objectOutputSchema<DocBrief>();
 const DocBriefViewerOutputSchema = objectOutputSchema<DocBriefViewerArtifact>();
 const DocBundleOutputSchema = objectOutputSchema<DocBundle>();
@@ -1151,6 +1163,11 @@ const MEMORY_OPERATION_FACETS: Record<string, MemoryOperationFacets> = {
   ...operationFacets(
     ["memory.provenance"],
     joinedPositionalInput("target"),
+    JSON_REPORT_OUTPUT,
+  ),
+  ...operationFacets(
+    ["memory.map-contract"],
+    inputBinding([flagField("communities", "boolean")]),
     JSON_REPORT_OUTPUT,
   ),
   ...operationFacets(
@@ -1587,6 +1604,27 @@ const CLAIM_CHECK_OPERATION: MemoryOperationDefinition<ClaimCheckInput, ClaimChe
     },
   },
   execute: (ctx, input) => claimCheck(ctx.store, input.assertion),
+};
+
+const MAP_CONTRACT_OPERATION: MemoryOperationDefinition<MapContractInput, GraphContract> = {
+  id: "memory.map-contract",
+  title: "Memory map consumer contract",
+  description:
+    "Read-only RedDB Memory map contract for graph consumers. Returns canonical nodes, edges, stats, provenance, confidence, source location, freshness, weight, and salience without UI layout or styling decisions.",
+  inputSchema: MapContractInputSchema,
+  outputSchema: MapContractOutputSchema,
+  safetyClass: "read-only",
+  sideEffectClass: "none",
+  capabilities: ["graph-store"],
+  renderer: {
+    cli: { command: "map-contract", supportsJson: true },
+    mcp: {
+      toolName: "memory_map_contract",
+      description:
+        "Read-only Memory map consumer contract over RedDB. Returns the versioned graph contract with canonical node/edge data, provenance, confidence, source locations, freshness, edge weight, and edge salience. It intentionally excludes layout, palette, opacity, label visibility, and interaction decisions.",
+    },
+  },
+  execute: (ctx, input) => buildMemoryMapContract(ctx.store, input),
 };
 
 const CAPABILITY_CATALOG_OPERATION: MemoryOperationDefinition<
@@ -3415,6 +3453,7 @@ const READ_ONLY_OPERATIONS = createReadOnlyMemoryOperationRegistry([
   AGENT_INTEGRATION_STATUS_VIEWER_OPERATION,
   CAPABILITY_CATALOG_OPERATION,
   CLAIM_CHECK_OPERATION,
+  MAP_CONTRACT_OPERATION,
   COMMUNITIES_OPERATION,
   COMMUNITIES_VIEWER_OPERATION,
   COMMUNITY_DIGEST_OPERATION,
@@ -3861,6 +3900,23 @@ async function safeSkillRollups(store: MemoryStore): Promise<SkillRollup[]> {
   } catch {
     return [];
   }
+}
+
+async function buildMemoryMapContract(
+  store: MemoryStore,
+  input: MapContractInput,
+): Promise<GraphContract> {
+  const [nodes, rawEdges, communities] = await Promise.all([
+    store.listNodes(),
+    store.listEdges(),
+    input.communities ? store.communities() : Promise.resolve(new Map<number, string>()),
+  ]);
+
+  return buildGraphContract({
+    nodes,
+    edges: rawEdges.map((edge) => toEdge(edge as Record<string, unknown>)),
+    communities,
+  });
 }
 
 async function graphPrivacyRecords(store: MemoryStore): Promise<PrivacyMemoryRecord[]> {
