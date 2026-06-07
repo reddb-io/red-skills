@@ -24,6 +24,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [Record context-pack and Memory injection observations](./pages/497-record-context-pack-and-memory-injection-observations.md)
 - [Resolve #363 lane-idle reaper](./pages/508-resolve-363-lane-idle-reaper.md)
 - [Resolve HITL operational blockers](./pages/507-resolve-hitl-operational-blockers.md)
+- [Route agents through Memory map context](./pages/538-route-agents-through-memory-map-context.md)
 - [build(release): one bundle-naming convention, all assets under ./dist/ (ADR 0052)](./pages/480-build-release-one-bundle-naming-convention-all-assets-under.md)
 - [chore(afk): native + sandcastle E2E smoke test (#284 gate)](./pages/291-chore-afk-native-sandcastle-e2e-smoke-test-284-gate.md)
 - [chore(afk): rebuild committed bin/afk.mjs from current source](./pages/320-chore-afk-rebuild-committed-bin-afk-mjs-from-current-source.md)
