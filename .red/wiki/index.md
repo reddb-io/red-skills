@@ -46,6 +46,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [docs(readme): redact AFK usage from public README + fix dev bundle CI build](./pages/321-docs-readme-redact-afk-usage-from-public-readme-fix-dev-bund.md)
 - [docs(triage-labels): align running-state liveness with Slice D (timeline-only)](./pages/361-docs-triage-labels-align-running-state-liveness-with-slice-d.md)
 - [docs: align AFK failure recovery contract](./pages/512-docs-align-afk-failure-recovery-contract.md)
+- [docs: document recent operator skills](./pages/541-docs-document-recent-operator-skills.md)
 - [docs: propagate ADR record to wiki and Memory](./pages/514-docs-propagate-adr-record-to-wiki-and-memory.md)
 - [feat(afk): --boot-only dry-run + parallelize boot reads + fix smoke](./pages/324-feat-afk-boot-only-dry-run-parallelize-boot-reads-fix-smoke.md)
 - [feat(afk): RED_AFK_SANDBOX env override + fix E2E smoke docker path](./pages/310-feat-afk-red-afk-sandbox-env-override-fix-e2e-smoke-docker-p.md)
