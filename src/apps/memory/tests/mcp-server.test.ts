@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { afterEach, beforeAll, describe, expect, test } from "vitest";
+import { GRAPH_CONTRACT_VERSION } from "../src/graph-contract.js";
 import { MemoryStore } from "../src/graph-store.js";
 import {
   getReadOnlyMemoryOperation,
@@ -289,6 +290,38 @@ describe("MCP server over stdio", () => {
       const supersedeTool = tools.find((tool) => tool.name === "memory_supersede");
       expect(storeTool?.description?.toLowerCase()).toContain("mutating");
       expect(supersedeTool?.description?.toLowerCase()).toContain("mutating");
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "memory_export returns the graph contract inline without writing a bundle",
+    async () => {
+      const client = await connect(await seedStore());
+      const res = (await client.callTool({
+        name: "memory_export",
+        arguments: {},
+      })) as ToolResult;
+      const body = JSON.parse(res.content[0]?.text ?? "{}") as {
+        contract: {
+          version: string;
+          nodes: Array<{ id: number; confidence: string | null; source_location: string | null }>;
+          edges: Array<{ id: number; weight: number; salience: number | null; kind: string }>;
+        };
+      };
+
+      expect(body.contract.version).toBe(GRAPH_CONTRACT_VERSION);
+      expect(body.contract.nodes.length).toBeGreaterThan(0);
+      expect(body.contract.edges.length).toBeGreaterThan(0);
+      expect(body.contract.nodes[0]).toHaveProperty("confidence");
+      expect(body.contract.nodes[0]).toHaveProperty("source_location");
+      expect(body.contract.nodes[0]).toHaveProperty("freshness");
+      expect(body.contract.nodes[0]).toHaveProperty("provenance");
+      expect(body.contract.edges[0]).toMatchObject({
+        weight: expect.any(Number),
+        freshness: expect.any(Object),
+      });
+      expect(body.contract.edges[0]).toHaveProperty("salience");
     },
     TIMEOUT,
   );
