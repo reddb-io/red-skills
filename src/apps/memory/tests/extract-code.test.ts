@@ -158,6 +158,11 @@ describe("extractCode", () => {
       expect.objectContaining({
         label: `sym:${IMPORT_LOCAL_FIXTURE}#LocalOptions`,
         node_type: "symbol",
+        properties: expect.objectContaining({
+          title: "LocalOptions",
+          source_location: expect.stringContaining(`${IMPORT_LOCAL_FIXTURE}:`),
+          extraction_backend: "typescript-compiler",
+        }),
       }),
     );
     expect(edges).toContainEqual(
@@ -177,6 +182,11 @@ describe("extractCode", () => {
         fromLabel: `sym:${IMPORT_FIXTURE}#render`,
         toLabel: `sym:${IMPORT_LOCAL_FIXTURE}#LocalOptions`,
         label: "USES_TYPE",
+        properties: expect.objectContaining({
+          confidence: "EXTRACTED",
+          extraction_backend: "typescript-compiler",
+          topological_weight: expect.any(Number),
+        }),
       }),
     );
   });

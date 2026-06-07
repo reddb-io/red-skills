@@ -822,7 +822,7 @@ function extractCallEdges(
   }
   const callableNames = new Set(
     symbols
-      .filter((symbol) => symbol.kind === "function" || symbol.kind === "const" || symbol.kind === "class")
+      .filter((symbol) => isCallableKind(symbol.kind))
       .map((symbol) => symbol.name),
   );
   const edges: CodeExtraction["edges"] = [];
@@ -866,7 +866,7 @@ function extractTypeEdges(
   }
   const typeNames = new Set(
     symbols
-      .filter((symbol) => symbol.kind === "type" || symbol.kind === "interface" || symbol.kind === "class" || symbol.kind === "enum")
+      .filter((symbol) => isTypeKind(symbol.kind))
       .map((symbol) => symbol.name),
   );
   const edges: CodeExtraction["edges"] = [];

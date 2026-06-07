@@ -218,7 +218,7 @@ describe("ingestProject over a TS+MD fixture repo", () => {
   );
 
   test(
-    "ingests IMPORTS edges and does not duplicate them on re-ingest",
+    "ingests IMPORTS plus compiler-resolved cross-file edges without duplicating on re-ingest",
     async () => {
       const store = await openStore();
       await ingestProject(store, { cwd: IMPORT_FIXTURE_REPO });
