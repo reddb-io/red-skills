@@ -49,21 +49,9 @@ jobs:
           node-version: 22
 
       - name: Install red binary for SDK
-        run: |
-          set -euo pipefail
-          asset_id="$(
-            curl -fsSL \
-              -H "Accept: application/vnd.github+json" \
-              https://api.github.com/repos/reddb-io/reddb/releases/tags/v1.7.0 |
-            node -e 'const fs = require("node:fs"); const release = JSON.parse(fs.readFileSync(0, "utf8")); const asset = release.assets.find((entry) => entry.name === "red-linux-x86_64"); if (!asset) throw new Error("red-linux-x86_64 release asset not found"); console.log(asset.id);'
-          )"
-          curl -fsSL \
-            -H "Accept: application/octet-stream" \
-            "https://api.github.com/repos/reddb-io/reddb/releases/assets/${asset_id}" \
-            -o "$RUNNER_TEMP/red"
-          chmod +x "$RUNNER_TEMP/red"
-          echo "REDDB_BIN=$RUNNER_TEMP/red" >> "$GITHUB_ENV"
-          echo "REDDB_SKIP_POSTINSTALL=1" >> "$GITHUB_ENV"
+        uses: ./.github/actions/install-red-binary
+        with:
+          github-token: ${{ github.token }}
 
       - name: Install workspace dependencies
         run: pnpm install --frozen-lockfile

@@ -1,0 +1,93 @@
+name: Install red binary
+description: Download and verify the red binary used by @reddb-io/sdk in CI.
+
+inputs:
+  version:
+    description: red release tag to install.
+    required: false
+    default: v1.7.0
+  asset:
+    description: red release asset name to install.
+    required: false
+    default: red-linux-x86_64
+  github-token:
+    description: Optional GitHub token used for Releases API requests.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Download and verify red
+      shell: bash
+      env:
+        RED_VERSION: ${{ inputs.version }}
+        RED_ASSET: ${{ inputs.asset }}
+        RED_GITHUB_TOKEN: ${{ inputs.github-token }}
+      run: |
+        set -euo pipefail
+
+        curl_auth=()
+        if [ -n "${RED_GITHUB_TOKEN:-}" ]; then
+          curl_auth=(-H "Authorization: Bearer ${RED_GITHUB_TOKEN}")
+        fi
+
+        curl_json() {
+          curl -fsSL \
+            --retry 3 \
+            --retry-connrefused \
+            --retry-delay 2 \
+            --max-time 60 \
+            "${curl_auth[@]}" \
+            -H "Accept: application/vnd.github+json" \
+            "$@"
+        }
+
+        curl_asset() {
+          curl -fsSL \
+            --retry 3 \
+            --retry-connrefused \
+            --retry-delay 2 \
+            --max-time 120 \
+            "${curl_auth[@]}" \
+            -H "Accept: application/octet-stream" \
+            "$@"
+        }
+
+        release_json="$RUNNER_TEMP/red-release.json"
+        curl_json "https://api.github.com/repos/reddb-io/reddb/releases/tags/${RED_VERSION}" \
+          -o "$release_json"
+
+        asset_id="$(
+          node -e 'const fs = require("node:fs"); const name = process.argv[1]; const release = JSON.parse(fs.readFileSync(0, "utf8")); const asset = release.assets.find((entry) => entry.name === name); if (!asset) throw new Error(`${name} release asset not found`); console.log(asset.id);' \
+            "$RED_ASSET" < "$release_json"
+        )"
+        checksum_asset_id="$(
+          node -e 'const fs = require("node:fs"); const name = `${process.argv[1]}.sha256`; const release = JSON.parse(fs.readFileSync(0, "utf8")); const asset = release.assets.find((entry) => entry.name === name); if (!asset) throw new Error(`${name} release asset not found`); console.log(asset.id);' \
+            "$RED_ASSET" < "$release_json"
+        )"
+
+        if [ -z "$asset_id" ] || [ -z "$checksum_asset_id" ]; then
+          echo "red asset lookup returned an empty id" >&2
+          exit 1
+        fi
+
+        red_bin="$RUNNER_TEMP/red"
+        checksum_file="$RUNNER_TEMP/red.sha256"
+        curl_asset "https://api.github.com/repos/reddb-io/reddb/releases/assets/${asset_id}" \
+          -o "$red_bin"
+        curl_asset "https://api.github.com/repos/reddb-io/reddb/releases/assets/${checksum_asset_id}" \
+          -o "$checksum_file"
+
+        expected="$(awk '{print $1}' "$checksum_file")"
+        actual="$(sha256sum "$red_bin" | awk '{print $1}')"
+        if [ -z "$expected" ] || [ "$actual" != "$expected" ]; then
+          echo "red binary checksum mismatch" >&2
+          echo "expected: $expected" >&2
+          echo "actual:   $actual" >&2
+          exit 1
+        fi
+
+        chmod +x "$red_bin"
+        echo "REDDB_BIN=$red_bin" >> "$GITHUB_ENV"
+        echo "REDDB_SKIP_POSTINSTALL=1" >> "$GITHUB_ENV"
