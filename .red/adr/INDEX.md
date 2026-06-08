@@ -35,7 +35,8 @@ stale notes inline.
 - **0031** Branch-lock value drives AFK base/merge; enforcement stays agent-only
 - **0033** AFK agent execution runs on `@ai-hero/sandcastle`
 - **0044** AFK attempt progress guard aborts stalled-but-busy attempts to `blocked:stalled` without requiring a promise sentinel — *§4 "no-sandbox only" superseded by **0054***
-- **0055** AFK landability reconciler: parked-but-green branches self-land via a no-agent reconcile worker *(generalises 0047/0050 from terminal point-fixes to a continuous reconcile of `timeout`/`no-sentinel`; relies on 0008 gate, 0030 landing)*
+- **0055** AFK reconcile — a no-agent worker mode that lands a parked green branch *(the implemented worker-mode, #558; realises 0056)*
+- **0056** AFK landability reconciler: parked-but-green branches self-land via a no-agent reconcile worker *(the umbrella design — generalises 0047/0050 to a continuous reconcile of `timeout`/`no-sentinel`; realised by 0055; relies on 0008 gate, 0030 landing)*
 - **0045** AFK externalized proof-of-life: heartbeat record, state field, and periodic `on_heartbeat` hook *(extends 0026; follows 0044; §4 "no-sandbox only" superseded by **0054**)*
 - **0047** AFK salvages a no-sentinel branch that already passes feedback *(complements 0028)*
 - **0048** AFK merges without advice; in-process backpressure (`drift-guard` + feedback) is the guardrail — opt into waiting with `afk.merge.wait_for_review` *(refines 0030, 0008)*
