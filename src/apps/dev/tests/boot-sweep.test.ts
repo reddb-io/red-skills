@@ -2,9 +2,13 @@ import { describe, expect, it } from "vitest";
 import {
   auditComment,
   cascadeAuditComment,
+  findOwnedBranch,
+  isParkedMechanical,
+  issueFromAFKBranch,
   parseBlockedBy,
   parseReqLabels,
   planCloseCascade,
+  planReconcileSweep,
   planUnblockSweep,
   refToNumber,
   shouldPromote,
@@ -12,6 +16,7 @@ import {
   stragglerCounts,
   type BlockerState,
   type DependentIssue,
+  type ReconcileSweepCandidate,
   type StragglerCountLookup,
   type UnblockCandidate,
 } from "../src/core/boot-sweep.js";
@@ -330,5 +335,126 @@ describe("straggler check", () => {
     expect(shouldWarnStragglers({ unlabeled: 1, needsTriage: 0, needsInfo: 0 })).toBe(true);
     expect(shouldWarnStragglers({ unlabeled: 0, needsTriage: 1, needsInfo: 0 })).toBe(true);
     expect(shouldWarnStragglers({ unlabeled: 0, needsTriage: 0, needsInfo: 1 })).toBe(true);
+  });
+});
+
+describe("issueFromAFKBranch", () => {
+  it("extracts the issue number from a well-formed live branch ref", () => {
+    expect(issueFromAFKBranch("afk/wA1B5/101-add-feature")).toBe(101);
+    expect(issueFromAFKBranch("afk/wXXX/42-fix-bug")).toBe(42);
+  });
+
+  it("returns null for afk-attempts/* refs", () => {
+    expect(issueFromAFKBranch("afk-attempts/wA1B5/101-add-feature")).toBeNull();
+  });
+
+  it("returns null for refs that don't match the pattern", () => {
+    expect(issueFromAFKBranch("main")).toBeNull();
+    expect(issueFromAFKBranch("afk/wA1B5/101")).toBeNull(); // missing slug
+    expect(issueFromAFKBranch("")).toBeNull();
+  });
+
+  it("parses multi-digit and leading-digit issue numbers", () => {
+    expect(issueFromAFKBranch("afk/wAAA/999-some-long-slug")).toBe(999);
+  });
+});
+
+describe("findOwnedBranch", () => {
+  const branches = [
+    "afk/wA1B5/101-add-feature",
+    "afk/wA1B5/202-fix-bug",
+    "afk/wOther/303-other-worker",
+  ];
+
+  it("returns the branch that owns the given issue number", () => {
+    expect(findOwnedBranch(branches, 101)).toBe("afk/wA1B5/101-add-feature");
+    expect(findOwnedBranch(branches, 303)).toBe("afk/wOther/303-other-worker");
+  });
+
+  it("returns null when no branch owns the issue", () => {
+    expect(findOwnedBranch(branches, 404)).toBeNull();
+    expect(findOwnedBranch([], 101)).toBeNull();
+  });
+
+  it("returns the first match when multiple workers own the same issue", () => {
+    const dupes = ["afk/wA/50-slug", "afk/wB/50-other"];
+    expect(findOwnedBranch(dupes, 50)).toBe("afk/wA/50-slug");
+  });
+});
+
+describe("isParkedMechanical", () => {
+  it("returns true for blocked:stalled", () => {
+    expect(isParkedMechanical(["blocked:stalled", "type:feature"])).toBe(true);
+  });
+
+  it("returns true for blocked:crashed", () => {
+    expect(isParkedMechanical(["blocked:crashed"])).toBe(true);
+  });
+
+  it("returns false for non-mechanical labels", () => {
+    expect(isParkedMechanical(["blocked:spec", "ready-for-human"])).toBe(false);
+    expect(isParkedMechanical(["blocked:validation"])).toBe(false);
+    expect(isParkedMechanical([])).toBe(false);
+  });
+});
+
+describe("planReconcileSweep", () => {
+  const branches = [
+    "afk/wA1B5/101-add-feature",
+    "afk/wA1B5/202-fix-bug",
+  ];
+
+  it("plans an issue that has a parked-mechanical label AND an owned branch", () => {
+    const candidates: ReconcileSweepCandidate[] = [
+      { number: 101, title: "Add feature", body: "", labels: ["blocked:stalled"] },
+    ];
+    const plans = planReconcileSweep(candidates, branches);
+    expect(plans).toEqual([
+      { number: 101, title: "Add feature", body: "", labels: ["blocked:stalled"], branch: "afk/wA1B5/101-add-feature" },
+    ]);
+  });
+
+  it("skips an issue with no owned branch (no-branch→skip)", () => {
+    const candidates: ReconcileSweepCandidate[] = [
+      { number: 999, title: "No branch", body: "", labels: ["blocked:stalled"] },
+    ];
+    expect(planReconcileSweep(candidates, branches)).toEqual([]);
+  });
+
+  it("skips a candidate without a parked-mechanical label", () => {
+    const candidates: ReconcileSweepCandidate[] = [
+      { number: 101, title: "Add feature", body: "", labels: ["blocked:dependency"] },
+    ];
+    expect(planReconcileSweep(candidates, branches)).toEqual([]);
+  });
+
+  it("plans blocked:crashed candidates", () => {
+    const candidates: ReconcileSweepCandidate[] = [
+      { number: 202, title: "Fix bug", body: "", labels: ["blocked:crashed"] },
+    ];
+    const plans = planReconcileSweep(candidates, branches);
+    expect(plans).toHaveLength(1);
+    expect(plans[0].branch).toBe("afk/wA1B5/202-fix-bug");
+  });
+
+  it("does NOT filter blocked:spec — the reconcile guard handles that", () => {
+    // A candidate may carry BOTH blocked:stalled AND blocked:spec. planReconcileSweep
+    // only checks for owned branch; the reconcile() guard rejects non-mechanical ones.
+    const candidates: ReconcileSweepCandidate[] = [
+      { number: 101, title: "Add feature", body: "", labels: ["blocked:stalled", "blocked:spec"] },
+    ];
+    const plans = planReconcileSweep(candidates, branches);
+    expect(plans).toHaveLength(1); // planner yields it; reconcile() will skip it
+  });
+
+  it("plans each eligible candidate from a mixed batch", () => {
+    const candidates: ReconcileSweepCandidate[] = [
+      { number: 101, title: "Add feature", body: "", labels: ["blocked:stalled"] }, // owned → plan
+      { number: 202, title: "Fix bug", body: "", labels: ["blocked:crashed"] },     // owned → plan
+      { number: 303, title: "No branch", body: "", labels: ["blocked:stalled"] },  // no branch → skip
+      { number: 404, title: "Wrong label", body: "", labels: ["blocked:spec"] },   // not mechanical → skip
+    ];
+    const plans = planReconcileSweep(candidates, branches);
+    expect(plans.map((p) => p.number)).toEqual([101, 202]);
   });
 });

@@ -6,6 +6,15 @@ Upstream base: `mattpocock/skills@aaf2453fbdfe7a15c07f11d861224f34ab4b53cb` (see
 
 ---
 
+## afk (engineering) — emit DONE after final commit, no post-commit re-validation loop (#557)
+
+- **status**: modified
+- **upstream**: —
+- **why**: Issue #557 / ADR 0055 (preventive half). Inner agents were re-running a full-suite "sanity" pass *after* their final commit; with no new commit produced, the commit-anchored attempt guard treated the still-grinding agent as stalled and parked the work (#407, #456). The runtime already flags this as the real fix (`src/apps/dev/src/core/execution.ts:84-88`); the prompt previously only forbade *backgrounding* the gate, not the post-commit foreground re-run.
+- **what changed**: Added a rule to *What "Done" Means* in `AGENT-PROMPT.md`: after the final commit, do not run a full-suite pass; run the touched package's gate at most once for confidence, then emit `<promise>DONE</promise>` immediately. Names the orchestrator's Feedback-loops step as the merge authority and the commit-anchored attempt guard as the failure mode a second full-suite run triggers.
+
+---
+
 ## to-prd (engineering) — upstream testing seam wording (#325)
 
 - **status**: modified

@@ -3,6 +3,8 @@ import {
   buildDiscardEnvelope,
   buildReaperEnvelope,
   computeStalled,
+  dispatchReconcileIfPossible,
+  freshSlot,
   handleDeadSlot,
   initSupervisorState,
   pollStallDetector,
@@ -16,8 +18,10 @@ import {
   classifySupervisor,
   guardedTick,
   type IterDirInfo,
+  type ReconcileCandidate,
   type SupervisorConfig,
   type SupervisorDeps,
+  type SupervisorState,
   type SweepWork,
 } from "../src/core/supervisor.js";
 import type { ProcessSnapshotEntry } from "../src/core/reaper-signal.js";
@@ -42,6 +46,7 @@ function config(over: Partial<SupervisorConfig> = {}): SupervisorConfig {
 
 interface FakeIo {
   spawnSlot: ReturnType<typeof vi.fn>;
+  spawnReconcileWorker: ReturnType<typeof vi.fn>;
   isAlive: ReturnType<typeof vi.fn>;
   killTree: ReturnType<typeof vi.fn>;
   inspectTree: ReturnType<typeof vi.fn>;
@@ -56,6 +61,7 @@ interface FakeIo {
   ensureRunnerErrorLabel: ReturnType<typeof vi.fn>;
   ensureLabel: ReturnType<typeof vi.fn>;
   readyQueueDepth: ReturnType<typeof vi.fn>;
+  findReconcileCandidate: ReturnType<typeof vi.fn>;
   emitFleetHeartbeat: ReturnType<typeof vi.fn>;
   now: ReturnType<typeof vi.fn>;
 }
@@ -67,6 +73,7 @@ function makeDeps(over: Partial<Record<keyof FakeIo, unknown>> = {}): {
   let nextPid = 1000;
   const io: FakeIo = {
     spawnSlot: vi.fn(async () => ({ pid: ++nextPid, spawnEpoch: NOW })),
+    spawnReconcileWorker: vi.fn(async () => ({ pid: ++nextPid, spawnEpoch: NOW })),
     isAlive: vi.fn(() => true),
     killTree: vi.fn(async () => {}),
     inspectTree: vi.fn((): readonly ProcessSnapshotEntry[] => []),
@@ -90,6 +97,7 @@ function makeDeps(over: Partial<Record<keyof FakeIo, unknown>> = {}): {
     ensureRunnerErrorLabel: vi.fn(async () => {}),
     ensureLabel: vi.fn(async () => {}),
     readyQueueDepth: vi.fn(async () => 0),
+    findReconcileCandidate: vi.fn(async (): Promise<ReconcileCandidate | null> => null),
     emitFleetHeartbeat: vi.fn(async () => {}),
     now: vi.fn(() => NOW),
     ...(over as Partial<FakeIo>),
@@ -97,6 +105,7 @@ function makeDeps(over: Partial<Record<keyof FakeIo, unknown>> = {}): {
   const deps: SupervisorDeps = {
     proc: {
       spawnSlot: io.spawnSlot,
+      spawnReconcileWorker: io.spawnReconcileWorker,
       isAlive: io.isAlive,
       killTree: io.killTree,
       inspectTree: io.inspectTree,
@@ -115,6 +124,7 @@ function makeDeps(over: Partial<Record<keyof FakeIo, unknown>> = {}): {
       ensureRunnerErrorLabel: io.ensureRunnerErrorLabel,
       ensureLabel: io.ensureLabel,
       readyQueueDepth: io.readyQueueDepth,
+      findReconcileCandidate: io.findReconcileCandidate,
     },
     now: io.now,
     emitFleetHeartbeat: io.emitFleetHeartbeat,
@@ -679,8 +689,8 @@ describe("envelope builders", () => {
 describe("guardedTick — per-tick wall-clock ceiling (unwedgeable loop)", () => {
   const never = (): Promise<void> => new Promise<void>(() => {});
   const immediate = (): Promise<void> => Promise.resolve();
-  const okResult = { respawned: [1], deaths: [], parked: [], reaped: [], stopped: false };
-  const CONTINUE = { respawned: [], deaths: [], parked: [], reaped: [], stopped: false };
+  const okResult = { respawned: [1], deaths: [], parked: [], reaped: [], reconciledSlots: [], stopped: false };
+  const CONTINUE = { respawned: [], deaths: [], parked: [], reaped: [], reconciledSlots: [], stopped: false };
 
   it("returns the tick result when it completes before the ceiling", async () => {
     const logs: string[] = [];
@@ -729,5 +739,207 @@ describe("resolveSupervisorConfig — supervisor stale knob (#407)", () => {
     expect(resolveSupervisorConfig({ RED_AFK_SUPERVISOR_STALE_S: "0" }).supervisorStaleS).toBe(300);
     expect(resolveSupervisorConfig({ RED_AFK_SUPERVISOR_STALE_S: "900" }).supervisorStaleS).toBe(900);
     expect(resolveSupervisorConfig({ RED_AFK_SUPERVISOR_STALE_S: "abc" }).supervisorStaleS).toBe(300);
+  });
+});
+
+// ---------- dispatchReconcileIfPossible (#562) ----------
+
+/** Build a SupervisorState with slot 0 free (pid null, not parked). */
+function freeSlotState(): SupervisorState {
+  const state = initSupervisorState(1);
+  state.slots[0] = freshSlot(); // pid: null, parked: false
+  return state;
+}
+
+describe("dispatchReconcileIfPossible — dispatch decision and slot accounting", () => {
+  const CANDIDATE: ReconcileCandidate = { issue: 42, branch: "afk/wAAAA/42-some-fix" };
+
+  it("is a no-op when spawnReconcileWorker is absent", async () => {
+    const { deps, io } = makeDeps();
+    // Remove the optional method.
+    delete (deps.proc as Partial<typeof deps.proc>).spawnReconcileWorker;
+    io.findReconcileCandidate.mockResolvedValueOnce(CANDIDATE);
+
+    const state = freeSlotState();
+    const result = await dispatchReconcileIfPossible(state, deps);
+
+    expect(result).toBeNull();
+    expect(io.spawnReconcileWorker).not.toHaveBeenCalled();
+  });
+
+  it("is a no-op when findReconcileCandidate is absent", async () => {
+    const { deps, io } = makeDeps();
+    delete (deps.gh as Partial<typeof deps.gh>).findReconcileCandidate;
+
+    const state = freeSlotState();
+    const result = await dispatchReconcileIfPossible(state, deps);
+
+    expect(result).toBeNull();
+    expect(io.spawnReconcileWorker).not.toHaveBeenCalled();
+  });
+
+  it("returns null when no free slot exists (all slots have a live pid)", async () => {
+    const { deps, io } = makeDeps();
+    io.findReconcileCandidate.mockResolvedValueOnce(CANDIDATE);
+
+    const state = initSupervisorState(2);
+    // Both slots occupied.
+    state.slots[0]!.pid = 1001;
+    state.slots[1]!.pid = 1002;
+
+    const result = await dispatchReconcileIfPossible(state, deps);
+
+    expect(result).toBeNull();
+    expect(io.findReconcileCandidate).not.toHaveBeenCalled(); // slot check first
+    expect(io.spawnReconcileWorker).not.toHaveBeenCalled();
+  });
+
+  it("returns null when findReconcileCandidate returns null (no eligible candidate)", async () => {
+    const { deps, io } = makeDeps();
+    io.findReconcileCandidate.mockResolvedValueOnce(null);
+
+    const state = freeSlotState();
+    const result = await dispatchReconcileIfPossible(state, deps);
+
+    expect(result).toBeNull();
+    expect(io.findReconcileCandidate).toHaveBeenCalledOnce();
+    expect(io.spawnReconcileWorker).not.toHaveBeenCalled();
+  });
+
+  it("returns null when findReconcileCandidate throws (best-effort: swallowed)", async () => {
+    const { deps, io } = makeDeps();
+    io.findReconcileCandidate.mockRejectedValueOnce(new Error("gh timeout"));
+
+    const state = freeSlotState();
+    const result = await dispatchReconcileIfPossible(state, deps);
+
+    expect(result).toBeNull();
+    expect(io.spawnReconcileWorker).not.toHaveBeenCalled();
+  });
+
+  it("dispatches a reconcile worker into the free slot when a candidate is found", async () => {
+    const { deps, io } = makeDeps();
+    io.findReconcileCandidate.mockResolvedValueOnce(CANDIDATE);
+    io.spawnReconcileWorker.mockResolvedValueOnce({ pid: 9999, spawnEpoch: NOW });
+
+    const state = freeSlotState();
+    const result = await dispatchReconcileIfPossible(state, deps);
+
+    expect(result).toBe(0); // slot 0 received the worker
+    expect(io.findReconcileCandidate).toHaveBeenCalledOnce();
+    expect(io.spawnReconcileWorker).toHaveBeenCalledOnce();
+    expect(io.spawnReconcileWorker).toHaveBeenCalledWith(0, CANDIDATE);
+  });
+
+  it("updates the slot state after dispatch: pid set, stale flags cleared", async () => {
+    const { deps, io } = makeDeps();
+    io.findReconcileCandidate.mockResolvedValueOnce(CANDIDATE);
+    io.spawnReconcileWorker.mockResolvedValueOnce({ pid: 9999, spawnEpoch: NOW + 5 });
+
+    const state = freeSlotState();
+    // Pre-set stale stall flags to verify they are cleared.
+    state.slots[0]!.stalled = true;
+    state.slots[0]!.stallSinceEpoch = NOW - 100;
+    state.slots[0]!.reaped = true;
+
+    await dispatchReconcileIfPossible(state, deps);
+
+    const slot = state.slots[0]!;
+    expect(slot.pid).toBe(9999);
+    expect(slot.spawnEpoch).toBe(NOW + 5);
+    expect(slot.stalled).toBe(false);
+    expect(slot.stallSinceEpoch).toBe(0);
+    expect(slot.reaped).toBe(false);
+  });
+
+  it("picks the first free slot when multiple slots exist", async () => {
+    const { deps, io } = makeDeps();
+    io.findReconcileCandidate.mockResolvedValueOnce(CANDIDATE);
+    io.spawnReconcileWorker.mockResolvedValueOnce({ pid: 7777, spawnEpoch: NOW });
+
+    const state = initSupervisorState(3);
+    // Slots 0 and 2 are busy; slot 1 is free.
+    state.slots[0]!.pid = 1001;
+    state.slots[1]!.pid = null; // free
+    state.slots[2]!.pid = 1003;
+
+    const result = await dispatchReconcileIfPossible(state, deps);
+
+    expect(result).toBe(1);
+    expect(io.spawnReconcileWorker).toHaveBeenCalledWith(1, CANDIDATE);
+    expect(state.slots[1]!.pid).toBe(7777);
+  });
+
+  it("skips parked slots when looking for a free slot", async () => {
+    const { deps, io } = makeDeps();
+    io.findReconcileCandidate.mockResolvedValueOnce(CANDIDATE);
+
+    const state = initSupervisorState(2);
+    // Slot 0 is parked (circuit-tripped); slot 1 has a live worker.
+    state.slots[0]!.parked = true;
+    state.slots[0]!.pid = null;
+    state.slots[1]!.pid = 1002;
+
+    const result = await dispatchReconcileIfPossible(state, deps);
+
+    // No free non-parked slot → no dispatch.
+    expect(result).toBeNull();
+    expect(io.spawnReconcileWorker).not.toHaveBeenCalled();
+  });
+});
+
+describe("superviseTick — reconciledSlots accounting (#562)", () => {
+  // Stall-reap setup: slot has a live pid, stalled past the kill threshold, and
+  // an empty inspectTree so decideReaperSignal returns "kill". After the stall-
+  // reaper fires (step 3 of superviseTick), the slot's pid is null → free for
+  // dispatchReconcileIfPossible (step 4) to fill with a reconcile worker.
+  function stalledSlotDeps(candidate: ReconcileCandidate | null) {
+    return makeDeps({
+      isAlive: vi.fn(() => true), // pid alive so step 2 never respawns
+      agentLaneMtime: vi.fn(() => NOW - 1000), // agent lane silent for 1000s
+      now: vi.fn(() => NOW),
+      inspectTree: vi.fn((): readonly ProcessSnapshotEntry[] => []), // no active → "kill"
+      resolveIterDir: vi.fn(() => null),
+      findReconcileCandidate: vi.fn(async (): Promise<ReconcileCandidate | null> => candidate),
+    });
+  }
+
+  it("dispatches into a stall-reaped slot when a candidate is found", async () => {
+    const CANDIDATE: ReconcileCandidate = { issue: 77, branch: "afk/wBBBB/77-fix" };
+    const { deps, io } = stalledSlotDeps(CANDIDATE);
+    io.spawnReconcileWorker.mockResolvedValueOnce({ pid: 8888, spawnEpoch: NOW });
+
+    const state = initSupervisorState(1);
+    state.slots[0]!.pid = 9001;
+    state.slots[0]!.spawnEpoch = NOW - 3600;
+    state.slots[0]!.stalled = true;
+    state.slots[0]!.stallSinceEpoch = NOW - 1000; // 1000s > stallKillThresholdS(90)
+
+    const result = await superviseTick(
+      state, deps, config({ target: 1, stallThresholdS: 30, stallKillThresholdS: 90 }), () => false,
+    );
+
+    expect(result.reaped).toEqual([0]);
+    expect(result.reconciledSlots).toEqual([0]);
+    expect(io.spawnReconcileWorker).toHaveBeenCalledOnce();
+    expect(io.spawnReconcileWorker).toHaveBeenCalledWith(0, CANDIDATE);
+  });
+
+  it("reconciledSlots is empty when no candidate is found after a stall-reap", async () => {
+    const { deps, io } = stalledSlotDeps(null);
+
+    const state = initSupervisorState(1);
+    state.slots[0]!.pid = 9001;
+    state.slots[0]!.spawnEpoch = NOW - 3600;
+    state.slots[0]!.stalled = true;
+    state.slots[0]!.stallSinceEpoch = NOW - 1000;
+
+    const result = await superviseTick(
+      state, deps, config({ target: 1, stallThresholdS: 30, stallKillThresholdS: 90 }), () => false,
+    );
+
+    expect(result.reaped).toEqual([0]);
+    expect(result.reconciledSlots).toEqual([]);
+    expect(io.spawnReconcileWorker).not.toHaveBeenCalled();
   });
 });

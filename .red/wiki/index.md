@@ -69,6 +69,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [feat(afk): req:N dependency labels + event-driven auto-unblock](./pages/292-feat-afk-req-n-dependency-labels-event-driven-auto-unblock.md)
 - [feat(afk): salvage uncommitted worktree when codex emits DONE without committing](./pages/468-feat-afk-salvage-uncommitted-worktree-when-codex-emits-done.md)
 - [feat(afk): statusline reads project root from first arg; 🙋→🆘](./pages/266-feat-afk-statusline-reads-project-root-from-first-arg.md)
+- [feat(afk): supervisor tick dispatches reconcile workers for parked-mechanical issues](./pages/564-feat-afk-supervisor-tick-dispatches-reconcile-workers-for-pa.md)
 - [feat(afk): typed blocked:<reason> labels (descriptive, auto-classified)](./pages/293-feat-afk-typed-blocked-reason-labels-descriptive-auto-classi.md)
 - [feat(bench): memory bench eval spine — single-hop, fixed-pack, exact-match/F1, JSONL (#334)](./pages/425-feat-bench-memory-bench-eval-spine-single-hop-fixed-pack-exa.md)
 - [feat(brain): add the brain plugin (project-local knowledge repository)](./pages/422-feat-brain-add-the-brain-plugin-project-local-knowledge-repo.md)

@@ -8,7 +8,9 @@ import {
   type IssueCandidate,
 } from "../core/session.js";
 import { genWorkerId } from "../core/session.js";
-import { runBoot, type BootDeps, type BootOptions, type BootstrapInput } from "../core/boot.js";
+import { runBoot, type BootDeps, type BootOptions, type BootstrapInput, type ReconcileBootRunner } from "../core/boot.js";
+import { reconcile, type ReconcileDeps, type ReconcileInput } from "../core/reconcile.js";
+import { findOwnedBranch, type ReconcileSweepPlan } from "../core/boot-sweep.js";
 import { processIssue, type ProcessIssueDeps, type ProcessIssueInput } from "../core/process-issue.js";
 import {
   toMemoryPayload,
@@ -25,6 +27,7 @@ import {
   resolveRepoContext,
   resolveRunSettings,
   type RepoContext,
+  type AfkPaths,
 } from "../runtime/wire.js";
 import type { LaneIdleStallConfig } from "../core/lane-idle-reaper.js";
 import { workerDir as workerDirPath, workerPidFile } from "../core/worker-paths.js";
@@ -74,6 +77,12 @@ interface ParsedRunFlags {
   fallbackRunner: boolean;
   /** --boot-only: run the boot sweeps then exit without selecting/claiming/processing. */
   bootOnly: boolean;
+  /**
+   * --reconcile-issue <n>: supervisor-dispatched reconcile worker mode (ADR 0055,
+   * #562). Bypass the normal boot+session; validate-and-land the parked branch for
+   * issue `n` without re-running the agent.
+   */
+  reconcileIssue?: number;
 }
 
 /** Raised when --alternate is combined with --runner (mutually exclusive). */
@@ -106,6 +115,7 @@ const RUN_FLAG_SCHEMA = {
   alternate: { kind: "boolean" },
   "fallback-runner": { kind: "boolean" },
   "boot-only": { kind: "boolean" },
+  "reconcile-issue": { kind: "value", coerce: (raw: string): number => Number(raw) },
 } satisfies FlagSchema;
 
 /** Parse the `run` flags: --prd N / --issues a,b,c / -n N / --once / --request / --runner. */
@@ -136,6 +146,12 @@ export function parseRunFlags(args: readonly string[]): ParsedRunFlags {
     throw new RunFlagError("--alternate is mutually exclusive with --runner");
   }
 
+  const rawReconcileIssue = values["reconcile-issue"];
+  const reconcileIssue =
+    typeof rawReconcileIssue === "number" && Number.isFinite(rawReconcileIssue) && rawReconcileIssue > 0
+      ? rawReconcileIssue
+      : undefined;
+
   return {
     filter,
     iterCap: values.n as number | undefined,
@@ -145,6 +161,7 @@ export function parseRunFlags(args: readonly string[]): ParsedRunFlags {
     alternate,
     fallbackRunner: values["fallback-runner"] === true,
     bootOnly: values["boot-only"] === true,
+    reconcileIssue,
   };
 }
 
@@ -176,6 +193,140 @@ async function resolveBranchIssueCache(
     else cache.set(n, await ghx.issueMeta(ghCtx, n));
   }
   return cache;
+}
+
+/** Build the boot reconcile runner (step 7, ADR 0055). The runner closes over
+ * the repo context and feedback worktree so each plan invocation has full
+ * reconcile deps without re-building them on every call. */
+function makeBootReconcileRunner(
+  ctx: RepoContext,
+  paths: AfkPaths,
+  workerId: string,
+  runner: Runner,
+  feedback: FeedbackWorktree,
+): ReconcileBootRunner {
+  const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo };
+  const gitCtx: GitContext = { cwd: ctx.root };
+  const lockPath = branchLockPath(ctx.root);
+
+  return async (plan: ReconcileSweepPlan) => {
+    const reconcileDeps: ReconcileDeps = {
+      gh: {
+        editLabels: async (issue, remove, add) => {
+          await ghx.editLabels(ghCtx, issue, remove, add);
+          return true;
+        },
+        ensureLabel: (name) => ghx.ensureLabel(ghCtx, name),
+        comment: (issue, body) => ghx.comment(ghCtx, issue, body),
+        close: (issue) => ghx.closeIssue(ghCtx, issue),
+        listByLabel: (label) => ghx.listByLabel(ghCtx, label),
+        issueClosed: (n) => ghx.issueClosed(ghCtx, n),
+      },
+      git: {
+        headShortSha: () => gitx.headShortSha(gitCtx),
+        deleteLocalBranch: (branch) => gitx.deleteLocalBranch(gitCtx, branch),
+      },
+      fs: {
+        completionSweep: (issue) => fsx.completionSweep(paths.workersRoot, issue),
+      },
+      lookups: {
+        changedFiles: (branch, base) => gitx.changedFiles(gitCtx, branch, base),
+        branchPresent: async (branch) => {
+          if (await gitx.branchExists(gitCtx, branch)) return true;
+          await gitx.fetchBranch(gitCtx, branch);
+          return gitx.branchExists(gitCtx, branch);
+        },
+        isLocked: () => isLocked(lockPath),
+      },
+      mergeExec: gitx.mergeExec(gitCtx),
+      remoteGit: gitx.gitExec(gitCtx),
+      pnpm: feedback.pnpm,
+      layout: feedback.layout,
+      envelope: {
+        git: gitx.gitExec(gitCtx),
+        poster: async (issue, body) => {
+          await ghx.comment(ghCtx, issue, body);
+          return true;
+        },
+        // Boot reconcile has no per-attempt dir — markers/posted are best-effort
+        // observability hooks that are silently skipped in this context.
+        writeMarkers: async () => {},
+        writePosted: async () => {},
+      },
+      nowEpoch: () => Math.floor(Date.now() / 1000),
+      appendIterLog: () => {},
+    };
+
+    const reconcileInput: ReconcileInput = {
+      issue: plan.number,
+      title: plan.title,
+      body: plan.body,
+      labels: plan.labels,
+      branch: plan.branch,
+      base: "main",
+      repo: ctx.repo,
+      repoDir: ctx.root,
+      remote: ctx.remote,
+      workerId,
+      attempt: 0,
+      attemptDir: join(paths.tmpDir, "boot-reconcile", String(plan.number)),
+      runner,
+    };
+
+    const result = await reconcile(reconcileDeps, reconcileInput);
+    const outcome = result.outcome === "landed" ? "landed" as const
+      : result.outcome === "parked" ? "parked" as const
+      : "skipped" as const;
+    return { outcome };
+  };
+}
+
+/**
+ * Supervisor-dispatched reconcile worker (ADR 0055, #562): validate-and-land the
+ * parked branch for `issue` without re-running the agent. Fetches the issue
+ * metadata + its `afk/…` branch, then delegates to `makeBootReconcileRunner`.
+ * Best-effort: a missing branch or failed fetch exits 0 (nothing to reconcile).
+ */
+async function runReconcileWorker(
+  issue: number,
+  runner: Runner,
+  ctx: RepoContext,
+  paths: AfkPaths,
+  workerId: string,
+): Promise<number> {
+  const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo };
+  const gitCtx: GitContext = { cwd: ctx.root };
+
+  const issueData = await ghx.viewIssueFull(ghCtx, issue);
+  if (!issueData) {
+    process.stderr.write(`[afk reconcile-worker] #${issue} not found or fetch failed — nothing to reconcile\n`);
+    return 0;
+  }
+
+  const remoteBranches = await gitx.listRemoteBranches(gitCtx, "afk/");
+  const branch = findOwnedBranch(remoteBranches.map((r) => r.branch), issue);
+  if (!branch) {
+    process.stderr.write(`[afk reconcile-worker] no afk branch for #${issue} — nothing to reconcile\n`);
+    return 0;
+  }
+
+  const plan: ReconcileSweepPlan = {
+    number: issueData.number,
+    title: issueData.title,
+    body: issueData.body,
+    labels: issueData.labels,
+    branch,
+  };
+
+  const feedback = makeFeedbackWorktree(ctx.root, join(paths.tmpDir, "feedback"));
+  try {
+    const reconcileRunner = makeBootReconcileRunner(ctx, paths, workerId, runner, feedback);
+    await reconcileRunner(plan);
+  } finally {
+    await feedback.cleanup();
+  }
+
+  return 0;
 }
 
 async function buildBootDeps(ctx: RepoContext, options: BootOptions, nowS: number): Promise<BootDeps> {
@@ -795,6 +946,12 @@ export async function runCommand(options: RunOptions): Promise<number> {
   const existing = new Set((await collectMonitorInputs(cwd)).workers.map((w) => w.state.worker_id));
   const workerId = genWorkerId(Math.random, (id) => existing.has(id));
 
+  // Supervisor-dispatched reconcile worker: bypass the normal boot+session and
+  // validate-and-land the specific parked branch for `--reconcile-issue <n>`.
+  if (flags.reconcileIssue !== undefined) {
+    return runReconcileWorker(flags.reconcileIssue, runner, ctx, paths, workerId);
+  }
+
   const facts = await collectPrecheckFacts(ctx);
   const nowS = Math.floor(Date.now() / 1000);
 
@@ -842,6 +999,9 @@ export async function runCommand(options: RunOptions): Promise<number> {
 
   // Feedback worktree manager — checks out the worker branch for the gate.
   const feedback = makeFeedbackWorktree(ctx.root, join(paths.tmpDir, "feedback"));
+
+  // Wire the boot reconcile runner into bootDeps (step 7, ADR 0055).
+  bootDeps = { ...bootDeps, reconcileRunner: makeBootReconcileRunner(ctx, paths, workerId, runner, feedback) };
 
   // Per-issue mutable attempt context the process deps' envelope/iter-log close
   // over; buildProcessInput resets it before each processIssue call.
