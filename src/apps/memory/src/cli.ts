@@ -4893,7 +4893,7 @@ function buildSkillTelemetryEvidenceCard(input: {
       ? `skill-rollup:${contentHash(input.rollup.source_kind, input.rollup.name, input.rollup.path)}`
       : `skill-rollup:${contentHash(input.rec.source_kind, input.rec.name, input.rec.path)}`;
 
-  return {
+  const card: SkillTelemetryEvidenceCard = {
     contract: "memory.evidence-card.experimental.v1",
     id,
     kind: "skill_telemetry",
@@ -4973,6 +4973,7 @@ function buildSkillTelemetryEvidenceCard(input: {
       fingerprint: input.proposalFingerprint,
     },
   };
+  return redactSensitiveValue(card) as SkillTelemetryEvidenceCard;
 }
 
 function suggestedSectionOrAnchor(

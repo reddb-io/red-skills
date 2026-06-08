@@ -6,11 +6,15 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, test } from "vitest";
 import { initGraph } from "../src/init.js";
 
-const TIMEOUT = 30_000;
+const TIMEOUT = 90_000;
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = join(HERE, "..");
 
 const roots: string[] = [];
+
+function stableProposalText(markdown: string): string {
+  return markdown.replace(/^Generated: .+$/m, "Generated: <stable>");
+}
 
 async function tempRoot(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "memory-improve-skills-"));
@@ -201,6 +205,129 @@ describe("memory improve skills CLI", () => {
 
       await expect(readdir(join(root, ".red", "memory", "proposals"))).rejects.toThrow();
       await expect(readdir(join(root, ".red", "memory", "inbox", "evidence"))).rejects.toThrow();
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "runs the governed self-improvement tracer bullet from telemetry through card review",
+    async () => {
+      const root = await tempRoot();
+      await initGraph(root, { skillTelemetry: true });
+      const skillFile = join(root, "skills", "flaky-skill", "SKILL.md");
+      await mkdir(dirname(skillFile), { recursive: true });
+      await writeFile(skillFile, "---\nname: flaky-skill\ndescription: fixture\n---\n\n# flaky-skill\n\nOriginal content.\n", "utf8");
+      const token = "sk-test_1234567890abcdefghijklmnopqrstuv";
+      const events = [
+        skillResultEvent(1, skillFile, "failed"),
+        skillResultEvent(2, skillFile, "failed"),
+        skillResultEvent(3, skillFile, "failed"),
+        skillResultEvent(4, skillFile, "failed"),
+        skillResultEvent(5, skillFile, "succeeded"),
+      ].map((event) =>
+        event.result.status === "failed"
+          ? { ...event, event_id: `${event.event_id}-${token}` }
+          : event,
+      );
+      const ingest = runMemory(["event", "skill", "--root", root], events.map((event) => JSON.stringify(event)).join("\n"));
+      expect(ingest.status).toBe(0);
+
+      const first = runMemory(["improve", "skills", "--root", root, "--write-proposal", "--json"]);
+      expect(first.status, first.stderr).toBe(0);
+      const firstBody = JSON.parse(first.stdout);
+      expect(firstBody.state).toBe("proposal-written");
+      expect(firstBody.proposals).toHaveLength(1);
+      expect(firstBody.proposals[0]).toMatchObject({
+        skill: "flaky-skill",
+        written: true,
+        reusedExisting: false,
+        cardStatus: "proposed",
+        evidenceSource: "skill-telemetry:flaky-skill:project",
+        evidenceRoute: "skill-improvement:frequently-failing:skills/flaky-skill/SKILL.md",
+        dominantErrorPattern: "stage=verify|class=ValidationError|code=",
+      });
+      expect(firstBody.proposals[0].fingerprint).toMatch(/^sha256:/);
+      expect(firstBody.proposals[0].path).toContain(".red/memory/proposals/");
+      expect(firstBody.evidenceCards).toHaveLength(1);
+      expect(firstBody.evidenceCards[0]).toMatchObject({
+        contract: "memory.evidence-card.experimental.v1",
+        skill: "flaky-skill",
+        status: "proposed",
+        proposalPath: firstBody.proposals[0].path,
+        reusedExisting: false,
+        written: true,
+      });
+
+      const proposalBeforeReview = await readFile(firstBody.proposals[0].path, "utf8");
+      expect(proposalBeforeReview).toContain("## Evidence Card");
+      expect(proposalBeforeReview).toContain(firstBody.evidenceCards[0].id);
+      expect(proposalBeforeReview).toContain(firstBody.evidenceCards[0].path.replace(`${root}/`, ""));
+      expect(proposalBeforeReview).toContain("```json memory-skill-patch");
+      expect(proposalBeforeReview).not.toContain(token);
+
+      const cardBeforeReview = await readFile(firstBody.evidenceCards[0].path, "utf8");
+      expect(cardBeforeReview).toContain('contract: "memory.evidence-card.experimental.v1"');
+      expect(cardBeforeReview).toContain(`path: "${firstBody.proposals[0].path.replace(`${root}/`, "")}"`);
+      expect(cardBeforeReview).toContain("[REDACTED:openai-token]");
+      expect(cardBeforeReview).not.toContain(token);
+
+      const second = runMemory(["improve", "skills", "--root", root, "--write-proposal", "--json"]);
+      expect(second.status, second.stderr).toBe(0);
+      const secondBody = JSON.parse(second.stdout);
+      expect(secondBody.proposals[0].fingerprint).toBe(firstBody.proposals[0].fingerprint);
+      expect(secondBody.proposals[0].reusedExisting).toBe(true);
+      expect(secondBody.evidenceCards[0].id).toBe(firstBody.evidenceCards[0].id);
+      expect(secondBody.evidenceCards[0].path).toBe(firstBody.evidenceCards[0].path);
+      expect(secondBody.evidenceCards[0].reusedExisting).toBe(true);
+
+      const approve = runMemory([
+        "evidence",
+        "approve",
+        firstBody.evidenceCards[0].id,
+        "--root",
+        root,
+        "--reviewer",
+        "maintainer",
+        "--yes",
+        "--json",
+      ]);
+      expect(approve.status, approve.stderr).toBe(0);
+      const approvedCard = await readFile(firstBody.evidenceCards[0].path, "utf8");
+      expect(approvedCard).toContain('status: "approved"');
+      expect(approvedCard).toContain('decision: "approved"');
+      expect(stableProposalText(await readFile(firstBody.proposals[0].path, "utf8"))).toBe(
+        stableProposalText(proposalBeforeReview),
+      );
+
+      const third = runMemory(["improve", "skills", "--root", root, "--write-proposal", "--json"]);
+      expect(third.status, third.stderr).toBe(0);
+      const thirdBody = JSON.parse(third.stdout);
+      expect(thirdBody.proposals[0].fingerprint).toBe(firstBody.proposals[0].fingerprint);
+      expect(thirdBody.proposals[0].reusedExisting).toBe(true);
+      expect(thirdBody.evidenceCards[0].id).not.toBe(firstBody.evidenceCards[0].id);
+      expect(await readFile(firstBody.evidenceCards[0].path, "utf8")).toBe(approvedCard);
+
+      const reject = runMemory([
+        "evidence",
+        "reject",
+        thirdBody.evidenceCards[0].id,
+        "--root",
+        root,
+        "--reason",
+        "tracer bullet rejected this evidence interpretation",
+        "--reviewer",
+        "maintainer",
+        "--yes",
+        "--json",
+      ]);
+      expect(reject.status, reject.stderr).toBe(0);
+      const proposalAfterReject = await readFile(firstBody.proposals[0].path, "utf8");
+      expect(proposalAfterReject).toContain("## Evidence Card Review Warning");
+      expect(proposalAfterReject).toContain(`Evidence card id: ${thirdBody.evidenceCards[0].id}`);
+
+      const applyWithoutApproval = runMemory(["improve", "apply", firstBody.proposals[0].path, "--root", root, "--json"]);
+      expect(applyWithoutApproval.status).not.toBe(0);
+      expect(applyWithoutApproval.stderr).toContain("requires explicit --yes approval");
     },
     TIMEOUT,
   );

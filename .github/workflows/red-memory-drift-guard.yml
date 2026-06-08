@@ -48,6 +48,11 @@ jobs:
         with:
           node-version: 22
 
+      - name: Install red binary for SDK
+        uses: ./.github/actions/install-red-binary
+        with:
+          github-token: ${{ github.token }}
+
       - name: Install workspace dependencies
         run: pnpm install --frozen-lockfile
 
