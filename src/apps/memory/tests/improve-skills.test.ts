@@ -131,9 +131,12 @@ describe("memory improve skills CLI", () => {
       expect(proposal).toContain("4/5 results failed (80%)");
       expect(proposal).toContain("## Proposed Patch");
       expect(proposal).toContain("```json memory-skill-patch");
-      expect(proposal).toContain("## Recent Failure Evidence");
-      expect(proposal).toContain("error_stage=verify");
-      expect(proposal).toContain("error_class=ValidationError");
+      expect(proposal).toContain("## Evidence Card");
+      expect(proposal).toContain(body.evidenceCards[0].id);
+      expect(proposal).toContain(".red/memory/inbox/evidence/");
+      expect(proposal).not.toContain("## Recent Failure Evidence");
+      expect(proposal).not.toContain("error_stage=verify");
+      expect(proposal).not.toContain("error_class=ValidationError");
       expect(proposal).toContain("Telemetry troubleshooting note");
       expect(proposal).toContain("verification guidance for the `verify` stage");
       expect(proposal).toContain("approval-gated");
@@ -333,7 +336,16 @@ describe("memory improve skills CLI", () => {
       const firstBody = JSON.parse(first.stdout);
       expect(firstBody.proposals[0].fingerprint).toMatch(/^sha256:/);
       expect(firstBody.proposals[0].reusedExisting).toBe(false);
+      expect(firstBody.evidenceCards).toHaveLength(1);
+      expect(firstBody.evidenceCards[0].reusedExisting).toBe(false);
       const firstPath = firstBody.proposals[0].path;
+      const firstCard = firstBody.evidenceCards[0];
+
+      const newFailure = runMemory(
+        ["event", "skill", "--root", root],
+        JSON.stringify(skillResultEvent(6, skillFile, "failed")),
+      );
+      expect(newFailure.status).toBe(0);
 
       const second = runMemory(["improve", "skills", "--root", root, "--write-proposal", "--json"]);
       expect(second.status).toBe(0);
@@ -341,11 +353,50 @@ describe("memory improve skills CLI", () => {
       expect(secondBody.proposals[0].fingerprint).toBe(firstBody.proposals[0].fingerprint);
       expect(secondBody.proposals[0].path).toBe(firstPath);
       expect(secondBody.proposals[0].reusedExisting).toBe(true);
+      expect(secondBody.evidenceCards).toHaveLength(1);
+      expect(secondBody.evidenceCards[0].id).toBe(firstCard.id);
+      expect(secondBody.evidenceCards[0].path).toBe(firstCard.path);
+      expect(secondBody.evidenceCards[0].proposalPath).toBe(firstPath);
+      expect(secondBody.evidenceCards[0].reusedExisting).toBe(true);
 
       const files = await readdir(join(root, ".red", "memory", "proposals"));
       expect(files.filter((file) => file.endsWith(".md"))).toHaveLength(1);
+      const evidenceFiles = await readdir(join(root, ".red", "memory", "inbox", "evidence"));
+      expect(evidenceFiles.filter((file) => file.endsWith(".yaml"))).toHaveLength(1);
       const proposal = await readFile(firstPath, "utf8");
       expect(proposal).toContain(`Fingerprint: ${firstBody.proposals[0].fingerprint}`);
+
+      const archived = runMemory([
+        "improve",
+        "proposals",
+        "archive",
+        firstPath,
+        "--reason",
+        "rejected",
+        "--root",
+        root,
+        "--yes",
+        "--json",
+      ]);
+      expect(archived.status).toBe(0);
+
+      const third = runMemory(["improve", "skills", "--root", root, "--write-proposal", "--json"]);
+      expect(third.status).toBe(0);
+      const thirdBody = JSON.parse(third.stdout);
+      expect(thirdBody.proposals[0].fingerprint).toBe(firstBody.proposals[0].fingerprint);
+      expect(thirdBody.proposals[0].path).toBe(firstPath);
+      expect(thirdBody.proposals[0].reusedExisting).toBe(false);
+      expect(thirdBody.evidenceCards[0].id).not.toBe(firstCard.id);
+      expect(thirdBody.evidenceCards[0].path).not.toBe(firstCard.path);
+      const regeneratedEvidenceFiles = await readdir(join(root, ".red", "memory", "inbox", "evidence"));
+      expect(regeneratedEvidenceFiles.filter((file) => file.endsWith(".yaml"))).toHaveLength(2);
+
+      const fourth = runMemory(["improve", "skills", "--root", root, "--write-proposal", "--json"]);
+      expect(fourth.status).toBe(0);
+      const fourthBody = JSON.parse(fourth.stdout);
+      expect(fourthBody.proposals[0].reusedExisting).toBe(true);
+      expect(fourthBody.evidenceCards[0].id).toBe(thirdBody.evidenceCards[0].id);
+      expect(fourthBody.evidenceCards[0].path).toBe(thirdBody.evidenceCards[0].path);
 
       const listed = runMemory(["improve", "proposals", "list", "--root", root, "--json"]);
       expect(listed.status).toBe(0);

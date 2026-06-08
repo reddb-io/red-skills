@@ -4324,6 +4324,10 @@ async function buildSkillImprovementProposals(
       dominantErrorClass,
       patchDrafted,
     });
+    const existingCardCount = writeProposal
+      ? await countSkillTelemetryEvidenceCardsForProposalFingerprint(evidenceCardDir, fingerprint)
+      : 0;
+    const cardRevision = reusedExisting ? Math.max(0, existingCardCount - 1) : existingCardCount;
     const card = buildSkillTelemetryEvidenceCard({
       rootDir,
       rec,
@@ -4332,6 +4336,7 @@ async function buildSkillImprovementProposals(
       dominantErrorStage,
       dominantErrorClass,
       proposalFingerprint: fingerprint,
+      cardRevision,
       priority,
     });
     if (writeProposal && proposalPath) {
@@ -4381,6 +4386,26 @@ async function buildSkillImprovementProposals(
     proposals: sortProposalSummaries(proposals),
     evidenceCards: evidenceCards.sort((a, b) => a.skill.localeCompare(b.skill) || a.path.localeCompare(b.path)),
   };
+}
+
+async function countSkillTelemetryEvidenceCardsForProposalFingerprint(
+  evidenceCardDir: string,
+  proposalFingerprint: string,
+): Promise<number> {
+  let entries;
+  try {
+    entries = await readdir(evidenceCardDir, { withFileTypes: true });
+  } catch {
+    return 0;
+  }
+  const fingerprintLine = `fingerprint: ${yamlScalar(proposalFingerprint)}`;
+  let count = 0;
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith(".yaml")) continue;
+    const body = await readFile(join(evidenceCardDir, entry.name), "utf8");
+    if (body.includes('kind: "skill_telemetry"') && body.includes(fingerprintLine)) count += 1;
+  }
+  return count;
 }
 
 
@@ -4475,6 +4500,7 @@ function buildSkillTelemetryEvidenceCard(input: {
   dominantErrorStage: string | null;
   dominantErrorClass: string | null;
   proposalFingerprint: string;
+  cardRevision: number;
   priority: { score: number; priority: "high" | "medium" | "low"; reasons: string[] };
 }): SkillTelemetryEvidenceCard {
   const relSkillPath = isAbsolute(input.rec.path)
@@ -4482,19 +4508,14 @@ function buildSkillTelemetryEvidenceCard(input: {
     : input.rec.path;
   const runner = topValues(input.evidence.map((event) => event.runner))[0] ?? "unknown";
   const recentEventRefs = input.evidence.map((event) => `skill-event:${event.event_id}`);
-  const telemetryWindow = input.evidence.map((event) => event.event_id).join("|");
   const fingerprint = `sha256:${createHash("sha256")
     .update(
       JSON.stringify({
         contract: "memory.evidence-card.experimental.v1",
         source: "skill.telemetry",
         route: "skill_proposal",
-        skill: input.rec.name,
-        source_kind: input.rec.source_kind,
-        path: relSkillPath,
-        dominantErrorStage: input.dominantErrorStage ?? "",
-        dominantErrorClass: input.dominantErrorClass ?? "",
-        telemetryWindow,
+        proposalFingerprint: input.proposalFingerprint,
+        cardRevision: input.cardRevision,
       }),
     )
     .digest("hex")}`;
@@ -4633,7 +4654,7 @@ async function renderSkillImprovementProposal(
   evidenceCard: SkillTelemetryEvidenceCard | null,
 ): Promise<string> {
   const relSkillPath = isAbsolute(rec.path) ? toPosix(relative(rootDir, rec.path)) : rec.path;
-  const evidenceBlock = renderRecentFailureEvidence(evidence);
+  const evidenceBlock = evidenceCard ? "" : renderRecentFailureEvidence(evidence);
   const patchBlock = await renderDraftSkillPatchBlock(rootDir, rec, relSkillPath, evidence);
   const evidenceCardBlock = evidenceCard
     ? `\n## Evidence Card\n\n- Evidence card id: ${evidenceCard.id}\n- Evidence card path: ${toPosix(join(".red", "memory", "inbox", "evidence", evidenceCard.file))}\n`
