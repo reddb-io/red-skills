@@ -4482,19 +4482,13 @@ function buildSkillTelemetryEvidenceCard(input: {
     : input.rec.path;
   const runner = topValues(input.evidence.map((event) => event.runner))[0] ?? "unknown";
   const recentEventRefs = input.evidence.map((event) => `skill-event:${event.event_id}`);
-  const telemetryWindow = input.evidence.map((event) => event.event_id).join("|");
   const fingerprint = `sha256:${createHash("sha256")
     .update(
       JSON.stringify({
         contract: "memory.evidence-card.experimental.v1",
         source: "skill.telemetry",
         route: "skill_proposal",
-        skill: input.rec.name,
-        source_kind: input.rec.source_kind,
-        path: relSkillPath,
-        dominantErrorStage: input.dominantErrorStage ?? "",
-        dominantErrorClass: input.dominantErrorClass ?? "",
-        telemetryWindow,
+        proposalFingerprint: input.proposalFingerprint,
       }),
     )
     .digest("hex")}`;
