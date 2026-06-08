@@ -8,6 +8,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [#253/#254: lock-driven base + lock-toggled landing (ADR 0030/0031)](./pages/261-253-254-lock-driven-base-lock-toggled-landing-adr-0030-0031.md)
 - [#302 Memory extraction: strict-write structural-type gate (provider path)](./pages/377-302-memory-extraction-strict-write-structural-type-gate-prov.md)
 - [Add Evidence inbox YAML review CLI](./pages/551-add-evidence-inbox-yaml-review-cli.md)
+- [Add Evidence-linked Skill improvement proposals](./pages/553-add-evidence-linked-skill-improvement-proposals.md)
 - [Add Memory community navigation analytics](./pages/536-add-memory-community-navigation-analytics.md)
 - [Add Memory map context slices](./pages/519-add-memory-map-context-slices.md)
 - [Add Memory map freshness report](./pages/537-add-memory-map-freshness-report.md)
