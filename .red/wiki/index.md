@@ -11,6 +11,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [Add Memory community navigation analytics](./pages/536-add-memory-community-navigation-analytics.md)
 - [Add Memory map context slices](./pages/519-add-memory-map-context-slices.md)
 - [Add Memory map freshness report](./pages/537-add-memory-map-freshness-report.md)
+- [Add Skill telemetry Evidence cards](./pages/552-add-skill-telemetry-evidence-cards.md)
 - [Add compiler-backed TypeScript memory extraction](./pages/529-add-compiler-backed-typescript-memory-extraction.md)
 - [Add tidy recommendation review workflow](./pages/498-add-tidy-recommendation-review-workflow.md)
 - [Context packs render pinned core context](./pages/494-context-packs-render-pinned-core-context.md)
