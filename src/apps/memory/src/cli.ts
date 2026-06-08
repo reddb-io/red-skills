@@ -289,7 +289,6 @@ import { runCurateWorkflow } from "./curate-skill/workflow.js";
 import type { CuratorReportEnvelope } from "./curate-skill/types.js";
 import type { Confidence, MemoryLayer, MemoryProvenance, MemoryScope } from "./schema.js";
 import { slugify, storeNote } from "./store.js";
-import { contentHash } from "./hash.js";
 import { readBuildInfo, renderVersion } from "@reddb-io/build-info";
 import { parseLooseArgs, type LooseParsedArgs } from "@reddb-io/shared/args.js";
 
