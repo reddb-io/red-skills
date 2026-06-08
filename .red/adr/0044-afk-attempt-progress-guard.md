@@ -22,7 +22,7 @@ Sandcastle (`@ai-hero/sandcastle` ≥ 0.6.6) exposes `RunOptions.signal?: AbortS
 
 3. **On fire → park, never retry.** The guard surfaces a `timeout` agent-outcome which `processIssue` maps to the existing `stalled` terminal outcome: `recoveryReasonFor("stalled")` is `null` → always escalate → `ready-for-human` + the typed `blocked:stalled` label, a failure envelope, and the attempt dir/branch/PR preserved. No auto-retry — the work is there for a human to review (the maintainer's "review first, don't merge" disposition).
 
-4. **Armed only under no-sandbox isolation.** Under docker/podman the agent commits in an isolated copy not host-visible until final sync, so a commit-anchored probe would false-fire; the guard is skipped there (idle timeout + maxIterations still apply). Default mode is no-sandbox.
+4. **Armed only under no-sandbox isolation.** Under docker/podman the agent commits in an isolated copy not host-visible until final sync, so a commit-anchored probe would false-fire; the guard is skipped there (idle timeout + maxIterations still apply). Default mode is no-sandbox. **(Superseded by ADR 0054, issue #405: sandcastle ≥ 0.6.x bind-mounts the worktree + shared `.git` into the container, so commits/edits ARE host-visible mid-run; the guard now arms under docker/podman too, gated only on a worker branch. Only the lane-idle reaper stays no-sandbox.)**
 
 ## Consequences
 

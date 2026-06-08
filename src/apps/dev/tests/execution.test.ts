@@ -131,6 +131,37 @@ describe("buildRunOptions", () => {
     expect(opts.idleTimeoutSeconds).toBe(300);
   });
 
+  it("forwards the attempt dir to sandboxFor as the bind-mount path (issue #405)", () => {
+    // Under docker/podman the attempt dir must be bind-mounted into the container
+    // at the identical path so the worktree + proof-of-life lane are host-visible
+    // — the precondition for arming the guard + heartbeat under isolation.
+    const seen: Array<{ mode: string; mountPath: string | undefined }> = [];
+    const deps: SandcastleDeps = {
+      run: async () => fakeResult(),
+      agentFor: (runner, model, opts) => fakeAgent(`${runner}:${model}:${opts?.effort ?? "-"}`),
+      sandboxFor: (mode, opts) => {
+        seen.push({ mode, mountPath: opts?.mountPath });
+        return fakeSandbox(mode);
+      },
+    };
+    buildRunOptions(deps, { ...baseInput, sandboxMode: "docker", cwd: "/red/tmp/workers/w1/42-a1" });
+    expect(seen).toEqual([{ mode: "docker", mountPath: "/red/tmp/workers/w1/42-a1" }]);
+  });
+
+  it("passes no mount path to sandboxFor when cwd is absent (issue #405)", () => {
+    const seen: Array<{ mode: string; mountPath: string | undefined }> = [];
+    const deps: SandcastleDeps = {
+      run: async () => fakeResult(),
+      agentFor: (runner, model, opts) => fakeAgent(`${runner}:${model}:${opts?.effort ?? "-"}`),
+      sandboxFor: (mode, opts) => {
+        seen.push({ mode, mountPath: opts?.mountPath });
+        return fakeSandbox(mode);
+      },
+    };
+    buildRunOptions(deps, { ...baseInput, sandboxMode: "podman" });
+    expect(seen).toEqual([{ mode: "podman", mountPath: undefined }]);
+  });
+
   it("does NOT inject any hooks when continuous push is not requested (default)", () => {
     const opts = buildRunOptions(makeDeps(async () => fakeResult()), baseInput);
     expect(opts.hooks).toBeUndefined();
@@ -716,6 +747,43 @@ describe("runAgent — attempt guard wiring", () => {
     };
     await runAgent(deps, { ...baseInput, attemptTimeoutSeconds: 60, headProbe: async () => "x" });
     expect(seenSignal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("fires the proof-of-life heartbeat AND aborts a stall under docker isolation (issue #405)", async () => {
+    // The guard arms identically regardless of sandbox mode — runAgent gates only
+    // on (attemptTimeoutSeconds + headProbe), never on sandboxMode. So under
+    // docker/podman the externalized heartbeat (onHeartbeat) fires each poll and a
+    // stalled-but-busy agent is aborted the same as no-sandbox (AC1 + AC2).
+    let clock = 0;
+    const sched = manualScheduler();
+    const controller = new AbortController();
+    const ticks: AttemptProgressInfo[] = [];
+    const deps: SandcastleDeps = {
+      ...makeDeps(
+        (o) =>
+          new Promise<RunResult>((_resolve, reject) => {
+            o.signal?.addEventListener("abort", () => reject(o.signal?.reason ?? new Error("aborted")));
+          }),
+      ),
+      now: () => clock,
+      schedule: sched.schedule,
+      makeAbortController: () => controller,
+    };
+    const p = runAgent(deps, {
+      ...baseInput,
+      sandboxMode: "docker",
+      cwd: "/red/tmp/workers/w1/42-a1",
+      attemptTimeoutSeconds: 1,
+      headProbe: async () => "static",
+      onHeartbeat: (info) => ticks.push(info),
+    });
+    await sched.tick(); // anchor; heartbeat fires
+    expect(ticks).toHaveLength(1);
+    clock = 1000;
+    await sched.tick(); // cap elapsed, head static → abort
+    const res = await p;
+    expect(res.outcome).toBe("timeout");
+    expect(ticks.length).toBeGreaterThanOrEqual(2); // proof-of-life fired under isolation
   });
 });
 

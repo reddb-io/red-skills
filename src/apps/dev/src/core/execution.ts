@@ -298,7 +298,16 @@ export interface RunAgentResult {
 export interface SandcastleDeps {
   run: (options: RunOptions) => Promise<RunResult>;
   agentFor: (runner: AgentRunner, model: string, opts?: { effort?: AgentEffort }) => RunOptions["agent"];
-  sandboxFor: (mode: SandboxMode) => RunOptions["sandbox"];
+  /**
+   * Build the sandbox provider for a mode. `opts.mountPath` (issue #405) is the
+   * absolute host attempt dir: under docker/podman it is added as a bind-mount at
+   * the identical path inside the container so the attempt dir's proof-of-life
+   * lane (afk.state.json / agent.log.jsonl / log.jsonl) AND the worktree
+   * sandcastle creates under it are host-visible in real time — the precondition
+   * for arming the progress guard + heartbeat under isolation. Ignored for the
+   * host-native `none` mode (no container to mount into).
+   */
+  sandboxFor: (mode: SandboxMode, opts?: { mountPath?: string }) => RunOptions["sandbox"];
   /**
    * Optional warn sink for degrade-safe diagnostics (FIX D effort drop, FIX F
    * continuous-push-under-isolation notice). Defaults to `console.warn` in the
@@ -454,7 +463,11 @@ export function buildRunOptions(deps: SandcastleDeps, input: RunAgentInput): Run
     : undefined;
   return {
     agent: deps.agentFor(input.runner, input.model, { effort: input.effort }),
-    sandbox: deps.sandboxFor(input.sandboxMode ?? "none"),
+    // Bind-mount the host attempt dir into the container at the identical path
+    // (issue #405) so the proof-of-life lane + the worktree sandcastle creates
+    // under it are host-visible mid-run — the precondition for arming the guard +
+    // heartbeat under docker/podman. `none` ignores `mountPath` (no container).
+    sandbox: deps.sandboxFor(input.sandboxMode ?? "none", input.cwd ? { mountPath: input.cwd } : undefined),
     // Re-anchor sandcastle's `.sandcastle/` dir + git ops at the caller's cwd
     // (AFK's per-attempt dir under .red/) so nothing is generated at the repo
     // root. Omitted → sandcastle defaults to process.cwd().
@@ -811,9 +824,17 @@ export async function defaultSandcastleDeps(): Promise<SandcastleDeps> {
       ? core.codex(model, effort ? ({ effort } as Parameters<typeof core.codex>[1]) : undefined)
       : core.claudeCode(model, effort ? ({ effort } as Parameters<typeof core.claudeCode>[1]) : undefined);
   };
-  const sandboxFor: SandcastleDeps["sandboxFor"] = (mode) => {
-    if (mode === "docker") return dockerMod.docker();
-    if (mode === "podman") return podmanMod.podman();
+  const sandboxFor: SandcastleDeps["sandboxFor"] = (mode, opts) => {
+    // Issue #405: bind-mount the host attempt dir at the identical path so the
+    // worktree sandcastle creates under it + the proof-of-life lane files are
+    // host-visible in real time, arming the progress guard + heartbeat under
+    // isolation. The mount uses an identity host→sandbox path so host probes
+    // (branchHead / worktree diffstat) resolve the same locations the agent
+    // writes. hostPath must exist (process-issue creates the attempt dir before
+    // the run), else sandcastle fails fast with a clear error.
+    const mounts = opts?.mountPath ? [{ hostPath: opts.mountPath, sandboxPath: opts.mountPath }] : undefined;
+    if (mode === "docker") return dockerMod.docker(mounts ? { mounts } : undefined);
+    if (mode === "podman") return podmanMod.podman(mounts ? { mounts } : undefined);
     return noSandboxMod.noSandbox();
   };
   return { run: core.run as SandcastleDeps["run"], agentFor, sandboxFor, warn };

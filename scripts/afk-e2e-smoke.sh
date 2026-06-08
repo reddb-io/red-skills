@@ -173,7 +173,39 @@ else
       *ready-for-human*) warn "issue → ready-for-human (BLOCKED/no-sentinel/merge-conflict) — read the envelope on the issue + $log" ;;
       *) warn "issue state '$state' — inspect $log" ;;
     esac
-    echo "  diagnostics: latest worker log → $(ls -t .red/tmp/workers/*/*/afk.log 2>/dev/null | head -1 || echo none)"
+    latest_dir="$(ls -td .red/tmp/workers/*/*/ 2>/dev/null | head -1)"
+    echo "  diagnostics: latest worker dir → ${latest_dir:-none}"
+
+    # ---- issue #405: prove the guard + heartbeat armed UNDER ISOLATION --------
+    # ADR 0054 lifts the guard + externalized heartbeat from no-sandbox-only to
+    # docker/podman (attempt-dir bind-mount makes the worker branch + proof-of-life
+    # lane host-visible mid-run). When the gate ran under isolation, prove it
+    # end-to-end: the agent ran in a real container AND a periodic heartbeat fired.
+    if [ "$SANDBOX" != "none" ] && [ -n "${latest_dir:-}" ]; then
+      hdr "Phase 3.5 — issue #405: guard + heartbeat under $SANDBOX isolation"
+      # (a) the agent really ran in a container: sandcastle logs a sandcastle-<uuid>
+      #     container, and the bind-mount provider creates the worktree on the host.
+      if grep -qiE "sandcastle-[0-9a-f-]{8}|docker (run|exec)|podman (run|exec)|container" "$latest_dir/sandcastle.log" "$log" 2>/dev/null; then
+        pass "container execution observed in the sandcastle log ($SANDBOX)"
+      else
+        warn "no explicit container marker in logs — confirm '$SANDBOX run' happened (inspect $latest_dir/sandcastle.log)"
+      fi
+      # (b) the externalized proof-of-life heartbeat fired under isolation: an
+      #     enriched type=heartbeat record in the firehose + last_progress_at state.
+      if grep -q '"type":"heartbeat"' "$latest_dir/log.jsonl" 2>/dev/null; then
+        pass "type=heartbeat firehose record present under isolation (AC2)"
+      else
+        warn "no type=heartbeat record in $latest_dir/log.jsonl — short runs may finish before the first ~60s poll; lengthen the test issue"
+      fi
+      if grep -q 'last_progress_at' "$latest_dir/afk.state.json" 2>/dev/null; then
+        pass "current.last_progress_at mirrored into afk.state.json under isolation (AC2)"
+      else
+        warn "no last_progress_at in $latest_dir/afk.state.json — guard may not have polled (short run)"
+      fi
+      echo "  Note: AC1 (guard aborts a mid-run stall under $SANDBOX) needs a"
+      echo "  deliberately-stalling issue + a low RED_AFK_ATTEMPT_TIMEOUT_S; expect"
+      echo "  the issue to land 'ready-for-human' with blocked:stalled."
+    fi
   fi
 fi
 
