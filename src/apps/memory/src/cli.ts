@@ -938,6 +938,7 @@ async function rejectLinkedEvidenceCard(
   const rawStatus = firstYamlScalar(found.body, "status");
   const proposalPath = firstNestedYamlScalar(found.body, "proposal", "path");
   if (rawStatus === "rejected") {
+    if (proposalPath) await markProposalEvidenceRejected(rootDir, proposalPath, id, reason);
     return { id, status: "rejected", path: found.path, ...(proposalPath ? { proposalPath } : {}) };
   }
   if (rawStatus !== "proposed") {
@@ -981,10 +982,10 @@ function withLinkedEvidenceReview(
   next = next.replace(/\nreview:\n(?:  .+\n)*/m, "\n");
   const review = [
     "review:",
-    `  state: ${yamlScalar(status)}`,
+    `  decision: ${yamlScalar(status)}`,
     ...(reviewer ? [`  reviewer: ${yamlScalar(reviewer)}`] : []),
     `  reviewed_at: ${yamlScalar(now)}`,
-    ...(reason ? [`  reason: ${yamlScalar(reason)}`] : []),
+    ...(reason ? [`  notes: ${yamlScalar(status === "rejected" ? (redactSensitiveValue(reason) as string) : reason)}`] : []),
   ].join("\n");
   return next.replace(/\nproposal:\n/, `\n${review}\nproposal:\n`);
 }
