@@ -34,13 +34,14 @@ stale notes inline.
 - **0030** AFK landing is lock-toggled; the PR carries the history
 - **0031** Branch-lock value drives AFK base/merge; enforcement stays agent-only
 - **0033** AFK agent execution runs on `@ai-hero/sandcastle`
-- **0044** AFK attempt progress guard aborts stalled-but-busy attempts to `blocked:stalled` without requiring a promise sentinel
-- **0045** AFK externalized proof-of-life: heartbeat record, state field, and periodic `on_heartbeat` hook *(extends 0026; follows 0044)*
+- **0044** AFK attempt progress guard aborts stalled-but-busy attempts to `blocked:stalled` without requiring a promise sentinel — *§4 "no-sandbox only" superseded by **0054***
+- **0045** AFK externalized proof-of-life: heartbeat record, state field, and periodic `on_heartbeat` hook *(extends 0026; follows 0044; §4 "no-sandbox only" superseded by **0054**)*
 - **0047** AFK salvages a no-sentinel branch that already passes feedback *(complements 0028)*
 - **0048** AFK merges without advice; in-process backpressure (`drift-guard` + feedback) is the guardrail — opt into waiting with `afk.merge.wait_for_review` *(refines 0030, 0008)*
 - **0049** Model-tier routing embedded in the plugin (single config source), enforced by the shared skill + hooks + sandcastle trio, per runner *(relates 0003, 0033)*
 - **0050** AFK salvages an uncommitted worktree when the inner agent emits DONE without committing (codex non-compliance net) *(complements 0047, 0028)*
 - **0051** AFK attempt-progress guard resets on worktree edits, not just commits — stops false-stalling the productive-but-not-committing codex runner *(refines 0044, 0045)*
+- **0054** AFK arms the attempt guard + heartbeat under docker/podman isolation via an attempt-dir bind mount; lane-idle reaper stays host-only *(supersedes 0044 §4 / 0045 §4; relies on 0033; absorbs #284 docker E2E)*
 
 ## Branch lock
 - **0006** Branch lock enforces on the agent only, not the human terminal

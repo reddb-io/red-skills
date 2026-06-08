@@ -20,7 +20,7 @@ Externalize proof-of-life on the attempt guard's existing **~60s poll cadence** 
    - **State field** — `current.last_progress_at` mirrored into `afk.state.json` (integrators/monitors *read* it).
    - **`on_heartbeat` hook** — a new canonical lifecycle hook (user shell, ADR 0026 model; `continue` exit policy). Unlike the once-per-point lifecycle hooks it fires **periodically** during a run; a user command receives the heartbeat context so an external monitor can be *pushed* to. No built-in default; absent config → no-op.
 
-4. **Armed where the guard is armed** (no-sandbox): the heartbeat rides the guard's tick, so under docker/podman (where the guard is skipped — commits not host-visible mid-run) no periodic heartbeat fires either. Liveness there remains the agent lane + `idleTimeoutSeconds`.
+4. **Armed where the guard is armed** (no-sandbox): the heartbeat rides the guard's tick, so under docker/podman (where the guard is skipped — commits not host-visible mid-run) no periodic heartbeat fires either. Liveness there remains the agent lane + `idleTimeoutSeconds`. **(Superseded by ADR 0054, issue #405: the guard now arms under docker/podman via the attempt-dir bind mount, so the heartbeat rides its tick under isolation too.)**
 
 ## Consequences
 

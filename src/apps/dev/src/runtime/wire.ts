@@ -173,6 +173,47 @@ export function agentLaneMtimeSeconds(lanePath: string): number {
   }
 }
 
+// ---------- attempt-guard arming policy (pure) ----------
+
+/** What an attempt run arms, decided from sandbox mode + available signals. */
+export interface AttemptGuardArming {
+  /**
+   * Arm the attempt progress guard (ADR 0044) + externalized heartbeat
+   * (ADR 0045). True for EVERY sandbox mode once a worker branch exists
+   * (issue #405): under docker/podman sandcastle's bind-mount providers
+   * host-create the worktree and bind-mount it + the shared `.git` into the
+   * container, and #405 additionally bind-mounts the attempt dir — so the worker
+   * branch's commits + worktree edits are host-visible mid-run and the
+   * commit/volume probes no longer false-fire. (ADR 0044's "isolated copy"
+   * premise described a copy-isolated sandbox; sandcastle 0.6.x bind-mounts.)
+   */
+  guardArmed: boolean;
+  /**
+   * Arm the lane-idle stall reaper (issue #363). NO-SANDBOX only: its
+   * busy-predicate inspects the HOST process tree, which cannot see the inner
+   * agent inside a container — under docker/podman it would read every container
+   * as "not busy" and could reap a genuinely-busy worker. Decoupled from
+   * `guardArmed` (#405) so arming the guard under isolation never drags the
+   * host-blind reaper along with it.
+   */
+  laneArmed: boolean;
+}
+
+/**
+ * Decide what an attempt run arms, given the resolved sandbox mode and the
+ * presence of a worker branch / attempt dir. Pure so the isolated-mode arming
+ * decision is unit-testable without sandcastle or git.
+ */
+export function resolveAttemptGuardArming(opts: {
+  sandbox: SandboxMode;
+  branch: string | undefined;
+  attemptDir: string | undefined;
+}): AttemptGuardArming {
+  const guardArmed = !!opts.branch;
+  const laneArmed = opts.sandbox === "none" && guardArmed && !!opts.attemptDir;
+  return { guardArmed, laneArmed };
+}
+
 // ---------- lazy sandcastle runAgent binding ----------
 
 /**
@@ -205,28 +246,30 @@ export function makeRunAgent(
     // same typo-safe contract.
     const envIdleTimeout = parseIdleTimeout(env.RED_AFK_IDLE_TIMEOUT_S);
     const effectiveSandbox = input.sandboxMode ?? sandbox;
-    // Attempt progress guard (proof-of-progress). Armed only under no-sandbox
-    // isolation: there the worker branch's commits land in the shared `.git`, so
-    // `branchHead` sees HEAD advance. Under docker/podman the agent commits in an
-    // isolated copy not host-visible until final sync, so a commit-anchored guard
-    // would false-fire — skip it there (idle timeout + maxIterations still apply).
+    // Attempt progress guard (proof-of-progress) + externalized heartbeat. Armed
+    // for EVERY sandbox mode now (issue #405): under docker/podman sandcastle's
+    // bind-mount providers host-create the worktree and bind-mount it + the
+    // shared `.git` into the container, and #405 additionally bind-mounts the
+    // attempt dir (buildRunOptions), so `branchHead` sees HEAD advance and the
+    // worktree diffstat reflects in-container edits — the commit/volume probes no
+    // longer false-fire under isolation. The lane-idle reaper stays no-sandbox
+    // only (its host process-tree busy-predicate is blind to a containerized
+    // agent); resolveAttemptGuardArming decouples the two.
     const attemptTimeout =
       input.attemptTimeoutSeconds ??
       attemptTimeoutSeconds ??
       parseAttemptTimeout(env.RED_AFK_ATTEMPT_TIMEOUT_S) ??
       DEFAULT_ATTEMPT_TIMEOUT_S;
-    const guardArmed = effectiveSandbox === "none" && !!input.branch;
-    // Lane-idle stall reaper (issue #363): armed under the SAME no-sandbox
-    // condition as the progress guard. Under docker/podman the inner agent runs
-    // in a container, so the host process tree can't see its build/test
-    // descendants — the busy-predicate would read every container as "not busy"
-    // and could reap a busy worker; skip it there (the idle timeout +
-    // maxIterations + final-sync still apply). Resolved lane-idle config is
-    // threaded from resolveRunSettings (validated at boot); a caller that
-    // constructed makeRunAgent without one falls back to the env-resolved config.
+    // Resolved lane-idle config is threaded from resolveRunSettings (validated at
+    // boot); a caller that constructed makeRunAgent without one falls back to the
+    // env-resolved config.
     const laneIdleCfg = laneIdle ?? resolveLaneIdleStallConfig(env);
     const laneAttemptDir = input.cwd;
-    const laneArmed = guardArmed && !!laneAttemptDir;
+    const { guardArmed, laneArmed } = resolveAttemptGuardArming({
+      sandbox: effectiveSandbox,
+      branch: input.branch,
+      attemptDir: laneAttemptDir,
+    });
     return runAgent(deps, {
       ...input,
       sandboxMode: effectiveSandbox,

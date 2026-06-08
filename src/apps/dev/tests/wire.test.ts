@@ -2,11 +2,58 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afkPaths, resolveRunSettings, collectMonitorInputs, readFleetState } from "../src/runtime/wire.js";
+import {
+  afkPaths,
+  resolveRunSettings,
+  collectMonitorInputs,
+  readFleetState,
+  resolveAttemptGuardArming,
+} from "../src/runtime/wire.js";
 
 function scratch(): string {
   return mkdtempSync(join(tmpdir(), "afk-wire-"));
 }
+
+describe("resolveAttemptGuardArming (issue #405)", () => {
+  const dir = "/red/tmp/workers/w1/42-a1";
+
+  it("arms the guard + lane-idle reaper under no-sandbox", () => {
+    expect(resolveAttemptGuardArming({ sandbox: "none", branch: "afk/x/1", attemptDir: dir })).toEqual({
+      guardArmed: true,
+      laneArmed: true,
+    });
+  });
+
+  it("arms the guard but NOT the lane-idle reaper under docker (host process tree is container-blind)", () => {
+    expect(resolveAttemptGuardArming({ sandbox: "docker", branch: "afk/x/1", attemptDir: dir })).toEqual({
+      guardArmed: true,
+      laneArmed: false,
+    });
+  });
+
+  it("arms the guard but NOT the lane-idle reaper under podman", () => {
+    expect(resolveAttemptGuardArming({ sandbox: "podman", branch: "afk/x/1", attemptDir: dir })).toEqual({
+      guardArmed: true,
+      laneArmed: false,
+    });
+  });
+
+  it("arms nothing without a worker branch (every mode)", () => {
+    for (const sandbox of ["none", "docker", "podman"] as const) {
+      expect(resolveAttemptGuardArming({ sandbox, branch: undefined, attemptDir: dir })).toEqual({
+        guardArmed: false,
+        laneArmed: false,
+      });
+    }
+  });
+
+  it("does not arm the lane-idle reaper without an attempt dir even under no-sandbox", () => {
+    expect(resolveAttemptGuardArming({ sandbox: "none", branch: "afk/x/1", attemptDir: undefined })).toEqual({
+      guardArmed: true,
+      laneArmed: false,
+    });
+  });
+});
 
 describe("afkPaths", () => {
   it("derives the standard .red layout from a root", () => {
