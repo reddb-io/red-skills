@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
@@ -247,5 +247,158 @@ describe("memory evidence CLI", () => {
 
     const files = await readdir(evidenceInboxRoot(root));
     expect(files.sort()).toEqual([`${approvedId}.yaml`, `${rejectedId}.yaml`].sort());
+  }, TIMEOUT);
+
+  test("reviews linked proposal cards without applying or archiving proposals", async () => {
+    const root = await tempRoot();
+    expect(runMemory(["init", "--mode", "graph", "--root", root, "--yes"]).status).toBe(0);
+    const proposalDir = join(root, ".red", "memory", "proposals");
+    await mkdir(proposalDir, { recursive: true });
+    const approvedProposal = join(proposalDir, "approve-linked.md");
+    const rejectedProposal = join(proposalDir, "reject-linked.md");
+    await writeFile(approvedProposal, "# Skill Improvement Proposal: approve\n\nPatch later.\n", "utf8");
+    await writeFile(rejectedProposal, "# Skill Improvement Proposal: reject\n\nPatch later.\n", "utf8");
+
+    const createApproved = runMemory([
+      "evidence",
+      "create",
+      "--root",
+      root,
+      "--summary",
+      "Approving a linked Evidence card validates only the evidence interpretation.",
+      "--source-ref",
+      "issue 549",
+      "--citation",
+      "issue 549||approve linked card",
+      "--lesson",
+      "Keep linked proposal application separate from card approval.",
+      "--proposal-kind",
+      "skill-improvement",
+      "--proposal-path",
+      ".red/memory/proposals/approve-linked.md",
+      "--proposal-apply-state",
+      "pending",
+      "--json",
+    ]);
+    expect(createApproved.status, createApproved.stderr).toBe(0);
+    const approvedId = (JSON.parse(createApproved.stdout) as { card: { id: string } }).card.id;
+    const beforeApprove = await readFile(approvedProposal, "utf8");
+    const approve = runMemory(["evidence", "approve", approvedId, "--root", root, "--reviewer", "maintainer", "--yes", "--json"]);
+    expect(approve.status, approve.stderr).toBe(0);
+    expect(await readFile(approvedProposal, "utf8")).toBe(beforeApprove);
+    const approvedCardBody = await readFile(join(evidenceInboxRoot(root), `${approvedId}.yaml`), "utf8");
+    expect(approvedCardBody).toContain("status: approved");
+    expect(approvedCardBody).toContain("state: approved");
+
+    const createRejected = runMemory([
+      "evidence",
+      "create",
+      "--root",
+      root,
+      "--summary",
+      "Rejecting a linked Evidence card warns the linked proposal only.",
+      "--source-ref",
+      "issue 549",
+      "--citation",
+      "issue 549||reject linked card",
+      "--lesson",
+      "Warn when evidence interpretation is rejected.",
+      "--proposal-kind",
+      "skill-improvement",
+      "--proposal-path",
+      ".red/memory/proposals/reject-linked.md",
+      "--proposal-apply-state",
+      "pending",
+      "--json",
+    ]);
+    expect(createRejected.status, createRejected.stderr).toBe(0);
+    const rejectedId = (JSON.parse(createRejected.stdout) as { card: { id: string } }).card.id;
+    const reject = runMemory([
+      "evidence",
+      "reject",
+      rejectedId,
+      "--root",
+      root,
+      "--reason",
+      "evidence interpretation was wrong for token sk-test_1234567890abcdefghijklmnopqrstuv",
+      "--reviewer",
+      "maintainer",
+      "--yes",
+      "--json",
+    ]);
+    expect(reject.status, reject.stderr).toBe(0);
+    const rejectedCardBody = await readFile(join(evidenceInboxRoot(root), `${rejectedId}.yaml`), "utf8");
+    expect(rejectedCardBody).toContain("status: rejected");
+    expect(rejectedCardBody).toContain("state: rejected");
+    const rejectedProposalBody = await readFile(rejectedProposal, "utf8");
+    expect(rejectedProposalBody).toContain("## Evidence Card Review Warning");
+    expect(rejectedProposalBody).toContain(`Evidence card id: ${rejectedId}`);
+    expect(rejectedProposalBody).toContain("evidence interpretation was wrong for token [REDACTED:openai-token]");
+    expect((await readdir(proposalDir)).sort()).toEqual(["approve-linked.md", "reject-linked.md"].sort());
+
+    const v1RejectedId = "skill-card-549-rejected";
+    const v1RejectedCard = join(evidenceInboxRoot(root), `${v1RejectedId}.yaml`);
+    await writeFile(
+      v1RejectedCard,
+      [
+        'contract: "memory.evidence-card.experimental.v1"',
+        `id: "${v1RejectedId}"`,
+        'status: "proposed"',
+        'updated_at: "2026-01-01T00:00:00.000Z"',
+        "review:",
+        "  decision: null",
+        "proposal:",
+        '  path: ".red/memory/proposals/reject-linked.md"',
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    await writeFile(rejectedProposal, "# Skill Improvement Proposal: reject\n\nPatch later.\n", "utf8");
+    const rejectV1 = runMemory([
+      "evidence",
+      "reject",
+      v1RejectedId,
+      "--root",
+      root,
+      "--reason",
+      "evidence interpretation was wrong for token sk-test_1234567890abcdefghijklmnopqrstuv",
+      "--reviewer",
+      "maintainer",
+      "--yes",
+      "--json",
+    ]);
+    expect(rejectV1.status, rejectV1.stderr).toBe(0);
+    const rejectedV1CardBody = await readFile(v1RejectedCard, "utf8");
+    expect(rejectedV1CardBody).toContain('status: "rejected"');
+    expect(rejectedV1CardBody).toContain('decision: "rejected"');
+    expect(rejectedV1CardBody).toContain('notes: "evidence interpretation was wrong for token [REDACTED:openai-token]"');
+
+    await writeFile(rejectedProposal, "# Skill Improvement Proposal: reject\n\nPatch later.\n", "utf8");
+    const rejectAgain = runMemory([
+      "evidence",
+      "reject",
+      v1RejectedId,
+      "--root",
+      root,
+      "--reason",
+      "evidence interpretation was still wrong",
+      "--reviewer",
+      "maintainer",
+      "--yes",
+      "--json",
+    ]);
+    expect(rejectAgain.status, rejectAgain.stderr).toBe(0);
+    const retriedProposalBody = await readFile(rejectedProposal, "utf8");
+    expect(retriedProposalBody).toContain("## Evidence Card Review Warning");
+    expect(retriedProposalBody).toContain(`Evidence card id: ${v1RejectedId}`);
+    expect(retriedProposalBody).toContain("evidence interpretation was wrong for token [REDACTED:openai-token]");
+    expect(retriedProposalBody).not.toContain("evidence interpretation was still wrong");
+
+    const applyWithoutApproval = runMemory(["improve", "apply", rejectedProposal, "--root", root, "--json"]);
+    expect(applyWithoutApproval.status).not.toBe(0);
+    expect(applyWithoutApproval.stderr).toContain("requires explicit --yes approval");
+    const applyWithoutStructuredBlock = runMemory(["improve", "apply", rejectedProposal, "--root", root, "--yes", "--json"]);
+    expect(applyWithoutStructuredBlock.status).not.toBe(0);
+    expect(applyWithoutStructuredBlock.stderr).toContain("structured memory-skill-patch block");
   }, TIMEOUT);
 });

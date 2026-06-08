@@ -866,7 +866,10 @@ async function runEvidence(args: ParsedArgs): Promise<void> {
       if (args.flags.yes !== true) {
         throw new Error("memory evidence approve requires explicit --yes approval");
       }
-      const card = await approveEvidenceCard(rootDir, id, stringFlag(args.flags, "reviewer"));
+      const reviewer = stringFlag(args.flags, "reviewer");
+      const linked = await approveLinkedEvidenceCard(rootDir, id, reviewer);
+      if (linked) return printLinkedEvidenceResult("approved", linked, args.flags.json === true);
+      const card = await approveEvidenceCard(rootDir, id, reviewer);
       return printEvidenceResult("approved", card, args.flags.json === true);
     }
     case "reject": {
@@ -877,17 +880,162 @@ async function runEvidence(args: ParsedArgs): Promise<void> {
       }
       const reason = stringFlag(args.flags, "reason")?.trim();
       if (!reason) throw new Error("memory evidence reject requires a non-empty --reason");
+      const reviewer = stringFlag(args.flags, "reviewer");
+      const linked = await rejectLinkedEvidenceCard(rootDir, id, reason, reviewer);
+      if (linked) return printLinkedEvidenceResult("rejected", linked, args.flags.json === true);
       const card = await rejectEvidenceCard(
         rootDir,
         id,
         reason,
-        stringFlag(args.flags, "reviewer"),
+        reviewer,
       );
+      if (card.proposal_link.path) {
+        await markProposalEvidenceRejected(rootDir, card.proposal_link.path, card.id, reason);
+      }
       return printEvidenceResult("rejected", card, args.flags.json === true);
     }
     default:
       throw new Error("usage: memory evidence create|list|show|approve|reject [args]");
   }
+}
+
+interface LinkedEvidenceReviewResult {
+  id: string;
+  status: "approved" | "rejected";
+  path: string;
+  proposalPath?: string;
+}
+
+async function approveLinkedEvidenceCard(
+  rootDir: string,
+  id: string,
+  reviewer: string | undefined,
+): Promise<LinkedEvidenceReviewResult | null> {
+  const found = await findLinkedEvidenceCard(rootDir, id);
+  if (!found) return null;
+  const rawStatus = firstYamlScalar(found.body, "status");
+  if (rawStatus === "approved") {
+    const proposalPath = firstNestedYamlScalar(found.body, "proposal", "path");
+    return { id, status: "approved", path: found.path, ...(proposalPath ? { proposalPath } : {}) };
+  }
+  if (rawStatus !== "proposed") {
+    throw new Error(`memory evidence card ${id} cannot be approved from status ${rawStatus ?? "unknown"}`);
+  }
+  const updated = withLinkedEvidenceReview(found.body, "approved", reviewer);
+  await writeFile(found.path, updated, "utf8");
+  const proposalPath = firstNestedYamlScalar(updated, "proposal", "path");
+  return { id, status: "approved", path: found.path, ...(proposalPath ? { proposalPath } : {}) };
+}
+
+async function rejectLinkedEvidenceCard(
+  rootDir: string,
+  id: string,
+  reason: string,
+  reviewer: string | undefined,
+): Promise<LinkedEvidenceReviewResult | null> {
+  const found = await findLinkedEvidenceCard(rootDir, id);
+  if (!found) return null;
+  const rawStatus = firstYamlScalar(found.body, "status");
+  const proposalPath = firstNestedYamlScalar(found.body, "proposal", "path");
+  if (rawStatus === "rejected") {
+    const reviewNotes = firstNestedYamlScalar(found.body, "review", "notes");
+    if (proposalPath) await markProposalEvidenceRejected(rootDir, proposalPath, id, reviewNotes ?? reason);
+    return { id, status: "rejected", path: found.path, ...(proposalPath ? { proposalPath } : {}) };
+  }
+  if (rawStatus !== "proposed") {
+    throw new Error(`memory evidence card ${id} cannot be rejected from status ${rawStatus ?? "unknown"}`);
+  }
+  const updated = withLinkedEvidenceReview(found.body, "rejected", reviewer, reason);
+  await writeFile(found.path, updated, "utf8");
+  if (proposalPath) await markProposalEvidenceRejected(rootDir, proposalPath, id, reason);
+  return { id, status: "rejected", path: found.path, ...(proposalPath ? { proposalPath } : {}) };
+}
+
+async function findLinkedEvidenceCard(rootDir: string, id: string): Promise<{ path: string; body: string } | null> {
+  const dir = join(rootDir, ".red", "memory", "inbox", "evidence");
+  let entries;
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+  const idLine = `id: ${yamlScalar(id)}`;
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith(".yaml")) continue;
+    const path = join(dir, entry.name);
+    const body = await readFile(path, "utf8");
+    if (body.includes('contract: "memory.evidence-card.experimental.v1"') && body.includes(idLine)) {
+      return { path, body };
+    }
+  }
+  return null;
+}
+
+function withLinkedEvidenceReview(
+  body: string,
+  status: "approved" | "rejected",
+  reviewer: string | undefined,
+  reason?: string,
+): string {
+  const now = new Date().toISOString();
+  let next = body.replace(/^status: .+$/m, `status: ${yamlScalar(status)}`);
+  next = next.replace(/^updated_at: .+$/m, `updated_at: ${yamlScalar(now)}`);
+  next = next.replace(/\nreview:\n(?:  .+\n)*/m, "\n");
+  const review = [
+    "review:",
+    `  decision: ${yamlScalar(status)}`,
+    ...(reviewer ? [`  reviewer: ${yamlScalar(reviewer)}`] : []),
+    `  reviewed_at: ${yamlScalar(now)}`,
+    ...(reason ? [`  notes: ${yamlScalar(status === "rejected" ? (redactSensitiveValue(reason) as string) : reason)}`] : []),
+  ].join("\n");
+  return next.replace(/\nproposal:\n/, `\n${review}\nproposal:\n`);
+}
+
+async function markProposalEvidenceRejected(
+  rootDir: string,
+  proposalPathValue: string,
+  evidenceCardId: string,
+  reason: string,
+): Promise<void> {
+  const proposalPath = resolve(rootDir, proposalPathValue);
+  assertInsideRoot(rootDir, proposalPath, "proposal file");
+  assertInsideProposalTree(rootDir, proposalPath);
+  const body = await readFile(proposalPath, "utf8");
+  const marker = `Evidence card id: ${evidenceCardId}`;
+  if (body.includes(marker) && body.includes("Evidence Card Review Warning")) return;
+  const redactedReason = redactSensitiveValue(reason) as string;
+  const warning = [
+    "",
+    "## Evidence Card Review Warning",
+    "",
+    `- Evidence card id: ${evidenceCardId}`,
+    "- Status: rejected",
+    `- Reason: ${redactedReason}`,
+    "",
+    "The evidence interpretation for the linked card was rejected. This warning does not archive, move, delete, apply, or otherwise approve this proposal.",
+    "",
+  ].join("\n");
+  await writeFile(proposalPath, `${body.trimEnd()}\n${warning}`, "utf8");
+}
+
+function firstYamlScalar(body: string, key: string): string | null {
+  const match = body.match(new RegExp(`^${escapeRegExp(key)}: (.+)$`, "m"));
+  return match ? unquoteYamlScalar(match[1]) : null;
+}
+
+function firstNestedYamlScalar(body: string, parent: string, key: string): string | null {
+  const match = body.match(new RegExp(`^${escapeRegExp(parent)}:\\n(?:  .+\\n)*?  ${escapeRegExp(key)}: (.+)$`, "m"));
+  return match ? unquoteYamlScalar(match[1]) : null;
+}
+
+function unquoteYamlScalar(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.startsWith('"')) return JSON.parse(trimmed) as string;
+  return trimmed;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function evidenceCardInputFromFlags(args: ParsedArgs): CreateEvidenceCardInput {
@@ -982,6 +1130,17 @@ function printEvidenceResult(action: string, card: EvidenceCard, json: boolean):
   }
   console.log(`memory evidence: ${action} ${card.id}`);
   console.log(`  status: ${card.status}`);
+}
+
+function printLinkedEvidenceResult(action: string, card: LinkedEvidenceReviewResult, json: boolean): void {
+  if (json) {
+    console.log(JSON.stringify({ state: action, card }, null, 2));
+    return;
+  }
+  console.log(`memory evidence: ${action} ${card.id}`);
+  console.log(`  status: ${card.status}`);
+  console.log(`  card: ${card.path}`);
+  if (card.proposalPath) console.log(`  proposal: ${card.proposalPath}`);
 }
 
 function printEvidenceList(cards: EvidenceCard[]): void {
@@ -4526,10 +4685,6 @@ function parseYamlScalar(value: string): string | null {
   } catch {
     return raw;
   }
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function parseSkillTelemetryEvidenceCardStatus(value: string | null): SkillTelemetryEvidenceCardStatus {
