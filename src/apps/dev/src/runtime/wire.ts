@@ -18,6 +18,9 @@ import type { AgentEffort, RunAgentInput, RunAgentResult } from "../core/executi
 // defaultSandcastleDeps' dynamic import) so resolveRunSettings can parse the
 // max-iterations knob from env/config without importing the runtime.
 import { parseAttemptTimeout, parseMaxIterations } from "../core/execution.js";
+import { resolveLaneIdleStallConfig, type LaneIdleStallConfig } from "../core/lane-idle-reaper.js";
+import { inspectProcessTreeNative } from "./proc-tree.js";
+import { statSync } from "node:fs";
 import type { BranchRef } from "../core/branch-cleanup.js";
 import { isRunner, type Runner } from "../types/runner.js";
 import * as ghx from "./gh.js";
@@ -95,6 +98,16 @@ export interface RunSettings {
    * commit within the cap (proof-of-progress) → blocked:stalled / ready-for-human.
    */
   attemptTimeoutSeconds?: number;
+  /**
+   * Solo-path lane-idle stall reaper config (issue #363), resolved + validated
+   * at boot via resolveLaneIdleStallConfig (RED_AFK_STALL_THRESHOLD_S /
+   * RED_AFK_STALL_KILL_THRESHOLD_S / RED_AFK_STALL_POLL_S, fleet defaults
+   * 600 / 1800 / 30). A kill ≤ soft threshold THROWS here, so a misconfigured
+   * solo run fails fast at boot — the same invariant the supervisor enforces.
+   * Complementary to attemptTimeoutSeconds: this cuts an idle hang at the stall
+   * threshold; the progress guard caps the whole attempt on no-commit.
+   */
+  laneIdle: LaneIdleStallConfig;
 }
 
 const SANDBOX_MODES: readonly SandboxMode[] = ["none", "docker", "podman"];
@@ -131,7 +144,33 @@ export function resolveRunSettings(
   // undefined from either source.
   const attemptTimeoutSeconds =
     parseAttemptTimeout(env.RED_AFK_ATTEMPT_TIMEOUT_S) ?? parseAttemptTimeout(getConfig(cfg, "afk.attempt_timeout"));
-  return { sandbox, defaultRunner, model: tier.model, effort: tier.effort, maxIterations, attemptTimeoutSeconds };
+  // Solo lane-idle reaper thresholds (issue #363), env-driven with fleet
+  // defaults and the same boot invariant (kill > soft) — throws here on a `<=`
+  // config so the run fails fast before claiming an issue.
+  const laneIdle = resolveLaneIdleStallConfig(env);
+  return {
+    sandbox,
+    defaultRunner,
+    model: tier.model,
+    effort: tier.effort,
+    maxIterations,
+    attemptTimeoutSeconds,
+    laneIdle,
+  };
+}
+
+/** mtime of the solo attempt's agent lane (`agent.log.jsonl`) in whole epoch
+ * seconds, 0 when the lane does not exist yet / cannot be stat'd. The clean
+ * liveness signal the solo lane-idle reaper keys off — mirrors the fleet
+ * `agentLaneMtimeFor` stat, but resolved directly from the attempt dir the solo
+ * worker already holds (no slot-pid round-trip). Best-effort: any stat failure
+ * degrades to 0 (no lane observed), which computeStalled never flags. */
+export function agentLaneMtimeSeconds(lanePath: string): number {
+  try {
+    return Math.floor(statSync(lanePath).mtimeMs / 1000);
+  } catch {
+    return 0;
+  }
 }
 
 // ---------- lazy sandcastle runAgent binding ----------
@@ -147,6 +186,7 @@ export function makeRunAgent(
   env: NodeJS.ProcessEnv = process.env,
   maxIterations?: number,
   attemptTimeoutSeconds?: number,
+  laneIdle?: LaneIdleStallConfig,
 ): (input: RunAgentInput) => Promise<RunAgentResult> {
   let depsPromise: Promise<import("../core/execution.js").SandcastleDeps> | null = null;
   return async (input: RunAgentInput): Promise<RunAgentResult> => {
@@ -176,6 +216,17 @@ export function makeRunAgent(
       parseAttemptTimeout(env.RED_AFK_ATTEMPT_TIMEOUT_S) ??
       DEFAULT_ATTEMPT_TIMEOUT_S;
     const guardArmed = effectiveSandbox === "none" && !!input.branch;
+    // Lane-idle stall reaper (issue #363): armed under the SAME no-sandbox
+    // condition as the progress guard. Under docker/podman the inner agent runs
+    // in a container, so the host process tree can't see its build/test
+    // descendants — the busy-predicate would read every container as "not busy"
+    // and could reap a busy worker; skip it there (the idle timeout +
+    // maxIterations + final-sync still apply). Resolved lane-idle config is
+    // threaded from resolveRunSettings (validated at boot); a caller that
+    // constructed makeRunAgent without one falls back to the env-resolved config.
+    const laneIdleCfg = laneIdle ?? resolveLaneIdleStallConfig(env);
+    const laneAttemptDir = input.cwd;
+    const laneArmed = guardArmed && !!laneAttemptDir;
     return runAgent(deps, {
       ...input,
       sandboxMode: effectiveSandbox,
@@ -197,6 +248,19 @@ export function makeRunAgent(
               const { added, removed } = await gitx.diffstatShortstat({ cwd: worktree }, "origin/main");
               return added + removed;
             },
+          }
+        : {}),
+      ...(laneArmed && laneAttemptDir
+        ? {
+            laneIdleThresholdSeconds: laneIdleCfg.stallThresholdS,
+            laneIdleKillThresholdSeconds: laneIdleCfg.stallKillThresholdS,
+            laneIdlePollSeconds: laneIdleCfg.stallPollS,
+            // Clean liveness signal: the attempt's agent.log.jsonl mtime in whole
+            // seconds, 0 when absent — NEVER afk.log / the firehose (#243).
+            laneMtimeProbe: () => agentLaneMtimeSeconds(`${laneAttemptDir}/agent.log.jsonl`),
+            // Inner-agent tree is a descendant of this worker process; the native
+            // inspector is safe-by-default (a failed ps reports busy, never reaps).
+            inspectTree: () => inspectProcessTreeNative(process.pid),
           }
         : {}),
     });

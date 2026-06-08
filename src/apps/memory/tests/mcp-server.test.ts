@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { afterEach, beforeAll, describe, expect, test } from "vitest";
+import { GRAPH_CONTRACT_VERSION } from "../src/graph-contract.js";
 import { MemoryStore } from "../src/graph-store.js";
 import {
   getReadOnlyMemoryOperation,
@@ -59,8 +60,19 @@ async function seedStore(): Promise<string> {
       hash: "jwt-doc",
       updated_at: 123,
     });
-    await store.upsertEdge({ label: "REFERENCES", from_rid: auth, to_rid: jwt });
-    await store.upsertEdge({ label: "REFERENCES", from_rid: jwt, to_rid: cache });
+    await store.upsertEdge({
+      label: "REFERENCES",
+      from_rid: auth,
+      to_rid: jwt,
+      weight: 2,
+      properties: { confidence: "EXTRACTED" },
+    });
+    await store.upsertEdge({
+      label: "REFERENCES",
+      from_rid: jwt,
+      to_rid: cache,
+      properties: { confidence: "INFERRED" },
+    });
   } finally {
     await store.close();
   }
@@ -219,6 +231,7 @@ describe("MCP server over stdio", () => {
           "memory_layers",
           "memory_layers_viewer",
           "memory_lint",
+          "memory_map_context",
           "memory_merge_pass",
           "memory_neighbors",
           "memory_onboarding_map",
@@ -277,6 +290,38 @@ describe("MCP server over stdio", () => {
       const supersedeTool = tools.find((tool) => tool.name === "memory_supersede");
       expect(storeTool?.description?.toLowerCase()).toContain("mutating");
       expect(supersedeTool?.description?.toLowerCase()).toContain("mutating");
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "memory_export returns the graph contract inline without writing a bundle",
+    async () => {
+      const client = await connect(await seedStore());
+      const res = (await client.callTool({
+        name: "memory_export",
+        arguments: {},
+      })) as ToolResult;
+      const body = JSON.parse(res.content[0]?.text ?? "{}") as {
+        contract: {
+          version: string;
+          nodes: Array<{ id: number; confidence: string | null; source_location: string | null }>;
+          edges: Array<{ id: number; weight: number; salience: number | null; kind: string }>;
+        };
+      };
+
+      expect(body.contract.version).toBe(GRAPH_CONTRACT_VERSION);
+      expect(body.contract.nodes.length).toBeGreaterThan(0);
+      expect(body.contract.edges.length).toBeGreaterThan(0);
+      expect(body.contract.nodes[0]).toHaveProperty("confidence");
+      expect(body.contract.nodes[0]).toHaveProperty("source_location");
+      expect(body.contract.nodes[0]).toHaveProperty("freshness");
+      expect(body.contract.nodes[0]).toHaveProperty("provenance");
+      expect(body.contract.edges[0]).toMatchObject({
+        weight: expect.any(Number),
+        freshness: expect.any(Object),
+      });
+      expect(body.contract.edges[0]).toHaveProperty("salience");
     },
     TIMEOUT,
   );
@@ -1000,16 +1045,23 @@ describe("MCP server over stdio", () => {
         schema_version: string;
         read_only: boolean;
         summary: { total_nodes: number };
+        tidy_availability: { status: string; reason: string };
       };
       expect(governance).toMatchObject({
         schema_version: "memory.governance.v1",
         read_only: true,
         summary: { total_nodes: 3 },
+        tidy_availability: {
+          status: "unavailable",
+          reason: "no AI provider configured for governance tidy",
+        },
       });
       expect(governanceRes.structuredContent).toMatchObject({
         operation_id: "memory.governance",
         schema_version: "memory.governance.v1",
         read_only: true,
+        tidy_status: "unavailable",
+        tidy_reason: "no AI provider configured for governance tidy",
       });
 
       const decayRes = (await client.callTool({
@@ -1041,9 +1093,12 @@ describe("MCP server over stdio", () => {
       });
       expect(governanceViewer.html).toContain("Memory Governance");
       expect(governanceViewer.html).toContain('id="memory-governance-data"');
+      expect(governanceViewer.html).toContain("Tidy availability");
       expect(governanceViewerRes.structuredContent).toMatchObject({
         operation_id: "memory.governance-viewer",
         consumes: "memory.governance.v1",
+        tidy_status: "unavailable",
+        tidy_reason: "no AI provider configured for governance tidy",
         html_bytes: expect.any(Number),
       });
 
@@ -1695,6 +1750,40 @@ describe("MCP server over stdio", () => {
       expect(nodes.some((n) => n.label === "auth-service")).toBe(true);
       expect(result.structuredContent?.diagnostics).toMatchObject({
         vector: { status: "unavailable" },
+      });
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "memory_map_context returns a compact graph slice for code-agent routing",
+    async () => {
+      const client = await connect(await seedStore());
+      const result = (await client.callTool({
+        name: "memory_map_context",
+        arguments: { query: "jwt rotation references", depth: 1, context: "reference" },
+      })) as ToolResult;
+
+      const slice = JSON.parse(result.content[0]?.text ?? "{}") as {
+        schema_version: string;
+        context_md: string;
+        nodes: Array<{ label: string; source: string | null }>;
+        edges: Array<{ label: string; weight: number; salience: number }>;
+        diagnostics: { selected_nodes: number; selected_edges: number };
+      };
+      expect(slice.schema_version).toBe("memory.map_context.v1");
+      expect(slice.context_md).toContain("NODE");
+      expect(slice.context_md).toContain("EDGE");
+      expect(slice.nodes.some((node) => node.label === "jwt-rotation")).toBe(true);
+      expect(slice.edges.some((edge) => edge.weight === 2 && edge.salience === 2)).toBe(true);
+      expect(result.structuredContent).toMatchObject({
+        operation_id: "memory.map-context",
+        schema_version: "memory.map_context.v1",
+        query: "jwt rotation references",
+        mode: "bfs",
+        depth: 1,
+        nodes: slice.diagnostics.selected_nodes,
+        edges: slice.diagnostics.selected_edges,
       });
     },
     TIMEOUT,

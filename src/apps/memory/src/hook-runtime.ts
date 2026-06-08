@@ -9,7 +9,11 @@ import { recall as engineRecall, type RecallResult } from "./engine.js";
 import { extractStructuredTranscript, factsToGraph } from "./extract-conversation.js";
 import { MemoryStore } from "./graph-store.js";
 import { type IngestReport, reindexFiles } from "./ingest.js";
-import { appendMemoryEvent, hookLifecycleToMemoryEvent } from "./memory-events.js";
+import {
+  appendMemoryEvent,
+  hookLifecycleToMemoryEvent,
+  memoryInjectionToMemoryEvent,
+} from "./memory-events.js";
 import { runPromote } from "./promote.js";
 import type { MemoryNode, NodeType } from "./schema.js";
 import { slugify } from "./store.js";
@@ -62,6 +66,12 @@ export interface HookResult {
   reason?: string;
   /** Context to inject into the model's turn (SessionStart). */
   inject?: string;
+  /** Ids actually delivered through a Memory-controlled hook/transport. */
+  injection?: {
+    goal?: string;
+    deliveredCitationIds: string[];
+    deliveredNodeIds: number[];
+  };
   /** Memories persisted (Stop / PreCompact). */
   stored?: number;
   /** Files re-indexed (PostToolUse). */
@@ -216,6 +226,21 @@ async function recordLifecycle(
     const store = await deps.openStore(resolveStoreUri(rootDir, config));
     try {
       await appendMemoryEvent(store, hookLifecycleToMemoryEvent(input, result));
+      if (result.inject && result.injection) {
+        await appendMemoryEvent(
+          store,
+          memoryInjectionToMemoryEvent({
+            deliverySurface: "hook",
+            deliveredCitationIds: result.injection.deliveredCitationIds,
+            deliveredNodeIds: result.injection.deliveredNodeIds,
+            goal: result.injection.goal,
+            sessionId: input.sessionId,
+            runner: input.runner,
+            hookEvent: input.event,
+            injectedChars: result.inject.length,
+          }),
+        );
+      }
     } finally {
       await store.close();
     }
@@ -239,7 +264,16 @@ async function handleSessionStart(
     if (result.nodes.length === 0) {
       return { noop: true, reason: "no relevant memory" };
     }
-    return { noop: false, inject: result.context_md };
+    const deliveredNodeIds = result.nodes.map((node) => node.rid);
+    return {
+      noop: false,
+      inject: result.context_md,
+      injection: {
+        goal: query,
+        deliveredNodeIds,
+        deliveredCitationIds: deliveredNodeIds.map((rid) => `memory_nodes:${rid}`),
+      },
+    };
   } finally {
     await store.close();
   }

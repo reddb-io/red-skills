@@ -54,6 +54,19 @@ describe("Memory workbench", () => {
   test("builds a unified local UI artifact over dashboard, capabilities, and timeline", async () => {
     const { root, store } = await graphRoot();
     await seedDoc(root, store);
+    await store.upsertNode({
+      label: "pinned-memory-workbench-context",
+      node_type: "decision",
+      properties: {
+        title: "Pinned Memory Workbench context",
+        content: "Decision: memory workbench context packs must show pinned core context first.",
+        confidence: "EXTRACTED",
+        source: "manual",
+        importance: 0.95,
+        tier: "durable",
+        created_at: 1_700_000_000_000,
+      },
+    });
     await appendMemoryEvent(
       store,
       hookLifecycleToMemoryEvent(
@@ -81,7 +94,7 @@ describe("Memory workbench", () => {
       read_only: true,
       dashboard: { schema_version: "memory.operational_dashboard.v1" },
       capabilities: { schema_version: "memory.capability_catalog.v1" },
-      references_radar: { schema_version: "memory.references_radar.v1" },
+      references_radar: { schema_version: "memory.reference_radar.v1" },
       context_pack: {
         goal: "memory",
       },
@@ -92,6 +105,10 @@ describe("Memory workbench", () => {
       governance: {
         schema_version: "memory.governance.v1",
         read_only: true,
+        tidy_availability: {
+          status: "unavailable",
+          reason: "no AI provider configured for governance tidy",
+        },
       },
       memory_decay: {
         schema_version: "memory.decay_plan.v1",
@@ -135,7 +152,7 @@ describe("Memory workbench", () => {
       consumes: [
         "memory.operational_dashboard.v1",
         "memory.capability_catalog.v1",
-        "memory.references_radar.v1",
+        "memory.reference_radar.v1",
         "memory.context_pack.v1",
         "memory.extraction_status.v1",
         "memory.governance.v1",
@@ -166,8 +183,8 @@ describe("Memory workbench", () => {
     expect(artifact.html).toContain("Open Memory Layers");
     expect(artifact.html).toContain('fetch("/api/layers"');
     expect(artifact.html).toContain("Capabilities");
-    expect(artifact.html).toContain("Competitive Radar");
-    expect(artifact.html).toContain("not a public benchmark claim");
+    expect(artifact.html).toContain("References Radar");
+    expect(artifact.html).toContain("not public benchmark claims");
     expect(artifact.html).toContain("Search Console");
     expect(artifact.html).toContain('action="/api/search"');
     expect(artifact.html).toContain('id="memory-search-form"');
@@ -180,6 +197,14 @@ describe("Memory workbench", () => {
     expect(artifact.html).toContain("asset_hits");
     expect(artifact.html).toContain("vector_hits");
     expect(artifact.html).toContain("Context Pack");
+    expect(workbench.context_pack.coreContext.map((entry) => entry.title)).toContain(
+      "Pinned Memory Workbench context",
+    );
+    expect(artifact.html).toContain("core_context");
+    expect(artifact.html).toContain("Pinned Memory Workbench context");
+    expect(artifact.html.indexOf("core_context")).toBeLessThan(
+      artifact.html.indexOf("memory-context-pack-markdown"),
+    );
     expect(artifact.html).toContain('id="memory-context-pack-form"');
     expect(artifact.html).toContain('href="/context-pack?goal=memory"');
     expect(artifact.html).toContain("Open Context Pack");
@@ -265,6 +290,8 @@ describe("Memory workbench", () => {
     expect(artifact.html).toContain("Open Extraction Status");
     expect(artifact.html).toContain('fetch("/api/extraction/status"');
     expect(artifact.html).toContain("Governance");
+    expect(artifact.html).toContain("Tidy availability");
+    expect(artifact.html).toContain("no AI provider configured for governance tidy");
     expect(artifact.html).toContain('id="memory-governance-refresh"');
     expect(artifact.html).toContain('href="/governance"');
     expect(artifact.html).toContain("Open Governance");
@@ -379,7 +406,7 @@ describe("Memory workbench", () => {
       expect(JSON.parse(json.stdout)).toMatchObject({
         schema_version: "memory.workbench.v1",
         dashboard: { schema_version: "memory.operational_dashboard.v1" },
-        references_radar: { schema_version: "memory.references_radar.v1" },
+        references_radar: { schema_version: "memory.reference_radar.v1" },
         context_pack: { goal: "memory" },
         extraction_status: { schema_version: "memory.extraction_status.v1" },
         governance: { schema_version: "memory.governance.v1" },

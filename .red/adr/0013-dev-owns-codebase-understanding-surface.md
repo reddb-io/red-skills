@@ -77,3 +77,20 @@ instead of map first.
 - Future work on `ask` should start from the same boundary: `dev` workflow,
   Memory-backed context when available, ordinary code exploration as fallback.
 - Documentation and skill naming should avoid `/understand` for this surface.
+
+## Status
+
+Accepted; post-0041 supersession applies **on migration**. The surviving
+decision is the boundary: `dev` owns the codebase-understanding workflow surface
+and Memory owns the graph/query substrate. What is obsoleted on migration is the
+assumption that `dev` consumes an in-repo Memory CLI or graph-mode verbs by
+shelling through local `memory ...` commands. After ADR 0041 lands, `dev`
+consumes project memory through the `red-memory` MCP exposed by the migrated
+memory plugin; the in-repo implementation and CLI are no longer the contract.
+This record does not rewire the implementation; that migration work is tracked
+separately.
+
+## Related
+
+- ADR 0041 — red-skills consumes the `red-memory` and `red-ui` MCPs instead of
+  building the memory plugin in this repo.

@@ -26,6 +26,7 @@ import {
   resolveRunSettings,
   type RepoContext,
 } from "../runtime/wire.js";
+import type { LaneIdleStallConfig } from "../core/lane-idle-reaper.js";
 import { workerDir as workerDirPath, workerPidFile } from "../core/worker-paths.js";
 import { parseFlags, type FlagSchema } from "@reddb-io/shared/args.js";
 import * as ghx from "../runtime/gh.js";
@@ -276,6 +277,7 @@ export function buildProcessDeps(
   exec?: ExecFn,
   maxIterations?: number,
   attemptTimeoutSeconds?: number,
+  laneIdle?: LaneIdleStallConfig,
 ): ProcessIssueDeps {
   const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo, exec };
   const gitCtx: GitContext = { cwd: ctx.root, exec };
@@ -368,7 +370,7 @@ export function buildProcessDeps(
     // shell commands run against the same worker-branch checkout after feedback.
     backpressure: feedback.backpressure,
     backpressureCommands: readBackpressure(config),
-    runAgent: makeRunAgent(sandbox, process.env, maxIterations, attemptTimeoutSeconds),
+    runAgent: makeRunAgent(sandbox, process.env, maxIterations, attemptTimeoutSeconds, laneIdle),
     model,
     classifyIssue: makeIssueClassifier(config, runner, ctx.root, exec),
     resolveTier: (activeRunner, taskClass = "think") => resolveTier(config, activeRunner, taskClass),
@@ -684,6 +686,20 @@ interface CurrentAttempt {
 
 const DEFAULT_RUNNER_TRANSIENT_COOLDOWN_S = 300;
 
+async function recordBootError(workerDir: string, type: "boot-error" | "session-error", err: unknown): Promise<void> {
+  const message = err instanceof Error ? err.message : String(err);
+  const stack = err instanceof Error ? err.stack : undefined;
+  const payload = {
+    type,
+    at: new Date().toISOString(),
+    message,
+    stack,
+  };
+  await fsx.ensureDir(workerDir);
+  await writeFile(join(workerDir, `${type}.log`), `${JSON.stringify(payload)}\n`, "utf8");
+  process.stderr.write(`[afk] ${type}: ${message}\n`);
+}
+
 function runnerCircuitDir(tmpDir: string): string {
   return join(tmpDir, "runner-circuit");
 }
@@ -812,8 +828,17 @@ export async function runCommand(options: RunOptions): Promise<number> {
     workerPidFile: workerPidFile(paths.tmpDir, workerId),
     workerPid: process.pid,
   };
-  const bootOptions = await collectBootOptions(ctx, facts, bootstrap, nowS);
-  const bootDeps = await buildBootDeps(ctx, bootOptions, nowS);
+  let bootOptions: BootOptions;
+  let bootDeps: BootDeps;
+  try {
+    bootOptions = await collectBootOptions(ctx, facts, bootstrap, nowS);
+    bootDeps = await buildBootDeps(ctx, bootOptions, nowS);
+  } catch (err) {
+    await recordBootError(bootstrap.workerDir, "boot-error", err).catch(() => {
+      process.stderr.write(`[afk] boot-error: ${err instanceof Error ? err.message : String(err)}\n`);
+    });
+    return 1;
+  }
 
   // Feedback worktree manager — checks out the worker branch for the gate.
   const feedback = makeFeedbackWorktree(ctx.root, join(paths.tmpDir, "feedback"));
@@ -845,7 +870,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
       if (await fsx.pathExists(sp)) await updateState(sp, { pid: 0 }).catch(() => {});
       return result;
     },
-    processDeps: buildProcessDeps(ctx, settings.model, settings.sandbox, feedback, current, flags.fallbackRunner, runner, undefined, settings.maxIterations, settings.attemptTimeoutSeconds),
+    processDeps: buildProcessDeps(ctx, settings.model, settings.sandbox, feedback, current, flags.fallbackRunner, runner, undefined, settings.maxIterations, settings.attemptTimeoutSeconds, settings.laneIdle),
     // Session-scoped lifecycle hooks (PRD #207): compose the same config /
     // resolver / exec / env the process deps use, so session + per-issue points
     // share one dispatcher rather than duplicating the wiring.
@@ -911,6 +936,11 @@ export async function runCommand(options: RunOptions): Promise<number> {
   let summary;
   try {
     summary = await runSession(deps, sessionCtx);
+  } catch (err) {
+    await recordBootError(bootstrap.workerDir, "session-error", err).catch(() => {
+      process.stderr.write(`[afk] session-error: ${err instanceof Error ? err.message : String(err)}\n`);
+    });
+    return 1;
   } finally {
     await feedback.cleanup();
   }

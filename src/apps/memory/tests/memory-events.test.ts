@@ -4,12 +4,17 @@ import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { MemoryStore } from "../src/graph-store.js";
 import { initGraph } from "../src/init.js";
+import { buildContextPack, type ContextPack } from "../src/context-pack.js";
 import {
+  appendContextPackGenerationEvent,
   appendEngineOpEvent,
   appendMemoryEvent,
+  contextPackGenerationToMemoryEvent,
+  deriveMemoryInjectionRollups,
   driftCaughtToMemoryEvent,
   engineOpToMemoryEvent,
   hookLifecycleToMemoryEvent,
+  memoryInjectionToMemoryEvent,
   parseMemoryEvent,
   readMemoryEvents,
 } from "../src/memory-events.js";
@@ -236,6 +241,182 @@ describe("Memory event log", () => {
         query: "memory layers",
         hit_count: 3,
       },
+    });
+  });
+
+  test("validates context-pack generation observations with pack identity and citations", () => {
+    const pack: ContextPack = {
+      goal: "jwt rotation",
+      status: "ok",
+      budgetChars: 1200,
+      usedChars: 320,
+      markdown: "# Memory context pack: jwt rotation\n",
+      coreContext: [],
+      entries: [
+        {
+          section: "prior_decisions",
+          title: "JWT rotation",
+          nodeType: "decision",
+          importance: 0.8,
+          confidence: "EXTRACTED",
+          trust: 1,
+          provenance: null,
+          citation: { marker: "[M1]", urn: "memory_nodes:7", rid: 7, source: "manual" },
+          reason: "decision evidence matched the goal",
+          excerpt: "Rotate JWT keys with signed fixtures.",
+          score: 1,
+        },
+      ],
+      skillRecommendations: {
+        task: "jwt rotation",
+        status: "insufficient-evidence",
+        recommendations: [],
+        missingEvidence: [],
+      },
+      warnings: [],
+      omittedEntries: 0,
+    };
+
+    const event = contextPackGenerationToMemoryEvent({
+      pack,
+      surface: "cli",
+      timestamp: "2026-05-22T19:00:00.000Z",
+      eventId: "context-pack:1",
+    });
+
+    expect(event).toMatchObject({
+      id: "context-pack:1",
+      kind: "memory.context-pack.generated",
+      payload: {
+        event_type: "memory.context-pack.generated",
+        goal: "jwt rotation",
+        surface: "cli",
+        citation_ids: ["memory_nodes:7"],
+        node_ids: [7],
+        entry_count: 1,
+      },
+    });
+    expect(event.payload).toHaveProperty("pack_id");
+    expect(() => parseMemoryEvent(event)).not.toThrow();
+  });
+
+  test("validates Memory injection observations and rejects empty deliveries", () => {
+    const event = memoryInjectionToMemoryEvent({
+      deliveredCitationIds: ["memory_nodes:7"],
+      deliveredNodeIds: [7],
+      deliverySurface: "hook",
+      goal: "jwt rotation",
+      sessionId: "session-1",
+      runner: "codex",
+      hookEvent: "SessionStart",
+      injectedChars: 512,
+      timestamp: "2026-05-22T19:10:00.000Z",
+      eventId: "injection:1",
+    });
+
+    expect(event).toMatchObject({
+      id: "injection:1",
+      kind: "memory.injection.delivered",
+      payload: {
+        event_type: "memory.injection.delivered",
+        delivery_surface: "hook",
+        delivered_citation_ids: ["memory_nodes:7"],
+        delivered_node_ids: [7],
+      },
+    });
+    expect(() =>
+      memoryInjectionToMemoryEvent({
+        deliverySurface: "hook",
+        timestamp: "2026-05-22T19:10:00.000Z",
+      }),
+    ).toThrow(/delivered citation or node ids/);
+  });
+
+  test(
+    "context-pack generation records generation without creating injection",
+    async () => {
+      const root = await tempRoot();
+      await initGraph(root);
+      const store = await openStore(root);
+      await store.upsertNode({
+        label: "context-pack-generation",
+        node_type: "decision",
+        properties: {
+          title: "Context pack generation",
+          content: "Decision: context-pack generation cites Memory nodes.",
+          source: "manual",
+        },
+      });
+
+      const pack = await buildContextPack(store, "context-pack generation", { budgetChars: 1200 });
+      await appendContextPackGenerationEvent(store, { pack, surface: "cli" });
+
+      const events = await readMemoryEvents(store);
+      expect(events.filter((event) => event.kind === "memory.context-pack.generated")).toHaveLength(1);
+      expect(events.filter((event) => event.kind === "memory.injection.delivered")).toHaveLength(0);
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "manual recall display records recall/access bookkeeping but not injection",
+    async () => {
+      const { graphRecallResult } = await import("../src/graph-recall.js");
+      const root = await tempRoot();
+      await initGraph(root);
+      const store = await openStore(root);
+      const rid = await store.upsertNode({
+        label: "manual-recall-display",
+        node_type: "decision",
+        properties: {
+          title: "Manual recall display",
+          content: "Decision: manual recall display is not Memory injection.",
+          source: "manual",
+        },
+      });
+
+      await graphRecallResult(store, "manual recall display");
+
+      const access = await store.accessRecord(rid);
+      expect(access?.count).toBeGreaterThan(0);
+      const events = await readMemoryEvents(store);
+      expect(events.some((event) => event.kind === "engine.op")).toBe(true);
+      expect(events.filter((event) => event.kind === "memory.injection.delivered")).toHaveLength(0);
+    },
+    TIMEOUT,
+  );
+
+  test("derives injection counters and last timestamps from event-log observations", () => {
+    const first = memoryInjectionToMemoryEvent({
+      deliveredCitationIds: ["memory_nodes:7"],
+      deliveredNodeIds: [7],
+      deliverySurface: "hook",
+      timestamp: "2026-05-22T19:00:00.000Z",
+      eventId: "injection:rollup:1",
+    });
+    const second = memoryInjectionToMemoryEvent({
+      deliveredCitationIds: ["memory_nodes:7"],
+      deliveredNodeIds: [7],
+      deliverySurface: "mcp",
+      timestamp: "2026-05-22T20:00:00.000Z",
+      eventId: "injection:rollup:2",
+    });
+
+    const rollups = deriveMemoryInjectionRollups([first, second]);
+
+    expect(rollups).toContainEqual({
+      id: "citation:memory_nodes:7",
+      citation_id: "memory_nodes:7",
+      delivered_count: 2,
+      last_injected_at: "2026-05-22T20:00:00.000Z",
+      delivery_surfaces: ["hook", "mcp"],
+    });
+    expect(rollups).toContainEqual({
+      id: "node:7",
+      node_id: 7,
+      delivered_count: 2,
+      last_injected_at: "2026-05-22T20:00:00.000Z",
+      delivery_surfaces: ["hook", "mcp"],
     });
   });
 

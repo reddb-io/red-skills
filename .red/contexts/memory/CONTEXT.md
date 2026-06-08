@@ -31,15 +31,15 @@ A short redacted excerpt plus a stable pointer from an **Evidence card** back to
 _Avoid_: full transcript, raw stdout, unsupported summary
 
 **Evidence card status**:
-The lifecycle state of an **Evidence card**: `captured`, `routed`, `proposed`, `approved`, `rejected`, `promoted`, or `archived`.
+The v0 review state of an **Evidence card**: `pending`, `approved`, or `rejected`; proposal apply state and future promotion/archive state are separate metadata.
 _Avoid_: quarantine-only status, issue status, proposal archive reason
 
 **Two-stage refinement review**:
-The human review pattern where approving an **Evidence card** validates the interpretation of evidence, while approving the resulting proposal validates the concrete Memory, context, issue/PRD, or Skill change.
+The human review pattern where approving an **Evidence card** validates the interpretation of evidence, while a separate proposal review validates any concrete Memory, context, issue/PRD, or Skill change.
 _Avoid_: one-click mutation, evidence-free diff review, automatic apply
 
 **Evidence review CLI**:
-The first operator surface for listing, inspecting, routing, approving, rejecting, promoting, and archiving **Evidence cards**.
+The first operator surface for v0 **Evidence cards**: create, list, show, approve, and reject YAML cards without promoting Memory facts or applying proposals.
 _Avoid_: primary Workbench workflow, GitHub-only review, hidden hook action
 
 **Evidence inbox**:
@@ -681,7 +681,7 @@ A compact, cited answer-shaped subgraph selected from **Memory map** evidence fo
 _Avoid_: raw graph dump, visual map, generated prose answer
 
 **Memory map edge weight**:
-The topological strength of a Memory map edge, usually the count or aggregate strength of concrete relationships between two vertices or two communities.
+The topological strength of a Memory map edge, usually the count or aggregate strength of concrete relationships between two vertices or two communities, independent of how any UI chooses to draw the edge.
 _Avoid_: confidence score, UI opacity, importance score
 
 **Memory map edge salience**:
@@ -738,12 +738,12 @@ _Avoid_: memory rollback, historical search
 - A Skill telemetry **Evidence card source** records runner, Skill identity, rollup reference, and recent event references rather than copying the raw telemetry stream into YAML.
 - An **Evidence card** uses **Evidence citations** to cite **Memory event log** records, hook observations, rejection notes, validation nodes, or external-system summaries without making the raw source itself the durable Memory fact.
 - An **Evidence card status** tracks the review lifecycle of a card separately from the lifecycle of any proposal file or promoted Memory node it creates.
-- An **Evidence card fingerprint** refreshes pending cards in `captured`, `routed`, or `proposed` status, but a new card is created after the previous card is approved, rejected, promoted, or archived.
+- An **Evidence card fingerprint** refreshes unresolved `pending` cards; future routed/proposed/promoted/archive states must remain separate from v0 card review state.
 - **Two-stage refinement review** is required for mutating routes: the card review accepts the evidence interpretation, and the proposal review accepts the concrete change.
 - In the first cycle, approving an **Evidence card** updates card review metadata only; it does not change proposal contents or alter the existing proposal apply gate.
 - Rejecting an **Evidence card** linked to a proposal should mark the proposal with a rejected-card warning, but should not archive or move the proposal automatically.
 - The **Evidence inbox** is the first filesystem home for YAML **Evidence cards**, preserving the existing inbox while separating the new review contract.
-- The **Evidence review CLI** first supports list, show, approve, and reject over the **Evidence inbox**; viewers and PR workflows may consume the same evidence contract later.
+- The **Evidence review CLI** first supports create, list, show, approve, and reject over the **Evidence inbox**; viewers and PR workflows may consume the same evidence contract later.
 - `memory improve skills` remains the **Skill improvement proposal** surface, but its telemetry candidates should fit the **Evidence card** layer before patch proposals are applied.
 - A **Skill telemetry evidence card** is the first tracer-bullet input for the **Hermes-like refinement loop**, proving telemetry → card → proposal before external sources are added.
 - **Evidence tracer-bullet proof** is required before treating the **Evidence card contract** as usable beyond the first Skill telemetry slice.
@@ -832,6 +832,12 @@ _Avoid_: memory rollback, historical search
 - **Memory ask gap analysis** makes GBrain-style answer gaps explicit while staying grounded in Memory evidence, supersession, contradictions, and confidence.
 - A **Memory backup snapshot** preserves the local RedDB/notes/config persistence surface for restore; graph export remains the read-only inspection bundle.
 - **Memory interop export** emits Graphify/Neo4j-style exchange artifacts while preserving RedDB as the canonical persistence layer.
+- **Memory map** uses RedDB as the canonical destination; Graphify-style HTML/JSON/GraphML outputs are optional interop projections, not Memory's source of truth.
+- **Memory map context slice** is the Graphify-style agent-routing surface: agents query the graph before broad grep or recursive file reads to reduce tokens and sharpen source inspection.
+- **Memory map metadata** may include weight, salience, confidence, provenance, community, source location, and freshness, but graph layout, color palettes, labels, opacity, filtering interactions, and other UI/UX decisions belong to red-ui or another frontend consumer.
+- **Memory map edge weight** and **Memory map edge salience** are separate signals: weight names relationship strength, salience names navigation priority.
+- **Memory map analytic cache** may persist expensive RedDB analytics results such as communities, while cheap metrics may be computed on read.
+- **Memory map boundary** keeps **Brain** totally disconnected from **Memory map**; complementary sources can feed Memory map only when they ground project code, docs, assets, or operational evidence in RedDB.
 - The **Memory local HTTP server** is optional UI/API transport over existing read-only Memory contracts, not the canonical persistence process.
 - The **Memory local HTTP server** exposes docs search/brief/bundle/read/related/coverage/reference-graph and the **Doc brief viewer**, **Doc bundle viewer**, **Doc evidence pack viewer**, **Doc search viewer**, plus **Doc reference graph viewer** from `memory_docs` and graph evidence; it does not read arbitrary filesystem paths.
 - The **Memory multi-agent integration guide** routes multiple coding agents to the same project-local RedDB Memory store through MCP, loopback HTTP, agent rules, and hooks where a runner supports them.

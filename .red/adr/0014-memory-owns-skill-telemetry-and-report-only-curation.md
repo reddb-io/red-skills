@@ -45,3 +45,19 @@ workflow outside the Memory plugin.
 - Background operation has two levels: lightweight checks can follow user-turn
   counts and process only new skill events, while report-only curator reviews
   follow interval/idle gates.
+
+## Status
+
+Accepted; post-0041 supersession applies **on migration**. The surviving
+decision is ownership: Memory owns Skill telemetry persistence, rollups, and
+report-only curation evidence, while mutation remains outside Memory. What is
+obsoleted on migration is the repo-local placement of that runtime inside
+red-skills. Once ADR 0041 lands, the telemetry and report-only curation runtime
+live in `red-memory` and are consumed from red-skills through the `red-memory`
+MCP, not through an in-repo `memory ...` CLI. This record only narrows the
+historical co-location claim; it does not perform the migration.
+
+## Related
+
+- ADR 0041 — red-skills consumes the `red-memory` and `red-ui` MCPs instead of
+  building the memory plugin in this repo.

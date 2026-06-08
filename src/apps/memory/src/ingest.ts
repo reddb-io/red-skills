@@ -9,7 +9,7 @@ import { extractSql } from "./extract-sql.js";
 import { contentHash } from "./hash.js";
 import { readMemoryIgnore } from "./scope.js";
 import type { MemoryStore } from "./graph-store.js";
-import type { EdgeLabel, MemoryDoc, MemoryNode } from "./schema.js";
+import type { EdgeLabel, MemoryDoc, MemoryEdgeProps, MemoryNode } from "./schema.js";
 
 export interface IngestOptions {
   /** Root directory to walk. */
@@ -125,7 +125,13 @@ interface FileExtraction {
   doc?: MemoryDoc;
   nodes: MemoryNode[];
   edges: Array<
-    | { fromLabel: string; toLabel: string; label: EdgeLabel }
+    | {
+        fromLabel: string;
+        toLabel: string;
+        label: EdgeLabel;
+        weight?: number;
+        properties?: MemoryEdgeProps;
+      }
     | { fromHash: string; toLabel: string; label: EdgeLabel }
   >;
   elements: string[];
@@ -223,7 +229,13 @@ async function writeExtraction(
       if (!("toLabel" in e)) continue;
       const toRid = await store.findNodeByLabel(e.toLabel);
       if (rootRid != null && toRid != null) {
-        await store.upsertEdge({ from_rid: rootRid, to_rid: toRid, label: e.label });
+        await store.upsertEdge({
+          from_rid: rootRid,
+          to_rid: toRid,
+          label: e.label,
+          ...("weight" in e && e.weight != null ? { weight: e.weight } : {}),
+          ...("properties" in e && e.properties ? { properties: e.properties } : {}),
+        });
         report.edges += 1;
       }
     }
@@ -239,7 +251,13 @@ async function writeExtraction(
       const fromRid = labelToRid.get(e.fromLabel);
       const toRid = labelToRid.get(e.toLabel);
       if (fromRid != null && toRid != null) {
-        await store.upsertEdge({ from_rid: fromRid, to_rid: toRid, label: e.label });
+        await store.upsertEdge({
+          from_rid: fromRid,
+          to_rid: toRid,
+          label: e.label,
+          weight: e.weight,
+          properties: e.properties,
+        });
         report.edges += 1;
       }
     }
@@ -252,7 +270,7 @@ export interface RefreshOptions {
   rootDir?: string;
 }
 
-interface FileManifestEntry {
+export interface FileManifestEntry {
   hash: string;
   format?: "element-hashes" | "element-hash-chunks";
   elements: string[];
@@ -392,7 +410,7 @@ const INDEXABLE_EXT = new Set([
   ".xlsx",
 ]);
 
-async function readIndexHash(path: string): Promise<string> {
+export async function readIndexHash(path: string): Promise<string> {
   if (isAssetFile(path)) {
     return contentHash(path, await readFile(path, "base64"));
   }
@@ -405,7 +423,7 @@ async function readLegacyFileManifest(store: MemoryStore): Promise<FileManifest>
   return typeof raw === "string" ? (JSON.parse(raw) as FileManifest) : raw;
 }
 
-async function readFileManifestEntry(
+export async function readFileManifestEntry(
   store: MemoryStore,
   path: string,
   legacyEntry?: FileManifestEntry,

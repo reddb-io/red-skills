@@ -88,8 +88,8 @@ existing operational typology (Decision / Problem / Fix / Validation / Gotcha /
 Reasoning), plus `summary` and `preferences` schemas for AMS parity.
 
 LLM and embedding calls go through **RedDB's `red.config.ai.provider`** layer
-(`openai-native`, `anthropic-native`, `openai-compat`). The memory plugin does
-not import LLM SDKs.
+(`openai-native`, `anthropic-native`, `openai-compat`, `bedrock`). The memory
+plugin does not import LLM SDKs.
 
 Rejected: hard-coded AMS strategy enum; LiteLLM dep; bring-your-own-client.
 

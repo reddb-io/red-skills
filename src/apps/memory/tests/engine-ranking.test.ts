@@ -16,14 +16,23 @@ import type { MemoryScope, Tier } from "../src/schema.js";
  * deterministically.
  */
 class MockStore implements RecallStore {
+  readonly listNodeNowValues: Array<number | undefined> = [];
+  readonly recordAccessCalls: Array<{ rids: number[]; now?: number }> = [];
+
   constructor(
     private nodes: StoredNode[],
     private superseded: Map<number, number> = new Map(),
     private edges: Record<string, unknown>[] = [],
     private vectorHits: SearchRow[] = [],
   ) {}
-  async listNodes(): Promise<StoredNode[]> {
-    return this.nodes;
+  async listNodes(now?: number): Promise<StoredNode[]> {
+    this.listNodeNowValues.push(now);
+    const effectiveNow = now ?? Date.now();
+    return this.nodes.filter((n) => {
+      if (n.properties.tier !== "ephemeral") return true;
+      const expiresAt = n.properties.expires_at;
+      return typeof expiresAt !== "number" || effectiveNow < expiresAt;
+    });
   }
   async searchText(): Promise<SearchRow[]> {
     return [];
@@ -42,13 +51,16 @@ class MockStore implements RecallStore {
     }
     return out;
   }
-  async recordAccess(): Promise<void> {}
+  async recordAccess(rids: number[], now?: number): Promise<void> {
+    this.recordAccessCalls.push({ rids, now });
+  }
   async listEdges(): Promise<Record<string, unknown>[]> {
     return this.edges;
   }
 }
 
 const NOW = 1_700_000_000_000;
+const DAY = 86_400_000;
 
 function node(
   rid: number,
@@ -251,6 +263,21 @@ describe("recall ranking with a mock store (#72)", () => {
       candidates: 1,
       contributed: 1,
     });
+  });
+
+  test("uses the injected clock for AS-OF node visibility and access bookkeeping", async () => {
+    const store = new MockStore([
+      node(1, "ephemeral", { content: "alpha as-of visible", expires_at: NOW + DAY }),
+      node(2, "durable", { content: "alpha durable" }),
+    ]);
+
+    const { nodes } = await recall(store, "alpha", { depth: 0, now: NOW });
+
+    expect(nodes.map((n) => n.rid)).toContain(1);
+    expect(store.listNodeNowValues).toEqual([NOW]);
+    expect(store.recordAccessCalls).toEqual([
+      { rids: nodes.map((n) => n.rid), now: NOW },
+    ]);
   });
 
   test("treats doc-grounded vector candidates as governed recall seeds", async () => {

@@ -37,15 +37,51 @@ describe("Memory routing guide", () => {
     expect(guide.mcpTools).toEqual(expect.arrayContaining(["memory_context_pack"]));
     expect(guide.mcpTools).toEqual(expect.arrayContaining(["memory_doc_read"]));
     expect(guide.mcpTools).toEqual(expect.arrayContaining(["memory_pre_pr_review"]));
+    expect(guide.mcpTools).toEqual(expect.arrayContaining(["memory_onboarding_map"]));
+    expect(guide.mapContext).toMatchObject({
+      kind: "agent_context",
+      relationFilters: expect.arrayContaining([
+        "call",
+        "import",
+        "type",
+        "validation",
+        "decision",
+        "work",
+        "reference",
+      ]),
+    });
+    expect(guide.mapContext.description).toContain("before broad grep");
+    expect(guide.mapContext.description).toContain("not a generated answer");
+    expect(guide.mapContext.examples.map((example) => example.relationFilters.join(","))).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("call"),
+        expect.stringContaining("validation"),
+        expect.stringContaining("decision"),
+        expect.stringContaining("work"),
+        expect.stringContaining("reference"),
+      ]),
+    );
     expect(guide.rules.map((rule) => rule.call)).toEqual(
       expect.arrayContaining([
         expect.stringContaining("memory_claim_check"),
         expect.stringContaining("memory_structural_impact"),
+        expect.stringContaining("memory_map_context"),
+        expect.stringContaining("route Personal facts and human-facing context to Brain"),
+      ]),
+    );
+    expect(guide.safetyNotes).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("Map context is agent context"),
+        expect.stringContaining("Personal facts, human-facing context"),
+        expect.stringContaining("belong in Brain, not Memory"),
       ]),
     );
     expect(guide.installSnippet).toContain("## Memory Routing");
     expect(guide.installSnippet).toContain("MCP server command");
+    expect(guide.installSnippet).toContain("Map context before broad source reads");
+    expect(guide.installSnippet).toContain("Relation filters to apply");
     expect(guide.installSnippet).toContain("Target file: AGENTS.md");
+    expect(guide.installSnippet).toContain("route Personal facts and human-facing context to Brain");
   });
 
   test("builds multi-agent integration metadata for MCP-first agents", () => {
@@ -86,6 +122,9 @@ describe("Memory routing guide", () => {
     expect(artifact.html).toContain("Cursor");
     expect(artifact.html).toContain('id="memory-routing-guide-data"');
     expect(artifact.html).toContain("memory_context_pack");
+    expect(artifact.html).toContain("Map Context");
+    expect(artifact.html).toContain("agent_context");
+    expect(artifact.html).toContain("call, import, type, validation");
   });
 
   test("CLI emits JSON, installable text, and viewer HTML without requiring a store", async () => {
@@ -96,6 +135,7 @@ describe("Memory routing guide", () => {
       targetFiles: string[];
       supportedAgents: string[];
       integration: { transports: string[]; configSnippets: Array<{ body: string }> };
+      mapContext: { kind: string; relationFilters: string[]; description: string };
       installSnippet: string;
     };
     expect(body.schemaVersion).toBe("memory.routing_guide.v1");
@@ -103,12 +143,29 @@ describe("Memory routing guide", () => {
     expect(body.supportedAgents).toContain("cursor");
     expect(body.integration.transports).toContain("mcp");
     expect(body.integration.configSnippets[0]?.body).toContain("memory-mcp");
+    expect(body.mapContext.kind).toBe("agent_context");
+    expect(body.mapContext.relationFilters).toEqual(
+      expect.arrayContaining([
+        "call",
+        "import",
+        "type",
+        "validation",
+        "decision",
+        "work",
+        "reference",
+      ]),
+    );
+    expect(body.mapContext.description).toContain("not a generated answer");
+    expect(body.installSnippet).toContain("memory_map_context");
     expect(body.installSnippet).toContain("memory_pre_pr_review");
 
     const text = runMemory(["routing-guide", "--agent", "codex"]);
     expect(text.status, text.stderr).toBe(0);
     expect(text.stdout).toContain("memory: routing guide");
+    expect(text.stdout).toContain("before broad grep");
+    expect(text.stdout).toContain("filters=work, validation, decision, reference");
     expect(text.stdout).toContain("Target file: AGENTS.md");
+    expect(text.stdout).toContain("memory_map_context");
 
     const root = await mkdtemp(join(tmpdir(), "memory-routing-guide-"));
     roots.push(root);

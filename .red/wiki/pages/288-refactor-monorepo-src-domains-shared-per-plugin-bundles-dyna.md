@@ -3,7 +3,7 @@ title: refactor: monorepo (src/domains + shared + per-plugin bundles + dynamic f
 type: source
 tags: [pr, merged]
 created: 2026-05-30
-updated: 2026-05-30
+updated: 2026-06-06
 sources: [pr-288]
 pr: 288
 merge_sha: 84a62af40769f473cf4425e61cb83ab8ad5ee042
@@ -21,10 +21,20 @@ merge_sha: 84a62af40769f473cf4425e61cb83ab8ad5ee042
 Completes the monorepo restructure (ADR 0034) **and** the functionality-loss recovery (PRD #287).
 
 ## Restructure (ADR 0034)
-- `src/domains/{dev,memory}` = implementation; `plugins/*` = definition only; `src/shared/` = common (cli-args-parser + dynamic bundle-fetch).
+- Historical note: this PR used the original `src/domains/{dev,memory}` wording.
+  ADR 0034 now records the implemented tree as `src/apps/{dev,memory}`; the
+  definition/implementation split is unchanged.
+- `src/apps/{dev,memory}` = implementation; `plugins/*` = definition only;
+  shared implementation code belongs under top-level `src/`.
 - One minified bundle per artifact under `dist/`: `dev.bundle.min.mjs`, `memory.bundle.min.mjs` (+ memory-mcp, red-curate-skill), `code-nav-mcp.bundle.min.mjs` — shipped as GitHub Release assets, fetched dynamically by a best-effort SessionStart hook.
 - code-nav MCP moved into the reorg + bundled + fetched like the rest.
 - Skills reframed to "run the bundle with these params + agent-facing behaviour" (no implementation citations); `RED_AFK_LEGACY=1` documented as the transition shell fallback.
+
+## Current ADR record (2026-06-06)
+
+ADR 0034 remains accepted for the dev implementation split under `src/apps/dev`.
+It is partially superseded by ADR 0039 for fused entrypoints and by ADR 0041 for
+memory moving out of red-skills into `red-memory`.
 
 ## Functionality recovery (PRD #287 — a 3-front audit found real losses)
 - **A — AFK live wiring un-stubbed**: config+hooks, attempt-ledger, branch-lock (ADR 0031), comments→handoff, prior-attempt+markers (#255), feedback against the agent worktree, `--request`, boot sweeps, diffstat+iter-log — were dormant despite passing unit tests.
@@ -161,4 +171,3 @@ Continuous per-commit push (#191), baseBranch best-effort on retries — see #28
 - `src/domains/dev/tests/cli.test.ts`
 - `src/domains/dev/tests/comment-classification.test.ts`
 - `src/domains/dev/tests/config.test.ts`
-

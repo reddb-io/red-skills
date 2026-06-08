@@ -131,7 +131,7 @@ export interface RecallStore {
     direction?: "outgoing" | "incoming" | "both",
   ): Promise<GraphRow[]>;
   supersededByMany(rids: number[]): Promise<Map<number, number>>;
-  recordAccess?(rids: number[]): Promise<void>;
+  recordAccess?(rids: number[], now?: number): Promise<void>;
   listEdges(): Promise<Record<string, unknown>[]>;
 }
 
@@ -333,9 +333,10 @@ function nodeMatchesScope(node: StoredNode, scope: RecallScope): boolean {
 async function loadIndex(
   store: RecallStore,
   scope: RecallScope = DEFAULT_RECALL_SCOPE,
+  now?: number,
 ): Promise<Map<number, StoredNode>> {
   const index = new Map<number, StoredNode>();
-  for (const node of await store.listNodes()) {
+  for (const node of await store.listNodes(now)) {
     if (nodeMatchesScope(node, scope)) index.set(node.rid, node);
   }
   return index;
@@ -371,7 +372,7 @@ export async function buildConfidenceContext(
   store: RecallStore | MemoryStore,
   now: number = Date.now(),
 ): Promise<ConfidenceContext> {
-  const nodes = await store.listNodes();
+  const nodes = await store.listNodes(now);
   const supersededMap = await store.supersededByMany(nodes.map((n) => n.rid));
   const supersedingSet = new Set<number>();
   for (const successor of supersededMap.values()) supersedingSet.add(successor);
@@ -603,7 +604,7 @@ export async function recall(
   const codeFilter =
     codes && codes.length > 0 ? new Set(codes.map(codeCanonicalize)) : null;
   const terms = tokenize(query);
-  const index = await loadIndex(store, scope);
+  const index = await loadIndex(store, scope, now);
   if (terms.length === 0) {
     const diagnostics = emptyDiagnostics("blank query");
     return { query, nodes: [], context_md: renderContext(query, [], diagnostics), diagnostics };
@@ -718,7 +719,7 @@ export async function recall(
   // (count + last-accessed) so `memory:doctor` can tell what's still earning its
   // keep from what's gone cold. Best-effort — never let it fail a read.
   if (nodes.length > 0 && store.recordAccess) {
-    await store.recordAccess(nodes.map((n) => n.rid)).catch(() => {});
+    await store.recordAccess(nodes.map((n) => n.rid), now).catch(() => {});
   }
 
   return { query, nodes, context_md: renderContext(query, nodes, diagnostics), diagnostics };
@@ -850,7 +851,12 @@ export async function ask(
   question: string,
   opts: { rootDir?: string; now?: number } = {},
 ): Promise<AskResult> {
-  const recalled = await recall(store, question, { includeSuperseded: true, depth: 0, k: 8 });
+  const recalled = await recall(store, question, {
+    includeSuperseded: true,
+    depth: 0,
+    k: 8,
+    now: opts.now,
+  });
   const evidence = await buildAskEvidence(store, recalled.nodes);
   const gapAnalysis = buildAskGapAnalysis(evidence);
   const citations: AskCitation[] = [...evidence.active, ...evidence.superseded].map((item) => ({

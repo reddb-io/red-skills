@@ -47,6 +47,12 @@ The AFK lifecycle exposes the following hooks, in execution order:
 `docker system prune`) without that cost being paid per-attempt inside
 `post_attempt`.
 
+ADR 0045 extends this model with one **periodic** hook, `on_heartbeat`, fired
+from the attempt guard's cadence while an attempt is still running. It is
+distinct from the once-per-lifecycle-moment interceptors above: it may fire
+many times in one attempt, carries heartbeat/progress context, and has a
+`continue` exit policy so a failing heartbeat hook cannot abort the run.
+
 ### Worker vs attempt vocabulary
 
 The lifecycle uses two distinct terms that earlier drafts conflated:
@@ -336,3 +342,8 @@ reaching under the hood.
   disable defaults, they do not reorder them; promotion of a user
   hook into the defaults bundle is the supported path when ordering
   must change.
+
+## Related
+
+- ADR 0045 — AFK externalized proof-of-life adds the periodic `on_heartbeat`
+  hook.

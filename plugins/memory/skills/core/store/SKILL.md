@@ -5,7 +5,7 @@ description: Save one durable work fact to the project's configured memory surfa
 
 # memory store
 
-Saves one fact to the project's memory and routes to whatever `memory init`
+Saves one operational work fact to the project's memory and routes to whatever `memory init`
 configured. In **markdown-only** mode it writes a markdown note under
 `.red/memory/notes/` — the note **is** the canonical store, human-readable and
 committable. In **graph** mode it writes a deduped operational-memory node to
@@ -39,6 +39,7 @@ Report the note path or graph node id so the user knows what was captured.
 
 - ✅ Store a single, self-contained fact per call (a decision, a gotcha, a why-note).
 - ✅ Capture the *why*, not just the *what*, when the user is explaining a decision.
+- ❌ Don't store Personal facts, biographical details, identity context, or long-lived human preferences in Memory; route them to Brain with `brain capture`.
 - ❌ Don't store secrets — notes are plain text on disk and may be committed.
 - ❌ Don't hand-write files into `notesDir` — go through the CLI so ids and frontmatter stay consistent.
 

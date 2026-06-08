@@ -31,7 +31,8 @@ import { diagnose } from "./doctor.js";
 import { runAutoCure } from "./auto-curation.js";
 import { neighbors, path, recall, search, traverse } from "./engine.js";
 import { resolveProvider } from "./extract-conversation.js";
-import { exportGraph } from "./export.js";
+import { exportGraph, toEdge } from "./export.js";
+import { buildGraphContract } from "./graph-contract.js";
 import { MemoryStore, factToNode } from "./graph-store.js";
 import { HistoricalMemoryStore } from "./historical-memory-store.js";
 import {
@@ -217,7 +218,7 @@ async function main(): Promise<void> {
     if (operation) {
       const output = await executeReadOnlyMemoryOperation(
         operation.id,
-        { store, rootDir: root, providerConfig: config?.provider },
+        { store, rootDir: root, providerConfig: config?.provider, transportSurface: "mcp" },
         args,
       );
       return text(
@@ -334,7 +335,8 @@ async function main(): Promise<void> {
           store.listEdges(),
           store.stats(),
         ]);
-        return text(JSON.stringify({ nodes, edges, stats }, null, 2), stats);
+        const contract = buildGraphContract({ nodes, edges: edges.map(toEdge) });
+        return text(JSON.stringify({ contract, nodes, edges, stats }, null, 2), stats);
       }
       case "memory_doctor": {
         const input = DoctorInput.parse(args);
@@ -674,11 +676,23 @@ async function operationStructuredContent(
       };
     case "memory.governance": {
       const summary = isRecord(output.summary) ? output.summary : {};
+      const tidy = isRecord(output.tidy_availability) ? output.tidy_availability : {};
+      const tidyRecommendations = isRecord(output.tidy_recommendations)
+        ? output.tidy_recommendations
+        : {};
+      const tidyRecommendationsSummary = isRecord(tidyRecommendations.summary)
+        ? tidyRecommendations.summary
+        : {};
       return {
         operation_id: operationId,
         schema_version: output.schema_version,
         read_only: output.read_only,
         status: output.status,
+        tidy_status: tidy.status ?? null,
+        tidy_reason: tidy.reason ?? null,
+        tidy_next_action: tidy.next_action ?? null,
+        tidy_recommendations_status: tidyRecommendations.status ?? null,
+        tidy_recommendations: tidyRecommendationsSummary.recommended_pairs ?? null,
         total_nodes: summary.total_nodes ?? null,
         missing_provenance: summary.missing_provenance ?? null,
         privacy_findings: summary.privacy_findings ?? null,
@@ -691,11 +705,23 @@ async function operationStructuredContent(
     case "memory.governance-viewer": {
       const report = isRecord(output.report) ? output.report : {};
       const summary = isRecord(report.summary) ? report.summary : {};
+      const tidy = isRecord(report.tidy_availability) ? report.tidy_availability : {};
+      const tidyRecommendations = isRecord(report.tidy_recommendations)
+        ? report.tidy_recommendations
+        : {};
+      const tidyRecommendationsSummary = isRecord(tidyRecommendations.summary)
+        ? tidyRecommendations.summary
+        : {};
       return {
         operation_id: operationId,
         contract: isRecord(output.contract) ? output.contract.version : undefined,
         consumes: isRecord(output.contract) ? output.contract.consumes : undefined,
         status: report.status,
+        tidy_status: tidy.status ?? null,
+        tidy_reason: tidy.reason ?? null,
+        tidy_next_action: tidy.next_action ?? null,
+        tidy_recommendations_status: tidyRecommendations.status ?? null,
+        tidy_recommendations: tidyRecommendationsSummary.recommended_pairs ?? null,
         missing_provenance: summary.missing_provenance ?? null,
         privacy_findings: summary.privacy_findings ?? null,
         lint_findings: summary.lint_findings ?? null,
@@ -930,6 +956,8 @@ async function operationStructuredContent(
         read_only: output.read_only,
         communities: arrayLength(output.communities),
         assignments: arrayLength(output.assignments),
+        node_analytics: arrayLength(output.node_analytics),
+        inter_community_edges: arrayLength(output.inter_community_edges),
         graph_hash: output.graph_hash,
         cached: output.cached,
         nodes: stats.nodes,
@@ -983,6 +1011,8 @@ async function operationStructuredContent(
         consumes: isRecord(output.contract) ? output.contract.consumes : undefined,
         communities: arrayLength(report.communities),
         assignments: arrayLength(report.assignments),
+        node_analytics: arrayLength(report.node_analytics),
+        inter_community_edges: arrayLength(report.inter_community_edges),
         graph_hash: report.graph_hash,
         cached: report.cached,
         html_bytes:
@@ -1474,6 +1504,23 @@ async function operationStructuredContent(
         readiness_status: envelope.status,
         active_evidence: arrayLength(evidence.active),
         html_bytes: typeof output.html === "string" ? Buffer.byteLength(output.html, "utf8") : 0,
+      };
+    }
+    case "memory.map-context": {
+      const diagnostics = isRecord(output.diagnostics) ? output.diagnostics : {};
+      const traversal = isRecord(output.traversal) ? output.traversal : {};
+      return {
+        operation_id: operationId,
+        schema_version: output.schema_version,
+        query: output.query,
+        mode: traversal.mode,
+        depth: traversal.depth,
+        context_filters: arrayLength(traversal.context_filters),
+        seeds: arrayLength(output.seeds),
+        nodes: arrayLength(output.nodes),
+        edges: arrayLength(output.edges),
+        truncated: diagnostics.truncated,
+        omitted_nodes: diagnostics.omitted_nodes,
       };
     }
     case "memory.routing-guide":

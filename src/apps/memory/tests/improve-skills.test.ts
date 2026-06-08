@@ -140,6 +140,32 @@ describe("memory improve skills CLI", () => {
       expect(proposal).toContain("Telemetry troubleshooting note");
       expect(proposal).toContain("verification guidance for the `verify` stage");
       expect(proposal).toContain("approval-gated");
+      expect(proposal).toContain("## Evidence Card");
+      expect(proposal).toContain(body.evidenceCards[0].id);
+
+      const evidenceFiles = await readdir(join(root, ".red", "memory", "inbox", "evidence"));
+      expect(evidenceFiles).toHaveLength(1);
+      const card = await readFile(body.evidenceCards[0].path, "utf8");
+      expect(card).toContain('contract: "memory.evidence-card.experimental.v1"');
+      expect(card).toContain('kind: "skill_telemetry"');
+      expect(card).toContain('source_kind: "project"');
+      expect(card).toContain('runner: "claude"');
+      expect(card).toContain('name: "flaky-skill"');
+      expect(card).toContain('rollup_ref: "skill-rollup:');
+      expect(card).toContain('- "skill-event:flaky-skill-evt-4"');
+      expect(card).toContain('kind: "skill_proposal"');
+      expect(card).toContain('target_skill_name: "flaky-skill"');
+      expect(card).toContain('suggested_section_or_anchor: "stage:verify"');
+      expect(card).toContain("external_audience: false");
+      expect(card).toContain("customer_commercial_security: false");
+      expect(card).toContain("shared_workflow_context: true");
+      expect(card).toContain('derived_level: "medium"');
+      expect(card).toContain("source_refs_not_raw_dump: true");
+      expect(card).toContain('verdict: "proposal_ready"');
+      expect(card).toContain('confidence: "high"');
+      expect(card).toContain(`path: "${body.proposals[0].path.replace(`${root}/`, "")}"`);
+      expect(card).not.toContain("session_id:");
+      expect(card).not.toContain("turn_id:");
 
       const evidenceFiles = await readdir(join(root, ".red", "memory", "inbox", "evidence"));
       expect(evidenceFiles).toHaveLength(1);
