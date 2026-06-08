@@ -246,6 +246,7 @@ import { buildMemorySmartSearchViewerArtifact } from "./smart-search-viewer.js";
 import { commitMemoryGraph, type MemoryGraphCommitResult } from "./vcs-commit.js";
 import { buildVectorSearchReport } from "./vector-search.js";
 import { buildVectorStatusViewerArtifact } from "./vector-status-viewer.js";
+import { contentHash } from "./hash.js";
 import {
   buildMemoryWorkbench,
   buildMemoryWorkbenchArtifact,
@@ -3950,8 +3951,9 @@ async function runImprove(args: ParsedArgs): Promise<void> {
   const store = await MemoryStore.open({ uri: resolveStoreUri(rootDir, config) });
   let report;
   let recent: SkillEventSummary[];
+  let rollups: SkillRollup[];
   try {
-    const rollups = await readSkillRollups(store);
+    rollups = await readSkillRollups(store);
     recent = await readRecentSkillEvents(store, 50);
     report = curateSkills(rollupsToCuratorInput(rollups), {
       staleDays: intFlag(args.flags, "stale-days"),
@@ -3960,11 +3962,17 @@ async function runImprove(args: ParsedArgs): Promise<void> {
     await store.close();
   }
 
-  const proposals = await buildSkillImprovementProposals(rootDir, report.recommendations, recent, writeProposal);
+  const { proposals, evidenceCards } = await buildSkillImprovementProposals(
+    rootDir,
+    report.recommendations,
+    rollups,
+    recent,
+    writeProposal,
+  );
   const state = proposals.length === 0 ? "no-candidates" : writeProposal ? "proposal-written" : "proposal-ready";
 
   if (json) {
-    console.log(JSON.stringify({ state, proposals }, null, 2));
+    console.log(JSON.stringify({ state, proposals, evidenceCards }, null, 2));
     return;
   }
 
@@ -3976,6 +3984,10 @@ async function runImprove(args: ParsedArgs): Promise<void> {
   for (const proposal of proposals) {
     console.log(`  ${proposal.skill}: ${proposal.category} — ${proposal.reason}`);
     if (proposal.path) console.log(`    proposal: ${proposal.path}`);
+  }
+  if (evidenceCards.length > 0) {
+    console.log("\n  evidence cards:");
+    for (const card of evidenceCards) console.log(`    ${card.skill}: ${card.path}`);
   }
   console.log("\nProposal-gated: skill files were not patched. Review and apply manually.");
 }
@@ -4234,16 +4246,47 @@ interface SkillImprovementProposalSummary {
   written: boolean;
 }
 
+interface SkillTelemetryEvidenceCardArtifact {
+  id: string;
+  contract: "memory.evidence-card.experimental.v1";
+  kind: "skill_telemetry";
+  skill: string;
+  skillPath: string;
+  fingerprint: string;
+  path: string;
+  proposalPath: string;
+  reusedExisting: boolean;
+  written: boolean;
+}
+
+interface SkillImprovementBuildResult {
+  proposals: SkillImprovementProposalSummary[];
+  evidenceCards: SkillTelemetryEvidenceCardArtifact[];
+}
+
 async function buildSkillImprovementProposals(
   rootDir: string,
-  recommendations: readonly { name: string; category: string; reason: string; path: string; curatable: boolean }[],
+  recommendations: readonly {
+    name: string;
+    source_kind: string;
+    category: string;
+    reason: string;
+    path: string;
+    curatable: boolean;
+  }[],
+  rollups: readonly SkillRollup[],
   recentEvents: readonly SkillEventSummary[],
   writeProposal: boolean,
-): Promise<SkillImprovementProposalSummary[]> {
+): Promise<SkillImprovementBuildResult> {
   const candidates = recommendations.filter((rec) => rec.curatable && rec.category === "frequently-failing");
   const proposals: SkillImprovementProposalSummary[] = [];
+  const evidenceCards: SkillTelemetryEvidenceCardArtifact[] = [];
   const proposalDir = join(rootDir, ".red", "memory", "proposals");
-  if (writeProposal && candidates.length > 0) await mkdir(proposalDir, { recursive: true });
+  const evidenceCardDir = join(rootDir, ".red", "memory", "inbox", "evidence");
+  if (writeProposal && candidates.length > 0) {
+    await mkdir(proposalDir, { recursive: true });
+    await mkdir(evidenceCardDir, { recursive: true });
+  }
 
   const pendingProposals = writeProposal ? await listPendingProposalFiles(rootDir) : [];
 
@@ -4259,15 +4302,6 @@ async function buildSkillImprovementProposals(
       dominantErrorStage,
       dominantErrorClass,
     });
-    const body = await renderSkillImprovementProposal(rootDir, rec, evidence, fingerprint);
-    const patchDrafted = body.includes("```json memory-skill-patch");
-    const priority = computeProposalPriority({
-      reason: rec.reason,
-      recentFailures: evidence.length,
-      dominantErrorStage,
-      dominantErrorClass,
-      patchDrafted,
-    });
     let proposalPath: string | null = null;
     let reusedExisting = false;
     if (writeProposal) {
@@ -4279,7 +4313,51 @@ async function buildSkillImprovementProposals(
         const file = `skill-improvement-${slugify(rec.name)}-${fingerprint.slice("sha256:".length, "sha256:".length + 12)}.md`;
         proposalPath = join(proposalDir, file);
       }
+    }
+
+    const cardlessBody = await renderSkillImprovementProposal(rootDir, rec, evidence, fingerprint, null);
+    const patchDrafted = cardlessBody.includes("```json memory-skill-patch");
+    const priority = computeProposalPriority({
+      reason: rec.reason,
+      recentFailures: evidence.length,
+      dominantErrorStage,
+      dominantErrorClass,
+      patchDrafted,
+    });
+    const card = buildSkillTelemetryEvidenceCard({
+      rootDir,
+      rec,
+      rollup: rollups.find((r) => r.source_kind === rec.source_kind && r.name === rec.name && r.path === rec.path),
+      evidence,
+      dominantErrorStage,
+      dominantErrorClass,
+      proposalFingerprint: fingerprint,
+      priority,
+    });
+    if (writeProposal && proposalPath) {
+      card.proposal.path = toPosix(relative(rootDir, proposalPath));
+    }
+    const body =
+      writeProposal && proposalPath
+        ? await renderSkillImprovementProposal(rootDir, rec, evidence, fingerprint, card)
+        : cardlessBody;
+    if (writeProposal && proposalPath) {
+      const cardPath = join(evidenceCardDir, card.file);
+      const cardReusedExisting = existsSync(cardPath);
       await writeFile(proposalPath, body, "utf8");
+      await writeFile(cardPath, renderEvidenceCardYaml(card), "utf8");
+      evidenceCards.push({
+        id: card.id,
+        contract: "memory.evidence-card.experimental.v1",
+        kind: "skill_telemetry",
+        skill: rec.name,
+        skillPath: rec.path,
+        fingerprint: card.fingerprint,
+        path: cardPath,
+        proposalPath,
+        reusedExisting: cardReusedExisting,
+        written: true,
+      });
     }
     proposals.push({
       skill: rec.name,
@@ -4299,7 +4377,10 @@ async function buildSkillImprovementProposals(
       written: writeProposal,
     });
   }
-  return sortProposalSummaries(proposals);
+  return {
+    proposals: sortProposalSummaries(proposals),
+    evidenceCards: evidenceCards.sort((a, b) => a.skill.localeCompare(b.skill) || a.path.localeCompare(b.path)),
+  };
 }
 
 
@@ -4320,15 +4401,243 @@ function proposalFingerprint(input: {
   return `sha256:${createHash("sha256").update(payload).digest("hex")}`;
 }
 
+interface SkillTelemetryEvidenceCard {
+  contract: "memory.evidence-card.experimental.v1";
+  id: string;
+  kind: "skill_telemetry";
+  status: "proposed";
+  created_at: string;
+  updated_at: string;
+  fingerprint: string;
+  file: string;
+  source: {
+    kind: "skill_telemetry";
+    source_kind: string;
+    runner: string;
+    skill: {
+      name: string;
+      path: string;
+    };
+    rollup_ref: string;
+    recent_event_refs: string[];
+  };
+  signal: {
+    category: string;
+    reason: string;
+    recent_failures: number;
+    dominant_error_stage: string | null;
+    dominant_error_class: string | null;
+  };
+  route: {
+    kind: "skill_proposal";
+    target_skill_name: string;
+    target_skill_path: string;
+    suggested_section_or_anchor: string;
+    route_decision: "write_approval_gated_proposal";
+    route_reason: string;
+  };
+  blast_radius: {
+    axes: {
+      external_audience: boolean;
+      customer_commercial_security: boolean;
+      shared_workflow_context: boolean;
+    };
+    derived_level: "medium";
+    reason: string;
+  };
+  judge: {
+    checklist: {
+      source_refs_not_raw_dump: boolean;
+      enough_recent_failures: boolean;
+      privacy_posture_recorded: boolean;
+      blast_radius_recorded: boolean;
+      route_quality_recorded: boolean;
+    };
+    verdict: "proposal_ready";
+    confidence: "high" | "medium";
+    reason: string;
+  };
+  privacy: {
+    redaction: "not_required";
+    findings: string[];
+  };
+  proposal: {
+    path: string;
+    fingerprint: string;
+  };
+}
+
+function buildSkillTelemetryEvidenceCard(input: {
+  rootDir: string;
+  rec: { name: string; source_kind: string; category: string; reason: string; path: string };
+  rollup?: SkillRollup;
+  evidence: readonly SkillEventSummary[];
+  dominantErrorStage: string | null;
+  dominantErrorClass: string | null;
+  proposalFingerprint: string;
+  priority: { score: number; priority: "high" | "medium" | "low"; reasons: string[] };
+}): SkillTelemetryEvidenceCard {
+  const relSkillPath = isAbsolute(input.rec.path)
+    ? toPosix(relative(input.rootDir, input.rec.path))
+    : input.rec.path;
+  const runner = topValues(input.evidence.map((event) => event.runner))[0] ?? "unknown";
+  const recentEventRefs = input.evidence.map((event) => `skill-event:${event.event_id}`);
+  const telemetryWindow = input.evidence.map((event) => event.event_id).join("|");
+  const fingerprint = `sha256:${createHash("sha256")
+    .update(
+      JSON.stringify({
+        contract: "memory.evidence-card.experimental.v1",
+        source: "skill.telemetry",
+        route: "skill_proposal",
+        skill: input.rec.name,
+        source_kind: input.rec.source_kind,
+        path: relSkillPath,
+        dominantErrorStage: input.dominantErrorStage ?? "",
+        dominantErrorClass: input.dominantErrorClass ?? "",
+        telemetryWindow,
+      }),
+    )
+    .digest("hex")}`;
+  const short = fingerprint.slice("sha256:".length, "sha256:".length + 12);
+  const id = `skill-telemetry:${slugify(input.rec.name)}:${short}`;
+  const now = new Date().toISOString();
+  const rollupRef =
+    input.rollup != null
+      ? `skill-rollup:${contentHash(input.rollup.source_kind, input.rollup.name, input.rollup.path)}`
+      : `skill-rollup:${contentHash(input.rec.source_kind, input.rec.name, input.rec.path)}`;
+
+  return {
+    contract: "memory.evidence-card.experimental.v1",
+    id,
+    kind: "skill_telemetry",
+    status: "proposed",
+    created_at: now,
+    updated_at: now,
+    fingerprint,
+    file: `skill-telemetry-${slugify(input.rec.name)}-${short}.yaml`,
+    source: {
+      kind: "skill_telemetry",
+      source_kind: input.rec.source_kind,
+      runner,
+      skill: {
+        name: input.rec.name,
+        path: relSkillPath,
+      },
+      rollup_ref: rollupRef,
+      recent_event_refs: recentEventRefs,
+    },
+    signal: {
+      category: input.rec.category,
+      reason: input.rec.reason,
+      recent_failures: input.evidence.length,
+      dominant_error_stage: input.dominantErrorStage,
+      dominant_error_class: input.dominantErrorClass,
+    },
+    route: {
+      kind: "skill_proposal",
+      target_skill_name: input.rec.name,
+      target_skill_path: relSkillPath,
+      suggested_section_or_anchor: suggestedSectionOrAnchor(input.dominantErrorStage, input.dominantErrorClass),
+      route_decision: "write_approval_gated_proposal",
+      route_reason: `Repeated failing Skill telemetry should become a reviewed Skill improvement proposal for ${input.rec.name}.`,
+    },
+    blast_radius: {
+      axes: {
+        external_audience: false,
+        customer_commercial_security: false,
+        shared_workflow_context: true,
+      },
+      derived_level: "medium",
+      reason:
+        "The card routes to a Skill behavior proposal. It does not affect external users or customer/commercial/security behavior directly, but it can change shared agent workflow guidance after review.",
+    },
+    judge: {
+      checklist: {
+        source_refs_not_raw_dump: recentEventRefs.length > 0 && rollupRef.length > 0,
+        enough_recent_failures: input.evidence.length >= 2,
+        privacy_posture_recorded: true,
+        blast_radius_recorded: true,
+        route_quality_recorded: true,
+      },
+      verdict: "proposal_ready",
+      confidence: input.priority.priority === "high" ? "high" : "medium",
+      reason: `Telemetry supports a ${input.priority.priority}-priority approval-gated proposal: ${input.priority.reasons.join("; ")}.`,
+    },
+    privacy: {
+      redaction: "not_required",
+      findings: [],
+    },
+    proposal: {
+      path: "",
+      fingerprint: input.proposalFingerprint,
+    },
+  };
+}
+
+function suggestedSectionOrAnchor(
+  dominantErrorStage: string | null,
+  dominantErrorClass: string | null,
+): string {
+  if (dominantErrorStage) return `stage:${dominantErrorStage}`;
+  if (dominantErrorClass) return `error_class:${dominantErrorClass}`;
+  return "safe-tail-anchor";
+}
+
+function renderEvidenceCardYaml(card: SkillTelemetryEvidenceCard): string {
+  return `${yamlValue(card)}\n`;
+}
+
+function yamlValue(value: unknown, indent = 0): string {
+  const pad = " ".repeat(indent);
+  if (Array.isArray(value)) {
+    if (value.length === 0) return "[]";
+    return value
+      .map((item) => {
+        if (isPlainObject(item) || Array.isArray(item)) {
+          const rendered = yamlValue(item, indent + 2);
+          return `${pad}-\n${rendered}`;
+        }
+        return `${pad}- ${yamlScalar(item)}`;
+      })
+      .join("\n");
+  }
+  if (isPlainObject(value)) {
+    return Object.entries(value)
+      .map(([key, item]) => {
+        if (isPlainObject(item) || Array.isArray(item)) {
+          const rendered = yamlValue(item, indent + 2);
+          return `${pad}${key}:\n${rendered}`;
+        }
+        return `${pad}${key}: ${yamlScalar(item)}`;
+      })
+      .join("\n");
+  }
+  return `${pad}${yamlScalar(value)}`;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return value != null && typeof value === "object" && !Array.isArray(value);
+}
+
+function yamlScalar(value: unknown): string {
+  if (value === null) return "null";
+  if (typeof value === "boolean" || typeof value === "number") return String(value);
+  return JSON.stringify(String(value));
+}
+
 async function renderSkillImprovementProposal(
   rootDir: string,
   rec: { name: string; category: string; reason: string; path: string },
   evidence: SkillEventSummary[],
   fingerprint: string,
+  evidenceCard: SkillTelemetryEvidenceCard | null,
 ): Promise<string> {
   const relSkillPath = isAbsolute(rec.path) ? toPosix(relative(rootDir, rec.path)) : rec.path;
   const evidenceBlock = renderRecentFailureEvidence(evidence);
   const patchBlock = await renderDraftSkillPatchBlock(rootDir, rec, relSkillPath, evidence);
+  const evidenceCardBlock = evidenceCard
+    ? `\n## Evidence Card\n\n- Evidence card id: ${evidenceCard.id}\n- Evidence card path: ${toPosix(join(".red", "memory", "inbox", "evidence", evidenceCard.file))}\n`
+    : "";
   return `# Skill Improvement Proposal: ${rec.name}
 
 Status: approval-gated
@@ -4341,6 +4650,7 @@ Fingerprint: ${fingerprint}
 - Category: ${rec.category}
 - Reason: ${rec.reason}
 - Skill path: ${relSkillPath}
+${evidenceCardBlock}
 
 ## Hypothesis
 
@@ -4508,7 +4818,7 @@ function reportImproveState(
   proposals: SkillImprovementProposalSummary[],
 ): void {
   if (json) {
-    console.log(JSON.stringify({ state, reason, proposals }, null, 2));
+    console.log(JSON.stringify({ state, reason, proposals, evidenceCards: [] }, null, 2));
     return;
   }
   console.log(`memory: skill improvement — ${state}`);
@@ -4905,12 +5215,15 @@ async function healthReport(rootDir: string) {
         rollups = await readSkillRollups(store);
         const recent = await readRecentSkillEvents(store, 50);
         const curated = curateSkills(rollupsToCuratorInput(rollups));
-        topProposals = await buildSkillImprovementProposals(
-          rootDir,
-          curated.recommendations,
-          recent,
-          false,
-        );
+        topProposals = (
+          await buildSkillImprovementProposals(
+            rootDir,
+            curated.recommendations,
+            rollups,
+            recent,
+            false,
+          )
+        ).proposals;
       }
       engineEvents = await engineEventHealth(store);
     } finally {
