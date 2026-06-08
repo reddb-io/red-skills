@@ -46,6 +46,7 @@ function fleetHeartbeatState(hb: FleetHeartbeat): string {
     {
       ts: hb.ts,
       epoch: hb.epoch,
+      runner: hb.runner,
       ready_for_agent: hb.readyForAgent,
       slots: {
         busy: hb.slotsBusy,
@@ -320,6 +321,7 @@ function buildSupervisorDeps(
             worker: "fleet",
             extra: {
               scope: "fleet",
+              runner: hb.runner,
               ready_for_agent: String(hb.readyForAgent),
               slots_busy: String(hb.slotsBusy),
               slots_free: String(hb.slotsFree),

@@ -12,6 +12,8 @@ import {
   sweepParkedSlot,
   superviseTick,
   validateStallThresholds,
+  validateSupervisorStaleThreshold,
+  classifySupervisor,
   guardedTick,
   type IterDirInfo,
   type SupervisorConfig,
@@ -33,6 +35,7 @@ function config(over: Partial<SupervisorConfig> = {}): SupervisorConfig {
     runner: "claude",
     pollIntervalS: 15,
     tickTimeoutS: 120,
+    supervisorStaleS: 300,
     ...over,
   };
 }
@@ -140,6 +143,73 @@ describe("validateStallThresholds", () => {
     await expect(
       runSupervisor(state, deps, config({ stallThresholdS: 600, stallKillThresholdS: 600 }), () => true),
     ).rejects.toThrow();
+  });
+});
+
+// ---------- validateSupervisorStaleThreshold (#407) ----------
+
+describe("validateSupervisorStaleThreshold", () => {
+  it("passes when STALE > TICK_TIMEOUT", () => {
+    expect(() => validateSupervisorStaleThreshold({ supervisorStaleS: 300, tickTimeoutS: 120 })).not.toThrow();
+  });
+
+  it("throws when STALE == TICK_TIMEOUT", () => {
+    expect(() => validateSupervisorStaleThreshold({ supervisorStaleS: 120, tickTimeoutS: 120 })).toThrow();
+  });
+
+  it("throws when STALE < TICK_TIMEOUT", () => {
+    expect(() => validateSupervisorStaleThreshold({ supervisorStaleS: 60, tickTimeoutS: 120 })).toThrow();
+  });
+
+  it("runSupervisor refuses to boot with STALE <= TICK_TIMEOUT", async () => {
+    const { deps } = makeDeps();
+    const state = initSupervisorState(1);
+    await expect(
+      runSupervisor(state, deps, config({ supervisorStaleS: 120, tickTimeoutS: 120 }), () => true),
+    ).rejects.toThrow(/RED_AFK_SUPERVISOR_STALE_S/);
+  });
+});
+
+// ---------- classifySupervisor (#407 quiescence detector, pure) ----------
+
+describe("classifySupervisor", () => {
+  const STALE = 300;
+
+  it("is absent when there is no pid", () => {
+    expect(classifySupervisor({ pid: null, pidAlive: false, lastHeartbeatEpoch: NOW }, NOW, STALE)).toBe("absent");
+  });
+
+  it("is absent when the pid is dead", () => {
+    expect(classifySupervisor({ pid: 42, pidAlive: false, lastHeartbeatEpoch: NOW - 9999 }, NOW, STALE)).toBe(
+      "absent",
+    );
+  });
+
+  it("is healthy when a live pid has a fresh heartbeat", () => {
+    expect(classifySupervisor({ pid: 42, pidAlive: true, lastHeartbeatEpoch: NOW - 10 }, NOW, STALE)).toBe("healthy");
+  });
+
+  it("is healthy at exactly one second under the threshold", () => {
+    expect(classifySupervisor({ pid: 42, pidAlive: true, lastHeartbeatEpoch: NOW - (STALE - 1) }, NOW, STALE)).toBe(
+      "healthy",
+    );
+  });
+
+  it("is quiescent at exactly the threshold and beyond", () => {
+    expect(classifySupervisor({ pid: 42, pidAlive: true, lastHeartbeatEpoch: NOW - STALE }, NOW, STALE)).toBe(
+      "quiescent",
+    );
+    expect(classifySupervisor({ pid: 42, pidAlive: true, lastHeartbeatEpoch: NOW - 999999 }, NOW, STALE)).toBe(
+      "quiescent",
+    );
+  });
+
+  it("never proves a wedge on a live pid that has no heartbeat yet (just booted)", () => {
+    expect(classifySupervisor({ pid: 42, pidAlive: true, lastHeartbeatEpoch: null }, NOW, STALE)).toBe("healthy");
+  });
+
+  it("treats a future-stamped heartbeat (clock skew) as healthy", () => {
+    expect(classifySupervisor({ pid: 42, pidAlive: true, lastHeartbeatEpoch: NOW + 50 }, NOW, STALE)).toBe("healthy");
   });
 });
 
@@ -650,5 +720,14 @@ describe("resolveSupervisorConfig — tick timeout knob", () => {
     expect(resolveSupervisorConfig({ RED_AFK_TICK_TIMEOUT_S: "0" }).tickTimeoutS).toBe(120);
     expect(resolveSupervisorConfig({ RED_AFK_TICK_TIMEOUT_S: "45" }).tickTimeoutS).toBe(45);
     expect(resolveSupervisorConfig({ RED_AFK_TICK_TIMEOUT_S: "abc" }).tickTimeoutS).toBe(120);
+  });
+});
+
+describe("resolveSupervisorConfig — supervisor stale knob (#407)", () => {
+  it("defaults supervisorStaleS and floors a 0/garbage back to the default", () => {
+    expect(resolveSupervisorConfig({}).supervisorStaleS).toBe(300);
+    expect(resolveSupervisorConfig({ RED_AFK_SUPERVISOR_STALE_S: "0" }).supervisorStaleS).toBe(300);
+    expect(resolveSupervisorConfig({ RED_AFK_SUPERVISOR_STALE_S: "900" }).supervisorStaleS).toBe(900);
+    expect(resolveSupervisorConfig({ RED_AFK_SUPERVISOR_STALE_S: "abc" }).supervisorStaleS).toBe(300);
   });
 });

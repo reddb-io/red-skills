@@ -54,6 +54,8 @@ export interface CompactWorker {
 export interface FleetState {
   ts: string;
   epoch: number;
+  /** Runner the fleet was launched with (default "" for pre-#407 state files). */
+  runner: string;
   readyForAgent: number;
   slotsBusy: number;
   slotsFree: number;
