@@ -31,12 +31,15 @@ import {
 } from "./branch-cleanup.js";
 import {
   planUnblockSweep,
+  planReconcileSweep,
   stragglerCounts,
   shouldWarnStragglers,
   type BlockerStateLookup,
   type StragglerCountLookup,
   type StragglerCounts,
   type UnblockCandidate,
+  type ReconcileSweepCandidate,
+  type ReconcileSweepPlan,
 } from "./boot-sweep.js";
 
 // ---------- precheck (hard preconditions) ----------
@@ -152,6 +155,15 @@ export interface BootLookups {
   straggler: StragglerCountLookup;
 }
 
+/** Outcome of one boot reconcile run — a coarser view of `ReconcileResult`
+ * that only carries what the sweep needs to log and bucket. */
+export type ReconcileBootOutcome = "landed" | "parked" | "skipped";
+
+/** A runner the boot reconcile sweep invokes once per planned issue. Fully
+ * owns the reconcile call — builds its own `ReconcileDeps` + `ReconcileInput`
+ * from closed-over context. When absent, the reconcile sweep is a no-op. */
+export type ReconcileBootRunner = (plan: ReconcileSweepPlan) => Promise<{ outcome: ReconcileBootOutcome }>;
+
 /** All injected IO + lookups for the boot run. */
 export interface BootDeps {
   fs: BootFs;
@@ -162,6 +174,9 @@ export interface BootDeps {
   nowS: number;
   /** Env for the cap/grace resolvers (defaults to process.env). */
   env?: Record<string, string | undefined>;
+  /** When provided, the reconcile sweep (step 7) validates and lands each
+   * owned parked-mechanical branch without re-running the agent. */
+  reconcileRunner?: ReconcileBootRunner;
 }
 
 // ---------- step inputs ----------
@@ -233,6 +248,10 @@ export interface BootOptions {
   /** `.red/tmp/claims/<N>/` lock dirs whose recorded pid is dead. Reclaimed
    * unconditionally. Optional for back-compat. */
   staleClaimDirs?: readonly StaleClaimDir[];
+  /** Open issues labelled `blocked:stalled` or `blocked:crashed` that the
+   * reconcile sweep (step 7) will attempt to validate-and-land. When absent the
+   * sweep is a no-op. Optional for back-compat. */
+  reconcileSweepCandidates?: readonly ReconcileSweepCandidate[];
 }
 
 // ---------- per-step results (for parity assertions / logging) ----------
@@ -267,6 +286,15 @@ export interface StragglerResult {
   warn: boolean;
 }
 
+export interface ReconcileSweepResult {
+  /** Issues successfully validated-green and landed without re-running the agent. */
+  landed: number[];
+  /** Issues re-parked with `blocked:validation` (gate failed or merge conflict). */
+  parked: number[];
+  /** Issues skipped (no owned branch, not mechanical, or reconcile guard rejected). */
+  skipped: number[];
+}
+
 /** The boot run outcome. On a precheck failure the sequence short-circuits and
  * only `precheck` is populated (the bash `die` aborts before any other step). */
 export interface BootResult {
@@ -276,6 +304,7 @@ export interface BootResult {
   attemptCap?: AttemptCapResult;
   branchCleanup?: BranchCleanupResult;
   unblockSweep?: UnblockSweepResult;
+  reconcileSweep?: ReconcileSweepResult;
   straggler?: StragglerResult;
 }
 
@@ -295,9 +324,12 @@ export interface BootResult {
  *   5. branch cleanup       — planAttemptSnapshotCleanup, planLiveBranchCleanup,
  *                             planLocalBranchCleanup; delete reaped refs (git).
  *   6. unblock sweep        — planUnblockSweep; edit labels + audit comment (gh).
- *   7. straggler check      — stragglerCounts + shouldWarnStragglers → warn flag.
+ *   7. reconcile sweep      — planReconcileSweep; validate-and-land each owned
+ *                             parked-mechanical branch without re-running the agent
+ *                             (ADR 0055). No-op when reconcileRunner is absent.
+ *   8. straggler check      — stragglerCounts + shouldWarnStragglers → warn flag.
  *
- * Steps 3-7 run only after a passing precheck, mirroring the bash `die`/`set -e`
+ * Steps 3-8 run only after a passing precheck, mirroring the bash `die`/`set -e`
  * abort. The TTY "proceed anyway?" prompt is the caller's: this returns the
  * straggler warn flag, it does not block.
  */
@@ -327,7 +359,10 @@ export async function runBoot(deps: BootDeps, options: BootOptions): Promise<Boo
   // ---- 6. unblock sweep ----
   const unblockSweep = await runUnblockSweep(deps, options.unblockCandidates);
 
-  // ---- 7. straggler check ----
+  // ---- 7. reconcile sweep (ADR 0055) ----
+  const reconcileSweep = await runReconcileSweep(deps, options);
+
+  // ---- 8. straggler check ----
   const straggler = await runStragglerCheck(deps);
 
   return {
@@ -337,6 +372,7 @@ export async function runBoot(deps: BootDeps, options: BootOptions): Promise<Boo
     attemptCap,
     branchCleanup,
     unblockSweep,
+    reconcileSweep,
     straggler,
   };
 }
@@ -515,7 +551,38 @@ async function runUnblockSweep(
   return { promoted };
 }
 
-/** Step 7: gather the straggler counts and decide whether to warn. The actual
+/** Step 7: reconcile sweep (ADR 0055). For each owned parked-mechanical branch,
+ * validate-and-land it through the scoped feedback gate WITHOUT re-running the
+ * agent. A no-op when no `reconcileRunner` is wired in or no candidates are
+ * provided. Sequenced AFTER the unblock sweep so any dependency-promotion from
+ * step 6 is already in place before we attempt to land dependents. */
+async function runReconcileSweep(deps: BootDeps, options: BootOptions): Promise<ReconcileSweepResult> {
+  const result: ReconcileSweepResult = { landed: [], parked: [], skipped: [] };
+  if (!deps.reconcileRunner) return result;
+  const candidates = options.reconcileSweepCandidates ?? [];
+  if (candidates.length === 0) return result;
+
+  // The remote live refs already list every `afk/{worker}/{N}-{slug}` branch
+  // on origin — reuse them rather than fetching again. Extract the branch names.
+  const remoteBranches = options.branches.remoteLiveRefs.map((r) => r.branch);
+  const plans = planReconcileSweep(candidates, remoteBranches);
+
+  for (const plan of plans) {
+    try {
+      const { outcome } = await deps.reconcileRunner(plan);
+      if (outcome === "landed") result.landed.push(plan.number);
+      else if (outcome === "parked") result.parked.push(plan.number);
+      else result.skipped.push(plan.number);
+    } catch {
+      // Best-effort: a runner crash skips the issue; the boot sweep is the safety net,
+      // not the primary recovery path. The issue remains parked for the next boot.
+      result.skipped.push(plan.number);
+    }
+  }
+  return result;
+}
+
+/** Step 8: gather the straggler counts and decide whether to warn. The actual
  * TTY "proceed anyway?" prompt is the caller's — this only returns the flag.
  * Mirrors straggler_check. */
 async function runStragglerCheck(deps: BootDeps): Promise<StragglerResult> {

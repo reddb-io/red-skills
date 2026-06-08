@@ -12,7 +12,7 @@ import type { HitlCandidate } from "../core/hitl-selection.js";
 import type { IssueMeta } from "../core/branch-cleanup.js";
 import type { HandoffComment } from "../core/handoff.js";
 import type { IssueOpenState } from "../core/reclaim.js";
-import type { UnblockCandidate } from "../core/boot-sweep.js";
+import type { UnblockCandidate, ReconcileSweepCandidate } from "../core/boot-sweep.js";
 
 export interface GhContext {
   /** owner/repo slug for `gh ... --repo`. */
@@ -515,6 +515,63 @@ export async function listByLabel(
  * conservative `blockerState !== "CLOSED"` treatment in the sweep. */
 export async function issueClosed(ctx: GhContext, n: number): Promise<boolean> {
   return (await blockerState(ctx, n)) === "CLOSED";
+}
+
+/** List open issues labelled `blocked:stalled` OR `blocked:crashed` — the
+ * parked-mechanical candidates the boot reconcile sweep processes. The two
+ * `gh issue list` calls run concurrently and are de-duplicated by issue number.
+ * A failed probe for either label returns [] for that label; the surviving set
+ * is still processed. */
+export async function listParkedMechanicalCandidates(
+  ctx: GhContext,
+): Promise<ReconcileSweepCandidate[]> {
+  const [stalled, crashed] = await Promise.all([
+    listIssuesByLabel(ctx, "blocked:stalled"),
+    listIssuesByLabel(ctx, "blocked:crashed"),
+  ]);
+  const seen = new Set<number>();
+  const result: ReconcileSweepCandidate[] = [];
+  for (const c of [...stalled, ...crashed]) {
+    if (seen.has(c.number)) continue;
+    seen.add(c.number);
+    result.push(c);
+  }
+  return result;
+}
+
+/** List open issues carrying `label` with number, title, body, and labels. */
+async function listIssuesByLabel(ctx: GhContext, label: string): Promise<ReconcileSweepCandidate[]> {
+  const r = await runGh(ctx, [
+    "issue",
+    "list",
+    ...repoArgs(ctx),
+    "--label",
+    label,
+    "--state",
+    "open",
+    "--limit",
+    "200",
+    "--json",
+    "number,title,body,labels",
+  ]);
+  if (r.code !== 0) return [];
+  try {
+    const rows = JSON.parse(r.stdout) as Array<{
+      number?: number;
+      title?: string;
+      body?: string;
+      labels?: Array<{ name?: string }>;
+    }>;
+    if (!Array.isArray(rows)) return [];
+    return rows.map((row): ReconcileSweepCandidate => ({
+      number: Number(row.number ?? 0),
+      title: String(row.title ?? ""),
+      body: String(row.body ?? ""),
+      labels: Array.isArray(row.labels) ? row.labels.map((l) => String(l.name ?? "")) : [],
+    }));
+  } catch {
+    return [];
+  }
 }
 
 /** Branch-cleanup IssueLookup payload: gh issue view --json state,closedAt.

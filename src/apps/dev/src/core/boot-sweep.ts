@@ -277,3 +277,88 @@ export async function stragglerCounts(lookup: StragglerCountLookup): Promise<Str
 export function shouldWarnStragglers(counts: StragglerCounts): boolean {
   return counts.unlabeled > 0 || counts.needsTriage > 0 || counts.needsInfo > 0;
 }
+
+// ---------- reconcile sweep ----------
+
+/** Pattern for an AFK live-iteration worker branch (`afk/{worker}/{N}-{slug}`).
+ * Mirrors the LIVE_REF_RE capture in branch-cleanup.ts. */
+const AFK_LIVE_BRANCH_RE = /^afk\/[A-Za-z0-9._-]+\/([0-9]+)-[a-z0-9-]+$/;
+
+/**
+ * Extract the issue number from an `afk/{worker}/{N}-{slug}` live-iteration
+ * branch ref. Returns null when the ref does not match the pattern (e.g.
+ * `afk-attempts/*` or a malformed ref). Pure.
+ */
+export function issueFromAFKBranch(branch: string): number | null {
+  const m = AFK_LIVE_BRANCH_RE.exec(branch);
+  return m ? Number(m[1]) : null;
+}
+
+/**
+ * Find the first `afk/{worker}/{issue}-{slug}` branch in `branches` that owns
+ * `issue`. The caller passes the remote live-iteration branch list (e.g. from
+ * `git ls-remote --heads origin afk/`). Returns null when no matching branch is
+ * present — the sweep skips this issue. Pure.
+ */
+export function findOwnedBranch(branches: readonly string[], issue: number): string | null {
+  for (const b of branches) {
+    if (issueFromAFKBranch(b) === issue) return b;
+  }
+  return null;
+}
+
+/** The labels that mark a parked-mechanical issue: the attempt-progress guard
+ * fired (`blocked:stalled`) or the agent process crashed (`blocked:crashed`). */
+const PARKED_MECHANICAL_LABELS = new Set(["blocked:stalled", "blocked:crashed"]);
+
+/**
+ * True when the label set carries a parked-mechanical routing label
+ * (`blocked:stalled` or `blocked:crashed`). Pure.
+ */
+export function isParkedMechanical(labels: readonly string[]): boolean {
+  return labels.some((l) => PARKED_MECHANICAL_LABELS.has(l));
+}
+
+/** A parked-mechanical candidate the reconcile sweep examines. */
+export interface ReconcileSweepCandidate {
+  number: number;
+  title: string;
+  body: string;
+  labels: string[];
+}
+
+/** One planned reconcile: the candidate plus the owned branch to validate-and-land. */
+export interface ReconcileSweepPlan {
+  number: number;
+  title: string;
+  body: string;
+  labels: string[];
+  /** The `afk/{worker}/{N}-{slug}` ref on origin that carries this issue's work. */
+  branch: string;
+}
+
+/**
+ * Plan the reconcile sweep: for each parked-mechanical candidate that has an
+ * `afk/{worker}/{N}-{slug}` branch on origin, produce a reconcile plan. Issues
+ * without a parked-mechanical label are skipped; issues with a branch but also a
+ * `blocked:spec` / `blocked:validation` label (or an active non-mechanical
+ * `## Current blocker`) are rejected by `reconcile()`'s own guard — the
+ * planner's only job is the ownership check. Pure.
+ *
+ * @param candidates - Open issues labelled `blocked:stalled` or `blocked:crashed`.
+ * @param remoteBranches - The `afk/{worker}/{N}-{slug}` live branches on origin
+ *   (one short-name per element, e.g. `["afk/wA1B5/101-add-feature"]`).
+ */
+export function planReconcileSweep(
+  candidates: readonly ReconcileSweepCandidate[],
+  remoteBranches: readonly string[],
+): ReconcileSweepPlan[] {
+  const plans: ReconcileSweepPlan[] = [];
+  for (const c of candidates) {
+    if (!isParkedMechanical(c.labels)) continue;
+    const branch = findOwnedBranch(remoteBranches, c.number);
+    if (!branch) continue;
+    plans.push({ number: c.number, title: c.title, body: c.body, labels: c.labels, branch });
+  }
+  return plans;
+}
