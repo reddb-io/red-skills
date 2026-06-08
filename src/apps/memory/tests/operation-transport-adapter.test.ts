@@ -4,8 +4,10 @@ import { describe, expect, test } from "vitest";
 import { listMemoryHttpRegistryRoutes } from "../src/http-server.js";
 import {
   getReadOnlyMemoryOperation,
+  executeReadOnlyMemoryOperation,
   listReadOnlyMemoryOperations,
 } from "../src/operations.js";
+import type { MemoryStore } from "../src/graph-store.js";
 import {
   bindMemoryOperationInput,
   queryObjectFromSearchParams,
@@ -97,6 +99,10 @@ describe("Memory operation transport adapter", () => {
       operationId: "memory.context-pack",
     });
     expect(routes).toContainEqual({
+      route: "/api/map-contract",
+      operationId: "memory.map-contract",
+    });
+    expect(routes).toContainEqual({
       route: "/memory/health",
       operationId: "memory.health-viewer",
     });
@@ -123,10 +129,101 @@ describe("Memory operation transport adapter", () => {
     );
     expect(commands).toContainEqual(
       expect.objectContaining({
+        id: "memory.map-contract",
+        command: "map-contract",
+        outputKind: "report",
+        fields: expect.arrayContaining(["communities"]),
+      }),
+    );
+    expect(commands).toContainEqual(
+      expect.objectContaining({
         id: "memory.vector-status-viewer",
         command: "vector status-viewer",
         outputKind: "viewer",
       }),
     );
+  });
+
+  test("map-contract returns representative RedDB graph contract data", async () => {
+    const store = {
+      listNodes: async () => [
+        {
+          rid: 1,
+          label: "file:/repo/src/auth.ts",
+          node_type: "file",
+          properties: {
+            title: "src/auth.ts",
+            confidence: "EXTRACTED",
+            source_location: "src/auth.ts",
+            provenance: { source_kind: "derived", writer: "memory ingest" },
+            created_at: 1_700_000_000_000,
+            updated_at: 1_700_000_100_000,
+            salience: 0.8,
+          },
+        },
+        {
+          rid: 2,
+          label: "sym:/repo/src/auth.ts#issueToken",
+          node_type: "symbol",
+          properties: { title: "issueToken" },
+        },
+      ],
+      listEdges: async () => [
+        {
+          rid: 10,
+          label: "DEFINED_IN",
+          from: 2,
+          to: 1,
+          weight: 2.5,
+          properties: {
+            salience: 0.7,
+            confidence: "EXTRACTED",
+            source: "src/auth.ts:1",
+            provenance: { source_kind: "derived", evidence: ["src/auth.ts:1"] },
+            created_at: 1_700_000_200_000,
+          },
+        },
+      ],
+      communities: async () => new Map([[1, "c0"], [2, "c0"]]),
+    } as Partial<MemoryStore> as MemoryStore;
+
+    const contract = (await executeReadOnlyMemoryOperation(
+      "memory.map-contract",
+      { store },
+      { communities: true },
+    )) as Record<string, any>;
+
+    expect(contract).toMatchObject({
+      version: "2.0.0",
+      stats: {
+        node_count: 2,
+        edge_count: 1,
+        edge_kinds: { imports: 0, defines: 1, references: 0 },
+      },
+    });
+    expect(contract.nodes[0]).toMatchObject({
+      id: 1,
+      type: "file",
+      community: "c0",
+      confidence: "EXTRACTED",
+      source_location: "src/auth.ts",
+      provenance: { source_kind: "derived", writer: "memory ingest" },
+      freshness: { created_at: 1_700_000_000_000, updated_at: 1_700_000_100_000 },
+      salience: 0.8,
+    });
+    expect(contract.edges[0]).toMatchObject({
+      source: 1,
+      target: 2,
+      kind: "defines",
+      weight: 2.5,
+      salience: 0.7,
+      confidence: "EXTRACTED",
+      source_location: "src/auth.ts:1",
+      provenance: { source_kind: "derived", evidence: ["src/auth.ts:1"] },
+      freshness: { created_at: 1_700_000_200_000, updated_at: null },
+      direction: "directed",
+    });
+    expect(contract.edges[0]).not.toHaveProperty("layout");
+    expect(contract.edges[0]).not.toHaveProperty("opacity");
   });
 });

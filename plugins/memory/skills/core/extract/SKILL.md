@@ -20,7 +20,7 @@ If either is missing, stop and explain the missing prerequisite. Do not silently
 
 ## 2. Select the transcript deliberately
 
-Use a transcript/log that contains durable learning: decisions, root causes, gotchas, why-notes, failed attempts that explain constraints, or stable preferences. Do not extract secrets, raw credentials, private personal data, issue-only progress, PR numbers, commit SHAs, or stale task-completion logs.
+Use a transcript/log that contains durable operational learning: decisions, root causes, gotchas, why-notes, or failed attempts that explain constraints. Do not extract secrets, raw credentials, private personal data, Odysseus-style Personal facts, biographical details, issue-only progress, PR numbers, commit SHAs, or stale task-completion logs. Long-lived human preferences and identity context belong in Brain, not Memory.
 
 ## 3. Run extraction
 

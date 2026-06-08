@@ -31,6 +31,23 @@ describe("recoveryDecision — recoverable reasons honour the cap", () => {
   }
 });
 
+describe("recoveryDecision — the supervisor stalled re-claim cap (#402)", () => {
+  it("retries under the default cap of 3, escalates at/over it", () => {
+    expect(recoveryDecision("stalled", 1, {})).toBe("retry");
+    expect(recoveryDecision("stalled", 2, {})).toBe("retry");
+    expect(recoveryDecision("stalled", 3, {})).toBe("escalate");
+    expect(recoveryDecision("stalled", 4, {})).toBe("escalate");
+  });
+
+  it("RED_AFK_RETRY_STALLED overrides the cap; garbage falls back to the default", () => {
+    expect(recoveryDecision("stalled", 4, { RED_AFK_RETRY_STALLED: "5" })).toBe("retry");
+    expect(recoveryDecision("stalled", 5, { RED_AFK_RETRY_STALLED: "5" })).toBe("escalate");
+    expect(recoveryDecision("stalled", 3, { RED_AFK_RETRY_STALLED: "nope" })).toBe("escalate");
+    expect(recoveryCap("stalled", {})).toBe(3);
+    expect(recoveryCap("stalled", { RED_AFK_RETRY_STALLED: "8" })).toBe(8);
+  });
+});
+
 describe("recoveryDecision — non-recoverable reasons always escalate", () => {
   for (const reason of ["spec", "validation"]) {
     it(`${reason} escalates at every attempt`, () => {

@@ -2,7 +2,32 @@
 
 Records every change made to skills inherited from [`mattpocock/skills`](https://github.com/mattpocock/skills), plus new skills created by reddb.io. See the rules in [CLAUDE.md](./CLAUDE.md).
 
-Upstream base: `mattpocock/skills@b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (see `.upstream`).
+Upstream base: `mattpocock/skills@aaf2453fbdfe7a15c07f11d861224f34ab4b53cb` (see `.upstream`).
+
+---
+
+## to-prd (engineering) — upstream testing seam wording (#325)
+
+- **status**: modified
+- **upstream**: `aaf2453`
+- **why**: upstream shifted PRD planning away from extracting deep modules by default and toward agreeing on the highest useful testing seams.
+- **what changed**:
+  - Replaced the deep-module extraction prompt in step 2 with testing-seam planning language while preserving RedSkills' HITL capture and PRD label guardrails.
+  - Updated the PRD testing-decision prompt to allow seams as well as modules.
+
+---
+
+## afk — SKILL.md execution layer rewritten to match sandcastle reality (#352)
+
+- **status**: modified
+- **upstream**: —
+- **why**: PRD #351 / issue #352. The skill's runtime/invocation prose still described a fictional execution layer — a `claude -p` / `codex exec` session whose stdout was grepped for stages, plus an "attempt-exit reader" teardown pipeline (`RED_AFK_ATTEMPT_GRACE_S`, `RED_AFK_ATTEMPT_KILL_S`, `RED_AFK_WATCHDOG_GRACE_S`, recursive SIGTERM/SIGKILL of `claude|jq|grep|tee`) that does not exist in `src/apps/dev/src/`. Execution actually runs on `@ai-hero/sandcastle` (ADR 0033) as a single `runAgent` call, terminated by the `<promise>` completion signal and bounded by `idleTimeoutSeconds` / `maxIterations` / a commit-anchored attempt guard.
+- **what changed**: re-verified every claim against `src/apps/dev/src/core/execution.ts` and `runtime/wire.ts`:
+  - Added an **Execution Substrate (ADR 0033)** section: sandcastle owns spawn/worktree/sandbox/stream/completion-signal/landing; AFK owns issue policy; the Orchestrator is driven via injected providers (`SandcastleDeps`: `run`, `agentFor`, `sandboxFor`); execution is a single `runAgent` call, not a multi-mode dispatch.
+  - Rewrote Per-Issue Loop step 5 (**Inner agent**) from "invoke claude/codex, grep stdout for stages" to the sandcastle `runAgent` call (handoff `promptFile`, provider/sandbox/branchStrategy, `onAgentStreamEvent`).
+  - Replaced **The attempt-exit reader** section with **Attempt Completion & Termination Bounds**: deleted the non-existent grace/kill/watchdog teardown knobs and recursive-kill pipeline; documented the three real bounds — `idleTimeoutSeconds` (default 600s, `RED_AFK_IDLE_TIMEOUT_S`), `maxIterations` (default 12, `RED_AFK_MAX_ITERATIONS`), and the commit-anchored attempt guard (default 2700s, `RED_AFK_ATTEMPT_TIMEOUT_S`, no-sandbox only) — plus the `exhausted` / `runner-transient` / `no-sentinel` outcome split. Tied the busy-predicate gate (thread discussion / #362–363) to the fleet stall reaper, which is the predicate-gated bound.
+  - Added Configuration rows for `RED_AFK_IDLE_TIMEOUT_S` and `afk.attempt_timeout` / `RED_AFK_ATTEMPT_TIMEOUT_S` with correct defaults and precedence; corrected the Stage Detection + Heartbeat prose from `run_inner` stdout tee to the sandcastle stream capture.
+  - The "Capability Dispatch (#202)" run-mode table was already absent (no `RED_AFK_RUN_MODE` / `claude-native` / `codex-phased` / `hermes-fallback` references remain); confirmed and left removed. `maxIterations` default is **12** in source, not the 25 named in the issue text — documented the source value.
 
 ---
 

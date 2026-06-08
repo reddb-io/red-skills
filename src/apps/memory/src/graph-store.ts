@@ -496,6 +496,7 @@ export class MemoryStore {
   async upsertEdge(edge: MemoryEdge): Promise<number> {
     const existing = await this.findEdge(edge.from_rid, edge.to_rid, edge.label);
     if (existing != null) return existing;
+    const key = edgeKey(edge.from_rid, edge.to_rid, edge.label);
 
     const properties = {
       ...(edge.properties ?? {}),
@@ -513,7 +514,8 @@ export class MemoryStore {
     const row = r.rows[0];
     if (row == null) throw new Error("INSERT EDGE returned no row");
     const rid = Number(row.red_entity_id ?? row.rid);
-    await this.kv().put(edgeKey(edge.from_rid, edge.to_rid, edge.label), rid);
+    await this.kv().put(key, rid);
+    await this.clearRemovedEdgeTombstone(rid, key);
     this.invalidateEdgeCache();
     return rid;
   }
@@ -678,9 +680,8 @@ export class MemoryStore {
    * counts are advisory (decay bookkeeping for `doctor`), so the read-modify-
    * write race between concurrent recalls is acceptable.
    */
-  async recordAccess(rids: number[]): Promise<void> {
+  async recordAccess(rids: number[], now: number = Date.now()): Promise<void> {
     if (rids.length === 0) return;
-    const now = Date.now();
     const map = await this.readAccessMap();
     for (const rid of rids) {
       const prev = map[rid];
@@ -1504,6 +1505,15 @@ export class MemoryStore {
     const raw = await this.kv().get(REMOVED_EDGES_KEY);
     if (raw == null) return {};
     return (typeof raw === "string" ? JSON.parse(raw) : raw) as Record<string, boolean>;
+  }
+
+  private async clearRemovedEdgeTombstone(rid: number, key: string): Promise<void> {
+    const removed = await this.readRemovedEdgeMap();
+    if (!removed[rid] && !removed[key]) return;
+    delete removed[rid];
+    delete removed[key];
+    await this.kv().put(REMOVED_EDGES_KEY, removed);
+    this.invalidateRemovedEdgeCache();
   }
 
   async stats(): Promise<{ nodes: number; edges: number }> {

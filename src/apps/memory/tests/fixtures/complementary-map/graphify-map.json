@@ -1,0 +1,45 @@
+{
+  "source_kind": "graphify",
+  "generated_at": "2026-06-01T00:00:00.000Z",
+  "nodes": [
+    {
+      "id": "file:src/auth.ts",
+      "kind": "file",
+      "label": "src/auth.ts",
+      "path": "src/auth.ts",
+      "confidence": 0.95
+    },
+    {
+      "id": "symbol:src/auth.ts#authenticateUser",
+      "kind": "function",
+      "label": "authenticateUser",
+      "name": "authenticateUser",
+      "path": "src/auth.ts",
+      "confidence": 0.88
+    },
+    {
+      "id": "symbol:src/auth.ts#SessionStore",
+      "kind": "class",
+      "label": "SessionStore",
+      "name": "SessionStore",
+      "path": "src/auth.ts",
+      "confidence": "high"
+    }
+  ],
+  "edges": [
+    {
+      "from": "file:src/auth.ts",
+      "to": "symbol:src/auth.ts#authenticateUser",
+      "kind": "DEFINES",
+      "confidence": 0.9,
+      "salience": 0.8
+    },
+    {
+      "from": "symbol:src/auth.ts#authenticateUser",
+      "to": "symbol:src/auth.ts#SessionStore",
+      "kind": "CALLS",
+      "confidence": 0.8,
+      "salience": 0.9
+    }
+  ]
+}

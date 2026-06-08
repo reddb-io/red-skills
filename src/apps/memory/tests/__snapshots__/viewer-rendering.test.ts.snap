@@ -434,8 +434,8 @@ exports[`Memory viewer rendering > keeps routing guide viewer HTML stable 1`] = 
     </header>
     <section class="metrics">
       <div class="metric"><strong>4</strong><span class="meta">Transports</span></div>
-      <div class="metric"><strong>12</strong><span class="meta">MCP Tools</span></div>
-      <div class="metric"><strong>7</strong><span class="meta">Rules</span></div>
+      <div class="metric"><strong>13</strong><span class="meta">MCP Tools</span></div>
+      <div class="metric"><strong>8</strong><span class="meta">Rules</span></div>
       <div class="metric"><strong>1</strong><span class="meta">Target Files</span></div>
     </section>
     <section>
@@ -448,9 +448,36 @@ exports[`Memory viewer rendering > keeps routing guide viewer HTML stable 1`] = 
     </ul>
   </section>
     <section>
+    <h2>Map Context</h2>
+    <ul>
+      <li><strong>agent_context</strong><p class="meta">RedDB-backed code-structure context used to choose the next source reads before broad grep or recursive file opens. It is not a generated answer and does not replace checking the current worktree.</p></li>
+      <li><strong>Relation filters</strong><p class="meta">call, import, type, validation, decision, work, reference</p></li>
+      <li>
+        <strong>Which auth files should I inspect before changing token refresh?</strong>
+        <p><code>memory_map_context with relation filters import, call, type, validation; use memory_structural_impact when a specific file or symbol is already known</code></p>
+        <p class="meta">Filters: import, call, type, validation</p>
+        <p class="meta">Open the smallest set of cited files/tests from the map before falling back to grep.</p>
+      </li><li>
+        <strong>Why does this API handler depend on the session schema?</strong>
+        <p><code>memory_map_context with relation filters call, type, reference, decision; use memory_path_explain when both endpoint labels are known</code></p>
+        <p class="meta">Filters: call, type, reference, decision</p>
+        <p class="meta">Use the returned path as context for source reads; verify the current code after reading the mapped files.</p>
+      </li><li>
+        <strong>What work and validation evidence touches this migration?</strong>
+        <p><code>memory_map_context with relation filters work, validation, decision, reference; use memory_pre_pr_review when changed_files are known</code></p>
+        <p class="meta">Filters: work, validation, decision, reference</p>
+        <p class="meta">Treat the result as triage context for the next reads, not as a final generated answer.</p>
+      </li>
+    </ul>
+  </section>
+    <section>
     <h2>Routing Rules</h2>
     <ul>
       <li>
+        <strong>Before broad grep, recursive file reads, or opening many source files to understand code structure</strong>
+        <p><code>memory_map_context with the concrete code question; use context filters such as call, import, type, validation, decision, work, or reference when known</code></p>
+        <p class="meta">Route through the RedDB graph first so the agent gets a compact cited NODE/EDGE slice with weights, salience, confidence, and sources before spending tokens on raw code.</p>
+      </li><li>
         <strong>Before architecture, migration, or multi-file implementation work</strong>
         <p><code>memory_context_pack with the concrete goal</code></p>
         <p class="meta">Load prior decisions, validations, warnings, and citations before planning.</p>
@@ -475,19 +502,19 @@ exports[`Memory viewer rendering > keeps routing guide viewer HTML stable 1`] = 
         <p><code>memory_handoff, then memory_onboarding_map and memory_readiness for the immediate goal</code></p>
         <p class="meta">Get where-we-left-off context, map-first orientation, and a readiness score with missing-evidence warnings.</p>
       </li><li>
-        <strong>When preserving a durable fact, decision, fix, or user preference</strong>
-        <p><code>memory_store only when the user asked to remember it or the fact is clearly durable</code></p>
-        <p class="meta">Keep memory useful without polluting it with transient reasoning.</p>
+        <strong>When preserving a durable operational decision, fix, gotcha, or agent-work preference</strong>
+        <p><code>memory_store only for operational evidence; route Personal facts and human-facing context to Brain</code></p>
+        <p class="meta">Keep Memory useful without turning it into a Personal fact store.</p>
       </li>
     </ul>
   </section>
     <section>
     <h2>MCP Tools</h2>
-    <ul><li><code>memory_recall</code></li><li><code>memory_context_pack</code></li><li><code>memory_handoff</code></li><li><code>memory_readiness</code></li><li><code>memory_claim_check</code></li><li><code>memory_doc_search</code></li><li><code>memory_doc_read</code></li><li><code>memory_pre_pr_review</code></li><li><code>memory_path_explain</code></li><li><code>memory_structural_impact</code></li><li><code>memory_onboarding_map</code></li><li><code>memory_store</code></li></ul>
+    <ul><li><code>memory_map_context</code></li><li><code>memory_recall</code></li><li><code>memory_context_pack</code></li><li><code>memory_handoff</code></li><li><code>memory_readiness</code></li><li><code>memory_claim_check</code></li><li><code>memory_doc_search</code></li><li><code>memory_doc_read</code></li><li><code>memory_pre_pr_review</code></li><li><code>memory_path_explain</code></li><li><code>memory_structural_impact</code></li><li><code>memory_onboarding_map</code></li><li><code>memory_store</code></li></ul>
   </section>
     <section>
     <h2>CLI Fallbacks</h2>
-    <ul><li><code>memory recall &lt;query&gt;</code></li><li><code>memory context-pack &lt;goal&gt; --json</code></li><li><code>memory handoff [focus] --json</code></li><li><code>memory readiness &lt;goal&gt; --json</code></li><li><code>memory claim-check &lt;assertion&gt; --json</code></li><li><code>memory docs search &lt;query&gt; --json</code></li><li><code>memory docs read &lt;path|rid&gt; --json</code></li><li><code>memory docs restore [path|rid] --dry-run --json</code></li><li><code>memory pre-pr-review --json</code></li><li><code>memory path-explain &lt;from&gt; &lt;to&gt; --json</code></li><li><code>memory structural-impact --file &lt;path&gt;</code></li><li><code>memory onboarding-map --json</code></li><li><code>memory store &lt;fact&gt;</code></li></ul>
+    <ul><li><code>memory map-context &lt;query&gt; --json</code></li><li><code>memory recall &lt;query&gt;</code></li><li><code>memory context-pack &lt;goal&gt; --json</code></li><li><code>memory handoff [focus] --json</code></li><li><code>memory readiness &lt;goal&gt; --json</code></li><li><code>memory claim-check &lt;assertion&gt; --json</code></li><li><code>memory docs search &lt;query&gt; --json</code></li><li><code>memory docs read &lt;path|rid&gt; --json</code></li><li><code>memory docs restore [path|rid] --dry-run --json</code></li><li><code>memory pre-pr-review --json</code></li><li><code>memory path-explain &lt;from&gt; &lt;to&gt; --json</code></li><li><code>memory structural-impact --file &lt;path&gt;</code></li><li><code>memory onboarding-map --json</code></li><li><code>memory store &lt;fact&gt;</code></li></ul>
   </section>
     <section>
     <h2>Config Snippets</h2>
@@ -528,18 +555,29 @@ Integration:
 - MCP server command: \`memory-mcp\`
 - Optional HTTP workbench/API: \`memory serve --host 127.0.0.1 --port 3113\`
 
+Map context before broad source reads:
+- For code-structure questions, call \`memory_map_context\` before broad grep, recursive file reads, or opening many source files; use \`memory_structural_impact\`, \`memory_path_explain\`, or \`memory_pre_pr_review\` when you already have a concrete file, symbol, path endpoint, or change set.
+- Treat the returned map as agent context for choosing the next files, symbols, tests, and decisions to inspect; it is not a generated answer.
+- Relation filters to apply while reading map context: call, import, type, validation, decision, work, reference.
+- Which auth files should I inspect before changing token refresh?: memory_map_context with relation filters import, call, type, validation; use memory_structural_impact when a specific file or symbol is already known; filters=import, call, type, validation; Open the smallest set of cited files/tests from the map before falling back to grep.
+- Why does this API handler depend on the session schema?: memory_map_context with relation filters call, type, reference, decision; use memory_path_explain when both endpoint labels are known; filters=call, type, reference, decision; Use the returned path as context for source reads; verify the current code after reading the mapped files.
+- What work and validation evidence touches this migration?: memory_map_context with relation filters work, validation, decision, reference; use memory_pre_pr_review when changed_files are known; filters=work, validation, decision, reference; Treat the result as triage context for the next reads, not as a final generated answer.
+
 Rules:
+- Before broad grep, recursive file reads, or opening many source files to understand code structure: call \`memory_map_context with the concrete code question; use context filters such as call, import, type, validation, decision, work, or reference when known\` - Route through the RedDB graph first so the agent gets a compact cited NODE/EDGE slice with weights, salience, confidence, and sources before spending tokens on raw code.
 - Before architecture, migration, or multi-file implementation work: call \`memory_context_pack with the concrete goal\` - Load prior decisions, validations, warnings, and citations before planning.
 - Before claiming a design or rule is current: call \`memory_claim_check with the exact assertion\` - Check active, superseded, and contradictory evidence instead of trusting memory.
 - When the task asks what changed, what can break, or what a PR needs: call \`memory_pre_pr_review with explicit changed_files\` - Connect changed files to concepts, decisions, known failures, and validations.
 - When touching an unfamiliar file or symbol: call \`memory_structural_impact with file/symbol; use memory_path_explain when two labels need a relationship explanation\` - Find graph-backed imports, call/type/schema relationships, and cited paths between concepts.
 - When the user asks about project history, prior discussion, docs, or decisions: call \`memory_recall first; use memory_doc_search and memory_doc_read for ingested document chunks\` - Prefer zero-token retrieval and local source reads before asking an LLM to synthesize.
 - When starting in an unfamiliar repo or after a long gap: call \`memory_handoff, then memory_onboarding_map and memory_readiness for the immediate goal\` - Get where-we-left-off context, map-first orientation, and a readiness score with missing-evidence warnings.
-- When preserving a durable fact, decision, fix, or user preference: call \`memory_store only when the user asked to remember it or the fact is clearly durable\` - Keep memory useful without polluting it with transient reasoning.
+- When preserving a durable operational decision, fix, gotcha, or agent-work preference: call \`memory_store only for operational evidence; route Personal facts and human-facing context to Brain\` - Keep Memory useful without turning it into a Personal fact store.
 
 Safety:
 - Read-only tools are preferred before mutating Memory.
-- memory_store is durable; do not store secrets, raw credentials, or transient chain-of-thought.
+- Map context is agent context for routing source reads; verify the current worktree before making code claims.
+- memory_store is durable; do not store secrets, raw credentials, Personal facts, human-facing context, or transient chain-of-thought.
+- Personal facts, biographical details, identity context, and durable human preferences belong in Brain, not Memory.
 - memory_supersede and conflict-resolution tools are mutating; use them only with explicit user intent.
 - Citations such as memory_nodes:&lt;rid&gt; should be kept in summaries when they support an important claim.
 
@@ -600,6 +638,7 @@ Agent: codex
     "AGENTS.md"
   ],
   "mcpTools": [
+    "memory_map_context",
     "memory_recall",
     "memory_context_pack",
     "memory_handoff",
@@ -614,6 +653,7 @@ Agent: codex
     "memory_store"
   ],
   "cliFallbacks": [
+    "memory map-context \\u003cquery> --json",
     "memory recall \\u003cquery>",
     "memory context-pack \\u003cgoal> --json",
     "memory handoff [focus] --json",
@@ -629,6 +669,11 @@ Agent: codex
     "memory store \\u003cfact>"
   ],
   "rules": [
+    {
+      "when": "Before broad grep, recursive file reads, or opening many source files to understand code structure",
+      "call": "memory_map_context with the concrete code question; use context filters such as call, import, type, validation, decision, work, or reference when known",
+      "reason": "Route through the RedDB graph first so the agent gets a compact cited NODE/EDGE slice with weights, salience, confidence, and sources before spending tokens on raw code."
+    },
     {
       "when": "Before architecture, migration, or multi-file implementation work",
       "call": "memory_context_pack with the concrete goal",
@@ -660,18 +705,68 @@ Agent: codex
       "reason": "Get where-we-left-off context, map-first orientation, and a readiness score with missing-evidence warnings."
     },
     {
-      "when": "When preserving a durable fact, decision, fix, or user preference",
-      "call": "memory_store only when the user asked to remember it or the fact is clearly durable",
-      "reason": "Keep memory useful without polluting it with transient reasoning."
+      "when": "When preserving a durable operational decision, fix, gotcha, or agent-work preference",
+      "call": "memory_store only for operational evidence; route Personal facts and human-facing context to Brain",
+      "reason": "Keep Memory useful without turning it into a Personal fact store."
     }
   ],
+  "mapContext": {
+    "kind": "agent_context",
+    "description": "RedDB-backed code-structure context used to choose the next source reads before broad grep or recursive file opens. It is not a generated answer and does not replace checking the current worktree.",
+    "relationFilters": [
+      "call",
+      "import",
+      "type",
+      "validation",
+      "decision",
+      "work",
+      "reference"
+    ],
+    "examples": [
+      {
+        "question": "Which auth files should I inspect before changing token refresh?",
+        "relationFilters": [
+          "import",
+          "call",
+          "type",
+          "validation"
+        ],
+        "call": "memory_map_context with relation filters import, call, type, validation; use memory_structural_impact when a specific file or symbol is already known",
+        "followUp": "Open the smallest set of cited files/tests from the map before falling back to grep."
+      },
+      {
+        "question": "Why does this API handler depend on the session schema?",
+        "relationFilters": [
+          "call",
+          "type",
+          "reference",
+          "decision"
+        ],
+        "call": "memory_map_context with relation filters call, type, reference, decision; use memory_path_explain when both endpoint labels are known",
+        "followUp": "Use the returned path as context for source reads; verify the current code after reading the mapped files."
+      },
+      {
+        "question": "What work and validation evidence touches this migration?",
+        "relationFilters": [
+          "work",
+          "validation",
+          "decision",
+          "reference"
+        ],
+        "call": "memory_map_context with relation filters work, validation, decision, reference; use memory_pre_pr_review when changed_files are known",
+        "followUp": "Treat the result as triage context for the next reads, not as a final generated answer."
+      }
+    ]
+  },
   "safetyNotes": [
     "Read-only tools are preferred before mutating Memory.",
-    "memory_store is durable; do not store secrets, raw credentials, or transient chain-of-thought.",
+    "Map context is agent context for routing source reads; verify the current worktree before making code claims.",
+    "memory_store is durable; do not store secrets, raw credentials, Personal facts, human-facing context, or transient chain-of-thought.",
+    "Personal facts, biographical details, identity context, and durable human preferences belong in Brain, not Memory.",
     "memory_supersede and conflict-resolution tools are mutating; use them only with explicit user intent.",
     "Citations such as memory_nodes:\\u003crid> should be kept in summaries when they support an important claim."
   ],
-  "installSnippet": "## Memory Routing\\n\\nUse the Memory MCP tools proactively when prior project knowledge could change the answer.\\n\\nIntegration:\\n- Agent: Codex CLI\\n- Transports: agent-rules, mcp, hooks, http\\n- MCP server command: \`memory-mcp\`\\n- Optional HTTP workbench/API: \`memory serve --host 127.0.0.1 --port 3113\`\\n\\nRules:\\n- Before architecture, migration, or multi-file implementation work: call \`memory_context_pack with the concrete goal\` - Load prior decisions, validations, warnings, and citations before planning.\\n- Before claiming a design or rule is current: call \`memory_claim_check with the exact assertion\` - Check active, superseded, and contradictory evidence instead of trusting memory.\\n- When the task asks what changed, what can break, or what a PR needs: call \`memory_pre_pr_review with explicit changed_files\` - Connect changed files to concepts, decisions, known failures, and validations.\\n- When touching an unfamiliar file or symbol: call \`memory_structural_impact with file/symbol; use memory_path_explain when two labels need a relationship explanation\` - Find graph-backed imports, call/type/schema relationships, and cited paths between concepts.\\n- When the user asks about project history, prior discussion, docs, or decisions: call \`memory_recall first; use memory_doc_search and memory_doc_read for ingested document chunks\` - Prefer zero-token retrieval and local source reads before asking an LLM to synthesize.\\n- When starting in an unfamiliar repo or after a long gap: call \`memory_handoff, then memory_onboarding_map and memory_readiness for the immediate goal\` - Get where-we-left-off context, map-first orientation, and a readiness score with missing-evidence warnings.\\n- When preserving a durable fact, decision, fix, or user preference: call \`memory_store only when the user asked to remember it or the fact is clearly durable\` - Keep memory useful without polluting it with transient reasoning.\\n\\nSafety:\\n- Read-only tools are preferred before mutating Memory.\\n- memory_store is durable; do not store secrets, raw credentials, or transient chain-of-thought.\\n- memory_supersede and conflict-resolution tools are mutating; use them only with explicit user intent.\\n- Citations such as memory_nodes:\\u003crid> should be kept in summaries when they support an important claim.\\n\\nTarget file: AGENTS.md\\nAgent: codex\\n"
+  "installSnippet": "## Memory Routing\\n\\nUse the Memory MCP tools proactively when prior project knowledge could change the answer.\\n\\nIntegration:\\n- Agent: Codex CLI\\n- Transports: agent-rules, mcp, hooks, http\\n- MCP server command: \`memory-mcp\`\\n- Optional HTTP workbench/API: \`memory serve --host 127.0.0.1 --port 3113\`\\n\\nMap context before broad source reads:\\n- For code-structure questions, call \`memory_map_context\` before broad grep, recursive file reads, or opening many source files; use \`memory_structural_impact\`, \`memory_path_explain\`, or \`memory_pre_pr_review\` when you already have a concrete file, symbol, path endpoint, or change set.\\n- Treat the returned map as agent context for choosing the next files, symbols, tests, and decisions to inspect; it is not a generated answer.\\n- Relation filters to apply while reading map context: call, import, type, validation, decision, work, reference.\\n- Which auth files should I inspect before changing token refresh?: memory_map_context with relation filters import, call, type, validation; use memory_structural_impact when a specific file or symbol is already known; filters=import, call, type, validation; Open the smallest set of cited files/tests from the map before falling back to grep.\\n- Why does this API handler depend on the session schema?: memory_map_context with relation filters call, type, reference, decision; use memory_path_explain when both endpoint labels are known; filters=call, type, reference, decision; Use the returned path as context for source reads; verify the current code after reading the mapped files.\\n- What work and validation evidence touches this migration?: memory_map_context with relation filters work, validation, decision, reference; use memory_pre_pr_review when changed_files are known; filters=work, validation, decision, reference; Treat the result as triage context for the next reads, not as a final generated answer.\\n\\nRules:\\n- Before broad grep, recursive file reads, or opening many source files to understand code structure: call \`memory_map_context with the concrete code question; use context filters such as call, import, type, validation, decision, work, or reference when known\` - Route through the RedDB graph first so the agent gets a compact cited NODE/EDGE slice with weights, salience, confidence, and sources before spending tokens on raw code.\\n- Before architecture, migration, or multi-file implementation work: call \`memory_context_pack with the concrete goal\` - Load prior decisions, validations, warnings, and citations before planning.\\n- Before claiming a design or rule is current: call \`memory_claim_check with the exact assertion\` - Check active, superseded, and contradictory evidence instead of trusting memory.\\n- When the task asks what changed, what can break, or what a PR needs: call \`memory_pre_pr_review with explicit changed_files\` - Connect changed files to concepts, decisions, known failures, and validations.\\n- When touching an unfamiliar file or symbol: call \`memory_structural_impact with file/symbol; use memory_path_explain when two labels need a relationship explanation\` - Find graph-backed imports, call/type/schema relationships, and cited paths between concepts.\\n- When the user asks about project history, prior discussion, docs, or decisions: call \`memory_recall first; use memory_doc_search and memory_doc_read for ingested document chunks\` - Prefer zero-token retrieval and local source reads before asking an LLM to synthesize.\\n- When starting in an unfamiliar repo or after a long gap: call \`memory_handoff, then memory_onboarding_map and memory_readiness for the immediate goal\` - Get where-we-left-off context, map-first orientation, and a readiness score with missing-evidence warnings.\\n- When preserving a durable operational decision, fix, gotcha, or agent-work preference: call \`memory_store only for operational evidence; route Personal facts and human-facing context to Brain\` - Keep Memory useful without turning it into a Personal fact store.\\n\\nSafety:\\n- Read-only tools are preferred before mutating Memory.\\n- Map context is agent context for routing source reads; verify the current worktree before making code claims.\\n- memory_store is durable; do not store secrets, raw credentials, Personal facts, human-facing context, or transient chain-of-thought.\\n- Personal facts, biographical details, identity context, and durable human preferences belong in Brain, not Memory.\\n- memory_supersede and conflict-resolution tools are mutating; use them only with explicit user intent.\\n- Citations such as memory_nodes:\\u003crid> should be kept in summaries when they support an important claim.\\n\\nTarget file: AGENTS.md\\nAgent: codex\\n"
 }</script>
   </main>
 </body>

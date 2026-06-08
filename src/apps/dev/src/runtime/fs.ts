@@ -67,14 +67,33 @@ export async function writeWorkerPid(pidFile: string, pid: number): Promise<void
  */
 export async function tryAcquireClaimDir(dir: string, pid: number): Promise<boolean> {
   await mkdir(dirname(dir), { recursive: true });
-  try {
-    await mkdir(dir); // non-recursive → EEXIST when already held
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "EEXIST") return false;
-    throw err;
+  const claimOnce = async (): Promise<"acquired" | "held"> => {
+    try {
+      await mkdir(dir); // non-recursive → EEXIST when already held
+      return "acquired";
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "EEXIST") return "held";
+      throw err;
+    }
+  };
+
+  if ((await claimOnce()) === "held") {
+    if (await claimPathHeldByLivePid(dir)) return false;
+    await rm(dir, { recursive: true, force: true });
+    if ((await claimOnce()) === "held") return false;
   }
   await writeFile(join(dir, "pid"), String(pid), "utf8");
   return true;
+}
+
+async function claimPathHeldByLivePid(dir: string): Promise<boolean> {
+  try {
+    const st = await stat(dir);
+    if (!st.isDirectory()) return false;
+  } catch {
+    return false;
+  }
+  return pidAlive(await readText(join(dir, "pid")));
 }
 
 export async function removeDir(path: string): Promise<void> {

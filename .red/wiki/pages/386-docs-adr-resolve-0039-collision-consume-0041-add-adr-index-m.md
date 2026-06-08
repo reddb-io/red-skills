@@ -3,7 +3,7 @@ title: docs(adr): resolve 0039 collision (consume→0041) + add ADR INDEX.md
 type: source
 tags: [pr, merged]
 created: 2026-06-02
-updated: 2026-06-02
+updated: 2026-06-06
 sources: [pr-386]
 pr: 386
 merge_sha: f19be57060706245d82fa857f488e0b8cf8aae9e
@@ -23,6 +23,14 @@ merge_sha: f19be57060706245d82fa857f488e0b8cf8aae9e
 - Renumber the **consume** ADR `0039 → 0041` (0040 taken); the entrypoints ADR keeps 0039.
 - Disambiguate refs: consume-meaning `0039`→`0041` in ADR 0040 + `/dev:doctor` + `/dev:review-adrs`; launcher-meaning `0038/0039` left intact.
 - Add **`.red/adr/INDEX.md`** — thematic decision map (Pass 2 of review-adrs); the later **0005** double-number was resolved by renumbering `single-global-red-dir` to **0046**.
+
+## Current ADR record (2026-06-06)
+
+ADR 0005 is the memory three-layer RedDB architecture and remains accepted. The
+single-global `.red/` record is ADR 0046, not ADR 0005, and is superseded by ADR
+0021's multi-context plugin glossary model. The refreshed ADR index records both
+resolved numbering collisions: consume `0039 -> 0041` and single-global
+`0005 -> 0046`.
 
 Docs + skill text only.
 

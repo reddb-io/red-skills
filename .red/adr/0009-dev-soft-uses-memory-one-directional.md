@@ -1,13 +1,11 @@
 # `dev` soft-uses `memory`, one-directional
 
-## Status
-
-accepted; detection-gate mechanism partially superseded by ADR 0042.
-
-The one-directional soft-use direction below still stands. What changed: gate
-(1) is no longer `.red/memory/config.json` existing; it is a `plugins.memory`
-block in the unified `.red/config.yaml` (the legacy JSON path is still read as a
-back-compat fallback). See ADR 0042.
+> **Status:** accepted; detection-gate mechanism **partially superseded by ADR 0042**.
+> Split: the soft-use *direction* below still stands (`dev` may optionally consume
+> Memory, and Memory still hard-requires `dev`), but the opt-in gate mechanism changed.
+> Gate (1) is no longer `.red/memory/config.json` existing — it is a
+> `plugins.memory` block in the unified `.red/config.yaml` (the legacy JSON path is
+> still read as a back-compat fallback). See ADR 0042.
 
 PRD #49 builds the `memory` plugin as a sibling of `dev` under `plugins/`, with
 the product thesis that memory **lives on top of dev and improves its
@@ -59,3 +57,9 @@ degradation path rather than re-deriving "is memory here?" each.
   (resolution cascade, both gates, graceful degradation, query passthrough).
 - Future `dev` skills that want memory follow the same source-and-gate snippet;
   they must not introduce a hard dependency.
+
+## Related
+
+- ADR 0042 — plugin config is unified under `.red/config.yaml`; this changes
+  the Memory opt-in gate mechanism but not the one-directional soft-use
+  direction.

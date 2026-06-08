@@ -3,7 +3,7 @@ title: feat(config): unify plugin config under .red/config.yaml (plugins.<name>)
 type: source
 tags: [pr, merged]
 created: 2026-06-02
-updated: 2026-06-02
+updated: 2026-06-06
 sources: [pr-390]
 pr: 390
 merge_sha: d37478888666249c8c841968fad3b461a89bef10
@@ -47,6 +47,14 @@ Two plugins resolved config in two formats, two locations, for no principled rea
 ## Back-compat
 
 Both sides read the legacy location as a fallback (deprecated, removable later). No forced migration — a repo upgrades when it re-runs `memory init`. ADR 0009 annotated (gate mechanism partially superseded). **Bundles unchanged** — release builds from source; the `afk.mjs` launcher (ADR 0038) is untouched.
+
+## Current ADR record (2026-06-06)
+
+ADR 0042 is accepted and travels with the memory migration to `red-memory`: the
+contract is `.red/config.yaml` with plugin namespaces under `plugins.*`. ADR
+0009's one-directional soft-use decision still stands, but its detection-gate
+mechanism is partially superseded by the `plugins.memory` block, with the legacy
+`.red/memory/config.json` fallback retained only for compatibility.
 
 ## Tests
 
@@ -98,4 +106,3 @@ Both sides read the legacy location as a fallback (deprecated, removable later).
 - `src/apps/memory/tests/init-wizard.test.ts`
 - `src/apps/memory/tests/shared-config.test.ts`
 - `src/apps/memory/tests/vcs-hooks-install.test.ts`
-
