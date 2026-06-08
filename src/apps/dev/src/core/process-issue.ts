@@ -49,6 +49,7 @@ import {
   type WaitForReviewInput,
 } from "./merge.js";
 import { doLanding } from "./landing.js";
+import { reconcile, type ReconcileInput } from "./reconcile.js";
 import {
   emitEnvelope,
   type EmitEnvelopeDeps,
@@ -813,9 +814,56 @@ export async function processIssue(
       );
       await fireHook("post_attempt", postAttemptContext(current, workerBranch, "success", "no-sentinel"));
     } else if (run.outcome === "timeout") {
-      // ---- attempt progress guard fired: alive but no new commit within the cap.
-      // Park to ready-for-human (blocked:stalled), preserving the pushed branch/PR
-      // — never auto-retry (recoveryReasonFor("stalled") = null → always escalate). ----
+      // ---- attempt progress guard fired: alive but no new commit within the cap. ----
+      // Before escalating, try the ADR 0055 NO-AGENT reconcile: a stalled attempt
+      // frequently carries a COMPLETE, green branch — the agent finished the work
+      // but stalled before a final non-committing step, so the guard fired on a
+      // landable branch. reconcile validates the pushed branch through the SAME
+      // scoped gate the DONE path uses and lands it WITHOUT re-running the agent
+      // (the agent re-run stays recovery.ts). Mechanical class only; the land
+      // path's drift-guard + integrate/rebase catch any cross-package breakage.
+      // (The sibling no-sentinel-WITH-commits case is already reconciled by the
+      // salvage-through-feedback path above, which lands an ahead-of-base branch
+      // through the identical gate.)
+      const reconciled = await reconcile(
+        { ...deps, fireHook },
+        reconcileInputFor(input, current, workerBranch, base, labels, activeRunner),
+      );
+      if (reconciled.outcome === "landed") {
+        // reconcile already closed the issue, dropped labels, deleted the remote
+        // branch, swept the attempt dir + ran the close cascade — only the claim
+        // lock (which AFK, not reconcile, owns) remains to release.
+        await deps.claimLock.release(issue);
+        return {
+          outcome: "done",
+          issue,
+          branch: workerBranch,
+          base,
+          locked: reconciled.locked,
+          mergeSha: reconciled.mergeSha,
+          hooksFired,
+          envelopePosted: reconciled.posted,
+          preserved: true,
+          swept: true,
+        };
+      }
+      if (reconciled.outcome === "parked") {
+        await deps.claimLock.release(issue);
+        return {
+          outcome: "feedback-failed",
+          issue,
+          branch: workerBranch,
+          base,
+          hooksFired,
+          envelopePosted: reconciled.posted,
+          preserved: true,
+          swept: false,
+        };
+      }
+      // skipped (not mechanical / no commits / branch absent) → fall through to
+      // the original stalled escalation: park to ready-for-human (blocked:stalled),
+      // preserving the pushed branch/PR — never auto-retry (recoveryReasonFor
+      // ("stalled") = null → always escalate).
       await fireHook("on_attempt_error", onErrorContext(current, workerBranch, "stalled", current.attempt));
       return await terminalFailure(common, "stalled", "stalled", {
         notes: "_(no Notes appended; attempt aborted — inner agent made no progress within the wall-clock guard)_",
@@ -1499,6 +1547,43 @@ function parseHookEnv(context: string): Record<string, string> | undefined {
     if (typeof v === "string") out[k] = v;
   }
   return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/**
+ * Project the live lifecycle state into a {@link ReconcileInput} (ADR 0055). The
+ * labels passed are the issue's CURRENT routing set: the issue was promoted to
+ * `running` (shedding `ready-for-agent` + any stale `blocked:*`) at claim, so the
+ * live set is `running` + the domain labels — exactly what reconcile's land/park
+ * label transitions must shed or keep. `attempt`/`runner` reflect the runner that
+ * actually authored the exit after any fallback swap.
+ */
+function reconcileInputFor(
+  input: ProcessIssueInput,
+  current: ProcessIssueInput,
+  branch: string,
+  base: string,
+  claimLabels: string[],
+  runner: Runner,
+): ReconcileInput {
+  const liveLabels = [
+    LABEL_RUNNING,
+    ...claimLabels.filter((l) => l !== LABEL_READY && !l.startsWith("blocked:")),
+  ];
+  return {
+    issue: input.issue,
+    title: input.title,
+    body: input.body,
+    labels: liveLabels,
+    branch,
+    base,
+    repo: input.repo,
+    repoDir: input.repoDir,
+    remote: input.remote,
+    workerId: input.workerId,
+    attempt: current.attempt,
+    attemptDir: input.attemptDir,
+    runner,
+  };
 }
 
 /** Build the mutable hook context JSON, mirroring the `jq -nc` builders. */

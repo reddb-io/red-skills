@@ -1624,8 +1624,10 @@ describe("processIssue — AFK→Memory reasoning-attempt recording (ADR 0017)",
 });
 
 describe("processIssue — timeout (attempt progress guard fired)", () => {
-  it("routes through on_attempt_error → ready-for-human + blocked:stalled, no post_attempt", async () => {
-    const { deps, input, trace } = harness({ outcome: "timeout" });
+  it("reconcile skip (no commits) → on_attempt_error → ready-for-human + blocked:stalled, no post_attempt", async () => {
+    // No commits on the branch → the ADR 0055 reconcile skips (nothing to land)
+    // and the original stalled escalation fires unchanged.
+    const { deps, input, trace } = harness({ outcome: "timeout", changedFiles: [] });
     const result = await processIssue(deps, input);
 
     // The execution-layer `timeout` maps to the `stalled` terminal outcome.
@@ -1641,5 +1643,40 @@ describe("processIssue — timeout (attempt progress guard fired)", () => {
     expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "blocked" }]);
     // on_attempt_error fires; post_attempt does NOT (same as no-sentinel).
     expect(result.hooksFired).toEqual(["pre_worktree", "pre_attempt", "on_attempt_error"]);
+  });
+
+  it("reconcile lands the stalled-but-green branch WITHOUT re-running the agent (no escalation)", async () => {
+    // ADR 0055: the agent stalled on a final non-committing step, but its branch
+    // carries complete, green work. reconcile re-validates through the same gate
+    // and lands it — the issue closes as `done`, never reaching the escalation.
+    const { deps, input, trace } = harness({ outcome: "timeout", feedbackOk: true, locked: false });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(result.mergeSha).toBe("abc1234");
+    expect(result.swept).toBe(true);
+    expect(trace.closed).toEqual([9]);
+    // The agent ran exactly once — reconcile NEVER re-spawns it.
+    expect(trace.runAgentCalls.length).toBe(1);
+    // Closed cleanly: running shed, no blocked:stalled escalation label.
+    expect(labelTrace(trace)).toEqual(["-ready-for-agent|+running", "-running|+"]);
+    expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "done" }]);
+  });
+
+  it("reconcile parks the stalled branch to ready-for-human when re-validation fails", async () => {
+    // The branch carries work but the scoped gate fails on re-validation → park
+    // to ready-for-human with blocked:validation (the real reason), not landed.
+    const { deps, input, trace } = harness({ outcome: "timeout", feedbackOk: false });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("feedback-failed");
+    expect(result.preserved).toBe(true);
+    expect(trace.closed).toEqual([]);
+    expect(trace.runAgentCalls.length).toBe(1);
+    const edit = trace.labelEdits.at(-1)!;
+    expect(edit.add).toContain("ready-for-human");
+    expect(edit.add).toContain("blocked:validation");
+    // The park envelope rides the generic `blocked` status bucket.
+    expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "blocked" }]);
   });
 });
