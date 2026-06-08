@@ -938,7 +938,8 @@ async function rejectLinkedEvidenceCard(
   const rawStatus = firstYamlScalar(found.body, "status");
   const proposalPath = firstNestedYamlScalar(found.body, "proposal", "path");
   if (rawStatus === "rejected") {
-    if (proposalPath) await markProposalEvidenceRejected(rootDir, proposalPath, id, reason);
+    const reviewNotes = firstNestedYamlScalar(found.body, "review", "notes");
+    if (proposalPath) await markProposalEvidenceRejected(rootDir, proposalPath, id, reviewNotes ?? reason);
     return { id, status: "rejected", path: found.path, ...(proposalPath ? { proposalPath } : {}) };
   }
   if (rawStatus !== "proposed") {

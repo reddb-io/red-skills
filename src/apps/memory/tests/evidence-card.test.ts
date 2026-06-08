@@ -391,7 +391,8 @@ describe("memory evidence CLI", () => {
     const retriedProposalBody = await readFile(rejectedProposal, "utf8");
     expect(retriedProposalBody).toContain("## Evidence Card Review Warning");
     expect(retriedProposalBody).toContain(`Evidence card id: ${v1RejectedId}`);
-    expect(retriedProposalBody).toContain("evidence interpretation was still wrong");
+    expect(retriedProposalBody).toContain("evidence interpretation was wrong for token [REDACTED:openai-token]");
+    expect(retriedProposalBody).not.toContain("evidence interpretation was still wrong");
 
     const applyWithoutApproval = runMemory(["improve", "apply", rejectedProposal, "--root", root, "--json"]);
     expect(applyWithoutApproval.status).not.toBe(0);
