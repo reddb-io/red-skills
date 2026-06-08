@@ -115,7 +115,7 @@ Patch block format:
 
 <supporting-info>
 
-`memory improve skills` currently proposes fixes for curatable skills flagged as `frequently-failing` by partitioned Skill telemetry rollups. Each proposal gets a deterministic fingerprint from skill name, category, target path, dominant error stage, and dominant error class; pending proposals with the same fingerprint are refreshed in place. Draft patch blocks choose a semantic section anchor from the dominant failure stage/class before falling back to a tail anchor. It is deliberately proposal-gated: the Memory plugin may write `.red/memory/proposals/*.md`, but applying a patch remains an explicit review step handled outside this command.
+`memory improve skills` currently proposes fixes for curatable skills flagged as `frequently-failing` by partitioned Skill telemetry rollups. Each Evidence card gets a deterministic fingerprint from its telemetry source, refinement route, dominant error pattern, and telemetry window; unresolved cards in `captured`, `routed`, or `proposed` status with the same fingerprint are refreshed in place, while reviewed or terminal cards (`approved`, `rejected`, `promoted`, `archived`) are preserved and a later run creates a new card. Draft patch blocks choose a semantic section anchor from the dominant failure stage/class before falling back to a tail anchor. It is deliberately proposal-gated: the Memory plugin may write `.red/memory/proposals/*.md`, but applying a patch remains an explicit review step handled outside this command.
 
 This is the first mutating stage in the self-improvement loop. Proposal generation mutates only `.red/memory/proposals/`; proposal application can patch a target skill only when a reviewed structured block plus `--yes` are both present.
 

@@ -4241,6 +4241,11 @@ interface SkillImprovementProposalSummary {
   priority: "high" | "medium" | "low";
   scoreReasons: string[];
   fingerprint: string;
+  evidenceSource: string;
+  evidenceRoute: string;
+  dominantErrorPattern: string;
+  telemetryWindow: string;
+  cardStatus: SkillTelemetryEvidenceCardStatus;
   reusedExisting: boolean;
   path: string | null;
   written: boolean;
@@ -4252,6 +4257,8 @@ interface SkillTelemetryEvidenceCardArtifact {
   kind: "skill_telemetry";
   skill: string;
   skillPath: string;
+  status: SkillTelemetryEvidenceCardStatus;
+  signalFingerprint: string;
   fingerprint: string;
   path: string;
   proposalPath: string;
@@ -4294,7 +4301,22 @@ async function buildSkillImprovementProposals(
     const evidence = recentFailureEvidence(rec.name, recentEvents);
     const dominantErrorStage = topValues(evidence.map((event) => event.error_stage))[0] ?? null;
     const dominantErrorClass = topValues(evidence.map((event) => event.error_class))[0] ?? null;
+    const dominantErrorCode = topValues(evidence.map((event) => event.error_code))[0] ?? null;
     const relSkillPath = isAbsolute(rec.path) ? toPosix(relative(rootDir, rec.path)) : rec.path;
+    const evidenceSource = skillTelemetryEvidenceSource(rec.name, evidence);
+    const evidenceRoute = skillTelemetryEvidenceRoute(rec.category, relSkillPath);
+    const dominantErrorPattern = skillTelemetryDominantErrorPattern({
+      dominantErrorStage,
+      dominantErrorClass,
+      dominantErrorCode,
+    });
+    const telemetryWindow = skillTelemetryWindow(evidence);
+    const signalFingerprint = skillTelemetrySignalFingerprint({
+      evidenceSource,
+      evidenceRoute,
+      dominantErrorPattern,
+      telemetryWindow,
+    });
     const fingerprint = proposalFingerprint({
       skill: rec.name,
       category: rec.category,
@@ -4315,6 +4337,10 @@ async function buildSkillImprovementProposals(
       }
     }
 
+    const reusableCard =
+      writeProposal && proposalPath
+        ? await findReusableSkillTelemetryEvidenceCard(rootDir, evidenceCardDir, signalFingerprint)
+        : null;
     const cardlessBody = await renderSkillImprovementProposal(rootDir, rec, evidence, fingerprint, null);
     const patchDrafted = cardlessBody.includes("```json memory-skill-patch");
     const priority = computeProposalPriority({
@@ -4325,9 +4351,9 @@ async function buildSkillImprovementProposals(
       patchDrafted,
     });
     const existingCardCount = writeProposal
-      ? await countSkillTelemetryEvidenceCardsForProposalFingerprint(evidenceCardDir, fingerprint)
+      ? await countSkillTelemetryEvidenceCardsForSignal(evidenceCardDir, signalFingerprint)
       : 0;
-    const cardRevision = reusedExisting ? Math.max(0, existingCardCount - 1) : existingCardCount;
+    const cardRevision = reusableCard ? reusableCard.revision : existingCardCount;
     const card = buildSkillTelemetryEvidenceCard({
       rootDir,
       rec,
@@ -4336,7 +4362,13 @@ async function buildSkillImprovementProposals(
       dominantErrorStage,
       dominantErrorClass,
       proposalFingerprint: fingerprint,
+      signalFingerprint,
+      evidenceSource,
+      evidenceRoute,
+      dominantErrorPattern,
+      telemetryWindow,
       cardRevision,
+      reusableCard,
       priority,
     });
     if (writeProposal && proposalPath) {
@@ -4357,6 +4389,8 @@ async function buildSkillImprovementProposals(
         kind: "skill_telemetry",
         skill: rec.name,
         skillPath: rec.path,
+        status: card.status,
+        signalFingerprint: card.signal_fingerprint,
         fingerprint: card.fingerprint,
         path: cardPath,
         proposalPath,
@@ -4377,6 +4411,11 @@ async function buildSkillImprovementProposals(
       priority: priority.priority,
       scoreReasons: priority.reasons,
       fingerprint,
+      evidenceSource,
+      evidenceRoute,
+      dominantErrorPattern,
+      telemetryWindow,
+      cardStatus: card.status,
       reusedExisting,
       path: proposalPath,
       written: writeProposal,
@@ -4388,26 +4427,133 @@ async function buildSkillImprovementProposals(
   };
 }
 
-async function countSkillTelemetryEvidenceCardsForProposalFingerprint(
+type SkillTelemetryEvidenceCardStatus =
+  | "captured"
+  | "routed"
+  | "proposed"
+  | "approved"
+  | "rejected"
+  | "promoted"
+  | "archived";
+
+interface ExistingSkillTelemetryEvidenceCardRef {
+  file: string;
+  id: string;
+  fingerprint: string;
+  status: SkillTelemetryEvidenceCardStatus;
+  createdAt: string | null;
+  proposalPath: string | null;
+  revision: number;
+  review: SkillTelemetryEvidenceCard["review"];
+}
+
+async function countSkillTelemetryEvidenceCardsForSignal(
   evidenceCardDir: string,
-  proposalFingerprint: string,
+  signalFingerprint: string,
 ): Promise<number> {
+  return (await listSkillTelemetryEvidenceCardsForSignal(evidenceCardDir, signalFingerprint)).length;
+}
+
+async function findReusableSkillTelemetryEvidenceCard(
+  rootDir: string,
+  evidenceCardDir: string,
+  signalFingerprint: string,
+): Promise<ExistingSkillTelemetryEvidenceCardRef | null> {
+  const cards = await listSkillTelemetryEvidenceCardsForSignal(evidenceCardDir, signalFingerprint);
+  for (const card of cards) {
+    if (!isUnresolvedSkillTelemetryEvidenceCardStatus(card.status)) continue;
+    if (skillTelemetryReviewHasHumanDecision(card.review)) continue;
+    if (card.proposalPath && !existsSync(resolve(rootDir, card.proposalPath))) continue;
+    return card;
+  }
+  return null;
+}
+
+async function listSkillTelemetryEvidenceCardsForSignal(
+  evidenceCardDir: string,
+  signalFingerprint: string,
+): Promise<ExistingSkillTelemetryEvidenceCardRef[]> {
   let entries;
   try {
     entries = await readdir(evidenceCardDir, { withFileTypes: true });
   } catch {
-    return 0;
+    return [];
   }
-  const fingerprintLine = `fingerprint: ${yamlScalar(proposalFingerprint)}`;
-  let count = 0;
+  const signalLine = `signal_fingerprint: ${yamlScalar(signalFingerprint)}`;
+  const cards: ExistingSkillTelemetryEvidenceCardRef[] = [];
   for (const entry of entries) {
     if (!entry.isFile() || !entry.name.endsWith(".yaml")) continue;
     const body = await readFile(join(evidenceCardDir, entry.name), "utf8");
-    if (body.includes('kind: "skill_telemetry"') && body.includes(fingerprintLine)) count += 1;
+    if (!body.includes('kind: "skill_telemetry"') || !body.includes(signalLine)) continue;
+    const status = parseSkillTelemetryEvidenceCardStatus(firstTopLevelYamlScalarField(body, "status"));
+    cards.push({
+      file: entry.name,
+      id: firstTopLevelYamlScalarField(body, "id") ?? "",
+      fingerprint: firstTopLevelYamlScalarField(body, "fingerprint") ?? "",
+      status,
+      createdAt: firstTopLevelYamlScalarField(body, "created_at"),
+      proposalPath: lastYamlScalarField(body, "path"),
+      revision: Number(lastYamlScalarField(body, "revision") ?? "0") || 0,
+      review: {
+        reviewer: lastYamlScalarField(body, "reviewer"),
+        reviewed_at: lastYamlScalarField(body, "reviewed_at"),
+        decision: lastYamlScalarField(body, "decision"),
+        notes: lastYamlScalarField(body, "notes"),
+      },
+    });
   }
-  return count;
+  return cards.sort((a, b) => b.revision - a.revision || a.file.localeCompare(b.file));
 }
 
+function firstTopLevelYamlScalarField(body: string, key: string): string | null {
+  const match = body.match(new RegExp(`^${escapeRegExp(key)}:\\s*([^\\n]*)$`, "m"));
+  if (!match) return null;
+  return parseYamlScalar(match[1]);
+}
+
+function lastYamlScalarField(body: string, key: string): string | null {
+  const matches = [...body.matchAll(new RegExp(`^\\s*${escapeRegExp(key)}:\\s*([^\\n]*)$`, "gm"))];
+  const match = matches.at(-1);
+  if (!match) return null;
+  return parseYamlScalar(match[1]);
+}
+
+function parseYamlScalar(value: string): string | null {
+  const raw = value.trim();
+  if (raw === "" || raw === "null") return null;
+  try {
+    return String(JSON.parse(raw));
+  } catch {
+    return raw;
+  }
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function parseSkillTelemetryEvidenceCardStatus(value: string | null): SkillTelemetryEvidenceCardStatus {
+  if (
+    value === "captured" ||
+    value === "routed" ||
+    value === "proposed" ||
+    value === "approved" ||
+    value === "rejected" ||
+    value === "promoted" ||
+    value === "archived"
+  ) {
+    return value;
+  }
+  return "proposed";
+}
+
+function isUnresolvedSkillTelemetryEvidenceCardStatus(status: SkillTelemetryEvidenceCardStatus): boolean {
+  return status === "captured" || status === "routed" || status === "proposed";
+}
+
+function skillTelemetryReviewHasHumanDecision(review: SkillTelemetryEvidenceCard["review"]): boolean {
+  return Boolean(review.reviewed_at || review.decision);
+}
 
 function proposalFingerprint(input: {
   skill: string;
@@ -4426,15 +4572,68 @@ function proposalFingerprint(input: {
   return `sha256:${createHash("sha256").update(payload).digest("hex")}`;
 }
 
+function skillTelemetryEvidenceSource(skillName: string, evidence: readonly SkillEventSummary[]): string {
+  const sourceKinds = topValues(evidence.map((event) => event.source_kind));
+  return `skill-telemetry:${skillName}:${sourceKinds.length > 0 ? sourceKinds.join("+") : "unknown-source"}`;
+}
+
+function skillTelemetryEvidenceRoute(category: string, skillPath: string): string {
+  return `skill-improvement:${category}:${skillPath}`;
+}
+
+function skillTelemetryDominantErrorPattern(input: {
+  dominantErrorStage: string | null;
+  dominantErrorClass: string | null;
+  dominantErrorCode: string | null;
+}): string {
+  return [
+    `stage=${input.dominantErrorStage ?? ""}`,
+    `class=${input.dominantErrorClass ?? ""}`,
+    `code=${input.dominantErrorCode ?? ""}`,
+  ].join("|");
+}
+
+function skillTelemetryWindow(evidence: readonly SkillEventSummary[]): string {
+  const timestamps = evidence.map((event) => event.timestamp).filter(Boolean).sort();
+  if (timestamps.length === 0) return "none";
+  return `${timestamps[0]}..${timestamps[timestamps.length - 1]} count=${timestamps.length}`;
+}
+
+function skillTelemetrySignalFingerprint(input: {
+  evidenceSource: string;
+  evidenceRoute: string;
+  dominantErrorPattern: string;
+  telemetryWindow: string;
+}): string {
+  return `sha256:${createHash("sha256")
+    .update(
+      JSON.stringify({
+        evidenceSource: input.evidenceSource,
+        evidenceRoute: input.evidenceRoute,
+        dominantErrorPattern: input.dominantErrorPattern,
+        telemetryWindow: input.telemetryWindow,
+      }),
+    )
+    .digest("hex")}`;
+}
+
 interface SkillTelemetryEvidenceCard {
   contract: "memory.evidence-card.experimental.v1";
   id: string;
   kind: "skill_telemetry";
-  status: "proposed";
+  status: SkillTelemetryEvidenceCardStatus;
   created_at: string;
   updated_at: string;
+  signal_fingerprint: string;
   fingerprint: string;
   file: string;
+  refresh: {
+    evidence_source: string;
+    evidence_route: string;
+    dominant_error_pattern: string;
+    telemetry_window: string;
+    revision: number;
+  };
   source: {
     kind: "skill_telemetry";
     source_kind: string;
@@ -4486,6 +4685,12 @@ interface SkillTelemetryEvidenceCard {
     redaction: "not_required";
     findings: string[];
   };
+  review: {
+    reviewer: string | null;
+    reviewed_at: string | null;
+    decision: string | null;
+    notes: string | null;
+  };
   proposal: {
     path: string;
     fingerprint: string;
@@ -4500,7 +4705,13 @@ function buildSkillTelemetryEvidenceCard(input: {
   dominantErrorStage: string | null;
   dominantErrorClass: string | null;
   proposalFingerprint: string;
+  signalFingerprint: string;
+  evidenceSource: string;
+  evidenceRoute: string;
+  dominantErrorPattern: string;
+  telemetryWindow: string;
   cardRevision: number;
+  reusableCard: ExistingSkillTelemetryEvidenceCardRef | null;
   priority: { score: number; priority: "high" | "medium" | "low"; reasons: string[] };
 }): SkillTelemetryEvidenceCard {
   const relSkillPath = isAbsolute(input.rec.path)
@@ -4508,19 +4719,19 @@ function buildSkillTelemetryEvidenceCard(input: {
     : input.rec.path;
   const runner = topValues(input.evidence.map((event) => event.runner))[0] ?? "unknown";
   const recentEventRefs = input.evidence.map((event) => `skill-event:${event.event_id}`);
-  const fingerprint = `sha256:${createHash("sha256")
+  const fingerprint =
+    input.reusableCard?.fingerprint ||
+    `sha256:${createHash("sha256")
     .update(
       JSON.stringify({
         contract: "memory.evidence-card.experimental.v1",
-        source: "skill.telemetry",
-        route: "skill_proposal",
-        proposalFingerprint: input.proposalFingerprint,
+        signalFingerprint: input.signalFingerprint,
         cardRevision: input.cardRevision,
       }),
     )
     .digest("hex")}`;
   const short = fingerprint.slice("sha256:".length, "sha256:".length + 12);
-  const id = `skill-telemetry:${slugify(input.rec.name)}:${short}`;
+  const id = input.reusableCard?.id || `skill-telemetry:${slugify(input.rec.name)}:${short}`;
   const now = new Date().toISOString();
   const rollupRef =
     input.rollup != null
@@ -4532,10 +4743,18 @@ function buildSkillTelemetryEvidenceCard(input: {
     id,
     kind: "skill_telemetry",
     status: "proposed",
-    created_at: now,
+    created_at: input.reusableCard?.createdAt || now,
     updated_at: now,
+    signal_fingerprint: input.signalFingerprint,
     fingerprint,
-    file: `skill-telemetry-${slugify(input.rec.name)}-${short}.yaml`,
+    file: input.reusableCard?.file || `skill-telemetry-${slugify(input.rec.name)}-${short}.yaml`,
+    refresh: {
+      evidence_source: input.evidenceSource,
+      evidence_route: input.evidenceRoute,
+      dominant_error_pattern: input.dominantErrorPattern,
+      telemetry_window: input.telemetryWindow,
+      revision: input.cardRevision,
+    },
     source: {
       kind: "skill_telemetry",
       source_kind: input.rec.source_kind,
@@ -4587,6 +4806,12 @@ function buildSkillTelemetryEvidenceCard(input: {
     privacy: {
       redaction: "not_required",
       findings: [],
+    },
+    review: input.reusableCard?.review || {
+      reviewer: null,
+      reviewed_at: null,
+      decision: null,
+      notes: null,
     },
     proposal: {
       path: "",
