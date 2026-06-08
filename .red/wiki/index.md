@@ -20,6 +20,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [Define RedDB Memory map consumer contract](./pages/535-define-reddb-memory-map-consumer-contract.md)
 - [Document Brain ownership of personal facts](./pages/495-document-brain-ownership-of-personal-facts.md)
 - [Extract cross-file TypeScript map edges](./pages/534-extract-cross-file-typescript-map-edges.md)
+- [Handle linked proposal evidence card review](./pages/555-handle-linked-proposal-evidence-card-review.md)
 - [Import complementary map sources into Memory](./pages/539-import-complementary-map-sources-into-memory.md)
 - [Memory governance reports tidy availability](./pages/492-memory-governance-reports-tidy-availability.md)
 - [Memory: deterministic invariant fuzzer](./pages/510-memory-deterministic-invariant-fuzzer.md)
