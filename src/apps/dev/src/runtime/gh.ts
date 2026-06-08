@@ -307,6 +307,39 @@ export async function closeIssue(ctx: GhContext, issue: number): Promise<void> {
   await runGh(ctx, ["issue", "close", String(issue), ...repoArgs(ctx), "--reason", "completed"]);
 }
 
+/** Full metadata for a single issue (`gh issue view --json number,title,body,labels`).
+ * Returns null on a 404 or transient gh failure. */
+export async function viewIssueFull(
+  ctx: GhContext,
+  issue: number,
+): Promise<{ number: number; title: string; body: string; labels: string[] } | null> {
+  const r = await runGh(ctx, [
+    "issue",
+    "view",
+    String(issue),
+    ...repoArgs(ctx),
+    "--json",
+    "number,title,body,labels",
+  ]);
+  if (r.code !== 0) return null;
+  try {
+    const parsed = JSON.parse(r.stdout) as {
+      number?: number;
+      title?: string;
+      body?: string;
+      labels?: Array<{ name?: string }>;
+    };
+    return {
+      number: Number(parsed.number ?? issue),
+      title: String(parsed.title ?? ""),
+      body: String(parsed.body ?? ""),
+      labels: Array.isArray(parsed.labels) ? parsed.labels.map((l) => String(l.name ?? "")) : [],
+    };
+  } catch {
+    return null;
+  }
+}
+
 /** `gh issue view --json body` → raw body, or undefined when absent. */
 export async function issueBody(ctx: GhContext, issue: number): Promise<string | undefined> {
   const r = await runGh(ctx, ["issue", "view", String(issue), ...repoArgs(ctx), "--json", "body"]);

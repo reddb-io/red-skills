@@ -10,7 +10,7 @@ import {
 import { genWorkerId } from "../core/session.js";
 import { runBoot, type BootDeps, type BootOptions, type BootstrapInput, type ReconcileBootRunner } from "../core/boot.js";
 import { reconcile, type ReconcileDeps, type ReconcileInput } from "../core/reconcile.js";
-import type { ReconcileSweepPlan } from "../core/boot-sweep.js";
+import { findOwnedBranch, type ReconcileSweepPlan } from "../core/boot-sweep.js";
 import { processIssue, type ProcessIssueDeps, type ProcessIssueInput } from "../core/process-issue.js";
 import {
   toMemoryPayload,
@@ -77,6 +77,12 @@ interface ParsedRunFlags {
   fallbackRunner: boolean;
   /** --boot-only: run the boot sweeps then exit without selecting/claiming/processing. */
   bootOnly: boolean;
+  /**
+   * --reconcile-issue <n>: supervisor-dispatched reconcile worker mode (ADR 0055,
+   * #562). Bypass the normal boot+session; validate-and-land the parked branch for
+   * issue `n` without re-running the agent.
+   */
+  reconcileIssue?: number;
 }
 
 /** Raised when --alternate is combined with --runner (mutually exclusive). */
@@ -109,6 +115,7 @@ const RUN_FLAG_SCHEMA = {
   alternate: { kind: "boolean" },
   "fallback-runner": { kind: "boolean" },
   "boot-only": { kind: "boolean" },
+  "reconcile-issue": { kind: "value", coerce: (raw: string): number => Number(raw) },
 } satisfies FlagSchema;
 
 /** Parse the `run` flags: --prd N / --issues a,b,c / -n N / --once / --request / --runner. */
@@ -139,6 +146,12 @@ export function parseRunFlags(args: readonly string[]): ParsedRunFlags {
     throw new RunFlagError("--alternate is mutually exclusive with --runner");
   }
 
+  const rawReconcileIssue = values["reconcile-issue"];
+  const reconcileIssue =
+    typeof rawReconcileIssue === "number" && Number.isFinite(rawReconcileIssue) && rawReconcileIssue > 0
+      ? rawReconcileIssue
+      : undefined;
+
   return {
     filter,
     iterCap: values.n as number | undefined,
@@ -148,6 +161,7 @@ export function parseRunFlags(args: readonly string[]): ParsedRunFlags {
     alternate,
     fallbackRunner: values["fallback-runner"] === true,
     bootOnly: values["boot-only"] === true,
+    reconcileIssue,
   };
 }
 
@@ -265,6 +279,54 @@ function makeBootReconcileRunner(
       : "skipped" as const;
     return { outcome };
   };
+}
+
+/**
+ * Supervisor-dispatched reconcile worker (ADR 0055, #562): validate-and-land the
+ * parked branch for `issue` without re-running the agent. Fetches the issue
+ * metadata + its `afk/…` branch, then delegates to `makeBootReconcileRunner`.
+ * Best-effort: a missing branch or failed fetch exits 0 (nothing to reconcile).
+ */
+async function runReconcileWorker(
+  issue: number,
+  runner: Runner,
+  ctx: RepoContext,
+  paths: AfkPaths,
+  workerId: string,
+): Promise<number> {
+  const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo };
+  const gitCtx: GitContext = { cwd: ctx.root };
+
+  const issueData = await ghx.viewIssueFull(ghCtx, issue);
+  if (!issueData) {
+    process.stderr.write(`[afk reconcile-worker] #${issue} not found or fetch failed — nothing to reconcile\n`);
+    return 0;
+  }
+
+  const remoteBranches = await gitx.listRemoteBranches(gitCtx, "afk/");
+  const branch = findOwnedBranch(remoteBranches.map((r) => r.branch), issue);
+  if (!branch) {
+    process.stderr.write(`[afk reconcile-worker] no afk branch for #${issue} — nothing to reconcile\n`);
+    return 0;
+  }
+
+  const plan: ReconcileSweepPlan = {
+    number: issueData.number,
+    title: issueData.title,
+    body: issueData.body,
+    labels: issueData.labels,
+    branch,
+  };
+
+  const feedback = makeFeedbackWorktree(ctx.root, join(paths.tmpDir, "feedback"));
+  try {
+    const reconcileRunner = makeBootReconcileRunner(ctx, paths, workerId, runner, feedback);
+    await reconcileRunner(plan);
+  } finally {
+    await feedback.cleanup();
+  }
+
+  return 0;
 }
 
 async function buildBootDeps(ctx: RepoContext, options: BootOptions, nowS: number): Promise<BootDeps> {
@@ -883,6 +945,12 @@ export async function runCommand(options: RunOptions): Promise<number> {
   // Worker id — probe the workers root for collisions.
   const existing = new Set((await collectMonitorInputs(cwd)).workers.map((w) => w.state.worker_id));
   const workerId = genWorkerId(Math.random, (id) => existing.has(id));
+
+  // Supervisor-dispatched reconcile worker: bypass the normal boot+session and
+  // validate-and-land the specific parked branch for `--reconcile-issue <n>`.
+  if (flags.reconcileIssue !== undefined) {
+    return runReconcileWorker(flags.reconcileIssue, runner, ctx, paths, workerId);
+  }
 
   const facts = await collectPrecheckFacts(ctx);
   const nowS = Math.floor(Date.now() / 1000);
