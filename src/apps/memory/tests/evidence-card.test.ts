@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
@@ -247,5 +247,94 @@ describe("memory evidence CLI", () => {
 
     const files = await readdir(evidenceInboxRoot(root));
     expect(files.sort()).toEqual([`${approvedId}.yaml`, `${rejectedId}.yaml`].sort());
+  }, TIMEOUT);
+
+  test("reviews linked proposal cards without applying or archiving proposals", async () => {
+    const root = await tempRoot();
+    expect(runMemory(["init", "--mode", "graph", "--root", root, "--yes"]).status).toBe(0);
+    const proposalDir = join(root, ".red", "memory", "proposals");
+    await mkdir(proposalDir, { recursive: true });
+    const approvedProposal = join(proposalDir, "approve-linked.md");
+    const rejectedProposal = join(proposalDir, "reject-linked.md");
+    await writeFile(approvedProposal, "# Skill Improvement Proposal: approve\n\nPatch later.\n", "utf8");
+    await writeFile(rejectedProposal, "# Skill Improvement Proposal: reject\n\nPatch later.\n", "utf8");
+
+    const createApproved = runMemory([
+      "evidence",
+      "create",
+      "--root",
+      root,
+      "--summary",
+      "Approving a linked Evidence card validates only the evidence interpretation.",
+      "--source-ref",
+      "issue 549",
+      "--citation",
+      "issue 549||approve linked card",
+      "--lesson",
+      "Keep linked proposal application separate from card approval.",
+      "--proposal-kind",
+      "skill-improvement",
+      "--proposal-path",
+      ".red/memory/proposals/approve-linked.md",
+      "--proposal-apply-state",
+      "pending",
+      "--json",
+    ]);
+    expect(createApproved.status, createApproved.stderr).toBe(0);
+    const approvedId = (JSON.parse(createApproved.stdout) as { card: { id: string } }).card.id;
+    const beforeApprove = await readFile(approvedProposal, "utf8");
+    const approve = runMemory(["evidence", "approve", approvedId, "--root", root, "--reviewer", "maintainer", "--yes", "--json"]);
+    expect(approve.status, approve.stderr).toBe(0);
+    expect(await readFile(approvedProposal, "utf8")).toBe(beforeApprove);
+
+    const createRejected = runMemory([
+      "evidence",
+      "create",
+      "--root",
+      root,
+      "--summary",
+      "Rejecting a linked Evidence card warns the linked proposal only.",
+      "--source-ref",
+      "issue 549",
+      "--citation",
+      "issue 549||reject linked card",
+      "--lesson",
+      "Warn when evidence interpretation is rejected.",
+      "--proposal-kind",
+      "skill-improvement",
+      "--proposal-path",
+      ".red/memory/proposals/reject-linked.md",
+      "--proposal-apply-state",
+      "pending",
+      "--json",
+    ]);
+    expect(createRejected.status, createRejected.stderr).toBe(0);
+    const rejectedId = (JSON.parse(createRejected.stdout) as { card: { id: string } }).card.id;
+    const reject = runMemory([
+      "evidence",
+      "reject",
+      rejectedId,
+      "--root",
+      root,
+      "--reason",
+      "evidence interpretation was wrong",
+      "--reviewer",
+      "maintainer",
+      "--yes",
+      "--json",
+    ]);
+    expect(reject.status, reject.stderr).toBe(0);
+    const rejectedProposalBody = await readFile(rejectedProposal, "utf8");
+    expect(rejectedProposalBody).toContain("## Evidence Card Review Warning");
+    expect(rejectedProposalBody).toContain(`Evidence card id: ${rejectedId}`);
+    expect(rejectedProposalBody).toContain("evidence interpretation was wrong");
+    expect((await readdir(proposalDir)).sort()).toEqual(["approve-linked.md", "reject-linked.md"].sort());
+
+    const applyWithoutApproval = runMemory(["improve", "apply", rejectedProposal, "--root", root, "--json"]);
+    expect(applyWithoutApproval.status).not.toBe(0);
+    expect(applyWithoutApproval.stderr).toContain("requires explicit --yes approval");
+    const applyWithoutStructuredBlock = runMemory(["improve", "apply", rejectedProposal, "--root", root, "--yes", "--json"]);
+    expect(applyWithoutStructuredBlock.status).not.toBe(0);
+    expect(applyWithoutStructuredBlock.stderr).toContain("structured memory-skill-patch block");
   }, TIMEOUT);
 });
