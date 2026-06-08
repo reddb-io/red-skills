@@ -55,3 +55,13 @@ Start with the cheapest capable tier, but escalate immediately when evidence sho
 - Codex receives this same skill through `plugins/dev/.codex-plugin/plugin.json` (`"skills": "./skills/"`). Codex does not ship the Claude `agents/` wrappers.
 - AFK sandcastle execution lives in `plugins/dev/skills/engineering/afk/SKILL.md`, with host adapters in `runner-claude.md` and `runner-codex.md`. Runtime tier resolution flows through `resolveTier` in `src/apps/dev/src/core/process-issue.ts` and the config resolver in `src/apps/dev/src/core/config.ts`.
 - Host hooks live in `plugins/dev/hooks/claude.hooks.json` and `plugins/dev/hooks/codex.hooks.json`; they are host-specific enforcement surfaces, not places to duplicate the policy.
+
+## Interactive enforcement (issue #456, ADR 0049)
+
+The interactive session's tier is enforced — not merely suggested — by a PreToolUse hook on the subagent-dispatch tool (`Task`/`Agent`). On Claude Code, `plugins/dev/hooks/claude.hooks.json` routes the dispatch payload through the dev bundle's `route-model-tier` command (`src/apps/dev/src/commands/route-model-tier.ts`, pure decision in `core/model-tier-route.ts`). The command:
+
+- maps a dispatch to a tier-agent (`validate` → `validate`, `simple-code` → `simple`, `complex-code` → `complex`) and asks `resolveTier` for the policy model from the **single config source** (`plugins.dev.afk.models.claude.<tier>.model`); it hardcodes no model id;
+- when the dispatched model's family disagrees with the tier (or is unset), corrects it via the enforcement contract decided at HITL on 2026-06-08: **(a) rewrite** the dispatch model in place using Claude's `hookSpecificOutput.updatedInput` → **(b) fallback block-and-retry** (`permissionDecision: "deny"`) → **(c) degrade to audit** (`additionalContext`). Claude supports rewrite, so it always takes path (a);
+- leaves dispatches to any non-tier subagent untouched (the hook enforces a declared tier, it does not semantically classify arbitrary tasks).
+
+Codex safe-degrades to a no-op until the per-task subagent-with-model capability lands (#457): the `route-model-tier --host codex` path emits no change, and `codex.hooks.json` does not wire an enforcing hook yet. When #457 resolves Codex's dispatch tool shape, wire it the same way — the command already accepts `--host codex` and the contract is shared, so there is still exactly one tier table.
