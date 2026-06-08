@@ -8,7 +8,127 @@ workflows.
 
 **Memory plugin**:
 The RedSkills plugin that gives agents persistent, queryable per-project memory.
-_Avoid_: memory skill, harness memory
+_Avoid_: memory skill, harness memory, personal fact store, Brain interface
+
+**Operational evidence**:
+A durable fact about agent work, validation, decisions, risks, attempts, or codebase reasoning that can improve future agent execution.
+_Avoid_: personal knowledge, freeform dump, second brain note
+
+**Evidence card**:
+A YAML review unit distilled from one or more raw signals, carrying source, cited evidence, proposed lesson, confidence, privacy posture, routing target, and blast radius before any durable Memory or Skill proposal is written.
+_Avoid_: raw transcript, proposal file, JSON inbox item, unstructured inbox note
+
+**Evidence card contract**:
+The experimental versioned YAML schema for **Evidence cards**, initially `memory.evidence_card.experimental.v0`, intended to migrate to a stable v1 after real refinement sources validate the shape.
+_Avoid_: public stable API, ad hoc YAML, unversioned inbox format
+
+**Evidence card source**:
+The structured source block on an **Evidence card**; for Skill telemetry it records source kind, runner, Skill identity, rollup reference, and recent event references.
+_Avoid_: prose-only source, path-only source, raw event dump
+
+**Evidence citation**:
+A short redacted excerpt plus a stable pointer from an **Evidence card** back to its source signal, such as a Memory event, reasoning attempt, validation node, file location, or explicit user feedback record.
+_Avoid_: full transcript, raw stdout, unsupported summary
+
+**Evidence card status**:
+The lifecycle state of an **Evidence card**: `captured`, `routed`, `proposed`, `approved`, `rejected`, `promoted`, or `archived`.
+_Avoid_: quarantine-only status, issue status, proposal archive reason
+
+**Two-stage refinement review**:
+The human review pattern where approving an **Evidence card** validates the interpretation of evidence, while approving the resulting proposal validates the concrete Memory, context, issue/PRD, or Skill change.
+_Avoid_: one-click mutation, evidence-free diff review, automatic apply
+
+**Evidence review CLI**:
+The first operator surface for listing, inspecting, routing, approving, rejecting, promoting, and archiving **Evidence cards**.
+_Avoid_: primary Workbench workflow, GitHub-only review, hidden hook action
+
+**Evidence inbox**:
+The `.red/memory/inbox/evidence/` review queue where YAML **Evidence cards** live before promotion, archiving, or proposal review.
+_Avoid_: root evidence folder, mixed JSON inbox item, proposal directory
+
+**Evidence card fingerprint**:
+The deterministic identity for refreshing an unresolved **Evidence card** from the same source, route, dominant error pattern, and telemetry window without overwriting reviewed cards.
+_Avoid_: timestamp-only id, duplicate pending card, rewriting approved evidence
+
+**Skill improvement proposal**:
+An approval-gated patch proposal for an existing Skill, produced from **Evidence cards** or Skill telemetry while preserving the structured `memory-skill-patch` review/apply contract.
+_Avoid_: direct Skill rewrite, new Skill generation, telemetry-only patch
+
+**Skill telemetry evidence card**:
+An **Evidence card** distilled from Skill telemetry rollups and recent failure events before `memory improve skills` writes a **Skill improvement proposal**.
+_Avoid_: direct telemetry proposal, failure counter only, unreviewed patch trigger
+
+**Evidence tracer-bullet proof**:
+The minimum validation for the first **Skill telemetry evidence card** slice: telemetry creates YAML card plus proposal, JSON output stays compatible, fingerprint refreshes unresolved cards, redaction happens before persistence, approve/reject works, and card/proposal links are bidirectional.
+_Avoid_: viewer-only demo, untested YAML shape, proposal-only test
+
+**Evidence-linked proposal**:
+A proposal artifact that cites the **Evidence card** it came from, preserving traceability while keeping the existing proposal review/apply gate.
+_Avoid_: new orphan refinement proposal, cardless patch, duplicated evidence blob
+
+**Evidence proposal link**:
+The bidirectional trace between an **Evidence card** and a proposal artifact: the card records the proposal path, and the proposal records the card id or path.
+_Avoid_: one-way pointer, filename convention only, copied raw evidence
+
+**Evidence card redaction**:
+The privacy step that scans and redacts sensitive content before an **Evidence card** is persisted, while preserving privacy findings for review.
+_Avoid_: persist-then-redact, secret marker only, raw transcript storage
+
+**Context update proposal**:
+An approval-gated proposal to change Red context glossary language, produced from an **Evidence card** but not applied directly by the refinement loop.
+_Avoid_: direct context rewrite, hidden glossary mutation, automatic ADR
+
+**Hermes-like refinement loop**:
+A governed Memory workflow inspired by Hermes-style self-improvement, where captured signals become routed evidence and approval-gated proposals rather than automatic Skill creation or silent instruction rewrites.
+_Avoid_: Hermes runner, automatic skill factory, self-rewriting agent
+
+**Internal refinement signal**:
+A Memory-visible agent signal, such as Skill telemetry, hook observations, reasoning attempts, validations, or explicit user rejection feedback, that can seed an **Evidence card** without external-system integration.
+_Avoid_: third-party webhook, raw SaaS transcript, arbitrary import
+
+**User rejection signal**:
+An internal refinement signal where the user rejects, corrects, or constrains agent behavior; command/button feedback is high-confidence, while natural-language rejection is captured as lower-confidence evidence that cannot autopromote.
+_Avoid_: casual preference, inferred mood, silent edit
+
+**Evidence route**:
+The destination verdict on an **Evidence card**: durable Memory fact, Skill improvement proposal, Red context update, issue/PRD candidate, or discard.
+_Avoid_: automatic write target, ADR decision, unreviewed patch
+
+**Evidence route verdict**:
+The structured routing block on an **Evidence card**, combining route kind, target, decision, and reason.
+_Avoid_: destination-only route, hidden router rationale, automatic write target
+
+**Skill proposal target**:
+The `skill_proposal` route target on an **Evidence card**, naming the Skill, its path, and the suggested section or anchor for review.
+_Avoid_: skill name only, inferred patch target, hidden section choice
+
+**Low-risk autopromotion**:
+Automatic promotion of high-confidence, internal, low-blast-radius evidence such as validation outcomes or telemetry rollups into governed Memory, excluding Skill behavior changes and Red context updates.
+_Avoid_: autorefine, silent patch, automatic context rewrite
+
+**Refinement blast-radius gate**:
+The review gate that blocks autopromotion when an evidence route could affect an external audience, customer/commercial/security outcomes, or shared workflow/context semantics.
+_Avoid_: gut-check, trust score, generic risk
+
+**Evidence blast-radius assessment**:
+The **Evidence card** block that records the three blast-radius axes, a derived level, and the reason for that level.
+_Avoid_: single opaque risk score, generic severity, unstated gate rationale
+
+**Refinement judge**:
+The review function that checks whether an **Evidence card** has enough evidence, confidence, privacy posture, blast-radius assessment, and routing quality before producing or applying a proposal.
+_Avoid_: eval runner, automatic approver, model preference
+
+**Evidence judge block**:
+The **Evidence card** block that records judge checklist results plus verdict, confidence, and reason.
+_Avoid_: score-only judge, hidden model judgment, eval result
+
+**Refinement cadence**:
+The operating rhythm for the **Hermes-like refinement loop**: capture evidence near session or hook events, then review routed cards and proposals through an explicit manual or scheduled batch.
+_Avoid_: always-on rewrite, hidden background mutation, one-off cleanup
+
+**Skill creation candidate**:
+An evidence-backed recommendation that repeated work may deserve a new Skill, routed as issue/PRD work instead of being created automatically by the refinement loop.
+_Avoid_: auto-created skill, throwaway procedure, Hermes-style skill spawn
 
 **Markdown-only mode**:
 The lightest Memory storage mode: plain markdown facts, no RedDB, hooks, or MCP server.
@@ -37,6 +157,10 @@ _Avoid_: memory record, entry
 **Memory node**:
 The graph-mode unit for a stored fact, work item, attempt, file, symbol, validation, or other typed entity.
 _Avoid_: note, row
+
+**Pinned Memory node**:
+A **Memory node** whose `importance >= 0.8`; it is protected from stale-node pruning and treated as core context by context-pack policy when it is applicable to the current goal, not globally injected into every prompt. Recall ranking may learn from the same signal later, but context-pack is the first validation surface.
+_Avoid_: pinned field, separate always-include flag
 
 **Memory tier**:
 The retention class on a **Memory node**: `ephemeral`, `durable`, or `reasoning`.
@@ -69,6 +193,18 @@ _Avoid_: envelope hook dump, hook log
 **Memory event log**:
 The RedDB-backed operational telemetry stream for Memory-visible agent events, including skill events, attempt validations, hook events, and derived lifecycle observations.
 _Avoid_: separate telemetry tables, raw logs
+
+**Memory injection observation**:
+A Memory event-log observation that a recalled **Memory node** or **Memory context pack** citation was actually placed into agent context by a Memory-controlled hook or transport; event-log records are the source of truth, while node-level injection counters or timestamps are derived rollups for cheap doctor/decay queries. Manual recall display does not create an injection observation. Distinct from recall access bookkeeping such as `access_count`.
+_Avoid_: recall hit, access count, prompt transcript, rollup source of truth
+
+**Memory context pack generation observation**:
+A Memory event-log observation that a **Memory context pack** was produced for a goal; distinct from a **Memory injection observation**, because generating ready-to-inject Markdown does not prove that an integration or hook delivered it to an agent.
+_Avoid_: injection observation, recall access, prompt delivery
+
+**Brain federated context**:
+Cited Brain hits that Memory recall or context-pack may rank in the same result and trust model as Memory evidence, while preserving Brain as the canonical source for those artifacts rather than treating Brain as a Memory store.
+_Avoid_: shared store, uncited Brain injection, separate supplemental section
 
 **Memory readiness envelope**:
 The shared JSON contract consumed by future UI and competitive evaluation, combining task readiness, trust evidence, operational telemetry, VCS/time-travel status, and graph-community signals for a requested goal.
@@ -354,6 +490,12 @@ _Avoid_: HTTP server health endpoint, mutating repair wizard
 The read-only trust report over graph provenance coverage, privacy scan findings, lint findings, contradiction state, supersession state, and recommended next actions.
 _Avoid_: compliance certification, auto-fix workflow
 
+**Memory tidy recommendation**:
+A read-only duplicate or near-duplicate recommendation to merge Memory evidence through an approval-gated **Soft-merge edge**; the first provider-backed tidy scope does not decide supersession, deprecation, or contradiction resolution. Memory does not apply tidy recommendations automatically. Each provider tidy run is bounded by an absolute recommendation cap and a proportional guard against collapsing too much of the candidate set.
+The first product surface for provider-backed tidy recommendations is **Memory governance**. When no provider is configured or provider tidy is unavailable, Memory governance remains deterministic and reports tidy as unavailable with the reason and next action.
+A tidy recommendation's review status is `open`, `accepted`, `dismissed`, or `stale`; `accepted` means a human approved it through an explicit mutating workflow and Memory created the corresponding **Soft-merge edge**, while `stale` means the recommendation's **Provider review fingerprint** no longer matches current evidence or policy. `memory governance` only reports recommendations and never applies them. Graph supersession vocabulary is not used for provider review artifacts.
+_Avoid_: automatic tidy, auto-merge, destructive cleanup, supersession decision, contradiction resolution, retention recommendation
+
 **Memory lint rule suggestion**:
 The read-only recommendation emitted by Memory lint when hygiene findings imply a reusable agent rule or Red context update, including target files, evidence IDs, rationale, and ready-to-paste markdown.
 _Avoid_: automatic rule writer, Memory mutation
@@ -373,6 +515,10 @@ _Avoid_: mutating governance dashboard, public benchmark claim
 **Memory context pack viewer**:
 The self-contained HTML artifact that renders **Memory context pack** evidence for local agent-context inspection, including embedded JSON, grouped citations, warnings, skill recommendations, and ready-to-inject Markdown.
 _Avoid_: model-generated summary, separate prompt artifact store
+
+**Memory context pack core context**:
+The cited, provenance-preserving section of a **Memory context pack** for applicable **Pinned Memory nodes**; pinned nodes must still pass the same governed eligibility filters as ordinary context, then appear before ordinary recalled context without removing citations or trust metadata.
+_Avoid_: uncited always-include preface, ranking-only boost, governance bypass
 
 **Path explanation viewer**:
 The self-contained HTML artifact that renders a **Memory path explanation** for local inspection.
@@ -405,6 +551,14 @@ _Avoid_: CI runner, container build parser
 **Memory extraction status**:
 The read-only operator report that shows deterministic extractor coverage, local structured-transcript fallback readiness, inferred provider mode/model/egress, Stop hook readiness, and stored `INFERRED` fact count.
 _Avoid_: provider installer, extraction quality benchmark
+
+**Provider review fingerprint**:
+A stable hash over the relevant Memory nodes/edges plus the Memory operation id and provider-review policy/prompt version; used to skip repeated provider-backed review work only when both evidence and review policy are unchanged. Deterministic readers still recompute their reports rather than trusting the fingerprint.
+_Avoid_: report cache, governance cache, deterministic skip
+
+**Provider review artifact**:
+A persisted, non-canonical review result keyed by **Provider review fingerprint**, such as stable **Memory tidy recommendation** ids and pair-level evidence for reviewers. It lives in Memory persistence outside the canonical graph, such as RedDB KV or a side collection. It is not a **Memory node** or edge and does not change governed recall until an approved action creates canonical graph evidence.
+_Avoid_: Memory node, Soft-merge edge, recall evidence, markdown review file
 
 **Extraction status viewer**:
 The self-contained HTML artifact that renders **Memory extraction status** for local inspection, including deterministic extractor coverage, inferred provider readiness, Stop hook readiness, inferred fact counts, recommendations, and embedded JSON.
@@ -502,6 +656,42 @@ _Avoid_: demo project, synthetic showcase
 The goal of covering practical repository-understanding capabilities: ingestion, graph construction, impact queries, context maps, and exportable artifacts.
 _Avoid_: Understand clone, Graphify clone
 
+**Memory map**:
+A RedDB-backed, rebuildable projection of codebase-map evidence used by Memory to sharpen agent context between Claude Code/Codex and the repository while reducing unnecessary token use. It is derived from canonical Memory graph evidence and complementary ingest sources without becoming a second source of truth. It includes structural codebase entities plus operational evidence such as ADRs, decisions, validations, issues, PRDs, and attempts only when they are explicitly connected to files, symbols, docs, or assets. red-ui can inspect the same data as a database visualization client, but the primary product loop is agent context selection.
+_Avoid_: graphify-out clone, static map artifact, separate map database
+
+**Memory map versioning**:
+The rule that **Memory map** does not maintain its own snapshot/versioning system; it is recomputed from the queried RedDB graph state and relies on RedDB VCS/time-travel for historical reads.
+_Avoid_: map snapshot store, parallel graph history, committed map version
+
+**Memory map analytic cache**:
+The rebuildable RedDB-backed cache for expensive **Memory map metadata** such as community assignments and cohesion, computed through RedDB analytics capabilities for database visualization clients. Cheap metrics such as edge weight or salience may be computed on read unless materialization is proven necessary.
+_Avoid_: map snapshot, canonical evidence, UI cache
+
+**Memory map boundary**:
+The rule that **Memory map** and Brain remain disconnected surfaces. Brain artifacts do not participate as Memory map vertices, edges, citations, or federated context.
+_Avoid_: Brain-enriched map, federated Brain map context, shared project graph
+
+**Memory map metadata**:
+The semantic and analytic attributes Memory provides as decision inputs for database graph visualization, such as entity type, relation kind, edge weight, edge salience, confidence, provenance, community assignment, cohesion, and source freshness. It does not encode UI/UX decisions such as color palettes, layout, label visibility, opacity, interaction behavior, or visual hierarchy; those belong to red-ui or another frontend consumer.
+_Avoid_: Memory UI projection, graph layout contract, red-ui implementation detail
+
+**Memory map context slice**:
+A compact, cited answer-shaped subgraph selected from **Memory map** evidence for Claude Code/Codex before broad source-file reading, containing the relevant files, symbols, relations, source locations, connected decisions, validations, risks, and recommended next reads within a token budget.
+_Avoid_: raw graph dump, visual map, generated prose answer
+
+**Memory map edge weight**:
+The topological strength of a Memory map edge, usually the count or aggregate strength of concrete relationships between two vertices or two communities.
+_Avoid_: confidence score, UI opacity, importance score
+
+**Memory map edge salience**:
+A navigation-oriented ranking score derived from **Memory map edge weight** plus evidence quality, relation kind, recency, and centrality signals.
+_Avoid_: raw edge weight, visual style, confidence field
+
+**TypeScript map source**:
+The first complementary source for **Memory map** structural code evidence, using TypeScript compiler API or `tsserver` data to derive symbols, imports, exports, and call/type relationships before writing them into RedDB-backed map evidence.
+_Avoid_: Graphify dependency, separate TypeScript index, tsserver as source of truth
+
 **Onboarding map viewer**:
 The self-contained HTML artifact that renders **Memory onboarding map** evidence for local inspection, including concepts, workflows, decisions, risks, validations, suggested skills, warnings, markdown, and embedded JSON.
 _Avoid_: documentation generator, replacement README
@@ -542,6 +732,39 @@ _Avoid_: memory rollback, historical search
 - A **Validation sidecar** feeds **Validation nodes** and `TESTED_BY` edges; `validation_summary` remains a quick aggregate property.
 - **Reasoning attempt hooks** live as a property on the **Reasoning attempt** node; absent when the project declared no user hooks, never represented as an edge or separate node.
 - The **Memory event log** is the shared telemetry substrate for skill, attempt, and hook observations before specialized rollups are produced.
+- A **Hermes-like refinement loop** distills raw signals into **Evidence cards**, routes them into **Operational evidence** or proposal artifacts, and keeps mutation behind proposal review gates.
+- An **Evidence card** conforms to the **Evidence card contract**; the first contract is experimental even though cards are versioned and parseable.
+- The first **Evidence card contract** includes essential fields plus proposal traceability, judge, and review metadata; deeper audit fields wait until real sources prove they are needed.
+- A Skill telemetry **Evidence card source** records runner, Skill identity, rollup reference, and recent event references rather than copying the raw telemetry stream into YAML.
+- An **Evidence card** uses **Evidence citations** to cite **Memory event log** records, hook observations, rejection notes, validation nodes, or external-system summaries without making the raw source itself the durable Memory fact.
+- An **Evidence card status** tracks the review lifecycle of a card separately from the lifecycle of any proposal file or promoted Memory node it creates.
+- An **Evidence card fingerprint** refreshes pending cards in `captured`, `routed`, or `proposed` status, but a new card is created after the previous card is approved, rejected, promoted, or archived.
+- **Two-stage refinement review** is required for mutating routes: the card review accepts the evidence interpretation, and the proposal review accepts the concrete change.
+- In the first cycle, approving an **Evidence card** updates card review metadata only; it does not change proposal contents or alter the existing proposal apply gate.
+- Rejecting an **Evidence card** linked to a proposal should mark the proposal with a rejected-card warning, but should not archive or move the proposal automatically.
+- The **Evidence inbox** is the first filesystem home for YAML **Evidence cards**, preserving the existing inbox while separating the new review contract.
+- The **Evidence review CLI** first supports list, show, approve, and reject over the **Evidence inbox**; viewers and PR workflows may consume the same evidence contract later.
+- `memory improve skills` remains the **Skill improvement proposal** surface, but its telemetry candidates should fit the **Evidence card** layer before patch proposals are applied.
+- A **Skill telemetry evidence card** is the first tracer-bullet input for the **Hermes-like refinement loop**, proving telemetry → card → proposal before external sources are added.
+- **Evidence tracer-bullet proof** is required before treating the **Evidence card contract** as usable beyond the first Skill telemetry slice.
+- For Skill telemetry, `memory improve skills --write-proposal` may write an **Evidence-linked proposal** in the same run as the card; applying the proposal remains separately gated.
+- Existing cardless proposal artifacts remain valid during transition, but new refinement proposal generators should emit **Evidence-linked proposals**.
+- The JSON output for `memory improve skills --write-proposal` preserves existing proposal fields and adds an `evidenceCards` artifact list for compatibility.
+- An **Evidence proposal link** must be bidirectional so card review and proposal review remain auditable from either queue.
+- **Evidence card redaction** happens before persistence; privacy findings may stay on the card, but raw sensitive text must not.
+- A `context_update` **Evidence route** produces a **Context update proposal** under the proposal queue rather than editing `.red/contexts/*/CONTEXT.md` directly.
+- The first **Hermes-like refinement loop** is seeded by **Internal refinement signals**; external customer, SaaS, or webhook sources are later inputs that must pass the same evidence and privacy gates.
+- A **User rejection signal** can seed an **Evidence card**, but only explicit command or UI feedback should be treated as high-confidence rejection evidence.
+- An **Evidence route** determines what review artifact is proposed from an **Evidence card**; ADR candidates are outside the first routing set and remain governed by architecture-decision criteria.
+- An **Evidence route verdict** records route kind, target, decision, and reason so reviewers can inspect router rationale.
+- A `skill_proposal` **Evidence route** uses a **Skill proposal target** so the reviewer sees the Skill, file path, and suggested section before reading the patch.
+- **Low-risk autopromotion** may store internal operational evidence, but **Skill improvement proposal** and Red context updates remain approval-gated.
+- The **Refinement blast-radius gate** decides whether an **Evidence route** is eligible for **Low-risk autopromotion** or must become a human-reviewed proposal.
+- An **Evidence blast-radius assessment** uses the external-audience, customer/commercial/security, and shared-workflow/context axes plus a derived level and reason.
+- The **Refinement judge** evaluates evidence quality and safety for an **Evidence card**; it may recommend eval or validation, but it is not itself an eval harness.
+- An **Evidence judge block** combines checklist fields with verdict, confidence, and reason; score-only judge output is not enough.
+- The **Refinement cadence** separates near-event capture from batched human review, so evidence is not lost but mutations remain inspectable.
+- A `skill_proposal` **Evidence route** patches existing Skills; a **Skill creation candidate** is routed as issue/PRD work for explicit human prioritization.
 - The **Memory readiness envelope** is the contract shared by UI and `eval:competitive:v2`, so product views and benchmarks are backed by the same evidence.
 - A **Memory handoff report** composes live graph evidence for cross-agent continuation; it does not read or expose raw transcripts.
 - The **Handoff viewer** consumes a **Memory handoff report** instead of recomputing cross-agent continuation evidence.

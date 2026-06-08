@@ -57,6 +57,7 @@ stale notes inline.
 - **0035** Extraction schema splits closed structural type from open engineering code
 - **0036** Memory transports are adapters over the operation registry
 - **0037** Memory benchmark measures substrate superiority on a curated corpus, not LOCOMO
+- **0053** Provider tidy is report-only governance until explicit soft-merge approval
 
 ## MCP / transport / surfaces
 - **0013** Dev owns the codebase-understanding surface; memory owns the graph

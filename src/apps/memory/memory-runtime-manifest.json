@@ -1,0 +1,20 @@
+{
+  "schema": "red.memory.runtime.v1",
+  "version": "1.146.1",
+  "cli": {
+    "asset": "memory-cli.mjs",
+    "sha256": "7c7e682c472a1048f7a85894e4b05ea8a85a75e15220ee1eea4b2facf2ca7721"
+  },
+  "reddb": {
+    "repo": "reddb-io/reddb",
+    "tag": "v1.7.0",
+    "assets": {
+      "linux-x86_64": "red-linux-x86_64",
+      "linux-aarch64": "red-linux-aarch64",
+      "linux-armv7": "red-linux-armv7",
+      "macos-x86_64": "red-macos-x86_64",
+      "macos-aarch64": "red-macos-aarch64",
+      "windows-x86_64": "red-windows-x86_64.exe"
+    }
+  }
+}
