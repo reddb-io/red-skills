@@ -6,10 +6,11 @@ import {
   type BootOptions,
   type OrphanDir,
   type PrecheckFacts,
+  type ReconcileBootRunner,
 } from "../src/core/boot.js";
 import type { AttemptDir } from "../src/core/reclaim.js";
 import type { BranchRef, IssueMeta } from "../src/core/branch-cleanup.js";
-import type { UnblockCandidate } from "../src/core/boot-sweep.js";
+import type { UnblockCandidate, ReconcileSweepCandidate } from "../src/core/boot-sweep.js";
 
 const DAY = 86400;
 const NOW = 1700000000;
@@ -97,6 +98,7 @@ function makeDeps(over: Partial<{
   blockerState: BootDeps["lookups"]["blockerState"];
   straggler: BootDeps["lookups"]["straggler"];
   env: Record<string, string | undefined>;
+  reconcileRunner: ReconcileBootRunner;
 }> = {}) {
   const calls: string[] = [];
   const fsCalls = {
@@ -168,6 +170,7 @@ function makeDeps(over: Partial<{
     },
     nowS: NOW,
     env: over.env ?? {},
+    ...(over.reconcileRunner ? { reconcileRunner: over.reconcileRunner } : {}),
   };
 
   return { deps, calls, fsCalls, ghCalls, gitCalls };
@@ -471,6 +474,106 @@ describe("runBoot unblock sweep promotes + comments", () => {
       { issue: 100, body: "🤖 /afk unblocked: all dependencies closed (#10, #11)." },
     ]);
     expect(r.unblockSweep).toEqual({ promoted: [100] });
+  });
+});
+
+describe("runBoot reconcile sweep", () => {
+  const stalled: ReconcileSweepCandidate = {
+    number: 50,
+    title: "stalled issue",
+    body: "",
+    labels: ["blocked:stalled"],
+  };
+  const crashed: ReconcileSweepCandidate = {
+    number: 51,
+    title: "crashed issue",
+    body: "",
+    labels: ["blocked:crashed"],
+  };
+  const noBranch: ReconcileSweepCandidate = {
+    number: 52,
+    title: "no branch issue",
+    body: "",
+    labels: ["blocked:stalled"],
+  };
+  const remoteLiveRefs: BranchRef[] = [
+    { branch: "afk/wAAA/50-stalled-work" },
+    { branch: "afk/wAAA/51-crashed-work" },
+    // 52 intentionally omitted — no owned branch
+  ];
+
+  it("returns empty result when no reconcileRunner is wired", async () => {
+    const { deps } = makeDeps();
+    const r = await runBoot(
+      deps,
+      options({ reconcileSweepCandidates: [stalled], branches: { snapshotRefs: [], remoteLiveRefs, localLiveRefs: [] } }),
+    );
+    expect(r.reconcileSweep).toEqual({ landed: [], parked: [], skipped: [] });
+  });
+
+  it("green → landed when runner returns 'landed'", async () => {
+    const reconcileRunner: ReconcileBootRunner = async () => ({ outcome: "landed" });
+    const { deps } = makeDeps({ reconcileRunner });
+    const r = await runBoot(
+      deps,
+      options({ reconcileSweepCandidates: [stalled], branches: { snapshotRefs: [], remoteLiveRefs, localLiveRefs: [] } }),
+    );
+    expect(r.reconcileSweep).toEqual({ landed: [50], parked: [], skipped: [] });
+  });
+
+  it("red → parked when runner returns 'parked'", async () => {
+    const reconcileRunner: ReconcileBootRunner = async () => ({ outcome: "parked" });
+    const { deps } = makeDeps({ reconcileRunner });
+    const r = await runBoot(
+      deps,
+      options({ reconcileSweepCandidates: [crashed], branches: { snapshotRefs: [], remoteLiveRefs, localLiveRefs: [] } }),
+    );
+    expect(r.reconcileSweep).toEqual({ landed: [], parked: [51], skipped: [] });
+  });
+
+  it("no branch → not passed to runner, absent from all arrays", async () => {
+    let runnerCalled = false;
+    const reconcileRunner: ReconcileBootRunner = async () => {
+      runnerCalled = true;
+      return { outcome: "landed" };
+    };
+    const { deps } = makeDeps({ reconcileRunner });
+    const r = await runBoot(
+      deps,
+      options({ reconcileSweepCandidates: [noBranch], branches: { snapshotRefs: [], remoteLiveRefs, localLiveRefs: [] } }),
+    );
+    expect(runnerCalled).toBe(false);
+    expect(r.reconcileSweep).toEqual({ landed: [], parked: [], skipped: [] });
+  });
+
+  it("skipped when runner throws", async () => {
+    const reconcileRunner: ReconcileBootRunner = async () => {
+      throw new Error("gate failed");
+    };
+    const { deps } = makeDeps({ reconcileRunner });
+    const r = await runBoot(
+      deps,
+      options({ reconcileSweepCandidates: [stalled], branches: { snapshotRefs: [], remoteLiveRefs, localLiveRefs: [] } }),
+    );
+    expect(r.reconcileSweep).toEqual({ landed: [], parked: [], skipped: [50] });
+  });
+
+  it("mixed batch: landed + parked + no-branch in one pass", async () => {
+    let calls = 0;
+    const reconcileRunner: ReconcileBootRunner = async (plan) => {
+      calls++;
+      return { outcome: plan.number === 50 ? "landed" : "parked" };
+    };
+    const { deps } = makeDeps({ reconcileRunner });
+    const r = await runBoot(
+      deps,
+      options({
+        reconcileSweepCandidates: [stalled, crashed, noBranch],
+        branches: { snapshotRefs: [], remoteLiveRefs, localLiveRefs: [] },
+      }),
+    );
+    expect(r.reconcileSweep).toEqual({ landed: [50], parked: [51], skipped: [] });
+    expect(calls).toBe(2); // noBranch never reaches the runner
   });
 });
 

@@ -656,7 +656,7 @@ export async function collectBootOptions(
   // the stale claim-lock / pre-cutover work-* sweeps are mutually independent
   // reads — run them concurrently. (Stale-claim + legacy-work both probe pid
   // liveness at discovery so boot's orphan step stays a pure removal, #252.)
-  const [snapshotRefs, remoteLiveRefs, localAll, checkedOut, unblockCandidates, staleClaimDirs, legacyWorkDirs] =
+  const [snapshotRefs, remoteLiveRefs, localAll, checkedOut, unblockCandidates, staleClaimDirs, legacyWorkDirs, reconcileSweepCandidates] =
     await Promise.all([
       gitx.listRemoteBranches(gitCtx, "afk-attempts/"),
       gitx.listRemoteBranches(gitCtx, "afk/"),
@@ -665,6 +665,7 @@ export async function collectBootOptions(
       ghx.listUnblockCandidates(ghCtx),
       fsx.listStaleClaimDirs(paths.tmpDir),
       fsx.listLegacyWorkDirs(paths.tmpDir),
+      ghx.listParkedMechanicalCandidates(ghCtx),
     ]);
   const localLiveRefs = localAll.filter((b) => !checkedOut.has(b)).map((b) => ({ branch: b }));
 
@@ -677,6 +678,7 @@ export async function collectBootOptions(
     unblockCandidates,
     staleClaimDirs,
     legacyWorkDirs,
+    reconcileSweepCandidates,
   };
 }
 
