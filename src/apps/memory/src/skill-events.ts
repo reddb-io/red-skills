@@ -154,8 +154,10 @@ export async function readSkillRollups(store: MemoryStore): Promise<SkillRollup[
 /** A flattened, read-only view of a stored skill-event node for status output. */
 export interface SkillEventSummary {
   event_type: SkillEventType;
+  event_id: string;
   name: string;
   source_kind: string;
+  path: string;
   runner: string;
   timestamp: string;
   status?: SkillResultStatus;
@@ -185,8 +187,10 @@ export async function readRecentSkillEvents(
   events.sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp));
   return events.slice(0, Math.max(0, limit)).map((e) => ({
     event_type: e.event_type,
+    event_id: e.event_id,
     name: e.name,
     source_kind: e.source_kind,
+    path: e.path,
     runner: e.runner,
     timestamp: e.timestamp,
     status: e.result?.status,
