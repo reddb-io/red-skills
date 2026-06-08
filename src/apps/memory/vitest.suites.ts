@@ -46,6 +46,7 @@ export const INTEGRATION_TESTS: readonly string[] = [
   "curate-skill.test.ts",
   "doc-search-cli.test.ts",
   "drift-guard-cli.test.ts",
+  "evidence-card.test.ts",
   "extraction-status.test.ts",
   "governance.test.ts",
   "handoff.test.ts",
