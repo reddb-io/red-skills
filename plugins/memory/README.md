@@ -892,7 +892,7 @@ hooks on.
 `hooks coverage-viewer` writes the same report as embedded JSON plus HTML for
 local inspection and MCP/HTTP handoff.
 
-Proposals live under `.red/memory/proposals/`. Each proposal has a deterministic fingerprint, and repeated generation refreshes the matching pending proposal instead of creating duplicate files. Draft structured patches prefer semantic section anchors derived from the dominant failure stage/class before falling back to a safe tail anchor. Archiving moves reviewed files to
+Proposals live under `.red/memory/proposals/`. Each Evidence card has a deterministic fingerprint from telemetry source, refinement route, dominant error pattern, and telemetry window. Repeated generation refreshes matching unresolved cards in `captured`, `routed`, or `proposed` status instead of creating duplicate files; reviewed or terminal cards are preserved and the next run creates a new card. Draft structured patches prefer semantic section anchors derived from the dominant failure stage/class before falling back to a safe tail anchor. Archiving moves reviewed files to
 `.red/memory/proposals/archive/<applied|rejected|stale>/`, so `memory health`
 counts only actionable pending proposals while retaining audit history.
 

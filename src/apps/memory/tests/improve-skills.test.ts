@@ -341,12 +341,6 @@ describe("memory improve skills CLI", () => {
       const firstPath = firstBody.proposals[0].path;
       const firstCard = firstBody.evidenceCards[0];
 
-      const newFailure = runMemory(
-        ["event", "skill", "--root", root],
-        JSON.stringify(skillResultEvent(6, skillFile, "failed")),
-      );
-      expect(newFailure.status).toBe(0);
-
       const second = runMemory(["improve", "skills", "--root", root, "--write-proposal", "--json"]);
       expect(second.status).toBe(0);
       const secondBody = JSON.parse(second.stdout);
@@ -402,6 +396,111 @@ describe("memory improve skills CLI", () => {
       expect(listed.status).toBe(0);
       const listedBody = JSON.parse(listed.stdout);
       expect(listedBody.proposals[0].fingerprint).toBe(firstBody.proposals[0].fingerprint);
+      expect(firstBody.proposals[0].cardStatus).toBe("proposed");
+      expect(firstBody.proposals[0].evidenceSource).toBe("skill-telemetry:flaky-skill:project");
+      expect(firstBody.proposals[0].evidenceRoute).toBe("skill-improvement:frequently-failing:skills/flaky-skill/SKILL.md");
+      expect(firstBody.proposals[0].dominantErrorPattern).toBe("stage=verify|class=ValidationError|code=");
+      expect(firstBody.proposals[0].telemetryWindow).toBe(
+        "2026-05-22T16:01:00.000Z..2026-05-22T16:04:00.000Z count=4",
+      );
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "refreshes unresolved evidence cards by fingerprint without dropping review metadata",
+    async () => {
+      const root = await tempRoot();
+      await initGraph(root, { skillTelemetry: true });
+      const skillFile = join(root, "skills", "flaky-skill", "SKILL.md");
+      await mkdir(dirname(skillFile), { recursive: true });
+      await writeFile(skillFile, "---\nname: flaky-skill\ndescription: fixture\n---\n\n# flaky-skill\n\nOriginal content.\n", "utf8");
+      const events = [
+        skillResultEvent(1, skillFile, "failed"),
+        skillResultEvent(2, skillFile, "failed"),
+        skillResultEvent(3, skillFile, "failed"),
+        skillResultEvent(4, skillFile, "failed"),
+        skillResultEvent(5, skillFile, "succeeded"),
+      ];
+      const ingest = runMemory(["event", "skill", "--root", root], events.map((event) => JSON.stringify(event)).join("\n"));
+      expect(ingest.status).toBe(0);
+
+      const first = runMemory(["improve", "skills", "--root", root, "--write-proposal", "--json"]);
+      expect(first.status).toBe(0);
+      const firstBody = JSON.parse(first.stdout);
+      const firstCard = firstBody.evidenceCards[0];
+      const original = await readFile(firstCard.path, "utf8");
+      const routed = original
+        .replace(/^status: "proposed"$/m, 'status: "routed"')
+        .replace(/^  reviewer: null$/m, '  reviewer: "triager"')
+        .replace(/^  notes: null$/m, '  notes: "keep active-review context"');
+      await writeFile(firstCard.path, routed, "utf8");
+
+      const second = runMemory(["improve", "skills", "--root", root, "--write-proposal", "--json"]);
+      expect(second.status).toBe(0);
+      const secondBody = JSON.parse(second.stdout);
+      expect(secondBody.proposals[0].fingerprint).toBe(firstBody.proposals[0].fingerprint);
+      expect(secondBody.proposals[0].reusedExisting).toBe(true);
+      expect(secondBody.evidenceCards[0].id).toBe(firstCard.id);
+      expect(secondBody.evidenceCards[0].path).toBe(firstCard.path);
+      expect(secondBody.evidenceCards[0].reusedExisting).toBe(true);
+
+      const evidenceFiles = await readdir(join(root, ".red", "memory", "inbox", "evidence"));
+      expect(evidenceFiles.filter((file) => file.endsWith(".yaml"))).toHaveLength(1);
+      const refreshed = await readFile(firstCard.path, "utf8");
+      expect(refreshed).toContain('status: "proposed"');
+      expect(refreshed).toContain('reviewer: "triager"');
+      expect(refreshed).toContain('notes: "keep active-review context"');
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "preserves reviewed evidence cards and creates a new card for the same signal",
+    async () => {
+      const root = await tempRoot();
+      await initGraph(root, { skillTelemetry: true });
+      const skillFile = join(root, "skills", "flaky-skill", "SKILL.md");
+      await mkdir(dirname(skillFile), { recursive: true });
+      await writeFile(skillFile, "---\nname: flaky-skill\ndescription: fixture\n---\n\n# flaky-skill\n\nOriginal content.\n", "utf8");
+      const events = [
+        skillResultEvent(1, skillFile, "failed"),
+        skillResultEvent(2, skillFile, "failed"),
+        skillResultEvent(3, skillFile, "failed"),
+        skillResultEvent(4, skillFile, "failed"),
+        skillResultEvent(5, skillFile, "succeeded"),
+      ];
+      const ingest = runMemory(["event", "skill", "--root", root], events.map((event) => JSON.stringify(event)).join("\n"));
+      expect(ingest.status).toBe(0);
+
+      const first = runMemory(["improve", "skills", "--root", root, "--write-proposal", "--json"]);
+      expect(first.status).toBe(0);
+      const firstBody = JSON.parse(first.stdout);
+      const firstCard = firstBody.evidenceCards[0];
+      const approved = (await readFile(firstCard.path, "utf8"))
+        .replace(/^status: "proposed"$/m, 'status: "approved"')
+        .replace(/^  reviewer: null$/m, '  reviewer: "alice"')
+        .replace(/^  reviewed_at: null$/m, '  reviewed_at: "2026-05-22T17:00:00.000Z"')
+        .replace(/^  decision: null$/m, '  decision: "approved"')
+        .replace(/^  notes: null$/m, '  notes: "keep this reviewed decision"');
+      await writeFile(firstCard.path, approved, "utf8");
+
+      const second = runMemory(["improve", "skills", "--root", root, "--write-proposal", "--json"]);
+      expect(second.status).toBe(0);
+      const secondBody = JSON.parse(second.stdout);
+      expect(secondBody.proposals[0].fingerprint).toBe(firstBody.proposals[0].fingerprint);
+      expect(secondBody.proposals[0].path).toBe(firstBody.proposals[0].path);
+      expect(secondBody.proposals[0].reusedExisting).toBe(true);
+      expect(secondBody.evidenceCards[0].id).not.toBe(firstCard.id);
+      expect(secondBody.evidenceCards[0].path).not.toBe(firstCard.path);
+      expect(secondBody.evidenceCards[0].reusedExisting).toBe(false);
+
+      expect(await readFile(firstCard.path, "utf8")).toBe(approved);
+      const evidenceFiles = await readdir(join(root, ".red", "memory", "inbox", "evidence"));
+      expect(evidenceFiles.filter((file) => file.endsWith(".yaml"))).toHaveLength(2);
+      const nextCard = await readFile(secondBody.evidenceCards[0].path, "utf8");
+      expect(nextCard).toContain('status: "proposed"');
+      expect(nextCard).not.toContain("keep this reviewed decision");
     },
     TIMEOUT,
   );
