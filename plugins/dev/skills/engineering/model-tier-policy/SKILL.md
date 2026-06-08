@@ -49,6 +49,10 @@ Start with the cheapest capable tier, but escalate immediately when evidence sho
 - `complex` escalates to `think` when implementation should pause for design, product clarification, or routing.
 - AFK may retry a failed `simple` execution as `complex`; the intended cost of misclassification is one cheap miss, not a stuck loop.
 
+## Codex interactive
+
+Interactive Codex runs a **single session model** — it exposes no per-task subagent-with-model primitive analogous to Claude's Task/Agent tool (every `.codex-plugin/plugin.json` ships `agents: none`, and there is no interactive subagent dispatch surface), so an interactive session cannot pin a per-call model/effort. The model tier still applies to Codex through **AFK tier-routing**: the codex runner adapter (#455) resolves the per-issue tier into the sandcastle spawn's `--model`/`--effort`. Spike finding for #457; see ADR 0049.
+
 ## Executors
 
 - Claude interactive executors live in `plugins/dev/agents/validate.md`, `plugins/dev/agents/simple-code.md`, and `plugins/dev/agents/complex-code.md`. They are Claude-only wrappers over this policy.
