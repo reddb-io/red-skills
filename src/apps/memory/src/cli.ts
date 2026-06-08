@@ -100,6 +100,18 @@ import {
   type InboxStatus,
   type MemoryInboxItem,
 } from "./inbox.js";
+import {
+  approveEvidenceCard,
+  createEvidenceCard,
+  listEvidenceCards,
+  readEvidenceCard,
+  rejectEvidenceCard,
+  type CreateEvidenceCardInput,
+  type EvidenceCard,
+  type EvidenceCardStatus,
+  type EvidenceCitation,
+  type EvidenceProposalApplyState,
+} from "./evidence-card.js";
 import { graphRecallResult } from "./graph-recall.js";
 import {
   buildMemoryGovernanceReport,
@@ -304,6 +316,11 @@ Usage:
   memory inbox approve <id>         [--root <dir>] --yes [--json]
   memory inbox reject <id>          [--root <dir>] --reason <text> --yes [--json]
   memory inbox promote <id>         [--root <dir>] --yes [--json]
+  memory evidence create            [--root <dir>] --summary <text> --source-ref <ref> --citation <label|uri|quote> --lesson <text> [--source-kind <kind>] [--route <target>] [--confidence EXTRACTED|INFERRED|AMBIGUOUS] [--json]
+  memory evidence list              [--root <dir>] [--status pending|approved|rejected|all] [--json]
+  memory evidence show <id>         [--root <dir>] [--json]
+  memory evidence approve <id>      [--root <dir>] --yes [--reviewer <id>] [--json]
+  memory evidence reject <id>       [--root <dir>] --reason <text> --yes [--reviewer <id>] [--json]
   memory classify <candidate...>    [--root <dir>] [--json]
   memory recall <query...>          [--root <dir>] [--limit N] [--include-superseded] [--scope ...] [--scope-id ID] [--include-narrower-scopes] [--as-of <reddb-ref>] [--layer L1|L2|L3]
   memory federate                   [--root <dir>] --query "<topic>" [--limit N] [--per-root-limit N] [--json]
@@ -808,6 +825,190 @@ async function runInbox(args: ParsedArgs): Promise<void> {
         "usage: memory inbox quarantine|list|inspect|approve|reject|promote [args]",
       );
   }
+}
+
+async function runEvidence(args: ParsedArgs): Promise<void> {
+  const action = args.positional[0] ?? "list";
+  const rootDir = rootOf(args.flags);
+  await requireConfig(rootDir);
+
+  switch (action) {
+    case "create": {
+      const card = await createEvidenceCard(rootDir, evidenceCardInputFromFlags(args));
+      return printEvidenceResult("created", card, args.flags.json === true);
+    }
+    case "list": {
+      const status = parseEvidenceStatusFilter(args.flags.status);
+      let cards = await listEvidenceCards(rootDir);
+      if (status) cards = cards.filter((card) => card.status === status);
+      if (args.flags.json === true) {
+        console.log(JSON.stringify({ cards }, null, 2));
+        return;
+      }
+      printEvidenceList(cards);
+      return;
+    }
+    case "show": {
+      const id = args.positional[1];
+      if (!id) throw new Error("memory evidence show needs a card id");
+      const card = await readEvidenceCard(rootDir, id);
+      if (args.flags.json === true) {
+        console.log(JSON.stringify({ card }, null, 2));
+        return;
+      }
+      printEvidenceCard(card);
+      return;
+    }
+    case "approve": {
+      const id = args.positional[1];
+      if (!id) throw new Error("memory evidence approve needs a card id");
+      if (args.flags.yes !== true) {
+        throw new Error("memory evidence approve requires explicit --yes approval");
+      }
+      const card = await approveEvidenceCard(rootDir, id, stringFlag(args.flags, "reviewer"));
+      return printEvidenceResult("approved", card, args.flags.json === true);
+    }
+    case "reject": {
+      const id = args.positional[1];
+      if (!id) throw new Error("memory evidence reject needs a card id");
+      if (args.flags.yes !== true) {
+        throw new Error("memory evidence reject requires explicit --yes approval");
+      }
+      const reason = stringFlag(args.flags, "reason")?.trim();
+      if (!reason) throw new Error("memory evidence reject requires a non-empty --reason");
+      const card = await rejectEvidenceCard(
+        rootDir,
+        id,
+        reason,
+        stringFlag(args.flags, "reviewer"),
+      );
+      return printEvidenceResult("rejected", card, args.flags.json === true);
+    }
+    default:
+      throw new Error("usage: memory evidence create|list|show|approve|reject [args]");
+  }
+}
+
+function evidenceCardInputFromFlags(args: ParsedArgs): CreateEvidenceCardInput {
+  const summary = (stringFlag(args.flags, "summary") ?? args.positional.slice(1).join(" ")).trim();
+  if (!summary) throw new Error("memory evidence create requires --summary <text>");
+  const sourceRef = stringFlag(args.flags, "source-ref") ?? stringFlag(args.flags, "source");
+  if (!sourceRef) throw new Error("memory evidence create requires --source-ref <ref>");
+  const lesson = stringFlag(args.flags, "lesson") ?? stringFlag(args.flags, "proposed-lesson");
+  if (!lesson) throw new Error("memory evidence create requires --lesson <text>");
+  const citations = collectEvidenceFlagValues(args, "citation").map(parseEvidenceCitation);
+  if (citations.length === 0) throw new Error("memory evidence create requires at least one --citation <label|uri|quote>");
+  const judgeScore = numberFlag(args.flags, "judge-score") ?? 0.5;
+  const judgeReason = stringFlag(args.flags, "judge-reason") ?? "manual review candidate";
+  const proposalApplyState = evidenceProposalApplyStateFlag(args.flags["proposal-apply-state"]);
+
+  return {
+    source: {
+      kind: stringFlag(args.flags, "source-kind") ?? "manual",
+      ref: sourceRef,
+      ...(stringFlag(args.flags, "source-collected-at")
+        ? { collected_at: stringFlag(args.flags, "source-collected-at") }
+        : {}),
+    },
+    summary,
+    citations,
+    proposedLesson: {
+      text: lesson,
+      ...(stringFlag(args.flags, "lesson-scope") ? { scope: stringFlag(args.flags, "lesson-scope") } : {}),
+    },
+    route: {
+      target: stringFlag(args.flags, "route") ?? "memory",
+      ...(stringFlag(args.flags, "route-rationale") ? { rationale: stringFlag(args.flags, "route-rationale") } : {}),
+    },
+    confidence: parseConfidence(args.flags.confidence) ?? "INFERRED",
+    blastRadius: {
+      scope: stringFlag(args.flags, "blast-radius") ?? "project",
+      ...(stringFlag(args.flags, "blast-radius-rationale")
+        ? { rationale: stringFlag(args.flags, "blast-radius-rationale") }
+        : {}),
+    },
+    privacyNotes: collectEvidenceFlagValues(args, "privacy-note"),
+    judge: {
+      score: judgeScore,
+      rationale: judgeReason,
+    },
+    proposalLink: {
+      kind: stringFlag(args.flags, "proposal-kind") ?? "none",
+      ...(stringFlag(args.flags, "proposal-id") ? { id: stringFlag(args.flags, "proposal-id") } : {}),
+      ...(stringFlag(args.flags, "proposal-path") ? { path: stringFlag(args.flags, "proposal-path") } : {}),
+      apply_state: proposalApplyState,
+    },
+  };
+}
+
+function collectEvidenceFlagValues(args: ParsedArgs, key: string): string[] {
+  const values = collectRepeatedFlag(process.argv.slice(2), key);
+  const single = stringFlag(args.flags, key);
+  if (values.length === 0 && single) values.push(single);
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+}
+
+function parseEvidenceCitation(raw: string): EvidenceCitation {
+  const [label, uri, ...quoteParts] = raw.split("|").map((part) => part.trim());
+  if (!label) throw new Error("--citation needs a non-empty label");
+  return {
+    label,
+    ...(uri ? { uri } : {}),
+    ...(quoteParts.length > 0 && quoteParts.join("|") ? { quote: quoteParts.join("|") } : {}),
+  };
+}
+
+function evidenceProposalApplyStateFlag(value: string | boolean | undefined): EvidenceProposalApplyState {
+  if (value == null || value === false) return "unlinked";
+  if (value === true) throw new Error("--proposal-apply-state requires a value");
+  if (["unlinked", "pending", "applied", "rejected", "unknown"].includes(value)) {
+    return value as EvidenceProposalApplyState;
+  }
+  throw new Error(`invalid proposal apply state "${value}"`);
+}
+
+function parseEvidenceStatusFilter(value: string | boolean | undefined): EvidenceCardStatus | undefined {
+  if (value == null || value === false || value === "all") return undefined;
+  if (value === true) throw new Error("--status requires a value");
+  if (["pending", "approved", "rejected"].includes(value)) return value as EvidenceCardStatus;
+  throw new Error(`invalid evidence status "${value}"`);
+}
+
+function printEvidenceResult(action: string, card: EvidenceCard, json: boolean): void {
+  if (json) {
+    console.log(JSON.stringify({ state: action, card }, null, 2));
+    return;
+  }
+  console.log(`memory evidence: ${action} ${card.id}`);
+  console.log(`  status: ${card.status}`);
+}
+
+function printEvidenceList(cards: EvidenceCard[]): void {
+  console.log(`memory evidence: ${cards.length} ${plural(cards.length, "card")}`);
+  for (const card of cards) {
+    const privacy = card.privacy.findings.length > 0 ? ` privacy=${card.privacy.findings.length}` : "";
+    console.log(
+      `  ${card.id} [${card.status}] ${card.summary.slice(0, 100)}${privacy} confidence=${card.confidence}`,
+    );
+  }
+}
+
+function printEvidenceCard(card: EvidenceCard): void {
+  console.log(`memory evidence: ${card.id}`);
+  console.log(`contract: ${card.contract}`);
+  console.log(`status: ${card.status}`);
+  console.log(`summary: ${card.summary}`);
+  console.log(`source: ${card.source.kind} ${card.source.ref}`);
+  console.log(`citations: ${card.citations.map((citation) => citation.label).join(", ")}`);
+  console.log(`proposed lesson: ${card.proposed_lesson.text}`);
+  console.log(`route: ${card.route.target}${card.route.rationale ? ` - ${card.route.rationale}` : ""}`);
+  console.log(`confidence: ${card.confidence}`);
+  console.log(`blast radius: ${card.blast_radius.scope}`);
+  const privacyKinds = [...new Set(card.privacy.findings.map((finding) => finding.kind))];
+  console.log(`privacy: ${privacyKinds.length > 0 ? privacyKinds.join(", ") : "none"}`);
+  console.log(`judge: ${card.judge.score} - ${card.judge.rationale}`);
+  console.log(`review: ${card.review.state}${card.review.reason ? ` - ${card.review.reason}` : ""}`);
+  console.log(`proposal: ${card.proposal_link.kind} apply_state=${card.proposal_link.apply_state}`);
 }
 
 function parseInboxStatusFilter(value: string | boolean | undefined): InboxStatus | undefined {
@@ -6874,6 +7075,8 @@ async function main(): Promise<void> {
       return runCommit(args);
     case "inbox":
       return runInbox(args);
+    case "evidence":
+      return runEvidence(args);
     case "classify":
       return runClassify(args);
     case "recall":

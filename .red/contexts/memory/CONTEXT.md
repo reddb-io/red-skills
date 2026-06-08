@@ -18,6 +18,66 @@ _Avoid_: personal knowledge, freeform dump, second brain note
 A YAML review unit distilled from one or more raw signals, carrying source, cited evidence, proposed lesson, confidence, privacy posture, routing target, and blast radius before any durable Memory or Skill proposal is written.
 _Avoid_: raw transcript, proposal file, JSON inbox item, unstructured inbox note
 
+**Evidence card contract**:
+The experimental versioned YAML schema for **Evidence cards**, initially `memory.evidence_card.experimental.v0`, intended to migrate to a stable v1 after real refinement sources validate the shape.
+_Avoid_: public stable API, ad hoc YAML, unversioned inbox format
+
+**Evidence card source**:
+The structured source block on an **Evidence card**; for Skill telemetry it records source kind, runner, Skill identity, rollup reference, and recent event references.
+_Avoid_: prose-only source, path-only source, raw event dump
+
+**Evidence citation**:
+A short redacted excerpt plus a stable pointer from an **Evidence card** back to its source signal, such as a Memory event, reasoning attempt, validation node, file location, or explicit user feedback record.
+_Avoid_: full transcript, raw stdout, unsupported summary
+
+**Evidence card status**:
+The v0 review state of an **Evidence card**: `pending`, `approved`, or `rejected`; proposal apply state and future promotion/archive state are separate metadata.
+_Avoid_: quarantine-only status, issue status, proposal archive reason
+
+**Two-stage refinement review**:
+The human review pattern where approving an **Evidence card** validates the interpretation of evidence, while a separate proposal review validates any concrete Memory, context, issue/PRD, or Skill change.
+_Avoid_: one-click mutation, evidence-free diff review, automatic apply
+
+**Evidence review CLI**:
+The first operator surface for v0 **Evidence cards**: create, list, show, approve, and reject YAML cards without promoting Memory facts or applying proposals.
+_Avoid_: primary Workbench workflow, GitHub-only review, hidden hook action
+
+**Evidence inbox**:
+The `.red/memory/inbox/evidence/` review queue where YAML **Evidence cards** live before promotion, archiving, or proposal review.
+_Avoid_: root evidence folder, mixed JSON inbox item, proposal directory
+
+**Evidence card fingerprint**:
+The deterministic identity for refreshing an unresolved **Evidence card** from the same source, route, dominant error pattern, and telemetry window without overwriting reviewed cards.
+_Avoid_: timestamp-only id, duplicate pending card, rewriting approved evidence
+
+**Skill improvement proposal**:
+An approval-gated patch proposal for an existing Skill, produced from **Evidence cards** or Skill telemetry while preserving the structured `memory-skill-patch` review/apply contract.
+_Avoid_: direct Skill rewrite, new Skill generation, telemetry-only patch
+
+**Skill telemetry evidence card**:
+An **Evidence card** distilled from Skill telemetry rollups and recent failure events before `memory improve skills` writes a **Skill improvement proposal**.
+_Avoid_: direct telemetry proposal, failure counter only, unreviewed patch trigger
+
+**Evidence tracer-bullet proof**:
+The minimum validation for the first **Skill telemetry evidence card** slice: telemetry creates YAML card plus proposal, JSON output stays compatible, fingerprint refreshes unresolved cards, redaction happens before persistence, approve/reject works, and card/proposal links are bidirectional.
+_Avoid_: viewer-only demo, untested YAML shape, proposal-only test
+
+**Evidence-linked proposal**:
+A proposal artifact that cites the **Evidence card** it came from, preserving traceability while keeping the existing proposal review/apply gate.
+_Avoid_: new orphan refinement proposal, cardless patch, duplicated evidence blob
+
+**Evidence proposal link**:
+The bidirectional trace between an **Evidence card** and a proposal artifact: the card records the proposal path, and the proposal records the card id or path.
+_Avoid_: one-way pointer, filename convention only, copied raw evidence
+
+**Evidence card redaction**:
+The privacy step that scans and redacts sensitive content before an **Evidence card** is persisted, while preserving privacy findings for review.
+_Avoid_: persist-then-redact, secret marker only, raw transcript storage
+
+**Context update proposal**:
+An approval-gated proposal to change Red context glossary language, produced from an **Evidence card** but not applied directly by the refinement loop.
+_Avoid_: direct context rewrite, hidden glossary mutation, automatic ADR
+
 **Hermes-like refinement loop**:
 A governed Memory workflow inspired by Hermes-style self-improvement, where captured signals become routed evidence and approval-gated proposals rather than automatic Skill creation or silent instruction rewrites.
 _Avoid_: Hermes runner, automatic skill factory, self-rewriting agent
@@ -34,6 +94,14 @@ _Avoid_: casual preference, inferred mood, silent edit
 The destination verdict on an **Evidence card**: durable Memory fact, Skill improvement proposal, Red context update, issue/PRD candidate, or discard.
 _Avoid_: automatic write target, ADR decision, unreviewed patch
 
+**Evidence route verdict**:
+The structured routing block on an **Evidence card**, combining route kind, target, decision, and reason.
+_Avoid_: destination-only route, hidden router rationale, automatic write target
+
+**Skill proposal target**:
+The `skill_proposal` route target on an **Evidence card**, naming the Skill, its path, and the suggested section or anchor for review.
+_Avoid_: skill name only, inferred patch target, hidden section choice
+
 **Low-risk autopromotion**:
 Automatic promotion of high-confidence, internal, low-blast-radius evidence such as validation outcomes or telemetry rollups into governed Memory, excluding Skill behavior changes and Red context updates.
 _Avoid_: autorefine, silent patch, automatic context rewrite
@@ -41,6 +109,26 @@ _Avoid_: autorefine, silent patch, automatic context rewrite
 **Refinement blast-radius gate**:
 The review gate that blocks autopromotion when an evidence route could affect an external audience, customer/commercial/security outcomes, or shared workflow/context semantics.
 _Avoid_: gut-check, trust score, generic risk
+
+**Evidence blast-radius assessment**:
+The **Evidence card** block that records the three blast-radius axes, a derived level, and the reason for that level.
+_Avoid_: single opaque risk score, generic severity, unstated gate rationale
+
+**Refinement judge**:
+The review function that checks whether an **Evidence card** has enough evidence, confidence, privacy posture, blast-radius assessment, and routing quality before producing or applying a proposal.
+_Avoid_: eval runner, automatic approver, model preference
+
+**Evidence judge block**:
+The **Evidence card** block that records judge checklist results plus verdict, confidence, and reason.
+_Avoid_: score-only judge, hidden model judgment, eval result
+
+**Refinement cadence**:
+The operating rhythm for the **Hermes-like refinement loop**: capture evidence near session or hook events, then review routed cards and proposals through an explicit manual or scheduled batch.
+_Avoid_: always-on rewrite, hidden background mutation, one-off cleanup
+
+**Skill creation candidate**:
+An evidence-backed recommendation that repeated work may deserve a new Skill, routed as issue/PRD work instead of being created automatically by the refinement loop.
+_Avoid_: auto-created skill, throwaway procedure, Hermes-style skill spawn
 
 **Markdown-only mode**:
 The lightest Memory storage mode: plain markdown facts, no RedDB, hooks, or MCP server.
@@ -589,7 +677,7 @@ The semantic and analytic attributes Memory provides as decision inputs for data
 _Avoid_: Memory UI projection, graph layout contract, red-ui implementation detail
 
 **Memory map context slice**:
-A compact, cited subgraph selected from **Memory map** evidence for Claude Code/Codex before broad source-file reading, containing the relevant files, symbols, relations, source locations, connected decisions, validations, risks, and recommended next reads within a token budget.
+A compact, cited answer-shaped subgraph selected from **Memory map** evidence for Claude Code/Codex before broad source-file reading, containing the relevant files, symbols, relations, source locations, connected decisions, validations, risks, and recommended next reads within a token budget.
 _Avoid_: raw graph dump, visual map, generated prose answer
 
 **Memory map edge weight**:
@@ -645,12 +733,38 @@ _Avoid_: memory rollback, historical search
 - **Reasoning attempt hooks** live as a property on the **Reasoning attempt** node; absent when the project declared no user hooks, never represented as an edge or separate node.
 - The **Memory event log** is the shared telemetry substrate for skill, attempt, and hook observations before specialized rollups are produced.
 - A **Hermes-like refinement loop** distills raw signals into **Evidence cards**, routes them into **Operational evidence** or proposal artifacts, and keeps mutation behind proposal review gates.
-- An **Evidence card** can cite **Memory event log** records, hook observations, rejection notes, validation nodes, or external-system summaries without making the raw source itself the durable Memory fact.
+- An **Evidence card** conforms to the **Evidence card contract**; the first contract is experimental even though cards are versioned and parseable.
+- The first **Evidence card contract** includes essential fields plus proposal traceability, judge, and review metadata; deeper audit fields wait until real sources prove they are needed.
+- A Skill telemetry **Evidence card source** records runner, Skill identity, rollup reference, and recent event references rather than copying the raw telemetry stream into YAML.
+- An **Evidence card** uses **Evidence citations** to cite **Memory event log** records, hook observations, rejection notes, validation nodes, or external-system summaries without making the raw source itself the durable Memory fact.
+- An **Evidence card status** tracks the review lifecycle of a card separately from the lifecycle of any proposal file or promoted Memory node it creates.
+- An **Evidence card fingerprint** refreshes unresolved `pending` cards; future routed/proposed/promoted/archive states must remain separate from v0 card review state.
+- **Two-stage refinement review** is required for mutating routes: the card review accepts the evidence interpretation, and the proposal review accepts the concrete change.
+- In the first cycle, approving an **Evidence card** updates card review metadata only; it does not change proposal contents or alter the existing proposal apply gate.
+- Rejecting an **Evidence card** linked to a proposal should mark the proposal with a rejected-card warning, but should not archive or move the proposal automatically.
+- The **Evidence inbox** is the first filesystem home for YAML **Evidence cards**, preserving the existing inbox while separating the new review contract.
+- The **Evidence review CLI** first supports create, list, show, approve, and reject over the **Evidence inbox**; viewers and PR workflows may consume the same evidence contract later.
+- `memory improve skills` remains the **Skill improvement proposal** surface, but its telemetry candidates should fit the **Evidence card** layer before patch proposals are applied.
+- A **Skill telemetry evidence card** is the first tracer-bullet input for the **Hermes-like refinement loop**, proving telemetry → card → proposal before external sources are added.
+- **Evidence tracer-bullet proof** is required before treating the **Evidence card contract** as usable beyond the first Skill telemetry slice.
+- For Skill telemetry, `memory improve skills --write-proposal` may write an **Evidence-linked proposal** in the same run as the card; applying the proposal remains separately gated.
+- Existing cardless proposal artifacts remain valid during transition, but new refinement proposal generators should emit **Evidence-linked proposals**.
+- The JSON output for `memory improve skills --write-proposal` preserves existing proposal fields and adds an `evidenceCards` artifact list for compatibility.
+- An **Evidence proposal link** must be bidirectional so card review and proposal review remain auditable from either queue.
+- **Evidence card redaction** happens before persistence; privacy findings may stay on the card, but raw sensitive text must not.
+- A `context_update` **Evidence route** produces a **Context update proposal** under the proposal queue rather than editing `.red/contexts/*/CONTEXT.md` directly.
 - The first **Hermes-like refinement loop** is seeded by **Internal refinement signals**; external customer, SaaS, or webhook sources are later inputs that must pass the same evidence and privacy gates.
 - A **User rejection signal** can seed an **Evidence card**, but only explicit command or UI feedback should be treated as high-confidence rejection evidence.
 - An **Evidence route** determines what review artifact is proposed from an **Evidence card**; ADR candidates are outside the first routing set and remain governed by architecture-decision criteria.
+- An **Evidence route verdict** records route kind, target, decision, and reason so reviewers can inspect router rationale.
+- A `skill_proposal` **Evidence route** uses a **Skill proposal target** so the reviewer sees the Skill, file path, and suggested section before reading the patch.
 - **Low-risk autopromotion** may store internal operational evidence, but **Skill improvement proposal** and Red context updates remain approval-gated.
 - The **Refinement blast-radius gate** decides whether an **Evidence route** is eligible for **Low-risk autopromotion** or must become a human-reviewed proposal.
+- An **Evidence blast-radius assessment** uses the external-audience, customer/commercial/security, and shared-workflow/context axes plus a derived level and reason.
+- The **Refinement judge** evaluates evidence quality and safety for an **Evidence card**; it may recommend eval or validation, but it is not itself an eval harness.
+- An **Evidence judge block** combines checklist fields with verdict, confidence, and reason; score-only judge output is not enough.
+- The **Refinement cadence** separates near-event capture from batched human review, so evidence is not lost but mutations remain inspectable.
+- A `skill_proposal` **Evidence route** patches existing Skills; a **Skill creation candidate** is routed as issue/PRD work for explicit human prioritization.
 - The **Memory readiness envelope** is the contract shared by UI and `eval:competitive:v2`, so product views and benchmarks are backed by the same evidence.
 - A **Memory handoff report** composes live graph evidence for cross-agent continuation; it does not read or expose raw transcripts.
 - The **Handoff viewer** consumes a **Memory handoff report** instead of recomputing cross-agent continuation evidence.
