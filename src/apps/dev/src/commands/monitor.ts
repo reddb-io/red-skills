@@ -1,5 +1,8 @@
 import { renderCompactDashboard, type CompactWorker } from "../core/monitor.js";
 import { collectMonitorInputs } from "../runtime/wire.js";
+import { resolveSupervisorConfig } from "../core/supervisor.js";
+import { runWatchdog } from "../core/watchdog.js";
+import { buildWatchdogIO } from "../runtime/watchdog-io.js";
 import {
   mirrorPlan,
   codexSinkPlan,
@@ -119,6 +122,21 @@ export async function monitorCommand(
     const out = runMirrorPlan(workers, trackedJsonl, { codex });
     if (out !== "") stdout.write(out);
     return 0;
+  }
+
+  // Auto-monitor watchdog tick (#407): this render is an already-alive surface,
+  // so it doubles as the external recovery watchdog. A supervisor whose #406
+  // heartbeat is stale past RED_AFK_SUPERVISOR_STALE_S is hard-hung (live PID,
+  // drain loop wedged) — surface it loudly above the dashboard AND restart it.
+  // Idempotent: the relaunch stamps a fresh heartbeat, so a subsequent tick sees
+  // a healthy fleet and does not double-fire. Best-effort — a watchdog failure
+  // never blocks the dashboard render. Opt out with RED_AFK_WATCHDOG=0.
+  if (process.env.RED_AFK_WATCHDOG !== "0") {
+    try {
+      await runWatchdog(buildWatchdogIO(cwd, stdout), resolveSupervisorConfig().supervisorStaleS);
+    } catch {
+      // best-effort: recovery must never break monitoring.
+    }
   }
 
   const { workers, events, fleet } = await collectMonitorInputs(cwd);

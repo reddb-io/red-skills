@@ -58,6 +58,20 @@ export interface SupervisorConfig {
    * the default so a typo can never disable the guard.
    */
   tickTimeoutS: number;
+  /**
+   * RED_AFK_SUPERVISOR_STALE_S — the EXTERNAL watchdog's quiescence threshold
+   * (default 300). A supervisor whose #406 heartbeat has not advanced within this
+   * many seconds is treated as hard-hung (alive PID, drain loop wedged) and
+   * recovered by an already-alive surface (fleet pre-check / monitor tick) — see
+   * watchdog.ts + classifySupervisor. This is the recovery half of the
+   * unwedgeable-loop work: tickTimeoutS keeps a SINGLE tick from freezing the
+   * loop; this knob catches the case where the whole process is hung below the
+   * tick boundary (e.g. an un-timed gh call inside the heartbeat emit). Must be
+   * strictly greater than tickTimeoutS — validateSupervisorStaleThreshold enforces
+   * it at boot so a slow-but-live tick is never misread as quiescent. 0 /
+   * non-numeric falls back to the default so a typo can never disable recovery.
+   */
+  supervisorStaleS: number;
 }
 
 export const SUPERVISOR_DEFAULTS = {
@@ -70,6 +84,7 @@ export const SUPERVISOR_DEFAULTS = {
   runner: "claude",
   pollIntervalS: 15,
   tickTimeoutS: 120,
+  supervisorStaleS: 300,
 } as const satisfies SupervisorConfig;
 
 /**
@@ -102,6 +117,11 @@ export function resolveSupervisorConfig(
     // floor it back to the default — the guard can never be silently disabled.
     tickTimeoutS:
       num("RED_AFK_TICK_TIMEOUT_S", SUPERVISOR_DEFAULTS.tickTimeoutS) || SUPERVISOR_DEFAULTS.tickTimeoutS,
+    // 0 would make every live supervisor look quiescent — floor it back to the
+    // default so the watchdog can never be silently disabled by a typo.
+    supervisorStaleS:
+      num("RED_AFK_SUPERVISOR_STALE_S", SUPERVISOR_DEFAULTS.supervisorStaleS) ||
+      SUPERVISOR_DEFAULTS.supervisorStaleS,
   };
 }
 
@@ -118,6 +138,69 @@ export function validateStallThresholds(config: Pick<SupervisorConfig, "stallThr
       `RED_AFK_STALL_KILL_THRESHOLD_S (${config.stallKillThresholdS}) must be > RED_AFK_STALL_THRESHOLD_S (${config.stallThresholdS})`,
     );
   }
+}
+
+/**
+ * validateSupervisorStaleThreshold — boot-time invariant for the external
+ * watchdog (#407). The quiescence threshold must be strictly greater than the
+ * per-tick wall-clock ceiling; otherwise a tick that legitimately runs up to
+ * `tickTimeoutS` (a slow-but-live gh/ps/git call) followed by the next poll
+ * could be misread as a hung loop and a healthy supervisor needlessly killed.
+ * Throws (the supervisor `exit $?`s on a bad config) when violated.
+ */
+export function validateSupervisorStaleThreshold(
+  config: Pick<SupervisorConfig, "supervisorStaleS" | "tickTimeoutS">,
+): void {
+  if (config.supervisorStaleS <= config.tickTimeoutS) {
+    throw new Error(
+      `RED_AFK_SUPERVISOR_STALE_S (${config.supervisorStaleS}) must be > RED_AFK_TICK_TIMEOUT_S (${config.tickTimeoutS})`,
+    );
+  }
+}
+
+// ---------- quiescence detection (pure) ----------
+
+/**
+ * A point-in-time read of the fleet supervisor's liveness, gathered by an
+ * already-alive surface (fleet pre-check / monitor tick) from the pid file + the
+ * #406 heartbeat state file. Pure input to {@link classifySupervisor}.
+ */
+export interface SupervisorLiveness {
+  /** The supervisor pid from afk-supervisor.pid, or null when no pid file. */
+  pid: number | null;
+  /** Whether that pid is alive (kill -0). Meaningless when pid is null. */
+  pidAlive: boolean;
+  /** Epoch seconds of the last #406 heartbeat, or null when none was observed. */
+  lastHeartbeatEpoch: number | null;
+}
+
+/**
+ * The watchdog's verdict on a supervisor:
+ *   - "absent"    — no live supervisor (no pid / dead pid): nothing to recover;
+ *                   a launch may proceed, a monitor tick stays quiet.
+ *   - "healthy"   — a live PID whose heartbeat is fresh (or not yet observed, so
+ *                   it cannot be PROVEN wedged): leave it alone.
+ *   - "quiescent" — a live PID whose heartbeat is stale past the threshold: the
+ *                   drain loop is hard-hung and must be recovered.
+ */
+export type SupervisorHealth = "absent" | "healthy" | "quiescent";
+
+/**
+ * classifySupervisor — the pure quiescence detector (#407). A live PID is
+ * "quiescent" only when its last heartbeat is at least `staleS` seconds old; a
+ * missing heartbeat (a freshly-launched supervisor that has not ticked yet) is
+ * never enough to prove a wedge, so it stays "healthy" — the watchdog must never
+ * kill a supervisor that simply has not emitted its first heartbeat. Clock skew
+ * (a heartbeat stamped in the future) yields a negative age < staleS → healthy.
+ */
+export function classifySupervisor(
+  liveness: SupervisorLiveness,
+  now: number,
+  staleS: number,
+): SupervisorHealth {
+  if (liveness.pid === null || !liveness.pidAlive) return "absent";
+  if (liveness.lastHeartbeatEpoch === null) return "healthy";
+  return now - liveness.lastHeartbeatEpoch >= staleS ? "quiescent" : "healthy";
 }
 
 // ---------- circuit breaker (pure) ----------
@@ -264,6 +347,9 @@ export interface FleetHeartbeat {
   ts: string;
   /** Epoch seconds for cheap age calculations in monitor/statusline. */
   epoch: number;
+  /** Runner this fleet was launched with — lets the watchdog relaunch a recovered
+   * supervisor with the same runner instead of re-detecting from its own tree. */
+  runner: string;
   readyForAgent: number;
   slotsBusy: number;
   slotsFree: number;
@@ -464,6 +550,7 @@ async function emitFleetHeartbeat(
   state: SupervisorState,
   deps: SupervisorDeps,
   result: TickResult,
+  runner: string,
 ): Promise<FleetHeartbeat> {
   let readyForAgent = 0;
   try {
@@ -475,6 +562,7 @@ async function emitFleetHeartbeat(
   const heartbeat: FleetHeartbeat = {
     ts: isoFromEpoch(epoch),
     epoch,
+    runner,
     readyForAgent,
     ...fleetSlotCounts(state),
     spawnsThisTick: result.respawned.length,
@@ -772,6 +860,10 @@ export async function runSupervisor(
   stopRequested: () => boolean,
 ): Promise<void> {
   validateStallThresholds(config);
+  // The external watchdog (#407) reads this heartbeat to recover a hard-hung
+  // loop; refuse to boot with a threshold that could misread a slow-but-live
+  // tick as quiescent.
+  validateSupervisorStaleThreshold(config);
 
   // Spawn the initial fleet to target.
   for (let i = 0; i < state.slots.length; i += 1) {
@@ -793,7 +885,7 @@ export async function runSupervisor(
       deps.proc.sleep,
       deps.log,
     );
-    const heartbeat = await emitFleetHeartbeat(state, deps, result);
+    const heartbeat = await emitFleetHeartbeat(state, deps, result, config.runner);
     deps.log?.(
       `tick: slots=${state.slots.length} respawned=${result.respawned.length} ` +
         `deaths=${result.deaths.length} parked=${result.parked.length} reaped=${result.reaped.length} ` +

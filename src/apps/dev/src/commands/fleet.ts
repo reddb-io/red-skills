@@ -1,9 +1,12 @@
-import { spawn } from "node:child_process";
 import { constants } from "node:fs";
-import { access, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { parseRunnerFlag, detectRunner } from "../core/runner-detection.js";
 import { callerProcessTreeNative } from "../runtime/caller-process.js";
+import { classifySupervisor, resolveSupervisorConfig } from "../core/supervisor.js";
+import { teardownWedgedSupervisor } from "../core/watchdog.js";
+import { buildWatchdogIO } from "../runtime/watchdog-io.js";
+import { spawnSupervisor } from "../runtime/supervisor-spawn.js";
 
 export interface FleetLaunchResult {
   status: "launched";
@@ -45,16 +48,6 @@ async function fileExists(path: string): Promise<boolean> {
   } catch {
     return false;
   }
-}
-
-async function waitForPidFile(pidFile: string, deadlineMs: number): Promise<number | null> {
-  const deadline = Date.now() + deadlineMs;
-  while (Date.now() < deadline) {
-    const pid = await readPid(pidFile);
-    if (pid && isLivePid(pid)) return pid;
-    await sleep(100);
-  }
-  return null;
 }
 
 function parseFleetArgs(args: readonly string[]): { stop: boolean; target: number; request?: string; runnerFlag?: string; passthrough: string[] } {
@@ -133,7 +126,25 @@ export async function launchFleet(args: readonly string[], root = process.cwd(),
   const logFile = join(tmp, "afk-supervisor.log");
   const existing = await readPid(pidFile);
   if (existing && isLivePid(existing)) {
-    throw new Error(`fleet already running (supervisor pid=${existing}, log .red/tmp/afk-supervisor.log).\n  to stop it: /dev:afk fleet stop`);
+    // A live PID is not necessarily a healthy fleet (#407): a supervisor whose
+    // #406 heartbeat has gone stale past RED_AFK_SUPERVISOR_STALE_S is hard-hung
+    // (drain loop wedged) and cannot re-arm itself. This launch is an
+    // already-alive surface, so it doubles as the recovery watchdog — tear the
+    // wedged supervisor down and fall through to a clean relaunch. A FRESH
+    // heartbeat still refuses the launch, exactly as before.
+    const staleS = resolveSupervisorConfig().supervisorStaleS;
+    const io = buildWatchdogIO(root, stdout);
+    const liveness = await io.liveness();
+    const health = classifySupervisor(liveness, io.now(), staleS);
+    if (health !== "quiescent") {
+      throw new Error(`fleet already running (supervisor pid=${existing}, log .red/tmp/afk-supervisor.log).\n  to stop it: /dev:afk fleet stop`);
+    }
+    const staleForS = liveness.lastHeartbeatEpoch !== null ? io.now() - liveness.lastHeartbeatEpoch : null;
+    io.log(
+      `⚠️  fleet pre-check: supervisor pid=${existing} is QUIESCENT — heartbeat stale ` +
+        `${staleForS ?? "?"}s ≥ ${staleS}s; recovering before relaunch.`,
+    );
+    await teardownWedgedSupervisor(io, liveness.pid);
   }
 
   const detection = detectRunner({
@@ -141,26 +152,14 @@ export async function launchFleet(args: readonly string[], root = process.cwd(),
     processTree: callerProcessTreeNative(),
     scriptPath: process.argv[1],
   });
-  const childArgs = [...parsed.passthrough];
-  if (parsed.request) childArgs.unshift("--request", parsed.request);
-  const env: NodeJS.ProcessEnv = {
-    ...process.env,
-    RED_AFK_TARGET: String(parsed.target),
-    RED_AFK_RUNNER: detection.runner,
-  };
-  if (parsed.request) env.RED_AFK_REQUEST = parsed.request;
 
-  const out = await import("node:fs").then((fs) => fs.openSync(logFile, "a"));
-  // Spawn the native supervisor: `node <this-bundle> __supervise`.
-  const child = spawn(process.execPath, [process.argv[1]!, "__supervise", ...childArgs], {
-    cwd: root,
-    env,
-    detached: true,
-    stdio: ["ignore", out, out],
+  const supervisorPid = await spawnSupervisor({
+    root,
+    target: parsed.target,
+    runner: detection.runner,
+    passthrough: parsed.passthrough,
+    request: parsed.request,
   });
-  child.unref();
-
-  const supervisorPid = await waitForPidFile(pidFile, 3_000);
   if (!supervisorPid) {
     let tail = "";
     try {

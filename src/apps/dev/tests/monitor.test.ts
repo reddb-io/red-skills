@@ -39,6 +39,7 @@ const baseWorker = (over: Partial<CompactWorker> = {}): CompactWorker => ({
 const baseFleet = (over: Partial<FleetState> = {}): FleetState => ({
   ts: "2026-05-30T11:00:00Z",
   epoch: 1780138800,
+  runner: "claude",
   readyForAgent: 0,
   slotsBusy: 0,
   slotsFree: 2,
