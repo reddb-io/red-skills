@@ -366,6 +366,38 @@ describe("memory improve skills CLI", () => {
       const proposal = await readFile(firstPath, "utf8");
       expect(proposal).toContain(`Fingerprint: ${firstBody.proposals[0].fingerprint}`);
 
+      const archived = runMemory([
+        "improve",
+        "proposals",
+        "archive",
+        firstPath,
+        "--reason",
+        "rejected",
+        "--root",
+        root,
+        "--yes",
+        "--json",
+      ]);
+      expect(archived.status).toBe(0);
+
+      const third = runMemory(["improve", "skills", "--root", root, "--write-proposal", "--json"]);
+      expect(third.status).toBe(0);
+      const thirdBody = JSON.parse(third.stdout);
+      expect(thirdBody.proposals[0].fingerprint).toBe(firstBody.proposals[0].fingerprint);
+      expect(thirdBody.proposals[0].path).toBe(firstPath);
+      expect(thirdBody.proposals[0].reusedExisting).toBe(false);
+      expect(thirdBody.evidenceCards[0].id).not.toBe(firstCard.id);
+      expect(thirdBody.evidenceCards[0].path).not.toBe(firstCard.path);
+      const regeneratedEvidenceFiles = await readdir(join(root, ".red", "memory", "inbox", "evidence"));
+      expect(regeneratedEvidenceFiles.filter((file) => file.endsWith(".yaml"))).toHaveLength(2);
+
+      const fourth = runMemory(["improve", "skills", "--root", root, "--write-proposal", "--json"]);
+      expect(fourth.status).toBe(0);
+      const fourthBody = JSON.parse(fourth.stdout);
+      expect(fourthBody.proposals[0].reusedExisting).toBe(true);
+      expect(fourthBody.evidenceCards[0].id).toBe(thirdBody.evidenceCards[0].id);
+      expect(fourthBody.evidenceCards[0].path).toBe(thirdBody.evidenceCards[0].path);
+
       const listed = runMemory(["improve", "proposals", "list", "--root", root, "--json"]);
       expect(listed.status).toBe(0);
       const listedBody = JSON.parse(listed.stdout);
