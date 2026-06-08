@@ -42,9 +42,24 @@ how the child process winds down.
 
 ## Decision
 
-The `<promise>` sentinel is the **canonical termination signal** for an
-attempt. Pipe EOF and child-process exit become **crash detectors** — fallbacks
-that only matter when the agent failed to author its own exit.
+The `<promise>` sentinel is the **canonical agent-authored termination signal**
+for the happy path of an attempt: `<promise>DONE</promise>` and
+`<promise>BLOCKED</promise>` (plus the outer-loop exhaustion sentinel,
+`<promise>NO MORE TASKS</promise>`). Pipe EOF and child-process exit become
+**crash detectors** — fallbacks that only matter when the agent failed to
+author its own exit.
+
+That canonicality is intentionally scoped to states the agent can author. Some
+terminal paths are initiated by the runtime and emit no promise:
+
+- The ADR 0044 attempt progress guard aborts a stalled attempt on `timeout`;
+  `processIssue` maps that to `blocked:stalled` and parks the issue for human
+  review. A stuck agent cannot reliably emit a `<promise>STALLED</promise>`
+  sentinel, so the runtime must own this path.
+- The no-sentinel-but-mergeable salvage path repairs a completed branch whose
+  work passed feedback even though the agent exited without emitting the
+  sentinel. The absence of a promise is the condition being salvaged, not a new
+  sentinel outcome.
 
 Concretely:
 
@@ -147,3 +162,8 @@ Concretely:
   orchestrator just starts trusting that contract.
 - Codex / Claude parity: both runners emit the same sentinel; both pipes
   behave the same under tear-down. No runner-specific divergence introduced.
+
+## Related
+
+- ADR 0044 — AFK attempt progress guard (`timeout` routes to
+  `blocked:stalled` without requiring an agent-authored sentinel).

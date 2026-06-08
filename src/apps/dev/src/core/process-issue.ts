@@ -395,6 +395,18 @@ const LABEL_RUNNING = "running";
 const LABEL_HUMAN = "ready-for-human";
 
 /**
+ * The typed `blocked:*` labels present in a label set (#402). Promoting an issue
+ * to `running` (or `ready-for-agent`) must shed any stale `blocked:*` reason in
+ * the SAME edit so no live/queued issue ever carries `running`/`ready-for-agent`
+ * together with `blocked:*` — the exact hygiene gap the adoption doctor flags.
+ * Only labels actually present are returned, so the caller never asks gh to
+ * remove a label the issue does not have.
+ */
+function blockedLabelsIn(labels: string[]): string[] {
+  return labels.filter((l) => l.startsWith("blocked:"));
+}
+
+/**
  * ADDITIVE typed-blocked observability tag. Apply the routing label transition
  * (remove → add) and, ALONGSIDE it in the SAME editLabels call, the DESCRIPTIVE
  * `blocked:<reason>` label for the terminal failure. The typed label is created
@@ -419,10 +431,13 @@ async function editLabelsTagged(
  * Apply the BOUNDED auto-recovery routing for a terminal failure. The policy
  * (recovery.ts) decides retry vs escalate from the reason + the real attempt
  * number + the env caps:
- *   - "retry"    → remove [running], add [ready-for-agent, blocked:<reason>]
- *   - "escalate" → remove [running], add [ready-for-human,  blocked:<reason>]
- * The typed `blocked:<reason>` label is added in BOTH cases (descriptive). When
- * we ESCALATE a reason that was recoverable (its retry budget ran out), post a
+ *   - "retry"    → remove [running], add [ready-for-agent]            (CLEAN)
+ *   - "escalate" → remove [running], add [ready-for-human, blocked:<reason>]
+ * The typed `blocked:<reason>` label rides ONLY the escalation (#402): a re-queued
+ * issue returns to `ready-for-agent` with no `blocked:*` label, so it never trips
+ * the adoption-doctor hygiene check. The failure reason is still recorded by the
+ * attempt envelope + the attempt-ledger; the label is for the parked human lane.
+ * When we ESCALATE a reason that was recoverable (its retry budget ran out), post a
  * one-line comment so the human page is self-explanatory. Returns the decision
  * so the caller can log / shape its terminal result if it cares.
  */
@@ -442,7 +457,10 @@ async function routeRecovery(
   const env = deps.recoveryEnv ?? {};
   const decision = recoveryDecision(policyReason, attemptN, env);
   if (decision === "retry") {
-    await editLabelsTagged(deps, issue, [LABEL_RUNNING], [LABEL_READY], reason);
+    // CLEAN re-queue (#402): promote to ready-for-agent with NO blocked:* tag.
+    // The issue reached here from `running`, which the claim step already stripped
+    // of any blocked:* reason, so the promotion leaves it hygienic.
+    await deps.gh.editLabels(issue, [LABEL_RUNNING], [LABEL_READY]);
     return "retry";
   }
   // escalate
@@ -527,7 +545,10 @@ export async function processIssue(
     };
   }
 
-  if (!(await deps.gh.editLabels(issue, [LABEL_READY], [LABEL_RUNNING]))) {
+  // Promote to running, shedding any stale `blocked:*` reason in the same edit
+  // (#402). `labels` was just fetched above, so we only remove labels the issue
+  // actually carries — a clean promotion the adoption doctor can never flag.
+  if (!(await deps.gh.editLabels(issue, [LABEL_READY, ...blockedLabelsIn(labels)], [LABEL_RUNNING]))) {
     await deps.claimLock.release(issue);
     return claimLost(issue, hooksFired);
   }

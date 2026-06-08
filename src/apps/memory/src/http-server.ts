@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { MemoryStore } from "./graph-store.js";
+import type { AiProviderConfig } from "./extract-conversation.js";
 import { recall } from "./engine.js";
 import {
   buildMemoryOperationalDashboard,
@@ -29,6 +30,7 @@ export interface MemoryHttpServerOptions {
   store: MemoryStore;
   token?: string;
   now?: number;
+  providerConfig?: AiProviderConfig;
 }
 
 export interface MemoryHttpHealth {
@@ -85,6 +87,7 @@ const ENDPOINTS = [
   "GET /hooks/coverage",
   "GET /layers",
   "GET /learning-debt",
+  "GET /map-contract",
   "GET /memory/health",
   "GET /onboarding-map",
   "GET /openapi.json",
@@ -107,6 +110,8 @@ const ENDPOINTS = [
   "GET /api/integration-status?agent=<agent>",
   "GET /api/layers",
   "GET /api/learning-debt",
+  "GET /api/map-contract",
+  "GET /api/map/freshness",
   "GET /api/onboarding-map",
   "GET /api/hooks/coverage",
   "GET /api/session/timeline?session=<id>",
@@ -248,7 +253,13 @@ async function handleRegistryHttpOperation(
     const body = req.method === "POST" ? await readJsonBody(req) : undefined;
     const output = await executeMemoryOperationFromTransport(
       operation,
-      { store: opts.store, rootDir: opts.rootDir, now: opts.now },
+      {
+        store: opts.store,
+        rootDir: opts.rootDir,
+        now: opts.now,
+        providerConfig: opts.providerConfig,
+        transportSurface: "http",
+      },
       {
         positional: [],
         flags: {},
@@ -693,6 +704,12 @@ function openApiDocument(opts: MemoryHttpServerOptions): MemoryOpenApiDocument {
         get: {
           summary: "Memory learning debt",
           responses: { "200": jsonResponse("Learning debt report") },
+        },
+      },
+      "/api/map/freshness": {
+        get: {
+          summary: "Memory map freshness report",
+          responses: { "200": jsonResponse("Memory map freshness report") },
         },
       },
       "/learning-debt": {

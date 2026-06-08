@@ -145,7 +145,7 @@ function renderContextPackViewer(pack: ContextPack): string {
     </div>
     <div class="layout">
       <div class="stack">
-        ${pack.entries.length === 0 ? `<section><p class="empty">No active Memory evidence matched this context-pack goal.</p></section>` : groupedEntries(pack.entries)}
+        ${pack.entries.length === 0 ? `<section><p class="empty">No active Memory evidence matched this context-pack goal.</p></section>` : groupedEntries(pack)}
       </div>
       <div class="stack">
         <section>
@@ -168,7 +168,10 @@ function renderContextPackViewer(pack: ContextPack): string {
 </html>`;
 }
 
-function groupedEntries(entries: ContextPackEntry[]): string {
+function groupedEntries(pack: ContextPack): string {
+  const coreContext = pack.coreContext ?? [];
+  const coreRids = new Set(coreContext.map((entry) => entry.citation.rid));
+  const entries = pack.entries.filter((entry) => !coreRids.has(entry.citation.rid));
   const order: ContextPackEntry["section"][] = [
     "hard_constraints",
     "prior_decisions",
@@ -176,7 +179,14 @@ function groupedEntries(entries: ContextPackEntry[]): string {
     "similar_past_work",
     "do_not_do",
   ];
-  return order
+  const coreHtml =
+    coreContext.length === 0
+      ? ""
+      : `<section>
+        <h2>Core Context</h2>
+        <ul>${coreContext.map(entryHtml).join("")}</ul>
+      </section>`;
+  return `${coreHtml}${order
     .map((section) => {
       const sectionEntries = entries.filter((entry) => entry.section === section);
       if (sectionEntries.length === 0) return "";
@@ -185,16 +195,21 @@ function groupedEntries(entries: ContextPackEntry[]): string {
         <ul>${sectionEntries.map(entryHtml).join("")}</ul>
       </section>`;
     })
-    .join("");
+    .join("")}`;
 }
 
 function entryHtml(entry: ContextPackEntry): string {
   const source = entry.citation.source ? ` - ${escapeHtml(entry.citation.source)}` : "";
+  const confidence =
+    entry.confidence_score == null ? "" : ` - confidence ${entry.confidence_score.toFixed(2)}`;
+  const provenance = entry.provenance
+    ? ` - provenance ${escapeHtml(entry.provenance.source_kind)}${entry.provenance.writer ? `/${escapeHtml(entry.provenance.writer)}` : ""}`
+    : "";
   return `<li>
     <div>
-      <h3>${escapeHtml(entry.title)}</h3>
+      <h3>${escapeHtml(entry.citation.marker)} ${escapeHtml(entry.title)}</h3>
       <p>${escapeHtml(entry.excerpt)}</p>
-      <p class="meta"><code>${escapeHtml(entry.citation.urn)}</code>${source} - score ${entry.score.toFixed(4)}</p>
+      <p class="meta"><code>${escapeHtml(entry.citation.urn)}</code>${source} - score ${entry.score.toFixed(4)} - trust ${entry.trust.toFixed(2)} - importance ${entry.importance.toFixed(2)}${confidence}${provenance}</p>
       <p class="meta">${escapeHtml(entry.reason)}</p>
     </div>
     <span class="pill">${escapeHtml(entry.nodeType)}</span>

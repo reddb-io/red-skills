@@ -95,17 +95,50 @@ describe("memory communities CLI", () => {
         read_only: boolean;
         cached: boolean;
         graph_hash: string;
-        communities: Array<{ id: string; count: number; labels: string[]; titles: string[] }>;
+        cache_key: string;
+        communities: Array<{
+          id: string;
+          count: number;
+          total_degree: number;
+          avg_centrality: number;
+          external_edge_weight: number;
+          labels: string[];
+          titles: string[];
+        }>;
         assignments: Array<{ rid: number; community_id: string; label: string; title: string }>;
+        node_analytics: Array<{
+          rid: number;
+          community_id: string;
+          degree: number;
+          in_degree: number;
+          out_degree: number;
+          weighted_degree: number;
+          centrality: number;
+        }>;
+        inter_community_edges: Array<{
+          from_community_id: string;
+          to_community_id: string;
+          weight: number;
+          edge_count: number;
+        }>;
       };
 
       expect(firstBody.schema_version).toBe("memory.communities.v1");
       expect(firstBody.read_only).toBe(true);
       expect(firstBody.cached).toBe(false);
       expect(firstBody.graph_hash).toMatch(/^[a-f0-9]{64}$/);
+      expect(firstBody.cache_key).toContain("cache:communities:v2:");
       expect(firstBody.communities).toHaveLength(2);
       expect(firstBody.assignments).toHaveLength(6);
+      expect(firstBody.node_analytics).toHaveLength(6);
+      expect(firstBody.inter_community_edges).toHaveLength(1);
+      expect(firstBody.inter_community_edges[0]).toMatchObject({ weight: 1, edge_count: 1 });
+      expect(firstBody.node_analytics[0].centrality).toBeGreaterThan(0);
+      expect(firstBody.node_analytics[0].degree).toBeGreaterThan(0);
       expect(firstBody.communities.map((c) => c.count).sort()).toEqual([3, 3]);
+      expect(firstBody.communities.every((c) => c.total_degree > 0)).toBe(true);
+      expect(firstBody.communities.every((c) => c.avg_centrality > 0)).toBe(true);
+      expect(firstBody.communities.every((c) => c.external_edge_weight === 1)).toBe(true);
       expect(firstBody.communities.some((c) => c.labels.includes("auth-login"))).toBe(true);
       expect(firstBody.communities.some((c) => c.titles.includes("cache ttl"))).toBe(true);
 
@@ -115,6 +148,8 @@ describe("memory communities CLI", () => {
       expect(secondBody.cached).toBe(true);
       expect(secondBody.graph_hash).toBe(firstBody.graph_hash);
       expect(secondBody.assignments).toEqual(firstBody.assignments);
+      expect(secondBody.node_analytics).toEqual(firstBody.node_analytics);
+      expect(secondBody.inter_community_edges).toEqual(firstBody.inter_community_edges);
 
       const out = join(root, "communities.html");
       const viewer = runMemory(["communities-viewer", "--root", root, "--out", out]);
@@ -127,10 +162,40 @@ describe("memory communities CLI", () => {
       expect(html).toContain('id="communities-data"');
       expect(html).not.toContain("<script src=");
 
+      const afterAnalytics = await openStore(root);
+      const afterAnalyticsStats = await afterAnalytics.stats();
+      await afterAnalytics.close();
+      expect(afterAnalyticsStats).toEqual(beforeStats);
+
+      const changed = await openStore(root);
+      const newRid = await changed.upsertNode({
+        label: "auth-metrics",
+        node_type: "concept",
+        properties: { title: "auth metrics", content: "auth metrics" },
+      });
+      const authLogin = firstBody.assignments.find((assignment) => assignment.label === "auth-login");
+      expect(authLogin).toBeDefined();
+      await changed.upsertEdge({ label: "REFERENCES", from_rid: newRid, to_rid: authLogin!.rid });
+      await changed.close();
+
+      const regenerated = runMemory(["communities", "--root", root, "--json"]);
+      expect(regenerated.status).toBe(0);
+      const regeneratedBody = JSON.parse(regenerated.stdout) as typeof firstBody;
+      expect(regeneratedBody.cached).toBe(false);
+      expect(regeneratedBody.graph_hash).not.toBe(firstBody.graph_hash);
+      expect(regeneratedBody.assignments).toHaveLength(7);
+      expect(regeneratedBody.node_analytics).toHaveLength(7);
+
+      const regeneratedSecond = runMemory(["communities", "--root", root, "--json"]);
+      expect(regeneratedSecond.status).toBe(0);
+      const regeneratedSecondBody = JSON.parse(regeneratedSecond.stdout) as typeof firstBody;
+      expect(regeneratedSecondBody.cached).toBe(true);
+      expect(regeneratedSecondBody.graph_hash).toBe(regeneratedBody.graph_hash);
+
       const after = await openStore(root);
       const afterStats = await after.stats();
       await after.close();
-      expect(afterStats).toEqual(beforeStats);
+      expect(afterStats).toEqual({ nodes: beforeStats.nodes + 1, edges: beforeStats.edges + 1 });
     },
     TIMEOUT,
   );

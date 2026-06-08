@@ -929,12 +929,14 @@ describe("processIssue — worker branch absent (FIX E: merge-gate bypass guard)
     // The issue was NOT closed and NOT merged — the gate held on unvalidated work.
     expect(trace.closed).toEqual([]);
     expect(trace.pushedAttempt).toEqual([]);
-    // Routed through the merge-conflict BOUNDED-recovery reason: the terminal
-    // edit carries the typed blocked:merge-conflict tag (retry-vs-escalate is the
-    // recovery policy's call; what matters here is the gate diverted off merge).
+    // Routed through the merge-conflict BOUNDED-recovery reason. At the default
+    // attempt this is a retry (< cap 3), so #402 routes back to ready-for-agent
+    // CLEAN — no blocked:* tag — while the merge-conflict envelope records the
+    // reason; what matters here is the gate diverted off merge.
     const finalEdit = trace.labelEdits.at(-1)!;
-    expect(finalEdit.add).toContain("blocked:merge-conflict");
-    expect(trace.ensuredLabels).toContain("blocked:merge-conflict");
+    expect(finalEdit.add).toContain("ready-for-agent");
+    expect(finalEdit.add).not.toContain("blocked:merge-conflict");
+    expect(trace.ensuredLabels).not.toContain("blocked:merge-conflict");
     expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "merge-conflict" }]);
     // The claim was released on this terminal path.
     expect(trace.released).toEqual([9]);
@@ -1006,6 +1008,39 @@ describe("processIssue — claim lost", () => {
   });
 });
 
+describe("processIssue — claim sheds stale blocked:* on promote to running (#402)", () => {
+  it("removes every blocked:* label the issue carried in the SAME claim edit", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      // A ready-for-agent issue that still drags two stale typed blocks.
+      labels: ["ready-for-agent", "blocked:stalled", "blocked:dependency"],
+    });
+    await processIssue(deps, input);
+    // The first edit is the claim: promote to running while removing
+    // ready-for-agent AND both blocked:* reasons — one atomic edit, so no live
+    // issue is ever `running` together with `blocked:*`.
+    const claimEdit = trace.labelEdits[0]!;
+    expect(claimEdit.add).toEqual(["running"]);
+    expect(claimEdit.remove).toContain("ready-for-agent");
+    expect(claimEdit.remove).toContain("blocked:stalled");
+    expect(claimEdit.remove).toContain("blocked:dependency");
+  });
+
+  it("removes only the blocked:* labels actually present (never asks gh to drop absent ones)", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      labels: ["ready-for-agent"],
+    });
+    await processIssue(deps, input);
+    const claimEdit = trace.labelEdits[0]!;
+    // No blocked:* present → the claim edit is the plain promotion, unchanged.
+    expect(claimEdit.remove).toEqual(["ready-for-agent"]);
+    expect(claimEdit.add).toEqual(["running"]);
+  });
+});
+
 describe("processIssue — pre_worktree hook abort (BOUNDED-recoverable: policy)", () => {
   it("under the cap → RETRY: restores ready-for-agent and never runs the agent", async () => {
     // policy cap is 1 by default; raise it so attempt 1 is under-cap and retries.
@@ -1017,13 +1052,13 @@ describe("processIssue — pre_worktree hook abort (BOUNDED-recoverable: policy)
     const result = await processIssue(deps, input);
     expect(result.outcome).toBe("hook-aborted");
     expect(result.preserved).toBe(true);
-    // claim then restore ready-for-agent + the typed blocked:policy tag;
-    // sandcastle was never invoked.
-    expect(labelTrace(trace)).toEqual(["-ready-for-agent|+running", "-running|+ready-for-agent+blocked:policy"]);
+    // claim then CLEAN restore of ready-for-agent (#402: no blocked:* on a
+    // re-queue); sandcastle was never invoked.
+    expect(labelTrace(trace)).toEqual(["-ready-for-agent|+running", "-running|+ready-for-agent"]);
     const haEdit = trace.labelEdits.at(-1)!;
     expect(haEdit.add).toContain("ready-for-agent");
-    expect(haEdit.add).toContain("blocked:policy");
-    expect(trace.ensuredLabels).toContain("blocked:policy");
+    expect(haEdit.add).not.toContain("blocked:policy");
+    expect(trace.ensuredLabels).not.toContain("blocked:policy");
     expect(trace.runAgentCalls).toEqual([]);
     expect(result.hooksFired).toEqual(["pre_worktree"]);
     // the restore comment is posted on retry; no budget-exhausted page.
@@ -1062,13 +1097,13 @@ describe("processIssue — runner exhaustion (no --fallback-runner)", () => {
     expect(result.swept).toBe(false);
     // only one run; no swap.
     expect(trace.runAgentCalls.length).toBe(1);
-    // claim → running, then restore ready-for-agent (not ready-for-human) + the
-    // typed blocked:quota tag (routing unchanged).
-    expect(labelTrace(trace)).toEqual(["-ready-for-agent|+running", "-running|+ready-for-agent+blocked:quota"]);
+    // claim → running, then CLEAN restore of ready-for-agent (not ready-for-human),
+    // with NO blocked:quota tag riding the re-queue (#402).
+    expect(labelTrace(trace)).toEqual(["-ready-for-agent|+running", "-running|+ready-for-agent"]);
     const exEdit = trace.labelEdits.at(-1)!;
     expect(exEdit.add).toContain("ready-for-agent");
-    expect(exEdit.add).toContain("blocked:quota");
-    expect(trace.ensuredLabels).toContain("blocked:quota");
+    expect(exEdit.add).not.toContain("blocked:quota");
+    expect(trace.ensuredLabels).not.toContain("blocked:quota");
     expect(trace.closed).toEqual([]);
     expect(trace.released).toEqual([9]);
     // no post_attempt fired (exhaustion is terminal before the sentinel branch).
@@ -1121,10 +1156,10 @@ describe("processIssue — runner exhaustion → fallback swap → retry", () =>
     expect(result.outcome).toBe("exhausted");
     expect(result.preserved).toBe(true);
     expect(trace.runAgentCalls.length).toBe(2);
-    // ready-for-agent restored (both-runners comment posted) + the typed
-    // blocked:quota tag (routing unchanged), claim released.
-    expect(labelTrace(trace)).toEqual(["-ready-for-agent|+running", "-running|+ready-for-agent+blocked:quota"]);
-    expect(trace.ensuredLabels).toContain("blocked:quota");
+    // ready-for-agent restored CLEAN (both-runners comment posted); #402: no
+    // blocked:quota tag rides the re-queue, claim released.
+    expect(labelTrace(trace)).toEqual(["-ready-for-agent|+running", "-running|+ready-for-agent"]);
+    expect(trace.ensuredLabels).not.toContain("blocked:quota");
     expect(trace.released).toEqual([9]);
     expect(trace.closed).toEqual([]);
     // both attempts closed their post_attempt cycle; no merge ever reached.
@@ -1173,8 +1208,8 @@ describe("processIssue — runner transient transport/setup failure", () => {
     expect(result.outcome).toBe("runner-transient");
     expect(result.preserved).toBe(true);
     expect(trace.runAgentCalls.length).toBe(1);
-    expect(labelTrace(trace)).toEqual(["-ready-for-agent|+running", "-running|+ready-for-agent+blocked:runner-transient"]);
-    expect(trace.ensuredLabels).toContain("blocked:runner-transient");
+    expect(labelTrace(trace)).toEqual(["-ready-for-agent|+running", "-running|+ready-for-agent"]);
+    expect(trace.ensuredLabels).not.toContain("blocked:runner-transient");
     expect(trace.released).toEqual([9]);
     expect(trace.closed).toEqual([]);
     expect(trace.comments.some((c) => /transient transport\/setup failure/.test(c.body))).toBe(true);
@@ -1286,7 +1321,7 @@ describe("processIssue — merge-conflict one-shot self-resolve (gap 3)", () => 
 });
 
 describe("processIssue — BOUNDED auto-recovery routing (the policy wired in)", () => {
-  it("merge-conflict at attempt 1 (< cap 3) → RETRY: ready-for-agent + blocked:merge-conflict, no page", async () => {
+  it("merge-conflict at attempt 1 (< cap 3) → RETRY: CLEAN ready-for-agent, no blocked:* tag, no page (#402)", async () => {
     const { deps, input, trace } = harness({
       outcome: "done",
       feedbackOk: true,
@@ -1298,9 +1333,10 @@ describe("processIssue — BOUNDED auto-recovery routing (the policy wired in)",
     expect(result.outcome).toBe("merge-conflict");
     const edit = trace.labelEdits.at(-1)!;
     expect(edit.add).toContain("ready-for-agent");
-    expect(edit.add).toContain("blocked:merge-conflict");
+    // #402: a re-queue routes back CLEAN — no blocked:* rides the promotion.
+    expect(edit.add).not.toContain("blocked:merge-conflict");
     expect(edit.add).not.toContain("ready-for-human");
-    expect(trace.ensuredLabels).toContain("blocked:merge-conflict");
+    expect(trace.ensuredLabels).not.toContain("blocked:merge-conflict");
     // a retry never pages; no budget-exhausted comment.
     expect(trace.comments.some((c) => /retry budget exhausted/.test(c.body))).toBe(false);
     expect(trace.closed).not.toContain(9);
@@ -1326,13 +1362,13 @@ describe("processIssue — BOUNDED auto-recovery routing (the policy wired in)",
     ).toBe(true);
   });
 
-  it("quota (exhausted) at attempt < cap → RETRY: ready-for-agent + blocked:quota", async () => {
+  it("quota (exhausted) at attempt < cap → RETRY: CLEAN ready-for-agent, no blocked:* tag (#402)", async () => {
     const { deps, input, trace } = harness({ outcome: "exhausted", fallbackRunner: false, attempt: 2 });
     const result = await processIssue(deps, input);
     expect(result.outcome).toBe("exhausted");
     const edit = trace.labelEdits.at(-1)!;
     expect(edit.add).toContain("ready-for-agent");
-    expect(edit.add).toContain("blocked:quota");
+    expect(edit.add).not.toContain("blocked:quota");
     expect(edit.add).not.toContain("ready-for-human");
     expect(trace.comments.some((c) => /retry budget exhausted/.test(c.body))).toBe(false);
   });
@@ -1359,7 +1395,8 @@ describe("processIssue — BOUNDED auto-recovery routing (the policy wired in)",
     const r1 = await processIssue(retry.deps, retry.input);
     expect(r1.outcome).toBe("no-sentinel");
     expect(retry.trace.labelEdits.at(-1)!.add).toContain("ready-for-agent");
-    expect(retry.trace.labelEdits.at(-1)!.add).toContain("blocked:crashed");
+    // #402: clean re-queue — the crash reason no longer tags the ready-for-agent promotion.
+    expect(retry.trace.labelEdits.at(-1)!.add).not.toContain("blocked:crashed");
 
     const escalate = harness({ outcome: "no-sentinel", attempt: 1, changedFiles: [] }); // default cap 1 → escalate
     const r2 = await processIssue(escalate.deps, escalate.input);

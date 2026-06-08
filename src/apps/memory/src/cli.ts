@@ -83,6 +83,10 @@ import { dispatch, type HookEvent, type Runner } from "./hook-runtime.js";
 import { refreshFromGit, type VcsEvent } from "./vcs-refresh.js";
 import { installGitHooks, uninstallGitHooks } from "./vcs-hooks-install.js";
 import { importAmsDump } from "./import-ams.js";
+import {
+  importComplementaryMapFile,
+  type ComplementaryMapSourceKind,
+} from "./import-complementary-map.js";
 import { runPromote } from "./promote.js";
 import { runAfkLifecycle } from "./afk-lifecycle.js";
 import {
@@ -116,10 +120,15 @@ import {
 import { buildMemoryGovernanceViewerArtifact } from "./governance-viewer.js";
 import { MemoryStore, factToNode } from "./graph-store.js";
 import { HistoricalMemoryStore } from "./historical-memory-store.js";
+import { buildMemoryMapContextSlice } from "./map-context.js";
 import { createMemoryHttpServer } from "./http-server.js";
 import { ingestGuidance } from "./audit-marker.js";
 import { evaluateDriftGuard } from "./drift-guard.js";
-import { appendMemoryEvent, driftCaughtToMemoryEvent } from "./memory-events.js";
+import {
+  appendContextPackGenerationEvent,
+  appendMemoryEvent,
+  driftCaughtToMemoryEvent,
+} from "./memory-events.js";
 import { collectCandidates, ingestProject, refreshFiles } from "./ingest.js";
 import {
   defaultIgnorePatterns,
@@ -161,6 +170,7 @@ import { buildLearningDebtReport } from "./learning-debt.js";
 import { buildLearningDebtViewerArtifact } from "./learning-debt-viewer.js";
 import { buildOnboardingMap } from "./onboarding-map.js";
 import { buildOnboardingMapViewerArtifact } from "./onboarding-map-viewer.js";
+import { buildMemoryMapFreshnessReport } from "./map-freshness.js";
 import {
   buildMemoryOperationalDashboard,
   buildMemoryOperationalDashboardArtifact,
@@ -221,6 +231,11 @@ import {
   executeMemoryMergeBatch,
   unmergeMemoryMergeBatch,
 } from "./memory-merge-pass.js";
+import {
+  acceptGovernanceTidyRecommendation,
+  dismissGovernanceTidyRecommendation,
+  refreshGovernanceTidyReviewArtifacts,
+} from "./governance-tidy-review.js";
 import { recall } from "./recall.js";
 import { buildFederationReport } from "./federation.js";
 import { runAutoCure } from "./auto-curation.js";
@@ -281,6 +296,7 @@ const USAGE = `memory — governed operational memory for code agents
 Common workflows:
   remember one fact          memory store "Decision: ..."
   get context before acting  memory recall "topic"
+  map code before reading    memory map-context "who calls token refresh?"
   prepare another agent      memory context-pack "goal"  | memory handoff "focus"
   decide if safe to proceed  memory readiness "goal"     | memory claim-check "assertion"
   search every surface       memory smart-search "query"
@@ -347,7 +363,11 @@ Usage:
   memory merge-pass                 [--root <dir>] [--min-score N] [--limit N] [--json]
   memory merge-pass execute         --candidate-ranks 1,2 --approver <id> --yes [--root <dir>] [--min-score N] [--limit N] [--batch-id ID] [--json]
   memory merge-pass unmerge         --batch-id ID --yes [--root <dir>] [--json]
+  memory tidy-review refresh        [--root <dir>] [--json]
+  memory tidy-review accept <id>    --approver <id> --yes [--root <dir>] [--reason <text>] [--json]
+  memory tidy-review dismiss <id>   --approver <id> --yes [--root <dir>] [--reason <text>] [--json]
   memory health-viewer              [--root <dir>] [--stale-days N] [--out <file>]
+  memory map freshness              [--root <dir>] [--json]   (map freshness and extraction diagnostic, read-only)
   memory onboarding-map             [--root <dir>] [--stale-days N] [--json]
   memory onboarding-map-viewer      [--root <dir>] [--stale-days N] [--out <file>]
   memory onboarding-map export <out-dir> --public-safe [--strict] [--root <dir>] [--json]
@@ -413,6 +433,7 @@ Usage:
 
   Graph-mode read verbs (require \`memory init --mode graph\`):
   memory search <query...>          [--root <dir>] [--limit N]
+  memory map-context <query...>     [--root <dir>] [--depth N] [--mode bfs|dfs] [--context call,import,type,validation,decision,work,reference] [--budget N] [--json]
   memory neighbors <label>          [--root <dir>] [--depth N] [--direction outgoing|incoming|both]
   memory traverse <label>           [--root <dir>] [--depth N] [--strategy bfs|dfs] [--direction ...]
   memory path <from> <to>           [--root <dir>] [--algorithm bfs|dijkstra]
@@ -439,6 +460,7 @@ Usage:
   memory doctor                     [--root <dir>] [--stale-days N] [--prune] [--yes]
   memory export [<out-dir>]         [--root <dir>] [--communities] [--interop]
   memory graph  [<out-dir>]         [--root <dir>] [--communities]   (alias of export)
+  memory map-contract               [--root <dir>] [--communities] [--json]
   memory architecture-overview      [--root <dir>] [--from <graph.json>] [--out <file>] [--stdout] [--json]
 
   Auto-firing hooks (invoked by the plugin manifest, reads payload on stdin):
@@ -463,6 +485,7 @@ Usage:
   AMS migration (PRD #174, issue #184) — one-shot offline importer for Redis
   agent-memory-server JSON dumps. See \`docs/migrating-from-ams.md\`.
   memory import ams <dump.json>     [--root <dir>] [--json]
+  memory import map <artifact.json> [--kind graphify|scip|lsp|static-analysis] [--root <dir>] [--json]
 
   Benchmarks and reference eval live in the embedded app \`benchmark-memory\`.
 
@@ -478,6 +501,7 @@ const LEGACY_CLI_OPERATION_IDS = new Set(["memory.health"]);
 const LEGACY_SUBCOMMANDS_BY_REGISTRY_COMMAND: Readonly<Record<string, readonly string[]>> = {
   "merge-pass": ["execute", "unmerge"],
   "onboarding-map": ["export"],
+  "tidy-review": ["refresh", "accept", "dismiss"],
 };
 const PROOF_REGISTRY_CLI_COMMANDS = new Set(["docs brief", "docs brief-viewer"]);
 const REGISTRY_CLI_OPERATIONS = new Map<string, ReadOnlyMemoryOperation>(
@@ -535,6 +559,7 @@ const SOURCE_KINDS: readonly MemoryProvenance["source_kind"][] = [
   "hook",
   "derived",
   "system",
+  "external-map",
 ];
 
 function parseSourceKind(
@@ -1427,6 +1452,11 @@ async function runContextPack(args: ParsedArgs): Promise<void> {
       scope: scopeFlags(args.flags),
       skillRollups,
     });
+    await appendContextPackGenerationEvent(store, {
+      pack,
+      surface: "cli",
+      metadata: { command: "context-pack", json: args.flags.json === true },
+    });
     if (args.flags.json === true) {
       console.log(JSON.stringify(pack, null, 2));
       return;
@@ -1461,6 +1491,11 @@ async function runContextPackViewer(args: ParsedArgs): Promise<void> {
     );
     await mkdir(dirname(outPath), { recursive: true });
     await writeFile(outPath, artifact.html, "utf8");
+    await appendContextPackGenerationEvent(store, {
+      pack,
+      surface: "cli-viewer",
+      metadata: { command: "context-pack-viewer", out_path: outPath },
+    });
     console.log(`memory: context pack viewer written ${outPath}`);
     console.log(`  status: ${pack.status}`);
     console.log(`  contract: ${artifact.contract.consumes}`);
@@ -1912,6 +1947,85 @@ async function runMemoryMergePassUnmerge(args: ParsedArgs): Promise<void> {
         `  ${edge.removed ? "removed" : "missing"} ${edge.label} memory_nodes:${edge.duplicate_rid} -> memory_nodes:${edge.canonical_rid}`,
       );
     }
+  } finally {
+    await store.close();
+  }
+}
+
+async function runTidyReview(args: ParsedArgs): Promise<void> {
+  const action = args.positional[0];
+  if (action === "refresh") return runTidyReviewRefresh(args);
+  if (action === "accept") return runTidyReviewAccept(args);
+  if (action === "dismiss") return runTidyReviewDismiss(args);
+  throw new Error("memory tidy-review action must be one of: refresh, accept, dismiss");
+}
+
+async function runTidyReviewRefresh(args: ParsedArgs): Promise<void> {
+  const { store, config } = await openGraphStore(args);
+  try {
+    const result = await refreshGovernanceTidyReviewArtifacts(store, {
+      providerConfig: config.provider,
+    });
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
+    console.log(
+      `memory tidy-review refresh: ${result.summary.recommendations} open/current recommendation(s), ${result.summary.stale} stale`,
+    );
+    for (const artifact of result.artifacts) {
+      console.log(`  ${artifact.status} ${artifact.artifact_id}`);
+    }
+    for (const artifact of result.stale_artifacts) {
+      console.log(`  stale ${artifact.artifact_id}`);
+    }
+  } finally {
+    await store.close();
+  }
+}
+
+async function runTidyReviewAccept(args: ParsedArgs): Promise<void> {
+  if (args.flags.yes !== true) {
+    throw new Error("memory tidy-review accept requires explicit --yes approval");
+  }
+  const id = args.positional[1] ?? "";
+  const { store } = await openGraphStore(args);
+  try {
+    const result = await acceptGovernanceTidyRecommendation(store, {
+      id,
+      approver: stringFlag(args.flags, "approver") ?? "",
+      reason: stringFlag(args.flags, "reason"),
+    });
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
+    console.log(
+      `memory tidy-review accept: ${result.edge.label} memory_nodes:${result.edge.from_rid} -> memory_nodes:${result.edge.to_rid}`,
+    );
+    console.log(`  artifact: ${result.artifact_id}`);
+  } finally {
+    await store.close();
+  }
+}
+
+async function runTidyReviewDismiss(args: ParsedArgs): Promise<void> {
+  if (args.flags.yes !== true) {
+    throw new Error("memory tidy-review dismiss requires explicit --yes approval");
+  }
+  const id = args.positional[1] ?? "";
+  const { store } = await openGraphStore(args);
+  try {
+    const result = await dismissGovernanceTidyRecommendation(store, {
+      id,
+      approver: stringFlag(args.flags, "approver") ?? "",
+      reason: stringFlag(args.flags, "reason"),
+    });
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
+    console.log(`memory tidy-review dismiss: ${result.artifact_id}`);
   } finally {
     await store.close();
   }
@@ -2627,7 +2741,12 @@ async function runRegistryCliOperation(
   try {
     const output = await executeMemoryOperationFromTransport(
       operation,
-      { store: graphContext.store, rootDir, providerConfig: graphContext.config?.provider },
+      {
+        store: graphContext.store,
+        rootDir,
+        providerConfig: graphContext.config?.provider,
+        transportSurface: "cli",
+      },
       transportInput,
     );
     if (operation.outputKind.kind === "viewer") {
@@ -3264,8 +3383,8 @@ async function runServe(args: ParsedArgs): Promise<void> {
   const token = tokenEnv ? process.env[tokenEnv] : undefined;
   if (tokenEnv && !token) throw new Error(`--token-env ${tokenEnv} is not set`);
 
-  const { store } = await openGraphStore(args);
-  const server = createMemoryHttpServer({ rootDir, store, token });
+  const { store, config } = await openGraphStore(args);
+  const server = createMemoryHttpServer({ rootDir, store, token, providerConfig: config.provider });
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
     server.listen(port, host, () => {
@@ -4581,10 +4700,11 @@ async function runHealthViewer(args: ParsedArgs): Promise<void> {
 }
 
 async function runGovernance(args: ParsedArgs): Promise<void> {
-  const { store } = await openGraphStore(args);
+  const { store, config } = await openGraphStore(args);
   try {
     const report = await buildMemoryGovernanceReport(store, {
       staleProgressDays: intFlag(args.flags, "stale-progress-days"),
+      providerConfig: config.provider,
     });
     if (args.flags.json === true) {
       console.log(JSON.stringify(report, null, 2));
@@ -4598,10 +4718,11 @@ async function runGovernance(args: ParsedArgs): Promise<void> {
 
 async function runGovernanceViewer(args: ParsedArgs): Promise<void> {
   const rootDir = rootOf(args.flags);
-  const { store } = await openGraphStore(args);
+  const { store, config } = await openGraphStore(args);
   try {
     const report = await buildMemoryGovernanceReport(store, {
       staleProgressDays: intFlag(args.flags, "stale-progress-days"),
+      providerConfig: config.provider,
     });
     const artifact = buildMemoryGovernanceViewerArtifact(report);
     const outPath = resolve(
@@ -4623,6 +4744,15 @@ function printGovernance(report: MemoryGovernanceReport): void {
     `  provenance=${report.summary.nodes_with_provenance}/${report.summary.total_nodes} ` +
       `privacy=${report.summary.privacy_findings} lint=${report.summary.lint_findings} ` +
       `conflicts=${report.summary.unresolved_contradictions} superseded=${report.summary.superseded_nodes}`,
+  );
+  console.log(
+    `  tidy=${report.tidy_availability.status}` +
+      (report.tidy_availability.reason ? ` (${report.tidy_availability.reason})` : ""),
+  );
+  console.log(
+    `  tidy recommendations=${report.tidy_recommendations.summary.recommended_pairs}/` +
+      `${report.tidy_recommendations.summary.candidate_pairs}` +
+      (report.tidy_recommendations.reason ? ` (${report.tidy_recommendations.reason})` : ""),
   );
   for (const item of report.provenance.missing.slice(0, 5)) {
     console.log(`  missing provenance: memory_nodes:${item.rid} ${item.title}`);
@@ -5376,6 +5506,25 @@ async function runExtractionStatusViewer(args: ParsedArgs): Promise<void> {
   }
 }
 
+async function runMap(args: ParsedArgs): Promise<void> {
+  const action = args.positional[0];
+  if (action !== "freshness") {
+    throw new Error("memory map supports: freshness");
+  }
+  const rootDir = resolve(rootOf(args.flags));
+  const { store } = await openGraphStore(args);
+  try {
+    const report = await buildMemoryMapFreshnessReport(store, rootDir);
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(report, null, 2));
+      return;
+    }
+    process.stdout.write(report.markdown);
+  } finally {
+    await store.close();
+  }
+}
+
 /**
  * Read-only Code drift report (ADR 0035). It surfaces unknown engineering codes
  * by recurrence count for curation and never mutates the graph or recall path.
@@ -5575,6 +5724,36 @@ async function runSearch(args: ParsedArgs): Promise<void> {
   } finally {
     await store.close();
   }
+}
+
+async function runMapContext(args: ParsedArgs): Promise<void> {
+  const query = args.positional.join(" ").trim();
+  if (!query) throw new Error("nothing to map — pass a query: memory map-context <query>");
+  const { store } = await openGraphStore(args);
+  try {
+    const contextRaw = stringFlag(args.flags, "context");
+    const slice = await buildMemoryMapContextSlice(store, query, {
+      depth: intFlag(args.flags, "depth") ?? 2,
+      mode: mapContextModeFlag(args.flags),
+      tokenBudget: intFlag(args.flags, "budget") ?? 1800,
+      contextFilters: contextRaw
+        ? contextRaw.split(",").map((part) => part.trim()).filter(Boolean)
+        : undefined,
+    });
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(slice, null, 2));
+      return;
+    }
+    console.log(slice.context_md);
+  } finally {
+    await store.close();
+  }
+}
+
+function mapContextModeFlag(flags: Record<string, string | boolean>): "bfs" | "dfs" {
+  const mode = strFlag(flags, "mode", "bfs");
+  if (mode === "bfs" || mode === "dfs") return mode;
+  throw new Error("map-context --mode must be bfs or dfs");
 }
 
 async function runNeighbors(args: ParsedArgs): Promise<void> {
@@ -5782,10 +5961,15 @@ async function runCommunities(args: ParsedArgs): Promise<void> {
     console.log(
       `memory: ${report.communities.length} community(ies), ${report.assignments.length} assigned node(s)`,
     );
+    console.log(
+      `  navigation: ${report.node_analytics.length} ranked node(s), ${report.inter_community_edges.length} inter-community edge(s)`,
+    );
     console.log(`  graph hash: ${report.graph_hash}`);
     console.log(`  cache: ${report.cached ? "hit" : "miss"}`);
     for (const community of report.communities) {
-      console.log(`  ${community.id}: ${community.count} node(s)`);
+      console.log(
+        `  ${community.id}: ${community.count} node(s), degree ${community.total_degree}, centrality ${community.avg_centrality}`,
+      );
       if (community.titles.length > 0) {
         console.log(`        top titles: ${community.titles.join(", ")}`);
       }
@@ -6746,15 +6930,34 @@ async function runAttemptLearnApply(args: ParsedArgs): Promise<void> {
 async function runImport(args: ParsedArgs): Promise<void> {
   const source = args.positional[0];
   const file = args.positional[1];
-  if (source !== "ams") {
-    throw new Error(`usage: memory import ams <dump.json> [--root <dir>] [--json]`);
-  }
   if (!file) {
-    throw new Error("memory import ams: missing <dump.json> path");
+    throw new Error("usage: memory import ams <dump.json> | memory import map <artifact.json>");
   }
   const rootDir = rootOf(args.flags);
   const { store } = await openGraphStore(args);
   try {
+    if (source === "map") {
+      const report = await importComplementaryMapFile(store, file, {
+        rootDir,
+        sourceKind: parseComplementaryMapKind(stringFlag(args.flags, "kind")),
+        command: "memory import map",
+      });
+      if (args.flags.json === true) {
+        console.log(JSON.stringify(report, null, 2));
+        return;
+      }
+      console.log(
+        `memory import map: ${report.source_kind} nodes=${report.nodes.imported} imported/${report.nodes.overlapped} overlapped edges=${report.edges.imported} imported/${report.edges.overlapped} overlapped`,
+      );
+      console.log(`  destination: ${report.destination}`);
+      for (const warning of report.warnings.slice(0, 5)) console.log(`  warning: ${warning}`);
+      return;
+    }
+    if (source !== "ams") {
+      throw new Error(
+        `usage: memory import ams <dump.json> | memory import map <artifact.json> [--kind graphify|scip|lsp|static-analysis]`,
+      );
+    }
     const report = await importAmsDump(store, rootDir, file);
     if (args.flags.json === true) {
       console.log(JSON.stringify(report, null, 2));
@@ -6769,6 +6972,22 @@ async function runImport(args: ParsedArgs): Promise<void> {
   } finally {
     await store.close();
   }
+}
+
+function parseComplementaryMapKind(
+  value: string | undefined,
+): ComplementaryMapSourceKind | undefined {
+  if (value == null) return undefined;
+  const normalized = value.trim().toLowerCase();
+  if (
+    normalized === "graphify" ||
+    normalized === "scip" ||
+    normalized === "lsp" ||
+    normalized === "static-analysis"
+  ) {
+    return normalized;
+  }
+  throw new Error(`invalid complementary map kind "${value}"`);
 }
 
 async function runPromoteCmd(args: ParsedArgs): Promise<void> {
@@ -6912,6 +7131,8 @@ async function main(): Promise<void> {
       return runMemoryDecayViewer(args);
     case "merge-pass":
       return runMemoryMergePass(args);
+    case "tidy-review":
+      return runTidyReview(args);
     case "dashboard":
       return runDashboard(args);
     case "workbench":
@@ -6980,12 +7201,16 @@ async function main(): Promise<void> {
       return runExtract(args);
     case "extraction":
       return runExtraction(args);
+    case "map":
+      return runMap(args);
     case "code-drift":
       return runCodeDrift(args);
     case "code-curate":
       return runCodeCurate(args);
     case "search":
       return runSearch(args);
+    case "map-context":
+      return runMapContext(args);
     case "neighbors":
       return runNeighbors(args);
     case "traverse":

@@ -826,6 +826,85 @@ describe("startAttemptGuard — diff-anchored progress (ADR 0051, codex false-st
   });
 });
 
+// ---- lane-idle stall reaper wiring (issue #363) ----
+
+describe("runAgent — lane-idle reaper wiring", () => {
+  // The reaper reasons in epoch SECONDS; `now` here is ms (runAgent divides /1000).
+  const BASE_MS = 1_000_000_000;
+  const BASE_S = BASE_MS / 1000;
+
+  it("returns the 'no-sentinel' outcome when the lane-idle reaper reaps an idle run", async () => {
+    let clock = BASE_MS;
+    const sched = manualScheduler();
+    const controller = new AbortController();
+    const deps: SandcastleDeps = {
+      ...makeDeps(
+        (o) =>
+          new Promise<RunResult>((_resolve, reject) => {
+            o.signal?.addEventListener("abort", () => reject(o.signal?.reason ?? new Error("aborted")));
+          }),
+      ),
+      now: () => clock,
+      schedule: sched.schedule,
+      makeAbortController: () => controller,
+    };
+    const p = runAgent(deps, {
+      ...baseInput,
+      laneIdleThresholdSeconds: 600,
+      laneIdleKillThresholdSeconds: 1800,
+      laneIdlePollSeconds: 30,
+      // Lane last wrote at spawn; a sleep-only inner child — no agent turns, no
+      // build/test descendant under the tree, flat cpu.
+      laneMtimeProbe: () => BASE_S,
+      inspectTree: () => [{ command: "sleep", cpu: 0 }],
+    });
+    await sched.tick(); // worker age 0 → not yet a candidate
+    clock = BASE_MS + 1800_000; // idle 1800s ≥ kill, no active descendant → reap
+    await sched.tick();
+    const res = await p;
+    expect(res.outcome).toBe("no-sentinel");
+    expect(res.branch).toBe(baseInput.branch);
+    expect(res.commits).toEqual([]);
+  });
+
+  it("does NOT reap when an active vitest descendant is under the tree (busy-predicate)", async () => {
+    let clock = BASE_MS;
+    const sched = manualScheduler();
+    const controller = new AbortController();
+    let resolveRun: ((r: RunResult) => void) | undefined;
+    const deps: SandcastleDeps = {
+      ...makeDeps(() => new Promise<RunResult>((res) => (resolveRun = res))),
+      now: () => clock,
+      schedule: sched.schedule,
+      makeAbortController: () => controller,
+    };
+    const p = runAgent(deps, {
+      ...baseInput,
+      laneIdleThresholdSeconds: 600,
+      laneIdleKillThresholdSeconds: 1800,
+      laneMtimeProbe: () => BASE_S,
+      inspectTree: () => [{ command: "vitest", cpu: 0 }], // a test run mid-flight
+    });
+    clock = BASE_MS + 9999_000; // idle far past kill, but busy → never reaped
+    await sched.tick();
+    expect(controller.signal.aborted).toBe(false);
+    resolveRun?.(fakeResult({ completionSignal: DONE_SIGNAL }));
+    const res = await p;
+    expect(res.outcome).toBe("done");
+  });
+
+  it("does not arm the reaper when the lane probe / tree inspector are absent", async () => {
+    const deps = makeDeps(async () => fakeResult({ completionSignal: DONE_SIGNAL }));
+    const res = await runAgent(deps, {
+      ...baseInput,
+      laneIdleThresholdSeconds: 600,
+      laneIdleKillThresholdSeconds: 1800,
+      // no laneMtimeProbe / inspectTree → reaper stays disarmed
+    });
+    expect(res.outcome).toBe("done");
+  });
+});
+
 // ---- externalized proof-of-life (PR-B): onTick / onHeartbeat ----
 
 describe("startAttemptGuard — onTick (externalized heartbeat cadence)", () => {

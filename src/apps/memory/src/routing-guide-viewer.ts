@@ -81,6 +81,7 @@ function render(guide: MemoryRoutingGuide): string {
       ${metric("Target Files", guide.targetFiles.length)}
     </section>
     ${integrationSection(guide.integration)}
+    ${mapContextSection(guide)}
     ${rulesSection(guide.rules)}
     ${listSection("MCP Tools", guide.mcpTools)}
     ${listSection("CLI Fallbacks", guide.cliFallbacks)}
@@ -95,6 +96,26 @@ function render(guide: MemoryRoutingGuide): string {
 </html>`;
 }
 
+
+function mapContextSection(guide: MemoryRoutingGuide): string {
+  return `<section>
+    <h2>Map Context</h2>
+    <ul>
+      <li><strong>${escapeHtml(guide.mapContext.kind)}</strong><p class="meta">${escapeHtml(guide.mapContext.description)}</p></li>
+      <li><strong>Relation filters</strong><p class="meta">${escapeHtml(guide.mapContext.relationFilters.join(", "))}</p></li>
+      ${guide.mapContext.examples
+        .map(
+          (example) => `<li>
+        <strong>${escapeHtml(example.question)}</strong>
+        <p><code>${escapeHtml(example.call)}</code></p>
+        <p class="meta">Filters: ${escapeHtml(example.relationFilters.join(", "))}</p>
+        <p class="meta">${escapeHtml(example.followUp)}</p>
+      </li>`,
+        )
+        .join("")}
+    </ul>
+  </section>`;
+}
 
 function integrationSection(integration: MemoryAgentIntegration): string {
   return `<section>

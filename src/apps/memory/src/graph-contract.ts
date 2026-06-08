@@ -3,13 +3,15 @@ import type { ExportEdge } from "./export.js";
 import type { StoredNode } from "./graph-store.js";
 
 /**
- * Graph contract v1 — the versioned integration seam between `memory:export`
- * and any consumer (red-ui, scripts, future tools).
+ * Graph contract v2 — the versioned integration seam between RedDB-backed
+ * Memory state and any consumer (red-ui, scripts, future tools).
  *
- * `memory:export` emits this object under `graph.json#contract`. The contract
- * carries a `version` so producers and consumers can negotiate, and is the only
- * part of `graph.json` that consumers should treat as stable. The surrounding
- * dashboard fields (health, evidence, …) are diagnostic and may change.
+ * `memory map-contract` and the MCP `memory_map_contract` tool return this
+ * object directly. `memory:export` also emits it under `graph.json#contract`.
+ * The contract carries a `version` so producers and consumers can negotiate,
+ * and is the only part of `graph.json` that consumers should treat as stable.
+ * The surrounding dashboard fields (health, evidence, …) are diagnostic and
+ * may change.
  *
  * Design notes:
  *  - Every stored edge label collapses onto one of three directional **kinds**
@@ -23,7 +25,7 @@ import type { StoredNode } from "./graph-store.js";
  *    `exports` is the `properties.exports` string list captured by extraction.
  */
 
-export const GRAPH_CONTRACT_VERSION = "1.0.0";
+export const GRAPH_CONTRACT_VERSION = "2.0.0";
 
 export type EdgeKind = "imports" | "defines" | "references";
 
@@ -42,6 +44,16 @@ export interface ContractNode {
   layer: string | null;
   /** Community/cluster id when community detection ran; null otherwise. */
   community: string | null;
+  /** Producer confidence signal; null when unavailable on legacy rows. */
+  confidence: string | null;
+  /** Canonical source path/range/URN string; null when unavailable. */
+  source_location: string | null;
+  /** Write provenance as stored by Memory; null when unavailable. */
+  provenance: Record<string, unknown> | null;
+  /** Freshness timestamps and retention horizon, in epoch ms when available. */
+  freshness: ContractFreshness;
+  /** Node salience signal for ranking/filtering; null when unavailable. */
+  salience: number | null;
   /** True when no edge targets this node (no inbound edges). */
   orphan: boolean;
   /** Remaining node properties, preserved losslessly for consumers. */
@@ -49,6 +61,8 @@ export interface ContractNode {
 }
 
 export interface ContractEdge {
+  /** Stable edge id (RedDB rid). */
+  id: number;
   /** Source node id; the edge points source → target. */
   source: number;
   /** Target node id. */
@@ -57,8 +71,29 @@ export interface ContractEdge {
   kind: EdgeKind;
   /** Original stored edge label, preserved for traceability. */
   label: string;
+  /** RedDB edge weight. Distinct from salience. */
+  weight: number;
+  /** Consumer ranking salience. Null when Memory has not computed one. */
+  salience: number | null;
+  /** Producer confidence signal; null when unavailable on legacy rows. */
+  confidence: string | null;
+  /** Canonical source path/range/URN string; null when unavailable. */
+  source_location: string | null;
+  /** Write provenance as stored by Memory; null when unavailable. */
+  provenance: Record<string, unknown> | null;
+  /** Freshness timestamps and retention horizon, in epoch ms when available. */
+  freshness: ContractFreshness;
   /** Edges are directed; `source → target` is the semantic direction. */
   direction: "directed";
+  /** Remaining edge properties, preserved losslessly for consumers. */
+  metadata: Record<string, unknown>;
+}
+
+export interface ContractFreshness {
+  created_at: number | null;
+  updated_at: number | null;
+  accessed_at?: number | null;
+  expires_at?: number | null;
 }
 
 export interface ContractStats {
@@ -99,7 +134,33 @@ export function classifyEdgeKind(label: string): KindRule {
   return EDGE_KIND_RULES[label] ?? { kind: "references" };
 }
 
-const PROMOTED_PROPS = new Set(["description", "exports", "layer", "community"]);
+const PROMOTED_NODE_PROPS = new Set([
+  "description",
+  "exports",
+  "layer",
+  "community",
+  "confidence",
+  "source",
+  "source_location",
+  "provenance",
+  "created_at",
+  "updated_at",
+  "accessed_at",
+  "expires_at",
+  "salience",
+]);
+
+const PROMOTED_EDGE_PROPS = new Set([
+  "weight",
+  "confidence",
+  "source",
+  "source_location",
+  "provenance",
+  "created_at",
+  "updated_at",
+  "expires_at",
+  "salience",
+]);
 
 function nodeDescription(props: Record<string, unknown>): string | null {
   for (const key of ["description", "summary", "content"] as const) {
@@ -115,12 +176,47 @@ function nodeExports(props: Record<string, unknown>): string[] {
   return value.filter((item): item is string => typeof item === "string");
 }
 
-function nodeMetadata(props: Record<string, unknown>): Record<string, unknown> {
+function metadataWithout(
+  props: Record<string, unknown>,
+  promoted: Set<string>,
+): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(props)) {
-    if (!PROMOTED_PROPS.has(key)) out[key] = value;
+    if (!promoted.has(key)) out[key] = value;
   }
   return out;
+}
+
+function recordValue(value: unknown): Record<string, unknown> | null {
+  if (value == null || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function stringValue(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+function numberValue(value: unknown): number | null {
+  const n = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
+  return Number.isFinite(n) ? n : null;
+}
+
+function confidenceValue(props: Record<string, unknown>): string | null {
+  const provenance = recordValue(props.provenance);
+  return stringValue(props.confidence) ?? stringValue(provenance?.confidence);
+}
+
+function sourceLocation(props: Record<string, unknown>): string | null {
+  return stringValue(props.source_location) ?? stringValue(props.source);
+}
+
+function freshness(props: Record<string, unknown>, includeAccess = false): ContractFreshness {
+  return {
+    created_at: numberValue(props.created_at),
+    updated_at: numberValue(props.updated_at),
+    ...(includeAccess ? { accessed_at: numberValue(props.accessed_at) } : {}),
+    ...(props.expires_at != null ? { expires_at: numberValue(props.expires_at) } : {}),
+  };
 }
 
 export interface BuildContractInput {
@@ -137,7 +233,22 @@ export function buildGraphContract({
   const contractEdges: ContractEdge[] = edges.map((edge) => {
     const rule = classifyEdgeKind(edge.label);
     const [source, target] = rule.flip ? [edge.to, edge.from] : [edge.from, edge.to];
-    return { source, target, kind: rule.kind, label: edge.label, direction: "directed" as const };
+    const props = edge.properties as Record<string, unknown>;
+    return {
+      id: edge.rid,
+      source,
+      target,
+      kind: rule.kind,
+      label: edge.label,
+      weight: edge.weight,
+      salience: numberValue(props.salience),
+      confidence: confidenceValue(props),
+      source_location: sourceLocation(props),
+      provenance: recordValue(props.provenance),
+      freshness: freshness(props),
+      direction: "directed" as const,
+      metadata: metadataWithout(props, PROMOTED_EDGE_PROPS),
+    };
   });
 
   const inbound = new Set<number>(contractEdges.map((edge) => edge.target));
@@ -152,8 +263,13 @@ export function buildGraphContract({
       exports: nodeExports(props),
       layer: typeof props.layer === "string" ? props.layer : null,
       community: communities.get(node.rid) ?? null,
+      confidence: confidenceValue(props),
+      source_location: sourceLocation(props),
+      provenance: recordValue(props.provenance),
+      freshness: freshness(props, true),
+      salience: numberValue(props.salience),
       orphan: !inbound.has(node.rid),
-      metadata: nodeMetadata(props),
+      metadata: metadataWithout(props, PROMOTED_NODE_PROPS),
     };
   });
 
@@ -194,16 +310,38 @@ const ContractNodeZ = z.object({
   exports: z.array(z.string()),
   layer: z.string().nullable(),
   community: z.string().nullable(),
+  confidence: z.string().nullable(),
+  source_location: z.string().nullable(),
+  provenance: z.record(z.unknown()).nullable(),
+  freshness: z.object({
+    created_at: z.number().nullable(),
+    updated_at: z.number().nullable(),
+    accessed_at: z.number().nullable().optional(),
+    expires_at: z.number().nullable().optional(),
+  }),
+  salience: z.number().nullable(),
   orphan: z.boolean(),
   metadata: z.record(z.unknown()),
 });
 
 const ContractEdgeZ = z.object({
+  id: z.number(),
   source: z.number(),
   target: z.number(),
   kind: EDGE_KIND,
   label: z.string(),
+  weight: z.number(),
+  salience: z.number().nullable(),
+  confidence: z.string().nullable(),
+  source_location: z.string().nullable(),
+  provenance: z.record(z.unknown()).nullable(),
+  freshness: z.object({
+    created_at: z.number().nullable(),
+    updated_at: z.number().nullable(),
+    expires_at: z.number().nullable().optional(),
+  }),
   direction: z.literal("directed"),
+  metadata: z.record(z.unknown()),
 });
 
 const ContractStatsZ = z.object({
@@ -249,7 +387,7 @@ export function validateGraphContract(value: unknown): ValidationResult {
 export function graphContractJsonSchema(): Record<string, any> {
   return {
     $schema: "http://json-schema.org/draft-07/schema#",
-    $id: "https://reddb.io/schemas/memory/graph-contract/v1.json",
+    $id: "https://reddb.io/schemas/memory/graph-contract/v2.json",
     title: "Memory graph contract",
     description:
       "Versioned integration seam emitted by memory:export at graph.json#contract.",
@@ -270,6 +408,11 @@ export function graphContractJsonSchema(): Record<string, any> {
             "exports",
             "layer",
             "community",
+            "confidence",
+            "source_location",
+            "provenance",
+            "freshness",
+            "salience",
             "orphan",
             "metadata",
           ],
@@ -282,6 +425,21 @@ export function graphContractJsonSchema(): Record<string, any> {
             exports: { type: "array", items: { type: "string" } },
             layer: { type: ["string", "null"] },
             community: { type: ["string", "null"] },
+            confidence: { type: ["string", "null"] },
+            source_location: { type: ["string", "null"] },
+            provenance: { type: ["object", "null"] },
+            freshness: {
+              type: "object",
+              required: ["created_at", "updated_at"],
+              additionalProperties: false,
+              properties: {
+                created_at: { type: ["number", "null"] },
+                updated_at: { type: ["number", "null"] },
+                accessed_at: { type: ["number", "null"] },
+                expires_at: { type: ["number", "null"] },
+              },
+            },
+            salience: { type: ["number", "null"] },
             orphan: { type: "boolean" },
             metadata: { type: "object" },
           },
@@ -291,14 +449,45 @@ export function graphContractJsonSchema(): Record<string, any> {
         type: "array",
         items: {
           type: "object",
-          required: ["source", "target", "kind", "label", "direction"],
+          required: [
+            "id",
+            "source",
+            "target",
+            "kind",
+            "label",
+            "weight",
+            "salience",
+            "confidence",
+            "source_location",
+            "provenance",
+            "freshness",
+            "direction",
+            "metadata",
+          ],
           additionalProperties: false,
           properties: {
+            id: { type: "integer" },
             source: { type: "integer" },
             target: { type: "integer" },
             kind: { enum: ["imports", "defines", "references"] },
             label: { type: "string" },
+            weight: { type: "number" },
+            salience: { type: ["number", "null"] },
+            confidence: { type: ["string", "null"] },
+            source_location: { type: ["string", "null"] },
+            provenance: { type: ["object", "null"] },
+            freshness: {
+              type: "object",
+              required: ["created_at", "updated_at"],
+              additionalProperties: false,
+              properties: {
+                created_at: { type: ["number", "null"] },
+                updated_at: { type: ["number", "null"] },
+                expires_at: { type: ["number", "null"] },
+              },
+            },
             direction: { const: "directed" },
+            metadata: { type: "object" },
           },
         },
       },

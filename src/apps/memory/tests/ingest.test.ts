@@ -86,11 +86,23 @@ describe("ingestProject over a TS+MD fixture repo", () => {
       expect(issueToken).toBeDefined();
       expect(verifyToken).toBeDefined();
       expect(userId).toBeDefined();
-      expect(edges).toContainEqual(
+      const callEdge = edges.find(
+        (edge) =>
+          edge.from_rid === issueToken?.rid &&
+          edge.to_rid === verifyToken?.rid &&
+          edge.label === "CALLS",
+      );
+      expect(callEdge).toBeDefined();
+      expect(Number(callEdge?.weight ?? callEdge?.WEIGHT)).toBeGreaterThan(0);
+      expect(callEdge?.properties ?? callEdge?.PROPERTIES).toEqual(
         expect.objectContaining({
-          from_rid: issueToken?.rid,
-          to_rid: verifyToken?.rid,
-          label: "CALLS",
+          confidence: "EXTRACTED",
+          extraction_backend: "typescript-compiler",
+          topological_weight: expect.any(Number),
+          provenance: expect.objectContaining({
+            source_kind: "derived",
+            writer: "extract-code",
+          }),
         }),
       );
       expect(edges).toContainEqual(
@@ -206,7 +218,7 @@ describe("ingestProject over a TS+MD fixture repo", () => {
   );
 
   test(
-    "ingests IMPORTS edges and does not duplicate them on re-ingest",
+    "ingests IMPORTS plus compiler-resolved cross-file edges without duplicating on re-ingest",
     async () => {
       const store = await openStore();
       await ingestProject(store, { cwd: IMPORT_FIXTURE_REPO });
@@ -235,6 +247,19 @@ describe("ingestProject over a TS+MD fixture repo", () => {
       const after = await store.stats();
       expect(after.edges).toBe(before.edges);
       expect(after.nodes).toBe(before.nodes);
+
+      const render = nodes.find((n) => n.label.endsWith("/src/app.ts#render"));
+      const localValue = nodes.find((n) => n.label.endsWith("/src/local.ts#localValue"));
+      const localOptions = nodes.find((n) => n.label.endsWith("/src/local.ts#LocalOptions"));
+      expect(render).toBeDefined();
+      expect(localValue).toBeDefined();
+      expect(localOptions).toBeDefined();
+      await expect(store.findEdge(render!.rid, localValue!.rid, "CALLS")).resolves.toBeTypeOf(
+        "number",
+      );
+      await expect(store.findEdge(render!.rid, localOptions!.rid, "USES_TYPE")).resolves.toBeTypeOf(
+        "number",
+      );
     },
     TIMEOUT,
   );

@@ -3,7 +3,7 @@ title: merge: #227 AFK: make <promise> sentinel the canonical attempt exit signa
 type: source
 tags: [pr, merged]
 created: 2026-05-30
-updated: 2026-05-30
+updated: 2026-06-06
 sources: [pr-265]
 pr: 265
 merge_sha: 9e2ef6a4b314e155183c961364d93dbd90ed0c6b
@@ -19,6 +19,14 @@ merge_sha: 9e2ef6a4b314e155183c961364d93dbd90ed0c6b
 ## Summary
 
 Automated AFK landing for #227. Per-attempt history lives in the issue Envelopes, the JSONL logs, and the `afk-attempts/*` snapshot branches.
+
+## Current ADR record (2026-06-06)
+
+ADR 0028 remains accepted, but the "canonical attempt-exit signal" claim is now
+scoped to agent-authored happy-path exits: `DONE`, `BLOCKED`, and `NO MORE
+TASKS`. Runtime-initiated terminal paths do not require a promise: ADR 0044's
+progress-guard timeout parks as `blocked:stalled`, and the no-sentinel salvage
+path can merge only when feedback passes.
 
 <!-- codesmith:footer -->
 ---
@@ -43,4 +51,3 @@ Automated AFK landing for #227. Per-attempt history lives in the issue Envelopes
 - `plugins/dev/skills/engineering/afk/scripts/lib/attempt-reader.sh`
 - `plugins/dev/skills/engineering/afk/scripts/tests/attempt-reader.test.sh`
 - `plugins/dev/skills/engineering/afk/scripts/tests/lifecycle-attempt-rename.test.sh`
-

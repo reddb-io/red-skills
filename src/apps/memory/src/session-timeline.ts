@@ -125,6 +125,34 @@ function toEntry(event: MemoryEvent): SessionTimelineEntry {
     };
   }
 
+  if (payload.event_type === "memory.context-pack.generated") {
+    return {
+      id: event.id,
+      occurred_at: event.occurred_at,
+      kind: event.kind,
+      session_id: sessionIdOf(event),
+      actor: actorOf(event),
+      title: "context pack generated",
+      detail: `${payload.entry_count} citation(s); ${payload.used_chars} chars; surface:${payload.surface}`,
+      outcome: payload.status === "ok" ? "succeeded" : "noop",
+      source: sourceOf(event),
+    };
+  }
+
+  if (payload.event_type === "memory.injection.delivered") {
+    return {
+      id: event.id,
+      occurred_at: event.occurred_at,
+      kind: event.kind,
+      session_id: sessionIdOf(event),
+      actor: actorOf(event),
+      title: "memory injection delivered",
+      detail: `${payload.delivered_citation_ids.length} citation(s); ${payload.delivered_node_ids.length} node(s); surface:${payload.delivery_surface}`,
+      outcome: "succeeded",
+      source: sourceOf(event),
+    };
+  }
+
   return {
     id: event.id,
     occurred_at: event.occurred_at,

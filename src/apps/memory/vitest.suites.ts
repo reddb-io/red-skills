@@ -49,6 +49,7 @@ export const INTEGRATION_TESTS: readonly string[] = [
   "evidence-card.test.ts",
   "extraction-status.test.ts",
   "governance.test.ts",
+  "governance-tidy-review.test.ts",
   "handoff.test.ts",
   "health.test.ts",
   "hook-coverage.test.ts",

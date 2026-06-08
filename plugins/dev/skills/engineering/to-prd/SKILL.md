@@ -11,13 +11,11 @@ The issue tracker and triage label vocabulary should have been provided to you �
 
 1. Explore the repo to understand the current state of the codebase, if you haven't already. Use the project's domain glossary vocabulary throughout the PRD, and respect any ADRs in the area you're touching.
 
-2. Sketch out the major modules you will need to build or modify to complete the implementation. Actively look for opportunities to extract deep modules that can be tested in isolation.
+2. Sketch out the testing seams for the feature. Prefer existing, high-level seams over new low-level ones. If new seams are needed, propose them at the highest point that can exercise the behavior.
 
-A deep module (as opposed to a shallow module) is one which encapsulates a lot of functionality in a simple, testable interface which rarely changes.
+Check with the user that these seams match their expectations.
 
-Check with the user that these modules match their expectations. Check with the user which modules they want tests written for.
-
-**Capture every HITL call** made during the conversation that led to this PRD — module shape choices, trade-offs the user took a side on, alternatives they rejected, constraints they imposed. These go into the `Human Decisions` section of the template. Do not silently fold them into `Implementation Decisions` — once `/to-issues` slices this PRD and `/afk` picks up the children, the human's calls become indistinguishable from agent inference unless they are flagged here.
+**Capture every HITL call** made during the conversation that led to this PRD — testing seam choices, module shape choices, trade-offs the user took a side on, alternatives they rejected, constraints they imposed. These go into the `Human Decisions` section of the template. Do not silently fold them into `Implementation Decisions` — once `/to-issues` slices this PRD and `/afk` picks up the children, the human's calls become indistinguishable from agent inference unless they are flagged here.
 
 3. Write the PRD using the template below, then publish it to the project issue tracker.
 
@@ -78,7 +76,7 @@ Exception: if a prototype produced a snippet that encodes a decision more precis
 A list of testing decisions that were made. Include:
 
 - A description of what makes a good test (only test external behavior, not implementation details)
-- Which modules will be tested
+- Which seams or modules will be tested
 - Prior art for the tests (i.e. similar types of tests in the codebase)
 
 ## Out of Scope

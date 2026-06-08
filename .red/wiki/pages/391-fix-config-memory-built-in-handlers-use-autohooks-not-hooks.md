@@ -3,7 +3,7 @@ title: fix(config): memory built-in handlers use autohooks, not hooks (ADR 0042 
 type: source
 tags: [pr, merged]
 created: 2026-06-02
-updated: 2026-06-02
+updated: 2026-06-06
 sources: [pr-391]
 pr: 391
 merge_sha: d9dae1f4af5720609bf8c4c0a81c897ccb487b37
@@ -24,6 +24,11 @@ Follow-up to #390 (ADR 0042). Fixes an overload I introduced: `plugins.memory.ho
 
 - **User hooks** (`hooks:`, any plugin) — shell interceptors the user *writes and controls*. `plugins.dev.afk.hooks.pre_session: [./.red/hooks/boot.sh, …]`.
 - **Built-in hooks** — handlers the plugin *ships and owns* (memory's 4 auto-firing Claude Code event handlers; AFK's cargo/gradle defaults). Not user config; where toggleable, the toggle is a plain enable under a **different** key → `plugins.memory.autohooks.<event>: true`.
+
+Current ADR record (2026-06-06): ADR 0042 keeps `hooks` for user-authored shell
+hooks and `autohooks` for built-in Memory handlers. The unified config contract
+is still `plugins.memory` in `.red/config.yaml`, with legacy JSON as a read
+fallback only.
 
 ```yaml
 plugins:
@@ -74,4 +79,3 @@ memory typecheck clean; `shared-config` 11 pass; init-wizard + backup + graph-st
 - `.red/adr/0042-plugin-config-unified-under-red-config-yaml.md`
 - `src/apps/memory/src/shared-config.ts`
 - `src/apps/memory/tests/shared-config.test.ts`
-

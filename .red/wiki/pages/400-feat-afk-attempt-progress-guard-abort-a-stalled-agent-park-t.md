@@ -3,7 +3,7 @@ title: feat(afk): attempt progress guard — abort a stalled agent, park to read
 type: source
 tags: [pr, merged]
 created: 2026-06-02
-updated: 2026-06-02
+updated: 2026-06-06
 sources: [pr-400]
 pr: 400
 merge_sha: 55a2819935d8acea6425d78aa654b1af3f45fb9b
@@ -38,13 +38,21 @@ Liveness ≠ progress. The missing guard is a wall-clock bound on **progress**.
 - **Cap**: `RED_AFK_ATTEMPT_TIMEOUT_S` / `plugins.dev.afk.attempt_timeout`, default **2700s (45min)**, typo-safe.
 - **Armed only under no-sandbox** (commits aren't host-visible under docker/podman mid-run; idle timeout + maxIterations still apply there).
 
+## Current ADR record (2026-06-06)
+
+ADR 0044 is accepted as the attempt-progress guard. ADR 0028 now scopes
+`<promise>` canonicality to agent-authored happy-path exits; the guard's timeout
+is a runtime-initiated terminal path that emits no promise and parks as
+`blocked:stalled`. ADR 0051 later refines the progress signal so productive
+Codex work can reset the guard on worktree edits, not only commits.
+
 ## Tests
 
 dev suite **853 pass** (+9): guard cap / commit-reset / unborn-branch, `runAgent` timeout wiring + signal pass-through, `parseAttemptTimeout`, and `processIssue` timeout→stalled routing (→ ready-for-human + blocked:stalled, envelope, no post_attempt). typecheck clean. Guard logic is pure over an injected clock/scheduler/headProbe — no real timers.
 
 ## Follow-up (PR-B)
 
-Externalize proof-of-life: enrich the firehose heartbeat record with progress/liveness fields + a `state.last_progress_at` + an `on_heartbeat` integration hook (the "externalizar pra quem quiser integrar" piece).
+Externalize proof-of-life: enrich the firehose heartbeat record with progress/liveness fields + a `state.last_progress_at` + an `on_heartbeat` integration hook for external integrations that want a push signal.
 
 drift-guard: `Memory-NoIngest` trailer (ADR 0027).
 
@@ -85,4 +93,3 @@ drift-guard: `Memory-NoIngest` trailer (ADR 0027).
 - `src/apps/dev/src/runtime/wire.ts`
 - `src/apps/dev/tests/execution.test.ts`
 - `src/apps/dev/tests/process-issue.test.ts`
-
