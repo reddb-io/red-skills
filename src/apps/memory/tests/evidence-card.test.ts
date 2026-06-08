@@ -95,6 +95,10 @@ describe("Evidence card YAML contract", () => {
 
     const roundTrip = parseEvidenceCardYaml(formatEvidenceCardYaml(card));
     expect(roundTrip).toEqual(card);
+
+    const otherRoot = await tempRoot();
+    const sameEvidence = await createEvidenceCard(otherRoot, cardInput(), new Date("2026-06-08T04:00:00.000Z"));
+    expect(sameEvidence.id).toBe(card.id);
   });
 
   test("reports validation failures for missing required contract fields", () => {

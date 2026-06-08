@@ -162,7 +162,7 @@ export const EvidenceCardZ = z.object({
 }).strict();
 
 export function evidenceInboxRoot(rootDir: string): string {
-  return join(rootDir, ".red", "memory", "evidence", "inbox");
+  return join(rootDir, ".red", "memory", "inbox", "evidence");
 }
 
 export async function createEvidenceCard(
@@ -176,7 +176,6 @@ export async function createEvidenceCard(
     input.source.ref,
     input.summary,
     input.proposedLesson.text,
-    createdAt,
   ]).slice(0, 12)}`;
   const card: EvidenceCard = {
     contract: EVIDENCE_CARD_CONTRACT,

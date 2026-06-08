@@ -874,10 +874,12 @@ async function runEvidence(args: ParsedArgs): Promise<void> {
       if (args.flags.yes !== true) {
         throw new Error("memory evidence reject requires explicit --yes approval");
       }
+      const reason = stringFlag(args.flags, "reason")?.trim();
+      if (!reason) throw new Error("memory evidence reject requires a non-empty --reason");
       const card = await rejectEvidenceCard(
         rootDir,
         id,
-        stringFlag(args.flags, "reason") ?? "",
+        reason,
         stringFlag(args.flags, "reviewer"),
       );
       return printEvidenceResult("rejected", card, args.flags.json === true);
