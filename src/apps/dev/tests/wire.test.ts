@@ -8,6 +8,7 @@ import {
   collectMonitorInputs,
   readFleetState,
   resolveAttemptGuardArming,
+  withTimeout,
 } from "../src/runtime/wire.js";
 
 function scratch(): string {
@@ -271,5 +272,41 @@ describe("collectMonitorInputs", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe("withTimeout — bounded cold-cache refresh", () => {
+  it("resolves with the promise value when it settles before the deadline", async () => {
+    const result = await withTimeout(Promise.resolve(42), 500, -1);
+    expect(result).toBe(42);
+  });
+
+  it("resolves with the fallback when the promise does not settle within the deadline", async () => {
+    const never = new Promise<number>(() => { /* intentionally never resolves */ });
+    const result = await withTimeout(never, 20, -1);
+    expect(result).toBe(-1);
+  });
+
+  it("resolves with fallback when promise settles after the deadline (no unhandled rejection)", async () => {
+    const lateResolve = new Promise<number>((resolve) => {
+      setTimeout(() => resolve(99), 200);
+    });
+    const result = await withTimeout(lateResolve, 20, -1);
+    expect(result).toBe(-1);
+  });
+
+  it("propagates rejection when the promise rejects before the deadline", async () => {
+    const failing = Promise.reject(new Error("gh auth failed"));
+    await expect(withTimeout(failing, 500, -1)).rejects.toThrow("gh auth failed");
+  });
+
+  it("returns fallback and avoids unhandled rejection when promise rejects after deadline", async () => {
+    let lateReject!: (err: Error) => void;
+    const lateRejecting = new Promise<number>((_, reject) => {
+      lateReject = reject;
+    });
+    const result = await withTimeout(lateRejecting.catch(() => -1), 20, -1);
+    lateReject(new Error("network gone"));
+    expect(result).toBe(-1);
   });
 });
