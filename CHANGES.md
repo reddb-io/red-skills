@@ -6,6 +6,13 @@ Upstream base: `mattpocock/skills@aaf2453fbdfe7a15c07f11d861224f34ab4b53cb` (see
 
 ---
 
+## afk (engineering) — inner agent must not create PRs / wait on CI; commit + DONE only
+
+- **status**: modified
+- **upstream**: —
+- **why**: A live fleet worker did the work, then **created its own PR and "waited for CI"** instead of emitting `<promise>DONE</promise>`. Because it never signalled DONE, the orchestrator stalled behind it; the next re-invocation opened a **second duplicate PR** for the same issue — which had meanwhile been landed and closed — so the worker ground an already-closed issue and littered duplicate PRs until the attempt guard would reap it. The AGENT-PROMPT documented "the orchestrator owns the merge gate" but never explicitly forbade `gh pr create` / `gh pr merge` / `gh issue close` / CI-waiting on the inner agent (only the reddb run avoided it via an ad-hoc `-r` block).
+- **what changed**: Added a binding rule to *What "Done" Means* in `AGENT-PROMPT.md`: the inner agent stops at commit + `DONE`; it must NOT run `gh pr create` / `gh pr merge` / `gh issue close` or any land command, and must NOT wait for / poll CI or external review checks. PR/merge/close/CI is orchestrator mechanism that runs *after* the sentinel. Names the exact runaway (self-PR → no DONE → orchestrator stall → duplicate PR on re-invocation → grinding a closed issue) so the rule is grounded.
+
 ## ff (productivity) — translate to English + `--dispatch` flag; default is reframe-only (no auto-execute)
 
 - **status**: modified
