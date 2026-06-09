@@ -120,6 +120,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [fix(memory): resolveRedBinary honours REDDB_BIN before the SDK package lookup](./pages/230-fix-memory-resolveredbinary-honours-reddb-bin-before-the-sdk.md)
 - [fix(memory): skills invoke scripts/bootstrap.mjs, not the absent dist/cli.js](./pages/231-fix-memory-skills-invoke-scripts-bootstrap-mjs-not-the-absen.md)
 - [fix(release): drop dead dist-bundle/ gitignore entries + ship ADR 0052 naming](./pages/481-fix-release-drop-dead-dist-bundle-gitignore-entries-ship-adr.md)
+- [fix(skills): setup-red-skills Section F cached-bundle-first statusline (#591)](./pages/609-fix-skills-setup-red-skills-section-f-cached-bundle-first-st.md)
 - [fix(statusline): re-assert Codex tui.status_line on session_start (survives config resets)](./pages/380-fix-statusline-re-assert-codex-tui-status-line-on-session-st.md)
 - [fix(statusline): render from cached bundle, not the fetch-launcher (survives plugin updates)](./pages/379-fix-statusline-render-from-cached-bundle-not-the-fetch-launc.md)
 - [fix(statusline): resolve the AFK bundle by version (sort -V), not mtime](./pages/412-fix-statusline-resolve-the-afk-bundle-by-version-sort-v-not.md)
