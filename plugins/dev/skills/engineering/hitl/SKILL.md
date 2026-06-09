@@ -65,6 +65,8 @@ Try to identify a single pending decision from:
 - latest AFK Envelope with status `blocked`, `no-sentinel`, or `merge-conflict`;
 - advisory thread discussion only when it contains one clear question or decision point.
 
+Ignore this loop's own prior HITL-resolution directives when extracting: skip any `<details data-kind="directive">` block whose `<summary>` is `HITL resolution`, or whose first useful line is a bare field label such as `Pending decision:`, `Human answer:`, `Disposition:`, or `Next pending decision:`. Those echo the placeholder header rather than a real decision, so re-reading them on a re-loop would surface the literal string `Pending decision:` instead of the real `## Current blocker` next-field.
+
 If exactly one pending decision is clear, present it:
 
 ```text
@@ -124,7 +126,7 @@ If delegable:
 
 1. Clear the issue-body `## Current blocker` section to `None` and add a checked entry under `## Resolved blockers`.
 2. Update or create the issue-body `## Agent brief` section.
-3. Remove `ready-for-human`.
+3. Remove `ready-for-human` and every stale `blocked:*` label — the blocker is resolved, so the reason that parked the issue must not survive into `ready-for-agent`.
 4. Add `ready-for-agent`.
 
 If non-delegable:

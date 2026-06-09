@@ -6,6 +6,13 @@ Upstream base: `mattpocock/skills@aaf2453fbdfe7a15c07f11d861224f34ab4b53cb` (see
 
 ---
 
+## hitl (engineering) — ignore the loop's own prior resolution directive + shed stale blocked:* labels (#586)
+
+- **status**: modified
+- **upstream**: —
+- **why**: On a HITL re-loop, the pending-decision extractor re-read the loop's own prior `<details data-kind="directive"><summary>HITL resolution</summary>` comment and surfaced the literal placeholder label `Pending decision:` instead of the real `## Current blocker` next-field. Separately, a delegable resolution moved the issue back to `ready-for-agent` while still wearing the stale `blocked:*` reason that parked it.
+- **what changed**: Documented in Step 3 that extraction must ignore self-authored HITL-resolution directives (summary `HITL resolution`, or a first useful line that is a bare field label like `Pending decision:`), and in the delegable mutation step that every stale `blocked:*` label is shed alongside `ready-for-human`. Mirrors the runtime fix in `src/apps/dev/src/core/hitl-decision-extraction.ts` and `hitl-resolution-plan.ts`.
+
 ## afk (engineering) — inner agent must not create PRs / wait on CI; commit + DONE only
 
 - **status**: modified

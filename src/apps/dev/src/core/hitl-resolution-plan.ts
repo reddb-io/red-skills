@@ -5,6 +5,9 @@ export interface HitlResolutionIssue {
   number: number;
   title: string;
   body: string;
+  /** The issue's current labels, used to shed stale `blocked:*` reasons when the
+   * issue becomes delegable. Optional; when absent no blocker labels are shed. */
+  labels?: string[];
 }
 
 export type HitlResolutionDisposition =
@@ -33,6 +36,14 @@ export interface HitlResolutionPlan {
 
 function trimBlock(value: string): string {
   return value.trim().replace(/\n{3,}/g, "\n\n");
+}
+
+/** The stale `blocked:*` reason labels carried by the issue. When it becomes
+ * delegable the blocker is resolved, so these must be shed alongside
+ * `ready-for-human` — otherwise the issue returns to `ready-for-agent` still
+ * wearing the reason that parked it. */
+function staleBlockerLabels(labels: readonly string[] | undefined): string[] {
+  return (labels ?? []).filter((label) => label.startsWith("blocked:"));
 }
 
 function directiveComment(input: HitlResolutionInput): string {
@@ -94,7 +105,7 @@ export function planHitlResolution(input: HitlResolutionInput): HitlResolutionPl
       commentBody: directiveComment(input),
       bodyUpdate: upsertMarkdownSection(cleared, "Agent brief", input.disposition.agentBrief),
       addLabels: ["ready-for-agent"],
-      removeLabels: ["ready-for-human"],
+      removeLabels: ["ready-for-human", ...staleBlockerLabels(input.issue.labels)],
     };
   }
 
