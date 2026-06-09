@@ -152,6 +152,26 @@ describe("doLanding — happy paths", () => {
     expect(j.some((c) => c.includes("pr list") || c.includes("pr merge"))).toBe(false);
     expect(h.firedHooks).toEqual(["pre_merge", "post_merge"]);
   });
+
+  it("locked with non-main lock-branch → integrates origin/<lock-branch>, merges attempt, pushes lock-branch (never main)", async () => {
+    // Regression: when lock-value != "main", the landing must target the resolved
+    // base (lock-branch), not the primary checkout's HEAD which the boot precheck
+    // used to force to "main" unconditionally (#569).
+    const h = harness({ locked: true });
+    h.input.base = "feature-locked";
+    const r = await doLanding(h.deps, h.input, h.hooks);
+    expect(r).toEqual({ ok: true, locked: true });
+    const j = joined(h.mergeCalls);
+    // Integrate step synced the lock branch, not main.
+    expect(j.some((c) => c.includes("merge --ff-only origin/feature-locked"))).toBe(true);
+    expect(j.some((c) => c.includes("merge --ff-only origin/main"))).toBe(false);
+    // Attempt branch was merged (into current HEAD = lock-branch after the precheck fix).
+    expect(j.some((c) => c.includes("merge --no-ff afk/wAAAA/9-fix-the-thing"))).toBe(true);
+    // Push targeted the lock branch, not main.
+    expect(j.some((c) => c.includes("push origin feature-locked"))).toBe(true);
+    expect(j.some((c) => c.includes("push origin main"))).toBe(false);
+    expect(h.firedHooks).toEqual(["pre_merge", "post_merge"]);
+  });
 });
 
 describe("doLanding — abort / failure short-circuits", () => {

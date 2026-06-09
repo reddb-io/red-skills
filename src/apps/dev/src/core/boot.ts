@@ -68,6 +68,13 @@ export interface PrecheckFacts {
   hasMainBranch: boolean;
   /** `git branch --show-current` in the primary checkout. */
   currentBranch: string;
+  /**
+   * The currently locked branch from `.red/tmp/branch-lock.yaml`, or
+   * `undefined` when the session is unlocked. When set, the precheck gates on
+   * `currentBranch === lockedBranch` rather than `currentBranch === "main"`,
+   * so a locked checkout is on the lock branch, not main.
+   */
+  lockedBranch?: string;
   pnpmInstalled: boolean;
 }
 
@@ -93,7 +100,8 @@ export function precheck(facts: PrecheckFacts): PrecheckResult {
     }
   }
   if (!facts.hasMainBranch) return { ok: false, failed: "no-main-branch" };
-  if (facts.currentBranch !== "main") {
+  const expectedBranch = facts.lockedBranch ?? "main";
+  if (facts.currentBranch !== expectedBranch) {
     return { ok: false, failed: "not-on-main", detail: facts.currentBranch };
   }
   const warnings: string[] = [];

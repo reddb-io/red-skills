@@ -81,6 +81,29 @@ describe("precheck", () => {
     });
   });
 
+  it("locked: passes when currentBranch matches the lock value", () => {
+    expect(precheck(facts({ currentBranch: "feature-locked", lockedBranch: "feature-locked" }))).toEqual({
+      ok: true,
+      warnings: [],
+    });
+  });
+
+  it("locked: fails not-on-main when currentBranch is main instead of the lock value", () => {
+    expect(precheck(facts({ currentBranch: "main", lockedBranch: "feature-locked" }))).toEqual({
+      ok: false,
+      failed: "not-on-main",
+      detail: "main",
+    });
+  });
+
+  it("locked: fails not-on-main when currentBranch is a different branch than the lock value", () => {
+    expect(precheck(facts({ currentBranch: "other-branch", lockedBranch: "feature-locked" }))).toEqual({
+      ok: false,
+      failed: "not-on-main",
+      detail: "other-branch",
+    });
+  });
+
   it("treats a missing pnpm as a warning, not a failure", () => {
     const r = precheck(facts({ pnpmInstalled: false }));
     expect(r.ok).toBe(true);
