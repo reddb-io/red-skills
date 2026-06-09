@@ -23,8 +23,10 @@
 # (worktrees are how /afk works and are exempt by scope), and any other command.
 #
 # Recognition is intentionally conservative: it scans the token stream for a
-# `git` token immediately followed by a recognised subcommand, so a compound
-# command (`cd x && git reset --hard`) is still classified.
+# `git` token, skips any global options between `git` and the subcommand
+# (`git -C <path> checkout x`, `git --git-dir=… switch y`, `git -c k=v …`), and
+# classifies the recognised subcommand, so a compound command
+# (`cd x && git reset --hard`) and a global-option form are both classified.
 #
 # Public surface:
 #   classify_git_command <lock_branch> <command>
@@ -36,6 +38,33 @@
 #     config-flag guard from ADR 0043: unlike classify_git_command it has no
 #     lock branch and only cares about branch movement, not work-loss commands.
 
+# _git_subcommand_index <toks-name> <git-index>
+# Given the name of the token array and the index of a `git` token, echoes the
+# index of the git subcommand, skipping any leading global options. Global
+# options that take a separate argument (`-C <path>`, `-c <name=value>`,
+# `--git-dir <path>`, `--work-tree <path>`, `--namespace <name>`,
+# `--exec-path <path>`, `--super-prefix <path>`) consume the following token;
+# the `--opt=value` form is self-contained, and bare flags (`-p`, `--no-pager`,
+# `--bare`, …) consume only themselves. Echoes the array length when no
+# subcommand follows.
+_git_subcommand_index() {
+  local -n _t="$1"
+  local k=$(( $2 + 1 ))
+  local len=${#_t[@]}
+  while (( k < len )); do
+    local tok="${_t[k]}"
+    case "$tok" in
+      -C|-c|--git-dir|--work-tree|--namespace|--exec-path|--super-prefix)
+        k=$(( k + 2 )); continue ;;   # option + its separate argument
+      --*=*|-*)
+        k=$(( k + 1 )); continue ;;   # `--opt=value` or a bare flag
+      *)
+        break ;;                      # the subcommand token
+    esac
+  done
+  echo "$k"
+}
+
 # classify_git_command <lock_branch> <command>
 classify_git_command() {
   local _lock="$1" _cmd="$2"
@@ -45,14 +74,15 @@ classify_git_command() {
 
   for ((i = 0; i < n; i++)); do
     [[ "${toks[i]}" == "git" ]] || continue
-    local sub="${toks[i + 1]:-}"
+    local s; s="$(_git_subcommand_index toks "$i")"   # subcommand index, past global options
+    local sub="${toks[s]:-}"
     case "$sub" in
       worktree)
         echo "allow"; return 0
         ;;
       stash)
         # bare `git stash` defaults to push; push/save discard the working tree.
-        local op="${toks[i + 2]:-}"
+        local op="${toks[s + 1]:-}"
         if [[ -z "$op" || "$op" == "push" || "$op" == "save" ]]; then
           echo "block"; return 0
         fi
@@ -60,7 +90,7 @@ classify_git_command() {
         ;;
       clean)
         # any force flag makes clean destructive; -n/--dry-run is safe.
-        for ((j = i + 2; j < n; j++)); do
+        for ((j = s + 1; j < n; j++)); do
           local t="${toks[j]}"
           [[ "$t" == "--force" ]] && { echo "block"; return 0; }
           # short flag bundle containing 'f' (-f, -fd, -xfd, …) but not -n.
@@ -69,7 +99,7 @@ classify_git_command() {
         echo "allow"; return 0
         ;;
       reset)
-        for ((j = i + 2; j < n; j++)); do
+        for ((j = s + 1; j < n; j++)); do
           [[ "${toks[j]}" == "--hard" ]] && { echo "block"; return 0; }
         done
         echo "allow"; return 0
@@ -77,7 +107,7 @@ classify_git_command() {
       restore)
         # whole-tree restore (`git restore .`) loses work; a targeted path or an
         # unstage (`--staged <path>`) is allowed, mirroring `checkout -- <path>`.
-        for ((j = i + 2; j < n; j++)); do
+        for ((j = s + 1; j < n; j++)); do
           local t="${toks[j]}"
           [[ "$t" == -* ]] && continue   # skip flags (--staged, --source=…, …)
           if [[ "$t" == "." ]]; then echo "block"; return 0; fi
@@ -87,7 +117,7 @@ classify_git_command() {
         ;;
       checkout|switch)
         local target="" sawdoubledash=0
-        for ((j = i + 2; j < n; j++)); do
+        for ((j = s + 1; j < n; j++)); do
           local t="${toks[j]}"
           if [[ "$t" == "--" ]]; then sawdoubledash=1; continue; fi
           if [[ "$t" == "-" ]]; then target="-"; break; fi  # `switch -` = previous branch
@@ -116,14 +146,15 @@ classify_primary_branch_switch_guard() {
 
   for ((i = 0; i < n; i++)); do
     [[ "${toks[i]}" == "git" ]] || continue
-    local sub="${toks[i + 1]:-}"
+    local s; s="$(_git_subcommand_index toks "$i")"   # subcommand index, past global options
+    local sub="${toks[s]:-}"
     case "$sub" in
       worktree)
         echo "allow"; return 0
         ;;
       checkout|switch)
         local target="" sawdoubledash=0
-        for ((j = i + 2; j < n; j++)); do
+        for ((j = s + 1; j < n; j++)); do
           local t="${toks[j]}"
           if [[ "$t" == "--" ]]; then sawdoubledash=1; continue; fi
           if [[ "$t" == "-" ]]; then target="-"; break; fi

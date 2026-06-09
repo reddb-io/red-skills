@@ -1,4 +1,5 @@
 ---
+name: model-tier-policy
 description: Use when choosing or explaining the RedSkills dev model tier for validation, simple code, complex code, design, or AFK execution across Claude Code and Codex.
 ---
 

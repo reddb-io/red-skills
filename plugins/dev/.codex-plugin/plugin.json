@@ -17,7 +17,12 @@
     "github-issues",
     "tdd"
   ],
-  "skills": "./skills/",
+  "skills": [
+    "./skills/engineering/",
+    "./skills/knowledge/",
+    "./skills/productivity/",
+    "./skills/misc/"
+  ],
   "mcpServers": "./.mcp.json",
   "hooks": "./hooks/codex.hooks.json",
   "interface": {
