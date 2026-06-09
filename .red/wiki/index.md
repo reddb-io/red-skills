@@ -97,6 +97,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [fix(afk): harden sandcastle integration (pre-mortem J/E/D/F/G/H)](./pages/328-fix-afk-harden-sandcastle-integration-pre-mortem-j-e-d-f-g-h.md)
 - [fix(afk): heartbeat/monitor diff reads the real sandcastle worktree (kills the +0 -0 phantom)](./pages/469-fix-afk-heartbeat-monitor-diff-reads-the-real-sandcastle-wor.md)
 - [fix(afk): launcher no longer shadows AFK commands + atomic issue claim (#434)](./pages/435-fix-afk-launcher-no-longer-shadows-afk-commands-atomic-issue.md)
+- [fix(afk): locked landing targets the resolved base, not main](./pages/603-fix-afk-locked-landing-targets-the-resolved-base-not-main.md)
 - [fix(afk): monitor diff column counts committed work + relabel issue ratio](./pages/392-fix-afk-monitor-diff-column-counts-committed-work-relabel-is.md)
 - [fix(afk): native fleet supervisor — poll cadence + real stall-reaper IO](./pages/285-fix-afk-native-fleet-supervisor-poll-cadence-real-stall-reap.md)
 - [fix(afk): orphan sweep skips LIVE sibling workers — no more reaping a running attempt (#444)](./pages/465-fix-afk-orphan-sweep-skips-live-sibling-workers-no-more-reap.md)
