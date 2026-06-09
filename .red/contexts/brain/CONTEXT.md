@@ -82,6 +82,33 @@ _Avoid_: capturing everything an agent sees, transcript scraping, Memory hook in
 The rule that external connector tools stay behind the Brain runtime and the agent sees only Brain-scoped operations.
 _Avoid_: raw connector MCPs, generic messaging tools, tool-surface sprawl
 
+**Channel bridge**:
+The Brain integration point (`src/apps/brain/src/channel-bridge.ts`,
+`McpStdioChannelBridge`) that reaches external messaging channels through the
+`red-hermes` runtime as an internal black box, spawned as a stdio MCP server via
+`hermes mcp serve`. Brain speaks only the MCP tool protocol to it and never the
+runtime's internals. See ADR 0056.
+_Avoid_: red-hermes Python internals, direct messaging SDK, the AFK hermes-fallback runner
+
+**red-hermes black box**:
+The `reddb-io/red-hermes` channel-bridge runtime (~114 MB Python), consumed by
+the **brain** plugin as a black box and **fetched on demand as a GitHub Release
+asset** (ADR 0038 launcher model), version pinned (ADR 0040), **never vendored
+or committed**. MIT-licensed; attribution lives in `NOTICE` (ADR 0004). Distinct
+from the AFK `hermes-fallback` runner, which is an unrelated subsystem.
+_Avoid_: committed bundle, vendored runtime, memory-plugin dependency, AFK runner mode
+
+**Channel bridge contract**:
+The supported version/compatibility contract between brain and `red-hermes`: the
+**10-tool surface** asserted at connect by `assertHermesContract` —
+`conversations_list`, `conversation_get`, `messages_read`, `attachments_fetch`,
+`events_poll`, `events_wait`, `messages_send`, `channels_list`,
+`permissions_list_open`, `permissions_respond` — pinned against a specific
+red-hermes release. The full ten are the compatibility floor; dropping,
+renaming, or changing the semantics of any is a breaking change requiring a new
+pin. See ADR 0056.
+_Avoid_: best-effort tool discovery, partial-surface tolerance, unpinned runtime
+
 **Brain graph explorer**:
 The red-ui view over the Brain store used for early visual exploration and debugging of artifacts and connections.
 _Avoid_: daily dashboard, curated operating surface

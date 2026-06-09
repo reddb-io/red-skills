@@ -16,6 +16,9 @@ stale notes inline.
 - **0041** red-skills consumes `red-memory` + `red-ui` MCPs; stops building memory — partially supersedes 0034 *(renumbered from 0039)*
 - **0046** A single global `.red/` shared by all plugins — *superseded by 0021*
 
+## Brain plugin
+- **0056** `red-hermes` is a fetched, never-vendored black-box dependency of the `brain` plugin — reached via `hermes mcp serve`, fetched as a Release asset (0038 model), version pinned (0040), 10-tool contract; MIT attribution in `NOTICE` (0004) *(downstream fetch/launcher blocked on red-hermes releases, same shape as #378)*
+
 ## Bundle / fetch / release / version
 - **0029** Runtime ships as esbuild bundle + `red` binary, fetched post-install by a bootstrap — post-0041, the memory runtime is fetched from the `red-memory` repo rather than built in red-skills
 - **0032** AFK ships as a committed dependency-free bundle — *shipping detail superseded by 0038; location by 0034*
@@ -79,6 +82,7 @@ stale notes inline.
 
 ## Licensing
 - **0004** Relicense red-skills to Apache-2.0 with a NOTICE for upstream MIT
+- *(see also 0056 — MIT attribution for the fetched `red-hermes` brain dependency)*
 
 ## Setup / handoff / orientation
 - **0001** Explicit `/setup-red-skills` pointer only for hard dependencies
