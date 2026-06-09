@@ -86,6 +86,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [feat(review-adrs): reconcile findings through a /start-style interview](./pages/389-feat-review-adrs-reconcile-findings-through-a-start-style-in.md)
 - [feat(setup): scaffold afk.backpressure in /setup-red-skills (#433)](./pages/440-feat-setup-scaffold-afk-backpressure-in-setup-red-skills-433.md)
 - [fix(afk): AGENT-PROMPT foreground-execution rule — run gates in foreground and read the output](./pages/600-fix-afk-agent-prompt-foreground-execution-rule-run-gates-in.md)
+- [fix(afk): HITL extractor ignores its own prior resolution + sheds stale blocked labels (#586)](./pages/607-fix-afk-hitl-extractor-ignores-its-own-prior-resolution-shed.md)
 - [fix(afk): anchor sandcastle under the attempt dir, not the repo root](./pages/326-fix-afk-anchor-sandcastle-under-the-attempt-dir-not-the-repo.md)
 - [fix(afk): attempt-progress guard resets on worktree edits, not just commits (ADR 0051)](./pages/479-fix-afk-attempt-progress-guard-resets-on-worktree-edits-not.md)
 - [fix(afk): boot-reconcile base resolution + claim-race recovery safety (#568)](./pages/601-fix-afk-boot-reconcile-base-resolution-claim-race-recovery-s.md)
