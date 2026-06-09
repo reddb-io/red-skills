@@ -294,4 +294,19 @@ describe("withTimeout — bounded cold-cache refresh", () => {
     const result = await withTimeout(lateResolve, 20, -1);
     expect(result).toBe(-1);
   });
+
+  it("propagates rejection when the promise rejects before the deadline", async () => {
+    const failing = Promise.reject(new Error("gh auth failed"));
+    await expect(withTimeout(failing, 500, -1)).rejects.toThrow("gh auth failed");
+  });
+
+  it("returns fallback and avoids unhandled rejection when promise rejects after deadline", async () => {
+    let lateReject!: (err: Error) => void;
+    const lateRejecting = new Promise<number>((_, reject) => {
+      lateReject = reject;
+    });
+    const result = await withTimeout(lateRejecting.catch(() => -1), 20, -1);
+    lateReject(new Error("network gone"));
+    expect(result).toBe(-1);
+  });
 });

@@ -552,8 +552,9 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
 
   if (!cached) {
     // Cold cache: refresh with a bounded deadline so a hanging gh CLI cannot
-    // block the statusline render indefinitely. queue/human stay 0/0 on timeout.
-    await withTimeout(refresh(), STATUSLINE_GH_COLD_TIMEOUT_MS, undefined);
+    // block the statusline render indefinitely. queue/human stay 0/0 on timeout
+    // or on any gh/auth/network error.
+    await withTimeout(refresh(), STATUSLINE_GH_COLD_TIMEOUT_MS, undefined).catch(() => undefined);
   } else if (nowS - cached.ts >= STATUSLINE_CACHE_TTL_S) {
     // Stale: use the cached numbers now, refresh in the background.
     void refresh().catch(() => undefined);
