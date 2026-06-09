@@ -6,6 +6,13 @@ Upstream base: `mattpocock/skills@aaf2453fbdfe7a15c07f11d861224f34ab4b53cb` (see
 
 ---
 
+## setup-red-skills (engineering) — Section F writes the cached-bundle-first statusline command (#591)
+
+- **status**: modified
+- **upstream**: —
+- **why**: Section F emitted a statusline command that resolved only the plugin cache and the launcher `afk.mjs`. Since ADR 0038 the launcher does a synchronous network fetch on a cold cache, so a bootstrapped repo's statusline blanked on every plugin update — a regression `/doctor` already flagged (and flagged Section F itself as drifted until patched). `setup-red-skills` and `setup-statusline` disagreed on the canonical command.
+- **what changed**: Replaced the Section F `statusLine` JSON block with the two-tier **cached-bundle-first** form from `setup-statusline` (resolve the highest-version `~/.cache/red-skills/bundles/dev-*.bundle.min.mjs` first, fall back to the launcher only when no bundle is cached). The command is now byte-identical to `setup-statusline`'s. Updated the accompanying explainer to describe the cache-first resolution and why it keeps the network out of the statusline hot path. Removed the now-stale known-drift note in `doctor/SKILL.md`'s Fix-home table that flagged Section F as still emitting the old command.
+
 ## afk (engineering) — inner agent must not create PRs / wait on CI; commit + DONE only
 
 - **status**: modified
