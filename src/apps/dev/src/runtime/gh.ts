@@ -75,17 +75,24 @@ const ghAuthTransientPattern =
  * automatically "unauthenticated": gh exits non-zero both on a real missing /
  * rejected token AND on a transient failure of the validation API call (rate
  * limit, network, 5xx) while a valid token is still configured. We discriminate
- * on the report text (gh writes it to stderr): a definitive unauthenticated
- * signal → false; a transient blip → true (token present, just couldn't
- * validate now — boot proceeds and the individual gh calls degrade on their own
- * `r.code !== 0` guards). An unrecognised non-zero stays conservative → false.
+ * on the report text (gh writes it to stderr): a transient blip → true (token
+ * present, just couldn't validate now — boot proceeds and the individual gh
+ * calls degrade on their own `r.code !== 0` guards); a definitive
+ * unauthenticated signal → false. An unrecognised non-zero stays conservative →
+ * false.
+ *
+ * The transient pattern is tested BEFORE the unauthenticated one: a transient
+ * report may itself carry an auth hint ("…try again later; run `gh auth login`
+ * if this persists"), and a rate-limit / 5xx blip with a valid token configured
+ * must NOT be misread as unauthenticated just because the hint matched. The
+ * live-API failure is the stronger signal that the credential is present.
  */
 export async function ghAuthenticated(ctx: GhContext): Promise<boolean> {
   const r = await runGh(ctx, ["auth", "status"]);
   if (r.code === 0) return true;
   const report = `${r.stdout}\n${r.stderr}`;
-  if (ghUnauthenticatedPattern.test(report)) return false;
   if (ghAuthTransientPattern.test(report)) return true;
+  if (ghUnauthenticatedPattern.test(report)) return false;
   return false;
 }
 

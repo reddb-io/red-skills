@@ -268,6 +268,64 @@ export async function worktreePathUnder(ctx: GitContext, dirPrefix: string): Pro
 }
 
 /**
+ * Decode a single `git status --porcelain` path. When git deems a path "safe"
+ * (only printable ASCII, no quote/control bytes) it emits it verbatim — returned
+ * unchanged. Otherwise git wraps it in double quotes and C-style escapes the
+ * payload (`core.quotePath` default): `\\`, `\"`, the named escapes
+ * `\a \b \f \n \r \t \v`, and three-digit OCTAL escapes (`\303\251`) for each
+ * raw byte of a non-ASCII / control character. We reverse that exactly: octal
+ * runs are collected as bytes and UTF-8 decoded so a unicode filename round-trips
+ * to the literal path `git add --` accepts. A path that isn't quote-wrapped is
+ * passed through untouched.
+ */
+export function unquotePorcelainPath(raw: string): string {
+  if (!(raw.length >= 2 && raw.startsWith('"') && raw.endsWith('"'))) return raw;
+  const body = raw.slice(1, -1);
+  const bytes: number[] = [];
+  const named: Record<string, number> = {
+    a: 0x07,
+    b: 0x08,
+    f: 0x0c,
+    n: 0x0a,
+    r: 0x0d,
+    t: 0x09,
+    v: 0x0b,
+    '"': 0x22,
+    "\\": 0x5c,
+  };
+  for (let i = 0; i < body.length; i += 1) {
+    const ch = body[i];
+    if (ch !== "\\") {
+      // A non-escaped character — emit its UTF-8 bytes.
+      for (const b of Buffer.from(ch, "utf8")) bytes.push(b);
+      continue;
+    }
+    const next = body[i + 1] ?? "";
+    if (next >= "0" && next <= "7") {
+      // Octal escape: exactly up to three octal digits → one raw byte.
+      let j = i + 1;
+      let oct = "";
+      while (j < body.length && oct.length < 3 && body[j] >= "0" && body[j] <= "7") {
+        oct += body[j];
+        j += 1;
+      }
+      bytes.push(parseInt(oct, 8) & 0xff);
+      i = j - 1;
+      continue;
+    }
+    if (next in named) {
+      bytes.push(named[next]);
+      i += 1;
+      continue;
+    }
+    // Unknown escape — keep the backslash literally (defensive; git won't emit
+    // this) and let the following char be processed normally.
+    bytes.push(0x5c);
+  }
+  return Buffer.from(bytes).toString("utf8");
+}
+
+/**
  * Salvage uncommitted work an inner agent left in its worktree without
  * committing. Observed with the codex runner: the agent edits files, passes the
  * gates, and emits `<promise>DONE</promise>`, but never runs `git commit` — so
@@ -293,12 +351,15 @@ export async function salvageUncommitted(ctx: GitContext, branch: string, remote
     const t = line.replace(/\s+$/, "");
     if (!t) continue;
     // porcelain v1: "XY path" — the path begins at column 3. A rename is
-    // "old -> new"; take the destination. Quoted paths (spaces/unicode) are
-    // unwrapped to the literal path `git add --` accepts.
+    // "old -> new"; take the destination. Paths with special/non-ASCII bytes
+    // are C-quoted by git (core.quotePath default), so they are unwrapped AND
+    // un-escaped to the literal path `git add --` accepts — stripping the quotes
+    // alone leaves backslash escapes that don't name the file, silently dropping
+    // it from the salvage.
     let p = t.slice(3);
     const arrow = p.indexOf(" -> ");
     if (arrow !== -1) p = p.slice(arrow + 4);
-    p = p.replace(/^"(.*)"$/, "$1");
+    p = unquotePorcelainPath(p);
     if (p) paths.push(p);
   }
   let committed = 0;

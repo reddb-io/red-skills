@@ -82,4 +82,27 @@ describe("ghAuthenticated — rate-limit vs real auth failure", () => {
     const out: ExecOutput = { code: 1, stdout: "", stderr: "some unexpected gh failure" };
     expect(await ghAuthenticated(ctxWith(out))).toBe(false);
   });
+
+  it("transient error carrying an auth hint → transient wins (still authenticated)", async () => {
+    // A rate-limit / 5xx blip whose retry advice mentions `gh auth login` would
+    // ALSO match the unauthenticated pattern. The transient classifier must be
+    // tested FIRST so the still-configured token is not misread as missing.
+    const out: ExecOutput = {
+      code: 1,
+      stdout: "",
+      stderr:
+        "github.com\n  X error validating token: API rate limit exceeded for user ID 42.\n" +
+        "  try again later; run `gh auth login` if this persists.",
+    };
+    expect(await ghAuthenticated(ctxWith(out))).toBe(true);
+  });
+
+  it("5xx blip whose body also names bad credentials → transient still wins", async () => {
+    const out: ExecOutput = {
+      code: 1,
+      stdout: "",
+      stderr: "503 Service Unavailable while checking token — would otherwise read: Bad credentials",
+    };
+    expect(await ghAuthenticated(ctxWith(out))).toBe(true);
+  });
 });
