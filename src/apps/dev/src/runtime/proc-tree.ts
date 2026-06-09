@@ -116,6 +116,7 @@ export function inspectProcessTreeNative(pid: number): readonly ProcessSnapshotE
     stdout = execFileSync("ps", ["-e", "-o", "pid=,ppid=,%cpu=,comm="], {
       encoding: "utf8",
       maxBuffer: 16 * 1024 * 1024,
+      timeout: 5000,
     });
   } catch {
     // `ps` itself failed (missing binary, EAGAIN, buffer overflow, …). Failing
