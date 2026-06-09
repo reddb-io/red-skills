@@ -106,6 +106,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [fix(afk): native fleet supervisor — poll cadence + real stall-reaper IO](./pages/285-fix-afk-native-fleet-supervisor-poll-cadence-real-stall-reap.md)
 - [fix(afk): orphan sweep skips LIVE sibling workers — no more reaping a running attempt (#444)](./pages/465-fix-afk-orphan-sweep-skips-live-sibling-workers-no-more-reap.md)
 - [fix(afk): pnpm install the feedback worktree before validating (#458)](./pages/459-fix-afk-pnpm-install-the-feedback-worktree-before-validating.md)
+- [fix(afk): reconcile salvage fetches origin-only branch before the commits gate](./pages/611-fix-afk-reconcile-salvage-fetches-origin-only-branch-before.md)
 - [fix(afk): require the DONE sentinel even when work is already complete (Defeito 1)](./pages/427-fix-afk-require-the-done-sentinel-even-when-work-is-already.md)
 - [fix(afk): restore Task Mirror via monitor --mirror-plan](./pages/331-fix-afk-restore-task-mirror-via-monitor-mirror-plan.md)
 - [fix(afk): salvage a no-sentinel branch that passes feedback (Defeito 2 / issue #332)](./pages/428-fix-afk-salvage-a-no-sentinel-branch-that-passes-feedback-de.md)
