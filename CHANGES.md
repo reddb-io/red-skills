@@ -6,6 +6,13 @@ Upstream base: `mattpocock/skills@aaf2453fbdfe7a15c07f11d861224f34ab4b53cb` (see
 
 ---
 
+## ff (productivity) — translate to English + `--dispatch` flag; default is reframe-only (no auto-execute)
+
+- **status**: modified
+- **upstream**: —
+- **why**: Two issues. (1) `/ff` shipped a Portuguese body (recommendation template, the seven option labels, trigger phrases), violating the repo English-only rule and emitting Portuguese to every consumer (subsumes #590). (2) The old contract auto-continued the underlying task once the user picked a framing, so `/ff` "went executing all at once" instead of just handing the rewritten prompt back.
+- **what changed**: Translated the entire skill to English (recommendation line `I think you want (x), because …`, the seven option labels, and the trigger phrases `use a` / `mix a with d` / `go with that one`). Split behavior into two modes: **default** `/ff <text>` reframes, lets the user pick, then outputs the finalized rewrite and **stops** (hands it back — never executes); new **`--dispatch`/`-d`** flag (`/ff --dispatch <text>`) reframes, lets the user pick the format, and then **runs** the underlying task with that framing. Updated the frontmatter `description` and `argument-hint` accordingly.
+
 ## afk (engineering) — AGENT-PROMPT foreground-execution rule + drop stale pre-sandcastle machinery
 
 - **status**: modified
