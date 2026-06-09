@@ -96,6 +96,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [fix(afk): guard each supervise tick + per-tick heartbeat — unwedgeable fleet supervisor](./pages/408-fix-afk-guard-each-supervise-tick-per-tick-heartbeat-unwedge.md)
 - [fix(afk): harden sandcastle integration (pre-mortem J/E/D/F/G/H)](./pages/328-fix-afk-harden-sandcastle-integration-pre-mortem-j-e-d-f-g-h.md)
 - [fix(afk): heartbeat/monitor diff reads the real sandcastle worktree (kills the +0 -0 phantom)](./pages/469-fix-afk-heartbeat-monitor-diff-reads-the-real-sandcastle-wor.md)
+- [fix(afk): inner agent must not create PRs / wait on CI — commit + DONE only](./pages/605-fix-afk-inner-agent-must-not-create-prs-wait-on-ci-commit-do.md)
 - [fix(afk): launcher no longer shadows AFK commands + atomic issue claim (#434)](./pages/435-fix-afk-launcher-no-longer-shadows-afk-commands-atomic-issue.md)
 - [fix(afk): locked landing targets the resolved base, not main](./pages/603-fix-afk-locked-landing-targets-the-resolved-base-not-main.md)
 - [fix(afk): monitor diff column counts committed work + relabel issue ratio](./pages/392-fix-afk-monitor-diff-column-counts-committed-work-relabel-is.md)
