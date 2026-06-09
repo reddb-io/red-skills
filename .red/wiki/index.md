@@ -85,6 +85,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [feat(memory): ship runtime as bundled release asset + bootstrap fetch (ADR 0029)](./pages/229-feat-memory-ship-runtime-as-bundled-release-asset-bootstrap.md)
 - [feat(review-adrs): reconcile findings through a /start-style interview](./pages/389-feat-review-adrs-reconcile-findings-through-a-start-style-in.md)
 - [feat(setup): scaffold afk.backpressure in /setup-red-skills (#433)](./pages/440-feat-setup-scaffold-afk-backpressure-in-setup-red-skills-433.md)
+- [fix(afk): AGENT-PROMPT foreground-execution rule — run gates in foreground and read the output](./pages/600-fix-afk-agent-prompt-foreground-execution-rule-run-gates-in.md)
 - [fix(afk): anchor sandcastle under the attempt dir, not the repo root](./pages/326-fix-afk-anchor-sandcastle-under-the-attempt-dir-not-the-repo.md)
 - [fix(afk): attempt-progress guard resets on worktree edits, not just commits (ADR 0051)](./pages/479-fix-afk-attempt-progress-guard-resets-on-worktree-edits-not.md)
 - [fix(afk): carry the line-diff in the heartbeat + persist it for the monitor (#448)](./pages/462-fix-afk-carry-the-line-diff-in-the-heartbeat-persist-it-for.md)
