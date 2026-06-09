@@ -57,7 +57,7 @@ Canonical families live in the target repo's `.red/agents/triage-labels.md`: sta
 
 | Fix-home | Findings it owns |
 |---|---|
-| `→ /setup-red-skills` | AGENTS≡CLAUDE `## Agent skills` parity, AGENTS≡CLAUDE `## Development workflow` parity, `dev.lock-primary-branch` adoption, statusline drift, MCP wiring, label provisioning. **Note:** `/setup-red-skills` Section F currently still emits the OLD statusline command — flag it as itself drifted until patched. |
+| `→ /setup-red-skills` | AGENTS≡CLAUDE `## Agent skills` parity, AGENTS≡CLAUDE `## Development workflow` parity, `dev.lock-primary-branch` adoption, statusline drift, MCP wiring, label provisioning. |
 | `→ AFK runtime` | `blocked:*` accumulation (labels must be rotated/cleared on re-queue, plus the re-claim cap) — a bundle change, not a config edit. |
 | `→ manual / maintainer` | label renames (`gh label edit`), retiring legacy labels — the operator decides, the doctor never runs it. |
 | `→ release` | cross-manifest version mismatch — owned by the single-writer version script + `validate-install-metadata.sh` gate (ADR 0040); never hand-edit one manifest. |

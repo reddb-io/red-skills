@@ -6,6 +6,7 @@ import {
   worktreePathForBranch,
   worktreePathUnder,
   salvageUncommitted,
+  unquotePorcelainPath,
 } from "../src/runtime/git.js";
 import type { GitContext } from "../src/runtime/git.js";
 import type { ExecFn, ExecOutput } from "../src/runtime/exec.js";
@@ -152,6 +153,32 @@ describe("worktreePathUnder (sandcastle-blind heartbeat fix)", () => {
   });
 });
 
+describe("unquotePorcelainPath", () => {
+  it("passes a plain (unquoted) ASCII path through unchanged", () => {
+    expect(unquotePorcelainPath("src/a.ts")).toBe("src/a.ts");
+  });
+
+  it("decodes octal-escaped UTF-8 bytes back to the unicode literal", () => {
+    expect(unquotePorcelainPath('"caf\\303\\251.txt"')).toBe("café.txt");
+  });
+
+  it("decodes a multi-codepoint unicode name (emoji)", () => {
+    // 🚀 is U+1F680 → UTF-8 F0 9F 9A 80 → octal \360\237\232\200.
+    expect(unquotePorcelainPath('"\\360\\237\\232\\200.md"')).toBe("🚀.md");
+  });
+
+  it("unwraps a quoted path with a space and no escapes", () => {
+    expect(unquotePorcelainPath('"na me.txt"')).toBe("na me.txt");
+  });
+
+  it("decodes named C escapes (tab, newline, escaped quote, backslash)", () => {
+    expect(unquotePorcelainPath('"a\\tb.txt"')).toBe("a\tb.txt");
+    expect(unquotePorcelainPath('"a\\nb.txt"')).toBe("a\nb.txt");
+    expect(unquotePorcelainPath('"a\\"b.txt"')).toBe('a"b.txt');
+    expect(unquotePorcelainPath('"a\\\\b.txt"')).toBe("a\\b.txt");
+  });
+});
+
 describe("salvageUncommitted (codex DONE-without-commit)", () => {
   const porcelain = "worktree /repo/.red/tmp/wt\nHEAD bbb\nbranch refs/heads/afk/w/1-x\n";
 
@@ -180,6 +207,45 @@ describe("salvageUncommitted (codex DONE-without-commit)", () => {
       "origin",
       "HEAD:refs/heads/afk/w/1-x",
     ]);
+  });
+
+  it("un-escapes a C-quoted unicode porcelain path before staging", async () => {
+    // git core.quotePath wraps non-ASCII paths in quotes AND octal-escapes each
+    // raw UTF-8 byte: café.txt → "caf\303\251.txt". Stripping the quotes alone
+    // leaves the backslash escapes, naming a file that doesn't exist → the work
+    // is silently dropped. The literal path must reach `git add --`.
+    const { exec, calls } = recordingExec((_c, args) => {
+      if (args.includes("list")) return ok(porcelain);
+      if (args.includes("status")) return ok('?? "caf\\303\\251.txt"\n');
+      return ok();
+    });
+    expect(await salvageUncommitted({ cwd: "/repo", exec }, "afk/w/1-x")).toBe(1);
+    const add = calls.find((c) => c[1] === "add")!;
+    expect(add[add.length - 1]).toBe("café.txt");
+    const commit = calls.find((c) => c[1] === "commit")!;
+    expect(commit[commit.length - 1]).toBe("café.txt");
+  });
+
+  it("un-escapes a quoted path with a space and stages the literal name", async () => {
+    const { exec, calls } = recordingExec((_c, args) => {
+      if (args.includes("list")) return ok(porcelain);
+      if (args.includes("status")) return ok('?? "na me.txt"\n');
+      return ok();
+    });
+    expect(await salvageUncommitted({ cwd: "/repo", exec }, "afk/w/1-x")).toBe(1);
+    const add = calls.find((c) => c[1] === "add")!;
+    expect(add[add.length - 1]).toBe("na me.txt");
+  });
+
+  it("un-escapes the quoted destination path of a rename", async () => {
+    const { exec, calls } = recordingExec((_c, args) => {
+      if (args.includes("list")) return ok(porcelain);
+      if (args.includes("status")) return ok('R  old.ts -> "caf\\303\\251.ts"\n');
+      return ok();
+    });
+    expect(await salvageUncommitted({ cwd: "/repo", exec }, "afk/w/1-x")).toBe(1);
+    const add = calls.find((c) => c[1] === "add")!;
+    expect(add[add.length - 1]).toBe("café.ts");
   });
 
   it("commits the destination path of a rename", async () => {

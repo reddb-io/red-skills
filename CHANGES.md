@@ -12,6 +12,19 @@ Upstream base: `mattpocock/skills@aaf2453fbdfe7a15c07f11d861224f34ab4b53cb` (see
 - **upstream**: —
 - **why**: Three `dev`-plugin hygiene defects surfaced by the #567 super-checkpoint audit: `model-tier-policy/SKILL.md` was the only skill missing the `name:` frontmatter field; the Codex dev manifest exposed the whole `./skills/` tree (so `in-progress/` drafts would ship, violating CLAUDE.md rule 1); and the branch-lock classifier scanned only `git <subcommand>`, so a `git -C <path> checkout <branch>` (or any global-option form) slipped past the lock — a narrow bypass.
 - **what changed**: Added `name: model-tier-policy` to the SKILL.md frontmatter. Restricted `plugins/dev/.codex-plugin/plugin.json` `skills` from the `./skills/` glob to an explicit array of the four published buckets (`engineering/`, `knowledge/`, `productivity/`, `misc/`), excluding `in-progress/`. Broadened `git-command-classifier.sh` with a `_git_subcommand_index` helper that skips global options (`-C <path>`, `-c <k=v>`, `--git-dir[=]`, `--work-tree[=]`, `--namespace`, `--exec-path`, `--super-prefix`, and bare flags like `--no-pager`) before reading the subcommand, in both `classify_git_command` and `classify_primary_branch_switch_guard`. Extended the bash classifier test with global-option block/allow cases and added a TS `manifest-parity.test.ts` covering the frontmatter field and the bucket-only Codex manifest.
+## setup-red-skills (engineering) — Section F writes the cached-bundle-first statusline command (#591)
+
+- **status**: modified
+- **upstream**: —
+- **why**: Section F emitted a statusline command that resolved only the plugin cache and the launcher `afk.mjs`. Since ADR 0038 the launcher does a synchronous network fetch on a cold cache, so a bootstrapped repo's statusline blanked on every plugin update — a regression `/doctor` already flagged (and flagged Section F itself as drifted until patched). `setup-red-skills` and `setup-statusline` disagreed on the canonical command.
+- **what changed**: Replaced the Section F `statusLine` JSON block with the two-tier **cached-bundle-first** form from `setup-statusline` (resolve the highest-version `~/.cache/red-skills/bundles/dev-*.bundle.min.mjs` first, fall back to the launcher only when no bundle is cached). The command is now byte-identical to `setup-statusline`'s. Updated the accompanying explainer to describe the cache-first resolution and why it keeps the network out of the statusline hot path. Removed the now-stale known-drift note in `doctor/SKILL.md`'s Fix-home table that flagged Section F as still emitting the old command.
+
+## hitl (engineering) — ignore the loop's own prior resolution directive + shed stale blocked:* labels (#586)
+
+- **status**: modified
+- **upstream**: —
+- **why**: On a HITL re-loop, the pending-decision extractor re-read the loop's own prior `<details data-kind="directive"><summary>HITL resolution</summary>` comment and surfaced the literal placeholder label `Pending decision:` instead of the real `## Current blocker` next-field. Separately, a delegable resolution moved the issue back to `ready-for-agent` while still wearing the stale `blocked:*` reason that parked it.
+- **what changed**: Documented in Step 3 that extraction must ignore self-authored HITL-resolution directives (summary `HITL resolution`, or a first useful line that is a bare field label like `Pending decision:`), and in the delegable mutation step that every stale `blocked:*` label is shed alongside `ready-for-human`. Mirrors the runtime fix in `src/apps/dev/src/core/hitl-decision-extraction.ts` and `hitl-resolution-plan.ts`.
 
 ## afk (engineering) — inner agent must not create PRs / wait on CI; commit + DONE only
 
