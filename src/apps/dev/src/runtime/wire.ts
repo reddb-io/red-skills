@@ -685,15 +685,19 @@ export async function collectBootOptions(
 export async function collectPrecheckFacts(ctx: RepoContext): Promise<PrecheckFacts> {
   const gitCtx: gitx.GitContext = { cwd: ctx.root };
   const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo };
-  const [ghInstalled, ghAuthenticated, isRepo, remoteUrls, hasMain, currentBranch, pnpmProbe] = await Promise.all([
-    ghx.ghInstalled(ghCtx),
-    ghx.ghAuthenticated(ghCtx),
-    gitx.isGitRepo(gitCtx),
-    gitx.remoteUrls(gitCtx),
-    gitx.hasMainBranch(gitCtx),
-    gitx.currentBranch(gitCtx),
-    import("./exec.js").then((m) => m.pnpm(["--version"], { cwd: ctx.root })),
-  ]);
+  const { branchLockPath, readLockedBranch } = await import("./lock.js");
+  const lockPath = branchLockPath(ctx.root);
+  const [ghInstalled, ghAuthenticated, isRepo, remoteUrls, hasMain, currentBranch, pnpmProbe, lockedBranch] =
+    await Promise.all([
+      ghx.ghInstalled(ghCtx),
+      ghx.ghAuthenticated(ghCtx),
+      gitx.isGitRepo(gitCtx),
+      gitx.remoteUrls(gitCtx),
+      gitx.hasMainBranch(gitCtx),
+      gitx.currentBranch(gitCtx),
+      import("./exec.js").then((m) => m.pnpm(["--version"], { cwd: ctx.root })),
+      readLockedBranch(lockPath),
+    ]);
   const pnpmInstalled = pnpmProbe.code !== 127;
   return {
     ghInstalled,
@@ -702,6 +706,7 @@ export async function collectPrecheckFacts(ctx: RepoContext): Promise<PrecheckFa
     remoteUrls,
     hasMainBranch: hasMain,
     currentBranch,
+    lockedBranch,
     pnpmInstalled,
   };
 }
