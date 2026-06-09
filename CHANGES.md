@@ -6,6 +6,12 @@ Upstream base: `mattpocock/skills@aaf2453fbdfe7a15c07f11d861224f34ab4b53cb` (see
 
 ---
 
+## model-tier-policy / branch-lock + Codex dev manifest (engineering, misc) — frontmatter + manifest hygiene (#593)
+
+- **status**: modified
+- **upstream**: —
+- **why**: Three `dev`-plugin hygiene defects surfaced by the #567 super-checkpoint audit: `model-tier-policy/SKILL.md` was the only skill missing the `name:` frontmatter field; the Codex dev manifest exposed the whole `./skills/` tree (so `in-progress/` drafts would ship, violating CLAUDE.md rule 1); and the branch-lock classifier scanned only `git <subcommand>`, so a `git -C <path> checkout <branch>` (or any global-option form) slipped past the lock — a narrow bypass.
+- **what changed**: Added `name: model-tier-policy` to the SKILL.md frontmatter. Restricted `plugins/dev/.codex-plugin/plugin.json` `skills` from the `./skills/` glob to an explicit array of the four published buckets (`engineering/`, `knowledge/`, `productivity/`, `misc/`), excluding `in-progress/`. Broadened `git-command-classifier.sh` with a `_git_subcommand_index` helper that skips global options (`-C <path>`, `-c <k=v>`, `--git-dir[=]`, `--work-tree[=]`, `--namespace`, `--exec-path`, `--super-prefix`, and bare flags like `--no-pager`) before reading the subcommand, in both `classify_git_command` and `classify_primary_branch_switch_guard`. Extended the bash classifier test with global-option block/allow cases and added a TS `manifest-parity.test.ts` covering the frontmatter field and the bucket-only Codex manifest.
 ## setup-red-skills (engineering) — Section F writes the cached-bundle-first statusline command (#591)
 
 - **status**: modified
