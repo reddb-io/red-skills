@@ -35,6 +35,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [chore(afk): native + sandcastle E2E smoke test (#284 gate)](./pages/291-chore-afk-native-sandcastle-e2e-smoke-test-284-gate.md)
 - [chore(afk): rebuild committed bin/afk.mjs from current source](./pages/320-chore-afk-rebuild-committed-bin-afk-mjs-from-current-source.md)
 - [chore(dev): remove the scaffold-exercises skill (upstream course tooling)](./pages/411-chore-dev-remove-the-scaffold-exercises-skill-upstream-cours.md)
+- [chore(skills): manifest/frontmatter hygiene — name:, Codex in-progress, git -C lock (#593)](./pages/610-chore-skills-manifest-frontmatter-hygiene-name-codex-in-prog.md)
 - [chore(upstream): bump pin to e3b90b5 (no cherry-picks)](./pages/262-chore-upstream-bump-pin-to-e3b90b5-no-cherry-picks.md)
 - [chore: bump mattpocock skills upstream pin](./pages/511-chore-bump-mattpocock-skills-upstream-pin.md)
 - [chore: gitignore .turbo build cache](./pages/461-chore-gitignore-turbo-build-cache.md)
