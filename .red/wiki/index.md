@@ -111,6 +111,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [fix(config): memory built-in handlers use autohooks, not hooks (ADR 0042 refine)](./pages/391-fix-config-memory-built-in-handlers-use-autohooks-not-hooks.md)
 - [fix(dev): publish retake in claude plugin manifest](./pages/543-fix-dev-publish-retake-in-claude-plugin-manifest.md)
 - [fix(dev): resync dev claude plugin.json version (unblock red-release)](./pages/384-fix-dev-resync-dev-claude-plugin-json-version-unblock-red-re.md)
+- [fix(ff): translate to English + add --dispatch flag; default is reframe-only (#590)](./pages/602-fix-ff-translate-to-english-add-dispatch-flag-default-is-ref.md)
 - [fix(memory): remove backward-compat shims now that delivery + store are clean](./pages/232-fix-memory-remove-backward-compat-shims-now-that-delivery-st.md)
 - [fix(memory): resolveRedBinary honours REDDB_BIN before the SDK package lookup](./pages/230-fix-memory-resolveredbinary-honours-reddb-bin-before-the-sdk.md)
 - [fix(memory): skills invoke scripts/bootstrap.mjs, not the absent dist/cli.js](./pages/231-fix-memory-skills-invoke-scripts-bootstrap-mjs-not-the-absen.md)
