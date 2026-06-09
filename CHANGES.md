@@ -6,6 +6,13 @@ Upstream base: `mattpocock/skills@aaf2453fbdfe7a15c07f11d861224f34ab4b53cb` (see
 
 ---
 
+## afk (engineering) — AGENT-PROMPT foreground-execution rule + drop stale pre-sandcastle machinery
+
+- **status**: modified
+- **upstream**: —
+- **why**: Inner agents were running tests/commands in the background and polling a log (`until grep …`) for completion, so they never read the real exit code/output — crashes, panics, and stderr were misread as success, and they committed broken work on a false belief that it passed. Reported live during an AFK run ("não conseguir ler gera muito bug por não entender o que está acontecendo").
+- **what changed**: Rewrote the *Background Tasks and Polling* section of `AGENT-PROMPT.md` around one cardinal rule — run every result-bearing command in the **foreground**, wait for it to return, and **read its actual output**; never `run_in_background` a command whose result you need; never poll a log to detect completion; a slow command is solved by a longer `timeout`, not by polling. Also removed the obsolete pre-sandcastle machinery the section still claimed as live (the 30s post-sentinel pipe watchdog and the `pnpm` PATH `timeout` shim — neither exists under sandcastle, ADR 0033) and re-pointed the "safety net" language at the real bounds (idle-timeout, max-iterations, commit-anchored attempt guard). Subsumes the `AGENT-PROMPT.md` portion of #592.
+
 ## afk (engineering) — emit DONE after final commit, no post-commit re-validation loop (#557)
 
 - **status**: modified

@@ -193,32 +193,38 @@ Surgical precision. If you find an unrelated bug, mention it in Notes — don't 
 
 ## Background Tasks and Polling (binding)
 
-Several `/afk` iterations have been killed by inner agents writing untimed polling loops around `run_in_background` tasks — the bg task crashes silently or never writes the expected string, the polling loop runs forever, and even after you emit `<promise>DONE</promise>` the orchestrator's pipe stays open because your `until` loop is still alive. The orchestrator now has a watchdog (kills the inner pipeline 30 s after seeing the sentinel if it doesn't close on its own) **and a `pnpm` PATH shim** that wraps `pnpm test` / `pnpm test:*` invocations with `timeout ${RED_AFK_TEST_TIMEOUT_S:-300}s` so a hung test runner cannot keep your polling loop alive past the deadline. You are still responsible for not building the trap in the first place — the shim is a safety net, not the design.
+**The cardinal rule: run every command you need a result from in the FOREGROUND, wait for it to return, and read its actual output.** If you cannot read what a command actually printed, you do not know what happened — and you will commit broken work on the false belief that it passed. Backgrounding a command and then polling a log for it (`run_in_background` + `tail -f` / `until grep "..." log`) is the single biggest source of *misunderstood* failures: the compile error, the panic, the OOM, the stderr message, the partial output all land in a stream you never actually read, so you proceed as if it succeeded. Do not infer a result from a log you are watching from the outside — **get the result.**
 
-**Never background the feedback suite to poll for it.** The orchestrator runs the feedback gates — `test`, `typecheck`, `lint`, `build` — itself in the Feedback-loops step *after* you commit (see *Workflow* step 4). Validation is the orchestrator's mechanism; your job is to edit and commit. Do **not** spawn a background `pnpm test` (or any other gate) and wait on it — backgrounding a gate and polling for it is the single most common way an inner agent deadlocks the worker. When you need a gate's result while iterating, run it in the **foreground with `timeout`** (below) and read the exit code directly. Never `run_in_background` a feedback gate.
+So, by default:
 
-**Forbidden — the wheel-spin pattern:**
+- **Run it in the foreground with a `timeout`, then read the exit code and the output directly.** A slow command is *not* a reason to background it — **wait for it to return.** "Slow" is solved by a longer `timeout`, never by polling. `cargo test -p <crate> <module> -- --nocapture`, `pnpm test`, a one-shot script — all foreground, all read.
+- **Never `run_in_background` a command whose output you then need.** Tests, type-checks, builds, compiles, lints, scripts — the exit code is the truth; you must be present to read it.
+- **Never write an `until grep "…" log` / `tail -f` loop to detect that a command finished.** That loop is blind to crashes (your string never appears), to stderr (you grepped stdout), and to panics — it spins or silently lies. Foreground + exit code replaces it entirely.
 
-```bash
-until [ -s /tmp/.../bg-task-XXXX.output ] && grep -q "test result" /tmp/.../bg-task-XXXX.output; do
-  sleep 5
-done
-```
-
-No deadline, no escape. When the bg task crashes (or its output goes to stderr, or cargo panics, or the runner OOMs) this loop runs until the orchestrator watchdog reaps you.
-
-**Preferred — foreground with `timeout`:**
+**Forbidden — the blind wheel-spin:**
 
 ```bash
-timeout --kill-after=30 600 pnpm test 2>&1 | tee /tmp/test.log
+some-test-cmd > out 2>&1 &                                  # backgrounded; you cannot read its result
+until [ -s out ] && grep -q "test result" out; do sleep 5; done   # blind to crash/panic/stderr; no deadline
 ```
 
-`pnpm test` runs in the foreground with a 10-minute hard cap. No polling. The exit code is meaningful (0 success, 124 timeout, other = test failure). This is the default.
+You never see what actually happened — only whether a string you *guessed at* appeared. When it doesn't (crash, OOM, output on stderr, a different message), you either spin until a guard reaps you or — worse — conclude "no failures" and ship a bug.
 
-**If you must use `run_in_background`** for something that is *not* a feedback gate (e.g. a dev server you need running while you do other work), every wait loop **must** satisfy both of these:
+**Preferred — foreground with `timeout`, read the result:**
 
-1. **Never match by a literal string that appears in the wait loop's own command line.** A plain `pgrep -f vitest` matches the polling shell's *own* argv — which contains the word `vitest` — so `until ! pgrep -f vitest; do sleep 3; done` never exits: the condition is self-true forever, even though the test finished seconds in. This self-match trap hung worker wKXWG on #302 for 7+ minutes until it was reaped. Instead, match by the **captured job PID** — `pnpm dev & pid=$!; … kill -0 "$pid" 2>/dev/null` — or, if you must match by name, use the **bracket trick** so the pattern cannot match itself: put the first character inside a character class, e.g. `pgrep -f '[v]itest'` (the regex `[v]itest` matches `vitest` but the literal argv `[v]itest` does not).
-2. **Carry a hard wall-clock deadline** — a `timeout` wrapper or a `SECONDS`-based bound — so it can never loop forever, and signal `BLOCKED` if the deadline trips.
+```bash
+timeout --kill-after=30 600 pnpm test 2>&1 | tee /tmp/test.log; echo "exit=$?"
+# single target:  timeout --kill-after=30 600 cargo test -p <crate> <module> -- --nocapture; echo "exit=$?"
+```
+
+Foreground, hard cap, no polling. The exit code is meaningful (0 success, 124 timeout, other = failure) and the output is in front of you — **read it before you decide anything.** This is the default for *every* gate, test, and check.
+
+**The orchestrator owns the merge gate.** It re-runs `test` / `typecheck` / `lint` / `build` itself in the Feedback-loops step *after* you commit (*Workflow* step 4); that run, not yours, is the merge authority. You still run gates in the foreground while iterating to know where you stand — just never background them.
+
+**If you genuinely must background a long-lived process** — a dev server that must stay *up* while you do other work, not a command whose result you are waiting on — then every wait loop must satisfy both:
+
+1. **Never match a wait loop against a string that appears in its own command line.** A plain `pgrep -f vitest` matches the polling shell's *own* argv, so `until ! pgrep -f vitest; do sleep 3; done` is self-true forever — it hung worker wKXWG on #302 for 7+ minutes. Match by the **captured job PID** (`cmd & pid=$!; … kill -0 "$pid"`) or use the **bracket trick** so the pattern cannot match itself: `pgrep -f '[v]itest'` (the regex `[v]itest` matches `vitest`; the literal argv `[v]itest` does not).
+2. **Carry a hard wall-clock deadline** (a `timeout` wrapper or a `SECONDS` bound) so it can never loop forever; if the deadline trips, signal `BLOCKED`.
 
 ```bash
 pnpm dev & pid=$!              # capture the job PID — never pgrep the tool name
@@ -236,7 +242,7 @@ if [ "$SECONDS" -ge "$deadline" ]; then
 fi
 ```
 
-The rules: **never background the feedback suite to poll it**, **never match a wait loop against a string that appears in its own argv** (use the captured job PID or the bracket trick), and **no polling loop without a deadline**, ever. The orchestrator watchdog is the safety net, not the design.
+The rules, in order of importance: **run it in the foreground and read the real output**; **never background a command whose result you need**; **never poll a log to detect completion**; and if you must keep a server up, **never self-match a wait loop's own argv** and **never poll without a deadline**. AFK's idle-timeout, max-iterations, and commit-anchored attempt guard exist to reap a worker that ignores these — they are a safety net, not a substitute for reading your own command output.
 
 ## Wiki Awareness
 
