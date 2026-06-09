@@ -10,6 +10,7 @@ import {
 import { genWorkerId } from "../core/session.js";
 import { runBoot, type BootDeps, type BootOptions, type BootstrapInput, type ReconcileBootRunner } from "../core/boot.js";
 import { reconcile, type ReconcileDeps, type ReconcileInput } from "../core/reconcile.js";
+import { resolveBase } from "../core/base-resolver.js";
 import { findOwnedBranch, type ReconcileSweepPlan } from "../core/boot-sweep.js";
 import { processIssue, type ProcessIssueDeps, type ProcessIssueInput } from "../core/process-issue.js";
 import {
@@ -210,6 +211,14 @@ function makeBootReconcileRunner(
   const lockPath = branchLockPath(ctx.root);
 
   return async (plan: ReconcileSweepPlan) => {
+    // Acquire the per-issue claim before validating/landing so a concurrent live
+    // worker or a second concurrent boot cannot double-land the same parked
+    // branch (#568). Uses the same claims/{N} dir as the per-issue path, so the
+    // two are mutually exclusive; skip when another live pid already holds it.
+    const claimDir = `${paths.tmpDir}/claims/${plan.number}`;
+    if (!(await fsx.tryAcquireClaimDir(claimDir, process.pid))) {
+      return { outcome: "skipped" as const };
+    }
     const reconcileDeps: ReconcileDeps = {
       gh: {
         editLabels: async (issue, remove, add) => {
@@ -257,27 +266,40 @@ function makeBootReconcileRunner(
       appendIterLog: () => {},
     };
 
-    const reconcileInput: ReconcileInput = {
-      issue: plan.number,
-      title: plan.title,
-      body: plan.body,
-      labels: plan.labels,
-      branch: plan.branch,
-      base: "main",
-      repo: ctx.repo,
-      repoDir: ctx.root,
-      remote: ctx.remote,
-      workerId,
-      attempt: 0,
-      attemptDir: join(paths.tmpDir, "boot-reconcile", String(plan.number)),
-      runner,
-    };
+    try {
+      // Resolve the effective base (lock > pin > main, ADR 0031) instead of a
+      // literal "main": a parked issue pinned to a non-main branch — or a
+      // branch-locked session — must reconcile and land against that branch,
+      // never the trunk (#568, trunk safety). Mirrors the per-issue base lookup.
+      const base = await resolveBase(
+        { issueBody: plan.body },
+        { readLockedBranch: () => readLockedBranch(lockPath), fetchIssueBody: (n) => ghx.issueBody(ghCtx, n) },
+      );
 
-    const result = await reconcile(reconcileDeps, reconcileInput);
-    const outcome = result.outcome === "landed" ? "landed" as const
-      : result.outcome === "parked" ? "parked" as const
-      : "skipped" as const;
-    return { outcome };
+      const reconcileInput: ReconcileInput = {
+        issue: plan.number,
+        title: plan.title,
+        body: plan.body,
+        labels: plan.labels,
+        branch: plan.branch,
+        base,
+        repo: ctx.repo,
+        repoDir: ctx.root,
+        remote: ctx.remote,
+        workerId,
+        attempt: 0,
+        attemptDir: join(paths.tmpDir, "boot-reconcile", String(plan.number)),
+        runner,
+      };
+
+      const result = await reconcile(reconcileDeps, reconcileInput);
+      const outcome = result.outcome === "landed" ? "landed" as const
+        : result.outcome === "parked" ? "parked" as const
+        : "skipped" as const;
+      return { outcome };
+    } finally {
+      await fsx.removeDir(claimDir);
+    }
   };
 }
 

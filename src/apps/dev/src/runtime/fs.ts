@@ -12,6 +12,7 @@ import {
   mkdir,
   readdir,
   readFile,
+  rename,
   rm,
   stat,
   writeFile,
@@ -53,6 +54,12 @@ export async function writeWorkerPid(pidFile: string, pid: number): Promise<void
   await writeFile(pidFile, String(pid), "utf8");
 }
 
+/** Monotonic per-process counter so concurrent stale-claim reclaims (even from
+ * the same pid) each rename to a UNIQUE temp dir — the atomic rename of the
+ * shared claim dir is what serialises the winners, so the temp targets must not
+ * collide. */
+let claimReclaimSeq = 0;
+
 /**
  * Atomically claim `dir` as a fresh lock directory. A plain `mkdir` (NOT
  * recursive) is the POSIX-atomic primitive: it fails with `EEXIST` when another
@@ -79,8 +86,23 @@ export async function tryAcquireClaimDir(dir: string, pid: number): Promise<bool
 
   if ((await claimOnce()) === "held") {
     if (await claimPathHeldByLivePid(dir)) return false;
-    await rm(dir, { recursive: true, force: true });
-    if ((await claimOnce()) === "held") return false;
+    // Dead holder → reclaim ATOMICALLY. The prior `rm` + re-`mkdir` was a TOCTOU:
+    // two boots that both observed the dead pid would both rm the dir and both
+    // mkdir it, each believing it held the lock — the #434 duplicate-claim race
+    // reappeared on the recovery path that fires after any worker crash (#568).
+    // rename(2) is atomic, so of N racing reclaimers exactly one rename of the
+    // SAME stale dir succeeds; the losers get ENOENT and bail. Only the winner
+    // deletes it and re-claims through the exclusive mkdir, which still
+    // serialises against any fresh claimer that slipped in after the rename.
+    const stealing = `${dir}.stale-${pid}-${claimReclaimSeq++}`;
+    await rm(stealing, { recursive: true, force: true }).catch(() => {});
+    try {
+      await rename(dir, stealing);
+    } catch {
+      return false; // lost the steal race — another reclaimer already moved it
+    }
+    await rm(stealing, { recursive: true, force: true });
+    if ((await claimOnce()) !== "acquired") return false; // a fresh claimer won the re-mkdir
   }
   await writeFile(join(dir, "pid"), String(pid), "utf8");
   return true;

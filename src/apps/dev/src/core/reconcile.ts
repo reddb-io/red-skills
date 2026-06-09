@@ -176,7 +176,7 @@ export interface ReconcileInput {
 
 // ---------- result ----------
 
-export type ReconcileSkipReason = "not-mechanical" | "active-blocker" | "no-commits" | "branch-absent";
+export type ReconcileSkipReason = "not-mechanical" | "active-blocker" | "no-commits" | "branch-absent" | "already-closed";
 
 export type ReconcileResult =
   | { outcome: "landed"; mergeSha: string; locked: boolean; posted: boolean }
@@ -237,6 +237,18 @@ export async function reconcile(deps: ReconcileDeps, input: ReconcileInput): Pro
   // ---- 3b. RED → ready-for-human with the real failing checks ----
   if (!feedback.ok) {
     return await park(deps, input, feedback, startedEpoch);
+  }
+
+  // ---- 3a-pre. re-verify the issue is still open immediately before landing ----
+  // The candidate list and the claim window can go stale between selection and
+  // here: a concurrent worker or a human may have closed the issue. Landing +
+  // closing an already-closed issue churns labels on a closed thread (#568), so
+  // bail before doLanding when it is no longer open.
+  if (await deps.gh.issueClosed(issue)) {
+    deps.appendIterLog(
+      `🤖 /afk reconcile #${issue}: skipped (already-closed) — issue closed since selection; not landing.`,
+    );
+    return { outcome: "skipped", reason: "already-closed" };
   }
 
   // ---- 3a. GREEN → land via the existing landing path, then close ----

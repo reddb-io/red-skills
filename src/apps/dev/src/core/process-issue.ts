@@ -1257,6 +1257,12 @@ async function terminalFailure(
     notes: record.notes,
     validationSummary: record.validationSummary,
   });
+  // Release the per-issue claim before returning. Every other terminal path
+  // (mergeFailed/exhausted/abortAfterClaim/runnerRecoverable) releases; this
+  // shared tail (no-sentinel / blocked / feedback-failed / stalled) did not, so
+  // a retry-routed or human-requeued issue stayed un-claimable until the live
+  // worker process exited and boot's stale-claim sweep reclaimed the dir (#568).
+  await deps.claimLock.release(input.issue);
   return {
     outcome,
     issue: input.issue,
