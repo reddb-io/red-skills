@@ -91,6 +91,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [fix(afk): anchor sandcastle under the attempt dir, not the repo root](./pages/326-fix-afk-anchor-sandcastle-under-the-attempt-dir-not-the-repo.md)
 - [fix(afk): attempt-progress guard resets on worktree edits, not just commits (ADR 0051)](./pages/479-fix-afk-attempt-progress-guard-resets-on-worktree-edits-not.md)
 - [fix(afk): boot-reconcile base resolution + claim-race recovery safety (#568)](./pages/601-fix-afk-boot-reconcile-base-resolution-claim-race-recovery-s.md)
+- [fix(afk): bound synchronous ps and cold-cache gh calls to prevent event-loop stalls](./pages/612-fix-afk-bound-synchronous-ps-and-cold-cache-gh-calls-to-prev.md)
 - [fix(afk): carry the line-diff in the heartbeat + persist it for the monitor (#448)](./pages/462-fix-afk-carry-the-line-diff-in-the-heartbeat-persist-it-for.md)
 - [fix(afk): don't read gh rate-limit as an auth failure (Mode B fast-death)](./pages/482-fix-afk-don-t-read-gh-rate-limit-as-an-auth-failure-mode-b-f.md)
 - [fix(afk): feed the agent lane on the native path so liveness isn't blind](./pages/350-fix-afk-feed-the-agent-lane-on-the-native-path-so-liveness-i.md)
