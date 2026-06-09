@@ -39,6 +39,38 @@ describe("planHitlResolution", () => {
     expect(plan.removeLabels).toEqual(["ready-for-human"]);
   });
 
+  it("sheds stale blocked:* labels when a delegable resolution moves the issue back to ready-for-agent", () => {
+    const plan = planHitlResolution(
+      base({
+        issue: {
+          number: 42,
+          title: "Resolve HITL blocker",
+          body: "## Summary\nExisting summary.\n",
+          labels: ["ready-for-human", "blocked:spec", "blocked:validation", "priority:high"],
+        },
+      }),
+    );
+
+    expect(plan.addLabels).toEqual(["ready-for-agent"]);
+    expect(plan.removeLabels).toEqual(["ready-for-human", "blocked:spec", "blocked:validation"]);
+    expect(plan.removeLabels).not.toContain("priority:high");
+  });
+
+  it("does not invent blocked:* removals when the issue carries none", () => {
+    const plan = planHitlResolution(
+      base({
+        issue: {
+          number: 42,
+          title: "Resolve HITL blocker",
+          body: "## Summary\nExisting summary.\n",
+          labels: ["ready-for-human"],
+        },
+      }),
+    );
+
+    expect(plan.removeLabels).toEqual(["ready-for-human"]);
+  });
+
   it("clears Current blocker and records it when the answer makes the issue delegable", () => {
     const body = upsertCurrentBlocker("## Summary\nExisting summary.\n", {
       status: "blocked",

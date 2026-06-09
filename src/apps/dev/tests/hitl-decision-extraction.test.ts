@@ -70,6 +70,83 @@ describe("extractPendingHitlDecision", () => {
     });
   });
 
+  it("ignores the loop's own prior HITL-resolution directive on a re-loop and surfaces the real Current blocker", () => {
+    // The loop's previous resolution comment, exactly as planHitlResolution emits it:
+    // a directive whose summary is "HITL resolution" and whose first useful line is
+    // the bare "Pending decision:" label. Re-reading it would surface that placeholder.
+    const priorResolution = `<details data-kind="directive">
+<summary>HITL resolution</summary>
+
+Pending decision:
+Decide the API shape.
+
+Human answer:
+Use RPC for now.
+
+Disposition:
+non-delegable
+
+Next pending decision:
+Decide whether retries should be capped.
+</details>`;
+    const body = upsertCurrentBlocker("## Summary\nBuild the thing.", {
+      status: "blocked",
+      kind: "decision",
+      summary: "Retry policy is undecided.",
+      next: "Decide whether retries should be capped.",
+    });
+
+    const result = extractPendingHitlDecision(issue({ body, comments: [{ author: "afk", body: priorResolution }] }));
+
+    expect(result).toMatchObject({
+      kind: "pending-decision",
+      source: "current-blocker",
+      prompt: "Decide whether retries should be capped.",
+    });
+    expect(result.prompt).not.toBe("Pending decision:");
+  });
+
+  it("ignores a self-resolution directive that opens with a bare field label even without the HITL summary", () => {
+    const priorResolution = directive("Pending decision:\nDecide the API shape.\n\nHuman answer:\nUse RPC.");
+    const body = upsertCurrentBlocker("## Summary\nBuild the thing.", {
+      status: "blocked",
+      kind: "decision",
+      summary: "Retry policy is undecided.",
+      next: "Decide whether retries should be capped.",
+    });
+
+    const result = extractPendingHitlDecision(issue({ body, comments: [{ author: "afk", body: priorResolution }] }));
+
+    expect(result).toMatchObject({
+      kind: "pending-decision",
+      source: "current-blocker",
+      prompt: "Decide whether retries should be capped.",
+    });
+  });
+
+  it("still extracts a genuine human directive that is not a HITL resolution", () => {
+    const priorResolution = `<details data-kind="directive">
+<summary>HITL resolution</summary>
+
+Pending decision:
+Old question.
+</details>`;
+    const result = extractPendingHitlDecision(
+      issue({
+        comments: [
+          { author: "afk", body: priorResolution },
+          { author: "alice", body: directive("Remove the legacy label; do not preserve compatibility.") },
+        ],
+      }),
+    );
+
+    expect(result).toMatchObject({
+      kind: "pending-decision",
+      source: "human-guidance",
+      prompt: "Remove the legacy label; do not preserve compatibility.",
+    });
+  });
+
   it("uses the latest blocked envelope when there is no authoritative decision section", () => {
     const envelope = buildEnvelope({
       status: "blocked",
