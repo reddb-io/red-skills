@@ -192,10 +192,14 @@ export function makeFeedbackWorktree(
   // Backpressure commands are operator-declared shell strings (e.g. `npm run
   // test`) that run at the worker-branch checkout ROOT. `cwd` is the branch
   // token; materialise it the same way the pnpm executor does, then run the
-  // command through `sh -c`, mirroring the lifecycle-hook executor.
-  const backpressure: BackpressureExec = async ({ command, cwd }) => {
+  // command through `sh -c`, mirroring the lifecycle-hook executor. The gate
+  // runs post-DONE, outside the progress guard and reaper, so it carries its own
+  // bounded `timeoutMs` kill deadline: a hung command is killed and reads as a
+  // non-zero failure (the exec edge reports KILLED_EXIT_CODE) instead of
+  // deadlocking the worker (PRD #567).
+  const backpressure: BackpressureExec = async ({ command, cwd, timeoutMs }) => {
     const dir = await pathFor(cwd);
-    const r = await io.exec("sh", ["-c", command], { cwd: dir });
+    const r = await io.exec("sh", ["-c", command], { cwd: dir, timeoutMs });
     return { code: r.code, stdout: r.stdout, stderr: r.stderr };
   };
 
