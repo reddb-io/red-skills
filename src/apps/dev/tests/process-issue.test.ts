@@ -558,6 +558,10 @@ describe("processIssue — BLOCKED", () => {
     expect(trace.swept).toEqual([]);
     expect(trace.deletedRemote).toEqual([]);
     expect(trace.pushedAttempt).toEqual([]);
+    // #568: the shared terminalFailure tail must release the per-issue claim so a
+    // retry-routed / re-queued issue is immediately re-claimable — it previously
+    // leaked the lock until the worker process died and boot reclaimed the dir.
+    expect(trace.released).toEqual([9]);
   });
 
   it("writes Current blocker state when a terminal blocker pages a human", async () => {
@@ -595,6 +599,8 @@ describe("processIssue — no-sentinel (run ended without a <promise>)", () => {
     expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "no-sentinel" }]);
     // on_attempt_error fires; post_attempt does NOT (ADR 0028).
     expect(result.hooksFired).toEqual(["pre_worktree", "pre_attempt", "on_attempt_error"]);
+    // #568: the no-sentinel terminal also releases the per-issue claim.
+    expect(trace.released).toEqual([9]);
   });
 
   it("branch carries work + passes feedback → SALVAGE: lands like DONE, closes (issue #332)", async () => {
