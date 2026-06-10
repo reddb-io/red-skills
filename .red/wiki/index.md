@@ -94,6 +94,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [fix(afk): bound synchronous ps and cold-cache gh calls to prevent event-loop stalls](./pages/612-fix-afk-bound-synchronous-ps-and-cold-cache-gh-calls-to-prev.md)
 - [fix(afk): bound synchronous ps and cold-cache gh calls to prevent event-loop stalls](./pages/613-fix-afk-bound-synchronous-ps-and-cold-cache-gh-calls-to-prev.md)
 - [fix(afk): carry the line-diff in the heartbeat + persist it for the monitor (#448)](./pages/462-fix-afk-carry-the-line-diff-in-the-heartbeat-persist-it-for.md)
+- [fix(afk): circuit-tripped slot restores claimed issue instead of stranding it](./pages/615-fix-afk-circuit-tripped-slot-restores-claimed-issue-instead.md)
 - [fix(afk): don't read gh rate-limit as an auth failure (Mode B fast-death)](./pages/482-fix-afk-don-t-read-gh-rate-limit-as-an-auth-failure-mode-b-f.md)
 - [fix(afk): feed the agent lane on the native path so liveness isn't blind](./pages/350-fix-afk-feed-the-agent-lane-on-the-native-path-so-liveness-i.md)
 - [fix(afk): feedback gate resolves multi-slash afk/* branches (#437)](./pages/438-fix-afk-feedback-gate-resolves-multi-slash-afk-branches-437.md)
