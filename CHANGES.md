@@ -6,6 +6,20 @@ Upstream base: `mattpocock/skills@aaf2453fbdfe7a15c07f11d861224f34ab4b53cb` (see
 
 ---
 
+## afk (engineering) — circuit-tripped slot restores claimed issue; boot-stamp makes sweep reliable (#577)
+
+- **status**: modified
+- **upstream**: —
+- **why**: Three related bugs in the circuit-trip sweep (`sweepParkedSlot`). (1) The sweep resolved parked-slot workers from a per-slot log file (`afk-supervisor-slot-N.log`) that the native supervisor routed child stdout to but the worker never wrote a `[afk] worker: wXXXX` boot-stamp line into — so `parseWorkerIdsFromLog` always returned `[]` and the sweep always early-returned, stranding the claimed issue in `running` forever with no label restore and no discard envelope. (2) The PID-based fallback path (`findSlotIterDir`) was never reached in practice because the log-parse short-circuit fired first. (3) The discard envelope's fast-death count was always correct in the model (`state.deaths.length`) but was never verified to reach the envelope in an end-to-end test — a pure-fake test exercised it, but no test drove the real `parkedSlotWorkFor` filesystem path.
+- **what changed**:
+  - `src/apps/dev/src/commands/run.ts`: emit `[afk] worker: ${workerId}` to stdout immediately after generating the worker ID, before any I/O that could fail. The supervisor routes the child's stdout/stderr to the per-slot log, so the stamp is captured even when the worker fast-dies before writing `worker.pid`. This makes Path 1 (slot-log boot-stamp parse) the primary sweep-resolution path for the native fleet.
+  - `src/apps/dev/src/runtime/supervisor-fs.ts`: updated doc comments to reflect Path 1 as primary (native fleet) and Path 2 as fallback (rotated / pre-stamp logs).
+  - `src/apps/dev/src/core/supervisor.ts`: updated `SupervisorFs.parkedSlotWork` doc comment to match.
+  - `src/apps/dev/tests/supervisor.test.ts`: added a real-FS integration describe block (`circuit trip — real FS integration (slot-log boot-stamp path)`) that drives the full path `handleDeadSlot → sweepParkedSlot → parkedSlotWorkFor` against a real temp directory with boot-stamp log + worker iter dirs, verifying (a) the claimed issue is restored with `ready-for-agent`/`runner-error` labels, (b) the discard envelope carries `fast deaths: 5` (not 0), and (c) pre-claim iter dirs are also cleaned up.
+  - `src/apps/dev/tests/supervisor-fs.test.ts`: separate test suite for `parkedSlotWorkFor` real-FS paths (slot-log parse, PID fallback, empty log, missing file, multi-slot isolation).
+
+---
+
 ## model-tier-policy / branch-lock + Codex dev manifest (engineering, misc) — frontmatter + manifest hygiene (#593)
 
 - **status**: modified
