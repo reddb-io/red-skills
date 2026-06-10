@@ -147,6 +147,24 @@ describe("config", () => {
     expect(() => parseConfigYaml("- not a mapping\n")).toThrow(MalformedConfigError);
   });
 
+  it("inline comment after double-quoted scalar parses without throwing", () => {
+    const text = 'afk:\n  default_runner: "codex" # preferred runner\n';
+    expect(parseConfigYaml(text)).toEqual({ "afk.default_runner": "codex" });
+  });
+
+  it("inline comment after single-quoted scalar parses without throwing", () => {
+    const text = "afk:\n  default_runner: 'codex' # preferred runner\n";
+    expect(parseConfigYaml(text)).toEqual({ "afk.default_runner": "codex" });
+  });
+
+  it("block-sequence config does not disable the primary-branch guard", () => {
+    const text =
+      'dev:\n  lock-primary-branch: true\nafk:\n  backpressure:\n    - "npm run test" # full suite\n    - npm run lint\n';
+    const values = loadConfig("/x/.red/config.yaml", { read: () => text });
+    expect(getConfig(values, "dev.lock-primary-branch")).toBe("true");
+    expect(readBackpressure(values)).toEqual(["npm run test", "npm run lint"]);
+  });
+
   it("injectable reader bypasses the filesystem", () => {
     const values = loadConfig("virtual.yaml", {
       read: () => "afk:\n  fleet:\n    target: 9\n",
@@ -197,6 +215,11 @@ describe("config — block sequences (afk.backpressure, #430)", () => {
     expect(parseConfigYaml(text)).toEqual({
       "afk.backpressure.0": "npm run test -- --reporter=dot",
     });
+  });
+
+  it("strips inline comment after closing quote on a sequence item", () => {
+    const text = 'afk:\n  backpressure:\n    - "npm run test" # full suite\n';
+    expect(parseConfigYaml(text)).toEqual({ "afk.backpressure.0": "npm run test" });
   });
 
   it("throws on a top-level sequence with no enclosing mapping", () => {

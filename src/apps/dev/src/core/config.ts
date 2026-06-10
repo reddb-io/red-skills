@@ -155,6 +155,15 @@ export function parseConfigYaml(text: string): ConfigValues {
 
       let item = rest.slice(1).replace(/^\s+/, "");
       if (item === "") throw new MalformedConfigError();
+      // Strip an inline comment that follows the closing quote (e.g. `- "cmd" # note`).
+      if (item[0] === '"' || item[0] === "'") {
+        const q = item[0];
+        const close = item.indexOf(q, 1);
+        if (close > 0) {
+          const tail = item.slice(close + 1).trimStart();
+          if (tail === "" || tail.startsWith("#")) item = item.slice(0, close + 1);
+        }
+      }
       if (item.startsWith('"')) {
         if (!item.endsWith('"') || item.length < 2) throw new MalformedConfigError();
         item = item.slice(1, -1);
@@ -176,6 +185,15 @@ export function parseConfigYaml(text: string): ConfigValues {
     const key = rest.slice(0, colon);
     let value = rest.slice(colon + 1).replace(/^\s+/, "");
 
+    // Strip an inline comment that follows the closing quote (e.g. `key: "v" # note`).
+    if (value[0] === '"' || value[0] === "'") {
+      const q = value[0];
+      const close = value.indexOf(q, 1);
+      if (close > 0) {
+        const tail = value.slice(close + 1).trimStart();
+        if (tail === "" || tail.startsWith("#")) value = value.slice(0, close + 1);
+      }
+    }
     // unclosed-quote detection / strip matching quotes
     if (value.startsWith('"')) {
       if (!value.endsWith('"') || value.length < 2) throw new MalformedConfigError();
