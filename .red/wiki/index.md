@@ -121,6 +121,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [fix(afk): inject RED_AFK_SLOT per fleet slot so cargo/gradle build isolation works](./pages/645-fix-afk-inject-red-afk-slot-per-fleet-slot-so-cargo-gradle-b.md)
 - [fix(afk): inner agent must not create PRs / wait on CI — commit + DONE only](./pages/605-fix-afk-inner-agent-must-not-create-prs-wait-on-ci-commit-do.md)
 - [fix(afk): killed/timed-out exec is a failure + bounded backpressure timeout (#574)](./pages/606-fix-afk-killed-timed-out-exec-is-a-failure-bounded-backpress.md)
+- [fix(afk): land in an isolated worktree so rollback never mutates the primary checkout](./pages/658-fix-afk-land-in-an-isolated-worktree-so-rollback-never-mutat.md)
 - [fix(afk): launcher no longer shadows AFK commands + atomic issue claim (#434)](./pages/435-fix-afk-launcher-no-longer-shadows-afk-commands-atomic-issue.md)
 - [fix(afk): locked landing targets the resolved base, not main](./pages/603-fix-afk-locked-landing-targets-the-resolved-base-not-main.md)
 - [fix(afk): monitor diff column counts committed work + relabel issue ratio](./pages/392-fix-afk-monitor-diff-column-counts-committed-work-relabel-is.md)
