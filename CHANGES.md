@@ -6,6 +6,18 @@ Upstream base: `mattpocock/skills@aaf2453fbdfe7a15c07f11d861224f34ab4b53cb` (see
 
 ---
 
+## afk (engineering) — SAFETY.md git bans scoped to inner agent; push/branch-name claims corrected (#592)
+
+- **status**: modified
+- **upstream**: —
+- **why**: Binding doc SAFETY.md forbade `git rebase` and `--force-with-lease` "no exceptions" while the orchestrator's own documented flow (SKILL.md steps 2 and 8) relies on both for worktree-branch mirroring and base integration. Similarly, SAFETY.md claimed "the orchestrator pushes `main`, not the worktree branch" while the actual flow pushes the worktree branch via PR admin-merge or direct locked-branch merge + push. Two different branch-name templates were listed (`afk/{id}/{N}-{slug}` vs `afk/{N}-{slug}`) with the second missing the worker ID.
+- **what changed**:
+  - Scoped the git bans by actor: `git rebase` and `--force-with-lease` remain forbidden for the inner agent, but are now explicitly allowed for the orchestrator in the primary checkout (rebase for integration, `--force-with-lease` for mirroring the worktree branch onto `origin/afk/{id}/{N}-{slug}` and per-worktree post-commit hook).
+  - Rewrote the "pushes main" claim to state the actual mechanism: the orchestrator pushes the worktree branch via PR admin-merge (unlocked path) or direct merge + push of the locked branch (locked path); it does not push `main` directly.
+  - Unified the branch-name template to always use `afk/{id}/{N}-{slug}` (with worker ID); corrected the Worktree Lifecycle section which listed the older incomplete form. Also clarified that worktrees are created from `origin/{pinned}` (the resolved base), not `origin/main`.
+
+---
+
 ## afk (engineering) — idle queue does not park fleet permanently; clean drain exempt from fast-death ring (#578)
 
 - **status**: modified
