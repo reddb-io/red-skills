@@ -2,7 +2,11 @@
 
 ## Status
 
-accepted.
+accepted. **Superseded in implementation by ADR 0030** (`do_merge` now lock-toggled landing; the pinned branch resolution itself still applies).
+
+## Supersession note
+
+When AFK landing was refactored to use a lock-toggled, PR-carrying model (ADR 0030), the `do_merge` implementation changed significantly. The pinned branch resolution still applies — the target branch for a worktree comes from the same precedence ladder — but the merge path is now unified under the lock-toggled landing (ADR 0030/0031) rather than branch-specific logic.
 
 `/afk` historically based every worktree on `origin/main` and merged every
 finished issue back into `main`. PRD #59 (issue #64) introduces the **pinned

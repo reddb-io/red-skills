@@ -2,12 +2,7 @@
 
 ## Status
 
-accepted.
-
-Design-stage decision from a `/start` grilling on the worker-directory
-restructure (motivated by #243).
-
-Implemented by PRD #244 (issues #253–#258), shipped in the native TS runtime
+accepted. **⚠ Stale on bash implementation:** Early sections reference bash shell mechanics; the decision and landing architecture are implemented in TypeScript (PR shipped in native TS runtime). The lock-toggled landing and PR-carry-history pattern remain current; implementation lives in `src/apps/dev/core/landing.ts`.
 (the `afk.sh` line references below are historical; the bash is gone, commit
 3d92d56). Before this, `/afk` merged a successful iteration
 directly into the target via `do_merge`, opened no PR, and `rm -rf`'d the entire

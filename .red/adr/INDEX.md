@@ -15,8 +15,10 @@ stale notes inline.
 - **0034** Repo splits DEFINITIONS from IMPLEMENTATION (`src/apps/…`) — partially superseded by **0039** (entrypoints fused) and **0041** (memory leaves)
 - **0041** red-skills consumes `red-memory` + `red-ui` MCPs; stops building memory — partially supersedes 0034 *(renumbered from 0039)*
 - **0046** A single global `.red/` shared by all plugins — *superseded by 0021*
+- **0055** AFK reconcile — a no-agent worker mode that lands a parked green branch — *accepted*
 
-## Brain plugin
+## Brain plugin & contexts
+- **0021** Multi-context plugin glossaries — *accepted*, includes `brain` context — post-0041, brain is a new plugin alongside dev/memory
 - **0057** `red-hermes` is a fetched, never-vendored black-box dependency of the `brain` plugin — reached via `hermes mcp serve`, fetched as a Release asset (0038 model), version pinned (0040), 10-tool contract; MIT attribution in `NOTICE` (0004) *(downstream fetch/launcher blocked on red-hermes releases, same shape as #378)*
 
 ## Bundle / fetch / release / version
@@ -54,6 +56,8 @@ stale notes inline.
 - *(see also 0030, 0031)*
 
 ## Memory architecture & graph
+> **Post-0041 migration note:** Except for **0009** (soft-use boundary) and **0042** (plugin config), memory ADRs below document the `red-memory` MCP runtime as of its spin-off in ADR 0041. The decision record remains authoritative; implementation details live in the `red-memory` repo.
+
 - **0005** Memory plugin: three-layer RedDB architecture, local-first per-repo, MCP+CLI
 - **0007** RedDB graph writes go through multi-model DML, not table inserts
 - **0009** `dev` soft-uses `memory`, one-directional — gate mechanism partially superseded by **0042**; soft-use direction stands

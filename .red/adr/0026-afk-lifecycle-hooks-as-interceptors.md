@@ -2,7 +2,7 @@
 
 ## Status
 
-accepted.
+accepted. **⚠ Stale on shell implementation:** ADR 0042 lifted lifecycle hooks into unified plugin configuration (`.red/config.yaml`, `afk.hooks`). The hook-point lifecycle and interceptor pattern remain valid; implementation is now in TypeScript (ADR 0042, ADR 0026 "shell" language is historical). For current hook invocation and configuration, read ADR 0042 and `src/apps/dev/`.
 
 `/afk` already runs project-specific shell scripts at a few baked-in points
 (e.g. the cargo/gradle isolation defaults under `afk.hooks.defaults` in

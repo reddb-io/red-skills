@@ -2,7 +2,7 @@
 
 ## Status
 
-accepted.
+accepted. **⚠ Stale on bash implementation:** AFK runtime was ported from bash (`afk.sh`, `supervisor.sh`, `monitor.sh`) to TypeScript (PR committed as c7131856); implementation details here describe the deleted bash runner. The task-mirroring decision and the per-runner adapter pattern remain valid; read `src/apps/dev/` for the current runtime.
 
 `/afk` parallelises as independent OS processes (`afk.sh` launched with `nohup`,
 optionally fanned out by `supervisor.sh`), coordinated through GitHub labels and
