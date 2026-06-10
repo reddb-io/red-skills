@@ -1,7 +1,7 @@
 ---
 name: afk
 description: Autonomous loop that drains the `ready-for-agent` queue on the issue tracker. Each iteration claims an issue, runs it in an isolated worktree, executes with claude or codex, merges back to main, and closes the issue. Use when the user wants to run AFK execution, drain a PRD, hammer specific issues, or otherwise let agents grind through the backlog.
-argument-hint: "[--prd N | --issues N,N,N] [--runner claude|codex] [--alternate] [--fallback-runner] [--request TEXT] [-n N] [--once] [--boot-only] | fleet [N] | fleet stop | monitor | dashboard | daily-review | weekly-review | retake N | reap"
+argument-hint: "[--prd N | --issues N,N,N] [--runner claude|codex|opencode] [--alternate] [--fallback-runner] [--request TEXT] [-n N] [--once] [--boot-only] | fleet [N] | fleet stop | monitor | dashboard | daily-review | weekly-review | retake N | reap"
 ---
 
 # /afk
@@ -102,13 +102,13 @@ Run before the first iteration:
 2. Ensure `.red/tmp/` is in `.gitignore` of the primary checkout. Append if missing.
 3. **Generate the worker ID.** Literal `w` + 4 random characters from `[A-Z0-9]` (e.g. `wZ2R4`). On the astronomically unlikely chance the chosen ID already maps to a live worker directory `.red/tmp/workers/{id}` (its `worker.pid` alive), regenerate. Print the ID on the first line of the run: `worker: {id}`. All per-attempt paths interpolate `{id}`, the issue number `{N}`, and the attempt number `{n}`.
 4. Resolve the runner via the detection cascade:
-   1. `--runner X` flag (pin) — wins over everything, logged as `detected via --runner pin`.
-   2. **Caller runner env** — `RED_AFK_RUNNER=claude|codex|hermes` is the host-session identity and wins over ambient env/process/path sniffing. Under Codex, invoke the bundle as `RED_AFK_RUNNER=codex ...`; under Claude Code, invoke it as `RED_AFK_RUNNER=claude ...`. Logged as `detected via env-var`.
+   1. `--runner X` flag (pin) — wins over everything, logged as `detected via --runner pin`. `opencode` (ADR 0059) is valid **only here or via `RED_AFK_RUNNER`** — it is never auto-sniffed below, since no host session is OpenCode.
+   2. **Caller runner env** — `RED_AFK_RUNNER=claude|codex|hermes|opencode` is the host-session identity (or, for `opencode`, an explicit API-auth pin) and wins over ambient env/process/path sniffing. Under Codex, invoke the bundle as `RED_AFK_RUNNER=codex ...`; under Claude Code, invoke it as `RED_AFK_RUNNER=claude ...`. Logged as `detected via env-var`.
    3. **Env-var sniff** — `CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`, or `CLAUDE_CODE_SSE_PORT` → `claude`; `CODEX_HOME`, `CODEX_SANDBOX`, `CODEX_SANDBOX_NETWORK_DISABLED`, or `CODEX_MANAGED_BY_NPM` → `codex`. Logged as `detected via env-var`.
    4. **Process-tree sniff** — if the invoking process tree contains Claude Code, use `claude`; if it contains Codex, use `codex`. Logged as `detected via process`. This is the normal path for repo-local skill copies whose filesystem path is neutral.
    5. **`$BASH_SOURCE` path sniff** — script lives under `~/.claude/...` → `claude`; under `~/.codex/...` → `codex`. Logged as `detected via path`.
    6. **Default fallback** — `claude`. Logged as `detected via env-fallback`.
-   The boot log prints one line per invocation: `runner: <runner> (detected via <method>)`. Load [`runner-claude.md`](runner-claude.md) or [`runner-codex.md`](runner-codex.md) so the spawn command is ready.
+   The boot log prints one line per invocation: `runner: <runner> (detected via <method>)`. Load [`runner-claude.md`](runner-claude.md), [`runner-codex.md`](runner-codex.md), or [`runner-opencode.md`](runner-opencode.md) so the spawn command is ready.
    Do not probe `command -v claude` / `command -v codex` to choose a different runner after a transport failure. Installed binaries are capabilities, not caller identity. A runner swap is allowed only when the user explicitly passes `--fallback-runner`.
 5. Read [`SAFETY.md`](SAFETY.md). It is binding for every shell action the loop takes.
 6. **Write the per-worker pid file.** Create `.red/tmp/workers/{id}/` and write `worker.pid` (current `$$`) **once** — this is the worker's single liveness anchor for its whole lifetime.
@@ -356,7 +356,7 @@ Default behaviour is **no rotation and no fallback** — the runner resolved by 
 - `--alternate` re-enables round-robin rotation between consecutive issues (claude → codex → claude → …). Mutually exclusive with `--runner`.
 - `--fallback-runner` re-enables mid-issue swap when the active runner returns `RUNNER_EXHAUSTED`. Without it, exhaustion is terminal for the current runner invocation and routes through bounded recovery as `blocked:quota`.
 
-Exhaustion detection lives in [`runner-claude.md`](runner-claude.md) and [`runner-codex.md`](runner-codex.md) — they own the per-runner error strings. The orchestrator only sees `RUNNER_EXHAUSTED` as a structured signal.
+Exhaustion detection lives in [`runner-claude.md`](runner-claude.md), [`runner-codex.md`](runner-codex.md), and [`runner-opencode.md`](runner-opencode.md) — they own the per-runner error strings. The orchestrator only sees `RUNNER_EXHAUSTED` as a structured signal. Note `opencode` is an API-auth runner (OpenRouter); in an OpenRouter-only lane with no host session, run it without `--fallback-runner` so exhaustion is terminal-through-recovery rather than a swap to a session-auth runner that is not present.
 
 When swap happens mid-issue (only with `--fallback-runner`), the same worktree and handoff file are reused; the new runner sees the previous agent's Notes appended.
 
