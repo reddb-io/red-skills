@@ -47,11 +47,16 @@ export const CONFIG_DEFAULTS = {
   "afk.models.codex.think.model": "gpt-5.5",
   "afk.models.codex.think.effort": "high",
   // OpenCode tiers (ADR 0059). The model is OpenCode's own
-  // `openrouter/<vendor>/<model>` slug — OpenRouter is addressed purely through
-  // that slug, no provider config beyond OPENROUTER_API_KEY. The effort maps to
-  // OpenCode's `variant`. Defaults mirror the Claude tier capabilities (cheap →
-  // strong) via OpenRouter; operators override per repo under
-  // `plugins.dev.afk.models.opencode.<tier>.*`.
+  // `<provider>/<model>` slug — the leading segment tells OpenCode which
+  // OpenAI-compatible endpoint to dispatch to (`openrouter/...`, `openai/...`,
+  // `minimax/...`, …). Auth is environment-driven: AFK propagates the first
+  // set key of `OPENAI_API_KEY` > `MINIMAX_API_KEY` > `OPENROUTER_API_KEY`
+  // (see `opencode-env.ts`) through `OpenCodeOptions.env`; OpenCode owns
+  // endpoint resolution from there. The default slugs route through
+  // OpenRouter for back-compat with the #626 contract; operators override per
+  // repo under `plugins.dev.afk.models.opencode.<tier>.*` to point at any
+  // OpenAI-compatible endpoint (e.g. `openai/gpt-4o-mini`,
+  // `minimax/MiniMax-M3`).
   "afk.models.opencode.validate.model": "openrouter/anthropic/claude-3.5-haiku",
   "afk.models.opencode.validate.effort": "low",
   "afk.models.opencode.simple.model": "openrouter/anthropic/claude-sonnet-4",
