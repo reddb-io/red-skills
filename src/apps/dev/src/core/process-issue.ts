@@ -628,7 +628,12 @@ export async function processIssue(
   // Make the resolved base ref current so sandcastle forks the worker branch off
   // it (ADR 0031): the pinned/locked base becomes the branch's parent, not HEAD.
   if (deps.git.fetchBase) await deps.git.fetchBase(base);
-  let activeRunner: Runner = input.runner === "codex" ? "codex" : "claude";
+  // Pin to a sandcastle-backed runner. claude/codex/opencode (ADR 0059) each have
+  // a first-class provider and pass through; any other value (e.g. the
+  // runner-neutral hermes, which has no provider) coerces to claude so the spawn
+  // always has a real agent.
+  let activeRunner: Runner =
+    input.runner === "codex" || input.runner === "opencode" ? input.runner : "claude";
   let attemptN = input.attempt;
   // Anchor sandcastle at the per-attempt dir so its `.sandcastle/` (worktrees,
   // logs, .env, patches) + git ops land under .red/, never at the repo root.

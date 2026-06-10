@@ -274,6 +274,36 @@ describe("config — AFK model tier table (ADR 0049)", () => {
     expect(resolveTier(values, "codex", "think")).toEqual({ model: "gpt-5.5", effort: "high" });
   });
 
+  it("resolves every OpenCode tier from the default openrouter table (ADR 0059)", () => {
+    const values = loadConfig("/nonexistent/.red/config.yaml", { warn: () => {} });
+    expect(resolveTier(values, "opencode", "validate")).toEqual({
+      model: "openrouter/anthropic/claude-3.5-haiku",
+      effort: "low",
+    });
+    expect(resolveTier(values, "opencode", "simple")).toEqual({
+      model: "openrouter/anthropic/claude-sonnet-4",
+      effort: "high",
+    });
+    expect(resolveTier(values, "opencode", "complex")).toEqual({
+      model: "openrouter/anthropic/claude-opus-4",
+      effort: "medium",
+    });
+    expect(resolveTier(values, "opencode", "think")).toEqual({
+      model: "openrouter/anthropic/claude-opus-4",
+      effort: "high",
+    });
+  });
+
+  it("honours an overridden opencode tier under plugins.dev.afk.models.opencode.*", () => {
+    const text =
+      "plugins:\n  dev:\n    afk:\n      models:\n        opencode:\n          simple:\n            model: openrouter/openai/gpt-4o-mini\n            effort: medium\n";
+    const values = loadConfig("/x/.red/config.yaml", { read: () => text });
+    expect(resolveTier(values, "opencode", "simple")).toEqual({
+      model: "openrouter/openai/gpt-4o-mini",
+      effort: "medium",
+    });
+  });
+
   it("lets explicit tier entries override legacy scalar model keys", () => {
     const text =
       "afk:\n  model: shared-model\n  models:\n    claude:\n      think:\n        model: claude-tier-model\n        effort: max\n";

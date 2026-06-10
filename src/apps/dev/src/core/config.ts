@@ -46,6 +46,20 @@ export const CONFIG_DEFAULTS = {
   "afk.models.codex.complex.effort": "medium",
   "afk.models.codex.think.model": "gpt-5.5",
   "afk.models.codex.think.effort": "high",
+  // OpenCode tiers (ADR 0059). The model is OpenCode's own
+  // `openrouter/<vendor>/<model>` slug — OpenRouter is addressed purely through
+  // that slug, no provider config beyond OPENROUTER_API_KEY. The effort maps to
+  // OpenCode's `variant`. Defaults mirror the Claude tier capabilities (cheap →
+  // strong) via OpenRouter; operators override per repo under
+  // `plugins.dev.afk.models.opencode.<tier>.*`.
+  "afk.models.opencode.validate.model": "openrouter/anthropic/claude-3.5-haiku",
+  "afk.models.opencode.validate.effort": "low",
+  "afk.models.opencode.simple.model": "openrouter/anthropic/claude-sonnet-4",
+  "afk.models.opencode.simple.effort": "high",
+  "afk.models.opencode.complex.model": "openrouter/anthropic/claude-opus-4",
+  "afk.models.opencode.complex.effort": "medium",
+  "afk.models.opencode.think.model": "openrouter/anthropic/claude-opus-4",
+  "afk.models.opencode.think.effort": "high",
   "afk.hooks.defaults.cargo": "true",
   "afk.hooks.defaults.gradle": "true",
   // Merge-gate policy (ADR 0048). The unlocked admin-merge ignores advisory
@@ -275,14 +289,17 @@ export function resolveTier(
   runner: string,
   taskClass: AfkModelTier = "think",
 ): ResolvedTier {
-  const fallbackRunner = runner === "codex" ? "codex" : "claude";
+  // The runner whose tier table to read. claude/codex/opencode each ship a full
+  // table (CONFIG_DEFAULTS); any other runner (e.g. the runner-neutral hermes)
+  // falls back to the claude table.
+  const tierRunner = runner === "codex" || runner === "opencode" ? runner : "claude";
   const tier = (AFK_MODEL_TIERS as readonly string[]).includes(taskClass) ? taskClass : "think";
-  const modelKey = defaultTierKey(fallbackRunner, tier, "model")!;
-  const effortKey = defaultTierKey(fallbackRunner, tier, "effort")!;
+  const modelKey = defaultTierKey(tierRunner, tier, "model")!;
+  const effortKey = defaultTierKey(tierRunner, tier, "effort")!;
   const defaultModel = CONFIG_DEFAULTS[modelKey];
   const defaultEffort = CONFIG_DEFAULTS[effortKey] as AgentEffort;
   const tierModel = getConfig(values, modelKey);
-  const scalarRunnerModel = getConfig(values, `afk.models.${fallbackRunner}`);
+  const scalarRunnerModel = getConfig(values, `afk.models.${tierRunner}`);
   const scalarGlobalModel = getConfig(values, "afk.model");
 
   return {

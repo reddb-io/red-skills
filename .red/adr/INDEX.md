@@ -47,6 +47,7 @@ stale notes inline.
 - **0050** AFK salvages an uncommitted worktree when the inner agent emits DONE without committing (codex non-compliance net) *(complements 0047, 0028)*
 - **0051** AFK attempt-progress guard resets on worktree edits, not just commits — stops false-stalling the productive-but-not-committing codex runner *(refines 0044, 0045)*
 - **0054** AFK arms the attempt guard + heartbeat under docker/podman isolation via an attempt-dir bind mount; lane-idle reaper stays host-only *(supersedes 0044 §4 / 0045 §4; relies on 0033; absorbs #284 docker E2E)*
+- **0059** OpenCode is the third AFK runner, addressing OpenRouter through its own `openrouter/<vendor>/<model>` slug + the `OpenCodeOptions.env` auth seam; accepted only as an explicit pin, never auto-sniffed *(follows 0003, 0033, 0049)*
 
 ## Branch lock
 - **0006** Branch lock enforces on the agent only, not the human terminal

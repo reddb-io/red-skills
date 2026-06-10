@@ -21,7 +21,14 @@ import { startLaneIdleReaper, DEFAULT_STALL_POLL_S } from "./lane-idle-reaper.js
 // coupled to sandcastle, ADR 0033).
 export type { AgentStreamEvent } from "@ai-hero/sandcastle";
 
-export type AgentRunner = "claude" | "codex";
+// The runners with a first-class sandcastle agent provider. `opencode` (ADR
+// 0059) addresses OpenRouter through OpenCode's own `openrouter/<vendor>/<model>`
+// slug + the `OpenCodeOptions.env` auth seam; it is accepted only as an explicit
+// pin (`--runner opencode` / `RED_AFK_RUNNER=opencode`), never auto-sniffed
+// (runner-detection.ts), since no host session is OpenCode. `hermes` is a
+// runner-neutral fallback contract with NO sandcastle provider, so it is not in
+// this union — process-issue coerces it onto a backed runner before spawning.
+export type AgentRunner = "claude" | "codex" | "opencode";
 export type SandboxMode = "none" | "docker" | "podman";
 export type AgentEffort = "low" | "medium" | "high" | "xhigh" | "max";
 // `exhausted` is surfaced when sandcastle's run() signals quota / rate-limit
@@ -350,6 +357,68 @@ export function effortForProvider(
   if (effort === undefined) return undefined;
   const accepted = runner === "codex" ? CODEX_EFFORTS : CLAUDE_EFFORTS;
   return accepted.includes(effort) ? effort : undefined;
+}
+
+/** The env var carrying the OpenRouter API key into the OpenCode agent (ADR 0059). */
+export const OPENROUTER_API_KEY_ENV = "OPENROUTER_API_KEY";
+
+/**
+ * The subset of the sandcastle package surface `buildAgent` needs — the three
+ * provider factories AFK can drive. Injected so the runner→provider mapping
+ * (model slug, effort/variant gating, OpenRouter env passthrough) is unit-testable
+ * with fakes, without importing the package (which pulls real provider deps).
+ * `defaultSandcastleDeps` supplies the real `core.{claudeCode,codex,opencode}`.
+ */
+export interface AgentFactories {
+  claudeCode: (model: string, options?: { effort?: AgentEffort }) => RunOptions["agent"];
+  codex: (model: string, options?: { effort?: AgentEffort }) => RunOptions["agent"];
+  opencode: (model: string, options?: { variant?: string; env?: Record<string, string> }) => RunOptions["agent"];
+}
+
+/**
+ * Map a runner+model+effort to a sandcastle agent provider, reading any provider
+ * env passthrough from `env`. Pure: the package factories and the environment are
+ * injected.
+ *
+ * - **claude / codex**: the requested effort is gated per provider (FIX D, see
+ *   {@link effortForProvider}); an out-of-range value is DROPPED to the provider
+ *   default with a warn rather than cast through to a runtime rejection. It is
+ *   passed as the provider's numeric `effort` option.
+ * - **opencode** (ADR 0059): the model is OpenCode's own `openrouter/<vendor>/<model>`
+ *   slug, forwarded unchanged. AFK's effort maps to OpenCode's `variant` (its own
+ *   reasoning knob — a free-form string, distinct from the numeric effort the
+ *   other two take), so no gating applies. The OpenRouter API key is delivered
+ *   through `OpenCodeOptions.env` — the auth seam — when present in `env`.
+ */
+export function buildAgent(
+  factories: AgentFactories,
+  runner: AgentRunner,
+  model: string,
+  opts: { effort?: AgentEffort } | undefined,
+  env: NodeJS.ProcessEnv,
+  warn?: (message: string) => void,
+): RunOptions["agent"] {
+  const requested = opts?.effort;
+
+  if (runner === "opencode") {
+    const options: { variant?: string; env?: Record<string, string> } = {};
+    if (requested !== undefined) options.variant = requested;
+    const key = env[OPENROUTER_API_KEY_ENV];
+    if (key) options.env = { [OPENROUTER_API_KEY_ENV]: key };
+    return factories.opencode(model, Object.keys(options).length > 0 ? options : undefined);
+  }
+
+  const effort = effortForProvider(runner, requested);
+  if (requested !== undefined && effort === undefined) {
+    warn?.(
+      `[afk] warn: effort '${requested}' is not accepted by runner '${runner}' ` +
+        `(accepted: ${(runner === "codex" ? CODEX_EFFORTS : CLAUDE_EFFORTS).join(", ")}); ` +
+        "falling back to the provider default.",
+    );
+  }
+  return runner === "codex"
+    ? factories.codex(model, effort ? { effort } : undefined)
+    : factories.claudeCode(model, effort ? { effort } : undefined);
 }
 
 /** Map an AFK completion signal back to an iteration outcome. */
@@ -802,28 +871,20 @@ export async function defaultSandcastleDeps(): Promise<SandcastleDeps> {
     import("@ai-hero/sandcastle/sandboxes/docker"),
     import("@ai-hero/sandcastle/sandboxes/podman"),
   ]);
-  // FIX D: the effort unions differ per provider (codex tops out at "xhigh", no
-  // "max"). Gate the requested effort against the provider's accepted set BEFORE
-  // building the agent: an out-of-range value (e.g. codex + "max") is DROPPED
-  // (provider default) with a warn rather than cast through to a runtime provider
-  // rejection / infra crash. Degrade safely — never throw on a misconfig.
+  // FIX D / ADR 0059: the per-provider mapping (effort gating for claude/codex,
+  // effort→`variant` + OPENROUTER_API_KEY passthrough for opencode) lives in the
+  // pure `buildAgent`, unit-tested with fake factories. Here we just bind the real
+  // `core.*` factories and `process.env`. The casts narrow the shared option shape
+  // to each provider's option literal — `buildAgent` only ever passes options the
+  // factory accepts.
   const warn = (m: string) => console.warn(m);
-  const agentFor: SandcastleDeps["agentFor"] = (runner, model, opts) => {
-    const requested = opts?.effort;
-    const effort = effortForProvider(runner, requested);
-    if (requested !== undefined && effort === undefined) {
-      warn(
-        `[afk] warn: effort '${requested}' is not accepted by runner '${runner}' ` +
-          `(accepted: ${(runner === "codex" ? CODEX_EFFORTS : CLAUDE_EFFORTS).join(", ")}); ` +
-          "falling back to the provider default.",
-      );
-    }
-    // `effort` is now guaranteed to be in the provider's accepted union; the cast
-    // narrows the shared AgentEffort union to each provider's option literal.
-    return runner === "codex"
-      ? core.codex(model, effort ? ({ effort } as Parameters<typeof core.codex>[1]) : undefined)
-      : core.claudeCode(model, effort ? ({ effort } as Parameters<typeof core.claudeCode>[1]) : undefined);
+  const factories: AgentFactories = {
+    claudeCode: (model, options) => core.claudeCode(model, options as Parameters<typeof core.claudeCode>[1]),
+    codex: (model, options) => core.codex(model, options as Parameters<typeof core.codex>[1]),
+    opencode: (model, options) => core.opencode(model, options as Parameters<typeof core.opencode>[1]),
   };
+  const agentFor: SandcastleDeps["agentFor"] = (runner, model, opts) =>
+    buildAgent(factories, runner, model, opts, process.env, warn);
   const sandboxFor: SandcastleDeps["sandboxFor"] = (mode, opts) => {
     // Issue #405: bind-mount the host attempt dir at the identical path so the
     // worktree sandcastle creates under it + the proof-of-life lane files are

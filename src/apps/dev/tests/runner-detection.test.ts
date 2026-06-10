@@ -32,4 +32,41 @@ describe("runner detection", () => {
     expect(parseRunnerFlag(["--runner=codex"])).toBe("codex");
     expect(parseRunnerFlag(["--once"])).toBeUndefined();
   });
+
+  // ADR 0059: opencode is a valid pin via --runner / RED_AFK_RUNNER, but is NEVER
+  // auto-sniffed from caller identity — no host session is OpenCode.
+  it("accepts opencode only as an explicit pin (flag or RED_AFK_RUNNER)", () => {
+    expect(detectRunner({ flag: "opencode" })).toMatchObject({ runner: "opencode", method: "flag" });
+    expect(detectRunner({ env: { RED_AFK_RUNNER: "opencode" } })).toMatchObject({
+      runner: "opencode",
+      method: "env-var",
+      detail: "RED_AFK_RUNNER",
+    });
+  });
+
+  it("never auto-sniffs opencode from ambient env / process tree / path", () => {
+    // No ambient surface maps to opencode, so an opencode-ish process tree or
+    // script path must NOT promote it — the cascade falls through to claude.
+    expect(detectRunner({ env: {}, processTree: "node /opt/opencode/bin/opencode" })).toMatchObject({
+      runner: "claude",
+      method: "env-fallback",
+    });
+    expect(detectRunner({ env: { OPENCODE_HOME: "/x", OPENROUTER_API_KEY: "sk-x" } })).toMatchObject({
+      runner: "claude",
+      method: "env-fallback",
+    });
+    expect(detectRunner({ env: {}, scriptPath: "/home/me/.opencode/run.sh" })).toMatchObject({
+      runner: "claude",
+      method: "env-fallback",
+    });
+  });
+
+  it("honours an operator-configured opencode default (afk.default_runner), not a sniff", () => {
+    // The injected fallback IS the operator's explicit `afk.default_runner` choice,
+    // so opencode there is honoured — that is configuration, not caller-identity sniffing.
+    expect(detectRunner({ env: {}, fallback: "opencode" })).toMatchObject({
+      runner: "opencode",
+      method: "env-fallback",
+    });
+  });
 });
