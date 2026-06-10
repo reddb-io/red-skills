@@ -74,6 +74,29 @@ export function parseAttemptTimeout(raw: string | undefined): number | undefined
 }
 
 /**
+ * Commit-anchored HARD cap on the attempt guard (issue #637): the edit-signal
+ * (ADR 0051) may extend the soft deadline only this many seconds past the last
+ * commit (or spawn). A busy-but-unproductive agent that re-validates in a loop
+ * while occasionally touching a file resets the soft deadline forever — the
+ * observed #579 worker burned 5h+ that way. Past the hard cap with no NEW
+ * commit, the guard aborts regardless of worktree edits, which routes the
+ * attempt to the `timeout` terminal where the ADR 0055 reconcile can land an
+ * already-committed green branch without re-running the agent. Env-tunable via
+ * `RED_AFK_ATTEMPT_HARD_CAP_S`.
+ */
+export const DEFAULT_ATTEMPT_HARD_CAP_S = 5400;
+
+/** Parse `RED_AFK_ATTEMPT_HARD_CAP_S`: a positive integer, else undefined
+ * (caller falls back to {@link DEFAULT_ATTEMPT_HARD_CAP_S}). Same typo-safe
+ * contract as {@link parseAttemptTimeout} — `0` cannot disable the cap. */
+export function parseAttemptHardCap(raw: string | undefined): number | undefined {
+  if (raw === undefined) return undefined;
+  const parsed = Number(raw);
+  if (Number.isInteger(parsed) && parsed > 0) return parsed;
+  return undefined;
+}
+
+/**
  * The re-invocation ceiling handed to sandcastle's Orchestrator (issue #322).
  *
  * sandcastle's own DEFAULT_MAX_ITERATIONS is 1 (run.js), which cuts the inner
@@ -229,6 +252,14 @@ export interface RunAgentInput {
    * {@link DEFAULT_ATTEMPT_TIMEOUT_S}.
    */
   attemptTimeoutSeconds?: number;
+  /**
+   * Commit-anchored HARD cap in seconds (issue #637): bounds how long the
+   * edit-signal (`progressProbe`) may keep extending the soft deadline past the
+   * last commit. Only meaningful when the guard is armed. Omitted → soft cap
+   * only (back-compat). `makeRunAgent` threads `RED_AFK_ATTEMPT_HARD_CAP_S`
+   * here. See {@link DEFAULT_ATTEMPT_HARD_CAP_S}.
+   */
+  attemptHardCapSeconds?: number;
   /**
    * Returns the current HEAD sha of the worker branch (the progress signal the
    * guard watches). Best-effort: resolves `undefined` on any git failure, which
@@ -645,17 +676,27 @@ export function startAttemptGuard(opts: {
   headProbe: () => Promise<string | undefined>;
   now: () => number;
   schedule: (fn: () => void, ms: number) => () => void;
-  abort: () => void;
+  /** `reason` distinguishes the soft commit/edit deadline ("stalled") from the
+   * commit-anchored hard cap ("hard-cap", issue #637). Callbacks that ignore
+   * the argument keep the prior behaviour. */
+  abort: (reason: "stalled" | "hard-cap") => void;
   /** Worktree line-volume probe (ADR 0051): a CHANGE between polls counts as
    * progress and resets the deadline, so an editing-but-not-committing runner
    * (codex) is not falsely stalled. Optional → guard stays commit-anchored. */
   progressProbe?: () => Promise<number | undefined>;
+  /** Commit-anchored hard cap (issue #637): when set, edit-signal resets may
+   * extend the deadline only this long past the last commit (or spawn) — once
+   * `hardCapMs` elapses with no NEW commit, abort fires regardless of worktree
+   * edits. Without it a busy-but-unproductive agent that touches a file every
+   * <capMs resets the soft deadline forever. Optional → soft cap only. */
+  hardCapMs?: number;
   /** Fired once per poll (proof-of-life externalization): the externalized
    * heartbeat + on_heartbeat hook ride this same cadence (PR-B). Never throws —
    * the caller wraps its own IO. */
   onTick?: (info: AttemptProgressInfo) => void;
 }): { stop: () => void; firedTimeout: () => boolean } {
   let lastProgress = opts.now();
+  let lastCommit = opts.now();
   let lastHead: string | undefined;
   let lastVolume: number | undefined;
   let fired = false;
@@ -686,11 +727,20 @@ export function startAttemptGuard(opts: {
       if (fired) return;
       const committed = headOk && head !== undefined && head !== lastHead;
       const edited = volume !== undefined && lastVolume !== undefined && volume !== lastVolume;
-      if (committed || edited) {
+      if (committed) {
         lastProgress = opts.now();
-      } else if (opts.now() - lastProgress >= opts.capMs) {
+        lastCommit = opts.now();
+      } else if (edited) {
+        lastProgress = opts.now();
+      }
+      // The soft deadline resets on commit OR edit; the hard cap resets on
+      // commit ONLY, so periodic edits cannot keep an uncommitting agent alive
+      // past it (issue #637 — the 5h+ re-validation loop).
+      const softExpired = !committed && !edited && opts.now() - lastProgress >= opts.capMs;
+      const hardExpired = !committed && opts.hardCapMs !== undefined && opts.now() - lastCommit >= opts.hardCapMs;
+      if (softExpired || hardExpired) {
         fired = true;
-        opts.abort();
+        opts.abort(hardExpired && !softExpired ? "hard-cap" : "stalled");
       }
       if (headOk && head !== undefined) lastHead = head;
       if (volume !== undefined) lastVolume = volume;
@@ -749,15 +799,23 @@ export async function runAgent(deps: SandcastleDeps, input: RunAgentInput): Prom
     const capMs = input.attemptTimeoutSeconds * 1000;
     controller = makeController();
     const cap = input.attemptTimeoutSeconds;
+    const hardCap = input.attemptHardCapSeconds;
     guard = startAttemptGuard({
       capMs,
       intervalMs: Math.min(capMs, 60_000),
       headProbe: input.headProbe,
       ...(input.progressProbe ? { progressProbe: input.progressProbe } : {}),
+      ...(hardCap && hardCap > 0 ? { hardCapMs: hardCap * 1000 } : {}),
       now,
       schedule,
-      abort: () =>
-        controller?.abort(new Error(`afk: attempt aborted — no new commit within ${cap}s (stalled)`)),
+      abort: (reason) =>
+        controller?.abort(
+          new Error(
+            reason === "hard-cap"
+              ? `afk: attempt aborted — no new commit within ${hardCap}s despite worktree edits (hard cap, stalled)`
+              : `afk: attempt aborted — no new commit within ${cap}s (stalled)`,
+          ),
+        ),
       // Externalized proof-of-life (PR-B): each poll fires the caller's opaque
       // heartbeat sink (firehose record + state.last_progress_at + on_heartbeat
       // hook). execution.ts stays ignorant of what it does.
