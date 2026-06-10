@@ -26,6 +26,8 @@
 
 /** The literal `## Blocked by` heading line, allowing only trailing whitespace.
  * Mirrors awk `/^## Blocked by[[:space:]]*$/`. */
+import { LABEL_STALLED, LABEL_CRASHED, LABEL_DEPENDENCY } from "./triage-labels.js";
+
 const BLOCKED_BY_HEADING_RE = /^## Blocked by[ \t]*$/;
 /** Any `## ` heading — the awk `/^## /` that closes the Blocked-by section. */
 const ANY_H2_RE = /^## /;
@@ -204,7 +206,7 @@ export async function planUnblockSweep(
   const plans: PromotionPlan[] = [];
   for (const candidate of candidates) {
     const labels = candidate.labels ?? [];
-    if (!labels.includes("blocked:dependency")) continue;
+    if (!labels.includes(LABEL_DEPENDENCY)) continue;
 
     const reqIds = parseReqLabels(labels);
 
@@ -309,7 +311,7 @@ export function findOwnedBranch(branches: readonly string[], issue: number): str
 
 /** The labels that mark a parked-mechanical issue: the attempt-progress guard
  * fired (`blocked:stalled`) or the agent process crashed (`blocked:crashed`). */
-const PARKED_MECHANICAL_LABELS = new Set(["blocked:stalled", "blocked:crashed"]);
+const PARKED_MECHANICAL_LABELS = new Set([LABEL_STALLED, LABEL_CRASHED]);
 
 /**
  * True when the label set carries a parked-mechanical routing label

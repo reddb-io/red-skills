@@ -48,10 +48,15 @@ import { buildAttemptRecordPayload, type AttemptRecordPayload } from "./attempt-
 import type { HistoryClock } from "./history.js";
 import type { Runner } from "../types/runner.js";
 
-const LABEL_READY = "ready-for-agent";
-const LABEL_RUNNING = "running";
-const LABEL_HUMAN = "ready-for-human";
-const LABEL_VALIDATION = "blocked:validation";
+import {
+  LABEL_READY,
+  LABEL_RUNNING,
+  LABEL_HUMAN,
+  LABEL_VALIDATION,
+  LABEL_DEPENDENCY,
+  LABEL_MERGE_CONFLICT,
+  LABEL_SPEC,
+} from "./triage-labels.js";
 
 /**
  * The blocked-failure classes reconcile is allowed to act on: MECHANICAL ones
@@ -68,7 +73,7 @@ const MECHANICAL_BLOCKER_KINDS = new Set(["stalled", "crashed", "merge-conflict"
  * `blocked:validation` means a prior gate already failed for a reason a human
  * must resolve, so re-running the same gate is pointless.
  */
-const NON_MECHANICAL_LABELS = ["blocked:spec", LABEL_VALIDATION];
+const NON_MECHANICAL_LABELS = [LABEL_SPEC, LABEL_VALIDATION];
 
 // ---------- injected IO ----------
 
@@ -391,8 +396,8 @@ async function parkMergeConflict(
   startedEpoch: number,
 ): Promise<ReconcileResult> {
   const { issue, labels } = input;
-  await deps.gh.ensureLabel("blocked:merge-conflict");
-  await deps.gh.editLabels(issue, parkDropLabels(labels), [LABEL_HUMAN, "blocked:merge-conflict"]);
+  await deps.gh.ensureLabel(LABEL_MERGE_CONFLICT);
+  await deps.gh.editLabels(issue, parkDropLabels(labels), [LABEL_HUMAN, LABEL_MERGE_CONFLICT]);
   const posted = await emitFailure(deps, input, "merge-conflict", startedEpoch, {
     log: `reconcile land failed: ${reason}`,
   });
@@ -414,7 +419,7 @@ function parkDropLabels(labels: string[]): string[] {
     (l) =>
       l === LABEL_RUNNING ||
       l === LABEL_READY ||
-      (l.startsWith("blocked:") && l !== LABEL_VALIDATION && l !== "blocked:merge-conflict"),
+      (l.startsWith("blocked:") && l !== LABEL_VALIDATION && l !== LABEL_MERGE_CONFLICT),
   );
 }
 
@@ -555,7 +560,7 @@ async function runCloseCascade(deps: ReconcileDeps, closedIssue: number): Promis
     }
 
     for (const p of planCloseCascade(closedIssue, dependents)) {
-      await deps.gh.editLabels(p.number, ["blocked:dependency"], [LABEL_READY]);
+      await deps.gh.editLabels(p.number, [LABEL_DEPENDENCY], [LABEL_READY]);
       await deps.gh.comment(p.number, p.comment);
     }
   } catch (err) {

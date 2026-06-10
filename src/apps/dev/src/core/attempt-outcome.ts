@@ -22,6 +22,17 @@
 // envelope status, so the multi-enum-desync bug class becomes impossible.
 
 import type { AttemptStatus } from "./envelope.js";
+import {
+  LABEL_QUOTA,
+  LABEL_RUNNER_TRANSIENT,
+  LABEL_MERGE_CONFLICT,
+  LABEL_SPEC,
+  LABEL_VALIDATION,
+  LABEL_CRASHED,
+  LABEL_POLICY,
+  LABEL_STALLED,
+  LABEL_INFRA,
+} from "./triage-labels.js";
 
 /**
  * Every terminal ending an AFK iteration can have — the UNION of what
@@ -72,23 +83,23 @@ export type RecoveryReason = "quota" | "runner-transient" | "merge-conflict" | "
 export function blockedLabelFor(o: AttemptOutcome): string | null {
   switch (o) {
     case "exhausted":
-      return "blocked:quota";
+      return LABEL_QUOTA;
     case "runner-transient":
-      return "blocked:runner-transient";
+      return LABEL_RUNNER_TRANSIENT;
     case "merge-conflict":
-      return "blocked:merge-conflict";
+      return LABEL_MERGE_CONFLICT;
     case "blocked":
-      return "blocked:spec";
+      return LABEL_SPEC;
     case "feedback-failed":
-      return "blocked:validation";
+      return LABEL_VALIDATION;
     case "no-sentinel":
-      return "blocked:crashed";
+      return LABEL_CRASHED;
     case "hook-aborted":
-      return "blocked:policy";
+      return LABEL_POLICY;
     case "stalled":
-      return "blocked:stalled";
+      return LABEL_STALLED;
     case "infra":
-      return "blocked:infra";
+      return LABEL_INFRA;
     case "done":
     case "claim-lost":
       return null;

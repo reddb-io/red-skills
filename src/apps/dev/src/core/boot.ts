@@ -41,6 +41,7 @@ import {
   type ReconcileSweepCandidate,
   type ReconcileSweepPlan,
 } from "./boot-sweep.js";
+import { LABEL_READY, LABEL_RUNNING, LABEL_HUMAN, LABEL_DEPENDENCY } from "./triage-labels.js";
 
 // ---------- precheck (hard preconditions) ----------
 
@@ -455,7 +456,7 @@ async function runOrphanCleanup(
         await deps.fs.removeDir(dir.path);
         removed.push(dir.path);
       } else {
-        await deps.gh.editLabels(dir.issue!, ["running"], ["ready-for-agent"]);
+        await deps.gh.editLabels(dir.issue!, [LABEL_RUNNING], [LABEL_READY]);
         await deps.gh.comment(
           dir.issue!,
           "🤖 /afk orchestrator died mid-issue; restoring ready-for-agent.",
@@ -568,8 +569,8 @@ async function runUnblockSweep(
   const promoted: number[] = [];
   for (const p of plans) {
     const held = labelsByIssue.get(p.number) ?? [];
-    const remove = held.includes("blocked:dependency") ? "blocked:dependency" : "ready-for-human";
-    await deps.gh.editLabels(p.number, [remove], ["ready-for-agent"]);
+    const remove = held.includes(LABEL_DEPENDENCY) ? LABEL_DEPENDENCY : LABEL_HUMAN;
+    await deps.gh.editLabels(p.number, [remove], [LABEL_READY]);
     await deps.gh.comment(p.number, p.comment);
     promoted.push(p.number);
   }

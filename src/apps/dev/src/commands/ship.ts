@@ -1,5 +1,6 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import { parseFlags, type FlagSchema } from "@reddb-io/shared/args.js";
+import { LABEL_HUMAN } from "../core/triage-labels.js";
 import { execTool, type ExecOutput } from "../runtime/exec.js";
 import {
   advisoryReviewPending,
@@ -240,10 +241,10 @@ function hitlBody(pr: number, issue: number, reason: string, facts: ShipFacts): 
 
 async function markHitl(cwd: string, repo: string, pr: number, issue: number, reason: string, facts: ShipFacts): Promise<void> {
   const body = hitlBody(pr, issue, reason, facts);
-  await run("gh", ["label", "create", "ready-for-human", "--repo", repo, "--color", "FBCA04", "--description", "Waiting for a human decision"], cwd);
+  await run("gh", ["label", "create", LABEL_HUMAN, "--repo", repo, "--color", "FBCA04", "--description", "Waiting for a human decision"], cwd);
   await run("gh", ["issue", "comment", String(issue), "--repo", repo, "--body", body], cwd);
-  await run("gh", ["issue", "edit", String(issue), "--repo", repo, "--add-label", "ready-for-human"], cwd);
-  await run("gh", ["pr", "edit", String(pr), "--repo", repo, "--add-label", "ready-for-human"], cwd);
+  await run("gh", ["issue", "edit", String(issue), "--repo", repo, "--add-label", LABEL_HUMAN], cwd);
+  await run("gh", ["pr", "edit", String(pr), "--repo", repo, "--add-label", LABEL_HUMAN], cwd);
   await run("gh", ["pr", "comment", String(pr), "--repo", repo, "--body", body], cwd);
 }
 

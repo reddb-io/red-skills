@@ -1,3 +1,5 @@
+import { LABEL_PRD, LABEL_VALIDATION, LABEL_RUNNING } from "./triage-labels.js";
+
 export interface DashboardIssue {
   number: number;
   title: string;
@@ -114,7 +116,7 @@ function hasLabel(issue: DashboardIssue, predicate: (label: string) => boolean):
 
 function isPrd(issue: DashboardIssue): boolean {
   return (
-    hasLabel(issue, (label) => label === "type:prd" || label === "prd") ||
+    hasLabel(issue, (label) => label === LABEL_PRD || label === "prd") ||
     /^prd\b/i.test(issue.title.trim())
   );
 }
@@ -126,7 +128,7 @@ function isFailureLike(issue: DashboardIssue): boolean {
     label === "regression" ||
     label === "incident" ||
     label === "type:incident" ||
-    label === "blocked:validation",
+    label === LABEL_VALIDATION,
   );
 }
 
@@ -201,7 +203,7 @@ export function buildDashboardReport(input: DashboardInput): DashboardReport {
     operations: {
       open_prds: openPrds.length,
       open_issues: openNonPrdIssues.length,
-      global_running_workers: openIssues.filter((issue) => issue.labels.includes("running")).length,
+      global_running_workers: openIssues.filter((issue) => issue.labels.includes(LABEL_RUNNING)).length,
       local_workers: input.localWorkers,
       issues_created_in_period: createdInPeriod.length,
       issues_closed_today: input.issues.filter((issue) => sameUtcDay(parseDate(issue.closedAt), today)).length,

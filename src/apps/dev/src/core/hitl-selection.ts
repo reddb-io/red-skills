@@ -10,10 +10,7 @@ export interface HitlSelectionOptions {
   skipped?: readonly number[];
 }
 
-const LABEL_HUMAN = "ready-for-human";
-const LABEL_PRD = "type:prd";
-const LABEL_URGENT = "priority:urgent";
-const LABEL_HIGH = "priority:high";
+import { LABEL_HUMAN, LABEL_PRD, LABEL_URGENT, LABEL_HIGH } from "./triage-labels.js";
 
 function hasLabel(candidate: HitlCandidate, label: string): boolean {
   return candidate.labels.includes(label);

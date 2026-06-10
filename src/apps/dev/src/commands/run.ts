@@ -33,6 +33,7 @@ import {
 import type { LaneIdleStallConfig } from "../core/lane-idle-reaper.js";
 import { workerDir as workerDirPath, workerPidFile } from "../core/worker-paths.js";
 import { parseFlags, type FlagSchema } from "@reddb-io/shared/args.js";
+import { LABEL_HUMAN, LABEL_RUNNING } from "../core/triage-labels.js";
 import * as ghx from "../runtime/gh.js";
 import * as gitx from "../runtime/git.js";
 import * as fsx from "../runtime/fs.js";
@@ -416,10 +417,10 @@ async function buildBootDeps(ctx: RepoContext, options: BootOptions, nowS: numbe
       orphanState: async (issue) => {
         const row = issueStates.get(issue);
         if (!row) return ghx.orphanState(ghCtx, issue);
-        const label = row.labels.includes("ready-for-human")
-          ? "ready-for-human"
-          : row.labels.includes("running")
-            ? "running"
+        const label = row.labels.includes(LABEL_HUMAN)
+          ? LABEL_HUMAN
+          : row.labels.includes(LABEL_RUNNING)
+            ? LABEL_RUNNING
             : null;
         return { ghOk: true, state: row.state, label, envelopePosted: false };
       },

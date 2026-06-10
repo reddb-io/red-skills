@@ -73,10 +73,7 @@ export type SelectionFilter =
   | { kind: "issues"; numbers: number[] }
   | { kind: "prd"; prd: number };
 
-const LABEL_PRD = "type:prd";
-const LABEL_URGENT = "priority:urgent";
-const LABEL_HIGH = "priority:high";
-const LABEL_READY = "ready-for-agent";
+import { LABEL_PRD, LABEL_URGENT, LABEL_HIGH, LABEL_READY } from "./triage-labels.js";
 
 function hasLabel(c: IssueCandidate, label: string): boolean {
   return c.labels.includes(label);
