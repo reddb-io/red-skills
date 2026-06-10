@@ -439,6 +439,12 @@ export function deriveStage(event: AgentStreamEvent): string | undefined {
   return undefined;
 }
 
+function parseSlot(val: string | undefined): number | undefined {
+  if (val === undefined) return undefined;
+  const n = parseInt(val, 10);
+  return Number.isFinite(n) && n >= 0 ? n : undefined;
+}
+
 export function buildProcessDeps(
   ctx: RepoContext,
   model: string,
@@ -572,7 +578,7 @@ export function buildProcessDeps(
       config,
       resolveOptions,
       exec: makeHookExec(ctx.root),
-      env: hookEnv(ctx.repo, ctx.root),
+      env: hookEnv(ctx.repo, ctx.root, parseSlot(process.env.RED_AFK_SLOT)),
     },
     lookups: {
       base: {
@@ -1066,7 +1072,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
       config: loadConfig(afkPaths(ctx.root).configPath, { warn: () => undefined }),
       resolveOptions: makeHookResolveOptions(ctx.root),
       exec: makeHookExec(ctx.root),
-      env: hookEnv(ctx.repo, ctx.root),
+      env: hookEnv(ctx.repo, ctx.root, parseSlot(process.env.RED_AFK_SLOT)),
     },
     runnerCircuit: {
       isOpen: (r) => runnerCircuitOpen(paths.tmpDir, r, Math.floor(Date.now() / 1000)),

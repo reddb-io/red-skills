@@ -3,6 +3,7 @@ import {
   PASSTHROUGH_DENYLIST,
   passthroughKeys,
   buildWorkerEnv,
+  buildSlotEnv,
   slotFilterArgs,
 } from "../src/commands/supervise.js";
 
@@ -56,6 +57,35 @@ describe("buildWorkerEnv / passthroughKeys (gap 4: passthrough denylist)", () =>
   it("re-pins the runner even when RED_AFK_RUNNER was set in the source", () => {
     const env = buildWorkerEnv({ RED_AFK_RUNNER: "claude" }, "codex");
     expect(env.RED_AFK_RUNNER).toBe("codex");
+  });
+});
+
+describe("buildSlotEnv (per-slot RED_AFK_SLOT injection)", () => {
+  it("pins RED_AFK_SLOT to the given slot index", () => {
+    const base = buildWorkerEnv({ PATH: "/usr/bin" }, "claude");
+    expect(buildSlotEnv(base, 0).RED_AFK_SLOT).toBe("0");
+    expect(buildSlotEnv(base, 3).RED_AFK_SLOT).toBe("3");
+  });
+
+  it("each slot gets a distinct RED_AFK_SLOT (no shared slot-0 default)", () => {
+    const base = buildWorkerEnv({}, "claude");
+    const envs = [0, 1, 2].map((s) => buildSlotEnv(base, s));
+    expect(envs[0]!.RED_AFK_SLOT).toBe("0");
+    expect(envs[1]!.RED_AFK_SLOT).toBe("1");
+    expect(envs[2]!.RED_AFK_SLOT).toBe("2");
+  });
+
+  it("overrides any pre-existing RED_AFK_SLOT value", () => {
+    const env = buildSlotEnv({ RED_AFK_SLOT: "0", PATH: "/x" }, 5);
+    expect(env.RED_AFK_SLOT).toBe("5");
+  });
+
+  it("preserves all other keys from the base worker env", () => {
+    const base = buildWorkerEnv({ PATH: "/usr/bin", RED_AFK_SKIP_PERF: "1" }, "codex");
+    const slotted = buildSlotEnv(base, 2);
+    expect(slotted.PATH).toBe("/usr/bin");
+    expect(slotted.RED_AFK_SKIP_PERF).toBe("1");
+    expect(slotted.RED_AFK_RUNNER).toBe("codex");
   });
 });
 

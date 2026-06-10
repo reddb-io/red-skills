@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { makeHookResolveOptions } from "../src/runtime/hooks.js";
+import { hookEnv, makeHookResolveOptions } from "../src/runtime/hooks.js";
 import { skillDirFromModule } from "../src/platform/skill-paths.js";
 import { resolveHooks } from "../src/core/hook-config.js";
 
@@ -71,5 +71,28 @@ describe("makeHookResolveOptions (gap 6: built-in defaults anchor on the plugin)
     // path or undefined, never a crash.
     const cargo = opts.defaultCommand("cargo");
     expect(cargo === undefined || typeof cargo === "string").toBe(true);
+  });
+});
+
+describe("hookEnv (per-slot RED_AFK_SLOT in hook environment)", () => {
+  it("includes RED_AFK_REPO and RED_AFK_ROOT always", () => {
+    const env = hookEnv("owner/repo", "/repo");
+    expect(env.RED_AFK_REPO).toBe("owner/repo");
+    expect(env.RED_AFK_ROOT).toBe("/repo");
+  });
+
+  it("omits RED_AFK_SLOT when no slot is given", () => {
+    const env = hookEnv("owner/repo", "/repo");
+    expect(env.RED_AFK_SLOT).toBeUndefined();
+  });
+
+  it("includes RED_AFK_SLOT when a slot is given", () => {
+    expect(hookEnv("owner/repo", "/repo", 0).RED_AFK_SLOT).toBe("0");
+    expect(hookEnv("owner/repo", "/repo", 3).RED_AFK_SLOT).toBe("3");
+  });
+
+  it("each slot gets a distinct RED_AFK_SLOT value", () => {
+    const slots = [0, 1, 2].map((s) => hookEnv("owner/repo", "/repo", s).RED_AFK_SLOT);
+    expect(slots).toEqual(["0", "1", "2"]);
   });
 });
