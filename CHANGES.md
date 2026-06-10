@@ -12,8 +12,33 @@ Upstream base: `mattpocock/skills@aaf2453fbdfe7a15c07f11d861224f34ab4b53cb` (see
 - **upstream**: —
 - **why**: `afk/SKILL.md` is a 1024-line / 111 KB monolith that defeats progressive disclosure and contradicts its own "run, don't read" guidance. Refactored per the repo's `<what-to-do>`/`<supporting-info>` convention: kept the primary directive lean and moved reference material (formats, examples, deep mechanics) into bundled resource files the directive points to on demand.
 - **what changed**:
-  - `plugins/dev/skills/engineering/afk/SKILL.md`: broke the monolith. The `<what-to-do>` section now contains only the primary directive (invocation, when to use, parallelization, preconditions, core loop, substrate, state/monitoring, stop conditions — ~150 lines). The `<supporting-info>` section now contains subsections that organize the reference material by topic (file layout, outcomes, config, bootstrap, lifecycle, dependency, blockers, fallback, bounds, heartbeat, stall, fleet, monitor, configuration, backpressure, merge, reaper, state schema, handoff template, validation, worktree, landing, auto-monitor). Every subsection is self-contained and points at external docs (`AGENT-PROMPT.md`, `SAFETY.md`, `runner-*.md`) on demand. File size reduction: 1024 → 480 lines (~53% smaller). No behavioral change; registration unchanged.
-  - Behavioral contract remains unchanged — the agent still reads this file as the complete contract, and every section the contract names is still present (just reorganized under `<supporting-info>` for on-demand reference).
+  - `plugins/dev/skills/engineering/afk/SKILL.md`: broke the monolith. The `<what-to-do>` section now contains only the primary directive (invocation, when to use, parallelization, preconditions, core loop, substrate, monitoring, stop conditions — ~90 lines). The `<supporting-info>` section now contains only a reference index that organizes all external and bundled docs by topic, with no inline content (file layout, state, outcomes, lifecycle, etc. point to bundled `docs/*.md` files on demand).
+  - Created bundled resource files in `plugins/dev/skills/engineering/afk/docs/`:
+    - `FILE-LAYOUT.md` — per-worker and per-attempt file layout table.
+    - `STATE-FILE.md` — state snapshot schema and atomic update mechanism.
+    - `HANDOFF.md` — handoff file template the inner agent reads.
+    - `VALIDATION.md` — validation sidecar JSONL format.
+    - `LIFECYCLE.md` — state machine, dependency unblock mechanics.
+    - `OUTCOMES.md` — attempt outcomes table and recovery caps.
+    - `ENVELOPE.md` — terminal-event envelope schema and branch cleanup.
+    - `BLOCKER.md` — current blocker state for human gates.
+    - `DEPENDENCIES.md` — `req:N` edge labels and promotion mechanics.
+    - `BOUNDS.md` — termination bounds (idle timeout, max iterations, commit-anchored guard).
+    - `HEARTBEAT.md` — liveness signals across agent lane and periodic heartbeat.
+    - `STALL.md` — solo-run stall protection (attempt guard, lane-idle reaper).
+    - `ENVIRONMENT.md` — environment variables and configuration overrides.
+    - `CONFIG.md` — configuration schema and lifecycle hooks.
+    - `BACKPRESSURE.md` — backpressure gate for additional feedback checks.
+    - `MERGE-GATE.md` — merge-gate policy and review handling.
+    - `FALLBACK.md` — runner fallback and round-robin rotation.
+    - `WORKTREE.md` — worktree base resolution (ADR 0031).
+    - `LANDING.md` — lock-toggled landing (ADR 0030).
+    - `FLEET.md` — fleet mode, supervisor, circuit breaker.
+    - `MONITOR.md` — monitor view and task mirroring.
+    - `REAPER.md` — on-demand branch reaper.
+    - `BOOTSTRAP.md` — bootstrap and cleanup phases.
+    - `AUTO-MONITOR.md` — auto-monitor loop (Claude Code only).
+  - File size reduction: SKILL.md from 1024 to ~250 lines (~76% smaller). No behavioral change; registration unchanged; every section the contract names is still present (organized in `<supporting-info>` for on-demand reference).
 
 ---
 
