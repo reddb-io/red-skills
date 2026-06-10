@@ -11,7 +11,7 @@ stale notes inline.
 > in flight; do not reclaim the number.
 
 ## Repo structure & contexts
-- **0021** Multi-context plugin glossaries — *accepted*, includes `brain` context
+- **0021** Multi-context plugin glossaries — *accepted*, includes `dev`, `memory`, and `brain` contexts
 - **0034** Repo splits DEFINITIONS from IMPLEMENTATION (`src/apps/…`) — partially superseded by **0039** (entrypoints fused) and **0041** (memory leaves)
 - **0041** red-skills consumes `red-memory` + `red-ui` MCPs; stops building memory — partially supersedes 0034 *(renumbered from 0039)*
 - **0046** A single global `.red/` shared by all plugins — *superseded by 0021*
@@ -19,7 +19,6 @@ stale notes inline.
 - **0057** `red-hermes` is a fetched black-box dependency of the `brain` plugin; `brain` context documented in **0021**
 
 ## Brain plugin & contexts
-- **0021** Multi-context plugin glossaries — *accepted*, includes `brain` context — post-0041, brain is a new plugin alongside dev/memory
 - **0057** `red-hermes` is a fetched, never-vendored black-box dependency of the `brain` plugin — reached via `hermes mcp serve`, fetched as a Release asset (0038 model), version pinned (0040), 10-tool contract; MIT attribution in `NOTICE` (0004) *(downstream fetch/launcher blocked on red-hermes releases, same shape as #378)*
 
 ## Bundle / fetch / release / version
@@ -41,8 +40,6 @@ stale notes inline.
 - **0031** Branch-lock value drives AFK base/merge; enforcement stays agent-only
 - **0033** AFK agent execution runs on `@ai-hero/sandcastle`
 - **0044** AFK attempt progress guard aborts stalled-but-busy attempts to `blocked:stalled` without requiring a promise sentinel — *§4 "no-sandbox only" superseded by **0054***
-- **0055** AFK reconcile — a no-agent worker mode that lands a parked green branch *(the implemented worker-mode, #558; realises 0056)*
-- **0056** AFK landability reconciler: parked-but-green branches self-land via a no-agent reconcile worker *(the umbrella design — generalises 0047/0050 to a continuous reconcile of `timeout`/`no-sentinel`; realised by 0055; relies on 0008 gate, 0030 landing)*
 - **0045** AFK externalized proof-of-life: heartbeat record, state field, and periodic `on_heartbeat` hook *(extends 0026; follows 0044; §4 "no-sandbox only" superseded by **0054**)*
 - **0047** AFK salvages a no-sentinel branch that already passes feedback *(complements 0028)*
 - **0048** AFK merges without advice; in-process backpressure (`drift-guard` + feedback) is the guardrail — opt into waiting with `afk.merge.wait_for_review` *(refines 0030, 0008)*
@@ -50,6 +47,8 @@ stale notes inline.
 - **0050** AFK salvages an uncommitted worktree when the inner agent emits DONE without committing (codex non-compliance net) *(complements 0047, 0028)*
 - **0051** AFK attempt-progress guard resets on worktree edits, not just commits — stops false-stalling the productive-but-not-committing codex runner *(refines 0044, 0045)*
 - **0054** AFK arms the attempt guard + heartbeat under docker/podman isolation via an attempt-dir bind mount; lane-idle reaper stays host-only *(supersedes 0044 §4 / 0045 §4; relies on 0033; absorbs #284 docker E2E)*
+- **0055** AFK reconcile — a no-agent worker mode that lands a parked green branch *(the implemented worker-mode, #558; realises 0056)*
+- **0056** AFK landability reconciler: parked-but-green branches self-land via a no-agent reconcile worker *(the umbrella design — generalises 0047/0050 to a continuous reconcile of `timeout`/`no-sentinel`; realised by 0055; relies on 0008 gate, 0030 landing)*
 - **0059** OpenCode is the third AFK runner, addressing OpenRouter through its own `openrouter/<vendor>/<model>` slug + the `OpenCodeOptions.env` auth seam; accepted only as an explicit pin, never auto-sniffed. **Amended (1):** endpoint-agnostic — accepts any `<provider>/<model>` slug, propagates the first-set auth env-var (OPENAI_API_KEY > MINIMAX_API_KEY > OPENROUTER_API_KEY) through `OpenCodeOptions.env`; OpenCode owns endpoint resolution. **Amended (2):** MiniMax subscription API as the concrete case that motivated the endpoint-agnostic property *(follows 0003, 0033, 0049)*
 
 ## Branch lock
