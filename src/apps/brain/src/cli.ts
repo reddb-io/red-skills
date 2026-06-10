@@ -8,6 +8,7 @@ import { withBrainRuntime } from "./runtime.js";
 import { brainAct } from "./brain-act.js";
 import { ARTIFACT_KINDS, CONNECTION_KINDS } from "./schema.js";
 import { loadIngestionState, saveIngestionState, scheduledIngest } from "./scheduled-ingestion.js";
+import type { KpiGroupBy, KpiInterval, KpiTimeField } from "./kpi-query.js";
 
 async function main(): Promise<void> {
   const [command = "help", ...args] = process.argv.slice(2);
@@ -58,6 +59,10 @@ async function main(): Promise<void> {
       return;
     case "schedule-ingest":
       await scheduleIngestCmd(args);
+      return;
+    case "kpi":
+    case "kpis":
+      await kpis(args);
       return;
     default:
       throw new Error(`unknown brain command: ${command}`);
@@ -185,6 +190,27 @@ async function ingestEventsCmd(args: string[]): Promise<void> {
   }
 }
 
+async function kpis(args: string[]): Promise<void> {
+  const flags = parseFlags(args);
+  const interval = stringFlag(flags, "interval") as KpiInterval | undefined;
+  const groupBy = stringFlag(flags, "group-by") as KpiGroupBy | undefined;
+  const timeField = stringFlag(flags, "time-field") as KpiTimeField | undefined;
+  await withBrainRuntime(async ({ store }) => {
+    printJson(
+      await store.eventKpis({
+        interval,
+        groupBy,
+        timeField,
+        from: stringFlag(flags, "from"),
+        to: stringFlag(flags, "to"),
+        platform: stringFlag(flags, "platform"),
+        eventType: stringFlag(flags, "event-type"),
+        target: stringFlag(flags, "target"),
+      }),
+    );
+  });
+}
+
 async function act(args: string[]): Promise<void> {
   const flags = parseFlags(args);
   const target = stringFlag(flags, "target") ?? flags._[0];
@@ -265,6 +291,7 @@ function printHelp(): void {
   act --target <channel> --message <text>
   ingest-events [--after-cursor N] [--session-key KEY] [--limit N]
   schedule-ingest [--session-key KEY] [--limit N] [--state PATH]
+  kpi [--interval hour|day|week|month] [--group-by platform|event_type|target] [--time-field event|ingested] [--from T] [--to T] [--platform P] [--event-type T] [--target T]
 `);
 }
 

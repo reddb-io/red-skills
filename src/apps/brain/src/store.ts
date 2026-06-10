@@ -1,5 +1,6 @@
 import { type QueryParam, type RedDB, connect } from "@reddb-io/sdk";
 import { contentHash, slugify } from "./hash.js";
+import { KpiQuery, type KpiQueryInput, type KpiResult } from "./kpi-query.js";
 import {
   AUTO_LINK_CONNECTION_KINDS,
   artifactToAutoLinkArtifact,
@@ -258,6 +259,11 @@ export class BrainStore {
       connections: connections.length,
       kinds: countBy(artifacts.map((artifact) => artifact.kind)),
     };
+  }
+
+  async eventKpis(input: KpiQueryInput = {}): Promise<KpiResult> {
+    const artifacts = await this.listArtifacts();
+    return new KpiQuery(artifacts).events(input);
   }
 
   async think(query: string, limit = 8, options: ThinkOptions = {}): Promise<{ answer: string; hits: SearchHit[] }> {

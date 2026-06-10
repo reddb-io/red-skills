@@ -221,3 +221,53 @@ describe("BrainStore autolinking", () => {
     ]);
   });
 });
+
+describe("BrainStore event KPIs", () => {
+  it("computes a daily KPI series over captured kind:event artifacts", async () => {
+    const root = await tempRoot();
+    const store = await BrainStore.open({ uri: `file://${join(root, "brain.rdb")}` });
+    try {
+      await store.capture({
+        title: "slack message one",
+        content: "release train is green",
+        kind: "event",
+        tags: ["channel-event"],
+        metadata: { timestamp: "2026-06-01T08:00:00.000Z", platform: "slack", event_type: "message" },
+      });
+      await store.capture({
+        title: "slack message two",
+        content: "deploy started",
+        kind: "event",
+        tags: ["channel-event"],
+        metadata: { timestamp: "2026-06-01T20:00:00.000Z", platform: "slack", event_type: "message" },
+      });
+      await store.capture({
+        title: "discord message one",
+        content: "ops alert",
+        kind: "event",
+        tags: ["channel-event"],
+        metadata: { timestamp: "2026-06-03T09:00:00.000Z", platform: "discord", event_type: "message" },
+      });
+      // A non-event artifact must not be counted.
+      await store.capture({ title: "Use bearer auth", content: "decision body", kind: "decision" });
+
+      const result = await store.eventKpis({ interval: "day", groupBy: "platform" });
+
+      expect(result.kind).toBe("event");
+      expect(result.total).toBe(3);
+      const overall = result.series.find((s) => s.group === null);
+      expect(overall?.buckets.map((b) => ({ iso: b.startIso, count: b.count }))).toEqual([
+        { iso: "2026-06-01T00:00:00.000Z", count: 2 },
+        { iso: "2026-06-02T00:00:00.000Z", count: 0 },
+        { iso: "2026-06-03T00:00:00.000Z", count: 1 },
+      ]);
+      expect(result.series.map((s) => ({ group: s.group, total: s.total }))).toEqual([
+        { group: null, total: 3 },
+        { group: "slack", total: 2 },
+        { group: "discord", total: 1 },
+      ]);
+    } finally {
+      await store.close();
+    }
+  });
+});

@@ -135,6 +135,18 @@ _Avoid_: decorative metric, separate analytics subsystem, dashboard-only number
 An initial Brain KPI about the Brain itself, such as artifact counts by kind, connection counts, orphan artifacts, recent activity, and missing indexes.
 _Avoid_: business KPI, manually reported metric, external analytics
 
+**KpiQuery**:
+The Brain read module (`src/apps/brain/src/kpi-query.ts`, `KpiQuery`) that
+computes Brain KPIs as **time-windowed aggregations over `kind:event`
+artifacts** — a total count plus zero-filled per-window series (hour/day/week/
+month, UTC-aligned), optionally split by `platform`, `event_type`, or `target`,
+and bucketed on the event's own `metadata.timestamp` or on ingestion
+`created_at`. It is a pure, deterministic derived query over the existing
+artifact graph: **no separate metrics store and no schema change**. Exposed as
+`store.eventKpis`, the `brain kpi` CLI command, and the `brain_kpis` MCP tool;
+output is shaped for direct dashboard consumption.
+_Avoid_: separate metrics store, schema change, decorative metric, wall-clock-dependent result
+
 **Brain store**:
 The RedDB database owned by a Project brain and treated as the canonical source
 of truth for captured knowledge and derived connections.
