@@ -6,7 +6,7 @@ Binding for both the orchestrator (the shell loop) and the inner agent (claude/c
 
 - The **primary checkout** stays on `main` at all times. Never `git checkout`, `git switch`, or `git branch -m` inside it.
 - All work happens in **worktrees** under `.red/tmp/workers/{id}/{N}-a{n}/worktree/` (inside the primary checkout but gitignored) on a branch named `afk/{id}/{N}-{slug}`.
-- The worktree branch is **local-only** until the final push of `main`. The orchestrator pushes `main`, not the worktree branch.
+- The worktree branch is mirrored to `origin/afk/{id}/{N}-{slug}` for remote backup. The orchestrator pushes the worktree branch via the PR's admin-merge (unlocked) or direct merge + push of the locked branch (locked); it does not push `main` directly.
 
 ## Git Operations
 
@@ -14,6 +14,8 @@ Binding for both the orchestrator (the shell loop) and the inner agent (claude/c
 - `git fetch`, `git pull --ff-only`, `git merge --no-ff <local-branch>`, `git push` (SSH only).
 - `git add`, `git commit` (for the pre-merge snapshot when primary is dirty).
 - `git worktree add|remove|list`.
+- `git rebase` (integration step only: `git rebase origin/{pinned}` to integrate the fetched base before merging, per the Merge section below).
+- `git push --force-with-lease` (mirroring only: `git push origin -u HEAD:refs/heads/afk/{id}/{N}-{slug} --force-with-lease` to push the worktree branch onto the remote-tracked `afk/*` namespace, and per-worktree post-commit hook `git push origin HEAD --force-with-lease`, both per the Per-Issue Loop Worktree section below).
 - Read-only: `git status`, `git log`, `git diff`, `git show`, `git branch`.
 
 **Allowed in worktree:**
@@ -21,13 +23,13 @@ Binding for both the orchestrator (the shell loop) and the inner agent (claude/c
 
 **Forbidden everywhere, no exceptions:**
 - `git reset` (any flavour)
-- `git rebase` (any flavour)
+- `git rebase` in the worktree or inner agent (orchestrator-only integration step is excepted above).
 - `git clean` (any flavour)
 - `git restore`, `git checkout -- <path>`, `git checkout .`
 - `git stash` — push, pop, drop, all banned
 - `git branch -D`, `git branch -d -f`
-- `git push --force`, `--force-with-lease`, `--mirror`
-- Any command with `--force`, `--hard`, `--no-verify`
+- `git push --force` or any bare `--force` flag in the worktree or inner agent (orchestrator-only mirroring step is excepted above).
+- Any command with `--hard`, `--no-verify` anywhere
 - Switching branches inside any checkout
 - Rewriting history of any branch, ever
 
@@ -56,8 +58,8 @@ One self-resolve attempt: re-enter the inner agent with the conflict diff in the
 
 ## Worktree Lifecycle
 
-- Created from `origin/main` after `git fetch`.
-- Branch name: `afk/{N}-{slug}`. Slug is the issue title lowercased, non-alphanumerics → `-`, truncated to 40 chars.
+- Created from `origin/{pinned}` after `git fetch` (where `{pinned}` is the resolved base branch: lock > pin > main).
+- Branch name: `afk/{id}/{N}-{slug}` (literal `afk/` + worker ID + issue number + slug). Slug is the issue title lowercased, non-alphanumerics → `-`, truncated to 40 chars.
 - Removed only after successful merge **and** push. Never remove a worktree with uncommitted changes — that loses work.
 - If cleanup fails (e.g. worktree busy), leave it in place and print the path for manual recovery.
 
