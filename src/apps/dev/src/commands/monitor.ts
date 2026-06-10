@@ -133,7 +133,8 @@ export async function monitorCommand(
   // never blocks the dashboard render. Opt out with RED_AFK_WATCHDOG=0.
   if (process.env.RED_AFK_WATCHDOG !== "0") {
     try {
-      await runWatchdog(buildWatchdogIO(cwd, stdout), resolveSupervisorConfig().supervisorStaleS);
+      const supervisorCfg = resolveSupervisorConfig();
+      await runWatchdog(buildWatchdogIO(cwd, stdout), supervisorCfg.supervisorStaleS, supervisorCfg.progressStaleS);
     } catch {
       // best-effort: recovery must never break monitoring.
     }

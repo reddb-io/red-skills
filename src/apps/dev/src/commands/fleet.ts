@@ -132,17 +132,17 @@ export async function launchFleet(args: readonly string[], root = process.cwd(),
     // already-alive surface, so it doubles as the recovery watchdog — tear the
     // wedged supervisor down and fall through to a clean relaunch. A FRESH
     // heartbeat still refuses the launch, exactly as before.
-    const staleS = resolveSupervisorConfig().supervisorStaleS;
+    const cfg = resolveSupervisorConfig();
     const io = buildWatchdogIO(root, stdout);
     const liveness = await io.liveness();
-    const health = classifySupervisor(liveness, io.now(), staleS);
+    const health = classifySupervisor(liveness, io.now(), cfg.supervisorStaleS, cfg.progressStaleS);
     if (health !== "quiescent") {
       throw new Error(`fleet already running (supervisor pid=${existing}, log .red/tmp/afk-supervisor.log).\n  to stop it: /dev:afk fleet stop`);
     }
     const staleForS = liveness.lastHeartbeatEpoch !== null ? io.now() - liveness.lastHeartbeatEpoch : null;
     io.log(
       `⚠️  fleet pre-check: supervisor pid=${existing} is QUIESCENT — heartbeat stale ` +
-        `${staleForS ?? "?"}s ≥ ${staleS}s; recovering before relaunch.`,
+        `${staleForS ?? "?"}s ≥ ${cfg.supervisorStaleS}s; recovering before relaunch.`,
     );
     await teardownWedgedSupervisor(io, liveness.pid);
   }
