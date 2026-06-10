@@ -26,6 +26,8 @@ import {
   teardownIterDirNative,
 } from "../runtime/supervisor-fs.js";
 import * as ghx from "../runtime/gh.js";
+import * as gitx from "../runtime/git.js";
+import { planReconcileSweep } from "../core/boot-sweep.js";
 import { removeDir as removeDirNative } from "../runtime/fs.js";
 
 function isAlive(pid: number): boolean {
@@ -234,6 +236,23 @@ function buildSupervisorDeps(
         slotPids.set(slot, pid);
         return { pid, spawnEpoch: now() };
       },
+      spawnReconcileWorker: async (slot, candidate) => {
+        const runArgs = [
+          "run", "--once", "--runner", runner,
+          "--reconcile-issue", String(candidate.issue),
+          ...slotArgs,
+        ];
+        const child = spawn(process.execPath, [bundle, ...runArgs], {
+          cwd: root,
+          env: workerEnv,
+          detached: true,
+          stdio: ["ignore", logFd, logFd],
+        });
+        child.unref();
+        const pid = child.pid ?? 0;
+        slotPids.set(slot, pid);
+        return { pid, spawnEpoch: now() };
+      },
       isAlive,
       killTree: async (pid) => {
         try {
@@ -300,6 +319,21 @@ function buildSupervisorDeps(
           return await ghx.countReadyForAgent(ghCtx);
         } catch {
           return 0;
+        }
+      },
+      findReconcileCandidate: async () => {
+        try {
+          const [candidates, remoteBranches] = await Promise.all([
+            ghx.listParkedMechanicalCandidates(ghCtx),
+            gitx.listRemoteBranches({ cwd: root }, "afk/"),
+          ]);
+          const branchNames = remoteBranches.map((r) => r.branch);
+          const plans = planReconcileSweep(candidates, branchNames);
+          if (plans.length === 0) return null;
+          const first = plans[0]!;
+          return { issue: first.number, branch: first.branch };
+        } catch {
+          return null;
         }
       },
     },

@@ -347,6 +347,36 @@ describe("reconcile — guards (mechanical class only)", () => {
     expect(result).toEqual({ outcome: "skipped", reason: "branch-absent" });
     expect(trace.pnpmCalls).toBe(0);
   });
+
+  it("skips when the issue was closed since selection — does not land or close (#568)", async () => {
+    const { deps, input, trace } = harness({ feedbackOk: true, closedIssues: [9] });
+    const result = await reconcile(deps, input);
+
+    expect(result).toEqual({ outcome: "skipped", reason: "already-closed" });
+    // The re-check fires AFTER the green feedback gate but BEFORE landing, so the
+    // already-closed thread is never landed, closed, or relabelled.
+    expect(trace.closed).toEqual([]);
+    expect(trace.deletedRemote).toEqual([]);
+    expect(trace.labelEdits).toEqual([]);
+  });
+
+  it("fetches an origin-only branch before the commits gate so it is not skipped as no-commits", async () => {
+    // Simulate: branch exists on origin but not yet locally. Before branchPresent
+    // (which fetches), changedFiles would return []. After the fetch it returns work.
+    let fetched = false;
+    const { deps, input } = harness({ feedbackOk: true });
+    deps.lookups.changedFiles = async () => (fetched ? ["packages/x/src/a.ts"] : []);
+    deps.lookups.branchPresent = async () => {
+      fetched = true;
+      return true;
+    };
+
+    const result = await reconcile(deps, input);
+
+    // branchPresent ran first (fetching the branch), so changedFiles found work
+    // and the issue was salvaged rather than skipped as no-commits.
+    expect(result.outcome).toBe("landed");
+  });
 });
 
 describe("mechanicalDisqualifier", () => {

@@ -141,11 +141,28 @@ function agentBriefSignal(issue: HitlDecisionIssue): DecisionSignal | null {
   };
 }
 
+/** Bare placeholder labels the loop's own HITL-resolution directive starts with.
+ * They are field headers, not decisions, so a directive whose first useful line
+ * is one of these is the loop re-reading its own prior resolution. */
+const SELF_RESOLUTION_LABELS = ["pending decision:", "human answer:", "disposition:", "next pending decision:"];
+
+/** True when a directive body is one of the loop's own `<summary>HITL resolution</summary>`
+ * blocks (or otherwise opens with a bare resolution field label). Such directives
+ * echo the literal "Pending decision:" header instead of a real decision and must
+ * not be re-extracted on a HITL re-loop. */
+function isSelfHitlResolution(directive: string): boolean {
+  const summary = /<summary>\s*(.*?)\s*<\/summary>/i.exec(directive);
+  if (summary && summary[1]!.replace(/\s+/g, " ").trim().toLowerCase() === "hitl resolution") return true;
+  const first = firstUsefulLine(directive).toLowerCase();
+  return SELF_RESOLUTION_LABELS.includes(first);
+}
+
 function directiveSignals(comments: readonly HandoffComment[]): DecisionSignal[] {
   const out: DecisionSignal[] = [];
   for (const comment of comments) {
     if (classifyComment({ body: comment.body }) !== "directive") continue;
     for (const directive of extractDirectives(comment.body)) {
+      if (isSelfHitlResolution(directive)) continue;
       const line = firstUsefulLine(directive);
       if (!line) continue;
       out.push({

@@ -43,6 +43,18 @@ expect_verdict "block/switch dash previous"  "$LOCK" "git switch -"             
 expect_verdict "block/compound command"      "$LOCK" "cd repo && git checkout other" "block"
 expect_verdict "block/checkout --track"      "$LOCK" "git checkout --track origin/x" "block"
 
+# global options before the subcommand must not bypass the lock
+expect_verdict "block/-C path checkout"      "$LOCK" "git -C /repo checkout other"   "block"
+expect_verdict "block/-C path switch"        "$LOCK" "git -C /repo switch other"      "block"
+expect_verdict "block/-C path checkout -b"   "$LOCK" "git -C /repo checkout -b shiny" "block"
+expect_verdict "block/-c config checkout"    "$LOCK" "git -c core.x=1 checkout other" "block"
+expect_verdict "block/--git-dir eq switch"   "$LOCK" "git --git-dir=/r/.git switch o" "block"
+expect_verdict "block/--git-dir arg switch"  "$LOCK" "git --git-dir /r/.git switch o" "block"
+expect_verdict "block/--no-pager checkout"   "$LOCK" "git --no-pager checkout other"  "block"
+expect_verdict "block/-C compound"           "$LOCK" "cd x && git -C /r checkout other" "block"
+expect_verdict "block/-C reset --hard"       "$LOCK" "git -C /repo reset --hard"      "block"
+expect_verdict "block/-C stash"              "$LOCK" "git -C /repo stash"             "block"
+
 # ===========================================================================
 # ALLOW — same-branch / legitimate operations
 # ===========================================================================
@@ -55,6 +67,12 @@ expect_verdict "allow/worktree add"          "$LOCK" "git worktree add ../wt bra
 expect_verdict "allow/non-checkout git"      "$LOCK" "git status"                     "allow"
 expect_verdict "allow/non-git command"       "$LOCK" "ls -la"                         "allow"
 expect_verdict "allow/commit"                "$LOCK" "git commit -m wip"              "allow"
+
+# global options before the subcommand: legitimate operations still allowed
+expect_verdict "allow/-C checkout lock"      "$LOCK" "git -C /repo checkout main"     "allow"
+expect_verdict "allow/-C status"             "$LOCK" "git -C /repo status"            "allow"
+expect_verdict "allow/-C file restore"       "$LOCK" "git -C /repo checkout -- a.ts"  "allow"
+expect_verdict "allow/-C worktree add"       "$LOCK" "git -C /repo worktree add ../w" "allow"
 
 # slash lock target: switching back to it is allowed, elsewhere blocked
 expect_verdict "allow/slash lock back"  "feature/x" "git switch feature/x"  "allow"
@@ -114,6 +132,8 @@ expect_primary_guard "primary/on/checkout other blocked"     "git checkout other
 expect_primary_guard "primary/on/switch -b new blocked"      "git switch -b new"             primary  on  block
 expect_primary_guard "primary/on/checkout -b new blocked"    "git checkout -b new"           primary  on  block
 expect_primary_guard "primary/on/compound switch blocked"    "cd repo && git switch other"   primary  on  block
+expect_primary_guard "primary/on/-C switch blocked"          "git -C /repo switch other"     primary  on  block
+expect_primary_guard "primary/on/-C checkout -b blocked"     "git -C /repo checkout -b new"  primary  on  block
 expect_primary_guard "primary/on/switch dash blocked"        "git switch -"                  primary  on  block
 expect_primary_guard "primary/on/commit allowed"             "git commit -m wip"             primary  on  allow
 expect_primary_guard "primary/on/worktree add allowed"       "git worktree add ../wt other"  primary  on  allow

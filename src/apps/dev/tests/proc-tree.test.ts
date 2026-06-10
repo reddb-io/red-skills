@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   CONSERVATIVE_BUSY_SNAPSHOT,
   collectTree,
+  inspectProcessTree,
   inspectProcessTreeNative,
   parsePsTree,
 } from "../src/runtime/proc-tree.js";
@@ -55,18 +56,48 @@ describe("collectTree", () => {
   });
 });
 
+describe("inspectProcessTree — degrade / timeout paths", () => {
+  it("an un-inspectable pid (<=1) returns [] without calling the runner", () => {
+    const neverCalled = (): string => { throw new Error("must not be called"); };
+    expect(inspectProcessTree(0, neverCalled)).toEqual([]);
+    expect(inspectProcessTree(1, neverCalled)).toEqual([]);
+    expect(inspectProcessTree(Number.NaN, neverCalled)).toEqual([]);
+  });
+
+  it("returns CONSERVATIVE_BUSY_SNAPSHOT when the runner throws (simulated ETIMEDOUT)", () => {
+    const timeout = (): string => {
+      throw Object.assign(new Error("spawnSync ps ETIMEDOUT"), { code: "ETIMEDOUT" });
+    };
+    expect(inspectProcessTree(process.pid, timeout)).toBe(CONSERVATIVE_BUSY_SNAPSHOT);
+  });
+
+  it("a runner timeout reads as busy — reaper must not kill (deriveSnapshot)", () => {
+    const timeout = (): string => {
+      throw Object.assign(new Error("spawnSync ps ETIMEDOUT"), { code: "ETIMEDOUT" });
+    };
+    const snap = deriveSnapshot(inspectProcessTree(process.pid, timeout));
+    expect(snap.cpuPct).toBeGreaterThanOrEqual(5);
+  });
+
+  it("returns CONSERVATIVE_BUSY_SNAPSHOT when the runner throws (ENOENT — ps missing)", () => {
+    const noent = (): string => {
+      throw Object.assign(new Error("spawnSync ps ENOENT"), { code: "ENOENT" });
+    };
+    expect(inspectProcessTree(process.pid, noent)).toBe(CONSERVATIVE_BUSY_SNAPSHOT);
+  });
+
+  it("the conservative busy snapshot constant reads as busy (deriveSnapshot)", () => {
+    // Guards the constant value independent of any code path.
+    const snap = deriveSnapshot(CONSERVATIVE_BUSY_SNAPSHOT);
+    expect(snap.cpuPct).toBeGreaterThanOrEqual(5);
+  });
+});
+
 describe("inspectProcessTreeNative", () => {
   it("an un-inspectable pid (<=1) returns [] without running ps", () => {
     expect(inspectProcessTreeNative(0)).toEqual([]);
     expect(inspectProcessTreeNative(1)).toEqual([]);
     expect(inspectProcessTreeNative(Number.NaN)).toEqual([]);
-  });
-
-  it("the conservative busy fallback reads as busy (deriveSnapshot)", () => {
-    // The ps-failure fallback must NOT authorise a reap: its cpu sits above the
-    // busy line so the reaper-signal reduction reports the tree busy.
-    const snap = deriveSnapshot(CONSERVATIVE_BUSY_SNAPSHOT);
-    expect(snap.cpuPct).toBeGreaterThanOrEqual(5);
   });
 
   it("a real self-inspection returns this process in its own tree", () => {

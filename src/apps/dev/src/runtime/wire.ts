@@ -424,6 +424,29 @@ import type { AfkInput } from "../core/statusline.js";
  * statusline.sh's 60 s window. */
 export const STATUSLINE_CACHE_TTL_S = 60;
 
+/** Maximum milliseconds to wait for a cold-cache gh count refresh. If the gh
+ * CLI hangs (network stall, rate-limit backoff) the statusline falls back to
+ * 0/0 rather than blocking the render indefinitely. */
+export const STATUSLINE_GH_COLD_TIMEOUT_MS = 5000;
+
+/**
+ * Race `promise` against a deadline. If the deadline fires first, resolves
+ * with `fallback` immediately; the original promise is left to settle on its
+ * own (no cancel). If the promise settles first, clears the timer and resolves
+ * with its value.
+ */
+export async function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<T>((resolve) => {
+    timer = setTimeout(() => resolve(fallback), ms);
+  });
+  try {
+    return await Promise.race([promise, deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 interface StatuslineCache {
   queue: number;
   human: number;
@@ -528,8 +551,10 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
   };
 
   if (!cached) {
-    // Cold cache: refresh synchronously so the first render is correct.
-    await refresh();
+    // Cold cache: refresh with a bounded deadline so a hanging gh CLI cannot
+    // block the statusline render indefinitely. queue/human stay 0/0 on timeout
+    // or on any gh/auth/network error.
+    await withTimeout(refresh(), STATUSLINE_GH_COLD_TIMEOUT_MS, undefined).catch(() => undefined);
   } else if (nowS - cached.ts >= STATUSLINE_CACHE_TTL_S) {
     // Stale: use the cached numbers now, refresh in the background.
     void refresh().catch(() => undefined);
@@ -685,15 +710,19 @@ export async function collectBootOptions(
 export async function collectPrecheckFacts(ctx: RepoContext): Promise<PrecheckFacts> {
   const gitCtx: gitx.GitContext = { cwd: ctx.root };
   const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo };
-  const [ghInstalled, ghAuthenticated, isRepo, remoteUrls, hasMain, currentBranch, pnpmProbe] = await Promise.all([
-    ghx.ghInstalled(ghCtx),
-    ghx.ghAuthenticated(ghCtx),
-    gitx.isGitRepo(gitCtx),
-    gitx.remoteUrls(gitCtx),
-    gitx.hasMainBranch(gitCtx),
-    gitx.currentBranch(gitCtx),
-    import("./exec.js").then((m) => m.pnpm(["--version"], { cwd: ctx.root })),
-  ]);
+  const { branchLockPath, readLockedBranch } = await import("./lock.js");
+  const lockPath = branchLockPath(ctx.root);
+  const [ghInstalled, ghAuthenticated, isRepo, remoteUrls, hasMain, currentBranch, pnpmProbe, lockedBranch] =
+    await Promise.all([
+      ghx.ghInstalled(ghCtx),
+      ghx.ghAuthenticated(ghCtx),
+      gitx.isGitRepo(gitCtx),
+      gitx.remoteUrls(gitCtx),
+      gitx.hasMainBranch(gitCtx),
+      gitx.currentBranch(gitCtx),
+      import("./exec.js").then((m) => m.pnpm(["--version"], { cwd: ctx.root })),
+      readLockedBranch(lockPath),
+    ]);
   const pnpmInstalled = pnpmProbe.code !== 127;
   return {
     ghInstalled,
@@ -702,6 +731,7 @@ export async function collectPrecheckFacts(ctx: RepoContext): Promise<PrecheckFa
     remoteUrls,
     hasMainBranch: hasMain,
     currentBranch,
+    lockedBranch,
     pnpmInstalled,
   };
 }

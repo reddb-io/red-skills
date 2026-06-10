@@ -279,6 +279,13 @@ export function computeStalled(
 
 // ---------- injected IO ----------
 
+/** A parked-mechanical issue with a landable branch, detected cheaply by the
+ * supervisor tick for reconcile dispatch (ADR 0055, #562). */
+export interface ReconcileCandidate {
+  issue: number;
+  branch: string;
+}
+
 /** Process side effects the supervisor drives. All real spawn/kill/inspect IO
  * is injected so tests run with no real processes (parity with the bash
  * sup_kill_tree / sup_active_descendant / sup_tree_cpu stubs in the tests). */
@@ -299,6 +306,12 @@ export interface SupervisorProc {
    * Injected so tests advance the loop without real time. Mirrors the bash
    * `sleep "$POLL_S"` at the bottom of the supervisor `while :` loop. */
   sleep(ms: number): Promise<void>;
+  /**
+   * Spawn a reconcile worker for `candidate` into `slot` (ADR 0055, #562). The
+   * worker validates-and-lands `candidate.branch` without re-running the agent.
+   * Returns its pid and spawn epoch. Absent when reconcile dispatch is not wired.
+   */
+  spawnReconcileWorker?(slot: number, candidate: ReconcileCandidate): Promise<{ pid: number; spawnEpoch: number }>;
 }
 
 /** Filesystem side effects. Best-effort, like the bash `|| true` cleanups. */
@@ -343,6 +356,14 @@ export interface SupervisorGh {
   ensureLabel(name: string): Promise<void>;
   /** Current open `ready-for-agent` queue depth for the fleet heartbeat. */
   readyQueueDepth?(): Promise<number>;
+  /**
+   * Cheaply detect the first parked-mechanical issue with an `afk/…` live
+   * branch (blocked:stalled | blocked:crashed label + remote branch list). Runs
+   * inside the supervisor tick — must complete well under `RED_AFK_TICK_TIMEOUT_S`.
+   * Returns null when no candidate is found or on any gh/git failure (best-effort).
+   * Absent when reconcile dispatch is not wired.
+   */
+  findReconcileCandidate?(): Promise<ReconcileCandidate | null>;
 }
 
 export interface FleetHeartbeat {
@@ -523,6 +544,8 @@ export interface TickResult {
   deaths: number[];
   parked: number[];
   reaped: number[];
+  /** Slots into which a reconcile worker was dispatched this tick. */
+  reconciledSlots: number[];
   /** True when the stop-file was honoured and all workers terminated. */
   stopped: boolean;
 }
@@ -790,11 +813,57 @@ export async function handleDeadSlot(
 }
 
 /**
+ * dispatchReconcileIfPossible — attempt to dispatch ONE reconcile worker into
+ * the first free slot (ADR 0055, #562). Called at the end of every superviseTick,
+ * after normal lifecycle handling (respawn / stall / reap). Returns the slot
+ * index of the dispatched worker, or null when no dispatch occurred.
+ *
+ * A "free slot" is one that is not parked and has no live pid — typically freed
+ * by the stall-reaper within the same tick. The heavy validate+land runs in the
+ * worker process (its own timeout), off the tick's critical path.
+ *
+ * Both `deps.proc.spawnReconcileWorker` and `deps.gh.findReconcileCandidate` are
+ * optional — when either is absent this is a no-op, preserving backward
+ * compatibility with existing SupervisorDeps implementations (tests, boot-only).
+ */
+export async function dispatchReconcileIfPossible(
+  state: SupervisorState,
+  deps: SupervisorDeps,
+): Promise<number | null> {
+  if (!deps.proc.spawnReconcileWorker || !deps.gh.findReconcileCandidate) return null;
+
+  // Find the first free slot: not parked and no live pid.
+  const freeIdx = state.slots.findIndex((s) => !s.parked && s.pid === null);
+  if (freeIdx < 0) return null;
+
+  // Cheap detection: one gh label query + remote branch list via the injected closure.
+  let candidate: ReconcileCandidate | null = null;
+  try {
+    candidate = await deps.gh.findReconcileCandidate();
+  } catch {
+    return null;
+  }
+  if (candidate === null) return null;
+
+  // Dispatch the reconcile worker into the free slot.
+  const spawned = await deps.proc.spawnReconcileWorker(freeIdx, candidate);
+  const slot = state.slots[freeIdx]!;
+  slot.pid = spawned.pid;
+  slot.spawnEpoch = spawned.spawnEpoch;
+  // Clear stale stall/reap flags — this is a fresh worker start.
+  slot.stalled = false;
+  slot.stallSinceEpoch = 0;
+  slot.reaped = false;
+  return freeIdx;
+}
+
+/**
  * superviseTick — advance the health-check loop one cycle (the body of
  * supervisor.sh's `while :` at ~1122-1141). In order:
  *   1. honour the stop-file: terminate every worker and return early.
  *   2. respawn / park dead non-parked slots (handleDeadSlot).
  *   3. poll the passive stall detector + gated hard reaper (pollStallDetector).
+ *   4. reconcile dispatch: fill a free slot with a reconcile worker if eligible.
  *
  * `stopRequested` is the injected stop-file probe (the bash `[[ -f $STOP_FILE ]]`
  * check). The real loop is `while (!await superviseTick(...).stopped)`.
@@ -810,6 +879,7 @@ export async function superviseTick(
     deaths: [],
     parked: [],
     reaped: [],
+    reconciledSlots: [],
     stopped: false,
   };
 
@@ -835,6 +905,11 @@ export async function superviseTick(
   // Passive stall detector + gated hard reaper.
   const reaped = await pollStallDetector(state, deps, config);
   result.reaped = reaped;
+
+  // Reconcile dispatch: use any free slot (e.g. just stall-reaped) for a parked
+  // candidate. Best-effort; a failure or absent candidate is silently skipped.
+  const reconciledSlot = await dispatchReconcileIfPossible(state, deps);
+  if (reconciledSlot !== null) result.reconciledSlots.push(reconciledSlot);
 
   return result;
 }
@@ -904,7 +979,7 @@ export async function runSupervisor(
 
 /** A non-stop tick result (the abandon/error fallback). */
 function continueResult(): TickResult {
-  return { respawned: [], deaths: [], parked: [], reaped: [], stopped: false };
+  return { respawned: [], deaths: [], parked: [], reaped: [], reconciledSlots: [], stopped: false };
 }
 
 /**

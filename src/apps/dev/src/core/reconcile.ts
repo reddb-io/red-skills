@@ -12,11 +12,13 @@
 // The flow mirrors the DONE path's tail, composing the SAME building blocks — no
 // new merge code:
 //   1. guard      — mechanical class only (never blocked:spec / a non-mechanical
-//                    active `## Current blocker`); the branch must carry work.
-//   2. runFeedback — the scoped gate is the verdict, the SAME authority the DONE
+//                    active `## Current blocker`).
+//   2. fetch gate — branchPresent() fetches origin-only branches before the diff.
+//   3. commits gate — the branch must carry work (changedFiles vs base).
+//   4. runFeedback — the scoped gate is the verdict, the SAME authority the DONE
 //                    path trusts.
-//   3a. green     → doLanding (landing.ts) + close + drop blocked:*/ready-for-human.
-//   3b. red       → ready-for-human with the REAL failing checks (blocked:validation).
+//   4a. green     → doLanding (landing.ts) + close + drop blocked:*/ready-for-human.
+//   4b. red       → ready-for-human with the REAL failing checks (blocked:validation).
 //
 // PURE SEQUENCING over injected IO: every git/gh/pnpm/fs touch is a port, so the
 // whole decision tree is unit-testable with zero subprocesses. `ReconcileDeps`
@@ -176,7 +178,7 @@ export interface ReconcileInput {
 
 // ---------- result ----------
 
-export type ReconcileSkipReason = "not-mechanical" | "active-blocker" | "no-commits" | "branch-absent";
+export type ReconcileSkipReason = "not-mechanical" | "active-blocker" | "no-commits" | "branch-absent" | "already-closed";
 
 export type ReconcileResult =
   | { outcome: "landed"; mergeSha: string; locked: boolean; posted: boolean }
@@ -206,17 +208,11 @@ export async function reconcile(deps: ReconcileDeps, input: ReconcileInput): Pro
     return { outcome: "skipped", reason: disqualifier };
   }
 
-  // ---- 2. commits gate: the branch must carry work AND be present on the host ----
-  // changedFiles() is a three-dot diff that returns [] for an EMPTY or MISSING
-  // branch, so an empty set means "nothing to land" — exactly the no-work case
-  // that should fall through to the caller's escalation untouched.
-  const changedFiles = await deps.lookups.changedFiles(branch, base);
-  if (changedFiles.length === 0) {
-    deps.appendIterLog(
-      `🤖 /afk reconcile #${issue}: skipped (no-commits) — \`${branch}\` carries no work vs \`${base}\`.`,
-    );
-    return { outcome: "skipped", reason: "no-commits" };
-  }
+  // ---- 2. fetch gate: materialize origin-only branches before the commits diff ----
+  // branchPresent() fetches from origin on a local miss, so a branch force-pushed
+  // by a now-dead worker (present on origin, absent locally) is available for the
+  // three-dot diff below. Without this fetch, changedFiles() would silently return
+  // [] for the missing ref, triggering a false skipped:no-commits.
   if (deps.lookups.branchPresent && !(await deps.lookups.branchPresent(branch))) {
     deps.appendIterLog(
       `🤖 /afk reconcile #${issue}: skipped (branch-absent) — \`${branch}\` is not present on the host; cannot validate.`,
@@ -224,7 +220,19 @@ export async function reconcile(deps: ReconcileDeps, input: ReconcileInput): Pro
     return { outcome: "skipped", reason: "branch-absent" };
   }
 
-  // ---- 3. feedback gate (the verdict — SAME authority as the DONE path) ----
+  // ---- 3. commits gate: the branch must carry work ----
+  // changedFiles() is a three-dot diff that returns [] for an EMPTY branch.
+  // The fetch gate above guarantees the branch is local, so [] here means
+  // genuinely no commits — not a missing ref.
+  const changedFiles = await deps.lookups.changedFiles(branch, base);
+  if (changedFiles.length === 0) {
+    deps.appendIterLog(
+      `🤖 /afk reconcile #${issue}: skipped (no-commits) — \`${branch}\` carries no work vs \`${base}\`.`,
+    );
+    return { outcome: "skipped", reason: "no-commits" };
+  }
+
+  // ---- 4. feedback gate (the verdict — SAME authority as the DONE path) ----
   const startedEpoch = deps.nowEpoch();
   const feedback: RunFeedbackResult = await runFeedback(deps.pnpm, {
     worktree: branch,
@@ -234,12 +242,24 @@ export async function reconcile(deps: ReconcileDeps, input: ReconcileInput): Pro
   });
   await writeValidationSidecar(deps, input.attemptDir, feedback.sidecar);
 
-  // ---- 3b. RED → ready-for-human with the real failing checks ----
+  // ---- 4b. RED → ready-for-human with the real failing checks ----
   if (!feedback.ok) {
     return await park(deps, input, feedback, startedEpoch);
   }
 
-  // ---- 3a. GREEN → land via the existing landing path, then close ----
+  // ---- 4a-pre. re-verify the issue is still open immediately before landing ----
+  // The candidate list and the claim window can go stale between selection and
+  // here: a concurrent worker or a human may have closed the issue. Landing +
+  // closing an already-closed issue churns labels on a closed thread (#568), so
+  // bail before doLanding when it is no longer open.
+  if (await deps.gh.issueClosed(issue)) {
+    deps.appendIterLog(
+      `🤖 /afk reconcile #${issue}: skipped (already-closed) — issue closed since selection; not landing.`,
+    );
+    return { outcome: "skipped", reason: "already-closed" };
+  }
+
+  // ---- 4a. GREEN → land via the existing landing path, then close ----
   const locked = await deps.lookups.isLocked();
   const landing = await doLanding(
     {

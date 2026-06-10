@@ -131,6 +131,27 @@ describe("tryAcquireClaimDir (#434 atomic claim)", () => {
     }
   });
 
+  it("lets exactly ONE of N concurrent claimers win when RECLAIMING a stale dir (#568 recovery race)", async () => {
+    const root = scratch();
+    try {
+      const dir = join(root, "claims", "568");
+      // A crashed worker left a stale claim (dead pid). Several workers boot at
+      // once and all observe the dead holder. The prior rm-then-mkdir reclaim was
+      // a TOCTOU that let two of them both reclaim it (the #434 dup-PR race,
+      // reopened on the recovery path); the atomic-rename reclaim lets exactly one
+      // win even when every racer sees the same dead holder.
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "pid"), DEAD_PID);
+      const results = await Promise.all(
+        Array.from({ length: 8 }, () => tryAcquireClaimDir(dir, process.pid)),
+      );
+      expect(results.filter((won) => won)).toHaveLength(1);
+      expect(readFileSync(join(dir, "pid"), "utf8")).toBe(String(process.pid));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("does not remove a live existing claim while self-healing", async () => {
     const root = scratch();
     try {

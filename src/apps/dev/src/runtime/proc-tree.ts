@@ -99,27 +99,33 @@ export function collectTree(
   return out;
 }
 
+/** A synchronous runner that executes `ps -e -o pid=,ppid=,%cpu=,comm=` and
+ * returns its stdout. Injectable for testing. */
+export type PsTreeRunner = () => string;
+
 /**
- * Inspect the worker `pid`'s process tree into a ProcessSnapshotEntry[] via a
- * single `ps` snapshot of all processes. Best-effort and SAFE BY DEFAULT:
+ * Inspect the worker `pid`'s process tree into a ProcessSnapshotEntry[] using
+ * the provided `run` function to obtain the full-process-list stdout. Best-
+ * effort and SAFE BY DEFAULT:
  *   - an un-inspectable pid (<=1, NaN) → [] (no tree, deriveSnapshot is empty;
  *     a freed/garbage slot pid is genuinely not running anything).
- *   - a `ps` spawn/parse failure → CONSERVATIVE_BUSY_SNAPSHOT so the reaper
- *     never kills off the back of a transient inspection error.
- *   - a successful `ps` that simply does not list the pid (already exited) → []
+ *   - a runner throw (timeout, EAGAIN, missing binary) →
+ *     CONSERVATIVE_BUSY_SNAPSHOT so the reaper never kills off the back of a
+ *     transient inspection error.
+ *   - a successful run that simply does not list the pid (already exited) → []
  *     — that is a real, observed absence, not an inspection failure.
  */
-export function inspectProcessTreeNative(pid: number): readonly ProcessSnapshotEntry[] {
+export function inspectProcessTree(
+  pid: number,
+  run: PsTreeRunner,
+): readonly ProcessSnapshotEntry[] {
   if (!isInspectablePid(pid)) return [];
   let stdout: string;
   try {
-    stdout = execFileSync("ps", ["-e", "-o", "pid=,ppid=,%cpu=,comm="], {
-      encoding: "utf8",
-      maxBuffer: 16 * 1024 * 1024,
-    });
+    stdout = run();
   } catch {
-    // `ps` itself failed (missing binary, EAGAIN, buffer overflow, …). Failing
-    // to [] would read as "stuck" and authorise a kill — refuse: report busy.
+    // runner failed (timeout, missing binary, EAGAIN, …). Falling to [] would
+    // read as "stuck" and authorise a kill — refuse: report busy.
     return CONSERVATIVE_BUSY_SNAPSHOT;
   }
   try {
@@ -128,4 +134,14 @@ export function inspectProcessTreeNative(pid: number): readonly ProcessSnapshotE
   } catch {
     return CONSERVATIVE_BUSY_SNAPSHOT;
   }
+}
+
+export function inspectProcessTreeNative(pid: number): readonly ProcessSnapshotEntry[] {
+  return inspectProcessTree(pid, () =>
+    execFileSync("ps", ["-e", "-o", "pid=,ppid=,%cpu=,comm="], {
+      encoding: "utf8",
+      maxBuffer: 16 * 1024 * 1024,
+      timeout: 5000,
+    }),
+  );
 }

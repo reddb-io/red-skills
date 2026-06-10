@@ -39,7 +39,15 @@ export function callerProcessTree(
   for (let depth = 0; depth < maxDepth; depth += 1) {
     if (!Number.isInteger(pid) || pid <= 1 || seen.has(pid)) break;
     seen.add(pid);
-    const parsed = parsePsAncestorLine(inspect(pid));
+    let raw: string;
+    try {
+      raw = inspect(pid);
+    } catch {
+      // Transient ps failure (ETIMEDOUT, EAGAIN, vanished ancestor) — stop
+      // the walk rather than propagating; runner detection gets a partial tree.
+      break;
+    }
+    const parsed = parsePsAncestorLine(raw);
     if (!parsed) break;
     if (parsed.command) commands.push(parsed.command);
     pid = parsed.ppid;
@@ -53,6 +61,7 @@ export function callerProcessTreeNative(startPid = process.ppid): string {
     execFileSync("ps", ["-o", "pid=,ppid=,comm=", "-p", String(pid)], {
       encoding: "utf8",
       maxBuffer: 64 * 1024,
+      timeout: 3000,
     }),
   );
 }
