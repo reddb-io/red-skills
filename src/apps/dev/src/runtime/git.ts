@@ -165,10 +165,9 @@ export async function recentCommits(ctx: GitContext, ref = "main", count = 5): P
  */
 export async function worktreeAdd(ctx: GitContext, path: string, branch: string): Promise<boolean> {
   await runGit(ctx, ["fetch", "origin", branch]);
-  // Prefer the local branch if it exists, else the fetched origin ref.
-  const local = await runGit(ctx, ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`]);
-  const ref = local.code === 0 ? branch : `origin/${branch}`;
-  const r = await runGit(ctx, ["worktree", "add", "--force", "--detach", path, ref]);
+  // Always check out origin/<branch> so validation targets the freshly-pushed
+  // tip, never a stale local ref that may be behind what the worker committed.
+  const r = await runGit(ctx, ["worktree", "add", "--force", "--detach", path, `origin/${branch}`]);
   return r.code === 0;
 }
 

@@ -13,9 +13,9 @@
 // feedback gate consumes, both rebased onto the materialised checkout. Every
 // worktree it created is torn down by `cleanup()` after the session.
 //
-// When the worktree cannot be materialised (e.g. tests, or an origin ref that
-// never got pushed) it degrades to the primary checkout so feedback still runs
-// the package topology rather than silently passing.
+// The gate fails closed: a worktree-add or install failure blocks the attempt
+// rather than degrading to the primary checkout, which would silently validate
+// main instead of the branch under review.
 
 import { accessSync, constants, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -118,28 +118,30 @@ export function makeFeedbackWorktree(
     if (cached !== undefined) return cached;
     const dest = join(feedbackRoot, slugForBranch(branch));
     const ok = await io.worktreeAdd(gitCtx, dest, branch);
-    if (ok) {
-      // A freshly added worktree has NO node_modules. Without an install here,
-      // the feedback gate's `pnpm -C <dest> test/build` calls fail with
-      // `tsc/vite/svelte-kit: not found` — a FALSE validation failure that parks
-      // otherwise-green work as blocked:validation (#458). Install before any
-      // check can run.
-      const ins = await io.pnpm(["install", "--frozen-lockfile"], { cwd: dest });
-      if (ins.code !== 0) {
-        // Lockfile drift on the branch, or a transient registry error. Keep the
-        // checkout so validation still reflects the branch's real state instead
-        // of silently validating `main` from the primary checkout — but warn so
-        // the cause is visible in the attempt log.
-        process.stderr.write(
-          `warn: feedback worktree install failed for ${branch} (exit ${ins.code}); ` +
-            `validation may report missing binaries\n${ins.stderr.trim()}\n`,
-        );
-      }
-      created.add(dest);
+    if (!ok) {
+      throw new Error(
+        `feedback worktree add failed for branch ${branch}; gate fails closed`,
+      );
     }
-    const path = ok ? dest : root;
-    resolved.set(branch, path);
-    return path;
+    // A freshly added worktree has NO node_modules. Without an install here,
+    // the feedback gate's `pnpm -C <dest> test/build` calls fail with
+    // `tsc/vite/svelte-kit: not found` — a FALSE validation failure that parks
+    // otherwise-green work as blocked:validation (#458). Install before any
+    // check can run.
+    const ins = await io.pnpm(["install", "--frozen-lockfile"], { cwd: dest });
+    if (ins.code !== 0) {
+      // Lockfile drift or transient registry error: clean up the partial
+      // worktree and fail closed — continuing with missing binaries would
+      // produce false positives and mask real issues.
+      await io.worktreeRemove(gitCtx, dest).catch(() => {});
+      throw new Error(
+        `feedback worktree install failed for ${branch} (exit ${ins.code}); ` +
+          `gate fails closed\n${ins.stderr.trim()}`,
+      );
+    }
+    created.add(dest);
+    resolved.set(branch, dest);
+    return dest;
   }
 
   // The layout probe only needs the package topology, which is identical across
@@ -178,7 +180,12 @@ export function makeFeedbackWorktree(
     const cIdx = args.indexOf("-C");
     if (cIdx >= 0 && args[cIdx + 1] !== undefined) {
       const { branch, scope } = splitBranchDir(args[cIdx + 1]!, layout.hasPackage);
-      const base = await pathFor(branch);
+      let base: string;
+      try {
+        base = await pathFor(branch);
+      } catch (err) {
+        return { code: 1, stdout: "", stderr: err instanceof Error ? err.message : String(err) };
+      }
       const rewritten = scope === "." ? base : join(base, scope);
       const rest = args.filter((_, i) => i !== 0 && i !== cIdx && i !== cIdx + 1);
       const r = await io.pnpm(["-C", rewritten, ...rest], { cwd: root });
@@ -198,7 +205,12 @@ export function makeFeedbackWorktree(
   // non-zero failure (the exec edge reports KILLED_EXIT_CODE) instead of
   // deadlocking the worker (PRD #567).
   const backpressure: BackpressureExec = async ({ command, cwd, timeoutMs }) => {
-    const dir = await pathFor(cwd);
+    let dir: string;
+    try {
+      dir = await pathFor(cwd);
+    } catch (err) {
+      return { code: 1, stdout: "", stderr: err instanceof Error ? err.message : String(err) };
+    }
     const r = await io.exec("sh", ["-c", command], { cwd: dir, timeoutMs });
     return { code: r.code, stdout: r.stdout, stderr: r.stderr };
   };
