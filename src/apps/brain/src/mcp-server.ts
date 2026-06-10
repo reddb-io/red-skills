@@ -39,6 +39,17 @@ const ActInput = z.object({
   message: z.string().min(1),
 });
 
+const KpiInput = z.object({
+  interval: z.enum(["hour", "day", "week", "month"]).default("day"),
+  group_by: z.enum(["platform", "event_type", "target"]).optional(),
+  time_field: z.enum(["event", "ingested"]).default("event"),
+  from: z.union([z.string(), z.number()]).optional(),
+  to: z.union([z.string(), z.number()]).optional(),
+  platform: z.string().optional(),
+  event_type: z.string().optional(),
+  target: z.string().optional(),
+});
+
 const TOOLS = [
   {
     name: "brain_init",
@@ -85,6 +96,12 @@ const TOOLS = [
     description:
       "Send a message to a channel target through the ChannelBridge, outbound-only (no gateway daemon; channel tokens only).",
     inputSchema: zodShape(ActInput),
+  },
+  {
+    name: "brain_kpis",
+    description:
+      "Compute time-windowed KPI aggregations over kind:event artifacts (counts and per-window series), shaped for a dashboard. No metrics store; derived from the artifact graph.",
+    inputSchema: zodShape(KpiInput),
   },
 ];
 
@@ -145,6 +162,19 @@ async function main(): Promise<void> {
       case "brain_act": {
         const input = ActInput.parse(args);
         return text(await brainAct({ target: input.target, message: input.message }));
+      }
+      case "brain_kpis": {
+        const input = KpiInput.parse(args);
+        return text(await withBrainRuntime(async ({ store }) => store.eventKpis({
+          interval: input.interval,
+          groupBy: input.group_by,
+          timeField: input.time_field,
+          from: input.from,
+          to: input.to,
+          platform: input.platform,
+          eventType: input.event_type,
+          target: input.target,
+        })));
       }
       default:
         throw new Error(`unknown Brain tool: ${req.params.name}`);
