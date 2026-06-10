@@ -89,7 +89,7 @@ function makeDeps(over: Partial<Record<keyof FakeIo, unknown>> = {}): {
     resolveIterDir: vi.fn((): IterDirInfo | null => null),
     teardownIterDir: vi.fn(async () => {}),
     parkedSlotWork: vi.fn(
-      (): SweepWork => ({ workers: [], fastDeaths: 0, supervisorLogPath: ".red/tmp/afk-supervisor.log" }),
+      (): SweepWork => ({ workers: [], supervisorLogPath: ".red/tmp/afk-supervisor.log" }),
     ),
     removeDir: vi.fn(async () => {}),
     comment: vi.fn(async () => {}),
@@ -295,7 +295,6 @@ describe("circuit trip and sweep", () => {
       parkedSlotWork: vi.fn(
         (): SweepWork => ({
           workers: [{ workerId: "wAAAA", pairs: [{ dir: "/w/wAAAA/7-a1", issue: 7 }] }],
-          fastDeaths: 5,
           supervisorLogPath: ".red/tmp/afk-supervisor.log",
         }),
       ),
@@ -326,12 +325,31 @@ describe("circuit trip and sweep", () => {
     expect(io.removeDir).toHaveBeenCalledWith("/w/wAAAA/7-a1");
   });
 
+  it("passes the slot's last pid to parkedSlotWork so the fs layer can use PID-based resolution", async () => {
+    // The fs layer falls back to findSlotIterDir(tmpDir, lastPid) when the slot
+    // log has no boot-stamp (the native fleet path). sweepParkedSlot must thread
+    // state.pid through so the fallback has the dead worker's PID.
+    const { deps, io } = makeDeps({
+      parkedSlotWork: vi.fn(
+        (): SweepWork => ({ workers: [], supervisorLogPath: "" }),
+      ),
+    });
+    const state = initSupervisorState(1);
+    const slot = state.slots[0]!;
+    slot.pid = 4242; // last dead worker's PID
+    slot.deaths = [NOW - 40, NOW - 30, NOW - 20, NOW - 10];
+    slot.spawnEpoch = NOW - 5;
+
+    await handleDeadSlot(0, slot, deps, config());
+
+    expect(io.parkedSlotWork).toHaveBeenCalledWith(0, 4242);
+  });
+
   it("sweep is idempotent and cleans dirs with no claimed issue without posting", async () => {
     const { deps, io } = makeDeps({
       parkedSlotWork: vi.fn(
         (): SweepWork => ({
           workers: [{ workerId: "wDDDD", pairs: [{ dir: "/w/wDDDD/1-a1", issue: null }] }],
-          fastDeaths: 5,
           supervisorLogPath: ".red/tmp/afk-supervisor.log",
         }),
       ),
