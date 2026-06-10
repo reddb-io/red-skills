@@ -2,6 +2,7 @@
 import { readFile } from "node:fs/promises";
 import { handleHook, type Runner } from "./hook-runtime.js";
 import { withBrainRuntime } from "./runtime.js";
+import { brainAct } from "./brain-act.js";
 import { ARTIFACT_KINDS, CONNECTION_KINDS } from "./schema.js";
 
 async function main(): Promise<void> {
@@ -41,6 +42,9 @@ async function main(): Promise<void> {
       return;
     case "backlinks":
       await backlinks(args);
+      return;
+    case "act":
+      await act(args);
       return;
     case "hook":
       await hook(args);
@@ -123,6 +127,15 @@ async function backlinks(args: string[]): Promise<void> {
   await withBrainRuntime(async ({ store }) => printJson(await store.backlinks(parseRidOrId(target))));
 }
 
+async function act(args: string[]): Promise<void> {
+  const flags = parseFlags(args);
+  const target = stringFlag(flags, "target") ?? flags._[0];
+  const message = stringFlag(flags, "message") ?? flags._.slice(1).join(" ");
+  if (!target) throw new Error("brain act requires --target <channel>");
+  if (!message) throw new Error("brain act requires --message <text>");
+  printJson(await brainAct({ target, message }));
+}
+
 async function hook(args: string[]): Promise<void> {
   const [lifecycle = "SessionStart", ...rest] = args;
   const flags = parseFlags(rest);
@@ -191,6 +204,7 @@ function printHelp(): void {
   get <rid|id>
   link --from <rid|id> --to <rid|id> --kind <${CONNECTION_KINDS.join("|")}>
   backlinks <rid|id>
+  act --target <channel> --message <text>
 `);
 }
 

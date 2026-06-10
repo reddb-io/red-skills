@@ -109,6 +109,7 @@ describe("ChannelBridge MCP-stdio adapter", () => {
         "brain_get",
         "brain_link",
         "brain_backlinks",
+        "brain_act",
       ]);
       for (const rawTool of HERMES_CHANNEL_BRIDGE_TOOLS) {
         expect(names).not.toContain(rawTool);

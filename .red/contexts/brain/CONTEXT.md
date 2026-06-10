@@ -109,6 +109,16 @@ renaming, or changing the semantics of any is a breaking change requiring a new
 pin. See ADR 0056.
 _Avoid_: best-effort tool discovery, partial-surface tolerance, unpinned runtime
 
+**Brain act**:
+The brain-scoped capability (`brain_act`, `src/apps/brain/src/brain-act.ts`)
+that posts a message to a channel target through the **Channel bridge**
+`send()` path in **outbound-only** mode — the bridge sends standalone using
+configured channel tokens, with no gateway daemon running. Exposed on the brain
+MCP surface and the `brain act` CLI command; the raw `messages_send` Hermes tool
+stays hidden. Missing-token, bad-target, and unreachable-bridge failures surface
+as a brain-scoped `BrainActError` rather than raw bridge internals.
+_Avoid_: paid API agent loop for sending, gateway-required send, raw messages_send exposure
+
 **Brain graph explorer**:
 The red-ui view over the Brain store used for early visual exploration and debugging of artifacts and connections.
 _Avoid_: daily dashboard, curated operating surface
