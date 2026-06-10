@@ -7,6 +7,14 @@
 // Best-effort writes swallow failures (the bash orchestrator's `|| true`).
 
 import { execTool, type ExecOptions, type ExecFn, type ExecOutput } from "./exec.js";
+import {
+  LABEL_READY,
+  LABEL_HUMAN,
+  LABEL_RUNNING,
+  LABEL_DEPENDENCY,
+  LABEL_STALLED,
+  LABEL_CRASHED,
+} from "../core/triage-labels.js";
 import type { IssueCandidate } from "../core/session.js";
 import type { HitlCandidate } from "../core/hitl-selection.js";
 import type { IssueMeta } from "../core/branch-cleanup.js";
@@ -104,7 +112,7 @@ export async function listCandidates(ctx: GhContext): Promise<IssueCandidate[]> 
       "list",
       ...repoArgs(ctx),
       "--label",
-      "ready-for-agent",
+      LABEL_READY,
       "--state",
       "open",
       "--limit",
@@ -140,7 +148,7 @@ export async function listHitlCandidates(ctx: GhContext): Promise<HitlCandidate[
       "list",
       ...repoArgs(ctx),
       "--label",
-      "ready-for-human",
+      LABEL_HUMAN,
       "--state",
       "open",
       "--limit",
@@ -406,10 +414,10 @@ export async function orphanState(
     const parsed = JSON.parse(r.stdout) as { state?: string; labels?: Array<{ name?: string }> };
     const labels = Array.isArray(parsed.labels) ? parsed.labels.map((l) => String(l.name ?? "")) : [];
     // afk.sh checks ready-for-human first, then running.
-    const label = labels.includes("ready-for-human")
-      ? "ready-for-human"
-      : labels.includes("running")
-        ? "running"
+    const label = labels.includes(LABEL_HUMAN)
+      ? LABEL_HUMAN
+      : labels.includes(LABEL_RUNNING)
+        ? LABEL_RUNNING
         : null;
     return { ghOk: true, state: String(parsed.state ?? "OPEN"), label, envelopePosted: false };
   } catch {
@@ -461,12 +469,12 @@ export async function countUnlabeled(ctx: GhContext): Promise<number> {
 
 /** Count open `ready-for-agent` issues (the 📋 statusline queue count). */
 export function countReadyForAgent(ctx: GhContext): Promise<number> {
-  return countIssues(ctx, ["--label", "ready-for-agent"]);
+  return countIssues(ctx, ["--label", LABEL_READY]);
 }
 
 /** Count open `ready-for-human` issues (the 🆘 statusline count). */
 export function countReadyForHuman(ctx: GhContext): Promise<number> {
-  return countIssues(ctx, ["--label", "ready-for-human"]);
+  return countIssues(ctx, ["--label", LABEL_HUMAN]);
 }
 
 /** Count `needs-triage` straggler issues. */
@@ -489,7 +497,7 @@ export async function listUnblockCandidates(ctx: GhContext): Promise<UnblockCand
       "list",
       ...repoArgs(ctx),
       "--label",
-      "blocked:dependency",
+      LABEL_DEPENDENCY,
       "--state",
       "open",
       "--limit",
@@ -566,8 +574,8 @@ export async function listParkedMechanicalCandidates(
   ctx: GhContext,
 ): Promise<ReconcileSweepCandidate[]> {
   const [stalled, crashed] = await Promise.all([
-    listIssuesByLabel(ctx, "blocked:stalled"),
-    listIssuesByLabel(ctx, "blocked:crashed"),
+    listIssuesByLabel(ctx, LABEL_STALLED),
+    listIssuesByLabel(ctx, LABEL_CRASHED),
   ]);
   const seen = new Set<number>();
   const result: ReconcileSweepCandidate[] = [];
