@@ -6,6 +6,19 @@ Upstream base: `mattpocock/skills@aaf2453fbdfe7a15c07f11d861224f34ab4b53cb` (see
 
 ---
 
+## afk (engineering) — execution-environment command surface documented; Actions lane #631 ready-for-agent (#640, ADR 0059)
+
+- **status**: modified (docs only — no code/runtime change)
+- **upstream**: —
+- **why**: The OpenCode runner merged in #626/#640 runs the same `/afk --issues N --runner opencode --once` invocation regardless of where it is invoked from. Adopters who want to drive it from a GitHub Actions runner or a k8s pod need to know (a) the command line is stable, (b) the secret-injection surface is the env-precedence resolver (`OPENAI_API_KEY` > `MINIMAX_API_KEY` > `OPENROUTER_API_KEY`), (c) the trust gate is rigorous by default. The reusable workflow + container k8s job that wrap this command for adopters are tracked as #631.
+- **what changed**:
+  - `plugins/dev/skills/engineering/afk/SKILL.md`: new *Running `/afk` in an execution environment (GitHub Actions / k8s)* subsection under *When To Use* documents the canonical invocation, the env-var injection surface, the runtime/caller responsibility split (a 12-row table), the recommended `--permissions:` block for GHA, and the trust-gate-by-default contract. No new subcommand — the existing `/afk --issues N --runner opencode --once` IS the execution-environment command.
+  - `.red/contexts/dev/CONTEXT.md`: two new glossary terms — *Execution environment* (GHA + k8s, shared runtime contract) and *Actions lane* (the GHA reusable-workflow surface of the execution environment) — with avoid-antonyms.
+  - Issue [#631](https://github.com/reddb-io/red-skills/issues/631): rewritten body with full GHA + k8s acceptance criteria (reusable workflow with inputs/secrets/permissions, container Dockerfile + k8s job.yaml, trust gate enforcement, atomic claim via ADR 0056, no admin-merge by default, thin caller example, E2E test), hard deps mapped to #621 / #622 / #625, suggested slice ordering, out-of-scope. Label flipped from `blocked:dependency` to `ready-for-agent` so the slice can be claimed and executed.
+- **no runtime change** — the command surface is unchanged; the docs lift the existing runtime contract into the GHA/k8s context so adopters can wire the lane without re-reading the source.
+
+---
+
 ## afk (engineering) — OpenCode runner is endpoint-agnostic; env-precedence auth (OPENAI > MINIMAX > OPENROUTER) (#638, ADR 0059 amendment 1+2)
 
 - **status**: modified

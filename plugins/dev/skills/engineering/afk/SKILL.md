@@ -58,6 +58,56 @@ AFK drives the sandcastle Orchestrator through **injected providers** (`Sandcast
 - `/afk fleet stop` — gracefully shut down a running fleet supervisor and cancel its auto-monitor cron.
 - `/afk reap` — run branch hygiene without starting a worker: one count line for remote `afk/*`, remote `afk-attempts/*`, and local `afk/*`, then the same safe reapers used at boot.
 
+### Running `/afk` in an execution environment (GitHub Actions / k8s)
+
+The same `/afk --issues N --runner opencode --once` command runs unchanged
+in a GitHub Actions runner or a k8s pod — it is the canonical
+**execution-environment** invocation. The runtime contract is identical to
+the local one (one attempt, one issue, one PR per invocation, no fleet
+semantics); only the trigger and the secret-injection surface differ.
+
+The reusable workflow (`red-afk-attempt.yml`, `workflow_call`) and the k8s
+job manifest (container `Dockerfile` + `job.yaml`) that wrap this command
+for GHA / k8s adopters are tracked as [#631](https://github.com/reddb-io/red-skills/issues/631)
+(ADR 0059). Until #631 lands, an adopter can wire a thin caller
+themselves — the command line is stable:
+
+```bash
+# GHA reusable workflow body, or k8s container CMD
+export RED_AFK_RUNNER=opencode
+# One of the precedence env-vars, set from a secret:
+export MINIMAX_API_KEY="${{ secrets.MINIMAX_API_KEY }}"   # or OPENAI_API_KEY / OPENROUTER_API_KEY
+node plugins/dev/skills/engineering/afk/bin/afk.mjs run --issues "$ISSUE_NUMBER" --runner opencode --once
+```
+
+What the runtime does (and what is the caller's job):
+
+| step | runtime (`/afk`) | caller (GHA / k8s) |
+|---|---|---|
+| checkout the repo | — | yes — `actions/checkout@v4` or initContainer with the same git ref |
+| install pnpm | — | yes — `pnpm/action-setup@v4` or baked into the image |
+| install workspace deps | — | yes — `pnpm install --frozen-lockfile` |
+| expose the API key | env-precedence resolver reads `OPENAI_API_KEY` > `MINIMAX_API_KEY` > `OPENROUTER_API_KEY` from `process.env` | yes — wire the secret into the env (Actions: `${{ secrets.* }}`; k8s: `envFrom: secretRef`) |
+| resolve the model slug | `afk.models.opencode.<tier>.model` from the repo's `.red/config.yaml` | — |
+| run one attempt | `run --issues N --runner opencode --once` | — |
+| claim the issue | ADR 0056 GitHub-native CAS (when #622 lands) | — |
+| enforce the trust gate | predicate on author + label-actor (when #621 lands) | — |
+| push the worker branch | `git push origin …` | — (the runtime does it; no GITHUB_TOKEN dance required at the caller) |
+| post the terminal envelope | `gh issue comment` on the issue | caller grants `issues: write`; runtime has no `GITHUB_TOKEN` of its own |
+| open the PR | `gh pr create` | caller grants `pull-requests: write` |
+
+The recommended `--permissions:` for the GHA workflow is exactly
+`contents: write, issues: write, pull-requests: write` — no `id-token: write`
+(no OIDC needed for this lane) and no `actions: write` (the workflow does
+not publish actions). The k8s `ServiceAccount` needs the same scope bound
+to the same `GITHUB_TOKEN` Secret.
+
+Trust gate is **rigorous by default** in the Actions lane: the workflow
+refuses to claim an issue whose author or label-actor is not in
+`plugins.dev.afk.trust_gate.allowlist`. The opt-out is
+`enforce-trust-gate: false` on the workflow input — for the red-skills
+team's own private-repo runs, never for an adopting public repo.
+
 ## Parallelization
 
 `/afk` is **trivially parallel** — just open another terminal and run `/afk` again. No flag, no coordination, no slot to manage.

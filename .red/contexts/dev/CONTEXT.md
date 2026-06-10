@@ -124,7 +124,17 @@ _Avoid_: fleet supervisor, worker scheduler
 
 **Codex monitor agent**:
 A Codex TUI sub-agent used only as a read-only AFK state presentation surface.
-_Avoid_: AFK worker, supervisor slot
+_Avoid_: AFK worker, supervisor
+
+**Execution environment**:
+A non-interactive runtime that drives `/afk --issues N --runner opencode --once` for one attempt per invocation. The two target surfaces are the GitHub Actions lane (a `workflow_call` reusable workflow that any adopting repo invokes) and the k8s lane (a container image + `Job` manifest the team runs on a self-hosted cluster). Both share the same runtime contract — one attempt, one issue, one PR, no fleet — and differ only in trigger and secret-injection surface. Issue [#631](https://github.com/reddb-io/red-skills/issues/631) (ADR 0059) tracks the reusable workflow + container.
+_Avoid_: GHA-only, k8s-only, CI lane, production lane
+
+**Actions lane**:
+The GitHub Actions surface of the **Execution environment** — a published `workflow_call` reusable workflow (red-prefixed filename) that any adopting repo invokes with its own secrets. The wrapper takes inputs (issue number, runner, model slug, trust-gate flag) and the API key, then runs the inner `/afk --issues N --runner opencode --once` command. Per invocation: one attempt, one issue, one PR, no admin-merge.
+_Avoid_: GHA, reusable workflow (when referring to the lane), CI job
+
+ slot
 
 **Skill**:
 An agent-loadable behavior package rooted at a `SKILL.md` plus optional support files.
