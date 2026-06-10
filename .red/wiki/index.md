@@ -47,6 +47,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [docs(adr): refresh ADR index edges](./pages/513-docs-adr-refresh-adr-index-edges.md)
 - [docs(adr): resolve 0039 collision (consume→0041) + add ADR INDEX.md](./pages/386-docs-adr-resolve-0039-collision-consume-0041-add-adr-index-m.md)
 - [docs(afk): describe the Task Mirror as a `monitor --mirror-plan` subcommand](./pages/349-docs-afk-describe-the-task-mirror-as-a-monitor-mirror-plan-s.md)
+- [docs(afk): execution-environment command surface — GHA + k8s adoption path (Refs #631)](./pages/657-docs-afk-execution-environment-command-surface-gha-k8s-adopt.md)
 - [docs(afk): remove dead Capability Dispatch + document --boot-only](./pages/329-docs-afk-remove-dead-capability-dispatch-document-boot-only.md)
 - [docs(context): add the brain product context (glossary + map pointer)](./pages/409-docs-context-add-the-brain-product-context-glossary-map-poin.md)
 - [docs(memory): ADR 0036 — transports are adapters over the operation registry](./pages/375-docs-memory-adr-0036-transports-are-adapters-over-the-operat.md)
