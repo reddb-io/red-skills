@@ -109,6 +109,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [fix(afk): guard each supervise tick + per-tick heartbeat — unwedgeable fleet supervisor](./pages/408-fix-afk-guard-each-supervise-tick-per-tick-heartbeat-unwedge.md)
 - [fix(afk): harden sandcastle integration (pre-mortem J/E/D/F/G/H)](./pages/328-fix-afk-harden-sandcastle-integration-pre-mortem-j-e-d-f-g-h.md)
 - [fix(afk): heartbeat/monitor diff reads the real sandcastle worktree (kills the +0 -0 phantom)](./pages/469-fix-afk-heartbeat-monitor-diff-reads-the-real-sandcastle-wor.md)
+- [fix(afk): inject RED_AFK_SLOT per fleet slot so cargo/gradle build isolation works](./pages/645-fix-afk-inject-red-afk-slot-per-fleet-slot-so-cargo-gradle-b.md)
 - [fix(afk): inner agent must not create PRs / wait on CI — commit + DONE only](./pages/605-fix-afk-inner-agent-must-not-create-prs-wait-on-ci-commit-do.md)
 - [fix(afk): killed/timed-out exec is a failure + bounded backpressure timeout (#574)](./pages/606-fix-afk-killed-timed-out-exec-is-a-failure-bounded-backpress.md)
 - [fix(afk): launcher no longer shadows AFK commands + atomic issue claim (#434)](./pages/435-fix-afk-launcher-no-longer-shadows-afk-commands-atomic-issue.md)
