@@ -51,12 +51,17 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
           },
         ],
       });
-    case "messages_send":
+    case "messages_send": {
+      const target = req.params.arguments?.target;
+      if (typeof target !== "string" || target === "" || target.startsWith("bad:")) {
+        return text({ ok: false, error: "no channel token for target" });
+      }
       return text({
         ok: true,
-        target: req.params.arguments?.target,
+        target,
         message_id: "msg-1",
       });
+    }
     case "channels_list":
       return text({
         channels: [

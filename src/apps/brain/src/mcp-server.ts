@@ -5,6 +5,7 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprot
 import { z } from "zod";
 import { readBuildInfo } from "@reddb-io/build-info";
 import { withBrainRuntime } from "./runtime.js";
+import { brainAct } from "./brain-act.js";
 import { ARTIFACT_KINDS, CONNECTION_KINDS } from "./schema.js";
 
 const CaptureInput = z.object({
@@ -31,6 +32,11 @@ const LinkInput = z.object({
   to: z.union([z.string(), z.number()]),
   kind: z.enum(CONNECTION_KINDS).default("related_to"),
   reason: z.string().optional(),
+});
+
+const ActInput = z.object({
+  target: z.string().min(1),
+  message: z.string().min(1),
 });
 
 const TOOLS = [
@@ -73,6 +79,12 @@ const TOOLS = [
     name: "brain_backlinks",
     description: "List incoming connections for a Brain artifact.",
     inputSchema: zodShape(GetInput),
+  },
+  {
+    name: "brain_act",
+    description:
+      "Send a message to a channel target through the ChannelBridge, outbound-only (no gateway daemon; channel tokens only).",
+    inputSchema: zodShape(ActInput),
   },
 ];
 
@@ -129,6 +141,10 @@ async function main(): Promise<void> {
       case "brain_backlinks": {
         const input = GetInput.parse(args);
         return text(await withBrainRuntime(async ({ store }) => store.backlinks(input.id)));
+      }
+      case "brain_act": {
+        const input = ActInput.parse(args);
+        return text(await brainAct({ target: input.target, message: input.message }));
       }
       default:
         throw new Error(`unknown Brain tool: ${req.params.name}`);

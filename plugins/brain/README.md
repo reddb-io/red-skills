@@ -50,6 +50,13 @@ matches, artifact kind matches, and graph connections all contribute to each
 hit's `score_breakdown`. The contract already reserves a `vector` score slot, but
 embeddings are not required for the local Brain MVP.
 
+Brain can also act on a channel. `brain_act` (MCP) and `brain act --target
+<channel> --message <text>` (CLI) post a message to a channel target through the
+Channel bridge in outbound-only mode: the bridge sends standalone using
+configured channel tokens, with no gateway daemon required. Missing-token,
+bad-target, and unreachable-bridge failures surface as clear brain-scoped errors;
+the raw Hermes `messages_send` tool stays hidden.
+
 Core skills: [capture](./skills/core/capture/SKILL.md),
 [search](./skills/core/search/SKILL.md), [think](./skills/core/think/SKILL.md),
 [status](./skills/core/status/SKILL.md), and
