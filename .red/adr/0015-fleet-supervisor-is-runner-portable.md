@@ -2,7 +2,7 @@
 
 ## Status
 
-accepted. **⚠ Stale on bash implementation:** AFK runtime was ported from bash (`supervisor.sh`) to TypeScript; the shell orchestration examples and `supervisor.sh` mechanics described here are deleted. The portability decision (run on Claude Code, Codex, or bare terminal) and per-runner observability pattern remain valid; read `src/apps/dev/` for the TypeScript supervisor.
+accepted. **⚠ Stale on bash implementation:** AFK runtime was ported from bash (`supervisor.sh`) to TypeScript (commit 3d92d56); the shell orchestration examples and `supervisor.sh` mechanics described here are deleted. The portability decision (run on Claude Code, Codex, or bare terminal) and per-runner observability pattern remain valid; read `src/apps/dev/` for the TypeScript supervisor.
 
 `/afk fleet` is implemented by `supervisor.sh`: a bash process manager that
 maintains a target number of independent `/afk` workers, writes PID/stop/circuit

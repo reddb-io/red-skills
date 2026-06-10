@@ -2,7 +2,7 @@
 
 ## Status
 
-accepted.
+Accepted. The output of provider-backed tidy is non-canonical; graph mutations require explicit soft-merge approval gating.
 
 ## Context
 

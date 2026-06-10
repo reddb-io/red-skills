@@ -15,7 +15,7 @@ stale notes inline.
 - **0034** Repo splits DEFINITIONS from IMPLEMENTATION (`src/apps/…`) — partially superseded by **0039** (entrypoints fused) and **0041** (memory leaves)
 - **0041** red-skills consumes `red-memory` + `red-ui` MCPs; stops building memory — partially supersedes 0034 *(renumbered from 0039)*
 - **0046** A single global `.red/` shared by all plugins — *superseded by 0021*
-- **0055** AFK reconcile — a no-agent worker mode that lands a parked green branch — *accepted*
+- **0057** `red-hermes` is a fetched black-box dependency of the `brain` plugin; `brain` context documented in **0021**
 
 ## Brain plugin & contexts
 - **0021** Multi-context plugin glossaries — *accepted*, includes `brain` context — post-0041, brain is a new plugin alongside dev/memory
@@ -30,11 +30,11 @@ stale notes inline.
 - **0052** One bundle-naming convention — all release assets under `./dist/` as `<app>[-<role>].bundle.min.mjs`; legacy `dist-bundle/*-cli.mjs` removed *(supersedes 0029's dual output for memory/brain)*
 
 ## AFK execution & lifecycle
-- **0003** Native task surface mirrors AFK worker state
+- **0003** Native task surface mirrors AFK worker state — ⚠ stale on bash implementation (TypeScript runtime at `src/apps/dev/`)
 - **0008** `/afk` merges into the pinned branch, not always main — *implementation superseded by **0030** (lock-toggled landing); pinned-branch decision stands*
-- **0015** Fleet supervisor is runner-portable; observability degrades per runner
+- **0015** Fleet supervisor is runner-portable; observability degrades per runner — ⚠ stale on bash implementation (TypeScript runtime at `src/apps/dev/`)
 - **0017** AFK records Reasoning attempts into Memory Graph best-effort
-- **0026** AFK exposes lifecycle hooks as shell interceptors — extended by **0045** with the periodic `on_heartbeat` hook
+- **0026** AFK exposes lifecycle hooks as shell interceptors — ⚠ stale on shell implementation; hook configuration is now TypeScript under ADR 0042 and `src/apps/dev/` — extended by **0045** with the periodic `on_heartbeat` hook
 - **0028** `<promise>` sentinel is the canonical agent-authored attempt-exit signal — runtime-initiated exits are mapped by **0044** (`timeout`) and **0047** (no-sentinel salvage)
 - **0030** AFK landing is lock-toggled; the PR carries the history
 - **0031** Branch-lock value drives AFK base/merge; enforcement stays agent-only
@@ -56,7 +56,7 @@ stale notes inline.
 - *(see also 0030, 0031)*
 
 ## Memory architecture & graph
-> **Post-0041 migration note:** Except for **0009** (soft-use boundary) and **0042** (plugin config), memory ADRs below document the `red-memory` MCP runtime as of its spin-off in ADR 0041. The decision record remains authoritative; implementation details live in the `red-memory` repo.
+> **Post-0041 migration note:** Except for **0009** (soft-use boundary) and **0042** (plugin config), memory ADRs below document the **retired in-repo** `memory` plugin as it existed before spin-off (ADR 0041). Implementation now lives in the `red-memory` repo, bundled as an MCP; the decision record remains authoritative for red-skills architecture, but implementation details are archived here.
 
 - **0005** Memory plugin: three-layer RedDB architecture, local-first per-repo, MCP+CLI
 - **0007** RedDB graph writes go through multi-model DML, not table inserts
