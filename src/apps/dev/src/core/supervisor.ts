@@ -312,6 +312,12 @@ export interface SupervisorProc {
    * Returns its pid and spawn epoch. Absent when reconcile dispatch is not wired.
    */
   spawnReconcileWorker?(slot: number, candidate: ReconcileCandidate): Promise<{ pid: number; spawnEpoch: number }>;
+  /** Exit code of the last worker that ran in this slot, or null when unknown
+   * (killed externally, never spawned, or the impl does not track codes). A
+   * clean drain returns 0; null is treated conservatively as non-clean so it
+   * still feeds the circuit breaker. Optional so test harnesses that do not
+   * track exit codes compile without change. */
+  lastExitCode?(slot: number): number | null;
 }
 
 /** Filesystem side effects. Best-effort, like the bash `|| true` cleanups. */
@@ -462,6 +468,14 @@ export interface SlotState {
   stallSinceEpoch: number;
   /** SLOT_REAPED — the hard reap fired once. */
   reaped: boolean;
+  /** True while a spawnSlot call is in-flight for this slot. Prevents a
+   * duplicate spawn on the same slot if an enclosing tick is abandoned by
+   * the guardedTick ceiling before the spawn resolves. */
+  spawning: boolean;
+  /** True when the slot idle-parked after a clean drain (exit 0) with an
+   * empty ready queue. Distinct from a breaker-trip park: no sweep is run
+   * and the slot un-parks automatically when the queue refills. */
+  idleParked: boolean;
 }
 
 export function freshSlot(): SlotState {
@@ -475,6 +489,8 @@ export function freshSlot(): SlotState {
     stalled: false,
     stallSinceEpoch: 0,
     reaped: false,
+    spawning: false,
+    idleParked: false,
   };
 }
 
@@ -542,12 +558,19 @@ export interface TickResult {
   respawned: number[];
   /** Slots whose worker died and were handled (respawn or park). */
   deaths: number[];
+  /** Slots parked by a circuit-breaker trip this tick. */
   parked: number[];
+  /** Slots that entered idle-park this tick (clean drain, empty queue). */
+  idleParked: number[];
   reaped: number[];
   /** Slots into which a reconcile worker was dispatched this tick. */
   reconciledSlots: number[];
   /** True when the stop-file was honoured and all workers terminated. */
   stopped: boolean;
+  /** Ready-queue depth sampled at the start of this tick (0 on an abandoned
+   * tick or when readyQueueDepth is unavailable). Used by emitFleetHeartbeat
+   * so the queue is fetched exactly once per tick. */
+  queueDepth: number;
 }
 
 function fleetSlotCounts(state: SupervisorState): Pick<FleetHeartbeat, "slotsBusy" | "slotsFree" | "slotsTotal" | "slotsParked"> {
@@ -555,7 +578,7 @@ function fleetSlotCounts(state: SupervisorState): Pick<FleetHeartbeat, "slotsBus
   let slotsFree = 0;
   let slotsParked = 0;
   for (const slot of state.slots) {
-    if (slot.parked) {
+    if (slot.parked || slot.idleParked) {
       slotsParked += 1;
     } else if (slot.pid === null) {
       slotsFree += 1;
@@ -576,12 +599,10 @@ async function emitFleetHeartbeat(
   result: TickResult,
   runner: string,
 ): Promise<FleetHeartbeat> {
-  let readyForAgent = 0;
-  try {
-    readyForAgent = (await deps.gh.readyQueueDepth?.()) ?? 0;
-  } catch {
-    readyForAgent = 0;
-  }
+  // Queue depth was fetched once by superviseTick at the start of this tick
+  // and stored in result.queueDepth — reuse it here so there is exactly one
+  // readyQueueDepth call per tick (0 on a stop tick or abandoned tick).
+  const readyForAgent = result.queueDepth;
   const epoch = deps.now();
   const heartbeat: FleetHeartbeat = {
     ts: isoFromEpoch(epoch),
@@ -739,7 +760,7 @@ export async function pollStallDetector(
 
   for (let i = 0; i < state.slots.length; i += 1) {
     const slot = state.slots[i]!;
-    if (slot.parked) continue;
+    if (slot.parked || slot.idleParked) continue;
 
     const laneMtime = deps.fs.agentLaneMtime(i);
     const flagged = computeStalled(slot.spawnEpoch, laneMtime, now, config.stallThresholdS);
@@ -784,13 +805,49 @@ export async function pollStallDetector(
  * death against the circuit breaker; on a trip park the slot and run the trip
  * sweep, otherwise respawn. Returns whether the slot parked. Compose recordDeath
  * (pure) then apply the spawn / sweep side effects.
+ *
+ * A clean exit (exit code 0, i.e. NO_MORE_TASKS / empty queue drain) is exempt
+ * from the circuit breaker: it is never a fast-death, so K consecutive drains
+ * can never trip the breaker. When the queue is empty the slot idle-parks
+ * (no sweep, no discard envelope); when the queue has work it respawns
+ * immediately. Non-zero / unknown exit codes follow the original breaker logic.
+ *
+ * The spawning flag is set around the spawnSlot await so that a tick abandoned
+ * by the guardedTick ceiling (hung gh/ps call elsewhere in the tick) does not
+ * double-spawn the slot on the next pass.
  */
 export async function handleDeadSlot(
   slot: number,
   state: SlotState,
   deps: SupervisorDeps,
   config: SupervisorConfig,
+  queueDepth = 0,
 ): Promise<{ parked: boolean }> {
+  const exitCode = deps.proc.lastExitCode?.(slot) ?? null;
+  const cleanExit = exitCode === 0;
+
+  if (cleanExit) {
+    if (queueDepth === 0) {
+      // Clean drain with empty queue → idle-park (no sweep, no discard envelope).
+      state.idleParked = true;
+      return { parked: true };
+    }
+    // Clean drain but queue has work → respawn immediately without feeding the breaker.
+    state.spawning = true;
+    try {
+      const spawned = await deps.proc.spawnSlot(slot);
+      state.pid = spawned.pid;
+      state.spawnEpoch = spawned.spawnEpoch;
+    } finally {
+      state.spawning = false;
+    }
+    state.stalled = false;
+    state.stallSinceEpoch = 0;
+    state.reaped = false;
+    return { parked: false };
+  }
+
+  // Non-clean exit: record against the circuit breaker.
   const now = deps.now();
   const decision = recordDeath(state.deaths, state.spawnEpoch, now, config);
   state.deaths = decision.deaths;
@@ -802,9 +859,14 @@ export async function handleDeadSlot(
     return { parked: true };
   }
 
-  const spawned = await deps.proc.spawnSlot(slot);
-  state.pid = spawned.pid;
-  state.spawnEpoch = spawned.spawnEpoch;
+  state.spawning = true;
+  try {
+    const spawned = await deps.proc.spawnSlot(slot);
+    state.pid = spawned.pid;
+    state.spawnEpoch = spawned.spawnEpoch;
+  } finally {
+    state.spawning = false;
+  }
   // A respawn opens a fresh worker lifetime; clear any stale stall flags.
   state.stalled = false;
   state.stallSinceEpoch = 0;
@@ -861,9 +923,11 @@ export async function dispatchReconcileIfPossible(
  * superviseTick — advance the health-check loop one cycle (the body of
  * supervisor.sh's `while :` at ~1122-1141). In order:
  *   1. honour the stop-file: terminate every worker and return early.
- *   2. respawn / park dead non-parked slots (handleDeadSlot).
- *   3. poll the passive stall detector + gated hard reaper (pollStallDetector).
- *   4. reconcile dispatch: fill a free slot with a reconcile worker if eligible.
+ *   2. sample ready-queue depth (single fetch per tick, shared with heartbeat).
+ *   3. un-park idle-parked slots when the queue has work.
+ *   4. respawn / park dead non-parked, non-idle-parked, non-spawning slots.
+ *   5. poll the passive stall detector + gated hard reaper (pollStallDetector).
+ *   6. reconcile dispatch: fill a free slot with a reconcile worker if eligible.
  *
  * `stopRequested` is the injected stop-file probe (the bash `[[ -f $STOP_FILE ]]`
  * check). The real loop is `while (!await superviseTick(...).stopped)`.
@@ -878,9 +942,11 @@ export async function superviseTick(
     respawned: [],
     deaths: [],
     parked: [],
+    idleParked: [],
     reaped: [],
     reconciledSlots: [],
     stopped: false,
+    queueDepth: 0,
   };
 
   if (stopRequested()) {
@@ -889,16 +955,51 @@ export async function superviseTick(
     return result;
   }
 
-  // Respawn / park dead slots.
+  // Sample queue depth once per tick for idle-park / un-park decisions and the
+  // fleet heartbeat. Best-effort: 0 on any failure or missing implementation.
+  let queueDepth = 0;
+  try {
+    queueDepth = (await deps.gh.readyQueueDepth?.()) ?? 0;
+  } catch {
+    queueDepth = 0;
+  }
+  result.queueDepth = queueDepth;
+
+  // Un-park idle-parked slots when the queue has work to do.
   for (let i = 0; i < state.slots.length; i += 1) {
     const slot = state.slots[i]!;
-    if (slot.parked) continue;
+    if (!slot.idleParked || queueDepth === 0) continue;
+    slot.idleParked = false;
+    slot.spawning = true;
+    try {
+      const spawned = await deps.proc.spawnSlot(i);
+      slot.pid = spawned.pid;
+      slot.spawnEpoch = spawned.spawnEpoch;
+      slot.stalled = false;
+      slot.stallSinceEpoch = 0;
+      slot.reaped = false;
+    } finally {
+      slot.spawning = false;
+    }
+    result.respawned.push(i);
+  }
+
+  // Respawn / park dead non-parked, non-idle-parked, non-spawning slots.
+  // `slot.spawning` guards against a duplicate spawn when the enclosing tick
+  // was abandoned mid-spawnSlot by the guardedTick ceiling.
+  for (let i = 0; i < state.slots.length; i += 1) {
+    const slot = state.slots[i]!;
+    if (slot.parked || slot.idleParked || slot.spawning) continue;
     const pid = slot.pid;
     if (pid === null || !deps.proc.isAlive(pid)) {
       result.deaths.push(i);
-      const { parked } = await handleDeadSlot(i, slot, deps, config);
-      if (parked) result.parked.push(i);
-      else result.respawned.push(i);
+      const { parked } = await handleDeadSlot(i, slot, deps, config, queueDepth);
+      if (parked) {
+        if (slot.idleParked) result.idleParked.push(i);
+        else result.parked.push(i);
+      } else {
+        result.respawned.push(i);
+      }
     }
   }
 
@@ -969,8 +1070,8 @@ export async function runSupervisor(
     const heartbeat = await emitFleetHeartbeat(state, deps, result, config.runner);
     deps.log?.(
       `tick: slots=${state.slots.length} respawned=${result.respawned.length} ` +
-        `deaths=${result.deaths.length} parked=${result.parked.length} reaped=${result.reaped.length} ` +
-        `ready=${heartbeat.readyForAgent} busy=${heartbeat.slotsBusy} free=${heartbeat.slotsFree}`,
+        `deaths=${result.deaths.length} parked=${result.parked.length} idle-parked=${result.idleParked.length} ` +
+        `reaped=${result.reaped.length} ready=${heartbeat.readyForAgent} busy=${heartbeat.slotsBusy} free=${heartbeat.slotsFree}`,
     );
     if (result.stopped) return;
     await deps.proc.sleep(config.pollIntervalS * 1000);
@@ -979,7 +1080,7 @@ export async function runSupervisor(
 
 /** A non-stop tick result (the abandon/error fallback). */
 function continueResult(): TickResult {
-  return { respawned: [], deaths: [], parked: [], reaped: [], reconciledSlots: [], stopped: false };
+  return { respawned: [], deaths: [], parked: [], idleParked: [], reaped: [], reconciledSlots: [], stopped: false, queueDepth: 0 };
 }
 
 /**
