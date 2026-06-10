@@ -29,6 +29,7 @@ import * as ghx from "../runtime/gh.js";
 import * as gitx from "../runtime/git.js";
 import { planReconcileSweep } from "../core/boot-sweep.js";
 import { removeDir as removeDirNative } from "../runtime/fs.js";
+import { killTreeAndWait } from "../runtime/kill-tree.js";
 
 function isAlive(pid: number): boolean {
   try {
@@ -279,17 +280,11 @@ function buildSupervisorDeps(
       },
       lastExitCode: (slot) => slotExitCodes.get(slot) ?? null,
       isAlive,
-      killTree: async (pid) => {
-        try {
-          process.kill(-pid, "SIGTERM");
-        } catch {
-          try {
-            process.kill(pid, "SIGTERM");
-          } catch {
-            // already gone
-          }
-        }
-      },
+      // Wait-and-escalate killer (#580): SIGTERM → grace → SIGKILL → CONFIRM the
+      // tree is gone, then return whether it actually died. The reaper gates its
+      // `rm -rf` worktree teardown on this, so a SIGTERM-ignoring worker can
+      // never be torn down out from under itself.
+      killTree: (pid) => killTreeAndWait(pid),
       // Real ps-backed tree sample. A ps failure returns a CONSERVATIVE BUSY
       // snapshot (never []), so a transient ps error can never authorise a reap.
       inspectTree: (pid) => inspectProcessTreeNative(pid),

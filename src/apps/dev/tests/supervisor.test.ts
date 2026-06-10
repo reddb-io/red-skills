@@ -837,6 +837,65 @@ describe("pollStallDetector reaper gating", () => {
     expect(io.comment).not.toHaveBeenCalled();
   });
 
+  it("does NOT tear down the worktree when the worker survives the kill (#580)", async () => {
+    // killTree reports `false` (survived SIGKILL). The slot is still freed and
+    // labels rotate, but the destructive `rm -rf` teardown is skipped so it can
+    // never race a still-live worker still writing into the worktree.
+    const { deps, io } = makeDeps({
+      agentLaneMtime: vi.fn(() => NOW - 120),
+      inspectTree: vi.fn((): readonly ProcessSnapshotEntry[] => [{ command: "node", cpu: 0 }]),
+      killTree: vi.fn(async () => false),
+      resolveIterDir: vi.fn(
+        (): IterDirInfo => ({
+          path: "/w/wTEST/190-a1",
+          issue: 190,
+          workerId: "wTEST",
+          logTail: "stalled but SIGTERM-ignoring",
+          notes: "",
+          durationS: 200,
+          attempt: 1,
+        }),
+      ),
+    });
+    const state = stalledState();
+
+    const reaped = await pollStallDetector(state, deps, config());
+
+    expect(reaped).toEqual([0]);
+    expect(io.killTree).toHaveBeenCalledWith(4242);
+    // Teardown is gated on confirmed death — a survivor leaks its worktree
+    // rather than getting rm -rf'd out from under itself.
+    expect(io.teardownIterDir).not.toHaveBeenCalled();
+    // Slot still freed so the fleet keeps making progress.
+    expect(state.slots[0]!.pid).toBeNull();
+    expect(state.slots[0]!.reaped).toBe(true);
+  });
+
+  it("tears down the worktree when killTree confirms death (#580)", async () => {
+    const { deps, io } = makeDeps({
+      agentLaneMtime: vi.fn(() => NOW - 120),
+      inspectTree: vi.fn((): readonly ProcessSnapshotEntry[] => [{ command: "node", cpu: 0 }]),
+      killTree: vi.fn(async () => true),
+      resolveIterDir: vi.fn(
+        (): IterDirInfo => ({
+          path: "/w/wTEST/190-a1",
+          issue: 190,
+          workerId: "wTEST",
+          logTail: "stalled, killed cleanly",
+          notes: "",
+          durationS: 200,
+          attempt: 1,
+        }),
+      ),
+    });
+    const state = stalledState();
+
+    await pollStallDetector(state, deps, config());
+
+    expect(io.killTree).toHaveBeenCalledWith(4242);
+    expect(io.teardownIterDir).toHaveBeenCalledOnce();
+  });
+
   it("reaps without posting when the worker died pre-claim (no issue)", async () => {
     const { deps, io } = makeDeps({
       agentLaneMtime: vi.fn(() => NOW - 120),

@@ -358,9 +358,13 @@ export interface SupervisorProc {
   spawnSlot(slot: number): Promise<{ pid: number; spawnEpoch: number }>;
   /** True when the pid is alive (kill -0). Mirrors `kill -0 "$pid"`. */
   isAlive(pid: number): boolean;
-  /** kill_tree the pid and its descendants (TERM, grace, then KILL handled by
-   * the impl). Mirrors sup_kill_tree. */
-  killTree(pid: number): Promise<void>;
+  /** kill_tree the pid and its descendants: SIGTERM, grace, then SIGKILL, and
+   * CONFIRM the tree is gone (handled by the impl). Mirrors sup_kill_tree.
+   * Returns true when death is confirmed, false when the tree survived SIGKILL;
+   * a void return (stubs / impls that don't report) is treated as "assume dead".
+   * The reaper gates its worktree teardown on this so `rm -rf` never races a
+   * still-live worker (#580). */
+  killTree(pid: number): Promise<boolean | void>;
   /** Sample the worker tree into the per-process snapshot the reaper-signal
    * reduction consumes (deriveSnapshot). Mirrors sup_descendant_pids feeding
    * sup_active_descendant + sup_tree_cpu. */
@@ -780,9 +784,14 @@ export async function reapStalledSlot(
   const orchPid = state.pid;
   const info = deps.fs.resolveIterDir(slot);
 
-  // 1. kill_tree the orchestrator.
+  // 1. kill_tree the orchestrator — SIGTERM, grace, SIGKILL, confirm exit.
+  // `confirmedDead` gates the destructive teardown in step 4: a worker already
+  // gone (no pid / not alive) is trivially dead; otherwise we trust killTree's
+  // confirmation. Only a definitive `false` (survived SIGKILL) blocks teardown.
+  let confirmedDead = true;
   if (orchPid !== null && deps.proc.isAlive(orchPid)) {
-    await deps.proc.killTree(orchPid);
+    const killed = await deps.proc.killTree(orchPid);
+    confirmedDead = killed !== false;
   }
 
   // 2. Free the slot — next tick respawns it even if cleanup below fails.
@@ -822,8 +831,11 @@ export async function reapStalledSlot(
     }
   }
 
-  // 4. Teardown.
-  if (info) await deps.fs.teardownIterDir(info);
+  // 4. Teardown — only once the worker is confirmed dead, so the `rm -rf` of the
+  // worktree never races a still-live worker still writing into it (#580). A
+  // worker that survived SIGKILL leaks its worktree (cleaned up on the next boot
+  // sweep), which is strictly safer than corrupting a live checkout.
+  if (info && confirmedDead) await deps.fs.teardownIterDir(info);
 }
 
 /**
@@ -1102,8 +1114,10 @@ export async function superviseTick(
 }
 
 /**
- * terminate_all (supervisor.sh ~1036): send SIGTERM (via killTree) to every live
- * slot worker on shutdown. Best-effort.
+ * terminate_all (supervisor.sh ~1036): kill every live slot worker on shutdown
+ * via the wait-and-escalate killTree (SIGTERM → grace → SIGKILL → confirm), so a
+ * SIGTERM-ignoring worker does not survive the supervisor's exit (#580).
+ * Best-effort.
  */
 export async function terminateAll(state: SupervisorState, deps: SupervisorDeps): Promise<void> {
   for (const slot of state.slots) {

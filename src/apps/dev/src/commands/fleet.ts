@@ -7,6 +7,7 @@ import { classifySupervisor, resolveSupervisorConfig } from "../core/supervisor.
 import { teardownWedgedSupervisor } from "../core/watchdog.js";
 import { buildWatchdogIO } from "../runtime/watchdog-io.js";
 import { spawnSupervisor } from "../runtime/supervisor-spawn.js";
+import { isLivePid, killTreeAndWait } from "../runtime/kill-tree.js";
 
 export interface FleetLaunchResult {
   status: "launched";
@@ -21,15 +22,6 @@ export interface FleetStopResult {
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-function isLivePid(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 async function readPid(path: string): Promise<number | null> {
   try {
@@ -113,7 +105,25 @@ export async function stopFleet(root = process.cwd(), stdout: NodeJS.WritableStr
     }
     await sleep(1_000);
   }
-  stdout.write(`warn: supervisor pid=${pid} did not exit within 30s; stop file is present, see .red/tmp/afk-supervisor.log.\n`);
+
+  // Graceful stop timed out: a SIGTERM-ignoring supervisor (and its worker tree)
+  // is still alive. Never report "stopped" while survivors linger (#580) —
+  // escalate to the shared wait-and-escalate killer (SIGTERM → SIGKILL → confirm)
+  // and only report stopped once the tree is confirmed gone.
+  stdout.write(
+    `warn: supervisor pid=${pid} did not exit within 30s of the stop file; escalating to SIGTERM/SIGKILL.\n`,
+  );
+  const dead = await killTreeAndWait(pid);
+  if (dead) {
+    // SIGKILL skips the supervisor's own `finally`, so clean its control files.
+    await rm(pidFile, { force: true });
+    await rm(stopFile, { force: true });
+    stdout.write(`🛑 fleet stopped (supervisor pid=${pid} killed after graceful-stop timeout).\n`);
+    return { status: "stopped", pid };
+  }
+  stdout.write(
+    `✗ supervisor pid=${pid} survived SIGKILL; still live — see .red/tmp/afk-supervisor.log.\n`,
+  );
   return { status: "timeout", pid };
 }
 
