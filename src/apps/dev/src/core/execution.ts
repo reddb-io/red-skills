@@ -682,6 +682,9 @@ export interface AttemptProgressInfo {
   lastProgressMs: number;
   /** The guard's clock (epoch ms) at this tick. */
   nowMs: number;
+  /** Resolved base branch (lock > pin > main) for this attempt — populated by
+   * processIssue so the emitHeartbeat sink can diff against the correct ref. */
+  base?: string;
 }
 
 export function startAttemptGuard(opts: {

@@ -711,8 +711,9 @@ export function buildProcessDeps(
         const worktree =
           (await gitx.worktreePathUnder(gitCtx, current.attemptDir).catch(() => undefined)) ??
           join(current.attemptDir, "worktree");
+        const baseRef = info.base ? `origin/${info.base}` : "origin/main";
         const { added, removed } = await gitx
-          .diffstatShortstat({ cwd: worktree }, "origin/main")
+          .diffstatShortstat({ cwd: worktree }, baseRef)
           .catch(() => ({ added: 0, removed: 0 }));
         const hb = buildProgressHeartbeat({
           secsSinceProgress: secs,
@@ -729,6 +730,7 @@ export function buildProcessDeps(
         await updateState(join(current.attemptDir, "afk.state.json"), {
           ...hb.statePatch,
           "current.worktree": worktree,
+          ...(info.base ? { "current.base": info.base } : {}),
         }).catch(() => {});
       })();
     },

@@ -10,6 +10,7 @@ import type { AgentEffort, RunAgentInput, RunAgentResult } from "../src/core/exe
 import type { AttemptRecordPayload } from "../src/core/attempt-record.js";
 import type { IssueClassificationMetadata } from "../src/core/issue-classifier.js";
 import { parseCurrentBlocker, upsertCurrentBlocker } from "../src/core/blocker-state.js";
+import type { AttemptProgressInfo } from "../src/core/execution.js";
 
 // Everything injected is a fake — no real gh / git / sandcastle / pnpm / fs ever
 // runs. The harness records the side-effect sequence (label edits, comments,
@@ -1684,5 +1685,52 @@ describe("processIssue — timeout (attempt progress guard fired)", () => {
     expect(edit.add).toContain("blocked:validation");
     // The park envelope rides the generic `blocked` status bucket.
     expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "blocked" }]);
+  });
+});
+
+describe("processIssue — emitHeartbeat receives resolved base (issue #570)", () => {
+  it("passes the resolved non-main base to emitHeartbeat when the issue body pins a branch", async () => {
+    const heartbeatInfos: AttemptProgressInfo[] = [];
+    const pinBody = "branch: release/v2\n## Agent brief\nDo it.";
+    const { deps, input } = harness({ outcome: "done", feedbackOk: true, body: pinBody });
+    const customDeps: ProcessIssueDeps = {
+      ...deps,
+      emitHeartbeat: (info) => heartbeatInfos.push(info),
+      runAgent: async (ri) => {
+        ri.onHeartbeat?.({ head: "abc123", lastProgressMs: 0, nowMs: 0 });
+        return {
+          outcome: "done",
+          branch: ri.branch,
+          commits: [{ sha: "deadbee" }],
+          completionSignal: "<promise>DONE</promise>",
+          stdout: "",
+        };
+      },
+    };
+    await processIssue(customDeps, input);
+    expect(heartbeatInfos).toHaveLength(1);
+    expect(heartbeatInfos[0]?.base).toBe("release/v2");
+  });
+
+  it("passes main as base when no pin and no lock", async () => {
+    const heartbeatInfos: AttemptProgressInfo[] = [];
+    const { deps, input } = harness({ outcome: "done", feedbackOk: true });
+    const customDeps: ProcessIssueDeps = {
+      ...deps,
+      emitHeartbeat: (info) => heartbeatInfos.push(info),
+      runAgent: async (ri) => {
+        ri.onHeartbeat?.({ head: "abc123", lastProgressMs: 0, nowMs: 0 });
+        return {
+          outcome: "done",
+          branch: ri.branch,
+          commits: [{ sha: "deadbee" }],
+          completionSignal: "<promise>DONE</promise>",
+          stdout: "",
+        };
+      },
+    };
+    await processIssue(customDeps, input);
+    expect(heartbeatInfos).toHaveLength(1);
+    expect(heartbeatInfos[0]?.base).toBe("main");
   });
 });
