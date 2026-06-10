@@ -36,6 +36,16 @@ describe("deriveStage (native-path monitor stage detection)", () => {
     expect(deriveStage(tool("Bash", "find . -name '*.ts'"))).toBe("explore");
   });
 
+  it("does not mislabel an explore/read of a 'test'-containing path as tests (#589)", () => {
+    expect(deriveStage(tool("Read", "src/components/test-utils.ts"))).toBe("explore");
+    expect(deriveStage(tool("Read", "src/foo.test.ts"))).toBe("explore");
+    expect(deriveStage(tool("Glob", "**/*.test.ts"))).toBe("explore");
+    // Editing a test file is implementation work, not a test run.
+    expect(deriveStage(tool("Edit", "src/foo.test.ts"))).toBe("impl");
+    // A real test-runner invocation is still tests.
+    expect(deriveStage(tool("Bash", "pnpm test src/foo.test.ts"))).toBe("tests");
+  });
+
   it("returns undefined for an unrecognised tool with no stage signal", () => {
     expect(deriveStage(tool("WebFetch", "https://example.com"))).toBeUndefined();
   });
@@ -91,6 +101,13 @@ describe("parseRunFlags", () => {
   it("parses --issues into an ordered number list", () => {
     expect(parseRunFlags(["--issues", "3,1,2"]).filter).toEqual({ kind: "issues", numbers: [3, 1, 2] });
     expect(parseRunFlags(["--issues=10, 20"]).filter).toEqual({ kind: "issues", numbers: [10, 20] });
+  });
+
+  it("throws RunFlagError on an all-invalid --issues value instead of selecting zero (#589)", () => {
+    expect(() => parseRunFlags(["--issues", "banana"])).toThrow(RunFlagError);
+    expect(() => parseRunFlags(["--issues", "banana,kiwi"])).toThrow(/at least one valid issue number/);
+    // A partially-valid list still parses (the valid numbers survive).
+    expect(parseRunFlags(["--issues", "banana,7"]).filter).toEqual({ kind: "issues", numbers: [7] });
   });
 
   it("parses -n cap, --once, --runner, --request", () => {

@@ -2,12 +2,15 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { parseFlags, type FlagSchema } from "@reddb-io/shared/args.js";
 import { execTool, type ExecOutput } from "../runtime/exec.js";
 import {
+  advisoryReviewPending,
   decideShipMergeGate,
   isShipWorktreePath,
   issueNumberFromBranch,
   shipChecksAreGreen,
   type ShipCheck,
 } from "../core/ship.js";
+import { afkPaths } from "../runtime/wire.js";
+import { getConfig, loadConfig } from "../core/config.js";
 
 interface ShipFlags {
   base: string;
@@ -16,12 +19,17 @@ interface ShipFlags {
   issue?: number;
   timeoutS: number;
   pollS: number;
+  /** Name (substring, case-insensitive) of the advisory bot review to wait on
+   * before merging, e.g. `CodeRabbit`. Blank disables the wait. */
+  reviewCheck: string;
 }
 
 interface ShipFacts {
   branchProtectionSatisfied: boolean;
   changesRequested: boolean;
   checksGreen: boolean;
+  /** An advisory bot review (e.g. CodeRabbit) is registered but still in flight. */
+  advisoryReviewPending: boolean;
   reviewDecision: string;
   checkSummary: string;
 }
@@ -33,9 +41,17 @@ const SHIP_FLAG_SCHEMA = {
   issue: { kind: "value", aliases: ["i"], coerce: (raw: string): number => Number(raw) },
   "timeout-s": { kind: "value", coerce: (raw: string): number => Number(raw) },
   "poll-s": { kind: "value", coerce: (raw: string): number => Number(raw) },
+  "review-check": { kind: "value", coerce: (raw: string): string => raw },
+  "no-review-wait": { kind: "boolean" },
 } satisfies FlagSchema;
 
-function parseShipFlags(args: readonly string[]): ShipFlags {
+/**
+ * Resolve ship flags. `reviewCheck` is the advisory bot review to wait on before
+ * merging: an explicit `--review-check NAME` wins, else the repo's configured
+ * `afk.merge.review_check` (so `/ship` honors the same reviewer the AFK landing
+ * does), and `--no-review-wait` (or a blank name) disables the wait.
+ */
+function parseShipFlags(args: readonly string[], configReviewCheck: string): ShipFlags {
   const { values } = parseFlags(args, SHIP_FLAG_SCHEMA);
   const timeoutS = Number.isFinite(values["timeout-s"]) && Number(values["timeout-s"]) > 0
     ? Number(values["timeout-s"])
@@ -43,6 +59,9 @@ function parseShipFlags(args: readonly string[]): ShipFlags {
   const pollS = Number.isFinite(values["poll-s"]) && Number(values["poll-s"]) > 0
     ? Number(values["poll-s"])
     : 30;
+  const reviewCheck = values["no-review-wait"] === true
+    ? ""
+    : String((values["review-check"] as string | undefined) ?? configReviewCheck);
   return {
     base: String(values.base ?? "main"),
     remote: String(values.remote ?? "origin"),
@@ -50,6 +69,7 @@ function parseShipFlags(args: readonly string[]): ShipFlags {
     issue: Number.isFinite(values.issue) ? Number(values.issue) : undefined,
     timeoutS,
     pollS,
+    reviewCheck,
   };
 }
 
@@ -173,13 +193,15 @@ interface PrView {
   reviews?: Array<{ state?: string | null; author?: { login?: string | null } | null }>;
 }
 
-async function collectShipFacts(cwd: string, repo: string, pr: number): Promise<ShipFacts> {
+async function collectShipFacts(cwd: string, repo: string, pr: number, reviewCheck: string): Promise<ShipFacts> {
   const checksRes = await run("gh", ["pr", "checks", String(pr), "--repo", repo, "--json", "name,state,conclusion,bucket"], cwd);
   let checksGreen = false;
   let checkSummary = "checks unavailable";
+  let reviewPending = false;
   if (checksRes.code === 0) {
     const checks = parseJson<ShipCheck[]>(checksRes.stdout, []);
     checksGreen = shipChecksAreGreen(checks);
+    reviewPending = advisoryReviewPending(checks, reviewCheck);
     checkSummary = checks.length === 0 ? "no checks configured" : `${checks.filter((c) => shipChecksAreGreen([c])).length}/${checks.length} green`;
   } else if (/no checks/i.test(`${checksRes.stdout}\n${checksRes.stderr}`)) {
     checksGreen = true;
@@ -199,7 +221,7 @@ async function collectShipFacts(cwd: string, repo: string, pr: number): Promise<
     (view.reviews ?? []).some((review) => String(review.state ?? "").toUpperCase() === "CHANGES_REQUESTED");
   const branchProtectionSatisfied = reviewDecision !== "REVIEW_REQUIRED";
 
-  return { branchProtectionSatisfied, changesRequested, checksGreen, reviewDecision, checkSummary };
+  return { branchProtectionSatisfied, changesRequested, checksGreen, advisoryReviewPending: reviewPending, reviewDecision, checkSummary };
 }
 
 function hitlBody(pr: number, issue: number, reason: string, facts: ShipFacts): string {
@@ -249,7 +271,8 @@ export async function shipCommand(
   cwd = process.cwd(),
   stdout: NodeJS.WritableStream = process.stdout,
 ): Promise<number> {
-  const flags = parseShipFlags(args);
+  const config = loadConfig(afkPaths(cwd).configPath, { warn: () => undefined });
+  const flags = parseShipFlags(args, getConfig(config, "afk.merge.review_check"));
   const topLevel = await gitTopLevel(cwd);
   if (!isShipWorktreePath(topLevel)) {
     throw new Error("/ship must run from a .red/tmp/work-ship-*/ worktree");
@@ -270,18 +293,24 @@ export async function shipCommand(
   stdout.write(`/ship: PR #${pr} ready for #${issue}\n`);
 
   const deadline = Date.now() + flags.timeoutS * 1000;
-  let lastFacts = await collectShipFacts(cwd, repo, pr);
+  let lastFacts = await collectShipFacts(cwd, repo, pr, flags.reviewCheck);
   for (;;) {
     const timedOut = Date.now() >= deadline;
+    // Keep polling while CI is still running OR an advisory bot review (e.g.
+    // CodeRabbit) is registered but in flight — the AFK landing path waits for
+    // that reviewer to conclude, and `/ship` must not merge out from under it.
     if (
       !timedOut &&
       !lastFacts.changesRequested &&
       lastFacts.branchProtectionSatisfied &&
-      !lastFacts.checksGreen
+      (!lastFacts.checksGreen || lastFacts.advisoryReviewPending)
     ) {
-      stdout.write(`/ship: waiting (${lastFacts.checkSummary}); next poll in ${flags.pollS}s\n`);
+      const waitNote = lastFacts.advisoryReviewPending
+        ? `${lastFacts.checkSummary}; waiting on ${flags.reviewCheck} review`
+        : lastFacts.checkSummary;
+      stdout.write(`/ship: waiting (${waitNote}); next poll in ${flags.pollS}s\n`);
       await sleep(flags.pollS * 1000);
-      lastFacts = await collectShipFacts(cwd, repo, pr);
+      lastFacts = await collectShipFacts(cwd, repo, pr, flags.reviewCheck);
       continue;
     }
 
