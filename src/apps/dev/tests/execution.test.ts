@@ -8,6 +8,9 @@ import {
   isTransientRunnerError,
   runAgent,
   effortForProvider,
+  buildAgent,
+  OPENROUTER_API_KEY_ENV,
+  type AgentFactories,
   DONE_SIGNAL,
   BLOCKED_SIGNAL,
   COMPLETION_SIGNALS,
@@ -97,6 +100,12 @@ describe("buildRunOptions", () => {
       { ...baseInput, runner: "codex", model: "gpt-5.4", effort: "high" },
     );
     expect(codexOpts.agent).toEqual({ __agent: "codex:gpt-5.4:high" });
+    // ADR 0059: opencode forwards its `openrouter/<vendor>/<model>` slug unchanged.
+    const opencodeOpts = buildRunOptions(
+      makeDeps(async () => fakeResult()),
+      { ...baseInput, runner: "opencode", model: "openrouter/anthropic/claude-sonnet-4", effort: "high" },
+    );
+    expect(opencodeOpts.agent).toEqual({ __agent: "opencode:openrouter/anthropic/claude-sonnet-4:high" });
   });
 
   it("defaults the sandbox to none and the idle timeout to 600s", () => {
@@ -413,6 +422,72 @@ describe("effortForProvider (FIX D — per-provider effort gating)", () => {
   it("passes undefined through unchanged (no effort requested)", () => {
     expect(effortForProvider("codex", undefined)).toBeUndefined();
     expect(effortForProvider("claude", undefined)).toBeUndefined();
+  });
+});
+
+describe("buildAgent — provider mapping (ADR 0059 opencode wiring)", () => {
+  // Recording fakes: each factory captures the (model, options) it was handed so
+  // the pure runner→provider mapping is asserted without the real sandcastle deps.
+  type Call = { model: string; options: unknown };
+  function recorder() {
+    const calls: Record<"claudeCode" | "codex" | "opencode", Call[]> = {
+      claudeCode: [],
+      codex: [],
+      opencode: [],
+    };
+    const factories: AgentFactories = {
+      claudeCode: (model, options) => (calls.claudeCode.push({ model, options }), fakeAgent("claude")),
+      codex: (model, options) => (calls.codex.push({ model, options }), fakeAgent("codex")),
+      opencode: (model, options) => (calls.opencode.push({ model, options }), fakeAgent("opencode")),
+    };
+    return { calls, factories };
+  }
+
+  it("routes claude/codex with gated effort as the numeric `effort` option", () => {
+    const { calls, factories } = recorder();
+    buildAgent(factories, "claude", "claude-opus-4-8", { effort: "max" }, {});
+    expect(calls.claudeCode).toEqual([{ model: "claude-opus-4-8", options: { effort: "max" } }]);
+    // codex tops out at xhigh → "max" is dropped to the provider default (no options).
+    const warned: string[] = [];
+    buildAgent(factories, "codex", "gpt-5.5", { effort: "max" }, {}, (m) => warned.push(m));
+    expect(calls.codex).toEqual([{ model: "gpt-5.5", options: undefined }]);
+    expect(warned.some((l) => l.includes("not accepted by runner 'codex'"))).toBe(true);
+  });
+
+  it("maps opencode effort to `variant` and forwards the openrouter model slug unchanged", () => {
+    const { calls, factories } = recorder();
+    buildAgent(factories, "opencode", "openrouter/anthropic/claude-sonnet-4", { effort: "high" }, {});
+    expect(calls.opencode).toEqual([
+      { model: "openrouter/anthropic/claude-sonnet-4", options: { variant: "high" } },
+    ]);
+    // opencode never touches the claude/codex factories.
+    expect(calls.claudeCode).toEqual([]);
+    expect(calls.codex).toEqual([]);
+  });
+
+  it("delivers OPENROUTER_API_KEY through OpenCodeOptions.env (the auth seam)", () => {
+    const { calls, factories } = recorder();
+    buildAgent(factories, "opencode", "openrouter/x/y", { effort: "low" }, { [OPENROUTER_API_KEY_ENV]: "sk-or-123" });
+    expect(calls.opencode[0]!.options).toEqual({
+      variant: "low",
+      env: { OPENROUTER_API_KEY: "sk-or-123" },
+    });
+  });
+
+  it("omits env when no key is present and omits variant when no effort is requested", () => {
+    const { calls, factories } = recorder();
+    buildAgent(factories, "opencode", "openrouter/x/y", undefined, {});
+    // No effort and no key → no options object at all (provider defaults apply).
+    expect(calls.opencode).toEqual([{ model: "openrouter/x/y", options: undefined }]);
+  });
+
+  it("does not gate opencode effort — any AgentEffort maps straight to variant", () => {
+    const { calls, factories } = recorder();
+    const warned: string[] = [];
+    // "max" is rejected by codex but is a legal opencode variant; no warn fires.
+    buildAgent(factories, "opencode", "openrouter/x/y", { effort: "max" }, {}, (m) => warned.push(m));
+    expect(calls.opencode[0]!.options).toEqual({ variant: "max" });
+    expect(warned).toEqual([]);
   });
 });
 
