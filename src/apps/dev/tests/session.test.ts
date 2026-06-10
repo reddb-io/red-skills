@@ -379,6 +379,33 @@ describe("runSession", () => {
     expect(trace.processedOrder).toEqual([1]);
   });
 
+  it("--once skips past a lost claim race to the next candidate (#644 churn)", async () => {
+    // Under the fleet supervisor every worker is --once. A claim-lost on the
+    // head issue must not consume the single iteration — exiting here respawns
+    // a fresh worker that re-races the same head issue forever.
+    const { deps, ctx, trace } = makeSession({
+      candidates: [cand(1), cand(2), cand(3)],
+      once: true,
+      outcomeFor: (issue) => (issue === 1 ? "claim-lost" : "done"),
+    });
+    const summary = await runSession(deps, ctx);
+    expect(trace.processedOrder).toEqual([1, 2]); // lost #1 → moved on, ran #2, then stopped
+    expect(summary.done).toBe(1);
+    expect(summary.failed).toBe(1);
+  });
+
+  it("--once with every claim lost drains the whole queue without an attempt", async () => {
+    const { deps, ctx, trace } = makeSession({
+      candidates: [cand(1), cand(2)],
+      once: true,
+      outcomeFor: () => "claim-lost",
+    });
+    const summary = await runSession(deps, ctx);
+    expect(trace.processedOrder).toEqual([1, 2]);
+    expect(summary.done).toBe(0);
+    expect(summary.failed).toBe(2);
+  });
+
   it("aborts the drain on a precheck failure — no listing, no NO MORE TASKS", async () => {
     const bootResult: BootResult = { precheck: { ok: false, failed: "gh-missing" } };
     const { deps, ctx, trace } = makeSession({ candidates: [cand(1)], bootResult });

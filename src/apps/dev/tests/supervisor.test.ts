@@ -442,8 +442,11 @@ describe("guardedTick — abandoned flag", () => {
       respawned: [],
       deaths: [],
       parked: [],
+      idleParked: [],
       reaped: [],
+      reconciledSlots: [],
       stopped: false,
+      queueDepth: 0,
       abandoned: false,
     }));
     const sleep = vi.fn((_ms: number) => new Promise<void>((resolve) => setTimeout(resolve, 0)));
@@ -1097,8 +1100,8 @@ describe("envelope builders", () => {
 describe("guardedTick — per-tick wall-clock ceiling (unwedgeable loop)", () => {
   const never = (): Promise<void> => new Promise<void>(() => {});
   const immediate = (): Promise<void> => Promise.resolve();
-  const okResult = { respawned: [1], deaths: [], parked: [], idleParked: [], reaped: [], reconciledSlots: [], stopped: false, queueDepth: 0 };
-  const CONTINUE = { respawned: [], deaths: [], parked: [], idleParked: [], reaped: [], reconciledSlots: [], stopped: false, queueDepth: 0 };
+  const okResult = { respawned: [1], deaths: [], parked: [], idleParked: [], reaped: [], reconciledSlots: [], stopped: false, queueDepth: 0, abandoned: false };
+  const CONTINUE = { respawned: [], deaths: [], parked: [], idleParked: [], reaped: [], reconciledSlots: [], stopped: false, queueDepth: 0, abandoned: true };
 
   it("returns the tick result when it completes before the ceiling", async () => {
     const logs: string[] = [];

@@ -120,6 +120,7 @@ function makeDeps(over: Partial<{
   branchIssue: BootDeps["lookups"]["branchIssue"];
   blockerState: BootDeps["lookups"]["blockerState"];
   straggler: BootDeps["lookups"]["straggler"];
+  claimHolderAlive: BootDeps["lookups"]["claimHolderAlive"];
   env: Record<string, string | undefined>;
   reconcileRunner: ReconcileBootRunner;
 }> = {}) {
@@ -190,6 +191,7 @@ function makeDeps(over: Partial<{
           needsTriage: async () => 0,
           needsInfo: async () => 0,
         },
+      ...(over.claimHolderAlive ? { claimHolderAlive: over.claimHolderAlive } : {}),
     },
     nowS: NOW,
     env: over.env ?? {},
@@ -288,6 +290,57 @@ describe("runBoot orphan cleanup applies each fate", () => {
       "gh.comment:7",
       "fs.removeDir:/d/running",
     ]);
+  });
+
+  it("downgrades restore-and-remove to plain remove when a live worker holds the claim (#644)", async () => {
+    // A claim-race loser's debris dir names an issue the WINNER is actively
+    // working: restoring ready-for-agent here would clobber the live worker's
+    // `running` label and put the issue back at the head of every queue.
+    const orphanState: BootDeps["lookups"]["orphanState"] = async () => ({
+      ghOk: true,
+      state: "OPEN",
+      label: "running",
+      envelopePosted: false,
+    });
+    const { deps, ghCalls, fsCalls } = makeDeps({ orphanState, claimHolderAlive: async () => true });
+    const orphans: OrphanDir[] = [{ path: "/d/debris", issue: 9, ageS: 0 }];
+    const r = await runBoot(deps, options({ orphans }));
+    expect(ghCalls.editLabels).toEqual([]); // no label restore
+    expect(ghCalls.comment).toEqual([]); // no recovery comment
+    expect(fsCalls.removeDir).toEqual(["/d/debris"]);
+    expect(r.orphanCleanup).toEqual({ removed: ["/d/debris"], restored: [], kept: [], legacyWiped: [], claimsReleased: [] });
+  });
+
+  it("still restores when the claim lookup reports no live holder (#644)", async () => {
+    const orphanState: BootDeps["lookups"]["orphanState"] = async () => ({
+      ghOk: true,
+      state: "OPEN",
+      label: "running",
+      envelopePosted: false,
+    });
+    const { deps, ghCalls } = makeDeps({ orphanState, claimHolderAlive: async () => false });
+    const orphans: OrphanDir[] = [{ path: "/d/crashed", issue: 11, ageS: 0 }];
+    const r = await runBoot(deps, options({ orphans }));
+    expect(ghCalls.editLabels).toEqual([{ issue: 11, remove: ["running"], add: ["ready-for-agent"] }]);
+    expect(r.orphanCleanup?.restored).toEqual([11]);
+  });
+
+  it("treats a throwing claim lookup as no-live-holder and restores (#644 fail-open)", async () => {
+    const orphanState: BootDeps["lookups"]["orphanState"] = async () => ({
+      ghOk: true,
+      state: "OPEN",
+      label: "running",
+      envelopePosted: false,
+    });
+    const { deps, ghCalls } = makeDeps({
+      orphanState,
+      claimHolderAlive: async () => {
+        throw new Error("fs unavailable");
+      },
+    });
+    const orphans: OrphanDir[] = [{ path: "/d/crashed2", issue: 13, ageS: 0 }];
+    await runBoot(deps, options({ orphans }));
+    expect(ghCalls.editLabels).toEqual([{ issue: 13, remove: ["running"], add: ["ready-for-agent"] }]);
   });
 
   it("keep-until removes only once the dir has aged past the TTL", async () => {

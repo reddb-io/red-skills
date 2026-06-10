@@ -375,6 +375,11 @@ async function buildBootDeps(ctx: RepoContext, options: BootOptions, nowS: numbe
       deleteLocalBranch: (branch) => gitx.deleteLocalBranch(gitCtx, branch),
     },
     lookups: {
+      // Live-claim ownership for the orphan sweep (#644): a dead attempt dir
+      // naming an issue whose claims/{N}/pid is a LIVE process is claim-race
+      // debris, not a mid-issue crash — the sweep removes it without touching
+      // the winner's `running` label.
+      claimHolderAlive: (issue) => fsx.claimPathHeldByLivePid(join(afkPaths(ctx.root).tmpDir, "claims", String(issue))),
       // Orphan state pairs gh issue state/label with the attempt dir's
       // envelope.posted flag (read from the state file, not gh). Derived from
       // the batched map, preserving ghx.orphanState's exact label/state →
@@ -1053,6 +1058,15 @@ export async function runCommand(options: RunOptions): Promise<number> {
       const result = await processIssue(pd, pi);
       if (result.outcome === "runner-transient") {
         await openRunnerCircuit(paths.tmpDir, pi.runner, Math.floor(Date.now() / 1000), process.env).catch(() => {});
+      }
+      // Abandon means DELETE (#644): buildProcessInput pre-creates the attempt
+      // dir + state (current.number, live pid) BEFORE the claim, so a lost race
+      // leaves them naming an issue this worker never owned. The next boot's
+      // orphan sweep would misread that as a mid-issue crash and restore
+      // ready-for-agent over the live winner's `running` label.
+      if (result.outcome === "claim-lost") {
+        await fsx.removeDir(pi.attemptDir).catch(() => {});
+        return result;
       }
       const sp = join(pi.attemptDir, "afk.state.json");
       if (await fsx.pathExists(sp)) await updateState(sp, { pid: 0 }).catch(() => {});
