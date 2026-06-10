@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { McpStdioChannelBridge } from "./channel-bridge.js";
 import { handleHook, type Runner } from "./hook-runtime.js";
 import { ingestEvents } from "./ingest-events.js";
 import { withBrainRuntime } from "./runtime.js";
 import { ARTIFACT_KINDS, CONNECTION_KINDS } from "./schema.js";
+import { loadIngestionState, saveIngestionState, scheduledIngest } from "./scheduled-ingestion.js";
 
 async function main(): Promise<void> {
   const [command = "help", ...args] = process.argv.slice(2);
@@ -49,6 +51,9 @@ async function main(): Promise<void> {
       return;
     case "ingest-events":
       await ingestEventsCmd(args);
+      return;
+    case "schedule-ingest":
+      await scheduleIngestCmd(args);
       return;
     default:
       throw new Error(`unknown brain command: ${command}`);
@@ -126,6 +131,31 @@ async function backlinks(args: string[]): Promise<void> {
   const target = args[0];
   if (!target) throw new Error("brain backlinks requires a rid or artifact id");
   await withBrainRuntime(async ({ store }) => printJson(await store.backlinks(parseRidOrId(target))));
+}
+
+async function scheduleIngestCmd(args: string[]): Promise<void> {
+  const flags = parseFlags(args);
+  const sessionKey = stringFlag(flags, "session-key") ?? stringFlag(flags, "session");
+  const limit = numberFlag(flags, "limit");
+  const bridge = await McpStdioChannelBridge.connect();
+  try {
+    await withBrainRuntime(async ({ config, store }) => {
+      const statePath = stringFlag(flags, "state") ?? join(config.rootDir, ".red", "brain", "ingestion-state.json");
+      const state = await loadIngestionState(statePath);
+      const result = await scheduledIngest({
+        bridge,
+        store,
+        state,
+        sessionKey: sessionKey ?? undefined,
+        limit: limit ?? undefined,
+        sourceAgent: "brain.schedule-ingest",
+      });
+      await saveIngestionState(statePath, result.state);
+      printJson(result);
+    });
+  } finally {
+    await bridge.close().catch(() => {});
+  }
 }
 
 async function ingestEventsCmd(args: string[]): Promise<void> {
@@ -220,6 +250,7 @@ function printHelp(): void {
   link --from <rid|id> --to <rid|id> --kind <${CONNECTION_KINDS.join("|")}>
   backlinks <rid|id>
   ingest-events [--after-cursor N] [--session-key KEY] [--limit N]
+  schedule-ingest [--session-key KEY] [--limit N] [--state PATH]
 `);
 }
 
