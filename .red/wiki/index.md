@@ -137,6 +137,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [fix(afk): require the DONE sentinel even when work is already complete (Defeito 1)](./pages/427-fix-afk-require-the-done-sentinel-even-when-work-is-already.md)
 - [fix(afk): restore Task Mirror via monitor --mirror-plan](./pages/331-fix-afk-restore-task-mirror-via-monitor-mirror-plan.md)
 - [fix(afk): salvage a no-sentinel branch that passes feedback (Defeito 2 / issue #332)](./pages/428-fix-afk-salvage-a-no-sentinel-branch-that-passes-feedback-de.md)
+- [fix(afk): shell config reader skips block-sequence items and strips post-quote inline comments](./pages/663-fix-afk-shell-config-reader-skips-block-sequence-items-and-s.md)
 - [fix(afk): slugifyRef trailing dash after slice → sandcastle 'is not a working tree' (#442)](./pages/467-fix-afk-slugifyref-trailing-dash-after-slice-sandcastle-is-n.md)
 - [fix(afk): supervisor.test runSupervisor tests spin → OOM, false-failing every gate (#446)](./pages/464-fix-afk-supervisor-test-runsupervisor-tests-spin-oom-false-f.md)
 - [fix(afk): uncap sandcastle inner agent maxIterations (fixes #322)](./pages/327-fix-afk-uncap-sandcastle-inner-agent-maxiterations-fixes-322.md)
