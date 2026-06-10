@@ -387,8 +387,6 @@ export interface SweepWorker {
 /** The worker IDs + claimed work that occupied a parked slot. */
 export interface SweepWork {
   workers: SweepWorker[];
-  /** Fast-death count for the discard envelope summary. */
-  fastDeaths: number;
   /** Supervisor log path quoted in the discard envelope body. */
   supervisorLogPath: string;
 }
@@ -597,6 +595,9 @@ export async function sweepParkedSlot(
   if (work.workers.length === 0) return;
 
   const workerIdsCsv = work.workers.map((w) => w.workerId).join(",");
+  // Real fast-death count lives in the circuit ring at the time of the trip,
+  // not in the FS layer (which has no visibility into the breaker state).
+  const fastDeaths = state.deaths.length;
   const hasAnyClaim = work.workers.some((w) => w.pairs.some((p) => p.issue !== null));
   if (hasAnyClaim) await deps.gh.ensureRunnerErrorLabel();
 
@@ -607,7 +608,7 @@ export async function sweepParkedSlot(
           config.runner,
           slot,
           workerIdsCsv,
-          work.fastDeaths,
+          fastDeaths,
           work.supervisorLogPath,
         );
         await deps.gh.comment(pair.issue, body);

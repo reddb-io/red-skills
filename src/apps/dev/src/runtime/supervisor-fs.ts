@@ -229,7 +229,6 @@ export function parkedSlotWorkFor(
   tmpDir: string,
   root: string,
   slot: number,
-  fastDeaths: number,
 ): SweepWork {
   const supervisorLogPath = join(tmpDir, "afk-supervisor.log");
   const wids = parseWorkerIdsFromLog(slotLogPath(tmpDir, slot));
@@ -240,7 +239,7 @@ export function parkedSlotWorkFor(
       issue: iterDirIssueNumber(dir),
     })),
   }));
-  return { workers, fastDeaths, supervisorLogPath };
+  return { workers, supervisorLogPath };
 }
 
 /** Best-effort worktree teardown + iter-dir removal for a reaped slot. Mirrors

@@ -82,7 +82,7 @@ function makeDeps(over: Partial<Record<keyof FakeIo, unknown>> = {}): {
     resolveIterDir: vi.fn((): IterDirInfo | null => null),
     teardownIterDir: vi.fn(async () => {}),
     parkedSlotWork: vi.fn(
-      (): SweepWork => ({ workers: [], fastDeaths: 0, supervisorLogPath: ".red/tmp/afk-supervisor.log" }),
+      (): SweepWork => ({ workers: [], supervisorLogPath: ".red/tmp/afk-supervisor.log" }),
     ),
     removeDir: vi.fn(async () => {}),
     comment: vi.fn(async () => {}),
@@ -285,7 +285,6 @@ describe("circuit trip and sweep", () => {
       parkedSlotWork: vi.fn(
         (): SweepWork => ({
           workers: [{ workerId: "wAAAA", pairs: [{ dir: "/w/wAAAA/7-a1", issue: 7 }] }],
-          fastDeaths: 5,
           supervisorLogPath: ".red/tmp/afk-supervisor.log",
         }),
       ),
@@ -321,7 +320,6 @@ describe("circuit trip and sweep", () => {
       parkedSlotWork: vi.fn(
         (): SweepWork => ({
           workers: [{ workerId: "wDDDD", pairs: [{ dir: "/w/wDDDD/1-a1", issue: null }] }],
-          fastDeaths: 5,
           supervisorLogPath: ".red/tmp/afk-supervisor.log",
         }),
       ),

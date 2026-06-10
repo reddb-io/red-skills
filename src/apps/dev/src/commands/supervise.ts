@@ -7,7 +7,7 @@
 // native — no bash anywhere in the loop.
 
 import { spawn } from "node:child_process";
-import { existsSync, openSync, writeFileSync, writeSync, rmSync, renameSync } from "node:fs";
+import { existsSync, openSync, closeSync, writeFileSync, writeSync, rmSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import {
   type FleetHeartbeat,
@@ -216,12 +216,19 @@ function buildSupervisorDeps(
         // Forward the PRD/issue filter + runner-swap policy so a supervised
         // fleet honours the same filter a single `/afk run` would (gap 5).
         const runArgs = ["run", "--once", "--runner", runner, ...slotArgs];
+        // Each slot gets its own log file so the circuit-trip sweep can
+        // resolve which worker IDs ran in the slot via parseWorkerIdsFromLog
+        // (mirrors spawn_slot's per-slot slot_log in supervisor.sh).
+        const slotLogFile = join(tmpDir, `afk-supervisor-slot-${slot}.log`);
+        const slotFd = openSync(slotLogFile, "a");
         const child = spawn(process.execPath, [bundle, ...runArgs], {
           cwd: root,
           env: workerEnv,
           detached: true,
-          stdio: ["ignore", logFd, logFd],
+          stdio: ["ignore", slotFd, slotFd],
         });
+        // Close the parent's copy — the child inherits it and keeps it open.
+        closeSync(slotFd);
         child.unref();
         const pid = child.pid ?? 0;
         slotPids.set(slot, pid);
@@ -250,7 +257,7 @@ function buildSupervisorDeps(
       teardownIterDir: async (info) => {
         await teardownIterDirNative(info, root);
       },
-      parkedSlotWork: (slot) => parkedSlotWorkFor(tmpDir, root, slot, 0),
+      parkedSlotWork: (slot) => parkedSlotWorkFor(tmpDir, root, slot),
       removeDir: async (path) => {
         try {
           await removeDirNative(path);
