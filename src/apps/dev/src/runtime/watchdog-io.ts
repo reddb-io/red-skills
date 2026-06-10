@@ -15,49 +15,12 @@ import { listStaleClaimDirs, removeDir } from "./fs.js";
 import { detectRunner } from "../core/runner-detection.js";
 import { callerProcessTreeNative } from "./caller-process.js";
 import { spawnSupervisor, stampFreshFleetHeartbeat } from "./supervisor-spawn.js";
-
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-function isLivePid(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function signalTree(pid: number, signal: NodeJS.Signals): void {
-  try {
-    process.kill(-pid, signal);
-  } catch {
-    try {
-      process.kill(pid, signal);
-    } catch {
-      // already gone
-    }
-  }
-}
-
-/**
- * SIGTERM the wedged supervisor's tree, then WAIT for it to actually exit
- * (polling up to ~2s, escalating to SIGKILL) before returning. This matters for
- * recovery correctness: the supervisor's own `finally` removes the pid/stop
- * files on exit, so the relaunch must not write a fresh pid file until the dying
- * process has finished cleaning up — otherwise it would clobber the new one.
- */
-async function killTreeAndWait(pid: number): Promise<void> {
-  signalTree(pid, "SIGTERM");
-  for (let i = 0; i < 20; i += 1) {
-    if (!isLivePid(pid)) return;
-    await sleep(100);
-  }
-  signalTree(pid, "SIGKILL");
-  for (let i = 0; i < 10; i += 1) {
-    if (!isLivePid(pid)) return;
-    await sleep(100);
-  }
-}
+// The wait-and-escalate killer (SIGTERM → grace → SIGKILL → confirm) is shared
+// with the fleet reaper and `fleet stop` (#580). It matters for recovery
+// correctness here too: the supervisor's own `finally` removes the pid/stop
+// files on exit, so the relaunch must not write a fresh pid file until the dying
+// process has finished cleaning up — otherwise it would clobber the new one.
+import { isLivePid, killTreeAndWait } from "./kill-tree.js";
 
 async function readPid(path: string): Promise<number | null> {
   try {
