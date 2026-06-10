@@ -256,8 +256,11 @@ export function classifySupervisor(
   // Check 1: wall-clock heartbeat stale → hard-hung process.
   if (now - liveness.lastHeartbeatEpoch >= staleS) return "quiescent";
   // Check 2: progress stale with occupied slots → loop spinning on abandoned ticks.
+  // lastProgressEpoch === 0 means the supervisor hasn't completed a tick yet
+  // (fresh launch); treat it as null (healthy — can't prove a wedge yet).
   if (
     liveness.lastProgressEpoch !== null &&
+    liveness.lastProgressEpoch > 0 &&
     now - liveness.lastProgressEpoch >= progressStaleS &&
     liveness.slotsBusy > 0
   ) {

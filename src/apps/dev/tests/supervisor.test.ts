@@ -366,6 +366,27 @@ describe("classifySupervisor", () => {
     ).toBe("healthy");
   });
 
+  it("is healthy when progress epoch is 0 (uninitialised sentinel from initSupervisorState)", () => {
+    // initSupervisorState seeds lastProgressEpoch: 0; the first heartbeat a
+    // fresh supervisor emits carries 0 before any tick completes. Treat 0 as
+    // «no progress yet» (same as null) so a brand-new supervisor isn't
+    // immediately classified quiescent.
+    expect(
+      classifySupervisor(
+        liveness({
+          pid: 42,
+          pidAlive: true,
+          lastHeartbeatEpoch: NOW - 10,
+          lastProgressEpoch: 0,
+          slotsBusy: 2,
+        }),
+        NOW,
+        STALE,
+        PROGRESS_STALE,
+      ),
+    ).toBe("healthy");
+  });
+
   it("is healthy when progress epoch is recent despite busy slots", () => {
     expect(
       classifySupervisor(
@@ -442,8 +463,11 @@ describe("guardedTick — abandoned flag", () => {
       respawned: [],
       deaths: [],
       parked: [],
+      idleParked: [],
       reaped: [],
+      reconciledSlots: [],
       stopped: false,
+      queueDepth: 0,
       abandoned: false,
     }));
     const sleep = vi.fn((_ms: number) => new Promise<void>((resolve) => setTimeout(resolve, 0)));
@@ -1097,8 +1121,8 @@ describe("envelope builders", () => {
 describe("guardedTick — per-tick wall-clock ceiling (unwedgeable loop)", () => {
   const never = (): Promise<void> => new Promise<void>(() => {});
   const immediate = (): Promise<void> => Promise.resolve();
-  const okResult = { respawned: [1], deaths: [], parked: [], idleParked: [], reaped: [], reconciledSlots: [], stopped: false, queueDepth: 0 };
-  const CONTINUE = { respawned: [], deaths: [], parked: [], idleParked: [], reaped: [], reconciledSlots: [], stopped: false, queueDepth: 0 };
+  const okResult = { respawned: [1], deaths: [], parked: [], idleParked: [], reaped: [], reconciledSlots: [], stopped: false, queueDepth: 0, abandoned: false };
+  const CONTINUE = { respawned: [], deaths: [], parked: [], idleParked: [], reaped: [], reconciledSlots: [], stopped: false, queueDepth: 0, abandoned: true };
 
   it("returns the tick result when it completes before the ceiling", async () => {
     const logs: string[] = [];

@@ -5,9 +5,9 @@
 // never throws out of the closure.
 
 import { constants } from "node:fs";
-import { access, readFile, readdir, rm } from "node:fs/promises";
+import { access, readFile, readdir, realpath, rm } from "node:fs/promises";
 import { closeSync, openSync, writeSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import type { SupervisorLiveness } from "../core/supervisor.js";
 import type { WatchdogIO } from "../core/watchdog.js";
 import { afkPaths, readFleetState } from "./wire.js";
@@ -17,6 +17,24 @@ import { callerProcessTreeNative } from "./caller-process.js";
 import { spawnSupervisor, stampFreshFleetHeartbeat } from "./supervisor-spawn.js";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Guard against PID reuse: resolve /proc/<pid>/exe and check that the binary
+ * name is "node" or "nodejs". Workers are always Node.js processes; if the
+ * PID was recycled by an unrelated process this check fails and we skip the
+ * kill. Linux-only — returns true on any platform that lacks /proc (safe fallback).
+ */
+async function pidIsNodeProcess(pid: number): Promise<boolean> {
+  try {
+    const exe = await realpath(`/proc/${pid}/exe`);
+    const name = basename(exe);
+    return name === "node" || name === "nodejs";
+  } catch {
+    // /proc not available (non-Linux) or process already gone — allow the kill
+    // attempt; isLivePid will gate it.
+    return true;
+  }
+}
 
 function isLivePid(pid: number): boolean {
   try {
@@ -140,7 +158,7 @@ export function buildWatchdogIO(
           const raw = (await readFile(pidPath, "utf8")).trim();
           if (!/^[1-9][0-9]*$/.test(raw)) continue;
           const workerPid = Number(raw);
-          if (isLivePid(workerPid)) {
+          if (isLivePid(workerPid) && (await pidIsNodeProcess(workerPid))) {
             await killTreeAndWait(workerPid);
           }
         } catch {
