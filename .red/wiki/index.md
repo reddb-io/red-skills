@@ -82,6 +82,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [feat(brain): add scheduled ingestion with cursor-state persistence (#476)](./pages/650-feat-brain-add-scheduled-ingestion-with-cursor-state-persist.md)
 - [feat(brain): add the brain plugin (project-local knowledge repository)](./pages/422-feat-brain-add-the-brain-plugin-project-local-knowledge-repo.md)
 - [feat(brain): scheduled channel-event ingestion via EventArtifactMapper](./pages/648-feat-brain-scheduled-channel-event-ingestion-via-eventartifa.md)
+- [feat(brain): scheduled ingestion — channel events to kind:event artifacts (#476)](./pages/651-feat-brain-scheduled-ingestion-channel-events-to-kind-event.md)
 - [feat(config): unify plugin config under .red/config.yaml (plugins.<name>)](./pages/390-feat-config-unify-plugin-config-under-red-config-yaml-plugin.md)
 - [feat(dev): add retake apply mode](./pages/533-feat-dev-add-retake-apply-mode.md)
 - [feat(dev): add retake issue resumption command](./pages/531-feat-dev-add-retake-issue-resumption-command.md)
