@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import { readFile } from "node:fs/promises";
+import { McpStdioChannelBridge } from "./channel-bridge.js";
 import { handleHook, type Runner } from "./hook-runtime.js";
+import { ingestEvents } from "./ingest-events.js";
 import { withBrainRuntime } from "./runtime.js";
 import { ARTIFACT_KINDS, CONNECTION_KINDS } from "./schema.js";
 
@@ -44,6 +46,9 @@ async function main(): Promise<void> {
       return;
     case "hook":
       await hook(args);
+      return;
+    case "ingest-events":
+      await ingestEventsCmd(args);
       return;
     default:
       throw new Error(`unknown brain command: ${command}`);
@@ -123,6 +128,29 @@ async function backlinks(args: string[]): Promise<void> {
   await withBrainRuntime(async ({ store }) => printJson(await store.backlinks(parseRidOrId(target))));
 }
 
+async function ingestEventsCmd(args: string[]): Promise<void> {
+  const flags = parseFlags(args);
+  const afterCursor = stringFlag(flags, "after-cursor") ?? stringFlag(flags, "cursor");
+  const sessionKey = stringFlag(flags, "session-key") ?? stringFlag(flags, "session");
+  const limit = numberFlag(flags, "limit");
+  const bridge = await McpStdioChannelBridge.connect();
+  try {
+    await withBrainRuntime(async ({ store }) => {
+      const result = await ingestEvents({
+        bridge,
+        store,
+        afterCursor: afterCursor ?? undefined,
+        sessionKey: sessionKey ?? undefined,
+        limit: limit ?? undefined,
+        sourceAgent: "brain.ingest-events",
+      });
+      printJson(result);
+    });
+  } finally {
+    await bridge.close().catch(() => {});
+  }
+}
+
 async function hook(args: string[]): Promise<void> {
   const [lifecycle = "SessionStart", ...rest] = args;
   const flags = parseFlags(rest);
@@ -191,6 +219,7 @@ function printHelp(): void {
   get <rid|id>
   link --from <rid|id> --to <rid|id> --kind <${CONNECTION_KINDS.join("|")}>
   backlinks <rid|id>
+  ingest-events [--after-cursor N] [--session-key KEY] [--limit N]
 `);
 }
 
