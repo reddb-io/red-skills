@@ -6,6 +6,25 @@ Upstream base: `mattpocock/skills@aaf2453fbdfe7a15c07f11d861224f34ab4b53cb` (see
 
 ---
 
+## afk (engineering) — OpenCode runner is endpoint-agnostic; env-precedence auth (OPENAI > MINIMAX > OPENROUTER) (#638, ADR 0059 amendment 1+2)
+
+- **status**: modified
+- **upstream**: —
+- **why**: The #626 runner hardcoded OpenRouter (`OPENROUTER_API_KEY` only, `openrouter/<vendor>/<model>` slug only). A maintainer with a MiniMax subscription API key could not drive the runner without spinning up an OpenRouter account and paying the relay tax. The same shape blocked OpenAI-direct users. Endpoint resolution belongs in OpenCode, not in AFK.
+- **what changed**:
+  - `src/apps/dev/src/core/opencode-env.ts` (new, pure): `resolveOpenCodeAuth(env)` returns the first-set auth env-var by precedence; `openCodeAuthEnv(auth)` builds the `{ [envVar]: value }` payload for `OpenCodeOptions.env`; `OPENCODE_AUTH_ENV_PRECEDENCE` lists the three entries. Empty-string values are treated as unset (fail-safe against shell-rc placeholders).
+  - `src/apps/dev/src/core/execution.ts`: `buildAgent` opencode branch now calls the resolver; when no precedence entry is set, the agent is spawned without an auth `env` block (fail-closed — OpenCode surfaces its own auth error, the run routes through the normal failure path). The `OPENROUTER_API_KEY_ENV` constant is retained as a `@deprecated` back-compat export; new callers should use `OPENCODE_AUTH_ENV_PRECEDENCE`.
+  - `src/apps/dev/src/core/config.ts`: tier defaults are unchanged (`openrouter/anthropic/...`) for #626 back-compat; the surrounding comment now documents the `<provider>/<model>` shape and that operators may point the tiers at any OpenAI-compatible endpoint.
+  - `plugins/dev/skills/engineering/afk/runner-opencode.md`: rewritten as an endpoint-agnostic contract; new *Auth env precedence* section names the three env-vars, their slug prefixes, and the rationale for the order.
+  - `plugins/dev/skills/engineering/afk/SKILL.md`: runner-fallback note points at the new precedence table.
+  - `.red/adr/0059-…md`: status is now `accepted, amended`. Amendment 1 records the principled design shift (AFK only propagates the key, OpenCode owns endpoint resolution). Amendment 2 anchors the decision in the concrete MiniMax subscription case and commits to keeping the property load-bearing.
+  - `.red/adr/INDEX.md`: 0059 entry updated to mention both amendments.
+  - `.red/contexts/dev/CONTEXT.md`: two new glossary terms — *OpenCode auth env precedence* and *Endpoint-agnostic provider* — with avoid-antonyms.
+  - Tests: 10 new unit tests in `tests/opencode-env.test.ts` (precedence, fail-closed, unrelated-env-var immunity, buildEnv shape) + 3 new tests in `tests/execution.test.ts` (`<provider>/<model>` slug passthrough for `openai/` and `minimax/` prefixes, OPENAI-beats-MINIMAX-beats-OPENROUTER precedence, MINIMAX-beats-OPENROUTER). Total: 1239/1239 tests pass; typecheck clean.
+- **back-compat**: when only `OPENROUTER_API_KEY` is set, behaviour is byte-for-byte identical to the pre-amendment runner (same slug flow, same env payload name, same config defaults). No existing config, test, or contract changes are required to adopt the new precedence-aware env resolver.
+
+---
+
 ## afk (engineering) — idle queue does not park fleet permanently; clean drain exempt from fast-death ring (#578)
 
 - **status**: modified
