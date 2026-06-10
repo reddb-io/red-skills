@@ -79,6 +79,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [feat(afk): supervisor tick dispatches reconcile workers for parked-mechanical issues](./pages/564-feat-afk-supervisor-tick-dispatches-reconcile-workers-for-pa.md)
 - [feat(afk): typed blocked:<reason> labels (descriptive, auto-classified)](./pages/293-feat-afk-typed-blocked-reason-labels-descriptive-auto-classi.md)
 - [feat(bench): memory bench eval spine — single-hop, fixed-pack, exact-match/F1, JSONL (#334)](./pages/425-feat-bench-memory-bench-eval-spine-single-hop-fixed-pack-exa.md)
+- [feat(brain): add scheduled ingestion with cursor-state persistence (#476)](./pages/650-feat-brain-add-scheduled-ingestion-with-cursor-state-persist.md)
 - [feat(brain): add the brain plugin (project-local knowledge repository)](./pages/422-feat-brain-add-the-brain-plugin-project-local-knowledge-repo.md)
 - [feat(brain): scheduled channel-event ingestion via EventArtifactMapper](./pages/648-feat-brain-scheduled-channel-event-ingestion-via-eventartifa.md)
 - [feat(config): unify plugin config under .red/config.yaml (plugins.<name>)](./pages/390-feat-config-unify-plugin-config-under-red-config-yaml-plugin.md)
