@@ -13,9 +13,9 @@
 // feedback gate consumes, both rebased onto the materialised checkout. Every
 // worktree it created is torn down by `cleanup()` after the session.
 //
-// When the worktree cannot be materialised (e.g. tests, or an origin ref that
-// never got pushed) it degrades to the primary checkout so feedback still runs
-// the package topology rather than silently passing.
+// When the worktree cannot be materialised (worktreeAdd failure) or the
+// install fails, the gate fails closed: all validation calls return code 1.
+// A failed setup never silently validates the primary checkout.
 
 import { accessSync, constants, readFileSync } from "node:fs";
 import { join } from "node:path";
