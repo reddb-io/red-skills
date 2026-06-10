@@ -114,6 +114,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [fix(afk): commit-anchored hard cap bounds the edit-signal guard extension](./pages/639-fix-afk-commit-anchored-hard-cap-bounds-the-edit-signal-guar.md)
 - [fix(afk): don't read gh rate-limit as an auth failure (Mode B fast-death)](./pages/482-fix-afk-don-t-read-gh-rate-limit-as-an-auth-failure-mode-b-f.md)
 - [fix(afk): feed the agent lane on the native path so liveness isn't blind](./pages/350-fix-afk-feed-the-agent-lane-on-the-native-path-so-liveness-i.md)
+- [fix(afk): feedback gate fails closed on worktree-add/install failure and validates origin tip](./pages/660-fix-afk-feedback-gate-fails-closed-on-worktree-add-install-f.md)
 - [fix(afk): feedback gate resolves multi-slash afk/* branches (#437)](./pages/438-fix-afk-feedback-gate-resolves-multi-slash-afk-branches-437.md)
 - [fix(afk): guard each supervise tick + per-tick heartbeat — unwedgeable fleet supervisor](./pages/408-fix-afk-guard-each-supervise-tick-per-tick-heartbeat-unwedge.md)
 - [fix(afk): harden sandcastle integration (pre-mortem J/E/D/F/G/H)](./pages/328-fix-afk-harden-sandcastle-integration-pre-mortem-j-e-d-f-g-h.md)
