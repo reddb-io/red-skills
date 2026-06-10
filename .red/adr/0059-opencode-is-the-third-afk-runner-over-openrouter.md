@@ -2,7 +2,10 @@
 
 ## Status
 
-accepted.
+accepted, **amended** — see *Amendment 1* below. The original decision (third
+runner, OpenRouter-only, explicit pin) stands; the amendment extends the
+endpoint surface to any OpenAI-compatible endpoint (OpenAI direct, MiniMax
+subscription, OpenRouter relay) and shifts endpoint resolution into OpenCode.
 
 ## Context
 
@@ -87,3 +90,80 @@ pattern, with one deliberate divergence in the detection cascade:
   OpenRouter-only lane with no host session, opencode should run without it so an
   exhaustion is terminal-through-recovery rather than a swap to an unavailable
   runner.
+
+## Amendment 1 — endpoint-agnostic provider, env-precedence auth
+
+**Status:** accepted.
+**Date:** 2026-06-10.
+**Slice:** issue #638 (follows #626 and this ADR).
+
+### Context
+
+The original #626 contract hardcoded OpenRouter as the only reachable endpoint:
+the provider read `OPENROUTER_API_KEY` and the model slug always carried an
+`openrouter/<vendor>/<model>` prefix. That works for a relay but blocks two
+real-world needs:
+
+1. A user with a **MiniMax subscription API key** (no OpenRouter account) cannot
+   drive the runner without re-routing through OpenRouter as a paid relay.
+2. A user who already has an `OPENAI_API_KEY` and wants to talk to OpenAI
+   direct — not through OpenRouter — has to invent a slug OpenRouter happens to
+   expose (`openrouter/openai/gpt-4o-mini`) instead of using OpenCode's
+   first-class `openai/gpt-4o-mini`.
+
+OpenCode itself already knows how to talk to OpenAI, OpenRouter, MiniMax, and
+any other OpenAI-compatible endpoint — it dispatches on the leading segment of
+the model slug. The endpoint resolution belongs in OpenCode, not in AFK.
+
+### Decision
+
+**AFK only propagates the auth key. OpenCode owns endpoint resolution.**
+
+Concretely:
+
+- The model slug accepted at the config layer is `<provider>/<model>`. AFK
+  forwards it verbatim to OpenCode; AFK does not parse, validate, or rewrite
+  the leading segment.
+- The auth env-var is selected by **first-set precedence** (no config block,
+  no override):
+    1. `OPENAI_API_KEY` — `openai/...` slug
+    2. `MINIMAX_API_KEY` — `minimax/...` slug
+    3. `OPENROUTER_API_KEY` — `openrouter/<vendor>/...` slug
+- The full resolver lives in `src/core/opencode-env.ts` (a pure module) and is
+  unit-tested in `tests/opencode-env.test.ts`. The auth key rides in
+  `OpenCodeOptions.env` under the env-var's own name — OpenCode reads it
+  directly. No base URL, no auth header, no endpoint-specific code in AFK.
+- A user with no key set is fail-closed: the agent is spawned without an
+  auth `env` block, OpenCode surfaces its own auth error, the run routes
+  through the normal failure path.
+- Back-compat with the #626 contract: when **only** `OPENROUTER_API_KEY` is
+  set, behaviour is byte-for-byte identical to the pre-amendment runner.
+  Existing configs, tests, and the runner-opencode.md contract are forward-
+  compatible.
+
+### Considered options
+
+- **Hardcoded base URLs per env-var** — rejected: duplicates endpoint logic
+  AFK should not own; OpenCode already knows.
+- **Config block per endpoint** (e.g. `afk.opencode.endpoints: [openai, ...]`) —
+  rejected: the user has already expressed their choice by which env-var they
+  set; a second config layer is ceremony.
+- **Auto-detect endpoint by which env-var is set, but require a config flag
+  to enable MiniMax** — rejected: MiniMax is a first-class OpenAI-compatible
+  endpoint; gating it behind a config flag is paternalism.
+
+### Consequences
+
+- A user with `MINIMAX_API_KEY=…` and a tier config
+  `afk.models.opencode.think.model: minimax/MiniMax-M3` runs the inner agent
+  against the MiniMax subscription API with **no** further configuration.
+- A user with `OPENAI_API_KEY=…` and `afk.models.opencode.think.model:
+  openai/gpt-4o-mini` runs against OpenAI direct.
+- The previous "OpenRouter-only" framing in the contract, the SKILL.md cascade
+  notes, and the CONFIG_DEFAULTS comments is replaced by the
+  *Auth env precedence* table in `runner-opencode.md`. Defaults stay
+  OpenRouter-shaped for back-compat.
+- `--fallback-runner` semantics are unchanged: it swaps to a session-auth
+  runner, which is unavailable in an API-key-only lane. The
+  *Exhaustion Detection* section notes this and recommends running OpenCode
+  without `--fallback-runner` in that case.
