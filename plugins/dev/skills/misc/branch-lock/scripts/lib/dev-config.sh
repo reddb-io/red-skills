@@ -15,6 +15,7 @@ dev_config_lock_primary_branch_enabled() {
   local -a _stack=()
   local -a _indents=()
   local _raw _line _indent_str _indent _rest _key _value _full _i
+  local _inner _before_close _close_len _tail
 
   while IFS= read -r _raw || [[ -n "$_raw" ]]; do
     _raw="${_raw%$'\r'}"
@@ -30,6 +31,13 @@ dev_config_lock_primary_branch_enabled() {
     _indent=${#_indent_str}
     (( _indent % 2 == 0 )) || return 1
     _rest="${_line:$_indent}"
+
+    # Skip block-sequence items (`- value`) — they never contain dev flags.
+    # A top-level sequence (empty stack) mirrors the TS parser: malformed → bail.
+    if [[ "$_rest" =~ ^-([[:space:]]|$) ]]; then
+      (( ${#_stack[@]} == 0 )) && return 1
+      continue
+    fi
 
     [[ "$_rest" =~ ^[A-Za-z_][A-Za-z0-9_-]*: ]] || return 1
     _key="${_rest%%:*}"
@@ -55,6 +63,29 @@ dev_config_lock_primary_branch_enabled() {
       _stack+=("$_key")
       _indents+=("$_indent")
       continue
+    fi
+
+    # Strip an inline comment that follows a closing quote (e.g. `key: "v" # note`).
+    if [[ "${_value:0:1}" == '"' ]]; then
+      _inner="${_value:1}"
+      _before_close="${_inner%%\"*}"
+      if [[ "$_inner" == *'"'* ]]; then
+        _close_len=$(( 1 + ${#_before_close} + 1 ))
+        _tail="${_value:$_close_len}"
+        if [[ "$_tail" =~ ^[[:space:]]*(#.*)?$ ]]; then
+          _value="${_value:0:$_close_len}"
+        fi
+      fi
+    elif [[ "${_value:0:1}" == "'" ]]; then
+      _inner="${_value:1}"
+      _before_close="${_inner%%\'*}"
+      if [[ "$_inner" == *"'"* ]]; then
+        _close_len=$(( 1 + ${#_before_close} + 1 ))
+        _tail="${_value:$_close_len}"
+        if [[ "$_tail" =~ ^[[:space:]]*(#.*)?$ ]]; then
+          _value="${_value:0:$_close_len}"
+        fi
+      fi
     fi
 
     if [[ "$_value" == \"*\" && "$_value" == *\" ]]; then

@@ -62,6 +62,31 @@ dev:
 EOF
 expect_rc "malformed indentation: disabled" 1 "$cfg"
 
+cat > "$cfg" <<'EOF'
+dev:
+  lock-primary-branch: "true" # branch protection on
+EOF
+expect_rc "inline comment after quoted true: enabled" 0 "$cfg"
+
+cat > "$cfg" <<'EOF'
+dev:
+  lock-primary-branch: true
+afk:
+  backpressure:
+    - npm run test
+    - npm run lint
+EOF
+expect_rc "block-sequence sibling does not disable guard: enabled" 0 "$cfg"
+
+cat > "$cfg" <<'EOF'
+afk:
+  backpressure:
+    - npm run test
+dev:
+  lock-primary-branch: true
+EOF
+expect_rc "block-sequence before dev key: enabled" 0 "$cfg"
+
 echo
 echo "summary: $pass passed, $fail failed"
 [[ "$fail" -eq 0 ]]
