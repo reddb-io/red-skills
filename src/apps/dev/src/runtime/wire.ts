@@ -231,9 +231,14 @@ export function makeRunAgent(
 ): (input: RunAgentInput) => Promise<RunAgentResult> {
   let depsPromise: Promise<import("../core/execution.js").SandcastleDeps> | null = null;
   return async (input: RunAgentInput): Promise<RunAgentResult> => {
-    const { runAgent, defaultSandcastleDeps, parseIdleTimeout, DEFAULT_ATTEMPT_TIMEOUT_S } = await import(
-      "../core/execution.js"
-    );
+    const {
+      runAgent,
+      defaultSandcastleDeps,
+      parseIdleTimeout,
+      DEFAULT_ATTEMPT_TIMEOUT_S,
+      DEFAULT_ATTEMPT_HARD_CAP_S,
+      parseAttemptHardCap,
+    } = await import("../core/execution.js");
     if (!depsPromise) depsPromise = defaultSandcastleDeps();
     const deps = await depsPromise;
     // Sandcastle re-invocation ceiling (issue #322). Precedence: per-call
@@ -260,6 +265,13 @@ export function makeRunAgent(
       attemptTimeoutSeconds ??
       parseAttemptTimeout(env.RED_AFK_ATTEMPT_TIMEOUT_S) ??
       DEFAULT_ATTEMPT_TIMEOUT_S;
+    // Commit-anchored hard cap (issue #637): bounds how long the edit-signal
+    // below may keep extending the soft deadline. Never below the soft cap, so
+    // a low override cannot make the hard cap fire before plain ADR 0044 would.
+    const attemptHardCap = Math.max(
+      input.attemptHardCapSeconds ?? parseAttemptHardCap(env.RED_AFK_ATTEMPT_HARD_CAP_S) ?? DEFAULT_ATTEMPT_HARD_CAP_S,
+      attemptTimeout,
+    );
     // Resolved lane-idle config is threaded from resolveRunSettings (validated at
     // boot); a caller that constructed makeRunAgent without one falls back to the
     // env-resolved config.
@@ -278,6 +290,7 @@ export function makeRunAgent(
       ...(guardArmed
         ? {
             attemptTimeoutSeconds: attemptTimeout,
+            attemptHardCapSeconds: attemptHardCap,
             headProbe: () => gitx.branchHead({ cwd: input.cwd ?? process.cwd() }, input.branch),
             // Edit signal (ADR 0051): the changed-line volume of the agent's real
             // worktree (committed + uncommitted). A change between polls resets

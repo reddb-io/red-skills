@@ -969,6 +969,165 @@ describe("startAttemptGuard — diff-anchored progress (ADR 0051, codex false-st
   });
 });
 
+describe("startAttemptGuard — commit-anchored hard cap (issue #637, busy-but-unproductive loop)", () => {
+  it("aborts at the hard cap when periodic edits keep resetting the soft deadline but no commit lands", async () => {
+    // The #579 worker: code committed, then an open-ended re-validation loop
+    // that occasionally touches a test file. Every edit resets the soft
+    // deadline, so without the hard cap the guard never fires.
+    let clock = 0;
+    let volume = 10;
+    const sched = manualScheduler();
+    let reason: string | undefined;
+    startAttemptGuard({
+      capMs: 100,
+      intervalMs: 50,
+      hardCapMs: 200,
+      headProbe: async () => "sha-static",
+      progressProbe: async () => volume,
+      now: () => clock,
+      schedule: sched.schedule,
+      abort: (r) => {
+        reason = r;
+      },
+    });
+    await sched.tick(); // t=0 anchor (first head = spawn commit anchor)
+    for (const [t, v] of [
+      [50, 60],
+      [100, 140],
+      [150, 300],
+    ] as const) {
+      clock = t;
+      volume = v;
+      await sched.tick(); // edit each poll → soft deadline resets, still under the hard cap
+      expect(reason).toBeUndefined();
+    }
+    clock = 200;
+    volume = 999;
+    await sched.tick(); // edits continue, but 200ms since last commit >= hardCapMs → abort
+    expect(reason).toBe("hard-cap");
+  });
+
+  it("a new commit re-anchors the hard cap", async () => {
+    let clock = 0;
+    let head = "sha1";
+    let volume = 10;
+    const sched = manualScheduler();
+    let reason: string | undefined;
+    startAttemptGuard({
+      capMs: 100,
+      intervalMs: 50,
+      hardCapMs: 200,
+      headProbe: async () => head,
+      progressProbe: async () => volume,
+      now: () => clock,
+      schedule: sched.schedule,
+      abort: (r) => {
+        reason = r;
+      },
+    });
+    await sched.tick(); // t=0 anchor at sha1
+    clock = 150;
+    head = "sha2";
+    await sched.tick(); // commit → hard cap re-anchors to 150
+    clock = 300;
+    volume = 20;
+    await sched.tick(); // 300-150=150 < 200 → alive (edits within the re-anchored cap)
+    expect(reason).toBeUndefined();
+    clock = 350;
+    volume = 30;
+    await sched.tick(); // 350-150=200 >= hardCapMs, no further commit → abort
+    expect(reason).toBe("hard-cap");
+  });
+
+  it("reports 'stalled' (not 'hard-cap') when the plain soft deadline expires first", async () => {
+    let clock = 0;
+    const sched = manualScheduler();
+    let reason: string | undefined;
+    startAttemptGuard({
+      capMs: 100,
+      intervalMs: 50,
+      hardCapMs: 200,
+      headProbe: async () => "sha-static",
+      progressProbe: async () => 42, // frozen volume → no edit signal
+      now: () => clock,
+      schedule: sched.schedule,
+      abort: (r) => {
+        reason = r;
+      },
+    });
+    await sched.tick(); // anchor
+    clock = 100;
+    await sched.tick(); // soft cap expires with no commit and no edit
+    expect(reason).toBe("stalled");
+  });
+
+  it("without hardCapMs, continuous edits extend indefinitely (ADR 0051 behaviour unchanged)", async () => {
+    let clock = 0;
+    let volume = 10;
+    const sched = manualScheduler();
+    let aborted = false;
+    startAttemptGuard({
+      capMs: 100,
+      intervalMs: 50,
+      headProbe: async () => "sha-static",
+      progressProbe: async () => volume,
+      now: () => clock,
+      schedule: sched.schedule,
+      abort: () => {
+        aborted = true;
+      },
+    });
+    await sched.tick();
+    for (const [t, v] of [
+      [90, 20],
+      [180, 30],
+      [600, 40],
+      [1200, 50],
+    ] as const) {
+      clock = t;
+      volume = v;
+      await sched.tick();
+      expect(aborted).toBe(false);
+    }
+  });
+});
+
+describe("runAgent — hard cap wiring (issue #637)", () => {
+  it("returns the 'timeout' outcome when the hard cap aborts an editing-but-never-committing run", async () => {
+    let clock = 0;
+    let volume = 0;
+    const sched = manualScheduler();
+    const controller = new AbortController();
+    const deps: SandcastleDeps = {
+      ...makeDeps(
+        (o) =>
+          new Promise<RunResult>((_resolve, reject) => {
+            o.signal?.addEventListener("abort", () => reject(o.signal?.reason ?? new Error("aborted")));
+          }),
+      ),
+      now: () => clock,
+      schedule: sched.schedule,
+      makeAbortController: () => controller,
+    };
+    const p = runAgent(deps, {
+      ...baseInput,
+      attemptTimeoutSeconds: 1,
+      attemptHardCapSeconds: 2,
+      headProbe: async () => "static",
+      progressProbe: async () => ++volume, // an edit every poll → soft deadline never expires
+    });
+    await sched.tick(); // anchor
+    clock = 1000;
+    await sched.tick(); // soft cap held open by the edit signal → alive
+    clock = 2000;
+    await sched.tick(); // hard cap (2s) since anchor with no commit → abort
+    const res = await p;
+    expect(res.outcome).toBe("timeout");
+    expect(controller.signal.reason).toBeInstanceOf(Error);
+    expect(String((controller.signal.reason as Error).message)).toContain("hard cap");
+  });
+});
+
 // ---- lane-idle stall reaper wiring (issue #363) ----
 
 describe("runAgent — lane-idle reaper wiring", () => {
