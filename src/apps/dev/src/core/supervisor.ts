@@ -315,9 +315,11 @@ export interface SupervisorFs {
    * Mirrors reap_stalled_slot step 4. */
   teardownIterDir(info: IterDirInfo): Promise<void>;
   /** Worker IDs + their claimed (iterDir, issue) pairs that occupied a parked
-   * slot, parsed from the slot log + per-worker state. Mirrors
+   * slot. Resolved first from the per-slot boot-stamp log; falls back to the
+   * slot's last known PID (worker.pid match) when the log yields no workers
+   * (the native supervisor never writes the boot-stamp). Mirrors
    * parse_worker_ids_from_log + iter_dirs_for_worker + iter_dir_issue_number. */
-  parkedSlotWork(slot: number): SweepWork;
+  parkedSlotWork(slot: number, lastPid: number | null): SweepWork;
   /** Remove a swept iter dir (rm -rf). Mirrors the per-pair `rm -rf "$dir"`. */
   removeDir(path: string): Promise<void>;
 }
@@ -591,7 +593,9 @@ export async function sweepParkedSlot(
   if (state.swept) return;
   state.swept = true;
 
-  const work = deps.fs.parkedSlotWork(slot);
+  // state.pid is the last dead worker's PID — the fs layer uses it as a
+  // fallback when the slot log has no boot-stamp (native fleet path).
+  const work = deps.fs.parkedSlotWork(slot, state.pid);
   if (work.workers.length === 0) return;
 
   const workerIdsCsv = work.workers.map((w) => w.workerId).join(",");

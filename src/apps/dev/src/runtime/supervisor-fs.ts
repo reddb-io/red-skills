@@ -221,25 +221,55 @@ export function resolveIterDirInfo(
 }
 
 /**
- * parkedSlotWork backing: every worker ID seen in the slot log → its iter dirs
- * → each dir's claimed issue. Mirrors the sweep_parked_slot collection. Empty
- * workers list when the slot log named none (no-op sweep upstream).
+ * parkedSlotWork backing: resolve every worker that occupied a parked slot and
+ * the claimed issues they held. Mirrors the sweep_parked_slot collection.
+ *
+ * Two resolution paths, tried in order:
+ *   1. Slot log: parse `[afk] worker: wXXXX` boot-stamp lines from the
+ *      per-slot log file.  Works when the worker emits the stamp before dying.
+ *   2. PID fallback (lastPid): when the log yields no workers, resolve the
+ *      slot's last worker via its `worker.pid` file (findSlotIterDir).  This
+ *      is the primary live path for the native fleet supervisor, which routes
+ *      the child's stdout/stderr to the slot log file but never writes the
+ *      boot-stamp itself, so the log parse always returns [].
+ *
+ * Empty workers list when neither path finds a worker → no-op sweep upstream.
  */
 export function parkedSlotWorkFor(
   tmpDir: string,
-  root: string,
   slot: number,
+  lastPid: number | null = null,
 ): SweepWork {
   const supervisorLogPath = join(tmpDir, "afk-supervisor.log");
+
+  // Path 1: slot log boot-stamp parse.
   const wids = parseWorkerIdsFromLog(slotLogPath(tmpDir, slot));
-  const workers: SweepWorker[] = wids.map((wid) => ({
-    workerId: wid,
-    pairs: iterDirsForWorker(root, wid).map((dir) => ({
-      dir,
-      issue: iterDirIssueNumber(dir),
-    })),
+  if (wids.length > 0) {
+    const workers: SweepWorker[] = wids.map((wid) => ({
+      workerId: wid,
+      pairs: iterDirsForWorker(tmpDir, wid).map((dir) => ({
+        dir,
+        issue: iterDirIssueNumber(dir),
+      })),
+    }));
+    return { workers, supervisorLogPath };
+  }
+
+  // Path 2: PID-based fallback — resolve the last worker via worker.pid match.
+  const iterDir = findSlotIterDir(tmpDir, lastPid);
+  if (iterDir === null) return { workers: [], supervisorLogPath };
+
+  const parsed = parseWorkerAttemptPath(iterDir);
+  if (parsed === null) return { workers: [], supervisorLogPath };
+
+  const pairs = iterDirsForWorker(tmpDir, parsed.worker).map((dir) => ({
+    dir,
+    issue: iterDirIssueNumber(dir),
   }));
-  return { workers, supervisorLogPath };
+  return {
+    workers: [{ workerId: parsed.worker, pairs }],
+    supervisorLogPath,
+  };
 }
 
 /** Best-effort worktree teardown + iter-dir removal for a reaped slot. Mirrors

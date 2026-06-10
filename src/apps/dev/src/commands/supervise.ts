@@ -257,7 +257,7 @@ function buildSupervisorDeps(
       teardownIterDir: async (info) => {
         await teardownIterDirNative(info, root);
       },
-      parkedSlotWork: (slot) => parkedSlotWorkFor(tmpDir, root, slot),
+      parkedSlotWork: (slot, lastPid) => parkedSlotWorkFor(tmpDir, slot, lastPid),
       removeDir: async (path) => {
         try {
           await removeDirNative(path);
