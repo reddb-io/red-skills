@@ -233,6 +233,10 @@ function buildSupervisorDeps(
         });
         // Close the parent's copy — the child inherits it and keeps it open.
         closeSync(slotFd);
+        child.on("exit", (code) => {
+          // null means killed by signal; treat as non-clean (1).
+          slotExitCodes.set(slot, code ?? 1);
+        });
         child.unref();
         const pid = child.pid ?? 0;
         slotPids.set(slot, pid);

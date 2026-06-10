@@ -6,6 +6,18 @@ Upstream base: `mattpocock/skills@aaf2453fbdfe7a15c07f11d861224f34ab4b53cb` (see
 
 ---
 
+## afk (engineering) — idle queue does not park fleet permanently; clean drain exempt from fast-death ring (#578)
+
+- **status**: modified
+- **upstream**: —
+- **why**: An empty `ready-for-agent` queue made `run --once` exit within seconds (NO_MORE_TASKS / exit 0). The supervisor did not capture the exit code and classified the clean exit as a sub-30s fast-death, so a drained fleet tripped the circuit breaker and parked every slot permanently with no un-park path.
+- **what changed**:
+  - `src/apps/dev/src/commands/supervise.ts`: track each child's exit code in a `slotExitCodes` Map; expose it via `lastExitCode(slot)` on `SupervisorProc`.
+  - `src/apps/dev/src/core/supervisor.ts`: (1) `handleDeadSlot` checks `lastExitCode` — exit 0 (NO_MORE_TASKS) bypasses `recordDeath` entirely so the fast-death ring never fills on idle drains; (2) clean drain with empty queue enters new `idleParked` state (no sweep, no discard envelope, no respawn timer); (3) clean drain with non-empty queue respawns immediately without feeding the breaker; (4) each superviseTick fetches `readyQueueDepth` once and un-parks `idleParked` slots when depth > 0; (5) `spawning` flag on `SlotState` prevents a double-spawn if a tick is abandoned mid-`spawnSlot`; (6) `pollStallDetector` skips idle-parked slots; (7) `fleetSlotCounts` counts both `parked` and `idleParked` in `slotsParked`.
+  - `src/apps/dev/tests/supervisor.test.ts`: 14 new tests covering idle-drain-does-not-trip, exit-0-not-fast-death, queue-refill-unparks-idle, and spawning-guard double-spawn prevention.
+
+---
+
 ## afk (engineering) — circuit-tripped slot restores claimed issue; boot-stamp makes sweep reliable (#577)
 
 - **status**: modified
