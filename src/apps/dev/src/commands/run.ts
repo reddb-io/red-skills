@@ -251,6 +251,17 @@ function makeBootReconcileRunner(
       remoteGit: gitx.gitExec(gitCtx),
       pnpm: feedback.pnpm,
       layout: feedback.layout,
+      // Isolated landing worktree for the LOCKED reconcile-land (#572): the merge
+      // /push/rollback runs in a throwaway detached worktree, never the primary.
+      makeLandingWorktree: async (base: string) => {
+        const slot = parseSlot(process.env.RED_AFK_SLOT) ?? 0;
+        const slug = base.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "base";
+        const dest = join(paths.tmpDir, "landing", `${slug}-boot-${slot}`);
+        await gitx.worktreeRemove(gitCtx, dest);
+        const ok = await gitx.worktreeAdd(gitCtx, dest, base);
+        return ok ? dest : null;
+      },
+      removeLandingWorktree: (dir: string) => gitx.worktreeRemove(gitCtx, dir),
       envelope: {
         git: gitx.gitExec(gitCtx),
         poster: async (issue, body) => {
@@ -561,24 +572,39 @@ export function buildProcessDeps(
     fallbackRunner,
     waitForReview,
     // One-shot merge-conflict resolver (merge_resolve_conflict): re-enter the
-    // configured runner in the primary checkout with the resolver prompt. The
-    // merge primitive verifies git state afterwards, so a non-zero / thrown
-    // runner here is swallowed. Mirrors run_claude / run_codex on $PROJECT_ROOT.
-    conflictResolver: async (prompt: string) => {
+    // configured runner in the LANDING WORKTREE (`cwd`, the isolated checkout the
+    // locked merge happens in, #572) with the resolver prompt. The merge primitive
+    // verifies git state afterwards, so a non-zero / thrown runner here is
+    // swallowed. Mirrors run_claude / run_codex on the conflicted checkout.
+    conflictResolver: async (prompt: string, cwd: string) => {
       const conflictTier = resolveTier(config, runner, "think");
       const invocation =
         runner === "codex"
           ? codexSpawnArgs({
               prompt,
-              worktree: ctx.root,
+              worktree: cwd,
               lastMessagePath: join(paths.tmpDir, "merge-resolve.last"),
               model: conflictTier.model,
               effort: conflictTier.effort,
             })
-          : claudeSpawnArgs({ prompt, worktree: ctx.root });
+          : claudeSpawnArgs({ prompt, worktree: cwd });
       const { execTool } = await import("../runtime/exec.js");
-      await execTool(invocation.command, invocation.args, { cwd: ctx.root });
+      await execTool(invocation.command, invocation.args, { cwd });
     },
+    // Isolated landing worktree for the LOCKED path (#572): a detached worktree at
+    // <base> so the locked merge/push/rollback never `git -C`'s the primary
+    // checkout. The primary branch is sacred — a rejected push's `reset --hard`
+    // only rewinds this throwaway worktree, never the primary's WIP. A stale dir
+    // from a prior crash is removed first so `worktree add` does not collide.
+    makeLandingWorktree: async (base: string) => {
+      const slot = parseSlot(process.env.RED_AFK_SLOT) ?? 0;
+      const slug = base.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "base";
+      const dest = join(paths.tmpDir, "landing", `${slug}-${slot}`);
+      await gitx.worktreeRemove(gitCtx, dest);
+      const ok = await gitx.worktreeAdd(gitCtx, dest, base);
+      return ok ? dest : null;
+    },
+    removeLandingWorktree: (dir: string) => gitx.worktreeRemove(gitCtx, dir),
     hooks: {
       config,
       resolveOptions,

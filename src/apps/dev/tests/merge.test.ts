@@ -128,7 +128,8 @@ describe("landMerge (locked path)", () => {
     expect(result.ok).toBe(true);
     expect(result.rolledBack).toBe(false);
     expect(joined(calls)).toContain('git -C /repo merge --no-ff afk/wAAAA/9-x -m merge: #9 do thing');
-    expect(joined(calls)).toContain("git -C /repo push origin work-branch");
+    // Pushes the detached worktree HEAD to the target ref (#572), not a bare branch.
+    expect(joined(calls)).toContain("git -C /repo push origin HEAD:refs/heads/work-branch");
     // No rollback on the happy path.
     expect(joined(calls).some((c) => c.includes("reset --hard"))).toBe(false);
   });

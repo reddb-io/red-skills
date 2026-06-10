@@ -84,7 +84,8 @@ export async function integrateOrigin(
 
 /** Inputs for the LOCKED landing path, {@link landMerge}. */
 export interface LandMergeInput {
-  /** Repo dir passed to `git -C` (the primary checkout). */
+  /** Dir passed to `git -C` — the isolated landing worktree (#572), not the
+   * primary checkout. */
   repo: string;
   /** Remote name (e.g. `origin`). */
   remote: string;
@@ -112,6 +113,12 @@ export interface LandMergeResult {
  * push rolls the merge commit back to `preMergeSha` so the locked branch keeps
  * no orphan merge commit. No PR; nothing reaches main.
  *
+ * `repo` is an ISOLATED landing worktree (issue #572), not the primary checkout:
+ * the merge / push / rollback run on a detached HEAD there, so the `reset --hard`
+ * on a push reject can never discard the primary checkout's WIP. The push is a
+ * `HEAD:refs/heads/<target>` refspec rather than a bare `<target>` so it lands
+ * the merge commit regardless of the worktree being detached.
+ *
  * Conflict handling (the inner-agent resolver) is left to the caller — this
  * primitive surfaces a failed merge as `{ ok: false }` without pushing.
  */
@@ -130,8 +137,10 @@ export async function landMerge(exec: Exec, input: LandMergeInput): Promise<Land
   ]);
   if (merge.code !== 0) return { ok: false, rolledBack: false };
 
-  const push = await exec(["git", "-C", repo, "push", remote, target]);
+  const push = await exec(["git", "-C", repo, "push", remote, `HEAD:refs/heads/${target}`]);
   if (push.code !== 0) {
+    // The worktree is disposable — the reset only rewinds the detached HEAD, it
+    // never touches the primary checkout (issue #572).
     await exec(["git", "-C", repo, "reset", "--hard", preMergeSha]);
     return { ok: false, rolledBack: true };
   }
@@ -337,7 +346,8 @@ export async function landPr(exec: Exec, input: LandPrInput): Promise<LandPrResu
 
 /** Inputs for the one-shot merge-conflict self-resolver, {@link resolveMergeConflict}. */
 export interface ResolveConflictInput {
-  /** Repo dir passed to `git -C` (the primary checkout where the merge stalled). */
+  /** Dir passed to `git -C` — the isolated landing worktree where the merge
+   * stalled (#572); also the cwd the resolver runner is dispatched in. */
   repo: string;
   /** Attempt branch whose `git merge --no-ff` left conflicts. */
   branch: string;
@@ -349,11 +359,12 @@ export interface ResolveConflictInput {
   target: string;
 }
 
-/** Dispatch the configured runner in the primary checkout with the conflict
- * resolver prompt. Best-effort — a non-zero / thrown runner is swallowed, and
- * the resolved-or-not verdict is decided afterwards by inspecting git state.
- * Injected so the resolver stays testable over a fake. */
-export type ConflictResolver = (prompt: string) => Promise<void>;
+/** Dispatch the configured runner against the landing checkout (`cwd`, the
+ * isolated landing worktree #572) with the conflict resolver prompt. Best-effort
+ * — a non-zero / thrown runner is swallowed, and the resolved-or-not verdict is
+ * decided afterwards by inspecting git state. Injected so the resolver stays
+ * testable over a fake. */
+export type ConflictResolver = (prompt: string, cwd: string) => Promise<void>;
 
 export interface ResolveConflictResult {
   /** True iff no unmerged paths remain AND the merge was committed (MERGE_HEAD
@@ -396,7 +407,8 @@ export function buildConflictPrompt(
 /**
  * One-shot inner-agent merge-conflict resolver (SKILL.md per-issue loop step 8,
  * merge_resolve_conflict). A `git merge --no-ff <branch>` into `<target>` has
- * left conflicts in the primary checkout. Capture `git status` + a truncated
+ * left conflicts in the isolated landing worktree (`repo`, #572). Capture
+ * `git status` + a truncated
  * `git diff`, dispatch the configured runner once with the resolver prompt, then
  * verify: the merge is resolved iff NO unmerged paths remain AND MERGE_HEAD has
  * cleared (the merge was committed). On either failure the caller runs
@@ -419,7 +431,7 @@ export async function resolveMergeConflict(
   const prompt = buildConflictPrompt(input, statusRes.stdout, diffRes.stdout);
 
   try {
-    await resolve(prompt);
+    await resolve(prompt, repo);
   } catch {
     // Best-effort: the git-state verdict below is the real gate.
   }

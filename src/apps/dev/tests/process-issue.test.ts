@@ -296,6 +296,10 @@ function harness(opts: HarnessOptions = {}): {
           if (opts.conflictResolve === "resolve") mergeResolved = true;
         }
       : undefined,
+    // Isolated landing worktree for the LOCKED path (#572): a fixed fake dir so
+    // the locked merge/push/rollback runs there instead of the primary checkout.
+    makeLandingWorktree: async () => "/wt",
+    removeLandingWorktree: async () => {},
     hooks: {
       config,
       resolveOptions: {

@@ -255,6 +255,15 @@ export interface ProcessIssueDeps {
    */
   conflictResolver?: ConflictResolver;
   /**
+   * Provision/tear down an isolated detached worktree at `<base>` for the LOCKED
+   * landing (issue #572). The locked merge/push/rollback runs there so a push
+   * reject's `reset --hard` can never discard the primary checkout's WIP. The CLI
+   * binds these to `git worktree add --detach` / `git worktree remove`; absent →
+   * the locked landing is refused (never falls back to mutating the primary).
+   */
+  makeLandingWorktree?(base: string): Promise<string | null>;
+  removeLandingWorktree?(dir: string): Promise<void>;
+  /**
    * Opt-in advisory-review wait for the UNLOCKED admin-PR landing
    * (`afk.merge.wait_for_review`, ADR 0048). Resolved from config by the CLI:
    * present → the landing holds until the configured review check concludes
@@ -989,10 +998,11 @@ export async function processIssue(
     {
       mergeExec: deps.mergeExec,
       remoteGit: deps.remoteGit,
-      headShortSha: () => deps.git.headShortSha(),
       fireHook,
       conflictResolver: deps.conflictResolver,
       waitForReview: deps.waitForReview,
+      makeLandingWorktree: deps.makeLandingWorktree,
+      removeLandingWorktree: deps.removeLandingWorktree,
     },
     {
       locked,
@@ -1014,7 +1024,10 @@ export async function processIssue(
   }
 
   // ---- 7. close: envelope(done) → gh close + remove running → delete remote ----
-  const mergeSha = await deps.git.headShortSha();
+  // The locked landing runs in an isolated worktree (#572) so the primary HEAD no
+  // longer advances — prefer the merge sha doLanding captured there, falling back
+  // to the primary HEAD for the unlocked path (which best-effort fast-forwards it).
+  const mergeSha = landing.mergeSha ?? (await deps.git.headShortSha());
   const durationS = deps.nowEpoch() - startedEpoch;
   // Write the machine-readable validation sidecar ($ITER_DIR/validation.jsonl,
   // SKILL.md) the Memory bridge consumes. Best-effort: never fails the close.
