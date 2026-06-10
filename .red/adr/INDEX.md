@@ -31,7 +31,7 @@ stale notes inline.
 
 ## AFK execution & lifecycle
 - **0003** Native task surface mirrors AFK worker state
-- **0008** `/afk` merges into the pinned branch, not always main
+- **0008** `/afk` merges into the pinned branch, not always main — *implementation superseded by **0030** (lock-toggled landing); pinned-branch decision stands*
 - **0015** Fleet supervisor is runner-portable; observability degrades per runner
 - **0017** AFK records Reasoning attempts into Memory Graph best-effort
 - **0026** AFK exposes lifecycle hooks as shell interceptors — extended by **0045** with the periodic `on_heartbeat` hook

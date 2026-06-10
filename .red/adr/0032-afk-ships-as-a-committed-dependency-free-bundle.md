@@ -1,5 +1,9 @@
 # AFK ships as a committed, dependency-free bundle built outside the plugin tree
 
+## Status
+
+accepted. **⚠ Stale on implementation details:** This ADR describes the build and packaging model, which remains current (single committed `plugins/dev/skills/engineering/afk/bin/afk.mjs`). However, some implementation details reference the deleted bash runtime or incomplete TS port state (e.g. "two runtimes / runLegacy"). The port is complete — the TypeScript runtime is live, bash is deleted (commit 3d92d56), and the bundle inlines dependencies as designed. Read `src/apps/dev/` for the current build/runtime.
+
 ## Context
 
 The AFK skill is being ported from ~9k lines of shell (`scripts/*.sh`) to a

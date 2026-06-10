@@ -2,7 +2,7 @@
 
 ## Status
 
-accepted.
+accepted. **⚠ Stale on bash implementation:** ADR references shell code (`afk.sh`, `lib/attempt-reader.sh`) from the deleted bash runtime (commit 3d92d56). The decision — the `<promise>` sentinel is the canonical attempt-exit signal and pipe EOF / process exit are only crash detectors — is realised through sandcastle's `RunResult.completionSignal` in the TypeScript runtime. Read ADR 0033 and `src/apps/dev/` for the current implementation.
 
 ## Context
 
