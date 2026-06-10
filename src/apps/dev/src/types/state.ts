@@ -30,6 +30,10 @@ export const AfkCurrentSchema = z.object({
    * each time the inner agent's re-invocation count ticks. Lets the monitor show
    * "iter N/max" and surfaces a run burning through iterations re-validating. */
   iteration: z.union([z.number(), z.string()]).optional().default(""),
+  /** Resolved base branch (lock > pin > main) for this attempt. Persisted on
+   * first heartbeat so the monitor/statusline fallback diffstat uses the correct
+   * ref instead of hardcoding origin/main. */
+  base: z.string().default(""),
 });
 
 export const AfkStateSchema = z.object({

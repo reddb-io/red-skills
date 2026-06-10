@@ -301,7 +301,8 @@ export function makeRunAgent(
               const gitCtx = { cwd: input.cwd ?? process.cwd() };
               const worktree = await gitx.worktreePathForBranch(gitCtx, input.branch);
               if (!worktree) return undefined;
-              const { added, removed } = await gitx.diffstatShortstat({ cwd: worktree }, "origin/main");
+              const baseRef = input.base ? `origin/${input.base}` : "origin/main";
+              const { added, removed } = await gitx.diffstatShortstat({ cwd: worktree }, baseRef);
               return added + removed;
             },
           }
@@ -398,7 +399,8 @@ export async function collectMonitorInputs(root = process.cwd()): Promise<Monito
     let added = state.current.diff_added;
     let removed = state.current.diff_removed;
     if (added === 0 && removed === 0 && state.current.worktree) {
-      const stat = await gitx.diffstatShortstat({ cwd: state.current.worktree }, "origin/main");
+      const baseRef = state.current.base ? `origin/${state.current.base}` : "origin/main";
+      const stat = await gitx.diffstatShortstat({ cwd: state.current.worktree }, baseRef);
       added = stat.added;
       removed = stat.removed;
     }
@@ -535,7 +537,8 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
     let r = state.current.diff_removed;
     if (a === 0 && r === 0 && state.current.worktree) {
       // Fallback: compute the diffstat from the worktree like statusline.sh.
-      const stat = await gitx.diffstatShortstat({ cwd: state.current.worktree }, "origin/main");
+      const baseRef = state.current.base ? `origin/${state.current.base}` : "origin/main";
+      const stat = await gitx.diffstatShortstat({ cwd: state.current.worktree }, baseRef);
       a = stat.added;
       r = stat.removed;
     }

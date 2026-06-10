@@ -685,7 +685,7 @@ export async function processIssue(
             attempt_n: attemptN,
           }),
         );
-        deps.emitHeartbeat?.(info);
+        deps.emitHeartbeat?.({ ...info, base });
       },
       // Restore the issue #191 continuous-push guarantee: sandcastle pushes the
       // worker branch up-front + after every commit (host worktree hook), so a
