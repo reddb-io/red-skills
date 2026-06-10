@@ -100,6 +100,22 @@ function parseIssueList(raw: string): number[] {
 }
 
 /**
+ * Coerce a `--issues` value into the issues filter, rejecting an all-invalid
+ * value. `--issues banana` (or any value yielding zero finite numbers) would
+ * otherwise produce `{ kind: "issues", numbers: [] }`, which `selectIssues`
+ * reads as "select nothing" — the run then silently drains only urgents (or
+ * nothing). Erroring here forces the operator to fix the typo instead of
+ * launching a worker that quietly does the wrong thing.
+ */
+function coerceIssuesFilter(raw: string): SelectionFilter {
+  const numbers = parseIssueList(raw);
+  if (numbers.length === 0) {
+    throw new RunFlagError(`--issues requires at least one valid issue number (got: ${JSON.stringify(raw)})`);
+  }
+  return { kind: "issues", numbers };
+}
+
+/**
  * Flag schema for the `run` command, expressed against the shared CLI layer
  * (`src/packages/shared/args.ts`, built over `cli-args-parser`). The coercions here
  * reproduce the exact semantics the dev suite asserts: `--prd`/`-n` map through
@@ -108,7 +124,7 @@ function parseIssueList(raw: string): number[] {
  */
 const RUN_FLAG_SCHEMA = {
   prd: { kind: "value", coerce: (raw: string): SelectionFilter => ({ kind: "prd", prd: Number(raw) }) },
-  issues: { kind: "value", coerce: (raw: string): SelectionFilter => ({ kind: "issues", numbers: parseIssueList(raw) }) },
+  issues: { kind: "value", coerce: coerceIssuesFilter },
   n: { kind: "value", coerce: (raw: string): number => Number(raw) },
   once: { kind: "boolean" },
   runner: { kind: "value", coerce: (raw: string): string => raw },
@@ -449,9 +465,14 @@ export function deriveStage(event: AgentStreamEvent): string | undefined {
   const name = event.name.toLowerCase();
   const args = event.formattedArgs.toLowerCase();
   if (/\bgit\s+commit\b/.test(args)) return "commit";
-  if (/\b(vitest|jest|pnpm[^|]*\btest\b|\btest\b)\b/.test(args)) return "tests";
+  // Tool-name classification wins for file tools BEFORE the loose args `test`
+  // match (#589): reading/grepping/editing a path that merely CONTAINS "test"
+  // (e.g. `src/test-utils.ts`) is explore/impl, not a test run. The `\btest\b`
+  // args check below is for command tools running an actual test runner.
   if (/^(edit|write|multiedit|notebookedit)$/.test(name)) return "impl";
-  if (/^(read|grep|glob)$/.test(name) || /\bgit\s+ls-files\b|\bfind\b/.test(args)) return "explore";
+  if (/^(read|grep|glob)$/.test(name)) return "explore";
+  if (/\b(vitest|jest|pnpm[^|]*\btest\b|\btest\b)\b/.test(args)) return "tests";
+  if (/\bgit\s+ls-files\b|\bfind\b/.test(args)) return "explore";
   return undefined;
 }
 

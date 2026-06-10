@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseCli } from "../src/cli.js";
+import { UnknownCommandError } from "@reddb-io/shared/args.js";
 
 describe("cli routing — native commands", () => {
   it("routes reap and __supervise without changing their args", () => {
@@ -53,5 +54,15 @@ describe("cli routing — native commands", () => {
 
   it("still defaults bare args to run", () => {
     expect(parseCli(["-n", "0"])).toEqual({ command: "run", args: ["-n", "0"] });
+  });
+
+  it("errors on a typo'd subcommand instead of launching a worker", () => {
+    expect(() => parseCli(["moniter"])).toThrow(UnknownCommandError);
+    expect(() => parseCli(["fleeet", "3"])).toThrow(/unknown command 'fleeet'/);
+  });
+
+  it("still routes flag-led and bare invocations to run (legacy /afk interface)", () => {
+    expect(parseCli(["--runner", "codex", "--once"])).toEqual({ command: "run", args: ["--runner", "codex", "--once"] });
+    expect(parseCli([])).toEqual({ command: "run", args: [] });
   });
 });

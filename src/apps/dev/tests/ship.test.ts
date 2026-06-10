@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  advisoryReviewPending,
   decideShipMergeGate,
   isShipWorktreePath,
   issueNumberFromBranch,
@@ -67,5 +68,29 @@ describe("ship helpers", () => {
     expect(isShipWorktreePath("/repo/.red/tmp/work-ship-abc/worktree")).toBe(true);
     expect(isShipWorktreePath("/repo/.red/tmp/work-ship-abc/worktree/plugins/dev")).toBe(true);
     expect(isShipWorktreePath("/repo/.red/tmp/work-abc/worktree")).toBe(false);
+  });
+});
+
+describe("advisoryReviewPending (#589 — /ship waits for in-flight advisory bot reviews)", () => {
+  it("is pending while the named review check is registered but in flight", () => {
+    expect(advisoryReviewPending([{ name: "CodeRabbit", state: "PENDING" }], "CodeRabbit")).toBe(true);
+    // gh can report an as-yet-unstarted check with a blank state.
+    expect(advisoryReviewPending([{ name: "CodeRabbit" }], "CodeRabbit")).toBe(true);
+  });
+
+  it("is not pending once the review check has concluded (any verdict)", () => {
+    expect(advisoryReviewPending([{ name: "CodeRabbit", state: "SUCCESS" }], "CodeRabbit")).toBe(false);
+    expect(advisoryReviewPending([{ name: "CodeRabbit", state: "FAILURE" }], "CodeRabbit")).toBe(false);
+    expect(advisoryReviewPending([{ name: "CodeRabbit", conclusion: "NEUTRAL" }], "CodeRabbit")).toBe(false);
+  });
+
+  it("fails open: an absent reviewer or a blank check name never wedges /ship", () => {
+    expect(advisoryReviewPending([{ name: "CI", state: "PENDING" }], "CodeRabbit")).toBe(false);
+    expect(advisoryReviewPending([], "CodeRabbit")).toBe(false);
+    expect(advisoryReviewPending([{ name: "CodeRabbit", state: "PENDING" }], "")).toBe(false);
+  });
+
+  it("matches the check by case-insensitive substring", () => {
+    expect(advisoryReviewPending([{ name: "coderabbitai[bot]", state: "PENDING" }], "coderabbit")).toBe(true);
   });
 });
