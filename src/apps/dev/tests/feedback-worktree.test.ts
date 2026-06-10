@@ -58,9 +58,10 @@ describe("splitBranchDir (#437)", () => {
  * Recording fake IO: tracks every worktreeAdd/install/script/remove call so a
  * test can assert the materialise → install ordering and the install `cwd`. Pure
  * — no real subprocess is ever spawned. `installCode` scripts the `pnpm install`
- * exit so the install-failure path is exercisable.
+ * exit so the install-failure path is exercisable. `addOk` controls whether
+ * `worktreeAdd` succeeds so the worktree-add-failure path is exercisable.
  */
-function fakeIO(installCode = 0): {
+function fakeIO(installCode = 0, addOk = true): {
   io: FeedbackWorktreeIO;
   calls: Array<{ op: "add" | "install" | "script" | "remove"; dest: string }>;
 } {
@@ -68,7 +69,7 @@ function fakeIO(installCode = 0): {
   const io: FeedbackWorktreeIO = {
     worktreeAdd: async (_ctx, dest) => {
       calls.push({ op: "add", dest });
-      return true;
+      return addOk;
     },
     pnpm: async (args, opts) => {
       const isInstall = args[0] === "install";
@@ -111,17 +112,33 @@ describe("makeFeedbackWorktree install (#458)", () => {
     expect(calls.filter((c) => c.op === "install")).toHaveLength(1);
   });
 
-  it("keeps the checkout (does not fall back to root) when install fails", async () => {
+  it("blocks validation (returns exit code 1) when install fails", async () => {
     const { io, calls } = fakeIO(1);
     const fb = makeFeedbackWorktree("/root", "/root/.red/tmp/feedback", io);
 
-    await fb.pnpm(["pnpm", "-C", "afk/w1/42-fix", "test"]);
+    const result = await fb.pnpm(["pnpm", "-C", "afk/w1/42-fix", "test"]);
     await fb.cleanup();
 
-    // A failed install still registers the worktree for cleanup (the checkout is
-    // used, not abandoned to root), so cleanup removes it.
+    // A failed install must block: the pnpm executor returns code 1.
+    expect(result.code).toBe(1);
+    // The partially-created worktree is torn down immediately (not deferred to cleanup).
     expect(calls.filter((c) => c.op === "remove")).toEqual([
       { op: "remove", dest: "/root/.red/tmp/feedback/afk-w1-42-fix" },
     ]);
+    // The script was never run.
+    expect(calls.filter((c) => c.op === "script")).toHaveLength(0);
+  });
+
+  it("blocks validation (returns exit code 1) when worktree-add fails", async () => {
+    const { io, calls } = fakeIO(0, false);
+    const fb = makeFeedbackWorktree("/root", "/root/.red/tmp/feedback", io);
+
+    const result = await fb.pnpm(["pnpm", "-C", "afk/w1/42-fix", "test"]);
+
+    // A failed worktree-add must block: the pnpm executor returns code 1.
+    expect(result.code).toBe(1);
+    // No install or script should run after a failed worktree add.
+    expect(calls.filter((c) => c.op === "install")).toHaveLength(0);
+    expect(calls.filter((c) => c.op === "script")).toHaveLength(0);
   });
 });

@@ -108,38 +108,44 @@ export function makeFeedbackWorktree(
   io: FeedbackWorktreeIO = defaultIO,
 ): FeedbackWorktree {
   const gitCtx: gitx.GitContext = { cwd: root };
-  // branch -> resolved checkout path (the worktree, or root on fallback).
-  const resolved = new Map<string, string>();
+  // branch -> resolved checkout path, or null when setup failed (block all runs).
+  const resolved = new Map<string, string | null>();
   const created = new Set<string>();
 
-  async function pathFor(branch: string): Promise<string> {
+  async function pathFor(branch: string): Promise<string | null> {
     if (!branch) return root;
     const cached = resolved.get(branch);
     if (cached !== undefined) return cached;
     const dest = join(feedbackRoot, slugForBranch(branch));
     const ok = await io.worktreeAdd(gitCtx, dest, branch);
-    if (ok) {
-      // A freshly added worktree has NO node_modules. Without an install here,
-      // the feedback gate's `pnpm -C <dest> test/build` calls fail with
-      // `tsc/vite/svelte-kit: not found` — a FALSE validation failure that parks
-      // otherwise-green work as blocked:validation (#458). Install before any
-      // check can run.
-      const ins = await io.pnpm(["install", "--frozen-lockfile"], { cwd: dest });
-      if (ins.code !== 0) {
-        // Lockfile drift on the branch, or a transient registry error. Keep the
-        // checkout so validation still reflects the branch's real state instead
-        // of silently validating `main` from the primary checkout — but warn so
-        // the cause is visible in the attempt log.
-        process.stderr.write(
-          `warn: feedback worktree install failed for ${branch} (exit ${ins.code}); ` +
-            `validation may report missing binaries\n${ins.stderr.trim()}\n`,
-        );
-      }
-      created.add(dest);
+    if (!ok) {
+      process.stderr.write(
+        `error: feedback worktree add failed for ${branch}; blocking validation\n`,
+      );
+      resolved.set(branch, null);
+      return null;
     }
-    const path = ok ? dest : root;
-    resolved.set(branch, path);
-    return path;
+    // A freshly added worktree has NO node_modules. Without an install here,
+    // the feedback gate's `pnpm -C <dest> test/build` calls fail with
+    // `tsc/vite/svelte-kit: not found` — a FALSE validation failure that parks
+    // otherwise-green work as blocked:validation (#458). Install before any
+    // check can run.
+    const ins = await io.pnpm(["install", "--frozen-lockfile"], { cwd: dest });
+    if (ins.code !== 0) {
+      // Lockfile drift on the branch, or a transient registry error. Remove the
+      // partial checkout eagerly and block — continuing would silently validate
+      // the wrong environment (binaries absent, wrong lockfile).
+      await io.worktreeRemove(gitCtx, dest);
+      process.stderr.write(
+        `error: feedback worktree install failed for ${branch} (exit ${ins.code}); ` +
+          `blocking validation\n${ins.stderr.trim()}\n`,
+      );
+      resolved.set(branch, null);
+      return null;
+    }
+    created.add(dest);
+    resolved.set(branch, dest);
+    return dest;
   }
 
   // The layout probe only needs the package topology, which is identical across
@@ -179,6 +185,9 @@ export function makeFeedbackWorktree(
     if (cIdx >= 0 && args[cIdx + 1] !== undefined) {
       const { branch, scope } = splitBranchDir(args[cIdx + 1]!, layout.hasPackage);
       const base = await pathFor(branch);
+      if (base === null) {
+        return { code: 1, stdout: "", stderr: `feedback worktree setup failed for ${branch}; validation blocked` };
+      }
       const rewritten = scope === "." ? base : join(base, scope);
       const rest = args.filter((_, i) => i !== 0 && i !== cIdx && i !== cIdx + 1);
       const r = await io.pnpm(["-C", rewritten, ...rest], { cwd: root });
@@ -199,6 +208,9 @@ export function makeFeedbackWorktree(
   // deadlocking the worker (PRD #567).
   const backpressure: BackpressureExec = async ({ command, cwd, timeoutMs }) => {
     const dir = await pathFor(cwd);
+    if (dir === null) {
+      return { code: 1, stdout: "", stderr: `feedback worktree setup failed for ${cwd}; validation blocked` };
+    }
     const r = await io.exec("sh", ["-c", command], { cwd: dir, timeoutMs });
     return { code: r.code, stdout: r.stdout, stderr: r.stderr };
   };
