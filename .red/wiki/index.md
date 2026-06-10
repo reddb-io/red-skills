@@ -80,6 +80,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [feat(afk): typed blocked:<reason> labels (descriptive, auto-classified)](./pages/293-feat-afk-typed-blocked-reason-labels-descriptive-auto-classi.md)
 - [feat(bench): memory bench eval spine — single-hop, fixed-pack, exact-match/F1, JSONL (#334)](./pages/425-feat-bench-memory-bench-eval-spine-single-hop-fixed-pack-exa.md)
 - [feat(brain): add the brain plugin (project-local knowledge repository)](./pages/422-feat-brain-add-the-brain-plugin-project-local-knowledge-repo.md)
+- [feat(brain): scheduled channel-event ingestion via EventArtifactMapper](./pages/648-feat-brain-scheduled-channel-event-ingestion-via-eventartifa.md)
 - [feat(config): unify plugin config under .red/config.yaml (plugins.<name>)](./pages/390-feat-config-unify-plugin-config-under-red-config-yaml-plugin.md)
 - [feat(dev): add retake apply mode](./pages/533-feat-dev-add-retake-apply-mode.md)
 - [feat(dev): add retake issue resumption command](./pages/531-feat-dev-add-retake-issue-resumption-command.md)
