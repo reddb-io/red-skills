@@ -239,12 +239,13 @@ export interface RouterSchema<C extends string> {
  * rather than silently defaulting (which, for `run`, would launch a worker).
  */
 export class UnknownCommandError extends Error {
-  constructor(
-    readonly token: string,
-    readonly known: readonly string[],
-  ) {
+  readonly token: string;
+  readonly known: readonly string[];
+  constructor(token: string, known: readonly string[]) {
     super(`unknown command '${token}'; expected one of: ${known.join(", ")}`);
     this.name = "UnknownCommandError";
+    this.token = token;
+    this.known = known;
   }
 }
 
