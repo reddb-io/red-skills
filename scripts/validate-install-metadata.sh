@@ -44,8 +44,23 @@ validate_plugin() {
   jq -e --arg n "$plugin" '.name == $n' "$dir/.codex-plugin/plugin.json" >/dev/null \
     || fail "$plugin: Codex plugin name must be $plugin"
 
-  jq -e '.skills == "./skills/"' "$dir/.codex-plugin/plugin.json" >/dev/null \
-    || fail "$plugin: Codex plugin must expose ./skills/"
+  # Codex `skills` is either the legacy whole-tree string ("./skills/") or, since
+  # #610, an array of published bucket paths (excluding in-progress/). Accept both;
+  # every array entry must be a ./skills/<bucket>/ path that exists on disk.
+  jq -e '
+    (.skills == "./skills/")
+    or ((.skills | type) == "array"
+        and (.skills | length) > 0
+        and ([.skills[] | type == "string" and startswith("./skills/") and endswith("/")] | all))
+  ' "$dir/.codex-plugin/plugin.json" >/dev/null \
+    || fail "$plugin: Codex plugin must expose ./skills/ or an array of ./skills/<bucket>/ paths"
+  if jq -e '(.skills | type) == "array"' "$dir/.codex-plugin/plugin.json" >/dev/null; then
+    local bucket
+    while IFS= read -r bucket; do
+      [[ -d "$dir/${bucket#./}" ]] \
+        || fail "$plugin: Codex skills bucket not found on disk: $bucket"
+    done < <(jq -r '.skills[]' "$dir/.codex-plugin/plugin.json")
+  fi
 
   local claude_mcp_path codex_mcp_path
   claude_mcp_path="$(jq -r '.mcpServers // empty' "$dir/.claude-plugin/plugin.json")"
