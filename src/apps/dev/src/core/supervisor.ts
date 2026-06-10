@@ -18,6 +18,12 @@ import { decideReaperSignal, deriveSnapshot, type ProcessSnapshotEntry } from ".
 import { buildEnvelope } from "./envelope.js";
 import { blockedLabelFor } from "./attempt-outcome.js";
 import { recoveryCap, recoveryDecision, type RecoveryEnv } from "./recovery.js";
+import {
+  LABEL_READY,
+  LABEL_RUNNING,
+  LABEL_HUMAN,
+  LABEL_RUNNER_ERROR,
+} from "./triage-labels.js";
 
 // ---------- tunables ----------
 
@@ -752,8 +758,8 @@ export async function sweepParkedSlot(
         await deps.gh.comment(pair.issue, body);
         await deps.gh.editLabels(
           pair.issue,
-          ["ready-for-agent", "runner-error"],
-          ["ready-for-human", "running"],
+          [LABEL_READY, LABEL_RUNNER_ERROR],
+          [LABEL_HUMAN, LABEL_RUNNING],
         );
       }
       await deps.fs.removeDir(pair.dir);
@@ -812,14 +818,14 @@ export async function reapStalledSlot(
     const env = deps.recoveryEnv ?? {};
     const decision = recoveryDecision("stalled", info.attempt, env);
     if (decision === "retry") {
-      await deps.gh.editLabels(info.issue, ["ready-for-agent"], ["running"]);
+      await deps.gh.editLabels(info.issue, [LABEL_READY], [LABEL_RUNNING]);
     } else {
       const typed = blockedLabelFor("stalled");
       if (typed !== null) await deps.gh.ensureLabel(typed);
       await deps.gh.editLabels(
         info.issue,
-        typed !== null ? ["ready-for-human", typed] : ["ready-for-human"],
-        ["running", "ready-for-agent"],
+        typed !== null ? [LABEL_HUMAN, typed] : [LABEL_HUMAN],
+        [LABEL_RUNNING, LABEL_READY],
       );
       const cap = recoveryCap("stalled", env);
       if (cap !== null) {

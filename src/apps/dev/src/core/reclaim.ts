@@ -11,6 +11,7 @@
 // shared worker-paths.ts parser so the nested layout stays single-sourced.
 
 import { parseWorkerAttemptPath } from "./worker-paths.js";
+import { LABEL_HUMAN, LABEL_RUNNING } from "./triage-labels.js";
 
 /** Orphan TTLs (afk.sh TTL_LONG / TTL_SHORT). */
 export const ORPHAN_TTL_LONG_S = 7 * 86400;
@@ -84,13 +85,13 @@ export function decideOrphanFate(input: OrphanInput): OrphanFate {
     };
   }
   if (input.issueState === "CLOSED") return { kind: "remove" };
-  if (input.label === "ready-for-human") {
+  if (input.label === LABEL_HUMAN) {
     return {
       kind: "keep-until",
       ttlS: input.envelopePosted ? ORPHAN_TTL_SHORT_S : ORPHAN_TTL_LONG_S,
     };
   }
-  if (input.label === "running") return { kind: "restore-and-remove" };
+  if (input.label === LABEL_RUNNING) return { kind: "restore-and-remove" };
   return { kind: "remove" };
 }
 

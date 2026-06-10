@@ -1,4 +1,5 @@
 import { issueNumberFromBranch } from "./ship.js";
+import { LABEL_HUMAN } from "./triage-labels.js";
 
 export interface RetakeIssue {
   number: number;
@@ -155,7 +156,7 @@ export function recommendRetake(facts: RetakeFacts): RetakeRecommendation {
   const matchingWorktrees = facts.worktrees.filter((worktree) => worktreeMatchesIssue(worktree, facts.issue.number));
   const dirtyWorktree = matchingWorktrees.find((worktree) => worktree.dirty);
 
-  if (labels.has("ready-for-human")) {
+  if (labels.has(LABEL_HUMAN)) {
     return {
       kind: "resolve-hitl",
       summary: "Issue is waiting for a human decision before agents can continue.",

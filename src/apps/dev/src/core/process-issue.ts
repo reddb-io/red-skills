@@ -400,9 +400,7 @@ export interface ProcessIssueResult {
 
 // ---------- the orchestration ----------
 
-const LABEL_READY = "ready-for-agent";
-const LABEL_RUNNING = "running";
-const LABEL_HUMAN = "ready-for-human";
+import { LABEL_READY, LABEL_RUNNING, LABEL_HUMAN, LABEL_DEPENDENCY } from "./triage-labels.js";
 
 /**
  * The typed `blocked:*` labels present in a label set (#402). Promoting an issue
@@ -1398,7 +1396,7 @@ async function runCloseCascade(deps: ProcessIssueDeps, closedIssue: number): Pro
 
     const plans = planCloseCascade(closedIssue, dependents);
     for (const p of plans) {
-      await deps.gh.editLabels(p.number, ["blocked:dependency"], [LABEL_READY]);
+      await deps.gh.editLabels(p.number, [LABEL_DEPENDENCY], [LABEL_READY]);
       await deps.gh.comment(p.number, p.comment);
     }
   } catch (err) {

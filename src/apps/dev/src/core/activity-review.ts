@@ -1,4 +1,5 @@
 import type { HistoryRecord } from "./history.js";
+import { LABEL_HUMAN } from "./triage-labels.js";
 
 export type ActivityReviewKind = "daily" | "weekly";
 
@@ -163,7 +164,7 @@ function lowerLabels(labels: readonly string[]): string[] {
 
 function isHitlOrBlocked(issue: ActivityReviewIssue): boolean {
   const labels = lowerLabels(issue.labels);
-  if (labels.includes("ready-for-human")) return true;
+  if (labels.includes(LABEL_HUMAN)) return true;
   if (labels.some((label) => label.startsWith("blocked:"))) return true;
   const text = [
     issue.body ?? "",
