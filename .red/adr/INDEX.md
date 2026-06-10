@@ -11,10 +11,11 @@ stale notes inline.
 > in flight; do not reclaim the number.
 
 ## Repo structure & contexts
-- **0021** Multi-context plugin glossaries — *accepted*
+- **0021** Multi-context plugin glossaries — *accepted*, includes `brain` context
 - **0034** Repo splits DEFINITIONS from IMPLEMENTATION (`src/apps/…`) — partially superseded by **0039** (entrypoints fused) and **0041** (memory leaves)
 - **0041** red-skills consumes `red-memory` + `red-ui` MCPs; stops building memory — partially supersedes 0034 *(renumbered from 0039)*
 - **0046** A single global `.red/` shared by all plugins — *superseded by 0021*
+- **0055** AFK reconcile — a no-agent worker mode that lands a parked green branch
 - **0057** `red-hermes` is a fetched black-box dependency of the `brain` plugin; `brain` context documented in **0021**
 
 ## Brain plugin & contexts
@@ -56,7 +57,7 @@ stale notes inline.
 - *(see also 0030, 0031)*
 
 ## Memory architecture & graph
-> **Post-0041 migration note:** Except for **0009** (soft-use boundary) and **0042** (plugin config), memory ADRs below document the **retired in-repo** `memory` plugin as it existed before spin-off (ADR 0041). Implementation now lives in the `red-memory` repo, bundled as an MCP; the decision record remains authoritative for red-skills architecture, but implementation details are archived here.
+> **Post-0041 migration note:** Except for **0009** (soft-use boundary) and **0042** (plugin config), the memory ADRs below (**0005, 0007, 0011, 0012, 0014, 0019–0027, 0035–0037, 0053**) document the **retired in-repo** `memory` plugin as it existed before spin-off (ADR 0041). Implementation now lives in the `red-memory` repo, bundled as an MCP; the decision record remains authoritative for red-skills architecture, but implementation details are archived here.
 
 - **0005** Memory plugin: three-layer RedDB architecture, local-first per-repo, MCP+CLI
 - **0007** RedDB graph writes go through multi-model DML, not table inserts

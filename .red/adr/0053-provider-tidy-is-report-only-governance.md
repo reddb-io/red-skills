@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted. The output of provider-backed tidy is non-canonical; graph mutations require explicit soft-merge approval gating.
+Accepted. The output of provider-backed tidy is non-canonical; graph mutations require explicit soft-merge approval gating. Implementation lives in the `red-memory` repo as of ADR 0041 spin-off.
 
 ## Context
 
