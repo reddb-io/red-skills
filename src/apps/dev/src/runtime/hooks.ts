@@ -56,9 +56,13 @@ export function makeHookResolveOptions(root: string): ResolveHooksOptions {
 }
 
 /** The RED_AFK_* env handed to every hook command. */
-export function hookEnv(repo: string, root: string): Record<string, string> {
-  return {
+export function hookEnv(repo: string, root: string, slot?: number): Record<string, string> {
+  const env: Record<string, string> = {
     RED_AFK_REPO: repo,
     RED_AFK_ROOT: root,
   };
+  if (slot !== undefined) {
+    env.RED_AFK_SLOT = String(slot);
+  }
+  return env;
 }

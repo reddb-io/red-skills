@@ -133,6 +133,19 @@ export function buildWorkerEnv(
 }
 
 /**
+ * Pin RED_AFK_SLOT on a worker env for a specific fleet slot. The base env
+ * was stripped of RED_AFK_SLOT by buildWorkerEnv (it is in PASSTHROUGH_DENYLIST
+ * so it cannot leak from one slot to another); this re-adds it per-slot so the
+ * cargo/gradle pre_worktree defaults can resolve the correct per-slot build dir.
+ */
+export function buildSlotEnv(
+  workerEnv: Record<string, string>,
+  slot: number,
+): Record<string, string> {
+  return { ...workerEnv, RED_AFK_SLOT: String(slot) };
+}
+
+/**
  * Parse the supervisor's own argv (forwarded by fleet.ts) into the filter /
  * runner-swap policy flags each slot's `run --once` must carry, so a supervised
  * fleet honours the same PRD/issue filter + alternate/fallback policy a single
@@ -227,7 +240,7 @@ function buildSupervisorDeps(
         const slotFd = openSync(slotLogFile, "a");
         const child = spawn(process.execPath, [bundle, ...runArgs], {
           cwd: root,
-          env: workerEnv,
+          env: buildSlotEnv(workerEnv, slot),
           detached: true,
           stdio: ["ignore", slotFd, slotFd],
         });
@@ -250,7 +263,7 @@ function buildSupervisorDeps(
         ];
         const child = spawn(process.execPath, [bundle, ...runArgs], {
           cwd: root,
-          env: workerEnv,
+          env: buildSlotEnv(workerEnv, slot),
           detached: true,
           stdio: ["ignore", logFd, logFd],
         });
