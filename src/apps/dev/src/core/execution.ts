@@ -15,6 +15,7 @@
 import type { AgentStreamEvent, RunOptions, RunResult } from "@ai-hero/sandcastle";
 import { isRunnerExhausted } from "./runner-spawn.js";
 import { startLaneIdleReaper, DEFAULT_STALL_POLL_S } from "./lane-idle-reaper.js";
+import { openCodeAuthEnv, resolveOpenCodeAuth } from "./opencode-env.js";
 
 // Re-exported so process-issue / run can type their agent-event sink without
 // importing the sandcastle package directly (execution.ts is the single seam
@@ -22,12 +23,16 @@ import { startLaneIdleReaper, DEFAULT_STALL_POLL_S } from "./lane-idle-reaper.js
 export type { AgentStreamEvent } from "@ai-hero/sandcastle";
 
 // The runners with a first-class sandcastle agent provider. `opencode` (ADR
-// 0059) addresses OpenRouter through OpenCode's own `openrouter/<vendor>/<model>`
-// slug + the `OpenCodeOptions.env` auth seam; it is accepted only as an explicit
-// pin (`--runner opencode` / `RED_AFK_RUNNER=opencode`), never auto-sniffed
-// (runner-detection.ts), since no host session is OpenCode. `hermes` is a
-// runner-neutral fallback contract with NO sandcastle provider, so it is not in
-// this union — process-issue coerces it onto a backed runner before spawning.
+// 0059) is endpoint-agnostic — OpenCode itself routes `<provider>/<model>` slugs
+// to OpenAI / OpenRouter / MiniMax / any OpenAI-compatible endpoint using the
+// first set auth env-var (`OPENAI_API_KEY` > `MINIMAX_API_KEY` >
+// `OPENROUTER_API_KEY`, see `opencode-env.ts`). AFK only propagates the key
+// through `OpenCodeOptions.env`; OpenCode owns endpoint resolution. `opencode`
+// is accepted only as an explicit pin (`--runner opencode` /
+// `RED_AFK_RUNNER=opencode`), never auto-sniffed (runner-detection.ts), since
+// no host session is OpenCode. `hermes` is a runner-neutral fallback contract
+// with NO sandcastle provider, so it is not in this union — process-issue
+// coerces it onto a backed runner before spawning.
 export type AgentRunner = "claude" | "codex" | "opencode";
 export type SandboxMode = "none" | "docker" | "podman";
 export type AgentEffort = "low" | "medium" | "high" | "xhigh" | "max";
@@ -390,13 +395,17 @@ export function effortForProvider(
   return accepted.includes(effort) ? effort : undefined;
 }
 
-/** The env var carrying the OpenRouter API key into the OpenCode agent (ADR 0059). */
+/**
+ * @deprecated Retained for source-level back-compat with the #626 contract; the
+ * env-precedence resolver (`opencode-env.ts`) is the source of truth now. New
+ * callers should use `OPENCODE_AUTH_ENV_PRECEDENCE` from there.
+ */
 export const OPENROUTER_API_KEY_ENV = "OPENROUTER_API_KEY";
 
 /**
  * The subset of the sandcastle package surface `buildAgent` needs — the three
  * provider factories AFK can drive. Injected so the runner→provider mapping
- * (model slug, effort/variant gating, OpenRouter env passthrough) is unit-testable
+ * (model slug, effort/variant gating, auth env passthrough) is unit-testable
  * with fakes, without importing the package (which pulls real provider deps).
  * `defaultSandcastleDeps` supplies the real `core.{claudeCode,codex,opencode}`.
  */
@@ -415,11 +424,16 @@ export interface AgentFactories {
  *   {@link effortForProvider}); an out-of-range value is DROPPED to the provider
  *   default with a warn rather than cast through to a runtime rejection. It is
  *   passed as the provider's numeric `effort` option.
- * - **opencode** (ADR 0059): the model is OpenCode's own `openrouter/<vendor>/<model>`
- *   slug, forwarded unchanged. AFK's effort maps to OpenCode's `variant` (its own
- *   reasoning knob — a free-form string, distinct from the numeric effort the
- *   other two take), so no gating applies. The OpenRouter API key is delivered
- *   through `OpenCodeOptions.env` — the auth seam — when present in `env`.
+ * - **opencode** (ADR 0059, amended): the model is `<provider>/<model>` where
+ *   the leading segment tells OpenCode which endpoint to dispatch to
+ *   (`openrouter/...`, `openai/...`, `minimax/...`, …). AFK's effort maps to
+ *   OpenCode's `variant` (its own reasoning knob — a free-form string,
+ *   distinct from the numeric effort the other two take), so no gating
+ *   applies. The auth key — whichever precedence entry is set, see
+ *   `opencode-env.ts` — is delivered through `OpenCodeOptions.env` (the auth
+ *   seam). When NO auth env-var is set, no `env` option is added; OpenCode
+ *   falls back to its own default lookup and surfaces its own auth error if no
+ *   key is available through any other channel.
  */
 export function buildAgent(
   factories: AgentFactories,
@@ -434,8 +448,8 @@ export function buildAgent(
   if (runner === "opencode") {
     const options: { variant?: string; env?: Record<string, string> } = {};
     if (requested !== undefined) options.variant = requested;
-    const key = env[OPENROUTER_API_KEY_ENV];
-    if (key) options.env = { [OPENROUTER_API_KEY_ENV]: key };
+    const authEnv = openCodeAuthEnv(resolveOpenCodeAuth(env));
+    if (authEnv) options.env = authEnv;
     return factories.opencode(model, Object.keys(options).length > 0 ? options : undefined);
   }
 
@@ -930,11 +944,13 @@ export async function defaultSandcastleDeps(): Promise<SandcastleDeps> {
     import("@ai-hero/sandcastle/sandboxes/podman"),
   ]);
   // FIX D / ADR 0059: the per-provider mapping (effort gating for claude/codex,
-  // effort→`variant` + OPENROUTER_API_KEY passthrough for opencode) lives in the
-  // pure `buildAgent`, unit-tested with fake factories. Here we just bind the real
-  // `core.*` factories and `process.env`. The casts narrow the shared option shape
-  // to each provider's option literal — `buildAgent` only ever passes options the
-  // factory accepts.
+  // effort→`variant` for opencode, and the opencode auth env passthrough) lives
+  // in the pure `buildAgent`, unit-tested with fake factories. Here we just
+  // bind the real `core.*` factories and `process.env` — `buildAgent` reads
+  // whichever of OPENAI_API_KEY / MINIMAX_API_KEY / OPENROUTER_API_KEY is set
+  // (opencode-env.ts) and forwards it through `OpenCodeOptions.env`. The casts
+  // narrow the shared option shape to each provider's option literal —
+  // `buildAgent` only ever passes options the factory accepts.
   const warn = (m: string) => console.warn(m);
   const factories: AgentFactories = {
     claudeCode: (model, options) => core.claudeCode(model, options as Parameters<typeof core.claudeCode>[1]),

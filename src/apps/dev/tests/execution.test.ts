@@ -454,8 +454,10 @@ describe("buildAgent — provider mapping (ADR 0059 opencode wiring)", () => {
     expect(warned.some((l) => l.includes("not accepted by runner 'codex'"))).toBe(true);
   });
 
-  it("maps opencode effort to `variant` and forwards the openrouter model slug unchanged", () => {
+  it("maps opencode effort to `variant` and forwards the <provider>/<model> slug unchanged", () => {
     const { calls, factories } = recorder();
+    // The leading segment is opaque to AFK — OpenCode routes it. The contract
+    // is: AFK forwards the slug as-is and lets OpenCode's dispatch decide.
     buildAgent(factories, "opencode", "openrouter/anthropic/claude-sonnet-4", { effort: "high" }, {});
     expect(calls.opencode).toEqual([
       { model: "openrouter/anthropic/claude-sonnet-4", options: { variant: "high" } },
@@ -465,7 +467,23 @@ describe("buildAgent — provider mapping (ADR 0059 opencode wiring)", () => {
     expect(calls.codex).toEqual([]);
   });
 
-  it("delivers OPENROUTER_API_KEY through OpenCodeOptions.env (the auth seam)", () => {
+  it("forwards an OpenAI-style slug without mutating it", () => {
+    const { calls, factories } = recorder();
+    buildAgent(factories, "opencode", "openai/gpt-4o-mini", undefined, { OPENAI_API_KEY: "sk-oai-123" });
+    expect(calls.opencode).toEqual([
+      { model: "openai/gpt-4o-mini", options: { env: { OPENAI_API_KEY: "sk-oai-123" } } },
+    ]);
+  });
+
+  it("forwards a MiniMax subscription slug without mutating it", () => {
+    const { calls, factories } = recorder();
+    buildAgent(factories, "opencode", "minimax/MiniMax-M3", undefined, { MINIMAX_API_KEY: "minimax-sub-456" });
+    expect(calls.opencode).toEqual([
+      { model: "minimax/MiniMax-M3", options: { env: { MINIMAX_API_KEY: "minimax-sub-456" } } },
+    ]);
+  });
+
+  it("delivers OPENROUTER_API_KEY through OpenCodeOptions.env (back-compat with #626)", () => {
     const { calls, factories } = recorder();
     buildAgent(factories, "opencode", "openrouter/x/y", { effort: "low" }, { [OPENROUTER_API_KEY_ENV]: "sk-or-123" });
     expect(calls.opencode[0]!.options).toEqual({
@@ -474,10 +492,40 @@ describe("buildAgent — provider mapping (ADR 0059 opencode wiring)", () => {
     });
   });
 
-  it("omits env when no key is present and omits variant when no effort is requested", () => {
+  it("applies env precedence OPENAI > MINIMAX > OPENROUTER when multiple keys are set (ADR 0059 amendment)", () => {
+    const { calls, factories } = recorder();
+    buildAgent(
+      factories,
+      "opencode",
+      "openai/gpt-4o-mini",
+      undefined,
+      {
+        OPENAI_API_KEY: "sk-oai",
+        MINIMAX_API_KEY: "minimax",
+        OPENROUTER_API_KEY: "sk-or",
+      },
+    );
+    // OPENAI wins; only the winning key rides in `env`.
+    expect(calls.opencode[0]!.options).toEqual({ env: { OPENAI_API_KEY: "sk-oai" } });
+  });
+
+  it("promotes MINIMAX over OPENROUTER when OpenAI is absent", () => {
+    const { calls, factories } = recorder();
+    buildAgent(
+      factories,
+      "opencode",
+      "minimax/MiniMax-M3",
+      undefined,
+      { MINIMAX_API_KEY: "minimax", OPENROUTER_API_KEY: "sk-or" },
+    );
+    expect(calls.opencode[0]!.options).toEqual({ env: { MINIMAX_API_KEY: "minimax" } });
+  });
+
+  it("omits env when no precedence entry is set and omits variant when no effort is requested", () => {
     const { calls, factories } = recorder();
     buildAgent(factories, "opencode", "openrouter/x/y", undefined, {});
-    // No effort and no key → no options object at all (provider defaults apply).
+    // No effort and no key → no options object at all (provider defaults apply;
+    // OpenCode surfaces its own auth error in the agent's environment).
     expect(calls.opencode).toEqual([{ model: "openrouter/x/y", options: undefined }]);
   });
 
