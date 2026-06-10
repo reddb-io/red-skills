@@ -161,6 +161,12 @@ export interface BootLookups {
   blockerState: BlockerStateLookup;
   /** Straggler per-bucket count lookups (boot-sweep.ts StragglerCountLookup). */
   straggler: StragglerCountLookup;
+  /** True when the issue's local claim lock (`.red/tmp/claims/{N}/pid`) names a
+   * LIVE process (#644). Optional: absent → false (restore behaviour
+   * unchanged). The orphan sweep consults this before a restore-and-remove so
+   * a claim-race loser's debris dir can never clobber the live winner's
+   * `running` label back to ready-for-agent. */
+  claimHolderAlive?: (issue: number) => Promise<boolean>;
 }
 
 /** Outcome of one boot reconcile run — a coarser view of `ReconcileResult`
@@ -439,14 +445,25 @@ async function runOrphanCleanup(
       await deps.fs.removeDir(dir.path);
       removed.push(dir.path);
     } else if (fate.kind === "restore-and-remove") {
-      await deps.gh.editLabels(dir.issue!, ["running"], ["ready-for-agent"]);
-      await deps.gh.comment(
-        dir.issue!,
-        "🤖 /afk orchestrator died mid-issue; restoring ready-for-agent.",
-      );
-      restored.push(dir.issue!);
-      await deps.fs.removeDir(dir.path);
-      removed.push(dir.path);
+      // A dead attempt dir naming issue N does not prove the ISSUE is orphaned
+      // (#644): a claim-race loser leaves one behind while the winner is alive
+      // and working. Restore only when no live worker holds the claim lock;
+      // otherwise the dir is debris of a lost race → plain remove, no label
+      // edit, no recovery comment.
+      const ownedByLiveWorker = (await deps.lookups.claimHolderAlive?.(dir.issue!).catch(() => false)) ?? false;
+      if (ownedByLiveWorker) {
+        await deps.fs.removeDir(dir.path);
+        removed.push(dir.path);
+      } else {
+        await deps.gh.editLabels(dir.issue!, ["running"], ["ready-for-agent"]);
+        await deps.gh.comment(
+          dir.issue!,
+          "🤖 /afk orchestrator died mid-issue; restoring ready-for-agent.",
+        );
+        restored.push(dir.issue!);
+        await deps.fs.removeDir(dir.path);
+        removed.push(dir.path);
+      }
     } else {
       // keep-until(ttlS): remove only once the dir has aged past the TTL.
       if (dir.ageS > fate.ttlS) {

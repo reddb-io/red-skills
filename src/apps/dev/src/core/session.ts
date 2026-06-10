@@ -488,7 +488,13 @@ export async function runSession(deps: SessionDeps, ctx: SessionContext): Promis
         break;
       }
 
-      if (ctx.once) break;
+      // --once consumes the single supervised iteration only when an attempt
+      // actually ran. A lost claim race (another worker owns the issue) must
+      // skip to the next candidate (SKILL §Per-Issue Loop step 1), not burn the
+      // iteration: under the fleet supervisor every worker IS --once, so
+      // exiting here respawns a fresh worker that re-races the same head issue
+      // forever — the #644 churn that starved 2 of 3 slots.
+      if (ctx.once && result.outcome !== "claim-lost") break;
       if (ctx.alternate) activeRunner = otherRunner(activeRunner);
     }
 

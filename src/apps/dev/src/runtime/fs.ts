@@ -108,7 +108,11 @@ export async function tryAcquireClaimDir(dir: string, pid: number): Promise<bool
   return true;
 }
 
-async function claimPathHeldByLivePid(dir: string): Promise<boolean> {
+/** True when `dir` is a claim-lock dir whose recorded `pid` file names a live
+ * process — the issue is actively owned by a running worker. Exported for the
+ * boot orphan sweep (#644): a dead attempt dir naming issue N does not prove
+ * the ISSUE is orphaned when another live worker holds its claim. */
+export async function claimPathHeldByLivePid(dir: string): Promise<boolean> {
   try {
     const st = await stat(dir);
     if (!st.isDirectory()) return false;
