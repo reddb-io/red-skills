@@ -48,6 +48,7 @@ function fleetHeartbeatState(hb: FleetHeartbeat): string {
     {
       ts: hb.ts,
       epoch: hb.epoch,
+      last_progress_epoch: hb.lastProgressEpoch > 0 ? hb.lastProgressEpoch : undefined,
       runner: hb.runner,
       ready_for_agent: hb.readyForAgent,
       slots: {

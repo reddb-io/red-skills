@@ -327,6 +327,7 @@ function parseFleetState(raw: unknown): FleetState | null {
   const rec = raw as {
     ts?: unknown;
     epoch?: unknown;
+    last_progress_epoch?: unknown;
     runner?: unknown;
     ready_for_agent?: unknown;
     slots?: { busy?: unknown; free?: unknown; total?: unknown; parked?: unknown };
@@ -334,9 +335,11 @@ function parseFleetState(raw: unknown): FleetState | null {
   };
   const epoch = Number(rec.epoch ?? 0);
   if (!Number.isFinite(epoch) || epoch <= 0) return null;
+  const rawProgress = Number(rec.last_progress_epoch ?? 0);
   return {
     ts: typeof rec.ts === "string" ? rec.ts : "",
     epoch,
+    lastProgressEpoch: Number.isFinite(rawProgress) && rawProgress > 0 ? rawProgress : undefined,
     runner: typeof rec.runner === "string" ? rec.runner : "",
     readyForAgent: Number(rec.ready_for_agent ?? 0) || 0,
     slotsBusy: Number(rec.slots?.busy ?? 0) || 0,

@@ -5,7 +5,7 @@
 // never throws out of the closure.
 
 import { constants } from "node:fs";
-import { access, readFile, rm } from "node:fs/promises";
+import { access, readFile, readdir, rm } from "node:fs/promises";
 import { closeSync, openSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import type { SupervisorLiveness } from "../core/supervisor.js";
@@ -114,11 +114,39 @@ export function buildWatchdogIO(
         pid,
         pidAlive: pid !== null && isLivePid(pid),
         lastHeartbeatEpoch: fleet ? fleet.epoch : null,
+        lastProgressEpoch: fleet?.lastProgressEpoch ?? null,
+        slotsBusy: fleet?.slotsBusy ?? 0,
       };
     },
 
     killTree: async (pid) => {
       await killTreeAndWait(pid);
+    },
+
+    killWorkers: async () => {
+      // Workers are spawned detached (nohup'd) so they are NOT children of the
+      // supervisor — killTree misses them. Enumerate every worker dir and kill
+      // any still-alive PID recorded in worker.pid. Best-effort per worker: a
+      // failed read or kill on one worker must not block the rest.
+      let workerDirs: string[];
+      try {
+        workerDirs = await readdir(paths.workersRoot);
+      } catch {
+        return;
+      }
+      for (const workerDir of workerDirs) {
+        const pidPath = join(paths.workersRoot, workerDir, "worker.pid");
+        try {
+          const raw = (await readFile(pidPath, "utf8")).trim();
+          if (!/^[1-9][0-9]*$/.test(raw)) continue;
+          const workerPid = Number(raw);
+          if (isLivePid(workerPid)) {
+            await killTreeAndWait(workerPid);
+          }
+        } catch {
+          // best-effort: missing/bad pid file is not an error.
+        }
+      }
     },
 
     clearControlFiles: async () => {

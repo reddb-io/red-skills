@@ -101,6 +101,9 @@ export function stampFreshFleetHeartbeat(
     {
       ts: new Date(epoch * 1000).toISOString(),
       epoch,
+      // A fresh relaunch stamp counts as progress: the new supervisor is
+      // healthy until proven otherwise, so seed both epochs to `epoch`.
+      last_progress_epoch: epoch,
       runner,
       ready_for_agent: 0,
       slots: { busy: 0, free: target, total: target, parked: 0 },

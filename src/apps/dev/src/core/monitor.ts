@@ -54,6 +54,12 @@ export interface CompactWorker {
 export interface FleetState {
   ts: string;
   epoch: number;
+  /**
+   * Epoch seconds of the last non-abandoned tick (#579). 0 / absent on state
+   * files written before this field was added — treated as null (healthy) by
+   * the watchdog.
+   */
+  lastProgressEpoch?: number;
   /** Runner the fleet was launched with (default "" for pre-#407 state files). */
   runner: string;
   readyForAgent: number;
