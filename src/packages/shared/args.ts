@@ -222,6 +222,30 @@ export interface RouterSchema<C extends string> {
    * still dropped.
    */
   keepArgvOnDefault?: boolean;
+  /**
+   * When true, a leading token that is a non-flag positional (does not start
+   * with `-`) and matches no command throws {@link UnknownCommandError} instead
+   * of falling through to `default`. Flag-led (`--prd …`) and empty invocations
+   * still reach the default command — only a typo'd subcommand errors. Off by
+   * default to preserve the permissive fall-through.
+   */
+  errorOnUnknownCommand?: boolean;
+}
+
+/**
+ * Raised by {@link routeCommand} when `errorOnUnknownCommand` is set and the
+ * leading token looks like a subcommand (a non-flag positional) but matches no
+ * known command — e.g. a typo such as `moniter`. Lets the CLI fail loudly
+ * rather than silently defaulting (which, for `run`, would launch a worker).
+ */
+export class UnknownCommandError extends Error {
+  constructor(
+    readonly token: string,
+    readonly known: readonly string[],
+  ) {
+    super(`unknown command '${token}'; expected one of: ${known.join(", ")}`);
+    this.name = "UnknownCommandError";
+  }
 }
 
 /**
@@ -230,7 +254,9 @@ export interface RouterSchema<C extends string> {
  * If the first token matches a command name (or alias), returns that command
  * with the remaining args. Otherwise routes to `schema.default`; by default the
  * full argv is preserved (so a bare `--flag …` invocation still reaches the
- * default command with all its flags).
+ * default command with all its flags). With `errorOnUnknownCommand`, a leading
+ * non-flag positional that matches no command throws {@link UnknownCommandError}
+ * instead.
  */
 export function routeCommand<C extends string>(
   argv: readonly string[],
@@ -242,6 +268,11 @@ export function routeCommand<C extends string>(
       if (first === name || (spec.aliases ?? []).includes(first)) {
         return { command: name, args: rest };
       }
+    }
+    // A non-flag leading token that matched no command is a typo'd subcommand,
+    // not flags for the default command — error rather than silently default.
+    if (schema.errorOnUnknownCommand && !first.startsWith("-")) {
+      throw new UnknownCommandError(first, Object.keys(schema.commands));
     }
   }
   const keepArgv = schema.keepArgvOnDefault ?? true;

@@ -124,14 +124,17 @@ export async function monitorCommand(
     return 0;
   }
 
-  // Auto-monitor watchdog tick (#407): this render is an already-alive surface,
-  // so it doubles as the external recovery watchdog. A supervisor whose #406
-  // heartbeat is stale past RED_AFK_SUPERVISOR_STALE_S is hard-hung (live PID,
-  // drain loop wedged) — surface it loudly above the dashboard AND restart it.
-  // Idempotent: the relaunch stamps a fresh heartbeat, so a subsequent tick sees
-  // a healthy fleet and does not double-fire. Best-effort — a watchdog failure
-  // never blocks the dashboard render. Opt out with RED_AFK_WATCHDOG=0.
-  if (process.env.RED_AFK_WATCHDOG !== "0") {
+  // Recovery watchdog (#407): a supervisor whose #406 heartbeat is stale past
+  // RED_AFK_SUPERVISOR_STALE_S is hard-hung (live PID, drain loop wedged), and
+  // the watchdog tears it down and relaunches a fresh fleet. That is a real
+  // side effect, so `monitor` — a read-only dashboard the operator reaches for
+  // to *observe* the fleet — must NOT run it by default (#589): an inspect must
+  // never start/stop a supervisor. It is now strictly OPT-IN, for a caller that
+  // wants the dashboard to double as the recovery tick (`monitor --watchdog`,
+  // or RED_AFK_WATCHDOG=1 for a recurring loop). Best-effort — a watchdog
+  // failure never blocks the render.
+  const watchdogRequested = args.includes("--watchdog") || process.env.RED_AFK_WATCHDOG === "1";
+  if (watchdogRequested) {
     try {
       const supervisorCfg = resolveSupervisorConfig();
       await runWatchdog(buildWatchdogIO(cwd, stdout), supervisorCfg.supervisorStaleS, supervisorCfg.progressStaleS);

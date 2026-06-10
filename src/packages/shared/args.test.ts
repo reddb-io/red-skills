@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseFlags, parseLooseArgs, routeCommand, type FlagSchema, type RouterSchema } from "./args.js";
+import { parseFlags, parseLooseArgs, routeCommand, UnknownCommandError, type FlagSchema, type RouterSchema } from "./args.js";
 
 const SCHEMA = {
   prd: { kind: "value", coerce: (raw: string) => Number(raw) },
@@ -133,5 +133,29 @@ describe("routeCommand", () => {
   it("drops the leading token on default when keepArgvOnDefault is false", () => {
     const drop: RouterSchema<Cmd> = { commands: { run: {}, monitor: {}, fleet: {}, reap: {} }, default: "run", keepArgvOnDefault: false };
     expect(routeCommand(["weird", "--once"], drop)).toEqual({ command: "run", args: ["--once"] });
+  });
+
+  describe("errorOnUnknownCommand", () => {
+    const strict: RouterSchema<Cmd> = {
+      commands: { run: {}, monitor: {}, fleet: {}, reap: {} },
+      default: "run",
+      keepArgvOnDefault: true,
+      errorOnUnknownCommand: true,
+    };
+
+    it("throws on a typo'd subcommand (non-flag leading token)", () => {
+      expect(() => routeCommand(["moniter"], strict)).toThrow(UnknownCommandError);
+      expect(() => routeCommand(["fleeet", "3"], strict)).toThrow(/unknown command 'fleeet'/);
+    });
+
+    it("still routes flag-led and empty invocations to the default", () => {
+      expect(routeCommand(["--runner", "codex"], strict)).toEqual({ command: "run", args: ["--runner", "codex"] });
+      expect(routeCommand(["-n", "0"], strict)).toEqual({ command: "run", args: ["-n", "0"] });
+      expect(routeCommand([], strict)).toEqual({ command: "run", args: [] });
+    });
+
+    it("still peels a known command", () => {
+      expect(routeCommand(["monitor", "--once"], strict)).toEqual({ command: "monitor", args: ["--once"] });
+    });
   });
 });

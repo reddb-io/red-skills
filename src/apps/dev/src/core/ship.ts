@@ -29,9 +29,34 @@ export function decideShipMergeGate(input: ShipMergeGateInput): ShipMergeGateDec
 }
 
 export interface ShipCheck {
+  name?: string;
   state?: string;
   conclusion?: string;
   bucket?: string;
+}
+
+/**
+ * True when the named advisory review check (e.g. `CodeRabbit`) is registered
+ * on the PR but has not yet reached a terminal state. Mirrors the AFK landing
+ * path's `waitForReviewCheck` (core/merge.ts): `/ship` is the interactive
+ * sibling of that landing and must likewise hold until an advisory bot review
+ * concludes, rather than approving/merging out from under an in-flight reviewer.
+ *
+ * Fail-open by name: a check that never registers is NOT pending — an absent or
+ * misconfigured reviewer cannot wedge the finalizer. A blank `reviewCheck`
+ * disables the wait entirely. A check whose `state`/`conclusion`/`bucket` is
+ * still blank or `PENDING` counts as in-flight; anything else has concluded.
+ */
+export function advisoryReviewPending(checks: readonly ShipCheck[], reviewCheck: string): boolean {
+  const needle = reviewCheck.trim().toLowerCase();
+  if (needle === "") return false;
+  const match = checks.find((c) => String(c.name ?? "").toLowerCase().includes(needle));
+  if (match === undefined) return false;
+  const values = [match.state, match.conclusion, match.bucket]
+    .map((v) => String(v ?? "").trim().toUpperCase())
+    .filter(Boolean);
+  const concluded = values.some((v) => v !== "PENDING");
+  return !concluded;
 }
 
 const GREEN_CHECK_VALUES = new Set(["SUCCESS", "PASS", "PASSED", "NEUTRAL", "SKIPPED", "SKIPPING"]);

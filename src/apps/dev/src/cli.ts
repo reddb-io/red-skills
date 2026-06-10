@@ -12,7 +12,7 @@ import { shipCommand } from "./commands/ship.js";
 import { statuslineCommand } from "./commands/statusline.js";
 import { superviseCommand } from "./commands/supervise.js";
 import { readBuildInfo, renderVersion } from "@reddb-io/build-info";
-import { routeCommand, type RouterSchema } from "@reddb-io/shared/args.js";
+import { routeCommand, UnknownCommandError, type RouterSchema } from "@reddb-io/shared/args.js";
 
 export type CliCommand =
   | "run"
@@ -37,9 +37,12 @@ export interface ParsedCli {
 
 /**
  * Command-router schema for the dev CLI, expressed against the shared layer
- * (`src/packages/shared/args.ts`). A leading `run` is peeled like any other command;
- * any other leading token falls through to the `run` default with the full
- * argv preserved, reproducing the legacy default-`/afk` interface exactly.
+ * (`src/packages/shared/args.ts`). A leading `run` is peeled like any other
+ * command; a flag-led (`--prd …`) or empty invocation falls through to the
+ * `run` default with the full argv preserved, reproducing the legacy
+ * default-`/afk` interface. `errorOnUnknownCommand` makes a typo'd subcommand
+ * (a non-flag leading token matching no command) error instead of silently
+ * launching a worker — accidental `afk moniter` no longer drains the queue.
  */
 const CLI_ROUTER: RouterSchema<CliCommand> = {
   commands: {
@@ -60,6 +63,7 @@ const CLI_ROUTER: RouterSchema<CliCommand> = {
   },
   default: "run",
   keepArgvOnDefault: true,
+  errorOnUnknownCommand: true,
 };
 
 export function parseCli(argv: readonly string[]): ParsedCli {
@@ -68,7 +72,16 @@ export function parseCli(argv: readonly string[]): ParsedCli {
 }
 
 export async function main(argv = process.argv.slice(2)): Promise<number> {
-  const parsed = parseCli(argv);
+  let parsed: ParsedCli;
+  try {
+    parsed = parseCli(argv);
+  } catch (error) {
+    if (error instanceof UnknownCommandError) {
+      process.stderr.write(`[afk] ${error.message}\n`);
+      return 2;
+    }
+    throw error;
+  }
   if (parsed.command === "version") {
     const info = readBuildInfo("dev");
     process.stdout.write(parsed.args.includes("--json") ? `${JSON.stringify(info)}\n` : `${renderVersion(info)}\n`);
