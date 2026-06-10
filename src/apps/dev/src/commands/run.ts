@@ -883,6 +883,12 @@ export async function runCommand(options: RunOptions): Promise<number> {
   // Worker id — probe the workers root for collisions.
   const existing = new Set((await collectMonitorInputs(cwd)).workers.map((w) => w.state.worker_id));
   const workerId = genWorkerId(Math.random, (id) => existing.has(id));
+  // Emit the per-slot boot-stamp immediately so the supervisor's slot log
+  // captures this worker's ID before any failure. The circuit-trip sweep
+  // (sweepParkedSlot) parses `[afk] worker: wXXXX` lines from the slot log
+  // to resolve all workers that ran in a parked slot — this stamp must appear
+  // even when the worker fast-dies before writing worker.pid.
+  process.stdout.write(`[afk] worker: ${workerId}\n`);
 
   const facts = await collectPrecheckFacts(ctx);
   const nowS = Math.floor(Date.now() / 1000);

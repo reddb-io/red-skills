@@ -226,12 +226,14 @@ export function resolveIterDirInfo(
  *
  * Two resolution paths, tried in order:
  *   1. Slot log: parse `[afk] worker: wXXXX` boot-stamp lines from the
- *      per-slot log file.  Works when the worker emits the stamp before dying.
- *   2. PID fallback (lastPid): when the log yields no workers, resolve the
- *      slot's last worker via its `worker.pid` file (findSlotIterDir).  This
- *      is the primary live path for the native fleet supervisor, which routes
- *      the child's stdout/stderr to the slot log file but never writes the
- *      boot-stamp itself, so the log parse always returns [].
+ *      per-slot log file.  Each worker emits this stamp to stdout immediately
+ *      after generating its worker ID (before any I/O that could fail); the
+ *      supervisor routes the child's stdout/stderr to the slot log so the stamp
+ *      is captured even when the worker fast-dies before writing worker.pid.
+ *      This is the primary path for the native fleet.
+ *   2. PID fallback (lastPid): when the log yields no workers (e.g. a slot log
+ *      that predates the stamp or was rotated), resolve the slot's last worker
+ *      via its `worker.pid` file (findSlotIterDir).
  *
  * Empty workers list when neither path finds a worker → no-op sweep upstream.
  */

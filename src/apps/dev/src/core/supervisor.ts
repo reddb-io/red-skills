@@ -315,10 +315,11 @@ export interface SupervisorFs {
    * Mirrors reap_stalled_slot step 4. */
   teardownIterDir(info: IterDirInfo): Promise<void>;
   /** Worker IDs + their claimed (iterDir, issue) pairs that occupied a parked
-   * slot. Resolved first from the per-slot boot-stamp log; falls back to the
-   * slot's last known PID (worker.pid match) when the log yields no workers
-   * (the native supervisor never writes the boot-stamp). Mirrors
-   * parse_worker_ids_from_log + iter_dirs_for_worker + iter_dir_issue_number. */
+   * slot. Resolved first from the per-slot slot-log boot-stamp (`[afk] worker:
+   * wXXXX` lines the worker emits immediately on startup); falls back to the
+   * slot's last known PID (worker.pid match) when the log yields no workers.
+   * Mirrors parse_worker_ids_from_log + iter_dirs_for_worker +
+   * iter_dir_issue_number. */
   parkedSlotWork(slot: number, lastPid: number | null): SweepWork;
   /** Remove a swept iter dir (rm -rf). Mirrors the per-pair `rm -rf "$dir"`. */
   removeDir(path: string): Promise<void>;
