@@ -27,6 +27,13 @@ export interface WatchdogIO {
   liveness(): Promise<SupervisorLiveness>;
   /** kill_tree the wedged supervisor pid + its descendants. */
   killTree(pid: number): Promise<void>;
+  /**
+   * Kill all still-alive worker processes that survived the supervisor's death
+   * (#579). Workers are spawned `detached: true` (nohup'd) so they are NOT
+   * children of the supervisor and killTree misses them. Best-effort: a failed
+   * kill on one worker must not block the rest of the recovery sequence.
+   */
+  killWorkers(): Promise<void>;
   /** Remove the supervisor pid + stop control files so a relaunch is unblocked. */
   clearControlFiles(): Promise<void>;
   /** Reconcile claims/labels the wedged supervisor left so no issue is stranded
@@ -50,14 +57,15 @@ export interface WatchdogResult {
 }
 
 /**
- * Tear down a supervisor proven quiescent: kill its tree, clear the control
- * files, then reconcile any claims/labels it stranded. Order matters — the
+ * Tear down a supervisor proven quiescent: kill its tree, kill its detached
+ * workers (#579), clear the control files, then reconcile any claims/labels it
+ * stranded. Order matters — workers are killed while the supervisor is already
+ * dead so their claim-locks reflect reality by the time reconcile runs; the
  * pid/stop files are cleared BEFORE the relaunch so the fresh supervisor's
- * single-supervisor lock is not tripped by the wedged process's leftover pid
- * file, and reconcile runs after the kill so a still-live worker the wedged
- * supervisor spawned is judged dead-or-alive against reality, not a phantom.
- * Best-effort throughout: every step is wrapped so one failure never aborts the
- * rest of the recovery.
+ * single-supervisor lock is not tripped by the leftover pid file; and reconcile
+ * runs after the kill so a still-live worker is judged dead-or-alive against
+ * reality, not a phantom. Best-effort throughout: every step is wrapped so one
+ * failure never aborts the rest of the recovery.
  */
 export async function teardownWedgedSupervisor(io: WatchdogIO, pid: number | null): Promise<void> {
   if (pid !== null) {
@@ -66,6 +74,11 @@ export async function teardownWedgedSupervisor(io: WatchdogIO, pid: number | nul
     } catch {
       // best-effort: the pid may already be gone.
     }
+  }
+  try {
+    await io.killWorkers();
+  } catch {
+    // best-effort: a failed worker kill must not block the rest of recovery.
   }
   try {
     await io.clearControlFiles();
@@ -88,19 +101,29 @@ export async function teardownWedgedSupervisor(io: WatchdogIO, pid: number | nul
  * untouched — the launch pre-check handles the "refuse to stack on a healthy
  * fleet" case itself by inspecting the returned `health`.
  */
-export async function runWatchdog(io: WatchdogIO, staleS: number): Promise<WatchdogResult> {
+export async function runWatchdog(
+  io: WatchdogIO,
+  staleS: number,
+  progressStaleS: number,
+): Promise<WatchdogResult> {
   const now = io.now();
   const liveness = await io.liveness();
-  const health = classifySupervisor(liveness, now, staleS);
+  const health = classifySupervisor(liveness, now, staleS, progressStaleS);
   const staleForS = liveness.lastHeartbeatEpoch !== null ? now - liveness.lastHeartbeatEpoch : null;
 
   if (health !== "quiescent") {
     return { health, recovered: false, pid: liveness.pid, staleForS };
   }
 
+  const progressStaleForS =
+    liveness.lastProgressEpoch !== null ? now - liveness.lastProgressEpoch : null;
+  const isProgressQuiescent =
+    staleForS !== null && staleForS < staleS && progressStaleForS !== null;
+  const reason = isProgressQuiescent
+    ? `no completed tick for ${progressStaleForS}s ≥ ${progressStaleS}s with ${liveness.slotsBusy} busy slot(s) — loop spinning on abandoned ticks`
+    : `heartbeat stale ${staleForS ?? "?"}s ≥ ${staleS}s threshold`;
   io.log(
-    `⚠️  watchdog: supervisor pid=${liveness.pid ?? "?"} is QUIESCENT — heartbeat stale ` +
-      `${staleForS ?? "?"}s ≥ ${staleS}s threshold; the drain loop is wedged. Recovering.`,
+    `⚠️  watchdog: supervisor pid=${liveness.pid ?? "?"} is QUIESCENT — ${reason}. Recovering.`,
   );
   await teardownWedgedSupervisor(io, liveness.pid);
   try {

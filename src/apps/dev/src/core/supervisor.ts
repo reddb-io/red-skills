@@ -72,6 +72,17 @@ export interface SupervisorConfig {
    * non-numeric falls back to the default so a typo can never disable recovery.
    */
   supervisorStaleS: number;
+  /**
+   * RED_AFK_SUPERVISOR_PROGRESS_STALE_S — forward-progress quiescence threshold
+   * (default 900). A supervisor whose ticks keep timing out (abandoned) records no
+   * new `lastProgressEpoch` in the heartbeat; if that epoch goes this many seconds
+   * stale while slots are occupied the watchdog classifies the supervisor quiescent
+   * even though the wall-clock heartbeat epoch is fresh — loop-liveness alone is
+   * not enough proof of health. Must be strictly greater than supervisorStaleS
+   * (otherwise a stale heartbeat would already fire first). 0 / non-numeric falls
+   * back to the default so a typo can never disable the guard.
+   */
+  progressStaleS: number;
 }
 
 export const SUPERVISOR_DEFAULTS = {
@@ -85,6 +96,7 @@ export const SUPERVISOR_DEFAULTS = {
   pollIntervalS: 15,
   tickTimeoutS: 120,
   supervisorStaleS: 300,
+  progressStaleS: 900,
 } as const satisfies SupervisorConfig;
 
 /**
@@ -122,6 +134,10 @@ export function resolveSupervisorConfig(
     supervisorStaleS:
       num("RED_AFK_SUPERVISOR_STALE_S", SUPERVISOR_DEFAULTS.supervisorStaleS) ||
       SUPERVISOR_DEFAULTS.supervisorStaleS,
+    // 0 would fire the progress check instantly — floor back to the default.
+    progressStaleS:
+      num("RED_AFK_SUPERVISOR_PROGRESS_STALE_S", SUPERVISOR_DEFAULTS.progressStaleS) ||
+      SUPERVISOR_DEFAULTS.progressStaleS,
   };
 }
 
@@ -158,6 +174,23 @@ export function validateSupervisorStaleThreshold(
   }
 }
 
+/**
+ * validateSupervisorProgressThreshold — boot-time invariant for the forward-
+ * progress quiescence check (#579). The progress staleness threshold must be
+ * strictly greater than the heartbeat staleness threshold; otherwise the
+ * heartbeat check would always fire first and the progress check would never
+ * be reached. Throws when violated.
+ */
+export function validateSupervisorProgressThreshold(
+  config: Pick<SupervisorConfig, "progressStaleS" | "supervisorStaleS">,
+): void {
+  if (config.progressStaleS <= config.supervisorStaleS) {
+    throw new Error(
+      `RED_AFK_SUPERVISOR_PROGRESS_STALE_S (${config.progressStaleS}) must be > RED_AFK_SUPERVISOR_STALE_S (${config.supervisorStaleS})`,
+    );
+  }
+}
+
 // ---------- quiescence detection (pure) ----------
 
 /**
@@ -172,6 +205,17 @@ export interface SupervisorLiveness {
   pidAlive: boolean;
   /** Epoch seconds of the last #406 heartbeat, or null when none was observed. */
   lastHeartbeatEpoch: number | null;
+  /**
+   * Epoch seconds of the last NON-ABANDONED tick (#579). A tick that timed out
+   * (guardedTick returned continueResult) does NOT advance this epoch. When null
+   * the supervisor has not completed any tick yet — treated as healthy (can't
+   * prove a wedge on a freshly-launched fleet).
+   */
+  lastProgressEpoch: number | null;
+  /** Number of slots currently occupied by a live worker process, from the state
+   * file. Used by the progress-stale check: a supervisor with no busy slots is
+   * idle (not stuck), so progress staleness alone cannot prove a wedge. */
+  slotsBusy: number;
 }
 
 /**
@@ -186,21 +230,40 @@ export interface SupervisorLiveness {
 export type SupervisorHealth = "absent" | "healthy" | "quiescent";
 
 /**
- * classifySupervisor — the pure quiescence detector (#407). A live PID is
- * "quiescent" only when its last heartbeat is at least `staleS` seconds old; a
- * missing heartbeat (a freshly-launched supervisor that has not ticked yet) is
- * never enough to prove a wedge, so it stays "healthy" — the watchdog must never
- * kill a supervisor that simply has not emitted its first heartbeat. Clock skew
- * (a heartbeat stamped in the future) yields a negative age < staleS → healthy.
+ * classifySupervisor — the pure quiescence detector (#407, #579). Two checks:
+ *
+ *  1. Heartbeat stale (original #407 check): the wall-clock heartbeat epoch has
+ *     not advanced in `staleS` seconds → the supervisor process itself is hard-hung
+ *     (below the tick boundary, e.g. a stuck gh call that guardedTick cannot race).
+ *
+ *  2. Progress stale (#579): the heartbeat IS fresh but every recent tick was
+ *     abandoned (timed out / threw), so no `lastProgressEpoch` has been recorded
+ *     for `progressStaleS` seconds while slots are occupied. The supervisor is
+ *     looping but not completing its supervisory work — treated as quiescent.
+ *
+ * A missing epoch (null) means the supervisor is freshly launched and has not
+ * completed a tick yet — never enough to prove a wedge. Clock skew (a future-
+ * stamped epoch) yields a negative age < threshold → healthy.
  */
 export function classifySupervisor(
   liveness: SupervisorLiveness,
   now: number,
   staleS: number,
+  progressStaleS: number,
 ): SupervisorHealth {
   if (liveness.pid === null || !liveness.pidAlive) return "absent";
   if (liveness.lastHeartbeatEpoch === null) return "healthy";
-  return now - liveness.lastHeartbeatEpoch >= staleS ? "quiescent" : "healthy";
+  // Check 1: wall-clock heartbeat stale → hard-hung process.
+  if (now - liveness.lastHeartbeatEpoch >= staleS) return "quiescent";
+  // Check 2: progress stale with occupied slots → loop spinning on abandoned ticks.
+  if (
+    liveness.lastProgressEpoch !== null &&
+    now - liveness.lastProgressEpoch >= progressStaleS &&
+    liveness.slotsBusy > 0
+  ) {
+    return "quiescent";
+  }
+  return "healthy";
 }
 
 // ---------- circuit breaker (pure) ----------
@@ -377,6 +440,14 @@ export interface FleetHeartbeat {
   ts: string;
   /** Epoch seconds for cheap age calculations in monitor/statusline. */
   epoch: number;
+  /**
+   * Epoch seconds of the last NON-ABANDONED tick (#579). Only advances when
+   * guardedTick completes without timing out or throwing. 0 when no successful
+   * tick has been observed yet (freshly-launched supervisor whose first tick was
+   * abandoned). The watchdog checks this against progressStaleS; 0 is treated as
+   * null (healthy — can't prove a wedge on the first abandoned tick alone).
+   */
+  lastProgressEpoch: number;
   /** Runner this fleet was launched with — lets the watchdog relaunch a recovered
    * supervisor with the same runner instead of re-detecting from its own tree. */
   runner: string;
@@ -497,11 +568,18 @@ export function freshSlot(): SlotState {
 /** The whole supervisor runtime: one SlotState per target slot. */
 export interface SupervisorState {
   slots: SlotState[];
+  /**
+   * Epoch seconds of the last NON-ABANDONED tick (#579). 0 = no successful tick
+   * has been observed yet. Updated by runSupervisor after each non-abandoned
+   * guardedTick and carried into every FleetHeartbeat so the watchdog can detect
+   * a loop that spins on abandoned ticks.
+   */
+  lastProgressEpoch: number;
 }
 
 /** Build the initial runtime for `target` slots. */
 export function initSupervisorState(target: number): SupervisorState {
-  return { slots: Array.from({ length: target }, () => freshSlot()) };
+  return { slots: Array.from({ length: target }, () => freshSlot()), lastProgressEpoch: 0 };
 }
 
 // ---------- discard / no-sentinel envelopes (compose envelope.ts) ----------
@@ -571,6 +649,12 @@ export interface TickResult {
    * tick or when readyQueueDepth is unavailable). Used by emitFleetHeartbeat
    * so the queue is fetched exactly once per tick. */
   queueDepth: number;
+  /**
+   * True when the tick was abandoned — guardedTick timed out or threw. An
+   * abandoned tick does NOT advance lastProgressEpoch in the heartbeat; only
+   * ticks that complete normally are counted as "forward progress" (#579).
+   */
+  abandoned: boolean;
 }
 
 function fleetSlotCounts(state: SupervisorState): Pick<FleetHeartbeat, "slotsBusy" | "slotsFree" | "slotsTotal" | "slotsParked"> {
@@ -607,6 +691,7 @@ async function emitFleetHeartbeat(
   const heartbeat: FleetHeartbeat = {
     ts: isoFromEpoch(epoch),
     epoch,
+    lastProgressEpoch: state.lastProgressEpoch,
     runner,
     readyForAgent,
     ...fleetSlotCounts(state),
@@ -947,6 +1032,7 @@ export async function superviseTick(
     reconciledSlots: [],
     stopped: false,
     queueDepth: 0,
+    abandoned: false,
   };
 
   if (stopRequested()) {
@@ -1046,6 +1132,9 @@ export async function runSupervisor(
   // loop; refuse to boot with a threshold that could misread a slow-but-live
   // tick as quiescent.
   validateSupervisorStaleThreshold(config);
+  // The progress-stale check (#579) must fire strictly after the heartbeat-stale
+  // check, so its threshold must be greater.
+  validateSupervisorProgressThreshold(config);
 
   // Spawn the initial fleet to target.
   for (let i = 0; i < state.slots.length; i += 1) {
@@ -1067,6 +1156,11 @@ export async function runSupervisor(
       deps.proc.sleep,
       deps.log,
     );
+    // Advance the progress epoch only when the tick was NOT abandoned. An
+    // abandoned tick (timeout / throw) is loop-liveness, not work-progress.
+    if (!result.abandoned) {
+      state.lastProgressEpoch = deps.now();
+    }
     const heartbeat = await emitFleetHeartbeat(state, deps, result, config.runner);
     deps.log?.(
       `tick: slots=${state.slots.length} respawned=${result.respawned.length} ` +
@@ -1078,9 +1172,10 @@ export async function runSupervisor(
   }
 }
 
-/** A non-stop tick result (the abandon/error fallback). */
+/** A non-stop tick result (the abandon/error fallback). The `abandoned` flag
+ * tells runSupervisor not to advance lastProgressEpoch for this pass. */
 function continueResult(): TickResult {
-  return { respawned: [], deaths: [], parked: [], idleParked: [], reaped: [], reconciledSlots: [], stopped: false, queueDepth: 0 };
+  return { respawned: [], deaths: [], parked: [], idleParked: [], reaped: [], reconciledSlots: [], stopped: false, queueDepth: 0, abandoned: true };
 }
 
 /**
