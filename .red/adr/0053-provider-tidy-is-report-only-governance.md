@@ -2,11 +2,11 @@
 
 ## Status
 
-Accepted.
+accepted.
 
 ## Context
 
-Provider-backed tidy may help Memory find duplicate or near-duplicate evidence, but its output is not canonical graph evidence. Memory persists tidy results as non-canonical provider review artifacts.
+Provider-backed tidy may help Memory find duplicate or near-duplicate evidence, but its output is not canonical graph evidence. Memory persists tidy results as non-canonical provider review artifacts keyed by a fingerprint over the relevant nodes/edges plus operation and review-policy version; `memory governance` reports those recommendations read-only and degrades to deterministic output when provider tidy is unavailable.
 
 ## Decision
 
