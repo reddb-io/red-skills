@@ -56,4 +56,3 @@ export const AfkStateSchema = z.object({
 });
 
 export type AfkState = z.infer<typeof AfkStateSchema>;
-export type AfkCurrent = z.infer<typeof AfkCurrentSchema>;

@@ -8,7 +8,6 @@
   "scripts": {
     "dev": "node --import tsx src/cli.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "compile": "tsc -p tsconfig.build.json",
     "bundle": "node ../../../scripts/bundle-app.mjs --entry src/cli.ts --outfile ../../../dist/dev.bundle.min.mjs --asset dev.bundle.min.mjs --minify",
     "bundle:red-fetch": "esbuild ../../packages/shared/entrypoint-cli.ts --bundle --minify --platform=node --format=esm --target=node22 --define:__ENTRYPOINT_ROLE__='\"fetch\"' --outfile=../../../plugins/dev/hooks/red-fetch.mjs --banner:js=\"import { createRequire as __cr } from 'node:module'; const require = __cr(import.meta.url);\"",
     "bundle:entrypoint": "esbuild ../../packages/shared/entrypoint-cli.ts --bundle --minify --platform=node --format=esm --target=node22 --define:__ENTRYPOINT_ROLE__='\"run:dev\"' --outfile=../../../plugins/dev/skills/engineering/afk/bin/afk.mjs --banner:js=\"import { createRequire as __cr } from 'node:module'; const require = __cr(import.meta.url);\"",
