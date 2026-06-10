@@ -56,6 +56,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [docs: document recent operator skills](./pages/541-docs-document-recent-operator-skills.md)
 - [docs: propagate ADR record to wiki and Memory](./pages/514-docs-propagate-adr-record-to-wiki-and-memory.md)
 - [feat(afk): --boot-only dry-run + parallelize boot reads + fix smoke](./pages/324-feat-afk-boot-only-dry-run-parallelize-boot-reads-fix-smoke.md)
+- [feat(afk): OpenCode as the third runner, addressing OpenRouter (ADR 0059)](./pages/635-feat-afk-opencode-as-the-third-runner-addressing-openrouter.md)
 - [feat(afk): RED_AFK_SANDBOX env override + fix E2E smoke docker path](./pages/310-feat-afk-red-afk-sandbox-env-override-fix-e2e-smoke-docker-p.md)
 - [feat(afk): TypeScript runtime — committed bundle, release pipeline, 21 ported modules](./pages/282-feat-afk-typescript-runtime-committed-bundle-release-pipelin.md)
 - [feat(afk): add afk.merge.wait_for_review knob + document merge-without-advice policy (#431)](./pages/441-feat-afk-add-afk-merge-wait-for-review-knob-document-merge-w.md)
