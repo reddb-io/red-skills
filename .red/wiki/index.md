@@ -117,6 +117,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [fix(afk): feedback gate fails closed on worktree-add/install failure and validates origin tip](./pages/660-fix-afk-feedback-gate-fails-closed-on-worktree-add-install-f.md)
 - [fix(afk): feedback gate resolves multi-slash afk/* branches (#437)](./pages/438-fix-afk-feedback-gate-resolves-multi-slash-afk-branches-437.md)
 - [fix(afk): guard each supervise tick + per-tick heartbeat — unwedgeable fleet supervisor](./pages/408-fix-afk-guard-each-supervise-tick-per-tick-heartbeat-unwedge.md)
+- [fix(afk): guard locked landing against zero-commit branch](./pages/662-fix-afk-guard-locked-landing-against-zero-commit-branch.md)
 - [fix(afk): harden sandcastle integration (pre-mortem J/E/D/F/G/H)](./pages/328-fix-afk-harden-sandcastle-integration-pre-mortem-j-e-d-f-g-h.md)
 - [fix(afk): heartbeat/monitor diff reads the real sandcastle worktree (kills the +0 -0 phantom)](./pages/469-fix-afk-heartbeat-monitor-diff-reads-the-real-sandcastle-wor.md)
 - [fix(afk): inject RED_AFK_SLOT per fleet slot so cargo/gradle build isolation works](./pages/645-fix-afk-inject-red-afk-slot-per-fleet-slot-so-cargo-gradle-b.md)
