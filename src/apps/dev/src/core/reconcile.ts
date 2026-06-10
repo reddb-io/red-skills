@@ -135,6 +135,14 @@ export interface ReconcileDeps {
   layout: PackageLayout;
   /** One-shot inner-agent merge-conflict resolver for the LOCKED land (optional). */
   conflictResolver?: ConflictResolver;
+  /**
+   * Isolated landing-worktree provisioner/teardown for the LOCKED land (#572):
+   * the locked merge/push/rollback runs in a throwaway worktree, never the
+   * primary checkout. Threaded from process-issue's deps; absent → the locked
+   * land is refused rather than mutating the primary.
+   */
+  makeLandingWorktree?(base: string): Promise<string | null>;
+  removeLandingWorktree?(dir: string): Promise<void>;
   /** Opt-in advisory-review wait for the UNLOCKED admin-PR landing (optional). */
   waitForReview?: WaitForReviewInput;
   /** Envelope-emit IO (poster / marker writer / posted writer / git push). */
@@ -265,10 +273,11 @@ export async function reconcile(deps: ReconcileDeps, input: ReconcileInput): Pro
     {
       mergeExec: deps.mergeExec,
       remoteGit: deps.remoteGit,
-      headShortSha: () => deps.git.headShortSha(),
       fireHook: deps.fireHook ?? (async () => true),
       conflictResolver: deps.conflictResolver,
       waitForReview: deps.waitForReview,
+      makeLandingWorktree: deps.makeLandingWorktree,
+      removeLandingWorktree: deps.removeLandingWorktree,
     },
     {
       locked,
@@ -292,7 +301,10 @@ export async function reconcile(deps: ReconcileDeps, input: ReconcileInput): Pro
   }
 
   // ---- close: done envelope → gh close + drop routing/blocked labels → cleanup ----
-  const mergeSha = await deps.git.headShortSha();
+  // Prefer the sha doLanding captured (the locked landing runs in an isolated
+  // worktree, #572, so the primary HEAD no longer advances); fall back to the
+  // primary HEAD for the unlocked path.
+  const mergeSha = landing.mergeSha ?? (await deps.git.headShortSha());
   const durationS = deps.nowEpoch() - startedEpoch;
   const posted = await emitDone(deps, input, mergeSha, durationS, feedback.sidecar);
   await recordAttemptBestEffort(deps, input, "done", { durationS, mergeSha, validationSummary: feedback.sidecar.join("\n") });

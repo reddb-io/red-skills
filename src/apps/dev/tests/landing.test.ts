@@ -8,6 +8,11 @@ import type { ExecResult } from "../src/core/merge.js";
 // tests; here it has a direct surface. Every git/gh touch is the injected
 // mergeExec / remoteGit fake, and the merge hooks are the injected fireHook.
 
+// The isolated landing worktree the LOCKED path runs every git op in (#572). The
+// primary checkout (`/repo`) is never `git -C`'d destructively — see the
+// "primary checkout is sacred" suite below.
+const WT = "/wt";
+
 interface Harness {
   deps: LandingDeps;
   input: LandingInput;
@@ -15,6 +20,9 @@ interface Harness {
   mergeCalls: string[][];
   pushedAttempt: string[][];
   firedHooks: string[];
+  removedWorktrees: string[];
+  /** cwds the conflict resolver was dispatched in. */
+  resolverCwds: string[];
 }
 
 interface Opts {
@@ -27,16 +35,20 @@ interface Opts {
   mergeNoFfCode?: number;
   /** "resolve" → resolver clears the conflict; "fail" → leaves it; undefined → no resolver. */
   conflictResolve?: "resolve" | "fail";
-  /** rc the post-resolve `push <remote> <base>` returns (1 → reject → reset). */
+  /** rc the post-resolve `push <remote> HEAD:refs/heads/<base>` returns (1 → reject → reset). */
   resolvePushCode?: number;
   /** Enable the opt-in advisory-review wait (afk.merge.wait_for_review). */
   waitForReview?: boolean;
+  /** Make the landing-worktree provisioner fail (returns null). */
+  noWorktree?: boolean;
 }
 
 function harness(opts: Opts = {}): Harness {
   const mergeCalls: string[][] = [];
   const pushedAttempt: string[][] = [];
   const firedHooks: string[] = [];
+  const removedWorktrees: string[] = [];
+  const resolverCwds: string[] = [];
   let mergeResolved = false;
 
   const deps: LandingDeps = {
@@ -46,14 +58,18 @@ function harness(opts: Opts = {}): Harness {
       if (argv.includes("pr") && argv.includes("list")) {
         return { code: 0, stdout: "42\n", stderr: "" };
       }
+      // The rollback anchor + landed sha the locked worktree path reads.
+      if (j.includes("rev-parse --short HEAD")) {
+        return { code: 0, stdout: "abc1234\n", stderr: "" };
+      }
       if (opts.integrateCode !== undefined && j.includes("merge --ff-only")) {
         return { code: opts.integrateCode, stdout: "", stderr: "" };
       }
       if (opts.mergeNoFfCode !== undefined && j.includes("merge --no-ff")) {
         return { code: opts.mergeNoFfCode, stdout: "", stderr: "" };
       }
-      // The post-resolve push of the locked branch.
-      if (opts.resolvePushCode !== undefined && j === "git -C /repo push origin main") {
+      // The post-resolve push of the locked branch (from the worktree HEAD).
+      if (opts.resolvePushCode !== undefined && j === `git -C ${WT} push origin HEAD:refs/heads/main`) {
         return { code: opts.resolvePushCode, stdout: "", stderr: "" };
       }
       if (j.includes("diff --name-only --diff-filter=U")) {
@@ -73,19 +89,21 @@ function harness(opts: Opts = {}): Harness {
       pushedAttempt.push(argv);
       return { code: 0, stdout: "", stderr: "" };
     },
-    async headShortSha() {
-      return "abc1234";
-    },
     async fireHook(name) {
       firedHooks.push(name);
       return opts.abortHook !== name;
     },
     conflictResolver: opts.conflictResolve
-      ? async () => {
+      ? async (_prompt, cwd) => {
+          resolverCwds.push(cwd);
           if (opts.conflictResolve === "resolve") mergeResolved = true;
         }
       : undefined,
     waitForReview: opts.waitForReview ? { check: "CodeRabbit", sleep: async () => {} } : undefined,
+    makeLandingWorktree: async () => (opts.noWorktree ? null : WT),
+    removeLandingWorktree: async (dir) => {
+      removedWorktrees.push(dir);
+    },
   };
 
   const input: LandingInput = {
@@ -104,7 +122,7 @@ function harness(opts: Opts = {}): Harness {
     postMerge: () => "post_merge-ctx",
   };
 
-  return { deps, input, hooks, mergeCalls, pushedAttempt, firedHooks };
+  return { deps, input, hooks, mergeCalls, pushedAttempt, firedHooks, removedWorktrees, resolverCwds };
 }
 
 const joined = (calls: string[][]): string[] => calls.map((c) => c.join(" "));
@@ -146,7 +164,7 @@ describe("doLanding — happy paths", () => {
   it("locked → lands via merge --no-ff into the locked branch + push", async () => {
     const h = harness({ locked: true });
     const r = await doLanding(h.deps, h.input, h.hooks);
-    expect(r).toEqual({ ok: true, locked: true });
+    expect(r).toEqual({ ok: true, locked: true, mergeSha: "abc1234" });
     const j = joined(h.mergeCalls);
     expect(j.some((c) => c.includes("merge --no-ff afk/wAAAA/9-fix-the-thing"))).toBe(true);
     expect(j.some((c) => c.includes("pr list") || c.includes("pr merge"))).toBe(false);
@@ -160,16 +178,16 @@ describe("doLanding — happy paths", () => {
     const h = harness({ locked: true });
     h.input.base = "feature-locked";
     const r = await doLanding(h.deps, h.input, h.hooks);
-    expect(r).toEqual({ ok: true, locked: true });
+    expect(r).toEqual({ ok: true, locked: true, mergeSha: "abc1234" });
     const j = joined(h.mergeCalls);
     // Integrate step synced the lock branch, not main.
     expect(j.some((c) => c.includes("merge --ff-only origin/feature-locked"))).toBe(true);
     expect(j.some((c) => c.includes("merge --ff-only origin/main"))).toBe(false);
     // Attempt branch was merged (into current HEAD = lock-branch after the precheck fix).
     expect(j.some((c) => c.includes("merge --no-ff afk/wAAAA/9-fix-the-thing"))).toBe(true);
-    // Push targeted the lock branch, not main.
-    expect(j.some((c) => c.includes("push origin feature-locked"))).toBe(true);
-    expect(j.some((c) => c.includes("push origin main"))).toBe(false);
+    // Push targeted the lock branch (worktree HEAD → refs/heads/<base>), not main.
+    expect(j.some((c) => c.includes("push origin HEAD:refs/heads/feature-locked"))).toBe(true);
+    expect(j.some((c) => c.includes("refs/heads/main"))).toBe(false);
     expect(h.firedHooks).toEqual(["pre_merge", "post_merge"]);
   });
 });
@@ -187,13 +205,33 @@ describe("doLanding — abort / failure short-circuits", () => {
     expect(j.some((c) => c.includes("pr list"))).toBe(false);
   });
 
-  it("integrate failure → { ok:false, integrate-failed }, never lands or fires post_merge", async () => {
-    const h = harness({ locked: false, integrateCode: 1 });
+  it("integrate failure (locked, in the worktree) → { ok:false, integrate-failed }, never lands or fires post_merge", async () => {
+    // Integrate now runs only on the LOCKED path, inside the isolated worktree
+    // (#572) — the unlocked admin-PR path no longer integrates the primary at all.
+    const h = harness({ locked: true, integrateCode: 1 });
     const r = await doLanding(h.deps, h.input, h.hooks);
-    expect(r).toEqual({ ok: false, reason: "integrate-failed", locked: false });
+    expect(r).toEqual({ ok: false, reason: "integrate-failed", locked: true });
     expect(h.firedHooks).toEqual(["pre_merge"]);
     const j = joined(h.mergeCalls);
-    expect(j.some((c) => c.includes("pr list"))).toBe(false);
+    // The integrate ran against the worktree, never merged the attempt.
+    expect(j.some((c) => c.includes(`git -C ${WT} merge --ff-only origin/main`))).toBe(true);
+    expect(j.some((c) => c.includes("merge --no-ff"))).toBe(false);
+    // Even a failed locked land tears the worktree down.
+    expect(h.removedWorktrees).toEqual([WT]);
+  });
+
+  it("unlocked land succeeds on a diverged primary (no gating pre-merge ff-only)", async () => {
+    // The admin-PR merge is remote, so a diverged primary cannot fail the land
+    // (#572). integrateCode:1 fails every `merge --ff-only` — including landPr's
+    // best-effort POST-merge local fast-forward — yet the landing still succeeds:
+    // there is no longer a pre-merge integrate gating the unlocked path.
+    const h = harness({ locked: false, integrateCode: 1 });
+    const r = await doLanding(h.deps, h.input, h.hooks);
+    expect(r).toEqual({ ok: true, locked: false });
+    // It still admin-merged the PR.
+    expect(joined(h.mergeCalls).some((c) => c.includes("pr merge 42 --admin --merge"))).toBe(true);
+    // The primary checkout was never touched by a destructive op (no reset/abort).
+    expect(h.mergeCalls.every((c) => !c.includes("reset"))).toBe(true);
   });
 
   it("land failure (locked, no resolver) → { ok:false, land-failed, locked:true }", async () => {
@@ -206,32 +244,36 @@ describe("doLanding — abort / failure short-circuits", () => {
 });
 
 describe("doLanding — locked conflict self-resolve", () => {
-  it("resolver clears the conflict → lands ok, pushes the locked branch", async () => {
+  it("resolver clears the conflict → lands ok, pushes the locked branch from the worktree", async () => {
     const h = harness({ locked: true, mergeNoFfCode: 1, conflictResolve: "resolve" });
     const r = await doLanding(h.deps, h.input, h.hooks);
-    expect(r).toEqual({ ok: true, locked: true });
+    expect(r).toEqual({ ok: true, locked: true, mergeSha: "abc1234" });
     const j = joined(h.mergeCalls);
-    // the resolve path pushed the locked base.
-    expect(j).toContain("git -C /repo push origin main");
+    // the resolve path pushed the locked base from the worktree HEAD.
+    expect(j).toContain(`git -C ${WT} push origin HEAD:refs/heads/main`);
     expect(j.some((c) => c.includes("merge --abort"))).toBe(false);
+    // the resolver ran in the worktree, never the primary checkout.
+    expect(h.resolverCwds).toEqual([WT]);
     expect(h.firedHooks).toEqual(["pre_merge", "post_merge"]);
   });
 
-  it("resolver fails → aborts the merge, { ok:false, land-failed }", async () => {
+  it("resolver fails → aborts the merge in the worktree, { ok:false, land-failed }", async () => {
     const h = harness({ locked: true, mergeNoFfCode: 1, conflictResolve: "fail" });
     const r = await doLanding(h.deps, h.input, h.hooks);
     expect(r).toEqual({ ok: false, reason: "land-failed", locked: true });
     const j = joined(h.mergeCalls);
-    expect(j).toContain("git -C /repo merge --abort");
+    expect(j).toContain(`git -C ${WT} merge --abort`);
     expect(h.firedHooks).toEqual(["pre_merge"]);
   });
 
-  it("resolved but the locked push is rejected → resets to preMergeSha, land-failed", async () => {
+  it("resolved but the locked push is rejected → resets the worktree to preMergeSha, land-failed", async () => {
     const h = harness({ locked: true, mergeNoFfCode: 1, conflictResolve: "resolve", resolvePushCode: 1 });
     const r = await doLanding(h.deps, h.input, h.hooks);
     expect(r).toEqual({ ok: false, reason: "land-failed", locked: true });
     const j = joined(h.mergeCalls);
-    expect(j).toContain("git -C /repo reset --hard abc1234");
+    // The rollback rewinds the throwaway worktree, NOT the primary checkout (#572).
+    expect(j).toContain(`git -C ${WT} reset --hard abc1234`);
+    expect(j.some((c) => c.includes("git -C /repo reset --hard"))).toBe(false);
     expect(h.firedHooks).toEqual(["pre_merge"]);
   });
 
@@ -246,5 +288,69 @@ describe("doLanding — locked conflict self-resolve", () => {
     };
     const r = await doLanding(h.deps, h.input, h.hooks);
     expect(r).toEqual({ ok: false, reason: "land-failed", locked: false });
+  });
+});
+
+describe("doLanding — the primary checkout is sacred (#572)", () => {
+  // Acceptance: a push-reject rollback never `git reset --hard`s the primary
+  // working tree, and primary WIP survives a failed land. The locked merge/push/
+  // rollback all run in the isolated worktree (`/wt`); the ONLY `git -C /repo`
+  // touch is the non-destructive attempt-branch push (via remoteGit).
+  function assertPrimaryUntouched(h: Harness): void {
+    const primaryOps = h.mergeCalls.filter((c) => c.includes("-C") && c.includes("/repo"));
+    // No destructive op ever targets the primary checkout.
+    for (const op of primaryOps) {
+      expect(op.includes("reset")).toBe(false);
+      expect(op.includes("merge")).toBe(false);
+      expect(op.includes("rebase")).toBe(false);
+    }
+  }
+
+  it("locked push reject: reset --hard lands on the worktree, primary WIP is preserved", async () => {
+    // mergeNoFfCode unset → the `merge --no-ff` succeeds; the locked branch push
+    // is rejected, triggering landMerge's own reset. It must hit the worktree.
+    const h = harness({ locked: true });
+    h.deps.mergeExec = (() => {
+      const inner = h.deps.mergeExec;
+      return async (argv: string[]) => {
+        const j = argv.join(" ");
+        // Reject the locked-branch push so landMerge rolls back.
+        if (j === `git -C ${WT} push origin HEAD:refs/heads/main`) {
+          h.mergeCalls.push(argv);
+          return { code: 1, stdout: "", stderr: "rejected" };
+        }
+        return inner(argv);
+      };
+    })();
+    const r = await doLanding(h.deps, h.input, h.hooks);
+    expect(r).toEqual({ ok: false, reason: "land-failed", locked: true });
+    const j = joined(h.mergeCalls);
+    expect(j).toContain(`git -C ${WT} reset --hard abc1234`);
+    assertPrimaryUntouched(h);
+    // The throwaway worktree is always torn down.
+    expect(h.removedWorktrees).toEqual([WT]);
+  });
+
+  it("locked happy land: merge + push run in the worktree, primary untouched, worktree torn down", async () => {
+    const h = harness({ locked: true });
+    const r = await doLanding(h.deps, h.input, h.hooks);
+    expect(r).toEqual({ ok: true, locked: true, mergeSha: "abc1234" });
+    const j = joined(h.mergeCalls);
+    expect(j.some((c) => c.includes(`git -C ${WT} merge --no-ff afk/wAAAA/9-fix-the-thing`))).toBe(true);
+    expect(j).toContain(`git -C ${WT} push origin HEAD:refs/heads/main`);
+    assertPrimaryUntouched(h);
+    expect(h.removedWorktrees).toEqual([WT]);
+  });
+
+  it("locked land is REFUSED when no isolated worktree can be provisioned", async () => {
+    // Rather than fall back to mutating the primary, the locked land fails cleanly
+    // (parks to ready-for-human) so the primary checkout is never at risk.
+    const h = harness({ locked: true, noWorktree: true });
+    const r = await doLanding(h.deps, h.input, h.hooks);
+    expect(r).toEqual({ ok: false, reason: "land-failed", locked: true });
+    // Nothing merged/reset anywhere — no worktree, no land.
+    expect(h.mergeCalls.some((c) => c.includes("merge --no-ff"))).toBe(false);
+    assertPrimaryUntouched(h);
+    expect(h.firedHooks).toEqual(["pre_merge"]);
   });
 });

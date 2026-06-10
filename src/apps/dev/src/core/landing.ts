@@ -1,24 +1,26 @@
 // landing — the lock-toggled landing of a completed Attempt's worker branch
 // into its base (ADR 0030/0031). Carved out of process-issue so the
-// push → pre_merge → integrate → land → (locked conflict self-resolve) →
-// post_merge sequence lives in ONE place that owns "how lock-toggled landing
-// works", with a direct test surface of its own.
+// push → pre_merge → land → (locked conflict self-resolve) → post_merge
+// sequence lives in ONE place that owns "how lock-toggled landing works", with a
+// direct test surface of its own.
 //
-// PURE SEQUENCING over injected ports — exactly the slice process-issue used to
-// inline. The push, the merge-stage executor, the conflict resolver, the merge
-// hooks, and the headShortSha read are all injected; no real git/gh runs here.
-// The git/gh argv and the step ordering are UNCHANGED from the inline version —
-// this is a behaviour-preserving move.
+// PURE SEQUENCING over injected ports. The push, the merge-stage executor, the
+// conflict resolver, the merge hooks, and the landing-worktree provisioner are
+// all injected; no real git/gh runs here.
 //
-// Landing is lock-toggled (ADR 0030):
-//   - LOCKED   → `landMerge` (git merge --no-ff into the locked branch + push),
-//                with a one-shot inner-agent self-resolve of merge conflicts.
-//   - UNLOCKED → `landPr` (admin-merged PR carrying the attempt history).
+// Landing is lock-toggled (ADR 0030), and NEITHER path destructively touches the
+// primary checkout's working tree — the primary branch is sacred (issue #572):
+//   - LOCKED   → merge --no-ff + push + (one-shot self-resolve of conflicts) run
+//                inside an ISOLATED detached worktree at <base>, so a push
+//                reject's `reset --hard` only rewinds that throwaway checkout,
+//                never the primary's WIP.
+//   - UNLOCKED → `landPr` (admin-merged PR carrying the attempt history). The
+//                merge is remote, so no pre-merge local integrate runs — that
+//                step used to fail the whole landing on a diverged primary.
 //
 // The caller maps a non-ok result to its merge-conflict terminal-failure path.
-// On success the caller reads the FINAL merge sha (post post_merge) and runs the
-// done close — the final sha read stays in the caller to preserve the exact
-// current ordering (it is read AFTER post_merge, identical to before).
+// On success it closes; for the locked path the merge sha is carried back on the
+// result (`mergeSha`) since the primary HEAD no longer advances.
 
 import {
   integrateOrigin,
@@ -39,9 +41,6 @@ export interface LandingDeps {
   mergeExec: MergeExec;
   /** git executor for remote-branch.ts (pushAttempt). */
   remoteGit: GitExec;
-  /** git -C primary rev-parse --short HEAD — read once as the captured
-   * pre-merge tip (rollback anchor) before landing. */
-  headShortSha(): Promise<string>;
   /** Fire a lifecycle hook (pre_merge / post_merge); returns false when the hook
    * aborted. Wraps process-issue's fireHook so the landing never touches the
    * dispatcher directly. */
@@ -49,6 +48,20 @@ export interface LandingDeps {
   /** One-shot inner-agent merge-conflict resolver (locked path only). Absent →
    * a locked merge conflict goes straight to the failure path. */
   conflictResolver?: ConflictResolver;
+  /**
+   * Provision an ISOLATED, detached worktree at `<base>` for the LOCKED landing
+   * (issue #572). The locked merge / push / rollback run there instead of the
+   * primary checkout, so a `reset --hard` on a push reject can never discard the
+   * primary checkout's uncommitted/untracked WIP — the primary branch is sacred.
+   * Returns the worktree dir, or null when one could not be created (a `null`
+   * locked landing is refused rather than mutating the primary). Paired with
+   * {@link removeLandingWorktree}. Absent → the locked landing is refused too,
+   * since there is no safe checkout to operate in. The UNLOCKED path never needs
+   * it (the PR is admin-merged remotely).
+   */
+  makeLandingWorktree?(base: string): Promise<string | null>;
+  /** Tear down a worktree returned by {@link makeLandingWorktree} (best-effort). */
+  removeLandingWorktree?(dir: string): Promise<void>;
   /**
    * Opt-in advisory-review wait for the UNLOCKED admin-PR landing
    * (`afk.merge.wait_for_review`, ADR 0048). Present → landPr holds until the
@@ -86,28 +99,38 @@ export interface LandingHookContexts {
   postMerge(): string;
 }
 
-/** Result of a landing. On success the caller reads the final merge sha + runs
- * the done close; on failure the caller maps `reason` to the merge-conflict
- * terminal-failure path. `locked` echoes the path taken for the result shape. */
+/** Result of a landing. On success the caller closes; `mergeSha` carries the
+ * landed merge commit when the locked worktree path captured it (the primary
+ * checkout's HEAD no longer advances on the locked path, #572), so the caller
+ * prefers it over re-reading the primary HEAD. On failure the caller maps
+ * `reason` to the merge-conflict terminal-failure path. `locked` echoes the path
+ * taken for the result shape. */
 export type LandingResult =
-  | { ok: true; locked: boolean }
+  | { ok: true; locked: boolean; mergeSha?: string }
   | { ok: false; reason: "pre_merge-abort" | "integrate-failed" | "land-failed"; locked: boolean };
 
 /**
  * Land a completed attempt's worker branch into its base, lock-toggled. Owns the
- * whole sequence, IDENTICAL in ordering and argv to the previous inline version:
+ * whole sequence. The two landing paths diverge after the shared push + pre_merge
+ * hook — neither destructively touches the primary checkout's working tree (issue
+ * #572, the primary branch is sacred):
  *
  *   1. pushAttempt — make the worker branch's origin state certain so
  *      landMerge/landPr have a ref to merge.
  *   2. fireHook("pre_merge") — abort → { ok:false, reason:"pre_merge-abort" }.
- *   3. integrateOrigin — fail → { ok:false, reason:"integrate-failed" }.
- *   4. headShortSha — capture the integrated tip as the rollback anchor.
- *   5. landMerge (locked) | landPr (unlocked).
- *   6. locked-only one-shot conflict self-resolve (when a resolver is injected):
- *      on resolve, push the locked branch (reset on push-reject); else
- *      `git merge --abort`.
- *   7. land still failed → { ok:false, reason:"land-failed" }.
- *   8. fireHook("post_merge") → { ok:true }.
+ *
+ *   UNLOCKED → {@link landAdminPr}. The PR is admin-merged REMOTELY, so there is
+ *   nothing to integrate locally first; the prior pre-merge `merge --ff-only
+ *   origin/<base>` is dropped (it failed the whole landing on a diverged primary,
+ *   #572). landPr's own best-effort local fast-forward is the only primary touch
+ *   and never gates the land.
+ *
+ *   LOCKED → {@link landLockedInWorktree}. The merge / push / rollback run inside
+ *   an ISOLATED detached worktree (makeLandingWorktree) at `<base>`, so the
+ *   `reset --hard` on a push reject only rewinds that throwaway worktree — the
+ *   primary checkout and its WIP are never mutated. Inside it: integrateOrigin →
+ *   capture the integrated tip → landMerge → locked-only one-shot conflict
+ *   self-resolve → post_merge.
  */
 export async function doLanding(
   deps: LandingDeps,
@@ -124,26 +147,66 @@ export async function doLanding(
     return { ok: false, reason: "pre_merge-abort", locked };
   }
 
-  // 3. integrate origin/<base> into local <base>.
-  const integrated = await integrateOrigin(deps.mergeExec, {
-    repo: input.repoDir,
+  const landed = locked ? await landLockedInWorktree(deps, input) : await landAdminPr(deps, input);
+  if (!landed.ok) return landed;
+
+  // post_merge hook (best-effort; an abort here does not unwind the landing,
+  // matching the prior behaviour which never branched on its result).
+  await deps.fireHook("post_merge", hooks.postMerge());
+  return landed;
+}
+
+/**
+ * UNLOCKED landing: admin-merge a PR into `<base>` (ADR 0030). The merge happens
+ * remotely on the forge, so no local integrate runs first — that was the only
+ * step that could fail the landing on a diverged primary checkout (#572). The
+ * landing succeeds independent of the primary's local `<base>` state.
+ */
+async function landAdminPr(deps: LandingDeps, input: LandingInput): Promise<LandingResult> {
+  const r = await landPr(deps.mergeExec, {
+    repo: input.repo,
+    gitRepo: input.repoDir,
     remote: input.remote,
-    branch: input.base,
-    stillBehind: true,
-    inSync: false,
+    branch: input.branch,
+    target: input.base,
+    n: input.issue,
+    title: input.title,
+    waitForReview: deps.waitForReview,
   });
-  if (!integrated.ok) {
-    return { ok: false, reason: "integrate-failed", locked };
+  return r.ok ? { ok: true, locked: false } : { ok: false, reason: "land-failed", locked: false };
+}
+
+/**
+ * LOCKED landing in an ISOLATED worktree (#572). Provision a detached worktree at
+ * `<base>`, integrate origin into it, merge the attempt + push there, and on any
+ * push reject `reset --hard` only that throwaway worktree — the primary checkout
+ * is never `git -C`'d destructively, so its WIP survives a failed land. When no
+ * worktree can be provisioned the land is REFUSED (returns land-failed) rather
+ * than falling back to mutating the primary. The worktree is always torn down.
+ */
+async function landLockedInWorktree(deps: LandingDeps, input: LandingInput): Promise<LandingResult> {
+  const landDir = deps.makeLandingWorktree ? await deps.makeLandingWorktree(input.base) : null;
+  if (!landDir) {
+    // No isolated checkout → refuse rather than risk the primary working tree.
+    return { ok: false, reason: "land-failed", locked: true };
   }
 
-  // 4. capture the integrated tip (rollback anchor for the locked push reject).
-  const preMergeSha = await deps.headShortSha();
+  try {
+    // Integrate origin/<base> into the detached worktree HEAD (not the primary).
+    const integrated = await integrateOrigin(deps.mergeExec, {
+      repo: landDir,
+      remote: input.remote,
+      branch: input.base,
+      stillBehind: true,
+      inSync: false,
+    });
+    if (!integrated.ok) return { ok: false, reason: "integrate-failed", locked: true };
 
-  // 5. land per lock state.
-  let landed: boolean;
-  if (locked) {
-    const r = await landMerge(deps.mergeExec, {
-      repo: input.repoDir,
+    // Capture the integrated tip from the worktree as the rollback anchor.
+    const preMergeSha = (await deps.mergeExec(["git", "-C", landDir, "rev-parse", "--short", "HEAD"])).stdout.trim();
+
+    const merged = await landMerge(deps.mergeExec, {
+      repo: landDir,
       remote: input.remote,
       branch: input.branch,
       target: input.base,
@@ -151,56 +214,46 @@ export async function doLanding(
       title: input.title,
       preMergeSha,
     });
-    landed = r.ok;
-  } else {
-    const r = await landPr(deps.mergeExec, {
-      repo: input.repo,
-      gitRepo: input.repoDir,
-      remote: input.remote,
-      branch: input.branch,
-      target: input.base,
-      n: input.issue,
-      title: input.title,
-      waitForReview: deps.waitForReview,
-    });
-    landed = r.ok;
-  }
+    let landed = merged.ok;
 
-  // 6. One-shot self-resolve (merge_resolve_conflict, SKILL.md step 8): when the
-  // `git merge --no-ff` left conflicts, dispatch the configured runner once to
-  // resolve + commit the merge in the primary checkout. On success the landing
-  // continues to close, otherwise we `git merge --abort` and fall through to the
-  // ready-for-human merge-conflict path. Only attempted on the LOCKED path,
-  // where the merge happens locally — the unlocked PR path never merges in this
-  // checkout (gh admin-merges remotely), so there is nothing to resolve here.
-  if (!landed && locked && deps.conflictResolver) {
-    const resolved = await resolveMergeConflict(deps.mergeExec, deps.conflictResolver, {
-      repo: input.repoDir,
-      branch: input.branch,
-      n: input.issue,
-      title: input.title,
-      target: input.base,
-    });
-    if (resolved.resolved) {
-      const push = await deps.mergeExec(["git", "-C", input.repoDir, "push", input.remote, input.base]);
-      if (push.code === 0) {
-        landed = true;
+    // One-shot self-resolve (merge_resolve_conflict, SKILL.md step 8): when the
+    // `git merge --no-ff` left conflicts, dispatch the configured runner once to
+    // resolve + commit the merge in the worktree. On success push the locked base
+    // (reset the worktree on a push reject); else `git merge --abort` the worktree
+    // and fall through to the ready-for-human merge-conflict path.
+    if (!landed && deps.conflictResolver) {
+      const resolved = await resolveMergeConflict(deps.mergeExec, deps.conflictResolver, {
+        repo: landDir,
+        branch: input.branch,
+        n: input.issue,
+        title: input.title,
+        target: input.base,
+      });
+      if (resolved.resolved) {
+        const push = await deps.mergeExec([
+          "git",
+          "-C",
+          landDir,
+          "push",
+          input.remote,
+          `HEAD:refs/heads/${input.base}`,
+        ]);
+        if (push.code === 0) {
+          landed = true;
+        } else {
+          await deps.mergeExec(["git", "-C", landDir, "reset", "--hard", preMergeSha]);
+        }
       } else {
-        await deps.mergeExec(["git", "-C", input.repoDir, "reset", "--hard", preMergeSha]);
+        await deps.mergeExec(["git", "-C", landDir, "merge", "--abort"]);
       }
-    } else {
-      // Still conflicting → abandon the merge so the checkout is clean for the
-      // next iteration, then surface ready-for-human below.
-      await deps.mergeExec(["git", "-C", input.repoDir, "merge", "--abort"]);
     }
-  }
-  if (!landed) {
-    return { ok: false, reason: "land-failed", locked };
-  }
+    if (!landed) return { ok: false, reason: "land-failed", locked: true };
 
-  // 8. post_merge hook (best-effort; abort here does not unwind the landing,
-  // matching the inline version which never branched on its result).
-  await deps.fireHook("post_merge", hooks.postMerge());
-
-  return { ok: true, locked };
+    // The merge commit lives on the worktree's HEAD (and now origin/<base>); the
+    // primary HEAD did not advance, so carry the landed sha back for the close.
+    const mergeSha = (await deps.mergeExec(["git", "-C", landDir, "rev-parse", "--short", "HEAD"])).stdout.trim();
+    return { ok: true, locked: true, mergeSha: mergeSha || undefined };
+  } finally {
+    await deps.removeLandingWorktree?.(landDir);
+  }
 }
