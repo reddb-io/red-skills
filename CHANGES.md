@@ -6,6 +6,17 @@ Upstream base: `mattpocock/skills@aaf2453fbdfe7a15c07f11d861224f34ab4b53cb` (see
 
 ---
 
+## afk (engineering) — refactor SKILL.md monolith toward progressive disclosure (#594)
+
+- **status**: modified
+- **upstream**: —
+- **why**: `afk/SKILL.md` is a 1024-line / 111 KB monolith that defeats progressive disclosure and contradicts its own "run, don't read" guidance. Refactored per the repo's `<what-to-do>`/`<supporting-info>` convention: kept the primary directive lean and moved reference material (formats, examples, deep mechanics) into bundled resource files the directive points to on demand.
+- **what changed**:
+  - `plugins/dev/skills/engineering/afk/SKILL.md`: broke the monolith. The `<what-to-do>` section now contains only the primary directive (invocation, when to use, parallelization, preconditions, core loop, substrate, state/monitoring, stop conditions — ~150 lines). The `<supporting-info>` section now contains subsections that organize the reference material by topic (file layout, outcomes, config, bootstrap, lifecycle, dependency, blockers, fallback, bounds, heartbeat, stall, fleet, monitor, configuration, backpressure, merge, reaper, state schema, handoff template, validation, worktree, landing, auto-monitor). Every subsection is self-contained and points at external docs (`AGENT-PROMPT.md`, `SAFETY.md`, `runner-*.md`) on demand. File size reduction: 1024 → 480 lines (~53% smaller). No behavioral change; registration unchanged.
+  - Behavioral contract remains unchanged — the agent still reads this file as the complete contract, and every section the contract names is still present (just reorganized under `<supporting-info>` for on-demand reference).
+
+---
+
 ## afk (engineering) — OpenCode runner is endpoint-agnostic; env-precedence auth (OPENAI > MINIMAX > OPENROUTER) (#638, ADR 0059 amendment 1+2)
 
 - **status**: modified
