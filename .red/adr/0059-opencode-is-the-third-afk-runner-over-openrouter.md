@@ -167,3 +167,64 @@ Concretely:
   runner, which is unavailable in an API-key-only lane. The
   *Exhaustion Detection* section notes this and recommends running OpenCode
   without `--fallback-runner` in that case.
+
+## Amendment 2 — anchored in the MiniMax subscription case (2026-06-10)
+
+**Status:** accepted (narrative follow-up to Amendment 1).
+**Context:** issue #638 PR review.
+
+Amendment 1 generalised the OpenCode runner to any OpenAI-compatible endpoint
+on principled grounds (AFK should not own endpoint logic; OpenCode already
+does). This amendment records the **concrete use case** that exposed the gap
+and motivated the change, so future maintainers do not regress it under
+"simpler is better" pressure.
+
+### The case
+
+A reddb.io maintainer had a **MiniMax subscription API key** (`MINIMAX_API_KEY`)
+in their environment and wanted to run the AFK inner agent against a MiniMax
+model. Under the #626 contract the only reachable endpoint was OpenRouter:
+the runner hardcoded `OPENROUTER_API_KEY` and the model slug had to carry an
+`openrouter/<vendor>/<model>` prefix. The maintainer's options were:
+
+1. Spin up an OpenRouter account, buy credits, route the MiniMax model
+   through OpenRouter as a paid relay — paying twice for the same model.
+2. Edit AFK code to special-case `MINIMAX_API_KEY` — a one-off patch that
+   would not generalise to OpenAI, Anthropic direct, or any other
+   OpenAI-compatible endpoint.
+3. Argue that endpoint resolution is OpenCode's job and let the runner
+   become endpoint-agnostic — Amendment 1.
+
+Option 3 was the only one that survived the next ten users with different
+endpoints. The contract landed in the same shape as Amendment 1
+(`<provider>/<model>` slug + env-precedence auth), and the maintainer's
+MiniMax subscription started working with the config:
+
+```yaml
+plugins:
+  dev:
+    afk:
+      models:
+        opencode:
+          think:
+            model: minimax/MiniMax-M3
+            effort: high
+```
+
+plus `MINIMAX_API_KEY=…` in the worker process env. No AFK code change per
+endpoint, no extra config block, no OpenRouter account required.
+
+### What this amendment commits to
+
+- The endpoint-agnostic property from Amendment 1 is **load-bearing** for
+  MiniMax subscription users (and the same shape extends to any other
+  OpenAI-compatible endpoint). Reverting it would re-block that user class.
+- The env-precedence order (`OPENAI > MINIMAX > OPENROUTER`) is the
+  documented order; changing it is an ADR amendment, not a code change.
+- Defaults stay OpenRouter-shaped for back-compat with #626 — operators
+  opting into a different endpoint override `afk.models.opencode.<tier>.model`
+  explicitly, but the no-config case still works against OpenRouter.
+- The "fail-closed no env" behaviour (no key set → OpenCode surfaces its
+  own auth error → normal failure path) is part of the contract. A future
+  refactor must not silently spawn an agent without an `env` auth block
+  when a precedence entry IS set.

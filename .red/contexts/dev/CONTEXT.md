@@ -94,6 +94,14 @@ _Avoid_: main repo, root checkout
 A single AFK orchestrator instance, identified by `w` + 4 characters (e.g. `wZ2R4`). It owns `.red/tmp/workers/{wid}/` and a single `worker.pid` liveness anchor, written once at bootstrap and removed on exit.
 _Avoid_: agent, slot, runner
 
+**OpenCode auth env precedence**:
+The order in which AFK selects an API key for the OpenCode runner when multiple are set in the worker process: `OPENAI_API_KEY` > `MINIMAX_API_KEY` > `OPENROUTER_API_KEY`. The first set entry wins and the auth key rides in `OpenCodeOptions.env`; OpenCode itself dispatches on the leading segment of the model slug (`openai/...`, `minimax/...`, `openrouter/<vendor>/...`). A user with no key set is fail-closed — the agent spawns without an auth `env` block, OpenCode surfaces its own auth error, the run routes through the normal failure path.
+_Avoid_: hardcoded OpenRouter, base-url map, endpoint-specific code
+
+**Endpoint-agnostic provider**:
+The design property that the OpenCode runner does not know or care which OpenAI-compatible endpoint it ultimately talks to. AFK propagates only the auth key (per *OpenCode auth env precedence*); OpenCode owns endpoint resolution from the `<provider>/<model>` slug. Adding a new endpoint never requires changes to AFK code — the operator sets the corresponding env-var and a matching slug.
+_Avoid_: provider-specific config block, base-url per runner, multi-endpoint fan-out
+
 **Attempt**:
 One numbered AFK execution of an **Issue**, materialised at `.red/tmp/workers/{wid}/{issue}-a{n}/`. The `a{n}` counter is per-**Issue** across all **Workers**, so each retry — even by a different worker — is a fresh attempt directory.
 _Avoid_: iteration, run, retry dir
