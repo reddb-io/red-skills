@@ -204,6 +204,8 @@ function buildSupervisorDeps(
   const now = () => Math.floor(Date.now() / 1000);
   // slot index → live orchestrator pid (SLOT_PIDS parity).
   const slotPids = new Map<number, number>();
+  // slot index → exit code of the most recent worker for that slot.
+  const slotExitCodes = new Map<number, number>();
   // Worker env (build_passthrough_env parity): start from the supervisor's full
   // env, then STRIP every internal supervisor knob in PASSTHROUGH_DENYLIST plus
   // every per-slot `_BASE` build-isolation var, so they never leak to the worker
@@ -248,11 +250,16 @@ function buildSupervisorDeps(
           detached: true,
           stdio: ["ignore", logFd, logFd],
         });
+        child.on("exit", (code) => {
+          // null means the process was killed by a signal; treat as non-clean (1).
+          slotExitCodes.set(slot, code ?? 1);
+        });
         child.unref();
         const pid = child.pid ?? 0;
         slotPids.set(slot, pid);
         return { pid, spawnEpoch: now() };
       },
+      lastExitCode: (slot) => slotExitCodes.get(slot) ?? null,
       isAlive,
       killTree: async (pid) => {
         try {

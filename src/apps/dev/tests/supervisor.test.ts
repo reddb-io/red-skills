@@ -55,6 +55,7 @@ interface FakeIo {
   killTree: ReturnType<typeof vi.fn>;
   inspectTree: ReturnType<typeof vi.fn>;
   sleep: ReturnType<typeof vi.fn>;
+  lastExitCode: ReturnType<typeof vi.fn>;
   agentLaneMtime: ReturnType<typeof vi.fn>;
   resolveIterDir: ReturnType<typeof vi.fn>;
   teardownIterDir: ReturnType<typeof vi.fn>;
@@ -89,6 +90,8 @@ function makeDeps(over: Partial<Record<keyof FakeIo, unknown>> = {}): {
     // tick wins and `stopped` propagates — matching production, where `sleep` is a
     // real timer that never beats a sub-second tick.
     sleep: vi.fn((_ms: number) => new Promise<void>((resolve) => setTimeout(resolve, 0))),
+    // Default: exit code unknown (null) → treated as non-clean → circuit-breaker path.
+    lastExitCode: vi.fn((_slot: number) => null as number | null),
     agentLaneMtime: vi.fn(() => 0),
     resolveIterDir: vi.fn((): IterDirInfo | null => null),
     teardownIterDir: vi.fn(async () => {}),
@@ -111,6 +114,7 @@ function makeDeps(over: Partial<Record<keyof FakeIo, unknown>> = {}): {
       spawnSlot: io.spawnSlot,
       spawnReconcileWorker: io.spawnReconcileWorker,
       isAlive: io.isAlive,
+      lastExitCode: io.lastExitCode,
       killTree: io.killTree,
       inspectTree: io.inspectTree,
       sleep: io.sleep,
@@ -758,9 +762,13 @@ describe("runSupervisor", () => {
   });
 
   it("emits one structured fleet heartbeat per supervise tick with queue and slot counts", async () => {
+    // readyQueueDepth is now called once per tick (in superviseTick, not in
+    // emitFleetHeartbeat). The stop tick returns early and skips the fetch, so
+    // only one call happens (tick 1). The second heartbeat uses queueDepth: 0
+    // (the default for a stop tick).
     const { deps, io } = makeDeps({
       isAlive: vi.fn((pid: number) => pid !== 1001),
-      readyQueueDepth: vi.fn().mockResolvedValueOnce(5).mockResolvedValueOnce(4),
+      readyQueueDepth: vi.fn().mockResolvedValueOnce(5),
       now: vi.fn().mockReturnValueOnce(NOW).mockReturnValueOnce(NOW).mockReturnValueOnce(NOW).mockReturnValueOnce(NOW + 15),
     });
     const state = initSupervisorState(1);
@@ -779,7 +787,8 @@ describe("runSupervisor", () => {
     });
     expect(io.emitFleetHeartbeat.mock.calls[1]![0]).toMatchObject({
       ts: new Date((NOW + 15) * 1000).toISOString(),
-      readyForAgent: 4,
+      // Stop tick returns early before the queue-depth fetch; readyForAgent: 0.
+      readyForAgent: 0,
       spawnsThisTick: 0,
     });
   });
@@ -821,8 +830,8 @@ describe("envelope builders", () => {
 describe("guardedTick — per-tick wall-clock ceiling (unwedgeable loop)", () => {
   const never = (): Promise<void> => new Promise<void>(() => {});
   const immediate = (): Promise<void> => Promise.resolve();
-  const okResult = { respawned: [1], deaths: [], parked: [], reaped: [], reconciledSlots: [], stopped: false };
-  const CONTINUE = { respawned: [], deaths: [], parked: [], reaped: [], reconciledSlots: [], stopped: false };
+  const okResult = { respawned: [1], deaths: [], parked: [], idleParked: [], reaped: [], reconciledSlots: [], stopped: false, queueDepth: 0 };
+  const CONTINUE = { respawned: [], deaths: [], parked: [], idleParked: [], reaped: [], reconciledSlots: [], stopped: false, queueDepth: 0 };
 
   it("returns the tick result when it completes before the ceiling", async () => {
     const logs: string[] = [];
@@ -853,6 +862,175 @@ describe("guardedTick — per-tick wall-clock ceiling (unwedgeable loop)", () =>
     );
     expect(r).toEqual(CONTINUE);
     expect(logs.some((l) => l.includes("threw") && l.includes("gh boom"))).toBe(true);
+  });
+});
+
+// ---------- idle-drain: exit 0 idle-parks and un-parks on queue refill (#578) ----------
+
+describe("idle-drain: exit 0 idle-parks without tripping the circuit breaker", () => {
+  it("exit 0 with empty queue idle-parks the slot — no fast-death, no sweep, no spawn", async () => {
+    const { deps, io } = makeDeps({
+      isAlive: vi.fn(() => false),
+      readyQueueDepth: vi.fn(async () => 0),
+    });
+    io.lastExitCode.mockImplementation((slot: number) => (slot === 0 ? 0 : null));
+    const state = initSupervisorState(1);
+    const slot = state.slots[0]!;
+    slot.pid = 5000;
+    slot.spawnEpoch = NOW - 5; // would be a fast-death lifetime if counted
+
+    const result = await superviseTick(state, deps, config(), () => false);
+
+    expect(result.deaths).toEqual([0]);
+    expect(result.idleParked).toEqual([0]);
+    expect(result.parked).toEqual([]);
+    expect(result.respawned).toEqual([]);
+    expect(slot.idleParked).toBe(true);
+    expect(slot.parked).toBe(false);
+    // Death ring untouched — a clean exit is never a fast-death.
+    expect(slot.deaths).toEqual([]);
+    // No spawn, no discard envelope, no label edits.
+    expect(io.spawnSlot).not.toHaveBeenCalled();
+    expect(io.comment).not.toHaveBeenCalled();
+    expect(io.editLabels).not.toHaveBeenCalled();
+  });
+
+  it("five consecutive exit-0 drains do NOT trip the circuit breaker", async () => {
+    const { deps, io } = makeDeps({
+      isAlive: vi.fn(() => false),
+      readyQueueDepth: vi.fn(async () => 0),
+    });
+    io.lastExitCode.mockReturnValue(0);
+    const state = initSupervisorState(1);
+    const slot = state.slots[0]!;
+
+    for (let i = 0; i < 5; i++) {
+      slot.idleParked = false;
+      slot.pid = 1000 + i;
+      slot.spawnEpoch = NOW - 5;
+      await superviseTick(state, deps, config(), () => false);
+    }
+
+    expect(slot.parked).toBe(false);
+    expect(slot.idleParked).toBe(true);
+    expect(slot.deaths).toEqual([]);
+    expect(io.spawnSlot).not.toHaveBeenCalled();
+  });
+
+  it("exit 0 with non-empty queue respawns immediately without counting as fast-death", async () => {
+    const { deps, io } = makeDeps({
+      isAlive: vi.fn(() => false),
+      readyQueueDepth: vi.fn(async () => 2),
+      spawnSlot: vi.fn(async () => ({ pid: 8888, spawnEpoch: NOW })),
+    });
+    io.lastExitCode.mockReturnValue(0);
+    const state = initSupervisorState(1);
+    const slot = state.slots[0]!;
+    slot.pid = 5000;
+    slot.spawnEpoch = NOW - 5;
+
+    const result = await superviseTick(state, deps, config(), () => false);
+
+    expect(result.respawned).toEqual([0]);
+    expect(result.idleParked).toEqual([]);
+    expect(result.parked).toEqual([]);
+    expect(slot.idleParked).toBe(false);
+    expect(slot.parked).toBe(false);
+    expect(slot.deaths).toEqual([]);
+    expect(slot.pid).toBe(8888);
+    expect(io.spawnSlot).toHaveBeenCalledWith(0);
+  });
+
+  it("idle-parked slot respawns when queue refills", async () => {
+    const { deps, io } = makeDeps({
+      isAlive: vi.fn(() => true),
+      readyQueueDepth: vi.fn(async () => 3),
+      spawnSlot: vi.fn(async () => ({ pid: 7777, spawnEpoch: NOW })),
+    });
+    const state = initSupervisorState(1);
+    const slot = state.slots[0]!;
+    slot.idleParked = true;
+    slot.pid = null;
+
+    const result = await superviseTick(state, deps, config(), () => false);
+
+    expect(slot.idleParked).toBe(false);
+    expect(slot.pid).toBe(7777);
+    expect(result.respawned).toEqual([0]);
+    expect(result.idleParked).toEqual([]);
+    expect(io.spawnSlot).toHaveBeenCalledWith(0);
+  });
+
+  it("idle-parked slot stays parked when queue is empty", async () => {
+    const { deps, io } = makeDeps({
+      isAlive: vi.fn(() => true),
+      readyQueueDepth: vi.fn(async () => 0),
+    });
+    const state = initSupervisorState(1);
+    const slot = state.slots[0]!;
+    slot.idleParked = true;
+    slot.pid = null;
+
+    const result = await superviseTick(state, deps, config(), () => false);
+
+    expect(slot.idleParked).toBe(true);
+    expect(result.respawned).toEqual([]);
+    expect(result.idleParked).toEqual([]);
+    expect(io.spawnSlot).not.toHaveBeenCalled();
+  });
+
+  it("idle-parked slot is skipped by the stall detector", async () => {
+    // A slot that idle-parked has no live process; the stall detector must not
+    // try to inspect or reap it (it has no pid and no lane to measure).
+    const { deps, io } = makeDeps({
+      agentLaneMtime: vi.fn(() => NOW - 9999),
+      readyQueueDepth: vi.fn(async () => 0),
+    });
+    const state = initSupervisorState(1);
+    const slot = state.slots[0]!;
+    slot.idleParked = true;
+    slot.pid = null;
+    slot.spawnEpoch = NOW - 9999;
+
+    await pollStallDetector(state, deps, config({ stallThresholdS: 30, stallKillThresholdS: 90 }));
+
+    expect(io.killTree).not.toHaveBeenCalled();
+    expect(io.comment).not.toHaveBeenCalled();
+    expect(slot.reaped).toBe(false);
+  });
+});
+
+// ---------- spawning guard: prevents duplicate spawn on abandoned tick (#578) ----------
+
+describe("spawning guard: prevents duplicate spawn when tick is abandoned mid-spawn", () => {
+  it("skips a slot with spawning=true to prevent double-spawn", async () => {
+    const { deps, io } = makeDeps({ isAlive: vi.fn(() => false) });
+    const state = initSupervisorState(1);
+    const slot = state.slots[0]!;
+    slot.pid = null;
+    slot.spawning = true; // in-flight spawn from an abandoned tick
+
+    const result = await superviseTick(state, deps, config(), () => false);
+
+    expect(io.spawnSlot).not.toHaveBeenCalled();
+    expect(result.deaths).toEqual([]);
+    expect(result.respawned).toEqual([]);
+  });
+
+  it("spawning flag is cleared after a successful spawn inside handleDeadSlot", async () => {
+    const { deps } = makeDeps({
+      isAlive: vi.fn(() => false),
+      readyQueueDepth: vi.fn(async () => 0),
+    });
+    const state = initSupervisorState(1);
+    const slot = state.slots[0]!;
+    slot.pid = 5000;
+    slot.spawnEpoch = NOW - 1000; // slow death → respawn
+
+    await handleDeadSlot(0, slot, deps, config());
+
+    expect(slot.spawning).toBe(false);
+    expect(slot.pid).not.toBeNull();
   });
 });
 
