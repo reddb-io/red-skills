@@ -41,6 +41,8 @@ interface Opts {
   waitForReview?: boolean;
   /** Make the landing-worktree provisioner fail (returns null). */
   noWorktree?: boolean;
+  /** Commits ahead of base returned by `git rev-list --count`. Default 3. */
+  commitCount?: number;
 }
 
 function harness(opts: Opts = {}): Harness {
@@ -61,6 +63,9 @@ function harness(opts: Opts = {}): Harness {
       // The rollback anchor + landed sha the locked worktree path reads.
       if (j.includes("rev-parse --short HEAD")) {
         return { code: 0, stdout: "abc1234\n", stderr: "" };
+      }
+      if (j.includes("rev-list") && j.includes("--count")) {
+        return { code: 0, stdout: `${opts.commitCount ?? 3}\n`, stderr: "" };
       }
       if (opts.integrateCode !== undefined && j.includes("merge --ff-only")) {
         return { code: opts.integrateCode, stdout: "", stderr: "" };
@@ -239,6 +244,18 @@ describe("doLanding — abort / failure short-circuits", () => {
     const r = await doLanding(h.deps, h.input, h.hooks);
     expect(r).toEqual({ ok: false, reason: "land-failed", locked: true });
     // post_merge never fires on a failed land.
+    expect(h.firedHooks).toEqual(["pre_merge"]);
+  });
+
+  it("locked zero-commit branch → land-failed without merging (mirrors unlocked empty-branch)", async () => {
+    // A branch with no commits relative to base would produce an empty no-op merge
+    // on the locked path, wrongly closing the issue as done. Guard must catch this.
+    const h = harness({ locked: true, commitCount: 0 });
+    const r = await doLanding(h.deps, h.input, h.hooks);
+    expect(r).toEqual({ ok: false, reason: "land-failed", locked: true });
+    // No merge --no-ff must have been attempted.
+    expect(joined(h.mergeCalls).some((c) => c.includes("merge --no-ff"))).toBe(false);
+    // post_merge must not fire.
     expect(h.firedHooks).toEqual(["pre_merge"]);
   });
 });

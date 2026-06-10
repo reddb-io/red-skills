@@ -202,6 +202,20 @@ async function landLockedInWorktree(deps: LandingDeps, input: LandingInput): Pro
     });
     if (!integrated.ok) return { ok: false, reason: "integrate-failed", locked: true };
 
+    // Zero-commit guard: `git merge --no-ff` succeeds on a branch with no new
+    // commits (it creates a no-op merge commit), which would incorrectly close
+    // the issue as done without delivering any work. The unlocked path rejects
+    // this naturally — `gh pr create` fails on an empty branch — so mirror that
+    // guard here: route a zero-commit locked landing to land-failed.
+    const countRes = await deps.mergeExec([
+      "git", "-C", landDir,
+      "rev-list", "--count", `origin/${input.base}..origin/${input.branch}`,
+    ]);
+    const commitCount = parseInt(countRes.stdout.trim(), 10);
+    if (countRes.code !== 0 || !Number.isInteger(commitCount) || commitCount === 0) {
+      return { ok: false, reason: "land-failed", locked: true };
+    }
+
     // Capture the integrated tip from the worktree as the rollback anchor.
     const preMergeSha = (await deps.mergeExec(["git", "-C", landDir, "rev-parse", "--short", "HEAD"])).stdout.trim();
 

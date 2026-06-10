@@ -231,6 +231,10 @@ function harness(opts: HarnessOptions = {}): {
         const pending = opts.conflictResolve === "fail" || !mergeResolved;
         return { code: pending ? 0 : 1, stdout: "", stderr: "" };
       }
+      // Zero-commit guard: report 3 commits ahead so normal locked landings proceed.
+      if (j.includes("rev-list") && j.includes("--count")) {
+        return { code: 0, stdout: "3\n", stderr: "" };
+      }
       return { code: 0, stdout: "", stderr: "" };
     },
     remoteGit: async (argv) => {
