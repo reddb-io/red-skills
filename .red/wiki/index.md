@@ -99,6 +99,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [feat(afk): req:N dependency labels + event-driven auto-unblock](./pages/292-feat-afk-req-n-dependency-labels-event-driven-auto-unblock.md)
 - [feat(afk): run execution on the vendored @reddb-io/red-castle submodule (ADR 0061)](./pages/674-feat-afk-run-execution-on-the-vendored-reddb-io-red-castle-s.md)
 - [feat(afk): salvage uncommitted worktree when codex emits DONE without committing](./pages/468-feat-afk-salvage-uncommitted-worktree-when-codex-emits-done.md)
+- [feat(afk): shared WorkerVitals type + drift-guard contract test (S4 #710)](./pages/714-feat-afk-shared-workervitals-type-drift-guard-contract-test.md)
 - [feat(afk): statusline reads project root from first arg; 🙋→🆘](./pages/266-feat-afk-statusline-reads-project-root-from-first-arg.md)
 - [feat(afk): statusline worker liveness + WorkerVitals vocab (ADR 0065)](./pages/705-feat-afk-statusline-worker-liveness-workervitals-vocab-adr-0.md)
 - [feat(afk): supervisor proof-of-life requires forward progress](./pages/636-feat-afk-supervisor-proof-of-life-requires-forward-progress.md)
