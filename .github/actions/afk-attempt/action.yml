@@ -1,0 +1,98 @@
+# Composite action: afk-attempt
+#
+# The repo-portable EXECUTION primitive for the AFK Actions lane (ADR 0059/0062).
+# Runs exactly ONE AFK attempt against an issue in the already-checked-out
+# repository, then exits. No fleet, no admin-merge — the PR is the deliverable.
+#
+# Why a composite action (not just a workspace `node …afk.mjs`): when any repo
+# references `uses: reddb-io/red-skills/.github/actions/afk-attempt@<ref>`, GitHub
+# fetches the red-skills tree at <ref> to run this action. The committed launcher
+# `afk.mjs` and `plugins/dev/.claude-plugin/plugin.json` come along under
+# `${{ github.action_path }}`, so the launcher resolves its version and fetches
+# the matching `dev` bundle from the Release (ADR 0038/0039) — red-castle inlined,
+# no workspace build, no submodule. The action runs against the CALLER's checked-out
+# workspace (the target repo, where the issues/PRs live), while the launcher lives
+# in the action's own red-skills checkout. Reproducible by pinning <ref>.
+#
+# Contract: the CALLER checks out the target repo and grants `contents: write`,
+# `issues: write`, `pull-requests: write`. Secrets are passed as inputs (composite
+# actions cannot read `secrets.*`); the automatic `github.token` is used for gh/git.
+
+name: AFK attempt
+description: Run one AFK attempt against an issue in the checked-out repository (opencode/claude/codex).
+
+inputs:
+  issue:
+    description: "Issue number to process."
+    required: true
+  runner:
+    description: "AFK runner to drive (claude|codex|opencode). CI default is opencode (API-auth, no host session)."
+    required: false
+    default: "opencode"
+  openrouter-api-key:
+    description: "OpenRouter API key (opencode auth; precedence 3)."
+    required: false
+    default: ""
+  minimax-api-key:
+    description: "MiniMax API key (opencode auth; precedence 2)."
+    required: false
+    default: ""
+  openai-api-key:
+    description: "OpenAI API key (opencode auth precedence 1; also the codex CLI key)."
+    required: false
+    default: ""
+  anthropic-api-key:
+    description: "Anthropic API key (claude runner CLI)."
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Node
+      uses: actions/setup-node@v4
+      with:
+        node-version: 22
+
+    - name: Install the runner CLI
+      shell: bash
+      run: |
+        set -euo pipefail
+        case "${{ inputs.runner }}" in
+          opencode) npm install -g opencode-ai ;;
+          claude)   npm install -g @anthropic-ai/claude-code ;;
+          codex)    npm install -g @openai/codex ;;
+          *) echo "::error::unsupported runner for the Actions lane: '${{ inputs.runner }}'"; exit 1 ;;
+        esac
+        echo "runner '${{ inputs.runner }}' CLI installed"
+
+    - name: Run the AFK attempt
+      shell: bash
+      env:
+        # gh + git operations (label the issue, post the envelope, open the PR).
+        GH_TOKEN: ${{ github.token }}
+        # CI never wants a nested container: force the no-sandbox lane regardless
+        # of the target repo's `afk.sandbox` config (wire.ts precedence).
+        RED_AFK_SANDBOX: none
+        # opencode auth — first set key wins (opencode-env.ts precedence).
+        OPENROUTER_API_KEY: ${{ inputs.openrouter-api-key }}
+        MINIMAX_API_KEY: ${{ inputs.minimax-api-key }}
+        OPENAI_API_KEY: ${{ inputs.openai-api-key }}
+        # claude/codex CLIs, when those runners are selected, read these directly.
+        ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
+      run: |
+        set -euo pipefail
+        ISSUE="${{ inputs.issue }}"
+        if ! [[ "$ISSUE" =~ ^[0-9]+$ ]]; then
+          echo "::error::invalid issue number: '$ISSUE'"; exit 1
+        fi
+        # A committer identity for the worker-branch commits the runner lands.
+        git config --global user.name  "github-actions[bot]"
+        git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        # The launcher is resolved from THIS action's red-skills checkout; it
+        # fetches the version-matched dev bundle and runs against the CWD repo.
+        LAUNCHER="${{ github.action_path }}/../../../plugins/dev/skills/engineering/afk/bin/afk.mjs"
+        node "$LAUNCHER" run \
+          --issues "$ISSUE" \
+          --runner "${{ inputs.runner }}" \
+          --once
