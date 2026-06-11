@@ -97,6 +97,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [feat(afk): run execution on the vendored @reddb-io/red-castle submodule (ADR 0061)](./pages/674-feat-afk-run-execution-on-the-vendored-reddb-io-red-castle-s.md)
 - [feat(afk): salvage uncommitted worktree when codex emits DONE without committing](./pages/468-feat-afk-salvage-uncommitted-worktree-when-codex-emits-done.md)
 - [feat(afk): statusline reads project root from first arg; 🙋→🆘](./pages/266-feat-afk-statusline-reads-project-root-from-first-arg.md)
+- [feat(afk): statusline worker liveness + WorkerVitals vocab (ADR 0065)](./pages/705-feat-afk-statusline-worker-liveness-workervitals-vocab-adr-0.md)
 - [feat(afk): supervisor proof-of-life requires forward progress](./pages/636-feat-afk-supervisor-proof-of-life-requires-forward-progress.md)
 - [feat(afk): supervisor tick dispatches reconcile workers for parked-mechanical issues](./pages/564-feat-afk-supervisor-tick-dispatches-reconcile-workers-for-pa.md)
 - [feat(afk): typed blocked:<reason> labels (descriptive, auto-classified)](./pages/293-feat-afk-typed-blocked-reason-labels-descriptive-auto-classi.md)
