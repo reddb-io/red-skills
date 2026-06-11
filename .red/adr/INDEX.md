@@ -37,7 +37,8 @@ stale notes inline.
 - **0028** `<promise>` sentinel is the canonical agent-authored attempt-exit signal — runtime-initiated exits are mapped by **0044** (`timeout`) and **0047** (no-sentinel salvage)
 - **0030** AFK landing is lock-toggled; the PR carries the history
 - **0031** Branch-lock value drives AFK base/merge; enforcement stays agent-only
-- **0033** AFK agent execution runs on `@ai-hero/sandcastle`
+- **0033** AFK agent execution runs on a sandcastle-shaped substrate *(refined by 0061: the substrate is the vendored `@reddb-io/red-castle` submodule)*
+- **0061** AFK execution substrate is the vendored `@reddb-io/red-castle` git submodule under `packages/`, consumed as TypeScript source (no build); replaces the `@ai-hero/sandcastle` npm dependency *(refines 0033)*
 - **0044** AFK attempt progress guard aborts stalled-but-busy attempts to `blocked:stalled` without requiring a promise sentinel — *§4 "no-sandbox only" superseded by **0054***
 - **0055** AFK reconcile — a no-agent worker mode that lands a parked green branch *(the implemented worker-mode, #558; realises 0056)*
 - **0056** AFK landability reconciler: parked-but-green branches self-land via a no-agent reconcile worker *(the umbrella design — generalises 0047/0050 to a continuous reconcile of `timeout`/`no-sentinel`; realised by 0055; relies on 0008 gate, 0030 landing)*

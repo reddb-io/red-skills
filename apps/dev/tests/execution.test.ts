@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import type { RunOptions, RunResult } from "@ai-hero/sandcastle";
+import type { RunOptions, RunResult } from "@reddb-io/red-castle";
 import {
   buildRunOptions,
   buildContinuousPushHook,

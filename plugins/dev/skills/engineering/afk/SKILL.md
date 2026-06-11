@@ -28,7 +28,7 @@ The bundle is a single self-contained build (one file, one inlined runtime depen
 
 ## Execution Substrate (ADR 0033)
 
-The per-issue **agent run** executes on [`@ai-hero/sandcastle`](https://github.com/mattpocock/sandcastle), not on a hand-rolled `claude -p` / `codex exec` session whose stdout is grepped for stage transitions. The boundary is clean: **sandcastle owns the execution substrate, AFK owns the issue policy**.
+The per-issue **agent run** executes on [`@reddb-io/red-castle`](https://github.com/reddb-io/red-castle) — reddb.io's vendored sandcastle fork, a `packages/red-castle` submodule consumed as source (ADR 0061) — not on a hand-rolled `claude -p` / `codex exec` session whose stdout is grepped for stage transitions. The boundary is clean: **the substrate owns execution, AFK owns the issue policy**.
 
 - **sandcastle** (one `run()` call per attempt) spawns the inner agent, creates and manages the git worktree, runs the configured sandbox, captures the agent's stream, detects the completion signal, and lands the agent's commits on the worker branch.
 - **AFK** keeps everything around that call: issue selection, the three-layer claim, the handoff file, the package-aware feedback gate, lock-toggled landing (ADR 0030), base resolution (ADR 0031), the terminal-event envelope, close, and the boot/monitor/mirror sweeps.

@@ -35,6 +35,9 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
           token: ${{ secrets.GITHUB_TOKEN }}
+          # red-castle is a submodule under packages/; the dev bundle + pnpm
+          # install resolve it as the @reddb-io/red-castle workspace package.
+          submodules: recursive
 
       - name: Defer if /afk fleet is active
         id: fleet
