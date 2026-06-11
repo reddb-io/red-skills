@@ -325,6 +325,36 @@ describe("emitEnvelope — done", () => {
     expect(event).toBe("done");
     expect(fields).toMatchObject({ worker: "wTEST", issue: 20, runner: "claude" });
   });
+
+  // Regression (#625): the local history ledger is independent of the GitHub
+  // comment POST. A transient post failure must NOT drop the terminal record —
+  // before the fix the append sat in an `else if (posted)` branch, so the
+  // 2026-06-09 gap saw three issues land with no `done` record (frozen sparkline).
+  it("appends the history event even when the comment POST fails (#625)", async () => {
+    const { deps, historyAppend, posted } = makeDeps({ posterOk: false });
+    const res = await emitEnvelope(deps, {
+      status: "done",
+      issue: 21,
+      worker: "wTEST",
+      durationS: 600,
+      branch: "b",
+      attempt: 1,
+      mergeSha: "abcdef1",
+      diff: "merged",
+      historyPath: "/ledger.jsonl",
+      historyClock: { ts: "2026-05-30T00:00:00Z", epoch: 1748563200 },
+      historyFields: { runner: "claude", merge_sha: "abcdef1", duration_s: 600 },
+    });
+    // posted=false is still surfaced (warning + signal), but the ledger append fires anyway.
+    expect(res.posted).toBe(false);
+    expect(posted.writes).toContain(false);
+    expect(res.warnings.some((w) => w.includes("failed to post envelope"))).toBe(true);
+    expect(historyAppend).toHaveBeenCalledTimes(1);
+    const [path, , event, fields] = historyAppend.mock.calls[0]!;
+    expect(path).toBe("/ledger.jsonl");
+    expect(event).toBe("done");
+    expect(fields).toMatchObject({ worker: "wTEST", issue: 21 });
+  });
 });
 
 // ===========================================================================
@@ -392,7 +422,7 @@ describe("emitEnvelope — failure push/markers/posted flow", () => {
     expect(res.warnings.length).toBeGreaterThan(0);
   });
 
-  it("sets posted=false and skips the history append when the post fails", async () => {
+  it("sets posted=false but still appends the history event when the post fails (#625)", async () => {
     const { deps, posted, historyAppend } = makeDeps({ gitCode: 0, posterOk: false });
     const res = await emitEnvelope(deps, {
       status: "blocked",
@@ -413,7 +443,10 @@ describe("emitEnvelope — failure push/markers/posted flow", () => {
     });
     expect(res.posted).toBe(false);
     expect(posted.writes).toEqual([false]);
-    expect(historyAppend).not.toHaveBeenCalled();
+    // #625: the ledger append is independent of the comment POST — a failed
+    // post still surfaces the warning, but the terminal `blocked` record lands.
+    expect(historyAppend).toHaveBeenCalledTimes(1);
+    expect(historyAppend.mock.calls[0]![2]).toBe("blocked");
     expect(res.warnings.some((w) => w.includes("failed to post envelope for #11"))).toBe(true);
   });
 });
