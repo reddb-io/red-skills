@@ -143,6 +143,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [fix(afk): claim-race loser skips instead of dying, and never clobbers the winner's claim](./pages/646-fix-afk-claim-race-loser-skips-instead-of-dying-and-never-cl.md)
 - [fix(afk): claude cost vitals + honest [live] badge + pre-merge typecheck gate](./pages/715-fix-afk-claude-cost-vitals-honest-live-badge-pre-merge-typec.md)
 - [fix(afk): commit-anchored hard cap bounds the edit-signal guard extension](./pages/639-fix-afk-commit-anchored-hard-cap-bounds-the-edit-signal-guar.md)
+- [fix(afk): cure the supervisor.test.ts OOM and gate the apps/dev suite in CI (#446)](./pages/719-fix-afk-cure-the-supervisor-test-ts-oom-and-gate-the-apps-de.md)
 - [fix(afk): deliver the exit-protocol contract in the handoff so agents emit the DONE sentinel](./pages/698-fix-afk-deliver-the-exit-protocol-contract-in-the-handoff-so.md)
 - [fix(afk): don't read gh rate-limit as an auth failure (Mode B fast-death)](./pages/482-fix-afk-don-t-read-gh-rate-limit-as-an-auth-failure-mode-b-f.md)
 - [fix(afk): feed the agent lane on the native path so liveness isn't blind](./pages/350-fix-afk-feed-the-agent-lane-on-the-native-path-so-liveness-i.md)
