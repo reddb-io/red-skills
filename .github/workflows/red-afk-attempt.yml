@@ -23,10 +23,12 @@
 # allowlist. The gate is evaluated with `actions/github-script@v7`. Failure →
 # no claim, no PR, logged reason + a comment.
 #
-# Execution: the job checks out the repo, sets up Node, installs the selected
-# runner CLI, then runs the version-pinned AFK launcher (`afk.mjs`), which
-# fetches the prebuilt `dev` bundle from the matching GitHub Release (ADR
-# 0038/0039) — no workspace build, no submodule needed in CI.
+# Execution is delegated to the repo-portable composite action
+# `reddb-io/red-skills/.github/actions/afk-attempt` (ADR 0062): it sets up Node,
+# installs the selected runner CLI, and runs the version-pinned AFK launcher
+# (`afk.mjs`), which fetches the prebuilt `dev` bundle from the matching GitHub
+# Release (ADR 0038/0039) — no workspace build, no submodule needed in CI. This
+# workflow owns only the triggers + the trust gate (the policy layer).
 #
 # Adoption paths:
 #   - Path A (auto, simplest): install this workflow directly into the adopter
@@ -201,55 +203,24 @@ jobs:
             }
 
       # Everything below runs only when the gate admits the claim.
-      - name: Checkout
+      - name: Checkout the target repository
         if: steps.trust.outputs.gate == 'pass' || steps.trust.outputs.gate == 'bypass'
         uses: actions/checkout@v4
 
-      - name: Set up Node
-        if: steps.trust.outputs.gate == 'pass' || steps.trust.outputs.gate == 'bypass'
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - name: Install the runner CLI
-        if: steps.trust.outputs.gate == 'pass' || steps.trust.outputs.gate == 'bypass'
-        run: |
-          set -euo pipefail
-          case "${RED_AFK_RUNNER}" in
-            opencode) npm install -g opencode-ai ;;
-            claude)   npm install -g @anthropic-ai/claude-code ;;
-            codex)    npm install -g @openai/codex ;;
-            *) echo "::error::unsupported runner for the Actions lane: '${RED_AFK_RUNNER}'"; exit 1 ;;
-          esac
-          echo "runner '${RED_AFK_RUNNER}' CLI installed"
-        shell: bash
-
+      # Execution is the repo-portable composite action (ADR 0062): it sets up
+      # Node, installs the selected runner CLI, and runs the version-pinned
+      # launcher (which fetches the dev bundle from the Release) against this
+      # checkout. The action carries its own red-skills checkout, so the launcher
+      # resolves even when this workflow runs in an adopter repo.
+      # TODO: when #622 lands, the atomic claim CAS replaces the --issues <N>
+      # direct invocation with a server-side claim that can't race a local fleet.
       - name: Run the AFK attempt
         if: steps.trust.outputs.gate == 'pass' || steps.trust.outputs.gate == 'bypass'
-        env:
-          RESOLVED_NUMBER: ${{ steps.resolve.outputs.number }}
-          # gh + git operations (label the issue, post the envelope, open the PR).
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # opencode auth — first set key wins (opencode-env.ts precedence).
-          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-          MINIMAX_API_KEY:    ${{ secrets.MINIMAX_API_KEY }}
-          OPENAI_API_KEY:     ${{ secrets.OPENAI_API_KEY }}
-          # claude/codex CLIs, if those runners are selected, read these directly.
-          ANTHROPIC_API_KEY:  ${{ secrets.ANTHROPIC_API_KEY }}
-        run: |
-          set -euo pipefail
-          ISSUE="${RESOLVED_NUMBER}"
-          if [ -z "${ISSUE}" ]; then
-            echo "::error::missing issue number"
-            exit 1
-          fi
-          # A committer identity for the worker-branch commits the runner lands.
-          git config --global user.name  "github-actions[bot]"
-          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          # TODO: when #622 lands, the atomic claim CAS replaces the --issues <N>
-          # direct invocation with a server-side claim that can't race a local fleet.
-          node plugins/dev/skills/engineering/afk/bin/afk.mjs run \
-            --issues "$ISSUE" \
-            --runner "${RED_AFK_RUNNER}" \
-            --once
-        shell: bash
+        uses: reddb-io/red-skills/.github/actions/afk-attempt@main
+        with:
+          issue: ${{ steps.resolve.outputs.number }}
+          runner: ${{ env.RED_AFK_RUNNER }}
+          openrouter-api-key: ${{ secrets.OPENROUTER_API_KEY }}
+          minimax-api-key: ${{ secrets.MINIMAX_API_KEY }}
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
