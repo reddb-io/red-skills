@@ -57,28 +57,17 @@ permissions:
   pull-requests: write
 
 jobs:
+  # A reusable workflow is invoked at the JOB level via `uses:` (NOT as a step) —
+  # `with:`/`secrets:` are siblings of `uses:`, and the job has no `runs-on`/`steps`.
   attempt:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Resolve issue number
-        id: issue
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "number=${{ inputs.issue_number }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "number=${{ github.event.issue.number }}" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Trigger the AFK Actions lane
-        uses: reddb-io/red-skills/.github/workflows/red-afk-attempt.yml@main
-        with:
-          issue_number: ${{ steps.issue.outputs.number }}
-          runner: opencode
-          model_slug: ""            # empty → reuse afk.models.opencode.<tier>.model
-          enforce_trust_gate: "true"
-          allowlist_authors: "filipeforattini"          # EDIT — your trusted author logins
-          allowlist_label_actors: "filipeforattini"     # EDIT — your trusted label-applier logins
-        secrets:
-          openrouter_api_key: ${{ secrets.OPENROUTER_API_KEY }}
-          minimax_api_key:    ${{ secrets.MINIMAX_API_KEY }}
-          openai_api_key:     ${{ secrets.OPENAI_API_KEY }}
+    uses: reddb-io/red-skills/.github/workflows/red-afk-attempt.yml@main
+    with:
+      issue_number: ${{ inputs.issue_number }}
+      runner: opencode
+      enforce_trust_gate: "true"
+      allowlist_authors: "filipeforattini"          # EDIT — your trusted author logins
+      allowlist_label_actors: "filipeforattini"     # EDIT — your trusted label-applier logins
+    secrets:
+      openrouter_api_key: ${{ secrets.OPENROUTER_API_KEY }}
+      minimax_api_key:    ${{ secrets.MINIMAX_API_KEY }}
+      openai_api_key:     ${{ secrets.OPENAI_API_KEY }}
