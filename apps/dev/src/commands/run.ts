@@ -655,7 +655,11 @@ export function buildProcessDeps(
             ? `🧠 reasoning${
                 event.tokens ? ` (${event.tokens} tok)` : event.message ? `: ${event.message.slice(0, 80)}` : ""
               }`
-            : `→ ${event.name} ${event.formattedArgs}`;
+            : event.type === "usage"
+              ? `💰 usage (in:${event.inputTokens} out:${event.outputTokens}${
+                  event.reasoningTokens ? ` reason:${event.reasoningTokens}` : ""
+                })`
+              : `→ ${event.name} ${event.formattedArgs}`;
       void appendAgentRecord(join(current.attemptDir, "agent.log.jsonl"), msg, {
         ts,
         fields: { extra: { iteration: String(event.iteration), kind: event.type } },
@@ -671,11 +675,16 @@ export function buildProcessDeps(
       // Advance the monitor's state view on recognised tool-call transitions
       // (bounded write rate vs every text chunk — the lane mtime above is the
       // stall-detector's liveness signal; this is the dashboard's stage/last).
+      // `last_event_at` (the honest liveness clock, ADR 0065) is stamped on every
+      // DISCRETE event — tool/reasoning/usage, not per-text-chunk — so it advances
+      // every few seconds for an active worker even between commits.
       const stage = deriveStage(event);
-      if (stage) {
+      const discrete =
+        event.type === "toolCall" || event.type === "reasoning" || event.type === "usage";
+      if (stage || discrete) {
         void updateState(join(current.attemptDir, "afk.state.json"), {
-          "current.stage": stage,
-          "current.last_stream_line": msg.slice(0, 200),
+          ...(stage ? { "current.stage": stage, "current.last_stream_line": msg.slice(0, 200) } : {}),
+          "current.last_event_at": ts,
         }).catch(() => {});
       }
     },

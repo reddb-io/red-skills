@@ -6,8 +6,30 @@ export function defaultState(): AfkState {
   return AfkStateSchema.parse({});
 }
 
+/**
+ * One-release back-compat read shim (ADR 0065): map legacy worker-vitals keys on
+ * `current` onto their canonical names when the canonical key is absent, so a NEW
+ * bundle reads an OLD afk.state.json without losing the value. The state file is
+ * ephemeral (rewritten each ~60s heartbeat), so this only bridges the upgrade
+ * window. Remove the shim — and the legacy keys — one release after S1 lands.
+ */
+function migrateLegacyCurrentKeys(data: unknown): unknown {
+  if (typeof data !== "object" || data === null) return data;
+  const cur = (data as Record<string, unknown>).current;
+  if (typeof cur !== "object" || cur === null) return data;
+  const c = cur as Record<string, unknown>;
+  const alias = (canon: string, legacy: string): void => {
+    if (c[canon] === undefined && c[legacy] !== undefined) c[canon] = c[legacy];
+  };
+  alias("loc_added", "diff_added");
+  alias("loc_removed", "diff_removed");
+  alias("reasoning_events", "thinking_called_count");
+  alias("last_commit_at", "last_progress_at");
+  return data;
+}
+
 export function parseState(data: unknown): AfkState {
-  return AfkStateSchema.parse(data ?? {});
+  return AfkStateSchema.parse(migrateLegacyCurrentKeys(data ?? {}));
 }
 
 export async function readState(path: string): Promise<AfkState> {

@@ -218,13 +218,14 @@ describe("buildProgressHeartbeat (#448)", () => {
     expect(hb.extra.diff_removed).toBe("45");
     expect(hb.extra.secs_since_progress).toBe("75");
     // state patch persists the volume the monitor prefers over a live git diff.
+    // Canonical-only (ADR 0065): last_commit_at + loc_* — no legacy diff_* in state.
     expect(hb.statePatch).toEqual({
-      "current.last_progress_at": "2026-06-03T12:00:00.000Z",
-      "current.diff_added": 382,
-      "current.diff_removed": 45,
+      "current.last_commit_at": "2026-06-03T12:00:00.000Z",
       "current.loc_added": 382,
       "current.loc_removed": 45,
     });
+    // firehose extra keeps the legacy diff_* alias for one release (asserted above).
+    expect(hb.extra.last_commit_at).toBe("2026-06-03T12:00:00.000Z");
     // no activity snapshot → no activity fields, no msg tail (back-compat)
     expect(hb.extra.tools_called_count).toBeUndefined();
     expect(hb.msg.includes("tools:")).toBe(false);
@@ -239,8 +240,8 @@ describe("buildProgressHeartbeat (#448)", () => {
       removed: -2,
     });
     expect(hb.msg).toBe("progress: 0s since last commit · +0 -0");
-    expect(hb.statePatch["current.diff_added"]).toBe(0);
-    expect(hb.statePatch["current.diff_removed"]).toBe(0);
+    expect(hb.statePatch["current.loc_added"]).toBe(0);
+    expect(hb.statePatch["current.loc_removed"]).toBe(0);
   });
 
   it("folds the activity-meter snapshot into the msg tail, extra, and state", () => {
@@ -257,13 +258,17 @@ describe("buildProgressHeartbeat (#448)", () => {
     );
     expect(hb.extra.tools_called_count).toBe("12");
     expect(hb.extra.text_chunk_count).toBe("7");
+    // canonical reasoning_events + legacy thinking_called_count alias (firehose).
+    expect(hb.extra.reasoning_events).toBe("4");
     expect(hb.extra.thinking_called_count).toBe("4");
     expect(hb.extra.reasoning_tokens).toBe("130");
     expect(hb.extra.waiting_count).toBe("2");
     expect(hb.extra.loc_added).toBe("382");
     expect(hb.extra.loc_removed).toBe("45");
     expect(hb.statePatch["current.tools_called_count"]).toBe(12);
-    expect(hb.statePatch["current.thinking_called_count"]).toBe(4);
+    // canonical name in state — no legacy thinking_called_count in statePatch.
+    expect(hb.statePatch["current.reasoning_events"]).toBe(4);
+    expect(hb.statePatch["current.thinking_called_count"]).toBeUndefined();
     expect(hb.statePatch["current.reasoning_tokens"]).toBe(130);
     expect(hb.statePatch["current.waiting_count"]).toBe(2);
     expect(hb.statePatch["current.loc_added"]).toBe(382);

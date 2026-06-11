@@ -25,7 +25,10 @@
 
 /** The minimal shape this meter reads off a normalised stream event. */
 export interface StreamEventLike {
-  readonly type: "text" | "toolCall" | "reasoning";
+  /** `usage` is accepted so the sink can forward every stream event unfiltered,
+   * but it is a cost meta-event (ADR 0065 cost group) — `record()` does not count
+   * it as a tool/text/reasoning liveness unit. */
+  readonly type: "text" | "toolCall" | "reasoning" | "usage";
   /** Reasoning token count, when the runner exposes it (codex/opencode). */
   readonly tokens?: number;
 }
