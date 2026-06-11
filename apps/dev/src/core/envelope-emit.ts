@@ -315,7 +315,14 @@ export async function emitEnvelope(
   await deps.writePosted(posted);
   if (!posted) {
     warnings.push(`failed to post envelope for #${input.issue} (status=${input.status})`);
-  } else if (input.historyPath && input.historyClock) {
+  }
+  // The local history ledger is independent of the GitHub comment POST (#625).
+  // Append the terminal event whether or not the comment landed — a transient
+  // post failure must not drop the `done`/`blocked` record that feeds the
+  // monitor sparkline and the drain-promotion counters (the 2026-06-09 gap:
+  // three issues landed but produced no `done` records because the append was
+  // gated behind `posted === true`).
+  if (input.historyPath && input.historyClock) {
     const append = deps.historyAppend ?? historyAppend;
     await append(
       input.historyPath,
