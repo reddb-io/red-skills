@@ -131,6 +131,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [fix(afk): land in an isolated worktree so rollback never mutates the primary checkout](./pages/658-fix-afk-land-in-an-isolated-worktree-so-rollback-never-mutat.md)
 - [fix(afk): launcher no longer shadows AFK commands + atomic issue claim (#434)](./pages/435-fix-afk-launcher-no-longer-shadows-afk-commands-atomic-issue.md)
 - [fix(afk): locked landing targets the resolved base, not main](./pages/603-fix-afk-locked-landing-targets-the-resolved-base-not-main.md)
+- [fix(afk): make the red-afk-attempt Actions lane actually run + fire on pre-labeled issue creation](./pages/675-fix-afk-make-the-red-afk-attempt-actions-lane-actually-run-f.md)
 - [fix(afk): malformed or block-sequence config never silently disarms guards](./pages/661-fix-afk-malformed-or-block-sequence-config-never-silently-di.md)
 - [fix(afk): monitor diff column counts committed work + relabel issue ratio](./pages/392-fix-afk-monitor-diff-column-counts-committed-work-relabel-is.md)
 - [fix(afk): native fleet supervisor — poll cadence + real stall-reaper IO](./pages/285-fix-afk-native-fleet-supervisor-poll-cadence-real-stall-reap.md)
