@@ -99,6 +99,7 @@ back to a hard-coded maintainer allowlist.)
 | `runner` | ✓ | ✓ | `claude` \| `codex` \| `opencode` (CI default `opencode`) |
 | `model` | ✓ | ✓ | override every tier, e.g. `minimax/MiniMax-M2` (empty = repo config) |
 | `effort` | ✓ | ✓ | reasoning effort/variant override |
+| `lanes` | ✓ | ✓ | execution-lane tag (`actions`\|`k8s`), surfaced as `RED_AFK_LANE` for observability; default `actions` |
 | `*-api-key` secrets | ✓ (inputs) | ✓ (secrets) | the auth keys — passed as **action inputs** (composite actions can't read `secrets.*`) |
 | `allowlist_*`, `enforce_trust_gate` | — | ✓ | trust gate (policy layer) |
 
