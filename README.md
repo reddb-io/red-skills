@@ -221,7 +221,11 @@ afk:
 
 Defaults are runner- and tier-specific. Until classification lands, AFK uses the `think` tier by default: Codex defaults to `gpt-5.5`/`high`; Claude Code defaults to `claude-opus-4-8`/`high`. The legacy `afk.model` and `afk.models.<runner>` scalar keys are still accepted as fallback model overrides, but tiered `afk.models.<runner>.<tier>.{model,effort}` is safer for mixed Claude/Codex fleets.
 
-The cross-host tier table, deterministic-first validation rule, simple-vs-complex criterion, escalation policy, and executor map live in [`model-tier-policy`](./plugins/dev/skills/engineering/model-tier-policy/SKILL.md). The single machine source for defaults remains `CONFIG_DEFAULTS` in [`config.ts`](./apps/dev/src/core/config.ts).
+The cross-host tier table, deterministic-first validation rule, simple-vs-complex criterion, escalation policy, and executor map live in [`model-tier-policy`](./plugins/dev/skills/engineering/model-tier-policy/SKILL.md). The single machine source for defaults remains `CONFIG_DEFAULTS` in [`config.ts`](./apps/dev/src/core/config.ts). The runner and model are also overridable at run time without editing config — `--runner`/`RED_AFK_RUNNER` and `--model`/`RED_AFK_MODEL` (plus `--effort`/`RED_AFK_EFFORT`), flag beating env beating file.
+
+#### Running `/afk` from GitHub Actions
+
+The **AFK Actions lane** runs one attempt per issue from CI in any repo — a reusable workflow (triggers + trust gate) over a repo-portable composite action (`reddb-io/red-skills/.github/actions/afk-attempt@v1`), reusing the launcher + Release bundle (no workspace build, no submodule). It depends only on GitHub-official actions plus our own. Drive it on a label (`ready-for-agent`), on pre-labeled issue creation, manually, or via `workflow_call`, with the OpenCode runner pointed at OpenAI / MiniMax / OpenRouter through the model slug + matching key. **Full adopter guide: [`afk/actions-lane.md`](./plugins/dev/skills/engineering/afk/actions-lane.md)** (ADR 0059/0062).
 
 <details>
 <summary><strong>Alternatives — no auto-update</strong></summary>
