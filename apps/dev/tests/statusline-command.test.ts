@@ -66,6 +66,22 @@ describe("statusline command — pure helpers", () => {
     expect(resolveRoot(undefined, {}, "/fallback")).toBe("/fallback");
   });
 
+  it("resolveRoot prefers the fixed project_dir over the live current_dir (anchors to the project on cd)", () => {
+    // The session was started in /proj but the user cd'd into /proj/apps/dev —
+    // the statusline must stay anchored to /proj, not follow the subdir.
+    expect(
+      resolveRoot(
+        undefined,
+        { workspace: { project_dir: "/proj", current_dir: "/proj/apps/dev" }, cwd: "/proj/apps/dev" },
+        "/fallback",
+      ),
+    ).toBe("/proj");
+    // No project_dir (older host) → fall back to current_dir.
+    expect(
+      resolveRoot(undefined, { workspace: { current_dir: "/proj/apps/dev" } }, "/fallback"),
+    ).toBe("/proj/apps/dev");
+  });
+
   it("statuslineEnabled honours both opt-out shapes", async () => {
     const top = await mkdtemp(join(tmpdir(), "sl-cfg-"));
     await mkdir(join(top, ".red"), { recursive: true });
@@ -99,7 +115,15 @@ describe("statusline command — rendered line", () => {
     // One live worker on #17 with +12 -3, blocked 2; cached 📋11 🆘3.
     await writeWorkerState(root, "wA", "17-a1", {
       blocked: 2,
-      current: { number: 17, diff_added: 12, diff_removed: 3 },
+      // `started_at` (fresh) is what makes isStateActive treat this pid-live worker
+      // as active (ADR 0065): the statusline collector now requires recent activity,
+      // not just a resolving pid. A real worker always stamps started_at.
+      current: {
+        number: 17,
+        diff_added: 12,
+        diff_removed: 3,
+        started_at: new Date().toISOString(),
+      },
     });
     await seedFreshCache(root, 11, 3);
 
