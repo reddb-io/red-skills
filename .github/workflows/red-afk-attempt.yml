@@ -2,42 +2,41 @@
 #
 # This is the AFK Actions lane (ADR 0059, glossary term) for any GitHub
 # repository that installs RedSkills. It runs ONE attempt per invocation
-# against the executable issue(s) given by the caller — no fleet, no
+# against the executable issue given by the caller — no fleet, no
 # admin-merge in CI. The PR is the deliverable; the merge decision stays
 # human.
 #
-# Three trigger surfaces, all in the same file:
+# Trigger surfaces, all in the same file:
 #
-#   1. `workflow_call`     — direct invocation by a caller workflow
-#                            (e.g. a thin wrapper the adopter drops in
-#                            `.github/workflows/` of their own repo).
-#   2. `workflow_dispatch` — manual run from the Actions UI, with an
-#                            `issue_number` input. Useful for one-off
-#                            retries and operator-driven runs.
-#   3. `issues: labeled`   — auto-trigger on label application. The
-#                            `if:` gate below filters to only the
-#                            `ready-for-agent` label. Useful when a
-#                            triage bot (or a human) wants the lane
-#                            to fire the moment an issue is delegable,
-#                            without spinning up a caller workflow.
+#   1. `workflow_call`     — direct invocation by a caller workflow.
+#   2. `workflow_dispatch` — manual run from the Actions UI, `issue_number` input.
+#   3. `issues: labeled`   — auto-trigger when the `ready-for-agent` label is
+#                            applied. The `if:` gate filters to that label.
+#   4. `issues: opened`    — auto-trigger when an issue is CREATED already
+#                            carrying `ready-for-agent` (e.g. an automation or a
+#                            maintainer files a pre-delegated issue). Raw issues
+#                            with no label are NOT run — they fall through to
+#                            `red-issues-needs-triage` and the labeled path.
 #
-# Per ADR 0056, the trust gate is rigorous by default: the issue author
-# AND the label-applier must both be in `inputs.allowlist_*` (CSV
-# strings). The gate is evaluated inside the workflow with
-# `actions/github-script@v7` reading the event payload. Failure → no
-# claim, no PR, logged reason, exit 0.
+# Per ADR 0056, the trust gate is rigorous by default: the issue author AND the
+# label-applier (the opener, for the `opened` path) must both be in the
+# allowlist. The gate is evaluated with `actions/github-script@v7`. Failure →
+# no claim, no PR, logged reason + a comment.
+#
+# Execution: the job checks out the repo, sets up Node, installs the selected
+# runner CLI, then runs the version-pinned AFK launcher (`afk.mjs`), which
+# fetches the prebuilt `dev` bundle from the matching GitHub Release (ADR
+# 0038/0039) — no workspace build, no submodule needed in CI.
 #
 # Adoption paths:
-#   - Path A (auto, simplest): copy `.github/workflows/red-issues-needs-triage.yml`
-#     pattern into the adopter repo + the same `on: issues: labeled` block.
-#     No caller needed; this workflow fires directly.
+#   - Path A (auto, simplest): install this workflow directly into the adopter
+#     repo and edit the `allowlist_*` defaults below. Fires on issues:labeled/opened.
 #   - Path B (caller, more control): copy the thin caller at
-#     `plugins/dev/skills/engineering/afk/examples/red-afk-attempt-caller.yml`
-#     into the adopter repo, edit allowlist, done.
+#     `plugins/dev/skills/engineering/afk/examples/red-afk-attempt-caller.yml`.
 #
-# Required `permissions:` are intentionally minimal — `contents: write`
-# (push worker branch), `issues: write` (post envelope + apply labels),
-# `pull-requests: write` (open PR). No `id-token`, no `actions: write`.
+# Required `permissions:` are intentionally minimal — `contents: write` (push
+# worker branch), `issues: write` (envelope + labels), `pull-requests: write`
+# (open PR). No `id-token`, no `actions: write`.
 
 name: red-afk-attempt
 
@@ -55,7 +54,7 @@ on:
         type: string
         default: "opencode"
       model_slug:
-        description: "Override `afk.models.opencode.<tier>.model`. Empty = read from .red/config.yaml."
+        description: "Reserved. AFK reads the model from `.red/config.yaml` (`plugins.dev.afk.models.<runner>.<tier>.model`); a per-run override is not yet wired."
         required: false
         type: string
         default: ""
@@ -79,6 +78,8 @@ on:
         required: false
       openai_api_key:
         required: false
+      anthropic_api_key:
+        required: false
 
   workflow_dispatch:
     inputs:
@@ -87,16 +88,15 @@ on:
         required: true
         type: string
       runner:
-        description: "AFK runner to drive."
+        description: "AFK runner to drive (claude|codex|opencode)."
         required: false
         type: string
         default: "opencode"
 
-  # Auto-trigger: fire the lane when the `ready-for-agent` label is
-  # applied to any issue. The `if:` on the job filters to exactly that
-  # label; `actions/github-script` below evaluates the trust gate.
+  # Auto-trigger: fire when `ready-for-agent` is applied to an issue, or when an
+  # issue is opened already carrying it. The `if:` on the job enforces both.
   issues:
-    types: [labeled]
+    types: [labeled, opened]
 
 permissions:
   contents: write
@@ -105,15 +105,20 @@ permissions:
 
 jobs:
   attempt:
-    # Three trigger sources converge into a single job via the per-source
-    # resolution below. The job runs only when (a) the issue_number is
-    # resolvable and (b) the label is `ready-for-agent` (for the issues
-    # trigger; the other two are not label-gated).
+    # Trigger sources converge into a single job. The job runs only when:
+    #   - workflow_dispatch / workflow_call (caller-resolved issue), or
+    #   - issues:labeled with label == ready-for-agent, or
+    #   - issues:opened where the issue already carries ready-for-agent.
     if: >-
       (github.event_name == 'workflow_dispatch') ||
       (github.event_name == 'workflow_call') ||
-      (github.event_name == 'issues' && github.event.label.name == 'ready-for-agent')
+      (github.event_name == 'issues' && github.event.action == 'labeled' && github.event.label.name == 'ready-for-agent') ||
+      (github.event_name == 'issues' && github.event.action == 'opened' && contains(github.event.issue.labels.*.name, 'ready-for-agent'))
     runs-on: ubuntu-latest
+    # Resolve the runner once for every step. issues:* events have no host
+    # session, so they always use opencode (the API-auth runner, ADR 0059).
+    env:
+      RED_AFK_RUNNER: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.runner || 'opencode' }}
     steps:
       - name: Resolve the issue number
         id: resolve
@@ -149,13 +154,10 @@ jobs:
             const authors = (process.env.ALLOWLIST_AUTHORS || '').split(',').map(s => s.trim()).filter(Boolean);
             const labelActors = (process.env.ALLOWLIST_LABEL_ACTORS || '').split(',').map(s => s.trim()).filter(Boolean);
 
-            // For the issues:labeled trigger, fall back to a hard-coded
-            // allowlist of reddb-io maintainers (this workflow lives in
-            // the reddb-io/red-skills repo; the canonical allowlist
-            // is the set of maintainers with merge rights on main).
-            // TODO: when #621 lands, source the allowlist from
-            // `.red/config.yaml` (`plugins.dev.afk.trust_gate.allowlist`)
-            // and remove this hard-coded fallback.
+            // For the issues trigger, fall back to a hard-coded allowlist of
+            // reddb-io maintainers (this workflow lives in reddb-io/red-skills).
+            // TODO: when #621 lands, source the allowlist from `.red/config.yaml`
+            // (`plugins.dev.afk.trust_gate.allowlist`) and remove this fallback.
             if (authors.length === 0) {
               authors.push('filipeforattini');
             }
@@ -167,6 +169,8 @@ jobs:
             const issue = context.payload.issue;
             const sender = context.payload.sender;
             const author = issue?.user?.login;
+            // issues:opened — the opener is the de-facto label-applier (the issue
+            // was filed pre-labeled), so the sender (== author) is the actor.
             const labelActor = eventName === 'issues' ? sender?.login : (sender?.login || author);
 
             const authorOk = authors.includes(author);
@@ -196,14 +200,42 @@ jobs:
               }
             }
 
+      # Everything below runs only when the gate admits the claim.
+      - name: Checkout
+        if: steps.trust.outputs.gate == 'pass' || steps.trust.outputs.gate == 'bypass'
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        if: steps.trust.outputs.gate == 'pass' || steps.trust.outputs.gate == 'bypass'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install the runner CLI
+        if: steps.trust.outputs.gate == 'pass' || steps.trust.outputs.gate == 'bypass'
+        run: |
+          set -euo pipefail
+          case "${RED_AFK_RUNNER}" in
+            opencode) npm install -g opencode-ai ;;
+            claude)   npm install -g @anthropic-ai/claude-code ;;
+            codex)    npm install -g @openai/codex ;;
+            *) echo "::error::unsupported runner for the Actions lane: '${RED_AFK_RUNNER}'"; exit 1 ;;
+          esac
+          echo "runner '${RED_AFK_RUNNER}' CLI installed"
+        shell: bash
+
       - name: Run the AFK attempt
         if: steps.trust.outputs.gate == 'pass' || steps.trust.outputs.gate == 'bypass'
         env:
-          RED_AFK_RUNNER: ${{ github.event_name == 'workflow_dispatch' && inputs.runner || (github.event_name == 'workflow_call' && inputs.runner || 'opencode') }}
           RESOLVED_NUMBER: ${{ steps.resolve.outputs.number }}
+          # gh + git operations (label the issue, post the envelope, open the PR).
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # opencode auth — first set key wins (opencode-env.ts precedence).
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           MINIMAX_API_KEY:    ${{ secrets.MINIMAX_API_KEY }}
           OPENAI_API_KEY:     ${{ secrets.OPENAI_API_KEY }}
+          # claude/codex CLIs, if those runners are selected, read these directly.
+          ANTHROPIC_API_KEY:  ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           set -euo pipefail
           ISSUE="${RESOLVED_NUMBER}"
@@ -211,9 +243,11 @@ jobs:
             echo "::error::missing issue number"
             exit 1
           fi
-          # TODO: when #622 lands the atomic claim CAS replaces the
-          # --issues <N> direct invocation with a server-side-claim
-          # primitive that prevents race with a concurrent local fleet.
+          # A committer identity for the worker-branch commits the runner lands.
+          git config --global user.name  "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # TODO: when #622 lands, the atomic claim CAS replaces the --issues <N>
+          # direct invocation with a server-side claim that can't race a local fleet.
           node plugins/dev/skills/engineering/afk/bin/afk.mjs run \
             --issues "$ISSUE" \
             --runner "${RED_AFK_RUNNER}" \
