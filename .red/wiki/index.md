@@ -80,6 +80,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [feat(afk): exempt idle drain from fast-death ring, idle-park fleet on empty queue](./pages/620-feat-afk-exempt-idle-drain-from-fast-death-ring-idle-park-fl.md)
 - [feat(afk): exempt idle drain from fast-death ring, idle-park fleet on empty queue (#578)](./pages/633-feat-afk-exempt-idle-drain-from-fast-death-ring-idle-park-fl.md)
 - [feat(afk): externalize proof-of-life — heartbeat record, state field, on_heartbeat hook (ADR 0045)](./pages/401-feat-afk-externalize-proof-of-life-heartbeat-record-state-fi.md)
+- [feat(afk): fleet supervisor owns the boot sweeps — workers boot bootstrap+claim only (#623)](./pages/695-feat-afk-fleet-supervisor-owns-the-boot-sweeps-workers-boot.md)
 - [feat(afk): model/effort override via --model/--effort flag + RED_AFK_MODEL/RED_AFK_EFFORT env](./pages/677-feat-afk-model-effort-override-via-model-effort-flag-red-afk.md)
 - [feat(afk): opencode provider — endpoint-agnostic, env-precedence auth (Refs #638)](./pages/640-feat-afk-opencode-provider-endpoint-agnostic-env-precedence.md)
 - [feat(afk): per-runner `base` model/effort auto-populates every tier (extends ADR 0049)](./pages/694-feat-afk-per-runner-base-model-effort-auto-populates-every-t.md)
