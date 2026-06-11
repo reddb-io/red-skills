@@ -422,6 +422,9 @@ export async function collectMonitorInputs(root = process.cwd()): Promise<Monito
           title: state.current.title,
           stage: state.current.stage,
           started_at: state.current.started_at,
+          input_tokens: state.current.input_tokens,
+          output_tokens: state.current.output_tokens,
+          cost_usd: state.current.cost_usd,
         },
       },
       live: isStateLive(state),
@@ -520,6 +523,8 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
   let added = 0;
   let removed = 0;
   let waiting = 0;
+  let tokens = 0;
+  let costUsd = 0;
   const issues: Array<number | string> = [];
   const stages: Array<string | undefined> = [];
 
@@ -540,6 +545,9 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
     // event, persisted on `current` (see AfkCurrentSchema). Summed across the
     // fleet and shown as 💤N so a wedged-but-not-dead worker is visible.
     waiting += state.current.waiting_count;
+    // Cost group (ADR 0065): per-worker token spend + USD, summed for the fleet.
+    tokens += state.current.input_tokens + state.current.output_tokens;
+    costUsd += state.current.cost_usd;
 
     let a = state.current.loc_added;
     let r = state.current.loc_removed;
@@ -592,7 +600,7 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
     void refresh().catch(() => undefined);
   }
 
-  return { workers, queue, human, blocked, added, removed, waiting, issues, stages };
+  return { workers, queue, human, blocked, added, removed, waiting, tokens, costUsd, issues, stages };
 }
 
 // ---------- reap inputs ----------

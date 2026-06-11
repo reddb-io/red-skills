@@ -25,12 +25,17 @@
 
 /** The minimal shape this meter reads off a normalised stream event. */
 export interface StreamEventLike {
-  /** `usage` is accepted so the sink can forward every stream event unfiltered,
-   * but it is a cost meta-event (ADR 0065 cost group) — `record()` does not count
-   * it as a tool/text/reasoning liveness unit. */
+  /** `usage` is accepted so the sink can forward every stream event unfiltered.
+   * It is not counted as a tool/text/reasoning liveness unit, but it DOES feed
+   * the cumulative cost group (ADR 0065) via the fields below. */
   readonly type: "text" | "toolCall" | "reasoning" | "usage";
   /** Reasoning token count, when the runner exposes it (codex/opencode). */
   readonly tokens?: number;
+  /** Cost group, present on `usage` events only — per-turn/step token spend that
+   * `record()` sums into the cumulative attempt totals. */
+  readonly inputTokens?: number;
+  readonly outputTokens?: number;
+  readonly costUsd?: number;
 }
 
 /** The counters surfaced into a heartbeat tick. All cumulative for the attempt. */
@@ -56,6 +61,14 @@ export interface ActivitySnapshot {
   readonly waiting: number;
   /** New stream events since the previous `snapshotWindow()` (0 → a waiting window). */
   readonly eventsThisWindow: number;
+  /** Cost group (ADR 0065) — cumulative token spend summed from `usage` events.
+   * Fed live by codex/opencode (per-turn/step usage); claude's usage arrives at
+   * the iteration boundary, not the stream, so a pure-claude attempt accrues 0
+   * here (its cost is a follow-up). */
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  /** Cumulative USD cost when the runner reports it directly, else 0. */
+  readonly costUsd: number;
 }
 
 export interface ActivityMeter {
@@ -82,16 +95,25 @@ export function createActivityMeter(): ActivityMeter {
   let reasoningCount = 0;
   let reasoningTokens = 0;
   let waiting = 0;
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let costUsd = 0;
   // Total events at the last window boundary, to derive per-window deltas.
   let eventsAtLastWindow = 0;
 
+  // `usage` is deliberately excluded — it is a cost meta-event, not a liveness
+  // unit, so it never resets the waiting window.
   const total = (): number => toolsCalled + textChunks + reasoningCount;
 
   return {
     record(event) {
       if (event.type === "toolCall") toolsCalled += 1;
       else if (event.type === "text") textChunks += 1;
-      else if (event.type === "reasoning") {
+      else if (event.type === "usage") {
+        if (typeof event.inputTokens === "number") inputTokens += event.inputTokens;
+        if (typeof event.outputTokens === "number") outputTokens += event.outputTokens;
+        if (typeof event.costUsd === "number") costUsd += event.costUsd;
+      } else if (event.type === "reasoning") {
         reasoningCount += 1;
         if (typeof event.tokens === "number" && event.tokens > 0) reasoningTokens += event.tokens;
       }
@@ -107,6 +129,9 @@ export function createActivityMeter(): ActivityMeter {
         reasoningTokens,
         waiting,
         eventsThisWindow: Math.max(0, eventsThisWindow),
+        inputTokens,
+        outputTokens,
+        costUsd,
       };
     },
     peek() {
@@ -117,6 +142,9 @@ export function createActivityMeter(): ActivityMeter {
         reasoningTokens,
         waiting,
         eventsThisWindow: total() - eventsAtLastWindow,
+        inputTokens,
+        outputTokens,
+        costUsd,
       };
     },
   };

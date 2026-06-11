@@ -251,10 +251,10 @@ describe("buildProgressHeartbeat (#448)", () => {
       head: "40ac9326",
       added: 382,
       removed: 45,
-      activity: { toolsCalled: 12, textChunks: 7, reasoningCount: 4, reasoningTokens: 130, waiting: 2, eventsThisWindow: 3 },
+      activity: { toolsCalled: 12, textChunks: 7, reasoningCount: 4, reasoningTokens: 130, waiting: 2, eventsThisWindow: 3, inputTokens: 1500, outputTokens: 320, costUsd: 0.04 },
     });
     expect(hb.msg).toBe(
-      "progress: 75s since last commit @ 40ac9326 · +382 -45 · tools:12 text:7 think:4/130tok wait:2",
+      "progress: 75s since last commit @ 40ac9326 · +382 -45 · tools:12 text:7 think:4/130tok wait:2 tok:1500/320 $0.04",
     );
     expect(hb.extra.tools_called_count).toBe("12");
     expect(hb.extra.text_chunk_count).toBe("7");
@@ -265,6 +265,10 @@ describe("buildProgressHeartbeat (#448)", () => {
     expect(hb.extra.waiting_count).toBe("2");
     expect(hb.extra.loc_added).toBe("382");
     expect(hb.extra.loc_removed).toBe("45");
+    // cost group (ADR 0065)
+    expect(hb.extra.input_tokens).toBe("1500");
+    expect(hb.extra.output_tokens).toBe("320");
+    expect(hb.extra.cost_usd).toBe("0.04");
     expect(hb.statePatch["current.tools_called_count"]).toBe(12);
     // canonical name in state — no legacy thinking_called_count in statePatch.
     expect(hb.statePatch["current.reasoning_events"]).toBe(4);
@@ -272,6 +276,9 @@ describe("buildProgressHeartbeat (#448)", () => {
     expect(hb.statePatch["current.reasoning_tokens"]).toBe(130);
     expect(hb.statePatch["current.waiting_count"]).toBe(2);
     expect(hb.statePatch["current.loc_added"]).toBe(382);
+    expect(hb.statePatch["current.input_tokens"]).toBe(1500);
+    expect(hb.statePatch["current.output_tokens"]).toBe(320);
+    expect(hb.statePatch["current.cost_usd"]).toBe(0.04);
   });
 
   it("reasoning with no tokens (claude-style) shows think:N without /tok", () => {
@@ -281,7 +288,7 @@ describe("buildProgressHeartbeat (#448)", () => {
       head: "",
       added: 1,
       removed: 0,
-      activity: { toolsCalled: 0, textChunks: 2, reasoningCount: 3, reasoningTokens: 0, waiting: 0, eventsThisWindow: 5 },
+      activity: { toolsCalled: 0, textChunks: 2, reasoningCount: 3, reasoningTokens: 0, waiting: 0, eventsThisWindow: 5, inputTokens: 0, outputTokens: 0, costUsd: 0 },
     });
     expect(hb.msg).toContain("think:3 ");
     expect(hb.msg).not.toContain("tok");
@@ -294,7 +301,7 @@ describe("buildProgressHeartbeat (#448)", () => {
       head: "",
       added: 0,
       removed: 0,
-      activity: { toolsCalled: 5, textChunks: 3, reasoningCount: 1, reasoningTokens: 0, waiting: 4, eventsThisWindow: 0 },
+      activity: { toolsCalled: 5, textChunks: 3, reasoningCount: 1, reasoningTokens: 0, waiting: 4, eventsThisWindow: 0, inputTokens: 0, outputTokens: 0, costUsd: 0 },
     });
     expect(hb.msg).toContain("wait:4 (idle window)");
   });

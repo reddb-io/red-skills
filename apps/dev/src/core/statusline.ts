@@ -55,6 +55,12 @@ export interface AfkInput {
    * across live workers. A rising value between glances is the clean
    * stuck-vs-working signal (silent agent), so it is shown only when > 0. */
   waiting?: number;
+  /** 🪙 — summed token spend (input + output) across live workers (ADR 0065 cost
+   * group). Humanized (e.g. `🪙12k`); shown only when > 0. */
+  tokens?: number;
+  /** 💵 — summed USD cost across live workers, shown only when > 0 (most runners
+   * report tokens but not cost, so this is frequently absent). */
+  costUsd?: number;
   /** #N issue numbers for the in-progress workers, in order. */
   issues: ReadonlyArray<number | string>;
   /** Per-issue `current.stage` aligned by index with {@link issues}. When a
@@ -137,6 +143,8 @@ export function renderAfkBlock(afk: AfkInput | undefined): string | null {
   if (afk.added > 0) tokens.push(`+${afk.added}`);
   if (afk.removed > 0) tokens.push(`-${afk.removed}`);
   if (afk.waiting !== undefined && afk.waiting > 0) tokens.push(`💤${afk.waiting}`);
+  if (afk.tokens !== undefined && afk.tokens > 0) tokens.push(`🪙${humanizeTokens(afk.tokens)}`);
+  if (afk.costUsd !== undefined && afk.costUsd > 0) tokens.push(`💵$${afk.costUsd.toFixed(2)}`);
   afk.issues.forEach((issue, i) => {
     const stage = afk.stages?.[i];
     tokens.push(stage ? `#${issue}·${stage}` : `#${issue}`);

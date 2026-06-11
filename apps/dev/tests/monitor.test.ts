@@ -58,6 +58,29 @@ describe("monitor — compact line", () => {
     );
   });
 
+  it("appends per-worker token spend (and $cost when reported) when usage streamed", () => {
+    const base = baseWorker();
+    const withCost = baseWorker({
+      state: {
+        ...base.state,
+        current: { ...base.state.current, input_tokens: 15479, output_tokens: 184, cost_usd: 0.07 },
+      },
+    });
+    expect(renderWorkerCompactLine(withCost, 1780140600)).toContain("tok:15479/184 $0.07");
+    // no cost reported → tokens only, no $ fragment
+    const noUsd = baseWorker({
+      state: {
+        ...base.state,
+        current: { ...base.state.current, input_tokens: 100, output_tokens: 20, cost_usd: 0 },
+      },
+    });
+    const line = renderWorkerCompactLine(noUsd, 1780140600);
+    expect(line).toContain("tok:100/20");
+    expect(line).not.toContain("$");
+    // no usage at all → no cost fragment (back-compat with the documented shape)
+    expect(renderWorkerCompactLine(base, 1780140600)).not.toContain("tok:");
+  });
+
   it("flags a non-live worker as stale", () => {
     const line = renderWorkerCompactLine(
       baseWorker({ live: false }),

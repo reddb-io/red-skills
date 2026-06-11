@@ -177,6 +177,18 @@ describe("statusline — AFK block", () => {
     expect(renderAfkBlock(baseAfk())).not.toContain("💤");
   });
 
+  it("renders 🪙 humanized tokens and 💵 cost after 💤, each only when > 0", () => {
+    expect(renderAfkBlock(baseAfk({ tokens: 12500, costUsd: 0.42 }))).toBe(
+      "🤖1 📋11 🆘3 🚧2 +12 -3 🪙12k 💵$0.42 #17",
+    );
+    // tokens but no cost (the common case — most runners report tokens, not USD)
+    expect(renderAfkBlock(baseAfk({ tokens: 900 }))).toContain("🪙900");
+    expect(renderAfkBlock(baseAfk({ tokens: 900 }))).not.toContain("💵");
+    // neither when zero/absent
+    expect(renderAfkBlock(baseAfk({ tokens: 0, costUsd: 0 }))).not.toMatch(/🪙|💵/);
+    expect(renderAfkBlock(baseAfk())).not.toMatch(/🪙|💵/);
+  });
+
   it("keeps the pre-vitals render byte-for-byte when no waiting/stages are supplied", () => {
     // The new fields are optional: an aggregator that never populates them must
     // produce the exact legacy line, so the upgrade is a no-op for old callers.

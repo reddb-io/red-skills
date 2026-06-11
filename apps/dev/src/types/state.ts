@@ -56,6 +56,13 @@ export const AfkCurrentSchema = z.object({
   waiting_count: z.number().default(0),
   loc_added: z.number().default(0),
   loc_removed: z.number().default(0),
+  /** Cost group (ADR 0065) — cumulative per-worker token spend, summed from the
+   * runner's `usage` stream events (codex/opencode live; claude at iteration
+   * boundary, a follow-up). `cost_usd` is populated only when the runner reports
+   * cost directly. */
+  input_tokens: z.number().default(0),
+  output_tokens: z.number().default(0),
+  cost_usd: z.number().default(0),
 });
 
 export const AfkStateSchema = z.object({
