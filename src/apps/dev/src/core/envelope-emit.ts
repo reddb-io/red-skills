@@ -315,7 +315,11 @@ export async function emitEnvelope(
   await deps.writePosted(posted);
   if (!posted) {
     warnings.push(`failed to post envelope for #${input.issue} (status=${input.status})`);
-  } else if (input.historyPath && input.historyClock) {
+  }
+  // Append the terminal history record unconditionally — a transient GitHub post
+  // failure must not silently drop the ledger entry that feeds the sparkline and
+  // the drain-promotion criteria (issue #625).
+  if (input.historyPath && input.historyClock) {
     const append = deps.historyAppend ?? historyAppend;
     await append(
       input.historyPath,

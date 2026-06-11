@@ -392,7 +392,7 @@ describe("emitEnvelope — failure push/markers/posted flow", () => {
     expect(res.warnings.length).toBeGreaterThan(0);
   });
 
-  it("sets posted=false and skips the history append when the post fails", async () => {
+  it("sets posted=false and still appends the history event when the post fails (issue #625)", async () => {
     const { deps, posted, historyAppend } = makeDeps({ gitCode: 0, posterOk: false });
     const res = await emitEnvelope(deps, {
       status: "blocked",
@@ -413,8 +413,35 @@ describe("emitEnvelope — failure push/markers/posted flow", () => {
     });
     expect(res.posted).toBe(false);
     expect(posted.writes).toEqual([false]);
-    expect(historyAppend).not.toHaveBeenCalled();
+    // The history record must be written regardless of whether the envelope post succeeded.
+    expect(historyAppend).toHaveBeenCalledTimes(1);
+    const [path, , event] = historyAppend.mock.calls[0]!;
+    expect(path).toBe("/ledger.jsonl");
+    expect(event).toBe("blocked");
     expect(res.warnings.some((w) => w.includes("failed to post envelope for #11"))).toBe(true);
+  });
+
+  it("appends a done history event even when the envelope post fails (issue #625 regression)", async () => {
+    const { deps, historyAppend } = makeDeps({ posterOk: false });
+    const res = await emitEnvelope(deps, {
+      status: "done",
+      issue: 20,
+      worker: "wTEST",
+      durationS: 600,
+      branch: "afk/wTEST/20-foo",
+      attempt: 2,
+      mergeSha: "abcdef1",
+      diff: "merged",
+      historyPath: "/ledger.jsonl",
+      historyClock: { ts: "2026-06-09T00:00:00Z", epoch: 1749427200 },
+      historyFields: { runner: "claude", merge_sha: "abcdef1" },
+    });
+    expect(res.posted).toBe(false);
+    expect(historyAppend).toHaveBeenCalledTimes(1);
+    const [path, , event, fields] = historyAppend.mock.calls[0]!;
+    expect(path).toBe("/ledger.jsonl");
+    expect(event).toBe("done");
+    expect(fields).toMatchObject({ worker: "wTEST", issue: 20 });
   });
 });
 
