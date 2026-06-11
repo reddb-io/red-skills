@@ -50,6 +50,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [docs(afk): consolidate the Actions-lane / reusable-workflow docs into one adopter guide](./pages/678-docs-afk-consolidate-the-actions-lane-reusable-workflow-docs.md)
 - [docs(afk): describe the Task Mirror as a `monitor --mirror-plan` subcommand](./pages/349-docs-afk-describe-the-task-mirror-as-a-monitor-mirror-plan-s.md)
 - [docs(afk): execution-environment command surface — GHA + k8s adoption path (Refs #631)](./pages/657-docs-afk-execution-environment-command-surface-gha-k8s-adopt.md)
+- [docs(afk): progressive disclosure — split the SKILL.md monolith (~21k → ~13.4k tokens)](./pages/679-docs-afk-progressive-disclosure-split-the-skill-md-monolith.md)
 - [docs(afk): remove dead Capability Dispatch + document --boot-only](./pages/329-docs-afk-remove-dead-capability-dispatch-document-boot-only.md)
 - [docs(context): add the brain product context (glossary + map pointer)](./pages/409-docs-context-add-the-brain-product-context-glossary-map-poin.md)
 - [docs(memory): ADR 0036 — transports are adapters over the operation registry](./pages/375-docs-memory-adr-0036-transports-are-adapters-over-the-operat.md)
