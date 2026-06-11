@@ -78,6 +78,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [feat(afk): backpressure gate on the DONE path (#430)](./pages/436-feat-afk-backpressure-gate-on-the-done-path-430.md)
 - [feat(afk): bounded auto-recovery for recoverable blocks](./pages/294-feat-afk-bounded-auto-recovery-for-recoverable-blocks.md)
 - [feat(afk): default maxIterations to 50 + make it configurable via .red/config.yaml](./pages/360-feat-afk-default-maxiterations-to-50-make-it-configurable-vi.md)
+- [feat(afk): enrich the proof-of-life heartbeat with stream-activity metrics](./pages/699-feat-afk-enrich-the-proof-of-life-heartbeat-with-stream-acti.md)
 - [feat(afk): exempt idle drain from fast-death ring, idle-park fleet on empty queue](./pages/620-feat-afk-exempt-idle-drain-from-fast-death-ring-idle-park-fl.md)
 - [feat(afk): exempt idle drain from fast-death ring, idle-park fleet on empty queue (#578)](./pages/633-feat-afk-exempt-idle-drain-from-fast-death-ring-idle-park-fl.md)
 - [feat(afk): externalize proof-of-life — heartbeat record, state field, on_heartbeat hook (ADR 0045)](./pages/401-feat-afk-externalize-proof-of-life-heartbeat-record-state-fi.md)
