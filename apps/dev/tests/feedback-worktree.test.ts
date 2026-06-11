@@ -61,11 +61,18 @@ describe("splitBranchDir (#437)", () => {
  * exit so the install-failure path is exercisable. `addOk` controls whether
  * `worktreeAdd` succeeds so the worktree-add-failure path is exercisable.
  */
-function fakeIO(installCode = 0, addOk = true): {
+function fakeIO(
+  installCode = 0,
+  addOk = true,
+  submoduleCode = 0,
+): {
   io: FeedbackWorktreeIO;
-  calls: Array<{ op: "add" | "install" | "script" | "remove"; dest: string }>;
+  calls: Array<{ op: "add" | "submodule" | "install" | "script" | "remove"; dest: string }>;
 } {
-  const calls: Array<{ op: "add" | "install" | "script" | "remove"; dest: string }> = [];
+  const calls: Array<{
+    op: "add" | "submodule" | "install" | "script" | "remove";
+    dest: string;
+  }> = [];
   const io: FeedbackWorktreeIO = {
     worktreeAdd: async (_ctx, dest) => {
       calls.push({ op: "add", dest });
@@ -77,7 +84,13 @@ function fakeIO(installCode = 0, addOk = true): {
       const code = isInstall ? installCode : 0;
       return { code, stdout: "", stderr: code === 0 ? "" : "boom" };
     },
-    exec: async () => ({ code: 0, stdout: "", stderr: "" }),
+    // The submodule init (git submodule update --init --recursive) runs between
+    // worktreeAdd and install; `submoduleCode` scripts its exit so the
+    // init-failure path is exercisable.
+    exec: async (_cmd, _args, opts) => {
+      calls.push({ op: "submodule", dest: opts.cwd ?? "" });
+      return { code: submoduleCode, stdout: "", stderr: submoduleCode === 0 ? "" : "boom" };
+    },
     worktreeRemove: async (_ctx, dest) => {
       calls.push({ op: "remove", dest });
     },
@@ -94,10 +107,11 @@ describe("makeFeedbackWorktree install (#458)", () => {
     // it must materialise + install the checkout, then run the script there.
     await fb.pnpm(["pnpm", "-C", "afk/w1/42-fix", "test"]);
 
-    // add → install BEFORE the script runs, the first two keyed to the worktree.
-    expect(calls.map((c) => c.op)).toEqual(["add", "install", "script"]);
+    // add → submodule init → install BEFORE the script runs, all keyed to the worktree.
+    expect(calls.map((c) => c.op)).toEqual(["add", "submodule", "install", "script"]);
     expect(calls[0]?.dest).toBe("/root/.red/tmp/feedback/afk-w1-42-fix");
     expect(calls[1]?.dest).toBe("/root/.red/tmp/feedback/afk-w1-42-fix");
+    expect(calls[2]?.dest).toBe("/root/.red/tmp/feedback/afk-w1-42-fix");
   });
 
   it("installs the materialised checkout exactly once across reused branches", async () => {
@@ -126,6 +140,25 @@ describe("makeFeedbackWorktree install (#458)", () => {
       { op: "remove", dest: "/root/.red/tmp/feedback/afk-w1-42-fix" },
     ]);
     // The script was never run.
+    expect(calls.filter((c) => c.op === "script")).toHaveLength(0);
+  });
+
+  it("blocks validation (returns exit code 1) when submodule init fails", async () => {
+    const { io, calls } = fakeIO(0, true, 1);
+    const fb = makeFeedbackWorktree("/root", "/root/.red/tmp/feedback", io);
+
+    const result = await fb.pnpm(["pnpm", "-C", "afk/w1/42-fix", "test"]);
+    await fb.cleanup();
+
+    // A failed submodule init must block (else @reddb-io/red-castle is unresolved
+    // and the gate fails on every check — a false blocked:validation).
+    expect(result.code).toBe(1);
+    // The partial worktree is torn down immediately, and neither install nor the
+    // script ever runs.
+    expect(calls.filter((c) => c.op === "remove")).toEqual([
+      { op: "remove", dest: "/root/.red/tmp/feedback/afk-w1-42-fix" },
+    ]);
+    expect(calls.filter((c) => c.op === "install")).toHaveLength(0);
     expect(calls.filter((c) => c.op === "script")).toHaveLength(0);
   });
 
