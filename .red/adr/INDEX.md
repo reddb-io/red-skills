@@ -14,7 +14,7 @@ stale notes inline.
 > otherwise it lands with it — do not reclaim it blindly.
 
 ## Repo structure & contexts
-- **0021** Multi-context plugin glossaries — *accepted*
+- **0021** Multi-context plugin glossaries — *accepted* (predates the `brain` plugin; the multi-context model now spans `dev`/`memory`/**`brain`** — see the *Brain plugin* section and `.red/contexts/brain/`)
 - **0034** Repo splits DEFINITIONS from IMPLEMENTATION (`apps/…` + `packages/…`) — partially superseded by **0039** (entrypoints fused), **0041** (memory leaves), and **0060** (layout relocated to root with a pnpm catalog)
 - **0041** red-skills consumes `red-memory` + `red-ui` MCPs; stops building memory — partially supersedes 0034 *(renumbered from 0039)*
 - **0060** Workspaces move to root `apps/` + `packages/` with a pnpm `catalog:` for shared versions — relocates 0034's `src/apps`/`src/packages` layout (conventional Turborepo); `@reddb-io/sdk` stays per-app-pinned for the bundler
@@ -32,6 +32,12 @@ stale notes inline.
 - **0052** One bundle-naming convention — all release assets under `./dist/` as `<app>[-<role>].bundle.min.mjs`; legacy `dist-bundle/*-cli.mjs` removed *(supersedes 0029's dual output for memory/brain)*
 
 ## AFK execution & lifecycle
+
+> Many ADRs in this group predate the bash→TypeScript port (ADR 0032/0034 deleted
+> the `scripts/*.sh` runtime). Their references to `*.sh` files (e.g. `supervisor.sh`,
+> `afk.sh`) are **historical parity anchors** — the TS runtime mirrors that behaviour;
+> the shell files no longer exist. The decisions stand; only the implementation moved.
+
 - **0003** Native task surface mirrors AFK worker state
 - **0008** `/afk` merges into the pinned branch, not always main
 - **0015** Fleet supervisor is runner-portable; observability degrades per runner
@@ -60,6 +66,12 @@ stale notes inline.
 - *(see also 0030, 0031)*
 
 ## Memory architecture & graph
+
+> Post-**0041**, the memory runtime is no longer built in red-skills — it lives in the
+> `red-memory` repo and is consumed as a fetched MCP. These ADRs still describe the
+> memory **substrate/domain** (the decisions stand), but their implementation now
+> resides in `red-memory`, not `apps/memory`.
+
 - **0005** Memory plugin: three-layer RedDB architecture, local-first per-repo, MCP+CLI
 - **0007** RedDB graph writes go through multi-model DML, not table inserts
 - **0009** `dev` soft-uses `memory`, one-directional — gate mechanism partially superseded by **0042**; soft-use direction stands
