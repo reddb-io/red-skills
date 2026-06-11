@@ -671,7 +671,11 @@ export function buildProcessDeps(
         ts,
         fields: { extra: { iteration: String(event.iteration), kind: event.type } },
       }).catch(() => {});
-      void fsx.appendLine(join(current.attemptDir, "afk.log"), `[agent] ${msg}`);
+      // The plaintext `[agent] …` mirror into afk.log is intentionally gone:
+      // red-castle's file-log now points at the SAME afk.log (process-issue.ts), so
+      // it already renders agent text + tool calls there — re-appending here would
+      // double every turn. The structured per-event record stays in agent.log.jsonl
+      // + the firehose above, where the rich reasoning/usage glyphs live.
       // Advance the monitor's state view on recognised tool-call transitions
       // (bounded write rate vs every text chunk — the lane mtime above is the
       // stall-detector's liveness signal; this is the dashboard's stage/last).
