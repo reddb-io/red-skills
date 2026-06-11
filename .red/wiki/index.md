@@ -152,6 +152,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [fix(afk): shell config reader skips block-sequence items and strips post-quote inline comments](./pages/663-fix-afk-shell-config-reader-skips-block-sequence-items-and-s.md)
 - [fix(afk): slugifyRef trailing dash after slice → sandcastle 'is not a working tree' (#442)](./pages/467-fix-afk-slugifyref-trailing-dash-after-slice-sandcastle-is-n.md)
 - [fix(afk): supervisor.test runSupervisor tests spin → OOM, false-failing every gate (#446)](./pages/464-fix-afk-supervisor-test-runsupervisor-tests-spin-oom-false-f.md)
+- [fix(afk): terminal history event appends even when the envelope POST fails (closes #625)](./pages/687-fix-afk-terminal-history-event-appends-even-when-the-envelop.md)
 - [fix(afk): uncap sandcastle inner agent maxIterations (fixes #322)](./pages/327-fix-afk-uncap-sandcastle-inner-agent-maxiterations-fixes-322.md)
 - [fix(afk): write afk.state.json + lanes on the native path (monitor/statusline/stall-detector were blind)](./pages/359-fix-afk-write-afk-state-json-lanes-on-the-native-path-monito.md)
 - [fix(config): memory built-in handlers use autohooks, not hooks (ADR 0042 refine)](./pages/391-fix-config-memory-built-in-handlers-use-autohooks-not-hooks.md)
