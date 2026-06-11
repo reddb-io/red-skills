@@ -92,6 +92,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [feat(afk): publish red-afk-attempt reusable workflow — 3 triggers + trust gate (Refs #631)](./pages/665-feat-afk-publish-red-afk-attempt-reusable-workflow-3-trigger.md)
 - [feat(afk): raise max iterations to 20 + per-iteration boundary markers](./pages/413-feat-afk-raise-max-iterations-to-20-per-iteration-boundary-m.md)
 - [feat(afk): record reasoning attempts into memory (ADR 0017), CLI-to-CLI direct](./pages/330-feat-afk-record-reasoning-attempts-into-memory-adr-0017-cli.md)
+- [feat(afk): red-castle surfaces a normalized usage/cost stream event (S2 #707)](./pages/711-feat-afk-red-castle-surfaces-a-normalized-usage-cost-stream.md)
 - [feat(afk): repo-portable AFK Actions lane via a composite action (ADR 0062)](./pages/676-feat-afk-repo-portable-afk-actions-lane-via-a-composite-acti.md)
 - [feat(afk): req:N dependency labels + event-driven auto-unblock](./pages/292-feat-afk-req-n-dependency-labels-event-driven-auto-unblock.md)
 - [feat(afk): run execution on the vendored @reddb-io/red-castle submodule (ADR 0061)](./pages/674-feat-afk-run-execution-on-the-vendored-reddb-io-red-castle-s.md)
