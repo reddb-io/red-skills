@@ -72,6 +72,10 @@ interface ParsedRunFlags {
   iterCap?: number;
   once: boolean;
   runnerFlag?: string;
+  /** --model <slug>: override the resolved tier model for every tier (flag > env > config). */
+  model?: string;
+  /** --effort <e>: override the resolved tier effort (still provider-gated downstream). */
+  effort?: string;
   request?: string;
   /** --alternate: rotate the runner between consecutive issues (claude↔codex). */
   alternate: boolean;
@@ -129,6 +133,8 @@ const RUN_FLAG_SCHEMA = {
   n: { kind: "value", coerce: (raw: string): number => Number(raw) },
   once: { kind: "boolean" },
   runner: { kind: "value", coerce: (raw: string): string => raw },
+  model: { kind: "value", coerce: (raw: string): string => raw },
+  effort: { kind: "value", coerce: (raw: string): string => raw },
   request: { kind: "value", aliases: ["r"], coerce: (raw: string): string => raw },
   alternate: { kind: "boolean" },
   "fallback-runner": { kind: "boolean" },
@@ -175,6 +181,8 @@ export function parseRunFlags(args: readonly string[]): ParsedRunFlags {
     iterCap: values.n as number | undefined,
     once: values.once === true,
     runnerFlag,
+    model: values.model as string | undefined,
+    effort: values.effort as string | undefined,
     request: values.request as string | undefined,
     alternate,
     fallbackRunner: values["fallback-runner"] === true,
@@ -590,7 +598,7 @@ export function buildProcessDeps(
     runAgent: makeRunAgent(sandbox, process.env, maxIterations, attemptTimeoutSeconds, laneIdle),
     model,
     classifyIssue: makeIssueClassifier(config, runner, ctx.root, exec),
-    resolveTier: (activeRunner, taskClass = "think") => resolveTier(config, activeRunner, taskClass),
+    resolveTier: (activeRunner, taskClass = "think") => resolveTier(config, activeRunner, taskClass, process.env),
     fallbackRunner,
     waitForReview,
     // One-shot merge-conflict resolver (merge_resolve_conflict): re-enter the
@@ -599,7 +607,7 @@ export function buildProcessDeps(
     // verifies git state afterwards, so a non-zero / thrown runner here is
     // swallowed. Mirrors run_claude / run_codex on the conflicted checkout.
     conflictResolver: async (prompt: string, cwd: string) => {
-      const conflictTier = resolveTier(config, runner, "think");
+      const conflictTier = resolveTier(config, runner, "think", process.env);
       const invocation =
         runner === "codex"
           ? codexSpawnArgs({
@@ -804,7 +812,7 @@ function makeIssueClassifier(
   exec?: ExecFn,
 ): (metadata: IssueClassificationMetadata) => Promise<import("../core/config.js").AfkModelTier> {
   return async (metadata) => {
-    const validateTier = resolveTier(config, runner, "validate");
+    const validateTier = resolveTier(config, runner, "validate", process.env);
     return classifyIssue(metadata, async ({ prompt }) => {
       const run = exec ?? (await import("../runtime/exec.js")).execTool;
       const common = { cwd, timeoutMs: 45_000, maxBuffer: 1024 * 1024 };
@@ -1014,6 +1022,12 @@ export async function runCommand(options: RunOptions): Promise<number> {
   const cwd = options.cwd ?? process.cwd();
 
   const flags = parseRunFlags(options.args);
+  // --model / --effort pre-set the env override (flag > env). Setting them on the
+  // process env makes the override flow through both the in-process `--once` path
+  // (resolveTier reads process.env) and the fleet path (buildWorkerEnv passes
+  // RED_AFK_MODEL/RED_AFK_EFFORT through to workers — not in PASSTHROUGH_DENYLIST).
+  if (flags.model) process.env.RED_AFK_MODEL = flags.model;
+  if (flags.effort) process.env.RED_AFK_EFFORT = flags.effort;
   const detection = detectRunner({
     flag: flags.runnerFlag ?? parseRunnerFlag(options.args),
     processTree: callerProcessTreeNative(),
