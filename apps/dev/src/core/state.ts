@@ -83,6 +83,50 @@ export function isStateLive(state: Pick<AfkState, "pid">, kill: (pid: number, si
   return Number.isInteger(state.pid) && state.pid > 0 && kill(state.pid, 0);
 }
 
+/**
+ * Wall-clock staleness ceiling for the per-worker "live" badge. A worker whose
+ * most-recent activity timestamp is older than this is treated as NOT live even
+ * when its recorded pid still resolves — the pid can belong to the shared
+ * supervisor, or be recycled by the OS after the worker exits, both of which
+ * made a finished worker render as `[live]` on the monitor/statusline. Generous
+ * on purpose: a working agent advances `last_event_at` every few seconds and
+ * commits/heartbeats well inside this window, so a real-but-briefly-quiet worker
+ * is never mis-flagged stale (the monitor false-negative this must avoid).
+ */
+export const WORKER_LIVE_MAX_AGE_S = 180;
+
+/** Most-recent activity instant (ms) across a worker's vitals timestamps, or 0
+ * when none parse. `last_event_at` is the honest liveness clock (ADR 0065);
+ * `last_commit_at` and `started_at` are fallbacks so a committing-but-quiet or
+ * just-started worker still reads as fresh. */
+function latestActivityMs(state: Pick<AfkState, "current">): number {
+  let latest = 0;
+  for (const ts of [state.current.last_event_at, state.current.last_commit_at, state.current.started_at]) {
+    const t = ts ? Date.parse(ts) : Number.NaN;
+    if (Number.isFinite(t) && t > latest) latest = t;
+  }
+  return latest;
+}
+
+/**
+ * True when a worker is BOTH process-live (its pid resolves) AND recently active
+ * (latest activity within {@link WORKER_LIVE_MAX_AGE_S}). This is what the
+ * monitor/statusline use for the `[live]` badge: `isStateLive` alone (pid only)
+ * renders a finished worker as live whenever its pid is shared with the
+ * supervisor or recycled by the OS. Reaper/cap logic deliberately keeps using
+ * the pid-only `isStateLive` so a slow worker is never reaped on freshness.
+ */
+export function isStateActive(
+  state: Pick<AfkState, "pid" | "current">,
+  nowMs: number = Date.now(),
+  kill: (pid: number, signal?: 0) => boolean = defaultKill0,
+  maxAgeS: number = WORKER_LIVE_MAX_AGE_S,
+): boolean {
+  if (!isStateLive(state, kill)) return false;
+  const latest = latestActivityMs(state);
+  return latest > 0 && nowMs - latest <= maxAgeS * 1000;
+}
+
 function defaultKill0(pid: number): boolean {
   try {
     process.kill(pid, 0);
