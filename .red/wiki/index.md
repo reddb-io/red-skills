@@ -82,6 +82,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [feat(afk): externalize proof-of-life — heartbeat record, state field, on_heartbeat hook (ADR 0045)](./pages/401-feat-afk-externalize-proof-of-life-heartbeat-record-state-fi.md)
 - [feat(afk): model/effort override via --model/--effort flag + RED_AFK_MODEL/RED_AFK_EFFORT env](./pages/677-feat-afk-model-effort-override-via-model-effort-flag-red-afk.md)
 - [feat(afk): opencode provider — endpoint-agnostic, env-precedence auth (Refs #638)](./pages/640-feat-afk-opencode-provider-endpoint-agnostic-env-precedence.md)
+- [feat(afk): per-runner `base` model/effort auto-populates every tier (extends ADR 0049)](./pages/694-feat-afk-per-runner-base-model-effort-auto-populates-every-t.md)
 - [feat(afk): publish red-afk-attempt reusable workflow — 3 triggers + trust gate (Refs #631)](./pages/665-feat-afk-publish-red-afk-attempt-reusable-workflow-3-trigger.md)
 - [feat(afk): raise max iterations to 20 + per-iteration boundary markers](./pages/413-feat-afk-raise-max-iterations-to-20-per-iteration-boundary-m.md)
 - [feat(afk): record reasoning attempts into memory (ADR 0017), CLI-to-CLI direct](./pages/330-feat-afk-record-reasoning-attempts-into-memory-adr-0017-cli.md)
