@@ -398,8 +398,8 @@ export async function collectMonitorInputs(root = process.cwd()): Promise<Monito
     // are 0 (same logic as collectStatuslineAfk). Always populated — the dashboard
     // renders the +A -R volume unconditionally (idle / zero included) and sums it
     // into the fleet header, so it is never suppressed.
-    let added = state.current.diff_added;
-    let removed = state.current.diff_removed;
+    let added = state.current.loc_added;
+    let removed = state.current.loc_removed;
     if (added === 0 && removed === 0 && state.current.worktree) {
       const baseRef = state.current.base ? `origin/${state.current.base}` : "origin/main";
       const stat = await gitx.diffstatShortstat({ cwd: state.current.worktree }, baseRef);
@@ -541,8 +541,8 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
     // fleet and shown as 💤N so a wedged-but-not-dead worker is visible.
     waiting += state.current.waiting_count;
 
-    let a = state.current.diff_added;
-    let r = state.current.diff_removed;
+    let a = state.current.loc_added;
+    let r = state.current.loc_removed;
     if (a === 0 && r === 0 && state.current.worktree) {
       // Fallback: compute the diffstat from the worktree like statusline.sh.
       const baseRef = state.current.base ? `origin/${state.current.base}` : "origin/main";

@@ -192,37 +192,40 @@ export function buildProgressHeartbeat(input: ProgressHeartbeatInput): ProgressH
     msg,
     extra: {
       secs_since_progress: String(input.secsSinceProgress),
-      last_progress_at: input.lastProgressAt,
+      // Canonical WorkerVitals names (ADR 0065). The legacy keys below are kept
+      // ONLY in the firehose `extra` (append-only history read by post-mortem
+      // tooling) for one release; the live state (`statePatch`) is canonical-only.
+      last_commit_at: input.lastProgressAt,
       head: input.head,
-      diff_added: String(locAdded),
-      diff_removed: String(locRemoved),
-      diff: diff,
-      // The user-facing metric names (aliases of diff_*) so consumers can key on
-      // loc_* directly. Kept alongside diff_* for monitor back-compat.
       loc_added: String(locAdded),
       loc_removed: String(locRemoved),
+      diff: diff,
+      // Deprecated legacy aliases — remove one release after S1.
+      last_progress_at: input.lastProgressAt,
+      diff_added: String(locAdded),
+      diff_removed: String(locRemoved),
       ...(a
         ? {
             tools_called_count: String(a.toolsCalled),
             text_chunk_count: String(a.textChunks),
-            thinking_called_count: String(a.reasoningCount),
+            reasoning_events: String(a.reasoningCount),
             reasoning_tokens: String(a.reasoningTokens),
             waiting_count: String(a.waiting),
             events_this_window: String(a.eventsThisWindow),
+            // Deprecated legacy alias — remove one release after S1.
+            thinking_called_count: String(a.reasoningCount),
           }
         : {}),
     },
     statePatch: {
-      "current.last_progress_at": input.lastProgressAt,
-      "current.diff_added": locAdded,
-      "current.diff_removed": locRemoved,
+      "current.last_commit_at": input.lastProgressAt,
       "current.loc_added": locAdded,
       "current.loc_removed": locRemoved,
       ...(a
         ? {
             "current.tools_called_count": a.toolsCalled,
             "current.text_chunk_count": a.textChunks,
-            "current.thinking_called_count": a.reasoningCount,
+            "current.reasoning_events": a.reasoningCount,
             "current.reasoning_tokens": a.reasoningTokens,
             "current.waiting_count": a.waiting,
           }
