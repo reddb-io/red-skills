@@ -648,7 +648,14 @@ export function buildProcessDeps(
         emit(formatIterationMarker(lastIter, "started", iterMax), "started", lastIter);
         void updateState(join(dir0, "afk.state.json"), { "current.iteration": String(lastIter) }).catch(() => {});
       }
-      const msg = event.type === "text" ? event.message : `→ ${event.name} ${event.formattedArgs}`;
+      const msg =
+        event.type === "text"
+          ? event.message
+          : event.type === "reasoning"
+            ? `🧠 reasoning${
+                event.tokens ? ` (${event.tokens} tok)` : event.message ? `: ${event.message.slice(0, 80)}` : ""
+              }`
+            : `→ ${event.name} ${event.formattedArgs}`;
       void appendAgentRecord(join(current.attemptDir, "agent.log.jsonl"), msg, {
         ts,
         fields: { extra: { iteration: String(event.iteration), kind: event.type } },
