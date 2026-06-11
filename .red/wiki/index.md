@@ -72,6 +72,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [feat(afk): exempt idle drain from fast-death ring, idle-park fleet on empty queue (#578)](./pages/633-feat-afk-exempt-idle-drain-from-fast-death-ring-idle-park-fl.md)
 - [feat(afk): externalize proof-of-life — heartbeat record, state field, on_heartbeat hook (ADR 0045)](./pages/401-feat-afk-externalize-proof-of-life-heartbeat-record-state-fi.md)
 - [feat(afk): opencode provider — endpoint-agnostic, env-precedence auth (Refs #638)](./pages/640-feat-afk-opencode-provider-endpoint-agnostic-env-precedence.md)
+- [feat(afk): publish red-afk-attempt reusable workflow — 3 triggers + trust gate (Refs #631)](./pages/665-feat-afk-publish-red-afk-attempt-reusable-workflow-3-trigger.md)
 - [feat(afk): raise max iterations to 20 + per-iteration boundary markers](./pages/413-feat-afk-raise-max-iterations-to-20-per-iteration-boundary-m.md)
 - [feat(afk): record reasoning attempts into memory (ADR 0017), CLI-to-CLI direct](./pages/330-feat-afk-record-reasoning-attempts-into-memory-adr-0017-cli.md)
 - [feat(afk): req:N dependency labels + event-driven auto-unblock](./pages/292-feat-afk-req-n-dependency-labels-event-driven-auto-unblock.md)
