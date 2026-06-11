@@ -25,7 +25,9 @@
 
 /** The minimal shape this meter reads off a normalised stream event. */
 export interface StreamEventLike {
-  readonly type: "text" | "toolCall";
+  readonly type: "text" | "toolCall" | "reasoning";
+  /** Reasoning token count, when the runner exposes it (codex/opencode). */
+  readonly tokens?: number;
 }
 
 /** The counters surfaced into a heartbeat tick. All cumulative for the attempt. */
@@ -34,6 +36,19 @@ export interface ActivitySnapshot {
   readonly toolsCalled: number;
   /** Cumulative `text` events observed this attempt. */
   readonly textChunks: number;
+  /**
+   * Cumulative `reasoning` events. claude streams one per thinking block;
+   * codex/opencode emit one per reasoning-bearing turn/step. The unit differs
+   * per runner, but a non-zero value always means the model is actively
+   * reasoning — present on all three CLIs.
+   */
+  readonly reasoningCount: number;
+  /**
+   * Cumulative reasoning TOKENS, summed from events that carry a count
+   * (codex/opencode). claude folds thinking tokens into output and does not
+   * break them out, so a claude attempt accrues `reasoningCount` but 0 tokens.
+   */
+  readonly reasoningTokens: number;
   /** Cumulative heartbeat windows with no new stream event (waiting/blocked). */
   readonly waiting: number;
   /** New stream events since the previous `snapshotWindow()` (0 → a waiting window). */
@@ -61,25 +76,45 @@ export interface ActivityMeter {
 export function createActivityMeter(): ActivityMeter {
   let toolsCalled = 0;
   let textChunks = 0;
+  let reasoningCount = 0;
+  let reasoningTokens = 0;
   let waiting = 0;
   // Total events at the last window boundary, to derive per-window deltas.
   let eventsAtLastWindow = 0;
 
-  const total = (): number => toolsCalled + textChunks;
+  const total = (): number => toolsCalled + textChunks + reasoningCount;
 
   return {
     record(event) {
       if (event.type === "toolCall") toolsCalled += 1;
       else if (event.type === "text") textChunks += 1;
+      else if (event.type === "reasoning") {
+        reasoningCount += 1;
+        if (typeof event.tokens === "number" && event.tokens > 0) reasoningTokens += event.tokens;
+      }
     },
     snapshotWindow() {
       const eventsThisWindow = total() - eventsAtLastWindow;
       if (eventsThisWindow <= 0) waiting += 1;
       eventsAtLastWindow = total();
-      return { toolsCalled, textChunks, waiting, eventsThisWindow: Math.max(0, eventsThisWindow) };
+      return {
+        toolsCalled,
+        textChunks,
+        reasoningCount,
+        reasoningTokens,
+        waiting,
+        eventsThisWindow: Math.max(0, eventsThisWindow),
+      };
     },
     peek() {
-      return { toolsCalled, textChunks, waiting, eventsThisWindow: total() - eventsAtLastWindow };
+      return {
+        toolsCalled,
+        textChunks,
+        reasoningCount,
+        reasoningTokens,
+        waiting,
+        eventsThisWindow: total() - eventsAtLastWindow,
+      };
     },
   };
 }

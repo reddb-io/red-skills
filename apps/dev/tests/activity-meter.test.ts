@@ -12,6 +12,32 @@ describe("createActivityMeter", () => {
     expect(s.textChunks).toBe(1);
   });
 
+  it("counts reasoning events and sums their tokens (codex/opencode style)", () => {
+    const m = createActivityMeter();
+    m.record({ type: "reasoning", tokens: 13 });
+    m.record({ type: "reasoning", tokens: 21 });
+    const s = m.peek();
+    expect(s.reasoningCount).toBe(2);
+    expect(s.reasoningTokens).toBe(34);
+  });
+
+  it("counts a token-less reasoning event (claude thinking block) without adding tokens", () => {
+    const m = createActivityMeter();
+    m.record({ type: "reasoning" });
+    m.record({ type: "reasoning" });
+    const s = m.peek();
+    expect(s.reasoningCount).toBe(2);
+    expect(s.reasoningTokens).toBe(0);
+  });
+
+  it("reasoning events count as activity (a reasoning-only window is not waiting)", () => {
+    const m = createActivityMeter();
+    m.record({ type: "reasoning", tokens: 5 });
+    const s = m.snapshotWindow();
+    expect(s.eventsThisWindow).toBe(1);
+    expect(s.waiting).toBe(0);
+  });
+
   it("a window with new events does NOT increment waiting", () => {
     const m = createActivityMeter();
     m.record({ type: "toolCall" });

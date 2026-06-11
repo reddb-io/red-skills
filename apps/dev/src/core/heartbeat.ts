@@ -143,6 +143,10 @@ export interface ProgressHeartbeatInput {
     toolsCalled: number;
     /** Cumulative `text` events this attempt. */
     textChunks: number;
+    /** Cumulative `reasoning` events this attempt (all three CLIs). */
+    reasoningCount: number;
+    /** Cumulative reasoning tokens (codex/opencode; 0 for claude). */
+    reasoningTokens: number;
     /** Cumulative heartbeat windows with no new stream event (waiting/blocked). */
     waiting: number;
     /** New stream events in the window this tick closes (0 → a waiting window). */
@@ -177,8 +181,11 @@ export function buildProgressHeartbeat(input: ProgressHeartbeatInput): ProgressH
   const a = input.activity;
   // Append a compact activity tail to the human line so a `tail -f afk.log`
   // shows liveness without opening the firehose. Only when observed.
+  const reasonFrag = a
+    ? ` think:${a.reasoningCount}${a.reasoningTokens > 0 ? `/${a.reasoningTokens}tok` : ""}`
+    : "";
   const activityTail = a
-    ? ` · tools:${a.toolsCalled} text:${a.textChunks} wait:${a.waiting}${a.eventsThisWindow === 0 ? " (idle window)" : ""}`
+    ? ` · tools:${a.toolsCalled} text:${a.textChunks}${reasonFrag} wait:${a.waiting}${a.eventsThisWindow === 0 ? " (idle window)" : ""}`
     : "";
   const msg = `progress: ${input.secsSinceProgress}s since last commit${headShort} · ${diff}${activityTail}`;
   return {
@@ -198,6 +205,8 @@ export function buildProgressHeartbeat(input: ProgressHeartbeatInput): ProgressH
         ? {
             tools_called_count: String(a.toolsCalled),
             text_chunk_count: String(a.textChunks),
+            thinking_called_count: String(a.reasoningCount),
+            reasoning_tokens: String(a.reasoningTokens),
             waiting_count: String(a.waiting),
             events_this_window: String(a.eventsThisWindow),
           }
@@ -213,6 +222,8 @@ export function buildProgressHeartbeat(input: ProgressHeartbeatInput): ProgressH
         ? {
             "current.tools_called_count": a.toolsCalled,
             "current.text_chunk_count": a.textChunks,
+            "current.thinking_called_count": a.reasoningCount,
+            "current.reasoning_tokens": a.reasoningTokens,
             "current.waiting_count": a.waiting,
           }
         : {}),
