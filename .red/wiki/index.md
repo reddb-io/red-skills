@@ -104,6 +104,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [feat(memory): expose red-memory + red-ui MCP servers (ADR 0041)](./pages/423-feat-memory-expose-red-memory-red-ui-mcp-servers-adr-0041.md)
 - [feat(memory): ship runtime as bundled release asset + bootstrap fetch (ADR 0029)](./pages/229-feat-memory-ship-runtime-as-bundled-release-asset-bootstrap.md)
 - [feat(review-adrs): reconcile findings through a /start-style interview](./pages/389-feat-review-adrs-reconcile-findings-through-a-start-style-in.md)
+- [feat(setup): /setup-red-skills installs the autonomous AFK lane (opt-in) + workflow catalogue](./pages/680-feat-setup-setup-red-skills-installs-the-autonomous-afk-lane.md)
 - [feat(setup): scaffold afk.backpressure in /setup-red-skills (#433)](./pages/440-feat-setup-scaffold-afk-backpressure-in-setup-red-skills-433.md)
 - [fix(afk): AGENT-PROMPT foreground-execution rule — run gates in foreground and read the output](./pages/600-fix-afk-agent-prompt-foreground-execution-rule-run-gates-in.md)
 - [fix(afk): CLI ergonomics and safety — no accidental worker launch, no read-command side effects](./pages/668-fix-afk-cli-ergonomics-and-safety-no-accidental-worker-launc.md)
