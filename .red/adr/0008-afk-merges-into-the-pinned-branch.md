@@ -2,7 +2,11 @@
 
 ## Status
 
-accepted.
+accepted. **The merge *mechanism* is superseded by ADR 0030** (AFK landing is
+lock-toggled and the PR carries history): a finished issue no longer does a plain
+`do_merge` into the pinned base — the unlocked path lands via an admin-merged PR,
+the locked path pushes the locked branch over SSH. The **base-resolution decision
+of this ADR (pin > main) stands** and is refined by ADR 0031 (lock > pin > main).
 
 `/afk` historically based every worktree on `origin/main` and merged every
 finished issue back into `main`. PRD #59 (issue #64) introduces the **pinned
