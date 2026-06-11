@@ -30,6 +30,13 @@ export interface ResolveBaseDeps {
    * unlocked). Wraps the branch-lock skill's `lock_store_read`.
    */
   readLockedBranch: () => Promise<string | undefined>;
+  /**
+   * Static config default branch lock (`dev.lock.branch`), used when the runtime
+   * branch-lock file is absent/unset. The runtime lock still overrides it, so the
+   * `/branch-lock` skill can re-lock dynamically per session. Empty/undefined =
+   * no config-level lock.
+   */
+  configLockedBranch?: string;
   /** Fetch the raw body for issue/PRD number `n`, or `undefined` if missing. */
   fetchIssueBody: (n: number) => Promise<string | undefined>;
 }
@@ -37,16 +44,20 @@ export interface ResolveBaseDeps {
 export type ResolveBaseInput = ResolvePinInput;
 
 /**
- * Resolve the effective base branch by the fixed precedence lock > pin > main:
- *   the locked branch if present, else the resolved pin, else `main`.
+ * Resolve the effective base branch by the fixed precedence
+ * runtime-lock > config-lock > pin > main:
+ *   the runtime branch-lock if present, else the static `dev.lock.branch` config
+ *   default, else the resolved pin, else `main`.
  *
- * The lock value is read via the injected `readLockedBranch`; the pin is
- * delegated to pin-reader's `resolvePin` (composed with the injected
- * `fetchIssueBody`). A whitespace-only lock counts as "not set".
+ * The runtime lock is read via the injected `readLockedBranch`; `configLockedBranch`
+ * is the static `dev.lock.branch` value; the pin is delegated to pin-reader's
+ * `resolvePin`. A whitespace-only value counts as "not set".
  */
 export async function resolveBase(input: ResolveBaseInput, deps: ResolveBaseDeps): Promise<string> {
   const locked = await deps.readLockedBranch();
   if (isSet(locked)) return locked.trim();
+
+  if (isSet(deps.configLockedBranch)) return deps.configLockedBranch.trim();
 
   const pinned = await resolvePin(input, { fetchIssueBody: deps.fetchIssueBody });
   if (isSet(pinned)) return pinned;

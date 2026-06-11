@@ -50,6 +50,28 @@ describe("resolveBase", () => {
     expect(deps.fetchCalls).toEqual([59]);
   });
 
+  // dev.lock.branch (config-level static lock) — precedence runtime > config > pin > main.
+  it("uses the config lock (dev.lock.branch) when the runtime lock is unset", async () => {
+    const deps = { ...depsFor(undefined, { 59: prdWithPin }), configLockedBranch: "config/branch" };
+    expect(await resolveBase({ issueBody: issueWithPin }, deps)).toBe("config/branch");
+    expect(deps.fetchCalls).toEqual([]); // config lock short-circuits pin resolution
+  });
+
+  it("lets the runtime lock override the config lock", async () => {
+    const deps = { ...depsFor("runtime/branch"), configLockedBranch: "config/branch" };
+    expect(await resolveBase({ issueBody: issueWithPin }, deps)).toBe("runtime/branch");
+  });
+
+  it("config lock wins over a pin", async () => {
+    const deps = { ...depsFor(undefined), configLockedBranch: "config/branch" };
+    expect(await resolveBase({ issueBody: issueWithPin }, deps)).toBe("config/branch");
+  });
+
+  it("an empty config lock falls through to the pin", async () => {
+    const deps = { ...depsFor(undefined), configLockedBranch: "" };
+    expect(await resolveBase({ issueBody: issueWithPin }, deps)).toBe("feature/some-pin");
+  });
+
   it("defaults to main when neither a lock nor a pin is set", async () => {
     const deps = depsFor(undefined);
     expect(await resolveBase({ issueBody: "## What to build\nno pin, no parent" }, deps)).toBe(DEFAULT_BRANCH);

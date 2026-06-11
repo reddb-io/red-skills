@@ -52,3 +52,5 @@
 # dev:
 #   lock:
 #     primary-branch: true        # activate the primary-checkout branch-switch guard
+#     branch: my-branch           # static base lock: AFK bases/merges here (ADR 0031);
+#                                 # the runtime `/branch-lock` overrides it per session
