@@ -206,6 +206,8 @@ function makeBootReconcileRunner(
   const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo };
   const gitCtx: GitContext = { cwd: ctx.root };
   const lockPath = branchLockPath(ctx.root);
+  const configLockedBranch =
+    getConfig(loadConfig(paths.configPath, { warn: () => undefined }), "dev.lock.branch") || undefined;
 
   return async (plan: ReconcileSweepPlan) => {
     // Acquire the per-issue claim before validating/landing so a concurrent live
@@ -281,7 +283,11 @@ function makeBootReconcileRunner(
       // never the trunk (#568, trunk safety). Mirrors the per-issue base lookup.
       const base = await resolveBase(
         { issueBody: plan.body },
-        { readLockedBranch: () => readLockedBranch(lockPath), fetchIssueBody: (n) => ghx.issueBody(ghCtx, n) },
+        {
+          readLockedBranch: () => readLockedBranch(lockPath),
+          configLockedBranch,
+          fetchIssueBody: (n) => ghx.issueBody(ghCtx, n),
+        },
       );
 
       const reconcileInput: ReconcileInput = {
@@ -560,6 +566,7 @@ export function buildProcessDeps(
     lookups: {
       base: {
         readLockedBranch: () => readLockedBranch(lockPath),
+        configLockedBranch: getConfig(config, "dev.lock.branch") || undefined,
         fetchIssueBody: (n) => ghx.issueBody(ghCtx, n),
       },
       isLocked: () => isLocked(lockPath),

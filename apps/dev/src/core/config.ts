@@ -75,6 +75,11 @@ export const CONFIG_DEFAULTS = {
   "afk.merge.wait_for_review": "false",
   "afk.merge.review_check": "CodeRabbit",
   "dev.lock.primary-branch": "false",
+  // NOTE: `dev.lock.branch` (the static base lock — ADR 0031) is intentionally
+  // NOT in this table. Its "default" is *unset* (no config-level lock), and
+  // `getConfig` already returns "" for an absent key, so adding a "" default
+  // here would only break the "every default is non-empty" invariant. It is read
+  // via `getConfig(values, "dev.lock.branch")` and documented in config-template.yaml.
 } as const;
 
 export type ConfigKey = keyof typeof CONFIG_DEFAULTS;
