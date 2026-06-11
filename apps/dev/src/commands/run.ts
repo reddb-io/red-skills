@@ -681,10 +681,27 @@ export function buildProcessDeps(
       const stage = deriveStage(event);
       const discrete =
         event.type === "toolCall" || event.type === "reasoning" || event.type === "usage";
+      // A `usage` event is the only carrier of the cost group, and for claude it
+      // arrives exactly ONCE — on the terminal result line, AFTER the last
+      // heartbeat poll and just before the agent exits. The ~60s heartbeat is
+      // what normally folds the meter's cost into state, but it never fires again
+      // once the agent completes, so a single-iteration claude run persisted
+      // cost_usd=0 despite real token spend. Flush the cumulative cost from the
+      // meter the instant a usage event lands (ADR 0065). Idempotent: codex emits
+      // many usage events and each just re-stamps the running total.
+      const costPatch =
+        event.type === "usage"
+          ? {
+              "current.input_tokens": activityMeter.peek().inputTokens,
+              "current.output_tokens": activityMeter.peek().outputTokens,
+              "current.cost_usd": activityMeter.peek().costUsd,
+            }
+          : {};
       if (stage || discrete) {
         void updateState(join(current.attemptDir, "afk.state.json"), {
           ...(stage ? { "current.stage": stage, "current.last_stream_line": msg.slice(0, 200) } : {}),
           "current.last_event_at": ts,
+          ...costPatch,
         }).catch(() => {});
       }
     },
