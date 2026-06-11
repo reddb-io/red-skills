@@ -164,6 +164,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [fix(afk): uncap sandcastle inner agent maxIterations (fixes #322)](./pages/327-fix-afk-uncap-sandcastle-inner-agent-maxiterations-fixes-322.md)
 - [fix(afk): write afk.state.json + lanes on the native path (monitor/statusline/stall-detector were blind)](./pages/359-fix-afk-write-afk-state-json-lanes-on-the-native-path-monito.md)
 - [fix(brain): instant SessionStart — cache fast-path + non-blocking hook](./pages/693-fix-brain-instant-sessionstart-cache-fast-path-non-blocking.md)
+- [fix(config): fold plugins.dev.<key> onto dev.* so dev settings stay namespaced (extends ADR 0042)](./pages/697-fix-config-fold-plugins-dev-key-onto-dev-so-dev-settings-sta.md)
 - [fix(config): memory built-in handlers use autohooks, not hooks (ADR 0042 refine)](./pages/391-fix-config-memory-built-in-handlers-use-autohooks-not-hooks.md)
 - [fix(dev): publish retake in claude plugin manifest](./pages/543-fix-dev-publish-retake-in-claude-plugin-manifest.md)
 - [fix(dev): resync dev claude plugin.json version (unblock red-release)](./pages/384-fix-dev-resync-dev-claude-plugin-json-version-unblock-red-re.md)
