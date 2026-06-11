@@ -21,6 +21,7 @@ stale notes inline.
 - **0046** A single global `.red/` shared by all plugins — *superseded by 0021*
 
 ## Brain plugin
+- **0063** The `brain` plugin is a first-class red-skills plugin (RedDB knowledge repo: captures + graph connections, folder-level brains) and the **third** multi-context glossary context; stays in red-skills for now, may follow the 0041 split to a `red-brain` repo when mature *(amends 0021; reuses 0038/0040 fetch+version, 0034/0060 layout, 0057 Hermes)*
 - **0057** `red-hermes` is a fetched, never-vendored black-box dependency of the `brain` plugin — reached via `hermes mcp serve`, fetched as a Release asset (0038 model), version pinned (0040), 10-tool contract; MIT attribution in `NOTICE` (0004) *(downstream fetch/launcher blocked on red-hermes releases, same shape as #378)*
 
 ## Bundle / fetch / release / version
