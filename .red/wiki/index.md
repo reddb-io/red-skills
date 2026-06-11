@@ -32,6 +32,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [Resolve HITL operational blockers](./pages/507-resolve-hitl-operational-blockers.md)
 - [Route agents through Memory map context](./pages/538-route-agents-through-memory-map-context.md)
 - [build(release): one bundle-naming convention, all assets under ./dist/ (ADR 0052)](./pages/480-build-release-one-bundle-naming-convention-all-assets-under.md)
+- [chore(afk): Actions lane is dispatch/call-only — drop the issues auto-trigger until secrets are set](./pages/692-chore-afk-actions-lane-is-dispatch-call-only-drop-the-issues.md)
 - [chore(afk): native + sandcastle E2E smoke test (#284 gate)](./pages/291-chore-afk-native-sandcastle-e2e-smoke-test-284-gate.md)
 - [chore(afk): rebuild committed bin/afk.mjs from current source](./pages/320-chore-afk-rebuild-committed-bin-afk-mjs-from-current-source.md)
 - [chore(dev): remove the scaffold-exercises skill (upstream course tooling)](./pages/411-chore-dev-remove-the-scaffold-exercises-skill-upstream-cours.md)
