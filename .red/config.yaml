@@ -10,16 +10,14 @@
 #       cargo: true               # ship cargo isolation on Rust projects
 #       gradle: true              # ship gradle isolation when GRADLE_USER_HOME_BASE is set
 
-# Active: default the OpenCode/Actions lane to MiniMax M3 for every tier.
-# `base` auto-populates validate/simple/complex/think; specialize a single tier
-# with plugins.dev.afk.models.opencode.<tier>.model to override just that one.
+# Active dev-plugin settings, all namespaced under `plugins.dev.*` (the root
+# stays sacred). `base` auto-populates every opencode tier (validate/simple/
+# complex/think); specialize one with plugins.dev.afk.models.opencode.<tier>.model.
 plugins:
   dev:
+    lock-primary-branch: true       # primary-checkout branch-switch guard
     afk:
       models:
         opencode:
           base:
             model: minimax/MiniMax-M3
-
-dev:
-  lock-primary-branch: true
