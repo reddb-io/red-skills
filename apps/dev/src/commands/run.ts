@@ -58,7 +58,7 @@ import { makeHookExec, makeHookResolveOptions, hookEnv } from "../runtime/hooks.
 import { makeFeedbackWorktree, type FeedbackWorktree } from "../runtime/feedback-worktree.js";
 import { join } from "node:path";
 import { appendAgentRecord, appendRecord } from "../core/jsonl-log.js";
-import { initState, updateState } from "../core/state.js";
+import { initStateSync, updateState } from "../core/state.js";
 import { buildProgressHeartbeat, formatIterationMarker } from "../core/heartbeat.js";
 import { createActivityMeter } from "../core/activity-meter.js";
 import { DEFAULT_MAX_ITERATIONS } from "../core/execution.js";
@@ -1170,23 +1170,36 @@ export async function runCommand(options: RunOptions): Promise<number> {
       // pid + current.{number,stage} and its mtime). Restore it: write the
       // initial state with the live orchestrator pid so the worker shows up;
       // recordAgentEvent advances current.stage, and the processIssue wrapper
-      // marks it not-live (pid:0) on terminal. Best-effort — never blocks work.
+      // marks it not-live (pid:0) on terminal.
+      //
+      // SYNCHRONOUS on purpose: the agent-event sink + heartbeat fire async
+      // `updateState` read-modify-writes against this same path. A fire-and-forget
+      // async seed here raced them — a sink write that read the file before the
+      // seed landed got the schema DEFAULT (pid 0, number "", worker_id ""),
+      // patched only its vitals, and wrote that back, stranding the worker with
+      // vitals but NO identity (rendered as a pid-0 `?`/idle ghost in monitor /
+      // statusline). Seeding synchronously guarantees the identity exists before
+      // any updateState runs, so every later read preserves it.
       const statePath = join(attemptDir, "afk.state.json");
       const startedAt = new Date().toISOString();
-      void initState(statePath, {
-        worker_id: c.workerId,
-        pid: process.pid,
-        runner: c.runner,
-        log: join(attemptDir, "afk.log"),
-        started_at: startedAt,
-        "current.number": candidate.number,
-        "current.title": candidate.title,
-        "current.worktree": join(attemptDir, "worktree"),
-        "current.handoff": join(attemptDir, "handoff.md"),
-        "current.started_at": startedAt,
-        "current.runner": c.runner,
-        "current.stage": "setup",
-      }).catch(() => {});
+      try {
+        initStateSync(statePath, {
+          worker_id: c.workerId,
+          pid: process.pid,
+          runner: c.runner,
+          log: join(attemptDir, "afk.log"),
+          started_at: startedAt,
+          "current.number": candidate.number,
+          "current.title": candidate.title,
+          "current.worktree": join(attemptDir, "worktree"),
+          "current.handoff": join(attemptDir, "handoff.md"),
+          "current.started_at": startedAt,
+          "current.runner": c.runner,
+          "current.stage": "setup",
+        });
+      } catch {
+        // Best-effort — a failed seed must never block the worker's actual work.
+      }
       // Append the --request block into the handoff body so the inner agent
       // (which reads handoff.md as its prompt) sees the special request.
       const body = requestBlock ? `${candidate.body}\n\n${requestBlock}` : candidate.body;
