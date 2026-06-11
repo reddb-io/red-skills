@@ -271,12 +271,19 @@ export function loadConfig(path: string, options: LoadConfigOptions = {}): Confi
   }
 
   // Copy raw parsed keys (forward compatibility), then fold the namespaced
-  // `plugins.dev.*` block down to the bare accessor keys so the new location
-  // wins over the legacy top-level one (ADR 0042).
+  // `plugins.dev.*` block down to the accessor keys so the new location wins over
+  // the legacy top-level one (ADR 0042).
   for (const [key, value] of Object.entries(parsed)) values[key] = value;
   for (const [key, value] of Object.entries(parsed)) {
     const m = /^plugins\.dev\.(.+)$/.exec(key);
-    if (m) values[m[1]!] = value;
+    if (!m) continue;
+    const rest = m[1]!;
+    // The dev plugin's AFK settings flatten to the bare `afk.*` accessor
+    // (historical, shared with the legacy top-level `afk:` block); every other
+    // dev-plugin key keeps the `dev.*` accessor — so
+    // `plugins.dev.lock-primary-branch` folds to `dev.lock-primary-branch`, not a
+    // bare `lock-primary-branch` the loader never reads.
+    values[rest === "afk" || rest.startsWith("afk.") ? rest : `dev.${rest}`] = value;
   }
   return values;
 }

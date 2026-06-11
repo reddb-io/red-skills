@@ -97,6 +97,24 @@ describe("config", () => {
     expect(getConfig(values, "dev.lock-primary-branch")).toBe("true");
   });
 
+  it("folds the namespaced `plugins.dev.lock-primary-branch` onto `dev.lock-primary-branch`", () => {
+    // The root-sacred convention: dev-plugin keys nest under `plugins.dev.*` and
+    // fold to the `dev.*` accessor (afk keeps its bare `afk.*` accessor).
+    const values = loadConfig("/x/.red/config.yaml", {
+      read: () => "plugins:\n  dev:\n    lock-primary-branch: true\n",
+    });
+    expect(getConfig(values, "dev.lock-primary-branch")).toBe("true");
+  });
+
+  it("folds `plugins.dev` dev-keys and afk-keys to their distinct accessors at once", () => {
+    const values = loadConfig("/x/.red/config.yaml", {
+      read: () =>
+        "plugins:\n  dev:\n    lock-primary-branch: true\n    afk:\n      default_runner: codex\n",
+    });
+    expect(getConfig(values, "dev.lock-primary-branch")).toBe("true");
+    expect(getConfig(values, "afk.default_runner")).toBe("codex");
+  });
+
   it("nested override leaves siblings untouched", async () => {
     const path = await writeConfig(
       `afk:\n  hooks:\n    defaults:\n      cargo: false\n`,
