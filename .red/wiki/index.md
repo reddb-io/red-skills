@@ -77,6 +77,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [feat(afk): attempt progress guard — abort a stalled agent, park to ready-for-human (ADR 0044)](./pages/400-feat-afk-attempt-progress-guard-abort-a-stalled-agent-park-t.md)
 - [feat(afk): backpressure gate on the DONE path (#430)](./pages/436-feat-afk-backpressure-gate-on-the-done-path-430.md)
 - [feat(afk): bounded auto-recovery for recoverable blocks](./pages/294-feat-afk-bounded-auto-recovery-for-recoverable-blocks.md)
+- [feat(afk): count model reasoning in the heartbeat across claude/codex/opencode (slice 2)](./pages/702-feat-afk-count-model-reasoning-in-the-heartbeat-across-claud.md)
 - [feat(afk): default maxIterations to 50 + make it configurable via .red/config.yaml](./pages/360-feat-afk-default-maxiterations-to-50-make-it-configurable-vi.md)
 - [feat(afk): dev.lock.branch static base lock — runtime > config > pin > main (stage 2, extends ADR 0031)](./pages/701-feat-afk-dev-lock-branch-static-base-lock-runtime-config-pin.md)
 - [feat(afk): enrich the proof-of-life heartbeat with stream-activity metrics](./pages/699-feat-afk-enrich-the-proof-of-life-heartbeat-with-stream-acti.md)
