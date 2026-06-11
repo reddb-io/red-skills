@@ -330,6 +330,7 @@ export function makeRunAgent(
 
 import type { CompactWorker, FleetState } from "../core/monitor.js";
 import { parseState, isStateLive } from "../core/state.js";
+import type { WorkerVitals } from "../types/state.js";
 import { parseHistoryLines, type HistoryRecord } from "../core/history.js";
 
 export interface MonitorInputs {
@@ -541,16 +542,19 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
 
     workers += 1;
     blocked += state.blocked;
+    // Read the worker's signals through the canonical WorkerVitals contract
+    // (ADR 0065) rather than ad-hoc field access — `current` satisfies it.
+    const vitals: WorkerVitals = state.current;
     // Silent-agent signal: cumulative heartbeat windows with no new stream
-    // event, persisted on `current` (see AfkCurrentSchema). Summed across the
-    // fleet and shown as 💤N so a wedged-but-not-dead worker is visible.
-    waiting += state.current.waiting_count;
-    // Cost group (ADR 0065): per-worker token spend + USD, summed for the fleet.
-    tokens += state.current.input_tokens + state.current.output_tokens;
-    costUsd += state.current.cost_usd;
+    // event. Summed across the fleet and shown as 💤N so a wedged-but-not-dead
+    // worker is visible.
+    waiting += vitals.waiting_count;
+    // Cost group: per-worker token spend + USD, summed for the fleet.
+    tokens += vitals.input_tokens + vitals.output_tokens;
+    costUsd += vitals.cost_usd;
 
-    let a = state.current.loc_added;
-    let r = state.current.loc_removed;
+    let a = vitals.loc_added;
+    let r = vitals.loc_removed;
     if (a === 0 && r === 0 && state.current.worktree) {
       // Fallback: compute the diffstat from the worktree like statusline.sh.
       const baseRef = state.current.base ? `origin/${state.current.base}` : "origin/main";
