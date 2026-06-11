@@ -28,7 +28,7 @@ Look at the current repo to understand its starting state. Read whatever exists;
 - `.red/CONTEXT.md` and `.red/CONTEXT-MAP.md` at the repo root
 - `.red/adr/` and any `src/*/.red/adr/` directories
 - `.red/agents/` — does this skill's prior output already exist?
-- `.red/config.yaml` — is `dev.lock-primary-branch` already set?
+- `.red/config.yaml` — is `dev.lock.primary-branch` already set?
 - `AGENTS.md` and `CLAUDE.md` — does either already have a `## Development workflow` section?
 
 ### 2. Present findings and ask
@@ -159,12 +159,12 @@ The template carries a **commented `afk.backpressure`** block (#430 / PRD #429):
 
 **Section H — Development workflow.**
 
-> Explainer: RedSkills' interactive dev loop assumes agents work from isolated worktrees, leave the primary checkout's branch alone, push their branch early, and hand landing to `/ship`. The primary-branch guard already ships dormant; turning on `dev.lock-primary-branch: true` in `.red/config.yaml` activates it. The shared development-workflow injector writes the same `## Development workflow` rules into both `AGENTS.md` and `CLAUDE.md`, updating an existing block in place on rerun.
+> Explainer: RedSkills' interactive dev loop assumes agents work from isolated worktrees, leave the primary checkout's branch alone, push their branch early, and hand landing to `/ship`. The primary-branch guard already ships dormant; turning on `dev.lock.primary-branch: true` in `.red/config.yaml` activates it. The shared development-workflow injector writes the same `## Development workflow` rules into both `AGENTS.md` and `CLAUDE.md`, updating an existing block in place on rerun.
 
 Confirm with the user:
 
 - Activate the development workflow? Default: yes.
-- This sets `dev.lock-primary-branch: true` in `.red/config.yaml`.
+- This sets `dev.lock.primary-branch: true` in `.red/config.yaml`.
 - This writes or updates `## Development workflow` in both `AGENTS.md` and `CLAUDE.md` via the shared injector.
 - Recap that `/ship` is the landing command for interactive work after the branch is pushed.
 
@@ -174,7 +174,7 @@ Show the user a draft of:
 
 - The `## Agent skills` block to add to whichever of `CLAUDE.md` / `AGENTS.md` is being edited (see step 4 for selection rules)
 - The contents of `.red/agents/issue-tracker.md`, `.red/agents/triage-labels.md`, `.red/agents/domain.md`
-- The Section H development-workflow changes: `dev.lock-primary-branch: true` plus the canonical `## Development workflow` block for `AGENTS.md` and `CLAUDE.md`
+- The Section H development-workflow changes: `dev.lock.primary-branch: true` plus the canonical `## Development workflow` block for `AGENTS.md` and `CLAUDE.md`
 
 Let them edit before writing.
 
@@ -232,8 +232,8 @@ Scaffold `.red/config.yaml` (Section G, no user decision):
 
 If the user accepted Section H, activate the development workflow:
 
-1. Invoke the shared injector rather than hand-editing the rules block. From a source checkout, run `pnpm --filter @reddb-io/dev dev inject-development-workflow --root <repo-root>`. From an installed plugin, run the bundled AFK entrypoint with `inject-development-workflow --root <repo-root>` (for example, `node ../afk/bin/afk.mjs inject-development-workflow --root <repo-root>` from this skill folder). The command writes both `AGENTS.md` and `CLAUDE.md`, creates `.red/config.yaml` if still missing, and sets `dev.lock-primary-branch: true`.
-2. If the command is unavailable, make the same changes manually: add or update the top-level `dev:` block in `.red/config.yaml` with `lock-primary-branch: true`, then upsert the canonical `## Development workflow` block in both `AGENTS.md` and `CLAUDE.md`. Never append a duplicate block; update the existing section in place.
+1. Invoke the shared injector rather than hand-editing the rules block. From a source checkout, run `pnpm --filter @reddb-io/dev dev inject-development-workflow --root <repo-root>`. From an installed plugin, run the bundled AFK entrypoint with `inject-development-workflow --root <repo-root>` (for example, `node ../afk/bin/afk.mjs inject-development-workflow --root <repo-root>` from this skill folder). The command writes both `AGENTS.md` and `CLAUDE.md`, creates `.red/config.yaml` if still missing, and sets `dev.lock.primary-branch: true`.
+2. If the command is unavailable, make the same changes manually: add or update the top-level `dev:` block in `.red/config.yaml` so `dev.lock.primary-branch` is `true` (nested: `lock:` → `primary-branch: true`), then upsert the canonical `## Development workflow` block in both `AGENTS.md` and `CLAUDE.md`. Never append a duplicate block; update the existing section in place.
 3. In the recap, explicitly point the user at `/ship` as the landing command after an interactive worktree branch has been committed and pushed.
 
 If the user accepted Section F, wire the statusline:

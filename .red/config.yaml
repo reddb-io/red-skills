@@ -15,7 +15,8 @@
 # complex/think); specialize one with plugins.dev.afk.models.opencode.<tier>.model.
 plugins:
   dev:
-    lock-primary-branch: true       # primary-checkout branch-switch guard
+    lock:
+      primary-branch: true       # primary-checkout branch-switch guard
     afk:
       models:
         opencode:

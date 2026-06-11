@@ -7,7 +7,9 @@
 # the single flag ADR 0043 needs.
 
 # dev_config_lock_primary_branch_enabled <config.yaml>
-# Returns 0 when dev.lock-primary-branch is exactly true, 1 otherwise.
+# Returns 0 when the primary-branch lock is on, 1 otherwise. The flag lives at
+# `dev.lock.primary-branch` (top-level) or `plugins.dev.lock.primary-branch`
+# (namespaced); either set to exactly `true` enables the guard.
 dev_config_lock_primary_branch_enabled() {
   local _file="$1"
   [[ -f "$_file" ]] || return 1
@@ -94,9 +96,8 @@ dev_config_lock_primary_branch_enabled() {
       _value="${_value:1:${#_value}-2}"
     fi
 
-    if [[ "$_full" == "dev.lock-primary-branch" ]]; then
+    if [[ "$_full" == "dev.lock.primary-branch" || "$_full" == "plugins.dev.lock.primary-branch" ]]; then
       [[ "$_value" == "true" ]] && return 0
-      return 1
     fi
   done < "$_file"
 

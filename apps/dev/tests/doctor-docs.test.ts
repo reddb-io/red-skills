@@ -21,12 +21,12 @@ describe("doctor docs contract", () => {
     expect(skill).toContain("do not edit either agent rules file");
   });
 
-  it("reports dev.lock-primary-branch as set or unset without mutating config", async () => {
+  it("reports dev.lock.primary-branch as set or unset without mutating config", async () => {
     const skill = await readDoctorSkill();
 
     expect(skill).toContain("Primary-branch guard flag");
     expect(skill).toContain("read `.red/config.yaml`");
-    expect(skill).toContain("report whether `dev.lock-primary-branch` is set");
+    expect(skill).toContain("report whether `dev.lock.primary-branch` is set");
     expect(skill).toContain("Treat an absent config file");
     expect(skill).toContain("anything other than `true` as \"unset\"");
     expect(skill).toContain("recommend enabling it via `→ /setup-red-skills`");

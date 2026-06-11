@@ -44,7 +44,7 @@ scope_should_enforce "$ROOT" || exit 0
 if dev_config_lock_primary_branch_enabled "$ROOT/.red/config.yaml" &&
   [[ "$(classify_primary_branch_switch_guard "$COMMAND")" == "block" ]]; then
   cat >&2 <<EOF
-BLOCKED by primary branch guard: dev.lock-primary-branch is true.
+BLOCKED by primary branch guard: dev.lock.primary-branch is true.
 The command '$COMMAND' would switch the agent's primary checkout branch.
 
 Allowed in the primary checkout: git commit, git worktree add, read-only git,

@@ -40,7 +40,8 @@ primary="$tmp/red-skills"
 mkdir -p "$primary/.red"
 cat > "$primary/.red/config.yaml" <<'EOF'
 dev:
-  lock-primary-branch: true
+  lock:
+    primary-branch: true
 EOF
 
 payload() {
@@ -60,7 +61,7 @@ CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT" CLAUDE_PROJECT_DIR="$primary" bash -lc "$manif
   >"$out" 2>"$err" <<<"$(payload "git switch feature")"
 rc=$?
 expect_eq "primary guard: switch is blocked when flag is on" "2" "$rc"
-expect_contains "primary guard: error names config flag" "dev.lock-primary-branch is true" "$(<"$err")"
+expect_contains "primary guard: error names config flag" "dev.lock.primary-branch is true" "$(<"$err")"
 
 CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT" CLAUDE_PROJECT_DIR="$primary" bash -lc "$manifest_hook" \
   >"$out" 2>"$err" <<<"$(payload "git commit -m wip")"
@@ -69,7 +70,8 @@ expect_eq "primary guard: commit is allowed" "0" "$rc"
 
 cat > "$primary/.red/config.yaml" <<'EOF'
 dev:
-  lock-primary-branch: false
+  lock:
+    primary-branch: false
 EOF
 CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT" CLAUDE_PROJECT_DIR="$primary" bash -lc "$manifest_hook" \
   >"$out" 2>"$err" <<<"$(payload "git switch feature")"

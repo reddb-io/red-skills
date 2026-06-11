@@ -23,7 +23,7 @@
 # branch-lock hook so the autonomous loop is never strangled.
 #
 #   3. Primary branch guard — when `.red/config.yaml` sets
-#      `dev.lock-primary-branch: true`, the hook blocks branch-switching in the
+#      `dev.lock.primary-branch: true`, the hook blocks branch-switching in the
 #      primary checkout even without a branch-lock file. This is also
 #      self-contained and keeps the same worktree exemption.
 
@@ -122,9 +122,8 @@ _dev_lock_primary_branch_enabled() {
       _value="${_value:1:${#_value}-2}"
     fi
 
-    if [ "$_full" = "dev.lock-primary-branch" ]; then
+    if [ "$_full" = "dev.lock.primary-branch" ] || [ "$_full" = "plugins.dev.lock.primary-branch" ]; then
       [ "$_value" = "true" ] && return 0
-      return 1
     fi
   done < "$_file"
 
@@ -162,7 +161,7 @@ _primary_branch_switch_verdict() {
 if _dev_lock_primary_branch_enabled "$ROOT/.red/config.yaml" &&
   [ "$(_primary_branch_switch_verdict "$COMMAND")" = "block" ]; then
   cat >&2 <<EOF
-BLOCKED by primary branch guard: dev.lock-primary-branch is true.
+BLOCKED by primary branch guard: dev.lock.primary-branch is true.
 The command '$COMMAND' would switch the agent's primary checkout branch.
 
 Allowed in the primary checkout: git commit, git worktree add, read-only git,

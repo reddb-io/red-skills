@@ -73,7 +73,8 @@ expect_eq "no-lock/stash allowed"                   "0" "$(run_hook "$RU" "git s
 mkdir -p "$RU/.red"
 cat > "$RU/.red/config.yaml" <<'EOF'
 dev:
-  lock-primary-branch: true
+  lock:
+    primary-branch: true
 EOF
 expect_eq "primary-guard/switch other blocked"      "2" "$(run_hook "$RU" "git switch feature")"
 expect_eq "primary-guard/checkout other blocked"    "2" "$(run_hook "$RU" "git checkout feature")"
@@ -84,7 +85,8 @@ expect_eq "primary-guard/status allowed"            "0" "$(run_hook "$RU" "git s
 
 cat > "$RU/.red/config.yaml" <<'EOF'
 dev:
-  lock-primary-branch: false
+  lock:
+    primary-branch: false
 EOF
 expect_eq "primary-guard/flag off allows switch"    "0" "$(run_hook "$RU" "git switch feature")"
 
@@ -117,7 +119,8 @@ expect_eq "scope/worktree switch other allowed"     "0" "$(run_hook "$WT" "git s
 mkdir -p "$WT/.red"
 cat > "$WT/.red/config.yaml" <<'EOF'
 dev:
-  lock-primary-branch: true
+  lock:
+    primary-branch: true
 EOF
 expect_eq "scope/worktree primary guard allowed"     "0" "$(run_hook "$WT" "git switch feature")"
 # …but a worktree's own dangerous patterns still fire (guardrail is scope-independent).

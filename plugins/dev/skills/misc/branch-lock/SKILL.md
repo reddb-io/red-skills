@@ -16,7 +16,8 @@ interactive development loop (ADR 0043). When `.red/config.yaml` contains:
 
 ```yaml
 dev:
-  lock-primary-branch: true
+  lock:
+    primary-branch: true
 ```
 
 the same pre-tool hook blocks the agent from changing the primary checkout's
@@ -28,7 +29,7 @@ worktrees stay allowed.
 Enforcement is **agent-only**, via runner pre-tool hooks — Claude Code
 `PreToolUse(Bash)` and Codex plugin `PreToolUse` — that intercept the agent's own
 tool calls, not the human's terminal. The plugin-level hook is dormant until a
-lock file exists or `dev.lock-primary-branch` is true. See
+lock file exists or `dev.lock.primary-branch` is true. See
 [ADR 0006](../../../../../.red/adr/0006-branch-lock-agent-only-enforcement.md).
 The hook logic is self-contained: it depends on neither the
 `git-guardrails-claude-code` skill nor anything else, and the two stack
@@ -81,7 +82,7 @@ The `dev` plugin ships Claude wiring in
 That manifest registers `branch-lock-hook.sh` under `PreToolUse`/matcher `Bash`
 at the plugin level, so no per-repo `.claude/settings.json` copy is needed for
 the dormant primary-branch guard. The hook reads `.red/config.yaml` at runtime
-and stays silent until `dev.lock-primary-branch: true` or a branch-lock file is
+and stays silent until `dev.lock.primary-branch: true` or a branch-lock file is
 present.
 
 Manual per-repo installation is only needed for older/pluginless Claude setups:
@@ -116,7 +117,7 @@ branch-lock/
     ├── branch-lock-hook.sh       ← Claude PreToolUse(Bash) hook
     ├── branch-lock-session-start.sh ← SessionStart hook (offers to lock at start)
     ├── lib/
-    │   ├── dev-config.sh          ← read dev.lock-primary-branch from .red/config.yaml
+    │   ├── dev-config.sh          ← read dev.lock.primary-branch from .red/config.yaml
     │   ├── lock-store.sh          ← read/write/clear branch-lock.yaml
     │   ├── scope-resolver.sh      ← primary enforces, .red/tmp/work-*/ exempt
     │   └── git-command-classifier.sh ← branch-switch + work-loss family = block
@@ -153,7 +154,7 @@ It allows (exit 0, silent):
 - `git worktree add …` — worktrees are how `/afk` works
 - any other command
 
-With `dev.lock-primary-branch: true` and no branch-lock file, the primary guard
+With `dev.lock.primary-branch: true` and no branch-lock file, the primary guard
 blocks only branch-changing commands in the primary checkout:
 
 - blocks `git switch <branch>`, `git checkout <branch>`, `git switch -b <new>`,

@@ -5,7 +5,7 @@ export const DEVELOPMENT_WORKFLOW_BLOCK = `## ${DEVELOPMENT_WORKFLOW_HEADING}
 - Work in an isolated worktree; do not change the primary checkout's branch for task work.
 - Commit the worktree, push the branch early, then run \`/ship\` to open or reuse a PR.
 - Let \`/ship\` monitor checks and reviews, then either merge the PR or park the issue/PR for \`/hitl\`.
-- The agent never switches the primary checkout's branch; only the user does. The \`dev.lock-primary-branch\` flag in \`.red/config.yaml\` is the kill-switch for the primary-branch guard.`;
+- The agent never switches the primary checkout's branch; only the user does. The \`dev.lock.primary-branch\` flag in \`.red/config.yaml\` is the kill-switch for the primary-branch guard.`;
 
 const DEVELOPMENT_WORKFLOW_BODY = DEVELOPMENT_WORKFLOW_BLOCK.replace(/^## [^\n]+\n\n/, "");
 
@@ -67,13 +67,15 @@ export function activatePrimaryBranchLockConfig(yaml: string): string {
   if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
 
   const devStart = lines.findIndex((line) => /^dev:\s*(?:#.*)?$/.test(line));
-  const activeLine = "  lock-primary-branch: true";
+  const lockBlock = ["  lock:", "    primary-branch: true"];
 
+  // No `dev:` block at all — append the whole nested block.
   if (devStart === -1) {
     const prefix = lines.join("\n").trimEnd();
-    return `${prefix}${prefix.length > 0 ? "\n\n" : ""}dev:\n${activeLine}\n`;
+    return `${prefix}${prefix.length > 0 ? "\n\n" : ""}dev:\n${lockBlock.join("\n")}\n`;
   }
 
+  // Bound the `dev:` block (until the next top-level key).
   let devEnd = lines.length;
   for (let i = devStart + 1; i < lines.length; i += 1) {
     const line = lines[i]!;
@@ -84,14 +86,37 @@ export function activatePrimaryBranchLockConfig(yaml: string): string {
     }
   }
 
+  // An existing `  lock:` mapping inside `dev:` — ensure `    primary-branch: true`.
+  let lockIdx = -1;
   for (let i = devStart + 1; i < devEnd; i += 1) {
-    if (/^  lock-primary-branch:\s*/.test(lines[i]!)) {
-      lines[i] = activeLine;
-      return `${lines.join("\n").trimEnd()}\n`;
+    if (/^  lock:\s*(?:#.*)?$/.test(lines[i]!)) {
+      lockIdx = i;
+      break;
     }
   }
+  if (lockIdx !== -1) {
+    // Bound the `lock:` sub-block (until a line indented <= 2 spaces).
+    let lockEnd = devEnd;
+    for (let i = lockIdx + 1; i < devEnd; i += 1) {
+      const line = lines[i]!;
+      if (line.trim() === "") continue;
+      if (/^ {0,2}\S/.test(line)) {
+        lockEnd = i;
+        break;
+      }
+    }
+    for (let i = lockIdx + 1; i < lockEnd; i += 1) {
+      if (/^ {4}primary-branch:\s*/.test(lines[i]!)) {
+        lines[i] = "    primary-branch: true";
+        return `${lines.join("\n").trimEnd()}\n`;
+      }
+    }
+    lines.splice(lockIdx + 1, 0, "    primary-branch: true");
+    return `${lines.join("\n").trimEnd()}\n`;
+  }
 
-  lines.splice(devStart + 1, 0, activeLine);
+  // `dev:` exists without a `lock:` mapping — insert the nested block at its top.
+  lines.splice(devStart + 1, 0, ...lockBlock);
   return `${lines.join("\n").trimEnd()}\n`;
 }
 

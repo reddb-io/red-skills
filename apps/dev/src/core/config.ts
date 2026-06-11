@@ -74,7 +74,7 @@ export const CONFIG_DEFAULTS = {
   // regardless of the verdict) with `afk.merge.wait_for_review: true`.
   "afk.merge.wait_for_review": "false",
   "afk.merge.review_check": "CodeRabbit",
-  "dev.lock-primary-branch": "false",
+  "dev.lock.primary-branch": "false",
 } as const;
 
 export type ConfigKey = keyof typeof CONFIG_DEFAULTS;
@@ -281,8 +281,8 @@ export function loadConfig(path: string, options: LoadConfigOptions = {}): Confi
     // The dev plugin's AFK settings flatten to the bare `afk.*` accessor
     // (historical, shared with the legacy top-level `afk:` block); every other
     // dev-plugin key keeps the `dev.*` accessor — so
-    // `plugins.dev.lock-primary-branch` folds to `dev.lock-primary-branch`, not a
-    // bare `lock-primary-branch` the loader never reads.
+    // `plugins.dev.lock.primary-branch` folds to `dev.lock.primary-branch`, not a
+    // bare `lock.primary-branch` the loader never reads.
     values[rest === "afk" || rest.startsWith("afk.") ? rest : `dev.${rest}`] = value;
   }
   return values;
