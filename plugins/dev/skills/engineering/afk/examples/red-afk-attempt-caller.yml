@@ -1,0 +1,84 @@
+# Example: thin caller for the reddb-io/red-skills AFK Actions lane
+#
+# Copy this file verbatim into your repo at
+# `.github/workflows/red-afk-attempt.yml`, then edit:
+#   1. `allowlist_authors` and `allowlist_label_actors` — the GitHub
+#      logins whose issues + label-applications you trust to drive an
+#      autonomous run. Adopters: keep these short. Public repos: lean
+#      toward 0 or 1 entry (you and your automation bot only).
+#   2. `runner` — defaults to `opencode` (the third runner, ADR 0059).
+#   3. The `secrets:` block — wire whichever of the three API-key
+#      secrets your org provisions. The env-precedence resolver in
+#      `opencode-env.ts` picks the first set; the others are ignored.
+#
+# This file calls the published reusable workflow
+# `reddb-io/red-skills/.github/workflows/red-afk-attempt.yml@main` and
+# is the only piece of YAML your repo needs to enable the AFK Actions
+# lane. The reusable itself also auto-triggers on `issues: labeled`
+# when this caller does NOT route through it (e.g. an external
+# automation applies `ready-for-agent` directly), so the trigger
+# surface is covered from both sides.
+#
+# If you don't want this caller to exist at all (i.e. you only want
+# auto-trigger), you don't need this file: install
+# `reddb-io/red-skills/.github/workflows/red-afk-attempt.yml@main`
+# directly into your `.github/workflows/` and edit the
+# `allowlist_*` inputs there. The `if:` gate on that workflow
+# filters to the `ready-for-agent` label automatically.
+#
+# Trust gate: rigorous by default. The reusable refuses to claim an
+# issue whose author (`issue.user.login`) is NOT in
+# `allowlist_authors` OR whose label-applier (`sender.login` from the
+# labeled event) is NOT in `allowlist_label_actors`. Both checks
+# pass → claim proceeds. Either fails → logged, no claim, no PR.
+# (See #621 for the runtime predicate; the gh-script in the reusable
+# is the source of truth.)
+#
+# Permission scope (recommended minimum): contents: write, issues:
+# write, pull-requests: write. No id-token (no OIDC), no actions:
+# write (the workflow does not publish actions).
+
+name: red-afk-attempt-caller
+
+on:
+  # Manual trigger from the Actions UI; the reusable's `if:` filter
+  # also auto-triggers on `issues: labeled` regardless of whether
+  # this caller exists.
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: "Issue number to process (e.g. 631)."
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  attempt:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve issue number
+        id: issue
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "number=${{ inputs.issue_number }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "number=${{ github.event.issue.number }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Trigger the AFK Actions lane
+        uses: reddb-io/red-skills/.github/workflows/red-afk-attempt.yml@main
+        with:
+          issue_number: ${{ steps.issue.outputs.number }}
+          runner: opencode
+          model_slug: ""            # empty → reuse afk.models.opencode.<tier>.model
+          enforce_trust_gate: "true"
+          allowlist_authors: "filipeforattini"          # EDIT — your trusted author logins
+          allowlist_label_actors: "filipeforattini"     # EDIT — your trusted label-applier logins
+        secrets:
+          openrouter_api_key: ${{ secrets.OPENROUTER_API_KEY }}
+          minimax_api_key:    ${{ secrets.MINIMAX_API_KEY }}
+          openai_api_key:     ${{ secrets.OPENAI_API_KEY }}

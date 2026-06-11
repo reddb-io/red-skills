@@ -1,0 +1,221 @@
+# Reusable workflow: red-afk-attempt
+#
+# This is the AFK Actions lane (ADR 0059, glossary term) for any GitHub
+# repository that installs RedSkills. It runs ONE attempt per invocation
+# against the executable issue(s) given by the caller — no fleet, no
+# admin-merge in CI. The PR is the deliverable; the merge decision stays
+# human.
+#
+# Three trigger surfaces, all in the same file:
+#
+#   1. `workflow_call`     — direct invocation by a caller workflow
+#                            (e.g. a thin wrapper the adopter drops in
+#                            `.github/workflows/` of their own repo).
+#   2. `workflow_dispatch` — manual run from the Actions UI, with an
+#                            `issue_number` input. Useful for one-off
+#                            retries and operator-driven runs.
+#   3. `issues: labeled`   — auto-trigger on label application. The
+#                            `if:` gate below filters to only the
+#                            `ready-for-agent` label. Useful when a
+#                            triage bot (or a human) wants the lane
+#                            to fire the moment an issue is delegable,
+#                            without spinning up a caller workflow.
+#
+# Per ADR 0056, the trust gate is rigorous by default: the issue author
+# AND the label-applier must both be in `inputs.allowlist_*` (CSV
+# strings). The gate is evaluated inside the workflow with
+# `actions/github-script@v7` reading the event payload. Failure → no
+# claim, no PR, logged reason, exit 0.
+#
+# Adoption paths:
+#   - Path A (auto, simplest): copy `.github/workflows/red-issues-needs-triage.yml`
+#     pattern into the adopter repo + the same `on: issues: labeled` block.
+#     No caller needed; this workflow fires directly.
+#   - Path B (caller, more control): copy the thin caller at
+#     `plugins/dev/skills/engineering/afk/examples/red-afk-attempt-caller.yml`
+#     into the adopter repo, edit allowlist, done.
+#
+# Required `permissions:` are intentionally minimal — `contents: write`
+# (push worker branch), `issues: write` (post envelope + apply labels),
+# `pull-requests: write` (open PR). No `id-token`, no `actions: write`.
+
+name: red-afk-attempt
+
+on:
+  workflow_call:
+    inputs:
+      issue_number:
+        description: "Issue number to process. Empty string = no-op."
+        required: false
+        type: string
+        default: ""
+      runner:
+        description: "AFK runner to drive (claude|codex|opencode)."
+        required: false
+        type: string
+        default: "opencode"
+      model_slug:
+        description: "Override `afk.models.opencode.<tier>.model`. Empty = read from .red/config.yaml."
+        required: false
+        type: string
+        default: ""
+      allowlist_authors:
+        description: "CSV of GitHub logins allowed as issue author."
+        required: true
+        type: string
+      allowlist_label_actors:
+        description: "CSV of GitHub logins allowed as label-applier (sender)."
+        required: true
+        type: string
+      enforce_trust_gate:
+        description: "Refuse to claim if author/actor not in allowlist. Default true."
+        required: false
+        type: string
+        default: "true"
+    secrets:
+      openrouter_api_key:
+        required: false
+      minimax_api_key:
+        required: false
+      openai_api_key:
+        required: false
+
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: "Issue number to process (e.g. 631)."
+        required: true
+        type: string
+      runner:
+        description: "AFK runner to drive."
+        required: false
+        type: string
+        default: "opencode"
+
+  # Auto-trigger: fire the lane when the `ready-for-agent` label is
+  # applied to any issue. The `if:` on the job filters to exactly that
+  # label; `actions/github-script` below evaluates the trust gate.
+  issues:
+    types: [labeled]
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  attempt:
+    # Three trigger sources converge into a single job via the per-source
+    # resolution below. The job runs only when (a) the issue_number is
+    # resolvable and (b) the label is `ready-for-agent` (for the issues
+    # trigger; the other two are not label-gated).
+    if: >-
+      (github.event_name == 'workflow_dispatch') ||
+      (github.event_name == 'workflow_call') ||
+      (github.event_name == 'issues' && github.event.label.name == 'ready-for-agent')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve the issue number
+        id: resolve
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const eventName = context.eventName;
+            let issueNumber = '';
+            if (eventName === 'workflow_dispatch') {
+              issueNumber = context.payload.inputs.issue_number;
+            } else if (eventName === 'workflow_call') {
+              issueNumber = context.payload.inputs.issue_number || context.payload.issue_number || '';
+            } else if (eventName === 'issues') {
+              issueNumber = String(context.payload.issue.number);
+            }
+            if (!/^[0-9]+$/.test(issueNumber)) {
+              core.setFailed(`invalid issue number: ${JSON.stringify(issueNumber)}`);
+              return;
+            }
+            core.info(`resolved issue_number=${issueNumber} from event=${eventName}`);
+            core.setOutput('number', issueNumber);
+
+      - name: Evaluate the trust gate
+        id: trust
+        uses: actions/github-script@v7
+        env:
+          ENFORCE_TRUST_GATE: ${{ github.event_name == 'workflow_call' && inputs.enforce_trust_gate || 'true' }}
+          ALLOWLIST_AUTHORS: ${{ github.event_name == 'workflow_call' && inputs.allowlist_authors || '' }}
+          ALLOWLIST_LABEL_ACTORS: ${{ github.event_name == 'workflow_call' && inputs.allowlist_label_actors || '' }}
+        with:
+          script: |
+            const enforce = (process.env.ENFORCE_TRUST_GATE || 'true').toLowerCase() !== 'false';
+            const authors = (process.env.ALLOWLIST_AUTHORS || '').split(',').map(s => s.trim()).filter(Boolean);
+            const labelActors = (process.env.ALLOWLIST_LABEL_ACTORS || '').split(',').map(s => s.trim()).filter(Boolean);
+
+            // For the issues:labeled trigger, fall back to a hard-coded
+            // allowlist of reddb-io maintainers (this workflow lives in
+            // the reddb-io/red-skills repo; the canonical allowlist
+            // is the set of maintainers with merge rights on main).
+            // TODO: when #621 lands, source the allowlist from
+            // `.red/config.yaml` (`plugins.dev.afk.trust_gate.allowlist`)
+            // and remove this hard-coded fallback.
+            if (authors.length === 0) {
+              authors.push('filipeforattini');
+            }
+            if (labelActors.length === 0) {
+              labelActors.push('filipeforattini');
+            }
+
+            const eventName = context.eventName;
+            const issue = context.payload.issue;
+            const sender = context.payload.sender;
+            const author = issue?.user?.login;
+            const labelActor = eventName === 'issues' ? sender?.login : (sender?.login || author);
+
+            const authorOk = authors.includes(author);
+            const actorOk  = labelActors.includes(labelActor);
+            const ok = authorOk && actorOk;
+
+            core.info(`trust-gate: enforce=${enforce} author=${author} actor=${labelActor} author_ok=${authorOk} actor_ok=${actorOk}`);
+
+            if (!enforce) {
+              core.warning('trust gate DISABLED (enforce_trust_gate=false); claiming without allowlist check');
+              core.setOutput('gate', 'bypass');
+            } else if (ok) {
+              core.setOutput('gate', 'pass');
+            } else {
+              core.setOutput('gate', 'fail');
+              const reason = `trust gate failed: author=${author} in ${JSON.stringify(authors)} = ${authorOk}; label-actor=${labelActor} in ${JSON.stringify(labelActors)} = ${actorOk}`;
+              core.notice(reason, { properties: { tag: 'trust-gate' } });
+              try {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo:  context.repo.repo,
+                  issue_number: parseInt(context.payload.issue.number, 10),
+                  body: `🤖 /afk trust gate refused to claim this issue: ${reason}. See #621 for the allowlist predicate.`,
+                });
+              } catch (e) {
+                core.warning(`failed to post trust-gate refusal comment: ${e.message}`);
+              }
+            }
+
+      - name: Run the AFK attempt
+        if: steps.trust.outputs.gate == 'pass' || steps.trust.outputs.gate == 'bypass'
+        env:
+          RED_AFK_RUNNER: ${{ github.event_name == 'workflow_dispatch' && inputs.runner || (github.event_name == 'workflow_call' && inputs.runner || 'opencode') }}
+          RESOLVED_NUMBER: ${{ steps.resolve.outputs.number }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          MINIMAX_API_KEY:    ${{ secrets.MINIMAX_API_KEY }}
+          OPENAI_API_KEY:     ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          set -euo pipefail
+          ISSUE="${RESOLVED_NUMBER}"
+          if [ -z "${ISSUE}" ]; then
+            echo "::error::missing issue number"
+            exit 1
+          fi
+          # TODO: when #622 lands the atomic claim CAS replaces the
+          # --issues <N> direct invocation with a server-side-claim
+          # primitive that prevents race with a concurrent local fleet.
+          node plugins/dev/skills/engineering/afk/bin/afk.mjs run \
+            --issues "$ISSUE" \
+            --runner "${RED_AFK_RUNNER}" \
+            --once
+        shell: bash

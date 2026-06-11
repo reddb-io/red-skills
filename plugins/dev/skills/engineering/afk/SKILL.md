@@ -66,11 +66,48 @@ in a GitHub Actions runner or a k8s pod — it is the canonical
 the local one (one attempt, one issue, one PR per invocation, no fleet
 semantics); only the trigger and the secret-injection surface differ.
 
-The reusable workflow (`red-afk-attempt.yml`, `workflow_call`) and the k8s
-job manifest (container `Dockerfile` + `job.yaml`) that wrap this command
-for GHA / k8s adopters are tracked as [#631](https://github.com/reddb-io/red-skills/issues/631)
-(ADR 0059). Until #631 lands, an adopter can wire a thin caller
-themselves — the command line is stable:
+The published reusable workflow (`.github/workflows/red-afk-attempt.yml`
+in `reddb-io/red-skills`) is the single entry point for any adopting
+repository. It listens to **three triggers in the same file**:
+
+1. `workflow_call` — direct invocation by a thin caller the adopter
+   drops in their own `.github/workflows/` (template at
+   `plugins/dev/skills/engineering/afk/examples/red-afk-attempt-caller.yml`).
+2. `workflow_dispatch` — manual run from the Actions UI with an
+   `issue_number` input. Useful for one-off retries.
+3. `issues: types: [labeled]` — auto-trigger when the
+   `ready-for-agent` label is applied to any issue (the job's `if:`
+   filter restricts to exactly that label; the `actions/github-script`
+   step then evaluates the trust gate). Useful when a triage bot or a
+   human wants the lane to fire the moment an issue is delegable,
+   without spinning up a caller workflow.
+
+The trust gate is **rigorous by default** in the Actions lane: the
+reusable refuses to claim an issue whose author
+(`issue.user.login`) is NOT in the caller-supplied
+`allowlist_authors` CSV OR whose label-applier
+(`sender.login` from the `labeled` event) is NOT in the
+`allowlist_label_actors` CSV. Both checks pass → claim proceeds.
+Either fails → logged, no claim, no PR. Until issue #621 (the runtime
+trust-gate predicate) lands, the allowlist is hard-coded to the
+reddb-io maintainers for the auto-trigger path; the caller-supplied
+allowlist is honoured for `workflow_call` and the manual path.
+
+The k8s job manifest (container `Dockerfile` + `job.yaml`) and the
+real-environment E2E test are tracked as
+[#631](https://github.com/reddb-io/red-skills/issues/631) (ADR 0059).
+Until the k8s piece lands, an adopter running on a cluster can wire
+the same `node plugins/dev/skills/engineering/afk/bin/afk.mjs run
+--issues N --runner opencode --once` command line — the command is
+stable:
+
+```bash
+# GHA reusable workflow body, or k8s container CMD
+export RED_AFK_RUNNER=opencode
+# One of the precedence env-vars, set from a secret:
+export MINIMAX_API_KEY="${{ secrets.MINIMAX_API_KEY }}"   # or OPENAI_API_KEY / OPENROUTER_API_KEY
+node plugins/dev/skills/engineering/afk/bin/afk.mjs run --issues "$ISSUE_NUMBER" --runner opencode --once
+```
 
 ```bash
 # GHA reusable workflow body, or k8s container CMD
