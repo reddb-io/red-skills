@@ -528,6 +528,19 @@ export interface SupervisorDeps {
    * throws out of the loop.
    */
   emitFleetHeartbeat?(heartbeat: FleetHeartbeat): void | Promise<void>;
+  /**
+   * Run the shared boot sweeps ONCE before the initial fleet spawn (#623). The
+   * fleet supervisor owns the boot: it runs orphan cleanup / attempt cap /
+   * branch cleanup / unblock sweep / straggler check a single time, pre-spawn,
+   * and every worker it then spawns carries the `RED_AFK_SWEEPS_DONE` marker so
+   * it boots bootstrap+claim only — respawns are cheap and workers never race
+   * peers over shared `.red/tmp` state. Called exactly once per supervisor
+   * lifetime (never on a respawn, which happens inside the tick loop). The
+   * closure itself logs its sweep results via {@link SupervisorDeps.log}.
+   * Best-effort: a throw is caught and logged, never aborting the fleet. Absent
+   * in tests / non-fleet contexts → no boot runs (back-compat).
+   */
+  bootSweeps?(): Promise<void>;
 }
 
 // ---------- per-slot runtime state ----------
@@ -1155,6 +1168,22 @@ export async function runSupervisor(
   // The progress-stale check (#579) must fire strictly after the heartbeat-stale
   // check, so its threshold must be greater.
   validateSupervisorProgressThreshold(config);
+
+  // Fleet supervisor owns the boot (#623): run the shared sweeps ONCE, pre-spawn,
+  // so every worker the fleet spawns boots bootstrap+claim only and never races
+  // peers over `.red/tmp` state. This is the ONLY call site — a respawn after a
+  // worker exit happens inside the tick loop below and never re-enters here, so
+  // the sweeps run exactly once per supervisor lifetime. Best-effort: a boot
+  // failure is logged, not fatal (each worker still runs its own precheck).
+  if (deps.bootSweeps) {
+    try {
+      await deps.bootSweeps();
+    } catch (err) {
+      deps.log?.(
+        `boot sweeps failed: ${err instanceof Error ? err.message : String(err)} — spawning workers anyway`,
+      );
+    }
+  }
 
   // Spawn the initial fleet to target.
   for (let i = 0; i < state.slots.length; i += 1) {

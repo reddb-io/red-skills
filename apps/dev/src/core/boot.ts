@@ -267,6 +267,16 @@ export interface BootOptions {
    * reconcile sweep (step 7) will attempt to validate-and-land. When absent the
    * sweep is a no-op. Optional for back-compat. */
   reconcileSweepCandidates?: readonly ReconcileSweepCandidate[];
+  /**
+   * Skip every shared boot sweep (#623). When true, `runBoot` runs precheck +
+   * bootstrap only and returns before orphan cleanup / attempt cap / branch
+   * cleanup / unblock sweep / reconcile sweep / straggler check. The fleet
+   * supervisor sets this on each worker (via the `RED_AFK_SWEEPS_DONE` marker)
+   * because it already ran the sweeps once, pre-spawn — so a supervised worker
+   * boots bootstrap+claim only and never races peers over shared `.red/tmp`
+   * state. A solo `run` (no marker) leaves this false and runs every sweep.
+   */
+  skipSweeps?: boolean;
 }
 
 // ---------- per-step results (for parity assertions / logging) ----------
@@ -347,6 +357,11 @@ export interface BootResult {
  * Steps 3-8 run only after a passing precheck, mirroring the bash `die`/`set -e`
  * abort. The TTY "proceed anyway?" prompt is the caller's: this returns the
  * straggler warn flag, it does not block.
+ *
+ * When `options.skipSweeps` is set (#623, a supervised worker carrying the
+ * `RED_AFK_SWEEPS_DONE` marker) the sequence stops after step 2: the supervisor
+ * already ran every shared sweep once, pre-spawn, so the worker boots
+ * bootstrap+claim only and never races peers over `.red/tmp` / branch / gh state.
  */
 export async function runBoot(deps: BootDeps, options: BootOptions): Promise<BootResult> {
   // ---- 1. precheck ----
@@ -361,6 +376,16 @@ export async function runBoot(deps: BootDeps, options: BootOptions): Promise<Boo
   await deps.fs.ensureGitignoreLine(b.gitignorePath, ".red/state/");
   await deps.fs.ensureDir(b.workerDir);
   await deps.fs.writeWorkerPid(b.workerPidFile, b.workerPid);
+
+  // ---- 2a. supervisor-owned-sweeps short-circuit (#623) ----
+  // Under the fleet supervisor the shared sweeps already ran once, pre-spawn.
+  // A supervised worker boots bootstrap+claim only: return here so it touches no
+  // shared `.red/tmp` / branch / gh state below (no orphan cleanup, attempt cap,
+  // branch cleanup, unblock sweep, reconcile sweep, or straggler check). This is
+  // what makes a respawn cheap and keeps peers from racing over boot state.
+  if (options.skipSweeps) {
+    return { precheck: pre, bootstrap: { ok: true } };
+  }
 
   // ---- 3. orphan cleanup ----
   const orphanCleanup = await runOrphanCleanup(deps, options);

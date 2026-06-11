@@ -251,6 +251,57 @@ describe("runBoot bootstrap", () => {
   });
 });
 
+describe("runBoot skipSweeps — supervisor-owned boot (#623)", () => {
+  it("runs precheck + bootstrap then returns before every sweep", async () => {
+    const { deps, calls, fsCalls } = makeDeps();
+    // Provide sweep INPUTS that would normally trigger work, to prove they are
+    // ignored once skipSweeps is set: an orphan dir, an attempt-cap group, a
+    // reapable branch, and an unblock candidate.
+    const result = await runBoot(
+      deps,
+      options({
+        skipSweeps: true,
+        orphans: [{ path: "/d/orphan", issue: 7, ageS: 999_999 }],
+        attemptCap: { byIssue: new Map([[7, [attempt(7, 1, 999_999)]]]) },
+        branches: { snapshotRefs: [{ branch: "afk-attempts/7-x" }], remoteLiveRefs: [], localLiveRefs: [] },
+        unblockCandidates: [{ number: 9, body: "", labels: ["blocked:dependency", "req:1"] }],
+      }),
+    );
+
+    // Bootstrap still ran (dirs + gitignore + worker.pid).
+    expect(fsCalls.ensureDir).toEqual([
+      "/p/.red/tmp",
+      "/p/.red/state",
+      "/p/.red/tmp/workers/wAAA",
+    ]);
+    expect(fsCalls.workerPid).toHaveLength(1);
+    // …but NOTHING else: no removeDir, no gh, no git — every sweep was skipped.
+    expect(fsCalls.removeDir).toEqual([]);
+    expect(calls.filter((c) => c.startsWith("gh.") || c.startsWith("git."))).toEqual([]);
+
+    // The result carries only precheck + bootstrap; every sweep field is absent.
+    expect(result.precheck.ok).toBe(true);
+    expect(result.bootstrap).toEqual({ ok: true });
+    expect(result.orphanCleanup).toBeUndefined();
+    expect(result.attemptCap).toBeUndefined();
+    expect(result.branchCleanup).toBeUndefined();
+    expect(result.unblockSweep).toBeUndefined();
+    expect(result.reconcileSweep).toBeUndefined();
+    expect(result.straggler).toBeUndefined();
+  });
+
+  it("still aborts on a precheck failure before bootstrap", async () => {
+    const { deps, calls } = makeDeps();
+    const result = await runBoot(
+      deps,
+      options({ skipSweeps: true, precheck: facts({ ghInstalled: false }) }),
+    );
+    expect(result.precheck).toEqual({ ok: false, failed: "gh-missing" });
+    expect(result.bootstrap).toBeUndefined();
+    expect(calls).toEqual([]);
+  });
+});
+
 describe("runBoot orphan cleanup applies each fate", () => {
   it("removes a CLOSED-issue orphan dir", async () => {
     const orphanState: BootDeps["lookups"]["orphanState"] = async () => ({

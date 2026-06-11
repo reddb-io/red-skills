@@ -183,6 +183,8 @@ interface RunHarnessOptions {
   throwOnProcess?: boolean;
   /** --boot-only: run the boot then return before selection/processing. */
   bootOnly?: boolean;
+  /** #623: the supervisor already ran the sweeps; shape the boot-only line. */
+  sweepsSkipped?: boolean;
   /** Runners whose shared circuit is already open before the next claim. */
   circuitOpenFor?: Runner[];
 }
@@ -298,6 +300,7 @@ function makeSession(opts: RunHarnessOptions = {}): {
     once: opts.once,
     alternate: opts.alternate,
     bootOnly: opts.bootOnly,
+    sweepsSkipped: opts.sweepsSkipped,
     filter: opts.filter ?? { kind: "all" },
     issueTemplate: {
       tmpDir: "/tmp/afk",
@@ -442,6 +445,22 @@ describe("runSession — --boot-only dry-run", () => {
     // A single informational line is emitted, never the NO MORE TASKS sentinel.
     expect(trace.emitted).not.toContain(NO_MORE_TASKS);
     expect(trace.emitted).toEqual(["boot complete (--boot-only): sweeps ran, no issues processed"]);
+  });
+
+  it("reports the sweeps as supervisor-owned when sweepsSkipped is set (#623)", async () => {
+    const { deps, ctx, trace } = makeSession({
+      candidates: [cand(1), cand(2)],
+      bootOnly: true,
+      sweepsSkipped: true,
+    });
+    const summary = await runSession(deps, ctx);
+    // Still a dry-run: no selection / processing, just the supervisor-owned line.
+    expect(trace.listCandidatesCalls).toBe(0);
+    expect(trace.processedOrder).toEqual([]);
+    expect(trace.emitted).toEqual([
+      "boot complete (--boot-only): sweeps skipped (supervisor-owned), no issues processed",
+    ]);
+    expect(summary.drained).toBe(false);
   });
 });
 

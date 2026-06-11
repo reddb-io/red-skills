@@ -651,8 +651,10 @@ export async function collectReapInputs(ctx: RepoContext): Promise<ReapInputs> {
 
 // ---------- precheck facts ----------
 
-import type { PrecheckFacts, BootOptions, BootstrapInput, OrphanDir } from "../core/boot.js";
+import type { PrecheckFacts, BootOptions, BootDeps, BootstrapInput, OrphanDir } from "../core/boot.js";
 import type { AttemptDir } from "../core/reclaim.js";
+import type { IssueStateRow } from "./gh.js";
+import { LABEL_HUMAN, LABEL_RUNNING } from "../core/triage-labels.js";
 import { parseWorkerAttemptPath } from "../core/worker-paths.js";
 
 /**
@@ -754,5 +756,150 @@ export async function collectPrecheckFacts(ctx: RepoContext): Promise<PrecheckFa
     currentBranch,
     lockedBranch,
     pnpmInstalled,
+  };
+}
+
+// ---------- boot deps ----------
+
+/** Pre-resolve the gh issue-state cache the branch-cleanup reapers + orphan
+ * lookup read synchronously. Mirrors collectReapInputs' eager resolution, but
+ * sources every issue's meta from the SINGLE batched `listIssueStates` map
+ * instead of a per-issue `gh issue view` storm. A map miss (issue beyond the
+ * --limit window / just-created / transient list failure) falls back to the
+ * live `ghx.issueMeta` so closedAt-grace classification stays exact. */
+async function resolveBranchIssueCache(
+  ghCtx: GhContext,
+  options: BootOptions,
+  states: Map<number, IssueStateRow>,
+): Promise<Map<number, IssueMeta | null | undefined>> {
+  const { liveIssueFromBranch, attemptIssueFromBranch } = await import("../core/branch-cleanup.js");
+  const issues = new Set<number>();
+  for (const r of options.branches.snapshotRefs) {
+    const n = attemptIssueFromBranch(r.branch);
+    if (n !== null) issues.add(n);
+  }
+  for (const r of [...options.branches.remoteLiveRefs, ...options.branches.localLiveRefs]) {
+    const n = liveIssueFromBranch(r.branch);
+    if (n !== null) issues.add(n);
+  }
+  const cache = new Map<number, IssueMeta | null | undefined>();
+  for (const n of issues) {
+    const row = states.get(n);
+    if (row) cache.set(n, { state: row.state, closedAt: row.closedAt });
+    else cache.set(n, await issueMeta(ghCtx, n));
+  }
+  return cache;
+}
+
+/**
+ * Build the real {@link BootDeps} for a full boot run — the fs/gh/git side
+ * effects + per-issue lookups every sweep composes. ONE batched
+ * `listIssueStates` fetch backs every per-issue boot lookup (orphan state,
+ * branch state, blocker state); a map miss falls back to a live read so the
+ * classification stays exact. Used by a solo `run` (sweeps run) and by the fleet
+ * supervisor's pre-spawn boot (#623).
+ */
+export async function buildBootDeps(ctx: RepoContext, options: BootOptions, nowS: number): Promise<BootDeps> {
+  const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo };
+  const gitCtx: gitx.GitContext = { cwd: ctx.root };
+  // ONE batched issue-state fetch backs every per-issue boot lookup below.
+  const issueStates = await ghx.listIssueStates(ghCtx);
+  const branchCache = await resolveBranchIssueCache(ghCtx, options, issueStates);
+  return {
+    fs: {
+      ensureDir: fsx.ensureDir,
+      ensureGitignoreLine: fsx.ensureGitignoreLine,
+      writeWorkerPid: fsx.writeWorkerPid,
+      removeDir: fsx.removeDir,
+    },
+    gh: {
+      editLabels: async (issue, remove, add) => {
+        await ghx.editLabels(ghCtx, issue, remove, add);
+      },
+      comment: (issue, body) => ghx.comment(ghCtx, issue, body),
+    },
+    git: {
+      deleteRemoteBranch: (branch) => gitx.deleteRemoteBranch(gitCtx, branch),
+      deleteLocalBranch: (branch) => gitx.deleteLocalBranch(gitCtx, branch),
+    },
+    lookups: {
+      // Live-claim ownership for the orphan sweep (#644): a dead attempt dir
+      // naming an issue whose claims/{N}/pid is a LIVE process is claim-race
+      // debris, not a mid-issue crash — the sweep removes it without touching
+      // the winner's `running` label.
+      claimHolderAlive: (issue) => fsx.claimPathHeldByLivePid(join(afkPaths(ctx.root).tmpDir, "claims", String(issue))),
+      // Orphan state pairs gh issue state/label with the attempt dir's
+      // envelope.posted flag (read from the state file, not gh). Derived from
+      // the batched map, preserving ghx.orphanState's exact label/state →
+      // verdict mapping (ready-for-human > running > null). On a map MISS the
+      // issue isn't in the list window — fall back to the live read so a
+      // truncated/just-created/transient issue still classifies correctly.
+      orphanState: async (issue) => {
+        const row = issueStates.get(issue);
+        if (!row) return ghx.orphanState(ghCtx, issue);
+        const label = row.labels.includes(LABEL_HUMAN)
+          ? LABEL_HUMAN
+          : row.labels.includes(LABEL_RUNNING)
+            ? LABEL_RUNNING
+            : null;
+        return { ghOk: true, state: row.state, label, envelopePosted: false };
+      },
+      branchIssue: (issue) => branchCache.get(issue),
+      // Blocker state from the batched map: row.state ("OPEN"/"CLOSED") or
+      // undefined on a miss. undefined-on-miss exactly matches the prior
+      // 404→undefined→not-closed semantics — a missing blocker stays
+      // "open-or-unknown" and the dependent issue is NOT promoted.
+      blockerState: async (issue) => issueStates.get(issue)?.state,
+      straggler: {
+        unlabeled: () => ghx.countUnlabeled(ghCtx),
+        needsTriage: () => ghx.countNeedsTriage(ghCtx),
+        needsInfo: () => ghx.countNeedsInfo(ghCtx),
+      },
+    },
+    nowS,
+  };
+}
+
+/**
+ * Build a MINIMAL {@link BootDeps} for a supervised worker whose boot skips
+ * every shared sweep (#623, `RED_AFK_SWEEPS_DONE`). `runBoot` with
+ * `skipSweeps:true` touches only `deps.fs` (the bootstrap mkdir / gitignore /
+ * worker.pid writes) and `deps.nowS` before returning, so the gh/git/lookup
+ * closures are never reached — they are present only to satisfy the type and
+ * throw if ever called, which would surface a regression that let a skip-boot
+ * fall through into a sweep. This deliberately AVOIDS the batched
+ * `listIssueStates` + branch-cache resolution {@link buildBootDeps} pays, which
+ * is the whole point: a respawned worker's boot must be cheap.
+ */
+export function buildMinimalBootDeps(ctx: RepoContext, nowS: number): BootDeps {
+  const unreachable = (): never => {
+    throw new Error("buildMinimalBootDeps: sweep IO invoked on a skip-sweeps boot (#623)");
+  };
+  return {
+    fs: {
+      ensureDir: fsx.ensureDir,
+      ensureGitignoreLine: fsx.ensureGitignoreLine,
+      writeWorkerPid: fsx.writeWorkerPid,
+      removeDir: fsx.removeDir,
+    },
+    gh: {
+      editLabels: async () => unreachable(),
+      comment: async () => unreachable(),
+    },
+    git: {
+      deleteRemoteBranch: async () => unreachable(),
+      deleteLocalBranch: async () => unreachable(),
+    },
+    lookups: {
+      orphanState: async () => unreachable(),
+      branchIssue: () => unreachable(),
+      blockerState: async () => unreachable(),
+      straggler: {
+        unlabeled: async () => unreachable(),
+        needsTriage: async () => unreachable(),
+        needsInfo: async () => unreachable(),
+      },
+    },
+    nowS,
   };
 }

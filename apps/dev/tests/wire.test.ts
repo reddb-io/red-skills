@@ -8,8 +8,10 @@ import {
   collectMonitorInputs,
   readFleetState,
   resolveAttemptGuardArming,
+  buildMinimalBootDeps,
   withTimeout,
 } from "../src/runtime/wire.js";
+import { runBoot } from "../src/core/boot.js";
 
 function scratch(): string {
   return mkdtempSync(join(tmpdir(), "afk-wire-"));
@@ -308,5 +310,57 @@ describe("withTimeout — bounded cold-cache refresh", () => {
     const result = await withTimeout(lateRejecting.catch(() => -1), 20, -1);
     lateReject(new Error("network gone"));
     expect(result).toBe(-1);
+  });
+});
+
+describe("buildMinimalBootDeps — supervisor-owned-sweeps worker boot (#623)", () => {
+  it("drives a real skipSweeps runBoot: bootstrap on disk, no sweep IO", async () => {
+    const dir = scratch();
+    try {
+      const tmpDir = join(dir, ".red", "tmp");
+      const deps = buildMinimalBootDeps({ root: dir, repo: "o/r", remote: "origin" }, 1_700_000_000);
+      const result = await runBoot(deps, {
+        precheck: {
+          ghInstalled: true,
+          ghAuthenticated: true,
+          isGitRepo: true,
+          remoteUrls: ["git@github.com:o/r.git"],
+          hasMainBranch: true,
+          currentBranch: "main",
+          pnpmInstalled: true,
+        },
+        bootstrap: {
+          tmpDir,
+          stateDir: join(dir, ".red", "state"),
+          gitignorePath: join(dir, ".gitignore"),
+          workerDir: join(tmpDir, "workers", "wAAAA"),
+          workerPidFile: join(tmpDir, "workers", "wAAAA", "worker.pid"),
+          workerPid: 4242,
+        },
+        orphans: [],
+        attemptCap: { byIssue: new Map() },
+        branches: { snapshotRefs: [], remoteLiveRefs: [], localLiveRefs: [] },
+        unblockCandidates: [],
+        skipSweeps: true,
+      });
+      // Boot ran precheck + bootstrap then short-circuited; no sweep fields.
+      expect(result.precheck.ok).toBe(true);
+      expect(result.bootstrap).toEqual({ ok: true });
+      expect(result.orphanCleanup).toBeUndefined();
+      expect(result.straggler).toBeUndefined();
+      // Bootstrap really wrote to disk (the real fs closures are wired).
+      const { existsSync } = await import("node:fs");
+      expect(existsSync(join(tmpDir, "workers", "wAAAA", "worker.pid"))).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("throws if any sweep IO closure is invoked (guards a skip-boot regression)", async () => {
+    const deps = buildMinimalBootDeps({ root: "/x", repo: "o/r", remote: "origin" }, 0);
+    await expect(deps.gh.comment(1, "x")).rejects.toThrow(/skip-sweeps/);
+    await expect(deps.lookups.blockerState(1)).rejects.toThrow(/skip-sweeps/);
+    await expect(deps.lookups.straggler.unlabeled()).rejects.toThrow(/skip-sweeps/);
+    expect(() => deps.lookups.branchIssue(1)).toThrow(/skip-sweeps/);
   });
 });

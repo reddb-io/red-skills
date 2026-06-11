@@ -202,6 +202,14 @@ export interface SessionContext {
    * processing — a dry-run for inspecting the boot, never spawns an agent.
    */
   bootOnly?: boolean;
+  /**
+   * The fleet supervisor already ran the shared boot sweeps before spawning this
+   * worker (#623, `RED_AFK_SWEEPS_DONE`): the worker booted bootstrap+claim only.
+   * Purely informational — it only shapes the `--boot-only` line so the dry-run
+   * reports the sweeps as supervisor-owned rather than worker-run. The actual
+   * skip is driven by `BootOptions.skipSweeps` in `runBoot`, not here.
+   */
+  sweepsSkipped?: boolean;
 }
 
 /** Toggle a runner to the other backend (claude↔codex). */
@@ -410,7 +418,11 @@ export async function runSession(deps: SessionDeps, ctx: SessionContext): Promis
   // ---- 1a. --boot-only: dry-run. The boot sweeps ran above; return before
   // any selection/claim/processing so no agent is ever spawned. ----
   if (ctx.bootOnly) {
-    deps.emit("boot complete (--boot-only): sweeps ran, no issues processed");
+    deps.emit(
+      ctx.sweepsSkipped
+        ? "boot complete (--boot-only): sweeps skipped (supervisor-owned), no issues processed"
+        : "boot complete (--boot-only): sweeps ran, no issues processed",
+    );
     return { ...empty, boot };
   }
 
