@@ -24,6 +24,8 @@ import {
   collectPrecheckFacts,
   collectBootOptions,
   collectMonitorInputs,
+  buildBootDeps,
+  buildMinimalBootDeps,
   makeRunAgent,
   resolveRepoContext,
   resolveRunSettings,
@@ -33,7 +35,6 @@ import {
 import type { LaneIdleStallConfig } from "../core/lane-idle-reaper.js";
 import { workerDir as workerDirPath, workerPidFile } from "../core/worker-paths.js";
 import { parseFlags, type FlagSchema } from "@reddb-io/shared/args.js";
-import { LABEL_HUMAN, LABEL_RUNNING } from "../core/triage-labels.js";
 import * as ghx from "../runtime/gh.js";
 import * as gitx from "../runtime/git.js";
 import * as fsx from "../runtime/fs.js";
@@ -189,36 +190,6 @@ export function parseRunFlags(args: readonly string[]): ParsedRunFlags {
     bootOnly: values["boot-only"] === true,
     reconcileIssue,
   };
-}
-
-/** Pre-resolve the gh issue-state cache the branch-cleanup reapers + orphan
- * lookup read synchronously. Mirrors collectReapInputs' eager resolution, but
- * sources every issue's meta from the SINGLE batched `listIssueStates` map
- * instead of a per-issue `gh issue view` storm. A map miss (issue beyond the
- * --limit window / just-created / transient list failure) falls back to the
- * live `ghx.issueMeta` so closedAt-grace classification stays exact. */
-async function resolveBranchIssueCache(
-  ghCtx: GhContext,
-  options: BootOptions,
-  states: Map<number, import("../runtime/gh.js").IssueStateRow>,
-): Promise<Map<number, import("../core/branch-cleanup.js").IssueMeta | null | undefined>> {
-  const { liveIssueFromBranch, attemptIssueFromBranch } = await import("../core/branch-cleanup.js");
-  const issues = new Set<number>();
-  for (const r of options.branches.snapshotRefs) {
-    const n = attemptIssueFromBranch(r.branch);
-    if (n !== null) issues.add(n);
-  }
-  for (const r of [...options.branches.remoteLiveRefs, ...options.branches.localLiveRefs]) {
-    const n = liveIssueFromBranch(r.branch);
-    if (n !== null) issues.add(n);
-  }
-  const cache = new Map<number, import("../core/branch-cleanup.js").IssueMeta | null | undefined>();
-  for (const n of issues) {
-    const row = states.get(n);
-    if (row) cache.set(n, { state: row.state, closedAt: row.closedAt });
-    else cache.set(n, await ghx.issueMeta(ghCtx, n));
-  }
-  return cache;
 }
 
 /** Build the boot reconcile runner (step 7, ADR 0055). The runner closes over
@@ -385,67 +356,6 @@ async function runReconcileWorker(
   }
 
   return 0;
-}
-
-async function buildBootDeps(ctx: RepoContext, options: BootOptions, nowS: number): Promise<BootDeps> {
-  const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo };
-  const gitCtx: GitContext = { cwd: ctx.root };
-  // ONE batched issue-state fetch backs every per-issue boot lookup below.
-  const issueStates = await ghx.listIssueStates(ghCtx);
-  const branchCache = await resolveBranchIssueCache(ghCtx, options, issueStates);
-  return {
-    fs: {
-      ensureDir: fsx.ensureDir,
-      ensureGitignoreLine: fsx.ensureGitignoreLine,
-      writeWorkerPid: fsx.writeWorkerPid,
-      removeDir: fsx.removeDir,
-    },
-    gh: {
-      editLabels: async (issue, remove, add) => {
-        await ghx.editLabels(ghCtx, issue, remove, add);
-      },
-      comment: (issue, body) => ghx.comment(ghCtx, issue, body),
-    },
-    git: {
-      deleteRemoteBranch: (branch) => gitx.deleteRemoteBranch(gitCtx, branch),
-      deleteLocalBranch: (branch) => gitx.deleteLocalBranch(gitCtx, branch),
-    },
-    lookups: {
-      // Live-claim ownership for the orphan sweep (#644): a dead attempt dir
-      // naming an issue whose claims/{N}/pid is a LIVE process is claim-race
-      // debris, not a mid-issue crash — the sweep removes it without touching
-      // the winner's `running` label.
-      claimHolderAlive: (issue) => fsx.claimPathHeldByLivePid(join(afkPaths(ctx.root).tmpDir, "claims", String(issue))),
-      // Orphan state pairs gh issue state/label with the attempt dir's
-      // envelope.posted flag (read from the state file, not gh). Derived from
-      // the batched map, preserving ghx.orphanState's exact label/state →
-      // verdict mapping (ready-for-human > running > null). On a map MISS the
-      // issue isn't in the list window — fall back to the live read so a
-      // truncated/just-created/transient issue still classifies correctly.
-      orphanState: async (issue) => {
-        const row = issueStates.get(issue);
-        if (!row) return ghx.orphanState(ghCtx, issue);
-        const label = row.labels.includes(LABEL_HUMAN)
-          ? LABEL_HUMAN
-          : row.labels.includes(LABEL_RUNNING)
-            ? LABEL_RUNNING
-            : null;
-        return { ghOk: true, state: row.state, label, envelopePosted: false };
-      },
-      branchIssue: (issue) => branchCache.get(issue),
-      // Blocker state from the batched map: row.state ("OPEN"/"CLOSED") or
-      // undefined on a miss. undefined-on-miss exactly matches the prior
-      // 404→undefined→not-closed semantics — a missing blocker stays
-      // "open-or-unknown" and the dependent issue is NOT promoted.
-      blockerState: async (issue) => issueStates.get(issue)?.state,
-      straggler: {
-        unlabeled: () => ghx.countUnlabeled(ghCtx),
-        needsTriage: () => ghx.countNeedsTriage(ghCtx),
-        needsInfo: () => ghx.countNeedsInfo(ghCtx),
-      },
-    },
-    nowS,
-  };
 }
 
 /**
@@ -1058,6 +968,13 @@ export async function runCommand(options: RunOptions): Promise<number> {
   const facts = await collectPrecheckFacts(ctx);
   const nowS = Math.floor(Date.now() / 1000);
 
+  // Fleet supervisor owns the boot (#623): a worker spawned by the supervisor
+  // carries RED_AFK_SWEEPS_DONE, signalling the shared sweeps already ran once
+  // pre-spawn. Such a worker boots bootstrap+claim only — it skips every sweep
+  // (cheap respawns; no race over `.red/tmp`). A solo `run` has no marker and
+  // runs the full sweep suite exactly as before.
+  const sweepsDone = process.env.RED_AFK_SWEEPS_DONE === "1";
+
   const sessionCtx: SessionContext = {
     runner,
     workerId,
@@ -1066,6 +983,9 @@ export async function runCommand(options: RunOptions): Promise<number> {
     filter: flags.filter,
     alternate: flags.alternate,
     bootOnly: flags.bootOnly,
+    // Reported by the --boot-only line so the dry-run states whether this worker
+    // ran the sweeps or inherited them from the supervisor.
+    sweepsSkipped: sweepsDone,
     issueTemplate: {
       tmpDir: paths.tmpDir,
       repo: ctx.repo,
@@ -1091,8 +1011,25 @@ export async function runCommand(options: RunOptions): Promise<number> {
   let bootOptions: BootOptions;
   let bootDeps: BootDeps;
   try {
-    bootOptions = await collectBootOptions(ctx, facts, bootstrap, nowS);
-    bootDeps = await buildBootDeps(ctx, bootOptions, nowS);
+    if (sweepsDone) {
+      // Supervisor-owned boot (#623): skip the expensive discovery (branch
+      // listings, orphan walk, unblock-candidate + parked-mechanical gh probes)
+      // AND the sweep work itself. The minimal options carry empty sweep inputs
+      // + skipSweeps:true; the minimal deps wire only the bootstrap fs calls.
+      bootOptions = {
+        precheck: facts,
+        bootstrap,
+        orphans: [],
+        attemptCap: { byIssue: new Map() },
+        branches: { snapshotRefs: [], remoteLiveRefs: [], localLiveRefs: [] },
+        unblockCandidates: [],
+        skipSweeps: true,
+      };
+      bootDeps = buildMinimalBootDeps(ctx, nowS);
+    } else {
+      bootOptions = await collectBootOptions(ctx, facts, bootstrap, nowS);
+      bootDeps = await buildBootDeps(ctx, bootOptions, nowS);
+    }
   } catch (err) {
     await recordBootError(bootstrap.workerDir, "boot-error", err).catch(() => {
       process.stderr.write(`[afk] boot-error: ${err instanceof Error ? err.message : String(err)}\n`);
@@ -1103,8 +1040,13 @@ export async function runCommand(options: RunOptions): Promise<number> {
   // Feedback worktree manager — checks out the worker branch for the gate.
   const feedback = makeFeedbackWorktree(ctx.root, join(paths.tmpDir, "feedback"));
 
-  // Wire the boot reconcile runner into bootDeps (step 7, ADR 0055).
-  bootDeps = { ...bootDeps, reconcileRunner: makeBootReconcileRunner(ctx, paths, workerId, runner, feedback) };
+  // Wire the boot reconcile runner into bootDeps (step 7, ADR 0055). A
+  // supervisor-owned boot skips every sweep (including reconcile) and the fleet
+  // dispatches reconcile per-tick instead, so the runner is wired only on the
+  // solo / sweep-running path.
+  if (!sweepsDone) {
+    bootDeps = { ...bootDeps, reconcileRunner: makeBootReconcileRunner(ctx, paths, workerId, runner, feedback) };
+  }
 
   // Per-issue mutable attempt context the process deps' envelope/iter-log close
   // over; buildProcessInput resets it before each processIssue call.

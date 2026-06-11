@@ -5,7 +5,9 @@ import {
   buildWorkerEnv,
   buildSlotEnv,
   slotFilterArgs,
+  formatBootSweepResult,
 } from "../src/commands/supervise.js";
+import type { BootResult } from "../src/core/boot.js";
 
 describe("buildWorkerEnv / passthroughKeys (gap 4: passthrough denylist)", () => {
   it("forwards operator RED_AFK_* vars but strips internal supervisor knobs", () => {
@@ -26,12 +28,16 @@ describe("buildWorkerEnv / passthroughKeys (gap 4: passthrough denylist)", () =>
     // every internal knob is stripped
     for (const denied of PASSTHROUGH_DENYLIST) {
       if (denied === "RED_AFK_RUNNER") continue; // re-pinned below
+      if (denied === "RED_AFK_SWEEPS_DONE") continue; // re-pinned below (#623)
       expect(env[denied]).toBeUndefined();
     }
     expect(env.RED_AFK_TARGET).toBeUndefined();
     expect(env.RED_AFK_POLL_S).toBeUndefined();
     // runner is re-pinned to the supervisor's runner
     expect(env.RED_AFK_RUNNER).toBe("codex");
+    // #623: every supervised worker is marked sweeps-done so it boots
+    // bootstrap+claim only (skips the sweeps the supervisor already ran).
+    expect(env.RED_AFK_SWEEPS_DONE).toBe("1");
   });
 
   it("strips per-slot _BASE build-isolation vars (handled per slot, not forwarded)", () => {
@@ -133,5 +139,30 @@ describe("slotFilterArgs (gap 5: supervised fleet forwards the filter)", () => {
 
   it("returns [] for an empty arg list", () => {
     expect(slotFilterArgs([])).toEqual([]);
+  });
+});
+
+describe("formatBootSweepResult — supervisor boot log shape (#623)", () => {
+  it("summarises each sweep's counts on a passing precheck", () => {
+    const result: BootResult = {
+      precheck: { ok: true, warnings: [] },
+      bootstrap: { ok: true },
+      orphanCleanup: { removed: ["a", "b"], restored: [7], kept: ["c"], legacyWiped: [], claimsReleased: [] },
+      attemptCap: { reclaimed: ["x"] },
+      branchCleanup: { snapshotReaped: ["s1"], remoteLiveReaped: [], localLiveReaped: ["l1", "l2"] },
+      unblockSweep: { promoted: [9] },
+      straggler: { counts: { unlabeled: 2, needsTriage: 1, needsInfo: 0 }, warn: true },
+    };
+    expect(formatBootSweepResult(result)).toBe(
+      "boot sweeps complete: orphans removed=2 restored=1 kept=1 | attempt-cap reclaimed=1 | " +
+        "branches snapshot=1 remote=0 local=2 | unblocked=1 | stragglers unlabeled=2 triage=1 info=0",
+    );
+  });
+
+  it("reports a precheck failure (workers fall back to their own precheck)", () => {
+    const result: BootResult = { precheck: { ok: false, failed: "not-on-main", detail: "feat/x" } };
+    expect(formatBootSweepResult(result)).toBe(
+      "boot sweeps: precheck FAILED (not-on-main) — workers will run their own precheck",
+    );
   });
 });

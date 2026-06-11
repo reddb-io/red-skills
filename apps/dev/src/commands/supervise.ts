@@ -17,7 +17,15 @@ import {
   type SupervisorDeps,
 } from "../core/supervisor.js";
 import { appendRecord } from "../core/jsonl-log.js";
-import { afkPaths, resolveRepoSlug } from "../runtime/wire.js";
+import {
+  afkPaths,
+  resolveRepoSlug,
+  collectPrecheckFacts,
+  collectBootOptions,
+  buildBootDeps,
+  type RepoContext,
+} from "../runtime/wire.js";
+import { runBoot, type BootResult, type BootstrapInput } from "../core/boot.js";
 import { inspectProcessTreeNative } from "../runtime/proc-tree.js";
 import {
   agentLaneMtimeFor,
@@ -84,6 +92,11 @@ export const PASSTHROUGH_DENYLIST: readonly string[] = [
   "RED_AFK_TARGET",
   "RED_AFK_REQUEST",
   "RED_AFK_RUNNER",
+  // #623: the supervisor sets this explicitly on every spawned worker (below) so
+  // the worker boots bootstrap+claim only. Deny it from the inherited passthrough
+  // so an operator's stray `export RED_AFK_SWEEPS_DONE=1` can never reach a worker
+  // by accident — only the supervisor's own re-pin grants it.
+  "RED_AFK_SWEEPS_DONE",
   "RED_AFK_POLL_S",
   "RED_AFK_STALL_POLL_S",
   "RED_AFK_STALL_THRESHOLD_S",
@@ -131,6 +144,12 @@ export function buildWorkerEnv(
     out[key] = val;
   }
   out.RED_AFK_RUNNER = runner;
+  // Fleet supervisor owns the boot (#623): mark every spawned worker so it boots
+  // bootstrap+claim only (skips the shared sweeps the supervisor already ran
+  // pre-spawn). Read by `run`'s runCommand → BootOptions.skipSweeps. The marker
+  // is the sole grant — it is in PASSTHROUGH_DENYLIST so it can't leak in from
+  // the operator env, exactly mirroring how RED_AFK_RUNNER is re-pinned above.
+  out.RED_AFK_SWEEPS_DONE = "1";
   return out;
 }
 
@@ -195,6 +214,69 @@ export function slotFilterArgs(args: readonly string[]): string[] {
 }
 
 /**
+ * Render a one-line summary of a {@link BootResult} for the supervisor log
+ * (#623). A precheck failure is reported as such (workers still run their own);
+ * otherwise the per-sweep counts are listed so an operator can confirm the
+ * fleet's single boot did its work. Pure over the result.
+ */
+export function formatBootSweepResult(result: BootResult): string {
+  if (!result.precheck.ok) {
+    return `boot sweeps: precheck FAILED (${result.precheck.failed}) — workers will run their own precheck`;
+  }
+  const oc = result.orphanCleanup;
+  const ac = result.attemptCap;
+  const bc = result.branchCleanup;
+  const us = result.unblockSweep;
+  const st = result.straggler;
+  return (
+    "boot sweeps complete: " +
+    `orphans removed=${oc?.removed.length ?? 0} restored=${oc?.restored.length ?? 0} kept=${oc?.kept.length ?? 0}` +
+    ` | attempt-cap reclaimed=${ac?.reclaimed.length ?? 0}` +
+    ` | branches snapshot=${bc?.snapshotReaped.length ?? 0} remote=${bc?.remoteLiveReaped.length ?? 0} local=${bc?.localLiveReaped.length ?? 0}` +
+    ` | unblocked=${us?.promoted.length ?? 0}` +
+    ` | stragglers unlabeled=${st?.counts.unlabeled ?? 0} triage=${st?.counts.needsTriage ?? 0} info=${st?.counts.needsInfo ?? 0}`
+  );
+}
+
+/**
+ * Build the supervisor's pre-spawn boot closure (#623). Runs the FULL shared
+ * sweep suite a single time — precheck, bootstrap, orphan cleanup, attempt cap,
+ * branch cleanup, unblock sweep, straggler check — over real IO, then logs the
+ * result via `log`. The reconcile sweep (boot step 7) is intentionally NOT wired
+ * (no reconcileRunner): the fleet dispatches reconcile per-tick instead, so
+ * landing parked branches at boot would duplicate that path. A throw propagates
+ * to runSupervisor, which logs it and spawns workers anyway.
+ *
+ * The bootstrap writes a supervisor-scoped `afk-supervisor-boot.pid` alongside
+ * the supervisor pid file (NOT a worker dir), so it is never mistaken for a live
+ * worker by the monitor or a later orphan sweep.
+ */
+export function buildSupervisorBootSweeps(
+  root: string,
+  repo: string,
+  log: (line: string) => void,
+): () => Promise<void> {
+  const ctx: RepoContext = { root, repo, remote: "origin" };
+  const paths = afkPaths(root);
+  return async (): Promise<void> => {
+    const nowS = Math.floor(Date.now() / 1000);
+    const facts = await collectPrecheckFacts(ctx);
+    const bootstrap: BootstrapInput = {
+      tmpDir: paths.tmpDir,
+      stateDir: paths.stateDir,
+      gitignorePath: paths.gitignorePath,
+      workerDir: paths.tmpDir,
+      workerPidFile: join(paths.tmpDir, "afk-supervisor-boot.pid"),
+      workerPid: process.pid,
+    };
+    const options = await collectBootOptions(ctx, facts, bootstrap, nowS);
+    const bootDeps = await buildBootDeps(ctx, options, nowS);
+    const result = await runBoot(bootDeps, options);
+    log(formatBootSweepResult(result));
+  };
+}
+
+/**
  * Build SupervisorDeps backed by REAL process / filesystem / gh IO. Every
  * closure mirrors a supervisor.sh function (see runtime/proc-tree.ts +
  * runtime/supervisor-fs.ts) and is best-effort: a failed ps / stat / gh degrades
@@ -217,6 +299,15 @@ function buildSupervisorDeps(
 ): SupervisorDeps {
   const bundle = process.argv[1];
   const now = () => Math.floor(Date.now() / 1000);
+  // Per-tick / boot liveness line into afk-supervisor.log (best-effort). Shared
+  // by `log` and the pre-spawn boot sweeps so both land in the supervisor log.
+  const logLine = (line: string): void => {
+    try {
+      writeSync(logFd, `[${new Date().toISOString()}] ${line}\n`);
+    } catch {
+      // best-effort: a log-write failure must never affect the loop.
+    }
+  };
   // slot index → live orchestrator pid (SLOT_PIDS parity).
   const slotPids = new Map<number, number>();
   // slot index → exit code of the most recent worker for that slot.
@@ -362,13 +453,11 @@ function buildSupervisorDeps(
     recoveryEnv: process.env,
     // Per-tick liveness line into afk-supervisor.log (best-effort). Makes a
     // healthy fleet's heartbeat — and a wedged one's silence — observable.
-    log: (line) => {
-      try {
-        writeSync(logFd, `[${new Date().toISOString()}] ${line}\n`);
-      } catch {
-        // best-effort: a log-write failure must never affect the loop.
-      }
-    },
+    log: logLine,
+    // Fleet supervisor owns the boot (#623): runSupervisor calls this ONCE before
+    // the initial spawn. Runs the full shared sweep suite over real IO and logs
+    // the result; each worker then boots bootstrap+claim only.
+    bootSweeps: buildSupervisorBootSweeps(root, ghCtx.repo, logLine),
     emitFleetHeartbeat: async (hb) => {
       try {
         writeFleetStateAtomic(statePath, hb);
