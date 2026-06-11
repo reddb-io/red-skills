@@ -147,6 +147,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [fix(afk): feed the agent lane on the native path so liveness isn't blind](./pages/350-fix-afk-feed-the-agent-lane-on-the-native-path-so-liveness-i.md)
 - [fix(afk): feedback gate fails closed on worktree-add/install failure and validates origin tip](./pages/660-fix-afk-feedback-gate-fails-closed-on-worktree-add-install-f.md)
 - [fix(afk): feedback gate resolves multi-slash afk/* branches (#437)](./pages/438-fix-afk-feedback-gate-resolves-multi-slash-afk-branches-437.md)
+- [fix(afk): flush claude cost to state on the usage event (not only on the heartbeat)](./pages/716-fix-afk-flush-claude-cost-to-state-on-the-usage-event-not-on.md)
 - [fix(afk): guard each supervise tick + per-tick heartbeat — unwedgeable fleet supervisor](./pages/408-fix-afk-guard-each-supervise-tick-per-tick-heartbeat-unwedge.md)
 - [fix(afk): guard locked landing against zero-commit branch](./pages/662-fix-afk-guard-locked-landing-against-zero-commit-branch.md)
 - [fix(afk): harden sandcastle integration (pre-mortem J/E/D/F/G/H)](./pages/328-fix-afk-harden-sandcastle-integration-pre-mortem-j-e-d-f-g-h.md)
