@@ -90,7 +90,10 @@ dependency does not force a container runtime on anyone who doesn't ask for one.
 ## Status
 
 Accepted (supersedes the *execution-substrate* parts of the port; ADR 0032's shipping
-model stands).
+model stands). **Refined by ADR 0061:** the substrate is now reddb.io's own fork,
+vendored as the `packages/red-castle` git submodule and consumed as TypeScript
+source under the package name `@reddb-io/red-castle` (the `@ai-hero/sandcastle` npm
+dependency is removed). The single-seam architecture (`execution.ts`) is unchanged.
 
 ## Related
 

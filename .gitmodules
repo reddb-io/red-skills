@@ -1,0 +1,4 @@
+[submodule "packages/red-castle"]
+	path = packages/red-castle
+	url = git@github.com:reddb-io/red-castle.git
+	branch = main

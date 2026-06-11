@@ -1,4 +1,4 @@
-// AFK execution backend on @ai-hero/sandcastle (ADR 0033).
+// AFK execution backend on @reddb-io/red-castle (ADR 0033).
 //
 // sandcastle owns the execution substrate — spawn the agent, manage the git
 // worktree, run a sandbox, and land commits on a branch via `run()`. AFK keeps
@@ -12,7 +12,7 @@
 // as sandcastle completion signals, so the existing AGENT-PROMPT contract is
 // unchanged.
 
-import type { AgentStreamEvent, RunOptions, RunResult } from "@ai-hero/sandcastle";
+import type { AgentStreamEvent, RunOptions, RunResult } from "@reddb-io/red-castle";
 import { isRunnerExhausted } from "./runner-spawn.js";
 import { startLaneIdleReaper, DEFAULT_STALL_POLL_S } from "./lane-idle-reaper.js";
 import { openCodeAuthEnv, resolveOpenCodeAuth } from "./opencode-env.js";
@@ -20,7 +20,7 @@ import { openCodeAuthEnv, resolveOpenCodeAuth } from "./opencode-env.js";
 // Re-exported so process-issue / run can type their agent-event sink without
 // importing the sandcastle package directly (execution.ts is the single seam
 // coupled to sandcastle, ADR 0033).
-export type { AgentStreamEvent } from "@ai-hero/sandcastle";
+export type { AgentStreamEvent } from "@reddb-io/red-castle";
 
 // The runners with a first-class sandcastle agent provider. `opencode` (ADR
 // 0059) is endpoint-agnostic — OpenCode itself routes `<provider>/<model>` slugs
@@ -941,10 +941,10 @@ export async function runAgent(deps: SandcastleDeps, input: RunAgentInput): Prom
  */
 export async function defaultSandcastleDeps(): Promise<SandcastleDeps> {
   const [core, noSandboxMod, dockerMod, podmanMod] = await Promise.all([
-    import("@ai-hero/sandcastle"),
-    import("@ai-hero/sandcastle/sandboxes/no-sandbox"),
-    import("@ai-hero/sandcastle/sandboxes/docker"),
-    import("@ai-hero/sandcastle/sandboxes/podman"),
+    import("@reddb-io/red-castle"),
+    import("@reddb-io/red-castle/sandboxes/no-sandbox"),
+    import("@reddb-io/red-castle/sandboxes/docker"),
+    import("@reddb-io/red-castle/sandboxes/podman"),
   ]);
   // FIX D / ADR 0059: the per-provider mapping (effort gating for claude/codex,
   // effort→`variant` for opencode, and the opencode auth env passthrough) lives

@@ -5,10 +5,10 @@
   "type": "module",
   "packageManager": "pnpm@11.5.0",
   "scripts": {
-    "build": "turbo run build",
-    "bundle": "turbo run bundle",
-    "typecheck": "turbo run typecheck",
-    "test": "turbo run test",
+    "build": "turbo run build --filter=!@reddb-io/red-castle",
+    "bundle": "turbo run bundle --filter=!@reddb-io/red-castle",
+    "typecheck": "turbo run typecheck --filter=!@reddb-io/red-castle",
+    "test": "turbo run test --filter=!@reddb-io/red-castle",
     "release:manifest": "node scripts/release-manifest.mjs"
   },
   "devDependencies": {

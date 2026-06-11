@@ -15,8 +15,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@ai-hero/sandcastle": "^0.6.5",
     "@reddb-io/build-info": "workspace:*",
+    "@reddb-io/red-castle": "workspace:*",
     "@reddb-io/shared": "workspace:*",
     "zod": "catalog:"
   },

@@ -26,6 +26,8 @@ allowBuilds:
   esbuild: true
   "@parcel/watcher": false
   msgpackr-extract: false
+  # protobufjs ships via red-castle's @daytona/sdk, which AFK never uses; no build needed.
+  protobufjs: false
 
 minimumReleaseAgeExclude:
   - "@reddb-io/sdk@1.7.0"

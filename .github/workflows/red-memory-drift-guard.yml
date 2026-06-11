@@ -38,6 +38,8 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
+          # red-castle submodule must exist so the workspace pnpm install resolves.
+          submodules: recursive
 
       - name: Fetch base ref
         run: git fetch --no-tags origin "${{ github.base_ref }}"
