@@ -131,6 +131,23 @@ export interface ProgressHeartbeatInput {
   added: number;
   /** Removed lines vs the same base. */
   removed: number;
+  /**
+   * Optional per-attempt stream-activity counters (the activity-meter snapshot).
+   * Omitted on callers/tests that don't observe the stream — when absent the
+   * heartbeat is byte-for-byte the pre-metrics record. When present each count
+   * rides the firehose `extra` (string-valued) and is mirrored into
+   * `current.*_count` so the monitor/statusline can read liveness at a glance.
+   */
+  activity?: {
+    /** Cumulative `toolCall` events this attempt. */
+    toolsCalled: number;
+    /** Cumulative `text` events this attempt. */
+    textChunks: number;
+    /** Cumulative heartbeat windows with no new stream event (waiting/blocked). */
+    waiting: number;
+    /** New stream events in the window this tick closes (0 → a waiting window). */
+    eventsThisWindow: number;
+  };
 }
 
 export interface ProgressHeartbeat {
@@ -155,21 +172,50 @@ export interface ProgressHeartbeat {
 export function buildProgressHeartbeat(input: ProgressHeartbeatInput): ProgressHeartbeat {
   const diff = formatDiffVolume(input.added, input.removed);
   const headShort = input.head ? ` @ ${input.head.slice(0, 8)}` : "";
-  const msg = `progress: ${input.secsSinceProgress}s since last commit${headShort} · ${diff}`;
+  const locAdded = input.added > 0 ? input.added : 0;
+  const locRemoved = input.removed > 0 ? input.removed : 0;
+  const a = input.activity;
+  // Append a compact activity tail to the human line so a `tail -f afk.log`
+  // shows liveness without opening the firehose. Only when observed.
+  const activityTail = a
+    ? ` · tools:${a.toolsCalled} text:${a.textChunks} wait:${a.waiting}${a.eventsThisWindow === 0 ? " (idle window)" : ""}`
+    : "";
+  const msg = `progress: ${input.secsSinceProgress}s since last commit${headShort} · ${diff}${activityTail}`;
   return {
     msg,
     extra: {
       secs_since_progress: String(input.secsSinceProgress),
       last_progress_at: input.lastProgressAt,
       head: input.head,
-      diff_added: String(input.added > 0 ? input.added : 0),
-      diff_removed: String(input.removed > 0 ? input.removed : 0),
+      diff_added: String(locAdded),
+      diff_removed: String(locRemoved),
       diff: diff,
+      // The user-facing metric names (aliases of diff_*) so consumers can key on
+      // loc_* directly. Kept alongside diff_* for monitor back-compat.
+      loc_added: String(locAdded),
+      loc_removed: String(locRemoved),
+      ...(a
+        ? {
+            tools_called_count: String(a.toolsCalled),
+            text_chunk_count: String(a.textChunks),
+            waiting_count: String(a.waiting),
+            events_this_window: String(a.eventsThisWindow),
+          }
+        : {}),
     },
     statePatch: {
       "current.last_progress_at": input.lastProgressAt,
-      "current.diff_added": input.added > 0 ? input.added : 0,
-      "current.diff_removed": input.removed > 0 ? input.removed : 0,
+      "current.diff_added": locAdded,
+      "current.diff_removed": locRemoved,
+      "current.loc_added": locAdded,
+      "current.loc_removed": locRemoved,
+      ...(a
+        ? {
+            "current.tools_called_count": a.toolsCalled,
+            "current.text_chunk_count": a.textChunks,
+            "current.waiting_count": a.waiting,
+          }
+        : {}),
     },
   };
 }

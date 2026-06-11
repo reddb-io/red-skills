@@ -222,7 +222,12 @@ describe("buildProgressHeartbeat (#448)", () => {
       "current.last_progress_at": "2026-06-03T12:00:00.000Z",
       "current.diff_added": 382,
       "current.diff_removed": 45,
+      "current.loc_added": 382,
+      "current.loc_removed": 45,
     });
+    // no activity snapshot → no activity fields, no msg tail (back-compat)
+    expect(hb.extra.tools_called_count).toBeUndefined();
+    expect(hb.msg.includes("tools:")).toBe(false);
   });
 
   it("omits the head fragment when HEAD is unresolved and clamps the diff", () => {
@@ -236,5 +241,37 @@ describe("buildProgressHeartbeat (#448)", () => {
     expect(hb.msg).toBe("progress: 0s since last commit · +0 -0");
     expect(hb.statePatch["current.diff_added"]).toBe(0);
     expect(hb.statePatch["current.diff_removed"]).toBe(0);
+  });
+
+  it("folds the activity-meter snapshot into the msg tail, extra, and state", () => {
+    const hb = buildProgressHeartbeat({
+      secsSinceProgress: 75,
+      lastProgressAt: "2026-06-03T12:00:00.000Z",
+      head: "40ac9326",
+      added: 382,
+      removed: 45,
+      activity: { toolsCalled: 12, textChunks: 7, waiting: 2, eventsThisWindow: 3 },
+    });
+    expect(hb.msg).toBe("progress: 75s since last commit @ 40ac9326 · +382 -45 · tools:12 text:7 wait:2");
+    expect(hb.extra.tools_called_count).toBe("12");
+    expect(hb.extra.text_chunk_count).toBe("7");
+    expect(hb.extra.waiting_count).toBe("2");
+    expect(hb.extra.loc_added).toBe("382");
+    expect(hb.extra.loc_removed).toBe("45");
+    expect(hb.statePatch["current.tools_called_count"]).toBe(12);
+    expect(hb.statePatch["current.waiting_count"]).toBe(2);
+    expect(hb.statePatch["current.loc_added"]).toBe(382);
+  });
+
+  it("marks an idle window (no new stream events) in the msg tail", () => {
+    const hb = buildProgressHeartbeat({
+      secsSinceProgress: 130,
+      lastProgressAt: "t",
+      head: "",
+      added: 0,
+      removed: 0,
+      activity: { toolsCalled: 5, textChunks: 3, waiting: 4, eventsThisWindow: 0 },
+    });
+    expect(hb.msg).toContain("wait:4 (idle window)");
   });
 });
