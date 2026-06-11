@@ -14,6 +14,7 @@ import {
   LABEL_DEPENDENCY,
   LABEL_STALLED,
   LABEL_CRASHED,
+  LABEL_RUNNER_ERROR,
 } from "../core/triage-labels.js";
 import type { IssueCandidate } from "../core/session.js";
 import type { HitlCandidate } from "../core/hitl-selection.js";
@@ -289,7 +290,7 @@ export async function ensureRunnerErrorLabel(ctx: GhContext): Promise<void> {
     [
       "label",
       "create",
-      "runner-error",
+      LABEL_RUNNER_ERROR,
       ...repoArgs(ctx),
       "--color",
       "B60205",
