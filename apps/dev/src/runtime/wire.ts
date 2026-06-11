@@ -519,7 +519,9 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
   let blocked = 0;
   let added = 0;
   let removed = 0;
+  let waiting = 0;
   const issues: Array<number | string> = [];
+  const stages: Array<string | undefined> = [];
 
   for (const file of stateFiles) {
     const text = await fsx.readText(file);
@@ -534,6 +536,10 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
 
     workers += 1;
     blocked += state.blocked;
+    // Silent-agent signal: cumulative heartbeat windows with no new stream
+    // event, persisted on `current` (see AfkCurrentSchema). Summed across the
+    // fleet and shown as 💤N so a wedged-but-not-dead worker is visible.
+    waiting += state.current.waiting_count;
 
     let a = state.current.diff_added;
     let r = state.current.diff_removed;
@@ -548,7 +554,12 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
     removed += r;
 
     const number = state.current.number;
-    if (number !== "" && number !== undefined && number !== null) issues.push(number);
+    if (number !== "" && number !== undefined && number !== null) {
+      issues.push(number);
+      // Aligned by index with `issues`: the worker's current stage suffixes its
+      // `#N` token (`#629·impl`). Empty stage → bare `#N` (back-compat).
+      stages.push(state.current.stage || undefined);
+    }
   }
 
   if (workers <= 0) return null;
@@ -581,7 +592,7 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
     void refresh().catch(() => undefined);
   }
 
-  return { workers, queue, human, blocked, added, removed, issues };
+  return { workers, queue, human, blocked, added, removed, waiting, issues, stages };
 }
 
 // ---------- reap inputs ----------

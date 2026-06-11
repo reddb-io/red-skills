@@ -51,8 +51,18 @@ export interface AfkInput {
   added: number;
   /** -N — summed deletions. */
   removed: number;
+  /** 💤 — summed `waiting_count` (heartbeat windows with zero new stream events)
+   * across live workers. A rising value between glances is the clean
+   * stuck-vs-working signal (silent agent), so it is shown only when > 0. */
+  waiting?: number;
   /** #N issue numbers for the in-progress workers, in order. */
   issues: ReadonlyArray<number | string>;
+  /** Per-issue `current.stage` aligned by index with {@link issues}. When a
+   * stage is present and non-empty it renders as a `·stage` suffix on the
+   * matching `#N` token (`#629·impl`), so the block shows WHAT each live worker
+   * is doing, not just that it exists. Absent/short arrays fall back to bare
+   * `#N`, preserving the pre-stage render. */
+  stages?: ReadonlyArray<string | undefined>;
 }
 
 /** All the resolved inputs for one statusline render. */
@@ -112,9 +122,10 @@ export function renderContextBlock(claude: ClaudeInput | undefined): string | nu
 
 /**
  * Block 4: the space-joined AFK token run. Each emoji+number is emitted only
- * when its count is > 0, in the fixed order 🤖 📋 🆘 🚧 +N -N, followed by the
- * `#N` issue numbers (always emitted, in order). Null when there are no live
- * workers, matching the bash `(( total_workers > 0 ))` gate around the block.
+ * when its count is > 0, in the fixed order 🤖 📋 🆘 🚧 +N -N 💤N, followed by the
+ * `#N` issue numbers (always emitted, in order, each with an optional `·stage`
+ * suffix). Null when there are no live workers, matching the bash
+ * `(( total_workers > 0 ))` gate around the block.
  */
 export function renderAfkBlock(afk: AfkInput | undefined): string | null {
   if (!afk || afk.workers <= 0) return null;
@@ -125,7 +136,11 @@ export function renderAfkBlock(afk: AfkInput | undefined): string | null {
   if (afk.blocked > 0) tokens.push(`🚧${afk.blocked}`);
   if (afk.added > 0) tokens.push(`+${afk.added}`);
   if (afk.removed > 0) tokens.push(`-${afk.removed}`);
-  for (const issue of afk.issues) tokens.push(`#${issue}`);
+  if (afk.waiting !== undefined && afk.waiting > 0) tokens.push(`💤${afk.waiting}`);
+  afk.issues.forEach((issue, i) => {
+    const stage = afk.stages?.[i];
+    tokens.push(stage ? `#${issue}·${stage}` : `#${issue}`);
+  });
   if (tokens.length === 0) return null;
   return tokens.join(" ");
 }
