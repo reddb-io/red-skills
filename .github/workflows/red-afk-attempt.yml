@@ -78,6 +78,11 @@ on:
         required: false
         type: string
         default: "true"
+      lanes:
+        description: "Execution-lane tag for this invocation (e.g. actions|k8s). Surfaced as RED_AFK_LANE for observability/forward-compat; does not change the runtime contract (one attempt, one issue, one PR)."
+        required: false
+        type: string
+        default: "actions"
     secrets:
       openrouter_api_key:
         required: false
@@ -234,6 +239,7 @@ jobs:
           # issues triggers, which leaves the target repo's config in charge.
           model: ${{ inputs.model }}
           effort: ${{ inputs.effort }}
+          lane: ${{ github.event_name == 'workflow_call' && inputs.lanes || 'actions' }}
           openrouter-api-key: ${{ secrets.OPENROUTER_API_KEY }}
           minimax-api-key: ${{ secrets.MINIMAX_API_KEY }}
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}

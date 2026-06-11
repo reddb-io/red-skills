@@ -37,6 +37,10 @@ inputs:
     description: "Override the reasoning effort/variant (low|medium|high|…). Empty = config. Maps to RED_AFK_EFFORT (still provider-gated)."
     required: false
     default: ""
+  lane:
+    description: "Execution-lane tag (actions|k8s). Surfaced as RED_AFK_LANE for observability; does not change the runtime contract."
+    required: false
+    default: "actions"
   openrouter-api-key:
     description: "OpenRouter API key (opencode auth; precedence 3)."
     required: false
@@ -86,6 +90,8 @@ runs:
         # so an unset input leaves the target repo's .red/config.yaml in charge.
         RED_AFK_MODEL: ${{ inputs.model }}
         RED_AFK_EFFORT: ${{ inputs.effort }}
+        # Execution-lane observability tag (actions|k8s) — informational only.
+        RED_AFK_LANE: ${{ inputs.lane }}
         # opencode auth — first set key wins (opencode-env.ts precedence).
         OPENROUTER_API_KEY: ${{ inputs.openrouter-api-key }}
         MINIMAX_API_KEY: ${{ inputs.minimax-api-key }}
