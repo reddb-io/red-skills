@@ -113,6 +113,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [feat(dev): add retake issue resumption command](./pages/531-feat-dev-add-retake-issue-resumption-command.md)
 - [feat(dev): read-only adoption/process doctor (/dev:doctor)](./pages/381-feat-dev-read-only-adoption-process-doctor-dev-doctor.md)
 - [feat(dev): review-adrs skill — decision-record doctor (lint + group + propagate)](./pages/382-feat-dev-review-adrs-skill-decision-record-doctor-lint-group.md)
+- [feat(doctor): `--fix` gated apply lane — heal every adoption finding (read-only stays default)](./pages/704-feat-doctor-fix-gated-apply-lane-heal-every-adoption-finding.md)
 - [feat(memory): add /memory:view — open the graph in red-ui (ADR 0041)](./pages/424-feat-memory-add-memory-view-open-the-graph-in-red-ui-adr-004.md)
 - [feat(memory): community digest — deterministic per-community summary cached by graph hash (#300)](./pages/426-feat-memory-community-digest-deterministic-per-community-sum.md)
 - [feat(memory): expose red-memory + red-ui MCP servers (ADR 0041)](./pages/423-feat-memory-expose-red-memory-red-ui-mcp-servers-adr-0041.md)
