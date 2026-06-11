@@ -185,10 +185,10 @@ else
       hdr "Phase 3.5 — issue #405: guard + heartbeat under $SANDBOX isolation"
       # (a) the agent really ran in a container: sandcastle logs a sandcastle-<uuid>
       #     container, and the bind-mount provider creates the worktree on the host.
-      if grep -qiE "sandcastle-[0-9a-f-]{8}|docker (run|exec)|podman (run|exec)|container" "$latest_dir/sandcastle.log" "$log" 2>/dev/null; then
-        pass "container execution observed in the sandcastle log ($SANDBOX)"
+      if grep -qiE "sandcastle-[0-9a-f-]{8}|docker (run|exec)|podman (run|exec)|container" "$latest_dir/afk.log" "$log" 2>/dev/null; then
+        pass "container execution observed in the unified afk.log ($SANDBOX)"
       else
-        warn "no explicit container marker in logs — confirm '$SANDBOX run' happened (inspect $latest_dir/sandcastle.log)"
+        warn "no explicit container marker in logs — confirm '$SANDBOX run' happened (inspect $latest_dir/afk.log)"
       fi
       # (b) the externalized proof-of-life heartbeat fired under isolation: an
       #     enriched type=heartbeat record in the firehose + last_progress_at state.

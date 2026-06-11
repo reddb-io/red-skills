@@ -673,10 +673,15 @@ export async function processIssue(
       branch,
       base,
       cwd: input.attemptDir,
-      // Native-path liveness: drain sandcastle's file-log to the attempt dir and
-      // forward each agent stream event to the lanes (agent.log.jsonl + firehose)
-      // so the stall detector / monitor see a live agent instead of a frozen lane.
-      logPath: `${input.attemptDir}/sandcastle.log`,
+      // Native-path liveness + ONE unified human log: point red-castle's file-log
+      // at the attempt's `afk.log` (our canonical log, the one `state.log` and
+      // `tail -f afk.log` reference) instead of a separate `sandcastle.log`, so the
+      // setup phase red-castle narrates (worktree / sandbox / deps) lands in the
+      // SAME file as the agent turns + heartbeats — no more empty log before the
+      // agent streams. The structured per-event lanes (agent.log.jsonl + firehose)
+      // still get every stream event via `onAgentEvent`; the plaintext `[agent]`
+      // mirror is dropped (run.ts) so agent turns are not doubled in afk.log.
+      logPath: `${input.attemptDir}/afk.log`,
       onAgentEvent: deps.recordAgentEvent,
       // Externalized proof-of-life (PR-B): the attempt-guard poll fires this each
       // tick. processIssue owns the hook dispatcher, so it fires the `on_heartbeat`
@@ -740,7 +745,7 @@ export async function processIssue(
         branch,
         base,
         cwd: input.attemptDir,
-        logPath: `${input.attemptDir}/sandcastle.log`,
+        logPath: `${input.attemptDir}/afk.log`,
         onAgentEvent: deps.recordAgentEvent,
         remote: input.remote,
         continuousPush: true,

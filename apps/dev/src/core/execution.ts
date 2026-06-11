@@ -237,8 +237,11 @@ export interface RunAgentInput {
   env?: Record<string, string>;
   /**
    * Absolute path sandcastle drains its own file-log to (the `logging.path` of
-   * the "file" mode). AFK points this at the attempt dir's `sandcastle.log` so
-   * the inner agent's formatted stream lands under `.red/` next to the lanes.
+   * the "file" mode). AFK points this at the attempt dir's `afk.log` — our ONE
+   * canonical log — so red-castle's setup narration (worktree / sandbox / deps)
+   * AND the inner agent's formatted stream land in the same file as the heartbeat
+   * lines, under `.red/`. (Was a separate `sandcastle.log`; unified so the log is
+   * never empty during setup.)
    * Required to enable {@link onAgentEvent}: sandcastle only surfaces the stream
    * callback in log-to-file mode. Omitted → `buildRunOptions` leaves `logging`
    * unset and sandcastle uses its default location.
@@ -571,7 +574,8 @@ export function buildRunOptions(deps: SandcastleDeps, input: RunAgentInput): Run
     ? { host: { onWorktreeReady: [buildContinuousPushHook(input.branch, input.remote ?? DEFAULT_REMOTE)] } }
     : undefined;
   // Observability lane (native-path liveness): point sandcastle's file-log at
-  // the attempt dir's sandcastle.log and, when a sink is provided, forward each
+  // the attempt dir's afk.log (the unified log, set by the caller) and, when a
+  // sink is provided, forward each
   // agent stream event to it via `logging.onAgentStreamEvent`. sandcastle only
   // exposes the stream callback in "file" logging mode, so the callback rides
   // alongside the path. Omitting `logPath` leaves `logging` unset (sandcastle
