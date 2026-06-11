@@ -71,6 +71,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [feat(afk): exempt idle drain from fast-death ring, idle-park fleet on empty queue](./pages/620-feat-afk-exempt-idle-drain-from-fast-death-ring-idle-park-fl.md)
 - [feat(afk): exempt idle drain from fast-death ring, idle-park fleet on empty queue (#578)](./pages/633-feat-afk-exempt-idle-drain-from-fast-death-ring-idle-park-fl.md)
 - [feat(afk): externalize proof-of-life — heartbeat record, state field, on_heartbeat hook (ADR 0045)](./pages/401-feat-afk-externalize-proof-of-life-heartbeat-record-state-fi.md)
+- [feat(afk): model/effort override via --model/--effort flag + RED_AFK_MODEL/RED_AFK_EFFORT env](./pages/677-feat-afk-model-effort-override-via-model-effort-flag-red-afk.md)
 - [feat(afk): opencode provider — endpoint-agnostic, env-precedence auth (Refs #638)](./pages/640-feat-afk-opencode-provider-endpoint-agnostic-env-precedence.md)
 - [feat(afk): publish red-afk-attempt reusable workflow — 3 triggers + trust gate (Refs #631)](./pages/665-feat-afk-publish-red-afk-attempt-reusable-workflow-3-trigger.md)
 - [feat(afk): raise max iterations to 20 + per-iteration boundary markers](./pages/413-feat-afk-raise-max-iterations-to-20-per-iteration-boundary-m.md)
