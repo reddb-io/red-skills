@@ -154,6 +154,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [fix(afk): guard locked landing against zero-commit branch](./pages/662-fix-afk-guard-locked-landing-against-zero-commit-branch.md)
 - [fix(afk): harden sandcastle integration (pre-mortem J/E/D/F/G/H)](./pages/328-fix-afk-harden-sandcastle-integration-pre-mortem-j-e-d-f-g-h.md)
 - [fix(afk): heartbeat/monitor diff reads the real sandcastle worktree (kills the +0 -0 phantom)](./pages/469-fix-afk-heartbeat-monitor-diff-reads-the-real-sandcastle-wor.md)
+- [fix(afk): init the red-castle submodule in the feedback-gate worktree (landing blocker)](./pages/720-fix-afk-init-the-red-castle-submodule-in-the-feedback-gate-w.md)
 - [fix(afk): inject RED_AFK_SLOT per fleet slot so cargo/gradle build isolation works](./pages/645-fix-afk-inject-red-afk-slot-per-fleet-slot-so-cargo-gradle-b.md)
 - [fix(afk): inline comment after quoted scalar/sequence no longer disarms config guards](./pages/659-fix-afk-inline-comment-after-quoted-scalar-sequence-no-longe.md)
 - [fix(afk): inner agent must not create PRs / wait on CI — commit + DONE only](./pages/605-fix-afk-inner-agent-must-not-create-prs-wait-on-ci-commit-do.md)
