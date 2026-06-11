@@ -197,6 +197,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [refactor(afk): delete legacy bash, native-only runtime + parity recovery + zero-dep logger](./pages/289-refactor-afk-delete-legacy-bash-native-only-runtime-parity-r.md)
 - [refactor(afk): remove dead pre-sandcastle orphan modules](./pages/297-refactor-afk-remove-dead-pre-sandcastle-orphan-modules.md)
 - [refactor(afk): single-owner Attempt Outcome module](./pages/295-refactor-afk-single-owner-attempt-outcome-module.md)
+- [refactor(config): nested dev.lock.primary-branch branch guard (stage 1 of the lock redesign)](./pages/700-refactor-config-nested-dev-lock-primary-branch-branch-guard.md)
 - [refactor(core): extract triage-labels.ts as single shared vocabulary owner](./pages/670-refactor-core-extract-triage-labels-ts-as-single-shared-voca.md)
 - [refactor(dev): rename the statusline skill to setup-statusline](./pages/410-refactor-dev-rename-the-statusline-skill-to-setup-statusline.md)
 - [refactor(dev): ship dev runtime as fetched asset, not committed bundle (ADR 0038)](./pages/376-refactor-dev-ship-dev-runtime-as-fetched-asset-not-committed.md)
