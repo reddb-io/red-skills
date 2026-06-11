@@ -2,7 +2,7 @@
 
 ## Status
 
-accepted. Complements ADR 0028 (`<promise>` is the canonical attempt-exit). Supersedes the runtime half of the stale PR #335 (`fix/332-afk-salvage-no-sentinel`, ~169 commits behind on the pre-`src/apps` tree); re-implemented here on the current `src/apps/dev/src/core/process-issue.ts`.
+accepted. Complements ADR 0028 (`<promise>` is the canonical attempt-exit). Supersedes the runtime half of the stale PR #335 (`fix/332-afk-salvage-no-sentinel`, ~169 commits behind on a tree predating the monorepo relocation); re-implemented here on the current `apps/dev/src/core/process-issue.ts`.
 
 ## Context
 

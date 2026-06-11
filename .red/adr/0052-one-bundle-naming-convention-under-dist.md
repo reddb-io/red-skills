@@ -9,7 +9,7 @@ accepted. Supersedes the transitional dual-output state described in ADR 0029 (l
 The release shipped two parallel, inconsistent artifact shapes:
 
 - **dev, code-nav, benchmark-\*** → a single minified bundle in `./dist/`: `<app>.bundle.min.mjs` + `<app>.manifest.json`.
-- **memory, brain** → a non-minified pair under `src/apps/<app>/dist-bundle/`: `<app>-cli.mjs` + `<app>-mcp.mjs`, plus `<app>-runtime-manifest.json` written next to the package.
+- **memory, brain** → a non-minified pair under `apps/<app>/dist-bundle/`: `<app>-cli.mjs` + `<app>-mcp.mjs`, plus `<app>-runtime-manifest.json` written next to the package.
 
 The memory/brain build *already* produced the clean `dist/<app>.bundle.min.mjs` + `dist/<app>-mcp.bundle.min.mjs` via `pnpm bundle` — but the release ran `pnpm bundle:legacy` and shipped the `dist-bundle/*-cli.mjs` artifacts instead, leaving the clean bundles built and discarded. The result was incoherent: a `dist-bundle/` directory that shouldn't exist, non-minified 1.8 MB CLIs named `*-cli.mjs` (no `.bundle.min`), manifests outside `dist/`, and two naming schemes for the same concept.
 
@@ -25,7 +25,7 @@ One convention. Every release asset lives under `./dist/` and follows `<app>[-<r
 
 Concretely: drop the `bundle:legacy*` scripts from memory and brain; the release runs `pnpm bundle` and reads/uploads the `dist/` bundles; the runtime manifest's `cli.asset` / `mcp.asset` fields name the `dist/` bundles.
 
-The plugin bootstraps are unaffected at the fetch layer: they read the asset names **from the version-pinned manifest**, so the rename follows automatically and every released version stays internally self-consistent (an old launcher + old tag resolves old names; a new launcher + new tag resolves new names — no cross-version break). Only the dev-checkout *local fallback* path is repointed from `src/apps/<app>/dist-bundle/` to `./dist/`. The version-keyed runtime cache filenames (`<runtimeRoot>/<version>/memory-cli.mjs`) are internal and unchanged, so `memory-bridge.sh` keeps resolving them.
+The plugin bootstraps are unaffected at the fetch layer: they read the asset names **from the version-pinned manifest**, so the rename follows automatically and every released version stays internally self-consistent (an old launcher + old tag resolves old names; a new launcher + new tag resolves new names — no cross-version break). Only the dev-checkout *local fallback* path is repointed from `apps/<app>/dist-bundle/` to `./dist/`. The version-keyed runtime cache filenames (`<runtimeRoot>/<version>/memory-cli.mjs`) are internal and unchanged, so `memory-bridge.sh` keeps resolving them.
 
 ## Consequences
 
