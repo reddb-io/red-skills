@@ -6,6 +6,11 @@ accepted.
 
 Supersedes: [ADR 0046](0046-single-global-red-dir.md)
 
+**Amended by [ADR 0063](0063-brain-plugin-is-the-third-red-skills-context.md):** the
+`brain` plugin is a third product context — its glossary lives in
+`.red/contexts/brain/CONTEXT.md` (added to the Decision list below). The
+multi-context model is unchanged; only the context count grew from two to three.
+
 ## Context
 
 ADR 0046 deliberately kept one root `.red/CONTEXT.md` while `memory` was being
@@ -28,6 +33,9 @@ Use a multi-context glossary layout:
 - `.red/contexts/memory/CONTEXT.md` owns `memory` plugin, RedDB graph, reasoning
   memory, validation evidence, skill telemetry evidence, and codebase mapping
   terms.
+- `.red/contexts/brain/CONTEXT.md` owns `brain` plugin terms — project-local
+  RedDB knowledge repository, freeform captures, graph connections, folder-level
+  brains, and the Hermes connector (added by ADR 0063).
 - `.red/CONTEXT.md` remains only as a compatibility pointer to the map.
 - ADRs stay in the single root `.red/adr/` sequence for now; future
   context-specific ADR subtrees require a separate decision.
