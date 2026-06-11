@@ -29,6 +29,14 @@ inputs:
     description: "AFK runner to drive (claude|codex|opencode). CI default is opencode (API-auth, no host session)."
     required: false
     default: "opencode"
+  model:
+    description: "Override the model for every tier (e.g. minimax/MiniMax-M2). Empty = .red/config.yaml / defaults. Maps to RED_AFK_MODEL."
+    required: false
+    default: ""
+  effort:
+    description: "Override the reasoning effort/variant (low|medium|high|…). Empty = config. Maps to RED_AFK_EFFORT (still provider-gated)."
+    required: false
+    default: ""
   openrouter-api-key:
     description: "OpenRouter API key (opencode auth; precedence 3)."
     required: false
@@ -74,6 +82,10 @@ runs:
         # CI never wants a nested container: force the no-sandbox lane regardless
         # of the target repo's `afk.sandbox` config (wire.ts precedence).
         RED_AFK_SANDBOX: none
+        # Model/effort override (resolveTier precedence) — empty values are ignored,
+        # so an unset input leaves the target repo's .red/config.yaml in charge.
+        RED_AFK_MODEL: ${{ inputs.model }}
+        RED_AFK_EFFORT: ${{ inputs.effort }}
         # opencode auth — first set key wins (opencode-env.ts precedence).
         OPENROUTER_API_KEY: ${{ inputs.openrouter-api-key }}
         MINIMAX_API_KEY: ${{ inputs.minimax-api-key }}

@@ -298,19 +298,26 @@ function readEffort(raw: string, fallback: AgentEffort): AgentEffort {
 /**
  * Resolve AFK's per-runner model tier (ADR 0049).
  *
- * Precedence for the model:
+ * Precedence for the model (mirrors the runner/sandbox knobs — flag and env beat
+ * the file, ADR 0049):
+ *   0. runtime override: `RED_AFK_MODEL` env (the `--model` run flag pre-sets it).
+ *      Flattens every tier onto one slug — "use this model regardless of tier".
  *   1. explicit tier table entry: `afk.models.<runner>.<tier>.model`
  *   2. legacy runner scalar: `afk.models.<runner>`
  *   3. legacy global scalar: `afk.model`
  *   4. tier-table default
+ * `RED_AFK_EFFORT` overrides effort the same way (still provider-gated downstream).
  *
  * `loadConfig` already folds `plugins.dev.afk.*` over the legacy top-level
- * `afk.*` keys (ADR 0042), so the same reader honours both locations.
+ * `afk.*` keys (ADR 0042), so the same reader honours both locations. `env` is
+ * injected (default empty) so the override is opt-in per call site — the AFK run
+ * path passes `process.env`; the interactive model-tier route does not.
  */
 export function resolveTier(
   values: ConfigValues,
   runner: string,
   taskClass: AfkModelTier = "think",
+  env: NodeJS.ProcessEnv = {},
 ): ResolvedTier {
   // The runner whose tier table to read. claude/codex/opencode each ship a full
   // table (CONFIG_DEFAULTS); any other runner (e.g. the runner-neutral hermes)
@@ -325,12 +332,22 @@ export function resolveTier(
   const scalarRunnerModel = getConfig(values, `afk.models.${tierRunner}`);
   const scalarGlobalModel = getConfig(values, "afk.model");
 
+  // Runtime override: a non-empty RED_AFK_MODEL/RED_AFK_EFFORT wins over the file
+  // (`""` counts as unset, so a placeholder export never flattens the tiers).
+  const modelOverride = (env.RED_AFK_MODEL ?? "").trim();
+  const effortOverride = (env.RED_AFK_EFFORT ?? "").trim();
+
+  const configModel =
+    tierModel && tierModel !== defaultModel
+      ? tierModel
+      : scalarRunnerModel || scalarGlobalModel || tierModel || defaultModel;
+
   return {
-    model:
-      tierModel && tierModel !== defaultModel
-        ? tierModel
-        : scalarRunnerModel || scalarGlobalModel || tierModel || defaultModel,
-    effort: readEffort(getConfig(values, effortKey), defaultEffort),
+    model: modelOverride.length > 0 ? modelOverride : configModel,
+    effort:
+      effortOverride.length > 0
+        ? readEffort(effortOverride, defaultEffort)
+        : readEffort(getConfig(values, effortKey), defaultEffort),
   };
 }
 

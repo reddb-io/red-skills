@@ -281,6 +281,28 @@ describe("config — AFK model tier table (ADR 0049)", () => {
     expect(resolveTier(values, "codex")).toEqual({ model: "gpt-5.5", effort: "high" });
   });
 
+  it("lets RED_AFK_MODEL / RED_AFK_EFFORT override every tier (flag pre-sets the env)", () => {
+    const values = loadConfig("/nonexistent/.red/config.yaml", { warn: () => {} });
+    // Override flattens all tiers onto one slug, beating the config/default table.
+    expect(resolveTier(values, "opencode", "simple", { RED_AFK_MODEL: "minimax/MiniMax-M2" })).toEqual({
+      model: "minimax/MiniMax-M2",
+      effort: "high",
+    });
+    expect(
+      resolveTier(values, "opencode", "validate", { RED_AFK_MODEL: "minimax/MiniMax-M2", RED_AFK_EFFORT: "high" }),
+    ).toEqual({ model: "minimax/MiniMax-M2", effort: "high" });
+    // An empty override is treated as unset — config/default stays in charge.
+    expect(resolveTier(values, "opencode", "simple", { RED_AFK_MODEL: "" })).toEqual({
+      model: "openrouter/anthropic/claude-sonnet-4",
+      effort: "high",
+    });
+    // No env arg (e.g. the interactive model-tier route) → never overridden.
+    expect(resolveTier(values, "opencode", "simple")).toEqual({
+      model: "openrouter/anthropic/claude-sonnet-4",
+      effort: "high",
+    });
+  });
+
   it("resolves every Claude tier from the default table", () => {
     const values = loadConfig("/nonexistent/.red/config.yaml", { warn: () => {} });
     expect(resolveTier(values, "claude", "validate")).toEqual({ model: "claude-haiku-4-5", effort: "low" });

@@ -131,7 +131,9 @@ export function resolveRunSettings(
     : "none";
   const defaultRunner = getConfig(cfg, "afk.default_runner") || "claude";
   const activeRunner = runner ?? (isRunner(defaultRunner) ? defaultRunner : "claude");
-  const tier = resolveTier(cfg, activeRunner, "think");
+  // Pass env so the RED_AFK_MODEL/RED_AFK_EFFORT runtime override (the --model /
+  // --effort flags pre-set them) wins over the file, mirroring the sandbox knob.
+  const tier = resolveTier(cfg, activeRunner, "think", env);
   // Precedence: RED_AFK_MAX_ITERATIONS env > afk.max_iterations config >
   // undefined (→ DEFAULT_MAX_ITERATIONS). parseMaxIterations rejects a
   // non-numeric / zero / negative value from EITHER source, so a typo in the
