@@ -349,6 +349,30 @@ describe("config — AFK model tier table (ADR 0049)", () => {
     });
   });
 
+  it("auto-populates every tier from `base`, with a specialized tier overriding it", () => {
+    const text =
+      "plugins:\n  dev:\n    afk:\n      models:\n        opencode:\n          base:\n            model: minimax/MiniMax-M2\n            effort: medium\n          think:\n            model: minimax/MiniMax-M2-thinking\n";
+    const values = loadConfig("/x/.red/config.yaml", { read: () => text });
+    // base flows to every un-specialized tier (model AND effort)
+    expect(resolveTier(values, "opencode", "validate")).toEqual({ model: "minimax/MiniMax-M2", effort: "medium" });
+    expect(resolveTier(values, "opencode", "simple")).toEqual({ model: "minimax/MiniMax-M2", effort: "medium" });
+    expect(resolveTier(values, "opencode", "complex")).toEqual({ model: "minimax/MiniMax-M2", effort: "medium" });
+    // a specialized tier overrides the base model; its effort still inherits from base
+    expect(resolveTier(values, "opencode", "think")).toEqual({ model: "minimax/MiniMax-M2-thinking", effort: "medium" });
+    // base does not leak across runners — claude keeps its own table
+    expect(resolveTier(values, "claude", "simple")).toEqual({ model: "claude-sonnet-4-6", effort: "high" });
+  });
+
+  it("`base.model` alone uniformly sets the model but leaves each tier's default effort", () => {
+    const text =
+      "plugins:\n  dev:\n    afk:\n      models:\n        opencode:\n          base:\n            model: minimax/MiniMax-M2\n";
+    const values = loadConfig("/x/.red/config.yaml", { read: () => text });
+    // model is uniform from base; effort stays at each tier's table default (low/high/medium/high)
+    expect(resolveTier(values, "opencode", "validate")).toEqual({ model: "minimax/MiniMax-M2", effort: "low" });
+    expect(resolveTier(values, "opencode", "complex")).toEqual({ model: "minimax/MiniMax-M2", effort: "medium" });
+    expect(resolveTier(values, "opencode", "think")).toEqual({ model: "minimax/MiniMax-M2", effort: "high" });
+  });
+
   it("lets explicit tier entries override legacy scalar model keys", () => {
     const text =
       "afk:\n  model: shared-model\n  models:\n    claude:\n      think:\n        model: claude-tier-model\n        effort: max\n";
