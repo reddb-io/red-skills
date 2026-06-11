@@ -77,6 +77,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [feat(afk): attempt progress guard — abort a stalled agent, park to ready-for-human (ADR 0044)](./pages/400-feat-afk-attempt-progress-guard-abort-a-stalled-agent-park-t.md)
 - [feat(afk): backpressure gate on the DONE path (#430)](./pages/436-feat-afk-backpressure-gate-on-the-done-path-430.md)
 - [feat(afk): bounded auto-recovery for recoverable blocks](./pages/294-feat-afk-bounded-auto-recovery-for-recoverable-blocks.md)
+- [feat(afk): canonicalize worker-vitals names + last_event_at liveness clock (S1 #708)](./pages/712-feat-afk-canonicalize-worker-vitals-names-last-event-at-live.md)
 - [feat(afk): count model reasoning in the heartbeat across claude/codex/opencode (slice 2)](./pages/702-feat-afk-count-model-reasoning-in-the-heartbeat-across-claud.md)
 - [feat(afk): default maxIterations to 50 + make it configurable via .red/config.yaml](./pages/360-feat-afk-default-maxiterations-to-50-make-it-configurable-vi.md)
 - [feat(afk): deliver the exit-protocol as a system prompt, not a handoff footer (slice 4)](./pages/703-feat-afk-deliver-the-exit-protocol-as-a-system-prompt-not-a.md)
