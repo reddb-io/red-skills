@@ -81,6 +81,16 @@ Confirm with the user:
 - Does the `blocked:dependency` label exist? If not, create it (`gh label create blocked:dependency --color D4C5F9 --description "Waiting on other issues (req:N edges); auto-unblocks when the last dependency closes"`). `req:N` edge labels are created on demand by `/to-issues` (`gh label create req:<n>`) like `prd:N`, so they need no upfront provisioning.
 - Provision the typed **blocked-reason** labels `/afk` applies to describe *why* an iteration stopped (it falls back to creating each on the fly, so this only keeps colour/description consistent): `gh label create blocked:quota`, `blocked:runner-transient`, `blocked:merge-conflict`, `blocked:spec`, `blocked:validation`, `blocked:crashed`, `blocked:policy`, `blocked:stalled`, `blocked:infra` (suggested colour `E99695`, descriptions per the *Blocked Reasons* table in triage-labels). These are descriptive (added alongside the routing label) — see triage-labels.
 
+**Autonomous AFK execution lane (opt-in — default NO).** Beyond auto-triage, RedSkills can run `/afk` itself **from GitHub Actions** — one attempt per issue, opening a PR with no human at a terminal (the "offline" / headless lane, ADR 0059/0062). This is a bigger commitment than auto-triage, so it is **off by default**. Offer it, defaulting to no:
+
+- Install the AFK Actions lane (`red-afk-attempt.yml`) into `.github/workflows/`? **Default: no.** Explain the prerequisites before a yes:
+  - **Secrets** — an OpenCode auth key as a repo secret (`MINIMAX_API_KEY`, `OPENAI_API_KEY`, or `OPENROUTER_API_KEY`; first set wins). Without one the lane fires but the agent fails auth.
+  - **Trust gate** — only allowlisted issue authors + label-appliers can drive a run (you set the logins). Public repos: keep the allowlist to yourself + your bot.
+  - **Triggers** — fires on `ready-for-agent` (labeled, or an issue opened already carrying it) / manual dispatch.
+  - Full reference: [`../afk/actions-lane.md`](../afk/actions-lane.md).
+
+For the complete `red-*` workflow catalogue (which are adopter-installable vs. red-skills' own CI), see [WORKFLOWS.md](./WORKFLOWS.md).
+
 Future RedSkills workflows will land in this same step. Filename prefix `red-` is mandatory.
 
 **Section E — Token efficiency (strongly recommended).**
@@ -205,6 +215,13 @@ Then write the three docs files using the seed templates in this skill folder as
 - [domain.md](./domain.md) — domain doc consumer rules + layout
 
 If the user accepted Section D, copy each `workflows/red-*.yml` template from this skill folder into `.github/workflows/` of the consumer repo. Don't overwrite existing files with the same name — diff and ask first. Then ensure both `needs-triage` and `runner-error` labels exist via `gh label create` if missing (`gh label create runner-error --color B60205 --description "AFK supervisor circuit-tripped; runner was misconfigured"`).
+
+**If the user opted into the autonomous AFK execution lane** (Section D, default no), additionally:
+
+1. Copy [`../afk/examples/red-afk-attempt-caller.yml`](../afk/examples/red-afk-attempt-caller.yml) to `.github/workflows/red-afk-attempt.yml` in the consumer repo. Don't overwrite an existing file — diff and ask first.
+2. Edit `allowlist_authors` and `allowlist_label_actors` to the maintainer login(s) the user named (the trust gate; keep it short on public repos).
+3. Print the secret-setup guidance — the lane needs one OpenCode auth key as a repo secret; do **not** set it for them (secrets are the user's to provision): `gh secret set MINIMAX_API_KEY` (or `OPENAI_API_KEY` / `OPENROUTER_API_KEY`; first set wins). Point them at [`../afk/actions-lane.md`](../afk/actions-lane.md) for the auth precedence + the `model` slug (e.g. `minimax/MiniMax-M2`).
+4. Note that the lane will not fire until both a secret is set and an issue carries `ready-for-agent` from an allowlisted actor.
 
 Scaffold `.red/config.yaml` (Section G, no user decision):
 
