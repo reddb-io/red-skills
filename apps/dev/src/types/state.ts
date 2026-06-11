@@ -34,6 +34,21 @@ export const AfkCurrentSchema = z.object({
    * first heartbeat so the monitor/statusline fallback diffstat uses the correct
    * ref instead of hardcoding origin/main. */
   base: z.string().default(""),
+  /** Per-attempt stream-activity counters, mirrored from the proof-of-life
+   * heartbeat's `statePatch` (core/heartbeat.ts → buildProgressHeartbeat) each
+   * ~60s poll. These MUST be declared here: `updateState` round-trips the whole
+   * state through this schema before writing, so an undeclared key is silently
+   * stripped on BOTH write and read — the counters would never survive in
+   * afk.state.json. The monitor/statusline read them straight off `current` to
+   * show liveness (is the agent actually streaming) without opening the firehose.
+   * `loc_added`/`loc_removed` are user-facing aliases of `diff_added`/`diff_removed`. */
+  tools_called_count: z.number().default(0),
+  text_chunk_count: z.number().default(0),
+  thinking_called_count: z.number().default(0),
+  reasoning_tokens: z.number().default(0),
+  waiting_count: z.number().default(0),
+  loc_added: z.number().default(0),
+  loc_removed: z.number().default(0),
 });
 
 export const AfkStateSchema = z.object({
