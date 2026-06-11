@@ -23,7 +23,8 @@ If `.red/config.yaml` sets:
 
 ```yaml
 dev:
-  lock-primary-branch: true
+  lock:
+    primary-branch: true
 ```
 
 this hook also blocks the agent from switching the primary checkout's branch

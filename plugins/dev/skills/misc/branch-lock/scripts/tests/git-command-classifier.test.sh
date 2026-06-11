@@ -109,7 +109,7 @@ expect_verdict "allow/restore staged"        "$LOCK" "git restore --staged f.txt
 expect_verdict "allow/restore single file"   "$LOCK" "git restore src/app.ts"       "allow"
 
 # ===========================================================================
-# PRIMARY BRANCH GUARD — dev.lock-primary-branch (issue #396 / ADR 0043)
+# PRIMARY BRANCH GUARD — dev.lock.primary-branch (issue #396 / ADR 0043)
 # Table: command, cwd-is-primary, flag-state => allow/block.
 # ===========================================================================
 expect_primary_guard() {

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Unit test for lib/dev-config.sh — runtime reader for dev.lock-primary-branch.
+# Unit test for lib/dev-config.sh — runtime reader for dev.lock.primary-branch.
 
 set -uo pipefail
 
@@ -34,19 +34,22 @@ cfg="$tmp/config.yaml"
 
 cat > "$cfg" <<'EOF'
 dev:
-  lock-primary-branch: true
+  lock:
+    primary-branch: true
 EOF
 expect_rc "nested dev flag true: enabled" 0 "$cfg"
 
 cat > "$cfg" <<'EOF'
 dev:
-  lock-primary-branch: false
+  lock:
+    primary-branch: false
 EOF
 expect_rc "nested dev flag false: disabled" 1 "$cfg"
 
 cat > "$cfg" <<'EOF'
 dev:
-  lock-primary-branch: "true"
+  lock:
+    primary-branch: "true"
 EOF
 expect_rc "quoted true: enabled" 0 "$cfg"
 
@@ -58,19 +61,22 @@ expect_rc "absent key: disabled" 1 "$cfg"
 
 cat > "$cfg" <<'EOF'
 dev:
-   lock-primary-branch: true
+   lock:
+     primary-branch: true
 EOF
 expect_rc "malformed indentation: disabled" 1 "$cfg"
 
 cat > "$cfg" <<'EOF'
 dev:
-  lock-primary-branch: "true" # branch protection on
+  lock:
+    primary-branch: "true" # branch protection on
 EOF
 expect_rc "inline comment after quoted true: enabled" 0 "$cfg"
 
 cat > "$cfg" <<'EOF'
 dev:
-  lock-primary-branch: true
+  lock:
+    primary-branch: true
 afk:
   backpressure:
     - npm run test
@@ -83,7 +89,8 @@ afk:
   backpressure:
     - npm run test
 dev:
-  lock-primary-branch: true
+  lock:
+    primary-branch: true
 EOF
 expect_rc "block-sequence before dev key: enabled" 0 "$cfg"
 

@@ -118,14 +118,15 @@ expect_eq "unlocked: switch is allowed" "0" "$rc"
 mkdir -p "$primary/.red"
 cat > "$primary/.red/config.yaml" <<'EOF'
 dev:
-  lock-primary-branch: true
+  lock:
+    primary-branch: true
 EOF
 
 result="$(run_hook "$primary" "$(payload "$primary" "git switch feature")")"
 rc="$(sed -n '1p' <<<"$result")"
 stderr="$(sed -n '/---stderr---/,$p' <<<"$result")"
 expect_eq "primary guard: switch is blocked when flag is on" "2" "$rc"
-expect_contains "primary guard: error names config flag" "dev.lock-primary-branch is true" "$stderr"
+expect_contains "primary guard: error names config flag" "dev.lock.primary-branch is true" "$stderr"
 
 result="$(run_hook "$primary" "$(payload "$primary" "git checkout feature")")"
 rc="$(sed -n '1p' <<<"$result")"
@@ -149,7 +150,8 @@ expect_eq "primary guard: read-only git is allowed" "0" "$rc"
 
 cat > "$primary/.red/config.yaml" <<'EOF'
 dev:
-  lock-primary-branch: false
+  lock:
+    primary-branch: false
 EOF
 result="$(run_hook "$primary" "$(payload "$primary" "git switch feature")")"
 rc="$(sed -n '1p' <<<"$result")"
@@ -165,7 +167,8 @@ expect_eq "worktree: branch lock is exempt" "0" "$rc"
 mkdir -p "$worktree/.red"
 cat > "$worktree/.red/config.yaml" <<'EOF'
 dev:
-  lock-primary-branch: true
+  lock:
+    primary-branch: true
 EOF
 result="$(run_hook "$worktree" "$(payload "$worktree" "git switch feature")")"
 rc="$(sed -n '1p' <<<"$result")"

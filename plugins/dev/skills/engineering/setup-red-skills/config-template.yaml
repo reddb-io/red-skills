@@ -50,4 +50,5 @@
 #       gradle: true              # ship gradle isolation when GRADLE_USER_HOME_BASE is set
 
 # dev:
-#   lock-primary-branch: true     # activate the primary-checkout branch-switch guard
+#   lock:
+#     primary-branch: true        # activate the primary-checkout branch-switch guard

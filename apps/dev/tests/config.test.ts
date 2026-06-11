@@ -30,7 +30,7 @@ describe("config", () => {
     expect(getConfig(values, "afk.fleet.target")).toBe("2");
     expect(getConfig(values, "afk.hooks.defaults.cargo")).toBe("true");
     expect(getConfig(values, "afk.hooks.defaults.gradle")).toBe("true");
-    expect(getConfig(values, "dev.lock-primary-branch")).toBe("false");
+    expect(getConfig(values, "dev.lock.primary-branch")).toBe("false");
     expect(warnings).toHaveLength(0);
   });
 
@@ -87,31 +87,31 @@ describe("config", () => {
     }
   });
 
-  it("reads dev.lock-primary-branch and defaults it off", () => {
+  it("reads dev.lock.primary-branch and defaults it off", () => {
     const defaults = loadConfig("/nonexistent/.red/config.yaml", { warn: () => {} });
-    expect(getConfig(defaults, "dev.lock-primary-branch")).toBe("false");
+    expect(getConfig(defaults, "dev.lock.primary-branch")).toBe("false");
 
     const values = loadConfig("/x/.red/config.yaml", {
-      read: () => "dev:\n  lock-primary-branch: true\n",
+      read: () => "dev:\n  lock:\n    primary-branch: true\n",
     });
-    expect(getConfig(values, "dev.lock-primary-branch")).toBe("true");
+    expect(getConfig(values, "dev.lock.primary-branch")).toBe("true");
   });
 
-  it("folds the namespaced `plugins.dev.lock-primary-branch` onto `dev.lock-primary-branch`", () => {
+  it("folds the namespaced `plugins.dev.lock.primary-branch` onto `dev.lock.primary-branch`", () => {
     // The root-sacred convention: dev-plugin keys nest under `plugins.dev.*` and
     // fold to the `dev.*` accessor (afk keeps its bare `afk.*` accessor).
     const values = loadConfig("/x/.red/config.yaml", {
-      read: () => "plugins:\n  dev:\n    lock-primary-branch: true\n",
+      read: () => "plugins:\n  dev:\n    lock:\n      primary-branch: true\n",
     });
-    expect(getConfig(values, "dev.lock-primary-branch")).toBe("true");
+    expect(getConfig(values, "dev.lock.primary-branch")).toBe("true");
   });
 
   it("folds `plugins.dev` dev-keys and afk-keys to their distinct accessors at once", () => {
     const values = loadConfig("/x/.red/config.yaml", {
       read: () =>
-        "plugins:\n  dev:\n    lock-primary-branch: true\n    afk:\n      default_runner: codex\n",
+        "plugins:\n  dev:\n    lock:\n      primary-branch: true\n    afk:\n      default_runner: codex\n",
     });
-    expect(getConfig(values, "dev.lock-primary-branch")).toBe("true");
+    expect(getConfig(values, "dev.lock.primary-branch")).toBe("true");
     expect(getConfig(values, "afk.default_runner")).toBe("codex");
   });
 
@@ -177,9 +177,9 @@ describe("config", () => {
 
   it("block-sequence config does not disable the primary-branch guard", () => {
     const text =
-      'dev:\n  lock-primary-branch: true\nafk:\n  backpressure:\n    - "npm run test" # full suite\n    - npm run lint\n';
+      'dev:\n  lock:\n    primary-branch: true\nafk:\n  backpressure:\n    - "npm run test" # full suite\n    - npm run lint\n';
     const values = loadConfig("/x/.red/config.yaml", { read: () => text });
-    expect(getConfig(values, "dev.lock-primary-branch")).toBe("true");
+    expect(getConfig(values, "dev.lock.primary-branch")).toBe("true");
     expect(readBackpressure(values)).toEqual(["npm run test", "npm run lint"]);
   });
 
