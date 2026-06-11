@@ -131,6 +131,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [fix(afk): circuit-tripped slot restores claimed issue; boot-stamp ensures sweep resolves fast-dying workers](./pages/619-fix-afk-circuit-tripped-slot-restores-claimed-issue-boot-sta.md)
 - [fix(afk): claim-race loser skips instead of dying, and never clobbers the winner's claim](./pages/646-fix-afk-claim-race-loser-skips-instead-of-dying-and-never-cl.md)
 - [fix(afk): commit-anchored hard cap bounds the edit-signal guard extension](./pages/639-fix-afk-commit-anchored-hard-cap-bounds-the-edit-signal-guar.md)
+- [fix(afk): deliver the exit-protocol contract in the handoff so agents emit the DONE sentinel](./pages/698-fix-afk-deliver-the-exit-protocol-contract-in-the-handoff-so.md)
 - [fix(afk): don't read gh rate-limit as an auth failure (Mode B fast-death)](./pages/482-fix-afk-don-t-read-gh-rate-limit-as-an-auth-failure-mode-b-f.md)
 - [fix(afk): feed the agent lane on the native path so liveness isn't blind](./pages/350-fix-afk-feed-the-agent-lane-on-the-native-path-so-liveness-i.md)
 - [fix(afk): feedback gate fails closed on worktree-add/install failure and validates origin tip](./pages/660-fix-afk-feedback-gate-fails-closed-on-worktree-add-install-f.md)
