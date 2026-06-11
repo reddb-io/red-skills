@@ -60,6 +60,7 @@ import { join } from "node:path";
 import { appendAgentRecord, appendRecord } from "../core/jsonl-log.js";
 import { initState, updateState } from "../core/state.js";
 import { buildProgressHeartbeat, formatIterationMarker } from "../core/heartbeat.js";
+import { createActivityMeter } from "../core/activity-meter.js";
 import { DEFAULT_MAX_ITERATIONS } from "../core/execution.js";
 import type { AgentStreamEvent } from "../core/execution.js";
 
@@ -425,6 +426,11 @@ export function buildProcessDeps(
   const iterMax = maxIterations ?? DEFAULT_MAX_ITERATIONS;
   let lastIter = 0;
   let lastIterDir = "";
+  // Per-attempt stream-activity meter (slice 1 liveness metrics): counts
+  // toolCall/text events and derives waiting windows. Re-created when the
+  // attempt dir changes so counts never bleed across the attempt boundary.
+  let activityMeter = createActivityMeter();
+  let activityMeterDir = "";
 
   // ---- lifecycle hooks: load config + resolve built-in defaults + real exec ----
   const config = loadConfig(paths.configPath, { warn: () => undefined });
@@ -616,6 +622,12 @@ export function buildProcessDeps(
         lastIterDir = dir0;
         lastIter = 0; // new attempt → fresh iteration count
       }
+      // New attempt → fresh activity meter (counts must not bleed across attempts).
+      if (dir0 !== activityMeterDir) {
+        activityMeterDir = dir0;
+        activityMeter = createActivityMeter();
+      }
+      activityMeter.record(event);
       if (event.iteration !== lastIter) {
         const emit = (line: string, phase: string, n: number): void => {
           void fsx.appendLine(join(dir0, "afk.log"), line);
@@ -681,12 +693,17 @@ export function buildProcessDeps(
         const { added, removed } = await gitx
           .diffstatShortstat({ cwd: worktree }, baseRef)
           .catch(() => ({ added: 0, removed: 0 }));
+        // Close this heartbeat window on the meter — derives the waiting count
+        // (a window with no new stream events) and snapshots the cumulative
+        // tool/text counts to fold into the record + state.
+        const activity = activityMeter.snapshotWindow();
         const hb = buildProgressHeartbeat({
           secsSinceProgress: secs,
           lastProgressAt,
           head,
           added,
           removed,
+          activity,
         });
         await appendRecord(join(current.attemptDir, "log.jsonl"), "heartbeat", hb.msg, {
           ts,
