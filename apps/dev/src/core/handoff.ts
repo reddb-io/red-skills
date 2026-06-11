@@ -268,5 +268,31 @@ export function buildHandoff(input: HandoffInput): string {
   lines.push("<!-- inner agent appends progress/blockers here across attempts -->");
   lines.push("</agent-notes>");
 
+  lines.push("");
+  lines.push(EXIT_PROTOCOL);
+
   return lines.join("\n") + "\n";
 }
+
+/**
+ * Exit-protocol footer appended to every handoff. The agent's prompt is this
+ * handoff file alone (sandcastle `promptFile`); red-castle deliberately does not
+ * inject completion instructions — `run()` requires the caller to instruct the
+ * agent to emit the configured completion signal. Without this block the agent
+ * receives only the issue body and never learns that `<promise>DONE</promise>`
+ * is the required terminator, so it writes a prose "Done." and the orchestrator
+ * (matching the literal sentinel) re-invokes it until the attempt guard reaps it
+ * — most visibly on the "work already committed by a prior attempt" path, where
+ * a re-spawned agent re-verifies a finished branch every iteration. The
+ * already-done short-circuit is the fix for that class.
+ */
+export const EXIT_PROTOCOL = [
+  "<exit-protocol>",
+  "You are an autonomous AFK agent. Your prompt is this handoff alone; nothing else instructs you. Obey this exit protocol exactly.",
+  "",
+  "1. ALREADY-DONE SHORT-CIRCUIT (check first, every time). Before exploring or planning, check whether the current branch ALREADY satisfies the acceptance criteria — a prior attempt may have finished it. Run `git log --oneline origin/main..HEAD` and inspect the tip against the criteria. If the work is already present and correct, do NOT re-explore, re-plan, or re-run a full-suite sanity pass: emit `<promise>DONE</promise>` as your final line immediately. This is the single most common way an attempt wastes its whole budget.",
+  "2. Otherwise implement the slice: failing test first, minimal code, one commit per file (`git add -- <path>` then commit; never `git add -A`), `Refs #N` in each message.",
+  "3. When your work is committed and your touched package's gate is green, STOP. Do not open a PR, merge, close the issue, or poll CI — the orchestrator owns landing.",
+  "4. Your FINAL line MUST be exactly `<promise>DONE</promise>` (work complete) or `<promise>BLOCKED</promise>` (genuinely impossible/contradictory — explain in `<agent-notes>` first). A prose \"done\" is NOT a sentinel: an exit without the literal tag is read as a CRASH and re-invokes you, burning iterations. One of the two tags is always your last line.",
+  "</exit-protocol>",
+].join("\n");

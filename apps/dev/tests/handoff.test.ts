@@ -262,6 +262,19 @@ describe("buildHandoff", () => {
     expect(out).toContain("<agent-notes>");
   });
 
+  it("exit protocol: every handoff ends with the sentinel contract + already-done short-circuit", () => {
+    const out = base({ title: "Anything" });
+    // the agent's only prompt is this handoff; the exit protocol must be in it
+    expect(out).toContain("<exit-protocol>");
+    expect(out).toContain("<promise>DONE</promise>");
+    expect(out).toContain("<promise>BLOCKED</promise>");
+    expect(out).toContain("ALREADY-DONE SHORT-CIRCUIT");
+    // it sits after agent-notes so it reads as the final standing instruction
+    expect(out.indexOf("<agent-notes>")).toBeLessThan(out.indexOf("<exit-protocol>"));
+    // a prose "done" is explicitly rejected as a non-sentinel
+    expect(out).toContain("prose");
+  });
+
   it("case5: malformed envelope → no previous-attempts, no human-guidance, surfaces in discussion", () => {
     const out = buildHandoff({
       issue: 1,
