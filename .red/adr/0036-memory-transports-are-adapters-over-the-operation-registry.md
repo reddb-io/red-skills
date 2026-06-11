@@ -5,7 +5,7 @@
 Memory exposes ~80 read-only surfaces (the report + viewer pairs in the
 `memory` glossary) over three transports: CLI, MCP, and an optional local HTTP
 server. A seam for these already exists — `MemoryOperation<Input, Output>` in
-`src/apps/memory/src/operations.ts`, indexed by
+`apps/memory/src/operations.ts`, indexed by
 `createReadOnlyMemoryOperationRegistry`, carrying `inputSchema`, `outputSchema`,
 `execute`, and `renderer.{cli,mcp}` metadata.
 

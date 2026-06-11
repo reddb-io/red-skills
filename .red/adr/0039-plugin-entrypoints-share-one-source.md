@@ -26,7 +26,7 @@ bootstrap the fetched runtime — it cannot itself be fetched. The question is n
 
 ## Decision
 
-**One source — `src/packages/shared/entrypoint-cli.ts` — is the single entrypoint
+**One source — `packages/shared/entrypoint-cli.ts` — is the single entrypoint
 for every per-plugin bundle. The build emits it to each committed path with a
 `__ENTRYPOINT_ROLE__` esbuild define that selects behaviour.**
 

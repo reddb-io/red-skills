@@ -24,7 +24,7 @@ production by a sibling domain:
 - **ADR 0034** generalised the Memory bootstrap into a per-plugin dynamic-fetch
   mechanism: every domain builds to `<plugin>.bundle.min.mjs`, attached to the
   GitHub Release as an asset with a `<plugin>.manifest.json` sha256.
-- `src/packages/shared/bundle-fetch.ts` (pure, unit-tested) + the committed,
+- `packages/shared/bundle-fetch.ts` (pure, unit-tested) + the committed,
   dependency-free `red-fetch.mjs` launcher resolve and verify a bundle into a
   version-keyed cache (`~/.cache/red-skills/bundles/<plugin>-<version>.bundle.min.mjs`).
 - The dev plugin's **SessionStart hook already runs `red-fetch dev <version>`**,
@@ -68,7 +68,7 @@ domain and supersedes ADR 0032.
    existing call sites (`SKILL.md`, statusline hooks) invoke `node bin/afk.mjs`
    unchanged — only the file's *content* shrinks from 2.6 MB to a launcher.
 
-3. **`build` no longer emits a committed bundle.** `src/apps/dev` drops the
+3. **`build` no longer emits a committed bundle.** `apps/dev` drops the
    `bundle:bin` script; `build` = `bundle` (→ `dist/dev.bundle.min.mjs`) +
    `bundle:red-fetch` (→ committed `red-fetch.mjs`). The release workflow stops
    staging/committing `bin/afk.mjs`; it still rebuilds+stages `red-fetch.mjs` (the
@@ -98,7 +98,7 @@ domain and supersedes ADR 0032.
   network. Offline-without-cache fails loudly with build/network guidance.
 - `node` is assumed on the client — unchanged from ADR 0032.
 - The e2e smoke (`scripts/afk-e2e-smoke.sh`) and any direct `node bin/afk.mjs` use
-  now require a resolvable bundle (cache or a local `pnpm -C src/apps/dev bundle`).
+  now require a resolvable bundle (cache or a local `pnpm -C apps/dev bundle`).
 
 ## Status
 

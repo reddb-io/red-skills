@@ -4,8 +4,8 @@
 
 Each plugin resolved its own configuration, in its own place, in its own format:
 
-- `dev` reads `.red/config.yaml` (YAML) — `afk.*` and `statusline` keys, hand-authored, read-only to the code (`src/apps/dev/src/core/config.ts`).
-- `memory` read **and wrote** `.red/memory/config.json` (JSON) — `mode`, `hooks`, `notesDir`, `storePath`, `provider`, … (`src/apps/memory/src/config.ts`).
+- `dev` reads `.red/config.yaml` (YAML) — `afk.*` and `statusline` keys, hand-authored, read-only to the code (`apps/dev/src/core/config.ts`).
+- `memory` read **and wrote** `.red/memory/config.json` (JSON) — `mode`, `hooks`, `notesDir`, `storePath`, `provider`, … (`apps/memory/src/config.ts`).
 
 There is no shared config-resolution module; the two formats and locations diverged for no principled reason. A maintainer inspecting a repo sees two unrelated config conventions and cannot answer "where do I set plugin X?" from one place.
 

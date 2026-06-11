@@ -4,7 +4,7 @@
 
 The `brain` plugin reaches external messaging channels (the "channel bridge")
 through **`reddb-io/red-hermes`**, a separate product consumed as an internal
-**black box**. The integration point is `src/apps/brain/src/channel-bridge.ts`
+**black box**. The integration point is `apps/brain/src/channel-bridge.ts`
 (`McpStdioChannelBridge`), which spawns the runtime as a stdio MCP server with
 `command: "hermes"`, `args: ["mcp", "serve"]` and speaks only the MCP tool
 protocol to it — never red-hermes' Python internals, models, or storage.
@@ -38,7 +38,7 @@ coordination, never vendored.
 ## Decision
 
 1. **`red-hermes` is a dependency of the `brain` plugin, not `memory`.** Its only
-   consumer is `src/apps/brain/src/channel-bridge.ts`, and it is reached **only**
+   consumer is `apps/brain/src/channel-bridge.ts`, and it is reached **only**
    via `hermes mcp serve` over stdio MCP. `brain` treats it as a black box: it
    calls the 10-tool surface and never the Python runtime directly.
 
@@ -133,5 +133,5 @@ are downstream, blocked on red-hermes publishing fetchable releases.
   (the sibling consume-don't-build precedent).
 - ADR 0004 — Apache-2.0 relicense with a `NOTICE` for upstream MIT (the
   attribution model extended here).
-- `src/apps/brain/src/channel-bridge.ts` — the `McpStdioChannelBridge` and the
+- `apps/brain/src/channel-bridge.ts` — the `McpStdioChannelBridge` and the
   `HERMES_CHANNEL_BRIDGE_TOOLS` contract.

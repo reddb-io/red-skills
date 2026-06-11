@@ -17,7 +17,7 @@ those surfaces is **passive in two directions**:
   `Stop`, and `PreCompact` entries that each invoke
   `scripts/bootstrap.mjs hook <event> --runner <r>` with best-effort failure
   handling (`|| printf "{}"`). The dispatcher in
-  `src/apps/memory/src/hook-runtime.ts`
+  `apps/memory/src/hook-runtime.ts`
   routes them to `handleSessionStart` (engine `recall`), `handlePostToolUse`
   (`reindexFiles`), and `handleFlush` (`extractStructuredTranscript` +
   `factsToGraph`, then `PromotionEngine`). `recordLifecycle` writes each
@@ -45,7 +45,7 @@ Two mechanisms cited above were later superseded:
   (resolved under `${CLAUDE_PLUGIN_ROOT}`).
 - **Source location.** **ADR 0034** moved each plugin's implementation out of
   `plugins/<x>/src/` and under a top-level monorepo `src/`; the hook dispatcher
-  now lives at `src/apps/memory/src/hook-runtime.ts` (`plugins/memory/src/` no
+  now lives at `apps/memory/src/hook-runtime.ts` (`plugins/memory/src/` no
   longer holds source). The references below have been updated in place to the
   current paths; ADR 0041 records the pending migration of this code to a
   separate `red-memory` repo.
@@ -99,7 +99,7 @@ symmetrically catches Codex contributors and the human-only
 ### Already implemented or merged
 
 - SessionStart recall, PostToolUse reindex, Stop / PreCompact flush, and
-  lifecycle logging: shipped in `src/apps/memory/src/hook-runtime.ts`
+  lifecycle logging: shipped in `apps/memory/src/hook-runtime.ts`
   (issues #221 and #223 closed as already done).
 - PR-merge → wiki extract Action (#219 — merged).
 - Repo-versioned `MEMORY.md` migration (#220 — merged).

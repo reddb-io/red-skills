@@ -7,6 +7,9 @@ runner, OpenRouter-only, explicit pin) stands; the amendment extends the
 endpoint surface to any OpenAI-compatible endpoint (OpenAI direct, MiniMax
 subscription, OpenRouter relay) and shifts endpoint resolution into OpenCode.
 
+**Refined by ADR 0062:** the Actions-lane packaging introduced here is now a
+composite action + reusable workflow (the lane's runtime contract is unchanged).
+
 ## Context
 
 AFK ships two inner-agent runners — Claude Code and Codex — each integrated the
