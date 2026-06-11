@@ -329,7 +329,7 @@ export function makeRunAgent(
 // ---------- monitor inputs ----------
 
 import type { CompactWorker, FleetState } from "../core/monitor.js";
-import { parseState, isStateLive } from "../core/state.js";
+import { parseState, isStateLive, isStateActive } from "../core/state.js";
 import type { WorkerVitals } from "../types/state.js";
 import { parseHistoryLines, type HistoryRecord } from "../core/history.js";
 
@@ -428,7 +428,9 @@ export async function collectMonitorInputs(root = process.cwd()): Promise<Monito
           cost_usd: state.current.cost_usd,
         },
       },
-      live: isStateLive(state),
+      // Display liveness requires BOTH a resolving pid AND recent activity, so a
+      // finished worker whose pid is shared/recycled stops rendering as `[live]`.
+      live: isStateActive(state),
       diffAdded: added,
       diffRemoved: removed,
     });
@@ -538,7 +540,9 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
     } catch {
       continue;
     }
-    if (!isStateLive(state)) continue;
+    // Statusline counts only genuinely-active workers (pid-live AND fresh), so a
+    // finished worker with a stale state file no longer inflates the 🤖N badge.
+    if (!isStateActive(state)) continue;
 
     workers += 1;
     blocked += state.blocked;

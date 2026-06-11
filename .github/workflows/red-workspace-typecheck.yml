@@ -1,0 +1,45 @@
+name: red-workspace-typecheck
+
+# Pre-merge typecheck gate. Until this existed, `pnpm typecheck` ran ONLY in
+# red-release.yml on push-to-main — i.e. AFTER merge — so a type break landed
+# silently on a PR and only surfaced at release time (the WorkerVitals S2 `usage`
+# variant break, ADR 0065). This job runs the same workspace typecheck on every
+# pull request so the break is caught before merge. Test execution is deliberately
+# NOT added here yet: the suite carries a known supervisor.test.ts OOM (#446) that
+# would red-flag unrelated PRs; gating tests in CI is a separate effort.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # red-castle submodule must exist so the workspace pnpm install and the
+          # apps/* typecheck resolve @reddb-io/red-castle from source.
+          submodules: recursive
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install red binary for SDK
+        uses: ./.github/actions/install-red-binary
+        with:
+          github-token: ${{ github.token }}
+
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck workspace (apps + packages, excludes red-castle)
+        run: pnpm typecheck

@@ -2,7 +2,15 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
-import { initState, isStateLive, readState, updateState } from "../src/core/state.js";
+import {
+  initState,
+  isStateActive,
+  isStateLive,
+  readState,
+  updateState,
+  WORKER_LIVE_MAX_AGE_S,
+} from "../src/core/state.js";
+import { AfkStateSchema } from "../src/types/state.js";
 
 describe("state", () => {
   it("default-parses missing or malformed state files", async () => {
@@ -30,6 +38,36 @@ describe("state", () => {
     expect(isStateLive({ pid: 0 }, () => true)).toBe(false);
     expect(isStateLive({ pid: 123 }, (pid) => pid === 123)).toBe(true);
     expect(isStateLive({ pid: 123 }, () => false)).toBe(false);
+  });
+
+  it("isStateActive requires BOTH a resolving pid AND recent activity (ADR 0065)", () => {
+    const now = Date.parse("2026-06-11T20:00:00.000Z");
+    const alive = () => true;
+    const fresh = AfkStateSchema.parse({
+      pid: 123,
+      current: { last_event_at: new Date(now - 5_000).toISOString() },
+    });
+    const stale = AfkStateSchema.parse({
+      pid: 123,
+      current: { last_event_at: new Date(now - (WORKER_LIVE_MAX_AGE_S + 60) * 1000).toISOString() },
+    });
+
+    // pid-live + fresh activity → active
+    expect(isStateActive(fresh, now, alive)).toBe(true);
+    // pid-live but activity older than the ceiling → NOT active (the phantom case:
+    // a finished worker whose pid is shared/recycled still resolves).
+    expect(isStateActive(stale, now, alive)).toBe(false);
+    // dead pid is never active regardless of freshness
+    expect(isStateActive(fresh, now, () => false)).toBe(false);
+    // a committing-but-quiet worker (no recent event, recent commit) stays active
+    const committing = AfkStateSchema.parse({
+      pid: 123,
+      current: {
+        last_event_at: new Date(now - (WORKER_LIVE_MAX_AGE_S + 60) * 1000).toISOString(),
+        last_commit_at: new Date(now - 10_000).toISOString(),
+      },
+    });
+    expect(isStateActive(committing, now, alive)).toBe(true);
   });
 
   it("read-shims legacy worker-vitals keys onto their canonical names (ADR 0065)", async () => {
