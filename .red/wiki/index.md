@@ -45,6 +45,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [docs(adr): 0043 — RedSkills teaches and enforces an interactive development loop](./pages/393-docs-adr-0043-redskills-teaches-and-enforces-an-interactive.md)
 - [docs(adr): 0049 — model-tier routing embedded in the plugin, enforced by the shared trio (per runner)](./pages/445-docs-adr-0049-model-tier-routing-embedded-in-the-plugin-enfo.md)
 - [docs(adr): 0055 — AFK landability reconciler](./pages/563-docs-adr-0055-afk-landability-reconciler.md)
+- [docs(adr): correct stale src/apps paths in 9 ADRs + 0059→0062 note (closes #682)](./pages/685-docs-adr-correct-stale-src-apps-paths-in-9-adrs-0059-0062-no.md)
 - [docs(adr): refresh ADR index edges](./pages/513-docs-adr-refresh-adr-index-edges.md)
 - [docs(adr): resolve 0039 collision (consume→0041) + add ADR INDEX.md](./pages/386-docs-adr-resolve-0039-collision-consume-0041-add-adr-index-m.md)
 - [docs(afk): consolidate the Actions-lane / reusable-workflow docs into one adopter guide](./pages/678-docs-afk-consolidate-the-actions-lane-reusable-workflow-docs.md)
