@@ -36,6 +36,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [chore(afk): rebuild committed bin/afk.mjs from current source](./pages/320-chore-afk-rebuild-committed-bin-afk-mjs-from-current-source.md)
 - [chore(dev): remove the scaffold-exercises skill (upstream course tooling)](./pages/411-chore-dev-remove-the-scaffold-exercises-skill-upstream-cours.md)
 - [chore(legacy): remove dead exports and orphan build path](./pages/669-chore-legacy-remove-dead-exports-and-orphan-build-path.md)
+- [chore(legacy): remove the stale committed memory-runtime-manifest.json (closes #597)](./pages/690-chore-legacy-remove-the-stale-committed-memory-runtime-manif.md)
 - [chore(skills): manifest/frontmatter hygiene — name:, Codex in-progress, git -C lock (#593)](./pages/610-chore-skills-manifest-frontmatter-hygiene-name-codex-in-prog.md)
 - [chore(upstream): bump pin to e3b90b5 (no cherry-picks)](./pages/262-chore-upstream-bump-pin-to-e3b90b5-no-cherry-picks.md)
 - [chore: bump mattpocock skills upstream pin](./pages/511-chore-bump-mattpocock-skills-upstream-pin.md)
