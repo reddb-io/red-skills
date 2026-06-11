@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh -c 'node \"${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap.mjs\" hook SessionStart --runner claude || printf \"{}\"'"
+            "command": "sh -c '(node \"${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap.mjs\" hook SessionStart --runner claude >/dev/null 2>&1 &) ; printf \"{}\"'"
           }
         ]
       }

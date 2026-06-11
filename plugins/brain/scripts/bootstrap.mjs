@@ -135,6 +135,16 @@ async function ensureRuntime(version) {
   const mcpPath = join(dir, "brain-mcp.mjs");
   const redPath = join(dir, process.platform === "win32" ? "red.exe" : "red");
 
+  // Fast path: a complete version-keyed cache is immutable — each asset was
+  // sha256-verified before it was written (ensureFile), and a published release
+  // version never changes its assets. So when all three already exist, trust them
+  // and skip the network entirely. Without this, every SessionStart re-fetched
+  // the runtime manifest and re-validated (re-downloading the ~24 MB `red`
+  // binary), making session start take ~17 s instead of being instant.
+  if (existsSync(cliPath) && existsSync(mcpPath) && existsSync(redPath)) {
+    return { cliPath, mcpPath, redPath };
+  }
+
   const tag = `v${version}`;
   const manifest = JSON.parse(
     (

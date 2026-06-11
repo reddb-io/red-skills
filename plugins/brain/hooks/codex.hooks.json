@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh -c 'tmp=\"$(mktemp)\"; trap \"rm -f \\\"$tmp\\\"\" EXIT; cat >\"$tmp\" 2>/dev/null || true; node \"${CODEX_PLUGIN_ROOT}/scripts/bootstrap.mjs\" hook SessionStart --runner codex <\"$tmp\" || printf \"{}\"'"
+            "command": "sh -c 'tmp=\"$(mktemp)\"; cat >\"$tmp\" 2>/dev/null || true; (node \"${CODEX_PLUGIN_ROOT}/scripts/bootstrap.mjs\" hook SessionStart --runner codex <\"$tmp\" >/dev/null 2>&1; rm -f \"$tmp\") & printf \"{}\"'"
           }
         ]
       }
