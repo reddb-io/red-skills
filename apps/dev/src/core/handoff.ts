@@ -268,23 +268,22 @@ export function buildHandoff(input: HandoffInput): string {
   lines.push("<!-- inner agent appends progress/blockers here across attempts -->");
   lines.push("</agent-notes>");
 
-  lines.push("");
-  lines.push(EXIT_PROTOCOL);
-
   return lines.join("\n") + "\n";
 }
 
 /**
- * Exit-protocol footer appended to every handoff. The agent's prompt is this
- * handoff file alone (sandcastle `promptFile`); red-castle deliberately does not
- * inject completion instructions — `run()` requires the caller to instruct the
- * agent to emit the configured completion signal. Without this block the agent
- * receives only the issue body and never learns that `<promise>DONE</promise>`
- * is the required terminator, so it writes a prose "Done." and the orchestrator
- * (matching the literal sentinel) re-invokes it until the attempt guard reaps it
- * — most visibly on the "work already committed by a prior attempt" path, where
- * a re-spawned agent re-verifies a finished branch every iteration. The
- * already-done short-circuit is the fix for that class.
+ * The AFK exit-protocol contract. The agent receives it as a **system prompt**
+ * (not appended to the handoff body): the runtime passes it as
+ * `RunAgentInput.systemPrompt`, and red-castle delivers it per-CLI — claude via
+ * `--append-system-prompt` (kept out of the user turn), codex/opencode prepended
+ * to the handoff content (no flag exists). red-castle deliberately does not
+ * inject completion instructions itself (`run()` requires the caller to instruct
+ * the agent to emit the configured signal), so without delivering this the agent
+ * would only see the issue body and never learn that `<promise>DONE</promise>`
+ * is the required terminator — it would write a prose "Done." and the
+ * orchestrator (matching the literal sentinel) would re-invoke it until the
+ * attempt guard reaps it, worst on the "work already committed by a prior
+ * attempt" path. The already-done short-circuit is the fix for that class.
  */
 export const EXIT_PROTOCOL = [
   "<exit-protocol>",

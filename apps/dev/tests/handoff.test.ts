@@ -6,6 +6,7 @@ import {
   buildHumanGuidance,
   buildPreviousAttempts,
   buildThreadDiscussion,
+  EXIT_PROTOCOL,
   type HandoffComment,
 } from "../src/core/handoff.js";
 
@@ -262,17 +263,20 @@ describe("buildHandoff", () => {
     expect(out).toContain("<agent-notes>");
   });
 
-  it("exit protocol: every handoff ends with the sentinel contract + already-done short-circuit", () => {
+  it("exit protocol is delivered as a system prompt, NOT baked into the handoff body", () => {
     const out = base({ title: "Anything" });
-    // the agent's only prompt is this handoff; the exit protocol must be in it
-    expect(out).toContain("<exit-protocol>");
-    expect(out).toContain("<promise>DONE</promise>");
-    expect(out).toContain("<promise>BLOCKED</promise>");
-    expect(out).toContain("ALREADY-DONE SHORT-CIRCUIT");
-    // it sits after agent-notes so it reads as the final standing instruction
-    expect(out.indexOf("<agent-notes>")).toBeLessThan(out.indexOf("<exit-protocol>"));
-    // a prose "done" is explicitly rejected as a non-sentinel
-    expect(out).toContain("prose");
+    // The contract now rides RunAgentInput.systemPrompt (red-castle delivers it
+    // per-CLI), so the handoff body is back to pure issue data — no footer.
+    expect(out).not.toContain("<exit-protocol>");
+    expect(out).toContain("<agent-notes>");
+  });
+
+  it("EXIT_PROTOCOL constant still carries the sentinel contract + already-done short-circuit", () => {
+    expect(EXIT_PROTOCOL).toContain("<exit-protocol>");
+    expect(EXIT_PROTOCOL).toContain("<promise>DONE</promise>");
+    expect(EXIT_PROTOCOL).toContain("<promise>BLOCKED</promise>");
+    expect(EXIT_PROTOCOL).toContain("ALREADY-DONE SHORT-CIRCUIT");
+    expect(EXIT_PROTOCOL).toContain("prose");
   });
 
   it("case5: malformed envelope → no previous-attempts, no human-guidance, surfaces in discussion", () => {

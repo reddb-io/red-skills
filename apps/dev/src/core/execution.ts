@@ -159,6 +159,14 @@ export interface RunAgentInput {
   effort?: AgentEffort;
   /** Path to the materialised handoff file used as the agent prompt. */
   handoffPath: string;
+  /**
+   * The AFK exit-protocol contract, delivered as a system prompt rather than
+   * appended to the handoff body. red-castle picks the per-CLI delivery: claude
+   * `--append-system-prompt` (a real system prompt, out of the user turn);
+   * codex/opencode prepend it to the handoff content (no flag exists). Omitted →
+   * no contract delivered.
+   */
+  systemPrompt?: string;
   /** The worker branch sandcastle commits land on (afk/{id}/{N}-{slug}). */
   branch: string;
   /**
@@ -587,6 +595,7 @@ export function buildRunOptions(deps: SandcastleDeps, input: RunAgentInput): Run
     // root. Omitted → sandcastle defaults to process.cwd().
     ...(input.cwd ? { cwd: input.cwd } : {}),
     promptFile: input.handoffPath,
+    ...(input.systemPrompt ? { systemPrompt: input.systemPrompt } : {}),
     branchStrategy,
     completionSignal: [...COMPLETION_SIGNALS],
     // sandcastle defaults maxIterations to 1, which stops the agent before it

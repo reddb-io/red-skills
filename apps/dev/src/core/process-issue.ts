@@ -26,7 +26,7 @@ import {
   slugifyRef,
   type GitExec,
 } from "./remote-branch.js";
-import { buildHandoff, type HandoffComment } from "./handoff.js";
+import { buildHandoff, EXIT_PROTOCOL, type HandoffComment } from "./handoff.js";
 import {
   type AgentOutcome,
   type AgentEffort,
@@ -669,6 +669,7 @@ export async function processIssue(
       model: initialTier.model,
       effort: initialTier.effort,
       handoffPath,
+      systemPrompt: EXIT_PROTOCOL,
       branch,
       base,
       cwd: input.attemptDir,
@@ -735,6 +736,7 @@ export async function processIssue(
         model: fallbackTier.model,
         effort: fallbackTier.effort,
         handoffPath,
+        systemPrompt: EXIT_PROTOCOL,
         branch,
         base,
         cwd: input.attemptDir,
