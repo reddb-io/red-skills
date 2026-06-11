@@ -92,6 +92,16 @@ describe("buildRunOptions", () => {
     expect(opts.prompt).toBeUndefined();
   });
 
+  it("threads systemPrompt into RunOptions when present, omits it otherwise", () => {
+    const withSys = buildRunOptions(makeDeps(async () => fakeResult()), {
+      ...baseInput,
+      systemPrompt: "RULE: emit DONE last.",
+    });
+    expect(withSys.systemPrompt).toBe("RULE: emit DONE last.");
+    const without = buildRunOptions(makeDeps(async () => fakeResult()), baseInput);
+    expect(without.systemPrompt).toBeUndefined();
+  });
+
   it("selects the agent provider from runner+model+effort", () => {
     const opts = buildRunOptions(makeDeps(async () => fakeResult()), baseInput);
     expect(opts.agent).toEqual({ __agent: "claude:claude-opus-4-8:high" });
