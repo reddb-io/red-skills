@@ -85,3 +85,49 @@ export const AfkStateSchema = z.object({
 });
 
 export type AfkState = z.infer<typeof AfkStateSchema>;
+
+/** The full `current` sub-state of a running attempt (issue identity + worktree
+ * bookkeeping + the WorkerVitals signals). */
+export type AfkCurrent = z.infer<typeof AfkCurrentSchema>;
+
+/**
+ * The canonical worker-vitals contract (ADR 0065) — the observable signals a
+ * running AFK worker emits, one name per signal, grouped by the question each
+ * group answers. This is the single shape consumers (statusline, monitor,
+ * dashboard) read; `AfkCurrent` (the persisted `current.*`) is a superset of it,
+ * enforced by the `_AfkCurrentSatisfiesWorkerVitals` assertion below — so adding
+ * or renaming a vital is one declaration here + the schema, and a drift between
+ * the two fails to compile. The red-castle stream-event → field map is pinned by
+ * the contract test in `tests/worker-vitals.contract.test.ts`.
+ */
+export interface WorkerVitals {
+  // identity
+  number: number | string;
+  runner: string;
+  retries: number;
+  // lifecycle
+  stage: string;
+  iteration: number | string;
+  // progress
+  loc_added: number;
+  loc_removed: number;
+  last_commit_at: string;
+  // activity
+  tools_called_count: number;
+  text_chunk_count: number;
+  reasoning_events: number;
+  reasoning_tokens: number;
+  last_event_at: string;
+  // liveness
+  waiting_count: number;
+  // cost
+  input_tokens: number;
+  output_tokens: number;
+  cost_usd: number;
+}
+
+/** Compile-time guarantee that the persisted `current.*` satisfies the canonical
+ * WorkerVitals contract. If a vital is renamed on the schema without updating
+ * {@link WorkerVitals} (or vice-versa), this assignment fails to compile. */
+const _AfkCurrentSatisfiesWorkerVitals: WorkerVitals = undefined as unknown as AfkCurrent;
+void _AfkCurrentSatisfiesWorkerVitals;
