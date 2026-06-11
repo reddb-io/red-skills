@@ -34,7 +34,7 @@ Fetch first: `git fetch origin`. Resolve `origin/HEAD` to the remote default bra
 
 - **Contradictions** — two ADRs whose decisions oppose on the same topic (e.g. "memory lives in `src/apps`" vs "memory moves to `red-memory`"). Flag pairs that should cross-reference but don't.
 - **Missing supersession** — a later ADR reverses/supersedes an earlier one, but the earlier still reads `Status: accepted` with no "superseded by ADR-NNNN" / Related note.
-- **Stale references** — an ADR cites a path / file / command that no longer exists (grep the body for paths, check existence; e.g. an ADR naming `src/domains/` after the tree became `src/apps/`). Flag the prose, not the decision.
+- **Stale references** — an ADR cites a path / file / command that no longer exists (grep the body for paths, check existence; e.g. an ADR naming `src/domains/` or `src/apps/` after the tree became `apps/`). Flag the prose, not the decision.
 - **Numbering** — duplicate or gap-colliding ADR numbers (two files claiming the same NNNN, e.g. when parallel branches both grab the next number).
 - **Structural / controversial decisions** — a decision that is internally incoherent, was taken under unresolved disagreement, or was never actually implemented. These are the ones that **don't** get fixed by editing markdown — they need real work, and they are the spine of the PRD.
 

@@ -139,14 +139,14 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       # ADR 0032: AFK ships as a committed, dependency-free bundle. Rebuild it
-      # from src/apps/dev (which lives outside the plugin tree) so the shipped
+      # from apps/dev (which lives outside the plugin tree) so the shipped
       # bin/afk.mjs is always byte-for-byte the build of the released source,
       # then stage it into the version-bump commit below. esbuild output is
       # deterministic, so unchanged source rebuilds to identical bytes and the
       # git add is a no-op.
       - name: Build dev runtime bundle
         if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
-        working-directory: src/apps/dev
+        working-directory: apps/dev
         env:
           NEXT: ${{ steps.version.outputs.next }}
           RED_BUILD_VERSION: ${{ steps.version.outputs.next }}
@@ -158,23 +158,23 @@ jobs:
           # NOT a committed bundle. ADR 0039: the two committed, dependency-free
           # entrypoints — plugins/dev/hooks/red-fetch.mjs (fetch role) and
           # plugins/dev/skills/engineering/afk/bin/afk.mjs (run:dev role) — are built
-          # from ONE source, src/packages/shared/entrypoint-cli.ts. `build` emits the
+          # from ONE source, packages/shared/entrypoint-cli.ts. `build` emits the
           # dist/dev.bundle.min.mjs asset (ADR 0034) plus both entrypoints. They carry
           # no version, so esbuild's deterministic output rebuilds to identical bytes
           # and the git add below is a no-op unless the source actually changed.
           pnpm build
-          # Checksum manifest the dynamic-fetch hook (src/packages/shared/bundle-fetch.ts)
+          # Checksum manifest the dynamic-fetch hook (packages/shared/bundle-fetch.ts)
           # verifies before caching. Mirrors memory-runtime-manifest.json.
           node --input-type=module <<'EOF'
           import { createHash } from 'node:crypto';
           import { readFileSync, writeFileSync } from 'node:fs';
-          const bytes = readFileSync('../../../dist/dev.bundle.min.mjs');
+          const bytes = readFileSync('../../dist/dev.bundle.min.mjs');
           const manifest = {
             plugin: 'dev',
             version: process.env.NEXT.replace(/^v/, ''),
             sha256: createHash('sha256').update(bytes).digest('hex'),
           };
-          writeFileSync('../../../dist/dev.manifest.json', JSON.stringify(manifest, null, 2));
+          writeFileSync('../../dist/dev.manifest.json', JSON.stringify(manifest, null, 2));
           console.log('dev runtime manifest:', JSON.stringify(manifest));
           EOF
 
@@ -197,14 +197,14 @@ jobs:
           )
           package_jsons=(
             package.json
-            src/apps/dev/package.json
-            src/apps/memory/package.json
-            src/apps/brain/package.json
-            src/apps/benchmark-memory/package.json
-            src/apps/benchmark-code-understanding/package.json
-            src/apps/code-nav/package.json
-            src/packages/shared/package.json
-            src/packages/build-info/package.json
+            apps/dev/package.json
+            apps/memory/package.json
+            apps/brain/package.json
+            apps/benchmark-memory/package.json
+            apps/benchmark-code-understanding/package.json
+            apps/code-nav/package.json
+            packages/shared/package.json
+            packages/build-info/package.json
           )
           # ADR 0039: both committed entrypoints are built from entrypoint-cli.ts by
           # `pnpm build` above. Stage both so a source change ships; they carry no
@@ -249,7 +249,7 @@ jobs:
       # publishes. pnpm/node are already set up above for the AFK bundle.
       - name: Build memory runtime bundle + manifest
         if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
-        working-directory: src/apps/memory
+        working-directory: apps/memory
         env:
           NEXT: ${{ steps.version.outputs.next }}
           RED_BUILD_VERSION: ${{ steps.version.outputs.next }}
@@ -288,8 +288,8 @@ jobs:
             if (!sha256) throw new Error(`invalid sha256 file for ${asset}`);
             redAssets[platform] = { asset, sha256 };
           }
-          const cli = readFileSync('../../../dist/memory.bundle.min.mjs');
-          const mcp = readFileSync('../../../dist/memory-mcp.bundle.min.mjs');
+          const cli = readFileSync('../../dist/memory.bundle.min.mjs');
+          const mcp = readFileSync('../../dist/memory-mcp.bundle.min.mjs');
           const manifest = {
             schema: 'red.memory.runtime.v1',
             version: process.env.NEXT.replace(/^v/, ''),
@@ -297,7 +297,7 @@ jobs:
             mcp: { asset: 'memory-mcp.bundle.min.mjs', sha256: createHash('sha256').update(mcp).digest('hex') },
             reddb: { ...reddb, sdk, assets: redAssets },
           };
-          writeFileSync('../../../dist/memory-runtime-manifest.json', JSON.stringify(manifest, null, 2));
+          writeFileSync('../../dist/memory-runtime-manifest.json', JSON.stringify(manifest, null, 2));
           console.log('runtime manifest:', JSON.stringify(manifest));
           EOF
 
@@ -308,7 +308,7 @@ jobs:
       # `gh release create`; fetched by plugins/brain/scripts/bootstrap.mjs.
       - name: Build brain runtime bundle + manifest
         if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
-        working-directory: src/apps/brain
+        working-directory: apps/brain
         env:
           NEXT: ${{ steps.version.outputs.next }}
           RED_BUILD_VERSION: ${{ steps.version.outputs.next }}
@@ -345,8 +345,8 @@ jobs:
             if (!sha256) throw new Error(`invalid sha256 file for ${asset}`);
             redAssets[platform] = { asset, sha256 };
           }
-          const cli = readFileSync('../../../dist/brain.bundle.min.mjs');
-          const mcp = readFileSync('../../../dist/brain-mcp.bundle.min.mjs');
+          const cli = readFileSync('../../dist/brain.bundle.min.mjs');
+          const mcp = readFileSync('../../dist/brain-mcp.bundle.min.mjs');
           const manifest = {
             schema: 'red.brain.runtime.v1',
             version: process.env.NEXT.replace(/^v/, ''),
@@ -354,19 +354,19 @@ jobs:
             mcp: { asset: 'brain-mcp.bundle.min.mjs', sha256: createHash('sha256').update(mcp).digest('hex') },
             reddb: { ...reddb, sdk, assets: redAssets },
           };
-          writeFileSync('../../../dist/brain-runtime-manifest.json', JSON.stringify(manifest, null, 2));
+          writeFileSync('../../dist/brain-runtime-manifest.json', JSON.stringify(manifest, null, 2));
           console.log('brain runtime manifest:', JSON.stringify(manifest));
           EOF
 
       # ADR 0034: the code-nav MCP server ships as a release-asset bundle, like
-      # the dev/memory runtimes. Its package lives under src/apps/code-nav.
+      # the dev/memory runtimes. Its package lives under apps/code-nav.
       # `build` (typecheck + bundle) emits the dev-checkout
       # file dist/code-nav-mcp.bundle.min.mjs; the release asset the dynamic fetch
       # resolves is named code-nav.bundle.min.mjs (bundleAssetName('code-nav')),
       # with a code-nav.manifest.json mirroring dev.manifest.json.
       - name: Build code-nav MCP bundle + manifest
         if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
-        working-directory: src/apps/code-nav
+        working-directory: apps/code-nav
         env:
           NEXT: ${{ steps.version.outputs.next }}
           RED_BUILD_VERSION: ${{ steps.version.outputs.next }}
@@ -379,9 +379,9 @@ jobs:
           node --input-type=module <<'EOF'
           import { createHash } from 'node:crypto';
           import { readFileSync, writeFileSync, copyFileSync } from 'node:fs';
-          const built = '../../../dist/code-nav-mcp.bundle.min.mjs';
+          const built = '../../dist/code-nav-mcp.bundle.min.mjs';
           // Publish the fetch-resolvable asset name code-nav.bundle.min.mjs.
-          const asset = '../../../dist/code-nav.bundle.min.mjs';
+          const asset = '../../dist/code-nav.bundle.min.mjs';
           copyFileSync(built, asset);
           const bytes = readFileSync(asset);
           const manifest = {
@@ -389,13 +389,13 @@ jobs:
             version: process.env.NEXT.replace(/^v/, ''),
             sha256: createHash('sha256').update(bytes).digest('hex'),
           };
-          writeFileSync('../../../dist/code-nav.manifest.json', JSON.stringify(manifest, null, 2));
+          writeFileSync('../../dist/code-nav.manifest.json', JSON.stringify(manifest, null, 2));
           console.log('code-nav bundle manifest:', JSON.stringify(manifest));
           EOF
 
       - name: Build benchmark-memory bundle + manifest
         if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
-        working-directory: src/apps/benchmark-memory
+        working-directory: apps/benchmark-memory
         env:
           NEXT: ${{ steps.version.outputs.next }}
           RED_BUILD_VERSION: ${{ steps.version.outputs.next }}
@@ -407,20 +407,20 @@ jobs:
           node --input-type=module <<'EOF'
           import { createHash } from 'node:crypto';
           import { readFileSync, writeFileSync } from 'node:fs';
-          const asset = '../../../dist/benchmark-memory.bundle.min.mjs';
+          const asset = '../../dist/benchmark-memory.bundle.min.mjs';
           const bytes = readFileSync(asset);
           const manifest = {
             plugin: 'benchmark-memory',
             version: process.env.NEXT.replace(/^v/, ''),
             sha256: createHash('sha256').update(bytes).digest('hex'),
           };
-          writeFileSync('../../../dist/benchmark-memory.manifest.json', JSON.stringify(manifest, null, 2));
+          writeFileSync('../../dist/benchmark-memory.manifest.json', JSON.stringify(manifest, null, 2));
           console.log('benchmark-memory bundle manifest:', JSON.stringify(manifest));
           EOF
 
       - name: Build benchmark-code-understanding bundle + manifest
         if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
-        working-directory: src/apps/benchmark-code-understanding
+        working-directory: apps/benchmark-code-understanding
         env:
           NEXT: ${{ steps.version.outputs.next }}
           RED_BUILD_VERSION: ${{ steps.version.outputs.next }}
@@ -432,14 +432,14 @@ jobs:
           node --input-type=module <<'EOF'
           import { createHash } from 'node:crypto';
           import { readFileSync, writeFileSync } from 'node:fs';
-          const asset = '../../../dist/benchmark-code-understanding.bundle.min.mjs';
+          const asset = '../../dist/benchmark-code-understanding.bundle.min.mjs';
           const bytes = readFileSync(asset);
           const manifest = {
             plugin: 'benchmark-code-understanding',
             version: process.env.NEXT.replace(/^v/, ''),
             sha256: createHash('sha256').update(bytes).digest('hex'),
           };
-          writeFileSync('../../../dist/benchmark-code-understanding.manifest.json', JSON.stringify(manifest, null, 2));
+          writeFileSync('../../dist/benchmark-code-understanding.manifest.json', JSON.stringify(manifest, null, 2));
           console.log('benchmark-code-understanding bundle manifest:', JSON.stringify(manifest));
           EOF
 

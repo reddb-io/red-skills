@@ -7,7 +7,7 @@ description: Use when choosing or explaining the RedSkills dev model tier for va
 
 This is the dev plugin's cross-host policy for why a task uses a given model tier and which tier should run it. It is the human-readable policy from ADR 0049.
 
-The machine source for model ids and effort values is `src/apps/dev/src/core/config.ts` (`CONFIG_DEFAULTS`), overridden per repository by `.red/config.yaml` at `plugins.dev.afk.models.{claude,codex}.{validate,simple,complex,think}`. The legacy top-level `afk.models...` location remains a fallback. Do not copy this table into executor prompts; point executors here so the classification criterion stays in one place.
+The machine source for model ids and effort values is `apps/dev/src/core/config.ts` (`CONFIG_DEFAULTS`), overridden per repository by `.red/config.yaml` at `plugins.dev.afk.models.{claude,codex}.{validate,simple,complex,think}`. The legacy top-level `afk.models...` location remains a fallback. Do not copy this table into executor prompts; point executors here so the classification criterion stays in one place.
 
 ## Tier table
 
@@ -58,12 +58,12 @@ Interactive Codex runs a **single session model** — it exposes no per-task sub
 
 - Claude interactive executors live in `plugins/dev/agents/validate.md`, `plugins/dev/agents/simple-code.md`, and `plugins/dev/agents/complex-code.md`. They are Claude-only wrappers over this policy.
 - Codex receives this same skill through `plugins/dev/.codex-plugin/plugin.json` (`"skills": "./skills/"`). Codex does not ship the Claude `agents/` wrappers.
-- AFK sandcastle execution lives in `plugins/dev/skills/engineering/afk/SKILL.md`, with host adapters in `runner-claude.md` and `runner-codex.md`. Runtime tier resolution flows through `resolveTier` in `src/apps/dev/src/core/process-issue.ts` and the config resolver in `src/apps/dev/src/core/config.ts`.
+- AFK sandcastle execution lives in `plugins/dev/skills/engineering/afk/SKILL.md`, with host adapters in `runner-claude.md` and `runner-codex.md`. Runtime tier resolution flows through `resolveTier` in `apps/dev/src/core/process-issue.ts` and the config resolver in `apps/dev/src/core/config.ts`.
 - Host hooks live in `plugins/dev/hooks/claude.hooks.json` and `plugins/dev/hooks/codex.hooks.json`; they are host-specific enforcement surfaces, not places to duplicate the policy.
 
 ## Interactive enforcement (issue #456, ADR 0049)
 
-The interactive session's tier is enforced — not merely suggested — by a PreToolUse hook on the subagent-dispatch tool (`Task`/`Agent`). On Claude Code, `plugins/dev/hooks/claude.hooks.json` routes the dispatch payload through the dev bundle's `route-model-tier` command (`src/apps/dev/src/commands/route-model-tier.ts`, pure decision in `core/model-tier-route.ts`). The command:
+The interactive session's tier is enforced — not merely suggested — by a PreToolUse hook on the subagent-dispatch tool (`Task`/`Agent`). On Claude Code, `plugins/dev/hooks/claude.hooks.json` routes the dispatch payload through the dev bundle's `route-model-tier` command (`apps/dev/src/commands/route-model-tier.ts`, pure decision in `core/model-tier-route.ts`). The command:
 
 - maps a dispatch to a tier-agent (`validate` → `validate`, `simple-code` → `simple`, `complex-code` → `complex`) and asks `resolveTier` for the policy model from the **single config source** (`plugins.dev.afk.models.claude.<tier>.model`); it hardcodes no model id;
 - when the dispatched model's family disagrees with the tier (or is unset), corrects it via the enforcement contract decided at HITL on 2026-06-08: **(a) rewrite** the dispatch model in place using Claude's `hookSpecificOutput.updatedInput` → **(b) fallback block-and-retry** (`permissionDecision: "deny"`) → **(c) degrade to audit** (`additionalContext`). Claude supports rewrite, so it always takes path (a);

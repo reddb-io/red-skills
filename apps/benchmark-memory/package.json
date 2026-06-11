@@ -1,0 +1,29 @@
+{
+  "name": "@reddb-io/benchmark-memory",
+  "version": "1.185.0",
+  "private": true,
+  "description": "Internal benchmark and reference-eval app for RedSkills Memory.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "bundle": "node ../../scripts/bundle-app.mjs --entry src/cli.ts --outfile ../../dist/benchmark-memory.bundle.min.mjs --asset benchmark-memory.bundle.min.mjs --minify",
+    "build": "pnpm run typecheck && pnpm run bundle",
+    "references:baseline": "tsx src/cli.ts references baseline --json --human",
+    "references:eval": "tsx src/cli.ts references eval --json --human",
+    "references:eval:v2": "tsx src/cli.ts references eval --v2 --json --human",
+    "references:interop": "tsx src/cli.ts references interop --json --human",
+    "dev": "node --import tsx src/cli.ts"
+  },
+  "dependencies": {
+    "@reddb-io/build-info": "workspace:*",
+    "@reddb-io/sdk": "1.7.0",
+    "@reddb-io/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "esbuild": "catalog:",
+    "tsx": "catalog:",
+    "typescript": "catalog:"
+  }
+}

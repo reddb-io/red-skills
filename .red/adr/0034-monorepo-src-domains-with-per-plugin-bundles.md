@@ -98,12 +98,18 @@ red-skills/
 
 ## Status
 
-accepted; partially superseded by ADR 0039 (entrypoints fused) and partially
-superseded by ADR 0041 (memory moves out).
+accepted; partially superseded by ADR 0039 (entrypoints fused), partially
+superseded by ADR 0041 (memory moves out), and the **physical layout relocated
+by ADR 0060** (`src/apps/*` → `apps/*`, `src/packages/*` → `packages/*`, with a
+pnpm `catalog:` for shared versions).
 
-Accepted; the monorepo-`src/apps` implementation principle still stands for `dev`.
-ADR 0039 refines the entrypoint shape, and ADR 0041 partially supersedes this ADR
-for memory by moving memory's canonical home out of red-skills.
+Accepted; the definitions-vs-implementation principle and the shared-layer
+decision still stand for `dev`. ADR 0039 refines the entrypoint shape, ADR 0041
+partially supersedes this ADR for memory by moving memory's canonical home out of
+red-skills, and ADR 0060 moves the implementation tree from `src/apps`+`src/packages`
+to the conventional root-level `apps/`+`packages/` (the split itself is unchanged
+— only the paths moved). Where this ADR's body says `src/apps/…` or `src/packages/…`,
+read `apps/…` / `packages/…`.
 
 ## Related
 

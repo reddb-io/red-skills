@@ -1,0 +1,48 @@
+{
+  "name": "@reddb-io/memory",
+  "version": "1.185.0",
+  "private": true,
+  "description": "reddb.io memory plugin — governed operational memory for code agents: markdown notes, RedDB graph memory, governed recall, lifecycle hooks, MCP/HTTP read surfaces, Workbench diagnostics, and Skill telemetry for self-improvement.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "bin": {
+    "memory": "dist/cli.js",
+    "memory-mcp": "dist/mcp-server.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint:deterministic-extractors": "tsx src/deterministic-extractor-vocabulary-lint.ts",
+    "build": "pnpm lint:deterministic-extractors && tsc -p tsconfig.build.json && pnpm bundle",
+    "bundle": "pnpm bundle:cli && pnpm bundle:mcp",
+    "bundle:cli": "node ../../scripts/bundle-app.mjs --entry src/cli.ts --outfile ../../dist/memory.bundle.min.mjs --asset memory.bundle.min.mjs --minify --reddb-from-package",
+    "bundle:mcp": "node ../../scripts/bundle-app.mjs --entry src/mcp-server.ts --outfile ../../dist/memory-mcp.bundle.min.mjs --asset memory-mcp.bundle.min.mjs --minify --reddb-from-package",
+    "test": "vitest run",
+    "test:integration": "RED_MEMORY_RECALL_P50_TARGET_MS=250 vitest run --config vitest.integration.config.ts",
+    "dev": "node --import tsx src/cli.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "catalog:",
+    "@reddb-io/build-info": "workspace:*",
+    "@reddb-io/sdk": "1.7.0",
+    "@reddb-io/shared": "workspace:*",
+    "fast-glob": "^3.3.2",
+    "gray-matter": "^4.0.3",
+    "js-tiktoken": "^1.0.21",
+    "zod": "catalog:"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@reddb-io/sdk"
+    ]
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "esbuild": "catalog:",
+    "tsx": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

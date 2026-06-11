@@ -221,7 +221,7 @@ afk:
 
 Defaults are runner- and tier-specific. Until classification lands, AFK uses the `think` tier by default: Codex defaults to `gpt-5.5`/`high`; Claude Code defaults to `claude-opus-4-8`/`high`. The legacy `afk.model` and `afk.models.<runner>` scalar keys are still accepted as fallback model overrides, but tiered `afk.models.<runner>.<tier>.{model,effort}` is safer for mixed Claude/Codex fleets.
 
-The cross-host tier table, deterministic-first validation rule, simple-vs-complex criterion, escalation policy, and executor map live in [`model-tier-policy`](./plugins/dev/skills/engineering/model-tier-policy/SKILL.md). The single machine source for defaults remains `CONFIG_DEFAULTS` in [`config.ts`](./src/apps/dev/src/core/config.ts).
+The cross-host tier table, deterministic-first validation rule, simple-vs-complex criterion, escalation policy, and executor map live in [`model-tier-policy`](./plugins/dev/skills/engineering/model-tier-policy/SKILL.md). The single machine source for defaults remains `CONFIG_DEFAULTS` in [`config.ts`](./apps/dev/src/core/config.ts).
 
 <details>
 <summary><strong>Alternatives — no auto-update</strong></summary>
@@ -562,7 +562,7 @@ Skill telemetry, and soft integrations used by `dev`.
 
 | Server | What it does |
 |--------|--------------|
-| **[code-nav](./src/apps/code-nav/README.md)** | LSP-backed semantic navigation. Spawns the language server for each file type and exposes `workspace_symbols`, `goto_definition`, `find_references`, `document_symbols`, `hover` as MCP tools — IDE-grade symbol navigation on top of the agent's default search. Presets for TS/Go/Rust/Python; extend via `CODE_NAV_SERVERS`. Loads automatically with the `dev` plugin. |
+| **[code-nav](./apps/code-nav/README.md)** | LSP-backed semantic navigation. Spawns the language server for each file type and exposes `workspace_symbols`, `goto_definition`, `find_references`, `document_symbols`, `hover` as MCP tools — IDE-grade symbol navigation on top of the agent's default search. Presets for TS/Go/Rust/Python; extend via `CODE_NAV_SERVERS`. Loads automatically with the `dev` plugin. |
 
 </details>
 

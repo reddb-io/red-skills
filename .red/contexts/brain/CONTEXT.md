@@ -83,7 +83,7 @@ The rule that external connector tools stay behind the Brain runtime and the age
 _Avoid_: raw connector MCPs, generic messaging tools, tool-surface sprawl
 
 **Channel bridge**:
-The Brain integration point (`src/apps/brain/src/channel-bridge.ts`,
+The Brain integration point (`apps/brain/src/channel-bridge.ts`,
 `McpStdioChannelBridge`) that reaches external messaging channels through the
 `red-hermes` runtime as an internal black box, spawned as a stdio MCP server via
 `hermes mcp serve`. Brain speaks only the MCP tool protocol to it and never the
@@ -110,7 +110,7 @@ pin. See ADR 0056.
 _Avoid_: best-effort tool discovery, partial-surface tolerance, unpinned runtime
 
 **Brain act**:
-The brain-scoped capability (`brain_act`, `src/apps/brain/src/brain-act.ts`)
+The brain-scoped capability (`brain_act`, `apps/brain/src/brain-act.ts`)
 that posts a message to a channel target through the **Channel bridge**
 `send()` path in **outbound-only** mode — the bridge sends standalone using
 configured channel tokens, with no gateway daemon running. Exposed on the brain
@@ -136,7 +136,7 @@ An initial Brain KPI about the Brain itself, such as artifact counts by kind, co
 _Avoid_: business KPI, manually reported metric, external analytics
 
 **KpiQuery**:
-The Brain read module (`src/apps/brain/src/kpi-query.ts`, `KpiQuery`) that
+The Brain read module (`apps/brain/src/kpi-query.ts`, `KpiQuery`) that
 computes Brain KPIs as **time-windowed aggregations over `kind:event`
 artifacts** — a total count plus zero-filled per-window series (hour/day/week/
 month, UTC-aligned), optionally split by `platform`, `event_type`, or `target`,

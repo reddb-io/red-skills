@@ -6,7 +6,7 @@ import{spawnSync as L}from"node:child_process";import{createHash as U}from"node:
   Looked in cache ${t} and repo-root dist/.
   The bundle ships as a GitHub Release asset (ADR 0034) fetched by red-fetch;
   ensure network access on first run, or build it locally:
-    pnpm -C src/apps/${n} run bundle
+    pnpm -C apps/${n} run bundle
 `),process.exit(1)}let o=L(process.execPath,[i,...e.rest],{stdio:"inherit"});o.signal&&process.kill(process.pid,o.signal),process.exit(o.status??1)}var K=`entrypoint (fetch) \u2014 resolve a plugin's built bundle from its GitHub Release into a local cache.
 
 Usage:

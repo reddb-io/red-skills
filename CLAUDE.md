@@ -24,14 +24,14 @@ red-skills/                         ← repo root + marketplace
 │       ├── dev/CONTEXT.md          ← `dev` plugin glossary
 │       ├── memory/CONTEXT.md       ← `memory` plugin glossary
 │       └── brain/CONTEXT.md        ← `brain` plugin glossary
-├── src/                            ← implementation workspace (ADR 0034)
-│   ├── apps/
-│   │   ├── dev/                    ← `dev` runtime implementation
-│   │   ├── memory/                 ← `memory` runtime implementation
-│   │   ├── brain/                  ← `brain` runtime implementation
-│   │   └── code-nav/               ← code navigation runtime implementation
-│   └── packages/
-│       └── shared/                 ← code shared by multiple runtimes
+├── apps/                           ← runtime implementations (ADR 0034, relocated to root by ADR 0060)
+│   ├── dev/                        ← `dev` runtime implementation
+│   ├── memory/                     ← `memory` runtime implementation
+│   ├── brain/                      ← `brain` runtime implementation
+│   └── code-nav/                   ← code navigation runtime implementation
+├── packages/                       ← code shared by multiple runtimes
+│   ├── shared/                     ← CLI args, bundle-fetch, entrypoint (ADR 0034)
+│   └── build-info/                 ← shared build metadata helpers
 ├── dist/                           ← generated release bundles and manifests
 └── plugins/
     ├── dev/                        ← shipped `dev` plugin definition
@@ -48,17 +48,18 @@ red-skills/                         ← repo root + marketplace
 ```
 
 `plugins/` is the agent-facing definition surface: manifests, skills, hooks, and
-docs. Runtime implementation belongs under `src/`, and generated bundles belong
-under `dist/` when bundle/release builds run. ADR 0034 describes these as
-implementation domains (`src/domains/<plugin>/`) plus a shared layer
-(`src/shared/`); the current filesystem realizes that split as
-`src/apps/<plugin>/` and `src/packages/shared/`.
+docs. Runtime implementation lives in root-level `apps/`, shared code in
+`packages/`, and generated bundles belong under `dist/` when bundle/release
+builds run. ADR 0034 introduced the definitions/implementation split as
+implementation domains plus a shared layer; ADR 0060 relocated that split to the
+conventional Turborepo layout — `apps/<plugin>/` and `packages/shared/` at the
+repo root — with shared dependency versions consolidated into a pnpm `catalog:`.
 
 Future plugins (e.g. `data`, `ops`) live as additional siblings under
 `plugins/` with their own `.claude-plugin/plugin.json`,
 `.codex-plugin/plugin.json`, and their own `skills/` tree. Each plugin appears
 as a separate entry in both marketplace manifests, and any runtime code for it
-lives under `src/apps/<plugin>/`.
+lives under `apps/<plugin>/`.
 
 `personal/` and `deprecated/` were removed from upstream and **must not be recreated**.
 

@@ -11,11 +11,11 @@
     },
     "bundle": {
       "dependsOn": ["^build"],
-      "outputs": ["../../../dist/**", "dist-bundle/**"]
+      "outputs": ["../../dist/**"]
     },
     "build": {
       "dependsOn": ["^build"],
-      "outputs": ["dist/**", "dist-bundle/**", "../../../dist/**"]
+      "outputs": ["dist/**", "../../dist/**"]
     }
   }
 }
