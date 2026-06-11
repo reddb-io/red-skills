@@ -151,6 +151,10 @@ export interface ProgressHeartbeatInput {
     waiting: number;
     /** New stream events in the window this tick closes (0 → a waiting window). */
     eventsThisWindow: number;
+    /** Cost group (ADR 0065): cumulative token spend / USD from `usage` events. */
+    inputTokens: number;
+    outputTokens: number;
+    costUsd: number;
   };
 }
 
@@ -184,8 +188,13 @@ export function buildProgressHeartbeat(input: ProgressHeartbeatInput): ProgressH
   const reasonFrag = a
     ? ` think:${a.reasoningCount}${a.reasoningTokens > 0 ? `/${a.reasoningTokens}tok` : ""}`
     : "";
+  // Cost tail: shown only when the runner streamed token usage (codex/opencode).
+  const costFrag =
+    a && (a.inputTokens > 0 || a.outputTokens > 0)
+      ? ` tok:${a.inputTokens}/${a.outputTokens}${a.costUsd > 0 ? ` $${a.costUsd.toFixed(2)}` : ""}`
+      : "";
   const activityTail = a
-    ? ` · tools:${a.toolsCalled} text:${a.textChunks}${reasonFrag} wait:${a.waiting}${a.eventsThisWindow === 0 ? " (idle window)" : ""}`
+    ? ` · tools:${a.toolsCalled} text:${a.textChunks}${reasonFrag} wait:${a.waiting}${costFrag}${a.eventsThisWindow === 0 ? " (idle window)" : ""}`
     : "";
   const msg = `progress: ${input.secsSinceProgress}s since last commit${headShort} · ${diff}${activityTail}`;
   return {
@@ -212,6 +221,9 @@ export function buildProgressHeartbeat(input: ProgressHeartbeatInput): ProgressH
             reasoning_tokens: String(a.reasoningTokens),
             waiting_count: String(a.waiting),
             events_this_window: String(a.eventsThisWindow),
+            input_tokens: String(a.inputTokens),
+            output_tokens: String(a.outputTokens),
+            cost_usd: String(a.costUsd),
             // Deprecated legacy alias — remove one release after S1.
             thinking_called_count: String(a.reasoningCount),
           }
@@ -228,6 +240,9 @@ export function buildProgressHeartbeat(input: ProgressHeartbeatInput): ProgressH
             "current.reasoning_events": a.reasoningCount,
             "current.reasoning_tokens": a.reasoningTokens,
             "current.waiting_count": a.waiting,
+            "current.input_tokens": a.inputTokens,
+            "current.output_tokens": a.outputTokens,
+            "current.cost_usd": a.costUsd,
           }
         : {}),
     },

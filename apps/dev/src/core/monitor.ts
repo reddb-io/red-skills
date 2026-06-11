@@ -22,6 +22,12 @@ export interface CompactCurrent {
   stage: string;
   /** Per-iteration start (current.started_at), an ISO/RFC string or "". */
   started_at: string;
+  /** Cost group (ADR 0065) — cumulative per-worker token spend / USD. Optional so
+   * the dashboard's compact-current constructor and fixtures stay terse; absent
+   * reads as 0. */
+  input_tokens?: number;
+  output_tokens?: number;
+  cost_usd?: number;
 }
 
 /** The subset of afk.state.json the compact line reads. */
@@ -152,11 +158,18 @@ export function renderWorkerCompactLine(worker: CompactWorker, now: number): str
 
   const diff = `  ${formatDiff(worker.diffAdded ?? 0, worker.diffRemoved ?? 0)}`;
 
+  // Cost group (ADR 0065): per-worker token spend, shown only when the runner
+  // streamed usage (codex/opencode). `$cost` only when the runner reports USD.
+  const it = state.current.input_tokens ?? 0;
+  const ot = state.current.output_tokens ?? 0;
+  const cu = state.current.cost_usd ?? 0;
+  const costFrag = it > 0 || ot > 0 ? `  tok:${it}/${ot}${cu > 0 ? ` $${cu.toFixed(2)}` : ""}` : "";
+
   let cur: string;
   if (!isNoIssue(state.current.number)) {
     const title = state.current.title.slice(0, TITLE_MAX);
     const elapsed = formatElapsed(elapsedSeconds(state, now));
-    cur = `  #${state.current.number} ${title}  stage:${state.current.stage}  ${elapsed}${diff}`;
+    cur = `  #${state.current.number} ${title}  stage:${state.current.stage}  ${elapsed}${diff}${costFrag}`;
   } else {
     cur = `  idle${diff}`;
   }

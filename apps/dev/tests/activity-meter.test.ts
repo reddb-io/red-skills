@@ -12,6 +12,26 @@ describe("createActivityMeter", () => {
     expect(s.textChunks).toBe(1);
   });
 
+  it("sums usage events into the cost group without counting them as liveness units", () => {
+    const m = createActivityMeter();
+    m.record({ type: "toolCall" });
+    m.record({ type: "usage", inputTokens: 1500, outputTokens: 320, costUsd: 0.04 });
+    m.record({ type: "usage", inputTokens: 800, outputTokens: 120, costUsd: 0.02 });
+    const s = m.peek();
+    expect(s.inputTokens).toBe(2300);
+    expect(s.outputTokens).toBe(440);
+    expect(s.costUsd).toBeCloseTo(0.06);
+    expect(s.toolsCalled).toBe(1);
+    expect(s.textChunks).toBe(0);
+    expect(s.reasoningCount).toBe(0);
+  });
+
+  it("treats a usage-only window as a waiting window (usage is not a liveness event)", () => {
+    const m = createActivityMeter();
+    m.record({ type: "usage", inputTokens: 100, outputTokens: 10 });
+    expect(m.snapshotWindow().waiting).toBe(1);
+  });
+
   it("counts reasoning events and sums their tokens (codex/opencode style)", () => {
     const m = createActivityMeter();
     m.record({ type: "reasoning", tokens: 13 });
