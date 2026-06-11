@@ -76,6 +76,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [feat(afk): raise max iterations to 20 + per-iteration boundary markers](./pages/413-feat-afk-raise-max-iterations-to-20-per-iteration-boundary-m.md)
 - [feat(afk): record reasoning attempts into memory (ADR 0017), CLI-to-CLI direct](./pages/330-feat-afk-record-reasoning-attempts-into-memory-adr-0017-cli.md)
 - [feat(afk): req:N dependency labels + event-driven auto-unblock](./pages/292-feat-afk-req-n-dependency-labels-event-driven-auto-unblock.md)
+- [feat(afk): run execution on the vendored @reddb-io/red-castle submodule (ADR 0061)](./pages/674-feat-afk-run-execution-on-the-vendored-reddb-io-red-castle-s.md)
 - [feat(afk): salvage uncommitted worktree when codex emits DONE without committing](./pages/468-feat-afk-salvage-uncommitted-worktree-when-codex-emits-done.md)
 - [feat(afk): statusline reads project root from first arg; 🙋→🆘](./pages/266-feat-afk-statusline-reads-project-root-from-first-arg.md)
 - [feat(afk): supervisor proof-of-life requires forward progress](./pages/636-feat-afk-supervisor-proof-of-life-requires-forward-progress.md)
