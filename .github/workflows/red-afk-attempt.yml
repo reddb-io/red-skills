@@ -10,13 +10,12 @@
 #
 #   1. `workflow_call`     — direct invocation by a caller workflow.
 #   2. `workflow_dispatch` — manual run from the Actions UI, `issue_number` input.
-#   3. `issues: labeled`   — auto-trigger when the `ready-for-agent` label is
-#                            applied. The `if:` gate filters to that label.
-#   4. `issues: opened`    — auto-trigger when an issue is CREATED already
-#                            carrying `ready-for-agent` (e.g. an automation or a
-#                            maintainer files a pre-delegated issue). Raw issues
-#                            with no label are NOT run — they fall through to
-#                            `red-issues-needs-triage` and the labeled path.
+#
+# The `issues: [labeled, opened]` auto-trigger was intentionally removed so the
+# lane stays dispatch/call-only while no auth secrets are configured (it was
+# firing — and failing at auth — on every `ready-for-agent` issue). Re-add it
+# (the `on:` trigger + the two `issues`-event branches in the job `if:`) once the
+# MINIMAX / OPENAI / OPENROUTER secrets are set.
 #
 # Per ADR 0056, the trust gate is rigorous by default: the issue author AND the
 # label-applier (the opener, for the `opened` path) must both be in the
@@ -110,10 +109,9 @@ on:
         type: string
         default: ""
 
-  # Auto-trigger: fire when `ready-for-agent` is applied to an issue, or when an
-  # issue is opened already carrying it. The `if:` on the job enforces both.
-  issues:
-    types: [labeled, opened]
+  # NOTE: the `issues: [labeled, opened]` auto-trigger was intentionally removed —
+  # the lane is dispatch/call-only until auth secrets are configured (see the job
+  # `if:` below for how to restore auto-firing).
 
 permissions:
   contents: write
@@ -122,15 +120,14 @@ permissions:
 
 jobs:
   attempt:
-    # Trigger sources converge into a single job. The job runs only when:
-    #   - workflow_dispatch / workflow_call (caller-resolved issue), or
-    #   - issues:labeled with label == ready-for-agent, or
-    #   - issues:opened where the issue already carries ready-for-agent.
+    # Manual / programmatic dispatch only. The `issues:` auto-trigger was removed
+    # so the lane no longer fires (and fails) on every `ready-for-agent` issue
+    # while no auth secrets are configured. To restore auto-firing once secrets
+    # (MINIMAX / OPENAI / OPENROUTER) are set: re-add `issues: types: [labeled,
+    # opened]` to `on:` above, and the two `issues`-event branches to this `if:`.
     if: >-
       (github.event_name == 'workflow_dispatch') ||
-      (github.event_name == 'workflow_call') ||
-      (github.event_name == 'issues' && github.event.action == 'labeled' && github.event.label.name == 'ready-for-agent') ||
-      (github.event_name == 'issues' && github.event.action == 'opened' && contains(github.event.issue.labels.*.name, 'ready-for-agent'))
+      (github.event_name == 'workflow_call')
     runs-on: ubuntu-latest
     # Resolve the runner once for every step. issues:* events have no host
     # session, so they always use opencode (the API-auth runner, ADR 0059).
