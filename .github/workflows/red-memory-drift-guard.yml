@@ -57,7 +57,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build memory plugin
-        working-directory: src/apps/memory
+        working-directory: apps/memory
         run: |
           set -euo pipefail
           pnpm build
@@ -74,7 +74,7 @@ jobs:
           git diff --name-only FETCH_HEAD...HEAD > changed-files.txt
           echo "changed files:"; cat changed-files.txt
 
-          if ! node src/apps/memory/dist/cli.js drift-guard \
+          if ! node apps/memory/dist/cli.js drift-guard \
               --root "$GITHUB_WORKSPACE" \
               --changed-files "$GITHUB_WORKSPACE/changed-files.txt" \
               --pr-number "$PR_NUMBER" \

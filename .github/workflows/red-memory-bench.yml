@@ -31,7 +31,7 @@ jobs:
 
       - name: Memory bench deterministic core regression gate
         run: >
-          pnpm -C src/apps/benchmark-memory dev
+          pnpm -C apps/benchmark-memory dev
           bench eval core
           --analytics memory-bench-ci.rdb
           --gate

@@ -1,7 +1,21 @@
 # Root workspace for all RedSkills runtime apps and shared packages.
 packages:
-  - "src/apps/*"
-  - "src/packages/*"
+  - "apps/*"
+  - "packages/*"
+
+# Single source of truth for versions shared across workspaces (ADR 0060).
+# NOTE: @reddb-io/sdk is deliberately NOT cataloged — scripts/bundle-app.mjs reads
+# the raw `@reddb-io/sdk` string from each package.json for --reddb-from-package,
+# and pnpm leaves the literal "catalog:" in package.json, which would poison the
+# embedded SDK version/binary tag. Keep that one pinned explicitly per app.
+catalog:
+  typescript: ^5.6.0
+  tsx: ^4.19.0
+  vitest: ^2.1.0
+  esbuild: ^0.24.0
+  "@types/node": ^22.0.0
+  zod: ^3.23.8
+  "@modelcontextprotocol/sdk": ^1.0.0
 
 onlyBuiltDependencies:
   - "@reddb-io/sdk"

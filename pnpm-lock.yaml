@@ -4,6 +4,30 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+catalogs:
+  default:
+    '@modelcontextprotocol/sdk':
+      specifier: ^1.0.0
+      version: 1.29.0
+    '@types/node':
+      specifier: ^22.0.0
+      version: 22.19.19
+    esbuild:
+      specifier: ^0.24.0
+      version: 0.24.2
+    tsx:
+      specifier: ^4.19.0
+      version: 4.22.4
+    typescript:
+      specifier: ^5.6.0
+      version: 5.9.3
+    vitest:
+      specifier: ^2.1.0
+      version: 2.1.9
+    zod:
+      specifier: ^3.23.8
+      version: 3.25.76
+
 importers:
 
   .:
@@ -15,7 +39,7 @@ importers:
         specifier: ^5.6.0
         version: 5.9.3
 
-  src/apps/benchmark-code-understanding:
+  apps/benchmark-code-understanding:
     dependencies:
       '@reddb-io/build-info':
         specifier: workspace:*
@@ -25,22 +49,22 @@ importers:
         version: link:../../packages/shared
     devDependencies:
       '@types/node':
-        specifier: ^22.0.0
+        specifier: 'catalog:'
         version: 22.19.19
       esbuild:
-        specifier: ^0.24.0
+        specifier: 'catalog:'
         version: 0.24.2
       tsx:
-        specifier: ^4.19.0
+        specifier: 'catalog:'
         version: 4.22.4
       typescript:
-        specifier: ^5.6.0
+        specifier: 'catalog:'
         version: 5.9.3
       vitest:
-        specifier: ^2.1.0
+        specifier: 'catalog:'
         version: 2.1.9(@types/node@22.19.19)
 
-  src/apps/benchmark-memory:
+  apps/benchmark-memory:
     dependencies:
       '@reddb-io/build-info':
         specifier: workspace:*
@@ -53,22 +77,22 @@ importers:
         version: link:../../packages/shared
     devDependencies:
       '@types/node':
-        specifier: ^22.0.0
+        specifier: 'catalog:'
         version: 22.19.19
       esbuild:
-        specifier: ^0.24.0
+        specifier: 'catalog:'
         version: 0.24.2
       tsx:
-        specifier: ^4.19.0
+        specifier: 'catalog:'
         version: 4.22.4
       typescript:
-        specifier: ^5.6.0
+        specifier: 'catalog:'
         version: 5.9.3
 
-  src/apps/brain:
+  apps/brain:
     dependencies:
       '@modelcontextprotocol/sdk':
-        specifier: ^1.0.0
+        specifier: 'catalog:'
         version: 1.29.0(zod@3.25.76)
       '@reddb-io/build-info':
         specifier: workspace:*
@@ -77,29 +101,29 @@ importers:
         specifier: 1.7.0
         version: 1.7.0
       zod:
-        specifier: ^3.23.8
+        specifier: 'catalog:'
         version: 3.25.76
     devDependencies:
       '@types/node':
-        specifier: ^22.0.0
+        specifier: 'catalog:'
         version: 22.19.19
       esbuild:
-        specifier: ^0.24.0
+        specifier: 'catalog:'
         version: 0.24.2
       tsx:
-        specifier: ^4.19.0
+        specifier: 'catalog:'
         version: 4.22.4
       typescript:
-        specifier: ^5.6.0
+        specifier: 'catalog:'
         version: 5.9.3
       vitest:
-        specifier: ^2.1.0
+        specifier: 'catalog:'
         version: 2.1.9(@types/node@22.19.19)
 
-  src/apps/code-nav:
+  apps/code-nav:
     dependencies:
       '@modelcontextprotocol/sdk':
-        specifier: ^1.0.0
+        specifier: 'catalog:'
         version: 1.29.0(zod@3.25.76)
       '@reddb-io/build-info':
         specifier: workspace:*
@@ -111,7 +135,7 @@ importers:
         specifier: ^3.17.5
         version: 3.17.5
       zod:
-        specifier: ^3.23.8
+        specifier: 'catalog:'
         version: 3.25.76
     devDependencies:
       '@types/node':
@@ -121,13 +145,13 @@ importers:
         specifier: ^0.28.0
         version: 0.28.0
       tsx:
-        specifier: ^4.19.0
+        specifier: 'catalog:'
         version: 4.22.4
       typescript:
-        specifier: ^5.6.0
+        specifier: 'catalog:'
         version: 5.9.3
 
-  src/apps/dev:
+  apps/dev:
     dependencies:
       '@ai-hero/sandcastle':
         specifier: ^0.6.5
@@ -139,29 +163,29 @@ importers:
         specifier: workspace:*
         version: link:../../packages/shared
       zod:
-        specifier: ^3.23.8
+        specifier: 'catalog:'
         version: 3.25.76
     devDependencies:
       '@types/node':
-        specifier: ^22.0.0
+        specifier: 'catalog:'
         version: 22.19.19
       esbuild:
-        specifier: ^0.24.0
+        specifier: 'catalog:'
         version: 0.24.2
       tsx:
-        specifier: ^4.19.0
+        specifier: 'catalog:'
         version: 4.22.4
       typescript:
-        specifier: ^5.6.0
+        specifier: 'catalog:'
         version: 5.9.3
       vitest:
-        specifier: ^2.1.0
+        specifier: 'catalog:'
         version: 2.1.9(@types/node@22.19.19)
 
-  src/apps/memory:
+  apps/memory:
     dependencies:
       '@modelcontextprotocol/sdk':
-        specifier: ^1.0.0
+        specifier: 'catalog:'
         version: 1.29.0(zod@3.25.76)
       '@reddb-io/build-info':
         specifier: workspace:*
@@ -182,28 +206,28 @@ importers:
         specifier: ^1.0.21
         version: 1.0.21
       zod:
-        specifier: ^3.23.8
+        specifier: 'catalog:'
         version: 3.25.76
     devDependencies:
       '@types/node':
-        specifier: ^22.0.0
+        specifier: 'catalog:'
         version: 22.19.19
       esbuild:
-        specifier: ^0.24.0
+        specifier: 'catalog:'
         version: 0.24.2
       tsx:
-        specifier: ^4.19.0
+        specifier: 'catalog:'
         version: 4.22.4
       typescript:
-        specifier: ^5.6.0
+        specifier: 'catalog:'
         version: 5.9.3
       vitest:
-        specifier: ^2.1.0
+        specifier: 'catalog:'
         version: 2.1.9(@types/node@22.19.19)
 
-  src/packages/build-info: {}
+  packages/build-info: {}
 
-  src/packages/shared:
+  packages/shared:
     dependencies:
       cli-args-parser:
         specifier: ^1.0.6

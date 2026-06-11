@@ -12,8 +12,9 @@ stale notes inline.
 
 ## Repo structure & contexts
 - **0021** Multi-context plugin glossaries — *accepted*
-- **0034** Repo splits DEFINITIONS from IMPLEMENTATION (`src/apps/…`) — partially superseded by **0039** (entrypoints fused) and **0041** (memory leaves)
+- **0034** Repo splits DEFINITIONS from IMPLEMENTATION (`apps/…` + `packages/…`) — partially superseded by **0039** (entrypoints fused), **0041** (memory leaves), and **0060** (layout relocated to root with a pnpm catalog)
 - **0041** red-skills consumes `red-memory` + `red-ui` MCPs; stops building memory — partially supersedes 0034 *(renumbered from 0039)*
+- **0060** Workspaces move to root `apps/` + `packages/` with a pnpm `catalog:` for shared versions — relocates 0034's `src/apps`/`src/packages` layout (conventional Turborepo); `@reddb-io/sdk` stays per-app-pinned for the bundler
 - **0046** A single global `.red/` shared by all plugins — *superseded by 0021*
 
 ## Brain plugin

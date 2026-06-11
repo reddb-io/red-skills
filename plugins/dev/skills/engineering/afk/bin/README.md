@@ -14,15 +14,15 @@ bundle and delegates (`node bin/afk.mjs <cmd>` → `node <resolved bundle> <cmd>
 3. cold cache → fetches the Release asset once, then re-checks
 
 `afk.mjs` is **generated**, not hand-edited: it is built from the shared
-`src/packages/shared/entrypoint-cli.ts` with the `run:dev` role — the same source the
+`packages/shared/entrypoint-cli.ts` with the `run:dev` role — the same source the
 fetcher `plugins/dev/hooks/red-fetch.mjs` is built from with the `fetch` role
 (ADR 0039). Both are tiny (~6 KB), versionless, and deterministic.
 
 Build the runtime bundle locally (the launcher needs no separate build):
 
 ```bash
-pnpm -C src/apps/dev install
-pnpm -C src/apps/dev run bundle   # writes ../../../dist/dev.bundle.min.mjs
+pnpm -C apps/dev install
+pnpm -C apps/dev run bundle   # writes ../../dist/dev.bundle.min.mjs
 ```
 
 See ADR 0039 (one entrypoint source, two roles), ADR 0038 (fetched asset, supersedes
