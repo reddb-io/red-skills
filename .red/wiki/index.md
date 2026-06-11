@@ -46,6 +46,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [docs(adr): 0049 — model-tier routing embedded in the plugin, enforced by the shared trio (per runner)](./pages/445-docs-adr-0049-model-tier-routing-embedded-in-the-plugin-enfo.md)
 - [docs(adr): 0055 — AFK landability reconciler](./pages/563-docs-adr-0055-afk-landability-reconciler.md)
 - [docs(adr): correct stale src/apps paths in 9 ADRs + 0059→0062 note (closes #682)](./pages/685-docs-adr-correct-stale-src-apps-paths-in-9-adrs-0059-0062-no.md)
+- [docs(adr): reconcile the ADR map — 0008→0030, 0053 Status, brain/bash/memory notes (closes #595)](./pages/689-docs-adr-reconcile-the-adr-map-0008-0030-0053-status-brain-b.md)
 - [docs(adr): refresh ADR index edges](./pages/513-docs-adr-refresh-adr-index-edges.md)
 - [docs(adr): refresh INDEX — 0058 note + 0059→0062 edge (closes #683)](./pages/686-docs-adr-refresh-index-0058-note-0059-0062-edge-closes-683.md)
 - [docs(adr): resolve 0039 collision (consume→0041) + add ADR INDEX.md](./pages/386-docs-adr-resolve-0039-collision-consume-0041-add-adr-index-m.md)
