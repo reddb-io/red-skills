@@ -1,0 +1,74 @@
+name: red-workspace-ci
+
+# Pre-merge workspace gate: typecheck + tests on every PR.
+#
+# typecheck: until this existed, `pnpm typecheck` ran ONLY in red-release.yml on
+# push-to-main — AFTER merge — so a type break landed silently on a PR (the
+# WorkerVitals S2 `usage` variant, ADR 0065). Now it runs per-PR.
+#
+# test: the apps/dev vitest suite (1300+ tests). It was previously kept OUT of CI
+# because supervisor.test.ts ran an instant-`io.sleep` runaway loop that OOM-killed
+# the vitest worker (#446); that loop is fixed, so the suite is now a reliable
+# gate. Scoped to apps/dev — the AFK-critical suite that is verified green here;
+# broadening to the other apps' suites is a follow-up.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # red-castle submodule must exist so the workspace pnpm install and the
+          # apps/* typecheck resolve @reddb-io/red-castle from source.
+          submodules: recursive
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install red binary for SDK
+        uses: ./.github/actions/install-red-binary
+        with:
+          github-token: ${{ github.token }}
+
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck workspace (apps + packages, excludes red-castle)
+        run: pnpm typecheck
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install red binary for SDK
+        uses: ./.github/actions/install-red-binary
+        with:
+          github-token: ${{ github.token }}
+
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Test apps/dev (includes packages/shared)
+        run: pnpm -C apps/dev test

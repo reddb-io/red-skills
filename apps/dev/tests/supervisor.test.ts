@@ -490,27 +490,21 @@ describe("runSupervisor — lastProgressEpoch tracking (#579)", () => {
   });
 
   it("does NOT advance lastProgressEpoch on an abandoned tick", async () => {
-    const { deps, io } = makeDeps();
-    io.isAlive.mockReturnValue(true);
-    let ticks = 0;
-    const stopFn = () => ++ticks > 1;
-    const state = initSupervisorState(1);
-    // Make sleep resolve immediately so the timeout races and wins the tick.
-    io.sleep.mockImplementation(async () => {});
-    // Use a tick timeout so tiny that the real superviseTick always loses the race.
-    await runSupervisor(state, deps, config({ tickTimeoutS: 0 as unknown as number }), stopFn).catch(() => {});
-    // With tickTimeoutS:0 the guard fires a config error before ticks even run.
-    // Instead: use a very small timeout but a slow tick — but makeDeps.sleep is
-    // already instant. The important thing is the flag propagates; the above
-    // guardedTick unit test covers the actual timing. We test propagation via
-    // a direct guardedTick call.
+    // A tick that throws is "abandoned": guardedTick reports abandoned=true and the
+    // caller must NOT advance lastProgressEpoch. We assert this directly on
+    // guardedTick rather than by driving the whole runSupervisor loop — the loop
+    // form here previously mocked io.sleep to resolve INSTANTLY with a tick that
+    // always abandons, so stopFn was never reached and it spun forever, allocating
+    // until the vitest worker OOM-died (#446). The direct call is the real test.
     const result = await guardedTick(
-      async (): Promise<never> => { throw new Error("tick threw"); },
+      async (): Promise<never> => {
+        throw new Error("tick threw");
+      },
       5000,
       vi.fn(async () => {}),
     );
     expect(result.abandoned).toBe(true);
-    // Directly: if result.abandoned the epoch must not be updated.
+    const state = initSupervisorState(1);
     state.lastProgressEpoch = 0;
     if (!result.abandoned) state.lastProgressEpoch = 999;
     expect(state.lastProgressEpoch).toBe(0);
@@ -1095,14 +1089,25 @@ describe("runSupervisor", () => {
     // emitFleetHeartbeat). The stop tick returns early and skips the fetch, so
     // only one call happens (tick 1). The second heartbeat uses queueDepth: 0
     // (the default for a stop tick).
+    // A controllable clock instead of a fixed list of return values: the loop
+    // calls now() a variable number of times per tick (superviseTick + the
+    // lastProgressEpoch stamp + emitFleetHeartbeat), so a counted mock ran out and
+    // fed `undefined` into isoFromEpoch ("Invalid time value"). The clock reads NOW
+    // for tick 1 and flips to NOW+15 when the stop tick begins, so both heartbeats
+    // get a valid, asserted ts regardless of how many now() calls each tick makes.
+    let clock = NOW;
+    let probes = 0;
+    const stop = () => {
+      probes += 1;
+      if (probes >= 2) clock = NOW + 15;
+      return probes >= 2;
+    };
     const { deps, io } = makeDeps({
       isAlive: vi.fn((pid: number) => pid !== 1001),
       readyQueueDepth: vi.fn().mockResolvedValueOnce(5),
-      now: vi.fn().mockReturnValueOnce(NOW).mockReturnValueOnce(NOW).mockReturnValueOnce(NOW).mockReturnValueOnce(NOW + 15),
+      now: vi.fn(() => clock),
     });
     const state = initSupervisorState(1);
-    let probes = 0;
-    const stop = () => (++probes >= 2);
 
     await runSupervisor(state, deps, config({ target: 1, pollIntervalS: 15 }), stop);
 
