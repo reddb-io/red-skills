@@ -1,4 +1,5 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { AfkStateSchema, type AfkState } from "../types/state.js";
 
@@ -68,6 +69,30 @@ export async function initState(path: string, updates: Record<string, unknown> =
   for (const [key, value] of Object.entries(updates)) setDotted(state, key, value);
   const parsed = parseState(state);
   await writeStateAtomic(path, parsed);
+  return parsed;
+}
+
+/**
+ * Synchronous {@link initState}. Use this to seed an attempt's state BEFORE any
+ * async `updateState` can run against the same path. The async `initState` was
+ * fire-and-forget at the attempt-start seam (run.ts buildProcessInput), so a
+ * concurrent `updateState` (the agent-event sink / heartbeat) could read the
+ * not-yet-written file, get the schema DEFAULT (empty identity: pid 0, number
+ * "", worker_id ""), patch only its vitals, and write that back — stranding the
+ * worker with vitals but no identity, so `monitor`/`statusline` rendered it as a
+ * pid-0 `?`/idle ghost. A synchronous seed completes before the sink starts, so
+ * every later read-modify-write preserves the identity.
+ */
+export function initStateSync(path: string, updates: Record<string, unknown> = {}): AfkState {
+  const state = defaultState() as unknown as Record<string, unknown>;
+  state.version = 1;
+  state.envelope = { posted: false };
+  for (const [key, value] of Object.entries(updates)) setDotted(state, key, value);
+  const parsed = parseState(state);
+  mkdirSync(dirname(path), { recursive: true });
+  const tmp = `${path}.tmp.${process.pid}.sync`;
+  writeFileSync(tmp, `${JSON.stringify(AfkStateSchema.parse(parsed))}\n`, "utf8");
+  renameSync(tmp, path);
   return parsed;
 }
 

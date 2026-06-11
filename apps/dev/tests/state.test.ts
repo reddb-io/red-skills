@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
 import {
   initState,
+  initStateSync,
   isStateActive,
   isStateLive,
   readState,
@@ -32,6 +33,33 @@ describe("state", () => {
     expect(state.envelope.posted).toBe(true);
     expect(state.queue).toEqual([2, 3]);
     expect(await readFile(path, "utf8")).toContain('"version":1');
+  });
+
+  it("initStateSync seeds identity synchronously so a later updateState preserves it", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "afk-state-"));
+    const path = join(dir, "afk.state.json");
+
+    // Synchronous seed — the file MUST exist with full identity the instant the
+    // call returns (the whole point: it beats the async sink's read-modify-write).
+    const seeded = initStateSync(path, {
+      worker_id: "wL30L",
+      pid: 4242,
+      "current.number": 583,
+      "current.stage": "setup",
+    });
+    expect(seeded.pid).toBe(4242);
+    const onDisk = JSON.parse(await readFile(path, "utf8"));
+    expect(onDisk.worker_id).toBe("wL30L");
+    expect(onDisk.current.number).toBe(583);
+
+    // A subsequent vitals patch must NOT clobber the identity (the bug was the
+    // sink seeding from DEFAULT and stranding the worker with no pid/number).
+    const after = await updateState(path, { "current.cost_usd": 4.01, "current.stage": "tests" });
+    expect(after.pid).toBe(4242);
+    expect(after.worker_id).toBe("wL30L");
+    expect(after.current.number).toBe(583);
+    expect(after.current.cost_usd).toBe(4.01);
+    expect(after.current.stage).toBe("tests");
   });
 
   it("checks liveness via the injected kill -0 predicate", () => {
