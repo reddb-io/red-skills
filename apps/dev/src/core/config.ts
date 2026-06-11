@@ -303,9 +303,11 @@ function readEffort(raw: string, fallback: AgentEffort): AgentEffort {
  *   0. runtime override: `RED_AFK_MODEL` env (the `--model` run flag pre-sets it).
  *      Flattens every tier onto one slug — "use this model regardless of tier".
  *   1. explicit tier table entry: `afk.models.<runner>.<tier>.model`
- *   2. legacy runner scalar: `afk.models.<runner>`
- *   3. legacy global scalar: `afk.model`
- *   4. tier-table default
+ *   2. per-runner base: `afk.models.<runner>.base.model` (auto-populates every
+ *      tier of the runner; a specialized `.<tier>.model` still wins over it)
+ *   3. legacy runner scalar: `afk.models.<runner>`
+ *   4. legacy global scalar: `afk.model`
+ *   5. tier-table default
  * `RED_AFK_EFFORT` overrides effort the same way (still provider-gated downstream).
  *
  * `loadConfig` already folds `plugins.dev.afk.*` over the legacy top-level
@@ -329,8 +331,17 @@ export function resolveTier(
   const defaultModel = CONFIG_DEFAULTS[modelKey];
   const defaultEffort = CONFIG_DEFAULTS[effortKey] as AgentEffort;
   const tierModel = getConfig(values, modelKey);
+  // Per-runner `base` (model + effort): a structured default that auto-populates
+  // every tier of this runner, so an operator can point the whole runner at one
+  // provider/model with a single line and still specialize a tier by setting its
+  // own `.<tier>.model`. It sits between the explicit tier entry and the legacy
+  // scalars — a tier left at its table default falls back to `base`; an explicitly
+  // set tier overrides it.
+  const baseModel = getConfig(values, `afk.models.${tierRunner}.base.model`);
+  const baseEffort = getConfig(values, `afk.models.${tierRunner}.base.effort`);
   const scalarRunnerModel = getConfig(values, `afk.models.${tierRunner}`);
   const scalarGlobalModel = getConfig(values, "afk.model");
+  const tierEffort = getConfig(values, effortKey);
 
   // Runtime override: a non-empty RED_AFK_MODEL/RED_AFK_EFFORT wins over the file
   // (`""` counts as unset, so a placeholder export never flattens the tiers).
@@ -340,14 +351,18 @@ export function resolveTier(
   const configModel =
     tierModel && tierModel !== defaultModel
       ? tierModel
-      : scalarRunnerModel || scalarGlobalModel || tierModel || defaultModel;
+      : baseModel || scalarRunnerModel || scalarGlobalModel || tierModel || defaultModel;
+  const configEffort =
+    tierEffort && tierEffort !== defaultEffort
+      ? tierEffort
+      : baseEffort || tierEffort || defaultEffort;
 
   return {
     model: modelOverride.length > 0 ? modelOverride : configModel,
     effort:
       effortOverride.length > 0
         ? readEffort(effortOverride, defaultEffort)
-        : readEffort(getConfig(values, effortKey), defaultEffort),
+        : readEffort(configEffort, defaultEffort),
   };
 }
 
