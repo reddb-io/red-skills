@@ -62,6 +62,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [docs(context): add the brain product context (glossary + map pointer)](./pages/409-docs-context-add-the-brain-product-context-glossary-map-poin.md)
 - [docs(memory): ADR 0036 — transports are adapters over the operation registry](./pages/375-docs-memory-adr-0036-transports-are-adapters-over-the-operat.md)
 - [docs(readme): redact AFK usage from public README + fix dev bundle CI build](./pages/321-docs-readme-redact-afk-usage-from-public-readme-fix-dev-bund.md)
+- [docs(setup,doctor,afk): rs-* installed-workflow convention + adopter secret guide](./pages/725-docs-setup-doctor-afk-rs-installed-workflow-convention-adopt.md)
 - [docs(triage-labels): align running-state liveness with Slice D (timeline-only)](./pages/361-docs-triage-labels-align-running-state-liveness-with-slice-d.md)
 - [docs: align AFK failure recovery contract](./pages/512-docs-align-afk-failure-recovery-contract.md)
 - [docs: document recent operator skills](./pages/541-docs-document-recent-operator-skills.md)
