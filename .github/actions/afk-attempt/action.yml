@@ -107,6 +107,12 @@ runs:
         # A committer identity for the worker-branch commits the runner lands.
         git config --global user.name  "github-actions[bot]"
         git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        # Rewrite SSH git@github.com: URLs to HTTPS with token auth. Required because:
+        # (a) the feedback gate runs `git submodule update --init` which hits the SSH URL
+        #     in .gitmodules — Actions runners have no SSH key, so it fails; and
+        # (b) AFK worker-branch pushes go to the same SSH remote, failing the same way.
+        # github.token (GH_TOKEN) has `contents: write` so HTTPS push to worker branches works.
+        git config --global url."https://x-access-token:${GH_TOKEN}@github.com/".insteadOf "git@github.com:"
         # The launcher is resolved from THIS action's red-skills checkout; it
         # fetches the version-matched dev bundle and runs against the CWD repo.
         LAUNCHER="${{ github.action_path }}/../../../plugins/dev/skills/engineering/afk/bin/afk.mjs"
