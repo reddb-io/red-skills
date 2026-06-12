@@ -48,6 +48,17 @@
 #     defaults:
 #       cargo: true               # ship cargo isolation on Rust projects
 #       gradle: true              # ship gradle isolation when GRADLE_USER_HOME_BASE is set
+#   trust-gate:                   # "executable issue" trust gate (#621, ADR 0056)
+#     allowlist: alice,bob        # comma/space-separated GitHub logins. An issue is
+#                                 # executable only when its AUTHOR is in this list AND
+#                                 # `ready-for-agent` was applied by a listed actor
+#                                 # (read from the issue timeline, not the label set).
+#                                 # ABSENT/empty (the default) → PERMISSIVE: the gate
+#                                 # never fires and every ready-for-agent issue is
+#                                 # claimable, exactly as today. Setting it switches the
+#                                 # repo to STRICT mode; a ready-for-agent applied by a
+#                                 # non-listed actor is skipped at claim and may be
+#                                 # stripped by a sweep with an audit comment.
 
 # dev:
 #   lock:
