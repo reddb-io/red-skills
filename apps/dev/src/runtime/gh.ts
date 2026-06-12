@@ -622,6 +622,72 @@ async function listIssuesByLabel(ctx: GhContext, label: string): Promise<Reconci
   }
 }
 
+/**
+ * Trust-gate provenance for one issue (#621, ADR 0056): the author login + the
+ * actor who applied `ready-for-agent`, read from the issue TIMELINE (never
+ * inferred from the mutable label set). Two best-effort gh reads:
+ *   - `gh issue view --json author` → author login;
+ *   - `gh api repos/{owner}/{repo}/issues/{n}/timeline` → the LAST `labeled`
+ *     event for `ready-for-agent`, whose `actor.login` is the promoter.
+ * The `{owner}`/`{repo}` placeholders resolve from the current repo, so an empty
+ * `ctx.repo` (worker's own checkout) still works. Either field is `undefined`
+ * when its read fails — the gate treats unknown provenance as untrusted.
+ */
+export async function issueTrust(
+  ctx: GhContext,
+  issue: number,
+): Promise<{ author?: string; readyForAgentActor?: string }> {
+  const [author, actor] = await Promise.all([
+    issueAuthorLogin(ctx, issue),
+    readyForAgentActor(ctx, issue),
+  ]);
+  return { author, readyForAgentActor: actor };
+}
+
+/** `gh issue view --json author` → the author login, or undefined on failure. */
+async function issueAuthorLogin(ctx: GhContext, issue: number): Promise<string | undefined> {
+  const r = await runGh(ctx, ["issue", "view", String(issue), ...repoArgs(ctx), "--json", "author"]);
+  if (r.code !== 0) return undefined;
+  try {
+    const login = (JSON.parse(r.stdout) as { author?: { login?: string } }).author?.login;
+    return login ? String(login) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Read the login of the actor who applied `ready-for-agent` from the issue
+ * timeline (REST `…/issues/{n}/timeline`). Returns the MOST RECENT `labeled`
+ * event for the label — a re-applied label reflects the latest promoter.
+ * undefined when the read fails or no such event exists. */
+async function readyForAgentActor(ctx: GhContext, issue: number): Promise<string | undefined> {
+  const r = await runGh(ctx, [
+    "api",
+    `repos/{owner}/{repo}/issues/${issue}/timeline`,
+    "--paginate",
+    "-H",
+    "Accept: application/vnd.github+json",
+  ]);
+  if (r.code !== 0) return undefined;
+  try {
+    // `--paginate` concatenates pages; tolerate either one array or several.
+    const text = r.stdout.trim();
+    const events = text.startsWith("[")
+      ? (JSON.parse(text) as unknown[])
+      : (JSON.parse(`[${text.replace(/\]\s*\[/g, ",")}]`) as unknown[]);
+    let actor: string | undefined;
+    for (const ev of events) {
+      const e = ev as { event?: string; label?: { name?: string }; actor?: { login?: string } };
+      if (e.event === "labeled" && e.label?.name === LABEL_READY && e.actor?.login) {
+        actor = String(e.actor.login); // keep the last (most recent) match
+      }
+    }
+    return actor;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Branch-cleanup IssueLookup payload: gh issue view --json state,closedAt.
  * Returns null for a definitive 404, undefined for a transient failure. */
 export async function issueMeta(ctx: GhContext, issue: number): Promise<IssueMeta | null | undefined> {
