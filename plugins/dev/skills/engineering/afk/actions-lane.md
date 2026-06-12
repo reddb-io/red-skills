@@ -80,7 +80,7 @@ jobs:
 ## Triggers (reusable workflow)
 
 1. `workflow_call` — a thin caller in your repo.
-2. `workflow_dispatch` — manual run from the Actions UI (`issue_number` input).
+2. `workflow_dispatch` — manual run from the Actions UI. Pass an `issue_number`, **or leave it empty to auto-pick the oldest open `ready-for-agent` issue** (the queue head). If the queue is empty the run is a clean no-op.
 3. `issues: labeled` — fires when **`ready-for-agent`** is applied.
 4. `issues: opened` — fires when an issue is **created already carrying**
    `ready-for-agent` (a pre-delegated issue). Raw label-less issues are NOT run
@@ -99,7 +99,7 @@ back to a hard-coded maintainer allowlist.)
 
 | Input | Action | Reusable | Notes |
 |---|---|---|---|
-| `issue` / `issue_number` | ✓ | ✓ | required |
+| `issue` / `issue_number` | ✓ | ✓ | the reusable accepts it **empty** on `workflow_dispatch`/`workflow_call` → auto-picks the oldest open `ready-for-agent` issue (no-op if none); the composite action needs an explicit number |
 | `runner` | ✓ | ✓ | `claude` \| `codex` \| `opencode` (CI default `opencode`) |
 | `model` | ✓ | ✓ | override every tier, e.g. `minimax/MiniMax-M3` (empty = repo config) |
 | `effort` | ✓ | ✓ | reasoning effort/variant override |

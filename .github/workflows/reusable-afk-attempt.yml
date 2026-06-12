@@ -45,7 +45,7 @@ on:
   workflow_call:
     inputs:
       issue_number:
-        description: "Issue number to process. Empty string = no-op."
+        description: "Issue number to process. Empty = auto-pick the oldest open ready-for-agent issue (no-op if none)."
         required: false
         type: string
         default: ""
@@ -100,9 +100,10 @@ on:
   workflow_dispatch:
     inputs:
       issue_number:
-        description: "Issue number to process (e.g. 631)."
-        required: true
+        description: "Issue number to process (e.g. 631). Leave EMPTY to auto-pick the oldest open ready-for-agent issue."
+        required: false
         type: string
+        default: ""
       runner:
         description: "AFK runner to drive (claude|codex|opencode)."
         required: false
@@ -152,12 +153,36 @@ jobs:
             const eventName = context.eventName;
             let issueNumber = '';
             if (eventName === 'workflow_dispatch') {
-              issueNumber = context.payload.inputs.issue_number;
+              issueNumber = context.payload.inputs.issue_number || '';
             } else if (eventName === 'workflow_call') {
               issueNumber = context.payload.inputs.issue_number || context.payload.issue_number || '';
             } else if (eventName === 'issues') {
               issueNumber = String(context.payload.issue.number);
             }
+
+            // Auto-pick: a dispatch / call with no issue number drains the queue
+            // head — the OLDEST open `ready-for-agent` issue (PRs excluded). No
+            // such issue ⇒ a clean no-op (empty output; downstream steps skip).
+            if (!issueNumber && (eventName === 'workflow_dispatch' || eventName === 'workflow_call')) {
+              const candidates = await github.paginate(github.rest.issues.listForRepo, {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                state: 'open',
+                labels: 'ready-for-agent',
+                sort: 'created',
+                direction: 'asc',
+                per_page: 100,
+              });
+              const oldest = candidates.find(i => !i.pull_request);
+              if (!oldest) {
+                core.info('auto-pick: no open ready-for-agent issue — nothing to do');
+                core.setOutput('number', '');
+                return;
+              }
+              issueNumber = String(oldest.number);
+              core.info(`auto-pick: oldest open ready-for-agent issue is #${issueNumber}`);
+            }
+
             if (!/^[0-9]+$/.test(issueNumber)) {
               core.setFailed(`invalid issue number: ${JSON.stringify(issueNumber)}`);
               return;
@@ -167,6 +192,7 @@ jobs:
 
       - name: Evaluate the trust gate
         id: trust
+        if: steps.resolve.outputs.number != ''
         uses: actions/github-script@v7
         env:
           ENFORCE_TRUST_GATE: ${{ github.event_name == 'workflow_call' && inputs.enforce_trust_gate || 'true' }}
