@@ -57,6 +57,7 @@ import { branchLockPath, readLockedBranch, isLocked } from "../runtime/lock.js";
 import { makeHookExec, makeHookResolveOptions, hookEnv } from "../runtime/hooks.js";
 import { makeFeedbackWorktree, type FeedbackWorktree } from "../runtime/feedback-worktree.js";
 import { join } from "node:path";
+import { hostname } from "node:os";
 import { appendAgentRecord, appendRecord } from "../core/jsonl-log.js";
 import { initStateSync, updateState } from "../core/state.js";
 import { buildProgressHeartbeat, formatIterationMarker } from "../core/heartbeat.js";
@@ -474,6 +475,19 @@ export function buildProcessDeps(
       close: (issue) => ghx.closeIssue(ghCtx, issue),
       listByLabel: (label) => ghx.listByLabel(ghCtx, label),
       issueClosed: (n) => ghx.issueClosed(ghCtx, n),
+    },
+    claimGh: {
+      // ADR 0066: the atomic GitHub-native claim arbiter. Numeric comment ids
+      // (via `gh api`) are the cross-host total order.
+      postClaim: (issue, body) => ghx.postClaimComment(ghCtx, issue, body),
+      listClaims: (issue) => ghx.listClaimComments(ghCtx, issue),
+      concede: async (issue, body) => {
+        try {
+          await ghx.postClaimComment(ghCtx, issue, body);
+        } catch {
+          // best-effort: a failed concede ages out via the staleness predicate.
+        }
+      },
     },
     claimLock: {
       // Atomic POSIX mkdir lock (#434): a non-recursive mkdir that fails EEXIST,
@@ -1209,6 +1223,9 @@ export async function runCommand(options: RunOptions): Promise<number> {
         body,
         runner: c.runner,
         workerId: c.workerId,
+        // ADR 0066 claimant identity: `host:worker_id`, unique per worker process
+        // per host so the GitHub-native claim never collides across machines.
+        claimant: `${hostname()}:${c.workerId}`,
         tmpDir: c.issueTemplate.tmpDir,
         attempt,
         attemptDir,

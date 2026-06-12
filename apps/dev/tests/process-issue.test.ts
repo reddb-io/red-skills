@@ -47,6 +47,10 @@ interface Trace {
 interface HarnessOptions {
   labels?: string[];
   acquire?: boolean;
+  /** Inject the ADR 0066 GitHub-native claim arbiter. When set, the claim path
+   * is the authority and `running` is a projection. The `winner` field decides
+   * the verdict for the test (self worker is "h:w"). */
+  claim?: { winner: "self" | "other" };
   outcome?: RunAgentResult["outcome"];
   /** Scripted per-call outcomes (overrides `outcome`); one entry per runAgent call. */
   outcomes?: RunAgentResult["outcome"][];
@@ -176,6 +180,23 @@ function harness(opts: HarnessOptions = {}): {
         return (opts.closedIssues ?? []).includes(n);
       },
     },
+    claimGh: opts.claim
+      ? {
+          async postClaim(_issue, body) {
+            trace.comments.push({ issue: 9, body });
+            return 100; // our claim gets id 100
+          },
+          async listClaims() {
+            // "other" wins by posting an earlier id (50); "self" wins solo.
+            return opts.claim?.winner === "other"
+              ? [{ id: 50, body: "<!-- afk:claim v1 worker=otherhost:wZZZZ kind=claim -->" }]
+              : [];
+          },
+          async concede(_issue, body) {
+            trace.comments.push({ issue: 9, body });
+          },
+        }
+      : undefined,
     claimLock: {
       async acquire() {
         return opts.acquire ?? true;
@@ -404,6 +425,7 @@ function harness(opts: HarnessOptions = {}): {
     body: opts.body ?? "## Agent brief\nDo it.",
     runner: "claude",
     workerId: "wAAAA",
+    claimant: "testhost:wAAAA",
     tmpDir: "/tmp/afk",
     attempt: opts.attempt ?? 1,
     attemptDir: "/tmp/afk/workers/wAAAA/9-a1",
@@ -1020,6 +1042,30 @@ describe("processIssue — claim lost", () => {
     // no claim edit submitted; the claim lock was released.
     expect(trace.labelEdits).toEqual([]);
     expect(trace.released).toEqual([9]);
+  });
+
+  // ADR 0066: with the GitHub-native arbiter wired, `running` is a projection and
+  // the claim comment decides the winner.
+  it("concedes cleanly when it loses the GitHub-native claim (claim-lost, no agent)", async () => {
+    // `running` is even PRESENT here — proving it is no longer consulted as the
+    // lock; the earlier claim comment is what makes us lose.
+    const { deps, input, trace } = harness({ claim: { winner: "other" }, labels: ["ready-for-agent", "running"] });
+    const result = await processIssue(deps, input);
+    expect(result.outcome).toBe("claim-lost");
+    expect(trace.labelEdits).toEqual([]); // never projected running — we lost
+    expect(trace.released).toEqual([9]);
+    expect(trace.runAgentCalls).toEqual([]); // no agent spawned
+    // posted a claim then a concede (both recorded as comments).
+    expect(trace.comments.some((c) => /conceded/.test(c.body))).toBe(true);
+  });
+
+  it("wins the GitHub-native claim solo and proceeds (running projected best-effort)", async () => {
+    const { deps, input, trace } = harness({ claim: { winner: "self" } });
+    const result = await processIssue(deps, input);
+    expect(result.outcome).toBe("done");
+    // running was PROJECTED (label edit applied) but is not the lock.
+    expect(trace.labelEdits.some((e) => e.add.includes("running"))).toBe(true);
+    expect(trace.comments.some((c) => /AFK claim by worker/.test(c.body))).toBe(true);
   });
 });
 

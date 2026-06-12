@@ -1,5 +1,11 @@
 # AFK landability reconciler: parked-but-green branches self-land via a no-agent reconcile worker
 
+> **Numbering note.** PRD #614 / issue #622 use "ADR 0056" to mean the *atomic
+> GitHub-native claim substrate*. That is a **different** decision, recorded as
+> **ADR 0066** (`0066-afk-atomic-github-native-claim-substrate.md`), because this
+> 0056 — the landability reconciler — already held the number. This ADR is not
+> about claims.
+
 ## Context
 
 AFK's terminal routing is **one-shot and event-driven**. A terminal event

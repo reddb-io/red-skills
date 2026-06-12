@@ -275,6 +275,69 @@ export async function comment(ctx: GhContext, issue: number, body: string): Prom
   await runGh(ctx, ["issue", "comment", String(issue), ...repoArgs(ctx), "--body", body]);
 }
 
+// ---------- atomic GitHub-native claim (ADR 0066) ----------
+//
+// The claim primitive needs the comment's server-assigned NUMERIC id (the
+// cross-host total order), which `gh issue comment` / `gh issue view --json
+// comments` do not expose. The REST API does, so these go through `gh api`.
+
+function apiPath(ctx: GhContext, suffix: string): string {
+  // ctx.repo is `owner/repo`; fall back to the cwd repo when unset (gh resolves).
+  return ctx.repo ? `repos/${ctx.repo}/${suffix}` : suffix;
+}
+
+/** Post a claim/concede marker comment and resolve its server-assigned numeric
+ * id (the total order). Throws on a non-zero gh exit so a failed POST never reads
+ * as a won claim. */
+export async function postClaimComment(ctx: GhContext, issue: number, body: string): Promise<number> {
+  const r = await runGh(ctx, [
+    "api",
+    "-X",
+    "POST",
+    apiPath(ctx, `issues/${issue}/comments`),
+    "-f",
+    `body=${body}`,
+    "--jq",
+    ".id",
+  ]);
+  const id = Number((r.stdout ?? "").trim());
+  if (r.code !== 0 || !Number.isFinite(id)) {
+    throw new Error(`gh: failed to post claim comment on #${issue} (code ${r.code})`);
+  }
+  return id;
+}
+
+/** List an issue's comments as `{id, body, createdAt}` for the claim reconciler.
+ * Paginated so a long-lived issue's full claim history is read. A non-zero exit
+ * yields an empty list (the reconciler then sees only our just-posted claim). */
+export async function listClaimComments(
+  ctx: GhContext,
+  issue: number,
+): Promise<{ id: number; body: string; createdAt?: string }[]> {
+  const r = await runGh(ctx, [
+    "api",
+    "--paginate",
+    apiPath(ctx, `issues/${issue}/comments`),
+    "--jq",
+    ".[] | {id: .id, body: .body, createdAt: .created_at}",
+  ]);
+  if (r.code !== 0) return [];
+  const out: { id: number; body: string; createdAt?: string }[] = [];
+  for (const line of (r.stdout ?? "").split("\n")) {
+    const t = line.trim();
+    if (!t) continue;
+    try {
+      const o = JSON.parse(t) as { id?: number; body?: string; createdAt?: string };
+      if (typeof o.id === "number" && typeof o.body === "string") {
+        out.push({ id: o.id, body: o.body, createdAt: o.createdAt });
+      }
+    } catch {
+      // tolerate a malformed jq line; the reconciler is garbage-tolerant anyway.
+    }
+  }
+  return out;
+}
+
 /** `gh issue edit --body …`. */
 export async function editBody(ctx: GhContext, issue: number, body: string): Promise<boolean> {
   const r = await runGh(ctx, ["issue", "edit", String(issue), ...repoArgs(ctx), "--body", body]);
