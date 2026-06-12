@@ -218,6 +218,13 @@ jobs:
       - name: Checkout the target repository
         if: steps.trust.outputs.gate == 'pass' || steps.trust.outputs.gate == 'bypass'
         uses: actions/checkout@v4
+        with:
+          # Pull submodules so a repo that vendors one as a workspace dependency
+          # (e.g. red-skills' public `packages/red-castle`, ADR 0061) resolves in
+          # the feedback gate's `pnpm` build. A no-op for adopter repos with no
+          # submodule. actions/checkout rewrites `git@github.com:` submodule URLs
+          # to token-https; a PUBLIC submodule then needs no extra credential.
+          submodules: recursive
 
       # Execution is the repo-portable composite action (ADR 0062): it sets up
       # Node, installs the selected runner CLI, and runs the version-pinned

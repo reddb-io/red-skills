@@ -1,0 +1,54 @@
+# rs-afk-attempt — red-skills' OWN caller for the AFK Actions lane.
+#
+# Naming convention (ADR pending): RedSkills ships its reusable workflows under
+# `red-*` (here, the reusable `red-afk-attempt.yml`). A workflow INSTALLED into a
+# target repo to drive that lane is prefixed `rs-*` ("RedSkills-installed in this
+# repo"). This file is red-skills self-hosting its own lane, so it is `rs-*` too.
+#
+# It calls the LOCAL reusable (`./.github/workflows/red-afk-attempt.yml`) — the
+# same one adopters reference as `reddb-io/red-skills/.github/workflows/red-afk-attempt.yml@v1`.
+#
+# Auth: opencode + the org-level `MINIMAX_API_KEY` secret. Model: minimax/MiniMax-M3.
+# Trust gate: only issues authored AND labelled by an allowlisted login run.
+#
+# Runner: the reusable runs on `ubuntu-latest` today. To move execution onto
+# Blacksmith, swap the reusable's `runs-on:` to `blacksmith-2vcpu-ubuntu-2404`
+# once the Blacksmith GitHub App is installed on the org (a one-line change; a
+# Blacksmith label with no app installed leaves the job queued forever).
+
+name: rs-afk-attempt
+
+on:
+  # Manual: process a specific issue from the Actions UI.
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: "Issue number to process (e.g. 631)."
+        required: true
+        type: string
+  # Auto: fire when an issue gains the ready-for-agent label.
+  issues:
+    types: [labeled]
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  attempt:
+    # Dispatch always runs; the issues event only when the applied label is
+    # exactly ready-for-agent (so other label edits do not spawn attempts).
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'issues' && github.event.label.name == 'ready-for-agent')
+    uses: ./.github/workflows/red-afk-attempt.yml
+    with:
+      issue_number: ${{ github.event_name == 'workflow_dispatch' && inputs.issue_number || github.event.issue.number }}
+      runner: opencode
+      model: minimax/MiniMax-M3
+      enforce_trust_gate: "true"
+      allowlist_authors: "filipeforattini"
+      allowlist_label_actors: "filipeforattini"
+    secrets:
+      minimax_api_key: ${{ secrets.MINIMAX_API_KEY }}
