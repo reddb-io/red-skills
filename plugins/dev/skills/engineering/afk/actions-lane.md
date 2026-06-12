@@ -104,8 +104,26 @@ back to a hard-coded maintainer allowlist.)
 | `model` | ✓ | ✓ | override every tier, e.g. `minimax/MiniMax-M3` (empty = repo config) |
 | `effort` | ✓ | ✓ | reasoning effort/variant override |
 | `lanes` | ✓ | ✓ | execution-lane tag (`actions`\|`k8s`), surfaced as `RED_AFK_LANE` for observability; default `actions` |
+| `runs_on` | — | ✓ | runner label for the attempt job; default `ubuntu-latest`. Set e.g. `blacksmith-2vcpu-ubuntu-2404` to run on Blacksmith (see below). Composable path: set the job's own `runs-on:` directly. |
 | `*-api-key` secrets | ✓ (inputs) | ✓ (secrets) | the auth keys — passed as **action inputs** (composite actions can't read `secrets.*`) |
 | `allowlist_*`, `enforce_trust_gate` | — | ✓ | trust gate (policy layer) |
+
+## Runner host — GitHub-hosted or Blacksmith
+
+The attempt job runs on `ubuntu-latest` (GitHub-hosted) by default. To run it on
+[Blacksmith](https://blacksmith.sh) managed runners — a drop-in, faster, cheaper
+host — pass the `runs_on` input the matching label:
+
+```yaml
+with:
+  runs_on: blacksmith-2vcpu-ubuntu-2404   # smallest Blacksmith tier
+```
+
+`blacksmith-2vcpu-ubuntu-2404` is the **smallest** Blacksmith shape — there is no
+"nano"; 2 vCPU is the floor (other shapes: `-4vcpu-`, `-8vcpu-`, …). The
+**Blacksmith GitHub App must be installed on the org/repo** first — a Blacksmith
+label with no app installed leaves the job **queued forever**. red-skills' own
+`rs-afk-attempt.yml` caller runs on `blacksmith-2vcpu-ubuntu-2404`.
 
 ## Runner + auth
 
@@ -168,11 +186,19 @@ the runner plus `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`. The CI default is
 identity, and `--once`. Required permissions: exactly `contents: write`,
 `issues: write`, `pull-requests: write` — no `id-token`, no `actions: write`.
 
+## Issue ↔ PR link (auto-close on merge)
+
+The PR body carries `Closes #<issue>`, so GitHub links the PR to the issue and
+**auto-closes the issue when the PR is merged** into the default branch — the
+human just merges, no separate close step. (The local admin-merge lane closes the
+issue itself; both are idempotent.)
+
 ## What it does NOT do
 
-No fleet, no admin-merge, no auto-merge — the human merges the PR. It also does
-not yet claim atomically against a concurrently-running local fleet (#622), and
-the config-sourced allowlist predicate is pending (#621).
+No fleet, no admin-merge, no auto-merge — the human merges the PR (merging
+auto-closes the linked issue, above). It also does not yet claim atomically
+against a concurrently-running local fleet (#622), and the config-sourced
+allowlist predicate is pending (#621).
 
 ## See also
 
