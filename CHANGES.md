@@ -2,7 +2,16 @@
 
 Records every change made to skills inherited from [`mattpocock/skills`](https://github.com/mattpocock/skills), plus new skills created by reddb.io. See the rules in [CLAUDE.md](./CLAUDE.md).
 
-Upstream base: `mattpocock/skills@aaf2453fbdfe7a15c07f11d861224f34ab4b53cb` (see `.upstream`).
+Upstream base: `mattpocock/skills@694fa30311e02c2639942308513555e61ee84a6f` (see `.upstream`).
+
+---
+
+## teaching (upstream addition — skipped)
+
+- **status**: skipped
+- **upstream**: `694fa30311e02c2639942308513555e61ee84a6f`
+- **why**: Upstream added a `teaching` skill (lesson guidelines, citation patterns, fluency-vs-storage-strength pedagogy). Not relevant to reddb.io's engineering-automation focus; we do not carry teaching skills.
+- **what changed**: nothing — skipping adoption
 
 ---
 
