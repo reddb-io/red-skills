@@ -30,7 +30,7 @@ inputs:
     required: false
     default: "opencode"
   model:
-    description: "Override the model for every tier (e.g. minimax/MiniMax-M2). Empty = .red/config.yaml / defaults. Maps to RED_AFK_MODEL."
+    description: "Override the model for every tier (e.g. minimax/MiniMax-M3). Empty = .red/config.yaml / defaults. Maps to RED_AFK_MODEL."
     required: false
     default: ""
   effort:

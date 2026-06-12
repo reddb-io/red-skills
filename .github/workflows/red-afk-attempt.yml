@@ -55,7 +55,7 @@ on:
         type: string
         default: "opencode"
       model:
-        description: "Override the model for every tier (e.g. minimax/MiniMax-M2). Empty = read from `.red/config.yaml` / defaults. Maps to RED_AFK_MODEL."
+        description: "Override the model for every tier (e.g. minimax/MiniMax-M3). Empty = read from `.red/config.yaml` / defaults. Maps to RED_AFK_MODEL."
         required: false
         type: string
         default: ""
@@ -64,6 +64,11 @@ on:
         required: false
         type: string
         default: ""
+      runs_on:
+        description: "Runner label for the attempt job. Default ubuntu-latest (GitHub-hosted). Set e.g. blacksmith-2vcpu-ubuntu-2404 to run on Blacksmith (the GitHub App must be installed on the org, else the job queues forever)."
+        required: false
+        type: string
+        default: "ubuntu-latest"
       allowlist_authors:
         description: "CSV of GitHub logins allowed as issue author."
         required: true
@@ -104,10 +109,15 @@ on:
         type: string
         default: "opencode"
       model:
-        description: "Override the model for every tier (e.g. minimax/MiniMax-M2). Empty = config."
+        description: "Override the model for every tier (e.g. minimax/MiniMax-M3). Empty = config."
         required: false
         type: string
         default: ""
+      runs_on:
+        description: "Runner label for the attempt job (e.g. ubuntu-latest or blacksmith-2vcpu-ubuntu-2404)."
+        required: false
+        type: string
+        default: "ubuntu-latest"
 
   # NOTE: the `issues: [labeled, opened]` auto-trigger was intentionally removed —
   # the lane is dispatch/call-only until auth secrets are configured (see the job
@@ -128,7 +138,7 @@ jobs:
     if: >-
       (github.event_name == 'workflow_dispatch') ||
       (github.event_name == 'workflow_call')
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runs_on || 'ubuntu-latest' }}
     # Resolve the runner once for every step. issues:* events have no host
     # session, so they always use opencode (the API-auth runner, ADR 0059).
     env:
