@@ -16,6 +16,8 @@
  */
 
 /** The checksum manifest published alongside each bundle on the release. */
+import { type ReleaseChannel, channelReleaseRef } from "./channel.js";
+
 export interface BundleManifest {
   plugin: string;
   version: string;
@@ -27,6 +29,8 @@ export interface ResolveBundleInput {
   plugin: string;
   version: string;
   cacheDir: string;
+  /** Release channel; absent = `stable` (version-pinned, pre-ADR 0058). */
+  channel?: ReleaseChannel;
   /** `owner/name` GitHub repo that publishes the release; unused by resolve. */
   repo?: string;
 }
@@ -37,6 +41,8 @@ export interface EnsureBundleInput {
   /** `owner/name` GitHub repo that publishes the release. */
   repo: string;
   cacheDir: string;
+  /** Release channel; absent = `stable` (version-pinned, pre-ADR 0058). */
+  channel?: ReleaseChannel;
 }
 
 /** Injected IO surface. All async; all errors surface as BundleFetchError. */
@@ -66,20 +72,38 @@ export class BundleFetchError extends Error {
   }
 }
 
-/** Canonical cache filename for a plugin/version bundle. */
-export function bundleFileName(plugin: string, version: string): string {
-  return `${plugin}-${version}.bundle.min.mjs`;
+/**
+ * Canonical cache filename for a plugin bundle.
+ *
+ * `stable` (or no channel) keys by version (`<plugin>-<version>.bundle.min.mjs`)
+ * — unchanged from pre-ADR 0058. `canary` keys by the channel literal
+ * (`<plugin>-canary.bundle.min.mjs`) since the floating tag has no stable
+ * version; checksum re-verification in {@link ensureBundle} refreshes it when
+ * the canary tag moves.
+ */
+export function bundleFileName(
+  plugin: string,
+  version: string,
+  channel: ReleaseChannel = "stable",
+): string {
+  const key = channel === "canary" ? "canary" : version;
+  return `${plugin}-${key}.bundle.min.mjs`;
 }
 
 /** The local cache path a bundle resolves to (no IO). */
 export function resolveBundle(input: ResolveBundleInput): string {
-  const { plugin, version, cacheDir } = input;
-  return joinPath(cacheDir, bundleFileName(plugin, version));
+  const { plugin, version, cacheDir, channel } = input;
+  return joinPath(cacheDir, bundleFileName(plugin, version, channel));
 }
 
 /** GitHub release-asset URL: `…/releases/download/v<version>/<name>`. */
 export function assetUrl(repo: string, version: string, name: string): string {
-  return `https://github.com/${repo}/releases/download/v${version}/${name}`;
+  return assetUrlForRef(repo, `v${version}`, name);
+}
+
+/** GitHub release-asset URL for an arbitrary release ref (tag): `…/releases/download/<ref>/<name>`. */
+export function assetUrlForRef(repo: string, ref: string, name: string): string {
+  return `https://github.com/${repo}/releases/download/${ref}/${name}`;
 }
 
 /** Release asset name for a plugin's bundle. */
@@ -111,10 +135,11 @@ export async function ensureBundle(
   io: BundleIO,
   input: EnsureBundleInput,
 ): Promise<string> {
-  const { plugin, version, repo, cacheDir } = input;
-  const dest = resolveBundle({ plugin, version, cacheDir });
+  const { plugin, version, repo, cacheDir, channel = "stable" } = input;
+  const dest = resolveBundle({ plugin, version, cacheDir, channel });
+  const ref = channelReleaseRef(channel, version);
 
-  const manifest = await fetchManifest(io, repo, plugin, version);
+  const manifest = await fetchManifest(io, repo, plugin, ref);
 
   // Cache hit: verify against the manifest before trusting it.
   if (await io.exists(dest)) {
@@ -130,7 +155,7 @@ export async function ensureBundle(
   const bundleName = bundleAssetName(plugin);
   let bytes: Uint8Array;
   try {
-    bytes = await io.download(assetUrl(repo, version, bundleName));
+    bytes = await io.download(assetUrlForRef(repo, ref, bundleName));
   } catch (err) {
     throw classifyDownloadError(err, bundleName);
   }
@@ -152,12 +177,12 @@ async function fetchManifest(
   io: BundleIO,
   repo: string,
   plugin: string,
-  version: string,
+  ref: string,
 ): Promise<BundleManifest> {
   const name = manifestAssetName(plugin);
   let raw: Uint8Array;
   try {
-    raw = await io.download(assetUrl(repo, version, name));
+    raw = await io.download(assetUrlForRef(repo, ref, name));
   } catch (err) {
     throw classifyDownloadError(err, name);
   }
