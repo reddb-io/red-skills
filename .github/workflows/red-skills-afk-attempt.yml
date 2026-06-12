@@ -1,12 +1,12 @@
-# rs-afk-attempt — red-skills' OWN caller for the AFK Actions lane.
+# red-skills-afk-attempt — red-skills' OWN caller for the AFK Actions lane.
 #
-# Naming convention (ADR pending): RedSkills ships its reusable workflows under
-# `red-*` (here, the reusable `red-afk-attempt.yml`). A workflow INSTALLED into a
-# target repo to drive that lane is prefixed `rs-*` ("RedSkills-installed in this
-# repo"). This file is red-skills self-hosting its own lane, so it is `rs-*` too.
+# Naming convention: reusable workflows are prefixed `reusable-*` (here, the
+# reusable `reusable-afk-attempt.yml`). A workflow INSTALLED into a target repo to
+# drive that lane is prefixed `red-skills-*` ("RedSkills-installed in this repo").
+# This file is red-skills self-hosting its own lane, so it is `red-skills-*` too.
 #
-# It calls the LOCAL reusable (`./.github/workflows/red-afk-attempt.yml`) — the
-# same one adopters reference as `reddb-io/red-skills/.github/workflows/red-afk-attempt.yml@v1`.
+# It calls the LOCAL reusable (`./.github/workflows/reusable-afk-attempt.yml`) — the
+# same one adopters reference as `reddb-io/red-skills/.github/workflows/reusable-afk-attempt.yml@v1`.
 #
 # Auth: opencode + the org-level `MINIMAX_API_KEY` secret. Model: minimax/MiniMax-M3.
 # Trust gate: only issues authored AND labelled by an allowlisted login run.
@@ -17,7 +17,7 @@
 # adopters without Blacksmith. The Blacksmith GitHub App is installed on the org;
 # without it a Blacksmith label leaves the job queued forever.
 
-name: rs-afk-attempt
+name: red-skills-afk-attempt
 
 on:
   # Manual: process a specific issue from the Actions UI.
@@ -43,7 +43,7 @@ jobs:
     if: >
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'issues' && github.event.label.name == 'ready-for-agent')
-    uses: ./.github/workflows/red-afk-attempt.yml
+    uses: ./.github/workflows/reusable-afk-attempt.yml
     with:
       issue_number: ${{ github.event_name == 'workflow_dispatch' && inputs.issue_number || github.event.issue.number }}
       runner: opencode

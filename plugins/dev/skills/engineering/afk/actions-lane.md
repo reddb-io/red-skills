@@ -11,7 +11,7 @@ decision stays human. ADR 0059 (the lane + OpenCode as the CI runner) and ADR
 
 | Layer | What it owns | Artifact |
 |---|---|---|
-| **Trigger + policy** | *when* it runs + the trust gate | reusable workflow `red-afk-attempt.yml` |
+| **Trigger + policy** | *when* it runs + the trust gate | reusable workflow `reusable-afk-attempt.yml` |
 | **Execution** | run one attempt (Node, runner CLI, launcher) | composite action `.github/actions/afk-attempt` |
 | **Runtime distribution** | fetch the versioned `dev` bundle | the `afk.mjs` launcher + GitHub Release (ADR 0038/0039) |
 
@@ -34,17 +34,17 @@ third-party action repos.
 
 Drop the reusable into your repo (or call it). It ships the issue/label triggers
 and the ADR 0056 trust gate. Template:
-[`examples/red-afk-attempt-caller.yml`](./examples/red-afk-attempt-caller.yml).
+[`examples/red-skills-afk-attempt.yml`](./examples/red-skills-afk-attempt.yml).
 
-Install the caller as `rs-afk-attempt.yml` (the `rs-*` installed-name
-convention — see [WORKFLOWS.md](../setup-red-skills/WORKFLOWS.md); only the
-filename changes, the `uses:` ref keeps the `red-` source name).
+Install the caller as `red-skills-afk-attempt.yml` (the `red-skills-*`
+installed-name convention — see [WORKFLOWS.md](../setup-red-skills/WORKFLOWS.md);
+only the filename changes, the `uses:` ref keeps the `reusable-` source name).
 
 ```yaml
-# .github/workflows/rs-afk-attempt.yml in your repo
+# .github/workflows/red-skills-afk-attempt.yml in your repo
 jobs:
   attempt:
-    uses: reddb-io/red-skills/.github/workflows/red-afk-attempt.yml@v1
+    uses: reddb-io/red-skills/.github/workflows/reusable-afk-attempt.yml@v1
     with:
       issue_number: ${{ inputs.issue_number }}   # or wire your own trigger
       runner: opencode
@@ -123,7 +123,7 @@ with:
 "nano"; 2 vCPU is the floor (other shapes: `-4vcpu-`, `-8vcpu-`, …). The
 **Blacksmith GitHub App must be installed on the org/repo** first — a Blacksmith
 label with no app installed leaves the job **queued forever**. red-skills' own
-`rs-afk-attempt.yml` caller runs on `blacksmith-2vcpu-ubuntu-2404`.
+`red-skills-afk-attempt.yml` caller runs on `blacksmith-2vcpu-ubuntu-2404`.
 
 ## Runner + auth
 

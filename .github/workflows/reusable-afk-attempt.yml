@@ -1,4 +1,4 @@
-# Reusable workflow: red-afk-attempt
+# Reusable workflow: reusable-afk-attempt
 #
 # This is the AFK Actions lane (ADR 0059, glossary term) for any GitHub
 # repository that installs RedSkills. It runs ONE attempt per invocation
@@ -33,13 +33,13 @@
 #   - Path A (auto, simplest): install this workflow directly into the adopter
 #     repo and edit the `allowlist_*` defaults below. Fires on issues:labeled/opened.
 #   - Path B (caller, more control): copy the thin caller at
-#     `plugins/dev/skills/engineering/afk/examples/red-afk-attempt-caller.yml`.
+#     `plugins/dev/skills/engineering/afk/examples/red-skills-afk-attempt.yml`.
 #
 # Required `permissions:` are intentionally minimal — `contents: write` (push
 # worker branch), `issues: write` (envelope + labels), `pull-requests: write`
 # (open PR). No `id-token`, no `actions: write`.
 
-name: red-afk-attempt
+name: reusable-afk-attempt
 
 on:
   workflow_call:

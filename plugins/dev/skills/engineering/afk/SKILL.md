@@ -65,7 +65,7 @@ GitHub Actions runner — one attempt, one issue, one PR per invocation, no flee
 no admin-merge. Only the trigger and the secret-injection surface differ.
 
 The lane is packaged as three layers (ADR 0059/0062): the reusable workflow
-`.github/workflows/red-afk-attempt.yml` (triggers + trust gate) → the composite
+`.github/workflows/reusable-afk-attempt.yml` (triggers + trust gate) → the composite
 action `.github/actions/afk-attempt` (execution) → the `afk.mjs` launcher +
 Release bundle (runtime). Two adoption paths: **turnkey** (call the reusable) or
 **composable** (`uses: reddb-io/red-skills/.github/actions/afk-attempt@v1` with
