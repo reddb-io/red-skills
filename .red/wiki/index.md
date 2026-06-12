@@ -110,6 +110,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [feat(afk): supervisor proof-of-life requires forward progress](./pages/636-feat-afk-supervisor-proof-of-life-requires-forward-progress.md)
 - [feat(afk): supervisor tick dispatches reconcile workers for parked-mechanical issues](./pages/564-feat-afk-supervisor-tick-dispatches-reconcile-workers-for-pa.md)
 - [feat(afk): typed blocked:<reason> labels (descriptive, auto-classified)](./pages/293-feat-afk-typed-blocked-reason-labels-descriptive-auto-classi.md)
+- [feat(afk-lane): auto-pick skips parked issues (ready-for-human / blocked:*)](./pages/729-feat-afk-lane-auto-pick-skips-parked-issues-ready-for-human.md)
 - [feat(afk-lane): dispatch with no issue auto-picks the oldest ready-for-agent](./pages/728-feat-afk-lane-dispatch-with-no-issue-auto-picks-the-oldest-r.md)
 - [feat(bench): memory bench eval spine — single-hop, fixed-pack, exact-match/F1, JSONL (#334)](./pages/425-feat-bench-memory-bench-eval-spine-single-hop-fixed-pack-exa.md)
 - [feat(brain): add scheduled ingestion with cursor-state persistence (#476)](./pages/650-feat-brain-add-scheduled-ingestion-with-cursor-state-persist.md)
