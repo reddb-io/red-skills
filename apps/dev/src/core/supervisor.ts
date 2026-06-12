@@ -24,6 +24,11 @@ import {
   LABEL_HUMAN,
   LABEL_RUNNER_ERROR,
 } from "./triage-labels.js";
+import {
+  computeHalfOpenBackoff,
+  isHalfOpenDue,
+  SLOT_CIRCUIT_DEFAULTS,
+} from "./slot-circuit.js";
 
 // ---------- tunables ----------
 
@@ -89,6 +94,12 @@ export interface SupervisorConfig {
    * back to the default so a typo can never disable the guard.
    */
   progressStaleS: number;
+  /** RED_AFK_HALF_OPEN_BASE_S — base cooldown (seconds) for the first half-open
+   * probe after a circuit trip (default 60s). */
+  halfOpenBaseS: number;
+  /** RED_AFK_HALF_OPEN_CAP_S — maximum cooldown cap for exponential backoff
+   * (default 3600s = 1 hour). */
+  halfOpenCapS: number;
 }
 
 export const SUPERVISOR_DEFAULTS = {
@@ -103,6 +114,8 @@ export const SUPERVISOR_DEFAULTS = {
   tickTimeoutS: 120,
   supervisorStaleS: 300,
   progressStaleS: 900,
+  halfOpenBaseS: SLOT_CIRCUIT_DEFAULTS.halfOpenBaseS,
+  halfOpenCapS: SLOT_CIRCUIT_DEFAULTS.halfOpenCapS,
 } as const satisfies SupervisorConfig;
 
 /**
@@ -144,6 +157,8 @@ export function resolveSupervisorConfig(
     progressStaleS:
       num("RED_AFK_SUPERVISOR_PROGRESS_STALE_S", SUPERVISOR_DEFAULTS.progressStaleS) ||
       SUPERVISOR_DEFAULTS.progressStaleS,
+    halfOpenBaseS: num("RED_AFK_HALF_OPEN_BASE_S", SUPERVISOR_DEFAULTS.halfOpenBaseS),
+    halfOpenCapS: num("RED_AFK_HALF_OPEN_CAP_S", SUPERVISOR_DEFAULTS.halfOpenCapS),
   };
 }
 
@@ -570,6 +585,13 @@ export interface SlotState {
    * empty ready queue. Distinct from a breaker-trip park: no sweep is run
    * and the slot un-parks automatically when the queue refills. */
   idleParked: boolean;
+  /** Current half-open backoff step (0 = first probe). Increments on each
+   * probe fast-death; reset to 0 when the circuit closes (probe success). */
+  backoffStep: number;
+  /** True when the slot is in half-open state: parked=true AND a probe worker
+   * has been spawned. The probe's death resolves to either closed (success)
+   * or re-parked-open (fast-death failure). */
+  halfOpen: boolean;
 }
 
 export function freshSlot(): SlotState {
@@ -585,6 +607,8 @@ export function freshSlot(): SlotState {
     reaped: false,
     spawning: false,
     idleParked: false,
+    backoffStep: 0,
+    halfOpen: false,
   };
 }
 
@@ -663,6 +687,8 @@ export interface TickResult {
   parked: number[];
   /** Slots that entered idle-park this tick (clean drain, empty queue). */
   idleParked: number[];
+  /** Slots whose cooldown expired and a half-open probe was spawned this tick. */
+  halfOpened: number[];
   reaped: number[];
   /** Slots into which a reconcile worker was dispatched this tick. */
   reconciledSlots: number[];
@@ -939,6 +965,46 @@ export async function handleDeadSlot(
   config: SupervisorConfig,
   queueDepth = 0,
 ): Promise<{ parked: boolean }> {
+  // Half-open probe death: resolve the circuit transition before the normal path.
+  if (state.parked && state.halfOpen) {
+    const now = deps.now();
+    const lifetime = state.spawnEpoch > 0 ? now - state.spawnEpoch : 0;
+    const fastDeath = state.spawnEpoch > 0 && lifetime < config.fastDeathThresholdS;
+    state.halfOpen = false;
+    state.pid = null;
+    if (fastDeath) {
+      // Probe fast-died: re-park with next backoff step, sweep already ran on
+      // the original trip so we do NOT re-sweep.
+      state.backoffStep++;
+      state.tripEpoch = now;
+      deps.log?.(
+        `circuit re-parked: slot ${slot} probe fast-death (${lifetime}s), ` +
+          `next backoff=${computeHalfOpenBackoff(state.backoffStep, config)}s step=${state.backoffStep}`,
+      );
+      return { parked: true };
+    }
+    // Probe survived long enough: close the circuit and reset backoff.
+    state.parked = false;
+    state.backoffStep = 0;
+    state.tripEpoch = 0;
+    state.swept = false; // allow sweep on a future trip
+    state.deaths = []; // reset the fast-death ring
+    deps.log?.(`circuit closed: slot ${slot} probe succeeded (${lifetime}s), backoff reset`);
+    // Respawn immediately so the closed slot has a live worker.
+    state.spawning = true;
+    try {
+      const spawned = await deps.proc.spawnSlot(slot);
+      state.pid = spawned.pid;
+      state.spawnEpoch = spawned.spawnEpoch;
+    } finally {
+      state.spawning = false;
+    }
+    state.stalled = false;
+    state.stallSinceEpoch = 0;
+    state.reaped = false;
+    return { parked: false };
+  }
+
   const exitCode = deps.proc.lastExitCode?.(slot) ?? null;
   const cleanExit = exitCode === 0;
 
@@ -1059,6 +1125,7 @@ export async function superviseTick(
     deaths: [],
     parked: [],
     idleParked: [],
+    halfOpened: [],
     reaped: [],
     reconciledSlots: [],
     stopped: false,
@@ -1101,12 +1168,44 @@ export async function superviseTick(
     result.respawned.push(i);
   }
 
+  // Schedule half-open probes for circuit-tripped slots whose cooldown has expired.
+  // A parked slot without a probe (halfOpen=false) transitions to half-open when
+  // now - tripEpoch >= backoff(step). The probe is a normal worker spawn; its death
+  // is handled by handleDeadSlot which detects the halfOpen flag.
+  {
+    const now = deps.now();
+    for (let i = 0; i < state.slots.length; i += 1) {
+      const slot = state.slots[i]!;
+      if (!slot.parked || slot.halfOpen || slot.spawning) continue;
+      if (!isHalfOpenDue(slot.tripEpoch, slot.backoffStep, now, config)) continue;
+      deps.log?.(
+        `circuit half-open: slot ${i} cooldown expired, spawning probe ` +
+          `(backoff=${computeHalfOpenBackoff(slot.backoffStep, config)}s step=${slot.backoffStep})`,
+      );
+      slot.halfOpen = true;
+      slot.spawning = true;
+      try {
+        const spawned = await deps.proc.spawnSlot(i);
+        slot.pid = spawned.pid;
+        slot.spawnEpoch = spawned.spawnEpoch;
+        slot.stalled = false;
+        slot.stallSinceEpoch = 0;
+        slot.reaped = false;
+      } finally {
+        slot.spawning = false;
+      }
+      result.halfOpened.push(i);
+    }
+  }
+
   // Respawn / park dead non-parked, non-idle-parked, non-spawning slots.
   // `slot.spawning` guards against a duplicate spawn when the enclosing tick
   // was abandoned mid-spawnSlot by the guardedTick ceiling.
+  // Also processes half-open probe deaths (parked=true, halfOpen=true).
   for (let i = 0; i < state.slots.length; i += 1) {
     const slot = state.slots[i]!;
-    if (slot.parked || slot.idleParked || slot.spawning) continue;
+    // Skip: open (parked but not probing), idleParked, or spawning in-flight.
+    if ((slot.parked && !slot.halfOpen) || slot.idleParked || slot.spawning) continue;
     const pid = slot.pid;
     if (pid === null || !deps.proc.isAlive(pid)) {
       result.deaths.push(i);
@@ -1214,7 +1313,8 @@ export async function runSupervisor(
     deps.log?.(
       `tick: slots=${state.slots.length} respawned=${result.respawned.length} ` +
         `deaths=${result.deaths.length} parked=${result.parked.length} idle-parked=${result.idleParked.length} ` +
-        `reaped=${result.reaped.length} ready=${heartbeat.readyForAgent} busy=${heartbeat.slotsBusy} free=${heartbeat.slotsFree}`,
+        `half-opened=${result.halfOpened.length} reaped=${result.reaped.length} ` +
+        `ready=${heartbeat.readyForAgent} busy=${heartbeat.slotsBusy} free=${heartbeat.slotsFree}`,
     );
     if (result.stopped) return;
     await deps.proc.sleep(config.pollIntervalS * 1000);
@@ -1224,7 +1324,7 @@ export async function runSupervisor(
 /** A non-stop tick result (the abandon/error fallback). The `abandoned` flag
  * tells runSupervisor not to advance lastProgressEpoch for this pass. */
 function continueResult(): TickResult {
-  return { respawned: [], deaths: [], parked: [], idleParked: [], reaped: [], reconciledSlots: [], stopped: false, queueDepth: 0, abandoned: true };
+  return { respawned: [], deaths: [], parked: [], idleParked: [], halfOpened: [], reaped: [], reconciledSlots: [], stopped: false, queueDepth: 0, abandoned: true };
 }
 
 /**
