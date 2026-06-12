@@ -47,7 +47,18 @@ export type AgentEffort = "low" | "medium" | "high" | "xhigh" | "max";
 // infinite loop" the idle / max-iteration / stall guards all miss. It maps to the
 // `stalled` terminal outcome downstream (→ blocked:stalled, ready-for-human),
 // preserving the worktree/PR.
-export type AgentOutcome = "done" | "blocked" | "no-sentinel" | "exhausted" | "runner-transient" | "timeout";
+// `goal-moot` (ADR 0057): the attempt-guard poll observed the claimed issue
+// already CLOSED, so the attempt's goal is already reflected in the world. The
+// inner agent is aborted and process-issue maps it to a deterministic terminal
+// outcome (own-merge → done, foreign close → claim-lost) without envelope spam.
+export type AgentOutcome =
+  | "done"
+  | "blocked"
+  | "no-sentinel"
+  | "exhausted"
+  | "runner-transient"
+  | "timeout"
+  | "goal-moot";
 
 /** AFK's canonical sentinels, registered as sandcastle completion signals. */
 export const DONE_SIGNAL = "<promise>DONE</promise>";
@@ -300,6 +311,14 @@ export interface RunAgentInput {
    * Only fires when the guard is armed (cap + headProbe present).
    */
   onHeartbeat?: (info: AttemptProgressInfo) => void;
+  /**
+   * Goal predicate (ADR 0057): reads the claimed issue's CLOSED state on the
+   * existing attempt-guard poll (one issue-state read per tick). When it resolves
+   * `true` the attempt is aborted as moot and `runAgent` returns the `goal-moot`
+   * outcome (process-issue maps it: own-merge → done, foreign → claim-lost). Only
+   * fires when the guard is armed (cap + headProbe present). Omitted → disabled.
+   */
+  goalProbe?: () => Promise<boolean | undefined>;
   /**
    * Lane-idle stall reaper (issue #363) — the solo-path port of the fleet's
    * passive stall detector + hard stall reaper. COMPLEMENTARY to the #400
@@ -707,9 +726,19 @@ export function startAttemptGuard(opts: {
   now: () => number;
   schedule: (fn: () => void, ms: number) => () => void;
   /** `reason` distinguishes the soft commit/edit deadline ("stalled") from the
-   * commit-anchored hard cap ("hard-cap", issue #637). Callbacks that ignore
-   * the argument keep the prior behaviour. */
-  abort: (reason: "stalled" | "hard-cap") => void;
+   * commit-anchored hard cap ("hard-cap", issue #637) and the goal predicate
+   * ("goal-moot", ADR 0057 — the claimed issue is already CLOSED). Callbacks that
+   * ignore the argument keep the prior behaviour. */
+  abort: (reason: "stalled" | "hard-cap" | "goal-moot") => void;
+  /**
+   * Goal predicate (ADR 0057): reads the claimed issue's CLOSED state on THIS
+   * same poll (one issue-state read per tick — no extra polling loop). Resolves
+   * `true` when the issue is CLOSED, `false` when open, `undefined` on a gh /
+   * network failure. Only a definite `true` aborts the attempt ("goal-moot");
+   * `false` / `undefined` are no-ops, so a flaky read never kills on uncertainty.
+   * Optional → omitted means the goal predicate is disabled (prior behaviour).
+   */
+  goalProbe?: () => Promise<boolean | undefined>;
   /** Worktree line-volume probe (ADR 0051): a CHANGE between polls counts as
    * progress and resets the deadline, so an editing-but-not-committing runner
    * (codex) is not falsely stalled. Optional → guard stays commit-anchored. */
@@ -724,15 +753,38 @@ export function startAttemptGuard(opts: {
    * heartbeat + on_heartbeat hook ride this same cadence (PR-B). Never throws —
    * the caller wraps its own IO. */
   onTick?: (info: AttemptProgressInfo) => void;
-}): { stop: () => void; firedTimeout: () => boolean } {
+}): { stop: () => void; firedTimeout: () => boolean; firedGoalMoot: () => boolean } {
   let lastProgress = opts.now();
   let lastCommit = opts.now();
   let lastHead: string | undefined;
   let lastVolume: number | undefined;
   let fired = false;
+  let goalMoot = false;
   const cancel = opts.schedule(() => {
     void (async () => {
       if (fired) return;
+      // Goal predicate (ADR 0057): rides THIS poll — one issue-state read per
+      // tick, no separate loop. A definite CLOSED means the attempt's goal is
+      // already reflected in the world (someone landed it, or our own merge), so
+      // the attempt is moot: abort. An open issue OR a failed read (`!== true`)
+      // is a no-op — the predicate never kills on uncertainty. Checked before the
+      // progress/deadline logic so a busy-but-committing agent on an already-closed
+      // issue is still terminated within ~2 poll intervals.
+      if (opts.goalProbe) {
+        let closed: boolean | undefined;
+        try {
+          closed = await opts.goalProbe();
+        } catch {
+          closed = undefined;
+        }
+        if (fired) return;
+        if (closed === true) {
+          fired = true;
+          goalMoot = true;
+          opts.abort("goal-moot");
+          return;
+        }
+      }
       // Commit signal (always present). A headProbe rejection = no progress
       // observed (let the deadline run), matching the prior commit-anchored
       // behaviour exactly when no progressProbe is supplied.
@@ -777,7 +829,7 @@ export function startAttemptGuard(opts: {
       opts.onTick?.({ head: head ?? lastHead, lastProgressMs: lastProgress, nowMs: opts.now() });
     })();
   }, opts.intervalMs);
-  return { stop: cancel, firedTimeout: () => fired };
+  return { stop: cancel, firedTimeout: () => fired && !goalMoot, firedGoalMoot: () => goalMoot };
 }
 
 /**
@@ -822,7 +874,7 @@ export async function runAgent(deps: SandcastleDeps, input: RunAgentInput): Prom
   const now = deps.now ?? (() => Date.now());
   const makeController = deps.makeAbortController ?? (() => new AbortController());
   const schedule = deps.schedule ?? defaultSchedule;
-  let guard: { stop: () => void; firedTimeout: () => boolean } | undefined;
+  let guard: { stop: () => void; firedTimeout: () => boolean; firedGoalMoot: () => boolean } | undefined;
   let laneReaper: { stop: () => void; firedReap: () => boolean } | undefined;
   let controller: AbortController | undefined;
   if (input.attemptTimeoutSeconds && input.attemptTimeoutSeconds > 0 && input.headProbe) {
@@ -838,12 +890,15 @@ export async function runAgent(deps: SandcastleDeps, input: RunAgentInput): Prom
       ...(hardCap && hardCap > 0 ? { hardCapMs: hardCap * 1000 } : {}),
       now,
       schedule,
+      ...(input.goalProbe ? { goalProbe: input.goalProbe } : {}),
       abort: (reason) =>
         controller?.abort(
           new Error(
-            reason === "hard-cap"
-              ? `afk: attempt aborted — no new commit within ${hardCap}s despite worktree edits (hard cap, stalled)`
-              : `afk: attempt aborted — no new commit within ${cap}s (stalled)`,
+            reason === "goal-moot"
+              ? "afk: attempt mooted — the claimed issue is already CLOSED (goal predicate, ADR 0057)"
+              : reason === "hard-cap"
+                ? `afk: attempt aborted — no new commit within ${hardCap}s despite worktree edits (hard cap, stalled)`
+                : `afk: attempt aborted — no new commit within ${cap}s (stalled)`,
           ),
         ),
       // Externalized proof-of-life (PR-B): each poll fires the caller's opaque
@@ -906,6 +961,19 @@ export async function runAgent(deps: SandcastleDeps, input: RunAgentInput): Prom
         branch: input.branch,
         commits: [],
         stdout: `afk: attempt reaped — agent lane idle past ${input.laneIdleKillThresholdSeconds}s with no active build/test (stalled)`,
+      };
+    }
+    // The goal predicate fired (ADR 0057): the claimed issue is already CLOSED,
+    // so the attempt is moot. Surface the dedicated outcome — process-issue maps
+    // it deterministically (own-merge → done, foreign close → claim-lost) without
+    // a terminal envelope. Checked before the stall guard: a goal-moot abort sets
+    // its own flag and firedTimeout() excludes it, so they never collide.
+    if (guard?.firedGoalMoot()) {
+      return {
+        outcome: "goal-moot",
+        branch: input.branch,
+        commits: [],
+        stdout: "afk: attempt mooted — the claimed issue is already CLOSED (goal predicate, ADR 0057)",
       };
     }
     // The progress guard aborted: alive but not committing → stalled.

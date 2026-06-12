@@ -27,6 +27,7 @@ import {
   type GitExec,
 } from "./remote-branch.js";
 import { buildHandoff, EXIT_PROTOCOL, type HandoffComment } from "./handoff.js";
+import { evaluateGoalPredicate } from "./goal-predicate.js";
 import {
   type AgentOutcome,
   type AgentEffort,
@@ -179,6 +180,14 @@ export interface ProcessLookups {
    * (the legacy behaviour).
    */
   branchPresent?(branch: string): Promise<boolean>;
+  /**
+   * Goal predicate own-merge signal (ADR 0057): has the worker branch already
+   * landed in `<base>`? Consulted ONCE when the attempt-guard poll observes the
+   * claimed issue CLOSED, to map the moot attempt — `true` → the close carries
+   * THIS attempt's own merge (`done`); `false`/absent → a foreign lander closed
+   * it (`claim-lost`). Optional so legacy wiring/tests degrade to `claim-lost`.
+   */
+  branchMerged?(branch: string, base: string): Promise<boolean>;
 }
 
 /** The hook dispatch surface: the parsed config + the default resolver + the
@@ -750,6 +759,11 @@ export async function processIssue(
       // SIGKILL mid-iteration preserves the diff on origin. Best-effort.
       remote: input.remote,
       continuousPush: true,
+      // Goal predicate (ADR 0057): rides the attempt-guard poll — one issue-state
+      // read per tick. A CLOSED claimed issue moots the attempt (the 2026-06-09
+      // re-verify incident). issueClosed resolves false on a gh failure, so an
+      // uncertain read is a no-op (the predicate never kills on uncertainty).
+      goalProbe: () => deps.gh.issueClosed(issue),
       // FIX J: env computed by the pre_worktree hook (e.g. CARGO_TARGET_DIR per
       // slot) — runAgent applies it to the spawned agent's environment.
       env: agentEnv,
@@ -794,6 +808,8 @@ export async function processIssue(
         onAgentEvent: deps.recordAgentEvent,
         remote: input.remote,
         continuousPush: true,
+        // Goal predicate rides the fallback attempt's guard poll too (ADR 0057).
+        goalProbe: () => deps.gh.issueClosed(issue),
         // FIX J: carry the pre_worktree env onto the fallback runner too.
         env: agentEnv,
       });
@@ -877,6 +893,48 @@ export async function processIssue(
         `🤖 /afk: no-sentinel exit but worker branch \`${workerBranch}\` carries work — salvaging through the feedback gate (issue #332).`,
       );
       await fireHook("post_attempt", postAttemptContext(current, workerBranch, "success", "no-sentinel"));
+    } else if (run.outcome === "goal-moot") {
+      // ---- goal predicate fired (ADR 0057): the claimed issue is already CLOSED ----
+      // The attempt's goal is already reflected in the world (the 2026-06-09
+      // re-verify incident). Terminate deterministically WITHOUT a terminal
+      // envelope — at most ONE concise local record, so the issue thread stays
+      // readable. Map the moot attempt with the pure predicate: own-merge close →
+      // `done`; foreign close → `claim-lost`. The own-merge signal is best-effort
+      // (an absent lookup or any failure degrades to `claim-lost`, never falsely
+      // claiming credit).
+      const ownMerge = deps.lookups.branchMerged
+        ? await deps.lookups.branchMerged(workerBranch, base).catch(() => false)
+        : false;
+      const verdict = evaluateGoalPredicate({ closed: true, ownMerge });
+      const outcome: ProcessOutcome = verdict === "done" ? "done" : "claim-lost";
+      // Close the per-attempt lifecycle symmetrically (the pre_attempt hook fired
+      // at claim). No on_attempt_error — a mooted attempt is not a crash.
+      await fireHook(
+        "post_attempt",
+        postAttemptContext(current, workerBranch, verdict === "done" ? "success" : "fail", "goal-moot"),
+      );
+      deps.appendIterLog(
+        verdict === "done"
+          ? `🤖 /afk #${issue}: goal predicate — issue already CLOSED by this attempt's own merge; nothing to land (done).`
+          : `🤖 /afk #${issue}: goal predicate — issue already CLOSED by another lander; attempt mooted (claim-lost).`,
+      );
+      // Best-effort hygiene: drop our now-stale `running` label so a CLOSED issue
+      // is never left tagged running. The foreign lander typically already shed it.
+      try {
+        await deps.gh.editLabels(issue, [LABEL_RUNNING], []);
+      } catch {
+        // best-effort: a label failure on an already-closed issue is cosmetic.
+      }
+      await deps.claimLock.release(issue);
+      return {
+        outcome,
+        issue,
+        branch: workerBranch,
+        base,
+        hooksFired,
+        preserved: false,
+        swept: false,
+      };
     } else if (run.outcome === "timeout") {
       // ---- attempt progress guard fired: alive but no new commit within the cap. ----
       // Before escalating, try the ADR 0055 NO-AGENT reconcile: a stalled attempt

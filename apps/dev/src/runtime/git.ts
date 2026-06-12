@@ -114,6 +114,34 @@ export async function fetchBranch(ctx: GitContext, branch: string): Promise<void
   await runGit(ctx, ["fetch", "origin", branch]);
 }
 
+/**
+ * Has the worker branch ALREADY landed in `<base>`? — the own-merge signal for
+ * the goal predicate (ADR 0057). When the attempt-guard poll observes the claimed
+ * issue CLOSED, this distinguishes "the close carries THIS attempt's own merge"
+ * (`done`) from "a foreign lander closed it" (`claim-lost`): true iff the worker
+ * branch's tip commit is an ancestor of `origin/<base>` (i.e. its commits are
+ * contained in the base — it was merged).
+ *
+ * The branch tip is resolved from the local ref first (sandcastle's worktree),
+ * falling back to the continuous-push `origin/<branch>` copy. Best-effort and
+ * safe-by-default: an unresolvable branch, a missing base ref, or any git failure
+ * returns `false`, so the predicate never falsely claims credit (`done`) — it
+ * degrades to `claim-lost`.
+ */
+export async function branchMergedInto(ctx: GitContext, branch: string, base: string): Promise<boolean> {
+  if (!branch || !base) return false;
+  let head = await branchHead(ctx, branch);
+  if (!head) {
+    const r = await runGit(ctx, ["rev-parse", "--verify", "--quiet", `refs/remotes/origin/${branch}`]);
+    head = r.code === 0 && r.stdout.trim() !== "" ? r.stdout.trim() : undefined;
+  }
+  if (!head) return false;
+  // `merge-base --is-ancestor A B` exits 0 when A is an ancestor of B, 1 when it
+  // is not, and >1 on error (e.g. a bad ref). Only a clean 0 counts as merged.
+  const r = await runGit(ctx, ["merge-base", "--is-ancestor", head, `origin/${base}`]);
+  return r.code === 0;
+}
+
 /** Changed files of <branch> vs <base> (git diff --name-only base...branch). */
 export async function changedFiles(ctx: GitContext, branch: string, base: string): Promise<string[]> {
   const r = await runGit(ctx, ["diff", "--name-only", `${base}...${branch}`]);
