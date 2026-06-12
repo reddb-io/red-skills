@@ -474,6 +474,10 @@ export function buildProcessDeps(
       close: (issue) => ghx.closeIssue(ghCtx, issue),
       listByLabel: (label) => ghx.listByLabel(ghCtx, label),
       issueClosed: (n) => ghx.issueClosed(ghCtx, n),
+      // Trust-gate provenance (#621): author + ready-for-agent label actor, read
+      // from the issue timeline. Consulted at claim time only when an allowlist
+      // is configured (plugins.dev.afk.trust-gate.allowlist).
+      issueTrust: (issue) => ghx.issueTrust(ghCtx, issue),
     },
     claimLock: {
       // Atomic POSIX mkdir lock (#434): a non-recursive mkdir that fails EEXIST,
