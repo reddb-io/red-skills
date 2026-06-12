@@ -606,6 +606,10 @@ export function buildProcessDeps(
         await gitx.fetchBranch(gitCtx, branch);
         return gitx.branchExists(gitCtx, branch);
       },
+      // Goal predicate own-merge signal (ADR 0057): true iff the worker branch
+      // already landed in <base>, distinguishing own-merge close (done) from a
+      // foreign close (claim-lost) when the guard observes the issue CLOSED.
+      branchMerged: (branch, base) => gitx.branchMergedInto(gitCtx, branch, base),
     },
     envelope: {
       git: gitx.gitExec(gitCtx),
