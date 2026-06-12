@@ -41,6 +41,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [chore(legacy): remove the stale committed memory-runtime-manifest.json (closes #597)](./pages/690-chore-legacy-remove-the-stale-committed-memory-runtime-manif.md)
 - [chore(skills): manifest/frontmatter hygiene — name:, Codex in-progress, git -C lock (#593)](./pages/610-chore-skills-manifest-frontmatter-hygiene-name-codex-in-prog.md)
 - [chore(upstream): bump pin to e3b90b5 (no cherry-picks)](./pages/262-chore-upstream-bump-pin-to-e3b90b5-no-cherry-picks.md)
+- [chore(workflows): reusable-* / red-skills-* / red-* three-prefix naming scheme](./pages/727-chore-workflows-reusable-red-skills-red-three-prefix-naming.md)
 - [chore: bump mattpocock skills upstream pin](./pages/511-chore-bump-mattpocock-skills-upstream-pin.md)
 - [chore: gitignore .turbo build cache](./pages/461-chore-gitignore-turbo-build-cache.md)
 - [decision(adr): introduce the brain plugin (ADR 0063) + amend 0021 (closes #596)](./pages/691-decision-adr-introduce-the-brain-plugin-adr-0063-amend-0021.md)
