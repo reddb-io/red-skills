@@ -783,6 +783,10 @@ export async function collectPrecheckFacts(ctx: RepoContext): Promise<PrecheckFa
     currentBranch,
     lockedBranch,
     pnpmInstalled,
+    // CI lanes (the GHA Actions lane) check out an https remote token-authed by
+    // GITHUB_TOKEN — the intended setup — so the SSH-only rule must not fire there.
+    allowHttpsRemote:
+      process.env.RED_AFK_LANE === "actions" || process.env.GITHUB_ACTIONS === "true",
   };
 }
 
