@@ -38,6 +38,7 @@ import {
   ensureBundle,
   resolveBundle,
 } from "./bundle-fetch.js";
+import { type ReleaseChannel, channelReleaseRef, resolveChannel } from "./channel.js";
 
 const DEFAULT_REPO = "reddb-io/red-skills";
 
@@ -154,6 +155,75 @@ export function parseEntrypoint(argv: readonly string[], role: string): Entrypoi
   return parseFetchArgs(argv);
 }
 
+// ── Release-channel resolution (ADR 0058) ────────────────────────────────────
+
+/**
+ * Read `<key>` from a constrained-subset `.red/config.yaml` (2-space indent,
+ * scalar leaves) without a YAML dependency — the launcher ships dependency-free.
+ * Builds dotted keys from indentation and returns the first matching scalar.
+ * Best-effort: malformed lines are skipped, never thrown.
+ */
+function flatConfigValue(text: string, dottedKey: string): string | undefined {
+  const stack: Array<{ indent: number; key: string }> = [];
+  for (const rawLine of text.split("\n")) {
+    const line = rawLine.replace(/\r$/, "");
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const colon = line.indexOf(":");
+    if (colon < 0) continue;
+    const indent = line.length - line.trimStart().length;
+    const key = line.slice(0, colon).trim();
+    if (!key) continue;
+    const value = line.slice(colon + 1).trim();
+    while (stack.length && stack[stack.length - 1].indent >= indent) stack.pop();
+    stack.push({ indent, key });
+    if (value) {
+      const path = stack.map((s) => s.key).join(".");
+      if (path === dottedKey) return stripInlineComment(value);
+    }
+  }
+  return undefined;
+}
+
+function stripInlineComment(value: string): string {
+  const hash = value.indexOf(" #");
+  return (hash >= 0 ? value.slice(0, hash) : value).trim();
+}
+
+/**
+ * The configured channel string from `.red/config.yaml`: the namespaced
+ * `plugins.dev.afk.release.channel` (ADR 0042) with the legacy top-level
+ * `afk.release.channel` as a fallback. Returns undefined when neither is set.
+ */
+export function configuredChannelValue(text: string): string | undefined {
+  return (
+    flatConfigValue(text, "plugins.dev.afk.release.channel") ??
+    flatConfigValue(text, "afk.release.channel")
+  );
+}
+
+/**
+ * Resolve the launcher's active channel: `RED_SKILLS_CHANNEL` env wins, then the
+ * configured value, then the safe `stable` default (today's behaviour).
+ */
+export function resolveLauncherChannel(
+  env: Record<string, string | undefined>,
+  configText: string | undefined,
+): ReleaseChannel {
+  return resolveChannel({ env, configValue: configText ? configuredChannelValue(configText) : undefined });
+}
+
+/** Walk up from `process.cwd()` for `.red/config.yaml` and read it (best-effort). */
+function readProjectConfig(): string | undefined {
+  const path = findUp(process.cwd(), join(".red", "config.yaml"));
+  if (!path) return undefined;
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return undefined;
+  }
+}
+
 // ── Run-mode bundle resolution (IO) ──────────────────────────────────────────
 
 const moduleDir = (() => {
@@ -188,9 +258,14 @@ function resolvePluginVersion(): string {
   }
 }
 
-function cachedBundlePath(plugin: string, version: string, cacheDir: string): string | null {
-  if (!version) return null;
-  const p = resolveBundle({ plugin, version, cacheDir });
+function cachedBundlePath(
+  plugin: string,
+  version: string,
+  cacheDir: string,
+  channel: ReleaseChannel,
+): string | null {
+  if (!version && channel !== "canary") return null;
+  const p = resolveBundle({ plugin, version, cacheDir, channel });
   return existsSync(p) ? p : null;
 }
 
@@ -207,21 +282,29 @@ async function runMode(plan: RunPlan): Promise<never> {
   }
   const cacheDir = cacheRoot(plan.cacheDir);
   const version = resolvePluginVersion();
+  const channel = resolveLauncherChannel(process.env, readProjectConfig());
+  // Audit line so a fleet's channel is visible in its boot output (ADR 0058).
+  process.stderr.write(
+    `entrypoint: resolving ${plugin} via ${channel} channel (${channelReleaseRef(channel, version)})\n`,
+  );
 
-  let bundle = cachedBundlePath(plugin, version, cacheDir) ?? distBundlePath(plugin);
-  if (!bundle && version) {
+  let bundle = cachedBundlePath(plugin, version, cacheDir, channel) ?? distBundlePath(plugin);
+  if (!bundle && (version || channel === "canary")) {
     try {
-      bundle = await ensureBundle(realIO, { plugin, version, repo: plan.repo, cacheDir });
+      bundle = await ensureBundle(realIO, { plugin, version, repo: plan.repo, cacheDir, channel });
     } catch (err) {
       const kind = err instanceof BundleFetchError ? err.kind : "unknown";
       const msg = err instanceof Error ? err.message : String(err);
-      await logLine(cacheDir, `${kind}: ${msg} (run plugin=${plugin} version=${version})`);
-      bundle = cachedBundlePath(plugin, version, cacheDir) ?? distBundlePath(plugin);
+      await logLine(cacheDir, `${kind}: ${msg} (run plugin=${plugin} version=${version} channel=${channel})`);
+      bundle = cachedBundlePath(plugin, version, cacheDir, channel) ?? distBundlePath(plugin);
     }
   }
 
   if (!bundle) {
-    const want = version ? bundleFileName(plugin, version) : `${plugin}-<version>.bundle.min.mjs`;
+    const want =
+      version || channel === "canary"
+        ? bundleFileName(plugin, version, channel)
+        : `${plugin}-<version>.bundle.min.mjs`;
     process.stderr.write(
       `entrypoint: could not resolve the ${plugin} runtime bundle (${want}).\n` +
         `  Looked in cache ${cacheDir} and repo-root dist/.\n` +
@@ -271,14 +354,15 @@ async function fetchMode(plan: FetchPlan): Promise<never> {
     process.exit(0);
   }
   const { plugin, version } = plan;
-  const expected = resolveBundle({ plugin, version, cacheDir });
+  const channel = resolveLauncherChannel(process.env, readProjectConfig());
+  const expected = resolveBundle({ plugin, version, cacheDir, channel });
   try {
-    const path = await ensureBundle(realIO, { plugin, version, repo: plan.repo, cacheDir });
-    process.stdout.write(`entrypoint: bundle ready at ${path}\n`);
+    const path = await ensureBundle(realIO, { plugin, version, repo: plan.repo, cacheDir, channel });
+    process.stdout.write(`entrypoint: bundle ready at ${path} (${channel})\n`);
   } catch (err) {
     const kind = err instanceof BundleFetchError ? err.kind : "unknown";
     const msg = err instanceof Error ? err.message : String(err);
-    await logLine(cacheDir, `${kind}: ${msg} (fetch plugin=${plugin} version=${version})`);
+    await logLine(cacheDir, `${kind}: ${msg} (fetch plugin=${plugin} version=${version} channel=${channel})`);
     process.stdout.write(
       `entrypoint: could not fetch ${plugin}@${version} (${kind}); ` +
         `expected cache path ${expected}. Continuing — fetch is best-effort.\n`,
