@@ -95,6 +95,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [feat(afk): goal predicate — a CLOSED claimed issue moots the attempt (ADR 0057)](./pages/732-feat-afk-goal-predicate-a-closed-claimed-issue-moots-the-att.md)
 - [feat(afk): half-open circuit breaker for parked slots (#628)](./pages/731-feat-afk-half-open-circuit-breaker-for-parked-slots-628.md)
 - [feat(afk): model/effort override via --model/--effort flag + RED_AFK_MODEL/RED_AFK_EFFORT env](./pages/677-feat-afk-model-effort-override-via-model-effort-flag-red-afk.md)
+- [feat(afk): monitor renders parked slots — parked:N and per-slot TTY detail](./pages/735-feat-afk-monitor-renders-parked-slots-parked-n-and-per-slot.md)
 - [feat(afk): one unified attempt log (red-castle writes into afk.log, not sandcastle.log)](./pages/717-feat-afk-one-unified-attempt-log-red-castle-writes-into-afk.md)
 - [feat(afk): opencode provider — endpoint-agnostic, env-precedence auth (Refs #638)](./pages/640-feat-afk-opencode-provider-endpoint-agnostic-env-precedence.md)
 - [feat(afk): per-runner `base` model/effort auto-populates every tier (extends ADR 0049)](./pages/694-feat-afk-per-runner-base-model-effort-auto-populates-every-t.md)
