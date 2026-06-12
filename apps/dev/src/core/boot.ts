@@ -77,6 +77,15 @@ export interface PrecheckFacts {
    */
   lockedBranch?: string;
   pnpmInstalled: boolean;
+  /**
+   * Relax the SSH-only remote rule. "Reject https remote" is a LOCAL-dev safety
+   * net (don't drive autonomous runs through a token-in-URL https remote). In a
+   * CI lane (GitHub Actions: `RED_AFK_LANE=actions` / `GITHUB_ACTIONS`),
+   * `actions/checkout` configures an https remote whose auth is the ephemeral
+   * `GITHUB_TOKEN` — exactly the intended setup — so the rule must NOT fire there.
+   * Set by the runtime facts-builder from the environment.
+   */
+  allowHttpsRemote?: boolean;
 }
 
 /** A pass/fail precheck verdict. On failure, `failed` names the precondition and
@@ -95,9 +104,11 @@ export function precheck(facts: PrecheckFacts): PrecheckResult {
   if (!facts.ghInstalled) return { ok: false, failed: "gh-missing" };
   if (!facts.ghAuthenticated) return { ok: false, failed: "gh-unauthenticated" };
   if (!facts.isGitRepo) return { ok: false, failed: "not-a-git-repo" };
-  for (const url of facts.remoteUrls) {
-    if (url.startsWith("https://")) {
-      return { ok: false, failed: "https-remote-forbidden", detail: url };
+  if (!facts.allowHttpsRemote) {
+    for (const url of facts.remoteUrls) {
+      if (url.startsWith("https://")) {
+        return { ok: false, failed: "https-remote-forbidden", detail: url };
+      }
     }
   }
   if (!facts.hasMainBranch) return { ok: false, failed: "no-main-branch" };

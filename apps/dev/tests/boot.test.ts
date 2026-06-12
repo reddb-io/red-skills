@@ -66,6 +66,19 @@ describe("precheck", () => {
     });
   });
 
+  it("allows an https remote in a CI lane (allowHttpsRemote) — GHA checkout is token-https", () => {
+    // The Actions lane checks out an https remote authed by GITHUB_TOKEN; the
+    // SSH-only rule must not fire there or every cloud attempt dies at precheck.
+    expect(
+      precheck(
+        facts({
+          remoteUrls: ["https://github.com/reddb-io/red-skills.git"],
+          allowHttpsRemote: true,
+        }),
+      ),
+    ).toEqual({ ok: true, warnings: [] });
+  });
+
   it("fails no-main-branch", () => {
     expect(precheck(facts({ hasMainBranch: false }))).toEqual({
       ok: false,
