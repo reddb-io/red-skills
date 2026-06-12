@@ -3,13 +3,13 @@
 ## Context
 
 ADR 0059 introduced the AFK Actions lane — running ONE AFK attempt per issue from
-GitHub Actions. The first implementation (`red-afk-attempt.yml`, #665, made
+GitHub Actions. The first implementation (`reusable-afk-attempt.yml`, #665, made
 functional in #675) baked the execution into the reusable workflow: it invoked
 `node plugins/dev/skills/engineering/afk/bin/afk.mjs` as a **workspace-relative
 path**. That only resolves when the checked-out repository *is* red-skills.
 
 When an adopter repo calls the reusable
-(`uses: reddb-io/red-skills/.github/workflows/red-afk-attempt.yml@<ref>`),
+(`uses: reddb-io/red-skills/.github/workflows/reusable-afk-attempt.yml@<ref>`),
 `actions/checkout` checks out the **adopter's** repo (the event's
 `github.repository`), which does not contain `plugins/dev/.../afk.mjs`. So the
 lane worked only for red-skills self-hosting, not for the adopters the lane is
@@ -38,14 +38,14 @@ workflow as a thin policy layer (triggers + trust gate) on top of it.**
   **caller's** workspace (the target repo), while the launcher lives in the
   action's own red-skills checkout. The two are independent paths.
 
-- **`red-afk-attempt.yml`** (reusable workflow) keeps the triggers
+- **`reusable-afk-attempt.yml`** (reusable workflow) keeps the triggers
   (`issues: labeled`/`opened`, `workflow_dispatch`, `workflow_call`) and the
   ADR 0056 trust gate, then delegates execution via
   `uses: …/.github/actions/afk-attempt`. It owns policy, not execution.
 
 - **Two adoption surfaces**, one execution primitive:
   - *Turnkey*: call the reusable (or install it directly) — triggers + trust gate
-    handled (`examples/red-afk-attempt-caller.yml`).
+    handled (`examples/red-skills-afk-attempt.yml`).
   - *Composable*: `uses: …/afk-attempt@v1` in a workflow you control, with your
     own trigger and gating (`examples/red-afk-attempt-action.yml`).
 
@@ -66,7 +66,7 @@ workflow as a thin policy layer (triggers + trust gate) on top of it.**
 ## Consequences
 
 - The lane runs in **any** repo, not just red-skills. red-skills dogfoods it
-  (its own `red-afk-attempt.yml` consumes the action).
+  (its own `reusable-afk-attempt.yml` consumes the action).
 - Execution is a testable, independently-versioned unit, decoupled from triggers
   and gating.
 - No new distribution mechanism: reuses launcher + Release (ADR 0038/0039) and

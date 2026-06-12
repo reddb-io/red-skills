@@ -11,7 +11,7 @@ Scaffold the per-repo configuration that the engineering skills assume:
 - **Issue tracker** — GitHub Issues (the only supported option, reddb.io policy)
 - **Triage labels** — the strings used for the canonical triage roles and label families
 - **Domain docs** — where `.red/CONTEXT.md` and ADRs live, and the consumer rules for reading them
-- **Workflows** — GitHub Actions shipped by RedSkills (all prefixed `red-`), e.g. auto-label fresh issues with `needs-triage` so nothing slips past `/triage` and `/afk`
+- **Workflows** — GitHub Actions shipped by RedSkills (installed under the `red-skills-*` prefix), e.g. auto-label fresh issues with `needs-triage` so nothing slips past `/triage` and `/afk`
 - **Token efficiency** — strongly recommend installing [RTK](https://github.com/rtk-ai/rtk) to cut 60–90% of dev-operation tokens via a transparent CLI proxy
 - **Development workflow** — activate the primary-branch guard, teach agents the isolated-worktree rules, and route interactive landing through `/ship`
 
@@ -71,13 +71,13 @@ Confirm the layout:
 
 **Section D — Workflows.**
 
-> Explainer: RedSkills ships GitHub Actions workflows that close gaps in the manual flow. The most important one is `red-issues-needs-triage.yml` — it auto-applies the `needs-triage` label to any newly opened or reopened issue that has no labels yet, so fresh reports never slip past `/triage` and never sit invisible to `/afk` (which only drains `ready-for-agent`). In `reddb-io/red-skills` every workflow is prefixed `red-`; when we **install** one into a consumer repo we rename it `rs-<name>.yml` (RedSkills) so the adopter can tell our workflows from its own CI. The rename is filename-only — see [WORKFLOWS.md](./WORKFLOWS.md) for the full `red-*` (source) vs `rs-*` (installed) convention.
+> Explainer: RedSkills ships GitHub Actions workflows that close gaps in the manual flow. The most important one is `red-issues-needs-triage.yml` — it auto-applies the `needs-triage` label to any newly opened or reopened issue that has no labels yet, so fresh reports never slip past `/triage` and never sit invisible to `/afk` (which only drains `ready-for-agent`). When we **install** a workflow into a consumer repo we rename it `red-skills-<name>.yml` so the adopter can tell our workflows from its own CI. The rename is filename-only — see [WORKFLOWS.md](./WORKFLOWS.md) for the full three-prefix convention (`reusable-*` reusables / `red-skills-*` installed copies / `red-*` red-skills' own CI).
 
 This section is a **menu, not an all-or-nothing**. Ask the user which workflows they want and, for any opt-in lane, which configs — never install a lane the user didn't pick. Default each workflow as marked below and let them override.
 
 Confirm with the user:
 
-- Install `red-issues-needs-triage.yml` (as `rs-issues-needs-triage.yml`) into `.github/workflows/`? Default: yes.
+- Install `red-issues-needs-triage.yml` (as `red-skills-issues-needs-triage.yml`) into `.github/workflows/`? Default: yes.
 - Does the `needs-triage` label exist in the issue tracker? If not, create it (`gh label create needs-triage --description "Maintainer needs to evaluate"`).
 - Does the `runner-error` label exist? If not, create it (`gh label create runner-error --color B60205 --description "AFK supervisor circuit-tripped; runner was misconfigured"`). The `/afk` fleet supervisor falls back to creating it on the fly during a circuit trip, but provisioning it here keeps colour/description consistent across repos.
 - Does the `blocked:dependency` label exist? If not, create it (`gh label create blocked:dependency --color D4C5F9 --description "Waiting on other issues (req:N edges); auto-unblocks when the last dependency closes"`). `req:N` edge labels are created on demand by `/to-issues` (`gh label create req:<n>`) like `prd:N`, so they need no upfront provisioning.
@@ -85,16 +85,16 @@ Confirm with the user:
 
 **Autonomous AFK execution lane (opt-in — default NO).** Beyond auto-triage, RedSkills can run `/afk` itself **from GitHub Actions** — one attempt per issue, opening a PR with no human at a terminal (the "offline" / headless lane, ADR 0059/0062). This is a bigger commitment than auto-triage, so it is **off by default**. Offer it, defaulting to no:
 
-- Install the AFK Actions lane (the caller, as `rs-afk-attempt.yml`) into `.github/workflows/`? **Default: no.** Explain the prerequisites before a yes, and ask which configs to use:
+- Install the AFK Actions lane (the caller, as `red-skills-afk-attempt.yml`) into `.github/workflows/`? **Default: no.** Explain the prerequisites before a yes, and ask which configs to use:
   - **Secrets** — one OpenCode auth key as a repo secret. Ask which provider the user runs, then which key to wire (first set wins): `MINIMAX_API_KEY` (`minimax/<model>`), `OPENAI_API_KEY` (`openai/<model>`), or `OPENROUTER_API_KEY` (`openrouter/<vendor>/<model>`). Without one the lane fires but the agent fails auth. **Public-repo gotcha:** org secrets are *not* shared with public repos by default — if the repo is public, the key must be a **repo secret** or an org secret whose "Repository access" includes this repo, else it resolves empty with no error. Full secret guide: [`../afk/actions-lane.md`](../afk/actions-lane.md#configuring-secrets-per-provider).
   - **Model** — ask which `<provider>/<model>` slug to pin in the caller (e.g. `minimax/MiniMax-M3`), or leave empty to use the repo's `.red/config.yaml` model config.
   - **Trust gate** — ask for the allowlisted issue-author + label-applier logins (you set them). Public repos: keep the allowlist to yourself + your bot.
   - **Triggers** — ask whether they want the manual `workflow_dispatch` caller, the `issues: labeled` auto-trigger, or both. Fires on `ready-for-agent` (labeled, or an issue opened already carrying it) / manual dispatch.
   - Full reference: [`../afk/actions-lane.md`](../afk/actions-lane.md).
 
-For the complete `red-*` (source) vs `rs-*` (installed) workflow catalogue (which are adopter-installable vs. red-skills' own CI), see [WORKFLOWS.md](./WORKFLOWS.md).
+For the complete three-prefix workflow catalogue (`reusable-*` / `red-skills-*` / `red-*` — which are adopter-installable vs. red-skills' own CI), see [WORKFLOWS.md](./WORKFLOWS.md).
 
-Future RedSkills workflows will land in this same step. Source filename prefix `red-` is mandatory; the installed copy is renamed `rs-`.
+Future RedSkills workflows land in this same step: reusable workflows are `reusable-*`, red-skills' own CI is `red-*`, and any copy installed into an adopter is renamed `red-skills-*`.
 
 **Section E — Token efficiency (strongly recommended).**
 
@@ -217,11 +217,11 @@ Then write the three docs files using the seed templates in this skill folder as
 - [triage-labels.md](./triage-labels.md) — label mapping
 - [domain.md](./domain.md) — domain doc consumer rules + layout
 
-If the user accepted Section D, copy each `red-*.yml` template the user picked from this skill folder's `workflows/` into `.github/workflows/` of the consumer repo, **renaming the destination to `rs-<name>.yml`** (e.g. `workflows/red-issues-needs-triage.yml` → `.github/workflows/rs-issues-needs-triage.yml`). Only the filename changes; copy the body verbatim. Don't overwrite an existing `rs-*` file — diff and ask first. Then ensure both `needs-triage` and `runner-error` labels exist via `gh label create` if missing (`gh label create runner-error --color B60205 --description "AFK supervisor circuit-tripped; runner was misconfigured"`).
+If the user accepted Section D, copy each `red-*.yml` template the user picked from this skill folder's `workflows/` into `.github/workflows/` of the consumer repo, **renaming the destination to `red-skills-<name>.yml`** (e.g. `workflows/red-issues-needs-triage.yml` → `.github/workflows/red-skills-issues-needs-triage.yml`). Only the filename changes; copy the body verbatim. Don't overwrite an existing `red-skills-*` file — diff and ask first. Then ensure both `needs-triage` and `runner-error` labels exist via `gh label create` if missing (`gh label create runner-error --color B60205 --description "AFK supervisor circuit-tripped; runner was misconfigured"`).
 
 **If the user opted into the autonomous AFK execution lane** (Section D, default no), additionally:
 
-1. Copy [`../afk/examples/red-afk-attempt-caller.yml`](../afk/examples/red-afk-attempt-caller.yml) to `.github/workflows/rs-afk-attempt.yml` in the consumer repo (installed name is `rs-*`; the `uses:` ref inside still points at the `red-afk-attempt.yml` reusable — leave it). Don't overwrite an existing file — diff and ask first.
+1. Copy [`../afk/examples/red-skills-afk-attempt.yml`](../afk/examples/red-skills-afk-attempt.yml) to `.github/workflows/red-skills-afk-attempt.yml` in the consumer repo (installed name is `red-skills-*`; the `uses:` ref inside still points at the `reusable-afk-attempt.yml` reusable — leave it). Don't overwrite an existing file — diff and ask first.
 2. Edit `allowlist_authors` and `allowlist_label_actors` to the maintainer login(s) the user named (the trust gate; keep it short on public repos).
 3. Apply the trigger choice from Section D: keep `workflow_dispatch` for a manual caller, the `issues: labeled` auto-trigger, or both. (The reusable's own `if:` gate auto-triggers on `ready-for-agent` even when only the dispatch caller exists.)
 4. Set the `model:` input to the slug the user picked (e.g. `minimax/MiniMax-M3`), or leave it empty to fall back to the repo's `.red/config.yaml` model config.
