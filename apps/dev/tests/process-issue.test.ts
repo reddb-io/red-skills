@@ -68,6 +68,9 @@ interface HarnessOptions {
   backpressureOk?: boolean;
   locked?: boolean;
   config?: ConfigValues;
+  /** Trust-gate provenance (#621) returned by gh.issueTrust. When set, the port
+   * is registered; absent → no port (gate never fires). */
+  trust?: { author?: string; readyForAgentActor?: string };
   abortHook?: HookName;
   /** FIX J: when set, a pre_worktree hook command emits this env as the mutated
    * context's `{env:{…}}` slice — proving it threads onto the runAgent input. */
@@ -186,6 +189,9 @@ function harness(opts: HarnessOptions = {}): {
       async issueClosed(n) {
         return (opts.closedIssues ?? []).includes(n);
       },
+      // Trust-gate provenance port (#621): registered only when the test opts in,
+      // so legacy-shaped tests omit it and the gate never fires (permissive).
+      issueTrust: opts.trust ? async () => opts.trust! : undefined,
     },
     claimGh: opts.claim
       ? {
@@ -1116,6 +1122,63 @@ describe("processIssue — goal predicate (ADR 0057)", () => {
     const { deps, input, trace } = harness({ outcome: "goal-moot", branchMerged: false });
     await processIssue(deps, input);
     expect(typeof trace.runAgentCalls[0]?.goalProbe).toBe("function");
+  });
+});
+
+describe("processIssue — trust gate (#621)", () => {
+  const ALLOW: ConfigValues = { "afk.trust-gate.allowlist": "alice,bob" };
+
+  it("refuses a non-executable issue BEFORE any claim edit / worktree, with a clear log line", async () => {
+    const { deps, input, trace } = harness({
+      config: ALLOW,
+      trust: { author: "stranger", readyForAgentActor: "alice" },
+    });
+    const result = await processIssue(deps, input);
+    expect(result.outcome).toBe("claim-lost");
+    // No promotion edit, no agent spawn — refused before any work.
+    expect(trace.labelEdits).toEqual([]);
+    expect(trace.runAgentCalls).toEqual([]);
+    // Claim lock released so the slot is not leaked.
+    expect(trace.released).toEqual([9]);
+    // A clear, attributable log line names the gate + the reason.
+    expect(trace.iterLogs.some((l) => /trust gate refused #9.*untrusted author 'stranger'/.test(l))).toBe(true);
+  });
+
+  it("refuses when ready-for-agent was applied by a non-allowlisted actor", async () => {
+    const { deps, input, trace } = harness({
+      config: ALLOW,
+      trust: { author: "alice", readyForAgentActor: "github-actions[bot]" },
+    });
+    const result = await processIssue(deps, input);
+    expect(result.outcome).toBe("claim-lost");
+    expect(trace.runAgentCalls).toEqual([]);
+    expect(trace.iterLogs.some((l) => /trust gate refused.*github-actions\[bot\]/.test(l))).toBe(true);
+  });
+
+  it("claims normally when author AND label actor are both allowlisted", async () => {
+    const { deps, input, trace } = harness({
+      config: ALLOW,
+      outcome: "done",
+      feedbackOk: true,
+      trust: { author: "alice", readyForAgentActor: "bob" },
+    });
+    const result = await processIssue(deps, input);
+    expect(result.outcome).toBe("done");
+    // The promotion-to-running claim edit ran (the gate passed).
+    expect(trace.labelEdits[0]!.add).toEqual(["running"]);
+    expect(trace.runAgentCalls).toHaveLength(1);
+  });
+
+  it("is permissive when no allowlist is configured — the gate never fires even with an untrusted author", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      trust: { author: "stranger", readyForAgentActor: "anybody" },
+    });
+    const result = await processIssue(deps, input);
+    expect(result.outcome).toBe("done");
+    expect(trace.runAgentCalls).toHaveLength(1);
+    expect(trace.iterLogs.some((l) => /trust gate/.test(l))).toBe(false);
   });
 });
 
