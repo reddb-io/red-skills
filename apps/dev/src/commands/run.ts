@@ -64,6 +64,8 @@ import { buildProgressHeartbeat, formatIterationMarker } from "../core/heartbeat
 import { createActivityMeter } from "../core/activity-meter.js";
 import { DEFAULT_MAX_ITERATIONS } from "../core/execution.js";
 import type { AgentStreamEvent } from "../core/execution.js";
+import { makeStaleClaimPredicate, resolveClaimStalenessConfig } from "../core/claim-staleness.js";
+import { renderClaimComment } from "../core/claim.js";
 
 export interface RunOptions {
   args: string[];
@@ -492,7 +494,24 @@ export function buildProcessDeps(
           // best-effort: a failed concede ages out via the staleness predicate.
         }
       },
+      // One human-visible audit comment when we recover a stale cross-host claim
+      // (#627). Best-effort: a failed audit never abandons the won claim.
+      audit: async (issue, body) => {
+        try {
+          await ghx.comment(ghCtx, issue, body);
+        } catch {
+          // best-effort observability; the claim is already won.
+        }
+      },
     },
+    // Cross-host stale-claim recovery (#627, ADR 0066): a claim whose owner
+    // stopped refreshing past `cadence × (tolerance + 1)` is presumed dead and
+    // released by this sweep. The clock is sampled once per issue at deps build;
+    // the policy comes from RED_AFK_CLAIM_REFRESH_S / RED_AFK_CLAIM_STALE_TOLERANCE.
+    claimStale: makeStaleClaimPredicate(
+      Math.floor(Date.now() / 1000),
+      resolveClaimStalenessConfig(process.env),
+    ),
     claimLock: {
       // Atomic POSIX mkdir lock (#434): a non-recursive mkdir that fails EEXIST,
       // so two simultaneous boots cannot both claim the same issue. The prior
