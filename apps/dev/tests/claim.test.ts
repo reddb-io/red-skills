@@ -4,6 +4,7 @@ import {
   parseClaimRecords,
   reconcileClaim,
   renderClaimComment,
+  renderRecoveryAudit,
   type ClaimGh,
   type ClaimRecord,
   type ClaimSelf,
@@ -140,17 +141,70 @@ describe("reconcileClaim stale-claim recovery (injected liveness)", () => {
     const d = reconcileClaim(records, self("h:me", 50), { isStale: () => false });
     expect(d.verdict).toBe("won");
   });
+
+  it("reports the recovered stale worker that out-ordered us (#627 audit input)", () => {
+    const records = [rec(10, "dead:host"), rec(50, "h:me")];
+    const d = reconcileClaim(records, self("h:me", 50), { isStale: (r) => r.worker === "dead:host" });
+    expect(d.verdict).toBe("won");
+    expect(d.recovered).toEqual(["dead:host"]);
+  });
+
+  it("does not report a stale claim posted AFTER our claim as recovered", () => {
+    // dead:host's earliest claim (id 80) is LATER than ours (id 50): it never
+    // held the issue, so superseding it is not a recovery.
+    const records = [rec(50, "h:me"), rec(80, "dead:host")];
+    const d = reconcileClaim(records, self("h:me", 50), { isStale: (r) => r.worker === "dead:host" });
+    expect(d.verdict).toBe("won");
+    expect(d.recovered).toEqual([]);
+  });
+
+  it("reports no recovery when we lose", () => {
+    const records = [rec(10, "live:host"), rec(20, "dead:host"), rec(50, "h:me")];
+    const d = reconcileClaim(records, self("h:me", 50), { isStale: (r) => r.worker === "dead:host" });
+    expect(d.verdict).toBe("lost");
+    expect(d.winner).toBe("live:host");
+    expect(d.recovered).toEqual([]);
+  });
+
+  it("the returning stale owner concedes — the staleness predicate resolves the race", () => {
+    // B (h:me) recovered A (dead:host) and now holds the live claim. When A
+    // returns and reconciles WITHOUT refreshing, its own latest marker is still
+    // stale, so A is dropped and B (the live claim) wins — A concedes. This is
+    // the race resolved by the claim primitive itself.
+    const records = [rec(10, "dead:host"), rec(50, "h:me")];
+    const fromOwner = reconcileClaim(records, self("dead:host", 10), {
+      isStale: (r) => r.worker === "dead:host",
+    });
+    expect(fromOwner.verdict).toBe("lost");
+    expect(fromOwner.winner).toBe("h:me");
+  });
+});
+
+describe("renderRecoveryAudit", () => {
+  it("names the releasing worker and the recovered claimants", () => {
+    const one = renderRecoveryAudit({ worker: "h:me" }, ["dead:host"]);
+    expect(one).toContain("h:me");
+    expect(one).toContain("dead:host");
+    expect(one).toContain("a stale claim");
+    const many = renderRecoveryAudit({ worker: "h:me" }, ["a:1", "b:2"]);
+    expect(many).toContain("stale claims");
+    expect(many).toContain("`a:1`, `b:2`");
+  });
 });
 
 // ---- orchestrator (injected IO) ----
 
-function fakeGh(existing: RawClaimComment[]): ClaimGh & { posted: string[]; conceded: string[] } {
+function fakeGh(
+  existing: RawClaimComment[],
+): ClaimGh & { posted: string[]; conceded: string[]; audited: string[] } {
   let nextId = (existing.at(-1)?.id ?? 0) + 1;
   const posted: string[] = [];
   const conceded: string[] = [];
+  const audited: string[] = [];
   return {
     posted,
     conceded,
+    audited,
     async postClaim(_issue, body) {
       const id = nextId++;
       posted.push(body);
@@ -162,6 +216,9 @@ function fakeGh(existing: RawClaimComment[]): ClaimGh & { posted: string[]; conc
     },
     async concede(_issue, body) {
       conceded.push(body);
+    },
+    async audit(_issue, body) {
+      audited.push(body);
     },
   };
 }
@@ -190,5 +247,28 @@ describe("acquireClaim orchestration", () => {
     const d = await acquireClaim(gh, { worker: "h:me" }, 5, { suppressConcede: true });
     expect(d.verdict).toBe("lost");
     expect(gh.conceded).toHaveLength(0);
+  });
+
+  it("recovers a stale cross-host claim and posts exactly one audit comment (#627)", async () => {
+    // A dead worker holds an earlier claim (id 1); our post gets id 2. We win
+    // only because the staleness predicate drops the dead claim — and one audit
+    // comment records the recovery.
+    const gh = fakeGh([{ id: 1, body: renderClaimComment({ worker: "dead:host" }) }]);
+    const d = await acquireClaim(gh, { worker: "h:me", runner: "claude" }, 5, {
+      isStale: (r) => r.worker === "dead:host",
+    });
+    expect(d.verdict).toBe("won");
+    expect(d.recovered).toEqual(["dead:host"]);
+    expect(gh.audited).toHaveLength(1);
+    expect(gh.audited[0]).toContain("cross-host recovery");
+    expect(gh.audited[0]).toContain("dead:host");
+    expect(gh.conceded).toHaveLength(0);
+  });
+
+  it("posts no audit comment on an ordinary solo win", async () => {
+    const gh = fakeGh([]);
+    const d = await acquireClaim(gh, { worker: "h:me" }, 5);
+    expect(d.verdict).toBe("won");
+    expect(gh.audited).toHaveLength(0);
   });
 });
