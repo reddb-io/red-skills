@@ -82,8 +82,8 @@ describe("routeModelTier — rewrite (path a)", () => {
     expect(action.tier).toBe("validate");
     expect(action.model).toBe("claude-haiku-4-5");
     expect(action.effort).toBe("low");
-    // full input preserved, only model overridden
-    expect(action.updatedInput).toEqual({ subagent_type: "validate", model: "claude-haiku-4-5", prompt: "p" });
+    // full input preserved, model and effort overridden
+    expect(action.updatedInput).toEqual({ subagent_type: "validate", model: "claude-haiku-4-5", prompt: "p", effort: "low" });
   });
 
   it("injects the config model when a tier-agent dispatch leaves model unset", () => {
@@ -97,6 +97,26 @@ describe("routeModelTier — rewrite (path a)", () => {
   it("clamps simple-code dispatched on opus down to the simple tier (savings enforced)", () => {
     const action = routeModelTier(task({ subagent_type: "simple-code", model: "claude-opus-4-8" }), defaults());
     expect(action.kind === "rewrite" && action.model).toBe("claude-sonnet-4-6");
+  });
+});
+
+describe("routeModelTier — explicit pin vs legacy scalar", () => {
+  it("does not upgrade a correctly-cheap dispatch when an explicit tier pin equals the default", () => {
+    // validate tier default = claude-haiku-4-5; legacy afk.model = claude-sonnet-4-6.
+    // An explicit validate.model = claude-haiku-4-5 must beat the legacy scalar
+    // (resolveTier bug #583), so a haiku dispatch to validate remains a noop.
+    const config = loadConfig("/x/.red/config.yaml", {
+      read: () =>
+        "afk:\n  model: claude-sonnet-4-6\n  models:\n    claude:\n      validate:\n        model: claude-haiku-4-5\n",
+    });
+    expect(routeModelTier(task({ subagent_type: "validate", model: "haiku" }), config)).toEqual({ kind: "noop" });
+  });
+
+  it("enforces the resolved effort in updatedInput alongside the model", () => {
+    const action = routeModelTier(task({ subagent_type: "validate", model: "opus" }), defaults());
+    expect(action.kind).toBe("rewrite");
+    if (action.kind !== "rewrite") return;
+    expect(action.updatedInput).toMatchObject({ effort: "low" });
   });
 });
 
