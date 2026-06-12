@@ -36,15 +36,19 @@ Drop the reusable into your repo (or call it). It ships the issue/label triggers
 and the ADR 0056 trust gate. Template:
 [`examples/red-afk-attempt-caller.yml`](./examples/red-afk-attempt-caller.yml).
 
+Install the caller as `rs-afk-attempt.yml` (the `rs-*` installed-name
+convention — see [WORKFLOWS.md](../setup-red-skills/WORKFLOWS.md); only the
+filename changes, the `uses:` ref keeps the `red-` source name).
+
 ```yaml
-# .github/workflows/afk.yml in your repo
+# .github/workflows/rs-afk-attempt.yml in your repo
 jobs:
   attempt:
     uses: reddb-io/red-skills/.github/workflows/red-afk-attempt.yml@v1
     with:
       issue_number: ${{ inputs.issue_number }}   # or wire your own trigger
       runner: opencode
-      model: ""                                   # e.g. minimax/MiniMax-M2 (empty = repo config)
+      model: ""                                   # e.g. minimax/MiniMax-M3 (empty = repo config)
       allowlist_authors: "your-login"
       allowlist_label_actors: "your-login"
     secrets:
@@ -69,7 +73,7 @@ jobs:
         with:
           issue: ${{ github.event.issue.number }}
           runner: opencode
-          model: minimax/MiniMax-M2            # optional override
+          model: minimax/MiniMax-M3            # optional override
           minimax-api-key: ${{ secrets.MINIMAX_API_KEY }}
 ```
 
@@ -97,7 +101,7 @@ back to a hard-coded maintainer allowlist.)
 |---|---|---|---|
 | `issue` / `issue_number` | ✓ | ✓ | required |
 | `runner` | ✓ | ✓ | `claude` \| `codex` \| `opencode` (CI default `opencode`) |
-| `model` | ✓ | ✓ | override every tier, e.g. `minimax/MiniMax-M2` (empty = repo config) |
+| `model` | ✓ | ✓ | override every tier, e.g. `minimax/MiniMax-M3` (empty = repo config) |
 | `effort` | ✓ | ✓ | reasoning effort/variant override |
 | `lanes` | ✓ | ✓ | execution-lane tag (`actions`\|`k8s`), surfaced as `RED_AFK_LANE` for observability; default `actions` |
 | `*-api-key` secrets | ✓ (inputs) | ✓ (secrets) | the auth keys — passed as **action inputs** (composite actions can't read `secrets.*`) |
@@ -121,6 +125,41 @@ So to drive a **MiniMax** subscription: wire `minimax-api-key` and set
 own CLIs + `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`.) Details:
 [`runner-opencode.md`](./runner-opencode.md), and the model tiers/override in
 [`../model-tier-policy/SKILL.md`](../model-tier-policy/SKILL.md).
+
+## Configuring secrets (per provider)
+
+Pick **one** provider, wire **its** key, and set a matching `model` slug. The
+resolver takes the first key that is set, so wiring more than one just makes the
+precedence above decide.
+
+| Provider | Repo secret | `model` slug | Caller wiring |
+|---|---|---|---|
+| MiniMax | `MINIMAX_API_KEY` | `minimax/MiniMax-M3` | `secrets: { minimax_api_key: ${{ secrets.MINIMAX_API_KEY }} }` |
+| OpenAI | `OPENAI_API_KEY` | `openai/<model>` | `secrets: { openai_api_key: ${{ secrets.OPENAI_API_KEY }} }` |
+| OpenRouter | `OPENROUTER_API_KEY` | `openrouter/<vendor>/<model>` | `secrets: { openrouter_api_key: ${{ secrets.OPENROUTER_API_KEY }} }` |
+
+Set the key (the value is yours to provision — RedSkills never sets it for you):
+
+```bash
+gh secret set MINIMAX_API_KEY --repo OWNER/REPO     # paste the key when prompted
+```
+
+> **⚠️ Public-repo gotcha — org secrets don't reach public repos by default.**
+> GitHub does **not** expose organization secrets to a public repository unless
+> the secret's **Repository access** explicitly includes it. An org secret left
+> at the default scope resolves to an **empty string with no error** — the lane
+> fires, `opencode` starts, and auth fails as if the key were never set. If your
+> repo is public, either:
+> - set the key as a **repo secret** (`gh secret set … --repo OWNER/REPO`), or
+> - open the org secret's *Repository access* and add the repo (or set it to
+>   *All repositories*).
+>
+> Verify it actually reached the repo: `gh secret list --repo OWNER/REPO` should
+> list the key. An empty list on a public repo is the tell-tale of this gotcha.
+
+The `claude` / `codex` runners are not API-key-only — they need their own CLI on
+the runner plus `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`. The CI default is
+`opencode` precisely because it is pure API-auth.
 
 ## CI invariants (baked into the action)
 
