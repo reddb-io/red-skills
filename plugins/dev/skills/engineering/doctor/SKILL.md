@@ -1,6 +1,6 @@
 ---
 name: doctor
-description: Adoption/process doctor — report how fully a repo has adopted the RedSkills engineering stack (triage label vocabulary, AGENTS≡CLAUDE parity, Development-workflow adoption, statusline form, MCP wiring, blocked-label hygiene, version coherence). Read-only by default; `--fix` applies the canonical fix for every finding, gated per hard-to-reverse change. The recurring counterpart to the one-time `/setup-red-skills`. Use when asked "is our process round / is this repo set up right", "red doctor", "check adoption", "doctor --fix", before a large `/afk` drain, or to audit `reddb`/`red-ui`/`red-skills`-style repos against the canonical conventions.
+description: Adoption/process doctor — report how fully a repo has adopted the RedSkills engineering stack (triage label vocabulary, AGENTS≡CLAUDE parity, Development-workflow adoption, statusline form, MCP wiring, blocked-label hygiene, version coherence, installed `rs-*` workflow adoption). Read-only by default; `--fix` applies the canonical fix for every finding, gated per hard-to-reverse change. The recurring counterpart to the one-time `/setup-red-skills`. Use when asked "is our process round / is this repo set up right", "red doctor", "check adoption", "doctor --fix", before a large `/afk` drain, or to audit `reddb`/`red-ui`/`red-skills`-style repos against the canonical conventions.
 argument-hint: "[--repo <path|owner/name>] [--fix]"
 ---
 
@@ -38,6 +38,9 @@ Run the checks against the target repo (cwd by default; `--repo <path|owner/name
 7. **Statusline drift** — the installed `.claude/settings.json` `statusLine` command resolves the **cached bundle** (`~/.cache/red-skills/bundles/dev-*.bundle.min.mjs`), not the OLD launcher form (`…/plugins/cache/red-skills/dev/*/…/afk.mjs`) which blanks on every plugin update.
 8. **MCP wiring** — does the repo wire the expected MCPs? The `dev` plugin should expose `code-nav`; the `memory` plugin should expose **`red-memory` + `red-ui` as consumers** (fetched from the red-memory / red-ui releases per ADR 0041) — **flag a single standalone-local `memory` server** (running an in-repo `bootstrap.mjs`/build) as the pre-migration state. Also check whether the repo wires `code-nav`/`red-memory` for its **own** dev (root `.mcp.json` or agent-doc reference).
 9. **Version coherence** — every plugin manifest pair is on the same version: for each `plugins/*/`, `.claude-plugin/plugin.json` `version` **==** `.codex-plugin/plugin.json` `version`. A mismatch is what `validate-install-metadata.sh` rejects and what fails `red-release` (e.g. a stale manifest landed manually). Fix-home = `→ release` (the single-writer version script, ADR 0040).
+10. **Installed-workflow (`rs-*`) adoption** — list `.github/workflows/*.yml` and audit the **RedSkills-installed** workflows *already present* (do **not** recommend installing a lane the repo didn't opt into — that stays a `/setup-red-skills` decision, and our own `red-*` CI is never imposed). Two findings, both tagged `→ /setup-red-skills`:
+    - **Naming drift** — a copied adopter workflow that still carries the `red-` source prefix (e.g. a `red-afk-attempt.yml` *caller* or `red-issues-needs-triage.yml` sitting in a non-red-skills repo's `.github/workflows/`). Installed copies must be `rs-<name>.yml`; report the rename. (The reusable referenced by `uses:` is exempt — it lives in red-skills, not the adopter.)
+    - **AFK lane auth gap** — if `rs-afk-attempt.yml` (or a drifted `red-afk-attempt.yml` caller) is installed, best-effort check that an OpenCode auth secret **name** is present via `gh secret list --repo <repo>` (names only — never read or print a value). If none of `MINIMAX_API_KEY`/`OPENAI_API_KEY`/`OPENROUTER_API_KEY` is listed, flag the lane as installed-but-unauthed (the public-repo org-secret gotcha — on a public repo an org secret resolves empty unless its Repository access includes the repo). Skip silently if `gh secret list` 403s (no admin scope); report `unknown`, not a failure.
 
 **Scorecard** (always printed): one row per check (✅/⚠️/❌ + one-line evidence) + a readiness score (count of green checks, like `context-status`) + a prioritized recommendation list, **every recommendation carrying a fix-home tag** from the *Fix-home* table. End with the single highest-impact next step.
 
@@ -73,7 +76,7 @@ Canonical families live in the target repo's `.red/agents/triage-labels.md`: sta
 
 | Fix-home | Findings it owns |
 |---|---|
-| `→ /setup-red-skills` | AGENTS≡CLAUDE `## Agent skills` parity, AGENTS≡CLAUDE `## Development workflow` parity, `dev.lock.primary-branch` adoption, statusline drift, MCP wiring, label provisioning. |
+| `→ /setup-red-skills` | AGENTS≡CLAUDE `## Agent skills` parity, AGENTS≡CLAUDE `## Development workflow` parity, `dev.lock.primary-branch` adoption, statusline drift, MCP wiring, label provisioning, installed-workflow (`rs-*`) naming drift + AFK-lane auth gap. |
 | `→ AFK runtime` | `blocked:*` accumulation (labels must be rotated/cleared on re-queue, plus the re-claim cap) — a bundle change, not a config edit. |
 | `→ manual / maintainer` | label renames (`gh label edit`), retiring legacy labels — the operator decides. |
 | `→ release` | cross-manifest version mismatch — owned by the single-writer version script + `validate-install-metadata.sh` gate (ADR 0040); never hand-edit one manifest. |
@@ -91,12 +94,14 @@ Canonical families live in the target repo's `.red/agents/triage-labels.md`: sta
 | `blocked:*` on a `ready-for-agent`/`running` issue | `gh issue edit <N> --remove-label blocked:<reason>` (rotate the stale reason) | **confirm each** |
 | MCP wiring | add/correct the expected servers in the repo's `.mcp.json` | **confirm each** |
 | Version coherence mismatch | **run** the single-writer version/release tool (ADR 0040); never patch a manifest | **delegate** |
+| Installed-workflow `rs-*` naming drift | `git mv .github/workflows/red-<name>.yml .github/workflows/rs-<name>.yml` (filename only; body unchanged) | **confirm each** — renames a CI file |
+| AFK-lane auth gap (`rs-afk-attempt.yml`, no auth secret) | **do not set the secret** — print the per-provider `gh secret set … --repo` guidance + the public-repo org-secret note; delegate to `/setup-red-skills` | **delegate** |
 | Context-stack gap (check 1) | run the relevant `memory`/context skill | **delegate** |
 
 ### Scope & boundaries
 
 - **Single repo** by default; multi-repo sweep is opt-in. With `--fix`, a sweep applies per-repo with the same gating.
-- **Public-repo safe**: reads only conventions already public in the repo; emits no secrets and proposes no CI/CD standardization (explicitly out of scope — do not recommend or apply `red-`-prefixed workflows onto a repo's own CI).
+- **Public-repo safe**: reads only conventions already public in the repo; **emits no secret values** (it may list secret *names* via `gh secret list` to detect the AFK-lane auth gap — names are not sensitive — and never reads or prints a value). It does **not** impose RedSkills' own `red-*` CI (release/bench/drift-guard/upstream-watch) onto an adopter repo — that stays out of scope. What it *does* audit is the **adoption coherence of `rs-*` workflows already installed** (correct installed-name + the AFK lane's auth secret), never installing a lane the repo didn't opt into.
 - Pairs with `/review-adrs` (decision-record coherence) and `memory:doctor` (graph health) — three doctors over different axes; this one owns **process/adoption** and is the one that can both diagnose and, with `--fix`, heal.
 
 </supporting-info>
