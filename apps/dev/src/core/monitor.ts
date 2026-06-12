@@ -57,6 +57,19 @@ export interface CompactWorker {
   diffRemoved?: number;
 }
 
+/** Per-slot visibility record for a non-closed supervisor slot, sourced from the
+ * supervisor-published state file (never from the supervisor log). Closed slots
+ * are omitted; only the slots needing operator attention carry a record. */
+export interface SlotDetail {
+  index: number;
+  /** "open" = circuit tripped, awaiting half-open cooldown
+   *  "half-open" = probe worker spawned, awaiting success/failure verdict
+   *  "idle-parked" = clean drain with empty queue; auto-unparks on next work */
+  status: "open" | "half-open" | "idle-parked";
+  /** Epoch seconds when the half-open probe is scheduled (open slots only). */
+  retryAt?: number;
+}
+
 export interface FleetState {
   ts: string;
   epoch: number;
@@ -74,6 +87,9 @@ export interface FleetState {
   slotsTotal: number;
   slotsParked: number;
   spawnsThisTick: number;
+  /** Per-slot details for non-closed slots. Absent/empty = all slots closed.
+   * Absent on state files written before this field was added (#630). */
+  slotDetails?: SlotDetail[];
 }
 
 export const FLEET_STALE_AFTER_S = 180;
@@ -110,7 +126,7 @@ export function renderFleetLine(fleet: FleetState, now: number): string {
   return (
     `fleet [${status}] last ticked ${formatElapsed(age)} ago` +
     `  ready:${fleet.readyForAgent}` +
-    `  slots busy:${fleet.slotsBusy} free:${fleet.slotsFree}` +
+    `  slots busy:${fleet.slotsBusy} free:${fleet.slotsFree} parked:${fleet.slotsParked}` +
     `  spawns:${fleet.spawnsThisTick}`
   );
 }
@@ -177,6 +193,33 @@ export function renderWorkerCompactLine(worker: CompactWorker, now: number): str
   return `${workerId} [${tag}] ${runner}  issues ${done}/${total}${flags}${cur}`;
 }
 
+/**
+ * Renders per-slot detail lines for any non-closed slot in the fleet.
+ * Returns one line per non-closed slot:
+ *   open      → "  slot N open  retry in HH:MM:SS"
+ *   half-open → "  slot N half-open  (probing)"
+ *   idle-parked → "  slot N idle-parked  (queue empty)"
+ * Returns an empty array when all slots are closed or slotDetails is absent.
+ * `now` is epoch seconds.
+ */
+export function renderSlotDetails(fleet: FleetState, now: number): string[] {
+  if (!fleet.slotDetails || fleet.slotDetails.length === 0) return [];
+  return fleet.slotDetails.map((d) => {
+    if (d.status === "half-open") {
+      return `  slot ${d.index} half-open  (probing)`;
+    }
+    if (d.status === "idle-parked") {
+      return `  slot ${d.index} idle-parked  (queue empty)`;
+    }
+    // open: show next retry countdown
+    if (d.retryAt !== undefined) {
+      const waitS = Math.max(0, d.retryAt - now);
+      return `  slot ${d.index} open  retry in ${formatElapsed(waitS)}`;
+    }
+    return `  slot ${d.index} open`;
+  });
+}
+
 /** Stable sort key — the worker-process start, oldest first (the bash glob is
  * lexical over the worker dirs; we order by started_at for determinism). */
 function startedAtKey(worker: CompactWorker): string {
@@ -205,7 +248,16 @@ export function renderCompactDashboard(
     removed += w.diffRemoved ?? 0;
   }
   const header = `${buildSparkline(events, now).line}   Δ fleet ${formatDiff(added, removed)}`;
-  const prefix = fleet ? `${header}\n${renderFleetLine(fleet, now)}` : header;
+  let prefix: string;
+  if (fleet) {
+    const fleetLine = renderFleetLine(fleet, now);
+    const details = renderSlotDetails(fleet, now);
+    prefix = details.length > 0
+      ? `${header}\n${fleetLine}\n${details.join("\n")}`
+      : `${header}\n${fleetLine}`;
+  } else {
+    prefix = header;
+  }
   if (workers.length === 0) {
     return `${prefix}\nworkers: (none — /afk not running here)`;
   }

@@ -460,6 +460,20 @@ export interface SupervisorGh {
   findReconcileCandidate?(): Promise<ReconcileCandidate | null>;
 }
 
+/** Per-slot visibility record for non-closed slots in the heartbeat.
+ * Closed slots (pid running, not parked) are omitted — only non-closed slots
+ * carry a record so the monitor can show per-slot state without parsing logs. */
+export interface HeartbeatSlotDetail {
+  index: number;
+  /** "open" = circuit tripped, awaiting cooldown before next probe
+   *  "half-open" = probe worker spawned, waiting for its verdict
+   *  "idle-parked" = clean drain with empty queue; auto-unparks on next work */
+  status: "open" | "half-open" | "idle-parked";
+  /** Epoch when the half-open probe is scheduled (open slots only). Absent for
+   * half-open (already probing) and idle-parked (no scheduled retry). */
+  retryAt?: number;
+}
+
 export interface FleetHeartbeat {
   /** ISO-8601 timestamp for the supervisor tick. */
   ts: string;
@@ -482,6 +496,8 @@ export interface FleetHeartbeat {
   slotsTotal: number;
   slotsParked: number;
   spawnsThisTick: number;
+  /** Per-slot details for non-closed slots. Empty array when all slots are closed. */
+  slotDetails: HeartbeatSlotDetail[];
 }
 
 /** The slot's current iteration, resolved from the filesystem. Mirrors the
@@ -726,11 +742,34 @@ function isoFromEpoch(epoch: number): string {
   return new Date(epoch * 1000).toISOString();
 }
 
+function buildSlotDetails(
+  state: SupervisorState,
+  config: Pick<SupervisorConfig, "halfOpenBaseS" | "halfOpenCapS">,
+): HeartbeatSlotDetail[] {
+  const details: HeartbeatSlotDetail[] = [];
+  for (let i = 0; i < state.slots.length; i++) {
+    const slot = state.slots[i]!;
+    if (slot.idleParked) {
+      details.push({ index: i, status: "idle-parked" });
+    } else if (slot.parked && slot.halfOpen) {
+      details.push({ index: i, status: "half-open" });
+    } else if (slot.parked) {
+      const retryAt =
+        slot.tripEpoch > 0
+          ? slot.tripEpoch + computeHalfOpenBackoff(slot.backoffStep, config)
+          : undefined;
+      details.push({ index: i, status: "open", ...(retryAt !== undefined ? { retryAt } : {}) });
+    }
+  }
+  return details;
+}
+
 async function emitFleetHeartbeat(
   state: SupervisorState,
   deps: SupervisorDeps,
   result: TickResult,
   runner: string,
+  config: Pick<SupervisorConfig, "halfOpenBaseS" | "halfOpenCapS">,
 ): Promise<FleetHeartbeat> {
   // Queue depth was fetched once by superviseTick at the start of this tick
   // and stored in result.queueDepth — reuse it here so there is exactly one
@@ -745,6 +784,7 @@ async function emitFleetHeartbeat(
     readyForAgent,
     ...fleetSlotCounts(state),
     spawnsThisTick: result.respawned.length,
+    slotDetails: buildSlotDetails(state, config),
   };
   try {
     await deps.emitFleetHeartbeat?.(heartbeat);
@@ -1309,7 +1349,7 @@ export async function runSupervisor(
     if (!result.abandoned) {
       state.lastProgressEpoch = deps.now();
     }
-    const heartbeat = await emitFleetHeartbeat(state, deps, result, config.runner);
+    const heartbeat = await emitFleetHeartbeat(state, deps, result, config.runner, config);
     deps.log?.(
       `tick: slots=${state.slots.length} respawned=${result.respawned.length} ` +
         `deaths=${result.deaths.length} parked=${result.parked.length} idle-parked=${result.idleParked.length} ` +

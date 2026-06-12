@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   renderCompactDashboard,
   renderFleetLine,
+  renderSlotDetails,
   renderWorkerCompactLine,
   type FleetState,
   type CompactWorker,
@@ -230,7 +231,7 @@ describe("monitor — compact dashboard", () => {
   it("surfaces a healthy idle fleet last-tick line", () => {
     const out = renderCompactDashboard([], events, 1780138815, baseFleet());
     expect(out.split("\n")[1]).toBe(
-      "fleet [idle] last ticked 00:00:15 ago  ready:0  slots busy:0 free:2  spawns:0",
+      "fleet [idle] last ticked 00:00:15 ago  ready:0  slots busy:0 free:2 parked:0  spawns:0",
     );
   });
 
@@ -239,13 +240,74 @@ describe("monitor — compact dashboard", () => {
     expect(line).toContain("fleet [wedged]");
     expect(line).toContain("last ticked 00:03:21 ago");
     expect(line).toContain("ready:7");
+    expect(line).toContain("parked:0");
   });
 
   it("shows a non-stale fleet with queued or busy work as draining", () => {
     const line = renderFleetLine(baseFleet({ readyForAgent: 7, slotsBusy: 1, slotsFree: 1, spawnsThisTick: 1 }), 1780138815);
     expect(line).toBe(
-      "fleet [draining] last ticked 00:00:15 ago  ready:7  slots busy:1 free:1  spawns:1",
+      "fleet [draining] last ticked 00:00:15 ago  ready:7  slots busy:1 free:1 parked:0  spawns:1",
     );
+  });
+
+  it("carries parked:N unconditionally — zero when all slots closed", () => {
+    const line = renderFleetLine(baseFleet(), 1780138815);
+    expect(line).toContain("parked:0");
+  });
+
+  it("carries parked:2 for a degraded fleet with two tripped slots", () => {
+    const line = renderFleetLine(
+      baseFleet({ slotsBusy: 1, slotsFree: 0, slotsTotal: 3, slotsParked: 2 }),
+      1780138815,
+    );
+    expect(line).toContain("parked:2");
+  });
+
+  it("renders per-slot state for an open (circuit-tripped) slot with retry countdown", () => {
+    const fleet = baseFleet({
+      slotsParked: 1,
+      slotDetails: [{ index: 1, status: "open", retryAt: 1780138815 + 83 }],
+    });
+    const lines = renderSlotDetails(fleet, 1780138815);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toBe("  slot 1 open  retry in 00:01:23");
+  });
+
+  it("renders per-slot state for a half-open slot (probe running)", () => {
+    const fleet = baseFleet({
+      slotsParked: 1,
+      slotDetails: [{ index: 0, status: "half-open" }],
+    });
+    const lines = renderSlotDetails(fleet, 1780138815);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toBe("  slot 0 half-open  (probing)");
+  });
+
+  it("renders per-slot state for an idle-parked slot", () => {
+    const fleet = baseFleet({
+      slotsParked: 1,
+      slotDetails: [{ index: 2, status: "idle-parked" }],
+    });
+    const lines = renderSlotDetails(fleet, 1780138815);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toBe("  slot 2 idle-parked  (queue empty)");
+  });
+
+  it("returns no slot-detail lines when all slots are closed", () => {
+    expect(renderSlotDetails(baseFleet(), 1780138815)).toHaveLength(0);
+    expect(renderSlotDetails(baseFleet({ slotDetails: [] }), 1780138815)).toHaveLength(0);
+  });
+
+  it("compact dashboard includes slot details after the fleet line when slots are parked", () => {
+    const fleet = baseFleet({
+      slotsParked: 1,
+      slotDetails: [{ index: 0, status: "open", retryAt: 1780138815 + 60 }],
+    });
+    const out = renderCompactDashboard([], events, 1780138815, fleet);
+    const lines = out.split("\n");
+    const fleetIdx = lines.findIndex((l) => l.startsWith("fleet "));
+    expect(fleetIdx).toBeGreaterThanOrEqual(0);
+    expect(lines[fleetIdx + 1]).toBe("  slot 0 open  retry in 00:01:00");
   });
 });
 
