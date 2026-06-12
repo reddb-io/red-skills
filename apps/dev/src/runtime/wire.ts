@@ -704,6 +704,7 @@ import type { AttemptDir } from "../core/reclaim.js";
 import type { IssueStateRow } from "./gh.js";
 import { LABEL_HUMAN, LABEL_RUNNING } from "../core/triage-labels.js";
 import { parseWorkerAttemptPath } from "../core/worker-paths.js";
+import { parseClaimRecords } from "../core/claim.js";
 
 /**
  * Discover every per-step input boot's sweeps consume, replacing the empty
@@ -906,6 +907,24 @@ export async function buildBootDeps(ctx: RepoContext, options: BootOptions, nowS
         unlabeled: () => ghx.countUnlabeled(ghCtx),
         needsTriage: () => ghx.countNeedsTriage(ghCtx),
         needsInfo: () => ghx.countNeedsInfo(ghCtx),
+      },
+      // Cross-host stale-claim sweep input (#627): every OPEN issue projected as
+      // `running` (a held claim) with its parsed claim marker records. Derived
+      // from the batched issue-state map; the claim comments are read per-issue.
+      // A per-issue read failure drops that issue from the sweep (best-effort).
+      claimedIssues: async () => {
+        const claimed = [];
+        for (const [issue, row] of issueStates) {
+          if (row.state !== "OPEN") continue;
+          if (!row.labels.includes(LABEL_RUNNING)) continue;
+          try {
+            const comments = await ghx.listClaimComments(ghCtx, issue);
+            claimed.push({ issue, records: parseClaimRecords(comments) });
+          } catch {
+            // best-effort: skip an issue whose claim comments cannot be read.
+          }
+        }
+        return claimed;
       },
     },
     nowS,

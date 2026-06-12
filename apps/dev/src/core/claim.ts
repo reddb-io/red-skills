@@ -76,6 +76,11 @@ export interface ClaimDecision {
   winner: string | null;
   /** One-line rationale, for logs. */
   reason: string;
+  /** Stale cross-host claimants this decision RECOVERED — workers whose latest
+   * marker `isStale` rejected and who would otherwise have held an earlier claim
+   * than the winner. Empty unless a stale claim was superseded. Drives the single
+   * audit comment the orchestrator posts on a recovery (issue #627). */
+  recovered: string[];
 }
 
 export interface ClaimReconcileOptions {
@@ -99,6 +104,17 @@ function escapeField(value: string): string {
   // characters that would break parsing; identities are already constrained to
   // host/worker charsets, this is defence-in-depth against a forged title.
   return value.replace(/[\s>]/g, "_");
+}
+
+/** Render the one-line audit comment posted when a claim recovered a stale
+ * cross-host claim — the visible record that the issue returned to the
+ * executable pool because an owner stopped refreshing (#627). */
+export function renderRecoveryAudit(self: { worker: string }, recovered: readonly string[]): string {
+  const who = recovered.map((w) => `\`${w}\``).join(", ");
+  return (
+    `🤖 AFK cross-host recovery: worker \`${self.worker}\` released ${recovered.length === 1 ? "a stale claim" : "stale claims"} ` +
+    `held by ${who} (owner stopped refreshing past the staleness window) and re-claimed this issue.`
+  );
 }
 
 /** Render the structured claim/concede marker comment a claimant posts. The
@@ -252,19 +268,33 @@ export function reconcileClaim(
   });
 
   const contenders: Contender[] = [];
+  // Stale claimants that would have out-ordered us, captured so the orchestrator
+  // can post one audit comment recording the cross-host recovery (#627).
+  const stale: Contender[] = [];
   for (const [worker, f] of folds) {
     if (f.latestKind === "concede") continue; // withdrew
     if (f.earliestClaimId === null) continue; // only ever conceded — not a claim
-    if (isStale(f.latestRecord)) continue; // dead/expired — recovered
+    if (isStale(f.latestRecord)) {
+      stale.push({ worker, claimId: f.earliestClaimId }); // dead/expired — recovered
+      continue;
+    }
     contenders.push({ worker, claimId: f.earliestClaimId });
   }
 
   if (contenders.length === 0) {
-    return { verdict: "lost", winner: null, reason: "no live claim contends" };
+    return { verdict: "lost", winner: null, reason: "no live claim contends", recovered: [] };
   }
 
   contenders.sort((a, b) => a.claimId - b.claimId || (a.worker < b.worker ? -1 : 1));
   const winner = contenders[0];
+
+  // A recovery is real only when we WIN and a stale claimant out-ordered us —
+  // i.e. it would have beaten the winner had it not aged out. A stale claim that
+  // posted AFTER the winner never held the issue, so it is not "recovered".
+  const recovered =
+    winner.worker === self.worker
+      ? stale.filter((s) => s.claimId < winner.claimId).map((s) => s.worker).sort()
+      : [];
 
   if (winner.worker === self.worker) {
     return {
@@ -274,12 +304,14 @@ export function reconcileClaim(
         contenders.length === 1
           ? "solo claim"
           : `earliest of ${contenders.length} live claims (id ${winner.claimId})`,
+      recovered,
     };
   }
   return {
     verdict: "lost",
     winner: winner.worker,
     reason: `worker ${winner.worker} holds earlier claim (id ${winner.claimId} < our ${self.commentId})`,
+    recovered: [],
   };
 }
 
@@ -295,6 +327,10 @@ export interface ClaimGh {
   /** Post a concede marker (best-effort; a failed concede is non-fatal — our
    * claim simply ages out via staleness). */
   concede(issue: number, body: string): Promise<void>;
+  /** Post the single human-visible audit comment when this claim RECOVERED a
+   * stale cross-host claim (#627). Optional + best-effort: a failed audit does
+   * not abandon the won claim. Omitted by legacy callers (no audit posted). */
+  audit?(issue: number, body: string): Promise<void>;
 }
 
 export interface AcquireClaimOptions extends ClaimReconcileOptions {
@@ -327,6 +363,15 @@ export async function acquireClaim(
       issue,
       renderClaimComment({ worker: self.worker, runner: self.runner }, "concede"),
     );
+  }
+  // One audit comment when we won by recovering a stale cross-host claim (#627).
+  // Best-effort: a failed audit never abandons the won claim.
+  if (decision.verdict === "won" && decision.recovered.length > 0 && gh.audit) {
+    try {
+      await gh.audit(issue, renderRecoveryAudit({ worker: self.worker }, decision.recovered));
+    } catch {
+      // best-effort observability; the claim is already won.
+    }
   }
   return decision;
 }
