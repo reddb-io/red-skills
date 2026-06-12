@@ -161,8 +161,11 @@ jobs:
             }
 
             // Auto-pick: a dispatch / call with no issue number drains the queue
-            // head — the OLDEST open `ready-for-agent` issue (PRs excluded). No
-            // such issue ⇒ a clean no-op (empty output; downstream steps skip).
+            // head — the OLDEST *actionable* open `ready-for-agent` issue. Skip
+            // PRs and anything parked (`ready-for-human` or any `blocked:*`
+            // label): the runtime preflight would refuse those anyway, so picking
+            // one just burns a dispatch. No actionable issue ⇒ a clean no-op
+            // (empty output; downstream steps skip).
             if (!issueNumber && (eventName === 'workflow_dispatch' || eventName === 'workflow_call')) {
               const candidates = await github.paginate(github.rest.issues.listForRepo, {
                 owner: context.repo.owner,
@@ -173,14 +176,20 @@ jobs:
                 direction: 'asc',
                 per_page: 100,
               });
-              const oldest = candidates.find(i => !i.pull_request);
+              const parked = (i) => i.labels.some((l) => {
+                const name = (typeof l === 'string' ? l : l.name) || '';
+                return name === 'ready-for-human' || name.startsWith('blocked:');
+              });
+              const actionable = candidates.filter((i) => !i.pull_request && !parked(i));
+              const skipped = candidates.filter((i) => !i.pull_request && parked(i)).length;
+              const oldest = actionable[0];
               if (!oldest) {
-                core.info('auto-pick: no open ready-for-agent issue — nothing to do');
+                core.info(`auto-pick: no actionable ready-for-agent issue (skipped ${skipped} parked) — nothing to do`);
                 core.setOutput('number', '');
                 return;
               }
               issueNumber = String(oldest.number);
-              core.info(`auto-pick: oldest open ready-for-agent issue is #${issueNumber}`);
+              core.info(`auto-pick: oldest actionable ready-for-agent issue is #${issueNumber}` + (skipped ? ` (skipped ${skipped} parked)` : ''));
             }
 
             if (!/^[0-9]+$/.test(issueNumber)) {
