@@ -134,6 +134,7 @@ function makeDeps(over: Partial<{
   blockerState: BootDeps["lookups"]["blockerState"];
   straggler: BootDeps["lookups"]["straggler"];
   claimHolderAlive: BootDeps["lookups"]["claimHolderAlive"];
+  claimedIssues: BootDeps["lookups"]["claimedIssues"];
   env: Record<string, string | undefined>;
   reconcileRunner: ReconcileBootRunner;
 }> = {}) {
@@ -205,6 +206,7 @@ function makeDeps(over: Partial<{
           needsInfo: async () => 0,
         },
       ...(over.claimHolderAlive ? { claimHolderAlive: over.claimHolderAlive } : {}),
+      ...(over.claimedIssues ? { claimedIssues: over.claimedIssues } : {}),
     },
     nowS: NOW,
     env: over.env ?? {},
@@ -614,6 +616,67 @@ describe("runBoot unblock sweep promotes + comments", () => {
       { issue: 100, body: "🤖 /afk unblocked: all dependencies closed (#10, #11)." },
     ]);
     expect(r.unblockSweep).toEqual({ promoted: [100] });
+  });
+});
+
+describe("runBoot cross-host stale-claim sweep (#627)", () => {
+  // A claim record from `worker` whose latest refresh was `ageS` ago.
+  const claim = (commentId: number, worker: string, ageS: number) => ({
+    commentId,
+    worker,
+    kind: "claim" as const,
+    createdAt: new Date((NOW - ageS) * 1000).toISOString(),
+  });
+
+  it("is a no-op when claimedIssues is not wired", async () => {
+    const { deps, ghCalls } = makeDeps();
+    const r = await runBoot(deps, options());
+    expect(r.staleClaimSweep).toEqual({ released: [] });
+    expect(ghCalls.editLabels).toEqual([]);
+  });
+
+  it("releases a cross-host stale claim back to ready-for-agent with one audit comment", async () => {
+    const claimedIssues = async () => [{ issue: 42, records: [claim(10, "host1:wXY", 99999)] }];
+    const { deps, ghCalls } = makeDeps({ claimedIssues });
+    const r = await runBoot(deps, options());
+    expect(r.staleClaimSweep).toEqual({ released: [42] });
+    expect(ghCalls.editLabels).toEqual([
+      { issue: 42, remove: ["running"], add: ["ready-for-agent"] },
+    ]);
+    expect(ghCalls.comment).toHaveLength(1);
+    expect(ghCalls.comment[0].issue).toBe(42);
+    expect(ghCalls.comment[0].body).toContain("host1:wXY");
+    expect(ghCalls.comment[0].body).toContain("cross-host stale-claim sweep");
+  });
+
+  it("never releases an issue still held by a live worker", async () => {
+    const claimedIssues = async () => [{ issue: 42, records: [claim(10, "host1:wXY", 120)] }];
+    const { deps, ghCalls } = makeDeps({ claimedIssues });
+    const r = await runBoot(deps, options());
+    expect(r.staleClaimSweep).toEqual({ released: [] });
+    expect(ghCalls.editLabels).toEqual([]);
+    expect(ghCalls.comment).toEqual([]);
+  });
+
+  it("honours RED_AFK_CLAIM_REFRESH_S / tolerance from env", async () => {
+    // 700s old: stale under the default 1200s window? no. Tighten the window to
+    // 60×(1+0)=60s via env → 700s is now stale.
+    const claimedIssues = async () => [{ issue: 7, records: [claim(10, "h:w", 700)] }];
+    const { deps } = makeDeps({
+      claimedIssues,
+      env: { RED_AFK_CLAIM_REFRESH_S: "60", RED_AFK_CLAIM_STALE_TOLERANCE: "0" },
+    });
+    const r = await runBoot(deps, options());
+    expect(r.staleClaimSweep).toEqual({ released: [7] });
+  });
+
+  it("tolerates a claimedIssues listing failure (best-effort no-op)", async () => {
+    const claimedIssues = async () => {
+      throw new Error("gh down");
+    };
+    const { deps } = makeDeps({ claimedIssues });
+    const r = await runBoot(deps, options());
+    expect(r.staleClaimSweep).toEqual({ released: [] });
   });
 });
 
