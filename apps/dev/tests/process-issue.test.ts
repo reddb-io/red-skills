@@ -42,6 +42,8 @@ interface Trace {
   salvageCalls: string[];
   /** Metadata handed to the per-issue classifier before runAgent. */
   classifierCalls: IssueClassificationMetadata[];
+  /** Lines appended to the iteration log (deps.appendIterLog). */
+  iterLogs: string[];
 }
 
 interface HarnessOptions {
@@ -74,6 +76,10 @@ interface HarnessOptions {
   /** FIX E: result of the worker-branch presence check. Defaults to true
    * (present). Set false to model "sandcastle commits never reached the host". */
   branchPresent?: boolean;
+  /** Goal predicate own-merge signal (ADR 0057): result of lookups.branchMerged.
+   * true → the worker branch already landed in <base> (own-merge close → done);
+   * false (default) → a foreign lander closed it (claim-lost). */
+  branchMerged?: boolean;
   fallbackRunner?: boolean;
   /** Records each git fetch-base call (the ADR 0031 start-point fetch). */
   fetchedBases?: string[];
@@ -141,6 +147,7 @@ function harness(opts: HarnessOptions = {}): {
     recordedAttempts: [],
     salvageCalls: [],
     classifierCalls: [],
+    iterLogs: [],
   };
 
   const outcome = opts.outcome ?? "done";
@@ -375,6 +382,9 @@ function harness(opts: HarnessOptions = {}): {
       async branchPresent() {
         return opts.branchPresent ?? true;
       },
+      async branchMerged() {
+        return opts.branchMerged ?? false;
+      },
     },
     envelope: {
       git: async () => ({ code: 0, stdout: "", stderr: "" }),
@@ -388,7 +398,9 @@ function harness(opts: HarnessOptions = {}): {
     },
     nowEpoch: () => 1000,
     nowIso: () => "2026-05-30T00:00:00Z",
-    appendIterLog: () => {},
+    appendIterLog: (line) => {
+      trace.iterLogs.push(line);
+    },
     recoveryEnv: opts.recoveryEnv ?? {},
     // ADR 0017 recording port: omitted by default (older-caller safety). "ok"
     // records the payload; "throw" rejects, proving a memory failure never
@@ -1066,6 +1078,44 @@ describe("processIssue — claim lost", () => {
     // running was PROJECTED (label edit applied) but is not the lock.
     expect(trace.labelEdits.some((e) => e.add.includes("running"))).toBe(true);
     expect(trace.comments.some((c) => /AFK claim by worker/.test(c.body))).toBe(true);
+  });
+});
+
+describe("processIssue — goal predicate (ADR 0057)", () => {
+  it("maps a foreign close to claim-lost: releases the claim, drops running, no envelope spam", async () => {
+    const { deps, input, trace } = harness({ outcome: "goal-moot", branchMerged: false });
+    const result = await processIssue(deps, input);
+    expect(result.outcome).toBe("claim-lost");
+    // The attempt is moot — nothing is landed/closed and no terminal envelope is posted.
+    expect(trace.postedEnvelopes).toEqual([]);
+    expect(trace.closed).toEqual([]);
+    // The claim lock is released so the slot is not leaked.
+    expect(trace.released).toEqual([9]);
+    // Best-effort hygiene: our stale `running` label is shed.
+    expect(trace.labelEdits.some((e) => e.remove.includes("running") && e.add.length === 0)).toBe(true);
+    // At most one concise local record; the issue thread stays readable.
+    const moot = trace.iterLogs.filter((l) => /goal predicate/.test(l));
+    expect(moot).toHaveLength(1);
+    expect(moot[0]).toMatch(/another lander.*claim-lost/);
+  });
+
+  it("maps this attempt's own merge to done (the close carries our landed branch)", async () => {
+    const { deps, input, trace } = harness({ outcome: "goal-moot", branchMerged: true });
+    const result = await processIssue(deps, input);
+    expect(result.outcome).toBe("done");
+    // Still no re-landing / re-close — the work is already in the world.
+    expect(trace.postedEnvelopes).toEqual([]);
+    expect(trace.closed).toEqual([]);
+    expect(trace.released).toEqual([9]);
+    const moot = trace.iterLogs.filter((l) => /goal predicate/.test(l));
+    expect(moot).toHaveLength(1);
+    expect(moot[0]).toMatch(/own merge.*done/);
+  });
+
+  it("threads the goalProbe onto the runAgent input so the guard polls issue state", async () => {
+    const { deps, input, trace } = harness({ outcome: "goal-moot", branchMerged: false });
+    await processIssue(deps, input);
+    expect(typeof trace.runAgentCalls[0]?.goalProbe).toBe("function");
   });
 });
 
