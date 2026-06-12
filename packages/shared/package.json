@@ -9,6 +9,7 @@
     ".": "./index.ts",
     "./args.js": "./args.ts",
     "./bundle-fetch.js": "./bundle-fetch.ts",
+    "./channel.js": "./channel.ts",
     "./entrypoint-cli.js": "./entrypoint-cli.ts",
     "./log.js": "./log.ts"
   },

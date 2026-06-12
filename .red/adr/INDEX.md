@@ -9,9 +9,10 @@ stale notes inline.
 > **0005** to **0046**.
 > **0043** was reserved/pending for PR #393 ("dev loop / ship") while that PR was
 > in flight; do not reclaim the number.
-> **0058** is held by an unmerged AFK "goal-predicate" branch (commit `daa3cc18`)
-> and never landed on `main`; if that branch is abandoned the number is free,
-> otherwise it lands with it — do not reclaim it blindly.
+> **0058** was reserved by an unmerged AFK "goal-predicate" branch (commit
+> `daa3cc18`) that never landed on `main`; PRD #614 / issue #629 reassigned the
+> number to **AFK bundle release channels** (the goal-predicate branch must pick
+> a free number if it is ever revived).
 
 ## Repo structure & contexts
 - **0021** Multi-context plugin glossaries — *accepted* (predates the `brain` plugin; the multi-context model now spans `dev`/`memory`/**`brain`** — see the *Brain plugin* section and `.red/contexts/brain/`)
@@ -31,6 +32,7 @@ stale notes inline.
 - **0039** Plugin entrypoints share one source, selected by a build role (unifies red-fetch/afk/code-nav/memory launchers)
 - **0040** Version is a single source, written by one script; CLIs & MCP launchers version-aware
 - **0052** One bundle-naming convention — all release assets under `./dist/` as `<app>[-<role>].bundle.min.mjs`; legacy `dist-bundle/*-cli.mjs` removed *(supersedes 0029's dual output for memory/brain)*
+- **0058** AFK bundle release channels — `stable` (default, version-pinned = today) and `canary` (opt-in, floating `canary` tag) resolved by the 0038 launcher from `RED_SKILLS_CHANNEL`/`plugins.dev.afk.release.channel`; promotion is a tag move gated on the proof-by-drain history telemetry *(PRD #614 / #629; extends 0038/0039, config via 0042)*
 
 ## AFK execution & lifecycle
 

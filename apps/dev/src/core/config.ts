@@ -74,6 +74,11 @@ export const CONFIG_DEFAULTS = {
   // regardless of the verdict) with `afk.merge.wait_for_review: true`.
   "afk.merge.wait_for_review": "false",
   "afk.merge.review_check": "CodeRabbit",
+  // Release channel the ADR 0038 launcher tracks (ADR 0058). `stable` is the
+  // version-pinned release (today's behaviour); `canary` tracks the floating
+  // pre-release tag. The launcher reads this (or `RED_SKILLS_CHANNEL`); promotion
+  // canary→stable is a tag move gated on the proof-by-drain telemetry.
+  "afk.release.channel": "stable",
   "dev.lock.primary-branch": "false",
   // NOTE: `dev.lock.branch` (the static base lock — ADR 0031) is intentionally
   // NOT in this table. Its "default" is *unset* (no config-level lock), and
