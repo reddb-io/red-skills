@@ -328,7 +328,7 @@ export function makeRunAgent(
 
 // ---------- monitor inputs ----------
 
-import type { CompactWorker, FleetState } from "../core/monitor.js";
+import type { CompactWorker, FleetState, SlotDetail } from "../core/monitor.js";
 import { parseState, isStateLive, isStateActive } from "../core/state.js";
 import type { WorkerVitals } from "../types/state.js";
 import { parseHistoryLines, type HistoryRecord } from "../core/history.js";
@@ -338,6 +338,8 @@ export interface MonitorInputs {
   events: Array<Pick<HistoryRecord, "event" | "epoch">>;
   fleet: FleetState | null;
 }
+
+const SLOT_STATUSES = new Set<SlotDetail["status"]>(["open", "half-open", "idle-parked"]);
 
 function parseFleetState(raw: unknown): FleetState | null {
   if (raw === null || typeof raw !== "object") return null;
@@ -349,10 +351,28 @@ function parseFleetState(raw: unknown): FleetState | null {
     ready_for_agent?: unknown;
     slots?: { busy?: unknown; free?: unknown; total?: unknown; parked?: unknown };
     spawns_this_tick?: unknown;
+    slot_details?: unknown;
   };
   const epoch = Number(rec.epoch ?? 0);
   if (!Number.isFinite(epoch) || epoch <= 0) return null;
   const rawProgress = Number(rec.last_progress_epoch ?? 0);
+
+  let slotDetails: SlotDetail[] | undefined;
+  if (Array.isArray(rec.slot_details)) {
+    slotDetails = [];
+    for (const d of rec.slot_details as unknown[]) {
+      if (d === null || typeof d !== "object") continue;
+      const entry = d as { index?: unknown; status?: unknown; retry_at?: unknown };
+      const idx = Number(entry.index ?? -1);
+      if (!Number.isFinite(idx) || idx < 0) continue;
+      const status = entry.status;
+      if (typeof status !== "string" || !SLOT_STATUSES.has(status as SlotDetail["status"])) continue;
+      const rawRetry = entry.retry_at !== undefined ? Number(entry.retry_at) : undefined;
+      const retryAt = rawRetry !== undefined && Number.isFinite(rawRetry) ? rawRetry : undefined;
+      slotDetails.push({ index: idx, status: status as SlotDetail["status"], ...(retryAt !== undefined ? { retryAt } : {}) });
+    }
+  }
+
   return {
     ts: typeof rec.ts === "string" ? rec.ts : "",
     epoch,
@@ -364,6 +384,7 @@ function parseFleetState(raw: unknown): FleetState | null {
     slotsTotal: Number(rec.slots?.total ?? 0) || 0,
     slotsParked: Number(rec.slots?.parked ?? 0) || 0,
     spawnsThisTick: Number(rec.spawns_this_tick ?? 0) || 0,
+    ...(slotDetails !== undefined ? { slotDetails } : {}),
   };
 }
 
