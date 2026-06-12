@@ -11,14 +11,10 @@
 #       gradle: true              # ship gradle isolation when GRADLE_USER_HOME_BASE is set
 
 # Active dev-plugin settings, all namespaced under `plugins.dev.*` (the root
-# stays sacred). `base` auto-populates every opencode tier (validate/simple/
-# complex/think); specialize one with plugins.dev.afk.models.opencode.<tier>.model.
+# stays sacred). The AFK opencode model is NOT pinned here — the GHA lane sets it
+# (rs-afk-attempt.yml passes `model: minimax/MiniMax-M3` via RED_AFK_MODEL), so
+# the workflow is the single source of truth for the cloud runner's model.
 plugins:
   dev:
     lock:
       primary-branch: true       # primary-checkout branch-switch guard
-    afk:
-      models:
-        opencode:
-          base:
-            model: minimax/MiniMax-M3

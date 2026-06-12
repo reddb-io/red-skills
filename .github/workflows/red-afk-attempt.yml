@@ -162,6 +162,7 @@ jobs:
           ENFORCE_TRUST_GATE: ${{ github.event_name == 'workflow_call' && inputs.enforce_trust_gate || 'true' }}
           ALLOWLIST_AUTHORS: ${{ github.event_name == 'workflow_call' && inputs.allowlist_authors || '' }}
           ALLOWLIST_LABEL_ACTORS: ${{ github.event_name == 'workflow_call' && inputs.allowlist_label_actors || '' }}
+          ISSUE_NUMBER: ${{ steps.resolve.outputs.number }}
         with:
           script: |
             const enforce = (process.env.ENFORCE_TRUST_GATE || 'true').toLowerCase() !== 'false';
@@ -180,12 +181,27 @@ jobs:
             }
 
             const eventName = context.eventName;
-            const issue = context.payload.issue;
-            const sender = context.payload.sender;
-            const author = issue?.user?.login;
+            const sender = context.payload.sender?.login;
+            const issueNumber = parseInt(process.env.ISSUE_NUMBER, 10);
+            // The author is in the payload ONLY for the `issues` event. For
+            // workflow_dispatch / workflow_call there is no payload.issue, so fetch
+            // the issue by its resolved number to read the author — without this a
+            // dispatched run failed the gate with author=undefined.
+            let author;
+            if (eventName === 'issues') {
+              author = context.payload.issue?.user?.login;
+            } else {
+              const { data } = await github.rest.issues.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+              });
+              author = data.user?.login;
+            }
             // issues:opened — the opener is the de-facto label-applier (the issue
-            // was filed pre-labeled), so the sender (== author) is the actor.
-            const labelActor = eventName === 'issues' ? sender?.login : (sender?.login || author);
+            // was filed pre-labeled), so the sender (== author) is the actor. For a
+            // manual dispatch the human who triggered the run is the actor.
+            const labelActor = eventName === 'issues' ? sender : (sender || author);
 
             const authorOk = authors.includes(author);
             const actorOk  = labelActors.includes(labelActor);
@@ -206,7 +222,7 @@ jobs:
                 await github.rest.issues.createComment({
                   owner: context.repo.owner,
                   repo:  context.repo.repo,
-                  issue_number: parseInt(context.payload.issue.number, 10),
+                  issue_number: issueNumber,
                   body: `🤖 /afk trust gate refused to claim this issue: ${reason}. See #621 for the allowlist predicate.`,
                 });
               } catch (e) {
