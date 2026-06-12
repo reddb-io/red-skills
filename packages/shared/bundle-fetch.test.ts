@@ -87,6 +87,18 @@ describe("path + url builders", () => {
       "https://github.com/reddb-io/red-skills/releases/download/v1.140.0/dev.bundle.min.mjs",
     );
   });
+
+  it("canary cache name is version-independent so it never collides with stable", () => {
+    expect(bundleFileName(PLUGIN, VERSION)).toBe("dev-1.140.0.bundle.min.mjs");
+    expect(bundleFileName(PLUGIN, VERSION, "stable")).toBe("dev-1.140.0.bundle.min.mjs");
+    expect(bundleFileName(PLUGIN, VERSION, "canary")).toBe("dev-canary.bundle.min.mjs");
+  });
+
+  it("resolveBundle honours the channel in the cache path", () => {
+    expect(
+      resolveBundle({ plugin: PLUGIN, version: VERSION, cacheDir: CACHE, channel: "canary" }),
+    ).toBe(`${CACHE}/dev-canary.bundle.min.mjs`);
+  });
 });
 
 describe("ensureBundle", () => {
@@ -127,6 +139,35 @@ describe("ensureBundle", () => {
     expect(files[dest]).toEqual(bundle);
     expect(writes).toEqual([dest]);
     expect(downloads).toContain(assetUrl(REPO, VERSION, bundleAssetName(PLUGIN)));
+  });
+
+  it("canary: fetches from the floating canary tag and writes the canary cache file", async () => {
+    const bundle = new TextEncoder().encode("export const c = 3;");
+    const { io, files, downloads, writes } = makeIO({ bundleBytes: bundle });
+
+    const path = await ensureBundle(io, {
+      plugin: PLUGIN,
+      version: VERSION,
+      repo: REPO,
+      cacheDir: CACHE,
+      channel: "canary",
+    });
+
+    const dest = resolveBundle({
+      plugin: PLUGIN,
+      version: VERSION,
+      cacheDir: CACHE,
+      channel: "canary",
+    });
+    expect(path).toBe(dest);
+    expect(files[dest]).toEqual(bundle);
+    expect(writes).toEqual([dest]);
+    // Every download targets the `canary` tag, never the version-pinned tag.
+    expect(downloads.length).toBeGreaterThan(0);
+    for (const url of downloads) {
+      expect(url).toContain("/releases/download/canary/");
+      expect(url).not.toContain(`/v${VERSION}/`);
+    }
   });
 
   it("checksum mismatch: throws and does NOT write to cache", async () => {
