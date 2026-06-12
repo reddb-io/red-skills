@@ -70,6 +70,7 @@ import { parseReqLabels, planCloseCascade, type DependentIssue } from "./boot-sw
 import { buildAttemptRecordPayload, type AttemptRecordPayload } from "./attempt-record.js";
 import { acquireClaim, type ClaimGh, type ClaimReconcileOptions } from "./claim.js";
 import { parseCurrentBlocker, upsertCurrentBlocker, type CurrentBlocker } from "./blocker-state.js";
+import { parseTrustPolicy, evaluateTrustGate, type TrustProvenance } from "./trust-gate.js";
 import type { AfkModelTier, ConfigValues } from "./config.js";
 import {
   buildIssueClassificationMetadata,
@@ -104,6 +105,14 @@ export interface ProcessGh {
   /** Resolve whether issue `n` is CLOSED. Resolves the cascade's per-dependency
    * `req:*` closed-states. A 404 / transient failure resolves to false. */
   issueClosed(n: number): Promise<boolean>;
+  /**
+   * Trust-gate provenance (#621, ADR 0056): the issue author + the actor who
+   * applied `ready-for-agent`, read from the issue TIMELINE — never inferred from
+   * the mutable label set. Consulted at claim time ONLY when an allowlist is
+   * configured. Optional → absent callers/tests degrade to permissive (the gate
+   * never fires), preserving today's behaviour.
+   */
+  issueTrust?(issue: number): Promise<TrustProvenance>;
 }
 
 /** Claim-lock side effects (the local mkdir lock at .red/tmp/claims/{N}/). */
@@ -600,6 +609,31 @@ export async function processIssue(
       preserved: false,
       swept: false,
     };
+  }
+
+  // ---- trust gate (#621, ADR 0056) ----
+  // The "executable issue" predicate, evaluated BEFORE the promotion-to-running
+  // edit and before ANY worktree/handoff work: an issue is executable only when
+  // its author is a trusted identity AND `ready-for-agent` was applied by an
+  // allowlisted actor. Provenance is read from the issue TIMELINE + author field
+  // (deps.gh.issueTrust), never inferred from the mutable label set. When no
+  // allowlist is configured the policy is permissive (enabled:false) and this is
+  // a no-op — today's single-maintainer behaviour, preserved exactly. A refusal
+  // releases the claim and abandons the attempt (claim-lost) with a clear log
+  // line; the session loop then skips to the next candidate. The stripping of the
+  // non-allowlisted `ready-for-agent` itself is the sweep's job (planTrustStrip),
+  // not the claim's.
+  const trustPolicy = parseTrustPolicy(deps.hooks.config);
+  if (trustPolicy.enabled && deps.gh.issueTrust) {
+    const provenance = await deps.gh.issueTrust(issue);
+    const verdict = evaluateTrustGate(trustPolicy, provenance);
+    if (!verdict.executable) {
+      deps.appendIterLog(
+        `🤖 /afk trust gate refused #${issue}: ${verdict.reason} — not claimed; no worktree/handoff materialised.`,
+      );
+      await deps.claimLock.release(issue);
+      return claimLost(issue, hooksFired);
+    }
   }
 
   // Project the `running` label, shedding any stale `blocked:*` reason in the same
