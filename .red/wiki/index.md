@@ -82,6 +82,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [feat(afk): default maxIterations to 50 + make it configurable via .red/config.yaml](./pages/360-feat-afk-default-maxiterations-to-50-make-it-configurable-vi.md)
 - [feat(afk): deliver the exit-protocol as a system prompt, not a handoff footer (slice 4)](./pages/703-feat-afk-deliver-the-exit-protocol-as-a-system-prompt-not-a.md)
 - [feat(afk): dev.lock.branch static base lock — runtime > config > pin > main (stage 2, extends ADR 0031)](./pages/701-feat-afk-dev-lock-branch-static-base-lock-runtime-config-pin.md)
+- [feat(afk): enable the GHA AFK lane on red-skills (submodule checkout + rs-* self-caller)](./pages/722-feat-afk-enable-the-gha-afk-lane-on-red-skills-submodule-che.md)
 - [feat(afk): enrich the proof-of-life heartbeat with stream-activity metrics](./pages/699-feat-afk-enrich-the-proof-of-life-heartbeat-with-stream-acti.md)
 - [feat(afk): exempt idle drain from fast-death ring, idle-park fleet on empty queue](./pages/620-feat-afk-exempt-idle-drain-from-fast-death-ring-idle-park-fl.md)
 - [feat(afk): exempt idle drain from fast-death ring, idle-park fleet on empty queue (#578)](./pages/633-feat-afk-exempt-idle-drain-from-fast-death-ring-idle-park-fl.md)
