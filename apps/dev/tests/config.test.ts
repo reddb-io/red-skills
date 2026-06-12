@@ -87,6 +87,16 @@ describe("config", () => {
     }
   });
 
+  it("reads afk.release.channel and defaults it to stable (ADR 0058)", () => {
+    const defaults = loadConfig("/nonexistent/.red/config.yaml", { warn: () => {} });
+    expect(getConfig(defaults, "afk.release.channel")).toBe("stable");
+
+    const values = loadConfig("/x/.red/config.yaml", {
+      read: () => "plugins:\n  dev:\n    afk:\n      release:\n        channel: canary\n",
+    });
+    expect(getConfig(values, "afk.release.channel")).toBe("canary");
+  });
+
   it("reads dev.lock.primary-branch and defaults it off", () => {
     const defaults = loadConfig("/nonexistent/.red/config.yaml", { warn: () => {} });
     expect(getConfig(defaults, "dev.lock.primary-branch")).toBe("false");
