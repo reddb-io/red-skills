@@ -92,6 +92,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [feat(afk): exempt idle drain from fast-death ring, idle-park fleet on empty queue (#578)](./pages/633-feat-afk-exempt-idle-drain-from-fast-death-ring-idle-park-fl.md)
 - [feat(afk): externalize proof-of-life — heartbeat record, state field, on_heartbeat hook (ADR 0045)](./pages/401-feat-afk-externalize-proof-of-life-heartbeat-record-state-fi.md)
 - [feat(afk): fleet supervisor owns the boot sweeps — workers boot bootstrap+claim only (#623)](./pages/695-feat-afk-fleet-supervisor-owns-the-boot-sweeps-workers-boot.md)
+- [feat(afk): goal predicate — a CLOSED claimed issue moots the attempt (ADR 0057)](./pages/732-feat-afk-goal-predicate-a-closed-claimed-issue-moots-the-att.md)
 - [feat(afk): half-open circuit breaker for parked slots (#628)](./pages/731-feat-afk-half-open-circuit-breaker-for-parked-slots-628.md)
 - [feat(afk): model/effort override via --model/--effort flag + RED_AFK_MODEL/RED_AFK_EFFORT env](./pages/677-feat-afk-model-effort-override-via-model-effort-flag-red-afk.md)
 - [feat(afk): one unified attempt log (red-castle writes into afk.log, not sandcastle.log)](./pages/717-feat-afk-one-unified-attempt-log-red-castle-writes-into-afk.md)
