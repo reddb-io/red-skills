@@ -69,6 +69,7 @@ Wiki catalogue. Regenerated from `pages/` on every ingest.
 - [docs: propagate ADR record to wiki and Memory](./pages/514-docs-propagate-adr-record-to-wiki-and-memory.md)
 - [feat(afk): --boot-only dry-run + parallelize boot reads + fix smoke](./pages/324-feat-afk-boot-only-dry-run-parallelize-boot-reads-fix-smoke.md)
 - [feat(afk): Actions-lane reusable workflow — add the lanes input (#631 GHA target)](./pages/688-feat-afk-actions-lane-reusable-workflow-add-the-lanes-input.md)
+- [feat(afk): Blacksmith runner for rs-* + Closes #N auto-close on AFK PRs](./pages/726-feat-afk-blacksmith-runner-for-rs-closes-n-auto-close-on-afk.md)
 - [feat(afk): OpenCode as the third runner, addressing OpenRouter (ADR 0059)](./pages/635-feat-afk-opencode-as-the-third-runner-addressing-openrouter.md)
 - [feat(afk): RED_AFK_SANDBOX env override + fix E2E smoke docker path](./pages/310-feat-afk-red-afk-sandbox-env-override-fix-e2e-smoke-docker-p.md)
 - [feat(afk): TypeScript runtime — committed bundle, release pipeline, 21 ported modules](./pages/282-feat-afk-typescript-runtime-committed-bundle-release-pipelin.md)
