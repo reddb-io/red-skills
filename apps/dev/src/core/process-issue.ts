@@ -67,6 +67,7 @@ import { resolveHooks, type ResolveHooksOptions, type ResolvedHooks, type HookNa
 import { formatStartedMarker } from "./heartbeat.js";
 import { parseReqLabels, planCloseCascade, type DependentIssue } from "./boot-sweep.js";
 import { buildAttemptRecordPayload, type AttemptRecordPayload } from "./attempt-record.js";
+import { acquireClaim, type ClaimGh, type ClaimReconcileOptions } from "./claim.js";
 import { parseCurrentBlocker, upsertCurrentBlocker, type CurrentBlocker } from "./blocker-state.js";
 import type { AfkModelTier, ConfigValues } from "./config.js";
 import {
@@ -194,6 +195,15 @@ export interface ProcessHooks {
 export interface ProcessIssueDeps {
   gh: ProcessGh;
   claimLock: ProcessClaimLock;
+  /** Atomic GitHub-native claim arbitration (ADR 0066). The authority that
+   * decides the single winner across hosts — `claimLock` is now only a cheap
+   * same-host dedupe in front of it, and the `running` label is a projection,
+   * never the lock. Optional for back-compat: callers/tests that omit it fall
+   * back to the legacy `running`-label pre-check as the lock. */
+  claimGh?: ClaimGh;
+  /** Injected staleness predicate for cross-host stale-claim recovery (ADR 0066).
+   * Defaults to "never stale" when omitted. */
+  claimStale?: ClaimReconcileOptions["isStale"];
   fs: ProcessFs;
   git: ProcessGit;
   /** git executor for merge.ts (integrateOrigin / landMerge / landPr). */
@@ -350,6 +360,10 @@ export interface ProcessIssueInput {
   runner: Runner;
   /** Worker id (the `{id}` in the branch ref / attempt dir). */
   workerId: string;
+  /** Claimant identity for the GitHub-native claim (`host:worker_id`, ADR 0066).
+   * Unique per worker process per host so two hosts never collide. Defaults to
+   * `workerId` when the caller does not resolve a hostname. */
+  claimant?: string;
   /** .red/tmp root, for the attempt dir + claim lock paths. */
   tmpDir: string;
   /** Attempt number from the attempt-ledger (1-based). */
@@ -524,14 +538,40 @@ export async function processIssue(
     return !result.aborted;
   };
 
-  // ---- 1. claim ----
-  // local mkdir lock → pre-check ready-for-agent still present / not running →
-  // the actual edit. A lost race at any layer abandons the attempt and skips.
+  // ---- 1. claim (ADR 0066: atomic GitHub-native claim) ----
+  // The host-local mkdir lock is now only a CHEAP same-host dedupe in front of
+  // the real arbiter; the cross-host winner is decided by the GitHub-native
+  // claim (a structured claim-comment whose server-assigned id is the total
+  // order). A lost race at either layer abandons the attempt cleanly.
   if (!(await deps.claimLock.acquire(issue))) {
     return claimLost(issue, hooksFired);
   }
+  // State-validity recheck: the issue must still want an agent. This is NOT the
+  // contention lock (that is the claim below) — it only rejects an issue that was
+  // closed/blocked/re-triaged out of `ready-for-agent` between selection and now.
+  // `running` is deliberately NOT consulted here: it is a projection, not a lock.
   const labels = await deps.gh.viewLabels(issue);
-  if (!labels.includes(LABEL_READY) || labels.includes(LABEL_RUNNING)) {
+  if (!labels.includes(LABEL_READY)) {
+    await deps.claimLock.release(issue);
+    return claimLost(issue, hooksFired);
+  }
+  // Atomic GitHub-native arbitration. When `claimGh` is wired (production), this
+  // is the authority that guarantees a single winner across hosts. Omitted only
+  // by legacy callers/tests, which fall back to the `running` pre-check below.
+  if (deps.claimGh) {
+    const decision = await acquireClaim(
+      deps.claimGh,
+      { worker: input.claimant ?? input.workerId, runner: input.runner },
+      issue,
+      { isStale: deps.claimStale },
+    );
+    if (decision.verdict === "lost") {
+      // acquireClaim already conceded our marker; nothing to project, next issue.
+      await deps.claimLock.release(issue);
+      return claimLost(issue, hooksFired);
+    }
+  } else if (labels.includes(LABEL_RUNNING)) {
+    // Legacy lock (no claimGh): `running` present means another worker holds it.
     await deps.claimLock.release(issue);
     return claimLost(issue, hooksFired);
   }
@@ -553,10 +593,15 @@ export async function processIssue(
     };
   }
 
-  // Promote to running, shedding any stale `blocked:*` reason in the same edit
-  // (#402). `labels` was just fetched above, so we only remove labels the issue
-  // actually carries — a clean promotion the adoption doctor can never flag.
-  if (!(await deps.gh.editLabels(issue, [LABEL_READY, ...blockedLabelsIn(labels)], [LABEL_RUNNING]))) {
+  // Project the `running` label, shedding any stale `blocked:*` reason in the same
+  // edit (#402). `labels` was just fetched above, so we only remove labels the
+  // issue actually carries — a clean promotion the adoption doctor can never flag.
+  // Under ADR 0066 this is a best-effort OBSERVABILITY PROJECTION: the claim is
+  // already won via the GitHub-native arbiter, so a failed label edit must not
+  // abandon the attempt. Legacy callers (no `claimGh`) keep the old semantics
+  // where the edit-to-running was the lock and its failure lost the claim.
+  const promoted = await deps.gh.editLabels(issue, [LABEL_READY, ...blockedLabelsIn(labels)], [LABEL_RUNNING]);
+  if (!promoted && !deps.claimGh) {
     await deps.claimLock.release(issue);
     return claimLost(issue, hooksFired);
   }
