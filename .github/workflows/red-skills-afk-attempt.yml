@@ -20,13 +20,15 @@
 name: red-skills-afk-attempt
 
 on:
-  # Manual: process a specific issue from the Actions UI.
+  # Manual: process a specific issue from the Actions UI, OR leave it empty to
+  # auto-pick the oldest open ready-for-agent issue.
   workflow_dispatch:
     inputs:
       issue_number:
-        description: "Issue number to process (e.g. 631)."
-        required: true
+        description: "Issue number to process (e.g. 631). Leave EMPTY to auto-pick the oldest open ready-for-agent issue."
+        required: false
         type: string
+        default: ""
   # Auto: fire when an issue gains the ready-for-agent label.
   issues:
     types: [labeled]
