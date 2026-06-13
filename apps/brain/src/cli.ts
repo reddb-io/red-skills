@@ -1,11 +1,13 @@
 #!/usr/bin/env node
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { readFile, mkdir, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import type { AddressInfo } from "node:net";
 import { McpStdioChannelBridge } from "./channel-bridge.js";
 import { handleHook, type Runner } from "./hook-runtime.js";
 import { ingestEvents } from "./ingest-events.js";
 import { withBrainRuntime } from "./runtime.js";
 import { brainAct } from "./brain-act.js";
+import { buildBrainDashboard, buildBrainDashboardArtifact, serveBrainDashboardHtml } from "./dashboard.js";
 import { ARTIFACT_KINDS, CONNECTION_KINDS } from "./schema.js";
 import { loadIngestionState, saveIngestionState, scheduledIngest } from "./scheduled-ingestion.js";
 import type { KpiGroupBy, KpiInterval, KpiTimeField } from "./kpi-query.js";
@@ -63,6 +65,9 @@ async function main(): Promise<void> {
     case "kpi":
     case "kpis":
       await kpis(args);
+      return;
+    case "dashboard":
+      await dashboard(args);
       return;
     default:
       throw new Error(`unknown brain command: ${command}`);
@@ -211,6 +216,45 @@ async function kpis(args: string[]): Promise<void> {
   });
 }
 
+async function dashboard(args: string[]): Promise<void> {
+  const flags = parseFlags(args);
+  const rendered = await withBrainRuntime(async ({ config, store, project }) => {
+    const dashboard = await buildBrainDashboard(store, {
+      project,
+      rootDir: config.rootDir,
+    });
+    return {
+      dashboard,
+      artifact: buildBrainDashboardArtifact(dashboard),
+      defaultOut: join(config.rootDir, ".red", "brain", "dashboard.html"),
+    };
+  });
+
+  if (flags.json === true) {
+    printJson(rendered.dashboard);
+    return;
+  }
+
+  if (flags.serve === true) {
+    const host = stringFlag(flags, "host") ?? "127.0.0.1";
+    const port = numberFlag(flags, "port") ?? 4738;
+    const server = await serveBrainDashboardHtml(rendered.artifact.html, { host, port });
+    const address = server.address() as AddressInfo;
+    console.log(`brain: dashboard serving at http://${address.address}:${address.port}/`);
+    await new Promise<void>((resolve) => {
+      const stop = () => server.close(() => resolve());
+      process.once("SIGINT", stop);
+      process.once("SIGTERM", stop);
+    });
+    return;
+  }
+
+  const out = stringFlag(flags, "out") ?? rendered.defaultOut;
+  await mkdir(dirname(out), { recursive: true });
+  await writeFile(out, rendered.artifact.html, "utf8");
+  console.log(`brain: dashboard written ${out}`);
+}
+
 async function act(args: string[]): Promise<void> {
   const flags = parseFlags(args);
   const target = stringFlag(flags, "target") ?? flags._[0];
@@ -292,6 +336,7 @@ function printHelp(): void {
   ingest-events [--after-cursor N] [--session-key KEY] [--limit N]
   schedule-ingest [--session-key KEY] [--limit N] [--state PATH]
   kpi [--interval hour|day|week|month] [--group-by platform|event_type|target] [--time-field event|ingested] [--from T] [--to T] [--platform P] [--event-type T] [--target T]
+  dashboard [--out PATH] [--json] [--serve] [--host 127.0.0.1] [--port 4738]
 `);
 }
 

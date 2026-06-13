@@ -62,3 +62,10 @@ Core skills: [capture](./skills/core/capture/SKILL.md),
 [status](./skills/core/status/SKILL.md), and
 [view](./skills/core/view/SKILL.md). `view` opens `brain.rdb` in red-ui for
 graph/connection exploration.
+
+`brain dashboard` generates the separate daily-driver surface: a self-contained
+HTML overview with KpiQuery-backed event metrics, recent decisions, and recent
+typed connections. It is intentionally not a node-link graph and does not reuse
+the Memory Workbench. Use `brain dashboard --out dashboard.html` for a file,
+`brain dashboard --json` for the underlying `brain.dashboard.v1` contract, or
+`brain dashboard --serve --port 4738` for a loopback local URL.
