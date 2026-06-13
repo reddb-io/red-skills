@@ -1,4 +1,4 @@
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
@@ -135,6 +135,19 @@ describe("history append", () => {
     expect(total).toBe(1);
   });
 
+  it("skips malformed JSONL lines while keeping valid monitor history", () => {
+    const records = parseHistoryLines(
+      [
+        JSON.stringify({ ts: "t1", epoch: 1, worker: "wA", issue: 1, event: "done", duration_s: 0, runner: "codex" }),
+        "{not-json",
+        "",
+        JSON.stringify({ ts: "t2", epoch: 2, worker: "wB", issue: 2, event: "blocked", duration_s: 3, runner: "claude" }),
+      ].join("\n"),
+    );
+
+    expect(records.map((record) => record.issue)).toEqual([1, 2]);
+  });
+
   it("rejects an empty event", async () => {
     const dir = await mkdtemp(join(tmpdir(), "afk-history-"));
     const path = join(dir, "afk-history.jsonl");
@@ -170,5 +183,18 @@ describe("history trim", () => {
   it("is a silent no-op for a missing file", async () => {
     const dir = await mkdtemp(join(tmpdir(), "afk-history-"));
     expect(await historyTrim(join(dir, "missing.jsonl"), 5)).toBeNull();
+  });
+
+  it("preserves the original ledger when the atomic temp write fails", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "afk-history-"));
+    const path = join(dir, "afk-history.jsonl");
+    const original = [1, 2, 3]
+      .map((epoch) => JSON.stringify({ ts: "t", epoch, worker: "", issue: 0, event: "done", duration_s: 0, runner: "" }))
+      .join("\n") + "\n";
+    await writeFile(path, original, "utf8");
+    await mkdir(`${path}.tmp`);
+
+    await expect(historyTrim(path, 2)).rejects.toThrow();
+    expect(await readFile(path, "utf8")).toBe(original);
   });
 });
