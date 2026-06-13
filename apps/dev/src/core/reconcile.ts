@@ -295,8 +295,8 @@ export async function reconcile(deps: ReconcileDeps, input: ReconcileInput): Pro
       title: input.title,
     },
     {
-      preMerge: () => landingHookContext(input, branch),
-      postMerge: () => landingHookContext(input, branch),
+      preMerge: () => landingHookContext(input, branch, { mergeBase: input.base }),
+      postMerge: (mergeSha?: string) => landingHookContext(input, branch, { mergeSha }),
     },
   );
   if (!landing.ok) {
@@ -573,10 +573,17 @@ async function runCloseCascade(deps: ReconcileDeps, closedIssue: number): Promis
 // ---------- hook context ----------
 
 /** The pre_merge / post_merge hook context JSON, matching process-issue's shape. */
-function landingHookContext(input: ReconcileInput, branch: string): string {
-  return JSON.stringify({
+function landingHookContext(
+  input: ReconcileInput,
+  branch: string,
+  opts: { mergeBase?: string; mergeSha?: string } = {},
+): string {
+  const out: Record<string, unknown> = {
     issue: { number: input.issue, title: input.title },
     workspace: input.repoDir,
     branch,
-  });
+  };
+  if (opts.mergeBase) out.merge_base = opts.mergeBase;
+  if (opts.mergeSha) out.merge_commit = { sha: opts.mergeSha, short: opts.mergeSha.slice(0, 7) };
+  return JSON.stringify(out);
 }
