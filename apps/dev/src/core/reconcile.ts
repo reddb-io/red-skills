@@ -54,6 +54,8 @@ import {
   LABEL_HUMAN,
   LABEL_VALIDATION,
   LABEL_DEPENDENCY,
+  LABEL_POLICY,
+  LABEL_INFRA,
   LABEL_MERGE_CONFLICT,
   LABEL_SPEC,
 } from "./triage-labels.js";
@@ -71,9 +73,10 @@ const MECHANICAL_BLOCKER_KINDS = new Set(["stalled", "crashed", "merge-conflict"
  * Labels that DISQUALIFY an issue from reconcile outright — the human-decision
  * blocked classes. `blocked:spec` is the boundary the ADR calls out explicitly;
  * `blocked:validation` means a prior gate already failed for a reason a human
- * must resolve, so re-running the same gate is pointless.
+ * must resolve, `blocked:dependency` is a dependency wait, and policy/infra
+ * blocks need operator action outside the worker branch.
  */
-const NON_MECHANICAL_LABELS = [LABEL_SPEC, LABEL_VALIDATION];
+const NON_MECHANICAL_LABELS = [LABEL_SPEC, LABEL_VALIDATION, LABEL_DEPENDENCY, LABEL_POLICY, LABEL_INFRA];
 
 // ---------- injected IO ----------
 
@@ -330,8 +333,9 @@ export async function reconcile(deps: ReconcileDeps, input: ReconcileInput): Pro
 /**
  * The reason an issue is NOT a mechanical reconcile candidate, or null when it
  * is. Disqualified when it carries a human-decision blocked label
- * (`blocked:spec` / `blocked:validation`), or an ACTIVE `## Current blocker`
- * whose kind is not mechanical (stalled / crashed / merge-conflict). A stalled /
+ * (`blocked:spec` / `blocked:validation` / `blocked:dependency` /
+ * `blocked:policy` / `blocked:infra`), or an ACTIVE `## Current blocker` whose
+ * kind is not mechanical (stalled / crashed / merge-conflict). A stalled /
  * crashed blocker is mechanical and therefore allowed — it is exactly the parked
  * state reconcile exists to clear.
  */
