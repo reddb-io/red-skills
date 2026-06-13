@@ -1,4 +1,4 @@
-import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
 // Port of lib/history.sh — the afk-history.jsonl ledger. The pure parts (the
@@ -151,7 +151,11 @@ export function parseHistoryLines(text: string): HistoryRecord[] {
   for (const raw of text.split("\n")) {
     const line = raw.trim();
     if (!line) continue;
-    out.push(JSON.parse(line) as HistoryRecord);
+    try {
+      out.push(JSON.parse(line) as HistoryRecord);
+    } catch {
+      continue;
+    }
   }
   return out;
 }
@@ -179,7 +183,9 @@ export const defaultHistoryIO: HistoryIO = {
     }
   },
   async write(path, text) {
-    await writeFile(path, text, "utf8");
+    const tmp = `${path}.tmp`;
+    await writeFile(tmp, text, "utf8");
+    await rename(tmp, path);
   },
 };
 
