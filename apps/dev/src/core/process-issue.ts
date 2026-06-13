@@ -446,6 +446,8 @@ function blockedLabelsIn(labels: string[]): string[] {
   return labels.filter((l) => l.startsWith("blocked:"));
 }
 
+const MECHANICAL_BLOCKER_KINDS = new Set(["stalled", "crashed", "merge-conflict"]);
+
 /**
  * ADDITIVE typed-blocked observability tag. Apply the routing label transition
  * (remove → add) and, ALONGSIDE it in the SAME editLabels call, the DESCRIPTIVE
@@ -595,7 +597,7 @@ export async function processIssue(
   }
 
   const activeBlocker = parseCurrentBlocker(input.body);
-  if (activeBlocker) {
+  if (activeBlocker && !MECHANICAL_BLOCKER_KINDS.has(activeBlocker.kind)) {
     await editLabelsTagged(deps, issue, [LABEL_READY], [LABEL_HUMAN], "blocked");
     await deps.gh.comment(
       issue,
