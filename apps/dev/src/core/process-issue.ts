@@ -1157,8 +1157,16 @@ export async function processIssue(
       title: input.title,
     },
     {
-      preMerge: () => hookContext({ issue, title: input.title, workspace: input.repoDir, branch: workerBranch }),
-      postMerge: () => hookContext({ issue, title: input.title, workspace: input.repoDir, branch: workerBranch }),
+      preMerge: () =>
+        hookContext({ issue, title: input.title, workspace: input.repoDir, branch: workerBranch, merge_base: base }),
+      postMerge: (mergeSha?: string) =>
+        hookContext({
+          issue,
+          title: input.title,
+          workspace: input.repoDir,
+          branch: workerBranch,
+          merge_commit: mergeSha ? { sha: mergeSha, short: mergeSha.slice(0, 7) } : undefined,
+        }),
     },
   );
   if (!landing.ok) {
