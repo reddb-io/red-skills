@@ -216,7 +216,9 @@ export async function writeEnvelopePosted(attemptDir: string, posted: boolean): 
   env.posted = posted;
   obj.envelope = env;
   await mkdir(attemptDir, { recursive: true });
-  await writeFile(statePath, `${JSON.stringify(obj)}\n`, "utf8");
+  const tmp = `${statePath}.tmp`;
+  await writeFile(tmp, `${JSON.stringify(obj)}\n`, "utf8");
+  await rename(tmp, statePath);
 }
 
 /** Read the `envelope.posted` flag from an attempt state file (false when
