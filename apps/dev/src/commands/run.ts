@@ -598,7 +598,7 @@ export function buildProcessDeps(
       config,
       resolveOptions,
       exec: makeHookExec(ctx.root),
-      env: hookEnv(ctx.repo, ctx.root, parseSlot(process.env.RED_AFK_SLOT)),
+      env: hookEnv(ctx.repo, ctx.root, parseSlot(process.env.RED_AFK_SLOT), runner),
     },
     lookups: {
       base: {
@@ -1194,7 +1194,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
       config: loadConfig(afkPaths(ctx.root).configPath, { warn: () => undefined }),
       resolveOptions: makeHookResolveOptions(ctx.root),
       exec: makeHookExec(ctx.root),
-      env: hookEnv(ctx.repo, ctx.root, parseSlot(process.env.RED_AFK_SLOT)),
+      env: hookEnv(ctx.repo, ctx.root, parseSlot(process.env.RED_AFK_SLOT), runner),
     },
     runnerCircuit: {
       isOpen: (r) => runnerCircuitOpen(paths.tmpDir, r, Math.floor(Date.now() / 1000)),

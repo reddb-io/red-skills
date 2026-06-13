@@ -815,6 +815,28 @@ describe("processIssue — active Current blocker preflight", () => {
     expect(trace.comments[0]?.body).toContain("active Current blocker (decision)");
     expect(trace.released).toEqual([9]);
   });
+
+  it("does not escalate a mechanical Current blocker before reconcile can handle it", async () => {
+    const body = upsertCurrentBlocker("## Agent brief\nDo it.", {
+      status: "blocked",
+      kind: "stalled",
+      summary: "Worker stopped after pushing a branch.",
+      next: "Reconcile the owned branch.",
+    });
+    const { deps, input, trace } = harness({
+      body,
+      labels: ["ready-for-agent", "blocked:stalled"],
+      outcome: "done",
+      feedbackOk: true,
+    });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(trace.runAgentCalls.length).toBe(1);
+    expect(labelTrace(trace)[0]).toBe("-ready-for-agent+blocked:stalled|+running");
+    expect(trace.comments.map((c) => c.body).some((body) => body.includes("preflight stopped"))).toBe(false);
+    expect(trace.ensuredLabels).not.toContain("blocked:spec");
+  });
 });
 
 describe("processIssue — feedback fail", () => {

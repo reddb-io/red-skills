@@ -620,7 +620,7 @@ remaining : 8 still ready-for-agent
 
 ## Configuration & lifecycle hooks
 
-All `.red/config.yaml` knobs + `RED_AFK_*` env overrides (sandbox, runner, model/effort, timeouts, retry caps, stall thresholds, backpressure) and the lifecycle-hook contract live in [`docs/CONFIG.md`](./docs/CONFIG.md). Runner/model resolution policy: [`../model-tier-policy/SKILL.md`](../model-tier-policy/SKILL.md).
+All `.red/config.yaml` knobs + `RED_AFK_*` env overrides (sandbox, runner, model/effort, timeouts, retry caps, stall thresholds, backpressure) and the lifecycle-hook contract live in [`docs/CONFIG.md`](./docs/CONFIG.md). The runtime supplies the documented base env (`RED_AFK_REPO`, `RED_AFK_ROOT`, `RED_AFK_WORKSPACE`, `RED_AFK_RUNNER`, optional `RED_AFK_SLOT`) and layers each hook event's documented `RED_AFK_*` variables from that event's JSON context. Runner/model resolution policy: [`../model-tier-policy/SKILL.md`](../model-tier-policy/SKILL.md).
 
 ## Safety
 

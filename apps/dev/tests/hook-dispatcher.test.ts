@@ -5,6 +5,7 @@ import {
   type ResolvedHooks,
 } from "../src/core/hook-config.js";
 import {
+  deriveHookEnv,
   dispatchHooks,
   HOOK_EXIT_POLICY,
   UnknownLifecyclePointError,
@@ -288,6 +289,92 @@ describe("hook-dispatcher executions list shape", () => {
       { env: { RED_AFK_RUNNER: "claude" } },
     );
     expect(calls[0]!.env).toEqual({ RED_AFK_RUNNER: "claude" });
+  });
+});
+
+describe("deriveHookEnv (documented per-event RED_AFK_* contract)", () => {
+  const base = { RED_AFK_REPO: "owner/repo", RED_AFK_ROOT: "/repo", RED_AFK_WORKSPACE: "/repo" };
+
+  it("returns the base env unchanged for empty and non-object contexts", () => {
+    expect(deriveHookEnv(base, "{}")).toEqual(base);
+    expect(deriveHookEnv(base, "[]")).toEqual(base);
+    expect(deriveHookEnv(base, "not json")).toEqual(base);
+  });
+
+  it("derives the pre_attempt env from issue, workspace, runner, and attempt_n", () => {
+    const env = deriveHookEnv(
+      base,
+      JSON.stringify({
+        issue: { number: 585, title: "fix env contract" },
+        workspace: "/repo/.red/tmp/worktree",
+        runner: "codex",
+        attempt_n: 2,
+      }),
+    );
+
+    expect(env).toEqual({
+      RED_AFK_REPO: "owner/repo",
+      RED_AFK_ROOT: "/repo",
+      RED_AFK_WORKSPACE: "/repo/.red/tmp/worktree",
+      RED_AFK_ISSUE: "585",
+      RED_AFK_RUNNER: "codex",
+      RED_AFK_ATTEMPT_N: "2",
+    });
+  });
+
+  it("derives result, error, and merge vars when those event fields are present", () => {
+    const env = deriveHookEnv(
+      base,
+      JSON.stringify({
+        issue: { number: 7 },
+        result: { status: "success", outcome: "done" },
+        error: { class: "session-crash", message: "boom" },
+        merge_base: "main",
+        merge_commit: { sha: "abc123456", short: "abc1234" },
+        attempt_n: 1,
+      }),
+    );
+
+    expect(env.RED_AFK_ISSUE).toBe("7");
+    expect(env.RED_AFK_RESULT_STATUS).toBe("success");
+    expect(env.RED_AFK_RESULT_OUTCOME).toBe("done");
+    expect(env.RED_AFK_ERROR_CLASS).toBe("session-crash");
+    expect(env.RED_AFK_ERROR_MESSAGE).toBe("boom");
+    expect(env.RED_AFK_MERGE_BASE).toBe("main");
+    expect(env.RED_AFK_MERGE_COMMIT).toBe("abc123456");
+    expect(env.RED_AFK_MERGE_SHA).toBe("abc1234");
+    expect(env.RED_AFK_ATTEMPT_N).toBe("1");
+  });
+
+  it("leaves irrelevant or empty fields unset", () => {
+    const env = deriveHookEnv(base, JSON.stringify({ result: { status: "fail", outcome: "" } }));
+
+    expect(env.RED_AFK_RESULT_STATUS).toBe("fail");
+    expect("RED_AFK_RESULT_OUTCOME" in env).toBe(false);
+    expect("RED_AFK_ISSUE" in env).toBe(false);
+    expect("RED_AFK_RUNNER" in env).toBe(false);
+  });
+});
+
+describe("dispatchHooks layers the per-event env onto the base env", () => {
+  it("a pre_attempt command receives the documented RED_AFK_* vars for its event", async () => {
+    const calls: Array<{ command: string; stdin: string; env: Record<string, string> }> = [];
+    await dispatchHooks(
+      "pre_attempt",
+      ["notify"],
+      JSON.stringify({ issue: { number: 585 }, workspace: "/wt", runner: "codex", attempt_n: 1 }),
+      fakeExec({ notify: { code: 0, stdout: "" } }, calls),
+      { env: { RED_AFK_REPO: "o/r", RED_AFK_ROOT: "/repo", RED_AFK_WORKSPACE: "/repo" } },
+    );
+
+    expect(calls[0]!.env).toEqual({
+      RED_AFK_REPO: "o/r",
+      RED_AFK_ROOT: "/repo",
+      RED_AFK_WORKSPACE: "/wt",
+      RED_AFK_ISSUE: "585",
+      RED_AFK_RUNNER: "codex",
+      RED_AFK_ATTEMPT_N: "1",
+    });
   });
 });
 

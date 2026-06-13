@@ -96,7 +96,7 @@ export interface LandingInput {
  * exact JSON shape stays defined once, next to the other hook contexts). */
 export interface LandingHookContexts {
   preMerge(): string;
-  postMerge(): string;
+  postMerge(mergeSha?: string): string;
 }
 
 /** Result of a landing. On success the caller closes; `mergeSha` carries the
@@ -152,7 +152,7 @@ export async function doLanding(
 
   // post_merge hook (best-effort; an abort here does not unwind the landing,
   // matching the prior behaviour which never branched on its result).
-  await deps.fireHook("post_merge", hooks.postMerge());
+  await deps.fireHook("post_merge", hooks.postMerge(landed.mergeSha));
   return landed;
 }
 
