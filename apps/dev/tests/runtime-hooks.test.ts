@@ -75,10 +75,15 @@ describe("makeHookResolveOptions (gap 6: built-in defaults anchor on the plugin)
 });
 
 describe("hookEnv (per-slot RED_AFK_SLOT in hook environment)", () => {
-  it("includes RED_AFK_REPO and RED_AFK_ROOT always", () => {
+  it("includes RED_AFK_REPO, RED_AFK_ROOT, and RED_AFK_WORKSPACE always", () => {
     const env = hookEnv("owner/repo", "/repo");
     expect(env.RED_AFK_REPO).toBe("owner/repo");
     expect(env.RED_AFK_ROOT).toBe("/repo");
+    expect(env.RED_AFK_WORKSPACE).toBe("/repo");
+  });
+
+  it("includes RED_AFK_RUNNER when the caller supplies the resolved runner", () => {
+    expect(hookEnv("owner/repo", "/repo", undefined, "codex").RED_AFK_RUNNER).toBe("codex");
   });
 
   it("omits RED_AFK_SLOT when no slot is given", () => {
