@@ -65,6 +65,35 @@ export interface SearchOptions {
 
 export interface ThinkOptions extends SearchOptions {}
 
+export type BrainThinkConfidence = "none" | "low" | "medium" | "high";
+
+export interface BrainCitationSource {
+  path?: string;
+  session?: string;
+  agent?: string;
+  runner?: string;
+}
+
+export interface BrainCitation {
+  ref: string;
+  rid: number;
+  id: string;
+  title: string;
+  kind: ArtifactKind;
+  score: number;
+  score_breakdown: SearchScoreBreakdown;
+  excerpt: string;
+  source?: BrainCitationSource;
+}
+
+export interface BrainThinkResult {
+  answer: string;
+  hits: SearchHit[];
+  citations: BrainCitation[];
+  confidence: BrainThinkConfidence;
+  missing_evidence: string[];
+}
+
 export class BrainStore {
   private db!: RedDB;
   private artifactCache: StoredBrainArtifact[] | null = null;
@@ -266,12 +295,11 @@ export class BrainStore {
     return new KpiQuery(artifacts).events(input);
   }
 
-  async think(query: string, limit = 8, options: ThinkOptions = {}): Promise<{ answer: string; hits: SearchHit[] }> {
-    const hits = await this.search(query, limit, options);
-    return {
-      hits,
-      answer: renderThinkAnswer(query, hits),
-    };
+  async think(query: string, limit = 8, options: ThinkOptions = {}): Promise<BrainThinkResult> {
+    const hits = (await this.search(query, Math.max(limit * 2, limit + 5), options))
+      .filter((hit) => !isDerivedArtifact(hit.artifact))
+      .slice(0, limit);
+    return renderThinkResult(query, hits);
   }
 
   async deriveAutoLinks(artifact: StoredBrainArtifact): Promise<AppliedBrainAutoLink[]> {
@@ -337,7 +365,7 @@ export class BrainStore {
       const request: BrainAutoLinkRequest = {
         newArtifact: artifactToAutoLinkArtifact(artifact),
         candidates,
-        think: { query, answer: renderThinkAnswer(query, think.hits) },
+        think: { query, answer: think.answer },
         allowedKinds: AUTO_LINK_CONNECTION_KINDS,
       };
       const proposals = await this.opts.autoLinker.deriveConnections(request);
@@ -554,18 +582,126 @@ function excerpt(content: string, terms: string[]): string {
   return `${start > 0 ? "..." : ""}${content.slice(start, start + 220)}${start + 220 < content.length ? "..." : ""}`;
 }
 
-function renderThinkAnswer(query: string, hits: SearchHit[]): string {
-  const lines = hits.map((hit, index) => {
-    const artifact = hit.artifact;
-    const signals = Object.entries(hit.score_breakdown)
+function renderThinkResult(query: string, hits: SearchHit[]): BrainThinkResult {
+  const citations = hits.map(hitToCitation);
+  const confidence = classifyThinkConfidence(hits);
+  const missingEvidence = thinkMissingEvidence(query, citations, confidence);
+  return {
+    hits,
+    citations,
+    confidence,
+    missing_evidence: missingEvidence,
+    answer: renderThinkAnswer(query, citations, confidence, missingEvidence),
+  };
+}
+
+function hitToCitation(hit: SearchHit, index: number): BrainCitation {
+  const artifact = hit.artifact;
+  const source: BrainCitationSource = {};
+  if (artifact.properties.source_path) source.path = artifact.properties.source_path;
+  if (artifact.properties.source_session) source.session = artifact.properties.source_session;
+  if (artifact.properties.source_agent) source.agent = artifact.properties.source_agent;
+  if (artifact.properties.source_runner) source.runner = artifact.properties.source_runner;
+  return {
+    ref: `B${index + 1}`,
+    rid: artifact.rid,
+    id: artifact.properties.id,
+    title: artifact.properties.title,
+    kind: artifact.kind,
+    score: hit.score,
+    score_breakdown: hit.score_breakdown,
+    excerpt: hit.excerpt,
+    source: Object.keys(source).length > 0 ? source : undefined,
+  };
+}
+
+function classifyThinkConfidence(hits: SearchHit[]): BrainThinkConfidence {
+  const top = hits[0];
+  if (!top) return "none";
+  const signalCount = Object.entries(top.score_breakdown)
+    .filter(([key, value]) => key !== "total" && value > 0)
+    .length;
+  if (top.score >= 8 || (top.score >= 5 && signalCount >= 2)) return "high";
+  if (top.score >= 3) return "medium";
+  return "low";
+}
+
+function thinkMissingEvidence(
+  query: string,
+  citations: BrainCitation[],
+  confidence: BrainThinkConfidence,
+): string[] {
+  if (citations.length === 0) {
+    return [`No Brain artifacts matched "${query}". Capture or ingest cited artifacts before relying on Brain for this answer.`];
+  }
+  const gaps: string[] = [];
+  if (confidence === "low") {
+    gaps.push("Only low-scoring deterministic matches were found; open the cited artifacts before treating this as settled.");
+  }
+  if (citations.length === 1) {
+    gaps.push("Only one cited artifact matched; missing context or contradictions may not be visible yet.");
+  }
+  if (citations.every((citation) => citation.source == null)) {
+    gaps.push("The matched artifacts do not carry source path, session, agent, or runner provenance.");
+  }
+  return gaps;
+}
+
+function renderThinkAnswer(
+  query: string,
+  citations: BrainCitation[],
+  confidence: BrainThinkConfidence,
+  missingEvidence: string[],
+): string {
+  if (citations.length === 0) {
+    return [
+      `Brain has no cited evidence for "${query}".`,
+      "",
+      "Missing evidence:",
+      ...missingEvidence.map((gap) => `- ${gap}`),
+    ].join("\n");
+  }
+
+  const evidenceLines = citations.slice(0, 5).map((citation) => {
+    return `- ${citation.title}: ${citation.excerpt} [${citation.ref}]`;
+  });
+  const citationLines = citations.map((citation) => {
+    const signals = Object.entries(citation.score_breakdown)
       .filter(([key, value]) => key !== "total" && value > 0)
       .map(([key, value]) => `${key} ${value}`)
       .join(", ");
-    return `[${index + 1}] ${artifact.properties.title} (${artifact.kind}, rid ${artifact.rid}, score ${hit.score})${signals ? ` [${signals}]` : ""}: ${hit.excerpt}`;
+    return `[${citation.ref}] ${citation.title} (${citation.kind}, rid ${citation.rid}, score ${citation.score})${signals ? ` [${signals}]` : ""}; ${renderCitationSource(citation)}`;
   });
-  return lines.length > 0
-    ? `Deterministic Brain synthesis for "${query}":\n\n${lines.join("\n")}`
-    : `No Brain artifacts matched "${query}".`;
+  const gaps =
+    missingEvidence.length > 0
+      ? missingEvidence.map((gap) => `- ${gap}`)
+      : ["- No deterministic evidence gap detected in the returned Brain citations."];
+
+  return [
+    `Brain answer for "${query}"`,
+    "",
+    `Confidence: ${confidence}`,
+    "",
+    "Best cited evidence:",
+    ...evidenceLines,
+    "",
+    "Missing evidence:",
+    ...gaps,
+    "",
+    "Citations:",
+    ...citationLines,
+  ].join("\n");
+}
+
+function renderCitationSource(citation: BrainCitation): string {
+  if (!citation.source) return `source: Brain artifact ${citation.id}`;
+  const parts = [
+    citation.source.path ? `path ${citation.source.path}` : null,
+    citation.source.session ? `session ${citation.source.session}` : null,
+    citation.source.agent ? `agent ${citation.source.agent}` : null,
+    citation.source.runner ? `runner ${citation.source.runner}` : null,
+  ].filter(notNull);
+  return `source: ${parts.length > 0 ? parts.join(", ") : `Brain artifact ${citation.id}`}`;
 }
 
 function artifactHashKey(hash: string): string {
