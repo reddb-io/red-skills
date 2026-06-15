@@ -96,15 +96,56 @@ describe("BrainStore hybrid search", () => {
         kind: "decision",
         tags: ["brain"],
         content: "Keep Brain storage local by default.",
+        sourceAgent: "codex",
+        sourceRunner: "brain-test",
+        sourceSession: "session-123",
+        sourcePath: "/repo/notes/brain.md",
       });
 
       const result = await store.think("brain decision");
 
+      expect(result.confidence).toBe("high");
+      expect(result.citations[0]).toEqual(expect.objectContaining({
+        ref: "B1",
+        title: "Use local Brain",
+        kind: "decision",
+        score: result.hits[0]?.score,
+        source: expect.objectContaining({
+          path: "/repo/notes/brain.md",
+          agent: "codex",
+          runner: "brain-test",
+          session: "session-123",
+        }),
+      }));
+      expect(result.missing_evidence).toEqual(["Only one cited artifact matched; missing context or contradictions may not be visible yet."]);
+      expect(result.answer).toContain("Brain answer");
+      expect(result.answer).toContain("Confidence: high");
+      expect(result.answer).toContain("Citations:");
+      expect(result.answer).toContain("[B1]");
       expect(result.answer).toContain("score");
       expect(result.answer).toContain("lexical");
       expect(result.answer).toContain("tags");
       expect(result.answer).toContain("kind");
       expect(result.hits[0]?.score_breakdown.total).toBe(result.hits[0]?.score);
+    } finally {
+      await store.close();
+    }
+  });
+
+  it("admits when think has no cited evidence", async () => {
+    const root = await tempRoot();
+    const store = await BrainStore.open({ uri: `file://${join(root, "brain.rdb")}` });
+    try {
+      const result = await store.think("quantum roadmap");
+
+      expect(result.hits).toEqual([]);
+      expect(result.citations).toEqual([]);
+      expect(result.confidence).toBe("none");
+      expect(result.missing_evidence).toEqual([
+        'No Brain artifacts matched "quantum roadmap". Capture or ingest cited artifacts before relying on Brain for this answer.',
+      ]);
+      expect(result.answer).toContain('Brain has no cited evidence for "quantum roadmap".');
+      expect(result.answer).toContain("Missing evidence:");
     } finally {
       await store.close();
     }
