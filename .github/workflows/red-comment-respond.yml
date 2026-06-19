@@ -1,0 +1,101 @@
+# red-comment-respond — advisory `/dev` comment responder (PRD #745, #750).
+#
+# The event-router for the cloud-agent comment-interaction surface. When a
+# comment is posted on an issue or a pull request (including a PR review
+# comment), this thin workflow filters to comments that summon the agent — a
+# body starting with the `/dev` slash verb or an @mention of the bot — and
+# invokes the versioned `dev` bundle's `respond` subcommand. The binary owns ALL
+# logic: parse the `/dev` summon (the `comment-classification` seam), authorize
+# the commenter through the #747 trust resolver, and route `/dev explain` (answer
+# in-thread) or `/dev review` (delegate to the #746 advisory review path).
+#
+# This slice ships the ADVISORY verbs only — it NEVER pushes code, so the
+# workflow requests NO `contents: write`. The first-line `/dev`/@mention prefilter
+# below is a cheap gate so the dev bundle is fetched only for plausible summons;
+# the binary's grammar + trust resolver is the authoritative gate (an untrusted
+# commenter is refused there).
+#
+# Live firing additionally depends on runner-auth wiring (the MINIMAX/OPENAI/
+# OPENROUTER secrets) — a separate slice. Until those are set the explain path
+# no-ops at auth; the routing + subcommand contract is what this slice proves.
+
+name: red-comment-respond
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+
+# Minimal: read the code, post the reply + (for review) PR review comments +
+# labels. No `contents: write` — advisory only, never pushes code.
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  respond:
+    # Cheap prefilter: only run for comments that summon the agent. The binary's
+    # `/dev`-verb grammar + trust resolver is the authoritative gate.
+    if: >-
+      startsWith(github.event.comment.body, '/dev ') ||
+      github.event.comment.body == '/dev' ||
+      contains(github.event.comment.body, '@red-dev')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install the OpenCode runner CLI
+        run: npm install -g opencode-ai
+
+      - name: Run the advisory comment responder
+        env:
+          # gh operations (resolve trust, post the reply, drive the review path).
+          GH_TOKEN: ${{ github.token }}
+          # CI never wants a nested container: force the no-sandbox lane.
+          RED_AFK_SANDBOX: none
+          # The raw comment body, passed via env to avoid shell-injection from
+          # arbitrary public comment text.
+          COMMENT_BODY: ${{ github.event.comment.body }}
+          COMMENT_AUTHOR: ${{ github.event.comment.user.login }}
+          # OpenCode auth — first set key wins (opencode-env.ts precedence).
+          MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          set -euo pipefail
+          # issue_comment fires for BOTH issues and PRs; the PR shape carries a
+          # `pull_request` member on the issue object. pull_request_review_comment
+          # is always a PR.
+          if [[ -n "${{ github.event.pull_request.number }}" ]]; then
+            NUMBER="${{ github.event.pull_request.number }}"
+            IS_PR=1
+          elif [[ -n "${{ github.event.issue.pull_request.url }}" ]]; then
+            NUMBER="${{ github.event.issue.number }}"
+            IS_PR=1
+          else
+            NUMBER="${{ github.event.issue.number }}"
+            IS_PR=0
+          fi
+          if ! [[ "$NUMBER" =~ ^[0-9]+$ ]]; then
+            echo "::error::invalid issue/PR number: '$NUMBER'"; exit 1
+          fi
+          # The launcher resolves its version from plugins/dev/.claude-plugin and
+          # fetches the matching dev bundle from the Release (ADR 0038/0039), then
+          # forwards the `respond` subcommand to the binary.
+          LAUNCHER="plugins/dev/skills/engineering/afk/bin/afk.mjs"
+          ARGS=(respond
+            --body "$COMMENT_BODY"
+            --author "$COMMENT_AUTHOR"
+            --number "$NUMBER"
+            --runner opencode
+            --repo "${{ github.repository }}")
+          if [[ "$IS_PR" == "1" ]]; then ARGS+=(--is-pr); fi
+          node "$LAUNCHER" "${ARGS[@]}"

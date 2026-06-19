@@ -10,6 +10,7 @@ import {
   isHeartbeatGlyph,
   isHumanGuidance,
   isPromotionAudit,
+  parseDevDirective,
   threadLacksDirectiveMarker,
 } from "../src/core/comment-classification.js";
 
@@ -198,5 +199,57 @@ describe("thread helpers", () => {
 
   it("threadLacksDirectiveMarker: false when a directive carrier exists", () => {
     expect(threadLacksDirectiveMarker([discussion, directive])).toBe(false);
+  });
+});
+
+// ---------- `/dev` slash-verb summon grammar (issue #750) ----------
+
+describe("parseDevDirective — `/dev` summon grammar", () => {
+  it("parses `/dev <verb>` with lowercased verb and trailing args", () => {
+    expect(parseDevDirective("/dev explain why CI is red")).toEqual({
+      summon: "slash",
+      verb: "explain",
+      args: "why CI is red",
+    });
+  });
+
+  it("is case-insensitive on the verb and tolerates leading blank lines", () => {
+    expect(parseDevDirective("\n\n  /dev REVIEW  ")).toEqual({
+      summon: "slash",
+      verb: "review",
+      args: "",
+    });
+  });
+
+  it("ignores a comment with no `/dev` verb and no @mention (returns undefined)", () => {
+    expect(parseDevDirective(plainNarrativeBody)).toBeUndefined();
+    expect(parseDevDirective("please fix the flaky test")).toBeUndefined();
+    expect(parseDevDirective("")).toBeUndefined();
+    // a `/dev` that is not the first token is NOT a summon
+    expect(parseDevDirective("run /dev explain later")).toBeUndefined();
+  });
+
+  it("returns an empty verb for a bare `/dev` (router rejects it)", () => {
+    expect(parseDevDirective("/dev")).toEqual({ summon: "slash", verb: "", args: "" });
+  });
+
+  it("parses an @mention summon (with and without an inner `/dev`)", () => {
+    const opts = { mentions: ["red-dev"] };
+    expect(parseDevDirective("@red-dev explain this diff", opts)).toEqual({
+      summon: "mention",
+      verb: "explain",
+      args: "this diff",
+    });
+    expect(parseDevDirective("@red-dev /dev review", opts)).toEqual({
+      summon: "mention",
+      verb: "review",
+      args: "",
+    });
+  });
+
+  it("ignores an @mention of an unknown handle", () => {
+    expect(parseDevDirective("@someone-else explain this", { mentions: ["red-dev"] })).toBeUndefined();
+    // no mentions configured → a bare @mention is not a summon
+    expect(parseDevDirective("@red-dev explain this")).toBeUndefined();
   });
 });

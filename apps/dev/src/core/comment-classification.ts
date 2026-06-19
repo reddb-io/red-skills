@@ -192,6 +192,77 @@ export function classifyComment(comment: Comment): CommentCategory {
   return "discussion";
 }
 
+// ---------- `/dev` slash-verb summon grammar (PRD #745, issue #750) ----------
+//
+// The advisory comment responder reacts to a PR/issue comment ONLY when the
+// commenter summons the agent — either with a leading `/dev <verb>` slash verb
+// or by @mentioning a known bot handle (ADR 0064 decision 6). Every other
+// comment is ignored. This is a pure text predicate over the comment body: no
+// `gh`, no trust check — authorization happens downstream against the resolver.
+
+/** How the agent was summoned in a comment. */
+export type DevSummon = "slash" | "mention";
+
+/** A parsed `/dev` summon: the trigger, the verb, and the rest of the line. */
+export interface DevDirective {
+  /** Whether the summon was the `/dev` slash verb or an @mention of the bot. */
+  summon: DevSummon;
+  /** The verb token immediately after the summon, lowercased (`""` when absent). */
+  verb: string;
+  /** The remainder of the summon line after the verb, trimmed (`""` when none). */
+  args: string;
+}
+
+/** The `/dev` slash-verb token. */
+const DEV_SLASH = "/dev";
+
+/**
+ * Parse a `/dev` summon from a comment body. Recognised only on the FIRST
+ * non-blank line, trimmed, and only in one of two shapes (ADR 0064 decision 6):
+ *
+ *   - slash:   `/dev <verb> [args…]`
+ *   - mention: `@<handle> <verb> [args…]` or `@<handle> /dev <verb> [args…]`,
+ *     where `<handle>` is one of `opts.mentions` (case-insensitive, with or
+ *     without a leading `@`).
+ *
+ * Returns `undefined` when neither summon is present — a comment with no `/dev`
+ * verb and no @mention, which the caller IGNORES (no reply, no mutation). The
+ * verb is lowercased so routing is case-insensitive; an empty verb (a bare
+ * `/dev` or bare @mention) is returned verbatim for the router to reject.
+ */
+export function parseDevDirective(
+  body: string,
+  opts: { mentions?: readonly string[] } = {},
+): DevDirective | undefined {
+  const firstLine = body.split("\n").map((l) => l.trim()).find((l) => l.length > 0);
+  if (!firstLine) return undefined;
+
+  const tokens = firstLine.split(/\s+/);
+  const head = (tokens[0] ?? "").toLowerCase();
+
+  if (head === DEV_SLASH) {
+    return {
+      summon: "slash",
+      verb: (tokens[1] ?? "").toLowerCase(),
+      args: tokens.slice(2).join(" ").trim(),
+    };
+  }
+
+  const handles = new Set((opts.mentions ?? []).map((m) => m.replace(/^@/, "").toLowerCase()));
+  if (head.startsWith("@") && handles.has(head.slice(1))) {
+    // Allow an optional `/dev` between the mention and the verb.
+    let rest = tokens.slice(1);
+    if ((rest[0] ?? "").toLowerCase() === DEV_SLASH) rest = rest.slice(1);
+    return {
+      summon: "mention",
+      verb: (rest[0] ?? "").toLowerCase(),
+      args: rest.slice(1).join(" ").trim(),
+    };
+  }
+
+  return undefined;
+}
+
 /** The envelope's `data-attempt-status` value, or `undefined` when absent. */
 export function envelopeStatus(body: string): string | undefined {
   const match = /data-attempt-status="([^"]*)"/.exec(body);

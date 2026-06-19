@@ -8,6 +8,7 @@ import { runCommand } from "./commands/run.js";
 import { reapCommand } from "./commands/reap.js";
 import { retakeCommand } from "./commands/retake.js";
 import { reviewCommand } from "./commands/review.js";
+import { respondCommand } from "./commands/respond.js";
 import { routeModelTierCommand } from "./commands/route-model-tier.js";
 import { shipCommand } from "./commands/ship.js";
 import { statuslineCommand } from "./commands/statusline.js";
@@ -25,6 +26,7 @@ export type CliCommand =
   | "reap"
   | "retake"
   | "review"
+  | "respond"
   | "ship"
   | "route-model-tier"
   | "statusline"
@@ -57,6 +59,7 @@ const CLI_ROUTER: RouterSchema<CliCommand> = {
     reap: {},
     retake: {},
     review: {},
+    respond: {},
     ship: {},
     "route-model-tier": {},
     statusline: {},
@@ -98,6 +101,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   if (parsed.command === "reap") return reapCommand(parsed.args);
   if (parsed.command === "retake") return retakeCommand(parsed.args);
   if (parsed.command === "review") return reviewCommand(parsed.args);
+  if (parsed.command === "respond") return respondCommand(parsed.args);
   if (parsed.command === "ship") return shipCommand(parsed.args);
   if (parsed.command === "route-model-tier") return routeModelTierCommand(parsed.args);
   if (parsed.command === "statusline") return statuslineCommand(parsed.args);
