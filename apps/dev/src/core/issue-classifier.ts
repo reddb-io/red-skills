@@ -1,4 +1,4 @@
-import type { AfkModelTier } from "./config.js";
+import { AFK_MODEL_TIERS, getConfig, type AfkModelTier, type ConfigValues } from "./config.js";
 
 export type TaskClass = AfkModelTier;
 
@@ -146,6 +146,24 @@ export function isMechanicalChange(taskClass: TaskClass, threshold: TaskClass): 
 export function shouldRequestReview(taskClass: TaskClass, config: ReviewGateConfig): boolean {
   if (!config.enabled) return false;
   return !isMechanicalChange(taskClass, config.threshold);
+}
+
+/**
+ * Resolve the review gate from the flat config map (`afk.review_gate.*`). Returns
+ * undefined when the gate is off (the default), so callers treat "no gate" and
+ * "disabled gate" identically and keep the fast-merge path. An out-of-vocab
+ * `threshold` falls back to {@link DEFAULT_REVIEW_GATE_THRESHOLD}. Shared by the
+ * AFK run wiring and `/ship` so both read the gate the same way.
+ */
+export function resolveReviewGate(values: ConfigValues): ReviewGateConfig | undefined {
+  if (getConfig(values, "afk.review_gate.enabled") !== "true") return undefined;
+  const threshold = getConfig(values, "afk.review_gate.threshold");
+  return {
+    enabled: true,
+    threshold: (AFK_MODEL_TIERS as readonly string[]).includes(threshold)
+      ? (threshold as TaskClass)
+      : DEFAULT_REVIEW_GATE_THRESHOLD,
+  };
 }
 
 export function classifierPrompt(metadata: IssueClassificationMetadata): string {
