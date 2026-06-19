@@ -24,6 +24,8 @@ Scalar run settings live in `.red/config.yaml` under the `afk:` key (alongside t
 | `afk.backpressure` | — | _(empty)_ | Ordered list of shell commands run as an extra pre-merge gate on the DONE path (issue #430, PRD #429). |
 | `afk.merge.wait_for_review` | — | `false` | Merge-gate policy (ADR 0048). When `false` (default), the unlocked admin-merge proceeds **ignoring advisory review checks** (e.g. CodeRabbit) — the binding gates are `drift-guard` (the `pre_merge` hook) + in-process backpressure/feedback. When `true`, the unlocked landing **waits** for the configured review check to conclude before merging, then merges regardless of its verdict (the review stays advisory). `drift-guard` is a hard gate either way. |
 | `afk.merge.review_check` | — | `CodeRabbit` | Name (case-insensitive substring) of the advisory review check `wait_for_review` polls via `gh pr checks`. Only consulted when `afk.merge.wait_for_review` is `true`. |
+| `afk.review_gate.enabled` | — | `false` | PR review gate (ADR 0064 §10, #749). When `true`, a completed **non-mechanical** attempt (classified tier at/above `afk.review_gate.threshold`) gets `ready-for-review` on its PR — firing the advisory review — and **holds the merge** for a fresh-agent review by a different agent than the one that implemented it. Mechanical/trivial work keeps the fast-merge path. Only affects the unlocked admin-PR landing (the locked path never opens a PR). Off by default so the "merge fast / no drift" loop is unchanged until a repo opts in. |
+| `afk.review_gate.threshold` | — | `complex` | The cheapest issue-classifier tier (`validate` \| `simple` \| `complex` \| `think`) counted as non-mechanical. Tiers below it stay mechanical (fast-merge); this tier and above request review. |
 
 ```yaml
 afk:
@@ -45,6 +47,9 @@ afk:
   merge:
     wait_for_review: false   # true → hold the unlocked admin-merge until the review check concludes
     review_check: CodeRabbit
+  review_gate:
+    enabled: false           # true → non-mechanical PRs get ready-for-review + hold the merge for a fresh-agent review
+    threshold: complex       # cheapest tier counted as non-mechanical (validate|simple|complex|think)
 ```
 
 `RED_AFK_IDLE_TIMEOUT_S` is env-only (no `afk.*` config key); `sandbox`, `max_iterations`, and `attempt_timeout` resolve env > config > default. The three runtime bounds — silence (`idleTimeoutSeconds`), re-invocation count (`maxIterations`), and no-commit-progress (attempt guard) — are detailed under *Attempt Completion & Termination Bounds*.

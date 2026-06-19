@@ -23,6 +23,7 @@ import { resolveBase, type ResolveBaseDeps, type ResolveBaseInput } from "./base
 import {
   buildRefFromSlug,
   deleteRemote,
+  pushAttempt,
   slugifyRef,
   type GitExec,
 } from "./remote-branch.js";
@@ -45,6 +46,7 @@ import {
 } from "./feedback.js";
 import { runBackpressure, type BackpressureExec } from "./backpressure.js";
 import {
+  openReviewPr,
   type Exec as MergeExec,
   type ConflictResolver,
   type WaitForReviewInput,
@@ -74,7 +76,9 @@ import { parseTrustPolicy, evaluateTrustGate, type TrustProvenance } from "./tru
 import type { AfkModelTier, ConfigValues } from "./config.js";
 import {
   buildIssueClassificationMetadata,
+  shouldRequestReview,
   type IssueClassificationMetadata,
+  type ReviewGateConfig,
 } from "./issue-classifier.js";
 import type { AttemptStatus } from "./envelope.js";
 import type { Runner } from "../types/runner.js";
@@ -301,6 +305,19 @@ export interface ProcessIssueDeps {
    * omit it.
    */
   waitForReview?: WaitForReviewInput;
+  /**
+   * PR review gate (ADR 0064 §10, #749). Resolved from `afk.review_gate.*` by the
+   * CLI. When enabled AND the attempt's classified tier is non-mechanical, the
+   * UNLOCKED landing is replaced by a review handoff: open the PR, apply
+   * `ready-for-review` (firing the advisory review), and park the issue for the
+   * review→merge flow instead of fast-merging. Mechanical/trivial work — and the
+   * locked path, which never opens a PR — keep the existing fast-merge path.
+   * Absent or disabled (the default) → no review hop. Tests omit it.
+   */
+  reviewGate?: ReviewGateConfig;
+  /** Label applied to the PR to fire the advisory review (default
+   * `ready-for-review`). Injected so the policy string stays in the CLI layer. */
+  reviewGateLabel?: string;
   /** Envelope-emit IO (poster / marker writer / posted writer / git push). */
   envelope: EmitEnvelopeDeps;
   /** Clock: epoch seconds (date +%s) and an ISO timestamp (date -Iseconds). */
@@ -432,7 +449,13 @@ export interface ProcessIssueResult {
 
 // ---------- the orchestration ----------
 
-import { LABEL_READY, LABEL_RUNNING, LABEL_HUMAN, LABEL_DEPENDENCY } from "./triage-labels.js";
+import {
+  LABEL_READY,
+  LABEL_RUNNING,
+  LABEL_HUMAN,
+  LABEL_DEPENDENCY,
+  LABEL_READY_FOR_REVIEW,
+} from "./triage-labels.js";
 
 /**
  * The typed `blocked:*` labels present in a label set (#402). Promoting an issue
@@ -1138,6 +1161,17 @@ export async function processIssue(
   // path; on success the FINAL merge sha is read below (post post_merge), exactly
   // as before, to drive the done close.
   const locked = await deps.lookups.isLocked();
+
+  // ---- 6a. PR review gate (ADR 0064 §10, #749) ----
+  // On the UNLOCKED path, a NON-mechanical change is handed off for a fresh-agent
+  // review instead of fast-merged: open the PR, apply the review label (firing
+  // the advisory review from #746), and park the issue for the review→merge flow.
+  // Mechanical/trivial work — and the locked path, which never opens a PR — keep
+  // the existing fast-merge path untouched.
+  if (!locked && deps.reviewGate && shouldRequestReview(activeTaskClass, deps.reviewGate)) {
+    return await handoffForReview(common, activeTaskClass, validationSidecar);
+  }
+
   const landing = await doLanding(
     {
       mergeExec: deps.mergeExec,
@@ -1502,6 +1536,69 @@ async function mergeFailed(c: StageCommon, _reason: string, locked = false): Pro
     locked,
     hooksFired: c.hooksFired,
     envelopePosted: posted,
+    preserved: true,
+    swept: false,
+  };
+}
+
+/**
+ * Review-gate handoff (ADR 0064 §10, #749). The completed UNLOCKED attempt is
+ * non-mechanical, so hold the merge for a fresh-agent review: push the worker
+ * branch, open (or reuse) its PR and apply the review label — which fires the
+ * advisory review (#746) — then park the issue to ready-for-human for the
+ * review→merge flow. The PR + worker branch are intentionally LEFT in place (the
+ * review runs against them) and the attempt dir is preserved. On a PR-open/label
+ * failure the issue routes through the merge-conflict park instead, so the work
+ * is never silently lost.
+ */
+async function handoffForReview(
+  c: StageCommon,
+  taskClass: AfkModelTier,
+  validationSidecar: string[],
+): Promise<ProcessIssueResult> {
+  const { deps, input } = c;
+  const reviewLabel = deps.reviewGateLabel ?? LABEL_READY_FOR_REVIEW;
+
+  // Make the worker branch's origin state certain before opening the PR — the
+  // landing path's first step, reused here without the merge.
+  await pushAttempt(deps.remoteGit, input.repoDir, c.branch, c.branch);
+
+  const opened = await openReviewPr(deps.mergeExec, {
+    repo: input.repo,
+    branch: c.branch,
+    target: c.base,
+    n: input.issue,
+    title: input.title,
+    reviewLabel,
+  });
+  if (!opened.ok) {
+    return await mergeFailed(c, "review-pr-open-failed");
+  }
+
+  // Park for the review→merge flow: drop running, add ready-for-human.
+  // `review-requested` carries no typed `blocked:*` label (it is a handoff, not a
+  // failure), so editLabelsTagged appends nothing extra to the routing labels.
+  await editLabelsTagged(deps, input.issue, [LABEL_RUNNING], [LABEL_HUMAN], "review-requested");
+  await deps.gh.comment(
+    input.issue,
+    `🤖 /afk: non-mechanical change (\`${taskClass}\`) — opened PR #${opened.prNumber} and applied \`${reviewLabel}\` for a fresh-agent review before merge. Holding the fast-merge per the review gate (ADR 0064 §10).`,
+  );
+
+  // ADR 0017: record the attempt into Memory (best-effort, gated, no-op absent).
+  await recordAttemptBestEffort(c, "review-requested", {
+    durationS: deps.nowEpoch() - c.startedEpoch,
+    validationSummary: validationSidecar.join("\n"),
+    notes: `review-requested: PR #${opened.prNumber} labelled ${reviewLabel}`,
+  });
+  await deps.claimLock.release(input.issue);
+
+  return {
+    outcome: "review-requested",
+    issue: input.issue,
+    branch: c.branch,
+    base: c.base,
+    locked: false,
+    hooksFired: c.hooksFired,
     preserved: true,
     swept: false,
   };

@@ -107,6 +107,19 @@ describe("config", () => {
     expect(getConfig(values, "dev.lock.primary-branch")).toBe("true");
   });
 
+  it("reads afk.review_gate.* and defaults the gate off at the complex threshold (#749)", () => {
+    const defaults = loadConfig("/nonexistent/.red/config.yaml", { warn: () => {} });
+    expect(getConfig(defaults, "afk.review_gate.enabled")).toBe("false");
+    expect(getConfig(defaults, "afk.review_gate.threshold")).toBe("complex");
+
+    const values = loadConfig("/x/.red/config.yaml", {
+      read: () =>
+        "plugins:\n  dev:\n    afk:\n      review_gate:\n        enabled: true\n        threshold: simple\n",
+    });
+    expect(getConfig(values, "afk.review_gate.enabled")).toBe("true");
+    expect(getConfig(values, "afk.review_gate.threshold")).toBe("simple");
+  });
+
   it("folds the namespaced `plugins.dev.lock.primary-branch` onto `dev.lock.primary-branch`", () => {
     // The root-sacred convention: dev-plugin keys nest under `plugins.dev.*` and
     // fold to the `dev.*` accessor (afk keeps its bare `afk.*` accessor).

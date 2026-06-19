@@ -3,6 +3,7 @@ import {
   integrateOrigin,
   landMerge,
   landPr,
+  openReviewPr,
   resolveMergeConflict,
   buildConflictPrompt,
   waitForReviewCheck,
@@ -261,6 +262,85 @@ describe("landPr (unlocked path)", () => {
       target: "main",
       n: 9,
       title: "t",
+    });
+    expect(result.ok).toBe(false);
+  });
+});
+
+describe("openReviewPr (review-gate handoff, #749)", () => {
+  it("creates the PR, applies ready-for-review, and never admin-merges", async () => {
+    // pr list is empty before create, then 88 after (the default-rule fake
+    // can't express "empty then 88"), so build a bespoke recording exec.
+    let prMade = false;
+    const recorded: string[][] = [];
+    const review: Exec = async (argv) => {
+      recorded.push(argv);
+      const cmd = argv.join(" ");
+      if (cmd.includes("pr create")) prMade = true;
+      if (cmd.includes("pr list")) return { code: 0, stdout: prMade ? "88\n" : "\n", stderr: "" };
+      return { code: 0, stdout: "", stderr: "" };
+    };
+    const result = await openReviewPr(review, {
+      repo: "reddb-io/red-skills",
+      branch: "afk/wBBBB/9-x",
+      target: "main",
+      n: 9,
+      title: "risky change",
+      reviewLabel: "ready-for-review",
+    });
+    expect(result).toEqual({ ok: true, prNumber: 88 });
+    const c = joined(recorded);
+    expect(c.some((x) => x.includes("pr create --base main --head afk/wBBBB/9-x"))).toBe(true);
+    expect(c).toContain("gh -R reddb-io/red-skills pr edit 88 --add-label ready-for-review");
+    // The whole point: the merge is held for the fresh-agent review.
+    expect(c.some((x) => x.includes("pr merge"))).toBe(false);
+  });
+
+  it("reuses an open PR and re-applies the label (idempotent)", async () => {
+    const { exec, calls } = fakeExec([
+      { match: (a) => a.join(" ").includes("pr list"), result: { stdout: "42\n" } },
+    ]);
+    const result = await openReviewPr(exec, {
+      repo: "reddb-io/red-skills",
+      branch: "afk/wCCCC/9-x",
+      target: "main",
+      n: 9,
+      title: "t",
+      reviewLabel: "ready-for-review",
+    });
+    expect(result).toEqual({ ok: true, prNumber: 42 });
+    const c = joined(calls);
+    expect(c.some((x) => x.includes("pr create"))).toBe(false);
+    expect(c).toContain("gh -R reddb-io/red-skills pr edit 42 --add-label ready-for-review");
+  });
+
+  it("fails when the label edit fails (PR still resolved)", async () => {
+    const { exec } = fakeExec([
+      { match: (a) => a.join(" ").includes("pr list"), result: { stdout: "5\n" } },
+      { match: (a) => a.join(" ").includes("pr edit"), result: { code: 1 } },
+    ]);
+    const result = await openReviewPr(exec, {
+      repo: "reddb-io/red-skills",
+      branch: "afk/wDDDD/9-x",
+      target: "main",
+      n: 9,
+      title: "t",
+      reviewLabel: "ready-for-review",
+    });
+    expect(result).toEqual({ ok: false, prNumber: 5 });
+  });
+
+  it("fails when no PR can be resolved", async () => {
+    const { exec } = fakeExec([
+      { match: (a) => a.join(" ").includes("pr list"), result: { stdout: "\n" } },
+    ]);
+    const result = await openReviewPr(exec, {
+      repo: "reddb-io/red-skills",
+      branch: "afk/wEEEE/9-x",
+      target: "main",
+      n: 9,
+      title: "t",
+      reviewLabel: "ready-for-review",
     });
     expect(result.ok).toBe(false);
   });

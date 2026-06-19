@@ -44,8 +44,10 @@ import type { ExecFn } from "../runtime/exec.js";
 import { getConfig, loadConfig, readBackpressure, resolveTier } from "../core/config.js";
 import {
   classifyIssue,
+  resolveReviewGate,
   type IssueClassificationMetadata,
 } from "../core/issue-classifier.js";
+import { LABEL_READY_FOR_REVIEW } from "../core/triage-labels.js";
 import { resolveHooks } from "../core/hook-config.js";
 import { attemptLedgerContext, formatAttemptContext, highestAttempt, type AttemptDirEntry } from "../core/attempt-ledger.js";
 import { isValidWorkerId } from "../core/worker-paths.js";
@@ -461,6 +463,12 @@ export function buildProcessDeps(
         }
       : undefined;
 
+  // PR review gate (ADR 0064 §10, #749). Default off → AFK keeps fast-merging
+  // every tier. When enabled, a NON-mechanical attempt (classified tier at/above
+  // `afk.review_gate.threshold`) gets `ready-for-review` on its PR and holds the
+  // merge for a fresh-agent review; mechanical/trivial work fast-merges as today.
+  const reviewGate = resolveReviewGate(config);
+
   return {
     gh: {
       viewLabels: (issue) => ghx.viewLabels(ghCtx, issue),
@@ -560,6 +568,8 @@ export function buildProcessDeps(
     resolveTier: (activeRunner, taskClass = "think") => resolveTier(config, activeRunner, taskClass, process.env),
     fallbackRunner,
     waitForReview,
+    reviewGate,
+    reviewGateLabel: LABEL_READY_FOR_REVIEW,
     // One-shot merge-conflict resolver (merge_resolve_conflict): re-enter the
     // configured runner in the LANDING WORKTREE (`cwd`, the isolated checkout the
     // locked merge happens in, #572) with the resolver prompt. The merge primitive

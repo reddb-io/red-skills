@@ -3,6 +3,11 @@ import {
   buildIssueClassificationMetadata,
   classifierPrompt,
   classifyIssue,
+  DEFAULT_REVIEW_GATE_THRESHOLD,
+  isMechanicalChange,
+  resolveReviewGate,
+  shouldRequestReview,
+  type ReviewGateConfig,
 } from "../src/core/issue-classifier.js";
 
 describe("issue classifier", () => {
@@ -79,5 +84,63 @@ describe("issue classifier", () => {
     expect(prompt).toContain("Risk keywords: schema, migration");
     expect(prompt).toContain("Extensions: ts");
     expect(prompt).toContain("Diff size estimate: small");
+  });
+});
+
+describe("PR review gate (ADR 0064 §10, #749)", () => {
+  const enabled: ReviewGateConfig = { enabled: true, threshold: DEFAULT_REVIEW_GATE_THRESHOLD };
+
+  it("defaults the threshold to complex", () => {
+    expect(DEFAULT_REVIEW_GATE_THRESHOLD).toBe("complex");
+  });
+
+  it("treats tiers below the threshold as mechanical", () => {
+    expect(isMechanicalChange("validate", "complex")).toBe(true);
+    expect(isMechanicalChange("simple", "complex")).toBe(true);
+    expect(isMechanicalChange("complex", "complex")).toBe(false);
+    expect(isMechanicalChange("think", "complex")).toBe(false);
+  });
+
+  it("mechanical changes get no review label (fast-merge path untouched)", () => {
+    expect(shouldRequestReview("validate", enabled)).toBe(false);
+    expect(shouldRequestReview("simple", enabled)).toBe(false);
+  });
+
+  it("non-mechanical changes request ready-for-review", () => {
+    expect(shouldRequestReview("complex", enabled)).toBe(true);
+    expect(shouldRequestReview("think", enabled)).toBe(true);
+  });
+
+  it("a disabled gate never requests review, regardless of tier", () => {
+    const off: ReviewGateConfig = { enabled: false, threshold: "complex" };
+    expect(shouldRequestReview("complex", off)).toBe(false);
+    expect(shouldRequestReview("think", off)).toBe(false);
+  });
+
+  it("resolveReviewGate returns undefined when the gate is off (default)", () => {
+    expect(resolveReviewGate({})).toBeUndefined();
+    expect(resolveReviewGate({ "afk.review_gate.enabled": "false" })).toBeUndefined();
+  });
+
+  it("resolveReviewGate reads enabled + threshold from config", () => {
+    expect(
+      resolveReviewGate({ "afk.review_gate.enabled": "true", "afk.review_gate.threshold": "simple" }),
+    ).toEqual({ enabled: true, threshold: "simple" });
+  });
+
+  it("resolveReviewGate falls back to the default threshold for an out-of-vocab value", () => {
+    expect(
+      resolveReviewGate({ "afk.review_gate.enabled": "true", "afk.review_gate.threshold": "bogus" }),
+    ).toEqual({ enabled: true, threshold: DEFAULT_REVIEW_GATE_THRESHOLD });
+  });
+
+  it("honours a tuned threshold", () => {
+    const simpleAndUp: ReviewGateConfig = { enabled: true, threshold: "simple" };
+    expect(shouldRequestReview("validate", simpleAndUp)).toBe(false);
+    expect(shouldRequestReview("simple", simpleAndUp)).toBe(true);
+
+    const thinkOnly: ReviewGateConfig = { enabled: true, threshold: "think" };
+    expect(shouldRequestReview("complex", thinkOnly)).toBe(false);
+    expect(shouldRequestReview("think", thinkOnly)).toBe(true);
   });
 });

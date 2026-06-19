@@ -74,6 +74,15 @@ export const CONFIG_DEFAULTS = {
   // regardless of the verdict) with `afk.merge.wait_for_review: true`.
   "afk.merge.wait_for_review": "false",
   "afk.merge.review_check": "CodeRabbit",
+  // PR review gate (ADR 0064 §10, #749). When AFK / `/ship` open a PR for a
+  // completed attempt, the issue-classifier tier decides mechanical vs
+  // non-mechanical: non-mechanical changes get `ready-for-review` (firing the
+  // advisory review) and hold the merge; mechanical/trivial work keeps the
+  // fast-merge path. Off by default so the autonomous loop's "merge fast / no
+  // drift" behaviour is unchanged until a repo opts in. `threshold` is the
+  // cheapest tier counted as non-mechanical (validate|simple|complex|think).
+  "afk.review_gate.enabled": "false",
+  "afk.review_gate.threshold": "complex",
   // Release channel the ADR 0038 launcher tracks (ADR 0058). `stable` is the
   // version-pinned release (today's behaviour); `canary` tracks the floating
   // pre-release tag. The launcher reads this (or `RED_SKILLS_CHANNEL`); promotion

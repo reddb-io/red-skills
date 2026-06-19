@@ -303,30 +303,7 @@ export async function landPr(exec: Exec, input: LandPrInput): Promise<LandPrResu
   }
 
   // 2. Reuse an open PR for this head/base, else create one.
-  let prNumber = await listOpenPr(exec, repo, branch, target);
-  if (prNumber === undefined) {
-    const create = await exec([
-      "gh",
-      "-R",
-      repo,
-      "pr",
-      "create",
-      "--base",
-      target,
-      "--head",
-      branch,
-      "--title",
-      `merge: #${n} ${title}`,
-      "--body",
-      // `Closes #${n}` links the PR to the issue and lets GitHub auto-close it
-      // when the PR is merged into the default branch — the lane where a human
-      // merges the PR (GitHub Actions / no admin-merge). The admin-merge path
-      // also closes the issue itself; both are idempotent.
-      `${PR_BODY_PREFIX}${n}. Per-attempt history lives in the issue Envelopes, the JSONL logs, and the \`afk-attempts/*\` snapshot branches.\n\nCloses #${n}`,
-    ]);
-    if (create.code !== 0) return { ok: false };
-    prNumber = await listOpenPr(exec, repo, branch, target);
-  }
+  const prNumber = await ensurePr(exec, { repo, branch, target, n, title });
   if (prNumber === undefined) return { ok: false };
 
   // 2b. Opt-in advisory-review wait (afk.merge.wait_for_review, ADR 0048). Hold
@@ -344,6 +321,87 @@ export async function landPr(exec: Exec, input: LandPrInput): Promise<LandPrResu
   // 4. Fast-forward local <target> to the merge commit (best-effort).
   await exec(["git", "-C", gitRepo, "fetch", remote, target, "--quiet"]);
   await exec(["git", "-C", gitRepo, "merge", "--ff-only", `${remote}/${target}`]);
+
+  return { ok: true, prNumber };
+}
+
+/**
+ * Reuse the open PR for this head/base, else `gh pr create`. Shared by the
+ * admin-merge landing ({@link landPr}) and the review-gate handoff
+ * ({@link openReviewPr}) so the PR title/body shape stays defined once.
+ * `Closes #${n}` links the PR to the issue for GitHub's auto-close on merge.
+ * Returns the PR number, or undefined when create failed / no PR resolved.
+ */
+async function ensurePr(
+  exec: Exec,
+  input: { repo: string; branch: string; target: string; n: number; title: string },
+): Promise<number | undefined> {
+  const { repo, branch, target, n, title } = input;
+  let prNumber = await listOpenPr(exec, repo, branch, target);
+  if (prNumber === undefined) {
+    const create = await exec([
+      "gh",
+      "-R",
+      repo,
+      "pr",
+      "create",
+      "--base",
+      target,
+      "--head",
+      branch,
+      "--title",
+      `merge: #${n} ${title}`,
+      "--body",
+      `${PR_BODY_PREFIX}${n}. Per-attempt history lives in the issue Envelopes, the JSONL logs, and the \`afk-attempts/*\` snapshot branches.\n\nCloses #${n}`,
+    ]);
+    if (create.code !== 0) return undefined;
+    prNumber = await listOpenPr(exec, repo, branch, target);
+  }
+  return prNumber;
+}
+
+/** Inputs for the review-gate PR handoff, {@link openReviewPr}. */
+export interface OpenReviewPrInput {
+  /** `owner/repo` slug passed to `gh -R`. */
+  repo: string;
+  /** Attempt branch (PR head, already pushed to the remote). */
+  branch: string;
+  /** Pinned target branch (PR base). */
+  target: string;
+  /** Issue number, for the PR title/body. */
+  n: number;
+  /** Issue title, for the PR title. */
+  title: string;
+  /** Label that fires the advisory review (e.g. `ready-for-review`). */
+  reviewLabel: string;
+}
+
+export interface OpenReviewPrResult {
+  ok: boolean;
+  /** PR number that was opened/reused and labelled, when one resolved. */
+  prNumber?: number;
+}
+
+/**
+ * Review-gate handoff for a NON-mechanical attempt (ADR 0064 §10, #749). Open (or
+ * reuse) the PR for the attempt branch and apply `reviewLabel` — which fires the
+ * advisory review from #746 — WITHOUT admin-merging. The caller then parks the
+ * issue for the review→merge flow instead of fast-merging. Mirrors {@link landPr}
+ * steps 1–2 but stops before the merge: the whole point is to hold the merge for
+ * a fresh-agent review by a different agent than the one that implemented it.
+ *
+ * The branch must already be on the remote (the caller pushes it, exactly as the
+ * landing path does). Idempotent: a re-attempt reuses the open PR and re-adds the
+ * label (a no-op when already present).
+ */
+export async function openReviewPr(exec: Exec, input: OpenReviewPrInput): Promise<OpenReviewPrResult> {
+  const { repo, branch, target, n, title, reviewLabel } = input;
+
+  const prNumber = await ensurePr(exec, { repo, branch, target, n, title });
+  if (prNumber === undefined) return { ok: false };
+
+  const label = await exec(["gh", "-R", repo, "pr", "edit", String(prNumber), "--add-label", reviewLabel]);
+  if (label.code !== 0) return { ok: false, prNumber };
 
   return { ok: true, prNumber };
 }
