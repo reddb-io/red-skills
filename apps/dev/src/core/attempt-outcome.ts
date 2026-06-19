@@ -41,11 +41,13 @@ import {
  *   - `stalled` — the supervisor stall-reaper hard-killed the slot.
  *   - `infra`   — worktree/base/push setup failed before the agent ran.
  *
- * Successful or abandoned endings (`done`, `claim-lost`) are members so every
- * mapping is total, but they carry no typed label (null).
+ * Successful or abandoned endings (`done`, `claim-lost`, `review-requested`) are
+ * members so every mapping is total, but they carry no typed `blocked:*` label
+ * (null).
  */
 export type AttemptOutcome =
   | "done"
+  | "review-requested"
   | "blocked"
   | "no-sentinel"
   | "merge-conflict"
@@ -102,6 +104,7 @@ export function blockedLabelFor(o: AttemptOutcome): string | null {
       return LABEL_INFRA;
     case "done":
     case "claim-lost":
+    case "review-requested":
       return null;
   }
 }
@@ -144,6 +147,11 @@ export function envelopeStatusFor(o: AttemptOutcome): AttemptStatus {
     case "claim-lost":
     case "stalled":
     case "infra":
+    // review-requested is a handoff, not a failure: the per-issue lifecycle
+    // emits no terminal failure envelope for it (it parks the issue + opens the
+    // PR), so it folds into the generic `blocked` bucket only to keep the
+    // mapping total — like claim-lost / exhausted above.
+    case "review-requested":
       return "blocked";
   }
 }
@@ -180,6 +188,7 @@ export function recoveryReasonFor(o: AttemptOutcome): RecoveryReason | null {
     case "infra":
     case "done":
     case "claim-lost":
+    case "review-requested":
       return null;
   }
 }
