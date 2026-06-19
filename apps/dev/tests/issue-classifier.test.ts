@@ -5,6 +5,7 @@ import {
   classifyIssue,
   DEFAULT_REVIEW_GATE_THRESHOLD,
   isMechanicalChange,
+  resolveReviewGate,
   shouldRequestReview,
   type ReviewGateConfig,
 } from "../src/core/issue-classifier.js";
@@ -114,6 +115,23 @@ describe("PR review gate (ADR 0064 §10, #749)", () => {
     const off: ReviewGateConfig = { enabled: false, threshold: "complex" };
     expect(shouldRequestReview("complex", off)).toBe(false);
     expect(shouldRequestReview("think", off)).toBe(false);
+  });
+
+  it("resolveReviewGate returns undefined when the gate is off (default)", () => {
+    expect(resolveReviewGate({})).toBeUndefined();
+    expect(resolveReviewGate({ "afk.review_gate.enabled": "false" })).toBeUndefined();
+  });
+
+  it("resolveReviewGate reads enabled + threshold from config", () => {
+    expect(
+      resolveReviewGate({ "afk.review_gate.enabled": "true", "afk.review_gate.threshold": "simple" }),
+    ).toEqual({ enabled: true, threshold: "simple" });
+  });
+
+  it("resolveReviewGate falls back to the default threshold for an out-of-vocab value", () => {
+    expect(
+      resolveReviewGate({ "afk.review_gate.enabled": "true", "afk.review_gate.threshold": "bogus" }),
+    ).toEqual({ enabled: true, threshold: DEFAULT_REVIEW_GATE_THRESHOLD });
   });
 
   it("honours a tuned threshold", () => {
