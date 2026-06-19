@@ -661,6 +661,19 @@ export function buildProcessDeps(
     // break a run (sandcastle also swallows any throw from this callback).
     recordAgentEvent: (event) => {
       const ts = new Date().toISOString();
+      // Raw stdout lines (sandcastle 0.11.0 verbose stream `{type:"raw"}`) are
+      // noisy per-line output, not assistant turns. Fan them to the FIREHOSE only
+      // so a stuck/silent agent stays diagnosable, while the clean agent lane keeps
+      // its one-record-per-turn invariant. Not a liveness/activity unit, so skip
+      // the meter + iteration markers. Returning here also narrows `event` to the
+      // non-raw variants for the rest of the handler.
+      if (event.type === "raw") {
+        void appendRecord(join(current.attemptDir, "log.jsonl"), "raw", event.line, {
+          ts,
+          fields: { extra: { kind: "raw", iteration: String(event.iteration) } },
+        }).catch(() => {});
+        return;
+      }
       // Agentic-iteration boundary markers (synthetic — afk.log + firehose, NEVER
       // the agent lane). Emit "iteration N ended" + "iteration N+1 started" when
       // sandcastle's re-invocation count advances, so a run burning through

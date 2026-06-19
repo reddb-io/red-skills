@@ -19,6 +19,9 @@ const EVENT_TO_VITALS = {
   toolCall: ["tools_called_count"],
   reasoning: ["reasoning_events", "reasoning_tokens"],
   usage: ["input_tokens", "output_tokens", "cost_usd"],
+  // `raw` (sandcastle 0.11.0 verbose stdout stream) is firehose-only diagnostics,
+  // not an assistant turn — it maps to no WorkerVitals field.
+  raw: [],
 } satisfies Record<AgentStreamEvent["type"], (keyof WorkerVitals)[]>;
 
 describe("WorkerVitals contract (ADR 0065)", () => {
@@ -41,7 +44,7 @@ describe("WorkerVitals contract (ADR 0065)", () => {
     // of mapped event types is exactly what we expect. If red-castle adds a
     // variant, the `satisfies` above fails to compile first; this keeps the
     // expectation visible to a human reviewer too.
-    expect(Object.keys(EVENT_TO_VITALS).sort()).toEqual(["reasoning", "text", "toolCall", "usage"]);
+    expect(Object.keys(EVENT_TO_VITALS).sort()).toEqual(["raw", "reasoning", "text", "toolCall", "usage"]);
   });
 
   it("rejects a map that omits a known event type (compile-time guard demonstrated)", () => {
