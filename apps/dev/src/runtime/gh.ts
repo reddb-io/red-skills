@@ -751,6 +751,93 @@ async function readyForAgentActor(ctx: GhContext, issue: number): Promise<string
   }
 }
 
+/**
+ * Resolve an actor's dynamic-base trust signals (PRD #745, issue #747): GitHub
+ * write access and CODEOWNERS membership, the base the layered
+ * `resolveActorTrust` resolver decides over. Two best-effort reads, each
+ * degrading to `undefined` ("signal not available") on any gh failure so the
+ * resolver can fall back to the allowlist override and the permissive default:
+ *   - write access: `gh api repos/{owner}/{repo}/collaborators/{actor}/permission`
+ *     → `admin` / `maintain` / `write` count as write-or-higher;
+ *   - CODEOWNERS: fetch the repo CODEOWNERS file (the three GitHub-recognised
+ *     locations) and test whether `@actor` appears as an owner token.
+ * Bound to an `ActorTrustLookup` by the caller as `(actor) => actorTrustSignals(ctx, actor)`.
+ */
+export async function actorTrustSignals(
+  ctx: GhContext,
+  actor: string,
+): Promise<{ hasWriteAccess?: boolean; inCodeowners?: boolean }> {
+  const [hasWriteAccess, inCodeowners] = await Promise.all([
+    actorWriteAccess(ctx, actor),
+    actorInCodeowners(ctx, actor),
+  ]);
+  return { hasWriteAccess, inCodeowners };
+}
+
+/** Permission levels at or above repository write access. */
+const WRITE_PERMISSIONS = new Set(["admin", "maintain", "write"]);
+
+/** `gh api repos/{owner}/{repo}/collaborators/{actor}/permission` → true when the
+ * actor's permission is write-or-higher. undefined on a transient/auth failure;
+ * a definitive 404 (not a collaborator) resolves to `false`. */
+async function actorWriteAccess(ctx: GhContext, actor: string): Promise<boolean | undefined> {
+  const r = await runGh(ctx, [
+    "api",
+    apiPath(ctx, `collaborators/${actor}/permission`),
+    "--jq",
+    ".permission",
+  ]);
+  if (r.code !== 0) {
+    if (/not found|404|no such|could not resolve/i.test(`${r.stdout}\n${r.stderr}`)) return false;
+    return undefined;
+  }
+  const permission = (r.stdout ?? "").trim().toLowerCase();
+  if (!permission) return undefined;
+  return WRITE_PERMISSIONS.has(permission);
+}
+
+/** The GitHub-recognised CODEOWNERS locations, in resolution order. */
+const CODEOWNERS_PATHS = [".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS"];
+
+/** Resolve whether `@actor` is an owner token in the repo CODEOWNERS file. Reads
+ * the recognised locations in order; the first that resolves is parsed. undefined
+ * when no read succeeded (transient/auth) and `false` when a file was read but
+ * the actor is absent (or no CODEOWNERS exists at all). */
+async function actorInCodeowners(ctx: GhContext, actor: string): Promise<boolean | undefined> {
+  let sawDefinitiveMiss = false;
+  for (const path of CODEOWNERS_PATHS) {
+    const r = await runGh(ctx, [
+      "api",
+      apiPath(ctx, `contents/${path}`),
+      "-H",
+      "Accept: application/vnd.github.raw",
+    ]);
+    if (r.code === 0) return codeownersHasOwner(r.stdout ?? "", actor);
+    if (/not found|404|could not resolve/i.test(`${r.stdout}\n${r.stderr}`)) {
+      sawDefinitiveMiss = true;
+      continue; // this location is absent; try the next one
+    }
+    return undefined; // transient/auth failure — signal not available
+  }
+  // Every location returned a definitive 404 → there is no CODEOWNERS file.
+  return sawDefinitiveMiss ? false : undefined;
+}
+
+/** True when `@actor` (case-insensitive) appears as an owner token on any
+ * non-comment CODEOWNERS line. Team owners (`@org/team`) are not expanded here —
+ * only direct `@login` ownership is matched. */
+function codeownersHasOwner(content: string, actor: string): boolean {
+  const target = `@${actor.replace(/^@/, "")}`.toLowerCase();
+  for (const rawLine of content.split("\n")) {
+    const line = rawLine.replace(/#.*$/, "").trim();
+    if (!line) continue;
+    // tokens: <pattern> <owner> [<owner> ...]; owners start at the first @-token.
+    const tokens = line.split(/\s+/).slice(1);
+    if (tokens.some((t) => t.toLowerCase() === target)) return true;
+  }
+  return false;
+}
+
 /** Branch-cleanup IssueLookup payload: gh issue view --json state,closedAt.
  * Returns null for a definitive 404, undefined for a transient failure. */
 export async function issueMeta(ctx: GhContext, issue: number): Promise<IssueMeta | null | undefined> {
