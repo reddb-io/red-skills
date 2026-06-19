@@ -126,6 +126,9 @@ interface HarnessOptions {
   resolveTier?: ProcessIssueDeps["resolveTier"];
   /** Optional ADR 0049 issue classifier injected by the production wiring. */
   classifyIssue?: ProcessIssueDeps["classifyIssue"];
+  /** PR review gate (ADR 0064 §10, #749). When set, processIssue may hand the
+   * unlocked landing off for a fresh-agent review instead of fast-merging. */
+  reviewGate?: ProcessIssueDeps["reviewGate"];
 }
 
 function harness(opts: HarnessOptions = {}): {
@@ -327,6 +330,8 @@ function harness(opts: HarnessOptions = {}): {
         }
       : undefined,
     resolveTier: opts.resolveTier,
+    reviewGate: opts.reviewGate,
+    reviewGateLabel: "ready-for-review",
     fallbackRunner: opts.fallbackRunner ?? false,
     conflictResolver: opts.conflictResolve
       ? async (prompt) => {
@@ -583,6 +588,101 @@ describe("processIssue — lock-toggled landing", () => {
     expect(joined.some((c) => c.includes("pr merge 42 --admin --merge"))).toBe(true);
     // No direct `merge --no-ff` of the attempt branch into the locked target.
     expect(joined.some((c) => c.includes("merge --no-ff afk/"))).toBe(false);
+  });
+});
+
+describe("processIssue — PR review gate (ADR 0064 §10, #749)", () => {
+  function recordingMerge(deps: ProcessIssueDeps): string[][] {
+    const calls: string[][] = [];
+    const inner = deps.mergeExec;
+    deps.mergeExec = async (argv) => {
+      calls.push(argv);
+      return inner(argv);
+    };
+    return calls;
+  }
+
+  it("non-mechanical change → opens the PR, applies ready-for-review, parks instead of merging", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      locked: false,
+      classifyIssue: () => "complex",
+      reviewGate: { enabled: true, threshold: "complex" },
+    });
+    const calls = recordingMerge(deps);
+    const result = await processIssue(deps, input);
+    const joined = calls.map((c) => c.join(" "));
+
+    expect(result.outcome).toBe("review-requested");
+    expect(result.preserved).toBe(true);
+    expect(result.swept).toBe(false);
+    // The PR is opened/reused and labelled — firing the advisory review.
+    expect(joined.some((c) => c.includes("pr edit 42 --add-label ready-for-review"))).toBe(true);
+    // The merge is HELD for the fresh-agent review.
+    expect(joined.some((c) => c.includes("pr merge"))).toBe(false);
+    // The issue is parked to ready-for-human (running dropped) and NOT closed.
+    expect(
+      trace.labelEdits.some((e) => e.remove.includes("running") && e.add.includes("ready-for-human")),
+    ).toBe(true);
+    expect(trace.closed).not.toContain(9);
+    // The worker branch is left in place (the review runs against it).
+    expect(trace.deletedRemote).toHaveLength(0);
+    expect(trace.released).toContain(9);
+    expect(trace.comments.some((c) => c.body.includes("ready-for-review"))).toBe(true);
+  });
+
+  it("mechanical change → fast-merge path untouched (no review hop)", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      locked: false,
+      classifyIssue: () => "simple",
+      reviewGate: { enabled: true, threshold: "complex" },
+    });
+    const calls = recordingMerge(deps);
+    const result = await processIssue(deps, input);
+    const joined = calls.map((c) => c.join(" "));
+
+    expect(result.outcome).toBe("done");
+    expect(joined.some((c) => c.includes("pr merge 42 --admin --merge"))).toBe(true);
+    expect(joined.some((c) => c.includes("--add-label ready-for-review"))).toBe(false);
+    expect(trace.closed).toContain(9);
+  });
+
+  it("disabled gate → non-mechanical change still fast-merges", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      locked: false,
+      classifyIssue: () => "complex",
+      // reviewGate omitted → gate off (today's behaviour).
+    });
+    const calls = recordingMerge(deps);
+    const result = await processIssue(deps, input);
+    const joined = calls.map((c) => c.join(" "));
+
+    expect(result.outcome).toBe("done");
+    expect(joined.some((c) => c.includes("pr merge 42 --admin --merge"))).toBe(true);
+    expect(joined.some((c) => c.includes("--add-label ready-for-review"))).toBe(false);
+    expect(trace.closed).toContain(9);
+  });
+
+  it("locked path never opens a PR even when non-mechanical", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      locked: true,
+      classifyIssue: () => "think",
+      reviewGate: { enabled: true, threshold: "complex" },
+    });
+    const calls = recordingMerge(deps);
+    const result = await processIssue(deps, input);
+    const joined = calls.map((c) => c.join(" "));
+
+    expect(result.outcome).toBe("done");
+    expect(joined.some((c) => c.includes("--add-label ready-for-review"))).toBe(false);
+    expect(trace.closed).toContain(9);
   });
 });
 
