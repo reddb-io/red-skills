@@ -41,17 +41,10 @@ import * as fsx from "../runtime/fs.js";
 import type { GhContext } from "../runtime/gh.js";
 import type { GitContext } from "../runtime/git.js";
 import type { ExecFn } from "../runtime/exec.js";
-import {
-  AFK_MODEL_TIERS,
-  getConfig,
-  loadConfig,
-  readBackpressure,
-  resolveTier,
-  type AfkModelTier,
-} from "../core/config.js";
+import { getConfig, loadConfig, readBackpressure, resolveTier } from "../core/config.js";
 import {
   classifyIssue,
-  DEFAULT_REVIEW_GATE_THRESHOLD,
+  resolveReviewGate,
   type IssueClassificationMetadata,
 } from "../core/issue-classifier.js";
 import { LABEL_READY_FOR_REVIEW } from "../core/triage-labels.js";
@@ -474,16 +467,7 @@ export function buildProcessDeps(
   // every tier. When enabled, a NON-mechanical attempt (classified tier at/above
   // `afk.review_gate.threshold`) gets `ready-for-review` on its PR and holds the
   // merge for a fresh-agent review; mechanical/trivial work fast-merges as today.
-  const reviewGateThreshold = getConfig(config, "afk.review_gate.threshold");
-  const reviewGate =
-    getConfig(config, "afk.review_gate.enabled") === "true"
-      ? {
-          enabled: true,
-          threshold: (AFK_MODEL_TIERS as readonly string[]).includes(reviewGateThreshold)
-            ? (reviewGateThreshold as AfkModelTier)
-            : DEFAULT_REVIEW_GATE_THRESHOLD,
-        }
-      : undefined;
+  const reviewGate = resolveReviewGate(config);
 
   return {
     gh: {
