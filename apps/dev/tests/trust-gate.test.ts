@@ -3,9 +3,12 @@ import {
   parseTrustPolicy,
   evaluateTrustGate,
   planTrustStrip,
+  resolveActorTrust,
   TRUST_ALLOWLIST_KEY,
   type TrustPolicy,
   type TrustProvenance,
+  type ActorTrustLookup,
+  type ActorTrustSignals,
 } from "../src/core/trust-gate.js";
 import type { ConfigValues } from "../src/core/config.js";
 
@@ -92,6 +95,83 @@ describe("evaluateTrustGate — strict mode matrix", () => {
     const v = evaluateTrustGate(policy, prov("alice", undefined));
     expect(v.executable).toBe(false);
     expect(v.reason).toContain("unknown actor");
+  });
+});
+
+describe("resolveActorTrust — layered write-access / CODEOWNERS over the allowlist (#747)", () => {
+  // The injected fake `gh`: a recording lookup that returns the signals it is
+  // primed with, and asserts it was (or was not) consulted.
+  function fakeGh(signals: ActorTrustSignals): { lookup: ActorTrustLookup; calls: string[] } {
+    const calls: string[] = [];
+    return {
+      calls,
+      lookup: async (actor: string) => {
+        calls.push(actor);
+        return signals;
+      },
+    };
+  }
+
+  it("trusts an actor with write access (dynamic base)", async () => {
+    const gh = fakeGh({ hasWriteAccess: true, inCodeowners: false });
+    const v = await resolveActorTrust(permissive, "maintainer", gh.lookup);
+    expect(v.executable).toBe(true);
+    expect(v.basis).toBe("write-access");
+    expect(gh.calls).toEqual(["maintainer"]);
+  });
+
+  it("trusts an actor in CODEOWNERS even without write access", async () => {
+    const gh = fakeGh({ hasWriteAccess: false, inCodeowners: true });
+    const v = await resolveActorTrust(permissive, "owner", gh.lookup);
+    expect(v.executable).toBe(true);
+    expect(v.basis).toBe("codeowners");
+  });
+
+  it("trusts an allowlisted actor as an override — without consulting gh", async () => {
+    const gh = fakeGh({ hasWriteAccess: false, inCodeowners: false });
+    const v = await resolveActorTrust(policy, "alice", gh.lookup);
+    expect(v.executable).toBe(true);
+    expect(v.basis).toBe("allowlist");
+    expect(gh.calls).toEqual([]); // override short-circuits before any gh read
+  });
+
+  it("refuses an untrusted actor through the gate's refusal shape", async () => {
+    const gh = fakeGh({ hasWriteAccess: false, inCodeowners: false });
+    const v = await resolveActorTrust(policy, "stranger", gh.lookup);
+    expect(v.executable).toBe(false);
+    expect(v.basis).toBeUndefined();
+    expect(v.reason).toContain("'stranger'");
+    expect(v.reason).toContain("not a repository maintainer");
+  });
+
+  it("preserves the permissive default when neither a base signal nor an allowlist is available", async () => {
+    // gh resolved nothing (undefined signals) AND no allowlist configured.
+    const gh = fakeGh({});
+    const v = await resolveActorTrust(permissive, "anyone", gh.lookup);
+    expect(v.executable).toBe(true);
+    expect(v.basis).toBe("permissive-default");
+  });
+
+  it("does NOT fall through to permissive when a base signal IS available but negative", async () => {
+    const gh = fakeGh({ hasWriteAccess: false, inCodeowners: false });
+    const v = await resolveActorTrust(permissive, "stranger", gh.lookup);
+    expect(v.executable).toBe(false);
+  });
+
+  it("refuses an unknown actor (gh read failed upstream → empty login)", async () => {
+    const gh = fakeGh({ hasWriteAccess: false });
+    const v = await resolveActorTrust(policy, undefined, gh.lookup);
+    expect(v.executable).toBe(false);
+    expect(v.reason).toContain("(unknown)");
+    expect(gh.calls).toEqual([]); // no login → no gh read
+  });
+
+  it("is the single entry point reused for both comment-author and issue-author actors", async () => {
+    const gh = fakeGh({ hasWriteAccess: true });
+    const commentAuthor = await resolveActorTrust(permissive, "carol", gh.lookup);
+    const issueAuthor = await resolveActorTrust(permissive, "carol", gh.lookup);
+    expect(commentAuthor.executable).toBe(true);
+    expect(issueAuthor.executable).toBe(true);
   });
 });
 
