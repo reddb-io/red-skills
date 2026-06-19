@@ -1,6 +1,12 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import { parseFlags, type FlagSchema } from "@reddb-io/shared/args.js";
-import { LABEL_HUMAN } from "../core/triage-labels.js";
+import { LABEL_HUMAN, LABEL_READY_FOR_REVIEW } from "../core/triage-labels.js";
+import {
+  buildIssueClassificationMetadata,
+  classifyIssue,
+  resolveReviewGate,
+  shouldRequestReview,
+} from "../core/issue-classifier.js";
 import { execTool, type ExecOutput } from "../runtime/exec.js";
 import {
   advisoryReviewPending,
@@ -119,9 +125,26 @@ async function ensureCommittedWork(cwd: string): Promise<void> {
   }
 }
 
-async function issueTitle(cwd: string, repo: string, issue: number): Promise<string> {
-  const r = await run("gh", ["issue", "view", String(issue), "--repo", repo, "--json", "title", "-q", ".title"], cwd);
-  return r.code === 0 && r.stdout.trim() ? r.stdout.trim() : `Issue #${issue}`;
+interface IssueMeta {
+  title: string;
+  body: string;
+  labels: string[];
+}
+
+async function issueMeta(cwd: string, repo: string, issue: number): Promise<IssueMeta> {
+  const r = await run(
+    "gh",
+    ["issue", "view", String(issue), "--repo", repo, "--json", "title,body,labels"],
+    cwd,
+  );
+  const fallback: IssueMeta = { title: `Issue #${issue}`, body: "", labels: [] };
+  if (r.code !== 0) return fallback;
+  const parsed = parseJson<{ title?: string; body?: string; labels?: Array<{ name?: string }> }>(r.stdout, {});
+  return {
+    title: parsed.title?.trim() || fallback.title,
+    body: parsed.body ?? "",
+    labels: (parsed.labels ?? []).map((l) => l.name ?? "").filter(Boolean),
+  };
 }
 
 async function pushBranch(cwd: string, remote: string, branch: string): Promise<void> {
@@ -248,6 +271,35 @@ async function markHitl(cwd: string, repo: string, pr: number, issue: number, re
   await run("gh", ["pr", "comment", String(pr), "--repo", repo, "--body", body], cwd);
 }
 
+/**
+ * Review-gate handoff for `/ship` (ADR 0064 §10, #749): a non-mechanical change
+ * earns a fresh-agent review before merge, so apply `ready-for-review` to the PR
+ * (which fires the advisory review) and hold the merge. The label is created
+ * best-effort first so a fresh repo never wedges the handoff. Mirrors the AFK
+ * landing path's review handoff (process-issue's handoffForReview).
+ */
+async function markReviewRequested(cwd: string, repo: string, pr: number, issue: number, taskClass: string): Promise<void> {
+  await run(
+    "gh",
+    ["label", "create", LABEL_READY_FOR_REVIEW, "--repo", repo, "--color", "0E8A16", "--description", "PR awaiting a fresh-agent review"],
+    cwd,
+  );
+  await run("gh", ["pr", "edit", String(pr), "--repo", repo, "--add-label", LABEL_READY_FOR_REVIEW], cwd);
+  await run(
+    "gh",
+    [
+      "pr",
+      "comment",
+      String(pr),
+      "--repo",
+      repo,
+      "--body",
+      `🤖 /ship: non-mechanical change (\`${taskClass}\`) for #${issue} — applied \`${LABEL_READY_FOR_REVIEW}\` for a fresh-agent review before merge. Holding the merge per the review gate (ADR 0064 §10).`,
+    ],
+    cwd,
+  );
+}
+
 async function approveAndMerge(cwd: string, repo: string, pr: number): Promise<boolean> {
   const approve = await run(
     "gh",
@@ -286,12 +338,34 @@ export async function shipCommand(
   if (issue === undefined) {
     throw new Error("/ship could not infer the linked issue; pass --issue N");
   }
-  const title = await issueTitle(cwd, repo, issue);
+  const meta = await issueMeta(cwd, repo, issue);
+  const { title } = meta;
 
   await pushBranch(cwd, flags.remote, branch);
   stdout.write(`/ship: pushed ${branch} to ${flags.remote}\n`);
   const pr = await openOrReusePr(cwd, repo, branch, flags.base, issue, title);
   stdout.write(`/ship: PR #${pr} ready for #${issue}\n`);
+
+  // PR review gate (ADR 0064 §10, #749). When enabled and the change is
+  // NON-mechanical (issue-classifier tier at/above the threshold), `/ship`
+  // applies `ready-for-review` and HOLDS the merge for a fresh-agent review
+  // instead of auto-merging — honouring the same gate as the AFK landing path.
+  // Mechanical/trivial work falls through to the existing review-respecting
+  // merge loop unchanged. The classification is the cheap deterministic pass
+  // (no model call), matching `/ship`'s synchronous, offline-friendly contract.
+  const reviewGate = resolveReviewGate(config);
+  if (reviewGate) {
+    const taskClass = await classifyIssue(
+      buildIssueClassificationMetadata({ issue, title, body: meta.body, labels: meta.labels }),
+    );
+    if (shouldRequestReview(taskClass, reviewGate)) {
+      await markReviewRequested(cwd, repo, pr, issue, taskClass);
+      stdout.write(
+        `/ship: non-mechanical (${taskClass}) — applied ${LABEL_READY_FOR_REVIEW} to PR #${pr}; holding for a fresh-agent review\n`,
+      );
+      return 0;
+    }
+  }
 
   const deadline = Date.now() + flags.timeoutS * 1000;
   let lastFacts = await collectShipFacts(cwd, repo, pr, flags.reviewCheck);
