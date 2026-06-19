@@ -127,9 +127,20 @@ These exist for filtering and don't drive lifecycle transitions:
 | `priority:high` | Urgent / high-impact — `/afk` drains these first | `/triage` or maintainer        |
 | `priority:low`  | Everything else                                  | `/triage` or maintainer        |
 | `prd:{N}`      | Issue belongs to PRD #N                         | `/to-issues` when splitting a PRD |
+| `triage:summon` | Maintainer summon: releases an **untrusted** author's `needs-triage` issue to auto-triage. Without it (or a `/dev triage` invocation), an untrusted public author's issue is left for a maintainer — see *Trust-gated auto-triage* below. | maintainer (or `/triage`) |
 | `runner-error` | `/afk` fleet supervisor parked a slot after fast-death streak; affected issues were restored to `ready-for-agent` after the runner was discarded | `/afk` fleet supervisor on circuit trip |
 
 `runner-error` is the only auxiliary label `/afk` may create autonomously: the fleet supervisor calls `gh label create runner-error` when it trips the circuit breaker, so the cleanup never fails just because the label has not been provisioned.
+
+## Trust-gated auto-triage (`dev triage`)
+
+On `needs-triage`, the event-router resolves the **issue author's** trust against the same per-repo allowlist the executable-issue gate uses (`plugins.dev.afk.trust-gate.allowlist`, ADR 0056):
+
+- **Trusted author** (in the allowlist, or any author when no allowlist is configured) → **auto-triage**: `dev triage <issue> --decision <state>` applies the canonical transition (`ready-for-agent` / `needs-info` / `ready-for-human` / `wontfix`).
+- **Untrusted public author**, no summon → the issue is **held**; it never burns an agent runner automatically and waits for a maintainer.
+- **Maintainer summon** — a `/dev triage --summon` invocation, or the `triage:summon` label — releases an untrusted author's issue and applies the transition (the summon label is shed in the same edit).
+
+This keeps public strangers from making the repo auto-run agents while preserving frictionless triage for trusted authors. With no allowlist the gate is permissive and behaves exactly as before.
 
 ## Dependency Edges (`req:N`) + Auto-Unblock
 
