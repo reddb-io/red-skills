@@ -328,8 +328,9 @@ export function makeRunAgent(
 
 // ---------- monitor inputs ----------
 
-import type { CompactWorker, FleetState } from "../core/monitor.js";
-import { parseState, isStateLive } from "../core/state.js";
+import type { CompactWorker, FleetState, SlotDetail } from "../core/monitor.js";
+import { parseState, isStateLive, isStateActive } from "../core/state.js";
+import type { WorkerVitals } from "../types/state.js";
 import { parseHistoryLines, type HistoryRecord } from "../core/history.js";
 
 export interface MonitorInputs {
@@ -337,6 +338,8 @@ export interface MonitorInputs {
   events: Array<Pick<HistoryRecord, "event" | "epoch">>;
   fleet: FleetState | null;
 }
+
+const SLOT_STATUSES = new Set<SlotDetail["status"]>(["open", "half-open", "idle-parked"]);
 
 function parseFleetState(raw: unknown): FleetState | null {
   if (raw === null || typeof raw !== "object") return null;
@@ -348,10 +351,28 @@ function parseFleetState(raw: unknown): FleetState | null {
     ready_for_agent?: unknown;
     slots?: { busy?: unknown; free?: unknown; total?: unknown; parked?: unknown };
     spawns_this_tick?: unknown;
+    slot_details?: unknown;
   };
   const epoch = Number(rec.epoch ?? 0);
   if (!Number.isFinite(epoch) || epoch <= 0) return null;
   const rawProgress = Number(rec.last_progress_epoch ?? 0);
+
+  let slotDetails: SlotDetail[] | undefined;
+  if (Array.isArray(rec.slot_details)) {
+    slotDetails = [];
+    for (const d of rec.slot_details as unknown[]) {
+      if (d === null || typeof d !== "object") continue;
+      const entry = d as { index?: unknown; status?: unknown; retry_at?: unknown };
+      const idx = Number(entry.index ?? -1);
+      if (!Number.isFinite(idx) || idx < 0) continue;
+      const status = entry.status;
+      if (typeof status !== "string" || !SLOT_STATUSES.has(status as SlotDetail["status"])) continue;
+      const rawRetry = entry.retry_at !== undefined ? Number(entry.retry_at) : undefined;
+      const retryAt = rawRetry !== undefined && Number.isFinite(rawRetry) ? rawRetry : undefined;
+      slotDetails.push({ index: idx, status: status as SlotDetail["status"], ...(retryAt !== undefined ? { retryAt } : {}) });
+    }
+  }
+
   return {
     ts: typeof rec.ts === "string" ? rec.ts : "",
     epoch,
@@ -363,6 +384,7 @@ function parseFleetState(raw: unknown): FleetState | null {
     slotsTotal: Number(rec.slots?.total ?? 0) || 0,
     slotsParked: Number(rec.slots?.parked ?? 0) || 0,
     spawnsThisTick: Number(rec.spawns_this_tick ?? 0) || 0,
+    ...(slotDetails !== undefined ? { slotDetails } : {}),
   };
 }
 
@@ -398,8 +420,8 @@ export async function collectMonitorInputs(root = process.cwd()): Promise<Monito
     // are 0 (same logic as collectStatuslineAfk). Always populated — the dashboard
     // renders the +A -R volume unconditionally (idle / zero included) and sums it
     // into the fleet header, so it is never suppressed.
-    let added = state.current.diff_added;
-    let removed = state.current.diff_removed;
+    let added = state.current.loc_added;
+    let removed = state.current.loc_removed;
     if (added === 0 && removed === 0 && state.current.worktree) {
       const baseRef = state.current.base ? `origin/${state.current.base}` : "origin/main";
       const stat = await gitx.diffstatShortstat({ cwd: state.current.worktree }, baseRef);
@@ -422,9 +444,14 @@ export async function collectMonitorInputs(root = process.cwd()): Promise<Monito
           title: state.current.title,
           stage: state.current.stage,
           started_at: state.current.started_at,
+          input_tokens: state.current.input_tokens,
+          output_tokens: state.current.output_tokens,
+          cost_usd: state.current.cost_usd,
         },
       },
-      live: isStateLive(state),
+      // Display liveness requires BOTH a resolving pid AND recent activity, so a
+      // finished worker whose pid is shared/recycled stops rendering as `[live]`.
+      live: isStateActive(state),
       diffAdded: added,
       diffRemoved: removed,
     });
@@ -519,7 +546,11 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
   let blocked = 0;
   let added = 0;
   let removed = 0;
+  let waiting = 0;
+  let tokens = 0;
+  let costUsd = 0;
   const issues: Array<number | string> = [];
+  const stages: Array<string | undefined> = [];
 
   for (const file of stateFiles) {
     const text = await fsx.readText(file);
@@ -530,13 +561,25 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
     } catch {
       continue;
     }
-    if (!isStateLive(state)) continue;
+    // Statusline counts only genuinely-active workers (pid-live AND fresh), so a
+    // finished worker with a stale state file no longer inflates the 🤖N badge.
+    if (!isStateActive(state)) continue;
 
     workers += 1;
     blocked += state.blocked;
+    // Read the worker's signals through the canonical WorkerVitals contract
+    // (ADR 0065) rather than ad-hoc field access — `current` satisfies it.
+    const vitals: WorkerVitals = state.current;
+    // Silent-agent signal: cumulative heartbeat windows with no new stream
+    // event. Summed across the fleet and shown as 💤N so a wedged-but-not-dead
+    // worker is visible.
+    waiting += vitals.waiting_count;
+    // Cost group: per-worker token spend + USD, summed for the fleet.
+    tokens += vitals.input_tokens + vitals.output_tokens;
+    costUsd += vitals.cost_usd;
 
-    let a = state.current.diff_added;
-    let r = state.current.diff_removed;
+    let a = vitals.loc_added;
+    let r = vitals.loc_removed;
     if (a === 0 && r === 0 && state.current.worktree) {
       // Fallback: compute the diffstat from the worktree like statusline.sh.
       const baseRef = state.current.base ? `origin/${state.current.base}` : "origin/main";
@@ -548,7 +591,12 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
     removed += r;
 
     const number = state.current.number;
-    if (number !== "" && number !== undefined && number !== null) issues.push(number);
+    if (number !== "" && number !== undefined && number !== null) {
+      issues.push(number);
+      // Aligned by index with `issues`: the worker's current stage suffixes its
+      // `#N` token (`#629·impl`). Empty stage → bare `#N` (back-compat).
+      stages.push(state.current.stage || undefined);
+    }
   }
 
   if (workers <= 0) return null;
@@ -581,7 +629,7 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
     void refresh().catch(() => undefined);
   }
 
-  return { workers, queue, human, blocked, added, removed, issues };
+  return { workers, queue, human, blocked, added, removed, waiting, tokens, costUsd, issues, stages };
 }
 
 // ---------- reap inputs ----------
@@ -656,6 +704,7 @@ import type { AttemptDir } from "../core/reclaim.js";
 import type { IssueStateRow } from "./gh.js";
 import { LABEL_HUMAN, LABEL_RUNNING } from "../core/triage-labels.js";
 import { parseWorkerAttemptPath } from "../core/worker-paths.js";
+import { parseClaimRecords } from "../core/claim.js";
 
 /**
  * Discover every per-step input boot's sweeps consume, replacing the empty
@@ -756,6 +805,10 @@ export async function collectPrecheckFacts(ctx: RepoContext): Promise<PrecheckFa
     currentBranch,
     lockedBranch,
     pnpmInstalled,
+    // CI lanes (the GHA Actions lane) check out an https remote token-authed by
+    // GITHUB_TOKEN — the intended setup — so the SSH-only rule must not fire there.
+    allowHttpsRemote:
+      process.env.RED_AFK_LANE === "actions" || process.env.GITHUB_ACTIONS === "true",
   };
 }
 
@@ -854,6 +907,24 @@ export async function buildBootDeps(ctx: RepoContext, options: BootOptions, nowS
         unlabeled: () => ghx.countUnlabeled(ghCtx),
         needsTriage: () => ghx.countNeedsTriage(ghCtx),
         needsInfo: () => ghx.countNeedsInfo(ghCtx),
+      },
+      // Cross-host stale-claim sweep input (#627): every OPEN issue projected as
+      // `running` (a held claim) with its parsed claim marker records. Derived
+      // from the batched issue-state map; the claim comments are read per-issue.
+      // A per-issue read failure drops that issue from the sweep (best-effort).
+      claimedIssues: async () => {
+        const claimed = [];
+        for (const [issue, row] of issueStates) {
+          if (row.state !== "OPEN") continue;
+          if (!row.labels.includes(LABEL_RUNNING)) continue;
+          try {
+            const comments = await ghx.listClaimComments(ghCtx, issue);
+            claimed.push({ issue, records: parseClaimRecords(comments) });
+          } catch {
+            // best-effort: skip an issue whose claim comments cannot be read.
+          }
+        }
+        return claimed;
       },
     },
     nowS,

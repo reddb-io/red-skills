@@ -125,6 +125,24 @@ export function makeFeedbackWorktree(
       resolved.set(branch, null);
       return null;
     }
+    // A freshly added git worktree does NOT populate submodules: packages/red-castle
+    // (the `@reddb-io/red-castle` workspace:* SOURCE, ADR 0061) is an empty dir. The
+    // pnpm install below then cannot resolve that workspace dep, so every gate check
+    // (tsc / build / vitest) fails with `Cannot find module '@reddb-io/red-castle'`
+    // — a FALSE blocked:validation on otherwise-green apps/dev work. CI sidesteps
+    // this with `actions/checkout submodules:recursive`; a local `git worktree add`
+    // has no such convenience, so initialise the submodule into the worktree before
+    // installing. Fails closed, like the install below.
+    const sub = await io.exec("git", ["submodule", "update", "--init", "--recursive"], { cwd: dest });
+    if (sub.code !== 0) {
+      await io.worktreeRemove(gitCtx, dest);
+      process.stderr.write(
+        `error: feedback worktree submodule init failed for ${branch} (exit ${sub.code}); ` +
+          `blocking validation\n${sub.stderr.trim()}\n`,
+      );
+      resolved.set(branch, null);
+      return null;
+    }
     // A freshly added worktree has NO node_modules. Without an install here,
     // the feedback gate's `pnpm -C <dest> test/build` calls fail with
     // `tsc/vite/svelte-kit: not found` — a FALSE validation failure that parks

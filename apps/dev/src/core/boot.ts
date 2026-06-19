@@ -41,6 +41,12 @@ import {
   type ReconcileSweepCandidate,
   type ReconcileSweepPlan,
 } from "./boot-sweep.js";
+import {
+  planStaleClaimSweep,
+  renderStaleClaimSweepAudit,
+  resolveClaimStalenessConfig,
+  type ClaimedIssue,
+} from "./claim-staleness.js";
 import { LABEL_READY, LABEL_RUNNING, LABEL_HUMAN, LABEL_DEPENDENCY } from "./triage-labels.js";
 
 // ---------- precheck (hard preconditions) ----------
@@ -77,6 +83,15 @@ export interface PrecheckFacts {
    */
   lockedBranch?: string;
   pnpmInstalled: boolean;
+  /**
+   * Relax the SSH-only remote rule. "Reject https remote" is a LOCAL-dev safety
+   * net (don't drive autonomous runs through a token-in-URL https remote). In a
+   * CI lane (GitHub Actions: `RED_AFK_LANE=actions` / `GITHUB_ACTIONS`),
+   * `actions/checkout` configures an https remote whose auth is the ephemeral
+   * `GITHUB_TOKEN` — exactly the intended setup — so the rule must NOT fire there.
+   * Set by the runtime facts-builder from the environment.
+   */
+  allowHttpsRemote?: boolean;
 }
 
 /** A pass/fail precheck verdict. On failure, `failed` names the precondition and
@@ -95,9 +110,11 @@ export function precheck(facts: PrecheckFacts): PrecheckResult {
   if (!facts.ghInstalled) return { ok: false, failed: "gh-missing" };
   if (!facts.ghAuthenticated) return { ok: false, failed: "gh-unauthenticated" };
   if (!facts.isGitRepo) return { ok: false, failed: "not-a-git-repo" };
-  for (const url of facts.remoteUrls) {
-    if (url.startsWith("https://")) {
-      return { ok: false, failed: "https-remote-forbidden", detail: url };
+  if (!facts.allowHttpsRemote) {
+    for (const url of facts.remoteUrls) {
+      if (url.startsWith("https://")) {
+        return { ok: false, failed: "https-remote-forbidden", detail: url };
+      }
     }
   }
   if (!facts.hasMainBranch) return { ok: false, failed: "no-main-branch" };
@@ -168,6 +185,12 @@ export interface BootLookups {
    * a claim-race loser's debris dir can never clobber the live winner's
    * `running` label back to ready-for-agent. */
   claimHolderAlive?: (issue: number) => Promise<boolean>;
+  /** Cross-host stale-claim sweep input (#627): every currently-claimed issue
+   * (projected `running`) with its parsed claim marker records. Optional: absent
+   * → the sweep is a no-op (the same-host orphan sweep still covers local dead
+   * workers). When present, `runBoot` releases any issue held only by a claim
+   * whose owner stopped refreshing past the staleness window, cross-host. */
+  claimedIssues?: () => Promise<ClaimedIssue[]>;
 }
 
 /** Outcome of one boot reconcile run — a coarser view of `ReconcileResult`
@@ -311,6 +334,12 @@ export interface StragglerResult {
   warn: boolean;
 }
 
+export interface StaleClaimSweepResult {
+  /** Issues released back to the executable pool because their cross-host owner
+   * stopped refreshing past the staleness window. */
+  released: number[];
+}
+
 export interface ReconcileSweepResult {
   /** Issues successfully validated-green and landed without re-running the agent. */
   landed: number[];
@@ -329,6 +358,7 @@ export interface BootResult {
   attemptCap?: AttemptCapResult;
   branchCleanup?: BranchCleanupResult;
   unblockSweep?: UnblockSweepResult;
+  staleClaimSweep?: StaleClaimSweepResult;
   reconcileSweep?: ReconcileSweepResult;
   straggler?: StragglerResult;
 }
@@ -349,6 +379,9 @@ export interface BootResult {
  *   5. branch cleanup       — planAttemptSnapshotCleanup, planLiveBranchCleanup,
  *                             planLocalBranchCleanup; delete reaped refs (git).
  *   6. unblock sweep        — planUnblockSweep; edit labels + audit comment (gh).
+ *   6a. stale-claim sweep   — planStaleClaimSweep; release each issue held only by
+ *                             a cross-host claim that stopped refreshing (#627).
+ *                             No-op when `claimedIssues` is absent.
  *   7. reconcile sweep      — planReconcileSweep; validate-and-land each owned
  *                             parked-mechanical branch without re-running the agent
  *                             (ADR 0055). No-op when reconcileRunner is absent.
@@ -399,6 +432,9 @@ export async function runBoot(deps: BootDeps, options: BootOptions): Promise<Boo
   // ---- 6. unblock sweep ----
   const unblockSweep = await runUnblockSweep(deps, options.unblockCandidates);
 
+  // ---- 6a. cross-host stale-claim sweep (#627) ----
+  const staleClaimSweep = await runStaleClaimSweep(deps);
+
   // ---- 7. reconcile sweep (ADR 0055) ----
   const reconcileSweep = await runReconcileSweep(deps, options);
 
@@ -412,9 +448,43 @@ export async function runBoot(deps: BootDeps, options: BootOptions): Promise<Boo
     attemptCap,
     branchCleanup,
     unblockSweep,
+    staleClaimSweep,
     reconcileSweep,
     straggler,
   };
+}
+
+/** Step 6a: cross-host stale-claim sweep (#627). List the currently-claimed
+ * issues + their claim markers, plan a release for any held ONLY by a claim
+ * whose owner stopped refreshing past the staleness window, and apply it: strip
+ * `running`, restore `ready-for-agent`, and post one audit comment. A no-op when
+ * `claimedIssues` is not wired (the same-host orphan sweep still covers local
+ * dead workers). A live-but-slow worker is never released — the planner only
+ * releases an issue with no live claim. Sequenced AFTER the unblock sweep and
+ * BEFORE the reconcile sweep so a freshly-released issue rejoins the executable
+ * pool for the next drain. */
+async function runStaleClaimSweep(deps: BootDeps): Promise<StaleClaimSweepResult> {
+  if (!deps.lookups.claimedIssues) return { released: [] };
+  let claimed: ClaimedIssue[];
+  try {
+    claimed = await deps.lookups.claimedIssues();
+  } catch {
+    // Best-effort: a failed listing skips the sweep this boot, never aborting it.
+    return { released: [] };
+  }
+  const config = resolveClaimStalenessConfig(deps.env ?? process.env);
+  const plans = planStaleClaimSweep(claimed, deps.nowS, config);
+  const released: number[] = [];
+  for (const p of plans) {
+    try {
+      await deps.gh.editLabels(p.issue, [LABEL_RUNNING], [LABEL_READY]);
+      await deps.gh.comment(p.issue, renderStaleClaimSweepAudit(p.staleOwners));
+      released.push(p.issue);
+    } catch {
+      // Best-effort: a failed release leaves the issue for the next boot's sweep.
+    }
+  }
+  return { released };
 }
 
 /** Step 3: decideOrphanFate per dir, then apply the fate via gh + fs. Mirrors

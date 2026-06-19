@@ -389,6 +389,9 @@ describe("mechanicalDisqualifier", () => {
   it("flags human-decision blocked labels", () => {
     expect(mechanicalDisqualifier(["blocked:spec"], "x")).toBe("not-mechanical");
     expect(mechanicalDisqualifier(["blocked:validation"], "x")).toBe("not-mechanical");
+    expect(mechanicalDisqualifier(["blocked:dependency"], "x")).toBe("not-mechanical");
+    expect(mechanicalDisqualifier(["blocked:policy"], "x")).toBe("not-mechanical");
+    expect(mechanicalDisqualifier(["blocked:infra"], "x")).toBe("not-mechanical");
   });
 
   it("flags an active non-mechanical Current blocker", () => {

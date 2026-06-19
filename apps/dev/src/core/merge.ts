@@ -318,7 +318,11 @@ export async function landPr(exec: Exec, input: LandPrInput): Promise<LandPrResu
       "--title",
       `merge: #${n} ${title}`,
       "--body",
-      `${PR_BODY_PREFIX}${n}. Per-attempt history lives in the issue Envelopes, the JSONL logs, and the \`afk-attempts/*\` snapshot branches.`,
+      // `Closes #${n}` links the PR to the issue and lets GitHub auto-close it
+      // when the PR is merged into the default branch — the lane where a human
+      // merges the PR (GitHub Actions / no admin-merge). The admin-merge path
+      // also closes the issue itself; both are idempotent.
+      `${PR_BODY_PREFIX}${n}. Per-attempt history lives in the issue Envelopes, the JSONL logs, and the \`afk-attempts/*\` snapshot branches.\n\nCloses #${n}`,
     ]);
     if (create.code !== 0) return { ok: false };
     prNumber = await listOpenPr(exec, repo, branch, target);

@@ -74,6 +74,11 @@ export const CONFIG_DEFAULTS = {
   // regardless of the verdict) with `afk.merge.wait_for_review: true`.
   "afk.merge.wait_for_review": "false",
   "afk.merge.review_check": "CodeRabbit",
+  // Release channel the ADR 0038 launcher tracks (ADR 0058). `stable` is the
+  // version-pinned release (today's behaviour); `canary` tracks the floating
+  // pre-release tag. The launcher reads this (or `RED_SKILLS_CHANNEL`); promotion
+  // canary→stable is a tag move gated on the proof-by-drain telemetry.
+  "afk.release.channel": "stable",
   "dev.lock.primary-branch": "false",
   // NOTE: `dev.lock.branch` (the static base lock — ADR 0031) is intentionally
   // NOT in this table. Its "default" is *unset* (no config-level lock), and
@@ -278,7 +283,16 @@ export function loadConfig(path: string, options: LoadConfigOptions = {}): Confi
   // Copy raw parsed keys (forward compatibility), then fold the namespaced
   // `plugins.dev.*` block down to the accessor keys so the new location wins over
   // the legacy top-level one (ADR 0042).
-  for (const [key, value] of Object.entries(parsed)) values[key] = value;
+  // Track which accessor keys the user explicitly set — needed by resolveTier to
+  // distinguish "user pinned a tier to the same value as the default" (should win
+  // over legacy scalars) from "tier is just the CONFIG_DEFAULTS value" (should fall
+  // through to base/scalar fallbacks). Stored as a null-byte-keyed side-channel
+  // that can never originate from YAML (null bytes are invalid YAML key chars).
+  const explicitAccessorKeys = new Set<string>();
+  for (const [key, value] of Object.entries(parsed)) {
+    values[key] = value;
+    explicitAccessorKeys.add(key);
+  }
   for (const [key, value] of Object.entries(parsed)) {
     const m = /^plugins\.dev\.(.+)$/.exec(key);
     if (!m) continue;
@@ -288,7 +302,12 @@ export function loadConfig(path: string, options: LoadConfigOptions = {}): Confi
     // dev-plugin key keeps the `dev.*` accessor — so
     // `plugins.dev.lock.primary-branch` folds to `dev.lock.primary-branch`, not a
     // bare `lock.primary-branch` the loader never reads.
-    values[rest === "afk" || rest.startsWith("afk.") ? rest : `dev.${rest}`] = value;
+    const accessorKey = rest === "afk" || rest.startsWith("afk.") ? rest : `dev.${rest}`;
+    values[accessorKey] = value;
+    explicitAccessorKeys.add(accessorKey);
+  }
+  if (explicitAccessorKeys.size > 0) {
+    values["\0explicit"] = Array.from(explicitAccessorKeys).join("\x01");
   }
   return values;
 }
@@ -355,19 +374,28 @@ export function resolveTier(
   const scalarGlobalModel = getConfig(values, "afk.model");
   const tierEffort = getConfig(values, effortKey);
 
+  // The set of accessor keys the user explicitly wrote in their YAML (tracked by
+  // loadConfig). Needed to distinguish "user pinned a tier to the same value as the
+  // CONFIG_DEFAULT" (must win over legacy scalars — bug #583) from "tier is just the
+  // CONFIG_DEFAULT" (should fall through to base/scalar fallbacks).
+  const explicitKeys = new Set<string>((values["\0explicit"] ?? "").split("\x01").filter(Boolean));
+
   // Runtime override: a non-empty RED_AFK_MODEL/RED_AFK_EFFORT wins over the file
   // (`""` counts as unset, so a placeholder export never flattens the tiers).
   const modelOverride = (env.RED_AFK_MODEL ?? "").trim();
   const effortOverride = (env.RED_AFK_EFFORT ?? "").trim();
 
+  // An explicit tier pin wins when it is non-empty AND either differs from the
+  // default (clearly user-set) or is known to have been user-set (even when it
+  // equals the default — an explicit pin must beat legacy scalars per bug #583).
   const configModel =
-    tierModel && tierModel !== defaultModel
+    tierModel && (tierModel !== defaultModel || explicitKeys.has(modelKey))
       ? tierModel
-      : baseModel || scalarRunnerModel || scalarGlobalModel || tierModel || defaultModel;
+      : baseModel || scalarRunnerModel || scalarGlobalModel || defaultModel;
   const configEffort =
-    tierEffort && tierEffort !== defaultEffort
+    tierEffort && (tierEffort !== defaultEffort || explicitKeys.has(effortKey))
       ? tierEffort
-      : baseEffort || tierEffort || defaultEffort;
+      : baseEffort || defaultEffort;
 
   return {
     model: modelOverride.length > 0 ? modelOverride : configModel,

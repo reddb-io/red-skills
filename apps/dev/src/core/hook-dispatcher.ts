@@ -133,10 +133,68 @@ function isJsonObject(trimmed: string): boolean {
 }
 
 export interface DispatchHooksOptions {
-  /** The documented RED_AFK_* env passed to every command in this point. */
+  /**
+   * The base RED_AFK_* env passed to every command in this point. Per-event vars
+   * derived from the mutable context are layered on top.
+   */
   env?: Record<string, string>;
   /** Sink for the dispatcher's log lines (defaults to a no-op). */
   log?: (message: string) => void;
+}
+
+/**
+ * Derive the documented per-event RED_AFK_* env from a hook's mutable context.
+ * Irrelevant fields stay unset instead of being exported as empty strings.
+ */
+export function deriveHookEnv(base: Record<string, string>, contextJson: string): Record<string, string> {
+  const env: Record<string, string> = { ...base };
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(contextJson);
+  } catch {
+    return env;
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return env;
+  const ctx = parsed as Record<string, unknown>;
+
+  const set = (key: string, value: unknown): void => {
+    if (typeof value === "string") {
+      if (value.length > 0) env[key] = value;
+    } else if (typeof value === "number" && Number.isFinite(value)) {
+      env[key] = String(value);
+    }
+  };
+  const obj = (value: unknown): Record<string, unknown> | undefined =>
+    typeof value === "object" && value !== null && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : undefined;
+
+  set("RED_AFK_ISSUE", obj(ctx.issue)?.number);
+  set("RED_AFK_WORKSPACE", ctx.workspace);
+  set("RED_AFK_RUNNER", ctx.runner);
+  set("RED_AFK_ATTEMPT_N", ctx.attempt_n);
+  set("RED_AFK_MERGE_BASE", ctx.merge_base);
+
+  const result = obj(ctx.result);
+  if (result) {
+    set("RED_AFK_RESULT_STATUS", result.status);
+    set("RED_AFK_RESULT_OUTCOME", result.outcome);
+  }
+
+  const error = obj(ctx.error);
+  if (error) {
+    set("RED_AFK_ERROR_CLASS", error.class);
+    set("RED_AFK_ERROR_MESSAGE", error.message);
+  }
+
+  const mergeCommit = obj(ctx.merge_commit);
+  if (mergeCommit) {
+    set("RED_AFK_MERGE_COMMIT", mergeCommit.sha);
+    set("RED_AFK_MERGE_SHA", mergeCommit.short);
+  }
+
+  return env;
 }
 
 /**
@@ -160,7 +218,7 @@ export async function dispatchHooks(
 ): Promise<HookDispatchResult> {
   if (!HOOK_NAME_SET.has(name)) throw new UnknownLifecyclePointError(name);
 
-  const env = options.env ?? {};
+  const env = deriveHookEnv(options.env ?? {}, context);
   const log = options.log ?? (() => {});
   const policy = HOOK_EXIT_POLICY[name];
 

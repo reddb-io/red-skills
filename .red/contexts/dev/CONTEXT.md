@@ -127,11 +127,11 @@ A Codex TUI sub-agent used only as a read-only AFK state presentation surface.
 _Avoid_: AFK worker, supervisor
 
 **Execution environment**:
-A non-interactive runtime that drives `/afk --issues N --runner opencode --once` for one attempt per invocation. The two target surfaces are the GitHub Actions lane (the published `red-afk-attempt.yml` reusable workflow in `reddb-io/red-skills`) and the k8s lane (a container image + `Job` manifest the team runs on a self-hosted cluster). Both share the same runtime contract — one attempt, one issue, one PR, no fleet — and differ only in trigger and secret-injection surface. Issue [#631](https://github.com/reddb-io/red-skills/issues/631) (ADR 0059) tracks the k8s piece; the GHA piece lands in this slice.
+A non-interactive runtime that drives `/afk --issues N --runner opencode --once` for one attempt per invocation. The two target surfaces are the GitHub Actions lane (the published `reusable-afk-attempt.yml` reusable workflow in `reddb-io/red-skills`) and the k8s lane (a container image + `Job` manifest the team runs on a self-hosted cluster). Both share the same runtime contract — one attempt, one issue, one PR, no fleet — and differ only in trigger and secret-injection surface. Issue [#631](https://github.com/reddb-io/red-skills/issues/631) (ADR 0059) tracks the k8s piece; the GHA piece lands in this slice.
 _Avoid_: GHA-only, k8s-only, CI lane, production lane
 
 **Actions lane**:
-The GitHub Actions surface of the **Execution environment** — the published `red-afk-attempt.yml` reusable workflow in `reddb-io/red-skills/.github/workflows/`. The file exposes **three triggers in one**: `workflow_call` (caller invokes directly), `workflow_dispatch` (manual from the Actions UI), and `issues: types: [labeled]` (auto-fires when the `ready-for-agent` label is applied; the `if:` filter restricts to exactly that label). The trust gate is rigorous by default (author + label-applier must be in the caller-supplied allowlist). Per invocation: one attempt, one issue, one PR, no admin-merge.
+The GitHub Actions surface of the **Execution environment** — the published `reusable-afk-attempt.yml` reusable workflow in `reddb-io/red-skills/.github/workflows/`. The file exposes **three triggers in one**: `workflow_call` (caller invokes directly), `workflow_dispatch` (manual from the Actions UI), and `issues: types: [labeled]` (auto-fires when the `ready-for-agent` label is applied; the `if:` filter restricts to exactly that label). The trust gate is rigorous by default (author + label-applier must be in the caller-supplied allowlist). Per invocation: one attempt, one issue, one PR, no admin-merge.
 _Avoid_: GHA, reusable workflow (when referring to the lane), CI job
 
  slot

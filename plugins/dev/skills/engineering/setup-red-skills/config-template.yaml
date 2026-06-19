@@ -32,12 +32,20 @@
 #         effort: high
 #     opencode:                   # ADR 0059 — endpoint-agnostic; slug = <provider>/<model>
 #       base:                     # auto-populates EVERY tier of this runner. Set the model
-#         model: minimax/MiniMax-M2   # once to point the whole runner at one provider/model;
+#         model: minimax/MiniMax-M3   # once to point the whole runner at one provider/model;
 #         effort: medium          # `base.effort` is optional (omit it to keep per-tier defaults).
 #       think:                    # specialize a single tier — overrides `base` for that tier only
-#         model: minimax/MiniMax-M2
+#         model: minimax/MiniMax-M3
 #   fleet:
 #     target: 2                   # default supervisor worker target
+#   release:                      # bundle release channel (ADR 0058)
+#     channel: canary             # `stable` (default = today's version-pinned
+#                                 # release) or `canary` (the floating pre-release
+#                                 # tag). The launcher reads this or the
+#                                 # `RED_SKILLS_CHANNEL` env var (env wins); absent
+#                                 # config keeps tracking stable. Promotion
+#                                 # canary→stable is a tag move (scripts/afk-promote-channel.sh),
+#                                 # gated on the proof-by-drain telemetry.
 #   backpressure:                 # extra merge gates run on every successful
 #     - npm run test              # iteration (DONE + salvaged no-sentinel), after
 #     - npm run lint              # the built-in feedback gate. Any non-zero exit

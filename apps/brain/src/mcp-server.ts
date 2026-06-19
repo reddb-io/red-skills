@@ -73,7 +73,8 @@ const TOOLS = [
   },
   {
     name: "brain_think",
-    description: "Return a deterministic synthesis over Brain search hits.",
+    description:
+      "Return a deterministic cited synthesis over Brain search hits, including citations, confidence, and missing evidence.",
     inputSchema: zodShape(SearchInput),
   },
   {

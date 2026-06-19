@@ -22,6 +22,12 @@ export interface CompactCurrent {
   stage: string;
   /** Per-iteration start (current.started_at), an ISO/RFC string or "". */
   started_at: string;
+  /** Cost group (ADR 0065) — cumulative per-worker token spend / USD. Optional so
+   * the dashboard's compact-current constructor and fixtures stay terse; absent
+   * reads as 0. */
+  input_tokens?: number;
+  output_tokens?: number;
+  cost_usd?: number;
 }
 
 /** The subset of afk.state.json the compact line reads. */
@@ -51,6 +57,19 @@ export interface CompactWorker {
   diffRemoved?: number;
 }
 
+/** Per-slot visibility record for a non-closed supervisor slot, sourced from the
+ * supervisor-published state file (never from the supervisor log). Closed slots
+ * are omitted; only the slots needing operator attention carry a record. */
+export interface SlotDetail {
+  index: number;
+  /** "open" = circuit tripped, awaiting half-open cooldown
+   *  "half-open" = probe worker spawned, awaiting success/failure verdict
+   *  "idle-parked" = clean drain with empty queue; auto-unparks on next work */
+  status: "open" | "half-open" | "idle-parked";
+  /** Epoch seconds when the half-open probe is scheduled (open slots only). */
+  retryAt?: number;
+}
+
 export interface FleetState {
   ts: string;
   epoch: number;
@@ -68,6 +87,9 @@ export interface FleetState {
   slotsTotal: number;
   slotsParked: number;
   spawnsThisTick: number;
+  /** Per-slot details for non-closed slots. Absent/empty = all slots closed.
+   * Absent on state files written before this field was added (#630). */
+  slotDetails?: SlotDetail[];
 }
 
 export const FLEET_STALE_AFTER_S = 180;
@@ -104,7 +126,7 @@ export function renderFleetLine(fleet: FleetState, now: number): string {
   return (
     `fleet [${status}] last ticked ${formatElapsed(age)} ago` +
     `  ready:${fleet.readyForAgent}` +
-    `  slots busy:${fleet.slotsBusy} free:${fleet.slotsFree}` +
+    `  slots busy:${fleet.slotsBusy} free:${fleet.slotsFree} parked:${fleet.slotsParked}` +
     `  spawns:${fleet.spawnsThisTick}`
   );
 }
@@ -152,16 +174,50 @@ export function renderWorkerCompactLine(worker: CompactWorker, now: number): str
 
   const diff = `  ${formatDiff(worker.diffAdded ?? 0, worker.diffRemoved ?? 0)}`;
 
+  // Cost group (ADR 0065): per-worker token spend, shown only when the runner
+  // streamed usage (codex/opencode). `$cost` only when the runner reports USD.
+  const it = state.current.input_tokens ?? 0;
+  const ot = state.current.output_tokens ?? 0;
+  const cu = state.current.cost_usd ?? 0;
+  const costFrag = it > 0 || ot > 0 ? `  tok:${it}/${ot}${cu > 0 ? ` $${cu.toFixed(2)}` : ""}` : "";
+
   let cur: string;
   if (!isNoIssue(state.current.number)) {
     const title = state.current.title.slice(0, TITLE_MAX);
     const elapsed = formatElapsed(elapsedSeconds(state, now));
-    cur = `  #${state.current.number} ${title}  stage:${state.current.stage}  ${elapsed}${diff}`;
+    cur = `  #${state.current.number} ${title}  stage:${state.current.stage}  ${elapsed}${diff}${costFrag}`;
   } else {
     cur = `  idle${diff}`;
   }
 
   return `${workerId} [${tag}] ${runner}  issues ${done}/${total}${flags}${cur}`;
+}
+
+/**
+ * Renders per-slot detail lines for any non-closed slot in the fleet.
+ * Returns one line per non-closed slot:
+ *   open      → "  slot N open  retry in HH:MM:SS"
+ *   half-open → "  slot N half-open  (probing)"
+ *   idle-parked → "  slot N idle-parked  (queue empty)"
+ * Returns an empty array when all slots are closed or slotDetails is absent.
+ * `now` is epoch seconds.
+ */
+export function renderSlotDetails(fleet: FleetState, now: number): string[] {
+  if (!fleet.slotDetails || fleet.slotDetails.length === 0) return [];
+  return fleet.slotDetails.map((d) => {
+    if (d.status === "half-open") {
+      return `  slot ${d.index} half-open  (probing)`;
+    }
+    if (d.status === "idle-parked") {
+      return `  slot ${d.index} idle-parked  (queue empty)`;
+    }
+    // open: show next retry countdown
+    if (d.retryAt !== undefined) {
+      const waitS = Math.max(0, d.retryAt - now);
+      return `  slot ${d.index} open  retry in ${formatElapsed(waitS)}`;
+    }
+    return `  slot ${d.index} open`;
+  });
 }
 
 /** Stable sort key — the worker-process start, oldest first (the bash glob is
@@ -192,7 +248,16 @@ export function renderCompactDashboard(
     removed += w.diffRemoved ?? 0;
   }
   const header = `${buildSparkline(events, now).line}   Δ fleet ${formatDiff(added, removed)}`;
-  const prefix = fleet ? `${header}\n${renderFleetLine(fleet, now)}` : header;
+  let prefix: string;
+  if (fleet) {
+    const fleetLine = renderFleetLine(fleet, now);
+    const details = renderSlotDetails(fleet, now);
+    prefix = details.length > 0
+      ? `${header}\n${fleetLine}\n${details.join("\n")}`
+      : `${header}\n${fleetLine}`;
+  } else {
+    prefix = header;
+  }
   if (workers.length === 0) {
     return `${prefix}\nworkers: (none — /afk not running here)`;
   }

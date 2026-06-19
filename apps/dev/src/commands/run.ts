@@ -57,12 +57,15 @@ import { branchLockPath, readLockedBranch, isLocked } from "../runtime/lock.js";
 import { makeHookExec, makeHookResolveOptions, hookEnv } from "../runtime/hooks.js";
 import { makeFeedbackWorktree, type FeedbackWorktree } from "../runtime/feedback-worktree.js";
 import { join } from "node:path";
+import { hostname } from "node:os";
 import { appendAgentRecord, appendRecord } from "../core/jsonl-log.js";
-import { initState, updateState } from "../core/state.js";
+import { initStateSync, updateState } from "../core/state.js";
 import { buildProgressHeartbeat, formatIterationMarker } from "../core/heartbeat.js";
 import { createActivityMeter } from "../core/activity-meter.js";
 import { DEFAULT_MAX_ITERATIONS } from "../core/execution.js";
 import type { AgentStreamEvent } from "../core/execution.js";
+import { makeStaleClaimPredicate, resolveClaimStalenessConfig } from "../core/claim-staleness.js";
+import { renderClaimComment } from "../core/claim.js";
 
 export interface RunOptions {
   args: string[];
@@ -479,6 +482,36 @@ export function buildProcessDeps(
       // is configured (plugins.dev.afk.trust-gate.allowlist).
       issueTrust: (issue) => ghx.issueTrust(ghCtx, issue),
     },
+    claimGh: {
+      // ADR 0066: the atomic GitHub-native claim arbiter. Numeric comment ids
+      // (via `gh api`) are the cross-host total order.
+      postClaim: (issue, body) => ghx.postClaimComment(ghCtx, issue, body),
+      listClaims: (issue) => ghx.listClaimComments(ghCtx, issue),
+      concede: async (issue, body) => {
+        try {
+          await ghx.postClaimComment(ghCtx, issue, body);
+        } catch {
+          // best-effort: a failed concede ages out via the staleness predicate.
+        }
+      },
+      // One human-visible audit comment when we recover a stale cross-host claim
+      // (#627). Best-effort: a failed audit never abandons the won claim.
+      audit: async (issue, body) => {
+        try {
+          await ghx.comment(ghCtx, issue, body);
+        } catch {
+          // best-effort observability; the claim is already won.
+        }
+      },
+    },
+    // Cross-host stale-claim recovery (#627, ADR 0066): a claim whose owner
+    // stopped refreshing past `cadence × (tolerance + 1)` is presumed dead and
+    // released by this sweep. The clock is sampled once per issue at deps build;
+    // the policy comes from RED_AFK_CLAIM_REFRESH_S / RED_AFK_CLAIM_STALE_TOLERANCE.
+    claimStale: makeStaleClaimPredicate(
+      Math.floor(Date.now() / 1000),
+      resolveClaimStalenessConfig(process.env),
+    ),
     claimLock: {
       // Atomic POSIX mkdir lock (#434): a non-recursive mkdir that fails EEXIST,
       // so two simultaneous boots cannot both claim the same issue. The prior
@@ -565,7 +598,7 @@ export function buildProcessDeps(
       config,
       resolveOptions,
       exec: makeHookExec(ctx.root),
-      env: hookEnv(ctx.repo, ctx.root, parseSlot(process.env.RED_AFK_SLOT)),
+      env: hookEnv(ctx.repo, ctx.root, parseSlot(process.env.RED_AFK_SLOT), runner),
     },
     lookups: {
       base: {
@@ -596,6 +629,10 @@ export function buildProcessDeps(
         await gitx.fetchBranch(gitCtx, branch);
         return gitx.branchExists(gitCtx, branch);
       },
+      // Goal predicate own-merge signal (ADR 0057): true iff the worker branch
+      // already landed in <base>, distinguishing own-merge close (done) from a
+      // foreign close (claim-lost) when the guard observes the issue CLOSED.
+      branchMerged: (branch, base) => gitx.branchMergedInto(gitCtx, branch, base),
     },
     envelope: {
       git: gitx.gitExec(gitCtx),
@@ -659,7 +696,11 @@ export function buildProcessDeps(
             ? `🧠 reasoning${
                 event.tokens ? ` (${event.tokens} tok)` : event.message ? `: ${event.message.slice(0, 80)}` : ""
               }`
-            : `→ ${event.name} ${event.formattedArgs}`;
+            : event.type === "usage"
+              ? `💰 usage (in:${event.inputTokens} out:${event.outputTokens}${
+                  event.reasoningTokens ? ` reason:${event.reasoningTokens}` : ""
+                })`
+              : `→ ${event.name} ${event.formattedArgs}`;
       void appendAgentRecord(join(current.attemptDir, "agent.log.jsonl"), msg, {
         ts,
         fields: { extra: { iteration: String(event.iteration), kind: event.type } },
@@ -671,15 +712,41 @@ export function buildProcessDeps(
         ts,
         fields: { extra: { iteration: String(event.iteration), kind: event.type } },
       }).catch(() => {});
-      void fsx.appendLine(join(current.attemptDir, "afk.log"), `[agent] ${msg}`);
+      // The plaintext `[agent] …` mirror into afk.log is intentionally gone:
+      // red-castle's file-log now points at the SAME afk.log (process-issue.ts), so
+      // it already renders agent text + tool calls there — re-appending here would
+      // double every turn. The structured per-event record stays in agent.log.jsonl
+      // + the firehose above, where the rich reasoning/usage glyphs live.
       // Advance the monitor's state view on recognised tool-call transitions
       // (bounded write rate vs every text chunk — the lane mtime above is the
       // stall-detector's liveness signal; this is the dashboard's stage/last).
+      // `last_event_at` (the honest liveness clock, ADR 0065) is stamped on every
+      // DISCRETE event — tool/reasoning/usage, not per-text-chunk — so it advances
+      // every few seconds for an active worker even between commits.
       const stage = deriveStage(event);
-      if (stage) {
+      const discrete =
+        event.type === "toolCall" || event.type === "reasoning" || event.type === "usage";
+      // A `usage` event is the only carrier of the cost group, and for claude it
+      // arrives exactly ONCE — on the terminal result line, AFTER the last
+      // heartbeat poll and just before the agent exits. The ~60s heartbeat is
+      // what normally folds the meter's cost into state, but it never fires again
+      // once the agent completes, so a single-iteration claude run persisted
+      // cost_usd=0 despite real token spend. Flush the cumulative cost from the
+      // meter the instant a usage event lands (ADR 0065). Idempotent: codex emits
+      // many usage events and each just re-stamps the running total.
+      const costPatch =
+        event.type === "usage"
+          ? {
+              "current.input_tokens": activityMeter.peek().inputTokens,
+              "current.output_tokens": activityMeter.peek().outputTokens,
+              "current.cost_usd": activityMeter.peek().costUsd,
+            }
+          : {};
+      if (stage || discrete) {
         void updateState(join(current.attemptDir, "afk.state.json"), {
-          "current.stage": stage,
-          "current.last_stream_line": msg.slice(0, 200),
+          ...(stage ? { "current.stage": stage, "current.last_stream_line": msg.slice(0, 200) } : {}),
+          "current.last_event_at": ts,
+          ...costPatch,
         }).catch(() => {});
       }
     },
@@ -1127,7 +1194,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
       config: loadConfig(afkPaths(ctx.root).configPath, { warn: () => undefined }),
       resolveOptions: makeHookResolveOptions(ctx.root),
       exec: makeHookExec(ctx.root),
-      env: hookEnv(ctx.repo, ctx.root, parseSlot(process.env.RED_AFK_SLOT)),
+      env: hookEnv(ctx.repo, ctx.root, parseSlot(process.env.RED_AFK_SLOT), runner),
     },
     runnerCircuit: {
       isOpen: (r) => runnerCircuitOpen(paths.tmpDir, r, Math.floor(Date.now() / 1000)),
@@ -1144,23 +1211,36 @@ export async function runCommand(options: RunOptions): Promise<number> {
       // pid + current.{number,stage} and its mtime). Restore it: write the
       // initial state with the live orchestrator pid so the worker shows up;
       // recordAgentEvent advances current.stage, and the processIssue wrapper
-      // marks it not-live (pid:0) on terminal. Best-effort — never blocks work.
+      // marks it not-live (pid:0) on terminal.
+      //
+      // SYNCHRONOUS on purpose: the agent-event sink + heartbeat fire async
+      // `updateState` read-modify-writes against this same path. A fire-and-forget
+      // async seed here raced them — a sink write that read the file before the
+      // seed landed got the schema DEFAULT (pid 0, number "", worker_id ""),
+      // patched only its vitals, and wrote that back, stranding the worker with
+      // vitals but NO identity (rendered as a pid-0 `?`/idle ghost in monitor /
+      // statusline). Seeding synchronously guarantees the identity exists before
+      // any updateState runs, so every later read preserves it.
       const statePath = join(attemptDir, "afk.state.json");
       const startedAt = new Date().toISOString();
-      void initState(statePath, {
-        worker_id: c.workerId,
-        pid: process.pid,
-        runner: c.runner,
-        log: join(attemptDir, "afk.log"),
-        started_at: startedAt,
-        "current.number": candidate.number,
-        "current.title": candidate.title,
-        "current.worktree": join(attemptDir, "worktree"),
-        "current.handoff": join(attemptDir, "handoff.md"),
-        "current.started_at": startedAt,
-        "current.runner": c.runner,
-        "current.stage": "setup",
-      }).catch(() => {});
+      try {
+        initStateSync(statePath, {
+          worker_id: c.workerId,
+          pid: process.pid,
+          runner: c.runner,
+          log: join(attemptDir, "afk.log"),
+          started_at: startedAt,
+          "current.number": candidate.number,
+          "current.title": candidate.title,
+          "current.worktree": join(attemptDir, "worktree"),
+          "current.handoff": join(attemptDir, "handoff.md"),
+          "current.started_at": startedAt,
+          "current.runner": c.runner,
+          "current.stage": "setup",
+        });
+      } catch {
+        // Best-effort — a failed seed must never block the worker's actual work.
+      }
       // Append the --request block into the handoff body so the inner agent
       // (which reads handoff.md as its prompt) sees the special request.
       const body = requestBlock ? `${candidate.body}\n\n${requestBlock}` : candidate.body;
@@ -1170,6 +1250,9 @@ export async function runCommand(options: RunOptions): Promise<number> {
         body,
         runner: c.runner,
         workerId: c.workerId,
+        // ADR 0066 claimant identity: `host:worker_id`, unique per worker process
+        // per host so the GitHub-native claim never collides across machines.
+        claimant: `${hostname()}:${c.workerId}`,
         tmpDir: c.issueTemplate.tmpDir,
         attempt,
         attemptDir,

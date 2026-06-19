@@ -1,8 +1,17 @@
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
-import { initState, isStateLive, readState, updateState } from "../src/core/state.js";
+import {
+  initState,
+  initStateSync,
+  isStateActive,
+  isStateLive,
+  readState,
+  updateState,
+  WORKER_LIVE_MAX_AGE_S,
+} from "../src/core/state.js";
+import { AfkStateSchema } from "../src/types/state.js";
 
 describe("state", () => {
   it("default-parses missing or malformed state files", async () => {
@@ -26,9 +35,97 @@ describe("state", () => {
     expect(await readFile(path, "utf8")).toContain('"version":1');
   });
 
+  it("initStateSync seeds identity synchronously so a later updateState preserves it", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "afk-state-"));
+    const path = join(dir, "afk.state.json");
+
+    // Synchronous seed — the file MUST exist with full identity the instant the
+    // call returns (the whole point: it beats the async sink's read-modify-write).
+    const seeded = initStateSync(path, {
+      worker_id: "wL30L",
+      pid: 4242,
+      "current.number": 583,
+      "current.stage": "setup",
+    });
+    expect(seeded.pid).toBe(4242);
+    const onDisk = JSON.parse(await readFile(path, "utf8"));
+    expect(onDisk.worker_id).toBe("wL30L");
+    expect(onDisk.current.number).toBe(583);
+
+    // A subsequent vitals patch must NOT clobber the identity (the bug was the
+    // sink seeding from DEFAULT and stranding the worker with no pid/number).
+    const after = await updateState(path, { "current.cost_usd": 4.01, "current.stage": "tests" });
+    expect(after.pid).toBe(4242);
+    expect(after.worker_id).toBe("wL30L");
+    expect(after.current.number).toBe(583);
+    expect(after.current.cost_usd).toBe(4.01);
+    expect(after.current.stage).toBe("tests");
+  });
+
   it("checks liveness via the injected kill -0 predicate", () => {
     expect(isStateLive({ pid: 0 }, () => true)).toBe(false);
     expect(isStateLive({ pid: 123 }, (pid) => pid === 123)).toBe(true);
     expect(isStateLive({ pid: 123 }, () => false)).toBe(false);
+  });
+
+  it("isStateActive requires BOTH a resolving pid AND recent activity (ADR 0065)", () => {
+    const now = Date.parse("2026-06-11T20:00:00.000Z");
+    const alive = () => true;
+    const fresh = AfkStateSchema.parse({
+      pid: 123,
+      current: { last_event_at: new Date(now - 5_000).toISOString() },
+    });
+    const stale = AfkStateSchema.parse({
+      pid: 123,
+      current: { last_event_at: new Date(now - (WORKER_LIVE_MAX_AGE_S + 60) * 1000).toISOString() },
+    });
+
+    // pid-live + fresh activity → active
+    expect(isStateActive(fresh, now, alive)).toBe(true);
+    // pid-live but activity older than the ceiling → NOT active (the phantom case:
+    // a finished worker whose pid is shared/recycled still resolves).
+    expect(isStateActive(stale, now, alive)).toBe(false);
+    // dead pid is never active regardless of freshness
+    expect(isStateActive(fresh, now, () => false)).toBe(false);
+    // a committing-but-quiet worker (no recent event, recent commit) stays active
+    const committing = AfkStateSchema.parse({
+      pid: 123,
+      current: {
+        last_event_at: new Date(now - (WORKER_LIVE_MAX_AGE_S + 60) * 1000).toISOString(),
+        last_commit_at: new Date(now - 10_000).toISOString(),
+      },
+    });
+    expect(isStateActive(committing, now, alive)).toBe(true);
+  });
+
+  it("read-shims legacy worker-vitals keys onto their canonical names (ADR 0065)", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "afk-state-"));
+    const path = join(dir, "afk.state.json");
+    // An OLD afk.state.json written by a pre-S1 bundle: legacy keys only.
+    const legacy = {
+      version: 1,
+      current: {
+        diff_added: 120,
+        diff_removed: 7,
+        thinking_called_count: 5,
+        last_progress_at: "2026-06-11T00:00:00.000Z",
+      },
+    };
+    await writeFile(path, JSON.stringify(legacy), "utf8");
+    const state = await readState(path);
+    // Canonical names carry the legacy values — nothing is lost on read.
+    expect(state.current.loc_added).toBe(120);
+    expect(state.current.loc_removed).toBe(7);
+    expect(state.current.reasoning_events).toBe(5);
+    expect(state.current.last_commit_at).toBe("2026-06-11T00:00:00.000Z");
+  });
+
+  it("prefers the canonical key over the legacy alias when both are present", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "afk-state-"));
+    const path = join(dir, "afk.state.json");
+    const both = { version: 1, current: { loc_added: 99, diff_added: 1 } };
+    await writeFile(path, JSON.stringify(both), "utf8");
+    const state = await readState(path);
+    expect(state.current.loc_added).toBe(99);
   });
 });

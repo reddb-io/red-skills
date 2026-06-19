@@ -65,7 +65,7 @@ GitHub Actions runner — one attempt, one issue, one PR per invocation, no flee
 no admin-merge. Only the trigger and the secret-injection surface differ.
 
 The lane is packaged as three layers (ADR 0059/0062): the reusable workflow
-`.github/workflows/red-afk-attempt.yml` (triggers + trust gate) → the composite
+`.github/workflows/reusable-afk-attempt.yml` (triggers + trust gate) → the composite
 action `.github/actions/afk-attempt` (execution) → the `afk.mjs` launcher +
 Release bundle (runtime). Two adoption paths: **turnkey** (call the reusable) or
 **composable** (`uses: reddb-io/red-skills/.github/actions/afk-attempt@v1` with
@@ -620,7 +620,7 @@ remaining : 8 still ready-for-agent
 
 ## Configuration & lifecycle hooks
 
-All `.red/config.yaml` knobs + `RED_AFK_*` env overrides (sandbox, runner, model/effort, timeouts, retry caps, stall thresholds, backpressure) and the lifecycle-hook contract live in [`docs/CONFIG.md`](./docs/CONFIG.md). Runner/model resolution policy: [`../model-tier-policy/SKILL.md`](../model-tier-policy/SKILL.md).
+All `.red/config.yaml` knobs + `RED_AFK_*` env overrides (sandbox, runner, model/effort, timeouts, retry caps, stall thresholds, backpressure) and the lifecycle-hook contract live in [`docs/CONFIG.md`](./docs/CONFIG.md). The runtime supplies the documented base env (`RED_AFK_REPO`, `RED_AFK_ROOT`, `RED_AFK_WORKSPACE`, `RED_AFK_RUNNER`, optional `RED_AFK_SLOT`) and layers each hook event's documented `RED_AFK_*` variables from that event's JSON context. Runner/model resolution policy: [`../model-tier-policy/SKILL.md`](../model-tier-policy/SKILL.md).
 
 ## Safety
 

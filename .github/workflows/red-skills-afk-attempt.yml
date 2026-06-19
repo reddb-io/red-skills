@@ -1,0 +1,58 @@
+# red-skills-afk-attempt — red-skills' OWN caller for the AFK Actions lane.
+#
+# Naming convention: reusable workflows are prefixed `reusable-*` (here, the
+# reusable `reusable-afk-attempt.yml`). A workflow INSTALLED into a target repo to
+# drive that lane is prefixed `red-skills-*` ("RedSkills-installed in this repo").
+# This file is red-skills self-hosting its own lane, so it is `red-skills-*` too.
+#
+# It calls the LOCAL reusable (`./.github/workflows/reusable-afk-attempt.yml`) — the
+# same one adopters reference as `reddb-io/red-skills/.github/workflows/reusable-afk-attempt.yml@v1`.
+#
+# Auth: opencode + the org-level `MINIMAX_API_KEY` secret. Model: minimax/MiniMax-M3.
+# Trust gate: only issues authored AND labelled by an allowlisted login run.
+#
+# Runner: Blacksmith. We pass `runs_on: blacksmith-2vcpu-ubuntu-2404` (the
+# smallest Blacksmith tier — there is no "nano"; 2vcpu is the floor) to the
+# reusable, which exposes a `runs_on` input defaulting to `ubuntu-latest` for
+# adopters without Blacksmith. The Blacksmith GitHub App is installed on the org;
+# without it a Blacksmith label leaves the job queued forever.
+
+name: red-skills-afk-attempt
+
+on:
+  # Manual: process a specific issue from the Actions UI, OR leave it empty to
+  # auto-pick the oldest open ready-for-agent issue.
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: "Issue number to process (e.g. 631). Leave EMPTY to auto-pick the oldest open ready-for-agent issue."
+        required: false
+        type: string
+        default: ""
+  # Auto: fire when an issue gains the ready-for-agent label.
+  issues:
+    types: [labeled]
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  attempt:
+    # Dispatch always runs; the issues event only when the applied label is
+    # exactly ready-for-agent (so other label edits do not spawn attempts).
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'issues' && github.event.label.name == 'ready-for-agent')
+    uses: ./.github/workflows/reusable-afk-attempt.yml
+    with:
+      issue_number: ${{ github.event_name == 'workflow_dispatch' && inputs.issue_number || github.event.issue.number }}
+      runner: opencode
+      model: minimax/MiniMax-M3
+      runs_on: blacksmith-2vcpu-ubuntu-2404
+      enforce_trust_gate: "true"
+      allowlist_authors: "filipeforattini"
+      allowlist_label_actors: "filipeforattini"
+    secrets:
+      minimax_api_key: ${{ secrets.MINIMAX_API_KEY }}

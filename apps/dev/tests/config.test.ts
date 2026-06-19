@@ -87,6 +87,16 @@ describe("config", () => {
     }
   });
 
+  it("reads afk.release.channel and defaults it to stable (ADR 0058)", () => {
+    const defaults = loadConfig("/nonexistent/.red/config.yaml", { warn: () => {} });
+    expect(getConfig(defaults, "afk.release.channel")).toBe("stable");
+
+    const values = loadConfig("/x/.red/config.yaml", {
+      read: () => "plugins:\n  dev:\n    afk:\n      release:\n        channel: canary\n",
+    });
+    expect(getConfig(values, "afk.release.channel")).toBe("canary");
+  });
+
   it("reads dev.lock.primary-branch and defaults it off", () => {
     const defaults = loadConfig("/nonexistent/.red/config.yaml", { warn: () => {} });
     expect(getConfig(defaults, "dev.lock.primary-branch")).toBe("false");
@@ -396,6 +406,24 @@ describe("config — AFK model tier table (ADR 0049)", () => {
       "afk:\n  model: shared-model\n  models:\n    claude:\n      think:\n        model: claude-tier-model\n        effort: max\n";
     const values = loadConfig("/x/.red/config.yaml", { read: () => text });
     expect(resolveTier(values, "claude", "think")).toEqual({ model: "claude-tier-model", effort: "max" });
+  });
+
+  it("an explicit tier pin equal to the default beats a stale legacy scalar (bug #583)", () => {
+    // simple tier default = claude-sonnet-4-6; legacy afk.model = custom-model.
+    // An explicit simple.model = claude-sonnet-4-6 (same as the default) must
+    // still win — the old tierModel !== defaultModel guard silently dropped it.
+    const text = "afk:\n  model: custom-model\n  models:\n    claude:\n      simple:\n        model: claude-sonnet-4-6\n";
+    const values = loadConfig("/x/.red/config.yaml", { read: () => text });
+    expect(resolveTier(values, "claude", "simple")).toEqual({ model: "claude-sonnet-4-6", effort: "high" });
+  });
+
+  it("an explicit tier effort pin equal to the default beats a base effort override (bug #583)", () => {
+    // validate tier default effort = low; base effort = medium.
+    // An explicit validate.effort = low (same as the default) must still win.
+    const text =
+      "plugins:\n  dev:\n    afk:\n      models:\n        claude:\n          base:\n            effort: medium\n          validate:\n            effort: low\n";
+    const values = loadConfig("/x/.red/config.yaml", { read: () => text });
+    expect(resolveTier(values, "claude", "validate")).toEqual({ model: "claude-haiku-4-5", effort: "low" });
   });
 
   it("falls back to legacy per-runner and global scalar model keys", () => {

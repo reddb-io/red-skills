@@ -837,7 +837,114 @@ describe("startAttemptGuard — commit-anchored progress watchdog", () => {
   });
 });
 
+describe("startAttemptGuard — goal predicate (ADR 0057)", () => {
+  it("aborts 'goal-moot' once the claimed issue is observed CLOSED", async () => {
+    let clock = 0;
+    let closed = false;
+    const sched = manualScheduler();
+    let reason: string | undefined;
+    const g = startAttemptGuard({
+      capMs: 100_000, // huge cap so only the goal predicate can fire here
+      intervalMs: 50,
+      headProbe: async () => "sha-static",
+      now: () => clock,
+      schedule: sched.schedule,
+      goalProbe: async () => closed,
+      abort: (r) => {
+        reason = r;
+      },
+    });
+    await sched.tick(); // open → no-op
+    expect(reason).toBeUndefined();
+    expect(g.firedGoalMoot()).toBe(false);
+    closed = true;
+    clock = 50;
+    await sched.tick(); // CLOSED observed → moot
+    expect(reason).toBe("goal-moot");
+    expect(g.firedGoalMoot()).toBe(true);
+    expect(g.firedTimeout()).toBe(false); // a goal-moot is NOT a stall
+    g.stop();
+  });
+
+  it("never aborts while the issue is open or the read fails (uncertainty is a no-op)", async () => {
+    let clock = 0;
+    const states: Array<boolean | undefined> = [false, undefined];
+    let i = 0;
+    const sched = manualScheduler();
+    let aborted = false;
+    const g = startAttemptGuard({
+      capMs: 100_000,
+      intervalMs: 50,
+      headProbe: async () => "sha-static",
+      now: () => clock,
+      schedule: sched.schedule,
+      goalProbe: async () => states[i++],
+      abort: () => {
+        aborted = true;
+      },
+    });
+    await sched.tick(); // false → no-op
+    clock = 50;
+    await sched.tick(); // undefined (read failed) → no-op
+    expect(aborted).toBe(false);
+    expect(g.firedGoalMoot()).toBe(false);
+    g.stop();
+  });
+
+  it("swallows a goalProbe rejection and treats it as uncertainty (no abort)", async () => {
+    const sched = manualScheduler();
+    let aborted = false;
+    const g = startAttemptGuard({
+      capMs: 100_000,
+      intervalMs: 50,
+      headProbe: async () => "sha-static",
+      now: () => 0,
+      schedule: sched.schedule,
+      goalProbe: async () => {
+        throw new Error("gh exploded");
+      },
+      abort: () => {
+        aborted = true;
+      },
+    });
+    await sched.tick();
+    expect(aborted).toBe(false);
+    expect(g.firedGoalMoot()).toBe(false);
+    g.stop();
+  });
+});
+
 describe("runAgent — attempt guard wiring", () => {
+  it("returns the 'goal-moot' outcome when the goal predicate aborts the run", async () => {
+    let closed = false;
+    const sched = manualScheduler();
+    const controller = new AbortController();
+    const deps: SandcastleDeps = {
+      ...makeDeps(
+        (o) =>
+          new Promise<RunResult>((_resolve, reject) => {
+            o.signal?.addEventListener("abort", () => reject(o.signal?.reason ?? new Error("aborted")));
+          }),
+      ),
+      now: () => 0,
+      schedule: sched.schedule,
+      makeAbortController: () => controller,
+    };
+    const p = runAgent(deps, {
+      ...baseInput,
+      attemptTimeoutSeconds: 1,
+      headProbe: async () => "static",
+      goalProbe: async () => closed,
+    });
+    await sched.tick(); // open → run continues
+    closed = true;
+    await sched.tick(); // CLOSED → abort with goal-moot
+    const res = await p;
+    expect(res.outcome).toBe("goal-moot");
+    expect(res.branch).toBe(baseInput.branch);
+    expect(res.commits).toEqual([]);
+  });
+
   it("returns the 'timeout' outcome when the guard aborts a stalled run", async () => {
     let clock = 0;
     const sched = manualScheduler();

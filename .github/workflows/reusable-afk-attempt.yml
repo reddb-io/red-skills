@@ -1,4 +1,4 @@
-# Reusable workflow: red-afk-attempt
+# Reusable workflow: reusable-afk-attempt
 #
 # This is the AFK Actions lane (ADR 0059, glossary term) for any GitHub
 # repository that installs RedSkills. It runs ONE attempt per invocation
@@ -33,19 +33,19 @@
 #   - Path A (auto, simplest): install this workflow directly into the adopter
 #     repo and edit the `allowlist_*` defaults below. Fires on issues:labeled/opened.
 #   - Path B (caller, more control): copy the thin caller at
-#     `plugins/dev/skills/engineering/afk/examples/red-afk-attempt-caller.yml`.
+#     `plugins/dev/skills/engineering/afk/examples/red-skills-afk-attempt.yml`.
 #
 # Required `permissions:` are intentionally minimal — `contents: write` (push
 # worker branch), `issues: write` (envelope + labels), `pull-requests: write`
 # (open PR). No `id-token`, no `actions: write`.
 
-name: red-afk-attempt
+name: reusable-afk-attempt
 
 on:
   workflow_call:
     inputs:
       issue_number:
-        description: "Issue number to process. Empty string = no-op."
+        description: "Issue number to process. Empty = auto-pick the oldest open ready-for-agent issue (no-op if none)."
         required: false
         type: string
         default: ""
@@ -55,7 +55,7 @@ on:
         type: string
         default: "opencode"
       model:
-        description: "Override the model for every tier (e.g. minimax/MiniMax-M2). Empty = read from `.red/config.yaml` / defaults. Maps to RED_AFK_MODEL."
+        description: "Override the model for every tier (e.g. minimax/MiniMax-M3). Empty = read from `.red/config.yaml` / defaults. Maps to RED_AFK_MODEL."
         required: false
         type: string
         default: ""
@@ -64,6 +64,11 @@ on:
         required: false
         type: string
         default: ""
+      runs_on:
+        description: "Runner label for the attempt job. Default ubuntu-latest (GitHub-hosted). Set e.g. blacksmith-2vcpu-ubuntu-2404 to run on Blacksmith (the GitHub App must be installed on the org, else the job queues forever)."
+        required: false
+        type: string
+        default: "ubuntu-latest"
       allowlist_authors:
         description: "CSV of GitHub logins allowed as issue author."
         required: true
@@ -95,19 +100,25 @@ on:
   workflow_dispatch:
     inputs:
       issue_number:
-        description: "Issue number to process (e.g. 631)."
-        required: true
+        description: "Issue number to process (e.g. 631). Leave EMPTY to auto-pick the oldest open ready-for-agent issue."
+        required: false
         type: string
+        default: ""
       runner:
         description: "AFK runner to drive (claude|codex|opencode)."
         required: false
         type: string
         default: "opencode"
       model:
-        description: "Override the model for every tier (e.g. minimax/MiniMax-M2). Empty = config."
+        description: "Override the model for every tier (e.g. minimax/MiniMax-M3). Empty = config."
         required: false
         type: string
         default: ""
+      runs_on:
+        description: "Runner label for the attempt job (e.g. ubuntu-latest or blacksmith-2vcpu-ubuntu-2404)."
+        required: false
+        type: string
+        default: "ubuntu-latest"
 
   # NOTE: the `issues: [labeled, opened]` auto-trigger was intentionally removed —
   # the lane is dispatch/call-only until auth secrets are configured (see the job
@@ -128,7 +139,7 @@ jobs:
     if: >-
       (github.event_name == 'workflow_dispatch') ||
       (github.event_name == 'workflow_call')
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runs_on || 'ubuntu-latest' }}
     # Resolve the runner once for every step. issues:* events have no host
     # session, so they always use opencode (the API-auth runner, ADR 0059).
     env:
@@ -142,12 +153,45 @@ jobs:
             const eventName = context.eventName;
             let issueNumber = '';
             if (eventName === 'workflow_dispatch') {
-              issueNumber = context.payload.inputs.issue_number;
+              issueNumber = context.payload.inputs.issue_number || '';
             } else if (eventName === 'workflow_call') {
               issueNumber = context.payload.inputs.issue_number || context.payload.issue_number || '';
             } else if (eventName === 'issues') {
               issueNumber = String(context.payload.issue.number);
             }
+
+            // Auto-pick: a dispatch / call with no issue number drains the queue
+            // head — the OLDEST *actionable* open `ready-for-agent` issue. Skip
+            // PRs and anything parked (`ready-for-human` or any `blocked:*`
+            // label): the runtime preflight would refuse those anyway, so picking
+            // one just burns a dispatch. No actionable issue ⇒ a clean no-op
+            // (empty output; downstream steps skip).
+            if (!issueNumber && (eventName === 'workflow_dispatch' || eventName === 'workflow_call')) {
+              const candidates = await github.paginate(github.rest.issues.listForRepo, {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                state: 'open',
+                labels: 'ready-for-agent',
+                sort: 'created',
+                direction: 'asc',
+                per_page: 100,
+              });
+              const parked = (i) => i.labels.some((l) => {
+                const name = (typeof l === 'string' ? l : l.name) || '';
+                return name === 'ready-for-human' || name.startsWith('blocked:');
+              });
+              const actionable = candidates.filter((i) => !i.pull_request && !parked(i));
+              const skipped = candidates.filter((i) => !i.pull_request && parked(i)).length;
+              const oldest = actionable[0];
+              if (!oldest) {
+                core.info(`auto-pick: no actionable ready-for-agent issue (skipped ${skipped} parked) — nothing to do`);
+                core.setOutput('number', '');
+                return;
+              }
+              issueNumber = String(oldest.number);
+              core.info(`auto-pick: oldest actionable ready-for-agent issue is #${issueNumber}` + (skipped ? ` (skipped ${skipped} parked)` : ''));
+            }
+
             if (!/^[0-9]+$/.test(issueNumber)) {
               core.setFailed(`invalid issue number: ${JSON.stringify(issueNumber)}`);
               return;
@@ -157,11 +201,13 @@ jobs:
 
       - name: Evaluate the trust gate
         id: trust
+        if: steps.resolve.outputs.number != ''
         uses: actions/github-script@v7
         env:
           ENFORCE_TRUST_GATE: ${{ github.event_name == 'workflow_call' && inputs.enforce_trust_gate || 'true' }}
           ALLOWLIST_AUTHORS: ${{ github.event_name == 'workflow_call' && inputs.allowlist_authors || '' }}
           ALLOWLIST_LABEL_ACTORS: ${{ github.event_name == 'workflow_call' && inputs.allowlist_label_actors || '' }}
+          ISSUE_NUMBER: ${{ steps.resolve.outputs.number }}
         with:
           script: |
             const enforce = (process.env.ENFORCE_TRUST_GATE || 'true').toLowerCase() !== 'false';
@@ -180,12 +226,27 @@ jobs:
             }
 
             const eventName = context.eventName;
-            const issue = context.payload.issue;
-            const sender = context.payload.sender;
-            const author = issue?.user?.login;
+            const sender = context.payload.sender?.login;
+            const issueNumber = parseInt(process.env.ISSUE_NUMBER, 10);
+            // The author is in the payload ONLY for the `issues` event. For
+            // workflow_dispatch / workflow_call there is no payload.issue, so fetch
+            // the issue by its resolved number to read the author — without this a
+            // dispatched run failed the gate with author=undefined.
+            let author;
+            if (eventName === 'issues') {
+              author = context.payload.issue?.user?.login;
+            } else {
+              const { data } = await github.rest.issues.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+              });
+              author = data.user?.login;
+            }
             // issues:opened — the opener is the de-facto label-applier (the issue
-            // was filed pre-labeled), so the sender (== author) is the actor.
-            const labelActor = eventName === 'issues' ? sender?.login : (sender?.login || author);
+            // was filed pre-labeled), so the sender (== author) is the actor. For a
+            // manual dispatch the human who triggered the run is the actor.
+            const labelActor = eventName === 'issues' ? sender : (sender || author);
 
             const authorOk = authors.includes(author);
             const actorOk  = labelActors.includes(labelActor);
@@ -206,7 +267,7 @@ jobs:
                 await github.rest.issues.createComment({
                   owner: context.repo.owner,
                   repo:  context.repo.repo,
-                  issue_number: parseInt(context.payload.issue.number, 10),
+                  issue_number: issueNumber,
                   body: `🤖 /afk trust gate refused to claim this issue: ${reason}. See #621 for the allowlist predicate.`,
                 });
               } catch (e) {
@@ -218,6 +279,13 @@ jobs:
       - name: Checkout the target repository
         if: steps.trust.outputs.gate == 'pass' || steps.trust.outputs.gate == 'bypass'
         uses: actions/checkout@v4
+        with:
+          # Pull submodules so a repo that vendors one as a workspace dependency
+          # (e.g. red-skills' public `packages/red-castle`, ADR 0061) resolves in
+          # the feedback gate's `pnpm` build. A no-op for adopter repos with no
+          # submodule. actions/checkout rewrites `git@github.com:` submodule URLs
+          # to token-https; a PUBLIC submodule then needs no extra credential.
+          submodules: recursive
 
       # Execution is the repo-portable composite action (ADR 0062): it sets up
       # Node, installs the selected runner CLI, and runs the version-pinned

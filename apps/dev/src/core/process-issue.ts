@@ -27,6 +27,7 @@ import {
   type GitExec,
 } from "./remote-branch.js";
 import { buildHandoff, EXIT_PROTOCOL, type HandoffComment } from "./handoff.js";
+import { evaluateGoalPredicate } from "./goal-predicate.js";
 import {
   type AgentOutcome,
   type AgentEffort,
@@ -67,6 +68,7 @@ import { resolveHooks, type ResolveHooksOptions, type ResolvedHooks, type HookNa
 import { formatStartedMarker } from "./heartbeat.js";
 import { parseReqLabels, planCloseCascade, type DependentIssue } from "./boot-sweep.js";
 import { buildAttemptRecordPayload, type AttemptRecordPayload } from "./attempt-record.js";
+import { acquireClaim, type ClaimGh, type ClaimReconcileOptions } from "./claim.js";
 import { parseCurrentBlocker, upsertCurrentBlocker, type CurrentBlocker } from "./blocker-state.js";
 import { parseTrustPolicy, evaluateTrustGate, type TrustProvenance } from "./trust-gate.js";
 import type { AfkModelTier, ConfigValues } from "./config.js";
@@ -187,6 +189,14 @@ export interface ProcessLookups {
    * (the legacy behaviour).
    */
   branchPresent?(branch: string): Promise<boolean>;
+  /**
+   * Goal predicate own-merge signal (ADR 0057): has the worker branch already
+   * landed in `<base>`? Consulted ONCE when the attempt-guard poll observes the
+   * claimed issue CLOSED, to map the moot attempt — `true` → the close carries
+   * THIS attempt's own merge (`done`); `false`/absent → a foreign lander closed
+   * it (`claim-lost`). Optional so legacy wiring/tests degrade to `claim-lost`.
+   */
+  branchMerged?(branch: string, base: string): Promise<boolean>;
 }
 
 /** The hook dispatch surface: the parsed config + the default resolver + the
@@ -203,6 +213,15 @@ export interface ProcessHooks {
 export interface ProcessIssueDeps {
   gh: ProcessGh;
   claimLock: ProcessClaimLock;
+  /** Atomic GitHub-native claim arbitration (ADR 0066). The authority that
+   * decides the single winner across hosts — `claimLock` is now only a cheap
+   * same-host dedupe in front of it, and the `running` label is a projection,
+   * never the lock. Optional for back-compat: callers/tests that omit it fall
+   * back to the legacy `running`-label pre-check as the lock. */
+  claimGh?: ClaimGh;
+  /** Injected staleness predicate for cross-host stale-claim recovery (ADR 0066).
+   * Defaults to "never stale" when omitted. */
+  claimStale?: ClaimReconcileOptions["isStale"];
   fs: ProcessFs;
   git: ProcessGit;
   /** git executor for merge.ts (integrateOrigin / landMerge / landPr). */
@@ -359,6 +378,10 @@ export interface ProcessIssueInput {
   runner: Runner;
   /** Worker id (the `{id}` in the branch ref / attempt dir). */
   workerId: string;
+  /** Claimant identity for the GitHub-native claim (`host:worker_id`, ADR 0066).
+   * Unique per worker process per host so two hosts never collide. Defaults to
+   * `workerId` when the caller does not resolve a hostname. */
+  claimant?: string;
   /** .red/tmp root, for the attempt dir + claim lock paths. */
   tmpDir: string;
   /** Attempt number from the attempt-ledger (1-based). */
@@ -422,6 +445,8 @@ import { LABEL_READY, LABEL_RUNNING, LABEL_HUMAN, LABEL_DEPENDENCY } from "./tri
 function blockedLabelsIn(labels: string[]): string[] {
   return labels.filter((l) => l.startsWith("blocked:"));
 }
+
+const MECHANICAL_BLOCKER_KINDS = new Set(["stalled", "crashed", "merge-conflict"]);
 
 /**
  * ADDITIVE typed-blocked observability tag. Apply the routing label transition
@@ -533,20 +558,46 @@ export async function processIssue(
     return !result.aborted;
   };
 
-  // ---- 1. claim ----
-  // local mkdir lock → pre-check ready-for-agent still present / not running →
-  // the actual edit. A lost race at any layer abandons the attempt and skips.
+  // ---- 1. claim (ADR 0066: atomic GitHub-native claim) ----
+  // The host-local mkdir lock is now only a CHEAP same-host dedupe in front of
+  // the real arbiter; the cross-host winner is decided by the GitHub-native
+  // claim (a structured claim-comment whose server-assigned id is the total
+  // order). A lost race at either layer abandons the attempt cleanly.
   if (!(await deps.claimLock.acquire(issue))) {
     return claimLost(issue, hooksFired);
   }
+  // State-validity recheck: the issue must still want an agent. This is NOT the
+  // contention lock (that is the claim below) — it only rejects an issue that was
+  // closed/blocked/re-triaged out of `ready-for-agent` between selection and now.
+  // `running` is deliberately NOT consulted here: it is a projection, not a lock.
   const labels = await deps.gh.viewLabels(issue);
-  if (!labels.includes(LABEL_READY) || labels.includes(LABEL_RUNNING)) {
+  if (!labels.includes(LABEL_READY)) {
+    await deps.claimLock.release(issue);
+    return claimLost(issue, hooksFired);
+  }
+  // Atomic GitHub-native arbitration. When `claimGh` is wired (production), this
+  // is the authority that guarantees a single winner across hosts. Omitted only
+  // by legacy callers/tests, which fall back to the `running` pre-check below.
+  if (deps.claimGh) {
+    const decision = await acquireClaim(
+      deps.claimGh,
+      { worker: input.claimant ?? input.workerId, runner: input.runner },
+      issue,
+      { isStale: deps.claimStale },
+    );
+    if (decision.verdict === "lost") {
+      // acquireClaim already conceded our marker; nothing to project, next issue.
+      await deps.claimLock.release(issue);
+      return claimLost(issue, hooksFired);
+    }
+  } else if (labels.includes(LABEL_RUNNING)) {
+    // Legacy lock (no claimGh): `running` present means another worker holds it.
     await deps.claimLock.release(issue);
     return claimLost(issue, hooksFired);
   }
 
   const activeBlocker = parseCurrentBlocker(input.body);
-  if (activeBlocker) {
+  if (activeBlocker && !MECHANICAL_BLOCKER_KINDS.has(activeBlocker.kind)) {
     await editLabelsTagged(deps, issue, [LABEL_READY], [LABEL_HUMAN], "blocked");
     await deps.gh.comment(
       issue,
@@ -587,10 +638,15 @@ export async function processIssue(
     }
   }
 
-  // Promote to running, shedding any stale `blocked:*` reason in the same edit
-  // (#402). `labels` was just fetched above, so we only remove labels the issue
-  // actually carries — a clean promotion the adoption doctor can never flag.
-  if (!(await deps.gh.editLabels(issue, [LABEL_READY, ...blockedLabelsIn(labels)], [LABEL_RUNNING]))) {
+  // Project the `running` label, shedding any stale `blocked:*` reason in the same
+  // edit (#402). `labels` was just fetched above, so we only remove labels the
+  // issue actually carries — a clean promotion the adoption doctor can never flag.
+  // Under ADR 0066 this is a best-effort OBSERVABILITY PROJECTION: the claim is
+  // already won via the GitHub-native arbiter, so a failed label edit must not
+  // abandon the attempt. Legacy callers (no `claimGh`) keep the old semantics
+  // where the edit-to-running was the lock and its failure lost the claim.
+  const promoted = await deps.gh.editLabels(issue, [LABEL_READY, ...blockedLabelsIn(labels)], [LABEL_RUNNING]);
+  if (!promoted && !deps.claimGh) {
     await deps.claimLock.release(issue);
     return claimLost(issue, hooksFired);
   }
@@ -707,10 +763,15 @@ export async function processIssue(
       branch,
       base,
       cwd: input.attemptDir,
-      // Native-path liveness: drain sandcastle's file-log to the attempt dir and
-      // forward each agent stream event to the lanes (agent.log.jsonl + firehose)
-      // so the stall detector / monitor see a live agent instead of a frozen lane.
-      logPath: `${input.attemptDir}/sandcastle.log`,
+      // Native-path liveness + ONE unified human log: point red-castle's file-log
+      // at the attempt's `afk.log` (our canonical log, the one `state.log` and
+      // `tail -f afk.log` reference) instead of a separate `sandcastle.log`, so the
+      // setup phase red-castle narrates (worktree / sandbox / deps) lands in the
+      // SAME file as the agent turns + heartbeats — no more empty log before the
+      // agent streams. The structured per-event lanes (agent.log.jsonl + firehose)
+      // still get every stream event via `onAgentEvent`; the plaintext `[agent]`
+      // mirror is dropped (run.ts) so agent turns are not doubled in afk.log.
+      logPath: `${input.attemptDir}/afk.log`,
       onAgentEvent: deps.recordAgentEvent,
       // Externalized proof-of-life (PR-B): the attempt-guard poll fires this each
       // tick. processIssue owns the hook dispatcher, so it fires the `on_heartbeat`
@@ -734,6 +795,11 @@ export async function processIssue(
       // SIGKILL mid-iteration preserves the diff on origin. Best-effort.
       remote: input.remote,
       continuousPush: true,
+      // Goal predicate (ADR 0057): rides the attempt-guard poll — one issue-state
+      // read per tick. A CLOSED claimed issue moots the attempt (the 2026-06-09
+      // re-verify incident). issueClosed resolves false on a gh failure, so an
+      // uncertain read is a no-op (the predicate never kills on uncertainty).
+      goalProbe: () => deps.gh.issueClosed(issue),
       // FIX J: env computed by the pre_worktree hook (e.g. CARGO_TARGET_DIR per
       // slot) — runAgent applies it to the spawned agent's environment.
       env: agentEnv,
@@ -774,10 +840,12 @@ export async function processIssue(
         branch,
         base,
         cwd: input.attemptDir,
-        logPath: `${input.attemptDir}/sandcastle.log`,
+        logPath: `${input.attemptDir}/afk.log`,
         onAgentEvent: deps.recordAgentEvent,
         remote: input.remote,
         continuousPush: true,
+        // Goal predicate rides the fallback attempt's guard poll too (ADR 0057).
+        goalProbe: () => deps.gh.issueClosed(issue),
         // FIX J: carry the pre_worktree env onto the fallback runner too.
         env: agentEnv,
       });
@@ -861,6 +929,48 @@ export async function processIssue(
         `🤖 /afk: no-sentinel exit but worker branch \`${workerBranch}\` carries work — salvaging through the feedback gate (issue #332).`,
       );
       await fireHook("post_attempt", postAttemptContext(current, workerBranch, "success", "no-sentinel"));
+    } else if (run.outcome === "goal-moot") {
+      // ---- goal predicate fired (ADR 0057): the claimed issue is already CLOSED ----
+      // The attempt's goal is already reflected in the world (the 2026-06-09
+      // re-verify incident). Terminate deterministically WITHOUT a terminal
+      // envelope — at most ONE concise local record, so the issue thread stays
+      // readable. Map the moot attempt with the pure predicate: own-merge close →
+      // `done`; foreign close → `claim-lost`. The own-merge signal is best-effort
+      // (an absent lookup or any failure degrades to `claim-lost`, never falsely
+      // claiming credit).
+      const ownMerge = deps.lookups.branchMerged
+        ? await deps.lookups.branchMerged(workerBranch, base).catch(() => false)
+        : false;
+      const verdict = evaluateGoalPredicate({ closed: true, ownMerge });
+      const outcome: ProcessOutcome = verdict === "done" ? "done" : "claim-lost";
+      // Close the per-attempt lifecycle symmetrically (the pre_attempt hook fired
+      // at claim). No on_attempt_error — a mooted attempt is not a crash.
+      await fireHook(
+        "post_attempt",
+        postAttemptContext(current, workerBranch, verdict === "done" ? "success" : "fail", "goal-moot"),
+      );
+      deps.appendIterLog(
+        verdict === "done"
+          ? `🤖 /afk #${issue}: goal predicate — issue already CLOSED by this attempt's own merge; nothing to land (done).`
+          : `🤖 /afk #${issue}: goal predicate — issue already CLOSED by another lander; attempt mooted (claim-lost).`,
+      );
+      // Best-effort hygiene: drop our now-stale `running` label so a CLOSED issue
+      // is never left tagged running. The foreign lander typically already shed it.
+      try {
+        await deps.gh.editLabels(issue, [LABEL_RUNNING], []);
+      } catch {
+        // best-effort: a label failure on an already-closed issue is cosmetic.
+      }
+      await deps.claimLock.release(issue);
+      return {
+        outcome,
+        issue,
+        branch: workerBranch,
+        base,
+        hooksFired,
+        preserved: false,
+        swept: false,
+      };
     } else if (run.outcome === "timeout") {
       // ---- attempt progress guard fired: alive but no new commit within the cap. ----
       // Before escalating, try the ADR 0055 NO-AGENT reconcile: a stalled attempt
@@ -1049,8 +1159,16 @@ export async function processIssue(
       title: input.title,
     },
     {
-      preMerge: () => hookContext({ issue, title: input.title, workspace: input.repoDir, branch: workerBranch }),
-      postMerge: () => hookContext({ issue, title: input.title, workspace: input.repoDir, branch: workerBranch }),
+      preMerge: () =>
+        hookContext({ issue, title: input.title, workspace: input.repoDir, branch: workerBranch, merge_base: base }),
+      postMerge: (mergeSha?: string) =>
+        hookContext({
+          issue,
+          title: input.title,
+          workspace: input.repoDir,
+          branch: workerBranch,
+          merge_commit: mergeSha ? { sha: mergeSha, short: mergeSha.slice(0, 7) } : undefined,
+        }),
     },
   );
   if (!landing.ok) {

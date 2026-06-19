@@ -9,9 +9,10 @@ stale notes inline.
 > **0005** to **0046**.
 > **0043** was reserved/pending for PR #393 ("dev loop / ship") while that PR was
 > in flight; do not reclaim the number.
-> **0058** is held by an unmerged AFK "goal-predicate" branch (commit `daa3cc18`)
-> and never landed on `main`; if that branch is abandoned the number is free,
-> otherwise it lands with it — do not reclaim it blindly.
+> **0058** was reserved by an unmerged AFK "goal-predicate" branch (commit
+> `daa3cc18`) that never landed on `main`; PRD #614 / issue #629 reassigned the
+> number to **AFK bundle release channels** (the goal-predicate branch must pick
+> a free number if it is ever revived).
 
 ## Repo structure & contexts
 - **0021** Multi-context plugin glossaries — *accepted* (predates the `brain` plugin; the multi-context model now spans `dev`/`memory`/**`brain`** — see the *Brain plugin* section and `.red/contexts/brain/`)
@@ -31,6 +32,7 @@ stale notes inline.
 - **0039** Plugin entrypoints share one source, selected by a build role (unifies red-fetch/afk/code-nav/memory launchers)
 - **0040** Version is a single source, written by one script; CLIs & MCP launchers version-aware
 - **0052** One bundle-naming convention — all release assets under `./dist/` as `<app>[-<role>].bundle.min.mjs`; legacy `dist-bundle/*-cli.mjs` removed *(supersedes 0029's dual output for memory/brain)*
+- **0058** AFK bundle release channels — `stable` (default, version-pinned = today) and `canary` (opt-in, floating `canary` tag) resolved by the 0038 launcher from `RED_SKILLS_CHANNEL`/`plugins.dev.afk.release.channel`; promotion is a tag move gated on the proof-by-drain history telemetry *(PRD #614 / #629; extends 0038/0039, config via 0042)*
 
 ## AFK execution & lifecycle
 
@@ -61,6 +63,8 @@ stale notes inline.
 - **0054** AFK arms the attempt guard + heartbeat under docker/podman isolation via an attempt-dir bind mount; lane-idle reaper stays host-only *(supersedes 0044 §4 / 0045 §4; relies on 0033; absorbs #284 docker E2E)*
 - **0059** OpenCode is the third AFK runner, addressing OpenRouter through its own `openrouter/<vendor>/<model>` slug + the `OpenCodeOptions.env` auth seam; accepted only as an explicit pin, never auto-sniffed. **Amended (1):** endpoint-agnostic — accepts any `<provider>/<model>` slug, propagates the first-set auth env-var (OPENAI_API_KEY > MINIMAX_API_KEY > OPENROUTER_API_KEY) through `OpenCodeOptions.env`; OpenCode owns endpoint resolution. **Amended (2):** MiniMax subscription API as the concrete case that motivated the endpoint-agnostic property *(follows 0003, 0033, 0049; refined by 0062)*
 - **0062** AFK Actions lane is a repo-portable composite action (`.github/actions/afk-attempt`) under a thin reusable workflow (triggers + trust gate); execution carries its own red-skills checkout so the launcher resolves in any adopter repo *(refines 0059; reuses 0038/0039 launcher, 0033/0061 seam, 0056 gate)*
+- **0065** AFK worker vitals are one canonical `WorkerVitals` vocabulary across the chain (red-castle → state → statusline/monitor/dashboard); kills name drift (`thinking`→`reasoning`, drop `diff_*` alias, `last_progress_at`→`last_commit_at`), adds the honest `last_event_at` liveness clock + per-worker cost from red-castle's `usage` event *(proposed; formalizes 0044/0045; relies on 0033/0061 seam)*
+- **0066** AFK atomic GitHub-native claim: a pure reconciler over server-ordered claim comments decides the single winner; `running` and friends become an observability projection, never the lock *(claim-substrate slice of PRD #614 / #622, which call it "ADR 0056"; chosen primitive = structured claim-comment ordering, rejecting assignee CAS + check-run; reuses the `core/mirror.ts` pure-reconciler/injected-client shape; #434 mkdir lock demoted to same-host dedupe; proceeds into 0030/0048 landing)*
 
 ## Branch lock
 - **0006** Branch lock enforces on the agent only, not the human terminal

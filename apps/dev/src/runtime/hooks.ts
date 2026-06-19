@@ -55,12 +55,19 @@ export function makeHookResolveOptions(root: string): ResolveHooksOptions {
   return { defaultCommand: scriptDefaultResolver(defaultsDir, existsSync) };
 }
 
-/** The RED_AFK_* env handed to every hook command. */
-export function hookEnv(repo: string, root: string, slot?: number): Record<string, string> {
+/**
+ * The base RED_AFK_* env handed to every hook command. Event-specific context
+ * can override RED_AFK_WORKSPACE when dispatchHooks layers per-hook variables.
+ */
+export function hookEnv(repo: string, root: string, slot?: number, runner?: string): Record<string, string> {
   const env: Record<string, string> = {
     RED_AFK_REPO: repo,
     RED_AFK_ROOT: root,
+    RED_AFK_WORKSPACE: root,
   };
+  if (runner !== undefined && runner.length > 0) {
+    env.RED_AFK_RUNNER = runner;
+  }
   if (slot !== undefined) {
     env.RED_AFK_SLOT = String(slot);
   }

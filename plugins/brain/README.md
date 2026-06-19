@@ -50,6 +50,13 @@ matches, artifact kind matches, and graph connections all contribute to each
 hit's `score_breakdown`. The contract already reserves a `vector` score slot, but
 embeddings are not required for the local Brain MVP.
 
+`brain think` turns that ranking into a cited Brain answer. It returns the
+original hits plus stable `citations`, a deterministic `confidence` label, and a
+`missing_evidence` list so the Brain can say when it has weak or absent evidence
+instead of fabricating certainty. Citations point back to the Brain artifact rid,
+kind, id, score signals, excerpt, and any captured source path/session/agent
+provenance.
+
 Brain can also act on a channel. `brain_act` (MCP) and `brain act --target
 <channel> --message <text>` (CLI) post a message to a channel target through the
 Channel bridge in outbound-only mode: the bridge sends standalone using
@@ -62,3 +69,10 @@ Core skills: [capture](./skills/core/capture/SKILL.md),
 [status](./skills/core/status/SKILL.md), and
 [view](./skills/core/view/SKILL.md). `view` opens `brain.rdb` in red-ui for
 graph/connection exploration.
+
+`brain dashboard` generates the separate daily-driver surface: a self-contained
+HTML overview with KpiQuery-backed event metrics, recent decisions, and recent
+typed connections. It is intentionally not a node-link graph and does not reuse
+the Memory Workbench. Use `brain dashboard --out dashboard.html` for a file,
+`brain dashboard --json` for the underlying `brain.dashboard.v1` contract, or
+`brain dashboard --serve --port 4738` for a loopback local URL.

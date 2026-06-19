@@ -156,9 +156,9 @@ export function routeModelTier(
     return { kind: "audit", tier, model: resolved.model, reason };
   }
 
-  // path (a): rewrite. Preserve the full original input, override only model.
+  // path (a): rewrite. Preserve the full original input, override model and effort.
   const original = input.tool_input ?? {};
-  const updatedInput: Record<string, unknown> = { ...original, model: resolved.model };
+  const updatedInput: Record<string, unknown> = { ...original, model: resolved.model, effort: resolved.effort };
   return {
     kind: "rewrite",
     tier,

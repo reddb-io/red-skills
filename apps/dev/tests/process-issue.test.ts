@@ -49,6 +49,10 @@ interface Trace {
 interface HarnessOptions {
   labels?: string[];
   acquire?: boolean;
+  /** Inject the ADR 0066 GitHub-native claim arbiter. When set, the claim path
+   * is the authority and `running` is a projection. The `winner` field decides
+   * the verdict for the test (self worker is "h:w"). */
+  claim?: { winner: "self" | "other" };
   outcome?: RunAgentResult["outcome"];
   /** Scripted per-call outcomes (overrides `outcome`); one entry per runAgent call. */
   outcomes?: RunAgentResult["outcome"][];
@@ -75,6 +79,10 @@ interface HarnessOptions {
   /** FIX E: result of the worker-branch presence check. Defaults to true
    * (present). Set false to model "sandcastle commits never reached the host". */
   branchPresent?: boolean;
+  /** Goal predicate own-merge signal (ADR 0057): result of lookups.branchMerged.
+   * true → the worker branch already landed in <base> (own-merge close → done);
+   * false (default) → a foreign lander closed it (claim-lost). */
+  branchMerged?: boolean;
   fallbackRunner?: boolean;
   /** Records each git fetch-base call (the ADR 0031 start-point fetch). */
   fetchedBases?: string[];
@@ -185,6 +193,23 @@ function harness(opts: HarnessOptions = {}): {
       // so legacy-shaped tests omit it and the gate never fires (permissive).
       issueTrust: opts.trust ? async () => opts.trust! : undefined,
     },
+    claimGh: opts.claim
+      ? {
+          async postClaim(_issue, body) {
+            trace.comments.push({ issue: 9, body });
+            return 100; // our claim gets id 100
+          },
+          async listClaims() {
+            // "other" wins by posting an earlier id (50); "self" wins solo.
+            return opts.claim?.winner === "other"
+              ? [{ id: 50, body: "<!-- afk:claim v1 worker=otherhost:wZZZZ kind=claim -->" }]
+              : [];
+          },
+          async concede(_issue, body) {
+            trace.comments.push({ issue: 9, body });
+          },
+        }
+      : undefined,
     claimLock: {
       async acquire() {
         return opts.acquire ?? true;
@@ -363,6 +388,9 @@ function harness(opts: HarnessOptions = {}): {
       async branchPresent() {
         return opts.branchPresent ?? true;
       },
+      async branchMerged() {
+        return opts.branchMerged ?? false;
+      },
     },
     envelope: {
       git: async () => ({ code: 0, stdout: "", stderr: "" }),
@@ -415,6 +443,7 @@ function harness(opts: HarnessOptions = {}): {
     body: opts.body ?? "## Agent brief\nDo it.",
     runner: "claude",
     workerId: "wAAAA",
+    claimant: "testhost:wAAAA",
     tmpDir: "/tmp/afk",
     attempt: opts.attempt ?? 1,
     attemptDir: "/tmp/afk/workers/wAAAA/9-a1",
@@ -786,6 +815,28 @@ describe("processIssue — active Current blocker preflight", () => {
     expect(trace.comments[0]?.body).toContain("active Current blocker (decision)");
     expect(trace.released).toEqual([9]);
   });
+
+  it("does not escalate a mechanical Current blocker before reconcile can handle it", async () => {
+    const body = upsertCurrentBlocker("## Agent brief\nDo it.", {
+      status: "blocked",
+      kind: "stalled",
+      summary: "Worker stopped after pushing a branch.",
+      next: "Reconcile the owned branch.",
+    });
+    const { deps, input, trace } = harness({
+      body,
+      labels: ["ready-for-agent", "blocked:stalled"],
+      outcome: "done",
+      feedbackOk: true,
+    });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(trace.runAgentCalls.length).toBe(1);
+    expect(labelTrace(trace)[0]).toBe("-ready-for-agent+blocked:stalled|+running");
+    expect(trace.comments.map((c) => c.body).some((body) => body.includes("preflight stopped"))).toBe(false);
+    expect(trace.ensuredLabels).not.toContain("blocked:spec");
+  });
 });
 
 describe("processIssue — feedback fail", () => {
@@ -1031,6 +1082,125 @@ describe("processIssue — claim lost", () => {
     // no claim edit submitted; the claim lock was released.
     expect(trace.labelEdits).toEqual([]);
     expect(trace.released).toEqual([9]);
+  });
+
+  // ADR 0066: with the GitHub-native arbiter wired, `running` is a projection and
+  // the claim comment decides the winner.
+  it("concedes cleanly when it loses the GitHub-native claim (claim-lost, no agent)", async () => {
+    // `running` is even PRESENT here — proving it is no longer consulted as the
+    // lock; the earlier claim comment is what makes us lose.
+    const { deps, input, trace } = harness({ claim: { winner: "other" }, labels: ["ready-for-agent", "running"] });
+    const result = await processIssue(deps, input);
+    expect(result.outcome).toBe("claim-lost");
+    expect(trace.labelEdits).toEqual([]); // never projected running — we lost
+    expect(trace.released).toEqual([9]);
+    expect(trace.runAgentCalls).toEqual([]); // no agent spawned
+    // posted a claim then a concede (both recorded as comments).
+    expect(trace.comments.some((c) => /conceded/.test(c.body))).toBe(true);
+  });
+
+  it("wins the GitHub-native claim solo and proceeds (running projected best-effort)", async () => {
+    const { deps, input, trace } = harness({ claim: { winner: "self" } });
+    const result = await processIssue(deps, input);
+    expect(result.outcome).toBe("done");
+    // running was PROJECTED (label edit applied) but is not the lock.
+    expect(trace.labelEdits.some((e) => e.add.includes("running"))).toBe(true);
+    expect(trace.comments.some((c) => /AFK claim by worker/.test(c.body))).toBe(true);
+  });
+});
+
+describe("processIssue — goal predicate (ADR 0057)", () => {
+  it("maps a foreign close to claim-lost: releases the claim, drops running, no envelope spam", async () => {
+    const { deps, input, trace } = harness({ outcome: "goal-moot", branchMerged: false });
+    const result = await processIssue(deps, input);
+    expect(result.outcome).toBe("claim-lost");
+    // The attempt is moot — nothing is landed/closed and no terminal envelope is posted.
+    expect(trace.postedEnvelopes).toEqual([]);
+    expect(trace.closed).toEqual([]);
+    // The claim lock is released so the slot is not leaked.
+    expect(trace.released).toEqual([9]);
+    // Best-effort hygiene: our stale `running` label is shed.
+    expect(trace.labelEdits.some((e) => e.remove.includes("running") && e.add.length === 0)).toBe(true);
+    // At most one concise local record; the issue thread stays readable.
+    const moot = trace.iterLogs.filter((l) => /goal predicate/.test(l));
+    expect(moot).toHaveLength(1);
+    expect(moot[0]).toMatch(/another lander.*claim-lost/);
+  });
+
+  it("maps this attempt's own merge to done (the close carries our landed branch)", async () => {
+    const { deps, input, trace } = harness({ outcome: "goal-moot", branchMerged: true });
+    const result = await processIssue(deps, input);
+    expect(result.outcome).toBe("done");
+    // Still no re-landing / re-close — the work is already in the world.
+    expect(trace.postedEnvelopes).toEqual([]);
+    expect(trace.closed).toEqual([]);
+    expect(trace.released).toEqual([9]);
+    const moot = trace.iterLogs.filter((l) => /goal predicate/.test(l));
+    expect(moot).toHaveLength(1);
+    expect(moot[0]).toMatch(/own merge.*done/);
+  });
+
+  it("threads the goalProbe onto the runAgent input so the guard polls issue state", async () => {
+    const { deps, input, trace } = harness({ outcome: "goal-moot", branchMerged: false });
+    await processIssue(deps, input);
+    expect(typeof trace.runAgentCalls[0]?.goalProbe).toBe("function");
+  });
+});
+
+describe("processIssue — trust gate (#621)", () => {
+  const ALLOW: ConfigValues = { "afk.trust-gate.allowlist": "alice,bob" };
+
+  it("refuses a non-executable issue BEFORE any claim edit / worktree, with a clear log line", async () => {
+    const { deps, input, trace } = harness({
+      config: ALLOW,
+      trust: { author: "stranger", readyForAgentActor: "alice" },
+    });
+    const result = await processIssue(deps, input);
+    expect(result.outcome).toBe("claim-lost");
+    // No promotion edit, no agent spawn — refused before any work.
+    expect(trace.labelEdits).toEqual([]);
+    expect(trace.runAgentCalls).toEqual([]);
+    // Claim lock released so the slot is not leaked.
+    expect(trace.released).toEqual([9]);
+    // A clear, attributable log line names the gate + the reason.
+    expect(trace.iterLogs.some((l) => /trust gate refused #9.*untrusted author 'stranger'/.test(l))).toBe(true);
+  });
+
+  it("refuses when ready-for-agent was applied by a non-allowlisted actor", async () => {
+    const { deps, input, trace } = harness({
+      config: ALLOW,
+      trust: { author: "alice", readyForAgentActor: "github-actions[bot]" },
+    });
+    const result = await processIssue(deps, input);
+    expect(result.outcome).toBe("claim-lost");
+    expect(trace.runAgentCalls).toEqual([]);
+    expect(trace.iterLogs.some((l) => /trust gate refused.*github-actions\[bot\]/.test(l))).toBe(true);
+  });
+
+  it("claims normally when author AND label actor are both allowlisted", async () => {
+    const { deps, input, trace } = harness({
+      config: ALLOW,
+      outcome: "done",
+      feedbackOk: true,
+      trust: { author: "alice", readyForAgentActor: "bob" },
+    });
+    const result = await processIssue(deps, input);
+    expect(result.outcome).toBe("done");
+    // The promotion-to-running claim edit ran (the gate passed).
+    expect(trace.labelEdits[0]!.add).toEqual(["running"]);
+    expect(trace.runAgentCalls).toHaveLength(1);
+  });
+
+  it("is permissive when no allowlist is configured — the gate never fires even with an untrusted author", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      trust: { author: "stranger", readyForAgentActor: "anybody" },
+    });
+    const result = await processIssue(deps, input);
+    expect(result.outcome).toBe("done");
+    expect(trace.runAgentCalls).toHaveLength(1);
+    expect(trace.iterLogs.some((l) => /trust gate/.test(l))).toBe(false);
   });
 });
 

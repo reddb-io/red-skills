@@ -18,3 +18,14 @@ export {
   type RouterSchema,
 } from "./args.js";
 export * from "./log.js";
+export {
+  CANARY_TAG,
+  CHANNEL_ENV_VAR,
+  DEFAULT_CHANNEL,
+  RELEASE_CHANNELS,
+  channelReleaseRef,
+  normalizeChannel,
+  resolveChannel,
+  type ReleaseChannel,
+  type ResolveChannelOptions,
+} from "./channel.js";

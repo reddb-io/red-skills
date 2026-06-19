@@ -1,7 +1,9 @@
 # Example: thin caller for the reddb-io/red-skills AFK Actions lane
 #
-# Copy this file verbatim into your repo at
-# `.github/workflows/red-afk-attempt.yml`, then edit:
+# Copy this file into your repo at
+# `.github/workflows/red-skills-afk-attempt.yml` (the `red-skills-*`
+# installed-name convention — only the filename changes; the `uses:` ref
+# below keeps the `reusable-` source name), then edit:
 #   1. `allowlist_authors` and `allowlist_label_actors` — the GitHub
 #      logins whose issues + label-applications you trust to drive an
 #      autonomous run. Adopters: keep these short. Public repos: lean
@@ -12,7 +14,7 @@
 #      `opencode-env.ts` picks the first set; the others are ignored.
 #
 # This file calls the published reusable workflow
-# `reddb-io/red-skills/.github/workflows/red-afk-attempt.yml@v1` and
+# `reddb-io/red-skills/.github/workflows/reusable-afk-attempt.yml@v1` and
 # is the only piece of YAML your repo needs to enable the AFK Actions
 # lane. The reusable itself also auto-triggers on `issues: labeled`
 # when this caller does NOT route through it (e.g. an external
@@ -21,7 +23,7 @@
 #
 # If you don't want this caller to exist at all (i.e. you only want
 # auto-trigger), you don't need this file: install
-# `reddb-io/red-skills/.github/workflows/red-afk-attempt.yml@v1`
+# `reddb-io/red-skills/.github/workflows/reusable-afk-attempt.yml@v1`
 # directly into your `.github/workflows/` and edit the
 # `allowlist_*` inputs there. The `if:` gate on that workflow
 # filters to the `ready-for-agent` label automatically.
@@ -38,7 +40,7 @@
 # write, pull-requests: write. No id-token (no OIDC), no actions:
 # write (the workflow does not publish actions).
 
-name: red-afk-attempt-caller
+name: red-skills-afk-attempt
 
 on:
   # Manual trigger from the Actions UI; the reusable's `if:` filter
@@ -47,9 +49,10 @@ on:
   workflow_dispatch:
     inputs:
       issue_number:
-        description: "Issue number to process (e.g. 631)."
-        required: true
+        description: "Issue number to process (e.g. 631). Leave EMPTY to auto-pick the oldest open ready-for-agent issue."
+        required: false
         type: string
+        default: ""
 
 permissions:
   contents: write
@@ -60,7 +63,7 @@ jobs:
   # A reusable workflow is invoked at the JOB level via `uses:` (NOT as a step) —
   # `with:`/`secrets:` are siblings of `uses:`, and the job has no `runs-on`/`steps`.
   attempt:
-    uses: reddb-io/red-skills/.github/workflows/red-afk-attempt.yml@v1
+    uses: reddb-io/red-skills/.github/workflows/reusable-afk-attempt.yml@v1
     with:
       issue_number: ${{ inputs.issue_number }}
       runner: opencode

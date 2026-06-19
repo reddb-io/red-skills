@@ -12,7 +12,8 @@
 // Invocation: `node bin/afk.mjs statusline "<project-root>"` with the payload on
 // stdin. The root arg wins when it is a real directory (wire it as
 // `… statusline "$CLAUDE_PROJECT_DIR"`), else the payload's
-// `.workspace.current_dir // .cwd`, else `process.cwd()`.
+// `.workspace.project_dir` (the fixed session root — survives `cd` into subdirs),
+// else `.workspace.current_dir // .cwd`, else `process.cwd()`.
 
 import { existsSync, statSync } from "node:fs";
 import { join, basename } from "node:path";
@@ -46,7 +47,7 @@ function readStdin(stdin: NodeJS.ReadableStream & { isTTY?: boolean }): Promise<
 }
 
 interface ClaudePayload {
-  workspace?: { current_dir?: string };
+  workspace?: { project_dir?: string; current_dir?: string };
   cwd?: string;
   model?: { display_name?: string };
   effort?: { level?: string };
@@ -72,13 +73,17 @@ function isDir(path: string): boolean {
 }
 
 /**
- * Resolve the project root the same way statusline.sh does: an explicit
- * first-arg directory wins, then the payload's `.workspace.current_dir // .cwd`,
- * then `cwd`.
+ * Resolve the project root: an explicit first-arg directory wins, then the
+ * payload's `.workspace.project_dir` — the directory the Claude Code session was
+ * STARTED in, which stays fixed as you `cd` into subdirectories — then the older
+ * `.workspace.current_dir // .cwd` (which track the live cwd) as fallbacks, then
+ * `cwd`. Preferring `project_dir` keeps the statusline anchored to the project
+ * you opened: the basename, git ref, and AFK worker block (resolved under
+ * `<root>/.red/tmp`) no longer change when you wander into a subdir.
  */
 export function resolveRoot(rootArg: string | undefined, payload: ClaudePayload, fallback: string): string {
   if (rootArg && isDir(rootArg)) return rootArg;
-  const fromPayload = payload.workspace?.current_dir || payload.cwd;
+  const fromPayload = payload.workspace?.project_dir || payload.workspace?.current_dir || payload.cwd;
   if (fromPayload) return fromPayload;
   return fallback;
 }

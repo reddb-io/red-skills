@@ -70,6 +70,19 @@ _Avoid_: automatic cache, search result, folder listing
 A derived view or cache that summarizes a slice of the Brain until a human or agent curates it into a **Brain index**.
 _Avoid_: canonical artifact, promoted knowledge, durable decision
 
+**Brain cited answer**:
+The deterministic `brain think` response that turns Brain search hits into a
+user-facing answer with stable citations, confidence, and evidence gaps. It is
+grounded in Brain artifacts and their RedDB graph signals; it must not fill gaps
+from uncited model knowledge.
+_Avoid_: uncited synthesis, freeform answer, hallucinated recall
+
+**Brain evidence gap**:
+An explicit `missing_evidence` item in a Brain cited answer, used when the Brain
+has no hits, weak hits, only one citation, or artifacts missing captured source
+provenance.
+_Avoid_: silent uncertainty, generic disclaimer, confidence padding
+
 **Brain capture**:
 The ingestion act that creates or updates a Brain artifact.
 _Avoid_: memory store, transcript logging

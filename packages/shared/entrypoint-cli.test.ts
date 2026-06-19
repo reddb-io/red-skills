@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { type EntrypointPlan, parseEntrypoint } from "./entrypoint-cli.js";
+import {
+  configuredChannelValue,
+  type EntrypointPlan,
+  parseEntrypoint,
+  resolveLauncherChannel,
+} from "./entrypoint-cli.js";
 
 const DEFAULT_REPO = "reddb-io/red-skills";
 
@@ -101,5 +106,54 @@ describe("parseEntrypoint", () => {
       repo: DEFAULT_REPO,
       help: false,
     });
+  });
+});
+
+describe("configuredChannelValue", () => {
+  const yaml = [
+    "plugins:",
+    "  dev:",
+    "    afk:",
+    "      release:",
+    "        channel: canary",
+    "      models:",
+    "        claude:",
+    "          validate:",
+    "            model: claude-haiku-4-5",
+  ].join("\n");
+
+  it("reads the namespaced plugins.dev.afk.release.channel key", () => {
+    expect(configuredChannelValue(yaml)).toBe("canary");
+  });
+
+  it("reads the legacy top-level afk.release.channel as a fallback", () => {
+    const legacy = ["afk:", "  release:", "    channel: canary"].join("\n");
+    expect(configuredChannelValue(legacy)).toBe("canary");
+  });
+
+  it("returns undefined when no channel key is present", () => {
+    expect(configuredChannelValue("plugins:\n  dev:\n    afk:\n      fleet:\n        target: 2")).toBeUndefined();
+    expect(configuredChannelValue("")).toBeUndefined();
+  });
+
+  it("ignores a commented-out channel line", () => {
+    const commented = ["plugins:", "  dev:", "    afk:", "      release:", "        # channel: canary"].join("\n");
+    expect(configuredChannelValue(commented)).toBeUndefined();
+  });
+});
+
+describe("resolveLauncherChannel", () => {
+  it("defaults to stable with no env and no config", () => {
+    expect(resolveLauncherChannel({}, undefined)).toBe("stable");
+  });
+
+  it("uses the configured channel when env is unset", () => {
+    const yaml = ["plugins:", "  dev:", "    afk:", "      release:", "        channel: canary"].join("\n");
+    expect(resolveLauncherChannel({}, yaml)).toBe("canary");
+  });
+
+  it("RED_SKILLS_CHANNEL env overrides config", () => {
+    const yaml = ["plugins:", "  dev:", "    afk:", "      release:", "        channel: canary"].join("\n");
+    expect(resolveLauncherChannel({ RED_SKILLS_CHANNEL: "stable" }, yaml)).toBe("stable");
   });
 });
