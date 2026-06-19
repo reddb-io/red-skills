@@ -16,6 +16,13 @@ describe("cli routing — native commands", () => {
     expect(parseCli(["retake", "#395", "--json"])).toEqual({ command: "retake", args: ["#395", "--json"] });
   });
 
+  it("routes review with its PR + runner flags preserved", () => {
+    expect(parseCli(["review", "--pr", "742", "--runner", "opencode"])).toEqual({
+      command: "review",
+      args: ["--pr", "742", "--runner", "opencode"],
+    });
+  });
+
   it("routes route-model-tier with its host flag preserved", () => {
     expect(parseCli(["route-model-tier", "--host", "claude"])).toEqual({
       command: "route-model-tier",

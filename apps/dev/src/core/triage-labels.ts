@@ -10,6 +10,11 @@
 export const LABEL_READY = "ready-for-agent";
 export const LABEL_RUNNING = "running";
 export const LABEL_HUMAN = "ready-for-human";
+// PR-object entry label (PRD #745, issue #746): a maintainer applies this to a
+// PR to request the advisory cloud review. It is the only PR-specific label —
+// the review then transitions the PR through the shared lifecycle vocabulary
+// (`running` / `ready-for-human` / `blocked:*`).
+export const LABEL_READY_FOR_REVIEW = "ready-for-review";
 
 // Priority / type labels
 export const LABEL_PRD = "type:prd";

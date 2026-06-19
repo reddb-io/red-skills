@@ -1,0 +1,73 @@
+# red-pr-review — advisory cloud PR review on `ready-for-review` (PRD #745, #746).
+#
+# The tracer-bullet event-router for the cloud-agent interaction spine. When a
+# maintainer applies the `ready-for-review` label to a PR, this thin workflow
+# parses the event and invokes the versioned `dev` bundle's `review` subcommand —
+# `dev review --pr N`. The binary owns ALL logic: it runs the vendored sandcastle
+# review engine under the OpenCode/MiniMax provider, posts inline comments + a
+# summary back through our `gh` runtime, and transitions the PR through the shared
+# lifecycle labels (`running` / `ready-for-human` / `blocked:*`).
+#
+# Label-application is the write-access gate: only maintainers can label, so no
+# comment-author authorization is needed here. The review is ADVISORY — it never
+# pushes code, so this workflow requests NO `contents: write`.
+#
+# Live firing additionally depends on runner-auth wiring (the MINIMAX/OPENAI/
+# OPENROUTER secrets) — a separate slice. Until those are set the job no-ops at
+# auth; the routing + subcommand contract is what this slice proves.
+
+name: red-pr-review
+
+on:
+  pull_request:
+    types: [labeled]
+
+# Minimal: read the code, write PR review comments + labels. No `contents: write`.
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  review:
+    # Only the `ready-for-review` label triggers the advisory review.
+    if: github.event.label.name == 'ready-for-review'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install the OpenCode runner CLI
+        run: npm install -g opencode-ai
+
+      - name: Run the advisory review
+        env:
+          # gh operations (read the PR + diff, post the review, edit labels).
+          GH_TOKEN: ${{ github.token }}
+          # CI never wants a nested container: force the no-sandbox lane.
+          RED_AFK_SANDBOX: none
+          # OpenCode auth — first set key wins (opencode-env.ts precedence). The
+          # cloud lane is non-resumable, so the review's structured-output
+          # `maxRetries` resolves to 0 and the advisory path runs single-attempt.
+          MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          set -euo pipefail
+          PR="${{ github.event.pull_request.number }}"
+          if ! [[ "$PR" =~ ^[0-9]+$ ]]; then
+            echo "::error::invalid PR number: '$PR'"; exit 1
+          fi
+          # The launcher resolves its version from plugins/dev/.claude-plugin and
+          # fetches the matching dev bundle from the Release (ADR 0038/0039), then
+          # forwards the `review` subcommand to the binary.
+          LAUNCHER="plugins/dev/skills/engineering/afk/bin/afk.mjs"
+          node "$LAUNCHER" review \
+            --pr "$PR" \
+            --runner opencode \
+            --repo "${{ github.repository }}"
