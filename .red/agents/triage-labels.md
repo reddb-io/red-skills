@@ -11,6 +11,7 @@ The skills speak in terms of canonical triage roles. Map them here to the actual
 | `needs-triage`     | `needs-triage`       | `red-issues-needs-triage` workflow, `/triage` | `/triage` (when state transitions) |
 | `needs-info`       | `needs-info`         | `/triage`                             | `/triage` (when reporter replies)   |
 | `ready-for-agent`  | `ready-for-agent`    | `/triage`, `/to-issues`               | `/afk` (when claiming)              |
+| `ready-for-review` | `ready-for-review`   | maintainer (on a **PR**)              | `dev review` (when starting the advisory review) |
 | `running`          | `running`            | `/afk` (when claiming an issue)       | `/afk` (on close, blocker, or release) |
 | `ready-for-human`  | `ready-for-human`    | `/triage`, `/afk` (on blocker)        | maintainer                          |
 | `blocked:dependency` | `blocked:dependency` | `/to-issues` (slice with open deps)  | `/afk` auto-unblock when last dep closes |
@@ -115,6 +116,58 @@ Worker liveness during a long execution is signalled **locally**, not on the thr
 - the state-file mtime, combined with orchestrator-PID liveness, which `/afk monitor` renders as `🟢 live` vs `🟡 stale`.
 
 See the AFK `SKILL.md` *Heartbeat (local-only, post-Slice-D)* section for the authoritative description.
+
+## Pull Requests as a First-Class Object Type
+
+Issues are not the only object that moves through this lifecycle. **Pull requests**
+are a first-class object type too (PRD #745, cloud-agent interaction). A PR reuses
+the **same** lifecycle vocabulary — `running`, `ready-for-human`, `blocked:*` — so
+there is no bespoke PR state machine to learn; only the **entry** label differs.
+
+### `ready-for-review` (PR entry label)
+
+The only PR-specific label. A maintainer applies `ready-for-review` to a PR to
+request the **advisory cloud review** (the `red-pr-review.yml` event-router
+workflow fires on `pull_request: labeled` and invokes `dev review --pr N`).
+Because only maintainers can apply labels, **label-application is itself the
+write-access gate** — this surface needs no separate comment-author authorization.
+
+### PR review lifecycle (reuses the issue labels)
+
+```
+   maintainer labels PR
+   ready-for-review
+          │
+   dev review (advisory):
+   remove ready-for-review,
+   add running
+          ▼
+   ┌──────────────┐
+   │   running    │   (review in flight — same label as a claimed issue)
+   └──────┬───────┘
+          │
+   ┌──────┴───────────────────────────┐
+   │                                   │
+ clean pass                     blocking findings
+   │                                   │
+   ▼                                   ▼
+ remove running              remove running, add
+ (PR transitions             blocked:validation +
+  out of review)             ready-for-human
+```
+
+The review is **advisory**: it posts inline comments (path + line) and a summary
+back to the PR, then transitions the label. It **never pushes code**, and the
+workflow requests no `contents: write`. A clean pass drops `running` (the PR
+leaves the review state); blocking findings reuse `blocked:validation` +
+`ready-for-human` (the same "a human must review the diff" semantics issues
+already use) rather than minting a new vocabulary. When the structured review
+cannot be extracted (e.g. the non-resumable OpenCode/MiniMax lane exhausts its
+single attempt), the advisory path degrades to a top-level comment + a
+`ready-for-human` hand-off — it never aborts silently.
+
+`ready-for-review` is created on demand (`gh label create ready-for-review`) and
+provisioned by `/setup-red-skills`.
 
 ## Optional Auxiliary Labels
 
