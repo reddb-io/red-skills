@@ -607,7 +607,7 @@ describe("processIssue — PR review gate (ADR 0064 §10, #749)", () => {
       outcome: "done",
       feedbackOk: true,
       locked: false,
-      classifyIssue: () => "complex",
+      classifyIssue: async () => "complex",
       reviewGate: { enabled: true, threshold: "complex" },
     });
     const calls = recordingMerge(deps);
@@ -637,7 +637,7 @@ describe("processIssue — PR review gate (ADR 0064 §10, #749)", () => {
       outcome: "done",
       feedbackOk: true,
       locked: false,
-      classifyIssue: () => "simple",
+      classifyIssue: async () => "simple",
       reviewGate: { enabled: true, threshold: "complex" },
     });
     const calls = recordingMerge(deps);
@@ -655,7 +655,7 @@ describe("processIssue — PR review gate (ADR 0064 §10, #749)", () => {
       outcome: "done",
       feedbackOk: true,
       locked: false,
-      classifyIssue: () => "complex",
+      classifyIssue: async () => "complex",
       // reviewGate omitted → gate off (today's behaviour).
     });
     const calls = recordingMerge(deps);
@@ -673,7 +673,7 @@ describe("processIssue — PR review gate (ADR 0064 §10, #749)", () => {
       outcome: "done",
       feedbackOk: true,
       locked: true,
-      classifyIssue: () => "think",
+      classifyIssue: async () => "think",
       reviewGate: { enabled: true, threshold: "complex" },
     });
     const calls = recordingMerge(deps);
