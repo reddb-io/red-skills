@@ -106,6 +106,91 @@ export function evaluateTrustGate(policy: TrustPolicy, provenance: TrustProvenan
   return { executable: true };
 }
 
+// ---------- actor-trust resolver (PRD #745, issue #747) ----------
+//
+// A LAYERED trust resolver over a single actor login, reused by two callers:
+// comment-command authorization and issue-author auto-triage gating. Where the
+// `evaluateTrustGate` predicate above is purely allowlist-driven, this resolver
+// makes the allowlist an OVERRIDE on top of a DYNAMIC base — GitHub write-access
+// or CODEOWNERS membership resolved through the `gh` runtime:
+//
+//   trust = (has write access OR is in CODEOWNERS) OR (in the allowlist override)
+//
+// The module stays IO-free: the gh-backed signal resolution is injected as an
+// `ActorTrustLookup`, so the resolver only DECIDES. Refusal reuses the same
+// `TrustVerdict` shape the gate already ships, with a human-readable reason.
+
+/** The dynamic-base signals resolved from the `gh` runtime for one actor on the
+ * repo. Each field is `undefined` when its gh read could not determine the
+ * signal (gh absent, unauthenticated, network blip, 404) — the resolver treats
+ * an undefined signal as "not available" rather than a definite `false`, which
+ * is what preserves the permissive default. */
+export interface ActorTrustSignals {
+  /** True when the actor has push (write) access or higher to the repo. */
+  hasWriteAccess?: boolean;
+  /** True when the actor appears as an owner in the repo's CODEOWNERS file. */
+  inCodeowners?: boolean;
+}
+
+/** The injected, gh-backed resolution of an actor's dynamic-base signals. The
+ * production implementation lives in runtime/gh.ts; tests inject a fake. */
+export type ActorTrustLookup = (actor: string) => Promise<ActorTrustSignals>;
+
+/** The layer that granted (or, on refusal, failed to grant) trust — surfaced on
+ * the verdict for the log line. */
+export type ActorTrustBasis = "write-access" | "codeowners" | "allowlist" | "permissive-default";
+
+/** The actor-trust verdict: the gate's {@link TrustVerdict} shape (so refusal
+ * flows through the existing path) plus the deciding {@link ActorTrustBasis}. */
+export interface ActorTrustVerdict extends TrustVerdict {
+  basis?: ActorTrustBasis;
+}
+
+/**
+ * Resolve whether `actor` is trusted on the repo. The SINGLE entry point reused
+ * by comment-author authz and issue-author gating.
+ *
+ * Precedence:
+ *   1. allowlist OVERRIDE — an allowlisted login is trusted even when gh cannot
+ *      resolve its access (so the existing config keeps working offline);
+ *   2. dynamic BASE — write access or CODEOWNERS membership (via `lookup`);
+ *   3. PERMISSIVE default — when NEITHER a base signal NOR an allowlist is
+ *      available/configured, trust everything (today's single-maintainer
+ *      behaviour, preserved EXACTLY);
+ *   4. otherwise REFUSE through the gate's `{ executable:false, reason }` shape.
+ */
+export async function resolveActorTrust(
+  policy: TrustPolicy,
+  actor: string | undefined,
+  lookup: ActorTrustLookup,
+): Promise<ActorTrustVerdict> {
+  const login = (actor ?? "").trim();
+  const allow = new Set(policy.allowlist);
+
+  // 1. allowlist override — highest precedence, no gh read required.
+  if (login && allow.has(login)) return { executable: true, basis: "allowlist" };
+
+  // 2. dynamic base — write access / CODEOWNERS membership through gh.
+  const signals = login ? await lookup(login) : {};
+  if (signals.hasWriteAccess) return { executable: true, basis: "write-access" };
+  if (signals.inCodeowners) return { executable: true, basis: "codeowners" };
+
+  // 3. permissive default — neither a determinable base signal nor an allowlist.
+  const baseAvailable =
+    signals.hasWriteAccess !== undefined || signals.inCodeowners !== undefined;
+  if (!baseAvailable && !policy.enabled) {
+    return { executable: true, basis: "permissive-default" };
+  }
+
+  // 4. refuse via the existing trust-gate refusal shape.
+  return {
+    executable: false,
+    reason:
+      `${login ? `actor '${login}'` : "actor (unknown)"} is not a repository maintainer — ` +
+      `no write access, not in CODEOWNERS, and not in the trust-gate allowlist`,
+  };
+}
+
 /** A `ready-for-agent` candidate the strip sweep examines: its number + the
  * provenance resolved from gh. */
 export interface TrustSweepCandidate {
