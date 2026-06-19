@@ -98,6 +98,56 @@ export async function classifyIssue(
   return maxTier(deterministic, modelTier ?? "validate");
 }
 
+/**
+ * Policy for the AFK / `/ship` PR review gate (ADR 0064 §10, issue #749). When
+ * AFK or `/ship` opens a PR for a completed attempt, the change's classified task
+ * tier decides whether it is "mechanical" (trivial / well-scoped, keeps the
+ * existing fast-merge path) or "non-mechanical" (risky / architectural, earns a
+ * fresh-agent review hop). Non-mechanical changes get `ready-for-review` applied
+ * to the PR — which fires the advisory review from #746 — and hold the merge;
+ * mechanical work fast-merges unchanged.
+ *
+ * Tuned per repo through the plugin config surface, so the gate can be turned
+ * on/off and its threshold moved without code changes.
+ */
+export interface ReviewGateConfig {
+  /**
+   * Master on/off. Off (the default) → the gate never requests review and AFK /
+   * `/ship` keep today's fast-merge behaviour for every tier.
+   */
+  enabled: boolean;
+  /**
+   * The cheapest task tier that counts as NON-mechanical. Tiers below it stay
+   * mechanical (fast-merge); this tier and anything above it request review.
+   * Defaults to `complex`, so `validate` / `simple` fast-merge while `complex` /
+   * `think` get the review hop.
+   */
+  threshold: TaskClass;
+}
+
+/** The default review-gate threshold: `complex` and above are non-mechanical. */
+export const DEFAULT_REVIEW_GATE_THRESHOLD: TaskClass = "complex";
+
+/**
+ * A change is mechanical when its task tier sits strictly below `threshold` —
+ * trivial / well-scoped work that keeps the fast-merge path. Pure ranking over
+ * the shared tier order; no config or IO.
+ */
+export function isMechanicalChange(taskClass: TaskClass, threshold: TaskClass): boolean {
+  return RANK[taskClass] < RANK[threshold];
+}
+
+/**
+ * Decide whether a completed attempt's PR should get `ready-for-review` (and the
+ * fresh-agent review hop) instead of fast-merging. True only when the gate is
+ * enabled AND the change is non-mechanical (tier at or above the threshold).
+ * Disabled → always false, preserving the existing fast-merge behaviour.
+ */
+export function shouldRequestReview(taskClass: TaskClass, config: ReviewGateConfig): boolean {
+  if (!config.enabled) return false;
+  return !isMechanicalChange(taskClass, config.threshold);
+}
+
 export function classifierPrompt(metadata: IssueClassificationMetadata): string {
   return [
     "Classify this AFK issue into the cheapest capable task tier.",
