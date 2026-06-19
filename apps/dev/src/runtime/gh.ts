@@ -707,6 +707,13 @@ export async function issueTrust(
   return { author, readyForAgentActor: actor };
 }
 
+/** `gh issue view --json author` → the author login, or undefined on failure.
+ * Exported for the trust-gated triage router (#751), which gates auto-triage on
+ * the AUTHOR alone (a `needs-triage` issue has no `ready-for-agent` actor yet). */
+export async function issueAuthor(ctx: GhContext, issue: number): Promise<string | undefined> {
+  return issueAuthorLogin(ctx, issue);
+}
+
 /** `gh issue view --json author` → the author login, or undefined on failure. */
 async function issueAuthorLogin(ctx: GhContext, issue: number): Promise<string | undefined> {
   const r = await runGh(ctx, ["issue", "view", String(issue), ...repoArgs(ctx), "--json", "author"]);

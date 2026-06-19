@@ -16,6 +16,16 @@ export const LABEL_HUMAN = "ready-for-human";
 // (`running` / `ready-for-human` / `blocked:*`).
 export const LABEL_READY_FOR_REVIEW = "ready-for-review";
 
+// Triage state labels
+export const LABEL_NEEDS_TRIAGE = "needs-triage";
+export const LABEL_NEEDS_INFO = "needs-info";
+export const LABEL_WONTFIX = "wontfix";
+
+// Control label: a maintainer summon that releases an untrusted author's
+// `needs-triage` issue to auto-triage (#751). Created on demand like the other
+// auxiliary labels. The `/dev triage` invocation is the other summon channel.
+export const LABEL_TRIAGE_SUMMON = "triage:summon";
+
 // Priority / type labels
 export const LABEL_PRD = "type:prd";
 export const LABEL_URGENT = "priority:urgent";

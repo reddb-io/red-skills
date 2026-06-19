@@ -12,4 +12,12 @@ describe("cli parser", () => {
     expect(parseCli(["fleet", "3", "--runner", "claude"])).toEqual({ command: "fleet", args: ["3", "--runner", "claude"] });
     expect(parseCli(["fleet", "stop"])).toEqual({ command: "fleet", args: ["stop"] });
   });
+
+  it("routes the trust-gated triage subcommand without changing its args", () => {
+    expect(parseCli(["triage", "42", "--decision", "ready-for-agent"])).toEqual({
+      command: "triage",
+      args: ["42", "--decision", "ready-for-agent"],
+    });
+    expect(parseCli(["triage", "99", "--summon"])).toEqual({ command: "triage", args: ["99", "--summon"] });
+  });
 });
