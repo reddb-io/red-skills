@@ -678,7 +678,17 @@ export function isExhaustionError(error: unknown): boolean {
 /**
  * True when a sandcastle failure looks like a transient runner transport/setup
  * failure rather than agent-authored work. These should be bounded by AFK's
- * retry policy, not escape as raw worker crashes.
+ * retry policy (cooldown circuit + capped retries → exit 75), not escape as raw
+ * worker crashes that kill the orchestrator and orphan the issue in `running`.
+ *
+ * Covers two families: (a) Codex transport/setup hiccups (websocket, thread
+ * start, spawn/cwd); and (b) **provider server-side overload** — a `529
+ * Overloaded` / `overloaded_error` (Anthropic) or `503 Service Unavailable`,
+ * which is temporary and server-side, not your code or your quota. Before this,
+ * a 529 matched neither the exhaustion nor the transient pattern, so it hit the
+ * `throw error` fall-through and crashed the whole drain (observed on the reddb
+ * AFK lane: a sustained 529 killed the orchestrator mid-drain, orphaning the
+ * claimed issue in `running`).
  */
 export function isTransientRunnerError(error: unknown): boolean {
   if (error === null || error === undefined) return false;
@@ -688,7 +698,7 @@ export function isTransientRunnerError(error: unknown): boolean {
 }
 
 const runnerTransientPattern =
-  /failed to connect to websocket|HTTP error:\s*502 Bad Gateway|wss:\/\/chatgpt\.com\/backend-api\/codex\/responses|thread\/start failed|failed to load configuration|spawn sh ENOENT|cwd does not exist/i;
+  /failed to connect to websocket|HTTP error:\s*502 Bad Gateway|HTTP error:\s*503 Service Unavailable|\b529\b|overloaded|wss:\/\/chatgpt\.com\/backend-api\/codex\/responses|thread\/start failed|failed to load configuration|spawn sh ENOENT|cwd does not exist/i;
 
 /** Recursively gather string values reachable from an error-ish value, bounded
  * by depth and a visited set so cyclic Effect `Cause` graphs terminate. */

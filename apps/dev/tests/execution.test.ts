@@ -686,9 +686,34 @@ describe("isTransientRunnerError", () => {
     expect(isTransientRunnerError(new Error("cwd does not exist: /tmp/.red/tmp/workers/wAAAA/17-a1"))).toBe(true);
   });
 
+  it("matches provider server-side overload (529 / overloaded_error / 503) — temporary, not a crash", () => {
+    expect(
+      isTransientRunnerError(
+        new Error("claude-code exited with code 1: API Error: 529 Overloaded. This is a server-side issue, usually temporary"),
+      ),
+    ).toBe(true);
+    expect(isTransientRunnerError(new Error('{"type":"error","error":{"type":"overloaded_error"}}'))).toBe(true);
+    expect(isTransientRunnerError(new Error("HTTP error: 503 Service Unavailable"))).toBe(true);
+  });
+
   it("does not match ordinary agent/work failures", () => {
     expect(isTransientRunnerError(new Error("worktree add failed: fatal"))).toBe(false);
     expect(isTransientRunnerError(new Error("tests failed: 2 failing"))).toBe(false);
+    // A 529 elsewhere in unrelated prose is overwhelmingly the status code; a
+    // bare number like 5290 must NOT match (word-boundary guard).
+    expect(isTransientRunnerError(new Error("processed 5290 records"))).toBe(false);
+  });
+});
+
+describe("runAgent — server overload (529) is transient, never a crash", () => {
+  it("maps a thrown 529 Overloaded to runner-transient (not a rethrow/no-sentinel)", async () => {
+    const r = await runAgent(
+      makeDeps(async () => {
+        throw new Error("claude-code exited with code 1: API Error: 529 Overloaded. This is a server-side issue, usually temporary");
+      }),
+      baseInput,
+    );
+    expect(r.outcome).toBe("runner-transient");
   });
 });
 
