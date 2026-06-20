@@ -38,6 +38,11 @@ if [[ -z "$ROOT" ]]; then
 fi
 [[ -z "$ROOT" ]] && exit 0
 
+# Per-directory plugin gate (ADR 0067): the dev plugin's hooks are installed
+# globally but must stay fully inert in any repo that did not opt in. Exit before
+# any lock/scope work unless `plugins.dev.enabled: true` is set here.
+dev_plugin_enabled "$ROOT/.red/config.yaml" || exit 0
+
 # Scope: /afk worktrees are exempt even when a lock is active.
 scope_should_enforce "$ROOT" || exit 0
 

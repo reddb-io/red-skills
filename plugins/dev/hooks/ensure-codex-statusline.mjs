@@ -19,7 +19,7 @@
 
 import { readFileSync, writeFileSync, renameSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 const DEFAULT_STATUS_LINE =
   '["project", "git-branch", "model-with-reasoning", "context-remaining", "task-progress"]';
@@ -30,12 +30,57 @@ function emitAndExit() {
   process.exit(0);
 }
 
+// ── Per-directory plugin gate (ADR 0067) ─────────────────────────────────────
+// This hook mutates the user's GLOBAL ~/.codex/config.toml, so it must never run
+// for a project that did not opt into the dev plugin. Mirror of
+// packages/shared/plugin-gate.ts (strict opt-in over the constrained YAML).
+function flatConfigValue(text, dottedKey) {
+  const stack = [];
+  for (const rawLine of text.split("\n")) {
+    const line = rawLine.replace(/\r$/, "");
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const colon = line.indexOf(":");
+    if (colon < 0) continue;
+    const indent = line.length - line.trimStart().length;
+    const key = line.slice(0, colon).trim();
+    if (!key) continue;
+    let value = line.slice(colon + 1).trim();
+    const hash = value.indexOf(" #");
+    if (hash >= 0) value = value.slice(0, hash).trim();
+    while (stack.length && stack[stack.length - 1].indent >= indent) stack.pop();
+    stack.push({ indent, key });
+    if (value && stack.map((s) => s.key).join(".") === dottedKey) return value;
+  }
+  return undefined;
+}
+function devEnabled(cwd) {
+  let dir = cwd;
+  for (let i = 0; i < 16; i++) {
+    const candidate = join(dir, ".red", "config.yaml");
+    if (existsSync(candidate)) {
+      try {
+        return flatConfigValue(readFileSync(candidate, "utf8"), "plugins.dev.enabled") === "true";
+      } catch {
+        return false;
+      }
+    }
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return false;
+}
+
 // Drain stdin (the piped hook context) so the producer never blocks; ignore it.
 try {
   readFileSync(0);
 } catch {
   /* no stdin / closed — fine */
 }
+
+// Gate before touching any global config: dormant unless dev is enabled here.
+if (!devEnabled(process.cwd())) emitAndExit();
 
 try {
   const cfgPath = join(homedir(), ".codex", "config.toml");

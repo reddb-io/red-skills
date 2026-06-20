@@ -6,6 +6,19 @@ Upstream base: `mattpocock/skills@694fa30311e02c2639942308513555e61ee84a6f` (see
 
 ---
 
+## branch-lock (misc) + dev codex hooks — extend the ADR 0067 gate to the non-launcher hook surface
+
+- **status**: modified
+- **upstream**: —
+- **why**: The first ADR 0067 cut gated the bundle launchers but three dev hooks bypass them and stayed proactive in repos that never opted in: branch-lock ran git+file reads on every Bash call; `ensure-codex-statusline.mjs` rewrote the user's GLOBAL `~/.codex/config.toml` every session; and `red-fetch.mjs code-nav` gated on a `plugins.code-nav` flag that is never set (so code-nav stopped warming even when dev was on — a regression).
+- **what changed**:
+  - `branch-lock/scripts/lib/dev-config.sh`: generalized the YAML reader into `_dev_config_scalar_true`; added `dev_plugin_enabled` (strict `plugins.dev.enabled: true`).
+  - `branch-lock/scripts/branch-lock-hook.sh` + `plugins/dev/hooks/branch-lock-codex.sh`: early-exit via `dev_plugin_enabled` before any scope/lock/git work.
+  - `plugins/dev/hooks/ensure-codex-statusline.mjs`: inline gate (mirror of plugin-gate) — no global-config write unless dev is enabled in the cwd's project.
+  - `packages/shared/entrypoint-cli.ts`: `gatePluginName` aliases `code-nav → dev` for the fetch/run gate; automatic run subcommands (`route-model-tier`, `statusline`) are silent when gated off, interactive ones keep the setup hint. `gatePluginName` exported + unit-tested.
+
+---
+
 ## setup-red-skills (engineering) — sole `.red/` creator + plugin activation prompt (ADR 0067)
 
 - **status**: modified

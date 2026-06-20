@@ -229,6 +229,24 @@ function distBundlePath(plugin: string): string | null {
   return findUp(moduleDir, join("dist", `${plugin}.bundle.min.mjs`));
 }
 
+/**
+ * The config flag a fetch/run for `plugin` gates on. `code-nav` ships under the
+ * dev plugin's umbrella (dev's SessionStart hook warms it, there is no separate
+ * `plugins.code-nav` block), so it gates on `dev` — not a `code-nav` flag that
+ * would never be set.
+ */
+export function gatePluginName(plugin: string): string {
+  return plugin === "code-nav" ? "dev" : plugin;
+}
+
+/**
+ * Run-mode subcommands that are fired by automatic hooks (PreToolUse model-tier
+ * routing, the statusline refresh). When gated off they must be SILENT — no
+ * stderr — so a non-opted-in repo gets zero noise on every tool call / render.
+ * Interactive invocations (e.g. `/afk`) instead get a one-line setup hint.
+ */
+const SILENT_RUN_SUBCOMMANDS = new Set(["route-model-tier", "statusline"]);
+
 async function runMode(plan: RunPlan): Promise<never> {
   const { plugin } = plan;
   if (!plugin) {
@@ -239,12 +257,14 @@ async function runMode(plan: RunPlan): Promise<never> {
   // in any directory that did not explicitly opt in. Exit 0 (not 1) so a blanked
   // statusline degrades gracefully and an interactive invocation gets a hint
   // instead of a crash. Checked BEFORE any bundle resolution or fetch.
-  if (!isPluginEnabled(process.cwd(), plugin)) {
-    process.stderr.write(
-      `entrypoint: ${plugin} is not enabled in this directory ` +
-        `(no \`plugins.${plugin}.enabled: true\` in .red/config.yaml). ` +
-        `Run /setup-red-skills to enable it.\n`,
-    );
+  if (!isPluginEnabled(process.cwd(), gatePluginName(plugin))) {
+    if (!SILENT_RUN_SUBCOMMANDS.has(plan.rest[0] ?? "")) {
+      process.stderr.write(
+        `entrypoint: ${plugin} is not enabled in this directory ` +
+          `(no \`plugins.${gatePluginName(plugin)}.enabled: true\` in .red/config.yaml). ` +
+          `Run /setup-red-skills to enable it.\n`,
+      );
+    }
     process.exit(0);
   }
   const cacheDir = cacheRoot(plan.cacheDir);
@@ -323,8 +343,8 @@ async function fetchMode(plan: FetchPlan): Promise<never> {
   const { plugin, version } = plan;
   // Per-directory gate (ADR 0067): never warm the cache for a plugin that the
   // current directory has not opted into. Fetch is already best-effort/silent,
-  // so a gated-off fetch is simply a no-op exit 0.
-  if (!isPluginEnabled(process.cwd(), plugin)) {
+  // so a gated-off fetch is simply a no-op exit 0. (code-nav gates on dev.)
+  if (!isPluginEnabled(process.cwd(), gatePluginName(plugin))) {
     process.exit(0);
   }
   const channel = resolveLauncherChannel(process.env, readProjectConfig());

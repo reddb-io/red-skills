@@ -3,15 +3,16 @@
 #
 # The hook must be dormant by default: missing config file or missing key means
 # disabled. This parser intentionally mirrors the constrained YAML shape used by
-# the dev runtime: nested 2-space mappings with scalar leaves. It only exposes
-# the single flag ADR 0043 needs.
+# the dev runtime: nested 2-space mappings with scalar leaves. It exposes the
+# few boolean flags the dev hooks need (ADR 0043 lock guard, ADR 0067 gate).
 
-# dev_config_lock_primary_branch_enabled <config.yaml>
-# Returns 0 when the primary-branch lock is on, 1 otherwise. The flag lives at
-# `dev.lock.primary-branch` (top-level) or `plugins.dev.lock.primary-branch`
-# (namespaced); either set to exactly `true` enables the guard.
-dev_config_lock_primary_branch_enabled() {
+# _dev_config_scalar_true <config.yaml> <dotted-key...>
+# Returns 0 when ANY of the given dotted keys is the exact scalar `true`, 1
+# otherwise (including a missing file). Shared parser for the public readers.
+_dev_config_scalar_true() {
   local _file="$1"
+  shift
+  local -a _keys=("$@")
   [[ -f "$_file" ]] || return 1
 
   local -a _stack=()
@@ -96,10 +97,30 @@ dev_config_lock_primary_branch_enabled() {
       _value="${_value:1:${#_value}-2}"
     fi
 
-    if [[ "$_full" == "dev.lock.primary-branch" || "$_full" == "plugins.dev.lock.primary-branch" ]]; then
-      [[ "$_value" == "true" ]] && return 0
-    fi
+    local _k
+    for _k in "${_keys[@]}"; do
+      if [[ "$_full" == "$_k" ]]; then
+        [[ "$_value" == "true" ]] && return 0
+      fi
+    done
   done < "$_file"
 
   return 1
+}
+
+# dev_config_lock_primary_branch_enabled <config.yaml>
+# Returns 0 when the primary-branch lock is on, 1 otherwise. The flag lives at
+# `dev.lock.primary-branch` (top-level) or `plugins.dev.lock.primary-branch`
+# (namespaced); either set to exactly `true` enables the guard.
+dev_config_lock_primary_branch_enabled() {
+  _dev_config_scalar_true "$1" "dev.lock.primary-branch" "plugins.dev.lock.primary-branch"
+}
+
+# dev_plugin_enabled <config.yaml>
+# The per-directory plugin activation gate (ADR 0067): returns 0 only when
+# `plugins.dev.enabled` is the exact scalar `true`. A missing file or missing
+# flag → 1 (dormant). Every dev shell hook must early-exit on a non-zero return
+# so it stays fully inert in repos that did not opt into the dev plugin.
+dev_plugin_enabled() {
+  _dev_config_scalar_true "$1" "plugins.dev.enabled"
 }
