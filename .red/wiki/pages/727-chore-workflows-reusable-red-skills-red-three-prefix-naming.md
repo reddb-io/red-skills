@@ -11,6 +11,12 @@ merge_sha: b0b20ff278740e586b0c4316c02d702e706797f0
 
 # chore(workflows): reusable-* / red-skills-* / red-* three-prefix naming scheme
 
+> **Superseded by [ADR 0067](../../adr/0067-workflow-naming-three-prefix-rs-caller.md).**
+> The caller prefix `red-skills-*` was later renamed to **`rs-*`** (caller =
+> instantiation of a reusable, one per reusable adopted), and copy-installables
+> (e.g. needs-triage) now keep their `red-*` name on install. This page is kept
+> as the dated record of the original scheme.
+
 - **PR:** [#727](https://github.com/reddb-io/red-skills/pull/727)
 - **Author:** @filipeforattini
 - **Merge SHA:** `b0b20ff278740e586b0c4316c02d702e706797f0`
