@@ -33,7 +33,7 @@
 #   - Path A (auto, simplest): install this workflow directly into the adopter
 #     repo and edit the `allowlist_*` defaults below. Fires on issues:labeled/opened.
 #   - Path B (caller, more control): copy the thin caller at
-#     `plugins/dev/skills/engineering/afk/examples/red-skills-afk-attempt.yml`.
+#     `plugins/dev/skills/engineering/afk/examples/rs-afk-attempt.yml`.
 #
 # Required `permissions:` are intentionally minimal — `contents: write` (push
 # worker branch), `issues: write` (envelope + labels), `pull-requests: write`

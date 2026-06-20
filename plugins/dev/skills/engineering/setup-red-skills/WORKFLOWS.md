@@ -9,42 +9,47 @@ RedSkills workflows carry one of three filename prefixes, chosen by the file's
   workflow that lives in `reddb-io/red-skills` and adopters *invoke by reference*
   (e.g. `uses: reddb-io/red-skills/.github/workflows/reusable-afk-attempt.yml@v1`).
   It is **referenced, never copied** — its filename never changes.
-- **`red-skills-*` — installed into an adopter repo.** Any workflow `/setup-red-skills`
-  *copies* into a consumer repo's `.github/workflows/`. The `red-skills-` prefix
-  lets the adopter tell at a glance which of its workflows came from RedSkills vs.
-  its own CI. This covers both the thin **caller** for the reusable lane and the
-  plain wholesale-copied workflows (e.g. needs-triage).
-- **`red-*` — red-skills' own, never installed elsewhere.** Workflows that only
-  ever run in `reddb-io/red-skills`: our internal CI (release, memory bench /
-  drift-guard / wiki-extract, upstream-watch) **and** the *source* of the plain
-  installables (e.g. `red-issues-needs-triage.yml`, which installs as
-  `red-skills-issues-needs-triage.yml`).
+- **`rs-*` — caller of a reusable (an *instantiation*).** A thin workflow whose
+  job is to `uses:` a `reusable-*` with concrete triggers + inputs. This is what
+  an adopter installs to wire up a reusable lane — **one `rs-*` per reusable they
+  adopt** (today just `rs-afk-attempt.yml`; more as we extract more reusables).
+  `rs-` reads as "red-skills caller" — the namespace marker for a
+  red-skills-provided caller in a foreign repo.
+- **`red-*` — a standalone workflow authored by red-skills** (no `workflow_call`,
+  does not `uses:` a reusable). Most run only in `reddb-io/red-skills` (release,
+  upstream-watch, workspace CI). A few are *also* offered as verbatim
+  copy-installables (e.g. `red-issues-needs-triage.yml`) — those keep their
+  `red-*` name when copied into an adopter (filename unchanged, body verbatim).
 
-Install mapping is mechanical — the destination filename gets the `red-skills-`
-prefix, only the **filename** changes, and the body (including any
-`uses: …/reusable-afk-attempt.yml@v1` ref) is copied verbatim:
+Classification is by **role**, decidable from a file's content: has
+`workflow_call:` → `reusable-*`; `uses:` a `reusable-*` → `rs-*`; otherwise →
+`red-*`. (`/doctor` audits this — see its naming-convention check.)
+
+Install mapping (body copied verbatim, including any
+`uses: …/reusable-afk-attempt.yml@v1` ref):
 
 | Role / source | Installed into adopter as |
 |---|---|
-| `reusable-afk-attempt.yml` (reusable — called by ref) | not copied; the **caller** is installed as `red-skills-afk-attempt.yml` |
-| `red-issues-needs-triage.yml` (plain, source `red-*`) | `red-skills-issues-needs-triage.yml` |
+| `reusable-afk-attempt.yml` (reusable — called by ref) | not copied; the **caller** is installed as `rs-afk-attempt.yml` |
+| `red-issues-needs-triage.yml` (standalone `red-*` copy-installable) | `red-issues-needs-triage.yml` (verbatim — name unchanged) |
 
 So `red-skills` itself, as an adopter of its own lane, carries a
-`red-skills-afk-attempt.yml` caller next to the `reusable-afk-attempt.yml`
+`rs-afk-attempt.yml` caller next to the `reusable-afk-attempt.yml`
 reusable.
 
 ## Adopter-installable (offered by `/setup-red-skills`)
 
-Installed under the `red-skills-*` prefix. Section D is a **menu** — the user
-picks which workflows + configs.
+Section D is a **menu** — the user picks which workflows + configs. A reusable's
+**caller** installs as `rs-*`; a standalone copy-installable keeps its `red-*`
+name.
 
 | Source | Installed as | Default | Trigger | What it does |
 |---|---|---|---|---|
-| `red-issues-needs-triage.yml` | `red-skills-issues-needs-triage.yml` | **install (yes)** | `issues: opened`/`reopened` | Auto-applies `needs-triage` to any fresh label-less issue, so reports never slip past `/triage` and never sit invisible to `/afk` (which only drains `ready-for-agent`). |
-| `reusable-afk-attempt.yml` (reusable, called by ref) | `red-skills-afk-attempt.yml` (the caller) | **opt-in (no)** | `issues: labeled`/`opened` (on `ready-for-agent`), `workflow_dispatch`, `workflow_call` | The **AFK Actions lane** — runs one `/afk` attempt per issue headless from Actions and opens a PR (no fleet, no admin-merge; human merges). Needs an OpenCode auth secret + a trust-gate allowlist. Full guide: [`../afk/actions-lane.md`](../afk/actions-lane.md). |
+| `red-issues-needs-triage.yml` | `red-issues-needs-triage.yml` (verbatim) | **install (yes)** | `issues: opened`/`reopened` | Auto-applies `needs-triage` to any fresh label-less issue, so reports never slip past `/triage` and never sit invisible to `/afk` (which only drains `ready-for-agent`). |
+| `reusable-afk-attempt.yml` (reusable, called by ref) | `rs-afk-attempt.yml` (the caller) | **opt-in (no)** | `issues: labeled`/`opened` (on `ready-for-agent`), `workflow_dispatch`, `workflow_call` | The **AFK Actions lane** — runs one `/afk` attempt per issue headless from Actions and opens a PR (no fleet, no admin-merge; human merges). Needs an OpenCode auth secret + a trust-gate allowlist. Full guide: [`../afk/actions-lane.md`](../afk/actions-lane.md). |
 
 The AFK lane has two shapes (both in `../afk/examples/`): the **turnkey caller**
-(`red-skills-afk-attempt.yml`, what `/setup-red-skills` installs) and the
+(`rs-afk-attempt.yml`, what `/setup-red-skills` installs) and the
 **composable action** (`red-afk-attempt-action.yml`, for your own
 triggers/gate). It depends only on GitHub-official actions plus reddb-io's own
 composite action.
@@ -64,6 +69,6 @@ These run in `reddb-io/red-skills` only. Listed so the catalogue is complete.
 ## Conventions
 
 - **`reusable-*`** — reusable (`workflow_call`) workflows, referenced by `uses:`, never copied into an adopter.
-- **`red-skills-*`** — the installed name in an adopter repo. `/setup-red-skills` Section D copies each adopter-installable workflow into `.github/workflows/` and renames the destination `red-skills-<name>.yml` (filename only; body verbatim, including any `uses: …/reusable-afk-attempt.yml@v1` ref).
-- **`red-*`** — red-skills' own workflows that never leave this repo: internal CI plus the *source* of plain installables (the source keeps `red-`; only the installed copy becomes `red-skills-`).
-- red-skills self-hosts its own lane, so it carries a `red-skills-afk-attempt.yml` caller — the same `red-skills-*` an adopter installs.
+- **`rs-*`** — a caller that `uses:` a `reusable-*`. What an adopter installs to wire up a reusable lane (one `rs-*` per reusable). Body copied verbatim, including the `uses: …/reusable-afk-attempt.yml@v1` ref.
+- **`red-*`** — a standalone workflow authored by red-skills (no `workflow_call`, no `uses:` a reusable). Internal CI plus verbatim copy-installables (e.g. needs-triage) that keep the `red-*` name in the adopter.
+- red-skills self-hosts its own lane, so it carries a `rs-afk-attempt.yml` caller — the same `rs-*` an adopter installs.

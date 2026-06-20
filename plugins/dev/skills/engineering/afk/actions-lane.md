@@ -34,14 +34,14 @@ third-party action repos.
 
 Drop the reusable into your repo (or call it). It ships the issue/label triggers
 and the ADR 0056 trust gate. Template:
-[`examples/red-skills-afk-attempt.yml`](./examples/red-skills-afk-attempt.yml).
+[`examples/rs-afk-attempt.yml`](./examples/rs-afk-attempt.yml).
 
-Install the caller as `red-skills-afk-attempt.yml` (the `red-skills-*`
+Install the caller as `rs-afk-attempt.yml` (the `rs-*`
 installed-name convention — see [WORKFLOWS.md](../setup-red-skills/WORKFLOWS.md);
 only the filename changes, the `uses:` ref keeps the `reusable-` source name).
 
 ```yaml
-# .github/workflows/red-skills-afk-attempt.yml in your repo
+# .github/workflows/rs-afk-attempt.yml in your repo
 jobs:
   attempt:
     uses: reddb-io/red-skills/.github/workflows/reusable-afk-attempt.yml@v1
@@ -123,7 +123,7 @@ with:
 "nano"; 2 vCPU is the floor (other shapes: `-4vcpu-`, `-8vcpu-`, …). The
 **Blacksmith GitHub App must be installed on the org/repo** first — a Blacksmith
 label with no app installed leaves the job **queued forever**. red-skills' own
-`red-skills-afk-attempt.yml` caller runs on `blacksmith-2vcpu-ubuntu-2404`.
+`rs-afk-attempt.yml` caller runs on `blacksmith-2vcpu-ubuntu-2404`.
 
 ## Runner + auth
 

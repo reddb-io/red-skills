@@ -12,7 +12,7 @@
 
 # Active dev-plugin settings, all namespaced under `plugins.dev.*` (the root
 # stays sacred). The AFK opencode model is NOT pinned here — the GHA lane sets it
-# (red-skills-afk-attempt.yml passes `model: minimax/MiniMax-M3` via RED_AFK_MODEL), so
+# (rs-afk-attempt.yml passes `model: minimax/MiniMax-M3` via RED_AFK_MODEL), so
 # the workflow is the single source of truth for the cloud runner's model.
 plugins:
   dev:

@@ -1,9 +1,9 @@
-# red-skills-afk-attempt — red-skills' OWN caller for the AFK Actions lane.
+# rs-afk-attempt — red-skills' OWN caller for the AFK Actions lane.
 #
 # Naming convention: reusable workflows are prefixed `reusable-*` (here, the
 # reusable `reusable-afk-attempt.yml`). A workflow INSTALLED into a target repo to
-# drive that lane is prefixed `red-skills-*` ("RedSkills-installed in this repo").
-# This file is red-skills self-hosting its own lane, so it is `red-skills-*` too.
+# drive that lane is prefixed `rs-*` ("RedSkills-installed in this repo").
+# This file is red-skills self-hosting its own lane, so it is `rs-*` too.
 #
 # It calls the LOCAL reusable (`./.github/workflows/reusable-afk-attempt.yml`) — the
 # same one adopters reference as `reddb-io/red-skills/.github/workflows/reusable-afk-attempt.yml@v1`.
@@ -17,7 +17,7 @@
 # adopters without Blacksmith. The Blacksmith GitHub App is installed on the org;
 # without it a Blacksmith label leaves the job queued forever.
 
-name: red-skills-afk-attempt
+name: rs-afk-attempt
 
 on:
   # Manual: process a specific issue from the Actions UI, OR leave it empty to
