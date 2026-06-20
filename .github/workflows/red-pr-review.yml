@@ -51,12 +51,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           # CI never wants a nested container: force the no-sandbox lane.
           RED_AFK_SANDBOX: none
-          # OpenCode auth — first set key wins (opencode-env.ts precedence). The
-          # cloud lane is non-resumable, so the review's structured-output
-          # `maxRetries` resolves to 0 and the advisory path runs single-attempt.
+          # Route the review through the MiniMax-M3 subscription (#748). The
+          # review command resolves the opencode `complex` tier; RED_AFK_MODEL
+          # overrides it to a `minimax/...` slug so OpenCode dispatches to the
+          # MiniMax endpoint (config.ts resolveTier precedence: env wins).
+          RED_AFK_MODEL: minimax/MiniMax-M3
+          # OpenCode auth — first-set-key wins (opencode-env.ts precedence:
+          # OPENAI_API_KEY > MINIMAX_API_KEY > OPENROUTER_API_KEY). Expose ONLY
+          # MINIMAX_API_KEY so a stray/empty OPENAI/OPENROUTER secret cannot
+          # shadow it (#748 acceptance criterion). The cloud lane is
+          # non-resumable, so the review's structured-output `maxRetries`
+          # resolves to 0 and the advisory path runs single-attempt.
           MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
-          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           set -euo pipefail
           PR="${{ github.event.pull_request.number }}"
