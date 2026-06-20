@@ -5,6 +5,27 @@
 proposed. Captured from a `/start` grilling session (2026-06-18). The load-bearing
 decisions are stable; two implementation leaves stay open (see *Open questions*).
 
+## Amendment 1 — MiniMax-in-CI auth validated (GO, #748)
+
+The open leaf "the credential-into-CI mechanism is unverified" is **closed: GO**.
+Validated live on 2026-06-20 — labeling a real PR `ready-for-review` fired
+`red-pr-review.yml`, which resolved the `MINIMAX_API_KEY` repo secret
+**headlessly** in a GitHub-hosted runner and posted a substantive MiniMax-M3
+advisory review (run succeeded in ~1m44s, single-attempt).
+
+The durable mechanism (per ADR 0059 Amendment 1):
+
+- Auth is a **repo/org secret → worker env**, never an interactive session and
+  never committed. OpenCode picks the endpoint from the model slug's leading
+  segment (`minimax/MiniMax-M3` → MiniMax).
+- The lane **must expose only `MINIMAX_API_KEY`** — env precedence is
+  first-set-wins (`OPENAI_API_KEY` > `MINIMAX_API_KEY` > `OPENROUTER_API_KEY`), so
+  a stray/empty competing key would shadow MiniMax. `red-pr-review.yml` sets
+  `RED_AFK_MODEL=minimax/MiniMax-M3` and exports MiniMax only (#748 / PR #760).
+- Secret scope: **org-level** is preferred so every org repo's lane resolves it;
+  a public repo needs the org secret's Repository-access to include it (else it
+  resolves empty). red-skills currently carries it repo-level.
+
 ## Context
 
 `mattpocock/sandcastle` ships a label-driven cloud agent loop: applying an
