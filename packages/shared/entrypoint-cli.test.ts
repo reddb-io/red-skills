@@ -2,11 +2,23 @@ import { describe, expect, it } from "vitest";
 import {
   configuredChannelValue,
   type EntrypointPlan,
+  gatePluginName,
   parseEntrypoint,
   resolveLauncherChannel,
 } from "./entrypoint-cli.js";
 
 const DEFAULT_REPO = "reddb-io/red-skills";
+
+describe("gatePluginName (ADR 0067)", () => {
+  it("maps code-nav to dev (code-nav ships under the dev plugin)", () => {
+    expect(gatePluginName("code-nav")).toBe("dev");
+  });
+  it("leaves first-class plugins unchanged", () => {
+    expect(gatePluginName("dev")).toBe("dev");
+    expect(gatePluginName("memory")).toBe("memory");
+    expect(gatePluginName("brain")).toBe("brain");
+  });
+});
 
 describe("parseEntrypoint", () => {
   it("routes an explicit `run <plugin>` and forwards the remaining args verbatim", () => {

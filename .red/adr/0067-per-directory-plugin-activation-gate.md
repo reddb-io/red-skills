@@ -68,6 +68,31 @@ consults *first*, before any work:
 
 The gate never creates or writes anything — it only reads.
 
+### Amendment — the complete dev hook surface (follow-up)
+
+The first cut gated the bundle launchers (`red-fetch.mjs`, `afk.mjs`, the two
+`bootstrap.mjs`) but the dev plugin fires three more hooks that do not pass
+through them. They are gated too:
+
+- **`branch-lock-hook.sh`** (Claude `PreToolUse(Bash)`) and **`branch-lock-codex.sh`**
+  (Codex `PreToolUse`) ran git + file reads on *every* tool call in *every* repo.
+  They now early-exit unless `plugins.dev.enabled: true` (new `dev_plugin_enabled`
+  in `lib/dev-config.sh`, alongside the existing lock-flag reader).
+- **`ensure-codex-statusline.mjs`** (Codex `SessionStart`) mutated the user's
+  **global** `~/.codex/config.toml` on every session regardless of project. It
+  now gates on `plugins.dev.enabled` (inline mirror of the gate) before touching
+  anything.
+- **`code-nav`** is fetched by dev's `SessionStart` hook (`red-fetch.mjs code-nav
+  <ver>`) but has no `plugins.code-nav` block — it ships under the dev plugin. The
+  fetch/run gate aliases `code-nav → dev` (`gatePluginName`) so it warms iff dev
+  is enabled, not on a flag that is never set.
+
+**Noise rule:** automatic, hook-fired run subcommands (`route-model-tier`,
+`statusline`) are **silent** when gated off — zero stderr in a non-opted-in repo.
+Only interactive invocations (e.g. `/afk`) print the one-line "run
+/setup-red-skills" hint. Encouragement to run `/setup-red-skills` lives at the
+interactive/skill layer, never as per-tool-call hook noise.
+
 ## Consequences
 
 - **Breaking change / migration.** Strict opt-in means every existing repo that

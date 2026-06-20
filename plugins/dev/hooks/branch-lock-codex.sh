@@ -41,6 +41,10 @@ if [[ -n "$ROOT" && ! -d "$ROOT/.git" ]]; then
 fi
 [[ -z "$ROOT" ]] && { printf '{}'; exit 0; }
 
+# Per-directory plugin gate (ADR 0067): stay fully inert unless the dev plugin is
+# enabled in this repo. Mirrors branch-lock-hook.sh.
+dev_plugin_enabled "$ROOT/.red/config.yaml" || { printf '{}'; exit 0; }
+
 scope_should_enforce "$ROOT" || { printf '{}'; exit 0; }
 
 if dev_config_lock_primary_branch_enabled "$ROOT/.red/config.yaml" &&
