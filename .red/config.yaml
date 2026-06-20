@@ -16,5 +16,6 @@
 # the workflow is the single source of truth for the cloud runner's model.
 plugins:
   dev:
+    enabled: true                # opt this directory into the dev plugin (ADR 0067)
     lock:
       primary-branch: true       # primary-checkout branch-switch guard

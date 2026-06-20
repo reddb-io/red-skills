@@ -20,6 +20,13 @@ export interface HookConfig {
 
 export interface MemoryConfig {
   version: number;
+  /**
+   * Per-directory activation flag (ADR 0067). `plugins.memory.enabled: true` is
+   * what authorizes the globally-installed memory launcher to run in this repo;
+   * `/setup-red-skills` writes it. Carried here only so the `memory init` write
+   * path round-trips it — the launcher gate reads it straight from the YAML.
+   */
+  enabled?: boolean;
   mode: StorageMode;
   /** Where markdown notes live, relative to the repo root. */
   notesDir: string;

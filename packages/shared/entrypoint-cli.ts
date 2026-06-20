@@ -39,6 +39,7 @@ import {
   resolveBundle,
 } from "./bundle-fetch.js";
 import { type ReleaseChannel, channelReleaseRef, resolveChannel } from "./channel.js";
+import { findUp, flatConfigValue, isPluginEnabled } from "./plugin-gate.js";
 
 const DEFAULT_REPO = "reddb-io/red-skills";
 
@@ -158,39 +159,6 @@ export function parseEntrypoint(argv: readonly string[], role: string): Entrypoi
 // ── Release-channel resolution (ADR 0058) ────────────────────────────────────
 
 /**
- * Read `<key>` from a constrained-subset `.red/config.yaml` (2-space indent,
- * scalar leaves) without a YAML dependency — the launcher ships dependency-free.
- * Builds dotted keys from indentation and returns the first matching scalar.
- * Best-effort: malformed lines are skipped, never thrown.
- */
-function flatConfigValue(text: string, dottedKey: string): string | undefined {
-  const stack: Array<{ indent: number; key: string }> = [];
-  for (const rawLine of text.split("\n")) {
-    const line = rawLine.replace(/\r$/, "");
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-    const colon = line.indexOf(":");
-    if (colon < 0) continue;
-    const indent = line.length - line.trimStart().length;
-    const key = line.slice(0, colon).trim();
-    if (!key) continue;
-    const value = line.slice(colon + 1).trim();
-    while (stack.length && stack[stack.length - 1].indent >= indent) stack.pop();
-    stack.push({ indent, key });
-    if (value) {
-      const path = stack.map((s) => s.key).join(".");
-      if (path === dottedKey) return stripInlineComment(value);
-    }
-  }
-  return undefined;
-}
-
-function stripInlineComment(value: string): string {
-  const hash = value.indexOf(" #");
-  return (hash >= 0 ? value.slice(0, hash) : value).trim();
-}
-
-/**
  * The configured channel string from `.red/config.yaml`: the namespaced
  * `plugins.dev.afk.release.channel` (ADR 0042) with the legacy top-level
  * `afk.release.channel` as a fallback. Returns undefined when neither is set.
@@ -234,19 +202,6 @@ const moduleDir = (() => {
   }
 })();
 
-/** Walk up from `start` for the first existing `start/.../rel`. */
-function findUp(start: string, rel: string): string | null {
-  let dir = start;
-  for (let i = 0; i < 16; i++) {
-    const candidate = join(dir, rel);
-    if (existsSync(candidate)) return candidate;
-    const parent = dirname(dir);
-    if (parent === dir) break;
-    dir = parent;
-  }
-  return null;
-}
-
 /** Installed plugin version, read from the nearest `.claude-plugin/plugin.json`. */
 function resolvePluginVersion(): string {
   const manifest = findUp(moduleDir, join(".claude-plugin", "plugin.json"));
@@ -279,6 +234,18 @@ async function runMode(plan: RunPlan): Promise<never> {
   if (!plugin) {
     process.stderr.write("entrypoint: `run` requires a <plugin> name.\n");
     process.exit(1);
+  }
+  // Per-directory gate (ADR 0067): a globally-installed launcher must stay inert
+  // in any directory that did not explicitly opt in. Exit 0 (not 1) so a blanked
+  // statusline degrades gracefully and an interactive invocation gets a hint
+  // instead of a crash. Checked BEFORE any bundle resolution or fetch.
+  if (!isPluginEnabled(process.cwd(), plugin)) {
+    process.stderr.write(
+      `entrypoint: ${plugin} is not enabled in this directory ` +
+        `(no \`plugins.${plugin}.enabled: true\` in .red/config.yaml). ` +
+        `Run /setup-red-skills to enable it.\n`,
+    );
+    process.exit(0);
   }
   const cacheDir = cacheRoot(plan.cacheDir);
   const version = resolvePluginVersion();
@@ -354,6 +321,12 @@ async function fetchMode(plan: FetchPlan): Promise<never> {
     process.exit(0);
   }
   const { plugin, version } = plan;
+  // Per-directory gate (ADR 0067): never warm the cache for a plugin that the
+  // current directory has not opted into. Fetch is already best-effort/silent,
+  // so a gated-off fetch is simply a no-op exit 0.
+  if (!isPluginEnabled(process.cwd(), plugin)) {
+    process.exit(0);
+  }
   const channel = resolveLauncherChannel(process.env, readProjectConfig());
   const expected = resolveBundle({ plugin, version, cacheDir, channel });
   try {

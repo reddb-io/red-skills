@@ -132,3 +132,35 @@ describe("mergeMemoryBlock", () => {
     expect(parsed?.hooks.postToolUse).toBe(false);
   });
 });
+
+describe("plugins.memory.enabled (ADR 0067 activation flag)", () => {
+  test("parsePluginsMemory reads enabled: true", () => {
+    const config = parsePluginsMemory("plugins:\n  memory:\n    enabled: true\n    mode: graph\n");
+    expect(config?.enabled).toBe(true);
+  });
+
+  test("parsePluginsMemory reports enabled=false when the flag is absent", () => {
+    const config = parsePluginsMemory("plugins:\n  memory:\n    mode: graph\n");
+    expect(config?.enabled).toBe(false);
+  });
+
+  test("emitMemoryBlockLines writes enabled: true at the head of the block", () => {
+    const lines = emitMemoryBlockLines({ ...markdownOnlyConfig(), enabled: true });
+    expect(lines[0]).toBe("  memory:");
+    expect(lines[1]).toBe("    enabled: true");
+  });
+
+  test("emitMemoryBlockLines omits the flag when not enabled (sparse)", () => {
+    const lines = emitMemoryBlockLines(markdownOnlyConfig());
+    expect(lines.some((l) => l.includes("enabled"))).toBe(false);
+  });
+
+  test("mergeMemoryBlock preserves an enabled: true that setup-red-skills wrote", () => {
+    // setup wrote only the activation flag; the init wizard's config object does
+    // not carry it, yet the merge must not drop it (else memory goes dark).
+    const existing = "plugins:\n  memory:\n    enabled: true\n";
+    const merged = mergeMemoryBlock(existing, graphConfig());
+    expect(parsePluginsMemory(merged)?.enabled).toBe(true);
+    expect(parsePluginsMemory(merged)?.mode).toBe("graph");
+  });
+});

@@ -1,6 +1,24 @@
 # .red/config.yaml — per-project plugin settings (consumed by /afk and friends)
 # Uncomment any line to override the default.
 
+# Plugin activation gate (ADR 0067). RedSkills hooks are installed globally on
+# every agent but stay fully inert in any directory whose `.red/config.yaml`
+# does NOT set `plugins.<name>.enabled: true`. /setup-red-skills writes this
+# block; it is the only authorized creator of `.red/`. Strict opt-in: a block
+# without `enabled: true` is OFF.
+plugins:
+  dev:
+    enabled: true                 # the engineering stack (/afk, /triage, /ship, …)
+  #   lock:
+  #     primary-branch: true      # activate the primary-checkout branch-switch guard
+  #                               # (Section H of /setup-red-skills sets this)
+  #     branch: my-branch         # static base lock: AFK bases/merges here (ADR 0031);
+  #                               # the runtime /branch-lock overrides it per session
+  # memory:
+  #   enabled: true               # then run /memory:init to pick a storage mode
+  # brain:
+  #   enabled: true               # the agentic command-center context
+
 # afk:
 #   default_runner: claude        # fallback runner when no explicit signal
 #   models:                       # per-runner AFK tier table (ADR 0049)
@@ -67,9 +85,3 @@
 #                                 # repo to STRICT mode; a ready-for-agent applied by a
 #                                 # non-listed actor is skipped at claim and may be
 #                                 # stripped by a sweep with an audit comment.
-
-# dev:
-#   lock:
-#     primary-branch: true        # activate the primary-checkout branch-switch guard
-#     branch: my-branch           # static base lock: AFK bases/merges here (ADR 0031);
-#                                 # the runtime `/branch-lock` overrides it per session
