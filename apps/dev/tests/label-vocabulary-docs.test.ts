@@ -53,7 +53,17 @@ describe("setup-red-skills docs", () => {
     expect(skill).toContain("inject-development-workflow --root");
     expect(skill).toContain("both `AGENTS.md` and `CLAUDE.md`");
     expect(skill).toContain("`/ship` as the landing command");
-    expect(template).toContain("# dev:");
+    // ADR 0067: the template now carries an active `plugins:` activation block
+    // (dev enabled by default) with the dev lock example folded under it.
+    expect(template).toContain("plugins:");
+    expect(template).toContain("enabled: true");
     expect(template).toContain("#     primary-branch: true");
+  });
+
+  it("documents Section A0 plugin activation as the per-directory gate", async () => {
+    const skill = await readRepoFile("plugins/dev/skills/engineering/setup-red-skills/SKILL.md");
+    expect(skill).toContain("**Section A0 — Plugin activation");
+    expect(skill).toContain("plugins.<name>.enabled: true");
+    expect(skill).toContain("authorized to create `.red/`");
   });
 });
