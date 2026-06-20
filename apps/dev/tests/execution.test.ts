@@ -717,6 +717,19 @@ describe("runAgent — server overload (529) is transient, never a crash", () =>
   });
 });
 
+describe("runAgent — unclassified runner error never crashes the drain (#767)", () => {
+  it("maps any other thrown error to no-sentinel (recoverable crash), not a rethrow", async () => {
+    const r = await runAgent(
+      makeDeps(async () => {
+        throw new Error("some unrecognized runner failure nobody has a pattern for yet");
+      }),
+      baseInput,
+    );
+    expect(r.outcome).toBe("no-sentinel");
+    expect(r.stdout).toContain("unrecognized runner failure");
+  });
+});
+
 describe("runAgent — exhaustion", () => {
   it("maps a thrown exhaustion error to the exhausted outcome (no commits, no sentinel)", async () => {
     const r = await runAgent(
@@ -739,15 +752,18 @@ describe("runAgent — exhaustion", () => {
     expect(r.outcome).toBe("exhausted");
   });
 
-  it("re-throws a non-exhaustion sandcastle error unchanged", async () => {
-    await expect(
-      runAgent(
-        makeDeps(async () => {
-          throw new Error("worktree add failed: fatal");
-        }),
-        baseInput,
-      ),
-    ).rejects.toThrow("worktree add failed");
+  it("maps a non-exhaustion, non-transient error to no-sentinel (never rethrows — #767)", async () => {
+    // Previously this rethrew, killing the orchestrator + orphaning the issue
+    // in `running`. Now any unclassified runner error becomes a recoverable
+    // no-sentinel crash so the drain survives.
+    const r = await runAgent(
+      makeDeps(async () => {
+        throw new Error("worktree add failed: fatal");
+      }),
+      baseInput,
+    );
+    expect(r.outcome).toBe("no-sentinel");
+    expect(r.stdout).toContain("worktree add failed");
   });
 });
 
