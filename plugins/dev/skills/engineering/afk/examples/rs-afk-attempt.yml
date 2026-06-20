@@ -1,7 +1,7 @@
 # Example: thin caller for the reddb-io/red-skills AFK Actions lane
 #
 # Copy this file into your repo at
-# `.github/workflows/red-skills-afk-attempt.yml` (the `red-skills-*`
+# `.github/workflows/rs-afk-attempt.yml` (the `rs-*`
 # installed-name convention — only the filename changes; the `uses:` ref
 # below keeps the `reusable-` source name), then edit:
 #   1. `allowlist_authors` and `allowlist_label_actors` — the GitHub
@@ -40,7 +40,7 @@
 # write, pull-requests: write. No id-token (no OIDC), no actions:
 # write (the workflow does not publish actions).
 
-name: red-skills-afk-attempt
+name: rs-afk-attempt
 
 on:
   # Manual trigger from the Actions UI; the reusable's `if:` filter

@@ -45,7 +45,7 @@ workflow as a thin policy layer (triggers + trust gate) on top of it.**
 
 - **Two adoption surfaces**, one execution primitive:
   - *Turnkey*: call the reusable (or install it directly) — triggers + trust gate
-    handled (`examples/red-skills-afk-attempt.yml`).
+    handled (`examples/rs-afk-attempt.yml`).
   - *Composable*: `uses: …/afk-attempt@v1` in a workflow you control, with your
     own trigger and gating (`examples/red-afk-attempt-action.yml`).
 
