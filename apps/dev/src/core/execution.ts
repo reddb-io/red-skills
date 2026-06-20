@@ -869,8 +869,11 @@ export function startAttemptGuard(opts: {
  * sandcastle's `run()` can signal exhaustion two ways: by throwing an error
  * whose message matches the exhaustion patterns (the common case — the provider
  * raises on a 429 / usage-limit), or by completing with exhaustion text on
- * stdout. Both map to the `exhausted` outcome (no commits, no sentinel). Any
- * other thrown error propagates unchanged.
+ * stdout. Both map to the `exhausted` outcome (no commits, no sentinel). A
+ * transient transport / server-overload error maps to `runner-transient`; any
+ * OTHER thrown error maps to `no-sentinel` (a recoverable crash) rather than
+ * propagating — so an unrecognized runner failure never kills the drain or
+ * orphans the issue in `running` (#767).
  *
  * When `attemptTimeoutSeconds` + `headProbe` are supplied, an attempt progress
  * guard runs alongside: if no new commit lands within the cap, the run is
@@ -1027,7 +1030,21 @@ export async function runAgent(deps: SandcastleDeps, input: RunAgentInput): Prom
         stdout: error instanceof Error ? error.message : String(error),
       };
     }
-    throw error;
+    // Any OTHER thrown runner error (an error class we don't yet recognize):
+    // do NOT rethrow. A rethrow propagates uncaught past the per-issue loop,
+    // kills the whole orchestrator mid-drain, and leaves the claimed issue
+    // orphaned in `running` (the failure mode behind #766's 529 incident). Map
+    // it to `no-sentinel` instead — the same outcome a crashed agent produces —
+    // so the per-issue loop runs its graceful recovery: it posts a crash
+    // envelope carrying this error text, rotates the label off `running`, and
+    // pages `ready-for-human` (bounded by RED_AFK_RETRY_CRASH). The drain
+    // survives every runner error class, known or not. (#767)
+    return {
+      outcome: "no-sentinel",
+      branch: input.branch,
+      commits: [],
+      stdout: error instanceof Error ? error.message : String(error),
+    };
   } finally {
     guard?.stop();
     laneReaper?.stop();
