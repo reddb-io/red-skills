@@ -156,6 +156,14 @@ precedence above decide.
 | OpenAI | `OPENAI_API_KEY` | `openai/<model>` | `secrets: { openai_api_key: ${{ secrets.OPENAI_API_KEY }} }` |
 | OpenRouter | `OPENROUTER_API_KEY` | `openrouter/<vendor>/<model>` | `secrets: { openrouter_api_key: ${{ secrets.OPENROUTER_API_KEY }} }` |
 
+**Repo vs org secret.** A **repo** secret is the simplest. An **org** secret is
+preferred when several org repos run the lane (set it once). The public-repo
+gotcha: an org secret resolves to **empty** in a public repo unless that repo is
+in the secret's **Repository access** list — so an org secret looks "set" yet the
+review no-ops at auth. Include every repo that runs the lane in Repository
+access. Don't keep both a repo and an org secret of the same name on one repo —
+the repo one wins and the two can silently drift.
+
 Set the key (the value is yours to provision — RedSkills never sets it for you):
 
 ```bash
