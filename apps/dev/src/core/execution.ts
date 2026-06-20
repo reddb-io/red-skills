@@ -168,8 +168,25 @@ export interface RunAgentInput {
   /** Model id passed to the provider (e.g. "claude-opus-4-8", "gpt-5.4"). */
   model: string;
   effort?: AgentEffort;
-  /** Path to the materialised handoff file used as the agent prompt. */
+  /**
+   * Path to the materialised handoff file. Still written to disk (worktree-wipe
+   * survival + post-mortem + the `current.handoff` state pointer), but NO LONGER
+   * the agent prompt — see {@link RunAgentInput.handoffContent}.
+   */
   handoffPath: string;
+  /**
+   * The verbatim handoff text, delivered to red-castle as an **inline** prompt
+   * (`prompt`, source `"inline"`) rather than a `promptFile` template (#758).
+   *
+   * red-castle runs `{{KEY}}` substitution **and** `` !`command` `` shell
+   * expansion on `promptFile` templates, so any issue body carrying a literal
+   * `{{…}}` (→ "no matching value" PromptError) or a code span ending in `!`
+   * (Rust macros → false `` !` `` shell-exec, #756) crashed prompt resolution
+   * before iteration 1 and orphaned the issue in `running`. AFK handoffs are
+   * opaque text that never intends either feature, so inline delivery (which
+   * red-castle passes through verbatim) is immune to the whole class.
+   */
+  handoffContent: string;
   /**
    * The AFK exit-protocol contract, delivered as a system prompt rather than
    * appended to the handoff body. red-castle picks the per-CLI delivery: claude
@@ -617,7 +634,11 @@ export function buildRunOptions(deps: SandcastleDeps, input: RunAgentInput): Run
     // (AFK's per-attempt dir under .red/) so nothing is generated at the repo
     // root. Omitted → sandcastle defaults to process.cwd().
     ...(input.cwd ? { cwd: input.cwd } : {}),
-    promptFile: input.handoffPath,
+    // Deliver the handoff INLINE (verbatim), not as a `promptFile` template:
+    // red-castle expands `{{KEY}}` + `` !`cmd` `` only for templates, which
+    // crashed prompt resolution on opaque issue-body content (#756, #758). AFK
+    // passes no promptArgs, so inline is a clean pass-through.
+    prompt: input.handoffContent,
     ...(input.systemPrompt ? { systemPrompt: input.systemPrompt } : {}),
     branchStrategy,
     completionSignal: [...COMPLETION_SIGNALS],
