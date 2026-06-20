@@ -6,6 +6,19 @@ Upstream base: `mattpocock/skills@694fa30311e02c2639942308513555e61ee84a6f` (see
 
 ---
 
+## setup-red-skills (engineering) — sole `.red/` creator + plugin activation prompt (ADR 0067)
+
+- **status**: modified
+- **upstream**: —
+- **why**: RedSkills plugin hooks install globally on every agent, so they fired in every directory even when the user did not want dev/memory/brain there. ADR 0067 makes plugins strict opt-in per directory (`plugins.<name>.enabled: true` in `.red/config.yaml`) and designates `/setup-red-skills` as the only authorized creator of `.red/` and the only way to enable a plugin.
+- **what changed**:
+  - New **Section A0 — Plugin activation** asked first: a multi-select of `dev`/`memory`/`brain` to enable in this repo, with the strict-opt-in / sole-`.red`-creator contract spelled out.
+  - Section G + step 4 now write the `plugins.<name>.enabled` flags (and, for an existing `.red/config.yaml`, *surgically merge* just those flags — the sole exception to the no-clobber rule), instead of copying a fully-commented template that would leave every plugin disabled under the new gate.
+  - `config-template.yaml` ships an active `plugins:` block (`dev.enabled: true` baseline; `memory`/`brain` commented), with the `dev.lock` example folded under `plugins.dev`.
+  - Frontmatter/intro/Done updated to describe the gate and to point memory/brain enablers at their own init.
+
+---
+
 ## teaching (upstream addition — skipped)
 
 - **status**: skipped

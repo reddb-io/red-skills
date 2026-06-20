@@ -79,7 +79,7 @@ stale notes inline.
 
 - **0005** Memory plugin: three-layer RedDB architecture, local-first per-repo, MCP+CLI
 - **0007** RedDB graph writes go through multi-model DML, not table inserts
-- **0009** `dev` soft-uses `memory`, one-directional — gate mechanism partially superseded by **0042**; soft-use direction stands
+- **0009** `dev` soft-uses `memory`, one-directional — gate mechanism partially superseded by **0042**, then replaced by **0067**'s strict per-directory `enabled` gate; soft-use direction stands
 - **0011** Ephemeral-tier expiry enforced client-side, not engine TTL
 - **0012** Community-coloured graph needs a per-node assignment from the engine
 - **0019** Memory graph is the substrate for codebase mapping
@@ -114,5 +114,6 @@ stale notes inline.
 - **0001** Explicit `/setup-red-skills` pointer only for hard dependencies
 - **0002** Handoff precedence ladder and two-channel directive protocol
 - **0018** Zoom-out grows impact analysis by composing graph primitives
-- **0042** Plugin configuration is unified under `.red/config.yaml`, namespaced by `plugins.<name>` *(partially supersedes 0009 gate mechanism; carries 0026 hooks and 0041 migration config)*
+- **0042** Plugin configuration is unified under `.red/config.yaml`, namespaced by `plugins.<name>` *(partially supersedes 0009 gate mechanism; carries 0026 hooks and 0041 migration config; its block-presence opt-in is replaced by 0067's `enabled` gate)*
 - **0043** RedSkills teaches and enforces an interactive development loop — accepted from PR #393's reserved/pending "dev loop / ship" slot *(refines 0006; relates 0030/0031; depends on 0042)*
+- **0067** Per-directory plugin activation gate — globally-installed hooks stay inert until `.red/config.yaml` sets `plugins.<name>.enabled: true` (strict opt-in); `/setup-red-skills` is the sole creator of `.red/` and the only way to enable a plugin *(supersedes the 0042/0009 block-presence opt-in gate; builds on 0042 config + 0038/0039 launchers)*

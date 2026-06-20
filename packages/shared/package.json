@@ -11,7 +11,8 @@
     "./bundle-fetch.js": "./bundle-fetch.ts",
     "./channel.js": "./channel.ts",
     "./entrypoint-cli.js": "./entrypoint-cli.ts",
-    "./log.js": "./log.ts"
+    "./log.js": "./log.ts",
+    "./plugin-gate.js": "./plugin-gate.ts"
   },
   "dependencies": {
     "cli-args-parser": "^1.0.6"

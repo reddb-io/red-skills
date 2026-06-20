@@ -76,6 +76,18 @@ lives under `apps/<plugin>/`.
    the term.
 6. **All repo content is in English.** No Portuguese (or any other language) in committed files — SKILL.md, README, CHANGES, ADRs, comments, frontmatter descriptions. Chat with the user can stay Portuguese; the repo cannot.
 
+## Plugin activation (ADR 0067)
+
+RedSkills plugins (`dev`, `memory`, `brain`) install their hooks **globally** on
+every agent, but a plugin only runs in a directory whose `.red/config.yaml` sets
+`plugins.<name>.enabled: true` (strict opt-in). No `.red/config.yaml`, or a block
+without the explicit `enabled: true`, → the plugin stays fully inert there (no
+bundle fetch, no hooks). `/setup-red-skills` is the **only** thing authorized to
+create `.red/` and to write the activation flags — no other code path may create
+`.red/`. The gate lives in `packages/shared/plugin-gate.ts` (consumed by the dev
+launchers) with a mirrored inline copy in each of memory/brain's `bootstrap.mjs`;
+keep the three in lockstep.
+
 ## Token-efficient terminal work
 
 RTK is the preferred compression layer for noisy development commands in this repo. If `rtk --version` succeeds, prefer RTK-wrapped commands when summarized output is enough:

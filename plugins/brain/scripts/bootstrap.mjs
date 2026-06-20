@@ -23,7 +23,7 @@
 
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readFile, writeFile, chmod, appendFile } from "node:fs/promises";
 import { homedir, platform, arch } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -211,8 +211,61 @@ function run(command, args, env) {
   });
 }
 
+// ── Per-directory plugin gate (ADR 0067) ─────────────────────────────────────
+// Mirror of packages/shared/plugin-gate.ts (pluginEnabledInConfig + walk-up),
+// inlined because the launcher ships dependency-free in the plugin checkout and
+// cannot import the shared module at runtime. Keep the three copies in lockstep.
+function stripInlineComment(value) {
+  const hash = value.indexOf(" #");
+  return (hash >= 0 ? value.slice(0, hash) : value).trim();
+}
+function flatConfigValue(text, dottedKey) {
+  const stack = [];
+  for (const rawLine of text.split("\n")) {
+    const line = rawLine.replace(/\r$/, "");
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const colon = line.indexOf(":");
+    if (colon < 0) continue;
+    const indent = line.length - line.trimStart().length;
+    const key = line.slice(0, colon).trim();
+    if (!key) continue;
+    const value = line.slice(colon + 1).trim();
+    while (stack.length && stack[stack.length - 1].indent >= indent) stack.pop();
+    stack.push({ indent, key });
+    if (value && stack.map((s) => s.key).join(".") === dottedKey) {
+      return stripInlineComment(value);
+    }
+  }
+  return undefined;
+}
+function isPluginEnabled(cwd, plugin) {
+  let dir = cwd;
+  for (let i = 0; i < 16; i++) {
+    const candidate = join(dir, ".red", "config.yaml");
+    if (existsSync(candidate)) {
+      try {
+        return flatConfigValue(readFileSync(candidate, "utf8"), `plugins.${plugin}.enabled`) === "true";
+      } catch {
+        return false;
+      }
+    }
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return false;
+}
+
 async function main() {
   const argv = process.argv.slice(2);
+  // Gate FIRST (ADR 0067): if brain is not explicitly enabled in this directory,
+  // stay fully inert — no fetch, no local fallback — and honour the hooks' no-op
+  // contract (`{}` on stdout, exit 0).
+  if (!isPluginEnabled(process.cwd(), "brain")) {
+    process.stdout.write("{}");
+    process.exit(0);
+  }
   const kind = argv[0] === "mcp" || argv[0] === "brain-mcp" ? "mcp" : "cli";
   const extra = kind === "mcp" ? argv.slice(1) : argv;
 

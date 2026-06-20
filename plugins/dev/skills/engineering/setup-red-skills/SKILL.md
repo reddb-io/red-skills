@@ -1,6 +1,6 @@
 ---
 name: setup-red-skills
-description: Sets up `## Agent skills` and `## Development workflow` blocks in AGENTS.md/CLAUDE.md plus `.red/agents/` and `.red/config.yaml`, so the engineering skills know this repo's GitHub Issues setup, triage label vocabulary, domain doc layout, and interactive dev-loop rules. Run before first use of `to-issues`, `to-prd`, `triage`, `diagnose`, `tdd`, `improve-codebase-architecture`, `zoom-out`, or `/ship` — or if those skills appear to be missing context about the issue tracker, triage labels, domain docs, or dev workflow.
+description: The one authorized creator of a repo's `.red/` directory and the only way to enable RedSkills plugins (dev, memory, brain) in a project (ADR 0067). RedSkills hooks are installed globally on every agent but stay fully inert in any directory without a `.red/config.yaml` whose `plugins.<name>.enabled: true` opts that plugin in. This skill prompts which plugins to enable, creates `.red/`, writes the activation flags, and sets up `## Agent skills`/`## Development workflow` blocks in AGENTS.md/CLAUDE.md plus `.red/agents/`. Run to turn RedSkills on in a repo, to enable/disable a plugin, before first use of `to-issues`, `to-prd`, `triage`, `diagnose`, `tdd`, `improve-codebase-architecture`, `zoom-out`, or `/ship`, or if those skills appear to be missing context.
 disable-model-invocation: true
 ---
 
@@ -8,6 +8,7 @@ disable-model-invocation: true
 
 Scaffold the per-repo configuration that the engineering skills assume:
 
+- **Plugin activation** — the per-directory gate (ADR 0067): which RedSkills plugins (`dev`, `memory`, `brain`) are allowed to run here. This is the **only** skill authorized to create `.red/`; nothing else may.
 - **Issue tracker** — GitHub Issues (the only supported option, reddb.io policy)
 - **Triage labels** — the strings used for the canonical triage roles and label families
 - **Domain docs** — where `.red/CONTEXT.md` and ADRs live, and the consumer rules for reading them
@@ -28,7 +29,7 @@ Look at the current repo to understand its starting state. Read whatever exists;
 - `.red/CONTEXT.md` and `.red/CONTEXT-MAP.md` at the repo root
 - `.red/adr/` and any `src/*/.red/adr/` directories
 - `.red/agents/` — does this skill's prior output already exist?
-- `.red/config.yaml` — is `dev.lock.primary-branch` already set?
+- `.red/config.yaml` — does it exist? Which plugins are already enabled (`plugins.<name>.enabled: true`)? Is `dev.lock.primary-branch` already set?
 - `AGENTS.md` and `CLAUDE.md` — does either already have a `## Development workflow` section?
 
 ### 2. Present findings and ask
@@ -36,6 +37,18 @@ Look at the current repo to understand its starting state. Read whatever exists;
 Summarise what's present and what's missing. Then walk the user through the sections **one at a time** — present a section, get the user's answer, then move to the next. Don't dump all sections at once.
 
 Assume the user does not know what these terms mean. Each section starts with a short explainer (what it is, why these skills need it, what changes if they pick differently). Then show the choices and the default.
+
+**Section A0 — Plugin activation (the per-directory gate). Ask this FIRST.**
+
+> Explainer: RedSkills plugins (`dev`, `memory`, `brain`) install their hooks **globally** on every agent (Claude Code, Codex, opencode), but they must only act in repos that explicitly opt in. Each plugin's hook launcher checks, before doing anything, whether the current directory's `.red/config.yaml` sets `plugins.<name>.enabled: true` (ADR 0067, strict opt-in). No `.red/config.yaml` → every RedSkills plugin stays fully inert here (no bundle fetch, no hooks, no side effects). A `plugins.<name>` block alone is **not** enough — the flag must be the explicit `true`. This skill is the **only** thing authorized to create `.red/` and write these flags.
+
+Ask the user which plugins to enable in this repo (multi-select; `dev` is the usual baseline):
+
+- **dev** — the engineering stack: `/afk`, `/triage`, `/ship`, model-tier routing, branch-lock, statusline. Enabling it is what makes the rest of this setup meaningful; default yes.
+- **memory** — governed operational memory (recall/store/graph). After enabling, run `/memory:init` to choose the storage mode. Default no.
+- **brain** — the agentic command-center context. Default no.
+
+Record the choice; it drives the `plugins:` block written in step 4. Disabling a previously-enabled plugin is also valid here — set its flag to absent/`false`. Creating `.red/` (if missing) is authorized by this section; do not create it anywhere else, and never create it just to host one of the other sections — if the user enables no plugins, write nothing.
 
 **Section A — Issue tracker.**
 
@@ -156,7 +169,7 @@ The script is no-op outside `/afk` sessions (it prints nothing when no live work
 
 > Explainer: `.red/config.yaml` is the per-project knob file that `/afk` and friends read at runtime. It holds the project's fallback runner, default fleet target, and per-detector opt-outs. The schema is documented by the loader shipped in PRD #16 and is forward-compatible (unknown keys are ignored). A fresh repo should land with a *commented* template of every v1 knob so the user discovers the available settings without reading docs — the file is a no-op until lines are uncommented.
 
-No user decision here for the template itself — the skill scaffolds it whenever the file is missing. If `.red/config.yaml` already exists, leave it alone (any prior edits are project state — never clobbered). See step 4 for the write rule.
+No user decision here for the template itself — the skill scaffolds it whenever the file is missing. The one piece that is **not** optional is the `plugins:` activation block from Section A0: the file must carry `plugins.<name>.enabled: true` for each plugin the user enabled, or the globally-installed hooks stay inert (ADR 0067). If `.red/config.yaml` already exists, leave its existing content alone (any prior edits are project state — never clobbered) **except** for surgically adding/updating the `plugins.<name>.enabled` flags to match Section A0 — that targeted merge is the sole allowed exception to the no-clobber rule, since it is the whole point of re-running this skill to enable a plugin. See step 4 for the write rule.
 
 The template carries a **commented `afk.backpressure`** block (#430 / PRD #429): an ordered list of shell commands (`npm run test`, `npm run lint`, …) AFK runs after the built-in feedback gate on every successful iteration — DONE and salvaged no-sentinel alike — where any non-zero exit blocks the merge and parks the issue to `ready-for-human`. It ships commented (a no-op until uncommented). **One optional offer:** when scaffolding a fresh template into a repo whose root (or a clearly primary package) `package.json` declares `test` and/or `lint` scripts, surface them and ask whether to pre-fill the block with the matching `npm run <script>` (or `pnpm`) lines — uncommented — instead of the commented placeholder. Only pre-fill on explicit confirmation; otherwise leave the block commented. Never touch an existing `.red/config.yaml` (the clobber rule wins over this offer).
 
@@ -228,10 +241,10 @@ If the user accepted Section D, copy each standalone `red-*.yml` template the us
 5. Print the secret-setup guidance — the lane needs one OpenCode auth key; do **not** set it for them (secrets are the user's to provision): `gh secret set MINIMAX_API_KEY --repo OWNER/REPO` (or `OPENAI_API_KEY` / `OPENROUTER_API_KEY`; first set wins). **Public-repo gotcha:** if the repo is public, an *org* secret resolves empty unless its "Repository access" includes this repo — prefer a repo secret, or widen the org secret's access. Point them at [`../afk/actions-lane.md`](../afk/actions-lane.md#configuring-secrets-per-provider) for the per-provider table + auth precedence + the `model` slug.
 6. Note that the lane will not fire until both a secret is set (and reaching the repo) and an issue carries `ready-for-agent` from an allowlisted actor.
 
-Scaffold `.red/config.yaml` (Section G, no user decision):
+Scaffold `.red/config.yaml` (Section G), writing the Section A0 activation flags:
 
-1. If `.red/config.yaml` already exists at the repo root, leave it untouched and log a one-line notice (`.red/config.yaml already present — leaving as-is`). Do **not** diff, merge, or overwrite — any existing content is project state.
-2. Otherwise, ensure `.red/` exists and copy [config-template.yaml](./config-template.yaml) verbatim to `.red/config.yaml`. The template is a fully-commented snapshot of every v1 knob the AFK config loader (`apps/dev/src/core/config.ts`) reads from `.red/config.yaml`, so the file is a no-op until the user uncomments a line — including the commented `afk.backpressure` block.
+1. If `.red/config.yaml` already exists at the repo root, leave its existing content as-is **but surgically add/update the `plugins.<name>.enabled` flags** to match the Section A0 choice (add a `plugins:` block or `plugins.<name>:` child if missing; set `enabled: true` for enabled plugins; remove the flag or set `false` for ones the user turned off). Touch nothing else — log a one-line notice (`.red/config.yaml present — merged plugin activation flags, left the rest as-is`). This targeted merge is the only edit permitted to an existing file.
+2. Otherwise, ensure `.red/` exists (this section is the authorized creator) and copy [config-template.yaml](./config-template.yaml) to `.red/config.yaml`, then set the top `plugins:` block's `enabled` flags to match Section A0 (the template ships with `plugins.dev.enabled: true` as the baseline and `memory`/`brain` commented — uncomment/flip per the choice). The rest of the template is a fully-commented snapshot of every v1 knob the AFK config loader (`apps/dev/src/core/config.ts`) reads, so it stays a no-op until the user uncomments a line — including the commented `afk.backpressure` block.
 3. **Backpressure pre-fill offer (only on a fresh scaffold).** Read the repo-root (or primary package) `package.json`; if it declares `test` and/or `lint` scripts, surface them and ask whether to pre-fill `afk.backpressure` with the matching `npm run <script>` (or `pnpm run <script>`) lines, uncommented. On explicit yes, replace the commented `backpressure:` placeholder with the confirmed list; otherwise leave it commented. Skip silently when no such scripts exist. This step never runs when `.red/config.yaml` already existed (step 1 wins).
 4. Do **not** `git add` or commit the file — the user controls when it lands in git.
 
@@ -266,4 +279,4 @@ Never close, reassign, or edit issue bodies in this step — labels only.
 
 ### 6. Done
 
-Tell the user the setup is complete and which engineering skills will now read from these files. Mention they can edit `.red/agents/*.md` directly later, and that interactive work should land through `/ship`. Re-running this skill is only necessary if they want to switch issue trackers or restart from scratch.
+Tell the user the setup is complete, which plugins are now enabled here (and that all other directories stay inert until they run this skill there too), and which engineering skills will now read from these files. If they enabled **memory** or **brain**, point them at the next step — `/memory:init` to pick a storage mode, or the brain setup — since enabling only authorizes the plugin to run; its own init configures it. Mention they can edit `.red/agents/*.md` directly later, and that interactive work should land through `/ship`. Re-run this skill to enable or disable a plugin, switch issue trackers, or restart from scratch.

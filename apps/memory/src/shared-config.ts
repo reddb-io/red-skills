@@ -105,6 +105,7 @@ export function parsePluginsMemory(text: string): MemoryConfig | null {
 
   const config: MemoryConfig = {
     version: CONFIG_VERSION,
+    enabled: asBool(flat[`${p}enabled`]),
     mode: mode as StorageMode,
     notesDir: flat[`${p}notesDir`] ?? DEFAULT_NOTES_DIR,
     hooks,
@@ -146,6 +147,10 @@ function quoteIfNeeded(value: string): string {
  */
 export function emitMemoryBlockLines(config: MemoryConfig): string[] {
   const lines: string[] = ["  memory:"];
+  // Activation flag (ADR 0067) is emitted first so the per-directory gate finds
+  // it at the head of the block. Only `true` is written — absence is "disabled"
+  // under the strict opt-in, so an off/undefined flag stays sparse.
+  if (config.enabled) lines.push("    enabled: true");
   lines.push(`    mode: ${config.mode}`);
   if (config.notesDir && config.notesDir !== DEFAULT_NOTES_DIR)
     lines.push(`    notesDir: ${quoteIfNeeded(config.notesDir)}`);
@@ -210,7 +215,16 @@ function topKey(line: string): string {
  * new file text with a single trailing newline.
  */
 export function mergeMemoryBlock(existingText: string, config: MemoryConfig): string {
-  const memoryLines = emitMemoryBlockLines(config);
+  // Preserve an `enabled: true` that `/setup-red-skills` already wrote (ADR
+  // 0067): the wizard builds `config` from its own answers and does not know
+  // about the activation flag, so recover it from the existing block rather than
+  // letting the in-place replacement drop it (which would silently disable the
+  // plugin the gate just authorized).
+  const effective =
+    config.enabled === undefined && parseYamlFlat(existingText)["plugins.memory.enabled"] === "true"
+      ? { ...config, enabled: true }
+      : config;
+  const memoryLines = emitMemoryBlockLines(effective);
   const lines = existingText === "" ? [] : existingText.replace(/\n+$/, "").split("\n");
 
   // locate a top-level `plugins:` mapping
