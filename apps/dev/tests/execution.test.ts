@@ -50,6 +50,7 @@ const baseInput: RunAgentInput = {
   model: "claude-opus-4-8",
   effort: "high",
   handoffPath: "/wt/handoff.md",
+  handoffContent: "the handoff body",
   branch: "afk/wZ2R4/42-fix-oauth",
 };
 
@@ -84,12 +85,27 @@ describe("buildRunOptions", () => {
     expect(COMPLETION_SIGNALS).toEqual([DONE_SIGNAL, BLOCKED_SIGNAL]);
   });
 
-  it("uses the handoff as promptFile and a named branch strategy", () => {
+  it("delivers the handoff as an INLINE prompt (not a promptFile template) with a named branch strategy", () => {
     const opts = buildRunOptions(makeDeps(async () => fakeResult()), baseInput);
-    expect(opts.promptFile).toBe("/wt/handoff.md");
+    // #758: the handoff is passed inline (verbatim) so red-castle does NOT run
+    // {{KEY}} substitution / `` !`cmd` `` expansion on opaque issue-body text.
+    expect(opts.prompt).toBe("the handoff body");
+    expect(opts.promptFile).toBeUndefined();
     expect(opts.branchStrategy).toEqual({ type: "branch", branch: "afk/wZ2R4/42-fix-oauth" });
-    // Inline prompt must not be set when a promptFile is used.
-    expect(opts.prompt).toBeUndefined();
+  });
+
+  it("passes a handoff with {{KEY}} / Rust-macro code spans through verbatim (no template expansion — #756/#758)", () => {
+    // These tokens crash red-castle's template path: `{{KEY}}` -> "no matching
+    // value" PromptError, and `` `assert!` `` -> false `` !` `` shell-exec.
+    // Inline delivery must carry them byte-for-byte, never as promptFile.
+    const trap = "Use `{{KEY}}`, `assert!` and `debug_assert!` — !`echo nope`.";
+    const opts = buildRunOptions(makeDeps(async () => fakeResult()), {
+      ...baseInput,
+      handoffContent: trap,
+    });
+    expect(opts.prompt).toBe(trap);
+    expect(opts.promptFile).toBeUndefined();
+    expect(opts.promptArgs).toBeUndefined();
   });
 
   it("threads systemPrompt into RunOptions when present, omits it otherwise", () => {
@@ -339,7 +355,7 @@ describe("runAgent", () => {
       }),
       baseInput,
     );
-    expect(seen?.promptFile).toBe("/wt/handoff.md");
+    expect(seen?.prompt).toBe("the handoff body");
     expect(seen?.completionSignal).toEqual([DONE_SIGNAL, BLOCKED_SIGNAL]);
     expect(seen?.branchStrategy).toEqual({ type: "branch", branch: "afk/wZ2R4/42-fix-oauth" });
   });
