@@ -6,6 +6,13 @@ Upstream base: `mattpocock/skills@694fa30311e02c2639942308513555e61ee84a6f` (see
 
 ---
 
+## write-a-skill (productivity) — document the eight-technique SKILL.md writing convention + dogfood it
+
+- **status**: modified
+- **upstream**: —
+- **why**: RedSkills had a *section-level* SKILL.md convention (`<what-to-do>`/`<supporting-info>`) but no *sentence-level* writing guidance, so skill authors had no canonical reference for how each sentence should read. PRD #776 / #777 establishes the eight sentence-level techniques borrowed from `anthropics/launch-your-agent` and makes them discoverable.
+- **what changed**: Added a "SKILL.md writing style" section to `write-a-skill` enumerating all eight techniques (bold lead-in + gloss; maxim/slogan compression; prohibition + reason inline; literal phrasing in quotes; vocabulary hygiene; numbered taxonomy; self-demonstrating voice; precondition-carrying headers), each with a one-line before → after. Rewrote the skill's own body to follow the convention (imperative bold lead-ins, prohibitions carrying their reason, precondition in the Review header) so the generator both teaches and follows the style. Added a sentence-level pointer to `CLAUDE.md` beside the existing "SKILL.md body convention" section, framed as additive (it complements, does not replace, the section-level split). Docs-only — no behavioural/runtime change to any bundle, hook, or CLI.
+
 ## doctor (engineering) — enforce `plugins.dev.*` config namespacing + migrate legacy top-level keys
 
 - **status**: modified
