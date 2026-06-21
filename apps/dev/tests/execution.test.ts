@@ -563,6 +563,40 @@ describe("buildAgent — provider mapping (ADR 0059 opencode wiring)", () => {
     expect(calls.opencode[0]!.options).toEqual({ variant: "max" });
     expect(warned).toEqual([]);
   });
+
+  it("routes claude-minimax to the claude-code provider with MiniMax env + forced MiniMax-M3 model (PRD #788)", () => {
+    const { calls, factories } = recorder();
+    // The resolved tier model is discarded — the lane always forces MiniMax-M3 —
+    // and the MiniMax key rides in as the two Anthropic vars on the inner spawn.
+    buildAgent(factories, "claude-minimax", "claude-opus-4-8", { effort: "high" }, { MINIMAX_API_KEY: "mm-key-789" });
+    expect(calls.claudeCode).toEqual([
+      {
+        model: "MiniMax-M3",
+        options: {
+          effort: "high",
+          env: { ANTHROPIC_API_KEY: "mm-key-789", ANTHROPIC_BASE_URL: "https://api.minimax.io/anthropic" },
+        },
+      },
+    ]);
+    // claude-minimax never touches the codex/opencode factories.
+    expect(calls.codex).toEqual([]);
+    expect(calls.opencode).toEqual([]);
+  });
+
+  it("omits the env block when MINIMAX_API_KEY is absent (lane unusable, claude-code surfaces its own auth error)", () => {
+    const { calls, factories } = recorder();
+    buildAgent(factories, "claude-minimax", "claude-opus-4-8", undefined, {});
+    // No key + no effort → no options object; model is still forced to MiniMax-M3.
+    expect(calls.claudeCode).toEqual([{ model: "MiniMax-M3", options: undefined }]);
+  });
+
+  it("gates claude-minimax effort like claude — the full CLAUDE_EFFORTS set including max is accepted", () => {
+    const { calls, factories } = recorder();
+    const warned: string[] = [];
+    buildAgent(factories, "claude-minimax", "x", { effort: "max" }, { MINIMAX_API_KEY: "k" }, (m) => warned.push(m));
+    expect(calls.claudeCode[0]!.options).toMatchObject({ effort: "max" });
+    expect(warned).toEqual([]);
+  });
 });
 
 describe("runAgent — FIX F continuous-push under isolation warning", () => {
