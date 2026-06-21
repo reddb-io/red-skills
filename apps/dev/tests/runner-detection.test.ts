@@ -61,6 +61,17 @@ describe("runner detection", () => {
     });
   });
 
+  // PRD #788: claude-minimax is an explicit-pin-only lane (reuses claude-code
+  // over MiniMax). Like opencode, no caller identity ever auto-sniffs it.
+  it("accepts claude-minimax only as an explicit pin (flag or RED_AFK_RUNNER)", () => {
+    expect(detectRunner({ flag: "claude-minimax" })).toMatchObject({ runner: "claude-minimax", method: "flag" });
+    expect(detectRunner({ env: { RED_AFK_RUNNER: "claude-minimax" } })).toMatchObject({
+      runner: "claude-minimax",
+      method: "env-var",
+      detail: "RED_AFK_RUNNER",
+    });
+  });
+
   it("honours an operator-configured opencode default (afk.default_runner), not a sniff", () => {
     // The injected fallback IS the operator's explicit `afk.default_runner` choice,
     // so opencode there is honoured — that is configuration, not caller-identity sniffing.
