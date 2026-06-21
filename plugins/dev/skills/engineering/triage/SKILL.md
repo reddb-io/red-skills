@@ -5,64 +5,62 @@ description: Triage issues through a state machine driven by triage roles. Use w
 
 # Triage
 
-Move issues on the project issue tracker through a small state machine of triage roles.
+**Triage owns the gate from raw report to agentable issue.** Route each invocation to exactly one flow; never start a second without a fresh request.
 
 <what-to-do>
 
-When `/triage` fires, interpret the maintainer's natural-language request and route to the matching flow. **Do exactly one flow per invocation**; do not start a second flow without a fresh request.
-
-**The four flows:**
+Interpret the maintainer's natural-language request and route to the matching flow:
 
 | Request shape | Flow |
 |---|---|
-| "show me what needs attention" / "what's queued" / no specific issue | → **Show queue** |
-| Single issue reference ("look at #42", "triage #42") with no action verb | → **Triage one issue** |
-| Imperative on a specific issue ("move #42 to ready-for-agent", "close #99 wontfix") | → **Quick override** |
-| Returning to an issue that already has triage notes | → **Resume** |
+| "show me what needs attention" / "what's queued" / no specific issue | → **Flow A — Show queue** |
+| Single issue reference ("look at #42", "triage #42") with no action verb | → **Flow B — Triage one issue** |
+| Imperative on a specific issue ("move #42 to ready-for-agent", "close #99 wontfix") | → **Flow C — Quick override** |
+| Returning to an issue that already has triage notes | → **Flow D — Resume** |
 
-### Flow A — Show queue
+### Flow A — Show queue (no specific issue given)
 
-Query the issue tracker and present three buckets, oldest first:
+**Show the queue and stop — do not auto-triage.** Present three buckets, oldest first:
 
 1. **Unlabeled** — never triaged
 2. **`needs-triage`** — evaluation in progress
 3. **`needs-info` with reporter activity since the last triage notes** — needs re-evaluation
 
-Show counts and one line per issue. Let the maintainer pick. **Stop after presenting** — do not auto-triage.
+Show counts and one line per issue. Let the maintainer pick what to handle next.
 
-### Flow B — Triage one issue (the full loop)
+### Flow B — Triage one issue (single issue, no action verb)
 
-Execute these steps **in order**. Do not skip.
+**Execute every step in order — skipping any step produces an incomplete triage.**
 
-1. **Gather context.** Read the issue body, all comments, labels, reporter, dates. Parse any prior triage notes — never re-ask resolved questions. Explore the codebase using the domain glossary and respect ADRs in the area. Read `.out-of-scope/*.md` and surface any prior rejection that resembles this issue. **Then dedupe against memory** (see *Memory dedup* in `<supporting-info>`, optional): if the `memory` plugin is installed, recall the issue's key terms and surface any known problem, prior decision, or already-shipped fix that this report duplicates — a strong signal toward `wontfix`, `needs-info`, or a quick close.
-2. **Recommend.** Tell the maintainer your category role + state role recommendation with one-sentence reasoning, plus a brief codebase summary relevant to the issue. **Wait for direction.**
-3. **Reproduce (bugs only — mandatory).** Before any grilling, attempt reproduction: read steps, trace code, run tests. Report `repro confirmed` with code path, `repro failed`, or `insufficient detail` (strong `needs-info` signal). **Do not skip this for bugs.** A confirmed repro makes a much stronger agent brief.
-4. **Grill (only if needed).** If the issue needs fleshing out before it can move to a final state, run a `/start` session.
+1. **Gather context.** Read the issue body, all comments, labels, reporter, and dates. Parse any prior triage notes — never re-ask resolved questions. Explore the codebase via the domain glossary and respect ADRs in the area. Read `.out-of-scope/*.md` and surface any prior rejection that resembles this issue. If the `memory` plugin is installed, recall the issue's key terms (see *Memory dedup* in `<supporting-info>`) — a strong signal toward `wontfix`, `needs-info`, or a quick close.
+2. **Recommend.** State your category role + state role recommendation with one-sentence reasoning, plus a brief codebase summary relevant to the issue. **Wait for direction before proceeding.**
+3. **Reproduce — mandatory for bugs; skip for enhancements.** Attempt reproduction: read steps, trace code, run tests. Report `repro confirmed` with code path, `repro failed`, or `insufficient detail` (strong `needs-info` signal). A confirmed repro makes a much stronger agent brief.
+4. **Grill — only if needed.** If the issue needs fleshing out before reaching a final state, run a `/start` session.
 5. **Apply the outcome** per the table in `<supporting-info>`.
 
-### Flow C — Quick override
+### Flow C — Quick override (explicit action verb on a specific issue)
 
-When the maintainer says "move #42 to ready-for-agent" or similar imperative:
+**Apply the maintainer's directive exactly — skip grilling and reproduction.**
 
-1. Confirm what you're about to do — list every change (role swap, comment text, close).
-2. Apply on confirmation. **Skip grilling and reproduction.**
-3. If moving to `ready-for-agent` and no `## Agent brief` section exists in the issue body, ask if they want one written before applying the transition.
+1. Confirm what you are about to do: list every change (role swap, comment text, close). Wait for approval.
+2. Apply on confirmation.
+3. If moving to `ready-for-agent` and no `## Agent brief` section exists in the issue body, ask before applying the transition.
 
-### Flow D — Resume
+### Flow D — Resume (issue already has triage notes)
 
-If prior triage notes exist on the issue: read them, check whether the reporter answered outstanding questions, present an updated picture. Then enter Flow B at the step the prior session stopped at. Never re-ask resolved questions.
+**Pick up where the prior session left off — never re-ask resolved questions.** Read existing triage notes, check whether the reporter answered outstanding questions, present an updated picture. Then enter Flow B at the step the prior session stopped at.
 
 ### Hard rules — apply to every flow
 
-- ✅ **Every comment or issue you post must start with this disclaimer**, verbatim:
+- ✅ **Start every posted comment with the AI disclaimer**, verbatim:
   ```
   > *This was generated by AI during triage.*
   ```
-- ✅ **Confirm before any destructive change** (label removal, state transition, close). List the changes; wait.
-- ✅ **One category role + one state role** per triaged issue. If state roles conflict on an existing issue, **stop and ask the maintainer** before doing anything else.
-- ❌ Do **not** invent label strings — use the mapping from `/setup-red-skills`. If a mapping is missing, ask the maintainer to run `/setup-red-skills` and stop.
-- ❌ Do **not** skip Step 3 (Reproduce) for bug-category issues.
-- ❌ Do **not** modify or close a parent issue while triaging children.
+- ✅ **Confirm before any destructive change** — list every label removal, state transition, or close; wait for approval.
+- ✅ **One category role + one state role per issue.** If state roles conflict on an existing issue, stop and ask the maintainer before doing anything else — proceeding with conflicting roles corrupts the triage state machine.
+- ❌ Do **not** invent label strings — use the mapping from `/setup-red-skills`; invented labels fragment the queue and break AFK claim queries. If a mapping is missing, ask the maintainer to run `/setup-red-skills` and stop.
+- ❌ Do **not** skip Step 3 (Reproduce) for bug-category issues — an unverified repro leaves the agent brief guessing at the code path.
+- ❌ Do **not** modify or close a parent issue while triaging children — parent state reflects aggregate child state and must be updated only when the child set settles.
 
 </what-to-do>
 
