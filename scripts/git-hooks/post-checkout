@@ -1,0 +1,46 @@
+#!/bin/sh
+# .git/hooks/post-checkout — tracked in scripts/git-hooks/ and installed by
+# scripts/install-git-hooks.sh. Lives in the repo so a fresh clone of red-skills
+# (or a contributor's first git pull) gets the same checkout behaviour as CI,
+# which uses `actions/checkout submodules:recursive` (#AFK improvement).
+#
+# Why this exists: `git worktree add` does NOT populate submodules, so a fresh
+# AFK feedback worktree has `packages/red-castle/` as an empty dir and `pnpm
+# install` cannot resolve the `@reddb-io/red-castle` workspace dep — every gate
+# check (tsc / build / vitest) then fails with "Cannot find module" and a green
+# worker branch gets parked as `blocked:validation`. Auto-init submodules on
+# every checkout so any worktree, in any host, in any orchestrator session, has
+# the right shape before pnpm even looks.
+#
+# Args per `githooks(5)`: $1=prev HEAD, $2=new HEAD, $3=flag (1=branch checkout,
+# 0=file checkout, 2=clone). Idempotent; failures swallowed — a broken hook
+# must never break `git checkout` for a human.
+
+prev="$1"
+new="$2"
+flag="$3"
+
+# Only act on branch checkouts (1) and clones (2) — skip file-only checkouts (0).
+case "$flag" in
+  1|2) ;;
+  *) exit 0 ;;
+esac
+
+# Initialise the red-castle submodule (the @reddb-io/red-castle workspace:*
+# source consumed by every package, ADR 0061). `git submodule update` is
+# idempotent on an already-initialised submodule; `> /dev/null 2>&1` keeps the
+# hook silent on the common no-op path.
+git submodule update --init --recursive >/dev/null 2>&1 || true
+
+# For worktree adds only (the new worktree has no node_modules), pnpm install
+# is also needed. We can't perfectly detect a worktree add from this hook
+# (flag is the same as a branch checkout in the primary), so we look for the
+# canonical signal: a missing top-level node_modules. If absent, run install
+# with the frozen lockfile (same invocation feedback-worktree.ts uses).
+if [ ! -d node_modules ] || [ ! -x node_modules/.bin/pnpm ]; then
+  if command -v pnpm >/dev/null 2>&1; then
+    pnpm install --frozen-lockfile >/dev/null 2>&1 || true
+  fi
+fi
+
+exit 0
