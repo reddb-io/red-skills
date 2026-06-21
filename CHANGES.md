@@ -6,6 +6,13 @@ Upstream base: `mattpocock/skills@694fa30311e02c2639942308513555e61ee84a6f` (see
 
 ---
 
+## ff (productivity) — two-step interactive flow: choose framing, then dispatch prompt
+
+- **status**: modified
+- **upstream**: —
+- **why**: The old `/ff` dumped all seven framings at once and made dispatch an invocation-time flag. The desired UX is two sequential questions with user interaction between them — pick the framing first, then decide whether to execute the single rewrite.
+- **what changed**: Restructured the skill into two steps. **Step 1** asks `How do you want to rewrite your content?` and presents the framing menu (a–g) with one recommendation, then stops — no rewrite generated yet; the user picks by label. **Step 2** generates only the chosen framing's rewrite, prints `Result: {result}`, and asks `Would you like to dispatch it? Yes/no` — Yes adopts the rewrite as the active message and executes the underlying task, No hands it back and stops. `--dispatch`/`-d` is kept as an auto-yes shortcut that skips the Step 2 question. Dropped the all-previews-at-once output and the compare/mix affordance (conscious trade-off for a cleaner flow). Restructured the body into `<what-to-do>` / `<supporting-info>` and updated the frontmatter `description`. README, productivity bucket README updated to match.
+
 ## branch-lock (misc) + dev codex hooks — extend the ADR 0067 gate to the non-launcher hook surface
 
 - **status**: modified
