@@ -1,0 +1,6 @@
+# Built bundles are published as Release assets and fetched into a version-keyed
+# cache by scripts/bootstrap.mjs (ADR 0038) — never committed.
+dist/
+node_modules/
+*.tsbuildinfo
+dist-bundle/

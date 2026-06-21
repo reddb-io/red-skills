@@ -105,28 +105,27 @@ Most repos have a single context:
 
 ```
 /
-├── .red/CONTEXT.md
-├── docs/
+├── .red/
+│   ├── CONTEXT.md
 │   └── adr/
 │       ├── 0001-event-sourced-orders.md
 │       └── 0002-postgres-for-write-model.md
 └── src/
 ```
 
-If a `.red/CONTEXT-MAP.md` exists at the root, the repo has multiple contexts. The map points to where each one lives:
+If a `.red/CONTEXT-MAP.md` exists at the root, the repo has multiple contexts. Everything still lives under the single root `.red/` — the map lists the contexts and each one's glossary lives under `.red/contexts/<name>/`:
 
 ```
 /
-├── .red/CONTEXT-MAP.md
-├── docs/
-│   └── adr/                          ← system-wide decisions
-├── src/
-│   ├── ordering/
-│   │   ├── .red/CONTEXT.md
-│   │   └── .red/adr/                 ← context-specific decisions
-│   └── billing/
-│       ├── .red/CONTEXT.md
-│       └── .red/adr/
+├── .red/
+│   ├── CONTEXT-MAP.md                 ← lists the contexts and how they relate
+│   ├── contexts/
+│   │   ├── ordering/CONTEXT.md
+│   │   └── billing/CONTEXT.md
+│   └── adr/                           ← single root ADR sequence (all contexts)
+└── src/
+    ├── ordering/
+    └── billing/
 ```
 
 Create files lazily — only when you have something to write. If no `.red/CONTEXT.md` exists, create one when the first term is resolved. If no `.red/adr/` exists, create it when the first ADR is needed.

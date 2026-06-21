@@ -5,8 +5,8 @@ How the engineering skills should consume this repo's domain documentation when 
 ## Before exploring, read these
 
 - **`.red/CONTEXT.md`** at the repo root, or
-- **`.red/CONTEXT-MAP.md`** at the repo root if it exists — it points at one `.red/CONTEXT.md` per context. Read each one relevant to the topic.
-- **`.red/adr/`** — read ADRs that touch the area you're about to work in. In multi-context repos, also check `src/<context>/.red/adr/` for context-scoped decisions.
+- **`.red/CONTEXT-MAP.md`** at the repo root if it exists — it points at one `.red/contexts/<name>/CONTEXT.md` per context. Read each one relevant to the topic.
+- **`.red/adr/`** — read ADRs that touch the area you're about to work in. ADRs live in this single root sequence, even in multi-context repos.
 
 If any of these files don't exist, **proceed silently**. Don't flag their absence; don't suggest creating them upfront. The producer skill (`/start`) creates them lazily when terms or decisions actually get resolved.
 
@@ -16,26 +16,27 @@ Single-context repo (most repos):
 
 ```
 /
-├── .red/CONTEXT.md
-├── .red/adr/
-│   ├── 0001-event-sourced-orders.md
-│   └── 0002-postgres-for-write-model.md
+├── .red/
+│   ├── CONTEXT.md
+│   └── adr/
+│       ├── 0001-event-sourced-orders.md
+│       └── 0002-postgres-for-write-model.md
 └── src/
 ```
 
-Multi-context repo (presence of `.red/CONTEXT-MAP.md` at the root):
+Multi-context repo (presence of `.red/CONTEXT-MAP.md` at the root) — everything stays under the single root `.red/`:
 
 ```
 /
-├── .red/CONTEXT-MAP.md
-├── .red/adr/                          ← system-wide decisions
+├── .red/
+│   ├── CONTEXT-MAP.md                 ← lists the contexts and how they relate
+│   ├── contexts/
+│   │   ├── ordering/CONTEXT.md
+│   │   └── billing/CONTEXT.md
+│   └── adr/                           ← single root ADR sequence (all contexts)
 └── src/
     ├── ordering/
-    │   ├── .red/CONTEXT.md
-    │   └── .red/adr/                  ← context-specific decisions
     └── billing/
-        ├── .red/CONTEXT.md
-        └── .red/adr/
 ```
 
 ## Use the glossary's vocabulary
