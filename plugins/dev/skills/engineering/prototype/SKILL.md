@@ -5,7 +5,7 @@ description: Build a throwaway prototype to flesh out a design before committing
 
 # Prototype
 
-A prototype is **throwaway code that answers a question**. The question decides the shape.
+**Throwaway code answers one question — the question decides the shape.** Identify the question before writing a line, pick the branch that answers it, then delete the prototype once it has answered.
 
 ## Pick a branch
 
