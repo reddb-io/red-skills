@@ -6,6 +6,21 @@ Upstream base: `mattpocock/skills@694fa30311e02c2639942308513555e61ee84a6f` (see
 
 ---
 
+## ship, hitl, urgent, to-issues, to-prd, report-bug (engineering) — SKILL.md writing-convention sweep: bold lead-ins + primary edits (PRD #776, issue #782)
+
+- **status**: modified
+- **upstream**: to-issues `e74f006`; to-prd `aaf2453`; ship `—`; hitl `—`; urgent `—`; report-bug `—`
+- **why**: Apply PRD #776 writing convention — imperative bold lead-in on every skill, plus each skill's catalogued primary edit (prose only, no behavioural change).
+- **what changed**:
+  - **ship**: added bold lead-in; reformatted `--admin` prohibition as `**Do not … — reason.**`.
+  - **hitl**: bolded lead-in; converted `## Step N` headings to inline `**Step N — Verb.**` labels.
+  - **urgent**: moved "One fire per invocation — no triage bypass for 'I want it sooner'" to the opening line.
+  - **to-issues**: added bold lead-in; changed AFK/HITL taxonomy bullets to `(i)/(ii)` numbered form.
+  - **to-prd**: added bold lead-in; reformatted `ready-for-agent`/PRD prohibition as `**Do not … — reason.**`.
+  - **report-bug**: added "You file, /triage routes. Never pre-label or guess priority." as bold lead-in.
+
+---
+
 ## ff (productivity) — two-step interactive flow: choose framing, then dispatch prompt
 
 - **status**: modified
