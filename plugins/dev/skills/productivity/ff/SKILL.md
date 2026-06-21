@@ -15,10 +15,11 @@ first, generates only that one rewrite, then asks whether to dispatch it.
 
 <what-to-do>
 
-Run these two steps in order. Ask one question, wait for the answer, then proceed
-to the next. Never skip ahead.
+**Reframe the user's message through exactly one chosen framing, via two sequential interactions — pick the framing first, generate the rewrite second.** Never skip ahead or produce multiple rewrites.
 
-### Step 1 — choose the framing
+Run these two steps in order. Ask one question, wait for the answer, then proceed to the next.
+
+### Step 1 — choose the framing (no rewrite yet — stop and wait for the user's pick)
 
 Present the framing menu with a single recommendation, then **stop and wait**. Do
 not generate any rewrite yet — the user picks by label, before seeing any output.
@@ -39,7 +40,7 @@ I think you want (x), because ...
 
 The user picks with phrases like `d`, `use a`, or `go with that one`.
 
-### Step 2 — generate, then ask to dispatch
+### Step 2 — generate the chosen rewrite, then ask to dispatch (only after the user picks from Step 1)
 
 Produce **only** the chosen framing's rewrite and present it, then ask whether to
 dispatch:
@@ -73,6 +74,45 @@ remaining text.
 </what-to-do>
 
 <supporting-info>
+
+## Worked example — framing (e) end-to-end
+
+User invokes `/ff implement error handling for this API`.
+
+**Step 1 output (stop — wait for the user's pick):**
+
+```
+How do you want to rewrite your content?
+
+I think you want (e), because it's an implementation task that could be scoped as a ticket.
+
+(a) For a junior dev
+(b) For a 10-year-old
+(c) For a senior dev
+(d) As an improved prompt
+(e) As an implementable issue
+(f) As a decision request
+(g) Short and direct
+```
+
+User replies: `e`
+
+**Step 2 output (generate + ask to dispatch):**
+
+```
+Result:
+**Add error handling to the payment API endpoint**
+Context: The `/api/payment` endpoint currently lets uncaught exceptions propagate to the caller.
+Scope: Wrap the handler in try/catch; return `{ error: "…", code: 500 }` on failure; log via the existing logger.
+Acceptance criteria: non-2xx responses are structured JSON; errors are logged; no uncaught exceptions escape.
+Validation: manual smoke test + existing integration tests pass.
+
+Would you like to dispatch it? Yes/no
+```
+
+User replies: `yes` → carry out the implementation task described above.
+
+---
 
 ## Framing semantics
 
