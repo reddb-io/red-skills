@@ -5,27 +5,19 @@ description: Install or inspect the RedSkills statusline for the current repo. O
 
 # Statusline
 
-Install the RedSkills statusline for this repository.
+**Wire the RedSkills statusline for the host the agent is running under — stop immediately if a gate condition is met.** Claude Code: command-backed (full AFK block); Codex: built-in footer items only (no command hook, AFK block not available).
 
-It renders the project name, branch, and model/context data when the host
-provides it, and — on Claude Code — the live AFK issue block: workers, ready
-queue count, ready-for-human count, diffstat, and current issue numbers. The
-line is quiet when no AFK worker is active.
+Install the RedSkills statusline for this repository. It renders the project name, branch, and model/context data when the host provides it, and — on Claude Code — the live AFK issue block: workers, ready queue count, ready-for-human count, diffstat, and current issue numbers. The line is quiet when no AFK worker is active.
 
-**Host capabilities differ.** Claude Code supports a *command-backed* statusline
-(it runs a command and renders its stdout), so it shows the full AFK block.
-Codex, as of this writing, only supports *built-in* footer items via
-`tui.status_line` and has **no** command-backed statusline (open feature
-requests openai/codex#17827, #20244) — so the AFK worker block cannot render in
-Codex's footer; track AFK under Codex with `/afk monitor` instead.
+**Host capabilities differ.** Claude Code supports a *command-backed* statusline (it runs a command and renders its stdout), so it shows the full AFK block. Codex, as of this writing, only supports *built-in* footer items via `tui.status_line` and has **no** command-backed statusline (open feature requests openai/codex#17827, #20244) — so the AFK worker block cannot render in Codex's footer; track AFK under Codex with `/afk monitor` instead.
 
 ## Claude Code
 
 1. Inspect the repo: `.red/config.yaml`, `.claude/settings.json`, and whether `jq` is available.
 
-2. Respect opt-outs: if `.red/config.yaml` has top-level `statusline: false` or nested `afk.statusline: false`, stop and tell the user it is disabled.
+2. **Early exit — opt-out:** if `.red/config.yaml` has top-level `statusline: false` or nested `afk.statusline: false`, stop and tell the user it is disabled. Do not proceed.
 
-3. Preserve existing config: if `.claude/settings.json` already has `statusLine`, do not overwrite it unless the user explicitly asked to replace it (then replace only `statusLine`, preserving all other keys).
+3. **Early exit — already configured:** if `.claude/settings.json` already has `statusLine`, do not overwrite it unless the user explicitly asked to replace it (then replace only `statusLine`, preserving all other keys).
 
 4. Write the RedSkills statusline:
 

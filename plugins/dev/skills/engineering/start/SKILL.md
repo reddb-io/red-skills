@@ -6,7 +6,9 @@ argument-hint: "[plan to grill: prose, URL, path, or empty]"
 
 <what-to-do>
 
-Interview the user **relentlessly** about every aspect of their plan until you reach shared understanding. Walk down each branch of the design tree, resolving dependencies between decisions one at a time.
+**Run a relentless one-Q-at-a-time grilling session until every branch of the decision tree is resolved — shared understanding is the only exit condition.** Ask one question, include a recommendation with one-sentence reasoning, wait for the reply, re-evaluate, then move to the next branch.
+
+Walk down each branch of the design tree, resolving dependencies between decisions one at a time.
 
 **The loop:**
 
@@ -16,14 +18,19 @@ Interview the user **relentlessly** about every aspect of their plan until you r
 4. When their answer changes the tree, re-evaluate before asking the next question.
 5. Stop when the user says stop, or when every reachable branch is resolved.
 
-**Boot behavior (turn 1):**
+## Boot behavior (turn 1 — first invocation only)
 
 The argument is optional. Treat it as the plan or context to grill.
 
 - **External reference** (URL or file path) → eager ingest via `/wiki ingest <ref>`. If `.red/wiki/` is not initialised, ask **once**: `Initialise /wiki to cache fetches across sessions? (y/N)`. On `y`, run `/wiki-init` then proceed. On `n`, fall back to plain `WebFetch`/`Read` into context and note in the receipt that the material is **not cached**.
 - **Inline document** (text pasted in the argument) → already in context, no fetch.
 - **Prose** (short description) → no fetch, the prose is the plan.
-- **Empty argument** → open with `Q01: What plan are we grilling? Paste it, link a URL, point to a file, or describe it.`
+- **Empty argument** → open with the literal Q01:
+
+  > **Q01:** What plan are we grilling?
+  > **Branches:** (a) paste it inline  (b) share a URL or file path  (c) describe it in a sentence
+  > **Recommend:** (a), because inline context lets us start grilling immediately.
+  > *(answer, redirect, or push back — I'll wait)*
 
 After successful ingestion, emit a **single-line receipt** then proceed to `Q01`:
 

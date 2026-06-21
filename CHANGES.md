@@ -54,6 +54,62 @@ Upstream base: `mattpocock/skills@694fa30311e02c2639942308513555e61ee84a6f` (see
   - **to-prd**: added bold lead-in; reformatted `ready-for-agent`/PRD prohibition as `**Do not … — reason.**`.
   - **report-bug**: added "You file, /triage routes. Never pre-label or guess priority." as bold lead-in.
 
+## start (engineering) — convention sweep: bold lead-in, boot header carries precondition, literal Q01 example (PRD #776)
+
+- **status**: modified
+- **upstream**: —
+- **why**: PRD #776 convention sweep — technique #1 (bold lead-in), #4 (literal phrasing), #8 (phase/step header carries precondition).
+- **what changed**: Added a bold imperative lead-in at the top of `<what-to-do>`. Changed `**Boot behavior (turn 1):**` inline bold to `## Boot behavior (turn 1 — first invocation only)` section heading. Replaced the embedded Q01 text in the empty-argument bullet with a literal formatted Q01 block using the question-format template (branches + recommend line).
+
+## reflect (productivity) — convention sweep: bold lead-in + `<what-to-do>` structure (PRD #776)
+
+- **status**: modified
+- **upstream**: `e74f006` (renamed-from-grill-me)
+- **why**: PRD #776 convention sweep — technique #1 (bold lead-in). Skill was a near-stub with no structural tags, blurring with `/start`.
+- **what changed**: Wrapped body in `<what-to-do>`. Added a bold imperative lead-in. Expanded the one-liner into explicit instructions (one question per turn, include recommendation with reason, wait for reply).
+
+## ff (productivity) — convention sweep: bold lead-in, precondition headers, worked example (PRD #776)
+
+- **status**: modified
+- **upstream**: —
+- **why**: PRD #776 convention sweep — technique #1 (bold lead-in), #4 (literal phrasing — worked example end-to-end), #8 (phase/step headers carry preconditions).
+- **what changed**: Added a bold imperative lead-in at the top of `<what-to-do>`. Added precondition phrases to step headers: Step 1 → "(no rewrite yet — stop and wait for the user's pick)"; Step 2 → "(only after the user picks from Step 1)". Added a worked example to `<supporting-info>` showing one framing (e) end-to-end: Step 1 menu output, user pick, Step 2 rewrite + dispatch question, and Yes outcome.
+
+## handoff (productivity) — convention sweep: bold lead-in, maxim, inline template (PRD #776)
+
+- **status**: modified
+- **upstream**: `b8be62f`
+- **why**: PRD #776 convention sweep — technique #1 (bold lead-in), #2 (maxim), #4 (literal phrasing — inline template block). Was a bare checklist with no lead-in.
+- **what changed**: Added bold lead-in + maxim ("Hand over context, not content — reference existing artifacts; do not reproduce them."). Replaced the bare bullet list with an explicit four-field coverage spec (State, Next action, Skills, Refs) followed by a concrete template block in Markdown.
+
+## tdd (engineering) — convention sweep: bold lead-in, spec-language checklist (PRD #776)
+
+- **status**: modified
+- **upstream**: —
+- **why**: PRD #776 convention sweep — technique #1 (bold lead-in), #4 (literal phrasing — checklist rewritten in spec language "user can…").
+- **what changed**: Added bold lead-in at top of `<what-to-do>`. Rewrote per-cycle checklist from implementation-oriented assertions ("Test describes BEHAVIOUR, not implementation") to spec-language items that describe observable outcomes ("A reader can tell what the system does from this test alone — not how it does it").
+
+## prototype (engineering) — convention sweep: bold lead-in maxim (PRD #776)
+
+- **status**: modified
+- **upstream**: —
+- **why**: PRD #776 convention sweep — technique #1 (bold lead-in) + #2 (maxim). Opening line was passive prose.
+- **what changed**: Replaced "A prototype is **throwaway code that answers a question**. The question decides the shape." with a bold imperative maxim: "**Throwaway code answers one question — the question decides the shape.**" followed by an action directive (identify the question, pick the branch, delete once answered).
+
+## setup-red-skills (engineering) — convention sweep: bold lead-in, hoisted prohibition, Section A0 header (PRD #776)
+
+- **status**: modified
+- **upstream**: —
+- **why**: PRD #776 convention sweep — technique #1 (bold lead-in), #3 (prohibition + reason inline, hoisted to top), #8 (Section A0 header carries its precondition).
+- **what changed**: Added bold lead-in that names the `.red/` authorization constraint at the very first line ("this skill is the only thing authorized to create `.red/`"). Hoisted the NEVER prohibition inline with its consequence ("plugins stay fully inert…"). Updated Section A0 header from "Ask this FIRST" postscript to a proper precondition form: "ask first (the per-directory gate)". Removed the now-redundant "only skill authorized" clause from the plugin-activation bullet.
+
+## setup-statusline (engineering) — convention sweep: bold lead-in, gate early-exits marked (PRD #776)
+
+- **status**: modified
+- **upstream**: —
+- **why**: PRD #776 convention sweep — technique #1 (bold lead-in), #8 (steps that are early exits now say so explicitly).
+- **what changed**: Added bold lead-in naming the host-dispatch and gate-stop contract. Steps 2 and 3 relabelled as "**Early exit — opt-out:**" and "**Early exit — already configured:**" so the agent knows to stop rather than fall through.
+
 ---
 
 ## ff (productivity) — two-step interactive flow: choose framing, then dispatch prompt

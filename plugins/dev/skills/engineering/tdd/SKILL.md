@@ -7,6 +7,8 @@ description: Test-driven development with red-green-refactor loop. Use when user
 
 <what-to-do>
 
+**Build one vertical slice at a time — RED then GREEN, never the reverse, never in bulk.** One failing test, the minimum code to pass it, nothing more; repeat until every listed behaviour is covered, then refactor.
+
 Build the feature one **vertical slice** at a time. Each slice is exactly one RED → GREEN cycle: one failing test, then the minimum code to pass it. Repeat until the listed behaviours are covered, then refactor.
 
 ### Step 1 — Plan, then get approval
@@ -64,11 +66,11 @@ Once all planned tests are GREEN:
 Before declaring a cycle done, confirm every box:
 
 ```
-[ ] Test describes BEHAVIOUR, not implementation
-[ ] Test uses the PUBLIC INTERFACE only
-[ ] Test would survive an internal refactor
-[ ] Code added is MINIMAL for this test
-[ ] No speculative features
+[ ] A reader can tell what the system does from this test alone — not how it does it
+[ ] The test reaches the system only through its public interface
+[ ] This test would still pass if the internal implementation were replaced entirely
+[ ] No code was added beyond what this test required
+[ ] No features were anticipated beyond the current test
 ```
 
 If any box is unchecked, the cycle isn't done — fix it before moving on.
