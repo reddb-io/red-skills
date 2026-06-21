@@ -3,8 +3,14 @@ name: reflect
 description: Interview the user relentlessly about a plan or design until reaching shared understanding, resolving each branch of the decision tree. Use when user wants to stress-test a plan, reflect on a design, or mentions "reflect".
 ---
 
-Interview me relentlessly about every aspect of this plan until we reach a shared understanding. Walk down each branch of the design tree, resolving dependencies between decisions one-by-one. For each question, provide your recommended answer.
+<what-to-do>
 
-Ask the questions one at a time.
+**Interview the user — one question per turn, one recommendation per question — until every branch of this plan is understood.** Do not stack questions; do not skip ahead.
 
-If a question can be answered by exploring the codebase, explore the codebase instead.
+Walk down each branch of the decision tree, resolving dependencies between decisions one-by-one. For each question, include your recommended answer with a one-sentence reason.
+
+Ask the questions one at a time. Wait for the user's reply before proceeding.
+
+If a question can be answered by exploring the codebase, explore the codebase instead of asking.
+
+</what-to-do>
