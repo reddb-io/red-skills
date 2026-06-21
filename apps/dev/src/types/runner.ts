@@ -1,4 +1,4 @@
-export const runners = ["claude", "codex", "hermes", "opencode"] as const;
+export const runners = ["claude", "codex", "hermes", "opencode", "claude-minimax"] as const;
 export type Runner = (typeof runners)[number];
 
 export type RunnerDetectionMethod =
