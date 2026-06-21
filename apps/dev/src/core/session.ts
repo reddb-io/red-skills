@@ -212,9 +212,18 @@ export interface SessionContext {
   sweepsSkipped?: boolean;
 }
 
-/** Toggle a runner to the other backend (claude↔codex). */
-function otherRunner(r: Runner): Runner {
-  return r === "claude" ? "codex" : "claude";
+/**
+ * Toggle a runner to the other backend for --alternate rotation.
+ * The pair is determined by the initial runner so every run is a two-runner cycle:
+ *   claude-minimax ↔ claude  (new pair; claude-minimax is paired with claude)
+ *   claude         ↔ codex   (original pair when the session starts on claude)
+ *   codex/opencode ↔ claude  (everything else pairs with claude)
+ */
+function otherRunner(r: Runner, initial: Runner): Runner {
+  if (r !== initial) return initial;
+  if (initial === "claude-minimax") return "claude";
+  if (initial === "claude") return "codex";
+  return "claude";
 }
 
 /** The per-issue ProcessIssueInput fields that are identical across the drain.
@@ -504,7 +513,7 @@ export async function runSession(deps: SessionDeps, ctx: SessionContext): Promis
       // exiting here respawns a fresh worker that re-races the same head issue
       // forever — the #644 churn that starved 2 of 3 slots.
       if (ctx.once && result.outcome !== "claim-lost") break;
-      if (ctx.alternate) activeRunner = otherRunner(activeRunner);
+      if (ctx.alternate) activeRunner = otherRunner(activeRunner, ctx.runner);
     }
 
     // ---- 6. post_session (normal end) ----

@@ -65,6 +65,17 @@ export const CONFIG_DEFAULTS = {
   "afk.models.opencode.complex.effort": "medium",
   "afk.models.opencode.think.model": "openrouter/anthropic/claude-opus-4",
   "afk.models.opencode.think.effort": "high",
+  // claude-minimax runner: every tier resolves to MiniMax-M3 via the Anthropic-compat
+  // endpoint (execution.ts forces the model + caps effort to "low" regardless of what
+  // the tier table says; the table entries keep RED_AFK_MODEL override semantics intact).
+  "afk.models.claude-minimax.validate.model": "MiniMax-M3",
+  "afk.models.claude-minimax.validate.effort": "low",
+  "afk.models.claude-minimax.simple.model": "MiniMax-M3",
+  "afk.models.claude-minimax.simple.effort": "low",
+  "afk.models.claude-minimax.complex.model": "MiniMax-M3",
+  "afk.models.claude-minimax.complex.effort": "low",
+  "afk.models.claude-minimax.think.model": "MiniMax-M3",
+  "afk.models.claude-minimax.think.effort": "low",
   "afk.hooks.defaults.cargo": "true",
   "afk.hooks.defaults.gradle": "true",
   // Merge-gate policy (ADR 0048). The unlocked admin-merge ignores advisory
@@ -361,10 +372,11 @@ export function resolveTier(
   taskClass: AfkModelTier = "think",
   env: NodeJS.ProcessEnv = {},
 ): ResolvedTier {
-  // The runner whose tier table to read. claude/codex/opencode each ship a full
-  // table (CONFIG_DEFAULTS); any other runner (e.g. the runner-neutral hermes)
-  // falls back to the claude table.
-  const tierRunner = runner === "codex" || runner === "opencode" ? runner : "claude";
+  // The runner whose tier table to read. claude/codex/opencode/claude-minimax each
+  // ship a full table (CONFIG_DEFAULTS); any other runner (e.g. the runner-neutral
+  // hermes) falls back to the claude table.
+  const tierRunner =
+    runner === "codex" || runner === "opencode" || runner === "claude-minimax" ? runner : "claude";
   const tier = (AFK_MODEL_TIERS as readonly string[]).includes(taskClass) ? taskClass : "think";
   const modelKey = defaultTierKey(tierRunner, tier, "model")!;
   const effortKey = defaultTierKey(tierRunner, tier, "effort")!;
