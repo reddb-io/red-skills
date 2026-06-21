@@ -72,6 +72,23 @@ describe("runner detection", () => {
     });
   });
 
+  it("never auto-sniffs claude-minimax from ambient env / process tree / path", () => {
+    // No ambient surface maps to claude-minimax — a minimax-ish process tree or
+    // script path must NOT promote it; the cascade falls through to claude.
+    expect(detectRunner({ env: {}, processTree: "node /opt/minimax/bin/minimax" })).toMatchObject({
+      runner: "claude",
+      method: "env-fallback",
+    });
+    expect(detectRunner({ env: { MINIMAX_API_KEY: "sk-x" } })).toMatchObject({
+      runner: "claude",
+      method: "env-fallback",
+    });
+    expect(detectRunner({ env: {}, scriptPath: "/home/me/.minimax/run.sh" })).toMatchObject({
+      runner: "claude",
+      method: "env-fallback",
+    });
+  });
+
   it("honours an operator-configured opencode default (afk.default_runner), not a sniff", () => {
     // The injected fallback IS the operator's explicit `afk.default_runner` choice,
     // so opencode there is honoured — that is configuration, not caller-identity sniffing.
