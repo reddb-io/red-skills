@@ -5,7 +5,7 @@ description: Build and refresh the project context stack before non-trivial work
 
 # context
 
-Use this skill to make an agent stop operating from a cold prompt. It composes RedSkills' context surfaces into one disciplined loop: local domain docs, the private LLM Wiki, the optional Memory graph, graph-aware codebase orientation, and the Skill curator/self-improvement surfaces.
+**Ground the session before non-trivial work — read committed docs, recall memory, zoom out, then drill in.**
 
 <what-to-do>
 
