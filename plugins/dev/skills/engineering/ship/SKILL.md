@@ -6,9 +6,9 @@ argument-hint: "[--issue N] [--base BRANCH] [--timeout-s SECONDS] [--poll-s SECO
 
 # /ship
 
-Finalize committed work from a prepared ship worktree. This skill is the
-interactive sibling of `/afk`'s autonomous admin-merge landing: it respects
-branch protection, review decisions, CI, and the monitor time cap.
+**Ship committed work through the review gate: open or reuse a PR, wait for CI and the advisory-bot, then merge or park for `/hitl`.**
+
+This skill is the interactive sibling of `/afk`'s autonomous admin-merge landing: it respects branch protection, review decisions, CI, and the monitor time cap.
 
 ## Preconditions
 
@@ -47,5 +47,4 @@ that never registers cannot wedge the finalizer.
 6. On `merge`, approve the PR and merge it normally.
 7. On `hitl`, comment on the linked issue, add `ready-for-human`, mirror the label on the PR, and stop for `/hitl`.
 
-Do not use `--admin`; `/ship` is explicitly review-respecting. If approval or
-merge fails, treat that as HITL and let the runtime park the issue.
+**Do not use `--admin` — it skips the review gate `/ship` enforces.** If approval or merge fails, treat that as HITL and let the runtime park the issue.

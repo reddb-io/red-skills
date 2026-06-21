@@ -5,7 +5,7 @@ description: Break a plan, spec, or PRD into independently-grabbable issues on t
 
 # To Issues
 
-Break a plan into independently-grabbable issues using vertical slices (tracer bullets).
+**Break a plan into independently-grabbable vertical slices and publish them to the issue tracker.**
 
 The issue tracker and triage label vocabulary should have been provided to you — if not, ask the user to run `/setup-red-skills` and stop.
 
@@ -25,11 +25,12 @@ Break the plan into **tracer-bullet** issues. Each slice cuts end-to-end through
 
 Apply the rules in `<supporting-info>` literally. The cardinal one: **vertical, not horizontal.**
 
-Mark each slice as HITL or AFK:
+Mark each slice with its routing class:
 
-- **AFK** — implementable and mergeable without human interaction
-- **HITL** — requires a human decision (architecture, design review, external access)
-- **Prefer AFK over HITL wherever possible.**
+(i) **AFK** — mergeable without human decision
+(ii) **HITL** — requires an architecture call or human judgment (design review, external access)
+
+Prefer AFK over HITL wherever possible.
 
 ### Step 4 — Quiz the user (mandatory — do not skip)
 
