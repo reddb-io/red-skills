@@ -19,6 +19,7 @@ import {
   DEFAULT_MAX_ITERATIONS,
   CODEX_EFFORTS,
   CLAUDE_EFFORTS,
+  MINIMAX_EFFORTS,
   parseMaxIterations,
   parseIdleTimeout,
   parseAttemptTimeout,
@@ -449,6 +450,10 @@ describe("effortForProvider (FIX D — per-provider effort gating)", () => {
     expect(effortForProvider("codex", undefined)).toBeUndefined();
     expect(effortForProvider("claude", undefined)).toBeUndefined();
   });
+
+  it("MINIMAX_EFFORTS contains only 'low' — the sole non-thinking tier MiniMax-M3 accepts (#794)", () => {
+    expect(MINIMAX_EFFORTS).toEqual(["low"]);
+  });
 });
 
 describe("buildAgent — provider mapping (ADR 0059 opencode wiring)", () => {
@@ -568,12 +573,13 @@ describe("buildAgent — provider mapping (ADR 0059 opencode wiring)", () => {
     const { calls, factories } = recorder();
     // The resolved tier model is discarded — the lane always forces MiniMax-M3 —
     // and the MiniMax key rides in as the two Anthropic vars on the inner spawn.
+    // Effort "high" is capped to "low" (#794): MiniMax-M3 rejects thinking:{type:enabled}.
     buildAgent(factories, "claude-minimax", "claude-opus-4-8", { effort: "high" }, { MINIMAX_API_KEY: "mm-key-789" });
     expect(calls.claudeCode).toEqual([
       {
         model: "MiniMax-M3",
         options: {
-          effort: "high",
+          effort: "low",
           env: { ANTHROPIC_API_KEY: "mm-key-789", ANTHROPIC_BASE_URL: "https://api.minimax.io/anthropic" },
         },
       },
@@ -586,16 +592,42 @@ describe("buildAgent — provider mapping (ADR 0059 opencode wiring)", () => {
   it("omits the env block when MINIMAX_API_KEY is absent (lane unusable, claude-code surfaces its own auth error)", () => {
     const { calls, factories } = recorder();
     buildAgent(factories, "claude-minimax", "claude-opus-4-8", undefined, {});
-    // No key + no effort → no options object; model is still forced to MiniMax-M3.
-    expect(calls.claudeCode).toEqual([{ model: "MiniMax-M3", options: undefined }]);
+    // No key + no effort → effort is still forced to "low" (thinking guard); no env block.
+    expect(calls.claudeCode).toEqual([{ model: "MiniMax-M3", options: { effort: "low" } }]);
   });
 
-  it("gates claude-minimax effort like claude — the full CLAUDE_EFFORTS set including max is accepted", () => {
+  it("caps claude-minimax effort to 'low' — MiniMax-M3 rejects thinking:{type:enabled} from higher tiers (#794)", () => {
+    const { calls, factories } = recorder();
+    const warned: string[] = [];
+    // "high" would trigger thinking:{type:"enabled"} which MiniMax-M3 rejects → capped to "low".
+    buildAgent(factories, "claude-minimax", "x", { effort: "high" }, { MINIMAX_API_KEY: "k" }, (m) => warned.push(m));
+    expect(calls.claudeCode[0]!.options).toMatchObject({ effort: "low" });
+    expect(warned.some((l) => l.includes("triggers thinking") && l.includes("'high'"))).toBe(true);
+  });
+
+  it("accepts 'low' effort for claude-minimax without warning (the only non-thinking tier)", () => {
+    const { calls, factories } = recorder();
+    const warned: string[] = [];
+    buildAgent(factories, "claude-minimax", "x", { effort: "low" }, { MINIMAX_API_KEY: "k" }, (m) => warned.push(m));
+    expect(calls.claudeCode[0]!.options).toMatchObject({ effort: "low" });
+    expect(warned).toEqual([]);
+  });
+
+  it("defaults claude-minimax to effort 'low' when no effort is requested (prevents auto-selected thinking tier)", () => {
+    const { calls, factories } = recorder();
+    const warned: string[] = [];
+    buildAgent(factories, "claude-minimax", "x", undefined, { MINIMAX_API_KEY: "k" }, (m) => warned.push(m));
+    // Always passes effort: "low" explicitly — the inner spawn must never auto-select a thinking tier.
+    expect(calls.claudeCode[0]!.options).toMatchObject({ effort: "low" });
+    expect(warned).toEqual([]);
+  });
+
+  it("caps 'max' to 'low' for claude-minimax — max triggers thinking which MiniMax-M3 does not accept", () => {
     const { calls, factories } = recorder();
     const warned: string[] = [];
     buildAgent(factories, "claude-minimax", "x", { effort: "max" }, { MINIMAX_API_KEY: "k" }, (m) => warned.push(m));
-    expect(calls.claudeCode[0]!.options).toMatchObject({ effort: "max" });
-    expect(warned).toEqual([]);
+    expect(calls.claudeCode[0]!.options).toMatchObject({ effort: "low" });
+    expect(warned.some((l) => l.includes("triggers thinking") && l.includes("'max'"))).toBe(true);
   });
 });
 
