@@ -5,6 +5,8 @@ description: Review the `.red/adr/` set for contradictions, missing supersession
 
 # Review ADRs (decision-record interview → actionable PRD)
 
+**Lint the decision record read-only, reconcile each finding through a one-question-at-a-time interview, and package every agreement into one PRD — never edit an ADR, the wiki, or the graph directly.**
+
 ADRs accumulate (30–40+ per repo) and **derive**: one reverses another, a path it
 cites moves, a decision was taken controversially and never reconciled, the wiki and
 Memory graph hold claims sourced from a decision that later changed. This is the

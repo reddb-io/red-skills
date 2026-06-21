@@ -6,8 +6,9 @@ argument-hint: "[--json]"
 
 # /daily-review
 
-Render the RedSkills daily review. This skill is a wrapper over the dev runtime
-command; do not hand-calculate the metrics.
+**Wrapper over the dev runtime — never hand-calculate.**
+
+Render the RedSkills daily review.
 
 ## Run
 

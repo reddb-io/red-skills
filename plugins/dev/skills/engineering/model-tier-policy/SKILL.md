@@ -5,6 +5,8 @@ description: Use when choosing or explaining the RedSkills dev model tier for va
 
 # model-tier-policy
 
+**Route every AFK task to the cheapest capable tier and escalate on evidence — never copy this table into executor prompts; point executors here so the classification criterion stays in one place.**
+
 This is the dev plugin's cross-host policy for why a task uses a given model tier and which tier should run it. It is the human-readable policy from ADR 0049.
 
 The machine source for model ids and effort values is `apps/dev/src/core/config.ts` (`CONFIG_DEFAULTS`), overridden per repository by `.red/config.yaml` at `plugins.dev.afk.models.{claude,codex,opencode}.{validate,simple,complex,think}`. The legacy top-level `afk.models...` location remains a fallback. Do not copy this table into executor prompts; point executors here so the classification criterion stays in one place.

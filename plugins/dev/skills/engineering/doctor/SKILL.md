@@ -6,6 +6,8 @@ argument-hint: "[--repo <path|owner/name>] [--fix]"
 
 # Doctor (adoption / process)
 
+**Run the adoption/process check read-only; apply every canonical fix with `--fix` — never hand-edit what a single-writer tool owns, because each gap's fix-home already exists.**
+
 The recurring counterpart to the one-time `/setup-red-skills` — the same split the
 `memory` plugin has between `context-status` (read-only) and its setup. It reports
 how fully a repo adopted the RedSkills stack and **names the fix-home for each gap**.

@@ -5,7 +5,7 @@ description: Disciplined diagnosis loop for hard bugs and performance regression
 
 # Diagnose
 
-A discipline for hard bugs. Execute the phases in order. Skip a phase **only** when you can name an explicit reason and the user agrees.
+**Build the feedback loop first — without one, every subsequent phase is mechanical guesswork.**
 
 <what-to-do>
 

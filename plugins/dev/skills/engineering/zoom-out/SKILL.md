@@ -4,6 +4,8 @@ description: Tell the agent to zoom out and give broader context or a higher-lev
 disable-model-invocation: true
 ---
 
+**Never paste raw graph output — interpret nodes and edges into project terms before answering.**
+
 I don't know this area of code well. Go up a layer of abstraction and produce a map-first **Zoom-out answer** for the relevant part of the **Codebase understanding surface**.
 
 ## Gather Context

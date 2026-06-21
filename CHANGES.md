@@ -110,6 +110,20 @@ Upstream base: `mattpocock/skills@694fa30311e02c2639942308513555e61ee84a6f` (see
 - **why**: PRD #776 convention sweep — technique #1 (bold lead-in), #8 (steps that are early exits now say so explicitly).
 - **what changed**: Added bold lead-in naming the host-dispatch and gate-stop contract. Steps 2 and 3 relabelled as "**Early exit — opt-out:**" and "**Early exit — already configured:**" so the agent knows to stop rather than fall through.
 
+## diagnose (engineering) — imperative bold lead-in (convention sweep #783)
+
+- **status**: modified
+- **upstream**: `e74f006`
+- **why**: PRD #776 convention sweep (#783). The old intro prose ("A discipline for hard bugs. Execute the phases in order. Skip a phase only when…") described the skill rather than leading with its highest-impact maxim. Aligning with the house style: first content line is a bold imperative that names the core constraint.
+- **what changed**: Replaced the three-sentence intro with a single bold maxim: `**Build the feedback loop first — without one, every subsequent phase is mechanical guesswork.**` No step, rule, or behavioural change; diff is prose only. Refs #783.
+
+## improve-codebase-architecture (engineering) — bold lead-in claim (convention sweep #783)
+
+- **status**: modified
+- **upstream**: `e74f006`
+- **why**: PRD #776 convention sweep (#783). The opening line had partial bolding (`**deepening opportunities**`) but the sentence itself was not a bold imperative. Aligning with the house style: first content line is fully bold.
+- **what changed**: Wrapped the existing two-sentence intro (`Surface architectural friction … The aim is testability and AI-navigability.`) in bold as a single lead-in sentence. No step, rule, or behavioural change; diff is prose only. Refs #783.
+
 ---
 
 ## ff (productivity) — two-step interactive flow: choose framing, then dispatch prompt
