@@ -16,6 +16,7 @@ import type { AgentStreamEvent, RunOptions, RunResult } from "@reddb-io/red-cast
 import { isRunnerExhausted } from "./runner-spawn.js";
 import { startLaneIdleReaper, DEFAULT_STALL_POLL_S } from "./lane-idle-reaper.js";
 import { openCodeAuthEnv, resolveOpenCodeAuth } from "./opencode-env.js";
+import { MINIMAX_M3_MODEL, resolveMiniMaxClaudeEnv } from "./minimax-env.js";
 
 // Re-exported so process-issue / run can type their agent-event sink without
 // importing the sandcastle package directly (execution.ts is the single seam
@@ -30,10 +31,13 @@ export type { AgentStreamEvent } from "@reddb-io/red-castle";
 // through `OpenCodeOptions.env`; OpenCode owns endpoint resolution. `opencode`
 // is accepted only as an explicit pin (`--runner opencode` /
 // `RED_AFK_RUNNER=opencode`), never auto-sniffed (runner-detection.ts), since
-// no host session is OpenCode. `hermes` is a runner-neutral fallback contract
-// with NO sandcastle provider, so it is not in this union — process-issue
-// coerces it onto a backed runner before spawning.
-export type AgentRunner = "claude" | "codex" | "opencode";
+// no host session is OpenCode. `claude-minimax` (PRD #788) is likewise an
+// explicit-pin-only lane: it reuses the unchanged `claude-code` provider but
+// injects a MiniMax Anthropic-compat auth env and forces the `MiniMax-M3` model
+// (see {@link buildAgent} and `minimax-env.ts`). `hermes` is a runner-neutral
+// fallback contract with NO sandcastle provider, so it is not in this union —
+// process-issue coerces it onto a backed runner before spawning.
+export type AgentRunner = "claude" | "codex" | "opencode" | "claude-minimax";
 export type SandboxMode = "none" | "docker" | "podman";
 export type AgentEffort = "low" | "medium" | "high" | "xhigh" | "max";
 // `exhausted` is surfaced when sandcastle's run() signals quota / rate-limit
@@ -457,7 +461,7 @@ export const OPENROUTER_API_KEY_ENV = "OPENROUTER_API_KEY";
  * `defaultSandcastleDeps` supplies the real `core.{claudeCode,codex,opencode}`.
  */
 export interface AgentFactories {
-  claudeCode: (model: string, options?: { effort?: AgentEffort }) => RunOptions["agent"];
+  claudeCode: (model: string, options?: { effort?: AgentEffort; env?: Record<string, string> }) => RunOptions["agent"];
   codex: (model: string, options?: { effort?: AgentEffort }) => RunOptions["agent"];
   opencode: (model: string, options?: { variant?: string; env?: Record<string, string> }) => RunOptions["agent"];
 }
@@ -498,6 +502,29 @@ export function buildAgent(
     const authEnv = openCodeAuthEnv(resolveOpenCodeAuth(env));
     if (authEnv) options.env = authEnv;
     return factories.opencode(model, Object.keys(options).length > 0 ? options : undefined);
+  }
+
+  if (runner === "claude-minimax") {
+    // PRD #788: route to the UNCHANGED claude-code provider, but force the
+    // MiniMax model and inject the MiniMax Anthropic-compat auth env into the
+    // inner spawn only (`ClaudeCodeOptions.env`) — the orchestrator's own env is
+    // never touched, so it keeps its real-Anthropic auth. Effort gating matches
+    // claude (the provider is claude-code). When no `MINIMAX_API_KEY` is set, no
+    // `env` block is added: the lane is unusable and claude-code surfaces its
+    // own auth error through the normal failure path. The passed `model` is
+    // discarded — the lane always runs `MiniMax-M3`.
+    const effort = effortForProvider("claude", requested);
+    if (requested !== undefined && effort === undefined) {
+      warn?.(
+        `[afk] warn: effort '${requested}' is not accepted by runner 'claude-minimax' ` +
+          `(accepted: ${CLAUDE_EFFORTS.join(", ")}); falling back to the provider default.`,
+      );
+    }
+    const authEnv = resolveMiniMaxClaudeEnv(env);
+    const options: { effort?: AgentEffort; env?: Record<string, string> } = {};
+    if (effort) options.effort = effort;
+    if (authEnv) options.env = authEnv;
+    return factories.claudeCode(MINIMAX_M3_MODEL, Object.keys(options).length > 0 ? options : undefined);
   }
 
   const effort = effortForProvider(runner, requested);
