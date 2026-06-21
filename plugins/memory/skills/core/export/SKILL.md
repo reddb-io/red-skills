@@ -16,6 +16,8 @@ Dumps the whole graph (graph mode only) into a directory as three files:
 
 <what-to-do>
 
+**Export the graph to a self-contained bundle, then point the user at the three output files — this is a read-only snapshot; never commit the export.**
+
 ## 1. Require graph mode
 
 `export` needs a `plugins.memory` block in `.red/config.yaml` with `mode: "graph"`. If memory is not
