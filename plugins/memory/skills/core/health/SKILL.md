@@ -9,6 +9,8 @@ Read-only operational healthcheck for the Memory plugin.
 
 <what-to-do>
 
+**Run the healthcheck in JSON mode, interpret every counter against the state table, and report `recommendedNextActions` — never mutate any file from this diagnostic.**
+
 ## 1. Run the healthcheck
 
 ```bash
