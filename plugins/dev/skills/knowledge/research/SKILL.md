@@ -6,8 +6,7 @@ argument-hint: "<topic> [--deep] [--save-as slug]"
 
 # /research
 
-Research a topic using official or primary sources, then save the result to
-`.red/tmp/researches/<slug>.md`.
+**Research a technical topic from official primary sources only, then save a structured report to `.red/tmp/researches/<slug>.md`.**
 
 ## Source Policy
 
@@ -19,9 +18,7 @@ Use browsing. Prefer sources in this order:
 4. Standards, RFCs, specs, or API references.
 5. Official issues, discussions, and release notes when they document real behavior.
 
-Avoid SEO blogs, Medium posts, generic tutorials, StackOverflow answers, and
-unofficial summaries unless the user explicitly asks for them. If official
-coverage is weak, say so in the report.
+Never cite SEO blogs or Medium posts — they obscure official truth. Avoid generic tutorials, StackOverflow answers, and unofficial summaries; if the user explicitly asks for them, flag them as non-primary. If official coverage is weak, say so in the report.
 
 ## Workflow
 
