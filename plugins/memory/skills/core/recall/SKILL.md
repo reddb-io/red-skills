@@ -19,6 +19,8 @@ plugin README.
 
 <what-to-do>
 
+**Search the memory graph for facts matching the query and fold the ranked hits into your answer — do not re-derive what the project may already know.**
+
 ## 1. Require init
 
 If memory is not configured (no `plugins.memory` block in `.red/config.yaml`, nor a legacy `.red/memory/config.json`), memory was never initialized — there is
