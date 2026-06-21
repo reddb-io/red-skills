@@ -58,6 +58,7 @@ import { buildWorkerAttemptPath } from "../core/worker-paths.js";
 import { branchLockPath, readLockedBranch, isLocked } from "../runtime/lock.js";
 import { makeHookExec, makeHookResolveOptions, hookEnv } from "../runtime/hooks.js";
 import { makeFeedbackWorktree, type FeedbackWorktree } from "../runtime/feedback-worktree.js";
+import { installProcessSafety, fileSafetyLogger, safetyLogPath } from "../core/process-safety.js";
 import { join } from "node:path";
 import { hostname } from "node:os";
 import { appendAgentRecord, appendRecord } from "../core/jsonl-log.js";
@@ -1087,6 +1088,21 @@ export async function runCommand(options: RunOptions): Promise<number> {
   // to resolve all workers that ran in a parked slot — this stamp must appear
   // even when the worker fast-dies before writing worker.pid.
   process.stdout.write(`[afk] worker: ${workerId}\n`);
+
+  // AFK runner improvement — Pattern 5 diagnostic: every spike worker died
+  // post-commit + vitest with no exit code / signal / stack trace. Install
+  // process-level death detectors that record every fatal event to a
+  // per-worker diagnostic log at `.red/tmp/diagnostics/<id>.log`. The next
+  // session (or a human running `cat` on the log) can then correlate
+  // "agent idle for 1 minute → process absent" with the actual cause.
+  // Opt-out via RED_AFK_NO_PROCESS_SAFETY=1 for environments where the
+  // file IO itself is the suspected cause of the death.
+  if (process.env.RED_AFK_NO_PROCESS_SAFETY !== "1") {
+    installProcessSafety(
+      fileSafetyLogger(safetyLogPath(paths.tmpDir, workerId)),
+      { workerId, pid: process.pid },
+    );
+  }
 
   // Supervisor-dispatched reconcile worker: bypass the normal boot+session and
   // validate-and-land the specific parked branch for `--reconcile-issue <n>`.

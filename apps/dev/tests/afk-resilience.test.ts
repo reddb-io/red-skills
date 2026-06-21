@@ -285,3 +285,41 @@ describe("Pattern 7 — claim race / cross-host stale-claim band-aid", () => {
     }
   });
 });
+
+// AFK runner improvement: Pattern 5's diagnostic is now wired in. Every
+// worker process installs death detectors that record uncaught exceptions,
+// signal handlers, and exit codes to a per-worker log at
+// `.red/tmp/diagnostics/<id>.log`. The next session (or a human running
+// `cat` on the log) can then correlate the spike's "agent idle for 1
+// minute → process absent" symptom with the actual cause. This test
+// asserts the diagnostic module's contract: the file is written, the
+// format is parseable, and the safety log path is canonical.
+describe("Pattern 5 — orchestrator dying diagnostic (process-safety)", () => {
+  it("exposes a canonical safety log path under `.red/tmp/diagnostics/`", async () => {
+    const { safetyLogPath } = await import("../src/core/process-safety.js");
+    const { join } = await import("node:path");
+    expect(safetyLogPath("/repo/.red/tmp", "wABCD")).toBe(
+      join("/repo/.red/tmp", "diagnostics", "wABCD.log"),
+    );
+  });
+
+  it("fileSafetyLogger writes one line per call, with an ISO timestamp prefix", async () => {
+    const { fileSafetyLogger } = await import("../src/core/process-safety.js");
+    const { mkdtemp, readFile, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const dir = await mkdtemp(join(tmpdir(), "afk-resilience-"));
+    const path = join(dir, "safety.log");
+    const logger = fileSafetyLogger(path);
+    logger.log("worker=wX event=uncaughtException message=\"boom\" stack=\"...\"");
+    const content = await readFile(path, "utf8");
+    const lines = content.trimEnd().split("\n");
+    expect(lines).toHaveLength(1);
+    // ISO 8601 with milliseconds, UTC, 'Z' suffix — the format the post-mortem
+    // scripts parse to time-align with the issue thread's claim events.
+    expect(lines[0]).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z /);
+    expect(lines[0]).toContain("event=uncaughtException");
+    expect(lines[0]).toContain("message=\"boom\"");
+    await rm(dir, { recursive: true, force: true });
+  });
+});
