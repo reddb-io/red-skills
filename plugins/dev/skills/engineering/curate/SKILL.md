@@ -4,6 +4,8 @@ description: Interactive Skill curator. Reads `memory curate skills --json`, gro
 argument-hint: "[--restore <skill-name>] [--background] (no arg = interactive curation flow)"
 ---
 
+**Archive Curatable skills recoverably — the engine uses `rename` only; never call `rm`, `unlink`, or `git rm`, because every archive reverses with `--restore <name>`.**
+
 <what-to-do>
 
 This skill **mutates skills on disk**. Run the loop below verbatim. Every mutation goes through `memory curate`, the workflow engine embedded in the Memory CLI — never invent shell commands that delete, overwrite, or rename skill files directly.
@@ -11,8 +13,6 @@ This skill **mutates skills on disk**. Run the loop below verbatim. Every mutati
 ### Boot precondition (always, before anything else)
 
 Run `memory curate check`. If it exits non-zero, print its stderr verbatim and **stop**. The error already names the exact `memory init --mode graph --skill-telemetry` command the user needs.
-
-> **Why this exists:** the curator runs on Skill telemetry rollups (Curatable-skill activity counts, archive signals). Without **Graph mode** + the `--skill-telemetry` opt-in, there is no evidence to curate — failing fast is the only safe answer.
 
 ### Background mode — `--background`
 
