@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildValidationRecord,
+  isInfraFeedbackFailure,
   nearestPackageScope,
   outputSummary,
   relevantScopes,
@@ -11,6 +12,7 @@ import {
   type Exec,
   type ExecResult,
   type PackageLayout,
+  type RunFeedbackResult,
   type ValidationRecord,
 } from "../src/core/feedback.js";
 
@@ -283,5 +285,96 @@ describe("pure shaping helpers", () => {
     expect(outputSummary("failed", "line a\nline b\n")).toBe("line a line b");
     const long = `${"x".repeat(2000)}\n`;
     expect(outputSummary("failed", long).length).toBe(1000);
+  });
+});
+
+// AFK runner improvement: `isInfraFeedbackFailure` distinguishes a feedback
+// gate failure with an INFRA root cause (worktree add / submodule init / pnpm
+// install / OOM / ENOENT — the gate's environment is broken, NOT the worker's
+// code) from a SEMANTIC failure (the worker's tests/typecheck/lint/build
+// actually failed for a code reason). The detection is substring-based on
+// purpose: it has to survive pnpm's error-wrapping, multi-line output, and
+// minor message drift.
+describe("isInfraFeedbackFailure — INFRA root cause detection", () => {
+  function green(): RunFeedbackResult {
+    return { ok: true, checks: [], sidecar: [] };
+  }
+  function failedCheck(
+    name: string,
+    summary: string,
+    command = "pnpm -C apps/dev test",
+  ): RunFeedbackResult {
+    const record = buildValidationRecord({ name, status: "failed", command, summary });
+    return {
+      ok: false,
+      checks: [{ name, script: "test", label: "apps/dev", status: "failed", record }],
+      sidecar: [JSON.stringify(record)],
+    };
+  }
+
+  it("a green gate is never INFRA", () => {
+    expect(isInfraFeedbackFailure(green())).toBe(false);
+  });
+
+  it("a failed check with no infra marker is SEMANTIC (not INFRA)", () => {
+    const result = failedCheck("test:apps/dev", "FAIL tests/foo.test.ts > bar\nexpected 1 to equal 2");
+    expect(isInfraFeedbackFailure(result)).toBe(false);
+  });
+
+  it("matches the worktree-setup failed marker", () => {
+    const result = failedCheck("test:apps/dev", "feedback worktree setup failed for afk/wX/123-slug; validation blocked");
+    expect(isInfraFeedbackFailure(result)).toBe(true);
+  });
+
+  it("matches the submodule-init failed marker", () => {
+    const result = failedCheck("test:apps/dev", "feedback worktree submodule init failed for afk/wX/123-slug (exit 1)");
+    expect(isInfraFeedbackFailure(result)).toBe(true);
+  });
+
+  it("matches the install-failed marker", () => {
+    const result = failedCheck("test:apps/dev", "feedback worktree install failed for afk/wX/123-slug (exit 1)");
+    expect(isInfraFeedbackFailure(result)).toBe(true);
+  });
+
+  it("matches the OOM-killer signature (exit 137 / SIGKILL)", () => {
+    const a = failedCheck("test:apps/dev", "vitest worker killed by SIGKILL");
+    const b = failedCheck("test:apps/dev", "pnpm: signal SIGKILL");
+    const c = failedCheck("test:apps/dev", "ELIFECYCLE  Command failed with exit code 137");
+    expect(isInfraFeedbackFailure(a)).toBe(true);
+    expect(isInfraFeedbackFailure(b)).toBe(true);
+    expect(isInfraFeedbackFailure(c)).toBe(true);
+  });
+
+  it("does NOT false-positive on the substring `137` inside a hex string", () => {
+    // `\b137\b` requires word boundaries; an arbitrary hex token is a single
+    // word and should NOT trip the OOM heuristic.
+    const result = failedCheck("test:apps/dev", "hash 0x137abf computed correctly");
+    expect(isInfraFeedbackFailure(result)).toBe(false);
+  });
+
+  it("only inspects FAILED checks (passed checks carry no verdict)", () => {
+    // A passing `test:root` and a failing `test:apps/dev` with a SEMANTIC error —
+    // should NOT be INFRA just because the green check exists.
+    const passRecord = buildValidationRecord({
+      name: "test:root",
+      status: "passed",
+      command: "pnpm -C . test",
+      summary: "command exited 0",
+    });
+    const failRecord = buildValidationRecord({
+      name: "test:apps/dev",
+      status: "failed",
+      command: "pnpm -C apps/dev test",
+      summary: "expected 1 to equal 2",
+    });
+    const result: RunFeedbackResult = {
+      ok: false,
+      checks: [
+        { name: "test:root", script: "test", label: ".", status: "passed", record: passRecord },
+        { name: "test:apps/dev", script: "test", label: "apps/dev", status: "failed", record: failRecord },
+      ],
+      sidecar: [JSON.stringify(passRecord), JSON.stringify(failRecord)],
+    };
+    expect(isInfraFeedbackFailure(result)).toBe(false);
   });
 });

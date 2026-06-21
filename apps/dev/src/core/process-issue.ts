@@ -40,6 +40,7 @@ import {
 import {
   relevantScopes,
   runFeedback,
+  isInfraFeedbackFailure,
   type Exec as PnpmExec,
   type PackageLayout,
   type RunFeedbackResult,
@@ -1100,7 +1101,16 @@ export async function processIssue(
       // The feedback-failed path also has a structured sidecar — persist it for
       // Memory (best-effort) just like the done path does.
       await writeValidationSidecar(deps, input.attemptDir, feedback.sidecar);
-      if (activeTaskClass === "simple" && !escalatedSimpleFeedback) {
+      // AFK runner improvement: classify the failure before choosing the outcome.
+      // An INFRA root cause (worktree add / submodule init / pnpm install / OOM /
+      // ENOENT — see `isInfraFeedbackFailure`) routes through the `validation-infra`
+      // recovery policy (bounded retry, default cap 2) so a flake self-heals; a
+      // SEMANTIC failure (the worker's code really has a problem) still pages a
+      // human. The simple→complex escalation only helps for SEMANTIC failures —
+      // bumping the tier can't fix a broken submodule, so it would just burn a
+      // retry for nothing.
+      const isInfra = isInfraFeedbackFailure(feedback);
+      if (!isInfra && activeTaskClass === "simple" && !escalatedSimpleFeedback) {
         escalatedSimpleFeedback = true;
         activeTaskClass = "complex";
         attemptN += 1;
@@ -1117,10 +1127,13 @@ export async function processIssue(
         }
         continue;
       }
-      return await terminalFailure(common, "feedback-failed", "feedback", {
-        notes: salvaged
-          ? "Salvaged a no-sentinel branch (it carried work), but feedback validation failed — the branch was not merged."
-          : "Feedback validation failed after the inner agent emitted DONE. The worker branch was not merged.",
+      const outcome: ProcessOutcome = isInfra ? "feedback-failed-infra" : "feedback-failed";
+      return await terminalFailure(common, outcome, "feedback", {
+        notes: isInfra
+          ? `Feedback validation failed for an INFRA reason (worktree/submodule/pnpm install/OOM) on branch \`${workerBranch}\` — the recovery policy will retry up to its cap.`
+          : salvaged
+            ? "Salvaged a no-sentinel branch (it carried work), but feedback validation failed — the branch was not merged."
+            : "Feedback validation failed after the inner agent emitted DONE. The worker branch was not merged.",
         validation: feedback.sidecar.join("\n"),
       }, { validationSummary: feedback.sidecar.join("\n") });
     }

@@ -28,6 +28,7 @@ import {
   LABEL_MERGE_CONFLICT,
   LABEL_SPEC,
   LABEL_VALIDATION,
+  LABEL_VALIDATION_INFRA,
   LABEL_CRASHED,
   LABEL_POLICY,
   LABEL_STALLED,
@@ -52,6 +53,7 @@ export type AttemptOutcome =
   | "no-sentinel"
   | "merge-conflict"
   | "feedback-failed"
+  | "feedback-failed-infra"
   | "claim-lost"
   | "hook-aborted"
   | "exhausted"
@@ -71,7 +73,7 @@ export type AttemptOutcome =
  * recovery.ts keys its bounded retry-cap table on these. Outcomes outside this
  * subset are NON-recoverable (always escalate, see `recoveryReasonFor`).
  */
-export type RecoveryReason = "quota" | "runner-transient" | "merge-conflict" | "crashed" | "policy";
+export type RecoveryReason = "quota" | "runner-transient" | "merge-conflict" | "crashed" | "policy" | "validation-infra";
 
 /**
  * Pure mapping from a terminal outcome to its DESCRIPTIVE `blocked:<…>`
@@ -94,6 +96,12 @@ export function blockedLabelFor(o: AttemptOutcome): string | null {
       return LABEL_SPEC;
     case "feedback-failed":
       return LABEL_VALIDATION;
+    case "feedback-failed-infra":
+      // AFK runner improvement: a feedback gate failure with an INFRA root
+      // cause (worktree add / submodule init / pnpm install / OOM / ENOENT)
+      // — distinct from a semantic test failure. Auto-recoverable via
+      // `validation-infra` cap; the label is observability only.
+      return LABEL_VALIDATION_INFRA;
     case "no-sentinel":
       return LABEL_CRASHED;
     case "hook-aborted":
@@ -141,6 +149,7 @@ export function envelopeStatusFor(o: AttemptOutcome): AttemptStatus {
       return "merge-conflict";
     case "blocked":
     case "feedback-failed":
+    case "feedback-failed-infra":
     case "hook-aborted":
     case "exhausted":
     case "runner-transient":
@@ -169,6 +178,13 @@ export function envelopeStatusFor(o: AttemptOutcome): AttemptStatus {
  * Everything else (`blocked`, `feedback-failed`, `stalled`, `infra`, `done`,
  * `claim-lost`) returns null — those route straight to a human / carry no
  * recovery budget, preserving today's behaviour exactly.
+ *
+ * AFK runner improvement: `feedback-failed-infra` (the gate failed for an
+ * INFRA reason — worktree add / submodule init / pnpm install / OOM / ENOENT,
+ * detected by `isInfraFeedbackFailure`) maps to the new `validation-infra`
+ * recovery key. That key is bounded (default cap 2) so a stuck infra issue
+ * still escalates, but a one-off submodule/OOM flake now self-heals instead
+ * of parking a green branch.
  */
 export function recoveryReasonFor(o: AttemptOutcome): RecoveryReason | null {
   switch (o) {
@@ -182,6 +198,8 @@ export function recoveryReasonFor(o: AttemptOutcome): RecoveryReason | null {
       return "policy";
     case "merge-conflict":
       return "merge-conflict";
+    case "feedback-failed-infra":
+      return "validation-infra";
     case "blocked":
     case "feedback-failed":
     case "stalled":

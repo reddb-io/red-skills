@@ -148,6 +148,48 @@ export function formatValidationLine(record: ValidationRecord): string {
   return JSON.stringify(record);
 }
 
+// ---------- infra vs semantic failure classification ----------
+
+/**
+ * AFK runner improvement: distinguish INFRA validation failures (the gate's
+ * environment is broken — worktree add / submodule init / pnpm install / OOM /
+ * ENOENT — the WORKER's code is fine) from SEMANTIC validation failures (the
+ * worker's tests/typecheck/lint/build actually failed for a code reason).
+ *
+ * Infra failures route through the `validation-infra` recovery policy (bounded
+ * retry, default cap 2) so a one-off submodule/OOM flake self-heals instead
+ * of parking a green branch on every flaky day. Semantic failures stay
+ * non-recoverable — the worker code really has a problem, page a human.
+ *
+ * The signal is in the failing check's `summary`: feedback-worktree.ts fails
+ * closed on setup problems by rewriting the exec result to carry the literal
+ * `feedback worktree setup failed for <branch>; validation blocked` (or the
+ * `submodule init failed` / `install failed` variants) in `stderr`. A
+ * `summary` containing one of those markers — or an exit-code-137 (SIGKILL,
+ * the Linux OOM killer signature) anywhere in the gate output — flips this
+ * classifier to true. The detection is substring-based on purpose: it has to
+ * survive pnpm's error-wrapping, multi-line output, and minor message drift.
+ */
+export function isInfraFeedbackFailure(feedback: RunFeedbackResult): boolean {
+  if (feedback.ok) return false;
+  for (const check of feedback.checks) {
+    if (check.status !== "failed") continue;
+    const summary = check.record.summary ?? "";
+    if (
+      summary.includes("feedback worktree setup failed") ||
+      summary.includes("feedback worktree submodule init failed") ||
+      summary.includes("feedback worktree install failed")
+    ) {
+      return true;
+    }
+    // OOM killer: pnpm or vitest parent was SIGKILLed.
+    if (summary.includes("SIGKILL") || /\b137\b/.test(summary)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /**
  * Short summary for a finished check — the port of afk_validation_output_summary.
  * A passing check is always `command exited 0`; a failing check surfaces a

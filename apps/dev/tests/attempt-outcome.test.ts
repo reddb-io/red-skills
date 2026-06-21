@@ -32,6 +32,11 @@ const TABLE: Row[] = [
   // typed label, but NOT auto-recoverable (route straight to a human)
   { outcome: "blocked", label: "blocked:spec", recovery: null },
   { outcome: "feedback-failed", label: "blocked:validation", recovery: null },
+  // AFK runner improvement: feedback-failed-infra is the INFRA-classed feedback
+  // failure (worktree/submodule/pnpm/OOM) — it IS auto-recoverable via the
+  // `validation-infra` cap. The semantic `feedback-failed` above stays
+  // non-recoverable so a worker with a real broken test still pages a human.
+  { outcome: "feedback-failed-infra", label: "blocked:validation-infra", recovery: "validation-infra" },
   { outcome: "stalled", label: "blocked:stalled", recovery: null },
   { outcome: "infra", label: "blocked:infra", recovery: null },
   // no typed label, no recovery (success / abandoned)
@@ -56,6 +61,7 @@ describe("attempt-outcome — exhaustive outcome → (label, recovery) table", (
       "no-sentinel",
       "merge-conflict",
       "feedback-failed",
+      "feedback-failed-infra",
       "claim-lost",
       "hook-aborted",
       "exhausted",
@@ -68,8 +74,17 @@ describe("attempt-outcome — exhaustive outcome → (label, recovery) table", (
     expect(TABLE.length).toBe(ALL.length);
   });
 
-  it("recoveryReasonFor only ever returns the four recoverable policy keys (or null)", () => {
-    const valid = new Set<RecoveryReason>(["quota", "runner-transient", "merge-conflict", "crashed", "policy"]);
+  it("recoveryReasonFor only ever returns the recoverable policy keys (or null)", () => {
+    // AFK runner improvement: `validation-infra` joins the recoverable set so
+    // an INFRA feedback failure auto-retries under its cap.
+    const valid = new Set<RecoveryReason>([
+      "quota",
+      "runner-transient",
+      "merge-conflict",
+      "crashed",
+      "policy",
+      "validation-infra",
+    ]);
     for (const row of TABLE) {
       const r = recoveryReasonFor(row.outcome);
       if (r !== null) expect(valid.has(r)).toBe(true);
@@ -92,6 +107,10 @@ describe("attempt-outcome — exhaustive outcome → envelope status table", () 
     { outcome: "blocked", status: "blocked" },
     // feedback-failed emits a `blocked` envelope, NOT a `feedback-failed` one.
     { outcome: "feedback-failed", status: "blocked" },
+    // AFK runner improvement: feedback-failed-infra follows the same envelope
+    // convention as feedback-failed (a `blocked` envelope, NOT a distinct one
+    // — the observability label `blocked:validation-infra` is the discriminator).
+    { outcome: "feedback-failed-infra", status: "blocked" },
     // non-emitting outcomes (no live emitFailure call) fold into `blocked`.
     { outcome: "hook-aborted", status: "blocked" },
     { outcome: "exhausted", status: "blocked" },
@@ -114,6 +133,7 @@ describe("attempt-outcome — exhaustive outcome → envelope status table", () 
       "no-sentinel",
       "merge-conflict",
       "feedback-failed",
+      "feedback-failed-infra",
       "claim-lost",
       "hook-aborted",
       "exhausted",

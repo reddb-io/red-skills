@@ -28,6 +28,7 @@
 import {
   relevantScopes,
   runFeedback,
+  isInfraFeedbackFailure,
   type Exec as PnpmExec,
   type FeedbackCheck,
   type PackageLayout,
@@ -45,6 +46,8 @@ import { emitEnvelope, type EmitEnvelopeDeps } from "./envelope-emit.js";
 import { parseCurrentBlocker } from "./blocker-state.js";
 import { parseReqLabels, planCloseCascade, type DependentIssue } from "./boot-sweep.js";
 import { buildAttemptRecordPayload, type AttemptRecordPayload } from "./attempt-record.js";
+import { recoveryDecision, recoveryCap, type RecoveryEnv } from "./recovery.js";
+import { recoveryReasonFor } from "./attempt-outcome.js";
 import type { HistoryClock } from "./history.js";
 import type { Runner } from "../types/runner.js";
 
@@ -170,6 +173,15 @@ export interface ReconcileDeps {
   /** History ledger path + clock for the terminal envelope (optional). */
   historyPath?: string;
   historyClock?: HistoryClock;
+  /**
+   * AFK runner improvement: env slice for the recovery policy lookup, threaded
+   * from the CLI's `process.env` so the bounded-retry cap on infra failures
+   * (default 2) is overridable per-deployment via RED_AFK_RETRY_VALIDATION_INFRA.
+   * When absent the caps resolve to their defaults exactly like process-issue's
+   * `recoveryEnv` does. Reconciliation infra-retry would otherwise have no
+   * signal that an attempt is over the cap.
+   */
+  recoveryEnv?: RecoveryEnv;
 }
 
 /** Static per-reconcile inputs the caller resolves before `reconcile`. */
@@ -198,7 +210,16 @@ export type ReconcileSkipReason = "not-mechanical" | "active-blocker" | "no-comm
 
 export type ReconcileResult =
   | { outcome: "landed"; mergeSha: string; locked: boolean; posted: boolean }
-  | { outcome: "parked"; reason: "feedback-failed" | "merge-conflict"; posted: boolean }
+  | {
+      outcome: "parked";
+      // AFK runner improvement: `feedback-failed-infra` is a new parked reason
+      // for an INFRA-rooted feedback failure (worktree/submodule/pnpm/OOM)
+      // that the `validation-infra` recovery policy re-queues (or escalates
+      // when the cap is exhausted). The original `feedback-failed` keeps its
+      // semantic meaning (the worker's code really has a problem, page human).
+      reason: "feedback-failed" | "feedback-failed-infra" | "merge-conflict";
+      posted: boolean;
+    }
   | { outcome: "skipped"; reason: ReconcileSkipReason };
 
 // ---------- the orchestration ----------
@@ -259,6 +280,14 @@ export async function reconcile(deps: ReconcileDeps, input: ReconcileInput): Pro
   await writeValidationSidecar(deps, input.attemptDir, feedback.sidecar);
 
   // ---- 4b. RED → ready-for-human with the real failing checks ----
+  // AFK runner improvement: an INFRA-rooted failure (worktree / submodule /
+  // pnpm install / OOM) is NOT a parked branch — it is a flaky environment
+  // and the recovery policy should retry it (bounded, default cap 2). Skip
+  // the park-to-human path; let `routeRecovery` re-queue or escalate the
+  // same way the DONE path does, so the green branch isn't stranded.
+  if (!feedback.ok && isInfraFeedbackFailure(feedback)) {
+    return await parkInfraRetry(deps, input, feedback, startedEpoch);
+  }
   if (!feedback.ok) {
     return await park(deps, input, feedback, startedEpoch);
   }
@@ -389,6 +418,75 @@ async function park(
     `🤖 /afk reconcile #${issue}: \`${input.branch}\` failed re-validation — parked to ready-for-human with the failing checks.`,
   );
   return { outcome: "parked", reason: "feedback-failed", posted };
+}
+
+/**
+ * AFK runner improvement: a feedback-failed with an INFRA root cause
+ * (worktree / submodule / pnpm install / OOM / ENOENT — the gate's environment
+ * is broken, NOT the worker code) is a FLAKY environment, not a parked branch.
+ * Apply the same bounded-retry policy the DONE path uses: retry while the
+ * `validation-infra` cap (default 2) has budget left, escalate to a human once
+ * the budget is exhausted. The branch is preserved on the remote (deleteRemote
+ * is NOT called) so the next attempt can re-validate it.
+ */
+async function parkInfraRetry(
+  deps: ReconcileDeps,
+  input: ReconcileInput,
+  feedback: RunFeedbackResult,
+  startedEpoch: number,
+): Promise<ReconcileResult> {
+  const { issue, labels } = input;
+  const env = deps.recoveryEnv ?? {};
+  const decision = recoveryDecision("validation-infra", input.attempt, env);
+  const cap = recoveryCap("validation-infra", env) ?? 2;
+  const failed = feedback.checks.filter((c) => c.status === "failed");
+  const failedSummary = formatFailingChecks(failed);
+
+  if (decision === "retry") {
+    // Re-queue: drop `running` (already shed by the claim step) + the (now
+    // misleading) `blocked:validation-infra` from a prior attempt, add
+    // `ready-for-agent` so the issue resurfaces. The branch is left on the
+    // remote (no deleteRemote) — the next attempt can re-validate it.
+    const infraLabels = labels.filter((l) => l !== "blocked:validation-infra" && l !== "ready-for-agent");
+    await deps.gh.editLabels(issue, infraLabels, ["ready-for-agent"]);
+    await deps.gh.comment(
+      issue,
+      `🤖 /afk reconcile #${issue}: feedback gate failed for an INFRA reason (worktree/submodule/pnpm install/OOM) on \`${input.branch}\` — auto-retrying (attempt ${input.attempt}/${cap}):\n${failedSummary}`,
+    );
+    const posted = await emitFailure(deps, input, "blocked", startedEpoch, {
+      validation: feedback.sidecar.join("\n"),
+    });
+    await recordAttemptBestEffort(deps, input, "feedback-failed-infra", {
+      durationS: deps.nowEpoch() - startedEpoch,
+      notes: `Reconcile feedback gate failed INFRA (attempt ${input.attempt}/${cap}); auto-retry.`,
+      validationSummary: feedback.sidecar.join("\n"),
+    });
+    deps.appendIterLog(
+      `🤖 /afk reconcile #${issue}: \`${input.branch}\` failed re-validation for INFRA reason (attempt ${input.attempt}/${cap}) — re-queued to ready-for-agent.`,
+    );
+    return { outcome: "parked", reason: "feedback-failed-infra", posted };
+  }
+
+  // Cap exhausted → escalate to ready-for-human (page a maintainer). The
+  // infra flake is sticky; the issue needs a human to look at the gate setup.
+  await deps.gh.ensureLabel("blocked:validation-infra");
+  await deps.gh.editLabels(issue, parkDropLabels(labels), ["ready-for-human", "blocked:validation-infra"]);
+  await deps.gh.comment(
+    issue,
+    `🤖 /afk reconcile #${issue}: feedback gate INFRA failure retry budget exhausted (attempt ${input.attempt}/${cap}) on \`${input.branch}\` — escalating to ready-for-human:\n${failedSummary}`,
+  );
+  const posted = await emitFailure(deps, input, "blocked", startedEpoch, {
+    validation: feedback.sidecar.join("\n"),
+  });
+  await recordAttemptBestEffort(deps, input, "feedback-failed-infra", {
+    durationS: deps.nowEpoch() - startedEpoch,
+    notes: `Reconcile feedback gate INFRA retry budget exhausted (attempt ${input.attempt}/${cap}); escalating.`,
+    validationSummary: feedback.sidecar.join("\n"),
+  });
+  deps.appendIterLog(
+    `🤖 /afk reconcile #${issue}: \`${input.branch}\` failed re-validation for INFRA reason and the retry budget is exhausted (attempt ${input.attempt}/${cap}) — escalating.`,
+  );
+  return { outcome: "parked", reason: "feedback-failed-infra", posted };
 }
 
 /** The land path rejected the branch (integrate/rebase/drift) → park as a merge

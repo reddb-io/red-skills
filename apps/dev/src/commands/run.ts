@@ -279,6 +279,10 @@ function makeBootReconcileRunner(
       },
       nowEpoch: () => Math.floor(Date.now() / 1000),
       appendIterLog: () => {},
+      // AFK runner improvement: feed process.env to the recovery policy so the
+      // RED_AFK_RETRY_VALIDATION_INFRA cap on infra-rooted feedback failures
+      // is overridable per-deployment (mirrors process-issue's binding).
+      recoveryEnv: process.env,
     };
 
     try {

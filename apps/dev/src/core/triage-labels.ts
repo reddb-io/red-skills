@@ -33,6 +33,14 @@ export const LABEL_HIGH = "priority:high";
 
 // Blocked reason labels
 export const LABEL_VALIDATION = "blocked:validation";
+// AFK runner improvement: distinguish INFRA validation failures (worktree
+// setup / pnpm install / OOM / ENOENT — the gate's environment is broken) from
+// SEMANTIC validation failures (the worker's tests actually failed for code
+// reasons). Infra failures are auto-recoverable via the `validation-infra`
+// recovery policy (default cap 2); semantic failures stay non-recoverable and
+// page a human. Observability-only label: the routing decision is made by
+// `routeRecovery` via the recovery cap, not by the label.
+export const LABEL_VALIDATION_INFRA = "blocked:validation-infra";
 export const LABEL_STALLED = "blocked:stalled";
 export const LABEL_CRASHED = "blocked:crashed";
 export const LABEL_DEPENDENCY = "blocked:dependency";
