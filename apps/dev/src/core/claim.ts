@@ -108,13 +108,35 @@ function escapeField(value: string): string {
 
 /** Render the one-line audit comment posted when a claim recovered a stale
  * cross-host claim — the visible record that the issue returned to the
- * executable pool because an owner stopped refreshing (#627). */
-export function renderRecoveryAudit(self: { worker: string }, recovered: readonly string[]): string {
+ * executable pool because an owner stopped refreshing (#627).
+ *
+ * AFK runner improvement: when `deathFor` is supplied, it resolves each
+ * recovered owner's death cause (from its process-safety diagnostic log, when
+ * same-host and readable). Any resolved causes are appended so the comment
+ * SAYS why the predecessor died — "uncatchable death (likely SIGKILL/OOM) at
+ * ~HH:MM" — instead of only "stopped refreshing". This is what makes the
+ * Pattern 5 diagnostic actionable: the next worker's recovery comment carries
+ * the forensic verdict. `deathFor` returning null (cross-host, no log, or
+ * still-running) omits that owner's clause, so the comment degrades to the
+ * original wording when nothing is known. */
+export function renderRecoveryAudit(
+  self: { worker: string },
+  recovered: readonly string[],
+  deathFor?: (recoveredWorker: string) => string | null,
+): string {
   const who = recovered.map((w) => `\`${w}\``).join(", ");
-  return (
+  const base =
     `🤖 AFK cross-host recovery: worker \`${self.worker}\` released ${recovered.length === 1 ? "a stale claim" : "stale claims"} ` +
-    `held by ${who} (owner stopped refreshing past the staleness window) and re-claimed this issue.`
-  );
+    `held by ${who} (owner stopped refreshing past the staleness window) and re-claimed this issue.`;
+  if (!deathFor) return base;
+  const causes = recovered
+    .map((w) => {
+      const cause = deathFor(w);
+      return cause ? `\`${w}\`: ${cause}` : null;
+    })
+    .filter((c): c is string => c !== null);
+  if (causes.length === 0) return base;
+  return `${base}\n\nPredecessor cause${causes.length === 1 ? "" : "s"} (process-safety diagnostic): ${causes.join("; ")}.`;
 }
 
 /** Render the structured claim/concede marker comment a claimant posts. The
@@ -336,6 +358,14 @@ export interface ClaimGh {
 export interface AcquireClaimOptions extends ClaimReconcileOptions {
   /** Skip posting the human-facing concede when we lose (kept for tests). */
   suppressConcede?: boolean;
+  /**
+   * AFK runner improvement: resolve a recovered stale-claim owner's death cause
+   * for the recovery audit comment (Pattern 5 — make the diagnostic
+   * actionable). Injected so claim.ts stays pure; the runtime binds it to
+   * `deathCauseForRecoveredWorker`. Absent → the comment keeps its original
+   * wording.
+   */
+  deathFor?: (recoveredWorker: string) => string | null;
 }
 
 /**
@@ -368,7 +398,7 @@ export async function acquireClaim(
   // Best-effort: a failed audit never abandons the won claim.
   if (decision.verdict === "won" && decision.recovered.length > 0 && gh.audit) {
     try {
-      await gh.audit(issue, renderRecoveryAudit({ worker: self.worker }, decision.recovered));
+      await gh.audit(issue, renderRecoveryAudit({ worker: self.worker }, decision.recovered, opts.deathFor));
     } catch {
       // best-effort observability; the claim is already won.
     }

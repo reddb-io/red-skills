@@ -227,6 +227,12 @@ export interface ProcessIssueDeps {
   /** Injected staleness predicate for cross-host stale-claim recovery (ADR 0066).
    * Defaults to "never stale" when omitted. */
   claimStale?: ClaimReconcileOptions["isStale"];
+  /** AFK runner improvement: resolve a recovered stale-claim owner's death cause
+   * for the recovery audit comment (Pattern 5 — make the process-safety
+   * diagnostic actionable). Bound by the runtime to
+   * `deathCauseForRecoveredWorker`; absent → the audit keeps its original
+   * wording. */
+  recoveredWorkerDeathCause?: (recoveredWorker: string) => string | null;
   fs: ProcessFs;
   git: ProcessGit;
   /** git executor for merge.ts (integrateOrigin / landMerge / landPr). */
@@ -607,7 +613,7 @@ export async function processIssue(
       deps.claimGh,
       { worker: input.claimant ?? input.workerId, runner: input.runner },
       issue,
-      { isStale: deps.claimStale },
+      { isStale: deps.claimStale, deathFor: deps.recoveredWorkerDeathCause },
     );
     if (decision.verdict === "lost") {
       // acquireClaim already conceded our marker; nothing to project, next issue.

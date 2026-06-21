@@ -190,6 +190,36 @@ describe("renderRecoveryAudit", () => {
     expect(many).toContain("stale claims");
     expect(many).toContain("`a:1`, `b:2`");
   });
+
+  // AFK runner improvement (Pattern 5): when a deathFor lookup resolves a
+  // predecessor's cause, the audit appends it so the recovery comment SAYS why
+  // the worker died, not just that it "stopped refreshing".
+  it("appends a predecessor death cause when deathFor resolves one", () => {
+    const out = renderRecoveryAudit({ worker: "h:me" }, ["h:dead"], (w) =>
+      w === "h:dead" ? "uncatchable death (likely SIGKILL/OOM)" : null,
+    );
+    expect(out).toContain("stopped refreshing"); // base wording preserved
+    expect(out).toContain("Predecessor cause (process-safety diagnostic)");
+    expect(out).toContain("`h:dead`: uncatchable death (likely SIGKILL/OOM)");
+  });
+
+  it("pluralizes and joins multiple resolved causes, skipping the unresolved", () => {
+    const out = renderRecoveryAudit({ worker: "h:me" }, ["h:a", "h:b", "other:c"], (w) =>
+      w === "h:a" ? "clean exit (code 1)" : w === "h:b" ? "terminated by SIGTERM" : null,
+    );
+    expect(out).toContain("Predecessor causes (process-safety diagnostic)");
+    expect(out).toContain("`h:a`: clean exit (code 1)");
+    expect(out).toContain("`h:b`: terminated by SIGTERM");
+    // other:c resolved to null (cross-host) → omitted, no empty clause.
+    expect(out).not.toContain("`other:c`:");
+  });
+
+  it("keeps the original wording when deathFor is absent or resolves nothing", () => {
+    const noLookup = renderRecoveryAudit({ worker: "h:me" }, ["h:dead"]);
+    expect(noLookup).not.toContain("Predecessor cause");
+    const allNull = renderRecoveryAudit({ worker: "h:me" }, ["h:dead"], () => null);
+    expect(allNull).not.toContain("Predecessor cause");
+  });
 });
 
 // ---- orchestrator (injected IO) ----

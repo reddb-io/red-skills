@@ -58,7 +58,12 @@ import { buildWorkerAttemptPath } from "../core/worker-paths.js";
 import { branchLockPath, readLockedBranch, isLocked } from "../runtime/lock.js";
 import { makeHookExec, makeHookResolveOptions, hookEnv } from "../runtime/hooks.js";
 import { makeFeedbackWorktree, type FeedbackWorktree } from "../runtime/feedback-worktree.js";
-import { installProcessSafety, fileSafetyLogger, safetyLogPath } from "../core/process-safety.js";
+import {
+  installProcessSafety,
+  fileSafetyLogger,
+  safetyLogPath,
+  deathCauseForRecoveredWorker,
+} from "../core/process-safety.js";
 import { join } from "node:path";
 import { hostname } from "node:os";
 import { appendAgentRecord, appendRecord } from "../core/jsonl-log.js";
@@ -528,6 +533,13 @@ export function buildProcessDeps(
       Math.floor(Date.now() / 1000),
       resolveClaimStalenessConfig(process.env),
     ),
+    // AFK runner improvement (Pattern 5 — make the diagnostic actionable): when
+    // a stale-claim recovery releases a SAME-HOST predecessor, read its
+    // process-safety diagnostic log and surface the death cause in the recovery
+    // audit comment. The self identity only needs the host for the same-host
+    // gate (a cross-host predecessor's log isn't on this filesystem).
+    recoveredWorkerDeathCause: (recoveredWorker) =>
+      deathCauseForRecoveredWorker(paths.tmpDir, recoveredWorker, `${hostname()}:`),
     claimLock: {
       // Atomic POSIX mkdir lock (#434): a non-recursive mkdir that fails EEXIST,
       // so two simultaneous boots cannot both claim the same issue. The prior

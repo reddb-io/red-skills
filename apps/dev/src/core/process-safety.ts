@@ -316,3 +316,37 @@ export function describeDeath(d: DeathClass): string {
       return "no diagnostic log (cause unknown)";
   }
 }
+
+/** Split a `host:worker_id` claim identity into its parts. A bare id (no `:`)
+ * has an empty host. Only the FIRST `:` splits — a worker id never contains one,
+ * but a host theoretically could, so the worker is everything after the first. */
+export function splitClaimIdentity(fullId: string): { host: string; worker: string } {
+  const idx = fullId.indexOf(":");
+  if (idx < 0) return { host: "", worker: fullId };
+  return { host: fullId.slice(0, idx), worker: fullId.slice(idx + 1) };
+}
+
+/**
+ * Resolve the death cause of a recovered stale-claim owner for the cross-host
+ * recovery audit comment — the CONSUMER that makes the diagnostic actionable.
+ *
+ * Cross-host caveat: a worker that died on ANOTHER host left its diagnostic log
+ * on that host's filesystem, unreadable from here. So this only resolves a
+ * cause when the recovered owner ran on the SAME host as `self` (same `host:`
+ * prefix); a different host returns null (the comment then omits the cause, as
+ * before). Returns null too when the log is absent / classifies as
+ * `running`/`unknown` (nothing useful to say). Best-effort — never throws.
+ */
+export function deathCauseForRecoveredWorker(
+  redTmpDir: string,
+  recoveredFullId: string,
+  selfFullId: string,
+): string | null {
+  const recovered = splitClaimIdentity(recoveredFullId);
+  const self = splitClaimIdentity(selfFullId);
+  // Cross-host: the predecessor's log isn't on this filesystem.
+  if (recovered.host !== self.host) return null;
+  const verdict = classifyDeathFromLogFile(safetyLogPath(redTmpDir, recovered.worker));
+  if (verdict.kind === "unknown" || verdict.kind === "running") return null;
+  return describeDeath(verdict);
+}

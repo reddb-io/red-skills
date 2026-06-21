@@ -2,12 +2,14 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   classifyDeathFromLog,
   classifyDeathFromLogFile,
+  deathCauseForRecoveredWorker,
   describeDeath,
   fileSafetyLogger,
   getActiveSafety,
   installProcessSafety,
   noopSafetyLogger,
   safetyLogPath,
+  splitClaimIdentity,
   type SafetyLogger,
 } from "../src/core/process-safety.js";
 
@@ -330,5 +332,84 @@ describe("describeDeath — one-line human summary", () => {
     expect(describeDeath({ kind: "uncatchable", lastAliveLine: "...rss_mb=1900" })).toContain("SIGKILL/OOM");
     expect(describeDeath({ kind: "uncatchable", lastAliveLine: null })).toContain("no heartbeat");
     expect(describeDeath({ kind: "unknown" })).toContain("no diagnostic log");
+  });
+});
+
+describe("splitClaimIdentity", () => {
+  it("splits host:worker on the first colon", () => {
+    expect(splitClaimIdentity("cyber-XPS:wABCD")).toEqual({ host: "cyber-XPS", worker: "wABCD" });
+  });
+  it("a bare id (no colon) has an empty host", () => {
+    expect(splitClaimIdentity("wABCD")).toEqual({ host: "", worker: "wABCD" });
+  });
+  it("splits only on the FIRST colon (a host may contain more)", () => {
+    expect(splitClaimIdentity("h:o:st:wX")).toEqual({ host: "h", worker: "o:st:wX" });
+  });
+});
+
+// deathCauseForRecoveredWorker is the consumer that makes the diagnostic
+// actionable — it resolves a recovered SAME-HOST predecessor's cause from its
+// log, and returns null cross-host (the log isn't on this filesystem).
+describe("deathCauseForRecoveredWorker", () => {
+  it("returns null for a cross-host predecessor (its log is on another machine)", async () => {
+    const { mkdtemp, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const dir = await mkdtemp(join(tmpdir(), "afk-death-"));
+    try {
+      // Different host prefix → null even though we never look at the file.
+      expect(deathCauseForRecoveredWorker(dir, "otherhost:wDEAD", "myhost:wSELF")).toBeNull();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("returns null when the same-host predecessor left no diagnostic log", async () => {
+    const { mkdtemp, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const dir = await mkdtemp(join(tmpdir(), "afk-death-"));
+    try {
+      expect(deathCauseForRecoveredWorker(dir, "myhost:wDEAD", "myhost:wSELF")).toBeNull();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("resolves the cause for a same-host predecessor with an uncatchable-death log", async () => {
+    const { mkdtemp, mkdir, writeFile, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const dir = await mkdtemp(join(tmpdir(), "afk-death-"));
+    try {
+      // Write a diagnostic log for wDEAD at the canonical path: installed +
+      // heartbeats, no terminal line → uncatchable.
+      await mkdir(join(dir, "diagnostics"), { recursive: true });
+      await writeFile(
+        safetyLogPath(dir, "wDEAD"),
+        ["T0 ...event=installed node=v22", "T1 ...event=alive rss_mb=1800"].join("\n"),
+      );
+      const cause = deathCauseForRecoveredWorker(dir, "myhost:wDEAD", "myhost:wSELF");
+      expect(cause).not.toBeNull();
+      expect(cause).toContain("SIGKILL/OOM");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("returns null when the same-host predecessor exited cleanly... no — surfaces it (a clean exit is a real cause)", async () => {
+    const { mkdtemp, mkdir, writeFile, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const dir = await mkdtemp(join(tmpdir(), "afk-death-"));
+    try {
+      await mkdir(join(dir, "diagnostics"), { recursive: true });
+      await writeFile(safetyLogPath(dir, "wDEAD"), ["T0 ...event=installed", "T1 ...event=exit code=0"].join("\n"));
+      const cause = deathCauseForRecoveredWorker(dir, "myhost:wDEAD", "myhost:wSELF");
+      // A recorded clean exit IS a useful cause — surface it.
+      expect(cause).toContain("clean exit");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });
