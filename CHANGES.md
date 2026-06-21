@@ -6,6 +6,29 @@ Upstream base: `mattpocock/skills@694fa30311e02c2639942308513555e61ee84a6f` (see
 
 ---
 
+## git-guardrails-claude-code (misc) — bold lead-in (PRD #776, issue #785)
+
+- **status**: modified
+- **upstream**: `b8be62f`
+- **why**: PRD #776 convention sweep — every skill opens with an imperative bold lead-in.
+- **what changed**: Added "**Block destructive git ops before they run.**" as the first bold sentence after the H1.
+
+## migrate-to-shoehorn (misc) — bold lead-in + named functions (PRD #776, issue #785)
+
+- **status**: modified
+- **upstream**: `e74f006`
+- **why**: PRD #776 convention sweep; "type-safe alternatives" was vague — the functions have names.
+- **what changed**: Added bold lead-in. Replaced "type-safe alternatives" with "`fromPartial()` for partial data and `fromAny()` for intentionally wrong types."
+
+## setup-pre-commit (misc) — bold lead-in (PRD #776, issue #785)
+
+- **status**: modified
+- **upstream**: `e74f006`
+- **why**: PRD #776 convention sweep — every skill opens with an imperative bold lead-in.
+- **what changed**: Added "**Enforce lint + tests before commit.**" as the first bold sentence after the H1.
+
+---
+
 ## ff (productivity) — two-step interactive flow: choose framing, then dispatch prompt
 
 - **status**: modified
