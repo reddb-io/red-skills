@@ -32,26 +32,41 @@ export const MINIMAX_ANTHROPIC_BASE_URL = "https://api.minimax.io/anthropic";
 export const MINIMAX_M3_MODEL = "MiniMax-M3";
 
 /**
+ * Forces the Claude Code CLI down its API-key auth path instead of resolving a
+ * host OAuth/keychain session. Without it, a host already logged into a real
+ * Claude account would send that OAuth token to the MiniMax base URL — which
+ * MiniMax rejects (401), or worse, silently routes the inner agent to real
+ * Anthropic. `CLAUDE_CODE_SIMPLE=1` makes the injected `ANTHROPIC_API_KEY` the
+ * sole credential, so the lane is deterministic regardless of host login state.
+ */
+export const CLAUDE_CODE_SIMPLE_ENV = "1";
+
+/**
  * The inner-spawn env block delivered to the claude-code provider: the MiniMax
- * key under Anthropic's `ANTHROPIC_API_KEY` plus the hardcoded MiniMax
- * `ANTHROPIC_BASE_URL`.
+ * key under Anthropic's `ANTHROPIC_API_KEY`, the hardcoded MiniMax
+ * `ANTHROPIC_BASE_URL`, and `CLAUDE_CODE_SIMPLE=1` to pin the API-key auth path.
  */
 export type MiniMaxClaudeEnv = {
   ANTHROPIC_API_KEY: string;
   ANTHROPIC_BASE_URL: string;
+  CLAUDE_CODE_SIMPLE: string;
 };
 
 /**
- * Map `MINIMAX_API_KEY` → `{ ANTHROPIC_API_KEY, ANTHROPIC_BASE_URL }` for the
- * inner claude-code spawn, or `undefined` when no key is set (lane unusable).
- * Pure — the env is injected. An empty-string value counts as unset (operators
- * sometimes export an empty placeholder in shared rc files; we never want to
- * spawn against MiniMax with no real key).
+ * Map `MINIMAX_API_KEY` → `{ ANTHROPIC_API_KEY, ANTHROPIC_BASE_URL,
+ * CLAUDE_CODE_SIMPLE }` for the inner claude-code spawn, or `undefined` when no
+ * key is set (lane unusable). Pure — the env is injected. An empty-string value
+ * counts as unset (operators sometimes export an empty placeholder in shared rc
+ * files; we never want to spawn against MiniMax with no real key).
  */
 export function resolveMiniMaxClaudeEnv(env: NodeJS.ProcessEnv): MiniMaxClaudeEnv | undefined {
   const key = env[MINIMAX_API_KEY_ENV];
   if (typeof key === "string" && key.length > 0) {
-    return { ANTHROPIC_API_KEY: key, ANTHROPIC_BASE_URL: MINIMAX_ANTHROPIC_BASE_URL };
+    return {
+      ANTHROPIC_API_KEY: key,
+      ANTHROPIC_BASE_URL: MINIMAX_ANTHROPIC_BASE_URL,
+      CLAUDE_CODE_SIMPLE: CLAUDE_CODE_SIMPLE_ENV,
+    };
   }
   return undefined;
 }

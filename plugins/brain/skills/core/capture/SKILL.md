@@ -36,7 +36,7 @@ When unsure, use `note`. Do not invent kinds outside the Brain vertex vocabulary
 
 ## 2. Check the Brain-vs-Memory boundary
 
-Before capturing, confirm the content belongs in Brain:
+**Use Brain, not Memory, for Personal facts.** Before capturing, confirm the content belongs in Brain:
 
 - **Belongs in Brain**: biographical details, identity context, personal preferences, contact information, durable human decisions, knowledge about people and organizations, long-lived ideas, plans, and questions — anything the user wants to recall across sessions as human-facing knowledge.
 - **Belongs in Memory** (route to `/memory:store`): short operational facts from the current work session — a gotcha encountered, a why-note for a code decision, a validated approach, a scoped reminder for the agent.
