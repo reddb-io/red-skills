@@ -505,7 +505,7 @@ Composable. Boring on purpose where boring is enough. Sharp where it matters.
 | Skill | What it does |
 |-------|--------------|
 | **[reflect](./plugins/dev/skills/productivity/reflect/SKILL.md)** | Interviews you until every branch of the decision tree is resolved. |
-| **[ff](./plugins/dev/skills/productivity/ff/SKILL.md)** | Fast-forward clarity: reframes the latest user message into multiple plausible interpretations or next replies, then recommends one. |
+| **[ff](./plugins/dev/skills/productivity/ff/SKILL.md)** | Fast-forward clarity: asks which framing you want, rewrites your message into that one framing, then asks whether to dispatch (execute) it. |
 | **[handoff](./plugins/dev/skills/productivity/handoff/SKILL.md)** | Compacts the current conversation into a handoff doc for the next agent. |
 | **[write-a-skill](./plugins/dev/skills/productivity/write-a-skill/SKILL.md)** | Scaffolds new skills with proper structure and progressive disclosure. |
 
