@@ -580,7 +580,11 @@ describe("buildAgent — provider mapping (ADR 0059 opencode wiring)", () => {
         model: "MiniMax-M3",
         options: {
           effort: "low",
-          env: { ANTHROPIC_API_KEY: "mm-key-789", ANTHROPIC_BASE_URL: "https://api.minimax.io/anthropic" },
+          env: {
+            ANTHROPIC_API_KEY: "mm-key-789",
+            ANTHROPIC_BASE_URL: "https://api.minimax.io/anthropic",
+            CLAUDE_CODE_SIMPLE: "1",
+          },
         },
       },
     ]);
@@ -845,6 +849,124 @@ describe("runAgent — runner transient failures", () => {
     expect(r.branch).toBe("afk/wZ2R4/42-fix-oauth");
     expect(r.commits).toEqual([]);
     expect(r.stdout).toContain("failed to connect to websocket");
+  });
+});
+
+// ---- claude-minimax exhaustion detection (#793) ----
+//
+// MiniMax's Anthropic-compat endpoint (https://api.minimax.io/anthropic) was
+// validated in the spike gate (#790) but no quota hit was observed during the
+// probe. These tests document the expected error shapes based on the
+// Anthropic-compat error format that MiniMax's endpoint implements, plus the
+// HTTP 429 numeric code that Claude Code CLI surfaces when the endpoint returns
+// a rate-limit response without a parseable error body.
+
+describe("isExhaustionError — claude-minimax MiniMax Anthropic-compat shapes (#793)", () => {
+  it("matches a bare HTTP 429 status code string (MiniMax rate-limit via Claude Code)", () => {
+    expect(isExhaustionError(new Error("API Error: 429 Too Many Requests"))).toBe(true);
+    expect(isExhaustionError(new Error("HTTP error: 429"))).toBe(true);
+    expect(isExhaustionError("claude-code exited with status 429")).toBe(true);
+  });
+
+  it("matches a MiniMax Anthropic-compat rate_limit_error body (Anthropic format)", () => {
+    expect(
+      isExhaustionError(new Error('{"type":"error","error":{"type":"rate_limit_error","message":"Rate limit exceeded, please retry."}}')),
+    ).toBe(true);
+  });
+
+  it("matches rate_limit_error nested under a cause chain (Effect-style sandcastle error)", () => {
+    expect(
+      isExhaustionError({
+        message: "agent failed",
+        cause: { message: '{"type":"error","error":{"type":"rate_limit_error"}}' },
+      }),
+    ).toBe(true);
+  });
+
+  it("matches insufficient credits / balance (HTTP 402 variant)", () => {
+    expect(isExhaustionError(new Error("API Error: insufficient credits to complete this request"))).toBe(true);
+    expect(isExhaustionError(new Error("insufficient credit: please top up your MiniMax account"))).toBe(true);
+  });
+
+  it("matches MiniMax balance-depletion strings (Insufficient balance / balance insufficient)", () => {
+    expect(isExhaustionError(new Error("Insufficient balance"))).toBe(true);
+    expect(isExhaustionError(new Error("balance insufficient for this request"))).toBe(true);
+  });
+
+  it("does not match 4290 (word-boundary guard on 429)", () => {
+    expect(isExhaustionError(new Error("processed 4290 records"))).toBe(false);
+  });
+});
+
+describe("isTransientRunnerError — network transport errors for claude-minimax (#793)", () => {
+  it("matches ECONNREFUSED (MiniMax endpoint unreachable)", () => {
+    expect(isTransientRunnerError(new Error("connect ECONNREFUSED 1.2.3.4:443"))).toBe(true);
+    expect(isTransientRunnerError(new Error("request to https://api.minimax.io/anthropic failed: ECONNREFUSED"))).toBe(true);
+  });
+
+  it("matches ENOTFOUND (DNS lookup failure for api.minimax.io)", () => {
+    expect(isTransientRunnerError(new Error("getaddrinfo ENOTFOUND api.minimax.io"))).toBe(true);
+  });
+
+  it("matches ETIMEDOUT / ECONNRESET (connection timeout or reset)", () => {
+    expect(isTransientRunnerError(new Error("connect ETIMEDOUT 1.2.3.4:443"))).toBe(true);
+    expect(isTransientRunnerError(new Error("socket hang up: ECONNRESET"))).toBe(true);
+  });
+
+  it("does not match ordinary agent/work failures", () => {
+    expect(isTransientRunnerError(new Error("tests failed: 2 failing"))).toBe(false);
+    expect(isTransientRunnerError(new Error("worktree add failed: fatal"))).toBe(false);
+  });
+});
+
+describe("runAgent — claude-minimax exhaustion (HTTP 429 from MiniMax endpoint)", () => {
+  it("maps a thrown HTTP 429 error to the exhausted outcome", async () => {
+    const r = await runAgent(
+      makeDeps(async () => {
+        throw new Error("claude-code exited with code 1: API Error: 429 Too Many Requests");
+      }),
+      { ...baseInput, runner: "claude-minimax", model: "MiniMax-M3" },
+    );
+    expect(r.outcome).toBe("exhausted");
+    expect(r.commits).toEqual([]);
+    expect(r.completionSignal).toBeUndefined();
+  });
+
+  it("maps exhaustion text on stdout (rate_limit_error body, no completion signal) to exhausted", async () => {
+    const r = await runAgent(
+      makeDeps(async () =>
+        fakeResult({
+          completionSignal: undefined,
+          stdout: '{"type":"error","error":{"type":"rate_limit_error","message":"quota reached"}}',
+        }),
+      ),
+      { ...baseInput, runner: "claude-minimax", model: "MiniMax-M3" },
+    );
+    expect(r.outcome).toBe("exhausted");
+  });
+
+  it("maps a thrown balance-depletion error to the exhausted outcome", async () => {
+    const r = await runAgent(
+      makeDeps(async () => {
+        throw new Error("claude-code exited with code 1: Insufficient balance");
+      }),
+      { ...baseInput, runner: "claude-minimax", model: "MiniMax-M3" },
+    );
+    expect(r.outcome).toBe("exhausted");
+  });
+});
+
+describe("runAgent — claude-minimax transient transport failure (ECONNREFUSED)", () => {
+  it("maps a thrown ECONNREFUSED to runner-transient, not a crash", async () => {
+    const r = await runAgent(
+      makeDeps(async () => {
+        throw new Error("request to https://api.minimax.io/anthropic/v1/messages failed: ECONNREFUSED");
+      }),
+      { ...baseInput, runner: "claude-minimax", model: "MiniMax-M3" },
+    );
+    expect(r.outcome).toBe("runner-transient");
+    expect(r.commits).toEqual([]);
+    expect(r.stdout).toContain("ECONNREFUSED");
   });
 });
 

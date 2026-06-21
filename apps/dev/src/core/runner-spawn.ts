@@ -96,8 +96,12 @@ export function codexSpawnArgs(input: SpawnArgsInput & { lastMessagePath: string
 // ---------- runner exhaustion (run_inner exhaustion grep) -------------------
 
 // Exhaustion strings — keep in sync with runner-*.md.
+// MiniMax Anthropic-compatible endpoint surfaces quota depletion as "balance"
+// terms (e.g. "Insufficient balance", "balance insufficient") and HTTP 429 /
+// "insufficient credits" variants alongside the standard Anthropic
+// rate_limit_error (#793).
 const exhaustionPattern =
-  /usage limit|weekly (limit|cap)|session (limit|exhausted)|quota|rate_limit_error|try again later/i;
+  /usage limit|weekly (limit|cap)|session (limit|exhausted)|quota|rate_limit_error|try again later|\bbalance\b|\b429\b|insufficient.credit/i;
 
 /** True when a stream line signals the runner hit a usage/quota limit. */
 export function isRunnerExhausted(text: string): boolean {
