@@ -6,6 +6,8 @@ argument-hint: "[--prd N | --issues N,N,N] [--runner claude|codex|opencode] [--a
 
 # /afk
 
+**Read, don't reverse-engineer.** This SKILL.md is the contract; source is build artifact.
+
 Drain the agent-ready backlog. Single skill that owns issue selection, worktree isolation, inner-agent execution, GitHub state coordination, merge-back, and runner-fallback.
 
 ## Runtime & Invocation
@@ -113,35 +115,25 @@ Two workers cannot claim the same issue thanks to a local `mkdir` lock at `.red/
 
 ## Hard Preconditions
 
-Refuse to start if any of these fail. The user fixes them, you don't.
+Refuse to start if any fail — the user fixes them.
 
-- `git remote -v` shows only SSH remotes. Reject HTTPS — never auto-rewrite.
+- `git remote -v`: SSH only. Reject HTTPS — never auto-rewrite.
 - `gh auth status` succeeds.
-- Repo has a `main` branch and `git -C primary log -1 main` works.
-- Issue tracker label `ready-for-agent` exists. If not, point at `/triage`.
-- `pnpm` is on PATH (logger and tooling guidelines assume pnpm).
+- Repo has `main` branch: `git -C primary log -1 main` works.
+- Label `ready-for-agent` exists; if not, point at `/triage`.
+- `pnpm` is on PATH.
 
 ## Bootstrap
 
 Run before the first iteration:
 
-1. Ensure `.red/tmp/` exists. Create it.
-2. Ensure `.red/tmp/` is in `.gitignore` of the primary checkout. Append if missing.
-3. **Generate the worker ID.** Literal `w` + 4 random characters from `[A-Z0-9]` (e.g. `wZ2R4`). On the astronomically unlikely chance the chosen ID already maps to a live worker directory `.red/tmp/workers/{id}` (its `worker.pid` alive), regenerate. Print the ID on the first line of the run: `worker: {id}`. All per-attempt paths interpolate `{id}`, the issue number `{N}`, and the attempt number `{n}`.
-4. Resolve the runner via the detection cascade:
-   1. `--runner X` flag (pin) — wins over everything, logged as `detected via --runner pin`. `opencode` (ADR 0059) is valid **only here or via `RED_AFK_RUNNER`** — it is never auto-sniffed below, since no host session is OpenCode.
-   2. **Caller runner env** — `RED_AFK_RUNNER=claude|codex|hermes|opencode` is the host-session identity (or, for `opencode`, an explicit API-auth pin) and wins over ambient env/process/path sniffing. Under Codex, invoke the bundle as `RED_AFK_RUNNER=codex ...`; under Claude Code, invoke it as `RED_AFK_RUNNER=claude ...`. Logged as `detected via env-var`.
-   3. **Env-var sniff** — `CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`, or `CLAUDE_CODE_SSE_PORT` → `claude`; `CODEX_HOME`, `CODEX_SANDBOX`, `CODEX_SANDBOX_NETWORK_DISABLED`, or `CODEX_MANAGED_BY_NPM` → `codex`. Logged as `detected via env-var`.
-   4. **Process-tree sniff** — if the invoking process tree contains Claude Code, use `claude`; if it contains Codex, use `codex`. Logged as `detected via process`. This is the normal path for repo-local skill copies whose filesystem path is neutral.
-   5. **`$BASH_SOURCE` path sniff** — script lives under `~/.claude/...` → `claude`; under `~/.codex/...` → `codex`. Logged as `detected via path`.
-   6. **Default fallback** — `claude`. Logged as `detected via env-fallback`.
-   The boot log prints one line per invocation: `runner: <runner> (detected via <method>)`. Load [`runner-claude.md`](runner-claude.md), [`runner-codex.md`](runner-codex.md), or [`runner-opencode.md`](runner-opencode.md) so the spawn command is ready.
-   Do not probe `command -v claude` / `command -v codex` to choose a different runner after a transport failure. Installed binaries are capabilities, not caller identity. A runner swap is allowed only when the user explicitly passes `--fallback-runner`.
-5. Read [`SAFETY.md`](SAFETY.md). It is binding for every shell action the loop takes.
-6. **Write the per-worker pid file.** Create `.red/tmp/workers/{id}/` and write `worker.pid` (current `$$`) **once** — this is the worker's single liveness anchor for its whole lifetime.
-7. Install signal handlers — SIGINT, SIGTERM, and normal exit all release any in-flight issue claim, preserve the active `workers/{id}/{N}-a{n}/` attempt directory, and on the EXIT trap remove `worker.pid` (and rmdir the empty worker dir) before terminating.
-
-The per-attempt `workers/{id}/{N}-a{n}/` directory (log, state, handoff, worktree) is created in *Per-Issue Loop* step 1 below, not here — the worker has no attempt files until it claims an issue. Only `worker.pid` exists from bootstrap.
+1. Ensure `.red/tmp/` exists (create) and in `.gitignore` (append if missing).
+2. **Generate worker ID:** `w` + 4 random `[A-Z0-9]` chars (e.g. `wZ2R4`). Regenerate on live-directory collision. Print `worker: {id}` first.
+3. **Detect runner** (first wins; log `runner: <r> (detected via <method>)`). Load the matching runner doc. Never probe `command -v`; swap only via `--fallback-runner`.
+   - `--runner X` pin (`opencode` valid only here or via env) → `RED_AFK_RUNNER` env → env-var sniff (`CLAUDECODE`/`CLAUDE_CODE_ENTRYPOINT`/`CLAUDE_CODE_SSE_PORT` → `claude`; `CODEX_HOME`/`CODEX_SANDBOX`/`CODEX_SANDBOX_NETWORK_DISABLED`/`CODEX_MANAGED_BY_NPM` → `codex`) → process-tree → path (`~/.claude/` → `claude`; `~/.codex/` → `codex`) → default `claude`.
+4. Read [`SAFETY.md`](SAFETY.md) — binding for every shell action.
+5. **Write `worker.pid`:** create `.red/tmp/workers/{id}/`, write current PID **once** — the worker's liveness anchor for its whole lifetime.
+6. Install signal handlers (SIGINT/SIGTERM/EXIT): release claim, preserve attempt dir, remove `worker.pid`, rmdir empty worker dir.
 
 ## Boot-time sweeps
 
@@ -204,21 +196,14 @@ The systemic fix is the `red-issues-needs-triage.yml` workflow installed by `/se
 
 ## Issue Selection
 
-Pull the candidate list with `gh issue list --label ready-for-agent --state open --json number,title,labels,body --limit 100`.
+Pull: `gh issue list --label ready-for-agent --state open --json number,title,labels,body --limit 100`. Drop every `type:prd` issue before any filter (log `/to-issues N` warning for each). Prepend `priority:urgent` issues before any filter, oldest first.
 
-**PRD exclusion (hard).** Drop every issue carrying the `type:prd` label before any other filter. PRDs describe *what* to build, not an implementable slice — they must be split by `/to-issues` first. If a PRD is found in `ready-for-agent` (usually because someone labelled it manually), log a warning naming the issue numbers and the fix (`/to-issues N`), and continue with the remaining candidates. This defence is in addition to `/to-prd` never applying `ready-for-agent` in the first place.
+Filters for the **non-urgent remainder**:
+1. `--issues N…`: keep those numbers in argument order; error if missing or not `ready-for-agent`; PRDs rejected.
+2. `--prd N`: keep issues with `prd: #N` in body, parent link, or `prd:N` label; PRD itself excluded.
+3. Default: all remaining `ready-for-agent`, `priority:high` first, then ascending by number.
 
-**Urgent prepend (hard, runs before any filter).** Issues carrying `priority:urgent` always jump the head of the queue, ahead of `--prd` and `--issues` filters. Source: the `/urgent` skill files an issue with `priority:urgent` + `ready-for-agent`; every `/afk` invocation prepends those to the candidate list regardless of which selection flags were passed. Among urgents, oldest issue number first.
-
-Apply filters to the **non-urgent remainder** in this order:
-
-1. If `--issues` was passed: keep only those numbers, in argument order. Error if any are missing or not labelled `ready-for-agent`. PRDs in the explicit list are still rejected — the user is told to slice them first.
-2. Else if `--prd` was passed: keep issues with `prd: #N` in the body, a parent link to issue N, or a `prd:N` label. The PRD itself (#N) is excluded by the `type:prd` filter above.
-3. Else: keep all remaining `ready-for-agent` issues. Sort by triage priority — `priority:high` before `priority:low` (and unlabelled), then by issue number ascending.
-
-The final queue is `[urgent…] + [filtered non-urgent…]`, deduped by number (so an urgent issue that also matched the filter only appears once, at the front).
-
-If the list is empty, print `<promise>NO MORE TASKS</promise>` and exit 0.
+Final queue: `[urgent…] + [filtered…]`, deduped. Empty → `<promise>NO MORE TASKS</promise>`, exit 0.
 
 ## Issue Lifecycle (the `/afk` slice)
 
