@@ -108,24 +108,24 @@ describe("statusline — context block", () => {
 
 describe("statusline — AFK block", () => {
   it("renders the full token run in the fixed order", () => {
-    // case 3: one live worker on #17 with +12 -3, blocked 2, cached 📋11 🆘3.
-    expect(renderAfkBlock(baseAfk())).toBe("🤖1 📋11 🆘3 🚧2 +12 -3 #17");
+    // case 3: one live worker on #17 with ad12 rm3, blocked 2, cached rq11 rh3.
+    expect(renderAfkBlock(baseAfk())).toBe("wk1 rq11 rh3 bk2 ad12 rm3 #17");
   });
 
   it("sums diffstats and lists both issues for two workers", () => {
-    // case 4: 🤖2, +42 -10, 🚧5, both #17 and #20.
+    // case 4: wk2, ad42 rm10, bk5, both #17 and #20.
     const out = renderAfkBlock(
       baseAfk({ workers: 2, added: 42, removed: 10, blocked: 5, issues: [17, 20] }),
     );
-    expect(out).toContain("🤖2");
-    expect(out).toContain("+42 -10");
+    expect(out).toContain("wk2");
+    expect(out).toContain("ad42 rm10");
     expect(out).toContain("#17");
     expect(out).toContain("#20");
-    expect(out).toContain("🚧5");
+    expect(out).toContain("bk5");
   });
 
   it("drops the block when there are no live workers", () => {
-    // case 1 / case 2: empty .red/tmp => no 🤖 block.
+    // case 1 / case 2: empty .red/tmp => no wk block.
     expect(renderAfkBlock({ ...baseAfk(), workers: 0 })).toBeNull();
     expect(renderAfkBlock(undefined)).toBeNull();
   });
@@ -134,10 +134,10 @@ describe("statusline — AFK block", () => {
     const out = renderAfkBlock(
       baseAfk({ queue: 0, human: 0, blocked: 0, added: 5, removed: 2, issues: [17] }),
     );
-    expect(out).toBe("🤖1 +5 -2 #17");
-    expect(out).not.toContain("📋");
-    expect(out).not.toContain("🆘");
-    expect(out).not.toContain("🚧");
+    expect(out).toBe("wk1 ad5 rm2 #17");
+    expect(out).not.toContain("rq");
+    expect(out).not.toContain("rh");
+    expect(out).not.toContain("bk");
   });
 
   it("renders only the worker count when everything else is zero and no issues", () => {
@@ -151,7 +151,7 @@ describe("statusline — AFK block", () => {
         removed: 0,
         issues: [],
       }),
-    ).toBe("🤖1");
+    ).toBe("wk1");
   });
 
   it("suffixes each issue with its stage when present, aligned by index", () => {
@@ -171,28 +171,28 @@ describe("statusline — AFK block", () => {
     expect(out).not.toContain("#20·");
   });
 
-  it("renders 💤N after the diff only when waiting > 0", () => {
-    expect(renderAfkBlock(baseAfk({ waiting: 4 }))).toBe("🤖1 📋11 🆘3 🚧2 +12 -3 💤4 #17");
-    expect(renderAfkBlock(baseAfk({ waiting: 0 }))).not.toContain("💤");
-    expect(renderAfkBlock(baseAfk())).not.toContain("💤");
+  it("renders wtN after the diff only when waiting > 0", () => {
+    expect(renderAfkBlock(baseAfk({ waiting: 4 }))).toBe("wk1 rq11 rh3 bk2 ad12 rm3 wt4 #17");
+    expect(renderAfkBlock(baseAfk({ waiting: 0 }))).not.toContain("wt");
+    expect(renderAfkBlock(baseAfk())).not.toContain("wt");
   });
 
-  it("renders 🪙 humanized tokens and 💵 cost after 💤, each only when > 0", () => {
+  it("renders tk humanized tokens and $ cost after wt, each only when > 0", () => {
     expect(renderAfkBlock(baseAfk({ tokens: 12500, costUsd: 0.42 }))).toBe(
-      "🤖1 📋11 🆘3 🚧2 +12 -3 🪙12k 💵$0.42 #17",
+      "wk1 rq11 rh3 bk2 ad12 rm3 tk12k $0.42 #17",
     );
     // tokens but no cost (the common case — most runners report tokens, not USD)
-    expect(renderAfkBlock(baseAfk({ tokens: 900 }))).toContain("🪙900");
-    expect(renderAfkBlock(baseAfk({ tokens: 900 }))).not.toContain("💵");
+    expect(renderAfkBlock(baseAfk({ tokens: 900 }))).toContain("tk900");
+    expect(renderAfkBlock(baseAfk({ tokens: 900 }))).not.toContain("$");
     // neither when zero/absent
-    expect(renderAfkBlock(baseAfk({ tokens: 0, costUsd: 0 }))).not.toMatch(/🪙|💵/);
-    expect(renderAfkBlock(baseAfk())).not.toMatch(/🪙|💵/);
+    expect(renderAfkBlock(baseAfk({ tokens: 0, costUsd: 0 }))).not.toMatch(/tk|\$/);
+    expect(renderAfkBlock(baseAfk())).not.toMatch(/tk|\$/);
   });
 
   it("keeps the pre-vitals render byte-for-byte when no waiting/stages are supplied", () => {
     // The new fields are optional: an aggregator that never populates them must
     // produce the exact legacy line, so the upgrade is a no-op for old callers.
-    expect(renderAfkBlock(baseAfk())).toBe("🤖1 📋11 🆘3 🚧2 +12 -3 #17");
+    expect(renderAfkBlock(baseAfk())).toBe("wk1 rq11 rh3 bk2 ad12 rm3 #17");
   });
 });
 
@@ -204,7 +204,7 @@ describe("statusline — full assembly", () => {
       afk: { workers: 4, queue: 1, human: 11, blocked: 10, added: 12, removed: 3, issues: [17] },
     };
     expect(renderStatusline(input)).toBe(
-      "red-skills (main) · Opus·high · 47k 24% · 🤖4 📋1 🆘11 🚧10 +12 -3 #17",
+      "red-skills (main) · Opus·high · 47k 24% · wk4 rq1 rh11 bk10 ad12 rm3 #17",
     );
   });
 
@@ -213,7 +213,7 @@ describe("statusline — full assembly", () => {
       project: { basename: "c3" },
       afk: baseAfk(),
     });
-    expect(out).toBe("c3 · 🤖1 📋11 🆘3 🚧2 +12 -3 #17");
+    expect(out).toBe("c3 · wk1 rq11 rh3 bk2 ad12 rm3 #17");
     expect(out).not.toContain("Opus");
     expect(out).not.toContain("%");
   });
@@ -224,7 +224,7 @@ describe("statusline — full assembly", () => {
       claude: { model: "Opus", effort: "high", contextTokens: 47000, contextPercent: 24 },
     });
     expect(out).toBe("c1 · Opus·high · 47k 24%");
-    expect(out).not.toContain("🤖");
+    expect(out).not.toContain("wk");
     expect(out).toContain("c1");
   });
 
