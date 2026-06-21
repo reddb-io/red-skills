@@ -353,6 +353,17 @@ describe("isInfraFeedbackFailure — INFRA root cause detection", () => {
     expect(isInfraFeedbackFailure(result)).toBe(false);
   });
 
+  it("matches a maxBuffer capture overflow (green-but-verbose suite, not a test failure)", () => {
+    // exec.ts surfaces the literal `maxBuffer length exceeded` for an output
+    // overflow. The suite may have passed — only its output was too large — so
+    // it is an INFRA/config problem, routed through validation-infra recovery.
+    const result = failedCheck(
+      "test:apps/dev",
+      "command output exceeded the capture ceiling (maxBuffer length exceeded); stdout maxBuffer length exceeded",
+    );
+    expect(isInfraFeedbackFailure(result)).toBe(true);
+  });
+
   it("only inspects FAILED checks (passed checks carry no verdict)", () => {
     // A passing `test:root` and a failing `test:apps/dev` with a SEMANTIC error —
     // should NOT be INFRA just because the green check exists.

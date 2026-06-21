@@ -35,7 +35,27 @@ export interface ExecOptions {
  */
 export type ExecFn = (cmd: string, args: readonly string[], opts?: ExecOptions) => Promise<ExecOutput>;
 
-const DEFAULT_MAX_BUFFER = 16 * 1024 * 1024;
+// Default stdout/stderr capture ceiling for a single command. Raised from 16MB
+// to 64MB (AFK runner improvement): the feedback gate runs `pnpm test` for a
+// whole monorepo package, and a verbose vitest run over ~1700 tests can exceed
+// 16MB of combined output. On overflow Node KILLS the child and reports the
+// error — so a fully-GREEN suite would read as a failure purely because its
+// output was large. 64MB covers the largest current suite with headroom;
+// callers that need a different ceiling pass `opts.maxBuffer`.
+const DEFAULT_MAX_BUFFER = 64 * 1024 * 1024;
+
+/**
+ * Exit code reported when a command's output exceeds the maxBuffer ceiling.
+ * Distinct from a real command failure (the command may have SUCCEEDED — the
+ * tests all passed — and only its OUTPUT was too large). The feedback gate's
+ * INFRA classifier (`isInfraFeedbackFailure`) matches the literal
+ * `maxBuffer length exceeded` substring this carries on stderr, so a buffer
+ * overflow routes through the bounded `validation-infra` recovery (a config
+ * problem the operator fixes), NOT a semantic `blocked:validation` that pages
+ * a human for a green suite. 126 mirrors the shell's "command found but not
+ * executable" slot — a code no normal test runner returns.
+ */
+export const MAXBUFFER_EXIT_CODE = 126;
 
 /**
  * Exit code reported for a command killed by the exec timeout or an external
@@ -70,6 +90,20 @@ export function execTool(cmd: string, args: readonly string[], opts: ExecOptions
         encoding: "utf8",
       },
       (error, stdout, stderr) => {
+        if (error && (error as NodeJS.ErrnoException).code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") {
+          // Output exceeded maxBuffer: Node killed the child. The command may
+          // well have SUCCEEDED (a green-but-verbose test suite) — only its
+          // output was too large. Surface a DISTINCT code + a stable
+          // `maxBuffer length exceeded` marker on stderr so the feedback gate's
+          // INFRA classifier routes it through bounded `validation-infra`
+          // recovery instead of paging a human for a config problem.
+          resolve({
+            code: MAXBUFFER_EXIT_CODE,
+            stdout: String(stdout ?? ""),
+            stderr: `command output exceeded the capture ceiling (maxBuffer length exceeded); ${String((error as Error).message)}`,
+          });
+          return;
+        }
         if (error && typeof (error as NodeJS.ErrnoException).code === "string") {
           // Spawn failure (ENOENT etc.) — surface as 127 like a shell would.
           resolve({ code: 127, stdout: String(stdout ?? ""), stderr: String((error as Error).message) });

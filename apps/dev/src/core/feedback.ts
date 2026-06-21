@@ -166,9 +166,11 @@ export function formatValidationLine(record: ValidationRecord): string {
  * `feedback worktree setup failed for <branch>; validation blocked` (or the
  * `submodule init failed` / `install failed` variants) in `stderr`. A
  * `summary` containing one of those markers — or an exit-code-137 (SIGKILL,
- * the Linux OOM killer signature) anywhere in the gate output — flips this
- * classifier to true. The detection is substring-based on purpose: it has to
- * survive pnpm's error-wrapping, multi-line output, and minor message drift.
+ * the Linux OOM killer signature), or a `maxBuffer length exceeded` capture
+ * overflow (a green-but-verbose suite Node killed for its OUTPUT size, not a
+ * test failure) anywhere in the gate output — flips this classifier to true.
+ * The detection is substring-based on purpose: it has to survive pnpm's
+ * error-wrapping, multi-line output, and minor message drift.
  */
 export function isInfraFeedbackFailure(feedback: RunFeedbackResult): boolean {
   if (feedback.ok) return false;
@@ -184,6 +186,13 @@ export function isInfraFeedbackFailure(feedback: RunFeedbackResult): boolean {
     }
     // OOM killer: pnpm or vitest parent was SIGKILLed.
     if (summary.includes("SIGKILL") || /\b137\b/.test(summary)) {
+      return true;
+    }
+    // Output capture overflow: a green-but-verbose suite whose output exceeded
+    // the exec maxBuffer ceiling. The command may have SUCCEEDED — only its
+    // output was too large — so this is an environment/config problem, not a
+    // worker-code failure. Route through bounded validation-infra recovery.
+    if (summary.includes("maxBuffer length exceeded")) {
       return true;
     }
   }
