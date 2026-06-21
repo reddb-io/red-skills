@@ -17,7 +17,7 @@ stale notes inline.
 ## Repo structure & contexts
 - **0021** Multi-context plugin glossaries — *accepted* (predates the `brain` plugin; the multi-context model now spans `dev`/`memory`/**`brain`** — see the *Brain plugin* section and `.red/contexts/brain/`)
 - **0034** Repo splits DEFINITIONS from IMPLEMENTATION (`apps/…` + `packages/…`) — partially superseded by **0039** (entrypoints fused), **0041** (memory leaves), and **0060** (layout relocated to root with a pnpm catalog)
-- **0041** red-skills consumes `red-memory` + `red-ui` MCPs; stops building memory — partially supersedes 0034 *(renumbered from 0039)*
+- **0041** red-skills consumes `red-memory` + `red-ui` MCPs; stops building memory — partially supersedes 0034 *(renumbered from 0039; **REVERSED by Amendment 1, 2026-06-20 — memory stays in red-skills as the local `red-memory` MCP; the repo split is cancelled**)*
 - **0060** Workspaces move to root `apps/` + `packages/` with a pnpm `catalog:` for shared versions — relocates 0034's `src/apps`/`src/packages` layout (conventional Turborepo); `@reddb-io/sdk` stays per-app-pinned for the bundler
 - **0046** A single global `.red/` shared by all plugins — *superseded by 0021*
 
@@ -26,7 +26,7 @@ stale notes inline.
 - **0057** `red-hermes` is a fetched, never-vendored black-box dependency of the `brain` plugin — reached via `hermes mcp serve`, fetched as a Release asset (0038 model), version pinned (0040), 10-tool contract; MIT attribution in `NOTICE` (0004) *(downstream fetch/launcher blocked on red-hermes releases, same shape as #378)*
 
 ## Bundle / fetch / release / version
-- **0029** Runtime ships as esbuild bundle + `red` binary, fetched post-install by a bootstrap — post-0041, the memory runtime is fetched from the `red-memory` repo rather than built in red-skills
+- **0029** Runtime ships as esbuild bundle + `red` binary, fetched post-install by a bootstrap — the fetch model for the `dev`/`code-nav` bundles (0041's memory-fetch was reversed 2026-06-20; memory runs from the in-repo `apps/memory` build)
 - **0032** AFK ships as a committed dependency-free bundle — *shipping detail superseded by 0038; location by 0034*
 - **0038** Dev runtime ships as a fetched Release asset, not a committed bundle — supersedes 0032's committed-bundle model
 - **0039** Plugin entrypoints share one source, selected by a build role (unifies red-fetch/afk/code-nav/memory launchers)
@@ -72,10 +72,11 @@ stale notes inline.
 
 ## Memory architecture & graph
 
-> Post-**0041**, the memory runtime is no longer built in red-skills — it lives in the
-> `red-memory` repo and is consumed as a fetched MCP. These ADRs still describe the
-> memory **substrate/domain** (the decisions stand), but their implementation now
-> resides in `red-memory`, not `apps/memory`.
+> **0041's memory-to-separate-repo split was reversed (Amendment 1, 2026-06-20).**
+> The memory runtime stays in red-skills — it is built from `apps/memory` and
+> served by the local `red-memory` MCP (`plugins/memory/.mcp.json`). These ADRs
+> describe the memory **substrate/domain** and their decisions stand; their
+> implementation lives in `apps/memory`, not a separate `red-memory` repo.
 
 - **0005** Memory plugin: three-layer RedDB architecture, local-first per-repo, MCP+CLI
 - **0007** RedDB graph writes go through multi-model DML, not table inserts
@@ -103,7 +104,7 @@ stale notes inline.
 - *(see also 0035)*
 
 ## Skill curation & telemetry
-- **0014** Memory owns skill telemetry and report-only curation — post-0041 runtime moves to `red-memory`; ownership/report-only boundary stands
+- **0014** Memory owns skill telemetry and report-only curation — runtime stays in `apps/memory` (0041 split reversed 2026-06-20); ownership/report-only boundary stands
 - **0016** `dev` owns the mutating Skill curator — post-0041 it consumes report-only curator output through `red-memory` MCP, not an in-repo `memory` CLI
 
 ## Licensing

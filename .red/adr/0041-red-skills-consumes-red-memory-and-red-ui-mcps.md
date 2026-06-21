@@ -1,5 +1,13 @@
 # red-skills consumes `red-memory` and `red-ui` MCPs; it stops building the memory plugin
 
+> **⚠️ REVERSED by Amendment 1 (2026-06-20).** The core decision below — migrate
+> `apps/memory` out to a separate `red-memory` repo and consume it as a fetched
+> release bundle — is **cancelled**. Memory **stays in red-skills**; `red-memory`
+> is the **local** MCP already wired in `plugins/memory/.mcp.json` (it execs the
+> in-repo `apps/memory` build, RedDB-backed via `@reddb-io/sdk`). The only part
+> of this ADR that survives is the `memory` → `red-memory` **server rename**,
+> which is already applied. Read [Amendment 1](#amendment-1-2026-06-20--reversed-memory-stays-in-red-skills) for the current decision; the body below is kept for history.
+
 ## Context
 
 The red ecosystem has a dedicated repo per product:
@@ -52,10 +60,69 @@ There are two distinct MCPs in play, repeatedly conflated:
 
 ## Status
 
-Accepted (direction). The multi-repo migration is large and pending; until it lands, `apps/memory` remains the live source.
+**Reversed by Amendment 1 (2026-06-20).** The original direction (migrate memory
+to a separate `red-memory` repo, consume via release fetch, retire `apps/memory`)
+is cancelled. Memory stays in red-skills as the local `red-memory` MCP; the only
+surviving change is the `memory` → `red-memory` server rename, already applied.
+
+## Amendment 1 (2026-06-20) — REVERSED: memory stays in red-skills
+
+The core decision of this ADR — migrate `apps/memory` out to a dedicated
+`red-memory` repo and have red-skills consume it as a fetched release bundle — is
+**reversed**. It was scaffolded (`reddb-io/red-memory` was created 2026-06-08) but
+never delivered: that repo is an empty skeleton with **zero releases** and no
+activity since creation, so the "consume a fetched `red-memory` bundle / retire
+`apps/memory`" path has been blocking #378 indefinitely on a prerequisite that is
+not coming. Memory has run from the in-repo build the entire time and is fully
+functional, so there is no operational reason to keep waiting on the split.
+
+**New decision:**
+
+- **Memory stays in red-skills.** `apps/memory` (`@reddb-io/memory`) remains the
+  live, in-repo source of the memory plugin and is **not** retired; red-skills
+  keeps building it.
+- **`red-memory` is a local MCP, not a repo.** The memory MCP is the `red-memory`
+  server already wired in `plugins/memory/.mcp.json`, which execs the in-repo
+  `scripts/bootstrap.mjs mcp` (built from `apps/memory`). It is RedDB-backed
+  (`@reddb-io/sdk`) and exposes the `memory_*` tool surface locally. There is no
+  fetch-from-release for memory.
+- **No `red-memory` GitHub repo dependency.** The `reddb-io/red-memory` scaffold
+  is abandoned and should be archived (or left dormant). No red-skills surface
+  fetches from it.
+
+**What survives from the original decision:**
+
+- The **server rename `memory` → `red-memory`** in `plugins/memory/.mcp.json`
+  (decision item 2) — already applied and kept; a good name independent of where
+  the code lives.
+- **`red-ui` as a consumed visualizer MCP** — kept (today wired via
+  `npx @reddb-io/ui@latest`).
+- **`code-nav` stays in the `dev` plugin** — unchanged.
+
+**What is cancelled:**
+
+- Decision item 1 (migrate `apps/memory` → `red-memory` repo; retire it here).
+- Decision item 3's "fetch the `red-memory` bundle from its repo's release" —
+  memory runs from the local build; only `red-ui` remains a fetched/external
+  consumer.
+- Decision item 4's `red-memory` release prerequisite.
+
+**Consequences of the reversal:**
+
+- **#378** (the tracking issue for this migration) is **moot** and is closed as
+  not-planned — the migration it tracked is cancelled.
+- The partial reversal of ADR 0034 no longer applies to memory: `apps/memory`
+  stays under the root `apps/` layout (ADR 0060).
+- INDEX.md cross-references that read "post-0041, the memory runtime is fetched
+  from `red-memory`" / "no longer built in red-skills" are corrected in this
+  change.
+- `/dev:doctor` check 6 (which flags the standalone-local `memory`/`red-memory`
+  server as drift from the consumer shape) must be updated so the **local** shape
+  is the intended one, not drift. Tracked as a follow-up.
 
 ## Related
 
-- ADR 0029 — runtime ships as a release-asset bundle fetched by a bootstrap (the fetch model reused here).
-- ADR 0034 — monorepo `apps` domains (partially reversed for memory).
-- `../red-memory`, `../red-ui` — the owning repos.
+- ADR 0029 — runtime ships as a release-asset bundle fetched by a bootstrap (the fetch model the original decision reused; no longer applied to memory).
+- ADR 0034 — monorepo `apps` domains (memory stays under `apps/`, per this reversal + ADR 0060).
+- ADR 0060 — root `apps/` + `packages/` layout that `apps/memory` keeps.
+- `../red-ui` — the owning repo for the visualizer MCP (still external). `reddb-io/red-memory` is an abandoned scaffold, not a dependency.
