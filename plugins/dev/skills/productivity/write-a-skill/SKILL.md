@@ -7,34 +7,33 @@ description: Create new agent skills with proper structure, progressive disclosu
 
 ## Process
 
-1. **Gather requirements** - ask user about:
-   - What task/domain does the skill cover?
-   - What specific use cases should it handle?
-   - Does it need executable scripts or just instructions?
-   - Any reference materials to include?
+1. **Gather requirements** — ask the user, before drafting anything:
+   - What task or domain does the skill cover?
+   - Which specific use cases must it handle?
+   - Does it need executable scripts, or just instructions?
+   - Any reference material to bundle?
 
-2. **Draft the skill** - create:
-   - SKILL.md with concise instructions
-   - Additional reference files if content exceeds 500 lines
-   - Utility scripts if deterministic operations needed
+2. **Draft the skill** — produce:
+   - A SKILL.md with concise, imperative instructions.
+   - Extra reference files only when content would push SKILL.md past ~100 lines.
+   - Utility scripts only when a deterministic operation repeats.
 
-3. **Review with user** - present draft and ask:
-   - Does this cover your use cases?
-   - Anything missing or unclear?
-   - Should any section be more/less detailed?
+3. **Review with the user** — present the draft and ask whether it covers the
+   use cases, what is missing or unclear, and which section needs more or less
+   detail. Do not ship before this loop closes.
 
-## Skill Structure
+## Skill structure
 
 ```
 skill-name/
 ├── SKILL.md           # Main instructions (required)
-├── REFERENCE.md       # Detailed docs (if needed)
-├── EXAMPLES.md        # Usage examples (if needed)
-└── scripts/           # Utility scripts (if needed)
+├── REFERENCE.md       # Detailed docs (only if needed)
+├── EXAMPLES.md        # Usage examples (only if needed)
+└── scripts/           # Utility scripts (only if needed)
     └── helper.js
 ```
 
-## SKILL.md Template
+## SKILL.md template
 
 ```md
 ---
@@ -57,61 +56,100 @@ description: Brief description of capability. Use when [specific triggers].
 [Link to separate files: See [REFERENCE.md](REFERENCE.md)]
 ```
 
-## Description Requirements
+## Description requirements
 
-The description is **the only thing your agent sees** when deciding which skill to load. It's surfaced in the system prompt alongside all other installed skills. Your agent reads these descriptions and picks the relevant skill based on the user's request.
+The description is **the only thing the agent sees before loading the skill** —
+write it for the picker, not the reader. It is surfaced in the system prompt
+beside every other installed skill, and the agent chooses from those lines
+alone.
 
-**Goal**: Give your agent just enough info to know:
-
-1. What capability this skill provides
-2. When/why to trigger it (specific keywords, contexts, file types)
+Give the agent just enough to know two things: what the capability is, and
+when to trigger it (keywords, contexts, file types).
 
 **Format**:
 
-- Max 1024 chars
-- Write in third person
-- First sentence: what it does
-- Second sentence: "Use when [specific triggers]"
+- Max 1024 chars.
+- Third person.
+- First sentence: what it does.
+- Second sentence: starts with the literal `"Use when"` so the trigger is
+  matchable verbatim.
 
-**Good example**:
+**Good** — distinguishes itself from every other document skill:
 
 ```
 Extract text and tables from PDF files, fill forms, merge documents. Use when working with PDF files or when user mentions PDFs, forms, or document extraction.
 ```
 
-**Bad example**:
+**Bad** — gives the agent no way to pick it:
 
 ```
 Helps with documents.
 ```
 
-The bad example gives your agent no way to distinguish this from other document skills.
+## When to add scripts
 
-## When to Add Scripts
+Add a utility script when the operation is deterministic (validation,
+formatting), when the same code would be generated repeatedly, or when errors
+need explicit handling. Scripts save tokens and beat generated code on
+reliability.
 
-Add utility scripts when:
+## When to split files
 
-- Operation is deterministic (validation, formatting)
-- Same code would be generated repeatedly
-- Errors need explicit handling
+Split into a separate file when SKILL.md exceeds ~100 lines, when content spans
+distinct domains (finance vs sales schemas), or when advanced features are
+rarely needed — keep references one level deep so the agent never chases a chain.
 
-Scripts save tokens and improve reliability vs generated code.
+## SKILL.md writing style
 
-## When to Split Files
+Section structure (`<what-to-do>` / `<supporting-info>`) decides *where* a
+sentence goes; this section decides *how the sentence reads*. Apply these eight
+sentence-level techniques — borrowed from `anthropics/launch-your-agent` — when
+writing any RedSkills SKILL.md. Each carries a one-line before → after.
 
-Split into separate files when:
+1. **Bold lead-in + gloss** — open a step with the imperative in bold, then
+   explain it.
+   - Before: `You should gather the requirements from the user first.`
+   - After: `**Gather requirements** — ask the user what task the skill covers.`
 
-- SKILL.md exceeds 100 lines
-- Content has distinct domains (finance vs sales schemas)
-- Advanced features are rarely needed
+2. **Maxim/slogan compression** — fold a rule into one memorable line.
+   - Before: `The description matters because it is what the agent uses to decide whether to load the skill.`
+   - After: `The description is the only thing the agent sees before loading — write it for the picker, not the reader.`
 
-## Review Checklist
+3. **Prohibition + reason inline (em-dash consequence)** — state the ban and its
+   cost on one line.
+   - Before: `Do not exceed 100 lines. Long skills are hard to read.`
+   - After: `Never exceed ~100 lines — past that the agent skims and drops steps.`
 
-After drafting, verify:
+4. **Literal phrasing in quotes** — quote the exact words the agent must emit or
+   match.
+   - Before: `End the description with a phrase about when to use it.`
+   - After: `End the description with "Use when …" so the trigger is matchable verbatim.`
 
-- [ ] Description includes triggers ("Use when...")
-- [ ] SKILL.md under 100 lines
-- [ ] No time-sensitive info
-- [ ] Consistent terminology
-- [ ] Concrete examples included
-- [ ] References one level deep
+5. **Vocabulary hygiene (real term, ban synonym)** — name a thing once, forbid
+   its synonyms.
+   - Before: `Put your docs / guidance / instructions in the file.`
+   - After: `Call it the SKILL.md — never "the doc", "the manifest", or "the guide".`
+
+6. **Numbered taxonomy when concepts blur** — number a set whose members are
+   easily conflated.
+   - Before: `Add scripts for deterministic work and split files for big skills.`
+   - After: `Two distinct moves: (1) add a script for deterministic work; (2) split a file once SKILL.md passes ~100 lines.`
+
+7. **Self-demonstrating voice** — write the instruction in the style it teaches.
+   - Before: `Instructions should be concise and imperative.`
+   - After: `Write every step imperative and bold-led — like this one.`
+
+8. **Phase/step header carries its precondition** — fold the precondition into
+   the header instead of a trailing aside.
+   - Before: `## Review` followed by `(Only do this after the draft is complete.)`
+   - After: `## Review (after the draft compiles and runs)`
+
+## Review checklist (run after the draft compiles)
+
+- [ ] Description ends with the literal `"Use when …"` trigger.
+- [ ] SKILL.md stays under ~100 lines (excluding this meta-skill).
+- [ ] No time-sensitive info.
+- [ ] One term per concept — no synonym drift.
+- [ ] Concrete before → after or input → output examples included.
+- [ ] References stay one level deep.
+- [ ] Steps read imperative and bold-led — the skill follows its own style.
