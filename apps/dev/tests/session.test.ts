@@ -474,6 +474,16 @@ describe("runSession — --alternate runner rotation", () => {
     expect(trace.processedRunners).toEqual(["claude", "codex", "claude"]);
   });
 
+  it("rotates claude-minimax ↔ claude when the session starts on claude-minimax (#792)", async () => {
+    const { deps, ctx, trace } = makeSession({
+      candidates: [cand(1), cand(2), cand(3), cand(4)],
+      alternate: true,
+    });
+    ctx.runner = "claude-minimax";
+    await runSession(deps, ctx);
+    expect(trace.processedRunners).toEqual(["claude-minimax", "claude", "claude-minimax", "claude"]);
+  });
+
   it("keeps the session runner for every issue when --alternate is off", async () => {
     const { deps, ctx, trace } = makeSession({ candidates: [cand(1), cand(2), cand(3)] });
     await runSession(deps, ctx);

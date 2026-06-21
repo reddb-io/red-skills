@@ -380,6 +380,28 @@ describe("config — AFK model tier table (ADR 0049)", () => {
     });
   });
 
+  it("resolves every claude-minimax tier to MiniMax-M3/low from the default table (#792)", () => {
+    const values = loadConfig("/nonexistent/.red/config.yaml", { warn: () => {} });
+    expect(resolveTier(values, "claude-minimax", "validate")).toEqual({ model: "MiniMax-M3", effort: "low" });
+    expect(resolveTier(values, "claude-minimax", "simple")).toEqual({ model: "MiniMax-M3", effort: "low" });
+    expect(resolveTier(values, "claude-minimax", "complex")).toEqual({ model: "MiniMax-M3", effort: "low" });
+    expect(resolveTier(values, "claude-minimax", "think")).toEqual({ model: "MiniMax-M3", effort: "low" });
+  });
+
+  it("RED_AFK_MODEL still overrides the claude-minimax tier table (#792)", () => {
+    const values = loadConfig("/nonexistent/.red/config.yaml", { warn: () => {} });
+    expect(resolveTier(values, "claude-minimax", "think", { RED_AFK_MODEL: "MiniMax-M3-Custom" })).toEqual({
+      model: "MiniMax-M3-Custom",
+      effort: "low",
+    });
+  });
+
+  it("claude-minimax does not bleed into the claude table — runners stay isolated (#792)", () => {
+    const values = loadConfig("/nonexistent/.red/config.yaml", { warn: () => {} });
+    expect(resolveTier(values, "claude", "simple")).toEqual({ model: "claude-sonnet-4-6", effort: "high" });
+    expect(resolveTier(values, "claude-minimax", "simple")).toEqual({ model: "MiniMax-M3", effort: "low" });
+  });
+
   it("honours an overridden opencode tier under plugins.dev.afk.models.opencode.*", () => {
     const text =
       "plugins:\n  dev:\n    afk:\n      models:\n        opencode:\n          simple:\n            model: openrouter/openai/gpt-4o-mini\n            effort: medium\n";
