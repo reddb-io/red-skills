@@ -9,6 +9,8 @@ Read-only diagnostic for the self-improvement loop. It shows whether Skill telem
 
 <what-to-do>
 
+**Run the skills-status diagnostic, interpret the telemetry state, and recommend the next concrete action — never mutate skills from this command.**
+
 ## 1. Run the diagnostic
 
 ```bash
