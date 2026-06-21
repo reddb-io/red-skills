@@ -5,9 +5,11 @@ description: Migrate test files from `as` type assertions to @total-typescript/s
 
 # Migrate to Shoehorn
 
+**Replace `as` assertions in test files with `fromPartial()` or `fromAny()` from `@total-typescript/shoehorn`.**
+
 ## Why shoehorn?
 
-`shoehorn` lets you pass partial data in tests while keeping TypeScript happy. It replaces `as` assertions with type-safe alternatives.
+`shoehorn` lets you pass partial data in tests while keeping TypeScript happy. It replaces `as` assertions with `fromPartial()` for partial data and `fromAny()` for intentionally wrong types.
 
 **Test code only.** Never use shoehorn in production code.
 
