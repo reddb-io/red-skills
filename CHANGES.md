@@ -6,6 +6,20 @@ Upstream base: `mattpocock/skills@694fa30311e02c2639942308513555e61ee84a6f` (see
 
 ---
 
+## start (engineering) — single-root `.red/` layout in the file-structure examples
+
+- **status**: modified
+- **upstream**: `694fa30`
+- **why**: The `start` skill's `SKILL.md` and `CONTEXT-FORMAT.md` taught a layout inherited from upstream that contradicts our own ADRs: ADRs under `docs/adr/` and per-context `.red/` directories nested inside source subtrees (`src/ordering/.red/CONTEXT.md`, `src/ordering/.red/adr/`). The canonical RedSkills model (ADR 0046 → multi-context ADR 0021) is a **single root `.red/`**: ADRs always at `.red/adr/`, context glossaries at `.red/contexts/<name>/CONTEXT.md`, and never a nested `.red/` inside a source tree.
+- **what changed**: Rewrote both file-structure trees in `start/SKILL.md` and the context-map example in `start/CONTEXT-FORMAT.md` so everything lives under the single root `.red/` — `docs/adr/` → `.red/adr/`, `src/<ctx>/.red/CONTEXT.md` → `.red/contexts/<ctx>/CONTEXT.md`, with the per-context ADR subtrees removed (one root ADR sequence). Mirrored the same fix in the `setup-red-skills` skill (`SKILL.md` inspection list + `domain.md`) and in `.red/agents/domain.md`. Docs-only.
+
+## brain (plugin) — stop committing the runtime bundle; fetch via the entrypoint (ADR 0038)
+
+- **status**: modified
+- **upstream**: —
+- **why**: `plugins/brain/dist-bundle/{brain-cli,brain-mcp}.mjs` (786 KB) was checked into git, but the brain entrypoint (`scripts/bootstrap.mjs`) resolves the runtime from a version-keyed `~/.cache` populated from the Release asset, falling back only to `dist/` or the TS source — it never reads `plugins/brain/dist-bundle/*`. The committed bundle was dead weight contradicting ADR 0038's fetch-the-release-asset model, and `plugins/brain/` had no `.gitignore` (unlike `plugins/memory/`).
+- **what changed**: `git rm` the two committed bundles and added `plugins/brain/.gitignore` (mirrors `plugins/memory/.gitignore`: `dist/`, `dist-bundle/`, `node_modules/`, `*.tsbuildinfo`) so they can never be re-committed. Also removed stale local-only build artifacts (`plugins/memory/dist*`, root `./dist`) from the working tree — they were already git-ignored, no git change.
+
 ## write-a-skill (productivity) — document the eight-technique SKILL.md writing convention + dogfood it
 
 - **status**: modified

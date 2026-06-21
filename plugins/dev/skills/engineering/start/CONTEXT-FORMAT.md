@@ -50,16 +50,16 @@ _Avoid_: Client, buyer, account
 
 **Single context (most repos):** One `.red/CONTEXT.md` at the repo root.
 
-**Multiple contexts:** A `.red/CONTEXT-MAP.md` at the repo root lists the contexts, where they live, and how they relate to each other:
+**Multiple contexts:** A `.red/CONTEXT-MAP.md` at the repo root lists the contexts and how they relate. Each context's glossary lives under `.red/contexts/<name>/CONTEXT.md` — all still inside the single root `.red/`, never a nested `.red/` inside a source subtree:
 
 ```md
 # Context Map
 
 ## Contexts
 
-- [Ordering](./src/ordering/.red/CONTEXT.md) — receives and tracks customer orders
-- [Billing](./src/billing/.red/CONTEXT.md) — generates invoices and processes payments
-- [Fulfillment](./src/fulfillment/.red/CONTEXT.md) — manages warehouse picking and shipping
+- [Ordering](./contexts/ordering/CONTEXT.md) — receives and tracks customer orders
+- [Billing](./contexts/billing/CONTEXT.md) — generates invoices and processes payments
+- [Fulfillment](./contexts/fulfillment/CONTEXT.md) — manages warehouse picking and shipping
 
 ## Relationships
 

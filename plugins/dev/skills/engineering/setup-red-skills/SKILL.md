@@ -29,7 +29,7 @@ Look at the current repo to understand its starting state. Read whatever exists;
 - `git remote -v` and `.git/config` — is this a GitHub repo? Which one?
 - `AGENTS.md` and `CLAUDE.md` at the repo root — does either exist? Is there already an `## Agent skills` section in either?
 - `.red/CONTEXT.md` and `.red/CONTEXT-MAP.md` at the repo root
-- `.red/adr/` and any `src/*/.red/adr/` directories
+- `.red/adr/` — the single root ADR sequence (there are no nested `.red/` subtrees)
 - `.red/agents/` — does this skill's prior output already exist?
 - `.red/config.yaml` — does it exist? Which plugins are already enabled (`plugins.<name>.enabled: true`)? Is `dev.lock.primary-branch` already set?
 - `AGENTS.md` and `CLAUDE.md` — does either already have a `## Development workflow` section?
