@@ -61,62 +61,99 @@ export function upsertDevelopmentWorkflowBlock(markdown: string): string {
   return upsertMarkdownSection(markdown, DEVELOPMENT_WORKFLOW_HEADING, DEVELOPMENT_WORKFLOW_BODY);
 }
 
+/**
+ * Ensure the canonical, namespaced primary-branch guard flag
+ * `plugins.dev.lock.primary-branch: true` exists in `.red/config.yaml`.
+ *
+ * Canonical placement is the namespaced `plugins.dev.*` block (ADR 0042 / PR
+ * #697: the whole `plugins.dev.*` block folds onto the `dev.*` accessors and the
+ * namespaced form wins over the legacy top-level `dev:` one). This writer never
+ * touches a legacy top-level `dev.lock.*` it finds — migrating/removing that is
+ * the doctor's gated `--fix` job, not setup's.
+ */
 export function activatePrimaryBranchLockConfig(yaml: string): string {
   const normalised = yaml.replace(/\r\n/g, "\n");
   const lines = normalised.split("\n");
   if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
 
-  const devStart = lines.findIndex((line) => /^dev:\s*(?:#.*)?$/.test(line));
-  const lockBlock = ["  lock:", "    primary-branch: true"];
+  const flag = "      primary-branch: true";
 
-  // No `dev:` block at all — append the whole nested block.
-  if (devStart === -1) {
+  // No `plugins:` block at all — append the whole nested block.
+  const pluginsStart = lines.findIndex((line) => /^plugins:\s*(?:#.*)?$/.test(line));
+  if (pluginsStart === -1) {
     const prefix = lines.join("\n").trimEnd();
-    return `${prefix}${prefix.length > 0 ? "\n\n" : ""}dev:\n${lockBlock.join("\n")}\n`;
+    const block = ["plugins:", "  dev:", "    lock:", flag].join("\n");
+    return `${prefix}${prefix.length > 0 ? "\n\n" : ""}${block}\n`;
   }
 
-  // Bound the `dev:` block (until the next top-level key).
-  let devEnd = lines.length;
-  for (let i = devStart + 1; i < lines.length; i += 1) {
+  // Bound the `plugins:` block (until the next top-level key).
+  let pluginsEnd = lines.length;
+  for (let i = pluginsStart + 1; i < lines.length; i += 1) {
     const line = lines[i]!;
     if (line.trim() === "") continue;
     if (/^\S/.test(line)) {
+      pluginsEnd = i;
+      break;
+    }
+  }
+
+  // Find `  dev:` inside `plugins:`.
+  let devIdx = -1;
+  for (let i = pluginsStart + 1; i < pluginsEnd; i += 1) {
+    if (/^ {2}dev:\s*(?:#.*)?$/.test(lines[i]!)) {
+      devIdx = i;
+      break;
+    }
+  }
+  // No `plugins.dev:` — insert the dev/lock/flag block at the top of `plugins:`.
+  if (devIdx === -1) {
+    lines.splice(pluginsStart + 1, 0, "  dev:", "    lock:", flag);
+    return `${lines.join("\n").trimEnd()}\n`;
+  }
+
+  // Bound `plugins.dev:` (until a line indented <= 2 spaces).
+  let devEnd = pluginsEnd;
+  for (let i = devIdx + 1; i < pluginsEnd; i += 1) {
+    const line = lines[i]!;
+    if (line.trim() === "") continue;
+    if (/^ {0,2}\S/.test(line)) {
       devEnd = i;
       break;
     }
   }
 
-  // An existing `  lock:` mapping inside `dev:` — ensure `    primary-branch: true`.
+  // Find `    lock:` inside `plugins.dev:`.
   let lockIdx = -1;
-  for (let i = devStart + 1; i < devEnd; i += 1) {
-    if (/^  lock:\s*(?:#.*)?$/.test(lines[i]!)) {
+  for (let i = devIdx + 1; i < devEnd; i += 1) {
+    if (/^ {4}lock:\s*(?:#.*)?$/.test(lines[i]!)) {
       lockIdx = i;
       break;
     }
   }
-  if (lockIdx !== -1) {
-    // Bound the `lock:` sub-block (until a line indented <= 2 spaces).
-    let lockEnd = devEnd;
-    for (let i = lockIdx + 1; i < devEnd; i += 1) {
-      const line = lines[i]!;
-      if (line.trim() === "") continue;
-      if (/^ {0,2}\S/.test(line)) {
-        lockEnd = i;
-        break;
-      }
-    }
-    for (let i = lockIdx + 1; i < lockEnd; i += 1) {
-      if (/^ {4}primary-branch:\s*/.test(lines[i]!)) {
-        lines[i] = "    primary-branch: true";
-        return `${lines.join("\n").trimEnd()}\n`;
-      }
-    }
-    lines.splice(lockIdx + 1, 0, "    primary-branch: true");
+  // No `plugins.dev.lock:` — insert it at the top of `plugins.dev:`.
+  if (lockIdx === -1) {
+    lines.splice(devIdx + 1, 0, "    lock:", flag);
     return `${lines.join("\n").trimEnd()}\n`;
   }
 
-  // `dev:` exists without a `lock:` mapping — insert the nested block at its top.
-  lines.splice(devStart + 1, 0, ...lockBlock);
+  // Bound `plugins.dev.lock:` (until a line indented <= 4 spaces).
+  let lockEnd = devEnd;
+  for (let i = lockIdx + 1; i < devEnd; i += 1) {
+    const line = lines[i]!;
+    if (line.trim() === "") continue;
+    if (/^ {0,4}\S/.test(line)) {
+      lockEnd = i;
+      break;
+    }
+  }
+  // Ensure `      primary-branch: true` under the existing `plugins.dev.lock:`.
+  for (let i = lockIdx + 1; i < lockEnd; i += 1) {
+    if (/^ {6}primary-branch:\s*/.test(lines[i]!)) {
+      lines[i] = flag;
+      return `${lines.join("\n").trimEnd()}\n`;
+    }
+  }
+  lines.splice(lockIdx + 1, 0, flag);
   return `${lines.join("\n").trimEnd()}\n`;
 }
 

@@ -6,6 +6,13 @@ Upstream base: `mattpocock/skills@694fa30311e02c2639942308513555e61ee84a6f` (see
 
 ---
 
+## doctor (engineering) — enforce `plugins.dev.*` config namespacing + migrate legacy top-level keys
+
+- **status**: modified
+- **upstream**: —
+- **why**: `.red/config.yaml` resolved both top-level `dev.lock.*` and namespaced `plugins.dev.lock.*` (the PR #697 fold), but `/setup-red-skills` *wrote* the top-level form and `/doctor` treated both as equally adopted — so fresh configs came out half-migrated (`plugins.dev.enabled` next to a top-level `dev.lock`) and the doctor never nudged toward the namespace. Captured in ADR 0069.
+- **what changed**: Check 6 became **"Config namespacing + primary-branch guard"** — beyond reporting the guard flag, Pass 1 now flags any legacy top-level dev-plugin placement (top-level `afk:`, top-level `dev.lock.*`, flat `lock-primary-branch`) as a namespacing migration finding, and the `--fix` Apply table migrates them into `plugins.dev.*` (delete the top-level orphan; gated confirm-each). The shared runtime writer `activatePrimaryBranchLockConfig` now writes the canonical `plugins.dev.lock.primary-branch: true` (3-level `plugins:`→`dev:`→`lock:` nesting) instead of top-level `dev.lock`, so setup and doctor agree and don't ping-pong. Added ADR 0069; updated `development-workflow.test.ts` + `doctor-docs.test.ts`. Frontmatter `description` lists the new check.
+
 ## ff (productivity) — two-step interactive flow: choose framing, then dispatch prompt
 
 - **status**: modified
