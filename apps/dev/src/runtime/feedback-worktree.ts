@@ -99,6 +99,19 @@ export interface FeedbackWorktreeIO {
    * `dest` is not a git worktree (the cache miss signal) or git fails.
    */
   worktreeHead(ctx: gitx.GitContext, dest: string): Promise<string | null>;
+  /**
+   * Best-effort `git -C dest rebase <base>` (Pattern 2 of the claude-minimax
+   * spike investigation). A worker's branch is forked from main at T0; by the
+   * time the feedback gate runs at T1, main has moved and the worker's tests
+   * can be stale (a test that expected 2 env vars but the function now
+   * returns 3, the wPB6F/wQYIB CLAUDE_CODE_SIMPLE incident). Rebasing the
+   * worker's branch onto current main BEFORE the gate re-syncs the source so
+   * the test runs against the latest. On conflict → returns `ok: false` with
+   * the stderr so the manager can abort and fall through to the baseline
+   * probe. On rebase error → returns `ok: false` with the reason. Never
+   * throws — the gate still has to run.
+   */
+  rebase(ctx: gitx.GitContext, dest: string, base: string): Promise<{ ok: true } | { ok: false; stderr: string }>;
   /** Run `pnpm <args>` with the given cwd. */
   pnpm(args: readonly string[], opts: ExecOptions): Promise<ExecOutput>;
   /** Run an arbitrary tool (used by the backpressure `sh -c` executor). */
@@ -118,6 +131,19 @@ const defaultIO: FeedbackWorktreeIO = {
     } catch {
       return null;
     }
+  },
+  rebase: async (_ctx, dest, base) => {
+    // `git -C dest rebase <base>`. On conflict (exit non-zero) or any other
+    // failure: abort the rebase so the worktree is left in its ORIGINAL state
+    // (never mid-rebase, which would make the next git op refuse to start),
+    // then return `ok: false` with the stderr. The caller (the manager) lets
+    // the gate run as-is + the baseline probe catches the resulting test drift.
+    const r = await execTool("git", ["-C", dest, "rebase", base], { cwd: dest });
+    if (r.code === 0) return { ok: true };
+    // Swallow abort failures — worst case is a "rebase in progress" warning on
+    // the next invocation; the manager surfaces the original stderr regardless.
+    await execTool("git", ["-C", dest, "rebase", "--abort"], { cwd: dest });
+    return { ok: false, stderr: r.stderr.trim() };
   },
   pnpm: runPnpm,
   exec: execTool,
@@ -150,6 +176,21 @@ export interface FeedbackWorktreeOptions {
    * independent.
    */
   cacheEnabled?: boolean;
+  /**
+   * AFK runner improvement (Pattern 2): when set to a base branch, a freshly
+   * materialised worker worktree is rebased onto that base BEFORE the gate
+   * runs, so a worker test written against a now-moved main (the
+   * wPB6F/wQYIB CLAUDE_CODE_SIMPLE drift) validates against the latest source
+   * rather than failing on stale expectations. Best-effort: a rebase conflict
+   * is aborted (the worktree is left in its original state) and the gate runs
+   * as-is — the already-shipped baseline probe then downgrades any resulting
+   * pre-existing failure. OFF by default (undefined) — the caller opts in
+   * only when the session base is unambiguous (no per-issue pin), since
+   * rebasing a pinned-base issue onto main would be wrong. The rebase is
+   * skipped on a cache hit (the cached worktree is already at the branch HEAD;
+   * re-rebasing would invalidate the cache for no benefit).
+   */
+  rebaseOnto?: string;
 }
 
 /**
@@ -166,6 +207,7 @@ export function makeFeedbackWorktree(
   options: FeedbackWorktreeOptions = {},
 ): FeedbackWorktree {
   const cacheEnabled = options.cacheEnabled !== false; // default: ON
+  const rebaseOnto = options.rebaseOnto; // default: undefined (OFF)
   const gitCtx: gitx.GitContext = { cwd: root };
   // branch -> resolved checkout path, or null when setup failed (block all runs).
   const resolved = new Map<string, string | null>();
@@ -242,6 +284,22 @@ export function makeFeedbackWorktree(
       );
       resolved.set(branch, null);
       return null;
+    }
+    // AFK runner improvement (Pattern 2): best-effort rebase onto the session
+    // base so a worker test written against a now-moved main validates against
+    // the latest source. A conflict aborts (worktree left in its original
+    // state) and the gate runs as-is — the baseline probe catches the drift.
+    // NEVER blocks: rebase failure is a warning, not a gate failure. Only runs
+    // after a FRESH materialise (not a cache hit), so the cached worktree's
+    // HEAD stays aligned with the branch ref for the next session's cache check.
+    if (rebaseOnto) {
+      const rb = await io.rebase(gitCtx, dest, rebaseOnto);
+      if (!rb.ok) {
+        process.stderr.write(
+          `warn: feedback worktree rebase of ${branch} onto ${rebaseOnto} failed ` +
+            `(${rb.stderr || "no detail"}); running the gate on the un-rebased branch\n`,
+        );
+      }
     }
     created.add(dest);
     resolved.set(branch, dest);

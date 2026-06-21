@@ -118,6 +118,27 @@ describe("Pattern 2 — test drift between worker branch and main", () => {
     expect(check.status).toBe("skipped");
     expect(check.record.summary).toBe("pre-existing failure on baseline");
   });
+
+  it("the optional rebase-on-base is wired through resolveRunSettings (opt-in, default OFF)", async () => {
+    // The deeper fix for drift: rebase the worker branch onto the moved base
+    // BEFORE the gate runs so the updated test runs against the worker's code.
+    // It is opt-in (afk.feedback.rebase_on_base) so a per-issue-pinned repo
+    // doesn't rebase onto the wrong base. Here we assert the resolution
+    // contract: OFF by default, ON via the flag.
+    const { resolveRunSettings } = await import("../src/runtime/wire.js");
+    const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const root = mkdtempSync(join(tmpdir(), "afk-resilience-rebase-"));
+    try {
+      expect(resolveRunSettings(root).feedbackRebaseBase).toBeUndefined();
+      mkdirSync(join(root, ".red"), { recursive: true });
+      writeFileSync(join(root, ".red", "config.yaml"), "afk:\n  feedback:\n    rebase_on_base: true\n");
+      expect(resolveRunSettings(root).feedbackRebaseBase).toBe("main");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
 
 // Pattern 3: Pre-existing test failures on main being inherited — main had

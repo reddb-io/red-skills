@@ -364,7 +364,10 @@ async function runReconcileWorker(
     branch,
   };
 
-  const feedback = makeFeedbackWorktree(ctx.root, join(paths.tmpDir, "feedback"));
+  const reconcileSettings = resolveRunSettings(ctx.root, process.env, runner);
+  const feedback = makeFeedbackWorktree(ctx.root, join(paths.tmpDir, "feedback"), undefined, {
+    rebaseOnto: reconcileSettings.feedbackRebaseBase,
+  });
   try {
     const reconcileRunner = makeBootReconcileRunner(ctx, paths, workerId, runner, feedback);
     await reconcileRunner(plan);
@@ -1183,7 +1186,12 @@ export async function runCommand(options: RunOptions): Promise<number> {
   }
 
   // Feedback worktree manager — checks out the worker branch for the gate.
-  const feedback = makeFeedbackWorktree(ctx.root, join(paths.tmpDir, "feedback"));
+  // AFK runner improvement (Pattern 2): `feedbackRebaseBase` is set only when
+  // the `afk.feedback.rebase_on_base` flag is on; undefined → no rebase
+  // (default behaviour unchanged).
+  const feedback = makeFeedbackWorktree(ctx.root, join(paths.tmpDir, "feedback"), undefined, {
+    rebaseOnto: settings.feedbackRebaseBase,
+  });
 
   // Wire the boot reconcile runner into bootDeps (step 7, ADR 0055). A
   // supervisor-owned boot skips every sweep (including reconcile) and the fleet

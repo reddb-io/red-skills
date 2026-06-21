@@ -108,6 +108,19 @@ export interface RunSettings {
    * threshold; the progress guard caps the whole attempt on no-commit.
    */
   laneIdle: LaneIdleStallConfig;
+  /**
+   * AFK runner improvement (Pattern 2): the base branch the feedback gate
+   * rebases a freshly materialised worker worktree onto, or `undefined` when
+   * the rebase is OFF. Resolved from `afk.feedback.rebase_on_base` (default
+   * false → undefined) AND the config-locked branch (`dev.lock.branch`,
+   * falling back to "main"). Left undefined when the flag is off, so the
+   * default behaviour — no rebase — is unchanged. The file-level branch lock
+   * (`.red/tmp/branch-lock.yaml`) is NOT consulted here: it pins the agent's
+   * interactive checkout, not the AFK base, which resolveBase derives
+   * per-issue. This session-level base is the common-case trunk; per-issue
+   * pinned bases are exactly why the flag defaults off.
+   */
+  feedbackRebaseBase?: string;
 }
 
 const SANDBOX_MODES: readonly SandboxMode[] = ["none", "docker", "podman"];
@@ -150,6 +163,14 @@ export function resolveRunSettings(
   // defaults and the same boot invariant (kill > soft) — throws here on a `<=`
   // config so the run fails fast before claiming an issue.
   const laneIdle = resolveLaneIdleStallConfig(env);
+  // Feedback-gate base rebase (Pattern 2). Only resolves to a base branch when
+  // the opt-in flag is on; the base is the config-locked branch or "main".
+  // A RED_AFK_FEEDBACK_REBASE env knob lets an E2E/CI run force it without
+  // mutating .red/config.yaml, mirroring the other RED_AFK_* overrides.
+  const rebaseFlag =
+    (env.RED_AFK_FEEDBACK_REBASE ?? "").trim() === "1" ||
+    getConfig(cfg, "afk.feedback.rebase_on_base") === "true";
+  const feedbackRebaseBase = rebaseFlag ? getConfig(cfg, "dev.lock.branch") || "main" : undefined;
   return {
     sandbox,
     defaultRunner,
@@ -158,6 +179,7 @@ export function resolveRunSettings(
     maxIterations,
     attemptTimeoutSeconds,
     laneIdle,
+    feedbackRebaseBase,
   };
 }
 

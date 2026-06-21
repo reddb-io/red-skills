@@ -78,18 +78,16 @@ function fakeIO(
     enabled?: boolean;
     shas?: Record<string, string>;
     expectedShas?: Record<string, string>;
+    /** When false, `rebase` returns `{ ok: false }` to model a conflict. */
+    rebaseOk?: boolean;
   } = {},
 ): {
   io: FeedbackWorktreeIO;
-  calls: Array<{ op: "add" | "submodule" | "install" | "script" | "remove" | "branchHead" | "worktreeHead"; dest: string; branch?: string }>;
+  calls: Array<{ op: Op; dest: string; branch?: string; base?: string }>;
   setWorktreeSha: (dest: string, sha: string | null) => void;
   setBranchSha: (branch: string, sha: string | null) => void;
 } {
-  const calls: Array<{
-    op: "add" | "submodule" | "install" | "script" | "remove" | "branchHead" | "worktreeHead";
-    dest: string;
-    branch?: string;
-  }> = [];
+  const calls: Array<{ op: Op; dest: string; branch?: string; base?: string }> = [];
   // The shas map is keyed on dest (worktreeHead) and branch (branchHead). Tests
   // mutate via the returned setters to model a force-push, a re-claim, etc.
   const shas: Record<string, string | null> = { ...(cache.shas ?? {}) };
@@ -97,6 +95,7 @@ function fakeIO(
   // The cache-enabled default mirrors the production default (ON); tests that
   // want the strict per-session behaviour pass `{ enabled: false }`.
   const enabled = cache.enabled !== false;
+  const rebaseOk = cache.rebaseOk !== false;
   const io: FeedbackWorktreeIO = {
     worktreeAdd: async (_ctx, dest) => {
       calls.push({ op: "add", dest });
@@ -128,6 +127,10 @@ function fakeIO(
       if (!enabled) return null; // cache disabled → never a hit
       return shas[dest] ?? null;
     },
+    rebase: async (_ctx, dest, base) => {
+      calls.push({ op: "rebase", dest, base });
+      return rebaseOk ? { ok: true } : { ok: false, stderr: "CONFLICT (content): merge conflict in x" };
+    },
   };
   return {
     io,
@@ -142,6 +145,8 @@ function fakeIO(
     },
   };
 }
+
+type Op = "add" | "submodule" | "install" | "script" | "remove" | "branchHead" | "worktreeHead" | "rebase";
 
 describe("makeFeedbackWorktree install (#458)", () => {
   // All tests in this block use `cacheEnabled: false` to keep the existing
@@ -392,5 +397,93 @@ describe("makeFeedbackWorktree — cross-session worktree cache", () => {
     expect(calls.filter((c) => c.op === "remove")).toEqual([
       { op: "remove", dest: DEST },
     ]);
+  });
+});
+
+// AFK runner improvement (Pattern 2): when `rebaseOnto` is set, a freshly
+// materialised worker worktree is rebased onto the session base BEFORE the gate
+// runs so a worker test written against a now-moved main validates against the
+// latest source. Best-effort: a conflict aborts and the gate runs un-rebased
+// (the baseline probe then downgrades the resulting pre-existing failure).
+describe("makeFeedbackWorktree — rebaseOnto (Pattern 2 drift mitigation)", () => {
+  const BRANCH = "afk/w1/42-fix";
+  const DEST = "/root/.red/tmp/feedback/afk-w1-42-fix";
+  const SHA = "abc1234";
+
+  it("rebases a freshly materialised worktree onto the base AFTER install, BEFORE the script", async () => {
+    const { io, calls } = fakeIO(0, true, 0, { enabled: false });
+    const fb = makeFeedbackWorktree("/root", "/root/.red/tmp/feedback", io, {
+      cacheEnabled: false,
+      rebaseOnto: "main",
+    });
+
+    await fb.pnpm(["pnpm", "-C", BRANCH, "test"]);
+
+    // Order: add → submodule → install → rebase → script.
+    expect(calls.map((c) => c.op)).toEqual(["add", "submodule", "install", "rebase", "script"]);
+    const rebaseCall = calls.find((c) => c.op === "rebase")!;
+    expect(rebaseCall.dest).toBe(DEST);
+    expect(rebaseCall.base).toBe("main");
+  });
+
+  it("does NOT rebase when `rebaseOnto` is unset (default OFF — no behaviour change)", async () => {
+    const { io, calls } = fakeIO(0, true, 0, { enabled: false });
+    const fb = makeFeedbackWorktree("/root", "/root/.red/tmp/feedback", io, { cacheEnabled: false });
+
+    await fb.pnpm(["pnpm", "-C", BRANCH, "test"]);
+
+    expect(calls.filter((c) => c.op === "rebase")).toHaveLength(0);
+    expect(calls.map((c) => c.op)).toEqual(["add", "submodule", "install", "script"]);
+  });
+
+  it("a rebase CONFLICT does not block the gate — the script still runs (best-effort)", async () => {
+    const { io, calls } = fakeIO(0, true, 0, { enabled: false, rebaseOk: false });
+    const fb = makeFeedbackWorktree("/root", "/root/.red/tmp/feedback", io, {
+      cacheEnabled: false,
+      rebaseOnto: "main",
+    });
+
+    const result = await fb.pnpm(["pnpm", "-C", BRANCH, "test"]);
+
+    // The rebase failed, but the gate still ran (the script executed) and the
+    // result is the script's result (code 0 here), NOT a blocked validation.
+    expect(result.code).toBe(0);
+    expect(calls.filter((c) => c.op === "rebase")).toHaveLength(1);
+    expect(calls.filter((c) => c.op === "script")).toHaveLength(1);
+  });
+
+  it("does NOT rebase on a CACHE HIT (the cached worktree is already at the branch HEAD)", async () => {
+    // Cache hit: branch HEAD == worktree HEAD → skip the full materialise AND
+    // the rebase. Re-rebasing would invalidate the cache for no benefit.
+    const { io, calls } = fakeIO(0, true, 0, {
+      shas: { [DEST]: SHA },
+      expectedShas: { [BRANCH]: SHA },
+    });
+    const fb = makeFeedbackWorktree("/root", "/root/.red/tmp/feedback", io, {
+      cacheEnabled: true,
+      rebaseOnto: "main",
+    });
+
+    await fb.pnpm(["pnpm", "-C", BRANCH, "test"]);
+
+    expect(calls.filter((c) => c.op === "rebase")).toHaveLength(0);
+    expect(calls.filter((c) => c.op === "add")).toHaveLength(0);
+    expect(calls.filter((c) => c.op === "script")).toHaveLength(1);
+  });
+
+  it("DOES rebase on a cache MISS that re-materialises (the base moved → re-validate against it)", async () => {
+    const { io, calls } = fakeIO(0, true, 0, {
+      shas: { [DEST]: SHA },
+      expectedShas: { [BRANCH]: "def5678" }, // branch moved → cache miss
+    });
+    const fb = makeFeedbackWorktree("/root", "/root/.red/tmp/feedback", io, {
+      cacheEnabled: true,
+      rebaseOnto: "main",
+    });
+
+    await fb.pnpm(["pnpm", "-C", BRANCH, "test"]);
+
+    expect(calls.filter((c) => c.op === "add")).toHaveLength(1);
+    expect(calls.filter((c) => c.op === "rebase")).toHaveLength(1);
   });
 });
