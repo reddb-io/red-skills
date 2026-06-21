@@ -40,6 +40,8 @@ the interactive primary checkout, never the autonomous loop.
 
 <what-to-do>
 
+**Never hand-edit `branch-lock.yaml` — route every lock change through `scripts/branch-lock.sh` so the lock-store stays single-writer.**
+
 ## Parse the request
 
 The user invokes `/branch-lock <branch>` or `/branch-lock clear` (or just asks
@@ -52,8 +54,7 @@ to lock/unlock). Map it to one CLI action and run the bundled CLI:
 
 The CLI does the **atomic relock-then-switch**: it rewrites the lock target
 first, so the switch to that branch is itself "return to the lock target" and
-the hook never blocks the very change the user asked for. Never hand-edit
-`branch-lock.yaml` — go through the CLI so `lock-store` stays the single writer.
+the hook never blocks the very change the user asked for.
 
 ## Install the hooks (first time only)
 
@@ -97,7 +98,7 @@ lock; it never writes the lock itself.
 
 - ✅ Always route lock changes through `scripts/branch-lock.sh`.
 - ✅ Confirm the resulting `status` to the user after `set`/`clear`.
-- ❌ Don't hand-edit or `git add` `branch-lock.yaml` — it lives under gitignored `.red/tmp/`.
+- ❌ Never hand-edit `branch-lock.yaml` — route via CLI so the lock-store stays single-writer.
 - ❌ Don't try to make the lock block the human terminal — out of scope by design (ADR 0006).
 
 </what-to-do>
