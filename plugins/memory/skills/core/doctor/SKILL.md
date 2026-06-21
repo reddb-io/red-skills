@@ -14,6 +14,8 @@ fresh; one that nobody reads goes cold and surfaces here.
 
 <what-to-do>
 
+**Run a read-only stale-node scan first, show the list to the user, and prune only after they explicitly confirm — never pass `--prune --yes` on their behalf.**
+
 ## 1. Require graph mode
 
 `doctor` needs a `plugins.memory` block in `.red/config.yaml` with `mode: "graph"`. If memory is not
@@ -46,7 +48,7 @@ In a non-interactive shell, `--prune` refuses unless `--yes` is also passed. Pas
 
 - ✅ Show the stale list and let the user decide — pruning is destructive.
 - ✅ Treat pinned (`importance >= 0.8`) nodes as keepers; they never appear stale.
-- ❌ Never run `--prune --yes` on the user's behalf without their explicit go-ahead.
+- ❌ Never run `--prune --yes` on the user's behalf without their explicit go-ahead — pruning is destructive.
 - ❌ Don't lower `--stale-days` to force-flag nodes the user didn't ask to clean.
 
 </what-to-do>
