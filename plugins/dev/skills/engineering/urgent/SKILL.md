@@ -6,6 +6,8 @@ argument-hint: "[urgent task — leave empty for a 2-question interview]"
 
 <what-to-do>
 
+**One fire per invocation — no triage bypass for "I want it sooner".**
+
 Create one issue with labels `priority:urgent` + `ready-for-agent`, then stop. The next `/afk` invocation picks it up first.
 
 **Boot behavior (turn 1):**
