@@ -11,6 +11,7 @@ describe("resolveMiniMaxClaudeEnv", () => {
     expect(resolveMiniMaxClaudeEnv({ [MINIMAX_API_KEY_ENV]: "mm-key-123" })).toEqual({
       ANTHROPIC_API_KEY: "mm-key-123",
       ANTHROPIC_BASE_URL: MINIMAX_ANTHROPIC_BASE_URL,
+      CLAUDE_CODE_SIMPLE: "1",
     });
   });
 
