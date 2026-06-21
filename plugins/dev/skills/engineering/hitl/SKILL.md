@@ -6,13 +6,13 @@ argument-hint: "[--issue N | --skip N,N]"
 
 # HITL
 
-Drain the human-in-the-loop decision queue without doing manual implementation.
+**Drain the human-in-the-loop decision queue — one ready-for-human issue at a time.**
 
 The **HITL queue** is open, non-PRD Issues labelled `ready-for-human`. PRDs (`type:prd`) are planning artifacts and are never selected by this workflow.
 
 <what-to-do>
 
-## Step 1 — Select a HITL issue
+**Step 1 — Select.** Pick the highest-priority open `ready-for-human` issue that is not a PRD.
 
 List open candidates:
 
@@ -39,7 +39,7 @@ Recommended HITL issue: #N <title>
 
 If the maintainer says `skip`, repeat Step 1 with that issue number added to the skipped set. If the queue is empty, say so and stop.
 
-## Step 2 — Read the full issue thread
+**Step 2 — Read.** Fetch the selected issue's full body and all comments; apply RedSkills precedence rules.
 
 Fetch the selected Issue body and all comments:
 
@@ -54,7 +54,7 @@ Use existing RedSkills precedence:
 3. Previous AFK **Envelopes** explain why the Issue entered `ready-for-human`.
 4. Thread discussion without a Directive block is advisory only.
 
-## Step 3 — Extract the pending decision
+**Step 3 — Extract.** Identify the single pending decision from the issue thread.
 
 Try to identify a single pending decision from:
 
@@ -76,7 +76,7 @@ Pending decision:
 
 If the decision is ambiguous, ask the maintainer to state the pending decision directly before continuing. Do not guess.
 
-## Step 4 — Get the maintainer answer and disposition
+**Step 4 — Answer.** Get the maintainer's response and determine whether the issue is now delegable.
 
 Ask for the answer to the pending decision.
 
@@ -89,7 +89,7 @@ If delegable, draft the refreshed `## Agent brief` before mutating anything.
 
 If non-delegable, draft the next pending decision before mutating anything.
 
-## Step 5 — Confirm the mutation plan
+**Step 5 — Confirm.** Show the exact planned mutations and wait for explicit approval before writing anything.
 
 Show the maintainer the exact planned changes:
 
@@ -100,7 +100,7 @@ Show the maintainer the exact planned changes:
 
 Wait for explicit approval before writing.
 
-## Step 6 — Apply the resolution
+**Step 6 — Apply.** Post the Directive comment and update labels and body atomically.
 
 Always post a Directive block comment:
 
