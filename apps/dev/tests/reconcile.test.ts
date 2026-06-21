@@ -140,8 +140,18 @@ function harness(opts: HarnessOptions = {}): {
       else trace.pushedAttempt.push(argv);
       return { code: 0, stdout: "", stderr: "" };
     },
-    pnpm: async () => {
+    pnpm: async (args) => {
       trace.pnpmCalls += 1;
+      // AFK runner improvement: reconcile now passes the base as
+      // `baselineWorktree` to `runFeedback`. The baseline probe always
+      // returns success in this harness (it isn't modelling pre-existing
+      // main failures) so a worker-failure test still sees
+      // feedback-failed and isn't accidentally downgraded.
+      const cIdx = Array.isArray(args) ? args.indexOf("-C") : -1;
+      const dir = cIdx >= 0 ? (args[cIdx + 1] ?? "") : "";
+      if (dir === "main" || dir.startsWith("main/")) {
+        return { code: 0, stdout: "", stderr: "" };
+      }
       return { code: opts.feedbackOk === false ? 1 : 0, stdout: "", stderr: "boom\n" };
     },
     layout: {

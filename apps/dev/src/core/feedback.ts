@@ -227,6 +227,19 @@ export interface RunFeedbackInput {
   layout: PackageLayout;
   /** Injected millisecond clock — no `Date.now()` at module scope. */
   now: () => number;
+  /**
+   * AFK runner improvement: when the gate fails, re-run the failing checks
+   * against this baseline worktree. A check that also fails on the baseline
+   * is a pre-existing flake (NOT the worker's fault) and is downgraded to
+   * `skipped (pre-existing failure on baseline)` so a green branch doesn't
+   * get parked as `blocked:validation` because main itself is red. The
+   * baseline worktree is typically the base ref (`origin/main` or the
+   * lock-pinned branch); feedback-worktree.ts materialises it on demand.
+   * Optional — when absent the gate runs exactly as before (no baseline
+   * probe, no slowdown, no behavior change). The probe only runs when the
+   * gate FAILED, so the happy path costs nothing.
+   */
+  baselineWorktree?: string;
 }
 
 export interface RunFeedbackResult {
@@ -236,6 +249,57 @@ export interface RunFeedbackResult {
   checks: FeedbackCheck[];
   /** The sidecar lines, one JSONL record per check, in the same order. */
   sidecar: string[];
+  /**
+   * AFK runner improvement: the set of check names that were downgraded from
+   * `failed` to `skipped` because they ALSO failed on the baseline branch
+   * (pre-existing failures on main, not the worker's fault). Always empty
+   * when no `baselineWorktree` is supplied to `runFeedback`. Surfaced for
+   * observability so the issue thread / envelope can explain why the gate
+   * passed when the worker's branch showed red.
+   */
+  baselineDowngraded: readonly string[];
+}
+
+/** A single `(script, scope)` pair to re-run, for the baseline probe. */
+export interface BaselineCheckRef {
+  script: FeedbackScript;
+  scope: string;
+}
+
+/**
+ * Internal: run a list of FEEDBACK_SCRIPTS over a list of scopes against a
+ * concrete worktree path, using the same per-check shape `runFeedback` emits.
+ * The probe reuses the same `exec`/`layout`/`now` injections so the
+ * per-scope `hasScript` probe + the sidecar shape stay byte-identical to
+ * the worker's run — only the worktree path (and the script/scope set) differ.
+ *
+ * Returns a Map keyed by the same `{script}:{label}` names `runFeedback`
+ * uses, so the baseline comparison is a single `Set` membership test. A
+ * check that was `skipped` on the worker's run because the script was
+ * missing is NOT re-run on the baseline (it would just be skipped again)
+ * and is absent from the map.
+ */
+async function runChecksForBaseline(
+  exec: Exec,
+  baselineWorktree: string,
+  refs: readonly BaselineCheckRef[],
+  layout: PackageLayout,
+  now: () => number,
+): Promise<Map<string, "passed" | "failed">> {
+  const out = new Map<string, "passed" | "failed">();
+  for (const { script, scope } of refs) {
+    if (!layout.hasScript(scope, script)) continue;
+    const label = scopeLabel(scope);
+    const name = `${script}:${label}`;
+    const dir = scopeDir(baselineWorktree, scope);
+    const result = await exec(["pnpm", "-C", dir, script]);
+    out.set(name, result.code === 0 ? "passed" : "failed");
+  }
+  // `now` is part of the signature for symmetry with the main run; the
+  // baseline probe is intentionally cheaper (no per-check timing emitted
+  // to the sidecar) so the clock is unused. Reference it to keep tsc quiet.
+  void now;
+  return out;
 }
 
 /**
@@ -248,9 +312,20 @@ export interface RunFeedbackResult {
  * single `{script}:no-package` skip (`no package.json`). `ok` is false if any
  * check failed, blocking the merge. Nothing here touches the filesystem or a
  * real clock — the `exec`/`now`/`layout` injections own all IO.
+ *
+ * AFK runner improvement: when `baselineWorktree` is provided AND the gate
+ * fails, the failing checks are re-run against the baseline branch. Any
+ * check that also fails on the baseline is a pre-existing flake (NOT the
+ * worker's fault) and is downgraded from `failed` to `skipped` with the
+ * summary `pre-existing failure on baseline`. This stops a green worker
+ * branch from being parked as `blocked:validation` when main itself is red
+ * (the #791/#792/#793/#794 cause: the worker's tests were 103/103 green in
+ * sandcastle but the feedback gate picked up a pre-existing main failure
+ * from a touched-but-untouched-by-worker file). Only the failing checks
+ * are probed — the happy path costs nothing extra.
  */
 export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<RunFeedbackResult> {
-  const { worktree, scopes, layout, now } = input;
+  const { worktree, scopes, layout, now, baselineWorktree } = input;
   const checks: FeedbackCheck[] = [];
   const sidecar: string[] = [];
   let failed = false;
@@ -299,5 +374,39 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
     }
   }
 
-  return { ok: !failed, checks, sidecar };
+  // AFK runner improvement: baseline probe for pre-existing failures. Only
+  // triggered when the gate failed AND a baseline worktree was supplied.
+  if (failed && baselineWorktree) {
+    const failing = checks
+      .filter((c) => c.status === "failed")
+      .map((c) => ({ script: c.script, scope: c.label === "no-package" ? "" : c.label === "root" ? "." : c.label }));
+    const baselineResults = await runChecksForBaseline(exec, baselineWorktree, failing, layout, now);
+
+    // Re-classify any check that ALSO failed on the baseline as
+    // `skipped (pre-existing failure on baseline)`. Rebuild the sidecar
+    // and the `failed` flag in lockstep so the downgraded check is
+    // observable on the Envelope / Memory sidecar but does not block
+    // the gate.
+    const downgraded: string[] = [];
+    for (let i = 0; i < checks.length; i += 1) {
+      const check = checks[i]!;
+      if (check.status !== "failed") continue;
+      const baselineStatus = baselineResults.get(check.name);
+      if (baselineStatus === "failed") {
+        const newRecord = buildValidationRecord({
+          name: check.name,
+          status: "skipped",
+          command: check.record.command,
+          summary: "pre-existing failure on baseline",
+        });
+        checks[i] = { ...check, status: "skipped", record: newRecord };
+        sidecar[i] = formatValidationLine(newRecord);
+        downgraded.push(check.name);
+      }
+    }
+    failed = checks.some((c) => c.status === "failed");
+    return { ok: !failed, checks, sidecar, baselineDowngraded: downgraded };
+  }
+
+  return { ok: !failed, checks, sidecar, baselineDowngraded: [] };
 }

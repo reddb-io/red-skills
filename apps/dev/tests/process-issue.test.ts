@@ -279,7 +279,24 @@ function harness(opts: HarnessOptions = {}): {
       else trace.pushedAttempt.push(argv);
       return { code: 0, stdout: "", stderr: "" };
     },
-    pnpm: async () => {
+    pnpm: async (args) => {
+      // AFK runner improvement: feedback now optionally probes the base branch
+      // (the `baselineWorktree` passed to `runFeedback`) when the worker run
+      // fails. The baseline probe re-runs ONLY the failing checks; every other
+      // invocation is the normal worker run. For the test harness, the worker's
+      // branch result is governed by `feedbackOk`/`feedbackResults`; the
+      // baseline probe always passes (a fake probe — the real harness isn't
+      // trying to model a pre-existing main failure). This way a test that
+      // intends "worker fails, no baseline probe would have helped" still
+      // lands the issue as `feedback-failed` and isn't accidentally downgraded
+      // by the new baseline-probe logic. The detection is by dir path: the
+      // base resolves to "main" in the test, so the baseline invocation's
+      // -C dir is "main" or "main/<scope>".
+      const cIdx = Array.isArray(args) ? args.indexOf("-C") : -1;
+      const dir = cIdx >= 0 ? (args[cIdx + 1] ?? "") : "";
+      if (dir === "main" || dir.startsWith("main/")) {
+        return { code: 0, stdout: "", stderr: "" };
+      }
       const feedbackRun = Math.floor(pnpmCalls / 4);
       pnpmCalls += 1;
       const ok = opts.feedbackResults

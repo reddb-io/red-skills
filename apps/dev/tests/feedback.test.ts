@@ -297,7 +297,7 @@ describe("pure shaping helpers", () => {
 // minor message drift.
 describe("isInfraFeedbackFailure — INFRA root cause detection", () => {
   function green(): RunFeedbackResult {
-    return { ok: true, checks: [], sidecar: [] };
+    return { ok: true, checks: [], sidecar: [], baselineDowngraded: [] };
   }
   function failedCheck(
     name: string,
@@ -309,6 +309,7 @@ describe("isInfraFeedbackFailure — INFRA root cause detection", () => {
       ok: false,
       checks: [{ name, script: "test", label: "apps/dev", status: "failed", record }],
       sidecar: [JSON.stringify(record)],
+      baselineDowngraded: [],
     };
   }
 
@@ -374,7 +375,171 @@ describe("isInfraFeedbackFailure — INFRA root cause detection", () => {
         { name: "test:apps/dev", script: "test", label: "apps/dev", status: "failed", record: failRecord },
       ],
       sidecar: [JSON.stringify(passRecord), JSON.stringify(failRecord)],
+      baselineDowngraded: [],
     };
     expect(isInfraFeedbackFailure(result)).toBe(false);
+  });
+});
+
+// AFK runner improvement: when `runFeedback` is called with a `baselineWorktree`
+// and the gate fails, the failing checks are re-run against the baseline and
+// any check that also fails there is downgraded from `failed` to
+// `skipped (pre-existing failure on baseline)`. The happy path is unchanged
+// (the probe is gated on the gate failing). This is the cause of the
+// #791/#792/#793/#794 false-positive `blocked:validation` cases: a pre-existing
+// test failure on main that the worker's branch had nothing to do with.
+describe("runFeedback — baseline probe downgrades pre-existing failures", () => {
+  function makeLayout(): PackageLayout {
+    return {
+      hasPackage: (scope) => scope === "." || scope === "apps/dev",
+      hasScript: (scope) => scope === "." || scope === "apps/dev",
+    };
+  }
+  function recorder(): { exec: Exec; calls: string[] } {
+    const calls: string[] = [];
+    const exec: Exec = async (args) => {
+      calls.push(args.slice(1).join(" "));
+      // The exec executor signature is `pnpm -C <dir> <script>`; route by
+      // whether the args contain "main" (the baseline worktree path) or the
+      // worker branch path. For the test we use a fixed branch name.
+      const joined = calls[calls.length - 1]!;
+      // First call: worker's branch → always fail test on apps/dev.
+      // Second call (baseline probe): if test on apps/dev → also fail (baseline-fail).
+      //                         if typecheck on apps/dev → pass.
+      // We achieve this with a simple state machine keyed on call order.
+      if (joined.includes("typecheck")) {
+        return { code: 0, stdout: "ok", stderr: "" };
+      }
+      // All test invocations fail.
+      return { code: 1, stdout: "FAIL", stderr: "expected 1 to equal 2" };
+    };
+    return { exec, calls };
+  }
+  function counter(): { exec: Exec; counts: Record<string, number> } {
+    const counts: Record<string, number> = {};
+    const exec: Exec = async (args) => {
+      const joined = args.slice(1).join(" ");
+      const key = joined.replace(/\/main\b|\/afk\/.+$/, "/<branch>");
+      counts[key] = (counts[key] ?? 0) + 1;
+      return { code: 0, stdout: "", stderr: "" };
+    };
+    return { exec, counts };
+  }
+
+  it("the happy path is unchanged: a green gate skips the baseline probe entirely", async () => {
+    const counts: Record<string, number> = {};
+    const exec: Exec = async (args) => {
+      const dir = args[args.indexOf("-C") + 1] ?? "";
+      const script = args[args.length - 1] ?? "";
+      const key = `${dir}::${script}`;
+      counts[key] = (counts[key] ?? 0) + 1;
+      return { code: 0, stdout: "ok", stderr: "" };
+    };
+    const result = await runFeedback(exec, {
+      worktree: "afk/wX/123-slug",
+      scopes: ["apps/dev"],
+      layout: makeLayout(),
+      now: () => 0,
+      baselineWorktree: "main",
+    });
+    expect(result.ok).toBe(true);
+    // 4 scripts × 1 scope = 4 worker invocations; ZERO baseline probes (the
+    // gate was green, no reason to probe).
+    const baselineCalls = Object.entries(counts).filter(([k]) => k.includes("main"));
+    expect(baselineCalls).toEqual([]);
+    expect(Object.values(counts).reduce((a, b) => a + b, 0)).toBe(4);
+  });
+
+  it("a failing check is downgraded when the baseline also fails (pre-existing flake)", async () => {
+    // The test runner does typecheck=0, test=1, etc. The worker's branch fails
+    // test on apps/dev; the baseline also fails test on apps/dev → downgraded.
+    const calls: Array<{ dir: string; script: string; code: number }> = [];
+    const exec: Exec = async (args) => {
+      const cIdx = args.indexOf("-C");
+      const dir = cIdx >= 0 ? args[cIdx + 1] ?? "" : "";
+      const script = args[args.length - 1] ?? "";
+      calls.push({ dir, script, code: 0 });
+      // Simulate: typecheck passes everywhere; test fails on both worker + baseline.
+      if (script === "test") return { code: 1, stdout: "FAIL", stderr: "expected 1 to equal 2" };
+      return { code: 0, stdout: "ok", stderr: "" };
+    };
+    const result = await runFeedback(exec, {
+      worktree: "afk/wX/123-slug",
+      scopes: ["apps/dev"],
+      layout: makeLayout(),
+      now: () => 0,
+      baselineWorktree: "main",
+    });
+    // test:apps/dev failed on worker AND on baseline → downgraded; gate passes.
+    expect(result.ok).toBe(true);
+    expect(result.baselineDowngraded).toEqual(["test:apps/dev"]);
+    const testCheck = result.checks.find((c) => c.name === "test:apps/dev")!;
+    expect(testCheck.status).toBe("skipped");
+    expect(testCheck.record.summary).toBe("pre-existing failure on baseline");
+  });
+
+  it("a failing check that does NOT also fail on the baseline stays `failed` (real worker bug)", async () => {
+    const exec: Exec = async (args) => {
+      const script = args[args.length - 1] ?? "";
+      const dir = args[args.indexOf("-C") + 1] ?? "";
+      // Baseline test passes; worker's test fails.
+      if (script === "test" && !dir.includes("main")) return { code: 1, stdout: "FAIL", stderr: "bad code" };
+      return { code: 0, stdout: "ok", stderr: "" };
+    };
+    const result = await runFeedback(exec, {
+      worktree: "afk/wX/123-slug",
+      scopes: ["apps/dev"],
+      layout: makeLayout(),
+      now: () => 0,
+      baselineWorktree: "main",
+    });
+    expect(result.ok).toBe(false);
+    expect(result.baselineDowngraded).toEqual([]);
+    const testCheck = result.checks.find((c) => c.name === "test:apps/dev")!;
+    expect(testCheck.status).toBe("failed");
+  });
+
+  it("a mix: one baseline-failing, one worker-only-failing → only the second blocks the gate", async () => {
+    const exec: Exec = async (args) => {
+      const script = args[args.length - 1] ?? "";
+      const dir = args[args.indexOf("-C") + 1] ?? "";
+      // test on apps/dev: fails on BOTH (pre-existing).
+      if (script === "test" && dir.endsWith("apps/dev")) return { code: 1, stdout: "FAIL", stderr: "pre-existing" };
+      // typecheck on apps/dev: fails ONLY on worker branch (real bug).
+      if (script === "typecheck" && !dir.includes("main")) return { code: 1, stdout: "FAIL", stderr: "tsc error" };
+      return { code: 0, stdout: "ok", stderr: "" };
+    };
+    const result = await runFeedback(exec, {
+      worktree: "afk/wX/123-slug",
+      scopes: ["apps/dev"],
+      layout: makeLayout(),
+      now: () => 0,
+      baselineWorktree: "main",
+    });
+    expect(result.ok).toBe(false);
+    expect(result.baselineDowngraded).toEqual(["test:apps/dev"]);
+    const testCheck = result.checks.find((c) => c.name === "test:apps/dev")!;
+    expect(testCheck.status).toBe("skipped");
+    const typecheckCheck = result.checks.find((c) => c.name === "typecheck:apps/dev")!;
+    expect(typecheckCheck.status).toBe("failed");
+  });
+
+  it("without `baselineWorktree`, the gate behaves exactly as before (no probe, no downgrades)", async () => {
+    const calls: string[] = [];
+    const exec: Exec = async (args) => {
+      calls.push(args.slice(1).join(" "));
+      return { code: 1, stdout: "FAIL", stderr: "expected 1 to equal 2" };
+    };
+    const result = await runFeedback(exec, {
+      worktree: "afk/wX/123-slug",
+      scopes: ["apps/dev"],
+      layout: makeLayout(),
+      now: () => 0,
+      // no baselineWorktree
+    });
+    expect(result.ok).toBe(false);
+    expect(result.baselineDowngraded).toEqual([]);
+    // 4 scripts × 1 scope = 4 invocations, no probe.
+    expect(calls.length).toBe(4);
   });
 });

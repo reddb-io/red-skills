@@ -1090,12 +1090,18 @@ export async function processIssue(
     // ---- 5b. feedback loops (the merge gate, ADR 0008) ----
     // Feedback runs against a checkout of the returned worker branch; the injected
     // pnpm/layout execs resolve `workerBranch` to a concrete path in the CLI.
+    // AFK runner improvement: pass `base` as the `baselineWorktree` so a failure
+    // that ALSO fails on the base branch (pre-existing flake, not the worker's
+    // fault — the #791/#792/#793/#794 cause) is downgraded to `skipped` instead
+    // of parking a green branch. The baseline probe only runs on failure, so the
+    // happy path costs nothing.
     const changedFiles = await deps.lookups.changedFiles(workerBranch, base);
     const feedback: RunFeedbackResult = await runFeedback(deps.pnpm, {
       worktree: workerBranch,
       scopes: relevantScopes(deps.layout, changedFiles),
       layout: deps.layout,
       now: deps.nowEpoch,
+      baselineWorktree: base,
     });
     if (!feedback.ok) {
       // The feedback-failed path also has a structured sidecar — persist it for

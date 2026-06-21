@@ -270,12 +270,17 @@ export async function reconcile(deps: ReconcileDeps, input: ReconcileInput): Pro
   }
 
   // ---- 4. feedback gate (the verdict — SAME authority as the DONE path) ----
+  // AFK runner improvement: pass `base` as the `baselineWorktree` so a pre-existing
+  // failure on the base branch (NOT the worker's fault) is downgraded to
+  // `skipped (pre-existing failure on baseline)` instead of parking the green
+  // branch. Mirrors the DONE path's behaviour exactly.
   const startedEpoch = deps.nowEpoch();
   const feedback: RunFeedbackResult = await runFeedback(deps.pnpm, {
     worktree: branch,
     scopes: relevantScopes(deps.layout, changedFiles),
     layout: deps.layout,
     now: deps.nowEpoch,
+    baselineWorktree: input.base,
   });
   await writeValidationSidecar(deps, input.attemptDir, feedback.sidecar);
 
