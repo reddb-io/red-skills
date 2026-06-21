@@ -9,6 +9,8 @@ Generate concrete Skill improvement proposals from Skill telemetry evidence.
 
 <what-to-do>
 
+**Generate approval-gated Skill improvement proposals from telemetry evidence, review each one before applying, and never patch a skill without explicit human approval.**
+
 ## 1. Run the proposal surface
 
 Prefer JSON when another agent or command will inspect the result:

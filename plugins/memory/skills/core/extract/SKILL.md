@@ -9,6 +9,8 @@ Turns a transcript into `INFERRED` memory graph facts. This is the LLM-backed wr
 
 <what-to-do>
 
+**Extract durable facts from the transcript into the graph through the configured provider, then verify with a targeted recall — never run this just to summarize.**
+
 ## 1. Require graph mode and provider
 
 `extract` needs a `plugins.memory` block in `.red/config.yaml` with:

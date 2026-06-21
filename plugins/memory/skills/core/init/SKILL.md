@@ -28,6 +28,8 @@ The `memory` plugin requires the `dev` plugin (it builds on dev's processes —
 
 <what-to-do>
 
+**Bootstrap memory for this repo: pick the storage mode with the user, run the wizard, and confirm which mode and hooks are active before pointing them at the next step.**
+
 ## 1. Runtime is fetched automatically (no build step)
 
 `${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap.mjs` ships with the plugin and resolves

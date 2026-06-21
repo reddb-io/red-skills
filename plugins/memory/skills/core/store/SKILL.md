@@ -5,15 +5,17 @@ description: Save one durable work fact to the project's configured memory surfa
 
 # memory store
 
-Saves one operational work fact to the project's memory and routes to whatever `memory init`
+Saves one fact to the project's memory and routes to whatever `memory init`
 configured. In **markdown-only** mode it writes a markdown note under
 `.red/memory/notes/` — the note **is** the canonical store, human-readable and
-committable. In **graph** mode it writes a deduped operational-memory node to
-the RedDB store (storing the same fact twice returns the same node) with the
+committable. In **graph** mode it writes a deduped node to the RedDB store
+(storing the same fact twice returns the same node) with the
 metadata needed for governed recall, freshness, and later supersession. Either
 way the fact is recallable later with `/memory:recall`.
 
 <what-to-do>
+
+**Save one fact to the project memory — a decision, a gotcha, or a why-note — and confirm the stored identity so the user knows what was captured.**
 
 ## 1. Require init
 
