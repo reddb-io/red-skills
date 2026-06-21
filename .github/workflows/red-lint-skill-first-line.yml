@@ -1,0 +1,24 @@
+name: red-lint-skill-first-line
+
+# Report-only lint: every shipped SKILL.md should open with a bold imperative
+# lead-in (**…** as the first content character). Findings are printed but the
+# job never fails — it exists to surface drift toward the convention, not to
+# block unrelated PRs.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Skill first-line bold check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check bold imperative lead-in in SKILL.md files
+        run: bash scripts/lint-skill-first-line.sh
