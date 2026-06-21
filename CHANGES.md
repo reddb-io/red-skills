@@ -124,6 +124,27 @@ Upstream base: `mattpocock/skills@694fa30311e02c2639942308513555e61ee84a6f` (see
 - **why**: PRD #776 convention sweep (#783). The opening line had partial bolding (`**deepening opportunities**`) but the sentence itself was not a bold imperative. Aligning with the house style: first content line is fully bold.
 - **what changed**: Wrapped the existing two-sentence intro (`Surface architectural friction … The aim is testability and AI-navigability.`) in bold as a single lead-in sentence. No step, rule, or behavioural change; diff is prose only. Refs #783.
 
+## git-guardrails-claude-code (misc) — bold lead-in (PRD #776, issue #785)
+
+- **status**: modified
+- **upstream**: `b8be62f`
+- **why**: PRD #776 convention sweep — every skill opens with an imperative bold lead-in.
+- **what changed**: Added "**Block destructive git ops before they run.**" as the first bold sentence after the H1.
+
+## migrate-to-shoehorn (misc) — bold lead-in + named functions (PRD #776, issue #785)
+
+- **status**: modified
+- **upstream**: `e74f006`
+- **why**: PRD #776 convention sweep; "type-safe alternatives" was vague — the functions have names.
+- **what changed**: Added bold lead-in. Replaced "type-safe alternatives" with "`fromPartial()` for partial data and `fromAny()` for intentionally wrong types."
+
+## setup-pre-commit (misc) — bold lead-in (PRD #776, issue #785)
+
+- **status**: modified
+- **upstream**: `e74f006`
+- **why**: PRD #776 convention sweep — every skill opens with an imperative bold lead-in.
+- **what changed**: Added "**Enforce lint + tests before commit.**" as the first bold sentence after the H1.
+
 ---
 
 ## ff (productivity) — two-step interactive flow: choose framing, then dispatch prompt

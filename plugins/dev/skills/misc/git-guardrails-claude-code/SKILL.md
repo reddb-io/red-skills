@@ -5,6 +5,8 @@ description: Set up Claude Code hooks to block dangerous git commands (push, res
 
 # Setup Git Guardrails
 
+**Block destructive git ops before they run.**
+
 Sets up a PreToolUse hook that intercepts and blocks dangerous git commands before Claude executes them.
 
 ## What Gets Blocked

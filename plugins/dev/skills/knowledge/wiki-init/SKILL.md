@@ -6,6 +6,8 @@ disable-model-invocation: true
 
 # wiki-init
 
+**Bootstrap the LLM Wiki with a short interview, then write the layout and agent schema.**
+
 Sets up the [LLM Wiki](./REFERENCES.md) pattern. After this runs, the agent has a persistent, incrementally-maintained knowledge base inside `.red/wiki/` and a schema in `.red/agents/wiki.md` that teaches future sessions how to ingest sources, query, and lint.
 
 ## Process
@@ -24,7 +26,7 @@ Before asking anything, check:
 
 ### 2. Ask three questions
 
-Walk through them one at a time. Recommend a default for each.
+The three questions are Domain, Source types, and Voice. Walk through them one at a time and recommend a default for each before waiting for an answer.
 
 **Q1 — Domain.** "In one sentence, what will this wiki accumulate?"
 Examples: "research on LLMs applied to finance", "reading notes on The Lord of the Rings", "competitive intel on reddb.io competitors", "personal journals and self-tracking".

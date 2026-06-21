@@ -5,6 +5,8 @@ description: Set up Husky pre-commit hooks with lint-staged (Prettier), type che
 
 # Setup Pre-Commit Hooks
 
+**Enforce lint + tests before commit.**
+
 ## What This Sets Up
 
 - **Husky** pre-commit hook

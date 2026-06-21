@@ -5,7 +5,7 @@ description: Operate the LLM Wiki — ingest a source (URL or file), query the w
 
 # wiki
 
-Operate on the LLM Wiki configured by `/wiki-init`. **Always** read `.red/agents/wiki.md` before acting — that file is the source of truth for this repo's conventions.
+**Operate the LLM Wiki — ingest a source, query for answers, or lint for contradictions — reading `.red/agents/wiki.md` first (source of truth for this repo's conventions).**
 
 ## Preconditions
 
@@ -17,13 +17,11 @@ If any of those fails, stop and tell the user to run `/wiki-init`.
 
 ## Routing
 
-Detect the operation from the verb at the start of the user's message:
+Map the opening verb to an operation; if ambiguous, ask which one:
 
-- "ingest …" / "ingest <url>" / "add source …" → **Ingest**
-- "query: …" / "what / how / why / who / when / where …" / any free-form question → **Query**
-- "lint" / "health check" / "audit the wiki" → **Lint**
-
-If ambiguous: ask which operation explicitly.
+- "ingest …" / "add source …" → **Ingest**
+- question words / free-form question → **Query**
+- "lint" / "health check" → **Lint**
 
 ## Ingest
 
@@ -250,11 +248,11 @@ Bump the `updated:` frontmatter on every meaningful edit. The Lint staleness che
 
 ## Anti-patterns
 
-- ❌ Do **not** operate without reading `.red/agents/wiki.md` first.
-- ❌ Do **not** edit `raw/`. It's immutable.
-- ❌ Do **not** silence contradictions — surface them.
-- ❌ Do **not** create wikilinks `[[...]]`. Use standard markdown `[...](./...)`.
-- ❌ Do **not** commit `.red/wiki/`. Verify `.gitignore` before any `git add`.
+- ❌ Never operate without reading `.red/agents/wiki.md` first.
+- ❌ Never edit `raw/` — it is immutable.
+- ❌ Never silence contradictions — surface them.
+- ❌ Never use wikilinks `[[...]]` — use standard markdown `[...](./...)`.
+- ❌ Never commit `.red/wiki/` — verify `.gitignore` before any `git add`.
 
 ## References
 
