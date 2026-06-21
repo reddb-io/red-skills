@@ -23,8 +23,22 @@
 // not to swallow the death — swallowing would mask the real bug). They just
 // leave a breadcrumb so the next session can correlate. Tests stub `install`
 // via the injected logger so the handlers don't fire spuriously under vitest.
+//
+// THE SIGKILL BLIND SPOT. The single most likely Pattern 5 cause — the OS
+// OOM-killer SIGKILLing the orchestrator under memory pressure — is
+// UNCATCHABLE: SIGKILL fires no handler and no `exit` event. So a worker that
+// is OOM-killed leaves a log with an `installed` line but NO terminal line.
+// That absence is itself the signal. To make it legible, the install starts a
+// periodic `alive` heartbeat (default every 15s). A reader
+// (`classifyDeathFromLog`) then classifies a worker's fate from its log:
+//   - a terminal line (exit / signal / uncaught) present  → "clean" / that cause
+//   - `installed` + `alive` but NO terminal line          → "uncatchable"
+//     (almost always SIGKILL/OOM, the thing the handlers can't see), with the
+//     last heartbeat as the approximate time of death.
+// This closes Pattern 5's observability: the next session can SAY "the previous
+// worker was OOM-killed at ~HH:MM" instead of "the process just vanished".
 
-import { appendFileSync } from "node:fs";
+import { appendFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 /** The injectable logger the safety handlers use. Production: writes to a
@@ -56,8 +70,8 @@ export const noopSafetyLogger: SafetyLogger = {
 
 /** The bundle of handlers + their teardown function. */
 export interface ProcessSafety {
-  /** Detach the installed handlers. Idempotent. After uninstall the
-   * handlers no longer fire — the process continues to run normally. */
+  /** Detach the installed handlers + stop the heartbeat. Idempotent. After
+   * uninstall the handlers no longer fire — the process runs normally. */
   uninstall(): void;
   /**
    * The individual handlers, exposed for unit tests. Tests call them
@@ -73,8 +87,42 @@ export interface ProcessSafety {
     sigInt(): void;
     sigHup(): void;
     exit(code: number | null): void;
+    /** The periodic liveness heartbeat. Exposed for unit tests; in production
+     * a timer drives it. */
+    heartbeat(): void;
   };
 }
+
+/** Options for {@link installProcessSafety}. */
+export interface ProcessSafetyOptions {
+  workerId?: string;
+  pid?: number;
+  /**
+   * Liveness heartbeat interval in milliseconds. Default 15000. The heartbeat
+   * writes an `alive` line so `classifyDeathFromLog` can pin the approximate
+   * time of an UNCATCHABLE death (SIGKILL/OOM, which fire no handler). Set to
+   * 0 to disable the heartbeat (tests that drive `handlers.heartbeat()`
+   * manually pass 0 so no real timer is created).
+   */
+  heartbeatMs?: number;
+  /**
+   * Injected timer factory, so tests don't create real intervals. Defaults to
+   * Node's `setInterval`/`clearInterval`. The returned handle is passed back to
+   * `clear` on uninstall. `.unref()` is called when present so the heartbeat
+   * never keeps the process alive on its own.
+   */
+  setInterval?: (fn: () => void, ms: number) => { unref?: () => void };
+  clearInterval?: (handle: unknown) => void;
+}
+
+/** The classified fate of a worker, derived from its diagnostic log. */
+export type DeathClass =
+  | { kind: "running" } // installed, alive, no terminal — but we can't tell live-vs-dead from the log alone
+  | { kind: "clean-exit"; code: string }
+  | { kind: "signal"; signal: string }
+  | { kind: "uncaught"; detail: string }
+  | { kind: "uncatchable"; lastAliveLine: string | null } // SIGKILL/OOM: installed + maybe alive, no terminal
+  | { kind: "unknown" }; // no `installed` line — the log isn't a safety log
 
 /** The current safety installation status, exported for tests + diagnostics.
  * `null` when no handlers are installed (the default state). */
@@ -103,11 +151,14 @@ export function getActiveSafety(): ProcessSafety | null {
  */
 export function installProcessSafety(
   logger: SafetyLogger,
-  meta: { workerId?: string; pid?: number } = {},
+  meta: ProcessSafetyOptions = {},
 ): ProcessSafety {
   if (activeSafety) activeSafety.uninstall();
   const pid = meta.pid ?? process.pid;
   const wid = meta.workerId ?? "(no-worker-id)";
+  const heartbeatMs = meta.heartbeatMs ?? 15000;
+  const setIntervalFn = meta.setInterval ?? ((fn, ms) => setInterval(fn, ms));
+  const clearIntervalFn = meta.clearInterval ?? ((h) => clearInterval(h as NodeJS.Timeout));
 
   const write = (event: string, detail: string): void => {
     logger.log(`pid=${pid} worker=${wid} event=${event} ${detail}`);
@@ -132,6 +183,14 @@ export function installProcessSafety(
     // signal; this one is the "we made it to a clean exit code N" notice.
     write("exit", `code=${code ?? "null"}`);
   };
+  // The heartbeat is the SIGKILL counter-measure: a SIGKILL/OOM death fires no
+  // handler, so the only forensic trace is "installed + heartbeats, then
+  // silence". Each beat carries the current RSS so a reader can see memory
+  // climbing toward the OOM wall before the silence.
+  const onHeartbeat = (): void => {
+    const rssMb = Math.round(process.memoryUsage().rss / (1024 * 1024));
+    write("alive", `rss_mb=${rssMb}`);
+  };
 
   process.on("uncaughtException", onUncaught);
   process.on("unhandledRejection", onUnhandled);
@@ -142,6 +201,13 @@ export function installProcessSafety(
 
   write("installed", `node=${process.version} platform=${process.platform}`);
 
+  let timer: { unref?: () => void } | null = null;
+  if (heartbeatMs > 0) {
+    timer = setIntervalFn(onHeartbeat, heartbeatMs);
+    // Never let the heartbeat alone keep the process alive.
+    timer.unref?.();
+  }
+
   activeSafety = {
     uninstall(): void {
       process.off("uncaughtException", onUncaught);
@@ -150,6 +216,8 @@ export function installProcessSafety(
       process.off("SIGINT", onSigInt);
       process.off("SIGHUP", onSigHup);
       process.off("exit", onExit);
+      if (timer) clearIntervalFn(timer);
+      timer = null;
       activeSafety = null;
     },
     handlers: {
@@ -159,6 +227,7 @@ export function installProcessSafety(
       sigInt: onSigInt,
       sigHup: onSigHup,
       exit: onExit,
+      heartbeat: onHeartbeat,
     },
   };
   return activeSafety;
@@ -168,4 +237,82 @@ export function installProcessSafety(
  * <worker-id>.log`. The diagnostics dir is gitignored. */
 export function safetyLogPath(redTmpDir: string, workerId: string): string {
   return join(redTmpDir, "diagnostics", `${workerId}.log`);
+}
+
+/**
+ * Classify a worker's fate from its diagnostic log CONTENT (pure — the caller
+ * reads the file). This is the half that closes the SIGKILL blind spot: a
+ * terminal line (exit/signal/uncaught) means the death was caught and named;
+ * its ABSENCE after `installed` + `alive` heartbeats means the process died
+ * UNCATCHABLY — almost always SIGKILL/OOM — and the last `alive` line pins the
+ * approximate time of death.
+ *
+ * Precedence (first match wins, scanning the whole log):
+ *   1. `event=exit`               → clean-exit (the process reached an exit code)
+ *   2. `event=SIG*`               → signal (a catchable signal was delivered)
+ *   3. `event=uncaughtException` / `event=unhandledRejection` → uncaught
+ *   4. `event=installed` present, none of the above → uncatchable
+ *      (SIGKILL/OOM), carrying the last `event=alive` line if any
+ *   5. no `event=installed`       → unknown (not a safety log)
+ *
+ * NOTE: a still-RUNNING worker also has no terminal line. This classifier is
+ * for a worker KNOWN to be gone (its pid is absent / its claim went stale) —
+ * the caller establishes death; this names the cause. When liveness is unknown
+ * the `uncatchable` verdict should be read as "no clean shutdown was recorded".
+ */
+export function classifyDeathFromLog(logContent: string): DeathClass {
+  const lines = logContent.split("\n").filter((l) => l.trim() !== "");
+  let installed = false;
+  let lastAlive: string | null = null;
+  for (const line of lines) {
+    if (line.includes("event=installed")) installed = true;
+    if (line.includes("event=alive")) lastAlive = line;
+    if (line.includes("event=exit")) {
+      const m = /code=(\S+)/.exec(line);
+      return { kind: "clean-exit", code: m?.[1] ?? "unknown" };
+    }
+    if (line.includes("event=SIGTERM") || line.includes("event=SIGINT") || line.includes("event=SIGHUP")) {
+      const m = /event=(SIG\w+)/.exec(line);
+      return { kind: "signal", signal: m?.[1] ?? "SIG?" };
+    }
+    if (line.includes("event=uncaughtException") || line.includes("event=unhandledRejection")) {
+      return { kind: "uncaught", detail: line };
+    }
+  }
+  if (!installed) return { kind: "unknown" };
+  return { kind: "uncatchable", lastAliveLine: lastAlive };
+}
+
+/**
+ * Read a worker's diagnostic log from disk and classify its fate. Returns
+ * `{ kind: "unknown" }` when the file is absent / unreadable (treated the same
+ * as "no safety log"). Best-effort — a read failure never throws.
+ */
+export function classifyDeathFromLogFile(path: string): DeathClass {
+  try {
+    return classifyDeathFromLog(readFileSync(path, "utf8"));
+  } catch {
+    return { kind: "unknown" };
+  }
+}
+
+/** A one-line human summary of a {@link DeathClass}, for the next session's
+ * iteration log / a worker's re-claim comment. */
+export function describeDeath(d: DeathClass): string {
+  switch (d.kind) {
+    case "running":
+      return "no terminal record (worker may still be running)";
+    case "clean-exit":
+      return `clean exit (code ${d.code})`;
+    case "signal":
+      return `terminated by ${d.signal}`;
+    case "uncaught":
+      return `uncaught error: ${d.detail}`;
+    case "uncatchable":
+      return d.lastAliveLine
+        ? `uncatchable death (likely SIGKILL/OOM) — no clean shutdown recorded; last heartbeat: ${d.lastAliveLine}`
+        : "uncatchable death (likely SIGKILL/OOM) — no clean shutdown recorded, no heartbeat captured";
+    case "unknown":
+      return "no diagnostic log (cause unknown)";
+  }
 }

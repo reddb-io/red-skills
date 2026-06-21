@@ -210,20 +210,39 @@ describe("Pattern 4 — OOM under fleet=2", () => {
 });
 
 // Pattern 5: Orchestrator process dying — every worker process died
-// post-commit + vitest. The cause is still under investigation (#INV-A in
-// the roadmap). For now, this test codifies the STALE-CLAIM behavior that
-// the cross-host recovery uses to keep the issue moving when the worker
-// owner stops refreshing: the issue must not be stuck.
-describe("Pattern 5 — orchestrator process dying post-commit (cross-host stale-claim recovery)", () => {
-  // We can't easily test the supervisor's kill + stale-claim sweep without
-  // the full supervisor module, but we can lock in the recovery cap that
-  // bounds the re-claim loop: a stalled worker re-claims at most 3 times
-  // before escalating (#402).
+// post-commit + vitest with no exit code / signal / stack. The diagnostic
+// (process-safety) now records every CATCHABLE death, and — crucially — the
+// liveness heartbeat makes the UNCATCHABLE death (SIGKILL/OOM, which fires no
+// handler) legible: "installed + heartbeats, then silence" classifies as
+// uncatchable, pinned to the last heartbeat. The root cause is still under
+// investigation, but it is no longer invisible.
+describe("Pattern 5 — orchestrator process dying post-commit (now diagnosable)", () => {
   it("the stalled re-claim cap is 3 (regression guard for the runaway-loop fix in #402)", () => {
     expect(recoveryDecision("stalled", 1, {})).toBe("retry");
     expect(recoveryDecision("stalled", 2, {})).toBe("retry");
     expect(recoveryDecision("stalled", 3, {})).toBe("escalate");
     expect(recoveryCap("stalled", {})).toBe(3);
+  });
+
+  it("classifies an UNCATCHABLE death (SIGKILL/OOM) from the diagnostic log — the spike's exact symptom", async () => {
+    // The spike workers died with no exit code / signal / stack: that is
+    // EXACTLY the uncatchable case. A log with `installed` + heartbeats but no
+    // terminal line is classified as SIGKILL/OOM, pinned to the last heartbeat.
+    const { classifyDeathFromLog, describeDeath } = await import("../src/core/process-safety.js");
+    const log = [
+      "T0 pid=1 worker=wQYIB event=installed node=v22 platform=linux",
+      "T1 pid=1 worker=wQYIB event=alive rss_mb=900",
+      "T2 pid=1 worker=wQYIB event=alive rss_mb=1850", // climbing toward the OOM wall
+    ].join("\n");
+    const verdict = classifyDeathFromLog(log);
+    expect(verdict.kind).toBe("uncatchable");
+    expect(describeDeath(verdict)).toContain("SIGKILL/OOM");
+  });
+
+  it("a clean exit is NOT misread as an OOM death (no false alarm)", async () => {
+    const { classifyDeathFromLog } = await import("../src/core/process-safety.js");
+    const log = ["T0 ...event=installed node=v22", "T1 ...event=alive rss_mb=100", "T2 ...event=exit code=0"].join("\n");
+    expect(classifyDeathFromLog(log)).toEqual({ kind: "clean-exit", code: "0" });
   });
 });
 

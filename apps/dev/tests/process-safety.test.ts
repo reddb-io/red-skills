@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  classifyDeathFromLog,
+  classifyDeathFromLogFile,
+  describeDeath,
   fileSafetyLogger,
   getActiveSafety,
   installProcessSafety,
@@ -27,7 +30,7 @@ describe("installProcessSafety — install/uninstall lifecycle", () => {
   it("install returns a ProcessSafety with an `uninstall` method + a `handlers` object", () => {
     const log: string[] = [];
     const logger: SafetyLogger = { log: (l) => log.push(l) };
-    const safety = installProcessSafety(logger, { workerId: "wTEST", pid: 12345 });
+    const safety = installProcessSafety(logger, { workerId: "wTEST", pid: 12345, heartbeatMs: 0 });
     expect(typeof safety.uninstall).toBe("function");
     expect(typeof safety.handlers.uncaughtException).toBe("function");
     expect(typeof safety.handlers.unhandledRejection).toBe("function");
@@ -40,7 +43,7 @@ describe("installProcessSafety — install/uninstall lifecycle", () => {
 
   it("after uninstall, getActiveSafety returns null (handlers are detached)", () => {
     const log: string[] = [];
-    const safety = installProcessSafety({ log: (l) => log.push(l) }, { workerId: "wTEST" });
+    const safety = installProcessSafety({ log: (l) => log.push(l) }, { workerId: "wTEST", heartbeatMs: 0 });
     expect(getActiveSafety()).not.toBeNull();
     safety.uninstall();
     expect(getActiveSafety()).toBeNull();
@@ -49,8 +52,8 @@ describe("installProcessSafety — install/uninstall lifecycle", () => {
   it("a second install uninstalls the first (idempotent singleton)", () => {
     const log1: string[] = [];
     const log2: string[] = [];
-    const first = installProcessSafety({ log: (l) => log1.push(l) }, { workerId: "wFIRST" });
-    const second = installProcessSafety({ log: (l) => log2.push(l) }, { workerId: "wSECOND" });
+    const first = installProcessSafety({ log: (l) => log1.push(l) }, { workerId: "wFIRST", heartbeatMs: 0 });
+    const second = installProcessSafety({ log: (l) => log2.push(l) }, { workerId: "wSECOND", heartbeatMs: 0 });
     expect(getActiveSafety()).toBe(second);
     second.uninstall();
     // first.uninstall() is now a no-op (it was already detached by the second install)
@@ -71,7 +74,7 @@ describe("installProcessSafety — event log lines (via direct handler call)", (
   let uninstall: () => void;
   beforeEach(() => {
     log = [];
-    const safety = installProcessSafety({ log: (l) => log.push(l) }, { workerId: "wDIAG", pid: 999 });
+    const safety = installProcessSafety({ log: (l) => log.push(l) }, { workerId: "wDIAG", pid: 999, heartbeatMs: 0 });
     handlers = safety.handlers;
     uninstall = safety.uninstall;
   });
@@ -153,7 +156,7 @@ describe("installProcessSafety — handlers detach on uninstall", () => {
     // detached, so a real process event will not invoke them. We assert
     // here that uninstall() does not throw and does not break the bundle.
     const log: string[] = [];
-    const safety = installProcessSafety({ log: (l) => log.push(l) }, { workerId: "wTEST" });
+    const safety = installProcessSafety({ log: (l) => log.push(l) }, { workerId: "wTEST", heartbeatMs: 0 });
     safety.uninstall();
     // The bundle remains a valid object reference; uninstall is idempotent.
     expect(() => safety.uninstall()).not.toThrow();
@@ -202,11 +205,130 @@ describe("safetyLogPath", () => {
 
 describe("installProcessSafety — cost & integration", () => {
   it("installing twice in a row does not throw (idempotent under quick re-install)", () => {
-    const safety1 = installProcessSafety(noopSafetyLogger, { workerId: "wA" });
-    const safety2 = installProcessSafety(noopSafetyLogger, { workerId: "wB" });
+    const safety1 = installProcessSafety(noopSafetyLogger, { workerId: "wA", heartbeatMs: 0 });
+    const safety2 = installProcessSafety(noopSafetyLogger, { workerId: "wB", heartbeatMs: 0 });
     expect(safety2).not.toBe(safety1);
     safety1.uninstall(); // no-op (already detached)
     safety2.uninstall();
     expect(getActiveSafety()).toBeNull();
+  });
+});
+
+// AFK runner improvement — the liveness heartbeat closes the SIGKILL blind
+// spot: a SIGKILL/OOM death fires no handler, so the only trace is "installed
+// + heartbeats, then silence". The heartbeat writes an `alive` line carrying
+// RSS; the injected timer keeps the test free of real intervals.
+describe("installProcessSafety — liveness heartbeat", () => {
+  it("registers the injected interval and writes an `alive` line carrying rss_mb", () => {
+    const log: string[] = [];
+    let captured: (() => void) | null = null;
+    const safety = installProcessSafety(
+      { log: (l) => log.push(l) },
+      {
+        workerId: "wHB",
+        heartbeatMs: 15000,
+        setInterval: (fn) => {
+          captured = fn;
+          return { unref: () => {} };
+        },
+        clearInterval: () => {},
+      },
+    );
+    // The timer was registered (the factory captured the callback).
+    expect(captured).not.toBeNull();
+    // Drive one beat.
+    captured!();
+    const alive = log.find((l) => l.includes("event=alive"));
+    expect(alive).toBeDefined();
+    expect(alive).toMatch(/rss_mb=\d+/);
+    expect(alive).toMatch(/worker=wHB/);
+    safety.uninstall();
+  });
+
+  it("heartbeatMs=0 disables the timer entirely (no interval registered)", () => {
+    let registered = false;
+    const safety = installProcessSafety(noopSafetyLogger, {
+      workerId: "wNoHB",
+      heartbeatMs: 0,
+      setInterval: () => {
+        registered = true;
+        return { unref: () => {} };
+      },
+    });
+    expect(registered).toBe(false);
+    safety.uninstall();
+  });
+
+  it("uninstall clears the injected interval", () => {
+    let cleared = false;
+    const handle = { unref: () => {} };
+    const safety = installProcessSafety(noopSafetyLogger, {
+      workerId: "wClear",
+      heartbeatMs: 15000,
+      setInterval: () => handle,
+      clearInterval: (h) => {
+        if (h === handle) cleared = true;
+      },
+    });
+    safety.uninstall();
+    expect(cleared).toBe(true);
+  });
+});
+
+// classifyDeathFromLog is the reader half: it names a dead worker's cause from
+// its diagnostic log, including the UNCATCHABLE (SIGKILL/OOM) case the handlers
+// can't see — the absence of a terminal line after `installed` + `alive`.
+describe("classifyDeathFromLog — fate from the diagnostic log", () => {
+  const inst = "2026-06-21T19:00:00.000Z pid=1 worker=wX event=installed node=v22 platform=linux";
+  const alive1 = "2026-06-21T19:00:15.000Z pid=1 worker=wX event=alive rss_mb=512";
+  const alive2 = "2026-06-21T19:00:30.000Z pid=1 worker=wX event=alive rss_mb=1900";
+
+  it("clean exit wins (a terminal exit line was recorded)", () => {
+    const log = [inst, alive1, "...event=exit code=0"].join("\n");
+    expect(classifyDeathFromLog(log)).toEqual({ kind: "clean-exit", code: "0" });
+  });
+
+  it("a catchable signal is named", () => {
+    const log = [inst, alive1, "...event=SIGTERM received"].join("\n");
+    expect(classifyDeathFromLog(log)).toEqual({ kind: "signal", signal: "SIGTERM" });
+  });
+
+  it("an uncaught error is named", () => {
+    const log = [inst, "...event=uncaughtException message=\"boom\""].join("\n");
+    expect(classifyDeathFromLog(log)).toMatchObject({ kind: "uncaught" });
+  });
+
+  it("UNCATCHABLE: installed + heartbeats but NO terminal line → SIGKILL/OOM, pinned to the last heartbeat", () => {
+    const log = [inst, alive1, alive2].join("\n");
+    const result = classifyDeathFromLog(log);
+    expect(result.kind).toBe("uncatchable");
+    if (result.kind === "uncatchable") {
+      expect(result.lastAliveLine).toBe(alive2); // the LAST heartbeat — climbing rss
+    }
+  });
+
+  it("UNCATCHABLE with no heartbeat captured (died before the first beat)", () => {
+    const result = classifyDeathFromLog(inst);
+    expect(result).toEqual({ kind: "uncatchable", lastAliveLine: null });
+  });
+
+  it("no `installed` line → unknown (not a safety log)", () => {
+    expect(classifyDeathFromLog("random unrelated content")).toEqual({ kind: "unknown" });
+    expect(classifyDeathFromLog("")).toEqual({ kind: "unknown" });
+  });
+
+  it("classifyDeathFromLogFile returns unknown for a missing file (best-effort, no throw)", () => {
+    expect(classifyDeathFromLogFile("/no/such/diagnostics/wZ.log")).toEqual({ kind: "unknown" });
+  });
+});
+
+describe("describeDeath — one-line human summary", () => {
+  it("summarizes each death class for the next session's log", () => {
+    expect(describeDeath({ kind: "clean-exit", code: "0" })).toContain("clean exit");
+    expect(describeDeath({ kind: "signal", signal: "SIGTERM" })).toContain("SIGTERM");
+    expect(describeDeath({ kind: "uncaught", detail: "x" })).toContain("uncaught");
+    expect(describeDeath({ kind: "uncatchable", lastAliveLine: "...rss_mb=1900" })).toContain("SIGKILL/OOM");
+    expect(describeDeath({ kind: "uncatchable", lastAliveLine: null })).toContain("no heartbeat");
+    expect(describeDeath({ kind: "unknown" })).toContain("no diagnostic log");
   });
 });
