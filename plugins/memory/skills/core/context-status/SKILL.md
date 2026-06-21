@@ -9,6 +9,8 @@ Read-only healthcheck for the agent context stack. It reports committed context,
 
 <what-to-do>
 
+**Run the context-status report, read every section together, and surface `recommendations` as concrete next steps — never trigger initialization or mutations from this diagnostic.**
+
 ## 1. Run the status report
 
 ```bash
