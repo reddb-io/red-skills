@@ -6,6 +6,15 @@ Upstream base: `mattpocock/skills@694fa30311e02c2639942308513555e61ee84a6f` (see
 
 ---
 
+## afk (engineering) — SKILL.md convention rewrite: lead-in + ~40% compression of Preconditions/Bootstrap/Issue-Selection (#781)
+
+- **status**: modified
+- **upstream**: —
+- **why**: PRD #776 house style — imperative lead-in at the top; narration cut from the three densest prose sections while preserving every load-bearing rule.
+- **what changed**: Added bold lead-in (`**Read, don't reverse-engineer.**…`) after the title. Compressed **Hard Preconditions** (word-level tightening, ~30% word reduction). Compressed **Bootstrap** (combined steps 1+2; flattened 6-level runner cascade into one ordered-bullet line; removed trailing explanatory paragraph; ~50% line reduction). Compressed **Issue Selection** (merged pull/drop/prepend into one paragraph; removed narration from PRD/urgent explanations; ~41% line reduction). No rule was dropped; overall ~40% line reduction across the three sections.
+
+---
+
 ## ff (productivity) — two-step interactive flow: choose framing, then dispatch prompt
 
 - **status**: modified
