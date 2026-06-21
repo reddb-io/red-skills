@@ -21,15 +21,24 @@ describe("doctor docs contract", () => {
     expect(skill).toContain("do not edit either agent rules file");
   });
 
-  it("reports dev.lock.primary-branch as set or unset without mutating config", async () => {
+  it("reports the primary-branch guard + config namespacing without mutating config", async () => {
     const skill = await readDoctorSkill();
 
-    expect(skill).toContain("Primary-branch guard flag");
+    expect(skill).toContain("Config namespacing + primary-branch guard");
     expect(skill).toContain("read `.red/config.yaml`");
-    expect(skill).toContain("report whether `dev.lock.primary-branch` is set");
-    expect(skill).toContain("Treat an absent config file");
-    expect(skill).toContain("anything other than `true` as \"unset\"");
-    expect(skill).toContain("recommend enabling it via `→ /setup-red-skills`");
+    expect(skill).toContain("canonical key is the namespaced `plugins.dev.lock.primary-branch`");
+    expect(skill).toContain("any value other than `true` as \"unset\"");
+    expect(skill).toContain("recommend `→ /setup-red-skills`");
     expect(skill).toContain("never write `.red/config.yaml`");
+  });
+
+  it("flags legacy top-level dev-plugin config as a namespacing migration", async () => {
+    const skill = await readDoctorSkill();
+
+    expect(skill).toContain("Namespacing conformance");
+    expect(skill).toContain("dev-plugin settings belong under `plugins.dev.*`");
+    expect(skill).toContain("hygiene, not breakage");
+    // The `--fix` Apply table has the migration row.
+    expect(skill).toContain("Legacy/top-level dev-plugin config");
   });
 });

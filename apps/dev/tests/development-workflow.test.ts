@@ -64,7 +64,7 @@ describe("development workflow rules block", () => {
     expect(first.configChanged).toBe(true);
     expect(extractMarkdownSection(agents, DEVELOPMENT_WORKFLOW_HEADING)).toBe(DEVELOPMENT_WORKFLOW_BLOCK);
     expect(extractMarkdownSection(claude, DEVELOPMENT_WORKFLOW_HEADING)).toBe(DEVELOPMENT_WORKFLOW_BLOCK);
-    expect(config).toBe("dev:\n  lock:\n    primary-branch: true\n");
+    expect(config).toBe("plugins:\n  dev:\n    lock:\n      primary-branch: true\n");
 
     const second = injectDevelopmentWorkflowRules(root);
     expect(second.agentsChanged).toBe(false);
@@ -84,10 +84,12 @@ describe("development workflow rules block", () => {
 
     expect(extractMarkdownSection(plan.agentsMarkdown, DEVELOPMENT_WORKFLOW_HEADING)).toBe(DEVELOPMENT_WORKFLOW_BLOCK);
     expect(extractMarkdownSection(plan.claudeMarkdown, DEVELOPMENT_WORKFLOW_HEADING)).toBe(DEVELOPMENT_WORKFLOW_BLOCK);
-    expect(plan.configYaml).toBe("afk:\n  default_runner: codex\n\ndev:\n  lock:\n    primary-branch: true\n");
+    expect(plan.configYaml).toBe(
+      "afk:\n  default_runner: codex\n\nplugins:\n  dev:\n    lock:\n      primary-branch: true\n",
+    );
   });
 
-  it("activates dev.lock.primary-branch in existing config without duplicating it", () => {
+  it("writes the canonical namespaced plugins.dev.lock.primary-branch and stays idempotent", () => {
     const once = activatePrimaryBranchLockConfig(
       [
         "afk:",
@@ -103,13 +105,22 @@ describe("development workflow rules block", () => {
     const twice = activatePrimaryBranchLockConfig(once);
 
     expect(once).toBe(twice);
-    expect(once).toContain("dev:\n  lock:\n    primary-branch: true\n");
-    expect((once.match(/^    primary-branch:/gm) ?? [])).toHaveLength(1);
+    expect(once).toContain("plugins:\n  dev:\n    lock:\n      primary-branch: true\n");
+    // The namespaced flag is written exactly once; a legacy top-level
+    // `dev.lock.*` is left untouched (the doctor migrates it, not setup).
+    expect((once.match(/^ {6}primary-branch:/gm) ?? [])).toHaveLength(1);
+    expect(once).toContain("dev:\n  lock:\n    primary-branch: false");
   });
 
-  it("adds the primary-branch lock setting to an existing dev config block", () => {
+  it("appends a full plugins block when none exists", () => {
     expect(activatePrimaryBranchLockConfig("dev:\n  other: yes\nafk:\n  default_runner: codex\n")).toBe(
-      "dev:\n  lock:\n    primary-branch: true\n  other: yes\nafk:\n  default_runner: codex\n",
+      "dev:\n  other: yes\nafk:\n  default_runner: codex\n\nplugins:\n  dev:\n    lock:\n      primary-branch: true\n",
+    );
+  });
+
+  it("nests the lock under an existing plugins.dev block without disturbing enabled", () => {
+    expect(activatePrimaryBranchLockConfig("plugins:\n  dev:\n    enabled: true\n")).toBe(
+      "plugins:\n  dev:\n    lock:\n      primary-branch: true\n    enabled: true\n",
     );
   });
 });
