@@ -6,6 +6,22 @@ Upstream base: `mattpocock/skills@694fa30311e02c2639942308513555e61ee84a6f` (see
 
 ---
 
+## triage (engineering) — prose rewrite to RedSkills SKILL.md writing convention (PRD #776)
+
+- **status**: modified
+- **upstream**: `e74f006`
+- **why**: Issue #778 (PRD #776). The skill's directive surface was passive prose: Flows A–D lacked imperative lead-ins, the "Hard rules" section stated prohibitions without consequences, and Flow B step 1 buried its directives in a narrative paragraph. Applied all eight writing-convention techniques as the reference exemplar for the rest of the PRD sweep.
+- **what changed**:
+  - Added a bold maxim as the opening line: "Triage owns the gate from raw report to agentable issue."
+  - Each Flow header now carries its routing trigger in parentheses (technique #8).
+  - Each Flow opens with a bold imperative lead-in + inline consequence (technique #1).
+  - Flow B step 3 header names its precondition: "mandatory for bugs; skip for enhancements."
+  - Three prohibitions in Hard rules gained their consequences via em-dash (technique #3): invented labels → "fragment the queue and break AFK claim queries"; skipping Reproduce → "leaves the agent brief guessing at the code path"; modifying parent while triaging children → "parent state reflects aggregate child state."
+  - Flow B step 1 prose compressed from a multi-sentence narrative paragraph to scannable directives (technique #7).
+  - No change to the triage state machine, label vocabulary, role names, supporting-info reference material, or outcome table.
+
+---
+
 ## ff (productivity) — two-step interactive flow: choose framing, then dispatch prompt
 
 - **status**: modified
