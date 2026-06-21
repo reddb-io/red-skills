@@ -4,12 +4,33 @@ description: Compact the current conversation into a handoff document for anothe
 argument-hint: "What will the next session be used for?"
 ---
 
-Write a handoff document summarising the current conversation so a fresh agent can continue the work. Save it to a path produced by `mktemp -t handoff-XXXXXX.md` (read the file before you write to it).
+**Hand over context, not content — reference existing artifacts; do not reproduce them.** The next agent needs enough to continue, not a transcript.
 
-Suggest the skills to be used, if any, by the next session.
+Write a handoff document to a path from `mktemp -t handoff-XXXXXX.md` (read the file before writing). Cover:
 
-Do not duplicate content already captured in other artifacts (PRDs, plans, ADRs, issues, commits, diffs). Reference them by path or URL instead.
+- **State:** what was done, what is in progress, what is blocked
+- **Next action:** the first concrete step the next session should take
+- **Skills:** which skills the next session should invoke, if any
+- **Refs:** paths or URLs to any PRDs, plans, ADRs, issues, commits, or diffs — do not reproduce their content
 
-Redact any sensitive information — API keys, passwords, tokens, or personally identifiable information — before writing it to the handoff document.
+Use this template:
+
+```markdown
+# Handoff — <date>
+
+## State
+<what was done / in progress / blocked>
+
+## Next action
+<the first concrete step>
+
+## Skills to invoke
+<list of /skill names, if any>
+
+## References
+- <path-or-url>: <one-line description>
+```
+
+Redact API keys, passwords, tokens, and personally identifiable information before writing.
 
 If the user passed arguments, treat them as a description of what the next session will focus on and tailor the doc accordingly.
