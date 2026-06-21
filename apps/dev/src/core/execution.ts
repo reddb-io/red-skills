@@ -428,9 +428,16 @@ export interface SandcastleDeps {
  * effort is gated per provider in `agentFor` (FIX D): an out-of-range value is
  * DROPPED (provider default) with a warn rather than cast through to a runtime
  * provider rejection / infra crash.
+ *
+ * claude-minimax is a special case: MiniMax-M3 thinking is off by default and
+ * only accepts thinking:{type:"adaptive"} — it rejects thinking:{type:"enabled",
+ * budget} that Claude Code emits at effort > "low". Only "low" is safe;
+ * `buildAgent` caps any higher request and always passes "low" explicitly so the
+ * inner spawn never auto-selects a thinking tier.
  */
 export const CODEX_EFFORTS: readonly AgentEffort[] = ["low", "medium", "high", "xhigh"];
 export const CLAUDE_EFFORTS: readonly AgentEffort[] = ["low", "medium", "high", "xhigh", "max"];
+export const MINIMAX_EFFORTS: readonly AgentEffort[] = ["low"];
 
 /**
  * Validate a requested effort against a provider's accepted set. Returns the
@@ -505,26 +512,35 @@ export function buildAgent(
   }
 
   if (runner === "claude-minimax") {
-    // PRD #788: route to the UNCHANGED claude-code provider, but force the
-    // MiniMax model and inject the MiniMax Anthropic-compat auth env into the
-    // inner spawn only (`ClaudeCodeOptions.env`) — the orchestrator's own env is
-    // never touched, so it keeps its real-Anthropic auth. Effort gating matches
-    // claude (the provider is claude-code). When no `MINIMAX_API_KEY` is set, no
-    // `env` block is added: the lane is unusable and claude-code surfaces its
-    // own auth error through the normal failure path. The passed `model` is
-    // discarded — the lane always runs `MiniMax-M3`.
-    const effort = effortForProvider("claude", requested);
-    if (requested !== undefined && effort === undefined) {
+    // PRD #788 / #794: route to the UNCHANGED claude-code provider, but force
+    // the MiniMax model and inject the MiniMax Anthropic-compat auth env into
+    // the inner spawn only (`ClaudeCodeOptions.env`) — the orchestrator's own
+    // env is never touched, so it keeps its real-Anthropic auth. The passed
+    // `model` is discarded — the lane always runs `MiniMax-M3`.
+    //
+    // Thinking-control reconciliation (#794): MiniMax-M3 thinking is off by
+    // default and only accepts thinking:{type:"adaptive"} — it rejects
+    // thinking:{type:"enabled",budget} that Claude Code emits at effort > "low".
+    // The lane is capped to MINIMAX_EFFORTS (["low"]): any higher requested
+    // effort degrades to "low" with a warn; when no effort is requested the lane
+    // still passes "low" explicitly so the inner spawn never auto-selects a
+    // thinking tier.
+    const MINIMAX_SAFE_EFFORT: AgentEffort = "low";
+    const effort: AgentEffort =
+      requested !== undefined && (MINIMAX_EFFORTS as readonly string[]).includes(requested)
+        ? (requested as AgentEffort)
+        : MINIMAX_SAFE_EFFORT;
+    if (requested !== undefined && !(MINIMAX_EFFORTS as readonly string[]).includes(requested)) {
       warn?.(
-        `[afk] warn: effort '${requested}' is not accepted by runner 'claude-minimax' ` +
-          `(accepted: ${CLAUDE_EFFORTS.join(", ")}); falling back to the provider default.`,
+        `[afk] warn: effort '${requested}' triggers thinking which MiniMax-M3 does not accept; ` +
+          `capping to '${MINIMAX_SAFE_EFFORT}' for runner 'claude-minimax' ` +
+          `(accepted: ${MINIMAX_EFFORTS.join(", ")}).`,
       );
     }
     const authEnv = resolveMiniMaxClaudeEnv(env);
-    const options: { effort?: AgentEffort; env?: Record<string, string> } = {};
-    if (effort) options.effort = effort;
+    const options: { effort: AgentEffort; env?: Record<string, string> } = { effort };
     if (authEnv) options.env = authEnv;
-    return factories.claudeCode(MINIMAX_M3_MODEL, Object.keys(options).length > 0 ? options : undefined);
+    return factories.claudeCode(MINIMAX_M3_MODEL, options);
   }
 
   const effort = effortForProvider(runner, requested);
