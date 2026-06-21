@@ -6,9 +6,7 @@ argument-hint: "#ISSUE [--apply] [--json] [--repo OWNER/REPO] [--pr-limit N]"
 
 # /retake
 
-Resume a specific issue by finding where its work currently lives and what has
-to happen next. `/retake` is the front door; `/ship` remains the tail command
-for a clean, committed worktree that is ready to land.
+**Find where the work lives and print the one next action — `/ship` is the tail command for a committed worktree ready to land.**
 
 ## Run
 
