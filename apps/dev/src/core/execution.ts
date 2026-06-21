@@ -741,7 +741,7 @@ export function isTransientRunnerError(error: unknown): boolean {
 }
 
 const runnerTransientPattern =
-  /failed to connect to websocket|HTTP error:\s*502 Bad Gateway|HTTP error:\s*503 Service Unavailable|\b529\b|overloaded|wss:\/\/chatgpt\.com\/backend-api\/codex\/responses|thread\/start failed|failed to load configuration|spawn sh ENOENT|cwd does not exist/i;
+  /failed to connect to websocket|HTTP error:\s*502 Bad Gateway|HTTP error:\s*503 Service Unavailable|\b529\b|overloaded|wss:\/\/chatgpt\.com\/backend-api\/codex\/responses|thread\/start failed|failed to load configuration|spawn sh ENOENT|cwd does not exist|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|ECONNRESET/i;
 
 /** Recursively gather string values reachable from an error-ish value, bounded
  * by depth and a visited set so cyclic Effect `Cause` graphs terminate. */
