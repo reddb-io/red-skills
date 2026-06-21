@@ -6,6 +6,8 @@ argument-hint: "[symptom — leave empty to seed from conversation]"
 
 <what-to-do>
 
+**You file, /triage routes. Never pre-label or guess priority.**
+
 Conduct a short, focused interview that fills in every field of the issue template in `<supporting-info>`, then open the issue on the project tracker.
 
 **Boot behavior (turn 1):**
