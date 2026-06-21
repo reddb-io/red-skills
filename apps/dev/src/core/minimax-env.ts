@@ -32,19 +32,22 @@ export const MINIMAX_ANTHROPIC_BASE_URL = "https://api.minimax.io/anthropic";
 export const MINIMAX_M3_MODEL = "MiniMax-M3";
 
 /**
- * Forces the Claude Code CLI down its API-key auth path instead of resolving a
- * host OAuth/keychain session. Without it, a host already logged into a real
- * Claude account would send that OAuth token to the MiniMax base URL — which
- * MiniMax rejects (401), or worse, silently routes the inner agent to real
- * Anthropic. `CLAUDE_CODE_SIMPLE=1` makes the injected `ANTHROPIC_API_KEY` the
- * sole credential, so the lane is deterministic regardless of host login state.
+ * Mirrors the operator's manual `minimax` wrapper, which exports
+ * `CLAUDE_CODE_SIMPLE=1`. NOTE: the Claude Code CLI does **not** read this var
+ * today — verified zero references in the v2.1.185 binary, so it is a **no-op**.
+ * What actually pins the inner spawn to MiniMax is `ANTHROPIC_BASE_URL` +
+ * `ANTHROPIC_API_KEY` (below): a non-default base URL with an explicit API key
+ * routes there without sending a host OAuth/keychain token. We still inject this
+ * var for parity with the wrapper and as a forward-compatible hint should Claude
+ * Code adopt a "simple/API-key-only" switch; it never harms the spawn.
  */
 export const CLAUDE_CODE_SIMPLE_ENV = "1";
 
 /**
  * The inner-spawn env block delivered to the claude-code provider: the MiniMax
  * key under Anthropic's `ANTHROPIC_API_KEY`, the hardcoded MiniMax
- * `ANTHROPIC_BASE_URL`, and `CLAUDE_CODE_SIMPLE=1` to pin the API-key auth path.
+ * `ANTHROPIC_BASE_URL` (these two are what actually route to MiniMax), plus the
+ * parity-only `CLAUDE_CODE_SIMPLE` (a no-op in current Claude Code — see above).
  */
 export type MiniMaxClaudeEnv = {
   ANTHROPIC_API_KEY: string;
