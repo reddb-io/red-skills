@@ -16,6 +16,18 @@
 // When the worktree cannot be materialised (worktreeAdd failure) or the
 // install fails, the gate fails closed: all validation calls return code 1.
 // A failed setup never silently validates the primary checkout.
+//
+// AFK runner improvement — cross-session worktree cache: by default, a
+// materialised worktree whose branch HEAD matches the live branch's HEAD
+// is REUSED across sessions (no `worktree add` / `submodule update` /
+// `pnpm install` on re-claim). The worktree itself is the cache — it just
+// isn't torn down if it was a cache hit. SHA mismatch (force-push, new
+// commit) is the only invalidation signal; there is no mtime/TTL GC. The
+// cost saved is `git submodule update --init --recursive` (5-30s) +
+// `pnpm install --frozen-lockfile` (60-180s) per re-claim — the dominant
+// cost when 5+ workers race-claim the same branch (Pattern 7 of the
+// claude-minimax spike investigation). The flag is opt-out via
+// `cacheEnabled: false` for callers that need a strict per-session manager.
 
 import { accessSync, constants, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -64,10 +76,29 @@ export function splitBranchDir(
  * exec.ts; tests substitute fakes so the whole manager — materialise, install,
  * script run, backpressure — exercises with zero subprocesses. (Spawning a real
  * `pnpm` from inside a vitest worker destabilised the tinypool worker pool.)
+ *
+ * AFK runner improvement: `branchHead` + `worktreeHead` enable the cross-session
+ * cache. The manager calls `branchHead(gitCtx, branch)` to get the live branch's
+ * HEAD SHA, then `worktreeHead(gitCtx, dest)` to read the SHA the cached
+ * worktree is actually at. A match → cache hit (no install, no submodule init).
+ * Mismatch (force-push, new commit) → cache miss (full re-materialise). Both
+ * helpers return `null` on failure; the manager treats `null` as a cache miss
+ * (the safe default — re-materialise from scratch).
  */
 export interface FeedbackWorktreeIO {
   worktreeAdd(ctx: gitx.GitContext, dest: string, branch: string): Promise<boolean>;
   worktreeRemove(ctx: gitx.GitContext, dest: string): Promise<void>;
+  /**
+   * Resolve `branch` (local or remote) to its HEAD SHA. Returns `null` when
+   * the ref is absent or git fails — the manager treats `null` as a cache
+   * miss so a transient lookup failure never reuses a stale worktree.
+   */
+  branchHead(ctx: gitx.GitContext, branch: string): Promise<string | null>;
+  /**
+   * Read the HEAD SHA of a worktree rooted at `dest`. Returns `null` when
+   * `dest` is not a git worktree (the cache miss signal) or git fails.
+   */
+  worktreeHead(ctx: gitx.GitContext, dest: string): Promise<string | null>;
   /** Run `pnpm <args>` with the given cwd. */
   pnpm(args: readonly string[], opts: ExecOptions): Promise<ExecOutput>;
   /** Run an arbitrary tool (used by the backpressure `sh -c` executor). */
@@ -77,6 +108,17 @@ export interface FeedbackWorktreeIO {
 const defaultIO: FeedbackWorktreeIO = {
   worktreeAdd: gitx.worktreeAdd,
   worktreeRemove: gitx.worktreeRemove,
+  branchHead: async (ctx, branch) => (await gitx.branchHead(ctx, branch)) ?? null,
+  worktreeHead: async (_ctx, dest) => {
+    // `git -C dest rev-parse --short HEAD`. Returns null on any failure so the
+    // manager can treat it as a cache miss and re-materialise from scratch.
+    try {
+      const sha = await gitx.headShortSha({ cwd: dest });
+      return sha === "" ? null : sha;
+    } catch {
+      return null;
+    }
+  },
   pnpm: runPnpm,
   exec: execTool,
 };
@@ -92,24 +134,44 @@ export interface FeedbackWorktree {
    * is the branch token, materialised the same way the pnpm executor does.
    */
   backpressure: BackpressureExec;
-  /** Remove every worktree this manager created (best-effort). */
+  /** Remove every worktree this manager created in THIS session (best-effort). */
   cleanup(): Promise<void>;
+}
+
+/** Optional configuration for {@link makeFeedbackWorktree}. */
+export interface FeedbackWorktreeOptions {
+  /**
+   * AFK runner improvement: when true (the default), a materialised worktree
+   * whose branch HEAD matches the live branch's HEAD is REUSED across sessions
+   * (no `worktree add` / `submodule update` / `pnpm install` on re-claim).
+   * Set to false for callers that need a strict per-session manager — the
+   * worktree is torn down on `cleanup()` and the next session materialises
+   * fresh. Tests typically want the per-session behaviour to keep fixtures
+   * independent.
+   */
+  cacheEnabled?: boolean;
 }
 
 /**
  * Build a feedback worktree manager for one session. `root` is the primary
  * checkout; `feedbackRoot` is the dir temp checkouts live under (gitignored
  * `.red/tmp/feedback`). Worktrees are created on demand keyed by branch and
- * reused; `cleanup()` removes them all.
+ * reused; `cleanup()` removes only what THIS session created (cached
+ * worktrees from prior sessions are left in place for the next session).
  */
 export function makeFeedbackWorktree(
   root: string,
   feedbackRoot: string,
   io: FeedbackWorktreeIO = defaultIO,
+  options: FeedbackWorktreeOptions = {},
 ): FeedbackWorktree {
+  const cacheEnabled = options.cacheEnabled !== false; // default: ON
   const gitCtx: gitx.GitContext = { cwd: root };
   // branch -> resolved checkout path, or null when setup failed (block all runs).
   const resolved = new Map<string, string | null>();
+  // Worktrees created in THIS session — these are the only ones `cleanup()`
+  // removes. A cache hit (worktree reused from a prior session) is NOT in
+  // this set, so cleanup leaves it alone.
   const created = new Set<string>();
 
   async function pathFor(branch: string): Promise<string | null> {
@@ -117,6 +179,26 @@ export function makeFeedbackWorktree(
     const cached = resolved.get(branch);
     if (cached !== undefined) return cached;
     const dest = join(feedbackRoot, slugForBranch(branch));
+
+    // AFK runner improvement — cross-session cache: a worktree already at
+    // `dest` whose HEAD matches the live branch's HEAD is a cache hit. The
+    // cost saved is `git submodule update --init --recursive` (5-30s) +
+    // `pnpm install --frozen-lockfile` (60-180s) per re-claim — the dominant
+    // cost when 5+ workers race-claim the same branch (Pattern 7 of the
+    // claude-minimax spike investigation). SHA mismatch is the only
+    // invalidation signal; no mtime/TTL GC. Cached worktrees are not torn
+    // down by `cleanup()` so the next session reuses them.
+    if (cacheEnabled) {
+      const expectedSha = await io.branchHead(gitCtx, branch);
+      const actualSha = await io.worktreeHead(gitCtx, dest);
+      if (expectedSha && actualSha && expectedSha === actualSha) {
+        resolved.set(branch, dest);
+        return dest; // cache hit — don't add to `created`, don't re-install
+      }
+      // Mismatch (or dest is not a worktree, or lookup failed): fall through
+      // to a clean re-materialise.
+    }
+
     const ok = await io.worktreeAdd(gitCtx, dest, branch);
     if (!ok) {
       process.stderr.write(
