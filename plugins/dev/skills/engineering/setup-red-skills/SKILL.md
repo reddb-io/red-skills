@@ -6,9 +6,11 @@ disable-model-invocation: true
 
 # Setup RedSkills
 
-Scaffold the per-repo configuration that the engineering skills assume:
+**Scaffold the per-repo configuration that the engineering skills assume — this skill is the only thing authorized to create `.red/`.** NEVER create `.red/` outside this skill — plugins stay fully inert in any directory whose `.red/config.yaml` is missing or lacks an explicit `plugins.<name>.enabled: true`.
 
-- **Plugin activation** — the per-directory gate (ADR 0067): which RedSkills plugins (`dev`, `memory`, `brain`) are allowed to run here. This is the **only** skill authorized to create `.red/`; nothing else may.
+Scaffold includes:
+
+- **Plugin activation** — the per-directory gate (ADR 0067): which RedSkills plugins (`dev`, `memory`, `brain`) are allowed to run here.
 - **Issue tracker** — GitHub Issues (the only supported option, reddb.io policy)
 - **Triage labels** — the strings used for the canonical triage roles and label families
 - **Domain docs** — where `.red/CONTEXT.md` and ADRs live, and the consumer rules for reading them
@@ -38,7 +40,7 @@ Summarise what's present and what's missing. Then walk the user through the sect
 
 Assume the user does not know what these terms mean. Each section starts with a short explainer (what it is, why these skills need it, what changes if they pick differently). Then show the choices and the default.
 
-**Section A0 — Plugin activation (the per-directory gate). Ask this FIRST.**
+**Section A0 — Plugin activation — ask first (the per-directory gate)**
 
 > Explainer: RedSkills plugins (`dev`, `memory`, `brain`) install their hooks **globally** on every agent (Claude Code, Codex, opencode), but they must only act in repos that explicitly opt in. Each plugin's hook launcher checks, before doing anything, whether the current directory's `.red/config.yaml` sets `plugins.<name>.enabled: true` (ADR 0067, strict opt-in). No `.red/config.yaml` → every RedSkills plugin stays fully inert here (no bundle fetch, no hooks, no side effects). A `plugins.<name>` block alone is **not** enough — the flag must be the explicit `true`. This skill is the **only** thing authorized to create `.red/` and write these flags.
 
