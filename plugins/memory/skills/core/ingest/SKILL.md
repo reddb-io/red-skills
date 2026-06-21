@@ -24,6 +24,8 @@ This is the `EXTRACTED` (deterministic) ingest path only. Conversation/git
 
 <what-to-do>
 
+**Index the repository tree into the graph store with the deterministic extractors, then relay the file, node, edge, and doc counts so the user knows what was graphed.**
+
 ## 1. Require graph mode
 
 Read the `plugins.memory` block of `.red/config.yaml` (or the legacy `.red/memory/config.json`). If neither is present, memory was never initialized —
