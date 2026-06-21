@@ -101,14 +101,35 @@ invalidation signal; there is no mtime/TTL GC. `cleanup()` removes only
 worktrees the session created, so a cache hit survives for the next session.
 Opt-out via `cacheEnabled: false`.
 
-### 5. Process-safety death diagnostic (Pattern 5)
+### 5. Process-safety death diagnostic + liveness heartbeat (Pattern 5)
 
 Every worker installs process-level handlers
 (`uncaughtException`/`unhandledRejection`/`SIGTERM`/`SIGINT`/`SIGHUP`/`exit`)
 that write one line per fatal event to `.red/tmp/diagnostics/<id>.log`. The
-handlers **observe, never swallow** — swallowing would mask the bug. The next
-session (or a human) correlates the spike's "agent idle → process absent" with
-the actual cause. Opt-out via `RED_AFK_NO_PROCESS_SAFETY=1`.
+handlers **observe, never swallow** — swallowing would mask the bug. Opt-out
+via `RED_AFK_NO_PROCESS_SAFETY=1`.
+
+**The SIGKILL blind spot.** The most likely Pattern 5 cause — the OS OOM-killer
+SIGKILLing the orchestrator — is *uncatchable*: SIGKILL fires no handler and no
+`exit` event, so an OOM-killed worker leaves a log with `installed` but no
+terminal line. To make that absence legible, the install runs a periodic
+`alive` heartbeat (default 15s) carrying RSS. A reader (`classifyDeathFromLog`)
+then names the fate: a terminal line → that cause; `installed` + heartbeats with
+no terminal line → `uncatchable` (SIGKILL/OOM), pinned to the last heartbeat
+with memory climbing. The root cause stays under investigation, but the next
+occurrence reports "uncatchable death (likely SIGKILL/OOM) at ~HH:MM, rss → N
+MB" instead of nothing.
+
+### 5b. maxBuffer overflow is INFRA, not semantic (Pattern 4/6 extension)
+
+The gate runs `pnpm test` via `execFile` with a capture ceiling. A green-but-
+verbose suite whose output exceeds the ceiling was killed by Node and folded
+into the generic spawn-error path, parking a passing branch as a *semantic*
+`blocked:validation`. The ceiling is raised (16MB → 64MB) and a maxBuffer
+overflow now carries a distinct exit code + a `maxBuffer length exceeded`
+marker that `isInfraFeedbackFailure` routes through bounded `validation-infra`
+recovery — a config problem the operator fixes, never a human page for a green
+suite.
 
 ### 6. Opt-in feedback-gate rebase onto base (Pattern 2)
 
@@ -150,8 +171,11 @@ runbook: any pattern recurring in production trips a CI test first.
 - A red main no longer fails unrelated workers (the baseline probe downgrades
   the inherited failure).
 - Re-claims of an unchanged branch skip the dominant install cost.
-- A dying worker now leaves a forensic record; Pattern 5's root cause remains
+- A dying worker now leaves a forensic record AND the uncatchable (SIGKILL/OOM)
+  death is classifiable from the heartbeat trail; Pattern 5's root cause remains
   open but is no longer invisible.
+- A green-but-verbose suite is no longer parked as a semantic failure for
+  exceeding the output capture ceiling.
 - The semantic `blocked:validation` contract is unchanged — a real worker bug
   still pages a human, so the gate's authority (ADR 0008) is preserved.
 - New config surface: `afk.feedback.rebase_on_base` (default false),
