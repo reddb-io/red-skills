@@ -6,6 +6,25 @@ Upstream base: `mattpocock/skills@694fa30311e02c2639942308513555e61ee84a6f` (see
 
 ---
 
+## runner-claude-minimax (engineering/afk) — fourth AFK runner targeting MiniMax Anthropic-compatible endpoint
+
+- **status**: added
+- **upstream**: —
+- **why**: Operators with a MiniMax subscription want a session-auth runner (like Claude Code) that targets MiniMax's Anthropic-compatible endpoint instead of real Anthropic, without requiring an OpenCode install or switching runners. PRD #788 spike validates the approach; issue #795 documents it.
+- **what changed**:
+  - New `plugins/dev/skills/engineering/afk/runner-claude-minimax.md` documents the runner: explicit-pin selection, env-var injection (`MINIMAX_API_KEY` → `ANTHROPIC_API_KEY/ANTHROPIC_BASE_URL`), model pinned to `MiniMax-M3`, effort capped to `low`, exhaustion/transient-failure detection, working directory.
+  - `plugins/dev/skills/engineering/model-tier-policy/SKILL.md` updated to add `claude-minimax` column with tier mappings (all map to `MiniMax-M3` / `low`); executors section mentions the runner.
+  - `.red/adr/0070-claude-minimax-runner-anthropic-compat-endpoint.md` (new) records the decision, rejected alternatives (env-toggle, flag, merge into OpenCode), and implementation rationale.
+  - `.red/adr/INDEX.md` updated with 0070 entry.
+  - Implementation: `apps/dev/src/core/minimax-env.ts` (auth env resolver), `execution.ts` (provider dispatch + effort capping), `runner-detection.ts` (explicit-pin only), `types/runner.ts` (runner discriminated union), tests in `runner-detection.test.ts` and `execution.test.ts`.
+
+## model-tier-policy (engineering) — add claude-minimax tier table entry
+
+- **status**: modified
+- **upstream**: —
+- **why**: Documentation update for the new `claude-minimax` runner; see runner-claude-minimax entry above.
+- **what changed**: Added `claude-minimax` column to the tier table; all tiers map to `MiniMax-M3` / `low` (pinned model, capped effort due to MiniMax-M3 extended-thinking constraint). Runners section expanded to mention the runner doc.
+
 ## start (engineering) — single-root `.red/` layout in the file-structure examples
 
 - **status**: modified

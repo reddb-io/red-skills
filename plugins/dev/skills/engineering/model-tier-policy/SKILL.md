@@ -15,12 +15,12 @@ The machine source for model ids and effort values is `apps/dev/src/core/config.
 
 ## Tier table
 
-| tier | default Claude model / effort | default Codex model / effort | use |
-|---|---|---|---|
-| `validate` | `claude-haiku-4-5` / `low` | `gpt-5.5` / `low` | Fuzzy or semantic validation, contract review, fixture sanity checks, and AFK task classification after deterministic checks have run. |
-| `simple` | `claude-sonnet-4-6` / `high` | `gpt-5.5` / `high` | Well-specified, single-scope code where expected files and behavior are clear and blast radius is small. |
-| `complex` | `claude-opus-4-8` / `medium` | `gpt-5.5` / `medium` | Cross-module, architectural, public-contract, migration, security-sensitive, data-risky, concurrency-sensitive, or otherwise high-blast-radius code. |
-| `think` | `claude-opus-4-8` / `high` | `gpt-5.5` / `high` | Design, planning, issue routing, broad diagnosis, and cases where the right execution tier is not yet clear. |
+| tier | default Claude model / effort | default Codex model / effort | default Claude-MiniMax model / effort | use |
+|---|---|---|---|---|
+| `validate` | `claude-haiku-4-5` / `low` | `gpt-5.5` / `low` | `MiniMax-M3` / `low` | Fuzzy or semantic validation, contract review, fixture sanity checks, and AFK task classification after deterministic checks have run. |
+| `simple` | `claude-sonnet-4-6` / `high` | `gpt-5.5` / `high` | `MiniMax-M3` / `low` | Well-specified, single-scope code where expected files and behavior are clear and blast radius is small. |
+| `complex` | `claude-opus-4-8` / `medium` | `gpt-5.5` / `medium` | `MiniMax-M3` / `low` | Cross-module, architectural, public-contract, migration, security-sensitive, data-risky, concurrency-sensitive, or otherwise high-blast-radius code. |
+| `think` | `claude-opus-4-8` / `high` | `gpt-5.5` / `high` | `MiniMax-M3` / `low` | Design, planning, issue routing, broad diagnosis, and cases where the right execution tier is not yet clear. |
 
 ## Deterministic-first validation
 
@@ -62,7 +62,7 @@ Interactive Codex runs a **single session model** — it exposes no per-task sub
 
 - Claude interactive executors live in `plugins/dev/agents/validate.md`, `plugins/dev/agents/simple-code.md`, and `plugins/dev/agents/complex-code.md`. They are Claude-only wrappers over this policy.
 - Codex receives this same skill through `plugins/dev/.codex-plugin/plugin.json` (`"skills": "./skills/"`). Codex does not ship the Claude `agents/` wrappers.
-- AFK sandcastle execution lives in `plugins/dev/skills/engineering/afk/SKILL.md`, with host adapters in `runner-claude.md` and `runner-codex.md`. Runtime tier resolution flows through `resolveTier` in `apps/dev/src/core/process-issue.ts` and the config resolver in `apps/dev/src/core/config.ts`.
+- AFK sandcastle execution lives in `plugins/dev/skills/engineering/afk/SKILL.md`, with host adapters in `runner-claude.md`, `runner-codex.md`, and `runner-claude-minimax.md` (the MiniMax lane, which pins `MiniMax-M3` and caps effort to `low`). Runtime tier resolution flows through `resolveTier` in `apps/dev/src/core/process-issue.ts` and the config resolver in `apps/dev/src/core/config.ts`.
 - Host hooks live in `plugins/dev/hooks/claude.hooks.json` and `plugins/dev/hooks/codex.hooks.json`; they are host-specific enforcement surfaces, not places to duplicate the policy.
 
 ## Interactive enforcement (issue #456, ADR 0049)
