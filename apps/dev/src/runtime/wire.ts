@@ -577,10 +577,17 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
   const issues: Array<number | string> = [];
   const stages: Array<string | undefined> = [];
 
-  for (const { state, active } of records) {
-    // Statusline counts only genuinely-active workers (pid-live AND fresh), so a
-    // finished worker with a stale state file no longer inflates the wkN badge.
-    if (!active) continue;
+  for (const { state, live } of records) {
+    // Statusline line 2 counts every pid-live worker (the orchestrator process is
+    // alive), NOT only "fresh" ones (#836). The agent stream legitimately goes
+    // silent for minutes during the feedback gate / long builds — the per-minute
+    // heartbeat even stops at post_attempt — so an `active` (180s freshness) gate
+    // dropped a busy worker and made line 2 VANISH mid-test, reading as "fleet
+    // died." A finished worker sets pid:0 (split teardown) and its dir is reclaimed
+    // by the completion sweep, so it still drops here; only a SIGKILL'd worker with
+    // an OS-recycled pid can briefly ghost (bounded by the boot sweep). The record's
+    // `active` flag stays available for a future per-worker quiet badge.
+    if (!live) continue;
 
     workers += 1;
     blocked += state.blocked;
