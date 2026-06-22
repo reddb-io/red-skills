@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   auditComment,
   cascadeAuditComment,
+  executeUnblockSweep,
   findOwnedBranch,
   isParkedMechanical,
   issueFromAFKBranch,
@@ -305,6 +306,84 @@ describe("planUnblockSweep", () => {
     const lookup = lookupFor({ 1: "CLOSED" });
     expect(await planUnblockSweep(candidates, lookup.fetch)).toEqual([]);
     expect(lookup.calls).toEqual([]);
+  });
+});
+
+describe("executeUnblockSweep", () => {
+  const lookupFor = (states: Record<number, string | undefined>) => async (n: number) => states[n];
+
+  // Records the gh mutations the sweep applies, so a test can assert the exact
+  // label rotation + audit comment per promoted issue.
+  function recordingGh() {
+    const edits: Array<{ issue: number; remove: string[]; add: string[] }> = [];
+    const comments: Array<{ issue: number; body: string }> = [];
+    return {
+      edits,
+      comments,
+      gh: {
+        editLabels: async (issue: number, remove: string[], add: string[]) => {
+          edits.push({ issue, remove, add });
+        },
+        comment: async (issue: number, body: string) => {
+          comments.push({ issue, body });
+        },
+      },
+    };
+  }
+
+  it("promotes a fully-unblocked dependent exactly once: -blocked:dependency +ready-for-agent + audit", async () => {
+    const candidates: UnblockCandidate[] = [
+      { number: 7, labels: ["blocked:dependency", "req:101", "req:102"], body: "" },
+    ];
+    const rec = recordingGh();
+    const promoted = await executeUnblockSweep(candidates, lookupFor({ 101: "CLOSED", 102: "CLOSED" }), rec.gh);
+
+    expect(promoted).toEqual([7]);
+    expect(rec.edits).toEqual([{ issue: 7, remove: ["blocked:dependency"], add: ["ready-for-agent"] }]);
+    expect(rec.comments).toEqual([
+      { issue: 7, body: "🤖 /afk unblocked: all dependencies closed (#101, #102)." },
+    ]);
+  });
+
+  it("leaves a partially-blocked dependent untouched (no label edit, no comment)", async () => {
+    const candidates: UnblockCandidate[] = [
+      { number: 7, labels: ["blocked:dependency", "req:101", "req:102"], body: "" },
+    ];
+    const rec = recordingGh();
+    const promoted = await executeUnblockSweep(candidates, lookupFor({ 101: "CLOSED", 102: "OPEN" }), rec.gh);
+
+    expect(promoted).toEqual([]);
+    expect(rec.edits).toEqual([]);
+    expect(rec.comments).toEqual([]);
+  });
+
+  it("never auto-promotes a ready-for-human gate", async () => {
+    const candidates: UnblockCandidate[] = [
+      { number: 7, labels: ["ready-for-human", "req:101"], body: "## Blocked by\n- [ ] #101\n" },
+    ];
+    const rec = recordingGh();
+    const promoted = await executeUnblockSweep(candidates, lookupFor({ 101: "CLOSED" }), rec.gh);
+
+    expect(promoted).toEqual([]);
+    expect(rec.edits).toEqual([]);
+    expect(rec.comments).toEqual([]);
+  });
+
+  it("promotes only the unblockable issues across a mixed batch", async () => {
+    const candidates: UnblockCandidate[] = [
+      { number: 7, labels: ["blocked:dependency", "req:101"], body: "" }, // closed → promote
+      { number: 8, labels: ["blocked:dependency", "req:102"], body: "" }, // open → leave
+      { number: 9, labels: ["ready-for-human", "req:103"], body: "" }, // human gate → never
+    ];
+    const rec = recordingGh();
+    const promoted = await executeUnblockSweep(
+      candidates,
+      lookupFor({ 101: "CLOSED", 102: "OPEN", 103: "CLOSED" }),
+      rec.gh,
+    );
+
+    expect(promoted).toEqual([7]);
+    expect(rec.edits.map((e) => e.issue)).toEqual([7]);
   });
 });
 
