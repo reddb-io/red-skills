@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# red-heartbeat — built-in post_attempt library hook (ADR 0026, PRD #207,
+# issue #212; renamed from post_worker in #226).
+#
+# Stops the orchestrator's per-minute heartbeat side-channel (when a PID is
+# available) and writes the "iteration stopped" boundary marker into the
+# iteration log, migrating the inline heartbeat_stop that used to fire from
+# afk.sh right after run_inner returned.
+#
+# Contract:
+#   stdin   — JSON object: post_attempt context (issue, workspace, result).
+#   stdout  — empty (context unchanged). Pure side-effect.
+#   exit    — 0. Never aborts the post_attempt chain.
+#
+# Env contract (RED_AFK_* exported by the orchestrator):
+#   RED_AFK_HEARTBEAT_PID — PID of the orchestrator heartbeat subprocess;
+#                           empty/unset when no external heartbeat runs
+#                           (e.g. the native TS runtime manages heartbeat
+#                           internally). Killing a stale pid is guarded via
+#                           kill -0.
+#   RED_AFK_ITER_LOG      — absolute path to the iteration log (afk.log);
+#                           the boundary line is appended only when the file
+#                           exists. Unset/empty → skip the marker.
+#
+# Shadowing: place a same-named file in .red/hooks/red-heartbeat to replace
+# this default. An empty (exit-0) file disables it; the orchestrator EXIT
+# trap remains the backstop for heartbeat teardown.
+
+set -uo pipefail
+
+# Drain stdin (context flows through unchanged — emit nothing).
+cat >/dev/null 2>&1 || true
+
+pid="${RED_AFK_HEARTBEAT_PID:-}"
+if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+  kill "$pid" 2>/dev/null || true
+  # Best-effort reap; the sub-shell may already be exiting.
+  wait "$pid" 2>/dev/null || true
+fi
+
+iterlog="${RED_AFK_ITER_LOG:-}"
+if [[ -n "$iterlog" && -f "$iterlog" ]]; then
+  printf '[heartbeat] iteration stopped at %s\n' "$(date -Is)" >> "$iterlog"
+fi
+
+exit 0
