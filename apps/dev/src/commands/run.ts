@@ -788,6 +788,11 @@ export function buildProcessDeps(
       if (stage || discrete) {
         void updateState(join(current.attemptDir, "afk.state.json"), {
           ...(stage ? { "current.stage": stage, "current.last_stream_line": msg.slice(0, 200) } : {}),
+          // Any inner-agent stream activity means we are in the macro `coding`
+          // phase (collapses explore/impl/tests/commit — the fine stage lives in
+          // the description, so the title never flickers, issue #811). Idempotent:
+          // re-stamping `coding` each event is a no-op write.
+          "current.phase": "coding",
           "current.last_event_at": ts,
           ...costPatch,
         }).catch(() => {});
@@ -844,6 +849,15 @@ export function buildProcessDeps(
           ...(info.base ? { "current.base": info.base } : {}),
         }).catch(() => {});
       })();
+    },
+    // Macro-lifecycle phase stamp (issue #811): processIssue calls this at the
+    // orchestrator-owned points the agent stream can't see — `validating` at the
+    // feedback gate, `merging` at landing. Best-effort, swallowed; the calm title
+    // signal must never fail the run.
+    markPhase: (phase) => {
+      void updateState(join(current.attemptDir, "afk.state.json"), {
+        "current.phase": phase,
+      }).catch(() => {});
     },
     historyPath: paths.historyPath,
     historyClock: { ts: new Date().toISOString(), epoch: Math.floor(Date.now() / 1000) },
@@ -1300,6 +1314,11 @@ export async function runCommand(options: RunOptions): Promise<number> {
           "current.started_at": startedAt,
           "current.runner": c.runner,
           "current.stage": "setup",
+          // Macro-lifecycle phase seed (issue #811): the calm signal the
+          // task-mirror title surfaces. `coding` is stamped on the first inner-
+          // agent stream event; `validating`/`merging` by the orchestrator at the
+          // gate/landing steps (deps.markPhase).
+          "current.phase": "setup",
         });
       } catch {
         // Best-effort — a failed seed must never block the worker's actual work.
