@@ -198,6 +198,8 @@ describe("salvageUncommitted (codex DONE-without-commit)", () => {
     expect(adds.map((c) => c[c.length - 1])).toEqual(["src/a.ts", "src/b.ts"]);
     expect(commits).toHaveLength(2);
     for (const c of commits) expect(c[c.length - 2]).toBe("--");
+    // each salvage commit bypasses the consumer repo's commit-phase hooks (#840).
+    for (const c of commits) expect(c).toContain("--no-verify");
     // a single force-with-lease push of HEAD to the branch ref.
     expect(pushes).toHaveLength(1);
     expect(pushes[0]).toEqual([

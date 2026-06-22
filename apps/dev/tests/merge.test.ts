@@ -131,7 +131,8 @@ describe("landMerge (locked path)", () => {
     });
     expect(result.ok).toBe(true);
     expect(result.rolledBack).toBe(false);
-    expect(joined(calls)).toContain('git -C /repo merge --no-ff afk/wAAAA/9-x -m merge: #9 do thing');
+    // `--no-verify` bypasses the consumer repo's commit-phase hooks on the merge (#840).
+    expect(joined(calls)).toContain('git -C /repo merge --no-ff --no-verify afk/wAAAA/9-x -m merge: #9 do thing');
     // Pushes the detached worktree HEAD to the target ref (#572), not a bare branch.
     expect(joined(calls)).toContain("git -C /repo push origin HEAD:refs/heads/work-branch");
     // No rollback on the happy path.
@@ -730,5 +731,10 @@ describe("resolveMergeConflict (one-shot self-resolver)", () => {
     expect(prompt).toContain("line 0");
     expect(prompt).toContain("line 399");
     expect(prompt).not.toContain("line 400");
+  });
+
+  it("instructs the resolver to commit with --no-verify (bypass consumer hooks, #840)", () => {
+    const prompt = buildConflictPrompt(input, "status", "diff");
+    expect(prompt).toContain("git commit --no-edit --no-verify");
   });
 });

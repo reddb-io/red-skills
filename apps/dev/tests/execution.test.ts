@@ -217,11 +217,17 @@ describe("buildRunOptions", () => {
     expect(command).toContain("--force-with-lease");
     expect(command).toContain("HEAD:refs/heads/afk/wZ2R4/42-fix-oauth");
     expect(command).toContain(`git push ${DEFAULT_REMOTE} -u`);
-    // (b) post-commit hook install into the worktree's own gitdir.
-    expect(command).toContain("git rev-parse --git-dir");
-    expect(command).toContain("hooks/post-commit");
+    // (b) post-commit hook install into the worktree's own AFK-owned hooks dir
+    // (`$hd` = `$gd/afk-hooks`, so the path is assembled from shell vars).
+    expect(command).toContain("git rev-parse --absolute-git-dir");
+    expect(command).toContain('hd="$gd/afk-hooks"');
+    expect(command).toContain('"$hd/post-commit"');
     // The installed hook pushes HEAD after every commit (continuous push).
     expect(command).toContain(`git push ${DEFAULT_REMOTE} HEAD --force-with-lease`);
+    // (c) the worktree's core.hooksPath is redirected (worktree-scoped) so the
+    // consumer repo's commit-phase hooks are bypassed for AFK's commits (#840).
+    expect(command).toContain("git config extensions.worktreeConfig true");
+    expect(command).toContain('git config --worktree core.hooksPath "$hd"');
   });
 
   it("re-anchors sandcastle at the caller's cwd (the AFK attempt dir) when supplied", () => {
@@ -302,12 +308,16 @@ describe("buildContinuousPushHook (issue #191)", () => {
     expect(command).toContain("|| true");
   });
 
-  it("scopes the hook to the worktree's linked gitdir, not a fixed .git path", () => {
+  it("scopes the hook + the core.hooksPath redirect to the worktree, not a fixed .git path", () => {
     const { command } = buildContinuousPushHook("afk/x/1-slug", "origin");
-    // Uses `git rev-parse --git-dir` so a linked worktree's hooks dir is used —
-    // the hook cannot leak into the primary checkout or a sibling worktree.
-    expect(command).toContain("git rev-parse --git-dir");
+    // Uses `git rev-parse --absolute-git-dir` so a linked worktree's own gitdir is
+    // used — the hook cannot leak into the primary checkout or a sibling worktree.
+    expect(command).toContain("git rev-parse --absolute-git-dir");
     expect(command).not.toContain('.git/hooks/post-commit"');
+    // The core.hooksPath redirect is set `--worktree` ONLY — never a bare
+    // `git config core.hooksPath`, which would silence the consumer's hooks in the
+    // primary checkout too (the primary branch is sacred, #840).
+    expect(command).not.toContain('git config core.hooksPath');
   });
 
   it("is a single shell command string (the sandcastle host-hook shape)", () => {
