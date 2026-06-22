@@ -221,8 +221,10 @@ export interface FeedbackCheck {
   /** `{script}:{label}` such as `test:root` or `lint:plugins/memory`. */
   name: string;
   script: FeedbackScript;
-  /** Scope label (`root` or the dir). `no-package` when the repo has no package. */
+  /** Scope label (`root` or the dir). `no-package` when the repo has no package. `workspace` for the whole-workspace typecheck. */
   label: string;
+  /** Real package scope (repo-relative dir, `"."` for root, `""` for no-package). Used by the baseline probe. */
+  scope: string;
   status: ValidationStatus;
   record: ValidationRecord;
 }
@@ -269,8 +271,10 @@ export interface RunFeedbackResult {
   baselineDowngraded: readonly string[];
 }
 
-/** A single `(script, scope)` pair to re-run, for the baseline probe. */
+/** A single check to re-run against the baseline, for the baseline probe. */
 export interface BaselineCheckRef {
+  /** The canonical check name — used as the map key so the probe result matches the main run. */
+  name: string;
   script: FeedbackScript;
   scope: string;
 }
@@ -296,10 +300,8 @@ async function runChecksForBaseline(
   now: () => number,
 ): Promise<Map<string, "passed" | "failed">> {
   const out = new Map<string, "passed" | "failed">();
-  for (const { script, scope } of refs) {
+  for (const { name, script, scope } of refs) {
     if (!layout.hasScript(scope, script)) continue;
-    const label = scopeLabel(scope);
-    const name = `${script}:${label}`;
     const dir = scopeDir(baselineWorktree, scope);
     const result = await exec(["pnpm", "-C", dir, script]);
     out.set(name, result.code === 0 ? "passed" : "failed");
@@ -352,7 +354,7 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
         status: "skipped",
         summary: "no package.json",
       });
-      push({ name, script, label: "no-package", status: "skipped", record });
+      push({ name, script, label: "no-package", scope: "", status: "skipped", record });
       continue;
     }
 
@@ -366,7 +368,7 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
           status: "skipped",
           summary: "script missing",
         });
-        push({ name, script, label, status: "skipped", record });
+        push({ name, script, label, scope, status: "skipped", record });
         continue;
       }
 
@@ -379,8 +381,32 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
       if (status === "failed") failed = true;
       const summary = outputSummary(status, `${result.stdout}${result.stderr}`);
       const record = buildValidationRecord({ name, status, command, durationMs, summary });
-      push({ name, script, label, status, record });
+      push({ name, script, label, scope, status, record });
     }
+  }
+
+  // Whole-workspace typecheck: run `pnpm -C <root> typecheck` once after all
+  // scoped checks. This catches cross-package type breaks — a slice that
+  // touches only package A but breaks package B's typecheck will pass the
+  // scoped gate (B is not in scopes) but fail here. Skipped when:
+  //   • the repo has no packages (scopes is empty — no-package repos);
+  //   • "." is already in scopes (the scoped loop already ran typecheck:root,
+  //     which executes the same workspace-wide turbo command);
+  //   • the root package.json does not declare a `typecheck` script.
+  if (scopes.length > 0 && !scopes.includes(".") && layout.hasScript(".", "typecheck")) {
+    const name = "typecheck:workspace";
+    const label = "workspace";
+    const scope = ".";
+    const dir = scopeDir(worktree, ".");
+    const command = `pnpm -C ${dir} typecheck`;
+    const start = now();
+    const result = await exec(["pnpm", "-C", dir, "typecheck"]);
+    const durationMs = now() - start;
+    const status: ValidationStatus = result.code === 0 ? "passed" : "failed";
+    if (status === "failed") failed = true;
+    const summary = outputSummary(status, `${result.stdout}${result.stderr}`);
+    const record = buildValidationRecord({ name, status, command, durationMs, summary });
+    push({ name, script: "typecheck", label, scope, status, record });
   }
 
   // AFK runner improvement: baseline probe for pre-existing failures. Only
@@ -388,7 +414,7 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
   if (failed && baselineWorktree) {
     const failing = checks
       .filter((c) => c.status === "failed")
-      .map((c) => ({ script: c.script, scope: c.label === "no-package" ? "" : c.label === "root" ? "." : c.label }));
+      .map((c) => ({ name: c.name, script: c.script, scope: c.scope }));
     const baselineResults = await runChecksForBaseline(exec, baselineWorktree, failing, layout, now);
 
     // Re-classify any check that ALSO failed on the baseline as
