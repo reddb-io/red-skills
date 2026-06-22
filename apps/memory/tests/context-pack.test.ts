@@ -1,5 +1,10 @@
 import { describe, expect, test } from "vitest";
-import { buildContextPack, type ContextPackStore } from "../src/context-pack.js";
+import {
+  buildContextPack,
+  parseExpandHandle,
+  type ContentCompressor,
+  type ContextPackStore,
+} from "../src/context-pack.js";
 import { buildContextPackViewerArtifact } from "../src/context-pack-viewer.js";
 import type { GraphRow, SearchRow, StoredNode } from "../src/graph-store.js";
 
@@ -35,6 +40,11 @@ class MockStore implements ContextPackStore {
 
   async listEdges(): Promise<Record<string, unknown>[]> {
     return this.edges;
+  }
+
+  /** Existing recall-by-rid path an expand handle round-trips through. */
+  async getNode(rid: number): Promise<StoredNode | null> {
+    return this.nodes.find((node) => node.rid === rid) ?? null;
   }
 }
 
@@ -342,5 +352,121 @@ describe("context packs", () => {
     expect(budgeted.warnings).toEqual([
       expect.objectContaining({ kind: "budget", rids: [2] }),
     ]);
+  });
+});
+
+describe("context pack compression (#827)", () => {
+  const CODE_CONTENT = [
+    'import { signToken } from "./auth.js";',
+    "export function verifyAuthToken(token: string): AuthResult {",
+    "  const decoded = decodeJwt(token);",
+    '  if (!decoded) throw new Error("rejected bad token");',
+    "  return { valid: true, subject: decoded.sub };",
+    "}",
+  ].join("\n");
+
+  test("preserves load-bearing code (signatures/imports/types) and drops the body", async () => {
+    const store = new MockStore([
+      node(1, "symbol", "verifyAuthToken implementation", CODE_CONTENT),
+    ]);
+
+    const pack = await buildContextPack(store, "auth token verifyAuthToken", {
+      budgetChars: 4_000,
+      now: NOW,
+    });
+
+    const entry = pack.entries.find((e) => e.citation.rid === 1);
+    expect(entry).toBeDefined();
+    expect(entry?.compressed).toBe(true);
+    expect(entry?.compressedKind).toBe("code");
+    // Planted needle in the signature + the import survive compression.
+    expect(entry?.excerpt).toContain("verifyAuthToken");
+    expect(entry?.excerpt).toContain("signToken");
+    // Pure body lines are dropped.
+    expect(entry?.excerpt).not.toContain("rejected bad token");
+    expect(pack.markdown).toContain("verifyAuthToken");
+  });
+
+  test("each compressed entry carries an expand handle that round-trips to the full node", async () => {
+    const store = new MockStore([
+      node(1, "symbol", "verifyAuthToken implementation", CODE_CONTENT),
+    ]);
+
+    const pack = await buildContextPack(store, "auth token verifyAuthToken", {
+      budgetChars: 4_000,
+      now: NOW,
+    });
+
+    const entry = pack.entries.find((e) => e.citation.rid === 1);
+    expect(entry?.compressed).toBe(true);
+    expect(entry?.expandHandle).toBe("memory:recall 1");
+    expect(pack.markdown).toContain("memory:recall 1");
+
+    // The handle round-trips back to the full node via the recall-by-rid path.
+    const rid = parseExpandHandle(entry?.expandHandle ?? "");
+    expect(rid).toBe(1);
+    const full = await store.getNode(rid!);
+    expect(full?.properties.content).toBe(CODE_CONTENT);
+    expect(full?.properties.content).toContain("rejected bad token");
+  });
+
+  test("safety fallback: a forced compression error emits the original entry unchanged", async () => {
+    const store = new MockStore([
+      node(1, "symbol", "verifyAuthToken implementation", CODE_CONTENT),
+    ]);
+    const throwing: ContentCompressor = () => {
+      throw new Error("forced compression failure");
+    };
+
+    const pack = await buildContextPack(store, "auth token verifyAuthToken", {
+      budgetChars: 4_000,
+      now: NOW,
+      compressor: throwing,
+    });
+
+    const entry = pack.entries.find((e) => e.citation.rid === 1);
+    expect(entry).toBeDefined();
+    expect(entry?.compressed).toBe(false);
+    expect(entry?.compressedKind).toBeUndefined();
+    // The original (un-truncated-by-compression) excerpt is emitted as-is.
+    expect(entry?.excerpt.length).toBeGreaterThan(0);
+    expect(pack.markdown).not.toContain("Expand:");
+  });
+
+  test("compresses richer recall sets to pack more facts than truncation would", async () => {
+    const long = (label: string) => "x".repeat(400) + ` ${label} config detail`;
+    const structuredNodes = [1, 2, 3, 4, 5].map((rid) =>
+      node(
+        rid,
+        "concept",
+        `Config record ${rid}`,
+        JSON.stringify({ summary: long(`s${rid}`), detail: long(`d${rid}`) }),
+      ),
+    );
+    const store = new MockStore(structuredNodes);
+
+    // Baseline: legacy truncation — slice content to the old 240-char width.
+    const truncate: ContentCompressor = (n) => ({
+      text: String(n.properties.content ?? "").slice(0, 240),
+      kind: "prose",
+      lossy: false,
+    });
+
+    const budgetChars = 1_400;
+    const truncated = await buildContextPack(store, "config record detail", {
+      budgetChars,
+      now: NOW,
+      compressor: truncate,
+    });
+    const compressed = await buildContextPack(store, "config record detail", {
+      budgetChars,
+      now: NOW,
+    });
+
+    expect(compressed.entries.length).toBeGreaterThan(truncated.entries.length);
+    expect(compressed.omittedEntries).toBeLessThan(truncated.omittedEntries);
+    const compressedEntry = compressed.entries[0];
+    expect(compressedEntry.compressed).toBe(true);
+    expect(compressedEntry.compressedKind).toBe("structured");
   });
 });
