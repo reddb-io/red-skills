@@ -65,6 +65,13 @@ export interface AfkInput {
   /** `$` — summed USD cost across live workers, shown only when > 0 (most runners
    * report tokens but not cost, so this is frequently absent). */
   costUsd?: number;
+  /** The fleet runner (`claude` / `codex` / `minimax` / …); first non-empty
+   * across live workers. Rendered as a literal label leading the AFK line.
+   * Themed line 2 only; absent on pre-runner state files. */
+  runner?: string;
+  /** `res` — issues the current supervisor has closed this session (the worker
+   * state's `done`, the monitor's `issues done/total`). Themed line 2 only. */
+  resolved?: number;
   /** #N issue numbers for the in-progress workers, in order. */
   issues: ReadonlyArray<number | string>;
   /** Per-issue `current.stage` aligned by index with {@link issues}. When a
@@ -75,10 +82,24 @@ export interface AfkInput {
   stages?: ReadonlyArray<string | undefined>;
 }
 
+/** Repo-global header inputs (themed line 1, always rendered). Independent of
+ * live AFK workers: it shows where the repo stands even when nothing is running. */
+export interface RepoInput {
+  /** `pr` — open pull-request count (repo-global, GitHub-derived). */
+  openPrs?: number;
+  /** `is` — open issue count (repo-global, GitHub-derived). */
+  openIssues?: number;
+  /** `+N` — LOCAL branch insertions (committed + uncommitted vs origin/main). */
+  localAdded?: number;
+  /** `-N` — LOCAL branch deletions (committed + uncommitted vs origin/main). */
+  localRemoved?: number;
+}
+
 /** All the resolved inputs for one statusline render. */
 export interface StatuslineInput {
   project: ProjectInput;
   claude?: ClaudeInput;
+  repo?: RepoInput;
   afk?: AfkInput;
 }
 

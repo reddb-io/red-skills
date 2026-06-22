@@ -545,6 +545,37 @@ export function countNeedsTriage(ctx: GhContext): Promise<number> {
   return countIssues(ctx, ["--label", "needs-triage"]);
 }
 
+/** Count ALL open issues — the repo-global `is` statusline count (no label
+ * filter). Capped at 500 like {@link countIssues}; a busier repo undercounts,
+ * which is acceptable for a glanceable badge. */
+export function countOpenIssues(ctx: GhContext): Promise<number> {
+  return countIssues(ctx, []);
+}
+
+/** Count open pull requests — the repo-global `pr` statusline count. Mirrors
+ * {@link countIssues} against `gh pr list`. Returns 0 on any gh/auth/parse
+ * failure so the statusline stays fail-open. */
+export async function countOpenPrs(ctx: GhContext): Promise<number> {
+  const r = await runGh(ctx, [
+    "pr",
+    "list",
+    ...repoArgs(ctx),
+    "--state",
+    "open",
+    "--limit",
+    "500",
+    "--json",
+    "number",
+  ]);
+  if (r.code !== 0) return 0;
+  try {
+    const parsed = JSON.parse(r.stdout) as unknown[];
+    return Array.isArray(parsed) ? parsed.length : 0;
+  } catch {
+    return 0;
+  }
+}
+
 /** Count `needs-info` straggler issues. */
 export function countNeedsInfo(ctx: GhContext): Promise<number> {
   return countIssues(ctx, ["--label", "needs-info"]);

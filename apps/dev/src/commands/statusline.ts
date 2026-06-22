@@ -20,7 +20,7 @@ import { join, basename } from "node:path";
 import { type ClaudeInput, type ProjectInput } from "../core/statusline.js";
 import { renderStatuslineThemed } from "../core/statusline-style.js";
 import { loadConfig, getConfig } from "../core/config.js";
-import { collectStatuslineAfk } from "../runtime/wire.js";
+import { collectStatuslineAfk, collectStatuslineRepo } from "../runtime/wire.js";
 import * as gitx from "../runtime/git.js";
 
 /** Read the entire stdin stream as a UTF-8 string (empty when there is none). */
@@ -150,9 +150,13 @@ export async function statuslineCommand(
   const project = await resolveProject(root);
   const claude = resolveClaude(payload);
 
-  // No `gh repo view` round-trip: like statusline.sh, the gh count probes run
-  // from the project root and let gh infer the repo from cwd (repo slug "").
-  const afk = (await collectStatuslineAfk({ root, repo: "", remote: "origin" })) ?? undefined;
+  // No `gh repo view` round-trip: like statusline.sh, the gh probes run from the
+  // project root and let gh infer the repo from cwd (repo slug ""). The repo
+  // header stats (line 1) render ALWAYS; the AFK block (line 2) only with live
+  // workers, so both collectors run every render (each cheap + cached).
+  const repoCtx = { root, repo: "", remote: "origin" };
+  const repo = await collectStatuslineRepo(repoCtx);
+  const afk = (await collectStatuslineAfk(repoCtx)) ?? undefined;
 
   // Theme on by default (the two-line powerline wine layout with chipped KPI
   // numbers); honour NO_COLOR for plain consumers, matching the de-facto colour
@@ -161,7 +165,7 @@ export async function statuslineCommand(
   const color = !process.env.NO_COLOR;
   const columns = Number.parseInt(process.env.COLUMNS ?? "", 10);
   const line = renderStatuslineThemed(
-    { project, claude, afk },
+    { project, claude, repo, afk },
     color,
     Number.isFinite(columns) && columns > 0 ? columns : undefined,
   );

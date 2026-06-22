@@ -54,6 +54,14 @@ async function seedFreshCache(root: string, queue: number, human: number): Promi
   await writeFile(join(dir, "statusline-cache.json"), JSON.stringify({ queue, human, ts }), "utf8");
 }
 
+/** Pre-seed a FRESH repo-stats cache so collectStatuslineRepo never calls gh. */
+async function seedFreshRepoCache(root: string, openPrs: number, openIssues: number): Promise<void> {
+  const dir = join(root, ".red", "tmp");
+  await mkdir(dir, { recursive: true });
+  const ts = Math.floor(Date.now() / 1000);
+  await writeFile(join(dir, "statusline-repo-cache.json"), JSON.stringify({ openPrs, openIssues, ts }), "utf8");
+}
+
 const PAYLOAD = JSON.stringify({
   model: { display_name: "Opus" },
   effort: { level: "high" },
@@ -118,8 +126,11 @@ describe("statusline command — rendered line", () => {
   });
 
   it("emits the full block run from a payload + live workers + cached counts", async () => {
-    // One live worker on #17 with ad12 rm3, blocked 2; cached rq11 rh3.
+    // One live worker on #17 with ad12 rm3, blocked 2, runner claude, done 7;
+    // cached rq11 rh3; repo cache pr3 is24.
     await writeWorkerState(root, "wA", "17-a1", {
+      runner: "claude",
+      done: 7,
       blocked: 2,
       // `started_at` (fresh) is what makes isStateActive treat this pid-live worker
       // as active (ADR 0065): the statusline collector now requires recent activity,
@@ -132,23 +143,33 @@ describe("statusline command — rendered line", () => {
       },
     });
     await seedFreshCache(root, 11, 3);
+    await seedFreshRepoCache(root, 3, 24);
 
     const out = sink();
     const code = await statuslineCommand([root], root, out.stream, fakeStdin(PAYLOAD));
     expect(code).toBe(0);
 
-    // Two powerline rows: header (project/model/ctx) + AFK (backlog + active).
+    // Two powerline rows: header (project/model/ctx/pr·is) + AFK (runner/wk·res/
+    // in-transit/pipeline/issues).
     const rows = out.text().trimEnd().split("\n");
     expect(rows).toHaveLength(2);
-    expect(stripAnsi(rows[0])).toContain("Opus·high");
-    expect(stripAnsi(rows[0])).toContain("47k 24%");
-    expect(stripAnsi(rows[1])).toContain("rq11 rh3 bk2"); // backlog block
-    expect(stripAnsi(rows[1])).toContain("wk1 ad12 rm3 #17"); // active block
+    const l1 = stripAnsi(rows[0]);
+    const l2 = stripAnsi(rows[1]);
+    expect(l1).toContain("Opus·high");
+    expect(l1).toContain("47k 24%");
+    expect(l1).toContain("pr3");
+    expect(l1).toContain("is24");
+    expect(l2).toContain("claude"); // runner
+    expect(l2).toContain("wk1 res7"); // workers + resolved
+    expect(l2).toContain("ad12 rm3"); // in-transit
+    expect(l2).toContain("rq11 rh3 bk2"); // pipeline
+    expect(l2).toContain("#17");
     // The raw output carries the wine-red background SGR (theme on by default).
     expect(out.text()).toContain("\x1b[48;2;114;47;55m");
   });
 
   it("drops the AFK block when there are no live workers", async () => {
+    await seedFreshRepoCache(root, 0, 0);
     const out = sink();
     const code = await statuslineCommand([root], root, out.stream, fakeStdin(PAYLOAD));
     expect(code).toBe(0);
@@ -160,6 +181,7 @@ describe("statusline command — rendered line", () => {
   });
 
   it("renders only the project block outside Claude Code (empty stdin)", async () => {
+    await seedFreshRepoCache(root, 0, 0);
     const out = sink();
     const code = await statuslineCommand([root], root, out.stream, fakeStdin(""));
     expect(code).toBe(0);
