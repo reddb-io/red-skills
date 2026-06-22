@@ -488,6 +488,39 @@ export async function orphanState(
   }
 }
 
+/** Running-supervisor crash-reconcile lookup (#815): whether a dead worker's
+ * last-claimed issue is still stranded in `running` with no terminal envelope.
+ * One `gh issue view` round-trip resolving all three signals
+ * reconcileDeadWorkerClaim needs:
+ *   - `ghOk`           — the read succeeded (false → leave it for the boot sweep).
+ *   - `stillRunning`   — the issue is OPEN and still carries the `running` label
+ *                        (a worker that completed normally already dropped it).
+ *   - `envelopePosted` — some comment already carries a terminal
+ *                        `<details data-attempt-status>` envelope, so the
+ *                        reconcile skips re-commenting. */
+export async function crashedClaimState(
+  ctx: GhContext,
+  issue: number,
+): Promise<{ ghOk: boolean; stillRunning: boolean; envelopePosted: boolean }> {
+  const r = await runGh(ctx, ["issue", "view", String(issue), ...repoArgs(ctx), "--json", "state,labels,comments"]);
+  if (r.code !== 0) return { ghOk: false, stillRunning: false, envelopePosted: false };
+  try {
+    const parsed = JSON.parse(r.stdout) as {
+      state?: string;
+      labels?: Array<{ name?: string }>;
+      comments?: Array<{ body?: string }>;
+    };
+    const labels = Array.isArray(parsed.labels) ? parsed.labels.map((l) => String(l.name ?? "")) : [];
+    const stillRunning = String(parsed.state ?? "OPEN") !== "CLOSED" && labels.includes(LABEL_RUNNING);
+    const envelopePosted = Array.isArray(parsed.comments)
+      ? parsed.comments.some((c) => String(c.body ?? "").includes("data-attempt-status"))
+      : false;
+    return { ghOk: true, stillRunning, envelopePosted };
+  } catch {
+    return { ghOk: false, stillRunning: false, envelopePosted: false };
+  }
+}
+
 /** Branch-cleanup/boot blocker-state lookup: gh issue view --json state → the
  * raw state string ("OPEN" | "CLOSED"), or undefined on a 404/transient miss. */
 export async function blockerState(ctx: GhContext, issue: number): Promise<string | undefined> {
@@ -543,6 +576,37 @@ export function countReadyForHuman(ctx: GhContext): Promise<number> {
 /** Count `needs-triage` straggler issues. */
 export function countNeedsTriage(ctx: GhContext): Promise<number> {
   return countIssues(ctx, ["--label", "needs-triage"]);
+}
+
+/** Count ALL open issues — the repo-global `is` statusline count (no label
+ * filter). Capped at 500 like {@link countIssues}; a busier repo undercounts,
+ * which is acceptable for a glanceable badge. */
+export function countOpenIssues(ctx: GhContext): Promise<number> {
+  return countIssues(ctx, []);
+}
+
+/** Count open pull requests — the repo-global `pr` statusline count. Mirrors
+ * {@link countIssues} against `gh pr list`. Returns 0 on any gh/auth/parse
+ * failure so the statusline stays fail-open. */
+export async function countOpenPrs(ctx: GhContext): Promise<number> {
+  const r = await runGh(ctx, [
+    "pr",
+    "list",
+    ...repoArgs(ctx),
+    "--state",
+    "open",
+    "--limit",
+    "500",
+    "--json",
+    "number",
+  ]);
+  if (r.code !== 0) return 0;
+  try {
+    const parsed = JSON.parse(r.stdout) as unknown[];
+    return Array.isArray(parsed) ? parsed.length : 0;
+  } catch {
+    return 0;
+  }
 }
 
 /** Count `needs-info` straggler issues. */

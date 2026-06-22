@@ -51,6 +51,7 @@ import {
   type Exec as MergeExec,
   type ConflictResolver,
   type WaitForReviewInput,
+  type CiAwaitInput,
 } from "./merge.js";
 import { doLanding } from "./landing.js";
 import { reconcile, type ReconcileInput } from "./reconcile.js";
@@ -60,11 +61,11 @@ import {
   type SectionBodies,
 } from "./envelope-emit.js";
 import { dispatchHooks, type HookExec } from "./hook-dispatcher.js";
-import { recoveryCap, recoveryDecision, type RecoveryEnv } from "./recovery.js";
+import { type RecoveryEnv } from "./recovery.js";
+import { dispose } from "./disposition.js";
 import {
   blockedLabelFor,
   envelopeStatusFor,
-  recoveryReasonFor,
   type AttemptOutcome,
 } from "./attempt-outcome.js";
 import { resolveHooks, type ResolveHooksOptions, type ResolvedHooks, type HookName } from "./hook-config.js";
@@ -83,6 +84,7 @@ import {
 } from "./issue-classifier.js";
 import type { AttemptStatus } from "./envelope.js";
 import type { Runner } from "../types/runner.js";
+import { toAgentRunner } from "./runner-spec.js";
 import type { HistoryClock } from "./history.js";
 
 // ---------- injected IO ----------
@@ -172,7 +174,9 @@ export interface ProcessGit {
 export interface ProcessLookups {
   /** Resolve the effective base (lock > pin > main). */
   base: ResolveBaseDeps;
-  /** True when the session is locked to a branch — drives the landing toggle. */
+  /** True when the session is locked to a branch. Since #842 the lock only
+   * resolves the base; the landing mode is the `worktreeLaunchesPr` flag. The
+   * result still echoes this for observability. */
   isLocked(): Promise<boolean>;
   /** Issue comments projected for the handoff (gh issue view --json comments). */
   comments(issue: number): Promise<HandoffComment[]>;
@@ -294,16 +298,24 @@ export interface ProcessIssueDeps {
    */
   conflictResolver?: ConflictResolver;
   /**
-   * Provision/tear down an isolated detached worktree at `<base>` for the LOCKED
-   * landing (issue #572). The locked merge/push/rollback runs there so a push
-   * reject's `reset --hard` can never discard the primary checkout's WIP. The CLI
-   * binds these to `git worktree add --detach` / `git worktree remove`; absent →
-   * the locked landing is refused (never falls back to mutating the primary).
+   * Landing-mode flag, decoupled from the lock (ADR 0030 amended, #842). Resolved
+   * from `afk.worktree_launches_pull_request` (default `true`) by the CLI. `true`
+   * → the attempt lands via an admin-merged PR into the resolved base; `false` →
+   * a direct merge into that base (no PR, offline). The lock only resolves the
+   * base now, not the mode. Undefined (tests) is treated as `true` (the default).
+   */
+  worktreeLaunchesPr?: boolean;
+  /**
+   * Provision/tear down an isolated detached worktree at `<base>` for the DIRECT
+   * (non-PR) landing (issue #572). The direct merge/push/rollback runs there so a
+   * push reject's `reset --hard` can never discard the primary checkout's WIP. The
+   * CLI binds these to `git worktree add --detach` / `git worktree remove`; absent
+   * → the direct landing is refused (never falls back to mutating the primary).
    */
   makeLandingWorktree?(base: string): Promise<string | null>;
   removeLandingWorktree?(dir: string): Promise<void>;
   /**
-   * Opt-in advisory-review wait for the UNLOCKED admin-PR landing
+   * Opt-in advisory-review wait for the admin-PR landing
    * (`afk.merge.wait_for_review`, ADR 0048). Resolved from config by the CLI:
    * present → the landing holds until the configured review check concludes
    * before the admin-merge, then merges regardless of the verdict (the review
@@ -313,13 +325,23 @@ export interface ProcessIssueDeps {
    */
   waitForReview?: WaitForReviewInput;
   /**
+   * Opt-in CI-aware merge for the UNLOCKED admin-PR landing (#812). Resolved from
+   * config by the CLI (`afk.merge.ci_aware` + `RED_AFK_MERGE_CI_TIMEOUT_S`). When
+   * present, the landing polls the PR's merge state and admin-merges only once it
+   * settles to ready, routing the distinct `ci-failed` / `ci-pending` failure
+   * modes instead of mislabelling a MERGEABLE-but-CI-blocked PR as a merge
+   * conflict (and re-running the whole inner agent). Absent (the default) →
+   * admin-merge immediately. Tests omit it.
+   */
+  ciAwait?: CiAwaitInput;
+  /**
    * PR review gate (ADR 0064 §10, #749). Resolved from `afk.review_gate.*` by the
-   * CLI. When enabled AND the attempt's classified tier is non-mechanical, the
-   * UNLOCKED landing is replaced by a review handoff: open the PR, apply
+   * CLI. When enabled AND the attempt's classified tier is non-mechanical, a
+   * PR landing is replaced by a review handoff: open the PR, apply
    * `ready-for-review` (firing the advisory review), and park the issue for the
    * review→merge flow instead of fast-merging. Mechanical/trivial work — and the
-   * locked path, which never opens a PR — keep the existing fast-merge path.
-   * Absent or disabled (the default) → no review hop. Tests omit it.
+   * direct (non-PR) path, which never opens a PR — keep the existing fast-merge
+   * path. Absent or disabled (the default) → no review hop. Tests omit it.
    */
   reviewGate?: ReviewGateConfig;
   /** Label applied to the PR to fire the advisory review (default
@@ -350,6 +372,26 @@ export interface ProcessIssueDeps {
    * which owns the hook dispatcher). Optional → tests/legacy callers omit it.
    */
   emitHeartbeat?(info: AttemptProgressInfo): void;
+  /**
+   * Worker-vitals provider for the `on_heartbeat` hook context (ADR 0065/#832).
+   * Called on each attempt-guard poll right before the hook fires; returns the
+   * live cumulative WorkerVitals (tools/text/reasoning/reasoning-tokens/loc/cost)
+   * so the `on_heartbeat` stdin-JSON carries the full vitals snapshot and a hook
+   * can drive custom live alerting. The CLI (run.ts) wires it to the attempt's
+   * activity meter + last-observed diff volume. Optional → when absent the hook
+   * context omits `vitals` (byte-for-byte the pre-#832 record).
+   */
+  heartbeatVitals?(): Record<string, number> | undefined;
+  /**
+   * Stamp the attempt's macro-lifecycle phase (issue #811) — the calm signal the
+   * task-mirror title surfaces. processIssue calls it at the orchestrator-owned
+   * lifecycle points the inner-agent stream cannot see: `validating` at the start
+   * of the feedback gate (step 5b) and `merging` at the start of landing (step 6).
+   * The CLI (run.ts) wires it to `updateState(current.phase)`; `setup`/`coding`
+   * are stamped elsewhere (the seed + the agent stream sink). Optional → tests and
+   * legacy callers omit it (the call is `?.`-guarded).
+   */
+  markPhase?(phase: string): void;
   /** History ledger path + clock for the terminal envelope (optional). */
   historyPath?: string;
   historyClock?: HistoryClock;
@@ -519,35 +561,108 @@ async function routeRecovery(
   reason: AttemptOutcome,
   attemptN: number,
 ): Promise<"retry" | "escalate"> {
-  const policyReason = recoveryReasonFor(reason);
-  // A reason with no policy mapping is treated as escalate (page a human),
-  // preserving the pre-recovery default for any unexpected reason.
-  if (policyReason === null) {
-    await editLabelsTagged(deps, issue, [LABEL_RUNNING], [LABEL_HUMAN], reason);
-    return "escalate";
-  }
-  const env = deps.recoveryEnv ?? {};
-  const decision = recoveryDecision(policyReason, attemptN, env);
-  if (decision === "retry") {
-    // CLEAN re-queue (#402): promote to ready-for-agent with NO blocked:* tag.
-    // The issue reached here from `running`, which the claim step already stripped
-    // of any blocked:* reason, so the promotion leaves it hygienic.
-    await deps.gh.editLabels(issue, [LABEL_RUNNING], [LABEL_READY]);
-    return "retry";
-  }
-  // escalate
-  await editLabelsTagged(deps, issue, [LABEL_RUNNING], [LABEL_HUMAN], reason);
-  const cap = recoveryCap(policyReason, env);
-  if (cap !== null) {
-    // A previously-auto-recoverable reason whose retry budget is exhausted —
-    // announce the page so it is not mistaken for a first-attempt human block.
-    const typed = blockedLabelFor(reason) ?? `blocked:${policyReason}`;
-    await deps.gh.comment(
-      issue,
-      `🤖 /afk escalating to ready-for-human: ${typed} retry budget exhausted (attempt ${attemptN}/${cap}).`,
+  // The composer owns the retry-vs-escalate decision, the label sets, and the
+  // budget-exhausted page comment (core/disposition). This site only APPLIES it:
+  //   - retry    → editLabels [running] → [ready-for-agent] CLEAN (#402); the
+  //                issue reached here from `running`, already stripped of any
+  //                blocked:* reason, so the promotion stays hygienic.
+  //   - escalate → ensure + add the typed blocked:* label alongside ready-for-human,
+  //                then post the page comment when a recoverable budget ran out.
+  // The per-issue lifecycle never auto-retries `stalled` (the reaper owns that
+  // bounded re-claim), so we ask the composer for the PER-ISSUE policy view.
+  const disp = dispose(reason, attemptN, deps.recoveryEnv ?? {}, { stalledRecoverable: false });
+
+  // on_recovery_decision (#832, MUTABLE): hand the composer's proposed decision
+  // to a hook, which may override retry↔escalate via a `{"decision":…}` stdout
+  // JSON before any label is applied. An absent / silent hook is a no-op.
+  let decision = disp.decision;
+  const recResult = await fireRecoveryHook(
+    deps,
+    "on_recovery_decision",
+    JSON.stringify({ issue: { number: issue, title: "" }, decision, reason, attempt_n: attemptN }),
+  );
+  const override = parseRecoveryDecision(recResult.context);
+  if (override !== null) decision = override;
+
+  if (decision === "escalate") {
+    if (disp.typedLabel !== null) await deps.gh.ensureLabel(disp.typedLabel);
+    // Build the escalate label set from the typed label (computed independent of
+    // the composer's own decision) so a hook-FORCED escalate still pages cleanly.
+    const addLabels = disp.typedLabel !== null ? [LABEL_HUMAN, disp.typedLabel] : [LABEL_HUMAN];
+    await deps.gh.editLabels(issue, [LABEL_RUNNING], addLabels);
+    // The budget-exhausted page comment only rides the composer's OWN escalate
+    // (it tells a retry-budget story); a hook-forced escalate stays silent.
+    if (decision === disp.decision && disp.escalationComment !== null) {
+      await deps.gh.comment(issue, disp.escalationComment);
+    }
+    // on_blocked (#832): the issue is now parked to a human gate.
+    await fireRecoveryHook(
+      deps,
+      "on_blocked",
+      JSON.stringify({
+        issue: { number: issue, title: "" },
+        blocked_label: disp.typedLabel ?? "",
+        reason,
+        attempt_n: attemptN,
+      }),
     );
+  } else {
+    // retry → CLEAN promotion: running → ready-for-agent, no blocked:* tag.
+    await deps.gh.editLabels(issue, [LABEL_RUNNING], [LABEL_READY]);
   }
-  return "escalate";
+  return decision;
+}
+
+/**
+ * Dispatch ONE lifecycle point from a site that lives outside the processIssue
+ * closure (recovery routing, reconcile bracketing). Resolves the hook list from
+ * the injected config each call (pure + cheap) and returns the full dispatch
+ * result so a mutable point can read its stdout-JSON override back. Never throws
+ * — a recovery hook must not be able to wedge the recovery path.
+ */
+async function fireRecoveryHook(
+  deps: ProcessIssueDeps,
+  name: HookName,
+  context: string,
+): Promise<{ context: string; aborted: boolean }> {
+  try {
+    const resolved = resolveHooks(deps.hooks.config, deps.hooks.resolveOptions);
+    return await dispatchHooks(name, resolved[name], context, deps.hooks.exec, { env: deps.hooks.env ?? {} });
+  } catch {
+    return { context, aborted: false };
+  }
+}
+
+/**
+ * Parse a mutable `on_recovery_decision` hook's stdout JSON for a
+ * `decision` override. Returns the validated decision, or null when the hook
+ * was silent / returned an unrecognised value (→ keep the composer's decision).
+ */
+function parseRecoveryDecision(contextJson: string): "retry" | "escalate" | null {
+  try {
+    const parsed: unknown = JSON.parse(contextJson);
+    if (typeof parsed !== "object" || parsed === null) return null;
+    const decision = (parsed as Record<string, unknown>).decision;
+    return decision === "retry" || decision === "escalate" ? decision : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Parse a mutable `on_feedback_classify` hook's stdout JSON for a `class`
+ * override. Returns the validated classification, or null when the hook was
+ * silent / returned an unrecognised value (→ keep the computed classification).
+ */
+function parseFeedbackClass(contextJson: string): "infra" | "semantic" | null {
+  try {
+    const parsed: unknown = JSON.parse(contextJson);
+    if (typeof parsed !== "object" || parsed === null) return null;
+    const cls = (parsed as Record<string, unknown>).class;
+    return cls === "infra" || cls === "semantic" ? cls : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -573,7 +688,10 @@ export async function processIssue(
   // inherits it (see execution.runAgent — applied to process.env for noSandbox).
   let agentEnv: Record<string, string> | undefined;
 
-  const fireHook = async (name: HookName, context: string): Promise<boolean> => {
+  // Dispatch one point and return the FULL result, so a MUTABLE point (#832:
+  // on_feedback_classify) can read its stdout-JSON override back. fireHook wraps
+  // this for the boolean veto-only callers.
+  const fireHookCtx = async (name: HookName, context: string): Promise<{ context: string; aborted: boolean }> => {
     hooksFired.push(name);
     const result = await dispatchHooks(name, resolved[name], context, deps.hooks.exec, {
       env: deps.hooks.env ?? {},
@@ -585,7 +703,10 @@ export async function processIssue(
       const parsed = parseHookEnv(result.context);
       if (parsed) agentEnv = parsed;
     }
-    return !result.aborted;
+    return result;
+  };
+  const fireHook = async (name: HookName, context: string): Promise<boolean> => {
+    return !(await fireHookCtx(name, context)).aborted;
   };
 
   // ---- 1. claim (ADR 0066: atomic GitHub-native claim) ----
@@ -759,10 +880,7 @@ export async function processIssue(
   // claude-minimax (PRD #788) each map to a first-class provider and pass
   // through; any other value (e.g. the runner-neutral hermes, which has no
   // provider) coerces to claude so the spawn always has a real agent.
-  let activeRunner: Runner =
-    input.runner === "codex" || input.runner === "opencode" || input.runner === "claude-minimax"
-      ? input.runner
-      : "claude";
+  let activeRunner: Runner = toAgentRunner(input.runner);
   let attemptN = input.attempt;
   // Anchor sandcastle at the per-attempt dir so its `.sandcastle/` (worktrees,
   // logs, .env, patches) + git ops land under .red/, never at the repo root.
@@ -811,6 +929,10 @@ export async function processIssue(
       // user hook here (fire-and-forget) AND forwards the progress signal to the
       // CLI-wired sink (firehose record + state.last_progress_at). Never throws.
       onHeartbeat: (info) => {
+        // Enrich the on_heartbeat context with the full worker vitals (ADR 0065/
+        // #832) so an operator hook can build custom live alerting off the
+        // tool/text/reasoning/loc/cost counters, not just the bare liveness ping.
+        const vitals = deps.heartbeatVitals?.();
         void fireHook(
           "on_heartbeat",
           hookContext({
@@ -819,6 +941,7 @@ export async function processIssue(
             workspace: branch,
             runner: activeRunner,
             attempt_n: attemptN,
+            ...(vitals ? { vitals } : {}),
           }),
         );
         deps.emitHeartbeat?.({ ...info, base });
@@ -1007,6 +1130,20 @@ export async function processIssue(
       };
     } else if (run.outcome === "timeout") {
       // ---- attempt progress guard fired: alive but no new commit within the cap. ----
+      // on_attempt_timeout (#832): the commit-anchored progress guard (ADR 0044/
+      // 0045) just fired. Announce it before the no-agent reconcile / escalation
+      // routing decides what to do with the parked branch.
+      await fireHook(
+        "on_attempt_timeout",
+        hookContext({
+          issue,
+          title: input.title,
+          workspace: branch,
+          runner: activeRunner,
+          attempt_n: attemptN,
+          reason: "timeout",
+        }),
+      );
       // Before escalating, try the ADR 0055 NO-AGENT reconcile: a stalled attempt
       // frequently carries a COMPLETE, green branch — the agent finished the work
       // but stalled before a final non-committing step, so the guard fired on a
@@ -1020,6 +1157,19 @@ export async function processIssue(
       const reconciled = await reconcile(
         { ...deps, fireHook },
         reconcileInputFor(input, current, workerBranch, base, labels, activeRunner),
+      );
+      // on_reconcile (#832): the no-agent reconcile (ADR 0055) re-validated the
+      // parked mechanical branch and landed / parked / skipped it. Surface the
+      // outcome so an operator can track auto-landings without re-running the agent.
+      await fireHook(
+        "on_reconcile",
+        hookContext({
+          issue,
+          title: input.title,
+          workspace: branch,
+          attempt_n: attemptN,
+          outcome: reconciled.outcome,
+        }),
       );
       if (reconciled.outcome === "landed") {
         // reconcile already closed the issue, dropped labels, deleted the remote
@@ -1101,14 +1251,53 @@ export async function processIssue(
     // fault — the #791/#792/#793/#794 cause) is downgraded to `skipped` instead
     // of parking a green branch. The baseline probe only runs on failure, so the
     // happy path costs nothing.
+    // Macro phase → `validating` (issue #811): the feedback gate is starting.
+    deps.markPhase?.("validating");
     const changedFiles = await deps.lookups.changedFiles(workerBranch, base);
+    const feedbackScopes = relevantScopes(deps.layout, changedFiles);
+    // pre_feedback (#832): a pre_* gate around the scope-derived feedback run — a
+    // non-zero exit VETOES validation and routes the attempt to the abort-after-
+    // claim terminal (the branch/PR is preserved, the issue returns to the queue).
+    if (
+      !(await fireHook(
+        "pre_feedback",
+        hookContext({ issue, title: input.title, workspace: branch, scopes: feedbackScopes }),
+      ))
+    ) {
+      return await abortAfterClaim(deps, input, branch, base, hooksFired, "pre_feedback");
+    }
     const feedback: RunFeedbackResult = await runFeedback(deps.pnpm, {
       worktree: workerBranch,
-      scopes: relevantScopes(deps.layout, changedFiles),
+      scopes: feedbackScopes,
       layout: deps.layout,
       now: deps.nowEpoch,
       baselineWorktree: base,
     });
+    // on_baseline_probe (#832): the "already failing on main?" probe (ADR 0071)
+    // runs ONLY when the gate failed AND a baseline worktree was supplied. Report
+    // whether it downgraded any pre-existing-on-baseline failures.
+    if (!feedback.ok) {
+      await fireHook(
+        "on_baseline_probe",
+        hookContext({
+          issue,
+          title: input.title,
+          workspace: branch,
+          ok: feedback.ok,
+          downgraded: feedback.baselineDowngraded,
+        }),
+      );
+    }
+    // post_feedback (#832): the scope-derived gate has produced its verdict.
+    await fireHook(
+      "post_feedback",
+      hookContext({
+        issue,
+        title: input.title,
+        workspace: branch,
+        result: { status: feedback.ok ? "pass" : "fail" },
+      }),
+    );
     if (!feedback.ok) {
       // The feedback-failed path also has a structured sidecar — persist it for
       // Memory (best-effort) just like the done path does.
@@ -1121,7 +1310,17 @@ export async function processIssue(
       // human. The simple→complex escalation only helps for SEMANTIC failures —
       // bumping the tier can't fix a broken submodule, so it would just burn a
       // retry for nothing.
-      const isInfra = isInfraFeedbackFailure(feedback);
+      let isInfra = isInfraFeedbackFailure(feedback);
+      // on_feedback_classify (#832, MUTABLE): hand the INFRA-vs-SEMANTIC verdict
+      // (ADR 0071) to a hook, which may override it via a `{"class":…}` stdout
+      // JSON. An operator that knows a given failure shape is really infra (or
+      // really the worker's fault) can steer the recovery policy this way.
+      const classResult = await fireHookCtx(
+        "on_feedback_classify",
+        hookContext({ issue, title: input.title, workspace: branch, class: isInfra ? "infra" : "semantic" }),
+      );
+      const classOverride = parseFeedbackClass(classResult.context);
+      if (classOverride !== null) isInfra = classOverride === "infra";
       if (!isInfra && activeTaskClass === "simple" && !escalatedSimpleFeedback) {
         escalatedSimpleFeedback = true;
         activeTaskClass = "complex";
@@ -1183,24 +1382,31 @@ export async function processIssue(
     break;
   }
 
-  // ---- 6. push the worker branch, integrate, then land per lock state ----
-  // The entire lock-toggled landing (push → pre_merge → integrate → land →
-  // locked conflict self-resolve → post_merge) is owned by doLanding (landing.ts,
-  // ADR 0030/0031). A non-ok result maps to the merge-conflict terminal-failure
-  // path; on success the FINAL merge sha is read below (post post_merge), exactly
-  // as before, to drive the done close.
+  // ---- 6. push the worker branch, integrate, then land per the flag ----
+  // The entire flag-toggled landing (push → pre_merge → integrate → land →
+  // direct conflict self-resolve → post_merge) is owned by doLanding (landing.ts,
+  // ADR 0030 amended by #842 / 0031). A non-ok result maps to the merge-conflict
+  // terminal-failure path; on success the FINAL merge sha is read below (post
+  // post_merge), exactly as before, to drive the done close.
+  //
+  // Landing MODE is decoupled from the lock (#842): the lock only resolved `base`
+  // (above); `afk.worktree_launches_pull_request` (default true) decides PR vs
+  // direct merge. `locked` is still read for the result's observability echo.
   const locked = await deps.lookups.isLocked();
+  const openPr = deps.worktreeLaunchesPr !== false;
 
   // ---- 6a. PR review gate (ADR 0064 §10, #749) ----
-  // On the UNLOCKED path, a NON-mechanical change is handed off for a fresh-agent
-  // review instead of fast-merged: open the PR, apply the review label (firing
-  // the advisory review from #746), and park the issue for the review→merge flow.
-  // Mechanical/trivial work — and the locked path, which never opens a PR — keep
-  // the existing fast-merge path untouched.
-  if (!locked && deps.reviewGate && shouldRequestReview(activeTaskClass, deps.reviewGate)) {
+  // When a PR is opened (openPr), a NON-mechanical change is handed off for a
+  // fresh-agent review instead of fast-merged: open the PR, apply the review label
+  // (firing the advisory review from #746), and park the issue for the review→merge
+  // flow. Mechanical/trivial work — and the direct (non-PR) path, which never opens
+  // a PR — keep the existing fast-merge path untouched.
+  if (openPr && deps.reviewGate && shouldRequestReview(activeTaskClass, deps.reviewGate)) {
     return await handoffForReview(common, activeTaskClass, validationSidecar);
   }
 
+  // Macro phase → `merging` (issue #811): the lock-toggled landing is starting.
+  deps.markPhase?.("merging");
   const landing = await doLanding(
     {
       mergeExec: deps.mergeExec,
@@ -1208,10 +1414,12 @@ export async function processIssue(
       fireHook,
       conflictResolver: deps.conflictResolver,
       waitForReview: deps.waitForReview,
+      ciAwait: deps.ciAwait,
       makeLandingWorktree: deps.makeLandingWorktree,
       removeLandingWorktree: deps.removeLandingWorktree,
     },
     {
+      openPr,
       locked,
       repo: input.repo,
       repoDir: input.repoDir,
@@ -1235,6 +1443,13 @@ export async function processIssue(
     },
   );
   if (!landing.ok) {
+    // CI-aware landing failures (#812): a completed, MERGEABLE PR the admin-merge
+    // could not land because the `enforce_admins` base's required checks failed /
+    // are still pending. NOT a merge conflict — preserve the OPEN PR and park to
+    // ready-for-human with `blocked:ci` rather than re-running the whole agent.
+    if (landing.reason === "ci-failed" || landing.reason === "ci-pending") {
+      return await ciBlocked(common, landing.reason, landing.prNumber);
+    }
     return await mergeFailed(common, landing.reason, landing.locked);
   }
 
@@ -1440,6 +1655,20 @@ function blockerForFailure(outcome: ProcessOutcome, sections: SectionBodies): Cu
         summary: oneLine(sections.log, "Worker branch could not be merged cleanly."),
         next: "Resolve the merge conflict or add guidance for the next agent attempt.",
       };
+    case "ci-failed":
+      return {
+        status: "blocked",
+        kind: "ci",
+        summary: oneLine(sections.log, "A required status check failed on the completed, mergeable PR."),
+        next: "Fix the failing required check on the open PR, then merge it (no full agent re-run needed).",
+      };
+    case "ci-pending":
+      return {
+        status: "blocked",
+        kind: "ci",
+        summary: oneLine(sections.log, "Required status checks were still pending on the completed, mergeable PR."),
+        next: "Wait for the required checks to go green, then merge the open PR (no full agent re-run needed).",
+      };
     default:
       return null;
   }
@@ -1571,6 +1800,59 @@ async function mergeFailed(c: StageCommon, _reason: string, locked = false): Pro
 }
 
 /**
+ * CI-aware landing handoff (#812). The completed UNLOCKED attempt produced a
+ * MERGEABLE PR, but the admin-merge could not land it because the
+ * `enforce_admins` base's required checks FAILED (`ci-failed`) or were still
+ * PENDING past the CI-wait timeout (`ci-pending`). This is NOT a merge conflict
+ * and the work is DONE and committed on the open PR — so DO NOT re-run the agent:
+ * park to ready-for-human with the truthful `blocked:ci` label (routeRecovery
+ * escalates because ci-* carry no recovery budget), leave the PR + worker branch
+ * in place, and post a self-explanatory comment so a human / CI-aware finisher
+ * drives the existing PR to merge. The attempt dir is preserved; nothing swept.
+ */
+async function ciBlocked(
+  c: StageCommon,
+  outcome: "ci-failed" | "ci-pending",
+  prNumber?: number,
+): Promise<ProcessIssueResult> {
+  const { deps, input } = c;
+  const prRef = prNumber !== undefined ? `PR #${prNumber}` : "the open PR";
+  const reason =
+    outcome === "ci-failed"
+      ? `a required status check FAILED on ${prRef}`
+      : `required status checks were still pending on ${prRef} past the CI-wait timeout`;
+  // routeRecovery escalates (ci-* map to no recovery policy → ready-for-human +
+  // blocked:ci). The branch is intact, so the open PR is the durable artifact.
+  await routeRecovery(deps, input.issue, outcome, input.attempt);
+  await writeCurrentBlockerBestEffort(deps, input, blockerForFailure(outcome, { log: reason }));
+  const posted = await emitFailure(c, envelopeStatusFor(outcome), "ci", {
+    log:
+      `Inner agent completed (DONE, committed) and ${prRef} is MERGEABLE, but ${reason}. ` +
+      `The work is NOT lost — drive the open PR to merge once CI is green (no agent re-run needed).`,
+  });
+  await deps.gh.comment(
+    input.issue,
+    `🤖 /afk: ${reason}. The implementation is complete and committed on ${prRef} (MERGEABLE — not a merge conflict). ` +
+      `Holding for a human / CI-aware finisher to land the existing PR; the inner agent was NOT re-run (#812).`,
+  );
+  await recordAttemptBestEffort(c, outcome, {
+    durationS: deps.nowEpoch() - c.startedEpoch,
+    notes: reason,
+  });
+  await deps.claimLock.release(input.issue);
+  return {
+    outcome,
+    issue: input.issue,
+    branch: c.branch,
+    base: c.base,
+    hooksFired: c.hooksFired,
+    envelopePosted: posted,
+    preserved: true,
+    swept: false,
+  };
+}
+
+/**
  * Review-gate handoff (ADR 0064 §10, #749). The completed UNLOCKED attempt is
  * non-mechanical, so hold the merge for a fresh-agent review: push the worker
  * branch, open (or reuse) its PR and apply the review label — which fires the
@@ -1676,7 +1958,7 @@ async function runCloseCascade(deps: ProcessIssueDeps, closedIssue: number): Pro
 
     const plans = planCloseCascade(closedIssue, dependents);
     for (const p of plans) {
-      await deps.gh.editLabels(p.number, [LABEL_DEPENDENCY], [LABEL_READY]);
+      await deps.gh.editLabels(p.number, [LABEL_DEPENDENCY, ...p.reqLabels], [LABEL_READY]);
       await deps.gh.comment(p.number, p.comment);
     }
   } catch (err) {
@@ -1912,6 +2194,10 @@ function postAttemptContext(
     workspace,
     result: { status, outcome },
     attempt_n: input.attempt,
+    // Per-attempt file paths exported as RED_AFK_ITER_LOG / RED_AFK_STATE_FILE
+    // so the red-heartbeat and red-envelope library hooks can write to them.
+    iter_log: `${input.attemptDir}/afk.log`,
+    state_file: `${input.attemptDir}/afk.state.json`,
   });
 }
 

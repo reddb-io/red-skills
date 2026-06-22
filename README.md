@@ -476,6 +476,7 @@ Composable. Boring on purpose where boring is enough. Sharp where it matters.
 | **[report-bug](./plugins/dev/skills/engineering/report-bug/SKILL.md)** | Interview the user about a bug, then file a `type:bug needs-triage` issue on the tracker. Seeds from conversation context when invoked with no argument. |
 | **[urgent](./plugins/dev/skills/engineering/urgent/SKILL.md)** | File a `priority:urgent` issue that bypasses `/triage` and jumps the head of the `/afk` queue, ahead of any `--prd N` / `--issues a,b,c` filter. Use when something is on fire. |
 | **[improve-codebase-architecture](./plugins/dev/skills/engineering/improve-codebase-architecture/SKILL.md)** | Finds deepening opportunities in the codebase, informed by the active glossary (`.red/contexts/**` in multi-context repos) and `.red/adr/`. |
+| **[implement](./plugins/dev/skills/engineering/implement/SKILL.md)** | Interactive, human-driven PRD execution: guided `/tdd` at pre-agreed seams, full-suite gate, `/review`, and `/ship`. Interactive counterpart to the autonomous `/afk`. |
 | **[tdd](./plugins/dev/skills/engineering/tdd/SKILL.md)** | Red-green-refactor loop; one vertical slice at a time. |
 | **[to-issues](./plugins/dev/skills/engineering/to-issues/SKILL.md)** | Breaks a plan, spec, or PRD into independently-grabbable issues via vertical slices. |
 | **[to-prd](./plugins/dev/skills/engineering/to-prd/SKILL.md)** | Turns the current conversation into a PRD; publishes as a GitHub issue. |
@@ -485,6 +486,7 @@ Composable. Boring on purpose where boring is enough. Sharp where it matters.
 | **[doctor](./plugins/dev/skills/engineering/doctor/SKILL.md)** | Adoption/process doctor — reports label-vocab conformance, AGENTS≡CLAUDE parity, statusline drift, MCP wiring, `blocked:*` hygiene, and version coherence, tagging each gap with its fix-home. Read-only by default; `--fix` heals every finding (safe ones batched, hard-to-reverse ones confirmed per-item). The recurring counterpart to `/setup-red-skills`. |
 | **[review-adrs](./plugins/dev/skills/engineering/review-adrs/SKILL.md)** | Decision-record doctor — lints `.red/adr/` for contradictions, missing supersession, stale references, number collisions, and controversial decisions, then reconciles each finding through a one-question-at-a-time interview (like `/start`) and consolidates every agreement into a single actionable PRD on the tracker via `/to-prd`. |
 | **[setup-statusline](./plugins/dev/skills/engineering/setup-statusline/SKILL.md)** | Installs or inspects the RedSkills Claude Code statusline, rendering the live AFK block via `node bin/afk.mjs statusline`. |
+| **[resolving-merge-conflicts](./plugins/dev/skills/engineering/resolving-merge-conflicts/SKILL.md)** | Guided merge-conflict resolution: inspect state, find each side's original intent, resolve every hunk preserving both intents, then run the project's automated checks. Never abort. |
 
 </details>
 

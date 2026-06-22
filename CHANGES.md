@@ -2,9 +2,40 @@
 
 Records every change made to skills inherited from [`mattpocock/skills`](https://github.com/mattpocock/skills), plus new skills created by reddb.io. See the rules in [CLAUDE.md](./CLAUDE.md).
 
-Upstream base: `mattpocock/skills@694fa30311e02c2639942308513555e61ee84a6f` (see `.upstream`).
+Upstream base: `mattpocock/skills@6eeb81b5fcfeeb5bd531dd47ab2f9f2bbea27461` (see `.upstream`).
 
 ---
+
+## implement (engineering)
+
+- **status**: added
+- **upstream**: `6eeb81b`
+- **why**: upstream skill ported and adapted — fills the "implement a PRD myself, guided" gap distinct from the autonomous `/afk` fleet; no equivalent existed in red-skills
+- **what changed**:
+  - ported upstream 8-line `implement` SKILL.md, rewrote to RedSkills house style (`<what-to-do>`/`<supporting-info>`, 8-technique sentence style)
+  - made the AFK-vs-implement boundary explicit: `/implement` is interactive (human-driven, single session, `/ship` to land); `/afk` is autonomous (fleet, claim→worktree→gate→merge→close unattended)
+  - replaced "commit to current branch" with the worktree → `/ship` loop
+  - wired to our `/tdd`, `/review`, `/to-issues`, and GitHub Issues PRD model instead of Matt's
+
+## resolving-merge-conflicts (engineering)
+
+- **status**: added
+- **upstream**: `6eeb81b`
+- **why**: adopt the upstream conflict-resolution skill into the engineering bucket; no existing human-facing counterpart (AFK handles conflict *recovery* internally, but there was no skill for interactive use)
+- **what changed**:
+  - new skill at `plugins/dev/skills/engineering/resolving-merge-conflicts/SKILL.md`
+  - ported the upstream loop (inspect state → find each side's intent → resolve every hunk → run checks) and rewrote to RedSkills house style (`<what-to-do>`/`<supporting-info>` split + 8 SKILL.md writing techniques)
+  - registered in root `README.md`, `plugins/dev/skills/engineering/README.md`, and `plugins/dev/.claude-plugin/plugin.json`
+
+## upstream drift review — 694fa30 → 6eeb81b (#744)
+
+- **status**: reviewed
+- **upstream**: `6eeb81b`
+- **why**: `red-upstream-watch` flagged ~30 upstream commits past the pinned SHA (#744). Reviewed the full compare, recorded the disposition below, and bumped `.upstream` to `6eeb81b`.
+- **what changed**:
+  - **Adopting (house-style ports, tracked as separate issues):** `resolving-merge-conflicts` (#807, net-new), `implement` — interactive PRD execution distinct from the autonomous `/afk` (#808), `codebase-design` deep-module vocabulary — reconcile with `improve-codebase-architecture` (#809). Each lands its own `status: added` entry when it merges.
+  - **Kept despite upstream removal (deliberate divergence):** `write-a-skill` — upstream replaced it with `writing-great-skills`; ours evolved further under PRD #776. `zoom-out` — part of our context stack (`/context` references graph-aware zoom-out).
+  - **Skipped:** `ask-matt` (Matt-specific); `domain-modeling` / `grilling` / `grill-me` / `grill-with-docs` (folded into our `start` + the `.red/` multi-context glossary); `writing-great-skills` (superseded by our `write-a-skill` + the 8-technique convention); `decision-mapping` (upstream in-progress draft); `teach` / `edit-article` / `caveman` (not in our set); `setup-matt-pocock-skills` (we have `setup-red-skills`); all release/changeset/package/CHANGELOG infra (we use `red-release`); and refinements to `triage` / `tdd` / `to-issues` / `to-prd` / `prototype` / `handoff` / `review` / `improve-codebase-architecture` (already rewritten under the PRD #776 convention sweep — adopting upstream diffs would conflict).
 
 ## runner-claude-minimax (engineering/afk) — fourth AFK runner targeting MiniMax Anthropic-compatible endpoint
 
@@ -1956,3 +1987,10 @@ Upstream base: `mattpocock/skills@694fa30311e02c2639942308513555e61ee84a6f` (see
 - **provenance**: upstream-derived from `mattpocock/skills`; imported during the dev-plugin marketplace restructuring (`7792235`) and later removed in `8e02ac2` / `a49666c`.
 - **why**: upstream AI Hero / Total TypeScript course-exercise scaffolder (targets `pnpm ai-hero-cli internal lint` + an `exercises/` tree); irrelevant to reddb.io engineering.
 - **what changed**: deleted `plugins/dev/skills/misc/scaffold-exercises/`; removed from `plugins/dev/.claude-plugin/plugin.json`, the root `README.md` table, and the `misc/` bucket README. `.codex-plugin` drops it via its `./skills/` wildcard.
+
+## codebase-design (engineering)
+
+- **status**: skipped — folded into improve-codebase-architecture
+- **upstream**: `6eeb81b`
+- **why**: The deep-module vocabulary is referenced by exactly one skill (`improve-codebase-architecture`), so a standalone shared-vocabulary skill adds indirection without serving a second consumer. All upstream content already exists in the ICA skill directory: the vocabulary (`codebase-design/SKILL.md` ≡ `LANGUAGE.md`), the deepening guide (`DEEPENING.md`), and the design-it-twice pattern (`DESIGN-IT-TWICE.md` ≡ `INTERFACE-DESIGN.md`).
+- **what changed**: no files added, removed, or modified; upstream `codebase-design` skill recorded here as not adopted.

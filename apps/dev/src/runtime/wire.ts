@@ -351,7 +351,7 @@ export function makeRunAgent(
 // ---------- monitor inputs ----------
 
 import type { CompactWorker, FleetState, SlotDetail } from "../core/monitor.js";
-import { parseState, isStateLive, isStateActive } from "../core/state.js";
+import { readWorkerState, readWorkerStates } from "../core/worker-state-reader.js";
 import type { WorkerVitals } from "../types/state.js";
 import { parseHistoryLines, type HistoryRecord } from "../core/history.js";
 
@@ -425,17 +425,13 @@ export async function readFleetState(path: string): Promise<FleetState | null> {
  * (small fleet → a handful of cheap git calls, like the statusline does). */
 export async function collectMonitorInputs(root = process.cwd()): Promise<MonitorInputs> {
   const paths = afkPaths(root);
-  const stateFiles = await fsx.globWorkerStates(paths.workersRoot);
+  // The ONE owner reads + normalizes + liveness-tags every worker state file
+  // (core/worker-state-reader). The dashboard's `[live]` badge uses the
+  // pid + freshness verdict (`active`); the `[quiet]` badge falls back to the
+  // pid-only verdict (`live`, surfaced here as `pidLive`).
+  const records = await readWorkerStates(paths.workersRoot);
   const workers: CompactWorker[] = [];
-  for (const file of stateFiles) {
-    const text = await fsx.readText(file);
-    if (text === null) continue;
-    let state;
-    try {
-      state = parseState(JSON.parse(text));
-    } catch {
-      continue;
-    }
+  for (const { state, active, live: pidLive } of records) {
     // Diff volume: committed + uncommitted work for the attempt, measured from
     // the branch's merge-base with origin/main. Prefer the state file's persisted
     // counts; fall back to a live `git diff --shortstat` of the worktree when both
@@ -471,9 +467,12 @@ export async function collectMonitorInputs(root = process.cwd()): Promise<Monito
           cost_usd: state.current.cost_usd,
         },
       },
-      // Display liveness requires BOTH a resolving pid AND recent activity, so a
-      // finished worker whose pid is shared/recycled stops rendering as `[live]`.
-      live: isStateActive(state),
+      // active = pid resolves + agent-lane freshness → [live] badge; a finished
+      // worker whose pid is shared/recycled stops rendering as `[live]`.
+      // pidLive = pid resolves regardless of freshness → [quiet] badge when the
+      // agent lane is idle (e.g. post_attempt gate/commit) but the process lives.
+      live: active,
+      pidLive,
       diffAdded: added,
       diffRemoved: removed,
     });
@@ -487,7 +486,7 @@ export async function collectMonitorInputs(root = process.cwd()): Promise<Monito
 
 // ---------- statusline inputs ----------
 
-import type { AfkInput } from "../core/statusline.js";
+import type { AfkInput, RepoInput } from "../core/statusline.js";
 
 /** The TTL (seconds) of the GitHub-derived queue/human counts cache, matching
  * statusline.sh's 60 s window. */
@@ -553,15 +552,17 @@ function writeStatuslineCacheAtomic(path: string, cache: StatuslineCache): void 
  * collect the in-progress issue numbers in directory order. Returns null when
  * there are no live workers, so the caller drops the whole AFK block.
  *
- * The 📋 ready-for-agent / 🆘 ready-for-human counts are GitHub-derived and
+ * The `rq` ready-for-agent / `rh` ready-for-human counts are GitHub-derived and
  * cached for {@link STATUSLINE_CACHE_TTL_S} seconds in
- * `.red/tmp/statusline-cache.json`: a cold cache refreshes synchronously, a
- * fresh cache is read as-is, and a stale cache is read AND refreshed in the
- * background (the bash `( refresh_cache ) &`), so the render stays fast.
+ * `.red/tmp/statusline-cache.json`. The cache refreshes on every stale or cold
+ * render — awaited with a bounded deadline so a hanging gh CLI cannot block the
+ * statusline process indefinitely. The refresh runs even when there are no live
+ * workers so the queue/human badges stay current while the fleet is idle.
  */
 export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput | null> {
   const paths = afkPaths(ctx.root);
-  const stateFiles = await fsx.globWorkerStates(paths.workersRoot);
+  // Same single owner as the monitor (core/worker-state-reader).
+  const records = await readWorkerStates(paths.workersRoot);
   const gitCtx: gitx.GitContext = { cwd: ctx.root };
 
   let workers = 0;
@@ -571,29 +572,36 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
   let waiting = 0;
   let tokens = 0;
   let costUsd = 0;
+  // `runner` is the fleet runner (first non-empty across live workers — a fleet
+  // is single-runner in practice). `resolved` is the supervisor's issues-closed
+  // count, already persisted as `state.done` (the same field the monitor renders
+  // as `issues done/total`), maxed across workers since they all mirror it.
+  let runner = "";
+  let resolved = 0;
   const issues: Array<number | string> = [];
   const stages: Array<string | undefined> = [];
 
-  for (const file of stateFiles) {
-    const text = await fsx.readText(file);
-    if (text === null) continue;
-    let state;
-    try {
-      state = parseState(JSON.parse(text));
-    } catch {
-      continue;
-    }
-    // Statusline counts only genuinely-active workers (pid-live AND fresh), so a
-    // finished worker with a stale state file no longer inflates the 🤖N badge.
-    if (!isStateActive(state)) continue;
+  for (const { state, live } of records) {
+    // Statusline line 2 counts every pid-live worker (the orchestrator process is
+    // alive), NOT only "fresh" ones (#836). The agent stream legitimately goes
+    // silent for minutes during the feedback gate / long builds — the per-minute
+    // heartbeat even stops at post_attempt — so an `active` (180s freshness) gate
+    // dropped a busy worker and made line 2 VANISH mid-test, reading as "fleet
+    // died." A finished worker sets pid:0 (split teardown) and its dir is reclaimed
+    // by the completion sweep, so it still drops here; only a SIGKILL'd worker with
+    // an OS-recycled pid can briefly ghost (bounded by the boot sweep). The record's
+    // `active` flag stays available for a future per-worker quiet badge.
+    if (!live) continue;
 
     workers += 1;
     blocked += state.blocked;
+    if (runner === "" && state.runner) runner = state.runner;
+    if (state.done > resolved) resolved = state.done;
     // Read the worker's signals through the canonical WorkerVitals contract
     // (ADR 0065) rather than ad-hoc field access — `current` satisfies it.
     const vitals: WorkerVitals = state.current;
     // Silent-agent signal: cumulative heartbeat windows with no new stream
-    // event. Summed across the fleet and shown as 💤N so a wedged-but-not-dead
+    // event. Summed across the fleet and shown as wtN so a wedged-but-not-dead
     // worker is visible.
     waiting += vitals.waiting_count;
     // Cost group: per-worker token spend + USD, summed for the fleet.
@@ -621,9 +629,8 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
     }
   }
 
-  if (workers <= 0) return null;
-
-  // GitHub-derived counts with a 60 s cache.
+  // GitHub-derived counts with a 60 s cache — refreshed before the early-return
+  // so queue/human stay current even when the fleet is idle (workers == 0).
   const cachePath = join(paths.tmpDir, "statusline-cache.json");
   const nowS = Math.floor(Date.now() / 1000);
   const cached = readStatuslineCache(cachePath);
@@ -647,11 +654,87 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
     // or on any gh/auth/network error.
     await withTimeout(refresh(), STATUSLINE_GH_COLD_TIMEOUT_MS, undefined).catch(() => undefined);
   } else if (nowS - cached.ts >= STATUSLINE_CACHE_TTL_S) {
-    // Stale: use the cached numbers now, refresh in the background.
-    void refresh().catch(() => undefined);
+    // Stale: await a bounded refresh so the cache is rewritten before the
+    // process exits. Shows the previous value on timeout (fail-open).
+    await withTimeout(refresh(), STATUSLINE_GH_COLD_TIMEOUT_MS, undefined).catch(() => undefined);
   }
 
-  return { workers, queue, human, blocked, added, removed, waiting, tokens, costUsd, issues, stages };
+  if (workers <= 0) return null;
+
+  return { workers, queue, human, blocked, added, removed, waiting, tokens, costUsd, runner, resolved, issues, stages };
+}
+
+interface RepoStatsCache {
+  openPrs: number;
+  openIssues: number;
+  ts: number;
+}
+
+function readRepoStatsCache(path: string): RepoStatsCache | null {
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<RepoStatsCache>;
+    return {
+      openPrs: Number(parsed.openPrs ?? 0),
+      openIssues: Number(parsed.openIssues ?? 0),
+      ts: Number(parsed.ts ?? 0),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeRepoStatsCacheAtomic(path: string, cache: RepoStatsCache): void {
+  try {
+    const tmp = `${path}.tmp`;
+    writeFileSync(tmp, JSON.stringify(cache), "utf8");
+    renameSync(tmp, path);
+  } catch {
+    // best-effort, like the bash `|| true`
+  }
+}
+
+/**
+ * Repo-global statusline header inputs (line 1, ALWAYS rendered — unlike the
+ * AFK block these show with no live workers): open-PR / open-issue counts from
+ * GitHub (cached for {@link STATUSLINE_CACHE_TTL_S} seconds in
+ * `.red/tmp/statusline-repo-cache.json`, same cold-bounded / stale-background
+ * discipline as the AFK queue/human cache), plus the LOCAL branch diffstat
+ * (committed + uncommitted vs origin/main) measured live at the project root.
+ * Every field is fail-open: any gh/git error leaves it 0.
+ */
+export async function collectStatuslineRepo(ctx: RepoContext): Promise<RepoInput> {
+  const paths = afkPaths(ctx.root);
+  const cachePath = join(paths.tmpDir, "statusline-repo-cache.json");
+  const nowS = Math.floor(Date.now() / 1000);
+  const cached = readRepoStatsCache(cachePath);
+  let openPrs = cached?.openPrs ?? 0;
+  let openIssues = cached?.openIssues ?? 0;
+
+  const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo };
+  const refresh = async (): Promise<void> => {
+    const [p, i] = await Promise.all([ghx.countOpenPrs(ghCtx), ghx.countOpenIssues(ghCtx)]);
+    openPrs = p;
+    openIssues = i;
+    writeRepoStatsCacheAtomic(cachePath, { openPrs: p, openIssues: i, ts: nowS });
+  };
+  if (!cached) {
+    await withTimeout(refresh(), STATUSLINE_GH_COLD_TIMEOUT_MS, undefined).catch(() => undefined);
+  } else if (nowS - cached.ts >= STATUSLINE_CACHE_TTL_S) {
+    // Stale: await a bounded refresh so the cache is rewritten before the
+    // process exits. Shows the previous value on timeout (fail-open).
+    await withTimeout(refresh(), STATUSLINE_GH_COLD_TIMEOUT_MS, undefined).catch(() => undefined);
+  }
+
+  // Local branch diff (committed + uncommitted) vs origin/main, bounded so a slow
+  // git can never wedge the render. diffstatShortstat resolves the merge-base, so
+  // this counts every commit on the branch plus the dirty worktree.
+  const diff = await withTimeout(
+    gitx.diffstatShortstat({ cwd: ctx.root }, "origin/main"),
+    STATUSLINE_GH_COLD_TIMEOUT_MS,
+    { added: 0, removed: 0 },
+  ).catch(() => ({ added: 0, removed: 0 }));
+
+  return { openPrs, openIssues, localAdded: diff.added, localRemoved: diff.removed };
 }
 
 // ---------- reap inputs ----------
@@ -756,15 +839,10 @@ export async function collectBootOptions(
   for (const o of orphans) {
     const parsed = parseWorkerAttemptPath(o.path);
     if (!parsed) continue;
-    const text = await fsx.readText(join(o.path, "afk.state.json"));
-    let live = false;
-    if (text !== null) {
-      try {
-        live = isStateLive(parseState(JSON.parse(text)));
-      } catch {
-        live = false;
-      }
-    }
+    // Cap-pass liveness keeps the pid-only verdict (a live attempt is excluded
+    // from the cap even when briefly quiet), read through the single owner so the
+    // schema + legacy-key shim apply here too.
+    const live = readWorkerState(join(o.path, "afk.state.json"))?.live ?? false;
     const mtimeS = nowS - o.ageS;
     const list = byIssue.get(parsed.issue) ?? [];
     list.push({ path: o.path, mtimeS, live });

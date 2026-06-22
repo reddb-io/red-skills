@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
+import { VOLATILE_MARKER } from "../src/cache-prefix.js";
 import { MemoryStore } from "../src/graph-store.js";
 import { buildMemoryHandoff } from "../src/handoff.js";
 import { buildMemoryHandoffViewerArtifact } from "../src/handoff-viewer.js";
@@ -107,6 +108,15 @@ describe("Memory handoff", () => {
       expect(report.markdown).toContain("Finish JWT rotation");
       expect(report.markdown).toContain("JWT rotation stays server-side");
       expect(report.markdown).not.toContain("Billing retry");
+
+      // Cache-prefix stability (#828): the structural prefix comes first and the
+      // per-run dynamic ages are relocated below the volatile marker.
+      const markerIndex = report.markdown.indexOf(VOLATILE_MARKER);
+      expect(markerIndex).toBeGreaterThan(0);
+      const stablePrefix = report.markdown.slice(0, markerIndex);
+      expect(stablePrefix).toContain("Finish JWT rotation");
+      expect(stablePrefix).not.toMatch(/\d+\s*d(?:ays?)?\s+old/);
+      expect(report.markdown.slice(markerIndex)).toMatch(/\d+\s*d(?:ays?)?\s+old/);
       const artifact = buildMemoryHandoffViewerArtifact(report);
       expect(artifact.contract).toMatchObject({
         name: "memory.handoff.viewer",

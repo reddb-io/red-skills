@@ -9,6 +9,12 @@ import {
   statuslineEnabled,
 } from "../src/commands/statusline.js";
 
+/** Strip ANSI SGR escapes so assertions read the plain rendered text. The
+ * command now themes the line (wine background + black-chipped KPI numbers);
+ * stripping recovers the exact plain content the renderer produced. */
+// eslint-disable-next-line no-control-regex
+const stripAnsi = (s: string): string => s.replace(/\x1b\[[0-9;]*m/g, "");
+
 /** A non-TTY readable carrying the Claude Code payload on stdin. */
 function fakeStdin(text: string): NodeJS.ReadableStream & { isTTY?: boolean } {
   const stream = Readable.from([text]) as Readable & { isTTY?: boolean };
@@ -46,6 +52,14 @@ async function seedFreshCache(root: string, queue: number, human: number): Promi
   await mkdir(dir, { recursive: true });
   const ts = Math.floor(Date.now() / 1000);
   await writeFile(join(dir, "statusline-cache.json"), JSON.stringify({ queue, human, ts }), "utf8");
+}
+
+/** Pre-seed a FRESH repo-stats cache so collectStatuslineRepo never calls gh. */
+async function seedFreshRepoCache(root: string, openPrs: number, openIssues: number): Promise<void> {
+  const dir = join(root, ".red", "tmp");
+  await mkdir(dir, { recursive: true });
+  const ts = Math.floor(Date.now() / 1000);
+  await writeFile(join(dir, "statusline-repo-cache.json"), JSON.stringify({ openPrs, openIssues, ts }), "utf8");
 }
 
 const PAYLOAD = JSON.stringify({
@@ -112,12 +126,15 @@ describe("statusline command — rendered line", () => {
   });
 
   it("emits the full block run from a payload + live workers + cached counts", async () => {
-    // One live worker on #17 with +12 -3, blocked 2; cached 📋11 🆘3.
+    // One live worker on #17 with ad12 rm3, blocked 2, runner claude, done 7;
+    // cached rq11 rh3; repo cache pr3 is24.
     await writeWorkerState(root, "wA", "17-a1", {
+      runner: "claude",
+      done: 7,
       blocked: 2,
-      // `started_at` (fresh) is what makes isStateActive treat this pid-live worker
-      // as active (ADR 0065): the statusline collector now requires recent activity,
-      // not just a resolving pid. A real worker always stamps started_at.
+      // A real worker stamps started_at; the statusline collector counts any
+      // pid-live worker (#836) — freshness is not required, so a worker quiet on
+      // the agent lane during a long test/build still renders on line 2.
       current: {
         number: 17,
         diff_added: 12,
@@ -126,30 +143,47 @@ describe("statusline command — rendered line", () => {
       },
     });
     await seedFreshCache(root, 11, 3);
+    await seedFreshRepoCache(root, 3, 24);
 
     const out = sink();
     const code = await statuslineCommand([root], root, out.stream, fakeStdin(PAYLOAD));
     expect(code).toBe(0);
 
-    const line = out.text().trim();
-    // basename(root) (branch may or may not resolve) · Opus·high · 47k 24% · AFK run.
-    expect(line).toContain("Opus·high");
-    expect(line).toContain("47k 24%");
-    expect(line).toContain("🤖1 📋11 🆘3 🚧2 +12 -3 #17");
+    // Two powerline rows: header (project/model/ctx/pr·is) + AFK (runner/wk·res/
+    // in-transit/pipeline/issues).
+    const rows = out.text().trimEnd().split("\n");
+    expect(rows).toHaveLength(2);
+    const l1 = stripAnsi(rows[0]);
+    const l2 = stripAnsi(rows[1]);
+    expect(l1).toContain("Opus·high");
+    expect(l1).toContain("47k 24%");
+    expect(l1).toContain("prs=3");
+    expect(l1).toContain("iss=24");
+    expect(l2).toContain("claude"); // runner
+    expect(l2).toContain("wrk=1 res=7"); // workers + resolved
+    expect(l2).toContain("loc=+12 -3"); // in-transit diff
+    expect(l2).toContain("rdy=11 hmn=3 blk=2"); // pipeline
+    expect(l2).toContain("#17");
+    // The raw output carries the wine-red background SGR (theme on by default).
+    expect(out.text()).toContain("\x1b[48;2;114;47;55m");
   });
 
   it("drops the AFK block when there are no live workers", async () => {
+    await seedFreshRepoCache(root, 0, 0);
+    await seedFreshCache(root, 0, 0);
     const out = sink();
     const code = await statuslineCommand([root], root, out.stream, fakeStdin(PAYLOAD));
     expect(code).toBe(0);
 
-    const line = out.text().trim();
+    const line = stripAnsi(out.text().trim());
     expect(line).toContain("Opus·high");
     expect(line).toContain("47k 24%");
-    expect(line).not.toContain("🤖");
+    expect(line).not.toContain("wk");
   });
 
   it("renders only the project block outside Claude Code (empty stdin)", async () => {
+    await seedFreshRepoCache(root, 0, 0);
+    await seedFreshCache(root, 0, 0);
     const out = sink();
     const code = await statuslineCommand([root], root, out.stream, fakeStdin(""));
     expect(code).toBe(0);

@@ -3,6 +3,7 @@ import {
   CANONICAL_HOOK_NAMES,
   HOOK_DEFAULTS_REGISTRY,
   resolveHooks,
+  scriptDefaultResolver,
   type ResolvedHooks,
 } from "../src/core/hook-config.js";
 
@@ -11,19 +12,20 @@ import {
  * ordered command list per lifecycle point. Ported from
  * scripts/tests/hook-config.test.sh, keeping the meaningful cases:
  * defaults-first ordering, user-after-defaults, bare-string normalization,
- * single-default disable, unknown-hook hard error, per-point attachment.
+ * shadowing (project script wins over lib), unknown-hook hard error,
+ * per-point attachment, and legacy-toggle backward-compat (no error).
  *
- * The shell loader resolves against built-in default *scripts* whose presence
- * is gated by an executable-file check; here we inject the resolved default
- * commands so the resolution stays pure and IO-free.
+ * The shell loader resolves against built-in `red-*` library scripts whose
+ * presence is gated by an executable-file check; here we inject the resolved
+ * default commands so the resolution stays pure and IO-free.
  */
 
 const DEFAULT_CMDS = {
-  cargo: "defaults/cargo-pre-worktree.sh",
-  gradle: "defaults/gradle-pre-worktree.sh",
-  heartbeat: "defaults/heartbeat-post-attempt.sh",
-  envelope: "defaults/envelope-post-attempt.sh",
-  validation: "defaults/validation-post-merge.sh",
+  cargo: "hooks/red-cargo",
+  gradle: "hooks/red-gradle",
+  heartbeat: "hooks/red-heartbeat",
+  envelope: "hooks/red-envelope",
+  validation: "hooks/red-validation",
 } as const;
 
 function defaultCommand(name: keyof typeof DEFAULT_CMDS): string {
@@ -75,22 +77,32 @@ describe("hook-config resolution", () => {
     ]);
   });
 
-  it("disables exactly one default via defaults.<name>: false", () => {
+  it("silently ignores legacy defaults.<name>: false toggles (no error, no disable)", () => {
+    // Old configs may still carry afk.hooks.defaults.cargo: false — these are
+    // now silently ignored (shadowing in .red/hooks/ is the new mechanism).
     const resolved = resolve({ "afk.hooks.defaults.cargo": "false" });
-    expect(resolved.pre_worktree).toEqual([DEFAULT_CMDS.gradle]);
-    // gradle stays enabled; the other points are untouched
-    expect(resolved.post_attempt).toEqual([
-      DEFAULT_CMDS.heartbeat,
-      DEFAULT_CMDS.envelope,
-    ]);
+    // cargo is still present — the legacy toggle no longer disables it.
+    expect(resolved.pre_worktree).toEqual([DEFAULT_CMDS.cargo, DEFAULT_CMDS.gradle]);
   });
 
-  it("only `false` disables a default — any other value keeps it", () => {
-    const resolved = resolve({ "afk.hooks.defaults.cargo": "true" });
-    expect(resolved.pre_worktree).toEqual([
-      DEFAULT_CMDS.cargo,
-      DEFAULT_CMDS.gradle,
-    ]);
+  it("shadows a default via scriptDefaultResolver when projectHooksDir has a same-named script", () => {
+    // Simulate: /project/.red/hooks/red-cargo exists (shadow).
+    const resolver = scriptDefaultResolver(
+      "/lib/hooks",
+      "/project/.red/hooks",
+      (p) => p.startsWith("/project/.red/hooks/"),
+    );
+    expect(resolver("cargo")).toBe("/project/.red/hooks/red-cargo");
+    // gradle has no shadow → falls through to lib.
+    const resolverGradle = scriptDefaultResolver(
+      "/lib/hooks",
+      "/project/.red/hooks",
+      (p) => p === "/lib/hooks/red-gradle",
+    );
+    expect(resolverGradle("gradle")).toBe("/lib/hooks/red-gradle");
+    // heartbeat has no shadow and lib also missing → undefined.
+    const resolverMissing = scriptDefaultResolver("/lib/hooks", "/project/.red/hooks", () => false);
+    expect(resolverMissing("heartbeat")).toBeUndefined();
   });
 
   it("throws a hard error on an unknown hook name", () => {
@@ -122,5 +134,23 @@ describe("hook-config resolution", () => {
     expect(HOOK_DEFAULTS_REGISTRY.pre_worktree).toEqual(["cargo", "gradle"]);
     expect(HOOK_DEFAULTS_REGISTRY.post_attempt).toEqual(["heartbeat", "envelope"]);
     expect(HOOK_DEFAULTS_REGISTRY.post_merge).toEqual(["validation"]);
+  });
+
+  it("registers the #832 recovery/feedback checkpoints as canonical (no default attaches)", () => {
+    const names = [
+      "pre_feedback",
+      "on_baseline_probe",
+      "on_feedback_classify",
+      "post_feedback",
+      "on_attempt_timeout",
+      "on_recovery_decision",
+      "on_blocked",
+      "on_reconcile",
+    ] as const;
+    for (const name of names) {
+      expect(CANONICAL_HOOK_NAMES).toContain(name);
+      // None of the new points ship a built-in default → resolve to the empty list.
+      expect(resolve({})[name]).toEqual([]);
+    }
   });
 });

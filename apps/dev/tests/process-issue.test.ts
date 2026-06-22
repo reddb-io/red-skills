@@ -67,6 +67,12 @@ interface HarnessOptions {
    * Defaults to passing. Only consulted when `backpressureCommands` is set. */
   backpressureOk?: boolean;
   locked?: boolean;
+  /**
+   * Landing-mode flag (#842), decoupled from the lock. Defaults to `!locked` so
+   * the pre-#842 coupling (locked → direct merge, unlocked → admin PR) holds for
+   * the existing path/conflict tests; the decoupling tests set it explicitly.
+   */
+  worktreeLaunchesPr?: boolean;
   config?: ConfigValues;
   /** Trust-gate provenance (#621) returned by gh.issueTrust. When set, the port
    * is registered; absent → no port (gate never fires). */
@@ -129,6 +135,9 @@ interface HarnessOptions {
   /** PR review gate (ADR 0064 §10, #749). When set, processIssue may hand the
    * unlocked landing off for a fresh-agent review instead of fast-merging. */
   reviewGate?: ProcessIssueDeps["reviewGate"];
+  /** CI-aware merge (#812). When set, register the `ciAwait` port and drive the
+   * `gh pr view` verdict the unlocked landing polls before admin-merging. */
+  ciAware?: "merge" | "ci-failed" | "ci-pending" | "conflict";
 }
 
 function harness(opts: HarnessOptions = {}): {
@@ -272,6 +281,16 @@ function harness(opts: HarnessOptions = {}): {
       if (j.includes("rev-list") && j.includes("--count")) {
         return { code: 0, stdout: "3\n", stderr: "" };
       }
+      // #812 CI-aware poll: drive the mergeStateStatus + rollup per opts.ciAware.
+      if (j.includes("pr view")) {
+        const map: Record<string, { mergeStateStatus: string; statusCheckRollup: unknown[] }> = {
+          merge: { mergeStateStatus: "CLEAN", statusCheckRollup: [] },
+          "ci-failed": { mergeStateStatus: "BLOCKED", statusCheckRollup: [{ state: "FAILURE" }] },
+          "ci-pending": { mergeStateStatus: "BLOCKED", statusCheckRollup: [{ status: "IN_PROGRESS" }] },
+          conflict: { mergeStateStatus: "DIRTY", statusCheckRollup: [] },
+        };
+        return { code: 0, stdout: JSON.stringify(map[opts.ciAware ?? "merge"]), stderr: "" };
+      }
       return { code: 0, stdout: "", stderr: "" };
     },
     remoteGit: async (argv) => {
@@ -347,8 +366,12 @@ function harness(opts: HarnessOptions = {}): {
         }
       : undefined,
     resolveTier: opts.resolveTier,
+    // Landing mode is decoupled from the lock (#842); default to the pre-#842
+    // coupling so existing locked/unlocked path tests keep their behaviour.
+    worktreeLaunchesPr: opts.worktreeLaunchesPr ?? !(opts.locked ?? false),
     reviewGate: opts.reviewGate,
     reviewGateLabel: "ready-for-review",
+    ciAwait: opts.ciAware ? { sleep: async () => {}, maxPolls: 2 } : undefined,
     fallbackRunner: opts.fallbackRunner ?? false,
     conflictResolver: opts.conflictResolve
       ? async (prompt) => {
@@ -525,6 +548,8 @@ describe("processIssue — DONE + green + merged (unlocked, admin-PR landing)", 
       "pre_worktree",
       "pre_attempt",
       "post_attempt",
+      "pre_feedback",
+      "post_feedback",
       "pre_merge",
       "post_merge",
     ]);
@@ -567,7 +592,64 @@ describe("processIssue — DONE + green + merged (unlocked, admin-PR landing)", 
   });
 });
 
-describe("processIssue — lock-toggled landing", () => {
+describe("processIssue — CI-aware unlocked landing (#812)", () => {
+  it("CLEAN → polls merge state then admin-merges + closes (no bounce, no re-run)", async () => {
+    const { deps, input, trace } = harness({ outcome: "done", feedbackOk: true, locked: false, ciAware: "merge" });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "done" }]);
+    // exactly ONE agent run — the completed work is never re-run.
+    expect(trace.runAgentCalls.length).toBe(1);
+  });
+
+  it("a FAILED required check → ci-failed, blocked:ci (NOT merge-conflict), PR preserved, agent not re-run", async () => {
+    const { deps, input, trace } = harness({ outcome: "done", feedbackOk: true, locked: false, ciAware: "ci-failed" });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("ci-failed");
+    // Truthful envelope: blocked, NEVER merge-conflict on a MERGEABLE PR.
+    expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "blocked" }]);
+    // Parked to ready-for-human with the distinct blocked:ci label.
+    expect(trace.labelEdits.some((e) => e.add.includes("ready-for-human") && e.add.includes("blocked:ci"))).toBe(true);
+    expect(trace.ensuredLabels).toContain("blocked:ci");
+    // NEVER mislabelled merge-conflict.
+    expect(trace.labelEdits.some((e) => e.add.includes("blocked:merge-conflict"))).toBe(false);
+    expect(trace.ensuredLabels).not.toContain("blocked:merge-conflict");
+    // The work is the durable artifact: open PR preserved (no remote branch delete),
+    // issue NOT closed, agent NOT re-run.
+    expect(trace.deletedRemote.length).toBe(0);
+    expect(trace.closed).toEqual([]);
+    expect(trace.runAgentCalls.length).toBe(1);
+    // Never admin-merged on a failed check.
+    expect(trace.released).toEqual([9]);
+  });
+
+  it("PENDING past the timeout → ci-pending, parked (NOT ready-for-agent), no token re-spend", async () => {
+    const { deps, input, trace } = harness({ outcome: "done", feedbackOk: true, locked: false, ciAware: "ci-pending" });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("ci-pending");
+    expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "blocked" }]);
+    // Pending NEVER recovers to ready-for-agent (which would re-run the agent).
+    expect(trace.labelEdits.some((e) => e.add.includes("ready-for-agent"))).toBe(false);
+    expect(trace.labelEdits.some((e) => e.add.includes("ready-for-human") && e.add.includes("blocked:ci"))).toBe(true);
+    // Open PR preserved; agent ran exactly once.
+    expect(trace.deletedRemote.length).toBe(0);
+    expect(trace.closed).toEqual([]);
+    expect(trace.runAgentCalls.length).toBe(1);
+  });
+
+  it("a real DIRTY conflict still classifies as merge-conflict (correct here)", async () => {
+    const { deps, input, trace } = harness({ outcome: "done", feedbackOk: true, locked: false, ciAware: "conflict" });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("merge-conflict");
+    expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "merge-conflict" }]);
+  });
+});
+
+describe("processIssue — landing mode decoupled from the lock (#842)", () => {
   it("locked → landMerge (merge --no-ff into the locked branch + push)", async () => {
     const calls: string[][] = [];
     const { deps, input } = harness({ outcome: "done", feedbackOk: true, locked: true });
@@ -580,9 +662,9 @@ describe("processIssue — lock-toggled landing", () => {
 
     expect(result.outcome).toBe("done");
     expect(result.locked).toBe(true);
-    // landMerge issues `git -C /repo merge --no-ff afk/wAAAA/9-fix-the-thing …`.
+    // landMerge issues `git -C /repo merge --no-ff --no-verify afk/wAAAA/9-fix-the-thing …`.
     const joined = calls.map((c) => c.join(" "));
-    expect(joined.some((c) => c.includes("merge --no-ff afk/wAAAA/9-fix-the-thing"))).toBe(true);
+    expect(joined.some((c) => c.includes("merge --no-ff --no-verify afk/wAAAA/9-fix-the-thing"))).toBe(true);
     // No PR list/create/merge on the locked path.
     expect(joined.some((c) => c.includes("pr list") || c.includes("pr merge"))).toBe(false);
   });
@@ -605,6 +687,56 @@ describe("processIssue — lock-toggled landing", () => {
     expect(joined.some((c) => c.includes("pr merge 42 --admin --merge"))).toBe(true);
     // No direct `merge --no-ff` of the attempt branch into the locked target.
     expect(joined.some((c) => c.includes("merge --no-ff afk/"))).toBe(false);
+  });
+
+  it("locked + flag true → admin PR (no direct merge), even though locked", async () => {
+    // Decoupled: a lock no longer forces a direct merge. With the default flag the
+    // locked session lands via an admin-merged PR to its base (the lock branch).
+    const calls: string[][] = [];
+    const { deps, input } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      locked: true,
+      worktreeLaunchesPr: true,
+    });
+    const inner = deps.mergeExec;
+    deps.mergeExec = async (argv) => {
+      calls.push(argv);
+      return inner(argv);
+    };
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    // result.locked still echoes the lock state (observational), not the mode.
+    expect(result.locked).toBe(true);
+    const joined = calls.map((c) => c.join(" "));
+    expect(joined.some((c) => c.includes("pr merge 42 --admin --merge"))).toBe(true);
+    expect(joined.some((c) => c.includes("merge --no-ff afk/"))).toBe(false);
+  });
+
+  it("unlocked + flag false → direct merge to main, no PR (offline)", async () => {
+    // Decoupled: no lock no longer forces a PR. With the flag off the unlocked
+    // session lands via a direct merge into main (no PR, offline).
+    const calls: string[][] = [];
+    const { deps, input } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      locked: false,
+      worktreeLaunchesPr: false,
+    });
+    const inner = deps.mergeExec;
+    deps.mergeExec = async (argv) => {
+      calls.push(argv);
+      return inner(argv);
+    };
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(result.locked).toBe(false);
+    const joined = calls.map((c) => c.join(" "));
+    // Direct merge of the attempt branch; no PR list/merge anywhere.
+    expect(joined.some((c) => c.includes("merge --no-ff --no-verify afk/wAAAA/9-fix-the-thing"))).toBe(true);
+    expect(joined.some((c) => c.includes("pr list") || c.includes("pr merge"))).toBe(false);
   });
 });
 
@@ -786,7 +918,15 @@ describe("processIssue — no-sentinel (run ended without a <promise>)", () => {
     expect(trace.closed).toEqual([9]);
     expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "done" }]);
     // post_attempt(success) + the full land tail fire; on_attempt_error does NOT.
-    expect(result.hooksFired).toEqual(["pre_worktree", "pre_attempt", "post_attempt", "pre_merge", "post_merge"]);
+    expect(result.hooksFired).toEqual([
+      "pre_worktree",
+      "pre_attempt",
+      "post_attempt",
+      "pre_feedback",
+      "post_feedback",
+      "pre_merge",
+      "post_merge",
+    ]);
   });
 
   it("branch carries work but FAILS feedback → feedback-failed, never merged, not an error", async () => {
@@ -970,9 +1110,18 @@ describe("processIssue — feedback fail", () => {
     expect(trace.ensuredLabels).toContain("blocked:validation");
     expect(trace.closed).toEqual([]);
     expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "blocked" }]);
-    // post_attempt fired (the run authored DONE), pre_merge never reached, and
-    // the worker branch was not pushed for landing.
-    expect(result.hooksFired).toEqual(["pre_worktree", "pre_attempt", "post_attempt"]);
+    // post_attempt fired (the run authored DONE); the feedback gate ran and
+    // FAILED (pre_feedback → on_baseline_probe → post_feedback → on_feedback_classify),
+    // so pre_merge was never reached and the worker branch was not pushed.
+    expect(result.hooksFired).toEqual([
+      "pre_worktree",
+      "pre_attempt",
+      "post_attempt",
+      "pre_feedback",
+      "on_baseline_probe",
+      "post_feedback",
+      "on_feedback_classify",
+    ]);
     expect(trace.pushedAttempt).toEqual([]);
   });
 
@@ -1005,8 +1154,14 @@ describe("processIssue — feedback fail", () => {
       "pre_worktree",
       "pre_attempt",
       "post_attempt",
-      "pre_attempt",
+      "pre_feedback",
+      "on_baseline_probe", // gate 1 FAILED → the baseline probe ran
+      "post_feedback",
+      "on_feedback_classify", // SEMANTIC → simple→complex retry
+      "pre_attempt", // the complex-tier retry
       "post_attempt",
+      "pre_feedback",
+      "post_feedback", // gate 2 passed → no baseline probe
       "pre_merge",
       "post_merge",
     ]);
@@ -1509,6 +1664,8 @@ describe("processIssue — runner exhaustion → fallback swap → retry", () =>
       "post_attempt", // exhausted attempt cycle closes
       "pre_attempt", // second firing for the swapped runner (#226)
       "post_attempt", // terminal success
+      "pre_feedback",
+      "post_feedback",
       "pre_merge",
       "post_merge",
     ]);
@@ -1604,6 +1761,8 @@ describe("processIssue — runner transient transport/setup failure", () => {
       "post_attempt",
       "pre_attempt",
       "post_attempt",
+      "pre_feedback",
+      "post_feedback",
       "pre_merge",
       "post_merge",
     ]);
@@ -1826,7 +1985,7 @@ describe("close cascade (event-driven auto-unblock)", () => {
     expect(trace.listByLabelCalls).toEqual(["req:9"]);
 
     const promote = trace.labelEdits.filter((e) => e.add.includes("ready-for-agent"));
-    expect(promote).toEqual([{ issue: 20, remove: ["blocked:dependency"], add: ["ready-for-agent"] }]);
+    expect(promote).toEqual([{ issue: 20, remove: ["blocked:dependency", "req:9"], add: ["ready-for-agent"] }]);
     expect(trace.comments).toContainEqual({
       issue: 20,
       body: "🤖 /afk unblocked: all dependencies closed (#9).",
@@ -1852,7 +2011,7 @@ describe("close cascade (event-driven auto-unblock)", () => {
     });
     expect(trace.labelEdits).toContainEqual({
       issue: 30,
-      remove: ["blocked:dependency"],
+      remove: ["blocked:dependency", "req:8", "req:9"],
       add: ["ready-for-agent"],
     });
   });
@@ -2011,8 +2170,15 @@ describe("processIssue — timeout (attempt progress guard fired)", () => {
     expect(trace.ensuredLabels).toContain("blocked:stalled");
     // The failure envelope rides the generic `blocked` status bucket.
     expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "blocked" }]);
-    // on_attempt_error fires; post_attempt does NOT (same as no-sentinel).
-    expect(result.hooksFired).toEqual(["pre_worktree", "pre_attempt", "on_attempt_error"]);
+    // on_attempt_timeout fires when the guard trips; on_reconcile reports the
+    // ADR 0055 skip; then on_attempt_error escalates. post_attempt does NOT fire.
+    expect(result.hooksFired).toEqual([
+      "pre_worktree",
+      "pre_attempt",
+      "on_attempt_timeout",
+      "on_reconcile",
+      "on_attempt_error",
+    ]);
   });
 
   it("reconcile lands the stalled-but-green branch WITHOUT re-running the agent (no escalation)", async () => {
@@ -2095,5 +2261,134 @@ describe("processIssue — emitHeartbeat receives resolved base (issue #570)", (
     await processIssue(customDeps, input);
     expect(heartbeatInfos).toHaveLength(1);
     expect(heartbeatInfos[0]?.base).toBe("main");
+  });
+});
+
+describe("processIssue — new lifecycle checkpoints (#832)", () => {
+  it("on_heartbeat context carries the full worker vitals", async () => {
+    const stdins: string[] = [];
+    const { deps, input } = harness({ outcome: "done", feedbackOk: true });
+    const vitals = {
+      tools_called_count: 7,
+      text_chunk_count: 3,
+      reasoning_events: 2,
+      reasoning_tokens: 128,
+      waiting_count: 1,
+      input_tokens: 900,
+      output_tokens: 450,
+      cost_usd: 0.12,
+      loc_added: 40,
+      loc_removed: 5,
+    };
+    const customDeps: ProcessIssueDeps = {
+      ...deps,
+      heartbeatVitals: () => vitals,
+      hooks: {
+        ...deps.hooks,
+        config: { "afk.hooks.on_heartbeat": "hb-cmd" },
+        exec: async (command, _env, stdin) => {
+          if (command === "hb-cmd") stdins.push(stdin);
+          return { code: 0, stdout: "" };
+        },
+      },
+      runAgent: async (ri) => {
+        ri.onHeartbeat?.({ head: "abc123", lastProgressMs: 0, nowMs: 0 });
+        return {
+          outcome: "done",
+          branch: ri.branch,
+          commits: [{ sha: "deadbee" }],
+          completionSignal: "<promise>DONE</promise>",
+          stdout: "",
+        };
+      },
+    };
+    await processIssue(customDeps, input);
+    expect(stdins).toHaveLength(1);
+    const ctx = JSON.parse(stdins[0]!) as { vitals?: Record<string, number> };
+    expect(ctx.vitals).toEqual(vitals);
+  });
+
+  it("on_feedback_classify (mutable) overrides SEMANTIC→INFRA and suppresses the tier retry", async () => {
+    // A SEMANTIC simple-tier feedback failure normally retries once on the complex
+    // tier (a second runAgent). A hook that reclassifies it as INFRA suppresses
+    // that retry — a tier bump can't fix infra — so the agent runs exactly once.
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: false,
+      classifyIssue: async () => "simple",
+    });
+    const customDeps: ProcessIssueDeps = {
+      ...deps,
+      hooks: {
+        ...deps.hooks,
+        config: { "afk.hooks.on_feedback_classify": "cls" },
+        exec: async (command) =>
+          command === "cls"
+            ? { code: 0, stdout: JSON.stringify({ class: "infra" }) }
+            : { code: 0, stdout: "" },
+      },
+    };
+    const result = await processIssue(customDeps, input);
+    expect(trace.runAgentCalls).toHaveLength(1);
+    expect(result.outcome).toBe("feedback-failed-infra");
+  });
+
+  it("on_recovery_decision (mutable) overrides retry→escalate", async () => {
+    // pre_worktree abort routes through routeRecovery("hook-aborted"), bounded-
+    // recoverable → RETRY under a raised cap. A hook returning {"decision":
+    // "escalate"} forces the human gate instead of the clean re-queue.
+    const { deps, input, trace } = harness({
+      abortHook: "pre_worktree",
+      attempt: 1,
+      recoveryEnv: { RED_AFK_RETRY_POLICY: "2" },
+    });
+    const customDeps: ProcessIssueDeps = {
+      ...deps,
+      hooks: {
+        ...deps.hooks,
+        config: {
+          "afk.hooks.pre_worktree": "abort:pre_worktree",
+          "afk.hooks.on_recovery_decision": "dec",
+        },
+        exec: async (command) => {
+          if (command === "abort:pre_worktree") return { code: 1, stdout: "" };
+          if (command === "dec") return { code: 0, stdout: JSON.stringify({ decision: "escalate" }) };
+          return { code: 0, stdout: "" };
+        },
+      },
+    };
+    await processIssue(customDeps, input);
+    const edit = trace.labelEdits.at(-1)!;
+    expect(edit.add).toContain("ready-for-human");
+    expect(edit.add).not.toContain("ready-for-agent");
+  });
+
+  it("on_blocked fires when an issue is parked to the human gate", async () => {
+    // Default policy cap (1) → attempt 1 escalates, so the issue is parked to a
+    // human gate and the on_blocked hook fires with the typed blocked label.
+    const commands: string[] = [];
+    const { deps, input } = harness({ abortHook: "pre_worktree", attempt: 1 });
+    const customDeps: ProcessIssueDeps = {
+      ...deps,
+      hooks: {
+        ...deps.hooks,
+        config: {
+          "afk.hooks.pre_worktree": "abort:pre_worktree",
+          "afk.hooks.on_blocked": "blk",
+        },
+        exec: async (command, env) => {
+          commands.push(command);
+          if (command === "blk") {
+            // The typed blocked:* label rides the env (RED_AFK_BLOCKED_LABEL).
+            expect(env.RED_AFK_BLOCKED_LABEL).toBe("blocked:policy");
+            return { code: 0, stdout: "" };
+          }
+          if (command === "abort:pre_worktree") return { code: 1, stdout: "" };
+          return { code: 0, stdout: "" };
+        },
+      },
+    };
+    await processIssue(customDeps, input);
+    expect(commands).toContain("blk");
   });
 });

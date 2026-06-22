@@ -94,6 +94,10 @@ _Avoid_: main repo, root checkout
 A single AFK orchestrator instance, identified by `w` + 4 characters (e.g. `wZ2R4`). It owns `.red/tmp/workers/{wid}/` and a single `worker.pid` liveness anchor, written once at bootstrap and removed on exit.
 _Avoid_: agent, slot, runner
 
+**Worker state reader**:
+The single owner of "read a **Worker**'s `afk.state.json`" — `readWorkerState(path)` wraps `parseState` (with the legacy shim), liveness (`isStateActive`), and stage extraction for one file, and `readWorkerStates(root)` globs every worker and maps to normalized, liveness-tagged records. The monitor, statusline, dashboard, **Task mirror**, boot facts, and the **Fleet supervisor** stall-reaper all read through it instead of each re-globbing, re-parsing, and re-deriving liveness — closing the divergent hand-rolled parse path that skipped the schema/shim.
+_Avoid_: state glob, status reader (these are the per-consumer loops the Worker state reader replaces)
+
 **OpenCode auth env precedence**:
 The order in which AFK selects an API key for the OpenCode runner when multiple are set in the worker process: `OPENAI_API_KEY` > `MINIMAX_API_KEY` > `OPENROUTER_API_KEY`. The first set entry wins and the auth key rides in `OpenCodeOptions.env`; OpenCode itself dispatches on the leading segment of the model slug (`openai/...`, `minimax/...`, `openrouter/<vendor>/...`). A user with no key set is fail-closed — the agent spawns without an auth `env` block, OpenCode surfaces its own auth error, the run routes through the normal failure path.
 _Avoid_: hardcoded OpenRouter, base-url map, endpoint-specific code
@@ -102,13 +106,21 @@ _Avoid_: hardcoded OpenRouter, base-url map, endpoint-specific code
 The design property that the OpenCode runner does not know or care which OpenAI-compatible endpoint it ultimately talks to. AFK propagates only the auth key (per *OpenCode auth env precedence*); OpenCode owns endpoint resolution from the `<provider>/<model>` slug. Adding a new endpoint never requires changes to AFK code — the operator sets the corresponding env-var and a matching slug.
 _Avoid_: provider-specific config block, base-url per runner, multi-endpoint fan-out
 
+**Agent runner / Runner spec**:
+The provider-facing runner set (`AgentRunner` = claude | codex | opencode | claude-minimax) and the single descriptor table that owns each runner's provider policy — its accepted efforts, whether effort rides the numeric `effort` knob or OpenCode's free-form `variant` channel, any forced model (claude-minimax → MiniMax-M3), and its auth-env resolver. `toAgentRunner` projects the broader orchestrator **Runner** (which also includes the runner-neutral `hermes`) onto this set, collapsing any provider-less runner to `claude`. Adding a provider becomes one table row instead of parallel edits across `buildAgent`, `effortForProvider`, and the tier-table coercion.
+_Avoid_: runner detection (that resolves *which* Runner to use; a Runner spec defines *what each provider runner accepts*)
+
 **Attempt**:
 One numbered AFK execution of an **Issue**, materialised at `.red/tmp/workers/{wid}/{issue}-a{n}/`. The `a{n}` counter is per-**Issue** across all **Workers**, so each retry — even by a different worker — is a fresh attempt directory.
 _Avoid_: iteration, run, retry dir
 
 **Attempt Outcome**:
-How an **Attempt** ended, and what that ending *means* for the **Issue**: the single concept that owns the mapping from a terminal result to its `blocked:<reason>` label and its recovery disposition (retry vs page). Today this concept is smeared across three parallel enums (`ProcessOutcome`, `BlockedReason`, `RecoveryReason`); the deepening consolidates them so the outcome model has one owner.
-_Avoid_: process outcome, blocked reason, recovery reason (these are the three views being unified, not separate concepts)
+How an **Attempt** ended, and what that ending *means* for the **Issue**: the single concept (owned by `core/attempt-outcome.ts`) that maps a terminal result to its `blocked:<reason>` label (`blockedLabelFor`), its envelope status (`envelopeStatusFor`), and its bounded-recovery policy key (`recoveryReasonFor`). The historical three-enum smear (`ProcessOutcome` / `BlockedReason` / `RecoveryReason`) is resolved — adding an outcome now touches one set of exhaustive switches.
+_Avoid_: process outcome, blocked reason, recovery reason (these were the three views now unified, not separate concepts)
+
+**Attempt disposition**:
+What AFK *does* about an **Attempt Outcome** — the single owner that composes the outcome's recovery decision (retry vs escalate, from the cap policy plus the real attempt number), its typed `blocked:*` label, its envelope status, and the standard escalation announcement into one pure descriptor. The worker per-issue path (`routeRecovery`), the no-agent **reconcile** path, and the **Fleet supervisor** stall-reaper all consume the same disposition instead of each re-deriving labels, statuses, and comments. It owns the total `outcome → policy key` map (including `stalled`, which the per-issue `recoveryReasonFor` view deliberately omits).
+_Avoid_: recovery routing, park logic (these are the per-site applications of one Attempt disposition)
 
 **Worktree**:
 An isolated `git worktree` created by AFK per **Attempt** under `.red/tmp/workers/{wid}/{issue}-a{n}/worktree/`.

@@ -3,10 +3,13 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  buildCrashEnvelope,
   buildDiscardEnvelope,
   buildReaperEnvelope,
   computeStalled,
+  decideCrashReconcile,
   dispatchReconcileIfPossible,
+  reconcileDeadWorkerClaim,
   freshSlot,
   handleDeadSlot,
   initSupervisorState,
@@ -84,6 +87,7 @@ interface FakeIo {
   ensureLabel: ReturnType<typeof vi.fn>;
   readyQueueDepth: ReturnType<typeof vi.fn>;
   findReconcileCandidate: ReturnType<typeof vi.fn>;
+  crashedClaimState: ReturnType<typeof vi.fn>;
   emitFleetHeartbeat: ReturnType<typeof vi.fn>;
   unblockSweep: ReturnType<typeof vi.fn>;
   now: ReturnType<typeof vi.fn>;
@@ -123,6 +127,8 @@ function makeDeps(over: Partial<Record<keyof FakeIo, unknown>> = {}): {
     ensureLabel: vi.fn(async () => {}),
     readyQueueDepth: vi.fn(async () => 0),
     findReconcileCandidate: vi.fn(async (): Promise<ReconcileCandidate | null> => null),
+    // Default: no stranded claim → reconcile is a no-op (existing tests unaffected).
+    crashedClaimState: vi.fn(async () => ({ ghOk: true, stillRunning: false, envelopePosted: false })),
     emitFleetHeartbeat: vi.fn(async () => {}),
     unblockSweep: vi.fn(async (): Promise<number[]> => []),
     now: vi.fn(() => NOW),
@@ -152,6 +158,7 @@ function makeDeps(over: Partial<Record<keyof FakeIo, unknown>> = {}): {
       ensureLabel: io.ensureLabel,
       readyQueueDepth: io.readyQueueDepth,
       findReconcileCandidate: io.findReconcileCandidate,
+      crashedClaimState: io.crashedClaimState,
     },
     now: io.now,
     emitFleetHeartbeat: io.emitFleetHeartbeat,
@@ -451,6 +458,7 @@ describe("guardedTick — abandoned flag", () => {
       idleParked: [],
       halfOpened: [],
       reaped: [],
+      crashReconciled: [],
       reconciledSlots: [],
       unblocked: [],
       stopped: false,
@@ -1039,6 +1047,156 @@ describe("superviseTick", () => {
   });
 });
 
+// ---------- crash reconcile (#815, ADR 0071 Pattern 5) ----------
+
+function crashInfo(over: Partial<IterDirInfo> = {}): IterDirInfo {
+  return {
+    path: "/tmp/workers/w27CZ/807-a1",
+    issue: 807,
+    workerId: "w27CZ",
+    logTail: "agent finished after 1 iteration\nfeedback gate: turbo run test…",
+    notes: "",
+    durationS: 1200,
+    attempt: 1,
+    ...over,
+  };
+}
+
+describe("decideCrashReconcile", () => {
+  it("reconciles a still-running claim with a real issue", () => {
+    expect(decideCrashReconcile({ issue: 807, ghOk: true, stillRunning: true })).toBe(true);
+  });
+  it("skips a pre-claim death (null issue)", () => {
+    expect(decideCrashReconcile({ issue: null, ghOk: true, stillRunning: true })).toBe(false);
+  });
+  it("skips a failed gh lookup", () => {
+    expect(decideCrashReconcile({ issue: 807, ghOk: false, stillRunning: true })).toBe(false);
+  });
+  it("skips an issue no longer running (worker completed)", () => {
+    expect(decideCrashReconcile({ issue: 807, ghOk: true, stillRunning: false })).toBe(false);
+  });
+});
+
+describe("reconcileDeadWorkerClaim", () => {
+  it("posts a no-sentinel envelope and re-queues a stranded running issue (under cap)", async () => {
+    const { deps, io } = makeDeps({
+      crashedClaimState: vi.fn(async () => ({ ghOk: true, stillRunning: true, envelopePosted: false })),
+    });
+    // Raise the crashed cap to 2 so attempt 1 (1 < 2) is under the cap → retry.
+    deps.recoveryEnv = { RED_AFK_RETRY_CRASH: "2" };
+
+    const issue = await reconcileDeadWorkerClaim(crashInfo(), deps);
+
+    expect(issue).toBe(807);
+    // No-sentinel envelope carrying the afk.log tail.
+    expect(io.comment).toHaveBeenCalledTimes(1);
+    const body = io.comment.mock.calls[0]![1] as string;
+    expect(body).toContain('data-attempt-status="no-sentinel"');
+    expect(body).toContain("agent finished after 1 iteration");
+    // running → ready-for-agent CLEAN (no blocked label rides along).
+    expect(io.editLabels).toHaveBeenCalledWith(807, ["ready-for-agent"], ["running"]);
+  });
+
+  it("escalates to ready-for-human with blocked:crashed once the cap is exhausted", async () => {
+    const { deps, io } = makeDeps({
+      crashedClaimState: vi.fn(async () => ({ ghOk: true, stillRunning: true, envelopePosted: false })),
+    });
+    // Default crashed cap is 1; attempt 1 is at the cap → escalate.
+    const issue = await reconcileDeadWorkerClaim(crashInfo({ attempt: 1 }), deps);
+
+    expect(issue).toBe(807);
+    expect(io.ensureLabel).toHaveBeenCalledWith("blocked:crashed");
+    expect(io.editLabels).toHaveBeenCalledWith(
+      807,
+      ["ready-for-human", "blocked:crashed"],
+      ["running", "ready-for-agent"],
+    );
+  });
+
+  it("does not re-post the envelope when one already rode the issue", async () => {
+    const { deps, io } = makeDeps({
+      crashedClaimState: vi.fn(async () => ({ ghOk: true, stillRunning: true, envelopePosted: true })),
+    });
+    deps.recoveryEnv = { RED_AFK_RETRY_CRASH: "2" };
+
+    await reconcileDeadWorkerClaim(crashInfo(), deps);
+    expect(io.comment).not.toHaveBeenCalled();
+    expect(io.editLabels).toHaveBeenCalledWith(807, ["ready-for-agent"], ["running"]);
+  });
+
+  it("is a no-op for a pre-claim death (null issue) — no gh calls", async () => {
+    const { deps, io } = makeDeps();
+    const issue = await reconcileDeadWorkerClaim(crashInfo({ issue: null }), deps);
+    expect(issue).toBeNull();
+    expect(io.crashedClaimState).not.toHaveBeenCalled();
+    expect(io.comment).not.toHaveBeenCalled();
+    expect(io.editLabels).not.toHaveBeenCalled();
+  });
+
+  it("leaves the issue untouched when it is no longer running", async () => {
+    const { deps, io } = makeDeps({
+      crashedClaimState: vi.fn(async () => ({ ghOk: true, stillRunning: false, envelopePosted: false })),
+    });
+    const issue = await reconcileDeadWorkerClaim(crashInfo(), deps);
+    expect(issue).toBeNull();
+    expect(io.comment).not.toHaveBeenCalled();
+    expect(io.editLabels).not.toHaveBeenCalled();
+  });
+
+  it("is a no-op when crashedClaimState is not wired (back-compat)", async () => {
+    const { deps } = makeDeps();
+    delete (deps.gh as { crashedClaimState?: unknown }).crashedClaimState;
+    const issue = await reconcileDeadWorkerClaim(crashInfo(), deps);
+    expect(issue).toBeNull();
+  });
+});
+
+describe("superviseTick — crash reconcile on respawn (#815)", () => {
+  it("re-queues a dead worker's stranded running issue and counts the death", async () => {
+    const { deps, io } = makeDeps({
+      isAlive: vi.fn(() => false), // the slot's worker is dead
+      // A slow death → respawn (not park), so the reconcile path runs.
+      spawnSlot: vi.fn(async () => ({ pid: 9001, spawnEpoch: NOW })),
+      resolveIterDir: vi.fn((): IterDirInfo | null => crashInfo()),
+      crashedClaimState: vi.fn(async () => ({ ghOk: true, stillRunning: true, envelopePosted: false })),
+      readyQueueDepth: vi.fn(async () => 3), // queue has work → respawn, not idle-park
+    });
+    deps.recoveryEnv = { RED_AFK_RETRY_CRASH: "2" };
+    const state = initSupervisorState(1);
+    const slot = state.slots[0]!;
+    slot.pid = 5000;
+    slot.spawnEpoch = NOW - 1000; // long-lived → slow death → respawn
+
+    const result = await superviseTick(state, deps, config(), () => false);
+
+    expect(result.deaths).toEqual([0]); // the death is reported, not deaths=0
+    expect(result.respawned).toContain(0);
+    expect(result.crashReconciled).toEqual([807]);
+    expect(io.editLabels).toHaveBeenCalledWith(807, ["ready-for-agent"], ["running"]);
+  });
+
+  it("does not reconcile when the slot circuit-trips and parks (sweep owns it)", async () => {
+    const { deps, io } = makeDeps({
+      isAlive: vi.fn(() => false),
+      now: vi.fn(() => NOW),
+      resolveIterDir: vi.fn((): IterDirInfo | null => crashInfo()),
+      crashedClaimState: vi.fn(async () => ({ ghOk: true, stillRunning: true, envelopePosted: false })),
+    });
+    const state = initSupervisorState(1);
+    const slot = state.slots[0]!;
+    slot.pid = 5000;
+    slot.spawnEpoch = NOW; // zero-lifetime fast death
+    // Prime the fast-death ring so this death trips the breaker → park + sweep.
+    slot.deaths = Array.from({ length: 4 }, (_, k) => NOW - k);
+
+    const result = await superviseTick(state, deps, config(), () => false);
+
+    expect(result.parked).toEqual([0]);
+    expect(result.crashReconciled).toEqual([]);
+    expect(io.crashedClaimState).not.toHaveBeenCalled();
+  });
+});
+
 // ---------- runSupervisor end-to-end shape ----------
 
 describe("runSupervisor", () => {
@@ -1172,8 +1330,8 @@ describe("envelope builders", () => {
 describe("guardedTick — per-tick wall-clock ceiling (unwedgeable loop)", () => {
   const never = (): Promise<void> => new Promise<void>(() => {});
   const immediate = (): Promise<void> => Promise.resolve();
-  const okResult = { respawned: [1], deaths: [], parked: [], idleParked: [], halfOpened: [], reaped: [], reconciledSlots: [], unblocked: [], stopped: false, queueDepth: 0, abandoned: false };
-  const CONTINUE = { respawned: [], deaths: [], parked: [], idleParked: [], halfOpened: [], reaped: [], reconciledSlots: [], unblocked: [], stopped: false, queueDepth: 0, abandoned: true };
+  const okResult = { respawned: [1], deaths: [], parked: [], idleParked: [], halfOpened: [], reaped: [], crashReconciled: [], reconciledSlots: [], unblocked: [], stopped: false, queueDepth: 0, abandoned: false };
+  const CONTINUE = { respawned: [], deaths: [], parked: [], idleParked: [], halfOpened: [], reaped: [], crashReconciled: [], reconciledSlots: [], unblocked: [], stopped: false, queueDepth: 0, abandoned: true };
 
   it("returns the tick result when it completes before the ceiling", async () => {
     const logs: string[] = [];

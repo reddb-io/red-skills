@@ -177,6 +177,7 @@ You are autonomous. The orchestrator is watching, but you are responsible.
 - `git reset`, `git rebase`, `git clean`, `git restore`, `git checkout -- .`, `git branch -D`
 - `git stash` of any flavour (drop, pop, push — all banned)
 - `git push --force`, any `--force`/`--hard`/`--no-verify`
+  - You do **not** need `--no-verify`: AFK has already redirected this worktree's `core.hooksPath`, so the consumer repo's commit-phase hooks (pre-commit / commit-msg / pre-push) do **not** fire on your commits. There is nothing to bypass — commit normally. A reformat-and-restage hook therefore cannot break the "exactly one path staged" discipline.
 - Switching branches inside the worktree
 - Touching the primary checkout (you are not in it)
 - Rewriting HTTPS remotes (they shouldn't exist; if they do, that's a blocker)

@@ -46,8 +46,9 @@ import { emitEnvelope, type EmitEnvelopeDeps } from "./envelope-emit.js";
 import { parseCurrentBlocker } from "./blocker-state.js";
 import { parseReqLabels, planCloseCascade, type DependentIssue } from "./boot-sweep.js";
 import { buildAttemptRecordPayload, type AttemptRecordPayload } from "./attempt-record.js";
-import { recoveryDecision, recoveryCap, type RecoveryEnv } from "./recovery.js";
-import { recoveryReasonFor } from "./attempt-outcome.js";
+import { type RecoveryEnv } from "./recovery.js";
+import { dispose } from "./disposition.js";
+import type { AttemptStatus } from "./envelope.js";
 import type { HistoryClock } from "./history.js";
 import type { Runner } from "../types/runner.js";
 
@@ -121,7 +122,8 @@ export interface ReconcileLookups {
   changedFiles(branch: string, base: string): Promise<string[]>;
   /** Confirm the worker branch actually reached the host (optional → assume present). */
   branchPresent?(branch: string): Promise<boolean>;
-  /** True when the session is locked to a branch — drives the landing toggle. */
+  /** True when the session is locked to a branch. Since #842 the lock only
+   * resolves the base; landing mode is the `worktreeLaunchesPr` flag. */
   isLocked(): Promise<boolean>;
 }
 
@@ -144,17 +146,24 @@ export interface ReconcileDeps {
   pnpm: PnpmExec;
   /** Package layout probe for feedback scope resolution. */
   layout: PackageLayout;
-  /** One-shot inner-agent merge-conflict resolver for the LOCKED land (optional). */
+  /** One-shot inner-agent merge-conflict resolver for the DIRECT land (optional). */
   conflictResolver?: ConflictResolver;
   /**
-   * Isolated landing-worktree provisioner/teardown for the LOCKED land (#572):
-   * the locked merge/push/rollback runs in a throwaway worktree, never the
-   * primary checkout. Threaded from process-issue's deps; absent → the locked
+   * Landing-mode flag, decoupled from the lock (#842). `true`/undefined → land via
+   * an admin-merged PR; `false` → a direct merge. Threaded from process-issue's
+   * deps so a reconcile-land honours the same `afk.worktree_launches_pull_request`
+   * posture as the DONE-path landing.
+   */
+  worktreeLaunchesPr?: boolean;
+  /**
+   * Isolated landing-worktree provisioner/teardown for the DIRECT land (#572):
+   * the direct merge/push/rollback runs in a throwaway worktree, never the
+   * primary checkout. Threaded from process-issue's deps; absent → the direct
    * land is refused rather than mutating the primary.
    */
   makeLandingWorktree?(base: string): Promise<string | null>;
   removeLandingWorktree?(dir: string): Promise<void>;
-  /** Opt-in advisory-review wait for the UNLOCKED admin-PR landing (optional). */
+  /** Opt-in advisory-review wait for the admin-PR landing (optional). */
   waitForReview?: WaitForReviewInput;
   /** Envelope-emit IO (poster / marker writer / posted writer / git push). */
   envelope: EmitEnvelopeDeps;
@@ -310,7 +319,10 @@ export async function reconcile(deps: ReconcileDeps, input: ReconcileInput): Pro
   }
 
   // ---- 4a. GREEN → land via the existing landing path, then close ----
+  // Landing mode is the `worktreeLaunchesPr` flag (default true), decoupled from
+  // the lock which only resolved `base` (#842); `locked` is read for the echo.
   const locked = await deps.lookups.isLocked();
+  const openPr = deps.worktreeLaunchesPr !== false;
   const landing = await doLanding(
     {
       mergeExec: deps.mergeExec,
@@ -322,6 +334,7 @@ export async function reconcile(deps: ReconcileDeps, input: ReconcileInput): Pro
       removeLandingWorktree: deps.removeLandingWorktree,
     },
     {
+      openPr,
       locked,
       repo: input.repo,
       repoDir: input.repoDir,
@@ -404,14 +417,19 @@ async function park(
 ): Promise<ReconcileResult> {
   const { issue, labels } = input;
   const failed = feedback.checks.filter((c) => c.status === "failed");
-  await deps.gh.ensureLabel(LABEL_VALIDATION);
-  await deps.gh.editLabels(issue, parkDropLabels(labels), [LABEL_HUMAN, LABEL_VALIDATION]);
+  // The composer owns the typed blocked label + envelope status for this terminal
+  // (core/disposition); reconcile keeps its context-specific removeLabels
+  // (parkDropLabels) and failing-checks comment.
+  const disp = dispose("feedback-failed", input.attempt, deps.recoveryEnv ?? {});
+  const typed = disp.typedLabel!;
+  await deps.gh.ensureLabel(typed);
+  await deps.gh.editLabels(issue, parkDropLabels(labels), [LABEL_HUMAN, typed]);
   await deps.gh.comment(
     issue,
     `🤖 /afk reconcile validated parked branch \`${input.branch}\` WITHOUT re-running the agent — validation FAILED, so it was not landed:\n${formatFailingChecks(failed)}`,
   );
   const validationSummary = feedback.sidecar.join("\n");
-  const posted = await emitFailure(deps, input, "blocked", startedEpoch, {
+  const posted = await emitFailure(deps, input, disp.envelopeStatus, startedEpoch, {
     validation: validationSummary,
   });
   await recordAttemptBestEffort(deps, input, "feedback-failed", {
@@ -441,24 +459,28 @@ async function parkInfraRetry(
   startedEpoch: number,
 ): Promise<ReconcileResult> {
   const { issue, labels } = input;
-  const env = deps.recoveryEnv ?? {};
-  const decision = recoveryDecision("validation-infra", input.attempt, env);
-  const cap = recoveryCap("validation-infra", env) ?? 2;
+  // The composer owns the retry-vs-escalate decision, the cap, the typed label,
+  // and the envelope status (core/disposition, validation-infra is bounded-
+  // recoverable). reconcile keeps its context-specific label removals + the
+  // failing-checks comments.
+  const disp = dispose("feedback-failed-infra", input.attempt, deps.recoveryEnv ?? {});
+  const typed = disp.typedLabel!;
+  const cap = disp.cap ?? 2;
   const failed = feedback.checks.filter((c) => c.status === "failed");
   const failedSummary = formatFailingChecks(failed);
 
-  if (decision === "retry") {
+  if (disp.decision === "retry") {
     // Re-queue: drop `running` (already shed by the claim step) + the (now
     // misleading) `blocked:validation-infra` from a prior attempt, add
     // `ready-for-agent` so the issue resurfaces. The branch is left on the
     // remote (no deleteRemote) — the next attempt can re-validate it.
-    const infraLabels = labels.filter((l) => l !== "blocked:validation-infra" && l !== "ready-for-agent");
-    await deps.gh.editLabels(issue, infraLabels, ["ready-for-agent"]);
+    const infraLabels = labels.filter((l) => l !== typed && l !== LABEL_READY);
+    await deps.gh.editLabels(issue, infraLabels, disp.addLabels);
     await deps.gh.comment(
       issue,
       `🤖 /afk reconcile #${issue}: feedback gate failed for an INFRA reason (worktree/submodule/pnpm install/OOM) on \`${input.branch}\` — auto-retrying (attempt ${input.attempt}/${cap}):\n${failedSummary}`,
     );
-    const posted = await emitFailure(deps, input, "blocked", startedEpoch, {
+    const posted = await emitFailure(deps, input, disp.envelopeStatus, startedEpoch, {
       validation: feedback.sidecar.join("\n"),
     });
     await recordAttemptBestEffort(deps, input, "feedback-failed-infra", {
@@ -474,13 +496,13 @@ async function parkInfraRetry(
 
   // Cap exhausted → escalate to ready-for-human (page a maintainer). The
   // infra flake is sticky; the issue needs a human to look at the gate setup.
-  await deps.gh.ensureLabel("blocked:validation-infra");
-  await deps.gh.editLabels(issue, parkDropLabels(labels), ["ready-for-human", "blocked:validation-infra"]);
+  await deps.gh.ensureLabel(typed);
+  await deps.gh.editLabels(issue, parkDropLabels(labels), disp.addLabels);
   await deps.gh.comment(
     issue,
     `🤖 /afk reconcile #${issue}: feedback gate INFRA failure retry budget exhausted (attempt ${input.attempt}/${cap}) on \`${input.branch}\` — escalating to ready-for-human:\n${failedSummary}`,
   );
-  const posted = await emitFailure(deps, input, "blocked", startedEpoch, {
+  const posted = await emitFailure(deps, input, disp.envelopeStatus, startedEpoch, {
     validation: feedback.sidecar.join("\n"),
   });
   await recordAttemptBestEffort(deps, input, "feedback-failed-infra", {
@@ -503,9 +525,15 @@ async function parkMergeConflict(
   startedEpoch: number,
 ): Promise<ReconcileResult> {
   const { issue, labels } = input;
-  await deps.gh.ensureLabel(LABEL_MERGE_CONFLICT);
-  await deps.gh.editLabels(issue, parkDropLabels(labels), [LABEL_HUMAN, LABEL_MERGE_CONFLICT]);
-  const posted = await emitFailure(deps, input, "merge-conflict", startedEpoch, {
+  // The composer owns the typed blocked label + envelope status. reconcile ALWAYS
+  // parks a failed land to a human here (the land path already exhausted its own
+  // gates), so it uses the typed label + status but not the composer's
+  // retry-vs-escalate decision.
+  const disp = dispose("merge-conflict", input.attempt, deps.recoveryEnv ?? {});
+  const typed = disp.typedLabel!;
+  await deps.gh.ensureLabel(typed);
+  await deps.gh.editLabels(issue, parkDropLabels(labels), [LABEL_HUMAN, typed]);
+  const posted = await emitFailure(deps, input, disp.envelopeStatus, startedEpoch, {
     log: `reconcile land failed: ${reason}`,
   });
   await recordAttemptBestEffort(deps, input, "merge-conflict", {
@@ -564,7 +592,7 @@ async function emitDone(
 async function emitFailure(
   deps: ReconcileDeps,
   input: ReconcileInput,
-  status: "blocked" | "merge-conflict",
+  status: AttemptStatus,
   startedEpoch: number,
   sections: { validation?: string; log?: string },
 ): Promise<boolean> {
@@ -667,7 +695,7 @@ async function runCloseCascade(deps: ReconcileDeps, closedIssue: number): Promis
     }
 
     for (const p of planCloseCascade(closedIssue, dependents)) {
-      await deps.gh.editLabels(p.number, [LABEL_DEPENDENCY], [LABEL_READY]);
+      await deps.gh.editLabels(p.number, [LABEL_DEPENDENCY, ...p.reqLabels], [LABEL_READY]);
       await deps.gh.comment(p.number, p.comment);
     }
   } catch (err) {

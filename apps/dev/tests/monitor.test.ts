@@ -91,6 +91,36 @@ describe("monitor — compact line", () => {
     expect(line).not.toContain("[live]");
   });
 
+  it("live-fresh worker (active + pid-live) renders [live]", () => {
+    const line = renderWorkerCompactLine(
+      baseWorker({ live: true, pidLive: true }),
+      1780140600,
+    );
+    expect(line).toContain("[live]");
+    expect(line).not.toContain("[stale]");
+    expect(line).not.toContain("[quiet]");
+  });
+
+  it("live-quiet worker (pid-live but agent-lane stale) renders [quiet], not [stale]", () => {
+    const line = renderWorkerCompactLine(
+      baseWorker({ live: false, pidLive: true }),
+      1780140600,
+    );
+    expect(line).toContain("[quiet]");
+    expect(line).not.toContain("[stale]");
+    expect(line).not.toContain("[live]");
+  });
+
+  it("dead/finished worker (pid does not resolve, pid=0) renders [stale]", () => {
+    const line = renderWorkerCompactLine(
+      baseWorker({ live: false, pidLive: false }),
+      1780140600,
+    );
+    expect(line).toContain("[stale]");
+    expect(line).not.toContain("[live]");
+    expect(line).not.toContain("[quiet]");
+  });
+
   it("labels the counter as issues closed/total, with no misleading percent", () => {
     const w = baseWorker({
       state: { ...baseWorker().state, total: 3, done: 1 },
@@ -318,12 +348,13 @@ describe("monitor — mirror plan", () => {
     title: string,
     stage: string,
     live = true,
+    phase = "coding",
   ): CompactWorker =>
     baseWorker({
       state: {
         ...baseWorker().state,
         worker_id,
-        current: { number, title, stage, started_at: "2026-05-30T11:00:00Z" },
+        current: { number, title, slug: title, stage, phase, started_at: "2026-05-30T11:00:00Z" },
       },
       live,
     });
@@ -341,14 +372,14 @@ describe("monitor — mirror plan", () => {
     expect(calls[0]).toMatchObject({
       call: "TaskCreate",
       key: "wAAAA:42",
-      title: "#42 wAAAA — do thing",
+      title: "wAAAA [2/5 coding] #42 do thing",
       description: "stage: impl",
       state: "in_progress",
     });
   });
 
   it("stage change emits a TaskUpdate carrying the new stage", () => {
-    const tracked = JSON.stringify({ key: "wAAAA:42", stage: "impl" });
+    const tracked = JSON.stringify({ key: "wAAAA:42", stage: "impl", phase: "coding" });
     const out = runMirrorPlan([liveWorker("wAAAA", 42, "t", "tests")], tracked);
     const calls = parse(out);
     expect(calls).toHaveLength(1);
@@ -356,12 +387,26 @@ describe("monitor — mirror plan", () => {
       call: "TaskUpdate",
       key: "wAAAA:42",
       description: "stage: tests",
+      title: "wAAAA [2/5 coding] #42 t",
+      state: "in_progress",
+    });
+  });
+
+  it("phase change emits a TaskUpdate that re-titles the macro phase", () => {
+    const tracked = JSON.stringify({ key: "wAAAA:42", stage: "impl", phase: "coding" });
+    const out = runMirrorPlan([liveWorker("wAAAA", 42, "t", "impl", true, "validating")], tracked);
+    const calls = parse(out);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      call: "TaskUpdate",
+      key: "wAAAA:42",
+      title: "wAAAA [3/5 validating] #42 t",
       state: "in_progress",
     });
   });
 
   it("terminal (non-live) tracked worker completes", () => {
-    const tracked = JSON.stringify({ key: "wAAAA:42", stage: "impl" });
+    const tracked = JSON.stringify({ key: "wAAAA:42", stage: "impl", phase: "coding" });
     const out = runMirrorPlan(
       [liveWorker("wAAAA", 42, "t", "impl", false)],
       tracked,
@@ -375,8 +420,24 @@ describe("monitor — mirror plan", () => {
     });
   });
 
+  it("terminal (non-live) blocked worker fails with a [blocked] title", () => {
+    const tracked = JSON.stringify({ key: "wAAAA:42", stage: "impl", phase: "coding" });
+    const out = runMirrorPlan(
+      [liveWorker("wAAAA", 42, "t", "impl", false, "blocked")],
+      tracked,
+    );
+    const calls = parse(out);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      call: "TaskUpdate",
+      key: "wAAAA:42",
+      title: "wAAAA [blocked] #42 t",
+      state: "failed",
+    });
+  });
+
   it("tracked worker absent from desired completes", () => {
-    const tracked = JSON.stringify({ key: "wAAAA:42", stage: "impl" });
+    const tracked = JSON.stringify({ key: "wAAAA:42", stage: "impl", phase: "coding" });
     const out = runMirrorPlan([], tracked);
     const calls = parse(out);
     expect(calls).toHaveLength(1);
@@ -384,7 +445,7 @@ describe("monitor — mirror plan", () => {
   });
 
   it("no change emits no output (idempotent)", () => {
-    const tracked = JSON.stringify({ key: "wAAAA:42", stage: "impl" });
+    const tracked = JSON.stringify({ key: "wAAAA:42", stage: "impl", phase: "coding" });
     const out = runMirrorPlan([liveWorker("wAAAA", 42, "t", "impl")], tracked);
     expect(out).toBe("");
   });
@@ -413,11 +474,12 @@ describe("monitor — mirror plan", () => {
     expect(desired[1]!.status).toBe("gone");
   });
 
-  it("parseTrackedJsonl skips blank/garbage lines and tolerates missing stage", () => {
-    const text = '\n{"key":"a:1","stage":"impl"}\nnot json\n{"stage":"x"}\n{"key":"b:2"}\n';
+  it("parseTrackedJsonl skips blank/garbage lines and tolerates missing stage/phase", () => {
+    const text =
+      '\n{"key":"a:1","stage":"impl","phase":"coding"}\nnot json\n{"stage":"x"}\n{"key":"b:2"}\n';
     expect(parseTrackedJsonl(text)).toEqual([
-      { key: "a:1", stage: "impl" },
-      { key: "b:2", stage: "" },
+      { key: "a:1", stage: "impl", phase: "coding" },
+      { key: "b:2", stage: "", phase: "" },
     ]);
   });
 });

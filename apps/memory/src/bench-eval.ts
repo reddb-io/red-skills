@@ -44,6 +44,14 @@ export interface CorpusEntry {
   valid_until?: string | null;
   supersedes?: string;
   superseded_by?: string;
+  /** Governed-recall axes (ADR 0035/0037). `scope` confines a fact to one
+   * entity so a near-duplicate from another scope is filtered out; `confidence`
+   * and `tier` weight a fact down when a contradictory lower-trust source is
+   * textually tempting. All are optional — an entry without them is a global,
+   * full-confidence, canonical fact and recall behaves exactly as before. */
+  scope?: string;
+  confidence?: string;
+  tier?: string;
 }
 
 export interface CorpusRelation {
@@ -63,6 +71,9 @@ export interface Question {
   gold_doc_ids: string[];
   gold_answer: string;
   as_of?: string;
+  /** Restricts an adversarial near-duplicate question to one entity. Governed
+   * recall drops scoped entries whose `scope` differs from the question's. */
+  scope?: string;
 }
 
 export interface ContextPackEntry {
@@ -224,6 +235,10 @@ export interface QuestionRecord {
   pack_ids: string[];
   gold_in_pack: boolean;
   gold_rank: number | null;
+  retrieval_k: number;
+  precision_at_k: number;
+  recall_at_k: number;
+  ndcg_at_k: number;
   exact_match: number;
   f1: number;
   tokens: TokenCounts;
@@ -287,6 +302,9 @@ export interface EvalAggregate {
   judge_j: JudgeJAggregate | null;
   abstention_score: number;
   gold_in_pack_rate: number;
+  precision_at_k: number;
+  recall_at_k: number;
+  ndcg_at_k: number;
   tokens: TokenCounts;
   quality_per_1k_tokens: number;
   tools_used: number;
@@ -395,6 +413,9 @@ function asCorpusEntry(value: unknown): CorpusEntry {
     valid_until: optionalNullableStringField(r, "valid_until"),
     supersedes: optionalStringField(r, "supersedes"),
     superseded_by: optionalStringField(r, "superseded_by"),
+    scope: optionalStringField(r, "scope"),
+    confidence: optionalStringField(r, "confidence"),
+    tier: optionalStringField(r, "tier"),
   };
 }
 
@@ -464,6 +485,7 @@ function asQuestion(value: unknown): Question {
     gold_doc_ids: Array.isArray(r.gold_doc_ids) ? goldDocIds : [goldDocId],
     gold_answer: stringField(r, "gold_answer"),
     as_of: optionalStringField(r, "as_of"),
+    scope: optionalStringField(r, "scope"),
   };
 }
 
@@ -552,7 +574,7 @@ export function createRedDbSubstrateAdapter(id = "reddb"): SubstrateAdapter<RedD
       const activeEntries = index.entries.filter((entry) => isEntryEligibleForQuestion(entry, question));
       const scores = new Map<string, number>();
       for (const entry of activeEntries) {
-        const score = scoreEntry(question, entry);
+        const score = scoreEntry(question, entry) * governanceWeight(entry);
         if (score > 0) scores.set(entry.id, (scores.get(entry.id) ?? 0) + score);
       }
       if (question.category === "multi-hop") {
@@ -580,8 +602,38 @@ export function createRedDbSubstrateAdapter(id = "reddb"): SubstrateAdapter<RedD
 }
 
 function isEntryEligibleForQuestion(entry: CorpusEntry, question: Question): boolean {
-  if (!question.as_of) return true;
-  return isEntryActiveAt(entry, question.as_of);
+  // Scope governance: a scoped fact only answers a question carrying the same
+  // scope. Global (unscoped) facts stay eligible everywhere.
+  if (!isEntryInScope(entry, question)) return false;
+  // Temporal/supersession governance. With an explicit `as_of`, the valid-time
+  // window decides eligibility. Without one ("as of now"), a superseded entry
+  // is no longer current and is dropped so the superseding fact surfaces.
+  if (question.as_of) return isEntryActiveAt(entry, question.as_of);
+  return entry.superseded_by === undefined;
+}
+
+function isEntryInScope(entry: CorpusEntry, question: Question): boolean {
+  if (!question.scope || !entry.scope) return true;
+  return entry.scope === question.scope;
+}
+
+/** Confidence/tier governance weight. A low-confidence or chat-tier fact is
+ * weighted down so a contradictory canonical fact wins even when the tempting
+ * source has more raw token overlap. Unset axes weigh 1, so a corpus without
+ * these fields ranks exactly as before. */
+function governanceWeight(entry: CorpusEntry): number {
+  return confidenceWeight(entry.confidence) * tierWeight(entry.tier);
+}
+
+function confidenceWeight(confidence: string | undefined): number {
+  if (confidence === "low") return 0.25;
+  if (confidence === "medium") return 0.6;
+  return 1;
+}
+
+function tierWeight(tier: string | undefined): number {
+  if (tier === "chat") return 0.5;
+  return 1;
 }
 
 function isEntryActiveAt(entry: CorpusEntry, asOf: string): boolean {
@@ -1165,6 +1217,58 @@ export function tokenF1(predicted: string, gold: string): number {
   return (2 * precision * recall) / (precision + recall);
 }
 
+/* ----------------------------------------------------------------------------
+ * Retrieval-quality metrics — precision@k / recall@k / NDCG@k (#825, ADR 0037)
+ *
+ * `gold_in_pack` only answers "did the right entry land anywhere in the pack".
+ * These three answer "did recall return the *right* entries, ranked well":
+ *   precision@k — fraction of the returned top-k that is a gold doc
+ *   recall@k    — fraction of the gold set surfaced within the top-k
+ *   NDCG@k      — rank-weighted gain (binary relevance) over the ideal ranking
+ *
+ * Unanswerable questions carry an empty gold set: a perfect substrate returns
+ * nothing, so an empty top-k scores 1 on all three and any returned entry scores
+ * 0. This mirrors the `gold_in_pack` abstention convention. Pure and
+ * deterministic so it gates in CI alongside the exact-match/F1 scorer.
+ * --------------------------------------------------------------------------*/
+
+export interface RetrievalQualityMetrics {
+  k: number;
+  precision_at_k: number;
+  recall_at_k: number;
+  ndcg_at_k: number;
+}
+
+export function retrievalQualityMetrics(packIds: string[], goldIds: string[], k: number): RetrievalQualityMetrics {
+  const cutoff = Math.max(0, Math.floor(k));
+  const topK = packIds.slice(0, cutoff);
+  const gold = new Set(goldIds);
+  if (gold.size === 0) {
+    const clean = topK.length === 0 ? 1 : 0;
+    return { k: cutoff, precision_at_k: clean, recall_at_k: clean, ndcg_at_k: clean };
+  }
+  let relevant = 0;
+  let dcg = 0;
+  topK.forEach((id, i) => {
+    if (gold.has(id)) {
+      relevant += 1;
+      dcg += 1 / Math.log2(i + 2);
+    }
+  });
+  const precision = topK.length > 0 ? relevant / topK.length : 0;
+  const recall = relevant / gold.size;
+  const idealRelevant = Math.min(gold.size, cutoff);
+  let idcg = 0;
+  for (let i = 0; i < idealRelevant; i += 1) idcg += 1 / Math.log2(i + 2);
+  const ndcg = idcg > 0 ? dcg / idcg : 0;
+  return {
+    k: cutoff,
+    precision_at_k: round4(precision),
+    recall_at_k: round4(recall),
+    ndcg_at_k: round4(ndcg),
+  };
+}
+
 export function isUnanswerableQuestion(question: Question): boolean {
   return question.category === "unanswerable" || question.gold_doc_ids.length === 0;
 }
@@ -1508,6 +1612,9 @@ export async function evaluateSubstrateAdapter<TIndex>(
   let f1Sum = 0;
   let abstentionScoreSum = 0;
   let goldInPackCount = 0;
+  let precisionSum = 0;
+  let recallSum = 0;
+  let ndcgSum = 0;
   const tokens: TokenCounts = { input: 0, output: 0, total: 0 };
   let promptTokens = 0;
 
@@ -1536,10 +1643,14 @@ export async function evaluateSubstrateAdapter<TIndex>(
     const goldIndexes = q.gold_doc_ids.map((id) => packIds.indexOf(id));
     const goldIdx = goldIndexes[0] ?? -1;
     const goldInPack = unanswerable ? packIds.length === 0 : goldIndexes.every((idx) => idx >= 0);
+    const retrieval = retrievalQualityMetrics(packIds, q.gold_doc_ids, packSize);
     emSum += em;
     f1Sum += f1;
     abstentionScoreSum += qAbstentionScore;
     if (goldInPack) goldInPackCount += 1;
+    precisionSum += retrieval.precision_at_k;
+    recallSum += retrieval.recall_at_k;
+    ndcgSum += retrieval.ndcg_at_k;
     tokens.input += tokenUsage.input;
     tokens.output += tokenUsage.output;
     tokens.total += tokenUsage.total;
@@ -1564,6 +1675,10 @@ export async function evaluateSubstrateAdapter<TIndex>(
       pack_ids: packIds,
       gold_in_pack: goldInPack,
       gold_rank: goldInPack && q.gold_doc_ids.length > 0 ? goldIdx + 1 : null,
+      retrieval_k: retrieval.k,
+      precision_at_k: retrieval.precision_at_k,
+      recall_at_k: retrieval.recall_at_k,
+      ndcg_at_k: retrieval.ndcg_at_k,
       exact_match: em,
       f1: round4(f1),
       tokens: tokenUsage,
@@ -1585,6 +1700,9 @@ export async function evaluateSubstrateAdapter<TIndex>(
     judge_j: aggregateJudgeJ(records, opts.judge?.config ?? FROZEN_JUDGE_J_CONFIG),
     abstention_score: round4(abstentionScoreSum / n),
     gold_in_pack_rate: round4(goldInPackCount / n),
+    precision_at_k: round4(precisionSum / n),
+    recall_at_k: round4(recallSum / n),
+    ndcg_at_k: round4(ndcgSum / n),
     tokens,
     quality_per_1k_tokens: qualityPer1kTokens(f1Sum, tokens.total),
     tools_used: 0,
@@ -1639,6 +1757,9 @@ export async function evaluateAgentToolSubstrateAdapter<TIndex>(
   let f1Sum = 0;
   let abstentionScoreSum = 0;
   let goldInPackCount = 0;
+  let precisionSum = 0;
+  let recallSum = 0;
+  let ndcgSum = 0;
   const tokens: TokenCounts = { input: 0, output: 0, total: 0 };
   let toolsUsed = 0;
   let promptTokens = 0;
@@ -1672,6 +1793,7 @@ export async function evaluateAgentToolSubstrateAdapter<TIndex>(
     const goldIndexes = q.gold_doc_ids.map((id) => packIds.indexOf(id));
     const goldIdx = goldIndexes[0] ?? -1;
     const goldInPack = unanswerable ? packIds.length === 0 : goldIndexes.every((idx) => idx >= 0);
+    const retrieval = retrievalQualityMetrics(packIds, q.gold_doc_ids, packSize);
     const qToolsUsed = 1;
     const measuredResponseMs = round4(Math.max(0, clock() - startedAt));
     const qResponseMs = useMeasuredTime
@@ -1687,6 +1809,9 @@ export async function evaluateAgentToolSubstrateAdapter<TIndex>(
     f1Sum += f1;
     abstentionScoreSum += qAbstentionScore;
     if (goldInPack) goldInPackCount += 1;
+    precisionSum += retrieval.precision_at_k;
+    recallSum += retrieval.recall_at_k;
+    ndcgSum += retrieval.ndcg_at_k;
     tokens.input += tokenUsage.tokens.input;
     tokens.output += tokenUsage.tokens.output;
     tokens.total += tokenUsage.tokens.total;
@@ -1714,6 +1839,10 @@ export async function evaluateAgentToolSubstrateAdapter<TIndex>(
       pack_ids: packIds,
       gold_in_pack: goldInPack,
       gold_rank: goldInPack && q.gold_doc_ids.length > 0 ? goldIdx + 1 : null,
+      retrieval_k: retrieval.k,
+      precision_at_k: retrieval.precision_at_k,
+      recall_at_k: retrieval.recall_at_k,
+      ndcg_at_k: retrieval.ndcg_at_k,
       exact_match: em,
       f1: round4(f1),
       tokens: tokenUsage.tokens,
@@ -1735,6 +1864,9 @@ export async function evaluateAgentToolSubstrateAdapter<TIndex>(
     judge_j: aggregateJudgeJ(records, opts.judge?.config ?? FROZEN_JUDGE_J_CONFIG),
     abstention_score: round4(abstentionScoreSum / n),
     gold_in_pack_rate: round4(goldInPackCount / n),
+    precision_at_k: round4(precisionSum / n),
+    recall_at_k: round4(recallSum / n),
+    ndcg_at_k: round4(ndcgSum / n),
     tokens,
     quality_per_1k_tokens: qualityPer1kTokens(f1Sum, tokens.total),
     tools_used: round4(toolsUsed / n),
@@ -1831,6 +1963,9 @@ function emptyEvalReport(opts: {
     judge_j: null,
     abstention_score: 0,
     gold_in_pack_rate: 0,
+    precision_at_k: 0,
+    recall_at_k: 0,
+    ndcg_at_k: 0,
     tokens: { input: 0, output: 0, total: 0 },
     quality_per_1k_tokens: 0,
     tools_used: 0,
@@ -2046,6 +2181,9 @@ function aggregateRecords(records: QuestionRecord[]): EvalAggregate {
   );
   const f1Sum = records.reduce((sum, record) => sum + record.f1, 0);
   const abstentionScoreSum = records.reduce((sum, record) => sum + record.abstention_score, 0);
+  const precisionSum = records.reduce((sum, record) => sum + record.precision_at_k, 0);
+  const recallSum = records.reduce((sum, record) => sum + record.recall_at_k, 0);
+  const ndcgSum = records.reduce((sum, record) => sum + record.ndcg_at_k, 0);
   const promptTokens = records.reduce((sum, record) => sum + record.prompt_tokens, 0);
   const reasoningTokens = records.reduce((sum, record) => sum + record.reasoning_tokens, 0);
   return {
@@ -2054,6 +2192,9 @@ function aggregateRecords(records: QuestionRecord[]): EvalAggregate {
     judge_j: aggregateJudgeJ(records, FROZEN_JUDGE_J_CONFIG),
     abstention_score: round4(abstentionScoreSum / n),
     gold_in_pack_rate: round4(records.filter((record) => record.gold_in_pack).length / n),
+    precision_at_k: round4(precisionSum / n),
+    recall_at_k: round4(recallSum / n),
+    ndcg_at_k: round4(ndcgSum / n),
     tokens,
     quality_per_1k_tokens: qualityPer1kTokens(f1Sum, tokens.total),
     tools_used: round4(records.reduce((sum, record) => sum + record.tools_used, 0) / n),
@@ -2150,6 +2291,8 @@ function categoryOrder(category: string): number {
     "multi-hop": 1,
     "temporal-as-of": 2,
     "unanswerable": 3,
+    "needle": 4,
+    "adversarial": 5,
   };
   return order[category] ?? 99;
 }
@@ -2266,6 +2409,9 @@ export function formatEvalReport(report: EvalReport): string {
   lines.push(`| LLM-judge J | ${formatJudgeJAggregate(report.aggregate.judge_j)} |`);
   lines.push(`| abstention score | ${report.aggregate.abstention_score.toFixed(3)} |`);
   lines.push(`| gold-in-pack rate | ${report.aggregate.gold_in_pack_rate.toFixed(3)} |`);
+  lines.push(`| precision@k | ${report.aggregate.precision_at_k.toFixed(3)} |`);
+  lines.push(`| recall@k | ${report.aggregate.recall_at_k.toFixed(3)} |`);
+  lines.push(`| NDCG@k | ${report.aggregate.ndcg_at_k.toFixed(3)} |`);
   lines.push(`| input tokens | ${report.aggregate.tokens.input} |`);
   lines.push(`| output tokens | ${report.aggregate.tokens.output} |`);
   lines.push(`| quality per 1k tokens | ${report.aggregate.quality_per_1k_tokens.toFixed(3)} |`);
@@ -2292,6 +2438,20 @@ export function formatEvalReport(report: EvalReport): string {
     if (temporal?.plain_neo4j_limitation) {
       lines.push("");
       lines.push(`Temporal as-of note: ${temporal.plain_neo4j_limitation}`);
+    }
+    lines.push("");
+    lines.push("## Retrieval quality");
+    lines.push("");
+    lines.push("Recall returning the *right* nodes, paired with the token cost it took (ADR 0037: never tokens without quality).");
+    lines.push("");
+    lines.push("| category | substrate | gold-in-pack | precision@k | recall@k | NDCG@k | total tokens |");
+    lines.push("| --- | --- | ---: | ---: | ---: | ---: | ---: |");
+    for (const category of report.categories) {
+      for (const summary of category.substrates) {
+        lines.push(
+          `| ${category.category} | ${summary.substrate} | ${summary.aggregate.gold_in_pack_rate.toFixed(3)} | ${summary.aggregate.precision_at_k.toFixed(3)} | ${summary.aggregate.recall_at_k.toFixed(3)} | ${summary.aggregate.ndcg_at_k.toFixed(3)} | ${summary.aggregate.tokens.total} |`,
+        );
+      }
     }
     lines.push("");
   }

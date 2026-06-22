@@ -394,7 +394,14 @@ export async function salvageUncommitted(ctx: GitContext, branch: string, remote
     const add = await runGit(wctx, ["add", "--", p]);
     if (add.code !== 0) continue;
     const message = `afk: salvage uncommitted change to ${p}\n\nInner agent emitted a completion sentinel without committing this file; AFK committed it so the feedback gate and landing see the work.`;
-    const commit = await runGit(wctx, ["commit", "-m", message, "--", p]);
+    // `--no-verify` bypasses the CONSUMER repo's commit-phase hooks (pre-commit /
+    // commit-msg) on AFK's own salvage commit (#840) — AFK's binding validation is
+    // the feedback gate + backpressure, not the consumer's per-commit hooks, and a
+    // reformat-and-restage hook would break the one-path-staged discipline. The
+    // worktree's `core.hooksPath` redirect already covers the continuous-push path;
+    // `--no-verify` covers the isolated-provider path where that hook never ran.
+    // It leaves `post-commit` firing, so the continuous-push hook still pushes.
+    const commit = await runGit(wctx, ["commit", "--no-verify", "-m", message, "--", p]);
     if (commit.code === 0) committed += 1;
   }
   if (committed > 0) {

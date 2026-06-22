@@ -41,7 +41,7 @@ import * as fsx from "../runtime/fs.js";
 import type { GhContext } from "../runtime/gh.js";
 import type { GitContext } from "../runtime/git.js";
 import type { ExecFn } from "../runtime/exec.js";
-import { getConfig, loadConfig, readBackpressure, resolveTier } from "../core/config.js";
+import { getConfig, loadConfig, readBackpressure, resolveTier, resolveCiTimeoutSeconds } from "../core/config.js";
 import {
   classifyIssue,
   resolveReviewGate,
@@ -455,6 +455,10 @@ export function buildProcessDeps(
   // attempt dir changes so counts never bleed across the attempt boundary.
   let activityMeter = createActivityMeter();
   let activityMeterDir = "";
+  // Last diff volume observed by the heartbeat sink, so the on_heartbeat vitals
+  // provider (#832) can report loc_added/loc_removed alongside the meter's
+  // activity counters without re-shelling `git diff`.
+  let lastHeartbeatDiff = { added: 0, removed: 0 };
 
   // ---- lifecycle hooks: load config + resolve built-in defaults + real exec ----
   const config = loadConfig(paths.configPath, { warn: () => undefined });
@@ -476,11 +480,34 @@ export function buildProcessDeps(
         }
       : undefined;
 
+  // CI-aware merge (#812). Default off → the unlocked admin-merge fires
+  // immediately (fine on a base with NO required status checks). When
+  // `afk.merge.ci_aware` is true, the unlocked landing first polls the PR's merge
+  // state and admin-merges ONLY once it settles — because an admin-merge cannot
+  // bypass required checks on an `enforce_admins` base, so merging a just-opened
+  // PR with checks pending is rejected and was mislabelled `merge-conflict`. The
+  // poll budget comes from `RED_AFK_MERGE_CI_TIMEOUT_S` (default 1800s) at a fixed
+  // 10s cadence; on timeout the open, MERGEABLE PR is handed off (no agent re-run).
+  const ciAwait =
+    getConfig(config, "afk.merge.ci_aware") === "true"
+      ? {
+          sleep: (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
+          intervalMs: 10_000,
+          maxPolls: Math.max(1, Math.ceil(resolveCiTimeoutSeconds(process.env) / 10)),
+        }
+      : undefined;
+
   // PR review gate (ADR 0064 §10, #749). Default off → AFK keeps fast-merging
   // every tier. When enabled, a NON-mechanical attempt (classified tier at/above
   // `afk.review_gate.threshold`) gets `ready-for-review` on its PR and holds the
   // merge for a fresh-agent review; mechanical/trivial work fast-merges as today.
   const reviewGate = resolveReviewGate(config);
+
+  // Landing-mode flag (ADR 0030 amended, #842), decoupled from the lock. Default
+  // true → the attempt lands via an admin-merged PR into the resolved base; false
+  // → a direct merge into that base (offline, no PR). The lock only resolves the
+  // base (ADR 0031). Honours the namespaced + legacy fallback via loadConfig.
+  const worktreeLaunchesPr = getConfig(config, "afk.worktree_launches_pull_request") !== "false";
 
   return {
     gh: {
@@ -588,6 +615,8 @@ export function buildProcessDeps(
     resolveTier: (activeRunner, taskClass = "think") => resolveTier(config, activeRunner, taskClass, process.env),
     fallbackRunner,
     waitForReview,
+    ciAwait,
+    worktreeLaunchesPr,
     reviewGate,
     reviewGateLabel: LABEL_READY_FOR_REVIEW,
     // One-shot merge-conflict resolver (merge_resolve_conflict): re-enter the
@@ -788,6 +817,11 @@ export function buildProcessDeps(
       if (stage || discrete) {
         void updateState(join(current.attemptDir, "afk.state.json"), {
           ...(stage ? { "current.stage": stage, "current.last_stream_line": msg.slice(0, 200) } : {}),
+          // Any inner-agent stream activity means we are in the macro `coding`
+          // phase (collapses explore/impl/tests/commit — the fine stage lives in
+          // the description, so the title never flickers, issue #811). Idempotent:
+          // re-stamping `coding` each event is a no-op write.
+          "current.phase": "coding",
           "current.last_event_at": ts,
           ...costPatch,
         }).catch(() => {});
@@ -821,6 +855,8 @@ export function buildProcessDeps(
         const { added, removed } = await gitx
           .diffstatShortstat({ cwd: worktree }, baseRef)
           .catch(() => ({ added: 0, removed: 0 }));
+        // Remember the volume for the on_heartbeat vitals provider (#832).
+        lastHeartbeatDiff = { added, removed };
         // Close this heartbeat window on the meter — derives the waiting count
         // (a window with no new stream events) and snapshots the cumulative
         // tool/text counts to fold into the record + state.
@@ -844,6 +880,34 @@ export function buildProcessDeps(
           ...(info.base ? { "current.base": info.base } : {}),
         }).catch(() => {});
       })();
+    },
+    // Worker-vitals provider for the on_heartbeat hook context (ADR 0065/#832):
+    // the live cumulative activity counters from the attempt's meter plus the
+    // last-observed diff volume, under their canonical WorkerVitals names. Read
+    // each attempt-guard poll right before the on_heartbeat hook fires.
+    heartbeatVitals: () => {
+      const a = activityMeter.peek();
+      return {
+        tools_called_count: a.toolsCalled,
+        text_chunk_count: a.textChunks,
+        reasoning_events: a.reasoningCount,
+        reasoning_tokens: a.reasoningTokens,
+        waiting_count: a.waiting,
+        input_tokens: a.inputTokens,
+        output_tokens: a.outputTokens,
+        cost_usd: a.costUsd,
+        loc_added: lastHeartbeatDiff.added,
+        loc_removed: lastHeartbeatDiff.removed,
+      };
+    },
+    // Macro-lifecycle phase stamp (issue #811): processIssue calls this at the
+    // orchestrator-owned points the agent stream can't see — `validating` at the
+    // feedback gate, `merging` at landing. Best-effort, swallowed; the calm title
+    // signal must never fail the run.
+    markPhase: (phase) => {
+      void updateState(join(current.attemptDir, "afk.state.json"), {
+        "current.phase": phase,
+      }).catch(() => {});
     },
     historyPath: paths.historyPath,
     historyClock: { ts: new Date().toISOString(), epoch: Math.floor(Date.now() / 1000) },
@@ -1300,6 +1364,11 @@ export async function runCommand(options: RunOptions): Promise<number> {
           "current.started_at": startedAt,
           "current.runner": c.runner,
           "current.stage": "setup",
+          // Macro-lifecycle phase seed (issue #811): the calm signal the
+          // task-mirror title surfaces. `coding` is stamped on the first inner-
+          // agent stream event; `validating`/`merging` by the orchestrator at the
+          // gate/landing steps (deps.markPhase).
+          "current.phase": "setup",
         });
       } catch {
         // Best-effort — a failed seed must never block the worker's actual work.

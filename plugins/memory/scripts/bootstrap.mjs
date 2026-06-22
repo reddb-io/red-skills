@@ -229,6 +229,70 @@ function isPluginEnabled(cwd, plugin) {
   return false;
 }
 
+// ── Inert MCP server (issue #843) ────────────────────────────────────────────
+// When the plugin is gated off (ADR 0067), the `cli`/`hook` paths no-op by
+// printing `{}` and exiting 0. The `mcp` stdio path cannot do that: exiting
+// closes the pipe before the MCP handshake, which the host reports as
+// `✘ Failed to connect` ("1 error during load"). Instead, speak just enough of
+// the MCP stdio protocol (newline-delimited JSON-RPC 2.0) to complete the
+// handshake and expose zero tools — a valid, empty, inert server. No bundle
+// fetch, no RedDB, no hooks, no tools: the only thing this does is not
+// fake-fail the handshake. Exported for tests.
+export function startInertMcpServer({ name, version } = {}) {
+  const serverInfo = { name: name || "inert", version: version || "0.0.0" };
+  let buffer = "";
+  const send = (msg) => process.stdout.write(`${JSON.stringify(msg)}\n`);
+  const handle = (msg) => {
+    if (!msg || typeof msg !== "object") return;
+    // A request carries an id; a notification (e.g. notifications/initialized)
+    // does not — ignore notifications. (id may legitimately be 0.)
+    if (msg.id === undefined || msg.id === null) return;
+    const { id, method, params } = msg;
+    if (method === "initialize") {
+      send({
+        jsonrpc: "2.0",
+        id,
+        result: {
+          protocolVersion: params?.protocolVersion || "2024-11-05",
+          capabilities: { tools: {} },
+          serverInfo,
+        },
+      });
+      return;
+    }
+    if (method === "tools/list") {
+      send({ jsonrpc: "2.0", id, result: { tools: [] } });
+      return;
+    }
+    if (method === "ping") {
+      send({ jsonrpc: "2.0", id, result: {} });
+      return;
+    }
+    send({
+      jsonrpc: "2.0",
+      id,
+      error: { code: -32601, message: `Method not found: ${method}` },
+    });
+  };
+  process.stdin.setEncoding("utf8");
+  process.stdin.on("data", (chunk) => {
+    buffer += chunk;
+    let idx;
+    while ((idx = buffer.indexOf("\n")) >= 0) {
+      const line = buffer.slice(0, idx).trim();
+      buffer = buffer.slice(idx + 1);
+      if (!line) continue;
+      try {
+        handle(JSON.parse(line));
+      } catch {
+        /* ignore malformed frames */
+      }
+    }
+  });
+  process.stdin.on("end", () => process.exit(0));
+  process.stdin.resume();
+}
+
 function delegate(runtime, argv) {
   return new Promise((resolve) => {
     const target = argv[0] === "mcp" || argv[0] === "memory-mcp" ? runtime.mcpPath : runtime.cliPath;
@@ -248,6 +312,13 @@ async function main() {
   // directory, stay fully inert — no version resolution, no runtime fetch, no
   // delegate — and honour the hooks' no-op contract (`{}` on stdout, exit 0).
   if (!isPluginEnabled(process.cwd(), "memory")) {
+    // The mcp stdio path must complete the handshake (empty server) rather than
+    // exit, or the host reports `✘ Failed to connect` (issue #843). cli/hook
+    // paths keep the silent no-op exit.
+    if (argv[0] === "mcp" || argv[0] === "memory-mcp") {
+      startInertMcpServer({ name: "red-memory", version: await pluginVersion() });
+      return;
+    }
     process.stdout.write("{}");
     process.exit(0);
   }

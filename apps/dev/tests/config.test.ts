@@ -10,6 +10,8 @@ import {
   parseConfigYaml,
   readBackpressure,
   resolveTier,
+  resolveCiTimeoutSeconds,
+  DEFAULT_MERGE_CI_TIMEOUT_S,
 } from "../src/core/config.js";
 
 async function writeConfig(yaml: string): Promise<string> {
@@ -312,6 +314,63 @@ describe("config — afk.merge.wait_for_review (ADR 0048)", () => {
     expect(getConfig(values, "afk.merge.wait_for_review")).toBe("true");
     // review_check keeps its default when unset.
     expect(getConfig(values, "afk.merge.review_check")).toBe("CodeRabbit");
+  });
+});
+
+describe("config — resolveCiTimeoutSeconds (RED_AFK_MERGE_CI_TIMEOUT_S, #812)", () => {
+  it("defaults to 1800s when the env var is unset", () => {
+    expect(resolveCiTimeoutSeconds({})).toBe(DEFAULT_MERGE_CI_TIMEOUT_S);
+    expect(DEFAULT_MERGE_CI_TIMEOUT_S).toBe(1800);
+  });
+
+  it("reads a positive integer override", () => {
+    expect(resolveCiTimeoutSeconds({ RED_AFK_MERGE_CI_TIMEOUT_S: "300" })).toBe(300);
+  });
+
+  it("falls back to the default on a non-positive / unparseable value", () => {
+    expect(resolveCiTimeoutSeconds({ RED_AFK_MERGE_CI_TIMEOUT_S: "0" })).toBe(DEFAULT_MERGE_CI_TIMEOUT_S);
+    expect(resolveCiTimeoutSeconds({ RED_AFK_MERGE_CI_TIMEOUT_S: "-5" })).toBe(DEFAULT_MERGE_CI_TIMEOUT_S);
+    expect(resolveCiTimeoutSeconds({ RED_AFK_MERGE_CI_TIMEOUT_S: "abc" })).toBe(DEFAULT_MERGE_CI_TIMEOUT_S);
+  });
+});
+
+describe("config — afk.merge.ci_aware (#812)", () => {
+  it("defaults to false (admin-merge immediately)", () => {
+    const values = loadConfig("/nonexistent/.red/config.yaml", { warn: () => {} });
+    expect(getConfig(values, "afk.merge.ci_aware")).toBe("false");
+  });
+
+  it("reads the namespaced plugins.dev.afk.merge.ci_aware block", () => {
+    const text = "plugins:\n  dev:\n    afk:\n      merge:\n        ci_aware: true\n";
+    const values = loadConfig("/x/.red/config.yaml", { read: () => text });
+    expect(getConfig(values, "afk.merge.ci_aware")).toBe("true");
+  });
+});
+
+describe("config — afk.worktree_launches_pull_request (ADR 0030 amended, #842)", () => {
+  it("defaults to true (admin-PR landing) when unset", () => {
+    const values = loadConfig("/nonexistent/.red/config.yaml", { warn: () => {} });
+    expect(getConfig(values, "afk.worktree_launches_pull_request")).toBe("true");
+  });
+
+  it("reads the namespaced plugins.dev.afk.* block", () => {
+    const text = "plugins:\n  dev:\n    afk:\n      worktree_launches_pull_request: false\n";
+    const values = loadConfig("/x/.red/config.yaml", { read: () => text });
+    expect(getConfig(values, "afk.worktree_launches_pull_request")).toBe("false");
+  });
+
+  it("reads the legacy top-level afk.* block (back-compat)", () => {
+    const text = "afk:\n  worktree_launches_pull_request: false\n";
+    const values = loadConfig("/x/.red/config.yaml", { read: () => text });
+    expect(getConfig(values, "afk.worktree_launches_pull_request")).toBe("false");
+  });
+
+  it("lets the namespaced location win over a legacy top-level key", () => {
+    const text =
+      "afk:\n  worktree_launches_pull_request: false\n" +
+      "plugins:\n  dev:\n    afk:\n      worktree_launches_pull_request: true\n";
+    const values = loadConfig("/x/.red/config.yaml", { read: () => text });
+    expect(getConfig(values, "afk.worktree_launches_pull_request")).toBe("true");
   });
 });
 

@@ -2,13 +2,19 @@ import { describe, expect, it } from "vitest";
 import { doLanding, type LandingDeps, type LandingInput, type LandingHookContexts } from "../src/core/landing.js";
 import type { ExecResult } from "../src/core/merge.js";
 
-// doLanding owns the lock-toggled landing (ADR 0030/0031): push → pre_merge →
-// integrate → land → (locked conflict self-resolve) → post_merge. Before this
-// extraction the sequence was only exercised through process-issue's integration
-// tests; here it has a direct surface. Every git/gh touch is the injected
-// mergeExec / remoteGit fake, and the merge hooks are the injected fireHook.
+// doLanding owns the flag-toggled landing (ADR 0030 amended by #842 / 0031):
+// push → pre_merge → integrate → land → (direct conflict self-resolve) →
+// post_merge. Before this extraction the sequence was only exercised through
+// process-issue's integration tests; here it has a direct surface. Every git/gh
+// touch is the injected mergeExec / remoteGit fake, and the merge hooks are the
+// injected fireHook.
+//
+// Landing MODE is the `openPr` flag (afk.worktree_launches_pull_request), NOT the
+// lock — the lock only resolves `base` (#842). The "lock × flag matrix" suite
+// below covers all four cells; the legacy path suites default the flag to the
+// pre-#842 coupling (locked → direct, unlocked → PR) so they keep their meaning.
 
-// The isolated landing worktree the LOCKED path runs every git op in (#572). The
+// The isolated landing worktree the DIRECT path runs every git op in (#572). The
 // primary checkout (`/repo`) is never `git -C`'d destructively — see the
 // "primary checkout is sacred" suite below.
 const WT = "/wt";
@@ -27,6 +33,13 @@ interface Harness {
 
 interface Opts {
   locked?: boolean;
+  /**
+   * Landing MODE (#842), decoupled from the lock. Defaults to `!locked` so the
+   * pre-#842 coupling is preserved for the existing path tests (locked → direct,
+   * unlocked → PR); the (lock × flag) matrix suite below sets it explicitly to
+   * exercise the two newly-reachable cells.
+   */
+  openPr?: boolean;
   /** Abort one of the merge hooks. */
   abortHook?: "pre_merge" | "post_merge";
   /** rc the integrate fast-forward returns (1 → integrate fails). */
@@ -39,6 +52,8 @@ interface Opts {
   resolvePushCode?: number;
   /** Enable the opt-in advisory-review wait (afk.merge.wait_for_review). */
   waitForReview?: boolean;
+  /** Enable the opt-in CI-aware merge (#812) and drive the `pr view` verdict. */
+  ciAware?: "merge" | "ci-failed" | "ci-pending" | "conflict";
   /** Make the landing-worktree provisioner fail (returns null). */
   noWorktree?: boolean;
   /** Commits ahead of base returned by `git rev-list --count`. Default 3. */
@@ -88,6 +103,16 @@ function harness(opts: Opts = {}): Harness {
       if (j.includes("pr checks")) {
         return { code: 0, stdout: JSON.stringify([{ name: "CodeRabbit", state: "SUCCESS" }]), stderr: "" };
       }
+      if (j.includes("pr view")) {
+        // #812 CI-aware poll: drive the mergeStateStatus + rollup per opts.ciAware.
+        const map: Record<string, { mergeStateStatus: string; statusCheckRollup: unknown[] }> = {
+          merge: { mergeStateStatus: "CLEAN", statusCheckRollup: [] },
+          "ci-failed": { mergeStateStatus: "BLOCKED", statusCheckRollup: [{ state: "FAILURE" }] },
+          "ci-pending": { mergeStateStatus: "BLOCKED", statusCheckRollup: [{ status: "IN_PROGRESS" }] },
+          conflict: { mergeStateStatus: "DIRTY", statusCheckRollup: [] },
+        };
+        return { code: 0, stdout: JSON.stringify(map[opts.ciAware ?? "merge"]), stderr: "" };
+      }
       return { code: 0, stdout: "", stderr: "" };
     },
     remoteGit: async (argv) => {
@@ -105,6 +130,7 @@ function harness(opts: Opts = {}): Harness {
         }
       : undefined,
     waitForReview: opts.waitForReview ? { check: "CodeRabbit", sleep: async () => {} } : undefined,
+    ciAwait: opts.ciAware ? { sleep: async () => {}, maxPolls: 2 } : undefined,
     makeLandingWorktree: async () => (opts.noWorktree ? null : WT),
     removeLandingWorktree: async (dir) => {
       removedWorktrees.push(dir);
@@ -113,6 +139,9 @@ function harness(opts: Opts = {}): Harness {
 
   const input: LandingInput = {
     locked: opts.locked ?? false,
+    // Default the mode to the pre-#842 coupling (locked → direct, unlocked → PR)
+    // unless the test pins the flag to exercise a decoupled cell.
+    openPr: opts.openPr ?? !(opts.locked ?? false),
     repo: "o/r",
     repoDir: "/repo",
     remote: "origin",
@@ -171,7 +200,7 @@ describe("doLanding — happy paths", () => {
     const r = await doLanding(h.deps, h.input, h.hooks);
     expect(r).toEqual({ ok: true, locked: true, mergeSha: "abc1234" });
     const j = joined(h.mergeCalls);
-    expect(j.some((c) => c.includes("merge --no-ff afk/wAAAA/9-fix-the-thing"))).toBe(true);
+    expect(j.some((c) => c.includes("merge --no-ff --no-verify afk/wAAAA/9-fix-the-thing"))).toBe(true);
     expect(j.some((c) => c.includes("pr list") || c.includes("pr merge"))).toBe(false);
     expect(h.firedHooks).toEqual(["pre_merge", "post_merge"]);
   });
@@ -189,7 +218,7 @@ describe("doLanding — happy paths", () => {
     expect(j.some((c) => c.includes("merge --ff-only origin/feature-locked"))).toBe(true);
     expect(j.some((c) => c.includes("merge --ff-only origin/main"))).toBe(false);
     // Attempt branch was merged (into current HEAD = lock-branch after the precheck fix).
-    expect(j.some((c) => c.includes("merge --no-ff afk/wAAAA/9-fix-the-thing"))).toBe(true);
+    expect(j.some((c) => c.includes("merge --no-ff --no-verify afk/wAAAA/9-fix-the-thing"))).toBe(true);
     // Push targeted the lock branch (worktree HEAD → refs/heads/<base>), not main.
     expect(j.some((c) => c.includes("push origin HEAD:refs/heads/feature-locked"))).toBe(true);
     expect(j.some((c) => c.includes("refs/heads/main"))).toBe(false);
@@ -353,7 +382,7 @@ describe("doLanding — the primary checkout is sacred (#572)", () => {
     const r = await doLanding(h.deps, h.input, h.hooks);
     expect(r).toEqual({ ok: true, locked: true, mergeSha: "abc1234" });
     const j = joined(h.mergeCalls);
-    expect(j.some((c) => c.includes(`git -C ${WT} merge --no-ff afk/wAAAA/9-fix-the-thing`))).toBe(true);
+    expect(j.some((c) => c.includes(`git -C ${WT} merge --no-ff --no-verify afk/wAAAA/9-fix-the-thing`))).toBe(true);
     expect(j).toContain(`git -C ${WT} push origin HEAD:refs/heads/main`);
     assertPrimaryUntouched(h);
     expect(h.removedWorktrees).toEqual([WT]);
@@ -369,5 +398,113 @@ describe("doLanding — the primary checkout is sacred (#572)", () => {
     expect(h.mergeCalls.some((c) => c.includes("merge --no-ff"))).toBe(false);
     assertPrimaryUntouched(h);
     expect(h.firedHooks).toEqual(["pre_merge"]);
+  });
+});
+
+describe("doLanding — CI-aware merge (#812)", () => {
+  it("unlocked + ciAwait, CLEAN → polls merge state then admin-merges", async () => {
+    const h = harness({ locked: false, ciAware: "merge" });
+    const r = await doLanding(h.deps, h.input, h.hooks);
+    expect(r).toEqual({ ok: true, locked: false });
+    const j = joined(h.mergeCalls);
+    const viewIdx = j.findIndex((c) => c.includes("pr view"));
+    const mergeIdx = j.findIndex((c) => c.includes("pr merge 42 --admin --merge"));
+    expect(viewIdx).toBeGreaterThanOrEqual(0);
+    expect(mergeIdx).toBeGreaterThan(viewIdx);
+  });
+
+  it("a FAILED required check → { ok:false, ci-failed } with the PR number, never admin-merges", async () => {
+    const h = harness({ locked: false, ciAware: "ci-failed" });
+    const r = await doLanding(h.deps, h.input, h.hooks);
+    expect(r).toEqual({ ok: false, reason: "ci-failed", locked: false, prNumber: 42 });
+    expect(joined(h.mergeCalls).some((c) => c.includes("pr merge"))).toBe(false);
+    // post_merge never fires on a failed land.
+    expect(h.firedHooks).toEqual(["pre_merge"]);
+  });
+
+  it("checks still pending past the timeout → { ok:false, ci-pending } (no re-run, PR preserved)", async () => {
+    const h = harness({ locked: false, ciAware: "ci-pending" });
+    const r = await doLanding(h.deps, h.input, h.hooks);
+    expect(r).toEqual({ ok: false, reason: "ci-pending", locked: false, prNumber: 42 });
+    expect(joined(h.mergeCalls).some((c) => c.includes("pr merge"))).toBe(false);
+  });
+
+  it("a real DIRTY conflict still maps to land-failed (→ merge-conflict), not ci", async () => {
+    const h = harness({ locked: false, ciAware: "conflict" });
+    const r = await doLanding(h.deps, h.input, h.hooks);
+    expect(r).toEqual({ ok: false, reason: "land-failed", locked: false });
+  });
+});
+
+describe("doLanding — landing mode decoupled from the lock (lock × flag matrix, #842)", () => {
+  // The flag (openPr = afk.worktree_launches_pull_request) chooses PR vs direct;
+  // the lock only resolves `base`. Four cells: {no lock, lock=X} × {true, false}.
+  // `prMerged` = the admin-PR path ran; `directMerged` = the worktree merge ran.
+  const prMerged = (j: string[]) => j.some((c) => c.includes("pr merge 42 --admin --merge"));
+  const directMerged = (j: string[]) => j.some((c) => c.includes("merge --no-ff --no-verify afk/wAAAA/9-fix-the-thing"));
+
+  it("no lock + true (default) → admin-merged PR into main (today's unlocked)", async () => {
+    const h = harness({ locked: false, openPr: true });
+    const r = await doLanding(h.deps, h.input, h.hooks);
+    expect(r).toEqual({ ok: true, locked: false });
+    const j = joined(h.mergeCalls);
+    expect(prMerged(j)).toBe(true);
+    expect(directMerged(j)).toBe(false);
+    // PR base is the resolved base (main here) — the reused-PR lookup keys on it.
+    expect(j.some((c) => c.includes("pr list") && c.includes("--base main"))).toBe(true);
+  });
+
+  it("no lock + false → DIRECT merge into main, no PR (offline, new)", async () => {
+    const h = harness({ locked: false, openPr: false });
+    const r = await doLanding(h.deps, h.input, h.hooks);
+    // Direct path captures the merge sha from the worktree; locked echoes input.locked=false.
+    expect(r).toEqual({ ok: true, locked: false, mergeSha: "abc1234" });
+    const j = joined(h.mergeCalls);
+    expect(directMerged(j)).toBe(true);
+    // No PR opened/merged at all.
+    expect(prMerged(j)).toBe(false);
+    expect(j.some((c) => c.includes("pr list") || c.includes("pr merge"))).toBe(false);
+    // Merge ran in the isolated worktree, pushing main from its HEAD.
+    expect(j).toContain(`git -C ${WT} push origin HEAD:refs/heads/main`);
+  });
+
+  it("lock=X + true (default) → admin-merged PR with base = the lock branch, not main (new)", async () => {
+    const h = harness({ locked: true, openPr: true });
+    h.input.base = "feature-locked";
+    const r = await doLanding(h.deps, h.input, h.hooks);
+    // PR path → no captured sha; locked echoes input.locked=true.
+    expect(r).toEqual({ ok: true, locked: true });
+    const j = joined(h.mergeCalls);
+    expect(prMerged(j)).toBe(true);
+    // The PR targeted the lock branch as its base (PR #42 reused via pr list).
+    expect(j.some((c) => c.includes("pr list") && c.includes("--base feature-locked"))).toBe(true);
+    // No local direct merge of the attempt branch.
+    expect(directMerged(j)).toBe(false);
+  });
+
+  it("lock=X + false → DIRECT merge into the lock branch (today's locked path)", async () => {
+    const h = harness({ locked: true, openPr: false });
+    h.input.base = "feature-locked";
+    const r = await doLanding(h.deps, h.input, h.hooks);
+    expect(r).toEqual({ ok: true, locked: true, mergeSha: "abc1234" });
+    const j = joined(h.mergeCalls);
+    expect(directMerged(j)).toBe(true);
+    // Integrate + push targeted the lock branch, never main.
+    expect(j.some((c) => c.includes("merge --ff-only origin/feature-locked"))).toBe(true);
+    expect(j).toContain(`git -C ${WT} push origin HEAD:refs/heads/feature-locked`);
+    expect(j.some((c) => c.includes("refs/heads/main"))).toBe(false);
+    expect(prMerged(j)).toBe(false);
+  });
+
+  it("afk.merge.* still governs the PR merge: lock=X + true + wait_for_review polls before the admin-merge", async () => {
+    // The flag only decides whether a PR opens; HOW it merges stays afk.merge.*.
+    const h = harness({ locked: true, openPr: true, waitForReview: true });
+    const r = await doLanding(h.deps, h.input, h.hooks);
+    expect(r).toEqual({ ok: true, locked: true });
+    const j = joined(h.mergeCalls);
+    const checksIdx = j.findIndex((c) => c.includes("pr checks"));
+    const mergeIdx = j.findIndex((c) => c.includes("pr merge 42 --admin --merge"));
+    expect(checksIdx).toBeGreaterThanOrEqual(0);
+    expect(mergeIdx).toBeGreaterThan(checksIdx);
   });
 });

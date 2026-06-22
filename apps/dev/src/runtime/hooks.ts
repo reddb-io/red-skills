@@ -18,14 +18,19 @@ import { skillDirFromModule } from "../platform/skill-paths.js";
 /**
  * A real `HookExec`: runs the hook command through `sh -c`, passing the
  * documented RED_AFK_* env and the mutable context JSON on stdin, and returns
- * the exit code + captured stdout. The command string is whatever the config /
- * default resolver registered (a script path or a shell snippet).
+ * the exit code + captured stdout. When `libraryHooksDir` is supplied it is
+ * prepended to PATH so inline config entries can call library scripts by name
+ * (invoke-by-name mode, e.g. `red-notify --channel=slack`).
  */
-export function makeHookExec(cwd: string): HookExec {
+export function makeHookExec(cwd: string, libraryHooksDir?: string): HookExec {
   return async (command, env, stdinJson) => {
+    const fullEnv: NodeJS.ProcessEnv = { ...process.env, ...env };
+    if (libraryHooksDir) {
+      fullEnv.PATH = `${libraryHooksDir}${fullEnv.PATH ? `:${fullEnv.PATH}` : ""}`;
+    }
     const r = await execTool("sh", ["-c", command], {
       cwd,
-      env: { ...process.env, ...env },
+      env: fullEnv,
       input: stdinJson,
     });
     return { code: r.code, stdout: r.stdout };
@@ -33,26 +38,39 @@ export function makeHookExec(cwd: string): HookExec {
 }
 
 /**
- * The default-command resolver bound to the shipped hook scripts. The built-in
- * defaults (cargo / gradle / heartbeat / envelope / validation) ship inside the
- * AFK skill at `<plugin>/defaults/<name>.sh` — NOT in the consuming project's
- * checkout. hook-config.sh anchors its `defaults_dir` on the plugin root the
- * same way (`<plugin>/defaults`); the native cutover wrongly pointed at
- * `<root>/.red/hooks/defaults`, so the cargo/gradle per-slot build-isolation
- * defaults (and heartbeat/envelope/validation) never registered. Resolve the
- * plugin root from this module's own location, falling back to the legacy
- * project path if the skill dir cannot be located (e.g. a bundled copy without
- * the surrounding tree), so an install without the scripts simply runs no
- * default for that point.
+ * The default-command resolver + directory hooks options bound to the shipped
+ * hook scripts. The built-in defaults (cargo / gradle / heartbeat / envelope /
+ * validation) ship inside the AFK skill as `red-*` scripts directly under
+ * `<plugin>/hooks/` — NOT in the consuming project's checkout. Per-point library
+ * hook scripts also live under `<plugin>/hooks/<point>/`, and the project's own
+ * hooks live under `<root>/.red/hooks/` (never created here — ADR 0067): a
+ * same-named `red-<name>` shadow there wins over the library default, and
+ * per-point project scripts shadow the matching library scripts.
+ *
+ * Resolves the plugin root from this module's own location. When the skill dir
+ * cannot be located (e.g. a bundled copy without the surrounding tree) the
+ * defaults fall back to a non-existent project path (`<root>/.red/hooks/lib`) —
+ * so an install without the scripts simply runs no default for that point — and
+ * the library hooks dir is left undefined (no library-dir contribution).
  */
 export function makeHookResolveOptions(root: string): ResolveHooksOptions {
-  let defaultsDir: string;
+  let skillDir: string | undefined;
   try {
-    defaultsDir = join(skillDirFromModule(), "defaults");
+    skillDir = skillDirFromModule();
   } catch {
-    defaultsDir = join(root, ".red", "hooks", "defaults");
+    skillDir = undefined;
   }
-  return { defaultCommand: scriptDefaultResolver(defaultsDir, existsSync) };
+
+  const libHooksDir = skillDir
+    ? join(skillDir, "hooks")
+    : join(root, ".red", "hooks", "lib");
+  const projectHooksDir = join(root, ".red", "hooks");
+
+  return {
+    defaultCommand: scriptDefaultResolver(libHooksDir, projectHooksDir, existsSync),
+    libraryHooksDir: skillDir ? join(skillDir, "hooks") : undefined,
+    projectHooksDir,
+  };
 }
 
 /**

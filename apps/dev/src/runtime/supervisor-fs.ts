@@ -17,6 +17,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { IterDirInfo, SweepWork, SweepWorker } from "../core/supervisor.js";
 import { parseWorkerAttemptPath, workerDir } from "../core/worker-paths.js";
+import { readWorkerState } from "../core/worker-state-reader.js";
 
 /** Absolute path of a slot's per-worker stdout/stderr log
  * (`afk-supervisor-slot-{slot}.log`). Mirrors spawn_slot's slot_log. */
@@ -73,17 +74,13 @@ export function iterDirsForWorker(root: string, wid: string): string[] {
 }
 
 /** `.current.number` from a dir's afk.state.json, or null. Mirrors
- * iter_dir_issue_number. */
+ * iter_dir_issue_number. Reads through the single owner
+ * (core/worker-state-reader) so the schema + legacy-key shim apply — no private
+ * JSON.parse. */
 export function iterDirIssueNumber(dir: string): number | null {
-  try {
-    const parsed = JSON.parse(readFileSync(join(dir, "afk.state.json"), "utf8")) as {
-      current?: { number?: unknown };
-    };
-    const n = parsed.current?.number;
-    return typeof n === "number" && Number.isInteger(n) ? n : null;
-  } catch {
-    return null;
-  }
+  const rec = readWorkerState(join(dir, "afk.state.json"));
+  const n = rec?.state.current.number;
+  return typeof n === "number" && Number.isInteger(n) ? n : null;
 }
 
 /**
@@ -188,18 +185,14 @@ export function resolveIterDirInfo(
   let issue: number | null = null;
   let workerId = "";
   let startedAt = "";
-  try {
-    const parsed = JSON.parse(readFileSync(join(dir, "afk.state.json"), "utf8")) as {
-      current?: { number?: unknown };
-      worker_id?: unknown;
-      started_at?: unknown;
-    };
-    const n = parsed.current?.number;
+  // Single owner (core/worker-state-reader): null when the dir has no/malformed
+  // state, in which case issue/worker stay empty and teardown still proceeds.
+  const rec = readWorkerState(join(dir, "afk.state.json"));
+  if (rec !== null) {
+    const n = rec.state.current.number;
     if (typeof n === "number" && Number.isInteger(n)) issue = n;
-    if (typeof parsed.worker_id === "string") workerId = parsed.worker_id;
-    if (typeof parsed.started_at === "string") startedAt = parsed.started_at;
-  } catch {
-    // no state → no issue/worker; teardown still proceeds on the dir
+    workerId = rec.state.worker_id;
+    startedAt = rec.state.started_at;
   }
 
   let durationS = 0;

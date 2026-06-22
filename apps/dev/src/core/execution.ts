@@ -15,8 +15,7 @@
 import type { AgentStreamEvent, RunOptions, RunResult } from "@reddb-io/red-castle";
 import { isRunnerExhausted } from "./runner-spawn.js";
 import { startLaneIdleReaper, DEFAULT_STALL_POLL_S } from "./lane-idle-reaper.js";
-import { openCodeAuthEnv, resolveOpenCodeAuth } from "./opencode-env.js";
-import { MINIMAX_M3_MODEL, resolveMiniMaxClaudeEnv } from "./minimax-env.js";
+import { RUNNER_SPECS } from "./runner-spec.js";
 
 // Re-exported so process-issue / run can type their agent-event sink without
 // importing the sandcastle package directly (execution.ts is the single seam
@@ -421,36 +420,23 @@ export interface SandcastleDeps {
   makeAbortController?: () => AbortController;
 }
 
-/**
- * The reasoning-effort values each provider's option type accepts. codex tops
- * out at "xhigh" (no "max"); claude accepts the full union (see the sandcastle
- * AgentProvider d.ts — CodexOptions.effort vs ClaudeCodeOptions.effort). The
- * effort is gated per provider in `agentFor` (FIX D): an out-of-range value is
- * DROPPED (provider default) with a warn rather than cast through to a runtime
- * provider rejection / infra crash.
- *
- * claude-minimax is a special case: MiniMax-M3 thinking is off by default and
- * only accepts thinking:{type:"adaptive"} — it rejects thinking:{type:"enabled",
- * budget} that Claude Code emits at effort > "low". Only "low" is safe;
- * `buildAgent` caps any higher request and always passes "low" explicitly so the
- * inner spawn never auto-selects a thinking tier.
- */
-export const CODEX_EFFORTS: readonly AgentEffort[] = ["low", "medium", "high", "xhigh"];
-export const CLAUDE_EFFORTS: readonly AgentEffort[] = ["low", "medium", "high", "xhigh", "max"];
-export const MINIMAX_EFFORTS: readonly AgentEffort[] = ["low"];
+// The per-provider accepted-effort sets + the full RUNNER_SPECS policy table now
+// live in `runner-spec.ts` (issue #823) — the single seam for per-runner provider
+// policy. Re-exported here so existing `execution.ts` importers keep working.
+export { CODEX_EFFORTS, CLAUDE_EFFORTS, MINIMAX_EFFORTS } from "./runner-spec.js";
 
 /**
- * Validate a requested effort against a provider's accepted set. Returns the
- * effort when accepted, or `undefined` when it must be dropped (degrade to the
- * provider default). Pure — the warn is emitted by the caller (`agentFor`).
+ * Validate a requested effort against a provider's accepted set ({@link
+ * RUNNER_SPECS}). Returns the effort when accepted, or `undefined` when it must
+ * be dropped (degrade to the provider default). Pure — the warn is emitted by
+ * the caller (`buildAgent`).
  */
 export function effortForProvider(
   runner: AgentRunner,
   effort: AgentEffort | undefined,
 ): AgentEffort | undefined {
   if (effort === undefined) return undefined;
-  const accepted = runner === "codex" ? CODEX_EFFORTS : CLAUDE_EFFORTS;
-  return accepted.includes(effort) ? effort : undefined;
+  return RUNNER_SPECS[runner].efforts.includes(effort) ? effort : undefined;
 }
 
 /**
@@ -501,59 +487,51 @@ export function buildAgent(
   env: NodeJS.ProcessEnv,
   warn?: (message: string) => void,
 ): RunOptions["agent"] {
+  const spec = RUNNER_SPECS[runner];
   const requested = opts?.effort;
+  const authEnv = spec.resolveAuthEnv?.(env);
 
-  if (runner === "opencode") {
+  // opencode (ADR 0059): the effort is OpenCode's free-form `variant` (not
+  // gated), and the model `<provider>/<model>` slug is forwarded verbatim — the
+  // leading segment tells OpenCode which endpoint to dispatch to. The auth key
+  // (precedence owned by opencode-env.ts) rides in on `OpenCodeOptions.env`;
+  // with no key set, no `env` option is added and OpenCode owns the fallback.
+  if (spec.channel === "variant") {
     const options: { variant?: string; env?: Record<string, string> } = {};
     if (requested !== undefined) options.variant = requested;
-    const authEnv = openCodeAuthEnv(resolveOpenCodeAuth(env));
     if (authEnv) options.env = authEnv;
     return factories.opencode(model, Object.keys(options).length > 0 ? options : undefined);
   }
 
-  if (runner === "claude-minimax") {
-    // PRD #788 / #794: route to the UNCHANGED claude-code provider, but force
-    // the MiniMax model and inject the MiniMax Anthropic-compat auth env into
-    // the inner spawn only (`ClaudeCodeOptions.env`) — the orchestrator's own
-    // env is never touched, so it keeps its real-Anthropic auth. The passed
-    // `model` is discarded — the lane always runs `MiniMax-M3`.
-    //
-    // Thinking-control reconciliation (#794): MiniMax-M3 thinking is off by
-    // default and only accepts thinking:{type:"adaptive"} — it rejects
-    // thinking:{type:"enabled",budget} that Claude Code emits at effort > "low".
-    // The lane is capped to MINIMAX_EFFORTS (["low"]): any higher requested
-    // effort degrades to "low" with a warn; when no effort is requested the lane
-    // still passes "low" explicitly so the inner spawn never auto-selects a
-    // thinking tier.
-    const MINIMAX_SAFE_EFFORT: AgentEffort = "low";
-    const effort: AgentEffort =
-      requested !== undefined && (MINIMAX_EFFORTS as readonly string[]).includes(requested)
-        ? (requested as AgentEffort)
-        : MINIMAX_SAFE_EFFORT;
-    if (requested !== undefined && !(MINIMAX_EFFORTS as readonly string[]).includes(requested)) {
-      warn?.(
-        `[afk] warn: effort '${requested}' triggers thinking which MiniMax-M3 does not accept; ` +
-          `capping to '${MINIMAX_SAFE_EFFORT}' for runner 'claude-minimax' ` +
-          `(accepted: ${MINIMAX_EFFORTS.join(", ")}).`,
-      );
-    }
-    const authEnv = resolveMiniMaxClaudeEnv(env);
-    const options: { effort: AgentEffort; env?: Record<string, string> } = { effort };
-    if (authEnv) options.env = authEnv;
-    return factories.claudeCode(MINIMAX_M3_MODEL, options);
-  }
-
-  const effort = effortForProvider(runner, requested);
-  if (requested !== undefined && effort === undefined) {
+  // effort channel (claude / codex / claude-minimax): gate the requested effort
+  // against the spec's accepted set (FIX D). A runner with a `defaultEffort`
+  // (claude-minimax → "low", PRD #794) CAPS a rejected/absent effort to it and
+  // always passes it explicitly so the inner spawn never auto-selects a thinking
+  // tier; a runner without one DROPS a rejected effort to the provider default.
+  const accepted = requested !== undefined && spec.efforts.includes(requested);
+  const effort = accepted ? requested : spec.defaultEffort;
+  if (requested !== undefined && !accepted) {
     warn?.(
-      `[afk] warn: effort '${requested}' is not accepted by runner '${runner}' ` +
-        `(accepted: ${(runner === "codex" ? CODEX_EFFORTS : CLAUDE_EFFORTS).join(", ")}); ` +
-        "falling back to the provider default.",
+      spec.defaultEffort !== undefined
+        ? `[afk] warn: effort '${requested}' triggers thinking which MiniMax-M3 does not accept; ` +
+            `capping to '${spec.defaultEffort}' for runner '${runner}' ` +
+            `(accepted: ${spec.efforts.join(", ")}).`
+        : `[afk] warn: effort '${requested}' is not accepted by runner '${runner}' ` +
+            `(accepted: ${spec.efforts.join(", ")}); ` +
+            "falling back to the provider default.",
     );
   }
-  return runner === "codex"
-    ? factories.codex(model, effort ? { effort } : undefined)
-    : factories.claudeCode(model, effort ? { effort } : undefined);
+
+  // `forcedModel` (claude-minimax → MiniMax-M3) discards the resolved tier model.
+  const targetModel = spec.forcedModel ?? model;
+  if (spec.factory === "codex") {
+    // The codex provider takes no `env` seam; codex never resolves an auth env.
+    return factories.codex(targetModel, effort !== undefined ? { effort } : undefined);
+  }
+  const options: { effort?: AgentEffort; env?: Record<string, string> } = {};
+  if (effort !== undefined) options.effort = effort;
+  if (authEnv) options.env = authEnv;
+  return factories.claudeCode(targetModel, Object.keys(options).length > 0 ? options : undefined);
 }
 
 /** Map an AFK completion signal back to an iteration outcome. */
@@ -576,16 +554,19 @@ type HostHookCommand = NonNullable<NonNullable<NonNullable<RunOptions["hooks"]>[
  *   (a) force-with-lease pushes the worker branch to the remote up-front
  *       (`push_initial`), and
  *   (b) installs a `post-commit` git hook that fire-and-forgets a push after
- *       every inner-agent commit (`install_post_commit_hook`).
+ *       every inner-agent commit (`install_post_commit_hook`), into an AFK-owned
+ *       hooks dir the worktree's `core.hooksPath` is then pointed at — which also
+ *       bypasses the consumer repo's commit-phase hooks for AFK's commits (#840).
  *
  * Every step is best-effort: a network / auth failure logs to stderr (via the
  * shell `||` fallbacks) but never returns non-zero, so the hook can NOT abort
  * the run. The post-commit hook itself ends in `|| true` for the same reason
  * (git ignores a post-commit exit status, but we belt-and-braces it).
  *
- * The hook is written with `git rev-parse --git-dir` so it lands in the linked
- * worktree's own gitdir (`.git/hooks/`), never leaking into the primary
- * checkout or a sibling worktree — exactly the shell behaviour.
+ * The hook is written with `git rev-parse --absolute-git-dir` so it lands in the
+ * linked worktree's own gitdir (`afk-hooks/`) and the `core.hooksPath` redirect is
+ * set `--worktree`, never leaking into the primary checkout or a sibling
+ * worktree — the primary branch's hooks stay exactly as the consumer wrote them.
  */
 export function buildContinuousPushHook(branch: string, remote: string): HostHookCommand {
   // Single-quoted heredoc body so the inner `$()` / `HEAD` are evaluated when
@@ -604,14 +585,33 @@ export function buildContinuousPushHook(branch: string, remote: string): HostHoo
     `git push ${remote} HEAD --force-with-lease 2>/dev/null || true`,
     "",
   ].join("\n");
-  // printf %s with the body passed as a single argument; escape only what `sh -c`
-  // and printf need. We pass the body through a shell variable assignment to keep
-  // the command portable and free of nested single quotes.
+  // Install the post-commit hook into an AFK-OWNED hooks dir (`afk-hooks`) inside
+  // the worktree's gitdir, then point the worktree's `core.hooksPath` at it (issue
+  // #840). This single redirect does three things at once:
+  //   (a) BYPASSES the consumer repo's commit-phase hooks (pre-commit / commit-msg
+  //       / pre-push) for every AFK commit — those live in the COMMON gitdir's
+  //       `hooks/`, which `core.hooksPath` now shadows; redundant with AFK's own
+  //       feedback gate + backpressure + `.red/config.yaml` lifecycle hooks, and a
+  //       reformat-and-restage hook would otherwise break the one-path-staged
+  //       invariant (false BLOCKED).
+  //   (b) KEEPS AFK's own post-commit push firing — it is the only hook in
+  //       `afk-hooks`. (A linked worktree never fires hooks from its private gitdir
+  //       `hooks/` — only the common dir or `core.hooksPath` — so the redirect is
+  //       also what makes the issue #191 push hook actually run here.)
+  //   (c) STAYS worktree-scoped via `git config --worktree`, so the primary
+  //       checkout's hooks are untouched (the primary branch is sacred). We never
+  //       fall back to a non-worktree `core.hooksPath`, which would leak into the
+  //       common config and silence the consumer's hooks in the primary checkout.
+  // The bypass is commit-phase only: this runs in `onWorktreeReady`, AFTER the
+  // worktree-creation `post-checkout` (submodule init) has already fired.
   const installHook = [
-    'gd=$(git rev-parse --git-dir 2>/dev/null) || gd=""',
+    'gd=$(git rev-parse --absolute-git-dir 2>/dev/null) || gd=""',
     'if [ -n "$gd" ]; then',
-    '  mkdir -p "$gd/hooks" 2>/dev/null || true',
-    `  printf '%s' "$HOOK_BODY" > "$gd/hooks/post-commit" 2>/dev/null && chmod 0755 "$gd/hooks/post-commit" 2>/dev/null || echo "[afk] warn: could not install post-commit hook" >&2`,
+    '  hd="$gd/afk-hooks"',
+    '  mkdir -p "$hd" 2>/dev/null || true',
+    `  printf '%s' "$HOOK_BODY" > "$hd/post-commit" 2>/dev/null && chmod 0755 "$hd/post-commit" 2>/dev/null || echo "[afk] warn: could not install post-commit hook" >&2`,
+    '  git config extensions.worktreeConfig true 2>/dev/null || true',
+    '  git config --worktree core.hooksPath "$hd" 2>/dev/null || echo "[afk] warn: could not redirect core.hooksPath — consumer git hooks may fire on AFK commits" >&2',
     "else",
     '  echo "[afk] warn: could not resolve .git dir — post-commit hook not installed" >&2',
     "fi",

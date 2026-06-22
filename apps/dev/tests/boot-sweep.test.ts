@@ -115,7 +115,7 @@ describe("planCloseCascade", () => {
       { number: 20, reqs: [{ n: 9, closed: true }] },
     ];
     expect(planCloseCascade(9, deps)).toEqual([
-      { number: 20, refs: ["#9"], comment: "🤖 /afk unblocked: all dependencies closed (#9)." },
+      { number: 20, refs: ["#9"], reqLabels: ["req:9"], comment: "🤖 /afk unblocked: all dependencies closed (#9)." },
     ]);
   });
 
@@ -136,7 +136,7 @@ describe("planCloseCascade", () => {
       { number: 30, reqs: [{ n: 9, closed: true }, { n: 8, closed: true }] },
     ];
     expect(planCloseCascade(9, deps)).toEqual([
-      { number: 30, refs: ["#8", "#9"], comment: "🤖 /afk unblocked: all dependencies closed (#8, #9)." },
+      { number: 30, refs: ["#8", "#9"], reqLabels: ["req:8", "req:9"], comment: "🤖 /afk unblocked: all dependencies closed (#8, #9)." },
     ]);
   });
 
@@ -202,6 +202,7 @@ describe("planUnblockSweep", () => {
       {
         number: 7,
         refs: ["#1", "#2"],
+        reqLabels: [],
         comment: "🤖 /afk promoted to ready-for-agent: all blockers closed (#1, #2).",
       },
     ]);
@@ -260,6 +261,7 @@ describe("planUnblockSweep", () => {
       {
         number: 7,
         refs: ["#101", "#102"],
+        reqLabels: ["req:101", "req:102"],
         comment: "🤖 /afk unblocked: all dependencies closed (#101, #102).",
       },
     ]);
@@ -285,6 +287,7 @@ describe("planUnblockSweep", () => {
       {
         number: 7,
         refs: ["#1"],
+        reqLabels: [],
         comment: "🤖 /afk promoted to ready-for-agent: all blockers closed (#1).",
       },
     ]);
@@ -339,7 +342,9 @@ describe("executeUnblockSweep", () => {
     const promoted = await executeUnblockSweep(candidates, lookupFor({ 101: "CLOSED", 102: "CLOSED" }), rec.gh);
 
     expect(promoted).toEqual([7]);
-    expect(rec.edits).toEqual([{ issue: 7, remove: ["blocked:dependency"], add: ["ready-for-agent"] }]);
+    expect(rec.edits).toEqual([
+      { issue: 7, remove: ["blocked:dependency", "req:101", "req:102"], add: ["ready-for-agent"] },
+    ]);
     expect(rec.comments).toEqual([
       { issue: 7, body: "🤖 /afk unblocked: all dependencies closed (#101, #102)." },
     ]);

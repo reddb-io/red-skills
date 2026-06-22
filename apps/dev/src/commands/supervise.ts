@@ -38,6 +38,9 @@ import * as gitx from "../runtime/git.js";
 import { planReconcileSweep, executeUnblockSweep } from "../core/boot-sweep.js";
 import { removeDir as removeDirNative } from "../runtime/fs.js";
 import { killTreeAndWait } from "../runtime/kill-tree.js";
+import { resolveFleetHooks } from "../core/fleet-hook-config.js";
+import { dispatchFleetHook } from "../core/fleet-hook-dispatcher.js";
+import { makeHookExec, makeHookResolveOptions } from "../runtime/hooks.js";
 
 function isAlive(pid: number): boolean {
   try {
@@ -296,6 +299,7 @@ function buildSupervisorDeps(
   runner: string,
   ghCtx: ghx.GhContext,
   slotArgs: readonly string[],
+  hookEnvBase: Record<string, string>,
 ): SupervisorDeps {
   const bundle = process.argv[1];
   const now = () => Math.floor(Date.now() / 1000);
@@ -308,6 +312,14 @@ function buildSupervisorDeps(
       // best-effort: a log-write failure must never affect the loop.
     }
   };
+  // Fleet hook resolution: library defaults-dir + project .red/hooks/ layering,
+  // same convention as worker hooks (ADR 0026, #830, #833).
+  const resolveOptions = makeHookResolveOptions(root);
+  const fleetHooks = resolveFleetHooks({
+    libraryHooksDir: resolveOptions.libraryHooksDir,
+    projectHooksDir: resolveOptions.projectHooksDir,
+  });
+  const fleetHookExec = makeHookExec(root, resolveOptions.libraryHooksDir);
   // slot index → live orchestrator pid (SLOT_PIDS parity).
   const slotPids = new Map<number, number>();
   // slot index → exit code of the most recent worker for that slot.
@@ -447,6 +459,15 @@ function buildSupervisorDeps(
           return null;
         }
       },
+      // #815: running-supervisor crash reconcile. Resolve whether a dead worker's
+      // claimed issue is still stranded in `running` with no terminal envelope.
+      crashedClaimState: async (issue) => {
+        try {
+          return await ghx.crashedClaimState(ghCtx, issue);
+        } catch {
+          return { ghOk: false, stillRunning: false, envelopePosted: false };
+        }
+      },
     },
     now,
     // Env for the bounded stalled re-claim cap (#402): RED_AFK_RETRY_STALLED.
@@ -483,6 +504,16 @@ function buildSupervisorDeps(
       } catch {
         return [];
       }
+    },
+    // Fleet-scoped lifecycle hooks (#833). Commands are resolved from the same
+    // .red/hooks/<point>/ + library layering as worker hooks. Best-effort:
+    // a dispatch failure is returned to the caller; the caller catches and logs.
+    dispatchFleetHook: async (name, context) => {
+      const commands = fleetHooks[name];
+      return dispatchFleetHook(name, commands, context, fleetHookExec, {
+        env: hookEnvBase,
+        log: logLine,
+      });
     },
     emitFleetHeartbeat: async (hb) => {
       try {
@@ -553,7 +584,14 @@ export async function superviseCommand(args: string[], cwd = process.cwd()): Pro
   // The filter/policy flags fleet.ts forwarded (--prd/--issues/--alternate/
   // --fallback-runner/--request), threaded into every slot's `run --once`.
   const slotArgs = slotFilterArgs(args);
-  const deps = buildSupervisorDeps(root, tmp, logFd, firehoseFile, stateFile, config.runner, ghCtx, slotArgs);
+  // Base env for fleet hooks: RED_AFK_REPO, RED_AFK_ROOT, RED_AFK_RUNNER.
+  const hookEnvBase: Record<string, string> = {
+    RED_AFK_ROOT: root,
+    RED_AFK_WORKSPACE: root,
+    RED_AFK_RUNNER: config.runner,
+    ...(repo.length > 0 ? { RED_AFK_REPO: repo } : {}),
+  };
+  const deps = buildSupervisorDeps(root, tmp, logFd, firehoseFile, stateFile, config.runner, ghCtx, slotArgs, hookEnvBase);
 
   const stopRequested = (): boolean => existsSync(stopFile);
 
