@@ -41,4 +41,20 @@ describe("doctor docs contract", () => {
     // The `--fix` Apply table has the migration row.
     expect(skill).toContain("Legacy/top-level dev-plugin config");
   });
+
+  it("validates AFK hook/backpressure commands statically and never executes them", async () => {
+    const skill = await readDoctorSkill();
+
+    expect(skill).toContain("AFK hook / backpressure static validation");
+    expect(skill).toContain("never execute one");
+    expect(skill).toContain("never execute a command");
+    // Conservative classification: missing → ❌, unresolvable → ⚠️.
+    expect(skill).toContain("non-existent file path");
+    expect(skill).toContain("cannot be statically resolved");
+    // Unknown hook names are pre-caught read-only.
+    expect(skill).toContain("Unknown hook names");
+    // --fix cannot auto-fix operator intent — it flags and points at the fix-home.
+    expect(skill).toContain("`--fix` cannot auto-fix operator intent");
+    expect(skill).toContain("`/setup-red-skills`");
+  });
 });
