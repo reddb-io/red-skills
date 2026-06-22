@@ -363,6 +363,16 @@ export interface ProcessIssueDeps {
    */
   emitHeartbeat?(info: AttemptProgressInfo): void;
   /**
+   * Worker-vitals provider for the `on_heartbeat` hook context (ADR 0065/#832).
+   * Called on each attempt-guard poll right before the hook fires; returns the
+   * live cumulative WorkerVitals (tools/text/reasoning/reasoning-tokens/loc/cost)
+   * so the `on_heartbeat` stdin-JSON carries the full vitals snapshot and a hook
+   * can drive custom live alerting. The CLI (run.ts) wires it to the attempt's
+   * activity meter + last-observed diff volume. Optional → when absent the hook
+   * context omits `vitals` (byte-for-byte the pre-#832 record).
+   */
+  heartbeatVitals?(): Record<string, number> | undefined;
+  /**
    * Stamp the attempt's macro-lifecycle phase (issue #811) — the calm signal the
    * task-mirror title surfaces. processIssue calls it at the orchestrator-owned
    * lifecycle points the inner-agent stream cannot see: `validating` at the start
@@ -551,14 +561,98 @@ async function routeRecovery(
   // The per-issue lifecycle never auto-retries `stalled` (the reaper owns that
   // bounded re-claim), so we ask the composer for the PER-ISSUE policy view.
   const disp = dispose(reason, attemptN, deps.recoveryEnv ?? {}, { stalledRecoverable: false });
-  if (disp.decision === "escalate" && disp.typedLabel !== null) {
-    await deps.gh.ensureLabel(disp.typedLabel);
+
+  // on_recovery_decision (#832, MUTABLE): hand the composer's proposed decision
+  // to a hook, which may override retry↔escalate via a `{"decision":…}` stdout
+  // JSON before any label is applied. An absent / silent hook is a no-op.
+  let decision = disp.decision;
+  const recResult = await fireRecoveryHook(
+    deps,
+    "on_recovery_decision",
+    JSON.stringify({ issue: { number: issue, title: "" }, decision, reason, attempt_n: attemptN }),
+  );
+  const override = parseRecoveryDecision(recResult.context);
+  if (override !== null) decision = override;
+
+  if (decision === "escalate") {
+    if (disp.typedLabel !== null) await deps.gh.ensureLabel(disp.typedLabel);
+    // Build the escalate label set from the typed label (computed independent of
+    // the composer's own decision) so a hook-FORCED escalate still pages cleanly.
+    const addLabels = disp.typedLabel !== null ? [LABEL_HUMAN, disp.typedLabel] : [LABEL_HUMAN];
+    await deps.gh.editLabels(issue, [LABEL_RUNNING], addLabels);
+    // The budget-exhausted page comment only rides the composer's OWN escalate
+    // (it tells a retry-budget story); a hook-forced escalate stays silent.
+    if (decision === disp.decision && disp.escalationComment !== null) {
+      await deps.gh.comment(issue, disp.escalationComment);
+    }
+    // on_blocked (#832): the issue is now parked to a human gate.
+    await fireRecoveryHook(
+      deps,
+      "on_blocked",
+      JSON.stringify({
+        issue: { number: issue, title: "" },
+        blocked_label: disp.typedLabel ?? "",
+        reason,
+        attempt_n: attemptN,
+      }),
+    );
+  } else {
+    // retry → CLEAN promotion: running → ready-for-agent, no blocked:* tag.
+    await deps.gh.editLabels(issue, [LABEL_RUNNING], [LABEL_READY]);
   }
-  await deps.gh.editLabels(issue, disp.removeLabels, disp.addLabels);
-  if (disp.escalationComment !== null) {
-    await deps.gh.comment(issue, disp.escalationComment);
+  return decision;
+}
+
+/**
+ * Dispatch ONE lifecycle point from a site that lives outside the processIssue
+ * closure (recovery routing, reconcile bracketing). Resolves the hook list from
+ * the injected config each call (pure + cheap) and returns the full dispatch
+ * result so a mutable point can read its stdout-JSON override back. Never throws
+ * — a recovery hook must not be able to wedge the recovery path.
+ */
+async function fireRecoveryHook(
+  deps: ProcessIssueDeps,
+  name: HookName,
+  context: string,
+): Promise<{ context: string; aborted: boolean }> {
+  try {
+    const resolved = resolveHooks(deps.hooks.config, deps.hooks.resolveOptions);
+    return await dispatchHooks(name, resolved[name], context, deps.hooks.exec, { env: deps.hooks.env ?? {} });
+  } catch {
+    return { context, aborted: false };
   }
-  return disp.decision;
+}
+
+/**
+ * Parse a mutable `on_recovery_decision` hook's stdout JSON for a
+ * `decision` override. Returns the validated decision, or null when the hook
+ * was silent / returned an unrecognised value (→ keep the composer's decision).
+ */
+function parseRecoveryDecision(contextJson: string): "retry" | "escalate" | null {
+  try {
+    const parsed: unknown = JSON.parse(contextJson);
+    if (typeof parsed !== "object" || parsed === null) return null;
+    const decision = (parsed as Record<string, unknown>).decision;
+    return decision === "retry" || decision === "escalate" ? decision : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Parse a mutable `on_feedback_classify` hook's stdout JSON for a `class`
+ * override. Returns the validated classification, or null when the hook was
+ * silent / returned an unrecognised value (→ keep the computed classification).
+ */
+function parseFeedbackClass(contextJson: string): "infra" | "semantic" | null {
+  try {
+    const parsed: unknown = JSON.parse(contextJson);
+    if (typeof parsed !== "object" || parsed === null) return null;
+    const cls = (parsed as Record<string, unknown>).class;
+    return cls === "infra" || cls === "semantic" ? cls : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -584,7 +678,10 @@ export async function processIssue(
   // inherits it (see execution.runAgent — applied to process.env for noSandbox).
   let agentEnv: Record<string, string> | undefined;
 
-  const fireHook = async (name: HookName, context: string): Promise<boolean> => {
+  // Dispatch one point and return the FULL result, so a MUTABLE point (#832:
+  // on_feedback_classify) can read its stdout-JSON override back. fireHook wraps
+  // this for the boolean veto-only callers.
+  const fireHookCtx = async (name: HookName, context: string): Promise<{ context: string; aborted: boolean }> => {
     hooksFired.push(name);
     const result = await dispatchHooks(name, resolved[name], context, deps.hooks.exec, {
       env: deps.hooks.env ?? {},
@@ -596,7 +693,10 @@ export async function processIssue(
       const parsed = parseHookEnv(result.context);
       if (parsed) agentEnv = parsed;
     }
-    return !result.aborted;
+    return result;
+  };
+  const fireHook = async (name: HookName, context: string): Promise<boolean> => {
+    return !(await fireHookCtx(name, context)).aborted;
   };
 
   // ---- 1. claim (ADR 0066: atomic GitHub-native claim) ----
@@ -819,6 +919,10 @@ export async function processIssue(
       // user hook here (fire-and-forget) AND forwards the progress signal to the
       // CLI-wired sink (firehose record + state.last_progress_at). Never throws.
       onHeartbeat: (info) => {
+        // Enrich the on_heartbeat context with the full worker vitals (ADR 0065/
+        // #832) so an operator hook can build custom live alerting off the
+        // tool/text/reasoning/loc/cost counters, not just the bare liveness ping.
+        const vitals = deps.heartbeatVitals?.();
         void fireHook(
           "on_heartbeat",
           hookContext({
@@ -827,6 +931,7 @@ export async function processIssue(
             workspace: branch,
             runner: activeRunner,
             attempt_n: attemptN,
+            ...(vitals ? { vitals } : {}),
           }),
         );
         deps.emitHeartbeat?.({ ...info, base });
@@ -1015,6 +1120,20 @@ export async function processIssue(
       };
     } else if (run.outcome === "timeout") {
       // ---- attempt progress guard fired: alive but no new commit within the cap. ----
+      // on_attempt_timeout (#832): the commit-anchored progress guard (ADR 0044/
+      // 0045) just fired. Announce it before the no-agent reconcile / escalation
+      // routing decides what to do with the parked branch.
+      await fireHook(
+        "on_attempt_timeout",
+        hookContext({
+          issue,
+          title: input.title,
+          workspace: branch,
+          runner: activeRunner,
+          attempt_n: attemptN,
+          reason: "timeout",
+        }),
+      );
       // Before escalating, try the ADR 0055 NO-AGENT reconcile: a stalled attempt
       // frequently carries a COMPLETE, green branch — the agent finished the work
       // but stalled before a final non-committing step, so the guard fired on a
@@ -1028,6 +1147,19 @@ export async function processIssue(
       const reconciled = await reconcile(
         { ...deps, fireHook },
         reconcileInputFor(input, current, workerBranch, base, labels, activeRunner),
+      );
+      // on_reconcile (#832): the no-agent reconcile (ADR 0055) re-validated the
+      // parked mechanical branch and landed / parked / skipped it. Surface the
+      // outcome so an operator can track auto-landings without re-running the agent.
+      await fireHook(
+        "on_reconcile",
+        hookContext({
+          issue,
+          title: input.title,
+          workspace: branch,
+          attempt_n: attemptN,
+          outcome: reconciled.outcome,
+        }),
       );
       if (reconciled.outcome === "landed") {
         // reconcile already closed the issue, dropped labels, deleted the remote
@@ -1112,13 +1244,50 @@ export async function processIssue(
     // Macro phase → `validating` (issue #811): the feedback gate is starting.
     deps.markPhase?.("validating");
     const changedFiles = await deps.lookups.changedFiles(workerBranch, base);
+    const feedbackScopes = relevantScopes(deps.layout, changedFiles);
+    // pre_feedback (#832): a pre_* gate around the scope-derived feedback run — a
+    // non-zero exit VETOES validation and routes the attempt to the abort-after-
+    // claim terminal (the branch/PR is preserved, the issue returns to the queue).
+    if (
+      !(await fireHook(
+        "pre_feedback",
+        hookContext({ issue, title: input.title, workspace: branch, scopes: feedbackScopes }),
+      ))
+    ) {
+      return await abortAfterClaim(deps, input, branch, base, hooksFired, "pre_feedback");
+    }
     const feedback: RunFeedbackResult = await runFeedback(deps.pnpm, {
       worktree: workerBranch,
-      scopes: relevantScopes(deps.layout, changedFiles),
+      scopes: feedbackScopes,
       layout: deps.layout,
       now: deps.nowEpoch,
       baselineWorktree: base,
     });
+    // on_baseline_probe (#832): the "already failing on main?" probe (ADR 0071)
+    // runs ONLY when the gate failed AND a baseline worktree was supplied. Report
+    // whether it downgraded any pre-existing-on-baseline failures.
+    if (!feedback.ok) {
+      await fireHook(
+        "on_baseline_probe",
+        hookContext({
+          issue,
+          title: input.title,
+          workspace: branch,
+          ok: feedback.ok,
+          downgraded: feedback.baselineDowngraded,
+        }),
+      );
+    }
+    // post_feedback (#832): the scope-derived gate has produced its verdict.
+    await fireHook(
+      "post_feedback",
+      hookContext({
+        issue,
+        title: input.title,
+        workspace: branch,
+        result: { status: feedback.ok ? "pass" : "fail" },
+      }),
+    );
     if (!feedback.ok) {
       // The feedback-failed path also has a structured sidecar — persist it for
       // Memory (best-effort) just like the done path does.
@@ -1131,7 +1300,17 @@ export async function processIssue(
       // human. The simple→complex escalation only helps for SEMANTIC failures —
       // bumping the tier can't fix a broken submodule, so it would just burn a
       // retry for nothing.
-      const isInfra = isInfraFeedbackFailure(feedback);
+      let isInfra = isInfraFeedbackFailure(feedback);
+      // on_feedback_classify (#832, MUTABLE): hand the INFRA-vs-SEMANTIC verdict
+      // (ADR 0071) to a hook, which may override it via a `{"class":…}` stdout
+      // JSON. An operator that knows a given failure shape is really infra (or
+      // really the worker's fault) can steer the recovery policy this way.
+      const classResult = await fireHookCtx(
+        "on_feedback_classify",
+        hookContext({ issue, title: input.title, workspace: branch, class: isInfra ? "infra" : "semantic" }),
+      );
+      const classOverride = parseFeedbackClass(classResult.context);
+      if (classOverride !== null) isInfra = classOverride === "infra";
       if (!isInfra && activeTaskClass === "simple" && !escalatedSimpleFeedback) {
         escalatedSimpleFeedback = true;
         activeTaskClass = "complex";
