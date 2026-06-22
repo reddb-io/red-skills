@@ -2,9 +2,19 @@
 
 Records every change made to skills inherited from [`mattpocock/skills`](https://github.com/mattpocock/skills), plus new skills created by reddb.io. See the rules in [CLAUDE.md](./CLAUDE.md).
 
-Upstream base: `mattpocock/skills@694fa30311e02c2639942308513555e61ee84a6f` (see `.upstream`).
+Upstream base: `mattpocock/skills@6eeb81b5fcfeeb5bd531dd47ab2f9f2bbea27461` (see `.upstream`).
 
 ---
+
+## upstream drift review — 694fa30 → 6eeb81b (#744)
+
+- **status**: reviewed
+- **upstream**: `6eeb81b`
+- **why**: `red-upstream-watch` flagged ~30 upstream commits past the pinned SHA (#744). Reviewed the full compare, recorded the disposition below, and bumped `.upstream` to `6eeb81b`.
+- **what changed**:
+  - **Adopting (house-style ports, tracked as separate issues):** `resolving-merge-conflicts` (#807, net-new), `implement` — interactive PRD execution distinct from the autonomous `/afk` (#808), `codebase-design` deep-module vocabulary — reconcile with `improve-codebase-architecture` (#809). Each lands its own `status: added` entry when it merges.
+  - **Kept despite upstream removal (deliberate divergence):** `write-a-skill` — upstream replaced it with `writing-great-skills`; ours evolved further under PRD #776. `zoom-out` — part of our context stack (`/context` references graph-aware zoom-out).
+  - **Skipped:** `ask-matt` (Matt-specific); `domain-modeling` / `grilling` / `grill-me` / `grill-with-docs` (folded into our `start` + the `.red/` multi-context glossary); `writing-great-skills` (superseded by our `write-a-skill` + the 8-technique convention); `decision-mapping` (upstream in-progress draft); `teach` / `edit-article` / `caveman` (not in our set); `setup-matt-pocock-skills` (we have `setup-red-skills`); all release/changeset/package/CHANGELOG infra (we use `red-release`); and refinements to `triage` / `tdd` / `to-issues` / `to-prd` / `prototype` / `handoff` / `review` / `improve-codebase-architecture` (already rewritten under the PRD #776 convention sweep — adopting upstream diffs would conflict).
 
 ## runner-claude-minimax (engineering/afk) — fourth AFK runner targeting MiniMax Anthropic-compatible endpoint
 
