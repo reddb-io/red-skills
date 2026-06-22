@@ -157,12 +157,12 @@ describe("statusline command — rendered line", () => {
     const l2 = stripAnsi(rows[1]);
     expect(l1).toContain("Opus·high");
     expect(l1).toContain("47k 24%");
-    expect(l1).toContain("pr3");
-    expect(l1).toContain("is24");
+    expect(l1).toContain("prs=3");
+    expect(l1).toContain("iss=24");
     expect(l2).toContain("claude"); // runner
-    expect(l2).toContain("wk1 res7"); // workers + resolved
-    expect(l2).toContain("ad12 rm3"); // in-transit
-    expect(l2).toContain("rq11 rh3 bk2"); // pipeline
+    expect(l2).toContain("wrk=1 res=7"); // workers + resolved
+    expect(l2).toContain("loc=+12 -3"); // in-transit diff
+    expect(l2).toContain("rdy=11 hmn=3 blk=2"); // pipeline
     expect(l2).toContain("#17");
     // The raw output carries the wine-red background SGR (theme on by default).
     expect(out.text()).toContain("\x1b[48;2;114;47;55m");

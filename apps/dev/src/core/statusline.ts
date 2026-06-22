@@ -3,11 +3,12 @@
 // model, effort, context window) and combines it with live /afk worker state
 // from <root>/.red/tmp/workers/*/* to emit ONE compact line like:
 //
-//   red-skills · Opus·high · 47k 24% · wk4 rq1 rh11 bk10 ad12 rm3 #17
+//   red-skills · Opus·high · 47k 24% · wrk=4 rdy=1 hmn=11 blk=10 loc=+12 -3 #17
 //
-// The AFK KPIs use two-letter mnemonics (wk/rq/rh/bk/ad/rm/wt/tk/$) instead of
-// emojis; the optional ANSI theming (wine-red line, black-chipped KPI numbers)
-// lives in the sibling style module, not here.
+// The AFK KPIs use three-letter `key=value` mnemonics
+// (wrk/rdy/hmn/blk/loc/wai/tok/usd) instead of emojis; the optional ANSI
+// theming (a short wine identity zone, then a transparent key=value tail) lives
+// in the sibling style module, not here.
 //
 // The render here is PURE — no stdin parse, no filesystem, no git/gh, no cache,
 // no ANSI. The caller injects the already-resolved inputs (project basename +
@@ -184,15 +185,17 @@ export function afkTokens(afk: AfkInput | undefined): AfkToken[] {
   const kpi = (label: string, value: string): void => {
     tokens.push({ label, value, suffix: "" });
   };
-  if (afk.workers > 0) kpi("wk", String(afk.workers));
-  if (afk.queue > 0) kpi("rq", String(afk.queue));
-  if (afk.human > 0) kpi("rh", String(afk.human));
-  if (afk.blocked > 0) kpi("bk", String(afk.blocked));
-  if (afk.added > 0) kpi("ad", String(afk.added));
-  if (afk.removed > 0) kpi("rm", String(afk.removed));
-  if (afk.waiting !== undefined && afk.waiting > 0) kpi("wt", String(afk.waiting));
-  if (afk.tokens !== undefined && afk.tokens > 0) kpi("tk", humanizeTokens(afk.tokens));
-  if (afk.costUsd !== undefined && afk.costUsd > 0) kpi("$", afk.costUsd.toFixed(2));
+  if (afk.workers > 0) kpi("wrk=", String(afk.workers));
+  if (afk.queue > 0) kpi("rdy=", String(afk.queue));
+  if (afk.human > 0) kpi("hmn=", String(afk.human));
+  if (afk.blocked > 0) kpi("blk=", String(afk.blocked));
+  const diff: string[] = [];
+  if (afk.added > 0) diff.push(`+${afk.added}`);
+  if (afk.removed > 0) diff.push(`-${afk.removed}`);
+  if (diff.length) kpi("loc=", diff.join(" "));
+  if (afk.waiting !== undefined && afk.waiting > 0) kpi("wai=", String(afk.waiting));
+  if (afk.tokens !== undefined && afk.tokens > 0) kpi("tok=", humanizeTokens(afk.tokens));
+  if (afk.costUsd !== undefined && afk.costUsd > 0) kpi("usd=", afk.costUsd.toFixed(2));
   afk.issues.forEach((issue, i) => {
     const stage = afk.stages?.[i];
     tokens.push({ label: "#", value: String(issue), suffix: stage ? `·${stage}` : "" });

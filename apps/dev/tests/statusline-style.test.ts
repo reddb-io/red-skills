@@ -18,8 +18,8 @@ const vlen = (s: string): number => stripAnsi(s).length;
 
 const WINE = "\x1b[48;2;114;47;55m";
 const WINE2 = "\x1b[48;2;88;36;42m";
-const BLACK = "\x1b[48;2;0;0;0m";
-const GOLD = "\x1b[38;2;240;200;120m";
+const NOBG = "\x1b[49m";
+const SOFT = "\x1b[38;2;224;138;148m";
 const RESET = "\x1b[0m";
 
 const afk: AfkInput = { workers: 1, queue: 11, human: 3, blocked: 2, added: 12, removed: 3, issues: [17] };
@@ -36,18 +36,17 @@ describe("statusline style — header line", () => {
     const h = renderHeaderLine(input.project, input.claude, repo);
     expect(h).not.toContain("\n");
     expect(h.endsWith(RESET)).toBe(true);
-    expect(h).toContain(WINE2);
-    expect(h).toContain(WINE);
-    expect(h).toContain(BLACK); // chips
+    expect(h).toContain(WINE2); // project block bg
+    expect(h).toContain(WINE); // model block bg
+    expect(h).toContain(NOBG); // background drops to transparent after the model
     const t = stripAnsi(h);
     expect(t).toContain("» red-skills (main)");
     expect(t).toContain("v1.2.3"); // fixed fixture version — proves the renderer echoes whatever version it is handed (not the live build version)
     expect(t).toContain("Opus·high");
-    expect(t).toContain("ctx47k 24%");
-    expect(t).toContain("pr3");
-    expect(t).toContain("is24");
-    expect(t).toContain("+142");
-    expect(t).toContain("-36");
+    expect(t).toContain("ctx=47k 24%");
+    expect(t).toContain("prs=3");
+    expect(t).toContain("iss=24");
+    expect(t).toContain("loc=+142 -36");
   });
 
   it("drops the repo blocks when counts are zero / a clean branch", () => {
@@ -58,9 +57,9 @@ describe("statusline style — header line", () => {
       localRemoved: 0,
     });
     const t = stripAnsi(h);
-    expect(t).not.toContain("pr");
-    expect(t).not.toContain("is");
-    expect(t).not.toContain("+");
+    expect(t).not.toContain("prs=");
+    expect(t).not.toContain("iss=");
+    expect(t).not.toContain("loc=");
   });
 
   it("drops model/ctx/repo outside Claude Code with no repo stats", () => {
@@ -75,20 +74,21 @@ describe("statusline style — AFK line", () => {
     const line = renderAfkLine({ ...afk, runner: "claude", resolved: 7 }, undefined);
     expect(line).not.toBeNull();
     expect(line!.endsWith(RESET)).toBe(true);
-    expect(line).toContain(BLACK);
-    expect(line).toContain(GOLD); // runner label
+    expect(line).toContain(NOBG); // line 2 is fully transparent — no red block
+    expect(line).toContain(SOFT); // softer red for the runner / sigils
+    expect(line).not.toContain(WINE); // never a wine background on line 2
     const t = stripAnsi(line!);
     expect(t).toContain("claude"); // runner
-    expect(t).toContain("wk1 res7"); // workers + resolved
-    expect(t).toContain("ad12 rm3"); // in-transit
-    expect(t).toContain("rq11 rh3 bk2"); // pipeline
+    expect(t).toContain("wrk=1 res=7"); // workers + resolved
+    expect(t).toContain("loc=+12 -3"); // in-transit diff
+    expect(t).toContain("rdy=11 hmn=3 blk=2"); // pipeline
     expect(t).toContain("#17");
   });
 
   it("omits runner and res when absent / zero", () => {
     const t = stripAnsi(renderAfkLine(afk, undefined)!);
     expect(t).not.toContain("res");
-    expect(t.startsWith(" wk1")).toBe(true); // first block is workers, no runner
+    expect(t.startsWith(" wrk=1")).toBe(true); // first group is workers, no runner
   });
 
   it("is null when there are no live workers", () => {
@@ -117,10 +117,16 @@ describe("statusline style — AFK line", () => {
 
   it("fits the issue list to the COLUMNS budget, collapsing the rest into +N", () => {
     const wide = renderAfkLine({ ...afk, workers: 6, issues: [1, 2, 3, 4, 5, 6] }, 200);
-    expect(stripAnsi(wide!)).not.toContain("+"); // all six fit in 200 cols
-    const narrow = renderAfkLine({ ...afk, workers: 6, issues: [1, 2, 3, 4, 5, 6] }, 40);
-    expect(vlen(narrow!)).toBeLessThanOrEqual(40);
-    expect(stripAnsi(narrow!)).toMatch(/\+\d/);
+    expect(stripAnsi(wide!)).toContain("#6"); // all six issues fit in 200 cols (none collapsed)
+    // The verbose key=value KPI run is wider than the old 2-letter chips, so the
+    // fixed groups alone are ~40 cols for a busy fleet; the budget can only trim
+    // ISSUES. 56 is the realistic narrow floor where collapsing is exercised.
+    // (We assert collapse via a dropped #N, not a bare "+", since the loc=+A -R
+    // diff value also contains a "+".)
+    const narrow = renderAfkLine({ ...afk, workers: 6, issues: [1, 2, 3, 4, 5, 6] }, 56);
+    expect(vlen(narrow!)).toBeLessThanOrEqual(56);
+    expect(stripAnsi(narrow!)).not.toContain("#6"); // tail issues collapsed into +N
+    expect(stripAnsi(narrow!)).toMatch(/ \+\d/); // the +N overflow marker is present
   });
 });
 
@@ -132,15 +138,15 @@ describe("statusline style — full themed assembly", () => {
     expect(rows[0].endsWith(RESET)).toBe(true);
     expect(rows[1].endsWith(RESET)).toBe(true);
     expect(stripAnsi(rows[0])).toContain("» red-skills");
-    expect(stripAnsi(rows[0])).toContain("pr3");
-    expect(stripAnsi(rows[1])).toContain("wk1");
+    expect(stripAnsi(rows[0])).toContain("prs=3");
+    expect(stripAnsi(rows[1])).toContain("wrk=1");
   });
 
   it("emits only the header row when there are no live workers", () => {
     const out = styleStatusline({ project: input.project, claude: input.claude, repo });
     expect(out).not.toContain("\n");
     expect(stripAnsi(out)).toContain("Opus·high");
-    expect(stripAnsi(out)).toContain("pr3");
+    expect(stripAnsi(out)).toContain("prs=3");
   });
 
   it("renderStatuslineThemed switches between powerline and plain on the color flag", () => {
