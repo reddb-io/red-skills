@@ -84,6 +84,7 @@ import {
 } from "./issue-classifier.js";
 import type { AttemptStatus } from "./envelope.js";
 import type { Runner } from "../types/runner.js";
+import { toAgentRunner } from "./runner-spec.js";
 import type { HistoryClock } from "./history.js";
 
 // ---------- injected IO ----------
@@ -780,10 +781,7 @@ export async function processIssue(
   // claude-minimax (PRD #788) each map to a first-class provider and pass
   // through; any other value (e.g. the runner-neutral hermes, which has no
   // provider) coerces to claude so the spawn always has a real agent.
-  let activeRunner: Runner =
-    input.runner === "codex" || input.runner === "opencode" || input.runner === "claude-minimax"
-      ? input.runner
-      : "claude";
+  let activeRunner: Runner = toAgentRunner(input.runner);
   let attemptN = input.attempt;
   // Anchor sandcastle at the per-attempt dir so its `.sandcastle/` (worktrees,
   // logs, .env, patches) + git ops land under .red/, never at the repo root.
