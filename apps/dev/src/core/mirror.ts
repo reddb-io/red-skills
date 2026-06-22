@@ -24,12 +24,43 @@ import type { AfkState } from "../types/state.js";
 /** Terminal = anything but "running" (gone = pid dead, blocked = terminal failure). */
 export type WorkerStatus = "running" | "gone" | "blocked";
 
+/**
+ * Ordered macro-lifecycle phases (issue #811), 1-based position out of 5. The
+ * index drives the calm `n/5` prefix in the task title; the terminal `blocked`
+ * is deliberately NOT in this list — it carries no position (edge decision 1:
+ * `[blocked]`, never `3/5 blocked`).
+ */
+export const AFK_PHASE_ORDER = ["setup", "coding", "validating", "merging", "done"] as const;
+
+/**
+ * Build the calm macro-phase task title: `w<id> [<n>/5 <phase>] #<issue> <slug>`.
+ * A phase inside {@link AFK_PHASE_ORDER} renders its 1-based `n/5` position; any
+ * other non-empty phase (the terminal `blocked`) drops the `n/5` → `[<phase>]`;
+ * an empty phase drops the bracket entirely. The leading `worker_id` already
+ * carries its `w` prefix.
+ */
+export function mirrorTitle(
+  worker_id: string,
+  issue: number,
+  phase: string,
+  slug: string,
+): string {
+  const idx = (AFK_PHASE_ORDER as readonly string[]).indexOf(phase);
+  const bracket = idx >= 0 ? `[${idx + 1}/5 ${phase}]` : phase ? `[${phase}]` : "";
+  const head = bracket ? `${worker_id} ${bracket}` : worker_id;
+  return `${head} #${issue} ${slug}`.trimEnd();
+}
+
 /** One normalized live/crashed worker that maps to a task. */
 export interface WorkerRecord {
   worker_id: string;
   issue: number;
   title: string;
+  /** Short branch-slug for the title (`current.slug`, falling back to title). */
+  slug: string;
   stage: string;
+  /** Macro-lifecycle phase (drives the title's `n/5` prefix, issue #811). */
+  phase: string;
   started_at: string;
   status: WorkerStatus;
 }
@@ -38,6 +69,10 @@ export interface WorkerRecord {
 export interface TrackedTask {
   key: string;
   stage: string;
+  /** Last-seen macro phase, parsed back from the task title (issue #811). A
+   * tracked task missing it (older sessions) compares as "" and re-titles on the
+   * next observed phase. */
+  phase?: string;
 }
 
 /** An operation emitted by the reconciler. */
@@ -47,7 +82,9 @@ export interface MirrorOp {
   worker_id?: string;
   issue?: number;
   title?: string;
+  slug?: string;
   stage?: string;
+  phase?: string;
   status?: "running";
   result?: "completed" | "failed";
 }
@@ -84,13 +121,18 @@ export function readWorkers(reads: readonly WorkerStateRead[]): WorkerRecord[] {
     if (number === "" || number === null || number === undefined) continue;
     const issue = typeof number === "number" ? number : Number(number);
     if (!Number.isFinite(issue)) continue;
+    const phase = state.current.phase;
     out.push({
       worker_id: state.worker_id,
       issue,
       title: state.current.title,
+      slug: state.current.slug || state.current.title,
       stage: state.current.stage,
+      phase,
       started_at: state.current.started_at || state.started_at,
-      status: live ? "running" : "gone",
+      // A dead worker whose last macro phase is the terminal `blocked` is a
+      // FAILURE (→ task failed); any other dead worker is a normal completion.
+      status: live ? "running" : phase === "blocked" ? "blocked" : "gone",
     });
   }
   return out;
@@ -129,17 +171,23 @@ export function mirrorReconcile(
           worker_id: w.worker_id,
           issue: w.issue,
           title: w.title,
+          slug: w.slug,
           stage: w.stage,
+          phase: w.phase,
           status: "running",
         });
-      } else if (cur.stage !== w.stage) {
+      } else if (cur.stage !== w.stage || (cur.phase ?? "") !== w.phase) {
+        // The title tracks the macro PHASE, the description the micro STAGE — a
+        // change to either re-emits an update (the sink rewrites whichever moved).
         ops.push({
           op: "update",
           key,
           worker_id: w.worker_id,
           issue: w.issue,
           title: w.title,
+          slug: w.slug,
           stage: w.stage,
+          phase: w.phase,
           status: "running",
         });
       }
@@ -149,6 +197,10 @@ export function mirrorReconcile(
         key,
         worker_id: w.worker_id,
         issue: w.issue,
+        slug: w.slug,
+        // Terminal failure surfaces the `blocked` phase in the title; a normal
+        // completion needs no title rewrite (state-only TaskUpdate).
+        phase: w.status === "blocked" ? "blocked" : "done",
         result: w.status === "blocked" ? "failed" : "completed",
       });
     }
@@ -167,9 +219,9 @@ export function mirrorReconcile(
  * Map reconciler operations to harness call descriptors (mirror_plan). Idempotent:
  * an empty desired/tracked diff yields an empty plan.
  *
- *   create   → TaskCreate (in_progress), title "#<issue> <worker_id> — <title>"
- *   update   → TaskUpdate (in_progress) refreshing "stage: <x>"
- *   complete → TaskUpdate with state completed | failed
+ *   create   → TaskCreate (in_progress), title "w<id> [<n>/5 <phase>] #<issue> <slug>"
+ *   update   → TaskUpdate (in_progress) re-titling the macro phase + refreshing "stage: <x>"
+ *   complete → TaskUpdate with state completed | failed (failed re-titles to [blocked])
  */
 export function mirrorPlan(
   desired: readonly WorkerRecord[],
@@ -181,16 +233,28 @@ export function mirrorPlan(
       calls.push({
         call: "TaskCreate",
         key: op.key,
-        title: `#${op.issue} ${op.worker_id} — ${op.title}`,
+        title: mirrorTitle(op.worker_id!, op.issue!, op.phase ?? "", op.slug ?? ""),
         description: `stage: ${op.stage}`,
         state: "in_progress",
       });
     } else if (op.op === "update") {
+      // Rewrite the title (macro phase) AND refresh the description (micro stage)
+      // — idempotent when only one moved, since the unchanged side re-renders to
+      // the same string.
       calls.push({
         call: "TaskUpdate",
         key: op.key,
+        title: mirrorTitle(op.worker_id!, op.issue!, op.phase ?? "", op.slug ?? ""),
         description: `stage: ${op.stage}`,
         state: "in_progress",
+      });
+    } else if (op.result === "failed" && op.worker_id !== undefined) {
+      // Terminal failure: re-title to the `[blocked]` macro phase, flip to failed.
+      calls.push({
+        call: "TaskUpdate",
+        key: op.key,
+        title: mirrorTitle(op.worker_id, op.issue!, op.phase ?? "blocked", op.slug ?? ""),
+        state: "failed",
       });
     } else {
       calls.push({ call: "TaskUpdate", key: op.key, state: op.result });
