@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# red-envelope — built-in post_attempt library hook (ADR 0026, PRD #207,
+# issue #212; renamed from post_worker in #226).
+#
+# Reconciles the iteration's intermediate envelope state on the AFK state
+# file as soon as the runner returns — before any user post_attempt hook
+# runs, so a user notifier/pager integration that reads state already sees
+# the worker's terminal result classified.
+#
+# Contract:
+#   stdin   — JSON object: post_attempt context with .result.status of
+#             "success" or "fail".
+#   stdout  — empty (context unchanged). Pure side-effect on the state file.
+#   exit    — 0. Never aborts the chain.
+#
+# Env contract (RED_AFK_* exported by the orchestrator):
+#   RED_AFK_STATE_FILE      — absolute path to the iteration's afk.state.json;
+#                             when unset/missing, the default is a no-op.
+#   RED_AFK_RESULT_STATUS   — redundant fallback ("success"|"fail") for
+#                             runners/tests that cannot shape a context JSON;
+#                             if ctx.result.status is absent this is used
+#                             instead.
+#
+# Shadowing: place a same-named file in .red/hooks/red-envelope to replace
+# this default with a project-local variant. An empty (exit-0) file disables
+# it.
+
+set -uo pipefail
+
+ctx="$(cat || true)"
+
+state_file="${RED_AFK_STATE_FILE:-}"
+[[ -z "$state_file" || ! -f "$state_file" ]] && exit 0
+
+status=""
+if [[ -n "$ctx" ]]; then
+  status="$(printf '%s' "$ctx" | jq -r '.result.status // empty' 2>/dev/null || true)"
+fi
+[[ -z "$status" ]] && status="${RED_AFK_RESULT_STATUS:-}"
+[[ -z "$status" ]] && exit 0
+
+tmp="${state_file}.tmp.$$"
+if jq --arg s "$status" '.current = ((.current // {}) + {result_status: $s})' \
+     "$state_file" > "$tmp" 2>/dev/null; then
+  mv "$tmp" "$state_file"
+else
+  rm -f "$tmp"
+fi
+
+exit 0
