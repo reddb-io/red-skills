@@ -126,7 +126,7 @@ function compareFilenames(a: string, b: string): number {
  * may be undefined or absent — its contribution is simply empty.
  */
 export function resolveDirScripts(
-  point: HookName,
+  point: HookName | string,
   libraryHooksDir: string | undefined,
   projectHooksDir: string | undefined,
   listFiles: ListFiles,
