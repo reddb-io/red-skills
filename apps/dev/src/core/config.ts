@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 import { z } from "zod";
 import type { AgentEffort } from "./execution.js";
+import { toAgentRunner } from "./runner-spec.js";
+import type { Runner } from "../types/runner.js";
 
 /**
  * config.ts — TypeScript port of scripts/config.sh.
@@ -385,9 +387,8 @@ export function resolveTier(
 ): ResolvedTier {
   // The runner whose tier table to read. claude/codex/opencode/claude-minimax each
   // ship a full table (CONFIG_DEFAULTS); any other runner (e.g. the runner-neutral
-  // hermes) falls back to the claude table.
-  const tierRunner =
-    runner === "codex" || runner === "opencode" || runner === "claude-minimax" ? runner : "claude";
+  // hermes) falls back to the claude table via the shared `toAgentRunner` seam.
+  const tierRunner = toAgentRunner(runner as Runner);
   const tier = (AFK_MODEL_TIERS as readonly string[]).includes(taskClass) ? taskClass : "think";
   const modelKey = defaultTierKey(tierRunner, tier, "model")!;
   const effortKey = defaultTierKey(tierRunner, tier, "effort")!;
