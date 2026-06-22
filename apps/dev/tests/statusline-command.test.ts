@@ -137,11 +137,13 @@ describe("statusline command — rendered line", () => {
     const code = await statuslineCommand([root], root, out.stream, fakeStdin(PAYLOAD));
     expect(code).toBe(0);
 
-    const line = stripAnsi(out.text().trim());
-    // basename(root) (branch may or may not resolve) · Opus·high · 47k 24% · AFK run.
-    expect(line).toContain("Opus·high");
-    expect(line).toContain("47k 24%");
-    expect(line).toContain("wk1 rq11 rh3 bk2 ad12 rm3 #17");
+    // Two powerline rows: header (project/model/ctx) + AFK (backlog + active).
+    const rows = out.text().trimEnd().split("\n");
+    expect(rows).toHaveLength(2);
+    expect(stripAnsi(rows[0])).toContain("Opus·high");
+    expect(stripAnsi(rows[0])).toContain("47k 24%");
+    expect(stripAnsi(rows[1])).toContain("rq11 rh3 bk2"); // backlog block
+    expect(stripAnsi(rows[1])).toContain("wk1 ad12 rm3 #17"); // active block
     // The raw output carries the wine-red background SGR (theme on by default).
     expect(out.text()).toContain("\x1b[48;2;114;47;55m");
   });

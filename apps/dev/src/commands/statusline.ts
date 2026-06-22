@@ -154,10 +154,17 @@ export async function statuslineCommand(
   // from the project root and let gh infer the repo from cwd (repo slug "").
   const afk = (await collectStatuslineAfk({ root, repo: "", remote: "origin" })) ?? undefined;
 
-  // Theme on by default (the high-tech wine line with chipped KPI numbers);
-  // honour NO_COLOR for plain consumers, matching the de-facto colour opt-out.
+  // Theme on by default (the two-line powerline wine layout with chipped KPI
+  // numbers); honour NO_COLOR for plain consumers, matching the de-facto colour
+  // opt-out. Claude Code exports $COLUMNS (v2.1.153+) so the AFK line fits its
+  // issue list to the terminal width; absent/unparseable → fixed-cap fallback.
   const color = !process.env.NO_COLOR;
-  const line = renderStatuslineThemed({ project, claude, afk }, color);
+  const columns = Number.parseInt(process.env.COLUMNS ?? "", 10);
+  const line = renderStatuslineThemed(
+    { project, claude, afk },
+    color,
+    Number.isFinite(columns) && columns > 0 ? columns : undefined,
+  );
   stdout.write(`${line}\n`);
   return 0;
 }
