@@ -49,6 +49,7 @@ function config(over: Partial<SupervisorConfig> = {}): SupervisorConfig {
     progressStaleS: 900,
     halfOpenBaseS: 60,
     halfOpenCapS: 3600,
+    unblockSweepIntervalS: 60,
     ...over,
   };
 }
@@ -84,6 +85,7 @@ interface FakeIo {
   readyQueueDepth: ReturnType<typeof vi.fn>;
   findReconcileCandidate: ReturnType<typeof vi.fn>;
   emitFleetHeartbeat: ReturnType<typeof vi.fn>;
+  unblockSweep: ReturnType<typeof vi.fn>;
   now: ReturnType<typeof vi.fn>;
 }
 
@@ -122,6 +124,7 @@ function makeDeps(over: Partial<Record<keyof FakeIo, unknown>> = {}): {
     readyQueueDepth: vi.fn(async () => 0),
     findReconcileCandidate: vi.fn(async (): Promise<ReconcileCandidate | null> => null),
     emitFleetHeartbeat: vi.fn(async () => {}),
+    unblockSweep: vi.fn(async (): Promise<number[]> => []),
     now: vi.fn(() => NOW),
     ...(over as Partial<FakeIo>),
   };
@@ -152,6 +155,7 @@ function makeDeps(over: Partial<Record<keyof FakeIo, unknown>> = {}): {
     },
     now: io.now,
     emitFleetHeartbeat: io.emitFleetHeartbeat,
+    unblockSweep: io.unblockSweep,
   };
   return { deps, io };
 }
@@ -448,6 +452,7 @@ describe("guardedTick — abandoned flag", () => {
       halfOpened: [],
       reaped: [],
       reconciledSlots: [],
+      unblocked: [],
       stopped: false,
       queueDepth: 0,
       abandoned: false,
@@ -1167,8 +1172,8 @@ describe("envelope builders", () => {
 describe("guardedTick — per-tick wall-clock ceiling (unwedgeable loop)", () => {
   const never = (): Promise<void> => new Promise<void>(() => {});
   const immediate = (): Promise<void> => Promise.resolve();
-  const okResult = { respawned: [1], deaths: [], parked: [], idleParked: [], halfOpened: [], reaped: [], reconciledSlots: [], stopped: false, queueDepth: 0, abandoned: false };
-  const CONTINUE = { respawned: [], deaths: [], parked: [], idleParked: [], halfOpened: [], reaped: [], reconciledSlots: [], stopped: false, queueDepth: 0, abandoned: true };
+  const okResult = { respawned: [1], deaths: [], parked: [], idleParked: [], halfOpened: [], reaped: [], reconciledSlots: [], unblocked: [], stopped: false, queueDepth: 0, abandoned: false };
+  const CONTINUE = { respawned: [], deaths: [], parked: [], idleParked: [], halfOpened: [], reaped: [], reconciledSlots: [], unblocked: [], stopped: false, queueDepth: 0, abandoned: true };
 
   it("returns the tick result when it completes before the ceiling", async () => {
     const logs: string[] = [];
@@ -1588,6 +1593,114 @@ describe("superviseTick — reconciledSlots accounting (#562)", () => {
     expect(result.reaped).toEqual([0]);
     expect(result.reconciledSlots).toEqual([]);
     expect(io.spawnReconcileWorker).not.toHaveBeenCalled();
+  });
+});
+
+// ---------- periodic dependency Unblock Sweep on the tick (#844) ----------
+
+describe("superviseTick — periodic dependency Unblock Sweep (#844)", () => {
+  it("runs the sweep on the first tick (lastUnblockSweepEpoch=0) and records promotions", async () => {
+    const { deps, io } = makeDeps({
+      isAlive: vi.fn(() => true), // slot occupied: no spawn/respawn this tick
+      unblockSweep: vi.fn(async (): Promise<number[]> => [42]),
+    });
+    const state = initSupervisorState(1);
+    state.slots[0]!.pid = 9001;
+    state.slots[0]!.spawnEpoch = NOW - 3600;
+
+    const result = await superviseTick(state, deps, config({ unblockSweepIntervalS: 60 }), () => false);
+
+    expect(io.unblockSweep).toHaveBeenCalledOnce();
+    expect(result.unblocked).toEqual([42]);
+    expect(state.lastUnblockSweepEpoch).toBe(NOW);
+  });
+
+  it("throttles: a second tick inside the interval does NOT re-run the sweep", async () => {
+    const { deps, io } = makeDeps({
+      isAlive: vi.fn(() => true),
+      now: vi.fn(() => NOW),
+      unblockSweep: vi.fn(async (): Promise<number[]> => []),
+    });
+    const state = initSupervisorState(1);
+    state.slots[0]!.pid = 9001;
+    state.slots[0]!.spawnEpoch = NOW - 3600;
+    state.lastUnblockSweepEpoch = NOW - 30; // 30s ago, interval is 60s → not due
+
+    const result = await superviseTick(state, deps, config({ unblockSweepIntervalS: 60 }), () => false);
+
+    expect(io.unblockSweep).not.toHaveBeenCalled();
+    expect(result.unblocked).toEqual([]);
+    expect(state.lastUnblockSweepEpoch).toBe(NOW - 30); // unchanged
+  });
+
+  it("re-runs once the interval has elapsed", async () => {
+    const { deps, io } = makeDeps({
+      isAlive: vi.fn(() => true),
+      now: vi.fn(() => NOW),
+      unblockSweep: vi.fn(async (): Promise<number[]> => [7]),
+    });
+    const state = initSupervisorState(1);
+    state.slots[0]!.pid = 9001;
+    state.slots[0]!.spawnEpoch = NOW - 3600;
+    state.lastUnblockSweepEpoch = NOW - 60; // exactly the interval → due
+
+    const result = await superviseTick(state, deps, config({ unblockSweepIntervalS: 60 }), () => false);
+
+    expect(io.unblockSweep).toHaveBeenCalledOnce();
+    expect(result.unblocked).toEqual([7]);
+    expect(state.lastUnblockSweepEpoch).toBe(NOW);
+  });
+
+  it("promotes an unblockable dependent with an idle, all-blocked queue and no spawn", async () => {
+    // ready:0 (empty queue), every slot occupied → no respawn, no idle un-park.
+    // The only mutation this tick is the periodic sweep promoting the dependent.
+    const { deps, io } = makeDeps({
+      isAlive: vi.fn(() => true),
+      readyQueueDepth: vi.fn(async () => 0),
+      unblockSweep: vi.fn(async (): Promise<number[]> => [101]),
+    });
+    const state = initSupervisorState(1);
+    state.slots[0]!.pid = 9001;
+    state.slots[0]!.spawnEpoch = NOW - 3600;
+
+    const result = await superviseTick(state, deps, config({ unblockSweepIntervalS: 60 }), () => false);
+
+    expect(result.respawned).toEqual([]);
+    expect(result.unblocked).toEqual([101]);
+    expect(io.spawnSlot).not.toHaveBeenCalled();
+  });
+
+  it("is best-effort: a throwing sweep leaves unblocked=[] and still stamps so it retries next interval", async () => {
+    const { deps, io } = makeDeps({
+      isAlive: vi.fn(() => true),
+      unblockSweep: vi.fn(async (): Promise<number[]> => {
+        throw new Error("gh exploded");
+      }),
+    });
+    const state = initSupervisorState(1);
+    state.slots[0]!.pid = 9001;
+    state.slots[0]!.spawnEpoch = NOW - 3600;
+
+    const result = await superviseTick(state, deps, config({ unblockSweepIntervalS: 60 }), () => false);
+
+    expect(io.unblockSweep).toHaveBeenCalledOnce();
+    expect(result.unblocked).toEqual([]);
+    expect(state.lastUnblockSweepEpoch).toBe(NOW); // stamped despite the throw
+  });
+
+  it("is back-compat: a tick with no unblockSweep wired completes without sweeping", async () => {
+    const { deps } = makeDeps({
+      isAlive: vi.fn(() => true),
+      unblockSweep: undefined,
+    });
+    const state = initSupervisorState(1);
+    state.slots[0]!.pid = 9001;
+    state.slots[0]!.spawnEpoch = NOW - 3600;
+
+    const result = await superviseTick(state, deps, config(), () => false);
+
+    expect(result.unblocked).toEqual([]);
+    expect(state.lastUnblockSweepEpoch).toBe(0); // never stamped
   });
 });
 
