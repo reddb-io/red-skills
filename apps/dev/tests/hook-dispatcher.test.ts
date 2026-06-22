@@ -354,6 +354,30 @@ describe("deriveHookEnv (documented per-event RED_AFK_* contract)", () => {
     expect("RED_AFK_ISSUE" in env).toBe(false);
     expect("RED_AFK_RUNNER" in env).toBe(false);
   });
+
+  it("derives RED_AFK_ITER_LOG and RED_AFK_STATE_FILE from the post_attempt context", () => {
+    const env = deriveHookEnv(
+      base,
+      JSON.stringify({
+        issue: { number: 42 },
+        workspace: "/wt",
+        result: { status: "success", outcome: "done" },
+        attempt_n: 1,
+        iter_log: "/repo/.red/tmp/workers/w0/42-1/afk.log",
+        state_file: "/repo/.red/tmp/workers/w0/42-1/afk.state.json",
+      }),
+    );
+
+    expect(env.RED_AFK_ITER_LOG).toBe("/repo/.red/tmp/workers/w0/42-1/afk.log");
+    expect(env.RED_AFK_STATE_FILE).toBe("/repo/.red/tmp/workers/w0/42-1/afk.state.json");
+  });
+
+  it("leaves RED_AFK_ITER_LOG and RED_AFK_STATE_FILE unset when absent from context", () => {
+    const env = deriveHookEnv(base, JSON.stringify({ result: { status: "fail", outcome: "" } }));
+
+    expect("RED_AFK_ITER_LOG" in env).toBe(false);
+    expect("RED_AFK_STATE_FILE" in env).toBe(false);
+  });
 });
 
 describe("dispatchHooks layers the per-event env onto the base env", () => {
