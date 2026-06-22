@@ -30,7 +30,7 @@ import {
   type IssueLookup,
 } from "./branch-cleanup.js";
 import {
-  planUnblockSweep,
+  executeUnblockSweep,
   planReconcileSweep,
   stragglerCounts,
   shouldWarnStragglers,
@@ -47,7 +47,7 @@ import {
   resolveClaimStalenessConfig,
   type ClaimedIssue,
 } from "./claim-staleness.js";
-import { LABEL_READY, LABEL_RUNNING, LABEL_HUMAN, LABEL_DEPENDENCY } from "./triage-labels.js";
+import { LABEL_READY, LABEL_RUNNING } from "./triage-labels.js";
 
 // ---------- precheck (hard preconditions) ----------
 
@@ -655,20 +655,9 @@ async function runUnblockSweep(
   deps: BootDeps,
   candidates: readonly UnblockCandidate[],
 ): Promise<UnblockSweepResult> {
-  const plans = await planUnblockSweep(candidates, deps.lookups.blockerState);
-  // Resolve each promoted issue's holding label from its candidate label set.
-  // The planner only promotes true dependency waits, but keep the fallback
-  // defensive for older callers.
-  const labelsByIssue = new Map<number, string[]>();
-  for (const c of candidates) labelsByIssue.set(c.number, c.labels ?? []);
-  const promoted: number[] = [];
-  for (const p of plans) {
-    const held = labelsByIssue.get(p.number) ?? [];
-    const remove = held.includes(LABEL_DEPENDENCY) ? LABEL_DEPENDENCY : LABEL_HUMAN;
-    await deps.gh.editLabels(p.number, [remove], [LABEL_READY]);
-    await deps.gh.comment(p.number, p.comment);
-    promoted.push(p.number);
-  }
+  // Delegate to the shared sweep core so the boot-time safety net and the
+  // periodic supervisor sweep (#844) promote through exactly one code path.
+  const promoted = await executeUnblockSweep(candidates, deps.lookups.blockerState, deps.gh);
   return { promoted };
 }
 
