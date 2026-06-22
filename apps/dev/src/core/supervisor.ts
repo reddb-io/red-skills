@@ -785,29 +785,24 @@ export async function reconcileDeadWorkerClaim(
     await deps.gh.comment(info.issue, buildCrashEnvelope(info));
   }
 
-  // 2. Bounded blocked:crashed recovery, mirroring the stall-reaper (#402).
-  const env = deps.recoveryEnv ?? {};
-  const decision = recoveryDecision("crashed", info.attempt, env);
-  if (decision === "retry") {
-    await deps.gh.editLabels(info.issue, [LABEL_READY], [LABEL_RUNNING]);
+  // 2. Bounded blocked:crashed recovery via the disposition composer (#402,
+  // #822), mirroring the stall-reaper path below. The death-without-envelope
+  // outcome is "no-sentinel" → recovery reason `crashed` + label `blocked:crashed`;
+  // dispose() owns the retry/escalate decision, label sets, and the budget-
+  // exhausted page comment. (Completes #822: this crash path still called the
+  // un-imported recoveryDecision/blockedLabelFor/recoveryCap after the stall path
+  // was converted, breaking the apps/dev typecheck.)
+  const disp = dispose("no-sentinel", info.attempt, deps.recoveryEnv ?? {});
+  if (disp.decision === "retry") {
+    // CLEAN re-queue: no blocked:* tag rides a re-queued issue.
+    await deps.gh.editLabels(info.issue, disp.addLabels, disp.removeLabels);
   } else {
-    // The recovery REASON is "crashed" (recovery.ts cap table), but the
-    // descriptive `blocked:crashed` label is keyed off the matching terminal
-    // OUTCOME — "no-sentinel" (attempt-outcome.ts), the death-without-envelope
-    // class this reconcile recovers.
-    const typed = blockedLabelFor("no-sentinel");
-    if (typed !== null) await deps.gh.ensureLabel(typed);
-    await deps.gh.editLabels(
-      info.issue,
-      typed !== null ? [LABEL_HUMAN, typed] : [LABEL_HUMAN],
-      [LABEL_RUNNING, LABEL_READY],
-    );
-    const cap = recoveryCap("crashed", env);
-    if (cap !== null) {
-      await deps.gh.comment(
-        info.issue,
-        `🤖 /afk escalating to ready-for-human: blocked:crashed retry budget exhausted (attempt ${info.attempt}/${cap}).`,
-      );
+    if (disp.typedLabel !== null) await deps.gh.ensureLabel(disp.typedLabel);
+    // Escalation also sheds any stale ready-for-agent — the crashed slot was
+    // `running`, never re-queue it (matches the reaper path).
+    await deps.gh.editLabels(info.issue, disp.addLabels, [...disp.removeLabels, LABEL_READY]);
+    if (disp.escalationComment !== null) {
+      await deps.gh.comment(info.issue, disp.escalationComment);
     }
   }
   return info.issue;

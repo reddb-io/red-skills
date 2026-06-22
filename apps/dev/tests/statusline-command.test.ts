@@ -132,9 +132,9 @@ describe("statusline command — rendered line", () => {
       runner: "claude",
       done: 7,
       blocked: 2,
-      // `started_at` (fresh) is what makes isStateActive treat this pid-live worker
-      // as active (ADR 0065): the statusline collector now requires recent activity,
-      // not just a resolving pid. A real worker always stamps started_at.
+      // A real worker stamps started_at; the statusline collector counts any
+      // pid-live worker (#836) — freshness is not required, so a worker quiet on
+      // the agent lane during a long test/build still renders on line 2.
       current: {
         number: 17,
         diff_added: 12,

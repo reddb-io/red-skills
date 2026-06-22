@@ -551,6 +551,47 @@ describe("collectStatuslineAfk — cache discipline", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it("counts a pid-live worker even when its activity is stale (#836)", async () => {
+    const root = mkdtempSync(join(tmpdir(), "afk-sl-afk-"));
+    try {
+      const tmpDir = join(root, ".red", "tmp");
+      mkdirSync(tmpDir, { recursive: true });
+      // Fresh gh cache → collectStatuslineAfk makes no gh call.
+      writeFileSync(join(tmpDir, "statusline-cache.json"), JSON.stringify({ queue: 0, human: 0, ts: nowS() }), "utf8");
+
+      // A worker whose orchestrator process is ALIVE (pid resolves) but whose
+      // agent-stream activity froze long ago — exactly a long feedback-gate /
+      // build phase, after the heartbeat stops at post_attempt. Pre-#836 this was
+      // dropped (isStateActive freshness gate) and line 2 vanished mid-test.
+      const stale = new Date(Date.now() - 2 * 3600 * 1000).toISOString();
+      const dir = join(tmpDir, "workers", "wQ", "55-a1");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(
+        join(dir, "afk.state.json"),
+        JSON.stringify({
+          pid: process.pid, // alive
+          current: {
+            number: 55,
+            stage: "tests",
+            started_at: stale,
+            last_event_at: stale,
+            last_commit_at: stale,
+            loc_added: 5, // non-zero → no live git diffstat fallback (hermetic)
+            loc_removed: 1,
+          },
+        }),
+        "utf8",
+      );
+
+      const result = await collectStatuslineAfk({ root, repo: "", remote: "origin" });
+      expect(result).not.toBeNull(); // pid-live worker keeps line 2 alive despite stale activity
+      expect(result!.workers).toBe(1);
+      expect(result!.issues).toContain(55);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
