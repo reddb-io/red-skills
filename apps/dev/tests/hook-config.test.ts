@@ -135,4 +135,22 @@ describe("hook-config resolution", () => {
     expect(HOOK_DEFAULTS_REGISTRY.post_attempt).toEqual(["heartbeat", "envelope"]);
     expect(HOOK_DEFAULTS_REGISTRY.post_merge).toEqual(["validation"]);
   });
+
+  it("registers the #832 recovery/feedback checkpoints as canonical (no default attaches)", () => {
+    const names = [
+      "pre_feedback",
+      "on_baseline_probe",
+      "on_feedback_classify",
+      "post_feedback",
+      "on_attempt_timeout",
+      "on_recovery_decision",
+      "on_blocked",
+      "on_reconcile",
+    ] as const;
+    for (const name of names) {
+      expect(CANONICAL_HOOK_NAMES).toContain(name);
+      // None of the new points ship a built-in default → resolve to the empty list.
+      expect(resolve({})[name]).toEqual([]);
+    }
+  });
 });
