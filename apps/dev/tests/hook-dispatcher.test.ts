@@ -63,9 +63,17 @@ describe("hook-dispatcher exit-code policy table", () => {
       pre_worktree: "abort",
       pre_attempt: "abort",
       post_attempt: "continue",
+      pre_feedback: "abort",
+      on_baseline_probe: "continue",
+      on_feedback_classify: "continue",
+      post_feedback: "continue",
       pre_merge: "abort",
       post_merge: "continue",
       on_attempt_error: "continue",
+      on_attempt_timeout: "continue",
+      on_recovery_decision: "continue",
+      on_blocked: "continue",
+      on_reconcile: "continue",
       on_idle: "continue",
       on_heartbeat: "continue",
       post_session: "continue",
@@ -377,6 +385,41 @@ describe("deriveHookEnv (documented per-event RED_AFK_* contract)", () => {
 
     expect("RED_AFK_ITER_LOG" in env).toBe(false);
     expect("RED_AFK_STATE_FILE" in env).toBe(false);
+  });
+
+  it("derives the #832 recovery/feedback decision vars from their contexts", () => {
+    expect(
+      deriveHookEnv(base, JSON.stringify({ issue: { number: 1 }, decision: "escalate", reason: "stalled" }))
+        .RED_AFK_RECOVERY_DECISION,
+    ).toBe("escalate");
+    expect(deriveHookEnv(base, JSON.stringify({ blocked_label: "blocked:policy" })).RED_AFK_BLOCKED_LABEL).toBe(
+      "blocked:policy",
+    );
+    expect(deriveHookEnv(base, JSON.stringify({ class: "infra" })).RED_AFK_FEEDBACK_CLASS).toBe("infra");
+    expect(deriveHookEnv(base, JSON.stringify({ outcome: "landed" })).RED_AFK_RECONCILE_OUTCOME).toBe("landed");
+  });
+
+  it("flattens the on_heartbeat vitals object into RED_AFK_VITAL_* env (ADR 0065/#832)", () => {
+    const env = deriveHookEnv(
+      base,
+      JSON.stringify({
+        issue: { number: 9 },
+        vitals: {
+          tools_called_count: 7,
+          reasoning_tokens: 128,
+          loc_added: 40,
+          cost_usd: 0.5,
+          // A non-numeric vital is ignored (only finite numbers are surfaced).
+          last_commit_at: "2026-06-22T00:00:00Z",
+        },
+      }),
+    );
+
+    expect(env.RED_AFK_VITAL_TOOLS_CALLED_COUNT).toBe("7");
+    expect(env.RED_AFK_VITAL_REASONING_TOKENS).toBe("128");
+    expect(env.RED_AFK_VITAL_LOC_ADDED).toBe("40");
+    expect(env.RED_AFK_VITAL_COST_USD).toBe("0.5");
+    expect("RED_AFK_VITAL_LAST_COMMIT_AT" in env).toBe(false);
   });
 });
 
