@@ -6,6 +6,19 @@ Upstream base: `mattpocock/skills@694fa30311e02c2639942308513555e61ee84a6f` (see
 
 ---
 
+## implement (engineering)
+
+- **status**: added
+- **upstream**: `6eeb81b`
+- **why**: upstream skill ported and adapted — fills the "implement a PRD myself, guided" gap distinct from the autonomous `/afk` fleet; no equivalent existed in red-skills
+- **what changed**:
+  - ported upstream 8-line `implement` SKILL.md, rewrote to RedSkills house style (`<what-to-do>`/`<supporting-info>`, 8-technique sentence style)
+  - made the AFK-vs-implement boundary explicit: `/implement` is interactive (human-driven, single session, `/ship` to land); `/afk` is autonomous (fleet, claim→worktree→gate→merge→close unattended)
+  - replaced "commit to current branch" with the worktree → `/ship` loop
+  - wired to our `/tdd`, `/review`, `/to-issues`, and GitHub Issues PRD model instead of Matt's
+
+---
+
 ## runner-claude-minimax (engineering/afk) — fourth AFK runner targeting MiniMax Anthropic-compatible endpoint
 
 - **status**: added

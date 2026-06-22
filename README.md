@@ -476,6 +476,7 @@ Composable. Boring on purpose where boring is enough. Sharp where it matters.
 | **[report-bug](./plugins/dev/skills/engineering/report-bug/SKILL.md)** | Interview the user about a bug, then file a `type:bug needs-triage` issue on the tracker. Seeds from conversation context when invoked with no argument. |
 | **[urgent](./plugins/dev/skills/engineering/urgent/SKILL.md)** | File a `priority:urgent` issue that bypasses `/triage` and jumps the head of the `/afk` queue, ahead of any `--prd N` / `--issues a,b,c` filter. Use when something is on fire. |
 | **[improve-codebase-architecture](./plugins/dev/skills/engineering/improve-codebase-architecture/SKILL.md)** | Finds deepening opportunities in the codebase, informed by the active glossary (`.red/contexts/**` in multi-context repos) and `.red/adr/`. |
+| **[implement](./plugins/dev/skills/engineering/implement/SKILL.md)** | Interactive, human-driven PRD execution: guided `/tdd` at pre-agreed seams, full-suite gate, `/review`, and `/ship`. Interactive counterpart to the autonomous `/afk`. |
 | **[tdd](./plugins/dev/skills/engineering/tdd/SKILL.md)** | Red-green-refactor loop; one vertical slice at a time. |
 | **[to-issues](./plugins/dev/skills/engineering/to-issues/SKILL.md)** | Breaks a plan, spec, or PRD into independently-grabbable issues via vertical slices. |
 | **[to-prd](./plugins/dev/skills/engineering/to-prd/SKILL.md)** | Turns the current conversation into a PRD; publishes as a GitHub issue. |

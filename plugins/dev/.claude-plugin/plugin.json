@@ -25,6 +25,7 @@
     "./skills/engineering/improve-codebase-architecture",
     "./skills/engineering/setup-red-skills",
     "./skills/engineering/setup-statusline",
+    "./skills/engineering/implement",
     "./skills/engineering/tdd",
     "./skills/engineering/to-issues",
     "./skills/engineering/to-prd",
