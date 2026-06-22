@@ -186,6 +186,32 @@ Confirm with the user:
 - This writes or updates `## Development workflow` in both `AGENTS.md` and `CLAUDE.md` via the shared injector.
 - Recap that `/ship` is the landing command for interactive work after the branch is pushed.
 
+**Section I — Hook scripts from repo signals (offer-only).**
+
+> Explainer: RedSkills hook scripts run at fixed AFK lifecycle points — before merging (`pre_merge`), after merging (`post_merge`), etc. — letting you gate or react to each iteration without editing the AFK runtime. Rather than asking you to configure these from scratch, this step scans your repo for concrete signals (a `package.json` with test/lint scripts, a `Makefile`, a Slack webhook env var, and so on) and offers to seed matching `red-*.sh` scripts into `.red/hooks/<point>/`. Each confirmed script is also registered in `.red/config.yaml` under `afk.hooks.<point>`. Nothing is written without explicit confirmation; no existing script is ever overwritten; nothing is `git add`ed. If no signals are found, this section is silent — absence of signals means no offer.
+
+Scan for concrete repo signals in this order:
+
+1. **`package.json` `scripts.*`** — look for keys named `test`, `typecheck`, `type-check`, `lint`, `build`, `e2e`, or `test:e2e`. Infer the package manager from the first lockfile found (`pnpm-lock.yaml` → `pnpm run`, `yarn.lock` → `yarn run`, else `npm run`). `e2e`/`test:e2e` goes to `post_merge` (too costly as a pre-merge gate); all others go to `pre_merge`.
+2. **`Makefile`** — parse top-level targets; offer `pre_merge` hooks for any target named `test`, `check`, `verify`, `lint`, or `build`.
+3. **`Cargo.toml`** — offer a `pre_merge` hook running `cargo test` (the built-in default handles Rust worktree isolation; this adds the test run).
+4. **`build.gradle` / `build.gradle.kts`** — offer a `pre_merge` hook running `./gradlew check` (the built-in default handles Gradle isolation; this adds the check step).
+5. **`.husky/` directory** — offer a `pre_merge` hook running `npx lint-staged`.
+6. **`.pre-commit-config.yaml`** — offer a `pre_merge` hook running `pre-commit run --all-files`.
+7. **`.env.example`** — scan for `SLACK_WEBHOOK_URL` or `SLACK_INCOMING_WEBHOOK`; offer a `post_merge` Slack notification hook.
+
+If no signals are detected, skip this section entirely — present no table, ask nothing.
+
+If signals are found, present an offer table listing each suggestion:
+
+| Point | Script | Signal |
+|-------|--------|--------|
+| `pre_merge` | `.red/hooks/pre_merge/red-run-tests.sh` | `package.json scripts.test = "vitest"` |
+| `pre_merge` | `.red/hooks/pre_merge/red-lint.sh` | `package.json scripts.lint = "eslint ."` |
+| `post_merge` | `.red/hooks/post_merge/red-slack-notify.sh` | `SLACK_WEBHOOK_URL in .env.example` |
+
+Ask the user which to confirm (all, none, or pick by number). Skip the offer for any path that already exists — log a notice and move on (no-clobber, no overwrite, no second ask).
+
 ### 3. Confirm and edit
 
 Show the user a draft of:
@@ -270,6 +296,37 @@ If the user accepted Section F, wire the statusline:
 1. Check the opt-out: if `.red/config.yaml` exists and contains an `afk:` block with `statusline: false`, log `afk.statusline: false in .red/config.yaml — skipping statusline wiring` and skip the rest of this step.
 2. Check for an existing `statusLine` key in `.claude/settings.json`. If one is present, log `statusLine already configured in .claude/settings.json — leaving as-is` and skip the rest of this step.
 3. Otherwise, ensure `.claude/` exists and write/merge the `statusLine` block above into `.claude/settings.json`. Use `jq` for the merge when the file already has unrelated keys; create a fresh file containing only `statusLine` when missing.
+
+If the user confirmed any hook scripts from Section I:
+
+1. For each confirmed suggestion, ensure `.red/hooks/<point>/` exists (create the directory; `.red/` is already authorized by Section A0 — subdirectories under it are permitted).
+2. Write `.red/hooks/<point>/<name>` with the script content. **If the file already exists, skip it silently** — log a one-line notice (`.red/hooks/<point>/<name> already exists — not overwriting`) and move on. Never overwrite.
+3. Update `.red/config.yaml`: add the script path under the `afk.hooks.<point>:` list. Use the relative-to-root form `bash .red/hooks/<point>/<name>` as the command string. If the key already has entries, append without duplicating; if missing, add it. The `afk:` → `hooks:` → `<point>:` nesting matches the config-template structure.
+4. Do **not** `git add` any of the written files or the updated config.
+
+Script content for each signal type (all open with `#!/usr/bin/env bash` + `set -euo pipefail`):
+
+- `red-run-tests.sh` (`pre_merge`): `<pm> run test`
+- `red-typecheck.sh` (`pre_merge`): `<pm> run typecheck` (or `type-check` per the detected key)
+- `red-lint.sh` (`pre_merge`): `<pm> run lint`
+- `red-build.sh` (`pre_merge`): `<pm> run build`
+- `red-e2e.sh` (`post_merge`): `<pm> run e2e` (or `test:e2e` per the detected key)
+- `red-make-<target>.sh` (`pre_merge`): `make <target>`
+- `red-cargo-test.sh` (`pre_merge`): `cargo test`
+- `red-gradle-check.sh` (`pre_merge`): `./gradlew check`
+- `red-lint-staged.sh` (`pre_merge`): `npx lint-staged`
+- `red-pre-commit.sh` (`pre_merge`): `pre-commit run --all-files`
+- `red-slack-notify.sh` (`post_merge`):
+
+  ```bash
+  #!/usr/bin/env bash
+  set -euo pipefail
+  # Post-merge Slack notification. Set SLACK_WEBHOOK_URL before running /afk.
+  [ -z "${SLACK_WEBHOOK_URL:-}" ] && exit 0
+  curl -sf -X POST "$SLACK_WEBHOOK_URL" \
+    -H "Content-Type: application/json" \
+    -d "{\"text\":\"AFK merged issue #${RED_AFK_ISSUE:-?} on ${RED_AFK_REPO:-repo}\"}"
+  ```
 
 ### 5. Sweep existing issues
 
