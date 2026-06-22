@@ -455,6 +455,10 @@ export function buildProcessDeps(
   // attempt dir changes so counts never bleed across the attempt boundary.
   let activityMeter = createActivityMeter();
   let activityMeterDir = "";
+  // Last diff volume observed by the heartbeat sink, so the on_heartbeat vitals
+  // provider (#832) can report loc_added/loc_removed alongside the meter's
+  // activity counters without re-shelling `git diff`.
+  let lastHeartbeatDiff = { added: 0, removed: 0 };
 
   // ---- lifecycle hooks: load config + resolve built-in defaults + real exec ----
   const config = loadConfig(paths.configPath, { warn: () => undefined });
@@ -844,6 +848,8 @@ export function buildProcessDeps(
         const { added, removed } = await gitx
           .diffstatShortstat({ cwd: worktree }, baseRef)
           .catch(() => ({ added: 0, removed: 0 }));
+        // Remember the volume for the on_heartbeat vitals provider (#832).
+        lastHeartbeatDiff = { added, removed };
         // Close this heartbeat window on the meter — derives the waiting count
         // (a window with no new stream events) and snapshots the cumulative
         // tool/text counts to fold into the record + state.
@@ -867,6 +873,25 @@ export function buildProcessDeps(
           ...(info.base ? { "current.base": info.base } : {}),
         }).catch(() => {});
       })();
+    },
+    // Worker-vitals provider for the on_heartbeat hook context (ADR 0065/#832):
+    // the live cumulative activity counters from the attempt's meter plus the
+    // last-observed diff volume, under their canonical WorkerVitals names. Read
+    // each attempt-guard poll right before the on_heartbeat hook fires.
+    heartbeatVitals: () => {
+      const a = activityMeter.peek();
+      return {
+        tools_called_count: a.toolsCalled,
+        text_chunk_count: a.textChunks,
+        reasoning_events: a.reasoningCount,
+        reasoning_tokens: a.reasoningTokens,
+        waiting_count: a.waiting,
+        input_tokens: a.inputTokens,
+        output_tokens: a.outputTokens,
+        cost_usd: a.costUsd,
+        loc_added: lastHeartbeatDiff.added,
+        loc_removed: lastHeartbeatDiff.removed,
+      };
     },
     // Macro-lifecycle phase stamp (issue #811): processIssue calls this at the
     // orchestrator-owned points the agent stream can't see — `validating` at the
