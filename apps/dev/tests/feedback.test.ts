@@ -11,6 +11,7 @@ import {
   VALIDATION_SCHEMA,
   type Exec,
   type ExecResult,
+  type FeedbackCheck,
   type PackageLayout,
   type RunFeedbackResult,
   type ValidationRecord,
@@ -305,9 +306,10 @@ describe("isInfraFeedbackFailure — INFRA root cause detection", () => {
     command = "pnpm -C apps/dev test",
   ): RunFeedbackResult {
     const record = buildValidationRecord({ name, status: "failed", command, summary });
+    const check: FeedbackCheck = { name, script: "test", label: "apps/dev", scope: "apps/dev", status: "failed", record };
     return {
       ok: false,
-      checks: [{ name, script: "test", label: "apps/dev", status: "failed", record }],
+      checks: [check],
       sidecar: [JSON.stringify(record)],
       baselineDowngraded: [],
     };
@@ -382,8 +384,8 @@ describe("isInfraFeedbackFailure — INFRA root cause detection", () => {
     const result: RunFeedbackResult = {
       ok: false,
       checks: [
-        { name: "test:root", script: "test", label: ".", status: "passed", record: passRecord },
-        { name: "test:apps/dev", script: "test", label: "apps/dev", status: "failed", record: failRecord },
+        { name: "test:root", script: "test", label: "root", scope: ".", status: "passed", record: passRecord },
+        { name: "test:apps/dev", script: "test", label: "apps/dev", scope: "apps/dev", status: "failed", record: failRecord },
       ],
       sidecar: [JSON.stringify(passRecord), JSON.stringify(failRecord)],
       baselineDowngraded: [],
@@ -454,11 +456,11 @@ describe("runFeedback — baseline probe downgrades pre-existing failures", () =
       baselineWorktree: "main",
     });
     expect(result.ok).toBe(true);
-    // 4 scripts × 1 scope = 4 worker invocations; ZERO baseline probes (the
-    // gate was green, no reason to probe).
+    // 4 scripts × 1 scope + 1 workspace typecheck = 5 worker invocations;
+    // ZERO baseline probes (the gate was green, no reason to probe).
     const baselineCalls = Object.entries(counts).filter(([k]) => k.includes("main"));
     expect(baselineCalls).toEqual([]);
-    expect(Object.values(counts).reduce((a, b) => a + b, 0)).toBe(4);
+    expect(Object.values(counts).reduce((a, b) => a + b, 0)).toBe(5);
   });
 
   it("a failing check is downgraded when the baseline also fails (pre-existing flake)", async () => {
@@ -550,7 +552,184 @@ describe("runFeedback — baseline probe downgrades pre-existing failures", () =
     });
     expect(result.ok).toBe(false);
     expect(result.baselineDowngraded).toEqual([]);
-    // 4 scripts × 1 scope = 4 invocations, no probe.
-    expect(calls.length).toBe(4);
+    // 4 scripts × 1 scope + 1 workspace typecheck = 5 invocations, no probe.
+    expect(calls.length).toBe(5);
+  });
+});
+
+// Workspace typecheck: a whole-workspace `typecheck` runs once after the
+// scoped checks, regardless of which packages were touched. This catches
+// cross-package type breaks where a slice touches only package A but breaks
+// package B's typecheck (the concrete incident from 2026-06-22: #822 broke
+// apps/dev typecheck; #825/#826 only touched apps/memory and passed their
+// scoped gate, landing on a red main).
+describe("runFeedback — workspace typecheck", () => {
+  function workspaceLayout(): PackageLayout {
+    return fakeLayout({
+      packages: [".", "apps/dev"],
+      scripts: { ".": ["typecheck"], "apps/dev": ["test", "typecheck"] },
+    });
+  }
+
+  it("runs workspace typecheck after scoped checks when root is not in scopes", async () => {
+    const { exec, calls } = fakeExec();
+    const result = await runFeedback(exec, {
+      worktree: "/wt",
+      scopes: ["apps/dev"],
+      layout: workspaceLayout(),
+      now: fakeClock(),
+    });
+
+    expect(result.ok).toBe(true);
+    const c = joined(calls);
+    // Scoped: test + typecheck for apps/dev (lint/build not declared → skipped).
+    expect(c).toContain("pnpm -C /wt/apps/dev test");
+    expect(c).toContain("pnpm -C /wt/apps/dev typecheck");
+    // Workspace-wide typecheck at root runs once.
+    expect(c.filter((x) => x === "pnpm -C /wt typecheck").length).toBe(1);
+    // Exactly one typecheck:workspace check in the result.
+    const ws = result.checks.find((ch) => ch.name === "typecheck:workspace");
+    expect(ws?.status).toBe("passed");
+    expect(ws?.record.command).toBe("pnpm -C /wt typecheck");
+  });
+
+  it("skips workspace typecheck when root is already a touched scope", async () => {
+    const { exec, calls } = fakeExec();
+    await runFeedback(exec, {
+      worktree: "/wt",
+      scopes: [".", "apps/dev"],
+      layout: workspaceLayout(),
+      now: fakeClock(),
+    });
+
+    const c = joined(calls);
+    // Root typecheck runs once (from the scoped loop as typecheck:root).
+    expect(c.filter((x) => x === "pnpm -C /wt typecheck").length).toBe(1);
+    // No extra typecheck:workspace check.
+    expect(c.some((x) => x === "pnpm -C /wt typecheck")).toBe(true); // only the scoped one
+  });
+
+  it("blocks the merge when workspace typecheck fails", async () => {
+    const { exec } = fakeExec([
+      {
+        match: (a) => a.includes("typecheck") && !a.includes("apps/dev"),
+        result: { code: 1, stdout: "src/core/supervisor.ts: error TS2304: Cannot find name 'recoveryDecision'\n" },
+      },
+    ]);
+    const result = await runFeedback(exec, {
+      worktree: "/wt",
+      scopes: ["apps/memory"],
+      layout: fakeLayout({
+        packages: [".", "apps/memory"],
+        scripts: { ".": ["typecheck"], "apps/memory": ["typecheck"] },
+      }),
+      now: fakeClock(),
+    });
+
+    expect(result.ok).toBe(false);
+    const ws = result.checks.find((ch) => ch.name === "typecheck:workspace");
+    expect(ws?.status).toBe("failed");
+    expect(ws?.record.command).toBe("pnpm -C /wt typecheck");
+    expect(ws?.record.summary).toContain("recoveryDecision");
+  });
+
+  it("scoped test/lint/build stay per-touched-package (only typecheck goes workspace)", async () => {
+    const { exec, calls } = fakeExec();
+    const layout = fakeLayout({
+      packages: [".", "apps/dev"],
+      scripts: { ".": ["typecheck", "test", "lint", "build"], "apps/dev": ["test", "lint"] },
+    });
+    await runFeedback(exec, {
+      worktree: "/wt",
+      scopes: ["apps/dev"],
+      layout,
+      now: fakeClock(),
+    });
+
+    const c = joined(calls);
+    // Scoped scripts run only for apps/dev.
+    expect(c).toContain("pnpm -C /wt/apps/dev test");
+    expect(c).toContain("pnpm -C /wt/apps/dev lint");
+    // test/lint/build do NOT run at root for the workspace check — only typecheck.
+    expect(c.some((x) => x === "pnpm -C /wt test")).toBe(false);
+    expect(c.some((x) => x === "pnpm -C /wt lint")).toBe(false);
+    expect(c.some((x) => x === "pnpm -C /wt build")).toBe(false);
+    // Only the workspace typecheck fires at root.
+    expect(c).toContain("pnpm -C /wt typecheck");
+  });
+
+  it("skips workspace typecheck when root has no typecheck script", async () => {
+    const layout = fakeLayout({
+      packages: [".", "apps/dev"],
+      scripts: { ".": ["build"], "apps/dev": ["test"] },
+    });
+    const { exec, calls } = fakeExec();
+    await runFeedback(exec, {
+      worktree: "/wt",
+      scopes: ["apps/dev"],
+      layout,
+      now: fakeClock(),
+    });
+
+    const c = joined(calls);
+    expect(c.some((x) => x.includes("/wt typecheck"))).toBe(false);
+  });
+
+  it("skips workspace typecheck when there are no scopes (no-package repo)", async () => {
+    const { exec, calls } = fakeExec();
+    await runFeedback(exec, {
+      worktree: "/wt",
+      scopes: [],
+      layout: fakeLayout({ packages: [] }),
+      now: fakeClock(),
+    });
+
+    expect(calls).toEqual([]);
+  });
+
+  it("downgrades workspace typecheck failure when baseline also fails (pre-existing break)", async () => {
+    const exec: Exec = async (args) => {
+      const dir = args[args.indexOf("-C") + 1] ?? "";
+      const script = args[args.length - 1] ?? "";
+      // typecheck fails everywhere (worker AND baseline) — pre-existing.
+      if (script === "typecheck") return { code: 1, stdout: "tsc: error TS2304", stderr: "" };
+      return { code: 0, stdout: "ok", stderr: "" };
+    };
+    const result = await runFeedback(exec, {
+      worktree: "afk/wX/123-slug",
+      scopes: ["apps/dev"],
+      layout: workspaceLayout(),
+      now: () => 0,
+      baselineWorktree: "main",
+    });
+
+    // typecheck:apps/dev and typecheck:workspace both fail on worker AND baseline.
+    expect(result.ok).toBe(true);
+    expect(result.baselineDowngraded).toContain("typecheck:workspace");
+    const ws = result.checks.find((c) => c.name === "typecheck:workspace")!;
+    expect(ws.status).toBe("skipped");
+    expect(ws.record.summary).toBe("pre-existing failure on baseline");
+  });
+
+  it("does NOT downgrade workspace typecheck when only the worker's branch fails it", async () => {
+    const exec: Exec = async (args) => {
+      const dir = args[args.indexOf("-C") + 1] ?? "";
+      const script = args[args.length - 1] ?? "";
+      // Workspace typecheck fails on worker branch only; passes on baseline.
+      if (script === "typecheck" && !dir.includes("main")) return { code: 1, stdout: "tsc error", stderr: "" };
+      return { code: 0, stdout: "ok", stderr: "" };
+    };
+    const result = await runFeedback(exec, {
+      worktree: "afk/wX/123-slug",
+      scopes: ["apps/dev"],
+      layout: workspaceLayout(),
+      now: () => 0,
+      baselineWorktree: "main",
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.baselineDowngraded).not.toContain("typecheck:workspace");
+    const ws = result.checks.find((c) => c.name === "typecheck:workspace")!;
+    expect(ws.status).toBe("failed");
   });
 });

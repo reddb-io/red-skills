@@ -46,7 +46,7 @@ describe("Pattern 1 — submodule lifecycle in a fresh worktree", () => {
     });
     const result: RunFeedbackResult = {
       ok: false,
-      checks: [{ name: "test:apps/dev", script: "test", label: "apps/dev", status: "failed", record }],
+      checks: [{ name: "test:apps/dev", script: "test", label: "apps/dev", scope: "apps/dev", status: "failed", record }],
       sidecar: [JSON.stringify(record)],
       baselineDowngraded: [],
     };
@@ -185,7 +185,7 @@ describe("Pattern 4 — OOM under fleet=2", () => {
     });
     const result: RunFeedbackResult = {
       ok: false,
-      checks: [{ name: "test:apps/dev", script: "test", label: "apps/dev", status: "failed", record }],
+      checks: [{ name: "test:apps/dev", script: "test", label: "apps/dev", scope: "apps/dev", status: "failed", record }],
       sidecar: [JSON.stringify(record)],
       baselineDowngraded: [],
     };
@@ -201,7 +201,7 @@ describe("Pattern 4 — OOM under fleet=2", () => {
     });
     const result: RunFeedbackResult = {
       ok: false,
-      checks: [{ name: "test:apps/dev", script: "test", label: "apps/dev", status: "failed", record }],
+      checks: [{ name: "test:apps/dev", script: "test", label: "apps/dev", scope: "apps/dev", status: "failed", record }],
       sidecar: [JSON.stringify(record)],
       baselineDowngraded: [],
     };
