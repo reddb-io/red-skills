@@ -665,7 +665,7 @@ async function runUnblockSweep(
   for (const p of plans) {
     const held = labelsByIssue.get(p.number) ?? [];
     const remove = held.includes(LABEL_DEPENDENCY) ? LABEL_DEPENDENCY : LABEL_HUMAN;
-    await deps.gh.editLabels(p.number, [remove], [LABEL_READY]);
+    await deps.gh.editLabels(p.number, [remove, ...p.reqLabels], [LABEL_READY]);
     await deps.gh.comment(p.number, p.comment);
     promoted.push(p.number);
   }
