@@ -540,18 +540,20 @@ When `CronList` / `CronDelete` are unavailable (Codex runner, or `/afk monitor` 
 
 Every `/dev:afk monitor` run also **mirrors each live worker onto the runner's native task list when that runner exposes one**, so a `/afk` session surfaces progress on the host's native UI — advancing through stages on its own, with no extra typing. This is a **read-only reflection of `afk.state.json`**; the mirror never writes state and never touches the orchestration.
 
+The mirror surfaces **two signals on one lifecycle** (issue #811): the task **title** carries the calm **macro phase** — `w<id> [<n>/5 <phase>] #<issue> <slug>` — while the task **description** carries the fine **micro stage** — `stage: <impl|explore|tests|commit>`. The phase vocabulary is the ordered `setup → coding → validating → merging → done` (1-based `n/5`), plus the terminal `blocked` which drops the `n/5` and renders `[blocked]`. The title changes only when the macro phase moves, so it never flickers on every inner-agent tool call.
+
 The mirror is a pure diff: it reconciles the live worker state files against the tasks already on the native surface and emits a **call plan**. After rendering the dashboard, the agent (under Claude Code only) must:
 
 1. Fetch `TaskCreate`, `TaskUpdate`, and `TaskList` via `ToolSearch` if not already loaded (deferred tools).
-2. **Build the tracked set.** `TaskList` → keep the mirror-owned tasks (those whose title matches `#<n> w<id> — …`). For each, emit one JSONL line `{"key":"<worker_id>:<issue>","stage":"<last stage>"}`, reading the key from the title and the stage from the description (`stage: <x>`). Keep a key→task_id map for step 4.
+2. **Build the tracked set.** `TaskList` → keep the mirror-owned tasks (those whose title matches `w<id> [<…>] #<n> <slug>`). For each, emit one JSONL line `{"key":"<worker_id>:<issue>","stage":"<last stage>","phase":"<last phase>"}`, reading the key (`worker_id` from the leading token, `issue` from the `#<n>`) and the **phase** (the word inside the title's `[…]` bracket, after any `n/5 `) from the title, and the **stage** from the description (`stage: <x>`). Keep a key→task_id map for step 4.
 3. **Compute the plan.** Pipe the tracked JSONL from step 2 into the bundle's `monitor --mirror-plan` subcommand:
    ```bash
    printf '%s\n' "$tracked" | node "$CLAUDE_PLUGIN_ROOT/skills/engineering/afk/bin/afk.mjs" monitor --mirror-plan
    ```
-   The command globs the state files and reconciles them against the tracked set on stdin (keyed by `worker_id:issue`, so parallel workers each get exactly one task and re-runs never duplicate), then prints a JSONL **call plan** to stdout — one descriptor per harness call (empty stdin → cold reconcile; empty plan → no output):
+   The command globs the state files and reconciles them against the tracked set on stdin (keyed by `worker_id:issue`, so parallel workers each get exactly one task and re-runs never duplicate), then prints a JSONL **call plan** to stdout — one descriptor per harness call (empty stdin → cold reconcile; empty plan → no output). A `TaskUpdate` rewrites the **title** when the macro phase moves and refreshes the **description** when the micro stage moves; a terminal failure re-titles to `[blocked]` and flips the task to `failed`:
    ```jsonl
-   {"call":"TaskCreate","key":"wAAAA:22","title":"#22 wAAAA — extract state.sh","description":"stage: impl","state":"in_progress"}
-   {"call":"TaskUpdate","key":"wAAAA:22","description":"stage: tests","state":"in_progress"}
+   {"call":"TaskCreate","key":"wAAAA:22","title":"wAAAA [2/5 coding] #22 extract state.sh","description":"stage: impl","state":"in_progress"}
+   {"call":"TaskUpdate","key":"wAAAA:22","title":"wAAAA [3/5 validating] #22 extract state.sh","description":"stage: tests","state":"in_progress"}
    {"call":"TaskUpdate","key":"wAAAA:22","state":"completed"}
    ```
 4. **Apply the plan.** For each descriptor in order:
