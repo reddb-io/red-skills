@@ -20,6 +20,12 @@ export interface CompactCurrent {
   number: number | string;
   title: string;
   stage: string;
+  /** Macro-lifecycle phase (issue #811) — the calm task-mirror title signal,
+   * distinct from the micro `stage`. Optional so fixtures stay terse; absent
+   * reads as "" (no `n/5` bracket). */
+  phase?: string;
+  /** Short branch-slug for the title; absent falls back to `title`. */
+  slug?: string;
   /** Per-iteration start (current.started_at), an ISO/RFC string or "". */
   started_at: string;
   /** Cost group (ADR 0065) — cumulative per-worker token spend / USD. Optional so

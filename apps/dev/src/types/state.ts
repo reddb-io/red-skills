@@ -13,6 +13,14 @@ export const AfkCurrentSchema = z.object({
   handoff: z.string().default(""),
   started_at: z.string().default(""),
   stage: z.string().default(""),
+  /** Macro-lifecycle phase of the attempt (issue #811) — the calm signal the
+   * task-mirror TITLE surfaces (`setup → coding → validating → merging → done`,
+   * plus the terminal `blocked`), distinct from `stage` (the fine explore/impl/
+   * tests/commit detail that feeds the task DESCRIPTION). Kept a plain string so
+   * an out-of-vocab value round-trips through `updateState` instead of being
+   * stripped; the ordered vocabulary is owned by `AFK_PHASE_ORDER` in
+   * `core/mirror.ts` (it drives the `n/5` position). Defaults to "". */
+  phase: z.string().default(""),
   heartbeat_glyph: z.union([z.string(), z.number(), z.null()]).optional().default(""),
   heartbeat_pid: z.union([z.string(), z.number(), z.null()]).optional().default(""),
   runner: z.string().default(""),
@@ -107,6 +115,7 @@ export interface WorkerVitals {
   retries: number;
   // lifecycle
   stage: string;
+  phase: string;
   iteration: number | string;
   // progress
   loc_added: number;

@@ -26,13 +26,18 @@ export function workersToDesired(workers: readonly CompactWorker[]): WorkerRecor
     if (number === "" || number === null || number === undefined) continue;
     const issue = typeof number === "number" ? number : Number(number);
     if (!Number.isFinite(issue)) continue;
+    const phase = w.state.current.phase ?? "";
     out.push({
       worker_id: w.state.worker_id,
       issue,
       title: w.state.current.title,
+      slug: w.state.current.slug || w.state.current.title,
       stage: w.state.current.stage,
+      phase,
       started_at: w.state.current.started_at || w.state.started_at,
-      status: w.live ? "running" : "gone",
+      // A dead worker whose last macro phase is `blocked` is a terminal failure
+      // (→ task failed); any other dead worker is a normal completion (→ gone).
+      status: w.live ? "running" : phase === "blocked" ? "blocked" : "gone",
     });
   }
   return out;
@@ -53,9 +58,13 @@ export function parseTrackedJsonl(text: string): TrackedTask[] {
       continue;
     }
     if (parsed === null || typeof parsed !== "object") continue;
-    const rec = parsed as { key?: unknown; stage?: unknown };
+    const rec = parsed as { key?: unknown; stage?: unknown; phase?: unknown };
     if (typeof rec.key !== "string") continue;
-    out.push({ key: rec.key, stage: typeof rec.stage === "string" ? rec.stage : "" });
+    out.push({
+      key: rec.key,
+      stage: typeof rec.stage === "string" ? rec.stage : "",
+      phase: typeof rec.phase === "string" ? rec.phase : "",
+    });
   }
   return out;
 }

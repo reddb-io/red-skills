@@ -361,6 +361,16 @@ export interface ProcessIssueDeps {
    * which owns the hook dispatcher). Optional → tests/legacy callers omit it.
    */
   emitHeartbeat?(info: AttemptProgressInfo): void;
+  /**
+   * Stamp the attempt's macro-lifecycle phase (issue #811) — the calm signal the
+   * task-mirror title surfaces. processIssue calls it at the orchestrator-owned
+   * lifecycle points the inner-agent stream cannot see: `validating` at the start
+   * of the feedback gate (step 5b) and `merging` at the start of landing (step 6).
+   * The CLI (run.ts) wires it to `updateState(current.phase)`; `setup`/`coding`
+   * are stamped elsewhere (the seed + the agent stream sink). Optional → tests and
+   * legacy callers omit it (the call is `?.`-guarded).
+   */
+  markPhase?(phase: string): void;
   /** History ledger path + clock for the terminal envelope (optional). */
   historyPath?: string;
   historyClock?: HistoryClock;
@@ -1112,6 +1122,8 @@ export async function processIssue(
     // fault — the #791/#792/#793/#794 cause) is downgraded to `skipped` instead
     // of parking a green branch. The baseline probe only runs on failure, so the
     // happy path costs nothing.
+    // Macro phase → `validating` (issue #811): the feedback gate is starting.
+    deps.markPhase?.("validating");
     const changedFiles = await deps.lookups.changedFiles(workerBranch, base);
     const feedback: RunFeedbackResult = await runFeedback(deps.pnpm, {
       worktree: workerBranch,
@@ -1212,6 +1224,8 @@ export async function processIssue(
     return await handoffForReview(common, activeTaskClass, validationSidecar);
   }
 
+  // Macro phase → `merging` (issue #811): the lock-toggled landing is starting.
+  deps.markPhase?.("merging");
   const landing = await doLanding(
     {
       mergeExec: deps.mergeExec,
