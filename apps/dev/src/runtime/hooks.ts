@@ -39,13 +39,19 @@ export function makeHookExec(cwd: string, libraryHooksDir?: string): HookExec {
 
 /**
  * The default-command resolver + directory hooks options bound to the shipped
- * hook scripts. Built-in defaults (cargo / gradle / heartbeat / envelope /
- * validation) ship at `<plugin>/defaults/`; library hook scripts ship at
- * `<plugin>/hooks/` as per-point subdirectories. The project's own hooks live
- * under `<root>/.red/hooks/` (never created here — ADR 0067). When the skill
- * dir cannot be located (e.g. a bundled copy without the surrounding tree) the
- * resolver falls back to the legacy project path for defaults, and the library
- * hooks dir is left undefined (no library-dir contribution).
+ * hook scripts. The built-in defaults (cargo / gradle / heartbeat / envelope /
+ * validation) ship inside the AFK skill as `red-*` scripts directly under
+ * `<plugin>/hooks/` — NOT in the consuming project's checkout. Per-point library
+ * hook scripts also live under `<plugin>/hooks/<point>/`, and the project's own
+ * hooks live under `<root>/.red/hooks/` (never created here — ADR 0067): a
+ * same-named `red-<name>` shadow there wins over the library default, and
+ * per-point project scripts shadow the matching library scripts.
+ *
+ * Resolves the plugin root from this module's own location. When the skill dir
+ * cannot be located (e.g. a bundled copy without the surrounding tree) the
+ * defaults fall back to a non-existent project path (`<root>/.red/hooks/lib`) —
+ * so an install without the scripts simply runs no default for that point — and
+ * the library hooks dir is left undefined (no library-dir contribution).
  */
 export function makeHookResolveOptions(root: string): ResolveHooksOptions {
   let skillDir: string | undefined;
@@ -55,14 +61,15 @@ export function makeHookResolveOptions(root: string): ResolveHooksOptions {
     skillDir = undefined;
   }
 
-  const defaultsDir = skillDir
-    ? join(skillDir, "defaults")
-    : join(root, ".red", "hooks", "defaults");
+  const libHooksDir = skillDir
+    ? join(skillDir, "hooks")
+    : join(root, ".red", "hooks", "lib");
+  const projectHooksDir = join(root, ".red", "hooks");
 
   return {
-    defaultCommand: scriptDefaultResolver(defaultsDir, existsSync),
+    defaultCommand: scriptDefaultResolver(libHooksDir, projectHooksDir, existsSync),
     libraryHooksDir: skillDir ? join(skillDir, "hooks") : undefined,
-    projectHooksDir: join(root, ".red", "hooks"),
+    projectHooksDir,
   };
 }
 

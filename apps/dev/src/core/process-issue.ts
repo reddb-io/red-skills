@@ -1999,6 +1999,10 @@ function postAttemptContext(
     workspace,
     result: { status, outcome },
     attempt_n: input.attempt,
+    // Per-attempt file paths exported as RED_AFK_ITER_LOG / RED_AFK_STATE_FILE
+    // so the red-heartbeat and red-envelope library hooks can write to them.
+    iter_log: `${input.attemptDir}/afk.log`,
+    state_file: `${input.attemptDir}/afk.state.json`,
   });
 }
 

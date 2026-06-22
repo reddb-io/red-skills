@@ -176,6 +176,11 @@ export function deriveHookEnv(base: Record<string, string>, contextJson: string)
   set("RED_AFK_ATTEMPT_N", ctx.attempt_n);
   set("RED_AFK_MERGE_BASE", ctx.merge_base);
 
+  // Per-attempt file paths — set by the orchestrator in the post_attempt context
+  // so the red-heartbeat and red-envelope library hooks can write to them.
+  set("RED_AFK_ITER_LOG", ctx.iter_log);
+  set("RED_AFK_STATE_FILE", ctx.state_file);
+
   const result = obj(ctx.result);
   if (result) {
     set("RED_AFK_RESULT_STATUS", result.status);
