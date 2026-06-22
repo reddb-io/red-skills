@@ -532,7 +532,11 @@ After rendering the dashboard, the agent must:
    - `CronList` — find every job with `prompt == "/dev:afk monitor"`. There will normally be exactly one; multiples can appear if the user manually invoked `/loop 3m /dev:afk monitor` on top of the auto-loop.
    - `CronDelete` each match.
    - Append one line to the user-facing output: `🛑 no live workers — auto-cancelled monitor loop (cron <id>).`
-3. If `live_workers >= 1`: do nothing. The cron continues firing every 10 minutes.
+3. If `live_workers >= 1` or `.red/tmp/afk-supervisor.pid` resolves to a live PID: arm the cron when unwatched (observe path — same dedup as the spawn path):
+   - Fetch `CronCreate` and `CronList` via `ToolSearch` if not already loaded (deferred tools).
+   - `CronList` — if any existing job has `prompt == "/dev:afk monitor"`, **skip** (cron already present; it continues firing every 10 minutes).
+   - Otherwise `CronCreate(cron="*/10 * * * *", prompt="/dev:afk monitor", recurring=true)` and tell the user one line: `monitor loop scheduled (every 10 min) — auto-cancels when all workers exit.`
+   - If `CronCreate` is unavailable (non-Claude-Code host), skip silently.
 
 When `CronList` / `CronDelete` are unavailable (Codex runner, or `/afk monitor` invoked outside Claude Code), skip the teardown silently — the cron infrastructure isn't running there to begin with.
 
