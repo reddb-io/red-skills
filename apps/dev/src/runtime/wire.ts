@@ -487,7 +487,7 @@ export async function collectMonitorInputs(root = process.cwd()): Promise<Monito
 
 // ---------- statusline inputs ----------
 
-import type { AfkInput } from "../core/statusline.js";
+import type { AfkInput, RepoInput } from "../core/statusline.js";
 
 /** The TTL (seconds) of the GitHub-derived queue/human counts cache, matching
  * statusline.sh's 60 s window. */
@@ -571,6 +571,12 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
   let waiting = 0;
   let tokens = 0;
   let costUsd = 0;
+  // `runner` is the fleet runner (first non-empty across live workers — a fleet
+  // is single-runner in practice). `resolved` is the supervisor's issues-closed
+  // count, already persisted as `state.done` (the same field the monitor renders
+  // as `issues done/total`), maxed across workers since they all mirror it.
+  let runner = "";
+  let resolved = 0;
   const issues: Array<number | string> = [];
   const stages: Array<string | undefined> = [];
 
@@ -589,6 +595,8 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
 
     workers += 1;
     blocked += state.blocked;
+    if (runner === "" && state.runner) runner = state.runner;
+    if (state.done > resolved) resolved = state.done;
     // Read the worker's signals through the canonical WorkerVitals contract
     // (ADR 0065) rather than ad-hoc field access — `current` satisfies it.
     const vitals: WorkerVitals = state.current;
@@ -651,7 +659,78 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
     void refresh().catch(() => undefined);
   }
 
-  return { workers, queue, human, blocked, added, removed, waiting, tokens, costUsd, issues, stages };
+  return { workers, queue, human, blocked, added, removed, waiting, tokens, costUsd, runner, resolved, issues, stages };
+}
+
+interface RepoStatsCache {
+  openPrs: number;
+  openIssues: number;
+  ts: number;
+}
+
+function readRepoStatsCache(path: string): RepoStatsCache | null {
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<RepoStatsCache>;
+    return {
+      openPrs: Number(parsed.openPrs ?? 0),
+      openIssues: Number(parsed.openIssues ?? 0),
+      ts: Number(parsed.ts ?? 0),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeRepoStatsCacheAtomic(path: string, cache: RepoStatsCache): void {
+  try {
+    const tmp = `${path}.tmp`;
+    writeFileSync(tmp, JSON.stringify(cache), "utf8");
+    renameSync(tmp, path);
+  } catch {
+    // best-effort, like the bash `|| true`
+  }
+}
+
+/**
+ * Repo-global statusline header inputs (line 1, ALWAYS rendered — unlike the
+ * AFK block these show with no live workers): open-PR / open-issue counts from
+ * GitHub (cached for {@link STATUSLINE_CACHE_TTL_S} seconds in
+ * `.red/tmp/statusline-repo-cache.json`, same cold-bounded / stale-background
+ * discipline as the AFK queue/human cache), plus the LOCAL branch diffstat
+ * (committed + uncommitted vs origin/main) measured live at the project root.
+ * Every field is fail-open: any gh/git error leaves it 0.
+ */
+export async function collectStatuslineRepo(ctx: RepoContext): Promise<RepoInput> {
+  const paths = afkPaths(ctx.root);
+  const cachePath = join(paths.tmpDir, "statusline-repo-cache.json");
+  const nowS = Math.floor(Date.now() / 1000);
+  const cached = readRepoStatsCache(cachePath);
+  let openPrs = cached?.openPrs ?? 0;
+  let openIssues = cached?.openIssues ?? 0;
+
+  const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo };
+  const refresh = async (): Promise<void> => {
+    const [p, i] = await Promise.all([ghx.countOpenPrs(ghCtx), ghx.countOpenIssues(ghCtx)]);
+    openPrs = p;
+    openIssues = i;
+    writeRepoStatsCacheAtomic(cachePath, { openPrs: p, openIssues: i, ts: nowS });
+  };
+  if (!cached) {
+    await withTimeout(refresh(), STATUSLINE_GH_COLD_TIMEOUT_MS, undefined).catch(() => undefined);
+  } else if (nowS - cached.ts >= STATUSLINE_CACHE_TTL_S) {
+    void refresh().catch(() => undefined);
+  }
+
+  // Local branch diff (committed + uncommitted) vs origin/main, bounded so a slow
+  // git can never wedge the render. diffstatShortstat resolves the merge-base, so
+  // this counts every commit on the branch plus the dirty worktree.
+  const diff = await withTimeout(
+    gitx.diffstatShortstat({ cwd: ctx.root }, "origin/main"),
+    STATUSLINE_GH_COLD_TIMEOUT_MS,
+    { added: 0, removed: 0 },
+  ).catch(() => ({ added: 0, removed: 0 }));
+
+  return { openPrs, openIssues, localAdded: diff.added, localRemoved: diff.removed };
 }
 
 // ---------- reap inputs ----------

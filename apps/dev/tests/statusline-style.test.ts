@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { renderStatusline, type AfkInput, type StatuslineInput } from "../src/core/statusline.js";
+import {
+  renderStatusline,
+  type AfkInput,
+  type RepoInput,
+  type StatuslineInput,
+} from "../src/core/statusline.js";
 import {
   renderAfkLine,
   renderHeaderLine,
@@ -9,50 +14,80 @@ import {
 
 // eslint-disable-next-line no-control-regex
 const stripAnsi = (s: string): string => s.replace(/\x1b\[[0-9;]*m/g, "");
-// eslint-disable-next-line no-control-regex
 const vlen = (s: string): number => stripAnsi(s).length;
 
 const WINE = "\x1b[48;2;114;47;55m";
 const WINE2 = "\x1b[48;2;88;36;42m";
 const BLACK = "\x1b[48;2;0;0;0m";
+const GOLD = "\x1b[38;2;240;200;120m";
 const RESET = "\x1b[0m";
 
 const afk: AfkInput = { workers: 1, queue: 11, human: 3, blocked: 2, added: 12, removed: 3, issues: [17] };
+const repo: RepoInput = { openPrs: 3, openIssues: 24, localAdded: 142, localRemoved: 36 };
 const input: StatuslineInput = {
   project: { basename: "red-skills", branch: "main" },
   claude: { model: "Opus", effort: "high", contextTokens: 47000, contextPercent: 24 },
+  repo,
   afk,
 };
 
 describe("statusline style — header line", () => {
-  it("is one powerline row: » bold project, model·effort, ctx — ending in a reset", () => {
-    const h = renderHeaderLine(input.project, input.claude);
+  it("powerlines » project, model·effort, ctx, pr/is, +local/-local — reset-terminated", () => {
+    const h = renderHeaderLine(input.project, input.claude, repo);
     expect(h).not.toContain("\n");
     expect(h.endsWith(RESET)).toBe(true);
-    expect(h).toContain(WINE2); // project + ctx blocks
-    expect(h).toContain(WINE); // model block
-    expect(stripAnsi(h)).toContain("» red-skills (main)");
-    expect(stripAnsi(h)).toContain("Opus·high");
-    expect(stripAnsi(h)).toContain("ctx47k 24%");
+    expect(h).toContain(WINE2);
+    expect(h).toContain(WINE);
+    expect(h).toContain(BLACK); // chips
+    const t = stripAnsi(h);
+    expect(t).toContain("» red-skills (main)");
+    expect(t).toContain("Opus·high");
+    expect(t).toContain("ctx47k 24%");
+    expect(t).toContain("pr3");
+    expect(t).toContain("is24");
+    expect(t).toContain("+142");
+    expect(t).toContain("-36");
   });
 
-  it("drops the model and ctx blocks outside Claude Code", () => {
-    const h = renderHeaderLine({ basename: "c3" }, undefined);
+  it("drops the repo blocks when counts are zero / a clean branch", () => {
+    const h = renderHeaderLine(input.project, input.claude, {
+      openPrs: 0,
+      openIssues: 0,
+      localAdded: 0,
+      localRemoved: 0,
+    });
+    const t = stripAnsi(h);
+    expect(t).not.toContain("pr");
+    expect(t).not.toContain("is");
+    expect(t).not.toContain("+");
+  });
+
+  it("drops model/ctx/repo outside Claude Code with no repo stats", () => {
+    const h = renderHeaderLine({ basename: "c3" }, undefined, undefined);
     expect(stripAnsi(h)).toBe(" » c3 ");
-    expect(h).not.toContain(WINE); // only the WINE2 project block remains
+    expect(h).not.toContain(WINE);
   });
 });
 
 describe("statusline style — AFK line", () => {
-  it("chips each KPI number and splits backlog (WINE2) from active (WINE)", () => {
-    const line = renderAfkLine(afk, undefined);
+  it("chips KPI numbers across the runner/workers/transit/pipeline blocks", () => {
+    const line = renderAfkLine({ ...afk, runner: "claude", resolved: 7 }, undefined);
     expect(line).not.toBeNull();
     expect(line!.endsWith(RESET)).toBe(true);
-    expect(line).toContain(BLACK); // numbers are drawn as black chips
-    expect(line).toContain(WINE2); // backlog block
-    expect(line).toContain(WINE); // active block
-    expect(stripAnsi(line!)).toContain("rq11 rh3 bk2");
-    expect(stripAnsi(line!)).toContain("wk1 ad12 rm3 #17");
+    expect(line).toContain(BLACK);
+    expect(line).toContain(GOLD); // runner label
+    const t = stripAnsi(line!);
+    expect(t).toContain("claude"); // runner
+    expect(t).toContain("wk1 res7"); // workers + resolved
+    expect(t).toContain("ad12 rm3"); // in-transit
+    expect(t).toContain("rq11 rh3 bk2"); // pipeline
+    expect(t).toContain("#17");
+  });
+
+  it("omits runner and res when absent / zero", () => {
+    const t = stripAnsi(renderAfkLine(afk, undefined)!);
+    expect(t).not.toContain("res");
+    expect(t.startsWith(" wk1")).toBe(true); // first block is workers, no runner
   });
 
   it("is null when there are no live workers", () => {
@@ -83,9 +118,8 @@ describe("statusline style — AFK line", () => {
     const wide = renderAfkLine({ ...afk, workers: 6, issues: [1, 2, 3, 4, 5, 6] }, 200);
     expect(stripAnsi(wide!)).not.toContain("+"); // all six fit in 200 cols
     const narrow = renderAfkLine({ ...afk, workers: 6, issues: [1, 2, 3, 4, 5, 6] }, 40);
-    const ntxt = stripAnsi(narrow!);
     expect(vlen(narrow!)).toBeLessThanOrEqual(40);
-    expect(ntxt).toMatch(/\+\d/); // overflow marker present
+    expect(stripAnsi(narrow!)).toMatch(/\+\d/);
   });
 });
 
@@ -97,13 +131,15 @@ describe("statusline style — full themed assembly", () => {
     expect(rows[0].endsWith(RESET)).toBe(true);
     expect(rows[1].endsWith(RESET)).toBe(true);
     expect(stripAnsi(rows[0])).toContain("» red-skills");
+    expect(stripAnsi(rows[0])).toContain("pr3");
     expect(stripAnsi(rows[1])).toContain("wk1");
   });
 
   it("emits only the header row when there are no live workers", () => {
-    const out = styleStatusline({ project: input.project, claude: input.claude });
+    const out = styleStatusline({ project: input.project, claude: input.claude, repo });
     expect(out).not.toContain("\n");
     expect(stripAnsi(out)).toContain("Opus·high");
+    expect(stripAnsi(out)).toContain("pr3");
   });
 
   it("renderStatuslineThemed switches between powerline and plain on the color flag", () => {
