@@ -13,8 +13,9 @@ import type { ConfigValues } from "./config.js";
  *     hard error at boot;
  *   - within a point, built-in DEFAULTS run first (fixed registration order,
  *     never reorderable), then user-declared commands in declaration order;
- *   - users can only *disable* a default via `afk.hooks.defaults.<name>:
- *     false`, never reorder;
+ *   - users can *shadow* a built-in default by placing a same-named script in
+ *     `.red/hooks/` (the shadow wins over the library script); to disable a
+ *     default entirely, shadow it with a no-op script that exits 0;
  *   - a bare string is shorthand for a one-element list.
  *
  * The resolution is pure: it reads the already-parsed flat config map and a
@@ -96,19 +97,23 @@ const HOOKS_PREFIX = "afk.hooks.";
 const DEFAULTS_PREFIX = "afk.hooks.defaults.";
 
 export interface ResolveHooksOptions {
-  /** Resolves each enabled built-in default to its command string. */
+  /** Resolves each built-in default to its command string (library or shadow). */
   defaultCommand: HookDefaultResolver;
 }
 
 /**
  * Resolve the parsed config into the ordered command list per lifecycle point.
  *
- * Mirrors `hook_config_load`'s resolution: defaults register first (filtered
- * by the `afk.hooks.defaults.<name>: false` toggles), then user-declared
- * commands replay in declaration order. A bare-string user value is a
- * one-element list; a newline-joined value (how the config loader stores a
- * block list) splits into its elements with blanks dropped. An unknown hook
- * name throws `UnknownHookError`.
+ * Defaults register first (resolved from the library hook dir, with project
+ * shadows in `.red/hooks/` taking precedence), then user-declared commands
+ * replay in declaration order. A bare-string user value is a one-element list;
+ * a newline-joined value (how the config loader stores a block list) splits
+ * into its elements with blanks dropped. An unknown hook name throws
+ * `UnknownHookError`.
+ *
+ * The `afk.hooks.defaults.<name>: false` toggle is no longer honored — shadow
+ * the built-in with a same-named no-op script in `.red/hooks/` instead. Old
+ * configs that still carry the key are silently ignored (no error).
  */
 export function resolveHooks(
   config: ConfigValues,
@@ -116,21 +121,16 @@ export function resolveHooks(
 ): ResolvedHooks {
   const { defaultCommand } = options;
 
-  // Walk the flat config once, partitioning into disable toggles and
-  // per-point user command lists, validating hook names eagerly.
-  const disabled = new Set<string>();
+  // Walk the flat config once, collecting per-point user command lists and
+  // validating hook names eagerly.
   const userLists = new Map<HookName, string[]>();
 
   for (const [key, value] of Object.entries(config)) {
     if (!key.startsWith(HOOKS_PREFIX)) continue;
 
-    if (key.startsWith(DEFAULTS_PREFIX)) {
-      const name = key.slice(DEFAULTS_PREFIX.length);
-      // Only `false` disables a default — every other value keeps it (matches
-      // the shell, which gates on the literal string "false").
-      if (value === "false") disabled.add(name);
-      continue;
-    }
+    // afk.hooks.defaults.* keys are legacy disable toggles — silently ignored
+    // now that same-filename shadowing in .red/hooks/ replaces them.
+    if (key.startsWith(DEFAULTS_PREFIX)) continue;
 
     const name = key.slice(HOOKS_PREFIX.length);
     if (!isCanonical(name)) throw new UnknownHookError(name);
@@ -150,7 +150,6 @@ export function resolveHooks(
     const defaults = HOOK_DEFAULTS_REGISTRY[name as keyof typeof HOOK_DEFAULTS_REGISTRY];
     if (defaults) {
       for (const defaultName of defaults) {
-        if (disabled.has(defaultName)) continue;
         const command = defaultCommand(defaultName);
         if (command !== undefined) list.push(command);
       }
@@ -166,25 +165,36 @@ export function resolveHooks(
 }
 
 /**
- * A `HookDefaultResolver` backed by the shipped default scripts under
- * `defaultsDir`. Returns the script path when the file exists and is not
- * disabled (disable filtering happens in `resolveHooks`), `undefined`
- * otherwise — mirroring the shell loader's `-x "$defaults_dir/<script>"`
- * presence guard. The `exists` predicate is injectable for testing.
+ * A `HookDefaultResolver` backed by the shipped `red-*` library scripts under
+ * `libHooksDir`, with optional project-local shadow support. When `projectHooksDir`
+ * is provided and a same-named `red-<name>` file exists there, the project shadow
+ * wins over the library script — this is the mechanism by which operators customize
+ * or disable a built-in default (place a no-op script in `.red/hooks/red-<name>`).
+ *
+ * Returns `undefined` when neither the shadow nor the library script is present,
+ * mirroring the shell loader's `-x "$hooks_dir/<script>"` presence guard. The
+ * `exists` predicate is injectable for testing.
  */
 export function scriptDefaultResolver(
-  defaultsDir: string,
+  libHooksDir: string,
+  projectHooksDir?: string,
   exists: (path: string) => boolean = existsSync,
 ): HookDefaultResolver {
   const scripts: Record<HookDefaultName, string> = {
-    cargo: "cargo-pre-worktree.sh",
-    gradle: "gradle-pre-worktree.sh",
-    heartbeat: "heartbeat-post-attempt.sh",
-    envelope: "envelope-post-attempt.sh",
-    validation: "validation-post-merge.sh",
+    cargo: "red-cargo",
+    gradle: "red-gradle",
+    heartbeat: "red-heartbeat",
+    envelope: "red-envelope",
+    validation: "red-validation",
   };
   return (name) => {
-    const path = `${defaultsDir}/${scripts[name]}`;
-    return exists(path) ? path : undefined;
+    const filename = scripts[name];
+    // Project shadow wins over library script.
+    if (projectHooksDir) {
+      const shadowPath = `${projectHooksDir}/${filename}`;
+      if (exists(shadowPath)) return shadowPath;
+    }
+    const libPath = `${libHooksDir}/${filename}`;
+    return exists(libPath) ? libPath : undefined;
   };
 }
