@@ -127,6 +127,23 @@ describe("dispose — full descriptor per outcome × {under cap, at cap}", () =>
     );
   });
 
+  it("per-issue view (stalledRecoverable:false) escalates stalled at attempt 1 (reaper owns the re-claim)", () => {
+    // The per-issue lifecycle never auto-retries stalled — routeRecovery passes
+    // this view so the bounded re-claim stays the reaper's job. Every NON-stalled
+    // outcome is unaffected by the option.
+    const disp = dispose("stalled", 1, {}, { stalledRecoverable: false });
+    expect(disp.decision).toBe("escalate");
+    expect(disp.addLabels).toEqual(["ready-for-human", "blocked:stalled"]);
+    // No retry budget in the per-issue view → escalates silently (no page comment).
+    expect(disp.cap).toBeNull();
+    expect(disp.escalationComment).toBeNull();
+
+    // A non-stalled recoverable outcome is identical under either view.
+    expect(dispose("exhausted", 1, {}, { stalledRecoverable: false })).toEqual(
+      dispose("exhausted", 1, {}),
+    );
+  });
+
   it("honours a RED_AFK_RETRY_* env knob override for the cap", () => {
     const env = { RED_AFK_RETRY_STALLED: "1" };
     // cap lowered to 1 → attempt 1 already escalates.
