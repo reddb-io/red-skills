@@ -131,6 +131,11 @@ export async function landMerge(exec: Exec, input: LandMergeInput): Promise<Land
     repo,
     "merge",
     "--no-ff",
+    // Bypass the consumer repo's commit-phase hooks (pre-merge-commit / commit-msg)
+    // on AFK's merge commit (#840) — the merge lands in the isolated landing
+    // worktree (#572) and AFK's binding validation already ran (feedback gate +
+    // backpressure). post-commit still fires, so a continuous-push hook is intact.
+    "--no-verify",
     branch,
     "-m",
     `merge: #${n} ${title}`,
@@ -455,7 +460,7 @@ export function buildConflictPrompt(
     `Rules:`,
     `- Work only in this checkout. Do NOT switch branches, \`git merge --abort\`, \`git reset\`, \`git rebase\`, or push.`,
     `- Resolve each conflicted file by hand, honouring both sides' intent, then \`git add\` it.`,
-    `- When all conflicts are staged, run \`git commit --no-edit\` to complete the merge. Do not change the merge message or introduce unrelated edits.`,
+    `- When all conflicts are staged, run \`git commit --no-edit --no-verify\` to complete the merge (\`--no-verify\` bypasses the consumer repo's commit hooks, which AFK does not gate on). Do not change the merge message or introduce unrelated edits.`,
     `- When the merge is committed (or you have determined you cannot resolve it), emit \`<promise>DONE</promise>\` on a line by itself as your final output.`,
     ``,
     "`git status`:",
