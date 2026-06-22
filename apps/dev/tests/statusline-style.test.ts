@@ -25,7 +25,7 @@ const RESET = "\x1b[0m";
 const afk: AfkInput = { workers: 1, queue: 11, human: 3, blocked: 2, added: 12, removed: 3, issues: [17] };
 const repo: RepoInput = { openPrs: 3, openIssues: 24, localAdded: 142, localRemoved: 36 };
 const input: StatuslineInput = {
-  project: { basename: "red-skills", branch: "main" },
+  project: { basename: "red-skills", branch: "main", version: "1.2.3" },
   claude: { model: "Opus", effort: "high", contextTokens: 47000, contextPercent: 24 },
   repo,
   afk,
@@ -41,6 +41,7 @@ describe("statusline style — header line", () => {
     expect(h).toContain(BLACK); // chips
     const t = stripAnsi(h);
     expect(t).toContain("» red-skills (main)");
+    expect(t).toContain("v1.2.3"); // fixed fixture version — proves the renderer echoes whatever version it is handed (not the live build version)
     expect(t).toContain("Opus·high");
     expect(t).toContain("ctx47k 24%");
     expect(t).toContain("pr3");

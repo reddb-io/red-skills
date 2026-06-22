@@ -27,6 +27,10 @@ export interface ProjectInput {
   branch?: string;
   /** `git rev-parse --short HEAD` when detached (used only when branch is absent). */
   detachedSha?: string;
+  /** Running `dev` plugin/bundle version (e.g. `1.233.0`), from build-info.
+   * Rendered as a dim `v<version>` tag on the themed header line so the user can
+   * see which RedSkills version is producing the statusline. Themed line only. */
+  version?: string;
 }
 
 /** The block-2/3 Claude Code payload inputs. */
