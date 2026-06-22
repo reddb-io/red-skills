@@ -102,6 +102,18 @@ export interface SupervisorConfig {
   /** RED_AFK_HALF_OPEN_CAP_S — maximum cooldown cap for exponential backoff
    * (default 3600s = 1 hour). */
   halfOpenCapS: number;
+  /**
+   * RED_AFK_UNBLOCK_SWEEP_INTERVAL_S — minimum seconds between periodic dependency
+   * Unblock Sweeps on the supervisor tick (#844, default 60). The boot-time sweep
+   * and the event-driven close-cascade are both best-effort; when a cascade misses
+   * an unblock AND the queue is all dependency-blocked the fleet goes idle and
+   * never re-runs the boot sweep, stranding the dependent forever. Running the
+   * idempotent sweep on the tick (throttled to this interval) self-heals that gap
+   * with no worker spawn. The sweep is cheap (one `gh issue list`, then a per-dep
+   * `gh issue view` only when blocked:dependency issues exist), so the throttle is
+   * a cost guard, not a correctness one. 0 / non-numeric falls back to the default.
+   */
+  unblockSweepIntervalS: number;
 }
 
 export const SUPERVISOR_DEFAULTS = {
@@ -118,6 +130,7 @@ export const SUPERVISOR_DEFAULTS = {
   progressStaleS: 900,
   halfOpenBaseS: SLOT_CIRCUIT_DEFAULTS.halfOpenBaseS,
   halfOpenCapS: SLOT_CIRCUIT_DEFAULTS.halfOpenCapS,
+  unblockSweepIntervalS: 60,
 } as const satisfies SupervisorConfig;
 
 /**
@@ -161,6 +174,11 @@ export function resolveSupervisorConfig(
       SUPERVISOR_DEFAULTS.progressStaleS,
     halfOpenBaseS: num("RED_AFK_HALF_OPEN_BASE_S", SUPERVISOR_DEFAULTS.halfOpenBaseS),
     halfOpenCapS: num("RED_AFK_HALF_OPEN_CAP_S", SUPERVISOR_DEFAULTS.halfOpenCapS),
+    // 0 would run the sweep on every tick — floor back to the default so the
+    // cost guard can never be silently disabled by a typo.
+    unblockSweepIntervalS:
+      num("RED_AFK_UNBLOCK_SWEEP_INTERVAL_S", SUPERVISOR_DEFAULTS.unblockSweepIntervalS) ||
+      SUPERVISOR_DEFAULTS.unblockSweepIntervalS,
   };
 }
 
@@ -591,6 +609,17 @@ export interface SupervisorDeps {
    */
   bootSweeps?(): Promise<void>;
   /**
+   * Run the dependency Unblock Sweep on the supervisor tick (#844): list open
+   * `blocked:dependency` issues, resolve each `req:*` blocker, and promote only
+   * those whose every blocker is CLOSED — returning the promoted issue numbers.
+   * Read-mostly and idempotent (re-uses the boot sweep's {@link
+   * executeUnblockSweep} core). The tick throttles invocation to
+   * `unblockSweepIntervalS`. Best-effort: a throw is swallowed and retried next
+   * due tick. Absent in tests / non-fleet contexts → the tick skips the periodic
+   * sweep entirely (back-compat; the boot-time sweep still runs).
+   */
+  unblockSweep?(): Promise<number[]>;
+  /**
    * Dispatch a fleet-scoped lifecycle hook at a supervisor checkpoint. Receives
    * the fleet-scoped context (slot, pid, death ring, runner — no issue/worktree
    * fields). Best-effort: throws from the hook executor are caught by the
@@ -665,11 +694,22 @@ export interface SupervisorState {
    * a loop that spins on abandoned ticks.
    */
   lastProgressEpoch: number;
+  /**
+   * Epoch seconds of the last periodic dependency Unblock Sweep (#844). 0 = never
+   * swept; the first eligible tick sweeps immediately. The tick throttles the
+   * next sweep to `unblockSweepIntervalS` past this stamp so an idle, all-blocked
+   * queue still self-heals within one interval without a per-tick gh cost.
+   */
+  lastUnblockSweepEpoch: number;
 }
 
 /** Build the initial runtime for `target` slots. */
 export function initSupervisorState(target: number): SupervisorState {
-  return { slots: Array.from({ length: target }, () => freshSlot()), lastProgressEpoch: 0 };
+  return {
+    slots: Array.from({ length: target }, () => freshSlot()),
+    lastProgressEpoch: 0,
+    lastUnblockSweepEpoch: 0,
+  };
 }
 
 // ---------- discard / no-sentinel envelopes (compose envelope.ts) ----------
@@ -839,6 +879,10 @@ export interface TickResult {
   crashReconciled: number[];
   /** Slots into which a reconcile worker was dispatched this tick. */
   reconciledSlots: number[];
+  /** Issues the periodic dependency Unblock Sweep promoted to ready-for-agent
+   * this tick (#844). Empty when the sweep was throttled, unwired, found nothing
+   * to promote, or failed (best-effort). */
+  unblocked: number[];
   /** True when the stop-file was honoured and all workers terminated. */
   stopped: boolean;
   /** Ready-queue depth sampled at the start of this tick (0 on an abandoned
@@ -1406,6 +1450,7 @@ export async function superviseTick(
     reaped: [],
     crashReconciled: [],
     reconciledSlots: [],
+    unblocked: [],
     stopped: false,
     queueDepth: 0,
     abandoned: false,
@@ -1563,6 +1608,31 @@ export async function superviseTick(
   const reconciledSlot = await dispatchReconcileIfPossible(state, deps);
   if (reconciledSlot !== null) result.reconciledSlots.push(reconciledSlot);
 
+  // Periodic dependency Unblock Sweep (#844). The boot-time sweep and the
+  // event-driven close-cascade are both best-effort; when a cascade misses an
+  // unblock AND the remaining queue is all dependency-blocked, the fleet idles
+  // (ready:0) → spawns no worker → the boot sweep never re-runs → the dependent
+  // is stranded forever. Running the idempotent sweep here self-heals that within
+  // one interval with NO worker spawn. Throttled to unblockSweepIntervalS so a
+  // drained tracker costs ~no extra gh calls (the sweep itself is a single `gh
+  // issue list` that short-circuits when there are no blocked:dependency issues).
+  if (deps.unblockSweep) {
+    const now = deps.now();
+    const due =
+      state.lastUnblockSweepEpoch === 0 ||
+      now - state.lastUnblockSweepEpoch >= config.unblockSweepIntervalS;
+    if (due) {
+      // Stamp BEFORE awaiting so a slow/hung sweep can't be re-fired by the next
+      // tick; the guardedTick ceiling still abandons a wedged tick independently.
+      state.lastUnblockSweepEpoch = now;
+      try {
+        result.unblocked = await deps.unblockSweep();
+      } catch {
+        // Best-effort: a failed sweep is retried on the next due tick.
+      }
+    }
+  }
+
   return result;
 }
 
@@ -1683,6 +1753,7 @@ export async function runSupervisor(
       `tick: slots=${state.slots.length} respawned=${result.respawned.length} ` +
         `deaths=${result.deaths.length} parked=${result.parked.length} idle-parked=${result.idleParked.length} ` +
         `half-opened=${result.halfOpened.length} reaped=${result.reaped.length} ` +
+        `unblocked=${result.unblocked.length} ` +
         `crash-reconciled=${result.crashReconciled.length} ` +
         `ready=${heartbeat.readyForAgent} busy=${heartbeat.slotsBusy} free=${heartbeat.slotsFree}`,
     );
@@ -1710,7 +1781,7 @@ export async function runSupervisor(
 /** A non-stop tick result (the abandon/error fallback). The `abandoned` flag
  * tells runSupervisor not to advance lastProgressEpoch for this pass. */
 function continueResult(): TickResult {
-  return { respawned: [], deaths: [], parked: [], idleParked: [], halfOpened: [], reaped: [], crashReconciled: [], reconciledSlots: [], stopped: false, queueDepth: 0, abandoned: true };
+  return { respawned: [], deaths: [], parked: [], idleParked: [], halfOpened: [], reaped: [], crashReconciled: [], reconciledSlots: [], unblocked: [], stopped: false, queueDepth: 0, abandoned: true };
 }
 
 /**

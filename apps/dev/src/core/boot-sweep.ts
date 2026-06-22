@@ -26,7 +26,7 @@
 
 /** The literal `## Blocked by` heading line, allowing only trailing whitespace.
  * Mirrors awk `/^## Blocked by[[:space:]]*$/`. */
-import { LABEL_STALLED, LABEL_CRASHED, LABEL_DEPENDENCY } from "./triage-labels.js";
+import { LABEL_STALLED, LABEL_CRASHED, LABEL_DEPENDENCY, LABEL_READY, LABEL_HUMAN } from "./triage-labels.js";
 
 const BLOCKED_BY_HEADING_RE = /^## Blocked by[ \t]*$/;
 /** Any `## ` heading — the awk `/^## /` that closes the Blocked-by section. */
@@ -249,6 +249,50 @@ export async function planUnblockSweep(
     }
   }
   return plans;
+}
+
+/** The minimal gh surface the Unblock Sweep MUTATES: rotate labels + post the
+ * audit comment. Injected so the promote loop lives in exactly one place — both
+ * the boot-time sweep and the periodic supervisor sweep (#844) call
+ * {@link executeUnblockSweep} through it. */
+export interface UnblockSweepGh {
+  /** Rotate labels — REMOVE first, ADD second (BootDeps.gh order). */
+  editLabels(issue: number, remove: string[], add: string[]): Promise<void>;
+  comment(issue: number, body: string): Promise<void>;
+}
+
+/**
+ * Run the Unblock Sweep end-to-end: {@link planUnblockSweep} the candidates,
+ * then promote each planned issue — strip its holding `blocked:dependency` label
+ * (the defensive `ready-for-human` fallback only fires for a malformed candidate
+ * the planner would never plan) and add `ready-for-agent`, then post the audit
+ * comment. Returns the promoted issue numbers.
+ *
+ * This is the SINGLE mutation path for the sweep. The boot-time safety net and
+ * the periodic supervisor tick (#844) both call it so a missed live close-cascade
+ * self-heals identically from either trigger. Idempotent: a candidate with an
+ * still-open `req:*` is left blocked; a fully-unblocked one is promoted exactly
+ * once (the next sweep no longer sees it, since the promotion drops the
+ * `blocked:dependency` label that put it in the candidate set).
+ */
+export async function executeUnblockSweep(
+  candidates: readonly UnblockCandidate[],
+  fetchBlockerState: BlockerStateLookup,
+  gh: UnblockSweepGh,
+): Promise<number[]> {
+  const plans = await planUnblockSweep(candidates, fetchBlockerState);
+  // Resolve each promoted issue's holding label from its candidate label set.
+  const labelsByIssue = new Map<number, string[]>();
+  for (const c of candidates) labelsByIssue.set(c.number, c.labels ?? []);
+  const promoted: number[] = [];
+  for (const p of plans) {
+    const held = labelsByIssue.get(p.number) ?? [];
+    const remove = held.includes(LABEL_DEPENDENCY) ? LABEL_DEPENDENCY : LABEL_HUMAN;
+    await gh.editLabels(p.number, [remove, ...p.reqLabels], [LABEL_READY]);
+    await gh.comment(p.number, p.comment);
+    promoted.push(p.number);
+  }
+  return promoted;
 }
 
 /** Counts of open issues in states /afk cannot consume. Mirrors the three

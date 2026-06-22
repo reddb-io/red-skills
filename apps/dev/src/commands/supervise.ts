@@ -35,7 +35,7 @@ import {
 } from "../runtime/supervisor-fs.js";
 import * as ghx from "../runtime/gh.js";
 import * as gitx from "../runtime/git.js";
-import { planReconcileSweep } from "../core/boot-sweep.js";
+import { planReconcileSweep, executeUnblockSweep } from "../core/boot-sweep.js";
 import { removeDir as removeDirNative } from "../runtime/fs.js";
 import { killTreeAndWait } from "../runtime/kill-tree.js";
 import { resolveFleetHooks } from "../core/fleet-hook-config.js";
@@ -479,6 +479,32 @@ function buildSupervisorDeps(
     // the initial spawn. Runs the full shared sweep suite over real IO and logs
     // the result; each worker then boots bootstrap+claim only.
     bootSweeps: buildSupervisorBootSweeps(root, ghCtx.repo, logLine),
+    // Periodic dependency Unblock Sweep on the supervisor tick (#844). Re-uses the
+    // boot sweep's executeUnblockSweep core over fresh gh reads: list open
+    // blocked:dependency issues, resolve each req:* blocker, promote only the
+    // fully-unblocked ones. Short-circuits to [] when nothing is dependency-blocked
+    // (one cheap `gh issue list`), so a drained tracker costs ~nothing. Best-effort:
+    // any gh failure resolves to [] and is retried on the next due tick.
+    unblockSweep: async () => {
+      try {
+        const candidates = await ghx.listUnblockCandidates(ghCtx);
+        if (candidates.length === 0) return [];
+        return await executeUnblockSweep(
+          candidates,
+          (issue) => ghx.blockerState(ghCtx, issue),
+          {
+            editLabels: async (issue, remove, add) => {
+              await ghx.editLabels(ghCtx, issue, remove, add);
+            },
+            comment: async (issue, body) => {
+              await ghx.comment(ghCtx, issue, body);
+            },
+          },
+        );
+      } catch {
+        return [];
+      }
+    },
     // Fleet-scoped lifecycle hooks (#833). Commands are resolved from the same
     // .red/hooks/<point>/ + library layering as worker hooks. Best-effort:
     // a dispatch failure is returned to the caller; the caller catches and logs.

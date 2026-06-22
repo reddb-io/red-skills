@@ -48,6 +48,7 @@ function config(over: Partial<SupervisorConfig> = {}): SupervisorConfig {
     progressStaleS: 900,
     halfOpenBaseS: 60,
     halfOpenCapS: 3600,
+    unblockSweepIntervalS: 60,
     ...over,
   };
 }
