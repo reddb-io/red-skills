@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# red-gradle — built-in pre_worktree library hook for Gradle projects.
+#
+# Contract (ADR 0026, PRD #207, issue #211):
+#   stdin   — JSON object: pre_worktree context (issue, target, branch, env).
+#   stdout  — empty (context unchanged) when no build.gradle* is present at
+#             $PROJECT_ROOT, OR when RED_AFK_GRADLE_USER_HOME_BASE is unset
+#             (opt-in by env var — we do not claim a path on the user's
+#             filesystem without their consent). Otherwise a JSON object
+#             that merges {env: {GRADLE_USER_HOME: <slot dir>}} into ctx.
+#   exit    — 0 on either branch. Never aborts the chain.
+#
+# Side effect: mkdir -p the slot Gradle home so daemons / caches are isolated
+# between worker slots.
+#
+# Env contract (RED_AFK_* exported by the orchestrator):
+#   RED_AFK_SLOT                   — worker slot number (0-based); defaults to 0.
+#   RED_AFK_GRADLE_USER_HOME_BASE  — base dir for per-slot Gradle homes;
+#                                    UNSET by default (opt-in). Set in
+#                                    .red/config.yaml or by environment to
+#                                    activate per-slot Gradle isolation.
+#
+# Shadowing: place a same-named file in .red/hooks/red-gradle to replace this
+# default with a project-local variant. An empty (exit-0) file disables it.
+
+set -uo pipefail
+
+project_root="${PROJECT_ROOT:-$(pwd)}"
+ctx="$(cat || true)"
+[[ -z "$ctx" ]] && ctx='{}'
+
+shopt -s nullglob
+matches=("$project_root"/build.gradle*)
+shopt -u nullglob
+if [[ "${#matches[@]}" -eq 0 ]]; then
+  exit 0
+fi
+
+if [[ -z "${RED_AFK_GRADLE_USER_HOME_BASE:-}" ]]; then
+  exit 0
+fi
+
+slot="${RED_AFK_SLOT:-0}"
+home_dir="${RED_AFK_GRADLE_USER_HOME_BASE}/slot-${slot}"
+
+mkdir -p "$home_dir" 2>/dev/null || true
+
+printf '%s' "$ctx" | jq -c \
+  --arg h "$home_dir" \
+  '. + {env: ((.env // {}) + {GRADLE_USER_HOME: $h})}'
