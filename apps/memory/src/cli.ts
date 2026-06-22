@@ -127,8 +127,14 @@ import { evaluateDriftGuard } from "./drift-guard.js";
 import {
   appendContextPackGenerationEvent,
   appendMemoryEvent,
+  appendRecallObservationEvent,
   driftCaughtToMemoryEvent,
 } from "./memory-events.js";
+import {
+  buildRecallTelemetryReport,
+  recallObservationFromContextPack,
+  renderRecallTelemetryReport,
+} from "./recall-telemetry.js";
 import { collectCandidates, ingestProject, refreshFiles } from "./ingest.js";
 import {
   defaultIgnorePatterns,
@@ -420,6 +426,7 @@ Usage:
   memory improve proposals archive <proposal> --reason applied|rejected|stale --yes [--root <dir>] [--json]
   memory improve apply <proposal>    [--root <dir>] --yes [--json]   (explicit patch apply)
   memory health                    [--root <dir>] [--json]   (operational healthcheck, read-only)
+  memory recall-telemetry          [--root <dir>] [--window-ms N] [--json]   (real-run recall metrics, read-only; distinct from bench)
   memory hooks coverage            [--root <dir>] [--json]   (hook manifest/config coverage, read-only)
   memory hooks coverage-viewer     [--root <dir>] [--out <file>]
   memory lint                      [--root <dir>] [--json]   (policy hygiene report, read-only)
@@ -1619,6 +1626,11 @@ async function runContextPack(args: ParsedArgs): Promise<void> {
       surface: "cli",
       metadata: { command: "context-pack", json: args.flags.json === true },
     });
+    // Recall telemetry from a real run (#828): additive, never blocks the pack.
+    await appendRecallObservationEvent(
+      store,
+      recallObservationFromContextPack(pack, { surface: "context-pack" }),
+    );
     if (args.flags.json === true) {
       console.log(JSON.stringify(pack, null, 2));
       return;
@@ -5392,6 +5404,29 @@ async function runHealth(args: ParsedArgs): Promise<void> {
   console.log("\nRead-only healthcheck: no memory, graph, proposal, or skill files were mutated.");
 }
 
+/**
+ * memory recall-telemetry — roll up `memory.recall.observed` events from the
+ * analytics hypertable into a real-run recall-quality report (hit-rate,
+ * gold-in-pack proxy, tokens saved). Explicitly distinct from `memory bench`,
+ * the synthetic retrieval benchmark (#828). Read-only.
+ */
+async function runRecallTelemetry(args: ParsedArgs): Promise<void> {
+  const { store } = await openGraphStore(args);
+  try {
+    const windowMs = intFlag(args.flags, "window-ms");
+    const report = await buildRecallTelemetryReport(store, {
+      ...(windowMs != null ? { windowMs } : {}),
+    });
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(report, null, 2));
+      return;
+    }
+    console.log(renderRecallTelemetryReport(report));
+  } finally {
+    await store.close();
+  }
+}
+
 async function runHealthViewer(args: ParsedArgs): Promise<void> {
   const rootDir = rootOf(args.flags);
   const { store } = await openGraphStore(args);
@@ -7900,6 +7935,8 @@ async function main(): Promise<void> {
       return runHealth(args);
     case "health-viewer":
       return runHealthViewer(args);
+    case "recall-telemetry":
+      return runRecallTelemetry(args);
     case "governance":
       return runGovernance(args);
     case "governance-viewer":
