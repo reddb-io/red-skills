@@ -63,11 +63,27 @@ export function policyKeyFor(o: AttemptOutcome): string | null {
 /**
  * Compose the single routing descriptor for a terminal outcome at attempt
  * `attemptN`, under the env caps. PURE.
+ *
+ * `opts.stalledRecoverable` selects the policy VIEW for the one outcome the two
+ * lifecycles disagree on, `stalled`:
+ *   - default (true)  — the TOTAL map: `stalled` is bounded-recoverable. This is
+ *     the supervisor stall-reaper's view (its bounded re-claim, #402) and the
+ *     reconcile view.
+ *   - false           — the PER-ISSUE map (recoveryReasonFor): `stalled` is
+ *     non-recoverable → always escalate. The per-issue lifecycle never
+ *     auto-retries a stalled attempt; only the reaper owns the bounded re-claim,
+ *     so `routeRecovery` passes this to preserve that split.
+ * For EVERY other outcome the two views are identical, so the option is a no-op.
  */
-export function dispose(o: AttemptOutcome, attemptN: number, env: RecoveryEnv): Disposition {
+export function dispose(
+  o: AttemptOutcome,
+  attemptN: number,
+  env: RecoveryEnv,
+  opts: { stalledRecoverable?: boolean } = {},
+): Disposition {
   const typedLabel = blockedLabelFor(o);
   const envelopeStatus = envelopeStatusFor(o);
-  const policyKey = policyKeyFor(o);
+  const policyKey = opts.stalledRecoverable === false ? recoveryReasonFor(o) : policyKeyFor(o);
   const cap = policyKey === null ? null : recoveryCap(policyKey, env);
   const decision = policyKey === null ? "escalate" : recoveryDecision(policyKey, attemptN, env);
 
