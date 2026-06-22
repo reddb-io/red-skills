@@ -15,8 +15,7 @@
 import type { AgentStreamEvent, RunOptions, RunResult } from "@reddb-io/red-castle";
 import { isRunnerExhausted } from "./runner-spawn.js";
 import { startLaneIdleReaper, DEFAULT_STALL_POLL_S } from "./lane-idle-reaper.js";
-import { openCodeAuthEnv, resolveOpenCodeAuth } from "./opencode-env.js";
-import { MINIMAX_M3_MODEL, resolveMiniMaxClaudeEnv } from "./minimax-env.js";
+import { RUNNER_SPECS } from "./runner-spec.js";
 
 // Re-exported so process-issue / run can type their agent-event sink without
 // importing the sandcastle package directly (execution.ts is the single seam
@@ -421,36 +420,23 @@ export interface SandcastleDeps {
   makeAbortController?: () => AbortController;
 }
 
-/**
- * The reasoning-effort values each provider's option type accepts. codex tops
- * out at "xhigh" (no "max"); claude accepts the full union (see the sandcastle
- * AgentProvider d.ts — CodexOptions.effort vs ClaudeCodeOptions.effort). The
- * effort is gated per provider in `agentFor` (FIX D): an out-of-range value is
- * DROPPED (provider default) with a warn rather than cast through to a runtime
- * provider rejection / infra crash.
- *
- * claude-minimax is a special case: MiniMax-M3 thinking is off by default and
- * only accepts thinking:{type:"adaptive"} — it rejects thinking:{type:"enabled",
- * budget} that Claude Code emits at effort > "low". Only "low" is safe;
- * `buildAgent` caps any higher request and always passes "low" explicitly so the
- * inner spawn never auto-selects a thinking tier.
- */
-export const CODEX_EFFORTS: readonly AgentEffort[] = ["low", "medium", "high", "xhigh"];
-export const CLAUDE_EFFORTS: readonly AgentEffort[] = ["low", "medium", "high", "xhigh", "max"];
-export const MINIMAX_EFFORTS: readonly AgentEffort[] = ["low"];
+// The per-provider accepted-effort sets + the full RUNNER_SPECS policy table now
+// live in `runner-spec.ts` (issue #823) — the single seam for per-runner provider
+// policy. Re-exported here so existing `execution.ts` importers keep working.
+export { CODEX_EFFORTS, CLAUDE_EFFORTS, MINIMAX_EFFORTS } from "./runner-spec.js";
 
 /**
- * Validate a requested effort against a provider's accepted set. Returns the
- * effort when accepted, or `undefined` when it must be dropped (degrade to the
- * provider default). Pure — the warn is emitted by the caller (`agentFor`).
+ * Validate a requested effort against a provider's accepted set ({@link
+ * RUNNER_SPECS}). Returns the effort when accepted, or `undefined` when it must
+ * be dropped (degrade to the provider default). Pure — the warn is emitted by
+ * the caller (`buildAgent`).
  */
 export function effortForProvider(
   runner: AgentRunner,
   effort: AgentEffort | undefined,
 ): AgentEffort | undefined {
   if (effort === undefined) return undefined;
-  const accepted = runner === "codex" ? CODEX_EFFORTS : CLAUDE_EFFORTS;
-  return accepted.includes(effort) ? effort : undefined;
+  return RUNNER_SPECS[runner].efforts.includes(effort) ? effort : undefined;
 }
 
 /**
@@ -501,59 +487,51 @@ export function buildAgent(
   env: NodeJS.ProcessEnv,
   warn?: (message: string) => void,
 ): RunOptions["agent"] {
+  const spec = RUNNER_SPECS[runner];
   const requested = opts?.effort;
+  const authEnv = spec.resolveAuthEnv?.(env);
 
-  if (runner === "opencode") {
+  // opencode (ADR 0059): the effort is OpenCode's free-form `variant` (not
+  // gated), and the model `<provider>/<model>` slug is forwarded verbatim — the
+  // leading segment tells OpenCode which endpoint to dispatch to. The auth key
+  // (precedence owned by opencode-env.ts) rides in on `OpenCodeOptions.env`;
+  // with no key set, no `env` option is added and OpenCode owns the fallback.
+  if (spec.channel === "variant") {
     const options: { variant?: string; env?: Record<string, string> } = {};
     if (requested !== undefined) options.variant = requested;
-    const authEnv = openCodeAuthEnv(resolveOpenCodeAuth(env));
     if (authEnv) options.env = authEnv;
     return factories.opencode(model, Object.keys(options).length > 0 ? options : undefined);
   }
 
-  if (runner === "claude-minimax") {
-    // PRD #788 / #794: route to the UNCHANGED claude-code provider, but force
-    // the MiniMax model and inject the MiniMax Anthropic-compat auth env into
-    // the inner spawn only (`ClaudeCodeOptions.env`) — the orchestrator's own
-    // env is never touched, so it keeps its real-Anthropic auth. The passed
-    // `model` is discarded — the lane always runs `MiniMax-M3`.
-    //
-    // Thinking-control reconciliation (#794): MiniMax-M3 thinking is off by
-    // default and only accepts thinking:{type:"adaptive"} — it rejects
-    // thinking:{type:"enabled",budget} that Claude Code emits at effort > "low".
-    // The lane is capped to MINIMAX_EFFORTS (["low"]): any higher requested
-    // effort degrades to "low" with a warn; when no effort is requested the lane
-    // still passes "low" explicitly so the inner spawn never auto-selects a
-    // thinking tier.
-    const MINIMAX_SAFE_EFFORT: AgentEffort = "low";
-    const effort: AgentEffort =
-      requested !== undefined && (MINIMAX_EFFORTS as readonly string[]).includes(requested)
-        ? (requested as AgentEffort)
-        : MINIMAX_SAFE_EFFORT;
-    if (requested !== undefined && !(MINIMAX_EFFORTS as readonly string[]).includes(requested)) {
-      warn?.(
-        `[afk] warn: effort '${requested}' triggers thinking which MiniMax-M3 does not accept; ` +
-          `capping to '${MINIMAX_SAFE_EFFORT}' for runner 'claude-minimax' ` +
-          `(accepted: ${MINIMAX_EFFORTS.join(", ")}).`,
-      );
-    }
-    const authEnv = resolveMiniMaxClaudeEnv(env);
-    const options: { effort: AgentEffort; env?: Record<string, string> } = { effort };
-    if (authEnv) options.env = authEnv;
-    return factories.claudeCode(MINIMAX_M3_MODEL, options);
-  }
-
-  const effort = effortForProvider(runner, requested);
-  if (requested !== undefined && effort === undefined) {
+  // effort channel (claude / codex / claude-minimax): gate the requested effort
+  // against the spec's accepted set (FIX D). A runner with a `defaultEffort`
+  // (claude-minimax → "low", PRD #794) CAPS a rejected/absent effort to it and
+  // always passes it explicitly so the inner spawn never auto-selects a thinking
+  // tier; a runner without one DROPS a rejected effort to the provider default.
+  const accepted = requested !== undefined && spec.efforts.includes(requested);
+  const effort = accepted ? requested : spec.defaultEffort;
+  if (requested !== undefined && !accepted) {
     warn?.(
-      `[afk] warn: effort '${requested}' is not accepted by runner '${runner}' ` +
-        `(accepted: ${(runner === "codex" ? CODEX_EFFORTS : CLAUDE_EFFORTS).join(", ")}); ` +
-        "falling back to the provider default.",
+      spec.defaultEffort !== undefined
+        ? `[afk] warn: effort '${requested}' triggers thinking which MiniMax-M3 does not accept; ` +
+            `capping to '${spec.defaultEffort}' for runner '${runner}' ` +
+            `(accepted: ${spec.efforts.join(", ")}).`
+        : `[afk] warn: effort '${requested}' is not accepted by runner '${runner}' ` +
+            `(accepted: ${spec.efforts.join(", ")}); ` +
+            "falling back to the provider default.",
     );
   }
-  return runner === "codex"
-    ? factories.codex(model, effort ? { effort } : undefined)
-    : factories.claudeCode(model, effort ? { effort } : undefined);
+
+  // `forcedModel` (claude-minimax → MiniMax-M3) discards the resolved tier model.
+  const targetModel = spec.forcedModel ?? model;
+  if (spec.factory === "codex") {
+    // The codex provider takes no `env` seam; codex never resolves an auth env.
+    return factories.codex(targetModel, effort !== undefined ? { effort } : undefined);
+  }
+  const options: { effort?: AgentEffort; env?: Record<string, string> } = {};
+  if (effort !== undefined) options.effort = effort;
+  if (authEnv) options.env = authEnv;
+  return factories.claudeCode(targetModel, Object.keys(options).length > 0 ? options : undefined);
 }
 
 /** Map an AFK completion signal back to an iteration outcome. */
