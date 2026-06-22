@@ -174,7 +174,9 @@ export interface ProcessGit {
 export interface ProcessLookups {
   /** Resolve the effective base (lock > pin > main). */
   base: ResolveBaseDeps;
-  /** True when the session is locked to a branch — drives the landing toggle. */
+  /** True when the session is locked to a branch. Since #842 the lock only
+   * resolves the base; the landing mode is the `worktreeLaunchesPr` flag. The
+   * result still echoes this for observability. */
   isLocked(): Promise<boolean>;
   /** Issue comments projected for the handoff (gh issue view --json comments). */
   comments(issue: number): Promise<HandoffComment[]>;
@@ -296,16 +298,24 @@ export interface ProcessIssueDeps {
    */
   conflictResolver?: ConflictResolver;
   /**
-   * Provision/tear down an isolated detached worktree at `<base>` for the LOCKED
-   * landing (issue #572). The locked merge/push/rollback runs there so a push
-   * reject's `reset --hard` can never discard the primary checkout's WIP. The CLI
-   * binds these to `git worktree add --detach` / `git worktree remove`; absent →
-   * the locked landing is refused (never falls back to mutating the primary).
+   * Landing-mode flag, decoupled from the lock (ADR 0030 amended, #842). Resolved
+   * from `afk.worktree_launches_pull_request` (default `true`) by the CLI. `true`
+   * → the attempt lands via an admin-merged PR into the resolved base; `false` →
+   * a direct merge into that base (no PR, offline). The lock only resolves the
+   * base now, not the mode. Undefined (tests) is treated as `true` (the default).
+   */
+  worktreeLaunchesPr?: boolean;
+  /**
+   * Provision/tear down an isolated detached worktree at `<base>` for the DIRECT
+   * (non-PR) landing (issue #572). The direct merge/push/rollback runs there so a
+   * push reject's `reset --hard` can never discard the primary checkout's WIP. The
+   * CLI binds these to `git worktree add --detach` / `git worktree remove`; absent
+   * → the direct landing is refused (never falls back to mutating the primary).
    */
   makeLandingWorktree?(base: string): Promise<string | null>;
   removeLandingWorktree?(dir: string): Promise<void>;
   /**
-   * Opt-in advisory-review wait for the UNLOCKED admin-PR landing
+   * Opt-in advisory-review wait for the admin-PR landing
    * (`afk.merge.wait_for_review`, ADR 0048). Resolved from config by the CLI:
    * present → the landing holds until the configured review check concludes
    * before the admin-merge, then merges regardless of the verdict (the review
@@ -326,12 +336,12 @@ export interface ProcessIssueDeps {
   ciAwait?: CiAwaitInput;
   /**
    * PR review gate (ADR 0064 §10, #749). Resolved from `afk.review_gate.*` by the
-   * CLI. When enabled AND the attempt's classified tier is non-mechanical, the
-   * UNLOCKED landing is replaced by a review handoff: open the PR, apply
+   * CLI. When enabled AND the attempt's classified tier is non-mechanical, a
+   * PR landing is replaced by a review handoff: open the PR, apply
    * `ready-for-review` (firing the advisory review), and park the issue for the
    * review→merge flow instead of fast-merging. Mechanical/trivial work — and the
-   * locked path, which never opens a PR — keep the existing fast-merge path.
-   * Absent or disabled (the default) → no review hop. Tests omit it.
+   * direct (non-PR) path, which never opens a PR — keep the existing fast-merge
+   * path. Absent or disabled (the default) → no review hop. Tests omit it.
    */
   reviewGate?: ReviewGateConfig;
   /** Label applied to the PR to fire the advisory review (default
@@ -1372,21 +1382,26 @@ export async function processIssue(
     break;
   }
 
-  // ---- 6. push the worker branch, integrate, then land per lock state ----
-  // The entire lock-toggled landing (push → pre_merge → integrate → land →
-  // locked conflict self-resolve → post_merge) is owned by doLanding (landing.ts,
-  // ADR 0030/0031). A non-ok result maps to the merge-conflict terminal-failure
-  // path; on success the FINAL merge sha is read below (post post_merge), exactly
-  // as before, to drive the done close.
+  // ---- 6. push the worker branch, integrate, then land per the flag ----
+  // The entire flag-toggled landing (push → pre_merge → integrate → land →
+  // direct conflict self-resolve → post_merge) is owned by doLanding (landing.ts,
+  // ADR 0030 amended by #842 / 0031). A non-ok result maps to the merge-conflict
+  // terminal-failure path; on success the FINAL merge sha is read below (post
+  // post_merge), exactly as before, to drive the done close.
+  //
+  // Landing MODE is decoupled from the lock (#842): the lock only resolved `base`
+  // (above); `afk.worktree_launches_pull_request` (default true) decides PR vs
+  // direct merge. `locked` is still read for the result's observability echo.
   const locked = await deps.lookups.isLocked();
+  const openPr = deps.worktreeLaunchesPr !== false;
 
   // ---- 6a. PR review gate (ADR 0064 §10, #749) ----
-  // On the UNLOCKED path, a NON-mechanical change is handed off for a fresh-agent
-  // review instead of fast-merged: open the PR, apply the review label (firing
-  // the advisory review from #746), and park the issue for the review→merge flow.
-  // Mechanical/trivial work — and the locked path, which never opens a PR — keep
-  // the existing fast-merge path untouched.
-  if (!locked && deps.reviewGate && shouldRequestReview(activeTaskClass, deps.reviewGate)) {
+  // When a PR is opened (openPr), a NON-mechanical change is handed off for a
+  // fresh-agent review instead of fast-merged: open the PR, apply the review label
+  // (firing the advisory review from #746), and park the issue for the review→merge
+  // flow. Mechanical/trivial work — and the direct (non-PR) path, which never opens
+  // a PR — keep the existing fast-merge path untouched.
+  if (openPr && deps.reviewGate && shouldRequestReview(activeTaskClass, deps.reviewGate)) {
     return await handoffForReview(common, activeTaskClass, validationSidecar);
   }
 
@@ -1404,6 +1419,7 @@ export async function processIssue(
       removeLandingWorktree: deps.removeLandingWorktree,
     },
     {
+      openPr,
       locked,
       repo: input.repo,
       repoDir: input.repoDir,

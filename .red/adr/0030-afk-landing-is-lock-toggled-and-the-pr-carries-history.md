@@ -2,7 +2,8 @@
 
 ## Status
 
-accepted.
+accepted; **amended by #842** (see *Amendment 1* below) — landing is no longer
+lock-toggled, it is flag-toggled, with the lock only resolving the target base.
 
 Design-stage decision from a `/start` grilling on the worker-directory
 restructure (motivated by #243).
@@ -80,3 +81,43 @@ maximise observability and learn across attempts without unbounded disk growth.
   (`contexts/dev/CONTEXT.md:54`) and a new **Attempt** term.
 - The unlocked path requires admin-merge rights, or branch protection that does
   not require approvals.
+
+## Amendment 1 — landing mode is decoupled from the lock (#842)
+
+Decision 1 above coupled **two orthogonal concerns** into the single branch-lock
+toggle: the *target branch* (which ADR 0031 resolves: lock > pin > main) and the
+*landing mode* (PR vs direct merge). The coupling left two postures unreachable:
+an operator who locks to `main` for an offline/direct flow got **no PRs at all**,
+and an operator who wanted PRs could not also pin a non-`main` target.
+
+They are now **decoupled** by a config flag,
+`plugins.dev.afk.worktree_launches_pull_request` (boolean, **default `true`**;
+honours the legacy bare `afk.worktree_launches_pull_request` fallback, ADR 0042):
+
+- The **lock only resolves the target base** (ADR 0031, unchanged).
+- The **flag** chooses the landing mode, independently of the lock:
+
+  | branch-lock | flag | landing |
+  |---|---|---|
+  | none | `true` (default) | admin-merged PR → `main` (the old *unlocked*) |
+  | none | `false` | direct merge → `main` (offline, newly reachable) |
+  | set `X` | `true` (default) | admin-merged PR → `X` (newly reachable) |
+  | set `X` | `false` | direct merge → `X` (the old *locked*) |
+
+**Merge-mode stays orthogonal.** *How* a PR merges (admin-merge by default, or
+held per `afk.merge.wait_for_review` / `afk.review_gate`) is unchanged and still
+governed by `afk.merge.*`; this flag only decides whether a PR is opened at all.
+The branch-lock skill's interactive primary-branch guard is untouched — the flag
+affects only AFK landing.
+
+**Migration.** The default `true` flips the previous **locked** behaviour: a repo
+locked to a feature branch used to get a *direct merge for human promotion*; with
+the new default it gets an *admin-merged PR to the lock branch* instead.
+Operators who want the old offline/direct-promotion flow set
+`worktree_launches_pull_request: false`.
+
+Implementation: the lock-toggle in `core/landing.ts` (`doLanding`) became the
+`openPr` flag; `core/process-issue.ts` (and the `core/reconcile.ts` re-land path)
+resolve it from config and the PR review gate now keys on it rather than on the
+lock. The direct-merge path still runs inside an isolated worktree so the primary
+checkout stays sacred (#572).

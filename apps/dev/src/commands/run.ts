@@ -503,6 +503,12 @@ export function buildProcessDeps(
   // merge for a fresh-agent review; mechanical/trivial work fast-merges as today.
   const reviewGate = resolveReviewGate(config);
 
+  // Landing-mode flag (ADR 0030 amended, #842), decoupled from the lock. Default
+  // true → the attempt lands via an admin-merged PR into the resolved base; false
+  // → a direct merge into that base (offline, no PR). The lock only resolves the
+  // base (ADR 0031). Honours the namespaced + legacy fallback via loadConfig.
+  const worktreeLaunchesPr = getConfig(config, "afk.worktree_launches_pull_request") !== "false";
+
   return {
     gh: {
       viewLabels: (issue) => ghx.viewLabels(ghCtx, issue),
@@ -610,6 +616,7 @@ export function buildProcessDeps(
     fallbackRunner,
     waitForReview,
     ciAwait,
+    worktreeLaunchesPr,
     reviewGate,
     reviewGateLabel: LABEL_READY_FOR_REVIEW,
     // One-shot merge-conflict resolver (merge_resolve_conflict): re-enter the

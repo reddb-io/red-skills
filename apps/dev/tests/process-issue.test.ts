@@ -67,6 +67,12 @@ interface HarnessOptions {
    * Defaults to passing. Only consulted when `backpressureCommands` is set. */
   backpressureOk?: boolean;
   locked?: boolean;
+  /**
+   * Landing-mode flag (#842), decoupled from the lock. Defaults to `!locked` so
+   * the pre-#842 coupling (locked → direct merge, unlocked → admin PR) holds for
+   * the existing path/conflict tests; the decoupling tests set it explicitly.
+   */
+  worktreeLaunchesPr?: boolean;
   config?: ConfigValues;
   /** Trust-gate provenance (#621) returned by gh.issueTrust. When set, the port
    * is registered; absent → no port (gate never fires). */
@@ -360,6 +366,9 @@ function harness(opts: HarnessOptions = {}): {
         }
       : undefined,
     resolveTier: opts.resolveTier,
+    // Landing mode is decoupled from the lock (#842); default to the pre-#842
+    // coupling so existing locked/unlocked path tests keep their behaviour.
+    worktreeLaunchesPr: opts.worktreeLaunchesPr ?? !(opts.locked ?? false),
     reviewGate: opts.reviewGate,
     reviewGateLabel: "ready-for-review",
     ciAwait: opts.ciAware ? { sleep: async () => {}, maxPolls: 2 } : undefined,
@@ -640,7 +649,7 @@ describe("processIssue — CI-aware unlocked landing (#812)", () => {
   });
 });
 
-describe("processIssue — lock-toggled landing", () => {
+describe("processIssue — landing mode decoupled from the lock (#842)", () => {
   it("locked → landMerge (merge --no-ff into the locked branch + push)", async () => {
     const calls: string[][] = [];
     const { deps, input } = harness({ outcome: "done", feedbackOk: true, locked: true });
@@ -653,9 +662,9 @@ describe("processIssue — lock-toggled landing", () => {
 
     expect(result.outcome).toBe("done");
     expect(result.locked).toBe(true);
-    // landMerge issues `git -C /repo merge --no-ff afk/wAAAA/9-fix-the-thing …`.
+    // landMerge issues `git -C /repo merge --no-ff --no-verify afk/wAAAA/9-fix-the-thing …`.
     const joined = calls.map((c) => c.join(" "));
-    expect(joined.some((c) => c.includes("merge --no-ff afk/wAAAA/9-fix-the-thing"))).toBe(true);
+    expect(joined.some((c) => c.includes("merge --no-ff --no-verify afk/wAAAA/9-fix-the-thing"))).toBe(true);
     // No PR list/create/merge on the locked path.
     expect(joined.some((c) => c.includes("pr list") || c.includes("pr merge"))).toBe(false);
   });
@@ -678,6 +687,56 @@ describe("processIssue — lock-toggled landing", () => {
     expect(joined.some((c) => c.includes("pr merge 42 --admin --merge"))).toBe(true);
     // No direct `merge --no-ff` of the attempt branch into the locked target.
     expect(joined.some((c) => c.includes("merge --no-ff afk/"))).toBe(false);
+  });
+
+  it("locked + flag true → admin PR (no direct merge), even though locked", async () => {
+    // Decoupled: a lock no longer forces a direct merge. With the default flag the
+    // locked session lands via an admin-merged PR to its base (the lock branch).
+    const calls: string[][] = [];
+    const { deps, input } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      locked: true,
+      worktreeLaunchesPr: true,
+    });
+    const inner = deps.mergeExec;
+    deps.mergeExec = async (argv) => {
+      calls.push(argv);
+      return inner(argv);
+    };
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    // result.locked still echoes the lock state (observational), not the mode.
+    expect(result.locked).toBe(true);
+    const joined = calls.map((c) => c.join(" "));
+    expect(joined.some((c) => c.includes("pr merge 42 --admin --merge"))).toBe(true);
+    expect(joined.some((c) => c.includes("merge --no-ff afk/"))).toBe(false);
+  });
+
+  it("unlocked + flag false → direct merge to main, no PR (offline)", async () => {
+    // Decoupled: no lock no longer forces a PR. With the flag off the unlocked
+    // session lands via a direct merge into main (no PR, offline).
+    const calls: string[][] = [];
+    const { deps, input } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      locked: false,
+      worktreeLaunchesPr: false,
+    });
+    const inner = deps.mergeExec;
+    deps.mergeExec = async (argv) => {
+      calls.push(argv);
+      return inner(argv);
+    };
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(result.locked).toBe(false);
+    const joined = calls.map((c) => c.join(" "));
+    // Direct merge of the attempt branch; no PR list/merge anywhere.
+    expect(joined.some((c) => c.includes("merge --no-ff --no-verify afk/wAAAA/9-fix-the-thing"))).toBe(true);
+    expect(joined.some((c) => c.includes("pr list") || c.includes("pr merge"))).toBe(false);
   });
 });
 

@@ -106,6 +106,16 @@ export const CONFIG_DEFAULTS = {
   // once it settles, routing a failed check (`blocked:ci`) / still-pending checks
   // distinctly. The wait budget is `RED_AFK_MERGE_CI_TIMEOUT_S` (default 1800s).
   "afk.merge.ci_aware": "false",
+  // Landing-mode flag, decoupled from the branch-lock (ADR 0030 amended, #842).
+  // The branch-lock now ONLY resolves the target base (lock > pin > main, ADR
+  // 0031); this flag — independently — decides whether the attempt lands via an
+  // admin-merged PR (`true`, default) or a direct merge (`false`). So: no lock +
+  // true → admin-PR to main (today's unlocked); no lock + false → direct merge
+  // to main (offline); lock=X + true → admin-PR to X; lock=X + false → direct
+  // merge to X (today's locked). How a PR merges stays governed by `afk.merge.*`.
+  // Resolved from the namespaced `plugins.dev.afk.*` block with the legacy bare
+  // `afk.*` fallback (ADR 0042), like every other accessor here.
+  "afk.worktree_launches_pull_request": "true",
   // PR review gate (ADR 0064 §10, #749). When AFK / `/ship` open a PR for a
   // completed attempt, the issue-classifier tier decides mechanical vs
   // non-mechanical: non-mechanical changes get `ready-for-review` (firing the

@@ -347,6 +347,33 @@ describe("config — afk.merge.ci_aware (#812)", () => {
   });
 });
 
+describe("config — afk.worktree_launches_pull_request (ADR 0030 amended, #842)", () => {
+  it("defaults to true (admin-PR landing) when unset", () => {
+    const values = loadConfig("/nonexistent/.red/config.yaml", { warn: () => {} });
+    expect(getConfig(values, "afk.worktree_launches_pull_request")).toBe("true");
+  });
+
+  it("reads the namespaced plugins.dev.afk.* block", () => {
+    const text = "plugins:\n  dev:\n    afk:\n      worktree_launches_pull_request: false\n";
+    const values = loadConfig("/x/.red/config.yaml", { read: () => text });
+    expect(getConfig(values, "afk.worktree_launches_pull_request")).toBe("false");
+  });
+
+  it("reads the legacy top-level afk.* block (back-compat)", () => {
+    const text = "afk:\n  worktree_launches_pull_request: false\n";
+    const values = loadConfig("/x/.red/config.yaml", { read: () => text });
+    expect(getConfig(values, "afk.worktree_launches_pull_request")).toBe("false");
+  });
+
+  it("lets the namespaced location win over a legacy top-level key", () => {
+    const text =
+      "afk:\n  worktree_launches_pull_request: false\n" +
+      "plugins:\n  dev:\n    afk:\n      worktree_launches_pull_request: true\n";
+    const values = loadConfig("/x/.red/config.yaml", { read: () => text });
+    expect(getConfig(values, "afk.worktree_launches_pull_request")).toBe("true");
+  });
+});
+
 describe("config — AFK model tier table (ADR 0049)", () => {
   it("defaults the unclassified AFK tier to think per runner", () => {
     const values = loadConfig("/nonexistent/.red/config.yaml", { warn: () => {} });
