@@ -488,6 +488,39 @@ export async function orphanState(
   }
 }
 
+/** Running-supervisor crash-reconcile lookup (#815): whether a dead worker's
+ * last-claimed issue is still stranded in `running` with no terminal envelope.
+ * One `gh issue view` round-trip resolving all three signals
+ * reconcileDeadWorkerClaim needs:
+ *   - `ghOk`           — the read succeeded (false → leave it for the boot sweep).
+ *   - `stillRunning`   — the issue is OPEN and still carries the `running` label
+ *                        (a worker that completed normally already dropped it).
+ *   - `envelopePosted` — some comment already carries a terminal
+ *                        `<details data-attempt-status>` envelope, so the
+ *                        reconcile skips re-commenting. */
+export async function crashedClaimState(
+  ctx: GhContext,
+  issue: number,
+): Promise<{ ghOk: boolean; stillRunning: boolean; envelopePosted: boolean }> {
+  const r = await runGh(ctx, ["issue", "view", String(issue), ...repoArgs(ctx), "--json", "state,labels,comments"]);
+  if (r.code !== 0) return { ghOk: false, stillRunning: false, envelopePosted: false };
+  try {
+    const parsed = JSON.parse(r.stdout) as {
+      state?: string;
+      labels?: Array<{ name?: string }>;
+      comments?: Array<{ body?: string }>;
+    };
+    const labels = Array.isArray(parsed.labels) ? parsed.labels.map((l) => String(l.name ?? "")) : [];
+    const stillRunning = String(parsed.state ?? "OPEN") !== "CLOSED" && labels.includes(LABEL_RUNNING);
+    const envelopePosted = Array.isArray(parsed.comments)
+      ? parsed.comments.some((c) => String(c.body ?? "").includes("data-attempt-status"))
+      : false;
+    return { ghOk: true, stillRunning, envelopePosted };
+  } catch {
+    return { ghOk: false, stillRunning: false, envelopePosted: false };
+  }
+}
+
 /** Branch-cleanup/boot blocker-state lookup: gh issue view --json state → the
  * raw state string ("OPEN" | "CLOSED"), or undefined on a 404/transient miss. */
 export async function blockerState(ctx: GhContext, issue: number): Promise<string | undefined> {

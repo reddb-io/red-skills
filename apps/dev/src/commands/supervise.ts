@@ -447,6 +447,15 @@ function buildSupervisorDeps(
           return null;
         }
       },
+      // #815: running-supervisor crash reconcile. Resolve whether a dead worker's
+      // claimed issue is still stranded in `running` with no terminal envelope.
+      crashedClaimState: async (issue) => {
+        try {
+          return await ghx.crashedClaimState(ghCtx, issue);
+        } catch {
+          return { ghOk: false, stillRunning: false, envelopePosted: false };
+        }
+      },
     },
     now,
     // Env for the bounded stalled re-claim cap (#402): RED_AFK_RETRY_STALLED.
