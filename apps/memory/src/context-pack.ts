@@ -12,6 +12,42 @@ import {
   type SkillRecommendationReport,
 } from "./skill-recommendations.js";
 import type { SkillRollup } from "./skill-events.js";
+import {
+  compressContent,
+  type CompressedContent,
+  type CompressedContentKind,
+} from "./context-compress.js";
+
+/**
+ * Compresses one recalled node's content for the pack (issue #827). Injectable
+ * so tests can force a compression error (exercising the safety fallback) or
+ * compare against an uncompressed baseline.
+ */
+export type ContentCompressor = (node: RecalledNode) => CompressedContent;
+
+/** Expand-handle prefix; the full node is one `memory:recall <rid>` away. */
+export const EXPAND_HANDLE_PREFIX = "memory:recall ";
+
+/** Build the expand handle that round-trips an entry back to its full node. */
+export function expandHandleFor(rid: number): string {
+  return `${EXPAND_HANDLE_PREFIX}${rid}`;
+}
+
+/** Recover the rid from an expand handle, or null when it is not one. */
+export function parseExpandHandle(handle: string): number | null {
+  if (!handle.startsWith(EXPAND_HANDLE_PREFIX)) return null;
+  const rid = Number.parseInt(handle.slice(EXPAND_HANDLE_PREFIX.length).trim(), 10);
+  return Number.isInteger(rid) ? rid : null;
+}
+
+function defaultCompressor(node: RecalledNode): CompressedContent {
+  const raw =
+    node.properties.content ?? node.properties.summary ?? node.properties.title ?? node.excerpt;
+  return compressContent(raw ?? "", {
+    nodeType: node.node_type,
+    language: typeof node.properties.language === "string" ? node.properties.language : null,
+  });
+}
 
 export type ContextPackStore = RecallStore;
 
@@ -45,6 +81,12 @@ export interface ContextPackEntry {
   score: number;
   /** Composed confidence in [0, 1] (issue #167). */
   confidence_score?: number;
+  /** `memory:recall <rid>` handle that round-trips back to the full node (#827). */
+  expandHandle: string;
+  /** True when `excerpt` is a compression of larger content (the handle matters). */
+  compressed: boolean;
+  /** Which content-type strategy produced `excerpt`, when compressed. */
+  compressedKind?: CompressedContentKind;
 }
 
 export interface ContextPackWarning {
@@ -73,6 +115,8 @@ export interface ContextPackOptions extends Pick<RecallOptions, "scope" | "now">
   limit?: number;
   depth?: number;
   skillRollups?: SkillRollup[];
+  /** Override the per-entry content compressor (tests, baselines). */
+  compressor?: ContentCompressor;
 }
 
 const DEFAULT_BUDGET_CHARS = 4_000;
@@ -147,7 +191,8 @@ export async function buildContextPack(
     };
   }
 
-  const entries = activeNodes.map((node, index) => toEntry(node, index + 1, goal));
+  const compressor = opts.compressor ?? defaultCompressor;
+  const entries = activeNodes.map((node, index) => toEntry(node, index + 1, goal, compressor));
   const skillRecommendations = buildSkillRecommendationsFromEvidence(
     goal,
     activeNodes,
@@ -205,11 +250,33 @@ async function buildWarnings(
   return warnings.sort((a, b) => order[a.kind] - order[b.kind] || a.rids[0] - b.rids[0]);
 }
 
-function toEntry(node: RecalledNode, marker: number, goal: string): ContextPackEntry {
+function toEntry(
+  node: RecalledNode,
+  marker: number,
+  goal: string,
+  compressor: ContentCompressor,
+): ContextPackEntry {
   const section = classifySection(node);
   const title = node.properties.title ?? node.label;
   const source = typeof node.properties.source === "string" ? node.properties.source : null;
   const confidence = node.properties.confidence ?? "AMBIGUOUS";
+  // Safety fallback (#827): any compression error emits the original entry
+  // unchanged — the legacy normalized excerpt, no handle, nothing lost.
+  let excerpt = normalizeWhitespace(node.excerpt);
+  let compressed = false;
+  let compressedKind: CompressedContentKind | undefined;
+  try {
+    const result = compressor(node);
+    if (result.text.length > 0) {
+      excerpt = normalizeWhitespace(result.text);
+      compressed = result.lossy;
+      if (result.lossy) compressedKind = result.kind;
+    }
+  } catch {
+    excerpt = normalizeWhitespace(node.excerpt);
+    compressed = false;
+    compressedKind = undefined;
+  }
   return {
     section,
     title,
@@ -225,8 +292,11 @@ function toEntry(node: RecalledNode, marker: number, goal: string): ContextPackE
       source,
     },
     reason: inclusionReason(node, section, goal),
-    excerpt: normalizeWhitespace(node.excerpt),
+    excerpt,
     score: node.score,
+    expandHandle: expandHandleFor(node.rid),
+    compressed,
+    ...(compressedKind != null ? { compressedKind } : {}),
     ...(node.confidence != null ? { confidence_score: node.confidence } : {}),
   };
 }
@@ -393,11 +463,16 @@ function renderEntry(entry: ContextPackEntry): string {
   const provenance = entry.provenance
     ? `; provenance: ${entry.provenance.source_kind}${entry.provenance.writer ? `/${entry.provenance.writer}` : ""}`
     : "";
-  return [
+  const lines = [
     `- ${entry.citation.marker} ${entry.title} (${entry.nodeType}, ${entry.confidence}; trust: ${entry.trust.toFixed(2)}; importance: ${entry.importance.toFixed(2)}; urn: ${entry.citation.urn}${source}${provenance})`,
     `  Reason: ${entry.reason}`,
     `  Evidence: ${entry.excerpt}`,
-  ].join("\n");
+  ];
+  if (entry.compressed) {
+    const kind = entry.compressedKind ? `${entry.compressedKind}-compressed; ` : "";
+    lines.push(`  Expand: ${kind}\`${entry.expandHandle}\``);
+  }
+  return lines.join("\n");
 }
 
 function edgeLabel(edge: Record<string, unknown>): string {
