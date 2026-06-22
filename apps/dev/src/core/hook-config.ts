@@ -1,4 +1,5 @@
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 import type { ConfigValues } from "./config.js";
 
 /**
@@ -95,9 +96,81 @@ function isCanonical(name: string): name is HookName {
 const HOOKS_PREFIX = "afk.hooks.";
 const DEFAULTS_PREFIX = "afk.hooks.defaults.";
 
+/** Injectable directory lister — returns filenames (not full paths). */
+export type ListFiles = (dir: string) => string[];
+
+/**
+ * Sort key for a hook script filename: the leading integer prefix (e.g. 10 from
+ * "10-foo.sh"), or Infinity when there is no numeric prefix so un-prefixed
+ * scripts sort after all numbered ones.
+ */
+function numericPrefix(filename: string): number {
+  const m = /^(\d+)/.exec(filename);
+  return m ? parseInt(m[1]!, 10) : Infinity;
+}
+
+function compareFilenames(a: string, b: string): number {
+  const diff = numericPrefix(a) - numericPrefix(b);
+  return diff !== 0 ? diff : a.localeCompare(b);
+}
+
+/**
+ * Resolve the per-point layered script directories into an ordered command list.
+ *
+ * For a given lifecycle point, collects every non-hidden file from the library
+ * dir (`<libraryHooksDir>/<point>/`) and the project dir
+ * (`<projectHooksDir>/<point>/`), merges them with project-wins shadowing (a
+ * project file with the same filename overwrites the library file), and returns
+ * the full paths sorted by numeric filename prefix then lexically. Either dir
+ * may be undefined or absent — its contribution is simply empty.
+ */
+export function resolveDirScripts(
+  point: HookName,
+  libraryHooksDir: string | undefined,
+  projectHooksDir: string | undefined,
+  listFiles: ListFiles,
+  dirExists: (dir: string) => boolean,
+): string[] {
+  const listDir = (base: string | undefined): Map<string, string> => {
+    const map = new Map<string, string>();
+    if (!base) return map;
+    const dir = join(base, point);
+    if (!dirExists(dir)) return map;
+    for (const f of listFiles(dir)) {
+      if (!f.startsWith(".")) map.set(f, join(dir, f));
+    }
+    return map;
+  };
+
+  const libMap = listDir(libraryHooksDir);
+  const projMap = listDir(projectHooksDir);
+
+  // Merge: project shadows library on same filename.
+  const merged = new Map<string, string>([...libMap, ...projMap]);
+  const sorted = [...merged.keys()].sort(compareFilenames);
+  return sorted.map((f) => merged.get(f)!);
+}
+
 export interface ResolveHooksOptions {
   /** Resolves each enabled built-in default to its command string. */
   defaultCommand: HookDefaultResolver;
+  /**
+   * The plugin's library hooks directory (`<skill>/hooks/`). Per-point
+   * subdirectories under it are scanned for auto-run scripts (ADR 0026 layered
+   * PATH extension). When undefined (e.g. bundled without the surrounding tree),
+   * the library contribution is empty.
+   */
+  libraryHooksDir?: string;
+  /**
+   * The project's hooks directory (`.red/hooks/`). Per-point subdirectories
+   * under it are scanned for auto-run scripts that may shadow library scripts.
+   * When undefined or absent on disk, the project contribution is empty.
+   */
+  projectHooksDir?: string;
+  /** Injected dir lister for testing (defaults to readdirSync). */
+  listFiles?: ListFiles;
+  /** Injected existence check for testing (defaults to existsSync). */
+  dirExists?: (dir: string) => boolean;
 }
 
 /**
@@ -142,7 +215,11 @@ export function resolveHooks(
     userLists.set(name, commands);
   }
 
-  // Build the resolved map: every canonical point present, defaults first.
+  const { libraryHooksDir, projectHooksDir } = options;
+  const listFiles = options.listFiles ?? ((dir) => readdirSync(dir));
+  const dirExists = options.dirExists ?? existsSync;
+
+  // Build the resolved map: defaults first, then directory scripts, then inline.
   const resolved = {} as ResolvedHooks;
   for (const name of CANONICAL_HOOK_NAMES) {
     const list: string[] = [];
@@ -154,6 +231,12 @@ export function resolveHooks(
         const command = defaultCommand(defaultName);
         if (command !== undefined) list.push(command);
       }
+    }
+
+    // Directory scripts (library + project, merged, shadowed) run after defaults
+    // and before inline config entries.
+    if (libraryHooksDir !== undefined || projectHooksDir !== undefined) {
+      list.push(...resolveDirScripts(name, libraryHooksDir, projectHooksDir, listFiles, dirExists));
     }
 
     const userCommands = userLists.get(name);
