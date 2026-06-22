@@ -254,7 +254,7 @@ describe("reconcile — green → land", () => {
     expect(trace.listByLabelCalls).toContain("req:9");
     // The dependent (#12) is promoted: blocked:dependency → ready-for-agent.
     const promote = trace.labelEdits.find((e) => e.issue === 12);
-    expect(promote).toEqual({ issue: 12, remove: ["blocked:dependency"], add: ["ready-for-agent"] });
+    expect(promote).toEqual({ issue: 12, remove: ["blocked:dependency", "req:9"], add: ["ready-for-agent"] });
   });
 });
 

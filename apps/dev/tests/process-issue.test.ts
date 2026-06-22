@@ -1826,7 +1826,7 @@ describe("close cascade (event-driven auto-unblock)", () => {
     expect(trace.listByLabelCalls).toEqual(["req:9"]);
 
     const promote = trace.labelEdits.filter((e) => e.add.includes("ready-for-agent"));
-    expect(promote).toEqual([{ issue: 20, remove: ["blocked:dependency"], add: ["ready-for-agent"] }]);
+    expect(promote).toEqual([{ issue: 20, remove: ["blocked:dependency", "req:9"], add: ["ready-for-agent"] }]);
     expect(trace.comments).toContainEqual({
       issue: 20,
       body: "🤖 /afk unblocked: all dependencies closed (#9).",
@@ -1852,7 +1852,7 @@ describe("close cascade (event-driven auto-unblock)", () => {
     });
     expect(trace.labelEdits).toContainEqual({
       issue: 30,
-      remove: ["blocked:dependency"],
+      remove: ["blocked:dependency", "req:8", "req:9"],
       add: ["ready-for-agent"],
     });
   });
