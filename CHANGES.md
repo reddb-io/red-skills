@@ -1966,3 +1966,10 @@ Upstream base: `mattpocock/skills@6eeb81b5fcfeeb5bd531dd47ab2f9f2bbea27461` (see
 - **provenance**: upstream-derived from `mattpocock/skills`; imported during the dev-plugin marketplace restructuring (`7792235`) and later removed in `8e02ac2` / `a49666c`.
 - **why**: upstream AI Hero / Total TypeScript course-exercise scaffolder (targets `pnpm ai-hero-cli internal lint` + an `exercises/` tree); irrelevant to reddb.io engineering.
 - **what changed**: deleted `plugins/dev/skills/misc/scaffold-exercises/`; removed from `plugins/dev/.claude-plugin/plugin.json`, the root `README.md` table, and the `misc/` bucket README. `.codex-plugin` drops it via its `./skills/` wildcard.
+
+## codebase-design (engineering)
+
+- **status**: skipped — folded into improve-codebase-architecture
+- **upstream**: `6eeb81b`
+- **why**: The deep-module vocabulary is referenced by exactly one skill (`improve-codebase-architecture`), so a standalone shared-vocabulary skill adds indirection without serving a second consumer. All upstream content already exists in the ICA skill directory: the vocabulary (`codebase-design/SKILL.md` ≡ `LANGUAGE.md`), the deepening guide (`DEEPENING.md`), and the design-it-twice pattern (`DESIGN-IT-TWICE.md` ≡ `INTERFACE-DESIGN.md`).
+- **what changed**: no files added, removed, or modified; upstream `codebase-design` skill recorded here as not adopted.
