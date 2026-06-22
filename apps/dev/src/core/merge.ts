@@ -239,6 +239,157 @@ export async function waitForReviewCheck(
   return everSeen ? "timeout" : "absent";
 }
 
+// ---------- CI-aware merge (#812) ----------
+//
+// An UNLOCKED admin-merge (`gh pr merge --admin --merge`) does NOT bypass
+// required status checks on a base with `enforce_admins=true` (e.g. reddb-io/reddb
+// since #975 / ADR 0059). Admin-merging a just-opened PR whose required checks are
+// still pending is therefore rejected — and historically AFK bucketed that
+// rejection into `merge-conflict`, mislabelling a perfectly MERGEABLE PR and
+// re-running the whole inner agent. CI-aware merge fixes this: poll
+// `mergeStateStatus` + `statusCheckRollup` until the PR settles, then merge only
+// when it is genuinely ready, and DISTINGUISH the failure modes (conflict vs a
+// failed required check vs checks merely pending).
+
+/**
+ * Normalised verdict for the CI-aware merge poll:
+ *   - `merge`     — ready to admin-merge (CLEAN, or BLOCKED only by a required
+ *                   review which `--admin` waives, or non-required checks flaky).
+ *   - `conflict`  — a real git conflict / DIRTY / BEHIND (non-fast-forward). Maps
+ *                   to the existing bounded `merge-conflict` recovery.
+ *   - `ci-failed` — a required check FAILED. A distinct outcome so the next
+ *                   attempt fixes the red check, not a blind full re-run.
+ *   - `pending`   — required checks still running / GitHub still computing. The
+ *                   poll keeps waiting; on timeout the caller hands off the open PR.
+ */
+export type MergeReadiness = "merge" | "conflict" | "ci-failed" | "pending";
+
+/** Opt-in CI-aware merge wait for the UNLOCKED admin-PR landing (#812). Present →
+ * the landing polls the PR's merge state until it settles before admin-merging.
+ * Absent → admin-merge immediately (the legacy behaviour, fine on a base with no
+ * required checks). */
+export interface CiAwaitInput {
+  /** Injected sleep between polls. */
+  sleep: Sleep;
+  /** Max poll attempts before the wait times out (→ ci-pending handoff). Default 60. */
+  maxPolls?: number;
+  /** Delay between polls, in ms. Default 10000. */
+  intervalMs?: number;
+}
+
+interface RollupEntry {
+  status?: unknown;
+  conclusion?: unknown;
+  state?: unknown;
+}
+
+const up = (v: unknown): string => (typeof v === "string" ? v.trim().toUpperCase() : "");
+
+/** A check has concluded with a non-success verdict. Covers both the CheckRun
+ * shape (`conclusion`) and the legacy StatusContext shape (`state`). */
+function checkFailed(entry: RollupEntry): boolean {
+  const conclusion = up(entry.conclusion);
+  const state = up(entry.state);
+  if (["FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE", "STALE"].includes(conclusion)) {
+    return true;
+  }
+  return ["FAILURE", "ERROR"].includes(state);
+}
+
+/** A check has not yet concluded. A CheckRun whose `status` is anything but
+ * COMPLETED is in flight; a StatusContext in PENDING/EXPECTED is in flight; a
+ * COMPLETED CheckRun with no conclusion yet is treated as in flight too. */
+function checkPending(entry: RollupEntry): boolean {
+  const status = up(entry.status);
+  const state = up(entry.state);
+  const conclusion = up(entry.conclusion);
+  if (status !== "" && status !== "COMPLETED") return true;
+  if (["PENDING", "EXPECTED"].includes(state)) return true;
+  if (status === "COMPLETED" && conclusion === "") return true;
+  return false;
+}
+
+interface MergeStateView {
+  mergeStateStatus: string;
+  anyFailed: boolean;
+  anyPending: boolean;
+}
+
+/** Parse `gh pr view <num> --json mergeStateStatus,statusCheckRollup` stdout.
+ * Tolerant: any parse failure yields UNKNOWN + no check signal, so the caller
+ * keeps polling rather than mis-deciding on a transient gh hiccup. */
+export function parseMergeStateView(stdout: string): MergeStateView {
+  const text = stdout.trim();
+  if (text === "") return { mergeStateStatus: "", anyFailed: false, anyPending: false };
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (typeof parsed !== "object" || parsed === null) {
+      return { mergeStateStatus: "", anyFailed: false, anyPending: false };
+    }
+    const mergeStateStatus = (parsed as { mergeStateStatus?: unknown }).mergeStateStatus;
+    const rollup = (parsed as { statusCheckRollup?: unknown }).statusCheckRollup;
+    const entries: RollupEntry[] = Array.isArray(rollup)
+      ? rollup.filter((e): e is RollupEntry => typeof e === "object" && e !== null)
+      : [];
+    return {
+      mergeStateStatus: typeof mergeStateStatus === "string" ? mergeStateStatus : "",
+      anyFailed: entries.some(checkFailed),
+      anyPending: entries.some(checkPending),
+    };
+  } catch {
+    return { mergeStateStatus: "", anyFailed: false, anyPending: false };
+  }
+}
+
+/**
+ * Decide the merge readiness from the parsed merge state. Order matters:
+ *   1. DIRTY / BEHIND → a real git conflict / non-fast-forward → `conflict`.
+ *   2. any required check FAILED → `ci-failed` (even when GitHub still reports
+ *      BLOCKED — a failed check never clears by waiting).
+ *   3. CLEAN → `merge`.
+ *   4. any check still running → `pending` (keep waiting).
+ *   5. BLOCKED with neither failures nor pending checks → blocked by a required
+ *      REVIEW only, which `--admin` waives → `merge`.
+ *   6. UNSTABLE / HAS_HOOKS (mergeable; only non-required checks unsettled) → `merge`.
+ *   7. UNKNOWN / DRAFT / empty → `pending` (GitHub still computing mergeability).
+ */
+export function classifyMergeState(view: MergeStateView): MergeReadiness {
+  const s = up(view.mergeStateStatus);
+  if (s === "DIRTY" || s === "BEHIND") return "conflict";
+  if (view.anyFailed) return "ci-failed";
+  if (s === "CLEAN") return "merge";
+  if (view.anyPending) return "pending";
+  if (s === "BLOCKED") return "merge";
+  if (s === "UNSTABLE" || s === "HAS_HOOKS") return "merge";
+  return "pending";
+}
+
+/**
+ * Poll `gh pr view <num>` until the PR settles to a terminal readiness
+ * (`merge` / `conflict` / `ci-failed`) or the poll budget is exhausted. A
+ * `pending` return means the wait timed out with checks still running — the
+ * caller hands off the OPEN PR rather than re-running the agent (#812).
+ */
+export async function waitForMergeReady(
+  exec: Exec,
+  repo: string,
+  prNumber: number,
+  input: CiAwaitInput,
+): Promise<MergeReadiness> {
+  const maxPolls = input.maxPolls ?? 60;
+  const intervalMs = input.intervalMs ?? 10_000;
+
+  for (let attempt = 0; attempt < maxPolls; attempt++) {
+    const res = await exec([
+      "gh", "-R", repo, "pr", "view", String(prNumber), "--json", "mergeStateStatus,statusCheckRollup",
+    ]);
+    const verdict = classifyMergeState(parseMergeStateView(res.stdout));
+    if (verdict !== "pending") return verdict;
+    if (attempt + 1 < maxPolls) await input.sleep(intervalMs);
+  }
+  return "pending";
+}
+
 /** Inputs for the UNLOCKED landing path, {@link landPr}. */
 export interface LandPrInput {
   /** `owner/repo` slug passed to `gh -R`. */
@@ -264,12 +415,33 @@ export interface LandPrInput {
    * default) → admin-merge immediately, ignoring advisory checks.
    */
   waitForReview?: WaitForReviewInput;
+  /**
+   * Opt-in CI-aware merge (#812). When present, the landing polls the PR's merge
+   * state (`mergeStateStatus` + `statusCheckRollup`) after opening/reusing it and
+   * admin-merges ONLY once it is genuinely ready — instead of admin-merging a
+   * just-opened PR whose required checks are still pending (which an
+   * `enforce_admins` base rejects). Absent (the default) → admin-merge
+   * immediately, fine on a base with no required status checks.
+   */
+  ciAwait?: CiAwaitInput;
 }
+
+/** Why an UNLOCKED landing did not admin-merge, so the caller can route the
+ * distinct failure modes (#812) instead of collapsing them all to merge-conflict. */
+export type LandPrFailReason =
+  | "push-failed"
+  | "no-pr"
+  | "conflict"
+  | "ci-failed"
+  | "ci-pending"
+  | "merge-failed";
 
 export interface LandPrResult {
   ok: boolean;
-  /** PR number that was admin-merged, when one resolved. */
+  /** PR number that was admin-merged (or held), when one resolved. */
   prNumber?: number;
+  /** Set on `ok:false` — the distinct failure mode (#812). */
+  reason?: LandPrFailReason;
 }
 
 const PR_BODY_PREFIX = "Automated AFK landing for #";
@@ -286,7 +458,7 @@ const PR_BODY_PREFIX = "Automated AFK landing for #";
  * Idempotent: a re-attempt reuses the open PR rather than creating a second.
  */
 export async function landPr(exec: Exec, input: LandPrInput): Promise<LandPrResult> {
-  const { repo, gitRepo, remote, branch, target, n, title, worktree, waitForReview } = input;
+  const { repo, gitRepo, remote, branch, target, n, title, worktree, waitForReview, ciAwait } = input;
 
   // 1. Make the attempt branch's origin state certain before opening the PR.
   if (worktree) {
@@ -299,12 +471,12 @@ export async function landPr(exec: Exec, input: LandPrInput): Promise<LandPrResu
       `HEAD:refs/heads/${branch}`,
       "--force-with-lease",
     ]);
-    if (push.code !== 0) return { ok: false };
+    if (push.code !== 0) return { ok: false, reason: "push-failed" };
   }
 
   // 2. Reuse an open PR for this head/base, else create one.
   const prNumber = await ensurePr(exec, { repo, branch, target, n, title });
-  if (prNumber === undefined) return { ok: false };
+  if (prNumber === undefined) return { ok: false, reason: "no-pr" };
 
   // 2b. Opt-in advisory-review wait (afk.merge.wait_for_review, ADR 0048). Hold
   // until the configured review check concludes, then fall through to merge
@@ -314,9 +486,24 @@ export async function landPr(exec: Exec, input: LandPrInput): Promise<LandPrResu
     await waitForReviewCheck(exec, repo, prNumber, waitForReview);
   }
 
+  // 2c. Opt-in CI-aware merge (#812). An admin-merge does NOT bypass required
+  // status checks on an `enforce_admins` base, so admin-merging a just-opened PR
+  // with checks still pending is rejected. Poll until the PR settles, then route
+  // the distinct failure modes instead of collapsing them to merge-conflict:
+  //   - conflict   → caller's bounded merge-conflict recovery (correct here).
+  //   - ci-failed  → a distinct outcome targeting the failed check, not a re-run.
+  //   - ci-pending → timeout: hand off the OPEN, MERGEABLE PR (never re-run the agent).
+  //   - merge      → fall through to the admin-merge below.
+  if (ciAwait) {
+    const ready = await waitForMergeReady(exec, repo, prNumber, ciAwait);
+    if (ready === "conflict") return { ok: false, prNumber, reason: "conflict" };
+    if (ready === "ci-failed") return { ok: false, prNumber, reason: "ci-failed" };
+    if (ready === "pending") return { ok: false, prNumber, reason: "ci-pending" };
+  }
+
   // 3. Admin-merge: the worker is autonomous, so bypass required-review checks.
   const merge = await exec(["gh", "-R", repo, "pr", "merge", String(prNumber), "--admin", "--merge"]);
-  if (merge.code !== 0) return { ok: false, prNumber };
+  if (merge.code !== 0) return { ok: false, prNumber, reason: "merge-failed" };
 
   // 4. Fast-forward local <target> to the merge commit (best-effort).
   await exec(["git", "-C", gitRepo, "fetch", remote, target, "--quiet"]);
