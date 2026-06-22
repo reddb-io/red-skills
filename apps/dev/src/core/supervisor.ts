@@ -458,6 +458,22 @@ export interface SupervisorGh {
    * Absent when reconcile dispatch is not wired.
    */
   findReconcileCandidate?(): Promise<ReconcileCandidate | null>;
+  /**
+   * Resolve whether a dead worker's last-claimed issue is still stranded in
+   * `running` with no terminal envelope posted (#815). The running-supervisor
+   * analogue of boot.ts orphanState, scoped to the crash-reconcile path: the
+   * caller already has the issue number from the dead worker's iter-dir state,
+   * and only needs to know whether the claim is still open + still `running` +
+   * whether an envelope already rode the issue. Best-effort: `ghOk=false` on any
+   * gh failure leaves the issue for the boot sweep. Absent → the running
+   * supervisor never reconciles a dead worker's claim (back-compat; the
+   * boot-time orphan sweep is the only recovery path).
+   */
+  crashedClaimState?(issue: number): Promise<{
+    ghOk: boolean;
+    stillRunning: boolean;
+    envelopePosted: boolean;
+  }>;
 }
 
 /** Per-slot visibility record for non-closed slots in the heartbeat.
@@ -692,6 +708,111 @@ export function buildReaperEnvelope(info: IterDirInfo): string {
   });
 }
 
+/** Build the crash-reconcile no-sentinel envelope body (#815), composing
+ * envelope.ts buildEnvelope. The running-supervisor analogue of
+ * buildReaperEnvelope: status "no-sentinel", a notes section and a fenced
+ * afk.log tail, but worded for an orchestrator that DIED mid-attempt (SIGKILL
+ * class — its EXIT trap never ran, so it posted no terminal envelope) rather
+ * than a stall-reap. */
+export function buildCrashEnvelope(info: IterDirInfo): string {
+  return buildEnvelope({
+    status: "no-sentinel",
+    worker: info.workerId.length > 0 ? info.workerId : "unknown",
+    duration: `${info.durationS}s · orchestrator died mid-attempt`,
+    diff: "crashed",
+    attempt: info.attempt,
+    sections: [
+      { name: "notes", body: info.notes.length > 0 ? info.notes : "(no agent notes recorded before the orchestrator died)" },
+      { name: "log", body: info.logTail, fenced: true },
+    ],
+  });
+}
+
+/** Pure gate for the running-supervisor crash reconcile (#815): a dead worker's
+ * claim is reconcilable only when it named a real issue, the gh lookup
+ * succeeded, and the issue is still stranded in `running`. A null issue (worker
+ * died pre-claim), a failed gh lookup (left for the boot sweep), or an issue no
+ * longer `running` (the worker completed normally, or another surface already
+ * reclaimed it) all resolve to false → no envelope, no label edit. */
+export function decideCrashReconcile(input: {
+  issue: number | null;
+  ghOk: boolean;
+  stillRunning: boolean;
+}): boolean {
+  return input.issue !== null && input.ghOk && input.stillRunning;
+}
+
+/**
+ * reconcileDeadWorkerClaim (#815, ADR 0071 Pattern 5): recover a single issue a
+ * just-dead worker stranded in `running`. The running supervisor's analogue of
+ * the boot-time orphan sweep's restore-and-remove branch — it closes the gap
+ * where a worker dies mid-attempt (after the agent finished, before posting a
+ * terminal envelope), the slot is respawned onto a NEW issue, and the old claim
+ * sits `running` forever because no fleet reboot ever runs the boot sweep.
+ *
+ * `info` is the dead worker's iter-dir snapshot, captured by the caller BEFORE
+ * handleDeadSlot respawns the slot (a respawn rebinds resolveIterDir to the new
+ * worker's dir). Steps, all best-effort and gated on a real still-`running`
+ * claim:
+ *   1. Post a no-sentinel envelope carrying the attempt's afk.log tail (skipped
+ *      when one was already posted, so a double-fire never double-comments).
+ *   2. Route through bounded `blocked:crashed` recovery (recovery.ts), exactly
+ *      as reapStalledSlot does for `stalled`: under the cap → rotate
+ *      `running` → `ready-for-agent` CLEAN; at the cap → escalate to
+ *      ready-for-human carrying `blocked:crashed` + a self-explanatory comment.
+ * Returns the reconciled issue number, or null when nothing was reconciled.
+ */
+export async function reconcileDeadWorkerClaim(
+  info: IterDirInfo | null,
+  deps: SupervisorDeps,
+): Promise<number | null> {
+  if (info === null || info.issue === null) return null;
+  if (!deps.gh.crashedClaimState) return null;
+
+  let claim: { ghOk: boolean; stillRunning: boolean; envelopePosted: boolean };
+  try {
+    claim = await deps.gh.crashedClaimState(info.issue);
+  } catch {
+    // gh failed → leave the issue for the next boot sweep (conservative).
+    return null;
+  }
+  if (!decideCrashReconcile({ issue: info.issue, ghOk: claim.ghOk, stillRunning: claim.stillRunning })) {
+    return null;
+  }
+
+  // 1. No-sentinel envelope (skip when one already rode the issue).
+  if (!claim.envelopePosted) {
+    await deps.gh.comment(info.issue, buildCrashEnvelope(info));
+  }
+
+  // 2. Bounded blocked:crashed recovery, mirroring the stall-reaper (#402).
+  const env = deps.recoveryEnv ?? {};
+  const decision = recoveryDecision("crashed", info.attempt, env);
+  if (decision === "retry") {
+    await deps.gh.editLabels(info.issue, [LABEL_READY], [LABEL_RUNNING]);
+  } else {
+    // The recovery REASON is "crashed" (recovery.ts cap table), but the
+    // descriptive `blocked:crashed` label is keyed off the matching terminal
+    // OUTCOME — "no-sentinel" (attempt-outcome.ts), the death-without-envelope
+    // class this reconcile recovers.
+    const typed = blockedLabelFor("no-sentinel");
+    if (typed !== null) await deps.gh.ensureLabel(typed);
+    await deps.gh.editLabels(
+      info.issue,
+      typed !== null ? [LABEL_HUMAN, typed] : [LABEL_HUMAN],
+      [LABEL_RUNNING, LABEL_READY],
+    );
+    const cap = recoveryCap("crashed", env);
+    if (cap !== null) {
+      await deps.gh.comment(
+        info.issue,
+        `🤖 /afk escalating to ready-for-human: blocked:crashed retry budget exhausted (attempt ${info.attempt}/${cap}).`,
+      );
+    }
+  }
+  return info.issue;
+}
+
 // ---------- actions (compose deciders, apply via injected IO) ----------
 
 /** Outcome of one supervise tick, for parity assertions / logging. */
@@ -706,6 +827,10 @@ export interface TickResult {
   /** Slots whose cooldown expired and a half-open probe was spawned this tick. */
   halfOpened: number[];
   reaped: number[];
+  /** Issues re-queued this tick because their claiming worker died mid-attempt
+   * and stranded them in `running` (#815, ADR 0071 Pattern 5). One entry per
+   * issue the running supervisor reconciled off the dead-slot respawn path. */
+  crashReconciled: number[];
   /** Slots into which a reconcile worker was dispatched this tick. */
   reconciledSlots: number[];
   /** True when the stop-file was honoured and all workers terminated. */
@@ -1167,6 +1292,7 @@ export async function superviseTick(
     idleParked: [],
     halfOpened: [],
     reaped: [],
+    crashReconciled: [],
     reconciledSlots: [],
     stopped: false,
     queueDepth: 0,
@@ -1248,13 +1374,31 @@ export async function superviseTick(
     if ((slot.parked && !slot.halfOpen) || slot.idleParked || slot.spawning) continue;
     const pid = slot.pid;
     if (pid === null || !deps.proc.isAlive(pid)) {
+      // Capture the dead worker's iter dir BEFORE handleDeadSlot respawns the
+      // slot — a respawn rebinds resolveIterDir(i) to the NEW worker's dir, so
+      // the stranded claim must be snapshotted here, while it still resolves.
+      const deadInfo = deps.fs.resolveIterDir(i);
       result.deaths.push(i);
       const { parked } = await handleDeadSlot(i, slot, deps, config, queueDepth);
       if (parked) {
+        // A circuit-trip park already swept this slot's claimed issues
+        // (sweepParkedSlot); an idle-park drained cleanly with no live claim.
+        // Neither needs the crash reconcile.
         if (slot.idleParked) result.idleParked.push(i);
         else result.parked.push(i);
       } else {
         result.respawned.push(i);
+        // #815: the respawn reused the slot for a NEW issue, so a worker that
+        // died mid-attempt (agent finished, no terminal envelope) would leave
+        // its old claim stranded in `running` forever — invisible to the drain
+        // until a fleet reboot runs the boot sweep. Reconcile it here on the
+        // live loop instead. Best-effort: a failure leaves it for the boot sweep.
+        try {
+          const reconciled = await reconcileDeadWorkerClaim(deadInfo, deps);
+          if (reconciled !== null) result.crashReconciled.push(reconciled);
+        } catch {
+          // never let a reconcile failure abort the tick.
+        }
       }
     }
   }
@@ -1354,6 +1498,7 @@ export async function runSupervisor(
       `tick: slots=${state.slots.length} respawned=${result.respawned.length} ` +
         `deaths=${result.deaths.length} parked=${result.parked.length} idle-parked=${result.idleParked.length} ` +
         `half-opened=${result.halfOpened.length} reaped=${result.reaped.length} ` +
+        `crash-reconciled=${result.crashReconciled.length} ` +
         `ready=${heartbeat.readyForAgent} busy=${heartbeat.slotsBusy} free=${heartbeat.slotsFree}`,
     );
     if (result.stopped) return;
@@ -1364,7 +1509,7 @@ export async function runSupervisor(
 /** A non-stop tick result (the abandon/error fallback). The `abandoned` flag
  * tells runSupervisor not to advance lastProgressEpoch for this pass. */
 function continueResult(): TickResult {
-  return { respawned: [], deaths: [], parked: [], idleParked: [], halfOpened: [], reaped: [], reconciledSlots: [], stopped: false, queueDepth: 0, abandoned: true };
+  return { respawned: [], deaths: [], parked: [], idleParked: [], halfOpened: [], reaped: [], crashReconciled: [], reconciledSlots: [], stopped: false, queueDepth: 0, abandoned: true };
 }
 
 /**
