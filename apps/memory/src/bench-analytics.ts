@@ -157,6 +157,9 @@ export async function writeBenchEvalAnalytics(
       { name: "exact_match", value: report.aggregate.exact_match, unit: "score" },
       { name: "f1", value: report.aggregate.f1, unit: "score" },
       { name: "abstention_score", value: report.aggregate.abstention_score, unit: "score" },
+      { name: "precision_at_k", value: report.aggregate.precision_at_k, unit: "score" },
+      { name: "recall_at_k", value: report.aggregate.recall_at_k, unit: "score" },
+      { name: "ndcg_at_k", value: report.aggregate.ndcg_at_k, unit: "score" },
       { name: "quality_per_1k_tokens", value: report.aggregate.quality_per_1k_tokens, unit: "score_per_1k_tokens" },
       ...(report.aggregate.judge_j?.score !== null && report.aggregate.judge_j?.score !== undefined
         ? [{ name: "judge_j", value: report.aggregate.judge_j.score, unit: "score" }]
@@ -308,7 +311,8 @@ export async function gateBenchEvalCoreRegression(opts: {
 }): Promise<BenchRegressionGateResult> {
   const bench = "eval";
   const substrate = opts.substrate ?? "reddb";
-  const checkedMetrics = opts.metrics ?? ["exact_match", "f1", "abstention_score", "quality_per_1k_tokens"];
+  const checkedMetrics = opts.metrics
+    ?? ["exact_match", "f1", "abstention_score", "precision_at_k", "recall_at_k", "ndcg_at_k", "quality_per_1k_tokens"];
   const allowedDelta = opts.allowedNegativeDelta ?? 0;
   const result = await opts.db.query(
     `SELECT * FROM ${BENCH_ANALYTICS_COLLECTIONS.regression} WHERE bench = $1 AND substrate = $2 ORDER BY ts DESC`,
@@ -595,6 +599,9 @@ function evalRecordMetrics(record: QuestionRecord): Array<{ name: string; value:
     { name: "exact_match", value: record.exact_match, unit: "score" },
     { name: "f1", value: record.f1, unit: "score" },
     { name: "abstention_score", value: record.abstention_score, unit: "score" },
+    { name: "precision_at_k", value: record.precision_at_k, unit: "score" },
+    { name: "recall_at_k", value: record.recall_at_k, unit: "score" },
+    { name: "ndcg_at_k", value: record.ndcg_at_k, unit: "score" },
     { name: "tokens_input", value: record.tokens.input, unit: "tokens" },
     { name: "tokens_output", value: record.tokens.output, unit: "tokens" },
     { name: "tokens_total", value: record.tokens.total, unit: "tokens" },
