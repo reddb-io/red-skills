@@ -80,7 +80,7 @@ describe("memory bench analytics — RedDB writer", () => {
     expect(result.inserted_runs).toBeGreaterThan(0);
     expect(result.inserted_histograms).toBeGreaterThan(0);
     expect(result.inserted_percentiles).toBeGreaterThan(0);
-    expect(result.inserted_regressions).toBe(4);
+    expect(result.inserted_regressions).toBe(7);
     expect(db.executeCalls).toContainEqual(expect.stringContaining(`CREATE TABLE IF NOT EXISTS ${BENCH_ANALYTICS_COLLECTIONS.histograms}`));
     expect(db.executeCalls).toContainEqual(expect.stringContaining(`CREATE TABLE IF NOT EXISTS ${BENCH_ANALYTICS_COLLECTIONS.regression}`));
     expect(db.executeCalls).toContainEqual(expect.stringContaining(`CREATE HYPERTABLE ${BENCH_ANALYTICS_COLLECTIONS.runs} TIME_COLUMN ts`));
@@ -118,6 +118,14 @@ describe("memory bench analytics — RedDB writer", () => {
     expect(db.queryCalls).toContainEqual(expect.objectContaining({
       sql: expect.stringContaining(`INSERT INTO ${BENCH_ANALYTICS_COLLECTIONS.regression}`),
       params: expect.arrayContaining(["eval", "reddb", "abstention_score", report.aggregate.abstention_score]),
+    }));
+    expect(db.queryCalls).toContainEqual(expect.objectContaining({
+      sql: expect.stringContaining(`INSERT INTO ${BENCH_ANALYTICS_COLLECTIONS.regression}`),
+      params: expect.arrayContaining(["eval", "reddb", "ndcg_at_k", report.aggregate.ndcg_at_k]),
+    }));
+    expect(db.queryCalls).toContainEqual(expect.objectContaining({
+      sql: expect.stringContaining(`INSERT INTO ${BENCH_ANALYTICS_COLLECTIONS.runs}`),
+      params: expect.arrayContaining(["eval", "reddb", "fixed-pack", "precision_at_k"]),
     }));
     expect(db.queryCalls).toContainEqual(expect.objectContaining({
       sql: expect.stringContaining(`INSERT INTO ${BENCH_ANALYTICS_COLLECTIONS.regressionAggregate}`),
@@ -186,5 +194,20 @@ describe("memory bench analytics — RedDB writer", () => {
       sql: expect.stringContaining(`FROM ${BENCH_ANALYTICS_COLLECTIONS.regression}`),
       params: ["eval", "reddb"],
     }));
+  });
+
+  test("gates a retrieval-quality drop (precision/recall/NDCG) beyond the allowed delta", async () => {
+    const db = new FakeBenchAnalyticsDb();
+    db.regressionRows.push(
+      { ts: 10, bench: "eval", substrate: "reddb", metric_name: "ndcg_at_k", metric_value: 0.7, previous_value: 0.95, delta: -0.25, delta_pct: -26.3 },
+      { ts: 10, bench: "eval", substrate: "reddb", metric_name: "recall_at_k", metric_value: 0.8, previous_value: 1, delta: -0.2, delta_pct: -20 },
+      { ts: 10, bench: "eval", substrate: "reddb", metric_name: "precision_at_k", metric_value: 0.4, previous_value: 0.4, delta: 0, delta_pct: 0 },
+    );
+
+    const result = await gateBenchEvalCoreRegression({ db });
+
+    expect(result.status).toBe("fail");
+    expect(result.checked_metrics).toContain("ndcg_at_k");
+    expect(result.failures.map((failure) => failure.metric_name).sort()).toEqual(["ndcg_at_k", "recall_at_k"]);
   });
 });

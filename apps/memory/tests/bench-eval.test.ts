@@ -22,6 +22,7 @@ import {
   isAbstentionAnswer,
   normalizeAnswer,
   parseJudgeJResponse,
+  retrievalQualityMetrics,
   runBenchEval,
   runBenchEvalCore,
   runBenchEvalShowcase,
@@ -182,6 +183,49 @@ describe("memory bench eval — scorer (pure)", () => {
       exact_match: 1,
       f1: 1,
     }).system).toContain("frozen Memory benchmark LLM judge J");
+  });
+});
+
+describe("memory bench eval — retrieval-quality metrics (pure)", () => {
+  test("computes exact precision/recall/NDCG over a known ranked pack", () => {
+    // gold = {g1, g2}; pack ranks g1 at 1 and g2 at 3 within a pack of five.
+    const m = retrievalQualityMetrics(["g1", "x", "g2", "y", "z"], ["g1", "g2"], 5);
+    expect(m.k).toBe(5);
+    expect(m.precision_at_k).toBe(0.4); // 2 gold of 5 returned
+    expect(m.recall_at_k).toBe(1); // both gold surfaced
+    // DCG = 1/log2(2) + 1/log2(4) = 1.5; IDCG = 1/log2(2) + 1/log2(3) = 1.63093
+    expect(m.ndcg_at_k).toBe(0.9197);
+  });
+
+  test("gold on top scores a perfect NDCG and full recall", () => {
+    const m = retrievalQualityMetrics(["g1", "a", "b", "c", "d"], ["g1"], 5);
+    expect(m.precision_at_k).toBe(0.2);
+    expect(m.recall_at_k).toBe(1);
+    expect(m.ndcg_at_k).toBe(1);
+  });
+
+  test("rank-2 gold is discounted by NDCG below a rank-1 hit", () => {
+    const m = retrievalQualityMetrics(["x", "g1", "y"], ["g1"], 5);
+    expect(m.precision_at_k).toBe(0.3333); // 1 gold of 3 returned
+    expect(m.recall_at_k).toBe(1);
+    expect(m.ndcg_at_k).toBe(0.6309); // 1/log2(3)
+  });
+
+  test("a gold doc missing from the pack zeroes every metric", () => {
+    const m = retrievalQualityMetrics(["a", "b", "c"], ["g1"], 5);
+    expect(m).toMatchObject({ precision_at_k: 0, recall_at_k: 0, ndcg_at_k: 0 });
+  });
+
+  test("unanswerable (empty gold) rewards an empty pack and punishes a non-empty one", () => {
+    expect(retrievalQualityMetrics([], [], 5)).toMatchObject({ precision_at_k: 1, recall_at_k: 1, ndcg_at_k: 1 });
+    expect(retrievalQualityMetrics(["a"], [], 5)).toMatchObject({ precision_at_k: 0, recall_at_k: 0, ndcg_at_k: 0 });
+  });
+
+  test("the k cutoff hides gold ranked below it", () => {
+    const m = retrievalQualityMetrics(["a", "b", "g1"], ["g1"], 2);
+    expect(m.k).toBe(2);
+    expect(m.recall_at_k).toBe(0); // g1 sits at rank 3, beyond k=2
+    expect(m.ndcg_at_k).toBe(0);
   });
 });
 
@@ -678,6 +722,17 @@ describe("memory bench eval — runner", () => {
       expect(r.time_to_response_ms).toBe(0);
       if (r.gold_in_pack && r.gold_doc_ids.length > 0) expect(r.gold_rank).toBe(r.pack_ids.indexOf(r.gold_doc_id) + 1);
       else expect(r.gold_rank).toBeNull();
+      expect(r.retrieval_k).toBe(report.pack_size);
+      for (const v of [r.precision_at_k, r.recall_at_k, r.ndcg_at_k]) {
+        expect(v).toBeGreaterThanOrEqual(0);
+        expect(v).toBeLessThanOrEqual(1);
+      }
+      // gold-in-pack means the whole gold set is present, so recall@k must be 1.
+      if (r.gold_in_pack && !r.unanswerable) expect(r.recall_at_k).toBe(1);
+    }
+    for (const v of [report.aggregate.precision_at_k, report.aggregate.recall_at_k, report.aggregate.ndcg_at_k]) {
+      expect(v).toBeGreaterThanOrEqual(0);
+      expect(v).toBeLessThanOrEqual(1);
     }
   });
 
@@ -736,6 +791,10 @@ describe("memory bench eval — markdown report", () => {
     const report = await runBenchEval({ corpusDir: STRUCTURED_CORPUS_DIR, now: () => FIXED_NOW });
     const md = formatEvalReport(report);
     expect(md).toContain("## Per-category");
+    expect(md).toContain("## Retrieval quality");
+    expect(md).toContain("precision@k");
+    expect(md).toContain("recall@k");
+    expect(md).toContain("NDCG@k");
     expect(md).toContain("multi-hop");
     expect(md).toContain("temporal-as-of");
     expect(md).toContain("unanswerable");
