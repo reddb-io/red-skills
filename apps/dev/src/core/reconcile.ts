@@ -121,7 +121,8 @@ export interface ReconcileLookups {
   changedFiles(branch: string, base: string): Promise<string[]>;
   /** Confirm the worker branch actually reached the host (optional → assume present). */
   branchPresent?(branch: string): Promise<boolean>;
-  /** True when the session is locked to a branch — drives the landing toggle. */
+  /** True when the session is locked to a branch. Since #842 the lock only
+   * resolves the base; landing mode is the `worktreeLaunchesPr` flag. */
   isLocked(): Promise<boolean>;
 }
 
@@ -144,17 +145,24 @@ export interface ReconcileDeps {
   pnpm: PnpmExec;
   /** Package layout probe for feedback scope resolution. */
   layout: PackageLayout;
-  /** One-shot inner-agent merge-conflict resolver for the LOCKED land (optional). */
+  /** One-shot inner-agent merge-conflict resolver for the DIRECT land (optional). */
   conflictResolver?: ConflictResolver;
   /**
-   * Isolated landing-worktree provisioner/teardown for the LOCKED land (#572):
-   * the locked merge/push/rollback runs in a throwaway worktree, never the
-   * primary checkout. Threaded from process-issue's deps; absent → the locked
+   * Landing-mode flag, decoupled from the lock (#842). `true`/undefined → land via
+   * an admin-merged PR; `false` → a direct merge. Threaded from process-issue's
+   * deps so a reconcile-land honours the same `afk.worktree_launches_pull_request`
+   * posture as the DONE-path landing.
+   */
+  worktreeLaunchesPr?: boolean;
+  /**
+   * Isolated landing-worktree provisioner/teardown for the DIRECT land (#572):
+   * the direct merge/push/rollback runs in a throwaway worktree, never the
+   * primary checkout. Threaded from process-issue's deps; absent → the direct
    * land is refused rather than mutating the primary.
    */
   makeLandingWorktree?(base: string): Promise<string | null>;
   removeLandingWorktree?(dir: string): Promise<void>;
-  /** Opt-in advisory-review wait for the UNLOCKED admin-PR landing (optional). */
+  /** Opt-in advisory-review wait for the admin-PR landing (optional). */
   waitForReview?: WaitForReviewInput;
   /** Envelope-emit IO (poster / marker writer / posted writer / git push). */
   envelope: EmitEnvelopeDeps;
@@ -310,7 +318,10 @@ export async function reconcile(deps: ReconcileDeps, input: ReconcileInput): Pro
   }
 
   // ---- 4a. GREEN → land via the existing landing path, then close ----
+  // Landing mode is the `worktreeLaunchesPr` flag (default true), decoupled from
+  // the lock which only resolved `base` (#842); `locked` is read for the echo.
   const locked = await deps.lookups.isLocked();
+  const openPr = deps.worktreeLaunchesPr !== false;
   const landing = await doLanding(
     {
       mergeExec: deps.mergeExec,
@@ -322,6 +333,7 @@ export async function reconcile(deps: ReconcileDeps, input: ReconcileInput): Pro
       removeLandingWorktree: deps.removeLandingWorktree,
     },
     {
+      openPr,
       locked,
       repo: input.repo,
       repoDir: input.repoDir,
