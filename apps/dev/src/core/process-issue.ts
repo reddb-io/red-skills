@@ -60,11 +60,11 @@ import {
   type SectionBodies,
 } from "./envelope-emit.js";
 import { dispatchHooks, type HookExec } from "./hook-dispatcher.js";
-import { recoveryCap, recoveryDecision, type RecoveryEnv } from "./recovery.js";
+import { type RecoveryEnv } from "./recovery.js";
+import { dispose } from "./disposition.js";
 import {
   blockedLabelFor,
   envelopeStatusFor,
-  recoveryReasonFor,
   type AttemptOutcome,
 } from "./attempt-outcome.js";
 import { resolveHooks, type ResolveHooksOptions, type ResolvedHooks, type HookName } from "./hook-config.js";
@@ -519,35 +519,24 @@ async function routeRecovery(
   reason: AttemptOutcome,
   attemptN: number,
 ): Promise<"retry" | "escalate"> {
-  const policyReason = recoveryReasonFor(reason);
-  // A reason with no policy mapping is treated as escalate (page a human),
-  // preserving the pre-recovery default for any unexpected reason.
-  if (policyReason === null) {
-    await editLabelsTagged(deps, issue, [LABEL_RUNNING], [LABEL_HUMAN], reason);
-    return "escalate";
+  // The composer owns the retry-vs-escalate decision, the label sets, and the
+  // budget-exhausted page comment (core/disposition). This site only APPLIES it:
+  //   - retry    → editLabels [running] → [ready-for-agent] CLEAN (#402); the
+  //                issue reached here from `running`, already stripped of any
+  //                blocked:* reason, so the promotion stays hygienic.
+  //   - escalate → ensure + add the typed blocked:* label alongside ready-for-human,
+  //                then post the page comment when a recoverable budget ran out.
+  // The per-issue lifecycle never auto-retries `stalled` (the reaper owns that
+  // bounded re-claim), so we ask the composer for the PER-ISSUE policy view.
+  const disp = dispose(reason, attemptN, deps.recoveryEnv ?? {}, { stalledRecoverable: false });
+  if (disp.decision === "escalate" && disp.typedLabel !== null) {
+    await deps.gh.ensureLabel(disp.typedLabel);
   }
-  const env = deps.recoveryEnv ?? {};
-  const decision = recoveryDecision(policyReason, attemptN, env);
-  if (decision === "retry") {
-    // CLEAN re-queue (#402): promote to ready-for-agent with NO blocked:* tag.
-    // The issue reached here from `running`, which the claim step already stripped
-    // of any blocked:* reason, so the promotion leaves it hygienic.
-    await deps.gh.editLabels(issue, [LABEL_RUNNING], [LABEL_READY]);
-    return "retry";
+  await deps.gh.editLabels(issue, disp.removeLabels, disp.addLabels);
+  if (disp.escalationComment !== null) {
+    await deps.gh.comment(issue, disp.escalationComment);
   }
-  // escalate
-  await editLabelsTagged(deps, issue, [LABEL_RUNNING], [LABEL_HUMAN], reason);
-  const cap = recoveryCap(policyReason, env);
-  if (cap !== null) {
-    // A previously-auto-recoverable reason whose retry budget is exhausted —
-    // announce the page so it is not mistaken for a first-attempt human block.
-    const typed = blockedLabelFor(reason) ?? `blocked:${policyReason}`;
-    await deps.gh.comment(
-      issue,
-      `🤖 /afk escalating to ready-for-human: ${typed} retry budget exhausted (attempt ${attemptN}/${cap}).`,
-    );
-  }
-  return "escalate";
+  return disp.decision;
 }
 
 /**
