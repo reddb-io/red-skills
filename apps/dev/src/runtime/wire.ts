@@ -555,9 +555,10 @@ function writeStatuslineCacheAtomic(path: string, cache: StatuslineCache): void 
  *
  * The `rq` ready-for-agent / `rh` ready-for-human counts are GitHub-derived and
  * cached for {@link STATUSLINE_CACHE_TTL_S} seconds in
- * `.red/tmp/statusline-cache.json`: a cold cache refreshes synchronously, a
- * fresh cache is read as-is, and a stale cache is read AND refreshed in the
- * background (the bash `( refresh_cache ) &`), so the render stays fast.
+ * `.red/tmp/statusline-cache.json`. The cache refreshes on every stale or cold
+ * render — awaited with a bounded deadline so a hanging gh CLI cannot block the
+ * statusline process indefinitely. The refresh runs even when there are no live
+ * workers so the queue/human badges stay current while the fleet is idle.
  */
 export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput | null> {
   const paths = afkPaths(ctx.root);
@@ -629,9 +630,8 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
     }
   }
 
-  if (workers <= 0) return null;
-
-  // GitHub-derived counts with a 60 s cache.
+  // GitHub-derived counts with a 60 s cache — refreshed before the early-return
+  // so queue/human stay current even when the fleet is idle (workers == 0).
   const cachePath = join(paths.tmpDir, "statusline-cache.json");
   const nowS = Math.floor(Date.now() / 1000);
   const cached = readStatuslineCache(cachePath);
@@ -655,9 +655,12 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
     // or on any gh/auth/network error.
     await withTimeout(refresh(), STATUSLINE_GH_COLD_TIMEOUT_MS, undefined).catch(() => undefined);
   } else if (nowS - cached.ts >= STATUSLINE_CACHE_TTL_S) {
-    // Stale: use the cached numbers now, refresh in the background.
-    void refresh().catch(() => undefined);
+    // Stale: await a bounded refresh so the cache is rewritten before the
+    // process exits. Shows the previous value on timeout (fail-open).
+    await withTimeout(refresh(), STATUSLINE_GH_COLD_TIMEOUT_MS, undefined).catch(() => undefined);
   }
+
+  if (workers <= 0) return null;
 
   return { workers, queue, human, blocked, added, removed, waiting, tokens, costUsd, runner, resolved, issues, stages };
 }
@@ -718,7 +721,9 @@ export async function collectStatuslineRepo(ctx: RepoContext): Promise<RepoInput
   if (!cached) {
     await withTimeout(refresh(), STATUSLINE_GH_COLD_TIMEOUT_MS, undefined).catch(() => undefined);
   } else if (nowS - cached.ts >= STATUSLINE_CACHE_TTL_S) {
-    void refresh().catch(() => undefined);
+    // Stale: await a bounded refresh so the cache is rewritten before the
+    // process exits. Shows the previous value on timeout (fail-open).
+    await withTimeout(refresh(), STATUSLINE_GH_COLD_TIMEOUT_MS, undefined).catch(() => undefined);
   }
 
   // Local branch diff (committed + uncommitted) vs origin/main, bounded so a slow

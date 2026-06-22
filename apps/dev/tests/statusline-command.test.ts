@@ -170,6 +170,7 @@ describe("statusline command — rendered line", () => {
 
   it("drops the AFK block when there are no live workers", async () => {
     await seedFreshRepoCache(root, 0, 0);
+    await seedFreshCache(root, 0, 0);
     const out = sink();
     const code = await statuslineCommand([root], root, out.stream, fakeStdin(PAYLOAD));
     expect(code).toBe(0);
@@ -182,6 +183,7 @@ describe("statusline command — rendered line", () => {
 
   it("renders only the project block outside Claude Code (empty stdin)", async () => {
     await seedFreshRepoCache(root, 0, 0);
+    await seedFreshCache(root, 0, 0);
     const out = sink();
     const code = await statuslineCommand([root], root, out.stream, fakeStdin(""));
     expect(code).toBe(0);
