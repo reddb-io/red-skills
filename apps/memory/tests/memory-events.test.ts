@@ -265,6 +265,8 @@ describe("Memory event log", () => {
           reason: "decision evidence matched the goal",
           excerpt: "Rotate JWT keys with signed fixtures.",
           score: 1,
+          expandHandle: "memory:recall 7",
+          compressed: false,
         },
       ],
       skillRecommendations: {
