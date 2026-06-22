@@ -539,6 +539,8 @@ describe("processIssue — DONE + green + merged (unlocked, admin-PR landing)", 
       "pre_worktree",
       "pre_attempt",
       "post_attempt",
+      "pre_feedback",
+      "post_feedback",
       "pre_merge",
       "post_merge",
     ]);
@@ -857,7 +859,15 @@ describe("processIssue — no-sentinel (run ended without a <promise>)", () => {
     expect(trace.closed).toEqual([9]);
     expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "done" }]);
     // post_attempt(success) + the full land tail fire; on_attempt_error does NOT.
-    expect(result.hooksFired).toEqual(["pre_worktree", "pre_attempt", "post_attempt", "pre_merge", "post_merge"]);
+    expect(result.hooksFired).toEqual([
+      "pre_worktree",
+      "pre_attempt",
+      "post_attempt",
+      "pre_feedback",
+      "post_feedback",
+      "pre_merge",
+      "post_merge",
+    ]);
   });
 
   it("branch carries work but FAILS feedback → feedback-failed, never merged, not an error", async () => {
@@ -1041,9 +1051,18 @@ describe("processIssue — feedback fail", () => {
     expect(trace.ensuredLabels).toContain("blocked:validation");
     expect(trace.closed).toEqual([]);
     expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "blocked" }]);
-    // post_attempt fired (the run authored DONE), pre_merge never reached, and
-    // the worker branch was not pushed for landing.
-    expect(result.hooksFired).toEqual(["pre_worktree", "pre_attempt", "post_attempt"]);
+    // post_attempt fired (the run authored DONE); the feedback gate ran and
+    // FAILED (pre_feedback → on_baseline_probe → post_feedback → on_feedback_classify),
+    // so pre_merge was never reached and the worker branch was not pushed.
+    expect(result.hooksFired).toEqual([
+      "pre_worktree",
+      "pre_attempt",
+      "post_attempt",
+      "pre_feedback",
+      "on_baseline_probe",
+      "post_feedback",
+      "on_feedback_classify",
+    ]);
     expect(trace.pushedAttempt).toEqual([]);
   });
 
@@ -1076,8 +1095,14 @@ describe("processIssue — feedback fail", () => {
       "pre_worktree",
       "pre_attempt",
       "post_attempt",
-      "pre_attempt",
+      "pre_feedback",
+      "on_baseline_probe", // gate 1 FAILED → the baseline probe ran
+      "post_feedback",
+      "on_feedback_classify", // SEMANTIC → simple→complex retry
+      "pre_attempt", // the complex-tier retry
       "post_attempt",
+      "pre_feedback",
+      "post_feedback", // gate 2 passed → no baseline probe
       "pre_merge",
       "post_merge",
     ]);
@@ -1580,6 +1605,8 @@ describe("processIssue — runner exhaustion → fallback swap → retry", () =>
       "post_attempt", // exhausted attempt cycle closes
       "pre_attempt", // second firing for the swapped runner (#226)
       "post_attempt", // terminal success
+      "pre_feedback",
+      "post_feedback",
       "pre_merge",
       "post_merge",
     ]);
@@ -1675,6 +1702,8 @@ describe("processIssue — runner transient transport/setup failure", () => {
       "post_attempt",
       "pre_attempt",
       "post_attempt",
+      "pre_feedback",
+      "post_feedback",
       "pre_merge",
       "post_merge",
     ]);
@@ -2082,8 +2111,15 @@ describe("processIssue — timeout (attempt progress guard fired)", () => {
     expect(trace.ensuredLabels).toContain("blocked:stalled");
     // The failure envelope rides the generic `blocked` status bucket.
     expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "blocked" }]);
-    // on_attempt_error fires; post_attempt does NOT (same as no-sentinel).
-    expect(result.hooksFired).toEqual(["pre_worktree", "pre_attempt", "on_attempt_error"]);
+    // on_attempt_timeout fires when the guard trips; on_reconcile reports the
+    // ADR 0055 skip; then on_attempt_error escalates. post_attempt does NOT fire.
+    expect(result.hooksFired).toEqual([
+      "pre_worktree",
+      "pre_attempt",
+      "on_attempt_timeout",
+      "on_reconcile",
+      "on_attempt_error",
+    ]);
   });
 
   it("reconcile lands the stalled-but-green branch WITHOUT re-running the agent (no escalation)", async () => {
@@ -2166,5 +2202,134 @@ describe("processIssue — emitHeartbeat receives resolved base (issue #570)", (
     await processIssue(customDeps, input);
     expect(heartbeatInfos).toHaveLength(1);
     expect(heartbeatInfos[0]?.base).toBe("main");
+  });
+});
+
+describe("processIssue — new lifecycle checkpoints (#832)", () => {
+  it("on_heartbeat context carries the full worker vitals", async () => {
+    const stdins: string[] = [];
+    const { deps, input } = harness({ outcome: "done", feedbackOk: true });
+    const vitals = {
+      tools_called_count: 7,
+      text_chunk_count: 3,
+      reasoning_events: 2,
+      reasoning_tokens: 128,
+      waiting_count: 1,
+      input_tokens: 900,
+      output_tokens: 450,
+      cost_usd: 0.12,
+      loc_added: 40,
+      loc_removed: 5,
+    };
+    const customDeps: ProcessIssueDeps = {
+      ...deps,
+      heartbeatVitals: () => vitals,
+      hooks: {
+        ...deps.hooks,
+        config: { "afk.hooks.on_heartbeat": "hb-cmd" },
+        exec: async (command, _env, stdin) => {
+          if (command === "hb-cmd") stdins.push(stdin);
+          return { code: 0, stdout: "" };
+        },
+      },
+      runAgent: async (ri) => {
+        ri.onHeartbeat?.({ head: "abc123", lastProgressMs: 0, nowMs: 0 });
+        return {
+          outcome: "done",
+          branch: ri.branch,
+          commits: [{ sha: "deadbee" }],
+          completionSignal: "<promise>DONE</promise>",
+          stdout: "",
+        };
+      },
+    };
+    await processIssue(customDeps, input);
+    expect(stdins).toHaveLength(1);
+    const ctx = JSON.parse(stdins[0]!) as { vitals?: Record<string, number> };
+    expect(ctx.vitals).toEqual(vitals);
+  });
+
+  it("on_feedback_classify (mutable) overrides SEMANTIC→INFRA and suppresses the tier retry", async () => {
+    // A SEMANTIC simple-tier feedback failure normally retries once on the complex
+    // tier (a second runAgent). A hook that reclassifies it as INFRA suppresses
+    // that retry — a tier bump can't fix infra — so the agent runs exactly once.
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: false,
+      classifyIssue: async () => "simple",
+    });
+    const customDeps: ProcessIssueDeps = {
+      ...deps,
+      hooks: {
+        ...deps.hooks,
+        config: { "afk.hooks.on_feedback_classify": "cls" },
+        exec: async (command) =>
+          command === "cls"
+            ? { code: 0, stdout: JSON.stringify({ class: "infra" }) }
+            : { code: 0, stdout: "" },
+      },
+    };
+    const result = await processIssue(customDeps, input);
+    expect(trace.runAgentCalls).toHaveLength(1);
+    expect(result.outcome).toBe("feedback-failed-infra");
+  });
+
+  it("on_recovery_decision (mutable) overrides retry→escalate", async () => {
+    // pre_worktree abort routes through routeRecovery("hook-aborted"), bounded-
+    // recoverable → RETRY under a raised cap. A hook returning {"decision":
+    // "escalate"} forces the human gate instead of the clean re-queue.
+    const { deps, input, trace } = harness({
+      abortHook: "pre_worktree",
+      attempt: 1,
+      recoveryEnv: { RED_AFK_RETRY_POLICY: "2" },
+    });
+    const customDeps: ProcessIssueDeps = {
+      ...deps,
+      hooks: {
+        ...deps.hooks,
+        config: {
+          "afk.hooks.pre_worktree": "abort:pre_worktree",
+          "afk.hooks.on_recovery_decision": "dec",
+        },
+        exec: async (command) => {
+          if (command === "abort:pre_worktree") return { code: 1, stdout: "" };
+          if (command === "dec") return { code: 0, stdout: JSON.stringify({ decision: "escalate" }) };
+          return { code: 0, stdout: "" };
+        },
+      },
+    };
+    await processIssue(customDeps, input);
+    const edit = trace.labelEdits.at(-1)!;
+    expect(edit.add).toContain("ready-for-human");
+    expect(edit.add).not.toContain("ready-for-agent");
+  });
+
+  it("on_blocked fires when an issue is parked to the human gate", async () => {
+    // Default policy cap (1) → attempt 1 escalates, so the issue is parked to a
+    // human gate and the on_blocked hook fires with the typed blocked label.
+    const commands: string[] = [];
+    const { deps, input } = harness({ abortHook: "pre_worktree", attempt: 1 });
+    const customDeps: ProcessIssueDeps = {
+      ...deps,
+      hooks: {
+        ...deps.hooks,
+        config: {
+          "afk.hooks.pre_worktree": "abort:pre_worktree",
+          "afk.hooks.on_blocked": "blk",
+        },
+        exec: async (command, env) => {
+          commands.push(command);
+          if (command === "blk") {
+            // The typed blocked:* label rides the env (RED_AFK_BLOCKED_LABEL).
+            expect(env.RED_AFK_BLOCKED_LABEL).toBe("blocked:policy");
+            return { code: 0, stdout: "" };
+          }
+          if (command === "abort:pre_worktree") return { code: 1, stdout: "" };
+          return { code: 0, stdout: "" };
+        },
+      },
+    };
+    await processIssue(customDeps, input);
+    expect(commands).toContain("blk");
   });
 });

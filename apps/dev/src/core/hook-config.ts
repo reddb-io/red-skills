@@ -38,14 +38,39 @@ export const CANONICAL_HOOK_NAMES = [
   "pre_worktree",
   "pre_attempt",
   "post_attempt",
+  // Feedback gate (the scope-derived merge gate, ADR 0008 + #832). The gate runs
+  // between a green attempt and the merge: `pre_feedback` brackets it (a pre_*
+  // point — a non-zero exit VETOES the gate and routes the attempt to the
+  // abort-after-claim terminal); `on_baseline_probe` fires when the "already
+  // failing on main?" probe ran (ADR 0071); `on_feedback_classify` is MUTABLE —
+  // a hook can override the INFRA-vs-SEMANTIC classification via stdout JSON;
+  // `post_feedback` reports the gate's verdict.
+  "pre_feedback",
+  "on_baseline_probe",
+  "on_feedback_classify",
+  "post_feedback",
   "pre_merge",
   "post_merge",
   "on_attempt_error",
+  // Commit-anchored progress guard fired (ADR 0044/0045 + #832): the attempt was
+  // alive but produced no new commit within the cap. Fires before the no-agent
+  // reconcile / escalation routing decides what to do with the parked branch.
+  "on_attempt_timeout",
+  // Recovery disposition (#832). `on_recovery_decision` is MUTABLE — fired with
+  // the composer's proposed retry-vs-escalate decision (core/disposition); a
+  // hook can override it via stdout JSON before the labels are applied.
+  // `on_blocked` fires once an issue is actually parked to a human gate
+  // (escalate path). `on_reconcile` fires after the ADR 0055 no-agent reconcile
+  // re-validated a parked mechanical branch and landed/parked/skipped it.
+  "on_recovery_decision",
+  "on_blocked",
+  "on_reconcile",
   "on_idle",
   // Periodic proof-of-life (PR-B): fired once per attempt-guard poll (~60s)
   // during an inner-agent run, NOT a once-per-lifecycle point. A user shell
-  // command here receives the heartbeat context (issue/branch/runner) so an
-  // external monitor can be pinged. No built-in default; absent config → no-op.
+  // command here receives the heartbeat context (issue/branch/runner + the full
+  // worker vitals, ADR 0065/#832) so an external monitor can be pinged or drive
+  // custom live alerting. No built-in default; absent config → no-op.
   "on_heartbeat",
   "post_session",
   "on_session_error",

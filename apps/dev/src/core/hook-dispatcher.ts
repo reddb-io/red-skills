@@ -49,9 +49,20 @@ export const HOOK_EXIT_POLICY: Record<HookName, HookExitPolicy> = {
   pre_worktree: "abort",
   pre_attempt: "abort",
   post_attempt: "continue",
+  // Feedback gate (#832). `pre_feedback` is a pre_* gate: a non-zero exit VETOES
+  // the feedback run and aborts the attempt. The rest observe/mutate but never
+  // wedge the gate, so they log-and-continue.
+  pre_feedback: "abort",
+  on_baseline_probe: "continue",
+  on_feedback_classify: "continue",
+  post_feedback: "continue",
   pre_merge: "abort",
   post_merge: "continue",
   on_attempt_error: "continue",
+  on_attempt_timeout: "continue",
+  on_recovery_decision: "continue",
+  on_blocked: "continue",
+  on_reconcile: "continue",
   on_idle: "continue",
   on_heartbeat: "continue",
   post_session: "continue",
@@ -197,6 +208,26 @@ export function deriveHookEnv(base: Record<string, string>, contextJson: string)
   if (mergeCommit) {
     set("RED_AFK_MERGE_COMMIT", mergeCommit.sha);
     set("RED_AFK_MERGE_SHA", mergeCommit.short);
+  }
+
+  // New checkpoints (#832). Each exposes its decision-bearing field as a flat
+  // RED_AFK_* var so a plain shell hook can branch without parsing the stdin JSON.
+  set("RED_AFK_RECOVERY_DECISION", ctx.decision); // on_recovery_decision (mutable)
+  set("RED_AFK_RECOVERY_REASON", ctx.reason); // on_recovery_decision / on_attempt_timeout
+  set("RED_AFK_BLOCKED_LABEL", ctx.blocked_label); // on_blocked
+  set("RED_AFK_FEEDBACK_CLASS", ctx.class); // on_feedback_classify (mutable)
+  set("RED_AFK_RECONCILE_OUTCOME", ctx.outcome); // on_reconcile (landed/parked/skipped)
+
+  // Worker vitals (ADR 0065/#832): the on_heartbeat context carries the full
+  // vitals object. Surface each numeric vital as RED_AFK_VITAL_<UPPER> so a
+  // shell hook can alert on a threshold without parsing the JSON.
+  const vitals = obj(ctx.vitals);
+  if (vitals) {
+    for (const [key, value] of Object.entries(vitals)) {
+      if (typeof value === "number" && Number.isFinite(value)) {
+        env[`RED_AFK_VITAL_${key.toUpperCase()}`] = String(value);
+      }
+    }
   }
 
   return env;
