@@ -44,6 +44,14 @@ export interface CorpusEntry {
   valid_until?: string | null;
   supersedes?: string;
   superseded_by?: string;
+  /** Governed-recall axes (ADR 0035/0037). `scope` confines a fact to one
+   * entity so a near-duplicate from another scope is filtered out; `confidence`
+   * and `tier` weight a fact down when a contradictory lower-trust source is
+   * textually tempting. All are optional — an entry without them is a global,
+   * full-confidence, canonical fact and recall behaves exactly as before. */
+  scope?: string;
+  confidence?: string;
+  tier?: string;
 }
 
 export interface CorpusRelation {
@@ -63,6 +71,9 @@ export interface Question {
   gold_doc_ids: string[];
   gold_answer: string;
   as_of?: string;
+  /** Restricts an adversarial near-duplicate question to one entity. Governed
+   * recall drops scoped entries whose `scope` differs from the question's. */
+  scope?: string;
 }
 
 export interface ContextPackEntry {
@@ -402,6 +413,9 @@ function asCorpusEntry(value: unknown): CorpusEntry {
     valid_until: optionalNullableStringField(r, "valid_until"),
     supersedes: optionalStringField(r, "supersedes"),
     superseded_by: optionalStringField(r, "superseded_by"),
+    scope: optionalStringField(r, "scope"),
+    confidence: optionalStringField(r, "confidence"),
+    tier: optionalStringField(r, "tier"),
   };
 }
 
@@ -471,6 +485,7 @@ function asQuestion(value: unknown): Question {
     gold_doc_ids: Array.isArray(r.gold_doc_ids) ? goldDocIds : [goldDocId],
     gold_answer: stringField(r, "gold_answer"),
     as_of: optionalStringField(r, "as_of"),
+    scope: optionalStringField(r, "scope"),
   };
 }
 
@@ -559,7 +574,7 @@ export function createRedDbSubstrateAdapter(id = "reddb"): SubstrateAdapter<RedD
       const activeEntries = index.entries.filter((entry) => isEntryEligibleForQuestion(entry, question));
       const scores = new Map<string, number>();
       for (const entry of activeEntries) {
-        const score = scoreEntry(question, entry);
+        const score = scoreEntry(question, entry) * governanceWeight(entry);
         if (score > 0) scores.set(entry.id, (scores.get(entry.id) ?? 0) + score);
       }
       if (question.category === "multi-hop") {
@@ -587,8 +602,38 @@ export function createRedDbSubstrateAdapter(id = "reddb"): SubstrateAdapter<RedD
 }
 
 function isEntryEligibleForQuestion(entry: CorpusEntry, question: Question): boolean {
-  if (!question.as_of) return true;
-  return isEntryActiveAt(entry, question.as_of);
+  // Scope governance: a scoped fact only answers a question carrying the same
+  // scope. Global (unscoped) facts stay eligible everywhere.
+  if (!isEntryInScope(entry, question)) return false;
+  // Temporal/supersession governance. With an explicit `as_of`, the valid-time
+  // window decides eligibility. Without one ("as of now"), a superseded entry
+  // is no longer current and is dropped so the superseding fact surfaces.
+  if (question.as_of) return isEntryActiveAt(entry, question.as_of);
+  return entry.superseded_by === undefined;
+}
+
+function isEntryInScope(entry: CorpusEntry, question: Question): boolean {
+  if (!question.scope || !entry.scope) return true;
+  return entry.scope === question.scope;
+}
+
+/** Confidence/tier governance weight. A low-confidence or chat-tier fact is
+ * weighted down so a contradictory canonical fact wins even when the tempting
+ * source has more raw token overlap. Unset axes weigh 1, so a corpus without
+ * these fields ranks exactly as before. */
+function governanceWeight(entry: CorpusEntry): number {
+  return confidenceWeight(entry.confidence) * tierWeight(entry.tier);
+}
+
+function confidenceWeight(confidence: string | undefined): number {
+  if (confidence === "low") return 0.25;
+  if (confidence === "medium") return 0.6;
+  return 1;
+}
+
+function tierWeight(tier: string | undefined): number {
+  if (tier === "chat") return 0.5;
+  return 1;
 }
 
 function isEntryActiveAt(entry: CorpusEntry, asOf: string): boolean {
@@ -2246,6 +2291,8 @@ function categoryOrder(category: string): number {
     "multi-hop": 1,
     "temporal-as-of": 2,
     "unanswerable": 3,
+    "needle": 4,
+    "adversarial": 5,
   };
   return order[category] ?? 99;
 }
