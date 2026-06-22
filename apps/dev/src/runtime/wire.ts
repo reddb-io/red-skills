@@ -427,10 +427,11 @@ export async function collectMonitorInputs(root = process.cwd()): Promise<Monito
   const paths = afkPaths(root);
   // The ONE owner reads + normalizes + liveness-tags every worker state file
   // (core/worker-state-reader). The dashboard's `[live]` badge uses the
-  // pid + freshness verdict (`active`).
+  // pid + freshness verdict (`active`); the `[quiet]` badge falls back to the
+  // pid-only verdict (`live`, surfaced here as `pidLive`).
   const records = await readWorkerStates(paths.workersRoot);
   const workers: CompactWorker[] = [];
-  for (const { state, active } of records) {
+  for (const { state, active, live: pidLive } of records) {
     // Diff volume: committed + uncommitted work for the attempt, measured from
     // the branch's merge-base with origin/main. Prefer the state file's persisted
     // counts; fall back to a live `git diff --shortstat` of the worktree when both
@@ -466,9 +467,12 @@ export async function collectMonitorInputs(root = process.cwd()): Promise<Monito
           cost_usd: state.current.cost_usd,
         },
       },
-      // Display liveness requires BOTH a resolving pid AND recent activity, so a
-      // finished worker whose pid is shared/recycled stops rendering as `[live]`.
+      // active = pid resolves + agent-lane freshness → [live] badge; a finished
+      // worker whose pid is shared/recycled stops rendering as `[live]`.
+      // pidLive = pid resolves regardless of freshness → [quiet] badge when the
+      // agent lane is idle (e.g. post_attempt gate/commit) but the process lives.
       live: active,
+      pidLive,
       diffAdded: added,
       diffRemoved: removed,
     });
