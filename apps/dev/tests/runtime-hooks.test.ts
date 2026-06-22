@@ -7,18 +7,19 @@ import { resolveHooks } from "../src/core/hook-config.js";
 
 /**
  * Gap 6 (per-slot build isolation): the cargo/gradle pre_worktree defaults ship
- * inside the AFK skill at `<plugin>/defaults/*.sh`. makeHookResolveOptions must
- * anchor its defaults dir on the plugin root (like hook-config.sh), NOT on the
- * consuming project's `.red/hooks/defaults`, or the built-in defaults never
- * register and per-slot CARGO_TARGET_DIR / GRADLE_USER_HOME isolation never fires.
+ * inside the AFK skill at `<plugin>/hooks/red-*`. makeHookResolveOptions must
+ * anchor its lib hooks dir on the plugin root (like hook-config.sh), NOT on the
+ * consuming project's `.red/hooks/lib`, or the built-in defaults never register
+ * and per-slot CARGO_TARGET_DIR / GRADLE_USER_HOME isolation never fires.
  *
- * From the SOURCE tree `skillDirFromModule` cannot find a `defaults/` directory
- * as an ancestor (the skill lives under plugins/, not above src/), so it throws and the
- * resolver falls back to the project path. We therefore verify the resolution
- * logic against the SHIPPED bundle location, which is what runs in production.
+ * From the SOURCE tree `skillDirFromModule` cannot find a `hooks/` directory
+ * as an ancestor (the skill lives under plugins/, not above src/), so it throws
+ * and the resolver falls back to the project path. We therefore verify the
+ * resolution logic against the SHIPPED bundle location, which is what runs in
+ * production.
  */
 describe("makeHookResolveOptions (gap 6: built-in defaults anchor on the plugin)", () => {
-  it("resolves cargo/gradle/heartbeat/envelope/validation from <plugin>/defaults when reachable", () => {
+  it("resolves cargo/gradle/heartbeat/envelope/validation from <plugin>/hooks when reachable", () => {
     let skillDir: string;
     try {
       // The bundle ships at <plugin>/bin/afk.mjs; resolve from there.
@@ -30,39 +31,42 @@ describe("makeHookResolveOptions (gap 6: built-in defaults anchor on the plugin)
       // The skill/bundle isn't laid out in this checkout — skip the strong assertion.
       return;
     }
-    const defaultsDir = join(skillDir, "defaults");
-    // Sanity: the shipped defaults exist where we expect them.
-    expect(existsSync(join(defaultsDir, "cargo-pre-worktree.sh"))).toBe(true);
-    expect(existsSync(join(defaultsDir, "gradle-pre-worktree.sh"))).toBe(true);
+    const hooksDir = join(skillDir, "hooks");
+    // Sanity: the shipped library hooks exist where we expect them.
+    expect(existsSync(join(hooksDir, "red-cargo"))).toBe(true);
+    expect(existsSync(join(hooksDir, "red-gradle"))).toBe(true);
+    expect(existsSync(join(hooksDir, "red-heartbeat"))).toBe(true);
+    expect(existsSync(join(hooksDir, "red-envelope"))).toBe(true);
+    expect(existsSync(join(hooksDir, "red-validation"))).toBe(true);
 
     // resolveHooks must register the cargo + gradle defaults at pre_worktree.
     const resolved = resolveHooks(
       {},
       { defaultCommand: (name) => {
         const scripts: Record<string, string> = {
-          cargo: "cargo-pre-worktree.sh",
-          gradle: "gradle-pre-worktree.sh",
-          heartbeat: "heartbeat-post-attempt.sh",
-          envelope: "envelope-post-attempt.sh",
-          validation: "validation-post-merge.sh",
+          cargo: "red-cargo",
+          gradle: "red-gradle",
+          heartbeat: "red-heartbeat",
+          envelope: "red-envelope",
+          validation: "red-validation",
         };
-        const p = join(defaultsDir, scripts[name]!);
+        const p = join(hooksDir, scripts[name]!);
         return existsSync(p) ? p : undefined;
       } },
     );
     expect(resolved.pre_worktree).toEqual([
-      join(defaultsDir, "cargo-pre-worktree.sh"),
-      join(defaultsDir, "gradle-pre-worktree.sh"),
+      join(hooksDir, "red-cargo"),
+      join(hooksDir, "red-gradle"),
     ]);
-    expect(resolved.post_attempt).toContain(join(defaultsDir, "heartbeat-post-attempt.sh"));
-    expect(resolved.post_merge).toContain(join(defaultsDir, "validation-post-merge.sh"));
+    expect(resolved.post_attempt).toContain(join(hooksDir, "red-heartbeat"));
+    expect(resolved.post_merge).toContain(join(hooksDir, "red-validation"));
   });
 
   it("never points at the consuming project's .red unless the skill dir is unreachable", () => {
-    // makeHookResolveOptions(root) must NOT default to `<root>/.red/hooks/defaults`
+    // makeHookResolveOptions(root) must NOT default to `<root>/.red/hooks/lib`
     // when the plugin is reachable — that path never ships the scripts. We assert
-    // the resolver returns undefined for a fictional project root (no defaults
-    // under it), proving it does not silently read project-local paths.
+    // the resolver returns undefined for a fictional project root (no library
+    // scripts under it), proving it does not silently read project-local paths.
     const opts = makeHookResolveOptions("/tmp/no-such-afk-project-xyz");
     // Whatever the anchor, a fictional project has no scripts, so cargo resolves
     // to undefined only if the anchor is NOT a populated plugin dir. When the
