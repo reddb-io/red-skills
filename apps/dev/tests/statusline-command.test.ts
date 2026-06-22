@@ -9,6 +9,12 @@ import {
   statuslineEnabled,
 } from "../src/commands/statusline.js";
 
+/** Strip ANSI SGR escapes so assertions read the plain rendered text. The
+ * command now themes the line (wine background + black-chipped KPI numbers);
+ * stripping recovers the exact plain content the renderer produced. */
+// eslint-disable-next-line no-control-regex
+const stripAnsi = (s: string): string => s.replace(/\x1b\[[0-9;]*m/g, "");
+
 /** A non-TTY readable carrying the Claude Code payload on stdin. */
 function fakeStdin(text: string): NodeJS.ReadableStream & { isTTY?: boolean } {
   const stream = Readable.from([text]) as Readable & { isTTY?: boolean };
@@ -112,7 +118,7 @@ describe("statusline command — rendered line", () => {
   });
 
   it("emits the full block run from a payload + live workers + cached counts", async () => {
-    // One live worker on #17 with +12 -3, blocked 2; cached 📋11 🆘3.
+    // One live worker on #17 with ad12 rm3, blocked 2; cached rq11 rh3.
     await writeWorkerState(root, "wA", "17-a1", {
       blocked: 2,
       // `started_at` (fresh) is what makes isStateActive treat this pid-live worker
@@ -131,11 +137,13 @@ describe("statusline command — rendered line", () => {
     const code = await statuslineCommand([root], root, out.stream, fakeStdin(PAYLOAD));
     expect(code).toBe(0);
 
-    const line = out.text().trim();
+    const line = stripAnsi(out.text().trim());
     // basename(root) (branch may or may not resolve) · Opus·high · 47k 24% · AFK run.
     expect(line).toContain("Opus·high");
     expect(line).toContain("47k 24%");
-    expect(line).toContain("🤖1 📋11 🆘3 🚧2 +12 -3 #17");
+    expect(line).toContain("wk1 rq11 rh3 bk2 ad12 rm3 #17");
+    // The raw output carries the wine-red background SGR (theme on by default).
+    expect(out.text()).toContain("\x1b[48;2;114;47;55m");
   });
 
   it("drops the AFK block when there are no live workers", async () => {
@@ -143,10 +151,10 @@ describe("statusline command — rendered line", () => {
     const code = await statuslineCommand([root], root, out.stream, fakeStdin(PAYLOAD));
     expect(code).toBe(0);
 
-    const line = out.text().trim();
+    const line = stripAnsi(out.text().trim());
     expect(line).toContain("Opus·high");
     expect(line).toContain("47k 24%");
-    expect(line).not.toContain("🤖");
+    expect(line).not.toContain("wk");
   });
 
   it("renders only the project block outside Claude Code (empty stdin)", async () => {

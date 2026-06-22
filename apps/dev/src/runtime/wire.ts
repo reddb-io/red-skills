@@ -553,7 +553,7 @@ function writeStatuslineCacheAtomic(path: string, cache: StatuslineCache): void 
  * collect the in-progress issue numbers in directory order. Returns null when
  * there are no live workers, so the caller drops the whole AFK block.
  *
- * The 📋 ready-for-agent / 🆘 ready-for-human counts are GitHub-derived and
+ * The `rq` ready-for-agent / `rh` ready-for-human counts are GitHub-derived and
  * cached for {@link STATUSLINE_CACHE_TTL_S} seconds in
  * `.red/tmp/statusline-cache.json`: a cold cache refreshes synchronously, a
  * fresh cache is read as-is, and a stale cache is read AND refreshed in the
@@ -584,7 +584,7 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
       continue;
     }
     // Statusline counts only genuinely-active workers (pid-live AND fresh), so a
-    // finished worker with a stale state file no longer inflates the 🤖N badge.
+    // finished worker with a stale state file no longer inflates the wkN badge.
     if (!isStateActive(state)) continue;
 
     workers += 1;
@@ -593,7 +593,7 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
     // (ADR 0065) rather than ad-hoc field access — `current` satisfies it.
     const vitals: WorkerVitals = state.current;
     // Silent-agent signal: cumulative heartbeat windows with no new stream
-    // event. Summed across the fleet and shown as 💤N so a wedged-but-not-dead
+    // event. Summed across the fleet and shown as wtN so a wedged-but-not-dead
     // worker is visible.
     waiting += vitals.waiting_count;
     // Cost group: per-worker token spend + USD, summed for the fleet.

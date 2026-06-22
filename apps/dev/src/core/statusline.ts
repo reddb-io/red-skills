@@ -3,7 +3,11 @@
 // model, effort, context window) and combines it with live /afk worker state
 // from <root>/.red/tmp/workers/*/* to emit ONE compact line like:
 //
-//   red-skills · Opus·high · 47k 24% · 🤖4 📋1 🆘11 🚧10 +12 -3 #17
+//   red-skills · Opus·high · 47k 24% · wk4 rq1 rh11 bk10 ad12 rm3 #17
+//
+// The AFK KPIs use two-letter mnemonics (wk/rq/rh/bk/ad/rm/wt/tk/$) instead of
+// emojis; the optional ANSI theming (wine-red line, black-chipped KPI numbers)
+// lives in the sibling style module, not here.
 //
 // The render here is PURE — no stdin parse, no filesystem, no git/gh, no cache,
 // no ANSI. The caller injects the already-resolved inputs (project basename +
@@ -39,26 +43,26 @@ export interface ClaudeInput {
 
 /** The block-4 aggregated worker counts, already summed across live workers. */
 export interface AfkInput {
-  /** 🤖 — number of live workers. */
+  /** `wk` — number of live workers. */
   workers: number;
-  /** 📋 — cached ready-for-agent (queue) count. */
+  /** `rq` — cached ready-for-agent (queue) count. */
   queue: number;
-  /** 🆘 — cached ready-for-human count. */
+  /** `rh` — cached ready-for-human count. */
   human: number;
-  /** 🚧 — summed blocked count. */
+  /** `bk` — summed blocked count. */
   blocked: number;
-  /** +N — summed insertions. */
+  /** `adN` — summed insertions. */
   added: number;
-  /** -N — summed deletions. */
+  /** `rmN` — summed deletions. */
   removed: number;
-  /** 💤 — summed `waiting_count` (heartbeat windows with zero new stream events)
+  /** `wt` — summed `waiting_count` (heartbeat windows with zero new stream events)
    * across live workers. A rising value between glances is the clean
    * stuck-vs-working signal (silent agent), so it is shown only when > 0. */
   waiting?: number;
-  /** 🪙 — summed token spend (input + output) across live workers (ADR 0065 cost
-   * group). Humanized (e.g. `🪙12k`); shown only when > 0. */
+  /** `tk` — summed token spend (input + output) across live workers (ADR 0065 cost
+   * group). Humanized (e.g. `tk12k`); shown only when > 0. */
   tokens?: number;
-  /** 💵 — summed USD cost across live workers, shown only when > 0 (most runners
+  /** `$` — summed USD cost across live workers, shown only when > 0 (most runners
    * report tokens but not cost, so this is frequently absent). */
   costUsd?: number;
   /** #N issue numbers for the in-progress workers, in order. */
@@ -127,30 +131,60 @@ export function renderContextBlock(claude: ClaudeInput | undefined): string | nu
 }
 
 /**
- * Block 4: the space-joined AFK token run. Each emoji+number is emitted only
- * when its count is > 0, in the fixed order 🤖 📋 🆘 🚧 +N -N 💤N, followed by the
- * `#N` issue numbers (always emitted, in order, each with an optional `·stage`
- * suffix). Null when there are no live workers, matching the bash
- * `(( total_workers > 0 ))` gate around the block.
+ * One AFK token, split so the styling slice can paint the numeric VALUE
+ * independently of its label. `label` is the leading two-letter mnemonic (`wk`,
+ * `rq`, …) or sigil (`#`, `$`); `value` is the number/humanized count the chip
+ * highlights; `suffix` is any trailing non-numeric text (the `·stage` on an
+ * issue token). Plain render = `label + value + suffix`; styled render chips
+ * only `value`. See {@link renderAfkBlock} (plain) and the style module.
  */
-export function renderAfkBlock(afk: AfkInput | undefined): string | null {
-  if (!afk || afk.workers <= 0) return null;
-  const tokens: string[] = [];
-  if (afk.workers > 0) tokens.push(`🤖${afk.workers}`);
-  if (afk.queue > 0) tokens.push(`📋${afk.queue}`);
-  if (afk.human > 0) tokens.push(`🆘${afk.human}`);
-  if (afk.blocked > 0) tokens.push(`🚧${afk.blocked}`);
-  if (afk.added > 0) tokens.push(`+${afk.added}`);
-  if (afk.removed > 0) tokens.push(`-${afk.removed}`);
-  if (afk.waiting !== undefined && afk.waiting > 0) tokens.push(`💤${afk.waiting}`);
-  if (afk.tokens !== undefined && afk.tokens > 0) tokens.push(`🪙${humanizeTokens(afk.tokens)}`);
-  if (afk.costUsd !== undefined && afk.costUsd > 0) tokens.push(`💵$${afk.costUsd.toFixed(2)}`);
+export interface AfkToken {
+  label: string;
+  value: string;
+  suffix: string;
+}
+
+/**
+ * The ordered AFK token model behind block 4. Each KPI is emitted only when its
+ * count is > 0, in the fixed order workers `wk`, queue `rq`, human `rh`, blocked
+ * `bk`, added `ad`, removed `rm`, waiting `wt`, tokens `tk`, cost `$`, followed
+ * by the `#N` issue tokens (always emitted, in order, each carrying an optional
+ * `·stage` suffix). Empty when there are no live workers. Two-letter mnemonics
+ * replace the legacy emojis (🤖📋🆘🚧+−💤🪙💵) so the line is emoji-free and the
+ * style slice can chip each numeric value.
+ */
+export function afkTokens(afk: AfkInput | undefined): AfkToken[] {
+  if (!afk || afk.workers <= 0) return [];
+  const tokens: AfkToken[] = [];
+  const kpi = (label: string, value: string): void => {
+    tokens.push({ label, value, suffix: "" });
+  };
+  if (afk.workers > 0) kpi("wk", String(afk.workers));
+  if (afk.queue > 0) kpi("rq", String(afk.queue));
+  if (afk.human > 0) kpi("rh", String(afk.human));
+  if (afk.blocked > 0) kpi("bk", String(afk.blocked));
+  if (afk.added > 0) kpi("ad", String(afk.added));
+  if (afk.removed > 0) kpi("rm", String(afk.removed));
+  if (afk.waiting !== undefined && afk.waiting > 0) kpi("wt", String(afk.waiting));
+  if (afk.tokens !== undefined && afk.tokens > 0) kpi("tk", humanizeTokens(afk.tokens));
+  if (afk.costUsd !== undefined && afk.costUsd > 0) kpi("$", afk.costUsd.toFixed(2));
   afk.issues.forEach((issue, i) => {
     const stage = afk.stages?.[i];
-    tokens.push(stage ? `#${issue}·${stage}` : `#${issue}`);
+    tokens.push({ label: "#", value: String(issue), suffix: stage ? `·${stage}` : "" });
   });
+  return tokens;
+}
+
+/**
+ * Block 4: the space-joined AFK token run in plain text. Null when there are no
+ * live workers, matching the bash `(( total_workers > 0 ))` gate around the
+ * block. The ANSI-painted variant lives in the style module and shares the
+ * {@link afkTokens} model, so plain and styled never drift.
+ */
+export function renderAfkBlock(afk: AfkInput | undefined): string | null {
+  const tokens = afkTokens(afk);
   if (tokens.length === 0) return null;
-  return tokens.join(" ");
+  return tokens.map((t) => `${t.label}${t.value}${t.suffix}`).join(" ");
 }
 
 /**

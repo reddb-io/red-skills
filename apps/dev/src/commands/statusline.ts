@@ -17,7 +17,8 @@
 
 import { existsSync, statSync } from "node:fs";
 import { join, basename } from "node:path";
-import { renderStatusline, type ClaudeInput, type ProjectInput } from "../core/statusline.js";
+import { type ClaudeInput, type ProjectInput } from "../core/statusline.js";
+import { renderStatuslineThemed } from "../core/statusline-style.js";
 import { loadConfig, getConfig } from "../core/config.js";
 import { collectStatuslineAfk } from "../runtime/wire.js";
 import * as gitx from "../runtime/git.js";
@@ -153,7 +154,10 @@ export async function statuslineCommand(
   // from the project root and let gh infer the repo from cwd (repo slug "").
   const afk = (await collectStatuslineAfk({ root, repo: "", remote: "origin" })) ?? undefined;
 
-  const line = renderStatusline({ project, claude, afk });
+  // Theme on by default (the high-tech wine line with chipped KPI numbers);
+  // honour NO_COLOR for plain consumers, matching the de-facto colour opt-out.
+  const color = !process.env.NO_COLOR;
+  const line = renderStatuslineThemed({ project, claude, afk }, color);
   stdout.write(`${line}\n`);
   return 0;
 }
