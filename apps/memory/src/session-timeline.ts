@@ -153,6 +153,20 @@ function toEntry(event: MemoryEvent): SessionTimelineEntry {
     };
   }
 
+  if (payload.event_type === "memory.recall.observed") {
+    return {
+      id: event.id,
+      occurred_at: event.occurred_at,
+      kind: event.kind,
+      session_id: sessionIdOf(event),
+      actor: actorOf(event),
+      title: "recall observed",
+      detail: `${payload.returned_count}/${payload.candidate_count} candidate(s); ${payload.tokens_saved} tokens saved; surface:${payload.surface}`,
+      outcome: payload.hit ? "succeeded" : "noop",
+      source: sourceOf(event),
+    };
+  }
+
   return {
     id: event.id,
     occurred_at: event.occurred_at,
