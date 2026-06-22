@@ -93,7 +93,8 @@ function projectContent(project: ProjectInput): string {
   } else if (project.detachedSha) {
     ref = ` ${DIM}(detached ${project.detachedSha})${WHITE}`;
   }
-  return `${GOLD}»${WHITE} ${BOLD}${project.basename}${NOBOLD}${ref}`;
+  const ver = project.version ? ` ${DIM}v${project.version}${WHITE}` : "";
+  return `${GOLD}»${WHITE} ${BOLD}${project.basename}${NOBOLD}${ref}${ver}`;
 }
 
 /** `model·effort`, or null when there is no model. */

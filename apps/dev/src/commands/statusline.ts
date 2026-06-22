@@ -17,6 +17,7 @@
 
 import { existsSync, statSync } from "node:fs";
 import { join, basename } from "node:path";
+import { readBuildInfo } from "@reddb-io/build-info";
 import { type ClaudeInput, type ProjectInput } from "../core/statusline.js";
 import { renderStatuslineThemed } from "../core/statusline-style.js";
 import { loadConfig, getConfig } from "../core/config.js";
@@ -103,15 +104,18 @@ export function statuslineEnabled(root: string): boolean {
   return true;
 }
 
-/** The block-1 project input: basename plus the resolved git ref (branch or
- * detached short sha), like statusline.sh's block 1. */
+/** The block-1 project input: basename, the resolved git ref (branch or detached
+ * short sha), and the running `dev` plugin version (build-info → dim `v<version>`
+ * tag on the themed header). */
 async function resolveProject(root: string): Promise<ProjectInput> {
   const ctx: gitx.GitContext = { cwd: root };
+  const version = readBuildInfo("dev").version;
+  const base: ProjectInput = { basename: basename(root), version };
   const branch = await gitx.currentBranch(ctx);
-  if (branch) return { basename: basename(root), branch };
+  if (branch) return { ...base, branch };
   const sha = await gitx.headShortSha(ctx);
-  if (sha) return { basename: basename(root), detachedSha: sha };
-  return { basename: basename(root) };
+  if (sha) return { ...base, detachedSha: sha };
+  return base;
 }
 
 /** Project the Claude Code payload into the renderer's block-2/3 input. */
