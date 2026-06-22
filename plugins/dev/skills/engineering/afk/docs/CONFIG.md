@@ -106,6 +106,38 @@ The full lifecycle table is defined in PRD #207. The hooks shipped so far:
 | `post_session`  | Normal session termination                 | `RED_AFK_RUNNER`, `RED_AFK_WORKSPACE` | session stats (`runner`, `worker_id`, `stats.{done,blocked,total}`) | non-zero is **logged** and the session ends as `NO MORE TASKS` |
 | `on_session_error` | Last gasp — the AFK loop itself crashed (unhandled `set -e` exit, supervisor died, unrecoverable orchestrator exception). Distinct from `on_attempt_error` (a single attempt blew up; the loop continued) and from `post_session` (clean shutdown). This is the only path that guarantees a notification when the autonomous worker stopped without the operator noticing. Does **not** fire on a user-requested abort (`pre_session` rejection, straggler decline, Ctrl+C / SIGTERM through the cleanup trap) — those set the clean-exit sentinel before exiting. | `RED_AFK_RUNNER`, `RED_AFK_WORKSPACE`, `RED_AFK_ERROR_CLASS` (`session-crash` by default), `RED_AFK_ERROR_MESSAGE` | `error` (`{class, rc, message}`) — none mutable (the loop is already collapsing) | non-zero is **logged** but the process still exits — this hook cannot rescue the session, only announce its death |
 
+### Hook context schema (generated)
+
+> Generated from the canonical hook registry (`apps/dev/src/core/hook-registry.ts`, #834). A drift test (`hook-registry.test.ts`) fails if this block and the registry disagree, so the contract below can never drift from the wired hooks. Edit the registry, not this table.
+
+The stdin-JSON context each point receives, the **mutable slice** a hook may rewrite via stdout JSON (everything else is read-only context), and the exit-code policy class:
+
+<!-- BEGIN GENERATED: hook-context-schema -->
+| Hook | Stdin context (JSON) | Mutable slice | Exit policy |
+|---|---|---|---|
+| `pre_session` | `runner`, `worker_id`, `filter`, `iter_cap` | `runner`, `worker_id`, `filter`, `iter_cap` | non-zero **aborts** |
+| `pre_pick` | `label`, `state`, `limit`, `filter` | `label`, `state`, `limit` | non-zero **aborts** |
+| `post_pick` | `issues[]` | `issues[]` | non-zero **logged**, continues |
+| `pre_worktree` | `issue`, `target`, `env`, `branch` | `issue`, `target`, `env` | non-zero **aborts** |
+| `pre_attempt` | `issue`, `workspace`, `attempt_n`, `runner` | `issue`, `workspace`, `attempt_n` | non-zero **aborts** |
+| `post_attempt` | `issue`, `workspace`, `result`, `attempt_n` | `issue`, `workspace`, `result`, `attempt_n` | non-zero **logged**, continues |
+| `pre_feedback` | `issue`, `workspace`, `scopes[]` | `issue`, `workspace`, `scopes[]` | non-zero **aborts** |
+| `on_baseline_probe` | `issue`, `workspace`, `ok`, `downgraded[]` | _none (read-only)_ | non-zero **logged**, continues |
+| `on_feedback_classify` | `issue`, `workspace`, `class` | `class` | non-zero **logged**, continues |
+| `post_feedback` | `issue`, `workspace`, `result` | `issue`, `workspace`, `result` | non-zero **logged**, continues |
+| `pre_merge` | `issue`, `workspace`, `diff`, `branch` | `issue`, `workspace`, `diff` | non-zero **aborts** |
+| `post_merge` | `issue`, `workspace`, `merge_commit` | `issue`, `workspace`, `merge_commit` | non-zero **logged**, continues |
+| `on_attempt_error` | `issue`, `workspace`, `error`, `attempt_n` | `issue`, `workspace`, `error`, `attempt_n` | non-zero **logged**, continues |
+| `on_attempt_timeout` | `issue`, `workspace`, `attempt_n`, `reason` | _none (read-only)_ | non-zero **logged**, continues |
+| `on_recovery_decision` | `issue`, `decision`, `reason`, `attempt_n` | `decision` | non-zero **logged**, continues |
+| `on_blocked` | `issue`, `blocked_label`, `reason`, `attempt_n` | _none (read-only)_ | non-zero **logged**, continues |
+| `on_reconcile` | `issue`, `workspace`, `attempt_n`, `outcome` | _none (read-only)_ | non-zero **logged**, continues |
+| `on_idle` | `stats` | _none (read-only)_ | non-zero **logged**, continues |
+| `on_heartbeat` | `issue`, `workspace`, `runner`, `attempt_n`, `vitals` | _none (read-only)_ | non-zero **logged**, continues |
+| `post_session` | `runner`, `worker_id`, `stats` | `runner`, `worker_id`, `stats` | non-zero **logged**, continues |
+| `on_session_error` | `error` | _none (read-only)_ | non-zero **logged**, continues |
+<!-- END GENERATED: hook-context-schema -->
+
 **Attempt vocabulary & back-compat (issue #226, ADR 0026).** The attempt-level hooks were renamed from `pre_worker` / `post_worker` / `on_worker_error` to `pre_attempt` / `post_attempt` / `on_attempt_error` so "worker" unambiguously names the orchestrator process (`RED_AFK_WORKER_ID`) and the hooks align 1:1 with ADR 0017's `attempt` (one node = one runner invocation). They fire **per runner invocation**, so a `--fallback-runner` swap on one issue yields two `pre_attempt → post_attempt` cycles; `attempt_n` (mutable-context field and the `RED_AFK_ATTEMPT_N` env var) carries the attempt counter (1 for the first runner, 2 for the swap). For one release window, the old names declared in `.red/config.yaml` still fire — they are translated to the canonical names at session boot with a single deprecation warning logged. Rename them before the next release; the back-compat shim is dropped then.
 
 ### Built-in defaults
