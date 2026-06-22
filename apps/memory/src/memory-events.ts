@@ -193,6 +193,40 @@ const memoryInjectionPayloadSchema = z
     }
   });
 
+const recallObservationPayloadSchema = z
+  .object({
+    event_type: z.literal("memory.recall.observed"),
+    event_id: safeString("payload.event_id", 200),
+    timestamp: z
+      .string()
+      .datetime({ offset: true })
+      .or(z.string().datetime({ offset: false })),
+    /** Surface that drove the recall (e.g. "context-pack", "handoff", "cli"). */
+    surface: safeString("payload.surface", 120),
+    query: safeString("payload.query", SAFE_TEXT_MAX).optional(),
+    session_id: safeString("payload.session_id", 200).optional(),
+    runner: safeString("payload.runner", 80).optional(),
+    /** Total governed candidates recall produced (returned + budget-omitted). */
+    candidate_count: z.number().int().nonnegative().max(1_000_000),
+    /** Candidates that survived into the delivered pack. */
+    returned_count: z.number().int().nonnegative().max(1_000_000),
+    /** Whether recall returned at least one governed candidate. */
+    hit: z.boolean(),
+    hit_count: z.number().int().nonnegative().max(1_000_000),
+    /** Proxy for "the most-important fact made the pack": a pinned/core entry
+     * survived budgeting (or nothing valuable was dropped). */
+    gold_in_pack_proxy: z.boolean(),
+    gold_proxy_rank: z.number().int().positive().max(1_000_000).optional(),
+    /** Estimated tokens for the full recalled content before budgeting. */
+    tokens_baseline: z.number().int().nonnegative().max(10_000_000),
+    /** Estimated tokens actually delivered in the pack. */
+    tokens_compressed: z.number().int().nonnegative().max(10_000_000),
+    /** Tokens saved versus delivering the full recalled content. */
+    tokens_saved: z.number().int().nonnegative().max(10_000_000),
+    metadata: z.record(z.unknown()).optional(),
+  })
+  .strict();
+
 const provenanceSchema = z
   .object({
     source_kind: z.enum(["manual", "hook", "derived", "system"]),
@@ -217,6 +251,7 @@ const memoryEventSchema = z
       "memory.drift.caught",
       "memory.context-pack.generated",
       "memory.injection.delivered",
+      "memory.recall.observed",
     ]),
     source: envelopeObject("source"),
     actor: envelopeObject("actor"),
@@ -234,6 +269,7 @@ const memoryEventSchema = z
       driftCaughtPayloadSchema,
       contextPackGenerationPayloadSchema,
       memoryInjectionPayloadSchema,
+      recallObservationPayloadSchema,
     ]),
     provenance: provenanceSchema,
   })
@@ -248,6 +284,7 @@ export type EngineOpOutcome = EngineOpPayload["outcome"];
 export type DriftCaughtPayload = z.infer<typeof driftCaughtPayloadSchema>;
 export type ContextPackGenerationPayload = z.infer<typeof contextPackGenerationPayloadSchema>;
 export type MemoryInjectionPayload = z.infer<typeof memoryInjectionPayloadSchema>;
+export type RecallObservationPayload = z.infer<typeof recallObservationPayloadSchema>;
 
 export interface DriftCaughtInput {
   /** Watched paths that changed without an audit marker. Must be non-empty. */
@@ -292,6 +329,23 @@ export interface MemoryInjectionInput {
   runner?: string;
   hookEvent?: string;
   injectedChars?: number;
+  timestamp?: string | Date;
+  eventId?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface RecallObservationInput {
+  surface: string;
+  query?: string;
+  sessionId?: string;
+  runner?: string;
+  candidateCount: number;
+  returnedCount: number;
+  hitCount: number;
+  goldInPackProxy: boolean;
+  goldProxyRank?: number;
+  tokensBaseline: number;
+  tokensCompressed: number;
   timestamp?: string | Date;
   eventId?: string;
   metadata?: Record<string, unknown>;
@@ -544,6 +598,59 @@ export function memoryInjectionToMemoryEvent(input: MemoryInjectionInput): Memor
 }
 
 /**
+ * Build a `memory.recall.observed` event (PRD #820, issue #828). Emitted from
+ * real agent runs so recall hit-rate, gold-in-pack proxy, and tokens-saved are
+ * observable in the analytics hypertable alongside the synthetic benchmark.
+ */
+export function recallObservationToMemoryEvent(
+  input: RecallObservationInput,
+): MemoryEvent {
+  const timestamp =
+    input.timestamp instanceof Date
+      ? input.timestamp.toISOString()
+      : input.timestamp ?? new Date().toISOString();
+  const eventId =
+    input.eventId ??
+    `recall-observed:${input.surface}:${input.query ?? "anon"}:${Date.parse(timestamp) || timestamp}`;
+  const sessionId = input.sessionId ?? `recall:${input.surface}`;
+  const tokensSaved = Math.max(0, input.tokensBaseline - input.tokensCompressed);
+  return parseMemoryEvent({
+    id: eventId,
+    occurred_at: timestamp,
+    kind: "memory.recall.observed",
+    source: { kind: "memory", name: "memory.recall" },
+    actor: { kind: "agent", id: input.runner ?? input.surface },
+    scope: { level: "session", id: sessionId },
+    subject: { kind: "recall", id: input.query ?? input.surface },
+    payload: {
+      event_type: "memory.recall.observed",
+      event_id: eventId,
+      timestamp,
+      surface: input.surface,
+      ...(input.query ? { query: input.query } : {}),
+      ...(input.sessionId ? { session_id: input.sessionId } : {}),
+      ...(input.runner ? { runner: input.runner } : {}),
+      candidate_count: input.candidateCount,
+      returned_count: input.returnedCount,
+      hit: input.hitCount > 0,
+      hit_count: input.hitCount,
+      gold_in_pack_proxy: input.goldInPackProxy,
+      ...(input.goldProxyRank != null ? { gold_proxy_rank: input.goldProxyRank } : {}),
+      tokens_baseline: input.tokensBaseline,
+      tokens_compressed: input.tokensCompressed,
+      tokens_saved: tokensSaved,
+      ...(input.metadata ? { metadata: input.metadata } : {}),
+    },
+    provenance: {
+      source_kind: "system",
+      writer: "memory",
+      command: "memory recall-observed",
+      evidence: [`event_id:${eventId}`],
+    },
+  });
+}
+
+/**
  * Build a `memory.drift.caught` event (ADR 0025) for the CI drift guard (#224).
  * The guard emits one of these when it fails a PR so the maintainer can see how
  * often the markdown↔graph drift guard actually catches divergence.
@@ -611,6 +718,21 @@ export async function appendMemoryInjectionEvent(
   input: MemoryInjectionInput,
 ): Promise<void> {
   await appendMemoryEvent(store, memoryInjectionToMemoryEvent(input));
+}
+
+/**
+ * Best-effort recall-observation append. Telemetry is additive and must never
+ * fail the recall it describes (issue #828, mirroring `appendEngineOpEvent`).
+ */
+export async function appendRecallObservationEvent(
+  store: MemoryStore,
+  input: RecallObservationInput,
+): Promise<void> {
+  try {
+    await appendMemoryEvent(store, recallObservationToMemoryEvent(input));
+  } catch {
+    // Swallowed by design — see function docs.
+  }
 }
 
 export function deriveMemoryInjectionRollups(events: readonly MemoryEvent[]): MemoryInjectionRollup[] {

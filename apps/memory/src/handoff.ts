@@ -1,3 +1,4 @@
+import { stabilizeCachePrefix } from "./cache-prefix.js";
 import type { MemoryStore, StoredNode } from "./graph-store.js";
 import type { NodeType } from "./schema.js";
 
@@ -221,7 +222,10 @@ function renderMarkdown(report: Omit<MemoryHandoffReport, "markdown">): string {
     for (const action of report.recommended_next_actions) lines.push(`- ${action}`);
     lines.push("");
   }
-  return lines.join("\n").trimEnd();
+  // Cache-prefix stability (#828): the handoff brief is reused as a prompt for
+  // the next agent (and AFK handoffs), so relocate the per-run dynamic values
+  // (node ages, timestamps) to the tail and keep the structural prefix stable.
+  return stabilizeCachePrefix(lines.join("\n").trimEnd()).text;
 }
 
 function nextActions(returnedItems: number, focus: string | null): string[] {
