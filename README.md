@@ -485,6 +485,7 @@ Composable. Boring on purpose where boring is enough. Sharp where it matters.
 | **[doctor](./plugins/dev/skills/engineering/doctor/SKILL.md)** | Adoption/process doctor — reports label-vocab conformance, AGENTS≡CLAUDE parity, statusline drift, MCP wiring, `blocked:*` hygiene, and version coherence, tagging each gap with its fix-home. Read-only by default; `--fix` heals every finding (safe ones batched, hard-to-reverse ones confirmed per-item). The recurring counterpart to `/setup-red-skills`. |
 | **[review-adrs](./plugins/dev/skills/engineering/review-adrs/SKILL.md)** | Decision-record doctor — lints `.red/adr/` for contradictions, missing supersession, stale references, number collisions, and controversial decisions, then reconciles each finding through a one-question-at-a-time interview (like `/start`) and consolidates every agreement into a single actionable PRD on the tracker via `/to-prd`. |
 | **[setup-statusline](./plugins/dev/skills/engineering/setup-statusline/SKILL.md)** | Installs or inspects the RedSkills Claude Code statusline, rendering the live AFK block via `node bin/afk.mjs statusline`. |
+| **[resolving-merge-conflicts](./plugins/dev/skills/engineering/resolving-merge-conflicts/SKILL.md)** | Guided merge-conflict resolution: inspect state, find each side's original intent, resolve every hunk preserving both intents, then run the project's automated checks. Never abort. |
 
 </details>
 

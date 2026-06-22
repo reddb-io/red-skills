@@ -6,6 +6,16 @@ Upstream base: `mattpocock/skills@6eeb81b5fcfeeb5bd531dd47ab2f9f2bbea27461` (see
 
 ---
 
+## resolving-merge-conflicts (engineering)
+
+- **status**: added
+- **upstream**: `6eeb81b`
+- **why**: adopt the upstream conflict-resolution skill into the engineering bucket; no existing human-facing counterpart (AFK handles conflict *recovery* internally, but there was no skill for interactive use)
+- **what changed**:
+  - new skill at `plugins/dev/skills/engineering/resolving-merge-conflicts/SKILL.md`
+  - ported the upstream loop (inspect state → find each side's intent → resolve every hunk → run checks) and rewrote to RedSkills house style (`<what-to-do>`/`<supporting-info>` split + 8 SKILL.md writing techniques)
+  - registered in root `README.md`, `plugins/dev/skills/engineering/README.md`, and `plugins/dev/.claude-plugin/plugin.json`
+
 ## upstream drift review — 694fa30 → 6eeb81b (#744)
 
 - **status**: reviewed
