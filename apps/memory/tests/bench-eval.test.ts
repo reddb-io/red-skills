@@ -36,6 +36,7 @@ import {
 
 const CORPUS_DIR = join(__dirname, "../bench/eval/single-hop");
 const STRUCTURED_CORPUS_DIR = join(__dirname, "../bench/eval/structured");
+const GOVERNED_CORPUS_DIR = join(__dirname, "../bench/eval/governed");
 const FIXED_NOW = new Date("2026-06-02T00:00:00.000Z");
 
 describe("memory bench eval — fixture integrity", () => {
@@ -79,6 +80,113 @@ describe("memory bench eval — fixture integrity", () => {
     }
     expect(byId.get("doc-t-001")?.superseded_by).toBe("doc-t-002");
     expect(byId.get("doc-t-002")?.supersedes).toBe("doc-t-001");
+  });
+
+  test("governed corpus scales the spine and adds needle + adversarial scenarios", async () => {
+    const corpus = await loadCorpus(GOVERNED_CORPUS_DIR);
+    const byId = new Map(corpus.map((c) => [c.id, c]));
+    const questions = await loadQuestions(GOVERNED_CORPUS_DIR);
+
+    // Realistically sized: well beyond the 6-node fixture, with distractors.
+    expect(corpus.length).toBeGreaterThanOrEqual(40);
+
+    // Multi-hop chains and temporal supersession survive in the larger corpus.
+    expect(byId.get("doc-mh-001")?.relations[0]?.target_id).toBe("doc-mh-002");
+    expect(byId.get("doc-t-001")?.superseded_by).toBe("doc-t-002");
+
+    // Both new categories are present.
+    expect([...new Set(questions.map((q) => q.category))].sort()).toEqual([
+      "adversarial",
+      "multi-hop",
+      "needle",
+      "single-hop",
+      "temporal-as-of",
+      "unanswerable",
+    ]);
+
+    // needle: a planted authoritative fact with gold answer + gold doc id.
+    const needle = questions.filter((q) => q.category === "needle");
+    expect(needle.length).toBeGreaterThanOrEqual(1);
+    for (const q of needle) {
+      const gold = byId.get(q.gold_doc_id);
+      expect(gold, `needle gold ${q.gold_doc_id}`).toBeDefined();
+      expect(exactMatch(q.gold_answer, gold!.fact)).toBe(1);
+    }
+
+    // adversarial: every gold resolves and the case-specific governance axis it
+    // exercises is actually present in the corpus.
+    const adversarial = questions.filter((q) => q.category === "adversarial");
+    expect(adversarial.length).toBeGreaterThanOrEqual(3);
+    for (const q of adversarial) {
+      expect(byId.get(q.gold_doc_id), `adversarial gold ${q.gold_doc_id}`).toBeDefined();
+    }
+    // near-duplicate: gold and decoy differ only by scope.
+    expect(questions.find((q) => q.id === "q-adv-dup-001")?.scope).toBe("checkout-api");
+    expect(byId.get("doc-adv-dup-a")?.scope).toBe("search-api");
+    expect(byId.get("doc-adv-dup-b")?.scope).toBe("checkout-api");
+    // superseded-but-tempting: the decoy carries superseded_by.
+    expect(byId.get("doc-adv-sup-a")?.superseded_by).toBe("doc-adv-sup-b");
+    // contradictory-source: the decoy is low-confidence / chat tier.
+    expect(byId.get("doc-adv-con-a")?.confidence).toBe("low");
+    expect(byId.get("doc-adv-con-a")?.tier).toBe("chat");
+    expect(byId.get("doc-adv-con-b")?.confidence).toBe("high");
+  });
+});
+
+describe("memory bench eval — governed needle + adversarial scoring", () => {
+  test("governed recall surfaces the planted needle among its distractors", async () => {
+    const report = await runBenchEval({
+      corpusDir: GOVERNED_CORPUS_DIR,
+      substrate: "reddb",
+      now: () => FIXED_NOW,
+    });
+    const needle = report.records.filter((r) => r.category === "needle");
+    expect(needle.length).toBeGreaterThanOrEqual(1);
+    for (const r of needle) {
+      expect(r.gold_in_pack).toBe(true);
+      expect(r.gold_rank).toBe(1);
+      expect(r.exact_match).toBe(1);
+    }
+  });
+
+  test("governed recall scores every adversarial case; ungoverned ranking is fooled", async () => {
+    const corpus = await loadCorpus(GOVERNED_CORPUS_DIR);
+    const questions = await loadQuestions(GOVERNED_CORPUS_DIR);
+    const governed = await runBenchEval({
+      corpusDir: GOVERNED_CORPUS_DIR,
+      substrate: "reddb",
+      now: () => FIXED_NOW,
+    });
+
+    const adversarial = questions.filter((q) => q.category === "adversarial");
+    expect(adversarial.length).toBeGreaterThanOrEqual(3);
+
+    for (const q of adversarial) {
+      // Governed recall (supersession / scope / confidence / tier applied) scores it.
+      const governedRecord = governed.records.find((r) => r.question_id === q.id)!;
+      expect(governedRecord.exact_match, `governed ${q.id}`).toBe(1);
+
+      // Ungoverned ranking — raw token overlap with no governance — is tempted
+      // by the distractor and answers wrong, proving the governance is load-bearing.
+      const naivePack = buildContextPack(corpus, q, governed.pack_size, "reddb");
+      expect(exactMatch(answerFromPack(naivePack, q), q.gold_answer), `naive ${q.id}`).toBe(0);
+    }
+
+    // The whole adversarial category clears under governed recall but not under
+    // an ungoverned embedding-RAG baseline.
+    const adversarialCategory = governed.categories.find((c) => c.category === "adversarial")!;
+    expect(adversarialCategory.question_count).toBe(adversarial.length);
+    const ungoverned = await runBenchEval({
+      corpusDir: GOVERNED_CORPUS_DIR,
+      substrate: "markdown-rag",
+      now: () => FIXED_NOW,
+    });
+    const ungovernedAdversarial = ungoverned.records.filter((r) => r.category === "adversarial");
+    const governedAdversarial = governed.records.filter((r) => r.category === "adversarial");
+    const governedEm = governedAdversarial.reduce((s, r) => s + r.exact_match, 0);
+    const ungovernedEm = ungovernedAdversarial.reduce((s, r) => s + r.exact_match, 0);
+    expect(governedEm).toBe(adversarial.length);
+    expect(ungovernedEm).toBeLessThan(governedEm);
   });
 });
 
