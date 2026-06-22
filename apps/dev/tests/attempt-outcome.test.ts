@@ -29,6 +29,12 @@ const TABLE: Row[] = [
   { outcome: "no-sentinel", label: "blocked:crashed", recovery: "crashed" },
   { outcome: "hook-aborted", label: "blocked:policy", recovery: "policy" },
   { outcome: "merge-conflict", label: "blocked:merge-conflict", recovery: "merge-conflict" },
+  // #812: a completed, MERGEABLE PR the admin-merge could not land because the
+  // `enforce_admins` base's required checks failed / are still pending. Distinct
+  // `blocked:ci` label, and NON-recoverable — the work is already on the open PR,
+  // so an auto-retry would re-run the whole inner agent for nothing.
+  { outcome: "ci-failed", label: "blocked:ci", recovery: null },
+  { outcome: "ci-pending", label: "blocked:ci", recovery: null },
   // typed label, but NOT auto-recoverable (route straight to a human)
   { outcome: "blocked", label: "blocked:spec", recovery: null },
   { outcome: "feedback-failed", label: "blocked:validation", recovery: null },
@@ -60,6 +66,8 @@ describe("attempt-outcome — exhaustive outcome → (label, recovery) table", (
       "blocked",
       "no-sentinel",
       "merge-conflict",
+      "ci-failed",
+      "ci-pending",
       "feedback-failed",
       "feedback-failed-infra",
       "claim-lost",
@@ -104,6 +112,11 @@ describe("attempt-outcome — exhaustive outcome → envelope status table", () 
     { outcome: "done", status: "done" },
     { outcome: "no-sentinel", status: "no-sentinel" },
     { outcome: "merge-conflict", status: "merge-conflict" },
+    // #812: ci-failed / ci-pending describe a MERGEABLE PR blocked by CI, never a
+    // git conflict — they MUST NOT emit a `merge-conflict` envelope. They fold
+    // into the generic `blocked` bucket (the `blocked:ci` label is the discriminator).
+    { outcome: "ci-failed", status: "blocked" },
+    { outcome: "ci-pending", status: "blocked" },
     { outcome: "blocked", status: "blocked" },
     // feedback-failed emits a `blocked` envelope, NOT a `feedback-failed` one.
     { outcome: "feedback-failed", status: "blocked" },
@@ -132,6 +145,8 @@ describe("attempt-outcome — exhaustive outcome → envelope status table", () 
       "blocked",
       "no-sentinel",
       "merge-conflict",
+      "ci-failed",
+      "ci-pending",
       "feedback-failed",
       "feedback-failed-infra",
       "claim-lost",

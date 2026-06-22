@@ -48,6 +48,14 @@ export const LABEL_SPEC = "blocked:spec";
 export const LABEL_QUOTA = "blocked:quota";
 export const LABEL_RUNNER_TRANSIENT = "blocked:runner-transient";
 export const LABEL_MERGE_CONFLICT = "blocked:merge-conflict";
+// AFK runner improvement (#812): an UNLOCKED admin-merge cannot bypass required
+// status checks on an `enforce_admins` base. A completed, MERGEABLE PR whose
+// required checks have FAILED, or are still PENDING past the CI-wait timeout, is
+// NOT a merge conflict — the branch merges cleanly once CI is green. This label
+// marks that distinct "blocked by CI, not by git" hold so a failed check / a
+// pending PR is never mislabelled `blocked:merge-conflict` and never triggers a
+// full inner-agent re-run.
+export const LABEL_CI = "blocked:ci";
 export const LABEL_POLICY = "blocked:policy";
 export const LABEL_INFRA = "blocked:infra";
 

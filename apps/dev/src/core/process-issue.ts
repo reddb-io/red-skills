@@ -51,6 +51,7 @@ import {
   type Exec as MergeExec,
   type ConflictResolver,
   type WaitForReviewInput,
+  type CiAwaitInput,
 } from "./merge.js";
 import { doLanding } from "./landing.js";
 import { reconcile, type ReconcileInput } from "./reconcile.js";
@@ -312,6 +313,16 @@ export interface ProcessIssueDeps {
    * omit it.
    */
   waitForReview?: WaitForReviewInput;
+  /**
+   * Opt-in CI-aware merge for the UNLOCKED admin-PR landing (#812). Resolved from
+   * config by the CLI (`afk.merge.ci_aware` + `RED_AFK_MERGE_CI_TIMEOUT_S`). When
+   * present, the landing polls the PR's merge state and admin-merges only once it
+   * settles to ready, routing the distinct `ci-failed` / `ci-pending` failure
+   * modes instead of mislabelling a MERGEABLE-but-CI-blocked PR as a merge
+   * conflict (and re-running the whole inner agent). Absent (the default) →
+   * admin-merge immediately. Tests omit it.
+   */
+  ciAwait?: CiAwaitInput;
   /**
    * PR review gate (ADR 0064 §10, #749). Resolved from `afk.review_gate.*` by the
    * CLI. When enabled AND the attempt's classified tier is non-mechanical, the
@@ -1208,6 +1219,7 @@ export async function processIssue(
       fireHook,
       conflictResolver: deps.conflictResolver,
       waitForReview: deps.waitForReview,
+      ciAwait: deps.ciAwait,
       makeLandingWorktree: deps.makeLandingWorktree,
       removeLandingWorktree: deps.removeLandingWorktree,
     },
@@ -1235,6 +1247,13 @@ export async function processIssue(
     },
   );
   if (!landing.ok) {
+    // CI-aware landing failures (#812): a completed, MERGEABLE PR the admin-merge
+    // could not land because the `enforce_admins` base's required checks failed /
+    // are still pending. NOT a merge conflict — preserve the OPEN PR and park to
+    // ready-for-human with `blocked:ci` rather than re-running the whole agent.
+    if (landing.reason === "ci-failed" || landing.reason === "ci-pending") {
+      return await ciBlocked(common, landing.reason, landing.prNumber);
+    }
     return await mergeFailed(common, landing.reason, landing.locked);
   }
 
@@ -1440,6 +1459,20 @@ function blockerForFailure(outcome: ProcessOutcome, sections: SectionBodies): Cu
         summary: oneLine(sections.log, "Worker branch could not be merged cleanly."),
         next: "Resolve the merge conflict or add guidance for the next agent attempt.",
       };
+    case "ci-failed":
+      return {
+        status: "blocked",
+        kind: "ci",
+        summary: oneLine(sections.log, "A required status check failed on the completed, mergeable PR."),
+        next: "Fix the failing required check on the open PR, then merge it (no full agent re-run needed).",
+      };
+    case "ci-pending":
+      return {
+        status: "blocked",
+        kind: "ci",
+        summary: oneLine(sections.log, "Required status checks were still pending on the completed, mergeable PR."),
+        next: "Wait for the required checks to go green, then merge the open PR (no full agent re-run needed).",
+      };
     default:
       return null;
   }
@@ -1563,6 +1596,59 @@ async function mergeFailed(c: StageCommon, _reason: string, locked = false): Pro
     branch: c.branch,
     base: c.base,
     locked,
+    hooksFired: c.hooksFired,
+    envelopePosted: posted,
+    preserved: true,
+    swept: false,
+  };
+}
+
+/**
+ * CI-aware landing handoff (#812). The completed UNLOCKED attempt produced a
+ * MERGEABLE PR, but the admin-merge could not land it because the
+ * `enforce_admins` base's required checks FAILED (`ci-failed`) or were still
+ * PENDING past the CI-wait timeout (`ci-pending`). This is NOT a merge conflict
+ * and the work is DONE and committed on the open PR — so DO NOT re-run the agent:
+ * park to ready-for-human with the truthful `blocked:ci` label (routeRecovery
+ * escalates because ci-* carry no recovery budget), leave the PR + worker branch
+ * in place, and post a self-explanatory comment so a human / CI-aware finisher
+ * drives the existing PR to merge. The attempt dir is preserved; nothing swept.
+ */
+async function ciBlocked(
+  c: StageCommon,
+  outcome: "ci-failed" | "ci-pending",
+  prNumber?: number,
+): Promise<ProcessIssueResult> {
+  const { deps, input } = c;
+  const prRef = prNumber !== undefined ? `PR #${prNumber}` : "the open PR";
+  const reason =
+    outcome === "ci-failed"
+      ? `a required status check FAILED on ${prRef}`
+      : `required status checks were still pending on ${prRef} past the CI-wait timeout`;
+  // routeRecovery escalates (ci-* map to no recovery policy → ready-for-human +
+  // blocked:ci). The branch is intact, so the open PR is the durable artifact.
+  await routeRecovery(deps, input.issue, outcome, input.attempt);
+  await writeCurrentBlockerBestEffort(deps, input, blockerForFailure(outcome, { log: reason }));
+  const posted = await emitFailure(c, envelopeStatusFor(outcome), "ci", {
+    log:
+      `Inner agent completed (DONE, committed) and ${prRef} is MERGEABLE, but ${reason}. ` +
+      `The work is NOT lost — drive the open PR to merge once CI is green (no agent re-run needed).`,
+  });
+  await deps.gh.comment(
+    input.issue,
+    `🤖 /afk: ${reason}. The implementation is complete and committed on ${prRef} (MERGEABLE — not a merge conflict). ` +
+      `Holding for a human / CI-aware finisher to land the existing PR; the inner agent was NOT re-run (#812).`,
+  );
+  await recordAttemptBestEffort(c, outcome, {
+    durationS: deps.nowEpoch() - c.startedEpoch,
+    notes: reason,
+  });
+  await deps.claimLock.release(input.issue);
+  return {
+    outcome,
+    issue: input.issue,
+    branch: c.branch,
+    base: c.base,
     hooksFired: c.hooksFired,
     envelopePosted: posted,
     preserved: true,

@@ -41,7 +41,7 @@ import * as fsx from "../runtime/fs.js";
 import type { GhContext } from "../runtime/gh.js";
 import type { GitContext } from "../runtime/git.js";
 import type { ExecFn } from "../runtime/exec.js";
-import { getConfig, loadConfig, readBackpressure, resolveTier } from "../core/config.js";
+import { getConfig, loadConfig, readBackpressure, resolveTier, resolveCiTimeoutSeconds } from "../core/config.js";
 import {
   classifyIssue,
   resolveReviewGate,
@@ -476,6 +476,23 @@ export function buildProcessDeps(
         }
       : undefined;
 
+  // CI-aware merge (#812). Default off → the unlocked admin-merge fires
+  // immediately (fine on a base with NO required status checks). When
+  // `afk.merge.ci_aware` is true, the unlocked landing first polls the PR's merge
+  // state and admin-merges ONLY once it settles — because an admin-merge cannot
+  // bypass required checks on an `enforce_admins` base, so merging a just-opened
+  // PR with checks pending is rejected and was mislabelled `merge-conflict`. The
+  // poll budget comes from `RED_AFK_MERGE_CI_TIMEOUT_S` (default 1800s) at a fixed
+  // 10s cadence; on timeout the open, MERGEABLE PR is handed off (no agent re-run).
+  const ciAwait =
+    getConfig(config, "afk.merge.ci_aware") === "true"
+      ? {
+          sleep: (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
+          intervalMs: 10_000,
+          maxPolls: Math.max(1, Math.ceil(resolveCiTimeoutSeconds(process.env) / 10)),
+        }
+      : undefined;
+
   // PR review gate (ADR 0064 §10, #749). Default off → AFK keeps fast-merging
   // every tier. When enabled, a NON-mechanical attempt (classified tier at/above
   // `afk.review_gate.threshold`) gets `ready-for-review` on its PR and holds the
@@ -588,6 +605,7 @@ export function buildProcessDeps(
     resolveTier: (activeRunner, taskClass = "think") => resolveTier(config, activeRunner, taskClass, process.env),
     fallbackRunner,
     waitForReview,
+    ciAwait,
     reviewGate,
     reviewGateLabel: LABEL_READY_FOR_REVIEW,
     // One-shot merge-conflict resolver (merge_resolve_conflict): re-enter the

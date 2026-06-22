@@ -28,6 +28,7 @@ import {
   landPr,
   resolveMergeConflict,
   type ConflictResolver,
+  type CiAwaitInput,
   type Exec as MergeExec,
   type WaitForReviewInput,
 } from "./merge.js";
@@ -70,6 +71,15 @@ export interface LandingDeps {
    * Ignored on the locked path, which never opens a PR.
    */
   waitForReview?: WaitForReviewInput;
+  /**
+   * Opt-in CI-aware merge for the UNLOCKED admin-PR landing (#812). Present →
+   * landPr polls the PR's merge state and admin-merges only once it is genuinely
+   * ready (CLEAN, or blocked only by a review `--admin` waives), routing the
+   * distinct failure modes (`ci-failed` / `ci-pending`) instead of collapsing
+   * them to merge-conflict. Absent (the default) → admin-merge immediately.
+   * Ignored on the locked path, which never opens a PR.
+   */
+  ciAwait?: CiAwaitInput;
 }
 
 /** Static per-landing inputs the caller already resolved. */
@@ -107,7 +117,18 @@ export interface LandingHookContexts {
  * taken for the result shape. */
 export type LandingResult =
   | { ok: true; locked: boolean; mergeSha?: string }
-  | { ok: false; reason: "pre_merge-abort" | "integrate-failed" | "land-failed"; locked: boolean };
+  | {
+      ok: false;
+      // `ci-failed` / `ci-pending` (#812) are UNLOCKED-only: a completed,
+      // MERGEABLE PR that the admin-merge could not land because the
+      // `enforce_admins` base's required checks failed / are still pending. The
+      // caller routes them to the distinct `blocked:ci` path (NOT merge-conflict,
+      // NOT a full agent re-run), preserving the open PR.
+      reason: "pre_merge-abort" | "integrate-failed" | "land-failed" | "ci-failed" | "ci-pending";
+      locked: boolean;
+      /** PR number left open for the CI-aware handoff (`ci-failed` / `ci-pending`). */
+      prNumber?: number;
+    };
 
 /**
  * Land a completed attempt's worker branch into its base, lock-toggled. Owns the
@@ -172,8 +193,16 @@ async function landAdminPr(deps: LandingDeps, input: LandingInput): Promise<Land
     n: input.issue,
     title: input.title,
     waitForReview: deps.waitForReview,
+    ciAwait: deps.ciAwait,
   });
-  return r.ok ? { ok: true, locked: false } : { ok: false, reason: "land-failed", locked: false };
+  if (r.ok) return { ok: true, locked: false };
+  // Route the CI-aware failure modes (#812) distinctly. A failed required check
+  // or a still-pending PR is NOT a merge conflict — preserve the open PR and hand
+  // it to the `blocked:ci` path rather than the merge-conflict re-run. Everything
+  // else (real conflict / push / no-PR / admin-merge rejection) stays land-failed.
+  if (r.reason === "ci-failed") return { ok: false, reason: "ci-failed", locked: false, prNumber: r.prNumber };
+  if (r.reason === "ci-pending") return { ok: false, reason: "ci-pending", locked: false, prNumber: r.prNumber };
+  return { ok: false, reason: "land-failed", locked: false };
 }
 
 /**

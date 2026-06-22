@@ -129,6 +129,9 @@ interface HarnessOptions {
   /** PR review gate (ADR 0064 §10, #749). When set, processIssue may hand the
    * unlocked landing off for a fresh-agent review instead of fast-merging. */
   reviewGate?: ProcessIssueDeps["reviewGate"];
+  /** CI-aware merge (#812). When set, register the `ciAwait` port and drive the
+   * `gh pr view` verdict the unlocked landing polls before admin-merging. */
+  ciAware?: "merge" | "ci-failed" | "ci-pending" | "conflict";
 }
 
 function harness(opts: HarnessOptions = {}): {
@@ -272,6 +275,16 @@ function harness(opts: HarnessOptions = {}): {
       if (j.includes("rev-list") && j.includes("--count")) {
         return { code: 0, stdout: "3\n", stderr: "" };
       }
+      // #812 CI-aware poll: drive the mergeStateStatus + rollup per opts.ciAware.
+      if (j.includes("pr view")) {
+        const map: Record<string, { mergeStateStatus: string; statusCheckRollup: unknown[] }> = {
+          merge: { mergeStateStatus: "CLEAN", statusCheckRollup: [] },
+          "ci-failed": { mergeStateStatus: "BLOCKED", statusCheckRollup: [{ state: "FAILURE" }] },
+          "ci-pending": { mergeStateStatus: "BLOCKED", statusCheckRollup: [{ status: "IN_PROGRESS" }] },
+          conflict: { mergeStateStatus: "DIRTY", statusCheckRollup: [] },
+        };
+        return { code: 0, stdout: JSON.stringify(map[opts.ciAware ?? "merge"]), stderr: "" };
+      }
       return { code: 0, stdout: "", stderr: "" };
     },
     remoteGit: async (argv) => {
@@ -349,6 +362,7 @@ function harness(opts: HarnessOptions = {}): {
     resolveTier: opts.resolveTier,
     reviewGate: opts.reviewGate,
     reviewGateLabel: "ready-for-review",
+    ciAwait: opts.ciAware ? { sleep: async () => {}, maxPolls: 2 } : undefined,
     fallbackRunner: opts.fallbackRunner ?? false,
     conflictResolver: opts.conflictResolve
       ? async (prompt) => {
@@ -564,6 +578,63 @@ describe("processIssue — DONE + green + merged (unlocked, admin-PR landing)", 
     expect(tiers).toEqual([{ runner: "claude", taskClass: "complex" }]);
     expect(trace.runAgentCalls[0]?.model).toBe("claude-complex-model");
     expect(trace.runAgentCalls[0]?.effort).toBe("medium");
+  });
+});
+
+describe("processIssue — CI-aware unlocked landing (#812)", () => {
+  it("CLEAN → polls merge state then admin-merges + closes (no bounce, no re-run)", async () => {
+    const { deps, input, trace } = harness({ outcome: "done", feedbackOk: true, locked: false, ciAware: "merge" });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "done" }]);
+    // exactly ONE agent run — the completed work is never re-run.
+    expect(trace.runAgentCalls.length).toBe(1);
+  });
+
+  it("a FAILED required check → ci-failed, blocked:ci (NOT merge-conflict), PR preserved, agent not re-run", async () => {
+    const { deps, input, trace } = harness({ outcome: "done", feedbackOk: true, locked: false, ciAware: "ci-failed" });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("ci-failed");
+    // Truthful envelope: blocked, NEVER merge-conflict on a MERGEABLE PR.
+    expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "blocked" }]);
+    // Parked to ready-for-human with the distinct blocked:ci label.
+    expect(trace.labelEdits.some((e) => e.add.includes("ready-for-human") && e.add.includes("blocked:ci"))).toBe(true);
+    expect(trace.ensuredLabels).toContain("blocked:ci");
+    // NEVER mislabelled merge-conflict.
+    expect(trace.labelEdits.some((e) => e.add.includes("blocked:merge-conflict"))).toBe(false);
+    expect(trace.ensuredLabels).not.toContain("blocked:merge-conflict");
+    // The work is the durable artifact: open PR preserved (no remote branch delete),
+    // issue NOT closed, agent NOT re-run.
+    expect(trace.deletedRemote.length).toBe(0);
+    expect(trace.closed).toEqual([]);
+    expect(trace.runAgentCalls.length).toBe(1);
+    // Never admin-merged on a failed check.
+    expect(trace.released).toEqual([9]);
+  });
+
+  it("PENDING past the timeout → ci-pending, parked (NOT ready-for-agent), no token re-spend", async () => {
+    const { deps, input, trace } = harness({ outcome: "done", feedbackOk: true, locked: false, ciAware: "ci-pending" });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("ci-pending");
+    expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "blocked" }]);
+    // Pending NEVER recovers to ready-for-agent (which would re-run the agent).
+    expect(trace.labelEdits.some((e) => e.add.includes("ready-for-agent"))).toBe(false);
+    expect(trace.labelEdits.some((e) => e.add.includes("ready-for-human") && e.add.includes("blocked:ci"))).toBe(true);
+    // Open PR preserved; agent ran exactly once.
+    expect(trace.deletedRemote.length).toBe(0);
+    expect(trace.closed).toEqual([]);
+    expect(trace.runAgentCalls.length).toBe(1);
+  });
+
+  it("a real DIRTY conflict still classifies as merge-conflict (correct here)", async () => {
+    const { deps, input, trace } = harness({ outcome: "done", feedbackOk: true, locked: false, ciAware: "conflict" });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("merge-conflict");
+    expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "merge-conflict" }]);
   });
 });
 

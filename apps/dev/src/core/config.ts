@@ -96,6 +96,14 @@ export const CONFIG_DEFAULTS = {
   // regardless of the verdict) with `afk.merge.wait_for_review: true`.
   "afk.merge.wait_for_review": "false",
   "afk.merge.review_check": "CodeRabbit",
+  // CI-aware merge (#812). An UNLOCKED admin-merge cannot bypass required status
+  // checks on an `enforce_admins` base, so admin-merging a just-opened PR with
+  // checks pending is rejected — and was mislabelled `merge-conflict`, re-running
+  // the whole inner agent. Opt in with `afk.merge.ci_aware: true` to first poll
+  // the PR's merge state (`mergeStateStatus` + `statusCheckRollup`) and merge only
+  // once it settles, routing a failed check (`blocked:ci`) / still-pending checks
+  // distinctly. The wait budget is `RED_AFK_MERGE_CI_TIMEOUT_S` (default 1800s).
+  "afk.merge.ci_aware": "false",
   // PR review gate (ADR 0064 §10, #749). When AFK / `/ship` open a PR for a
   // completed attempt, the issue-classifier tier decides mechanical vs
   // non-mechanical: non-mechanical changes get `ready-for-review` (firing the
@@ -465,4 +473,19 @@ export function readBackpressure(values: ConfigValues): string[] {
   if (indexed.length > 0) return indexed;
   const scalar = values["afk.backpressure"];
   return scalar && scalar.trim() !== "" ? [scalar] : [];
+}
+
+/** Default CI-aware merge wait, in seconds (#812) — 30 minutes, generous enough
+ * to outlast a slow required-check suite (e.g. reddb's 25 checks / ~25m fuzzer)
+ * without wedging the worker forever. */
+export const DEFAULT_MERGE_CI_TIMEOUT_S = 1800;
+
+/**
+ * Resolve the CI-aware merge wait budget (#812) from `RED_AFK_MERGE_CI_TIMEOUT_S`.
+ * A non-positive / unparseable value falls back to {@link DEFAULT_MERGE_CI_TIMEOUT_S}.
+ */
+export function resolveCiTimeoutSeconds(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = (env.RED_AFK_MERGE_CI_TIMEOUT_S ?? "").trim();
+  const n = Number.parseInt(raw, 10);
+  return Number.isInteger(n) && n > 0 ? n : DEFAULT_MERGE_CI_TIMEOUT_S;
 }

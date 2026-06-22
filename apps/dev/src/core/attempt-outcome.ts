@@ -26,6 +26,7 @@ import {
   LABEL_QUOTA,
   LABEL_RUNNER_TRANSIENT,
   LABEL_MERGE_CONFLICT,
+  LABEL_CI,
   LABEL_SPEC,
   LABEL_VALIDATION,
   LABEL_VALIDATION_INFRA,
@@ -52,6 +53,17 @@ export type AttemptOutcome =
   | "blocked"
   | "no-sentinel"
   | "merge-conflict"
+  // AFK runner improvement (#812): an UNLOCKED admin-merge could not land a
+  // completed, MERGEABLE PR because the `enforce_admins` base's required checks
+  // are not satisfied. These are NOT merge conflicts — the branch merges cleanly
+  // once CI is green — so they carry the distinct `blocked:ci` label and (unlike
+  // merge-conflict) NEVER auto-recover to ready-for-agent, which would re-run the
+  // whole inner agent on already-complete work:
+  //   - ci-failed   — a required check FAILED; the next attempt should fix that check.
+  //   - ci-pending  — checks still running past the CI-wait timeout; the open PR
+  //                   is handed off for a human/CI-aware finisher.
+  | "ci-failed"
+  | "ci-pending"
   | "feedback-failed"
   | "feedback-failed-infra"
   | "claim-lost"
@@ -92,6 +104,9 @@ export function blockedLabelFor(o: AttemptOutcome): string | null {
       return LABEL_RUNNER_TRANSIENT;
     case "merge-conflict":
       return LABEL_MERGE_CONFLICT;
+    case "ci-failed":
+    case "ci-pending":
+      return LABEL_CI;
     case "blocked":
       return LABEL_SPEC;
     case "feedback-failed":
@@ -150,6 +165,12 @@ export function envelopeStatusFor(o: AttemptOutcome): AttemptStatus {
     case "blocked":
     case "feedback-failed":
     case "feedback-failed-infra":
+    // ci-failed / ci-pending describe a MERGEABLE PR blocked by CI, never a git
+    // conflict — so they must NOT emit a `merge-conflict` envelope. They fold
+    // into the generic `blocked` bucket (truthful: the issue is blocked, the work
+    // is intact and committed on the open PR).
+    case "ci-failed":
+    case "ci-pending":
     case "hook-aborted":
     case "exhausted":
     case "runner-transient":
@@ -200,6 +221,12 @@ export function recoveryReasonFor(o: AttemptOutcome): RecoveryReason | null {
       return "merge-conflict";
     case "feedback-failed-infra":
       return "validation-infra";
+    // ci-failed / ci-pending are NON-recoverable on purpose (#812): the work is
+    // already complete on the open PR, so a bounded auto-retry would re-run the
+    // whole inner agent and re-spend tokens for no reason. They escalate to a
+    // human / CI-aware finisher who drives the existing PR to merge.
+    case "ci-failed":
+    case "ci-pending":
     case "blocked":
     case "feedback-failed":
     case "stalled":
