@@ -39,6 +39,8 @@ interface Opts {
   resolvePushCode?: number;
   /** Enable the opt-in advisory-review wait (afk.merge.wait_for_review). */
   waitForReview?: boolean;
+  /** Enable the opt-in CI-aware merge (#812) and drive the `pr view` verdict. */
+  ciAware?: "merge" | "ci-failed" | "ci-pending" | "conflict";
   /** Make the landing-worktree provisioner fail (returns null). */
   noWorktree?: boolean;
   /** Commits ahead of base returned by `git rev-list --count`. Default 3. */
@@ -88,6 +90,16 @@ function harness(opts: Opts = {}): Harness {
       if (j.includes("pr checks")) {
         return { code: 0, stdout: JSON.stringify([{ name: "CodeRabbit", state: "SUCCESS" }]), stderr: "" };
       }
+      if (j.includes("pr view")) {
+        // #812 CI-aware poll: drive the mergeStateStatus + rollup per opts.ciAware.
+        const map: Record<string, { mergeStateStatus: string; statusCheckRollup: unknown[] }> = {
+          merge: { mergeStateStatus: "CLEAN", statusCheckRollup: [] },
+          "ci-failed": { mergeStateStatus: "BLOCKED", statusCheckRollup: [{ state: "FAILURE" }] },
+          "ci-pending": { mergeStateStatus: "BLOCKED", statusCheckRollup: [{ status: "IN_PROGRESS" }] },
+          conflict: { mergeStateStatus: "DIRTY", statusCheckRollup: [] },
+        };
+        return { code: 0, stdout: JSON.stringify(map[opts.ciAware ?? "merge"]), stderr: "" };
+      }
       return { code: 0, stdout: "", stderr: "" };
     },
     remoteGit: async (argv) => {
@@ -105,6 +117,7 @@ function harness(opts: Opts = {}): Harness {
         }
       : undefined,
     waitForReview: opts.waitForReview ? { check: "CodeRabbit", sleep: async () => {} } : undefined,
+    ciAwait: opts.ciAware ? { sleep: async () => {}, maxPolls: 2 } : undefined,
     makeLandingWorktree: async () => (opts.noWorktree ? null : WT),
     removeLandingWorktree: async (dir) => {
       removedWorktrees.push(dir);
@@ -369,5 +382,40 @@ describe("doLanding — the primary checkout is sacred (#572)", () => {
     expect(h.mergeCalls.some((c) => c.includes("merge --no-ff"))).toBe(false);
     assertPrimaryUntouched(h);
     expect(h.firedHooks).toEqual(["pre_merge"]);
+  });
+});
+
+describe("doLanding — CI-aware merge (#812)", () => {
+  it("unlocked + ciAwait, CLEAN → polls merge state then admin-merges", async () => {
+    const h = harness({ locked: false, ciAware: "merge" });
+    const r = await doLanding(h.deps, h.input, h.hooks);
+    expect(r).toEqual({ ok: true, locked: false });
+    const j = joined(h.mergeCalls);
+    const viewIdx = j.findIndex((c) => c.includes("pr view"));
+    const mergeIdx = j.findIndex((c) => c.includes("pr merge 42 --admin --merge"));
+    expect(viewIdx).toBeGreaterThanOrEqual(0);
+    expect(mergeIdx).toBeGreaterThan(viewIdx);
+  });
+
+  it("a FAILED required check → { ok:false, ci-failed } with the PR number, never admin-merges", async () => {
+    const h = harness({ locked: false, ciAware: "ci-failed" });
+    const r = await doLanding(h.deps, h.input, h.hooks);
+    expect(r).toEqual({ ok: false, reason: "ci-failed", locked: false, prNumber: 42 });
+    expect(joined(h.mergeCalls).some((c) => c.includes("pr merge"))).toBe(false);
+    // post_merge never fires on a failed land.
+    expect(h.firedHooks).toEqual(["pre_merge"]);
+  });
+
+  it("checks still pending past the timeout → { ok:false, ci-pending } (no re-run, PR preserved)", async () => {
+    const h = harness({ locked: false, ciAware: "ci-pending" });
+    const r = await doLanding(h.deps, h.input, h.hooks);
+    expect(r).toEqual({ ok: false, reason: "ci-pending", locked: false, prNumber: 42 });
+    expect(joined(h.mergeCalls).some((c) => c.includes("pr merge"))).toBe(false);
+  });
+
+  it("a real DIRTY conflict still maps to land-failed (→ merge-conflict), not ci", async () => {
+    const h = harness({ locked: false, ciAware: "conflict" });
+    const r = await doLanding(h.deps, h.input, h.hooks);
+    expect(r).toEqual({ ok: false, reason: "land-failed", locked: false });
   });
 });
