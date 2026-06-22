@@ -29,6 +29,8 @@ import {
   isHalfOpenDue,
   SLOT_CIRCUIT_DEFAULTS,
 } from "./slot-circuit.js";
+import type { FleetHookContext, FleetHookDispatchResult } from "./fleet-hook-dispatcher.js";
+import type { FleetHookName } from "./fleet-hook-config.js";
 
 // ---------- tunables ----------
 
@@ -588,6 +590,15 @@ export interface SupervisorDeps {
    * in tests / non-fleet contexts → no boot runs (back-compat).
    */
   bootSweeps?(): Promise<void>;
+  /**
+   * Dispatch a fleet-scoped lifecycle hook at a supervisor checkpoint. Receives
+   * the fleet-scoped context (slot, pid, death ring, runner — no issue/worktree
+   * fields). Best-effort: throws from the hook executor are caught by the
+   * caller and logged, never aborting the fleet. The `on_stall_reap` point has
+   * an additional veto semantic: a `vetoed=true` result cancels the hard-reap
+   * kill for that pass. Absent → no-op (backward-compatible). (#833)
+   */
+  dispatchFleetHook?(name: FleetHookName, context: FleetHookContext): Promise<FleetHookDispatchResult>;
 }
 
 // ---------- per-slot runtime state ----------
@@ -935,12 +946,31 @@ export async function sweepParkedSlot(
   // state.pid is the last dead worker's PID — the fs layer uses it as a
   // fallback when the slot log has no boot-stamp (native fleet path).
   const work = deps.fs.parkedSlotWork(slot, state.pid);
-  if (work.workers.length === 0) return;
-
   const workerIdsCsv = work.workers.map((w) => w.workerId).join(",");
   // Real fast-death count lives in the circuit ring at the time of the trip,
   // not in the FS layer (which has no visibility into the breaker state).
   const fastDeaths = state.deaths.length;
+
+  // Dispatch on_circuit_trip with the sweep context (slot, worker-ids, death
+  // count, supervisor log). Best-effort: hook failure never blocks the sweep.
+  if (deps.dispatchFleetHook) {
+    try {
+      await deps.dispatchFleetHook("on_circuit_trip", {
+        event: "on_circuit_trip",
+        runner: config.runner,
+        slot,
+        ...(state.pid !== null ? { pid: state.pid } : {}),
+        ...(workerIdsCsv.length > 0 ? { worker_ids: workerIdsCsv } : {}),
+        death_count: fastDeaths,
+        supervisor_log: work.supervisorLogPath,
+      });
+    } catch {
+      // best-effort
+    }
+  }
+
+  if (work.workers.length === 0) return;
+
   const hasAnyClaim = work.workers.some((w) => w.pairs.some((p) => p.issue !== null));
   if (hasAnyClaim) await deps.gh.ensureRunnerErrorLabel();
 
@@ -1053,7 +1083,7 @@ export async function reapStalledSlot(
 export async function pollStallDetector(
   state: SupervisorState,
   deps: SupervisorDeps,
-  config: Pick<SupervisorConfig, "stallThresholdS" | "stallKillThresholdS">,
+  config: Pick<SupervisorConfig, "stallThresholdS" | "stallKillThresholdS" | "runner">,
 ): Promise<number[]> {
   const now = deps.now();
   const reaped: number[] = [];
@@ -1071,6 +1101,21 @@ export async function pollStallDetector(
         // Anchor the stall window to the last observed lane activity so the
         // rendered idle duration matches "agent lane idle for N".
         slot.stallSinceEpoch = laneMtime;
+        // Dispatch on_stall_detected on first detection. Best-effort.
+        if (deps.dispatchFleetHook) {
+          try {
+            await deps.dispatchFleetHook("on_stall_detected", {
+              event: "on_stall_detected",
+              runner: config.runner,
+              slot: i,
+              ...(slot.pid !== null ? { pid: slot.pid } : {}),
+              stall_since: laneMtime,
+              idle_seconds: now - laneMtime,
+            });
+          } catch {
+            // best-effort
+          }
+        }
       }
       // Hard-reap escalation: candidacy alone is not death — gate the kill.
       const since = slot.stallSinceEpoch;
@@ -1087,8 +1132,30 @@ export async function pollStallDetector(
           cpuPct: snapshot.cpuPct,
         });
         if (decision === "kill") {
-          await reapStalledSlot(i, slot, deps);
-          reaped.push(i);
+          // Dispatch on_stall_reap as a veto gate: a non-zero exit from any
+          // command cancels the kill for this pass so a worker mid a long
+          // build/test is not reaped unfairly. Best-effort: a hook throw is
+          // treated as no-veto so the gate can never be silently disabled.
+          let vetoed = false;
+          if (deps.dispatchFleetHook) {
+            try {
+              const fleetResult = await deps.dispatchFleetHook("on_stall_reap", {
+                event: "on_stall_reap",
+                runner: config.runner,
+                slot: i,
+                ...(orchPid !== null ? { pid: orchPid } : {}),
+                idle_seconds: now - since,
+                stall_since: since,
+              });
+              vetoed = fleetResult.vetoed;
+            } catch {
+              // best-effort: hook throw → treat as no-veto
+            }
+          }
+          if (!vetoed) {
+            await reapStalledSlot(i, slot, deps);
+            reaped.push(i);
+          }
         }
       }
     } else if (slot.stalled) {
@@ -1160,6 +1227,20 @@ export async function handleDeadSlot(
     state.stalled = false;
     state.stallSinceEpoch = 0;
     state.reaped = false;
+    // Circuit-close spawn: on_slot_spawn fires; on_respawn does NOT (this is a
+    // circuit recovery, not a plain post-death respawn). Best-effort.
+    if (deps.dispatchFleetHook) {
+      try {
+        await deps.dispatchFleetHook("on_slot_spawn", {
+          event: "on_slot_spawn",
+          runner: config.runner,
+          slot,
+          ...(state.pid !== null ? { pid: state.pid } : {}),
+        });
+      } catch {
+        // best-effort
+      }
+    }
     return { parked: false };
   }
 
@@ -1184,6 +1265,25 @@ export async function handleDeadSlot(
     state.stalled = false;
     state.stallSinceEpoch = 0;
     state.reaped = false;
+    // Clean-exit respawn: on_slot_spawn + on_respawn. Best-effort.
+    if (deps.dispatchFleetHook) {
+      try {
+        await deps.dispatchFleetHook("on_slot_spawn", {
+          event: "on_slot_spawn",
+          runner: config.runner,
+          slot,
+          ...(state.pid !== null ? { pid: state.pid } : {}),
+        });
+        await deps.dispatchFleetHook("on_respawn", {
+          event: "on_respawn",
+          runner: config.runner,
+          slot,
+          ...(state.pid !== null ? { pid: state.pid } : {}),
+        });
+      } catch {
+        // best-effort
+      }
+    }
     return { parked: false };
   }
 
@@ -1211,6 +1311,25 @@ export async function handleDeadSlot(
   state.stalled = false;
   state.stallSinceEpoch = 0;
   state.reaped = false;
+  // Non-clean respawn: on_slot_spawn + on_respawn. Best-effort.
+  if (deps.dispatchFleetHook) {
+    try {
+      await deps.dispatchFleetHook("on_slot_spawn", {
+        event: "on_slot_spawn",
+        runner: config.runner,
+        slot,
+        ...(state.pid !== null ? { pid: state.pid } : {}),
+      });
+      await deps.dispatchFleetHook("on_respawn", {
+        event: "on_respawn",
+        runner: config.runner,
+        slot,
+        ...(state.pid !== null ? { pid: state.pid } : {}),
+      });
+    } catch {
+      // best-effort
+    }
+  }
   return { parked: false };
 }
 
@@ -1325,6 +1444,19 @@ export async function superviseTick(
       slot.spawning = false;
     }
     result.respawned.push(i);
+    // Idle-unpark spawn: notify on_slot_spawn. Best-effort.
+    if (deps.dispatchFleetHook) {
+      try {
+        await deps.dispatchFleetHook("on_slot_spawn", {
+          event: "on_slot_spawn",
+          runner: config.runner,
+          slot: i,
+          ...(slot.pid !== null ? { pid: slot.pid } : {}),
+        });
+      } catch {
+        // best-effort
+      }
+    }
   }
 
   // Schedule half-open probes for circuit-tripped slots whose cooldown has expired.
@@ -1354,6 +1486,19 @@ export async function superviseTick(
         slot.spawning = false;
       }
       result.halfOpened.push(i);
+      // Half-open probe spawn: notify on_slot_spawn. Best-effort.
+      if (deps.dispatchFleetHook) {
+        try {
+          await deps.dispatchFleetHook("on_slot_spawn", {
+            event: "on_slot_spawn",
+            runner: config.runner,
+            slot: i,
+            ...(slot.pid !== null ? { pid: slot.pid } : {}),
+          });
+        } catch {
+          // best-effort
+        }
+      }
     }
   }
 
@@ -1367,6 +1512,19 @@ export async function superviseTick(
     if ((slot.parked && !slot.halfOpen) || slot.idleParked || slot.spawning) continue;
     const pid = slot.pid;
     if (pid === null || !deps.proc.isAlive(pid)) {
+      // Dispatch on_slot_death before the slot is recycled. Best-effort.
+      if (deps.dispatchFleetHook) {
+        try {
+          await deps.dispatchFleetHook("on_slot_death", {
+            event: "on_slot_death",
+            runner: config.runner,
+            slot: i,
+            ...(pid !== null ? { pid } : {}),
+          });
+        } catch {
+          // best-effort
+        }
+      }
       // Capture the dead worker's iter dir BEFORE handleDeadSlot respawns the
       // slot — a respawn rebinds resolveIterDir(i) to the NEW worker's dir, so
       // the stranded claim must be snapshotted here, while it still resolves.
@@ -1461,12 +1619,46 @@ export async function runSupervisor(
     }
   }
 
+  // pre_fleet: abort policy — a non-zero exit stops the fleet before spawning.
+  // Best-effort throw handling: a hook executor crash is logged, not fatal.
+  if (deps.dispatchFleetHook) {
+    let preFleetAborted = false;
+    try {
+      const preFleetResult = await deps.dispatchFleetHook("pre_fleet", {
+        event: "pre_fleet",
+        runner: config.runner,
+      });
+      preFleetAborted = preFleetResult.aborted;
+    } catch (err) {
+      deps.log?.(
+        `pre_fleet hook threw: ${err instanceof Error ? err.message : String(err)} — spawning workers anyway`,
+      );
+    }
+    if (preFleetAborted) {
+      deps.log?.("pre_fleet hook aborted boot — fleet will not spawn");
+      return;
+    }
+  }
+
   // Spawn the initial fleet to target.
   for (let i = 0; i < state.slots.length; i += 1) {
     const slot = state.slots[i]!;
     const spawned = await deps.proc.spawnSlot(i);
     slot.pid = spawned.pid;
     slot.spawnEpoch = spawned.spawnEpoch;
+    // Notify on_slot_spawn for each initial slot. Best-effort.
+    if (deps.dispatchFleetHook) {
+      try {
+        await deps.dispatchFleetHook("on_slot_spawn", {
+          event: "on_slot_spawn",
+          runner: config.runner,
+          slot: i,
+          ...(slot.pid !== null ? { pid: slot.pid } : {}),
+        });
+      } catch {
+        // best-effort
+      }
+    }
   }
 
   // Health-check loop until the stop-file, sleeping the poll cadence each pass.
@@ -1494,7 +1686,23 @@ export async function runSupervisor(
         `crash-reconciled=${result.crashReconciled.length} ` +
         `ready=${heartbeat.readyForAgent} busy=${heartbeat.slotsBusy} free=${heartbeat.slotsFree}`,
     );
-    if (result.stopped) return;
+    if (result.stopped) {
+      // post_fleet: informational — fires after all workers are terminated.
+      // Best-effort: hook failure is logged but never prevents clean exit.
+      if (deps.dispatchFleetHook) {
+        try {
+          await deps.dispatchFleetHook("post_fleet", {
+            event: "post_fleet",
+            runner: config.runner,
+          });
+        } catch (err) {
+          deps.log?.(
+            `post_fleet hook threw: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+      return;
+    }
     await deps.proc.sleep(config.pollIntervalS * 1000);
   }
 }
