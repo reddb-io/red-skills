@@ -695,7 +695,7 @@ async function runCloseCascade(deps: ReconcileDeps, closedIssue: number): Promis
     }
 
     for (const p of planCloseCascade(closedIssue, dependents)) {
-      await deps.gh.editLabels(p.number, [LABEL_DEPENDENCY], [LABEL_READY]);
+      await deps.gh.editLabels(p.number, [LABEL_DEPENDENCY, ...p.reqLabels], [LABEL_READY]);
       await deps.gh.comment(p.number, p.comment);
     }
   } catch (err) {

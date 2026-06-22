@@ -151,6 +151,7 @@ export function planCloseCascade(
     plans.push({
       number: dep.number,
       refs: reqs.map((n) => `#${n}`),
+      reqLabels: reqs.map((n) => `req:${n}`),
       comment: cascadeAuditComment(reqs),
     });
   }
@@ -181,6 +182,9 @@ export interface PromotionPlan {
   number: number;
   /** The sorted-unique blocker refs that resolved to CLOSED. */
   refs: string[];
+  /** The `req:<N>` label names to remove on promotion (mirrors `refs` as labels).
+   * Empty for legacy `## Blocked by` promotions that carried no `req:*` labels. */
+  reqLabels: string[];
   /** The audit comment to post on promotion. */
   comment: string;
 }
@@ -221,6 +225,7 @@ export async function planUnblockSweep(
         plans.push({
           number: candidate.number,
           refs: reqIds.map((n) => `#${n}`),
+          reqLabels: reqIds.map((n) => `req:${n}`),
           comment: cascadeAuditComment(reqIds),
         });
       }
@@ -240,7 +245,7 @@ export async function planUnblockSweep(
     }
 
     if (shouldPromote(states)) {
-      plans.push({ number: candidate.number, refs, comment: auditComment(refs) });
+      plans.push({ number: candidate.number, refs, reqLabels: [], comment: auditComment(refs) });
     }
   }
   return plans;

@@ -1958,7 +1958,7 @@ async function runCloseCascade(deps: ProcessIssueDeps, closedIssue: number): Pro
 
     const plans = planCloseCascade(closedIssue, dependents);
     for (const p of plans) {
-      await deps.gh.editLabels(p.number, [LABEL_DEPENDENCY], [LABEL_READY]);
+      await deps.gh.editLabels(p.number, [LABEL_DEPENDENCY, ...p.reqLabels], [LABEL_READY]);
       await deps.gh.comment(p.number, p.comment);
     }
   } catch (err) {

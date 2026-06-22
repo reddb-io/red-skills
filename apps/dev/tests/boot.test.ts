@@ -610,7 +610,7 @@ describe("runBoot unblock sweep promotes + comments", () => {
     ];
     const r = await runBoot(deps, options({ unblockCandidates }));
     expect(ghCalls.editLabels).toEqual([
-      { issue: 100, remove: ["blocked:dependency"], add: ["ready-for-agent"] },
+      { issue: 100, remove: ["blocked:dependency", "req:10", "req:11"], add: ["ready-for-agent"] },
     ]);
     expect(ghCalls.comment).toEqual([
       { issue: 100, body: "🤖 /afk unblocked: all dependencies closed (#10, #11)." },
