@@ -7,6 +7,9 @@ import {
   resolveMergeConflict,
   buildConflictPrompt,
   waitForReviewCheck,
+  classifyMergeState,
+  parseMergeStateView,
+  waitForMergeReady,
   type Exec,
   type ExecResult,
 } from "../src/core/merge.js";
@@ -463,6 +466,206 @@ describe("landPr wait_for_review wiring", () => {
     });
     expect(result.ok).toBe(true);
     expect(joined(calls).some((c) => c.includes("pr checks"))).toBe(false);
+    expect(joined(calls).some((c) => c.includes("pr merge 42 --admin --merge"))).toBe(true);
+  });
+});
+
+describe("CI-aware merge classification (#812)", () => {
+  const view = (mergeStateStatus: string, rollup: unknown[] = []) =>
+    parseMergeStateView(JSON.stringify({ mergeStateStatus, statusCheckRollup: rollup }));
+
+  it("CLEAN → merge", () => {
+    expect(classifyMergeState(view("CLEAN"))).toBe("merge");
+  });
+
+  it("DIRTY (real git conflict) → conflict", () => {
+    expect(classifyMergeState(view("DIRTY"))).toBe("conflict");
+  });
+
+  it("BEHIND (non-fast-forward) → conflict", () => {
+    expect(classifyMergeState(view("BEHIND"))).toBe("conflict");
+  });
+
+  it("BLOCKED with a FAILED required check → ci-failed", () => {
+    const v = view("BLOCKED", [
+      { __typename: "CheckRun", status: "COMPLETED", conclusion: "SUCCESS" },
+      { __typename: "CheckRun", status: "COMPLETED", conclusion: "FAILURE" },
+    ]);
+    expect(classifyMergeState(v)).toBe("ci-failed");
+  });
+
+  it("a failed legacy StatusContext (state=FAILURE) → ci-failed", () => {
+    expect(classifyMergeState(view("BLOCKED", [{ state: "FAILURE" }]))).toBe("ci-failed");
+  });
+
+  it("BLOCKED with checks still running → pending", () => {
+    const v = view("BLOCKED", [{ __typename: "CheckRun", status: "IN_PROGRESS" }]);
+    expect(classifyMergeState(v)).toBe("pending");
+  });
+
+  it("a COMPLETED CheckRun without a conclusion yet → pending", () => {
+    expect(classifyMergeState(view("BLOCKED", [{ status: "COMPLETED", conclusion: "" }]))).toBe("pending");
+  });
+
+  it("BLOCKED by required REVIEW only (all checks green) → merge (admin waives review)", () => {
+    const v = view("BLOCKED", [{ __typename: "CheckRun", status: "COMPLETED", conclusion: "SUCCESS" }]);
+    expect(classifyMergeState(v)).toBe("merge");
+  });
+
+  it("UNSTABLE (only non-required checks unsettled) → merge", () => {
+    expect(classifyMergeState(view("UNSTABLE"))).toBe("merge");
+  });
+
+  it("UNKNOWN / empty (GitHub still computing) → pending", () => {
+    expect(classifyMergeState(view("UNKNOWN"))).toBe("pending");
+    expect(classifyMergeState(view(""))).toBe("pending");
+  });
+
+  it("a failed check outweighs DIRTY only after the conflict check — DIRTY wins first", () => {
+    // DIRTY is a git-level problem; classify it as conflict even if a check also failed.
+    expect(classifyMergeState(view("DIRTY", [{ state: "FAILURE" }]))).toBe("conflict");
+  });
+
+  it("parseMergeStateView tolerates non-JSON / empty stdout", () => {
+    expect(parseMergeStateView("")).toEqual({ mergeStateStatus: "", anyFailed: false, anyPending: false });
+    expect(parseMergeStateView("not json")).toEqual({ mergeStateStatus: "", anyFailed: false, anyPending: false });
+  });
+});
+
+describe("waitForMergeReady (#812 poll loop)", () => {
+  function pollExec(views: string[]): { exec: Exec; calls: string[][] } {
+    const calls: string[][] = [];
+    let i = 0;
+    const exec: Exec = async (argv) => {
+      calls.push(argv);
+      const out = views[Math.min(i, views.length - 1)] ?? "{}";
+      i++;
+      return { code: 0, stdout: out, stderr: "" };
+    };
+    return { exec, calls };
+  }
+  const noSleep = async () => {};
+  const v = (mergeStateStatus: string, rollup: unknown[] = []) =>
+    JSON.stringify({ mergeStateStatus, statusCheckRollup: rollup });
+
+  it("polls until the PR goes CLEAN, then returns merge", async () => {
+    const { exec, calls } = pollExec([v("UNKNOWN"), v("BLOCKED", [{ status: "IN_PROGRESS" }]), v("CLEAN")]);
+    const r = await waitForMergeReady(exec, "o/r", 77, { sleep: noSleep });
+    expect(r).toBe("merge");
+    expect(calls.filter((c) => c.join(" ").includes("pr view 77")).length).toBe(3);
+    expect(calls[0].join(" ")).toContain("--json mergeStateStatus,statusCheckRollup");
+  });
+
+  it("returns ci-failed immediately on a failed required check (no further polls)", async () => {
+    const { exec, calls } = pollExec([v("BLOCKED", [{ state: "FAILURE" }])]);
+    const r = await waitForMergeReady(exec, "o/r", 1, { sleep: noSleep });
+    expect(r).toBe("ci-failed");
+    expect(calls.length).toBe(1);
+  });
+
+  it("returns conflict on DIRTY", async () => {
+    const { exec } = pollExec([v("DIRTY")]);
+    expect(await waitForMergeReady(exec, "o/r", 1, { sleep: noSleep })).toBe("conflict");
+  });
+
+  it("times out to pending when checks never settle", async () => {
+    let sleeps = 0;
+    const { exec, calls } = pollExec([v("BLOCKED", [{ status: "QUEUED" }])]);
+    const r = await waitForMergeReady(exec, "o/r", 9, { sleep: async () => { sleeps++; }, maxPolls: 3 });
+    expect(r).toBe("pending");
+    expect(calls.filter((c) => c.join(" ").includes("pr view")).length).toBe(3);
+    expect(sleeps).toBe(2);
+  });
+});
+
+describe("landPr CI-aware wiring (#812)", () => {
+  it("polls merge state then admin-merges once CLEAN", async () => {
+    let viewed = false;
+    let mergedAfterView = false;
+    const calls: string[][] = [];
+    const exec: Exec = async (argv) => {
+      calls.push(argv);
+      const cmd = argv.join(" ");
+      if (cmd.includes("pr list")) return { code: 0, stdout: "77\n", stderr: "" };
+      if (cmd.includes("pr view")) {
+        viewed = true;
+        return { code: 0, stdout: JSON.stringify({ mergeStateStatus: "CLEAN", statusCheckRollup: [] }), stderr: "" };
+      }
+      if (cmd.includes("pr merge")) {
+        mergedAfterView = viewed;
+        return { code: 0, stdout: "", stderr: "" };
+      }
+      return { code: 0, stdout: "", stderr: "" };
+    };
+    const r = await landPr(exec, {
+      repo: "o/r", gitRepo: "/repo", remote: "origin", branch: "afk/wX/9-x", target: "main", n: 9, title: "t",
+      ciAwait: { sleep: async () => {} },
+    });
+    expect(r.ok).toBe(true);
+    expect(viewed).toBe(true);
+    expect(mergedAfterView).toBe(true);
+  });
+
+  it("returns ci-failed WITHOUT admin-merging when a required check failed", async () => {
+    const calls: string[][] = [];
+    const exec: Exec = async (argv) => {
+      calls.push(argv);
+      const cmd = argv.join(" ");
+      if (cmd.includes("pr list")) return { code: 0, stdout: "5\n", stderr: "" };
+      if (cmd.includes("pr view")) {
+        return { code: 0, stdout: JSON.stringify({ mergeStateStatus: "BLOCKED", statusCheckRollup: [{ state: "FAILURE" }] }), stderr: "" };
+      }
+      return { code: 0, stdout: "", stderr: "" };
+    };
+    const r = await landPr(exec, {
+      repo: "o/r", gitRepo: "/repo", remote: "origin", branch: "afk/wX/9-x", target: "main", n: 9, title: "t",
+      ciAwait: { sleep: async () => {}, maxPolls: 2 },
+    });
+    expect(r).toEqual({ ok: false, prNumber: 5, reason: "ci-failed" });
+    expect(calls.some((c) => c.join(" ").includes("pr merge"))).toBe(false);
+  });
+
+  it("returns ci-pending (no merge, no re-run) when checks stay pending", async () => {
+    const exec: Exec = async (argv) => {
+      const cmd = argv.join(" ");
+      if (cmd.includes("pr list")) return { code: 0, stdout: "5\n", stderr: "" };
+      if (cmd.includes("pr view")) {
+        return { code: 0, stdout: JSON.stringify({ mergeStateStatus: "BLOCKED", statusCheckRollup: [{ status: "IN_PROGRESS" }] }), stderr: "" };
+      }
+      return { code: 0, stdout: "", stderr: "" };
+    };
+    const r = await landPr(exec, {
+      repo: "o/r", gitRepo: "/repo", remote: "origin", branch: "afk/wX/9-x", target: "main", n: 9, title: "t",
+      ciAwait: { sleep: async () => {}, maxPolls: 2 },
+    });
+    expect(r).toEqual({ ok: false, prNumber: 5, reason: "ci-pending" });
+  });
+
+  it("returns conflict on DIRTY (real merge conflict, distinct from ci)", async () => {
+    const exec: Exec = async (argv) => {
+      const cmd = argv.join(" ");
+      if (cmd.includes("pr list")) return { code: 0, stdout: "5\n", stderr: "" };
+      if (cmd.includes("pr view")) {
+        return { code: 0, stdout: JSON.stringify({ mergeStateStatus: "DIRTY", statusCheckRollup: [] }), stderr: "" };
+      }
+      return { code: 0, stdout: "", stderr: "" };
+    };
+    const r = await landPr(exec, {
+      repo: "o/r", gitRepo: "/repo", remote: "origin", branch: "afk/wX/9-x", target: "main", n: 9, title: "t",
+      ciAwait: { sleep: async () => {} },
+    });
+    expect(r).toEqual({ ok: false, prNumber: 5, reason: "conflict" });
+  });
+
+  it("does NOT poll merge state by default (ciAwait absent)", async () => {
+    const { exec, calls } = fakeExec([
+      { match: (a) => a.join(" ").includes("pr list"), result: { stdout: "42\n" } },
+    ]);
+    const r = await landPr(exec, {
+      repo: "o/r", gitRepo: "/repo", remote: "origin", branch: "afk/wX/9-x", target: "main", n: 9, title: "t",
+    });
+    expect(r.ok).toBe(true);
+    expect(joined(calls).some((c) => c.includes("pr view"))).toBe(false);
     expect(joined(calls).some((c) => c.includes("pr merge 42 --admin --merge"))).toBe(true);
   });
 });
