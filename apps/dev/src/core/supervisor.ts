@@ -16,8 +16,8 @@
 
 import { decideReaperSignal, deriveSnapshot, type ProcessSnapshotEntry } from "./reaper-signal.js";
 import { buildEnvelope } from "./envelope.js";
-import { blockedLabelFor } from "./attempt-outcome.js";
-import { recoveryCap, recoveryDecision, type RecoveryEnv } from "./recovery.js";
+import { dispose } from "./disposition.js";
+import { type RecoveryEnv } from "./recovery.js";
 import {
   LABEL_READY,
   LABEL_RUNNING,
@@ -1019,24 +1019,22 @@ export async function reapStalledSlot(
   // exactly like the per-issue routeRecovery escalation.
   if (info && info.issue !== null) {
     await deps.gh.comment(info.issue, buildReaperEnvelope(info));
-    const env = deps.recoveryEnv ?? {};
-    const decision = recoveryDecision("stalled", info.attempt, env);
-    if (decision === "retry") {
-      await deps.gh.editLabels(info.issue, [LABEL_READY], [LABEL_RUNNING]);
+    // The composer owns the bounded re-claim decision + label sets + the
+    // budget-exhausted page comment (core/disposition, total map → `stalled` is
+    // recoverable, #402). gh.editLabels here is the (issue, add, remove) shape,
+    // so the descriptor's (remove, add) sets are applied swapped.
+    const disp = dispose("stalled", info.attempt, deps.recoveryEnv ?? {});
+    if (disp.decision === "retry") {
+      // CLEAN re-queue: no blocked:* tag rides a re-queued issue.
+      await deps.gh.editLabels(info.issue, disp.addLabels, disp.removeLabels);
     } else {
-      const typed = blockedLabelFor("stalled");
-      if (typed !== null) await deps.gh.ensureLabel(typed);
-      await deps.gh.editLabels(
-        info.issue,
-        typed !== null ? [LABEL_HUMAN, typed] : [LABEL_HUMAN],
-        [LABEL_RUNNING, LABEL_READY],
-      );
-      const cap = recoveryCap("stalled", env);
-      if (cap !== null) {
-        await deps.gh.comment(
-          info.issue,
-          `🤖 /afk escalating to ready-for-human: blocked:stalled retry budget exhausted (attempt ${info.attempt}/${cap}).`,
-        );
+      if (disp.typedLabel !== null) await deps.gh.ensureLabel(disp.typedLabel);
+      // Escalation also sheds any stale ready-for-agent — the reaped slot was
+      // `running`, never re-queue it. (Context-specific to the reaper; the
+      // per-issue routeRecovery only removes `running`.)
+      await deps.gh.editLabels(info.issue, disp.addLabels, [...disp.removeLabels, LABEL_READY]);
+      if (disp.escalationComment !== null) {
+        await deps.gh.comment(info.issue, disp.escalationComment);
       }
     }
   }
