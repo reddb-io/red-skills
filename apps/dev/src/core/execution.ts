@@ -576,16 +576,19 @@ type HostHookCommand = NonNullable<NonNullable<NonNullable<RunOptions["hooks"]>[
  *   (a) force-with-lease pushes the worker branch to the remote up-front
  *       (`push_initial`), and
  *   (b) installs a `post-commit` git hook that fire-and-forgets a push after
- *       every inner-agent commit (`install_post_commit_hook`).
+ *       every inner-agent commit (`install_post_commit_hook`), into an AFK-owned
+ *       hooks dir the worktree's `core.hooksPath` is then pointed at — which also
+ *       bypasses the consumer repo's commit-phase hooks for AFK's commits (#840).
  *
  * Every step is best-effort: a network / auth failure logs to stderr (via the
  * shell `||` fallbacks) but never returns non-zero, so the hook can NOT abort
  * the run. The post-commit hook itself ends in `|| true` for the same reason
  * (git ignores a post-commit exit status, but we belt-and-braces it).
  *
- * The hook is written with `git rev-parse --git-dir` so it lands in the linked
- * worktree's own gitdir (`.git/hooks/`), never leaking into the primary
- * checkout or a sibling worktree — exactly the shell behaviour.
+ * The hook is written with `git rev-parse --absolute-git-dir` so it lands in the
+ * linked worktree's own gitdir (`afk-hooks/`) and the `core.hooksPath` redirect is
+ * set `--worktree`, never leaking into the primary checkout or a sibling
+ * worktree — the primary branch's hooks stay exactly as the consumer wrote them.
  */
 export function buildContinuousPushHook(branch: string, remote: string): HostHookCommand {
   // Single-quoted heredoc body so the inner `$()` / `HEAD` are evaluated when
@@ -604,14 +607,33 @@ export function buildContinuousPushHook(branch: string, remote: string): HostHoo
     `git push ${remote} HEAD --force-with-lease 2>/dev/null || true`,
     "",
   ].join("\n");
-  // printf %s with the body passed as a single argument; escape only what `sh -c`
-  // and printf need. We pass the body through a shell variable assignment to keep
-  // the command portable and free of nested single quotes.
+  // Install the post-commit hook into an AFK-OWNED hooks dir (`afk-hooks`) inside
+  // the worktree's gitdir, then point the worktree's `core.hooksPath` at it (issue
+  // #840). This single redirect does three things at once:
+  //   (a) BYPASSES the consumer repo's commit-phase hooks (pre-commit / commit-msg
+  //       / pre-push) for every AFK commit — those live in the COMMON gitdir's
+  //       `hooks/`, which `core.hooksPath` now shadows; redundant with AFK's own
+  //       feedback gate + backpressure + `.red/config.yaml` lifecycle hooks, and a
+  //       reformat-and-restage hook would otherwise break the one-path-staged
+  //       invariant (false BLOCKED).
+  //   (b) KEEPS AFK's own post-commit push firing — it is the only hook in
+  //       `afk-hooks`. (A linked worktree never fires hooks from its private gitdir
+  //       `hooks/` — only the common dir or `core.hooksPath` — so the redirect is
+  //       also what makes the issue #191 push hook actually run here.)
+  //   (c) STAYS worktree-scoped via `git config --worktree`, so the primary
+  //       checkout's hooks are untouched (the primary branch is sacred). We never
+  //       fall back to a non-worktree `core.hooksPath`, which would leak into the
+  //       common config and silence the consumer's hooks in the primary checkout.
+  // The bypass is commit-phase only: this runs in `onWorktreeReady`, AFTER the
+  // worktree-creation `post-checkout` (submodule init) has already fired.
   const installHook = [
-    'gd=$(git rev-parse --git-dir 2>/dev/null) || gd=""',
+    'gd=$(git rev-parse --absolute-git-dir 2>/dev/null) || gd=""',
     'if [ -n "$gd" ]; then',
-    '  mkdir -p "$gd/hooks" 2>/dev/null || true',
-    `  printf '%s' "$HOOK_BODY" > "$gd/hooks/post-commit" 2>/dev/null && chmod 0755 "$gd/hooks/post-commit" 2>/dev/null || echo "[afk] warn: could not install post-commit hook" >&2`,
+    '  hd="$gd/afk-hooks"',
+    '  mkdir -p "$hd" 2>/dev/null || true',
+    `  printf '%s' "$HOOK_BODY" > "$hd/post-commit" 2>/dev/null && chmod 0755 "$hd/post-commit" 2>/dev/null || echo "[afk] warn: could not install post-commit hook" >&2`,
+    '  git config extensions.worktreeConfig true 2>/dev/null || true',
+    '  git config --worktree core.hooksPath "$hd" 2>/dev/null || echo "[afk] warn: could not redirect core.hooksPath — consumer git hooks may fire on AFK commits" >&2',
     "else",
     '  echo "[afk] warn: could not resolve .git dir — post-commit hook not installed" >&2',
     "fi",
