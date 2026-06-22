@@ -47,8 +47,14 @@ export interface CompactState {
 /** One worker as handed to the pure renderer. */
 export interface CompactWorker {
   state: CompactState;
-  /** Liveness from state_is_live(pid) + freshness, decided by the caller. */
+  /** True when the worker's pid resolves AND agent-lane activity is fresh
+   * (within {@link WORKER_LIVE_MAX_AGE_S}). Used for the `[live]` badge.
+   * When false but {@link pidLive} is true, the badge renders as `[quiet]`
+   * (pid alive, agent lane idle — e.g. mid-gate or post-attempt commit). */
   live: boolean;
+  /** True when the worker's pid resolves regardless of agent-lane freshness.
+   * Absent / false collapses to the `[stale]` (dead/finished) badge. */
+  pidLive?: boolean;
   /** Added lines of the attempt's diff (committed + uncommitted, from the
    * branch's merge-base with origin/main). Defaults to 0 when unavailable —
    * the diff volume is rendered unconditionally, so this is never omitted. */
@@ -147,7 +153,7 @@ function elapsedSeconds(state: CompactState, now: number): number {
  * Renders one compact worker line, ANSI-stripped, byte-for-byte matching
  * render_worker_compact's plain text:
  *
- *   w<id> [live|stale] <runner>  issues <done>/<total><flags><cur>
+ *   w<id> [live|quiet|stale] <runner>  issues <done>/<total><flags><cur>
  *
  * The progress counter is labelled `issues <done>/<total>` — issues *closed*
  * over the queue total, NOT lines changed or a completion percentage. The bare
@@ -163,7 +169,7 @@ function elapsedSeconds(state: CompactState, now: number): number {
 export function renderWorkerCompactLine(worker: CompactWorker, now: number): string {
   const { state } = worker;
   const workerId = state.worker_id || "?";
-  const tag = worker.live ? "live" : "stale";
+  const tag = worker.live ? "live" : worker.pidLive ? "quiet" : "stale";
   const runner = state.runner || "-";
   const total = state.total;
   const done = state.done;

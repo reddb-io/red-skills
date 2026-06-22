@@ -471,9 +471,11 @@ export async function collectMonitorInputs(root = process.cwd()): Promise<Monito
           cost_usd: state.current.cost_usd,
         },
       },
-      // Display liveness requires BOTH a resolving pid AND recent activity, so a
-      // finished worker whose pid is shared/recycled stops rendering as `[live]`.
+      // active = pid resolves + agent-lane freshness → [live] badge.
+      // pidLive = pid resolves regardless of freshness → [quiet] badge when the
+      // agent lane is idle (e.g. post_attempt gate/commit) but the process lives.
       live: isStateActive(state),
+      pidLive: isStateLive(state),
       diffAdded: added,
       diffRemoved: removed,
     });

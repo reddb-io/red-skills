@@ -91,6 +91,36 @@ describe("monitor — compact line", () => {
     expect(line).not.toContain("[live]");
   });
 
+  it("live-fresh worker (active + pid-live) renders [live]", () => {
+    const line = renderWorkerCompactLine(
+      baseWorker({ live: true, pidLive: true }),
+      1780140600,
+    );
+    expect(line).toContain("[live]");
+    expect(line).not.toContain("[stale]");
+    expect(line).not.toContain("[quiet]");
+  });
+
+  it("live-quiet worker (pid-live but agent-lane stale) renders [quiet], not [stale]", () => {
+    const line = renderWorkerCompactLine(
+      baseWorker({ live: false, pidLive: true }),
+      1780140600,
+    );
+    expect(line).toContain("[quiet]");
+    expect(line).not.toContain("[stale]");
+    expect(line).not.toContain("[live]");
+  });
+
+  it("dead/finished worker (pid does not resolve, pid=0) renders [stale]", () => {
+    const line = renderWorkerCompactLine(
+      baseWorker({ live: false, pidLive: false }),
+      1780140600,
+    );
+    expect(line).toContain("[stale]");
+    expect(line).not.toContain("[live]");
+    expect(line).not.toContain("[quiet]");
+  });
+
   it("labels the counter as issues closed/total, with no misleading percent", () => {
     const w = baseWorker({
       state: { ...baseWorker().state, total: 3, done: 1 },
