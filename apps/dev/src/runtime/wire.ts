@@ -351,7 +351,7 @@ export function makeRunAgent(
 // ---------- monitor inputs ----------
 
 import type { CompactWorker, FleetState, SlotDetail } from "../core/monitor.js";
-import { parseState, isStateLive, isStateActive } from "../core/state.js";
+import { readWorkerState, readWorkerStates } from "../core/worker-state-reader.js";
 import type { WorkerVitals } from "../types/state.js";
 import { parseHistoryLines, type HistoryRecord } from "../core/history.js";
 
@@ -425,17 +425,12 @@ export async function readFleetState(path: string): Promise<FleetState | null> {
  * (small fleet → a handful of cheap git calls, like the statusline does). */
 export async function collectMonitorInputs(root = process.cwd()): Promise<MonitorInputs> {
   const paths = afkPaths(root);
-  const stateFiles = await fsx.globWorkerStates(paths.workersRoot);
+  // The ONE owner reads + normalizes + liveness-tags every worker state file
+  // (core/worker-state-reader). The dashboard's `[live]` badge uses the
+  // pid + freshness verdict (`active`).
+  const records = await readWorkerStates(paths.workersRoot);
   const workers: CompactWorker[] = [];
-  for (const file of stateFiles) {
-    const text = await fsx.readText(file);
-    if (text === null) continue;
-    let state;
-    try {
-      state = parseState(JSON.parse(text));
-    } catch {
-      continue;
-    }
+  for (const { state, active } of records) {
     // Diff volume: committed + uncommitted work for the attempt, measured from
     // the branch's merge-base with origin/main. Prefer the state file's persisted
     // counts; fall back to a live `git diff --shortstat` of the worktree when both
@@ -473,7 +468,7 @@ export async function collectMonitorInputs(root = process.cwd()): Promise<Monito
       },
       // Display liveness requires BOTH a resolving pid AND recent activity, so a
       // finished worker whose pid is shared/recycled stops rendering as `[live]`.
-      live: isStateActive(state),
+      live: active,
       diffAdded: added,
       diffRemoved: removed,
     });
@@ -561,7 +556,8 @@ function writeStatuslineCacheAtomic(path: string, cache: StatuslineCache): void 
  */
 export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput | null> {
   const paths = afkPaths(ctx.root);
-  const stateFiles = await fsx.globWorkerStates(paths.workersRoot);
+  // Same single owner as the monitor (core/worker-state-reader).
+  const records = await readWorkerStates(paths.workersRoot);
   const gitCtx: gitx.GitContext = { cwd: ctx.root };
 
   let workers = 0;
@@ -574,18 +570,10 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
   const issues: Array<number | string> = [];
   const stages: Array<string | undefined> = [];
 
-  for (const file of stateFiles) {
-    const text = await fsx.readText(file);
-    if (text === null) continue;
-    let state;
-    try {
-      state = parseState(JSON.parse(text));
-    } catch {
-      continue;
-    }
+  for (const { state, active } of records) {
     // Statusline counts only genuinely-active workers (pid-live AND fresh), so a
     // finished worker with a stale state file no longer inflates the 🤖N badge.
-    if (!isStateActive(state)) continue;
+    if (!active) continue;
 
     workers += 1;
     blocked += state.blocked;
@@ -756,15 +744,10 @@ export async function collectBootOptions(
   for (const o of orphans) {
     const parsed = parseWorkerAttemptPath(o.path);
     if (!parsed) continue;
-    const text = await fsx.readText(join(o.path, "afk.state.json"));
-    let live = false;
-    if (text !== null) {
-      try {
-        live = isStateLive(parseState(JSON.parse(text)));
-      } catch {
-        live = false;
-      }
-    }
+    // Cap-pass liveness keeps the pid-only verdict (a live attempt is excluded
+    // from the cap even when briefly quiet), read through the single owner so the
+    // schema + legacy-key shim apply here too.
+    const live = readWorkerState(join(o.path, "afk.state.json"))?.live ?? false;
     const mtimeS = nowS - o.ageS;
     const list = byIssue.get(parsed.issue) ?? [];
     list.push({ path: o.path, mtimeS, live });
