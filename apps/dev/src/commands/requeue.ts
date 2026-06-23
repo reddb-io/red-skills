@@ -104,9 +104,14 @@ export async function requeueCommand(
     process.stderr.write("[afk] requeue requires an issue number like #123\n");
     return 2;
   }
-  const guidance = values.guidance as string | undefined;
+  const guidance = (values.guidance as string | undefined)?.trim();
   const json = values.json === true;
   const dryRun = values["dry-run"] === true;
+
+  if (!guidance) {
+    process.stderr.write("[afk] requeue requires --guidance with the retry decision so it can be recorded as Human guidance\n");
+    return 2;
+  }
 
   const repo = ghOverride ? "" : await resolveRepo(cwd, values.repo as string | undefined);
   const gh = ghOverride ?? ghFor(cwd, repo);
@@ -119,6 +124,10 @@ export async function requeueCommand(
 
   const plan = planRequeue({ body: issueState.body, labels: issueState.labels, guidance });
   if (!plan.requeueable) {
+    if (plan.refuseForHitl) {
+      process.stderr.write(`[afk] requeue #${issue}: refused — ${plan.reason}\n`);
+      return 1;
+    }
     stdout.write(`Requeue #${issue}: no-op — ${plan.reason}\n`);
     return 0;
   }
