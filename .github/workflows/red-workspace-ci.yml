@@ -37,12 +37,12 @@ jobs:
         with:
           node-version: 22
 
-      - name: Install red binary for SDK
-        uses: ./.github/actions/install-red-binary
-        with:
-          github-token: ${{ github.token }}
-
       - name: Install workspace dependencies
+        env:
+          # This PR gate typechecks/tests apps/dev; it does not execute the
+          # @reddb-io/sdk-backed memory/brain runtimes. Skip the SDK postinstall
+          # binary download so CI is not coupled to reddb release assets.
+          REDDB_SKIP_POSTINSTALL: "1"
         run: pnpm install --frozen-lockfile
 
       - name: Typecheck workspace (apps + packages, excludes red-castle)
@@ -62,12 +62,12 @@ jobs:
         with:
           node-version: 22
 
-      - name: Install red binary for SDK
-        uses: ./.github/actions/install-red-binary
-        with:
-          github-token: ${{ github.token }}
-
       - name: Install workspace dependencies
+        env:
+          # This PR gate typechecks/tests apps/dev; it does not execute the
+          # @reddb-io/sdk-backed memory/brain runtimes. Skip the SDK postinstall
+          # binary download so CI is not coupled to reddb release assets.
+          REDDB_SKIP_POSTINSTALL: "1"
         run: pnpm install --frozen-lockfile
 
       - name: Test apps/dev (includes packages/shared)
