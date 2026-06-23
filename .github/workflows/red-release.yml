@@ -272,12 +272,29 @@ jobs:
             'macos-aarch64': 'red-macos-aarch64',
             'windows-x86_64': 'red-windows-x86_64.exe',
           };
+          async function previousRedAssets() {
+            const url = 'https://github.com/reddb-io/red-skills/releases/latest/download/memory-runtime-manifest.json';
+            const response = await fetch(url, { redirect: 'follow' });
+            if (!response.ok) throw new Error(`GET ${url} -> ${response.status}`);
+            const previous = await response.json();
+            if (previous?.reddb?.sdk !== sdk || previous?.reddb?.tag !== reddb.tag) {
+              throw new Error(`latest memory runtime manifest points at ${previous?.reddb?.tag ?? 'unknown'} / ${previous?.reddb?.sdk ?? 'unknown'}, expected ${reddb.tag} / ${sdk}`);
+            }
+            return previous.reddb.assets ?? {};
+          }
+          const fallbackAssets = await previousRedAssets();
           const redAssets = {};
           for (const [platform, asset] of Object.entries(assetNames)) {
             const url = `https://github.com/${reddb.repo}/releases/download/${reddb.tag}/${asset}.sha256`;
             const response = await fetch(url, { redirect: 'follow' });
-            if (!response.ok) throw new Error(`GET ${url} -> ${response.status}`);
-            const sha256 = (await response.text()).match(/\b[0-9a-f]{64}\b/i)?.[0]?.toLowerCase();
+            let sha256 = "";
+            if (response.ok) {
+              sha256 = (await response.text()).match(/\b[0-9a-f]{64}\b/i)?.[0]?.toLowerCase() ?? "";
+            } else {
+              const fallback = fallbackAssets[platform];
+              if (fallback?.asset !== asset || !fallback?.sha256) throw new Error(`GET ${url} -> ${response.status}`);
+              sha256 = fallback.sha256;
+            }
             if (!sha256) throw new Error(`invalid sha256 file for ${asset}`);
             redAssets[platform] = { asset, sha256 };
           }
@@ -329,12 +346,29 @@ jobs:
             'macos-aarch64': 'red-macos-aarch64',
             'windows-x86_64': 'red-windows-x86_64.exe',
           };
+          async function previousRedAssets() {
+            const url = 'https://github.com/reddb-io/red-skills/releases/latest/download/brain-runtime-manifest.json';
+            const response = await fetch(url, { redirect: 'follow' });
+            if (!response.ok) throw new Error(`GET ${url} -> ${response.status}`);
+            const previous = await response.json();
+            if (previous?.reddb?.sdk !== sdk || previous?.reddb?.tag !== reddb.tag) {
+              throw new Error(`latest brain runtime manifest points at ${previous?.reddb?.tag ?? 'unknown'} / ${previous?.reddb?.sdk ?? 'unknown'}, expected ${reddb.tag} / ${sdk}`);
+            }
+            return previous.reddb.assets ?? {};
+          }
+          const fallbackAssets = await previousRedAssets();
           const redAssets = {};
           for (const [platform, asset] of Object.entries(assetNames)) {
             const url = `https://github.com/${reddb.repo}/releases/download/${reddb.tag}/${asset}.sha256`;
             const response = await fetch(url, { redirect: 'follow' });
-            if (!response.ok) throw new Error(`GET ${url} -> ${response.status}`);
-            const sha256 = (await response.text()).match(/\b[0-9a-f]{64}\b/i)?.[0]?.toLowerCase();
+            let sha256 = "";
+            if (response.ok) {
+              sha256 = (await response.text()).match(/\b[0-9a-f]{64}\b/i)?.[0]?.toLowerCase() ?? "";
+            } else {
+              const fallback = fallbackAssets[platform];
+              if (fallback?.asset !== asset || !fallback?.sha256) throw new Error(`GET ${url} -> ${response.status}`);
+              sha256 = fallback.sha256;
+            }
             if (!sha256) throw new Error(`invalid sha256 file for ${asset}`);
             redAssets[platform] = { asset, sha256 };
           }
