@@ -156,6 +156,11 @@ describe("buildSections", () => {
     expect(s.map((x) => x.name)).toEqual(["notes", "diff"]);
   });
 
+  it("blocked with validation → notes + validation + diff", () => {
+    const s = buildSections("blocked", { notes: "halted", validation: "cargo fmt --all -- --check → exit=1" }, diff, "r/n-attempts");
+    expect(s.map((x) => x.name)).toEqual(["notes", "validation", "diff"]);
+  });
+
   it("no-sentinel → notes + diff + log (log fenced)", () => {
     const s = buildSections("no-sentinel", { notes: "n", log: "line C" }, diff, "remote");
     expect(s.map((x) => x.name)).toEqual(["notes", "diff", "log"]);
@@ -215,6 +220,29 @@ describe("emitEnvelope — per-status summary + sections", () => {
     expect(res.body).not.toContain('data-section="log"');
     // notes precedes diff
     expect(res.body.indexOf('data-section="notes"')).toBeLessThan(res.body.indexOf('data-section="diff"'));
+  });
+
+  it("blocked: renders validation details when provided", async () => {
+    const { deps } = makeDeps();
+    const res = await emitEnvelope(deps, {
+      status: "blocked",
+      issue: 11,
+      worker: "wTEST",
+      durationS: 125,
+      branch: "afk/wTEST/11-foo",
+      attempt: 1,
+      diff: "+42 -10",
+      remoteName: "afk-attempts/wTEST/11-foo",
+      repo: "reddb-io/red-skills",
+      repoDir: "/tmp/x",
+      worktreeRel: ".red/tmp/work-wTEST-i11/worktree",
+      diffstat: "+42 -10 files=3",
+      sections: { notes: "feedback failed", validation: "cargo clippy --workspace → exit=1" },
+    });
+    expect(res.body).toContain('<details data-section="validation">');
+    expect(res.body).toContain("cargo clippy --workspace → exit=1");
+    expect(res.body.indexOf('data-section="notes"')).toBeLessThan(res.body.indexOf('data-section="validation"'));
+    expect(res.body.indexOf('data-section="validation"')).toBeLessThan(res.body.indexOf('data-section="diff"'));
   });
 
   it("no-sentinel: notes < diff < log, log fenced", async () => {

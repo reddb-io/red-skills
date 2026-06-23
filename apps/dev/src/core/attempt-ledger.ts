@@ -18,14 +18,17 @@ import { isPositiveIntegerToken, isValidWorkerId, parseWorkerAttemptPath } from 
  * the directory globbing is a thin injectable reader.
  *
  * Per-attempt outcome contract (read-only here): an attempt directory MAY carry
- * two plain-text marker files —
+ * two plain-text marker files and one validation sidecar —
  *   <attempt_dir>/snapshot-branch.ref   one line: the remote snapshot branch ref.
  *   <attempt_dir>/failure.reason        free text: the recorded failure reason.
- * Both are optional; a missing file degrades to a labelled "(none)" placeholder.
+ *   <attempt_dir>/validation.jsonl      feedback/backpressure records for the failure.
+ * All are optional; missing marker files degrade to labelled placeholders, and
+ * a missing validation sidecar is omitted from the retry context.
  */
 
 const SNAPSHOT_BRANCH_FILE = "snapshot-branch.ref";
 const FAILURE_REASON_FILE = "failure.reason";
+const VALIDATION_FILE = "validation.jsonl";
 const NONE_BRANCH = "(none)";
 const NONE_REASON = "(none recorded)";
 
@@ -57,6 +60,7 @@ export interface AttemptContext {
   prevAttempt: number;
   prevSnapshotBranch: string;
   prevFailureReason: string;
+  prevValidationSummary?: string;
 }
 
 /**
@@ -135,23 +139,32 @@ export async function attemptLedgerContext(
 
   const branchRaw = await reader.readMarker(best.dir, SNAPSHOT_BRANCH_FILE);
   const reasonRaw = await reader.readMarker(best.dir, FAILURE_REASON_FILE);
+  const validationRaw = await reader.readMarker(best.dir, VALIDATION_FILE);
   // The ref is a single line; take the first and trim any surrounding newline.
   const branchLine = branchRaw?.split("\n", 1)[0]?.trim() ?? "";
-  return {
+  const context: AttemptContext = {
     prevAttempt: best.attempt,
     prevSnapshotBranch: branchLine.length > 0 ? branchLine : NONE_BRANCH,
     prevFailureReason: reasonRaw && reasonRaw.length > 0 ? reasonRaw : NONE_REASON,
   };
+  if (validationRaw && validationRaw.trim().length > 0) {
+    context.prevValidationSummary = validationRaw;
+  }
+  return context;
 }
 
 /** Render a context block in the same textual shape the bash module emits. */
 export function formatAttemptContext(context: AttemptContext): string {
-  return [
+  const lines = [
     `prev-attempt: ${context.prevAttempt}`,
     `prev-snapshot-branch: ${context.prevSnapshotBranch}`,
     "prev-failure-reason:",
     context.prevFailureReason,
-  ].join("\n");
+  ];
+  if (context.prevValidationSummary) {
+    lines.push("prev-validation-summary:", context.prevValidationSummary);
+  }
+  return lines.join("\n");
 }
 
 function validateIdentity(root: string, issue: number): number {
