@@ -282,6 +282,12 @@ the configured window, `/ship` parks the PR and issue for `/hitl`.
   one issue's local/GitHub state and prints the next command.
 - [`/hitl`](./plugins/dev/skills/engineering/hitl/SKILL.md) resolves one
   `ready-for-human` issue and moves it back to `ready-for-agent` when delegable.
+- [`/requeue`](./plugins/dev/skills/engineering/requeue/SKILL.md) safely puts a
+  `blocked:validation`/`blocked:spec` issue back in the queue when you already
+  have the retry guidance: clears the active `## Current blocker`, drops stale
+  `ready-for-human`/`blocked:*` labels, adds `ready-for-agent` as one transition
+  so preflight does not re-park it. Use `/hitl` when the decision still needs to
+  be extracted first.
 
 ### Memory
 
@@ -467,6 +473,7 @@ This is a map, not a replacement for the skill files. Open the linked
 | [`report-bug`](./plugins/dev/skills/engineering/report-bug/SKILL.md) | File a structured `type:bug needs-triage` issue. |
 | [`urgent`](./plugins/dev/skills/engineering/urgent/SKILL.md) | Create a `priority:urgent ready-for-agent` issue that jumps the queue. |
 | [`hitl`](./plugins/dev/skills/engineering/hitl/SKILL.md) | Resolve one `ready-for-human` issue and make it delegable again. |
+| [`requeue`](./plugins/dev/skills/engineering/requeue/SKILL.md) | Safe requeue for a `blocked:validation`/`blocked:spec` issue: clears the active blocker, drops stale labels, adds `ready-for-agent`. Use when guidance is already decided; `/hitl` is the interactive sibling. |
 | [`retake`](./plugins/dev/skills/engineering/retake/SKILL.md) | Reconstruct issue/PR/local state and print the next command. |
 | [`dashboard`](./plugins/dev/skills/engineering/dashboard/SKILL.md) | Inspect open PRDs/issues, AFK workers, flow metrics, and DORA proxies. |
 | [`daily-review`](./plugins/dev/skills/engineering/daily-review/SKILL.md) | Produce a daily operational review. |

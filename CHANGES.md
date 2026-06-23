@@ -6,6 +6,29 @@ Upstream base: `mattpocock/skills@6eeb81b5fcfeeb5bd531dd47ab2f9f2bbea27461` (see
 
 ---
 
+## requeue (engineering) — narrowed safe requeue for blocked:validation/spec (issue #860)
+
+- **status**: modified
+- **upstream**: —
+- **why**: #850 introduced the base requeue helper; #860 narrows its scope to `blocked:validation` and `blocked:spec` only, refuses mixed `blocked:*` states and label/body kind mismatches (directing the maintainer to `/hitl`), and makes `--guidance` required so every requeue is auditable.
+- **what changed** (#860 additions on top of #850):
+  - `REQUEUE_SUPPORTED_KINDS` constant guards the two accepted kinds; `refuseForHitl` field on `RequeuePlan` distinguishes `/hitl`-refusal from silent no-op.
+  - `planRequeue` now refuses: mixed `blocked:*` labels; label kind not in `{validation, spec}`; active body blocker kind not in `{validation, spec, stalled, crashed, merge-conflict}`; label/body kind mismatch.
+  - `requeueCommand` exits 2 when `--guidance` is missing or empty; exits 1 (not exit 0 no-op) when the planner sets `refuseForHitl`.
+  - SKILL.md updated: scope narrowed in description, `--guidance` marked required, three `/hitl`-refusal conditions listed, `/requeue`-vs-`/hitl` decision table with explicit pre-conditions.
+  - Tests extended to cover all new refusal paths and the guidance-required check.
+
+## requeue (engineering) — safe one-shot requeue for issues parked behind an active Current blocker (issue #850)
+
+- **status**: added
+- **upstream**: —
+- **why**: A validation/spec failure parks an issue with `ready-for-human`, a `blocked:*` label, and an active `## Current blocker` block. Flipping labels back to `ready-for-agent` by hand is a silent no-op loop: AFK preflight re-reads the active non-mechanical blocker and re-parks the issue. Maintainers needed one safe, documented command to requeue after a human decision makes the issue delegable (issue #850).
+- **what changed**:
+  - New `plugins/dev/skills/engineering/requeue/SKILL.md` documents `/requeue #N --guidance "…"` and the `/hitl`-vs-`/requeue` split (interactive decision extraction vs already-decided requeue).
+  - Implementation: `apps/dev/src/core/requeue.ts` (`planRequeue` plans the clear-blocker + drop-stale-labels + `ready-for-agent` transition; `isRequeueComplete` mirrors preflight so a label flip alone is never a successful requeue) and `apps/dev/src/commands/requeue.ts` (gh-backed command, wired into the CLI router).
+  - Tests: `apps/dev/tests/requeue.test.ts` and `apps/dev/tests/requeue-command.test.ts` cover the label-flip-alone invariant, blocker clearing, label transition, no-op/dry-run/closed/missing-arg paths.
+  - `plugins/dev/skills/engineering/hitl/SKILL.md` cross-references `/requeue`.
+
 ## implement (engineering)
 
 - **status**: added

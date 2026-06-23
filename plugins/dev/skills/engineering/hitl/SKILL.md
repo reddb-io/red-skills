@@ -10,6 +10,8 @@ argument-hint: "[--issue N | --skip N,N]"
 
 The **HITL queue** is open, non-PRD Issues labelled `ready-for-human`. PRDs (`type:prd`) are planning artifacts and are never selected by this workflow.
 
+**`/hitl` versus `/requeue`.** Use `/hitl` when the pending human decision still has to be **extracted and answered** — it interviews you, decides delegability, then (when delegable) clears the active `## Current blocker` and requeues. When the decision is **already made** and you only need to put a parked `blocked:validation`/`blocked:spec` issue back in the queue safely, reach for [`/requeue`](../requeue/SKILL.md) instead: it records your guidance and applies the same clear-blocker + drop-stale-labels + `ready-for-agent` transition without the interview. Both end in the same safe state; never flip labels by hand, because AFK preflight re-reads the active blocker and re-parks the issue.
+
 <what-to-do>
 
 **Step 1 — Select.** Pick the highest-priority open `ready-for-human` issue that is not a PRD.
