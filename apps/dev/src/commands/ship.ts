@@ -219,7 +219,7 @@ interface PrView {
   statusCheckRollup?: Array<Record<string, unknown>> | null;
 }
 
-async function collectShipFacts(cwd: string, repo: string, pr: number, reviewCheck: string): Promise<ShipFacts> {
+export async function collectShipFacts(cwd: string, repo: string, pr: number, reviewCheck: string): Promise<ShipFacts> {
   const checksRes = await run("gh", ["pr", "checks", String(pr), "--repo", repo, "--json", "name,state,conclusion,bucket"], cwd);
   let checksGreen = false;
   let checkSummary = "checks unavailable";
