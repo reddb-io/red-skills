@@ -101,8 +101,9 @@ Memory modes:
 | `markdown-only` | Plain notes under `.red/memory/notes/`.               | Low-risk rollout with explicit store/recall only.                                                              |
 | `graph`         | Project-local RedDB store at `.red/memory/graph.rdb`. | Governed recall, provenance, supersession, readiness, context packs, Workbench, MCP/HTTP, and Skill telemetry. |
 
-Memory is not the Personal-fact store. Personal facts and broad human-facing
-project knowledge belong in Brain.
+Memory is not the Personal-fact store.
+Personal facts belong in Brain, not Memory.
+Broad human-facing project knowledge belongs in Brain too.
 
 Start with [plugins/memory/README.md](./plugins/memory/README.md).
 
