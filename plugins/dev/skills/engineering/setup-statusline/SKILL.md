@@ -1,15 +1,21 @@
 ---
 name: setup-statusline
-description: Install or inspect the RedSkills statusline for the current repo. On Claude Code, wires `.claude/settings.json` to a command that runs the AFK bundle's `statusline` subcommand (resolving the installed bundle itself — Claude Code does not expose `$CLAUDE_PLUGIN_ROOT` to a statusLine). On Codex, configures the built-in `tui.status_line` footer. Preserves existing config unless replacement is explicitly requested.
+description: Install or inspect the RedSkills statusline for the active host. RedSkills has one shared `statusline` producer in the dev bundle; Claude Code wires it through `.claude/settings.json` as a command-backed statusLine, while Codex configures the built-in `tui.status_line` footer and the dev plugin's SessionStart self-heal hook. Preserves existing config unless replacement is explicitly requested.
 ---
 
 # Statusline
 
-**Wire the RedSkills statusline for the host the agent is running under — stop immediately if a gate condition is met.** Claude Code: command-backed (full AFK block); Codex: built-in footer items only (no command hook, AFK block not available).
+**Wire the RedSkills statusline surface for the host the agent is running under — stop immediately if a gate condition is met.** RedSkills is client/CLI/coder/runner agnostic: the dev bundle owns one `statusline` producer, and each host gets the richest integration it actually supports. Claude Code can render the shared producer directly as a command-backed statusLine. Codex currently exposes only native footer widgets, so the skill configures those widgets and relies on the dev plugin's SessionStart hook to keep the footer present across Codex config rewrites.
 
-Install the RedSkills statusline for this repository. It renders the project name, branch, and model/context data when the host provides it, and — on Claude Code — the live AFK issue block: workers, ready queue count, ready-for-human count, diffstat, and current issue numbers. The line is quiet when no AFK worker is active.
+Install or inspect the RedSkills statusline for this repository. The shared producer renders the project name, branch, model/context data when the host provides it, repo counters, and the live AFK issue block: workers, ready queue count, ready-for-human count, diffstat, current issue numbers, and runner labels. The line is quiet when no AFK worker is active. Hosts that cannot run a command-backed statusline still get a useful native footer plus `/afk monitor` for live AFK visibility.
 
-**Host capabilities differ.** Claude Code supports a *command-backed* statusline (it runs a command and renders its stdout), so it shows the full AFK block. Codex, as of this writing, only supports *built-in* footer items via `tui.status_line` and has **no** command-backed statusline (open feature requests openai/codex#17827, #20244) — so the AFK worker block cannot render in Codex's footer; track AFK under Codex with `/afk monitor` instead.
+**Host capabilities differ; the product architecture should not.** Treat the RedSkills statusline as:
+
+1. A shared producer: the dev bundle's `statusline` subcommand.
+2. Host adapters: Claude Code's command-backed `statusLine`; Codex's global `tui.status_line` list and plugin `SessionStart` hook.
+3. Fallback visibility: `/afk monitor`, which works when a host has no command-backed footer.
+
+This mirrors how Codex itself organizes customization: skills define reusable workflows, plugins distribute skills plus hooks/MCP/apps, `config.toml` stores host settings, and hooks attach lifecycle behavior next to the active plugin/config layer. Keep RedSkills logic in the bundle and keep host-specific wiring in the host sections below.
 
 ## Claude Code
 
@@ -71,12 +77,19 @@ It should print a line like `red-skills (main) · Opus`.
 
 ## Codex
 
-Codex configures its footer through the **global** `tui.status_line` key in
-`~/.codex/config.toml` — an ordered list of **built-in** item identifiers
-(`project`, `git-branch`, `model-with-reasoning`, `context-remaining`,
-`task-progress`, `spinner`, `current-dir`, …). Default is `["spinner",
-"project"]`; `null` disables the footer. There is no command hook, so the
-RedSkills AFK block cannot be injected.
+Codex configures its footer through the `tui.status_line` key in `config.toml`
+— an ordered list of **built-in** item identifiers (`project`, `git-branch`,
+`model-with-reasoning`, `context-remaining`, `task-progress`, `current-dir`,
+…). When unset, Codex currently uses `["model-with-reasoning",
+"context-remaining", "current-dir"]`; set it to `[]` to hide the footer.
+This skill offers the **global** `~/.codex/config.toml` path because the footer
+is a personal host preference, not repo state. There is no command hook, so the
+shared RedSkills `statusline` producer cannot be injected into the footer yet.
+
+Codex has a native `/statusline` command for picking and reordering these
+footer items and persisting them to `config.toml`. If the user already has a
+custom `tui.status_line`, preserve it; that custom value is the operator's host
+preference, not repo state.
 
 Offer to set a useful footer (note: this is **global** Codex config, not
 per-repo like the Claude path):
@@ -96,6 +109,12 @@ lose the update but never corrupt the file). So a reset self-heals on the next
 session start. The hook is additive and idempotent; disable it by removing the
 second `SessionStart` entry in `hooks/codex.hooks.json`.
 
+This is intentionally host-global and plugin-gated. Codex stores footer
+preferences in `~/.codex/config.toml`, while RedSkills gates global hook side
+effects on the repo's `.red/config.yaml` `plugins.dev.enabled: true` flag. That
+keeps the installed plugin available everywhere but inert outside opted-in
+repos, matching the rest of the RedSkills hook model.
+
 For live AFK visibility under Codex, point the user at `/afk monitor` (fleet
 spawns a read-only monitor agent; otherwise it falls back to the monitor
 dashboard). When Codex ships a command-backed statusline (openai/codex#17827 /
@@ -104,5 +123,5 @@ at the same AFK bundle so the line matches Claude Code's.
 
 ## Notes
 
-- Invoke as `/setup-statusline` (Claude Code) or `$setup-statusline` (Codex). Wire the host you are running under — the AFK bundle's `statusline` subcommand is the shared producer of the line; only the host integration differs.
-- `/setup-red-skills` also offers to wire the Claude Code statusline as part of project bootstrap (Section F).
+- Invoke as `/setup-statusline` (Claude Code) or `$setup-statusline` (Codex). Wire the host you are running under; do not imply the statusline feature belongs to only one client.
+- `/setup-red-skills` may offer the Claude Code command-backed adapter during project bootstrap. Under Codex, use this skill to inspect or configure the native footer path.
