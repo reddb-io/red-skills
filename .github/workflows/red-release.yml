@@ -123,6 +123,12 @@ jobs:
 
       - name: Install workspace dependencies
         if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
+        env:
+          # The release job builds JS bundles and manifests; it does not execute
+          # the @reddb-io/sdk-backed memory/brain runtimes during install. Skip
+          # the SDK postinstall binary download so release is not blocked when
+          # the matching reddb binary asset is unavailable.
+          REDDB_SKIP_POSTINSTALL: "1"
         run: pnpm install --frozen-lockfile
 
       # ADR 0032: AFK ships as a committed, dependency-free bundle. Rebuild it
