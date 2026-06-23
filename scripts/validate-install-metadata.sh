@@ -78,6 +78,12 @@ validate_plugin() {
       || fail "$plugin: Claude MCP manifest must contain an mcpServers object"
     jq -e '.mcpServers | type == "object"' "$dir/${codex_mcp_path#./}" >/dev/null \
       || fail "$plugin: Codex MCP manifest must contain an mcpServers object"
+    if [[ "$plugin" == "dev" ]]; then
+      [[ -x "$dir/hooks/code-nav-mcp.sh" ]] \
+        || fail "$plugin: code-nav MCP launcher must exist and be executable"
+      jq -e '.mcpServers["code-nav"].args[]? | contains("code-nav-mcp.sh")' "$dir/${codex_mcp_path#./}" >/dev/null \
+        || fail "$plugin: code-nav MCP manifest must use the on-demand launcher"
+    fi
   fi
 
   local hooks_path
