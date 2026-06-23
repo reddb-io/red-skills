@@ -233,6 +233,12 @@ import { buildMemoryHealthViewerArtifact } from "./memory-health-viewer.js";
 import { buildMemoryDecayReport } from "./memory-decay.js";
 import { buildMemoryDecayViewerArtifact } from "./memory-decay-viewer.js";
 import {
+  memoryStoreEvidence,
+  rejectMemoryStoreEvidence,
+  type GovernedWriteResult,
+  type MemoryStoreEvidenceInput,
+} from "./governed-write.js";
+import {
   buildMemoryMergePassReport,
   executeMemoryMergeBatch,
   unmergeMemoryMergeBatch,
@@ -317,6 +323,7 @@ over the same evidence store.
 Usage:
   memory init [--mode markdown-only|graph] [--hooks] [--skill-telemetry] [--event-retention-days N] [--root <dir>] [--yes]
   memory store <fact...>            [--root <dir>] [--scope project|repo|branch|worktree|session|agent-run|user] [--scope-id ID]
+  memory store-evidence             [--root <dir>] --claim <text> --source-ref <ref> --citation-excerpt <text> --intent <text> --observer <id> [--json]
   memory inbox quarantine <fact...> [--root <dir>] --reason <text> --evidence <summary> [--confidence EXTRACTED|INFERRED|AMBIGUOUS] [--source-kind manual|hook|derived|system] [--writer <name>] [--command <cmd>] [--hook <event>] [--json]
   memory inbox list                 [--root <dir>] [--status quarantined|approved|rejected|promoted|all] [--json]
   memory inbox inspect <id>         [--root <dir>] [--json]
@@ -705,6 +712,33 @@ async function runStore(args: ParsedArgs): Promise<void> {
   });
   console.log(`memory: stored ${note.id}`);
   console.log(`  ${note.path}`);
+}
+
+async function runStoreEvidence(args: ParsedArgs): Promise<void> {
+  const rootDir = rootOf(args.flags);
+  const input: MemoryStoreEvidenceInput = {
+    claim: stringFlag(args.flags, "claim") ?? args.positional.join(" "),
+    sourceRef: stringFlag(args.flags, "source-ref") ?? stringFlag(args.flags, "source"),
+    citationExcerpt:
+      stringFlag(args.flags, "citation-excerpt") ?? stringFlag(args.flags, "citation"),
+    intent: stringFlag(args.flags, "intent"),
+    observer: stringFlag(args.flags, "observer") ?? stringFlag(args.flags, "writer"),
+  };
+
+  const config = await readConfig(rootDir);
+  if (!config || config.mode !== "graph") {
+    const rejected = rejectMemoryStoreEvidence(input, "graph_mode_required");
+    printGovernedWriteResult(rejected, args.flags.json === true);
+    return;
+  }
+
+  const store = await MemoryStore.open({ uri: resolveStoreUri(rootDir, config) });
+  try {
+    const result = await memoryStoreEvidence(store, input);
+    printGovernedWriteResult(result, args.flags.json === true);
+  } finally {
+    await store.close();
+  }
 }
 
 async function runCommit(args: ParsedArgs): Promise<void> {
@@ -1137,6 +1171,23 @@ function printEvidenceResult(action: string, card: EvidenceCard, json: boolean):
   }
   console.log(`memory evidence: ${action} ${card.id}`);
   console.log(`  status: ${card.status}`);
+}
+
+function printGovernedWriteResult(
+  result: GovernedWriteResult,
+  json: boolean,
+): void {
+  if (json) {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+  console.log(`memory store-evidence: ${result.outcome}`);
+  console.log(`  reason: ${result.reason}`);
+  if (result.memory.urn) console.log(`  memory: ${result.memory.urn}`);
+  if (result.provenance.source_ref) console.log(`  source: ${result.provenance.source_ref}`);
+  if (result.provenance.citation_excerpt) {
+    console.log(`  citation: ${result.provenance.citation_excerpt}`);
+  }
 }
 
 function printLinkedEvidenceResult(action: string, card: LinkedEvidenceReviewResult, json: boolean): void {
@@ -7821,6 +7872,8 @@ async function main(): Promise<void> {
       return runInit(args);
     case "store":
       return runStore(args);
+    case "store-evidence":
+      return runStoreEvidence(args);
     case "commit":
       return runCommit(args);
     case "inbox":
