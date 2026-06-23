@@ -88,7 +88,7 @@ stale notes inline.
 - **0019** Memory graph is the substrate for codebase mapping
 - **0020** Memory tier maps directly to VERSIONED collection policy
 - **0022** Vector is a seed provider for Memory recall
-- **0023** Memory moat foundation before surface expansion
+- **0023** Memory moat foundation before surface expansion — amended by **0072** for the next delivery cycle: governed write MCP and cross-agent smoke test ship before the full foundation is complete
 - **0024** AS OF recall is read-only over RedDB VCS
 - **0025** Memory event log is append-only and non-versioned
 - **0027** Memory operates as a closed loop via hooks, PR-merge automation, CI drift guards
@@ -96,6 +96,7 @@ stale notes inline.
 - **0036** Memory transports are adapters over the operation registry
 - **0037** Memory benchmark measures substrate superiority on a curated corpus, not LOCOMO
 - **0053** Provider tidy is report-only governance until explicit soft-merge approval
+- **0072** Memory ships governed write surface before completing the moat foundation — first write surface is `memory_store_evidence` over MCP plus CLI, direct storage is limited to low-blast-radius source-cited validation evidence, and the cross-agent smoke test must show provenance plus policy outcome *(amends 0023; informed by Headroom competitive analysis)*
 
 ## MCP / transport / surfaces
 - **0013** Dev owns the codebase-understanding surface; memory owns the graph — post-0041, `dev` consumes project memory through the `red-memory` MCP rather than an in-repo Memory CLI

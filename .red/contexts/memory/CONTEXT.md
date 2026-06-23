@@ -106,6 +106,18 @@ _Avoid_: skill name only, inferred patch target, hidden section choice
 Automatic promotion of high-confidence, internal, low-blast-radius evidence such as validation outcomes or telemetry rollups into governed Memory, excluding Skill behavior changes and Red context updates.
 _Avoid_: autorefine, silent patch, automatic context rewrite
 
+**Governed write surface**:
+A Memory write surface, exposed first through MCP plus a CLI companion, that can store only source-cited, low-blast-radius **Operational evidence** directly through **Low-risk autopromotion**; medium- or high-blast-radius writes become **Evidence cards** or proposals instead of durable Memory facts. The first governed write surface is `memory_store_evidence`; the caller supplies a claim, source reference, citation excerpt, intent, and observer identity, while a server-side deterministic policy decides whether direct storage is allowed. MCP and CLI are adapters over the same shared write policy and execution function, but governed write surfaces stay outside the read-only **Memory operation registry**. In the first slice, direct `stored` writes require **Graph mode**; markdown-only mode may reject or route to review instead of creating a durable fact.
+_Avoid_: raw memory_save clone, unreviewed cross-agent write, silent MCP mutation
+
+**Governed write result**:
+The response envelope from a **Governed write surface**, carrying a `stored`, `proposed`, or `rejected` outcome, the created Memory id or review artifact path, normalized provenance, and the deterministic policy reason. Graph-mode unavailability returns `rejected` with an infrastructure reason such as `graph_mode_required`, not a review proposal.
+_Avoid_: opaque save id, hidden review route, log-only governance result
+
+**Cross-agent Memory smoke test**:
+The first-run demonstration for **Governed write surfaces**: one agent stores source-cited validation **Operational evidence** through `memory_store_evidence`, another agent recalls the resulting Memory with provenance, and the result shows the governing policy decision. CI may run a deterministic runner-labeled version, while docs and manual validation show real cross-agent interop against the same graph store.
+_Avoid_: generic save/search demo, personal fact sync, uncited cross-agent memory
+
 **Refinement blast-radius gate**:
 The review gate that blocks autopromotion when an evidence route could affect an external audience, customer/commercial/security outcomes, or shared workflow/context semantics.
 _Avoid_: gut-check, trust score, generic risk
