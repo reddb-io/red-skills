@@ -9,202 +9,410 @@
    ╚═╝  ╚═╝╚══════╝╚═════╝     ╚══════╝╚═╝  ╚═╝╚═╝╚══════╝╚══════╝╚══════╝
 ```
 
-### Ship code while the agent remembers why.
+### Agent workflow, governed memory, and project brain for Claude Code and Codex.
 
-RedSkills is reddb.io's agent workflow kit for Claude Code, Codex, and any agent that can read `SKILL.md` files.
+RedSkills is reddb.io's plugin suite for running serious agentic engineering
+work: turn GitHub issues into shipped PRs, preserve the operational memory that
+made the work safe, and keep project knowledge searchable across sessions.
 
-It ships as three plugins:
-
-| Plugin | Job | Use it when... |
-|--------|-----|----------------|
-| **`dev`** | Turns plans and GitHub issues into reviewed, tested PRs. | You want `/start`, `/to-prd`, `/to-issues`, `/triage`, `/tdd`, `/diagnose`, `/wiki`, the autonomous `/afk` loop, and the interactive `/ship` finalizer. |
-| **`memory`** | Gives those agents governed operational memory. | You want decisions, gotchas, validations, provenance, claim checks, readiness, context packs, and handoffs to survive `/clear`. |
-| **`brain`** | Gives the workspace a RedDB knowledge repository. | You want to dump notes, ideas, Personal facts, decisions, references, questions, and other human-facing knowledge into `.red/brain/*` and connect it later. |
-
-**Install all three in Claude Code:**
-
-```
-/plugin marketplace add reddb-io/red-skills && /plugin install dev@red-skills && /plugin install memory@red-skills && /plugin install brain@red-skills
-```
-
-[Install](#install) · [Three plugins](#three-plugins-one-workflow) · [Memory](#memory--governed-operational-memory) · [Pipeline](#-the-pipeline-that-feeds-it) · [Reference](#reference)
-
-```
-   dev plugin                                      memory plugin
-   ──────────                                      ─────────────
-
-   /start ─▶ /to-prd ─▶ /to-issues ─▶ /triage ─▶ /afk
-     │                                              │
-     └────────────── stores what mattered ─────────▶│
-                                                    ▼
-                       init ─▶ store ─▶ recall ─▶ verify ─▶ handoff
-
-   brain plugin
-   ────────────
-
-   SessionStart ─▶ .red/brain ─▶ capture ─▶ search ─▶ think
-```
-
-**The punchline:** `dev` does the work. `memory` keeps the next agent from starting cold. `brain` stores the knowledge the human wants to keep. Personal facts belong in Brain, not Memory.
-
-**Highlights**
-
-- Fleet mode for draining real GitHub issue queues with Claude or Codex.
-- Safe git guardrails, live monitors, statusline, and `.red/config.yaml` detectors.
-- Governed memory over markdown notes or a project-local RedDB graph.
-- Project-local Brain over a separate RedDB store under `.red/brain/*`.
-- Recall, claim-check, readiness, context-pack, handoff, Workbench, MCP, and HTTP surfaces.
+[Install](#install) · [Quick Start](#quick-start) · [Core Workflows](#core-workflows) · [Repo Layout](#repo-layout) · [Skill Index](#skill-index)
 
 </div>
 
-> A reddb.io adaptation of [`mattpocock/skills`](https://github.com/mattpocock/skills) — same DNA, adapted for our reality, with an autonomous loop layered on top. Massive thanks to [@mattpocock](https://github.com/mattpocock); the original lives at [aihero.dev](https://www.aihero.dev/s/skills-newsletter). We pin upstream via `.upstream` and a daily workflow (`red-upstream-watch.yml`) opens an issue when it advances, so we cherry-pick what's worth taking.
+> RedSkills started as a reddb.io adaptation of
+> [`mattpocock/skills`](https://github.com/mattpocock/skills). The upstream
+> idea is still visible: small `SKILL.md` files that teach agents concrete
+> behaviors. RedSkills adds the engineering loop, GitHub issue automation,
+> governed Memory, Brain, MCP tools, release bundles, and operational guardrails
+> we need for our workflows. Attribution is preserved in [NOTICE](./NOTICE).
 
----
+## What This Is
 
-## Three plugins, one workflow
+RedSkills ships as three plugins that share one repository and one issue-tracker
+language.
 
-RedSkills is not a bag of prompts. It is a small operating system for agentic engineering work.
+| Plugin | Owns | Use it when |
+|--------|------|-------------|
+| [`dev`](./plugins/dev/.claude-plugin/plugin.json) | Engineering workflow: setup, triage, PRDs, TDD, diagnosis, `/afk`, `/ship`, statusline, dashboard, process doctors, wiki, research, and codebase orientation. | You want an agent to move a repo forward through GitHub issues and reviewed PRs. |
+| [`memory`](./plugins/memory/README.md) | Governed operational memory: decisions, gotchas, validation evidence, reasoning attempts, supersession, claim checks, readiness, context packs, handoffs, Workbench, MCP/HTTP read surfaces, and Skill telemetry. | You want agents to stop starting cold after `/clear` and to verify old claims before acting. |
+| [`brain`](./plugins/brain/README.md) | Project-local knowledge repository: typed artifacts, Personal facts, freeform captures, search, cited synthesis, graph connections, dashboard, and channel actions. | You want to dump human/project knowledge into `.red/brain/*` and retrieve it later with citations. |
 
-| Layer | Plugin | What it owns | First command |
-|-------|--------|--------------|---------------|
-| Work execution | `dev` | Planning, PRDs, issue slicing, triage, TDD, diagnosis, wiki, codebase orientation, and `/afk` workers. | `/setup-red-skills` |
-| Work memory | `memory` | Durable operational decisions, gotchas, reasoning traces, validations, provenance, supersession, claim checks, readiness, and handoff context. | `memory init` or `$init` |
-| Knowledge repository | `brain` | Freeform knowledge captures, Personal facts, typed artifacts, graph connections, and human-facing recall under `.red/brain/*`. | `$capture` or `brain capture` |
+The boundary is intentional:
 
-Brain skills: [`capture`](./plugins/brain/skills/core/capture/SKILL.md),
-[`search`](./plugins/brain/skills/core/search/SKILL.md),
-[`think`](./plugins/brain/skills/core/think/SKILL.md),
-[`status`](./plugins/brain/skills/core/status/SKILL.md), and
-[`view`](./plugins/brain/skills/core/view/SKILL.md).
-
-Use `dev` when you want an agent to move the repo forward. Add `memory` when you want that movement to compound instead of evaporating after every session. Add `brain` when you want a workspace knowledge repository for arbitrary dumps and later synthesis, including Personal facts that provide human-facing context.
-
-The intended loop is simple:
-
-```text
-Plan with dev        /start -> /to-prd -> /to-issues
-Queue with dev       /triage -> ready-for-agent
-Execute with dev     /afk -> test -> merge -> close
-Remember with memory store -> recall -> claim-check/readiness -> handoff
-```
-
-`memory` depends on `dev` because memory is most valuable when it is attached to real work: issues, attempts, validations, code changes, and decisions an agent will need later.
-
----
+- **Dev moves work.** It owns the issue pipeline and mutating engineering workflows.
+- **Memory improves agents.** It stores operational evidence about code work, not biographical or personal context. Memory is not the Personal-fact store.
+- **Brain stores knowledge.** It owns Personal facts and durable human-facing project knowledge, not AFK attempt evidence. Personal facts belong in Brain, not Memory.
 
 ## Install
 
-### Claude Code — marketplace install
+### Claude Code
 
-RedSkills ships as a Claude Code **plugin marketplace** with three plugins. Install `dev` for the engineering workflow. Install `memory` as well when you want governed memory, lifecycle hooks, Workbench diagnostics, and context handoff. Install `brain` when you want a project-local knowledge repository under `.red/brain/*`.
+Install the marketplace and the three plugins:
 
-Inside Claude Code:
-
-```
+```text
 /plugin marketplace add reddb-io/red-skills
 /plugin install dev@red-skills
 /plugin install memory@red-skills
 /plugin install brain@red-skills
 ```
 
-Use `dev` skills as native slash commands:
+Common commands are native slash commands after install:
 
 ```text
 /setup-red-skills
 /triage
 /afk --once
+/ship
+/dashboard
 ```
 
-Use `memory` through its skills and CLI-backed command surface:
+Memory and Brain skills are also available as plugin skills:
 
 ```text
 $init
-$store Decision: retries use exponential backoff with jitter.
-$recall retry policy
+$store Decision: cache TTL is 300 seconds because upstream rate limits.
+$recall cache TTL
+$capture Remember this project decision...
+$think What do we know about the billing migration?
 ```
 
-From now on Claude Code checks `reddb-io/red-skills` at session start. Toggle the behaviour with `/plugin` -> **Marketplaces** -> select `red-skills` -> **Enable auto-update**.
+Refresh or remove:
 
-Force a refresh without restarting:
-
-```
+```text
 /plugin marketplace update red-skills
-```
-
-Remove:
-
-```
+/plugin uninstall brain@red-skills
 /plugin uninstall memory@red-skills
 /plugin uninstall dev@red-skills
 /plugin marketplace remove red-skills
 ```
 
-> ℹ️ Every push to `main` cuts a patch release on GitHub. New commits land on auto-update users at their next session — no action needed from them.
+### Codex CLI
 
-### Codex CLI — marketplace install
-
-RedSkills also ships Codex plugin metadata for `dev`, `memory`, and `brain`. Codex reads `.agents/plugins/marketplace.json`, then loads the plugin trees through `plugins/*/.codex-plugin/plugin.json`. `dev` is installed by default; `memory` and `brain` are available.
+Add the marketplace:
 
 ```bash
 codex plugin marketplace add reddb-io/red-skills
 ```
 
-Use the skills by name in Codex prompts. The convention is `$<skill>`:
+Codex installs `dev` by default. `memory` and `brain` are available from the
+same marketplace metadata and can be enabled when you want those surfaces.
+
+Codex convention is `$<skill>`:
 
 ```text
 $setup-red-skills
 $triage
 $afk --once
+$ship
 $init
-$store Decision: retries use exponential backoff with jitter.
-$recall retry policy
+$recall cache TTL
+$capture Save this project note...
 ```
 
-Refresh later:
+Upgrade or remove:
 
 ```bash
 codex plugin marketplace upgrade red-skills
-```
-
-That upgrade refreshes the installed Codex plugin metadata, the skills tree, the
-bundled hook manifests, and supporting files such as MCP/app definitions. On
-the first Codex boot after installing or upgrading a marketplace that ships
-hooks, Codex will ask you to revisit the plugin hooks before they run. Current
-Codex builds list `plugin_hooks` as stable and enabled; older builds may require
-this in `~/.codex/config.toml`:
-
-```toml
-[features]
-plugin_hooks = true
-```
-
-Remove:
-
-```bash
 codex plugin marketplace remove red-skills
 ```
 
-For Codex installs pinned to a local checkout, pass the local repo root instead:
+Codex currently supports built-in footer items through `tui.status_line`, not a
+command-backed statusline. RedSkills can configure a useful Codex footer, but
+the live AFK block is Claude Code-only until Codex adds command-backed
+statuslines. Use `$afk monitor` for live AFK visibility under Codex.
+
+### No Marketplace
+
+Use these paths for older agents, local hacking, or Gemini-style skill loading.
 
 ```bash
-codex plugin marketplace add ~/code/red-skills
+npx skills@latest add reddb-io/red-skills
 ```
 
-### Verify Claude + Codex compatibility
+For a local checkout with symlinked skills:
 
-Run this before a release or after upgrading either CLI:
+```bash
+git clone git@github.com:reddb-io/red-skills.git ~/code/red-skills
+cd ~/code/red-skills
+./scripts/link-skills.sh
+```
+
+Marketplace installs auto-update. `npx skills` and manual symlinks do not.
+
+### Verify Runners
+
+Before a release, or after upgrading Claude Code/Codex, run:
 
 ```bash
 ./scripts/doctor-runners.sh
 ```
 
-It validates the install metadata, checks shell syntax, verifies the Claude and Codex runner flags that `/afk` depends on, tests Codex marketplace registration in a temporary home directory, and checks manual symlink installs for all local agent skill directories.
+It checks plugin metadata, shell syntax, runner flags used by `/afk`, Codex
+marketplace registration in a temporary home, and manual skill-link installs.
 
-### AFK runner and model config
+## Quick Start
 
-`/afk` is runner-portable, but the invoking LLM must identify its own host runner when it calls the bundle: Codex uses `RED_AFK_RUNNER=codex`; Claude Code uses `RED_AFK_RUNNER=claude`. Do not choose a different runner just because another CLI exists on `PATH`.
+### 1. Bootstrap A Repo
 
-Project-local AFK settings live in `.red/config.yaml`. Prefer per-runner tier config so Codex never receives a Claude-only model:
+Run this inside a target repository:
+
+```text
+/setup-red-skills
+```
+
+It configures the RedSkills operating surface for that repo:
+
+- GitHub Issues as the issue tracker.
+- Canonical triage labels such as `needs-triage`, `ready-for-agent`,
+  `ready-for-human`, `running`, and `blocked:*`.
+- Domain docs under `.red/CONTEXT.md` or `.red/CONTEXT-MAP.md` plus
+  `.red/contexts/*/CONTEXT.md`.
+- ADR directory conventions under `.red/adr/`.
+- RedSkills GitHub workflows such as `red-issues-needs-triage.yml`.
+- `.red/config.yaml`.
+- Agent-facing `## Agent skills` and `## Development workflow` blocks in
+  `AGENTS.md` and `CLAUDE.md`.
+- Optional statusline wiring and branch-safety guardrails.
+
+Re-run `/setup-red-skills` when a repo drifts. Run `/doctor` later to inspect
+adoption without changing anything.
+
+### 2. Move Work Through Issues
+
+```text
+/start                  # sharpen a plan against the domain language
+/to-prd                 # publish the plan as a PRD issue
+/to-issues <prd>        # cut vertical implementation slices
+/triage                 # make an issue delegable
+/afk                    # drain ready-for-agent work in isolated worktrees
+```
+
+Shortcuts:
+
+- Already have a spec? Start at `/to-issues`.
+- Already have a delegable issue? Start at `/triage` or `/afk --issues N`.
+- Hit a bug? Use `/report-bug`, then `/triage`.
+- Something is urgent? Use `/urgent`; it bypasses triage and jumps the next
+  `/afk` queue selection.
+
+### 3. Land Human-Prepared Work
+
+`/ship` is the review-respecting finalizer for committed work in an exempt
+`.red/tmp/work-ship-*/` worktree. It pushes early, opens or reuses a PR,
+monitors checks/reviews with a time cap, then merges or parks the linked issue
+for `/hitl`.
+
+Use `/ship` when a human or interactive agent prepared the branch. Use `/afk`
+when RedSkills should claim and execute issue work autonomously.
+
+### 4. Turn On Memory And Brain When Useful
+
+```text
+$init                 # Memory setup: markdown-only or graph
+$store Decision: ...
+$recall topic
+$capture Long-lived project or personal context...
+$search topic
+$think question
+```
+
+Use Memory for operational evidence that helps future agents act. Use Brain for
+knowledge the human wants preserved and cited later.
+
+## Core Workflows
+
+### The Issue Pipeline
+
+```text
+idea / bug / fire
+      |
+      +-- /start ------> /to-prd ------> /to-issues
+      |
+      +-- /report-bug -----------------> needs-triage
+      |
+      +-- /urgent ---------------------> ready-for-agent
+
+needs-triage -> /triage -> ready-for-agent -> /afk -> PR -> closed
+                                |
+                                +----------> ready-for-human -> /hitl
+```
+
+The issue thread is the durable ledger. AFK posts structured attempt envelopes,
+human decisions are recorded as directive blocks, and labels represent the
+current state machine. GitHub Issues are the only tracker RedSkills targets.
+
+### AFK Execution
+
+[`/afk`](./plugins/dev/skills/engineering/afk/SKILL.md) drains
+`ready-for-agent` issues. Each worker claims an issue, creates an isolated
+worktree, invokes the selected runner, validates the result, posts an envelope,
+and either lands work or routes the issue to a blocked/HITL state.
+
+Useful surfaces:
+
+- `/afk --once` for one claim.
+- `/afk --issues 123,456` for a bounded set.
+- `/afk --prd 789` for a PRD slice.
+- `/afk fleet N` for local fleet mode.
+- `/afk monitor` for live worker state.
+- [AFK Actions lane](./plugins/dev/skills/engineering/afk/actions-lane.md) for
+  one-attempt GitHub Actions execution in adopter repos.
+
+Runner identity matters. Codex callers should run with `RED_AFK_RUNNER=codex`;
+Claude Code callers with `RED_AFK_RUNNER=claude`; OpenCode/hosted attempts use
+the explicit runner/model env they are launched with. Do not pick a different
+runner just because another binary exists on `PATH`.
+
+### Interactive Landing
+
+[`/ship`](./plugins/dev/skills/engineering/ship/SKILL.md) is deliberately
+different from AFK landing. It respects branch protection, requested changes,
+review state, and check status. If the branch cannot be merged cleanly within
+the configured window, `/ship` parks the PR and issue for `/hitl`.
+
+### Operational Views
+
+- [`/dashboard`](./plugins/dev/skills/engineering/dashboard/SKILL.md) shows
+  process state: PRDs, open issues, worker state, flow metrics, and DORA proxies.
+- [`/daily-review`](./plugins/dev/skills/engineering/daily-review/SKILL.md)
+  summarizes delivery from yesterday local midnight to now.
+- [`/weekly-review`](./plugins/dev/skills/engineering/weekly-review/SKILL.md)
+  summarizes the six-day window ending now.
+- [`/retake`](./plugins/dev/skills/engineering/retake/SKILL.md) reconstructs
+  one issue's local/GitHub state and prints the next command.
+- [`/hitl`](./plugins/dev/skills/engineering/hitl/SKILL.md) resolves one
+  `ready-for-human` issue and moves it back to `ready-for-agent` when delegable.
+
+### Memory
+
+Memory's golden path is:
+
+```text
+init -> store -> recall -> verify -> handoff
+```
+
+Modes:
+
+| Mode | Storage | Best for |
+|------|---------|----------|
+| `markdown-only` | Plain files under `.red/memory/notes/`. | Low-risk rollout with explicit store/recall only. |
+| `graph` | Project-local RedDB store at `.red/memory/graph.rdb`. | Governed recall, provenance, supersession, readiness, claim checks, context packs, Workbench, MCP/HTTP, and Skill telemetry. |
+
+Start with [plugins/memory/README.md](./plugins/memory/README.md). The key rule
+is that `memory recall` is the canonical agent-context path. Smart search,
+vectors, Workbench, exports, and dashboards are diagnostics around the same
+evidence, not replacement truth.
+
+### Brain
+
+Brain creates a project-local knowledge repository under `.red/brain/*`.
+Artifacts are typed, searchable, connected, and available for cited synthesis.
+
+Use it for:
+
+- Personal facts and durable human-facing context.
+- Project notes, decisions, ideas, questions, sources, references, and meeting
+  residue.
+- Cited answers through `brain think`.
+- Visual graph exploration through `brain view`.
+- Dashboard/KPI summaries over Brain artifacts.
+- Optional outbound channel actions through the Brain channel bridge.
+
+Start with [plugins/brain/README.md](./plugins/brain/README.md).
+
+### Wiki And Research
+
+The `dev` plugin also carries a project-local LLM Wiki:
+
+- [`/wiki-init`](./plugins/dev/skills/knowledge/wiki-init/SKILL.md) bootstraps
+  `.red/wiki/`.
+- [`/wiki`](./plugins/dev/skills/knowledge/wiki/SKILL.md) ingests sources,
+  answers questions, and lints contradictions/orphans/staleness.
+- [`/research`](./plugins/dev/skills/knowledge/research/SKILL.md) performs
+  official-source technical research and saves durable reports under
+  `.red/tmp/researches/`.
+
+Wiki is a private markdown knowledge cache. Brain is the RedDB-backed project
+knowledge repository. Memory is governed operational evidence for agent work.
+
+### Codebase Understanding
+
+[`/zoom-out`](./plugins/dev/skills/engineering/zoom-out/SKILL.md) is the
+Codebase understanding surface. It gives map-first codebase orientation:
+modules, relationships, critical paths, and risks before raw detail. When
+Memory Graph mode has indexed context, zoom-out can use graph neighbors as a
+starting map, then verify against files.
+
+Boundaries:
+
+- `/zoom-out` is read-only and does not run `/memory:ingest`.
+- If graph indexing is absent or stale, explicitly run `/memory:ingest <path>`
+  before a later zoom-out.
+- Use Memory recall (`/memory:recall`) for stored decisions/gotchas.
+- Use Wiki query (`/wiki query`) for the private markdown LLM Wiki.
+- The future Ask surface is still separate; zoom-out is map-first orientation,
+  not the question-first answer surface.
+
+The `dev` plugin also ships the
+[code-nav MCP server](./apps/code-nav/README.md), which exposes LSP-backed
+symbol tools: `workspace_symbols`, `goto_definition`, `find_references`,
+`document_symbols`, and `hover`.
+
+## Repo Layout
+
+| Path | Purpose |
+|------|---------|
+| [`plugins/dev`](./plugins/dev) | Plugin definition, skills, hooks, scripts, MCP config, and docs for the engineering workflow. |
+| [`plugins/memory`](./plugins/memory) | Plugin definition and skills for governed operational memory. Runtime source lives in `apps/memory`. |
+| [`plugins/brain`](./plugins/brain) | Plugin definition and skills for Brain. Runtime source lives in `apps/brain`. |
+| [`apps/dev`](./apps/dev) | AFK, ship, dashboard, triage, runner, and workflow runtime code. |
+| [`apps/memory`](./apps/memory) | Memory CLI, graph operations, Workbench, MCP/HTTP surfaces, evals, and diagnostics. |
+| [`apps/brain`](./apps/brain) | Brain CLI, store, MCP server, dashboard, channel bridge, and artifact logic. |
+| [`apps/code-nav`](./apps/code-nav) | LSP-backed MCP server used by the `dev` plugin. |
+| [`packages/shared`](./packages/shared) | Shared runtime helpers for plugin gates, bundle fetching, args, logging, and channels. |
+| [`.red`](./.red) | RedSkills' own project configuration: context map, glossaries, ADRs, issue-tracker docs, and agent rules. |
+| [`.github/workflows`](./.github/workflows) | Release, CI, upstream watch, issue automation, PR review, and reusable AFK attempt workflows. |
+
+The installed plugin trees are definitions and launchers. Runtime bundles are
+built from `apps/*` and shipped as GitHub Release assets. Session-start hooks
+fetch the right bundle into the local RedSkills cache. For local development,
+use the monorepo build commands below instead of expecting committed `dist/`
+output inside plugin directories.
+
+## Development
+
+Install dependencies:
+
+```bash
+pnpm install
+```
+
+Common checks:
+
+```bash
+pnpm build
+pnpm typecheck
+pnpm test
+pnpm bundle
+./scripts/doctor-runners.sh
+```
+
+The workspace is managed by [`turbo`](./turbo.json) and
+[`pnpm-workspace.yaml`](./pnpm-workspace.yaml). Root scripts intentionally cover
+the runtime apps and shared packages while excluding unrelated heavy packages
+where needed.
+
+Release is automated by [red-release.yml](./.github/workflows/red-release.yml):
+pushes to `main` with release-worthy commits bump versions, build bundles,
+publish release assets, and update plugin metadata. The release process keeps
+runtime bundles out of git and lets marketplace installs update cleanly.
+
+## Configuration
+
+Per-repo RedSkills config lives in `.red/config.yaml`. Consumer repos opt into
+plugins and knobs there; the root namespace stays conservative.
+
+Example AFK runner model config:
 
 ```yaml
 afk:
@@ -219,371 +427,126 @@ afk:
         effort: high
 ```
 
-Defaults are runner- and tier-specific. Until classification lands, AFK uses the `think` tier by default: Codex defaults to `gpt-5.5`/`high`; Claude Code defaults to `claude-opus-4-8`/`high`. The legacy `afk.model` and `afk.models.<runner>` scalar keys are still accepted as fallback model overrides, but tiered `afk.models.<runner>.<tier>.{model,effort}` is safer for mixed Claude/Codex fleets.
+Model defaults and escalation rules are documented in
+[`model-tier-policy`](./plugins/dev/skills/engineering/model-tier-policy/SKILL.md).
+The runtime source of truth is `CONFIG_DEFAULTS` in
+[`apps/dev/src/core/config.ts`](./apps/dev/src/core/config.ts).
 
-The cross-host tier table, deterministic-first validation rule, simple-vs-complex criterion, escalation policy, and executor map live in [`model-tier-policy`](./plugins/dev/skills/engineering/model-tier-policy/SKILL.md). The single machine source for defaults remains `CONFIG_DEFAULTS` in [`config.ts`](./apps/dev/src/core/config.ts). The runner and model are also overridable at run time without editing config — `--runner`/`RED_AFK_RUNNER` and `--model`/`RED_AFK_MODEL` (plus `--effort`/`RED_AFK_EFFORT`), flag beating env beating file.
+House rules:
 
-#### Running `/afk` from GitHub Actions
+- Labels are kebab-case or `prefix:value`: `needs-triage`, `ready-for-agent`,
+  `ready-for-human`, `priority:urgent`, `blocked:dependency`, `prd:42`.
+- RedSkills-managed workflows start with `red-`.
+- Issues and PRDs live on GitHub Issues.
+- Project artifacts live under `.red/`.
+- Use SSH git remotes for AFK-managed repositories.
+- Do task work in isolated worktrees; the primary checkout's branch is for the
+  human to control.
 
-The **AFK Actions lane** runs one attempt per issue from CI in any repo — a reusable workflow (triggers + trust gate) over a repo-portable composite action (`reddb-io/red-skills/.github/actions/afk-attempt@v1`), reusing the launcher + Release bundle (no workspace build, no submodule). It depends only on GitHub-official actions plus our own. Drive it on a label (`ready-for-agent`), on pre-labeled issue creation, manually, or via `workflow_call`, with the OpenCode runner pointed at OpenAI / MiniMax / OpenRouter through the model slug + matching key. **Full adopter guide: [`afk/actions-lane.md`](./plugins/dev/skills/engineering/afk/actions-lane.md)** (ADR 0059/0062).
+## Skill Index
+
+This is a map, not a replacement for the skill files. Open the linked
+`SKILL.md` before using a skill in a new context.
 
 <details>
-<summary><strong>Alternatives — no auto-update</strong></summary>
-
-Pick one of these only if the marketplace path doesn't fit (Gemini users, local hacking, or older agents without plugin marketplace support).
-
-#### `npx skills` (Matt's installer)
-
-```bash
-npx skills@latest add reddb-io/red-skills
-```
-
-[skills.sh](https://skills.sh/reddb-io/red-skills) walks you through which skills to install and which coding agents to install them on. **No auto-update** — re-run the command to pull new versions. Same installer Matt uses for his upstream repo — credit to [@mattpocock](https://github.com/mattpocock).
-
-#### Manual clone + symlinks
-
-For local edits or `$<name>` access from Codex / Gemini CLI:
-
-```bash
-git clone git@github.com:reddb-io/red-skills.git ~/code/red-skills
-cd ~/code/red-skills
-./scripts/link-skills.sh         # symlinks every stable SKILL.md into local agent skill dirs
-```
-
-The script links into `~/.claude/skills`, `~/.agents/skills`, and `~/.codex/skills` so Claude Code, current Codex installs, and simple `$<name>` agents see the same working tree. **No auto-update.** Update later with `git pull && ./scripts/link-skills.sh`.
-
-</details>
-
-### Pick your agent
-
-| Agent | Invocation | Notes |
-|-------|------------|-------|
-| **Claude Code** | `/afk`, `/ship`, `/wiki`, `/triage`, `$init`, `$recall`, `$capture`, ... | Native `dev` slash commands after `/plugin install dev@red-skills`; install `memory@red-skills` for governed memory skills and `brain@red-skills` for project Brain skills. |
-| **Codex CLI** | `$afk`, `$ship`, `$wiki`, `$triage`, `$init`, `$recall`, ... | Skill-name convention after `codex plugin marketplace add reddb-io/red-skills`. |
-| **Gemini CLI / others** | `$afk`, `$recall`, etc. | Same `$<name>` convention. Works with any agent that can read local `SKILL.md` files and run bash. |
-
-Teach Codex (or any non-Claude-Code agent) the convention by appending to `~/.codex/AGENTS.md`:
-
-```markdown
-## RedSkills
-
-When the user types `$<name>` (e.g. `$afk`, `$wiki`, `$triage`), look up
-`~/.agents/skills/<name>/SKILL.md`, `~/.codex/skills/<name>/SKILL.md`, or
-`~/.claude/skills/<name>/SKILL.md` and follow it — usually that means running
-`bash <skill-dir>/scripts/<entrypoint>.sh` with the documented flags.
-Each SKILL.md is self-documenting; read it before invoking.
-```
-
-### New operator surfaces
-
-Several recent `dev` skills are meant to make the queue easier to see, resume,
-and explain:
-
-| Skill | Use it when... |
-|-------|----------------|
-| [`/dashboard`](./plugins/dev/skills/engineering/dashboard/SKILL.md) | You want a live process dashboard: open PRDs/issues, global `running` issues, local AFK workers, flow metrics, and DORA proxies. |
-| [`/daily-review`](./plugins/dev/skills/engineering/daily-review/SKILL.md) | You want yesterday-local-midnight through now: delivery big numbers, worker attempts/time, token spend when available, HITL/blocker challenges, and issue/PR cycle times. |
-| [`/weekly-review`](./plugins/dev/skills/engineering/weekly-review/SKILL.md) | You want the same operational review over the six-day window ending now. |
-| [`/retake`](./plugins/dev/skills/engineering/retake/SKILL.md) | You want to resume issue `#123`: find linked PRs, matching branches, local worktrees, HITL state, and the next command. Add `--apply` to run only safe local setup steps such as creating a missing ship worktree. |
-| [`/research`](./plugins/dev/skills/knowledge/research/SKILL.md) | You need official-source technical research captured under `.red/tmp/researches/`. |
-| [`/ff`](./plugins/dev/skills/productivity/ff/SKILL.md) | You want fast-forward clarity: several possible interpretations or future replies for the latest user message, with a recommendation. |
-
-### Bootstrap a repo
-
-Run once per target repo (from inside the repo):
-
-```
-/setup-red-skills
-```
-
-It walks you through the setup sections:
-
-1. **Issue tracker.** GitHub Issues only — confirms `git remote -v` shows the right repo.
-2. **Triage labels.** Maps the canonical state roles (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `blocked:dependency`, `wontfix`) to actual label strings.
-3. **Domain docs.** Consumer repos choose single-context (`.red/CONTEXT.md` + `.red/adr/`) or multi-context (`.red/CONTEXT-MAP.md` with glossaries under `.red/contexts/`). This repo uses the multi-context layout; its root `.red/CONTEXT.md` is only a compatibility pointer.
-4. **Workflows.** Installs `red-issues-needs-triage.yml` (auto-applies `needs-triage` so nothing slips past `/afk`).
-5. **Token efficiency.** Strong recommendation to install [RTK](https://github.com/rtk-ai/rtk) before running `/afk` (details below).
-6. **AFK statusline.** Optionally wires the Claude Code statusline to the RedSkills AFK status renderer.
-7. **Config template.** Scaffolds `.red/config.yaml` when missing so the runtime knobs are discoverable.
-8. **Development workflow.** Sets `dev.lock-primary-branch: true`, writes `## Development workflow` into `AGENTS.md` and `CLAUDE.md`, and points interactive landing at `/ship`.
-
-Output: `.red/agents/*.md`, `.red/config.yaml`, an `## Agent skills` block, a `## Development workflow` block in `CLAUDE.md`/`AGENTS.md`, and `.github/workflows/red-*.yml`. All git-tracked. Safe to rerun; managed blocks update in place and the development-workflow flag stays set.
-
----
-
-## Memory — governed operational memory
-
-Agents forget the exact things you need them to remember: why a decision was made, which workaround failed, what the last validation proved, and which warning is stale. The `memory` plugin turns that into a governed local memory surface.
-
-Memory is not the Personal-fact store. Store Odysseus-style biographical facts,
-preferences, identity details, and other human-facing context in Brain via
-`brain capture`; Memory keeps operational evidence that helps agents do repo
-work.
-
-The loop is deliberately boring:
-
-```text
-memory init
-memory store "Decision: ..."
-memory recall "what matters now"
-memory claim-check "is this still true?"
-memory readiness "should an agent start this?"
-memory handoff "what should the next session know?"
-```
-
-Two modes ship today:
-
-| Mode | What it gives you | Best for |
-|------|-------------------|----------|
-| `markdown-only` | Plain notes in `.red/memory/notes/` with explicit store/recall. No RedDB engine, no hooks, no background process. | Cautious rollout in any repo. |
-| `graph` | Project-local `.red/memory/graph.rdb` with provenance, supersession, claim checks, readiness, context packs, hooks, MCP/HTTP, Workbench, and export. | Serious agent workflows where memory has to be trusted, inspected, and handed off. |
-
-The useful path is Init -> Store -> Recall -> Verify -> Handoff. Everything else, vectors, docs search, Workbench panels, HTTP endpoints, and reference evals, exists to support that path instead of becoming another source of truth.
-
-Start here: [plugins/memory/README.md](./plugins/memory/README.md).
-
----
-
-## 🔁 The pipeline that feeds it
-
-`/afk` is the last mile. The skills compose into the full loop:
-
-```
-  vague idea                       bug you hit                      something on fire
-       │                                │                                  │
-       │   /start                       │   /report-bug                    │   /urgent
-       ▼                                ▼                                  ▼
-   refined plan                  type:bug + needs-triage           priority:urgent +
-       │                                │                          ready-for-agent
-       │   /to-prd                      │   /triage                          │
-       ▼                                ▼                                    │
-   published PRD                  ready-for-agent  ◄──────────────── jumps queue
-       │                                │                            (next /afk picks it
-       │   /to-issues <PRD>             │                             first, ahead of
-       ▼                                │                             --prd / --issues)
-   children issues                      │
-       │                                │
-       │   /triage  (per child)         │
-       ▼                                │
-   ready-for-agent ─────────────────────┘
-       │
-       │   /afk                    Drain. Inner agent implements, tests pass,
-       ▼                            merged, closed. Next iteration re-fetches
-   shipped                          queue — `priority:urgent` always wins.
-```
-
-**Enter at any step.**
-- Spec already written? Jump to `/to-issues`.
-- Issues already triaged? Jump straight to `/afk`.
-- Single feature, not a whole PRD? `/start` → `/to-issues` → `/afk` works fine.
-- Bug report? `/report-bug` interviews you, files `type:bug + needs-triage`, then `/triage` writes the AGENT-BRIEF.
-- Something on fire? `/urgent` skips triage entirely — `priority:urgent + ready-for-agent` direct, and `/afk` prepends urgents to its queue on every iteration so the next claim is yours.
-
-The full issue lifecycle (`needs-triage` → `ready-for-agent` → `running` → `closed`, with `ready-for-human` and `needs-info` as branches) — including the ASCII state machine, the heartbeat protocol, and every label transition — lives in [`setup-red-skills/triage-labels.md`](./plugins/dev/skills/engineering/setup-red-skills/triage-labels.md).
-
-### Nothing leaks
-
-`/setup-red-skills` installs `red-issues-needs-triage.yml`, a GitHub Action that auto-applies `needs-triage` to every fresh issue with no labels. `/afk`'s startup straggler check warns you when unlabelled, `needs-triage`, or `needs-info` issues pile up. Belt **and** braces — the pipeline is hard to leak.
-
----
-
-## 🗺 Codebase understanding surface
-
-`/zoom-out` is the first Codebase understanding surface in the `dev` plugin. It is map-first: answers start with modules/layers, then relationships, critical paths, and risks/gaps, so you get orientation before raw detail.
-
-When the optional `memory` plugin is initialized in Memory Graph mode and the graph has indexed content, `/zoom-out` is graph-aware. It may read graph neighbors and paths through the `dev` Memory bridge, interpret them into the map, and verify the explanation against current files. If Memory is absent, uninitialized, markdown-only, stale, empty, or failing, `/zoom-out` degrades to ordinary codebase exploration and still answers from the repo.
-
-`/zoom-out` is read-only. It does not run `/memory:ingest`, reindex files, or write graph state. If graph indexing is absent or stale enough to matter, the answer can recommend that you explicitly run `/memory:ingest <path>` before a later zoom-out.
-
-Boundaries:
-
-| Surface | Use it for |
-|---------|------------|
-| `/zoom-out` | Map-first orientation over unfamiliar code; graph-aware when Memory Graph mode is ready. |
-| `/memory:recall` | Search stored Memory notes or graph memory for relevant prior facts. |
-| `/memory:view` | Open the Memory graph visually in red-ui (cluster/query/collections), with a browser Workbench fallback in terminal hosts. |
-| `/brain:view` | Open Brain artifacts and typed connections visually in red-ui (cluster/query/collections/home), with a browser fallback in terminal hosts. |
-| `/wiki query` | Ask over the private `.red/wiki/` knowledge cache and optionally save a synthesis page. |
-| Future Ask surface | Direct question-first answers over project knowledge. This remains out of scope here. |
-
----
-
-## 📚 Knowledge — your private LLM Wiki
-
-```
-$ /wiki ingest https://example.com/important-paper.pdf
-[wiki] fetched → .red/wiki/raw/important-paper.md
-[wiki] discussing key takeaways before writing pages…
-[wiki] touched: pages/important-paper.md, pages/vannevar-bush.md, pages/associative-trails.md
-[wiki] index.md and log.md updated.
-```
-
-Inspired by Karpathy's [LLM Wiki gist](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f). Instead of RAG re-deriving knowledge on every query, the agent **maintains** an incremental markdown wiki at `.red/wiki/` (gitignored — your private knowledge cache, never leaves the machine).
-
-- **[`/wiki-init`](./plugins/dev/skills/knowledge/wiki-init/SKILL.md)** — one-time bootstrap. Three questions (domain, source types, solo vs team) and you have a schema, layout, and `## Agent skills` registration.
-- **[`/wiki`](./plugins/dev/skills/knowledge/wiki/SKILL.md)** routes by verb:
-
-| Verb | What it does |
-|------|--------------|
-| `ingest <url\|path>` | Fetches the source, writes a source page, updates entity/concept pages, surfaces contradictions |
-| `query <question>` | Searches index + pages, synthesises (prose, table, Mermaid), optionally files the answer back as a `synthesis` page |
-| `lint` | Health check: contradictions, stale pages, orphans, stubs, missing concepts, open gaps |
-
-Pages are typed (`entity`, `concept`, `source`, `synthesis`) with YAML frontmatter, standard markdown links (no Obsidian wikilinks — GitHub-portable), and an append-only `log.md` so every operation is auditable.
-
-→ Walkthroughs: [research wiki](./plugins/dev/skills/knowledge/wiki-init/examples/research.md) · [book-reading wiki](./plugins/dev/skills/knowledge/wiki-init/examples/book-reading.md)
-
----
-
-
-## Philosophy
-
-Small, sharp skills. They work with any model. Each one targets a specific failure mode of code agents:
-
-| Failure mode | Use |
-|--------------|-----|
-| Agent didn't do what I want | [`/reflect`](./plugins/dev/skills/productivity/reflect/SKILL.md), [`/start`](./plugins/dev/skills/engineering/start/SKILL.md) |
-| Agent is verbose, no shared vocabulary | Active glossary (`.red/CONTEXT-MAP.md` + `.red/contexts/**`, or `.red/CONTEXT.md` in single-context repos) + [`/start`](./plugins/dev/skills/engineering/start/SKILL.md) |
-| Code doesn't work | [`/tdd`](./plugins/dev/skills/engineering/tdd/SKILL.md), [`/diagnose`](./plugins/dev/skills/engineering/diagnose/SKILL.md) |
-| Codebase turned into a mud ball | [`/to-prd`](./plugins/dev/skills/engineering/to-prd/SKILL.md), [`/zoom-out`](./plugins/dev/skills/engineering/zoom-out/SKILL.md), [`/improve-codebase-architecture`](./plugins/dev/skills/engineering/improve-codebase-architecture/SKILL.md) |
-| I want it to run while I sleep | [`/afk`](./plugins/dev/skills/engineering/afk/SKILL.md) |
-| I have committed work and want a review-respecting landing | [`/ship`](./plugins/dev/skills/engineering/ship/SKILL.md) |
-
-Composable. Boring on purpose where boring is enough. Sharp where it matters.
-
----
-
-## Reference
-
-<details>
-<summary><strong>Engineering — daily code work</strong></summary>
-
-| Skill | What it does |
-|-------|--------------|
-| **[afk](./plugins/dev/skills/engineering/afk/SKILL.md)** | Drains `ready-for-agent` issues in isolated worktrees. Claude/Codex runner cascade, fleet mode (`/afk fleet N`), pluggable detectors via `.red/config.yaml`, canonical attempt envelopes on the issue thread, 48h sparkline monitor, statusline integration. |
-| **[dashboard](./plugins/dev/skills/engineering/dashboard/SKILL.md)** | RedSkills process dashboard: open PRDs/issues, global and local AFK workers, flow metrics, and DORA proxies. |
-| **[daily-review](./plugins/dev/skills/engineering/daily-review/SKILL.md)** | Daily operational review from yesterday local midnight to now: delivery big numbers, local worker attempts/time, token spend when available, HITL/blocker challenges, and issue/PR cycle times. |
-| **[weekly-review](./plugins/dev/skills/engineering/weekly-review/SKILL.md)** | Six-day operational review from six-days-ago local midnight to now, with the same delivery, worker, challenge, and cycle-time sections as `/daily-review`. |
-| **[model-tier-policy](./plugins/dev/skills/engineering/model-tier-policy/SKILL.md)** | Cross-host model tier policy for Claude Code, Codex, and AFK: tier table, deterministic-first validation, simple-vs-complex classification, escalation, and executor/config pointers. |
-| **[retake](./plugins/dev/skills/engineering/retake/SKILL.md)** | Issue resumption command. Finds the issue, linked PRs, matching branches, local worktrees, HITL state, and the next command to continue, fix, create a ship worktree, or hand the branch to `/ship`. `--apply` executes only safe local setup steps. |
-| **[ship](./plugins/dev/skills/engineering/ship/SKILL.md)** | Interactive finalizer for committed work in `.red/tmp/work-ship-*/` worktrees. Pushes early, opens or reuses a PR, monitors checks and reviews with a time cap, then approves/merges or parks the linked issue and PR in `ready-for-human`. |
-| **[curate](./plugins/dev/skills/engineering/curate/SKILL.md)** | Interactive, archive-only Skill curator. Lists `archive` candidates from `memory curate skills --json`, requires explicit approval, performs a recoverable archive of Curatable skills (atomic `rename` + SHA-256 manifest), and reverses it with `/curate --restore <name>`. Tracer slice — only the `archive` category is wired. |
-| **[context](./plugins/dev/skills/engineering/context/SKILL.md)** | Compose the RedSkills context stack before non-trivial work: domain docs, ADRs, LLM Wiki, Memory graph/recall, graph-aware zoom-out, durable learning capture, and self-improvement telemetry. |
-| **[diagnose](./plugins/dev/skills/engineering/diagnose/SKILL.md)** | Disciplined diagnosis: reproduce → minimise → hypothesise → instrument → fix → regression-test. |
-| **[start](./plugins/dev/skills/engineering/start/SKILL.md)** | Grilling session that challenges your plan against the domain model; updates the active glossary (`.red/contexts/**` in multi-context repos) and ADRs inline. |
-| **[hitl](./plugins/dev/skills/engineering/hitl/SKILL.md)** | Resolves one `ready-for-human` issue by extracting the pending decision, recording Human guidance, and promoting it back to `ready-for-agent` when delegable. |
-| **[triage](./plugins/dev/skills/engineering/triage/SKILL.md)** | Moves issues through the triage state machine; writes the AGENT-BRIEF that `/afk` will consume. |
-| **[report-bug](./plugins/dev/skills/engineering/report-bug/SKILL.md)** | Interview the user about a bug, then file a `type:bug needs-triage` issue on the tracker. Seeds from conversation context when invoked with no argument. |
-| **[urgent](./plugins/dev/skills/engineering/urgent/SKILL.md)** | File a `priority:urgent` issue that bypasses `/triage` and jumps the head of the `/afk` queue, ahead of any `--prd N` / `--issues a,b,c` filter. Use when something is on fire. |
-| **[improve-codebase-architecture](./plugins/dev/skills/engineering/improve-codebase-architecture/SKILL.md)** | Finds deepening opportunities in the codebase, informed by the active glossary (`.red/contexts/**` in multi-context repos) and `.red/adr/`. |
-| **[implement](./plugins/dev/skills/engineering/implement/SKILL.md)** | Interactive, human-driven PRD execution: guided `/tdd` at pre-agreed seams, full-suite gate, `/review`, and `/ship`. Interactive counterpart to the autonomous `/afk`. |
-| **[tdd](./plugins/dev/skills/engineering/tdd/SKILL.md)** | Red-green-refactor loop; one vertical slice at a time. |
-| **[to-issues](./plugins/dev/skills/engineering/to-issues/SKILL.md)** | Breaks a plan, spec, or PRD into independently-grabbable issues via vertical slices. |
-| **[to-prd](./plugins/dev/skills/engineering/to-prd/SKILL.md)** | Turns the current conversation into a PRD; publishes as a GitHub issue. |
-| **[zoom-out](./plugins/dev/skills/engineering/zoom-out/SKILL.md)** | Map-first Codebase understanding; graph-aware when Memory Graph mode is ready, read-only when it is not. |
-| **[prototype](./plugins/dev/skills/engineering/prototype/SKILL.md)** | Throwaway prototype — terminal app for state/logic, or UI variations toggleable from one route. |
-| **[setup-red-skills](./plugins/dev/skills/engineering/setup-red-skills/SKILL.md)** | Per-repo config: issue tracker, triage label vocab, domain doc layout, RedSkills workflows, RTK, and the `/ship` development loop. |
-| **[doctor](./plugins/dev/skills/engineering/doctor/SKILL.md)** | Adoption/process doctor — reports label-vocab conformance, AGENTS≡CLAUDE parity, statusline drift, MCP wiring, `blocked:*` hygiene, and version coherence, tagging each gap with its fix-home. Read-only by default; `--fix` heals every finding (safe ones batched, hard-to-reverse ones confirmed per-item). The recurring counterpart to `/setup-red-skills`. |
-| **[review-adrs](./plugins/dev/skills/engineering/review-adrs/SKILL.md)** | Decision-record doctor — lints `.red/adr/` for contradictions, missing supersession, stale references, number collisions, and controversial decisions, then reconciles each finding through a one-question-at-a-time interview (like `/start`) and consolidates every agreement into a single actionable PRD on the tracker via `/to-prd`. |
-| **[setup-statusline](./plugins/dev/skills/engineering/setup-statusline/SKILL.md)** | Installs or inspects the RedSkills Claude Code statusline, rendering the live AFK block via `node bin/afk.mjs statusline`. |
-| **[resolving-merge-conflicts](./plugins/dev/skills/engineering/resolving-merge-conflicts/SKILL.md)** | Guided merge-conflict resolution: inspect state, find each side's original intent, resolve every hunk preserving both intents, then run the project's automated checks. Never abort. |
+<summary><strong>Dev: engineering workflow</strong></summary>
+
+| Skill | Use it for |
+|-------|------------|
+| [`setup-red-skills`](./plugins/dev/skills/engineering/setup-red-skills/SKILL.md) | Bootstrap `.red/`, issue labels, agent rules, workflows, config, and development workflow docs. |
+| [`doctor`](./plugins/dev/skills/engineering/doctor/SKILL.md) | Audit RedSkills adoption and optionally fix process drift. |
+| [`start`](./plugins/dev/skills/engineering/start/SKILL.md) | Stress-test a plan against domain language and ADRs. |
+| [`to-prd`](./plugins/dev/skills/engineering/to-prd/SKILL.md) | Turn the current conversation into a PRD issue. |
+| [`to-issues`](./plugins/dev/skills/engineering/to-issues/SKILL.md) | Slice a plan/PRD into independently grabbable issues. |
+| [`triage`](./plugins/dev/skills/engineering/triage/SKILL.md) | Move issues through the triage state machine and write agent briefs. |
+| [`afk`](./plugins/dev/skills/engineering/afk/SKILL.md) | Drain `ready-for-agent` issues autonomously. |
+| [`ship`](./plugins/dev/skills/engineering/ship/SKILL.md) | Finalize committed work through PR checks/reviews. |
+| [`implement`](./plugins/dev/skills/engineering/implement/SKILL.md) | Interactive, human-guided PRD execution. |
+| [`tdd`](./plugins/dev/skills/engineering/tdd/SKILL.md) | Red-green-refactor feature or bug work. |
+| [`diagnose`](./plugins/dev/skills/engineering/diagnose/SKILL.md) | Reproduce, minimize, instrument, fix, and regression-test hard bugs. |
+| [`report-bug`](./plugins/dev/skills/engineering/report-bug/SKILL.md) | File a structured `type:bug needs-triage` issue. |
+| [`urgent`](./plugins/dev/skills/engineering/urgent/SKILL.md) | Create a `priority:urgent ready-for-agent` issue that jumps the queue. |
+| [`hitl`](./plugins/dev/skills/engineering/hitl/SKILL.md) | Resolve one `ready-for-human` issue and make it delegable again. |
+| [`retake`](./plugins/dev/skills/engineering/retake/SKILL.md) | Reconstruct issue/PR/local state and print the next command. |
+| [`dashboard`](./plugins/dev/skills/engineering/dashboard/SKILL.md) | Inspect open PRDs/issues, AFK workers, flow metrics, and DORA proxies. |
+| [`daily-review`](./plugins/dev/skills/engineering/daily-review/SKILL.md) | Produce a daily operational review. |
+| [`weekly-review`](./plugins/dev/skills/engineering/weekly-review/SKILL.md) | Produce a six-day operational review. |
+| [`context`](./plugins/dev/skills/engineering/context/SKILL.md) | Compose the repo context stack before non-trivial work. |
+| [`zoom-out`](./plugins/dev/skills/engineering/zoom-out/SKILL.md) | Explain codebase structure map-first. |
+| [`improve-codebase-architecture`](./plugins/dev/skills/engineering/improve-codebase-architecture/SKILL.md) | Find architecture deepening opportunities. |
+| [`review-adrs`](./plugins/dev/skills/engineering/review-adrs/SKILL.md) | Review ADRs for contradictions, staleness, and missing supersession. |
+| [`model-tier-policy`](./plugins/dev/skills/engineering/model-tier-policy/SKILL.md) | Choose model tier and validation policy across runners. |
+| [`setup-statusline`](./plugins/dev/skills/engineering/setup-statusline/SKILL.md) | Install or inspect Claude/Codex statusline support. |
+| [`prototype`](./plugins/dev/skills/engineering/prototype/SKILL.md) | Build a throwaway prototype for state, logic, or UI exploration. |
+| [`resolving-merge-conflicts`](./plugins/dev/skills/engineering/resolving-merge-conflicts/SKILL.md) | Resolve merge conflicts by preserving both sides' intent. |
+| [`curate`](./plugins/dev/skills/engineering/curate/SKILL.md) | Archive approved curatable skills from Memory recommendations. |
 
 </details>
 
 <details>
-<summary><strong>Knowledge — incremental wiki</strong></summary>
+<summary><strong>Dev: knowledge, productivity, and utilities</strong></summary>
 
-| Skill | What it does |
-|-------|--------------|
-| **[wiki-init](./plugins/dev/skills/knowledge/wiki-init/SKILL.md)** | Bootstrap `.red/wiki/`, write the schema, gitignore artefacts, register under `## Agent skills`. |
-| **[wiki](./plugins/dev/skills/knowledge/wiki/SKILL.md)** | `ingest` / `query` / `lint` — operate on the wiki. |
-| **[research](./plugins/dev/skills/knowledge/research/SKILL.md)** | Deep official-source technical research saved to `.red/tmp/researches/<slug>.md`; use when answers need current primary-source grounding and durable notes. |
-
-</details>
-
-<details>
-<summary><strong>Productivity — workflow</strong></summary>
-
-| Skill | What it does |
-|-------|--------------|
-| **[reflect](./plugins/dev/skills/productivity/reflect/SKILL.md)** | Interviews you until every branch of the decision tree is resolved. |
-| **[ff](./plugins/dev/skills/productivity/ff/SKILL.md)** | Fast-forward clarity: asks which framing you want, rewrites your message into that one framing, then asks whether to dispatch (execute) it. |
-| **[handoff](./plugins/dev/skills/productivity/handoff/SKILL.md)** | Compacts the current conversation into a handoff doc for the next agent. |
-| **[write-a-skill](./plugins/dev/skills/productivity/write-a-skill/SKILL.md)** | Scaffolds new skills with proper structure and progressive disclosure. |
+| Skill | Use it for |
+|-------|------------|
+| [`wiki-init`](./plugins/dev/skills/knowledge/wiki-init/SKILL.md) | Bootstrap `.red/wiki/`. |
+| [`wiki`](./plugins/dev/skills/knowledge/wiki/SKILL.md) | Ingest/query/lint the private LLM Wiki. |
+| [`research`](./plugins/dev/skills/knowledge/research/SKILL.md) | Save official-source research under `.red/tmp/researches/`. |
+| [`reflect`](./plugins/dev/skills/productivity/reflect/SKILL.md) | Interview through a plan or design until decisions are explicit. |
+| [`ff`](./plugins/dev/skills/productivity/ff/SKILL.md) | Rewrite a message into a chosen framing and optionally dispatch it. |
+| [`handoff`](./plugins/dev/skills/productivity/handoff/SKILL.md) | Compact the current conversation into a handoff document. |
+| [`write-a-skill`](./plugins/dev/skills/productivity/write-a-skill/SKILL.md) | Create a new agent skill with proper structure. |
+| [`branch-lock`](./plugins/dev/skills/misc/branch-lock/SKILL.md) | Lock an agent to one branch. |
+| [`git-guardrails-claude-code`](./plugins/dev/skills/misc/git-guardrails-claude-code/SKILL.md) | Add Claude Code hooks that block dangerous git commands. |
+| [`migrate-to-shoehorn`](./plugins/dev/skills/misc/migrate-to-shoehorn/SKILL.md) | Replace test `as` assertions with `@total-typescript/shoehorn`. |
+| [`setup-pre-commit`](./plugins/dev/skills/misc/setup-pre-commit/SKILL.md) | Configure Husky/lint-staged/typecheck/test pre-commit hooks. |
 
 </details>
 
 <details>
-<summary><strong>Misc — niche utilities</strong></summary>
+<summary><strong>Memory</strong></summary>
 
-| Skill | What it does |
-|-------|--------------|
-| **[branch-lock](./plugins/dev/skills/misc/branch-lock/SKILL.md)** | Locks the agent to a branch and blocks it from switching away (agent-only pre-tool hook for Claude Code and Codex). |
-| **[git-guardrails-claude-code](./plugins/dev/skills/misc/git-guardrails-claude-code/SKILL.md)** | Claude Code hooks that block destructive git commands. |
-| **[migrate-to-shoehorn](./plugins/dev/skills/misc/migrate-to-shoehorn/SKILL.md)** | Migrates test files from `as` type assertions to `@total-typescript/shoehorn`. |
-| **[setup-pre-commit](./plugins/dev/skills/misc/setup-pre-commit/SKILL.md)** | Configures Husky pre-commit with lint-staged, Prettier, type-check, tests. |
-
-</details>
-
-<details>
-<summary><strong>Memory plugin — persistent memory (markdown-only · graph)</strong></summary>
-
-The separate **`memory`** plugin gives agents governed operational memory:
-scoped decisions, gotchas, provenance, supersession, and trust checks that
-survive `/clear` and cross sessions. It lives on top of `dev` (requires it).
-Two storage modes ship today: **markdown-only** (plain notes, zero engine
-dependency) and **graph** (a governed evidence graph over a per-project RedDB
-store). Graph mode can opt into lifecycle hooks, Skill telemetry, MCP/HTTP
-access, Workbench diagnostics, and graph export; markdown-only remains
-explicit-only with no engine. Install `memory` alongside `dev`, then use the
-[Memory golden path](./plugins/memory/README.md#golden-path-governed-operational-memory).
-
-The detailed Memory README also carries the reference comparison and the
-claim-to-eval evidence map used by `references:eval:v2`, so public claims stay
-tied to executable checks instead of unsupported marketing copy.
-
-| Skill | What it does |
-|-------|--------------|
-| **[init](./plugins/memory/skills/core/init/SKILL.md)** | Setup wizard. markdown-only writes `.red/memory/config.json` + `.red/memory/notes/`; graph also builds locally and provisions a per-project RedDB store at `.red/memory/graph.rdb`. Hooks off, MCP off. |
-| **[store](./plugins/memory/skills/core/store/SKILL.md)** | `/memory:store <fact>` — save a fact (markdown note, or a deduped graph node). |
-| **[recall](./plugins/memory/skills/core/recall/SKILL.md)** | `/memory:recall <query>` — ranked search over stored memory (notes, or the graph with supersede-aware, neighborhood-expanded results). |
-| **[ingest](./plugins/memory/skills/core/ingest/SKILL.md)** | `/memory:ingest <path>` — walk a repo into the graph: code symbols + markdown structure with their edges (graph mode). |
-| **[extract](./plugins/memory/skills/core/extract/SKILL.md)** | `/memory:extract <transcript>` — extract durable `INFERRED` facts from a transcript using the configured provider (graph mode). |
-| **[skills-status](./plugins/memory/skills/core/skills-status/SKILL.md)** | `/memory:skills-status` — diagnose Skill telemetry and recent usage before curation/self-improvement. |
-| **[improve-skills](./plugins/memory/skills/core/improve-skills/SKILL.md)** | `/memory:improve-skills` — generate approval-gated Skill improvement proposals from telemetry and apply reviewed structured patches only with explicit `--yes`. |
-| **[health](./plugins/memory/skills/core/health/SKILL.md)** | `/memory:health` — report operational Memory health: graph readiness, freshness, telemetry rollups, ranked candidates, pending proposals, and next actions. |
-| **[context-status](./plugins/memory/skills/core/context-status/SKILL.md)** | `/memory:context-status` — report context stack readiness across agent rules, domain docs, ADRs, Memory graph/freshness/telemetry, Wiki, score, and recommendations. |
-| **[doctor](./plugins/memory/skills/core/doctor/SKILL.md)** | `/memory:doctor` — flag stale nodes (long-unaccessed, never recalled) and prune them after confirmation (graph mode). |
-| **[export](./plugins/memory/skills/core/export/SKILL.md)** | `/memory:export` — export the graph to a navigable graph.html + graph.json + audit.md (graph mode). |
-
-See [plugins/memory/README.md](./plugins/memory/README.md) and, for the RedDB
-graph-write constraints, [ADR 0007](./.red/adr/0007-reddb-graph-writes-via-multi-model-dml.md).
-Graph mode provides the governed recall, lifecycle hooks, MCP/HTTP surfaces,
-Skill telemetry, and soft integrations used by `dev`.
+| Skill | Use it for |
+|-------|------------|
+| [`init`](./plugins/memory/skills/core/init/SKILL.md) | Initialize markdown-only or graph-backed Memory. |
+| [`store`](./plugins/memory/skills/core/store/SKILL.md) | Save one scoped operational fact. |
+| [`recall`](./plugins/memory/skills/core/recall/SKILL.md) | Retrieve governed context by relevance. |
+| [`ingest`](./plugins/memory/skills/core/ingest/SKILL.md) | Index repo files/docs into graph mode. |
+| [`extract`](./plugins/memory/skills/core/extract/SKILL.md) | Extract durable operational facts from a transcript. |
+| [`context-status`](./plugins/memory/skills/core/context-status/SKILL.md) | Report context stack readiness. |
+| [`skills-status`](./plugins/memory/skills/core/skills-status/SKILL.md) | Diagnose Skill telemetry and recent usage. |
+| [`health`](./plugins/memory/skills/core/health/SKILL.md) | Report Memory health and next actions. |
+| [`improve-skills`](./plugins/memory/skills/core/improve-skills/SKILL.md) | Create approval-gated Skill improvement proposals from evidence. |
+| [`doctor`](./plugins/memory/skills/core/doctor/SKILL.md) | Inspect and prune stale graph nodes after confirmation. |
+| [`export`](./plugins/memory/skills/core/export/SKILL.md) | Export graph artifacts for audit/inspection. |
+| [`view`](./plugins/memory/skills/core/view/SKILL.md) | Open Memory graph views in red-ui or browser fallback. |
 
 </details>
 
 <details>
-<summary><strong>MCP servers — bundled tools</strong></summary>
+<summary><strong>Brain</strong></summary>
 
-| Server | What it does |
-|--------|--------------|
-| **[code-nav](./apps/code-nav/README.md)** | LSP-backed semantic navigation. Spawns the language server for each file type and exposes `workspace_symbols`, `goto_definition`, `find_references`, `document_symbols`, `hover` as MCP tools — IDE-grade symbol navigation on top of the agent's default search. Presets for TS/Go/Rust/Python; extend via `CODE_NAV_SERVERS`. Loads automatically with the `dev` plugin. |
+| Skill | Use it for |
+|-------|------------|
+| [`capture`](./plugins/brain/skills/core/capture/SKILL.md) | Save durable project or personal knowledge into Brain. |
+| [`search`](./plugins/brain/skills/core/search/SKILL.md) | Search Brain artifacts. |
+| [`think`](./plugins/brain/skills/core/think/SKILL.md) | Produce a cited answer from Brain evidence. |
+| [`status`](./plugins/brain/skills/core/status/SKILL.md) | Inspect Brain store status. |
+| [`view`](./plugins/brain/skills/core/view/SKILL.md) | Open Brain graph/connection views in red-ui. |
 
 </details>
 
----
+<details>
+<summary><strong>MCP servers</strong></summary>
 
-## House conventions
+| Server | Use it for |
+|--------|------------|
+| [`code-nav`](./apps/code-nav/README.md) | IDE-grade symbol navigation through LSP-backed MCP tools. |
+| [`memory-mcp`](./plugins/memory/.mcp.json) | Read Memory through MCP surfaces. |
+| [`brain`](./plugins/brain/.mcp.json) | Search, think, inspect, and act through Brain MCP surfaces. |
 
-- 🏷 **Labels are kebab-case or `prefix:value`.** `needs-triage`, `ready-for-agent`, `running`, `priority:high`, `prd:42`. No uppercase, no spaces.
-- 🤖 **Workflows shipped by RedSkills start with `red-`.** `red-issues-needs-triage.yml`, `red-upstream-watch.yml`.
-- 🐙 **Issues and PRDs live on GitHub.** No local-markdown tracker, no GitLab/Jira/Linear fallback.
-- 📁 **Artefacts live under `.red/`.** Context glossaries, ADRs, agent docs, the wiki, the `/afk` state file. Keeps consumer repos clean.
-- 🔒 **SSH for git, every time.** No HTTPS remotes. `/afk` refuses to start otherwise.
-
----
+</details>
 
 ## License
 
-Apache-2.0. See [LICENSE](./LICENSE). The [NOTICE](./NOTICE) file preserves the original MIT attribution for upstream-derived skills from [`mattpocock/skills`](https://github.com/mattpocock/skills).
+Apache-2.0. See [LICENSE](./LICENSE). See [NOTICE](./NOTICE) for upstream MIT
+attribution and bundled runtime notices.
