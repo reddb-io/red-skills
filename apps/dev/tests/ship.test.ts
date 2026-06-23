@@ -4,6 +4,7 @@ import {
   decideShipMergeGate,
   isShipWorktreePath,
   issueNumberFromBranch,
+  normalizeRollupEntry,
   shipChecksAreGreen,
 } from "../src/core/ship.js";
 
@@ -68,6 +69,50 @@ describe("ship helpers", () => {
     expect(isShipWorktreePath("/repo/.red/tmp/work-ship-abc/worktree")).toBe(true);
     expect(isShipWorktreePath("/repo/.red/tmp/work-ship-abc/worktree/plugins/dev")).toBe(true);
     expect(isShipWorktreePath("/repo/.red/tmp/work-abc/worktree")).toBe(false);
+  });
+});
+
+describe("normalizeRollupEntry (#857 — statusCheckRollup fallback)", () => {
+  it("maps a CheckRun entry (name/status/conclusion) to ShipCheck", () => {
+    expect(normalizeRollupEntry({ __typename: "CheckRun", name: "typecheck", status: "COMPLETED", conclusion: "SUCCESS" }))
+      .toEqual({ name: "typecheck", state: "COMPLETED", conclusion: "SUCCESS" });
+  });
+
+  it("maps an in-progress CheckRun (null conclusion) to ShipCheck", () => {
+    expect(normalizeRollupEntry({ __typename: "CheckRun", name: "test", status: "IN_PROGRESS", conclusion: null }))
+      .toEqual({ name: "test", state: "IN_PROGRESS", conclusion: undefined });
+  });
+
+  it("maps a StatusContext entry (context/state) to ShipCheck", () => {
+    expect(normalizeRollupEntry({ __typename: "StatusContext", context: "ci/circleci", state: "SUCCESS" }))
+      .toEqual({ name: "ci/circleci", state: "SUCCESS", conclusion: undefined });
+  });
+
+  it("a mixed rollup with all-green entries is green", () => {
+    const rollup = [
+      { __typename: "CheckRun", name: "typecheck", status: "COMPLETED", conclusion: "SUCCESS" },
+      { __typename: "StatusContext", context: "Skill first-line bold check", state: "SUCCESS" },
+    ].map(normalizeRollupEntry);
+    expect(shipChecksAreGreen(rollup)).toBe(true);
+  });
+
+  it("a mixed rollup with an in-progress CheckRun is not green", () => {
+    const rollup = [
+      { __typename: "CheckRun", name: "test", status: "IN_PROGRESS", conclusion: null },
+      { __typename: "StatusContext", context: "typecheck", state: "SUCCESS" },
+    ].map(normalizeRollupEntry);
+    expect(shipChecksAreGreen(rollup)).toBe(false);
+  });
+
+  it("empty rollup is treated as green (no checks configured)", () => {
+    expect(shipChecksAreGreen([])).toBe(true);
+  });
+
+  it("advisoryReviewPending works on normalized StatusContext entry", () => {
+    const rollup = [
+      { __typename: "StatusContext", context: "coderabbitai[bot]", state: "PENDING" },
+    ].map(normalizeRollupEntry);
+    expect(advisoryReviewPending(rollup, "coderabbit")).toBe(true);
   });
 });
 
