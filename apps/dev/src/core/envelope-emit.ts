@@ -7,7 +7,8 @@
 // merge-conflict) and the success envelope (done):
 //   - the summary line shape (worker `{id}` · status: … · duration: … · …),
 //   - the per-status section set (blocked→notes; no-sentinel→notes+log;
-//     merge-conflict→log; done→validation; + a trailing hooks block #215),
+//     merge-conflict→log; done→validation; blocked→notes+optional validation;
+//     + a trailing hooks block #215),
 //   - the diff section (compare-link on a successful afk-attempts push, else a
 //     local-worktree fallback line),
 //   - the failure-only afk-attempts push, the `envelope.posted` signal, and the
@@ -140,6 +141,7 @@ export function buildSections(
     if (sections.validation !== undefined) out.push({ name: "validation", body: sections.validation });
   } else if (status === "blocked") {
     out.push({ name: "notes", body: sections.notes ?? "" });
+    if (sections.validation !== undefined) out.push({ name: "validation", body: sections.validation });
     out.push({ name: "diff", body: diffBody() });
   } else if (status === "no-sentinel") {
     out.push({ name: "notes", body: sections.notes ?? "" });

@@ -17,13 +17,15 @@ interface MakeAttempt {
   attempt: number;
   branch?: string;
   reason?: string;
+  validation?: string;
 }
 
-async function mkAttempt(root: string, { worker, issue, attempt, branch, reason }: MakeAttempt): Promise<void> {
+async function mkAttempt(root: string, { worker, issue, attempt, branch, reason, validation }: MakeAttempt): Promise<void> {
   const dir = join(root, "workers", worker, `${issue}-a${attempt}`);
   await mkdir(join(dir, "worktree"), { recursive: true });
   if (branch !== undefined) await writeFile(join(dir, "snapshot-branch.ref"), `${branch}\n`, "utf8");
   if (reason !== undefined) await writeFile(join(dir, "failure.reason"), `${reason}\n`, "utf8");
+  if (validation !== undefined) await writeFile(join(dir, "validation.jsonl"), `${validation}\n`, "utf8");
 }
 
 async function tmpRoot(): Promise<string> {
@@ -152,5 +154,22 @@ describe("attempt-ledger restart context", () => {
     const context = await attemptLedgerContext(root, 779);
     expect(context?.prevFailureReason).toContain("line one");
     expect(context?.prevFailureReason).toContain("line two");
+  });
+
+  it("carries validation sidecar details when the previous attempt recorded them", async () => {
+    const root = await tmpRoot();
+    const validation = '{"name":"backpressure:cargo fmt --all -- --check","status":"fail","exitCode":1}';
+    await mkAttempt(root, {
+      worker: "wJ1K2",
+      issue: 780,
+      attempt: 1,
+      branch: "afk-attempts/wJ1K2/780-quux",
+      reason: "worker `wJ1K2` · status: blocked",
+      validation,
+    });
+    const context = await attemptLedgerContext(root, 780);
+    expect(context?.prevValidationSummary).toContain("cargo fmt --all");
+    expect(formatAttemptContext(context!)).toContain("prev-validation-summary:");
+    expect(formatAttemptContext(context!)).toContain(validation);
   });
 });
