@@ -4,15 +4,27 @@ import { formatCurrentBlocker } from "../src/core/blocker-state.js";
 import { isRequeueComplete } from "../src/core/requeue.js";
 import { requeueCommand, type RequeueGh } from "../src/commands/requeue.js";
 
-function capture(): { stream: Writable; text: () => string } {
+function capture(): { stream: Writable; text: () => string; stderr: () => string } {
   let buf = "";
+  let errBuf = "";
   const stream = new Writable({
     write(chunk, _enc, cb) {
       buf += chunk.toString();
       cb();
     },
   });
-  return { stream, text: () => buf };
+  // stderr goes to process.stderr; we capture it via mock below
+  return { stream, text: () => buf, stderr: () => errBuf };
+}
+
+function captureStderr(): { restore: () => void; text: () => string } {
+  let buf = "";
+  const orig = process.stderr.write.bind(process.stderr);
+  process.stderr.write = (chunk: string | Uint8Array) => {
+    buf += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString();
+    return true;
+  };
+  return { restore: () => { process.stderr.write = orig; }, text: () => buf };
 }
 
 function fakeGh(state: { state: string; body: string; labels: string[] }) {
@@ -47,11 +59,19 @@ const validationBlocker = {
   next: "Human must decide whether to retry.",
 };
 
-const parkedBody = `## Summary\nDo it.\n\n## Current blocker\n\n${formatCurrentBlocker(validationBlocker)}\n`;
+const specBlocker = {
+  status: "blocked" as const,
+  kind: "spec",
+  summary: "Spec is ambiguous.",
+  next: "Human must clarify before work proceeds.",
+};
 
-describe("requeue command", () => {
+const parkedBody = `## Summary\nDo it.\n\n## Current blocker\n\n${formatCurrentBlocker(validationBlocker)}\n`;
+const specBodyMismatch = `## Summary\nDo it.\n\n## Current blocker\n\n${formatCurrentBlocker(specBlocker)}\n`;
+
+describe("requeue command — happy path", () => {
   it("applies the full transition so a label flip alone is never the requeue", async () => {
-    const { gh, calls, state, lastRemove, lastAdd } = fakeGh({
+    const { gh, calls, state } = fakeGh({
       state: "OPEN",
       body: parkedBody,
       labels: ["ready-for-human", "blocked:validation"],
@@ -61,10 +81,9 @@ describe("requeue command", () => {
     const code = await requeueCommand(["#42", "--guidance", "Gate flake fixed."], "/tmp", stream, gh);
 
     expect(code).toBe(0);
-    expect(calls.editBody).toBe(1); // body rewritten, not a manual edit
-    expect(calls.comment).toBe(1); // guidance recorded
+    expect(calls.editBody).toBe(1);
+    expect(calls.comment).toBe(1);
     expect(calls.editLabels).toBe(1);
-    // After the transition the issue is a COMPLETE requeue — no active blocker left.
     expect(isRequeueComplete(state.body, ["ready-for-agent"])).toBe(true);
     expect(text()).toContain("Requeue #42");
   });
@@ -73,7 +92,7 @@ describe("requeue command", () => {
     const { gh, calls } = fakeGh({ state: "OPEN", body: "## Summary\nNothing.\n", labels: ["ready-for-agent"] });
     const { stream, text } = capture();
 
-    const code = await requeueCommand(["42"], "/tmp", stream, gh);
+    const code = await requeueCommand(["42", "--guidance", "Retry."], "/tmp", stream, gh);
 
     expect(code).toBe(0);
     expect(calls.editBody + calls.editLabels + calls.comment).toBe(0);
@@ -88,7 +107,7 @@ describe("requeue command", () => {
     });
     const { stream, text } = capture();
 
-    const code = await requeueCommand(["#42", "--dry-run"], "/tmp", stream, gh);
+    const code = await requeueCommand(["#42", "--guidance", "Gate flake fixed.", "--dry-run"], "/tmp", stream, gh);
 
     expect(code).toBe(0);
     expect(calls.editBody + calls.editLabels + calls.comment).toBe(0);
@@ -96,18 +115,101 @@ describe("requeue command", () => {
   });
 
   it("refuses a closed issue", async () => {
-    const { gh, calls } = fakeGh({ state: "CLOSED", body: parkedBody, labels: ["blocked:spec"] });
+    const { gh, calls } = fakeGh({ state: "CLOSED", body: parkedBody, labels: ["blocked:validation"] });
     const { stream } = capture();
 
-    const code = await requeueCommand(["#42"], "/tmp", stream, gh);
+    const code = await requeueCommand(["#42", "--guidance", "Fixed."], "/tmp", stream, gh);
 
     expect(code).toBe(1);
     expect(calls.editBody + calls.editLabels + calls.comment).toBe(0);
   });
+});
 
+describe("requeue command — usage errors (exit 2)", () => {
   it("rejects a missing issue number", async () => {
     const { gh } = fakeGh({ state: "OPEN", body: "", labels: [] });
     const { stream } = capture();
-    expect(await requeueCommand([], "/tmp", stream, gh)).toBe(2);
+    const err = captureStderr();
+    const code = await requeueCommand([], "/tmp", stream, gh);
+    err.restore();
+    expect(code).toBe(2);
+  });
+
+  it("rejects missing --guidance before reading the issue", async () => {
+    const { gh, calls } = fakeGh({ state: "OPEN", body: parkedBody, labels: ["blocked:validation"] });
+    const { stream } = capture();
+    const err = captureStderr();
+
+    const code = await requeueCommand(["#42"], "/tmp", stream, gh);
+    err.restore();
+
+    expect(code).toBe(2);
+    expect(err.text()).toContain("--guidance");
+    expect(calls.editBody + calls.editLabels + calls.comment).toBe(0);
+  });
+
+  it("rejects an empty --guidance string", async () => {
+    const { gh, calls } = fakeGh({ state: "OPEN", body: parkedBody, labels: ["blocked:validation"] });
+    const { stream } = capture();
+    const err = captureStderr();
+
+    const code = await requeueCommand(["#42", "--guidance", "   "], "/tmp", stream, gh);
+    err.restore();
+
+    expect(code).toBe(2);
+    expect(calls.editBody + calls.editLabels + calls.comment).toBe(0);
+  });
+});
+
+describe("requeue command — /hitl refusals (exit 1, no mutation)", () => {
+  it("refuses mixed blocked:* labels and exits 1 without mutation", async () => {
+    const { gh, calls } = fakeGh({
+      state: "OPEN",
+      body: parkedBody,
+      labels: ["ready-for-human", "blocked:validation", "blocked:spec"],
+    });
+    const { stream } = capture();
+    const err = captureStderr();
+
+    const code = await requeueCommand(["#42", "--guidance", "Retry."], "/tmp", stream, gh);
+    err.restore();
+
+    expect(code).toBe(1);
+    expect(err.text()).toContain("refused");
+    expect(calls.editBody + calls.editLabels + calls.comment).toBe(0);
+  });
+
+  it("refuses a label/body kind mismatch (blocked:validation label, spec blocker in body) and exits 1", async () => {
+    const { gh, calls } = fakeGh({
+      state: "OPEN",
+      body: specBodyMismatch,
+      labels: ["ready-for-human", "blocked:validation"],
+    });
+    const { stream } = capture();
+    const err = captureStderr();
+
+    const code = await requeueCommand(["#42", "--guidance", "Fixed."], "/tmp", stream, gh);
+    err.restore();
+
+    expect(code).toBe(1);
+    expect(err.text()).toContain("refused");
+    expect(calls.editBody + calls.editLabels + calls.comment).toBe(0);
+  });
+
+  it("refuses an unsupported blocked:decision label and exits 1", async () => {
+    const { gh, calls } = fakeGh({
+      state: "OPEN",
+      body: "## Summary\nNeeds a decision.\n",
+      labels: ["ready-for-human", "blocked:decision"],
+    });
+    const { stream } = capture();
+    const err = captureStderr();
+
+    const code = await requeueCommand(["#42", "--guidance", "Decision made."], "/tmp", stream, gh);
+    err.restore();
+
+    expect(code).toBe(1);
+    expect(err.text()).toContain("refused");
+    expect(calls.editBody + calls.editLabels + calls.comment).toBe(0);
   });
 });
