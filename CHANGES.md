@@ -6,6 +6,17 @@ Upstream base: `mattpocock/skills@6eeb81b5fcfeeb5bd531dd47ab2f9f2bbea27461` (see
 
 ---
 
+## requeue (engineering) — safe one-shot requeue for issues parked behind an active Current blocker
+
+- **status**: added
+- **upstream**: —
+- **why**: A validation/spec failure parks an issue with `ready-for-human`, a `blocked:*` label, and an active `## Current blocker` block. Flipping labels back to `ready-for-agent` by hand is a silent no-op loop: AFK preflight re-reads the active non-mechanical blocker and re-parks the issue. Maintainers needed one safe, documented command to requeue after a human decision makes the issue delegable (issue #850).
+- **what changed**:
+  - New `plugins/dev/skills/engineering/requeue/SKILL.md` documents `/requeue #N --guidance "…"` and the `/hitl`-vs-`/requeue` split (interactive decision extraction vs already-decided requeue).
+  - Implementation: `apps/dev/src/core/requeue.ts` (`planRequeue` plans the clear-blocker + drop-stale-labels + `ready-for-agent` transition; `isRequeueComplete` mirrors preflight so a label flip alone is never a successful requeue) and `apps/dev/src/commands/requeue.ts` (gh-backed command, wired into the CLI router).
+  - Tests: `apps/dev/tests/requeue.test.ts` and `apps/dev/tests/requeue-command.test.ts` cover the label-flip-alone invariant, blocker clearing, label transition, no-op/dry-run/closed/missing-arg paths.
+  - `plugins/dev/skills/engineering/hitl/SKILL.md` cross-references `/requeue`.
+
 ## implement (engineering)
 
 - **status**: added
