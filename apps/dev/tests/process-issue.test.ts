@@ -847,6 +847,29 @@ describe("processIssue — no-sentinel (run ended without a <promise>)", () => {
     expect(result.outcome).toBe("done"); // salvaged + both gates green → lands like DONE
     expect(trace.closed).toEqual([9]);
   });
+
+  it("exposes the configured backpressure command to the inner-agent handoff as the binding <merge-gate> (#849)", async () => {
+    // Acceptance #849: the inner agent must SEE the exact orchestrator gate it
+    // has to satisfy before DONE, not discover it only when the post-DONE
+    // backpressure gate bounces it as blocked:validation.
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      backpressureCommands: ["cargo fmt --all -- --check", "npm run e2e"],
+      backpressureOk: true,
+    });
+    await processIssue(deps, input);
+
+    const handoff = trace.runAgentCalls[0]?.handoffContent ?? "";
+    expect(handoff).toContain("<merge-gate>");
+    expect(handoff).toContain("- cargo fmt --all -- --check");
+    expect(handoff).toContain("- npm run e2e");
+  });
+
+  it("omits <merge-gate> from the handoff when no backpressure command is configured (#849)", async () => {
+    const { deps, input, trace } = harness({ outcome: "done" });
+    await processIssue(deps, input);
+    expect(trace.runAgentCalls[0]?.handoffContent ?? "").not.toContain("<merge-gate>");
+  });
 });
 
 describe("processIssue — commit-leftovers salvage (codex DONE-without-commit)", () => {
