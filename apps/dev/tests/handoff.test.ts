@@ -4,6 +4,7 @@ import type { AttemptStatus } from "../src/core/envelope.js";
 import {
   buildHandoff,
   buildHumanGuidance,
+  buildMergeGate,
   buildPreviousAttempts,
   buildThreadDiscussion,
   EXIT_PROTOCOL,
@@ -279,6 +280,16 @@ describe("buildHandoff", () => {
     expect(EXIT_PROTOCOL).toContain("prose");
   });
 
+  it("EXIT_PROTOCOL distinguishes touched-package confidence checks from the binding merge gate (#849)", () => {
+    // The completion contract must name BOTH kinds of check and point at the
+    // per-attempt <merge-gate> section as the binding one.
+    expect(EXIT_PROTOCOL).toContain("CONFIDENCE");
+    expect(EXIT_PROTOCOL).toContain("BINDING");
+    expect(EXIT_PROTOCOL).toContain("<merge-gate>");
+    // Still must not push agents to re-run an unbounded full suite after DONE.
+    expect(EXIT_PROTOCOL).toContain("Do NOT re-run an unbounded full repository suite");
+  });
+
   it("case5: malformed envelope → no previous-attempts, no human-guidance, surfaces in discussion", () => {
     const out = buildHandoff({
       issue: 1,
@@ -390,5 +401,71 @@ describe("buildHandoff prior-attempt-context", () => {
     });
     expect(out.indexOf("<human-guidance-thread>")).toBeLessThan(out.indexOf("<prior-attempt-context>"));
     expect(out.indexOf("<prior-attempt-context>")).toBeLessThan(out.indexOf("<thread-discussion>"));
+  });
+});
+
+// ---------- merge gate / backpressure contract (issue #849) ----------
+
+describe("buildMergeGate", () => {
+  it("empty / undefined / blank-only → omitted (no section)", () => {
+    expect(buildMergeGate(undefined)).toBe("");
+    expect(buildMergeGate([])).toBe("");
+    expect(buildMergeGate(["", "  ", "\t"])).toBe("");
+  });
+
+  it("lists each command verbatim in declaration order, trimmed", () => {
+    const out = buildMergeGate(["  cargo fmt --all -- --check  ", "cargo clippy --workspace"]);
+    expect(out).toContain("- cargo fmt --all -- --check");
+    expect(out).toContain("- cargo clippy --workspace");
+    expect(out.indexOf("cargo fmt")).toBeLessThan(out.indexOf("cargo clippy"));
+    // explains it is the binding gate enforced after DONE
+    expect(out).toContain("binding merge gate");
+    expect(out).toContain("blocked:validation");
+  });
+
+  it("drops blank entries but keeps the real ones", () => {
+    const out = buildMergeGate(["npm run test", "", "npm run lint"]);
+    expect(out).toContain("- npm run test");
+    expect(out).toContain("- npm run lint");
+    expect(out).not.toMatch(/^- $/m);
+  });
+});
+
+describe("buildHandoff merge-gate", () => {
+  it("a configured backpressure command is exposed verbatim in <merge-gate>", () => {
+    const out = buildHandoff({
+      issue: 849,
+      title: "Gate",
+      body: "issue body",
+      runner: "claude",
+      started: "t",
+      attempt: 1,
+      url: "url",
+      comments: [],
+      mergeGateCommands: ["cargo fmt --all -- --check", "npm run test"],
+    });
+    expect(out).toContain("<merge-gate>");
+    expect(out).toContain("</merge-gate>");
+    expect(out).toContain("- cargo fmt --all -- --check");
+    expect(out).toContain("- npm run test");
+    // sits between the issue body and the agent-notes footer
+    expect(out.indexOf("</issue-body>")).toBeLessThan(out.indexOf("<merge-gate>"));
+    expect(out.indexOf("<merge-gate>")).toBeLessThan(out.indexOf("<agent-notes>"));
+  });
+
+  it("no commands → <merge-gate> omitted entirely (first-attempt handoff unchanged)", () => {
+    expect(base({})).not.toContain("<merge-gate>");
+    const explicitEmpty = buildHandoff({
+      issue: 1,
+      title: "Empty",
+      body: "b",
+      runner: "claude",
+      started: "t",
+      attempt: 1,
+      url: "url",
+      comments: [],
+      mergeGateCommands: [],
+    });
+    expect(explicitEmpty).not.toContain("<merge-gate>");
   });
 });
