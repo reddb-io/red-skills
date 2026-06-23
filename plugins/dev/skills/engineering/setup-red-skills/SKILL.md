@@ -1,6 +1,17 @@
 ---
 name: setup-red-skills
-description: The one authorized creator of a repo's `.red/` directory and the only way to enable RedSkills plugins (dev, memory, brain) in a project (ADR 0067). RedSkills hooks are installed globally on every agent but stay fully inert in any directory without a `.red/config.yaml` whose `plugins.<name>.enabled: true` opts that plugin in. This skill prompts which plugins to enable, creates `.red/`, writes the activation flags, and sets up `## Agent skills`/`## Development workflow` blocks in AGENTS.md/CLAUDE.md plus `.red/agents/`. Run to turn RedSkills on in a repo, to enable/disable a plugin, before first use of `to-issues`, `to-prd`, `triage`, `diagnose`, `tdd`, `improve-codebase-architecture`, `zoom-out`, or `/ship`, or if those skills appear to be missing context.
+description: >-
+  The one authorized creator of a repo's `.red/` directory and the only way to
+  enable RedSkills plugins (dev, memory, brain) in a project (ADR 0067).
+  RedSkills hooks are installed globally on every agent but stay fully inert in
+  any directory without a `.red/config.yaml` whose
+  `plugins.<name>.enabled: true` opts that plugin in. This skill prompts which
+  plugins to enable, creates `.red/`, writes the activation flags, and sets up
+  `## Agent skills`/`## Development workflow` blocks in AGENTS.md/CLAUDE.md plus
+  `.red/agents/`. Run to turn RedSkills on in a repo, to enable/disable a
+  plugin, before first use of `to-issues`, `to-prd`, `triage`, `diagnose`,
+  `tdd`, `improve-codebase-architecture`, `zoom-out`, or `/ship`, or if those
+  skills appear to be missing context.
 disable-model-invocation: true
 ---
 
