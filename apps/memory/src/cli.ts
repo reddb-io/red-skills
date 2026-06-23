@@ -23,6 +23,7 @@ import {
   restoreMemoryBackup,
 } from "./backup.js";
 import { buildMemoryCapabilityCatalog } from "./capability-catalog.js";
+import { buildMemoryCapsule, type MemoryCapsuleSourceKind } from "./capsule.js";
 import { buildMemoryAssetInventory } from "./asset-inventory.js";
 import { buildMemoryAssetInventoryViewerArtifact } from "./asset-inventory-viewer.js";
 import { buildMemoryAgentIntegrationStatus } from "./agent-integration-status.js";
@@ -310,7 +311,7 @@ Common workflows:
   remember one fact          memory store "Decision: ..."
   get context before acting  memory recall "topic"
   map code before reading    memory map-context "who calls token refresh?"
-  prepare another agent      memory context-pack "goal"  | memory handoff "focus"
+  prepare another agent      memory capsule "goal"       | memory context-pack "goal"
   decide if safe to proceed  memory readiness "goal"     | memory claim-check "assertion"
   search every surface       memory smart-search "query"
   operate/debug Memory       memory workbench             | memory health-viewer | memory governance
@@ -341,6 +342,7 @@ Usage:
   memory whatif                     [--root <dir>] --change "<descriptor>" [--change "<descriptor>" ...] [--limit N] [--json]
   memory autocure                   [--root <dir>] [--apply] [--stale-days N] [--json]
   memory smart-search <query...>    [--root <dir>] [--limit N] [--depth N] [--json]
+  memory capsule <goal...>          [--root <dir>] [--source context-pack|handoff] [--budget N] [--limit N] [--json] [--scope ...] [--scope-id ID] [--include-narrower-scopes]
   memory smart-search-viewer <query...> [--root <dir>] [--limit N] [--depth N] [--out <file>]
   memory context-pack <goal...>     [--root <dir>] [--budget N] [--limit N] [--json] [--scope ...] [--scope-id ID] [--include-narrower-scopes]
   memory context-pack-viewer <goal...> [--root <dir>] [--budget N] [--limit N] [--depth N] [--out <file>] [--scope ...] [--scope-id ID] [--include-narrower-scopes]
@@ -1690,6 +1692,37 @@ async function runContextPack(args: ParsedArgs): Promise<void> {
   } finally {
     await store.close();
   }
+}
+
+async function runCapsule(args: ParsedArgs): Promise<void> {
+  const goal = args.positional.join(" ").trim();
+  if (!goal) throw new Error("nothing to package — pass a goal: memory capsule <goal>");
+  const { store } = await openGraphStore(args);
+  try {
+    const source = capsuleSourceFlag(args.flags);
+    const skillRollups = source === "context-pack" ? await readSkillRollups(store) : [];
+    const capsule = await buildMemoryCapsule(store, goal, {
+      source,
+      budgetChars: intFlag(args.flags, "budget"),
+      limit: intFlag(args.flags, "limit"),
+      depth: intFlag(args.flags, "depth"),
+      scope: scopeFlags(args.flags),
+      skillRollups,
+    });
+    if (args.flags.json === true) {
+      console.log(JSON.stringify(capsule, null, 2));
+      return;
+    }
+    process.stdout.write(capsule.markdown);
+  } finally {
+    await store.close();
+  }
+}
+
+function capsuleSourceFlag(flags: ParsedArgs["flags"]): MemoryCapsuleSourceKind {
+  const source = stringFlag(flags, "source") ?? "context-pack";
+  if (source === "context-pack" || source === "handoff") return source;
+  throw new Error(`invalid capsule source "${source}" — expected context-pack or handoff`);
 }
 
 async function runContextPackViewer(args: ParsedArgs): Promise<void> {
@@ -7896,6 +7929,8 @@ async function main(): Promise<void> {
       return runAutocure(args);
     case "smart-search-viewer":
       return runSmartSearchViewer(args);
+    case "capsule":
+      return runCapsule(args);
     case "context-pack":
       return runContextPack(args);
     case "context-pack-viewer":
