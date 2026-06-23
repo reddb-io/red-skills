@@ -75,6 +75,25 @@ export function shipChecksAreGreen(checks: readonly ShipCheck[]): boolean {
   });
 }
 
+/**
+ * Normalize a raw `statusCheckRollup` entry (either a GitHub `CheckRun` or
+ * `StatusContext`) into the `ShipCheck` shape used by the rest of /ship.
+ *
+ * CheckRun:     { name, status (running state), conclusion (terminal result) }
+ * StatusContext: { context (name), state (SUCCESS/FAILURE/PENDING/…) }
+ *
+ * The two shapes are unified by reading `name ?? context` and `state ?? status`
+ * so that `shipChecksAreGreen` and `advisoryReviewPending` work without knowing
+ * which shape they received.
+ */
+export function normalizeRollupEntry(raw: Record<string, unknown>): ShipCheck {
+  return {
+    name: String(raw.name ?? raw.context ?? ""),
+    state: String(raw.state ?? raw.status ?? ""),
+    conclusion: raw.conclusion != null ? String(raw.conclusion) : undefined,
+  };
+}
+
 /** Extract the first issue number from common branch names like
  * `ship/395-finalizer` or `afk/wAAAA/395-finalizer`. */
 export function issueNumberFromBranch(branch: string): number | undefined {
