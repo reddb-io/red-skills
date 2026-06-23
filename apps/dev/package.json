@@ -23,6 +23,7 @@
   "devDependencies": {
     "@types/node": "catalog:",
     "esbuild": "catalog:",
+    "js-yaml": "^4.1.0",
     "tsx": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
