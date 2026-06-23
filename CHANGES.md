@@ -6,7 +6,19 @@ Upstream base: `mattpocock/skills@6eeb81b5fcfeeb5bd531dd47ab2f9f2bbea27461` (see
 
 ---
 
-## requeue (engineering) — safe one-shot requeue for issues parked behind an active Current blocker
+## requeue (engineering) — narrowed safe requeue for blocked:validation/spec (issue #860)
+
+- **status**: modified
+- **upstream**: —
+- **why**: #850 introduced the base requeue helper; #860 narrows its scope to `blocked:validation` and `blocked:spec` only, refuses mixed `blocked:*` states and label/body kind mismatches (directing the maintainer to `/hitl`), and makes `--guidance` required so every requeue is auditable.
+- **what changed** (#860 additions on top of #850):
+  - `REQUEUE_SUPPORTED_KINDS` constant guards the two accepted kinds; `refuseForHitl` field on `RequeuePlan` distinguishes `/hitl`-refusal from silent no-op.
+  - `planRequeue` now refuses: mixed `blocked:*` labels; label kind not in `{validation, spec}`; active body blocker kind not in `{validation, spec, stalled, crashed, merge-conflict}`; label/body kind mismatch.
+  - `requeueCommand` exits 2 when `--guidance` is missing or empty; exits 1 (not exit 0 no-op) when the planner sets `refuseForHitl`.
+  - SKILL.md updated: scope narrowed in description, `--guidance` marked required, three `/hitl`-refusal conditions listed, `/requeue`-vs-`/hitl` decision table with explicit pre-conditions.
+  - Tests extended to cover all new refusal paths and the guidance-required check.
+
+## requeue (engineering) — safe one-shot requeue for issues parked behind an active Current blocker (issue #850)
 
 - **status**: added
 - **upstream**: —
