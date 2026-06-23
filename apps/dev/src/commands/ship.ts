@@ -13,6 +13,7 @@ import {
   decideShipMergeGate,
   isShipWorktreePath,
   issueNumberFromBranch,
+  normalizeRollupEntry,
   shipChecksAreGreen,
   type ShipCheck,
 } from "../core/ship.js";
@@ -215,6 +216,7 @@ async function openOrReusePr(
 interface PrView {
   reviewDecision?: string | null;
   reviews?: Array<{ state?: string | null; author?: { login?: string | null } | null }>;
+  statusCheckRollup?: Array<Record<string, unknown>> | null;
 }
 
 async function collectShipFacts(cwd: string, repo: string, pr: number, reviewCheck: string): Promise<ShipFacts> {
@@ -234,11 +236,25 @@ async function collectShipFacts(cwd: string, repo: string, pr: number, reviewChe
 
   const viewRes = await required(
     "gh",
-    ["pr", "view", String(pr), "--repo", repo, "--json", "reviewDecision,reviews"],
+    ["pr", "view", String(pr), "--repo", repo, "--json", "reviewDecision,reviews,statusCheckRollup"],
     cwd,
     "read PR reviews",
   );
   const view = parseJson<PrView>(viewRes.stdout, {});
+
+  // When gh pr checks failed but gh pr view returned a populated statusCheckRollup,
+  // use that rollup as the check source so a transient gh-checks API failure does
+  // not falsely report checks as unavailable.
+  if (checkSummary === "checks unavailable") {
+    const rollup = view.statusCheckRollup ?? [];
+    if (rollup.length > 0) {
+      const normalized = rollup.map(normalizeRollupEntry);
+      checksGreen = shipChecksAreGreen(normalized);
+      reviewPending = advisoryReviewPending(normalized, reviewCheck);
+      checkSummary = `${normalized.filter((c) => shipChecksAreGreen([c])).length}/${normalized.length} green`;
+    }
+  }
+
   const reviewDecision = String(view.reviewDecision ?? "").toUpperCase();
   const changesRequested =
     reviewDecision === "CHANGES_REQUESTED" ||
