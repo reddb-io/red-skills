@@ -721,6 +721,11 @@ export async function processIssue(
     comments,
     priorAttemptContext,
     prdRef: input.prdRef,
+    // Surface the operator-declared backpressure commands as the binding
+    // `<merge-gate>` so the inner agent satisfies the EXACT gate the
+    // orchestrator enforces after DONE, instead of bouncing as
+    // blocked:validation off a narrower touched-package check (issue #849).
+    mergeGateCommands: deps.backpressureCommands ?? [],
   });
   const handoffPath = `${input.attemptDir}/handoff.md`;
   await deps.fs.writeHandoff(handoffPath, handoff);
