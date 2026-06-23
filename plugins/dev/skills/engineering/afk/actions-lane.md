@@ -21,8 +21,8 @@ red-skills tree to run the action, so the committed `afk.mjs` + `plugin.json`
 ride along and the launcher resolves its version and fetches the matching `dev`
 bundle (red-castle inlined, ADR 0061) — **no workspace build, no submodule, in
 any repo.** Execution runs against the caller's checkout; the launcher lives in
-the action's own checkout. Pin `@v1` (or a SHA) to fix both the action and the
-bundle version.
+the action's own checkout. Pin `@v1` to track the latest compatible v1 release,
+or pin a SHA when the caller needs a fully immutable action/runtime pair.
 
 External dependencies are only **GitHub-official** actions (`actions/checkout`,
 `actions/setup-node`, `actions/github-script`) plus our own action — no

@@ -12,6 +12,8 @@ name: red-release
 #   3. Sync plugins/dev/.claude-plugin/plugin.json `version` field.
 #   4. Commit the bump back to main (marker `[skip release]` to avoid loop).
 #   5. Create the git tag and a GitHub Release with auto-generated notes.
+#   6. Move the matching major tag (for example `v1`) to the same commit so
+#      reusable workflows and actions pinned to `@v1` keep receiving releases.
 
 on:
   push:
@@ -501,6 +503,9 @@ jobs:
           PREVIOUS: ${{ steps.bump.outputs.previous }}
         run: |
           set -euo pipefail
+          major="v${NEXT#v}"
+          major="${major%%.*}"
+
           git tag -a "$NEXT" -m "Release $NEXT"
           git push origin "$NEXT"
           assets=(
@@ -530,3 +535,8 @@ jobs:
               --title "$NEXT" \
               --generate-notes
           fi
+
+          # `vX.Y.Z` is immutable release history; `vX` is the moving major ref
+          # GitHub reusable workflows/actions consume via `uses: ...@vX`.
+          git tag -f "$major" HEAD
+          git push --force origin "refs/tags/$major:refs/tags/$major"
