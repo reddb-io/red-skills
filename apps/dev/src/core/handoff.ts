@@ -57,6 +57,17 @@ export interface HandoffInput {
   priorAttemptContext?: string;
   /** Optional PRD reference for the `prd: #N` line (FILTER_KIND=prd in bash). */
   prdRef?: string;
+  /**
+   * The effective binding merge gate for this attempt: the operator-declared
+   * `afk.backpressure` commands the orchestrator will run against the worker
+   * branch AFTER `<promise>DONE</promise>` (issue #849). Surfaced verbatim in a
+   * `<merge-gate>` section so the inner agent can run/satisfy the EXACT command
+   * + scope it must pass — instead of finishing on a narrower touched-package
+   * confidence check and bouncing as `blocked:validation`. Empty/undefined →
+   * `<merge-gate>` is omitted (no operator gate declared, or not yet known), so
+   * the first-attempt handoff is byte-for-byte unchanged.
+   */
+  mergeGateCommands?: readonly string[];
 }
 
 /** Trimmed-of-all-whitespace emptiness test (bash `[[ -n "$x" ]]` after capture). */
@@ -211,6 +222,29 @@ export function buildThreadDiscussion(comments: HandoffComment[]): string {
 }
 
 /**
+ * `<merge-gate>` inner body: the operator-declared `afk.backpressure` commands
+ * the orchestrator runs against the worker branch AFTER `<promise>DONE</promise>`
+ * (issue #849). Each command is surfaced verbatim as a `- <cmd>` line in
+ * declaration order so the inner agent satisfies the EXACT binding gate rather
+ * than a narrower touched-package confidence check. Blank/whitespace entries are
+ * dropped. Returns "" when no command is declared — caller suppresses the
+ * wrapper, keeping the first-attempt handoff byte-for-byte unchanged.
+ */
+export function buildMergeGate(commands: readonly string[] | undefined): string {
+  const cmds = (commands ?? []).map((c) => c.trim()).filter((c) => c.length > 0);
+  if (cmds.length === 0) return "";
+  const lines = [
+    "These operator-declared commands are the binding merge gate. AFTER you emit",
+    "`<promise>DONE</promise>` the orchestrator runs them against your branch, in",
+    "order, and any non-zero exit parks the issue as `blocked:validation`. Run them",
+    "yourself and make them pass BEFORE you emit DONE — they are broader than your",
+    "touched-package confidence checks:",
+  ];
+  for (const cmd of cmds) lines.push(`- ${cmd}`);
+  return lines.join("\n");
+}
+
+/**
  * Assemble the full handoff.md content. Pure: no network, no filesystem. The
  * top-level XML wrappers appear in template order; any empty section is omitted
  * entirely (matching the bash `build_retry_handoff_body`). `<prior-attempt-context>`
@@ -229,6 +263,14 @@ export function buildHandoff(input: HandoffInput): string {
   lines.push("<issue-body>");
   lines.push(input.body);
   lines.push("</issue-body>");
+
+  const mergeGate = buildMergeGate(input.mergeGateCommands);
+  if (isPresent(mergeGate)) {
+    lines.push("");
+    lines.push("<merge-gate>");
+    lines.push(mergeGate);
+    lines.push("</merge-gate>");
+  }
 
   const attempts = buildPreviousAttempts(input.comments);
   const guidance = buildHumanGuidance(input.comments);
@@ -291,7 +333,7 @@ export const EXIT_PROTOCOL = [
   "",
   "1. ALREADY-DONE SHORT-CIRCUIT (check first, every time). Before exploring or planning, check whether the current branch ALREADY satisfies the acceptance criteria — a prior attempt may have finished it. Run `git log --oneline origin/main..HEAD` and inspect the tip against the criteria. If the work is already present and correct, do NOT re-explore, re-plan, or re-run a full-suite sanity pass: emit `<promise>DONE</promise>` as your final line immediately. This is the single most common way an attempt wastes its whole budget.",
   "2. Otherwise implement the slice: failing test first, minimal code, one commit per file (`git add -- <path>` then commit; never `git add -A`), `Refs #N` in each message.",
-  "3. When your work is committed and your touched package's gate is green, STOP. Do not open a PR, merge, close the issue, or poll CI — the orchestrator owns landing.",
+  "3. Two kinds of check, do not confuse them: (a) touched-package CONFIDENCE checks — the test/typecheck/lint/build for the package you changed — run these while developing to gain confidence; (b) the BINDING merge gate the orchestrator enforces AFTER you emit DONE. If your handoff carries a `<merge-gate>` section, those operator-declared commands ARE the binding gate (broader than your touched package): run them and make them pass before DONE. When your work is committed and both are green, STOP. Do not open a PR, merge, close the issue, or poll CI — the orchestrator owns landing. Do NOT re-run an unbounded full repository suite after your final commit; the listed gate commands are the contract.",
   "4. Your FINAL line MUST be exactly `<promise>DONE</promise>` (work complete) or `<promise>BLOCKED</promise>` (genuinely impossible/contradictory — explain in `<agent-notes>` first). A prose \"done\" is NOT a sentinel: an exit without the literal tag is read as a CRASH and re-invokes you, burning iterations. One of the two tags is always your last line.",
   "</exit-protocol>",
 ].join("\n");
