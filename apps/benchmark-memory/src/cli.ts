@@ -28,6 +28,7 @@ import {
   type LiveBaselineRunResult,
 } from "../../memory/src/live-baseline-adapters.js";
 import { formatMarkdownReport, runBenchRecall } from "../../memory/src/bench-recall.js";
+import { formatMistakeAvoidedReport, runBenchMistakeAvoided } from "../../memory/src/bench-mistake-avoided.js";
 import {
   formatEvalReport,
   runBenchEval,
@@ -61,6 +62,7 @@ Usage:
   benchmark-memory bench eval core   [--corpus <dir>] [--pack N] [--substrate reddb] [--records <file>] [--analytics <uri|file>] [--gate] [--out <file>] [--report <file>] [--json]
   benchmark-memory bench eval showcase [--corpus <dir>] [--pack N] [--substrate <name>] [--runs N] [--records <file>] [--analytics <uri|file>] [--out <file>] [--report <file>] [--json]
   benchmark-memory bench eval        [--corpus <dir>] [--pack N] [--substrate <name>] [--records <file>] [--analytics <uri|file>] [--out <file>] [--report <file>] [--json]
+  benchmark-memory bench mistake-avoided [--fixtures <dir>] [--out <file>] [--report <file>] [--json]
   benchmark-memory bench recall      [--root <dir>] [--corpus <dir>] [--k 1,5,10] [--out <file>] [--report <file>] [--json]
   benchmark-memory bench latency     [--root <dir>] [--workload <dir>] [--iterations N] [--warmup N] [--seed N] [--ops working-get,session-recall,long-term-recall] [--analytics <uri|file>] [--out <file>] [--report <file>] [--json]
   benchmark-memory references eval    [--v2] [--json] [--human] [--out <file>]
@@ -193,9 +195,10 @@ async function runInterop(args: ParsedArgs): Promise<number> {
 async function runBench(args: ParsedArgs): Promise<number> {
   const sub = args.positional[0];
   if (sub === "eval") return runBenchEvalCmd(args);
+  if (sub === "mistake-avoided") return runBenchMistakeAvoidedCmd(args);
   if (sub === "recall") return runBenchRecallCmd(args);
   if (sub === "latency") return runBenchLatencyCmd(args);
-  throw new Error(`usage: benchmark-memory bench (eval|recall|latency) ...`);
+  throw new Error(`usage: benchmark-memory bench (eval|mistake-avoided|recall|latency) ...`);
 }
 
 async function runBenchEvalCmd(args: ParsedArgs): Promise<number> {
@@ -241,6 +244,21 @@ async function runBenchEvalCmd(args: ParsedArgs): Promise<number> {
     );
   }
   return gateResult?.status === "fail" ? 1 : 0;
+}
+
+async function runBenchMistakeAvoidedCmd(args: ParsedArgs): Promise<number> {
+  const rootDir = resolveRepoRoot(String(process.cwd()));
+  const fixtureDir = stringFlag(args, "fixtures") ?? join(rootDir, "apps/memory/bench/mistake-avoided/governed-flows");
+  const report = await runBenchMistakeAvoided({ fixtureDir });
+  await writeOutputs(args, report, formatMistakeAvoidedReport(report));
+  if (args.flags.json === true) {
+    process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+  } else {
+    process.stdout.write(
+      `benchmark-memory bench mistake-avoided: scenarios=${report.aggregate.scenario_count} mistake_avoided=${report.aggregate.mistake_avoided} token_savings=${report.aggregate.token_savings_pct.toFixed(3)}\n`,
+    );
+  }
+  return 0;
 }
 
 async function runBenchRecallCmd(args: ParsedArgs): Promise<number> {
