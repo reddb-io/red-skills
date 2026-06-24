@@ -220,6 +220,7 @@ describe("read-only Memory operations registry", () => {
     expect(operations.every((op) => op.safetyClass === "read-only")).toBe(true);
     expect(operations.map((op) => op.sideEffectClass)).not.toContain("writes-memory");
     expect(operations.map((op) => op.id)).not.toContain("memory.store");
+    expect(operations.map((op) => op.id)).not.toContain("memory.store-evidence");
     expect(operations.map((op) => op.id)).not.toContain("memory.supersede");
 
     expect(getReadOnlyMemoryOperation("memory.readiness").outputSchema.parse).toBeTypeOf(

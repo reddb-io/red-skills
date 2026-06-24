@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -15,6 +15,7 @@ import {
 const TIMEOUT = 40_000;
 
 const pkgRoot = resolve(__dirname, "..");
+const pluginRoot = resolve(pkgRoot, "..", "..", "plugins", "memory");
 const tsx = join(pkgRoot, "node_modules", ".bin", "tsx");
 const serverEntry = join(pkgRoot, "src", "mcp-server.ts");
 
@@ -116,6 +117,15 @@ async function seedConfiguredStore(): Promise<{ uri: string; root: string }> {
     ),
     "utf8",
   );
+  return { uri, root: dir };
+}
+
+async function seedWritableStore(): Promise<{ uri: string; root: string }> {
+  const dir = await mkdtemp(join(tmpdir(), "memory-mcp-writable-"));
+  roots.push(dir);
+  const uri = `file://${join(dir, "graph.rdb")}`;
+  const store = await MemoryStore.open({ uri, project: "test" });
+  await store.close();
   return { uri, root: dir };
 }
 
@@ -232,6 +242,8 @@ describe("MCP server over stdio", () => {
           "memory_layers_viewer",
           "memory_lint",
           "memory_map_context",
+          "memory_map_contract",
+          "memory_map_freshness",
           "memory_merge_pass",
           "memory_neighbors",
           "memory_onboarding_map",
@@ -260,6 +272,7 @@ describe("MCP server over stdio", () => {
           "memory_smart_search_viewer",
           "memory_stats",
           "memory_store",
+          "memory_store_evidence",
           "memory_structural_impact",
           "memory_structural_impact_viewer",
           "memory_supersede",
@@ -287,9 +300,125 @@ describe("MCP server over stdio", () => {
         expect(tool?.inputSchema).toEqual(expect.objectContaining({ type: "object" }));
       }
       const storeTool = tools.find((tool) => tool.name === "memory_store");
+      const storeEvidenceTool = tools.find((tool) => tool.name === "memory_store_evidence");
       const supersedeTool = tools.find((tool) => tool.name === "memory_supersede");
       expect(storeTool?.description?.toLowerCase()).toContain("mutating");
+      expect(storeEvidenceTool?.description?.toLowerCase()).toContain("mutating");
+      expect(storeEvidenceTool?.description?.toLowerCase()).toContain("governed");
+      expect(storeEvidenceTool?.description?.toLowerCase()).toContain("stored");
+      expect(storeEvidenceTool?.description?.toLowerCase()).toContain("proposed");
+      expect(storeEvidenceTool?.description?.toLowerCase()).toContain("rejected");
       expect(supersedeTool?.description?.toLowerCase()).toContain("mutating");
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "memory_store_evidence returns stored, proposed, and rejected governed-write outcomes",
+    async () => {
+      const { uri, root } = await seedWritableStore();
+      const client = await connect(uri, { MEMORY_ROOT: root });
+
+      const storedRes = (await client.callTool({
+        name: "memory_store_evidence",
+        arguments: {
+          claim: "MCP governed evidence stores low-risk validation facts.",
+          source_ref: "tests/mcp-server.test.ts",
+          citation_excerpt: "stores low-risk validation facts",
+          intent: "validation",
+          observer: "mcp-test",
+        },
+      })) as ToolResult;
+      const stored = JSON.parse(storedRes.content[0]?.text ?? "{}") as {
+        outcome: string;
+        memory: { id: number; urn: string };
+        provenance: { source_ref: string; citation_excerpt: string; evidence: string[] };
+      };
+      expect(stored).toMatchObject({
+        outcome: "stored",
+        provenance: {
+          source_ref: "tests/mcp-server.test.ts",
+          citation_excerpt: "stores low-risk validation facts",
+          evidence: ["tests/mcp-server.test.ts", "stores low-risk validation facts"],
+        },
+      });
+      expect(stored.memory.urn).toBe(`memory_nodes:${stored.memory.id}`);
+      expect(storedRes.structuredContent).toMatchObject({
+        outcome: "stored",
+        artifact_id: stored.memory.urn,
+        artifact_path: null,
+        policy_reason: "low_risk_validation_evidence_stored",
+        provenance: {
+          source_ref: "tests/mcp-server.test.ts",
+          citation_excerpt: "stores low-risk validation facts",
+        },
+      });
+
+      const proposedRes = (await client.callTool({
+        name: "memory_store_evidence",
+        arguments: {
+          claim: "Always remember this human-facing deployment preference.",
+          source_ref: "agent transcript:9",
+          citation_excerpt: "The instruction-like claim should route through review.",
+          intent: "instruction capture",
+          observer: "mcp-test",
+          blast_radius: "medium",
+        },
+      })) as ToolResult;
+      const proposed = JSON.parse(proposedRes.content[0]?.text ?? "{}") as {
+        outcome: string;
+        memory: { id: null; urn: null };
+        review_artifact: { id: string; path: string };
+      };
+      expect(proposed).toMatchObject({
+        outcome: "proposed",
+        memory: { id: null, urn: null },
+        review_artifact: {
+          id: expect.stringMatching(/^evidence-[a-f0-9]{12}$/),
+          path: expect.stringMatching(/^\.red\/memory\/inbox\/evidence\/evidence-[a-f0-9]{12}\.yaml$/),
+        },
+      });
+      expect(proposedRes.structuredContent).toMatchObject({
+        outcome: "proposed",
+        artifact_id: proposed.review_artifact.id,
+        artifact_path: proposed.review_artifact.path,
+        policy_reason: "risk_requires_evidence_review:medium_blast_radius",
+      });
+      await expect(readFile(join(root, proposed.review_artifact.path), "utf8")).resolves.toContain(
+        proposed.review_artifact.id,
+      );
+
+      const rejectedRes = (await client.callTool({
+        name: "memory_store_evidence",
+        arguments: {
+          claim: "Missing provenance must return a governed rejection.",
+          intent: "validation",
+          observer: "mcp-test",
+        },
+      })) as ToolResult;
+      const rejected = JSON.parse(rejectedRes.content[0]?.text ?? "{}") as {
+        outcome: string;
+        reason: string;
+        memory: { id: null; urn: null };
+        review_artifact: null;
+      };
+      expect(rejected).toMatchObject({
+        outcome: "rejected",
+        reason: "missing_required_fields:sourceRef,citationExcerpt",
+        memory: { id: null, urn: null },
+        review_artifact: null,
+      });
+      expect(rejectedRes.structuredContent).toMatchObject({
+        outcome: "rejected",
+        artifact_id: null,
+        artifact_path: null,
+        policy_reason: "missing_required_fields:sourceRef,citationExcerpt",
+        provenance: {
+          source_ref: null,
+          citation_excerpt: null,
+          evidence: [],
+        },
+      });
     },
     TIMEOUT,
   );
@@ -1672,7 +1801,11 @@ describe("MCP server over stdio", () => {
     "memory_hook_coverage exposes read-only runner manifest and config coverage",
     async () => {
       const seeded = await seedConfiguredStore();
-      const client = await connect(seeded.uri, { MEMORY_ROOT: seeded.root });
+      const client = await connect(seeded.uri, {
+        MEMORY_ROOT: seeded.root,
+        CLAUDE_PLUGIN_ROOT: pluginRoot,
+        CODEX_PLUGIN_ROOT: pluginRoot,
+      });
 
       const result = (await client.callTool({
         name: "memory_hook_coverage",

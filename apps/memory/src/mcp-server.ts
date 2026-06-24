@@ -32,6 +32,10 @@ import { runAutoCure } from "./auto-curation.js";
 import { neighbors, path, recall, search, traverse } from "./engine.js";
 import { resolveProvider } from "./extract-conversation.js";
 import { exportGraph, toEdge } from "./export.js";
+import {
+  memoryStoreEvidence,
+  type GovernedWriteResult,
+} from "./governed-write.js";
 import { buildGraphContract } from "./graph-contract.js";
 import { MemoryStore, factToNode } from "./graph-store.js";
 import { HistoricalMemoryStore } from "./historical-memory-store.js";
@@ -41,7 +45,7 @@ import {
   type ReadOnlyMemoryOperation,
 } from "./operations.js";
 import { runPromote } from "./promote.js";
-import type { EdgeLabel, MemoryScope, NodeType } from "./schema.js";
+import type { Confidence, EdgeLabel, MemoryScope, NodeType } from "./schema.js";
 import {
   current as sessionCurrent,
   end as sessionEnd,
@@ -113,6 +117,20 @@ const StoreInput = z.object({
       }),
     )
     .default([]),
+});
+
+const StoreEvidenceInput = z.object({
+  claim: z.string().optional(),
+  source_ref: z.string().optional(),
+  citation_excerpt: z.string().optional(),
+  intent: z.string().optional(),
+  observer: z.string().optional(),
+  blast_radius: z.string().optional(),
+  confidence: z.enum(["EXTRACTED", "INFERRED", "AMBIGUOUS"]).optional(),
+  route: z.string().optional(),
+  proposal_kind: z.string().optional(),
+  proposal_id: z.string().optional(),
+  proposal_path: z.string().optional(),
 });
 
 const SearchInput = z.object({
@@ -296,6 +314,30 @@ async function main(): Promise<void> {
           );
         }
         return text(`stored rid=${rid}, edges=${edges.length}`, { rid, edges });
+      }
+      case "memory_store_evidence": {
+        const input = StoreEvidenceInput.parse(args);
+        const result = await memoryStoreEvidence(
+          store,
+          {
+            claim: input.claim,
+            sourceRef: input.source_ref,
+            citationExcerpt: input.citation_excerpt,
+            intent: input.intent,
+            observer: input.observer,
+            blastRadius: input.blast_radius,
+            confidence: input.confidence as Confidence | undefined,
+            route: input.route,
+            proposalKind: input.proposal_kind,
+            proposalId: input.proposal_id,
+            proposalPath: input.proposal_path,
+          },
+          { rootDir: root },
+        );
+        return text(
+          JSON.stringify(result, null, 2),
+          governedWriteStructuredContent(result),
+        );
       }
       case "memory_search": {
         const input = SearchInput.parse(args);
@@ -528,6 +570,12 @@ const MANUAL_TOOLS = [
     inputSchema: zodToSchema(StoreInput),
   },
   {
+    name: "memory_store_evidence",
+    description:
+      "MUTATING governed write: submit operational evidence through the shared Memory write policy. Returns stored, proposed, or rejected depending on governance review requirements.",
+    inputSchema: zodToSchema(StoreEvidenceInput),
+  },
+  {
     name: "memory_search",
     description: "Direct full-text search over node titles and content.",
     inputSchema: zodToSchema(SearchInput),
@@ -628,6 +676,30 @@ const OPERATION_BY_TOOL_NAME = new Map<string, ReadOnlyMemoryOperation>(
     operation,
   ]),
 );
+
+function governedWriteStructuredContent(
+  result: GovernedWriteResult,
+): Record<string, unknown> {
+  const artifactId =
+    result.review_artifact?.id ??
+    result.memory.urn ??
+    (result.memory.id == null ? null : String(result.memory.id));
+  return {
+    operation: result.operation,
+    schema_version: result.schema_version,
+    outcome: result.outcome,
+    reason: result.reason,
+    policy_reason: result.policy.reason,
+    policy: result.policy,
+    artifact_id: artifactId,
+    artifact_path: result.review_artifact?.path ?? null,
+    provenance: result.provenance,
+    memory_id: result.memory.id,
+    memory_urn: result.memory.urn,
+    review_artifact_id: result.review_artifact?.id ?? null,
+    review_artifact_path: result.review_artifact?.path ?? null,
+  };
+}
 
 async function operationStructuredContent(
   operationId: string,
