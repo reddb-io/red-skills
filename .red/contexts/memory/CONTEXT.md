@@ -79,7 +79,7 @@ An approval-gated proposal to change Red context glossary language, produced fro
 _Avoid_: direct context rewrite, hidden glossary mutation, automatic ADR
 
 **Hermes-like refinement loop**:
-A governed Memory workflow inspired by Hermes-style self-improvement, where captured signals become routed evidence and approval-gated proposals rather than automatic Skill creation or silent instruction rewrites.
+A governed Memory workflow inspired by Hermes-style self-improvement, where captured signals become routed evidence and approval-gated proposals rather than automatic Skill creation or silent instruction rewrites. The first `memory learn`/`memory refine` slice follows **Governed write surface** delivery and consumes governed write artifacts plus validation and reasoning-attempt evidence instead of raw agent logs or a parallel capture path. Its initial output is Evidence cards plus optional linked proposals when the route and confidence are clear; it does not apply context or Skill patches directly.
 _Avoid_: Hermes runner, automatic skill factory, self-rewriting agent
 
 **Internal refinement signal**:
@@ -225,6 +225,10 @@ _Avoid_: viewer payload, benchmark fixture
 **Memory handoff report**:
 The read-only cross-agent brief generated from recent graph evidence, with active work, decisions, validations, risks, relevant context, citations, and ready-to-inject markdown.
 _Avoid_: raw transcript, session dump
+
+**Memory capsule**:
+A small cross-agent packaging name over **Memory context pack** and **Memory handoff report** outputs, used to create/read cited, budgeted, ready-to-inject context without introducing a new durable storage primitive in the first slice.
+_Avoid_: compressed transcript, new capsule database, uncited shared context blob
 
 **Memory work frontier**:
 The read-only planning report that ranks remembered `task`, `issue`, `goal`, and `prd` nodes into ready, blocked, and completed work from RedDB graph evidence and dependency edges.
@@ -657,8 +661,16 @@ The Memory product strategy that makes RedDB's embedded multi-model engine the c
 _Avoid_: generic database backend, storage detail
 
 **Memory moat foundation**:
-The first-cycle implementation stance that completes the core RedDB-backed substrate for vector/hybrid recall, VCS/time-travel memory, operational telemetry, and graph analytics before treating UI, MCP/API, or benchmarks as the primary work.
+The first-cycle implementation stance that completes the core RedDB-backed substrate for vector/hybrid recall, VCS/time-travel memory, operational telemetry, and graph analytics before treating UI, MCP/API, or benchmarks as the primary work. ADR 0072 amends the next delivery cycle so a **Governed write surface** and **Cross-agent Memory smoke test** ship before the full foundation is complete.
 _Avoid_: surface-first roadmap, demo-driven roadmap
+
+**Memory token-savings benchmark**:
+An incremental deterministic benchmark for governed Memory ergonomics that first compares a baseline broad-read agent against **Governed write surface** plus recall plus **Memory capsule** flows, then adds full failure-learning scenarios after `memory learn`/`memory refine` exists. The first four deterministic scenarios are validation retry, cross-agent recall, capsule handoff, and governed rejection. Its primary non-token metric is `mistake_avoided`; token, file, command, answer, and policy metrics support that claim.
+_Avoid_: compression benchmark, live-agent-only eval, failure-learning claim before implementation
+
+**Mistakes avoided positioning**:
+The public Memory benchmark and Workbench framing that leads with repeated-work or wrong-action prevention, then uses tokens avoided as a supporting efficiency metric rather than the primary product claim.
+_Avoid_: compression-first positioning, token savings without correctness, recall-only demo copy
 
 **Memory product evidence base**:
 The current RedSkills repository itself — ADRs, contexts, PRDs, code, tests, issues, and Memory graph evidence — used as the proof surface for Memory product direction instead of a separate demo corpus.
@@ -883,7 +895,7 @@ _Avoid_: memory rollback, historical search
 - **Memory learning debt** is report-only evidence for self-improvement; mutating skill changes remain outside Memory.
 - **Engineering semantic graph** is the schema strategy behind **Codebase mapping parity** and **Neo4j Agent Memory parity**.
 - The **RedDB-native Memory moat** coordinates product tracks by requiring visible RedDB-backed advantages, not just surface-area parity.
-- The **Memory moat foundation** is the first-cycle priority before surface expansion, so UI, MCP/API, and benchmark work prove real RedDB substrate capabilities instead of placeholders.
+- The **Memory moat foundation** remains the moat strategy, but ADR 0072 lets the **Governed write surface** and **Cross-agent Memory smoke test** ship before the full foundation is complete.
 - The **Memory product evidence base** is the shared proving ground for UI, benchmarks, MCP/API examples, public documentation, and roadmap decisions.
 - The **Agentmemory live baseline** is the first external comparison for `eval:competitive:v2` because it competes directly in operational memory for coding agents.
 - The **Neo4j Agent Memory live baseline** keeps Neo4j-backed recall-latency comparisons opt-in and measured instead of asserted from checked fixtures.
