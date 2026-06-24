@@ -1679,6 +1679,21 @@ function blockerForFailure(outcome: ProcessOutcome, sections: SectionBodies): Cu
   }
 }
 
+const ACTIONABLE_BLOCKER_KINDS = new Set([
+  "spec",
+  "validation",
+  "merge-conflict",
+  "ci",
+  "stalled",
+  "decision",
+]);
+
+function shouldPreserveCurrentBlocker(existing: CurrentBlocker | null, next: CurrentBlocker): boolean {
+  if (!existing) return false;
+  if (next.kind !== "runner") return false;
+  return ACTIONABLE_BLOCKER_KINDS.has(existing.kind);
+}
+
 async function writeCurrentBlockerBestEffort(
   deps: ProcessIssueDeps,
   input: ProcessIssueInput,
@@ -1686,7 +1701,9 @@ async function writeCurrentBlockerBestEffort(
 ): Promise<void> {
   if (!blocker || !deps.gh.editBody) return;
   try {
-    await deps.gh.editBody(input.issue, upsertCurrentBlocker(input.body, blocker));
+    const existing = parseCurrentBlocker(input.body);
+    const next = shouldPreserveCurrentBlocker(existing, blocker) ? existing! : blocker;
+    await deps.gh.editBody(input.issue, upsertCurrentBlocker(input.body, next));
   } catch {
     // Best-effort: issue-body state improves resumability, but label routing and
     // the failure envelope remain the canonical fallback if the edit fails.
