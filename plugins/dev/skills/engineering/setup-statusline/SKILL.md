@@ -87,9 +87,21 @@ is a personal host preference, not repo state. There is no command hook, so the
 shared RedSkills `statusline` producer cannot be injected into the footer yet.
 
 Codex has a native `/statusline` command for picking and reordering these
-footer items and persisting them to `config.toml`. If the user already has a
-custom `tui.status_line`, preserve it; that custom value is the operator's host
-preference, not repo state.
+footer items and persisting them to `config.toml`. The dev bundle also exposes
+an explicit inspector/fixer:
+
+```bash
+node "$CODEX_PLUGIN_ROOT/skills/engineering/afk/bin/afk.mjs" codex-statusline
+node "$CODEX_PLUGIN_ROOT/skills/engineering/afk/bin/afk.mjs" codex-statusline --fix
+```
+
+The inspector reports the active `tui.status_line`, flags a missing
+`task-progress` widget, prints the recommended order, and reminds the operator
+that rich AFK worker state still lives in `/afk monitor`. `--fix` is explicit:
+it appends `task-progress` to an existing visible footer or installs the
+recommended footer when `status_line` is absent. If the user already has a
+custom `tui.status_line`, preserve it unless they explicitly ask for `--fix`;
+that custom value is the operator's host preference, not repo state.
 
 Offer to set a useful footer (note: this is **global** Codex config, not
 per-repo like the Claude path):
@@ -120,6 +132,15 @@ spawns a read-only monitor agent; otherwise it falls back to the monitor
 dashboard). When Codex ships a command-backed statusline (openai/codex#17827 /
 #20244), this skill can add a `{ type = "command", command = … }` entry pointing
 at the same AFK bundle so the line matches Claude Code's.
+
+## OpenCode
+
+OpenCode is not a Codex/Claude-style host UI in RedSkills. It is the AFK
+API-auth runner lane selected explicitly with `--runner opencode` or
+`RED_AFK_RUNNER=opencode`; AFK observes it through the same GitHub envelopes,
+worker logs, `/afk monitor`, `/afk dashboard`, and Actions output as any other
+runner. There is no OpenCode footer/statusline adapter to install here because
+there is no interactive RedSkills-hosted OpenCode plugin surface.
 
 ## Notes
 
