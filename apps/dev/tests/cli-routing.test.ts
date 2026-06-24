@@ -41,6 +41,13 @@ describe("cli routing — native commands", () => {
     });
   });
 
+  it("routes codex-monitor-agent with prompt flags preserved", () => {
+    expect(parseCli(["codex-monitor-agent", "--project-root", "/repo", "--mode", "fleet"])).toEqual({
+      command: "codex-monitor-agent",
+      args: ["--project-root", "/repo", "--mode", "fleet"],
+    });
+  });
+
   it("routes dashboard with reporting flags preserved", () => {
     expect(parseCli(["dashboard", "--period", "14d", "--json"])).toEqual({
       command: "dashboard",
