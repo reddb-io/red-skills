@@ -6,6 +6,18 @@ Upstream base: `mattpocock/skills@6eeb81b5fcfeeb5bd531dd47ab2f9f2bbea27461` (see
 
 ---
 
+## afk (engineering) — Task mirror host capability matrix codified (issue #886)
+
+- **status**: modified
+- **upstream**: —
+- **why**: The Task mirror's per-host support (Claude Code native task API, Codex monitor-agent fallback, OpenCode headless) was implicit and scattered across ADR 0003/0015 and the runner docs; OpenCode had no explicit Task-mirror decision and `runMirrorPlan` would have routed an `opencode` host down the Claude native path. #886 makes the matrix explicit and test-backed without changing product behavior, preserving the AFK-runner vs interactive-host distinction and the no-cross-runner-abstraction rule.
+- **what changed**:
+  - `core/mirror.ts`: new `taskMirrorCapability(host)` — an explicit per-host switch (not a generic registry) returning a `TaskMirrorCapability` (`surface`: `native-task` | `monitor-agent` | `headless`, plus `agentDriven`/`nativeTaskApi`/operator note). Unknown host throws. The three sinks (`mirrorPlan`, `codexSinkPlan`, headless none) stay separate; the function classifies, it does not dispatch generically.
+  - `commands/monitor.ts`: `runMirrorPlan` now picks the sink by `taskMirrorCapability(host).surface`; `MirrorPlanOptions` gains `host` (`codex` kept as legacy shorthand). `monitor --mirror-plan --runner opencode` resolves to the headless host and emits an empty plan.
+  - SKILL.md: a binding host-capability matrix table in *Task Mirror And Codex Monitor Agent*, stating no parity across hosts.
+  - `runner-opencode.md`: new *Task mirror (headless — no surface)* section.
+  - Tests: `tests/mirror.test.ts` covers the capability decision for all three hosts (distinct surfaces, normalization, loud unknown-host failure); `tests/monitor.test.ts` covers the OpenCode-headless empty plan and the per-host sink routing.
+
 ## requeue (engineering) — narrowed safe requeue for blocked:validation/spec (issue #860)
 
 - **status**: modified
