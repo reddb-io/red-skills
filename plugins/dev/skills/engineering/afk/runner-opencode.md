@@ -109,6 +109,19 @@ in an API-key-only lane with no host session, run OpenCode **without**
 `--fallback-runner` so an exhaustion is terminal-through-recovery rather than a
 swap to an unavailable runner.
 
+## Task mirror (headless — no surface)
+
+OpenCode is the `headless` row of the Task-mirror host capability matrix
+(`taskMirrorCapability("opencode")`, SKILL.md *Task Mirror And Codex Monitor
+Agent*). Because it has **no host session**, there is no native task list and no
+sub-agent UI to mirror worker progress into: the OpenCode runner is not a Claude
+Code-style native-task host, and it is not the Codex monitor-agent fallback
+either. `monitor --mirror-plan --runner opencode` therefore emits an **empty
+plan** — no `TaskCreate`/`TaskUpdate` calls — and the canonical progress surface
+for an OpenCode lane is the `monitor` dashboard read directly from the worker
+state files. This is the honest no-parity position: do not invent a cross-runner
+task abstraction to pretend OpenCode has a surface it does not (ADR 0003).
+
 ## Working Directory
 
 OpenCode runs with the sandcastle-created worktree as its working directory and
