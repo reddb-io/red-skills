@@ -24,7 +24,7 @@ The invoking LLM is responsible for setting `RED_AFK_RUNNER` to its own host run
 
 `afk.mjs` is a **dedicated forwarder** (ADR 0039 entrypoint, build role `run:dev`): every argument is passed straight to the `dev` bundle, whose own command surface (`run`, `monitor`, `fleet`, …) is documented below. So `… afk.mjs run --once`, `… afk.mjs monitor`, and the bare `… afk.mjs --issues 42` all reach the orchestrator. The generic entrypoint verbs (`run <plugin>` / `fetch`) belong to `red-fetch.mjs`, not to this launcher — they do **not** shadow the bundle's commands (#434).
 
-Commands and their parameters are documented in *When To Use* below — that section is authoritative for the CLI surface. The commands are `run` (the default — a bare token routes here with argv preserved), `monitor`, `dashboard`, `daily-review`, `weekly-review`, `retake`, `fleet`, `reap`, `statusline` (the shared RedSkills statusline producer for command-backed host adapters; reads the host payload on stdin and resolves the project root from `$1` or the payload), and the hidden `__supervise` (the fleet supervisor entrypoint; never invoked by hand). `run` accepts `--prd`, `--issues`, `--runner`, `--alternate`, `--fallback-runner`, `--request`/`-r`, `-n`, `--once`, and `--boot-only`; `monitor` accepts `--once`; `dashboard` accepts `--period N|Nd` and `--json`; `daily-review` and `weekly-review` accept `--json`; `retake` accepts `#ISSUE`, `--apply`, `--json`, `--repo OWNER/REPO`, and `--pr-limit N`; `fleet` accepts an optional numeric target `N`, the `stop` subcommand, `--request`/`-r`, and `--runner`; `reap` takes no flags; `statusline` accepts an optional project-root path as `$1`.
+Commands and their parameters are documented in *When To Use* below — that section is authoritative for the CLI surface. The commands are `run` (the default — a bare token routes here with argv preserved), `monitor`, `dashboard`, `daily-review`, `weekly-review`, `retake`, `fleet`, `reap`, `codex-statusline` (inspect/fix Codex's native footer widgets), `codex-monitor-agent` (emit the read-only Codex monitor-agent prompt for host-layer spawning), `statusline` (the shared RedSkills statusline producer for command-backed host adapters; reads the host payload on stdin and resolves the project root from `$1` or the payload), and the hidden `__supervise` (the fleet supervisor entrypoint; never invoked by hand). `run` accepts `--prd`, `--issues`, `--runner`, `--alternate`, `--fallback-runner`, `--request`/`-r`, `-n`, `--once`, and `--boot-only`; `monitor` accepts `--once`; `dashboard` accepts `--period N|Nd` and `--json`; `daily-review` and `weekly-review` accept `--json`; `retake` accepts `#ISSUE`, `--apply`, `--json`, `--repo OWNER/REPO`, and `--pr-limit N`; `fleet` accepts an optional numeric target `N`, the `stop` subcommand, `--request`/`-r`, and `--runner`; `reap` takes no flags; `codex-statusline` accepts `--config`, `--fix`, and `--json`; `codex-monitor-agent` accepts `--project-root`, `--mode run|fleet`, `--interval-seconds`, and `--json`; `statusline` accepts an optional project-root path as `$1`.
 
 The bundle is a single self-contained build (one file, one inlined runtime dependency, no `node_modules`, no install step) and is the public entrypoint. Every command — orchestration, supervisor, statusline, and hooks — executes natively in the bundle; the legacy shell orchestrator under `scripts/` has been removed (ADR 0032, ADR 0034). Treat this `SKILL.md` as the contract: run the bundle, don't read its source.
 
@@ -379,6 +379,38 @@ The monitor invocation handles its own teardown — see *Self-Cancel* under the 
 - The invocation is `/afk --once` (single supervised iteration; user is already watching).
 - `CronCreate` is unavailable (not running under Claude Code — e.g. Codex). Print one line `monitor loop unavailable in this runner; tail .red/tmp/workers/*/*/afk.log manually.` and continue.
 
+## Codex Monitor Agent (Codex only — binding)
+
+Codex does not expose Claude Code's `TaskCreate` / `TaskUpdate` task surface, and
+its `tui.status_line` only renders built-in footer widgets. It does expose a
+native sub-agent UI in hosts where the sub-agent primitive is available. For
+Codex runs, use that sub-agent UI as a read-only presentation layer over the
+canonical `/afk monitor` dashboard.
+
+When `/afk` launches a normal detached worker under Codex (`run`, not
+`monitor`, not `--once`, not `--boot-only`):
+
+1. Fetch a sub-agent spawn primitive via `ToolSearch` (query:
+   `spawn agent background monitor`).
+2. If unavailable, continue the worker launch and print:
+   `monitor loop unavailable in this runner; run /dev:afk monitor or tail .red/tmp/workers/*/*/afk.log manually.`
+3. If available, emit the canonical prompt from the bundle:
+   ```bash
+   RED_AFK_RUNNER=codex node "$CODEX_PLUGIN_ROOT/skills/engineering/afk/bin/afk.mjs" codex-monitor-agent --project-root "$PWD" --mode run
+   ```
+   Spawn exactly one monitor agent with that prompt. The monitor agent is a
+   presentation consumer only: it periodically runs `/dev:afk monitor --once`,
+   reports concise progress in the Codex UI, and exits once no supervisor or
+   live workers remain.
+4. Tell the user one line:
+   `Codex monitor agent spawned — auto-closes when AFK exits; manual monitor: /dev:afk monitor.`
+
+Hard boundaries for the monitor agent are non-negotiable: it must never edit
+files, claim issues, change labels, comment, stop workers, run validation, push,
+merge, `/ship`, `/hitl`, `/triage`, `/afk run`, `/afk fleet`, `/afk fleet stop`,
+`/afk reap`, or `/afk requeue`. Closing it manually must not affect the AFK
+worker.
+
 ## Fleet Mode (runner-portable — binding)
 
 `/dev:afk fleet [N]` and `/dev:afk fleet stop` are the user-facing fleet commands. They let one terminal command spin up (or shut down) `N` concurrent `run` workers on the current checkout, with the supervisor handling respawn, the circuit breaker, the **passive stall detector** (samples each slot's per-attempt **agent lane** `agent.log.jsonl` mtime — the clean liveness signal — every `RED_AFK_STALL_POLL_S=30s`; flags any slot alive ≥ `RED_AFK_STALL_THRESHOLD_S=600` whose agent lane has been idle ≥ the same — surfaces as `⏸️ stalled` in `/dev:afk monitor`. It keys off the agent lane, never `afk.log`/`log.jsonl`, because the orchestrator heartbeat writes those every minute and would mask a real stall — the masking that defeated detection in #243), the **hard stall reaper** (a slot silent on the agent lane past `RED_AFK_STALL_KILL_THRESHOLD_S=1800` is only a *candidate*: the irreversible kill is gated behind a reaper-signal predicate, so a worker mid-build/test — an active `vitest`/`tsc`/`cargo`/… descendant under its tree, or non-trivial aggregate cpu — is **busy** and left alone, while a genuinely stuck worker [idle past the threshold, no active descendant, flat cpu] is killed tree-wide, a `data-attempt-status="no-sentinel"` envelope is posted with the attempt-dir `afk.log` tail, the issue label is rotated back to `ready-for-agent`, the worktree + attempt dir are removed, and the slot is freed for the next health-check respawn — `RED_AFK_STALL_KILL_THRESHOLD_S` must be strictly greater than `RED_AFK_STALL_THRESHOLD_S`, validated at supervisor boot), and per-slot build isolation.
@@ -394,7 +426,7 @@ $ /dev:afk fleet 1   # every worker sees both vars
 Fleet mode is **runner-portable**: the supervisor is plain process orchestration, not a Claude Code primitive. Claude Code, Codex, and bare terminals may all launch and stop the supervisor when the normal AFK hard preconditions pass. Runner-specific observability degrades independently:
 
 - Claude Code: schedule the auto-monitor cron when `CronCreate`/`CronList` are available; if not, launch fleet anyway and print `monitor loop unavailable in this runner; run /dev:afk monitor or tail .red/tmp/afk-supervisor.log manually.`
-- Codex: launch fleet with `RED_AFK_RUNNER=codex`, skip cron, and spawn one read-only Codex monitor agent when a sub-agent primitive is available. If no sub-agent primitive is available, launch fleet anyway and print the same manual-monitor guidance.
+- Codex: launch fleet with `RED_AFK_RUNNER=codex`, skip cron, and spawn one read-only Codex monitor agent from the bundle's `codex-monitor-agent --mode fleet` prompt when a sub-agent primitive is available. If no sub-agent primitive is available, launch fleet anyway and print the same manual-monitor guidance.
 - Bare terminal / unknown runner: launch fleet, skip cron/native monitor, and print the manual-monitor guidance.
 
 ### `/dev:afk fleet [N]` — launch
@@ -415,7 +447,7 @@ Fleet mode is **runner-portable**: the supervisor is plain process orchestration
    The command performs the PID-file pre-check from step 2 itself (refusing if a live supervisor already runs), detaches the supervisor, and forwards the resolved runner and the `--request/-r` text to every worker it spawns. It waits up to 3 s for `.red/tmp/afk-supervisor.pid` to appear and contain a live PID, then prints the launched supervisor PID and target; on failure it reports the tail of `.red/tmp/afk-supervisor.log`. Capture the reported PID for the *Report back* step. The launched supervisor is the native `__supervise` entrypoint of the same bundle.
 4. **Attach the best available monitor surface.**
    - Claude Code: same flow as *Auto-Monitor Loop* — `CronList` first to deduplicate, then `CronCreate(cron="*/10 * * * *", prompt="/dev:afk monitor", recurring=true)`. If cron tools are unavailable, skip and use the manual-monitor line.
-   - Codex: fetch a sub-agent spawn primitive via `ToolSearch` (query: `spawn agent background monitor`). If available, spawn exactly one read-only Codex monitor agent for this newly-launched supervisor. Its task: from the project root, periodically run `/dev:afk monitor --once` (the bundle's `monitor --once`), report concise progress, and auto-close when `.red/tmp/afk-supervisor.pid` is missing/dead and no `[live]` workers remain. It must never edit files, claim issues, stop workers, or run merges. The user may close it manually; workers continue. If the primitive is unavailable, skip and use the manual-monitor line.
+   - Codex: fetch a sub-agent spawn primitive via `ToolSearch` (query: `spawn agent background monitor`). If available, emit the canonical prompt with `RED_AFK_RUNNER=codex node "$CODEX_PLUGIN_ROOT/skills/engineering/afk/bin/afk.mjs" codex-monitor-agent --project-root "$PWD" --mode fleet` and spawn exactly one read-only Codex monitor agent for this newly-launched supervisor. Its task: from the project root, periodically run `/dev:afk monitor --once` (the bundle's `monitor --once`), report concise progress, and auto-close when `.red/tmp/afk-supervisor.pid` is missing/dead and no `[live]` workers remain. It must never edit files, claim issues, stop workers, or run merges. The user may close it manually; workers continue. If the primitive is unavailable, skip and use the manual-monitor line.
    - Bare/unknown: skip native monitor setup and use the manual-monitor line.
 5. **Report back.** Print:
    ```
@@ -580,7 +612,7 @@ When `TaskCreate` / `TaskUpdate` are unavailable because the session is **outsid
 - If Codex grows a native background-task surface, the sink emits the **same call-plan descriptors** the Claude sink applies — apply them against the Codex primitive.
 - Otherwise (today's reality), `--runner codex` emits an **empty plan**, so the mirror falls back to the `monitor` dashboard and a one-line notice. No native calls are emitted, so there is no half-rendered state, and a dashboard hiccup is swallowed so the tick never crashes.
 
-**Codex monitor agent (fleet-specific — binding).** Codex has a native sub-agent UI even though it does not expose the Claude-style `TaskCreate`/`TaskUpdate` task API. When `/dev:afk fleet N` launches a new supervisor under Codex, the agent should spawn exactly one read-only Codex monitor agent when the sub-agent primitive is available. That monitor agent periodically runs `/dev:afk monitor --once`, reports concise progress, and exits once no supervisor or live workers remain. It is a presentation consumer only: it must not edit files, stop workers, claim issues, or merge anything. Closing it manually must not affect the fleet.
+**Codex monitor agent (Codex-only — binding).** Codex has a native sub-agent UI even though it does not expose the Claude-style `TaskCreate`/`TaskUpdate` task API. When `/dev:afk run` launches a normal detached worker under Codex, or `/dev:afk fleet N` launches a new supervisor under Codex, the agent should spawn exactly one read-only Codex monitor agent when the sub-agent primitive is available. Generate its prompt with `codex-monitor-agent --mode run|fleet` so the read-only rules stay identical across single-worker and fleet launches. That monitor agent periodically runs `/dev:afk monitor --once`, reports concise progress, and exits once no supervisor or live workers remain. It is a presentation consumer only: it must not edit files, stop workers, claim issues, run validation, push, merge, or repair state. Closing it manually must not affect the worker or fleet.
 
 Do **not** invent a cross-runner task abstraction (rejected in ADR 0003) — keep the adapter explicitly per-runner.
 

@@ -90,24 +90,39 @@ differs. The Codex sink:
 This is an explicit per-runner adapter, not a cross-runner abstraction (rejected
 in ADR 0003).
 
-## Fleet Monitor Agent
+## Monitor Agent
 
 Codex does expose a native sub-agent UI, but that is not the same as Claude
-Code's `TaskCreate` / `TaskUpdate` task surface. `/afk fleet` therefore keeps
-the actual workers as supervised OS processes and uses one optional Codex
-monitor agent only for presentation.
+Code's `TaskCreate` / `TaskUpdate` task surface. `/afk run` and `/afk fleet`
+therefore keep the actual workers as supervised OS processes and use one
+optional Codex monitor agent only for presentation.
+
+When a Codex session launches a normal detached `/dev:afk run` worker:
+
+- skip the monitor agent for `--once` and `--boot-only`, because no background
+  worker needs a separate presentation surface;
+- fetch a sub-agent spawn primitive when the host exposes one;
+- generate the monitor-agent prompt with:
+  `afk codex-monitor-agent --project-root "$PWD" --mode run`;
+- spawn at most one read-only monitor agent for the newly-started worker;
+- have that monitor agent periodically run `/dev:afk monitor --once`, report
+  concise progress, and exit once no supervisor or live workers remain;
+- never let the monitor agent edit files, claim issues, stop workers, run
+  validation, merge, push, or repair state.
 
 When a Codex session launches `/dev:afk fleet N`:
 
 - launch `/dev:afk fleet N --runner codex` or invoke the bundle with
   `RED_AFK_RUNNER=codex` so detached workers stay on the Codex runner
   deterministically;
-- spawn at most one read-only monitor agent for the newly-started supervisor
-  when the sub-agent primitive is available;
+- generate the monitor-agent prompt with:
+  `afk codex-monitor-agent --project-root "$PWD" --mode fleet`;
+- spawn at most one read-only monitor agent for the newly-started supervisor when
+  the sub-agent primitive is available;
 - have that monitor agent periodically run `/dev:afk monitor --once`, report
   concise progress, and exit once no supervisor or live workers remain;
 - never let the monitor agent edit files, claim issues, stop workers, run
-  validation, merge, or push.
+  validation, merge, push, or repair state.
 
 If the sub-agent primitive is unavailable, launch the supervisor anyway and
 tell the user to run `/dev:afk monitor` or tail `.red/tmp/afk-supervisor.log`.

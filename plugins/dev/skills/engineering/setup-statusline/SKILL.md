@@ -127,11 +127,14 @@ effects on the repo's `.red/config.yaml` `plugins.dev.enabled: true` flag. That
 keeps the installed plugin available everywhere but inert outside opted-in
 repos, matching the rest of the RedSkills hook model.
 
-For live AFK visibility under Codex, point the user at `/afk monitor` (fleet
-spawns a read-only monitor agent; otherwise it falls back to the monitor
-dashboard). When Codex ships a command-backed statusline (openai/codex#17827 /
-#20244), this skill can add a `{ type = "command", command = … }` entry pointing
-at the same AFK bundle so the line matches Claude Code's.
+For live AFK visibility under Codex, `/afk monitor` remains the canonical
+dashboard. Normal `/afk run` launches and `/afk fleet` launches also try to
+attach one read-only Codex monitor agent when the host exposes a sub-agent
+primitive; the prompt comes from `afk codex-monitor-agent --mode run|fleet`.
+When the primitive is unavailable, Codex falls back to the monitor dashboard.
+When Codex ships a command-backed statusline (openai/codex#17827 / #20244), this
+skill can add a `{ type = "command", command = … }` entry pointing at the same
+AFK bundle so the line matches Claude Code's.
 
 ## OpenCode
 
