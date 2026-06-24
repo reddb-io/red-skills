@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { fleetCommand } from "./commands/fleet.js";
 import { activityReviewCommand } from "./commands/activity-review.js";
+import { codexStatuslineCommand } from "./commands/codex-statusline.js";
 import { dashboardCommand } from "./commands/dashboard.js";
 import { injectDevelopmentWorkflowCommand } from "./commands/inject-development-workflow.js";
 import { monitorCommand } from "./commands/monitor.js";
@@ -32,6 +33,7 @@ export type CliCommand =
   | "respond"
   | "ship"
   | "triage"
+  | "codex-statusline"
   | "route-model-tier"
   | "statusline"
   | "inject-development-workflow"
@@ -67,6 +69,7 @@ const CLI_ROUTER: RouterSchema<CliCommand> = {
     respond: {},
     ship: {},
     triage: {},
+    "codex-statusline": {},
     "route-model-tier": {},
     statusline: {},
     "inject-development-workflow": {},
@@ -111,6 +114,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   if (parsed.command === "respond") return respondCommand(parsed.args);
   if (parsed.command === "ship") return shipCommand(parsed.args);
   if (parsed.command === "triage") return triageCommand(parsed.args);
+  if (parsed.command === "codex-statusline") return codexStatuslineCommand(parsed.args);
   if (parsed.command === "route-model-tier") return routeModelTierCommand(parsed.args);
   if (parsed.command === "statusline") return statuslineCommand(parsed.args);
   if (parsed.command === "inject-development-workflow") return injectDevelopmentWorkflowCommand(parsed.args);

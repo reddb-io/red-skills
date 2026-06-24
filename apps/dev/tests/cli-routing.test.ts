@@ -34,6 +34,13 @@ describe("cli routing — native commands", () => {
     expect(parseCli(["statusline", "/repo"])).toEqual({ command: "statusline", args: ["/repo"] });
   });
 
+  it("routes codex-statusline with its config/fix flags preserved", () => {
+    expect(parseCli(["codex-statusline", "--config", "/tmp/config.toml", "--fix"])).toEqual({
+      command: "codex-statusline",
+      args: ["--config", "/tmp/config.toml", "--fix"],
+    });
+  });
+
   it("routes dashboard with reporting flags preserved", () => {
     expect(parseCli(["dashboard", "--period", "14d", "--json"])).toEqual({
       command: "dashboard",
