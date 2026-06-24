@@ -8,11 +8,12 @@ import {
   type CompactWorker,
 } from "../src/core/monitor.js";
 import {
+  monitorCommand,
   runMirrorPlan,
   parseTrackedJsonl,
   workersToDesired,
 } from "../src/commands/monitor.js";
-import type { MirrorCall } from "../src/core/mirror.js";
+import type { MirrorCall, MirrorFallbackNotice } from "../src/core/mirror.js";
 
 const baseWorker = (over: Partial<CompactWorker> = {}): CompactWorker => ({
   state: {
@@ -450,18 +451,26 @@ describe("monitor — mirror plan", () => {
     expect(out).toBe("");
   });
 
-  it("codex runner falls back to an empty plan (no native surface)", () => {
+  it("codex runner emits a fallback notice (no native task calls)", () => {
     const out = runMirrorPlan([liveWorker("wAAAA", 42, "t", "impl")], "", {
       codex: true,
     });
-    expect(out).toBe("");
+    const lines = out.split("\n").filter((l) => l.trim() !== "");
+    expect(lines).toHaveLength(1);
+    const notice = JSON.parse(lines[0]!) as MirrorFallbackNotice;
+    expect(notice.signal).toBe("fallback-notice");
+    expect(notice.message).toContain("no native task surface");
+    // no task call descriptors — criterion 2
+    expect(notice).not.toHaveProperty("call");
   });
 
-  it("codex host (via host option) falls back to an empty plan", () => {
+  it("codex host (via host option) emits the same fallback notice", () => {
     const out = runMirrorPlan([liveWorker("wAAAA", 42, "t", "impl")], "", {
       host: "codex",
     });
-    expect(out).toBe("");
+    const lines = out.split("\n").filter((l) => l.trim() !== "");
+    expect(lines).toHaveLength(1);
+    expect(JSON.parse(lines[0]!)).toMatchObject({ signal: "fallback-notice" });
   });
 
   it("opencode is a headless runner: no native task calls are ever emitted", () => {
@@ -505,5 +514,79 @@ describe("monitor — mirror plan", () => {
       { key: "a:1", stage: "impl", phase: "coding" },
       { key: "b:2", stage: "", phase: "" },
     ]);
+  });
+});
+
+// Helpers shared by the monitorCommand integration tests below.
+function makeMockStdout(): { chunks: string[]; stream: NodeJS.WritableStream } {
+  const chunks: string[] = [];
+  const stream = {
+    write(chunk: string | Buffer) {
+      chunks.push(String(chunk));
+      return true;
+    },
+  } as unknown as NodeJS.WritableStream;
+  return { chunks, stream };
+}
+
+// An async-iterable stdin that immediately ends (no piped input).
+const emptyStdin = {
+  async *[Symbol.asyncIterator]() {},
+} as unknown as NodeJS.ReadableStream;
+
+describe("monitorCommand — Codex fallback path (issue #887)", () => {
+  it("--mirror-plan --runner codex writes the fallback notice to stdout", async () => {
+    const { chunks, stream } = makeMockStdout();
+    const code = await monitorCommand(
+      ["--mirror-plan", "--runner", "codex"],
+      "/tmp",
+      stream,
+      emptyStdin,
+    );
+    expect(code).toBe(0);
+    const output = chunks.join("");
+    const lines = output.split("\n").filter((l) => l.trim() !== "");
+    expect(lines.length).toBeGreaterThanOrEqual(1);
+    const records = lines.map((l) => JSON.parse(l) as Record<string, unknown>);
+    const notice = records.find((r) => r["signal"] === "fallback-notice");
+    expect(notice).toBeDefined();
+    expect(String(notice!["message"])).toContain("no native task surface");
+  });
+
+  it("--mirror-plan --codex (legacy flag) also writes the fallback notice", async () => {
+    const { chunks, stream } = makeMockStdout();
+    await monitorCommand(["--mirror-plan", "--codex"], "/tmp", stream, emptyStdin);
+    const output = chunks.join("");
+    const records = output
+      .split("\n")
+      .filter((l) => l.trim() !== "")
+      .map((l) => JSON.parse(l) as Record<string, unknown>);
+    expect(records.some((r) => r["signal"] === "fallback-notice")).toBe(true);
+  });
+
+  it("codex fallback notice contains no TaskCreate or TaskUpdate call descriptors", async () => {
+    const { chunks, stream } = makeMockStdout();
+    await monitorCommand(
+      ["--mirror-plan", "--runner", "codex"],
+      "/tmp",
+      stream,
+      emptyStdin,
+    );
+    const output = chunks.join("");
+    const records = output
+      .split("\n")
+      .filter((l) => l.trim() !== "")
+      .map((l) => JSON.parse(l) as Record<string, unknown>);
+    const taskCalls = records.filter(
+      (r) => r["call"] === "TaskCreate" || r["call"] === "TaskUpdate",
+    );
+    expect(taskCalls).toHaveLength(0);
+  });
+
+  it("monitor --mirror-plan --runner codex is non-crashing and read-only (exit 0)", async () => {
+    const { stream } = makeMockStdout();
+    await expect(
+      monitorCommand(["--mirror-plan", "--runner", "codex"], "/tmp", stream, emptyStdin),
+    ).resolves.toBe(0);
   });
 });

@@ -8,6 +8,7 @@ import {
   codexSinkPlan,
   taskMirrorCapability,
   type MirrorCall,
+  type MirrorFallbackNotice,
   type TaskMirrorHost,
   type TrackedTask,
   type WorkerRecord,
@@ -99,21 +100,33 @@ export function runMirrorPlan(
   const tracked = parseTrackedJsonl(trackedJsonl);
   const host: TaskMirrorHost = options.host ?? (options.codex ? "codex" : "claude");
   let calls: MirrorCall[];
+  let notice: string | undefined;
   switch (taskMirrorCapability(host).surface) {
     case "native-task":
       calls = mirrorPlan(desired, tracked);
       break;
-    case "monitor-agent":
-      calls = codexSinkPlan(desired, tracked).plan;
+    case "monitor-agent": {
+      // Codex has no native task API. codexSinkPlan always returns an empty call
+      // plan plus a one-line fallback notice so the operator can see that task
+      // mirroring is intentionally falling back to the dashboard, not silently
+      // doing nothing. The notice is surfaced as a structured JSONL line — it
+      // carries `signal`, never `call`, so it is not a task call descriptor.
+      const sink = codexSinkPlan(desired, tracked);
+      calls = sink.plan;
+      notice = sink.notice;
       break;
+    }
     case "headless":
       // OpenCode is a headless Worker with no in-session surface — no native
       // calls are ever emitted, so the plan is always empty.
       calls = [];
       break;
   }
-  if (calls.length === 0) return "";
-  return `${calls.map((c) => JSON.stringify(c)).join("\n")}\n`;
+  const callsOut =
+    calls.length === 0 ? "" : `${calls.map((c) => JSON.stringify(c)).join("\n")}\n`;
+  if (notice === undefined) return callsOut;
+  const noticeRecord: MirrorFallbackNotice = { signal: "fallback-notice", message: notice };
+  return `${callsOut}${JSON.stringify(noticeRecord)}\n`;
 }
 
 /** Read all of stdin to a string (empty when nothing is piped / TTY). */
@@ -134,7 +147,9 @@ async function readStdin(stdin: NodeJS.ReadableStream): Promise<string> {
  * mode: read the agent's tracked mirror tasks as JSONL from stdin, diff against
  * the live worker state (the same reads the dashboard uses), and emit the mirror
  * call plan as JSONL to stdout for the agent to apply via TaskCreate/TaskUpdate.
- * Renders no dashboard; empty plan → no output.
+ * Renders no dashboard; empty plan → no output. For Codex (monitor-agent surface)
+ * a `{ signal: "fallback-notice" }` line is always written so the operator knows
+ * that native task mirroring is unavailable — never a silent no-op.
  */
 export async function monitorCommand(
   args: string[],
