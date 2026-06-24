@@ -280,6 +280,17 @@ export const CODEX_NO_NATIVE_NOTICE =
   "afk: Codex has no native task surface — mirroring via the monitor.sh dashboard instead.";
 
 /**
+ * Structured monitor signal emitted to stdout in the `--mirror-plan` output
+ * when the Codex fallback path is active. Never confused with a task call
+ * descriptor — `signal` is present, `call` is absent — so the consumer can
+ * render it as a plain notice without attempting to apply it to a task surface.
+ */
+export interface MirrorFallbackNotice {
+  signal: "fallback-notice";
+  message: string;
+}
+
+/**
  * Codex half of the runner-specific Task-mirror sink (mirror_sink_codex). The
  * reader + reconciler are reused unchanged; only this sink is runner-specific.
  *
