@@ -4,6 +4,7 @@ import {
   mirrorPlan,
   mirrorReconcile,
   mirrorTitle,
+  taskMirrorCapability,
   type MirrorCall,
   type TrackedTask,
   type WorkerRecord,
@@ -231,5 +232,48 @@ describe("codex sink", () => {
     const result = codexSinkPlan(workers, []);
     expect(result.plan).toEqual([]);
     expect(result.notice).toContain("no native task surface");
+  });
+});
+
+describe("task mirror host capability matrix (#886)", () => {
+  it("Claude Code drives the native task surface (TaskCreate/TaskUpdate)", () => {
+    const cap = taskMirrorCapability("claude");
+    expect(cap.surface).toBe("native-task");
+    expect(cap.agentDriven).toBe(true);
+    expect(cap.nativeTaskApi).toBe(true);
+    expect(cap.note).toContain("Agent runner");
+  });
+
+  it("Codex has no task API — monitor-agent fallback, not parity", () => {
+    const cap = taskMirrorCapability("codex");
+    expect(cap.surface).toBe("monitor-agent");
+    expect(cap.agentDriven).toBe(true);
+    expect(cap.nativeTaskApi).toBe(false);
+    expect(cap.note).toContain("Codex monitor agent");
+  });
+
+  it("OpenCode is a headless runner with no host session to mirror into", () => {
+    const cap = taskMirrorCapability("opencode");
+    expect(cap.surface).toBe("headless");
+    expect(cap.agentDriven).toBe(false);
+    expect(cap.nativeTaskApi).toBe(false);
+    expect(cap.note).toContain("OpenCode runner");
+  });
+
+  it("no two hosts claim parity — each surface is distinct", () => {
+    const surfaces = (["claude", "codex", "opencode"] as const).map(
+      (h) => taskMirrorCapability(h).surface,
+    );
+    expect(new Set(surfaces).size).toBe(3);
+    // Exactly one host exposes a native task API; the matrix never implies parity.
+    expect(surfaces.filter((s) => s === "native-task")).toHaveLength(1);
+  });
+
+  it("the host token is normalized (case / whitespace insensitive)", () => {
+    expect(taskMirrorCapability("  Codex \n").surface).toBe("monitor-agent");
+  });
+
+  it("an unknown host fails loudly instead of inheriting the Claude path", () => {
+    expect(() => taskMirrorCapability("gemini")).toThrow(/unknown host 'gemini'/);
   });
 });
