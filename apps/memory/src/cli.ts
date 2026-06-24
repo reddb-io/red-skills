@@ -324,7 +324,7 @@ over the same evidence store.
 Usage:
   memory init [--mode markdown-only|graph] [--hooks] [--skill-telemetry] [--event-retention-days N] [--root <dir>] [--yes]
   memory store <fact...>            [--root <dir>] [--scope project|repo|branch|worktree|session|agent-run|user] [--scope-id ID]
-  memory store-evidence             [--root <dir>] --claim <text> --source-ref <ref> --citation-excerpt <text> --intent <text> --observer <id> [--json]
+  memory store-evidence             [--root <dir>] --claim <text> --source-ref <ref> --citation-excerpt <text> --intent <text> --observer <id> [--blast-radius low|medium|high] [--route <target>] [--confidence EXTRACTED|INFERRED|AMBIGUOUS] [--json]
   memory inbox quarantine <fact...> [--root <dir>] --reason <text> --evidence <summary> [--confidence EXTRACTED|INFERRED|AMBIGUOUS] [--source-kind manual|hook|derived|system] [--writer <name>] [--command <cmd>] [--hook <event>] [--json]
   memory inbox list                 [--root <dir>] [--status quarantined|approved|rejected|promoted|all] [--json]
   memory inbox inspect <id>         [--root <dir>] [--json]
@@ -725,6 +725,12 @@ async function runStoreEvidence(args: ParsedArgs): Promise<void> {
       stringFlag(args.flags, "citation-excerpt") ?? stringFlag(args.flags, "citation"),
     intent: stringFlag(args.flags, "intent"),
     observer: stringFlag(args.flags, "observer") ?? stringFlag(args.flags, "writer"),
+    blastRadius: stringFlag(args.flags, "blast-radius"),
+    route: stringFlag(args.flags, "route"),
+    confidence: parseConfidence(args.flags.confidence),
+    proposalKind: stringFlag(args.flags, "proposal-kind"),
+    proposalId: stringFlag(args.flags, "proposal-id"),
+    proposalPath: stringFlag(args.flags, "proposal-path"),
   };
 
   const config = await readConfig(rootDir);
@@ -736,7 +742,7 @@ async function runStoreEvidence(args: ParsedArgs): Promise<void> {
 
   const store = await MemoryStore.open({ uri: resolveStoreUri(rootDir, config) });
   try {
-    const result = await memoryStoreEvidence(store, input);
+    const result = await memoryStoreEvidence(store, input, { rootDir });
     printGovernedWriteResult(result, args.flags.json === true);
   } finally {
     await store.close();
@@ -1186,6 +1192,10 @@ function printGovernedWriteResult(
   console.log(`memory store-evidence: ${result.outcome}`);
   console.log(`  reason: ${result.reason}`);
   if (result.memory.urn) console.log(`  memory: ${result.memory.urn}`);
+  if (result.review_artifact) {
+    console.log(`  review: ${result.review_artifact.kind}:${result.review_artifact.id}`);
+    console.log(`  path: ${result.review_artifact.path}`);
+  }
   if (result.provenance.source_ref) console.log(`  source: ${result.provenance.source_ref}`);
   if (result.provenance.citation_excerpt) {
     console.log(`  citation: ${result.provenance.citation_excerpt}`);
