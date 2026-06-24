@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, test } from "vitest";
 import { MemoryStore } from "../src/graph-store.js";
+import { graphRecall } from "../src/graph-recall.js";
 import { initGraph, initMarkdownOnly } from "../src/init.js";
 import { memoryStoreEvidence } from "../src/governed-write.js";
 import { evidenceInboxRoot, parseEvidenceCardYaml } from "../src/evidence-card.js";
@@ -74,6 +75,88 @@ describe("memory_store_evidence governed write", () => {
             evidence: [
               "tests/governed-write-cli.test.ts",
               "stores low-risk validation evidence",
+            ],
+          },
+        },
+      });
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "smoke: stores validation evidence as one runner and recalls it as another",
+    async () => {
+      const root = await tempRoot();
+      const { storeUri } = await initGraph(root);
+      const writerStore = await MemoryStore.open({
+        uri: storeUri,
+        project: "claude-smoke-runner",
+      });
+      stores.push(writerStore);
+
+      const result = await memoryStoreEvidence(writerStore, {
+        claim: "Validation smoke proves cross-agent governed Memory recall.",
+        sourceRef: "issue-871-cross-agent-memory-smoke.md:17",
+        citationExcerpt: "Validation smoke proves cross-agent governed Memory recall.",
+        intent: "validation",
+        observer: "claude-smoke-runner",
+      });
+
+      expect(result).toMatchObject({
+        operation: "memory_store_evidence",
+        outcome: "stored",
+        reason: "low_risk_validation_evidence_stored",
+        policy: {
+          reason: "low_risk_validation_evidence_stored",
+          risk: "low",
+          mode_required: "graph",
+        },
+        provenance: {
+          writer: "claude-smoke-runner",
+          source_ref: "issue-871-cross-agent-memory-smoke.md:17",
+          citation_excerpt: "Validation smoke proves cross-agent governed Memory recall.",
+        },
+      });
+      expect(result.memory.id).toEqual(expect.any(Number));
+
+      await writerStore.close();
+      stores.splice(stores.indexOf(writerStore), 1);
+
+      const readerStore = await MemoryStore.open({
+        uri: storeUri,
+        project: "codex-smoke-runner",
+      });
+      stores.push(readerStore);
+
+      const hits = await graphRecall(
+        readerStore,
+        "cross-agent governed Memory recall validation smoke",
+        5,
+      );
+      expect(hits).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            rid: result.memory.id,
+            node_type: "validation",
+            excerpt: expect.stringContaining(
+              "Validation smoke proves cross-agent governed Memory recall.",
+            ),
+          }),
+        ]),
+      );
+
+      const recalled = await readerStore.getNode(result.memory.id!);
+      expect(recalled).toMatchObject({
+        node_type: "validation",
+        properties: {
+          intent: "validation",
+          observer: "claude-smoke-runner",
+          provenance: {
+            writer: "claude-smoke-runner",
+            command: "memory store-evidence",
+            evidence: [
+              "issue-871-cross-agent-memory-smoke.md:17",
+              "Validation smoke proves cross-agent governed Memory recall.",
             ],
           },
         },
