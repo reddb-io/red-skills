@@ -37,14 +37,15 @@ describe("competitive eval v2 scaffold (#155)", () => {
       "retrieval",
       "readiness",
       "trust-governance",
+      "governed-write",
       "skill-evolution",
       "operator-surface",
       "multi-agent-integration",
       "intelligence",
     ]);
     expect(report.composite).toMatchObject({
-      score: 7,
-      maxScore: 7,
+      score: 8,
+      maxScore: 8,
       normalizedScore: 1,
       status: "pass",
     });
@@ -67,6 +68,7 @@ describe("competitive eval v2 scaffold (#155)", () => {
       "retrieval",
       "readiness",
       "trust-governance",
+      "governed-write",
       "skill-evolution",
       "operator-surface",
       "multi-agent-integration",
@@ -74,9 +76,10 @@ describe("competitive eval v2 scaffold (#155)", () => {
     ]);
 
     const human = renderCompetitiveEvalV2Human(report);
-    expect(human).toContain("# Memory competitive eval v2");
-    expect(human).toContain("Composite: 7/7 normalized=1 status=pass");
+    expect(human).toContain("# Memory reference eval v2");
+    expect(human).toContain("Composite: 8/8 normalized=1 status=pass");
     expect(human).toContain("intelligence: 1/1 pass");
+    expect(human).toContain("governed-write: 1/1 pass");
     expect(human).toContain("retrieval: 1/1 pass");
     expect(human).toContain("operator-surface: 1/1 pass");
     expect(human).toContain("multi-agent-integration: 1/1 pass");
@@ -233,7 +236,7 @@ describe("competitive eval v2 scaffold (#155)", () => {
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('"schema_version": "memory.reference_eval.v2"');
-    expect(result.stdout).toContain("# Memory competitive eval v2");
+    expect(result.stdout).toContain("# Memory reference eval v2");
     expect(result.stderr).toBe("");
   }, 30_000);
 

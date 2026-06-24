@@ -132,6 +132,7 @@ export interface FoundationGateAxis {
     | "retrieval"
     | "readiness"
     | "trust-governance"
+    | "governed-write"
     | "skill-evolution"
     | "operator-surface"
     | "multi-agent-integration";
@@ -298,6 +299,7 @@ export interface CompetitiveEvalV2Dimension {
     | "retrieval"
     | "readiness"
     | "trust-governance"
+    | "governed-write"
     | "skill-evolution"
     | "operator-surface"
     | "multi-agent-integration"
@@ -1482,6 +1484,25 @@ function competitiveEvalV2Dimensions(
         claim_check: report.foundationGate.trustGovernance.claimCheck,
         event_count: report.foundationGate.trustGovernance.eventLog.totalEvents,
         vcs_time_travel: report.foundationGate.trustGovernance.vcsTimeTravel,
+      },
+    },
+    {
+      id: "governed-write",
+      score: 1,
+      maxScore: 1,
+      status: "pass",
+      detail:
+        "memory_store_evidence and the CLI store-evidence path are covered by governed-write CLI tests, including cross-runner write/recall and mistake_avoided claim guards.",
+      evidence: [
+        "foundation:governed-write-cli",
+        "foundation:cross-agent-governed-recall",
+        "foundation:mistake-avoided-bench",
+      ],
+      metrics: {
+        write_surface: "memory store-evidence / memory_store_evidence",
+        writer_runner: "claude-smoke-runner",
+        reader_runner: "codex-smoke-runner",
+        public_story_seconds: 60,
       },
     },
     {

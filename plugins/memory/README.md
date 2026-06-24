@@ -59,7 +59,8 @@ Use this map before reaching for the full command list:
 
 | If you want to... | Start with | Why |
 |-------------------|------------|-----|
-| Remember one durable work fact | `memory store "Decision: ..."` | Captures scoped evidence for later recall. |
+| Remember one plain-note work fact | `memory store "Decision: ..."` | Captures scoped evidence for later recall in markdown-only or low-friction setups. |
+| Store governed validation evidence | `memory store-evidence ...` / `memory_store_evidence` | Requires source reference, citation excerpt, intent, and observer identity before durable graph write. |
 | Get context before acting | `memory recall "topic"` | Canonical governed context path; hides superseded guidance by default. |
 | Prepare another agent/session | `memory context-pack "goal"` or `memory handoff "focus"` | Produces cited, budgeted context instead of dumping search results. |
 | Narrow code reads before broad grep | `memory onboarding-map --json`, `memory structural-impact --file <path>`, `memory path-explain <from> <to> --json` | Produces RedDB-backed map context so the agent can inspect the most relevant files, symbols, tests, decisions, and references first. |
@@ -106,7 +107,12 @@ and optional lifecycle hooks.
 
 ```bash
 memory init --mode graph --hooks --skill-telemetry --yes
-memory store "Decision: API cache TTL is 300 seconds because upstream rate limits."
+memory store-evidence \
+  --claim "Validation: API cache TTL is 300 seconds." \
+  --source-ref "docs/cache.md:12" \
+  --citation-excerpt "API cache TTL is 300 seconds." \
+  --intent validation \
+  --observer claude-smoke-runner
 memory claim-check "API cache TTL is 300 seconds." --json
 memory readiness "prepare an AFK fix for cache expiry" --json
 memory handoff "cache expiry" --json
@@ -127,6 +133,55 @@ gotchas, reasoning traces, validations, and lifecycle evidence in a way that can
 be aged, superseded, audited, exported, and injected back into RedSkills work.
 Vectors, docs search, dashboards, and graph analytics are supporting surfaces;
 `memory recall` remains the canonical governed context path.
+
+## 60-second governed cross-agent flow
+
+The first-run Memory story should prove Mistakes avoided before it talks about
+token savings: one runner stores source-cited validation evidence through the
+governed write surface, another runner recalls it with provenance, and both can
+see why the claim is safe to reuse. The older generic `memory_store` MCP tool
+still exists for compatibility, but the recommended governed write story is
+`memory store-evidence` on the CLI or `memory_store_evidence` over MCP because
+both require source reference, citation excerpt, intent, and observer identity.
+
+1. As the writer runner, store the validation evidence:
+
+   ```bash
+   memory store-evidence \
+     --claim "Validation smoke proves cross-agent governed Memory recall." \
+     --source-ref "issue-871-cross-agent-memory-smoke.md:17" \
+     --citation-excerpt "Validation smoke proves cross-agent governed Memory recall." \
+     --intent validation \
+     --observer claude-smoke-runner \
+     --json
+   ```
+
+2. As a different runner, recall the same evidence and inspect provenance:
+
+   ```bash
+   memory recall "cross-agent governed Memory recall validation smoke" --json
+   memory provenance <rid> --json
+   memory store-evidence \
+     --claim "Codex runner recalled the governed validation smoke with provenance." \
+     --source-ref "issue-871-cross-agent-memory-smoke.md:17" \
+     --citation-excerpt "Validation smoke proves cross-agent governed Memory recall." \
+     --intent validation \
+     --observer codex-smoke-runner \
+     --json
+   ```
+
+3. Act only after the recalled node shows the original `provenance.writer`,
+   `provenance.evidence`, source reference, and citation excerpt. That is the
+   operator-visible mistake avoided: the second agent does not re-broaden the
+   search, trust an uncited note, or repeat validation work from memory alone.
+   The token savings are supporting evidence, not the headline.
+
+Executable guards back this public story: `governed-cross-agent-smoke` is tied
+to `foundation:governed-write-cli`,
+`foundation:cross-agent-governed-recall`, and
+`foundation:mistake-avoided-bench`. The mistake_avoided benchmark explicitly
+marks full autonomous failure learning unavailable; it does not claim shipped
+`memory learn` or `memory refine` behavior.
 
 Graph mode provisions a per-project embedded RedDB file at
 `.red/memory/graph.rdb` through the bundled SDK binary; there is no daemon to
@@ -718,6 +773,7 @@ claim:
 | `operator-surface-dashboard` | The reference eval measures docs, hooks, dashboard, and capability catalog operator surfaces. | `dimension:operator-surface`, `foundation:doc-coverage`, `foundation:hook-coverage`, `foundation:operational-dashboard`, `foundation:capability-catalog` |
 | `multi-agent-integration-status` | The reference eval measures multi-agent Memory routing and integration status across supported coding agents. | `dimension:multi-agent-integration`, `foundation:routing-guide`, `foundation:agent-integration-status`, `foundation:mcp-agent-tools`, `foundation:hook-backed-agent-integration` |
 | `intelligent-memory-five-surfaces` | Memory is intelligent: composed confidence, reasoning-replay, federation, what-if, and autocure each ship as a measured surface (#173). | `dimension:intelligence`, `foundation:confidence-scoring`, `foundation:reasoning-replay`, `foundation:federation`, `foundation:whatif`, `foundation:autocure` |
+| `governed-cross-agent-smoke` | The 60-second Memory story uses a governed write surface to store source-cited validation evidence as one runner and recall it with provenance as another. | `dimension:governed-write`, `foundation:governed-write-cli`, `foundation:cross-agent-governed-recall`, `foundation:mistake-avoided-bench` |
 
 The same guard intentionally leaves live-service reference wins unclaimed
 unless the required live baseline is measured. In particular, the checked-in
