@@ -901,6 +901,27 @@ describe("processIssue — no-sentinel (run ended without a <promise>)", () => {
     expect(trace.released).toEqual([9]);
   });
 
+  it("preserves an earlier actionable blocker when a later empty no-sentinel crashes (#862)", async () => {
+    const body = upsertCurrentBlocker("## Agent brief\nDo it.", {
+      status: "blocked",
+      kind: "merge-conflict",
+      summary: "Attempt 1 preserved a merge-conflict branch.",
+      next: "Resolve the merge conflict or add guidance for the next agent attempt.",
+    });
+    const { deps, input, trace } = harness({ outcome: "no-sentinel", changedFiles: [], body });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("no-sentinel");
+    expect(trace.bodyEdits).toHaveLength(1);
+    expect(parseCurrentBlocker(trace.bodyEdits[0]!.body)).toMatchObject({
+      kind: "merge-conflict",
+      summary: "Attempt 1 preserved a merge-conflict branch.",
+      next: "Resolve the merge conflict or add guidance for the next agent attempt.",
+    });
+    expect(trace.bodyEdits[0]!.body).not.toContain("Review the attempt log and decide whether to retry");
+    expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "no-sentinel" }]);
+  });
+
   it("branch carries work + passes feedback → SALVAGE: lands like DONE, closes (issue #332)", async () => {
     // The agent finished + committed but exited without the sentinel (the #300
     // loop). Branch is ahead of base and green → salvage through the same gate.
