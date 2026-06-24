@@ -175,12 +175,12 @@ describe("reference baseline harness (#73)", () => {
   });
 
   test("competitive interop command emits JSON and human reports without live services", () => {
-    const result = runMemoryScript(["references:interop"]);
+    const result = runMemoryScript(["--filter", "@reddb-io/benchmark-memory", "references:interop"]);
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('"schema_version": "memory.reference_interop.v1"');
     expect(result.stdout).toContain('"live_services": "not-required"');
-    expect(result.stdout).toContain("# Memory competitor interop report");
+    expect(result.stdout).toContain("# Memory reference interop report");
     expect(result.stdout).toContain("No unsupported full-parity claims were asserted.");
     // pnpm v11+ writes harmless "Ignored build scripts" warnings to stderr on first run.
     // Filter known noise; assert no actual error lines.

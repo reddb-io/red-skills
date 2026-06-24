@@ -31,6 +31,28 @@ describe("public Memory documentation claims", () => {
     expect(readme).toContain('memory recall "cache TTL"');
   });
 
+  test("README documents the 60-second governed cross-agent Memory story", async () => {
+    const readme = await readFile(README, "utf8");
+
+    expect(readme).toContain("## 60-second governed cross-agent flow");
+    expect(readme).toContain("Mistakes avoided");
+    expect(readme).toContain("token savings");
+    expect(readme).toContain("memory store-evidence");
+    expect(readme).toContain("memory_store_evidence");
+    expect(readme).toContain("--observer claude-smoke-runner");
+    expect(readme).toContain("--observer codex-smoke-runner");
+    expect(readme).toContain("issue-871-cross-agent-memory-smoke.md:17");
+    expect(readme).toContain("provenance");
+    expect(readme).toContain("`governed-cross-agent-smoke`");
+    expect(readme).toContain("`foundation:governed-write-cli`");
+    expect(readme).toContain("`foundation:cross-agent-governed-recall`");
+    expect(readme).toContain("`foundation:mistake-avoided-bench`");
+    expect(readme).not.toContain("Use `memory_store` for governed writes");
+    expect(readme).not.toContain("Use `memory store` for governed writes");
+    expect(readme).not.toContain("memory learn will");
+    expect(readme).not.toContain("memory refine will");
+  });
+
   test("README public claims are backed by executable reference eval evidence", async () => {
     const readme = await readFile(README, "utf8");
     const report = await evaluateCompetitiveEvalV2({

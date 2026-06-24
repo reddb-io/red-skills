@@ -324,6 +324,16 @@ export const competitiveEvalFixture: CompetitiveEvalFixture = {
         "foundation:autocure",
       ],
     },
+    {
+      id: "governed-cross-agent-smoke",
+      text: "The 60-second Memory story uses a governed write surface to store source-cited validation evidence as one runner and recall it with provenance as another.",
+      requiredEvidence: [
+        "dimension:governed-write",
+        "foundation:governed-write-cli",
+        "foundation:cross-agent-governed-recall",
+        "foundation:mistake-avoided-bench",
+      ],
+    },
   ],
 };
 

@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -86,7 +86,7 @@ const MODULE_DIR = dirname(fileURLToPath(import.meta.url));
 function resolvePluginRoot(): string {
   const env = process.env.CLAUDE_PLUGIN_ROOT ?? process.env.CODEX_PLUGIN_ROOT;
   const candidates = [
-    env,
+    isMemoryPluginRoot(env) ? env : undefined,
     // Built/legacy layout: dist/hook-coverage.js sits next to a `hooks/` dir.
     dirname(MODULE_DIR),
     // Dev/source layout: this file is <repoRoot>/apps/memory/src/...,
@@ -102,6 +102,21 @@ function resolvePluginRoot(): string {
 }
 
 const PLUGIN_ROOT = resolvePluginRoot();
+
+function isMemoryPluginRoot(candidate: string | undefined): candidate is string {
+  if (!candidate) return false;
+  for (const manifest of [".codex-plugin/plugin.json", ".claude-plugin/plugin.json"]) {
+    const path = join(candidate, manifest);
+    if (!existsSync(path)) continue;
+    try {
+      const parsed = JSON.parse(readFileSync(path, "utf8")) as { name?: unknown };
+      return parsed.name === "memory";
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
 
 export async function buildHookCoverageReport(
   rootDir: string,
