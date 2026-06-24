@@ -457,6 +457,30 @@ describe("monitor — mirror plan", () => {
     expect(out).toBe("");
   });
 
+  it("codex host (via host option) falls back to an empty plan", () => {
+    const out = runMirrorPlan([liveWorker("wAAAA", 42, "t", "impl")], "", {
+      host: "codex",
+    });
+    expect(out).toBe("");
+  });
+
+  it("opencode is a headless runner: no native task calls are ever emitted", () => {
+    // A fresh live worker would be a TaskCreate under Claude; under the headless
+    // OpenCode runner there is no host session to mirror into, so the plan is empty.
+    const out = runMirrorPlan([liveWorker("wAAAA", 42, "t", "impl")], "", {
+      host: "opencode",
+    });
+    expect(out).toBe("");
+  });
+
+  it("claude host emits the native TaskCreate plan (matrix sanity)", () => {
+    const out = runMirrorPlan([liveWorker("wAAAA", 42, "do thing", "impl")], "", {
+      host: "claude",
+    });
+    expect(parse(out)).toHaveLength(1);
+    expect(parse(out)[0]).toMatchObject({ call: "TaskCreate", key: "wAAAA:42" });
+  });
+
   it("workersToDesired omits idle workers and maps liveness", () => {
     const desired = workersToDesired([
       liveWorker("wAAAA", 42, "t", "impl"),

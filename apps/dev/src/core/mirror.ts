@@ -298,3 +298,83 @@ export function codexSinkPlan(
   }
   return { plan: [], notice: CODEX_NO_NATIVE_NOTICE };
 }
+
+// --- Host capability matrix (issue #886) -----------------------------------
+//
+// The Task mirror is per-runner by construction (ADR 0003/0015): there is NO
+// shared native task API across the hosts, so a single cross-runner abstraction
+// would be a fiction. `taskMirrorCapability` is a *classification*, not a
+// dispatcher — it states what each host supports today and which explicit sink
+// applies, leaving the three sinks (`mirrorPlan`, `codexSinkPlan`, headless
+// none) separate. Reading the matrix never collapses the adapters into one.
+
+/** The host/runner whose Task-mirror capability is being classified. */
+export type TaskMirrorHost = "claude" | "codex" | "opencode";
+
+/**
+ * The progress surface a host drives today. Deliberately three distinct values,
+ * never a single "supported: boolean", so the matrix cannot imply parity:
+ *   native-task   — a first-class host task API (Claude Code TaskCreate/TaskUpdate).
+ *   monitor-agent — no task API; the dashboard plus one read-only monitor agent.
+ *   headless      — no host session at all; nothing to mirror into.
+ */
+export type TaskMirrorSurface = "native-task" | "monitor-agent" | "headless";
+
+/** One host's Task-mirror capability — what it supports and how it surfaces. */
+export interface TaskMirrorCapability {
+  host: TaskMirrorHost;
+  /** Which surface this host drives (see {@link TaskMirrorSurface}). */
+  surface: TaskMirrorSurface;
+  /** Whether an in-session agent drives the mirror tick at all. False = headless. */
+  agentDriven: boolean;
+  /** Whether the host exposes a native background-task API the mirror writes to. */
+  nativeTaskApi: boolean;
+  /** Operator-facing one-liner, in project vocabulary (Worker / Agent runner / …). */
+  note: string;
+}
+
+/**
+ * Classify a host's Task-mirror capability (issue #886). An explicit per-host
+ * switch — NOT a generic registry — so adding or pretending a host is left an
+ * obvious code edit, and an unknown host fails loudly rather than silently
+ * inheriting the Claude native path. The honest, no-parity matrix:
+ *
+ *   claude   → native-task   — the Claude Code Agent runner drives the Task
+ *                              mirror through TaskCreate / TaskUpdate.
+ *   codex    → monitor-agent — the Codex Agent runner has no task API; the Task
+ *                              mirror falls back to the dashboard plus one
+ *                              read-only Codex monitor agent (see codexSinkPlan).
+ *   opencode → headless      — the OpenCode runner is an API-auth Worker with no
+ *                              host session, so there is no surface to mirror into.
+ */
+export function taskMirrorCapability(host: string): TaskMirrorCapability {
+  const normalized = host.trim().toLowerCase();
+  switch (normalized) {
+    case "claude":
+      return {
+        host: "claude",
+        surface: "native-task",
+        agentDriven: true,
+        nativeTaskApi: true,
+        note: "Claude Code Agent runner: native Task mirror via TaskCreate/TaskUpdate.",
+      };
+    case "codex":
+      return {
+        host: "codex",
+        surface: "monitor-agent",
+        agentDriven: true,
+        nativeTaskApi: false,
+        note: "Codex Agent runner: no task API — dashboard fallback plus one read-only Codex monitor agent.",
+      };
+    case "opencode":
+      return {
+        host: "opencode",
+        surface: "headless",
+        agentDriven: false,
+        nativeTaskApi: false,
+        note: "OpenCode runner: headless API-auth Worker, no host session and no Task mirror surface.",
+      };
+    default:
+      throw new Error(`taskMirrorCapability: unknown host '${host}'`);
+  }
+}

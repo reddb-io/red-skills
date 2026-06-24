@@ -581,6 +581,16 @@ When `CronList` / `CronDelete` are unavailable (Codex runner, or `/afk monitor` 
 
 Every `/dev:afk monitor` run also **mirrors each live worker onto the runner's native task list when that runner exposes one**, so a `/afk` session surfaces progress on the host's native UI — advancing through stages on its own, with no extra typing. This is a **read-only reflection of `afk.state.json`**; the mirror never writes state and never touches the orchestration.
 
+**Host capability matrix (binding — no parity).** The Task mirror is per-runner by construction (ADR 0003/0015): there is **no shared native task API** across the hosts, so each runner gets its own explicit adapter, never a generic cross-runner abstraction. The honest matrix — encoded as `taskMirrorCapability(host)` in `core/mirror.ts` and exercised by `tests/mirror.test.ts` — is:
+
+| Host (Agent runner) | Surface | Native task API | Adapter / sink | Today's behavior |
+|---|---|---|---|---|
+| Claude Code | `native-task` | yes | `mirrorPlan` (`TaskCreate`/`TaskUpdate`) | the in-session Agent runner drives the native Task mirror through the host task tools |
+| Codex | `monitor-agent` | no | `codexSinkPlan` | no task API — the mirror falls back to the `monitor` dashboard plus **one read-only Codex monitor agent** |
+| OpenCode runner | `headless` | no | none (empty plan) | a headless API-auth **Worker** with no host session — there is no surface to mirror into, so no native calls are ever emitted |
+
+The three surfaces are deliberately distinct values (never a single `supported: boolean`) so the matrix can **never imply parity**. Exactly one host (Claude Code) exposes a native task API; the other two degrade explicitly, each on its own adapter. An unknown host fails loudly rather than silently inheriting the Claude native path.
+
 The mirror surfaces **two signals on one lifecycle** (issue #811): the task **title** carries the calm **macro phase** — `w<id> [<n>/5 <phase>] #<issue> <slug>` — while the task **description** carries the fine **micro stage** — `stage: <impl|explore|tests|commit>`. The phase vocabulary is the ordered `setup → coding → validating → merging → done` (1-based `n/5`), plus the terminal `blocked` which drops the `n/5` and renders `[blocked]`. The title changes only when the macro phase moves, so it never flickers on every inner-agent tool call.
 
 The mirror is a pure diff: it reconciles the live worker state files against the tasks already on the native surface and emits a **call plan**. After rendering the dashboard, the agent (under Claude Code only) must:

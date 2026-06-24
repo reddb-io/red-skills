@@ -6,7 +6,9 @@ import { buildWatchdogIO } from "../runtime/watchdog-io.js";
 import {
   mirrorPlan,
   codexSinkPlan,
+  taskMirrorCapability,
   type MirrorCall,
+  type TaskMirrorHost,
   type TrackedTask,
   type WorkerRecord,
 } from "../core/mirror.js";
@@ -70,15 +72,23 @@ export function parseTrackedJsonl(text: string): TrackedTask[] {
 }
 
 export interface MirrorPlanOptions {
-  /** Use the Codex sink (codexSinkPlan) instead of the Claude mirrorPlan. */
+  /** The host whose Task-mirror capability picks the sink. Default "claude". */
+  host?: TaskMirrorHost;
+  /** Legacy shorthand for `host: "codex"`; ignored when `host` is set. */
   codex?: boolean;
 }
 
 /**
  * Pure, testable core of `monitor --mirror-plan`: given the live worker inputs,
- * the tracked-task JSONL, and the runner, compute the mirror call plan and emit
+ * the tracked-task JSONL, and the host, compute the mirror call plan and emit
  * it as JSONL (one MirrorCall per line, trailing newline). An empty plan yields
  * the empty string (idempotent: nothing changed → no output).
+ *
+ * The sink is picked by the host's {@link taskMirrorCapability}, keeping each
+ * adapter explicit per runner (issue #886 / ADR 0003) — never a generic merge:
+ *   native-task   (claude)   → mirrorPlan, the host TaskCreate/TaskUpdate sink.
+ *   monitor-agent (codex)    → codexSinkPlan, empty today (dashboard fallback).
+ *   headless      (opencode) → empty plan, no host session to mirror into.
  */
 export function runMirrorPlan(
   workers: readonly CompactWorker[],
@@ -87,9 +97,21 @@ export function runMirrorPlan(
 ): string {
   const desired = workersToDesired(workers);
   const tracked = parseTrackedJsonl(trackedJsonl);
-  const calls: MirrorCall[] = options.codex
-    ? codexSinkPlan(desired, tracked).plan
-    : mirrorPlan(desired, tracked);
+  const host: TaskMirrorHost = options.host ?? (options.codex ? "codex" : "claude");
+  let calls: MirrorCall[];
+  switch (taskMirrorCapability(host).surface) {
+    case "native-task":
+      calls = mirrorPlan(desired, tracked);
+      break;
+    case "monitor-agent":
+      calls = codexSinkPlan(desired, tracked).plan;
+      break;
+    case "headless":
+      // OpenCode is a headless Worker with no in-session surface — no native
+      // calls are ever emitted, so the plan is always empty.
+      calls = [];
+      break;
+  }
   if (calls.length === 0) return "";
   return `${calls.map((c) => JSON.stringify(c)).join("\n")}\n`;
 }
@@ -122,13 +144,16 @@ export async function monitorCommand(
 ): Promise<number> {
   if (args.includes("--mirror-plan")) {
     const runnerIdx = args.indexOf("--runner");
-    const codex =
-      args.includes("--codex") ||
-      args.includes("--runner=codex") ||
-      (runnerIdx !== -1 && args[runnerIdx + 1] === "codex");
+    const runnerFlag = runnerIdx !== -1 ? args[runnerIdx + 1] : undefined;
+    const host: TaskMirrorHost =
+      args.includes("--codex") || args.includes("--runner=codex") || runnerFlag === "codex"
+        ? "codex"
+        : args.includes("--runner=opencode") || runnerFlag === "opencode"
+          ? "opencode"
+          : "claude";
     const { workers } = await collectMonitorInputs(cwd);
     const trackedJsonl = await readStdin(stdin);
-    const out = runMirrorPlan(workers, trackedJsonl, { codex });
+    const out = runMirrorPlan(workers, trackedJsonl, { host });
     if (out !== "") stdout.write(out);
     return 0;
   }
