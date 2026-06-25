@@ -83,6 +83,32 @@ describe("monitor — compact line", () => {
     expect(renderWorkerCompactLine(base, 1780140600)).not.toContain("tok:");
   });
 
+  it("appends activity counters and cursor-backed log line counts", () => {
+    const base = baseWorker();
+    const line = renderWorkerCompactLine(
+      baseWorker({
+        state: {
+          ...base.state,
+          current: {
+            ...base.state.current,
+            tools_called_count: 39,
+            reasoning_events: 4,
+            text_chunk_count: 112,
+            waiting_count: 2,
+          },
+        },
+        logLines: 540,
+        logNewLines: 12,
+      }),
+      1780140600,
+    );
+    expect(line).toContain("tools:39");
+    expect(line).toContain("reason:4");
+    expect(line).toContain("text:112");
+    expect(line).toContain("wait:2");
+    expect(line).toContain("log:540(+12)");
+  });
+
   it("flags a non-live worker as stale", () => {
     const line = renderWorkerCompactLine(
       baseWorker({ live: false }),
@@ -421,6 +447,32 @@ describe("monitor — mirror plan", () => {
     });
   });
 
+  it("quiet but pid-live tracked worker stays in progress instead of completing", () => {
+    const tracked = JSON.stringify({ key: "wAAAA:42", stage: "tests", phase: "validating" });
+    const out = runMirrorPlan(
+      [
+        baseWorker({
+          state: {
+            ...baseWorker().state,
+            worker_id: "wAAAA",
+            current: {
+              number: 42,
+              title: "t",
+              slug: "t",
+              stage: "tests",
+              phase: "validating",
+              started_at: "2026-05-30T11:00:00Z",
+            },
+          },
+          live: false,
+          pidLive: true,
+        }),
+      ],
+      tracked,
+    );
+    expect(out).toBe("");
+  });
+
   it("terminal (non-live) blocked worker fails with a [blocked] title", () => {
     const tracked = JSON.stringify({ key: "wAAAA:42", stage: "impl", phase: "coding" });
     const out = runMirrorPlan(
@@ -501,10 +553,20 @@ describe("monitor — mirror plan", () => {
         },
       }),
       liveWorker("wDEAD", 7, "t", "impl", false),
+      baseWorker({
+        state: {
+          ...baseWorker().state,
+          worker_id: "wQUIET",
+          current: { number: 8, title: "q", stage: "tests", started_at: "2026-05-30T11:00:00Z" },
+        },
+        live: false,
+        pidLive: true,
+      }),
     ]);
-    expect(desired.map((d) => d.worker_id)).toEqual(["wAAAA", "wDEAD"]);
+    expect(desired.map((d) => d.worker_id)).toEqual(["wAAAA", "wDEAD", "wQUIET"]);
     expect(desired[0]!.status).toBe("running");
     expect(desired[1]!.status).toBe("gone");
+    expect(desired[2]!.status).toBe("running");
   });
 
   it("parseTrackedJsonl skips blank/garbage lines and tolerates missing stage/phase", () => {

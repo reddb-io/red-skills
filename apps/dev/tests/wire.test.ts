@@ -296,12 +296,20 @@ describe("collectMonitorInputs", () => {
         join(attemptDir, "afk.state.json"),
         JSON.stringify({ worker_id: "wAB12", pid: 999999, runner: "claude", total: 3, done: 1 }),
       );
+      writeFileSync(join(attemptDir, "afk.log"), "a\nb\n");
       const { workers } = await collectMonitorInputs(root);
       expect(workers).toHaveLength(1);
       expect(workers[0]!.state.worker_id).toBe("wAB12");
       expect(workers[0]!.state.done).toBe(1);
+      expect(workers[0]!.logLines).toBe(2);
+      expect(workers[0]!.logNewLines).toBe(2);
       // pid 999999 is almost certainly dead → not live
       expect(workers[0]!.live).toBe(false);
+
+      writeFileSync(join(attemptDir, "afk.log"), "a\nb\nc\n");
+      const again = await collectMonitorInputs(root);
+      expect(again.workers[0]!.logLines).toBe(3);
+      expect(again.workers[0]!.logNewLines).toBe(1);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

@@ -277,6 +277,7 @@ describe("buildHandoff", () => {
     expect(EXIT_PROTOCOL).toContain("<promise>DONE</promise>");
     expect(EXIT_PROTOCOL).toContain("<promise>BLOCKED</promise>");
     expect(EXIT_PROTOCOL).toContain("ALREADY-DONE SHORT-CIRCUIT");
+    expect(EXIT_PROTOCOL).toContain("git status --short");
     expect(EXIT_PROTOCOL).toContain("prose");
   });
 

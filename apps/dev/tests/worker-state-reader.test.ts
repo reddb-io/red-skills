@@ -31,6 +31,7 @@ describe("worker-state-reader", () => {
     expect(rec!.state.current.number).toBe(824);
     expect(rec!.live).toBe(true);
     expect(rec!.active).toBe(true);
+    expect(rec!.liveness).toBe("active");
   });
 
   it("reads a stale worker as live (pid only) but NOT active (old activity)", async () => {
@@ -43,6 +44,7 @@ describe("worker-state-reader", () => {
     const rec = readWorkerState(path, { nowMs: NOW, kill: aliveKill });
     expect(rec!.live).toBe(true);
     expect(rec!.active).toBe(false);
+    expect(rec!.liveness).toBe("quiet-but-live");
   });
 
   it("a dead pid is neither live nor active", async () => {
@@ -51,6 +53,25 @@ describe("worker-state-reader", () => {
     const rec = readWorkerState(path, { nowMs: NOW, kill: deadKill });
     expect(rec!.live).toBe(false);
     expect(rec!.active).toBe(false);
+    expect(rec!.liveness).toBe("dead");
+  });
+
+  it("a recycled pid with a different start time is neither live nor active", async () => {
+    const base = await mkdtemp(join(tmpdir(), "wsr-reused-pid-"));
+    const path = await writeState(base, {
+      worker_id: "wOLD",
+      pid: 4242,
+      pid_start_time: "old-start",
+      current: { last_event_at: fresh },
+    });
+    const rec = readWorkerState(path, {
+      nowMs: NOW,
+      kill: aliveKill,
+      pidStartTime: () => "new-start",
+    });
+    expect(rec!.live).toBe(false);
+    expect(rec!.active).toBe(false);
+    expect(rec!.liveness).toBe("dead");
   });
 
   it("reads a LEGACY-keyed file identically through the shared parseState shim", async () => {

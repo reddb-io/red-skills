@@ -34,6 +34,12 @@ export interface CompactCurrent {
   input_tokens?: number;
   output_tokens?: number;
   cost_usd?: number;
+  /** WorkerVitals activity counters (ADR 0065), shown as the operator's
+   * tie-breaker when the agent lane is quiet but the worker pid still lives. */
+  tools_called_count?: number;
+  text_chunk_count?: number;
+  reasoning_events?: number;
+  waiting_count?: number;
 }
 
 /** The subset of afk.state.json the compact line reads. */
@@ -53,12 +59,15 @@ export interface CompactState {
 /** One worker as handed to the pure renderer. */
 export interface CompactWorker {
   state: CompactState;
-  /** True when the worker's pid resolves AND agent-lane activity is fresh
+  /** Explicit liveness verdict from the shared Worker state reader. Older tests
+   * may omit it and still fall back to `live` / `pidLive`. */
+  liveness?: "active" | "quiet-but-live" | "dead";
+  /** True when the worker's pid identity matches AND agent-lane activity is fresh
    * (within {@link WORKER_LIVE_MAX_AGE_S}). Used for the `[live]` badge.
    * When false but {@link pidLive} is true, the badge renders as `[quiet]`
-   * (pid alive, agent lane idle — e.g. mid-gate or post-attempt commit). */
+   * (pid identity alive, agent lane idle — e.g. mid-gate or post-attempt commit). */
   live: boolean;
-  /** True when the worker's pid resolves regardless of agent-lane freshness.
+  /** True when the worker's pid identity matches regardless of freshness.
    * Absent / false collapses to the `[stale]` (dead/finished) badge. */
   pidLive?: boolean;
   /** Added lines of the attempt's diff (committed + uncommitted, from the
@@ -67,6 +76,11 @@ export interface CompactWorker {
   diffAdded?: number;
   /** Removed lines of the attempt's diff. Defaults to 0 — see {@link diffAdded}. */
   diffRemoved?: number;
+  /** Total newline-terminated lines currently observed in the attempt's
+   * `afk.log`, read via the monitor's persistent cursor. */
+  logLines?: number;
+  /** New log lines observed since the previous monitor tick for this log file. */
+  logNewLines?: number;
 }
 
 /** Per-slot visibility record for a non-closed supervisor slot, sourced from the
@@ -175,7 +189,18 @@ function elapsedSeconds(state: CompactState, now: number): number {
 export function renderWorkerCompactLine(worker: CompactWorker, now: number): string {
   const { state } = worker;
   const workerId = state.worker_id || "?";
-  const tag = worker.live ? "live" : worker.pidLive ? "quiet" : "stale";
+  const tag =
+    worker.liveness === "active"
+      ? "live"
+      : worker.liveness === "quiet-but-live"
+        ? "quiet"
+        : worker.liveness === "dead"
+          ? "stale"
+          : worker.live
+            ? "live"
+            : worker.pidLive
+              ? "quiet"
+              : "stale";
   const runner = state.runner || "-";
   const total = state.total;
   const done = state.done;
@@ -192,14 +217,26 @@ export function renderWorkerCompactLine(worker: CompactWorker, now: number): str
   const ot = state.current.output_tokens ?? 0;
   const cu = state.current.cost_usd ?? 0;
   const costFrag = it > 0 || ot > 0 ? `  tok:${it}/${ot}${cu > 0 ? ` $${cu.toFixed(2)}` : ""}` : "";
+  const tools = state.current.tools_called_count ?? 0;
+  const text = state.current.text_chunk_count ?? 0;
+  const reasoning = state.current.reasoning_events ?? 0;
+  const waiting = state.current.waiting_count ?? 0;
+  const hasVitals = tools > 0 || text > 0 || reasoning > 0 || waiting > 0;
+  const vitalsFrag = hasVitals
+    ? `  tools:${tools} reason:${reasoning} text:${text}${waiting > 0 ? ` wait:${waiting}` : ""}`
+    : "";
+  const logFrag =
+    worker.logLines !== undefined
+      ? `  log:${worker.logLines}${worker.logNewLines !== undefined ? `(+${worker.logNewLines})` : ""}`
+      : "";
 
   let cur: string;
   if (!isNoIssue(state.current.number)) {
     const title = state.current.title.slice(0, TITLE_MAX);
     const elapsed = formatElapsed(elapsedSeconds(state, now));
-    cur = `  #${state.current.number} ${title}  stage:${state.current.stage}  ${elapsed}${diff}${costFrag}`;
+    cur = `  #${state.current.number} ${title}  stage:${state.current.stage}  ${elapsed}${diff}${costFrag}${vitalsFrag}${logFrag}`;
   } else {
-    cur = `  idle${diff}`;
+    cur = `  idle${diff}${logFrag}`;
   }
 
   return `${workerId} [${tag}] ${runner}  issues ${done}/${total}${flags}${cur}`;

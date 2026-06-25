@@ -310,6 +310,7 @@ For each issue `N`:
    - Inner emits `<promise>BLOCKED</promise>` plus notes appended to the handoff file → comment the blocker on the issue, re-label `ready-for-human`, drop the worktree, go to next issue.
    - Inner emits `<promise>NO MORE TASKS</promise>` from inside one iteration → ignored. That sentinel is for the outer loop.
    - Runner-exhausted signal (rate limit / quota error string per runner) → without `--fallback-runner`, terminate this issue as Attempt Outcome `exhausted`; route it through bounded recovery (`blocked:quota`, retry under `RED_AFK_RETRY_QUOTA`, escalate at/over cap). With `--fallback-runner`, keep the same worktree and handoff, swap runner once, and only route `exhausted` if the swapped runner also exhausts.
+   - Inner emits `DONE` / no-sentinel while the worktree still has dirty paths (zero commits or a partial commit) → AFK runs the ADR 0050 salvage: commit each dirty path on the worker branch, push it, then continue through the same feedback + landing tail. A salvage that later fails feedback/backpressure still parks as `blocked:validation`; the terminal envelope names the commit state (`zero commits` or `left dirty worktree paths after N commit(s)`), `salvaged N uncommitted file(s)`, and the failing gate so operators know the work was rescued but not mergeable.
 7. **Feedback loops.** In the worktree, derive relevant package scopes from the worker branch diff against the pinned base, then run `test`, `typecheck`, `lint`, and `build` with `pnpm -C <scope>` for each touched package that declares the script. Root-only repos keep using the root package. Any missing script is reported as an explicit per-scope skip in the validation section. Any failure blocks the merge and flips the issue to `ready-for-human` with the validation report in the blocker envelope.
 8. **Merge.** All steps target the **base branch** resolved in step 2 (`{pinned}`, defaults to `main`). The integration prelude is shared; **landing is lock-toggled** by the branch-lock state (ADR 0030).
    - Primary dirty? Auto-stage and commit `chore(afk): pre-merge snapshot for #N` in primary. Never `git stash`. Never `git checkout -- .`.
@@ -510,9 +511,10 @@ Idempotency: `SLOT_SWEPT[slot]=1` blocks a second sweep within the same supervis
 `/afk monitor` is the readonly aggregated view across all live workers. **Run the bundle's `monitor` command — do not reinvent the rendering in inline bash.** It:
 
 1. Globs `.red/tmp/workers/*/*/afk.state.json` and renders one section per active attempt.
-2. Verifies liveness via the orchestrator PID recorded in `afk.state.json` (`.pid` field) — attempts whose PID is dead are flagged `stale`/`gone` and excluded, not counted as running.
-3. Optionally tails the sibling `afk.log` for the most recent line under each worker's header.
-4. Renders the 48h sparkline header (next subsection) on every refresh.
+2. Verifies liveness via the orchestrator PID recorded in `afk.state.json` (`.pid` field), paired with `pid_start_time` when the platform exposes a stable process-start token. Attempts whose PID identity is dead or mismatched are flagged `stale`/`gone`; PID-live but agent-lane-quiet workers render `[quiet]` and are still counted as running.
+3. Reads sibling `afk.log` line counts through the monitor cursor and renders `log:<total>(+<new>)` when available, without re-reading whole logs on every tick.
+4. Renders WorkerVitals activity counters (`tools:<n> reason:<n> text:<n> wait:<n>`) so a quiet but pid-live worker can show useful progress signals.
+5. Renders the 48h sparkline header (next subsection) on every refresh.
 
 To invoke, from the project root:
 
@@ -529,7 +531,7 @@ Compact output shape (≈3 lines total for 2 workers — fits inline without tru
 
 ```
 48h: ···············································█  (4 closed, peak 4/h, all workers)   Δ fleet +382 -45
-wZ2R4 [live] claude  issues 4/5  #150 [blog/D] Agent SDK on RedDB  stage:impl  00:23:01  +382 -45
+wZ2R4 [live] claude  issues 4/5  #150 [blog/D] Agent SDK on RedDB  stage:impl  00:23:01  +382 -45  tools:39 reason:4 text:112 wait:2  log:540(+12)
 wK7M2 [live] codex   issues 0/16  idle  +0 -0
 ```
 
@@ -563,13 +565,13 @@ Every `/afk monitor` run — whether typed by the user or fired by the auto-moni
 
 After rendering the dashboard, the agent must:
 
-1. Count workers with status `[live]` in the rendered output (i.e., orchestrator pid alive, post-orphan-cleanup).
-2. If `live_workers == 0`:
+1. Count observable workers with status `[live]` or `[quiet]` in the rendered output (i.e., orchestrator pid identity alive, post-orphan-cleanup).
+2. If `observable_workers == 0`:
    - Fetch `CronList` and `CronDelete` via `ToolSearch` if not already loaded.
    - `CronList` — find every job with `prompt == "/dev:afk monitor"`. There will normally be exactly one; multiples can appear if the user manually invoked `/loop 3m /dev:afk monitor` on top of the auto-loop.
    - `CronDelete` each match.
    - Append one line to the user-facing output: `🛑 no live workers — auto-cancelled monitor loop (cron <id>).`
-3. If `live_workers >= 1` or `.red/tmp/afk-supervisor.pid` resolves to a live PID: arm the cron when unwatched (observe path — same dedup as the spawn path):
+3. If `observable_workers >= 1` or `.red/tmp/afk-supervisor.pid` resolves to a live PID: arm the cron when unwatched (observe path — same dedup as the spawn path):
    - Fetch `CronCreate` and `CronList` via `ToolSearch` if not already loaded (deferred tools).
    - `CronList` — if any existing job has `prompt == "/dev:afk monitor"`, **skip** (cron already present; it continues firing every 10 minutes).
    - Otherwise `CronCreate(cron="*/10 * * * *", prompt="/dev:afk monitor", recurring=true)` and tell the user one line: `monitor loop scheduled (every 10 min) — auto-cancels when all workers exit.`

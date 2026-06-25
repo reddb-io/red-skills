@@ -77,6 +77,10 @@ export const AfkStateSchema = z.object({
   version: z.number().default(1),
   worker_id: z.string().default(""),
   pid: z.number().default(0),
+  /** Stable process identity paired with `pid` when the OS exposes one. Linux
+   * writes `/proc/<pid>/stat` field 22 here; empty means legacy/unavailable and
+   * readers fall back to pid-only liveness. */
+  pid_start_time: z.string().default(""),
   log: z.string().default(""),
   started_at: z.string().default(""),
   runner: z.string().default(""),

@@ -16,8 +16,10 @@
 
 import { readFileSync } from "node:fs";
 import type { AfkState } from "../types/state.js";
-import { isStateActive, isStateLive, parseState } from "./state.js";
+import { isStateActive, isStateLive, parseState, type PidStartTimeProbe } from "./state.js";
 import { globWorkerStates } from "../runtime/fs.js";
+
+export type WorkerLivenessVerdict = "active" | "quiet-but-live" | "dead";
 
 /** One normalized, liveness-tagged worker state read. */
 export interface WorkerStateRecord {
@@ -26,17 +28,18 @@ export interface WorkerStateRecord {
   /** Parsed state with the schema + ADR 0065 legacy-key shim applied. */
   state: AfkState;
   /**
-   * pid-only liveness ({@link isStateLive}). The reaper/cap signal: a slow
-   * worker whose pid still resolves is live even when briefly quiet — so it is
-   * never reaped on freshness.
+   * pid-identity liveness ({@link isStateLive}). The reaper/cap signal: a slow
+   * worker whose pid identity still matches is live even when briefly quiet —
+   * so it is never reaped on freshness.
    */
   live: boolean;
   /**
-   * pid + recent-activity liveness ({@link isStateActive}). The display `[live]`
-   * badge the monitor/statusline use: a finished worker whose pid is shared with
-   * the supervisor or recycled by the OS stops rendering as live.
+   * pid identity + recent-activity liveness ({@link isStateActive}). The
+   * display `[live]` badge the monitor/statusline use.
    */
   active: boolean;
+  /** Explicit verdict derived once from pid identity + activity freshness. */
+  liveness: WorkerLivenessVerdict;
 }
 
 /** Liveness injection for {@link readWorkerState} (tests / determinism). */
@@ -45,6 +48,9 @@ export interface WorkerStateReadOpts {
   nowMs?: number;
   /** pid-resolution probe. Defaults to `process.kill(pid, 0)`. */
   kill?: (pid: number, signal?: 0) => boolean;
+  /** pid identity probe. Defaults to Linux `/proc`; empty legacy state falls
+   * back to pid-only liveness. */
+  pidStartTime?: PidStartTimeProbe;
 }
 
 /**
@@ -70,11 +76,14 @@ export function readWorkerState(path: string, opts: WorkerStateReadOpts = {}): W
     return null;
   }
   const nowMs = opts.nowMs ?? Date.now();
+  const live = isStateLive(state, opts.kill, opts.pidStartTime);
+  const active = isStateActive(state, nowMs, opts.kill, undefined, opts.pidStartTime);
   return {
     path,
     state,
-    live: opts.kill ? isStateLive(state, opts.kill) : isStateLive(state),
-    active: opts.kill ? isStateActive(state, nowMs, opts.kill) : isStateActive(state, nowMs),
+    live,
+    active,
+    liveness: active ? "active" : live ? "quiet-but-live" : "dead",
   };
 }
 
@@ -97,7 +106,7 @@ export async function readWorkerStates(root: string, opts: WorkerStatesReadOpts 
   const files = await glob(root);
   const out: WorkerStateRecord[] = [];
   for (const file of files) {
-    const rec = readWorkerState(file, { nowMs, kill: opts.kill });
+    const rec = readWorkerState(file, { nowMs, kill: opts.kill, pidStartTime: opts.pidStartTime });
     if (rec !== null) out.push(rec);
   }
   return out;

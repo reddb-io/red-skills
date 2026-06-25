@@ -68,6 +68,15 @@ describe("state", () => {
     expect(isStateLive({ pid: 123 }, () => false)).toBe(false);
   });
 
+  it("rejects pid reuse when pid_start_time is present and mismatched", () => {
+    const alive = (pid: number): boolean => pid === 123;
+    expect(isStateLive({ pid: 123, pid_start_time: "old" }, alive, () => "old")).toBe(true);
+    expect(isStateLive({ pid: 123, pid_start_time: "old" }, alive, () => "new")).toBe(false);
+    expect(isStateLive({ pid: 123, pid_start_time: "old" }, alive, () => null)).toBe(true);
+    // Legacy/unavailable identity remains pid-only for compatibility.
+    expect(isStateLive({ pid: 123, pid_start_time: "" }, alive, () => "new")).toBe(true);
+  });
+
   it("isStateActive requires BOTH a resolving pid AND recent activity (ADR 0065)", () => {
     const now = Date.parse("2026-06-11T20:00:00.000Z");
     const alive = () => true;
@@ -82,6 +91,7 @@ describe("state", () => {
 
     // pid-live + fresh activity → active
     expect(isStateActive(fresh, now, alive)).toBe(true);
+    expect(isStateActive({ ...fresh, pid_start_time: "old" }, now, alive, undefined, () => "new")).toBe(false);
     // pid-live but activity older than the ceiling → NOT active (the phantom case:
     // a finished worker whose pid is shared/recycled still resolves).
     expect(isStateActive(stale, now, alive)).toBe(false);
