@@ -45,17 +45,16 @@ Final result is read from `--output-last-message`. The orchestrator checks it fo
 
 AGENT-PROMPT (Workflow step 5) requires the inner agent to commit its work — one
 commit per file — before emitting a sentinel. Codex does not always comply: it
-edits the worktree, runs the gates, and emits `<promise>DONE</promise>` while
-leaving every change **uncommitted**. sandcastle then collects zero commits, the
-worker branch is empty, and a DONE attempt would land an empty merge — the work
-is stranded in the torn-down worktree.
+can edit the worktree, run the gates, and emit `<promise>DONE</promise>` while
+leaving some or all paths uncommitted. sandcastle then sees only the committed
+subset; the rest would be stranded in the torn-down worktree.
 
-The orchestrator guards against this: when `runAgent` returns **zero commits** on
-a `done` (or `no-sentinel`) outcome, `processIssue` calls `salvageUncommitted`,
-which locates the worktree checked out on the worker branch and, if it is dirty,
-commits each changed path on its own commit (the AGENT-PROMPT discipline) and
-pushes. The same feedback gate + landing tail then validate and merge the real
-work. A clean worktree salvages nothing and the empty-branch behaviour is
+The orchestrator guards against this: after a `done` (or `no-sentinel`) outcome,
+`processIssue` calls `salvageUncommitted`, which locates the worktree checked out
+on the worker branch and, if it is dirty, commits each changed path on its own
+commit (the AGENT-PROMPT discipline) and pushes. The same feedback gate +
+landing tail then validate and merge the complete work. A clean worktree
+salvages nothing and the existing behaviour is
 unchanged. This is a net under codex's prompt non-compliance, not a substitute
 for it — the agent should still commit.
 

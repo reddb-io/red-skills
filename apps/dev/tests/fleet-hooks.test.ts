@@ -336,6 +336,18 @@ describe("dispatchFleetHook — exit-code policy", () => {
     expect(capturedEnv!.RED_AFK_RUNNER).toBe("claude");
     expect(capturedEnv!.RED_AFK_ROOT).toBe("/repo");
   });
+
+  it("logs fleet hook enter and exit for successful commands", async () => {
+    const logs: string[] = [];
+    const ctx: FleetHookContext = { event: "on_slot_spawn", runner: "claude", slot: 1, pid: 999 };
+    await dispatchFleetHook("on_slot_spawn", ["notify-fleet"], ctx, async () => ({ code: 0, stdout: "" }), {
+      log: (line) => logs.push(line),
+    });
+    expect(logs).toEqual([
+      "[afk:fleet-hooks] on_slot_spawn: enter: notify-fleet",
+      "[afk:fleet-hooks] on_slot_spawn: exit rc=0: notify-fleet",
+    ]);
+  });
 });
 
 // ---------- FLEET_HOOK_EXIT_POLICY ----------

@@ -416,14 +416,12 @@ export interface ProcessIssueDeps {
   /**
    * Salvage uncommitted work the inner agent left in its worktree. The codex
    * runner sometimes edits, passes the gates, and emits `<promise>DONE</promise>`
-   * WITHOUT ever running `git commit`, so sandcastle collects zero commits and
-   * the worker branch is empty — a DONE attempt then lands an empty merge and the
-   * issue is never really resolved. When `runAgent` reports zero commits on a
-   * done / no-sentinel outcome, processIssue calls this to commit the dirty
-   * worktree (one commit per file) onto `branch` and push, so the SAME feedback
-   * gate + landing tail see the work. Returns the count of files committed (0 =
-   * clean worktree, nothing salvaged). Best-effort; MUST NOT throw. Optional →
-   * tests/legacy callers omit it (no salvage, today's behaviour).
+   * without committing every dirty path. After any done / no-sentinel outcome,
+   * processIssue calls this to commit remaining dirty worktree paths (one commit
+   * per file) onto `branch` and push, so the SAME feedback gate + landing tail
+   * see the complete work. Returns the count of files committed (0 = clean
+   * worktree, nothing salvaged). Best-effort; MUST NOT throw. Optional → tests /
+   * legacy callers omit it (no salvage).
    */
   salvageUncommitted?(branch: string): Promise<number>;
 }
@@ -627,7 +625,10 @@ async function fireRecoveryHook(
 ): Promise<{ context: string; aborted: boolean }> {
   try {
     const resolved = resolveHooks(deps.hooks.config, deps.hooks.resolveOptions);
-    return await dispatchHooks(name, resolved[name], context, deps.hooks.exec, { env: deps.hooks.env ?? {} });
+    return await dispatchHooks(name, resolved[name], context, deps.hooks.exec, {
+      env: deps.hooks.env ?? {},
+      log: (line) => deps.appendIterLog(line),
+    });
   } catch {
     return { context, aborted: false };
   }
@@ -695,6 +696,7 @@ export async function processIssue(
     hooksFired.push(name);
     const result = await dispatchHooks(name, resolved[name], context, deps.hooks.exec, {
       env: deps.hooks.env ?? {},
+      log: (line) => deps.appendIterLog(line),
     });
     // Capture the pre_worktree env mutation (FIX J). Only this point computes the
     // mutable `env` slice the runner must inherit; other points' mutations are
@@ -906,6 +908,20 @@ export async function processIssue(
     startedEpoch,
   };
   let validationSidecar: string[] = [];
+  let salvagedUncommittedFiles = 0;
+  let salvagedUncommittedOutcome: RunAgentResult["outcome"] | undefined;
+  let salvagedRunCommitCount = 0;
+  const salvagedUncommittedNotes = (gate: "feedback" | "backpressure"): string => {
+    const prefix =
+      salvagedRunCommitCount === 0
+        ? `Inner agent emitted ${salvagedUncommittedOutcome} with zero commits`
+        : `Inner agent emitted ${salvagedUncommittedOutcome} after ${salvagedRunCommitCount} commit(s) and left dirty worktree paths`;
+    const gateText =
+      gate === "feedback"
+        ? "feedback validation failed"
+        : "backpressure validation failed after the feedback gate passed";
+    return `${prefix}; AFK salvaged ${salvagedUncommittedFiles} uncommitted file(s), but ${gateText}. The worker branch was not merged.`;
+  };
 
   while (true) {
     const initialTier = resolveSpawnTier(deps, activeRunner, activeTaskClass);
@@ -1036,25 +1052,30 @@ export async function processIssue(
       startedEpoch,
     } satisfies StageCommon;
 
-    // ---- commit-leftovers salvage (codex DONE-without-commit, ADR 0050) ----
+    // ---- commit-leftovers salvage (codex DONE/partial-commit leftovers, ADR 0050) ----
     // The inner agent (observed: codex) can edit, pass the gates, and emit
-    // `<promise>DONE</promise>` WITHOUT ever running `git commit`. sandcastle then
-    // collects zero commits → the worker branch is empty → a DONE attempt lands an
-    // empty merge and the issue is never really resolved (the no-sentinel salvage
-    // below misses it too: the branch carries no commits). When runAgent reports
-    // zero commits on a sentinel-bearing (done) or no-sentinel outcome, commit the
-    // dirty worktree onto the worker branch (one commit per file) so the SAME
-    // feedback gate + landing tail validate and merge the real work. A clean
-    // worktree salvages nothing (count 0) → today's behaviour is unchanged.
+    // `<promise>DONE</promise>` without committing every dirty path. This includes
+    // the original zero-commit bug and the partial-commit variant: sandcastle
+    // reports at least one commit, but useful edits remain unstaged/uncommitted.
+    // After any done/no-sentinel outcome, ask the salvage port to commit leftover
+    // dirty worktree paths onto the worker branch (one commit per file) so the
+    // SAME feedback gate + landing tail validate and merge the complete work. A
+    // clean worktree salvages nothing (count 0).
     if (
       deps.salvageUncommitted &&
-      run.commits.length === 0 &&
       (run.outcome === "done" || run.outcome === "no-sentinel")
     ) {
       const salvagedFiles = await deps.salvageUncommitted(workerBranch).catch(() => 0);
       if (salvagedFiles > 0) {
+        salvagedUncommittedFiles = salvagedFiles;
+        salvagedUncommittedOutcome = run.outcome;
+        salvagedRunCommitCount = run.commits.length;
+        const commitFact =
+          run.commits.length === 0
+            ? "committed nothing"
+            : `left dirty worktree paths after ${run.commits.length} commit(s)`;
         deps.appendIterLog(
-          `🤖 /afk: inner agent emitted ${run.outcome} but committed nothing — salvaged ${salvagedFiles} uncommitted file(s) onto \`${workerBranch}\` so the feedback gate + landing see the work.`,
+          `🤖 /afk: inner agent emitted ${run.outcome} but ${commitFact} — salvaged ${salvagedFiles} uncommitted file(s) onto \`${workerBranch}\` so the feedback gate + landing see the work.`,
         );
       }
     }
@@ -1344,12 +1365,18 @@ export async function processIssue(
         continue;
       }
       const outcome: ProcessOutcome = isInfra ? "feedback-failed-infra" : "feedback-failed";
+      let notes: string;
+      if (isInfra) {
+        notes = `Feedback validation failed for an INFRA reason (worktree/submodule/pnpm install/OOM) on branch \`${workerBranch}\` — the recovery policy will retry up to its cap.`;
+      } else if (salvagedUncommittedFiles > 0) {
+        notes = salvagedUncommittedNotes("feedback");
+      } else if (salvaged) {
+        notes = "Salvaged a no-sentinel branch (it carried work), but feedback validation failed — the branch was not merged.";
+      } else {
+        notes = "Feedback validation failed after the inner agent emitted DONE. The worker branch was not merged.";
+      }
       return await terminalFailure(common, outcome, "feedback", {
-        notes: isInfra
-          ? `Feedback validation failed for an INFRA reason (worktree/submodule/pnpm install/OOM) on branch \`${workerBranch}\` — the recovery policy will retry up to its cap.`
-          : salvaged
-            ? "Salvaged a no-sentinel branch (it carried work), but feedback validation failed — the branch was not merged."
-            : "Feedback validation failed after the inner agent emitted DONE. The worker branch was not merged.",
+        notes,
         validation: feedback.sidecar.join("\n"),
       }, { validationSummary: feedback.sidecar.join("\n") });
     }
@@ -1375,9 +1402,12 @@ export async function processIssue(
         // Persist BOTH gates' records (feedback passed, backpressure failed) for
         // Memory, but surface only the failing backpressure records in the envelope.
         await writeValidationSidecar(deps, input.attemptDir, [...feedback.sidecar, ...backpressure.sidecar]);
+        const notes =
+          salvagedUncommittedFiles > 0
+            ? salvagedUncommittedNotes("backpressure")
+            : "Backpressure validation failed after the feedback gate passed. The worker branch was not merged.";
         return await terminalFailure(common, "feedback-failed", "feedback", {
-          notes:
-            "Backpressure validation failed after the feedback gate passed. The worker branch was not merged.",
+          notes,
           validation: backpressure.sidecar.join("\n"),
         }, { validationSummary: backpressure.sidecar.join("\n") });
       }

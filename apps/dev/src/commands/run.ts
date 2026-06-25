@@ -67,7 +67,7 @@ import {
 import { join } from "node:path";
 import { hostname } from "node:os";
 import { appendAgentRecord, appendRecord } from "../core/jsonl-log.js";
-import { initStateSync, updateState } from "../core/state.js";
+import { initStateSync, readPidStartTime, updateState } from "../core/state.js";
 import { buildProgressHeartbeat, formatIterationMarker } from "../core/heartbeat.js";
 import { createActivityMeter } from "../core/activity-meter.js";
 import { DEFAULT_MAX_ITERATIONS } from "../core/execution.js";
@@ -1161,6 +1161,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
   // Worker id — probe the workers root for collisions.
   const existing = new Set((await collectMonitorInputs(cwd)).workers.map((w) => w.state.worker_id));
   const workerId = genWorkerId(Math.random, (id) => existing.has(id));
+  const pidStartTime = readPidStartTime(process.pid) ?? "";
   // Emit the per-slot boot-stamp immediately so the supervisor's slot log
   // captures this worker's ID before any failure. The circuit-trip sweep
   // (sweepParkedSlot) parses `[afk] worker: wXXXX` lines from the slot log
@@ -1354,6 +1355,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
         initStateSync(statePath, {
           worker_id: c.workerId,
           pid: process.pid,
+          pid_start_time: pidStartTime,
           runner: c.runner,
           log: join(attemptDir, "afk.log"),
           started_at: startedAt,

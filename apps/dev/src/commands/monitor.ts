@@ -30,6 +30,7 @@ export function workersToDesired(workers: readonly CompactWorker[]): WorkerRecor
     const issue = typeof number === "number" ? number : Number(number);
     if (!Number.isFinite(issue)) continue;
     const phase = w.state.current.phase ?? "";
+    const processLive = w.liveness ? w.liveness !== "dead" : (w.pidLive ?? w.live);
     out.push({
       worker_id: w.state.worker_id,
       issue,
@@ -38,9 +39,11 @@ export function workersToDesired(workers: readonly CompactWorker[]): WorkerRecor
       stage: w.state.current.stage,
       phase,
       started_at: w.state.current.started_at || w.state.started_at,
-      // A dead worker whose last macro phase is `blocked` is a terminal failure
-      // (→ task failed); any other dead worker is a normal completion (→ gone).
-      status: w.live ? "running" : phase === "blocked" ? "blocked" : "gone",
+      // Terminal completion requires the pid to be gone. `w.live` is the
+      // pid+freshness badge; when it is false but `pidLive` is true the worker is
+      // merely `[quiet]` (e.g. long validation/merge wait) and must stay
+      // in-progress on the native task surface.
+      status: processLive ? "running" : phase === "blocked" ? "blocked" : "gone",
     });
   }
   return out;

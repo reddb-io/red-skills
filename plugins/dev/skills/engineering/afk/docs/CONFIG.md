@@ -84,6 +84,14 @@ External advisory reviewers (CodeRabbit and the like) are **not** binding: the w
 
 Within a single hook list, **built-in defaults run first, user-declared commands run after**, and declaration order is preserved inside each group. A bare string is shorthand for a one-element list. An unknown hook name in `.red/config.yaml` is a hard error at session boot. Disable a built-in default with `afk.hooks.defaults.<name>: false` — reordering is not supported.
 
+Every hook command emits explicit dispatch breadcrumbs around the shell call:
+`[afk:hooks] <point>: enter: <command>` and
+`[afk:hooks] <point>: exit rc=<n>: <command>`. Session-scoped hooks write those
+lines to the session output, per-issue hooks write them to the attempt's
+`afk.log`, and fleet hooks use the analogous `[afk:fleet-hooks]` prefix in the
+supervisor log. A quiet Worker can therefore still show policy/hook activity
+without pretending the inner agent lane advanced.
+
 The full lifecycle table is defined in PRD #207. The hooks shipped so far:
 
 | Hook            | When it fires                              | Env vars              | Mutable slice   | Exit-code policy        |
@@ -185,4 +193,3 @@ afk:
     defaults:
       gradle: false                     # opt out of the gradle built-in
 ```
-

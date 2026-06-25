@@ -28,6 +28,7 @@ interface Trace {
   pushedAttempt: string[][];
   deletedRemote: string[][];
   postedEnvelopes: Array<{ issue: number; status: string }>;
+  envelopeBodies: string[];
   released: number[];
   runAgentCalls: RunAgentInput[];
   /** Labels queried via gh.listByLabel during the close cascade. */
@@ -154,6 +155,7 @@ function harness(opts: HarnessOptions = {}): {
     pushedAttempt: [],
     deletedRemote: [],
     postedEnvelopes: [],
+    envelopeBodies: [],
     released: [],
     runAgentCalls: [],
     listByLabelCalls: [],
@@ -442,6 +444,7 @@ function harness(opts: HarnessOptions = {}): {
       poster: async (issue, body) => {
         const status = /data-attempt-status="([^"]*)"/.exec(body)?.[1] ?? "?";
         trace.postedEnvelopes.push({ issue, status });
+        trace.envelopeBodies.push(body);
         return true;
       },
       async writeMarkers() {},
@@ -1056,15 +1059,66 @@ describe("processIssue — commit-leftovers salvage (codex DONE-without-commit)"
     expect(trace.closed).toContain(9);
   });
 
-  it("DONE WITH commits → never calls the salvage port (no double-commit)", async () => {
+  it("DONE with commits + clean worktree → probes salvage but creates no extra salvage log", async () => {
     const { deps, input, trace } = harness({
       outcome: "done",
       commits: [{ sha: "deadbee" }],
-      salvage: 3,
+      salvage: 0,
       feedbackOk: true,
     });
     await processIssue(deps, input);
-    expect(trace.salvageCalls).toEqual([]);
+    expect(trace.salvageCalls).toHaveLength(1);
+    expect(trace.iterLogs.some((line) => line.includes("salvaged"))).toBe(false);
+  });
+
+  it("DONE with commits + dirty leftovers → salvages the remaining work before validation", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      commits: [{ sha: "deadbee" }],
+      salvage: 2,
+      feedbackOk: true,
+    });
+    const result = await processIssue(deps, input);
+    expect(trace.salvageCalls).toHaveLength(1);
+    expect(trace.iterLogs.some((line) => line.includes("left dirty worktree paths after 1 commit(s)"))).toBe(true);
+    expect(result.outcome).toBe("done");
+    expect(trace.closed).toContain(9);
+  });
+
+  it("DONE but zero commits + salvaged dirty worktree + feedback fail explains both facts", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      commits: [],
+      salvage: 1,
+      changedFiles: ["packages/x/src/a.ts"],
+      feedbackOk: false,
+    });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("feedback-failed");
+    expect(trace.salvageCalls).toHaveLength(1);
+    expect(trace.iterLogs.some((line) => line.includes("salvaged 1 uncommitted file(s)"))).toBe(true);
+    const body = trace.envelopeBodies.at(-1) ?? "";
+    expect(body).toContain("Inner agent emitted done with zero commits");
+    expect(body).toContain("AFK salvaged 1 uncommitted file(s)");
+    expect(body).toContain("feedback validation failed");
+  });
+
+  it("DONE with commits + salvaged leftovers + feedback fail explains partial dirty state", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      commits: [{ sha: "deadbee" }],
+      salvage: 1,
+      changedFiles: ["packages/x/src/a.ts"],
+      feedbackOk: false,
+    });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("feedback-failed");
+    const body = trace.envelopeBodies.at(-1) ?? "";
+    expect(body).toContain("after 1 commit(s) and left dirty worktree paths");
+    expect(body).toContain("AFK salvaged 1 uncommitted file(s)");
+    expect(body).toContain("feedback validation failed");
   });
 
   it("no-sentinel + zero commits → salvage runs; a clean worktree (0 files) stays the empty-branch terminal", async () => {

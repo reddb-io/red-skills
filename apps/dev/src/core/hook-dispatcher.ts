@@ -264,10 +264,12 @@ export async function dispatchHooks(
   for (const command of commands) {
     if (command.length === 0) continue;
 
+    log(`[afk:hooks] ${name}: enter: ${command}`);
     const { code, stdout } = await exec(command, env, ctx);
     // Record every execution regardless of policy outcome — the Envelope must
     // show that a non-zero exit happened, not hide it.
     executions.push({ name, command, rc: code });
+    log(`[afk:hooks] ${name}: exit rc=${code}: ${command}`);
 
     if (code !== 0) {
       if (policy === "abort") {

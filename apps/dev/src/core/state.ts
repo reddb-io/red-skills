@@ -1,5 +1,5 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { AfkStateSchema, type AfkState } from "../types/state.js";
 
@@ -104,19 +104,41 @@ export async function updateState(path: string, updates: Record<string, unknown>
   return parsed;
 }
 
-export function isStateLive(state: Pick<AfkState, "pid">, kill: (pid: number, signal?: 0) => boolean = defaultKill0): boolean {
-  return Number.isInteger(state.pid) && state.pid > 0 && kill(state.pid, 0);
+export type PidStartTimeProbe = (pid: number) => string | null;
+
+export function readPidStartTime(pid: number): string | null {
+  if (!Number.isInteger(pid) || pid <= 0) return null;
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+    const commEnd = stat.lastIndexOf(")");
+    if (commEnd === -1) return null;
+    const fields = stat.slice(commEnd + 2).trim().split(/\s+/);
+    const startTime = fields[19];
+    return startTime && /^\d+$/.test(startTime) ? startTime : null;
+  } catch {
+    return null;
+  }
+}
+
+export function isStateLive(
+  state: Pick<AfkState, "pid"> & Partial<Pick<AfkState, "pid_start_time">>,
+  kill: (pid: number, signal?: 0) => boolean = defaultKill0,
+  pidStartTime: PidStartTimeProbe = readPidStartTime,
+): boolean {
+  if (!Number.isInteger(state.pid) || state.pid <= 0 || !kill(state.pid, 0)) return false;
+  const expected = state.pid_start_time ?? "";
+  if (!expected) return true;
+  const actual = pidStartTime(state.pid);
+  return actual === null || actual === expected;
 }
 
 /**
  * Wall-clock staleness ceiling for the per-worker "live" badge. A worker whose
- * most-recent activity timestamp is older than this is treated as NOT live even
- * when its recorded pid still resolves — the pid can belong to the shared
- * supervisor, or be recycled by the OS after the worker exits, both of which
- * made a finished worker render as `[live]` on the monitor/statusline. Generous
- * on purpose: a working agent advances `last_event_at` every few seconds and
- * commits/heartbeats well inside this window, so a real-but-briefly-quiet worker
- * is never mis-flagged stale (the monitor false-negative this must avoid).
+ * most-recent activity timestamp is older than this is treated as NOT active
+ * even when its recorded pid identity still matches. Generous on purpose: a
+ * working agent advances `last_event_at` every few seconds and commits/
+ * heartbeats well inside this window, so a real-but-briefly-quiet worker is
+ * never mis-flagged stale (the monitor false-negative this must avoid).
  */
 export const WORKER_LIVE_MAX_AGE_S = 180;
 
@@ -134,20 +156,21 @@ function latestActivityMs(state: Pick<AfkState, "current">): number {
 }
 
 /**
- * True when a worker is BOTH process-live (its pid resolves) AND recently active
- * (latest activity within {@link WORKER_LIVE_MAX_AGE_S}). This is what the
- * monitor/statusline use for the `[live]` badge: `isStateLive` alone (pid only)
- * renders a finished worker as live whenever its pid is shared with the
- * supervisor or recycled by the OS. Reaper/cap logic deliberately keeps using
- * the pid-only `isStateLive` so a slow worker is never reaped on freshness.
+ * True when a worker is BOTH process-live (its pid resolves and, when present,
+ * pid_start_time matches) AND recently active (latest activity within
+ * {@link WORKER_LIVE_MAX_AGE_S}). This is what the monitor/statusline use for
+ * the `[live]` badge; pid-identity liveness without freshness renders `[quiet]`.
+ * Reaper/cap logic deliberately keeps using the identity-only `isStateLive` so
+ * a slow worker is never reaped on freshness.
  */
 export function isStateActive(
-  state: Pick<AfkState, "pid" | "current">,
+  state: Pick<AfkState, "pid" | "current"> & Partial<Pick<AfkState, "pid_start_time">>,
   nowMs: number = Date.now(),
   kill: (pid: number, signal?: 0) => boolean = defaultKill0,
   maxAgeS: number = WORKER_LIVE_MAX_AGE_S,
+  pidStartTime: PidStartTimeProbe = readPidStartTime,
 ): boolean {
-  if (!isStateLive(state, kill)) return false;
+  if (!isStateLive(state, kill, pidStartTime)) return false;
   const latest = latestActivityMs(state);
   return latest > 0 && nowMs - latest <= maxAgeS * 1000;
 }

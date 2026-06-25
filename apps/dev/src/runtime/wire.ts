@@ -10,7 +10,7 @@
 // provider subpaths.
 
 import { readFileSync, writeFileSync, renameSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { loadConfig, getConfig, resolveTier } from "../core/config.js";
 import type { SandboxMode } from "../core/execution.js";
 import type { AgentEffort, RunAgentInput, RunAgentResult } from "../core/execution.js";
@@ -26,6 +26,7 @@ import { isRunner, type Runner } from "../types/runner.js";
 import * as ghx from "./gh.js";
 import * as gitx from "./git.js";
 import * as fsx from "./fs.js";
+import { collectLogLineCounts } from "./log-cursor.js";
 
 // ---------- repo resolution ----------
 
@@ -59,6 +60,7 @@ export interface AfkPaths {
   historyPath: string;
   fleetStatePath: string;
   fleetFirehosePath: string;
+  monitorLogCursorPath: string;
   gitignorePath: string;
   configPath: string;
 }
@@ -73,6 +75,7 @@ export function afkPaths(root: string): AfkPaths {
     historyPath: join(stateDir, "afk-history.jsonl"),
     fleetStatePath: join(tmpDir, "afk-supervisor.state.json"),
     fleetFirehosePath: join(tmpDir, "afk-supervisor.log.jsonl"),
+    monitorLogCursorPath: join(tmpDir, "monitor-log-cursors.json"),
     gitignorePath: join(root, ".gitignore"),
     configPath: join(root, ".red", "config.yaml"),
   };
@@ -427,11 +430,13 @@ export async function collectMonitorInputs(root = process.cwd()): Promise<Monito
   const paths = afkPaths(root);
   // The ONE owner reads + normalizes + liveness-tags every worker state file
   // (core/worker-state-reader). The dashboard's `[live]` badge uses the
-  // pid + freshness verdict (`active`); the `[quiet]` badge falls back to the
-  // pid-only verdict (`live`, surfaced here as `pidLive`).
+  // pid-identity + freshness verdict (`active`); the `[quiet]` badge falls back
+  // to the pid-identity verdict (`live`, surfaced here as `pidLive`).
   const records = await readWorkerStates(paths.workersRoot);
+  const logPaths = records.map(({ path, state }) => state.log || join(dirname(path), "afk.log"));
+  const logCounts = await collectLogLineCounts(paths.monitorLogCursorPath, logPaths);
   const workers: CompactWorker[] = [];
-  for (const { state, active, live: pidLive } of records) {
+  for (const { path, state, active, live: pidLive, liveness } of records) {
     // Diff volume: committed + uncommitted work for the attempt, measured from
     // the branch's merge-base with origin/main. Prefer the state file's persisted
     // counts; fall back to a live `git diff --shortstat` of the worktree when both
@@ -447,6 +452,8 @@ export async function collectMonitorInputs(root = process.cwd()): Promise<Monito
       removed = stat.removed;
     }
 
+    const logPath = state.log || join(dirname(path), "afk.log");
+    const counts = logCounts.get(logPath);
     workers.push({
       state: {
         worker_id: state.worker_id,
@@ -465,16 +472,22 @@ export async function collectMonitorInputs(root = process.cwd()): Promise<Monito
           input_tokens: state.current.input_tokens,
           output_tokens: state.current.output_tokens,
           cost_usd: state.current.cost_usd,
+          tools_called_count: state.current.tools_called_count,
+          text_chunk_count: state.current.text_chunk_count,
+          reasoning_events: state.current.reasoning_events,
+          waiting_count: state.current.waiting_count,
         },
       },
-      // active = pid resolves + agent-lane freshness → [live] badge; a finished
-      // worker whose pid is shared/recycled stops rendering as `[live]`.
-      // pidLive = pid resolves regardless of freshness → [quiet] badge when the
-      // agent lane is idle (e.g. post_attempt gate/commit) but the process lives.
+      liveness,
+      // active = pid identity matches + agent-lane freshness → [live] badge.
+      // pidLive = pid identity matches regardless of freshness → [quiet] badge
+      // when the agent lane is idle (e.g. post_attempt gate/commit) but the
+      // process still lives.
       live: active,
       pidLive,
       diffAdded: added,
       diffRemoved: removed,
+      ...(counts !== undefined ? { logLines: counts.lines, logNewLines: counts.newLines } : {}),
     });
   }
 
@@ -839,9 +852,9 @@ export async function collectBootOptions(
   for (const o of orphans) {
     const parsed = parseWorkerAttemptPath(o.path);
     if (!parsed) continue;
-    // Cap-pass liveness keeps the pid-only verdict (a live attempt is excluded
-    // from the cap even when briefly quiet), read through the single owner so the
-    // schema + legacy-key shim apply here too.
+    // Cap-pass liveness keeps the pid-identity verdict (a live attempt is
+    // excluded from the cap even when briefly quiet), read through the single
+    // owner so the schema + legacy-key shim apply here too.
     const live = readWorkerState(join(o.path, "afk.state.json"))?.live ?? false;
     const mtimeS = nowS - o.ageS;
     const list = byIssue.get(parsed.issue) ?? [];

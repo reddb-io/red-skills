@@ -76,6 +76,7 @@ describe("codex monitor agent prompt", () => {
     expect(prompt).toContain("Do not run /dev:afk run");
     expect(prompt).toContain("Do not repair state. Only observe and report.");
     expect(prompt).toContain("Exit once there is no live .red/tmp/afk-supervisor.pid");
+    expect(prompt).toContain("no [live] or [quiet] workers");
   });
 
   it("prints prompt JSON for host-layer spawn tooling", async () => {
