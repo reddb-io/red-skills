@@ -1,5 +1,6 @@
+import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile, mkdir } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -20,13 +21,44 @@ async function tempRoot(): Promise<string> {
   return root;
 }
 
+function hasRedAncestor(path: string): boolean {
+  let current = resolve(path);
+  while (true) {
+    if (existsSync(join(current, ".red"))) return true;
+    const parent = dirname(current);
+    if (parent === current) return false;
+    current = parent;
+  }
+}
+
+async function tempRootWithoutRedAncestor(): Promise<string> {
+  const candidates = new Set(
+    [
+      process.env.RUNNER_TEMP,
+      process.env.TMPDIR,
+      tmpdir(),
+      process.platform === "win32" ? undefined : "/var/tmp",
+      process.platform === "win32" ? undefined : "/dev/shm",
+    ].filter((candidate): candidate is string => Boolean(candidate)),
+  );
+
+  for (const parent of candidates) {
+    if (!existsSync(parent) || hasRedAncestor(parent)) continue;
+    const root = await mkdtemp(join(parent, "brain-config-"));
+    roots.push(root);
+    return root;
+  }
+
+  throw new Error("No temporary parent without a .red ancestor is available");
+}
+
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
 describe("Brain config", () => {
   it("uses the initial directory when no .red ancestor exists", async () => {
-    const root = await tempRoot();
+    const root = await tempRootWithoutRedAncestor();
     await expect(findBrainRoot(root)).resolves.toBe(root);
   });
 

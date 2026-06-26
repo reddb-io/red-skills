@@ -733,6 +733,19 @@ export function buildProcessDeps(
         }).catch(() => {});
         return;
       }
+      if (event.type === "sessionId") {
+        void appendRecord(join(current.attemptDir, "log.jsonl"), "session", `session ${event.sessionId}`, {
+          ts,
+          fields: {
+            extra: {
+              kind: "sessionId",
+              iteration: String(event.iteration),
+              session_id: event.sessionId,
+            },
+          },
+        }).catch(() => {});
+        return;
+      }
       // Agentic-iteration boundary markers (synthetic — afk.log + firehose, NEVER
       // the agent lane). Emit "iteration N ended" + "iteration N+1 started" when
       // sandcastle's re-invocation count advances, so a run burning through
@@ -747,7 +760,14 @@ export function buildProcessDeps(
         activityMeterDir = dir0;
         activityMeter = createActivityMeter();
       }
-      activityMeter.record(event);
+      if (
+        event.type === "text" ||
+        event.type === "toolCall" ||
+        event.type === "reasoning" ||
+        event.type === "usage"
+      ) {
+        activityMeter.record(event);
+      }
       if (event.iteration !== lastIter) {
         const emit = (line: string, phase: string, n: number): void => {
           void fsx.appendLine(join(dir0, "afk.log"), line);
@@ -772,7 +792,9 @@ export function buildProcessDeps(
               ? `💰 usage (in:${event.inputTokens} out:${event.outputTokens}${
                   event.reasoningTokens ? ` reason:${event.reasoningTokens}` : ""
                 })`
-              : `→ ${event.name} ${event.formattedArgs}`;
+              : event.type === "result"
+                ? `result: ${event.result}`
+                : `→ ${event.name} ${event.formattedArgs}`;
       void appendAgentRecord(join(current.attemptDir, "agent.log.jsonl"), msg, {
         ts,
         fields: { extra: { iteration: String(event.iteration), kind: event.type } },
@@ -793,11 +815,14 @@ export function buildProcessDeps(
       // (bounded write rate vs every text chunk — the lane mtime above is the
       // stall-detector's liveness signal; this is the dashboard's stage/last).
       // `last_event_at` (the honest liveness clock, ADR 0065) is stamped on every
-      // DISCRETE event — tool/reasoning/usage, not per-text-chunk — so it advances
+      // DISCRETE event — tool/reasoning/usage/result, not per-text-chunk — so it advances
       // every few seconds for an active worker even between commits.
       const stage = deriveStage(event);
       const discrete =
-        event.type === "toolCall" || event.type === "reasoning" || event.type === "usage";
+        event.type === "toolCall" ||
+        event.type === "reasoning" ||
+        event.type === "usage" ||
+        event.type === "result";
       // A `usage` event is the only carrier of the cost group, and for claude it
       // arrives exactly ONCE — on the terminal result line, AFTER the last
       // heartbeat poll and just before the agent exits. The ~60s heartbeat is

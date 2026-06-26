@@ -558,6 +558,7 @@ async function routeRecovery(
   issue: number,
   reason: AttemptOutcome,
   attemptN: number,
+  opts: { forceDecision?: "retry" | "escalate" } = {},
 ): Promise<"retry" | "escalate"> {
   // The composer owns the retry-vs-escalate decision, the label sets, and the
   // budget-exhausted page comment (core/disposition). This site only APPLIES it:
@@ -573,14 +574,16 @@ async function routeRecovery(
   // on_recovery_decision (#832, MUTABLE): hand the composer's proposed decision
   // to a hook, which may override retry↔escalate via a `{"decision":…}` stdout
   // JSON before any label is applied. An absent / silent hook is a no-op.
-  let decision = disp.decision;
-  const recResult = await fireRecoveryHook(
-    deps,
-    "on_recovery_decision",
-    JSON.stringify({ issue: { number: issue, title: "" }, decision, reason, attempt_n: attemptN }),
-  );
-  const override = parseRecoveryDecision(recResult.context);
-  if (override !== null) decision = override;
+  let decision = opts.forceDecision ?? disp.decision;
+  if (!opts.forceDecision) {
+    const recResult = await fireRecoveryHook(
+      deps,
+      "on_recovery_decision",
+      JSON.stringify({ issue: { number: issue, title: "" }, decision, reason, attempt_n: attemptN }),
+    );
+    const override = parseRecoveryDecision(recResult.context);
+    if (override !== null) decision = override;
+  }
 
   if (decision === "escalate") {
     if (disp.typedLabel !== null) await deps.gh.ensureLabel(disp.typedLabel);
@@ -1485,6 +1488,22 @@ export async function processIssue(
     if (landing.reason === "ci-failed" || landing.reason === "ci-pending") {
       return await ciBlocked(common, landing.reason, landing.prNumber);
     }
+    if (landing.reason === "pr-conflict") {
+      return await prLandingBlocked(
+        common,
+        "merge-conflict",
+        landing.prNumber,
+        `the open PR has merge conflicts and could not be landed`,
+      );
+    }
+    if (landing.reason === "pr-merge-failed") {
+      return await prLandingBlocked(
+        common,
+        "ci-failed",
+        landing.prNumber,
+        `the open PR merge was rejected by GitHub, usually because branch protection or CI is not satisfied`,
+      );
+    }
     return await mergeFailed(common, landing.reason, landing.locked);
   }
 
@@ -1890,6 +1909,50 @@ async function ciBlocked(
   await recordAttemptBestEffort(c, outcome, {
     durationS: deps.nowEpoch() - c.startedEpoch,
     notes: reason,
+  });
+  await deps.claimLock.release(input.issue);
+  return {
+    outcome,
+    issue: input.issue,
+    branch: c.branch,
+    base: c.base,
+    hooksFired: c.hooksFired,
+    envelopePosted: posted,
+    preserved: true,
+    swept: false,
+  };
+}
+
+/**
+ * PR landing handoff for failures that happen AFTER a PR exists. At that point
+ * the durable artifact is the open PR, so re-queueing the issue would make the
+ * next worker re-run the agent from scratch and often create competing work.
+ * Preserve the PR/branch and park the issue for a finisher instead.
+ */
+async function prLandingBlocked(
+  c: StageCommon,
+  outcome: "ci-failed" | "merge-conflict",
+  prNumber: number | undefined,
+  reason: string,
+): Promise<ProcessIssueResult> {
+  const { deps, input } = c;
+  const prRef = prNumber !== undefined ? `PR #${prNumber}` : "the open PR";
+  await routeRecovery(deps, input.issue, outcome, input.attempt, { forceDecision: "escalate" });
+  await writeCurrentBlockerBestEffort(deps, input, blockerForFailure(outcome, { log: `${prRef}: ${reason}` }));
+  const section = outcome === "merge-conflict" ? "merge-conflict" : "ci";
+  const posted = await emitFailure(c, envelopeStatusFor(outcome), section, {
+    log:
+      `Inner agent completed (DONE, committed) and ${prRef} exists, but ${reason}. ` +
+      `The work is NOT lost — finish and land the existing PR instead of re-running the agent.`,
+  });
+  await deps.gh.comment(
+    input.issue,
+    `🤖 /afk: ${reason} on ${prRef}. Holding for a human / PR finisher to land the existing PR; ` +
+      `the inner agent was NOT re-run.`,
+  );
+  await recordAttemptBestEffort(c, outcome, {
+    durationS: deps.nowEpoch() - c.startedEpoch,
+    notes: `${prRef}: ${reason}`,
   });
   await deps.claimLock.release(input.issue);
   return {
