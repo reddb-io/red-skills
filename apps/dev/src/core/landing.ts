@@ -141,7 +141,14 @@ export type LandingResult =
       // `enforce_admins` base's required checks failed / are still pending. The
       // caller routes them to the distinct `blocked:ci` path (NOT merge-conflict,
       // NOT a full agent re-run), preserving the open PR.
-      reason: "pre_merge-abort" | "integrate-failed" | "land-failed" | "ci-failed" | "ci-pending";
+      reason:
+        | "pre_merge-abort"
+        | "integrate-failed"
+        | "land-failed"
+        | "ci-failed"
+        | "ci-pending"
+        | "pr-conflict"
+        | "pr-merge-failed";
       locked: boolean;
       /** PR number left open for the CI-aware handoff (`ci-failed` / `ci-pending`). */
       prNumber?: number;
@@ -225,7 +232,11 @@ async function landAdminPr(deps: LandingDeps, input: LandingInput): Promise<Land
   // longer unlocked-only — lock=X + openPr=true also lands through here.
   if (r.reason === "ci-failed") return { ok: false, reason: "ci-failed", locked: input.locked, prNumber: r.prNumber };
   if (r.reason === "ci-pending") return { ok: false, reason: "ci-pending", locked: input.locked, prNumber: r.prNumber };
-  return { ok: false, reason: "land-failed", locked: input.locked };
+  if (r.reason === "conflict") return { ok: false, reason: "pr-conflict", locked: input.locked, prNumber: r.prNumber };
+  if (r.reason === "merge-failed" && r.prNumber !== undefined) {
+    return { ok: false, reason: "pr-merge-failed", locked: input.locked, prNumber: r.prNumber };
+  }
+  return { ok: false, reason: "land-failed", locked: input.locked, prNumber: r.prNumber };
 }
 
 /**

@@ -139,6 +139,8 @@ interface HarnessOptions {
   /** CI-aware merge (#812). When set, register the `ciAwait` port and drive the
    * `gh pr view` verdict the unlocked landing polls before admin-merging. */
   ciAware?: "merge" | "ci-failed" | "ci-pending" | "conflict";
+  /** Exit code for the final `gh pr merge` command. Defaults to 0. */
+  prMergeCode?: number;
 }
 
 function harness(opts: HarnessOptions = {}): {
@@ -292,6 +294,9 @@ function harness(opts: HarnessOptions = {}): {
           conflict: { mergeStateStatus: "DIRTY", statusCheckRollup: [] },
         };
         return { code: 0, stdout: JSON.stringify(map[opts.ciAware ?? "merge"]), stderr: "" };
+      }
+      if (j.includes("pr merge")) {
+        return { code: opts.prMergeCode ?? 0, stdout: "", stderr: opts.prMergeCode ? "merge rejected" : "" };
       }
       return { code: 0, stdout: "", stderr: "" };
     },
@@ -649,6 +654,23 @@ describe("processIssue — CI-aware unlocked landing (#812)", () => {
 
     expect(result.outcome).toBe("merge-conflict");
     expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "merge-conflict" }]);
+    expect(trace.labelEdits.some((e) => e.add.includes("ready-for-agent"))).toBe(false);
+    expect(trace.labelEdits.some((e) => e.add.includes("ready-for-human") && e.add.includes("blocked:merge-conflict"))).toBe(true);
+    expect(trace.runAgentCalls.length).toBe(1);
+  });
+
+  it("admin-merge rejected after PR exists parks the PR instead of re-queueing for a fresh agent", async () => {
+    const { deps, input, trace } = harness({ outcome: "done", feedbackOk: true, locked: false, prMergeCode: 1 });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("ci-failed");
+    expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "blocked" }]);
+    expect(trace.labelEdits.some((e) => e.add.includes("ready-for-agent"))).toBe(false);
+    expect(trace.labelEdits.some((e) => e.add.includes("ready-for-human") && e.add.includes("blocked:ci"))).toBe(true);
+    expect(trace.closed).toEqual([]);
+    expect(trace.deletedRemote).toEqual([]);
+    expect(trace.runAgentCalls.length).toBe(1);
+    expect(trace.released).toEqual([9]);
   });
 });
 

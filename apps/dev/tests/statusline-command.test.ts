@@ -116,13 +116,18 @@ describe("statusline command — pure helpers", () => {
 
 describe("statusline command — rendered line", () => {
   let root: string;
+  let oldNoColor: string | undefined;
 
   beforeEach(async () => {
+    oldNoColor = process.env.NO_COLOR;
+    delete process.env.NO_COLOR;
     root = await mkdtemp(join(tmpdir(), "sl-cmd-"));
   });
 
   afterEach(async () => {
     await rm(root, { recursive: true, force: true });
+    if (oldNoColor === undefined) delete process.env.NO_COLOR;
+    else process.env.NO_COLOR = oldNoColor;
   });
 
   it("emits the full block run from a payload + live workers + cached counts", async () => {
