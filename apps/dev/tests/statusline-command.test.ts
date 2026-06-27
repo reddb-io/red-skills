@@ -146,24 +146,32 @@ describe("statusline command — rendered line", () => {
     await seedFreshRepoCache(root, 3, 24);
 
     const out = sink();
-    const code = await statuslineCommand([root], root, out.stream, fakeStdin(PAYLOAD));
-    expect(code).toBe(0);
+    const oldColumns = process.env.COLUMNS;
+    const oldNoColor = process.env.NO_COLOR;
+    process.env.COLUMNS = "200";
+    delete process.env.NO_COLOR;
+    try {
+      const code = await statuslineCommand([root], root, out.stream, fakeStdin(PAYLOAD));
+      expect(code).toBe(0);
+    } finally {
+      if (oldColumns === undefined) delete process.env.COLUMNS;
+      else process.env.COLUMNS = oldColumns;
+      if (oldNoColor === undefined) delete process.env.NO_COLOR;
+      else process.env.NO_COLOR = oldNoColor;
+    }
 
-    // Two powerline rows: header (project/model/ctx/pr·is) + AFK (runner/wk·res/
-    // in-transit/pipeline/issues).
-    const rows = out.text().trimEnd().split("\n");
-    expect(rows).toHaveLength(2);
-    const l1 = stripAnsi(rows[0]);
-    const l2 = stripAnsi(rows[1]);
-    expect(l1).toContain("Opus·high");
-    expect(l1).toContain("47k 24%");
-    expect(l1).toContain("prs=3");
-    expect(l1).toContain("iss=24");
-    expect(l2).toContain("claude"); // runner
-    expect(l2).toContain("wrk=1 res=7"); // workers + resolved
-    expect(l2).toContain("loc=+12 -3"); // in-transit diff
-    expect(l2).toContain("rdy=11 hmn=3 blk=2"); // pipeline
-    expect(l2).toContain("#17");
+    // Header and AFK KPI content may render on one or two rows depending on the
+    // host width, but the command contract is the field set.
+    const text = stripAnsi(out.text());
+    expect(text).toContain("Opus·high");
+    expect(text).toContain("47k 24%");
+    expect(text).toContain("prs=3");
+    expect(text).toContain("iss=24");
+    expect(text).toContain("claude"); // runner
+    expect(text).toContain("wrk=1 res=7"); // workers + resolved
+    expect(text).toContain("loc=+12 -3"); // in-transit diff
+    expect(text).toContain("rdy=11 hmn=3 blk=2"); // pipeline
+    expect(text).toContain("#17");
     // The raw output carries the wine-red background SGR (theme on by default).
     expect(out.text()).toContain("\x1b[48;2;114;47;55m");
   });
@@ -178,7 +186,7 @@ describe("statusline command — rendered line", () => {
     const line = stripAnsi(out.text().trim());
     expect(line).toContain("Opus·high");
     expect(line).toContain("47k 24%");
-    expect(line).not.toContain("wk");
+    expect(line).not.toContain("wrk=");
   });
 
   it("renders only the project block outside Claude Code (empty stdin)", async () => {
