@@ -1,7 +1,7 @@
 # RedSkills
 
 Agent workflow, governed operational memory, and project-local knowledge for
-Claude Code, Codex, and GitHub Actions.
+Claude Code, Codex, OpenCode, and GitHub Actions.
 
 RedSkills is reddb.io's plugin suite for serious agentic engineering work. It
 turns GitHub issues into reviewed PRs, preserves the operational evidence that
@@ -203,6 +203,37 @@ command-backed statusline. Use `$dev:afk monitor` when the client exposes
 namespace-qualified skills, or `$afk monitor` when it exposes unqualified skill
 names.
 
+### OpenCode
+
+OpenCode is a **third host** for RedSkills. ADR 0059 already integrates it as
+the third AFK runner; ADR 0075 extends that to the developer-facing opencode
+TUI by materialising the same `.red/config.yaml` block as an `opencode.json`
+`provider>` entry. The adapter lives in
+[`apps/opencode-host/`](./apps/opencode-host/README.md) and ships per-slice:
+
+- **Slice 1 (this release)** — provider block. Run the generator and the
+  opencode TUI on the same repo picks the same model AFK would have picked,
+  with the same auth env-var (`OPENAI_API_KEY` → `MINIMAX_API_KEY` →
+  `OPENROUTER_API_KEY`).
+
+  ```bash
+  # Local-dev path
+  pnpm --filter @redskills/opencode-host generate
+
+  # Bundled form (release asset)
+  pnpm --filter @redskills/opencode-host bundle
+  node ./dist/opencode-host.bundle.min.mjs --config .red/config.yaml --out ./opencode.json
+  ```
+
+  Auth lives in `~/.local/share/opencode/auth.json` (populated by
+  `/connect` inside opencode) and the process env, **not** in the emitted
+  `opencode.json` — that file is safe to commit.
+
+- **Slices 2-5 (next)** — skills → custom tools, hooks → plugin events,
+  MCP passthrough, agents → subagents, and a remote-install form. The
+  Slice 1 contract is stable; later slices add files under
+  `dist/opencode/<plugin>/` without changing `provider-block.ts`.
+
 ### No Marketplace
 
 Use these paths for older agents, local hacking, or Gemini-style skill loading:
@@ -380,6 +411,7 @@ Full guide: [AFK Actions lane](./plugins/dev/skills/engineering/afk/actions-lane
 | [`apps/memory`](./apps/memory)             | Memory CLI, graph operations, Workbench, MCP/HTTP surfaces, evals, and diagnostics.                       |
 | [`apps/brain`](./apps/brain)               | Brain CLI, store, MCP server, dashboard, channel bridge, and artifact logic.                              |
 | [`apps/code-nav`](./apps/code-nav)         | LSP-backed MCP server used by the `dev` plugin.                                                           |
+| [`apps/opencode-host`](./apps/opencode-host) | Adapter that emits `opencode.json` from `.red/config.yaml` (Slice 1: provider block; Slices 2-5: skills/hooks/MCP/agents). |
 | [`packages/shared`](./packages/shared)     | Shared runtime helpers for plugin gates, bundle fetching, args, logging, and channels.                    |
 | [`.red`](./.red)                           | RedSkills' own project configuration: context map, glossaries, ADRs, issue-tracker docs, and agent rules. |
 | [`.github/workflows`](./.github/workflows) | Release, CI, upstream watch, issue automation, PR review, and reusable AFK attempt workflows.             |
