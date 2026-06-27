@@ -149,10 +149,10 @@ function configEventTemplate(input: {
   const steps = input.commands.map((cmd) => {
     const inner = cmd.replace(/^sh -c\s*'/, "").replace(/'$/, "");
     return [
-      "  try {",
-      `    const __pluginRoot = context.directory;`,
-      `    await Bun.$\`sh -c ${JSON.stringify(inner)}\`.quiet();`,
-      "  } catch { /* best-effort */ }",
+      "      try {",
+      `        const __pluginRoot = context.directory;`,
+      `        await Bun.$\`sh -c ${JSON.stringify(inner)}\`.quiet();`,
+      "      } catch { /* best-effort */ }",
     ].join("\n");
   });
 
@@ -164,7 +164,11 @@ function configEventTemplate(input: {
     'import type { Plugin } from "@opencode-ai/plugin";',
     "",
     "export const SessionStart: Plugin = async (context) => {",
+    "  return {",
+    "    config: async () => {",
     steps.join("\n"),
+    "    },",
+    "  };",
     "};",
     "",
   ].join("\n");

@@ -79,6 +79,7 @@ describe("planPluginHooks (real claude.hooks.json shape)", () => {
     expect(session!.target).toBe("plugin/session-start.ts");
     expect(session!.source).toMatch(/config/);
     expect(session!.source).toMatch(/@opencode-ai\/plugin/);
+    expect(session!.source).toMatch(/return \{\s+config: async/s);
   });
 
   it("emits one tool.execute.before module for PreToolUse, branching on input.tool", () => {
