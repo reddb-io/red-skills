@@ -209,7 +209,65 @@ OpenCode is a **third host** for RedSkills. ADR 0059 already integrates it as
 the third AFK runner; ADR 0075 extends that to the developer-facing opencode
 TUI by materialising the same `.red/config.yaml` block as an `opencode.json`
 `provider>` entry. The adapter lives in
-[`apps/opencode-host/`](./apps/opencode-host/README.md) and ships per-slice:
+[`apps/opencode-host/`](./apps/opencode-host/README.md) and ships per-slice.
+
+#### Quick start (local install)
+
+Run from a fresh red-skills clone. The script bundles the opencode-host
+generator (or uses `tsx` for the local-dev path), generates the dist tree
+for the three plugins (`dev`, `memory`, `brain`), and installs everything
+into the target directory's `.opencode/` subtree + writes the `opencode.json`
+provider block at the target root.
+
+```bash
+# install into $PWD
+scripts/install-opencode.sh
+
+# install into a specific project directory
+scripts/install-opencode.sh /path/to/your-project
+
+# copy SKILL.md instead of symlinking (cross-filesystem safety)
+scripts/install-opencode.sh /path/to/your-project --copy
+
+# user-scoped install (loads in every project the user opens)
+scripts/install-opencode.sh --global
+
+# dry-run — print the steps, do not write
+scripts/install-opencode.sh /path/to/your-project --dry-run
+```
+
+What the script writes (local mode):
+
+```text
+<target>/.opencode/plugin/   ← Slice 2 hook modules (session-start.ts, pre-tool-use.ts)
+<target>/.opencode/skills/   ← Slice 2 skills, flat-symlinked from plugins/<name>/skills/<bucket>/<name>/SKILL.md
+<target>/opencode.json       ← Slice 1 provider block (provider> + model)
+```
+
+What the script writes (global mode):
+
+```text
+~/.config/opencode/plugins/redskills-<plugin>-<event>.ts
+~/.config/opencode/skills/<name>/SKILL.md
+~/.config/opencode/opencode.json   ← provider block (existing config is backed up first)
+```
+
+After the install, run `opencode <target>` (or `cd <target> && opencode .`).
+The opencode TUI auto-loads the `.opencode/` subtree and the 56 skills + 4
+hook modules become available immediately. The provider block tells
+opencode the same model + auth env-var AFK would have picked (back-compat
+with the AFK-only era).
+
+Preconditions:
+
+- `pnpm install` has been run at least once (the script runs it
+  automatically on the first invocation).
+- `.red/config.yaml` exists with `plugins.dev.enabled: true` (ADR 0067
+  strict opt-in). The script aborts if the gate is closed.
+
+The script is idempotent — re-running replaces the install in place.
+See [apps/opencode-host/README.md](./apps/opencode-host/README.md) for
+the lower-level CLI surface (`generate` / `--with-slice-2` / etc.).
 
 - **Slice 1 (this release)** — provider block. Run the generator and the
   opencode TUI on the same repo picks the same model AFK would have picked,

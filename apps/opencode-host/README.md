@@ -42,6 +42,28 @@ pnpm --filter @redskills/opencode-host bundle
 node ./dist/opencode-host.bundle.min.mjs --with-slice-2 --plugins-root ./plugins
 ```
 
+## Install script (recommended)
+
+The `scripts/install-opencode.sh` wrapper in the repo root bundles the
+above into one command that handles generation + install:
+
+```bash
+# local — install into the current directory's .opencode/
+scripts/install-opencode.sh
+
+# local — install into a specific project
+scripts/install-opencode.sh /path/to/your-project
+
+# global — install into ~/.config/opencode/
+scripts/install-opencode.sh --global
+
+# --copy forces SKILL.md copy instead of symlink
+scripts/install-opencode.sh /path/to/your-project --copy
+
+# --dry-run prints the steps without writing
+scripts/install-opencode.sh /path/to/your-project --dry-run
+```
+
 Exit codes: `0` wrote/printed; `1` read/write failure or opt-in gate
 closed; `2` usage error.
 
