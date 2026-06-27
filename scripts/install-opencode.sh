@@ -1,13 +1,11 @@
 #!/usr/bin/env bash
 # scripts/install-opencode.sh — install the RedSkills opencode-host
-# adapter (Slice 1 + Slice 2) into a target directory.
+# adapter into a target directory or the user-scoped OpenCode config.
 #
-# Slice 1 + Slice 2 are the opencode-native surface: a provider block
-# (Slice 1) plus the .opencode/skills/<name>/SKILL.md and
-# .opencode/plugin/<event>.ts files opencode auto-loads (Slice 2).
-# The generator emits this surface under ./dist/opencode/<plugin>/;
-# this script copies/symlinks it into the target directory's .opencode/
-# and writes the opencode.json provider block at the target root.
+# The generated OpenCode surface includes provider/model config, MCP servers,
+# flat skills, plugin event modules, and TUI attention config. The generator
+# emits plugin-local trees under ./dist/opencode/<plugin>/; this script merges
+# them into either <target>/.opencode/ or ~/.config/opencode/.
 #
 # Usage:
 #   scripts/install-opencode.sh [TARGET_DIR]
@@ -17,18 +15,19 @@
 #
 # Positional TARGET_DIR (default $PWD):
 #   The directory to install into. The script writes:
-#     <TARGET_DIR>/.opencode/plugin/   (Slice 2 hook modules)
-#     <TARGET_DIR>/.opencode/skills/   (Slice 2 skill symlinks/copies)
-#     <TARGET_DIR>/opencode.json       (Slice 1 provider block)
+#     <TARGET_DIR>/.opencode/plugin/   (plugin modules)
+#     <TARGET_DIR>/.opencode/skills/   (skill symlinks/copies)
+#     <TARGET_DIR>/opencode.json       (provider + model + MCP servers)
+#     <TARGET_DIR>/tui.json            (attention sounds/notifications)
 #   The user then runs `opencode <TARGET_DIR>` (or `cd <TARGET_DIR>
 #   && opencode .`) and opencode auto-loads the .opencode subtree.
 #
 # --global: install into ~/.config/opencode/plugins/ instead. opencode
 #   auto-loads .ts files from that directory but does NOT recurse into
 #   sub-skills/. The global mode therefore flattens the .opencode/
-#   subtree to a single plugin directory. The provider block is
-#   written to ~/.config/opencode/opencode.json(c) (the existing file
-#   is preserved; the script merges the new provider entries in).
+#   subtree to a single plugin directory. Provider/MCP config is written to
+#   ~/.config/opencode/opencode.json(c), and attention config is written to
+#   ~/.config/opencode/tui.json(c). Existing config files are backed up first.
 #
 # --copy: copy SKILL.md into the target instead of symlinking. Use
 #   this when the source tree is on a different filesystem than
@@ -171,21 +170,37 @@ if [ "$MODE" = "local" ]; then
   if [ "$DRY_RUN" = "true" ]; then
     log "(dry-run) write $TARGET_CFG (Slice 1+3 provider block + MCP servers)"
   else
-    # Generate the standalone opencode.json via a fresh invocation
-    # pointed at the target path. This is cheap (the dist tree
-    # already exists; the generator just walks the .red/config.yaml
-    # + plugins/ tree again).
     STANDALONE_OUT="$TARGET_CFG.tmp-$$"
     (cd "$REPO_ROOT" && $GENERATOR --config "$CONFIG_PATH" --plugins-root "$PLUGINS_ROOT" --out "$STANDALONE_OUT") >/dev/null
     if [ -f "$STANDALONE_OUT" ]; then
       mv "$STANDALONE_OUT" "$TARGET_CFG"
       log "wrote $TARGET_CFG (provider block + MCP servers from $(echo $PLUGINS | wc -w) plugin(s))"
     else
-      # Fallback: copy the dev per-plugin file (has the code-nav MCP
-      # at least, even if memory/brain/red-ui are missing).
       cp "$OUT_DIR/dev/opencode.json" "$TARGET_CFG"
       log "(warning) standalone emit failed; fell back to per-plugin opencode.json"
     fi
+  fi
+
+  # Slice 4: write tui.json to the project root with attention
+  # enabled (built-in done/error/permission/question sounds +
+  # notifications). The user can rename it to tui.jsonc and move
+  # it to ~/.config/opencode/ to make it user-scoped.
+  TARGET_TUI="$TARGET_DIR/tui.json"
+  if [ "$DRY_RUN" = "true" ]; then
+    log "(dry-run) write $TARGET_TUI (Slice 4: tui.json with attention.enabled)"
+  else
+    cat > "$TARGET_TUI" <<'TUI'
+{
+  "$schema": "https://opencode.ai/tui.json",
+  "attention": {
+    "enabled": true,
+    "notifications": true,
+    "sound": true,
+    "volume": 0.4
+  }
+}
+TUI
+    log "wrote $TARGET_TUI (Slice 4: tui.json with attention.enabled; move to ~/.config/opencode/ to make it user-scoped)"
   fi
 
   log "done. run: cd $TARGET_DIR && opencode ."
@@ -240,6 +255,35 @@ else
     else
       cp "$OUT_DIR/dev/opencode.json" "$GLOBAL_CFG"
       log "(warning) standalone emit failed; fell back to per-plugin opencode.json"
+    fi
+
+    # Slice 4: merge the tui.json with attention.enabled. opencode
+    # reads tui.json (or tui.jsonc) at $XDG_CONFIG_HOME/opencode/
+    # on every session start, so this enables the built-in
+    # done / error / permission / question / subagent_done
+    # sounds + notifications globally.
+    GLOBAL_TUI="$XDG_CONFIG_HOME/opencode/tui.json"
+    [ -f "$XDG_CONFIG_HOME/opencode/tui.jsonc" ] && GLOBAL_TUI="$XDG_CONFIG_HOME/opencode/tui.jsonc"
+    if [ "$DRY_RUN" = "true" ]; then
+      log "(dry-run) write $GLOBAL_TUI (Slice 4: tui.json with attention.enabled)"
+    else
+      if [ -f "$GLOBAL_TUI" ] && [ -s "$GLOBAL_TUI" ] && [ "$(cat "$GLOBAL_TUI" 2>/dev/null)" != "{}" ]; then
+        backup="$GLOBAL_TUI.backup-$(date +%Y%m%d%H%M%S)"
+        cp "$GLOBAL_TUI" "$backup"
+        log "backed up existing $GLOBAL_TUI -> $backup"
+      fi
+      cat > "$GLOBAL_TUI" <<'TUI'
+{
+  "$schema": "https://opencode.ai/tui.json",
+  "attention": {
+    "enabled": true,
+    "notifications": true,
+    "sound": true,
+    "volume": 0.4
+  }
+}
+TUI
+      log "wrote $GLOBAL_TUI (Slice 4: tui.json with attention.enabled)"
     fi
   fi
 

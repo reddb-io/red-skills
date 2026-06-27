@@ -20,6 +20,7 @@ import {
 } from "./skills-to-opencode.js";
 import { planPluginHooks, type HookPlan } from "./hooks-to-events.js";
 import { planPluginMcp, type McpPlan, type McpEntry } from "./mcp-passthrough.js";
+import { planPluginStatusline, type StatuslinePlan } from "./statusline.js";
 
 /** A single plugin's planned output. */
 export interface PluginEmit {
@@ -28,6 +29,7 @@ export interface PluginEmit {
   skills: PlanResult;
   hooks: HookPlan[];
   mcp: McpPlan[];
+  statusline: StatuslinePlan[];
 }
 
 /** Top-level emit plan for one or more plugins. */
@@ -66,11 +68,12 @@ export function planEmit(input: {
     const skills = skillPlan.find((s) => s.plugin === plugin)?.result ?? { plans: [], errors: [] };
     const hooks = planPluginHooks(input.pluginsRoot, plugin);
     const mcp = planPluginMcp(input.pluginsRoot, plugin);
+    const statusline = planPluginStatusline(input.pluginsRoot, plugin);
     const provider = buildProviderBlock({
       configText: input.configText,
       env: input.env,
     });
-    return { plugin, provider, skills, hooks, mcp };
+    return { plugin, provider, skills, hooks, mcp, statusline };
   });
   return { byPlugin };
 }
@@ -83,7 +86,7 @@ export function planEmit(input: {
  */
 export function writeEmit(plan: EmitPlan, options: EmitOptions): void {
   for (const entry of plan.byPlugin) {
-    const { plugin, provider, skills, hooks, mcp } = entry;
+    const { plugin, provider, skills, hooks, mcp, statusline } = entry;
     const pluginRoot = join(options.outRoot, plugin);
     mkdirSync(pluginRoot, { recursive: true });
 
@@ -105,13 +108,6 @@ export function writeEmit(plan: EmitPlan, options: EmitOptions): void {
       if (options.copySkills) {
         copyFileSync(sp.source, target);
       } else {
-        // Prefer a relative symlink so the dist tree is portable
-        // (works after a `cp -r` or a release-asset download). When
-        // the relative path would escape the dist root — e.g. the
-        // source lives in a different filesystem or far enough that
-        // `relative()` returns a path starting with `../../../../../` —
-        // fall back to an absolute symlink. An absolute symlink still
-        // works on the user's machine; it just stops being portable.
         const rel = relative(dirname(target), sp.source);
         const portable = !rel.startsWith("..") || rel.split("/").filter((s) => s === "..").length <= 4;
         const linkTarget = portable ? rel : sp.source;
@@ -128,6 +124,13 @@ export function writeEmit(plan: EmitPlan, options: EmitOptions): void {
       const target = join(pluginRoot, ".opencode", hp.target);
       mkdirSync(dirname(target), { recursive: true });
       writeFileSync(target, hp.source, "utf8");
+    }
+
+    // 4. Slice 4: statusline + toasts (only the dev plugin today)
+    for (const sp of statusline) {
+      const target = join(pluginRoot, ".opencode", sp.target);
+      mkdirSync(dirname(target), { recursive: true });
+      writeFileSync(target, sp.source, "utf8");
     }
   }
 }

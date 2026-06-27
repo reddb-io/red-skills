@@ -21,8 +21,14 @@ serves Claude Code, Codex, and OpenCode through this single generator.
   command, environment, cwd? } }` shape and merged into the Slice 1
   `opencode.json`. The plugin root is resolved at build time and
   baked into the emitted `command` array.
-- **Slice 4-5 (planned)** — statusline + telemetry parity, remote
-  install.
+- **Slice 4 (ADR 0080)** — statusline + toasts. The dev plugin ships
+  a `session-status.ts` opencode plugin module that emits a toast
+  with the AFK statusline on every `session.idle`, injects the
+  worker state into `experimental.session.compacting`, and
+  suggests `/afk monitor` on `session.created`. The install
+  script also writes a `tui.json` with `attention.enabled: true`
+  so the built-in sound + notification events fire by default.
+- **Slice 5 (planned)** — remote install via release asset.
 
 ## CLI
 
@@ -53,14 +59,16 @@ The `scripts/install-opencode.sh` wrapper in the repo root bundles the
 above into one command that handles generation + install:
 
 ```bash
+# global — recommended user-scoped install into ~/.config/opencode/
+git clone git@github.com:reddb-io/red-skills.git ~/code/red-skills
+cd ~/code/red-skills
+scripts/install-opencode.sh --global
+
 # local — install into the current directory's .opencode/
 scripts/install-opencode.sh
 
 # local — install into a specific project
 scripts/install-opencode.sh /path/to/your-project
-
-# global — install into ~/.config/opencode/
-scripts/install-opencode.sh --global
 
 # --copy forces SKILL.md copy instead of symlink
 scripts/install-opencode.sh /path/to/your-project --copy
@@ -68,6 +76,23 @@ scripts/install-opencode.sh /path/to/your-project --copy
 # --dry-run prints the steps without writing
 scripts/install-opencode.sh /path/to/your-project --dry-run
 ```
+
+Then open OpenCode in a project:
+
+```bash
+cd /path/to/your-project
+opencode .
+```
+
+The global install writes `~/.config/opencode/plugins/`,
+`~/.config/opencode/skills/`, `opencode.json(c)`, and `tui.json(c)`. The local
+install writes the same OpenCode surface under the target repo's `.opencode/`
+plus project-local `opencode.json` and `tui.json`. Existing global config files
+are timestamp-backed-up before replacement.
+
+Use `/connect` inside OpenCode, or export one of `OPENAI_API_KEY`,
+`MINIMAX_API_KEY`, or `OPENROUTER_API_KEY`. The generated files carry provider
+and model config only; they never store auth secrets.
 
 Exit codes: `0` wrote/printed; `1` read/write failure or opt-in gate
 closed; `2` usage error.

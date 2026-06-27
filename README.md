@@ -211,16 +211,21 @@ TUI by materialising the same `.red/config.yaml` block as an `opencode.json`
 `provider>` entry. The adapter lives in
 [`apps/opencode-host/`](./apps/opencode-host/README.md) and ships per-slice.
 
-#### Quick start (local install)
+#### Quick start
 
-Run from a fresh red-skills clone. The script bundles the opencode-host
-generator (or uses `tsx` for the local-dev path), generates the dist tree
-for the three plugins (`dev`, `memory`, `brain`), and installs everything
-into the target directory's `.opencode/` subtree + writes the `opencode.json`
-provider block at the target root.
+Install from a red-skills checkout. The wrapper builds the
+`@reddb-io/red-skills` opencode-host bundle when needed, generates the
+OpenCode surface for the three plugins (`dev`, `memory`, `brain`), and writes
+skills, plugin modules, MCP config, provider config, and TUI attention config
+for OpenCode.
 
 ```bash
-# install into $PWD
+# user-scoped install; recommended for agents that use OpenCode across repos
+git clone git@github.com:reddb-io/red-skills.git ~/code/red-skills
+cd ~/code/red-skills
+scripts/install-opencode.sh --global
+
+# project-local install into $PWD
 scripts/install-opencode.sh
 
 # install into a specific project directory
@@ -236,12 +241,25 @@ scripts/install-opencode.sh --global
 scripts/install-opencode.sh /path/to/your-project --dry-run
 ```
 
+After a global install, run OpenCode in any project:
+
+```bash
+cd /path/to/your-project
+opencode .
+```
+
+After a project-local install, run `opencode <target>` or `cd <target> &&
+opencode .`. Use `/connect` inside OpenCode or export one of
+`OPENAI_API_KEY`, `MINIMAX_API_KEY`, or `OPENROUTER_API_KEY`; auth is never
+written into the generated `opencode.json`.
+
 What the script writes (local mode):
 
 ```text
 <target>/.opencode/plugin/   ← Slice 2 hook modules (session-start.ts, pre-tool-use.ts)
 <target>/.opencode/skills/   ← Slice 2 skills, flat-symlinked from plugins/<name>/skills/<bucket>/<name>/SKILL.md
-<target>/opencode.json       ← Slice 1 provider block (provider> + model)
+<target>/opencode.json       ← provider + model + MCP servers
+<target>/tui.json            ← attention config for sounds + notifications
 ```
 
 What the script writes (global mode):
@@ -249,10 +267,10 @@ What the script writes (global mode):
 ```text
 ~/.config/opencode/plugins/redskills-<plugin>-<event>.ts
 ~/.config/opencode/skills/<name>/SKILL.md
-~/.config/opencode/opencode.json   ← provider block (existing config is backed up first)
+~/.config/opencode/opencode.json(c) ← provider + model + MCP servers; existing config is backed up
+~/.config/opencode/tui.json(c)      ← attention config; existing config is backed up
 ```
 
-After the install, run `opencode <target>` (or `cd <target> && opencode .`).
 The opencode TUI auto-loads the `.opencode/` subtree and the 56 skills + 4
 hook modules become available immediately. The provider block tells
 opencode the same model + auth env-var AFK would have picked (back-compat
@@ -328,11 +346,28 @@ the lower-level CLI surface (`generate` / `--with-slice-2` / etc.).
   set) now work in the opencode TUI the same way they work in
   Claude Code and Codex.
 
-- **Slices 4-5 (next)** — statusline + telemetry parity and a
-  remote-install form. The Slice 1 + 2 + 3 contract is stable;
-  later slices add files under `dist/opencode/<plugin>/` without
-  changing `provider-block.ts`, `skills-to-opencode.ts`,
-  `hooks-to-events.ts`, or `mcp-passthrough.ts`.
+- **Slice 4 (this release)** — statusline + toasts. The dev plugin
+  ships a `session-status.ts` opencode plugin module that
+  capitalises on the AFK statusline subcommand
+  (`apps/dev/src/commands/statusline.ts`) via four opencode
+  events: `session.idle` (toast the live statusline after
+  every LLM turn), `session.error` (toast the error),
+  `session.created` (suggest `/afk monitor` to the user), and
+  `experimental.session.compacting` (inject the live worker
+  state into the compaction prompt so the LLM sees it after
+  `/compact`). The install script also writes a `tui.json`
+  with `attention.enabled: true` so the built-in `done` /
+  `error` / `permission` / `question` / `subagent_done` sounds
+  + notifications fire by default. Together: the opencode
+  TUI shows a toast with the live worker state after every
+  turn, the user hears the `done` sound when a turn finishes,
+  and the LLM has fresh AFK context after a compaction.
+
+- **Slice 5 (next)** — remote install (`opencode --plugin
+  <github-release-url>` without `git clone`). The Slice 1 + 2 +
+  3 + 4 contract is stable; Slice 5 changes the release pipeline
+  (the dist tree ships as a GitHub Release asset) and adds a
+  `--remote` flag to `scripts/install-opencode.sh`.
 
 ### No Marketplace
 
