@@ -229,10 +229,33 @@ TUI by materialising the same `.red/config.yaml` block as an `opencode.json`
   `/connect` inside opencode) and the process env, **not** in the emitted
   `opencode.json` — that file is safe to commit.
 
-- **Slices 2-5 (next)** — skills → custom tools, hooks → plugin events,
-  MCP passthrough, agents → subagents, and a remote-install form. The
-  Slice 1 contract is stable; later slices add files under
-  `dist/opencode/<plugin>/` without changing `provider-block.ts`.
+- **Slice 2 (this release)** — skills + hooks. The `--with-slice-2` flag
+  emits a dist tree at `./dist/opencode/<plugin>/` containing:
+
+  - `.opencode/skills/<name>/SKILL.md` — flat-symlinked (or copied with
+    `--copy`) from `plugins/<plugin>/skills/<bucket>/<name>/SKILL.md`.
+    OpenCode discovers these natively; no tool wrapping required.
+  - `.opencode/plugin/session-start.ts` and `.opencode/plugin/pre-tool-use.ts` —
+    one TS module per Claude/Codex event class. The matcher
+    (`Bash`, `Task|Agent`) is translated to an inline `input.tool` regex
+    test, and `${CLAUDE_PLUGIN_ROOT}` / `${CODEX_PLUGIN_ROOT}` are
+    rewritten to the opencode plugin context's `directory`.
+
+  ```bash
+  pnpm --filter @redskills/opencode-host generate -- --with-slice-2
+  pnpm --filter @redskills/opencode-host generate -- --with-slice-2 --plugin dev
+  ```
+
+  Skills are validated against opencode's name rule
+  (`^[a-z0-9]+(-[a-z0-9]+)*$`); a bad name is a build error, not a
+  silent skip. Unsupported events (`UserPromptSubmit`, `PostToolUse`,
+  `Stop`, `PreCompact`) are warn-and-continue; the source hooks the user
+  actually depends on are still emitted.
+
+- **Slices 3-5 (next)** — MCP passthrough, agents → subagents, and a
+  remote-install form. The Slice 1 + 2 contract is stable; later slices
+  add files under `dist/opencode/<plugin>/` without changing
+  `provider-block.ts`, `skills-to-opencode.ts`, or `hooks-to-events.ts`.
 
 ### No Marketplace
 
