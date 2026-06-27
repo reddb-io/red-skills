@@ -1,6 +1,6 @@
 # RedSkills — Agent Instructions
 
-Public reddb.io repository containing the engineering skills (slash commands) used with Claude Code, Codex, Gemini CLI, and similar agents.
+Public reddb.io repository containing the engineering skills (slash commands) used with Claude Code, Codex, OpenCode, Gemini CLI, and similar agents.
 
 ## Origin
 
@@ -28,7 +28,8 @@ red-skills/                         ← repo root + marketplace
 │   ├── dev/                        ← `dev` runtime implementation
 │   ├── memory/                     ← `memory` runtime implementation
 │   ├── brain/                      ← `brain` runtime implementation
-│   └── code-nav/                   ← code navigation runtime implementation
+│   ├── code-nav/                   ← code navigation runtime implementation
+│   └── opencode-host/              ← opencode-host adapter: emits opencode.json from .red/config.yaml (ADR 0075; Slice 1 = provider block)
 ├── packages/                       ← code shared by multiple runtimes
 │   ├── shared/                     ← CLI args, bundle-fetch, entrypoint (ADR 0034)
 │   ├── build-info/                 ← shared build metadata helpers

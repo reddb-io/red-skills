@@ -1,0 +1,26 @@
+{
+  "name": "@reddb-io/red-skills",
+  "version": "1.246.0",
+  "private": true,
+  "description": "RedSkills opencode-host — the adapter layer that emits opencode.json (provider, model, mcp, plugins) from the canonical .red/config.yaml + ADR 0059 env-precedence rule. Slice 1: provider block only.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "bundle": "node ../../scripts/bundle-app.mjs --entry src/generate.ts --outfile ../../dist/opencode-host.bundle.min.mjs --asset opencode-host.bundle.min.mjs --minify",
+    "build": "pnpm run typecheck && pnpm run bundle",
+    "test": "NODE_OPTIONS=--max-old-space-size=6144 vitest run",
+    "generate": "tsx src/generate.ts"
+  },
+  "dependencies": {
+    "@reddb-io/build-info": "workspace:*",
+    "@reddb-io/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "esbuild": "catalog:",
+    "tsx": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

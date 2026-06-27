@@ -1,7 +1,7 @@
 # RedSkills
 
 Agent workflow, governed operational memory, and project-local knowledge for
-Claude Code, Codex, and GitHub Actions.
+Claude Code, Codex, OpenCode, and GitHub Actions.
 
 RedSkills is reddb.io's plugin suite for serious agentic engineering work. It
 turns GitHub issues into reviewed PRs, preserves the operational evidence that
@@ -203,6 +203,172 @@ command-backed statusline. Use `$dev:afk monitor` when the client exposes
 namespace-qualified skills, or `$afk monitor` when it exposes unqualified skill
 names.
 
+### OpenCode
+
+OpenCode is a **third host** for RedSkills. ADR 0059 already integrates it as
+the third AFK runner; ADR 0075 extends that to the developer-facing opencode
+TUI by materialising the same `.red/config.yaml` block as an `opencode.json`
+`provider>` entry. The adapter lives in
+[`apps/opencode-host/`](./apps/opencode-host/README.md) and ships per-slice.
+
+#### Quick start
+
+Install from a red-skills checkout. The wrapper builds the
+`@reddb-io/red-skills` opencode-host bundle when needed, generates the
+OpenCode surface for the three plugins (`dev`, `memory`, `brain`), and writes
+skills, plugin modules, MCP config, provider config, and TUI attention config
+for OpenCode.
+
+```bash
+# user-scoped install; recommended for agents that use OpenCode across repos
+git clone git@github.com:reddb-io/red-skills.git ~/code/red-skills
+cd ~/code/red-skills
+scripts/install-opencode.sh --global
+
+# project-local install into $PWD
+scripts/install-opencode.sh
+
+# install into a specific project directory
+scripts/install-opencode.sh /path/to/your-project
+
+# copy SKILL.md instead of symlinking (cross-filesystem safety)
+scripts/install-opencode.sh /path/to/your-project --copy
+
+# user-scoped install (loads in every project the user opens)
+scripts/install-opencode.sh --global
+
+# dry-run — print the steps, do not write
+scripts/install-opencode.sh /path/to/your-project --dry-run
+```
+
+After a global install, run OpenCode in any project:
+
+```bash
+cd /path/to/your-project
+opencode .
+```
+
+After a project-local install, run `opencode <target>` or `cd <target> &&
+opencode .`. Use `/connect` inside OpenCode or export one of
+`OPENAI_API_KEY`, `MINIMAX_API_KEY`, or `OPENROUTER_API_KEY`; auth is never
+written into the generated `opencode.json`.
+
+What the script writes (local mode):
+
+```text
+<target>/.opencode/plugin/   ← Slice 2 hook modules (session-start.ts, pre-tool-use.ts)
+<target>/.opencode/skills/   ← Slice 2 skills, flat-symlinked from plugins/<name>/skills/<bucket>/<name>/SKILL.md
+<target>/opencode.json       ← provider + model + MCP servers
+<target>/tui.json            ← attention config for sounds + notifications
+```
+
+What the script writes (global mode):
+
+```text
+~/.config/opencode/plugins/redskills-<plugin>-<event>.ts
+~/.config/opencode/skills/<name>/SKILL.md
+~/.config/opencode/opencode.json(c) ← provider + model + MCP servers; existing config is backed up
+~/.config/opencode/tui.json(c)      ← attention config; existing config is backed up
+```
+
+The opencode TUI auto-loads the `.opencode/` subtree and the 56 skills + 4
+hook modules become available immediately. The provider block tells
+opencode the same model + auth env-var AFK would have picked (back-compat
+with the AFK-only era).
+
+Preconditions:
+
+- `pnpm install` has been run at least once (the script runs it
+  automatically on the first invocation).
+- `.red/config.yaml` exists with `plugins.dev.enabled: true` (ADR 0067
+  strict opt-in). The script aborts if the gate is closed.
+
+The script is idempotent — re-running replaces the install in place.
+See [apps/opencode-host/README.md](./apps/opencode-host/README.md) for
+the lower-level CLI surface (`generate` / `--with-slice-2` / etc.).
+
+- **Slice 1 (this release)** — provider block. Run the generator and the
+  opencode TUI on the same repo picks the same model AFK would have picked,
+  with the same auth env-var (`OPENAI_API_KEY` → `MINIMAX_API_KEY` →
+  `OPENROUTER_API_KEY`).
+
+  ```bash
+  # Local-dev path
+  pnpm --filter @reddb-io/red-skills generate
+
+  # Bundled form (release asset)
+  pnpm --filter @reddb-io/red-skills bundle
+  node ./dist/opencode-host.bundle.min.mjs --config .red/config.yaml --out ./opencode.json
+  ```
+
+  Auth lives in `~/.local/share/opencode/auth.json` (populated by
+  `/connect` inside opencode) and the process env, **not** in the emitted
+  `opencode.json` — that file is safe to commit.
+
+- **Slice 2 (this release)** — skills + hooks. The `--with-slice-2` flag
+  emits a dist tree at `./dist/opencode/<plugin>/` containing:
+
+  - `.opencode/skills/<name>/SKILL.md` — flat-symlinked (or copied with
+    `--copy`) from `plugins/<plugin>/skills/<bucket>/<name>/SKILL.md`.
+    OpenCode discovers these natively; no tool wrapping required.
+  - `.opencode/plugin/session-start.ts` and `.opencode/plugin/pre-tool-use.ts` —
+    one TS module per Claude/Codex event class. The matcher
+    (`Bash`, `Task|Agent`) is translated to an inline `input.tool` regex
+    test, and `${CLAUDE_PLUGIN_ROOT}` / `${CODEX_PLUGIN_ROOT}` are
+    rewritten to the opencode plugin context's `directory`.
+
+  ```bash
+  pnpm --filter @reddb-io/red-skills generate -- --with-slice-2
+  pnpm --filter @reddb-io/red-skills generate -- --with-slice-2 --plugin dev
+  ```
+
+  Skills are validated against opencode's name rule
+  (`^[a-z0-9]+(-[a-z0-9]+)*$`); a bad name is a build error, not a
+  silent skip. Unsupported events (`UserPromptSubmit`, `PostToolUse`,
+  `Stop`, `PreCompact`) are warn-and-continue; the source hooks the user
+  actually depends on are still emitted.
+
+- **Slice 3 (this release)** — MCP passthrough. The standalone
+  `opencode.json` (and the per-plugin dist files) now embed an
+  `mcp:` block alongside the `provider>`. The generator rewrites
+  each `plugins/<name>/.mcp.json` entry (Claude/Codex
+  `mcpServers: { ... }` shape with a `sh -c` body that resolves
+  the plugin root through a chain of env vars) into opencode's
+  `mcp: { <name>: { type: "local", command, environment, cwd? } }`
+  shape — the plugin root is resolved at **build time** and the
+  absolute path baked into the emitted `command` array. A missing
+  bootstrap script is a build warning, not a silent failure.
+  Today the standalone Slice 1+3 file carries four MCPs: `code-nav`
+  (LSP-backed code navigation), `red-memory` (governed operational
+  memory), `brain` (RedDB knowledge repo), and `red-ui` (the
+  reddb.io dashboard). Skills that depend on MCPs (`$recall`,
+  `$store`, `$init`, the entire `memory:core/*` and `brain:core/*`
+  set) now work in the opencode TUI the same way they work in
+  Claude Code and Codex.
+
+- **Slice 4 (this release)** — statusline + toasts. The dev plugin
+  ships a `session-status.ts` opencode plugin module that
+  capitalises on the AFK statusline subcommand
+  (`apps/dev/src/commands/statusline.ts`) via four opencode
+  events: `session.idle` (toast the live statusline after
+  every LLM turn), `session.error` (toast the error),
+  `session.created` (suggest `/afk monitor` to the user), and
+  `experimental.session.compacting` (inject the live worker
+  state into the compaction prompt so the LLM sees it after
+  `/compact`). The install script also writes a `tui.json`
+  with `attention.enabled: true` so the built-in `done` /
+  `error` / `permission` / `question` / `subagent_done` sounds
+  + notifications fire by default. Together: the opencode
+  TUI shows a toast with the live worker state after every
+  turn, the user hears the `done` sound when a turn finishes,
+  and the LLM has fresh AFK context after a compaction.
+
+- **Slice 5 (next)** — remote install (`opencode --plugin
+  <github-release-url>` without `git clone`). The Slice 1 + 2 +
+  3 + 4 contract is stable; Slice 5 changes the release pipeline
+  (the dist tree ships as a GitHub Release asset) and adds a
+  `--remote` flag to `scripts/install-opencode.sh`.
+
 ### No Marketplace
 
 Use these paths for older agents, local hacking, or Gemini-style skill loading:
@@ -380,6 +546,7 @@ Full guide: [AFK Actions lane](./plugins/dev/skills/engineering/afk/actions-lane
 | [`apps/memory`](./apps/memory)             | Memory CLI, graph operations, Workbench, MCP/HTTP surfaces, evals, and diagnostics.                       |
 | [`apps/brain`](./apps/brain)               | Brain CLI, store, MCP server, dashboard, channel bridge, and artifact logic.                              |
 | [`apps/code-nav`](./apps/code-nav)         | LSP-backed MCP server used by the `dev` plugin.                                                           |
+| [`apps/opencode-host`](./apps/opencode-host) | Adapter that emits `opencode.json` from `.red/config.yaml` (Slice 1: provider block; Slices 2-5: skills/hooks/MCP/agents). |
 | [`packages/shared`](./packages/shared)     | Shared runtime helpers for plugin gates, bundle fetching, args, logging, and channels.                    |
 | [`.red`](./.red)                           | RedSkills' own project configuration: context map, glossaries, ADRs, issue-tracker docs, and agent rules. |
 | [`.github/workflows`](./.github/workflows) | Release, CI, upstream watch, issue automation, PR review, and reusable AFK attempt workflows.             |
