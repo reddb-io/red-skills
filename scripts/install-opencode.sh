@@ -163,12 +163,29 @@ if [ "$MODE" = "local" ]; then
     log "merged $plugin into $TARGET_OC/"
   done
 
-  # Slice 1: write the provider block at the target root
+  # Slice 1+3: write the standalone opencode.json (provider block +
+  # MCP servers from every installed plugin, deduplicated). Slice 1
+  # is now part of Slice 1+3 — the generator emits a single file
+  # with `provider> + mcp:`, and the install script writes that
+  # to the target root.
   if [ "$DRY_RUN" = "true" ]; then
-    log "(dry-run) write $TARGET_CFG (Slice 1 provider block)"
+    log "(dry-run) write $TARGET_CFG (Slice 1+3 provider block + MCP servers)"
   else
-    cp "$OUT_DIR/dev/opencode.json" "$TARGET_CFG"
-    log "wrote $TARGET_CFG (provider block; plugin list auto-loaded from $TARGET_OC/)"
+    # Generate the standalone opencode.json via a fresh invocation
+    # pointed at the target path. This is cheap (the dist tree
+    # already exists; the generator just walks the .red/config.yaml
+    # + plugins/ tree again).
+    STANDALONE_OUT="$TARGET_CFG.tmp-$$"
+    (cd "$REPO_ROOT" && $GENERATOR --config "$CONFIG_PATH" --plugins-root "$PLUGINS_ROOT" --out "$STANDALONE_OUT") >/dev/null
+    if [ -f "$STANDALONE_OUT" ]; then
+      mv "$STANDALONE_OUT" "$TARGET_CFG"
+      log "wrote $TARGET_CFG (provider block + MCP servers from $(echo $PLUGINS | wc -w) plugin(s))"
+    else
+      # Fallback: copy the dev per-plugin file (has the code-nav MCP
+      # at least, even if memory/brain/red-ui are missing).
+      cp "$OUT_DIR/dev/opencode.json" "$TARGET_CFG"
+      log "(warning) standalone emit failed; fell back to per-plugin opencode.json"
+    fi
   fi
 
   log "done. run: cd $TARGET_DIR && opencode ."
@@ -205,19 +222,25 @@ else
       done
     done
 
-    # Merge provider block into the user's opencode.json(c). The
-    # generator emits a single file per plugin; for global install
-    # we use the dev plugin's provider block (the only one whose
-    # provider entries depend on .red/config.yaml — memory and
-    # brain share the same block today). If the user's config
-    # already has content, back it up so a re-run is safe.
+    # Merge provider block + MCP servers into the user's
+    # opencode.json(c). The generator emits a single standalone
+    # file with `provider> + mcp:` (Slice 1+3) for the global
+    # install; the per-plugin dist files are not used here because
+    # the global config is a single file, not a per-plugin tree.
     if [ -f "$GLOBAL_CFG" ] && [ -s "$GLOBAL_CFG" ] && [ "$(cat "$GLOBAL_CFG" 2>/dev/null)" != "{}" ]; then
       backup="$GLOBAL_CFG.backup-$(date +%Y%m%d%H%M%S)"
       cp "$GLOBAL_CFG" "$backup"
       log "backed up existing $GLOBAL_CFG -> $backup"
     fi
-    cp "$OUT_DIR/dev/opencode.json" "$GLOBAL_CFG"
-    log "wrote $GLOBAL_CFG (provider block)"
+    STANDALONE_OUT="$GLOBAL_CFG.tmp-$$"
+    (cd "$REPO_ROOT" && $GENERATOR --config "$CONFIG_PATH" --plugins-root "$PLUGINS_ROOT" --out "$STANDALONE_OUT") >/dev/null
+    if [ -f "$STANDALONE_OUT" ]; then
+      mv "$STANDALONE_OUT" "$GLOBAL_CFG"
+      log "wrote $GLOBAL_CFG (provider block + MCP servers)"
+    else
+      cp "$OUT_DIR/dev/opencode.json" "$GLOBAL_CFG"
+      log "(warning) standalone emit failed; fell back to per-plugin opencode.json"
+    fi
   fi
 
   log "done. opencode in any directory now picks up the same model + plugins."

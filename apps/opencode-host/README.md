@@ -16,7 +16,12 @@ serves Claude Code, Codex, and OpenCode through this single generator.
 - **Slice 2 (ADR 0076 + 0077)** — `.opencode/skills/<name>/SKILL.md`
   (flat-symlinked) and `.opencode/plugin/<event>.ts` (one TS module per
   Claude/Codex event class).
-- **Slice 3-5 (planned)** — MCP passthrough, agents → subagents, remote
+- **Slice 3 (ADR 0079)** — MCP passthrough. The per-plugin `.mcp.json`
+  is rewritten into opencode's `mcp: { <name>: { type: "local",
+  command, environment, cwd? } }` shape and merged into the Slice 1
+  `opencode.json`. The plugin root is resolved at build time and
+  baked into the emitted `command` array.
+- **Slice 4-5 (planned)** — statusline + telemetry parity, remote
   install.
 
 ## CLI

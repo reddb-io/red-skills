@@ -310,10 +310,29 @@ the lower-level CLI surface (`generate` / `--with-slice-2` / etc.).
   `Stop`, `PreCompact`) are warn-and-continue; the source hooks the user
   actually depends on are still emitted.
 
-- **Slices 3-5 (next)** — MCP passthrough, agents → subagents, and a
-  remote-install form. The Slice 1 + 2 contract is stable; later slices
-  add files under `dist/opencode/<plugin>/` without changing
-  `provider-block.ts`, `skills-to-opencode.ts`, or `hooks-to-events.ts`.
+- **Slice 3 (this release)** — MCP passthrough. The standalone
+  `opencode.json` (and the per-plugin dist files) now embed an
+  `mcp:` block alongside the `provider>`. The generator rewrites
+  each `plugins/<name>/.mcp.json` entry (Claude/Codex
+  `mcpServers: { ... }` shape with a `sh -c` body that resolves
+  the plugin root through a chain of env vars) into opencode's
+  `mcp: { <name>: { type: "local", command, environment, cwd? } }`
+  shape — the plugin root is resolved at **build time** and the
+  absolute path baked into the emitted `command` array. A missing
+  bootstrap script is a build warning, not a silent failure.
+  Today the standalone Slice 1+3 file carries four MCPs: `code-nav`
+  (LSP-backed code navigation), `red-memory` (governed operational
+  memory), `brain` (RedDB knowledge repo), and `red-ui` (the
+  reddb.io dashboard). Skills that depend on MCPs (`$recall`,
+  `$store`, `$init`, the entire `memory:core/*` and `brain:core/*`
+  set) now work in the opencode TUI the same way they work in
+  Claude Code and Codex.
+
+- **Slices 4-5 (next)** — statusline + telemetry parity and a
+  remote-install form. The Slice 1 + 2 + 3 contract is stable;
+  later slices add files under `dist/opencode/<plugin>/` without
+  changing `provider-block.ts`, `skills-to-opencode.ts`,
+  `hooks-to-events.ts`, or `mcp-passthrough.ts`.
 
 ### No Marketplace
 
