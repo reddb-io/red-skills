@@ -1,4 +1,4 @@
-# @redskills/opencode-host
+# @reddb-io/red-skills
 
 The **adapter layer** that emits `opencode.json` + the opencode-native
 dist tree (`opencode.json`, `.opencode/skills/<name>/SKILL.md`,
@@ -28,22 +28,22 @@ serves Claude Code, Codex, and OpenCode through this single generator.
 
 ```bash
 # Slice 1 only (default)
-pnpm --filter @redskills/opencode-host generate
-pnpm --filter @redskills/opencode-host generate -- --config ./redskills.yaml --out ./opencode.json
-pnpm --filter @redskills/opencode-host generate -- --print          # stdout, no file
+pnpm --filter @reddb-io/red-skills generate
+pnpm --filter @reddb-io/red-skills generate -- --config ./redskills.yaml --out ./opencode.json
+pnpm --filter @reddb-io/red-skills generate -- --print          # stdout, no file
 
 # Slice 1 + Slice 2 — emit the dist tree
-pnpm --filter @redskills/opencode-host generate -- --with-slice-2
+pnpm --filter @reddb-io/red-skills generate -- --with-slice-2
 # default out-dir is ./dist/opencode; override with --out-dir
 
 # Emit a single plugin
-pnpm --filter @redskills/opencode-host generate -- --with-slice-2 --plugin dev
+pnpm --filter @reddb-io/red-skills generate -- --with-slice-2 --plugin dev
 
 # Copy SKILL.md instead of symlinking (cross-filesystem safety)
-pnpm --filter @redskills/opencode-host generate -- --with-slice-2 --copy
+pnpm --filter @reddb-io/red-skills generate -- --with-slice-2 --copy
 
 # Bundled form (release asset)
-pnpm --filter @redskills/opencode-host bundle
+pnpm --filter @reddb-io/red-skills bundle
 node ./dist/opencode-host.bundle.min.mjs --with-slice-2 --plugins-root ./plugins
 ```
 
@@ -102,9 +102,9 @@ skills, and the same lifecycle hooks Claude Code and Codex see.
 ## Testing
 
 ```bash
-pnpm --filter @redskills/opencode-host test       # 60 tests, ~13s
-pnpm --filter @redskills/opencode-host typecheck  # tsc strict
-pnpm --filter @redskills/opencode-host bundle    # emits dist/opencode-host.bundle.min.mjs
+pnpm --filter @reddb-io/red-skills test       # 60 tests, ~13s
+pnpm --filter @reddb-io/red-skills typecheck  # tsc strict
+pnpm --filter @reddb-io/red-skills bundle    # emits dist/opencode-host.bundle.min.mjs
 ```
 
 The pure modules (`provider-block.ts`, `skills-to-opencode.ts`,

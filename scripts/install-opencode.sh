@@ -115,7 +115,7 @@ elif [ -f "$BUNDLE" ]; then
   GENERATOR="node $BUNDLE"
 else
   log "bundle missing — building"
-  (cd "$REPO_ROOT" && pnpm --filter @redskills/opencode-host bundle) >/dev/null
+  (cd "$REPO_ROOT" && pnpm --filter @reddb-io/red-skills bundle) >/dev/null
   GENERATOR="node $BUNDLE"
 fi
 

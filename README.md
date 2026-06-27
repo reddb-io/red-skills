@@ -276,10 +276,10 @@ the lower-level CLI surface (`generate` / `--with-slice-2` / etc.).
 
   ```bash
   # Local-dev path
-  pnpm --filter @redskills/opencode-host generate
+  pnpm --filter @reddb-io/red-skills generate
 
   # Bundled form (release asset)
-  pnpm --filter @redskills/opencode-host bundle
+  pnpm --filter @reddb-io/red-skills bundle
   node ./dist/opencode-host.bundle.min.mjs --config .red/config.yaml --out ./opencode.json
   ```
 
@@ -300,8 +300,8 @@ the lower-level CLI surface (`generate` / `--with-slice-2` / etc.).
     rewritten to the opencode plugin context's `directory`.
 
   ```bash
-  pnpm --filter @redskills/opencode-host generate -- --with-slice-2
-  pnpm --filter @redskills/opencode-host generate -- --with-slice-2 --plugin dev
+  pnpm --filter @reddb-io/red-skills generate -- --with-slice-2
+  pnpm --filter @reddb-io/red-skills generate -- --with-slice-2 --plugin dev
   ```
 
   Skills are validated against opencode's name rule
