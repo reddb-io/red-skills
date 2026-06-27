@@ -19,6 +19,7 @@ import {
   type PlanResult,
 } from "./skills-to-opencode.js";
 import { planPluginHooks, type HookPlan } from "./hooks-to-events.js";
+import { planPluginMcp, type McpPlan, type McpEntry } from "./mcp-passthrough.js";
 
 /** A single plugin's planned output. */
 export interface PluginEmit {
@@ -26,6 +27,7 @@ export interface PluginEmit {
   provider: OpencodeConfig;
   skills: PlanResult;
   hooks: HookPlan[];
+  mcp: McpPlan[];
 }
 
 /** Top-level emit plan for one or more plugins. */
@@ -63,11 +65,12 @@ export function planEmit(input: {
   const byPlugin: PluginEmit[] = input.plugins.map((plugin) => {
     const skills = skillPlan.find((s) => s.plugin === plugin)?.result ?? { plans: [], errors: [] };
     const hooks = planPluginHooks(input.pluginsRoot, plugin);
+    const mcp = planPluginMcp(input.pluginsRoot, plugin);
     const provider = buildProviderBlock({
       configText: input.configText,
       env: input.env,
     });
-    return { plugin, provider, skills, hooks };
+    return { plugin, provider, skills, hooks, mcp };
   });
   return { byPlugin };
 }
@@ -80,14 +83,18 @@ export function planEmit(input: {
  */
 export function writeEmit(plan: EmitPlan, options: EmitOptions): void {
   for (const entry of plan.byPlugin) {
-    const { plugin, provider, skills, hooks } = entry;
+    const { plugin, provider, skills, hooks, mcp } = entry;
     const pluginRoot = join(options.outRoot, plugin);
     mkdirSync(pluginRoot, { recursive: true });
 
-    // 1. opencode.json (Slice 1)
+    // 1. opencode.json (Slice 1 + Slice 3 MCP passthrough)
+    const opencodeJson: Record<string, unknown> = { ...provider };
+    if (mcp.length > 0) {
+      opencodeJson.mcp = mcpToObject(mcp);
+    }
     writeFileSync(
       join(pluginRoot, "opencode.json"),
-      JSON.stringify(provider, null, 2) + "\n",
+      JSON.stringify(opencodeJson, null, 2) + "\n",
       "utf8",
     );
 
@@ -123,4 +130,14 @@ export function writeEmit(plan: EmitPlan, options: EmitOptions): void {
       writeFileSync(target, hp.source, "utf8");
     }
   }
+}
+
+/** Reduce a McpPlan[] to the opencode `mcp:` shape
+ *  (`{ <name>: <entry> }`). */
+function mcpToObject(plans: McpPlan[]): Record<string, McpEntry> {
+  const out: Record<string, McpEntry> = {};
+  for (const p of plans) {
+    out[p.name] = p.entry;
+  }
+  return out;
 }
