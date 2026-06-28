@@ -90,7 +90,7 @@ plugins:
   dev:
     enabled: false
 command_guard:
-  deny:
+  global:
     - sudo
 YAML
 result="$(run_hook "$repo" "$(payload "$repo" "sudo make install")")"
@@ -109,7 +109,7 @@ plugins:
   dev:
     enabled: true
 command_guard:
-  deny:
+  global:
     - sudo
     - "rm -rf *" # destructive glob
     - "suffix:git reset --hard"
@@ -123,7 +123,7 @@ result="$(run_hook "$repo" "$(payload "$repo" "sudo make install")")"
 rc="$(sed -n '1p' <<<"$result")"
 stderr="$(sed -n '/---stderr---/,$p' <<<"$result")"
 expect_eq "prefix rule: blocks sudo command family" "2" "$rc"
-expect_contains "prefix rule: names deny rule" "matched deny rule 'sudo'" "$stderr"
+expect_contains "prefix rule: names scoped rule" "matched command_guard.global rule 'sudo'" "$stderr"
 
 result="$(run_hook "$repo" "$(payload "$repo" "sudo&&make install")")"
 expect_eq "prefix rule: blocks shell separator boundary" "2" "$(sed -n '1p' <<<"$result")"
@@ -172,10 +172,61 @@ plugins:
   dev:
     enabled: true
 command_guard:
-  deny: "git reset --hard"
+  global: "git reset --hard"
 YAML
 result="$(run_hook "$repo" "$(payload "$repo" "git reset --hard HEAD")")"
 expect_eq "global scalar: block" "2" "$(sed -n '1p' <<<"$result")"
+
+cat >"$repo/.red/config.yaml" <<'YAML'
+plugins:
+  dev:
+    enabled: true
+command_guard:
+  global:
+    - git stash
+  main:
+    - git rebase
+    - "git checkout -b"
+  worktree:
+    - git clean
+YAML
+result="$(run_hook "$repo" "$(payload "$repo" "git stash")")"
+expect_eq "scoped global: blocks primary checkout" "2" "$(sed -n '1p' <<<"$result")"
+
+result="$(run_hook "$repo" "$(payload "$repo" "git rebase origin/main")")"
+expect_eq "scoped main: blocks primary checkout" "2" "$(sed -n '1p' <<<"$result")"
+
+result="$(run_hook "$repo" "$(payload "$repo" "git checkout -b feature/foo")")"
+expect_eq "scoped main: blocks prefix command" "2" "$(sed -n '1p' <<<"$result")"
+
+result="$(run_hook "$repo" "$(payload "$repo" "git clean -fd")")"
+expect_eq "scoped worktree: allows primary checkout" "0" "$(sed -n '1p' <<<"$result")"
+
+worktree="$repo/.red/tmp/work-wAAAA-i1/worktree"
+mkdir -p "$worktree"
+result="$(run_hook "$worktree" "$(payload "$worktree" "git stash")")"
+expect_eq "scoped global: blocks flat worktree" "2" "$(sed -n '1p' <<<"$result")"
+
+result="$(run_hook "$worktree" "$(payload "$worktree" "git clean -fd")")"
+expect_eq "scoped worktree: blocks flat worktree" "2" "$(sed -n '1p' <<<"$result")"
+
+result="$(run_hook "$worktree" "$(payload "$worktree" "git rebase origin/main")")"
+expect_eq "scoped main: allows flat worktree" "0" "$(sed -n '1p' <<<"$result")"
+
+worker_worktree="$repo/.red/tmp/workers/wZ2R4/142-a1/worktree"
+mkdir -p "$worker_worktree"
+result="$(run_hook "$worker_worktree" "$(payload "$worker_worktree" "git clean -fd")")"
+expect_eq "scoped worktree: blocks nested AFK worktree" "2" "$(sed -n '1p' <<<"$result")"
+
+cat >"$repo/.red/config.yaml" <<'YAML'
+plugins:
+  dev:
+    enabled: true
+command_guard:
+  deny: "git reset --hard"
+YAML
+result="$(run_hook "$repo" "$(payload "$repo" "git reset --hard HEAD")")"
+expect_eq "legacy global deny scalar: block" "2" "$(sed -n '1p' <<<"$result")"
 
 cat >"$repo/.red/config.yaml" <<'YAML'
 plugins:

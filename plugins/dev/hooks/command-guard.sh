@@ -5,16 +5,22 @@
 # shell command, and blocks it when it matches a deny rule from .red/config.yaml:
 #
 #   command_guard:
-#     deny:
+#     global:
 #       - "sudo *"
 #       - "rm -rf *"
+#     main:
+#       - "git rebase"
+#     worktree:
+#       - "git clean"
 #
 #   plugins:
 #     dev:
 #       enabled: true
 #
 # The hook is dormant unless plugins.dev.enabled is true. Missing/empty deny
-# rules allow the command. Deny rules accept explicit modes:
+# rules allow the command. `global` rules apply in every scope, `main` rules
+# apply outside RedSkills runtime worktrees, and `worktree` rules apply inside
+# `/afk` and `/ship` worktrees. Deny rules accept explicit modes:
 # `regex:<pattern>`, `prefix:<literal>`, `suffix:<literal>`, `exact:<literal>`,
 # and `glob:<pattern>`. Bare rules with glob metacharacters are treated as globs;
 # every other bare rule matches the exact command, a command prefix, or a command
@@ -177,10 +183,56 @@ read_config_scalar() {
 enabled="$(read_config_scalar "plugins.dev.enabled" || true)"
 [[ "$enabled" == "true" ]] || allow
 
+scope_is_command_guard_worktree() {
+  local root="$1"
+  case "$root" in
+    */.red/tmp/work-* | */.red/tmp/work-*/*) return 0 ;;
+    */.red/tmp/workers/*/worktree | */.red/tmp/workers/*/worktree/*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+COMMAND_GUARD_SCOPE="main"
+scope_is_command_guard_worktree "$ROOT" && COMMAND_GUARD_SCOPE="worktree"
+
+guard_scope_for_path() {
+  local path="$1"
+  case "$path" in
+    command_guard.global | \
+      command_guard.deny | \
+      plugins.dev.command_guard.global | \
+      plugins.dev.command_guard.deny | \
+      dev.command_guard.global | \
+      dev.command_guard.deny)
+      printf 'global'
+      ;;
+    command_guard.main | plugins.dev.command_guard.main | dev.command_guard.main)
+      printf 'main'
+      ;;
+    command_guard.worktree | plugins.dev.command_guard.worktree | dev.command_guard.worktree)
+      printf 'worktree'
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+emit_deny_pattern() {
+  local path="$1"
+  local raw_value="$2"
+  local scope item
+  scope="$(guard_scope_for_path "$path" || true)"
+  [[ -n "$scope" ]] || return 0
+  [[ "$scope" == "global" || "$scope" == "$COMMAND_GUARD_SCOPE" ]] || return 0
+  item="$(unquote_scalar "$raw_value")"
+  [[ -n "$item" ]] && printf '%s\t%s\n' "$scope" "$item"
+}
+
 read_deny_patterns() {
   local -a STACK=()
   local -a INDENTS=()
-  local raw line indent_str indent rest parent key value full item
+  local raw line indent_str indent rest parent key value full
 
   while IFS= read -r raw || [[ -n "$raw" ]]; do
     raw="${raw%$'\r'}"
@@ -198,12 +250,7 @@ read_deny_patterns() {
 
     if [[ "$rest" =~ ^-([[:space:]]|$) ]]; then
       parent="$(join_stack)"
-      if [[ "$parent" == "command_guard.deny" ||
-            "$parent" == "plugins.dev.command_guard.deny" ||
-            "$parent" == "dev.command_guard.deny" ]]; then
-        item="$(unquote_scalar "${rest#-}")"
-        [[ -n "$item" ]] && printf '%s\n' "$item"
-      fi
+      emit_deny_pattern "$parent" "${rest#-}"
       continue
     fi
 
@@ -221,12 +268,7 @@ read_deny_patterns() {
       continue
     fi
 
-    if [[ "$full" == "command_guard.deny" ||
-          "$full" == "plugins.dev.command_guard.deny" ||
-          "$full" == "dev.command_guard.deny" ]]; then
-      item="$(unquote_scalar "$value")"
-      [[ -n "$item" ]] && printf '%s\n' "$item"
-    fi
+    emit_deny_pattern "$full" "$value"
   done <"$CONFIG"
 }
 
@@ -316,14 +358,14 @@ matches_rule() {
   esac
 }
 
-while IFS= read -r rule; do
+while IFS=$'\t' read -r rule_scope rule; do
   [[ -n "$rule" ]] || continue
   if matches_rule "$COMMAND" "$rule"; then
     cat >&2 <<EOF
 BLOCKED by RedSkills command guard.
-The command '$COMMAND' matched deny rule '$rule' from .red/config.yaml.
+The command '$COMMAND' matched command_guard.$rule_scope rule '$rule' from .red/config.yaml.
 
-Remove or narrow command_guard.deny if this command is intentional.
+Remove or narrow command_guard.$rule_scope if this command is intentional.
 EOF
     exit 2
   fi
