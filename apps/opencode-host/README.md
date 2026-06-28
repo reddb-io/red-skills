@@ -71,8 +71,9 @@ normal installs need `node` but do not need a local workspace build.
 ## Adapter install script
 
 The `scripts/install-opencode.sh` wrapper in the repo root bundles the
-above into one command that handles generation + install. Use it directly when
-developing the adapter or when installing a checkout into a specific project:
+above into one command that handles generation, install, and uninstall. Use it
+directly when developing the adapter or when installing/removing a checkout in a
+specific project:
 
 ```bash
 # global — recommended user-scoped install into ~/.config/opencode/
@@ -80,8 +81,14 @@ git clone git@github.com:reddb-io/red-skills.git ~/code/red-skills
 cd ~/code/red-skills
 scripts/install-opencode.sh --global
 
+# global — remove RedSkills from ~/.config/opencode/
+scripts/install-opencode.sh --uninstall --global
+
 # local — install into the current directory's .opencode/
 scripts/install-opencode.sh
+
+# local — remove RedSkills from the current directory's .opencode/
+scripts/install-opencode.sh --uninstall
 
 # local — install into a specific project
 scripts/install-opencode.sh /path/to/your-project
@@ -104,7 +111,9 @@ The global install writes `~/.config/opencode/plugins/`,
 `~/.config/opencode/skills/`, `opencode.json(c)`, and `tui.json(c)`. The local
 install writes the same OpenCode surface under the target repo's `.opencode/`
 plus project-local `opencode.json` and `tui.json`. Existing global config files
-are timestamp-backed-up before replacement.
+are timestamp-backed-up before replacement. Uninstall removes manifest-recorded
+files and RedSkills-generated config files, but keeps unrelated or edited user
+config.
 
 Use `/connect` inside OpenCode, or export one of `OPENAI_API_KEY`,
 `MINIMAX_API_KEY`, or `OPENROUTER_API_KEY`. The generated files carry provider
