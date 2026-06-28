@@ -104,6 +104,38 @@ YAML
 result="$(run_hook "$repo" "$(payload "$repo" "sudo make install")")"
 expect_eq "empty deny list: allow" "0" "$(sed -n '1p' <<<"$result")"
 
+result="$(run_hook "$repo" "$(payload "$repo" "git worktree add ../feature-wt -b feat/outside origin/main")")"
+rc="$(sed -n '1p' <<<"$result")"
+stderr="$(sed -n '/---stderr---/,$p' <<<"$result")"
+expect_eq "dev worktree guard: blocks sibling worktree" "2" "$rc"
+expect_contains "dev worktree guard: explains allowed root" "agent-created git worktrees must live under .red/tmp" "$stderr"
+
+result="$(run_hook "$repo" "$(payload "$repo" "rtk proxy git worktree add ../feature-wt -b feat/outside origin/main")")"
+expect_eq "dev worktree guard: blocks rtk-wrapped sibling worktree" "2" "$(sed -n '1p' <<<"$result")"
+
+result="$(run_hook "$repo" "$(payload "$repo" "git worktree add .red/tmp/work-feature -b feat/inside origin/main")")"
+expect_eq "dev worktree guard: allows .red/tmp worktree" "0" "$(sed -n '1p' <<<"$result")"
+
+result="$(run_hook "$repo" "$(payload "$repo" "git -C $repo worktree add .red/tmp/work-feature-c -b feat/inside-c origin/main")")"
+expect_eq "dev worktree guard: allows git -C .red/tmp worktree" "0" "$(sed -n '1p' <<<"$result")"
+
+result="$(run_hook "$repo" "$(payload "$repo" "git switch feature/foo")")"
+expect_eq "primary checkout guard: blocks branch switch" "2" "$(sed -n '1p' <<<"$result")"
+
+result="$(run_hook "$repo" "$(payload "$repo" "git checkout -b feature/foo")")"
+expect_eq "primary checkout guard: blocks branch creation" "2" "$(sed -n '1p' <<<"$result")"
+
+result="$(run_hook "$repo" "$(payload "$repo" "gh pr checkout 123")")"
+expect_eq "primary checkout guard: blocks gh pr checkout" "2" "$(sed -n '1p' <<<"$result")"
+
+result="$(run_hook "$repo" "$(payload "$repo" "git checkout -- README.md")")"
+expect_eq "primary checkout guard: allows file checkout" "0" "$(sed -n '1p' <<<"$result")"
+
+dev_worktree="$repo/.red/tmp/work-manual"
+mkdir -p "$dev_worktree"
+result="$(run_hook "$dev_worktree" "$(payload "$dev_worktree" "git switch feature/foo")")"
+expect_eq "primary checkout guard: allows branch switch inside .red/tmp worktree" "0" "$(sed -n '1p' <<<"$result")"
+
 cat >"$repo/.red/config.yaml" <<'YAML'
 plugins:
   dev:

@@ -304,14 +304,22 @@ Core responsibilities:
 
 Dev guard rails:
 
-- The primary-checkout branch guard is controlled by
-  `plugins.dev.lock.primary-branch` in `.red/config.yaml`.
+- When `plugins.dev.enabled: true`, the dev PreToolUse proxy enforces the
+  worktree boundary for agent shell commands: `git worktree add` must target a
+  path under `.red/tmp/`, and branch-moving commands in the primary checkout
+  (`git switch`, `git checkout <branch>`, `git checkout -b`, `git switch -c`,
+  `gh pr checkout`) are blocked. Create branches through
+  `git worktree add .red/tmp/work-<slug> -b <branch> ...` instead.
+- `plugins.dev.lock.primary-branch` remains the explicit branch-lock workflow
+  flag that setup writes for compatibility and base-pinning integrations.
 - The dev shell-command guard is controlled by `command_guard` in
   `.red/config.yaml`. It runs from the agent `PreToolUse` hook, stays inert
   unless `plugins.dev.enabled: true`, and blocks matching shell commands before
-  execution. `global` rules apply everywhere, `main` rules apply in the primary
-  session scope (not specifically the Git branch named `main`), and `worktree`
-  rules apply in `/afk` and `/ship` worktrees under `.red/tmp/`. Deny rules
+  execution. These repo-defined rules are **additional** to the built-in
+  `.red/tmp` worktree boundary above. `global` rules apply everywhere, `main`
+  rules apply in the primary session scope (not specifically the Git branch
+  named `main`), and `worktree` rules apply in `/afk` and `/ship` worktrees
+  under `.red/tmp/`. Deny rules
   support `regex:<pattern>`, `prefix:<literal>`, `suffix:<literal>`,
   `exact:<literal>`, and `glob:<pattern>`. Bare entries with `*`, `?`, or `[`
   are Bash globs; other bare entries match the exact command, a command prefix,

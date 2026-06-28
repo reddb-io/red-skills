@@ -17,14 +17,16 @@
 #     dev:
 #       enabled: true
 #
-# The hook is dormant unless plugins.dev.enabled is true. Missing/empty deny
-# rules allow the command. `global` rules apply in every scope, `main` rules
-# apply outside RedSkills runtime worktrees, and `worktree` rules apply inside
-# `/afk` and `/ship` worktrees. Deny rules accept explicit modes:
-# `regex:<pattern>`, `prefix:<literal>`, `suffix:<literal>`, `exact:<literal>`,
-# and `glob:<pattern>`. Bare rules with glob metacharacters are treated as globs;
-# every other bare rule matches the exact command, a command prefix, or a command
-# suffix at a shell-command boundary.
+# The hook is dormant unless plugins.dev.enabled is true. Once enabled, the dev
+# invariant is built in: agent-created git worktrees must live under .red/tmp/,
+# and branch-moving commands are blocked in the primary checkout. Missing/empty
+# deny rules still allow every other command. `global` rules apply in every
+# scope, `main` rules apply outside RedSkills runtime worktrees, and `worktree`
+# rules apply inside `/afk` and `/ship` worktrees. Deny rules accept explicit
+# modes: `regex:<pattern>`, `prefix:<literal>`, `suffix:<literal>`,
+# `exact:<literal>`, and `glob:<pattern>`. Bare rules with glob metacharacters
+# are treated as globs; every other bare rule matches the exact command, a
+# command prefix, or a command suffix at a shell-command boundary.
 
 set -uo pipefail
 
@@ -84,6 +86,7 @@ find_config() {
 
 CONFIG="$(find_config "$ROOT" || true)"
 [[ -n "$CONFIG" ]] || allow
+REPO_ROOT="${CONFIG%/.red/config.yaml}"
 
 trim() {
   local s="$1"
@@ -194,6 +197,216 @@ scope_is_command_guard_worktree() {
 
 COMMAND_GUARD_SCOPE="main"
 scope_is_command_guard_worktree "$ROOT" && COMMAND_GUARD_SCOPE="worktree"
+
+canonical_path() {
+  local base="$1"
+  local path="$2"
+  if [[ "$path" == /* ]]; then
+    realpath -m -- "$path" 2>/dev/null || printf '%s\n' "$path"
+  else
+    realpath -m -- "$base/$path" 2>/dev/null || printf '%s/%s\n' "$base" "$path"
+  fi
+}
+
+git_subcommand_index() {
+  local -n tokens_ref="$1"
+  local git_index="$2"
+  local -n cwd_ref="$3"
+  local k=$((git_index + 1))
+  local len=${#tokens_ref[@]}
+  while ((k < len)); do
+    local tok="${tokens_ref[k]}"
+    case "$tok" in
+      -C)
+        if ((k + 1 < len)); then
+          cwd_ref="$(canonical_path "$cwd_ref" "${tokens_ref[k + 1]}")"
+        fi
+        k=$((k + 2))
+        continue
+        ;;
+      -c|--git-dir|--work-tree|--namespace|--exec-path|--super-prefix)
+        k=$((k + 2))
+        continue
+        ;;
+      --*=*|-*)
+        k=$((k + 1))
+        continue
+        ;;
+      *)
+        break
+        ;;
+    esac
+  done
+  printf '%s\n' "$k"
+}
+
+skip_git_worktree_add_option() {
+  local -n tokens_ref="$1"
+  local -n index_ref="$2"
+  local len=${#tokens_ref[@]}
+  local tok="${tokens_ref[index_ref]}"
+  case "$tok" in
+    -b|-B|--orphan|--reason)
+      index_ref=$((index_ref + 2))
+      return 0
+      ;;
+    --reason=*|--orphan=*)
+      index_ref=$((index_ref + 1))
+      return 0
+      ;;
+    --detach|--checkout|--no-checkout|--guess-remote|--no-guess-remote|--force|-f|--lock)
+      index_ref=$((index_ref + 1))
+      return 0
+      ;;
+    --)
+      index_ref=$((index_ref + 1))
+      return 1
+      ;;
+    --*)
+      index_ref=$((index_ref + 1))
+      return 0
+      ;;
+    -*)
+      # Unknown short option. Treat it as a flag so the destination is still the
+      # first non-option token; if the option actually consumed an argument, the
+      # guard fails closed on a non-.red/tmp "destination".
+      index_ref=$((index_ref + 1))
+      return 0
+      ;;
+    *)
+      ((index_ref < len))
+      return 1
+      ;;
+  esac
+}
+
+worktree_add_destination() {
+  local tokens_name="$1"
+  local -n tokens_ref="$tokens_name"
+  local git_index="$2"
+  local cwd="$ROOT"
+  local s
+  s="$(git_subcommand_index "$tokens_name" "$git_index" cwd)"
+  [[ "${tokens_ref[s]:-}" == "worktree" && "${tokens_ref[s + 1]:-}" == "add" ]] || return 1
+
+  local j=$((s + 2))
+  local len=${#tokens_ref[@]}
+  while ((j < len)); do
+    if skip_git_worktree_add_option "$tokens_name" j; then
+      continue
+    fi
+    [[ -n "${tokens_ref[j]:-}" ]] || return 1
+    printf '%s\t%s\n' "$cwd" "${tokens_ref[j]}"
+    return 0
+  done
+  return 1
+}
+
+primary_branch_movement_reason() {
+  local tokens_name="$1"
+  local -n tokens_ref="$tokens_name"
+  local n=${#tokens_ref[@]}
+  local i j s sub
+
+  for ((i = 0; i < n; i++)); do
+    if [[ "${tokens_ref[i]}" == "gh" && "${tokens_ref[i + 1]:-}" == "pr" && "${tokens_ref[i + 2]:-}" == "checkout" ]]; then
+      printf 'gh pr checkout changes the primary checkout; create or reuse a .red/tmp worktree for the PR branch instead'
+      return 0
+    fi
+
+    [[ "${tokens_ref[i]}" == "git" ]] || continue
+    local cwd="$ROOT"
+    s="$(git_subcommand_index "$tokens_name" "$i" cwd)"
+    sub="${tokens_ref[s]:-}"
+    case "$sub" in
+      checkout|switch)
+        local target="" saw_doubledash=0
+        for ((j = s + 1; j < n; j++)); do
+          local t="${tokens_ref[j]}"
+          case "$t" in
+            --)
+              saw_doubledash=1
+              continue
+              ;;
+            -b|-B|-c|-C|--create|--force-create|--orphan|--track)
+              printf 'git %s creates or checks out a branch in the primary checkout; use git worktree add .red/tmp/work-<slug> -b <branch> ... instead' "$sub"
+              return 0
+              ;;
+            --create=*|--force-create=*|--orphan=*)
+              printf 'git %s creates a branch in the primary checkout; use git worktree add .red/tmp/work-<slug> -b <branch> ... instead' "$sub"
+              return 0
+              ;;
+            -*)
+              continue
+              ;;
+            *)
+              target="$t"
+              break
+              ;;
+          esac
+        done
+        ((saw_doubledash)) && continue
+        [[ -z "$target" || "$target" == "." ]] && continue
+        printf 'git %s changes the primary checkout branch; create or enter a .red/tmp worktree instead' "$sub"
+        return 0
+        ;;
+    esac
+  done
+
+  return 1
+}
+
+enforce_dev_worktree_policy() {
+  local -a tokens
+  read -ra tokens <<<"$COMMAND"
+  local n=${#tokens[@]}
+  ((n > 0)) || return 0
+
+  local i
+  for ((i = 0; i < n; i++)); do
+    [[ "${tokens[i]}" == "git" ]] || continue
+    local pair cwd dest abs allowed_root
+    pair="$(worktree_add_destination tokens "$i" || true)"
+    [[ -n "$pair" ]] || continue
+    cwd="${pair%%$'\t'*}"
+    dest="${pair#*$'\t'}"
+    abs="$(canonical_path "$cwd" "$dest")"
+    allowed_root="$(canonical_path "$REPO_ROOT" ".red/tmp")"
+    case "$abs" in
+      "$allowed_root"/*)
+        ;;
+      *)
+        cat >&2 <<EOF
+BLOCKED by RedSkills dev worktree guard.
+plugins.dev.enabled is true, so agent-created git worktrees must live under .red/tmp/.
+
+Requested worktree path: $dest
+Resolved worktree path:  $abs
+Allowed root:            $allowed_root/
+
+Use: git worktree add .red/tmp/work-<slug> -b <branch> origin/main
+EOF
+        exit 2
+        ;;
+    esac
+  done
+
+  if [[ "$COMMAND_GUARD_SCOPE" == "main" ]]; then
+    local reason
+    reason="$(primary_branch_movement_reason tokens || true)"
+    if [[ -n "$reason" ]]; then
+      cat >&2 <<EOF
+BLOCKED by RedSkills dev primary-checkout guard.
+plugins.dev.enabled is true, so agents must not create or switch branches in the primary checkout.
+
+$reason.
+EOF
+      exit 2
+    fi
+  fi
+}
+
+enforce_dev_worktree_policy
 
 guard_scope_for_path() {
   local path="$1"
