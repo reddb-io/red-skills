@@ -195,6 +195,7 @@ jobs:
             apps/dev/package.json
             apps/memory/package.json
             apps/brain/package.json
+            apps/opencode-host/package.json
             apps/benchmark-memory/package.json
             apps/benchmark-code-understanding/package.json
             apps/code-nav/package.json
@@ -447,6 +448,17 @@ jobs:
           console.log('benchmark-memory bundle manifest:', JSON.stringify(manifest));
           EOF
 
+      - name: Build OpenCode host installer bundle
+        if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
+        working-directory: apps/opencode-host
+        env:
+          RED_BUILD_VERSION: ${{ steps.version.outputs.next }}
+          RED_BUILD_GIT_SHA: ${{ github.sha }}
+          RED_BUILD_TIME: ${{ github.event.head_commit.timestamp }}
+        run: |
+          set -euo pipefail
+          pnpm build
+
       - name: Build benchmark-code-understanding bundle + manifest
         if: steps.fleet.outputs.running == '0' && steps.bump.outputs.kind != 'none'
         working-directory: apps/benchmark-code-understanding
@@ -486,6 +498,7 @@ jobs:
             dist/code-nav.manifest.json \
             dist/benchmark-memory.bundle.min.mjs \
             dist/benchmark-memory.manifest.json \
+            dist/opencode-host.bundle.min.mjs \
             dist/benchmark-code-understanding.bundle.min.mjs \
             dist/benchmark-code-understanding.manifest.json \
             dist/memory.bundle.min.mjs \
@@ -515,6 +528,7 @@ jobs:
             dist/code-nav.manifest.json
             dist/benchmark-memory.bundle.min.mjs
             dist/benchmark-memory.manifest.json
+            dist/opencode-host.bundle.min.mjs
             dist/benchmark-code-understanding.bundle.min.mjs
             dist/benchmark-code-understanding.manifest.json
             dist/memory.bundle.min.mjs

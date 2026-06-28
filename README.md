@@ -30,7 +30,52 @@ Attribution is preserved in [NOTICE](./NOTICE).
 
 ## Install
 
-### Claude Code
+### Universal Installer
+
+Recommended for normal installs and upgrades:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/reddb-io/red-skills/v1/scripts/install.sh | bash
+```
+
+The installer resolves the latest GitHub Release, stores it under
+`~/.red-skills/versions/<tag>`, updates `~/.red-skills/current`, detects which
+supported CLIs are present (`claude`, `codex`, `opencode`), then installs the
+right surface for each host:
+
+| Host | What the installer does |
+| --- | --- |
+| Claude Code | Registers the RedSkills marketplace and installs `dev`, `memory`, and `brain`. |
+| Codex CLI | Registers the RedSkills marketplace and installs `dev`, `memory`, and `brain`. |
+| OpenCode | Generates and installs OpenCode plugin modules, skills, MCP config, provider config, and TUI attention config. |
+
+OpenCode installs use the published `opencode-host.bundle.min.mjs` asset when
+available, so normal installs need `node` but do not need a local workspace
+build. If that asset is unavailable for a pinned older release, the installer
+falls back to building from source with `pnpm`.
+
+Useful options:
+
+```bash
+# inspect without writing
+curl -fsSL https://raw.githubusercontent.com/reddb-io/red-skills/v1/scripts/install.sh | bash -s -- --dry-run
+
+# install only one host
+curl -fsSL https://raw.githubusercontent.com/reddb-io/red-skills/v1/scripts/install.sh | bash -s -- --only opencode
+
+# pin a release
+curl -fsSL https://raw.githubusercontent.com/reddb-io/red-skills/v1/scripts/install.sh | bash -s -- --version v1.248.1
+
+# force plugin reinstall where the host supports removal
+curl -fsSL https://raw.githubusercontent.com/reddb-io/red-skills/v1/scripts/install.sh | bash -s -- --force
+```
+
+After installing, restart any already-open CLI sessions so they reload plugin
+manifests. Then run `/setup-red-skills` in a project from Claude Code or
+OpenCode, or `$dev:setup-red-skills` in Codex when the client exposes
+namespace-qualified skills.
+
+### Manual: Claude Code
 
 ```text
 /plugin marketplace add reddb-io/red-skills
@@ -69,11 +114,14 @@ Upgrade or remove:
 /plugin marketplace remove red-skills
 ```
 
-### Codex CLI
+### Manual: Codex CLI
 
 ```bash
 codex plugin marketplace add reddb-io/red-skills
 codex plugin marketplace upgrade red-skills
+codex plugin add dev@red-skills
+codex plugin add memory@red-skills
+codex plugin add brain@red-skills
 codex plugin marketplace remove red-skills
 ```
 
@@ -95,11 +143,13 @@ command-backed statusline. Use `$dev:afk monitor` when the client exposes
 namespace-qualified skills, or `$afk monitor` when it exposes unqualified skill
 names.
 
-### OpenCode
+### Manual: OpenCode
 
 OpenCode support is generated from the same plugin source tree as Claude Code
 and Codex. The installer writes skills, plugin modules, MCP config, provider
-config, and TUI attention config for OpenCode.
+config, and TUI attention config for OpenCode. The universal installer above is
+preferred for normal user-scoped installs; use the direct script when developing
+or when installing a checkout into a specific project.
 
 ```bash
 git clone git@github.com:reddb-io/red-skills.git ~/code/red-skills

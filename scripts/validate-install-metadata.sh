@@ -14,6 +14,9 @@ command -v jq >/dev/null || fail "jq is required"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
+bash -n scripts/install.sh || fail "scripts/install.sh has invalid bash syntax"
+bash -n scripts/install-opencode.sh || fail "scripts/install-opencode.sh has invalid bash syntax"
+
 # Validate one plugin's install metadata: Claude skill list matches the SKILL.md
 # tree on disk, Claude/Codex versions agree, and the Codex plugin exposes the
 # whole skills/ tree under the right name.

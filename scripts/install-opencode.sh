@@ -100,25 +100,26 @@ die() { printf 'install-opencode: %s\n' "$*" >&2; exit 1; }
 [ -f "$CONFIG_PATH" ] || die "config not found at $CONFIG_PATH — run from a red-skills clone"
 [ -d "$PLUGINS_ROOT" ] || die "plugins tree not found at $PLUGINS_ROOT"
 
-# 1. pnpm install (first run only)
-if [ ! -d "$REPO_ROOT/node_modules" ] && [ "$DRY_RUN" = "false" ]; then
-  log "running pnpm install (first run)"
-  (cd "$REPO_ROOT" && pnpm install --frozen-lockfile 2>/dev/null || pnpm install) >/dev/null
-fi
-
-# 2. resolve the generator (bundle preferred, tsx fallback)
+# 1. resolve the generator (release bundle preferred, tsx fallback)
 BUNDLE="$REPO_ROOT/dist/opencode-host.bundle.min.mjs"
 if [ "$DRY_RUN" = "true" ]; then
   GENERATOR="(tsx $REPO_ROOT/apps/opencode-host/src/generate.ts)"
 elif [ -f "$BUNDLE" ]; then
   GENERATOR="node $BUNDLE"
 else
+  # Build-from-source fallback for checkout installs. The universal curl
+  # installer downloads the release asset above, so normal user installs do not
+  # need pnpm unless the asset is unavailable.
+  if [ ! -d "$REPO_ROOT/node_modules" ]; then
+    log "running pnpm install (first run)"
+    (cd "$REPO_ROOT" && pnpm install --frozen-lockfile 2>/dev/null || pnpm install) >/dev/null
+  fi
   log "bundle missing — building"
   (cd "$REPO_ROOT" && pnpm --filter @reddb-io/red-skills bundle) >/dev/null
   GENERATOR="node $BUNDLE"
 fi
 
-# 3. generate the dist tree
+# 2. generate the dist tree
 GEN_ARGS=(--config "$CONFIG_PATH" --with-slice-2 --plugins-root "$PLUGINS_ROOT" --out-dir "$OUT_DIR")
 [ "$COPY" = "true" ] && GEN_ARGS+=(--copy)
 
@@ -129,7 +130,7 @@ else
   (cd "$REPO_ROOT" && $GENERATOR "${GEN_ARGS[@]}")
 fi
 
-# 4. discover the plugins that have a dist subtree
+# 3. discover the plugins that have a dist subtree
 PLUGINS=""
 for d in "$OUT_DIR"/*/; do
   [ -d "$d" ] || continue
@@ -138,6 +139,20 @@ for d in "$OUT_DIR"/*/; do
 done
 PLUGINS="${PLUGINS# }"
 [ -n "$PLUGINS" ] || die "no plugin dist trees under $OUT_DIR — the generator emitted nothing"
+
+ORDERED_PLUGINS=""
+for preferred in dev memory brain; do
+  case " $PLUGINS " in
+    *" $preferred "*) ORDERED_PLUGINS="$ORDERED_PLUGINS $preferred" ;;
+  esac
+done
+for plugin in $PLUGINS; do
+  case " $ORDERED_PLUGINS " in
+    *" $plugin "*) ;;
+    *) ORDERED_PLUGINS="$ORDERED_PLUGINS $plugin" ;;
+  esac
+done
+PLUGINS="${ORDERED_PLUGINS# }"
 
 # 5. install into the target
 if [ "$MODE" = "local" ]; then
@@ -211,6 +226,7 @@ else
   GLOBAL_SKILLS_DIR="$XDG_CONFIG_HOME/opencode/skills"
   GLOBAL_CFG="$XDG_CONFIG_HOME/opencode/opencode.json"
   [ -f "$XDG_CONFIG_HOME/opencode/opencode.jsonc" ] && GLOBAL_CFG="$XDG_CONFIG_HOME/opencode/opencode.jsonc"
+  declare -A INSTALLED_SKILLS=()
 
   if [ "$DRY_RUN" = "true" ]; then
     log "(dry-run) flatten each plugin module into $GLOBAL_PLUGINS_DIR/redskills-<plugin>-<event>.ts"
@@ -230,9 +246,14 @@ else
       [ -d "$SRC/skills" ] && for skill_dir in "$SRC/skills"/*/; do
         [ -d "$skill_dir" ] || continue
         skill_name=$(basename "$skill_dir")
+        if [ -n "${INSTALLED_SKILLS[$skill_name]:-}" ]; then
+          log "(note) duplicate skill $skill_name from $plugin skipped; already installed from ${INSTALLED_SKILLS[$skill_name]}"
+          continue
+        fi
         dst="$GLOBAL_SKILLS_DIR/$skill_name"
         rm -rf "$dst"
         cp -R "$skill_dir" "$dst"
+        INSTALLED_SKILLS[$skill_name]="$plugin"
         log "installed skill $skill_name -> $dst"
       done
     done
