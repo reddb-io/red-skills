@@ -17,7 +17,7 @@ Drain the agent-ready backlog. Single skill that owns issue selection, worktree 
 The skill ships a single committed runtime bundle. Invoke it as:
 
 ```
-RED_AFK_RUNNER=<claude|codex> node "$CLAUDE_PLUGIN_ROOT/skills/engineering/afk/bin/afk.mjs" <command> [params]
+RED_AFK_RUNNER=<claude|codex|opencode> red-skills-dev <command> [params]
 ```
 
 The invoking LLM is responsible for setting `RED_AFK_RUNNER` to its own host runner (`codex` from Codex, `claude` from Claude Code). Do not infer a different runner from binaries on `PATH`; use `--runner` only when the user explicitly pinned one.
@@ -397,7 +397,7 @@ When `/afk` launches a normal detached worker under Codex (`run`, not
    `monitor loop unavailable in this runner; run /dev:afk monitor or tail .red/tmp/workers/*/*/afk.log manually.`
 3. If available, emit the canonical prompt from the bundle:
    ```bash
-   RED_AFK_RUNNER=codex node "$CODEX_PLUGIN_ROOT/skills/engineering/afk/bin/afk.mjs" codex-monitor-agent --project-root "$PWD" --mode run
+   RED_AFK_RUNNER=codex red-skills-dev codex-monitor-agent --project-root "$PWD" --mode run
    ```
    Spawn exactly one monitor agent with that prompt. The monitor agent is a
    presentation consumer only: it periodically runs `/dev:afk monitor --once`,
@@ -443,12 +443,12 @@ Fleet mode is **runner-portable**: the supervisor is plain process orchestration
    Do **not** touch the file or attempt to recover. A stale PID file (file exists but `kill -0` fails) is left alone — the `fleet` command clears it itself when it acquires the supervisor lock.
 3. **Launch the fleet.** From the project root, run the bundle's `fleet` command with the target and any flags:
    ```bash
-   RED_AFK_RUNNER=<runner> node "$CLAUDE_PLUGIN_ROOT/skills/engineering/afk/bin/afk.mjs" fleet <N> [--request <text>]
+   RED_AFK_RUNNER=<runner> red-skills-dev fleet <N> [--request <text>]
    ```
    The command performs the PID-file pre-check from step 2 itself (refusing if a live supervisor already runs), detaches the supervisor, and forwards the resolved runner and the `--request/-r` text to every worker it spawns. It waits up to 3 s for `.red/tmp/afk-supervisor.pid` to appear and contain a live PID, then prints the launched supervisor PID and target; on failure it reports the tail of `.red/tmp/afk-supervisor.log`. Capture the reported PID for the *Report back* step. The launched supervisor is the native `__supervise` entrypoint of the same bundle.
 4. **Attach the best available monitor surface.**
    - Claude Code: same flow as *Auto-Monitor Loop* — `CronList` first to deduplicate, then `CronCreate(cron="*/10 * * * *", prompt="/dev:afk monitor", recurring=true)`. If cron tools are unavailable, skip and use the manual-monitor line.
-   - Codex: fetch a sub-agent spawn primitive via `ToolSearch` (query: `spawn agent background monitor`). If available, emit the canonical prompt with `RED_AFK_RUNNER=codex node "$CODEX_PLUGIN_ROOT/skills/engineering/afk/bin/afk.mjs" codex-monitor-agent --project-root "$PWD" --mode fleet` and spawn exactly one read-only Codex monitor agent for this newly-launched supervisor. Its task: from the project root, periodically run `/dev:afk monitor --once` (the bundle's `monitor --once`), report concise progress, and auto-close when `.red/tmp/afk-supervisor.pid` is missing/dead and no `[live]` workers remain. It must never edit files, claim issues, stop workers, or run merges. The user may close it manually; workers continue. If the primitive is unavailable, skip and use the manual-monitor line.
+   - Codex: fetch a sub-agent spawn primitive via `ToolSearch` (query: `spawn agent background monitor`). If available, emit the canonical prompt with `RED_AFK_RUNNER=codex red-skills-dev codex-monitor-agent --project-root "$PWD" --mode fleet` and spawn exactly one read-only Codex monitor agent for this newly-launched supervisor. Its task: from the project root, periodically run `/dev:afk monitor --once` (the bundle's `monitor --once`), report concise progress, and auto-close when `.red/tmp/afk-supervisor.pid` is missing/dead and no `[live]` workers remain. It must never edit files, claim issues, stop workers, or run merges. The user may close it manually; workers continue. If the primitive is unavailable, skip and use the manual-monitor line.
    - Bare/unknown: skip native monitor setup and use the manual-monitor line.
 5. **Report back.** Print:
    ```
@@ -519,7 +519,7 @@ Idempotency: `SLOT_SWEPT[slot]=1` blocks a second sweep within the same supervis
 To invoke, from the project root:
 
 ```bash
-RED_AFK_RUNNER=<runner> node "$CLAUDE_PLUGIN_ROOT/skills/engineering/afk/bin/afk.mjs" monitor
+RED_AFK_RUNNER=<runner> red-skills-dev monitor
 ```
 
 The command has **two modes**, auto-selected by stdout type:
@@ -601,7 +601,7 @@ The mirror is a pure diff: it reconciles the live worker state files against the
 2. **Build the tracked set.** `TaskList` → keep the mirror-owned tasks (those whose title matches `w<id> [<…>] #<n> <slug>`). For each, emit one JSONL line `{"key":"<worker_id>:<issue>","stage":"<last stage>","phase":"<last phase>"}`, reading the key (`worker_id` from the leading token, `issue` from the `#<n>`) and the **phase** (the word inside the title's `[…]` bracket, after any `n/5 `) from the title, and the **stage** from the description (`stage: <x>`). Keep a key→task_id map for step 4.
 3. **Compute the plan.** Pipe the tracked JSONL from step 2 into the bundle's `monitor --mirror-plan` subcommand:
    ```bash
-   printf '%s\n' "$tracked" | node "$CLAUDE_PLUGIN_ROOT/skills/engineering/afk/bin/afk.mjs" monitor --mirror-plan
+   printf '%s\n' "$tracked" | red-skills-dev monitor --mirror-plan
    ```
    The command globs the state files and reconciles them against the tracked set on stdin (keyed by `worker_id:issue`, so parallel workers each get exactly one task and re-runs never duplicate), then prints a JSONL **call plan** to stdout — one descriptor per harness call (empty stdin → cold reconcile; empty plan → no output). A `TaskUpdate` rewrites the **title** when the macro phase moves and refreshes the **description** when the micro stage moves; a terminal failure re-titles to `[blocked]` and flips the task to `failed`:
    ```jsonl

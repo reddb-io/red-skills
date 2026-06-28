@@ -22,7 +22,7 @@ This skill is the interactive sibling of `/afk`'s autonomous admin-merge landing
 Invoke the dev runtime command:
 
 ```bash
-node "$CLAUDE_PLUGIN_ROOT/skills/engineering/afk/bin/afk.mjs" ship [--issue N] [--base main] [--timeout-s 1800] [--poll-s 30] [--review-check CodeRabbit] [--no-review-wait]
+red-skills-dev ship [--issue N] [--base main] [--timeout-s 1800] [--poll-s 30] [--review-check CodeRabbit] [--no-review-wait]
 ```
 
 Use `--issue N` when the issue number is not inferable from the branch name.

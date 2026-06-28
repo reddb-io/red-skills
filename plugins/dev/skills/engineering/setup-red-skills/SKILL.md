@@ -27,6 +27,7 @@ Scaffold includes:
 - **Domain docs** — where `.red/CONTEXT.md` and ADRs live, and the consumer rules for reading them
 - **Workflows** — GitHub Actions shipped by RedSkills (installed under the `rs-*` prefix), e.g. auto-label fresh issues with `needs-triage` so nothing slips past `/triage` and `/afk`
 - **Token efficiency** — strongly recommend installing [RTK](https://github.com/rtk-ai/rtk) to cut 60–90% of dev-operation tokens via a transparent CLI proxy
+- **Runtime launcher** — optionally install a host-level `red-skills-dev` shim so Claude Code, Codex, and opencode can invoke the same dev runtime without relying on CLI-specific plugin-root env vars
 - **Command guards** — configure the repo-owned `.red/config.yaml` policy that the globally-installed Claude Code, Codex, and opencode hook proxies enforce
 - **Development workflow** — activate the primary-branch guard, teach agents the isolated-worktree rules, and route interactive landing through `/ship`
 
@@ -154,6 +155,33 @@ Three things to verify after install:
 3. **Fallback explicit mode works.** If the active agent cannot use RTK hooks, teach it to call `rtk git status`, `rtk vitest`, `rtk tsc`, `rtk pnpm`, `rtk test`, and `rtk err` directly for noisy commands.
 
 `rtk discover` scans recent transcripts for missed savings opportunities — useful periodically to spot commands the hook should be rewriting but isn't yet.
+
+**Section E1 — Runtime launcher (strongly recommended).**
+
+> Explainer: `CLAUDE_PLUGIN_ROOT`, `CODEX_PLUGIN_ROOT`, and similar variables are plugin/hook environment variables. They are not guaranteed in the interactive shell where an agent runs `/afk`, `/ship`, `/dashboard`, or `/requeue`. Setting those names globally is brittle because they point at versioned plugin-cache directories and can become stale after an update. The cross-CLI surface should be a stable command, not a global fake plugin-root variable.
+
+Offer to install the host-level runtime shim:
+
+```bash
+bash plugins/dev/skills/engineering/setup-red-skills/scripts/install-runtime-shim.sh
+```
+
+The script writes `${XDG_BIN_HOME:-$HOME/.local/bin}/red-skills-dev`. The shim:
+
+- prefers the active CLI plugin-root env var when the host exposes one;
+- otherwise finds the latest installed dev plugin under `~/.codex/plugins/cache/red-skills/dev/*` or `~/.claude/plugins/cache/red-skills/dev/*`;
+- falls back to the latest warmed dev bundle under `~/.cache/red-skills/bundles/`;
+- forwards all arguments to the dev runtime, so skills can say `red-skills-dev ship ...`, `red-skills-dev dashboard`, or `RED_AFK_RUNNER=codex red-skills-dev monitor --once`;
+- stores no secrets and does not replace the `.red/config.yaml` opt-in gate.
+
+After installing, verify:
+
+```bash
+command -v red-skills-dev
+red-skills-dev dashboard --json
+```
+
+If `command -v` cannot find it, add `${XDG_BIN_HOME:-$HOME/.local/bin}` to the shell `PATH`. Do not export `CLAUDE_PLUGIN_ROOT` or `CODEX_PLUGIN_ROOT` globally as a substitute.
 
 **Section F — RedSkills statusline (optional).**
 

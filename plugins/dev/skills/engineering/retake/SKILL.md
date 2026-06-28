@@ -11,7 +11,7 @@ argument-hint: "#ISSUE [--apply] [--json] [--repo OWNER/REPO] [--pr-limit N]"
 ## Run
 
 ```bash
-node "$CLAUDE_PLUGIN_ROOT/skills/engineering/afk/bin/afk.mjs" retake 123
+red-skills-dev retake 123
 ```
 
 Use `--json` when another tool or agent needs structured state. The runtime

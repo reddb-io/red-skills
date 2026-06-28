@@ -91,8 +91,8 @@ footer items and persisting them to `config.toml`. The dev bundle also exposes
 an explicit inspector/fixer:
 
 ```bash
-node "$CODEX_PLUGIN_ROOT/skills/engineering/afk/bin/afk.mjs" codex-statusline
-node "$CODEX_PLUGIN_ROOT/skills/engineering/afk/bin/afk.mjs" codex-statusline --fix
+red-skills-dev codex-statusline
+red-skills-dev codex-statusline --fix
 ```
 
 The inspector reports the active `tui.status_line`, flags a missing

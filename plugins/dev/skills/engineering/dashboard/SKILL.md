@@ -12,18 +12,10 @@ Render the RedSkills process dashboard.
 
 ## Run
 
-Resolve the plugin root before running the dashboard. Use the first available
-source:
-
-1. `$CLAUDE_PLUGIN_ROOT` under Claude Code.
-2. `$CODEX_PLUGIN_ROOT` under Codex when the host exposes it.
-3. The loaded `SKILL.md` path: from `skills/engineering/dashboard/SKILL.md`,
-   the plugin root is `../../..`.
-
-Then run:
+Run the host-level RedSkills dev runtime shim:
 
 ```bash
-node "$PLUGIN_ROOT/skills/engineering/afk/bin/afk.mjs" dashboard [--period 30d] [--json]
+red-skills-dev dashboard [--period 30d] [--json]
 ```
 
 When developing inside the red-skills source checkout, this repo-local path is
