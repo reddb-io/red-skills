@@ -29,7 +29,7 @@ Scaffold includes:
 - **Token efficiency** — strongly recommend installing [RTK](https://github.com/rtk-ai/rtk) to cut 60–90% of dev-operation tokens via a transparent CLI proxy
 - **Runtime launcher** — optionally install a host-level `red-skills-dev` shim so Claude Code, Codex, and opencode can invoke the same dev runtime without relying on CLI-specific plugin-root env vars
 - **Command guards** — configure the repo-owned `.red/config.yaml` policy that the globally-installed Claude Code, Codex, and opencode hook proxies enforce
-- **Development workflow** — activate the primary-branch guard, teach agents the isolated-worktree rules, and route interactive landing through `/ship`
+- **Development workflow** — teach agents the `.red/tmp` worktree rules, preserve the primary checkout for the human, and route interactive landing through `/ship`
 
 This is a prompt-driven skill, not a deterministic script. Explore, present what you found, confirm with the user, then write.
 
@@ -44,7 +44,7 @@ Look at the current repo to understand its starting state. Read whatever exists;
 - `.red/CONTEXT.md` and `.red/CONTEXT-MAP.md` at the repo root
 - `.red/adr/` — the single root ADR sequence (there are no nested `.red/` subtrees)
 - `.red/agents/` — does this skill's prior output already exist?
-- `.red/config.yaml` — does it exist? Which plugins are already enabled (`plugins.<name>.enabled: true`)? Is `dev.lock.primary-branch` already set? Is `command_guard` already configured, and under which scopes (`global`, `main`, `worktree`, or legacy `deny`)?
+- `.red/config.yaml` — does it exist? Which plugins are already enabled (`plugins.<name>.enabled: true`)? Is the canonical `plugins.dev.lock.primary-branch` flag already set? Is `command_guard` already configured, and under which scopes (`global`, `main`, `worktree`, or legacy `deny`)?
 - `AGENTS.md` and `CLAUDE.md` — does either already have a `## Development workflow` section?
 
 ### 2. Present findings and ask
@@ -219,7 +219,9 @@ The template carries a **commented `afk.backpressure`** block (#430 / PRD #429):
 
 > Explainer: RedSkills ships the maximum practical shell-command hook coverage for each supported CLI (Claude Code, Codex, and opencode). Those hooks are **proxy guarantees**, not the policy source: they extract the command and cwd, find the repo root, read `.red/config.yaml`, then evaluate `command_guard`. This keeps AFK workers and the main interactive session on the same repo-owned policy, and it keeps per-CLI hook files as thin adapters instead of places where safety rules drift.
 
-Offer to configure `command_guard` now. Default: **no active rules** unless the user confirms specific commands. Examples are examples only — do not write them as defaults.
+Built-in invariant: when `plugins.dev.enabled: true`, the dev proxy always enforces the RedSkills worktree boundary before any repo-authored `command_guard` rule runs. Agent-created `git worktree add` destinations must resolve under the repo's `.red/tmp/`, and branch-moving commands in the primary checkout (`git switch`, `git checkout <branch>`, `git checkout -b`, `git switch -c`, `gh pr checkout`) are blocked so interactive work starts with `git worktree add .red/tmp/work-<slug> -b <branch> ...`. This invariant is not written into `command_guard` and has no example defaults to copy; it is part of enabling `dev`.
+
+Offer to configure additional `command_guard` rules now. Default: **no extra active rules** unless the user confirms specific commands. Examples are examples only — do not write them as defaults.
 
 Explain the scopes:
 
@@ -252,12 +254,12 @@ Do not write the example blindly. The right policy is repo-specific.
 
 **Section H — Development workflow.**
 
-> Explainer: RedSkills' interactive dev loop assumes agents work from isolated worktrees, leave the primary checkout's branch alone, push their branch early, and hand landing to `/ship`. The primary-branch guard already ships dormant; turning on `dev.lock.primary-branch: true` in `.red/config.yaml` activates it. The shared development-workflow injector writes the same `## Development workflow` rules into both `AGENTS.md` and `CLAUDE.md`, updating an existing block in place on rerun.
+> Explainer: RedSkills' interactive dev loop assumes agents work from isolated worktrees, leave the primary checkout's branch alone, push their branch early, and hand landing to `/ship`. With `plugins.dev.enabled: true`, the shell proxy already blocks agent-created worktrees outside `.red/tmp/` and branch movement in the primary checkout. Turning on `plugins.dev.lock.primary-branch: true` in `.red/config.yaml` also activates the branch-lock compatibility flag used by older adapters and base-pinning integrations; the runtime folds it onto the legacy `dev.lock.primary-branch` accessor for back-compat. The shared development-workflow injector writes the same `## Development workflow` rules into both `AGENTS.md` and `CLAUDE.md`, updating an existing block in place on rerun.
 
 Confirm with the user:
 
 - Activate the development workflow? Default: yes.
-- This sets `dev.lock.primary-branch: true` in `.red/config.yaml`.
+- This sets the canonical `plugins.dev.lock.primary-branch: true` flag in `.red/config.yaml`.
 - This writes or updates `## Development workflow` in both `AGENTS.md` and `CLAUDE.md` via the shared injector.
 - Recap that `/ship` is the landing command for interactive work after the branch is pushed.
 
@@ -293,7 +295,7 @@ Show the user a draft of:
 
 - The `## Agent skills` block to add to whichever of `CLAUDE.md` / `AGENTS.md` is being edited (see step 4 for selection rules)
 - The contents of `.red/agents/issue-tracker.md`, `.red/agents/triage-labels.md`, `.red/agents/domain.md`
-- The Section H development-workflow changes: `dev.lock.primary-branch: true` plus the canonical `## Development workflow` block for `AGENTS.md` and `CLAUDE.md`
+- The Section H development-workflow changes: `plugins.dev.lock.primary-branch: true` plus the canonical `## Development workflow` block for `AGENTS.md` and `CLAUDE.md`
 - The Section G1 command-guard changes if the user accepted them: the exact `command_guard` block or scoped entries that will be written to `.red/config.yaml`
 
 Let them edit before writing.
@@ -364,8 +366,8 @@ Scaffold `.red/config.yaml` (Section G), writing the Section A0 activation flags
 
 If the user accepted Section H, activate the development workflow:
 
-1. Invoke the shared injector rather than hand-editing the rules block. From a source checkout, run `pnpm --filter @reddb-io/dev dev inject-development-workflow --root <repo-root>`. From an installed plugin, run the bundled AFK entrypoint with `inject-development-workflow --root <repo-root>` (for example, `node ../afk/bin/afk.mjs inject-development-workflow --root <repo-root>` from this skill folder). The command writes both `AGENTS.md` and `CLAUDE.md`, creates `.red/config.yaml` if still missing, and sets `dev.lock.primary-branch: true`.
-2. If the command is unavailable, make the same changes manually: add or update the top-level `dev:` block in `.red/config.yaml` so `dev.lock.primary-branch` is `true` (nested: `lock:` → `primary-branch: true`), then upsert the canonical `## Development workflow` block in both `AGENTS.md` and `CLAUDE.md`. Never append a duplicate block; update the existing section in place.
+1. Invoke the shared injector rather than hand-editing the rules block. From a source checkout, run `pnpm --filter @reddb-io/dev dev inject-development-workflow --root <repo-root>`. From an installed plugin, run the bundled AFK entrypoint with `inject-development-workflow --root <repo-root>` (for example, `node ../afk/bin/afk.mjs inject-development-workflow --root <repo-root>` from this skill folder). The command writes both `AGENTS.md` and `CLAUDE.md`, creates `.red/config.yaml` if still missing, and sets `plugins.dev.lock.primary-branch: true`.
+2. If the command is unavailable, make the same changes manually: add or update the canonical `plugins:` → `dev:` → `lock:` block in `.red/config.yaml` so `primary-branch` is `true`, then upsert the canonical `## Development workflow` block in both `AGENTS.md` and `CLAUDE.md`. Never append a duplicate block; update the existing section in place. Leave any legacy top-level `dev.lock.*` keys untouched; `/doctor --fix` owns that migration.
 3. In the recap, explicitly point the user at `/ship` as the landing command after an interactive worktree branch has been committed and pushed.
 
 If the user accepted Section F, wire the statusline:

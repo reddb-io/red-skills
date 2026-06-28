@@ -10,7 +10,7 @@ plugins:
   dev:
     enabled: true                 # the engineering stack (/afk, /triage, /ship, …)
   #   lock:
-  #     primary-branch: true      # activate the primary-checkout branch-switch guard
+  #     primary-branch: true      # branch-lock compatibility/base-pinning flag
   #                               # (Section H of /setup-red-skills sets this)
   #     branch: my-branch         # static base lock: AFK bases/merges here (ADR 0031);
   #                               # the runtime /branch-lock overrides it per session
@@ -19,9 +19,15 @@ plugins:
   # brain:
   #   enabled: true               # the agentic command-center context
 
+# Built-in dev shell guard: once plugins.dev.enabled is true, agent-created
+# worktrees must live under .red/tmp/, and branch-changing commands in the
+# primary checkout are blocked. Create task branches with:
+#   git worktree add .red/tmp/work-<slug> -b <branch> origin/main
+#
 # Command guard policy. The installed Claude Code, Codex, and opencode hooks are
 # thin proxies: they read this repo-owned policy at runtime and stay inert unless
-# plugins.dev.enabled is true. Uncomment only rules this repo actually wants.
+# plugins.dev.enabled is true. These rules are additional to the built-in
+# .red/tmp worktree boundary above. Uncomment only rules this repo actually wants.
 # command_guard:
 #   global:                       # applies in main sessions and runtime worktrees
 #     - "rm -Rf /*"
