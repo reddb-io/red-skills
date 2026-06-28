@@ -53,10 +53,26 @@ pnpm --filter @reddb-io/red-skills bundle
 node ./dist/opencode-host.bundle.min.mjs --with-slice-2 --plugins-root ./plugins
 ```
 
-## Install script (recommended)
+## Universal install (recommended)
+
+For normal user installs, use the root universal installer. It resolves the
+latest RedSkills release, detects `opencode` alongside Claude Code and Codex,
+and invokes the OpenCode adapter when OpenCode is present:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/reddb-io/red-skills/v1/scripts/install.sh | bash
+```
+
+That path installs OpenCode globally under `~/.config/opencode/` and also keeps
+Claude/Codex marketplace installs in sync when those CLIs are present. It uses
+the published `opencode-host.bundle.min.mjs` release asset when available, so
+normal installs need `node` but do not need a local workspace build.
+
+## Adapter install script
 
 The `scripts/install-opencode.sh` wrapper in the repo root bundles the
-above into one command that handles generation + install:
+above into one command that handles generation + install. Use it directly when
+developing the adapter or when installing a checkout into a specific project:
 
 ```bash
 # global — recommended user-scoped install into ~/.config/opencode/
