@@ -68,6 +68,12 @@ curl -fsSL https://raw.githubusercontent.com/reddb-io/red-skills/v1/scripts/inst
 
 # force plugin reinstall where the host supports removal
 curl -fsSL https://raw.githubusercontent.com/reddb-io/red-skills/v1/scripts/install.sh | bash -s -- --force
+
+# uninstall from every detected host
+curl -fsSL https://raw.githubusercontent.com/reddb-io/red-skills/v1/scripts/install.sh | bash -s -- --uninstall
+
+# uninstall and remove the ~/.red-skills release cache
+curl -fsSL https://raw.githubusercontent.com/reddb-io/red-skills/v1/scripts/install.sh | bash -s -- --uninstall --purge
 ```
 
 After installing, restart any already-open CLI sessions so they reload plugin
@@ -149,7 +155,7 @@ OpenCode support is generated from the same plugin source tree as Claude Code
 and Codex. The installer writes skills, plugin modules, MCP config, provider
 config, and TUI attention config for OpenCode. The universal installer above is
 preferred for normal user-scoped installs; use the direct script when developing
-or when installing a checkout into a specific project.
+or when installing/removing a checkout in a specific project.
 
 ```bash
 git clone git@github.com:reddb-io/red-skills.git ~/code/red-skills
@@ -158,8 +164,14 @@ cd ~/code/red-skills
 # user-scoped install into ~/.config/opencode
 scripts/install-opencode.sh --global
 
+# user-scoped uninstall from ~/.config/opencode
+scripts/install-opencode.sh --uninstall --global
+
 # project-local install into the current repo
 scripts/install-opencode.sh
+
+# project-local uninstall from the current repo
+scripts/install-opencode.sh --uninstall
 
 # inspect without writing
 scripts/install-opencode.sh /path/to/project --dry-run
