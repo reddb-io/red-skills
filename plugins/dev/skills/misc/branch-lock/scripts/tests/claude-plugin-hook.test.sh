@@ -39,9 +39,11 @@ trap 'rm -rf "$tmp"' EXIT
 primary="$tmp/red-skills"
 mkdir -p "$primary/.red"
 cat > "$primary/.red/config.yaml" <<'EOF'
-dev:
-  lock:
-    primary-branch: true
+plugins:
+  dev:
+    enabled: true
+    lock:
+      primary-branch: true
 EOF
 
 payload() {
@@ -69,9 +71,11 @@ rc=$?
 expect_eq "primary guard: commit is allowed" "0" "$rc"
 
 cat > "$primary/.red/config.yaml" <<'EOF'
-dev:
-  lock:
-    primary-branch: false
+plugins:
+  dev:
+    enabled: true
+    lock:
+      primary-branch: false
 EOF
 CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT" CLAUDE_PROJECT_DIR="$primary" bash -lc "$manifest_hook" \
   >"$out" 2>"$err" <<<"$(payload "git switch feature")"

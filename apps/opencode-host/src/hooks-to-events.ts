@@ -81,9 +81,9 @@ export function rewritePluginRoot(command: string, plugin: string): string {
 /** The TypeScript template for a single `tool.execute.before` module. */
 function toolExecuteBeforeTemplate(input: {
   sourceFiles: string[];
-  hookGroups: { matcher: string; command: string; kind: "branch-lock" | "route-model" }[];
+  hookGroups: { matcher: string; command: string; sourceFile: string }[];
 }): string {
-  // Each hookGroup is a `(matcher, command, kind)` tuple, where the
+  // Each hookGroup is a `(matcher, command, sourceFile)` tuple, where the
   // source `command` (a `sh -c` string) is rewritten so that
   // `${CLAUDE_PLUGIN_ROOT}` / `${CODEX_PLUGIN_ROOT}` become
   // `${__pluginRoot}` (resolved from the opencode plugin context).
@@ -92,13 +92,13 @@ function toolExecuteBeforeTemplate(input: {
   //
   // The handler body is intentionally a thin shim around `Bun.$` —
   // the source Claude/Codex hook is a `sh -c` shell command, and
-  // Bun's shell is the opencode-native equivalent. We run the
-  // command best-effort and, on a non-zero exit, do not mutate the
-  // output (the opencode `tool.execute.before` contract is "mutate
-  // `output` to influence the tool call"; the `branch-lock` and
-  // `route-model-tier` source hooks are advisory and would surface a
-  // refusal through their own env, not through this module's typed
-  // output).
+  // Bun's shell is the opencode-native equivalent. For PreToolUse we
+  // synthesize a Claude/Codex-shaped JSON payload from opencode's typed
+  // `(input, output)` and pipe it to the source hook on stdin. Non-zero
+  // exits are permission denials: for shell tools, rewrite the command to a
+  // harmless failing command that surfaces the hook's stderr; for non-shell
+  // tools, throw so opencode aborts the hook path instead of silently allowing
+  // a denied operation.
   const cases = input.hookGroups
     .map((g) => {
       const matcherRe = matcherToRegex(g.matcher);
@@ -108,12 +108,8 @@ function toolExecuteBeforeTemplate(input: {
       // `directory`. Bun's `$` shell template handles the quoting.
       const inner = g.command.replace(/^sh -c\s*'/, "").replace(/'$/, "");
       return `    if (${matcherRe}.test(input.tool)) {
-      try {
-        const __pluginRoot = context.directory;
-        await Bun.$\`sh -c ${JSON.stringify(inner)}\`.quiet();
-      } catch {
-        // best-effort; the source ${g.kind} hook is advisory
-      }
+      const __blocked = await __runHook(${JSON.stringify(inner)});
+      if (__blocked) return;
     }`;
     })
     .join("\n");
@@ -127,7 +123,35 @@ function toolExecuteBeforeTemplate(input: {
     "",
     "export const PreToolUse: Plugin = async (context) => {",
     "  return {",
-    "    \"tool.execute.before\": async (input: { tool: string; args: Record<string, unknown> }, output: { args: Record<string, unknown> }) => {",
+    "    \"tool.execute.before\": async (input: { tool: string; sessionID?: string; callID?: string }, output: { args: Record<string, unknown> }) => {",
+    "      const __encoder = new TextEncoder();",
+    "      const __decoder = new TextDecoder();",
+    "      const __pluginRoot = context.directory;",
+    "      const __cwd = context.worktree;",
+    "      const __payload = JSON.stringify({",
+    "        hook_event_name: \"PreToolUse\",",
+    "        tool_name: input.tool,",
+    "        tool_input: output.args ?? {},",
+    "        cwd: __cwd,",
+    "        workspace: { current_dir: __cwd },",
+    "      });",
+    "      const __shellQuote = (value: string): string => `'${value.replaceAll(\"'\", \"'\\\\''\")}'`;",
+    "      const __denyCommand = (reason: string, code: number): string => `printf '%s\\\\n' ${__shellQuote(reason)} >&2; exit ${code}`;",
+    "      const __runHook = async (inner: string): Promise<boolean> => {",
+    "        const proc = Bun.$`sh -c ${inner}`.env({ __pluginRoot, CLAUDE_PLUGIN_ROOT: __pluginRoot, CODEX_PLUGIN_ROOT: __pluginRoot }).quiet().nothrow();",
+    "        const writer = proc.stdin.getWriter();",
+    "        await writer.write(__encoder.encode(__payload));",
+    "        await writer.close();",
+    "        const result = await proc;",
+    "        if (result.exitCode === 0) return false;",
+    "        const stderr = __decoder.decode(result.stderr).trim();",
+    "        const reason = stderr.length > 0 ? stderr : `RedSkills PreToolUse hook denied ${input.tool}.`;",
+    "        if (output.args && typeof output.args === \"object\" && \"command\" in output.args) {",
+    "          output.args = { ...output.args, command: __denyCommand(reason, result.exitCode) };",
+    "          return true;",
+    "        }",
+    "        throw new Error(reason);",
+    "      };",
     cases,
     "    },",
     "  };",
@@ -182,7 +206,7 @@ export function matcherToRegex(matcher: string): string {
   const alts = matcher.split("|").map((s) => s.trim()).filter(Boolean);
   if (alts.length === 0) return "/.*/";
   const escaped = alts.map((a) => a.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-  return `/^(${escaped.join("|")})$/`;
+  return `/^(${escaped.join("|")})$/i`;
 }
 
 /** Plan the hook → event mapping for a single plugin. */
@@ -241,24 +265,11 @@ export function planPluginHooks(pluginsRoot: string, plugin: string): HookPlan[]
         warnings,
       });
     } else if (opencodeEvent === "tool.execute.before") {
-      // Reduce: pick the branch-lock command (matcher contains "Bash")
-      // and the route-model-tier command (matcher contains "Task" or
-      // "Agent"). Each becomes its own `if` in the generated module
-      // with the matcher translated inline; the rewritten `command`
-      // (with __pluginRoot env-var placeholder) is embedded verbatim
-      // — the emitted TS module re-evaluates it inside the opencode
-      // plugin context.
-      const branchLock = list.find((l) => /Bash/.test(l.matcher))?.command ?? null;
-      const routeModel = list.find((l) => /Task|Agent/.test(l.matcher))?.command ?? null;
-      const hookGroups: { matcher: string; command: string; kind: "branch-lock" | "route-model" }[] = [];
-      if (branchLock) hookGroups.push({ matcher: "Bash", command: branchLock, kind: "branch-lock" });
-      if (routeModel)
-        hookGroups.push({ matcher: "Task|Agent", command: routeModel, kind: "route-model" });
       plans.push({
         sourceEvent: "PreToolUse",
         opencodeEvent,
         target: "plugin/pre-tool-use.ts",
-        source: toolExecuteBeforeTemplate({ sourceFiles: list.map((l) => l.sourceFile), hookGroups }),
+        source: toolExecuteBeforeTemplate({ sourceFiles: list.map((l) => l.sourceFile), hookGroups: list }),
         sourceFiles: list.map((l) => l.sourceFile),
         warnings,
       });

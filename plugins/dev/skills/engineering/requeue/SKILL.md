@@ -15,7 +15,7 @@ A validation or spec failure parks an issue with `ready-for-human`, a `blocked:*
 ## Run
 
 ```bash
-node "$CLAUDE_PLUGIN_ROOT/skills/engineering/afk/bin/afk.mjs" requeue 123 --guidance "Retry with the documented guidance; the gate flake is fixed."
+red-skills-dev requeue 123 --guidance "Retry with the documented guidance; the gate flake is fixed."
 ```
 
 `--guidance` is required — it is the Human guidance recorded in an auditable `directive` comment before the transition is applied. The runtime accepts both `123` and `#123`; quote `'#123'` through a shell. Use `--dry-run` to print the planned transition without mutating, and `--json` for structured output.

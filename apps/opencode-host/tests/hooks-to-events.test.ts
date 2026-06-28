@@ -97,7 +97,30 @@ describe("planPluginHooks (real claude.hooks.json shape)", () => {
     const pre = plans.find((p) => p.opencodeEvent === "tool.execute.before");
     expect(pre).toBeDefined();
     expect(pre!.source).toMatch(/input\.tool/);
+    expect(pre!.source).toMatch(/JSON\.stringify/);
+    expect(pre!.source).toMatch(/proc\.stdin\.getWriter/);
+    expect(pre!.source).toMatch(/CLAUDE_PLUGIN_ROOT: __pluginRoot/);
     expect(pre!.source).toMatch(/Bash/);
+  });
+
+  it("preserves every PreToolUse command for the matched tool instead of reducing to hardcoded guards", () => {
+    writeHookFile("claude.hooks.json", {
+      hooks: {
+        PreToolUse: [
+          {
+            matcher: "Bash",
+            hooks: [
+              { type: "command", command: "sh -c 'branch-lock.sh'" },
+              { type: "command", command: "sh -c 'command-guard.sh'" },
+            ],
+          },
+        ],
+      },
+    });
+    const plans = planPluginHooks(root, "dev");
+    const pre = plans.find((p) => p.opencodeEvent === "tool.execute.before")!;
+    expect(pre.source).toMatch(/branch-lock\.sh/);
+    expect(pre.source).toMatch(/command-guard\.sh/);
   });
 
   it("emits the route-model-tier branch when the Task|Agent matcher is also present", () => {
@@ -158,13 +181,13 @@ describe("planPluginHooks (real claude.hooks.json shape)", () => {
 
 describe("matcherToRegex (Claude/Codex matcher → JS regex)", () => {
   it("anchors a single-name matcher", () => {
-    expect(matcherToRegex("Bash")).toBe("/^(Bash)$/");
+    expect(matcherToRegex("Bash")).toBe("/^(Bash)$/i");
   });
   it("translates a | -separated list into a regex alternation", () => {
-    expect(matcherToRegex("Task|Agent")).toBe("/^(Task|Agent)$/");
+    expect(matcherToRegex("Task|Agent")).toBe("/^(Task|Agent)$/i");
   });
   it("escapes regex metachars in alternation", () => {
-    expect(matcherToRegex("foo.bar")).toBe("/^(foo\\.bar)$/");
+    expect(matcherToRegex("foo.bar")).toBe("/^(foo\\.bar)$/i");
   });
   it("treats * and empty as wildcard", () => {
     expect(matcherToRegex("*")).toBe("/.*/");

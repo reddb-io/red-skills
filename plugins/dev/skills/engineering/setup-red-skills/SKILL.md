@@ -27,6 +27,8 @@ Scaffold includes:
 - **Domain docs** — where `.red/CONTEXT.md` and ADRs live, and the consumer rules for reading them
 - **Workflows** — GitHub Actions shipped by RedSkills (installed under the `rs-*` prefix), e.g. auto-label fresh issues with `needs-triage` so nothing slips past `/triage` and `/afk`
 - **Token efficiency** — strongly recommend installing [RTK](https://github.com/rtk-ai/rtk) to cut 60–90% of dev-operation tokens via a transparent CLI proxy
+- **Runtime launcher** — optionally install a host-level `red-skills-dev` shim so Claude Code, Codex, and opencode can invoke the same dev runtime without relying on CLI-specific plugin-root env vars
+- **Command guards** — configure the repo-owned `.red/config.yaml` policy that the globally-installed Claude Code, Codex, and opencode hook proxies enforce
 - **Development workflow** — activate the primary-branch guard, teach agents the isolated-worktree rules, and route interactive landing through `/ship`
 
 This is a prompt-driven skill, not a deterministic script. Explore, present what you found, confirm with the user, then write.
@@ -42,7 +44,7 @@ Look at the current repo to understand its starting state. Read whatever exists;
 - `.red/CONTEXT.md` and `.red/CONTEXT-MAP.md` at the repo root
 - `.red/adr/` — the single root ADR sequence (there are no nested `.red/` subtrees)
 - `.red/agents/` — does this skill's prior output already exist?
-- `.red/config.yaml` — does it exist? Which plugins are already enabled (`plugins.<name>.enabled: true`)? Is `dev.lock.primary-branch` already set?
+- `.red/config.yaml` — does it exist? Which plugins are already enabled (`plugins.<name>.enabled: true`)? Is `dev.lock.primary-branch` already set? Is `command_guard` already configured, and under which scopes (`global`, `main`, `worktree`, or legacy `deny`)?
 - `AGENTS.md` and `CLAUDE.md` — does either already have a `## Development workflow` section?
 
 ### 2. Present findings and ask
@@ -154,6 +156,33 @@ Three things to verify after install:
 
 `rtk discover` scans recent transcripts for missed savings opportunities — useful periodically to spot commands the hook should be rewriting but isn't yet.
 
+**Section E1 — Runtime launcher (strongly recommended).**
+
+> Explainer: `CLAUDE_PLUGIN_ROOT`, `CODEX_PLUGIN_ROOT`, and similar variables are plugin/hook environment variables. They are not guaranteed in the interactive shell where an agent runs `/afk`, `/ship`, `/dashboard`, or `/requeue`. Setting those names globally is brittle because they point at versioned plugin-cache directories and can become stale after an update. The cross-CLI surface should be a stable command, not a global fake plugin-root variable.
+
+Offer to install the host-level runtime shim:
+
+```bash
+bash plugins/dev/skills/engineering/setup-red-skills/scripts/install-runtime-shim.sh
+```
+
+The script writes `${XDG_BIN_HOME:-$HOME/.local/bin}/red-skills-dev`. The shim:
+
+- prefers the active CLI plugin-root env var when the host exposes one;
+- otherwise finds the latest installed dev plugin under `~/.codex/plugins/cache/red-skills/dev/*` or `~/.claude/plugins/cache/red-skills/dev/*`;
+- falls back to the latest warmed dev bundle under `~/.cache/red-skills/bundles/`;
+- forwards all arguments to the dev runtime, so skills can say `red-skills-dev ship ...`, `red-skills-dev dashboard`, or `RED_AFK_RUNNER=codex red-skills-dev monitor --once`;
+- stores no secrets and does not replace the `.red/config.yaml` opt-in gate.
+
+After installing, verify:
+
+```bash
+command -v red-skills-dev
+red-skills-dev dashboard --json
+```
+
+If `command -v` cannot find it, add `${XDG_BIN_HOME:-$HOME/.local/bin}` to the shell `PATH`. Do not export `CLAUDE_PLUGIN_ROOT` or `CODEX_PLUGIN_ROOT` globally as a substitute.
+
 **Section F — RedSkills statusline (optional).**
 
 > Explainer: RedSkills has one shared statusline producer in the dev bundle: the `statusline` subcommand reads each worker's `.red/tmp/workers/*/*/afk.state.json`, filters by `kill -0` liveness, sums diffstats locally, and caches GitHub-derived counts for 60 s to stay under the ~100 ms refresh budget. Host adapters differ. Claude Code can run that producer through a command-backed `statusLine`, so it can show live worker count, queue depth, and aggregated diffstat at a glance. Codex currently exposes native `tui.status_line` footer widgets instead of a command hook; under Codex, use `$setup-statusline` to inspect or configure the footer and rely on `/afk monitor` for the live AFK block.
@@ -185,6 +214,41 @@ The script is no-op outside `/afk` sessions (it prints nothing when no live work
 No user decision here for the template itself — the skill scaffolds it whenever the file is missing. The one piece that is **not** optional is the `plugins:` activation block from Section A0: the file must carry `plugins.<name>.enabled: true` for each plugin the user enabled, or the globally-installed hooks stay inert (ADR 0067). If `.red/config.yaml` already exists, leave its existing content alone (any prior edits are project state — never clobbered) **except** for surgically adding/updating the `plugins.<name>.enabled` flags to match Section A0 — that targeted merge is the sole allowed exception to the no-clobber rule, since it is the whole point of re-running this skill to enable a plugin. See step 4 for the write rule.
 
 The template carries a **commented `afk.backpressure`** block (#430 / PRD #429): an ordered list of shell commands (`npm run test`, `npm run lint`, …) AFK runs after the built-in feedback gate on every successful iteration — DONE and salvaged no-sentinel alike — where any non-zero exit blocks the merge and parks the issue to `ready-for-human`. It ships commented (a no-op until uncommented). **One optional offer:** when scaffolding a fresh template into a repo whose root (or a clearly primary package) `package.json` declares `test` and/or `lint` scripts, surface them and ask whether to pre-fill the block with the matching `npm run <script>` (or `pnpm`) lines — uncommented — instead of the commented placeholder. Only pre-fill on explicit confirmation; otherwise leave the block commented. Never touch an existing `.red/config.yaml` (the clobber rule wins over this offer).
+
+**Section G1 — Command guards (offer-only).**
+
+> Explainer: RedSkills ships the maximum practical shell-command hook coverage for each supported CLI (Claude Code, Codex, and opencode). Those hooks are **proxy guarantees**, not the policy source: they extract the command and cwd, find the repo root, read `.red/config.yaml`, then evaluate `command_guard`. This keeps AFK workers and the main interactive session on the same repo-owned policy, and it keeps per-CLI hook files as thin adapters instead of places where safety rules drift.
+
+Offer to configure `command_guard` now. Default: **no active rules** unless the user confirms specific commands. Examples are examples only — do not write them as defaults.
+
+Explain the scopes:
+
+- `global` — blocks in both the main session and `/afk`/`/ship` worktrees.
+- `main` — blocks only in the primary interactive session scope. This does **not** mean the Git branch named `main`.
+- `worktree` — blocks only in RedSkills runtime worktrees under `.red/tmp/`, including AFK workers.
+- `deny` — legacy alias for `global`; keep it readable but prefer writing new config as `global`.
+
+Explain the matcher forms:
+
+- Bare strings match the exact command, a command prefix, or a command suffix at a shell-command boundary.
+- Bare strings with `*`, `?`, or `[` are Bash globs.
+- Explicit modes are `regex:<pattern>`, `re:<pattern>`, `prefix:<literal>`, `suffix:<literal>`, `exact:<literal>`, and `glob:<pattern>`.
+
+When the user wants starter examples, present a draft like this and let them edit before writing:
+
+```yaml
+command_guard:
+  global:
+    - "rm -Rf /*"
+    - "git stash"
+  main:
+    - "git rebase"
+    - "git checkout -b"
+  worktree:
+    - "git clean"
+```
+
+Do not write the example blindly. The right policy is repo-specific.
 
 **Section H — Development workflow.**
 
@@ -230,6 +294,7 @@ Show the user a draft of:
 - The `## Agent skills` block to add to whichever of `CLAUDE.md` / `AGENTS.md` is being edited (see step 4 for selection rules)
 - The contents of `.red/agents/issue-tracker.md`, `.red/agents/triage-labels.md`, `.red/agents/domain.md`
 - The Section H development-workflow changes: `dev.lock.primary-branch: true` plus the canonical `## Development workflow` block for `AGENTS.md` and `CLAUDE.md`
+- The Section G1 command-guard changes if the user accepted them: the exact `command_guard` block or scoped entries that will be written to `.red/config.yaml`
 
 Let them edit before writing.
 
@@ -283,7 +348,7 @@ If the user accepted Section D, copy each standalone `red-*.yml` template the us
 Scaffold `.red/config.yaml` (Section G), writing the Section A0 activation flags:
 
 1. If `.red/config.yaml` already exists at the repo root, leave its existing content as-is **but surgically add/update the `plugins.<name>.enabled` flags** to match the Section A0 choice (add a `plugins:` block or `plugins.<name>:` child if missing; set `enabled: true` for enabled plugins; remove the flag or set `false` for ones the user turned off). Touch nothing else — log a one-line notice (`.red/config.yaml present — merged plugin activation flags, left the rest as-is`). This targeted merge is the only edit permitted to an existing file.
-2. Otherwise, ensure `.red/` exists (this section is the authorized creator) and copy [config-template.yaml](./config-template.yaml) to `.red/config.yaml`, then set the top `plugins:` block's `enabled` flags to match Section A0 (the template ships with `plugins.dev.enabled: true` as the baseline and `memory`/`brain` commented — uncomment/flip per the choice). The rest of the template is a fully-commented snapshot of every v1 knob the AFK config loader (`apps/dev/src/core/config.ts`) reads, so it stays a no-op until the user uncomments a line — including the commented `afk.backpressure` block.
+2. Otherwise, ensure `.red/` exists (this section is the authorized creator) and copy [config-template.yaml](./config-template.yaml) to `.red/config.yaml`, then set the top `plugins:` block's `enabled` flags to match Section A0 (the template ships with `plugins.dev.enabled: true` as the baseline and `memory`/`brain` commented — uncomment/flip per the choice). The rest of the template is a fully-commented snapshot of every v1 knob the AFK config loader (`apps/dev/src/core/config.ts`) reads, so it stays a no-op until the user uncomments a line — including the commented `command_guard` and `afk.backpressure` blocks.
 3. **Self-ignore `.red/`'s ephemeral state.** Whenever `.red/` exists (fresh scaffold or pre-existing), make the directory protect itself so `.red/tmp` and `.red/state` never get committed regardless of the repo-root `.gitignore`. Write `.red/.gitignore` if it is **missing** with exactly:
 
    ```gitignore
@@ -294,7 +359,8 @@ Scaffold `.red/config.yaml` (Section G), writing the Section A0 activation flags
 
    If `.red/.gitignore` already **exists**, leave it untouched **except** to append whichever of the two patterns (`tmp/`, `state/`) is missing — same non-clobber discipline as the config merge above; never rewrite or reorder existing lines. Keep tracked `.red` content (`config.yaml`, `contexts/`, `adr/`, `agents/`) committable — only `tmp/` and `state/` are ignored. Do **not** `git add` `.red/.gitignore` (step 5 — the user controls when `.red/` lands in git).
 4. **Backpressure pre-fill offer (only on a fresh scaffold).** Read the repo-root (or primary package) `package.json`; if it declares `test` and/or `lint` scripts, surface them and ask whether to pre-fill `afk.backpressure` with the matching `npm run <script>` (or `pnpm run <script>`) lines, uncommented. On explicit yes, replace the commented `backpressure:` placeholder with the confirmed list; otherwise leave it commented. Skip silently when no such scripts exist. This step never runs when `.red/config.yaml` already existed (step 1 wins).
-5. Do **not** `git add` or commit `.red/config.yaml` or `.red/.gitignore` — the user controls when they land in git.
+5. **Command guard write (only when Section G1 was explicitly accepted).** Update `.red/config.yaml` with the confirmed `command_guard` policy. If the file is fresh, replace the commented placeholder with the confirmed block. If the file already existed, merge only the accepted `command_guard.global`, `command_guard.main`, and/or `command_guard.worktree` entries, appending without duplicates and preserving unrelated content. If a legacy `command_guard.deny` block exists, leave it intact unless the user explicitly approved migrating it to `global`.
+6. Do **not** `git add` or commit `.red/config.yaml` or `.red/.gitignore` — the user controls when they land in git.
 
 If the user accepted Section H, activate the development workflow:
 

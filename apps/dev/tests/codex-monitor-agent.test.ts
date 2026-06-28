@@ -71,6 +71,7 @@ describe("codex monitor agent prompt", () => {
     expect(prompt).toContain("Project root: /repo");
     expect(prompt).toContain("AFK launch mode: fleet");
     expect(prompt).toContain("Every 10 seconds");
+    expect(prompt).toContain("red-skills-dev monitor --once");
     expect(prompt).toContain("monitor --once");
     expect(prompt).toContain("Do not edit files.");
     expect(prompt).toContain("Do not run /dev:afk run");
