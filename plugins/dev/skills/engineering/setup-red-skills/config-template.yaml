@@ -19,6 +19,19 @@ plugins:
   # brain:
   #   enabled: true               # the agentic command-center context
 
+# Command guard policy. The installed Claude Code, Codex, and opencode hooks are
+# thin proxies: they read this repo-owned policy at runtime and stay inert unless
+# plugins.dev.enabled is true. Uncomment only rules this repo actually wants.
+# command_guard:
+#   global:                       # applies in main sessions and runtime worktrees
+#     - "rm -Rf /*"
+#     - "git stash"
+#   main:                         # primary interactive session scope, not branch name
+#     - "git rebase"
+#     - "git checkout -b"
+#   worktree:                     # /afk and /ship worktrees under .red/tmp/
+#     - "git clean"
+
 # afk:
 #   default_runner: claude        # fallback runner when no explicit signal
 #   worktree_launches_pull_request: true   # landing MODE, decoupled from the lock

@@ -60,6 +60,24 @@ describe("setup-red-skills docs", () => {
     expect(template).toContain("#     primary-branch: true");
   });
 
+  it("documents command guards as repo-owned proxy policy", async () => {
+    const skill = await readRepoFile("plugins/dev/skills/engineering/setup-red-skills/SKILL.md");
+    const template = await readRepoFile("plugins/dev/skills/engineering/setup-red-skills/config-template.yaml");
+    const readme = await readRepoFile("README.md");
+
+    expect(skill).toContain("**Section G1 — Command guards");
+    expect(skill).toContain("hooks are **proxy guarantees**, not the policy source");
+    expect(skill).toContain("Examples are examples only");
+    expect(skill).toContain("command_guard.global");
+    expect(skill).toContain("command_guard.main");
+    expect(skill).toContain("command_guard.worktree");
+    expect(template).toContain("# command_guard:");
+    expect(template).toContain("#   global:");
+    expect(template).toContain("#   main:");
+    expect(template).toContain("#   worktree:");
+    expect(readme).toContain("Example policy, not a default:");
+  });
+
   it("documents Section A0 plugin activation as the per-directory gate", async () => {
     const skill = await readRepoFile("plugins/dev/skills/engineering/setup-red-skills/SKILL.md");
     expect(skill).toContain("**Section A0 — Plugin activation");
