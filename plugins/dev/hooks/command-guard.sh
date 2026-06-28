@@ -4,18 +4,21 @@
 # Reads a Claude/Codex/OpenCode-style PreToolUse payload on stdin, extracts the
 # shell command, and blocks it when it matches a deny rule from .red/config.yaml:
 #
+#   command_guard:
+#     deny:
+#       - "sudo *"
+#       - "rm -rf *"
+#
 #   plugins:
 #     dev:
 #       enabled: true
-#       command_guard:
-#         deny:
-#           - "sudo *"
-#           - "rm -rf *"
 #
 # The hook is dormant unless plugins.dev.enabled is true. Missing/empty deny
-# rules allow the command. A deny rule with glob metacharacters is matched as a
-# bash glob against the whole command; a rule without glob metacharacters matches
-# the exact command or the command followed by whitespace.
+# rules allow the command. Deny rules accept explicit modes:
+# `regex:<pattern>`, `prefix:<literal>`, `suffix:<literal>`, `exact:<literal>`,
+# and `glob:<pattern>`. Bare rules with glob metacharacters are treated as globs;
+# every other bare rule matches the exact command, a command prefix, or a command
+# suffix at a shell-command boundary.
 
 set -uo pipefail
 
@@ -195,7 +198,8 @@ read_deny_patterns() {
 
     if [[ "$rest" =~ ^-([[:space:]]|$) ]]; then
       parent="$(join_stack)"
-      if [[ "$parent" == "plugins.dev.command_guard.deny" ||
+      if [[ "$parent" == "command_guard.deny" ||
+            "$parent" == "plugins.dev.command_guard.deny" ||
             "$parent" == "dev.command_guard.deny" ]]; then
         item="$(unquote_scalar "${rest#-}")"
         [[ -n "$item" ]] && printf '%s\n' "$item"
@@ -217,7 +221,8 @@ read_deny_patterns() {
       continue
     fi
 
-    if [[ "$full" == "plugins.dev.command_guard.deny" ||
+    if [[ "$full" == "command_guard.deny" ||
+          "$full" == "plugins.dev.command_guard.deny" ||
           "$full" == "dev.command_guard.deny" ]]; then
       item="$(unquote_scalar "$value")"
       [[ -n "$item" ]] && printf '%s\n' "$item"
@@ -225,9 +230,76 @@ read_deny_patterns() {
   done <"$CONFIG"
 }
 
+has_leading_command_boundary() {
+  local value="$1"
+  local first="${value:0:1}"
+  [[ -z "$value" ||
+    "$first" == ";" ||
+    "$first" == "&" ||
+    "$first" == "|" ||
+    "$first" =~ [[:space:]] ]]
+}
+
+has_trailing_command_boundary() {
+  local value="$1"
+  local last="${value: -1}"
+  [[ -z "$value" ||
+    "$last" == ";" ||
+    "$last" == "&" ||
+    "$last" == "|" ||
+    "$last" =~ [[:space:]] ]]
+}
+
 matches_rule() {
   local command="$1"
   local rule="$2"
+  local mode="" pattern="$rule"
+  case "$rule" in
+    regex:*|re:*)
+      pattern="${rule#*:}"
+      [[ -n "$pattern" && "$command" =~ $pattern ]]
+      return
+      ;;
+    prefix:*)
+      mode="prefix"
+      pattern="${rule#prefix:}"
+      ;;
+    suffix:*)
+      mode="suffix"
+      pattern="${rule#suffix:}"
+      ;;
+    exact:*)
+      mode="exact"
+      pattern="${rule#exact:}"
+      ;;
+    glob:*)
+      mode="glob"
+      pattern="${rule#glob:}"
+      ;;
+  esac
+
+  local left right
+  case "$mode" in
+    prefix)
+      right="${command#"$pattern"}"
+      [[ "$right" != "$command" ]] && has_leading_command_boundary "$right"
+      return
+      ;;
+    suffix)
+      left="${command%"$pattern"}"
+      [[ "$left" != "$command" ]] && has_trailing_command_boundary "$left"
+      return
+      ;;
+    exact)
+      [[ "$command" == "$pattern" ]]
+      return
+      ;;
+    glob)
+      [[ "$command" == $pattern ]]
+      return
+      ;;
+  esac
+
   case "$rule" in
     *[\*\?\[]*)
       [[ "$command" == $rule ]]
@@ -236,8 +308,10 @@ matches_rule() {
       if [[ "$command" == "$rule" ]]; then
         return 0
       fi
-      local rest="${command#"$rule"}"
-      [[ "$rest" != "$command" && "$rest" =~ ^[[:space:]] ]]
+      right="${command#"$rule"}"
+      left="${command%"$rule"}"
+      ([[ "$right" != "$command" ]] && has_leading_command_boundary "$right") ||
+        ([[ "$left" != "$command" ]] && has_trailing_command_boundary "$left")
       ;;
   esac
 }
@@ -249,7 +323,7 @@ while IFS= read -r rule; do
 BLOCKED by RedSkills command guard.
 The command '$COMMAND' matched deny rule '$rule' from .red/config.yaml.
 
-Remove or narrow plugins.dev.command_guard.deny if this command is intentional.
+Remove or narrow command_guard.deny if this command is intentional.
 EOF
     exit 2
   fi
