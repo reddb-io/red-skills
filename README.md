@@ -302,6 +302,42 @@ Core responsibilities:
 - Land interactive work with [`ship`](./plugins/dev/skills/engineering/ship/SKILL.md).
 - Resolve human gates with [`hitl`](./plugins/dev/skills/engineering/hitl/SKILL.md) or safe retries with [`requeue`](./plugins/dev/skills/engineering/requeue/SKILL.md).
 
+Dev guard rails:
+
+- The primary-checkout branch guard is controlled by
+  `plugins.dev.lock.primary-branch` in `.red/config.yaml`.
+- The dev shell-command guard is controlled by `command_guard` in
+  `.red/config.yaml`. It runs from the agent `PreToolUse` hook, stays inert
+  unless `plugins.dev.enabled: true`, and blocks matching shell commands before
+  execution. `global` rules apply everywhere, `main` rules apply in the primary
+  session scope (not specifically the Git branch named `main`), and `worktree`
+  rules apply in `/afk` and `/ship` worktrees under `.red/tmp/`. Deny rules
+  support `regex:<pattern>`, `prefix:<literal>`, `suffix:<literal>`,
+  `exact:<literal>`, and `glob:<pattern>`. Bare entries with `*`, `?`, or `[`
+  are Bash globs; other bare entries match the exact command, a command prefix,
+  or a command suffix at a shell-command boundary. `command_guard.deny` remains
+  a legacy alias for `command_guard.global`.
+
+Example policy, not a default:
+
+```yaml
+command_guard:
+  global:
+    - "rm -Rf /*"
+    - "git stash"
+    - sudo
+    - 'regex:(^|[;&|[:space:]])curl[[:space:]].*\|[[:space:]]*sh'
+  main:
+    - "git rebase"
+    - "git checkout -b"
+  worktree:
+    - "git clean"
+
+plugins:
+  dev:
+    enabled: true
+```
+
 ### Memory
 
 `memory` is governed operational memory for code agents. It stores work
