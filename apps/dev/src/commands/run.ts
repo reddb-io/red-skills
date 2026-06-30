@@ -106,6 +106,11 @@ interface ParsedRunFlags {
    * (`"afk"` | `"go"` | `"urgent"` | …). Set by each entry point so the
    * monitor/statusline can render per-source counts. */
   origin?: string;
+  /** --lane <label>: the candidate-listing label the session drains. Defaults
+   * to `ready-for-agent` (the fleet). `/go` passes its isolated `lane:go` so
+   * its dedicated worker sees only the minted disposable issue and the running
+   * fleet never does. */
+  lane?: string;
 }
 
 /** Raised when --alternate is combined with --runner (mutually exclusive). */
@@ -158,6 +163,7 @@ const RUN_FLAG_SCHEMA = {
   "boot-only": { kind: "boolean" },
   "reconcile-issue": { kind: "value", coerce: (raw: string): number => Number(raw) },
   origin: { kind: "value", coerce: (raw: string): string => raw },
+  lane: { kind: "value", coerce: (raw: string): string => raw },
 } satisfies FlagSchema;
 
 /** Parse the `run` flags: --prd N / --issues a,b,c / -n N / --once / --request / --runner. */
@@ -207,6 +213,7 @@ export function parseRunFlags(args: readonly string[]): ParsedRunFlags {
     bootOnly: values["boot-only"] === true,
     reconcileIssue,
     origin: values.origin as string | undefined,
+    lane: values.lane as string | undefined,
   };
 }
 
@@ -1330,7 +1337,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
   const requestBlock = specialUserRequestBlock(flags.request);
 
   const deps: SessionDeps = {
-    gh: { listCandidates: () => ghx.listCandidates(ghCtx) },
+    gh: { listCandidates: () => ghx.listCandidates(ghCtx, flags.lane) },
     runBoot,
     bootDeps,
     bootOptions,

@@ -104,15 +104,18 @@ export async function ghAuthenticated(ctx: GhContext): Promise<boolean> {
   return false;
 }
 
-/** List the ready-for-agent candidate pool projected to IssueCandidate[]. */
-export async function listCandidates(ctx: GhContext): Promise<IssueCandidate[]> {
-  const r = await runGh(ctx, 
+/** List the candidate pool projected to IssueCandidate[]. Defaults to the
+ * `ready-for-agent` lane the `/afk` fleet drains; `/go` passes its isolated
+ * `lane:go` label so its dedicated worker sees only the minted disposable issue
+ * and the fleet never does. */
+export async function listCandidates(ctx: GhContext, label: string = LABEL_READY): Promise<IssueCandidate[]> {
+  const r = await runGh(ctx,
     [
       "issue",
       "list",
       ...repoArgs(ctx),
       "--label",
-      LABEL_READY,
+      label,
       "--state",
       "open",
       "--limit",
@@ -342,6 +345,34 @@ export async function listClaimComments(
 export async function editBody(ctx: GhContext, issue: number, body: string): Promise<boolean> {
   const r = await runGh(ctx, ["issue", "edit", String(issue), ...repoArgs(ctx), "--body", body]);
   return r.code === 0;
+}
+
+/** Create an issue and resolve its new number from the `…/issues/N` URL gh
+ * prints on stdout. Throws on a non-zero gh exit or an unparseable URL so a
+ * failed mint never reads as a created issue (`/go` would otherwise dispatch a
+ * worker at issue 0). Each label is passed as its own `--label` so a value with
+ * a comma is never split. */
+export async function createIssue(
+  ctx: GhContext,
+  spec: { title: string; body: string; labels?: readonly string[] },
+): Promise<number> {
+  const labelArgs = (spec.labels ?? []).flatMap((l) => ["--label", l]);
+  const r = await runGh(ctx, [
+    "issue",
+    "create",
+    ...repoArgs(ctx),
+    "--title",
+    spec.title,
+    "--body",
+    spec.body,
+    ...labelArgs,
+  ]);
+  const match = (r.stdout ?? "").match(/\/issues\/(\d+)\b/);
+  const num = match ? Number(match[1]) : NaN;
+  if (r.code !== 0 || !Number.isInteger(num) || num <= 0) {
+    throw new Error(`gh: failed to create issue (code ${r.code}): ${(r.stdout || r.stderr || "").trim()}`);
+  }
+  return num;
 }
 
 /** Idempotently create the `runner-error` label (best-effort). Mirrors

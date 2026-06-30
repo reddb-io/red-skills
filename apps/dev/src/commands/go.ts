@@ -1,0 +1,87 @@
+// go — the `/go` dispatch command (ADR 0081, PRD #928 / issue #938 / S4).
+//
+// `/go "<demand>"` is the semi-structured front door between `/goal` and
+// `/afk`. It mints a DISPOSABLE tracking issue in the isolated `lane:go` lane
+// (out of `ready-for-agent`, so the running fleet can never claim it), spins a
+// DEDICATED namespaced worker under `.red/tmp/go-workers/` (separate from the
+// fleet's `.red/tmp/workers/`), and reuses the ENTIRE AFK engine end-to-end
+// with `origin=go` and the interactive gate sink. The disposable issue
+// auto-closes on merge (the engine's PR body carries `Closes #N`). Works with
+// or without a fleet running — it is a self-sufficient front door.
+//
+// The classification + escalation logic lives in core/go.ts (pure, injected
+// IO); this command supplies the real gh + engine effects and the namespaced
+// worker root.
+
+import { dispatchGo, GO_WORKERS_SEGMENT, type DisposableIssueSpec } from "../core/go.js";
+import { resolveRepoContext } from "../runtime/wire.js";
+import { runCommand } from "./run.js";
+import * as ghx from "../runtime/gh.js";
+import type { GhContext } from "../runtime/gh.js";
+
+/** Parse `/go` args: the demand is every non-flag token joined; `--runner X`
+ * (or `-r X`) optionally pins the backend. A leading `--` is tolerated so
+ * `/go -- --literal` passes a dashed demand through. */
+export function parseGoArgs(args: readonly string[]): { demand: string; runner?: string } {
+  const positional: string[] = [];
+  let runner: string | undefined;
+  let sawDoubleDash = false;
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i]!;
+    if (!sawDoubleDash && arg === "--") { sawDoubleDash = true; continue; }
+    if (!sawDoubleDash && (arg === "--runner" || arg === "-r")) {
+      runner = args[++i];
+      if (runner === undefined) throw new Error(`${arg} requires a value`);
+      continue;
+    }
+    if (!sawDoubleDash && arg.startsWith("--runner=")) {
+      runner = arg.slice("--runner=".length);
+      continue;
+    }
+    positional.push(arg);
+  }
+  return { demand: positional.join(" ").trim(), runner };
+}
+
+export async function goCommand(args: string[], cwd = process.cwd()): Promise<number> {
+  let parsed: { demand: string; runner?: string };
+  try {
+    parsed = parseGoArgs(args);
+  } catch (error) {
+    console.error(`✗ ${error instanceof Error ? error.message : String(error)}`);
+    return 1;
+  }
+  if (!parsed.demand) {
+    console.error('✗ /go requires a demand, e.g. /go "fix the flaky login test"');
+    return 1;
+  }
+
+  // Namespace this process's worker dir + worktree under go-workers/ so the
+  // single-shot `/go` worker never collides with the fleet's workers/. Read
+  // per-call by worker-paths.workersSegment(); scoped to this process.
+  process.env.RED_AFK_WORKERS_NAMESPACE = GO_WORKERS_SEGMENT;
+
+  const ctx = await resolveRepoContext(cwd);
+  const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo };
+
+  try {
+    const result = await dispatchGo(
+      {
+        ensureLabel: (name) => ghx.ensureLabel(ghCtx, name),
+        createIssue: (spec: DisposableIssueSpec) => ghx.createIssue(ghCtx, spec),
+        // Reuse the full AFK engine in-process for exactly the minted issue.
+        runEngine: (engineArgs) => runCommand({ args: engineArgs, cwd }),
+      },
+      parsed.demand,
+      { runner: parsed.runner },
+    );
+    process.stdout.write(
+      `🚀 /go dispatched disposable issue #${result.issue} (origin=go, lane:go, go-workers/). ` +
+        `engine exit ${result.engineExit}.\n`,
+    );
+    return result.engineExit;
+  } catch (error) {
+    console.error(`✗ /go dispatch failed: ${error instanceof Error ? error.message : String(error)}`);
+    return 1;
+  }
+}
