@@ -130,6 +130,20 @@ export const CONFIG_DEFAULTS = {
   // pre-release tag. The launcher reads this (or `RED_SKILLS_CHANNEL`); promotion
   // canary→stable is a tag move gated on the proof-by-drain telemetry.
   "afk.release.channel": "stable",
+  // Warm worktree-pool model (treehouse, ADR Track 1B / issue #909). When false
+  // (default) AFK uses today's cold per-attempt worktree (`git worktree add` +
+  // submodule init + deps install every attempt). When true, attempts ACQUIRE a
+  // warm, dependency-preserving worktree from a pool by LEASE and RETURN it on
+  // completion (not destroy), so the red-castle submodule checkout and
+  // `node_modules` survive into the next lease — removing the lost-deps /
+  // submodule-not-init false-`blocked:validation` footgun and the cold setup
+  // cost. `max_size` caps the live pool; `lease_ttl_s` reclaims a lease whose
+  // holder pid died or that outlived the TTL; `min_idle_s` is the idle floor a
+  // clean/merged worktree must sit before the safe pruner may remove it.
+  "afk.worktree_pool.enabled": "false",
+  "afk.worktree_pool.max_size": "4",
+  "afk.worktree_pool.lease_ttl_s": "3600",
+  "afk.worktree_pool.min_idle_s": "1800",
   "dev.lock.primary-branch": "false",
   // NOTE: `dev.lock.branch` (the static base lock — ADR 0031) is intentionally
   // NOT in this table. Its "default" is *unset* (no config-level lock), and
