@@ -229,6 +229,20 @@ export function renderAfkBlock(afk: AfkInput | undefined): string | null {
  * byte-for-byte with statusline.sh's section loop. Absent blocks drop out
  * silently. The project block is always present, so the output is never empty
  * (the per-project opt-out is handled upstream by returning no render at all).
+ *
+ * TOON note (PRD #928 / ADR 0081, issue #941): TOON becomes the default
+ * agent-facing wire format for the multi-row read surfaces (monitor, dashboard,
+ * daily-review). The statusline is deliberately exempt from the *tabular* form —
+ * Claude Code's `statusLine` contract is a SINGLE line, so a multi-line TOON
+ * table cannot be rendered here. The cheap AXI principles still apply, and
+ * already hold (story #27, "even where TOON does not help"):
+ *   - minimal schema: each KPI token ({@link afkTokens}) is emitted only when its
+ *     count is > 0 — no zero-noise;
+ *   - pre-computed aggregates: the caller injects already-summed counts;
+ *   - definitive state: no live workers → the whole AFK block is dropped (an
+ *     unambiguous "nothing running here"), never a `wrk=0` placeholder;
+ *   - per-source counts from #930 ({@link AfkInput.sourceCounts}) are preserved
+ *     as `origin=N` tokens read from the same `state.origin` the monitor uses.
  */
 export function renderStatusline(input: StatuslineInput): string {
   const sections: string[] = [renderProjectBlock(input.project)];
