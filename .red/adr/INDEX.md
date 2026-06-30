@@ -98,6 +98,9 @@ stale notes inline.
 - **0053** Provider tidy is report-only governance until explicit soft-merge approval
 - **0072** Memory ships governed write surface before completing the moat foundation — first write surface is `memory_store_evidence` over MCP plus CLI, direct storage is limited to low-blast-radius source-cited validation evidence, and the cross-agent smoke test must show provenance plus policy outcome *(amends 0023; informed by Headroom competitive analysis)*
 
+## Agent security
+- **0073** Untrusted payloads (issue bodies, PR descriptions, diffs) are tagged `data-untrusted="true"` and bracketed by an explicit injection-guard instruction in every AFK prompt — tagging convention reused across `handoff.ts`, `review-extract.ts`, and `merge.ts`; EXIT_PROTOCOL carries the binding rule
+
 ## MCP / transport / surfaces
 - **0013** Dev owns the codebase-understanding surface; memory owns the graph — post-0041, `dev` consumes project memory through the `red-memory` MCP rather than an in-repo Memory CLI
 - *(see also 0007, 0036, 0041)*
