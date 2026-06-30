@@ -1,19 +1,31 @@
-import { buildDashboardReport, renderDashboardReport, type DashboardIssue, type DashboardPullRequest, type DashboardRelease } from "../core/dashboard.js";
+import { buildDashboardReport, renderDashboardReport, renderDashboardReportToon, type DashboardIssue, type DashboardPullRequest, type DashboardRelease } from "../core/dashboard.js";
 import { collectMonitorInputs, resolveRepoContext } from "../runtime/wire.js";
 import { execTool, type ExecFn } from "../runtime/exec.js";
 
+/** Output format. TOON is the default agent-facing wire format (PRD #928 / ADR
+ * 0081); `--json` forces raw JSON (tooling/escape hatch), `--human` the prose. */
+type DashboardFormat = "toon" | "json" | "human";
+
 interface DashboardFlags {
-  json: boolean;
+  format: DashboardFormat;
   periodDays: number;
 }
 
 function parseDashboardFlags(args: readonly string[]): DashboardFlags {
-  let json = false;
+  let format: DashboardFormat = "toon";
   let periodDays = 30;
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i]!;
     if (arg === "--json") {
-      json = true;
+      format = "json";
+      continue;
+    }
+    if (arg === "--toon") {
+      format = "toon";
+      continue;
+    }
+    if (arg === "--human") {
+      format = "human";
       continue;
     }
     if (arg === "--period" || arg === "--period-days") {
@@ -32,7 +44,7 @@ function parseDashboardFlags(args: readonly string[]): DashboardFlags {
     }
     throw new Error(`unknown dashboard argument: ${arg}`);
   }
-  return { json, periodDays };
+  return { format, periodDays };
 }
 
 function parsePeriodDays(value: string): number {
@@ -187,6 +199,12 @@ export async function dashboardCommand(
     report.warnings.push("Could not resolve GitHub repo; GitHub-derived metrics are empty.");
   }
 
-  stdout.write(flags.json ? `${JSON.stringify(report, null, 2)}\n` : `${renderDashboardReport(report)}\n`);
+  const rendered =
+    flags.format === "json"
+      ? JSON.stringify(report, null, 2)
+      : flags.format === "human"
+        ? renderDashboardReport(report)
+        : renderDashboardReportToon(report);
+  stdout.write(`${rendered}\n`);
   return 0;
 }
