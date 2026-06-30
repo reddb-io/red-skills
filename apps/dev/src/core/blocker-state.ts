@@ -111,6 +111,35 @@ export function upsertCurrentBlocker(markdown: string, blocker: CurrentBlocker):
   return `${prefix}${prefix.length > 0 ? "\n\n" : ""}${replacement}`;
 }
 
+export interface CurrentBlockerEditResult {
+  /** The body after the surgical edit (unchanged if already correct). */
+  body: string;
+  /** True when the body differs from the input — a no-op is signaled by false. */
+  changed: boolean;
+  /** True when parsing the result body yields the expected blocker state (round-trip integrity). */
+  valid: boolean;
+}
+
+/**
+ * Byte-exact round-trip edit: compute the new body surgically, detect whether it
+ * changed, and confirm the parse-back yields the intended blocker state. Callers
+ * can skip the remote write when `changed` is false and trust the edit was
+ * correctly formed when `valid` is true.
+ */
+export function applyCurrentBlockerEdit(markdown: string, blocker: CurrentBlocker): CurrentBlockerEditResult {
+  const body = upsertCurrentBlocker(markdown, blocker);
+  const changed = body !== markdown;
+  const parsed = parseCurrentBlocker(body);
+  const valid =
+    parsed !== null &&
+    parsed.status === blocker.status &&
+    parsed.kind === blocker.kind &&
+    parsed.summary === blocker.summary &&
+    parsed.next === blocker.next &&
+    parsed.ref === blocker.ref;
+  return { body, changed, valid };
+}
+
 function appendResolvedBlocker(markdown: string, resolved: ResolvedBlocker): string {
   const entry = `- [x] ${safeField(resolved.summary, "Resolved blocker.")} - ${safeField(
     firstLine(resolved.resolution),
