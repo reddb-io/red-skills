@@ -57,6 +57,9 @@ export function formatScalar(value: ToonValue): string {
   if (value === null || value === undefined) return "null";
   if (typeof value === "boolean") return value ? "true" : "false";
   if (typeof value === "number") return Number.isFinite(value) ? String(value) : "null";
+  // Non-scalars never reach a cell in practice (callers route arrays/objects to
+  // their own encoders); coerce defensively so the type stays total.
+  if (typeof value !== "string") return "null";
   return needsQuote(value) ? quote(value) : value;
 }
 
