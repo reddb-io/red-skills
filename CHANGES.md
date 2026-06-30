@@ -6,6 +6,16 @@ Upstream base: `mattpocock/skills@6eeb81b5fcfeeb5bd531dd47ab2f9f2bbea27461` (see
 
 ---
 
+## verify-browser (engineering) — Adversarial browser verification ground-truth (issue #915)
+
+- **status**: added
+- **upstream**: —
+- **why**: Absorbs the `chrome-devtools-axi` idea, reframed per maintainer steer: the transferable value is the **adversarial self-verification discipline** (claim → fresh ground-truth → confirm before reporting success), not browser automation per se. Browser automation is the vehicle; the anti-hallucination loop is the absorbed idea, and it generalizes to `/verify`, `/code-review`, and any adversarial pass.
+- **what changed**:
+  - New `plugins/dev/skills/engineering/verify-browser/SKILL.md`. `<what-to-do>` is the five-step claim → fresh-ground-truth → confirm loop with hard ✅/❌ rules: state a snapshot-checkable claim first, snapshot and act by numbered ref, **re-snapshot after every state-changing action**, confirm only against the fresh post-action snapshot, and report the snapshot (not a guess) on mismatch.
+  - `<supporting-info>` documents the `chrome-devtools-axi` vehicle (a11y-tree snapshots with numbered refs, stale-ref validation enforcing the re-snapshot rule, combined navigate+capture+suggest ops, persistent bridge, TOON output ~57% fewer tokens vs raw chrome-devtools-mcp), a table generalizing the discipline to `/verify`, `/code-review`, and frontend skills, and the bridge precondition.
+  - Registered in `plugins/dev/.claude-plugin/plugin.json`, the root `README.md` skill index, and the `engineering/` bucket README. (Codex manifest picks it up via its `./skills/engineering/` wildcard.)
+
 ## afk (engineering) — Task mirror host capability matrix codified (issue #886)
 
 - **status**: modified
