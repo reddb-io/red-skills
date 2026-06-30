@@ -5,6 +5,7 @@ import {
   activityReviewInterval,
   buildActivityReviewReport,
   renderActivityReviewReport,
+  renderActivityReviewReportToon,
   type ActivityReviewActiveWorker,
   type ActivityReviewComment,
   type ActivityReviewGitStats,
@@ -17,20 +18,32 @@ import { parseHistoryLines, type HistoryRecord } from "../core/history.js";
 import { collectMonitorInputs, afkPaths, resolveRepoContext } from "../runtime/wire.js";
 import { execTool, type ExecFn } from "../runtime/exec.js";
 
+/** Output format. TOON is the default agent-facing wire format (PRD #928 / ADR
+ * 0081); `--json` forces raw JSON (tooling/escape hatch), `--human` the prose. */
+type ActivityReviewFormat = "toon" | "json" | "human";
+
 interface ActivityReviewFlags {
-  json: boolean;
+  format: ActivityReviewFormat;
 }
 
 function parseFlags(args: readonly string[]): ActivityReviewFlags {
-  let json = false;
+  let format: ActivityReviewFormat = "toon";
   for (const arg of args) {
     if (arg === "--json") {
-      json = true;
+      format = "json";
+      continue;
+    }
+    if (arg === "--toon") {
+      format = "toon";
+      continue;
+    }
+    if (arg === "--human") {
+      format = "human";
       continue;
     }
     throw new Error(`unknown activity-review argument: ${arg}`);
   }
-  return { json };
+  return { format };
 }
 
 function labelsFrom(raw: unknown): string[] {
@@ -396,6 +409,12 @@ export async function activityReviewCommand(
     report.warnings.push("Could not resolve GitHub repo; GitHub-derived metrics may be empty.");
   }
 
-  stdout.write(flags.json ? `${JSON.stringify(report, null, 2)}\n` : `${renderActivityReviewReport(report)}\n`);
+  const rendered =
+    flags.format === "json"
+      ? JSON.stringify(report, null, 2)
+      : flags.format === "human"
+        ? renderActivityReviewReport(report)
+        : renderActivityReviewReportToon(report);
+  stdout.write(`${rendered}\n`);
   return 0;
 }
