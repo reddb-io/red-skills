@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { fleetCommand } from "./commands/fleet.js";
+import { goCommand } from "./commands/go.js";
 import { activityReviewCommand } from "./commands/activity-review.js";
 import { hitlCardCommand } from "./commands/hitl-card.js";
 import { codexMonitorAgentCommand } from "./commands/codex-monitor-agent.js";
@@ -25,6 +26,7 @@ export type CliCommand =
   | "run"
   | "monitor"
   | "fleet"
+  | "go"
   | "dashboard"
   | "daily-review"
   | "weekly-review"
@@ -63,6 +65,7 @@ const CLI_ROUTER: RouterSchema<CliCommand> = {
     run: {},
     monitor: {},
     fleet: {},
+    go: {},
     dashboard: {},
     "daily-review": {},
     "weekly-review": {},
@@ -110,6 +113,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   }
   if (parsed.command === "monitor") return monitorCommand(parsed.args);
   if (parsed.command === "fleet") return fleetCommand(parsed.args);
+  if (parsed.command === "go") return goCommand(parsed.args);
   if (parsed.command === "dashboard") return dashboardCommand(parsed.args);
   if (parsed.command === "daily-review") return activityReviewCommand("daily", parsed.args);
   if (parsed.command === "weekly-review") return activityReviewCommand("weekly", parsed.args);
