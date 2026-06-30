@@ -1,0 +1,11 @@
+{
+  "name": "@reddb-io/browser-bridge",
+  "version": "1.252.0",
+  "private": true,
+  "type": "module",
+  "description": "Local CLI-to-browser annotation bridge: injects an annotation SDK into HTML artifacts, captures element and character-range selections, and delivers feedback to the agent. Includes a layout-audit gate that blocks done on overflow / cutoff / overlap.",
+  "license": "Apache-2.0",
+  "exports": {
+    ".": "./index.ts"
+  }
+}
