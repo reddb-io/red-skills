@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   renderCompactDashboard,
+  renderCompactDashboardToon,
   renderFleetLine,
   renderSlotDetails,
   renderWorkerCompactLine,
@@ -283,6 +284,43 @@ describe("monitor — compact dashboard", () => {
     const lines = out.split("\n");
     expect(lines[0].startsWith("48h:")).toBe(true);
     expect(out).toContain("workers: (none");
+  });
+
+  describe("TOON (default agent-facing render)", () => {
+    it("renders one worker as a tabular row, preserving aggregates and sparkline", () => {
+      const out = renderCompactDashboardToon([baseWorker()], events, 1780140600);
+      expect(out).toContain("sparkline:");
+      expect(out).toContain("diff_added: 10");
+      expect(out).toContain("diff_removed: 3");
+      // The worker table names columns once, then one bare CSV row per worker.
+      expect(out).toContain(
+        "workers[1]{id,state,runner,issue,stage,done,total,blocked,failed,elapsed,added,removed,in_tok,out_tok,cost_usd,tools,reason,text,wait,log}:",
+      );
+      expect(out).toContain('wAAAA,live,claude,42,impl,1,4,0,0,"00:30:00",10,3,0,0,0,0,0,0,0,0');
+    });
+
+    it("preserves the per-source origin counts from #930 as a sources table", () => {
+      const a = baseWorker({ state: { ...baseWorker().state, worker_id: "wA", origin: "afk" } });
+      const b = baseWorker({ state: { ...baseWorker().state, worker_id: "wB", origin: "go" } });
+      const c = baseWorker({ state: { ...baseWorker().state, worker_id: "wC", origin: "afk" } });
+      const out = renderCompactDashboardToon([a, b, c], events, 1780140600);
+      expect(out).toContain("sources[2]{origin,count}:");
+      expect(out).toContain("  afk,2");
+      expect(out).toContain("  go,1");
+    });
+
+    it("emits a definitive empty state for an empty fleet", () => {
+      const out = renderCompactDashboardToon([], events, 1780140600);
+      expect(out).toContain("workers[0]:");
+      expect(out).toContain("sources[0]:");
+    });
+
+    it("includes the fleet status block when a fleet state is present", () => {
+      const out = renderCompactDashboardToon([], events, 1780138815, baseFleet());
+      expect(out).toContain("fleet:");
+      expect(out).toContain("  status: idle");
+      expect(out).toContain("  ready: 0");
+    });
   });
 
   it("surfaces a healthy idle fleet last-tick line", () => {
