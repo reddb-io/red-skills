@@ -1066,7 +1066,7 @@ export async function processIssue(
     // clean worktree salvages nothing (count 0).
     if (
       deps.salvageUncommitted &&
-      (run.outcome === "done" || run.outcome === "no-sentinel")
+      (run.outcome === "done" || run.outcome === "no-sentinel" || run.outcome === "budget-exceeded")
     ) {
       const salvagedFiles = await deps.salvageUncommitted(workerBranch).catch(() => 0);
       if (salvagedFiles > 0) {
@@ -1094,6 +1094,23 @@ export async function processIssue(
     // tail the DONE path uses. The feedback gate is load-bearing: it is the only
     // thing that distinguishes "complete prior work" from a half-baked crash-edit.
     // A branch with no work keeps today's terminal `no-sentinel` behaviour.
+    // ---- budget guard fired (#908): the attempt breached a resource ceiling ----
+    // The salvage pass above already committed any dirty worktree paths onto the
+    // worker branch, so the partial work is preserved on the branch/PR ("never
+    // wake up empty-handed"). Park it for a human with `blocked:budget`: a runaway
+    // is NOT auto-retried (recoveryReasonFor → null), and re-running the inner
+    // agent would just re-spend the budget. The salvaged commits stay on the
+    // branch for the human to review, continue with a larger budget, or stop.
+    if (run.outcome === "budget-exceeded") {
+      await fireHook("on_attempt_error", onErrorContext(current, workerBranch, "budget-exceeded", current.attempt));
+      return await terminalFailure(common, "budget-exceeded", "budget", {
+        notes:
+          salvagedUncommittedFiles > 0
+            ? `_(budget guard aborted the attempt; salvaged ${salvagedUncommittedFiles} uncommitted file(s) onto \`${workerBranch}\` — partial work preserved for review)_`
+            : "_(budget guard aborted the attempt; no uncommitted work to salvage)_",
+        log: run.stdout || "afk: attempt aborted — per-attempt resource budget exceeded (#908)",
+      });
+    }
     let salvaged = false;
     if (run.outcome === "no-sentinel") {
       const branchHasWork =
@@ -1701,6 +1718,13 @@ function blockerForFailure(outcome: ProcessOutcome, sections: SectionBodies): Cu
         kind: "stalled",
         summary: oneLine(sections.log, "Inner agent made no progress (no new commit) within the attempt wall-clock."),
         next: "Review the work already pushed (branch/PR) and decide whether to continue, re-scope, or stop.",
+      };
+    case "budget-exceeded":
+      return {
+        status: "blocked",
+        kind: "budget",
+        summary: oneLine(sections.log, "Attempt aborted — per-attempt resource budget exceeded (#908)."),
+        next: "Review the salvaged partial work (branch/PR) and decide whether to continue with a larger budget, re-scope, or stop.",
       };
     case "merge-conflict":
       return {

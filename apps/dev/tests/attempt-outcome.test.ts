@@ -44,6 +44,9 @@ const TABLE: Row[] = [
   // non-recoverable so a worker with a real broken test still pages a human.
   { outcome: "feedback-failed-infra", label: "blocked:validation-infra", recovery: "validation-infra" },
   { outcome: "stalled", label: "blocked:stalled", recovery: null },
+  // #908: a budget abort carries the typed `blocked:budget` label and is NOT
+  // auto-recoverable (escalate — a runaway is not a transient flake).
+  { outcome: "budget-exceeded", label: "blocked:budget", recovery: null },
   { outcome: "infra", label: "blocked:infra", recovery: null },
   // no typed label, no recovery (success / abandoned)
   { outcome: "done", label: null, recovery: null },
@@ -75,6 +78,7 @@ describe("attempt-outcome — exhaustive outcome → (label, recovery) table", (
       "exhausted",
       "runner-transient",
       "stalled",
+      "budget-exceeded",
       "infra",
     ];
     const covered = TABLE.map((r) => r.outcome).sort();
@@ -130,6 +134,7 @@ describe("attempt-outcome — exhaustive outcome → envelope status table", () 
     { outcome: "runner-transient", status: "blocked" },
     { outcome: "claim-lost", status: "blocked" },
     { outcome: "stalled", status: "blocked" },
+    { outcome: "budget-exceeded", status: "blocked" },
     { outcome: "infra", status: "blocked" },
   ];
 
@@ -154,6 +159,7 @@ describe("attempt-outcome — exhaustive outcome → envelope status table", () 
       "exhausted",
       "runner-transient",
       "stalled",
+      "budget-exceeded",
       "infra",
     ];
     const covered = STATUS_TABLE.map((r) => r.outcome).sort();
