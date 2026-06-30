@@ -1,5 +1,6 @@
 import type { HitlDecisionExtraction } from "./hitl-decision-extraction.js";
 import { clearCurrentBlocker, parseCurrentBlocker, upsertCurrentBlocker } from "./blocker-state.js";
+import { upsertMarkdownSection } from "./development-workflow.js";
 import { LABEL_READY, LABEL_HUMAN } from "./triage-labels.js";
 
 export interface HitlResolutionIssue {
@@ -69,29 +70,6 @@ ${trimBlock(input.answer)}
 Disposition:
 ${input.disposition.kind}${next}
 </details>`;
-}
-
-function upsertMarkdownSection(markdown: string, heading: string, body: string): string {
-  const lines = markdown.split("\n");
-  const headingRe = new RegExp(`^##\\s+${heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*$`, "i");
-  const start = lines.findIndex((line) => headingRe.test(line));
-  const replacement = [`## ${heading}`, "", trimBlock(body)];
-
-  if (start === -1) {
-    const prefix = markdown.trimEnd();
-    return `${prefix}${prefix.length > 0 ? "\n\n" : ""}${replacement.join("\n")}\n`;
-  }
-
-  let end = lines.length;
-  for (let i = start + 1; i < lines.length; i += 1) {
-    if (/^##\s+/.test(lines[i]!)) {
-      end = i;
-      break;
-    }
-  }
-
-  const next = [...lines.slice(0, start), ...replacement, ...lines.slice(end)];
-  return `${next.join("\n").trimEnd()}\n`;
 }
 
 export function planHitlResolution(input: HitlResolutionInput): HitlResolutionPlan {
