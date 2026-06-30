@@ -15,6 +15,12 @@ export const LABEL_HUMAN = "ready-for-human";
 // the review then transitions the PR through the shared lifecycle vocabulary
 // (`running` / `ready-for-human` / `blocked:*`).
 export const LABEL_READY_FOR_REVIEW = "ready-for-review";
+// Isolated `/go` dispatch lane (ADR 0081, PRD #928 / issue #938). A disposable
+// `/go` tracking issue is minted with THIS label and NEVER `ready-for-agent`,
+// so the running fleet's candidate listing (which lists `ready-for-agent`) can
+// never surface it. The dedicated `/go` worker lists this lane instead and
+// processes the single minted issue directly.
+export const LABEL_GO_LANE = "lane:go";
 
 // Triage state labels
 export const LABEL_NEEDS_TRIAGE = "needs-triage";
