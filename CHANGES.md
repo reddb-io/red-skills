@@ -6,6 +6,15 @@ Upstream base: `mattpocock/skills@6eeb81b5fcfeeb5bd531dd47ab2f9f2bbea27461` (see
 
 ---
 
+## browser-review (in-progress) — CLI↔browser collaboration surface (issue #916)
+
+- **status**: added
+- **upstream**: —
+- **why**: PRD #928 browser-collaboration capability — replace "screenshot + describe in prose" with surgical human annotation on a generated HTML artifact, and stop an agent declaring a broken render "done".
+- **what changed**: new `@reddb-io/browser-bridge` package (`packages/browser-bridge`) — a local, no-cloud annotation bridge (open artifact → inject portable SDK → long-poll for element + character-range annotations) plus a layout-audit gate (`assertLayoutClean`) flagging horizontal overflow / clipped text / overlapping text; new draft skill `plugins/dev/skills/in-progress/browser-review`. No source-repo names in committed content. Artifact-annotation half only; the live-app CDP driver half is a later slice.
+
+---
+
 ## afk (engineering) — Task mirror host capability matrix codified (issue #886)
 
 - **status**: modified
