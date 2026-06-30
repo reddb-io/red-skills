@@ -6,6 +6,21 @@ Upstream base: `mattpocock/skills@6eeb81b5fcfeeb5bd531dd47ab2f9f2bbea27461` (see
 
 ---
 
+## go (engineering) — `/go` dispatch: disposable issue, isolated lane, dedicated namespaced worker (issue #938)
+
+- **status**: added
+- **upstream**: —
+- **why**: ADR 0081 / PRD #928 defines a semi-structured middle tier between `/goal` (unstructured directive) and `/afk` (structured backlog). `/go "<demand>"` is the front door for one concrete demand → one clean PR, without authoring a PRD or triaging issues.
+- **what changed**:
+  - `plugins/dev/skills/engineering/go/SKILL.md`: the `/go` skill — invokes the dev bundle's `go` command, documents the isolated `lane:go` lane, the `go-workers/` namespace, `origin=go`, and the interactive gate sink.
+  - `apps/dev/src/core/go.ts`: pure dispatch planner — `buildDisposableIssue` (labels `lane:go`, never `ready-for-agent`), `goWorkersRoot`, `buildGoEngineArgs` (reuses the engine `--once --issues N --origin go --lane lane:go`), `dispatchGo` (IO injected).
+  - `apps/dev/src/commands/go.ts` + `cli.ts`: the `go` command — mints the disposable issue via `gh`, sets `RED_AFK_WORKERS_NAMESPACE=go-workers`, and runs the reused engine in-process.
+  - `apps/dev/src/core/worker-paths.ts`: `workersSegment()` honours `RED_AFK_WORKERS_NAMESPACE` so the `/go` worker dir + worktree land under `.red/tmp/go-workers/`, never colliding with the fleet's `.red/tmp/workers/`.
+  - `apps/dev/src/runtime/gh.ts`: `createIssue` helper + `listCandidates(label)` lane override.
+  - `apps/dev/src/core/triage-labels.ts`: `LABEL_GO_LANE = "lane:go"`.
+
+---
+
 ## hitl-card (engineering) — Actionable decision cards for ready-for-human (issue #927)
 
 - **status**: added
