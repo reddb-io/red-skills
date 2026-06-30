@@ -515,6 +515,10 @@ export async function collectMonitorInputs(root = process.cwd()): Promise<Monito
         pid: state.pid,
         runner: state.runner,
         started_at: state.started_at,
+        // Spawn-time provenance — passed through from the single state.origin
+        // field so the dashboard derives per-source counts from the same source
+        // as the statusline (issue #930, no independent derivation).
+        origin: state.origin || undefined,
         total: state.total,
         done: state.done,
         blocked: state.blocked,
@@ -648,6 +652,7 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
   let resolved = 0;
   const issues: Array<number | string> = [];
   const stages: Array<string | undefined> = [];
+  const sourceMap = new Map<string, number>();
 
   for (const { state, live } of records) {
     // Statusline line 2 counts every pid-live worker (the orchestrator process is
@@ -665,6 +670,8 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
     blocked += state.blocked;
     if (runner === "" && state.runner) runner = state.runner;
     if (state.done > resolved) resolved = state.done;
+    // Per-source count: read origin from the single state field (issue #930).
+    if (state.origin) sourceMap.set(state.origin, (sourceMap.get(state.origin) ?? 0) + 1);
     // Read the worker's signals through the canonical WorkerVitals contract
     // (ADR 0065) rather than ad-hoc field access — `current` satisfies it.
     const vitals: WorkerVitals = state.current;
@@ -729,7 +736,17 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
 
   if (workers <= 0) return null;
 
-  return { workers, queue, human, blocked, added, removed, waiting, tokens, costUsd, runner, resolved, issues, stages };
+  // Build the per-source count array sorted by origin for a deterministic order.
+  // Both statusline and monitor read from state.origin via readWorkerStates —
+  // this is the one derived form; nothing else derives source counts independently.
+  const sourceCounts =
+    sourceMap.size > 0
+      ? [...sourceMap.entries()]
+          .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+          .map(([origin, count]) => ({ origin, count }))
+      : undefined;
+
+  return { workers, queue, human, blocked, added, removed, waiting, tokens, costUsd, runner, resolved, issues, stages, sourceCounts };
 }
 
 interface RepoStatsCache {
