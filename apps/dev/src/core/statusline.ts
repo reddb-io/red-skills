@@ -85,6 +85,12 @@ export interface AfkInput {
    * is doing, not just that it exists. Absent/short arrays fall back to bare
    * `#N`, preserving the pre-stage render. */
   stages?: ReadonlyArray<string | undefined>;
+  /** Per-origin worker counts derived from `state.origin` across live workers.
+   * Populated by the IO layer (wire.ts collectStatuslineAfk) reading the SINGLE
+   * `origin` field on each worker state; absent when no live worker has a
+   * non-empty origin. Sorted by origin for a deterministic token order.
+   * Rendered as `go=N afk=M` tokens immediately after `wrk=<total>`. */
+  sourceCounts?: ReadonlyArray<{ origin: string; count: number }>;
 }
 
 /** Repo-global header inputs (themed line 1, always rendered). Independent of
@@ -186,6 +192,9 @@ export function afkTokens(afk: AfkInput | undefined): AfkToken[] {
     tokens.push({ label, value, suffix: "" });
   };
   if (afk.workers > 0) kpi("wrk=", String(afk.workers));
+  if (afk.sourceCounts && afk.sourceCounts.length > 0) {
+    for (const { origin, count } of afk.sourceCounts) kpi(`${origin}=`, String(count));
+  }
   if (afk.queue > 0) kpi("rdy=", String(afk.queue));
   if (afk.human > 0) kpi("hmn=", String(afk.human));
   if (afk.blocked > 0) kpi("blk=", String(afk.blocked));

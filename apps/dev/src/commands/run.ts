@@ -102,6 +102,10 @@ interface ParsedRunFlags {
    * issue `n` without re-running the agent.
    */
   reconcileIssue?: number;
+  /** --origin <label>: spawn-time provenance stamped on the worker state
+   * (`"afk"` | `"go"` | `"urgent"` | …). Set by each entry point so the
+   * monitor/statusline can render per-source counts. */
+  origin?: string;
 }
 
 /** Raised when --alternate is combined with --runner (mutually exclusive). */
@@ -153,6 +157,7 @@ const RUN_FLAG_SCHEMA = {
   "fallback-runner": { kind: "boolean" },
   "boot-only": { kind: "boolean" },
   "reconcile-issue": { kind: "value", coerce: (raw: string): number => Number(raw) },
+  origin: { kind: "value", coerce: (raw: string): string => raw },
 } satisfies FlagSchema;
 
 /** Parse the `run` flags: --prd N / --issues a,b,c / -n N / --once / --request / --runner. */
@@ -201,6 +206,7 @@ export function parseRunFlags(args: readonly string[]): ParsedRunFlags {
     fallbackRunner: values["fallback-runner"] === true,
     bootOnly: values["boot-only"] === true,
     reconcileIssue,
+    origin: values.origin as string | undefined,
   };
 }
 
@@ -1395,6 +1401,9 @@ export async function runCommand(options: RunOptions): Promise<number> {
           pid: process.pid,
           pid_start_time: pidStartTime,
           runner: c.runner,
+          // Spawn-time provenance (issue #930): stamped once here, never mutated.
+          // The entry point (`/afk`, `/go`, `/urgent`) passes `--origin <label>`.
+          origin: flags.origin ?? "",
           log: join(attemptDir, "afk.log"),
           started_at: startedAt,
           "current.number": candidate.number,

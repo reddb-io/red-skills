@@ -83,6 +83,13 @@ export const AfkStateSchema = z.object({
   pid_start_time: z.string().default(""),
   log: z.string().default(""),
   started_at: z.string().default(""),
+  /** Spawn-time provenance: the entry point that launched this worker
+   * (`"afk"` | `"go"` | `"urgent"` | `""`). Stamped once at `initStateSync`
+   * via the `--origin` flag and never mutated. Empty means unknown/pre-field
+   * (round-trip safe — out-of-vocab values survive through `updateState`).
+   * The single source of truth both statusline and monitor read for per-source
+   * worker counts; no independent derivation allowed. */
+  origin: z.string().default(""),
   runner: z.string().default(""),
   filter: AfkFilterSchema.default({}),
   total: z.number().default(0),
