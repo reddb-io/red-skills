@@ -38,6 +38,7 @@ import * as gitx from "../runtime/git.js";
 import { planReconcileSweep, executeUnblockSweep } from "../core/boot-sweep.js";
 import { removeDir as removeDirNative } from "../runtime/fs.js";
 import { killTreeAndWait } from "../runtime/kill-tree.js";
+import { buildStateChangeWake } from "../runtime/state-watch.js";
 import { resolveFleetHooks } from "../core/fleet-hook-config.js";
 import { dispatchFleetHook } from "../core/fleet-hook-dispatcher.js";
 import { makeHookExec, makeHookResolveOptions } from "../runtime/hooks.js";
@@ -470,6 +471,12 @@ function buildSupervisorDeps(
       },
     },
     now,
+    // Event-driven wake (#934): a recursive fs.watch over the workers root resolves
+    // the supervisor's inter-tick wait the instant a worker rewrites its
+    // afk.state.json (claim / stage / phase / progress transition), so the loop
+    // reacts to a state change immediately instead of waiting out the safety-net
+    // timer. Best-effort: a watch failure degrades to pure-timer polling.
+    wake: buildStateChangeWake(join(tmpDir, "workers")),
     // Env for the bounded stalled re-claim cap (#402): RED_AFK_RETRY_STALLED.
     recoveryEnv: process.env,
     // Per-tick liveness line into afk-supervisor.log (best-effort). Makes a
@@ -560,6 +567,9 @@ export async function superviseCommand(args: string[], cwd = process.cwd()): Pro
   const stateFile = paths.fleetStatePath;
 
   await import("../runtime/fs.js").then((m) => m.ensureDir(tmp));
+  // Ensure the workers root exists so the event-driven wake's fs.watch (#934) can
+  // attach from boot rather than waiting for the first worker to create it.
+  await import("../runtime/fs.js").then((m) => m.ensureDir(join(tmp, "workers")));
   // single-supervisor lock
   if (existsSync(pidFile)) {
     try {

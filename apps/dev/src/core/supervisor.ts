@@ -15,6 +15,13 @@
 // workers own all claim-lock / state / queue semantics (supervisor.sh header).
 
 import { decideReaperSignal, deriveSnapshot, type ProcessSnapshotEntry } from "./reaper-signal.js";
+import {
+  freshWakeStats,
+  recordWake,
+  waitForNextWake,
+  type WakeSource,
+  type WakeStats,
+} from "./event-wake.js";
 import { buildEnvelope } from "./envelope.js";
 import { dispose } from "./disposition.js";
 import { type RecoveryEnv } from "./recovery.js";
@@ -59,8 +66,24 @@ export interface SupervisorConfig {
    * (RED_AFK_RUNNER, default "claude"). */
   runner: string;
   /** RED_AFK_POLL_S — seconds the health-check loop sleeps between ticks
-   * (default 15, matching supervisor.sh). Prevents the loop from busy-spinning. */
+   * (default 15, matching supervisor.sh). Prevents the loop from busy-spinning.
+   * This is the interval used when NO event lane is wired (`deps.wake` absent) —
+   * the unchanged pre-#934 cadence, so a fleet without event-driven supervision
+   * behaves exactly as before. */
   pollIntervalS: number;
+  /**
+   * RED_AFK_WAKE_FALLBACK_S — the safety-net timer interval (seconds, default 60)
+   * used ONLY when an event lane (`deps.wake`) is wired (#934). With events
+   * driving responsiveness, the loop no longer needs the tight `pollIntervalS`
+   * poll to notice a state change promptly, so the idle timer can relax to this
+   * longer interval — that is the measurable reduction in idle wake-ups: an idle
+   * fleet wakes every `eventFallbackS` instead of every `pollIntervalS`, while a
+   * real state change still wakes it immediately. The threshold-based stall
+   * detector (600s/1800s) is unaffected by the coarser idle cadence. 0 /
+   * non-numeric falls back to the default; values below `pollIntervalS` simply
+   * poll more often (harmless).
+   */
+  eventFallbackS: number;
   /**
    * RED_AFK_TICK_TIMEOUT_S — per-tick wall-clock ceiling (default 120). A single
    * supervise tick should complete in well under a second; if one exceeds this
@@ -125,6 +148,7 @@ export const SUPERVISOR_DEFAULTS = {
   stallKillThresholdS: 1800,
   runner: "claude",
   pollIntervalS: 15,
+  eventFallbackS: 60,
   tickTimeoutS: 120,
   supervisorStaleS: 300,
   progressStaleS: 900,
@@ -159,6 +183,11 @@ export function resolveSupervisorConfig(
     ),
     runner: env.RED_AFK_RUNNER && env.RED_AFK_RUNNER.length > 0 ? env.RED_AFK_RUNNER : SUPERVISOR_DEFAULTS.runner,
     pollIntervalS: num("RED_AFK_POLL_S", SUPERVISOR_DEFAULTS.pollIntervalS),
+    // 0 would make the safety-net fire instantly (busy-spin) — floor it back to
+    // the default so a typo can never disable the relaxed idle cadence.
+    eventFallbackS:
+      num("RED_AFK_WAKE_FALLBACK_S", SUPERVISOR_DEFAULTS.eventFallbackS) ||
+      SUPERVISOR_DEFAULTS.eventFallbackS,
     // 0 is a valid /^[0-9]+$/ match but would abandon every tick instantly, so
     // floor it back to the default — the guard can never be silently disabled.
     tickTimeoutS:
@@ -577,6 +606,17 @@ export interface SupervisorDeps {
   /** Current epoch seconds (date +%s), injected for determinism. */
   now(): number;
   /**
+   * Event-driven wake source (#934): resolves the instant a worker's state
+   * changes (its afk.state.json is rewritten / a heartbeat-firehose record is
+   * appended), letting the health-check loop react WITHOUT waiting out the full
+   * `pollIntervalS` timer. The timer is always retained as the safety-net
+   * fallback — whichever fires first wins the per-iteration race. Absent → the
+   * loop sleeps the plain poll interval exactly as before (back-compat / no
+   * regression when no event lane is wired). The real source is an fs.watch over
+   * the worker state tree, built in commands/supervise.ts.
+   */
+  wake?: WakeSource;
+  /**
    * Env view for the bounded stalled re-claim cap (#402). Read by the stall-reaper
    * to resolve `RED_AFK_RETRY_STALLED` via recovery.ts. Defaults to {} (the
    * built-in cap) when absent, so tests can omit it.
@@ -701,6 +741,13 @@ export interface SupervisorState {
    * queue still self-heals within one interval without a per-tick gh cost.
    */
   lastUnblockSweepEpoch: number;
+  /**
+   * Cumulative wake accounting (#934): how many health-check loop iterations woke
+   * on a worker state-change event vs the safety-net timer. Lets the supervisor
+   * log — and a test assert — the measurable reduction in idle (timer) wake-ups
+   * the event lane delivered. Updated by runSupervisor after each iteration.
+   */
+  wakeStats: WakeStats;
 }
 
 /** Build the initial runtime for `target` slots. */
@@ -709,6 +756,7 @@ export function initSupervisorState(target: number): SupervisorState {
     slots: Array.from({ length: target }, () => freshSlot()),
     lastProgressEpoch: 0,
     lastUnblockSweepEpoch: 0,
+    wakeStats: freshWakeStats(),
   };
 }
 
@@ -1774,7 +1822,24 @@ export async function runSupervisor(
       }
       return;
     }
-    await deps.proc.sleep(config.pollIntervalS * 1000);
+    // Event-driven wake (#934): race the safety-net poll timer against the next
+    // worker-state-change event. Whichever fires first ends the wait, so a state
+    // change is reacted to immediately instead of waiting out the full interval,
+    // while the timer still guarantees a wake within `pollIntervalS` even if every
+    // event is missed. With no `deps.wake` wired this is exactly the old
+    // `sleep(pollIntervalS)` and always returns "timer" (no regression).
+    const fallbackS = deps.wake ? config.eventFallbackS : config.pollIntervalS;
+    const reason = await waitForNextWake({
+      fallbackMs: fallbackS * 1000,
+      sleep: deps.proc.sleep,
+      wake: deps.wake,
+    });
+    recordWake(state.wakeStats, reason);
+    if (reason === "event") {
+      deps.log?.(
+        `wake: event-driven (idle wakes reduced — ${state.wakeStats.event}/${state.wakeStats.total} wakes event-driven)`,
+      );
+    }
   }
 }
 
