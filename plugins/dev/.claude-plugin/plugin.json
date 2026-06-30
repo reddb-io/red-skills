@@ -33,6 +33,7 @@
     "./skills/engineering/to-prd",
     "./skills/engineering/zoom-out",
     "./skills/engineering/prototype",
+    "./skills/engineering/review",
     "./skills/engineering/resolving-merge-conflicts",
     "./skills/misc/branch-lock",
     "./skills/misc/git-guardrails-claude-code",
