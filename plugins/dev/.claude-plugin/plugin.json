@@ -12,6 +12,7 @@
     "./skills/engineering/daily-review",
     "./skills/engineering/dashboard",
     "./skills/engineering/diagnose",
+    "./skills/engineering/verify-browser",
     "./skills/engineering/doctor",
     "./skills/engineering/review-adrs",
     "./skills/engineering/ship",
