@@ -34,6 +34,7 @@ import {
   LABEL_POLICY,
   LABEL_STALLED,
   LABEL_INFRA,
+  LABEL_BUDGET,
 } from "./triage-labels.js";
 
 /**
@@ -71,6 +72,11 @@ export type AttemptOutcome =
   | "exhausted"
   | "runner-transient"
   | "stalled"
+  // AFK runner improvement (#908): the per-attempt resource budget guard aborted
+  // the attempt (token / cost / tool-call / waiting-window ceiling). Partial work
+  // is salvaged through the same feedback gate, then parked for a human — NOT
+  // auto-recovered (a runaway is not a transient flake to blind-retry).
+  | "budget-exceeded"
   | "infra";
 
 /**
@@ -123,6 +129,8 @@ export function blockedLabelFor(o: AttemptOutcome): string | null {
       return LABEL_POLICY;
     case "stalled":
       return LABEL_STALLED;
+    case "budget-exceeded":
+      return LABEL_BUDGET;
     case "infra":
       return LABEL_INFRA;
     case "done":
@@ -176,6 +184,7 @@ export function envelopeStatusFor(o: AttemptOutcome): AttemptStatus {
     case "runner-transient":
     case "claim-lost":
     case "stalled":
+    case "budget-exceeded":
     case "infra":
     // review-requested is a handoff, not a failure: the per-issue lifecycle
     // emits no terminal failure envelope for it (it parks the issue + opens the
@@ -230,6 +239,10 @@ export function recoveryReasonFor(o: AttemptOutcome): RecoveryReason | null {
     case "blocked":
     case "feedback-failed":
     case "stalled":
+    // #908: a budget abort is NOT auto-recoverable — re-running the inner agent
+    // on a runaway just re-spends the budget. Escalate to a human with the
+    // salvaged partial work intact.
+    case "budget-exceeded":
     case "infra":
     case "done":
     case "claim-lost":

@@ -58,6 +58,12 @@ export const LABEL_MERGE_CONFLICT = "blocked:merge-conflict";
 export const LABEL_CI = "blocked:ci";
 export const LABEL_POLICY = "blocked:policy";
 export const LABEL_INFRA = "blocked:infra";
+// AFK runner improvement (#908): the per-attempt resource budget guard aborted
+// the attempt — it breached a token/cost/tool-call/waiting-window ceiling before
+// it could finish. Distinct from `blocked:stalled` (a stall is *no* progress;
+// a budget abort may have been actively — and expensively — working). Partial
+// work is salvaged + parked for a human; never blind-retried as a transient.
+export const LABEL_BUDGET = "blocked:budget";
 
 // Auxiliary labels
 export const LABEL_RUNNER_ERROR = "runner-error";
