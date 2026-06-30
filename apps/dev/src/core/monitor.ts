@@ -13,6 +13,7 @@
 // orchestration-loop slice.
 
 import { buildSparkline, type HistoryRecord } from "./history.js";
+import { encodeToon, type ToonValue } from "./toon.js";
 
 /** The subset of a worker's current-iteration state the compact line reads. */
 export interface CompactCurrent {
@@ -190,21 +191,26 @@ function elapsedSeconds(state: CompactState, now: number): number {
  * otherwise. The `  +A -R` diff suffix is **always** appended (even idle, even
  * `+0 -0`) so the diff volume is never hidden. `now` is an epoch in seconds.
  */
+/** The `live` / `quiet` / `stale` liveness badge, shared by the plain and TOON
+ * renders so the two never drift. */
+export function compactWorkerTag(worker: CompactWorker): "live" | "quiet" | "stale" {
+  return worker.liveness === "active"
+    ? "live"
+    : worker.liveness === "quiet-but-live"
+      ? "quiet"
+      : worker.liveness === "dead"
+        ? "stale"
+        : worker.live
+          ? "live"
+          : worker.pidLive
+            ? "quiet"
+            : "stale";
+}
+
 export function renderWorkerCompactLine(worker: CompactWorker, now: number): string {
   const { state } = worker;
   const workerId = state.worker_id || "?";
-  const tag =
-    worker.liveness === "active"
-      ? "live"
-      : worker.liveness === "quiet-but-live"
-        ? "quiet"
-        : worker.liveness === "dead"
-          ? "stale"
-          : worker.live
-            ? "live"
-            : worker.pidLive
-              ? "quiet"
-              : "stale";
+  const tag = compactWorkerTag(worker);
   const runner = state.runner || "-";
   const total = state.total;
   const done = state.done;
@@ -333,4 +339,110 @@ export function renderCompactDashboard(
   );
   const lines = sorted.map((w) => renderWorkerCompactLine(w, now));
   return `${prefix}\n${lines.join("\n")}`;
+}
+
+/** Per-source counts from `state.origin` across all workers (#930), aggregated
+ * identically to the plain dashboard so both surfaces agree. Sorted by origin. */
+function sourceCountRows(workers: ReadonlyArray<CompactWorker>): Array<{ origin: string; count: number }> {
+  const sourceMap = new Map<string, number>();
+  for (const w of workers) {
+    const origin = w.state.origin;
+    if (origin) sourceMap.set(origin, (sourceMap.get(origin) ?? 0) + 1);
+  }
+  return [...sourceMap.entries()]
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([origin, count]) => ({ origin, count }));
+}
+
+/** One TOON worker row — a flat, uniform record so the array renders as a single
+ * header row plus bare CSV rows. Empty/idle fields stay present (uniform shape).
+ * The `state` column carries the same live/quiet/stale badge as the plain line. */
+function toonWorkerRow(worker: CompactWorker, now: number): Record<string, ToonValue> {
+  const { state } = worker;
+  const noIssue = isNoIssue(state.current.number);
+  return {
+    id: state.worker_id || "?",
+    state: compactWorkerTag(worker),
+    runner: state.runner || "-",
+    issue: noIssue ? "-" : state.current.number,
+    stage: noIssue ? "idle" : state.current.stage,
+    done: state.done,
+    total: state.total,
+    blocked: state.blocked,
+    failed: state.failed,
+    elapsed: formatElapsed(elapsedSeconds(state, now)),
+    added: worker.diffAdded ?? 0,
+    removed: worker.diffRemoved ?? 0,
+    in_tok: state.current.input_tokens ?? 0,
+    out_tok: state.current.output_tokens ?? 0,
+    cost_usd: state.current.cost_usd ?? 0,
+    tools: state.current.tools_called_count ?? 0,
+    reason: state.current.reasoning_events ?? 0,
+    text: state.current.text_chunk_count ?? 0,
+    wait: state.current.waiting_count ?? 0,
+    log: worker.logLines ?? 0,
+  };
+}
+
+/**
+ * The default agent-facing monitor render (PRD #928 / ADR 0081): the same live
+ * inputs as {@link renderCompactDashboard}, serialized as TOON. Cheap by design —
+ * the worker table names its columns ONCE instead of repeating mnemonics per
+ * line, the fleet/diff aggregates are pre-computed, the per-source `state.origin`
+ * counts (#930) survive as a `sources` table, and an empty fleet renders the
+ * definitive `workers[0]:` empty state rather than a prose "(none …)".
+ */
+export function renderCompactDashboardToon(
+  workers: ReadonlyArray<CompactWorker>,
+  events: ReadonlyArray<Pick<HistoryRecord, "event" | "epoch">>,
+  now: number,
+  fleet?: FleetState | null,
+): string {
+  let added = 0;
+  let removed = 0;
+  for (const w of workers) {
+    added += w.diffAdded ?? 0;
+    removed += w.diffRemoved ?? 0;
+  }
+
+  const root: Record<string, ToonValue> = {
+    sparkline: buildSparkline(events, now).line,
+    diff_added: added,
+    diff_removed: removed,
+    sources: sourceCountRows(workers),
+  };
+
+  if (fleet) {
+    const age = now - fleet.epoch;
+    const stale = age >= FLEET_STALE_AFTER_S;
+    const status = stale
+      ? "wedged"
+      : fleet.readyForAgent === 0 && fleet.slotsBusy === 0
+        ? "idle"
+        : "draining";
+    root.fleet = {
+      status,
+      ticked_ago: formatElapsed(age),
+      ready: fleet.readyForAgent,
+      slots_busy: fleet.slotsBusy,
+      slots_free: fleet.slotsFree,
+      slots_parked: fleet.slotsParked,
+      spawns: fleet.spawnsThisTick,
+      slot_details: (fleet.slotDetails ?? []).map((d) => ({
+        index: d.index,
+        status: d.status,
+        retry_in:
+          d.status === "open" && d.retryAt !== undefined
+            ? formatElapsed(Math.max(0, d.retryAt - now))
+            : "-",
+      })),
+    };
+  }
+
+  const sorted = [...workers].sort((a, b) =>
+    startedAtKey(a) < startedAtKey(b) ? -1 : startedAtKey(a) > startedAtKey(b) ? 1 : 0,
+  );
+  root.workers = sorted.map((w) => toonWorkerRow(w, now));
+
+  return encodeToon(root);
 }
