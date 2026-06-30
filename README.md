@@ -460,6 +460,7 @@ before using a skill in a new context.
 | [`implement`](./plugins/dev/skills/engineering/implement/SKILL.md)                                 | Interactive, human-guided PRD execution.                                                           |
 | [`tdd`](./plugins/dev/skills/engineering/tdd/SKILL.md)                                             | Red-green-refactor feature or bug work.                                                            |
 | [`diagnose`](./plugins/dev/skills/engineering/diagnose/SKILL.md)                                   | Reproduce, minimize, instrument, fix, and regression-test hard bugs.                               |
+| [`ground-truth`](./plugins/dev/skills/engineering/ground-truth/SKILL.md)                           | Confirm a state change against a fresh ground-truth snapshot (a11y-tree/TOON) before claiming success. |
 | [`hitl`](./plugins/dev/skills/engineering/hitl/SKILL.md)                                           | Resolve one `ready-for-human` issue and make it delegable again.                                   |
 | [`requeue`](./plugins/dev/skills/engineering/requeue/SKILL.md)                                     | Safely requeue a `blocked:validation`/`blocked:spec` issue when retry guidance is already decided. |
 | [`retake`](./plugins/dev/skills/engineering/retake/SKILL.md)                                       | Reconstruct issue/PR/local state and print the next command.                                       |
