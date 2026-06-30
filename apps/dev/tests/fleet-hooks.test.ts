@@ -43,6 +43,7 @@ function config(over: Partial<SupervisorConfig> = {}): SupervisorConfig {
     stallKillThresholdS: 90,
     runner: "claude",
     pollIntervalS: 15,
+    eventFallbackS: 60,
     tickTimeoutS: 120,
     supervisorStaleS: 300,
     progressStaleS: 900,
