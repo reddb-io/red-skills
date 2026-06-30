@@ -543,6 +543,13 @@ export function buildProcessDeps(
       // from the issue timeline. Consulted at claim time only when an allowlist
       // is configured (plugins.dev.afk.trust-gate.allowlist).
       issueTrust: (issue) => ghx.issueTrust(ghCtx, issue),
+      // HITL decision card (#935, S11a): post/update the card on escalation.
+      // Best-effort: errors are caught in routeRecovery so they never block
+      // the recovery path. Runs in the worktree root so gh resolves the repo.
+      renderDecisionCard: async (issue) => {
+        const { hitlCardCommand } = await import("./hitl-card.js");
+        await hitlCardCommand(["render", `--issue=${issue}`, `--root=${ctx.root}`]);
+      },
     },
     claimGh: {
       // ADR 0066: the atomic GitHub-native claim arbiter. Numeric comment ids

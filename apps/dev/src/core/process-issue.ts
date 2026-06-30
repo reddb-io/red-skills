@@ -120,6 +120,13 @@ export interface ProcessGh {
    * never fires), preserving today's behaviour.
    */
   issueTrust?(issue: number): Promise<TrustProvenance>;
+  /**
+   * Render (or refresh) the HITL decision card on a `ready-for-human` issue
+   * (#935, S11a). Called best-effort after the escalation labels are applied.
+   * Optional → absent callers/tests degrade silently (no card posted, existing
+   * behaviour preserved).
+   */
+  renderDecisionCard?(issue: number): Promise<void>;
 }
 
 /** Claim-lock side effects (the local mkdir lock at .red/tmp/claims/{N}/). */
@@ -607,6 +614,15 @@ async function routeRecovery(
         attempt_n: attemptN,
       }),
     );
+    // Render the HITL decision card (#935, S11a). Best-effort: a card failure
+    // must never block the recovery path — the label transition already happened.
+    if (deps.gh.renderDecisionCard) {
+      try {
+        await deps.gh.renderDecisionCard(issue);
+      } catch {
+        // best-effort: card render failure is non-fatal.
+      }
+    }
   } else {
     // retry → CLEAN promotion: running → ready-for-agent, no blocked:* tag.
     await deps.gh.editLabels(issue, [LABEL_RUNNING], [LABEL_READY]);
