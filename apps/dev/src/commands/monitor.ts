@@ -1,4 +1,4 @@
-import { renderCompactDashboard, type CompactWorker } from "../core/monitor.js";
+import { renderCompactDashboard, renderCompactDashboardToon, type CompactWorker } from "../core/monitor.js";
 import { collectMonitorInputs, afkPaths, resolveRepoContext } from "../runtime/wire.js";
 import { resolveSupervisorConfig } from "../core/supervisor.js";
 import { runWatchdog } from "../core/watchdog.js";
@@ -204,7 +204,11 @@ export async function monitorCommand(
 
   const { workers, events, fleet } = await collectMonitorInputs(cwd);
   const now = Math.floor(Date.now() / 1000);
-  const dashboard = renderCompactDashboard(workers, events, now, fleet);
+  // TOON is the default agent-facing wire format (PRD #928 / ADR 0081); `--plain`
+  // restores the legacy compact text dashboard for a human TTY glance.
+  const dashboard = args.includes("--plain")
+    ? renderCompactDashboard(workers, events, now, fleet)
+    : renderCompactDashboardToon(workers, events, now, fleet);
   stdout.write(`${dashboard}\n`);
 
   // Companion (active) mode (#921, PRD #907). STRICTLY opt-in: without
