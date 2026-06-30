@@ -8,6 +8,7 @@ import {
   collectMonitorInputs,
   readFleetState,
   resolveAttemptGuardArming,
+  resolveAttemptBudget,
   buildMinimalBootDeps,
   withTimeout,
   collectStatuslineAfk,
@@ -58,6 +59,36 @@ describe("resolveAttemptGuardArming (issue #405)", () => {
       guardArmed: true,
       laneArmed: false,
     });
+  });
+});
+
+describe("resolveAttemptBudget (#908)", () => {
+  const cfg = (m: Record<string, string>) => (key: string) => m[key] ?? "";
+  it("returns undefined when no ceiling is set anywhere (inert)", () => {
+    expect(resolveAttemptBudget({}, cfg({}))).toBeUndefined();
+  });
+  it("reads ceilings from afk.attempt.* config", () => {
+    const b = resolveAttemptBudget(
+      {},
+      cfg({
+        "afk.attempt.max_tokens": "500000",
+        "afk.attempt.max_cost_usd": "5",
+        "afk.attempt.max_tool_calls": "200",
+        "afk.attempt.max_waiting_windows": "30",
+      }),
+    );
+    expect(b).toEqual({ maxTotalTokens: 500000, maxCostUsd: 5, maxToolCalls: 200, maxWaitingWindows: 30 });
+  });
+  it("env overrides config", () => {
+    const b = resolveAttemptBudget(
+      { RED_AFK_ATTEMPT_MAX_TOOL_CALLS: "150" } as NodeJS.ProcessEnv,
+      cfg({ "afk.attempt.max_tool_calls": "999" }),
+    );
+    expect(b?.maxToolCalls).toBe(150);
+  });
+  it("rejects non-positive / non-numeric ceilings (typo never sets a 0 cap)", () => {
+    expect(resolveAttemptBudget({}, cfg({ "afk.attempt.max_tokens": "0" }))).toBeUndefined();
+    expect(resolveAttemptBudget({}, cfg({ "afk.attempt.max_tool_calls": "abc" }))).toBeUndefined();
   });
 });
 

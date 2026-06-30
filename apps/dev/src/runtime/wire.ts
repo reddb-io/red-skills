@@ -13,7 +13,7 @@ import { readFileSync, writeFileSync, renameSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { loadConfig, getConfig, resolveTier } from "../core/config.js";
 import type { SandboxMode } from "../core/execution.js";
-import type { AgentEffort, RunAgentInput, RunAgentResult } from "../core/execution.js";
+import type { AgentEffort, RunAgentInput, RunAgentResult, AttemptBudget, AttemptBudgetUsage } from "../core/execution.js";
 // Value import (pure, no sandcastle pull — the providers load lazily via
 // defaultSandcastleDeps' dynamic import) so resolveRunSettings can parse the
 // max-iterations knob from env/config without importing the runtime.
@@ -124,9 +124,52 @@ export interface RunSettings {
    * pinned bases are exactly why the flag defaults off.
    */
   feedbackRebaseBase?: string;
+  /**
+   * Per-attempt resource budget (#908): the optional token / cost / tool-call /
+   * waiting-window ceilings the attempt guard enforces. Every field is optional;
+   * an all-undefined budget is inert (today's behaviour). The #788 antidote —
+   * the proxy ceilings (tool-calls / waiting-windows) fire live even for
+   * claude/minimax, which stream 0 token usage on the wire.
+   */
+  attemptBudget?: AttemptBudget;
 }
 
 const SANDBOX_MODES: readonly SandboxMode[] = ["none", "docker", "podman"];
+
+/** Parse a positive number (int or float) for a budget ceiling; undefined when
+ * unset / non-numeric / non-positive, so a typo can never silently set a 0 cap
+ * that aborts every attempt instantly. */
+function parsePositive(raw: string | undefined): number | undefined {
+  if (raw === undefined) return undefined;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+/**
+ * Resolve the per-attempt budget (#908) from env overrides then `.red/config.yaml`
+ * `plugins.dev.afk.attempt.*` (folded to `afk.attempt.*`). Returns `undefined`
+ * when NO ceiling is set, so makeRunAgent can skip wiring the probe entirely and
+ * the guard stays at today's behaviour.
+ */
+export function resolveAttemptBudget(
+  env: NodeJS.ProcessEnv,
+  getCfg: (key: string) => string,
+): AttemptBudget | undefined {
+  const budget: AttemptBudget = {
+    maxTotalTokens: parsePositive(env.RED_AFK_ATTEMPT_MAX_TOKENS) ?? parsePositive(getCfg("afk.attempt.max_tokens")),
+    maxCostUsd: parsePositive(env.RED_AFK_ATTEMPT_MAX_COST_USD) ?? parsePositive(getCfg("afk.attempt.max_cost_usd")),
+    maxToolCalls:
+      parsePositive(env.RED_AFK_ATTEMPT_MAX_TOOL_CALLS) ?? parsePositive(getCfg("afk.attempt.max_tool_calls")),
+    maxWaitingWindows:
+      parsePositive(env.RED_AFK_ATTEMPT_MAX_WAITING_WINDOWS) ?? parsePositive(getCfg("afk.attempt.max_waiting_windows")),
+  };
+  const anySet =
+    budget.maxTotalTokens !== undefined ||
+    budget.maxCostUsd !== undefined ||
+    budget.maxToolCalls !== undefined ||
+    budget.maxWaitingWindows !== undefined;
+  return anySet ? budget : undefined;
+}
 
 export function resolveRunSettings(
   root: string,
@@ -174,6 +217,9 @@ export function resolveRunSettings(
     (env.RED_AFK_FEEDBACK_REBASE ?? "").trim() === "1" ||
     getConfig(cfg, "afk.feedback.rebase_on_base") === "true";
   const feedbackRebaseBase = rebaseFlag ? getConfig(cfg, "dev.lock.branch") || "main" : undefined;
+  // Per-attempt resource budget (#908) — env > `afk.attempt.*` config; undefined
+  // when no ceiling is set (inert).
+  const attemptBudget = resolveAttemptBudget(env, (key) => getConfig(cfg, key));
   return {
     sandbox,
     defaultRunner,
@@ -183,6 +229,7 @@ export function resolveRunSettings(
     attemptTimeoutSeconds,
     laneIdle,
     feedbackRebaseBase,
+    attemptBudget,
   };
 }
 
@@ -255,6 +302,11 @@ export function makeRunAgent(
   maxIterations?: number,
   attemptTimeoutSeconds?: number,
   laneIdle?: LaneIdleStallConfig,
+  // Per-attempt budget (#908): the resolved ceilings + a live usage probe (the
+  // attempt's activity meter `peek()`). Both must be present to arm the cap; it
+  // rides the existing progress guard, so it is only active when that guard is.
+  attemptBudget?: AttemptBudget,
+  budgetUsage?: () => AttemptBudgetUsage,
 ): (input: RunAgentInput) => Promise<RunAgentResult> {
   let depsPromise: Promise<import("../core/execution.js").SandcastleDeps> | null = null;
   return async (input: RunAgentInput): Promise<RunAgentResult> => {
@@ -334,6 +386,9 @@ export function makeRunAgent(
             },
           }
         : {}),
+      // Per-attempt budget (#908): only wired when the progress guard is armed
+      // (the budget check rides its poll) AND a budget + live usage probe exist.
+      ...(guardArmed && attemptBudget && budgetUsage ? { budget: attemptBudget, budgetUsage } : {}),
       ...(laneArmed && laneAttemptDir
         ? {
             laneIdleThresholdSeconds: laneIdleCfg.stallThresholdS,

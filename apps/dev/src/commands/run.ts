@@ -71,7 +71,7 @@ import { initStateSync, readPidStartTime, updateState } from "../core/state.js";
 import { buildProgressHeartbeat, formatIterationMarker } from "../core/heartbeat.js";
 import { createActivityMeter } from "../core/activity-meter.js";
 import { DEFAULT_MAX_ITERATIONS } from "../core/execution.js";
-import type { AgentStreamEvent } from "../core/execution.js";
+import type { AgentStreamEvent, AttemptBudget } from "../core/execution.js";
 import { makeStaleClaimPredicate, resolveClaimStalenessConfig } from "../core/claim-staleness.js";
 import { renderClaimComment } from "../core/claim.js";
 
@@ -438,6 +438,7 @@ export function buildProcessDeps(
   maxIterations?: number,
   attemptTimeoutSeconds?: number,
   laneIdle?: LaneIdleStallConfig,
+  attemptBudget?: AttemptBudget,
 ): ProcessIssueDeps {
   const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo, exec };
   const gitCtx: GitContext = { cwd: ctx.root, exec };
@@ -609,7 +610,19 @@ export function buildProcessDeps(
     // shell commands run against the same worker-branch checkout after feedback.
     backpressure: feedback.backpressure,
     backpressureCommands: readBackpressure(config),
-    runAgent: makeRunAgent(sandbox, process.env, maxIterations, attemptTimeoutSeconds, laneIdle),
+    // #908: thread the resolved budget + a LIVE usage probe off this attempt's
+    // activity meter (late-bound — `activityMeter` is reassigned per attempt dir,
+    // and `peek()` returns a superset of AttemptBudgetUsage). makeRunAgent only
+    // wires it when the progress guard is armed.
+    runAgent: makeRunAgent(
+      sandbox,
+      process.env,
+      maxIterations,
+      attemptTimeoutSeconds,
+      laneIdle,
+      attemptBudget,
+      () => activityMeter.peek(),
+    ),
     model,
     classifyIssue: makeIssueClassifier(config, runner, ctx.root, exec),
     resolveTier: (activeRunner, taskClass = "think") => resolveTier(config, activeRunner, taskClass, process.env),
@@ -1339,7 +1352,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
       if (await fsx.pathExists(sp)) await updateState(sp, { pid: 0 }).catch(() => {});
       return result;
     },
-    processDeps: buildProcessDeps(ctx, settings.model, settings.sandbox, feedback, current, flags.fallbackRunner, runner, undefined, settings.maxIterations, settings.attemptTimeoutSeconds, settings.laneIdle),
+    processDeps: buildProcessDeps(ctx, settings.model, settings.sandbox, feedback, current, flags.fallbackRunner, runner, undefined, settings.maxIterations, settings.attemptTimeoutSeconds, settings.laneIdle, settings.attemptBudget),
     // Session-scoped lifecycle hooks (PRD #207): compose the same config /
     // resolver / exec / env the process deps use, so session + per-issue points
     // share one dispatcher rather than duplicating the wiring.
