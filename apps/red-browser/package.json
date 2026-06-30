@@ -11,7 +11,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@reddb-io/browser-bridge": "workspace:*"
+    "@reddb-io/browser-bridge": "workspace:*",
+    "@reddb-io/cdp-driver": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "catalog:",
