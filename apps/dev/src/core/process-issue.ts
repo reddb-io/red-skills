@@ -73,7 +73,7 @@ import { formatStartedMarker } from "./heartbeat.js";
 import { parseReqLabels, planCloseCascade, type DependentIssue } from "./boot-sweep.js";
 import { buildAttemptRecordPayload, type AttemptRecordPayload } from "./attempt-record.js";
 import { acquireClaim, type ClaimGh, type ClaimReconcileOptions } from "./claim.js";
-import { parseCurrentBlocker, upsertCurrentBlocker, type CurrentBlocker } from "./blocker-state.js";
+import { applyCurrentBlockerEdit, parseCurrentBlocker, type CurrentBlocker } from "./blocker-state.js";
 import { parseTrustPolicy, evaluateTrustGate, type TrustProvenance } from "./trust-gate.js";
 import type { AfkModelTier, ConfigValues } from "./config.js";
 import {
@@ -1776,7 +1776,9 @@ async function writeCurrentBlockerBestEffort(
   try {
     const existing = parseCurrentBlocker(input.body);
     const next = shouldPreserveCurrentBlocker(existing, blocker) ? existing! : blocker;
-    await deps.gh.editBody(input.issue, upsertCurrentBlocker(input.body, next));
+    const { body, changed } = applyCurrentBlockerEdit(input.body, next);
+    if (!changed) return; // byte-exact no-op: body already reflects the desired blocker state
+    await deps.gh.editBody(input.issue, body);
   } catch {
     // Best-effort: issue-body state improves resumability, but label routing and
     // the failure envelope remain the canonical fallback if the edit fails.
