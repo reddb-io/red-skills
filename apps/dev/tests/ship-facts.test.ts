@@ -25,6 +25,7 @@ import { vi, describe, it, expect, beforeEach } from "vitest";
 
 vi.mock("../src/runtime/exec.js", () => ({
   execTool: vi.fn(),
+  pnpm: vi.fn(),
 }));
 
 import { execTool } from "../src/runtime/exec.js";
