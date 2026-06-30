@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { Writable } from "node:stream";
 import { formatCurrentBlocker } from "../src/core/blocker-state.js";
 import { isRequeueComplete } from "../src/core/requeue.js";
-import { requeueCommand, type RequeueGh } from "../src/commands/requeue.js";
+import { requeueCommand, type RequeueGh, type RequeueAdoptRunner } from "../src/commands/requeue.js";
 
 function capture(): { stream: Writable; text: () => string; stderr: () => string } {
   let buf = "";
@@ -211,5 +211,129 @@ describe("requeue command — /hitl refusals (exit 1, no mutation)", () => {
     expect(code).toBe(1);
     expect(err.text()).toContain("refused");
     expect(calls.editBody + calls.editLabels + calls.comment).toBe(0);
+  });
+});
+
+// ---------- ADR 0081 — adopt mode (--adopt-branch) ----------
+
+describe("requeue command — adopt mode (--adopt-branch)", () => {
+  it("requires --guidance even in adopt mode", async () => {
+    const { gh } = fakeGh({ state: "OPEN", body: "## Summary\nFoo.\n", labels: [] });
+    const { stream } = capture();
+    const err = captureStderr();
+
+    const code = await requeueCommand(["#42", "--adopt-branch", "my-branch"], "/tmp", stream, gh);
+    err.restore();
+
+    expect(code).toBe(2);
+    expect(err.text()).toContain("--guidance");
+  });
+
+  it("applies requeue transition then calls adopt runner for a parked issue", async () => {
+    const { gh, calls } = fakeGh({
+      state: "OPEN",
+      body: parkedBody,
+      labels: ["ready-for-human", "blocked:validation"],
+    });
+    const { stream, text } = capture();
+    let adoptCalled = false;
+    const runner: RequeueAdoptRunner = async () => { adoptCalled = true; return "landed"; };
+
+    const code = await requeueCommand(
+      ["#42", "--guidance", "Gate flake fixed.", "--adopt-branch", "my-branch"],
+      "/tmp", stream, gh, runner,
+    );
+
+    expect(code).toBe(0);
+    expect(calls.editBody).toBe(1);
+    expect(calls.editLabels).toBe(1);
+    expect(adoptCalled).toBe(true);
+    expect(text()).toContain("validated and landed");
+  });
+
+  it("calls adopt runner even when issue is not parked (fresh issue, no blockers)", async () => {
+    const { gh, calls } = fakeGh({ state: "OPEN", body: "## Summary\nFoo.\n", labels: [] });
+    const { stream, text } = capture();
+    let adoptCalled = false;
+    const runner: RequeueAdoptRunner = async () => { adoptCalled = true; return "landed"; };
+
+    const code = await requeueCommand(
+      ["#42", "--guidance", "Adopt hand-done branch.", "--adopt-branch", "my-branch"],
+      "/tmp", stream, gh, runner,
+    );
+
+    expect(code).toBe(0);
+    // No transition applied (issue was not parked)
+    expect(calls.editBody + calls.editLabels + calls.comment).toBe(0);
+    expect(adoptCalled).toBe(true);
+    expect(text()).toContain("validated and landed");
+  });
+
+  it("exits 1 when adopt runner returns parked (gate failed)", async () => {
+    const { gh } = fakeGh({ state: "OPEN", body: "## Summary\nFoo.\n", labels: [] });
+    const { stream } = capture();
+    const err = captureStderr();
+    const runner: RequeueAdoptRunner = async () => "parked";
+
+    const code = await requeueCommand(
+      ["#42", "--guidance", "Fix tests.", "--adopt-branch", "broken-branch"],
+      "/tmp", stream, gh, runner,
+    );
+    err.restore();
+
+    expect(code).toBe(1);
+    expect(err.text()).toContain("gate failed");
+  });
+
+  it("exits 0 with skip note when adopt runner returns skipped", async () => {
+    const { gh } = fakeGh({ state: "OPEN", body: "## Summary\nFoo.\n", labels: [] });
+    const { stream, text } = capture();
+    const runner: RequeueAdoptRunner = async () => "skipped";
+
+    const code = await requeueCommand(
+      ["#42", "--guidance", "Adopt.", "--adopt-branch", "empty-branch"],
+      "/tmp", stream, gh, runner,
+    );
+
+    expect(code).toBe(0);
+    expect(text()).toContain("skipped");
+  });
+
+  it("does not call adopt runner when issue has HITL-refuse (mixed blockers)", async () => {
+    const { gh } = fakeGh({
+      state: "OPEN",
+      body: parkedBody,
+      labels: ["ready-for-human", "blocked:validation", "blocked:spec"],
+    });
+    const { stream } = capture();
+    const err = captureStderr();
+    let adoptCalled = false;
+    const runner: RequeueAdoptRunner = async () => { adoptCalled = true; return "landed"; };
+
+    const code = await requeueCommand(
+      ["#42", "--guidance", "Fixed.", "--adopt-branch", "my-branch"],
+      "/tmp", stream, gh, runner,
+    );
+    err.restore();
+
+    expect(code).toBe(1);
+    expect(adoptCalled).toBe(false);
+  });
+
+  it("dry-run with --adopt-branch does not call adopt runner", async () => {
+    const { gh } = fakeGh({ state: "OPEN", body: "## Summary\nFoo.\n", labels: [] });
+    const { stream, text } = capture();
+    let adoptCalled = false;
+    const runner: RequeueAdoptRunner = async () => { adoptCalled = true; return "landed"; };
+
+    const code = await requeueCommand(
+      ["#42", "--guidance", "Adopt.", "--adopt-branch", "my-branch", "--dry-run"],
+      "/tmp", stream, gh, runner,
+    );
+
+    expect(code).toBe(0);
+    expect(adoptCalled).toBe(false);
+    expect(text()).toContain("dry-run");
+    expect(text()).toContain("adopt-branch=my-branch");
   });
 });

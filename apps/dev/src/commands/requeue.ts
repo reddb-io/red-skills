@@ -9,10 +9,27 @@
 // human guidance as a directive comment. The pure planner lives in
 // `core/requeue.ts`; `/hitl` is the interactive sibling for when the human
 // decision still has to be extracted.
+//
+// ADR 0081 adds an `--adopt-branch BRANCH` mode: when a maintainer has done the
+// work by hand on an existing branch, requeue adopts that branch and routes it
+// through the no-agent landing lane (ADR 0055 reconcile) — gate-only, no agent
+// re-run. The real adopt runner is built here; `RequeueAdoptRunner` is injectable
+// for tests (mirrors how `RequeueGh` is injected).
 
+import { join } from "node:path";
 import { parseFlags, type FlagSchema } from "@reddb-io/shared/args.js";
 import { execTool, type ExecFn } from "../runtime/exec.js";
 import { planRequeue, type RequeuePlan } from "../core/requeue.js";
+import { reconcile, type ReconcileDeps, type ReconcileInput } from "../core/reconcile.js";
+import { makeFeedbackWorktree } from "../runtime/feedback-worktree.js";
+import { afkPaths, resolveRepoSlug } from "../runtime/wire.js";
+import { branchLockPath, isLocked, readLockedBranch } from "../runtime/lock.js";
+import { resolveBase } from "../core/base-resolver.js";
+import * as ghx from "../runtime/gh.js";
+import * as gitx from "../runtime/git.js";
+import type { GhContext } from "../runtime/gh.js";
+import type { GitContext } from "../runtime/git.js";
+import type { Runner } from "../types/runner.js";
 
 export interface RequeueGh {
   view(issue: number): Promise<{ state: string; body: string; labels: string[] }>;
@@ -21,11 +38,30 @@ export interface RequeueGh {
   comment(issue: number, body: string): Promise<void>;
 }
 
+/** Metadata passed to the adopt runner after the requeue transition is applied. */
+export interface RequeueAdoptData {
+  title: string;
+  body: string;
+  labels: readonly string[];
+}
+
+/**
+ * Injectable adopt runner — builds the reconcile deps and calls reconcile()
+ * (ADR 0055 no-agent landing lane) for a hand-done branch. The real runner is
+ * built by `runAdoptLanding`; tests inject a stub. Returns the reconcile outcome.
+ */
+export type RequeueAdoptRunner = (
+  issue: number,
+  branch: string,
+  issueData: RequeueAdoptData,
+) => Promise<"landed" | "parked" | "skipped">;
+
 const REQUEUE_FLAG_SCHEMA = {
   guidance: { kind: "value", coerce: (raw: string): string => raw },
   repo: { kind: "value", aliases: ["R"], coerce: (raw: string): string => raw },
   json: { kind: "boolean" },
   "dry-run": { kind: "boolean" },
+  "adopt-branch": { kind: "value", coerce: (raw: string): string => raw },
 } satisfies FlagSchema;
 
 function parseIssue(raw: string | undefined): number | undefined {
@@ -87,16 +123,138 @@ async function resolveRepo(cwd: string, explicit?: string): Promise<string> {
 }
 
 /**
+ * Build the real adopt runner: wires ReconcileDeps and calls reconcile() (ADR
+ * 0055) for a hand-done branch. Mirrors makeBootReconcileRunner in commands/run.ts
+ * but is scoped to the requeue adopt path — no claim dir, no AFK worker machinery,
+ * no envelope history. Gate authority is the same runFeedback (via feedback worktree).
+ */
+async function runAdoptLanding(
+  issue: number,
+  branch: string,
+  issueData: RequeueAdoptData,
+  cwd: string,
+  repo: string,
+  stdout: NodeJS.WritableStream,
+): Promise<"landed" | "parked" | "skipped"> {
+  const paths = afkPaths(cwd);
+  const ghCtx: GhContext = { cwd, repo };
+  const gitCtx: GitContext = { cwd };
+  const lockPath = branchLockPath(cwd);
+  const feedbackDir = join(paths.tmpDir, "adopt-landing", String(issue));
+  const feedback = makeFeedbackWorktree(cwd, feedbackDir, undefined, {});
+
+  try {
+    const base = await resolveBase(
+      { issueBody: issueData.body },
+      {
+        readLockedBranch: () => readLockedBranch(lockPath),
+        configLockedBranch: undefined,
+        fetchIssueBody: async () => undefined,
+      },
+    );
+
+    // Re-read the issue title for the ReconcileInput — the gh view already gave
+    // us body+labels but not the title. The title is used in landing artifacts.
+    let title = `Issue #${issue}`;
+    try {
+      const r = await execTool("gh", ["issue", "view", String(issue), "--repo", repo, "--json", "title", "-q", ".title"], { cwd });
+      if (r.code === 0 && r.stdout.trim()) title = r.stdout.trim();
+    } catch { /* best-effort */ }
+
+    const reconcileDeps: ReconcileDeps = {
+      gh: {
+        editLabels: async (n, remove, add) => {
+          await ghx.editLabels(ghCtx, n, remove, add);
+          return true;
+        },
+        ensureLabel: (name) => ghx.ensureLabel(ghCtx, name),
+        comment: (n, body) => ghx.comment(ghCtx, n, body),
+        close: (n) => ghx.closeIssue(ghCtx, n),
+        listByLabel: (label) => ghx.listByLabel(ghCtx, label),
+        issueClosed: (n) => ghx.issueClosed(ghCtx, n),
+      },
+      git: {
+        headShortSha: () => gitx.headShortSha(gitCtx),
+        deleteLocalBranch: (b) => gitx.deleteLocalBranch(gitCtx, b),
+      },
+      fs: {
+        // Adopt landing has no AFK worker dir to sweep — best-effort no-op.
+        completionSweep: async () => [],
+      },
+      lookups: {
+        changedFiles: (b, bas) => gitx.changedFiles(gitCtx, b, bas),
+        branchPresent: async (b) => {
+          if (await gitx.branchExists(gitCtx, b)) return true;
+          await gitx.fetchBranch(gitCtx, b);
+          return gitx.branchExists(gitCtx, b);
+        },
+        isLocked: () => isLocked(lockPath),
+      },
+      mergeExec: gitx.mergeExec(gitCtx),
+      remoteGit: gitx.gitExec(gitCtx),
+      pnpm: feedback.pnpm,
+      layout: feedback.layout,
+      // Landing worktree for the locked (DIRECT) land path (#572).
+      makeLandingWorktree: async (bas: string) => {
+        const slug = bas.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "base";
+        const dest = join(paths.tmpDir, "landing", `${slug}-adopt-${issue}`);
+        await gitx.worktreeRemove(gitCtx, dest);
+        const ok = await gitx.worktreeAdd(gitCtx, dest, bas);
+        return ok ? dest : null;
+      },
+      removeLandingWorktree: (dir: string) => gitx.worktreeRemove(gitCtx, dir),
+      envelope: {
+        git: gitx.gitExec(gitCtx),
+        poster: async (n, body) => { await ghx.comment(ghCtx, n, body); return true; },
+        // Adopt landing has no attempt marker files — best-effort no-ops.
+        writeMarkers: async () => {},
+        writePosted: async () => {},
+      },
+      nowEpoch: () => Math.floor(Date.now() / 1000),
+      appendIterLog: (line) => { stdout.write(`${line}\n`); },
+      recoveryEnv: process.env,
+    };
+
+    const reconcileInput: ReconcileInput = {
+      issue,
+      title,
+      body: issueData.body,
+      labels: [...issueData.labels],
+      branch,
+      base,
+      repo,
+      repoDir: cwd,
+      remote: "origin",
+      // Synthetic worker identity for logging/envelope — no real AFK worker ran.
+      workerId: "requeue-adopt",
+      attempt: 0,
+      attemptDir: join(paths.tmpDir, "adopt-landing", String(issue)),
+      runner: "claude" as Runner,
+    };
+
+    const result = await reconcile(reconcileDeps, reconcileInput);
+    return result.outcome;
+  } finally {
+    await feedback.cleanup();
+  }
+}
+
+/**
  * `requeue <issue> [--guidance text] [--repo owner/repo] [--json] [--dry-run]`
+ *    `[--adopt-branch BRANCH]`
  * — apply the one-shot requeue transition. A non-parked issue is a no-op (exit
  * 0). `--dry-run` prints the plan without mutating. The `gh` dependency is
- * injectable for tests; production wires the gh CLI.
+ * injectable for tests; production wires the gh CLI. When `--adopt-branch` is
+ * given, the branch is adopted via the no-agent landing lane (ADR 0055
+ * reconcile) after the requeue transition; `adoptRunnerOverride` is injectable
+ * for tests.
  */
 export async function requeueCommand(
   args: readonly string[],
   cwd = process.cwd(),
   stdout: NodeJS.WritableStream = process.stdout,
   ghOverride?: RequeueGh,
+  adoptRunnerOverride?: RequeueAdoptRunner,
 ): Promise<number> {
   const { values, positionals } = parseFlags(args, REQUEUE_FLAG_SCHEMA);
   const issue = parseIssue(positionals[0]);
@@ -107,6 +265,7 @@ export async function requeueCommand(
   const guidance = (values.guidance as string | undefined)?.trim();
   const json = values.json === true;
   const dryRun = values["dry-run"] === true;
+  const adoptBranch = (values["adopt-branch"] as string | undefined)?.trim() || undefined;
 
   if (!guidance) {
     process.stderr.write("[afk] requeue requires --guidance with the retry decision so it can be recorded as Human guidance\n");
@@ -128,27 +287,66 @@ export async function requeueCommand(
       process.stderr.write(`[afk] requeue #${issue}: refused — ${plan.reason}\n`);
       return 1;
     }
-    stdout.write(`Requeue #${issue}: no-op — ${plan.reason}\n`);
-    return 0;
+    // Not parked — no-op for the requeue transition (may still adopt below).
+    if (!adoptBranch) {
+      stdout.write(`Requeue #${issue}: no-op — ${plan.reason}\n`);
+      return 0;
+    }
   }
 
   if (dryRun) {
     stdout.write(
       json
-        ? `${JSON.stringify({ issue, plan }, null, 2)}\n`
-        : `Requeue #${issue} (dry-run): clear blocker=${plan.bodyChanged} remove=[${plan.removeLabels.join(",")}] add=[${plan.addLabels.join(",")}]\n`,
+        ? `${JSON.stringify({ issue, plan, adoptBranch }, null, 2)}\n`
+        : `Requeue #${issue} (dry-run): clear blocker=${plan.bodyChanged} remove=[${plan.removeLabels.join(",")}] add=[${plan.addLabels.join(",")}]${adoptBranch ? ` adopt-branch=${adoptBranch}` : ""}\n`,
     );
     return 0;
   }
 
-  if (plan.bodyChanged) await gh.editBody(issue, plan.body);
-  await gh.comment(issue, directiveComment(plan, guidance));
-  await gh.editLabels(issue, plan.removeLabels, plan.addLabels);
+  // Apply the requeue transition when the issue is parked and requeueable.
+  if (plan.requeueable) {
+    if (plan.bodyChanged) await gh.editBody(issue, plan.body);
+    await gh.comment(issue, directiveComment(plan, guidance));
+    await gh.editLabels(issue, plan.removeLabels, plan.addLabels);
+    stdout.write(
+      json
+        ? `${JSON.stringify({ issue, plan, applied: true }, null, 2)}\n`
+        : `Requeue #${issue}: cleared blocker=${plan.bodyChanged}, removed [${plan.removeLabels.join(",")}], added [${plan.addLabels.join(",")}].\n`,
+    );
+  } else if (!adoptBranch) {
+    stdout.write(`Requeue #${issue}: no-op — ${plan.reason}\n`);
+    return 0;
+  }
 
-  stdout.write(
-    json
-      ? `${JSON.stringify({ issue, plan, applied: true }, null, 2)}\n`
-      : `Requeue #${issue}: cleared blocker=${plan.bodyChanged}, removed [${plan.removeLabels.join(",")}], added [${plan.addLabels.join(",")}].\n`,
-  );
+  // Adopt mode (ADR 0081): route the branch through the no-agent landing lane.
+  if (adoptBranch) {
+    // Post-transition labels/body — pass the reconcile guard the state AFTER
+    // the requeue cleared any blocked:* labels + active blocker.
+    const postLabels = plan.requeueable
+      ? [...issueState.labels.filter((l) => !plan.removeLabels.includes(l)), ...plan.addLabels]
+      : [...issueState.labels];
+    const postBody = plan.requeueable ? plan.body : issueState.body;
+    const adoptData: RequeueAdoptData = { title: "", body: postBody, labels: postLabels };
+
+    stdout.write(`Requeue #${issue}: adopting branch \`${adoptBranch}\` through the no-agent landing lane (ADR 0055)…\n`);
+
+    const runner = adoptRunnerOverride
+      ?? ((n, b, d) => runAdoptLanding(n, b, d, cwd, repo, stdout));
+
+    const outcome = await runner(issue, adoptBranch, adoptData);
+
+    if (outcome === "landed") {
+      stdout.write(`Requeue #${issue}: \`${adoptBranch}\` validated and landed.\n`);
+      return 0;
+    }
+    if (outcome === "parked") {
+      process.stderr.write(`[afk] requeue #${issue}: gate failed — \`${adoptBranch}\` was parked to ready-for-human.\n`);
+      return 1;
+    }
+    // skipped (no-commits, branch-absent, etc.) — not a failure but worth noting.
+    stdout.write(`Requeue #${issue}: adopt skipped (branch carries no work vs base or branch absent).\n`);
+    return 0;
+  }
+
   return 0;
 }
