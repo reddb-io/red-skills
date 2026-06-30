@@ -6,6 +6,19 @@ Upstream base: `mattpocock/skills@6eeb81b5fcfeeb5bd531dd47ab2f9f2bbea27461` (see
 
 ---
 
+## review (engineering) — HTML artifact review via annotation bridge (issue #943)
+
+- **status**: added
+- **upstream**: —
+- **why**: Replaces the lossy "screenshot + describe in prose" loop for generated HTML artifacts (plans, dashboards, prototypes). Wires `red-browser` as the first real consumer: serves the artifact locally, runs the layout-audit gate, and long-polls for surgical human annotations (element + character range) that the agent uses to correct and iterate.
+- **what changed**:
+  - `plugins/dev/skills/engineering/review/SKILL.md`: the `/review` skill — invokes `red-browser annotate`, documents the layout-audit gate contract, annotation interpretation, and iteration loop.
+  - `plugins/dev/.claude-plugin/plugin.json`: added `./skills/engineering/review` entry.
+  - `plugins/dev/skills/engineering/README.md`: added `review` entry to the bucket listing.
+  - `README.md`: added `review` to the "Dev operations and understanding" row of the skill map.
+
+---
+
 ## go (engineering) — `/go` dispatch: disposable issue, isolated lane, dedicated namespaced worker (issue #938)
 
 - **status**: added
