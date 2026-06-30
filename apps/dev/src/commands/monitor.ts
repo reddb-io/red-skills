@@ -1,8 +1,15 @@
 import { renderCompactDashboard, type CompactWorker } from "../core/monitor.js";
-import { collectMonitorInputs } from "../runtime/wire.js";
+import { collectMonitorInputs, afkPaths, resolveRepoContext } from "../runtime/wire.js";
 import { resolveSupervisorConfig } from "../core/supervisor.js";
 import { runWatchdog } from "../core/watchdog.js";
 import { buildWatchdogIO } from "../runtime/watchdog-io.js";
+import { loadConfig } from "../core/config.js";
+import {
+  runCompanionPass,
+  summarizeCompanionPass,
+  resolveCompanionThresholds,
+  resolveDriftCap,
+} from "../runtime/companion-io.js";
 import {
   mirrorPlan,
   codexSinkPlan,
@@ -199,5 +206,32 @@ export async function monitorCommand(
   const now = Math.floor(Date.now() / 1000);
   const dashboard = renderCompactDashboard(workers, events, now, fleet);
   stdout.write(`${dashboard}\n`);
+
+  // Companion (active) mode (#921, PRD #907). STRICTLY opt-in: without
+  // `--companion` / `--active` the monitor is byte-for-byte the read-only
+  // dashboard above (it has already returned all its output) and performs no gh
+  // writes. With the flag, run ONE bounded drift-detection pass over the live
+  // fleet — re-enqueueing a drifting worker's issue with a bounded correction
+  // (write-only, idempotent), or escalating to ready-for-human at the cap. It
+  // never kills a process; termination/respawn is the reaper + fleet's job.
+  // `--dry-run` computes + prints the plan without any gh write.
+  if (args.includes("--companion") || args.includes("--active")) {
+    try {
+      const paths = afkPaths(cwd);
+      const repoCtx = await resolveRepoContext(cwd);
+      const cfg = loadConfig(paths.configPath, { warn: () => undefined });
+      const outcomes = await runCompanionPass({
+        workersRoot: paths.workersRoot,
+        ctx: { repo: repoCtx.repo, cwd: repoCtx.root },
+        thresholds: resolveCompanionThresholds(cfg),
+        cap: resolveDriftCap(process.env),
+        dryRun: args.includes("--dry-run"),
+      });
+      const summary = summarizeCompanionPass(outcomes, args.includes("--dry-run"));
+      if (summary !== "") stdout.write(`${summary}\n`);
+    } catch {
+      // Best-effort: a companion failure must never break the dashboard render.
+    }
+  }
   return 0;
 }
