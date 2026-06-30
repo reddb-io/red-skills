@@ -901,7 +901,12 @@ export async function processIssue(
   // prompt, detects the DONE/BLOCKED completion signal, and commits on `branch`.
   // Make the resolved base ref current so sandcastle forks the worker branch off
   // it (ADR 0031): the pinned/locked base becomes the branch's parent, not HEAD.
+  // fetchBase runs `git fetch origin <base>` which updates the remote-tracking
+  // ref (origin/main) but NOT the local branch. We therefore pass the
+  // remote-tracking ref to runAgent so sandcastle's baseBranch start point
+  // uses the freshly-fetched ref, not the potentially-stale local branch.
   if (deps.git.fetchBase) await deps.git.fetchBase(base);
+  const baseRef = `${input.remote}/${base}`;
   // Pin to a sandcastle-backed runner. claude/codex/opencode (ADR 0059) +
   // claude-minimax (PRD #788) each map to a first-class provider and pass
   // through; any other value (e.g. the runner-neutral hermes, which has no
@@ -952,7 +957,7 @@ export async function processIssue(
       handoffContent: handoff,
       systemPrompt: EXIT_PROTOCOL,
       branch,
-      base,
+      base: baseRef,
       cwd: input.attemptDir,
       // Native-path liveness + ONE unified human log: point red-castle's file-log
       // at the attempt's `afk.log` (our canonical log, the one `state.log` and

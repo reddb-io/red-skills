@@ -1913,8 +1913,9 @@ describe("processIssue — base reaches sandcastle (ADR 0031)", () => {
     expect(result.base).toBe("main");
     // the base ref is fetched current before the run (ADR 0031 caller contract).
     expect(fetchedBases).toEqual(["main"]);
-    // runAgent receives the base as the branch start point.
-    expect(trace.runAgentCalls[0]?.base).toBe("main");
+    // runAgent receives the remote-tracking ref so sandcastle forks from the
+    // freshly-fetched ref, not the potentially-stale local branch.
+    expect(trace.runAgentCalls[0]?.base).toBe("origin/main");
   });
 });
 
