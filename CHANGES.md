@@ -6,6 +6,20 @@ Upstream base: `mattpocock/skills@6eeb81b5fcfeeb5bd531dd47ab2f9f2bbea27461` (see
 
 ---
 
+## hitl-card (engineering) — Actionable decision cards for ready-for-human (issue #927)
+
+- **status**: added
+- **upstream**: —
+- **why**: `ready-for-human` issues previously required the human to act by hand (reading, labelling, posting comments manually). Issue #927 turns them into IssueOps decision cards: a bot comment renders the pending decision + PR status + slash-command menu, and a GitHub Action executes the ticked command.
+- **what changed**:
+  - `apps/dev/src/core/hitl-card.ts`: pure logic — `renderCard`, `updateCardStatus` (idempotent status refresh), `isHitlCard` (card detection), `parseCardCommand` (injection-safe first-line slash-command parser), `classifyNaturalLanguage` (keyword-based NL → action mapping), `parseCiChecks`.
+  - `apps/dev/src/commands/hitl-card.ts`: IO command handler for `dev hitl-card render | refresh | act` — posts/updates the card, trust-gates `act` via the existing `resolveActorTrust`, executes approve/approve-ci/reject/requeue and posts directive comments.
+  - `apps/dev/src/cli.ts`: registers `hitl-card` in the CLI router.
+  - `.github/workflows/red-hitl-card.yml`: three-job workflow — `render` on `issues.labeled=ready-for-human`, `act` on `issue_comment.created`, `refresh` on `pull_request.synchronize/reopened/closed`.
+  - `apps/dev/tests/hitl-card.test.ts`: 37 unit tests covering all pure functions.
+
+---
+
 ## afk (engineering) — Task mirror host capability matrix codified (issue #886)
 
 - **status**: modified

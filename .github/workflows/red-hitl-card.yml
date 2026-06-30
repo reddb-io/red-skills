@@ -1,0 +1,146 @@
+# red-hitl-card — actionable decision cards for ready-for-human issues (issue #927).
+#
+# Turns a ready-for-human issue into an IssueOps UI:
+#
+#   render   → fires on `issues.labeled` with ready-for-human: posts the decision
+#              card as an issue comment, showing the pending decision + PR status +
+#              available slash-commands.
+#
+#   act      → fires on `issue_comment.created` when the issue is ready-for-human
+#              and the comment body starts with a recognised slash-command (/approve,
+#              /approve-ci, /reject, /requeue) or plain English the bot can classify.
+#              Trust-gated: only maintainers with write access (or the allowlist) may
+#              act.  Untrusted authors get a ⛔ reply and the action is a no-op.
+#
+#   refresh  → fires on `pull_request.synchronize` for a PR linked to a
+#              ready-for-human issue: updates the card's status section in place.
+#
+# Injection safety (ADR 0073): the slash-command parser only reads the FIRST non-blank
+# line of the comment body. Issue body and PR diff are never interpreted as commands
+# — they are passed as display data only.
+
+name: red-hitl-card
+
+on:
+  issues:
+    types: [labeled]
+  issue_comment:
+    types: [created]
+  pull_request:
+    types: [synchronize, reopened, closed]
+
+permissions:
+  issues: write
+  pull-requests: write
+  contents: read
+
+jobs:
+  # ─── render ────────────────────────────────────────────────────────────────
+  # Post the decision card when ready-for-human is applied to an issue.
+  render:
+    if: >-
+      github.event_name == 'issues' &&
+      github.event.action == 'labeled' &&
+      github.event.label.name == 'ready-for-human'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Render decision card
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RED_AFK_SANDBOX: none
+        run: |
+          set -euo pipefail
+          LAUNCHER="plugins/dev/skills/engineering/afk/bin/afk.mjs"
+          node "$LAUNCHER" hitl-card render \
+            --issue "${{ github.event.issue.number }}" \
+            --repo "${{ github.repository }}"
+
+  # ─── act ───────────────────────────────────────────────────────────────────
+  # Process a slash-command or plain-English comment on a ready-for-human issue.
+  act:
+    if: >-
+      github.event_name == 'issue_comment' &&
+      github.event.action == 'created' &&
+      !github.event.issue.pull_request &&
+      contains(toJSON(github.event.issue.labels), '"ready-for-human"')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Execute card command
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RED_AFK_SANDBOX: none
+          # Pass via env to avoid shell-injection from public comment text.
+          COMMENT_BODY: ${{ github.event.comment.body }}
+          COMMENT_AUTHOR: ${{ github.event.comment.user.login }}
+        run: |
+          set -euo pipefail
+          LAUNCHER="plugins/dev/skills/engineering/afk/bin/afk.mjs"
+          node "$LAUNCHER" hitl-card act \
+            --issue "${{ github.event.issue.number }}" \
+            --body "$COMMENT_BODY" \
+            --author "$COMMENT_AUTHOR" \
+            --repo "${{ github.repository }}"
+
+  # ─── refresh ───────────────────────────────────────────────────────────────
+  # Update the card's status section when the linked PR is updated.
+  # Requires finding the associated ready-for-human issue from the PR's body/title.
+  refresh:
+    if: >-
+      github.event_name == 'pull_request' &&
+      (github.event.action == 'synchronize' ||
+       github.event.action == 'reopened' ||
+       github.event.action == 'closed')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Refresh card status for linked issues
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RED_AFK_SANDBOX: none
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          LAUNCHER="plugins/dev/skills/engineering/afk/bin/afk.mjs"
+          # Extract all issue numbers referenced in the PR body or title.
+          # Match "Refs #N", "Closes #N", "Fixes #N", "Resolves #N" patterns.
+          ISSUES=$(echo "$PR_BODY $PR_TITLE" | grep -oP '(?:Refs?|Closes?|Fixes?|Resolves?)\s+#\K[0-9]+' || true)
+          if [[ -z "$ISSUES" ]]; then
+            echo "No linked issues found in PR #${PR_NUMBER}; skipping refresh."
+            exit 0
+          fi
+          for ISSUE in $ISSUES; do
+            # Only refresh if the issue is open and has ready-for-human label.
+            STATE=$(gh issue view "$ISSUE" --repo "$REPO" --json state,labels -q '.state + ":" + ([.labels[].name] | join(","))' 2>/dev/null || echo "")
+            if echo "$STATE" | grep -q "^OPEN:.*ready-for-human"; then
+              echo "Refreshing card for issue #${ISSUE}..."
+              node "$LAUNCHER" hitl-card refresh \
+                --issue "$ISSUE" \
+                --repo "$REPO" || true
+            fi
+          done
