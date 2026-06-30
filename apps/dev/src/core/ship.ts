@@ -107,3 +107,72 @@ export function issueNumberFromBranch(branch: string): number | undefined {
 export function isShipWorktreePath(path: string): boolean {
   return /(?:^|[/\\])\.red[/\\]tmp[/\\]work-ship-[^/\\]+(?:[/\\]|$)/.test(path);
 }
+
+// ---------- no-mistakes pre-PR pipeline: findings model ----------
+
+/**
+ * A single code-review finding from the pre-PR pipeline (review → test → docs → lint).
+ * Findings are classified as mechanical (safe auto-apply) or intent-changing (escalate).
+ */
+export interface PrePrFinding {
+  /** Category: lint, format, docs, logic, type, semantics. */
+  category: "lint" | "format" | "docs" | "logic" | "type" | "semantics";
+  /** Severity: low, medium, high. */
+  severity: "low" | "medium" | "high";
+  /** Repo-relative file path. */
+  file: string;
+  /** 1-indexed line number. */
+  line: number;
+  /** Human-readable description of the finding. */
+  message: string;
+  /** Suggested fix or action. */
+  suggestion: string;
+}
+
+/**
+ * True when a finding is mechanical (safe for automatic application).
+ * Mechanical findings: lint style/formatting, unused code, missing comments, docs.
+ * Intent findings (escalate): logic errors, type safety, semantics, API contracts.
+ */
+export function isPrePrFindingMechanical(finding: PrePrFinding): boolean {
+  // Mechanical categories: lint, format, docs (low-severity style/documentation)
+  if (finding.category === "lint" || finding.category === "format" || finding.category === "docs") {
+    return finding.severity === "low";
+  }
+  // Logic, type, semantics are always intent-changing (require human judgment)
+  return false;
+}
+
+/**
+ * Input to the pre-PR gate decision logic.
+ */
+export interface PrePrShipGateInput {
+  /** True when the feedback validation (test/typecheck/lint/build) passed. */
+  feedbackPassed: boolean;
+  /** True when any intent-changing findings are present. */
+  intentFindingsPresent: boolean;
+  /** True when any mechanical findings are present. */
+  mechanicalFindingsPresent: boolean;
+  /** True when the pre-PR pipeline time cap has expired. */
+  timedOut: boolean;
+}
+
+export type PrePrShipGateDecision = "auto-apply" | "escalate" | "push";
+
+/**
+ * Pure gate for the pre-PR pipeline in /ship (no-mistakes Track 2B).
+ *
+ * Rules:
+ * - If time cap exceeded, escalate.
+ * - If intent findings are present, escalate for human decision (approve/fix/skip).
+ * - If only mechanical findings (no intent findings), auto-apply them (even if feedback failed).
+ * - If no findings but feedback failed, escalate.
+ * - Otherwise (feedback passed, no findings), push.
+ */
+export function decidePrePrShipGate(input: PrePrShipGateInput): PrePrShipGateDecision {
+  if (input.timedOut) return "escalate";
+  if (input.intentFindingsPresent) return "escalate";
+  if (input.mechanicalFindingsPresent) return "auto-apply";
+  if (!input.feedbackPassed) return "escalate";
+  return "push";
+}

@@ -6,6 +6,9 @@ import {
   issueNumberFromBranch,
   normalizeRollupEntry,
   shipChecksAreGreen,
+  decidePrePrShipGate,
+  isPrePrFindingMechanical,
+  type PrePrFinding,
 } from "../src/core/ship.js";
 
 describe("decideShipMergeGate", () => {
@@ -137,5 +140,122 @@ describe("advisoryReviewPending (#589 — /ship waits for in-flight advisory bot
 
   it("matches the check by case-insensitive substring", () => {
     expect(advisoryReviewPending([{ name: "coderabbitai[bot]", state: "PENDING" }], "coderabbit")).toBe(true);
+  });
+});
+
+describe("no-mistakes pre-PR pipeline (#913 — findings classification)", () => {
+  it("classifies mechanical findings (infra, style, format)", () => {
+    // Mechanical findings: code-review suggestions for obvious style, format, or lint fixes
+    // that do not change intent or introduce risk
+    expect(isPrePrFindingMechanical({
+      category: "lint",
+      severity: "low",
+      file: "src/foo.ts",
+      line: 10,
+      message: "unused variable",
+      suggestion: "remove the variable",
+    })).toBe(true);
+
+    expect(isPrePrFindingMechanical({
+      category: "format",
+      severity: "low",
+      file: "src/foo.ts",
+      line: 15,
+      message: "trailing whitespace",
+      suggestion: "remove whitespace",
+    })).toBe(true);
+
+    expect(isPrePrFindingMechanical({
+      category: "docs",
+      severity: "low",
+      file: "src/foo.ts",
+      line: 20,
+      message: "missing JSDoc",
+      suggestion: "add JSDoc comment",
+    })).toBe(true);
+  });
+
+  it("escalates intent-changing findings (logic, type safety, semantics)", () => {
+    // Intent findings: changes that affect behavior, type safety, or require semantic judgment
+    expect(isPrePrFindingMechanical({
+      category: "logic",
+      severity: "high",
+      file: "src/foo.ts",
+      line: 10,
+      message: "potential null dereference",
+      suggestion: "add null check",
+    })).toBe(false);
+
+    expect(isPrePrFindingMechanical({
+      category: "type",
+      severity: "medium",
+      file: "src/foo.ts",
+      line: 15,
+      message: "implicit any",
+      suggestion: "add type annotation",
+    })).toBe(false);
+
+    expect(isPrePrFindingMechanical({
+      category: "semantics",
+      severity: "high",
+      file: "src/foo.ts",
+      line: 20,
+      message: "API contract violation",
+      suggestion: "adjust parameter",
+    })).toBe(false);
+  });
+
+  it("the pre-PR gate rejects push when intent findings are present", () => {
+    const gateInput = {
+      feedbackPassed: false,
+      intentFindingsPresent: true,
+      mechanicalFindingsPresent: true,
+      timedOut: false,
+    };
+    // When intent findings are present, /ship must escalate to human approval
+    expect(decidePrePrShipGate(gateInput)).toBe("escalate");
+  });
+
+  it("the pre-PR gate auto-applies mechanical findings when no intent findings", () => {
+    const gateInput = {
+      feedbackPassed: false,
+      intentFindingsPresent: false,
+      mechanicalFindingsPresent: true,
+      timedOut: false,
+    };
+    // When only mechanical findings, /ship auto-applies them
+    expect(decidePrePrShipGate(gateInput)).toBe("auto-apply");
+  });
+
+  it("the pre-PR gate pushes when feedback is green and no intent findings", () => {
+    const gateInput = {
+      feedbackPassed: true,
+      intentFindingsPresent: false,
+      mechanicalFindingsPresent: false,
+      timedOut: false,
+    };
+    // Clean feedback and no findings → proceed to push
+    expect(decidePrePrShipGate(gateInput)).toBe("push");
+  });
+
+  it("the pre-PR gate escalates when feedback fails (semantic)", () => {
+    const gateInput = {
+      feedbackPassed: false,
+      intentFindingsPresent: false,
+      mechanicalFindingsPresent: false,
+      timedOut: false,
+    };
+    // Feedback failure means semantic issues → escalate
+    expect(decidePrePrShipGate(gateInput)).toBe("escalate");
+  });
+
+  it("the pre-PR gate escalates when time cap is exceeded", () => {
+    const gateInput = {
+      feedbackPassed: true,
+      intentFindingsPresent: false,
+      mechanicalFindingsPresent: false,
+      timedOut: true,
+    };
+    expect(decidePrePrShipGate(gateInput)).toBe("escalate");
   });
 });
