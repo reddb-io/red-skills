@@ -6,7 +6,15 @@ Upstream base: `mattpocock/skills@6eeb81b5fcfeeb5bd531dd47ab2f9f2bbea27461` (see
 
 ---
 
-## afk (engineering) — Task mirror host capability matrix codified (issue #886)
+## ground-truth (engineering) — Adversarial verification ground-truth, snapshot-before-claiming-success (issue #915)
+
+- **status**: added
+- **upstream**: —
+- **why**: Absorbs the transferable discipline behind `chrome-devtools-axi` per the maintainer steer on #915 — the value is **adversarial / self-verification**, not browser automation per se. A verifier must check its claim against a fresh snapshot / ground-truth read before reporting success (chrome-devtools-axi's "verify state-changing actions with a fresh snapshot" + a11y-tree + stale-ref validation). The browser is the vehicle; the **claim → fresh-ground-truth → confirm** loop is the absorbed idea, applied as the evidence standard for `/verify`, `/code-review`, and the frontend skills.
+- **what changed**:
+  - added `plugins/dev/skills/engineering/ground-truth/SKILL.md`: the `claim → fresh ground-truth → confirm` loop, stale-ref validation anti-hallucination guard, integration hooks into `/verify` / `/code-review` / frontend skills, the chrome-devtools-axi browser vehicle (a11y-tree numbered refs, combined navigate+capture+suggest, persistent bridge, ~57%-cheaper TOON output), and a table generalizing the loop to DB/file/API/test/review ground truths
+  - registered in `plugins/dev/.claude-plugin/plugin.json` (the `.codex-plugin/plugin.json` picks it up via its `./skills/engineering/` wildcard)
+  - listed in the root `README.md` table and the `engineering/README.md` bucket index
 
 - **status**: modified
 - **upstream**: —
