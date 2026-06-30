@@ -49,6 +49,10 @@ export interface CompactState {
   runner: string;
   /** Worker-process start; the elapsed fallback when current.started_at is "". */
   started_at: string;
+  /** Spawn-time provenance from `state.origin` (e.g. `"afk"` | `"go"`).
+   * Absent / `""` means unknown (pre-field or origin flag not passed). The
+   * dashboard header aggregates non-empty values into per-source counts. */
+  origin?: string;
   total: number;
   done: number;
   blocked: number;
@@ -292,11 +296,25 @@ export function renderCompactDashboard(
 ): string {
   let added = 0;
   let removed = 0;
+  // Per-source counts: aggregate state.origin from all workers (not just live
+  // ones — liveness filtering happens at the collection layer). Only non-empty
+  // origins are counted; both surfaces read from the same state.origin field.
+  const sourceMap = new Map<string, number>();
   for (const w of workers) {
     added += w.diffAdded ?? 0;
     removed += w.diffRemoved ?? 0;
+    const origin = w.state.origin;
+    if (origin) sourceMap.set(origin, (sourceMap.get(origin) ?? 0) + 1);
   }
-  const header = `${buildSparkline(events, now).line}   Δ fleet ${formatDiff(added, removed)}`;
+  const sourceFrag =
+    sourceMap.size > 0
+      ? "  " +
+        [...sourceMap.entries()]
+          .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+          .map(([o, c]) => `${o}=${c}`)
+          .join(" ")
+      : "";
+  const header = `${buildSparkline(events, now).line}   Δ fleet ${formatDiff(added, removed)}${sourceFrag}`;
   let prefix: string;
   if (fleet) {
     const fleetLine = renderFleetLine(fleet, now);
