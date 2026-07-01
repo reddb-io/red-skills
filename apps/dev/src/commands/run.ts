@@ -120,6 +120,11 @@ interface ParsedRunFlags {
   localMerge: boolean;
   /** --yolo: the opt-in autonomy bump (`/go +yolo`, issue #923). */
   yolo: boolean;
+  /** --run-mode <mode>: execution mode modifier forwarded to `processIssue`.
+   * `"scout"` activates the read-only investigation path — no commits, no push,
+   * no PR, no merge; the agent report is posted as a comment and the disposable
+   * issue closes. Additional modes may be added by future dispatch tiers. */
+  runMode?: string;
 }
 
 /** Raised when --alternate is combined with --runner (mutually exclusive). */
@@ -176,6 +181,7 @@ const RUN_FLAG_SCHEMA = {
   "pre-pr": { kind: "boolean" },
   "local-merge": { kind: "boolean" },
   yolo: { kind: "boolean" },
+  "run-mode": { kind: "value", coerce: (raw: string): string => raw },
 } satisfies FlagSchema;
 
 /** Parse the `run` flags: --prd N / --issues a,b,c / -n N / --once / --request / --runner. */
@@ -229,6 +235,7 @@ export function parseRunFlags(args: readonly string[]): ParsedRunFlags {
     prePr: values["pre-pr"] === true,
     localMerge: values["local-merge"] === true,
     yolo: values.yolo === true,
+    runMode: values["run-mode"] as string | undefined,
   };
 }
 
@@ -1488,6 +1495,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
         repoDir: c.issueTemplate.repoDir,
         remote: c.issueTemplate.remote,
         baseInput: { issueBody: candidate.body },
+        runMode: flags.runMode,
       };
     },
     emit: (line: string) => process.stdout.write(`${line}\n`),

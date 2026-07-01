@@ -8,6 +8,7 @@ describe("parseGoArgs", () => {
       runner: undefined,
       mode: "direct-PR",
       yolo: false,
+      scout: false,
     });
   });
 

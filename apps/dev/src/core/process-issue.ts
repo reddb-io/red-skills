@@ -27,7 +27,7 @@ import {
   slugifyRef,
   type GitExec,
 } from "./remote-branch.js";
-import { buildHandoff, EXIT_PROTOCOL, type HandoffComment } from "./handoff.js";
+import { buildHandoff, EXIT_PROTOCOL, SCOUT_EXIT_PROTOCOL, type HandoffComment } from "./handoff.js";
 import { evaluateGoalPredicate } from "./goal-predicate.js";
 import {
   type AgentOutcome,
@@ -483,6 +483,11 @@ export interface ProcessIssueInput {
   baseInput: ResolveBaseInput;
   /** Optional PRD reference for the handoff `prd:` line. */
   prdRef?: string;
+  /** Execution mode modifier: `"scout"` activates the read-only investigation
+   * path — agent runs without committing, no push / PR / landing; report is
+   * posted as a comment and the disposable issue closes. Forwarded from the
+   * `--run-mode` flag by `run.ts`/`buildProcessInput`. */
+  runMode?: string;
 }
 
 // ---------- result ----------
@@ -951,6 +956,16 @@ export async function processIssue(
   let salvagedUncommittedFiles = 0;
   let salvagedUncommittedOutcome: RunAgentResult["outcome"] | undefined;
   let salvagedRunCommitCount = 0;
+  // Scout mode: collect the agent's text-chunk events as the report. The
+  // orchestrator posts this as a GitHub comment instead of pushing a branch.
+  const scoutTextChunks: string[] = [];
+  const agentEventSink: typeof deps.recordAgentEvent =
+    input.runMode === "scout"
+      ? (event: AgentStreamEvent) => {
+          if (event.type === "text") scoutTextChunks.push(event.message);
+          deps.recordAgentEvent?.(event);
+        }
+      : deps.recordAgentEvent;
   const salvagedUncommittedNotes = (gate: "feedback" | "backpressure"): string => {
     const prefix =
       salvagedRunCommitCount === 0
@@ -976,7 +991,7 @@ export async function processIssue(
       effort: initialTier.effort,
       handoffPath,
       handoffContent: handoff,
-      systemPrompt: EXIT_PROTOCOL,
+      systemPrompt: input.runMode === "scout" ? SCOUT_EXIT_PROTOCOL : EXIT_PROTOCOL,
       branch,
       base: baseRef,
       cwd: input.attemptDir,
@@ -989,7 +1004,7 @@ export async function processIssue(
       // still get every stream event via `onAgentEvent`; the plaintext `[agent]`
       // mirror is dropped (run.ts) so agent turns are not doubled in afk.log.
       logPath: `${input.attemptDir}/afk.log`,
-      onAgentEvent: deps.recordAgentEvent,
+      onAgentEvent: agentEventSink,
       // Externalized proof-of-life (PR-B): the attempt-guard poll fires this each
       // tick. processIssue owns the hook dispatcher, so it fires the `on_heartbeat`
       // user hook here (fire-and-forget) AND forwards the progress signal to the
@@ -1016,7 +1031,9 @@ export async function processIssue(
       // worker branch up-front + after every commit (host worktree hook), so a
       // SIGKILL mid-iteration preserves the diff on origin. Best-effort.
       remote: input.remote,
-      continuousPush: true,
+      // Scout mode disables continuous push: the branch must never reach the
+      // remote. `pushAttempt` is also skipped in the scout short-circuit below.
+      continuousPush: input.runMode !== "scout",
       // Goal predicate (ADR 0057): rides the attempt-guard poll — one issue-state
       // read per tick. A CLOSED claimed issue moots the attempt (the 2026-06-09
       // re-verify incident). issueClosed resolves false on a gh failure, so an
@@ -1098,14 +1115,14 @@ export async function processIssue(
         effort: fallbackTier.effort,
         handoffPath,
         handoffContent: handoff,
-        systemPrompt: EXIT_PROTOCOL,
+        systemPrompt: input.runMode === "scout" ? SCOUT_EXIT_PROTOCOL : EXIT_PROTOCOL,
         branch,
         base,
         cwd: input.attemptDir,
         logPath: `${input.attemptDir}/afk.log`,
-        onAgentEvent: deps.recordAgentEvent,
+        onAgentEvent: agentEventSink,
         remote: input.remote,
-        continuousPush: true,
+        continuousPush: input.runMode !== "scout",
         // Goal predicate rides the fallback attempt's guard poll too (ADR 0057).
         goalProbe: () => deps.gh.issueClosed(issue),
         // FIX J: carry the pre_worktree env onto the fallback runner too.
@@ -1350,6 +1367,26 @@ export async function processIssue(
         });
       }
       // run.outcome === "done" → fall through to the shared land + close tail.
+    }
+
+    // ---- Scout mode: read-only terminal path ----
+    // The agent emitted DONE (or was salvaged) in read-only mode. Instead of
+    // the push / feedback / landing pipeline, post the collected text-chunk
+    // output as a report comment and close the disposable issue. No branch is
+    // ever pushed to the remote; the worktree was ephemeral.
+    if (input.runMode === "scout") {
+      const report = scoutTextChunks.join("").trim() ||
+        "_Scout completed without output. Check the attempt log for details._";
+      await deps.gh.comment(issue, `## 🔍 Scout Report\n\n${report}`);
+      await deps.gh.close(issue);
+      await deps.claimLock.release(issue);
+      return {
+        outcome: "done",
+        issue,
+        hooksFired,
+        preserved: false,
+        swept: false,
+      };
     }
 
     // run.outcome === "done" OR a salvaged no-sentinel branch: shared feedback +
