@@ -33,7 +33,7 @@ Every CLI whose primary reader is an agent is designed against these ten princip
 9. **Contextual disclosure** — end each output with a next-step suggestion ("run `X` to …") so the agent needs one fewer guess.
 10. **Consistent way to get help** — a concise per-subcommand reference reachable the same way everywhere.
 
-**These are targets, not a lint.** A surface adopts them incrementally, slice by slice, measured (Decision 4). A CLI is not rejected for missing one; it is scheduled to close the gap.
+**These are targets, not a lint.** A surface adopts them incrementally, slice by slice, measured (Decision 4). A CLI is not rejected for missing one; it is scheduled to close the gap. The [AXI + TOON doctrine doc](../contexts/dev/axi-toon-doctrine.md) restates these ten as a copy-ready checklist for CLI authors.
 
 ### 2. TOON is the output format for list and tabular data
 
@@ -64,6 +64,8 @@ workers[2]{id,issue,state}:
 - **Do not force TOON onto** a single scalar, a one-off nested config object, or free-form prose. TOON's win is tabular; a lone object gains nothing and reads worse. JSON (or plain text) stays correct there.
 - **Human-facing rendering is unaffected.** A CLI may still render a pretty table for a human; the doctrine governs the *agent-facing* serialization path. A `--json` escape hatch stays available for consumers that need raw JSON.
 
+The [doctrine doc](../contexts/dev/axi-toon-doctrine.md) records the concrete TOON line format (delimiters, summary line, human-readability rules) and a TOON-vs-JSON-vs-prose contrast table.
+
 ### 3. Adoption order — the noisiest agent-facing surfaces first
 
 Surfaces adopt AXI + TOON in this order, chosen by how much an agent reads them and how noisy they are today:
@@ -87,7 +89,7 @@ The measurement is a first-class deliverable of the rollout, reported per slice,
 
 ## Consequences
 
-- **New agent-facing CLIs start AXI-shaped.** The ten principles are the checklist a new surface is designed against, not a retrofit. `/write-a-skill` and CLI authorship reference this ADR.
+- **New agent-facing CLIs start AXI-shaped.** The ten principles are the checklist a new surface is designed against, not a retrofit. `/write-a-skill` and CLI authorship reference this ADR and the [doctrine doc](../contexts/dev/axi-toon-doctrine.md).
 - **Existing surfaces converge incrementally.** `monitor` → `dashboard` → `daily-review` → `statusline`, one measured slice at a time (first = #918). No big-bang rewrite; no surface is blocked on the others.
 - **Output shrinks at the source, not only at the proxy.** RTK stays the safety net for output RedSkills does not control (raw `git`, `gh`, `vitest`, `tsc`); AXI removes the need for it on RedSkills' own CLIs. The two do not conflict — a TOON-emitting monitor piped through RTK simply has less left to compress.
 - **Fewer round-trips.** Pre-computed aggregates, definitive empty states, and contextual next-step suggestions each remove a follow-up call the agent would otherwise make — a saving larger than the byte-level TOON win on interactive flows.
@@ -98,6 +100,7 @@ The measurement is a first-class deliverable of the rollout, reported per slice,
 
 - PRD #907 — the parent program that scopes AXI + TOON adoption (Track 1C/F); this ADR is its design-time decision record.
 - Issue #918 — the first application slice (`monitor` → TOON).
+- [AXI + TOON doctrine doc](../contexts/dev/axi-toon-doctrine.md) — the CLI-author-facing checklist, TOON line-format rules, and the TOON-vs-JSON-vs-prose contrast table that this ADR mandates.
 - ADR 0065 — AFK WorkerVitals canonical vocabulary; the `monitor`/`statusline` fields this doctrine serializes read that vocabulary, so minimal-schema selection draws from it.
 - ADR 0053 — provider-tidy is report-only governance; a sibling "measure before you assert" posture (report the delta, do not claim it).
 - `RTK.md` (global) — the after-the-fact compression proxy whose empirical win motivates the design-time spec; AXI is the upstream complement, not a replacement.
