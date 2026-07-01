@@ -56,6 +56,17 @@ export interface HandoffInput {
    * first-attempt handoff is byte-for-byte unchanged.
    */
   priorAttemptContext?: string;
+  /**
+   * The unified self-repair loop's explicit repair instruction for THIS attempt
+   * (#940). When the prior iteration failed with an invalid structured output, a
+   * commit-fail, or a gate-reject — but stayed under the three-strike threshold —
+   * `core/self-repair.ts` seeds the next iteration with an exact "here is what to
+   * fix, your prior work is preserved on the branch" directive. Surfaced verbatim
+   * in a `<repair-instructions>` section so the agent repairs in place instead of
+   * restarting. Empty/undefined → the section is omitted (first attempt, or a
+   * prior success), so the handoff is byte-for-byte unchanged.
+   */
+  repairInstruction?: string;
   /** Optional PRD reference for the `prd: #N` line (FILTER_KIND=prd in bash). */
   prdRef?: string;
   /**
@@ -291,6 +302,14 @@ export function buildHandoff(input: HandoffInput): string {
   const guidance = buildHumanGuidance(input.comments);
   const discussion = buildThreadDiscussion(input.comments);
   const priorCtx = input.priorAttemptContext ?? "";
+  const repairInstruction = input.repairInstruction ?? "";
+
+  if (isPresent(repairInstruction)) {
+    lines.push("");
+    lines.push("<repair-instructions>");
+    lines.push(repairInstruction);
+    lines.push("</repair-instructions>");
+  }
 
   if (isPresent(attempts)) {
     lines.push("");
@@ -352,7 +371,6 @@ export const EXIT_PROTOCOL = [
   "2. Otherwise implement the slice: failing test first, minimal code, one commit per file (`git add -- <path>` then commit; never `git add -A`), `Refs #N` in each message. Before DONE, run `git status --short`; if it is not clean, commit the remaining changed paths instead of emitting DONE.",
   "3. Two kinds of check, do not confuse them: (a) touched-package CONFIDENCE checks — the test/typecheck/lint/build for the package you changed — run these while developing to gain confidence; (b) the BINDING merge gate the orchestrator enforces AFTER you emit DONE. If your handoff carries a `<merge-gate>` section, those operator-declared commands ARE the binding gate (broader than your touched package): run them and make them pass before DONE. When your work is committed and both are green, STOP. Do not open a PR, merge, close the issue, or poll CI — the orchestrator owns landing. Do NOT re-run an unbounded full repository suite after your final commit; the listed gate commands are the contract.",
   "4. Your FINAL line MUST be exactly `<promise>DONE</promise>` (work complete) or `<promise>BLOCKED</promise>` (genuinely impossible/contradictory — explain in `<agent-notes>` first). A prose \"done\" is NOT a sentinel: an exit without the literal tag is read as a CRASH and re-invokes you, burning iterations. One of the two tags is always your last line.",
-  "5. Immediately BEFORE that final `<promise>` line, emit a machine-readable completion block — this is the authoritative signal the orchestrator reads (ADR 0082), and it cures the class where a forgotten sentinel strands finished work. On its own lines write `<agent-output>`, then a single JSON object, then `</agent-output>`, where the JSON is `{\"success\": <bool>, \"summary\": \"<one paragraph>\", \"key_changes_made\": [<strings>], \"key_learnings\": [<strings>], \"should_fully_stop\": <bool>}`. `success: true` means the work is complete (equivalent to DONE); `success: false` means blocked (equivalent to BLOCKED). The orchestrator trusts this block over the sentinel and falls back to the `<promise>` line only when the block is absent or malformed — so emit valid JSON. Keep the `<promise>` line as the very last line regardless.",
   "</exit-protocol>",
 ].join("\n");
 
