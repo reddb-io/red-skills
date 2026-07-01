@@ -5,6 +5,7 @@ import {
   buildContinuousPushHook,
   interpretOutcome,
   interpretCompletion,
+  enforceStructuredOutput,
   isExhaustionError,
   isTransientRunnerError,
   runAgent,
@@ -59,11 +60,18 @@ const baseInput: RunAgentInput = {
   branch: "afk/wZ2R4/42-fix-oauth",
 };
 
+// A valid AgentOutput block (ADR 0082, #932). baseInput's runner is claude,
+// which is schema-enabled, so a `done` outcome is only honoured when stdout
+// carries a valid <agent-output> — embed it in the default fakeResult stdout so
+// the DONE-path tests reflect the structured-output contract.
+const VALID_AGENT_OUTPUT =
+  '<agent-output>{"success":true,"summary":"did the work","key_changes_made":["x"],"key_learnings":["y"],"should_fully_stop":false}</agent-output>';
+
 function fakeResult(over: Partial<RunResult> = {}): RunResult {
   return {
     iterations: [],
     completionSignal: DONE_SIGNAL,
-    stdout: "ok",
+    stdout: `ok\n${VALID_AGENT_OUTPUT}`,
     commits: [{ sha: "abc1234" }],
     branch: "afk/wZ2R4/42-fix-oauth",
     ...over,
@@ -105,6 +113,34 @@ describe("interpretCompletion (ADR 0082 — structured wins, sentinel fallback)"
     expect(interpretCompletion(undefined, DONE_SIGNAL)).toBe("done");
     expect(interpretCompletion(undefined, BLOCKED_SIGNAL)).toBe("blocked");
     expect(interpretCompletion(undefined, undefined)).toBe("no-sentinel");
+  });
+});
+
+describe("enforceStructuredOutput (ADR 0082, #932)", () => {
+  it("keeps a claude DONE that carries a valid AgentOutput", () => {
+    const r = enforceStructuredOutput("claude", "done", `log\n${VALID_AGENT_OUTPUT}`);
+    expect(r).toEqual({ outcome: "done" });
+  });
+
+  it("downgrades a claude DONE with a missing AgentOutput to no-sentinel", () => {
+    const r = enforceStructuredOutput("claude", "done", "just prose, no tag");
+    expect(r.outcome).toBe("no-sentinel");
+    expect(r.rejectedReason).toBe("missing");
+  });
+
+  it("downgrades a claude DONE with a schema-invalid AgentOutput", () => {
+    const r = enforceStructuredOutput("claude", "done", '<agent-output>{"success":true}</agent-output>');
+    expect(r.outcome).toBe("no-sentinel");
+    expect(r.rejectedReason).toContain("schema");
+  });
+
+  it("does NOT gate a non-schema runner (codex keeps the text sentinel)", () => {
+    expect(enforceStructuredOutput("codex", "done", "no tag here")).toEqual({ outcome: "done" });
+  });
+
+  it("only gates the done outcome — blocked / no-sentinel pass through untouched", () => {
+    expect(enforceStructuredOutput("claude", "blocked", "no tag")).toEqual({ outcome: "blocked" });
+    expect(enforceStructuredOutput("claude", "no-sentinel", "no tag")).toEqual({ outcome: "no-sentinel" });
   });
 });
 
@@ -375,7 +411,7 @@ describe("runAgent", () => {
       branch: "afk/wZ2R4/42-fix-oauth",
       commits: [{ sha: "abc1234" }],
       completionSignal: DONE_SIGNAL,
-      stdout: "ok",
+      stdout: `ok\n${VALID_AGENT_OUTPUT}`,
     });
   });
 
@@ -786,6 +822,26 @@ describe("runAgent — FIX J env application", () => {
   it("is a no-op when no env is supplied", async () => {
     // Just proves the empty-env path does not throw.
     const r = await runAgent(makeDeps(async () => fakeResult()), baseInput);
+    expect(r.outcome).toBe("done");
+  });
+});
+
+describe("runAgent — structured-output gate (ADR 0082, #932)", () => {
+  it("downgrades a claude DONE that lacks a valid AgentOutput to no-sentinel", async () => {
+    const warnings: string[] = [];
+    const deps = { ...makeDeps(async () => fakeResult({ stdout: "worked but no schema block" })), warn: (m: string) => warnings.push(m) };
+    const r = await runAgent(deps, baseInput);
+    expect(r.outcome).toBe("no-sentinel");
+    expect(r.completionSignal).toBe(DONE_SIGNAL);
+    expect(warnings.some((w) => w.includes("AgentOutput"))).toBe(true);
+  });
+
+  it("honours a codex DONE with no AgentOutput (non-schema runner keeps the sentinel)", async () => {
+    const r = await runAgent(makeDeps(async () => fakeResult({ stdout: "no schema block" })), {
+      ...baseInput,
+      runner: "codex",
+      model: "gpt-5.4",
+    });
     expect(r.outcome).toBe("done");
   });
 });
