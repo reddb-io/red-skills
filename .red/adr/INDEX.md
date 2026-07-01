@@ -46,7 +46,8 @@ stale notes inline.
 - **0015** Fleet supervisor is runner-portable; observability degrades per runner
 - **0017** AFK records Reasoning attempts into Memory Graph best-effort
 - **0026** AFK exposes lifecycle hooks as shell interceptors — extended by **0045** with the periodic `on_heartbeat` hook
-- **0028** `<promise>` sentinel is the canonical agent-authored attempt-exit signal — runtime-initiated exits are mapped by **0044** (`timeout`) and **0047** (no-sentinel salvage)
+- **0028** `<promise>` sentinel is the canonical agent-authored attempt-exit signal — runtime-initiated exits are mapped by **0044** (`timeout`) and **0047** (no-sentinel salvage); *augmented by **0082** (structured `AgentOutput` completion channel coexists with the sentinel)*
+- **0082** Structured-output completion contract — a validated `AgentOutput {success, summary, key_changes_made[], key_learnings[], should_fully_stop}` schema, enforced per runner at the API layer (`--json-schema` claude, `--output-schema` codex, JSON mode openai/minimax, embedded schema ACP), coexists with the `<promise>` sentinel (both channels active during rollout; structured wins on precedence). Root-cause fix for the `no-sentinel` / DONE-without-commit / #788-never-emitted-DONE class; `RunOptions.outputSchema` optional + `interpretOutcome` additive, no breaking change. Rollout claude→codex→others *(augments 0028; retires the primary need for 0047/0050 on adopting runners; lands via 0061 two-repo flow; design-only, impl #932; PRD #907)*
 - **0030** AFK landing is lock-toggled; the PR carries the history
 - **0031** Branch-lock value drives AFK base/merge; enforcement stays agent-only
 - **0033** AFK agent execution runs on a sandcastle-shaped substrate *(refined by 0061: the substrate is the vendored `@reddb-io/red-castle` submodule)*
