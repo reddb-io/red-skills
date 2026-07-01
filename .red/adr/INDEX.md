@@ -113,6 +113,9 @@ stale notes inline.
 - **0014** Memory owns skill telemetry and report-only curation — runtime stays in `apps/memory` (0041 split reversed 2026-06-20); ownership/report-only boundary stands
 - **0016** `dev` owns the mutating Skill curator — post-0041 it consumes report-only curator output through `red-memory` MCP, not an in-repo `memory` CLI
 
+## Agent-facing CLI ergonomics
+- **0082** AXI + TOON is the doctrine for every agent-facing CLI — the 10 AXI ("Agent eXperience Interface") design-time principles + TOON output (~40% fewer tokens than JSON) as the RedSkills standard for `monitor`/`dashboard`/`daily-review`/`statusline`/dev bundle CLIs; complements RTK's after-the-fact compression with a design-time spec (cheap at the source); adoption order `monitor`→`dashboard`→`daily-review`→`statusline` (first slice #918), measurement = 3 noisiest outputs TOONified + token delta reported *(implements PRD #907 Track 1C/F; reads 0065 WorkerVitals vocabulary; report-the-delta posture akin to 0053)*
+
 ## Licensing
 - **0004** Relicense red-skills to Apache-2.0 with a NOTICE for upstream MIT
 - *(see also 0057 — MIT attribution for the fetched `red-hermes` brain dependency)*
