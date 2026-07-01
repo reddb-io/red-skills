@@ -292,6 +292,17 @@ function makeBootReconcileRunner(
         return ok ? dest : null;
       },
       removeLandingWorktree: (dir: string) => gitx.worktreeRemove(gitCtx, dir),
+      // Isolated worker-branch worktree for the PR path's pre-merge rebase (#1006):
+      // fetch base + rebase the branch + force-push run here, never the primary.
+      makeRebaseWorktree: async (branch: string) => {
+        const slot = parseSlot(process.env.RED_AFK_SLOT) ?? 0;
+        const slug = branch.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "branch";
+        const dest = join(paths.tmpDir, "rebase", `${slug}-boot-${slot}`);
+        await gitx.worktreeRemove(gitCtx, dest);
+        const ok = await gitx.worktreeAdd(gitCtx, dest, branch);
+        return ok ? dest : null;
+      },
+      removeRebaseWorktree: (dir: string) => gitx.worktreeRemove(gitCtx, dir),
       envelope: {
         git: gitx.gitExec(gitCtx),
         poster: async (issue, body) => {
@@ -686,6 +697,17 @@ export function buildProcessDeps(
       return ok ? dest : null;
     },
     removeLandingWorktree: (dir: string) => gitx.worktreeRemove(gitCtx, dir),
+    // Isolated worker-branch worktree for the PR path's pre-merge rebase (#1006):
+    // fetch base + rebase the branch + force-push run here, never the primary.
+    makeRebaseWorktree: async (branch: string) => {
+      const slot = parseSlot(process.env.RED_AFK_SLOT) ?? 0;
+      const slug = branch.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "branch";
+      const dest = join(paths.tmpDir, "rebase", `${slug}-${slot}`);
+      await gitx.worktreeRemove(gitCtx, dest);
+      const ok = await gitx.worktreeAdd(gitCtx, dest, branch);
+      return ok ? dest : null;
+    },
+    removeRebaseWorktree: (dir: string) => gitx.worktreeRemove(gitCtx, dir),
     hooks: {
       config,
       resolveOptions,
