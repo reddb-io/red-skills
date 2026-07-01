@@ -176,3 +176,100 @@ export function decidePrePrShipGate(input: PrePrShipGateInput): PrePrShipGateDec
   if (!input.feedbackPassed) return "escalate";
   return "push";
 }
+
+// ---------- Track 2B: ordered pipeline + mechanical/intentional fix split ----------
+
+/**
+ * The seven /ship pipeline stages, in mandatory execution order. Each stage must
+ * pass before the next runs; a failure at stage N stops the pipeline at N.
+ *
+ * 1. review — scan the diff for obvious issues
+ * 2. test   — run the full test suite
+ * 3. docs   — verify public API / SKILL.md changes are documented
+ * 4. lint   — run linter / typecheck
+ * 5. push   — push branch to remote
+ * 6. pr     — open or reuse the PR
+ * 7. ci     — wait for CI to pass
+ */
+export const SHIP_PIPELINE_STAGES = [
+  "review",
+  "test",
+  "docs",
+  "lint",
+  "push",
+  "pr",
+  "ci",
+] as const;
+
+export type ShipPipelineStage = (typeof SHIP_PIPELINE_STAGES)[number];
+
+/** Outcome of a single pipeline stage. `reason` explains a failure (or absence). */
+export interface ShipStageOutcome {
+  passed: boolean;
+  reason?: string;
+}
+
+export type ShipPipelineResult =
+  | { status: "passed"; failedStage: null }
+  | { status: "failed"; failedStage: ShipPipelineStage; stageIndex: number; reason: string };
+
+/**
+ * Run the ordered /ship pipeline over per-stage outcomes and return the first
+ * failure (or `passed` when all seven stages are green).
+ *
+ * Evaluation always follows {@link SHIP_PIPELINE_STAGES} order regardless of the
+ * input map's key order, so "stage N must pass before N+1 runs" is enforced
+ * structurally: the first stage that is missing or `passed: false` stops the
+ * pipeline and is reported with its name, zero-based index, and reason. A stage
+ * with no outcome counts as not-run (the pipeline never reached it), which is a
+ * failure at that stage — callers therefore need only provide outcomes up to and
+ * including the first failure.
+ */
+export function runShipPipeline(
+  stages: Partial<Record<ShipPipelineStage, ShipStageOutcome>>,
+): ShipPipelineResult {
+  for (let index = 0; index < SHIP_PIPELINE_STAGES.length; index++) {
+    const stage = SHIP_PIPELINE_STAGES[index]!;
+    const outcome = stages[stage];
+    if (!outcome || !outcome.passed) {
+      return {
+        status: "failed",
+        failedStage: stage,
+        stageIndex: index,
+        reason: outcome?.reason ?? `stage "${stage}" did not run`,
+      };
+    }
+  }
+  return { status: "passed", failedStage: null };
+}
+
+/**
+ * The two fix classes every proposed fix is labelled with before it is applied.
+ * Maps to the existing INFRA/SEMANTIC distinction:
+ * - `mechanical` — cannot change behaviour (formatting, import sort, unused
+ *   variable, trailing whitespace). Auto-applied silently.
+ * - `intentional` — changes a public symbol, contract, or observable behaviour.
+ *   Escalated to the user; never applied silently.
+ */
+export type FixClass = "mechanical" | "intentional";
+
+/**
+ * Label a proposed fix `mechanical` or `intentional`. A fix that cannot be
+ * classified as mechanical with confidence is treated as `intentional` — the
+ * safe default inherited from {@link isPrePrFindingMechanical}, which only
+ * returns `true` for low-severity lint/format/docs findings.
+ */
+export function classifyFix(finding: PrePrFinding): FixClass {
+  return isPrePrFindingMechanical(finding) ? "mechanical" : "intentional";
+}
+
+export type FixApplication = "auto-apply" | "escalate";
+
+/**
+ * Decide how a labelled fix is applied: `mechanical` fixes are auto-applied
+ * silently; `intentional` fixes are escalated to the user (park
+ * `ready-for-human` or prompt interactively) and never silently applied.
+ */
+export function decideFixApplication(finding: PrePrFinding): FixApplication {
+  return classifyFix(finding) === "mechanical" ? "auto-apply" : "escalate";
+}
