@@ -70,6 +70,14 @@ import {
 } from "./attempt-outcome.js";
 import { resolveHooks, type ResolveHooksOptions, type ResolvedHooks, type HookName } from "./hook-config.js";
 import { formatStartedMarker } from "./heartbeat.js";
+import {
+  deriveNoteEntry,
+  injectNotesIntoHandoff,
+  isNotesLoopContinuable,
+  renderNotes,
+  type NoteEntry,
+  type NotesLoopConfig,
+} from "./notes-loop.js";
 import { parseReqLabels, planCloseCascade, type DependentIssue } from "./boot-sweep.js";
 import { buildAttemptRecordPayload, type AttemptRecordPayload } from "./attempt-record.js";
 import { acquireClaim, type ClaimGh, type ClaimReconcileOptions } from "./claim.js";
@@ -147,6 +155,15 @@ export interface ProcessFs {
    * to "do not write it".
    */
   writeValidationSidecar?(path: string, lines: string[]): Promise<void>;
+  /**
+   * Write the notes-loop `notes.md` (Track C, #997) into the attempt dir — the
+   * accumulated summary of prior short iterations. Lives at the attempt dir
+   * (sibling of the sandcastle worktree), NEVER inside the worktree and never
+   * committed to the branch (`.red/tmp/` is gitignored). Best-effort: the caller
+   * swallows a write failure so it never fails the loop. Optional so callers/tests
+   * that never enable the notes-loop degrade to "do not write it".
+   */
+  writeNotes?(path: string, content: string): Promise<void>;
   /** Remove every attempt dir for a completed issue (completion_sweep_issue). */
   completionSweep(issue: number): Promise<string[]>;
 }
@@ -424,6 +441,28 @@ export interface ProcessIssueDeps {
    * legacy callers omit it (no salvage).
    */
   salvageUncommitted?(branch: string): Promise<number>;
+  /**
+   * Notes-loop config (Track C, #997). When `enabled`, processIssue wraps its
+   * single `runAgent` call in an OUTER loop of short, notes-seeded invocations
+   * (see {@link runNotesLoop}). Absent or `enabled:false` (the default) →
+   * processIssue performs EXACTLY ONE `runAgent` call, byte-for-byte unchanged.
+   */
+  notesLoop?: NotesLoopConfig;
+  /**
+   * Cumulative token usage probe for the notes-loop's OPTIONAL between-call token
+   * budget (`afk.notes_loop.token_budget`). Read once before each outer iteration.
+   * Reliable only for codex/opencode (claude accrues at the iteration boundary),
+   * so the loop also leans on the iteration + wall-clock caps. Absent → the token
+   * budget is never enforced (the documented claude caveat).
+   */
+  notesLoopTokensUsed?(): number;
+  /**
+   * Stamp the current outer notes-loop iteration onto the worker state (#997).
+   * Called once per outer iteration with the 1-based index. The CLI wires it to
+   * `updateState(current.notes_iteration)` for the monitor. Optional → tests /
+   * legacy callers omit it.
+   */
+  markNotesIteration?(iteration: number): void;
 }
 
 function resolveSpawnTier(
@@ -432,6 +471,104 @@ function resolveSpawnTier(
   taskClass: AfkModelTier,
 ): { model: string; effort?: AgentEffort } {
   return deps.resolveTier?.(runner, taskClass) ?? { model: deps.model, effort: deps.effort };
+}
+
+/**
+ * Track C accumulative notes-loop (#997). The opt-in OUTER loop around the single
+ * `runAgent` call: make several SHORT invocations (each capped at
+ * `perIterationMaxIterations`), each seeded with a `notes.md` summary of prior
+ * progress and expected to commit one small increment. sandcastle re-invokes onto
+ * the same branch, so commits accumulate across iterations.
+ *
+ * Exit edges (all reuse processIssue's existing routing via the returned result):
+ *   - DONE / BLOCKED / runner-recoverable / budget-exceeded / timeout / goal-moot
+ *     in any iteration → return that result immediately (propagated verbatim). The
+ *     per-call guard fires INTRA-call and terminates here; the outer caps only
+ *     fire BETWEEN calls, so the two layers never double-abort the same attempt.
+ *   - no-sentinel under the outer caps → salvage-commit the increment, append a
+ *     one-sentence summary to notes.md, re-invoke with the notes-seeded prompt.
+ *   - outer cap hit (iteration/wall-clock/token) with no DONE → return the last
+ *     no-sentinel result, which routes to processIssue's existing salvage-lands
+ *     path (partial work committed; issue parks or lands per the feedback gate).
+ *
+ * `notes.md` lives at the attempt dir (sibling of the sandcastle worktree, under
+ * the gitignored `.red/tmp/`) — never inside the worktree, never committed.
+ */
+async function runNotesLoop(
+  deps: ProcessIssueDeps,
+  config: NotesLoopConfig,
+  baseInput: RunAgentInput,
+  ctx: { handoff: string; notesPath: string; startedEpoch: number; issue: number },
+): Promise<RunAgentResult> {
+  const entries: NoteEntry[] = [];
+  let last: RunAgentResult | undefined;
+
+  for (let iteration = 1; iteration <= config.maxIterations; iteration++) {
+    // Between-call outer budgets (never checked before iteration 1, so an enabled
+    // loop always makes at least one run). The per-call wall-clock guard is a
+    // DIFFERENT layer (baseInput.attemptTimeoutSeconds, applied intra-call), so
+    // these caps and that guard cannot double-abort the same call.
+    if (iteration > 1) {
+      const elapsed = deps.nowEpoch() - ctx.startedEpoch;
+      if (config.wallClockBudgetS !== undefined && elapsed >= config.wallClockBudgetS) {
+        deps.appendIterLog(
+          `🤖 /afk notes-loop #${ctx.issue}: wall-clock budget (${config.wallClockBudgetS}s) reached after ${iteration - 1} iteration(s) — routing partial work to the salvage-lands path.`,
+        );
+        break;
+      }
+      if (config.tokenBudget !== undefined && deps.notesLoopTokensUsed) {
+        const used = deps.notesLoopTokensUsed();
+        if (used >= config.tokenBudget) {
+          deps.appendIterLog(
+            `🤖 /afk notes-loop #${ctx.issue}: token budget (${config.tokenBudget}) reached (${used} used) after ${iteration - 1} iteration(s) — routing partial work to the salvage-lands path.`,
+          );
+          break;
+        }
+      }
+    }
+
+    const notesMarkdown = renderNotes(entries);
+    // Persist notes.md (best-effort) so a crash mid-loop leaves the accumulated
+    // summary on disk for the next attempt / a human reviewer.
+    if (deps.fs.writeNotes && notesMarkdown.length > 0) {
+      await deps.fs.writeNotes(ctx.notesPath, notesMarkdown).catch(() => {});
+    }
+    deps.markNotesIteration?.(iteration);
+    deps.appendIterLog(
+      `🤖 /afk notes-loop #${ctx.issue}: outer iteration ${iteration}/${config.maxIterations} (per-iteration ceiling ${config.perIterationMaxIterations}).`,
+    );
+
+    const run = await deps.runAgent({
+      ...baseInput,
+      handoffContent: injectNotesIntoHandoff(ctx.handoff, notesMarkdown),
+      maxIterations: config.perIterationMaxIterations,
+    });
+    last = run;
+
+    // Any non-continuable outcome (done/blocked/runner-recoverable/budget/timeout/
+    // goal-moot) is propagated verbatim to processIssue's existing routing.
+    if (!isNotesLoopContinuable(run.outcome)) return run;
+
+    // no-sentinel under caps: commit the increment before the next iteration
+    // ("never empty-handed") so sandcastle's next checkout carries it, then record
+    // the one-sentence summary for the next iteration's seeded prompt.
+    const workerBranch = run.branch || baseInput.branch;
+    if (deps.salvageUncommitted) {
+      await deps.salvageUncommitted(workerBranch).catch(() => 0);
+    }
+    entries.push(deriveNoteEntry(iteration, run));
+  }
+
+  // Outer cap exhausted with no DONE: hand the last no-sentinel result back so the
+  // existing salvage path (branch-ahead-of-base → feedback gate → land/park) runs.
+  return (
+    last ?? {
+      outcome: "no-sentinel",
+      branch: baseInput.branch,
+      commits: [],
+      stdout: "afk: notes-loop exhausted its outer iterations with no DONE",
+    }
+  );
 }
 
 /** Static per-issue inputs the caller resolves before `processIssue`. */
@@ -943,7 +1080,7 @@ export async function processIssue(
 
   while (true) {
     const initialTier = resolveSpawnTier(deps, activeRunner, activeTaskClass);
-    let run: RunAgentResult = await deps.runAgent({
+    const baseRunInput: RunAgentInput = {
       runner: activeRunner,
       model: initialTier.model,
       effort: initialTier.effort,
@@ -1000,7 +1137,19 @@ export async function processIssue(
       // FIX J: env computed by the pre_worktree hook (e.g. CARGO_TARGET_DIR per
       // slot) — runAgent applies it to the spawned agent's environment.
       env: agentEnv,
-    });
+    };
+    // Track C notes-loop (#997): when enabled, wrap the single run in the OUTER
+    // loop of short, notes-seeded invocations; otherwise perform EXACTLY ONE
+    // `runAgent` call (byte-for-byte no behaviour change, the regression guard).
+    let run: RunAgentResult =
+      deps.notesLoop?.enabled && input.runMode !== "scout"
+        ? await runNotesLoop(deps, deps.notesLoop, baseRunInput, {
+            handoff,
+            notesPath: `${input.attemptDir}/notes.md`,
+            startedEpoch,
+            issue,
+          })
+        : await deps.runAgent(baseRunInput);
 
     // ---- runner-fallback subsystem (--fallback-runner / runner failure) ----
     // The active runner signalled quota / rate-limit exhaustion OR a transient
