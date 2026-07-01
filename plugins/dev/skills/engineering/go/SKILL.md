@@ -1,7 +1,7 @@
 ---
 name: go
 description: Semi-structured front door between `/goal` and `/afk` — `/go "<demand>"` mints a disposable tracking issue in an isolated lane (out of `ready-for-agent`, so a running fleet can never claim it), spins a dedicated namespaced worker under `.red/tmp/go-workers/`, reuses the whole AFK engine end-to-end with `origin=go` and the interactive gate, and brings back a PR. The disposable issue auto-closes on merge. Works with or without a fleet running. Use when you have one concrete demand and want a clean PR without authoring a PRD or triaging issues.
-argument-hint: "\"<demand>\" [--runner claude|codex|opencode]"
+argument-hint: "\"<demand>\" [--mode no-mistakes|direct-PR|local-only] [--runner claude|codex|opencode] [+yolo]"
 ---
 
 # /go
@@ -15,10 +15,18 @@ argument-hint: "\"<demand>\" [--runner claude|codex|opencode]"
 Invoke the dev CLI's `go` command with the demand as a single quoted argument:
 
 ```
-RED_AFK_RUNNER=<claude|codex|opencode> red-skills-dev go "<demand>" [--runner <runner>]
+RED_AFK_RUNNER=<claude|codex|opencode> red-skills-dev go "<demand>" [--mode <mode>] [--runner <runner>] [+yolo]
 ```
 
 Set `RED_AFK_RUNNER` to your own host runner (`claude` from Claude Code, `codex` from Codex). Use `--runner` only when the user explicitly pinned a backend.
+
+**Dispatch mode — `--mode {no-mistakes|direct-PR|local-only}`** selects HOW the reused engine finishes the run. Omit it and `/go` uses `direct-PR`:
+
+- **`direct-PR`** (default) — the STANDARD path: run the gate, bring back a PR.
+- **`no-mistakes`** — route the run through the HARDENED pre-PR pipeline (review → validate → escalate intent findings) *before* the PR is opened. Slowest, safest.
+- **`local-only`** — land the branch by an APPROVED local fast-forward merge with **no PR opened**. For a trusted local demand the maintainer wants landed without a review PR.
+
+**`+yolo`** is an opt-in autonomy bump — pass the literal token to raise the engine's autonomy for this one dispatch. It composes with any mode.
 
 **What `go` does, in order (all reused from the AFK engine — not a parallel path):**
 
