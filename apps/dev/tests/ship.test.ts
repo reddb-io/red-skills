@@ -8,6 +8,10 @@ import {
   shipChecksAreGreen,
   decidePrePrShipGate,
   isPrePrFindingMechanical,
+  runShipPipeline,
+  classifyFix,
+  decideFixApplication,
+  SHIP_PIPELINE_STAGES,
   type PrePrFinding,
 } from "../src/core/ship.js";
 
@@ -257,5 +261,116 @@ describe("no-mistakes pre-PR pipeline (#913 — findings classification)", () =>
       timedOut: true,
     };
     expect(decidePrePrShipGate(gateInput)).toBe("escalate");
+  });
+});
+
+describe("ordered ship pipeline (#989 — Track 2B)", () => {
+  const allGreen = {
+    review: { passed: true },
+    test: { passed: true },
+    docs: { passed: true },
+    lint: { passed: true },
+    push: { passed: true },
+    pr: { passed: true },
+    ci: { passed: true },
+  } as const;
+
+  it("declares the seven stages in mandatory order", () => {
+    expect([...SHIP_PIPELINE_STAGES]).toEqual([
+      "review",
+      "test",
+      "docs",
+      "lint",
+      "push",
+      "pr",
+      "ci",
+    ]);
+  });
+
+  it("passes when all seven stages are green", () => {
+    expect(runShipPipeline(allGreen)).toEqual({ status: "passed", failedStage: null });
+  });
+
+  it("stops at stage N and reports the stage name and reason", () => {
+    // Test (stage 2, index 1) fails: the pipeline must stop there and never
+    // consult docs/lint/push/pr/ci, even though later stages would also fail.
+    const result = runShipPipeline({
+      review: { passed: true },
+      test: { passed: false, reason: "3 tests failing" },
+    });
+    expect(result).toEqual({
+      status: "failed",
+      failedStage: "test",
+      stageIndex: 1,
+      reason: "3 tests failing",
+    });
+  });
+
+  it("fails at the earliest failing stage regardless of input key order", () => {
+    // ci is listed first in the object but review (index 0) fails, so review wins.
+    const result = runShipPipeline({
+      ci: { passed: false, reason: "ci red" },
+      review: { passed: false, reason: "obvious bug in diff" },
+      test: { passed: false, reason: "would also fail" },
+    });
+    expect(result.status).toBe("failed");
+    if (result.status === "failed") {
+      expect(result.failedStage).toBe("review");
+      expect(result.stageIndex).toBe(0);
+      expect(result.reason).toBe("obvious bug in diff");
+    }
+  });
+
+  it("treats a missing (not-run) stage as a failure at that stage", () => {
+    const result = runShipPipeline({ review: { passed: true } });
+    expect(result.status).toBe("failed");
+    if (result.status === "failed") {
+      expect(result.failedStage).toBe("test");
+      expect(result.reason).toContain("did not run");
+    }
+  });
+});
+
+describe("mechanical vs intentional fix split (#989 — Track 2B)", () => {
+  const trailingWhitespace: PrePrFinding = {
+    category: "format",
+    severity: "low",
+    file: "src/foo.ts",
+    line: 12,
+    message: "trailing whitespace",
+    suggestion: "remove whitespace",
+  };
+
+  const renamePublicSymbol: PrePrFinding = {
+    category: "semantics",
+    severity: "high",
+    file: "src/foo.ts",
+    line: 40,
+    message: "public symbol should be renamed",
+    suggestion: "rename export",
+  };
+
+  it("labels a mechanical fix and applies it silently; labels an intentional fix and escalates it", () => {
+    // A mechanical fix (trailing whitespace) is labelled and auto-applied.
+    expect(classifyFix(trailingWhitespace)).toBe("mechanical");
+    expect(decideFixApplication(trailingWhitespace)).toBe("auto-apply");
+
+    // An intentional change (renaming a public symbol) is labelled and escalated.
+    expect(classifyFix(renamePublicSymbol)).toBe("intentional");
+    expect(decideFixApplication(renamePublicSymbol)).toBe("escalate");
+  });
+
+  it("treats a fix it cannot classify with confidence as intentional", () => {
+    // A logic finding is not mechanical → default to intentional (escalate).
+    const unclear: PrePrFinding = {
+      category: "logic",
+      severity: "medium",
+      file: "src/bar.ts",
+      line: 3,
+      message: "ambiguous branch",
+      suggestion: "review the condition",
+    };
+    expect(classifyFix(unclear)).toBe("intentional");
+    expect(decideFixApplication(unclear)).toBe("escalate");
   });
 });
