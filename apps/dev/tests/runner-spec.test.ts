@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   RUNNER_SPECS,
   toAgentRunner,
+  runnerSupportsStructuredOutput,
   CODEX_EFFORTS,
   CLAUDE_EFFORTS,
   MINIMAX_EFFORTS,
@@ -47,6 +48,13 @@ describe("RUNNER_SPECS — one row per AgentRunner (add a runner = one row)", ()
     expect(spec.forcedModel).toBeUndefined();
     expect(spec.defaultEffort).toBeUndefined();
     expect(spec.resolveAuthEnv).toBeUndefined();
+  });
+
+  it("claude is the only schema-enabled runner (claude-first rollout, ADR 0082, #932)", () => {
+    expect(runnerSupportsStructuredOutput("claude")).toBe(true);
+    expect(runnerSupportsStructuredOutput("codex")).toBe(false);
+    expect(runnerSupportsStructuredOutput("opencode")).toBe(false);
+    expect(runnerSupportsStructuredOutput("claude-minimax")).toBe(false);
   });
 
   it("codex: effort channel, gated to CODEX_EFFORTS (no 'max')", () => {
