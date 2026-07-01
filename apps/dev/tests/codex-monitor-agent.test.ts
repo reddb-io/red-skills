@@ -71,11 +71,13 @@ describe("codex monitor agent prompt", () => {
     expect(prompt).toContain("Project root: /repo");
     expect(prompt).toContain("AFK launch mode: fleet");
     expect(prompt).toContain("Every 10 seconds");
+    expect(prompt).toContain("red-skills-dev monitor --once");
     expect(prompt).toContain("monitor --once");
     expect(prompt).toContain("Do not edit files.");
     expect(prompt).toContain("Do not run /dev:afk run");
     expect(prompt).toContain("Do not repair state. Only observe and report.");
     expect(prompt).toContain("Exit once there is no live .red/tmp/afk-supervisor.pid");
+    expect(prompt).toContain("no [live] or [quiet] workers");
   });
 
   it("prints prompt JSON for host-layer spawn tooling", async () => {

@@ -228,7 +228,68 @@ importers:
         specifier: 'catalog:'
         version: 2.1.9(@types/node@22.19.19)
 
+  apps/opencode-host:
+    dependencies:
+      '@reddb-io/build-info':
+        specifier: workspace:*
+        version: link:../../packages/build-info
+      '@reddb-io/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 22.19.19
+      esbuild:
+        specifier: 'catalog:'
+        version: 0.24.2
+      tsx:
+        specifier: 'catalog:'
+        version: 4.22.4
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
+      vitest:
+        specifier: 'catalog:'
+        version: 2.1.9(@types/node@22.19.19)
+
+  apps/red-browser:
+    dependencies:
+      '@reddb-io/browser-bridge':
+        specifier: workspace:*
+        version: link:../../packages/browser-bridge
+      '@reddb-io/cdp-driver':
+        specifier: workspace:*
+        version: link:../../packages/cdp-driver
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 22.19.19
+      tsx:
+        specifier: 'catalog:'
+        version: 4.22.4
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
+      vitest:
+        specifier: 'catalog:'
+        version: 2.1.9(@types/node@22.19.19)
+
+  packages/browser-bridge: {}
+
   packages/build-info: {}
+
+  packages/cdp-driver:
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 22.19.19
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
+      vitest:
+        specifier: 'catalog:'
+        version: 2.1.9(@types/node@22.19.19)
 
   packages/red-castle:
     dependencies:

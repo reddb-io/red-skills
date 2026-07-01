@@ -8,6 +8,7 @@ import {
   collectMonitorInputs,
   readFleetState,
   resolveAttemptGuardArming,
+  resolveAttemptBudget,
   buildMinimalBootDeps,
   withTimeout,
   collectStatuslineAfk,
@@ -58,6 +59,36 @@ describe("resolveAttemptGuardArming (issue #405)", () => {
       guardArmed: true,
       laneArmed: false,
     });
+  });
+});
+
+describe("resolveAttemptBudget (#908)", () => {
+  const cfg = (m: Record<string, string>) => (key: string) => m[key] ?? "";
+  it("returns undefined when no ceiling is set anywhere (inert)", () => {
+    expect(resolveAttemptBudget({}, cfg({}))).toBeUndefined();
+  });
+  it("reads ceilings from afk.attempt.* config", () => {
+    const b = resolveAttemptBudget(
+      {},
+      cfg({
+        "afk.attempt.max_tokens": "500000",
+        "afk.attempt.max_cost_usd": "5",
+        "afk.attempt.max_tool_calls": "200",
+        "afk.attempt.max_waiting_windows": "30",
+      }),
+    );
+    expect(b).toEqual({ maxTotalTokens: 500000, maxCostUsd: 5, maxToolCalls: 200, maxWaitingWindows: 30 });
+  });
+  it("env overrides config", () => {
+    const b = resolveAttemptBudget(
+      { RED_AFK_ATTEMPT_MAX_TOOL_CALLS: "150" } as NodeJS.ProcessEnv,
+      cfg({ "afk.attempt.max_tool_calls": "999" }),
+    );
+    expect(b?.maxToolCalls).toBe(150);
+  });
+  it("rejects non-positive / non-numeric ceilings (typo never sets a 0 cap)", () => {
+    expect(resolveAttemptBudget({}, cfg({ "afk.attempt.max_tokens": "0" }))).toBeUndefined();
+    expect(resolveAttemptBudget({}, cfg({ "afk.attempt.max_tool_calls": "abc" }))).toBeUndefined();
   });
 });
 
@@ -296,12 +327,20 @@ describe("collectMonitorInputs", () => {
         join(attemptDir, "afk.state.json"),
         JSON.stringify({ worker_id: "wAB12", pid: 999999, runner: "claude", total: 3, done: 1 }),
       );
+      writeFileSync(join(attemptDir, "afk.log"), "a\nb\n");
       const { workers } = await collectMonitorInputs(root);
       expect(workers).toHaveLength(1);
       expect(workers[0]!.state.worker_id).toBe("wAB12");
       expect(workers[0]!.state.done).toBe(1);
+      expect(workers[0]!.logLines).toBe(2);
+      expect(workers[0]!.logNewLines).toBe(2);
       // pid 999999 is almost certainly dead → not live
       expect(workers[0]!.live).toBe(false);
+
+      writeFileSync(join(attemptDir, "afk.log"), "a\nb\nc\n");
+      const again = await collectMonitorInputs(root);
+      expect(again.workers[0]!.logLines).toBe(3);
+      expect(again.workers[0]!.logNewLines).toBe(1);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

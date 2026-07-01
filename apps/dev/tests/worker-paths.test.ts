@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   buildWorkerAttemptPath,
   issueAttemptsGlob,
@@ -7,6 +7,7 @@ import {
   workerDir,
   workerPidFile,
   workersGlob,
+  workersSegment,
 } from "../src/core/worker-paths.js";
 
 describe("worker paths", () => {
@@ -28,5 +29,32 @@ describe("worker paths", () => {
     expect(workerDir(".red/tmp/", "wAAAA")).toBe(".red/tmp/workers/wAAAA");
     expect(workerPidFile(".red/tmp/", "wAAAA")).toBe(".red/tmp/workers/wAAAA/worker.pid");
     expect(livePidsGlob(".red/tmp/")).toBe(".red/tmp/workers/*/worker.pid");
+  });
+});
+
+describe("worker paths — /go namespace", () => {
+  afterEach(() => {
+    delete process.env.RED_AFK_WORKERS_NAMESPACE;
+  });
+
+  it("defaults to the `workers` segment when no namespace is set", () => {
+    expect(workersSegment()).toBe("workers");
+  });
+
+  it("redirects every path to `go-workers` so /go never collides with the fleet", () => {
+    process.env.RED_AFK_WORKERS_NAMESPACE = "go-workers";
+    expect(workersSegment()).toBe("go-workers");
+    const path = buildWorkerAttemptPath(".red/tmp/", "wGO12", 938, 1);
+    expect(path).toBe(".red/tmp/go-workers/wGO12/938-a1");
+    expect(parseWorkerAttemptPath(path)).toEqual({ worker: "wGO12", issue: 938, attempt: 1 });
+    expect(workersGlob(".red/tmp/")).toBe(".red/tmp/go-workers/*");
+    expect(issueAttemptsGlob(".red/tmp/", 938)).toBe(".red/tmp/go-workers/*/938-a*");
+    expect(workerDir(".red/tmp/", "wGO12")).toBe(".red/tmp/go-workers/wGO12");
+    expect(livePidsGlob(".red/tmp/")).toBe(".red/tmp/go-workers/*/worker.pid");
+  });
+
+  it("ignores an unsafe namespace value and falls back to `workers`", () => {
+    process.env.RED_AFK_WORKERS_NAMESPACE = "../escape";
+    expect(workersSegment()).toBe("workers");
   });
 });

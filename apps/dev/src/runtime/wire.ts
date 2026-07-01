@@ -10,10 +10,10 @@
 // provider subpaths.
 
 import { readFileSync, writeFileSync, renameSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { loadConfig, getConfig, resolveTier } from "../core/config.js";
 import type { SandboxMode } from "../core/execution.js";
-import type { AgentEffort, RunAgentInput, RunAgentResult } from "../core/execution.js";
+import type { AgentEffort, RunAgentInput, RunAgentResult, AttemptBudget, AttemptBudgetUsage } from "../core/execution.js";
 // Value import (pure, no sandcastle pull — the providers load lazily via
 // defaultSandcastleDeps' dynamic import) so resolveRunSettings can parse the
 // max-iterations knob from env/config without importing the runtime.
@@ -26,6 +26,7 @@ import { isRunner, type Runner } from "../types/runner.js";
 import * as ghx from "./gh.js";
 import * as gitx from "./git.js";
 import * as fsx from "./fs.js";
+import { collectLogLineCounts } from "./log-cursor.js";
 
 // ---------- repo resolution ----------
 
@@ -59,6 +60,7 @@ export interface AfkPaths {
   historyPath: string;
   fleetStatePath: string;
   fleetFirehosePath: string;
+  monitorLogCursorPath: string;
   gitignorePath: string;
   configPath: string;
 }
@@ -73,6 +75,7 @@ export function afkPaths(root: string): AfkPaths {
     historyPath: join(stateDir, "afk-history.jsonl"),
     fleetStatePath: join(tmpDir, "afk-supervisor.state.json"),
     fleetFirehosePath: join(tmpDir, "afk-supervisor.log.jsonl"),
+    monitorLogCursorPath: join(tmpDir, "monitor-log-cursors.json"),
     gitignorePath: join(root, ".gitignore"),
     configPath: join(root, ".red", "config.yaml"),
   };
@@ -121,9 +124,52 @@ export interface RunSettings {
    * pinned bases are exactly why the flag defaults off.
    */
   feedbackRebaseBase?: string;
+  /**
+   * Per-attempt resource budget (#908): the optional token / cost / tool-call /
+   * waiting-window ceilings the attempt guard enforces. Every field is optional;
+   * an all-undefined budget is inert (today's behaviour). The #788 antidote —
+   * the proxy ceilings (tool-calls / waiting-windows) fire live even for
+   * claude/minimax, which stream 0 token usage on the wire.
+   */
+  attemptBudget?: AttemptBudget;
 }
 
 const SANDBOX_MODES: readonly SandboxMode[] = ["none", "docker", "podman"];
+
+/** Parse a positive number (int or float) for a budget ceiling; undefined when
+ * unset / non-numeric / non-positive, so a typo can never silently set a 0 cap
+ * that aborts every attempt instantly. */
+function parsePositive(raw: string | undefined): number | undefined {
+  if (raw === undefined) return undefined;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+/**
+ * Resolve the per-attempt budget (#908) from env overrides then `.red/config.yaml`
+ * `plugins.dev.afk.attempt.*` (folded to `afk.attempt.*`). Returns `undefined`
+ * when NO ceiling is set, so makeRunAgent can skip wiring the probe entirely and
+ * the guard stays at today's behaviour.
+ */
+export function resolveAttemptBudget(
+  env: NodeJS.ProcessEnv,
+  getCfg: (key: string) => string,
+): AttemptBudget | undefined {
+  const budget: AttemptBudget = {
+    maxTotalTokens: parsePositive(env.RED_AFK_ATTEMPT_MAX_TOKENS) ?? parsePositive(getCfg("afk.attempt.max_tokens")),
+    maxCostUsd: parsePositive(env.RED_AFK_ATTEMPT_MAX_COST_USD) ?? parsePositive(getCfg("afk.attempt.max_cost_usd")),
+    maxToolCalls:
+      parsePositive(env.RED_AFK_ATTEMPT_MAX_TOOL_CALLS) ?? parsePositive(getCfg("afk.attempt.max_tool_calls")),
+    maxWaitingWindows:
+      parsePositive(env.RED_AFK_ATTEMPT_MAX_WAITING_WINDOWS) ?? parsePositive(getCfg("afk.attempt.max_waiting_windows")),
+  };
+  const anySet =
+    budget.maxTotalTokens !== undefined ||
+    budget.maxCostUsd !== undefined ||
+    budget.maxToolCalls !== undefined ||
+    budget.maxWaitingWindows !== undefined;
+  return anySet ? budget : undefined;
+}
 
 export function resolveRunSettings(
   root: string,
@@ -171,6 +217,9 @@ export function resolveRunSettings(
     (env.RED_AFK_FEEDBACK_REBASE ?? "").trim() === "1" ||
     getConfig(cfg, "afk.feedback.rebase_on_base") === "true";
   const feedbackRebaseBase = rebaseFlag ? getConfig(cfg, "dev.lock.branch") || "main" : undefined;
+  // Per-attempt resource budget (#908) — env > `afk.attempt.*` config; undefined
+  // when no ceiling is set (inert).
+  const attemptBudget = resolveAttemptBudget(env, (key) => getConfig(cfg, key));
   return {
     sandbox,
     defaultRunner,
@@ -180,6 +229,7 @@ export function resolveRunSettings(
     attemptTimeoutSeconds,
     laneIdle,
     feedbackRebaseBase,
+    attemptBudget,
   };
 }
 
@@ -252,6 +302,11 @@ export function makeRunAgent(
   maxIterations?: number,
   attemptTimeoutSeconds?: number,
   laneIdle?: LaneIdleStallConfig,
+  // Per-attempt budget (#908): the resolved ceilings + a live usage probe (the
+  // attempt's activity meter `peek()`). Both must be present to arm the cap; it
+  // rides the existing progress guard, so it is only active when that guard is.
+  attemptBudget?: AttemptBudget,
+  budgetUsage?: () => AttemptBudgetUsage,
 ): (input: RunAgentInput) => Promise<RunAgentResult> {
   let depsPromise: Promise<import("../core/execution.js").SandcastleDeps> | null = null;
   return async (input: RunAgentInput): Promise<RunAgentResult> => {
@@ -331,6 +386,9 @@ export function makeRunAgent(
             },
           }
         : {}),
+      // Per-attempt budget (#908): only wired when the progress guard is armed
+      // (the budget check rides its poll) AND a budget + live usage probe exist.
+      ...(guardArmed && attemptBudget && budgetUsage ? { budget: attemptBudget, budgetUsage } : {}),
       ...(laneArmed && laneAttemptDir
         ? {
             laneIdleThresholdSeconds: laneIdleCfg.stallThresholdS,
@@ -427,11 +485,13 @@ export async function collectMonitorInputs(root = process.cwd()): Promise<Monito
   const paths = afkPaths(root);
   // The ONE owner reads + normalizes + liveness-tags every worker state file
   // (core/worker-state-reader). The dashboard's `[live]` badge uses the
-  // pid + freshness verdict (`active`); the `[quiet]` badge falls back to the
-  // pid-only verdict (`live`, surfaced here as `pidLive`).
+  // pid-identity + freshness verdict (`active`); the `[quiet]` badge falls back
+  // to the pid-identity verdict (`live`, surfaced here as `pidLive`).
   const records = await readWorkerStates(paths.workersRoot);
+  const logPaths = records.map(({ path, state }) => state.log || join(dirname(path), "afk.log"));
+  const logCounts = await collectLogLineCounts(paths.monitorLogCursorPath, logPaths);
   const workers: CompactWorker[] = [];
-  for (const { state, active, live: pidLive } of records) {
+  for (const { path, state, active, live: pidLive, liveness } of records) {
     // Diff volume: committed + uncommitted work for the attempt, measured from
     // the branch's merge-base with origin/main. Prefer the state file's persisted
     // counts; fall back to a live `git diff --shortstat` of the worktree when both
@@ -447,12 +507,18 @@ export async function collectMonitorInputs(root = process.cwd()): Promise<Monito
       removed = stat.removed;
     }
 
+    const logPath = state.log || join(dirname(path), "afk.log");
+    const counts = logCounts.get(logPath);
     workers.push({
       state: {
         worker_id: state.worker_id,
         pid: state.pid,
         runner: state.runner,
         started_at: state.started_at,
+        // Spawn-time provenance — passed through from the single state.origin
+        // field so the dashboard derives per-source counts from the same source
+        // as the statusline (issue #930, no independent derivation).
+        origin: state.origin || undefined,
         total: state.total,
         done: state.done,
         blocked: state.blocked,
@@ -465,16 +531,22 @@ export async function collectMonitorInputs(root = process.cwd()): Promise<Monito
           input_tokens: state.current.input_tokens,
           output_tokens: state.current.output_tokens,
           cost_usd: state.current.cost_usd,
+          tools_called_count: state.current.tools_called_count,
+          text_chunk_count: state.current.text_chunk_count,
+          reasoning_events: state.current.reasoning_events,
+          waiting_count: state.current.waiting_count,
         },
       },
-      // active = pid resolves + agent-lane freshness → [live] badge; a finished
-      // worker whose pid is shared/recycled stops rendering as `[live]`.
-      // pidLive = pid resolves regardless of freshness → [quiet] badge when the
-      // agent lane is idle (e.g. post_attempt gate/commit) but the process lives.
+      liveness,
+      // active = pid identity matches + agent-lane freshness → [live] badge.
+      // pidLive = pid identity matches regardless of freshness → [quiet] badge
+      // when the agent lane is idle (e.g. post_attempt gate/commit) but the
+      // process still lives.
       live: active,
       pidLive,
       diffAdded: added,
       diffRemoved: removed,
+      ...(counts !== undefined ? { logLines: counts.lines, logNewLines: counts.newLines } : {}),
     });
   }
 
@@ -580,6 +652,7 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
   let resolved = 0;
   const issues: Array<number | string> = [];
   const stages: Array<string | undefined> = [];
+  const sourceMap = new Map<string, number>();
 
   for (const { state, live } of records) {
     // Statusline line 2 counts every pid-live worker (the orchestrator process is
@@ -597,6 +670,8 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
     blocked += state.blocked;
     if (runner === "" && state.runner) runner = state.runner;
     if (state.done > resolved) resolved = state.done;
+    // Per-source count: read origin from the single state field (issue #930).
+    if (state.origin) sourceMap.set(state.origin, (sourceMap.get(state.origin) ?? 0) + 1);
     // Read the worker's signals through the canonical WorkerVitals contract
     // (ADR 0065) rather than ad-hoc field access — `current` satisfies it.
     const vitals: WorkerVitals = state.current;
@@ -661,7 +736,17 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
 
   if (workers <= 0) return null;
 
-  return { workers, queue, human, blocked, added, removed, waiting, tokens, costUsd, runner, resolved, issues, stages };
+  // Build the per-source count array sorted by origin for a deterministic order.
+  // Both statusline and monitor read from state.origin via readWorkerStates —
+  // this is the one derived form; nothing else derives source counts independently.
+  const sourceCounts =
+    sourceMap.size > 0
+      ? [...sourceMap.entries()]
+          .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+          .map(([origin, count]) => ({ origin, count }))
+      : undefined;
+
+  return { workers, queue, human, blocked, added, removed, waiting, tokens, costUsd, runner, resolved, issues, stages, sourceCounts };
 }
 
 interface RepoStatsCache {
@@ -839,9 +924,9 @@ export async function collectBootOptions(
   for (const o of orphans) {
     const parsed = parseWorkerAttemptPath(o.path);
     if (!parsed) continue;
-    // Cap-pass liveness keeps the pid-only verdict (a live attempt is excluded
-    // from the cap even when briefly quiet), read through the single owner so the
-    // schema + legacy-key shim apply here too.
+    // Cap-pass liveness keeps the pid-identity verdict (a live attempt is
+    // excluded from the cap even when briefly quiet), read through the single
+    // owner so the schema + legacy-key shim apply here too.
     const live = readWorkerState(join(o.path, "afk.state.json"))?.live ?? false;
     const mtimeS = nowS - o.ageS;
     const list = byIssue.get(parsed.issue) ?? [];

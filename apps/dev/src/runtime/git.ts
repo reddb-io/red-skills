@@ -353,12 +353,10 @@ export function unquotePorcelainPath(raw: string): string {
 }
 
 /**
- * Salvage uncommitted work an inner agent left in its worktree without
- * committing. Observed with the codex runner: the agent edits files, passes the
- * gates, and emits `<promise>DONE</promise>`, but never runs `git commit` — so
- * sandcastle collects zero commits, the worker branch is empty, and the diff is
- * stranded (a DONE attempt then lands an empty merge; the no-sentinel salvage
- * misses it because the branch carries no commits).
+ * Salvage uncommitted work an inner agent left in its worktree. Observed with
+ * the codex runner: the agent edits files, passes the gates, and emits
+ * `<promise>DONE</promise>`, but leaves some or all paths dirty — so sandcastle
+ * only sees the committed subset and the remaining diff is stranded.
  *
  * Locates the worktree checked out on `branch` and, when it is dirty, commits
  * each changed path on ITS OWN COMMIT — the one-commit-per-file discipline
@@ -393,7 +391,7 @@ export async function salvageUncommitted(ctx: GitContext, branch: string, remote
   for (const p of paths) {
     const add = await runGit(wctx, ["add", "--", p]);
     if (add.code !== 0) continue;
-    const message = `afk: salvage uncommitted change to ${p}\n\nInner agent emitted a completion sentinel without committing this file; AFK committed it so the feedback gate and landing see the work.`;
+    const message = `afk: salvage uncommitted change to ${p}\n\nInner agent emitted a completion sentinel with this file still dirty; AFK committed it so the feedback gate and landing see the work.`;
     // `--no-verify` bypasses the CONSUMER repo's commit-phase hooks (pre-commit /
     // commit-msg) on AFK's own salvage commit (#840) — AFK's binding validation is
     // the feedback gate + backpressure, not the consumer's per-commit hooks, and a

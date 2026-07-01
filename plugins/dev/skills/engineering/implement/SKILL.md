@@ -16,7 +16,7 @@ disable-model-invocation: true
 |---|---|---|
 | **Driver** | You — interactive, step-by-step | Autonomous fleet, no human in the loop |
 | **Scope** | One PRD / issue set, right now | Drains the full `ready-for-agent` queue |
-| **Worktree** | Your current worktree | Isolated worktree per issue, sandcastle |
+| **Worktree** | Dedicated `.red/tmp/work-*` worktree | Isolated worktree per issue, sandcastle |
 | **Finish** | You run `/ship` when satisfied | Agent merges, closes, claims next issue |
 
 Use `/implement` when you want to implement a PRD or issues yourself — with test-first discipline and review — but need the agent to guide each step. Use `/afk` when you want the fleet to work unsupervised.
@@ -37,7 +37,7 @@ Use `/implement` when you want to implement a PRD or issues yourself — with te
 
 ### Hard rules
 
-- ❌ Do **not** implement on the primary branch — work in an isolated worktree and finish via `/ship`.
+- ❌ Do **not** implement on the primary branch or a sibling checkout — work in `.red/tmp/work-*` and finish via `/ship`.
 - ❌ Do **not** skip `/tdd`; writing code before a failing test is undefined behaviour for this skill.
 - ❌ Do **not** run `/review` while any test is red.
 - ✅ **Do** let `/to-issues` decompose large PRDs before starting — smaller seams mean smaller merge risk.
@@ -61,7 +61,7 @@ Use `/implement` when you want to implement a PRD or issues yourself — with te
 
 ## Worktree convention
 
-All implementation work lives in a dedicated worktree, never on the primary branch. Create one with the dev loop:
+All implementation work lives in a dedicated worktree under `.red/tmp/`, never on the primary branch or in a sibling directory. Create one with the dev loop:
 
 ```
 git worktree add .red/tmp/work-<slug> -b feat/<slug>

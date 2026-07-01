@@ -391,6 +391,7 @@ export async function runSession(deps: SessionDeps, ctx: SessionContext): Promis
     sessionHooksFired.push(name);
     const result = await dispatchHooks(name, resolved[name], context, deps.hooks.exec, {
       env: deps.hooks.env ?? {},
+      log: deps.emit,
     });
     return !result.aborted;
   };

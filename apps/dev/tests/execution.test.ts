@@ -24,6 +24,9 @@ import {
   parseIdleTimeout,
   parseAttemptTimeout,
   startAttemptGuard,
+  exceedsBudget,
+  type AttemptBudget,
+  type AttemptBudgetUsage,
   DEFAULT_ATTEMPT_TIMEOUT_S,
   type SandcastleDeps,
   type RunAgentInput,
@@ -1089,6 +1092,79 @@ describe("startAttemptGuard — commit-anchored progress watchdog", () => {
     clock = 100;
     await sched.tick(); // 100 >= cap from start → abort
     expect(aborted).toBe(true);
+  });
+});
+
+describe("exceedsBudget — per-attempt budget predicate (#908)", () => {
+  const zero: AttemptBudgetUsage = { inputTokens: 0, outputTokens: 0, costUsd: 0, toolsCalled: 0, waiting: 0 };
+  it("an empty budget never fires (today's behaviour)", () => {
+    expect(exceedsBudget({ ...zero, inputTokens: 9e9, toolsCalled: 9999 }, {})).toBeUndefined();
+  });
+  it("token ceiling fires on input+output total at-or-above the cap", () => {
+    const b: AttemptBudget = { maxTotalTokens: 1000 };
+    expect(exceedsBudget({ ...zero, inputTokens: 600, outputTokens: 399 }, b)).toBeUndefined();
+    expect(exceedsBudget({ ...zero, inputTokens: 600, outputTokens: 400 }, b)).toBe("tokens");
+  });
+  it("cost ceiling fires at-or-above the cap", () => {
+    expect(exceedsBudget({ ...zero, costUsd: 4.99 }, { maxCostUsd: 5 })).toBeUndefined();
+    expect(exceedsBudget({ ...zero, costUsd: 5 }, { maxCostUsd: 5 })).toBe("cost");
+  });
+  it("runner-agnostic proxy ceilings fire with ZERO token usage (the claude/minimax case)", () => {
+    // claude/minimax stream 0 live tokens, so only the proxy ceilings protect them.
+    expect(exceedsBudget({ ...zero, toolsCalled: 200 }, { maxToolCalls: 200 })).toBe("tool-calls");
+    expect(exceedsBudget({ ...zero, waiting: 30 }, { maxWaitingWindows: 30 })).toBe("waiting-windows");
+  });
+});
+
+describe("startAttemptGuard — resource budget (#908)", () => {
+  it("aborts with reason 'budget' once a ceiling is breached, independent of commits", async () => {
+    let clock = 0;
+    const sched = manualScheduler();
+    let reason: string | undefined;
+    let usage: AttemptBudgetUsage = { inputTokens: 0, outputTokens: 0, costUsd: 0, toolsCalled: 0, waiting: 0 };
+    const g = startAttemptGuard({
+      capMs: 1_000_000, // huge: the wall-clock cap must NOT be what fires
+      intervalMs: 50,
+      headProbe: async () => "sha-static",
+      now: () => clock,
+      schedule: sched.schedule,
+      budget: { maxToolCalls: 5 },
+      budgetUsage: () => usage,
+      abort: (r) => {
+        reason = r;
+      },
+    });
+    await sched.tick(); // under budget
+    expect(reason).toBeUndefined();
+    clock = 100;
+    usage = { ...usage, toolsCalled: 5 };
+    await sched.tick(); // ceiling reached → abort('budget')
+    expect(reason).toBe("budget");
+    expect(g.firedBudget()).toBe(true);
+    expect(g.firedTimeout()).toBe(false); // a budget abort is NOT a stall
+    expect(g.firedGoalMoot()).toBe(false);
+    g.stop();
+  });
+
+  it("is a no-op when no budget is supplied", async () => {
+    let clock = 0;
+    const sched = manualScheduler();
+    let reason: string | undefined;
+    const g = startAttemptGuard({
+      capMs: 1_000_000,
+      intervalMs: 50,
+      headProbe: async () => "sha-static",
+      now: () => clock,
+      schedule: sched.schedule,
+      abort: (r) => {
+        reason = r;
+      },
+    });
+    clock = 500;
+    await sched.tick();
+    expect(reason).toBeUndefined();
+    expect(g.firedBudget()).toBe(false);
+    g.stop();
   });
 });
 

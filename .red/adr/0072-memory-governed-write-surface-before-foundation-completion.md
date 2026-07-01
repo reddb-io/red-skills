@@ -22,4 +22,4 @@ If graph mode is unavailable, `memory_store_evidence` returns `rejected` with an
 
 ## Consequences
 
-The foundation from ADR 0023 remains the moat, but it no longer blocks the first user-visible write/cross-agent proof. Benchmarks and Workbench copy should show "mistakes avoided" and governed provenance, not only recall or token savings. Future write tools must justify any expansion against this ADR's server-owned policy and review-gated mutation boundary.
+The foundation from ADR 0023 remains the moat, but it no longer blocks the first user-visible write/cross-agent proof. The next PRD after the governed write surface is `memory learn`/`memory refine`, because it reuses the same artifacts and governance to answer Headroom's failure-learning story without silent instruction rewrites. Benchmarks and Workbench copy should show "mistakes avoided" and governed provenance, not only recall or token savings. Future write tools must justify any expansion against this ADR's server-owned policy and review-gated mutation boundary.

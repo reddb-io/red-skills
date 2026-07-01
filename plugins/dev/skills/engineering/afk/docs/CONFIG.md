@@ -29,6 +29,11 @@ Scalar run settings live in `.red/config.yaml` under the `afk:` key (alongside t
 | `RED_AFK_MERGE_CI_TIMEOUT_S` | env | `1800` | CI-aware merge wait budget, in seconds (#812). The poll runs at a fixed 10s cadence until `mergeStateStatus` settles; on timeout the open, MERGEABLE PR is handed off (`ci-pending` → `blocked:ci`) instead of re-running the agent. Non-positive / unparseable → the 1800s default. Only consulted when `afk.merge.ci_aware` is `true`. |
 | `afk.review_gate.enabled` | — | `false` | PR review gate (ADR 0064 §10, #749). When `true`, a completed **non-mechanical** attempt (classified tier at/above `afk.review_gate.threshold`) gets `ready-for-review` on its PR — firing the advisory review — and **holds the merge** for a fresh-agent review by a different agent than the one that implemented it. Mechanical/trivial work keeps the fast-merge path. Only affects a PR landing (`worktree_launches_pull_request: true`); a direct merge never opens a PR, so the gate is moot there. Off by default so the "merge fast / no drift" loop is unchanged until a repo opts in. |
 | `afk.review_gate.threshold` | — | `complex` | The cheapest issue-classifier tier (`validate` \| `simple` \| `complex` \| `think`) counted as non-mechanical. Tiers below it stay mechanical (fast-merge); this tier and above request review. |
+| `afk.companion.iteration_churn` | — | `8` | Companion (active) monitor drift threshold (#921): a live worker at/above this iteration **and** below `min_progress_loc` added lines is judged `iteration-churn`. Only read when `monitor --companion` / `--active` is set (off → byte-for-byte read-only dashboard, no gh writes). A non-positive override falls back to the default. |
+| `afk.companion.waiting_windows` | — | `20` | Companion drift threshold: a flat-diff worker with this many zero-progress waiting windows is judged `stuck-waiting`. |
+| `afk.companion.diff_drift_loc` | — | `4000` | Companion drift threshold: total churn (added + removed) at/above this is judged `scope-creep` (sprawling past the issue), the highest-priority signal. |
+| `afk.companion.min_progress_loc` | — | `5` | Companion progress floor: a worker that has added at least this many lines has produced real work and is never flagged for churn/stuck. |
+| `afk.companion.*` (cap) | `RED_AFK_RETRY_DRIFT` | `2` | Companion bounded re-enqueue budget. Each detected drift on an attempt injects **one** correction (write-only, idempotent via a fingerprint, rewriting `## Agent brief`); once the attempt count reaches this cap the companion **escalates** to `ready-for-human` (a `## Current blocker` of kind `drift`) instead of correcting again. Shares the bounded-recovery policy (`core/recovery.ts`); never kills a process — termination/respawn is the reaper + fleet's job. |
 
 ```yaml
 afk:
@@ -83,6 +88,14 @@ External advisory reviewers (CodeRabbit and the like) are **not** binding: the w
 - Exit code: `0` continues the chain; non-zero is routed through a per-hook policy table — `pre_*` aborts the step, `post_*` / `on_idle` / `on_*_error` log and continue so a broken notifier never wedges AFK.
 
 Within a single hook list, **built-in defaults run first, user-declared commands run after**, and declaration order is preserved inside each group. A bare string is shorthand for a one-element list. An unknown hook name in `.red/config.yaml` is a hard error at session boot. Disable a built-in default with `afk.hooks.defaults.<name>: false` — reordering is not supported.
+
+Every hook command emits explicit dispatch breadcrumbs around the shell call:
+`[afk:hooks] <point>: enter: <command>` and
+`[afk:hooks] <point>: exit rc=<n>: <command>`. Session-scoped hooks write those
+lines to the session output, per-issue hooks write them to the attempt's
+`afk.log`, and fleet hooks use the analogous `[afk:fleet-hooks]` prefix in the
+supervisor log. A quiet Worker can therefore still show policy/hook activity
+without pretending the inner agent lane advanced.
 
 The full lifecycle table is defined in PRD #207. The hooks shipped so far:
 
@@ -185,4 +198,3 @@ afk:
     defaults:
       gradle: false                     # opt out of the gradle built-in
 ```
-

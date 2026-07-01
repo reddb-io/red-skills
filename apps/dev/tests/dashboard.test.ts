@@ -3,6 +3,7 @@ import {
   buildDashboardReport,
   parseDueDate,
   renderDashboardReport,
+  renderDashboardReportToon,
   type DashboardIssue,
 } from "../src/core/dashboard.js";
 
@@ -123,5 +124,26 @@ describe("dashboard report", () => {
     expect(text).toContain("RedSkills dashboard (7d)");
     expect(text).toContain("Operations");
     expect(text).toContain("DORA proxies");
+  });
+
+  it("renders the default agent-facing dashboard as TOON, cheaper than JSON", () => {
+    const report = buildDashboardReport({
+      now: new Date("2026-06-05T12:00:00Z"),
+      periodDays: 7,
+      localWorkers: { live: 2, stale: 1, total: 3 },
+      issues: [],
+      pullRequests: [],
+      releases: [],
+    });
+    const toon = renderDashboardReportToon(report);
+    // Indentation key:value tree with nested groups and a definitive empty state.
+    expect(toon).toContain("schema_version: red.dev.dashboard.v1");
+    expect(toon).toContain("operations:");
+    expect(toon).toContain("  open_prds: 0");
+    expect(toon).toContain("local_workers:");
+    expect(toon).toContain("    live: 2");
+    expect(toon).toMatch(/warnings\[\d+\]:/);
+    // No field name is repeated per element the way pretty JSON repeats keys.
+    expect(toon.length).toBeLessThan(JSON.stringify(report, null, 2).length);
   });
 });

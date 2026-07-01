@@ -1,85 +1,19 @@
-import { setTimeout as sleep } from "node:timers/promises";
-import { parseFlags, type FlagSchema } from "@reddb-io/shared/args.js";
-import { LABEL_HUMAN, LABEL_READY_FOR_REVIEW } from "../core/triage-labels.js";
-import {
-  buildIssueClassificationMetadata,
-  classifyIssue,
-  resolveReviewGate,
-  shouldRequestReview,
-} from "../core/issue-classifier.js";
+// commands/ship.ts — DEPRECATED per ADR 0081.
+//
+// `/ship` is retired. Manual adoption of a hand-done branch now routes through
+// `requeue --adopt-branch BRANCH` into the no-agent landing lane (ADR 0055).
+// `collectShipFacts` is kept (tested by ship-facts.test.ts; may be reused by
+// future callers). `shipCommand` is the backwards-compat alias.
+
 import { execTool, type ExecOutput } from "../runtime/exec.js";
 import {
   advisoryReviewPending,
-  decideShipMergeGate,
-  isShipWorktreePath,
   issueNumberFromBranch,
   normalizeRollupEntry,
   shipChecksAreGreen,
   type ShipCheck,
 } from "../core/ship.js";
-import { afkPaths } from "../runtime/wire.js";
-import { getConfig, loadConfig } from "../core/config.js";
-
-interface ShipFlags {
-  base: string;
-  remote: string;
-  repo?: string;
-  issue?: number;
-  timeoutS: number;
-  pollS: number;
-  /** Name (substring, case-insensitive) of the advisory bot review to wait on
-   * before merging, e.g. `CodeRabbit`. Blank disables the wait. */
-  reviewCheck: string;
-}
-
-interface ShipFacts {
-  branchProtectionSatisfied: boolean;
-  changesRequested: boolean;
-  checksGreen: boolean;
-  /** An advisory bot review (e.g. CodeRabbit) is registered but still in flight. */
-  advisoryReviewPending: boolean;
-  reviewDecision: string;
-  checkSummary: string;
-}
-
-const SHIP_FLAG_SCHEMA = {
-  base: { kind: "value", aliases: ["b"], coerce: (raw: string): string => raw },
-  remote: { kind: "value", coerce: (raw: string): string => raw },
-  repo: { kind: "value", aliases: ["R"], coerce: (raw: string): string => raw },
-  issue: { kind: "value", aliases: ["i"], coerce: (raw: string): number => Number(raw) },
-  "timeout-s": { kind: "value", coerce: (raw: string): number => Number(raw) },
-  "poll-s": { kind: "value", coerce: (raw: string): number => Number(raw) },
-  "review-check": { kind: "value", coerce: (raw: string): string => raw },
-  "no-review-wait": { kind: "boolean" },
-} satisfies FlagSchema;
-
-/**
- * Resolve ship flags. `reviewCheck` is the advisory bot review to wait on before
- * merging: an explicit `--review-check NAME` wins, else the repo's configured
- * `afk.merge.review_check` (so `/ship` honors the same reviewer the AFK landing
- * does), and `--no-review-wait` (or a blank name) disables the wait.
- */
-function parseShipFlags(args: readonly string[], configReviewCheck: string): ShipFlags {
-  const { values } = parseFlags(args, SHIP_FLAG_SCHEMA);
-  const timeoutS = Number.isFinite(values["timeout-s"]) && Number(values["timeout-s"]) > 0
-    ? Number(values["timeout-s"])
-    : 30 * 60;
-  const pollS = Number.isFinite(values["poll-s"]) && Number(values["poll-s"]) > 0
-    ? Number(values["poll-s"])
-    : 30;
-  const reviewCheck = values["no-review-wait"] === true
-    ? ""
-    : String((values["review-check"] as string | undefined) ?? configReviewCheck);
-  return {
-    base: String(values.base ?? "main"),
-    remote: String(values.remote ?? "origin"),
-    repo: values.repo as string | undefined,
-    issue: Number.isFinite(values.issue) ? Number(values.issue) : undefined,
-    timeoutS,
-    pollS,
-    reviewCheck,
-  };
-}
+import { requeueCommand } from "./requeue.js";
 
 async function run(cmd: string, args: readonly string[], cwd: string): Promise<ExecOutput> {
   return execTool(cmd, args, { cwd });
@@ -101,116 +35,13 @@ async function required(cmd: string, args: readonly string[], cwd: string, label
   return r;
 }
 
-async function resolveRepo(cwd: string, explicit?: string): Promise<string> {
-  if (explicit?.trim()) return explicit.trim();
-  const r = await required("gh", ["repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"], cwd, "resolve repo");
-  return r.stdout.trim();
-}
-
-async function currentBranch(cwd: string): Promise<string> {
-  const r = await required("git", ["branch", "--show-current"], cwd, "resolve current branch");
-  const branch = r.stdout.trim();
-  if (!branch) throw new Error("/ship requires a named branch, not detached HEAD");
-  return branch;
-}
-
-async function gitTopLevel(cwd: string): Promise<string> {
-  const r = await required("git", ["rev-parse", "--show-toplevel"], cwd, "resolve git worktree");
-  return r.stdout.trim();
-}
-
-async function ensureCommittedWork(cwd: string): Promise<void> {
-  const r = await required("git", ["status", "--porcelain"], cwd, "check git status");
-  if (r.stdout.trim() !== "") {
-    throw new Error("/ship requires committed work; commit or stash the remaining changes first");
-  }
-}
-
-interface IssueMeta {
-  title: string;
-  body: string;
-  labels: string[];
-}
-
-async function issueMeta(cwd: string, repo: string, issue: number): Promise<IssueMeta> {
-  const r = await run(
-    "gh",
-    ["issue", "view", String(issue), "--repo", repo, "--json", "title,body,labels"],
-    cwd,
-  );
-  const fallback: IssueMeta = { title: `Issue #${issue}`, body: "", labels: [] };
-  if (r.code !== 0) return fallback;
-  const parsed = parseJson<{ title?: string; body?: string; labels?: Array<{ name?: string }> }>(r.stdout, {});
-  return {
-    title: parsed.title?.trim() || fallback.title,
-    body: parsed.body ?? "",
-    labels: (parsed.labels ?? []).map((l) => l.name ?? "").filter(Boolean),
-  };
-}
-
-async function pushBranch(cwd: string, remote: string, branch: string): Promise<void> {
-  await required("git", ["push", "-u", remote, `HEAD:refs/heads/${branch}`], cwd, "push branch");
-}
-
-async function findOpenPr(cwd: string, repo: string, branch: string, base: string): Promise<number | undefined> {
-  const r = await required(
-    "gh",
-    [
-      "pr",
-      "list",
-      "--repo",
-      repo,
-      "--head",
-      branch,
-      "--base",
-      base,
-      "--state",
-      "open",
-      "--json",
-      "number",
-      "--jq",
-      ".[0].number // empty",
-    ],
-    cwd,
-    "find open PR",
-  );
-  const n = Number.parseInt(r.stdout.trim(), 10);
-  return Number.isInteger(n) ? n : undefined;
-}
-
-async function openOrReusePr(
-  cwd: string,
-  repo: string,
-  branch: string,
-  base: string,
-  issue: number,
-  title: string,
-): Promise<number> {
-  const existing = await findOpenPr(cwd, repo, branch, base);
-  if (existing !== undefined) return existing;
-
-  await required(
-    "gh",
-    [
-      "pr",
-      "create",
-      "--repo",
-      repo,
-      "--base",
-      base,
-      "--head",
-      branch,
-      "--title",
-      `ship: #${issue} ${title}`,
-      "--body",
-      `Interactive /ship landing for #${issue}.\n\nCloses #${issue}`,
-    ],
-    cwd,
-    "create PR",
-  );
-  const created = await findOpenPr(cwd, repo, branch, base);
-  if (created === undefined) throw new Error("created PR but could not resolve its number");
-  return created;
+interface ShipFacts {
+  branchProtectionSatisfied: boolean;
+  changesRequested: boolean;
+  checksGreen: boolean;
+  advisoryReviewPending: boolean;
+  reviewDecision: string;
+  checkSummary: string;
 }
 
 interface PrView {
@@ -243,8 +74,7 @@ export async function collectShipFacts(cwd: string, repo: string, pr: number, re
   const view = parseJson<PrView>(viewRes.stdout, {});
 
   // When gh pr checks failed but gh pr view returned a populated statusCheckRollup,
-  // use that rollup as the check source so a transient gh-checks API failure does
-  // not falsely report checks as unavailable.
+  // use that rollup as the check source.
   if (checkSummary === "checks unavailable") {
     const rollup = view.statusCheckRollup ?? [];
     if (rollup.length > 0) {
@@ -264,169 +94,55 @@ export async function collectShipFacts(cwd: string, repo: string, pr: number, re
   return { branchProtectionSatisfied, changesRequested, checksGreen, advisoryReviewPending: reviewPending, reviewDecision, checkSummary };
 }
 
-function hitlBody(pr: number, issue: number, reason: string, facts: ShipFacts): string {
-  return [
-    "/ship stopped for human review.",
-    "",
-    `PR: #${pr}`,
-    `Issue: #${issue}`,
-    `Reason: ${reason}`,
-    `Checks: ${facts.checkSummary}`,
-    `Review decision: ${facts.reviewDecision || "none"}`,
-    "",
-    "Next step: run `/dev:hitl` after the human decision is recorded.",
-  ].join("\n");
-}
-
-async function markHitl(cwd: string, repo: string, pr: number, issue: number, reason: string, facts: ShipFacts): Promise<void> {
-  const body = hitlBody(pr, issue, reason, facts);
-  await run("gh", ["label", "create", LABEL_HUMAN, "--repo", repo, "--color", "FBCA04", "--description", "Waiting for a human decision"], cwd);
-  await run("gh", ["issue", "comment", String(issue), "--repo", repo, "--body", body], cwd);
-  await run("gh", ["issue", "edit", String(issue), "--repo", repo, "--add-label", LABEL_HUMAN], cwd);
-  await run("gh", ["pr", "edit", String(pr), "--repo", repo, "--add-label", LABEL_HUMAN], cwd);
-  await run("gh", ["pr", "comment", String(pr), "--repo", repo, "--body", body], cwd);
+/** Scan argv for a `--issue N` or `-i N` value (the only ship flag the alias needs). */
+function parseIssueFlag(args: readonly string[]): number | undefined {
+  for (let i = 0; i < args.length; i += 1) {
+    if ((args[i] === "--issue" || args[i] === "-i") && i + 1 < args.length) {
+      const n = Number(args[i + 1]);
+      return Number.isFinite(n) && n > 0 ? n : undefined;
+    }
+  }
+  return undefined;
 }
 
 /**
- * Review-gate handoff for `/ship` (ADR 0064 §10, #749): a non-mechanical change
- * earns a fresh-agent review before merge, so apply `ready-for-review` to the PR
- * (which fires the advisory review) and hold the merge. The label is created
- * best-effort first so a fresh repo never wedges the handoff. Mirrors the AFK
- * landing path's review handoff (process-issue's handoffForReview).
+ * DEPRECATED per ADR 0081. `/ship` is retired; manual branch adoption routes
+ * through `requeue --adopt-branch BRANCH`. This alias prints the deprecation
+ * notice, infers issue + branch from the current context, and delegates to
+ * requeueCommand so callers are redirected rather than broken.
  */
-async function markReviewRequested(cwd: string, repo: string, pr: number, issue: number, taskClass: string): Promise<void> {
-  await run(
-    "gh",
-    ["label", "create", LABEL_READY_FOR_REVIEW, "--repo", repo, "--color", "0E8A16", "--description", "PR awaiting a fresh-agent review"],
-    cwd,
-  );
-  await run("gh", ["pr", "edit", String(pr), "--repo", repo, "--add-label", LABEL_READY_FOR_REVIEW], cwd);
-  await run(
-    "gh",
-    [
-      "pr",
-      "comment",
-      String(pr),
-      "--repo",
-      repo,
-      "--body",
-      `🤖 /ship: non-mechanical change (\`${taskClass}\`) for #${issue} — applied \`${LABEL_READY_FOR_REVIEW}\` for a fresh-agent review before merge. Holding the merge per the review gate (ADR 0064 §10).`,
-    ],
-    cwd,
-  );
-}
-
-async function approveAndMerge(cwd: string, repo: string, pr: number): Promise<boolean> {
-  const approve = await run(
-    "gh",
-    ["pr", "review", String(pr), "--repo", repo, "--approve", "--body", "Approved by /ship after green checks and review-respecting gate."],
-    cwd,
-  );
-  if (approve.code !== 0) return false;
-  const merge = await run("gh", ["pr", "merge", String(pr), "--repo", repo, "--merge"], cwd);
-  return merge.code === 0;
-}
-
-function reasonForHitl(facts: ShipFacts, timedOut: boolean): string {
-  if (timedOut) return "monitor time cap exceeded";
-  if (facts.changesRequested) return "review requested changes";
-  if (!facts.branchProtectionSatisfied) return "branch protection requires approval";
-  if (!facts.checksGreen) return "checks did not become green";
-  return "merge gate requested HITL";
-}
-
 export async function shipCommand(
   args: string[],
   cwd = process.cwd(),
   stdout: NodeJS.WritableStream = process.stdout,
 ): Promise<number> {
-  const config = loadConfig(afkPaths(cwd).configPath, { warn: () => undefined });
-  const flags = parseShipFlags(args, getConfig(config, "afk.merge.review_check"));
-  const topLevel = await gitTopLevel(cwd);
-  if (!isShipWorktreePath(topLevel)) {
-    throw new Error("/ship must run from a .red/tmp/work-ship-*/ worktree");
-  }
-  await ensureCommittedWork(cwd);
+  process.stderr.write(
+    "[afk] /ship is deprecated (ADR 0081). Manual adoption routes through requeue:\n" +
+    "  red-skills-dev requeue #ISSUE --adopt-branch BRANCH --guidance 'reason'\n\n",
+  );
 
-  const repo = await resolveRepo(cwd, flags.repo);
-  const branch = await currentBranch(cwd);
-  const issue = flags.issue ?? issueNumberFromBranch(branch);
-  if (issue === undefined) {
-    throw new Error("/ship could not infer the linked issue; pass --issue N");
-  }
-  const meta = await issueMeta(cwd, repo, issue);
-  const { title } = meta;
+  // Resolve current branch (best-effort).
+  let branch: string | undefined;
+  try {
+    const r = await execTool("git", ["branch", "--show-current"], { cwd });
+    branch = r.code === 0 ? r.stdout.trim() || undefined : undefined;
+  } catch { /* best-effort */ }
 
-  await pushBranch(cwd, flags.remote, branch);
-  stdout.write(`/ship: pushed ${branch} to ${flags.remote}\n`);
-  const pr = await openOrReusePr(cwd, repo, branch, flags.base, issue, title);
-  stdout.write(`/ship: PR #${pr} ready for #${issue}\n`);
+  const issue = parseIssueFlag(args) ?? (branch ? issueNumberFromBranch(branch) : undefined);
 
-  // PR review gate (ADR 0064 §10, #749). When enabled and the change is
-  // NON-mechanical (issue-classifier tier at/above the threshold), `/ship`
-  // applies `ready-for-review` and HOLDS the merge for a fresh-agent review
-  // instead of auto-merging — honouring the same gate as the AFK landing path.
-  // Mechanical/trivial work falls through to the existing review-respecting
-  // merge loop unchanged. The classification is the cheap deterministic pass
-  // (no model call), matching `/ship`'s synchronous, offline-friendly contract.
-  const reviewGate = resolveReviewGate(config);
-  if (reviewGate) {
-    const taskClass = await classifyIssue(
-      buildIssueClassificationMetadata({ issue, title, body: meta.body, labels: meta.labels }),
+  if (!issue || !branch) {
+    process.stderr.write(
+      "[afk] /ship alias: could not infer issue or branch.\n" +
+      "  Run manually: red-skills-dev requeue #ISSUE --adopt-branch BRANCH --guidance 'reason'\n",
     );
-    if (shouldRequestReview(taskClass, reviewGate)) {
-      await markReviewRequested(cwd, repo, pr, issue, taskClass);
-      stdout.write(
-        `/ship: non-mechanical (${taskClass}) — applied ${LABEL_READY_FOR_REVIEW} to PR #${pr}; holding for a fresh-agent review\n`,
-      );
-      return 0;
-    }
+    return 1;
   }
 
-  const deadline = Date.now() + flags.timeoutS * 1000;
-  let lastFacts = await collectShipFacts(cwd, repo, pr, flags.reviewCheck);
-  for (;;) {
-    const timedOut = Date.now() >= deadline;
-    // Keep polling while CI is still running OR an advisory bot review (e.g.
-    // CodeRabbit) is registered but in flight — the AFK landing path waits for
-    // that reviewer to conclude, and `/ship` must not merge out from under it.
-    if (
-      !timedOut &&
-      !lastFacts.changesRequested &&
-      lastFacts.branchProtectionSatisfied &&
-      (!lastFacts.checksGreen || lastFacts.advisoryReviewPending)
-    ) {
-      const waitNote = lastFacts.advisoryReviewPending
-        ? `${lastFacts.checkSummary}; waiting on ${flags.reviewCheck} review`
-        : lastFacts.checkSummary;
-      stdout.write(`/ship: waiting (${waitNote}); next poll in ${flags.pollS}s\n`);
-      await sleep(flags.pollS * 1000);
-      lastFacts = await collectShipFacts(cwd, repo, pr, flags.reviewCheck);
-      continue;
-    }
+  process.stderr.write(`[afk] /ship alias: routing to requeue #${issue} --adopt-branch ${branch}\n`);
 
-    const decision = decideShipMergeGate({
-      branchProtectionSatisfied: lastFacts.branchProtectionSatisfied,
-      changesRequested: lastFacts.changesRequested,
-      checksGreen: lastFacts.checksGreen,
-      timedOut,
-    });
-
-    if (decision === "merge") {
-      if (await approveAndMerge(cwd, repo, pr)) {
-        stdout.write(`/ship: approved and merged PR #${pr}\n`);
-        return 0;
-      }
-      await markHitl(cwd, repo, pr, issue, "approve or merge command failed", lastFacts);
-      stdout.write(`/ship: approve/merge failed; marked #${issue} and PR #${pr} ready-for-human\n`);
-      return 0;
-    }
-
-    if (timedOut || lastFacts.changesRequested || !lastFacts.branchProtectionSatisfied) {
-      const reason = reasonForHitl(lastFacts, timedOut);
-      await markHitl(cwd, repo, pr, issue, reason, lastFacts);
-      stdout.write(`/ship: ${reason}; marked #${issue} and PR #${pr} ready-for-human\n`);
-      return 0;
-    }
-  }
+  return requeueCommand(
+    [String(issue), "--adopt-branch", branch, "--guidance", "Adopted via deprecated /ship alias (ADR 0081). Update guidance if needed."],
+    cwd,
+    stdout,
+  );
 }
