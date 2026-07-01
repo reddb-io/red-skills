@@ -294,6 +294,33 @@ describe("reconcile — red → park", () => {
   });
 });
 
+describe("reconcile — pre-fetch safety push", () => {
+  it("attempts a push before the fetch gate so local-only commits reach the remote", async () => {
+    const { deps, input, trace } = harness({ feedbackOk: true });
+    await reconcile(deps, input);
+    // The pre-fetch push uses pushAttempt (not --delete), so trace.pushedAttempt
+    // must have at least one entry before the fetch gate runs.
+    const pushes = trace.pushedAttempt.filter((a) => !a.includes("--delete"));
+    expect(pushes.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("continues to the fetch gate even when the pre-fetch push fails", async () => {
+    const { deps, input, trace } = harness({ branchPresent: false });
+    // Override remoteGit to fail on the push attempt
+    let callCount = 0;
+    deps.remoteGit = async (argv) => {
+      callCount++;
+      if (!argv.includes("--delete")) trace.pushedAttempt.push(argv);
+      return { code: 1, stdout: "", stderr: "auth failed" };
+    };
+    const result = await reconcile(deps, input);
+    // Push was attempted (the pre-fetch safety step ran)
+    expect(callCount).toBeGreaterThan(0);
+    // Reconcile falls through to branch-absent (remote is still empty after failed push)
+    expect(result).toEqual({ outcome: "skipped", reason: "branch-absent" });
+  });
+});
+
 describe("reconcile — guards (mechanical class only)", () => {
   it("skips blocked:spec (a human-decision class) without touching the issue", async () => {
     const { deps, input, trace } = harness({

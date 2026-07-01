@@ -186,7 +186,14 @@ export async function doLanding(
   const { locked } = input;
 
   // 1. push the worker branch so landMerge/landPr have a remote ref.
-  await pushAttempt(deps.remoteGit, input.repoDir, input.branch, input.branch);
+  // NOT best-effort: if the push fails the remote has no commits and any merge
+  // attempt produces a false "zero-diff" land-failed (the true cause is a push
+  // failure, not a merge conflict). Fail early with the real reason so no work
+  // is silently lost and the issue is not mis-labelled blocked:merge-conflict.
+  const pushed = await pushAttempt(deps.remoteGit, input.repoDir, input.branch, input.branch);
+  if (!pushed.ok) {
+    return { ok: false, reason: "land-failed", locked };
+  }
 
   // 2. pre_merge hook.
   if (!(await deps.fireHook("pre_merge", hooks.preMerge()))) {

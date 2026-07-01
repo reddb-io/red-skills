@@ -232,6 +232,16 @@ describe("doLanding — happy paths", () => {
 });
 
 describe("doLanding — abort / failure short-circuits", () => {
+  it("push failure → { ok:false, land-failed } before any hook fires (no silent zero-diff)", async () => {
+    const h = harness({ locked: false });
+    // Simulate the continuous-push hook having failed: the initial push also fails.
+    h.deps.remoteGit = async () => ({ code: 1, stdout: "", stderr: "fatal: authentication failed" });
+    const r = await doLanding(h.deps, h.input, h.hooks);
+    expect(r).toEqual({ ok: false, reason: "land-failed", locked: false });
+    // No hooks should fire — the push is the first mandatory step.
+    expect(h.firedHooks).toEqual([]);
+  });
+
   it("pre_merge abort → { ok:false, pre_merge-abort } and never integrates/lands", async () => {
     const h = harness({ locked: false, abortHook: "pre_merge" });
     const r = await doLanding(h.deps, h.input, h.hooks);

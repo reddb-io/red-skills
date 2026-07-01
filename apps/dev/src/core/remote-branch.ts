@@ -134,13 +134,14 @@ export async function pushInitial(
 
 /** Body of the executable post-commit hook installed into a worktree's gitdir.
  * The `|| true` guard keeps the hook a pure side-effect — a failed push never
- * affects the commit. */
+ * affects the commit. stderr is NOT suppressed: push failures surface in the
+ * agent stream and in the teardown safety-push's unpushed-commit count. */
 export const POST_COMMIT_HOOK_BODY = [
   "#!/usr/bin/env bash",
   "# AFK continuous-push hook (issue #191)",
   "# Fire-and-forget: push the worker branch to origin after every commit so a",
   "# SIGKILL of the orchestrator at any point preserves the diff on the remote.",
-  "git push origin HEAD --force-with-lease 2>/dev/null || true",
+  "git push origin HEAD --force-with-lease || true",
   "",
 ].join("\n");
 
