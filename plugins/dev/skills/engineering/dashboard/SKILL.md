@@ -1,7 +1,7 @@
 ---
 name: dashboard
 description: Shows a RedSkills operational dashboard with issue, PRD, AFK worker, flow, and DORA-proxy metrics from GitHub plus local AFK state. Use when the user invokes `/dashboard`, asks for RedSkills process metrics, workers running, open PRDs/issues, cycle time, or DORA metrics.
-argument-hint: "[--period N|Nd] [--json]"
+argument-hint: "[--period N|Nd] [--json] [--human]"
 ---
 
 # /dashboard
@@ -12,18 +12,10 @@ Render the RedSkills process dashboard.
 
 ## Run
 
-Resolve the plugin root before running the dashboard. Use the first available
-source:
-
-1. `$CLAUDE_PLUGIN_ROOT` under Claude Code.
-2. `$CODEX_PLUGIN_ROOT` under Codex when the host exposes it.
-3. The loaded `SKILL.md` path: from `skills/engineering/dashboard/SKILL.md`,
-   the plugin root is `../../..`.
-
-Then run:
+Run the host-level RedSkills dev runtime shim:
 
 ```bash
-node "$PLUGIN_ROOT/skills/engineering/afk/bin/afk.mjs" dashboard [--period 30d] [--json]
+red-skills-dev dashboard [--period 30d] [--json]
 ```
 
 When developing inside the red-skills source checkout, this repo-local path is
@@ -32,6 +24,13 @@ also valid:
 ```bash
 node plugins/dev/skills/engineering/afk/bin/afk.mjs dashboard [--period 30d] [--json]
 ```
+
+## Output format
+
+**TOON by default** (PRD #928 / ADR 0081) — the agent-facing wire format is
+token-cheap by design: pre-computed aggregate groups, minimal schemas, and a
+definitive `warnings[0]:` empty state. `--json` forces raw JSON (tooling escape
+hatch); `--human` prints the prose dashboard for a terminal read.
 
 ## Metrics
 

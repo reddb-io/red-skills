@@ -552,6 +552,16 @@ describe("runSession — session-level lifecycle hooks", () => {
     const summary = await runSession(deps, ctx);
     expect(summary.sessionHooksFired).toEqual(["pre_session", "pre_pick", "post_pick", "post_session"]);
     expect(trace.hookCommands).toEqual(["cmd:pre_session", "cmd:pre_pick", "cmd:post_pick", "cmd:post_session"]);
+    expect(trace.emitted.filter((line) => line.startsWith("[afk:hooks]"))).toEqual([
+      "[afk:hooks] pre_session: enter: cmd:pre_session",
+      "[afk:hooks] pre_session: exit rc=0: cmd:pre_session",
+      "[afk:hooks] pre_pick: enter: cmd:pre_pick",
+      "[afk:hooks] pre_pick: exit rc=0: cmd:pre_pick",
+      "[afk:hooks] post_pick: enter: cmd:post_pick",
+      "[afk:hooks] post_pick: exit rc=0: cmd:post_pick",
+      "[afk:hooks] post_session: enter: cmd:post_session",
+      "[afk:hooks] post_session: exit rc=0: cmd:post_session",
+    ]);
   });
 
   it("fires on_idle then post_session when the queue is empty", async () => {
@@ -572,7 +582,11 @@ describe("runSession — session-level lifecycle hooks", () => {
     expect(trace.processedOrder).toEqual([]);
     expect(summary.sessionHooksFired).toEqual(["pre_session"]);
     // no listing happened → no NO MORE TASKS, no progress lines.
-    expect(trace.emitted).toEqual([]);
+    expect(trace.emitted).toEqual([
+      "[afk:hooks] pre_session: enter: cmd:pre_session",
+      "[afk:hooks] pre_session: exit rc=1: cmd:pre_session",
+      "[afk:hooks] pre_session: command failed (rc=1): cmd:pre_session",
+    ]);
   });
 
   it("fires on_session_error and re-throws when processIssue crashes", async () => {

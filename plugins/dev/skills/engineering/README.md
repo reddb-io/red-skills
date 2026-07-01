@@ -3,6 +3,7 @@
 Skills I use daily for code work.
 
 - **[afk](./afk/SKILL.md)** — Autonomous loop that drains the `ready-for-agent` queue. Claims an issue, runs it in an isolated worktree via claude/codex, merges back to main, closes. Filters by PRD or explicit issue list; pins caller identity with `RED_AFK_RUNNER`; swaps runners only when explicitly requested; heartbeat + monitor + live progress.
+- **[go](./go/SKILL.md)** — Semi-structured front door between `/goal` and `/afk`. Mints a disposable tracking issue in the isolated `lane:go` lane (out of `ready-for-agent`, so a running fleet cannot claim it), spins a dedicated namespaced worker under `.red/tmp/go-workers/`, reuses the whole AFK engine with `origin=go` and the interactive gate, and brings back a PR that auto-closes the issue on merge. Works with or without a fleet running.
 - **[dashboard](./dashboard/SKILL.md)** — RedSkills process dashboard: open PRDs/issues, global and local AFK workers, flow metrics, and DORA proxies.
 - **[daily-review](./daily-review/SKILL.md)** — Daily operational review from yesterday local midnight to now: delivery big numbers, local worker attempts/time, tokens when available, HITL/blocker challenges, and issue/PR cycle times.
 - **[weekly-review](./weekly-review/SKILL.md)** — Six-day operational review from six-days-ago local midnight to now, with the same delivery, worker, challenge, and cycle-time sections as `/daily-review`.
@@ -29,4 +30,6 @@ Skills I use daily for code work.
 - **[to-prd](./to-prd/SKILL.md)** — Turn the current conversation context into a PRD and submit it as a GitHub issue.
 - **[zoom-out](./zoom-out/SKILL.md)** — Map-first Codebase understanding for unfamiliar code; graph-aware when Memory Graph mode is ready and read-only when it is not.
 - **[prototype](./prototype/SKILL.md)** — Build a throwaway prototype to flesh out a design — either a runnable terminal app for state/business-logic questions, or several radically different UI variations toggleable from one route.
+- **[verify](./verify/SKILL.md)** — Verify that a code change does what it's supposed to by driving a live app with the CDP driver and checking ground-truth snapshots. Every visible-state claim must be backed by a `red-browser snapshot` result; no snapshot, no success claim.
+- **[review](./review/SKILL.md)** — Review a generated HTML artifact (plan, dashboard, or prototype) in the browser: opens it via the annotation bridge, runs the layout-audit gate, long-polls for surgical human feedback (element + character range), and feeds the annotation back for iteration.
 - **[resolving-merge-conflicts](./resolving-merge-conflicts/SKILL.md)** — Guided merge-conflict resolution: inspect state, find each side's original intent, resolve every hunk preserving both intents, then run the project's automated checks. Never abort.

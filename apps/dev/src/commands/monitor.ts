@@ -1,8 +1,15 @@
-import { renderCompactDashboard, type CompactWorker } from "../core/monitor.js";
-import { collectMonitorInputs } from "../runtime/wire.js";
+import { renderCompactDashboard, renderCompactDashboardToon, type CompactWorker } from "../core/monitor.js";
+import { collectMonitorInputs, afkPaths, resolveRepoContext } from "../runtime/wire.js";
 import { resolveSupervisorConfig } from "../core/supervisor.js";
 import { runWatchdog } from "../core/watchdog.js";
 import { buildWatchdogIO } from "../runtime/watchdog-io.js";
+import { loadConfig } from "../core/config.js";
+import {
+  runCompanionPass,
+  summarizeCompanionPass,
+  resolveCompanionThresholds,
+  resolveDriftCap,
+} from "../runtime/companion-io.js";
 import {
   mirrorPlan,
   codexSinkPlan,
@@ -30,6 +37,7 @@ export function workersToDesired(workers: readonly CompactWorker[]): WorkerRecor
     const issue = typeof number === "number" ? number : Number(number);
     if (!Number.isFinite(issue)) continue;
     const phase = w.state.current.phase ?? "";
+    const processLive = w.liveness ? w.liveness !== "dead" : (w.pidLive ?? w.live);
     out.push({
       worker_id: w.state.worker_id,
       issue,
@@ -38,9 +46,11 @@ export function workersToDesired(workers: readonly CompactWorker[]): WorkerRecor
       stage: w.state.current.stage,
       phase,
       started_at: w.state.current.started_at || w.state.started_at,
-      // A dead worker whose last macro phase is `blocked` is a terminal failure
-      // (→ task failed); any other dead worker is a normal completion (→ gone).
-      status: w.live ? "running" : phase === "blocked" ? "blocked" : "gone",
+      // Terminal completion requires the pid to be gone. `w.live` is the
+      // pid+freshness badge; when it is false but `pidLive` is true the worker is
+      // merely `[quiet]` (e.g. long validation/merge wait) and must stay
+      // in-progress on the native task surface.
+      status: processLive ? "running" : phase === "blocked" ? "blocked" : "gone",
     });
   }
   return out;
@@ -194,7 +204,38 @@ export async function monitorCommand(
 
   const { workers, events, fleet } = await collectMonitorInputs(cwd);
   const now = Math.floor(Date.now() / 1000);
-  const dashboard = renderCompactDashboard(workers, events, now, fleet);
+  // TOON is the default agent-facing wire format (PRD #928 / ADR 0081); `--plain`
+  // restores the legacy compact text dashboard for a human TTY glance.
+  const dashboard = args.includes("--plain")
+    ? renderCompactDashboard(workers, events, now, fleet)
+    : renderCompactDashboardToon(workers, events, now, fleet);
   stdout.write(`${dashboard}\n`);
+
+  // Companion (active) mode (#921, PRD #907). STRICTLY opt-in: without
+  // `--companion` / `--active` the monitor is byte-for-byte the read-only
+  // dashboard above (it has already returned all its output) and performs no gh
+  // writes. With the flag, run ONE bounded drift-detection pass over the live
+  // fleet — re-enqueueing a drifting worker's issue with a bounded correction
+  // (write-only, idempotent), or escalating to ready-for-human at the cap. It
+  // never kills a process; termination/respawn is the reaper + fleet's job.
+  // `--dry-run` computes + prints the plan without any gh write.
+  if (args.includes("--companion") || args.includes("--active")) {
+    try {
+      const paths = afkPaths(cwd);
+      const repoCtx = await resolveRepoContext(cwd);
+      const cfg = loadConfig(paths.configPath, { warn: () => undefined });
+      const outcomes = await runCompanionPass({
+        workersRoot: paths.workersRoot,
+        ctx: { repo: repoCtx.repo, cwd: repoCtx.root },
+        thresholds: resolveCompanionThresholds(cfg),
+        cap: resolveDriftCap(process.env),
+        dryRun: args.includes("--dry-run"),
+      });
+      const summary = summarizeCompanionPass(outcomes, args.includes("--dry-run"));
+      if (summary !== "") stdout.write(`${summary}\n`);
+    } catch {
+      // Best-effort: a companion failure must never break the dashboard render.
+    }
+  }
   return 0;
 }

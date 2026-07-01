@@ -32,7 +32,7 @@ export interface CodexMonitorAgentPromptOptions {
 export const DEFAULT_CODEX_MONITOR_INTERVAL_SECONDS = 30;
 
 export const DEFAULT_CODEX_MONITOR_COMMAND =
-  'rtk env RED_AFK_RUNNER=codex node "$CODEX_PLUGIN_ROOT/skills/engineering/afk/bin/afk.mjs" monitor --once';
+  "rtk env RED_AFK_RUNNER=codex red-skills-dev monitor --once";
 
 function normalizedRunner(runner: string): string {
   return runner.trim().toLowerCase();
@@ -66,7 +66,7 @@ export function renderCodexMonitorAgentPrompt(options: CodexMonitorAgentPromptOp
     `1. Every ${intervalSeconds} seconds, from the project root, run:`,
     `   ${monitorCommand}`,
     "2. Report a concise progress update when live worker state changes, when a worker becomes stale/wedged, or at least every five minutes.",
-    "3. Exit once there is no live .red/tmp/afk-supervisor.pid and the monitor output has no [live] workers.",
+    "3. Exit once there is no live .red/tmp/afk-supervisor.pid and the monitor output has no [live] or [quiet] workers.",
     "4. If the monitor command fails three times in a row, report the failure and exit.",
     "",
     "Hard read-only rules:",

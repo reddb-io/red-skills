@@ -1,87 +1,176 @@
-# @redskills/opencode-host
+# @reddb-io/red-skills
 
-The **adapter layer** that emits `opencode.json` from a project's
-`.red/config.yaml` and the ADR 0059 env-precedence rule. Slice 1 of the
-opencode-as-host plan (ADR 0075): provider block only. Skills, hooks, MCP,
-and agents land in slices 2-5.
+The **adapter layer** that emits `opencode.json` + the opencode-native
+dist tree (`opencode.json`, `.opencode/skills/<name>/SKILL.md`,
+`.opencode/plugin/<event>.ts`) from a project's `.red/config.yaml` and
+the ADR 0059 env-precedence rule. The same `plugins/<name>/` source tree
+serves Claude Code, Codex, and OpenCode through this single generator.
 
-## Why this exists
+## Slices
 
-ADR 0059 already lets AFK pick a model for the opencode runner from
-`plugins.dev.afk.models.opencode.*` in `.red/config.yaml` and the
-`OPENAI_API_KEY > MINIMAX_API_KEY > OPENROUTER_API_KEY` env-precedence
-rule. This app materialises the same config for the **developer-facing
-opencode TUI** — a user running `opencode .` on a reddb.io repo now sees
-the same model AFK would have picked, registered against the same auth
-env-var. No second configuration step.
-
-ADR 0075 documents the contract. ADR 0059 Amendment 3 is the cross-link.
-
-## What it does today (Slice 1)
-
-- Reads `.red/config.yaml` and applies the ADR 0067 strict opt-in gate
-  (`plugins.dev.enabled: true`); refuses to emit when the gate is closed.
-- Picks the active provider by env precedence
-  (`OPENAI_API_KEY` → `MINIMAX_API_KEY` → `OPENROUTER_API_KEY`), matching
-  ADR 0059 Amendment 1 byte-for-byte.
-- Reads the per-tier model table (`plugins.dev.afk.models.opencode.<tier>.
-  model`, default tier `think`); falls back to the OpenRouter-shaped
-  default for back-compat with the AFK-only era.
-- Emits `opencode.json` with the three provider entries registered and
-  the active one ordered first, and **does not** embed the API key (auth
-  stays in `~/.local/share/opencode/auth.json` + env).
+- **Slice 1 (ADR 0075)** — `opencode.json` `provider>` block. Active
+  provider picked by env precedence
+  `OPENAI_API_KEY > MINIMAX_API_KEY > OPENROUTER_API_KEY`; per-tier
+  model table read from `plugins.dev.afk.models.opencode.<tier>.model`
+  with the OpenRouter-shaped default as a back-compat fallback.
+- **Slice 2 (ADR 0076 + 0077)** — `.opencode/skills/<name>/SKILL.md`
+  (flat-symlinked) and `.opencode/plugin/<event>.ts` (one TS module per
+  Claude/Codex event class).
+- **Slice 3 (ADR 0079)** — MCP passthrough. The per-plugin `.mcp.json`
+  is rewritten into opencode's `mcp: { <name>: { type: "local",
+  command, environment, cwd? } }` shape and merged into the Slice 1
+  `opencode.json`. The plugin root is resolved at build time and
+  baked into the emitted `command` array.
+- **Slice 4 (ADR 0080)** — statusline + toasts. The dev plugin ships
+  a `session-status.ts` opencode plugin module that emits a toast
+  with the AFK statusline on every `session.idle`, injects the
+  worker state into `experimental.session.compacting`, and
+  suggests `/afk monitor` on `session.created`. The install
+  script also writes a `tui.json` with `attention.enabled: true`
+  so the built-in sound + notification events fire by default.
+- **Slice 5 (planned)** — remote install via release asset.
 
 ## CLI
 
 ```bash
-# Local-dev path (no install)
-pnpm --filter @redskills/opencode-host generate
-pnpm --filter @redskills/opencode-host generate -- --config ./redskills.yaml --out ./opencode.json
-pnpm --filter @redskills/opencode-host generate -- --print   # stdout, no file
+# Slice 1 only (default)
+pnpm --filter @reddb-io/red-skills generate
+pnpm --filter @reddb-io/red-skills generate -- --config ./redskills.yaml --out ./opencode.json
+pnpm --filter @reddb-io/red-skills generate -- --print          # stdout, no file
 
-# Bundled form (release-asset, GHA lane)
-node ./dist/opencode-host.bundle.min.mjs --config .red/config.yaml --out ./opencode.json
+# Slice 1 + Slice 2 — emit the dist tree
+pnpm --filter @reddb-io/red-skills generate -- --with-slice-2
+# default out-dir is ./dist/opencode; override with --out-dir
+
+# Emit a single plugin
+pnpm --filter @reddb-io/red-skills generate -- --with-slice-2 --plugin dev
+
+# Copy SKILL.md instead of symlinking (cross-filesystem safety)
+pnpm --filter @reddb-io/red-skills generate -- --with-slice-2 --copy
+
+# Bundled form (release asset)
+pnpm --filter @reddb-io/red-skills bundle
+node ./dist/opencode-host.bundle.min.mjs --with-slice-2 --plugins-root ./plugins
 ```
+
+## Universal install (recommended)
+
+For normal user installs, use the root universal installer. It resolves the
+latest RedSkills release, detects `opencode` alongside Claude Code and Codex,
+and invokes the OpenCode adapter when OpenCode is present:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/reddb-io/red-skills/v1/scripts/install.sh | bash
+```
+
+That path installs OpenCode globally under `~/.config/opencode/` and also keeps
+Claude/Codex marketplace installs in sync when those CLIs are present. It uses
+the published `opencode-host.bundle.min.mjs` release asset when available, so
+normal installs need `node` but do not need a local workspace build.
+
+## Adapter install script
+
+The `scripts/install-opencode.sh` wrapper in the repo root bundles the
+above into one command that handles generation, install, and uninstall. Use it
+directly when developing the adapter or when installing/removing a checkout in a
+specific project:
+
+```bash
+# global — recommended user-scoped install into ~/.config/opencode/
+git clone git@github.com:reddb-io/red-skills.git ~/code/red-skills
+cd ~/code/red-skills
+scripts/install-opencode.sh --global
+
+# global — remove RedSkills from ~/.config/opencode/
+scripts/install-opencode.sh --uninstall --global
+
+# local — install into the current directory's .opencode/
+scripts/install-opencode.sh
+
+# local — remove RedSkills from the current directory's .opencode/
+scripts/install-opencode.sh --uninstall
+
+# local — install into a specific project
+scripts/install-opencode.sh /path/to/your-project
+
+# --copy forces SKILL.md copy instead of symlink
+scripts/install-opencode.sh /path/to/your-project --copy
+
+# --dry-run prints the steps without writing
+scripts/install-opencode.sh /path/to/your-project --dry-run
+```
+
+Then open OpenCode in a project:
+
+```bash
+cd /path/to/your-project
+opencode .
+```
+
+The global install writes `~/.config/opencode/plugins/`,
+`~/.config/opencode/skills/`, `opencode.json(c)`, and `tui.json(c)`. The local
+install writes the same OpenCode surface under the target repo's `.opencode/`
+plus project-local `opencode.json` and `tui.json`. Existing global config files
+are timestamp-backed-up before replacement. Uninstall removes manifest-recorded
+files and RedSkills-generated config files, but keeps unrelated or edited user
+config.
+
+Use `/connect` inside OpenCode, or export one of `OPENAI_API_KEY`,
+`MINIMAX_API_KEY`, or `OPENROUTER_API_KEY`. The generated files carry provider
+and model config only; they never store auth secrets.
 
 Exit codes: `0` wrote/printed; `1` read/write failure or opt-in gate
 closed; `2` usage error.
 
-## What it does not do (Slices 2-5)
+## Output shape (Slice 1 + 2)
 
-- Skills → custom tools (`apps/opencode-host/src/skills-to-tools.ts`,
-  Slice 2). Each `SKILL.md` becomes a `tool({ description, args, execute })`
-  registered in a `.opencode/plugins/*.ts` module.
-- Hooks → plugin events (`apps/opencode-host/src/hooks-to-events.ts`,
-  Slice 2). `SessionStart`/`PreToolUse` from `claude.hooks.json` map to
-  `tool.execute.before` / `config` events; `${CODEX_PLUGIN_ROOT}` env
-  vars are rewritten to `OPENCODE_PLUGIN_DIR`.
-- MCP passthrough (`apps/opencode-host/src/mcp-passthrough.ts`, Slice 3).
-  `.mcp.json` flows into the `mcp>` block of `opencode.json`.
-- Agents → subagents (`apps/opencode-host/src/agents-to-subagents.ts`,
-  Slice 3). `plugins/dev/agents/*.md` become entries in the `agent>`
-  block.
-- Marketplace install (`Slice 5`). A standalone `link-skills.ts opencode`
-  command + a downloadable release-asset form so `opencode --plugin
-  <url>` works without a git clone.
+```
+dist/opencode/
+├── dev/
+│   ├── opencode.json
+│   └── .opencode/
+│       ├── plugin/
+│       │   ├── session-start.ts   ← SessionStart → config
+│       │   └── pre-tool-use.ts    ← PreToolUse → tool.execute.before
+│       └── skills/
+│           ├── afk/SKILL.md       ← symlink → plugins/dev/.../afk/SKILL.md
+│           ├── ship/SKILL.md
+│           └── …
+├── memory/
+└── brain/
+```
+
+## Why
+
+ADR 0059 already lets AFK pick a model for the opencode runner from
+`plugins.dev.afk.models.opencode.*`. ADR 0075 materialises the same
+config for the **developer-facing opencode TUI**. ADR 0076 + 0077
+extend the same source-of-truth to skills and hooks, so a user running
+`opencode .` on a reddb.io repo sees the same model, the same 56
+skills, and the same lifecycle hooks Claude Code and Codex see.
 
 ## Testing
 
 ```bash
-pnpm --filter @redskills/opencode-host test       # 27 tests, ~8s
-pnpm --filter @redskills/opencode-host typecheck  # tsc strict
-pnpm --filter @redskills/opencode-host bundle    # emits dist/opencode-host.bundle.min.mjs
+pnpm --filter @reddb-io/red-skills test       # 60 tests, ~13s
+pnpm --filter @reddb-io/red-skills typecheck  # tsc strict
+pnpm --filter @reddb-io/red-skills bundle    # emits dist/opencode-host.bundle.min.mjs
 ```
 
-The pure module (`provider-block.ts`) is unit-tested in isolation; the
-CLI smoke (`generate-cli.test.ts`) spawns the real entrypoint through
-`tsx` and exercises the file-IO contract, the opt-in gate, the precedence
-pick, and the auth-leak guard.
+The pure modules (`provider-block.ts`, `skills-to-opencode.ts`,
+`hooks-to-events.ts`, `emit.ts`) are unit-tested in isolation. The CLI
+smoke (`generate-cli.test.ts`) spawns the real entrypoint through
+`tsx` and exercises the file-IO contract, the opt-in gate, the
+precedence pick, and the auth-leak guard. The Slice 2 e2e
+(`slice-2-e2e.test.ts`) exercises the planner against the real
+`plugins/dev/`, `plugins/memory/`, `plugins/brain/` source trees.
 
 ## Related
 
-- **ADR 0075** — the decision; introduces this app.
-- **ADR 0059 Amendment 3** — cross-link; env-precedence + `<provider>/<model>` slug now also drive the host-side `provider>` block.
-- **ADR 0067** — strict opt-in gate; the generator checks `plugins.dev.enabled: true` before writing.
-- **ADR 0034** — `apps/<plugin>/` layout; this app is `apps/opencode-host/`.
-- **ADR 0060** — root-level `apps/` + `packages/` with pnpm `catalog:`; followed here.
-- **ADR 0038** — runtime ships as a fetched Release asset; the bundled form follows that shape.
+- **ADR 0075** — Slice 1 (provider block).
+- **ADR 0076** — Slice 2 (skills → flat symlinks, name validation).
+- **ADR 0077** — Slice 2 (hooks → plugin events, env-var rewrite).
+- **ADR 0059 Amendment 3** — env precedence + slug reused for the host.
+- **ADR 0067** — strict opt-in gate (`plugins.dev.enabled: true`).
+- **ADR 0034** — `apps/<plugin>/` layout; this app follows.
+- **ADR 0038 / 0052** — release-asset + dist naming, bundled form follows.

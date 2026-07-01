@@ -141,6 +141,7 @@ Path: `.red/tmp/workers/{id}/{N}-a{n}/afk.state.json` — one snapshot per (work
   "version": 1,
   "worker_id": "wZ2R4",
   "pid": 12340,
+  "pid_start_time": "123456789",
   "log": ".red/tmp/workers/wZ2R4/142-a1/afk.log",
   "started_at": "2026-05-16T12:00:00-03:00",
   "runner": "codex",
@@ -170,5 +171,8 @@ Path: `.red/tmp/workers/{id}/{N}-a{n}/afk.state.json` — one snapshot per (work
 }
 ```
 
-Atomic write: write to `afk.state.json.tmp` inside the attempt directory, `mv` over the original. `/afk monitor` and any other reader open it read-only. Between issues the worker has no live state file — monitor renders that as "idle".
+`pid_start_time` is a best-effort process identity token paired with `pid`
+(Linux `/proc/<pid>/stat` field 22). It is empty on legacy or unsupported
+platforms; readers then fall back to pid-only liveness.
 
+Atomic write: write to `afk.state.json.tmp` inside the attempt directory, `mv` over the original. `/afk monitor` and any other reader open it read-only. Between issues the worker has no live state file — monitor renders that as "idle".

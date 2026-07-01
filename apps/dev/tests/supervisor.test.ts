@@ -47,6 +47,7 @@ function config(over: Partial<SupervisorConfig> = {}): SupervisorConfig {
     stallKillThresholdS: 90,
     runner: "claude",
     pollIntervalS: 15,
+    eventFallbackS: 60,
     tickTimeoutS: 120,
     supervisorStaleS: 300,
     progressStaleS: 900,
@@ -1248,6 +1249,50 @@ describe("runSupervisor", () => {
 
     expect(io.sleep).toHaveBeenCalledWith(7000);
     expect(io.sleep.mock.calls.filter((c) => c[0] === 7000)).toHaveLength(1);
+  });
+
+  it("wakes on a worker state-change event without waiting the timer, recording it (#934)", async () => {
+    const { deps, io } = makeDeps({ isAlive: vi.fn(() => true) });
+    // A worker-state-change event that fires immediately each time the loop
+    // begins its inter-tick wait — the event lane beats the (never-needed) timer.
+    const waitForEvent = vi.fn(async () => undefined);
+    const depsWithWake = { ...deps, wake: { waitForEvent } };
+    const state = initSupervisorState(1);
+
+    // tick 1 runs (no stop) → the loop waits and the event wakes it → tick 2 stops.
+    let probes = 0;
+    const stop = () => ++probes >= 2;
+
+    await runSupervisor(
+      state,
+      depsWithWake,
+      config({ target: 1, pollIntervalS: 15, eventFallbackS: 60 }),
+      stop,
+    );
+
+    // The inter-tick wait woke on the EVENT lane, not the safety-net timer.
+    expect(waitForEvent).toHaveBeenCalled();
+    expect(state.wakeStats.event).toBe(1);
+    expect(state.wakeStats.timer).toBe(0);
+    // With an event lane wired the idle safety-net relaxes to eventFallbackS (60s);
+    // the tight 15s poll cadence is never used → fewer idle wake-ups.
+    expect(io.sleep.mock.calls.filter((c) => c[0] === 60000)).toHaveLength(1);
+    expect(io.sleep.mock.calls.filter((c) => c[0] === 15000)).toHaveLength(0);
+  });
+
+  it("falls back to the timer cadence when no event lane is wired (no regression)", async () => {
+    const { deps, io } = makeDeps({ isAlive: vi.fn(() => true) });
+    const state = initSupervisorState(1);
+    let probes = 0;
+    const stop = () => ++probes >= 2;
+
+    // No deps.wake → pure-timer loop at the unchanged 15s poll cadence.
+    await runSupervisor(state, deps, config({ target: 1, pollIntervalS: 15 }), stop);
+
+    expect(state.wakeStats.timer).toBe(1);
+    expect(state.wakeStats.event).toBe(0);
+    expect(io.sleep.mock.calls.filter((c) => c[0] === 15000)).toHaveLength(1);
+    expect(io.sleep.mock.calls.filter((c) => c[0] === 60000)).toHaveLength(0);
   });
 
   it("emits one structured fleet heartbeat per supervise tick with queue and slot counts", async () => {

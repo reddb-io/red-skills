@@ -85,6 +85,12 @@ export interface AfkInput {
    * is doing, not just that it exists. Absent/short arrays fall back to bare
    * `#N`, preserving the pre-stage render. */
   stages?: ReadonlyArray<string | undefined>;
+  /** Per-origin worker counts derived from `state.origin` across live workers.
+   * Populated by the IO layer (wire.ts collectStatuslineAfk) reading the SINGLE
+   * `origin` field on each worker state; absent when no live worker has a
+   * non-empty origin. Sorted by origin for a deterministic token order.
+   * Rendered as `go=N afk=M` tokens immediately after `wrk=<total>`. */
+  sourceCounts?: ReadonlyArray<{ origin: string; count: number }>;
 }
 
 /** Repo-global header inputs (themed line 1, always rendered). Independent of
@@ -186,6 +192,9 @@ export function afkTokens(afk: AfkInput | undefined): AfkToken[] {
     tokens.push({ label, value, suffix: "" });
   };
   if (afk.workers > 0) kpi("wrk=", String(afk.workers));
+  if (afk.sourceCounts && afk.sourceCounts.length > 0) {
+    for (const { origin, count } of afk.sourceCounts) kpi(`${origin}=`, String(count));
+  }
   if (afk.queue > 0) kpi("rdy=", String(afk.queue));
   if (afk.human > 0) kpi("hmn=", String(afk.human));
   if (afk.blocked > 0) kpi("blk=", String(afk.blocked));
@@ -220,6 +229,20 @@ export function renderAfkBlock(afk: AfkInput | undefined): string | null {
  * byte-for-byte with statusline.sh's section loop. Absent blocks drop out
  * silently. The project block is always present, so the output is never empty
  * (the per-project opt-out is handled upstream by returning no render at all).
+ *
+ * TOON note (PRD #928 / ADR 0081, issue #941): TOON becomes the default
+ * agent-facing wire format for the multi-row read surfaces (monitor, dashboard,
+ * daily-review). The statusline is deliberately exempt from the *tabular* form —
+ * Claude Code's `statusLine` contract is a SINGLE line, so a multi-line TOON
+ * table cannot be rendered here. The cheap AXI principles still apply, and
+ * already hold (story #27, "even where TOON does not help"):
+ *   - minimal schema: each KPI token ({@link afkTokens}) is emitted only when its
+ *     count is > 0 — no zero-noise;
+ *   - pre-computed aggregates: the caller injects already-summed counts;
+ *   - definitive state: no live workers → the whole AFK block is dropped (an
+ *     unambiguous "nothing running here"), never a `wrk=0` placeholder;
+ *   - per-source counts from #930 ({@link AfkInput.sourceCounts}) are preserved
+ *     as `origin=N` tokens read from the same `state.origin` the monitor uses.
  */
 export function renderStatusline(input: StatuslineInput): string {
   const sections: string[] = [renderProjectBlock(input.project)];

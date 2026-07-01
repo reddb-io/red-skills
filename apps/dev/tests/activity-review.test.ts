@@ -3,6 +3,7 @@ import {
   activityReviewInterval,
   buildActivityReviewReport,
   renderActivityReviewReport,
+  renderActivityReviewReportToon,
   type ActivityReviewIssue,
 } from "../src/core/activity-review.js";
 import { parseGitLogStats } from "../src/commands/activity-review.js";
@@ -151,6 +152,29 @@ describe("activity review", () => {
     expect(report.big_numbers.local_worker_seconds).toBe(
       Math.floor((now.getTime() - interval.start.getTime()) / 1000),
     );
+  });
+
+  it("renders the default agent-facing review as TOON with tabular tables", () => {
+    const report = buildActivityReviewReport({
+      kind: "daily",
+      now: new Date("2026-06-06T14:25:00.000Z"),
+      issues: [
+        issue({ number: 7, title: "One", state: "CLOSED", closedAt: "2026-06-06T01:00:00.000Z" }),
+      ],
+      pullRequests: [],
+      gitStats: { commits: 3, added: 10, removed: 2 },
+      history: [],
+      activeWorkers: [],
+      tokenSummary: { available: false, total: null, input: null, output: null, sourceRecords: 0 },
+    });
+    const toon = renderActivityReviewReportToon(report);
+    expect(toon).toContain("schema_version: red.dev.activity_review.v1");
+    expect(toon).toContain("big_numbers:");
+    expect(toon).toContain("  commits: 3");
+    // Empty tables render as the definitive empty state, not silent omission.
+    expect(toon).toContain("workers[0]:");
+    // Cheaper than the JSON baseline it replaces.
+    expect(toon.length).toBeLessThan(JSON.stringify(report, null, 2).length);
   });
 
   it("parses commit counts and diffstat from git log output", () => {

@@ -152,7 +152,7 @@ It allows (exit 0, silent):
 - `git stash list` / `git stash show` — read-only stash
 - `git clean -n` / `--dry-run` — non-destructive clean
 - `git reset --soft` / mixed reset, `git restore --staged <path>` — no working-tree loss
-- `git worktree add …` — worktrees are how `/afk` works
+- `git worktree add .red/tmp/...` — worktrees are how `/afk` and `/ship` work
 - any other command
 
 With `dev.lock.primary-branch: true` and no branch-lock file, the primary guard
@@ -162,6 +162,12 @@ blocks only branch-changing commands in the primary checkout:
   `git checkout -b <new>`, and `git switch -`
 - allows `git commit`, `git worktree add`, `git status` / read-only git,
   targeted path checkout, and every `.red/tmp/work-*/` worktree
+
+The dev command proxy has a stricter host-wide invariant when
+`plugins.dev.enabled: true`: any agent-created `git worktree add` destination
+must resolve under the repo's `.red/tmp/`. Branch-lock allows the command class;
+the dev proxy decides whether the destination path is inside the repo-owned
+runtime area.
 
 ## Tests
 

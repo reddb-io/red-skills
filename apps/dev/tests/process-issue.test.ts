@@ -28,6 +28,7 @@ interface Trace {
   pushedAttempt: string[][];
   deletedRemote: string[][];
   postedEnvelopes: Array<{ issue: number; status: string }>;
+  envelopeBodies: string[];
   released: number[];
   runAgentCalls: RunAgentInput[];
   /** Labels queried via gh.listByLabel during the close cascade. */
@@ -138,6 +139,8 @@ interface HarnessOptions {
   /** CI-aware merge (#812). When set, register the `ciAwait` port and drive the
    * `gh pr view` verdict the unlocked landing polls before admin-merging. */
   ciAware?: "merge" | "ci-failed" | "ci-pending" | "conflict";
+  /** Exit code for the final `gh pr merge` command. Defaults to 0. */
+  prMergeCode?: number;
 }
 
 function harness(opts: HarnessOptions = {}): {
@@ -154,6 +157,7 @@ function harness(opts: HarnessOptions = {}): {
     pushedAttempt: [],
     deletedRemote: [],
     postedEnvelopes: [],
+    envelopeBodies: [],
     released: [],
     runAgentCalls: [],
     listByLabelCalls: [],
@@ -290,6 +294,9 @@ function harness(opts: HarnessOptions = {}): {
           conflict: { mergeStateStatus: "DIRTY", statusCheckRollup: [] },
         };
         return { code: 0, stdout: JSON.stringify(map[opts.ciAware ?? "merge"]), stderr: "" };
+      }
+      if (j.includes("pr merge")) {
+        return { code: opts.prMergeCode ?? 0, stdout: "", stderr: opts.prMergeCode ? "merge rejected" : "" };
       }
       return { code: 0, stdout: "", stderr: "" };
     },
@@ -442,6 +449,7 @@ function harness(opts: HarnessOptions = {}): {
       poster: async (issue, body) => {
         const status = /data-attempt-status="([^"]*)"/.exec(body)?.[1] ?? "?";
         trace.postedEnvelopes.push({ issue, status });
+        trace.envelopeBodies.push(body);
         return true;
       },
       async writeMarkers() {},
@@ -646,6 +654,23 @@ describe("processIssue — CI-aware unlocked landing (#812)", () => {
 
     expect(result.outcome).toBe("merge-conflict");
     expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "merge-conflict" }]);
+    expect(trace.labelEdits.some((e) => e.add.includes("ready-for-agent"))).toBe(false);
+    expect(trace.labelEdits.some((e) => e.add.includes("ready-for-human") && e.add.includes("blocked:merge-conflict"))).toBe(true);
+    expect(trace.runAgentCalls.length).toBe(1);
+  });
+
+  it("admin-merge rejected after PR exists parks the PR instead of re-queueing for a fresh agent", async () => {
+    const { deps, input, trace } = harness({ outcome: "done", feedbackOk: true, locked: false, prMergeCode: 1 });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("ci-failed");
+    expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "blocked" }]);
+    expect(trace.labelEdits.some((e) => e.add.includes("ready-for-agent"))).toBe(false);
+    expect(trace.labelEdits.some((e) => e.add.includes("ready-for-human") && e.add.includes("blocked:ci"))).toBe(true);
+    expect(trace.closed).toEqual([]);
+    expect(trace.deletedRemote).toEqual([]);
+    expect(trace.runAgentCalls.length).toBe(1);
+    expect(trace.released).toEqual([9]);
   });
 });
 
@@ -912,13 +937,22 @@ describe("processIssue — no-sentinel (run ended without a <promise>)", () => {
     const result = await processIssue(deps, input);
 
     expect(result.outcome).toBe("no-sentinel");
-    expect(trace.bodyEdits).toHaveLength(1);
-    expect(parseCurrentBlocker(trace.bodyEdits[0]!.body)).toMatchObject({
+    // Byte-exact editing: the body already canonically carries the actionable
+    // merge-conflict blocker, so preservation is a no-op write rather than a
+    // re-render. What matters is that the generic runner blocker never clobbers
+    // it — assert no edit overwrites the merge-conflict blocker.
+    const clobbered = trace.bodyEdits.some(
+      (edit) =>
+        edit.body.includes("Review the attempt log and decide whether to retry") ||
+        parseCurrentBlocker(edit.body)?.kind === "runner",
+    );
+    expect(clobbered).toBe(false);
+    // The merge-conflict blocker survives in the (unchanged) issue body.
+    expect(parseCurrentBlocker(body)).toMatchObject({
       kind: "merge-conflict",
       summary: "Attempt 1 preserved a merge-conflict branch.",
       next: "Resolve the merge conflict or add guidance for the next agent attempt.",
     });
-    expect(trace.bodyEdits[0]!.body).not.toContain("Review the attempt log and decide whether to retry");
     expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "no-sentinel" }]);
   });
 
@@ -1056,15 +1090,66 @@ describe("processIssue — commit-leftovers salvage (codex DONE-without-commit)"
     expect(trace.closed).toContain(9);
   });
 
-  it("DONE WITH commits → never calls the salvage port (no double-commit)", async () => {
+  it("DONE with commits + clean worktree → probes salvage but creates no extra salvage log", async () => {
     const { deps, input, trace } = harness({
       outcome: "done",
       commits: [{ sha: "deadbee" }],
-      salvage: 3,
+      salvage: 0,
       feedbackOk: true,
     });
     await processIssue(deps, input);
-    expect(trace.salvageCalls).toEqual([]);
+    expect(trace.salvageCalls).toHaveLength(1);
+    expect(trace.iterLogs.some((line) => line.includes("salvaged"))).toBe(false);
+  });
+
+  it("DONE with commits + dirty leftovers → salvages the remaining work before validation", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      commits: [{ sha: "deadbee" }],
+      salvage: 2,
+      feedbackOk: true,
+    });
+    const result = await processIssue(deps, input);
+    expect(trace.salvageCalls).toHaveLength(1);
+    expect(trace.iterLogs.some((line) => line.includes("left dirty worktree paths after 1 commit(s)"))).toBe(true);
+    expect(result.outcome).toBe("done");
+    expect(trace.closed).toContain(9);
+  });
+
+  it("DONE but zero commits + salvaged dirty worktree + feedback fail explains both facts", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      commits: [],
+      salvage: 1,
+      changedFiles: ["packages/x/src/a.ts"],
+      feedbackOk: false,
+    });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("feedback-failed");
+    expect(trace.salvageCalls).toHaveLength(1);
+    expect(trace.iterLogs.some((line) => line.includes("salvaged 1 uncommitted file(s)"))).toBe(true);
+    const body = trace.envelopeBodies.at(-1) ?? "";
+    expect(body).toContain("Inner agent emitted done with zero commits");
+    expect(body).toContain("AFK salvaged 1 uncommitted file(s)");
+    expect(body).toContain("feedback validation failed");
+  });
+
+  it("DONE with commits + salvaged leftovers + feedback fail explains partial dirty state", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      commits: [{ sha: "deadbee" }],
+      salvage: 1,
+      changedFiles: ["packages/x/src/a.ts"],
+      feedbackOk: false,
+    });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("feedback-failed");
+    const body = trace.envelopeBodies.at(-1) ?? "";
+    expect(body).toContain("after 1 commit(s) and left dirty worktree paths");
+    expect(body).toContain("AFK salvaged 1 uncommitted file(s)");
+    expect(body).toContain("feedback validation failed");
   });
 
   it("no-sentinel + zero commits → salvage runs; a clean worktree (0 files) stays the empty-branch terminal", async () => {

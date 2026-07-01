@@ -20,6 +20,10 @@
           {
             "type": "command",
             "command": "sh -c 'tmp=\"$(mktemp)\"; trap \"rm -f \\\"$tmp\\\"\" EXIT; cat >\"$tmp\" 2>/dev/null || true; hook=\"${CODEX_PLUGIN_ROOT}/hooks/branch-lock-codex.sh\"; if [ -x \"$hook\" ]; then \"$hook\" <\"$tmp\"; else printf \"{}\"; fi'"
+          },
+          {
+            "type": "command",
+            "command": "sh -c 'tmp=\"$(mktemp)\"; trap \"rm -f \\\"$tmp\\\"\" EXIT; cat >\"$tmp\" 2>/dev/null || true; hook=\"${CODEX_PLUGIN_ROOT}/hooks/command-guard.sh\"; if [ -x \"$hook\" ]; then \"$hook\" <\"$tmp\"; else printf \"{}\"; fi'"
           }
         ]
       }

@@ -54,6 +54,8 @@ interface Opts {
   waitForReview?: boolean;
   /** Enable the opt-in CI-aware merge (#812) and drive the `pr view` verdict. */
   ciAware?: "merge" | "ci-failed" | "ci-pending" | "conflict";
+  /** rc the final `gh pr merge` returns (1 → PR exists but merge is rejected). */
+  prMergeCode?: number;
   /** Make the landing-worktree provisioner fail (returns null). */
   noWorktree?: boolean;
   /** Commits ahead of base returned by `git rev-list --count`. Default 3. */
@@ -112,6 +114,9 @@ function harness(opts: Opts = {}): Harness {
           conflict: { mergeStateStatus: "DIRTY", statusCheckRollup: [] },
         };
         return { code: 0, stdout: JSON.stringify(map[opts.ciAware ?? "merge"]), stderr: "" };
+      }
+      if (j.includes("pr merge")) {
+        return { code: opts.prMergeCode ?? 0, stdout: "", stderr: opts.prMergeCode ? "merge rejected" : "" };
       }
       return { code: 0, stdout: "", stderr: "" };
     },
@@ -429,10 +434,16 @@ describe("doLanding — CI-aware merge (#812)", () => {
     expect(joined(h.mergeCalls).some((c) => c.includes("pr merge"))).toBe(false);
   });
 
-  it("a real DIRTY conflict still maps to land-failed (→ merge-conflict), not ci", async () => {
+  it("a real DIRTY conflict preserves the PR number for the caller's merge-conflict handoff", async () => {
     const h = harness({ locked: false, ciAware: "conflict" });
     const r = await doLanding(h.deps, h.input, h.hooks);
-    expect(r).toEqual({ ok: false, reason: "land-failed", locked: false });
+    expect(r).toEqual({ ok: false, reason: "pr-conflict", locked: false, prNumber: 42 });
+  });
+
+  it("a rejected admin merge after PR creation preserves the PR instead of collapsing to generic land-failed", async () => {
+    const h = harness({ locked: false, prMergeCode: 1 });
+    const r = await doLanding(h.deps, h.input, h.hooks);
+    expect(r).toEqual({ ok: false, reason: "pr-merge-failed", locked: false, prNumber: 42 });
   });
 });
 

@@ -2,11 +2,9 @@
 // stream events, surfaced into the proof-of-life heartbeat so liveness is
 // readable at a glance rather than inferred from cpu/rss alone.
 //
-// red-castle's public `AgentStreamEvent` carries only `text` and `toolCall`
-// today (the raw per-CLI streams also carry reasoning/usage, but the parsers
-// drop them — extending that is a separate red-castle change). So this meter
-// counts exactly what the three runners (claude / codex / opencode) already
-// deliver identically:
+// The caller feeds only the activity/cost-bearing red-castle events here. Raw
+// stdout, terminal result, and session-id metadata are logged elsewhere because
+// they are useful diagnostics but not worker-activity units.
 //
 //   - tools_called_count — cumulative `toolCall` events this attempt
 //   - text_chunk_count   — cumulative `text` events this attempt

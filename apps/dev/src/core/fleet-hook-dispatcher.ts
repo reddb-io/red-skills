@@ -140,8 +140,10 @@ export async function dispatchFleetHook(
   for (const command of commands) {
     if (command.length === 0) continue;
 
+    log(`[afk:fleet-hooks] ${name}: enter: ${command}`);
     const { code } = await exec(command, env, stdinJson);
     executions.push({ name, command, rc: code });
+    log(`[afk:fleet-hooks] ${name}: exit rc=${code}: ${command}`);
 
     if (code !== 0) {
       if (name === "on_stall_reap") {

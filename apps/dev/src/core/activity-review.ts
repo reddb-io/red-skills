@@ -1,5 +1,6 @@
 import type { HistoryRecord } from "./history.js";
 import { LABEL_HUMAN } from "./triage-labels.js";
+import { encodeToon, type ToonValue } from "./toon.js";
 
 export type ActivityReviewKind = "daily" | "weekly";
 
@@ -440,4 +441,15 @@ export function renderActivityReviewReport(report: ActivityReviewReport): string
   }
 
   return lines.join("\n");
+}
+
+/**
+ * The default agent-facing render (PRD #928 / ADR 0081): the pre-computed report
+ * as TOON. The `workers`, `challenges`, `issue_cycle_times`, and `pr_cycle_times`
+ * arrays are uniform flat rows, so TOON names their fields once per table instead
+ * of once per row -- the bulk of the saving over pretty JSON. Empty tables render
+ * as the definitive `key[0]:` empty state.
+ */
+export function renderActivityReviewReportToon(report: ActivityReviewReport): string {
+  return encodeToon(report as unknown as ToonValue);
 }
