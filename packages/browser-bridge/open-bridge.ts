@@ -23,13 +23,13 @@ export interface AnnotationResult {
   timestamp: string;
 }
 
-export interface LayoutViolation {
+interface LayoutViolation {
   type: "overflow" | "cutoff" | "overlap";
   selector: string;
   detail: string;
 }
 
-export interface LayoutAuditResult {
+interface BridgeLayoutAuditResult {
   pass: boolean;
   violations: LayoutViolation[];
 }
@@ -39,7 +39,7 @@ export interface BrowserBridge {
   url: string;
   port: number;
   waitForAnnotation(timeoutMs?: number): Promise<AnnotationResult>;
-  layoutAudit(timeoutMs?: number): Promise<LayoutAuditResult>;
+  layoutAudit(timeoutMs?: number): Promise<{ pass: boolean; violations: LayoutViolation[] }>;
   close(): Promise<void>;
 }
 
@@ -99,7 +99,7 @@ function injectSdks(html: string, bridgeUrl: string): string {
 
 export async function openBridge(html: string, opts?: { port?: number }): Promise<BrowserBridge> {
   const annotations = new DeferredQueue<AnnotationResult>();
-  const auditResults = new DeferredQueue<LayoutAuditResult>();
+  const auditResults = new DeferredQueue<BridgeLayoutAuditResult>();
 
   const server = http.createServer();
 
