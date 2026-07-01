@@ -30,6 +30,58 @@ export const GO_WORKERS_SEGMENT = "go-workers";
  * never the headless park-to-`ready-for-human` sink `/afk` uses. */
 export const GO_GATE_CONTEXT = "interactive" as const;
 
+/**
+ * `/go` dispatch modes (issue #923, from firstmate). Each mode selects HOW the
+ * reused engine finishes the run:
+ *
+ * - `no-mistakes` — route the run through the HARDENED pre-PR pipeline (#920 /
+ *   the `/ship` slice): review → validate → escalate intent findings before the
+ *   PR is opened. Slowest, safest.
+ * - `direct-PR` — the STANDARD path: run the gate and bring back a PR. Default.
+ * - `local-only` — an APPROVED local fast-forward merge with NO PR opened; for
+ *   trusted local-only demands the maintainer wants landed without a review PR.
+ */
+export type GoMode = "no-mistakes" | "direct-PR" | "local-only";
+
+/** Every valid `--mode` value, in dispatch order (safest → most direct). */
+export const GO_MODES: readonly GoMode[] = ["no-mistakes", "direct-PR", "local-only"];
+
+/** `/go` defaults to the STANDARD `direct-PR` path when `--mode` is omitted. */
+export const DEFAULT_GO_MODE: GoMode = "direct-PR";
+
+/**
+ * The engine flag each non-default mode appends to the reused-engine argv. The
+ * default `direct-PR` mode is the STANDARD path and appends nothing, so an
+ * unmoded `/go` produces exactly the base argv.
+ *
+ * - `no-mistakes` → `--pre-pr` routes the run through the hardened pre-PR
+ *   pipeline (core/pre-pr-pipeline.ts + the `/ship` gate).
+ * - `local-only` → `--local-merge` lands the branch by an approved local
+ *   fast-forward instead of opening a PR.
+ */
+export const GO_MODE_ENGINE_FLAG: Record<GoMode, string | null> = {
+  "no-mistakes": "--pre-pr",
+  "direct-PR": null,
+  "local-only": "--local-merge",
+};
+
+/** The engine flag the opt-in `+yolo` autonomy bump appends. */
+export const GO_YOLO_FLAG = "--yolo";
+
+/**
+ * Resolve a raw `--mode` value to a canonical {@link GoMode}, case-insensitively
+ * (so `Direct-PR` and `NO-MISTAKES` both parse). Throws on any unknown value so
+ * a typo'd mode is a loud error, never a silent fall-through to the default.
+ */
+export function parseGoMode(raw: string): GoMode {
+  const needle = raw.trim().toLowerCase();
+  const match = GO_MODES.find((m) => m.toLowerCase() === needle);
+  if (!match) {
+    throw new Error(`invalid --mode "${raw}": expected one of ${GO_MODES.join(", ")}`);
+  }
+  return match;
+}
+
 /** The minted disposable tracking issue for one `/go` demand. */
 export interface DisposableIssueSpec {
   title: string;
@@ -76,10 +128,17 @@ export function goWorkersRoot(tmpDir: string): string {
  * Build the run-engine argv that reuses the FULL AFK engine for exactly ONE
  * minted disposable issue: single-issue (`--issues N`), single-shot (`--once`),
  * `origin=go`, and listing the isolated `lane:go` pool (`--lane`) instead of
- * `ready-for-agent`. An optional runner pins the backend. Throws on a
- * non-positive issue so a failed mint can never spawn a worker at issue 0.
+ * `ready-for-agent`. The dispatch `mode` (default `direct-PR`) appends its
+ * routing flag and the opt-in `yolo` autonomy bump appends `--yolo`. An optional
+ * runner pins the backend. Throws on a non-positive issue so a failed mint can
+ * never spawn a worker at issue 0.
  */
-export function buildGoEngineArgs(opts: { issue: number; runner?: string }): string[] {
+export function buildGoEngineArgs(opts: {
+  issue: number;
+  runner?: string;
+  mode?: GoMode;
+  yolo?: boolean;
+}): string[] {
   if (!Number.isInteger(opts.issue) || opts.issue <= 0) {
     throw new Error(`buildGoEngineArgs: invalid issue ${opts.issue}`);
   }
@@ -92,6 +151,11 @@ export function buildGoEngineArgs(opts: { issue: number; runner?: string }): str
     "--lane",
     LABEL_GO_LANE,
   ];
+  // The default `direct-PR` mode is the standard path and appends nothing, so an
+  // unmoded /go produces exactly the base argv.
+  const modeFlag = GO_MODE_ENGINE_FLAG[opts.mode ?? DEFAULT_GO_MODE];
+  if (modeFlag) args.push(modeFlag);
+  if (opts.yolo) args.push(GO_YOLO_FLAG);
   if (opts.runner) args.push("--runner", opts.runner);
   return args;
 }
@@ -122,11 +186,13 @@ export interface GoDispatchResult {
 export async function dispatchGo(
   deps: GoDispatchDeps,
   demand: string,
-  opts: { runner?: string } = {},
+  opts: { runner?: string; mode?: GoMode; yolo?: boolean } = {},
 ): Promise<GoDispatchResult> {
   const spec = buildDisposableIssue(demand);
   await deps.ensureLabel(LABEL_GO_LANE);
   const issue = await deps.createIssue(spec);
-  const engineExit = await deps.runEngine(buildGoEngineArgs({ issue, runner: opts.runner }));
+  const engineExit = await deps.runEngine(
+    buildGoEngineArgs({ issue, runner: opts.runner, mode: opts.mode, yolo: opts.yolo }),
+  );
   return { issue, engineExit };
 }
