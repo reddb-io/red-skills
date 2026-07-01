@@ -175,6 +175,12 @@ export const CONFIG_DEFAULTS = {
   "afk.notes_loop.inner_max_iterations": "0",
   "afk.notes_loop.token_budget": "0",
   "afk.notes_loop.wall_clock_s": "0",
+  // PRD cascade rebase (issue #1007). After a successful DONE landing, rebase
+  // every open sibling branch (same prd:N, not held by a live worker) onto the
+  // new base HEAD so the next worker to pick up a sibling starts from a
+  // near-current base. Best-effort: a per-branch failure is logged as a warning
+  // and never rolls back the primary landing. Set "false" to opt out.
+  "afk.landing.cascade_rebase": "true",
   "dev.lock.primary-branch": "false",
   // NOTE: `dev.lock.branch` (the static base lock — ADR 0031) is intentionally
   // NOT in this table. Its "default" is *unset* (no config-level lock), and
