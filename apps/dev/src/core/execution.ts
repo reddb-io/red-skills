@@ -1290,8 +1290,16 @@ export async function runAgent(deps: SandcastleDeps, input: RunAgentInput): Prom
   // block over the text sentinel. A run that emitted the structured block but no
   // sentinel now yields a definite `done`/`blocked` instead of `no-sentinel`.
   const agentOutput = parseAgentOutput(result.stdout ?? "");
+  const rawOutcome = interpretCompletion(agentOutput, result.completionSignal);
+  // Enforce the structured-output gate for schema-capable runners (ADR 0082,
+  // #932): a claude DONE with no valid <agent-output> block is downgraded to
+  // no-sentinel so the agent cannot claim success without the schema contract.
+  const enforced = enforceStructuredOutput(input.runner, rawOutcome, result.stdout ?? "");
+  if (enforced.rejectedReason) {
+    warn(`[afk] warn: AgentOutput ${enforced.rejectedReason} — downgraded to ${enforced.outcome}`);
+  }
   return {
-    outcome: interpretCompletion(agentOutput, result.completionSignal),
+    outcome: enforced.outcome,
     branch: result.branch,
     commits: result.commits,
     completionSignal: result.completionSignal,

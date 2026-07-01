@@ -412,12 +412,24 @@ describe("runAgent", () => {
       commits: [{ sha: "abc1234" }],
       completionSignal: DONE_SIGNAL,
       stdout: `ok\n${VALID_AGENT_OUTPUT}`,
+      agentOutput: {
+        success: true,
+        summary: "did the work",
+        key_changes_made: ["x"],
+        key_learnings: ["y"],
+        should_fully_stop: false,
+      },
     });
   });
 
   it("normalises a BLOCKED RunResult", async () => {
+    // Use plain stdout (no AgentOutput tag) so the sentinel drives the outcome.
+    // With a valid success:true AgentOutput, interpretCompletion returns "done"
+    // (structured wins) — that is a different test case.
     const r = await runAgent(
-      makeDeps(async () => fakeResult({ completionSignal: BLOCKED_SIGNAL, commits: [] })),
+      makeDeps(async () =>
+        fakeResult({ completionSignal: BLOCKED_SIGNAL, commits: [], stdout: "blocked, no structured output" }),
+      ),
       baseInput,
     );
     expect(r.outcome).toBe("blocked");
@@ -425,8 +437,11 @@ describe("runAgent", () => {
   });
 
   it("treats a run that produced no completion signal as no-sentinel", async () => {
+    // Use plain stdout (no AgentOutput tag) so the sentinel path returns no-sentinel.
     const r = await runAgent(
-      makeDeps(async () => fakeResult({ completionSignal: undefined })),
+      makeDeps(async () =>
+        fakeResult({ completionSignal: undefined, stdout: "no signal, no structured output" }),
+      ),
       baseInput,
     );
     expect(r.outcome).toBe("no-sentinel");
@@ -483,13 +498,16 @@ describe("runAgent", () => {
     expect(r.agentOutput).toEqual(output);
   });
 
-  it("falls back to the text sentinel when the structured block is malformed", async () => {
+  it("downgrades to no-sentinel when the structured block is malformed (ADR 0082 — all invalid forms gate)", async () => {
+    // ADR 0082: missing, invalid-json, and schema-invalid all downgrade "done" to
+    // "no-sentinel" for schema-capable runners (claude). A malformed block is not a
+    // free pass to the text sentinel — the agent must emit a valid block to claim done.
     const stdout = `<agent-output>{not valid json}</agent-output>\n${DONE_SIGNAL}`;
     const r = await runAgent(
       makeDeps(async () => fakeResult({ completionSignal: DONE_SIGNAL, stdout })),
       baseInput,
     );
-    expect(r.outcome).toBe("done");
+    expect(r.outcome).toBe("no-sentinel");
     expect(r.agentOutput).toBeUndefined();
   });
 });

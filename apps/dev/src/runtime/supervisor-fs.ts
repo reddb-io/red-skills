@@ -268,13 +268,47 @@ export function parkedSlotWorkFor(
 }
 
 /** Best-effort worktree teardown + iter-dir removal for a reaped slot. Mirrors
- * reap_stalled_slot step 4 (git worktree remove + rm -rf). */
+ * reap_stalled_slot step 4 (git worktree remove + rm -rf).
+ *
+ * Safety push: before destroying the worktree, push any local-only commits to
+ * origin. A stalled/crashed/merge-conflict worker may hold commits that the
+ * continuous-push hook never delivered (silent push failure). The commits must
+ * reach the remote before the worktree directory is removed — the branch ref in
+ * .git survives the dir removal but the reconcile path cannot use it if the
+ * remote branch has zero diff vs base. Best-effort: a failed safety push logs
+ * visibly to stderr but never blocks the teardown. */
 export async function teardownIterDirNative(info: IterDirInfo, root: string): Promise<void> {
   const fsp = await import("node:fs/promises");
   const worktree = join(info.path, "worktree");
   if (existsSync(worktree)) {
     try {
       const { git } = await import("./exec.js");
+
+      // --- safety push (never blocks teardown) ---
+      const branchRes = await git(["-C", worktree, "rev-parse", "--abbrev-ref", "HEAD"]);
+      const branch = branchRes.code === 0 ? branchRes.stdout.trim() : "";
+      if (branch && branch !== "HEAD" && branch.startsWith("afk/")) {
+        const countRes = await git([
+          "-C", worktree,
+          "rev-list", "--count", `origin/${branch}..${branch}`,
+        ]);
+        const unpushed = countRes.code === 0 ? parseInt(countRes.stdout.trim(), 10) : NaN;
+        if (!Number.isNaN(unpushed) && unpushed > 0) {
+          const pushRes = await git([
+            "-C", worktree,
+            "push", "--force", "origin", `HEAD:refs/heads/${branch}`,
+          ]);
+          if (pushRes.code !== 0) {
+            process.stderr.write(
+              `[afk teardown] WARN: ${unpushed} commit(s) on ${branch} could not be pushed — ` +
+                `they survive in the local branch ref until a manual push or git gc.\n` +
+                `  push stderr: ${pushRes.stderr.trim()}\n`,
+            );
+          }
+        }
+      }
+      // --- end safety push ---
+
       await git(["-C", root, "worktree", "remove", "--force", worktree]);
     } catch {
       // best-effort

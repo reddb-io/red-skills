@@ -39,6 +39,7 @@ import { type ConflictResolver, type Exec as MergeExec, type WaitForReviewInput 
 import {
   buildRefFromSlug,
   deleteRemote,
+  pushAttempt,
   slugifyRef,
   type GitExec,
 } from "./remote-branch.js";
@@ -252,6 +253,23 @@ export async function reconcile(deps: ReconcileDeps, input: ReconcileInput): Pro
       `🤖 /afk reconcile #${issue}: skipped (${disqualifier}) — not a mechanical reconcile candidate; leaving routing to the caller.`,
     );
     return { outcome: "skipped", reason: disqualifier };
+  }
+
+  // ---- 1b. pre-fetch safety push ----
+  // Before checking whether the branch is present on the remote, push any
+  // LOCAL-ONLY commits. A worker that hit a continuous-push failure may have
+  // committed work that never reached origin — the branch exists locally (in
+  // .git/refs/heads/) but the remote is at main's HEAD. Pushing here recovers
+  // those commits so the fetch gate and changedFiles() see them. Best-effort:
+  // a failed push is logged and reconcile falls through to the normal fetch gate
+  // (which will then skip with "branch-absent" or "no-commits" as before).
+  {
+    const safetyPush = await pushAttempt(deps.remoteGit, input.repoDir, branch, branch);
+    if (!safetyPush.ok) {
+      deps.appendIterLog(
+        `🤖 /afk reconcile #${issue}: pre-fetch push failed (${safetyPush.warn ?? "unknown"}) — continuing to fetch gate`,
+      );
+    }
   }
 
   // ---- 2. fetch gate: materialize origin-only branches before the commits diff ----
