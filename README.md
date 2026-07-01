@@ -487,7 +487,12 @@ Full guide: [AFK Actions lane](./plugins/dev/skills/engineering/afk/actions-lane
 | [`apps/brain`](./apps/brain) | Brain CLI, store, MCP server, dashboard, channel bridge, and artifact logic. |
 | [`apps/code-nav`](./apps/code-nav) | LSP-backed MCP server used by the `dev` plugin. |
 | [`apps/opencode-host`](./apps/opencode-host) | Adapter that emits OpenCode config, skills, hooks, MCP passthrough, and statusline/toast integration. |
+| [`apps/red-browser`](./apps/red-browser) | Browser CLI: opens a local annotation bridge for HTML artifacts, long-polls human feedback, and enforces the layout-audit gate. |
 | [`packages/shared`](./packages/shared) | Shared runtime helpers for plugin gates, bundle fetching, args, logging, and channels. |
+| [`packages/browser-bridge`](./packages/browser-bridge) | Local CLI-to-browser annotation bridge: injects an annotation SDK into HTML artifacts and long-polls for human feedback and layout-audit results. |
+| [`packages/cdp-driver`](./packages/cdp-driver) | CDP-based live-app driver for `red-browser`: connects to Chrome via DevTools Protocol, captures a11y-tree snapshots, and streams console/network events. |
+| [`packages/build-info`](./packages/build-info) | Shared runtime build metadata helpers consumed by bundled apps. |
+| [`packages/red-castle`](./packages/red-castle) | AFK execution substrate (vendored submodule, `@reddb-io/red-castle`): sandcastle fork that owns per-attempt worktree isolation, agent spawning, and signal detection. |
 | [`.red`](./.red) | RedSkills' own project configuration: context map, glossaries, ADRs, issue-tracker docs, and agent rules. |
 | [`.github/workflows`](./.github/workflows) | Release, CI, upstream watch, issue automation, PR review, and reusable AFK attempt workflows. |
 
