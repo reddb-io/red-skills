@@ -120,6 +120,12 @@ describe("parseRunFlags", () => {
     expect(f.lane).toBe("lane:go");
   });
 
+  it("parses --run-mode (the scout read-only enforcement flag), undefined by default", () => {
+    expect(parseRunFlags([]).runMode).toBeUndefined();
+    const f = parseRunFlags(["--run-mode", "scout"]);
+    expect(f.runMode).toBe("scout");
+  });
+
   it("parses --issues into an ordered number list", () => {
     expect(parseRunFlags(["--issues", "3,1,2"]).filter).toEqual({ kind: "issues", numbers: [3, 1, 2] });
     expect(parseRunFlags(["--issues=10, 20"]).filter).toEqual({ kind: "issues", numbers: [10, 20] });
