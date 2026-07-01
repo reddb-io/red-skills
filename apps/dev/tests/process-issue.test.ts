@@ -2346,6 +2346,66 @@ describe("processIssue — timeout (attempt progress guard fired)", () => {
   });
 });
 
+describe("processIssue — budget-exceeded (per-attempt resource guard fired, #908)", () => {
+  it("salvages partial work, then parks ready-for-human + blocked:budget without crashing", async () => {
+    // The attempt guard aborted on a resource ceiling: the inner agent returns
+    // the `budget-exceeded` outcome with dirty worktree paths. Salvage commits
+    // the partial work onto the branch ("never empty-handed"), then the issue
+    // parks for a human — a runaway is never auto-retried (recovery key null).
+    const { deps, input, trace } = harness({
+      outcome: "budget-exceeded",
+      commits: [],
+      salvage: 3,
+      changedFiles: ["packages/x/src/a.ts"],
+    });
+    const result = await processIssue(deps, input);
+
+    // Salvage ran against the live worker branch and committed the partial work.
+    expect(trace.salvageCalls).toHaveLength(1);
+    expect(trace.salvageCalls[0]).toBe(result.branch);
+    expect(trace.iterLogs.some((line) => line.includes("salvaged 3 uncommitted file(s)"))).toBe(true);
+
+    // Terminal budget-exceeded: preserved, never landed/closed.
+    expect(result.outcome).toBe("budget-exceeded");
+    expect(result.preserved).toBe(true);
+    expect(trace.closed).toEqual([]);
+    // The orchestrator did not leave the issue in `running` — it shed running and
+    // escalated to a human with the typed blocked:budget tag.
+    expect(labelTrace(trace)).toEqual([
+      "-ready-for-agent|+running",
+      "-running|+ready-for-human+blocked:budget",
+    ]);
+    const edit = trace.labelEdits.at(-1)!;
+    expect(edit.add).toContain("ready-for-human");
+    expect(edit.add).toContain("blocked:budget");
+    expect(trace.ensuredLabels).toContain("blocked:budget");
+    // The failure envelope rides the generic `blocked` status bucket.
+    expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "blocked" }]);
+    // on_attempt_error escalates (no auto-recovery); post_attempt never fires on
+    // a budget abort (the attempt did not reach a sentinel-bearing terminal).
+    expect(result.hooksFired).toEqual(["pre_worktree", "pre_attempt", "on_attempt_error"]);
+  });
+
+  it("a clean worktree (0 salvaged files) still parks ready-for-human + blocked:budget", async () => {
+    // Nothing to salvage (the runaway committed everything or edited nothing),
+    // but the budget abort still parks for a human — no auto-retry, no crash.
+    const { deps, input, trace } = harness({
+      outcome: "budget-exceeded",
+      commits: [],
+      salvage: 0,
+      changedFiles: [],
+    });
+    const result = await processIssue(deps, input);
+
+    expect(trace.salvageCalls).toHaveLength(1);
+    expect(result.outcome).toBe("budget-exceeded");
+    expect(trace.closed).toEqual([]);
+    const edit = trace.labelEdits.at(-1)!;
+    expect(edit.add).toContain("ready-for-human");
+    expect(edit.add).toContain("blocked:budget");
+  });
+});
+
 describe("processIssue — emitHeartbeat receives resolved base (issue #570)", () => {
   it("passes the resolved non-main base to emitHeartbeat when the issue body pins a branch", async () => {
     const heartbeatInfos: AttemptProgressInfo[] = [];
