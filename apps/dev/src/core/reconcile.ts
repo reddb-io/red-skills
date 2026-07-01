@@ -163,6 +163,13 @@ export interface ReconcileDeps {
    */
   makeLandingWorktree?(base: string): Promise<string | null>;
   removeLandingWorktree?(dir: string): Promise<void>;
+  /**
+   * Isolated worker-branch worktree provisioner/teardown for the PR path's
+   * pre-merge rebase (#1006). Threaded from process-issue's deps; absent → the
+   * rebase is skipped and the PR lands as before.
+   */
+  makeRebaseWorktree?(branch: string): Promise<string | null>;
+  removeRebaseWorktree?(dir: string): Promise<void>;
   /** Opt-in advisory-review wait for the admin-PR landing (optional). */
   waitForReview?: WaitForReviewInput;
   /** Envelope-emit IO (poster / marker writer / posted writer / git push). */
@@ -332,6 +339,8 @@ export async function reconcile(deps: ReconcileDeps, input: ReconcileInput): Pro
       waitForReview: deps.waitForReview,
       makeLandingWorktree: deps.makeLandingWorktree,
       removeLandingWorktree: deps.removeLandingWorktree,
+      makeRebaseWorktree: deps.makeRebaseWorktree,
+      removeRebaseWorktree: deps.removeRebaseWorktree,
     },
     {
       openPr,
