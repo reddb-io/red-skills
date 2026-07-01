@@ -156,6 +156,20 @@ export const CONFIG_DEFAULTS = {
   "afk.companion.waiting_windows": "20",
   "afk.companion.diff_drift_loc": "4000",
   "afk.companion.min_progress_loc": "5",
+  // Notes-loop (Track C, issue #997). Opt-in ACCUMULATIVE short-iteration inner
+  // loop: instead of one long inner-agent run, processIssue makes several SHORT
+  // runs, each seeded with a `notes.md` summary of prior progress and expected to
+  // commit one small increment. Off by default → exactly one `runAgent` call
+  // (byte-for-byte no behaviour change). `max_iterations` caps the outer short
+  // runs; `per_iteration_max_iterations` is the low inner re-invocation ceiling of
+  // each short run. `token_budget` and `wall_clock_budget_s` are optional
+  // between-call outer budgets (unset → unbounded). CAVEAT: the token budget is
+  // reliable only for codex/opencode, which emit discrete per-turn token usage;
+  // claude folds thinking into output and accrues usage at the iteration boundary,
+  // so a claude notes-loop should lean on the iteration + wall-clock caps instead.
+  "afk.notes_loop.enabled": "false",
+  "afk.notes_loop.max_iterations": "5",
+  "afk.notes_loop.per_iteration_max_iterations": "8",
   "dev.lock.primary-branch": "false",
   // NOTE: `dev.lock.branch` (the static base lock — ADR 0031) is intentionally
   // NOT in this table. Its "default" is *unset* (no config-level lock), and
