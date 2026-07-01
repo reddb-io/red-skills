@@ -16,6 +16,11 @@ import type { AgentStreamEvent, RunOptions, RunResult } from "@reddb-io/red-cast
 import { isRunnerExhausted } from "./runner-spawn.js";
 import { startLaneIdleReaper, DEFAULT_STALL_POLL_S } from "./lane-idle-reaper.js";
 import { RUNNER_SPECS } from "./runner-spec.js";
+import {
+  AGENT_OUTPUT_CLOSE,
+  parseAgentOutput,
+  type AgentOutput,
+} from "./agent-output.js";
 
 // Re-exported so process-issue / run can type their agent-event sink without
 // importing the sandcastle package directly (execution.ts is the single seam
@@ -396,8 +401,21 @@ export interface RunAgentResult {
   branch: string;
   commits: readonly { sha: string }[];
   completionSignal?: string;
+  /**
+   * The validated structured completion (ADR 0082) when the agent emitted a
+   * well-formed `<agent-output>` block. Carries `summary`, `key_changes_made`,
+   * and `key_learnings` for the PR body / audit trail / memory ingestion, plus
+   * the `should_fully_stop` outer-loop signal. Absent when the run completed via
+   * the text sentinel alone (the coexistence fallback).
+   */
+  agentOutput?: AgentOutput;
   stdout: string;
 }
+
+// Re-exported so process-issue / callers can consume the structured completion
+// without importing agent-output.ts directly (execution.ts stays the runner
+// result seam).
+export type { AgentOutput } from "./agent-output.js";
 
 /** Provider factories + the sandcastle `run` entrypoint, injected for testing. */
 export interface SandcastleDeps {
@@ -553,6 +571,25 @@ export function interpretOutcome(signal: string | undefined): AgentOutcome {
   return "no-sentinel";
 }
 
+/**
+ * Resolve an attempt outcome from the two coexisting completion channels (ADR
+ * 0082 §2). The structured `AgentOutput` wins when present and valid — a
+ * schema-validated `success` is authoritative — and its `success` maps to
+ * `done`/`blocked` exactly as the sentinel does. When no valid structured block
+ * is present the text sentinel path applies untouched ({@link interpretOutcome}),
+ * so every non-adopting runner and every legacy stdout keeps its current
+ * behaviour. This is what lets a run that emitted a valid structured block but
+ * forgot the `<promise>` sentinel yield a definite outcome instead of
+ * `no-sentinel` (the #788 failure class).
+ */
+export function interpretCompletion(
+  structured: AgentOutput | undefined,
+  signal: string | undefined,
+): AgentOutcome {
+  if (structured) return structured.success ? "done" : "blocked";
+  return interpretOutcome(signal);
+}
+
 /** The sandcastle `host.onWorktreeReady` hook command shape. */
 type HostHookCommand = NonNullable<NonNullable<NonNullable<RunOptions["hooks"]>["host"]>["onWorktreeReady"]>[number];
 
@@ -696,7 +733,16 @@ export function buildRunOptions(deps: SandcastleDeps, input: RunAgentInput): Run
     prompt: input.handoffContent,
     ...(input.systemPrompt ? { systemPrompt: input.systemPrompt } : {}),
     branchStrategy,
-    completionSignal: [...COMPLETION_SIGNALS],
+    // Structured-output completion adapter (ADR 0082), claude-first rollout
+    // (#919/#932). For the claude runner, register the `<agent-output>` closing
+    // tag as an ADDITIONAL completion signal so the turn can terminate on the
+    // schema-validated structured block ALONE — curing the `no-sentinel` class
+    // for it — while the `<promise>` sentinels stay valid (coexistence). Every
+    // other runner keeps just the sentinels until its own adoption slice lands.
+    completionSignal:
+      input.runner === "claude"
+        ? [...COMPLETION_SIGNALS, AGENT_OUTPUT_CLOSE]
+        : [...COMPLETION_SIGNALS],
     // sandcastle defaults maxIterations to 1, which stops the agent before it
     // can emit DONE (issue #322). Set a generous, env-tunable ceiling so the
     // completionSignal stays the real terminator.
@@ -1211,11 +1257,16 @@ export async function runAgent(deps: SandcastleDeps, input: RunAgentInput): Prom
   if (result.completionSignal === undefined && isRunnerExhausted(result.stdout ?? "")) {
     return { outcome: "exhausted", branch: result.branch, commits: result.commits, stdout: result.stdout };
   }
+  // Structured-output completion adapter (ADR 0082): prefer a valid AgentOutput
+  // block over the text sentinel. A run that emitted the structured block but no
+  // sentinel now yields a definite `done`/`blocked` instead of `no-sentinel`.
+  const agentOutput = parseAgentOutput(result.stdout ?? "");
   return {
-    outcome: interpretOutcome(result.completionSignal),
+    outcome: interpretCompletion(agentOutput, result.completionSignal),
     branch: result.branch,
     commits: result.commits,
     completionSignal: result.completionSignal,
+    ...(agentOutput ? { agentOutput } : {}),
     stdout: result.stdout,
   };
 }

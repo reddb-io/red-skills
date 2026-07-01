@@ -282,6 +282,19 @@ describe("buildHandoff", () => {
     expect(EXIT_PROTOCOL).toContain("prose");
   });
 
+  it("EXIT_PROTOCOL instructs the agent to emit the structured AgentOutput block (ADR 0082 / #919)", () => {
+    expect(EXIT_PROTOCOL).toContain("<agent-output>");
+    expect(EXIT_PROTOCOL).toContain("</agent-output>");
+    // The full AgentOutput schema fields must be named so the agent emits them.
+    expect(EXIT_PROTOCOL).toContain("success");
+    expect(EXIT_PROTOCOL).toContain("summary");
+    expect(EXIT_PROTOCOL).toContain("key_changes_made");
+    expect(EXIT_PROTOCOL).toContain("key_learnings");
+    expect(EXIT_PROTOCOL).toContain("should_fully_stop");
+    // Coexistence: the sentinel stays the final line as the fallback channel.
+    expect(EXIT_PROTOCOL).toContain("very last line");
+  });
+
   it("EXIT_PROTOCOL distinguishes touched-package confidence checks from the binding merge gate (#849)", () => {
     // The completion contract must name BOTH kinds of check and point at the
     // per-attempt <merge-gate> section as the binding one.
