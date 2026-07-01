@@ -2,7 +2,47 @@
 
 Records every change made to skills inherited from [`mattpocock/skills`](https://github.com/mattpocock/skills), plus new skills created by reddb.io. See the rules in [CLAUDE.md](./CLAUDE.md).
 
-Upstream base: `mattpocock/skills@6eeb81b5fcfeeb5bd531dd47ab2f9f2bbea27461` (see `.upstream`).
+Upstream base: `mattpocock/skills@21f59763be7bf734cd4cf138805bb653d9ffebb7` (see `.upstream`).
+
+---
+
+## upstream drift review — 6eeb81b → 21f5976 (issue #896)
+
+- **status**: reviewed
+- **upstream**: `21f5976`
+- **why**: Periodic upstream drift absorption — 50 commits since last pin. Absorbed TDD improvements and promoted the two-axis code-review skill; skipped decision-mapping, ask-matt, and link-skills (not applicable to red-skills structure).
+- **what changed**: See entries below for individual skill changes.
+
+---
+
+## code-review (engineering) — promoted from in-progress + Fowler smell baseline (upstream 21f5976)
+
+- **status**: added
+- **upstream**: `21f5976`
+- **why**: Upstream renamed `review` → `code-review`. Our `in-progress/review` was already the two-axis review derived from upstream. The rename resolves the naming collision with our own HTML annotation `review` skill. Added the Fowler smell baseline (12 smells, always-on in the Standards axis) which upstream added to their version.
+- **what changed**:
+  - `plugins/dev/skills/engineering/code-review/SKILL.md`: new file, promoted from `in-progress/review/SKILL.md`; added Fowler smell baseline table to step 3 and Standards sub-agent brief; frontmatter updated to `name: code-review`.
+  - `plugins/dev/skills/in-progress/review/SKILL.md`: removed (skill is now promoted to `engineering/code-review`).
+  - `plugins/dev/.claude-plugin/plugin.json`: added `./skills/engineering/code-review` entry.
+  - `plugins/dev/skills/engineering/README.md`: added `code-review` entry.
+  - `README.md`: added `code-review` to the skill map table.
+
+---
+
+## tdd (engineering) — seams concept + tautological anti-pattern + refactor removal (upstream 21f5976)
+
+- **status**: modified
+- **upstream**: `21f5976`
+- **why**: Three improvements from upstream absorbed: (1) "seams" as the canonical name for the public boundary being tested — upgrades Step 1 from a generic interface question to an explicit seam-confirmation gate; (2) tautological assertion anti-pattern — expected values must come from an independent source of truth, not re-derived the same way the code does; (3) refactoring removed from the TDD loop — upstream explicitly placed it in the review stage, and we align (Step 4 removed; `/review` handles cleanup).
+- **what changed**:
+  - Frontmatter description: "red-green-refactor loop" → "red → green loop".
+  - `<what-to-do>` lead line: removed "then refactor".
+  - Step 1 item 3: "public interface" question upgraded to explicit seam-naming and user-confirmation gate.
+  - Step 4 — Refactor: removed entirely.
+  - Hard rules: removed "❌ Do not refactor while RED" (redundant without Step 4); added "❌ Do not write tautological assertions".
+  - Added "✅ Do confirm seams with the user before the first test" to hard rules.
+  - Added closing line: "Once all tests are GREEN, refactoring is a separate concern — run `/review` on the branch to clean up."
+  - `<supporting-info>`: added "## Seams" section defining the term.
 
 ---
 

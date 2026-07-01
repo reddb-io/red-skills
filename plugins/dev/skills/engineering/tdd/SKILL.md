@@ -1,15 +1,15 @@
 ---
 name: tdd
-description: Test-driven development with red-green-refactor loop. Use when user wants to build features or fix bugs using TDD, mentions "red-green-refactor", wants integration tests, or asks for test-first development.
+description: Test-driven development with a red → green loop. Use when user wants to build features or fix bugs using TDD, mentions "red-green", wants integration tests, or asks for test-first development.
 ---
 
 # Test-Driven Development
 
 <what-to-do>
 
-**Build one vertical slice at a time — RED then GREEN, never the reverse, never in bulk.** One failing test, the minimum code to pass it, nothing more; repeat until every listed behaviour is covered, then refactor.
+**Build one vertical slice at a time — RED then GREEN, never the reverse, never in bulk.** One failing test, the minimum code to pass it, nothing more; repeat until every listed behaviour is covered.
 
-Build the feature one **vertical slice** at a time. Each slice is exactly one RED → GREEN cycle: one failing test, then the minimum code to pass it. Repeat until the listed behaviours are covered, then refactor.
+Build the feature one **vertical slice** at a time. Each slice is exactly one RED → GREEN cycle: one failing test, then the minimum code to pass it. Repeat until the listed behaviours are covered.
 
 ### Step 1 — Plan, then get approval
 
@@ -17,7 +17,7 @@ Before writing any code or test:
 
 1. Explore the codebase. Use the project's domain glossary so test names and interface vocabulary match the project's language. Respect ADRs in the area you're touching.
 2. List the **behaviours** to test (not implementation steps). Prioritise: critical paths and complex logic first; you cannot test everything.
-3. Ask the user: *"What should the public interface look like? Which behaviours matter most?"*
+3. Name the **seams** — the public boundaries where tests will observe behaviour without reaching inside the implementation. Write them down. Confirm with the user before writing the first test: *"These are the seams I'll test at: [list]. Which behaviours matter most?"*
 4. Present the plan. **Get explicit user approval before writing the first test.**
 
 ### Step 2 — Tracer bullet (first cycle)
@@ -40,23 +40,14 @@ RED:   Write the next test → fails
 GREEN: Minimum code to pass → passes
 ```
 
-### Step 4 — Refactor (only after GREEN)
-
-Once all planned tests are GREEN:
-
-- Extract duplication
-- Deepen modules (move complexity behind simple interfaces) — see [deep-modules.md](deep-modules.md)
-- Apply SOLID where it falls out naturally
-- Run the full test suite after **each** refactor step
-- See [refactoring.md](refactoring.md) for candidates
-
 ### Hard rules — do not break these
 
 - ❌ Do **not** write all tests first then all implementation ("horizontal slicing"). This produces tests of *imagined* behaviour, not *actual* behaviour. See `<supporting-info>` for why.
-- ❌ Do **not** refactor while RED. Get to GREEN first.
 - ❌ Do **not** write more code than the current test requires. No speculative features, no anticipating the next test.
 - ❌ Do **not** test private methods or mock internal collaborators. Tests must go through the public interface.
 - ❌ Do **not** verify behaviour through external means (querying the database directly when an API exists, etc.).
+- ❌ Do **not** write tautological assertions — expected values must come from an independent source of truth (a literal, a worked example, the spec), not by recomputing the same way the code does. `expect(add(a, b)).toBe(a + b)` always passes and can never catch a bug.
+- ✅ **Do** confirm seams with the user before writing the first test — no test at an unconfirmed seam.
 - ✅ **Do** check each cycle against the per-cycle checklist before moving to the next test.
 - ✅ **Do** keep tests focused on observable behaviour through public interfaces.
 - ✅ **Do** use the project's domain vocabulary in test names and interface design.
@@ -75,6 +66,8 @@ Before declaring a cycle done, confirm every box:
 
 If any box is unchecked, the cycle isn't done — fix it before moving on.
 
+Once all tests are GREEN, refactoring is a separate concern — run `/review` on the branch to clean up.
+
 </what-to-do>
 
 <supporting-info>
@@ -88,6 +81,12 @@ If any box is unchecked, the cycle isn't done — fix it before moving on.
 **Bad tests** are coupled to implementation. They mock internal collaborators, test private methods, or verify through external means (like querying a database directly instead of using the interface). The warning sign: your test breaks when you refactor, but behaviour hasn't changed.
 
 See [tests.md](tests.md) for examples, [mocking.md](mocking.md) for mocking guidelines, [interface-design.md](interface-design.md) for designing for testability.
+
+## Seams
+
+A **seam** is the public boundary you test at: the interface where you observe behaviour without reaching inside the implementation. Tests live at seams, never against internals.
+
+Confirming seams before the first test is how testing effort lands on critical paths and complex logic — not on every edge case. One seam, one test, one implementation per cycle.
 
 ## Why horizontal slicing is forbidden
 

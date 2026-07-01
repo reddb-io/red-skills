@@ -36,6 +36,7 @@
     "./skills/engineering/prototype",
     "./skills/engineering/verify",
     "./skills/engineering/review",
+    "./skills/engineering/code-review",
     "./skills/engineering/resolving-merge-conflicts",
     "./skills/misc/branch-lock",
     "./skills/misc/git-guardrails-claude-code",
