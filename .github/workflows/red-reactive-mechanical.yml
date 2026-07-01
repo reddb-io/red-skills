@@ -1,0 +1,221 @@
+# red-reactive-mechanical — reactive, provably-safe mechanical actions (issue #942 / PRD #928 S11b).
+#
+# A PUBLIC-REPO SECURITY BOUNDARY. This workflow reacts to comments and labels
+# on issues/PRs and executes ONLY an enumerated set of provably-safe *mechanical*
+# actions. It can never take a semantic decision (merge / close / approve a PR
+# review) — those stay behind the authenticated `/hitl` CLI. The reactive path
+# refuses them with a pointer back to `/hitl`.
+#
+# Provably-safe by construction — two independent guarantees:
+#
+#   1. PERMISSIONS. The token is granted `issues: write` + `actions: write` only.
+#      It has NO `contents: write` and NO `pull-requests: write`, so it is
+#      structurally incapable of merging a PR, pushing code, or submitting a PR
+#      review approval — even if a future edit tried to. The GitHub API rejects
+#      those calls for lack of scope. This is the load-bearing guarantee.
+#
+#   2. GRAMMAR. Mechanical intent is read from the FIRST non-blank line of a
+#      comment, matched against a fixed verb allowlist (`rerun-ci`, `label`,
+#      `audit`, `approve-ci`). Anything else — including the semantic verbs
+#      `merge` / `close` / `approve` — routes to the refusal path. The issue/PR
+#      body, the diff, and every line of the comment after the first are treated
+#      as delimited DATA, never as instructions.
+#
+# Injection safety (ADR 0073 pattern, mirrors red-hitl-card / red-comment-respond):
+# untrusted comment text is bound to the `COMMENT_BODY` environment variable and
+# read as `$COMMENT_BODY`. It is NEVER interpolated as a `${{ … }}` expression
+# inside a `run:` shell body, so a comment cannot break out of the string and
+# inject shell.
+#
+# Trust gate: only an author with a write-bearing association (OWNER / MEMBER /
+# COLLABORATOR) can drive a mechanical action; anyone else gets a no-op ⛔ reply.
+
+name: red-reactive-mechanical
+
+on:
+  # Mechanical command comments (`/red-mechanical <verb>`) on issues and PRs.
+  issue_comment:
+    types: [created]
+  # Self-healing reconcile: a label change re-evaluates mechanical drift.
+  issues:
+    types: [labeled, unlabeled]
+
+# Mechanical only. NO contents:write (cannot push / merge). NO pull-requests:write
+# (cannot approve a review). issues:write covers labels + comments on issues AND
+# PRs; actions:write covers re-running CI and approving pending fork CI runs.
+permissions:
+  contents: read
+  issues: write
+  actions: write
+  checks: read
+  pull-requests: read
+
+jobs:
+  # ─── dispatch ───────────────────────────────────────────────────────────────
+  # Parse a `/red-mechanical <verb>` comment and either execute an enumerated
+  # provably-safe mechanical action or refuse a semantic decision.
+  dispatch:
+    # Cheap prefilter: only wake for the mechanical summon prefix. The verb
+    # allowlist + trust gate below are the authoritative checks.
+    if: >-
+      github.event_name == 'issue_comment' &&
+      github.event.action == 'created' &&
+      startsWith(github.event.comment.body, '/red-mechanical')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reactive mechanical dispatch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          # issue_comment fires for both issues and PRs; both carry an issue number.
+          NUMBER: ${{ github.event.issue.number }}
+          # Untrusted, attacker-controlled text — bound as delimited data, never
+          # interpolated into the shell as a ${{ … }} expression.
+          COMMENT_BODY: ${{ github.event.comment.body }}
+          COMMENT_AUTHOR: ${{ github.event.comment.user.login }}
+          COMMENT_ASSOCIATION: ${{ github.event.comment.author_association }}
+        run: |
+          set -euo pipefail
+
+          # ── Trust gate ──────────────────────────────────────────────────────
+          # Only maintainers (write-bearing association) may drive a mechanical
+          # action. Untrusted authors get a no-op refusal.
+          case "$COMMENT_ASSOCIATION" in
+            OWNER|MEMBER|COLLABORATOR) : ;;
+            *)
+              gh issue comment "$NUMBER" --repo "$REPO" --body \
+                "⛔ \`@${COMMENT_AUTHOR}\` is not authorized to run reactive mechanical actions (write access required)."
+              echo "untrusted author '$COMMENT_AUTHOR' ($COMMENT_ASSOCIATION); refused."
+              exit 0
+              ;;
+          esac
+
+          # ── Grammar ─────────────────────────────────────────────────────────
+          # Read ONLY the first non-blank line of the comment. Everything else in
+          # the body is delimited data and is discarded here.
+          FIRST_LINE="$(printf '%s\n' "$COMMENT_BODY" | grep -m1 -v '^[[:space:]]*$' || true)"
+          # Strip the summon prefix, then take the verb and (optional) single arg.
+          REST="${FIRST_LINE#/red-mechanical}"
+          # shellcheck disable=SC2086
+          set -- $REST
+          VERB="${1:-}"
+          ARG="${2:-}"
+
+          echo "reactive mechanical: verb='${VERB}' arg='${ARG}' issue/PR=#${NUMBER}"
+
+          # ── Refuse semantic decisions ───────────────────────────────────────
+          # merge / close / approve are semantic. They are NOT in the allowlist;
+          # the reactive path refuses them and points to the authenticated /hitl CLI.
+          case "$VERB" in
+            merge|close|approve|reject|requeue)
+              gh issue comment "$NUMBER" --repo "$REPO" --body \
+                "⛔ \`${VERB}\` is a **semantic decision** and is refused by the reactive mechanical path. Semantic merge / close / approve stay in the authenticated \`/hitl\` CLI. Run it there."
+              echo "semantic verb '${VERB}' refused; redirected to /hitl."
+              exit 0
+              ;;
+          esac
+
+          # ── Enumerated provably-safe mechanical action set ──────────────────
+          case "$VERB" in
+            rerun-ci)
+              # Re-run failed CI runs for this PR's head branch. Mechanical: it
+              # re-executes existing workflows, changes no code, merges nothing.
+              HEAD="$(gh pr view "$NUMBER" --repo "$REPO" --json headRefName -q .headRefName 2>/dev/null || true)"
+              if [[ -z "$HEAD" ]]; then
+                gh issue comment "$NUMBER" --repo "$REPO" --body \
+                  "ℹ️ \`rerun-ci\` only applies to a pull request. #${NUMBER} is not a PR."
+                exit 0
+              fi
+              RUN_ID="$(gh run list --repo "$REPO" --branch "$HEAD" --limit 1 --json databaseId -q '.[0].databaseId' 2>/dev/null || true)"
+              if [[ -n "$RUN_ID" ]]; then
+                gh run rerun "$RUN_ID" --repo "$REPO" --failed || true
+                gh issue comment "$NUMBER" --repo "$REPO" --body "🔁 Re-ran failed CI for \`${HEAD}\` (run ${RUN_ID})."
+              else
+                gh issue comment "$NUMBER" --repo "$REPO" --body "ℹ️ No CI run found for \`${HEAD}\` to re-run."
+              fi
+              ;;
+
+            label)
+              # Apply a triage label from a fixed allowlist. The label name is
+              # validated against a strict allowlist regex before any use — an
+              # attacker cannot inject an arbitrary label.
+              case "$ARG" in
+                needs-triage|ready-for-human|ready-for-agent|priority:high|priority:urgent|blocked:validation)
+                  gh issue edit "$NUMBER" --repo "$REPO" --add-label "$ARG"
+                  gh issue comment "$NUMBER" --repo "$REPO" --body "🏷️ Applied triage label \`${ARG}\`."
+                  ;;
+                *)
+                  gh issue comment "$NUMBER" --repo "$REPO" --body \
+                    "⛔ \`${ARG}\` is not in the mechanical label allowlist. Allowed: needs-triage, ready-for-human, ready-for-agent, priority:high, priority:urgent, blocked:validation."
+                  ;;
+              esac
+              ;;
+
+            audit)
+              # Post an audit comment summarizing the current mechanical state.
+              STATE="$(gh issue view "$NUMBER" --repo "$REPO" --json state,labels -q '.state + " | labels: " + ([.labels[].name] | join(", "))' 2>/dev/null || echo "unknown")"
+              gh issue comment "$NUMBER" --repo "$REPO" --body \
+                "🔎 **Mechanical audit** for #${NUMBER}: ${STATE}. Reactive path executes mechanical actions only; semantic decisions live in \`/hitl\`."
+              ;;
+
+            approve-ci)
+              # Approve PENDING fork CI workflow runs for this PR. Mechanical:
+              # this only lets already-defined CI run for a fork PR; it never
+              # approves a PR review and never merges.
+              HEAD="$(gh pr view "$NUMBER" --repo "$REPO" --json headRefName -q .headRefName 2>/dev/null || true)"
+              if [[ -z "$HEAD" ]]; then
+                gh issue comment "$NUMBER" --repo "$REPO" --body \
+                  "ℹ️ \`approve-ci\` only applies to a pull request. #${NUMBER} is not a PR."
+                exit 0
+              fi
+              PENDING="$(gh api "repos/${REPO}/actions/runs?branch=${HEAD}&status=action_required" -q '.workflow_runs[0].id' 2>/dev/null || true)"
+              if [[ -n "$PENDING" && "$PENDING" != "null" ]]; then
+                gh api --method POST "repos/${REPO}/actions/runs/${PENDING}/approve" || true
+                gh issue comment "$NUMBER" --repo "$REPO" --body "✅ Approved pending fork CI run ${PENDING} for \`${HEAD}\` (CI only — not a merge or review approval)."
+              else
+                gh issue comment "$NUMBER" --repo "$REPO" --body "ℹ️ No pending fork CI run awaiting approval for \`${HEAD}\`."
+              fi
+              ;;
+
+            *)
+              gh issue comment "$NUMBER" --repo "$REPO" --body \
+                "🤖 Unknown mechanical verb \`${VERB}\`. Provably-safe mechanical actions: \`rerun-ci\`, \`label <name>\`, \`audit\`, \`approve-ci\`. Semantic merge / close / approve stay in \`/hitl\`."
+              ;;
+          esac
+
+  # ─── reconcile ──────────────────────────────────────────────────────────────
+  # Self-healing reconcile: on a label change, re-evaluate the issue's mechanical
+  # state and correct drift. Idempotent — only ever posts a mechanical audit and
+  # re-asserts mechanical labels; never merges, closes, or approves.
+  reconcile:
+    if: >-
+      github.event_name == 'issues' &&
+      (github.event.action == 'labeled' || github.event.action == 'unlabeled')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Self-healing mechanical reconcile
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.issue.number }}
+          # Label name is GitHub-controlled metadata, but still bound as data.
+          LABEL_NAME: ${{ github.event.label.name }}
+        run: |
+          set -euo pipefail
+          # Re-evaluate the issue's current state vs. its labels and report drift.
+          # This is the mechanical self-heal: it never takes a semantic decision.
+          STATE="$(gh issue view "$NUMBER" --repo "$REPO" --json state,labels -q '.state' 2>/dev/null || echo "unknown")"
+          LABELS="$(gh issue view "$NUMBER" --repo "$REPO" --json labels -q '[.labels[].name] | join(", ")' 2>/dev/null || echo "")"
+          echo "reconcile #${NUMBER}: state=${STATE} label-changed='${LABEL_NAME}' labels=[${LABELS}]"
+
+          # Drift rule (mechanical, provably-safe): a CLOSED issue must not keep
+          # an actionable queue label. Removing a stale label is mechanical; we
+          # never re-open, merge, or close here.
+          if [[ "$STATE" == "CLOSED" ]]; then
+            for STALE in ready-for-agent ready-for-human needs-triage; do
+              if printf '%s' "$LABELS" | grep -qw "$STALE"; then
+                gh issue edit "$NUMBER" --repo "$REPO" --remove-label "$STALE" || true
+                echo "reconcile: removed stale queue label '${STALE}' from closed #${NUMBER}."
+              fi
+            done
+          fi

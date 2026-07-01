@@ -4,6 +4,8 @@ import {
   buildRunOptions,
   buildContinuousPushHook,
   interpretOutcome,
+  interpretCompletion,
+  enforceStructuredOutput,
   isExhaustionError,
   isTransientRunnerError,
   runAgent,
@@ -58,11 +60,18 @@ const baseInput: RunAgentInput = {
   branch: "afk/wZ2R4/42-fix-oauth",
 };
 
+// A valid AgentOutput block (ADR 0082, #932). baseInput's runner is claude,
+// which is schema-enabled, so a `done` outcome is only honoured when stdout
+// carries a valid <agent-output> — embed it in the default fakeResult stdout so
+// the DONE-path tests reflect the structured-output contract.
+const VALID_AGENT_OUTPUT =
+  '<agent-output>{"success":true,"summary":"did the work","key_changes_made":["x"],"key_learnings":["y"],"should_fully_stop":false}</agent-output>';
+
 function fakeResult(over: Partial<RunResult> = {}): RunResult {
   return {
     iterations: [],
     completionSignal: DONE_SIGNAL,
-    stdout: "ok",
+    stdout: `ok\n${VALID_AGENT_OUTPUT}`,
     commits: [{ sha: "abc1234" }],
     branch: "afk/wZ2R4/42-fix-oauth",
     ...over,
@@ -82,11 +91,74 @@ describe("interpretOutcome", () => {
   });
 });
 
+describe("interpretCompletion (ADR 0082 — structured wins, sentinel fallback)", () => {
+  const structured = (success: boolean) => ({
+    success,
+    summary: "s",
+    key_changes_made: [],
+    key_learnings: [],
+    should_fully_stop: false,
+  });
+
+  it("maps a valid structured success:true to done regardless of the signal", () => {
+    expect(interpretCompletion(structured(true), undefined)).toBe("done");
+    expect(interpretCompletion(structured(true), BLOCKED_SIGNAL)).toBe("done");
+  });
+
+  it("maps a valid structured success:false to blocked", () => {
+    expect(interpretCompletion(structured(false), DONE_SIGNAL)).toBe("blocked");
+  });
+
+  it("falls back to the sentinel path when there is no structured output", () => {
+    expect(interpretCompletion(undefined, DONE_SIGNAL)).toBe("done");
+    expect(interpretCompletion(undefined, BLOCKED_SIGNAL)).toBe("blocked");
+    expect(interpretCompletion(undefined, undefined)).toBe("no-sentinel");
+  });
+});
+
+describe("enforceStructuredOutput (ADR 0082, #932)", () => {
+  it("keeps a claude DONE that carries a valid AgentOutput", () => {
+    const r = enforceStructuredOutput("claude", "done", `log\n${VALID_AGENT_OUTPUT}`);
+    expect(r).toEqual({ outcome: "done" });
+  });
+
+  it("downgrades a claude DONE with a missing AgentOutput to no-sentinel", () => {
+    const r = enforceStructuredOutput("claude", "done", "just prose, no tag");
+    expect(r.outcome).toBe("no-sentinel");
+    expect(r.rejectedReason).toBe("missing");
+  });
+
+  it("downgrades a claude DONE with a schema-invalid AgentOutput", () => {
+    const r = enforceStructuredOutput("claude", "done", '<agent-output>{"success":true}</agent-output>');
+    expect(r.outcome).toBe("no-sentinel");
+    expect(r.rejectedReason).toContain("schema");
+  });
+
+  it("does NOT gate a non-schema runner (codex keeps the text sentinel)", () => {
+    expect(enforceStructuredOutput("codex", "done", "no tag here")).toEqual({ outcome: "done" });
+  });
+
+  it("only gates the done outcome — blocked / no-sentinel pass through untouched", () => {
+    expect(enforceStructuredOutput("claude", "blocked", "no tag")).toEqual({ outcome: "blocked" });
+    expect(enforceStructuredOutput("claude", "no-sentinel", "no tag")).toEqual({ outcome: "no-sentinel" });
+  });
+});
+
 describe("buildRunOptions", () => {
-  it("registers both AFK sentinels as completion signals", () => {
+  it("registers both AFK sentinels + the claude structured-output tag as completion signals", () => {
+    // ADR 0082 / #919: the claude runner also terminates on the structured
+    // `<agent-output>` block so it can complete without the text sentinel.
     const opts = buildRunOptions(makeDeps(async () => fakeResult()), baseInput);
-    expect(opts.completionSignal).toEqual([DONE_SIGNAL, BLOCKED_SIGNAL]);
+    expect(opts.completionSignal).toEqual([DONE_SIGNAL, BLOCKED_SIGNAL, "</agent-output>"]);
     expect(COMPLETION_SIGNALS).toEqual([DONE_SIGNAL, BLOCKED_SIGNAL]);
+  });
+
+  it("keeps non-claude runners on the sentinels alone (claude-first rollout)", () => {
+    const opts = buildRunOptions(
+      makeDeps(async () => fakeResult()),
+      { ...baseInput, runner: "codex", model: "gpt-5.4" },
+    );
+    expect(opts.completionSignal).toEqual([DONE_SIGNAL, BLOCKED_SIGNAL]);
   });
 
   it("delivers the handoff as an INLINE prompt (not a promptFile template) with a named branch strategy", () => {
@@ -339,7 +411,7 @@ describe("runAgent", () => {
       branch: "afk/wZ2R4/42-fix-oauth",
       commits: [{ sha: "abc1234" }],
       completionSignal: DONE_SIGNAL,
-      stdout: "ok",
+      stdout: `ok\n${VALID_AGENT_OUTPUT}`,
     });
   });
 
@@ -370,8 +442,55 @@ describe("runAgent", () => {
       baseInput,
     );
     expect(seen?.prompt).toBe("the handoff body");
-    expect(seen?.completionSignal).toEqual([DONE_SIGNAL, BLOCKED_SIGNAL]);
+    expect(seen?.completionSignal).toEqual([DONE_SIGNAL, BLOCKED_SIGNAL, "</agent-output>"]);
     expect(seen?.branchStrategy).toEqual({ type: "branch", branch: "afk/wZ2R4/42-fix-oauth" });
+  });
+
+  it("reads a valid structured AgentOutput block as the outcome (ADR 0082, #919)", async () => {
+    // A run that emitted the structured block but NO `<promise>` sentinel now
+    // yields a definite outcome instead of no-sentinel (the #788 failure class).
+    const output = {
+      success: true,
+      summary: "Wired the structured-output completion adapter.",
+      key_changes_made: ["execution.ts"],
+      key_learnings: [],
+      should_fully_stop: false,
+    };
+    const stdout = `work log\n<agent-output>${JSON.stringify(output)}</agent-output>\n`;
+    const r = await runAgent(
+      makeDeps(async () => fakeResult({ completionSignal: "</agent-output>", stdout })),
+      baseInput,
+    );
+    expect(r.outcome).toBe("done");
+    expect(r.agentOutput).toEqual(output);
+  });
+
+  it("maps a structured success:false block to blocked, structured wins over the sentinel", async () => {
+    const output = {
+      success: false,
+      summary: "Contradictory acceptance criteria.",
+      key_changes_made: [],
+      key_learnings: ["spec conflict"],
+      should_fully_stop: false,
+    };
+    // Even with a DONE sentinel present, the structured block is authoritative.
+    const stdout = `<agent-output>${JSON.stringify(output)}</agent-output>\n${DONE_SIGNAL}`;
+    const r = await runAgent(
+      makeDeps(async () => fakeResult({ completionSignal: DONE_SIGNAL, stdout })),
+      baseInput,
+    );
+    expect(r.outcome).toBe("blocked");
+    expect(r.agentOutput).toEqual(output);
+  });
+
+  it("falls back to the text sentinel when the structured block is malformed", async () => {
+    const stdout = `<agent-output>{not valid json}</agent-output>\n${DONE_SIGNAL}`;
+    const r = await runAgent(
+      makeDeps(async () => fakeResult({ completionSignal: DONE_SIGNAL, stdout })),
+      baseInput,
+    );
+    expect(r.outcome).toBe("done");
+    expect(r.agentOutput).toBeUndefined();
   });
 });
 
@@ -703,6 +822,26 @@ describe("runAgent — FIX J env application", () => {
   it("is a no-op when no env is supplied", async () => {
     // Just proves the empty-env path does not throw.
     const r = await runAgent(makeDeps(async () => fakeResult()), baseInput);
+    expect(r.outcome).toBe("done");
+  });
+});
+
+describe("runAgent — structured-output gate (ADR 0082, #932)", () => {
+  it("downgrades a claude DONE that lacks a valid AgentOutput to no-sentinel", async () => {
+    const warnings: string[] = [];
+    const deps = { ...makeDeps(async () => fakeResult({ stdout: "worked but no schema block" })), warn: (m: string) => warnings.push(m) };
+    const r = await runAgent(deps, baseInput);
+    expect(r.outcome).toBe("no-sentinel");
+    expect(r.completionSignal).toBe(DONE_SIGNAL);
+    expect(warnings.some((w) => w.includes("AgentOutput"))).toBe(true);
+  });
+
+  it("honours a codex DONE with no AgentOutput (non-schema runner keeps the sentinel)", async () => {
+    const r = await runAgent(makeDeps(async () => fakeResult({ stdout: "no schema block" })), {
+      ...baseInput,
+      runner: "codex",
+      model: "gpt-5.4",
+    });
     expect(r.outcome).toBe("done");
   });
 });

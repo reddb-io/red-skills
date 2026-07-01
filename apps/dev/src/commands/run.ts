@@ -42,6 +42,7 @@ import type { GhContext } from "../runtime/gh.js";
 import type { GitContext } from "../runtime/git.js";
 import type { ExecFn } from "../runtime/exec.js";
 import { getConfig, loadConfig, readBackpressure, resolveTier, resolveCiTimeoutSeconds } from "../core/config.js";
+import { resolveNotesLoopConfig } from "../core/notes-loop.js";
 import {
   classifyIssue,
   resolveReviewGate,
@@ -51,7 +52,7 @@ import { LABEL_READY_FOR_REVIEW } from "../core/triage-labels.js";
 import { resolveHooks } from "../core/hook-config.js";
 import { attemptLedgerContext, formatAttemptContext, highestAttempt, type AttemptDirEntry } from "../core/attempt-ledger.js";
 import { isValidWorkerId } from "../core/worker-paths.js";
-import { readdirSync, existsSync, readFileSync } from "node:fs";
+import { readdirSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { specialUserRequestBlock, claudeSpawnArgs, codexSpawnArgs } from "../core/runner-spawn.js";
 import { buildWorkerAttemptPath } from "../core/worker-paths.js";
@@ -111,6 +112,14 @@ interface ParsedRunFlags {
    * its dedicated worker sees only the minted disposable issue and the running
    * fleet never does. */
   lane?: string;
+  /** --pre-pr: route the run through the hardened pre-PR pipeline before opening
+   * the PR (the `/go` `no-mistakes` dispatch mode, issue #923). */
+  prePr: boolean;
+  /** --local-merge: land the branch by an approved local fast-forward instead of
+   * opening a PR (the `/go` `local-only` dispatch mode, issue #923). */
+  localMerge: boolean;
+  /** --yolo: the opt-in autonomy bump (`/go +yolo`, issue #923). */
+  yolo: boolean;
   /** --run-mode <mode>: execution mode modifier forwarded to `processIssue`.
    * `"scout"` activates the read-only investigation path — no commits, no push,
    * no PR, no merge; the agent report is posted as a comment and the disposable
@@ -169,6 +178,9 @@ const RUN_FLAG_SCHEMA = {
   "reconcile-issue": { kind: "value", coerce: (raw: string): number => Number(raw) },
   origin: { kind: "value", coerce: (raw: string): string => raw },
   lane: { kind: "value", coerce: (raw: string): string => raw },
+  "pre-pr": { kind: "boolean" },
+  "local-merge": { kind: "boolean" },
+  yolo: { kind: "boolean" },
   "run-mode": { kind: "value", coerce: (raw: string): string => raw },
 } satisfies FlagSchema;
 
@@ -220,6 +232,9 @@ export function parseRunFlags(args: readonly string[]): ParsedRunFlags {
     reconcileIssue,
     origin: values.origin as string | undefined,
     lane: values.lane as string | undefined,
+    prePr: values["pre-pr"] === true,
+    localMerge: values["local-merge"] === true,
+    yolo: values.yolo === true,
     runMode: values["run-mode"] as string | undefined,
   };
 }
@@ -530,6 +545,11 @@ export function buildProcessDeps(
   // base (ADR 0031). Honours the namespaced + legacy fallback via loadConfig.
   const worktreeLaunchesPr = getConfig(config, "afk.worktree_launches_pull_request") !== "false";
 
+  // Intra-attempt notes-loop (Track C, #924). Default OFF → exactly one agent
+  // call. When enabled, processIssue wraps the inner invocation in a bounded
+  // outer loop carrying an accumulated `notes.md` between iterations.
+  const notesLoop = resolveNotesLoopConfig(config);
+
   return {
     gh: {
       viewLabels: (issue) => ghx.viewLabels(ghCtx, issue),
@@ -550,6 +570,13 @@ export function buildProcessDeps(
       // from the issue timeline. Consulted at claim time only when an allowlist
       // is configured (plugins.dev.afk.trust-gate.allowlist).
       issueTrust: (issue) => ghx.issueTrust(ghCtx, issue),
+      // HITL decision card (#935, S11a): post/update the card on escalation.
+      // Best-effort: errors are caught in routeRecovery so they never block
+      // the recovery path. Runs in the worktree root so gh resolves the repo.
+      renderDecisionCard: async (issue) => {
+        const { hitlCardCommand } = await import("./hitl-card.js");
+        await hitlCardCommand(["render", `--issue=${issue}`, `--root=${ctx.root}`]);
+      },
     },
     claimGh: {
       // ADR 0066: the atomic GitHub-native claim arbiter. Numeric comment ids
@@ -957,6 +984,19 @@ export function buildProcessDeps(
         loc_added: lastHeartbeatDiff.added,
         loc_removed: lastHeartbeatDiff.removed,
       };
+    },
+    // Intra-attempt notes-loop (Track C, #924). `notesLoop` is the resolved
+    // `afk.notes_loop.*` config (default OFF). `writeNotes` persists the loop's
+    // carried `notes.md` at the attempt dir — outside the worker branch's
+    // worktree, so it is never committed. Best-effort: a write failure must never
+    // fail the attempt.
+    notesLoop,
+    writeNotes: (path, content) => {
+      try {
+        writeFileSync(path, content, "utf8");
+      } catch {
+        /* best-effort: notes are also carried in-process */
+      }
     },
     // Macro-lifecycle phase stamp (issue #811): processIssue calls this at the
     // orchestrator-owned points the agent stream can't see — `validating` at the

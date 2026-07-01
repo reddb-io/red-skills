@@ -47,7 +47,7 @@ import {
   resolveClaimStalenessConfig,
   type ClaimedIssue,
 } from "./claim-staleness.js";
-import { LABEL_READY, LABEL_RUNNING } from "./triage-labels.js";
+import { LABEL_HUMAN, LABEL_READY, LABEL_RUNNING } from "./triage-labels.js";
 
 // ---------- precheck (hard preconditions) ----------
 
@@ -150,6 +150,8 @@ export interface BootGh {
   editLabels(issue: number, remove: string[], add: string[]): Promise<void>;
   /** gh issue comment --body … */
   comment(issue: number, body: string): Promise<void>;
+  /** gh issue view --json labels → flat name list. */
+  viewLabels(issue: number): Promise<string[]>;
 }
 
 /** git side effects: delete a remote or local branch ref. Best-effort. The
@@ -477,7 +479,24 @@ async function runStaleClaimSweep(deps: BootDeps): Promise<StaleClaimSweepResult
   const released: number[] = [];
   for (const p of plans) {
     try {
-      await deps.gh.editLabels(p.issue, [LABEL_RUNNING], [LABEL_READY]);
+      // Re-fetch current labels: the batched issueStates snapshot used by
+      // claimedIssues may be stale by now (parallel edits or a preflight-blocker
+      // concede between the batch and this sweep). Two cases warrant a guard:
+      //
+      //   1. running is gone (race): another sweep or recovery already released
+      //      the issue — skip to avoid a spurious ready-for-agent add.
+      //
+      //   2. running + ready-for-human: a crash recovery wrote ready-for-human but
+      //      left the running projection in place. Adding ready-for-agent here
+      //      would re-admit the issue into the agent queue while the human gate is
+      //      active, causing the preflight-blocker spin (#968). Remove running only.
+      const currentLabels = await deps.gh.viewLabels(p.issue);
+      if (!currentLabels.includes(LABEL_RUNNING)) {
+        released.push(p.issue);
+        continue;
+      }
+      const addLabels = currentLabels.includes(LABEL_HUMAN) ? [] : [LABEL_READY];
+      await deps.gh.editLabels(p.issue, [LABEL_RUNNING], addLabels);
       await deps.gh.comment(p.issue, renderStaleClaimSweepAudit(p.staleOwners));
       released.push(p.issue);
     } catch {

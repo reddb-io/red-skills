@@ -12,5 +12,10 @@
     "resolveJsonModule": true,
     "types": ["node"]
   },
-  "include": ["src", "tests", "../../packages/browser-bridge/**/*.ts"]
+  "include": [
+    "src",
+    "tests",
+    "../../packages/browser-bridge/**/*.ts",
+    "../../packages/cdp-driver/**/*.ts"
+  ]
 }

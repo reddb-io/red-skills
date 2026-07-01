@@ -135,6 +135,7 @@ function makeDeps(over: Partial<{
   straggler: BootDeps["lookups"]["straggler"];
   claimHolderAlive: BootDeps["lookups"]["claimHolderAlive"];
   claimedIssues: BootDeps["lookups"]["claimedIssues"];
+  viewLabels: (issue: number) => Promise<string[]>;
   env: Record<string, string | undefined>;
   reconcileRunner: ReconcileBootRunner;
 }> = {}) {
@@ -148,6 +149,7 @@ function makeDeps(over: Partial<{
   const ghCalls = {
     editLabels: [] as Array<{ issue: number; remove: string[]; add: string[] }>,
     comment: [] as Array<{ issue: number; body: string }>,
+    viewLabels: [] as Array<{ issue: number }>,
   };
   const gitCalls = {
     deleteRemote: [] as string[],
@@ -181,6 +183,11 @@ function makeDeps(over: Partial<{
       async comment(issue, body) {
         calls.push(`gh.comment:${issue}`);
         ghCalls.comment.push({ issue, body });
+      },
+      async viewLabels(issue) {
+        calls.push(`gh.viewLabels:${issue}`);
+        ghCalls.viewLabels.push({ issue });
+        return over.viewLabels ? over.viewLabels(issue) : ["running"];
       },
     },
     git: {
@@ -677,6 +684,35 @@ describe("runBoot cross-host stale-claim sweep (#627)", () => {
     const { deps } = makeDeps({ claimedIssues });
     const r = await runBoot(deps, options());
     expect(r.staleClaimSweep).toEqual({ released: [] });
+  });
+
+  it("removes running but does NOT add ready-for-agent when issue already has ready-for-human (#968)", async () => {
+    // Scenario: crash recovery wrote ready-for-human but left the running projection.
+    // The sweep must strip running without routing back to ready-for-agent, otherwise
+    // the next worker's preflight-blocker concede leaves running again → infinite spin.
+    const claimedIssues = async () => [{ issue: 55, records: [claim(10, "host1:wZZ", 99999)] }];
+    const viewLabels = async (_issue: number) => ["running", "ready-for-human", "blocked:crashed"];
+    const { deps, ghCalls } = makeDeps({ claimedIssues, viewLabels });
+    const r = await runBoot(deps, options());
+    expect(r.staleClaimSweep).toEqual({ released: [55] });
+    expect(ghCalls.editLabels).toEqual([
+      { issue: 55, remove: ["running"], add: [] },
+    ]);
+    expect(ghCalls.comment).toHaveLength(1);
+    expect(ghCalls.comment[0].issue).toBe(55);
+  });
+
+  it("skips (no-op) when running is already gone at viewLabels time (race)", async () => {
+    // Batch fetch returned issue as running, but by the time viewLabels fires
+    // another sweep or recovery already removed running — skip to avoid a
+    // spurious ready-for-agent add.
+    const claimedIssues = async () => [{ issue: 77, records: [claim(10, "host1:wAA", 99999)] }];
+    const viewLabels = async (_issue: number) => ["ready-for-human", "blocked:crashed"];
+    const { deps, ghCalls } = makeDeps({ claimedIssues, viewLabels });
+    const r = await runBoot(deps, options());
+    expect(r.staleClaimSweep).toEqual({ released: [77] });
+    expect(ghCalls.editLabels).toEqual([]);
+    expect(ghCalls.comment).toEqual([]);
   });
 });
 

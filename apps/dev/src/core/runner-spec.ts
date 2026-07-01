@@ -53,6 +53,17 @@ export interface RunnerSpec {
    * provider option's `env` seam; the orchestrator's own env is never touched.
    */
   resolveAuthEnv?: (env: NodeJS.ProcessEnv) => Record<string, string> | undefined;
+  /**
+   * Native structured-output support (ADR 0082, #932). When `true`, this runner
+   * emits + validates the red-castle `AgentOutput` schema as its terminal signal:
+   * the exit protocol instructs it to emit an `<agent-output>` JSON block, and a
+   * `done` outcome is REJECTED (→ `no-sentinel`) unless a valid `AgentOutput` is
+   * present. When absent/false, the runner keeps the text sentinel
+   * (`<promise>DONE</promise>`) as its sole terminal signal — the coexist
+   * fallback for runners without native schema support. Rolled out claude-first;
+   * deprecate the sentinel runner-by-runner as each flips this on.
+   */
+  structuredOutput?: boolean;
 }
 
 export const RUNNER_SPECS: Record<AgentRunner, RunnerSpec> = {
@@ -60,6 +71,10 @@ export const RUNNER_SPECS: Record<AgentRunner, RunnerSpec> = {
     efforts: CLAUDE_EFFORTS,
     channel: "effort",
     factory: "claudeCode",
+    // claude-first structured-output rollout (ADR 0082, #932): claude emits +
+    // validates the AgentOutput schema natively; the sentinel stays as a coexist
+    // fallback for the other runners below until each flips this on.
+    structuredOutput: true,
   },
   codex: {
     efforts: CODEX_EFFORTS,
@@ -100,4 +115,14 @@ export const RUNNER_SPECS: Record<AgentRunner, RunnerSpec> = {
  */
 export function toAgentRunner(r: Runner): AgentRunner {
   return r === "codex" || r === "opencode" || r === "claude-minimax" ? r : "claude";
+}
+
+/**
+ * True when a runner natively emits + validates the red-castle `AgentOutput`
+ * schema as its terminal signal (ADR 0082, #932). The single seam both the exit
+ * protocol (emit) and {@link enforceStructuredOutput} (validate) read, so
+ * flipping a runner onto the schema is a one-line {@link RUNNER_SPECS} change.
+ */
+export function runnerSupportsStructuredOutput(runner: AgentRunner): boolean {
+  return RUNNER_SPECS[runner].structuredOutput === true;
 }

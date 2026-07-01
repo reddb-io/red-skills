@@ -13,9 +13,15 @@
 // unchanged.
 
 import type { AgentStreamEvent, RunOptions, RunResult } from "@reddb-io/red-castle";
+import { extractAgentOutput } from "@reddb-io/red-castle";
 import { isRunnerExhausted } from "./runner-spawn.js";
 import { startLaneIdleReaper, DEFAULT_STALL_POLL_S } from "./lane-idle-reaper.js";
-import { RUNNER_SPECS } from "./runner-spec.js";
+import { RUNNER_SPECS, runnerSupportsStructuredOutput } from "./runner-spec.js";
+import {
+  AGENT_OUTPUT_CLOSE,
+  parseAgentOutput,
+  type AgentOutput,
+} from "./agent-output.js";
 
 // Re-exported so process-issue / run can type their agent-event sink without
 // importing the sandcastle package directly (execution.ts is the single seam
@@ -202,12 +208,13 @@ export interface RunAgentInput {
   /** The worker branch sandcastle commits land on (afk/{id}/{N}-{slug}). */
   branch: string;
   /**
-   * The resolved base branch (lock > pin > main, ADR 0031) the worker branch is
-   * forked from. Passed to sandcastle's NamedBranchStrategy `baseBranch` start
-   * point so the branch's parent is the pinned/locked base, not HEAD. Sandcastle
-   * only honours it when the branch is created new and the caller has made the
-   * ref current (process-issue does a `git fetch origin <base>` first). Defaults
-   * to HEAD when omitted.
+   * The remote-tracking ref for the resolved base (e.g. `origin/main`, ADR 0031)
+   * the worker branch is forked from. Passed to sandcastle's NamedBranchStrategy
+   * `baseBranch` start point so the branch's parent is the freshly-fetched base,
+   * not the potentially-stale local branch. process-issue populates this as
+   * `${remote}/${base}` after calling `fetchBase`, so the ref is guaranteed current.
+   * Sandcastle only honours it when the branch is created new. Defaults to HEAD
+   * when omitted.
    */
   base?: string;
   /** Isolation: "none" (default, node-only) | "docker" | "podman". */
@@ -395,8 +402,21 @@ export interface RunAgentResult {
   branch: string;
   commits: readonly { sha: string }[];
   completionSignal?: string;
+  /**
+   * The validated structured completion (ADR 0082) when the agent emitted a
+   * well-formed `<agent-output>` block. Carries `summary`, `key_changes_made`,
+   * and `key_learnings` for the PR body / audit trail / memory ingestion, plus
+   * the `should_fully_stop` outer-loop signal. Absent when the run completed via
+   * the text sentinel alone (the coexistence fallback).
+   */
+  agentOutput?: AgentOutput;
   stdout: string;
 }
+
+// Re-exported so process-issue / callers can consume the structured completion
+// without importing agent-output.ts directly (execution.ts stays the runner
+// result seam).
+export type { AgentOutput } from "./agent-output.js";
 
 /** Provider factories + the sandcastle `run` entrypoint, injected for testing. */
 export interface SandcastleDeps {
@@ -552,6 +572,53 @@ export function interpretOutcome(signal: string | undefined): AgentOutcome {
   return "no-sentinel";
 }
 
+/**
+ * Resolve an attempt outcome from the two coexisting completion channels (ADR
+ * 0082 §2). The structured `AgentOutput` wins when present and valid — a
+ * schema-validated `success` is authoritative — and its `success` maps to
+ * `done`/`blocked` exactly as the sentinel does. When no valid structured block
+ * is present the text sentinel path applies untouched ({@link interpretOutcome}),
+ * so every non-adopting runner and every legacy stdout keeps its current
+ * behaviour. This is what lets a run that emitted a valid structured block but
+ * forgot the `<promise>` sentinel yield a definite outcome instead of
+ * `no-sentinel` (the #788 failure class).
+ */
+export function interpretCompletion(
+  structured: AgentOutput | undefined,
+  signal: string | undefined,
+): AgentOutcome {
+  if (structured) return structured.success ? "done" : "blocked";
+  return interpretOutcome(signal);
+}
+
+/**
+ * Enforce the native structured-output contract (ADR 0082, #932) on a
+ * schema-enabled runner: a `done` outcome only stands when the agent also
+ * emitted a valid red-castle `AgentOutput` block. On a schema-enabled runner
+ * (claude first) a missing / malformed / schema-invalid `<agent-output>` DOWNGRADES
+ * the `done` to `no-sentinel`, so the agent literally cannot terminate "done"
+ * without the schema — routing a forgotten schema through the same recovery the
+ * forgotten text sentinel already uses. Pure; the `warn` is emitted by the caller.
+ *
+ * Coexist: for runners WITHOUT native schema support the outcome passes through
+ * unchanged, so the text sentinel remains their sole terminal signal. Only a
+ * `done` outcome is gated — `blocked` / `no-sentinel` / exhaustion / timeout are
+ * never touched (a schema is required to claim success, not to report a block).
+ */
+export function enforceStructuredOutput(
+  runner: AgentRunner,
+  outcome: AgentOutcome,
+  stdout: string,
+): { outcome: AgentOutcome; rejectedReason?: string } {
+  if (outcome !== "done" || !runnerSupportsStructuredOutput(runner)) return { outcome };
+  const extracted = extractAgentOutput(stdout);
+  if (extracted.ok) return { outcome };
+  return {
+    outcome: "no-sentinel",
+    rejectedReason: extracted.reason + (extracted.detail ? `: ${extracted.detail}` : ""),
+  };
+}
+
 /** The sandcastle `host.onWorktreeReady` hook command shape. */
 type HostHookCommand = NonNullable<NonNullable<NonNullable<RunOptions["hooks"]>["host"]>["onWorktreeReady"]>[number];
 
@@ -695,7 +762,16 @@ export function buildRunOptions(deps: SandcastleDeps, input: RunAgentInput): Run
     prompt: input.handoffContent,
     ...(input.systemPrompt ? { systemPrompt: input.systemPrompt } : {}),
     branchStrategy,
-    completionSignal: [...COMPLETION_SIGNALS],
+    // Structured-output completion adapter (ADR 0082), claude-first rollout
+    // (#919/#932). For the claude runner, register the `<agent-output>` closing
+    // tag as an ADDITIONAL completion signal so the turn can terminate on the
+    // schema-validated structured block ALONE — curing the `no-sentinel` class
+    // for it — while the `<promise>` sentinels stay valid (coexistence). Every
+    // other runner keeps just the sentinels until its own adoption slice lands.
+    completionSignal:
+      input.runner === "claude"
+        ? [...COMPLETION_SIGNALS, AGENT_OUTPUT_CLOSE]
+        : [...COMPLETION_SIGNALS],
     // sandcastle defaults maxIterations to 1, which stops the agent before it
     // can emit DONE (issue #322). Set a generous, env-tunable ceiling so the
     // completionSignal stays the real terminator.
@@ -1210,11 +1286,16 @@ export async function runAgent(deps: SandcastleDeps, input: RunAgentInput): Prom
   if (result.completionSignal === undefined && isRunnerExhausted(result.stdout ?? "")) {
     return { outcome: "exhausted", branch: result.branch, commits: result.commits, stdout: result.stdout };
   }
+  // Structured-output completion adapter (ADR 0082): prefer a valid AgentOutput
+  // block over the text sentinel. A run that emitted the structured block but no
+  // sentinel now yields a definite `done`/`blocked` instead of `no-sentinel`.
+  const agentOutput = parseAgentOutput(result.stdout ?? "");
   return {
-    outcome: interpretOutcome(result.completionSignal),
+    outcome: interpretCompletion(agentOutput, result.completionSignal),
     branch: result.branch,
     commits: result.commits,
     completionSignal: result.completionSignal,
+    ...(agentOutput ? { agentOutput } : {}),
     stdout: result.stdout,
   };
 }

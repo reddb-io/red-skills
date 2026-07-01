@@ -1055,6 +1055,7 @@ export async function buildBootDeps(ctx: RepoContext, options: BootOptions, nowS
         await ghx.editLabels(ghCtx, issue, remove, add);
       },
       comment: (issue, body) => ghx.comment(ghCtx, issue, body),
+      viewLabels: (issue) => ghx.viewLabels(ghCtx, issue),
     },
     git: {
       deleteRemoteBranch: (branch) => gitx.deleteRemoteBranch(gitCtx, branch),
@@ -1141,6 +1142,7 @@ export function buildMinimalBootDeps(ctx: RepoContext, nowS: number): BootDeps {
     gh: {
       editLabels: async () => unreachable(),
       comment: async () => unreachable(),
+      viewLabels: async () => unreachable(),
     },
     git: {
       deleteRemoteBranch: async () => unreachable(),

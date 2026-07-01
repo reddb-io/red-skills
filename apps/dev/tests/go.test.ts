@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  DEFAULT_GO_MODE,
   GO_GATE_CONTEXT,
+  GO_MODES,
   GO_ORIGIN,
   GO_WORKERS_SEGMENT,
   LABEL_GO_LANE,
@@ -8,6 +10,7 @@ import {
   buildGoEngineArgs,
   dispatchGo,
   goWorkersRoot,
+  parseGoMode,
   type DisposableIssueSpec,
 } from "../src/core/go.js";
 
@@ -68,6 +71,59 @@ describe("buildGoEngineArgs", () => {
     expect(() => buildGoEngineArgs({ issue: 0 })).toThrow(/invalid issue/);
     expect(() => buildGoEngineArgs({ issue: -1 })).toThrow(/invalid issue/);
   });
+
+  it("defaults to direct-PR: the standard path appends no mode flag", () => {
+    expect(buildGoEngineArgs({ issue: 7, mode: "direct-PR" })).toEqual(
+      buildGoEngineArgs({ issue: 7 }),
+    );
+    expect(buildGoEngineArgs({ issue: 7 })).not.toContain("--pre-pr");
+    expect(buildGoEngineArgs({ issue: 7 })).not.toContain("--local-merge");
+  });
+
+  it("no-mistakes routes through the hardened pre-PR pipeline (--pre-pr)", () => {
+    const args = buildGoEngineArgs({ issue: 7, mode: "no-mistakes" });
+    expect(args).toContain("--pre-pr");
+    expect(args).not.toContain("--local-merge");
+  });
+
+  it("local-only lands via an approved local fast-forward (--local-merge, no PR flag)", () => {
+    const args = buildGoEngineArgs({ issue: 7, mode: "local-only" });
+    expect(args).toContain("--local-merge");
+    expect(args).not.toContain("--pre-pr");
+  });
+
+  it("the opt-in +yolo autonomy bump appends --yolo, and composes with a mode", () => {
+    expect(buildGoEngineArgs({ issue: 7 })).not.toContain("--yolo");
+    expect(buildGoEngineArgs({ issue: 7, yolo: true })).toContain("--yolo");
+    const both = buildGoEngineArgs({ issue: 7, mode: "no-mistakes", yolo: true });
+    expect(both).toContain("--pre-pr");
+    expect(both).toContain("--yolo");
+  });
+
+  it("keeps --runner last after the mode/yolo flags", () => {
+    const args = buildGoEngineArgs({ issue: 7, mode: "local-only", yolo: true, runner: "codex" });
+    expect(args.slice(-2)).toEqual(["--runner", "codex"]);
+  });
+});
+
+describe("parseGoMode", () => {
+  it("accepts every canonical mode", () => {
+    for (const mode of GO_MODES) {
+      expect(parseGoMode(mode)).toBe(mode);
+    }
+    expect(DEFAULT_GO_MODE).toBe("direct-PR");
+  });
+
+  it("is case-insensitive and trims whitespace", () => {
+    expect(parseGoMode("NO-MISTAKES")).toBe("no-mistakes");
+    expect(parseGoMode("  Direct-PR  ")).toBe("direct-PR");
+    expect(parseGoMode("local-ONLY")).toBe("local-only");
+  });
+
+  it("throws loudly on an unknown mode rather than falling through to default", () => {
+    expect(() => parseGoMode("yolo")).toThrow(/invalid --mode/);
+    expect(() => parseGoMode("")).toThrow(/invalid --mode/);
+  });
 });
 
 describe("dispatchGo", () => {
@@ -96,6 +152,21 @@ describe("dispatchGo", () => {
       "demand",
     );
     expect(order).toEqual(["ensure", "create", "run"]);
+  });
+
+  it("threads the dispatch mode + yolo bump into the reused-engine argv", async () => {
+    const runEngine = vi.fn(async (_args: string[]) => 0);
+    await dispatchGo(
+      { ensureLabel: async () => {}, createIssue: async () => 42, runEngine },
+      "ship it",
+      { mode: "local-only", yolo: true },
+    );
+    expect(runEngine).toHaveBeenCalledWith(
+      buildGoEngineArgs({ issue: 42, mode: "local-only", yolo: true }),
+    );
+    const args = runEngine.mock.calls[0]![0];
+    expect(args).toContain("--local-merge");
+    expect(args).toContain("--yolo");
   });
 
   it("propagates a non-zero engine exit", async () => {

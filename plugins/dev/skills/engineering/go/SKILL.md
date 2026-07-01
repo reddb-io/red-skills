@@ -1,7 +1,7 @@
 ---
 name: go
-description: Semi-structured front door between `/goal` and `/afk` — `/go "<demand>"` mints a disposable tracking issue in an isolated lane, spins a dedicated worker, reuses the whole AFK engine, and brings back a PR. Add `--scout "<question>"` for a read-only investigation that posts a report comment and mutates nothing (no branch/PR/merge). Works with or without a fleet running.
-argument-hint: "\"<demand>\" [--runner claude|codex|opencode] | --scout \"<question>\" [--runner ...]"
+description: Semi-structured front door between `/goal` and `/afk` — `/go "<demand>"` mints a disposable tracking issue in an isolated lane (out of `ready-for-agent`, so a running fleet can never claim it), spins a dedicated namespaced worker under `.red/tmp/go-workers/`, reuses the whole AFK engine end-to-end with `origin=go` and the interactive gate, and brings back a PR. Add `--scout "<question>"` for a read-only investigation that posts a report comment and mutates nothing (no branch/PR/merge). Works with or without a fleet running.
+argument-hint: "\"<demand>\" [--mode no-mistakes|direct-PR|local-only] [--runner claude|codex|opencode] [+yolo] | --scout \"<question>\" [--runner ...]"
 ---
 
 # /go
@@ -17,8 +17,8 @@ Add `--scout` to investigate without touching any code: the agent reads the code
 Invoke the dev CLI's `go` command with the demand as a single quoted argument:
 
 ```
-# Standard /go — ships a PR
-RED_AFK_RUNNER=<claude|codex|opencode> red-skills-dev go "<demand>" [--runner <runner>]
+# Standard /go — ships a PR (direct-PR is the default mode)
+RED_AFK_RUNNER=<claude|codex|opencode> red-skills-dev go "<demand>" [--mode <mode>] [--runner <runner>] [+yolo]
 
 # Scout mode — read-only investigation, posts a report comment, no branch/PR/merge
 RED_AFK_RUNNER=<claude|codex|opencode> red-skills-dev go --scout "<question>" [--runner <runner>]
@@ -26,7 +26,15 @@ RED_AFK_RUNNER=<claude|codex|opencode> red-skills-dev go --scout "<question>" [-
 
 Set `RED_AFK_RUNNER` to your own host runner (`claude` from Claude Code, `codex` from Codex). Use `--runner` only when the user explicitly pinned a backend.
 
-**What standard `/go` does, in order (all reused from the AFK engine):**
+**Dispatch mode — `--mode {no-mistakes|direct-PR|local-only}`** selects HOW the reused engine finishes the run. Omit it and `/go` uses `direct-PR`:
+
+- **`direct-PR`** (default) — the STANDARD path: run the gate, bring back a PR.
+- **`no-mistakes`** — route the run through the HARDENED pre-PR pipeline (review → validate → escalate intent findings) *before* the PR is opened. Slowest, safest.
+- **`local-only`** — land the branch by an APPROVED local fast-forward merge with **no PR opened**. For a trusted local demand the maintainer wants landed without a review PR.
+
+**`+yolo`** is an opt-in autonomy bump — pass the literal token to raise the engine's autonomy for this one dispatch. It composes with any mode.
+
+**What standard `/go` does, in order (all reused from the AFK engine — not a parallel path):**
 
 1. **Mints a disposable tracking issue** in the isolated `lane:go` lane — labelled `lane:go` and **never** `ready-for-agent`, so a running fleet's candidate listing can never surface it.
 2. **Spins a dedicated namespaced worker** under `.red/tmp/go-workers/` (separate from `/afk`'s `.red/tmp/workers/`) via `RED_AFK_WORKERS_NAMESPACE=go-workers` — no collision with the fleet.
@@ -91,5 +99,9 @@ The validation gate splits findings two ways:
 - A batch of related work → author a PRD with `/to-prd`, then `/afk`.
 - A fire that must jump the queue → `/urgent`.
 - Hand-done work on your own branch that needs only validation + landing → requeue (the no-agent landing lane, ADR 0055).
+
+## Name choice: `/go` not `/run`
+
+**`/run` was the first candidate but was rejected** because the dev CLI already uses `run` as its main subcommand (`red-skills-dev run …` is the AFK queue-drain entrypoint). A second `run` skill would create an ambiguous surface: agents that type `/run` intending ad-hoc dispatch would instead invoke the queue drain, or vice versa. `/go` is unambiguous — it names the tier and carries no collision risk with any existing `dev` subcommand or skill.
 
 </supporting-info>

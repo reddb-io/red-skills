@@ -8,6 +8,9 @@ import {
   buildPreviousAttempts,
   buildThreadDiscussion,
   EXIT_PROTOCOL,
+  SCOUT_EXIT_PROTOCOL,
+  AGENT_OUTPUT_INSTRUCTION,
+  exitProtocolFor,
   UNTRUSTED_PAYLOAD_NOTICE,
   type HandoffComment,
 } from "../src/core/handoff.js";
@@ -282,6 +285,19 @@ describe("buildHandoff", () => {
     expect(EXIT_PROTOCOL).toContain("prose");
   });
 
+  it("EXIT_PROTOCOL instructs the agent to emit the structured AgentOutput block (ADR 0082 / #919)", () => {
+    expect(EXIT_PROTOCOL).toContain("<agent-output>");
+    expect(EXIT_PROTOCOL).toContain("</agent-output>");
+    // The full AgentOutput schema fields must be named so the agent emits them.
+    expect(EXIT_PROTOCOL).toContain("success");
+    expect(EXIT_PROTOCOL).toContain("summary");
+    expect(EXIT_PROTOCOL).toContain("key_changes_made");
+    expect(EXIT_PROTOCOL).toContain("key_learnings");
+    expect(EXIT_PROTOCOL).toContain("should_fully_stop");
+    // Coexistence: the sentinel stays the final line as the fallback channel.
+    expect(EXIT_PROTOCOL).toContain("very last line");
+  });
+
   it("EXIT_PROTOCOL distinguishes touched-package confidence checks from the binding merge gate (#849)", () => {
     // The completion contract must name BOTH kinds of check and point at the
     // per-attempt <merge-gate> section as the binding one.
@@ -290,6 +306,25 @@ describe("buildHandoff", () => {
     expect(EXIT_PROTOCOL).toContain("<merge-gate>");
     // Still must not push agents to re-run an unbounded full suite after DONE.
     expect(EXIT_PROTOCOL).toContain("Do NOT re-run an unbounded full repository suite");
+  });
+
+  it("exitProtocolFor: schema-enabled runner gets the AgentOutput clause spliced in (ADR 0082, #932)", () => {
+    const p = exitProtocolFor({ structuredOutput: true });
+    expect(p).toContain("<agent-output>");
+    expect(p).toContain(AGENT_OUTPUT_INSTRUCTION);
+    // Coexist: the sentinel contract is preserved, not replaced.
+    expect(p).toContain("<promise>DONE</promise>");
+    expect(p.endsWith("</exit-protocol>")).toBe(true);
+  });
+
+  it("exitProtocolFor: non-schema runner keeps the plain text-sentinel protocol (coexist fallback)", () => {
+    const p = exitProtocolFor({ structuredOutput: false });
+    expect(p).toBe(EXIT_PROTOCOL);
+    expect(p).not.toContain("<agent-output>");
+  });
+
+  it("exitProtocolFor: scout mode always wins over structured output", () => {
+    expect(exitProtocolFor({ runMode: "scout", structuredOutput: true })).toBe(SCOUT_EXIT_PROTOCOL);
   });
 
   it("case5: malformed envelope → no previous-attempts, no human-guidance, surfaces in discussion", () => {

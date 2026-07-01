@@ -6,6 +6,27 @@ Upstream base: `mattpocock/skills@6eeb81b5fcfeeb5bd531dd47ab2f9f2bbea27461` (see
 
 ---
 
+## browser-review (in-progress) — CLI↔browser collaboration surface (issue #916)
+
+- **status**: added
+- **upstream**: —
+- **why**: PRD #928 browser-collaboration capability — replace "screenshot + describe in prose" with surgical human annotation on a generated HTML artifact, and stop an agent declaring a broken render "done".
+- **what changed**: new `@reddb-io/browser-bridge` package (`packages/browser-bridge`) — a local, no-cloud annotation bridge (open artifact → inject portable SDK → long-poll for element + character-range annotations) plus a layout-audit gate (`assertLayoutClean`) flagging horizontal overflow / clipped text / overlapping text; new draft skill `plugins/dev/skills/in-progress/browser-review`. No source-repo names in committed content. Artifact-annotation half only; the live-app CDP driver half is a later slice.
+
+---
+
+## ground-truth (engineering) — Adversarial verification ground-truth, snapshot-before-claiming-success (issue #915)
+
+- **status**: added
+- **upstream**: —
+- **why**: Absorbs the transferable discipline behind `chrome-devtools-axi` per the maintainer steer on #915 — the value is **adversarial / self-verification**, not browser automation per se. A verifier must check its claim against a fresh snapshot / ground-truth read before reporting success (chrome-devtools-axi's "verify state-checking actions with a fresh snapshot" + a11y-tree + stale-ref validation). The browser is the vehicle; the **claim → fresh-ground-truth → confirm** loop is the absorbed idea, applied as the evidence standard for `/verify`, `/code-review`, and the frontend skills.
+- **what changed**:
+  - added `plugins/dev/skills/engineering/ground-truth/SKILL.md`: the `claim → fresh ground-truth → confirm` loop, stale-ref validation anti-hallucination guard, integration hooks into `/verify` / `/code-review` / frontend skills, the chrome-devtools-axi browser vehicle (a11y-tree numbered refs, combined navigate+capture+suggest, persistent bridge, ~57%-cheaper TOON output), and a table generalizing the loop to DB/file/API/test/review ground truths
+  - registered in `plugins/dev/.claude-plugin/plugin.json` (the `.codex-plugin/plugin.json` picks it up via its `./skills/engineering/` wildcard)
+  - listed in the root `README.md` table and the `engineering/README.md` bucket index
+
+---
+
 ## review (engineering) — HTML artifact review via annotation bridge (issue #943)
 
 - **status**: added
