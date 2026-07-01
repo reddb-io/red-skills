@@ -18,6 +18,20 @@ function normalizeRoot(root: string): string {
   return root.replace(/\/$/, "");
 }
 
+/**
+ * The worker-tree segment under the tmp root. Defaults to `workers` (the `/afk`
+ * fleet). A `/go` dispatch sets `RED_AFK_WORKERS_NAMESPACE=go-workers` in its
+ * own process so its worker dir + worktree land under `.red/tmp/go-workers/`,
+ * never colliding with the fleet's `.red/tmp/workers/`. The override is read
+ * per-call so it is process-scoped: the fleet supervisor (no env) keeps seeing
+ * `workers/` and never manages a `/go` worker, preserving lane isolation. Only
+ * a `[A-Za-z0-9_-]+` value is honoured; anything else falls back to `workers`.
+ */
+export function workersSegment(): string {
+  const ns = process.env.RED_AFK_WORKERS_NAMESPACE;
+  return ns && /^[A-Za-z0-9_-]+$/.test(ns) ? ns : "workers";
+}
+
 function asPositiveInteger(value: string | number, field: string): number {
   if (!isPositiveIntegerToken(value)) throw new Error(`invalid ${field}: ${value}`);
   return typeof value === "number" ? value : Number(value);
@@ -33,13 +47,15 @@ export function buildWorkerAttemptPath(
   if (!isValidWorkerId(worker)) throw new Error(`invalid worker id: ${worker}`);
   const issue = asPositiveInteger(issueValue, "issue");
   const attempt = asPositiveInteger(attemptValue, "attempt");
-  return `${normalizeRoot(root)}/workers/${worker}/${issue}-a${attempt}`;
+  return `${normalizeRoot(root)}/${workersSegment()}/${worker}/${issue}-a${attempt}`;
 }
 
 export function parseWorkerAttemptPath(path: string): WorkerAttemptIdentity | null {
   if (!path) return null;
   const normalized = path.replace(/\/$/, "");
-  const match = normalized.match(/(?:^|\/)workers\/([^/]+)\/([1-9][0-9]*)-a([1-9][0-9]*)$/);
+  // Accept both the fleet (`workers`) and `/go` (`go-workers`) segments so a
+  // parked-attempt path reverses regardless of which lane minted it.
+  const match = normalized.match(/(?:^|\/)(?:go-)?workers\/([^/]+)\/([1-9][0-9]*)-a([1-9][0-9]*)$/);
   if (!match) return null;
   const [, worker, issue, attempt] = match;
   if (!isValidWorkerId(worker)) return null;
@@ -49,18 +65,18 @@ export function parseWorkerAttemptPath(path: string): WorkerAttemptIdentity | nu
 export function issueAttemptsGlob(root: string, issueValue: string | number): string {
   if (!root) throw new Error("root is required");
   const issue = asPositiveInteger(issueValue, "issue");
-  return `${normalizeRoot(root)}/workers/*/${issue}-a*`;
+  return `${normalizeRoot(root)}/${workersSegment()}/*/${issue}-a*`;
 }
 
 export function workersGlob(root: string): string {
   if (!root) throw new Error("root is required");
-  return `${normalizeRoot(root)}/workers/*`;
+  return `${normalizeRoot(root)}/${workersSegment()}/*`;
 }
 
 export function workerDir(root: string, worker: string): string {
   if (!root) throw new Error("root is required");
   if (!isValidWorkerId(worker)) throw new Error(`invalid worker id: ${worker}`);
-  return `${normalizeRoot(root)}/workers/${worker}`;
+  return `${normalizeRoot(root)}/${workersSegment()}/${worker}`;
 }
 
 export function workerPidFile(root: string, worker: string): string {
@@ -69,5 +85,5 @@ export function workerPidFile(root: string, worker: string): string {
 
 export function livePidsGlob(root: string): string {
   if (!root) throw new Error("root is required");
-  return `${normalizeRoot(root)}/workers/*/worker.pid`;
+  return `${normalizeRoot(root)}/${workersSegment()}/*/worker.pid`;
 }

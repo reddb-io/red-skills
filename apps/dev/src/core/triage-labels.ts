@@ -15,6 +15,12 @@ export const LABEL_HUMAN = "ready-for-human";
 // the review then transitions the PR through the shared lifecycle vocabulary
 // (`running` / `ready-for-human` / `blocked:*`).
 export const LABEL_READY_FOR_REVIEW = "ready-for-review";
+// Isolated `/go` dispatch lane (ADR 0081, PRD #928 / issue #938). A disposable
+// `/go` tracking issue is minted with THIS label and NEVER `ready-for-agent`,
+// so the running fleet's candidate listing (which lists `ready-for-agent`) can
+// never surface it. The dedicated `/go` worker lists this lane instead and
+// processes the single minted issue directly.
+export const LABEL_GO_LANE = "lane:go";
 
 // Triage state labels
 export const LABEL_NEEDS_TRIAGE = "needs-triage";
@@ -58,6 +64,12 @@ export const LABEL_MERGE_CONFLICT = "blocked:merge-conflict";
 export const LABEL_CI = "blocked:ci";
 export const LABEL_POLICY = "blocked:policy";
 export const LABEL_INFRA = "blocked:infra";
+// AFK runner improvement (#908): the per-attempt resource budget guard aborted
+// the attempt — it breached a token/cost/tool-call/waiting-window ceiling before
+// it could finish. Distinct from `blocked:stalled` (a stall is *no* progress;
+// a budget abort may have been actively — and expensively — working). Partial
+// work is salvaged + parked for a human; never blind-retried as a transient.
+export const LABEL_BUDGET = "blocked:budget";
 
 // Auxiliary labels
 export const LABEL_RUNNER_ERROR = "runner-error";

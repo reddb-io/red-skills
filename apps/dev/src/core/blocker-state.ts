@@ -3,6 +3,8 @@
 // the issue, comments preserve audit history, and this block says what still
 // needs to be resolved before an agent can continue.
 
+import { readAnchoredRegion, replaceAnchoredRegion } from "./anchored-edit.js";
+
 export const BLOCKER_HEADING = "Current blocker";
 export const RESOLVED_BLOCKERS_HEADING = "Resolved blockers";
 export const BLOCKER_OPEN = "<!-- red:blocker-state v1 -->";
@@ -45,12 +47,9 @@ function parseFields(block: string): Record<string, string> {
 }
 
 export function parseCurrentBlocker(markdown: string): CurrentBlocker | null {
-  const start = markdown.indexOf(BLOCKER_OPEN);
-  if (start === -1) return null;
-  const bodyStart = start + BLOCKER_OPEN.length;
-  const end = markdown.indexOf(BLOCKER_CLOSE, bodyStart);
-  if (end === -1) return null;
-  const fields = parseFields(markdown.slice(bodyStart, end));
+  const inner = readAnchoredRegion(markdown, BLOCKER_OPEN, BLOCKER_CLOSE);
+  if (inner === null) return null;
+  const fields = parseFields(inner);
   if (fields.status !== "blocked") return null;
   const summary = safeField(fields.summary);
   const next = safeField(fields.next);
@@ -64,17 +63,20 @@ export function parseCurrentBlocker(markdown: string): CurrentBlocker | null {
   };
 }
 
-export function formatCurrentBlocker(blocker: CurrentBlocker): string {
+/** The field block that sits between the anchors (exclusive of the anchors). */
+function formatBlockerFields(blocker: CurrentBlocker): string {
   const lines = [
-    BLOCKER_OPEN,
     `status: ${blocker.status}`,
     `kind: ${safeField(blocker.kind, "unknown")}`,
   ];
   if (blocker.ref) lines.push(`ref: ${safeField(blocker.ref)}`);
   lines.push(`summary: ${safeField(blocker.summary, "Unspecified blocker.")}`);
   lines.push(`next: ${safeField(blocker.next, "Human guidance required.")}`);
-  lines.push(BLOCKER_CLOSE);
-  return lines.join("\n");
+  return `\n${lines.join("\n")}\n`;
+}
+
+export function formatCurrentBlocker(blocker: CurrentBlocker): string {
+  return `${BLOCKER_OPEN}${formatBlockerFields(blocker)}${BLOCKER_CLOSE}`;
 }
 
 function currentBlockerSectionRange(markdown: string): { start: number; end: number } | null {
@@ -102,6 +104,17 @@ function currentBlockerSectionRange(markdown: string): { start: number; end: num
 }
 
 export function upsertCurrentBlocker(markdown: string, blocker: CurrentBlocker): string {
+  // Fast path: when the state anchors already exist, edit only the field block
+  // between them and leave every other byte (heading, surrounding sections,
+  // trailing whitespace) untouched. This avoids regenerating the whole section.
+  const anchored = replaceAnchoredRegion(
+    markdown,
+    BLOCKER_OPEN,
+    BLOCKER_CLOSE,
+    formatBlockerFields(blocker),
+  );
+  if (anchored !== null) return anchored;
+
   const replacement = `## ${BLOCKER_HEADING}\n\n${formatCurrentBlocker(blocker)}\n`;
   const range = currentBlockerSectionRange(markdown);
   if (range) {
@@ -109,6 +122,35 @@ export function upsertCurrentBlocker(markdown: string, blocker: CurrentBlocker):
   }
   const prefix = markdown.trimEnd();
   return `${prefix}${prefix.length > 0 ? "\n\n" : ""}${replacement}`;
+}
+
+export interface CurrentBlockerEditResult {
+  /** The body after the surgical edit (unchanged if already correct). */
+  body: string;
+  /** True when the body differs from the input — a no-op is signaled by false. */
+  changed: boolean;
+  /** True when parsing the result body yields the expected blocker state (round-trip integrity). */
+  valid: boolean;
+}
+
+/**
+ * Byte-exact round-trip edit: compute the new body surgically, detect whether it
+ * changed, and confirm the parse-back yields the intended blocker state. Callers
+ * can skip the remote write when `changed` is false and trust the edit was
+ * correctly formed when `valid` is true.
+ */
+export function applyCurrentBlockerEdit(markdown: string, blocker: CurrentBlocker): CurrentBlockerEditResult {
+  const body = upsertCurrentBlocker(markdown, blocker);
+  const changed = body !== markdown;
+  const parsed = parseCurrentBlocker(body);
+  const valid =
+    parsed !== null &&
+    parsed.status === blocker.status &&
+    parsed.kind === blocker.kind &&
+    parsed.summary === blocker.summary &&
+    parsed.next === blocker.next &&
+    parsed.ref === blocker.ref;
+  return { body, changed, valid };
 }
 
 function appendResolvedBlocker(markdown: string, resolved: ResolvedBlocker): string {

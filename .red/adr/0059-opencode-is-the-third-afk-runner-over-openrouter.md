@@ -2,10 +2,13 @@
 
 ## Status
 
-accepted, **amended** — see *Amendment 1* below. The original decision (third
-runner, OpenRouter-only, explicit pin) stands; the amendment extends the
-endpoint surface to any OpenAI-compatible endpoint (OpenAI direct, MiniMax
-subscription, OpenRouter relay) and shifts endpoint resolution into OpenCode.
+accepted, **amended** — see *Amendment 1* and *Amendment 2* below; a third
+amendment (*Amendment 3*) lives in **ADR 0075** and adds the host-side
+`opencode.json` `provider>` block so the developer-facing opencode TUI and
+the AFK inner-agent opencode runner pick the same model from the same
+project config. The runner-level semantics (slug forwarding, env precedence,
+fail-closed no-env) are unchanged; Amendment 3 is a **new consumer** of the
+same `.red/config.yaml` block, not a behaviour change.
 
 **Refined by ADR 0062:** the Actions-lane packaging introduced here is now a
 composite action + reusable workflow (the lane's runtime contract is unchanged).
@@ -231,3 +234,12 @@ endpoint, no extra config block, no OpenRouter account required.
   own auth error → normal failure path) is part of the contract. A future
   refactor must not silently spawn an agent without an `env` auth block
   when a precedence entry IS set.
+
+## See also
+
+- **ADR 0075** — *OpenCode provider block is the canonical shape that hosts
+  the AFK opencode runner on a developer machine.* Refines this ADR with
+  **Amendment 3**: the same `<provider>/<model>` slug and env-precedence
+  rule are now also written into the `opencode.json` `provider>` block by
+  the `apps/opencode-host/` generator, so a developer typing into the
+  opencode TUI sees the same model the AFK inner agent would pick.

@@ -1,4 +1,5 @@
 import { LABEL_PRD, LABEL_VALIDATION, LABEL_RUNNING } from "./triage-labels.js";
+import { encodeToon, type ToonValue } from "./toon.js";
 
 export interface DashboardIssue {
   number: number;
@@ -272,4 +273,14 @@ export function renderDashboardReport(report: DashboardReport): string {
     lines.push("", "Warnings", ...report.warnings.map((warning) => `  - ${warning}`));
   }
   return lines.join("\n");
+}
+
+/**
+ * The default agent-facing render (PRD #928 / ADR 0081): the same pre-computed
+ * report object as TOON. Every group (operations/flow/dora) is already a minimal
+ * schema of aggregates; an empty `warnings` array renders as the definitive
+ * `warnings[0]:` empty state rather than a silent omission.
+ */
+export function renderDashboardReportToon(report: DashboardReport): string {
+  return encodeToon(report as unknown as ToonValue);
 }

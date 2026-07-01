@@ -61,6 +61,7 @@ export type AgentOutcome =
   | "exhausted"
   | "runner-transient"
   | "timeout"
+  | "budget-exceeded"
   | "goal-moot";
 
 /** AFK's canonical sentinels, registered as sandcastle completion signals. */
@@ -331,6 +332,16 @@ export interface RunAgentInput {
    * Only fires when the guard is armed (cap + headProbe present).
    */
   onHeartbeat?: (info: AttemptProgressInfo) => void;
+  /**
+   * Per-attempt resource budget (#908). When supplied alongside `budgetUsage`,
+   * the attempt guard aborts with the `budget-exceeded` outcome once any ceiling
+   * is breached. Rides the existing guard poll, so it is active whenever the
+   * progress guard is armed (cap + headProbe). Omitted → no budget cap.
+   */
+  budget?: AttemptBudget;
+  /** Sync probe returning the attempt's cumulative usage (the activity meter's
+   * `peek()`), read each guard poll to evaluate `budget`. */
+  budgetUsage?: () => AttemptBudgetUsage;
   /**
    * Goal predicate (ADR 0057): reads the claimed issue's CLOSED state on the
    * existing attempt-guard poll (one issue-state read per tick). When it resolves
@@ -793,6 +804,59 @@ export interface AttemptProgressInfo {
   base?: string;
 }
 
+/**
+ * Per-attempt resource budget (GNHF Track A, #908). Optional ceilings the
+ * attempt guard enforces ALONGSIDE the commit-anchored wall-clock cap. Any unset
+ * field is ignored, so an empty budget is a no-op (today's behaviour). The point
+ * is to stop a runaway BEFORE it burns the whole token allowance — the #788
+ * failure (2.1M tokens on one slice, never emitted DONE, 0 closed).
+ */
+export interface AttemptBudget {
+  /** Abort once cumulative (input+output) tokens reach this. Lives only for
+   * runners that stream usage on the wire (codex/opencode); a pure-claude
+   * attempt accrues 0 live tokens (usage folds in at the iteration boundary),
+   * so for claude/minimax the PROXY ceilings below carry the protection. */
+  maxTotalTokens?: number;
+  /** Abort once cumulative USD cost reaches this (runners that report cost). */
+  maxCostUsd?: number;
+  /** Runner-agnostic proxy: abort once this many tool calls have been made.
+   * Accrues live for ALL runners (incl. claude/minimax), so it is the ceiling
+   * that actually covers the #788 runner. */
+  maxToolCalls?: number;
+  /** Runner-agnostic proxy: abort once this many heartbeat windows have passed
+   * with zero new stream events (waiting/blocked) — a long wedged run. */
+  maxWaitingWindows?: number;
+}
+
+/** The cumulative counters the guard reads each poll to evaluate the budget —
+ * exactly the subset of the activity meter's `peek()` snapshot the ceilings
+ * compare against. */
+export interface AttemptBudgetUsage {
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+  toolsCalled: number;
+  waiting: number;
+}
+
+/**
+ * Pure budget predicate: is any configured ceiling reached? Returns the breached
+ * ceiling's name (for the abort message / observability) or `undefined`. Unset
+ * ceilings never fire, so an empty budget always returns `undefined`.
+ */
+export function exceedsBudget(
+  usage: AttemptBudgetUsage,
+  budget: AttemptBudget,
+): "tokens" | "cost" | "tool-calls" | "waiting-windows" | undefined {
+  if (budget.maxTotalTokens !== undefined && usage.inputTokens + usage.outputTokens >= budget.maxTotalTokens) {
+    return "tokens";
+  }
+  if (budget.maxCostUsd !== undefined && usage.costUsd >= budget.maxCostUsd) return "cost";
+  if (budget.maxToolCalls !== undefined && usage.toolsCalled >= budget.maxToolCalls) return "tool-calls";
+  if (budget.maxWaitingWindows !== undefined && usage.waiting >= budget.maxWaitingWindows) return "waiting-windows";
+  return undefined;
+}
+
 export function startAttemptGuard(opts: {
   capMs: number;
   intervalMs: number;
@@ -803,7 +867,16 @@ export function startAttemptGuard(opts: {
    * commit-anchored hard cap ("hard-cap", issue #637) and the goal predicate
    * ("goal-moot", ADR 0057 — the claimed issue is already CLOSED). Callbacks that
    * ignore the argument keep the prior behaviour. */
-  abort: (reason: "stalled" | "hard-cap" | "goal-moot") => void;
+  abort: (reason: "stalled" | "hard-cap" | "goal-moot" | "budget") => void;
+  /**
+   * Per-attempt resource budget (#908). When both `budget` and `budgetUsage` are
+   * supplied, the guard reads the cumulative usage each poll and aborts with
+   * reason `"budget"` once any ceiling is breached. Omitted → no budget cap.
+   */
+  budget?: AttemptBudget;
+  /** Sync probe for the cumulative usage this poll (the activity meter's
+   * `peek()`). Read only when `budget` is also set. */
+  budgetUsage?: () => AttemptBudgetUsage;
   /**
    * Goal predicate (ADR 0057): reads the claimed issue's CLOSED state on THIS
    * same poll (one issue-state read per tick — no extra polling loop). Resolves
@@ -827,13 +900,14 @@ export function startAttemptGuard(opts: {
    * heartbeat + on_heartbeat hook ride this same cadence (PR-B). Never throws —
    * the caller wraps its own IO. */
   onTick?: (info: AttemptProgressInfo) => void;
-}): { stop: () => void; firedTimeout: () => boolean; firedGoalMoot: () => boolean } {
+}): { stop: () => void; firedTimeout: () => boolean; firedGoalMoot: () => boolean; firedBudget: () => boolean } {
   let lastProgress = opts.now();
   let lastCommit = opts.now();
   let lastHead: string | undefined;
   let lastVolume: number | undefined;
   let fired = false;
   let goalMoot = false;
+  let budgetFired = false;
   const cancel = opts.schedule(() => {
     void (async () => {
       if (fired) return;
@@ -856,6 +930,19 @@ export function startAttemptGuard(opts: {
           fired = true;
           goalMoot = true;
           opts.abort("goal-moot");
+          return;
+        }
+      }
+      // Resource budget (#908): a runaway is cut on the cumulative-usage ceiling
+      // BEFORE the commit/edit/deadline logic, so a slice that burns tokens (or
+      // spins tool calls / waiting windows) without committing is stopped fast
+      // — the #788 antidote. Pure predicate over the injected usage probe; an
+      // empty budget never fires (today's behaviour).
+      if (opts.budget && opts.budgetUsage) {
+        if (exceedsBudget(opts.budgetUsage(), opts.budget) !== undefined) {
+          fired = true;
+          budgetFired = true;
+          opts.abort("budget");
           return;
         }
       }
@@ -903,7 +990,14 @@ export function startAttemptGuard(opts: {
       opts.onTick?.({ head: head ?? lastHead, lastProgressMs: lastProgress, nowMs: opts.now() });
     })();
   }, opts.intervalMs);
-  return { stop: cancel, firedTimeout: () => fired && !goalMoot, firedGoalMoot: () => goalMoot };
+  return {
+    stop: cancel,
+    // firedTimeout EXCLUDES the goal-moot and budget aborts — each has its own
+    // dedicated terminal so they never collide on the shared `fired` flag.
+    firedTimeout: () => fired && !goalMoot && !budgetFired,
+    firedGoalMoot: () => goalMoot,
+    firedBudget: () => budgetFired,
+  };
 }
 
 /**
@@ -951,7 +1045,9 @@ export async function runAgent(deps: SandcastleDeps, input: RunAgentInput): Prom
   const now = deps.now ?? (() => Date.now());
   const makeController = deps.makeAbortController ?? (() => new AbortController());
   const schedule = deps.schedule ?? defaultSchedule;
-  let guard: { stop: () => void; firedTimeout: () => boolean; firedGoalMoot: () => boolean } | undefined;
+  let guard:
+    | { stop: () => void; firedTimeout: () => boolean; firedGoalMoot: () => boolean; firedBudget: () => boolean }
+    | undefined;
   let laneReaper: { stop: () => void; firedReap: () => boolean } | undefined;
   let controller: AbortController | undefined;
   if (input.attemptTimeoutSeconds && input.attemptTimeoutSeconds > 0 && input.headProbe) {
@@ -968,14 +1064,17 @@ export async function runAgent(deps: SandcastleDeps, input: RunAgentInput): Prom
       now,
       schedule,
       ...(input.goalProbe ? { goalProbe: input.goalProbe } : {}),
+      ...(input.budget && input.budgetUsage ? { budget: input.budget, budgetUsage: input.budgetUsage } : {}),
       abort: (reason) =>
         controller?.abort(
           new Error(
             reason === "goal-moot"
               ? "afk: attempt mooted — the claimed issue is already CLOSED (goal predicate, ADR 0057)"
-              : reason === "hard-cap"
-                ? `afk: attempt aborted — no new commit within ${hardCap}s despite worktree edits (hard cap, stalled)`
-                : `afk: attempt aborted — no new commit within ${cap}s (stalled)`,
+              : reason === "budget"
+                ? "afk: attempt aborted — per-attempt resource budget exceeded (#908)"
+                : reason === "hard-cap"
+                  ? `afk: attempt aborted — no new commit within ${hardCap}s despite worktree edits (hard cap, stalled)`
+                  : `afk: attempt aborted — no new commit within ${cap}s (stalled)`,
           ),
         ),
       // Externalized proof-of-life (PR-B): each poll fires the caller's opaque
@@ -1051,6 +1150,20 @@ export async function runAgent(deps: SandcastleDeps, input: RunAgentInput): Prom
         branch: input.branch,
         commits: [],
         stdout: "afk: attempt mooted — the claimed issue is already CLOSED (goal predicate, ADR 0057)",
+      };
+    }
+    // The budget guard aborted: the attempt breached a resource ceiling (#908)
+    // — distinct from a stall (it may have been actively working, just too
+    // expensively). Surface the dedicated `budget-exceeded` outcome so
+    // process-issue salvages the partial work and parks it for a human rather
+    // than blind-retrying a runaway. Checked before firedTimeout (firedTimeout
+    // already excludes the budget abort, but order keeps intent explicit).
+    if (guard?.firedBudget()) {
+      return {
+        outcome: "budget-exceeded",
+        branch: input.branch,
+        commits: [],
+        stdout: "afk: attempt aborted — per-attempt resource budget exceeded (#908)",
       };
     }
     // The progress guard aborted: alive but not committing → stalled.

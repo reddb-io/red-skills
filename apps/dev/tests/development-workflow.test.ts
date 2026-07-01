@@ -41,13 +41,16 @@ describe("development workflow rules block", () => {
     expect(once).toContain("## Agent skills\n\nExisting.");
   });
 
-  it("documents the loop, primary-branch rule, and kill-switch flag", () => {
+  it("documents the loop and enforced .red/tmp worktree boundary", () => {
     expect(DEVELOPMENT_WORKFLOW_BLOCK).toContain("worktree");
+    expect(DEVELOPMENT_WORKFLOW_BLOCK).toContain("`.red/tmp/work-*/`");
+    expect(DEVELOPMENT_WORKFLOW_BLOCK).toContain("git worktree add .red/tmp/work-<slug>");
+    expect(DEVELOPMENT_WORKFLOW_BLOCK).toContain("not with `git checkout -b` or `git switch -c`");
     expect(DEVELOPMENT_WORKFLOW_BLOCK).toContain("push the branch early");
     expect(DEVELOPMENT_WORKFLOW_BLOCK).toContain("`/ship`");
     expect(DEVELOPMENT_WORKFLOW_BLOCK).toContain("merge the PR or park the issue/PR for `/hitl`");
     expect(DEVELOPMENT_WORKFLOW_BLOCK).toContain("The agent never switches the primary checkout's branch; only the user does.");
-    expect(DEVELOPMENT_WORKFLOW_BLOCK).toContain("`dev.lock.primary-branch`");
+    expect(DEVELOPMENT_WORKFLOW_BLOCK).toContain("the dev command proxy blocks agent-created worktrees outside `.red/tmp/`");
   });
 
   it("writes both AGENTS.md and CLAUDE.md with identical blocks, then reruns unchanged", async () => {

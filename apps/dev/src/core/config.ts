@@ -144,6 +144,18 @@ export const CONFIG_DEFAULTS = {
   "afk.worktree_pool.max_size": "4",
   "afk.worktree_pool.lease_ttl_s": "3600",
   "afk.worktree_pool.min_idle_s": "1800",
+  // Companion (active) monitor drift thresholds (#921). The opt-in
+  // `monitor --companion` pass reads these (folded from
+  // `plugins.dev.afk.companion.*`) to tune when a live worker is judged to be
+  // DRIFTING — churning iterations without producing work, wedged waiting, or
+  // sprawling far past the issue's scope. Mirror DEFAULT_COMPANION_THRESHOLDS in
+  // core/companion.ts; conservative on purpose so the companion only fires on
+  // clear drift. The flag, not a config key, gates the whole pass (off →
+  // read-only dashboard, no writes), so there is no `companion.enabled` here.
+  "afk.companion.iteration_churn": "8",
+  "afk.companion.waiting_windows": "20",
+  "afk.companion.diff_drift_loc": "4000",
+  "afk.companion.min_progress_loc": "5",
   "dev.lock.primary-branch": "false",
   // NOTE: `dev.lock.branch` (the static base lock — ADR 0031) is intentionally
   // NOT in this table. Its "default" is *unset* (no config-level lock), and

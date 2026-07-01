@@ -17,7 +17,7 @@ Drain the agent-ready backlog. Single skill that owns issue selection, worktree 
 The skill ships a single committed runtime bundle. Invoke it as:
 
 ```
-RED_AFK_RUNNER=<claude|codex> node "$CLAUDE_PLUGIN_ROOT/skills/engineering/afk/bin/afk.mjs" <command> [params]
+RED_AFK_RUNNER=<claude|codex|opencode> red-skills-dev <command> [params]
 ```
 
 The invoking LLM is responsible for setting `RED_AFK_RUNNER` to its own host runner (`codex` from Codex, `claude` from Claude Code). Do not infer a different runner from binaries on `PATH`; use `--runner` only when the user explicitly pinned one.
@@ -310,6 +310,7 @@ For each issue `N`:
    - Inner emits `<promise>BLOCKED</promise>` plus notes appended to the handoff file → comment the blocker on the issue, re-label `ready-for-human`, drop the worktree, go to next issue.
    - Inner emits `<promise>NO MORE TASKS</promise>` from inside one iteration → ignored. That sentinel is for the outer loop.
    - Runner-exhausted signal (rate limit / quota error string per runner) → without `--fallback-runner`, terminate this issue as Attempt Outcome `exhausted`; route it through bounded recovery (`blocked:quota`, retry under `RED_AFK_RETRY_QUOTA`, escalate at/over cap). With `--fallback-runner`, keep the same worktree and handoff, swap runner once, and only route `exhausted` if the swapped runner also exhausts.
+   - Inner emits `DONE` / no-sentinel while the worktree still has dirty paths (zero commits or a partial commit) → AFK runs the ADR 0050 salvage: commit each dirty path on the worker branch, push it, then continue through the same feedback + landing tail. A salvage that later fails feedback/backpressure still parks as `blocked:validation`; the terminal envelope names the commit state (`zero commits` or `left dirty worktree paths after N commit(s)`), `salvaged N uncommitted file(s)`, and the failing gate so operators know the work was rescued but not mergeable.
 7. **Feedback loops.** In the worktree, derive relevant package scopes from the worker branch diff against the pinned base, then run `test`, `typecheck`, `lint`, and `build` with `pnpm -C <scope>` for each touched package that declares the script. Root-only repos keep using the root package. Any missing script is reported as an explicit per-scope skip in the validation section. Any failure blocks the merge and flips the issue to `ready-for-human` with the validation report in the blocker envelope.
 8. **Merge.** All steps target the **base branch** resolved in step 2 (`{pinned}`, defaults to `main`). The integration prelude is shared; **landing is lock-toggled** by the branch-lock state (ADR 0030).
    - Primary dirty? Auto-stage and commit `chore(afk): pre-merge snapshot for #N` in primary. Never `git stash`. Never `git checkout -- .`.
@@ -396,7 +397,7 @@ When `/afk` launches a normal detached worker under Codex (`run`, not
    `monitor loop unavailable in this runner; run /dev:afk monitor or tail .red/tmp/workers/*/*/afk.log manually.`
 3. If available, emit the canonical prompt from the bundle:
    ```bash
-   RED_AFK_RUNNER=codex node "$CODEX_PLUGIN_ROOT/skills/engineering/afk/bin/afk.mjs" codex-monitor-agent --project-root "$PWD" --mode run
+   RED_AFK_RUNNER=codex red-skills-dev codex-monitor-agent --project-root "$PWD" --mode run
    ```
    Spawn exactly one monitor agent with that prompt. The monitor agent is a
    presentation consumer only: it periodically runs `/dev:afk monitor --once`,
@@ -442,12 +443,12 @@ Fleet mode is **runner-portable**: the supervisor is plain process orchestration
    Do **not** touch the file or attempt to recover. A stale PID file (file exists but `kill -0` fails) is left alone — the `fleet` command clears it itself when it acquires the supervisor lock.
 3. **Launch the fleet.** From the project root, run the bundle's `fleet` command with the target and any flags:
    ```bash
-   RED_AFK_RUNNER=<runner> node "$CLAUDE_PLUGIN_ROOT/skills/engineering/afk/bin/afk.mjs" fleet <N> [--request <text>]
+   RED_AFK_RUNNER=<runner> red-skills-dev fleet <N> [--request <text>]
    ```
    The command performs the PID-file pre-check from step 2 itself (refusing if a live supervisor already runs), detaches the supervisor, and forwards the resolved runner and the `--request/-r` text to every worker it spawns. It waits up to 3 s for `.red/tmp/afk-supervisor.pid` to appear and contain a live PID, then prints the launched supervisor PID and target; on failure it reports the tail of `.red/tmp/afk-supervisor.log`. Capture the reported PID for the *Report back* step. The launched supervisor is the native `__supervise` entrypoint of the same bundle.
 4. **Attach the best available monitor surface.**
    - Claude Code: same flow as *Auto-Monitor Loop* — `CronList` first to deduplicate, then `CronCreate(cron="*/10 * * * *", prompt="/dev:afk monitor", recurring=true)`. If cron tools are unavailable, skip and use the manual-monitor line.
-   - Codex: fetch a sub-agent spawn primitive via `ToolSearch` (query: `spawn agent background monitor`). If available, emit the canonical prompt with `RED_AFK_RUNNER=codex node "$CODEX_PLUGIN_ROOT/skills/engineering/afk/bin/afk.mjs" codex-monitor-agent --project-root "$PWD" --mode fleet` and spawn exactly one read-only Codex monitor agent for this newly-launched supervisor. Its task: from the project root, periodically run `/dev:afk monitor --once` (the bundle's `monitor --once`), report concise progress, and auto-close when `.red/tmp/afk-supervisor.pid` is missing/dead and no `[live]` workers remain. It must never edit files, claim issues, stop workers, or run merges. The user may close it manually; workers continue. If the primitive is unavailable, skip and use the manual-monitor line.
+   - Codex: fetch a sub-agent spawn primitive via `ToolSearch` (query: `spawn agent background monitor`). If available, emit the canonical prompt with `RED_AFK_RUNNER=codex red-skills-dev codex-monitor-agent --project-root "$PWD" --mode fleet` and spawn exactly one read-only Codex monitor agent for this newly-launched supervisor. Its task: from the project root, periodically run `/dev:afk monitor --once` (the bundle's `monitor --once`), report concise progress, and auto-close when `.red/tmp/afk-supervisor.pid` is missing/dead and no `[live]` workers remain. It must never edit files, claim issues, stop workers, or run merges. The user may close it manually; workers continue. If the primitive is unavailable, skip and use the manual-monitor line.
    - Bare/unknown: skip native monitor setup and use the manual-monitor line.
 5. **Report back.** Print:
    ```
@@ -510,14 +511,15 @@ Idempotency: `SLOT_SWEPT[slot]=1` blocks a second sweep within the same supervis
 `/afk monitor` is the readonly aggregated view across all live workers. **Run the bundle's `monitor` command — do not reinvent the rendering in inline bash.** It:
 
 1. Globs `.red/tmp/workers/*/*/afk.state.json` and renders one section per active attempt.
-2. Verifies liveness via the orchestrator PID recorded in `afk.state.json` (`.pid` field) — attempts whose PID is dead are flagged `stale`/`gone` and excluded, not counted as running.
-3. Optionally tails the sibling `afk.log` for the most recent line under each worker's header.
-4. Renders the 48h sparkline header (next subsection) on every refresh.
+2. Verifies liveness via the orchestrator PID recorded in `afk.state.json` (`.pid` field), paired with `pid_start_time` when the platform exposes a stable process-start token. Attempts whose PID identity is dead or mismatched are flagged `stale`/`gone`; PID-live but agent-lane-quiet workers render `[quiet]` and are still counted as running.
+3. Reads sibling `afk.log` line counts through the monitor cursor and renders `log:<total>(+<new>)` when available, without re-reading whole logs on every tick.
+4. Renders WorkerVitals activity counters (`tools:<n> reason:<n> text:<n> wait:<n>`) so a quiet but pid-live worker can show useful progress signals.
+5. Renders the 48h sparkline header (next subsection) on every refresh.
 
 To invoke, from the project root:
 
 ```bash
-RED_AFK_RUNNER=<runner> node "$CLAUDE_PLUGIN_ROOT/skills/engineering/afk/bin/afk.mjs" monitor
+RED_AFK_RUNNER=<runner> red-skills-dev monitor
 ```
 
 The command has **two modes**, auto-selected by stdout type:
@@ -529,7 +531,7 @@ Compact output shape (≈3 lines total for 2 workers — fits inline without tru
 
 ```
 48h: ···············································█  (4 closed, peak 4/h, all workers)   Δ fleet +382 -45
-wZ2R4 [live] claude  issues 4/5  #150 [blog/D] Agent SDK on RedDB  stage:impl  00:23:01  +382 -45
+wZ2R4 [live] claude  issues 4/5  #150 [blog/D] Agent SDK on RedDB  stage:impl  00:23:01  +382 -45  tools:39 reason:4 text:112 wait:2  log:540(+12)
 wK7M2 [live] codex   issues 0/16  idle  +0 -0
 ```
 
@@ -563,13 +565,13 @@ Every `/afk monitor` run — whether typed by the user or fired by the auto-moni
 
 After rendering the dashboard, the agent must:
 
-1. Count workers with status `[live]` in the rendered output (i.e., orchestrator pid alive, post-orphan-cleanup).
-2. If `live_workers == 0`:
+1. Count observable workers with status `[live]` or `[quiet]` in the rendered output (i.e., orchestrator pid identity alive, post-orphan-cleanup).
+2. If `observable_workers == 0`:
    - Fetch `CronList` and `CronDelete` via `ToolSearch` if not already loaded.
    - `CronList` — find every job with `prompt == "/dev:afk monitor"`. There will normally be exactly one; multiples can appear if the user manually invoked `/loop 3m /dev:afk monitor` on top of the auto-loop.
    - `CronDelete` each match.
    - Append one line to the user-facing output: `🛑 no live workers — auto-cancelled monitor loop (cron <id>).`
-3. If `live_workers >= 1` or `.red/tmp/afk-supervisor.pid` resolves to a live PID: arm the cron when unwatched (observe path — same dedup as the spawn path):
+3. If `observable_workers >= 1` or `.red/tmp/afk-supervisor.pid` resolves to a live PID: arm the cron when unwatched (observe path — same dedup as the spawn path):
    - Fetch `CronCreate` and `CronList` via `ToolSearch` if not already loaded (deferred tools).
    - `CronList` — if any existing job has `prompt == "/dev:afk monitor"`, **skip** (cron already present; it continues firing every 10 minutes).
    - Otherwise `CronCreate(cron="*/10 * * * *", prompt="/dev:afk monitor", recurring=true)` and tell the user one line: `monitor loop scheduled (every 10 min) — auto-cancels when all workers exit.`
@@ -599,7 +601,7 @@ The mirror is a pure diff: it reconciles the live worker state files against the
 2. **Build the tracked set.** `TaskList` → keep the mirror-owned tasks (those whose title matches `w<id> [<…>] #<n> <slug>`). For each, emit one JSONL line `{"key":"<worker_id>:<issue>","stage":"<last stage>","phase":"<last phase>"}`, reading the key (`worker_id` from the leading token, `issue` from the `#<n>`) and the **phase** (the word inside the title's `[…]` bracket, after any `n/5 `) from the title, and the **stage** from the description (`stage: <x>`). Keep a key→task_id map for step 4.
 3. **Compute the plan.** Pipe the tracked JSONL from step 2 into the bundle's `monitor --mirror-plan` subcommand:
    ```bash
-   printf '%s\n' "$tracked" | node "$CLAUDE_PLUGIN_ROOT/skills/engineering/afk/bin/afk.mjs" monitor --mirror-plan
+   printf '%s\n' "$tracked" | red-skills-dev monitor --mirror-plan
    ```
    The command globs the state files and reconciles them against the tracked set on stdin (keyed by `worker_id:issue`, so parallel workers each get exactly one task and re-runs never duplicate), then prints a JSONL **call plan** to stdout — one descriptor per harness call (empty stdin → cold reconcile; empty plan → no output). A `TaskUpdate` rewrites the **title** when the macro phase moves and refreshes the **description** when the micro stage moves; a terminal failure re-titles to `[blocked]` and flips the task to `failed`:
    ```jsonl

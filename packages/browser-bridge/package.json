@@ -1,26 +1,11 @@
 {
   "name": "@reddb-io/browser-bridge",
-  "version": "1.246.0",
+  "version": "1.252.0",
   "private": true,
   "type": "module",
-  "description": "CLI<->browser annotation bridge plus a layout-audit gate for HTML artifacts. Opens a generated artifact, injects a portable feedback SDK, long-polls for human annotations (element + character range), and blocks 'done' on a visually broken render. No cloud; state lives under .red/browser-bridge/.",
+  "description": "Local CLI-to-browser annotation bridge: injects an annotation SDK into HTML artifacts, captures element and character-range selections, and delivers feedback to the agent. Includes a layout-audit gate that blocks done on overflow / cutoff / overlap.",
   "license": "Apache-2.0",
   "exports": {
-    ".": "./index.ts",
-    "./layout-audit.js": "./layout-audit.ts",
-    "./session.js": "./session.ts",
-    "./annotation.js": "./annotation.ts",
-    "./inject.js": "./inject.ts",
-    "./server.js": "./server.ts"
-  },
-  "scripts": {
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run"
-  },
-  "devDependencies": {
-    "@types/node": "catalog:",
-    "tsx": "catalog:",
-    "typescript": "catalog:",
-    "vitest": "catalog:"
+    ".": "./index.ts"
   }
 }

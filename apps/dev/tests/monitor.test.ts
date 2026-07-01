@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   renderCompactDashboard,
+  renderCompactDashboardToon,
   renderFleetLine,
   renderSlotDetails,
   renderWorkerCompactLine,
@@ -81,6 +82,32 @@ describe("monitor — compact line", () => {
     expect(line).not.toContain("$");
     // no usage at all → no cost fragment (back-compat with the documented shape)
     expect(renderWorkerCompactLine(base, 1780140600)).not.toContain("tok:");
+  });
+
+  it("appends activity counters and cursor-backed log line counts", () => {
+    const base = baseWorker();
+    const line = renderWorkerCompactLine(
+      baseWorker({
+        state: {
+          ...base.state,
+          current: {
+            ...base.state.current,
+            tools_called_count: 39,
+            reasoning_events: 4,
+            text_chunk_count: 112,
+            waiting_count: 2,
+          },
+        },
+        logLines: 540,
+        logNewLines: 12,
+      }),
+      1780140600,
+    );
+    expect(line).toContain("tools:39");
+    expect(line).toContain("reason:4");
+    expect(line).toContain("text:112");
+    expect(line).toContain("wait:2");
+    expect(line).toContain("log:540(+12)");
   });
 
   it("flags a non-live worker as stale", () => {
@@ -259,6 +286,43 @@ describe("monitor — compact dashboard", () => {
     expect(out).toContain("workers: (none");
   });
 
+  describe("TOON (default agent-facing render)", () => {
+    it("renders one worker as a tabular row, preserving aggregates and sparkline", () => {
+      const out = renderCompactDashboardToon([baseWorker()], events, 1780140600);
+      expect(out).toContain("sparkline:");
+      expect(out).toContain("diff_added: 10");
+      expect(out).toContain("diff_removed: 3");
+      // The worker table names columns once, then one bare CSV row per worker.
+      expect(out).toContain(
+        "workers[1]{id,state,runner,issue,stage,done,total,blocked,failed,elapsed,added,removed,in_tok,out_tok,cost_usd,tools,reason,text,wait,log}:",
+      );
+      expect(out).toContain('wAAAA,live,claude,42,impl,1,4,0,0,"00:30:00",10,3,0,0,0,0,0,0,0,0');
+    });
+
+    it("preserves the per-source origin counts from #930 as a sources table", () => {
+      const a = baseWorker({ state: { ...baseWorker().state, worker_id: "wA", origin: "afk" } });
+      const b = baseWorker({ state: { ...baseWorker().state, worker_id: "wB", origin: "go" } });
+      const c = baseWorker({ state: { ...baseWorker().state, worker_id: "wC", origin: "afk" } });
+      const out = renderCompactDashboardToon([a, b, c], events, 1780140600);
+      expect(out).toContain("sources[2]{origin,count}:");
+      expect(out).toContain("  afk,2");
+      expect(out).toContain("  go,1");
+    });
+
+    it("emits a definitive empty state for an empty fleet", () => {
+      const out = renderCompactDashboardToon([], events, 1780140600);
+      expect(out).toContain("workers[0]:");
+      expect(out).toContain("sources[0]:");
+    });
+
+    it("includes the fleet status block when a fleet state is present", () => {
+      const out = renderCompactDashboardToon([], events, 1780138815, baseFleet());
+      expect(out).toContain("fleet:");
+      expect(out).toContain("  status: idle");
+      expect(out).toContain("  ready: 0");
+    });
+  });
+
   it("surfaces a healthy idle fleet last-tick line", () => {
     const out = renderCompactDashboard([], events, 1780138815, baseFleet());
     expect(out.split("\n")[1]).toBe(
@@ -421,6 +485,32 @@ describe("monitor — mirror plan", () => {
     });
   });
 
+  it("quiet but pid-live tracked worker stays in progress instead of completing", () => {
+    const tracked = JSON.stringify({ key: "wAAAA:42", stage: "tests", phase: "validating" });
+    const out = runMirrorPlan(
+      [
+        baseWorker({
+          state: {
+            ...baseWorker().state,
+            worker_id: "wAAAA",
+            current: {
+              number: 42,
+              title: "t",
+              slug: "t",
+              stage: "tests",
+              phase: "validating",
+              started_at: "2026-05-30T11:00:00Z",
+            },
+          },
+          live: false,
+          pidLive: true,
+        }),
+      ],
+      tracked,
+    );
+    expect(out).toBe("");
+  });
+
   it("terminal (non-live) blocked worker fails with a [blocked] title", () => {
     const tracked = JSON.stringify({ key: "wAAAA:42", stage: "impl", phase: "coding" });
     const out = runMirrorPlan(
@@ -501,10 +591,20 @@ describe("monitor — mirror plan", () => {
         },
       }),
       liveWorker("wDEAD", 7, "t", "impl", false),
+      baseWorker({
+        state: {
+          ...baseWorker().state,
+          worker_id: "wQUIET",
+          current: { number: 8, title: "q", stage: "tests", started_at: "2026-05-30T11:00:00Z" },
+        },
+        live: false,
+        pidLive: true,
+      }),
     ]);
-    expect(desired.map((d) => d.worker_id)).toEqual(["wAAAA", "wDEAD"]);
+    expect(desired.map((d) => d.worker_id)).toEqual(["wAAAA", "wDEAD", "wQUIET"]);
     expect(desired[0]!.status).toBe("running");
     expect(desired[1]!.status).toBe("gone");
+    expect(desired[2]!.status).toBe("running");
   });
 
   it("parseTrackedJsonl skips blank/garbage lines and tolerates missing stage/phase", () => {

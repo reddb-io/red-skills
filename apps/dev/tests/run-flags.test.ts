@@ -98,6 +98,14 @@ describe("parseRunFlags", () => {
     expect(parseRunFlags(["--prd=7"]).filter).toEqual({ kind: "prd", prd: 7 });
   });
 
+  it("parses --origin and --lane (the /go provenance + isolated lane), undefined by default", () => {
+    expect(parseRunFlags([]).origin).toBeUndefined();
+    expect(parseRunFlags([]).lane).toBeUndefined();
+    const f = parseRunFlags(["--origin", "go", "--lane", "lane:go"]);
+    expect(f.origin).toBe("go");
+    expect(f.lane).toBe("lane:go");
+  });
+
   it("parses --issues into an ordered number list", () => {
     expect(parseRunFlags(["--issues", "3,1,2"]).filter).toEqual({ kind: "issues", numbers: [3, 1, 2] });
     expect(parseRunFlags(["--issues=10, 20"]).filter).toEqual({ kind: "issues", numbers: [10, 20] });

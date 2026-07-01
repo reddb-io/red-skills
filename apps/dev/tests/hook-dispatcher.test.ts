@@ -287,6 +287,17 @@ describe("hook-dispatcher executions list shape", () => {
     expect(result.executions[1]!.rc).toBe(3);
   });
 
+  it("logs hook enter and exit for successful commands", async () => {
+    const logs: string[] = [];
+    await dispatchHooks("post_session", ["notify"], "{}", fakeExec({ notify: { code: 0 } }), {
+      log: (line) => logs.push(line),
+    });
+    expect(logs).toEqual([
+      "[afk:hooks] post_session: enter: notify",
+      "[afk:hooks] post_session: exit rc=0: notify",
+    ]);
+  });
+
   it("passes the documented env to every command", async () => {
     const calls: Array<{ command: string; stdin: string; env: Record<string, string> }> = [];
     await dispatchHooks(

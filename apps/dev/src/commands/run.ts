@@ -67,11 +67,11 @@ import {
 import { join } from "node:path";
 import { hostname } from "node:os";
 import { appendAgentRecord, appendRecord } from "../core/jsonl-log.js";
-import { initStateSync, updateState } from "../core/state.js";
+import { initStateSync, readPidStartTime, updateState } from "../core/state.js";
 import { buildProgressHeartbeat, formatIterationMarker } from "../core/heartbeat.js";
 import { createActivityMeter } from "../core/activity-meter.js";
 import { DEFAULT_MAX_ITERATIONS } from "../core/execution.js";
-import type { AgentStreamEvent } from "../core/execution.js";
+import type { AgentStreamEvent, AttemptBudget } from "../core/execution.js";
 import { makeStaleClaimPredicate, resolveClaimStalenessConfig } from "../core/claim-staleness.js";
 import { renderClaimComment } from "../core/claim.js";
 
@@ -102,6 +102,15 @@ interface ParsedRunFlags {
    * issue `n` without re-running the agent.
    */
   reconcileIssue?: number;
+  /** --origin <label>: spawn-time provenance stamped on the worker state
+   * (`"afk"` | `"go"` | `"urgent"` | …). Set by each entry point so the
+   * monitor/statusline can render per-source counts. */
+  origin?: string;
+  /** --lane <label>: the candidate-listing label the session drains. Defaults
+   * to `ready-for-agent` (the fleet). `/go` passes its isolated `lane:go` so
+   * its dedicated worker sees only the minted disposable issue and the running
+   * fleet never does. */
+  lane?: string;
 }
 
 /** Raised when --alternate is combined with --runner (mutually exclusive). */
@@ -153,6 +162,8 @@ const RUN_FLAG_SCHEMA = {
   "fallback-runner": { kind: "boolean" },
   "boot-only": { kind: "boolean" },
   "reconcile-issue": { kind: "value", coerce: (raw: string): number => Number(raw) },
+  origin: { kind: "value", coerce: (raw: string): string => raw },
+  lane: { kind: "value", coerce: (raw: string): string => raw },
 } satisfies FlagSchema;
 
 /** Parse the `run` flags: --prd N / --issues a,b,c / -n N / --once / --request / --runner. */
@@ -201,6 +212,8 @@ export function parseRunFlags(args: readonly string[]): ParsedRunFlags {
     fallbackRunner: values["fallback-runner"] === true,
     bootOnly: values["boot-only"] === true,
     reconcileIssue,
+    origin: values.origin as string | undefined,
+    lane: values.lane as string | undefined,
   };
 }
 
@@ -438,6 +451,7 @@ export function buildProcessDeps(
   maxIterations?: number,
   attemptTimeoutSeconds?: number,
   laneIdle?: LaneIdleStallConfig,
+  attemptBudget?: AttemptBudget,
 ): ProcessIssueDeps {
   const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo, exec };
   const gitCtx: GitContext = { cwd: ctx.root, exec };
@@ -529,6 +543,13 @@ export function buildProcessDeps(
       // from the issue timeline. Consulted at claim time only when an allowlist
       // is configured (plugins.dev.afk.trust-gate.allowlist).
       issueTrust: (issue) => ghx.issueTrust(ghCtx, issue),
+      // HITL decision card (#935, S11a): post/update the card on escalation.
+      // Best-effort: errors are caught in routeRecovery so they never block
+      // the recovery path. Runs in the worktree root so gh resolves the repo.
+      renderDecisionCard: async (issue) => {
+        const { hitlCardCommand } = await import("./hitl-card.js");
+        await hitlCardCommand(["render", `--issue=${issue}`, `--root=${ctx.root}`]);
+      },
     },
     claimGh: {
       // ADR 0066: the atomic GitHub-native claim arbiter. Numeric comment ids
@@ -609,7 +630,19 @@ export function buildProcessDeps(
     // shell commands run against the same worker-branch checkout after feedback.
     backpressure: feedback.backpressure,
     backpressureCommands: readBackpressure(config),
-    runAgent: makeRunAgent(sandbox, process.env, maxIterations, attemptTimeoutSeconds, laneIdle),
+    // #908: thread the resolved budget + a LIVE usage probe off this attempt's
+    // activity meter (late-bound — `activityMeter` is reassigned per attempt dir,
+    // and `peek()` returns a superset of AttemptBudgetUsage). makeRunAgent only
+    // wires it when the progress guard is armed.
+    runAgent: makeRunAgent(
+      sandbox,
+      process.env,
+      maxIterations,
+      attemptTimeoutSeconds,
+      laneIdle,
+      attemptBudget,
+      () => activityMeter.peek(),
+    ),
     model,
     classifyIssue: makeIssueClassifier(config, runner, ctx.root, exec),
     resolveTier: (activeRunner, taskClass = "think") => resolveTier(config, activeRunner, taskClass, process.env),
@@ -733,6 +766,19 @@ export function buildProcessDeps(
         }).catch(() => {});
         return;
       }
+      if (event.type === "sessionId") {
+        void appendRecord(join(current.attemptDir, "log.jsonl"), "session", `session ${event.sessionId}`, {
+          ts,
+          fields: {
+            extra: {
+              kind: "sessionId",
+              iteration: String(event.iteration),
+              session_id: event.sessionId,
+            },
+          },
+        }).catch(() => {});
+        return;
+      }
       // Agentic-iteration boundary markers (synthetic — afk.log + firehose, NEVER
       // the agent lane). Emit "iteration N ended" + "iteration N+1 started" when
       // sandcastle's re-invocation count advances, so a run burning through
@@ -747,7 +793,14 @@ export function buildProcessDeps(
         activityMeterDir = dir0;
         activityMeter = createActivityMeter();
       }
-      activityMeter.record(event);
+      if (
+        event.type === "text" ||
+        event.type === "toolCall" ||
+        event.type === "reasoning" ||
+        event.type === "usage"
+      ) {
+        activityMeter.record(event);
+      }
       if (event.iteration !== lastIter) {
         const emit = (line: string, phase: string, n: number): void => {
           void fsx.appendLine(join(dir0, "afk.log"), line);
@@ -772,7 +825,9 @@ export function buildProcessDeps(
               ? `💰 usage (in:${event.inputTokens} out:${event.outputTokens}${
                   event.reasoningTokens ? ` reason:${event.reasoningTokens}` : ""
                 })`
-              : `→ ${event.name} ${event.formattedArgs}`;
+              : event.type === "result"
+                ? `result: ${event.result}`
+                : `→ ${event.name} ${event.formattedArgs}`;
       void appendAgentRecord(join(current.attemptDir, "agent.log.jsonl"), msg, {
         ts,
         fields: { extra: { iteration: String(event.iteration), kind: event.type } },
@@ -793,11 +848,14 @@ export function buildProcessDeps(
       // (bounded write rate vs every text chunk — the lane mtime above is the
       // stall-detector's liveness signal; this is the dashboard's stage/last).
       // `last_event_at` (the honest liveness clock, ADR 0065) is stamped on every
-      // DISCRETE event — tool/reasoning/usage, not per-text-chunk — so it advances
+      // DISCRETE event — tool/reasoning/usage/result, not per-text-chunk — so it advances
       // every few seconds for an active worker even between commits.
       const stage = deriveStage(event);
       const discrete =
-        event.type === "toolCall" || event.type === "reasoning" || event.type === "usage";
+        event.type === "toolCall" ||
+        event.type === "reasoning" ||
+        event.type === "usage" ||
+        event.type === "result";
       // A `usage` event is the only carrier of the cost group, and for claude it
       // arrives exactly ONCE — on the terminal result line, AFTER the last
       // heartbeat poll and just before the agent exits. The ~60s heartbeat is
@@ -1161,6 +1219,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
   // Worker id — probe the workers root for collisions.
   const existing = new Set((await collectMonitorInputs(cwd)).workers.map((w) => w.state.worker_id));
   const workerId = genWorkerId(Math.random, (id) => existing.has(id));
+  const pidStartTime = readPidStartTime(process.pid) ?? "";
   // Emit the per-slot boot-stamp immediately so the supervisor's slot log
   // captures this worker's ID before any failure. The circuit-trip sweep
   // (sweepParkedSlot) parses `[afk] worker: wXXXX` lines from the slot log
@@ -1285,7 +1344,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
   const requestBlock = specialUserRequestBlock(flags.request);
 
   const deps: SessionDeps = {
-    gh: { listCandidates: () => ghx.listCandidates(ghCtx) },
+    gh: { listCandidates: () => ghx.listCandidates(ghCtx, flags.lane) },
     runBoot,
     bootDeps,
     bootOptions,
@@ -1313,7 +1372,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
       if (await fsx.pathExists(sp)) await updateState(sp, { pid: 0 }).catch(() => {});
       return result;
     },
-    processDeps: buildProcessDeps(ctx, settings.model, settings.sandbox, feedback, current, flags.fallbackRunner, runner, undefined, settings.maxIterations, settings.attemptTimeoutSeconds, settings.laneIdle),
+    processDeps: buildProcessDeps(ctx, settings.model, settings.sandbox, feedback, current, flags.fallbackRunner, runner, undefined, settings.maxIterations, settings.attemptTimeoutSeconds, settings.laneIdle, settings.attemptBudget),
     // Session-scoped lifecycle hooks (PRD #207): compose the same config /
     // resolver / exec / env the process deps use, so session + per-issue points
     // share one dispatcher rather than duplicating the wiring.
@@ -1354,7 +1413,11 @@ export async function runCommand(options: RunOptions): Promise<number> {
         initStateSync(statePath, {
           worker_id: c.workerId,
           pid: process.pid,
+          pid_start_time: pidStartTime,
           runner: c.runner,
+          // Spawn-time provenance (issue #930): stamped once here, never mutated.
+          // The entry point (`/afk`, `/go`, `/urgent`) passes `--origin <label>`.
+          origin: flags.origin ?? "",
           log: join(attemptDir, "afk.log"),
           started_at: startedAt,
           "current.number": candidate.number,

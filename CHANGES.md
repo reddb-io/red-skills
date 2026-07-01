@@ -15,6 +15,48 @@ Upstream base: `mattpocock/skills@6eeb81b5fcfeeb5bd531dd47ab2f9f2bbea27461` (see
 
 ---
 
+## review (engineering) — HTML artifact review via annotation bridge (issue #943)
+
+- **status**: added
+- **upstream**: —
+- **why**: Replaces the lossy "screenshot + describe in prose" loop for generated HTML artifacts (plans, dashboards, prototypes). Wires `red-browser` as the first real consumer: serves the artifact locally, runs the layout-audit gate, and long-polls for surgical human annotations (element + character range) that the agent uses to correct and iterate.
+- **what changed**:
+  - `plugins/dev/skills/engineering/review/SKILL.md`: the `/review` skill — invokes `red-browser annotate`, documents the layout-audit gate contract, annotation interpretation, and iteration loop.
+  - `plugins/dev/.claude-plugin/plugin.json`: added `./skills/engineering/review` entry.
+  - `plugins/dev/skills/engineering/README.md`: added `review` entry to the bucket listing.
+  - `README.md`: added `review` to the "Dev operations and understanding" row of the skill map.
+
+---
+
+## go (engineering) — `/go` dispatch: disposable issue, isolated lane, dedicated namespaced worker (issue #938)
+
+- **status**: added
+- **upstream**: —
+- **why**: ADR 0081 / PRD #928 defines a semi-structured middle tier between `/goal` (unstructured directive) and `/afk` (structured backlog). `/go "<demand>"` is the front door for one concrete demand → one clean PR, without authoring a PRD or triaging issues.
+- **what changed**:
+  - `plugins/dev/skills/engineering/go/SKILL.md`: the `/go` skill — invokes the dev bundle's `go` command, documents the isolated `lane:go` lane, the `go-workers/` namespace, `origin=go`, and the interactive gate sink.
+  - `apps/dev/src/core/go.ts`: pure dispatch planner — `buildDisposableIssue` (labels `lane:go`, never `ready-for-agent`), `goWorkersRoot`, `buildGoEngineArgs` (reuses the engine `--once --issues N --origin go --lane lane:go`), `dispatchGo` (IO injected).
+  - `apps/dev/src/commands/go.ts` + `cli.ts`: the `go` command — mints the disposable issue via `gh`, sets `RED_AFK_WORKERS_NAMESPACE=go-workers`, and runs the reused engine in-process.
+  - `apps/dev/src/core/worker-paths.ts`: `workersSegment()` honours `RED_AFK_WORKERS_NAMESPACE` so the `/go` worker dir + worktree land under `.red/tmp/go-workers/`, never colliding with the fleet's `.red/tmp/workers/`.
+  - `apps/dev/src/runtime/gh.ts`: `createIssue` helper + `listCandidates(label)` lane override.
+  - `apps/dev/src/core/triage-labels.ts`: `LABEL_GO_LANE = "lane:go"`.
+
+---
+
+## hitl-card (engineering) — Actionable decision cards for ready-for-human (issue #927)
+
+- **status**: added
+- **upstream**: —
+- **why**: `ready-for-human` issues previously required the human to act by hand (reading, labelling, posting comments manually). Issue #927 turns them into IssueOps decision cards: a bot comment renders the pending decision + PR status + slash-command menu, and a GitHub Action executes the ticked command.
+- **what changed**:
+  - `apps/dev/src/core/hitl-card.ts`: pure logic — `renderCard`, `updateCardStatus` (idempotent status refresh), `isHitlCard` (card detection), `parseCardCommand` (injection-safe first-line slash-command parser), `classifyNaturalLanguage` (keyword-based NL → action mapping), `parseCiChecks`.
+  - `apps/dev/src/commands/hitl-card.ts`: IO command handler for `dev hitl-card render | refresh | act` — posts/updates the card, trust-gates `act` via the existing `resolveActorTrust`, executes approve/approve-ci/reject/requeue and posts directive comments.
+  - `apps/dev/src/cli.ts`: registers `hitl-card` in the CLI router.
+  - `.github/workflows/red-hitl-card.yml`: three-job workflow — `render` on `issues.labeled=ready-for-human`, `act` on `issue_comment.created`, `refresh` on `pull_request.synchronize/reopened/closed`.
+  - `apps/dev/tests/hitl-card.test.ts`: 37 unit tests covering all pure functions.
+
+---
+
 ## afk (engineering) — Task mirror host capability matrix codified (issue #886)
 
 - **status**: modified

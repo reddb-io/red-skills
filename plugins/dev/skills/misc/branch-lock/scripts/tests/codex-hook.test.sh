@@ -39,6 +39,11 @@ trap 'rm -rf "$tmp"' EXIT
 
 primary="$tmp/red-skills"
 mkdir -p "$primary/.red/tmp"
+cat > "$primary/.red/config.yaml" <<'EOF'
+plugins:
+  dev:
+    enabled: true
+EOF
 printf 'main\n' > "$primary/.red/tmp/branch-lock.yaml"
 
 run_hook() {
@@ -117,9 +122,11 @@ expect_eq "unlocked: switch is allowed" "0" "$rc"
 
 mkdir -p "$primary/.red"
 cat > "$primary/.red/config.yaml" <<'EOF'
-dev:
-  lock:
-    primary-branch: true
+plugins:
+  dev:
+    enabled: true
+    lock:
+      primary-branch: true
 EOF
 
 result="$(run_hook "$primary" "$(payload "$primary" "git switch feature")")"
@@ -149,9 +156,11 @@ rc="$(sed -n '1p' <<<"$result")"
 expect_eq "primary guard: read-only git is allowed" "0" "$rc"
 
 cat > "$primary/.red/config.yaml" <<'EOF'
-dev:
-  lock:
-    primary-branch: false
+plugins:
+  dev:
+    enabled: true
+    lock:
+      primary-branch: false
 EOF
 result="$(run_hook "$primary" "$(payload "$primary" "git switch feature")")"
 rc="$(sed -n '1p' <<<"$result")"

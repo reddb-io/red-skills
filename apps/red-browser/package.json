@@ -1,0 +1,23 @@
+{
+  "name": "@reddb-io/red-browser",
+  "version": "1.252.0",
+  "private": true,
+  "type": "module",
+  "description": "Red Browser CLI surface — opens a local annotation bridge for HTML artifacts, long-polls human feedback, and enforces the layout-audit gate.",
+  "license": "Apache-2.0",
+  "scripts": {
+    "dev": "node --import tsx src/cli.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@reddb-io/browser-bridge": "workspace:*",
+    "@reddb-io/cdp-driver": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "tsx": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

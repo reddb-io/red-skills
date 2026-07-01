@@ -67,6 +67,15 @@ const RECOVERABLE: Record<string, RecoverableSpec> = {
   // `isInfraFeedbackFailure`; the semantic counterpart `feedback-failed` stays
   // non-recoverable (page a human — the worker code really has a problem).
   "validation-infra": { knob: "RED_AFK_RETRY_VALIDATION_INFRA", defaultCap: 2 },
+  // Companion-monitor drift correction (#921). The active monitor's bounded
+  // re-enqueue budget: each detected drift on an attempt injects ONE bounded
+  // correction (write-only, idempotent), and once the attempt count reaches this
+  // cap the companion ESCALATES to ready-for-human instead of correcting again —
+  // so a drifting issue can never loop forever. NOT in the per-issue
+  // `RecoveryReason` subset (recoveryReasonFor never returns "drift"); only the
+  // companion asks for it, by the literal string, sharing this same bounded
+  // policy as every other terminal class.
+  drift: { knob: "RED_AFK_RETRY_DRIFT", defaultCap: 2 },
 };
 
 /** A loose env view so the policy stays pure and trivially testable. */

@@ -19,6 +19,11 @@ const EVENT_TO_VITALS = {
   toolCall: ["tools_called_count"],
   reasoning: ["reasoning_events", "reasoning_tokens"],
   usage: ["input_tokens", "output_tokens", "cost_usd"],
+  // Terminal result text is logged as a discrete event, but it is not a
+  // cumulative WorkerVitals counter.
+  result: [],
+  // Session id metadata is firehose-only diagnostics, not worker activity.
+  sessionId: [],
   // `raw` (sandcastle 0.11.0 verbose stdout stream) is firehose-only diagnostics,
   // not an assistant turn — it maps to no WorkerVitals field.
   raw: [],
@@ -44,7 +49,15 @@ describe("WorkerVitals contract (ADR 0065)", () => {
     // of mapped event types is exactly what we expect. If red-castle adds a
     // variant, the `satisfies` above fails to compile first; this keeps the
     // expectation visible to a human reviewer too.
-    expect(Object.keys(EVENT_TO_VITALS).sort()).toEqual(["raw", "reasoning", "text", "toolCall", "usage"]);
+    expect(Object.keys(EVENT_TO_VITALS).sort()).toEqual([
+      "raw",
+      "reasoning",
+      "result",
+      "sessionId",
+      "text",
+      "toolCall",
+      "usage",
+    ]);
   });
 
   it("rejects a map that omits a known event type (compile-time guard demonstrated)", () => {
@@ -53,7 +66,7 @@ describe("WorkerVitals contract (ADR 0065)", () => {
     // completeness guard ever stops working (an unused directive is itself an error).
     // prettier-ignore
     // @ts-expect-error missing `usage` key
-    const _incomplete: Record<AgentStreamEvent["type"], (keyof WorkerVitals)[]> = { text: ["text_chunk_count"], toolCall: ["tools_called_count"], reasoning: ["reasoning_events"] };
+    const _incomplete: Record<AgentStreamEvent["type"], (keyof WorkerVitals)[]> = { text: ["text_chunk_count"], toolCall: ["tools_called_count"], reasoning: ["reasoning_events"], result: [], sessionId: [], raw: [] };
     void _incomplete;
     expect(true).toBe(true);
   });
@@ -63,7 +76,7 @@ describe("WorkerVitals contract (ADR 0065)", () => {
     // a keyof WorkerVitals — pointing a mapping at it must fail to compile.
     // prettier-ignore
     // @ts-expect-error `thinking_called_count` is not a keyof WorkerVitals
-    const _wrongField: Record<AgentStreamEvent["type"], (keyof WorkerVitals)[]> = { text: ["text_chunk_count"], toolCall: ["tools_called_count"], reasoning: ["reasoning_events", "reasoning_tokens"], usage: ["thinking_called_count"] };
+    const _wrongField: Record<AgentStreamEvent["type"], (keyof WorkerVitals)[]> = { text: ["text_chunk_count"], toolCall: ["tools_called_count"], reasoning: ["reasoning_events", "reasoning_tokens"], usage: ["thinking_called_count"], result: [], sessionId: [], raw: [] };
     void _wrongField;
     expect(true).toBe(true);
   });

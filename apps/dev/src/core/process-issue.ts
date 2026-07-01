@@ -73,7 +73,7 @@ import { formatStartedMarker } from "./heartbeat.js";
 import { parseReqLabels, planCloseCascade, type DependentIssue } from "./boot-sweep.js";
 import { buildAttemptRecordPayload, type AttemptRecordPayload } from "./attempt-record.js";
 import { acquireClaim, type ClaimGh, type ClaimReconcileOptions } from "./claim.js";
-import { parseCurrentBlocker, upsertCurrentBlocker, type CurrentBlocker } from "./blocker-state.js";
+import { applyCurrentBlockerEdit, parseCurrentBlocker, type CurrentBlocker } from "./blocker-state.js";
 import { parseTrustPolicy, evaluateTrustGate, type TrustProvenance } from "./trust-gate.js";
 import type { AfkModelTier, ConfigValues } from "./config.js";
 import {
@@ -120,6 +120,13 @@ export interface ProcessGh {
    * never fires), preserving today's behaviour.
    */
   issueTrust?(issue: number): Promise<TrustProvenance>;
+  /**
+   * Render (or refresh) the HITL decision card on a `ready-for-human` issue
+   * (#935, S11a). Called best-effort after the escalation labels are applied.
+   * Optional → absent callers/tests degrade silently (no card posted, existing
+   * behaviour preserved).
+   */
+  renderDecisionCard?(issue: number): Promise<void>;
 }
 
 /** Claim-lock side effects (the local mkdir lock at .red/tmp/claims/{N}/). */
@@ -416,14 +423,12 @@ export interface ProcessIssueDeps {
   /**
    * Salvage uncommitted work the inner agent left in its worktree. The codex
    * runner sometimes edits, passes the gates, and emits `<promise>DONE</promise>`
-   * WITHOUT ever running `git commit`, so sandcastle collects zero commits and
-   * the worker branch is empty — a DONE attempt then lands an empty merge and the
-   * issue is never really resolved. When `runAgent` reports zero commits on a
-   * done / no-sentinel outcome, processIssue calls this to commit the dirty
-   * worktree (one commit per file) onto `branch` and push, so the SAME feedback
-   * gate + landing tail see the work. Returns the count of files committed (0 =
-   * clean worktree, nothing salvaged). Best-effort; MUST NOT throw. Optional →
-   * tests/legacy callers omit it (no salvage, today's behaviour).
+   * without committing every dirty path. After any done / no-sentinel outcome,
+   * processIssue calls this to commit remaining dirty worktree paths (one commit
+   * per file) onto `branch` and push, so the SAME feedback gate + landing tail
+   * see the complete work. Returns the count of files committed (0 = clean
+   * worktree, nothing salvaged). Best-effort; MUST NOT throw. Optional → tests /
+   * legacy callers omit it (no salvage).
    */
   salvageUncommitted?(branch: string): Promise<number>;
 }
@@ -560,6 +565,7 @@ async function routeRecovery(
   issue: number,
   reason: AttemptOutcome,
   attemptN: number,
+  opts: { forceDecision?: "retry" | "escalate" } = {},
 ): Promise<"retry" | "escalate"> {
   // The composer owns the retry-vs-escalate decision, the label sets, and the
   // budget-exhausted page comment (core/disposition). This site only APPLIES it:
@@ -575,14 +581,16 @@ async function routeRecovery(
   // on_recovery_decision (#832, MUTABLE): hand the composer's proposed decision
   // to a hook, which may override retry↔escalate via a `{"decision":…}` stdout
   // JSON before any label is applied. An absent / silent hook is a no-op.
-  let decision = disp.decision;
-  const recResult = await fireRecoveryHook(
-    deps,
-    "on_recovery_decision",
-    JSON.stringify({ issue: { number: issue, title: "" }, decision, reason, attempt_n: attemptN }),
-  );
-  const override = parseRecoveryDecision(recResult.context);
-  if (override !== null) decision = override;
+  let decision = opts.forceDecision ?? disp.decision;
+  if (!opts.forceDecision) {
+    const recResult = await fireRecoveryHook(
+      deps,
+      "on_recovery_decision",
+      JSON.stringify({ issue: { number: issue, title: "" }, decision, reason, attempt_n: attemptN }),
+    );
+    const override = parseRecoveryDecision(recResult.context);
+    if (override !== null) decision = override;
+  }
 
   if (decision === "escalate") {
     if (disp.typedLabel !== null) await deps.gh.ensureLabel(disp.typedLabel);
@@ -606,6 +614,15 @@ async function routeRecovery(
         attempt_n: attemptN,
       }),
     );
+    // Render the HITL decision card (#935, S11a). Best-effort: a card failure
+    // must never block the recovery path — the label transition already happened.
+    if (deps.gh.renderDecisionCard) {
+      try {
+        await deps.gh.renderDecisionCard(issue);
+      } catch {
+        // best-effort: card render failure is non-fatal.
+      }
+    }
   } else {
     // retry → CLEAN promotion: running → ready-for-agent, no blocked:* tag.
     await deps.gh.editLabels(issue, [LABEL_RUNNING], [LABEL_READY]);
@@ -627,7 +644,10 @@ async function fireRecoveryHook(
 ): Promise<{ context: string; aborted: boolean }> {
   try {
     const resolved = resolveHooks(deps.hooks.config, deps.hooks.resolveOptions);
-    return await dispatchHooks(name, resolved[name], context, deps.hooks.exec, { env: deps.hooks.env ?? {} });
+    return await dispatchHooks(name, resolved[name], context, deps.hooks.exec, {
+      env: deps.hooks.env ?? {},
+      log: (line) => deps.appendIterLog(line),
+    });
   } catch {
     return { context, aborted: false };
   }
@@ -695,6 +715,7 @@ export async function processIssue(
     hooksFired.push(name);
     const result = await dispatchHooks(name, resolved[name], context, deps.hooks.exec, {
       env: deps.hooks.env ?? {},
+      log: (line) => deps.appendIterLog(line),
     });
     // Capture the pre_worktree env mutation (FIX J). Only this point computes the
     // mutable `env` slice the runner must inherit; other points' mutations are
@@ -906,6 +927,20 @@ export async function processIssue(
     startedEpoch,
   };
   let validationSidecar: string[] = [];
+  let salvagedUncommittedFiles = 0;
+  let salvagedUncommittedOutcome: RunAgentResult["outcome"] | undefined;
+  let salvagedRunCommitCount = 0;
+  const salvagedUncommittedNotes = (gate: "feedback" | "backpressure"): string => {
+    const prefix =
+      salvagedRunCommitCount === 0
+        ? `Inner agent emitted ${salvagedUncommittedOutcome} with zero commits`
+        : `Inner agent emitted ${salvagedUncommittedOutcome} after ${salvagedRunCommitCount} commit(s) and left dirty worktree paths`;
+    const gateText =
+      gate === "feedback"
+        ? "feedback validation failed"
+        : "backpressure validation failed after the feedback gate passed";
+    return `${prefix}; AFK salvaged ${salvagedUncommittedFiles} uncommitted file(s), but ${gateText}. The worker branch was not merged.`;
+  };
 
   while (true) {
     const initialTier = resolveSpawnTier(deps, activeRunner, activeTaskClass);
@@ -1036,25 +1071,30 @@ export async function processIssue(
       startedEpoch,
     } satisfies StageCommon;
 
-    // ---- commit-leftovers salvage (codex DONE-without-commit, ADR 0050) ----
+    // ---- commit-leftovers salvage (codex DONE/partial-commit leftovers, ADR 0050) ----
     // The inner agent (observed: codex) can edit, pass the gates, and emit
-    // `<promise>DONE</promise>` WITHOUT ever running `git commit`. sandcastle then
-    // collects zero commits → the worker branch is empty → a DONE attempt lands an
-    // empty merge and the issue is never really resolved (the no-sentinel salvage
-    // below misses it too: the branch carries no commits). When runAgent reports
-    // zero commits on a sentinel-bearing (done) or no-sentinel outcome, commit the
-    // dirty worktree onto the worker branch (one commit per file) so the SAME
-    // feedback gate + landing tail validate and merge the real work. A clean
-    // worktree salvages nothing (count 0) → today's behaviour is unchanged.
+    // `<promise>DONE</promise>` without committing every dirty path. This includes
+    // the original zero-commit bug and the partial-commit variant: sandcastle
+    // reports at least one commit, but useful edits remain unstaged/uncommitted.
+    // After any done/no-sentinel outcome, ask the salvage port to commit leftover
+    // dirty worktree paths onto the worker branch (one commit per file) so the
+    // SAME feedback gate + landing tail validate and merge the complete work. A
+    // clean worktree salvages nothing (count 0).
     if (
       deps.salvageUncommitted &&
-      run.commits.length === 0 &&
-      (run.outcome === "done" || run.outcome === "no-sentinel")
+      (run.outcome === "done" || run.outcome === "no-sentinel" || run.outcome === "budget-exceeded")
     ) {
       const salvagedFiles = await deps.salvageUncommitted(workerBranch).catch(() => 0);
       if (salvagedFiles > 0) {
+        salvagedUncommittedFiles = salvagedFiles;
+        salvagedUncommittedOutcome = run.outcome;
+        salvagedRunCommitCount = run.commits.length;
+        const commitFact =
+          run.commits.length === 0
+            ? "committed nothing"
+            : `left dirty worktree paths after ${run.commits.length} commit(s)`;
         deps.appendIterLog(
-          `🤖 /afk: inner agent emitted ${run.outcome} but committed nothing — salvaged ${salvagedFiles} uncommitted file(s) onto \`${workerBranch}\` so the feedback gate + landing see the work.`,
+          `🤖 /afk: inner agent emitted ${run.outcome} but ${commitFact} — salvaged ${salvagedFiles} uncommitted file(s) onto \`${workerBranch}\` so the feedback gate + landing see the work.`,
         );
       }
     }
@@ -1070,6 +1110,23 @@ export async function processIssue(
     // tail the DONE path uses. The feedback gate is load-bearing: it is the only
     // thing that distinguishes "complete prior work" from a half-baked crash-edit.
     // A branch with no work keeps today's terminal `no-sentinel` behaviour.
+    // ---- budget guard fired (#908): the attempt breached a resource ceiling ----
+    // The salvage pass above already committed any dirty worktree paths onto the
+    // worker branch, so the partial work is preserved on the branch/PR ("never
+    // wake up empty-handed"). Park it for a human with `blocked:budget`: a runaway
+    // is NOT auto-retried (recoveryReasonFor → null), and re-running the inner
+    // agent would just re-spend the budget. The salvaged commits stay on the
+    // branch for the human to review, continue with a larger budget, or stop.
+    if (run.outcome === "budget-exceeded") {
+      await fireHook("on_attempt_error", onErrorContext(current, workerBranch, "budget-exceeded", current.attempt));
+      return await terminalFailure(common, "budget-exceeded", "budget", {
+        notes:
+          salvagedUncommittedFiles > 0
+            ? `_(budget guard aborted the attempt; salvaged ${salvagedUncommittedFiles} uncommitted file(s) onto \`${workerBranch}\` — partial work preserved for review)_`
+            : "_(budget guard aborted the attempt; no uncommitted work to salvage)_",
+        log: run.stdout || "afk: attempt aborted — per-attempt resource budget exceeded (#908)",
+      });
+    }
     let salvaged = false;
     if (run.outcome === "no-sentinel") {
       const branchHasWork =
@@ -1344,12 +1401,18 @@ export async function processIssue(
         continue;
       }
       const outcome: ProcessOutcome = isInfra ? "feedback-failed-infra" : "feedback-failed";
+      let notes: string;
+      if (isInfra) {
+        notes = `Feedback validation failed for an INFRA reason (worktree/submodule/pnpm install/OOM) on branch \`${workerBranch}\` — the recovery policy will retry up to its cap.`;
+      } else if (salvagedUncommittedFiles > 0) {
+        notes = salvagedUncommittedNotes("feedback");
+      } else if (salvaged) {
+        notes = "Salvaged a no-sentinel branch (it carried work), but feedback validation failed — the branch was not merged.";
+      } else {
+        notes = "Feedback validation failed after the inner agent emitted DONE. The worker branch was not merged.";
+      }
       return await terminalFailure(common, outcome, "feedback", {
-        notes: isInfra
-          ? `Feedback validation failed for an INFRA reason (worktree/submodule/pnpm install/OOM) on branch \`${workerBranch}\` — the recovery policy will retry up to its cap.`
-          : salvaged
-            ? "Salvaged a no-sentinel branch (it carried work), but feedback validation failed — the branch was not merged."
-            : "Feedback validation failed after the inner agent emitted DONE. The worker branch was not merged.",
+        notes,
         validation: feedback.sidecar.join("\n"),
       }, { validationSummary: feedback.sidecar.join("\n") });
     }
@@ -1375,9 +1438,12 @@ export async function processIssue(
         // Persist BOTH gates' records (feedback passed, backpressure failed) for
         // Memory, but surface only the failing backpressure records in the envelope.
         await writeValidationSidecar(deps, input.attemptDir, [...feedback.sidecar, ...backpressure.sidecar]);
+        const notes =
+          salvagedUncommittedFiles > 0
+            ? salvagedUncommittedNotes("backpressure")
+            : "Backpressure validation failed after the feedback gate passed. The worker branch was not merged.";
         return await terminalFailure(common, "feedback-failed", "feedback", {
-          notes:
-            "Backpressure validation failed after the feedback gate passed. The worker branch was not merged.",
+          notes,
           validation: backpressure.sidecar.join("\n"),
         }, { validationSummary: backpressure.sidecar.join("\n") });
       }
@@ -1454,6 +1520,22 @@ export async function processIssue(
     // ready-for-human with `blocked:ci` rather than re-running the whole agent.
     if (landing.reason === "ci-failed" || landing.reason === "ci-pending") {
       return await ciBlocked(common, landing.reason, landing.prNumber);
+    }
+    if (landing.reason === "pr-conflict") {
+      return await prLandingBlocked(
+        common,
+        "merge-conflict",
+        landing.prNumber,
+        `the open PR has merge conflicts and could not be landed`,
+      );
+    }
+    if (landing.reason === "pr-merge-failed") {
+      return await prLandingBlocked(
+        common,
+        "ci-failed",
+        landing.prNumber,
+        `the open PR merge was rejected by GitHub, usually because branch protection or CI is not satisfied`,
+      );
     }
     return await mergeFailed(common, landing.reason, landing.locked);
   }
@@ -1653,6 +1735,13 @@ function blockerForFailure(outcome: ProcessOutcome, sections: SectionBodies): Cu
         summary: oneLine(sections.log, "Inner agent made no progress (no new commit) within the attempt wall-clock."),
         next: "Review the work already pushed (branch/PR) and decide whether to continue, re-scope, or stop.",
       };
+    case "budget-exceeded":
+      return {
+        status: "blocked",
+        kind: "budget",
+        summary: oneLine(sections.log, "Attempt aborted — per-attempt resource budget exceeded (#908)."),
+        next: "Review the salvaged partial work (branch/PR) and decide whether to continue with a larger budget, re-scope, or stop.",
+      };
     case "merge-conflict":
       return {
         status: "blocked",
@@ -1703,7 +1792,9 @@ async function writeCurrentBlockerBestEffort(
   try {
     const existing = parseCurrentBlocker(input.body);
     const next = shouldPreserveCurrentBlocker(existing, blocker) ? existing! : blocker;
-    await deps.gh.editBody(input.issue, upsertCurrentBlocker(input.body, next));
+    const { body, changed } = applyCurrentBlockerEdit(input.body, next);
+    if (!changed) return; // byte-exact no-op: body already reflects the desired blocker state
+    await deps.gh.editBody(input.issue, body);
   } catch {
     // Best-effort: issue-body state improves resumability, but label routing and
     // the failure envelope remain the canonical fallback if the edit fails.
@@ -1860,6 +1951,50 @@ async function ciBlocked(
   await recordAttemptBestEffort(c, outcome, {
     durationS: deps.nowEpoch() - c.startedEpoch,
     notes: reason,
+  });
+  await deps.claimLock.release(input.issue);
+  return {
+    outcome,
+    issue: input.issue,
+    branch: c.branch,
+    base: c.base,
+    hooksFired: c.hooksFired,
+    envelopePosted: posted,
+    preserved: true,
+    swept: false,
+  };
+}
+
+/**
+ * PR landing handoff for failures that happen AFTER a PR exists. At that point
+ * the durable artifact is the open PR, so re-queueing the issue would make the
+ * next worker re-run the agent from scratch and often create competing work.
+ * Preserve the PR/branch and park the issue for a finisher instead.
+ */
+async function prLandingBlocked(
+  c: StageCommon,
+  outcome: "ci-failed" | "merge-conflict",
+  prNumber: number | undefined,
+  reason: string,
+): Promise<ProcessIssueResult> {
+  const { deps, input } = c;
+  const prRef = prNumber !== undefined ? `PR #${prNumber}` : "the open PR";
+  await routeRecovery(deps, input.issue, outcome, input.attempt, { forceDecision: "escalate" });
+  await writeCurrentBlockerBestEffort(deps, input, blockerForFailure(outcome, { log: `${prRef}: ${reason}` }));
+  const section = outcome === "merge-conflict" ? "merge-conflict" : "ci";
+  const posted = await emitFailure(c, envelopeStatusFor(outcome), section, {
+    log:
+      `Inner agent completed (DONE, committed) and ${prRef} exists, but ${reason}. ` +
+      `The work is NOT lost — finish and land the existing PR instead of re-running the agent.`,
+  });
+  await deps.gh.comment(
+    input.issue,
+    `🤖 /afk: ${reason} on ${prRef}. Holding for a human / PR finisher to land the existing PR; ` +
+      `the inner agent was NOT re-run.`,
+  );
+  await recordAttemptBestEffort(c, outcome, {
+    durationS: deps.nowEpoch() - c.startedEpoch,
+    notes: `${prRef}: ${reason}`,
   });
   await deps.claimLock.release(input.issue);
   return {
