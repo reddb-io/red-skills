@@ -979,6 +979,62 @@ export function buildProcessDeps(
     // hop. ALL errors are swallowed (one warn line), so a memory failure can
     // NEVER fail the close.
     recordAttempt: makeRecordAttempt(ctx.root, current, exec),
+    // PRD cascade rebase (issue #1007): after a successful DONE landing, rebase
+    // every open sibling branch (same prd:N, not held by a live worker) onto the
+    // new base HEAD. Best-effort — failures log a warning, never fail the close.
+    // Gated by `afk.landing.cascade_rebase` (default "true", checked in core).
+    cascadeRebase: {
+      async listAFKBranches() {
+        const refs = await gitx.listRemoteBranches(gitCtx, "afk/");
+        return refs.map((r) => r.branch);
+      },
+      isWorkerLive(workerId: string): boolean {
+        try {
+          const pidPath = workerPidFile(paths.tmpDir, workerId);
+          const content = readFileSync(pidPath, "utf8").trim();
+          if (!/^[1-9][0-9]*$/.test(content)) return false;
+          process.kill(Number(content), 0);
+          return true;
+        } catch (err) {
+          return (err as NodeJS.ErrnoException).code === "EPERM";
+        }
+      },
+      async rebaseAndPush(repoDir: string, branch: string, newBase: string) {
+        const slug = branch.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
+        const slot = parseSlot(process.env.RED_AFK_SLOT) ?? 0;
+        const dest = join(paths.tmpDir, "cascade-rebase", `${slug}-${slot}`);
+        try {
+          await gitx.worktreeRemove(gitCtx, dest);
+          const ok = await gitx.worktreeAdd(gitCtx, dest, branch);
+          if (!ok) {
+            return { ok: false, warn: `failed to create worktree for ${branch}` };
+          }
+          const run = exec ?? (await import("../runtime/exec.js")).execTool;
+          const rebaseR = await run("git", ["rebase", `origin/${newBase}`], { cwd: dest });
+          if (rebaseR.code !== 0) {
+            await run("git", ["rebase", "--abort"], { cwd: dest }).catch(() => {});
+            return {
+              ok: false,
+              warn: `rebase of ${branch} onto ${newBase} conflicted: ${rebaseR.stderr.slice(0, 200)}`,
+            };
+          }
+          const pushR = await run(
+            "git",
+            ["push", "origin", `HEAD:refs/heads/${branch}`, "--force-with-lease"],
+            { cwd: dest },
+          );
+          if (pushR.code !== 0) {
+            return {
+              ok: false,
+              warn: `--force-with-lease push rejected for ${branch}: ${pushR.stderr.slice(0, 200)}`,
+            };
+          }
+          return { ok: true };
+        } finally {
+          await gitx.worktreeRemove(gitCtx, dest).catch(() => {});
+        }
+      },
+    },
   };
 }
 
