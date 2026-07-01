@@ -21,6 +21,7 @@
 //   <issue-body> · <previous-attempts> · <human-guidance-thread> ·
 //   <prior-attempt-context> · <thread-discussion> · <agent-notes>
 
+import { AGENT_OUTPUT_TAG } from "@reddb-io/red-castle";
 import { classifyComment, extractDirectives } from "./comment-classification.js";
 
 /** A comment as projected by the orchestrator from `gh issue view --json comments`. */
@@ -376,3 +377,31 @@ export const SCOUT_EXIT_PROTOCOL = [
   "4. Your FINAL line MUST be exactly `<promise>DONE</promise>`. A prose \"done\" is NOT accepted. `<promise>BLOCKED</promise>` is only for questions that are genuinely unanswerable given the codebase — explain why in the report before emitting it.",
   "</exit-protocol>",
 ].join("\n");
+
+/**
+ * The structured-output clause (ADR 0082, #932) appended to {@link EXIT_PROTOCOL}
+ * ONLY for schema-enabled runners (claude first). It COEXISTS with the text
+ * sentinel: the agent emits the `<agent-output>` JSON block immediately before
+ * its final `<promise>…</promise>` line, and on a schema-enabled runner a DONE
+ * that lacks a valid block is treated as a crash (re-invocation) by the
+ * orchestrator. The JSON shape mirrors the red-castle `AgentOutput` schema — the
+ * single source of truth {@link enforceStructuredOutput} validates against.
+ */
+export const AGENT_OUTPUT_INSTRUCTION = [
+  `5. STRUCTURED OUTPUT (this runner is schema-enabled): immediately BEFORE your final \`<promise>DONE</promise>\` / \`<promise>BLOCKED</promise>\` line, emit ONE \`<${AGENT_OUTPUT_TAG}>\` block wrapping a JSON object. On this runner a DONE WITHOUT a valid block is read as a CRASH and re-invokes you — the schema is the machine-readable terminal signal, the sentinel is its human-readable companion.`,
+  `   <${AGENT_OUTPUT_TAG}>{"success": true, "summary": "one paragraph on what this attempt did", "key_changes_made": ["concrete change 1"], "key_learnings": ["durable fact worth carrying forward"], "should_fully_stop": false}</${AGENT_OUTPUT_TAG}>`,
+  "   Fields (all required): success (boolean — was the goal achieved?), summary (string), key_changes_made (string[]), key_learnings (string[]), should_fully_stop (boolean — true when no further attempt is warranted, e.g. blocked or fully done). Emit the sentinel as your final line AFTER this block.",
+].join("\n");
+
+/**
+ * Select the exit protocol for an attempt. Scout mode always wins (read-only).
+ * Otherwise a schema-enabled runner (`structuredOutput`) gets the AgentOutput
+ * clause spliced in before `</exit-protocol>`; a non-schema runner gets the
+ * plain {@link EXIT_PROTOCOL} (text-sentinel-only) — the coexist fallback.
+ */
+export function exitProtocolFor(opts: { runMode?: string; structuredOutput?: boolean }): string {
+  if (opts.runMode === "scout") return SCOUT_EXIT_PROTOCOL;
+  if (!opts.structuredOutput) return EXIT_PROTOCOL;
+  const closing = "</exit-protocol>";
+  return EXIT_PROTOCOL.replace(closing, `${AGENT_OUTPUT_INSTRUCTION}\n${closing}`);
+}
