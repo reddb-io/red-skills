@@ -82,6 +82,84 @@ export async function integrateOrigin(
   return { ok: true, action: "rebase" };
 }
 
+/** Inputs for the pre-merge rebase, {@link preMergeRebase} (#1006). */
+export interface PreMergeRebaseInput {
+  /** Dir passed to `git -C` — an ISOLATED worktree checked out on the worker
+   * branch (#572), never the primary checkout. */
+  repo: string;
+  /** Remote name (e.g. `origin`). */
+  remote: string;
+  /** Base branch to rebase onto (e.g. `main`). */
+  base: string;
+  /** Worker branch being rebased + force-pushed. */
+  branch: string;
+  /**
+   * Additional force-push attempts after the first, on a `--force-with-lease`
+   * reject (a landing race: the base or the remote head moved under us). Each
+   * retry re-fetches + re-rebases the advanced base before pushing again. Default
+   * 2 — so at most three pushes total before the caller parks merge-conflict.
+   */
+  maxPushRetries?: number;
+}
+
+/** Why a {@link preMergeRebase} did not land the rebased branch on the remote. */
+export type PreMergeRebaseFailReason = "fetch-failed" | "conflict" | "push-rejected";
+
+export interface PreMergeRebaseResult {
+  ok: boolean;
+  /** Set on `ok:false` — the distinct failure mode. */
+  reason?: PreMergeRebaseFailReason;
+}
+
+/**
+ * Pre-merge rebase (#1006): before the PR admin-merge, rebase the worker branch
+ * onto the freshly-fetched `<remote>/<base>` tip inside an ISOLATED worktree and
+ * force-push it, so the merge is never rejected as a stale non-fast-forward and
+ * false-flagged `blocked:merge-conflict`. The whole sequence runs on `repo` — a
+ * throwaway worktree on the worker branch (#572) — so the primary checkout is
+ * never touched. Sequence, mirroring the issue spec:
+ *   1. `git fetch <remote> <base>` then `git rebase <remote>/<base>`;
+ *   2. on a rebase conflict → `git rebase --abort` → `{ ok:false, conflict }`;
+ *   3. `git push <remote> HEAD:refs/heads/<branch> --force-with-lease`;
+ *   4. on a push reject (a landing race), re-fetch + re-rebase the advanced base
+ *      and retry up to `maxPushRetries` times; exhausting them → `push-rejected`.
+ * Both failure modes map to `blocked:merge-conflict` at the caller.
+ */
+export async function preMergeRebase(exec: Exec, input: PreMergeRebaseInput): Promise<PreMergeRebaseResult> {
+  const { repo, remote, base, branch } = input;
+  const maxRetries = input.maxPushRetries ?? 2;
+  const baseRef = `${remote}/${base}`;
+
+  // Fetch the base tip and rebase the worker branch onto it. Reused by the
+  // push-retry loop so a racing base advance is re-integrated before each retry.
+  const rebaseOntoBase = async (): Promise<PreMergeRebaseResult> => {
+    const fetch = await exec(["git", "-C", repo, "fetch", remote, base, "--quiet"]);
+    if (fetch.code !== 0) return { ok: false, reason: "fetch-failed" };
+    const rebase = await exec(["git", "-C", repo, "rebase", baseRef]);
+    if (rebase.code !== 0) {
+      await exec(["git", "-C", repo, "rebase", "--abort"]);
+      return { ok: false, reason: "conflict" };
+    }
+    return { ok: true };
+  };
+
+  const first = await rebaseOntoBase();
+  if (!first.ok) return first;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const push = await exec([
+      "git", "-C", repo, "push", remote, `HEAD:refs/heads/${branch}`, "--force-with-lease",
+    ]);
+    if (push.code === 0) return { ok: true };
+    if (attempt < maxRetries) {
+      // Force-with-lease reject → a race: re-integrate the advanced base, retry.
+      const again = await rebaseOntoBase();
+      if (!again.ok) return again;
+    }
+  }
+  return { ok: false, reason: "push-rejected" };
+}
+
 /** Inputs for the LOCKED landing path, {@link landMerge}. */
 export interface LandMergeInput {
   /** Dir passed to `git -C` — the isolated landing worktree (#572), not the

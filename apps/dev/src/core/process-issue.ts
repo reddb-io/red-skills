@@ -323,6 +323,16 @@ export interface ProcessIssueDeps {
   makeLandingWorktree?(base: string): Promise<string | null>;
   removeLandingWorktree?(dir: string): Promise<void>;
   /**
+   * Provision/tear down an ISOLATED worktree on the worker branch for the PR
+   * path's pre-merge rebase (#1006): fetch base, rebase the branch onto it,
+   * force-push, then admin-merge — so a diverged base can never false-flag the
+   * landing as blocked:merge-conflict. Runs off the primary checkout (#572). The
+   * CLI binds these to `git worktree add --detach origin/<branch>` / `git worktree
+   * remove`; absent → the rebase is skipped and the PR lands as before (opt-in).
+   */
+  makeRebaseWorktree?(branch: string): Promise<string | null>;
+  removeRebaseWorktree?(dir: string): Promise<void>;
+  /**
    * Opt-in advisory-review wait for the admin-PR landing
    * (`afk.merge.wait_for_review`, ADR 0048). Resolved from config by the CLI:
    * present → the landing holds until the configured review check concludes
@@ -1598,6 +1608,8 @@ export async function processIssue(
       ciAwait: deps.ciAwait,
       makeLandingWorktree: deps.makeLandingWorktree,
       removeLandingWorktree: deps.removeLandingWorktree,
+      makeRebaseWorktree: deps.makeRebaseWorktree,
+      removeRebaseWorktree: deps.removeRebaseWorktree,
     },
     {
       openPr,

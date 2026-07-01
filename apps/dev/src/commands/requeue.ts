@@ -203,6 +203,15 @@ async function runAdoptLanding(
         return ok ? dest : null;
       },
       removeLandingWorktree: (dir: string) => gitx.worktreeRemove(gitCtx, dir),
+      // Isolated worker-branch worktree for the PR path's pre-merge rebase (#1006).
+      makeRebaseWorktree: async (branch: string) => {
+        const slug = branch.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "branch";
+        const dest = join(paths.tmpDir, "rebase", `${slug}-adopt-${issue}`);
+        await gitx.worktreeRemove(gitCtx, dest);
+        const ok = await gitx.worktreeAdd(gitCtx, dest, branch);
+        return ok ? dest : null;
+      },
+      removeRebaseWorktree: (dir: string) => gitx.worktreeRemove(gitCtx, dir),
       envelope: {
         git: gitx.gitExec(gitCtx),
         poster: async (n, body) => { await ghx.comment(ghCtx, n, body); return true; },

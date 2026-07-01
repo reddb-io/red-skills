@@ -19,6 +19,11 @@ import type { ExecResult } from "../src/core/merge.js";
 // "primary checkout is sacred" suite below.
 const WT = "/wt";
 
+// The isolated worker-branch worktree the PR path's pre-merge rebase runs in
+// (#1006). Distinct from WT so a test can assert the fetch/rebase/force-push
+// never `git -C`'d the primary checkout (`/repo`).
+const RWT = "/rwt";
+
 interface Harness {
   deps: LandingDeps;
   input: LandingInput;
@@ -27,6 +32,7 @@ interface Harness {
   pushedAttempt: string[][];
   firedHooks: string[];
   removedWorktrees: string[];
+  removedRebaseWorktrees: string[];
   /** cwds the conflict resolver was dispatched in. */
   resolverCwds: string[];
 }
@@ -60,6 +66,14 @@ interface Opts {
   noWorktree?: boolean;
   /** Commits ahead of base returned by `git rev-list --count`. Default 3. */
   commitCount?: number;
+  /** Enable the PR-path pre-merge rebase provisioner (#1006). */
+  rebaseWorktree?: boolean;
+  /** The rebase provisioner returns null (could not provision → rebase skipped). */
+  noRebaseWorktree?: boolean;
+  /** rc the rebase in the rebase worktree returns (1 → real conflict → abort). */
+  rebaseCode?: number;
+  /** rc the force-with-lease push returns (1 → reject on every attempt). */
+  rebasePushCode?: number;
 }
 
 function harness(opts: Opts = {}): Harness {
@@ -67,6 +81,7 @@ function harness(opts: Opts = {}): Harness {
   const pushedAttempt: string[][] = [];
   const firedHooks: string[] = [];
   const removedWorktrees: string[] = [];
+  const removedRebaseWorktrees: string[] = [];
   const resolverCwds: string[] = [];
   let mergeResolved = false;
 
@@ -74,6 +89,13 @@ function harness(opts: Opts = {}): Harness {
     mergeExec: async (argv): Promise<ExecResult> => {
       mergeCalls.push(argv);
       const j = argv.join(" ");
+      // #1006 pre-merge rebase, in the isolated worker-branch worktree (RWT).
+      if (j === `git -C ${RWT} rebase origin/main`) {
+        return { code: opts.rebaseCode ?? 0, stdout: "", stderr: "" };
+      }
+      if (j.startsWith(`git -C ${RWT} push origin HEAD:refs/heads/`) && j.includes("--force-with-lease")) {
+        return { code: opts.rebasePushCode ?? 0, stdout: "", stderr: "" };
+      }
       if (argv.includes("pr") && argv.includes("list")) {
         return { code: 0, stdout: "42\n", stderr: "" };
       }
@@ -140,6 +162,14 @@ function harness(opts: Opts = {}): Harness {
     removeLandingWorktree: async (dir) => {
       removedWorktrees.push(dir);
     },
+    // #1006: only wired when the test opts in, so the existing PR-path suites keep
+    // skipping the rebase (opt-in — an absent provisioner is a no-op).
+    makeRebaseWorktree: opts.rebaseWorktree ? async () => (opts.noRebaseWorktree ? null : RWT) : undefined,
+    removeRebaseWorktree: opts.rebaseWorktree
+      ? async (dir) => {
+          removedRebaseWorktrees.push(dir);
+        }
+      : undefined,
   };
 
   const input: LandingInput = {
@@ -161,7 +191,17 @@ function harness(opts: Opts = {}): Harness {
     postMerge: () => "post_merge-ctx",
   };
 
-  return { deps, input, hooks, mergeCalls, pushedAttempt, firedHooks, removedWorktrees, resolverCwds };
+  return {
+    deps,
+    input,
+    hooks,
+    mergeCalls,
+    pushedAttempt,
+    firedHooks,
+    removedWorktrees,
+    removedRebaseWorktrees,
+    resolverCwds,
+  };
 }
 
 const joined = (calls: string[][]): string[] => calls.map((c) => c.join(" "));
@@ -454,6 +494,84 @@ describe("doLanding — CI-aware merge (#812)", () => {
     const h = harness({ locked: false, prMergeCode: 1 });
     const r = await doLanding(h.deps, h.input, h.hooks);
     expect(r).toEqual({ ok: false, reason: "pr-merge-failed", locked: false, prNumber: 42 });
+  });
+});
+
+describe("doLanding — PR-path pre-merge rebase (#1006)", () => {
+  it("branch diverged by one unrelated commit is rebased in the worktree, force-pushed, then merged cleanly", async () => {
+    const h = harness({ locked: false, rebaseWorktree: true });
+    const r = await doLanding(h.deps, h.input, h.hooks);
+    expect(r).toEqual({ ok: true, locked: false });
+    const j = joined(h.mergeCalls);
+    // The rebase ran in the isolated worker-branch worktree, before the merge.
+    const fetchIdx = j.findIndex((c) => c === `git -C ${RWT} fetch origin main --quiet`);
+    const rebaseIdx = j.findIndex((c) => c === `git -C ${RWT} rebase origin/main`);
+    const pushIdx = j.findIndex(
+      (c) => c === `git -C ${RWT} push origin HEAD:refs/heads/afk/wAAAA/9-fix-the-thing --force-with-lease`,
+    );
+    const mergeIdx = j.findIndex((c) => c.includes("pr merge 42 --admin --merge"));
+    expect(fetchIdx).toBeGreaterThanOrEqual(0);
+    expect(rebaseIdx).toBeGreaterThan(fetchIdx);
+    expect(pushIdx).toBeGreaterThan(rebaseIdx);
+    expect(mergeIdx).toBeGreaterThan(pushIdx);
+    // Clean rebase → no abort; the primary checkout is never rebased/reset.
+    expect(j.some((c) => c.includes("rebase --abort"))).toBe(false);
+    expect(j.some((c) => c.includes(`git -C /repo rebase`) || c.includes(`git -C /repo reset`))).toBe(false);
+    // The throwaway rebase worktree is torn down.
+    expect(h.removedRebaseWorktrees).toEqual([RWT]);
+  });
+
+  it("a real rebase conflict aborts and parks blocked:merge-conflict (never admin-merges)", async () => {
+    const h = harness({ locked: false, rebaseWorktree: true, rebaseCode: 1 });
+    const r = await doLanding(h.deps, h.input, h.hooks);
+    // pr-conflict routes to blocked:merge-conflict at the caller (existing behaviour).
+    expect(r).toEqual({ ok: false, reason: "pr-conflict", locked: false });
+    const j = joined(h.mergeCalls);
+    expect(j).toContain(`git -C ${RWT} rebase --abort`);
+    // Never force-pushed, never admin-merged, post_merge never fired.
+    expect(j.some((c) => c.includes("--force-with-lease"))).toBe(false);
+    expect(j.some((c) => c.includes("pr merge"))).toBe(false);
+    expect(h.firedHooks).toEqual(["pre_merge"]);
+    // The primary checkout is never touched destructively.
+    expect(j.some((c) => c.includes("git -C /repo reset") || c.includes("git -C /repo rebase"))).toBe(false);
+    // Worktree still torn down on the failure path.
+    expect(h.removedRebaseWorktrees).toEqual([RWT]);
+  });
+
+  it("force-with-lease rejected on every attempt → parks blocked:merge-conflict after the bounded retry", async () => {
+    const h = harness({ locked: false, rebaseWorktree: true, rebasePushCode: 1 });
+    const r = await doLanding(h.deps, h.input, h.hooks);
+    expect(r).toEqual({ ok: false, reason: "pr-conflict", locked: false });
+    const j = joined(h.mergeCalls);
+    // Three force-with-lease pushes (1 + 2 retries) then gives up — never merges.
+    const pushes = j.filter((c) => c.includes("--force-with-lease")).length;
+    expect(pushes).toBe(3);
+    expect(j.some((c) => c.includes("pr merge"))).toBe(false);
+  });
+
+  it("no provisioner (opt-out) → rebase skipped, PR lands exactly as before", async () => {
+    const h = harness({ locked: false });
+    const r = await doLanding(h.deps, h.input, h.hooks);
+    expect(r).toEqual({ ok: true, locked: false });
+    // No rebase touched the worker branch; the admin-merge still ran.
+    expect(joined(h.mergeCalls).some((c) => c.includes("--force-with-lease"))).toBe(false);
+    expect(joined(h.mergeCalls).some((c) => c.includes("pr merge 42 --admin --merge"))).toBe(true);
+  });
+
+  it("worktree could not be provisioned → rebase skipped, PR still lands (never risks the primary)", async () => {
+    const h = harness({ locked: false, rebaseWorktree: true, noRebaseWorktree: true });
+    const r = await doLanding(h.deps, h.input, h.hooks);
+    expect(r).toEqual({ ok: true, locked: false });
+    expect(joined(h.mergeCalls).some((c) => c.includes("--force-with-lease"))).toBe(false);
+    expect(joined(h.mergeCalls).some((c) => c.includes("pr merge 42 --admin --merge"))).toBe(true);
+  });
+
+  it("the DIRECT (non-PR) path ignores the rebase provisioner (it integrates origin itself)", async () => {
+    const h = harness({ locked: false, openPr: false, rebaseWorktree: true });
+    const r = await doLanding(h.deps, h.input, h.hooks);
+    expect(r).toEqual({ ok: true, locked: false, mergeSha: "abc1234" });
+    // No pre-merge rebase force-push on the direct path.
+    expect(joined(h.mergeCalls).some((c) => c.includes(`git -C ${RWT}`))).toBe(false);
   });
 });
 

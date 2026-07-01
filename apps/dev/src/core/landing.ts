@@ -30,6 +30,7 @@ import {
   integrateOrigin,
   landMerge,
   landPr,
+  preMergeRebase,
   resolveMergeConflict,
   type ConflictResolver,
   type CiAwaitInput,
@@ -67,6 +68,18 @@ export interface LandingDeps {
   makeLandingWorktree?(base: string): Promise<string | null>;
   /** Tear down a worktree returned by {@link makeLandingWorktree} (best-effort). */
   removeLandingWorktree?(dir: string): Promise<void>;
+  /**
+   * Provision an ISOLATED worktree checked out on the worker `<branch>` for the
+   * PR path's pre-merge rebase (#1006), so the fetch / rebase / force-push run OFF
+   * the primary checkout — the primary branch is sacred (#572). Returns the
+   * worktree dir, or null when one could not be provisioned. Paired with
+   * {@link removeRebaseWorktree}. Absent → the pre-merge rebase is SKIPPED and the
+   * PR lands exactly as before (opt-in). Only the PR path uses it; the direct path
+   * already integrates origin inside its own detached landing worktree.
+   */
+  makeRebaseWorktree?(branch: string): Promise<string | null>;
+  /** Tear down a worktree returned by {@link makeRebaseWorktree} (best-effort). */
+  removeRebaseWorktree?(dir: string): Promise<void>;
   /**
    * Opt-in advisory-review wait for the admin-PR landing
    * (`afk.merge.wait_for_review`, ADR 0048). Present → landPr holds until the
@@ -219,6 +232,16 @@ export async function doLanding(
  * `<base>` state. `locked` is echoed for the caller's result observability.
  */
 async function landAdminPr(deps: LandingDeps, input: LandingInput): Promise<LandingResult> {
+  // Pre-merge rebase (#1006): rebase the worker branch onto the fetched base tip
+  // in an ISOLATED worktree and force-push it before opening/merging the PR, so
+  // the admin-merge is never rejected as a stale non-fast-forward and then
+  // false-flagged blocked:merge-conflict. A real rebase conflict — or a
+  // --force-with-lease reject that survives the bounded retry — parks
+  // blocked:merge-conflict through the existing `pr-conflict` route. Opt-in:
+  // without the worktree provisioner the rebase is skipped (today's behaviour).
+  const rebaseFail = await preMergeRebaseInWorktree(deps, input);
+  if (rebaseFail) return rebaseFail;
+
   const r = await landPr(deps.mergeExec, {
     repo: input.repo,
     gitRepo: input.repoDir,
@@ -244,6 +267,39 @@ async function landAdminPr(deps: LandingDeps, input: LandingInput): Promise<Land
     return { ok: false, reason: "pr-merge-failed", locked: input.locked, prNumber: r.prNumber };
   }
   return { ok: false, reason: "land-failed", locked: input.locked, prNumber: r.prNumber };
+}
+
+/**
+ * Pre-merge rebase step for the PR path (#1006). Provision an isolated worktree
+ * on the worker branch and {@link preMergeRebase} it onto the fetched base,
+ * force-pushing the result. Returns a failing {@link LandingResult} to abort the
+ * landing (parked as blocked:merge-conflict via `pr-conflict`) on a real conflict
+ * or an exhausted force-with-lease retry; returns `undefined` — "proceed to the
+ * admin-merge" — on success, when no provisioner is wired (opt-in), or when a
+ * worktree could not be provisioned (skip rather than risk the primary; the
+ * CI-aware poll still catches a genuinely stale base). The worktree is always
+ * torn down.
+ */
+async function preMergeRebaseInWorktree(
+  deps: LandingDeps,
+  input: LandingInput,
+): Promise<LandingResult | undefined> {
+  if (!deps.makeRebaseWorktree) return undefined;
+  const dir = await deps.makeRebaseWorktree(input.branch);
+  if (!dir) return undefined;
+  try {
+    const rebased = await preMergeRebase(deps.mergeExec, {
+      repo: dir,
+      remote: input.remote,
+      base: input.base,
+      branch: input.branch,
+    });
+    if (rebased.ok) return undefined;
+    // Real conflict / exhausted force-with-lease retries → park merge-conflict.
+    return { ok: false, reason: "pr-conflict", locked: input.locked };
+  } finally {
+    await deps.removeRebaseWorktree?.(dir);
+  }
 }
 
 /**
