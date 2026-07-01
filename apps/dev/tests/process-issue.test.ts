@@ -4,6 +4,7 @@ import {
   type ProcessIssueDeps,
   type ProcessIssueInput,
 } from "../src/core/process-issue.js";
+import { SCOUT_EXIT_PROTOCOL } from "../src/core/handoff.js";
 import type { HookName } from "../src/core/hook-config.js";
 import type { ConfigValues } from "../src/core/config.js";
 import type { AgentEffort, RunAgentInput, RunAgentResult } from "../src/core/execution.js";
@@ -129,6 +130,8 @@ interface HarnessOptions {
   salvage?: number;
   /** Issue body threaded into processIssue. */
   body?: string;
+  /** Execution mode forwarded to ProcessIssueInput (e.g. `"scout"`). */
+  runMode?: string;
   /** Optional ADR 0049 tier resolver injected by the production wiring. */
   resolveTier?: ProcessIssueDeps["resolveTier"];
   /** Optional ADR 0049 issue classifier injected by the production wiring. */
@@ -505,6 +508,7 @@ function harness(opts: HarnessOptions = {}): {
     remote: "origin",
     baseInput: { issueBody: opts.body ?? "## Agent brief\nDo it." },
     prdRef: undefined,
+    runMode: opts.runMode,
   };
 
   return { deps, input, trace };
@@ -2519,5 +2523,57 @@ describe("processIssue — new lifecycle checkpoints (#832)", () => {
     };
     await processIssue(customDeps, input);
     expect(commands).toContain("blk");
+  });
+});
+
+// ---------- scout mode (fleet-native read-only dispatch, issue #991) ----------
+
+describe("processIssue — scout mode (runMode: 'scout')", () => {
+  it("uses SCOUT_EXIT_PROTOCOL as the system prompt (read-only handoff)", async () => {
+    const { deps, input, trace } = harness({ runMode: "scout", outcome: "done" });
+    await processIssue(deps, input);
+    expect(trace.runAgentCalls[0]?.systemPrompt).toBe(SCOUT_EXIT_PROTOCOL);
+  });
+
+  it("disables continuous push — no-commit sandbox config", async () => {
+    const { deps, input, trace } = harness({ runMode: "scout", outcome: "done" });
+    await processIssue(deps, input);
+    expect(trace.runAgentCalls[0]?.continuousPush).toBe(false);
+  });
+
+  it("posts the agent's text output as a scout report comment and closes the issue", async () => {
+    const { deps, input, trace } = harness({ runMode: "scout", outcome: "done" });
+    await processIssue(deps, input);
+    const report = trace.comments.find((c) => c.issue === 9 && c.body.includes("Scout Report"));
+    expect(report).toBeDefined();
+    expect(trace.closed).toContain(9);
+  });
+
+  it("returns outcome 'done' after a successful scout", async () => {
+    const { deps, input } = harness({ runMode: "scout", outcome: "done" });
+    const result = await processIssue(deps, input);
+    expect(result.outcome).toBe("done");
+    expect(result.issue).toBe(9);
+  });
+
+  it("does not push a branch to the remote (no worker-branch push)", async () => {
+    const { deps, input, trace } = harness({ runMode: "scout", outcome: "done" });
+    await processIssue(deps, input);
+    expect(trace.pushedAttempt).toHaveLength(0);
+  });
+
+  it("releases the claim lock after a scout completion", async () => {
+    const { deps, input, trace } = harness({ runMode: "scout", outcome: "done" });
+    await processIssue(deps, input);
+    expect(trace.released).toContain(9);
+  });
+
+  it("parks the issue as ready-for-human on no-sentinel (no report)", async () => {
+    const { deps, input, trace } = harness({ runMode: "scout", outcome: "no-sentinel", commits: [] });
+    const result = await processIssue(deps, input);
+    expect(result.outcome).toBe("no-sentinel");
+    const humanLabel = trace.labelEdits.find((e) => e.add.includes("ready-for-human"));
+    expect(humanLabel).toBeDefined();
+    expect(trace.closed).not.toContain(9);
   });
 });
