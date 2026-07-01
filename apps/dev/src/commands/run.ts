@@ -111,6 +111,11 @@ interface ParsedRunFlags {
    * its dedicated worker sees only the minted disposable issue and the running
    * fleet never does. */
   lane?: string;
+  /** --run-mode <mode>: execution mode modifier forwarded to `processIssue`.
+   * `"scout"` activates the read-only investigation path — no commits, no push,
+   * no PR, no merge; the agent report is posted as a comment and the disposable
+   * issue closes. Additional modes may be added by future dispatch tiers. */
+  runMode?: string;
 }
 
 /** Raised when --alternate is combined with --runner (mutually exclusive). */
@@ -164,6 +169,7 @@ const RUN_FLAG_SCHEMA = {
   "reconcile-issue": { kind: "value", coerce: (raw: string): number => Number(raw) },
   origin: { kind: "value", coerce: (raw: string): string => raw },
   lane: { kind: "value", coerce: (raw: string): string => raw },
+  "run-mode": { kind: "value", coerce: (raw: string): string => raw },
 } satisfies FlagSchema;
 
 /** Parse the `run` flags: --prd N / --issues a,b,c / -n N / --once / --request / --runner. */
@@ -214,6 +220,7 @@ export function parseRunFlags(args: readonly string[]): ParsedRunFlags {
     reconcileIssue,
     origin: values.origin as string | undefined,
     lane: values.lane as string | undefined,
+    runMode: values["run-mode"] as string | undefined,
   };
 }
 
@@ -1448,6 +1455,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
         repoDir: c.issueTemplate.repoDir,
         remote: c.issueTemplate.remote,
         baseInput: { issueBody: candidate.body },
+        runMode: flags.runMode,
       };
     },
     emit: (line: string) => process.stdout.write(`${line}\n`),
