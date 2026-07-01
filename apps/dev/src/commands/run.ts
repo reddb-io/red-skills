@@ -42,6 +42,7 @@ import type { GhContext } from "../runtime/gh.js";
 import type { GitContext } from "../runtime/git.js";
 import type { ExecFn } from "../runtime/exec.js";
 import { getConfig, loadConfig, readBackpressure, resolveTier, resolveCiTimeoutSeconds } from "../core/config.js";
+import { resolveNotesLoopConfig } from "../core/notes-loop.js";
 import {
   classifyIssue,
   resolveReviewGate,
@@ -51,7 +52,7 @@ import { LABEL_READY_FOR_REVIEW } from "../core/triage-labels.js";
 import { resolveHooks } from "../core/hook-config.js";
 import { attemptLedgerContext, formatAttemptContext, highestAttempt, type AttemptDirEntry } from "../core/attempt-ledger.js";
 import { isValidWorkerId } from "../core/worker-paths.js";
-import { readdirSync, existsSync, readFileSync } from "node:fs";
+import { readdirSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { specialUserRequestBlock, claudeSpawnArgs, codexSpawnArgs } from "../core/runner-spawn.js";
 import { buildWorkerAttemptPath } from "../core/worker-paths.js";
@@ -523,6 +524,11 @@ export function buildProcessDeps(
   // base (ADR 0031). Honours the namespaced + legacy fallback via loadConfig.
   const worktreeLaunchesPr = getConfig(config, "afk.worktree_launches_pull_request") !== "false";
 
+  // Intra-attempt notes-loop (Track C, #924). Default OFF → exactly one agent
+  // call. When enabled, processIssue wraps the inner invocation in a bounded
+  // outer loop carrying an accumulated `notes.md` between iterations.
+  const notesLoop = resolveNotesLoopConfig(config);
+
   return {
     gh: {
       viewLabels: (issue) => ghx.viewLabels(ghCtx, issue),
@@ -957,6 +963,19 @@ export function buildProcessDeps(
         loc_added: lastHeartbeatDiff.added,
         loc_removed: lastHeartbeatDiff.removed,
       };
+    },
+    // Intra-attempt notes-loop (Track C, #924). `notesLoop` is the resolved
+    // `afk.notes_loop.*` config (default OFF). `writeNotes` persists the loop's
+    // carried `notes.md` at the attempt dir — outside the worker branch's
+    // worktree, so it is never committed. Best-effort: a write failure must never
+    // fail the attempt.
+    notesLoop,
+    writeNotes: (path, content) => {
+      try {
+        writeFileSync(path, content, "utf8");
+      } catch {
+        /* best-effort: notes are also carried in-process */
+      }
     },
     // Macro-lifecycle phase stamp (issue #811): processIssue calls this at the
     // orchestrator-owned points the agent stream can't see — `validating` at the
