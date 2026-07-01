@@ -114,11 +114,28 @@ describe("parseSeenFingerprints (#921)", () => {
 });
 
 describe("body rewrites (#921)", () => {
-  it("correction upserts the ## Agent brief section", () => {
+  it("correction upserts the ## Agent brief section with byte-exact anchors", () => {
     const out = applyCorrectionBody("## Parent\n#1\n", "Stop and change strategy.", "iteration-churn");
     expect(out).toMatch(/## Agent brief/);
+    expect(out).toContain("<!-- red:agent-brief v1 -->");
+    expect(out).toContain("<!-- /red:agent-brief -->");
     expect(out).toContain("Stop and change strategy.");
     expect(out).toContain("## Parent");
+  });
+  it("correction preserves bytes outside the anchored region on re-correction", () => {
+    // First correction plants the anchors.
+    const first = applyCorrectionBody("## Parent\n#1\n\n## Notes\nKeep this.\n", "Stop.", "iteration-churn");
+    const openIdx = first.indexOf("<!-- red:agent-brief v1 -->");
+    const closeIdx = first.indexOf("<!-- /red:agent-brief -->");
+    const before = first.slice(0, openIdx);
+    const after = first.slice(closeIdx + "<!-- /red:agent-brief -->".length);
+    // Second correction reuses the fast path — outer bytes are identical.
+    const second = applyCorrectionBody(first, "Try again.", "iteration-churn");
+    const openIdx2 = second.indexOf("<!-- red:agent-brief v1 -->");
+    const closeIdx2 = second.indexOf("<!-- /red:agent-brief -->");
+    expect(second.slice(0, openIdx2)).toBe(before);
+    expect(second.slice(closeIdx2 + "<!-- /red:agent-brief -->".length)).toBe(after);
+    expect(second).toContain("Try again.");
   });
   it("escalation opens a ## Current blocker with kind drift", () => {
     const out = applyEscalationBody("## Parent\n#1\n", "stuck-waiting", "budget spent.");
@@ -153,6 +170,7 @@ describe("runCompanionPass (#921)", () => {
     expect(outcomes[0]?.disposition).toBe("corrected");
     const body = gh.writes.find((w) => w.kind === "editBody");
     expect(body?.args.join(" ")).toContain("## Agent brief");
+    expect(body?.args.join(" ")).toContain("<!-- red:agent-brief v1 -->");
     const comment = gh.writes.find((w) => w.kind === "comment");
     expect(comment?.args.join(" ")).toContain(companionFingerprint(7, 1, "iteration-churn"));
     const labels = gh.writes.find((w) => w.kind === "editLabels");

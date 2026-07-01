@@ -34,7 +34,10 @@ describe("planHitlResolution", () => {
     expect(plan.commentBody).toContain("Pending decision:");
     expect(plan.commentBody).toContain("Human answer:");
     expect(plan.commentBody).toContain("Disposition:\ndelegable");
-    expect(plan.bodyUpdate).toContain("## Agent brief\n\nImplement the agreed behavior with tests.");
+    expect(plan.bodyUpdate).toContain("## Agent brief");
+    expect(plan.bodyUpdate).toContain("<!-- red:agent-brief v1 -->");
+    expect(plan.bodyUpdate).toContain("Implement the agreed behavior with tests.");
+    expect(plan.bodyUpdate).toContain("<!-- /red:agent-brief -->");
     expect(plan.addLabels).toEqual(["ready-for-agent"]);
     expect(plan.removeLabels).toEqual(["ready-for-human"]);
   });
@@ -106,7 +109,9 @@ describe("planHitlResolution", () => {
       }),
     );
 
-    expect(plan.bodyUpdate).toContain("## Agent brief\n\nNew brief.\n## Acceptance");
+    expect(plan.bodyUpdate).toContain("## Agent brief");
+    expect(plan.bodyUpdate).toContain("<!-- red:agent-brief v1 -->");
+    expect(plan.bodyUpdate).toContain("New brief.");
     expect(plan.bodyUpdate).not.toContain("Old brief.");
     expect(plan.bodyUpdate?.match(/## Agent brief/g)).toHaveLength(1);
   });
