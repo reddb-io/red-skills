@@ -156,6 +156,25 @@ export const CONFIG_DEFAULTS = {
   "afk.companion.waiting_windows": "20",
   "afk.companion.diff_drift_loc": "4000",
   "afk.companion.min_progress_loc": "5",
+  // Intra-attempt notes-loop (Track C, #924). Opt-in outer loop that wraps the
+  // single inner-agent invocation: each iteration makes one small committed
+  // change, then the loop re-invokes the agent seeded with an accumulated
+  // `notes.md` (carried at the attempt dir, never committed to the worker
+  // branch) until the agent signals DONE or a cap trips (partial work is then
+  // salvaged + landed). OFF by default → exactly one agent call, today's
+  // behaviour. Caps (folded from `plugins.dev.afk.notes_loop.*`, mirror
+  // NOTES_LOOP_DEFAULT_* in core/notes-loop.ts): `max_iterations` = outer
+  // re-invocation ceiling; `inner_max_iterations` = the per-iteration sandcastle
+  // re-invocation ceiling (0 → leave the run's own default); `token_budget` =
+  // cumulative input+output token ceiling checked BETWEEN iterations (0 →
+  // unlimited); `wall_clock_s` = wall-clock ceiling checked between iterations
+  // (0 → unlimited). The between-iteration checks never double-abort with the
+  // per-call attempt guard, which owns aborting a single in-flight iteration.
+  "afk.notes_loop.enabled": "false",
+  "afk.notes_loop.max_iterations": "4",
+  "afk.notes_loop.inner_max_iterations": "0",
+  "afk.notes_loop.token_budget": "0",
+  "afk.notes_loop.wall_clock_s": "0",
   "dev.lock.primary-branch": "false",
   // NOTE: `dev.lock.branch` (the static base lock — ADR 0031) is intentionally
   // NOT in this table. Its "default" is *unset* (no config-level lock), and

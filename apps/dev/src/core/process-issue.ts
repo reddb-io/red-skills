@@ -76,6 +76,7 @@ import { acquireClaim, type ClaimGh, type ClaimReconcileOptions } from "./claim.
 import { applyCurrentBlockerEdit, parseCurrentBlocker, type CurrentBlocker } from "./blocker-state.js";
 import { parseTrustPolicy, evaluateTrustGate, type TrustProvenance } from "./trust-gate.js";
 import type { AfkModelTier, ConfigValues } from "./config.js";
+import { runNotesLoop, notesPath, type NotesLoopConfig } from "./notes-loop.js";
 import {
   buildIssueClassificationMetadata,
   shouldRequestReview,
@@ -389,6 +390,21 @@ export interface ProcessIssueDeps {
    * context omits `vitals` (byte-for-byte the pre-#832 record).
    */
   heartbeatVitals?(): Record<string, number> | undefined;
+  /**
+   * Intra-attempt notes-loop config (Track C, #924). Resolved from
+   * `afk.notes_loop.*` by the CLI (`resolveNotesLoopConfig`). When enabled, the
+   * single inner-agent invocation is wrapped in a bounded outer loop that carries
+   * an accumulated `notes.md` between iterations. Absent (tests / legacy callers)
+   * or `enabled:false` → exactly one agent call, today's behaviour, unchanged.
+   */
+  notesLoop?: NotesLoopConfig;
+  /**
+   * Persist the notes-loop's carried `notes.md` (Track C, #924). The CLI binds it
+   * to a filesystem writer; the loop calls it with the attempt-dir path (outside
+   * the worker branch's worktree, so it is never committed). Optional → when
+   * absent the notes are carried in-process only.
+   */
+  writeNotes?(path: string, content: string): void;
   /**
    * Stamp the attempt's macro-lifecycle phase (issue #811) — the calm signal the
    * task-mirror title surfaces. processIssue calls it at the orchestrator-owned
@@ -949,7 +965,12 @@ export async function processIssue(
 
   while (true) {
     const initialTier = resolveSpawnTier(deps, activeRunner, activeTaskClass);
-    let run: RunAgentResult = await deps.runAgent({
+    // The base sandcastle input for THIS attempt. When the intra-attempt
+    // notes-loop (#924) is enabled, `runNotesLoop` re-invokes `runAgent` with
+    // this input and a per-iteration `handoffContent` (base handoff + carried
+    // notes) plus the optional inner-ceiling override; when disabled, it fires
+    // exactly once with `handoffContent: handoff` — byte-for-byte today's call.
+    const baseAgentInput: RunAgentInput = {
       runner: activeRunner,
       model: initialTier.model,
       effort: initialTier.effort,
@@ -1004,7 +1025,46 @@ export async function processIssue(
       // FIX J: env computed by the pre_worktree hook (e.g. CARGO_TARGET_DIR per
       // slot) — runAgent applies it to the spawned agent's environment.
       env: agentEnv,
+    };
+
+    // Intra-attempt notes-loop (Track C, #924). Default OFF → `runNotesLoop`
+    // fires the base input exactly once. Enabled → a bounded outer loop makes one
+    // small committed change per iteration, seeds the next with an accumulated
+    // `notes.md` (materialised at the attempt dir, never committed to the worker
+    // branch), short-circuits on DONE, and hands the last partial run back on a
+    // cap-hit so the existing salvage + landing path runs. The loop's resource
+    // caps are checked BETWEEN iterations, so they never double-abort with the
+    // per-call attempt guard inside `runAgent`.
+    const notesLoopCfg: NotesLoopConfig = deps.notesLoop ?? {
+      enabled: false,
+      maxIterations: 1,
+      innerMaxIterations: 0,
+      tokenBudget: 0,
+      wallClockS: 0,
+    };
+    const notesOutcome = await runNotesLoop({
+      config: notesLoopCfg,
+      baseHandoff: handoff,
+      runOnce: ({ handoff: iterationHandoff }) =>
+        deps.runAgent({
+          ...baseAgentInput,
+          handoffContent: iterationHandoff,
+          ...(notesLoopCfg.enabled && notesLoopCfg.innerMaxIterations > 0
+            ? { maxIterations: notesLoopCfg.innerMaxIterations }
+            : {}),
+        }),
+      persistNotes: (content) => deps.writeNotes?.(notesPath(input.attemptDir), content),
+      // Wall-clock cap reasons in ms; the attempt clock is epoch seconds.
+      now: () => deps.nowEpoch() * 1000,
+      // Cumulative input+output tokens for the token cap, read from the live
+      // WorkerVitals (ADR 0065). Absent vitals → 0, so the cap stays inert.
+      tokensSpent: () => {
+        const vitals = deps.heartbeatVitals?.();
+        return vitals ? (vitals.input_tokens ?? 0) + (vitals.output_tokens ?? 0) : 0;
+      },
+      log: (message) => deps.appendIterLog(message),
     });
+    let run: RunAgentResult = notesOutcome.run;
 
     // ---- runner-fallback subsystem (--fallback-runner / runner failure) ----
     // The active runner signalled quota / rate-limit exhaustion OR a transient
