@@ -378,8 +378,7 @@ export interface CompetitiveInteropOptions {
 }
 
 /**
- * Checked-in summary derived from
- * `/home/cyber/Work/reddb.io/reddb-benchmark/graphify-out`.
+ * Checked-in summary derived from a local reddb-benchmark graphify export.
  *
  * The full graph export is intentionally not copied here. The competitive
  * harness only needs the stable shape and the path-query timing fixture behind
