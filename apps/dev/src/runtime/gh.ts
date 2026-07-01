@@ -143,9 +143,11 @@ export async function listCandidates(ctx: GhContext, label: string = LABEL_READY
   });
 }
 
-/** List the ready-for-human candidate pool projected to HitlCandidate[]. */
+/** List the ready-for-human candidate pool projected to HitlCandidate[].
+ * Routing (selectHitlQueue) uses only labels/number/createdAt — body is not
+ * fetched here; callers that need it use viewIssueFull for the selected issue. */
 export async function listHitlCandidates(ctx: GhContext): Promise<HitlCandidate[]> {
-  const r = await runGh(ctx, 
+  const r = await runGh(ctx,
     [
       "issue",
       "list",
@@ -157,7 +159,7 @@ export async function listHitlCandidates(ctx: GhContext): Promise<HitlCandidate[
       "--limit",
       "200",
       "--json",
-      "number,title,labels,body,createdAt",
+      "number,title,labels,createdAt",
     ],
   );
   if (r.code !== 0) return [];
@@ -172,14 +174,12 @@ export async function listHitlCandidates(ctx: GhContext): Promise<HitlCandidate[
     const item = row as {
       number?: number;
       title?: string;
-      body?: string;
       createdAt?: string | null;
       labels?: Array<{ name?: string }>;
     };
     return {
       number: Number(item.number ?? 0),
       title: String(item.title ?? ""),
-      body: String(item.body ?? ""),
       createdAt: item.createdAt ?? null,
       labels: Array.isArray(item.labels) ? item.labels.map((l) => String(l.name ?? "")) : [],
     };

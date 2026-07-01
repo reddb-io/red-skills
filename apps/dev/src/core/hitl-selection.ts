@@ -1,7 +1,10 @@
 export interface HitlCandidate {
   number: number;
   title: string;
-  body: string;
+  /** Issue body — absent when the candidate was fetched via the routing list
+   * (only labels/number/createdAt are needed for selectHitlQueue). Callers
+   * that need the body use viewIssueFull for the selected issue. */
+  body?: string;
   labels: string[];
   createdAt?: string | null;
 }

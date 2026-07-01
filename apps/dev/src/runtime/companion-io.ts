@@ -26,7 +26,7 @@ import * as ghx from "./gh.js";
 import type { GhContext } from "./gh.js";
 import { readWorkerStates, type WorkerStatesReadOpts, type WorkerStateRecord } from "../core/worker-state-reader.js";
 import { parseWorkerAttemptPath } from "../core/worker-paths.js";
-import { upsertMarkdownSection } from "../core/development-workflow.js";
+import { upsertAgentBrief, AGENT_BRIEF_HEADING } from "../core/agent-brief.js";
 import { upsertCurrentBlocker } from "../core/blocker-state.js";
 import { recoveryCap, type RecoveryEnv } from "../core/recovery.js";
 import {
@@ -42,7 +42,7 @@ import type { AfkState } from "../types/state.js";
 
 /** The issue-body section the correction directive lands in — the next attempt's
  * brief. Kept stable so a re-correction REPLACES the section rather than stacking. */
-export const COMPANION_BRIEF_HEADING = "Agent brief";
+export const COMPANION_BRIEF_HEADING = AGENT_BRIEF_HEADING;
 export const LABEL_READY_FOR_AGENT = "ready-for-agent";
 export const LABEL_READY_FOR_HUMAN = "ready-for-human";
 
@@ -127,7 +127,8 @@ function auditComment(plan: CompanionPlan, issue: number, attempt: number): stri
 }
 
 /** Rewrite the issue body for a `correct` plan: replace the `## Agent brief`
- * section with the bounded correction directive the next attempt reads. */
+ * section with the bounded correction directive the next attempt reads. Uses
+ * byte-exact anchor editing so every byte outside the brief block is preserved. */
 export function applyCorrectionBody(body: string, note: string, signal: string): string {
   const brief = [
     "<!-- companion-correction -->",
@@ -136,7 +137,7 @@ export function applyCorrectionBody(body: string, note: string, signal: string):
     "",
     note,
   ].join("\n");
-  return upsertMarkdownSection(body, COMPANION_BRIEF_HEADING, brief);
+  return upsertAgentBrief(body, brief);
 }
 
 /** Rewrite the issue body for an `escalate` plan: open a `## Current blocker`
