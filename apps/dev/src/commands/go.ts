@@ -13,18 +13,31 @@
 // IO); this command supplies the real gh + engine effects and the namespaced
 // worker root.
 
-import { dispatchGo, GO_WORKERS_SEGMENT, type DisposableIssueSpec } from "../core/go.js";
+import {
+  dispatchGo,
+  parseGoMode,
+  DEFAULT_GO_MODE,
+  GO_WORKERS_SEGMENT,
+  type DisposableIssueSpec,
+  type GoMode,
+} from "../core/go.js";
 import { resolveRepoContext } from "../runtime/wire.js";
 import { runCommand } from "./run.js";
 import * as ghx from "../runtime/gh.js";
 import type { GhContext } from "../runtime/gh.js";
 
 /** Parse `/go` args: the demand is every non-flag token joined; `--runner X`
- * (or `-r X`) optionally pins the backend. A leading `--` is tolerated so
- * `/go -- --literal` passes a dashed demand through. */
-export function parseGoArgs(args: readonly string[]): { demand: string; runner?: string } {
+ * (or `-r X`) optionally pins the backend; `--mode {no-mistakes|direct-PR|
+ * local-only}` selects the dispatch mode (default `direct-PR`); the opt-in
+ * `+yolo` token bumps autonomy. A leading `--` is tolerated so `/go -- --literal`
+ * passes a dashed demand through. */
+export function parseGoArgs(
+  args: readonly string[],
+): { demand: string; runner?: string; mode: GoMode; yolo: boolean } {
   const positional: string[] = [];
   let runner: string | undefined;
+  let mode: GoMode = DEFAULT_GO_MODE;
+  let yolo = false;
   let sawDoubleDash = false;
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i]!;
@@ -38,13 +51,24 @@ export function parseGoArgs(args: readonly string[]): { demand: string; runner?:
       runner = arg.slice("--runner=".length);
       continue;
     }
+    if (!sawDoubleDash && arg === "--mode") {
+      const value = args[++i];
+      if (value === undefined) throw new Error("--mode requires a value");
+      mode = parseGoMode(value);
+      continue;
+    }
+    if (!sawDoubleDash && arg.startsWith("--mode=")) {
+      mode = parseGoMode(arg.slice("--mode=".length));
+      continue;
+    }
+    if (!sawDoubleDash && arg === "+yolo") { yolo = true; continue; }
     positional.push(arg);
   }
-  return { demand: positional.join(" ").trim(), runner };
+  return { demand: positional.join(" ").trim(), runner, mode, yolo };
 }
 
 export async function goCommand(args: string[], cwd = process.cwd()): Promise<number> {
-  let parsed: { demand: string; runner?: string };
+  let parsed: { demand: string; runner?: string; mode: GoMode; yolo: boolean };
   try {
     parsed = parseGoArgs(args);
   } catch (error) {
@@ -73,10 +97,11 @@ export async function goCommand(args: string[], cwd = process.cwd()): Promise<nu
         runEngine: (engineArgs) => runCommand({ args: engineArgs, cwd }),
       },
       parsed.demand,
-      { runner: parsed.runner },
+      { runner: parsed.runner, mode: parsed.mode, yolo: parsed.yolo },
     );
     process.stdout.write(
-      `🚀 /go dispatched disposable issue #${result.issue} (origin=go, lane:go, go-workers/). ` +
+      `🚀 /go dispatched disposable issue #${result.issue} ` +
+        `(origin=go, lane:go, go-workers/, mode=${parsed.mode}${parsed.yolo ? ", +yolo" : ""}). ` +
         `engine exit ${result.engineExit}.\n`,
     );
     return result.engineExit;

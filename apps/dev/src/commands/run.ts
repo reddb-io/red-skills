@@ -111,6 +111,14 @@ interface ParsedRunFlags {
    * its dedicated worker sees only the minted disposable issue and the running
    * fleet never does. */
   lane?: string;
+  /** --pre-pr: route the run through the hardened pre-PR pipeline before opening
+   * the PR (the `/go` `no-mistakes` dispatch mode, issue #923). */
+  prePr: boolean;
+  /** --local-merge: land the branch by an approved local fast-forward instead of
+   * opening a PR (the `/go` `local-only` dispatch mode, issue #923). */
+  localMerge: boolean;
+  /** --yolo: the opt-in autonomy bump (`/go +yolo`, issue #923). */
+  yolo: boolean;
 }
 
 /** Raised when --alternate is combined with --runner (mutually exclusive). */
@@ -164,6 +172,9 @@ const RUN_FLAG_SCHEMA = {
   "reconcile-issue": { kind: "value", coerce: (raw: string): number => Number(raw) },
   origin: { kind: "value", coerce: (raw: string): string => raw },
   lane: { kind: "value", coerce: (raw: string): string => raw },
+  "pre-pr": { kind: "boolean" },
+  "local-merge": { kind: "boolean" },
+  yolo: { kind: "boolean" },
 } satisfies FlagSchema;
 
 /** Parse the `run` flags: --prd N / --issues a,b,c / -n N / --once / --request / --runner. */
@@ -214,6 +225,9 @@ export function parseRunFlags(args: readonly string[]): ParsedRunFlags {
     reconcileIssue,
     origin: values.origin as string | undefined,
     lane: values.lane as string | undefined,
+    prePr: values["pre-pr"] === true,
+    localMerge: values["local-merge"] === true,
+    yolo: values.yolo === true,
   };
 }
 
