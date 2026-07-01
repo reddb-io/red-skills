@@ -202,12 +202,13 @@ export interface RunAgentInput {
   /** The worker branch sandcastle commits land on (afk/{id}/{N}-{slug}). */
   branch: string;
   /**
-   * The resolved base branch (lock > pin > main, ADR 0031) the worker branch is
-   * forked from. Passed to sandcastle's NamedBranchStrategy `baseBranch` start
-   * point so the branch's parent is the pinned/locked base, not HEAD. Sandcastle
-   * only honours it when the branch is created new and the caller has made the
-   * ref current (process-issue does a `git fetch origin <base>` first). Defaults
-   * to HEAD when omitted.
+   * The remote-tracking ref for the resolved base (e.g. `origin/main`, ADR 0031)
+   * the worker branch is forked from. Passed to sandcastle's NamedBranchStrategy
+   * `baseBranch` start point so the branch's parent is the freshly-fetched base,
+   * not the potentially-stale local branch. process-issue populates this as
+   * `${remote}/${base}` after calling `fetchBase`, so the ref is guaranteed current.
+   * Sandcastle only honours it when the branch is created new. Defaults to HEAD
+   * when omitted.
    */
   base?: string;
   /** Isolation: "none" (default, node-only) | "docker" | "podman". */
