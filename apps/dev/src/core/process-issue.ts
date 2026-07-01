@@ -27,7 +27,7 @@ import {
   slugifyRef,
   type GitExec,
 } from "./remote-branch.js";
-import { buildHandoff, EXIT_PROTOCOL, SCOUT_EXIT_PROTOCOL, type HandoffComment } from "./handoff.js";
+import { buildHandoff, exitProtocolFor, type HandoffComment } from "./handoff.js";
 import { evaluateGoalPredicate } from "./goal-predicate.js";
 import {
   type AgentOutcome,
@@ -85,7 +85,7 @@ import {
 } from "./issue-classifier.js";
 import type { AttemptStatus } from "./envelope.js";
 import type { Runner } from "../types/runner.js";
-import { toAgentRunner } from "./runner-spec.js";
+import { runnerSupportsStructuredOutput, toAgentRunner } from "./runner-spec.js";
 import type { HistoryClock } from "./history.js";
 
 // ---------- injected IO ----------
@@ -991,7 +991,12 @@ export async function processIssue(
       effort: initialTier.effort,
       handoffPath,
       handoffContent: handoff,
-      systemPrompt: input.runMode === "scout" ? SCOUT_EXIT_PROTOCOL : EXIT_PROTOCOL,
+      // Structured-output rollout (ADR 0082, #932): a schema-enabled runner gets
+      // the AgentOutput emit clause; others keep the text-sentinel-only protocol.
+      systemPrompt: exitProtocolFor({
+        runMode: input.runMode,
+        structuredOutput: runnerSupportsStructuredOutput(toAgentRunner(activeRunner)),
+      }),
       branch,
       base: baseRef,
       cwd: input.attemptDir,
@@ -1115,7 +1120,10 @@ export async function processIssue(
         effort: fallbackTier.effort,
         handoffPath,
         handoffContent: handoff,
-        systemPrompt: input.runMode === "scout" ? SCOUT_EXIT_PROTOCOL : EXIT_PROTOCOL,
+        systemPrompt: exitProtocolFor({
+          runMode: input.runMode,
+          structuredOutput: runnerSupportsStructuredOutput(toAgentRunner(other)),
+        }),
         branch,
         base,
         cwd: input.attemptDir,
