@@ -8,6 +8,9 @@ import {
   buildPreviousAttempts,
   buildThreadDiscussion,
   EXIT_PROTOCOL,
+  SCOUT_EXIT_PROTOCOL,
+  AGENT_OUTPUT_INSTRUCTION,
+  exitProtocolFor,
   UNTRUSTED_PAYLOAD_NOTICE,
   type HandoffComment,
 } from "../src/core/handoff.js";
@@ -303,6 +306,25 @@ describe("buildHandoff", () => {
     expect(EXIT_PROTOCOL).toContain("<merge-gate>");
     // Still must not push agents to re-run an unbounded full suite after DONE.
     expect(EXIT_PROTOCOL).toContain("Do NOT re-run an unbounded full repository suite");
+  });
+
+  it("exitProtocolFor: schema-enabled runner gets the AgentOutput clause spliced in (ADR 0082, #932)", () => {
+    const p = exitProtocolFor({ structuredOutput: true });
+    expect(p).toContain("<agent-output>");
+    expect(p).toContain(AGENT_OUTPUT_INSTRUCTION);
+    // Coexist: the sentinel contract is preserved, not replaced.
+    expect(p).toContain("<promise>DONE</promise>");
+    expect(p.endsWith("</exit-protocol>")).toBe(true);
+  });
+
+  it("exitProtocolFor: non-schema runner keeps the plain text-sentinel protocol (coexist fallback)", () => {
+    const p = exitProtocolFor({ structuredOutput: false });
+    expect(p).toBe(EXIT_PROTOCOL);
+    expect(p).not.toContain("<agent-output>");
+  });
+
+  it("exitProtocolFor: scout mode always wins over structured output", () => {
+    expect(exitProtocolFor({ runMode: "scout", structuredOutput: true })).toBe(SCOUT_EXIT_PROTOCOL);
   });
 
   it("case5: malformed envelope → no previous-attempts, no human-guidance, surfaces in discussion", () => {
