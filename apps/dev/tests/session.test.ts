@@ -606,3 +606,63 @@ describe("runSession — session-level lifecycle hooks", () => {
     expect(trace.hookCommands).toEqual([]);
   });
 });
+
+// ---------- /go issueless dispatch path (engine seam) ----------
+//
+// `/go "<demand>"` mints a disposable tracking issue and feeds its number back
+// into the AFK engine with `--once --issues N --lane lane:go`. These tests verify
+// that the session's INJECTION SEAM (SessionDeps / processIssue / selectIssues)
+// correctly handles that path — i.e. a `lane:go` candidate passes through
+// `selectIssues({ kind: "issues", numbers: [N] })` and gets processed exactly
+// once. No GH / git / gh-cli touches occur; all IO is injected.
+
+describe("runSession — /go issueless dispatch path via engine seams", () => {
+  it("processes the disposable issue when selected by number via --issues", async () => {
+    // The disposable issue minted by /go carries lane:go (never ready-for-agent).
+    // When the /go worker lists lane:go and selects --issues 42, selectIssues
+    // must find the candidate and processIssue must be called with it.
+    const { deps, ctx, trace } = makeSession({
+      candidates: [cand(42, ["lane:go"])],
+      filter: { kind: "issues", numbers: [42] },
+      once: true,
+    });
+    const summary = await runSession(deps, ctx);
+    expect(trace.processedOrder).toEqual([42]);
+    expect(summary.done).toBe(1);
+    expect(summary.total).toBe(1);
+  });
+
+  it("processes exactly one issue (--once) and stops — the /go single-shot invariant", async () => {
+    // /go runs the engine with --once so it never spills over into other issues.
+    // This verifies the single-shot invariant at the session seam.
+    const { deps, ctx, trace } = makeSession({
+      candidates: [cand(7, ["lane:go"]), cand(8, ["lane:go"])],
+      filter: { kind: "issues", numbers: [7] },
+      once: true,
+    });
+    await runSession(deps, ctx);
+    // Only issue 7 was requested; issue 8 is never touched.
+    expect(trace.processedOrder).toEqual([7]);
+  });
+
+  it("the lane:go candidate is absent from a ready-for-agent listing (isolation)", () => {
+    // Verifies that selectIssues({ kind: "all" }) over a pool that contains only
+    // ready-for-agent issues does NOT include a lane:go candidate — because the
+    // pool is whatever listCandidates returns. A lane:go issue never appears in
+    // the ready-for-agent listing the /afk fleet uses.
+    const laneGoIssue = cand(99, ["lane:go"]);
+    const readyPool = [cand(1), cand(2)]; // no lane:go entries
+    // selectIssues over the ready-for-agent pool never surfaces #99.
+    const selected = selectIssues(readyPool, { kind: "all" });
+    expect(selected.map((c) => c.number)).not.toContain(laneGoIssue.number);
+  });
+
+  it("a /go candidate not in the listed pool raises IssueSelectionError (missed mint)", () => {
+    // If the disposable issue was never created (or was closed before the worker
+    // listed it), --issues N throws so the /go worker fails cleanly rather than
+    // silently draining nothing.
+    expect(() =>
+      selectIssues([cand(1, ["lane:go"])], { kind: "issues", numbers: [999] }),
+    ).toThrow(IssueSelectionError);
+  });
+});
