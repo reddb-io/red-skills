@@ -4,6 +4,7 @@ import {
   landMerge,
   landPr,
   openReviewPr,
+  preMergeRebase,
   resolveMergeConflict,
   buildConflictPrompt,
   waitForReviewCheck,
@@ -736,5 +737,95 @@ describe("resolveMergeConflict (one-shot self-resolver)", () => {
   it("instructs the resolver to commit with --no-verify (bypass consumer hooks, #840)", () => {
     const prompt = buildConflictPrompt(input, "status", "diff");
     expect(prompt).toContain("git commit --no-edit --no-verify");
+  });
+});
+
+describe("preMergeRebase (#1006)", () => {
+  const base = { repo: "/wt", remote: "origin", base: "main", branch: "afk/w/9-x" };
+
+  it("clean rebase → fetches base, rebases, force-pushes the branch, ok", async () => {
+    const { exec, calls } = fakeExec();
+    const r = await preMergeRebase(exec, base);
+    expect(r).toEqual({ ok: true });
+    const j = joined(calls);
+    expect(j).toContain("git -C /wt fetch origin main --quiet");
+    expect(j).toContain("git -C /wt rebase origin/main");
+    expect(j).toContain("git -C /wt push origin HEAD:refs/heads/afk/w/9-x --force-with-lease");
+    // A clean rebase never aborts.
+    expect(j.some((c) => c.includes("rebase --abort"))).toBe(false);
+  });
+
+  it("a fetch failure short-circuits before any rebase", async () => {
+    const { exec, calls } = fakeExec([
+      { match: (a) => a.includes("fetch"), result: { code: 1 } },
+    ]);
+    const r = await preMergeRebase(exec, base);
+    expect(r).toEqual({ ok: false, reason: "fetch-failed" });
+    expect(joined(calls).some((c) => c.includes("rebase"))).toBe(false);
+  });
+
+  it("a rebase conflict aborts the rebase and never pushes → conflict", async () => {
+    const { exec, calls } = fakeExec([
+      { match: (a) => a.join(" ") === "git -C /wt rebase origin/main", result: { code: 1 } },
+    ]);
+    const r = await preMergeRebase(exec, base);
+    expect(r).toEqual({ ok: false, reason: "conflict" });
+    const j = joined(calls);
+    expect(j).toContain("git -C /wt rebase --abort");
+    expect(j.some((c) => c.includes("push"))).toBe(false);
+  });
+
+  it("a force-with-lease reject retries (re-fetch + re-rebase) then succeeds on the 2nd push", async () => {
+    let pushes = 0;
+    const { exec, calls } = fakeExec([
+      {
+        match: (a) => a.includes("push"),
+        result: { code: 1 },
+      },
+    ]);
+    // Wrap to make the 2nd push succeed.
+    const wrapped: typeof exec = async (argv) => {
+      if (argv.includes("push")) {
+        pushes++;
+        return { code: pushes >= 2 ? 0 : 1, stdout: "", stderr: "" };
+      }
+      return exec(argv);
+    };
+    const r = await preMergeRebase(wrapped, base);
+    expect(r).toEqual({ ok: true });
+    expect(pushes).toBe(2);
+    // A retry re-fetches + re-rebases the advanced base between pushes.
+    const fetches = joined(calls).filter((c) => c.includes("fetch")).length;
+    expect(fetches).toBeGreaterThanOrEqual(2);
+  });
+
+  it("force-with-lease rejected on every attempt → retries twice then push-rejected (3 pushes)", async () => {
+    let pushes = 0;
+    const exec: Exec = async (argv) => {
+      if (argv.includes("push")) {
+        pushes++;
+        return { code: 1, stdout: "", stderr: "rejected" };
+      }
+      return { code: 0, stdout: "", stderr: "" };
+    };
+    const r = await preMergeRebase(exec, { ...base, maxPushRetries: 2 });
+    expect(r).toEqual({ ok: false, reason: "push-rejected" });
+    expect(pushes).toBe(3);
+  });
+
+  it("a re-rebase during retry that conflicts → conflict (bounded, no infinite retry)", async () => {
+    let rebases = 0;
+    const exec: Exec = async (argv) => {
+      const j = argv.join(" ");
+      if (j === "git -C /wt rebase origin/main") {
+        rebases++;
+        // First rebase clean; the retry's re-rebase conflicts.
+        return { code: rebases >= 2 ? 1 : 0, stdout: "", stderr: "" };
+      }
+      if (argv.includes("push")) return { code: 1, stdout: "", stderr: "rejected" };
+      return { code: 0, stdout: "", stderr: "" };
+    };
+    const r = await preMergeRebase(exec, base);
+    expect(r).toEqual({ ok: false, reason: "conflict" });
   });
 });
