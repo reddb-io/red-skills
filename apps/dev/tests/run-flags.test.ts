@@ -62,7 +62,21 @@ describe("parseRunFlags", () => {
       alternate: false,
       fallbackRunner: false,
       bootOnly: false,
+      prePr: false,
+      localMerge: false,
+      yolo: false,
     });
+  });
+
+  it("parses the /go dispatch-mode flags --pre-pr / --local-merge / --yolo", () => {
+    const f = parseRunFlags(["--pre-pr", "--local-merge", "--yolo"]);
+    expect(f.prePr).toBe(true);
+    expect(f.localMerge).toBe(true);
+    expect(f.yolo).toBe(true);
+    const d = parseRunFlags([]);
+    expect(d.prePr).toBe(false);
+    expect(d.localMerge).toBe(false);
+    expect(d.yolo).toBe(false);
   });
 
   it("parses --boot-only as a boolean, defaulting to false", () => {
