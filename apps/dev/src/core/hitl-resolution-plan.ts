@@ -1,6 +1,6 @@
 import type { HitlDecisionExtraction } from "./hitl-decision-extraction.js";
 import { clearCurrentBlocker, parseCurrentBlocker, upsertCurrentBlocker } from "./blocker-state.js";
-import { upsertMarkdownSection } from "./development-workflow.js";
+import { upsertAgentBrief } from "./agent-brief.js";
 import { LABEL_READY, LABEL_HUMAN } from "./triage-labels.js";
 
 export interface HitlResolutionIssue {
@@ -82,7 +82,7 @@ export function planHitlResolution(input: HitlResolutionInput): HitlResolutionPl
     });
     return {
       commentBody: directiveComment(input),
-      bodyUpdate: upsertMarkdownSection(cleared, "Agent brief", input.disposition.agentBrief),
+      bodyUpdate: upsertAgentBrief(cleared, input.disposition.agentBrief),
       addLabels: [LABEL_READY],
       removeLabels: [LABEL_HUMAN, ...staleBlockerLabels(input.issue.labels)],
     };
