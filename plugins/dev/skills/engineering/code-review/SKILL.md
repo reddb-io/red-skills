@@ -1,13 +1,13 @@
 ---
-name: review
-description: Review the changes since a fixed point (commit, branch, tag, or merge-base) along two axes — Standards (does the code follow this repo's documented coding standards?) and Spec (does the code match what the originating issue/PRD asked for?). Runs both reviews in parallel sub-agents and reports them side by side. Use when the user wants to review a branch, a PR, work-in-progress changes, or asks to "review since X".
+name: code-review
+description: Two-axis code review of the diff between HEAD and a fixed point — Standards (does the code follow this repo's documented coding standards and the Fowler smell baseline?) and Spec (does it implement what the issue/PRD asked for?). Runs both reviews as parallel sub-agents. Use when the user wants to review a branch, a PR, work-in-progress changes, or asks to "review since X".
 ---
 
-# Review
+# Code Review
 
 Two-axis review of the diff between `HEAD` and a fixed point the user supplies:
 
-- **Standards** — does the code conform to this repo's documented coding standards?
+- **Standards** — does the code conform to this repo's documented coding standards, and does it avoid the universal Fowler smell baseline?
 - **Spec** — does the code faithfully implement the originating issue / PRD / spec?
 
 Both axes run as **parallel sub-agents** so they don't pollute each other's context, then this skill aggregates their findings.
@@ -42,7 +42,7 @@ Anything in the repo that documents how code should be written. Common locations
 - `.editorconfig`, `eslint.config.*`, `biome.json`, `prettier.config.*`, `tsconfig.json` (machine-enforced standards — note them but don't re-check what tooling already checks)
 - Any `STYLE.md`, `STANDARDS.md`, `STYLEGUIDE.md`, or similar at the repo root or under `docs/`
 
-Collect the list of files. The **Standards** sub-agent will read them.
+Collect the list of files. The **Standards** sub-agent will read them and also apply the always-on Fowler smell baseline (see `<supporting-info>`).
 
 ### 4. Spawn both sub-agents in parallel
 
@@ -52,7 +52,7 @@ Send a single message with two `Agent` tool calls. Use the `general-purpose` sub
 
 - The full diff command and commit list.
 - The list of standards-source files you found in step 3.
-- The brief: "Read the standards docs. Then read the diff. Report — per file/hunk where relevant — every place the diff violates a documented standard. Cite the standard (file + the rule). Distinguish hard violations from judgement calls. Skip anything tooling enforces. Under 400 words."
+- The brief: "Read the standards docs. Then read the diff. Report — per file/hunk where relevant — every place the diff violates a documented standard. Cite the standard (file + the rule). Distinguish hard violations from judgement calls. Skip anything tooling enforces. Also apply the following always-on smell baseline from Fowler's *Refactoring*, even when no standards doc exists: mysterious name, duplicated code, feature envy, data clumps, primitive obsession, repeated switches, shotgun surgery, divergent change, speculative generality, message chains, middle man, refused bequest. For each smell found, name it and suggest a one-line fix. Repo standards override the baseline. Under 400 words total."
 
 **Spec sub-agent prompt** — include:
 
@@ -76,3 +76,26 @@ A change can pass one axis and fail the other:
 - Code that does exactly what the issue asked but breaks the project's conventions → **Spec pass, Standards fail.**
 
 Reporting them separately stops one axis from masking the other.
+
+<supporting-info>
+
+## Fowler smell baseline
+
+These twelve smells apply universally to every review, even when the repo has no written standards. Repo-specific standards override or extend them.
+
+| Smell | One-line fix |
+|---|---|
+| **Mysterious Name** | Rename to describe exactly what it does |
+| **Duplicated Code** | Extract the shared logic once |
+| **Feature Envy** | Move the method closer to the data it uses |
+| **Data Clumps** | Bundle the recurring group into an object |
+| **Primitive Obsession** | Replace bare strings/numbers with typed objects |
+| **Repeated Switches** | Replace with polymorphism or a dispatch table |
+| **Shotgun Surgery** | Consolidate the scattered change points into one place |
+| **Divergent Change** | Split the class by its distinct responsibilities |
+| **Speculative Generality** | Delete the unused abstraction |
+| **Message Chains** | Introduce a method that hides the chain |
+| **Middle Man** | Remove the delegator and call the real object directly |
+| **Refused Bequest** | Push down the unused inheritance to the subclass that needs it |
+
+</supporting-info>
