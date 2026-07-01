@@ -21,6 +21,12 @@ export const LABEL_READY_FOR_REVIEW = "ready-for-review";
 // never surface it. The dedicated `/go` worker lists this lane instead and
 // processes the single minted issue directly.
 export const LABEL_GO_LANE = "lane:go";
+// Isolated `/go --scout` read-only investigation lane (issue #922). A disposable
+// scout tracking issue carries THIS label (never `ready-for-agent` or `lane:go`)
+// and is processed by a dedicated scout worker that runs the agent in read-only
+// mode — no commits, no branch push, no PR, no merge. The agent posts a report
+// comment and the issue auto-closes; nothing lands on main.
+export const LABEL_SCOUT_LANE = "lane:scout";
 
 // Triage state labels
 export const LABEL_NEEDS_TRIAGE = "needs-triage";
