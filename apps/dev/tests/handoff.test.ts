@@ -285,17 +285,21 @@ describe("buildHandoff", () => {
     expect(EXIT_PROTOCOL).toContain("prose");
   });
 
-  it("EXIT_PROTOCOL instructs the agent to emit the structured AgentOutput block (ADR 0082 / #919)", () => {
-    expect(EXIT_PROTOCOL).toContain("<agent-output>");
-    expect(EXIT_PROTOCOL).toContain("</agent-output>");
+  it("schema-enabled protocol instructs the agent to emit the structured AgentOutput block (ADR 0082 / #919)", () => {
+    // The AgentOutput clause is spliced in ONLY for a schema-enabled runner (the
+    // coexist design); the plain EXIT_PROTOCOL stays text-sentinel-only so a
+    // non-schema runner is never told to emit a block it cannot produce.
+    const p = exitProtocolFor({ structuredOutput: true });
+    expect(p).toContain("<agent-output>");
+    expect(p).toContain("</agent-output>");
     // The full AgentOutput schema fields must be named so the agent emits them.
-    expect(EXIT_PROTOCOL).toContain("success");
-    expect(EXIT_PROTOCOL).toContain("summary");
-    expect(EXIT_PROTOCOL).toContain("key_changes_made");
-    expect(EXIT_PROTOCOL).toContain("key_learnings");
-    expect(EXIT_PROTOCOL).toContain("should_fully_stop");
-    // Coexistence: the sentinel stays the final line as the fallback channel.
-    expect(EXIT_PROTOCOL).toContain("very last line");
+    expect(p).toContain("success");
+    expect(p).toContain("summary");
+    expect(p).toContain("key_changes_made");
+    expect(p).toContain("key_learnings");
+    expect(p).toContain("should_fully_stop");
+    // The plain constant carries NO structured clause (text-sentinel-only).
+    expect(EXIT_PROTOCOL).not.toContain("<agent-output>");
   });
 
   it("EXIT_PROTOCOL distinguishes touched-package confidence checks from the binding merge gate (#849)", () => {
@@ -438,6 +442,32 @@ describe("buildHandoff prior-attempt-context", () => {
     });
     expect(out.indexOf("<human-guidance-thread>")).toBeLessThan(out.indexOf("<prior-attempt-context>"));
     expect(out.indexOf("<prior-attempt-context>")).toBeLessThan(out.indexOf("<thread-discussion"));
+  });
+});
+
+// The unified self-repair loop (#940) seeds the next iteration with an explicit
+// repair instruction via <repair-instructions>. Byte-for-byte compatibility on a
+// first attempt (empty/undefined) is the same omit-when-absent invariant the
+// other optional sections keep.
+describe("buildHandoff repair-instructions (#940)", () => {
+  it("renders <repair-instructions> verbatim when a repair directive is set", () => {
+    const out = base({ repairInstruction: "REPAIR: fix the commit, work is preserved." });
+    expect(out).toContain("<repair-instructions>");
+    expect(out).toContain("</repair-instructions>");
+    expect(out).toContain("REPAIR: fix the commit, work is preserved.");
+  });
+
+  it("first attempt / undefined → section omitted (handoff unchanged)", () => {
+    expect(base({}).includes("<repair-instructions>")).toBe(false);
+    expect(base({ repairInstruction: "" }).includes("<repair-instructions>")).toBe(false);
+  });
+
+  it("repair-instructions sits before prior-attempt-context", () => {
+    const out = base({
+      repairInstruction: "REPAIR: rerun the gate.",
+      priorAttemptContext: "prev-attempt: 1",
+    });
+    expect(out.indexOf("<repair-instructions>")).toBeLessThan(out.indexOf("<prior-attempt-context>"));
   });
 });
 
