@@ -42,6 +42,7 @@ import type { GhContext } from "../runtime/gh.js";
 import type { GitContext } from "../runtime/git.js";
 import type { ExecFn } from "../runtime/exec.js";
 import { getConfig, loadConfig, readBackpressure, resolveTier, resolveCiTimeoutSeconds } from "../core/config.js";
+import { resolveNotesLoopConfig } from "../core/notes-loop.js";
 import {
   classifyIssue,
   resolveReviewGate,
@@ -603,6 +604,10 @@ export function buildProcessDeps(
       // $ITER_DIR/validation.jsonl — the machine-readable feedback sidecar the
       // Memory bridge consumes (SKILL.md §Validation Sidecar).
       writeValidationSidecar: (path, lines) => fsx.writeValidationSidecar(path, lines),
+      // notes-loop notes.md (#997): plain text written to the attempt dir (sibling
+      // of the sandcastle worktree; `.red/tmp/` is gitignored so it never lands on
+      // the branch). Reuses the handoff writer — both are "write text to a path".
+      writeNotes: (path, content) => fsx.writeHandoff(path, content),
       completionSweep: (issue) => fsx.completionSweep(paths.workersRoot, issue),
     },
     git: {
@@ -965,6 +970,21 @@ export function buildProcessDeps(
     markPhase: (phase) => {
       void updateState(join(current.attemptDir, "afk.state.json"), {
         "current.phase": phase,
+      }).catch(() => {});
+    },
+    // Track C notes-loop (#997): opt-in accumulative short-iteration inner loop.
+    // Off by default → processIssue performs exactly one runAgent call.
+    notesLoop: resolveNotesLoopConfig(config),
+    // Token-budget probe (reliable for codex/opencode; claude accrues at the
+    // iteration boundary — the notes-loop leans on iteration + wall-clock caps).
+    notesLoopTokensUsed: () => {
+      const a = activityMeter.peek();
+      return a.inputTokens + a.outputTokens;
+    },
+    // Stamp the outer notes-loop iteration onto worker state for the monitor.
+    markNotesIteration: (iteration) => {
+      void updateState(join(current.attemptDir, "afk.state.json"), {
+        "current.notes_iteration": String(iteration),
       }).catch(() => {});
     },
     historyPath: paths.historyPath,
