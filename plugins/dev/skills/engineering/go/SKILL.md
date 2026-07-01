@@ -71,4 +71,8 @@ A green gate (every finding mechanical or approved) proceeds to the PR and merge
 - A fire that must jump the queue → `/urgent`.
 - Hand-done work on your own branch that needs only validation + landing → requeue (the no-agent landing lane, ADR 0055).
 
+## Name choice: `/go` not `/run`
+
+**`/run` was the first candidate but was rejected** because the dev CLI already uses `run` as its main subcommand (`red-skills-dev run …` is the AFK queue-drain entrypoint). A second `run` skill would create an ambiguous surface: agents that type `/run` intending ad-hoc dispatch would instead invoke the queue drain, or vice versa. `/go` is unambiguous — it names the tier and carries no collision risk with any existing `dev` subcommand or skill.
+
 </supporting-info>
