@@ -6,6 +6,7 @@ describe("parseGoArgs", () => {
     expect(parseGoArgs(["fix", "the", "flaky", "test"])).toEqual({
       demand: "fix the flaky test",
       runner: undefined,
+      scout: false,
     });
   });
 
@@ -14,9 +15,9 @@ describe("parseGoArgs", () => {
   });
 
   it("extracts --runner / -r without folding it into the demand", () => {
-    expect(parseGoArgs(["do it", "--runner", "codex"])).toEqual({ demand: "do it", runner: "codex" });
-    expect(parseGoArgs(["-r", "claude", "do it"])).toEqual({ demand: "do it", runner: "claude" });
-    expect(parseGoArgs(["--runner=codex", "do it"])).toEqual({ demand: "do it", runner: "codex" });
+    expect(parseGoArgs(["do it", "--runner", "codex"])).toEqual({ demand: "do it", runner: "codex", scout: false });
+    expect(parseGoArgs(["-r", "claude", "do it"])).toEqual({ demand: "do it", runner: "claude", scout: false });
+    expect(parseGoArgs(["--runner=codex", "do it"])).toEqual({ demand: "do it", runner: "codex", scout: false });
   });
 
   it("passes a dashed demand through after --", () => {
