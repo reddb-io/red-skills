@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   genWorkerId,
+  runModeForCandidate,
   selectIssues,
   slugify,
   runSession,
@@ -107,6 +108,33 @@ describe("selectIssues", () => {
     ];
     const out = selectIssues(list, { kind: "prd", prd: 44 });
     expect(out.map((c) => c.number)).toEqual([9, 2]);
+  });
+});
+
+// ---------- runModeForCandidate ----------
+
+describe("runModeForCandidate (type:scout fleet routing)", () => {
+  it("returns undefined for a plain ship candidate (no type:scout label)", () => {
+    expect(runModeForCandidate(cand(1, ["ready-for-agent"]))).toBeUndefined();
+    expect(runModeForCandidate(cand(2, ["ready-for-agent", "priority:high"]))).toBeUndefined();
+  });
+
+  it("returns 'scout' when the candidate carries the type:scout label", () => {
+    expect(runModeForCandidate(cand(3, ["ready-for-agent", "type:scout"]))).toBe("scout");
+  });
+
+  it("the --run-mode flag takes priority over the label", () => {
+    expect(runModeForCandidate(cand(4, ["ready-for-agent", "type:scout"]), "scout")).toBe("scout");
+    expect(runModeForCandidate(cand(5, ["ready-for-agent"]), "scout")).toBe("scout");
+  });
+
+  it("type:scout issues are NOT dropped by selectIssues (fleet-compatible)", () => {
+    const list = [
+      cand(1, ["ready-for-agent"]),
+      cand(2, ["ready-for-agent", "type:scout"]),
+    ];
+    const out = selectIssues(list, { kind: "all" });
+    expect(out.map((c) => c.number)).toEqual([1, 2]);
   });
 });
 

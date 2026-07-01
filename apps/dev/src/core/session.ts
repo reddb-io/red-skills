@@ -73,7 +73,7 @@ export type SelectionFilter =
   | { kind: "issues"; numbers: number[] }
   | { kind: "prd"; prd: number };
 
-import { LABEL_PRD, LABEL_URGENT, LABEL_HIGH, LABEL_READY } from "./triage-labels.js";
+import { LABEL_PRD, LABEL_URGENT, LABEL_HIGH, LABEL_READY, LABEL_TYPE_SCOUT } from "./triage-labels.js";
 
 function hasLabel(c: IssueCandidate, label: string): boolean {
   return c.labels.includes(label);
@@ -176,6 +176,17 @@ export function selectIssues(candidates: readonly IssueCandidate[], filter: Sele
   const urgentNumbers = new Set(urgent.map((c) => c.number));
   const tail = filtered.filter((c) => !urgentNumbers.has(c.number));
   return [...urgent, ...tail];
+}
+
+/** Derive the execution run-mode for a fleet candidate from its labels.
+ * A `type:scout` label activates read-only investigation mode — no commits,
+ * no push, no PR. The caller's explicit `flagRunMode` (from `--run-mode`) wins
+ * when both are set, so CLI overrides always take priority. Issues WITHOUT
+ * `type:scout` return `undefined` (normal ship dispatch — unaffected). */
+export function runModeForCandidate(candidate: IssueCandidate, flagRunMode?: string): string | undefined {
+  if (flagRunMode !== undefined) return flagRunMode;
+  if (candidate.labels.includes(LABEL_TYPE_SCOUT)) return "scout";
+  return undefined;
 }
 
 // ---------- the outer session loop ----------

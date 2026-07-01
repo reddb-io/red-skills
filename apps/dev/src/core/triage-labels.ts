@@ -77,5 +77,12 @@ export const LABEL_INFRA = "blocked:infra";
 // work is salvaged + parked for a human; never blind-retried as a transient.
 export const LABEL_BUDGET = "blocked:budget";
 
+// Task-type routing labels (fleet-native dispatch)
+// A `ready-for-agent` issue carrying this label is dispatched in read-only
+// investigation mode — no commits, no push, no PR. The orchestrator posts the
+// agent's output as a comment and closes the issue. Regression guard: issues
+// WITHOUT this label are dispatched as normal ship tasks (unaffected).
+export const LABEL_TYPE_SCOUT = "type:scout";
+
 // Auxiliary labels
 export const LABEL_RUNNER_ERROR = "runner-error";

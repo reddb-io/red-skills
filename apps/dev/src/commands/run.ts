@@ -2,6 +2,7 @@ import { parseRunnerFlag, detectRunner } from "../core/runner-detection.js";
 import { callerProcessTreeNative } from "../runtime/caller-process.js";
 import {
   runSession,
+  runModeForCandidate,
   type SessionContext,
   type SessionDeps,
   type SelectionFilter,
@@ -1495,7 +1496,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
         repoDir: c.issueTemplate.repoDir,
         remote: c.issueTemplate.remote,
         baseInput: { issueBody: candidate.body },
-        runMode: flags.runMode,
+        runMode: runModeForCandidate(candidate, flags.runMode),
       };
     },
     emit: (line: string) => process.stdout.write(`${line}\n`),
