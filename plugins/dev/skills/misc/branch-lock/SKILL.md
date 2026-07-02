@@ -22,9 +22,18 @@ dev:
 
 the same pre-tool hook blocks the agent from changing the primary checkout's
 branch (`git switch <branch>`, `git checkout <branch>`, `git switch -b <new>`)
-even without a `branch-lock.yaml` file. Missing config or a missing key means
-off. `git commit`, `git worktree add`, read-only git, and `.red/tmp/work-*/`
-worktrees stay allowed.
+even without a `branch-lock.yaml` file. It also blocks the work-destroying
+commands the standing maintainer rules forbid in the primary checkout, because
+parallel human WIP lives there and these have destroyed in-progress work before
+(issue #1024): `git reset` in **any** form (`--hard`/`--soft`/`--mixed`, with or
+without a pathspec), every `git stash` subcommand, and `git rebase --autostash`.
+The refusal points to the sanctioned alternative — do branch work in an isolated
+worktree under `.red/tmp/work-*/`, and if the local trunk diverged from origin,
+leave it alone and base on the fresh remote ref (ADR 0083). Missing config or a
+missing key means off. `git commit`, `git worktree add`, read-only git, and
+`.red/tmp/work-*/` worktrees stay allowed. Inside isolated worktrees the
+reset/stash/autostash commands remain allowed — the guard is about the primary
+checkout only.
 
 Enforcement is **agent-only**, via runner pre-tool hooks — Claude Code
 `PreToolUse(Bash)` and Codex plugin `PreToolUse` — that intercept the agent's own
