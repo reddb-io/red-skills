@@ -1230,6 +1230,9 @@ export async function processIssue(
     let salvaged = false;
     if (run.outcome === "no-sentinel") {
       const branchHasWork =
+        // Scout runs read-only — the inner agent never commits, so there is
+        // nothing to salvage. Always treat no-sentinel as a hard failure.
+        input.runMode !== "scout" &&
         (await deps.lookups.changedFiles(workerBranch, base)).length > 0 &&
         (!deps.lookups.branchPresent || (await deps.lookups.branchPresent(workerBranch)));
       if (!branchHasWork) {
