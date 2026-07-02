@@ -37,7 +37,11 @@ export function workersToDesired(workers: readonly CompactWorker[]): WorkerRecor
     const issue = typeof number === "number" ? number : Number(number);
     if (!Number.isFinite(issue)) continue;
     const phase = w.state.current.phase ?? "";
-    const processLive = w.liveness ? w.liveness !== "dead" : (w.pidLive ?? w.live);
+    const processLive = w.livenessVerdict
+      ? w.livenessVerdict.status !== "stalled"
+      : w.liveness
+        ? w.liveness !== "dead"
+        : (w.pidLive ?? w.live);
     out.push({
       worker_id: w.state.worker_id,
       issue,

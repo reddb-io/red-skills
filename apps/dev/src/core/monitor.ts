@@ -14,6 +14,7 @@
 
 import { buildSparkline, type HistoryRecord } from "./history.js";
 import { encodeToon, type ToonValue } from "./toon.js";
+import type { LivenessVerdict } from "@reddb-io/red-castle";
 
 /** The subset of a worker's current-iteration state the compact line reads. */
 export interface CompactCurrent {
@@ -64,13 +65,16 @@ export interface CompactState {
 /** One worker as handed to the pure renderer. */
 export interface CompactWorker {
   state: CompactState;
-  /** Explicit liveness verdict from the shared Worker state reader. Older tests
-   * may omit it and still fall back to `live` / `pidLive`. */
+  /** Red-castle evaluator verdict (ADR 0083 §3). The primary liveness signal for
+   * all rendering surfaces; `liveness`, `live`, and `pidLive` are derived from
+   * it. Older test stubs may omit it — the fallbacks below still apply. */
+  livenessVerdict?: LivenessVerdict;
+  /** Explicit liveness verdict from the shared Worker state reader. Derived from
+   * `livenessVerdict` when present. Older tests may omit it and still fall back
+   * to `live` / `pidLive`. */
   liveness?: "active" | "quiet-but-live" | "dead";
-  /** True when the worker's pid identity matches AND agent-lane activity is fresh
-   * (within {@link WORKER_LIVE_MAX_AGE_S}). Used for the `[live]` badge.
-   * When false but {@link pidLive} is true, the badge renders as `[quiet]`
-   * (pid identity alive, agent lane idle — e.g. mid-gate or post-attempt commit). */
+  /** True when the evaluator says "alive". Used for the `[live]` badge.
+   * When false but {@link pidLive} is true, the badge renders as `[quiet]`. */
   live: boolean;
   /** True when the worker's pid identity matches regardless of freshness.
    * Absent / false collapses to the `[stale]` (dead/finished) badge. */
@@ -192,8 +196,21 @@ function elapsedSeconds(state: CompactState, now: number): number {
  * `+0 -0`) so the diff volume is never hidden. `now` is an epoch in seconds.
  */
 /** The `live` / `quiet` / `stale` liveness badge, shared by the plain and TOON
- * renders so the two never drift. */
+ * renders so the two never drift.
+ *
+ * Primary path: evaluator verdict (`livenessVerdict`) — the single source of
+ * truth (ADR 0083 §3). Fallback chain for older test stubs without the verdict:
+ * `liveness` → `live` / `pidLive`.
+ */
 export function compactWorkerTag(worker: CompactWorker): "live" | "quiet" | "stale" {
+  if (worker.livenessVerdict !== undefined) {
+    const s = worker.livenessVerdict.status;
+    if (s === "alive") {
+      return worker.livenessVerdict.laneFresh ? "live" : "quiet";
+    }
+    if (s === "unknown") return "quiet";
+    return "stale";
+  }
   return worker.liveness === "active"
     ? "live"
     : worker.liveness === "quiet-but-live"
