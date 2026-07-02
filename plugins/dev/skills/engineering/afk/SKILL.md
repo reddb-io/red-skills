@@ -205,6 +205,8 @@ Filters for the **non-urgent remainder**:
 
 Final queue: `[urgent…] + [filtered…]`, deduped. Empty → `<promise>NO MORE TASKS</promise>`, exit 0.
 
+**Empty queue + non-empty backlog = flow bug, not a stop (binding on the invoking agent).** "Nothing ready" and "nothing to do" are different claims — never report the second when only the first is true. When the queue is empty but open non-PRD issues exist, print a one-line **gate census** — counts per gate: `blocked:dependency`, `ready-for-human`, `needs-triage`/`needs-info`, `type:prd` — and name the highest-leverage unblock. In particular, audit `blocked:dependency` edges whose `req:*` target no longer really pends: a **delivered-but-open PRD** strands every dependent, because the unblock cascade fires on *close*, and PRDs close on manual bookkeeping (on 2026-07-02 two fully-delivered PRDs froze 14 slices this way). The mission is maximizing autonomous drainage; humans gate only genuine decisions.
+
 ## Issue Lifecycle (the `/afk` slice)
 
 Canonical state machine lives in [`setup-red-skills/triage-labels.md`](../setup-red-skills/triage-labels.md). The portion `/afk` touches:
@@ -634,7 +636,7 @@ The inner agent reads `../handoff.md` — top-level XML wrappers (`<issue-body>`
 
 ## Stop Conditions
 
-- Queue drained → `<promise>NO MORE TASKS</promise>` → exit 0.
+- Queue drained → `<promise>NO MORE TASKS</promise>` → exit 0. When the backlog still has open non-PRD issues, the invoking agent accompanies this with the gate census (see *Issue Selection*) — a drained queue with a gated backlog is a flow bug to surface, not "nothing to do".
 - `-n N` reached → summary + exit 0.
 - Runner exhaustion / runner transport failure → route the current issue through bounded recovery (`blocked:quota` or `blocked:runner-transient`), then stop the outer run with exit 75.
 - Uncaught error in orchestrator → leave worktree in place, exit 1, print recovery hint. (No heartbeat sub-shell to kill since Slice D.)

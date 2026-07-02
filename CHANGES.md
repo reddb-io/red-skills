@@ -6,6 +6,27 @@ Upstream base: `mattpocock/skills@21f59763be7bf734cd4cf138805bb653d9ffebb7` (see
 
 ---
 
+## afk (engineering) — empty-queue gate census is binding on the invoking agent
+
+- **status**: modified
+- **upstream**: —
+- **why**: `ready-for-agent: 0` with a gated backlog was reported as "nothing to do"; on 2026-07-02 two fully-delivered-but-open PRDs froze 14 slices unnoticed.
+- **what changed**: Issue Selection and Stop Conditions now require a one-line gate census (counts per gate + highest-leverage unblock) whenever the queue is empty but open non-PRD issues exist.
+
+## to-issues (engineering) — `req:N` must target executable issues, never PRDs
+
+- **status**: modified
+- **upstream**: —
+- **why**: the unblock cascade fires on close; PRDs close on manual bookkeeping, so a `req:<PRD>` edge strands dependents indefinitely (2026-07-02 freeze).
+- **what changed**: new hard rule under slice publication; runtime enforcement tracked in #1048.
+
+## hitl (engineering) — delegable-manual-landing disposition
+
+- **status**: modified
+- **upstream**: —
+- **why**: the binary delegable/non-delegable forced agent-codable manual-merge slices (PRD #1013 T1) to sit as plain human-parked work.
+- **what changed**: third disposition (keep `ready-for-human`, dispatch coding via `/go`, human merges; `landing:manual` routing once #1049 lands) in Step 4, Step 6, and the Directive template.
+
 ## upstream drift review — 6eeb81b → 21f5976 (issue #896)
 
 - **status**: reviewed
