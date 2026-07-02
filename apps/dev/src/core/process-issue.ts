@@ -75,6 +75,7 @@ import { buildAttemptRecordPayload, type AttemptRecordPayload } from "./attempt-
 import { acquireClaim, type ClaimGh, type ClaimReconcileOptions } from "./claim.js";
 import { applyCurrentBlockerEdit, parseCurrentBlocker, type CurrentBlocker } from "./blocker-state.js";
 import { parseTrustPolicy, evaluateTrustGate, type TrustProvenance } from "./trust-gate.js";
+import { getConfig } from "./config.js";
 import type { AfkModelTier, ConfigValues } from "./config.js";
 import { runNotesLoop, notesPath, type NotesLoopConfig } from "./notes-loop.js";
 import {
@@ -457,6 +458,39 @@ export interface ProcessIssueDeps {
    * legacy callers omit it (no salvage).
    */
   salvageUncommitted?(branch: string): Promise<number>;
+  /**
+   * Post-merge PRD cascade rebase (issue #1007, `afk.landing.cascade_rebase`).
+   * Provides the IO surface for {@link runCascadeRebase}: after a successful DONE
+   * landing, AFK rebases every open sibling branch (same prd:N label, not held by
+   * a live worker) onto the new base HEAD, keeping PRD siblings fresh between
+   * landings. All three operations are best-effort — a failure logs a warning and
+   * never rolls back the primary landing. Optional: when absent the cascade rebase
+   * is skipped entirely (legacy callers / tests that predate #1007).
+   */
+  cascadeRebase?: CascadeRebasePort;
+}
+
+/** Injectable IO for the post-merge PRD cascade rebase (#1007). */
+export interface CascadeRebasePort {
+  /**
+   * List remote branch names under the `afk/` namespace (e.g.
+   * `["afk/wXXX/42-fix-thing", …]`). Used to find which origin branches belong
+   * to sibling issues.
+   */
+  listAFKBranches(repoDir: string, remote: string): Promise<string[]>;
+  /**
+   * True when the worker process owning `workerId` is still alive. Used to skip
+   * branches currently held by a running worker — rebasing a live worker's branch
+   * would race with its next push.
+   */
+  isWorkerLive(workerId: string): boolean;
+  /**
+   * Rebase `branch` onto `origin/<newBase>` in an isolated worktree and push the
+   * result with `--force-with-lease`. Best-effort: never throws; returns
+   * `{ok:false, warn}` on any failure (rebase conflict, push rejection, worktree
+   * setup error).
+   */
+  rebaseAndPush(repoDir: string, branch: string, newBase: string): Promise<{ ok: boolean; warn?: string }>;
 }
 
 function resolveSpawnTier(
@@ -1699,6 +1733,14 @@ export async function processIssue(
   // run.
   await runCloseCascade(deps, issue);
 
+  // ---- 10. PRD cascade rebase (keep sibling branches fresh) ----
+  // After landing, rebase every open sibling branch (same prd:N, not held by
+  // a live worker) onto the new base HEAD so the next worker to pick up a
+  // sibling starts from a near-current base. Best-effort: per-branch failures
+  // are logged as warnings and never roll back the primary landing.
+  // `labels` was fetched at claim time (step 1) and carries the prd:N labels.
+  await runCascadeRebase(deps, input, issue, base, labels);
+
   return {
     outcome: "done",
     issue,
@@ -2246,6 +2288,85 @@ async function runCloseCascade(deps: ProcessIssueDeps, closedIssue: number): Pro
   } catch (err) {
     deps.appendIterLog(
       `🤖 /afk close-cascade for #${closedIssue} failed (best-effort; boot sweep will retry): ${String(err)}`,
+    );
+  }
+}
+
+// ---------- PRD cascade rebase (issue #1007) ----------
+
+const PRD_LABEL_RE = /^prd:([0-9]+)$/;
+const AFK_BRANCH_RE = /^afk\/([A-Za-z0-9._-]+)\/([0-9]+)-/;
+
+/**
+ * Best-effort post-merge cascade rebase for PRD siblings (issue #1007).
+ * Called after a DONE close when the issue carries a `prd:N` label. Finds every
+ * open issue carrying the same `prd:N` label, locates their live `afk/*` remote
+ * branches, skips any held by a live worker, and rebases the rest onto the new
+ * `base` HEAD with `--force-with-lease`. A per-branch failure is logged as a
+ * warning and never rolls back the primary landing.
+ *
+ * Guarded by `afk.landing.cascade_rebase` (default "true"): setting it to
+ * "false" in the repo config restores the pre-#1007 behaviour.
+ *
+ * @param labels - the claim-time label set of the closed issue (already fetched).
+ */
+async function runCascadeRebase(
+  deps: ProcessIssueDeps,
+  input: ProcessIssueInput,
+  closedIssue: number,
+  base: string,
+  labels: string[],
+): Promise<void> {
+  if (!deps.cascadeRebase) return;
+  if (getConfig(deps.hooks.config, "afk.landing.cascade_rebase") === "false") return;
+
+  try {
+    // Extract prd:N numbers from the claim-time labels.
+    const prdNumbers: number[] = [];
+    for (const l of labels) {
+      const m = PRD_LABEL_RE.exec(l);
+      if (m) prdNumbers.push(Number(m[1]));
+    }
+    if (prdNumbers.length === 0) return;
+
+    // Collect open sibling issue numbers (same prd:N, not the closed issue itself).
+    const siblingNums = new Set<number>();
+    for (const prd of prdNumbers) {
+      const siblings = await deps.gh.listByLabel(`prd:${prd}`);
+      for (const s of siblings) {
+        if (s.number !== closedIssue) siblingNums.add(s.number);
+      }
+    }
+    if (siblingNums.size === 0) return;
+
+    // List remote afk/* branches and rebase those belonging to sibling issues.
+    const remoteBranches = await deps.cascadeRebase.listAFKBranches(input.repoDir, input.remote);
+    for (const branch of remoteBranches) {
+      const m = AFK_BRANCH_RE.exec(branch);
+      if (!m) continue;
+      const workerId = m[1]!;
+      const issueNum = Number(m[2]);
+      if (!siblingNums.has(issueNum)) continue;
+
+      if (deps.cascadeRebase.isWorkerLive(workerId)) {
+        deps.appendIterLog(
+          `🤖 /afk cascade-rebase: skipping ${branch} — worker ${workerId} is alive`,
+        );
+        continue;
+      }
+
+      const r = await deps.cascadeRebase.rebaseAndPush(input.repoDir, branch, base);
+      if (r.ok) {
+        deps.appendIterLog(`🤖 /afk cascade-rebase: rebased ${branch} onto ${base}`);
+      } else {
+        deps.appendIterLog(
+          `🤖 /afk cascade-rebase warning: ${r.warn ?? `failed to rebase ${branch} onto ${base}`}`,
+        );
+      }
+    }
+  } catch (err) {
+    deps.appendIterLog(
+      `🤖 /afk cascade-rebase for #${closedIssue} failed (best-effort): ${String(err)}`,
     );
   }
 }
