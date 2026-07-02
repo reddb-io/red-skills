@@ -321,6 +321,19 @@ describe("monitor — compact dashboard", () => {
       expect(out).toContain("  status: idle");
       expect(out).toContain("  ready: 0");
     });
+
+    it("is materially cheaper than JSON for a typical multi-worker board (#995)", () => {
+      // The token win is the whole point of TOON as the default agent-facing
+      // render (#995): the worker table names its 20 columns ONCE, where JSON
+      // repeats every field name on every row. Guard the win so a future change
+      // that regresses the encoder back toward per-row key repetition is caught.
+      const board = Array.from({ length: 6 }, (_, i) =>
+        baseWorker({ state: { ...baseWorker().state, worker_id: `w${i}` } }),
+      );
+      const toon = renderCompactDashboardToon(board, events, 1780140600);
+      const json = JSON.stringify(board);
+      expect(toon.length).toBeLessThan(json.length);
+    });
   });
 
   it("surfaces a healthy idle fleet last-tick line", () => {
