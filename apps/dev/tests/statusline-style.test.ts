@@ -97,7 +97,7 @@ describe("statusline style — AFK line", () => {
       undefined,
     );
     const t = stripAnsi(line!);
-    expect(t).toContain("claude opus-max");
+    expect(t).toContain("claude-opus max");
     expect(t).not.toContain("claude-opus-4-8"); // always compact
   });
 
