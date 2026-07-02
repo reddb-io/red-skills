@@ -114,6 +114,12 @@ describe("statusline style — AFK line", () => {
     expect(stripAnsi(line!)).toContain("#17·impl·5m");
   });
 
+  it("renders loc= with a ~ prefix when locIsPeak is true", () => {
+    const t = stripAnsi(renderAfkLine({ ...afk, locIsPeak: true }, undefined)!);
+    expect(t).toContain("loc=~+12 -3");
+    expect(t).not.toContain("loc=+12 -3"); // ~ prefix replaces the plain form
+  });
+
   it("is null when there are no live workers", () => {
     expect(renderAfkLine(undefined, undefined)).toBeNull();
     expect(renderAfkLine({ ...afk, workers: 0 }, undefined)).toBeNull();

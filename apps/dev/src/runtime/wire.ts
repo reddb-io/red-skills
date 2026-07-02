@@ -642,6 +642,7 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
   let blocked = 0;
   let added = 0;
   let removed = 0;
+  let locIsPeak = false;
   let waiting = 0;
   let tokens = 0;
   let costUsd = 0;
@@ -701,6 +702,18 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
       a = stat.added;
       r = stat.removed;
     }
+    // Sticky fallback: if the live diff is still 0 but a prior non-zero value
+    // was seen this attempt, use the peak so `loc=` stays visible with a `~`
+    // prefix instead of disappearing (which looks alarming even when intact).
+    if (a === 0 && r === 0) {
+      const pa = state.current.loc_peak_added ?? 0;
+      const pr = state.current.loc_peak_removed ?? 0;
+      if (pa > 0 || pr > 0) {
+        a = pa;
+        r = pr;
+        locIsPeak = true;
+      }
+    }
     added += a;
     removed += r;
 
@@ -756,7 +769,9 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
       : undefined;
 
   return {
-    workers, queue, human, blocked, added, removed, waiting, tokens, costUsd,
+    workers, queue, human, blocked, added, removed,
+    locIsPeak: locIsPeak || undefined,
+    waiting, tokens, costUsd,
     runner, resolved, issues, stages,
     aliveMs: aliveMsList.length > 0 ? aliveMsList : undefined,
     model: model || undefined,

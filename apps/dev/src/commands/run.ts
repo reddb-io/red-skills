@@ -507,6 +507,13 @@ export function buildProcessDeps(
   // provider (#832) can report loc_added/loc_removed alongside the meter's
   // activity counters without re-shelling `git diff`.
   let lastHeartbeatDiff = { added: 0, removed: 0 };
+  // Per-attempt peak diff: the largest diff seen by the heartbeat for this attempt.
+  // Reset at attempt boundaries (same guard as activityMeter). Written to the state
+  // file so the statusline can show a sticky last-known value when the live diff
+  // transiently drops to 0 (e.g. during the feedback gate).
+  let peakLocAdded = 0;
+  let peakLocRemoved = 0;
+  let peakLocDir = "";
 
   // ---- lifecycle hooks: load config + resolve built-in defaults + real exec ----
   const config = loadConfig(paths.configPath, { warn: () => undefined });
@@ -843,6 +850,12 @@ export function buildProcessDeps(
         activityMeterDir = dir0;
         activityMeter = createActivityMeter();
       }
+      // New attempt → reset peak diff (peaks are per-attempt, not per-worker).
+      if (dir0 !== peakLocDir) {
+        peakLocDir = dir0;
+        peakLocAdded = 0;
+        peakLocRemoved = 0;
+      }
       if (
         event.type === "text" ||
         event.type === "toolCall" ||
@@ -965,6 +978,9 @@ export function buildProcessDeps(
           .catch(() => ({ added: 0, removed: 0 }));
         // Remember the volume for the on_heartbeat vitals provider (#832).
         lastHeartbeatDiff = { added, removed };
+        // Update the per-attempt peak diff (only grows; never decreases).
+        if (added > peakLocAdded) peakLocAdded = added;
+        if (removed > peakLocRemoved) peakLocRemoved = removed;
         // Close this heartbeat window on the meter — derives the waiting count
         // (a window with no new stream events) and snapshots the cumulative
         // tool/text counts to fold into the record + state.
@@ -984,6 +1000,8 @@ export function buildProcessDeps(
         await fsx.appendLine(join(current.attemptDir, "afk.log"), `[heartbeat] ${hb.msg}`);
         await updateState(join(current.attemptDir, "afk.state.json"), {
           ...hb.statePatch,
+          "current.loc_peak_added": peakLocAdded,
+          "current.loc_peak_removed": peakLocRemoved,
           "current.worktree": worktree,
           ...(info.base ? { "current.base": info.base } : {}),
         }).catch(() => {});

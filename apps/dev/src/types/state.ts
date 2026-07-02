@@ -70,6 +70,13 @@ export const AfkCurrentSchema = z.object({
   waiting_count: z.number().default(0),
   loc_added: z.number().default(0),
   loc_removed: z.number().default(0),
+  /** Last observed non-zero diff for this attempt (monotonically updated by the
+   * heartbeat when `loc_added > loc_peak_added` or `loc_removed > loc_peak_removed`).
+   * The statusline reads this as a sticky fallback when the current diff drops to 0
+   * (e.g. between commits and the next heartbeat) — prevents the `loc=` token from
+   * disappearing mid-attempt, which looks alarming even when the work is intact. */
+  loc_peak_added: z.number().default(0),
+  loc_peak_removed: z.number().default(0),
   /** Cost group (ADR 0065) — cumulative per-worker token spend, summed from the
    * runner's `usage` stream events (codex/opencode live; claude at iteration
    * boundary, a follow-up). `cost_usd` is populated only when the runner reports

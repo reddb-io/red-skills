@@ -255,6 +255,17 @@ describe("statusline — AFK block", () => {
     expect(out).toContain("#20·tests·30s");
   });
 
+  it("renders loc= with a ~ prefix when locIsPeak is true", () => {
+    expect(renderAfkBlock(baseAfk({ locIsPeak: true }))).toBe(
+      "wrk=1 rdy=11 hmn=3 blk=2 loc=~+12 -3 #17",
+    );
+  });
+
+  it("renders normal loc= when locIsPeak is false or absent", () => {
+    expect(renderAfkBlock(baseAfk())).toBe("wrk=1 rdy=11 hmn=3 blk=2 loc=+12 -3 #17");
+    expect(renderAfkBlock(baseAfk({ locIsPeak: false }))).toBe("wrk=1 rdy=11 hmn=3 blk=2 loc=+12 -3 #17");
+  });
+
   it("keeps the pre-vitals render byte-for-byte when no waiting/stages/aliveMs are supplied", () => {
     // All new fields are optional: an aggregator that never populates them must
     // produce the exact legacy line, so the upgrade is a no-op for old callers.
