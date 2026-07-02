@@ -71,15 +71,19 @@ A read-only reflection of AFK worker state onto a runner-native background-task 
 _Avoid_: native agent, subagent
 
 **Branch lock**:
-A local opt-in pin (`.red/tmp/branch-lock.yaml`) that blocks the interactive agent from switching away from one branch in the **Primary checkout**, and — when set — overrides the **Pinned branch** as AFK's base/merge target (precedence lock > pin > main) and toggles the landing: locked work merges into the locked branch for human promotion, unlocked work lands via an admin-merged PR (ADR 0030/0031).
+A local opt-in pin (`.red/tmp/branch-lock.yaml`) that blocks the interactive agent from switching away from one branch in the **Primary checkout**, and — when set — overrides the **Pinned branch** as AFK's base/merge target (precedence lock > pin > **Trunk**) and toggles the landing: locked work merges into the locked branch for human promotion, unlocked work lands via an admin-merged PR (ADR 0030/0031).
 _Avoid_: pinned branch
 
 **Pinned branch**:
 The branch an **Issue** or PRD declares that AFK must base work on and merge back into.
 _Avoid_: branch lock
 
+**Trunk**:
+The repo's configured focal branch — the default base every AFK **Worktree** forks from and the default target a **Landing** integrates into, always read as its fresh-fetched remote ref, never as the local working-tree branch. Defaults to `main` but is repo-configurable (e.g. `develop`); a **Pinned branch** or **Branch lock** overrides it (precedence lock > pin > trunk).
+_Avoid_: main (as a hardcoded assumption), default branch, primary branch
+
 **Landing**:
-How a completed **Attempt**'s worker branch is integrated into its base, toggled by the **Branch lock** (ADR 0030/0031): a locked branch is merged locally into the locked branch for human promotion (`landMerge`, with a one-shot self-resolve of merge conflicts), an unlocked branch lands via an admin-merged PR carrying the attempt history (`landPr`). Owns the push → integrate → land → post-merge sequence as one operation.
+How a completed **Attempt**'s worker branch is integrated into its base, toggled by the **Branch lock** (ADR 0030/0031, write target moved to the remote by ADR 0083): a locked branch is integrated on `origin/<locked-branch>` for human promotion by pull (`landMerge`, with a one-shot self-resolve of merge conflicts), an unlocked branch lands via an admin-merged PR carrying the attempt history (`landPr`). Never writes to the **Primary checkout**. Owns the push → integrate → land → post-merge sequence as one operation.
 _Avoid_: merge, merge-back, integrate (these are sub-steps of Landing, not the operation)
 
 **Ship (interactive landing)**:
