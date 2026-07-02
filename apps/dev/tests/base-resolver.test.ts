@@ -102,4 +102,54 @@ describe("resolveBase", () => {
     const deps = depsFor(" work-branch\n");
     expect(await resolveBase({ issueBody: issueWithPin }, deps)).toBe("work-branch");
   });
+
+  // Trunk (`plugins.dev.trunk`, ADR 0083) — precedence lock > pin > trunk.
+  it("falls through to the configured trunk when neither a lock nor a pin is set", async () => {
+    const deps = { ...depsFor(undefined), configTrunk: "develop" };
+    expect(await resolveBase({ issueBody: "## What to build\nno pin, no parent" }, deps)).toBe(
+      "develop",
+    );
+  });
+
+  it("collapses a pinless parent-PRD chain to the trunk, not to main", async () => {
+    // The issue references a parent PRD, but neither carries a `branch:` pin —
+    // the pin-reader collapse must land on the trunk (ADR 0083), not on `main`.
+    const deps = {
+      ...depsFor(undefined, { 59: "## PRD\nno pin here either" }),
+      configTrunk: "workspace/forattini",
+    };
+    expect(await resolveBase({ issueBody: issueNoPin }, deps)).toBe("workspace/forattini");
+    expect(deps.fetchCalls).toEqual([59]);
+  });
+
+  it("a pin wins over the trunk", async () => {
+    const deps = { ...depsFor(undefined), configTrunk: "develop" };
+    expect(await resolveBase({ issueBody: issueWithPin }, deps)).toBe("feature/some-pin");
+  });
+
+  it("a lock wins over the trunk", async () => {
+    const deps = { ...depsFor("work-branch"), configTrunk: "develop" };
+    expect(await resolveBase({ issueBody: issueNoPin }, deps)).toBe("work-branch");
+  });
+
+  it("the config lock wins over the trunk", async () => {
+    const deps = {
+      ...depsFor(undefined),
+      configLockedBranch: "config/branch",
+      configTrunk: "develop",
+    };
+    expect(await resolveBase({ issueBody: issueNoPin }, deps)).toBe("config/branch");
+  });
+
+  it("an empty/whitespace trunk falls back to main (pre-trunk behaviour)", async () => {
+    const empty = { ...depsFor(undefined), configTrunk: "" };
+    expect(await resolveBase({ issueBody: "no pin" }, empty)).toBe(DEFAULT_BRANCH);
+    const blank = { ...depsFor(undefined), configTrunk: "  \t " };
+    expect(await resolveBase({ issueBody: "no pin" }, blank)).toBe(DEFAULT_BRANCH);
+  });
+
+  it("trims the trunk value", async () => {
+    const deps = { ...depsFor(undefined), configTrunk: " develop\n" };
+    expect(await resolveBase({ issueBody: "no pin" }, deps)).toBe("develop");
+  });
 });

@@ -6,7 +6,7 @@ argument-hint: "#ISSUE [--apply] [--json] [--repo OWNER/REPO] [--pr-limit N]"
 
 # /retake
 
-**Find where the work lives and print the one next action — `/ship` is the tail command for a committed worktree ready to land.**
+**Find where the work lives and print the one next action — `/requeue` is the tail command for a committed worktree ready to land (the retired `/ship` is never suggested, ADR 0081); brand-new one-off work goes through `/go`.**
 
 ## Run
 
@@ -20,7 +20,7 @@ accepts both `123` and `#123`; quote `'#123'` if invoking it through a shell.
 Use `--apply` to execute only safe local setup steps: create a missing
 `.red/tmp/work-ship-*` worktree, recreate it from a matching branch, or fetch a
 PR head branch and create the ship worktree. `--apply` never merges, closes
-issues, edits labels, runs `/ship`, or changes the primary checkout branch.
+issues, edits labels, runs `/requeue`, or changes the primary checkout branch.
 
 ## Behaviour
 
@@ -32,11 +32,11 @@ issues, edits labels, runs `/ship`, or changes the primary checkout branch.
    - `ready-for-human` issue -> run `/hitl #ISSUE`
    - open PR with failing/pending checks or changes requested -> fix the PR branch
    - dirty matching worktree -> continue in that worktree
-   - clean open PR -> run `/ship --issue ISSUE` from the matching worktree
+   - clean open PR -> run `/requeue ISSUE` to adopt and land it through the reconcile lane
    - matching branch but no worktree -> recreate a `.red/tmp/work-ship-*` worktree
    - no local state -> create a fresh `.red/tmp/work-ship-*` branch from `origin/main`
 6. With `--apply`, run the safe local `git` operations for the selected action
-   and print the next `cd` or `/ship` command.
+   and print the next `cd`, `/requeue`, or `/go` command.
 
 `/retake` is intentionally non-destructive. It does not delete branches, close
 issues, merge PRs, or switch the primary checkout's branch.

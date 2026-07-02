@@ -4,20 +4,28 @@
 // Mirrors the slot→worker→iter-dir resolution chain in supervisor.sh:
 //   parse_worker_ids_from_log  (slot log → worker IDs)
 //   find_slot_iter_dir         (slot pid → worker dir → newest attempt dir)
-//   find_slot_agent_lane       (iter dir → agent.log.jsonl mtime)
+//   workerLivenessFor          (iter dir → liveness lane → evaluator verdict)
 //   iter_dirs_for_worker       (worker dir → every attempt dir)
 //   iter_dir_issue_number      (afk.state.json → .current.number)
 //   reap_stalled_slot reads    (notes, afk.log tail, duration)
 //
 // Every export is BEST-EFFORT: a failed read / stat / glob degrades to the safe
-// value (mtime 0, null iter dir, empty sweep work) and never throws out of a
-// SupervisorFs closure — the bash `|| true` cleanups.
+// value (null verdict, null iter dir, empty sweep work) and never throws out of
+// a SupervisorFs closure — the bash `|| true` cleanups.
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { IterDirInfo, SweepWork, SweepWorker } from "../core/supervisor.js";
 import { parseWorkerAttemptPath, workerDir } from "../core/worker-paths.js";
 import { readWorkerState } from "../core/worker-state-reader.js";
+import {
+  evaluateLiveness,
+  resolveLivenessCrossCheckArming,
+  createProcessDescendantProbe,
+  parseLivenessRecords,
+  LIVENESS_LANE_FILENAME,
+  type LivenessVerdict,
+} from "@reddb-io/red-castle";
 
 /** Absolute path of a slot's per-worker stdout/stderr log
  * (`afk-supervisor-slot-{slot}.log`). Mirrors spawn_slot's slot_log. */
@@ -136,21 +144,59 @@ export function findSlotIterDir(tmpDir: string, slotPid: number | null): string 
 }
 
 /**
- * agentLaneMtime backing: resolve the slot's live worker via the slot log, then
- * its current attempt's agent.log.jsonl mtime in whole seconds; 0 when absent.
- * Mirrors find_slot_agent_lane + the `stat -c %Y` read. The slot's live pid is
- * the bridge from log-parsed worker IDs to the running worker.pid match — but
- * since the supervisor already holds the slot pid, we resolve the iter dir
- * directly from it (find_slot_iter_dir), which is exactly what bash does. The
- * slot-log parse is retained for sweep work; here pid resolution is enough.
+ * workerLivenessVerdict backing: resolve the slot's iter dir, read the liveness
+ * lane (ADR 0083 §3), and evaluate via the red-castle evaluator. Returns null
+ * when the iter dir cannot be resolved (worker between iterations or pre-claim).
+ * Best-effort: any read/parse failure degrades to null.
  */
-export function agentLaneMtimeFor(tmpDir: string, slotPid: number | null): number {
+export function workerLivenessFor(
+  tmpDir: string,
+  slotPid: number | null,
+  laneIdleMs: number,
+): LivenessVerdict | null {
   const dir = findSlotIterDir(tmpDir, slotPid);
-  if (dir === null) return 0;
+  if (dir === null) return null;
+
+  // Read liveness lane synchronously (mirrors readLivenessRecencySync in worker-state-reader).
+  let laneRecencyMs: number | undefined;
   try {
-    return Math.floor(statSync(join(dir, "agent.log.jsonl")).mtimeMs / 1000);
+    const raw = readFileSync(join(dir, LIVENESS_LANE_FILENAME), "utf-8");
+    const records = parseLivenessRecords(raw);
+    if (records.length > 0) {
+      laneRecencyMs = records.reduce((max, r) => (r.at > max ? r.at : max), records[0]!.at);
+    }
   } catch {
-    return 0;
+    // absent or unreadable → undefined (lane never written or raced away)
+  }
+
+  // Cross-check: armed for local (no-sandbox) workers — container workers use a
+  // different execution path and are not managed by the fleet supervisor.
+  const { crossCheckArmed } = resolveLivenessCrossCheckArming({ sandboxTag: "none" });
+
+  // Worker pid from the state file for the descendant probe.
+  let agentPid = 0;
+  try {
+    const rec = readWorkerState(join(dir, "afk.state.json"));
+    if (rec !== null) agentPid = rec.state.pid;
+  } catch {
+    // best-effort
+  }
+
+  const hasLiveDescendants =
+    crossCheckArmed && agentPid > 0
+      ? createProcessDescendantProbe({ agentPid })
+      : undefined;
+
+  try {
+    return evaluateLiveness({
+      laneRecencyMs,
+      now: Date.now(),
+      laneIdleMs,
+      crossCheckArmed,
+      hasLiveDescendants,
+    });
+  } catch {
+    return null;
   }
 }
 

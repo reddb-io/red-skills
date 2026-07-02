@@ -24,7 +24,7 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, readFile, rename, writeFile, chmod, appendFile } from "node:fs/promises";
+import { mkdir, readFile, rename, writeFile, chmod, appendFile, unlink } from "node:fs/promises";
 import { homedir, platform, arch } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -36,7 +36,10 @@ const CLI_ASSET = "brain-cli.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = resolve(HERE, "..");
-const REPO_ROOT = resolve(PLUGIN_ROOT, "..", "..");
+// The dev / pre-release local-fallback root. Derived from this launcher's own
+// location by default; overridable (RED_BRAIN_REPO_ROOT) so the launcher tests
+// can point it at an empty dir and simulate an installed copy with no checkout.
+const REPO_ROOT = process.env.RED_BRAIN_REPO_ROOT || resolve(PLUGIN_ROOT, "..", "..");
 
 // ---------------------------------------------------------------------------
 // Pure helpers
@@ -54,9 +57,28 @@ export function sha256Hex(buf) {
   return createHash("sha256").update(buf).digest("hex");
 }
 
+/**
+ * Release host. Overridable via RED_BRAIN_RELEASE_BASE so the launcher tests
+ * can point every asset URL at a local server — no real network, ever.
+ */
+const RELEASE_HOST = process.env.RED_BRAIN_RELEASE_BASE || "https://github.com";
+
 /** GitHub release asset URL. */
 export function assetUrl(repo, tag, name) {
-  return `https://github.com/${repo}/releases/download/${tag}/${name}`;
+  return `${RELEASE_HOST}/${repo}/releases/download/${tag}/${name}`;
+}
+
+/**
+ * Which invocations may hit the network on a cache miss. Only the resolve/warm
+ * points do: the once-per-session SessionStart hook, the long-lived mcp server,
+ * and user-invoked CLI commands. Recurring render/hot-path hooks (PostToolUse /
+ * Stop / PreCompact) must never block on a synchronous fetch (ADR 0084, the
+ * statusline-blanking lesson). On a cold cache they no-op and let SessionStart
+ * warm the cache.
+ */
+export function mayFetchRuntime(argv) {
+  if (argv[0] === "hook") return argv[1] === "SessionStart";
+  return true;
 }
 
 function normalizeRedAsset(value) {
@@ -219,6 +241,44 @@ async function logLine(msg) {
   }
 }
 
+/** Machine-readable degrade marker path — a `brain doctor` can later read this. */
+export function degradeMarkerPath() {
+  return join(runtimeRoot(), "runtime-degraded.json");
+}
+
+/**
+ * Record an offline / failed-first-fetch degrade as a machine-readable marker
+ * the doctor can later report. Best-effort: writing the marker must never throw,
+ * so a degrade never becomes a crash.
+ */
+async function writeDegradeMarker(version, err, argv) {
+  try {
+    await mkdir(runtimeRoot(), { recursive: true });
+    await writeFile(
+      degradeMarkerPath(),
+      JSON.stringify(
+        {
+          schema: "red.brain.runtime-degraded.v1",
+          plugin: "brain",
+          version: version ?? null,
+          reason: String(err?.message ?? err),
+          argv,
+          at: new Date().toISOString(),
+        },
+        null,
+        2,
+      ),
+    );
+  } catch {
+    /* marker writing must never throw */
+  }
+}
+
+/** Clear a stale degrade marker once the runtime resolves again. */
+async function clearDegradeMarker() {
+  await unlink(degradeMarkerPath()).catch(() => {});
+}
+
 async function fetchBuffer(url) {
   const res = await fetch(url, { redirect: "follow" });
   if (!res.ok) throw new Error(`GET ${url} -> ${res.status}`);
@@ -247,10 +307,12 @@ async function ensureFile(url, dest, expectedSha, { mode } = {}) {
 
 /**
  * Ensure {brain-cli.mjs, brain-mcp.mjs, red} exist for `version` in the
- * version-keyed cache and return their absolute paths. Throws (caught by the
- * caller, which falls back to local artifacts) on any fetch failure.
+ * version-keyed cache and return their absolute paths. Returns null when a cold
+ * cache is hit on a render/hot path (`mayFetch` false) so the caller can honour
+ * the hook no-op contract. Throws (caught by the caller, which falls back to
+ * local artifacts) on any fetch failure.
  */
-async function ensureRuntime(version) {
+async function ensureRuntime(version, { mayFetch } = {}) {
   const dir = join(runtimeRoot(), version);
   const cliPath = join(dir, "brain-cli.mjs");
   const mcpPath = join(dir, "brain-mcp.mjs");
@@ -265,6 +327,11 @@ async function ensureRuntime(version) {
   if (existsSync(cliPath) && existsSync(mcpPath) && existsSync(redPath)) {
     return { cliPath, mcpPath, redPath };
   }
+
+  // Cold cache on a render/hot path (recurring PostToolUse / Stop / PreCompact
+  // hooks): never fetch. Defer to the SessionStart resolve point and no-op this
+  // call. `null` tells the caller to honour the hook no-op contract.
+  if (!mayFetch) return null;
 
   const tag = `v${version}`;
   const manifest = JSON.parse(
@@ -471,16 +538,25 @@ async function main() {
   const extra = kind === "mcp" ? argv.slice(1) : argv;
 
   // 1. Primary: fetch the release-published runtime into the version-keyed cache.
+  let version = null;
+  let fetchErr = null;
   try {
     const installed = await pluginVersion();
     if (!installed) throw new Error("could not resolve plugin version");
     // Serve the in-range version a prior background update swapped in (ADR 0084);
     // LOCAL read only — never fetches, so no render/hook path blocks on network.
-    const version = await resolveActiveVersion(installed);
+    version = await resolveActiveVersion(installed);
     // On session start, kick a DETACHED background in-range self-update for the
     // NEXT boot. Detached + unref'd so it never delays the hook or any surface.
     if (argv[0] === "hook" && argv[1] === "SessionStart") spawnBackgroundSelfUpdate();
-    const rt = await ensureRuntime(version);
+    const rt = await ensureRuntime(version, { mayFetch: mayFetchRuntime(argv) });
+    if (!rt) {
+      // Render/hot-path hook on a cold cache: SessionStart will warm it. No-op.
+      process.stdout.write("{}");
+      process.exit(0);
+    }
+    // The runtime resolved: any earlier degrade is stale.
+    await clearDegradeMarker();
     const target = kind === "mcp" ? rt.mcpPath : rt.cliPath;
     const code = await run(process.execPath, [target, ...extra], {
       ...process.env,
@@ -488,6 +564,7 @@ async function main() {
     });
     process.exit(code);
   } catch (err) {
+    fetchErr = err;
     await logLine(`release fetch failed (${err?.message ?? err}); trying local checkout`);
   }
 
@@ -503,6 +580,9 @@ async function main() {
     process.exit(code);
   }
 
+  // 3. No runtime at all (installed copy, first fetch offline): honour the hook
+  // no-op contract and leave a machine-readable marker the doctor can report.
+  await writeDegradeMarker(version, fetchErr, argv);
   await logLine("no runnable runtime: release fetch failed and no local bundle/source found");
   process.stdout.write("{}");
   process.exit(0);

@@ -22,7 +22,7 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, readFile, rename, writeFile, chmod, appendFile } from "node:fs/promises";
+import { mkdir, readFile, rename, writeFile, chmod, appendFile, unlink } from "node:fs/promises";
 import { homedir, platform, arch } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -48,9 +48,28 @@ export function sha256Hex(buf) {
   return createHash("sha256").update(buf).digest("hex");
 }
 
+/**
+ * Release host. Overridable via RED_MEMORY_RELEASE_BASE so the launcher tests
+ * can point every asset URL at a local server — no real network, ever.
+ */
+const RELEASE_HOST = process.env.RED_MEMORY_RELEASE_BASE || "https://github.com";
+
 /** GitHub release asset URL. */
 export function assetUrl(repo, tag, name) {
-  return `https://github.com/${repo}/releases/download/${tag}/${name}`;
+  return `${RELEASE_HOST}/${repo}/releases/download/${tag}/${name}`;
+}
+
+/**
+ * Which invocations may hit the network on a cache miss. Only the resolve/warm
+ * points do: the once-per-session SessionStart hook, the long-lived mcp server,
+ * and user-invoked CLI commands. The recurring PostToolUse / Stop / PreCompact
+ * hooks are render/hot paths — they must never block on a synchronous fetch
+ * (ADR 0084, the statusline-blanking lesson). On a cold cache they no-op and
+ * let SessionStart warm the cache.
+ */
+export function mayFetchRuntime(argv) {
+  if (argv[0] === "hook") return argv[1] === "SessionStart";
+  return true;
 }
 
 /** Parse the first hex token out of a `*.sha256` file body (`<hex>  <name>`). */
@@ -86,6 +105,44 @@ async function pluginVersion() {
   } catch {
     return null;
   }
+}
+
+/** Machine-readable degrade marker path — the `memory doctor` reads this. */
+export function degradeMarkerPath() {
+  return join(runtimeRoot(), "runtime-degraded.json");
+}
+
+/**
+ * Record an offline / failed-first-fetch degrade as a machine-readable marker
+ * the doctor can later report. Best-effort: writing the marker must never throw,
+ * so a degrade never becomes a crash.
+ */
+async function writeDegradeMarker(version, err, argv) {
+  try {
+    await mkdir(runtimeRoot(), { recursive: true });
+    await writeFile(
+      degradeMarkerPath(),
+      JSON.stringify(
+        {
+          schema: "red.memory.runtime-degraded.v1",
+          plugin: "memory",
+          version: version ?? null,
+          reason: String(err?.message ?? err),
+          argv,
+          at: new Date().toISOString(),
+        },
+        null,
+        2,
+      ),
+    );
+  } catch {
+    /* marker writing must never throw */
+  }
+}
+
+/** Clear a stale degrade marker once the runtime resolves again. */
+async function clearDegradeMarker() {
+  await unlink(degradeMarkerPath()).catch(() => {});
 }
 
 async function logLine(msg) {
@@ -131,11 +188,25 @@ async function ensureFile(url, dest, expectedSha, { mode } = {}) {
  * cache and return their absolute paths. Throws (caught by main) on any fetch
  * failure.
  */
-async function ensureRuntime(version) {
+async function ensureRuntime(version, { mayFetch } = {}) {
   const dir = join(runtimeRoot(), version);
   const cliPath = join(dir, "memory-cli.mjs");
   const mcpPath = join(dir, "memory-mcp.mjs");
   const redPath = join(dir, process.platform === "win32" ? "red.exe" : "red");
+
+  // Fast path: a fully warm cache delegates with ZERO network. The old code
+  // re-fetched the manifest on *every* invocation to re-verify checksums; that
+  // synchronous network hop on a render/hot path is exactly the
+  // statusline-blanking class (ADR 0084). Once resolved for a version, trust the
+  // cache — the first fetch already verified every checksum.
+  if (existsSync(cliPath) && existsSync(mcpPath) && existsSync(redPath)) {
+    return { cliPath, mcpPath, redPath };
+  }
+
+  // Cold cache on a render/hot path (recurring PostToolUse / Stop / PreCompact
+  // hooks): never fetch. Defer to the SessionStart resolve point and no-op this
+  // call. `null` tells the caller to honour the hook no-op contract.
+  if (!mayFetch) return null;
 
   // 1. manifest — names + checksums for this exact plugin version.
   const tag = `v${version}`;
@@ -452,21 +523,31 @@ async function main() {
     process.stdout.write("{}");
     process.exit(0);
   }
+  let version = null;
   try {
     const installed = await pluginVersion();
     if (!installed) throw new Error("could not resolve plugin version");
     // Serve the in-range version a prior background update swapped in (ADR 0084);
     // LOCAL read only — never fetches, so no render/hook path blocks on network.
-    const version = await resolveActiveVersion(installed);
+    version = await resolveActiveVersion(installed);
     // On session start, kick a DETACHED background in-range self-update for the
     // NEXT boot. Detached + unref'd so it never delays the hook or any surface.
     if (argv[0] === "hook" && argv[1] === "SessionStart") spawnBackgroundSelfUpdate();
-    const runtime = await ensureRuntime(version);
+    const runtime = await ensureRuntime(version, { mayFetch: mayFetchRuntime(argv) });
+    if (!runtime) {
+      // Render/hot-path hook on a cold cache: SessionStart will warm it. No-op.
+      process.stdout.write("{}");
+      process.exit(0);
+    }
+    // The runtime resolved: any earlier degrade is stale.
+    await clearDegradeMarker();
     const code = await delegate(runtime, argv);
     process.exit(code);
   } catch (err) {
-    // Preserve the hooks' no-op contract; make the failure diagnosable.
+    // Preserve the hooks' no-op contract; leave a machine-readable marker the
+    // doctor can report, and make the failure diagnosable in the log.
     await logLine(`${err?.message ?? err} (args: ${argv.join(" ")})`);
+    await writeDegradeMarker(version, err, argv);
     process.stdout.write("{}");
     process.exit(0);
   }

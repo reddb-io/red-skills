@@ -46,6 +46,8 @@ interface Trace {
   classifierCalls: IssueClassificationMetadata[];
   /** Lines appended to the iteration log (deps.appendIterLog). */
   iterLogs: string[];
+  /** Branches for which cascadeRebase.rebaseAndPush was called (#1007). */
+  cascadeRebaseAttempts: string[];
 }
 
 interface HarnessOptions {
@@ -94,6 +96,8 @@ interface HarnessOptions {
   fallbackRunner?: boolean;
   /** Records each git fetch-base call (the ADR 0031 start-point fetch). */
   fetchedBases?: string[];
+  /** The configured Trunk (`plugins.dev.trunk`, ADR 0083) injected into base resolution. */
+  configTrunk?: string;
   /** When set, the locked `git merge --no-ff` returns this rc (1 → conflict). */
   mergeNoFfCode?: number;
   /** When true, register a one-shot conflict resolver that "resolves" the merge
@@ -144,6 +148,13 @@ interface HarnessOptions {
   ciAware?: "merge" | "ci-failed" | "ci-pending" | "conflict";
   /** Exit code for the final `gh pr merge` command. Defaults to 0. */
   prMergeCode?: number;
+  /** PRD cascade rebase (#1007): remote afk/* branches returned by
+   * cascadeRebase.listAFKBranches. When set, injects the cascadeRebase port. */
+  siblingBranches?: string[];
+  /** Worker IDs considered live (skipped by cascade rebase). */
+  liveWorkers?: string[];
+  /** When true, cascadeRebase.rebaseAndPush returns ok=false for every branch. */
+  cascadeRebaseFail?: boolean;
 }
 
 function harness(opts: HarnessOptions = {}): {
@@ -170,6 +181,7 @@ function harness(opts: HarnessOptions = {}): {
     salvageCalls: [],
     classifierCalls: [],
     iterLogs: [],
+    cascadeRebaseAttempts: [],
   };
 
   const outcome = opts.outcome ?? "done";
@@ -418,6 +430,7 @@ function harness(opts: HarnessOptions = {}): {
         async readLockedBranch() {
           return opts.locked ? "main" : undefined;
         },
+        configTrunk: opts.configTrunk,
         async fetchIssueBody() {
           return undefined;
         },
@@ -482,6 +495,25 @@ function harness(opts: HarnessOptions = {}): {
             trace.salvageCalls.push(branch);
             return opts.salvage as number;
           },
+    // PRD cascade rebase port (#1007): injected when siblingBranches is set.
+    cascadeRebase:
+      opts.siblingBranches !== undefined
+        ? {
+            async listAFKBranches() {
+              return opts.siblingBranches!;
+            },
+            isWorkerLive(workerId) {
+              return (opts.liveWorkers ?? []).includes(workerId);
+            },
+            async rebaseAndPush(_repoDir, branch, _newBase) {
+              trace.cascadeRebaseAttempts.push(branch);
+              if (opts.cascadeRebaseFail) {
+                return { ok: false, warn: `rebase failed for ${branch}` };
+              }
+              return { ok: true };
+            },
+          }
+        : undefined,
   };
 
   // Wire the hook config + abort marker so dispatchHooks has a command to run.
@@ -1921,6 +1953,24 @@ describe("processIssue — base reaches sandcastle (ADR 0031)", () => {
     // freshly-fetched ref, not the potentially-stale local branch.
     expect(trace.runAgentCalls[0]?.base).toBe("origin/main");
   });
+
+  it("resolves an unlocked, pinless issue to the configured Trunk and forks off origin/<trunk> (ADR 0083)", async () => {
+    const fetchedBases: string[] = [];
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      locked: false,
+      configTrunk: "develop",
+      fetchedBases,
+    });
+    const result = await processIssue(deps, input);
+
+    expect(result.base).toBe("develop");
+    // the trunk is fetched current before the run — the resolver's value is
+    // only ever consumed as its fresh-fetched remote ref, never the local branch.
+    expect(fetchedBases).toEqual(["develop"]);
+    expect(trace.runAgentCalls[0]?.base).toBe("origin/develop");
+  });
 });
 
 describe("processIssue — merge-conflict one-shot self-resolve (gap 3)", () => {
@@ -2636,5 +2686,142 @@ describe("processIssue — scout mode (runMode: 'scout')", () => {
     const humanLabel = trace.labelEdits.find((e) => e.add.includes("ready-for-human"));
     expect(humanLabel).toBeDefined();
     expect(trace.closed).not.toContain(9);
+  });
+});
+
+// ---------- PRD cascade rebase (#1007) ----------
+
+describe("PRD cascade rebase after DONE landing", () => {
+  it("rebases two sibling branches onto main after merge of issue A (prd:42)", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      // Issue 9 carries prd:42 — so after close, AFK should rebase prd:42 siblings.
+      labels: ["ready-for-agent", "prd:42"],
+      // Two open issues carry prd:42; they are the siblings.
+      dependentsByLabel: {
+        "prd:42": [
+          { number: 20, labels: ["prd:42", "ready-for-agent"] },
+          { number: 21, labels: ["prd:42", "ready-for-agent"] },
+        ],
+      },
+      // Two remote afk branches, one for each sibling.
+      siblingBranches: [
+        "afk/wBBBB/20-fix-sibling-a",
+        "afk/wCCCC/21-fix-sibling-b",
+      ],
+    });
+    const result = await processIssue(deps, input);
+    expect(result.outcome).toBe("done");
+    // Both sibling branches were rebased.
+    expect(trace.cascadeRebaseAttempts).toEqual([
+      "afk/wBBBB/20-fix-sibling-a",
+      "afk/wCCCC/21-fix-sibling-b",
+    ]);
+    // The prd:42 label lookup fired.
+    expect(trace.listByLabelCalls).toContain("prd:42");
+  });
+
+  it("skips a sibling branch whose worker is still alive", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      labels: ["ready-for-agent", "prd:42"],
+      dependentsByLabel: {
+        "prd:42": [
+          { number: 20, labels: ["prd:42"] },
+          { number: 21, labels: ["prd:42"] },
+        ],
+      },
+      siblingBranches: [
+        "afk/wBBBB/20-fix-sibling-a",
+        "afk/wCCCC/21-fix-sibling-b",
+      ],
+      // wBBBB is alive — its branch must be skipped.
+      liveWorkers: ["wBBBB"],
+    });
+    const result = await processIssue(deps, input);
+    expect(result.outcome).toBe("done");
+    // Only the dead-worker branch is rebased.
+    expect(trace.cascadeRebaseAttempts).toEqual(["afk/wCCCC/21-fix-sibling-b"]);
+    expect(trace.iterLogs.some((l) => l.includes("wBBBB is alive"))).toBe(true);
+  });
+
+  it("cascade rebase failure is logged as a warning and does not fail the primary landing", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      labels: ["ready-for-agent", "prd:42"],
+      dependentsByLabel: {
+        "prd:42": [{ number: 20, labels: ["prd:42"] }],
+      },
+      siblingBranches: ["afk/wBBBB/20-fix-sibling-a"],
+      cascadeRebaseFail: true,
+    });
+    const result = await processIssue(deps, input);
+    // Primary landing is unaffected.
+    expect(result.outcome).toBe("done");
+    // rebaseAndPush was still called (the attempt is recorded).
+    expect(trace.cascadeRebaseAttempts).toEqual(["afk/wBBBB/20-fix-sibling-a"]);
+    // A warning was logged.
+    expect(trace.iterLogs.some((l) => l.includes("cascade-rebase warning"))).toBe(true);
+  });
+
+  it("does not rebase when the issue carries no prd:N label", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      labels: ["ready-for-agent"],
+      siblingBranches: ["afk/wBBBB/20-fix-sibling-a"],
+    });
+    const result = await processIssue(deps, input);
+    expect(result.outcome).toBe("done");
+    expect(trace.cascadeRebaseAttempts).toEqual([]);
+  });
+
+  it("does not rebase when afk.landing.cascade_rebase is false", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      labels: ["ready-for-agent", "prd:42"],
+      dependentsByLabel: {
+        "prd:42": [{ number: 20, labels: ["prd:42"] }],
+      },
+      siblingBranches: ["afk/wBBBB/20-fix-sibling-a"],
+      config: { "afk.landing.cascade_rebase": "false" },
+    });
+    const result = await processIssue(deps, input);
+    expect(result.outcome).toBe("done");
+    expect(trace.cascadeRebaseAttempts).toEqual([]);
+  });
+
+  it("does not run cascade rebase on a non-done outcome (blocked)", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "blocked",
+      labels: ["ready-for-agent", "prd:42"],
+      siblingBranches: ["afk/wBBBB/20-fix-sibling-a"],
+    });
+    const result = await processIssue(deps, input);
+    expect(result.outcome).toBe("blocked");
+    expect(trace.cascadeRebaseAttempts).toEqual([]);
+  });
+
+  it("skips branches that do not belong to a prd sibling issue", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      labels: ["ready-for-agent", "prd:42"],
+      dependentsByLabel: {
+        // Only issue 20 is a sibling; issue 99 is not listed.
+        "prd:42": [{ number: 20, labels: ["prd:42"] }],
+      },
+      siblingBranches: [
+        "afk/wBBBB/20-fix-sibling-a",
+        "afk/wCCCC/99-unrelated-branch",
+      ],
+    });
+    await processIssue(deps, input);
+    // Only issue 20's branch is rebased; issue 99's is not a sibling.
+    expect(trace.cascadeRebaseAttempts).toEqual(["afk/wBBBB/20-fix-sibling-a"]);
   });
 });

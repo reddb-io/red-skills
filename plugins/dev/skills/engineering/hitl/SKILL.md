@@ -85,9 +85,12 @@ Ask for the answer to the pending decision.
 Then decide whether the answer makes the Issue delegable:
 
 - **Delegable** means a complete `## Agent brief` can now be written and an AFK agent can execute without guessing.
+- **Delegable with manual landing** means the *coding* is fully delegable but the *merge* must stay human — e.g. changes to AFK's own landing/claim machinery, where auto-merge by the fleet is the exact failure the slice guards against.
 - **Non-delegable** means another human decision remains.
 
 If delegable, draft the refreshed `## Agent brief` before mutating anything.
+
+If delegable with manual landing, do **not** apply the plain-delegable transition: adding `ready-for-agent` would let a live fleet claim and auto-merge what must not be auto-merged. Until the `landing:manual` AFK mode (#1049) lands, keep `ready-for-human`, record the disposition as `delegable-manual-landing` in the Directive, and dispatch the coding via `/go` (agent codes and opens the PR; a human merges). Do not force these issues into the binary — parking them as plain non-delegable hides agent-executable work.
 
 If non-delegable, draft the next pending decision before mutating anything.
 
@@ -117,7 +120,7 @@ Human answer:
 ...
 
 Disposition:
-delegable | non-delegable
+delegable | delegable-manual-landing | non-delegable
 
 Next pending decision:
 ...   <!-- only when non-delegable -->
@@ -131,6 +134,12 @@ If delegable:
 3. Remove `ready-for-human` and every stale `blocked:*` label — the blocker is resolved, so the reason that parked the issue must not survive into `ready-for-agent`.
 4. Add `ready-for-agent`.
 
+If delegable-manual-landing:
+
+1. Keep `ready-for-human` — a live fleet must never claim and auto-merge landing-machinery work.
+2. Do not add `ready-for-agent` (until the `landing:manual` mode of #1049 exists; then route `ready-for-agent` + `landing:manual` instead).
+3. Post the Directive with disposition `delegable-manual-landing` and dispatch the coding via `/go`; the human merges the resulting PR and the issue is closed manually against it.
+
 If non-delegable:
 
 1. Keep or add `ready-for-human`.
@@ -142,7 +151,7 @@ If non-delegable:
 
 - Do not select `type:prd` Issues.
 - Do not use historical slice-routing labels; HITL queue membership is `ready-for-human`.
-- Do not do manual implementation as the default path. The goal is decision resolution and delegation.
+- Do not do manual implementation as the default path. The goal is decision resolution and delegation — when the resolution spawns one-off concrete work that needs no queue, dispatch it with `/go "<demand>"` instead of hand-rolling a worktree.
 - Do not update labels or body before showing the mutation plan and receiving explicit approval.
 - Do not treat Thread discussion as authoritative when it conflicts with Human guidance.
 - Do not move an Issue to `ready-for-agent` unless the refreshed `## Agent brief` is sufficient for autonomous execution.

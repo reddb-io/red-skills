@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, rm, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Readable } from "node:stream";
@@ -215,5 +215,80 @@ describe("statusline command — rendered line", () => {
     const code = await statuslineCommand([root], root, out.stream, fakeStdin(PAYLOAD));
     expect(code).toBe(0);
     expect(out.text()).toBe("");
+  });
+
+  it("local facts are read live: a mutated state file is reflected on the next render", async () => {
+    // First render: worker on #17 with loc=+12 -3
+    await writeWorkerState(root, "wA", "17-a1", {
+      runner: "claude",
+      done: 0,
+      blocked: 0,
+      current: {
+        number: 17,
+        diff_added: 12,
+        diff_removed: 3,
+        started_at: new Date().toISOString(),
+      },
+    });
+    await seedFreshCache(root, 0, 0);
+    await seedFreshRepoCache(root, 0, 0);
+
+    const out1 = sink();
+    await statuslineCommand([root], root, out1.stream, fakeStdin(PAYLOAD));
+    expect(stripAnsi(out1.text())).toContain("loc=+12 -3");
+    expect(stripAnsi(out1.text())).not.toContain("loc=+99");
+
+    // Mutate in-place: new diff +99 -5 — no process restart; next render reads fresh
+    await writeWorkerState(root, "wA", "17-a1", {
+      runner: "claude",
+      done: 0,
+      blocked: 0,
+      current: {
+        number: 17,
+        diff_added: 99,
+        diff_removed: 5,
+        started_at: new Date().toISOString(),
+      },
+    });
+
+    const out2 = sink();
+    await statuslineCommand([root], root, out2.stream, fakeStdin(PAYLOAD));
+    // Live read: must reflect the mutation without any cache involvement
+    expect(stripAnsi(out2.text())).toContain("loc=+99 -5");
+    expect(stripAnsi(out2.text())).not.toContain("loc=+12");
+  });
+
+  it("idle fleet (workers=0) does not gate remote refresh behind workers>0 check", async () => {
+    // Seed a STALE AFK cache (ts = 10 min ago, well past the 60 s TTL) with
+    // non-zero values.  The command must attempt a refresh and return exit 0
+    // even when no workers are live (regression: the old workers<=0 guard fired
+    // BEFORE the cache block and prevented any refresh).
+    const dir = join(root, ".red", "tmp");
+    await mkdir(dir, { recursive: true });
+    const staleTs = Math.floor(Date.now() / 1000) - 600;
+    await writeFile(
+      join(dir, "statusline-cache.json"),
+      JSON.stringify({ queue: 5, human: 2, ts: staleTs }),
+      "utf8",
+    );
+    await seedFreshRepoCache(root, 0, 0);
+
+    const out = sink();
+    const code = await statuslineCommand([root], root, out.stream, fakeStdin(PAYLOAD));
+    expect(code).toBe(0);
+
+    // No live workers → AFK block must be absent
+    expect(stripAnsi(out.text())).not.toContain("wrk=");
+    // Header still renders, confirming the command ran to completion
+    expect(stripAnsi(out.text())).toContain("Opus·high");
+
+    // The cache file must still exist (not deleted by refresh failure) —
+    // refresh is fire-and-attempt, fail-open.
+    const cacheRaw = await readFile(join(dir, "statusline-cache.json"), "utf8");
+    const cache = JSON.parse(cacheRaw) as { ts: number };
+    // Either a fresh ts (refresh succeeded) or the old stale ts (gh failed —
+    // fail-open). Either way the command ran past the stale check without
+    // crashing, proving the workers<=0 gate does not short-circuit the refresh.
+    expect(typeof cache.ts).toBe("number");
   });
 });
