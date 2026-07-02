@@ -47,10 +47,17 @@ describe("development workflow rules block", () => {
     expect(DEVELOPMENT_WORKFLOW_BLOCK).toContain("git worktree add .red/tmp/work-<slug>");
     expect(DEVELOPMENT_WORKFLOW_BLOCK).toContain("not with `git checkout -b` or `git switch -c`");
     expect(DEVELOPMENT_WORKFLOW_BLOCK).toContain("push the branch early");
-    expect(DEVELOPMENT_WORKFLOW_BLOCK).toContain("`/ship`");
-    expect(DEVELOPMENT_WORKFLOW_BLOCK).toContain("merge the PR or park the issue/PR for `/hitl`");
+    expect(DEVELOPMENT_WORKFLOW_BLOCK).toContain("merge it or park the issue/PR for `/hitl`");
     expect(DEVELOPMENT_WORKFLOW_BLOCK).toContain("The agent never switches the primary checkout's branch; only the user does.");
     expect(DEVELOPMENT_WORKFLOW_BLOCK).toContain("the dev command proxy blocks agent-created worktrees outside `.red/tmp/`");
+  });
+
+  it("routes one-off work through /go and never suggests the retired /ship (ADR 0081)", () => {
+    expect(DEVELOPMENT_WORKFLOW_BLOCK).toContain('One-off concrete work goes through `/go "<demand>"`');
+    expect(DEVELOPMENT_WORKFLOW_BLOCK).toContain("`.red/tmp/go-workers/`");
+    expect(DEVELOPMENT_WORKFLOW_BLOCK).toContain("Route the structured backlog through `/afk`");
+    expect(DEVELOPMENT_WORKFLOW_BLOCK).toContain("`/requeue`");
+    expect(DEVELOPMENT_WORKFLOW_BLOCK).not.toContain("/ship");
   });
 
   it("writes both AGENTS.md and CLAUDE.md with identical blocks, then reruns unchanged", async () => {
