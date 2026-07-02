@@ -79,6 +79,11 @@ export interface AfkInput {
   resolved?: number;
   /** #N issue numbers for the in-progress workers, in order. */
   issues: ReadonlyArray<number | string>;
+  /** When true, {@link added}/{@link removed} reflect the per-attempt peak rather
+   * than the live diff (current diff measured 0 but a prior non-zero value was
+   * seen this attempt). The `loc=` token renders with a `~` prefix on its value
+   * (`loc=~+50 -3`) to signal "last known, not current." */
+  locIsPeak?: boolean;
   /** Per-issue `current.stage` aligned by index with {@link issues}. When a
    * stage is present and non-empty it renders as a `·stage` suffix on the
    * matching `#N` token (`#629·impl`), so the block shows WHAT each live worker
@@ -229,7 +234,7 @@ export function afkTokens(afk: AfkInput | undefined): AfkToken[] {
   const diff: string[] = [];
   if (afk.added > 0) diff.push(`+${afk.added}`);
   if (afk.removed > 0) diff.push(`-${afk.removed}`);
-  if (diff.length) kpi("loc=", diff.join(" "));
+  if (diff.length) kpi("loc=", afk.locIsPeak ? `~${diff.join(" ")}` : diff.join(" "));
   if (afk.waiting !== undefined && afk.waiting > 0) kpi("wai=", String(afk.waiting));
   if (afk.tokens !== undefined && afk.tokens > 0) kpi("tok=", humanizeTokens(afk.tokens));
   if (afk.costUsd !== undefined && afk.costUsd > 0) kpi("usd=", afk.costUsd.toFixed(2));

@@ -173,7 +173,7 @@ export function renderAfkLine(afk: AfkInput | undefined, columns: number | undef
   groups.push(workers);
 
   const diff = signedDiff(afk.added, afk.removed);
-  if (diff) groups.push(kv("loc", diff));
+  if (diff) groups.push(kv("loc", afk.locIsPeak ? `~${diff}` : diff));
 
   const pipe: string[] = [];
   if (afk.queue > 0) pipe.push(kv("rdy", String(afk.queue)));
