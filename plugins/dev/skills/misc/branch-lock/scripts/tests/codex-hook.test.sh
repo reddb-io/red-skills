@@ -139,6 +139,26 @@ result="$(run_hook "$primary" "$(payload "$primary" "git checkout feature")")"
 rc="$(sed -n '1p' <<<"$result")"
 expect_eq "primary guard: checkout branch is blocked when flag is on" "2" "$rc"
 
+# issue #1024 — git reset (any form) and git stash (all subcommands) blocked,
+# and the refusal explains the reason + the sanctioned worktree alternative.
+result="$(run_hook "$primary" "$(payload "$primary" "git reset --hard")")"
+rc="$(sed -n '1p' <<<"$result")"
+stderr="$(sed -n '/---stderr---/,$p' <<<"$result")"
+expect_eq "primary guard: reset --hard is blocked when flag is on" "2" "$rc"
+expect_contains "primary guard: reset refusal points to worktree" ".red/tmp/work-" "$stderr"
+
+result="$(run_hook "$primary" "$(payload "$primary" "git reset --soft HEAD~1")")"
+rc="$(sed -n '1p' <<<"$result")"
+expect_eq "primary guard: reset --soft is blocked when flag is on" "2" "$rc"
+
+result="$(run_hook "$primary" "$(payload "$primary" "git stash")")"
+rc="$(sed -n '1p' <<<"$result")"
+expect_eq "primary guard: stash is blocked when flag is on" "2" "$rc"
+
+result="$(run_hook "$primary" "$(payload "$primary" "git rebase --autostash main")")"
+rc="$(sed -n '1p' <<<"$result")"
+expect_eq "primary guard: rebase --autostash is blocked when flag is on" "2" "$rc"
+
 result="$(run_hook "$primary" "$(payload "$primary" "git switch -b new")")"
 rc="$(sed -n '1p' <<<"$result")"
 expect_eq "primary guard: switch -b is blocked when flag is on" "2" "$rc"
