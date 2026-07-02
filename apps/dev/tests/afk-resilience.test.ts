@@ -49,6 +49,7 @@ describe("Pattern 1 — submodule lifecycle in a fresh worktree", () => {
       checks: [{ name: "test:apps/dev", script: "test", label: "apps/dev", scope: "apps/dev", status: "failed", record }],
       sidecar: [JSON.stringify(record)],
       baselineDowngraded: [],
+      quarantined: [],
     };
     expect(isInfraFeedbackFailure(result)).toBe(true);
   });
@@ -188,6 +189,7 @@ describe("Pattern 4 — OOM under fleet=2", () => {
       checks: [{ name: "test:apps/dev", script: "test", label: "apps/dev", scope: "apps/dev", status: "failed", record }],
       sidecar: [JSON.stringify(record)],
       baselineDowngraded: [],
+      quarantined: [],
     };
     expect(isInfraFeedbackFailure(result)).toBe(true);
   });
@@ -204,6 +206,7 @@ describe("Pattern 4 — OOM under fleet=2", () => {
       checks: [{ name: "test:apps/dev", script: "test", label: "apps/dev", scope: "apps/dev", status: "failed", record }],
       sidecar: [JSON.stringify(record)],
       baselineDowngraded: [],
+      quarantined: [],
     };
     expect(isInfraFeedbackFailure(result)).toBe(true);
   });
