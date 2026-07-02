@@ -46,11 +46,17 @@ dev_plugin_enabled "$ROOT/.red/config.yaml" || exit 0
 # Scope: /afk worktrees are exempt even when a lock is active.
 scope_should_enforce "$ROOT" || exit 0
 
-if dev_config_lock_primary_branch_enabled "$ROOT/.red/config.yaml" &&
-  [[ "$(classify_primary_branch_switch_guard "$COMMAND")" == "block" ]]; then
+# Untouchable primary (ADR 0083 §2): an agent may never move the primary
+# checkout's branch. This block is unconditional — it no longer arms with the
+# `dev.lock.primary-branch` toggle (which stays readable for backward
+# compatibility but can no longer *enable* switching; /doctor may flag it as
+# redundant). Human terminals are unaffected: this is an agent-only pre-tool hook
+# (ADR 0006).
+if [[ "$(classify_primary_branch_switch_guard "$COMMAND")" == "block" ]]; then
   cat >&2 <<EOF
-BLOCKED by primary branch guard: dev.lock.primary-branch is true.
-The command '$COMMAND' would switch the agent's primary checkout branch.
+BLOCKED by the untouchable-primary rule (ADR 0083): an agent can never switch
+the primary checkout's branch, regardless of configuration or lock state.
+The command '$COMMAND' would move the agent's primary checkout to another branch.
 
 Allowed in the primary checkout: git commit, git worktree add, read-only git,
 and non-branch-changing commands. To work on another branch, create/use a
