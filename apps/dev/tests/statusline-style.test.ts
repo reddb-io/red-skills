@@ -91,6 +91,29 @@ describe("statusline style — AFK line", () => {
     expect(t.startsWith(" wrk=1")).toBe(true); // first group is workers, no runner
   });
 
+  it("renders compact model-effort alongside the runner label", () => {
+    const line = renderAfkLine(
+      { ...afk, runner: "claude", model: "claude-opus-4-8", effort: "max" },
+      undefined,
+    );
+    const t = stripAnsi(line!);
+    expect(t).toContain("claude opus-max");
+    expect(t).not.toContain("claude-opus-4-8"); // always compact
+  });
+
+  it("renders runner + compact model without effort when effort is absent", () => {
+    const t = stripAnsi(renderAfkLine({ ...afk, runner: "codex", model: "gpt-4o" }, undefined)!);
+    expect(t).toContain("codex gpt-4o"); // non-claude model: falls back to the full name
+  });
+
+  it("renders alive time suffix on issue tokens", () => {
+    const line = renderAfkLine(
+      { ...afk, issues: [17], stages: ["impl"], aliveMs: [5 * 60 * 1000] },
+      undefined,
+    );
+    expect(stripAnsi(line!)).toContain("#17·impl·5m");
+  });
+
   it("is null when there are no live workers", () => {
     expect(renderAfkLine(undefined, undefined)).toBeNull();
     expect(renderAfkLine({ ...afk, workers: 0 }, undefined)).toBeNull();

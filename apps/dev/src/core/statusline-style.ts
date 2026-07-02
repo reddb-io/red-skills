@@ -25,6 +25,7 @@
 // passes the COLUMNS budget.
 
 import {
+  humanizeAlive,
   humanizeTokens,
   renderStatusline,
   type AfkInput,
@@ -141,12 +142,31 @@ export function renderHeaderLine(
 
 // ---------- line 2: AFK (fully transparent) ----------
 
+/** Compact model family name: `claude-opus-4-8` → `opus`, `claude-sonnet-5` → `sonnet`. */
+function compactModelName(model: string): string {
+  const m = model.match(/^claude-([a-z]+)-/);
+  return m ? m[1] : model;
+}
+
+/** Runner label with optional compact model+effort: `claude opus-max`, `codex`. */
+function formatRunnerLabel(
+  runner: string | undefined,
+  model: string | undefined,
+  effort: string | undefined,
+): string {
+  if (!runner) return "";
+  if (!model) return runner;
+  const compact = compactModelName(model);
+  return effort ? `${runner} ${compact}-${effort}` : `${runner} ${compact}`;
+}
+
 /** Line 2 — the AFK KPIs, transparent background, or null when no live workers. */
 export function renderAfkLine(afk: AfkInput | undefined, columns: number | undefined): string | null {
   if (!afk || afk.workers <= 0) return null;
 
   const groups: string[] = [];
-  if (afk.runner) groups.push(`${SOFT}${afk.runner}${VAL}`);
+  const runnerLabel = formatRunnerLabel(afk.runner, afk.model, afk.effort);
+  if (runnerLabel) groups.push(`${SOFT}${runnerLabel}${VAL}`);
 
   let workers = kv("wrk", String(afk.workers));
   if (afk.resolved !== undefined && afk.resolved > 0) workers += ` ${kv("res", String(afk.resolved))}`;
@@ -170,7 +190,9 @@ export function renderAfkLine(afk: AfkInput | undefined, columns: number | undef
   const showStage = afk.workers <= STAGE_MAX_WORKERS;
   const issueTok = (issue: number | string, i: number): string => {
     const stage = showStage ? afk.stages?.[i] : undefined;
-    const suffix = stage ? `${SOFT}·${stage}` : "";
+    const alive = afk.aliveMs?.[i];
+    let suffix = stage ? `${SOFT}·${stage}` : "";
+    if (alive !== undefined && alive > 0) suffix += `${SOFT}·${humanizeAlive(alive)}`;
     return `${SOFT}#${VAL}${issue}${suffix}`;
   };
 

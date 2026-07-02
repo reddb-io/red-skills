@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  humanizeAlive,
   humanizeTokens,
   renderAfkBlock,
   renderContextBlock,
@@ -19,6 +20,42 @@ const baseAfk = (over: Partial<AfkInput> = {}): AfkInput => ({
   removed: 3,
   issues: [17],
   ...over,
+});
+
+describe("statusline — humanizeAlive", () => {
+  it("renders seconds when under one minute", () => {
+    expect(humanizeAlive(30 * 1000)).toBe("30s");
+    expect(humanizeAlive(59 * 1000 + 999)).toBe("59s");
+  });
+
+  it("renders Xm when an exact number of minutes", () => {
+    expect(humanizeAlive(5 * 60 * 1000)).toBe("5m");
+    expect(humanizeAlive(60 * 1000)).toBe("1m");
+  });
+
+  it("renders XmYs when seconds remain under an hour", () => {
+    expect(humanizeAlive((5 * 60 + 40) * 1000)).toBe("5m40s");
+    expect(humanizeAlive((1 * 60 + 1) * 1000)).toBe("1m1s");
+  });
+
+  it("renders Xh when an exact number of hours", () => {
+    expect(humanizeAlive(1 * 60 * 60 * 1000)).toBe("1h");
+    expect(humanizeAlive(2 * 60 * 60 * 1000)).toBe("2h");
+  });
+
+  it("renders XhYm when minutes remain", () => {
+    expect(humanizeAlive((1 * 60 * 60 + 22 * 60) * 1000)).toBe("1h22m");
+    expect(humanizeAlive((1 * 60 * 60 + 1 * 60) * 1000)).toBe("1h1m");
+  });
+
+  it("drops the seconds part at hour scale", () => {
+    expect(humanizeAlive((1 * 60 * 60 + 22 * 60 + 45) * 1000)).toBe("1h22m");
+  });
+
+  it("renders 0s for zero or negative input", () => {
+    expect(humanizeAlive(0)).toBe("0s");
+    expect(humanizeAlive(-5000)).toBe("0s");
+  });
 });
 
 describe("statusline — humanizeTokens", () => {
@@ -191,8 +228,35 @@ describe("statusline — AFK block", () => {
     expect(renderAfkBlock(baseAfk())).not.toMatch(/tok=|usd=/);
   });
 
-  it("keeps the pre-vitals render byte-for-byte when no waiting/stages are supplied", () => {
-    // The new fields are optional: an aggregator that never populates them must
+  it("appends alive time after stage when both are present", () => {
+    const out = renderAfkBlock(
+      baseAfk({ issues: [17], stages: ["impl"], aliveMs: [5 * 60 * 1000] }),
+    );
+    expect(out).toContain("#17·impl·5m");
+  });
+
+  it("appends alive time without stage when stage is absent but aliveMs is set", () => {
+    const out = renderAfkBlock(
+      baseAfk({ issues: [17], aliveMs: [(1 * 60 * 60 + 22 * 60) * 1000] }),
+    );
+    expect(out).toContain("#17·1h22m");
+  });
+
+  it("appends alive time per-issue aligned by index", () => {
+    const out = renderAfkBlock(
+      baseAfk({
+        workers: 2,
+        issues: [17, 20],
+        stages: ["impl", "tests"],
+        aliveMs: [5 * 60 * 1000, 30 * 1000],
+      }),
+    );
+    expect(out).toContain("#17·impl·5m");
+    expect(out).toContain("#20·tests·30s");
+  });
+
+  it("keeps the pre-vitals render byte-for-byte when no waiting/stages/aliveMs are supplied", () => {
+    // All new fields are optional: an aggregator that never populates them must
     // produce the exact legacy line, so the upgrade is a no-op for old callers.
     expect(renderAfkBlock(baseAfk())).toBe("wrk=1 rdy=11 hmn=3 blk=2 loc=+12 -3 #17");
   });

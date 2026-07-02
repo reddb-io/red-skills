@@ -634,7 +634,8 @@ function writeStatuslineCacheAtomic(path: string, cache: StatuslineCache): void 
 export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput | null> {
   const paths = afkPaths(ctx.root);
   // Same single owner as the monitor (core/worker-state-reader).
-  const records = await readWorkerStates(paths.workersRoot);
+  const nowMs = Date.now();
+  const records = await readWorkerStates(paths.workersRoot, { nowMs });
   const gitCtx: gitx.GitContext = { cwd: ctx.root };
 
   let workers = 0;
@@ -644,14 +645,16 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
   let waiting = 0;
   let tokens = 0;
   let costUsd = 0;
-  // `runner` is the fleet runner (first non-empty across live workers — a fleet
-  // is single-runner in practice). `resolved` is the supervisor's issues-closed
-  // count, already persisted as `state.done` (the same field the monitor renders
-  // as `issues done/total`), maxed across workers since they all mirror it.
+  // `runner`/`model`/`effort` come from the first live worker (fleets are
+  // single-runner in practice). `resolved` is maxed across workers since they
+  // all mirror the same supervisor's done count.
   let runner = "";
+  let model = "";
+  let effort = "";
   let resolved = 0;
   const issues: Array<number | string> = [];
   const stages: Array<string | undefined> = [];
+  const aliveMsList: number[] = [];
   const sourceMap = new Map<string, number>();
 
   for (const { state, live } of records) {
@@ -669,9 +672,15 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
     workers += 1;
     blocked += state.blocked;
     if (runner === "" && state.runner) runner = state.runner;
+    if (model === "" && state.current.model) model = state.current.model;
+    if (effort === "" && state.current.effort) effort = state.current.effort;
     if (state.done > resolved) resolved = state.done;
     // Per-source count: read origin from the single state field (issue #930).
     if (state.origin) sourceMap.set(state.origin, (sourceMap.get(state.origin) ?? 0) + 1);
+    // Alive time: elapsed ms since this worker's top-level started_at, or 0
+    // when the timestamp is absent (pre-schema state files).
+    const startedAt = state.started_at || state.current.started_at;
+    const workerAliveMs = startedAt ? Math.max(0, nowMs - Date.parse(startedAt)) : 0;
     // Read the worker's signals through the canonical WorkerVitals contract
     // (ADR 0065) rather than ad-hoc field access — `current` satisfies it.
     const vitals: WorkerVitals = state.current;
@@ -698,9 +707,9 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
     const number = state.current.number;
     if (number !== "" && number !== undefined && number !== null) {
       issues.push(number);
-      // Aligned by index with `issues`: the worker's current stage suffixes its
-      // `#N` token (`#629·impl`). Empty stage → bare `#N` (back-compat).
+      // Aligned by index with `issues`: stage + alive time suffix each `#N` token.
       stages.push(state.current.stage || undefined);
+      aliveMsList.push(workerAliveMs);
     }
   }
 
@@ -746,7 +755,14 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
           .map(([origin, count]) => ({ origin, count }))
       : undefined;
 
-  return { workers, queue, human, blocked, added, removed, waiting, tokens, costUsd, runner, resolved, issues, stages, sourceCounts };
+  return {
+    workers, queue, human, blocked, added, removed, waiting, tokens, costUsd,
+    runner, resolved, issues, stages,
+    aliveMs: aliveMsList.length > 0 ? aliveMsList : undefined,
+    model: model || undefined,
+    effort: effort || undefined,
+    sourceCounts,
+  };
 }
 
 interface RepoStatsCache {

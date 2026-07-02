@@ -24,6 +24,12 @@ export const AfkCurrentSchema = z.object({
   heartbeat_glyph: z.union([z.string(), z.number(), z.null()]).optional().default(""),
   heartbeat_pid: z.union([z.string(), z.number(), z.null()]).optional().default(""),
   runner: z.string().default(""),
+  /** Model identifier resolved for this attempt (e.g. `claude-opus-4-8`). Stamped
+   * once at attempt start. Used by the statusline to show which model is running. */
+  model: z.string().default(""),
+  /** Effort level resolved for this attempt (e.g. `high`, `max`). Paired with
+   * `model` on the statusline runner label. */
+  effort: z.string().default(""),
   retries: z.number().default(0),
   last_stream_line: z.string().default(""),
   run_mode: z.string().default(""),
