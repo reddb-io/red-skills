@@ -15,6 +15,17 @@
 import { buildSparkline, type HistoryRecord } from "./history.js";
 import { encodeToon, type ToonValue } from "./toon.js";
 
+/** GitHub-derived queue/human counts exposed by the monitor with freshness metadata.
+ * Read passively from the statusline TTL cache; the monitor never refreshes it. */
+export interface MonitorRemote {
+  queue: number;
+  human: number;
+  /** Age of the underlying statusline cache file in seconds. */
+  cacheAgeS: number;
+  /** True when cacheAgeS exceeds the statusline TTL — render shows a stale marker. */
+  stale: boolean;
+}
+
 /** The subset of a worker's current-iteration state the compact line reads. */
 export interface CompactCurrent {
   /** Issue number; "" / "-" / "null" all mean "no issue in progress". */
@@ -299,6 +310,7 @@ export function renderCompactDashboard(
   events: ReadonlyArray<Pick<HistoryRecord, "event" | "epoch">>,
   now: number,
   fleet?: FleetState | null,
+  remote?: MonitorRemote | null,
 ): string {
   let added = 0;
   let removed = 0;
@@ -331,14 +343,20 @@ export function renderCompactDashboard(
   } else {
     prefix = header;
   }
+  // Remote facts (queue/human) with stale marker when the TTL cache is old.
+  const remoteLine = remote
+    ? `\nqueue:${remote.queue} human:${remote.human}${remote.stale ? ` [stale ${formatElapsed(remote.cacheAgeS)} ago]` : ""}`
+    : "";
+  // Standing rule: every tick report states the current wall-clock time.
+  const tickLine = `\ntick at: ${new Date(now * 1000).toISOString()}`;
   if (workers.length === 0) {
-    return `${prefix}\nworkers: (none — /afk not running here)`;
+    return `${prefix}\nworkers: (none — /afk not running here)${remoteLine}${tickLine}`;
   }
   const sorted = [...workers].sort((a, b) =>
     startedAtKey(a) < startedAtKey(b) ? -1 : startedAtKey(a) > startedAtKey(b) ? 1 : 0,
   );
   const lines = sorted.map((w) => renderWorkerCompactLine(w, now));
-  return `${prefix}\n${lines.join("\n")}`;
+  return `${prefix}\n${lines.join("\n")}${remoteLine}${tickLine}`;
 }
 
 /** Per-source counts from `state.origin` across all workers (#930), aggregated
@@ -397,6 +415,7 @@ export function renderCompactDashboardToon(
   events: ReadonlyArray<Pick<HistoryRecord, "event" | "epoch">>,
   now: number,
   fleet?: FleetState | null,
+  remote?: MonitorRemote | null,
 ): string {
   let added = 0;
   let removed = 0;
@@ -438,6 +457,21 @@ export function renderCompactDashboardToon(
       })),
     };
   }
+
+  // Remote facts: GitHub-derived queue/human counts read from the statusline cache.
+  // stale: 1 when the cache age exceeds the TTL — the consumer should treat the
+  // counts as approximate (last known value, not live).
+  if (remote) {
+    root.remote = {
+      queue: remote.queue,
+      human: remote.human,
+      cache_age_s: remote.cacheAgeS,
+      stale: remote.stale ? 1 : 0,
+    };
+  }
+
+  // Standing rule: every tick report states the current wall-clock time.
+  root.tick_at = new Date(now * 1000).toISOString();
 
   const sorted = [...workers].sort((a, b) =>
     startedAtKey(a) < startedAtKey(b) ? -1 : startedAtKey(a) > startedAtKey(b) ? 1 : 0,

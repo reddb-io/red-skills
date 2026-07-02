@@ -1,5 +1,5 @@
-import { renderCompactDashboard, renderCompactDashboardToon, type CompactWorker } from "../core/monitor.js";
-import { collectMonitorInputs, afkPaths, resolveRepoContext } from "../runtime/wire.js";
+import { renderCompactDashboard, renderCompactDashboardToon, type CompactWorker, type MonitorRemote } from "../core/monitor.js";
+import { collectMonitorInputs, afkPaths, resolveRepoContext, STATUSLINE_CACHE_TTL_S } from "../runtime/wire.js";
 import { resolveSupervisorConfig } from "../core/supervisor.js";
 import { runWatchdog } from "../core/watchdog.js";
 import { buildWatchdogIO } from "../runtime/watchdog-io.js";
@@ -202,13 +202,17 @@ export async function monitorCommand(
     }
   }
 
-  const { workers, events, fleet } = await collectMonitorInputs(cwd);
+  const { workers, events, fleet, remoteQueue, remoteHuman, remoteCacheAgeS } = await collectMonitorInputs(cwd);
   const now = Math.floor(Date.now() / 1000);
+  const remote: MonitorRemote | undefined =
+    remoteQueue !== undefined && remoteHuman !== undefined && remoteCacheAgeS !== undefined
+      ? { queue: remoteQueue, human: remoteHuman, cacheAgeS: remoteCacheAgeS, stale: remoteCacheAgeS >= STATUSLINE_CACHE_TTL_S }
+      : undefined;
   // TOON is the default agent-facing wire format (PRD #928 / ADR 0081); `--plain`
   // restores the legacy compact text dashboard for a human TTY glance.
   const dashboard = args.includes("--plain")
-    ? renderCompactDashboard(workers, events, now, fleet)
-    : renderCompactDashboardToon(workers, events, now, fleet);
+    ? renderCompactDashboard(workers, events, now, fleet, remote)
+    : renderCompactDashboardToon(workers, events, now, fleet, remote);
   stdout.write(`${dashboard}\n`);
 
   // Companion (active) mode (#921, PRD #907). STRICTLY opt-in: without

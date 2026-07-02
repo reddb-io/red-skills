@@ -677,3 +677,164 @@ describe("collectStatuslineRepo — cache discipline", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// collectMonitorInputs — layout discovery (#1029)
+// Both sandcastle and legacy layouts put afk.state.json at the same path
+// ({workersRoot}/{workerID}/{attemptDir}/afk.state.json) — the difference is
+// where the git worktree lives. This suite verifies both layouts are discovered
+// by the Worker state reader, satisfying the "no monitor-private globbing" contract.
+// ---------------------------------------------------------------------------
+
+describe("collectMonitorInputs — layout discovery (#1029)", () => {
+  it("discovers a sandcastle-layout worker (state at attemptDir/afk.state.json, worktree absent pre-heartbeat)", async () => {
+    const root = scratch();
+    try {
+      // Sandcastle layout: state file at the standard path; worktree field not yet
+      // set (simulates the pre-heartbeat window where current.worktree = "").
+      const attemptDir = join(root, ".red", "tmp", "workers", "wSC", "42-a1");
+      mkdirSync(attemptDir, { recursive: true });
+      writeFileSync(
+        join(attemptDir, "afk.state.json"),
+        JSON.stringify({ worker_id: "wSC", pid: 999999, runner: "claude", total: 5, done: 2 }),
+      );
+      const { workers } = await collectMonitorInputs(root);
+      // The worker must appear in the output — sandcastle layout does not hide the
+      // state file from the Worker state reader.
+      expect(workers).toHaveLength(1);
+      expect(workers[0]!.state.worker_id).toBe("wSC");
+      expect(workers[0]!.state.done).toBe(2);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("discovers a legacy-layout worker (state at attemptDir/afk.state.json, worktree at attemptDir/worktree)", async () => {
+    const root = scratch();
+    try {
+      const attemptDir = join(root, ".red", "tmp", "workers", "wLG", "7-a1");
+      mkdirSync(attemptDir, { recursive: true });
+      // Legacy layout: current.worktree points to {attemptDir}/worktree (doesn't
+      // exist here; git call fails gracefully, diffstat returns 0,0 safely).
+      writeFileSync(
+        join(attemptDir, "afk.state.json"),
+        JSON.stringify({
+          worker_id: "wLG",
+          pid: 999999,
+          runner: "codex",
+          total: 3,
+          done: 0,
+          current: { worktree: join(attemptDir, "worktree") },
+        }),
+      );
+      const { workers } = await collectMonitorInputs(root);
+      expect(workers).toHaveLength(1);
+      expect(workers[0]!.state.worker_id).toBe("wLG");
+      // Diffstat gracefully returns 0,0 when worktree path does not exist — no crash.
+      expect(workers[0]!.diffAdded).toBe(0);
+      expect(workers[0]!.diffRemoved).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("a live worker under the sandcastle layout renders in the dashboard (not 'workers: none')", async () => {
+    const root = scratch();
+    try {
+      // Use process.pid so isStateLive → true (pid is alive).
+      const attemptDir = join(root, ".red", "tmp", "workers", "wLIVE", "99-a1");
+      mkdirSync(attemptDir, { recursive: true });
+      const stateFile = join(attemptDir, "afk.state.json");
+      writeFileSync(
+        stateFile,
+        JSON.stringify({
+          worker_id: "wLIVE",
+          pid: process.pid,
+          runner: "claude",
+          total: 1,
+          done: 0,
+          current: { number: 99, title: "test issue", stage: "impl", started_at: new Date().toISOString(), loc_added: 5 },
+        }),
+      );
+      const { workers } = await collectMonitorInputs(root);
+      // Regression guard: live worker must appear (workers.length > 0), not be hidden.
+      expect(workers.length).toBeGreaterThan(0);
+      const found = workers.find((w) => w.state.worker_id === "wLIVE");
+      expect(found).toBeDefined();
+      // pid-live worker is not dead — the liveness verdict must not be "dead".
+      expect(found!.liveness).not.toBe("dead");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// collectMonitorInputs — remote facts (TTL cache) (#1029)
+// ---------------------------------------------------------------------------
+
+describe("collectMonitorInputs — remote facts (TTL cache) (#1029)", () => {
+  it("returns no remote facts when the statusline cache is absent", async () => {
+    const root = scratch();
+    try {
+      const result = await collectMonitorInputs(root);
+      expect(result.remoteQueue).toBeUndefined();
+      expect(result.remoteHuman).toBeUndefined();
+      expect(result.remoteCacheAgeS).toBeUndefined();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("exposes queue/human from a fresh statusline cache with low age", async () => {
+    const root = scratch();
+    try {
+      const tmpDir = join(root, ".red", "tmp");
+      mkdirSync(tmpDir, { recursive: true });
+      const freshTs = nowS();
+      writeFileSync(join(tmpDir, "statusline-cache.json"), JSON.stringify({ queue: 4, human: 2, ts: freshTs }));
+      const result = await collectMonitorInputs(root);
+      expect(result.remoteQueue).toBe(4);
+      expect(result.remoteHuman).toBe(2);
+      expect(result.remoteCacheAgeS).toBeGreaterThanOrEqual(0);
+      // Fresh cache age must be below the TTL.
+      expect(result.remoteCacheAgeS).toBeLessThan(STATUSLINE_CACHE_TTL_S);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("reports a stale age when the cache is older than the TTL", async () => {
+    const root = scratch();
+    try {
+      const tmpDir = join(root, ".red", "tmp");
+      mkdirSync(tmpDir, { recursive: true });
+      const staleTs = nowS() - STATUSLINE_CACHE_TTL_S - 30;
+      writeFileSync(join(tmpDir, "statusline-cache.json"), JSON.stringify({ queue: 7, human: 1, ts: staleTs }));
+      const result = await collectMonitorInputs(root);
+      expect(result.remoteQueue).toBe(7);
+      expect(result.remoteHuman).toBe(1);
+      // Age must exceed the TTL so the render can show a stale marker.
+      expect(result.remoteCacheAgeS).toBeGreaterThanOrEqual(STATUSLINE_CACHE_TTL_S);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does NOT refresh the cache (monitor is read-only; statusline owns cache lifecycle)", async () => {
+    const root = scratch();
+    try {
+      const tmpDir = join(root, ".red", "tmp");
+      mkdirSync(tmpDir, { recursive: true });
+      const staleTs = nowS() - STATUSLINE_CACHE_TTL_S - 30;
+      const cachePath = join(tmpDir, "statusline-cache.json");
+      writeFileSync(cachePath, JSON.stringify({ queue: 9, human: 3, ts: staleTs }));
+      await collectMonitorInputs(root);
+      // The cache timestamp must NOT have changed — the monitor never refreshes it.
+      const after = JSON.parse(readFileSync(cachePath, "utf8")) as { ts: number };
+      expect(after.ts).toBe(staleTs);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});

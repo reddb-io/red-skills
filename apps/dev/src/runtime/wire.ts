@@ -420,6 +420,13 @@ export interface MonitorInputs {
   workers: CompactWorker[];
   events: Array<Pick<HistoryRecord, "event" | "epoch">>;
   fleet: FleetState | null;
+  /** GitHub queue/human counts read passively from the statusline TTL cache.
+   * Absent when the cache file has never been written (no statusline run yet). */
+  remoteQueue?: number;
+  remoteHuman?: number;
+  /** Age of the statusline cache in seconds. Undefined when no cache file exists.
+   * The monitor render shows a stale marker when this exceeds STATUSLINE_CACHE_TTL_S. */
+  remoteCacheAgeS?: number;
 }
 
 const SLOT_STATUSES = new Set<SlotDetail["status"]>(["open", "half-open", "idle-parked"]);
@@ -503,11 +510,23 @@ export async function collectMonitorInputs(root = process.cwd()): Promise<Monito
     // into the fleet header, so it is never suppressed.
     let added = state.current.loc_added;
     let removed = state.current.loc_removed;
-    if (added === 0 && removed === 0 && state.current.worktree) {
+    if (added === 0 && removed === 0) {
+      const attemptDir = dirname(path);
       const baseRef = state.current.base ? `origin/${state.current.base}` : "origin/main";
-      const stat = await gitx.diffstatShortstat({ cwd: state.current.worktree }, baseRef);
-      added = stat.added;
-      removed = stat.removed;
+      // Resolve the real worktree path: the state file carries it after the first
+      // heartbeat tick. Before that (or for sandcastle where the initial seed is the
+      // legacy {attemptDir}/worktree path that never exists), fall back to
+      // worktreePathUnder which probes `git worktree list --porcelain` and resolves
+      // the sandcastle layout ({attemptDir}/.sandcastle/worktrees/{slug}) even before
+      // the heartbeat has had a chance to persist the resolved path.
+      const worktreePath =
+        state.current.worktree ||
+        (await gitx.worktreePathUnder({ cwd: attemptDir }, attemptDir).catch(() => undefined));
+      if (worktreePath) {
+        const stat = await gitx.diffstatShortstat({ cwd: worktreePath }, baseRef);
+        added = stat.added;
+        removed = stat.removed;
+      }
     }
 
     const logPath = state.log || join(dirname(path), "afk.log");
@@ -556,7 +575,18 @@ export async function collectMonitorInputs(root = process.cwd()): Promise<Monito
   const histText = await fsx.readText(paths.historyPath);
   const events = histText === null ? [] : parseHistoryLines(histText).map((r) => ({ event: r.event, epoch: r.epoch }));
   const fleet = await readFleetState(paths.fleetStatePath);
-  return { workers, events, fleet };
+
+  // Remote facts: read the statusline TTL cache passively (no refresh — the monitor
+  // is read-only; the statusline owns the cache lifecycle). Include queue/human counts
+  // and the cache age so the render can show a stale marker when the data is old.
+  const cachePath = join(paths.tmpDir, "statusline-cache.json");
+  const cached = readStatuslineCache(cachePath);
+  const nowS = Math.floor(Date.now() / 1000);
+  const remoteExtra = cached !== null
+    ? { remoteQueue: cached.queue, remoteHuman: cached.human, remoteCacheAgeS: nowS - cached.ts }
+    : {};
+
+  return { workers, events, fleet, ...remoteExtra };
 }
 
 // ---------- statusline inputs ----------
