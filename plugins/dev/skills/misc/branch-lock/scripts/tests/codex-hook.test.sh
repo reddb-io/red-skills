@@ -68,7 +68,7 @@ expect_contains "manifest: wrapper drains stdin before hook" 'cat >"$tmp"' "$man
 out="$tmp/manifest-out"
 err="$tmp/manifest-err"
 CODEX_PLUGIN_ROOT="$PLUGIN_ROOT" bash -lc "$manifest_hook" >"$out" 2>"$err" \
-  <<<"$(payload "$primary" "git switch main")"
+  <<<"$(payload "$primary" "git status")"
 rc=$?
 expect_eq "manifest: command executes through shell" "0" "$rc"
 expect_eq "manifest: command prints empty JSON" "{}" "$(<"$out")"
@@ -103,45 +103,58 @@ rc=$?
 expect_eq "hook: incomplete plugin root fails open" "0" "$rc"
 expect_eq "hook: incomplete plugin root prints empty JSON" "{}" "$(<"$out")"
 
+# Branch movement in the primary is now blocked unconditionally by the
+# untouchable-primary rule (ADR 0083) — it fires before the branch-lock path, so
+# switching away, and even switching *back* to the locked branch, is refused.
 result="$(run_hook "$primary" "$(payload "$primary" "git switch feature")")"
 rc="$(sed -n '1p' <<<"$result")"
 stderr="$(sed -n '/---stderr---/,$p' <<<"$result")"
 expect_eq "locked: switch away is blocked" "2" "$rc"
-expect_contains "locked: error names branch lock" "BLOCKED by branch lock" "$stderr"
+expect_contains "locked: error names ADR 0083" "ADR 0083" "$stderr"
 
 result="$(run_hook "$primary" "$(payload "$primary" "git switch main")")"
 rc="$(sed -n '1p' <<<"$result")"
-stdout="$(sed -n '/---stdout---/,/---stderr---/p' <<<"$result" | sed '1d;$d')"
-expect_eq "locked: switch back is allowed" "0" "$rc"
-expect_eq "locked: allowed prints empty JSON" "{}" "$stdout"
+stderr="$(sed -n '/---stderr---/,$p' <<<"$result")"
+expect_eq "locked: switch back is also blocked (untouchable primary)" "2" "$rc"
+expect_contains "locked: switch-back error names ADR 0083" "ADR 0083" "$stderr"
+
+# The branch-lock work-loss family survives: while locked, a non-movement
+# working-tree-losing command is still refused with the branch-lock message.
+result="$(run_hook "$primary" "$(payload "$primary" "git reset --hard HEAD~1")")"
+rc="$(sed -n '1p' <<<"$result")"
+stderr="$(sed -n '/---stderr---/,$p' <<<"$result")"
+expect_eq "locked: work-loss reset --hard is blocked" "2" "$rc"
+expect_contains "locked: work-loss error names branch lock" "BLOCKED by branch lock" "$stderr"
 
 rm -f "$primary/.red/tmp/branch-lock.yaml"
 result="$(run_hook "$primary" "$(payload "$primary" "git switch feature")")"
 rc="$(sed -n '1p' <<<"$result")"
-expect_eq "unlocked: switch is allowed" "0" "$rc"
+stderr="$(sed -n '/---stderr---/,$p' <<<"$result")"
+expect_eq "unlocked: switch is still blocked (untouchable primary)" "2" "$rc"
+expect_contains "unlocked: error names ADR 0083" "ADR 0083" "$stderr"
 
+# With no lock file the untouchable-primary guard still blocks every branch
+# move, regardless of the legacy `dev.lock.primary-branch` toggle value.
 mkdir -p "$primary/.red"
 cat > "$primary/.red/config.yaml" <<'EOF'
 plugins:
   dev:
     enabled: true
-    lock:
-      primary-branch: true
 EOF
 
 result="$(run_hook "$primary" "$(payload "$primary" "git switch feature")")"
 rc="$(sed -n '1p' <<<"$result")"
 stderr="$(sed -n '/---stderr---/,$p' <<<"$result")"
-expect_eq "primary guard: switch is blocked when flag is on" "2" "$rc"
-expect_contains "primary guard: error names config flag" "dev.lock.primary-branch is true" "$stderr"
+expect_eq "primary guard: switch blocked with no lock and no config" "2" "$rc"
+expect_contains "primary guard: error names ADR 0083" "ADR 0083" "$stderr"
 
 result="$(run_hook "$primary" "$(payload "$primary" "git checkout feature")")"
 rc="$(sed -n '1p' <<<"$result")"
-expect_eq "primary guard: checkout branch is blocked when flag is on" "2" "$rc"
+expect_eq "primary guard: checkout branch is blocked" "2" "$rc"
 
 result="$(run_hook "$primary" "$(payload "$primary" "git switch -b new")")"
 rc="$(sed -n '1p' <<<"$result")"
-expect_eq "primary guard: switch -b is blocked when flag is on" "2" "$rc"
+expect_eq "primary guard: switch -b is blocked" "2" "$rc"
 
 result="$(run_hook "$primary" "$(payload "$primary" "git commit -m wip")")"
 rc="$(sed -n '1p' <<<"$result")"
@@ -155,6 +168,8 @@ result="$(run_hook "$primary" "$(payload "$primary" "git status")")"
 rc="$(sed -n '1p' <<<"$result")"
 expect_eq "primary guard: read-only git is allowed" "0" "$rc"
 
+# The legacy toggle is still readable but can no longer *enable* switching:
+# explicitly false must not re-open primary branch movement (ADR 0083 §2).
 cat > "$primary/.red/config.yaml" <<'EOF'
 plugins:
   dev:
@@ -164,7 +179,7 @@ plugins:
 EOF
 result="$(run_hook "$primary" "$(payload "$primary" "git switch feature")")"
 rc="$(sed -n '1p' <<<"$result")"
-expect_eq "primary guard: switch is allowed when flag is off" "0" "$rc"
+expect_eq "primary guard: legacy toggle off still blocks switch" "2" "$rc"
 
 worktree="$primary/.red/tmp/work-wAAAA-i1/worktree"
 mkdir -p "$worktree" "$primary/.red/tmp"
