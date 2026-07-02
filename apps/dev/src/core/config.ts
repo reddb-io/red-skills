@@ -182,6 +182,14 @@ export const CONFIG_DEFAULTS = {
   // and never rolls back the primary landing. Set "false" to opt out.
   "afk.landing.cascade_rebase": "true",
   "dev.lock.primary-branch": "false",
+  // The Trunk (ADR 0083): the repo's configured focal branch — the default
+  // base every AFK worktree forks from and the default target a landing
+  // integrates into, when neither a branch lock nor a pin names one
+  // (precedence lock > pin > trunk). Always consumed as its fresh-fetched
+  // remote ref (`origin/<trunk>`), never as the local working-tree branch.
+  // Set `plugins.dev.trunk` (folds to this accessor) to move the focal branch
+  // to e.g. `develop` or `workspace/<user>`.
+  "dev.trunk": "main",
   // NOTE: `dev.lock.branch` (the static base lock — ADR 0031) is intentionally
   // NOT in this table. Its "default" is *unset* (no config-level lock), and
   // `getConfig` already returns "" for an absent key, so adding a "" default

@@ -63,6 +63,12 @@ export function parseParentPrd(body: string): number | undefined {
 export interface ResolvePinDeps {
   /** Fetch the raw body for issue/PRD number `n`, or `undefined` if missing. */
   fetchIssueBody: (n: number) => Promise<string | undefined>;
+  /**
+   * The branch a pinless item collapses to — the configured Trunk
+   * (`plugins.dev.trunk`, ADR 0083). Empty/undefined falls back to
+   * `DEFAULT_BRANCH` (`main`), preserving pre-trunk behaviour.
+   */
+  defaultBranch?: string;
 }
 
 export interface ResolvePinInput {
@@ -72,7 +78,8 @@ export interface ResolvePinInput {
 
 /**
  * Apply the inheritance chain and always resolve to a branch:
- *   the issue's own pin, else its parent PRD's pin, else `main`.
+ *   the issue's own pin, else its parent PRD's pin, else the Trunk
+ *   (`deps.defaultBranch`, falling back to `main` when unset — ADR 0083).
  *
  * The parent PRD body is fetched lazily via the injected `fetchIssueBody`,
  * keyed off the issue body's `PRD #<n>` reference.
@@ -90,5 +97,6 @@ export async function resolvePin(input: ResolvePinInput, deps: ResolvePinDeps): 
     }
   }
 
-  return DEFAULT_BRANCH;
+  const trunk = deps.defaultBranch?.trim();
+  return trunk !== undefined && trunk.length > 0 ? trunk : DEFAULT_BRANCH;
 }

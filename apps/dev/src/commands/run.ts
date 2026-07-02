@@ -253,8 +253,9 @@ function makeBootReconcileRunner(
   const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo };
   const gitCtx: GitContext = { cwd: ctx.root };
   const lockPath = branchLockPath(ctx.root);
-  const configLockedBranch =
-    getConfig(loadConfig(paths.configPath, { warn: () => undefined }), "dev.lock.branch") || undefined;
+  const reconcileConfig = loadConfig(paths.configPath, { warn: () => undefined });
+  const configLockedBranch = getConfig(reconcileConfig, "dev.lock.branch") || undefined;
+  const configTrunk = getConfig(reconcileConfig, "dev.trunk") || undefined;
 
   return async (plan: ReconcileSweepPlan) => {
     // Acquire the per-issue claim before validating/landing so a concurrent live
@@ -348,6 +349,7 @@ function makeBootReconcileRunner(
         {
           readLockedBranch: () => readLockedBranch(lockPath),
           configLockedBranch,
+          configTrunk,
           fetchIssueBody: (n) => ghx.issueBody(ghCtx, n),
         },
       );
@@ -753,6 +755,7 @@ export function buildProcessDeps(
       base: {
         readLockedBranch: () => readLockedBranch(lockPath),
         configLockedBranch: getConfig(config, "dev.lock.branch") || undefined,
+        configTrunk: getConfig(config, "dev.trunk") || undefined,
         fetchIssueBody: (n) => ghx.issueBody(ghCtx, n),
       },
       isLocked: () => isLocked(lockPath),
@@ -972,7 +975,10 @@ export function buildProcessDeps(
         const worktree =
           (await gitx.worktreePathUnder(gitCtx, current.attemptDir).catch(() => undefined)) ??
           join(current.attemptDir, "worktree");
-        const baseRef = info.base ? `origin/${info.base}` : "origin/main";
+        // Fall back to the configured Trunk (ADR 0083), not a literal "main".
+        const baseRef = info.base
+          ? `origin/${info.base}`
+          : `origin/${getConfig(config, "dev.trunk") || "main"}`;
         const { added, removed } = await gitx
           .diffstatShortstat({ cwd: worktree }, baseRef)
           .catch(() => ({ added: 0, removed: 0 }));
