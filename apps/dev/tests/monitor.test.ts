@@ -7,6 +7,7 @@ import {
   renderWorkerCompactLine,
   type FleetState,
   type CompactWorker,
+  type MonitorRemote,
 } from "../src/core/monitor.js";
 import {
   monitorCommand,
@@ -15,6 +16,13 @@ import {
   workersToDesired,
 } from "../src/commands/monitor.js";
 import type { MirrorCall, MirrorFallbackNotice } from "../src/core/mirror.js";
+
+// Shared fixture fixtureEvents used across multiple test suites (tick_at, remote facts).
+const fixtureEvents = [
+  { event: "done" as const, epoch: 1780137000 },
+  { event: "done" as const, epoch: 1780137000 },
+  { event: "blocked" as const, epoch: 1780137000 },
+];
 
 const baseWorker = (over: Partial<CompactWorker> = {}): CompactWorker => ({
   state: {
@@ -217,15 +225,15 @@ describe("monitor — compact line", () => {
 });
 
 describe("monitor — compact dashboard", () => {
-  // now = 1780140600; events one hour earlier are inside the 48h window.
-  const events = [
+  // now = 1780140600; fixtureEvents one hour earlier are inside the 48h window.
+  const fixtureEvents = [
     { event: "done" as const, epoch: 1780137000 },
     { event: "done" as const, epoch: 1780137000 },
     { event: "blocked" as const, epoch: 1780137000 },
   ];
 
   it("emits the 48h sparkline header as the first line", () => {
-    const out = renderCompactDashboard([baseWorker()], events, 1780140600);
+    const out = renderCompactDashboard([baseWorker()], fixtureEvents, 1780140600);
     const lines = out.split("\n");
     expect(lines[0].startsWith("48h:")).toBe(true);
     expect(lines[0]).toContain("(2 closed");
@@ -238,13 +246,13 @@ describe("monitor — compact dashboard", () => {
       diffAdded: 18,
       diffRemoved: 2,
     });
-    const out = renderCompactDashboard([a, b], events, 1780140600);
+    const out = renderCompactDashboard([a, b], fixtureEvents, 1780140600);
     const lines = out.split("\n");
     expect(lines[0]).toContain("Δ fleet +338 -49");
   });
 
   it("renders the fleet total as +0 -0 even with zero workers", () => {
-    const out = renderCompactDashboard([], events, 1780140600);
+    const out = renderCompactDashboard([], fixtureEvents, 1780140600);
     const lines = out.split("\n");
     expect(lines[0]).toContain("Δ fleet +0 -0");
     expect(out).toContain("workers: (none");
@@ -271,7 +279,7 @@ describe("monitor — compact dashboard", () => {
         started_at: "2026-05-30T09:00:00Z",
       },
     });
-    const out = renderCompactDashboard([later, earlier], events, 1780140600);
+    const out = renderCompactDashboard([later, earlier], fixtureEvents, 1780140600);
     const lines = out.split("\n");
     const aIdx = lines.findIndex((l) => l.startsWith("wAAAA"));
     const bIdx = lines.findIndex((l) => l.startsWith("wBBBB"));
@@ -280,7 +288,7 @@ describe("monitor — compact dashboard", () => {
   });
 
   it("renders a (none …) line when there are zero workers", () => {
-    const out = renderCompactDashboard([], events, 1780140600);
+    const out = renderCompactDashboard([], fixtureEvents, 1780140600);
     const lines = out.split("\n");
     expect(lines[0].startsWith("48h:")).toBe(true);
     expect(out).toContain("workers: (none");
@@ -288,7 +296,7 @@ describe("monitor — compact dashboard", () => {
 
   describe("TOON (default agent-facing render)", () => {
     it("renders one worker as a tabular row, preserving aggregates and sparkline", () => {
-      const out = renderCompactDashboardToon([baseWorker()], events, 1780140600);
+      const out = renderCompactDashboardToon([baseWorker()], fixtureEvents, 1780140600);
       expect(out).toContain("sparkline:");
       expect(out).toContain("diff_added: 10");
       expect(out).toContain("diff_removed: 3");
@@ -303,20 +311,20 @@ describe("monitor — compact dashboard", () => {
       const a = baseWorker({ state: { ...baseWorker().state, worker_id: "wA", origin: "afk" } });
       const b = baseWorker({ state: { ...baseWorker().state, worker_id: "wB", origin: "go" } });
       const c = baseWorker({ state: { ...baseWorker().state, worker_id: "wC", origin: "afk" } });
-      const out = renderCompactDashboardToon([a, b, c], events, 1780140600);
+      const out = renderCompactDashboardToon([a, b, c], fixtureEvents, 1780140600);
       expect(out).toContain("sources[2]{origin,count}:");
       expect(out).toContain("  afk,2");
       expect(out).toContain("  go,1");
     });
 
     it("emits a definitive empty state for an empty fleet", () => {
-      const out = renderCompactDashboardToon([], events, 1780140600);
+      const out = renderCompactDashboardToon([], fixtureEvents, 1780140600);
       expect(out).toContain("workers[0]:");
       expect(out).toContain("sources[0]:");
     });
 
     it("includes the fleet status block when a fleet state is present", () => {
-      const out = renderCompactDashboardToon([], events, 1780138815, baseFleet());
+      const out = renderCompactDashboardToon([], fixtureEvents, 1780138815, baseFleet());
       expect(out).toContain("fleet:");
       expect(out).toContain("  status: idle");
       expect(out).toContain("  ready: 0");
@@ -330,14 +338,14 @@ describe("monitor — compact dashboard", () => {
       const board = Array.from({ length: 6 }, (_, i) =>
         baseWorker({ state: { ...baseWorker().state, worker_id: `w${i}` } }),
       );
-      const toon = renderCompactDashboardToon(board, events, 1780140600);
+      const toon = renderCompactDashboardToon(board, fixtureEvents, 1780140600);
       const json = JSON.stringify(board);
       expect(toon.length).toBeLessThan(json.length);
     });
   });
 
   it("surfaces a healthy idle fleet last-tick line", () => {
-    const out = renderCompactDashboard([], events, 1780138815, baseFleet());
+    const out = renderCompactDashboard([], fixtureEvents, 1780138815, baseFleet());
     expect(out.split("\n")[1]).toBe(
       "fleet [idle] last ticked 00:00:15 ago  ready:0  slots busy:0 free:2 parked:0  spawns:0",
     );
@@ -411,7 +419,7 @@ describe("monitor — compact dashboard", () => {
       slotsParked: 1,
       slotDetails: [{ index: 0, status: "open", retryAt: 1780138815 + 60 }],
     });
-    const out = renderCompactDashboard([], events, 1780138815, fleet);
+    const out = renderCompactDashboard([], fixtureEvents, 1780138815, fleet);
     const lines = out.split("\n");
     const fleetIdx = lines.findIndex((l) => l.startsWith("fleet "));
     expect(fleetIdx).toBeGreaterThanOrEqual(0);
@@ -701,5 +709,73 @@ describe("monitorCommand — Codex fallback path (issue #887)", () => {
     await expect(
       monitorCommand(["--mirror-plan", "--runner", "codex"], "/tmp", stream, emptyStdin),
     ).resolves.toBe(0);
+  });
+});
+
+// now = 1780140600 → new Date(1780140600 * 1000).toISOString() = "2026-05-30T11:30:00.000Z"
+const NOW_ISO = "2026-05-30T11:30:00.000Z";
+
+describe("monitor — tick_at (standing wall-clock rule)", () => {
+  it("TOON output includes tick_at with the ISO wall-clock time", () => {
+    const out = renderCompactDashboardToon([], fixtureEvents, 1780140600);
+    // TOON quotes strings that contain ':' — the ISO date is wrapped in quotes.
+    expect(out).toContain(`tick_at: "${NOW_ISO}"`);
+  });
+
+  it("plain output includes tick at line with ISO wall-clock time", () => {
+    const out = renderCompactDashboard([], fixtureEvents, 1780140600);
+    expect(out).toContain(`tick at: ${NOW_ISO}`);
+  });
+
+  it("tick_at reflects the injected now (deterministic, no live clock)", () => {
+    const out1 = renderCompactDashboardToon([], fixtureEvents, 1780138800);
+    const out2 = renderCompactDashboardToon([], fixtureEvents, 1780140600);
+    expect(out1).toContain('"2026-05-30T11:00:00.000Z"');
+    expect(out2).toContain(`"${NOW_ISO}"`);
+  });
+});
+
+describe("monitor — remote facts age markers (#1029)", () => {
+  const freshRemote: MonitorRemote = { queue: 3, human: 1, cacheAgeS: 20, stale: false };
+  const staleRemote: MonitorRemote = { queue: 5, human: 2, cacheAgeS: 90, stale: true };
+
+  it("TOON output includes remote queue/human when provided", () => {
+    const out = renderCompactDashboardToon([baseWorker()], fixtureEvents, 1780140600, null, freshRemote);
+    expect(out).toContain("queue: 3");
+    expect(out).toContain("human: 1");
+    expect(out).toContain("cache_age_s: 20");
+    expect(out).toContain("stale: 0");
+  });
+
+  it("TOON output marks remote as stale when cache age exceeds TTL", () => {
+    const out = renderCompactDashboardToon([baseWorker()], fixtureEvents, 1780140600, null, staleRemote);
+    expect(out).toContain("stale: 1");
+    expect(out).toContain("cache_age_s: 90");
+    expect(out).toContain("queue: 5");
+  });
+
+  it("plain output shows queue/human with stale marker when cache is old", () => {
+    const out = renderCompactDashboard([baseWorker()], fixtureEvents, 1780140600, null, staleRemote);
+    expect(out).toContain("queue:5");
+    expect(out).toContain("human:2");
+    expect(out).toContain("[stale");
+  });
+
+  it("plain output shows queue/human without stale marker when cache is fresh", () => {
+    const out = renderCompactDashboard([baseWorker()], fixtureEvents, 1780140600, null, freshRemote);
+    expect(out).toContain("queue:3");
+    expect(out).toContain("human:1");
+    expect(out).not.toContain("[stale");
+  });
+
+  it("TOON output has no remote block when remote is absent", () => {
+    const out = renderCompactDashboardToon([baseWorker()], fixtureEvents, 1780140600);
+    expect(out).not.toContain("remote:");
+  });
+
+  it("plain output has no queue/human line when remote is absent", () => {
+    const out = renderCompactDashboard([baseWorker()], fixtureEvents, 1780140600);
+    expect(out).not.toContain("queue:");
+    expect(out).not.toContain("human:");
   });
 });
