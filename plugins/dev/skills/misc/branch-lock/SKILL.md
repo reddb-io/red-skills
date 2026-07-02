@@ -35,7 +35,7 @@ The hook logic is self-contained: it depends on neither the
 `git-guardrails-claude-code` skill nor anything else, and the two stack
 harmlessly if both are installed.
 
-`/afk` and `/ship` worktrees under `.red/tmp/work-*/` are always exempt — the lock protects
+`/afk` and `/go` worktrees under `.red/tmp/` are always exempt — the lock protects
 the interactive primary checkout, never the autonomous loop.
 
 <what-to-do>
@@ -152,7 +152,7 @@ It allows (exit 0, silent):
 - `git stash list` / `git stash show` — read-only stash
 - `git clean -n` / `--dry-run` — non-destructive clean
 - `git reset --soft` / mixed reset, `git restore --staged <path>` — no working-tree loss
-- `git worktree add .red/tmp/...` — worktrees are how `/afk` and `/ship` work
+- `git worktree add .red/tmp/...` — worktrees are how `/afk` and `/go` work
 - any other command
 
 With `dev.lock.primary-branch: true` and no branch-lock file, the primary guard

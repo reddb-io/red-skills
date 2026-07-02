@@ -142,7 +142,7 @@ If non-delegable:
 
 - Do not select `type:prd` Issues.
 - Do not use historical slice-routing labels; HITL queue membership is `ready-for-human`.
-- Do not do manual implementation as the default path. The goal is decision resolution and delegation.
+- Do not do manual implementation as the default path. The goal is decision resolution and delegation — when the resolution spawns one-off concrete work that needs no queue, dispatch it with `/go "<demand>"` instead of hand-rolling a worktree.
 - Do not update labels or body before showing the mutation plan and receiving explicit approval.
 - Do not treat Thread discussion as authoritative when it conflicts with Human guidance.
 - Do not move an Issue to `ready-for-agent` unless the refreshed `## Agent brief` is sufficient for autonomous execution.
