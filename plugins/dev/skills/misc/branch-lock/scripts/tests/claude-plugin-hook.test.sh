@@ -65,6 +65,24 @@ rc=$?
 expect_eq "primary guard: switch blocked with no lock and no config" "2" "$rc"
 expect_contains "primary guard: error names ADR 0083" "ADR 0083" "$(<"$err")"
 
+# issue #1024 — git reset (any form) and git stash (all subcommands) blocked,
+# and the refusal explains the reason + the sanctioned worktree alternative.
+CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT" CLAUDE_PROJECT_DIR="$primary" bash -lc "$manifest_hook" \
+  >"$out" 2>"$err" <<<"$(payload "git reset --hard")"
+rc=$?
+expect_eq "primary guard: reset --hard is blocked when flag is on" "2" "$rc"
+expect_contains "primary guard: reset refusal points to worktree" ".red/tmp/work-" "$(<"$err")"
+
+CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT" CLAUDE_PROJECT_DIR="$primary" bash -lc "$manifest_hook" \
+  >"$out" 2>"$err" <<<"$(payload "git stash")"
+rc=$?
+expect_eq "primary guard: stash is blocked when flag is on" "2" "$rc"
+
+CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT" CLAUDE_PROJECT_DIR="$primary" bash -lc "$manifest_hook" \
+  >"$out" 2>"$err" <<<"$(payload "git rebase --autostash main")"
+rc=$?
+expect_eq "primary guard: rebase --autostash is blocked when flag is on" "2" "$rc"
+
 CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT" CLAUDE_PROJECT_DIR="$primary" bash -lc "$manifest_hook" \
   >"$out" 2>"$err" <<<"$(payload "git commit -m wip")"
 rc=$?

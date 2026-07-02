@@ -55,12 +55,20 @@ scope_should_enforce "$ROOT" || exit 0
 if [[ "$(classify_primary_branch_switch_guard "$COMMAND")" == "block" ]]; then
   cat >&2 <<EOF
 BLOCKED by the untouchable-primary rule (ADR 0083): an agent can never switch
-the primary checkout's branch, regardless of configuration or lock state.
-The command '$COMMAND' would move the agent's primary checkout to another branch.
+the primary checkout's branch or destroy work in it, regardless of
+configuration or lock state. The command '$COMMAND' would move the agent's
+primary checkout to another branch or destroy work in it (branch switch,
+'git reset' in any form, 'git stash', or 'git rebase --autostash'). Parallel
+human WIP lives in this primary checkout, and these commands have destroyed
+in-progress work before.
+
+Do branch work in an isolated worktree under .red/tmp/work-*/ instead
+('git worktree add .red/tmp/work-<slug> -b <branch> origin/main'). If the local
+trunk diverged from origin, leave it alone and base on the fresh remote ref
+(ADR 0083) — never reset or stash the primary to reconcile it.
 
 Allowed in the primary checkout: git commit, git worktree add, read-only git,
-and non-branch-changing commands. To work on another branch, create/use a
-worktree under .red/tmp/work-*/ or ask the user to change the primary branch.
+and other non-destructive commands. To change the primary branch, ask the user.
 EOF
   exit 2
 fi

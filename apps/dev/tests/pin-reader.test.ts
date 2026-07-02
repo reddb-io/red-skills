@@ -93,4 +93,27 @@ describe("resolvePin", () => {
     expect(await resolvePin({ issueBody: issueNoPin }, deps)).toBe("main");
     expect(deps.calls).toEqual([59]);
   });
+
+  // Trunk collapse (ADR 0083): a pinless item lands on the configured trunk.
+  it("collapses a pinless item to the injected defaultBranch (the Trunk)", async () => {
+    const deps = { ...fetcherFor({ 59: prdNoPin }), defaultBranch: "develop" };
+    expect(await resolvePin({ issueBody: issueNoPin }, deps)).toBe("develop");
+  });
+
+  it("a real pin still wins over the defaultBranch", async () => {
+    const deps = { ...fetcherFor({}), defaultBranch: "develop" };
+    expect(await resolvePin({ issueBody: issueWithPin }, deps)).toBe("issue/own");
+  });
+
+  it("an empty/whitespace defaultBranch falls back to main", async () => {
+    const empty = { ...fetcherFor({}), defaultBranch: "" };
+    expect(await resolvePin({ issueBody: "no pin" }, empty)).toBe(DEFAULT_BRANCH);
+    const blank = { ...fetcherFor({}), defaultBranch: " \t " };
+    expect(await resolvePin({ issueBody: "no pin" }, blank)).toBe(DEFAULT_BRANCH);
+  });
+
+  it("trims the defaultBranch value", async () => {
+    const deps = { ...fetcherFor({}), defaultBranch: " develop\n" };
+    expect(await resolvePin({ issueBody: "no pin" }, deps)).toBe("develop");
+  });
 });

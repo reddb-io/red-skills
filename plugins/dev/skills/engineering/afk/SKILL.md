@@ -55,7 +55,7 @@ AFK drives the sandcastle Orchestrator through **injected providers** (`Sandcast
 - `/afk dashboard [--period 30d] [--json]` — readonly process dashboard: open PRDs/issues, global `running` issues, local AFK workers on this machine, issue/PR flow metrics, and DORA proxy metrics.
 - `/afk daily-review [--json]` — readonly daily operational review from yesterday local midnight to now: delivery big numbers, local worker attempts/time, token spend when available, HITL/blocker challenges, and issue/PR cycle times.
 - `/afk weekly-review [--json]` — readonly six-day operational review from six-days-ago local midnight to now, with the same sections as `daily-review`.
-- `/afk retake 123 [--apply] [--json]` — issue resumption report: reads the issue, linked PRs, matching local/remote branches, matching local worktrees, HITL state, and prints the next command to continue, fix, recreate a ship worktree, or run `/ship`. With `--apply`, executes only safe local setup `git` operations and still leaves merges/HITL to `/ship` or `/hitl`. The parser accepts `#123` too; quote it when invoking through a shell.
+- `/afk retake 123 [--apply] [--json]` — issue resumption report: reads the issue, linked PRs, matching local/remote branches, matching local worktrees, HITL state, and prints the next command to continue, fix, recreate a work worktree, or run `/requeue`. With `--apply`, executes only safe local setup `git` operations and still leaves merges/HITL to `/requeue` or `/hitl`. The parser accepts `#123` too; quote it when invoking through a shell.
 - `/afk fleet [N]` — launch the supervisor maintaining `N` concurrent workers (default `2`). See *Fleet Mode* below.
 - `/afk fleet stop` — gracefully shut down a running fleet supervisor and cancel its auto-monitor cron.
 - `/afk reap` — run branch hygiene without starting a worker: one count line for remote `afk/*`, remote `afk-attempts/*`, and local `afk/*`, then the same safe reapers used at boot.
@@ -204,6 +204,8 @@ Filters for the **non-urgent remainder**:
 3. Default: all remaining `ready-for-agent`, `priority:high` first, then ascending by number.
 
 Final queue: `[urgent…] + [filtered…]`, deduped. Empty → `<promise>NO MORE TASKS</promise>`, exit 0.
+
+**Empty queue + non-empty backlog = flow bug, not a stop (binding on the invoking agent).** "Nothing ready" and "nothing to do" are different claims — never report the second when only the first is true. When the queue is empty but open non-PRD issues exist, print a one-line **gate census** — counts per gate: `blocked:dependency`, `ready-for-human`, `needs-triage`/`needs-info`, `type:prd` — and name the highest-leverage unblock. In particular, audit `blocked:dependency` edges whose `req:*` target no longer really pends: a **delivered-but-open PRD** strands every dependent, because the unblock cascade fires on *close*, and PRDs close on manual bookkeeping (on 2026-07-02 two fully-delivered PRDs froze 14 slices this way). The mission is maximizing autonomous drainage; humans gate only genuine decisions.
 
 ## Issue Lifecycle (the `/afk` slice)
 
@@ -408,7 +410,7 @@ When `/afk` launches a normal detached worker under Codex (`run`, not
 
 Hard boundaries for the monitor agent are non-negotiable: it must never edit
 files, claim issues, change labels, comment, stop workers, run validation, push,
-merge, `/ship`, `/hitl`, `/triage`, `/afk run`, `/afk fleet`, `/afk fleet stop`,
+merge, `/requeue`, `/go`, `/hitl`, `/triage`, `/afk run`, `/afk fleet`, `/afk fleet stop`,
 `/afk reap`, or `/afk requeue`. Closing it manually must not affect the AFK
 worker.
 
@@ -634,7 +636,7 @@ The inner agent reads `../handoff.md` — top-level XML wrappers (`<issue-body>`
 
 ## Stop Conditions
 
-- Queue drained → `<promise>NO MORE TASKS</promise>` → exit 0.
+- Queue drained → `<promise>NO MORE TASKS</promise>` → exit 0. When the backlog still has open non-PRD issues, the invoking agent accompanies this with the gate census (see *Issue Selection*) — a drained queue with a gated backlog is a flow bug to surface, not "nothing to do".
 - `-n N` reached → summary + exit 0.
 - Runner exhaustion / runner transport failure → route the current issue through bounded recovery (`blocked:quota` or `blocked:runner-transient`), then stop the outer run with exit 75.
 - Uncaught error in orchestrator → leave worktree in place, exit 1, print recovery hint. (No heartbeat sub-shell to kill since Slice D.)

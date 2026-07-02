@@ -25,6 +25,7 @@ import { makeFeedbackWorktree } from "../runtime/feedback-worktree.js";
 import { afkPaths, resolveRepoSlug } from "../runtime/wire.js";
 import { branchLockPath, isLocked, readLockedBranch } from "../runtime/lock.js";
 import { resolveBase } from "../core/base-resolver.js";
+import { getConfig, loadConfig } from "../core/config.js";
 import * as ghx from "../runtime/gh.js";
 import * as gitx from "../runtime/git.js";
 import type { GhContext } from "../runtime/gh.js";
@@ -149,6 +150,9 @@ async function runAdoptLanding(
       {
         readLockedBranch: () => readLockedBranch(lockPath),
         configLockedBranch: undefined,
+        configTrunk:
+          getConfig(loadConfig(paths.configPath, { warn: () => undefined }), "dev.trunk") ||
+          undefined,
         fetchIssueBody: async () => undefined,
       },
     );

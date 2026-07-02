@@ -210,13 +210,16 @@ export function resolveRunSettings(
   // config so the run fails fast before claiming an issue.
   const laneIdle = resolveLaneIdleStallConfig(env);
   // Feedback-gate base rebase (Pattern 2). Only resolves to a base branch when
-  // the opt-in flag is on; the base is the config-locked branch or "main".
+  // the opt-in flag is on; the base is the config-locked branch or the Trunk
+  // (`dev.trunk`, ADR 0083 — defaults to "main").
   // A RED_AFK_FEEDBACK_REBASE env knob lets an E2E/CI run force it without
   // mutating .red/config.yaml, mirroring the other RED_AFK_* overrides.
   const rebaseFlag =
     (env.RED_AFK_FEEDBACK_REBASE ?? "").trim() === "1" ||
     getConfig(cfg, "afk.feedback.rebase_on_base") === "true";
-  const feedbackRebaseBase = rebaseFlag ? getConfig(cfg, "dev.lock.branch") || "main" : undefined;
+  const feedbackRebaseBase = rebaseFlag
+    ? getConfig(cfg, "dev.lock.branch") || getConfig(cfg, "dev.trunk") || "main"
+    : undefined;
   // Per-attempt resource budget (#908) — env > `afk.attempt.*` config; undefined
   // when no ceiling is set (inert).
   const attemptBudget = resolveAttemptBudget(env, (key) => getConfig(cfg, key));

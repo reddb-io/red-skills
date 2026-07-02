@@ -31,6 +31,17 @@ dev:
     primary-branch: true
 ```
 
+The same unconditional guard also blocks the work-destroying commands the
+standing maintainer rules forbid in the primary checkout, because parallel
+human WIP lives there and these have destroyed in-progress work before
+(issue #1024): `git reset` in **any** form (`--hard`/`--soft`/`--mixed`, with or
+without a pathspec), every `git stash` subcommand, and `git rebase --autostash`.
+The refusal points to the sanctioned alternative — do branch work in an isolated
+worktree under `.red/tmp/work-*/`, and if the local trunk diverged from origin,
+leave it alone and base on the fresh remote ref (ADR 0083). Inside isolated
+worktrees the reset/stash/autostash commands remain allowed — the guard is about
+the primary checkout only.
+
 Enforcement is **agent-only**, via runner pre-tool hooks — Claude Code
 `PreToolUse(Bash)` and Codex plugin `PreToolUse` — that intercept the agent's own
 tool calls, not the human's terminal (ADR 0006, unaffected). See
@@ -39,7 +50,7 @@ The hook logic is self-contained: it depends on neither the
 `git-guardrails-claude-code` skill nor anything else, and the two stack
 harmlessly if both are installed.
 
-`/afk` and `/ship` worktrees under `.red/tmp/work-*/` are always exempt — the lock protects
+`/afk` and `/go` worktrees under `.red/tmp/` are always exempt — the lock protects
 the interactive primary checkout, never the autonomous loop.
 
 <what-to-do>
@@ -158,7 +169,7 @@ It allows (exit 0, silent):
 - `git stash list` / `git stash show` — read-only stash
 - `git clean -n` / `--dry-run` — non-destructive clean
 - `git reset --soft` / mixed reset, `git restore --staged <path>` — no working-tree loss
-- `git worktree add .red/tmp/...` — worktrees are how `/afk` and `/ship` work
+- `git worktree add .red/tmp/...` — worktrees are how `/afk` and `/go` work
 - `git commit`, `git status` / read-only git, and any other command
 
 Even with no branch-lock file, the untouchable-primary guard still blocks every

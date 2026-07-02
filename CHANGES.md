@@ -15,10 +15,31 @@ Upstream base: `mattpocock/skills@21f59763be7bf734cd4cf138805bb653d9ffebb7` (see
   - `branch-lock-hook.sh` / `branch-lock-codex.sh`: the primary-branch-switch block no longer gates on `dev_config_lock_primary_branch_enabled`. Once `plugins.dev.enabled: true`, any agent `git switch`/`git checkout`/`git switch -b` of the primary is blocked with no lock and no config toggle.
   - Refusal message now references the untouchable-primary rule (ADR 0083) instead of naming the config flag.
   - The `dev.lock.primary-branch` key stays readable (`dev-config.sh` unchanged) for backward compatibility but can no longer enable/disable switching; `/doctor` may note it as redundant.
-  - Branch-lock keeps its other semantics: the work-loss family (stash / clean -f / reset --hard / whole-tree restore) is still blocked only while a lock file is present, and the AFK base/merge-target lock read is untouched. Human terminals stay unaffected (ADR 0006).
+  - Merged with #1024's guard extensions: the reset/stash/autostash family rides the same shared classifier and is therefore also blocked unconditionally in the primary checkout. The lock-file-gated semantics (AFK base/merge-target read, whole-tree restore under an active lock) are untouched. Human terminals stay unaffected (ADR 0006).
   - Updated `SKILL.md` and the Claude/Codex plugin-hook + CLI shell tests to the unconditional semantics.
 
 ---
+
+## afk (engineering) — empty-queue gate census is binding on the invoking agent
+
+- **status**: modified
+- **upstream**: —
+- **why**: `ready-for-agent: 0` with a gated backlog was reported as "nothing to do"; on 2026-07-02 two fully-delivered-but-open PRDs froze 14 slices unnoticed.
+- **what changed**: Issue Selection and Stop Conditions now require a one-line gate census (counts per gate + highest-leverage unblock) whenever the queue is empty but open non-PRD issues exist.
+
+## to-issues (engineering) — `req:N` must target executable issues, never PRDs
+
+- **status**: modified
+- **upstream**: —
+- **why**: the unblock cascade fires on close; PRDs close on manual bookkeeping, so a `req:<PRD>` edge strands dependents indefinitely (2026-07-02 freeze).
+- **what changed**: new hard rule under slice publication; runtime enforcement tracked in #1048.
+
+## hitl (engineering) — delegable-manual-landing disposition
+
+- **status**: modified
+- **upstream**: —
+- **why**: the binary delegable/non-delegable forced agent-codable manual-merge slices (PRD #1013 T1) to sit as plain human-parked work.
+- **what changed**: third disposition (keep `ready-for-human`, dispatch coding via `/go`, human merges; `landing:manual` routing once #1049 lands) in Step 4, Step 6, and the Directive template.
 
 ## upstream drift review — 6eeb81b → 21f5976 (issue #896)
 

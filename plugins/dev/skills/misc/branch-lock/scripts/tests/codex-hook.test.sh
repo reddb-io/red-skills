@@ -118,13 +118,15 @@ stderr="$(sed -n '/---stderr---/,$p' <<<"$result")"
 expect_eq "locked: switch back is also blocked (untouchable primary)" "2" "$rc"
 expect_contains "locked: switch-back error names ADR 0083" "ADR 0083" "$stderr"
 
-# The branch-lock work-loss family survives: while locked, a non-movement
-# working-tree-losing command is still refused with the branch-lock message.
+# Work-loss commands are caught by the unconditional untouchable-primary guard
+# (#1024 reset/stash family + #1025 unconditional structure) even while a lock
+# is active — the guard runs before the lock read, so the refusal names
+# ADR 0083, not the branch lock.
 result="$(run_hook "$primary" "$(payload "$primary" "git reset --hard HEAD~1")")"
 rc="$(sed -n '1p' <<<"$result")"
 stderr="$(sed -n '/---stderr---/,$p' <<<"$result")"
 expect_eq "locked: work-loss reset --hard is blocked" "2" "$rc"
-expect_contains "locked: work-loss error names branch lock" "BLOCKED by branch lock" "$stderr"
+expect_contains "locked: work-loss error names untouchable primary" "ADR 0083" "$stderr"
 
 rm -f "$primary/.red/tmp/branch-lock.yaml"
 result="$(run_hook "$primary" "$(payload "$primary" "git switch feature")")"
@@ -151,6 +153,26 @@ expect_contains "primary guard: error names ADR 0083" "ADR 0083" "$stderr"
 result="$(run_hook "$primary" "$(payload "$primary" "git checkout feature")")"
 rc="$(sed -n '1p' <<<"$result")"
 expect_eq "primary guard: checkout branch is blocked" "2" "$rc"
+
+# issue #1024 — git reset (any form) and git stash (all subcommands) blocked,
+# and the refusal explains the reason + the sanctioned worktree alternative.
+result="$(run_hook "$primary" "$(payload "$primary" "git reset --hard")")"
+rc="$(sed -n '1p' <<<"$result")"
+stderr="$(sed -n '/---stderr---/,$p' <<<"$result")"
+expect_eq "primary guard: reset --hard is blocked when flag is on" "2" "$rc"
+expect_contains "primary guard: reset refusal points to worktree" ".red/tmp/work-" "$stderr"
+
+result="$(run_hook "$primary" "$(payload "$primary" "git reset --soft HEAD~1")")"
+rc="$(sed -n '1p' <<<"$result")"
+expect_eq "primary guard: reset --soft is blocked when flag is on" "2" "$rc"
+
+result="$(run_hook "$primary" "$(payload "$primary" "git stash")")"
+rc="$(sed -n '1p' <<<"$result")"
+expect_eq "primary guard: stash is blocked when flag is on" "2" "$rc"
+
+result="$(run_hook "$primary" "$(payload "$primary" "git rebase --autostash main")")"
+rc="$(sed -n '1p' <<<"$result")"
+expect_eq "primary guard: rebase --autostash is blocked when flag is on" "2" "$rc"
 
 result="$(run_hook "$primary" "$(payload "$primary" "git switch -b new")")"
 rc="$(sed -n '1p' <<<"$result")"
