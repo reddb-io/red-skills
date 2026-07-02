@@ -15,6 +15,7 @@ import {
   type SupervisorDeps,
 } from "../src/core/supervisor.js";
 import type { ProcessSnapshotEntry } from "../src/core/reaper-signal.js";
+import type { LivenessVerdict } from "@reddb-io/red-castle";
 
 const NOW = 1_000_000;
 
@@ -63,7 +64,7 @@ function makeDeps(over: DepsOverrides = {}): {
       lastExitCode: vi.fn(over.lastExitCode ?? (() => null as number | null)),
     },
     fs: {
-      agentLaneMtime: vi.fn(() => 0),
+      workerLivenessVerdict: vi.fn((): LivenessVerdict | null => null),
       resolveIterDir: vi.fn(() => null),
       teardownIterDir: vi.fn(async () => {}),
       parkedSlotWork: vi.fn(() => ({ workers: [], supervisorLogPath: ".red/tmp/afk-supervisor.log" })),

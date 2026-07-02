@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import type { RunOptions, RunResult } from "@reddb-io/red-castle";
+import type { RunOptions, RunResult, LivenessVerdict } from "@reddb-io/red-castle";
 import {
   buildRunOptions,
   buildContinuousPushHook,
@@ -1803,6 +1803,15 @@ describe("runAgent — lane-idle reaper wiring", () => {
       schedule: sched.schedule,
       makeAbortController: () => controller,
     };
+    // Probe: lane was last written at spawn (BASE_MS). Returns stalled once
+    // clock passes the stallThresholdS (600s = 600_000ms).
+    const livenessVerdictProbe = (): LivenessVerdict | null => {
+      const idleMs = clock - BASE_MS;
+      if (idleMs >= 600_000) {
+        return { status: "stalled", laneFresh: false, laneAgeMs: idleMs, crossCheckArmed: false, reason: "lane idle" };
+      }
+      return { status: "alive", laneFresh: true, laneAgeMs: idleMs, crossCheckArmed: false, reason: "lane fresh" };
+    };
     const p = runAgent(deps, {
       ...baseInput,
       laneIdleThresholdSeconds: 600,
@@ -1810,7 +1819,7 @@ describe("runAgent — lane-idle reaper wiring", () => {
       laneIdlePollSeconds: 30,
       // Lane last wrote at spawn; a sleep-only inner child — no agent turns, no
       // build/test descendant under the tree, flat cpu.
-      laneMtimeProbe: () => BASE_S,
+      livenessVerdictProbe,
       inspectTree: () => [{ command: "sleep", cpu: 0 }],
     });
     await sched.tick(); // worker age 0 → not yet a candidate
@@ -1833,11 +1842,18 @@ describe("runAgent — lane-idle reaper wiring", () => {
       schedule: sched.schedule,
       makeAbortController: () => controller,
     };
+    const livenessVerdictProbe2 = (): LivenessVerdict | null => {
+      const idleMs = clock - BASE_MS;
+      if (idleMs >= 600_000) {
+        return { status: "stalled", laneFresh: false, laneAgeMs: idleMs, crossCheckArmed: false, reason: "lane idle" };
+      }
+      return { status: "alive", laneFresh: true, laneAgeMs: idleMs, crossCheckArmed: false, reason: "lane fresh" };
+    };
     const p = runAgent(deps, {
       ...baseInput,
       laneIdleThresholdSeconds: 600,
       laneIdleKillThresholdSeconds: 1800,
-      laneMtimeProbe: () => BASE_S,
+      livenessVerdictProbe: livenessVerdictProbe2,
       inspectTree: () => [{ command: "vitest", cpu: 0 }], // a test run mid-flight
     });
     clock = BASE_MS + 9999_000; // idle far past kill, but busy → never reaped

@@ -28,7 +28,7 @@ import {
 import { runBoot, type BootResult, type BootstrapInput } from "../core/boot.js";
 import { inspectProcessTreeNative } from "../runtime/proc-tree.js";
 import {
-  agentLaneMtimeFor,
+  workerLivenessFor,
   parkedSlotWorkFor,
   resolveIterDirInfo,
   teardownIterDirNative,
@@ -395,7 +395,8 @@ function buildSupervisorDeps(
       sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     },
     fs: {
-      agentLaneMtime: (slot) => agentLaneMtimeFor(tmpDir, slotPids.get(slot) ?? null),
+      workerLivenessVerdict: (slot, laneIdleMs) =>
+        workerLivenessFor(tmpDir, slotPids.get(slot) ?? null, laneIdleMs),
       resolveIterDir: (slot) => resolveIterDirInfo(tmpDir, slotPids.get(slot) ?? null, now()),
       teardownIterDir: async (info) => {
         await teardownIterDirNative(info, root);

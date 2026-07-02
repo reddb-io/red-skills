@@ -6,7 +6,6 @@ import {
   buildCrashEnvelope,
   buildDiscardEnvelope,
   buildReaperEnvelope,
-  computeStalled,
   decideCrashReconcile,
   dispatchReconcileIfPossible,
   reconcileDeadWorkerClaim,
@@ -34,8 +33,32 @@ import {
 } from "../src/core/supervisor.js";
 import { parkedSlotWorkFor, slotLogPath } from "../src/runtime/supervisor-fs.js";
 import type { ProcessSnapshotEntry } from "../src/core/reaper-signal.js";
+import type { LivenessVerdict } from "@reddb-io/red-castle";
 
 const NOW = 1700000000;
+
+/** Build a stalled LivenessVerdict with a given lane age in seconds. */
+function stalledVerdict(laneAgeS: number): LivenessVerdict {
+  return {
+    status: "stalled",
+    laneFresh: false,
+    laneAgeMs: laneAgeS * 1000,
+    crossCheckArmed: true,
+    liveDescendants: false,
+    reason: "lane idle and no live agent descendants",
+  };
+}
+
+/** Build an alive LivenessVerdict (lane fresh). */
+function aliveVerdict(): LivenessVerdict {
+  return {
+    status: "alive",
+    laneFresh: true,
+    laneAgeMs: 1000,
+    crossCheckArmed: true,
+    reason: "lane fresh",
+  };
+}
 
 function config(over: Partial<SupervisorConfig> = {}): SupervisorConfig {
   return {
@@ -77,7 +100,7 @@ interface FakeIo {
   inspectTree: ReturnType<typeof vi.fn>;
   sleep: ReturnType<typeof vi.fn>;
   lastExitCode: ReturnType<typeof vi.fn>;
-  agentLaneMtime: ReturnType<typeof vi.fn>;
+  workerLivenessVerdict: ReturnType<typeof vi.fn>;
   resolveIterDir: ReturnType<typeof vi.fn>;
   teardownIterDir: ReturnType<typeof vi.fn>;
   parkedSlotWork: ReturnType<typeof vi.fn>;
@@ -115,7 +138,7 @@ function makeDeps(over: Partial<Record<keyof FakeIo, unknown>> = {}): {
     sleep: vi.fn((_ms: number) => new Promise<void>((resolve) => setTimeout(resolve, 0))),
     // Default: exit code unknown (null) → treated as non-clean → circuit-breaker path.
     lastExitCode: vi.fn((_slot: number) => null as number | null),
-    agentLaneMtime: vi.fn(() => 0),
+    workerLivenessVerdict: vi.fn((): LivenessVerdict | null => null),
     resolveIterDir: vi.fn((): IterDirInfo | null => null),
     teardownIterDir: vi.fn(async () => {}),
     parkedSlotWork: vi.fn(
@@ -146,7 +169,7 @@ function makeDeps(over: Partial<Record<keyof FakeIo, unknown>> = {}): {
       sleep: io.sleep,
     },
     fs: {
-      agentLaneMtime: io.agentLaneMtime,
+      workerLivenessVerdict: io.workerLivenessVerdict,
       resolveIterDir: io.resolveIterDir,
       teardownIterDir: io.teardownIterDir,
       parkedSlotWork: io.parkedSlotWork,
@@ -528,26 +551,7 @@ describe("runSupervisor — lastProgressEpoch tracking (#579)", () => {
   });
 });
 
-// ---------- compute_stalled (pure) ----------
-
-describe("computeStalled", () => {
-  const T = 600;
-  it("fresh worker (alive < threshold) → false", () => {
-    expect(computeStalled(NOW - 100, NOW - 9999, NOW, T)).toBe(false);
-  });
-  it("recent lane activity → false", () => {
-    expect(computeStalled(NOW - 3600, NOW - 60, NOW, T)).toBe(false);
-  });
-  it("old + silent lane → true", () => {
-    expect(computeStalled(NOW - 3600, NOW - 700, NOW, T)).toBe(true);
-  });
-  it("no lane observed yet (mtime 0) → false", () => {
-    expect(computeStalled(NOW - 3600, 0, NOW, T)).toBe(false);
-  });
-  it("uninitialised slot (spawn 0) → false", () => {
-    expect(computeStalled(0, NOW - 9999, NOW, T)).toBe(false);
-  });
-});
+// ---------- pollStallDetector: liveness-evaluator stall detection ----------
 
 // ---------- circuit breaker (pure) ----------
 
@@ -785,7 +789,7 @@ describe("pollStallDetector reaper gating", () => {
   it("does NOT reap a busy slot (reaper-signal says busy)", async () => {
     // An active build/test descendant (vitest) → busy → no-kill.
     const { deps, io } = makeDeps({
-      agentLaneMtime: vi.fn(() => NOW - 120),
+      workerLivenessVerdict: vi.fn((): LivenessVerdict => stalledVerdict(120)),
       inspectTree: vi.fn((): readonly ProcessSnapshotEntry[] => [{ command: "vitest", cpu: 0 }]),
     });
     const state = stalledState();
@@ -801,7 +805,7 @@ describe("pollStallDetector reaper gating", () => {
 
   it("retries a genuinely-stalled slot UNDER the cap (kill + envelope + CLEAN re-queue)", async () => {
     const { deps, io } = makeDeps({
-      agentLaneMtime: vi.fn(() => NOW - 120),
+      workerLivenessVerdict: vi.fn((): LivenessVerdict => stalledVerdict(120)),
       // No build/test descendant, flat cpu → genuinely stuck.
       inspectTree: vi.fn((): readonly ProcessSnapshotEntry[] => [{ command: "node", cpu: 0 }]),
       resolveIterDir: vi.fn(
@@ -853,7 +857,7 @@ describe("pollStallDetector reaper gating", () => {
     // labels rotate, but the destructive `rm -rf` teardown is skipped so it can
     // never race a still-live worker still writing into the worktree.
     const { deps, io } = makeDeps({
-      agentLaneMtime: vi.fn(() => NOW - 120),
+      workerLivenessVerdict: vi.fn((): LivenessVerdict => stalledVerdict(120)),
       inspectTree: vi.fn((): readonly ProcessSnapshotEntry[] => [{ command: "node", cpu: 0 }]),
       killTree: vi.fn(async () => false),
       resolveIterDir: vi.fn(
@@ -884,7 +888,7 @@ describe("pollStallDetector reaper gating", () => {
 
   it("tears down the worktree when killTree confirms death (#580)", async () => {
     const { deps, io } = makeDeps({
-      agentLaneMtime: vi.fn(() => NOW - 120),
+      workerLivenessVerdict: vi.fn((): LivenessVerdict => stalledVerdict(120)),
       inspectTree: vi.fn((): readonly ProcessSnapshotEntry[] => [{ command: "node", cpu: 0 }]),
       killTree: vi.fn(async () => true),
       resolveIterDir: vi.fn(
@@ -909,7 +913,7 @@ describe("pollStallDetector reaper gating", () => {
 
   it("reaps without posting when the worker died pre-claim (no issue)", async () => {
     const { deps, io } = makeDeps({
-      agentLaneMtime: vi.fn(() => NOW - 120),
+      workerLivenessVerdict: vi.fn((): LivenessVerdict => stalledVerdict(120)),
       inspectTree: vi.fn((): readonly ProcessSnapshotEntry[] => []),
       resolveIterDir: vi.fn(
         (): IterDirInfo => ({
@@ -936,7 +940,7 @@ describe("pollStallDetector reaper gating", () => {
 
   it("escalates to ready-for-human once the stalled re-claim cap is exhausted (#402)", async () => {
     const { deps, io } = makeDeps({
-      agentLaneMtime: vi.fn(() => NOW - 120),
+      workerLivenessVerdict: vi.fn((): LivenessVerdict => stalledVerdict(120)),
       inspectTree: vi.fn((): readonly ProcessSnapshotEntry[] => [{ command: "node", cpu: 0 }]),
       resolveIterDir: vi.fn(
         (): IterDirInfo => ({
@@ -971,7 +975,7 @@ describe("pollStallDetector reaper gating", () => {
 
   it("honours RED_AFK_RETRY_STALLED to extend the re-claim budget (#402)", async () => {
     const { deps, io } = makeDeps({
-      agentLaneMtime: vi.fn(() => NOW - 120),
+      workerLivenessVerdict: vi.fn((): LivenessVerdict => stalledVerdict(120)),
       inspectTree: vi.fn((): readonly ProcessSnapshotEntry[] => [{ command: "node", cpu: 0 }]),
       resolveIterDir: vi.fn(
         (): IterDirInfo => ({
@@ -993,6 +997,75 @@ describe("pollStallDetector reaper gating", () => {
 
     expect(io.ensureLabel).not.toHaveBeenCalled();
     expect(io.editLabels).toHaveBeenCalledWith(190, ["ready-for-agent"], ["running"]);
+  });
+});
+
+// ---------- AC3: evaluator cross-check guards the kill ----------
+
+describe("pollStallDetector — live descendants prevent kill (AC3 / ADR 0083)", () => {
+  // Pre-set the slot as stalled past the kill threshold so each test reaches the
+  // kill-gate without needing to test full stall detection.
+  function stalledSlot() {
+    const state = initSupervisorState(1);
+    const slot = state.slots[0]!;
+    slot.pid = 4242;
+    slot.spawnEpoch = NOW - 9999;
+    slot.stalled = true;
+    slot.stallSinceEpoch = NOW - 120; // 120s > stallKillThresholdS(90)
+    return state;
+  }
+
+  it("stale lane + no live descendants → kill", async () => {
+    const { deps, io } = makeDeps({
+      // Evaluator: stalled (lane idle, no live descendants)
+      workerLivenessVerdict: vi.fn((): LivenessVerdict => ({
+        status: "stalled",
+        laneFresh: false,
+        laneAgeMs: 120_000,
+        crossCheckArmed: true,
+        liveDescendants: false,
+        reason: "lane idle and no live agent descendants",
+      })),
+      inspectTree: vi.fn((): readonly ProcessSnapshotEntry[] => [{ command: "node", cpu: 0 }]),
+      resolveIterDir: vi.fn(
+        (): IterDirInfo => ({
+          path: "/w/wTEST/42-a1",
+          issue: 42,
+          workerId: "wTEST",
+          logTail: "stalled",
+          notes: "",
+          durationS: 120,
+          attempt: 1,
+        }),
+      ),
+    });
+    const state = stalledSlot();
+
+    const reaped = await pollStallDetector(state, deps, config());
+
+    expect(reaped).toEqual([0]);
+    expect(io.killTree).toHaveBeenCalledWith(4242);
+  });
+
+  it("live agent descendants → no kill even with a stale lane", async () => {
+    const { deps, io } = makeDeps({
+      // Evaluator: alive via cross-check (wedged substrate but agent still running)
+      workerLivenessVerdict: vi.fn((): LivenessVerdict => ({
+        status: "alive",
+        laneFresh: false,
+        laneAgeMs: 120_000,
+        crossCheckArmed: true,
+        liveDescendants: true,
+        reason: "lane idle but live agent descendants",
+      })),
+      inspectTree: vi.fn((): readonly ProcessSnapshotEntry[] => []),
+    });
+    const state = stalledSlot();
+
+    const reaped = await pollStallDetector(state, deps, config());
+
+    expect(reaped).toEqual([]);
+    expect(io.killTree).not.toHaveBeenCalled();
   });
 });
 
@@ -1528,7 +1601,7 @@ describe("idle-drain: exit 0 idle-parks without tripping the circuit breaker", (
     // A slot that idle-parked has no live process; the stall detector must not
     // try to inspect or reap it (it has no pid and no lane to measure).
     const { deps, io } = makeDeps({
-      agentLaneMtime: vi.fn(() => NOW - 9999),
+      workerLivenessVerdict: vi.fn((): LivenessVerdict => stalledVerdict(9999)),
       readyQueueDepth: vi.fn(async () => 0),
     });
     const state = initSupervisorState(1);
@@ -1751,7 +1824,7 @@ describe("superviseTick — reconciledSlots accounting (#562)", () => {
   function stalledSlotDeps(candidate: ReconcileCandidate | null) {
     return makeDeps({
       isAlive: vi.fn(() => true), // pid alive so step 2 never respawns
-      agentLaneMtime: vi.fn(() => NOW - 1000), // agent lane silent for 1000s
+      workerLivenessVerdict: vi.fn((): LivenessVerdict => stalledVerdict(1000)), // agent lane silent for 1000s
       now: vi.fn(() => NOW),
       inspectTree: vi.fn((): readonly ProcessSnapshotEntry[] => []), // no active → "kill"
       resolveIterDir: vi.fn(() => null),

@@ -21,6 +21,14 @@ import { parseAttemptTimeout, parseMaxIterations } from "../core/execution.js";
 import { resolveLaneIdleStallConfig, type LaneIdleStallConfig } from "../core/lane-idle-reaper.js";
 import { inspectProcessTreeNative } from "./proc-tree.js";
 import { statSync } from "node:fs";
+import {
+  evaluateLiveness,
+  resolveLivenessCrossCheckArming,
+  createProcessDescendantProbe,
+  parseLivenessRecords,
+  LIVENESS_LANE_FILENAME,
+  type LivenessVerdict,
+} from "@reddb-io/red-castle";
 import type { BranchRef } from "../core/branch-cleanup.js";
 import { isRunner, type Runner } from "../types/runner.js";
 import * as ghx from "./gh.js";
@@ -236,17 +244,40 @@ export function resolveRunSettings(
   };
 }
 
-/** mtime of the solo attempt's agent lane (`agent.log.jsonl`) in whole epoch
- * seconds, 0 when the lane does not exist yet / cannot be stat'd. The clean
- * liveness signal the solo lane-idle reaper keys off — mirrors the fleet
- * `agentLaneMtimeFor` stat, but resolved directly from the attempt dir the solo
- * worker already holds (no slot-pid round-trip). Best-effort: any stat failure
- * degrades to 0 (no lane observed), which computeStalled never flags. */
-export function agentLaneMtimeSeconds(lanePath: string): number {
+/**
+ * Red-castle liveness evaluator verdict for the solo attempt's liveness lane
+ * (`liveness.lane.jsonl`). Reads and parses the lane synchronously, then calls
+ * `evaluateLiveness` with the configured idle threshold and a process cross-check
+ * (no-sandbox only, matching the fleet path). Returns null on any read failure
+ * (lane not yet written degrades gracefully to null → not-candidate this tick).
+ *
+ * Replaces the old `agentLaneMtimeSeconds` firehose-mtime probe (#1022): the
+ * liveness lane is the un-poisonable signal that the substrate's own control
+ * flow refreshes — never afk.log / agent.log.jsonl / the heartbeat (#243).
+ */
+export function agentLivenessVerdictSync(
+  attemptDir: string,
+  laneIdleMs: number,
+): LivenessVerdict | null {
+  const lanePath = join(attemptDir, LIVENESS_LANE_FILENAME);
+  let laneRecencyMs: number | undefined;
   try {
-    return Math.floor(statSync(lanePath).mtimeMs / 1000);
+    const raw = readFileSync(lanePath, "utf-8");
+    const records = parseLivenessRecords(raw);
+    if (records.length > 0) {
+      laneRecencyMs = records.reduce((max, r) => (r.at > max ? r.at : max), records[0]!.at);
+    }
   } catch {
-    return 0;
+    // Lane absent or unreadable → laneRecencyMs stays undefined.
+  }
+  const { crossCheckArmed } = resolveLivenessCrossCheckArming({ sandboxTag: "none" });
+  const hasLiveDescendants = crossCheckArmed
+    ? createProcessDescendantProbe({ agentPid: process.pid })
+    : undefined;
+  try {
+    return evaluateLiveness({ laneRecencyMs, now: Date.now(), laneIdleMs, crossCheckArmed, hasLiveDescendants });
+  } catch {
+    return null;
   }
 }
 
@@ -397,9 +428,10 @@ export function makeRunAgent(
             laneIdleThresholdSeconds: laneIdleCfg.stallThresholdS,
             laneIdleKillThresholdSeconds: laneIdleCfg.stallKillThresholdS,
             laneIdlePollSeconds: laneIdleCfg.stallPollS,
-            // Clean liveness signal: the attempt's agent.log.jsonl mtime in whole
-            // seconds, 0 when absent — NEVER afk.log / the firehose (#243).
-            laneMtimeProbe: () => agentLaneMtimeSeconds(`${laneAttemptDir}/agent.log.jsonl`),
+            // Clean liveness signal: the evaluator over the attempt's
+            // liveness.lane.jsonl — the un-poisonable lane (#1022, ADR 0083 §3).
+            livenessVerdictProbe: () =>
+              agentLivenessVerdictSync(laneAttemptDir, laneIdleCfg.stallThresholdS * 1000),
             // Inner-agent tree is a descendant of this worker process; the native
             // inspector is safe-by-default (a failed ps reports busy, never reaps).
             inspectTree: () => inspectProcessTreeNative(process.pid),
@@ -494,14 +526,13 @@ export async function readFleetState(path: string): Promise<FleetState | null> {
 export async function collectMonitorInputs(root = process.cwd()): Promise<MonitorInputs> {
   const paths = afkPaths(root);
   // The ONE owner reads + normalizes + liveness-tags every worker state file
-  // (core/worker-state-reader). The dashboard's `[live]` badge uses the
-  // pid-identity + freshness verdict (`active`); the `[quiet]` badge falls back
-  // to the pid-identity verdict (`live`, surfaced here as `pidLive`).
+  // (core/worker-state-reader). The single source of liveness truth for all
+  // surfaces is WorkerStateRecord.livenessVerdict (evaluator verdict, ADR 0083 §3).
   const records = await readWorkerStates(paths.workersRoot);
   const logPaths = records.map(({ path, state }) => state.log || join(dirname(path), "afk.log"));
   const logCounts = await collectLogLineCounts(paths.monitorLogCursorPath, logPaths);
   const workers: CompactWorker[] = [];
-  for (const { path, state, active, live: pidLive, liveness } of records) {
+  for (const { path, state, active, live: pidLive, liveness, livenessVerdict } of records) {
     // Diff volume: committed + uncommitted work for the attempt, measured from
     // the branch's merge-base with origin/main. Prefer the state file's persisted
     // counts; fall back to a live `git diff --shortstat` of the worktree when both
@@ -560,10 +591,10 @@ export async function collectMonitorInputs(root = process.cwd()): Promise<Monito
         },
       },
       liveness,
-      // active = pid identity matches + agent-lane freshness → [live] badge.
-      // pidLive = pid identity matches regardless of freshness → [quiet] badge
-      // when the agent lane is idle (e.g. post_attempt gate/commit) but the
-      // process still lives.
+      livenessVerdict,
+      // active = evaluator says "alive" → [live] badge.
+      // pidLive kept for backward compat with older test stubs (ignored when
+      // livenessVerdict is present).
       live: active,
       pidLive,
       diffAdded: added,
@@ -691,17 +722,14 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
   const aliveMsList: number[] = [];
   const sourceMap = new Map<string, number>();
 
-  for (const { state, live } of records) {
-    // Statusline line 2 counts every pid-live worker (the orchestrator process is
-    // alive), NOT only "fresh" ones (#836). The agent stream legitimately goes
-    // silent for minutes during the feedback gate / long builds — the per-minute
-    // heartbeat even stops at post_attempt — so an `active` (180s freshness) gate
-    // dropped a busy worker and made line 2 VANISH mid-test, reading as "fleet
-    // died." A finished worker sets pid:0 (split teardown) and its dir is reclaimed
-    // by the completion sweep, so it still drops here; only a SIGKILL'd worker with
-    // an OS-recycled pid can briefly ghost (bounded by the boot sweep). The record's
-    // `active` flag stays available for a future per-worker quiet badge.
-    if (!live) continue;
+  for (const { state, livenessVerdict } of records) {
+    // Statusline counts workers the evaluator does not consider stalled. A busy
+    // worker with live agent descendants shows as "alive" even when the liveness
+    // lane is silent (wedged-substrate guard in the evaluator), so a long
+    // build/gate wait no longer makes the AFK block vanish. "unknown" (container
+    // workers) is treated conservatively as live. Only "stalled" (stale lane AND
+    // no live descendants) is excluded.
+    if (livenessVerdict.status === "stalled") continue;
 
     workers += 1;
     blocked += state.blocked;
