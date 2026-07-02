@@ -9,8 +9,10 @@
 // busy-predicate so a mid-build/test worker is never killed.
 //
 // It is NOT a second mechanism. It REUSES the fleet machinery:
-//   - the fleet stall DETECTOR  — `computeStalled` (supervisor.ts): worker alive
-//     ≥ soft threshold AND agent lane silent ≥ soft threshold;
+//   - the fleet stall DETECTOR  — the red-castle `evaluateLiveness` evaluator
+//     (ADR 0083 §3): lane silent ≥ soft threshold AND (if armed) no live
+//     descendants → stalled. The verdict is injected via `livenessVerdict` so
+//     the reaper is fully testable without a real process tree or lane file.
 //   - the reaper-signal PREDICATE — `deriveSnapshot` + `decideReaperSignal`
 //     (reaper-signal.ts): the irreversible kill is gated on no active build/test
 //     descendant AND flat cpu.
@@ -19,10 +21,12 @@
 // duplicate or re-implement the #400 progress guard — that watches commits; this
 // watches the agent lane.
 //
-// SIGNAL HYGIENE (#243): the liveness signal is the active attempt's agent lane
-// JSONL mtime — never `afk.log` or the firehose `log.jsonl`, which the per-minute
+// SIGNAL HYGIENE (#243 / #1022): the liveness signal is the red-castle
+// `evaluateLiveness` evaluator over the attempt's `liveness.lane.jsonl` —
+// never `afk.log` or the firehose `agent.log.jsonl`, which the per-minute
 // heartbeat keeps fresh and would mask a real stall. The caller wires
-// `laneMtime` to stat the attempt's `agent.log.jsonl`.
+// `livenessVerdict` to a sync probe that reads the liveness lane and calls
+// the evaluator (runtime/wire.ts `agentLivenessVerdictSync`).
 //
 // The reaper runs in a SIDE-CHANNEL (an injected periodic scheduler) independent
 // of the inner-agent stream, so a fully-hung runner is still observed and reaped.
@@ -32,8 +36,9 @@
 // run then flows through the existing no-sentinel terminal policy (envelope +
 // label rotation + worktree teardown).
 
-import { computeStalled, SUPERVISOR_DEFAULTS, validateStallThresholds } from "./supervisor.js";
+import { SUPERVISOR_DEFAULTS, validateStallThresholds } from "./supervisor.js";
 import { decideReaperSignal, deriveSnapshot, type ProcessSnapshotEntry } from "./reaper-signal.js";
+import type { LivenessVerdict } from "@reddb-io/red-castle";
 
 /** Default agent-lane sampling cadence in seconds (RED_AFK_STALL_POLL_S). Mirrors
  * the fleet passive stall detector's poll cadence so the solo reaper observes a
@@ -85,12 +90,11 @@ export type LaneIdleVerdict = "not-candidate" | "no-kill" | "kill";
 
 /** One poll's observation, surfaced via `onTick` for diagnostics. */
 export interface LaneIdleInfo {
-  /** Agent-lane mtime observed this tick (epoch seconds; 0 when absent). */
-  laneMtime: number;
-  /** Agent-lane idle duration this tick (seconds; 0 when the lane is unseen). */
+  /** Agent-lane idle duration this tick (seconds; 0 when the lane is unseen or
+   * laneAgeMs is unavailable from the verdict). */
   idleSeconds: number;
-  /** True when the fleet detector flags the worker stalled (alive ≥ soft AND
-   * lane silent ≥ soft). */
+  /** True when the evaluator verdict is "stalled" (lane idle ≥ soft threshold
+   * AND cross-check confirms no live descendants). */
   stalled: boolean;
   /** The kill verdict this tick. */
   verdict: LaneIdleVerdict;
@@ -112,10 +116,13 @@ export interface LaneIdleReaperOptions {
   stallKillThresholdS: number;
   /** Poll cadence in milliseconds (RED_AFK_STALL_POLL_S × 1000). */
   intervalMs: number;
-  /** Agent-lane mtime probe (epoch seconds; 0 when the lane does not exist yet).
-   * MUST read the clean agent lane (`agent.log.jsonl`), never afk.log / the
-   * firehose (#243). */
-  laneMtime: () => number;
+  /**
+   * Red-castle liveness evaluator verdict probe (ADR 0083 §3). Returns the
+   * combined lane-recency + process-cross-check verdict, or null when the
+   * attempt dir cannot be resolved (worker between iterations). A null or
+   * non-stalled verdict keeps the worker as a non-candidate this tick.
+   */
+  livenessVerdict: () => LivenessVerdict | null;
   /** Inner-agent process-tree snapshot, reduced by `deriveSnapshot` into the
    * busy signals. Consulted only at the kill escalation so `ps` is not run every
    * poll. A safe-by-default inspector reports a busy snapshot on inspection
@@ -153,13 +160,29 @@ export function startLaneIdleReaper(opts: LaneIdleReaperOptions): {
   const cancel = opts.schedule(() => {
     if (fired) return;
     const now = opts.now();
-    const laneMtime = opts.laneMtime();
-    const stalled = computeStalled(opts.spawnEpoch, laneMtime, now, opts.stallThresholdS);
+
+    // Startup window: skip freshly-spawned workers (same guard as the fleet's
+    // pollStallDetector to prevent reaping a worker before it can write its lane).
+    const workerAgeS = now - opts.spawnEpoch;
+    if (!(opts.spawnEpoch > 0) || !(workerAgeS >= opts.stallThresholdS)) {
+      opts.onTick?.({ idleSeconds: 0, stalled: false, verdict: "not-candidate", nowS: now });
+      return;
+    }
+
+    // The red-castle evaluator (ADR 0083 §3) combines lane recency and process
+    // cross-check into a single verdict. A null probe result means the worker is
+    // between iterations — not a candidate.
+    const lv = opts.livenessVerdict();
+    const stalled = lv !== null && lv.status === "stalled";
+
+    // Lane idle duration from the evaluator's laneAgeMs (ms → s). When
+    // laneAgeMs is absent (lane never written), fall back to worker age so a
+    // stalled-but-never-written worker still escalates past the kill threshold.
+    const idleSeconds = lv?.laneAgeMs !== undefined ? Math.round(lv.laneAgeMs / 1000) : 0;
+
     let verdict: LaneIdleVerdict = "not-candidate";
     if (stalled) {
-      // The lane mtime IS the stall anchor, so idle === now - lastLaneActivity —
-      // exactly the fleet's `now - stallSinceEpoch`.
-      const idle = now - laneMtime;
+      const idle = idleSeconds > 0 ? idleSeconds : workerAgeS;
       if (idle >= opts.stallKillThresholdS) {
         const snapshot = deriveSnapshot(opts.inspectTree());
         const decision = decideReaperSignal({
@@ -178,8 +201,7 @@ export function startLaneIdleReaper(opts: LaneIdleReaperOptions): {
         verdict = "no-kill";
       }
     }
-    const idleSeconds = laneMtime > 0 ? now - laneMtime : 0;
-    opts.onTick?.({ laneMtime, idleSeconds, stalled, verdict, nowS: now });
+    opts.onTick?.({ idleSeconds, stalled, verdict, nowS: now });
   }, opts.intervalMs);
   return { stop: cancel, firedReap: () => fired };
 }
