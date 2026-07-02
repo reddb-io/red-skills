@@ -96,6 +96,8 @@ interface HarnessOptions {
   fallbackRunner?: boolean;
   /** Records each git fetch-base call (the ADR 0031 start-point fetch). */
   fetchedBases?: string[];
+  /** The configured Trunk (`plugins.dev.trunk`, ADR 0083) injected into base resolution. */
+  configTrunk?: string;
   /** When set, the locked `git merge --no-ff` returns this rc (1 → conflict). */
   mergeNoFfCode?: number;
   /** When true, register a one-shot conflict resolver that "resolves" the merge
@@ -428,6 +430,7 @@ function harness(opts: HarnessOptions = {}): {
         async readLockedBranch() {
           return opts.locked ? "main" : undefined;
         },
+        configTrunk: opts.configTrunk,
         async fetchIssueBody() {
           return undefined;
         },
@@ -1949,6 +1952,24 @@ describe("processIssue — base reaches sandcastle (ADR 0031)", () => {
     // runAgent receives the remote-tracking ref so sandcastle forks from the
     // freshly-fetched ref, not the potentially-stale local branch.
     expect(trace.runAgentCalls[0]?.base).toBe("origin/main");
+  });
+
+  it("resolves an unlocked, pinless issue to the configured Trunk and forks off origin/<trunk> (ADR 0083)", async () => {
+    const fetchedBases: string[] = [];
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      locked: false,
+      configTrunk: "develop",
+      fetchedBases,
+    });
+    const result = await processIssue(deps, input);
+
+    expect(result.base).toBe("develop");
+    // the trunk is fetched current before the run — the resolver's value is
+    // only ever consumed as its fresh-fetched remote ref, never the local branch.
+    expect(fetchedBases).toEqual(["develop"]);
+    expect(trace.runAgentCalls[0]?.base).toBe("origin/develop");
   });
 });
 
