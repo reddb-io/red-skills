@@ -26,6 +26,7 @@ function record(issue: number, attempt: number, current: Record<string, unknown>
     live,
     active: live,
     liveness: live ? "active" : "dead",
+    livenessVerdict: { status: live ? "alive" : "stalled", laneFresh: live, crossCheckArmed: false, reason: "" },
   };
 }
 

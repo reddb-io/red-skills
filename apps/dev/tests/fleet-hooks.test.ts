@@ -28,6 +28,7 @@ import {
 } from "../src/core/fleet-hook-config.js";
 import type { ProcessSnapshotEntry } from "../src/core/reaper-signal.js";
 import type { HookExec } from "../src/core/hook-dispatcher.js";
+import type { LivenessVerdict } from "@reddb-io/red-castle";
 
 const NOW = 1700000000;
 
@@ -66,7 +67,7 @@ interface FakeIo {
   inspectTree: ReturnType<typeof vi.fn>;
   sleep: ReturnType<typeof vi.fn>;
   lastExitCode: ReturnType<typeof vi.fn>;
-  agentLaneMtime: ReturnType<typeof vi.fn>;
+  workerLivenessVerdict: ReturnType<typeof vi.fn>;
   resolveIterDir: ReturnType<typeof vi.fn>;
   teardownIterDir: ReturnType<typeof vi.fn>;
   parkedSlotWork: ReturnType<typeof vi.fn>;
@@ -96,7 +97,7 @@ function makeDeps(over: Partial<Record<keyof FakeIo, unknown>> = {}): {
     inspectTree: vi.fn((): readonly ProcessSnapshotEntry[] => []),
     sleep: vi.fn((_ms: number) => new Promise<void>((resolve) => setTimeout(resolve, 0))),
     lastExitCode: vi.fn((_slot: number) => null as number | null),
-    agentLaneMtime: vi.fn(() => 0),
+    workerLivenessVerdict: vi.fn((): LivenessVerdict | null => null),
     resolveIterDir: vi.fn((): IterDirInfo | null => null),
     teardownIterDir: vi.fn(async () => {}),
     parkedSlotWork: vi.fn(
@@ -126,7 +127,7 @@ function makeDeps(over: Partial<Record<keyof FakeIo, unknown>> = {}): {
       sleep: io.sleep,
     },
     fs: {
-      agentLaneMtime: io.agentLaneMtime,
+      workerLivenessVerdict: io.workerLivenessVerdict,
       resolveIterDir: io.resolveIterDir,
       teardownIterDir: io.teardownIterDir,
       parkedSlotWork: io.parkedSlotWork,
@@ -441,8 +442,8 @@ describe("supervisor: on_stall_reap veto", () => {
     slot.stallSinceEpoch = NOW - 200; // stalled for 200s > stallKillThresholdS(90)
 
     const cfg = config({ stallThresholdS: 30, stallKillThresholdS: 90 });
-    // agentLaneMtime returns a mtime that keeps stall flagged.
-    io.agentLaneMtime.mockReturnValue(NOW - 200);
+    // workerLivenessVerdict returns stalled to keep the slot flagged.
+    io.workerLivenessVerdict.mockReturnValue({ status: "stalled", laneFresh: false, laneAgeMs: 200_000, crossCheckArmed: true, liveDescendants: false, reason: "lane idle" });
 
     await pollStallDetector(state, deps, cfg);
 
@@ -471,7 +472,7 @@ describe("supervisor: on_stall_reap veto", () => {
     slot.stallSinceEpoch = NOW - 200;
 
     const cfg = config({ stallThresholdS: 30, stallKillThresholdS: 90 });
-    io.agentLaneMtime.mockReturnValue(NOW - 200);
+    io.workerLivenessVerdict.mockReturnValue({ status: "stalled", laneFresh: false, laneAgeMs: 200_000, crossCheckArmed: true, liveDescendants: false, reason: "lane idle" });
 
     const reaped = await pollStallDetector(state, deps, cfg);
 
@@ -495,7 +496,7 @@ describe("supervisor: on_stall_reap veto", () => {
     slot.stallSinceEpoch = NOW - 200;
 
     const cfg = config({ stallThresholdS: 30, stallKillThresholdS: 90 });
-    io.agentLaneMtime.mockReturnValue(NOW - 200);
+    io.workerLivenessVerdict.mockReturnValue({ status: "stalled", laneFresh: false, laneAgeMs: 200_000, crossCheckArmed: true, liveDescendants: false, reason: "lane idle" });
 
     const reaped = await pollStallDetector(state, deps, cfg);
 
@@ -580,7 +581,7 @@ describe("supervisor: on_stall_detected", () => {
     // idleTime = 50s > stallThresholdS(30) → flagged, but 50 < stallKillThresholdS(90)
     // so the first poll detects the stall but does NOT reap, keeping slot.stalled=true
     // across both polls and preventing a second on_stall_detected from firing.
-    io.agentLaneMtime.mockReturnValue(NOW - 50);
+    io.workerLivenessVerdict.mockReturnValue({ status: "stalled", laneFresh: false, laneAgeMs: 50_000, crossCheckArmed: true, liveDescendants: false, reason: "lane idle" });
 
     const cfg = config({ stallThresholdS: 30, stallKillThresholdS: 90 });
 
