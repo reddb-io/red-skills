@@ -55,6 +55,7 @@ import { attemptLedgerContext, formatAttemptContext, highestAttempt, type Attemp
 import { isValidWorkerId } from "../core/worker-paths.js";
 import { readdirSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
+import { isLivePid } from "../runtime/kill-tree.js";
 import { specialUserRequestBlock, claudeSpawnArgs, codexSpawnArgs } from "../core/runner-spawn.js";
 import { buildWorkerAttemptPath } from "../core/worker-paths.js";
 import { branchLockPath, readLockedBranch, isLocked } from "../runtime/lock.js";
@@ -126,6 +127,9 @@ interface ParsedRunFlags {
    * no PR, no merge; the agent report is posted as a comment and the disposable
    * issue closes. Additional modes may be added by future dispatch tiers. */
   runMode?: string;
+  /** --force: bypass the live-supervisor boot guard (#1027). Operator accepts
+   * the collision risk; a warning is printed but the run proceeds. */
+  force: boolean;
 }
 
 /** Raised when --alternate is combined with --runner (mutually exclusive). */
@@ -134,6 +138,54 @@ export class RunFlagError extends Error {
     super(message);
     this.name = "RunFlagError";
   }
+}
+
+/**
+ * Probe the fleet supervisor pid file. Returns `{ live: true, pid }` when a
+ * running supervisor is detected, `{ live: false }` otherwise (no file, stale
+ * pid, or invalid content). `checkLivePid` is injectable so tests can provide a
+ * fake process probe without spawning real processes (#1027).
+ */
+export async function probeFleetSupervisor(
+  pidFile: string,
+  checkLivePid: (pid: number) => boolean = isLivePid,
+): Promise<{ live: true; pid: number } | { live: false }> {
+  try {
+    const raw = (await readFile(pidFile, "utf8")).trim();
+    if (!/^\d+$/.test(raw)) return { live: false };
+    const pid = Number(raw);
+    if (!checkLivePid(pid)) return { live: false };
+    return { live: true, pid };
+  } catch {
+    return { live: false };
+  }
+}
+
+/**
+ * Apply the boot guard: refuse to start if a fleet supervisor is already live
+ * (unless `--force` was passed). Returns `"refused"` when the caller should
+ * abort, `"forced"` when the guard was bypassed with a warning, or `"clear"`
+ * when no live supervisor was found.
+ */
+export async function checkBootGuard(
+  pidFile: string,
+  force: boolean,
+  stdout: NodeJS.WritableStream,
+  checkLivePid: (pid: number) => boolean = isLivePid,
+): Promise<"refused" | "forced" | "clear"> {
+  const probe = await probeFleetSupervisor(pidFile, checkLivePid);
+  if (!probe.live) return "clear";
+  if (force) {
+    stdout.write(`warn: --force: fleet supervisor pid=${probe.pid} is still running; collision risk accepted.\n`);
+    return "forced";
+  }
+  stdout.write(
+    `afk: a fleet supervisor is already running (pid=${probe.pid}).\n` +
+      `  monitor the running fleet: /dev:afk fleet\n` +
+      `  stop it first:             afk stop\n` +
+      `  override (risk):           afk run --force\n`,
+  );
+  return "refused";
 }
 
 /** Parse a comma-separated issue list into an ordered, finite number list. */
@@ -183,6 +235,7 @@ const RUN_FLAG_SCHEMA = {
   "local-merge": { kind: "boolean" },
   yolo: { kind: "boolean" },
   "run-mode": { kind: "value", coerce: (raw: string): string => raw },
+  force: { kind: "boolean" },
 } satisfies FlagSchema;
 
 /** Parse the `run` flags: --prd N / --issues a,b,c / -n N / --once / --request / --runner. */
@@ -237,6 +290,7 @@ export function parseRunFlags(args: readonly string[]): ParsedRunFlags {
     localMerge: values["local-merge"] === true,
     yolo: values.yolo === true,
     runMode: values["run-mode"] as string | undefined,
+    force: values.force === true,
   };
 }
 
@@ -1296,6 +1350,16 @@ export async function runCommand(options: RunOptions): Promise<number> {
   const ctx = await resolveRepoContext(cwd);
   const settings = resolveRunSettings(cwd, process.env, runner);
   const paths = afkPaths(cwd);
+
+  // Boot guard (#1027): refuse to start if a fleet supervisor is already live.
+  // Supervisor-dispatched paths bypass this: --reconcile-issue workers are
+  // spawned by the running supervisor; RED_AFK_SWEEPS_DONE=1 workers are
+  // fleet-owned and the supervisor already holds the pid.
+  if (flags.reconcileIssue === undefined && process.env.RED_AFK_SWEEPS_DONE !== "1") {
+    const pidFile = join(paths.tmpDir, "afk-supervisor.pid");
+    const guard = await checkBootGuard(pidFile, flags.force, process.stdout);
+    if (guard === "refused") return 1;
+  }
 
   // Worker id — probe the workers root for collisions.
   const existing = new Set((await collectMonitorInputs(cwd)).workers.map((w) => w.state.worker_id));
