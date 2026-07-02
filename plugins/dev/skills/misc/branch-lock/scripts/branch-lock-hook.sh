@@ -46,14 +46,21 @@ dev_plugin_enabled "$ROOT/.red/config.yaml" || exit 0
 # Scope: /afk worktrees are exempt even when a lock is active.
 scope_should_enforce "$ROOT" || exit 0
 
-if dev_config_lock_primary_branch_enabled "$ROOT/.red/config.yaml" &&
-  [[ "$(classify_primary_branch_switch_guard "$COMMAND")" == "block" ]]; then
+# Untouchable primary (ADR 0083 §2): an agent may never move the primary
+# checkout's branch. This block is unconditional — it no longer arms with the
+# `dev.lock.primary-branch` toggle (which stays readable for backward
+# compatibility but can no longer *enable* switching; /doctor may flag it as
+# redundant). Human terminals are unaffected: this is an agent-only pre-tool hook
+# (ADR 0006).
+if [[ "$(classify_primary_branch_switch_guard "$COMMAND")" == "block" ]]; then
   cat >&2 <<EOF
-BLOCKED by primary branch guard: dev.lock.primary-branch is true.
-The command '$COMMAND' would move the agent's primary checkout branch or
-destroy work in it (branch switch, 'git reset' in any form, 'git stash', or
-'git rebase --autostash'). Parallel human WIP lives in this primary checkout,
-and these commands have destroyed in-progress work before.
+BLOCKED by the untouchable-primary rule (ADR 0083): an agent can never switch
+the primary checkout's branch or destroy work in it, regardless of
+configuration or lock state. The command '$COMMAND' would move the agent's
+primary checkout to another branch or destroy work in it (branch switch,
+'git reset' in any form, 'git stash', or 'git rebase --autostash'). Parallel
+human WIP lives in this primary checkout, and these commands have destroyed
+in-progress work before.
 
 Do branch work in an isolated worktree under .red/tmp/work-*/ instead
 ('git worktree add .red/tmp/work-<slug> -b <branch> origin/main'). If the local

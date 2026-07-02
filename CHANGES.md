@@ -6,6 +6,20 @@ Upstream base: `mattpocock/skills@21f59763be7bf734cd4cf138805bb653d9ffebb7` (see
 
 ---
 
+## branch-lock (misc) — primary-checkout branch guard is now unconditional (#1025)
+
+- **status**: modified
+- **upstream**: —
+- **why**: ADR 0083 §2 (untouchable primary) makes "may an agent switch the primary checkout's branch" non-configurable — the answer is always no. The guard previously armed only with `dev.lock.primary-branch: true` (or a lock file); that toggle is removed.
+- **what changed**:
+  - `branch-lock-hook.sh` / `branch-lock-codex.sh`: the primary-branch-switch block no longer gates on `dev_config_lock_primary_branch_enabled`. Once `plugins.dev.enabled: true`, any agent `git switch`/`git checkout`/`git switch -b` of the primary is blocked with no lock and no config toggle.
+  - Refusal message now references the untouchable-primary rule (ADR 0083) instead of naming the config flag.
+  - The `dev.lock.primary-branch` key stays readable (`dev-config.sh` unchanged) for backward compatibility but can no longer enable/disable switching; `/doctor` may note it as redundant.
+  - Merged with #1024's guard extensions: the reset/stash/autostash family rides the same shared classifier and is therefore also blocked unconditionally in the primary checkout. The lock-file-gated semantics (AFK base/merge-target read, whole-tree restore under an active lock) are untouched. Human terminals stay unaffected (ADR 0006).
+  - Updated `SKILL.md` and the Claude/Codex plugin-hook + CLI shell tests to the unconditional semantics.
+
+---
+
 ## afk (engineering) — empty-queue gate census is binding on the invoking agent
 
 - **status**: modified

@@ -11,34 +11,40 @@ content is the branch name — under the gitignored `.red/tmp/`, so every checko
 and machine locks independently and nothing is committed. Absence of the file
 means unlocked: protection is strictly opt-in.
 
-The dev plugin also ships a dormant primary-checkout branch guard for the
-interactive development loop (ADR 0043). When `.red/config.yaml` contains:
+The dev plugin also ships an **unconditional** primary-checkout branch guard
+(ADR 0083 §2, untouchable primary). Once the dev plugin is enabled
+(`plugins.dev.enabled: true`), the pre-tool hook blocks the agent from changing
+the primary checkout's branch (`git switch <branch>`, `git checkout <branch>`,
+`git switch -b <new>`) — always, with no lock file and no config toggle. The
+answer to "may an agent switch the primary checkout's branch" is not
+configurable: it is always **no**. `git commit`, `git worktree add`, read-only
+git, and `.red/tmp/work-*/` worktrees stay allowed.
+
+The historical `dev.lock.primary-branch` key stays **readable** for backward
+compatibility but can no longer enable or disable switching; the guard fires
+regardless of its value. `/doctor` may note it as redundant.
 
 ```yaml
+# retained for backward compatibility only — no longer toggles the guard
 dev:
   lock:
     primary-branch: true
 ```
 
-the same pre-tool hook blocks the agent from changing the primary checkout's
-branch (`git switch <branch>`, `git checkout <branch>`, `git switch -b <new>`)
-even without a `branch-lock.yaml` file. It also blocks the work-destroying
-commands the standing maintainer rules forbid in the primary checkout, because
-parallel human WIP lives there and these have destroyed in-progress work before
+The same unconditional guard also blocks the work-destroying commands the
+standing maintainer rules forbid in the primary checkout, because parallel
+human WIP lives there and these have destroyed in-progress work before
 (issue #1024): `git reset` in **any** form (`--hard`/`--soft`/`--mixed`, with or
 without a pathspec), every `git stash` subcommand, and `git rebase --autostash`.
 The refusal points to the sanctioned alternative — do branch work in an isolated
 worktree under `.red/tmp/work-*/`, and if the local trunk diverged from origin,
-leave it alone and base on the fresh remote ref (ADR 0083). Missing config or a
-missing key means off. `git commit`, `git worktree add`, read-only git, and
-`.red/tmp/work-*/` worktrees stay allowed. Inside isolated worktrees the
-reset/stash/autostash commands remain allowed — the guard is about the primary
-checkout only.
+leave it alone and base on the fresh remote ref (ADR 0083). Inside isolated
+worktrees the reset/stash/autostash commands remain allowed — the guard is about
+the primary checkout only.
 
 Enforcement is **agent-only**, via runner pre-tool hooks — Claude Code
 `PreToolUse(Bash)` and Codex plugin `PreToolUse` — that intercept the agent's own
-tool calls, not the human's terminal. The plugin-level hook is dormant until a
-lock file exists or `dev.lock.primary-branch` is true. See
+tool calls, not the human's terminal (ADR 0006, unaffected). See
 [ADR 0006](../../../../../.red/adr/0006-branch-lock-agent-only-enforcement.md).
 The hook logic is self-contained: it depends on neither the
 `git-guardrails-claude-code` skill nor anything else, and the two stack
@@ -91,9 +97,9 @@ The `dev` plugin ships Claude wiring in
 `plugins/dev/.claude-plugin/plugin.json` (`"hooks": "./hooks/claude.hooks.json"`).
 That manifest registers `branch-lock-hook.sh` under `PreToolUse`/matcher `Bash`
 at the plugin level, so no per-repo `.claude/settings.json` copy is needed for
-the dormant primary-branch guard. The hook reads `.red/config.yaml` at runtime
-and stays silent until `dev.lock.primary-branch: true` or a branch-lock file is
-present.
+the primary-branch guard. The hook reads `.red/config.yaml` at runtime; once
+`plugins.dev.enabled: true` it enforces the untouchable-primary rule and, when a
+branch-lock file is present, the work-loss family too.
 
 Manual per-repo installation is only needed for older/pluginless Claude setups:
 copy [scripts/branch-lock-hook.sh](scripts/branch-lock-hook.sh),
@@ -144,9 +150,12 @@ branch-lock/
 
 ## What the hook blocks vs allows
 
-Locked to `<branch>`, in the primary checkout, the hook blocks:
+In the primary checkout, once `plugins.dev.enabled: true`, the hook blocks (the
+first three are the unconditional untouchable-primary rule; the rest are the
+work-loss family, blocked only while a branch-lock file is present):
 
-- `git checkout <other>` / `git switch <other>` — switching to any other branch
+- `git checkout <any>` / `git switch <any>` — switching to any branch, including
+  the lock target (untouchable primary — the agent can never move the primary)
 - `git checkout -b <new>` / `git switch -c <new>` — leaving via a new branch
 - `git switch -` — switching to the previous branch
 - `git stash` / `git stash push` / `git stash save` — shelving away the working tree
@@ -156,21 +165,18 @@ Locked to `<branch>`, in the primary checkout, the hook blocks:
 
 It allows (exit 0, silent):
 
-- `git checkout <branch>` / `git switch <branch>` — switching back to the lock target
 - `git checkout -- <path>` / `git restore <path>` — targeted file-level restore
 - `git stash list` / `git stash show` — read-only stash
 - `git clean -n` / `--dry-run` — non-destructive clean
 - `git reset --soft` / mixed reset, `git restore --staged <path>` — no working-tree loss
 - `git worktree add .red/tmp/...` — worktrees are how `/afk` and `/go` work
-- any other command
+- `git commit`, `git status` / read-only git, and any other command
 
-With `dev.lock.primary-branch: true` and no branch-lock file, the primary guard
-blocks only branch-changing commands in the primary checkout:
-
-- blocks `git switch <branch>`, `git checkout <branch>`, `git switch -b <new>`,
-  `git checkout -b <new>`, and `git switch -`
-- allows `git commit`, `git worktree add`, `git status` / read-only git,
-  targeted path checkout, and every `.red/tmp/work-*/` worktree
+Even with no branch-lock file, the untouchable-primary guard still blocks every
+branch-changing command (`git switch <branch>`, `git checkout <branch>`,
+`git switch -b <new>`, `git checkout -b <new>`, `git switch -`) while allowing
+`git commit`, `git worktree add`, read-only git, targeted path checkout, and
+every `.red/tmp/work-*/` worktree.
 
 The dev command proxy has a stricter host-wide invariant when
 `plugins.dev.enabled: true`: any agent-created `git worktree add` destination
