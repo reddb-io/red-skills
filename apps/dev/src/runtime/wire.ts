@@ -738,6 +738,7 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
   let human = cached?.human ?? 0;
 
   const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo };
+  let refreshSucceeded = false;
   const refresh = async (): Promise<void> => {
     const [q, h] = await Promise.all([
       ghx.countReadyForAgent(ghCtx),
@@ -745,9 +746,11 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
     ]);
     queue = q;
     human = h;
+    refreshSucceeded = true;
     writeStatuslineCacheAtomic(cachePath, { queue: q, human: h, ts: nowS });
   };
 
+  let cacheAgeS: number | undefined;
   if (!cached) {
     // Cold cache: refresh with a bounded deadline so a hanging gh CLI cannot
     // block the statusline render indefinitely. queue/human stay 0/0 on timeout
@@ -755,8 +758,11 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
     await withTimeout(refresh(), STATUSLINE_GH_COLD_TIMEOUT_MS, undefined).catch(() => undefined);
   } else if (nowS - cached.ts >= STATUSLINE_CACHE_TTL_S) {
     // Stale: await a bounded refresh so the cache is rewritten before the
-    // process exits. Shows the previous value on timeout (fail-open).
+    // process exits. Shows the previous value on timeout (fail-open). When
+    // refresh fails, mark the age so the renderer can signal staleness.
+    const staleAgeS = nowS - cached.ts;
     await withTimeout(refresh(), STATUSLINE_GH_COLD_TIMEOUT_MS, undefined).catch(() => undefined);
+    if (!refreshSucceeded) cacheAgeS = staleAgeS;
   }
 
   if (workers <= 0) return null;
@@ -780,6 +786,7 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
     model: model || undefined,
     effort: effort || undefined,
     sourceCounts,
+    cacheAgeS,
   };
 }
 
@@ -830,18 +837,24 @@ export async function collectStatuslineRepo(ctx: RepoContext): Promise<RepoInput
   let openIssues = cached?.openIssues ?? 0;
 
   const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo };
+  let repoRefreshSucceeded = false;
   const refresh = async (): Promise<void> => {
     const [p, i] = await Promise.all([ghx.countOpenPrs(ghCtx), ghx.countOpenIssues(ghCtx)]);
     openPrs = p;
     openIssues = i;
+    repoRefreshSucceeded = true;
     writeRepoStatsCacheAtomic(cachePath, { openPrs: p, openIssues: i, ts: nowS });
   };
+  let repoCacheAgeS: number | undefined;
   if (!cached) {
     await withTimeout(refresh(), STATUSLINE_GH_COLD_TIMEOUT_MS, undefined).catch(() => undefined);
   } else if (nowS - cached.ts >= STATUSLINE_CACHE_TTL_S) {
     // Stale: await a bounded refresh so the cache is rewritten before the
-    // process exits. Shows the previous value on timeout (fail-open).
+    // process exits. Shows the previous value on timeout (fail-open). When
+    // refresh fails, mark the age so the renderer can signal staleness.
+    const staleAgeS = nowS - cached.ts;
     await withTimeout(refresh(), STATUSLINE_GH_COLD_TIMEOUT_MS, undefined).catch(() => undefined);
+    if (!repoRefreshSucceeded) repoCacheAgeS = staleAgeS;
   }
 
   // Local branch diff (committed + uncommitted) vs origin/main, bounded so a slow
@@ -853,7 +866,7 @@ export async function collectStatuslineRepo(ctx: RepoContext): Promise<RepoInput
     { added: 0, removed: 0 },
   ).catch(() => ({ added: 0, removed: 0 }));
 
-  return { openPrs, openIssues, localAdded: diff.added, localRemoved: diff.removed };
+  return { openPrs, openIssues, localAdded: diff.added, localRemoved: diff.removed, cacheAgeS: repoCacheAgeS };
 }
 
 // ---------- reap inputs ----------
