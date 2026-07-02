@@ -6,6 +6,7 @@ import {
   type LaneIdleInfo,
   type LaneIdleReaperOptions,
 } from "../src/core/lane-idle-reaper.js";
+import type { LivenessVerdict } from "@reddb-io/red-castle";
 
 /** A manual scheduler: captures the periodic fn so the test pumps ticks
  * synchronously (the lane reaper's poll body is synchronous — statSync / ps). */
@@ -28,19 +29,54 @@ const SOFT = 600;
 const KILL = 1800;
 // A realistic epoch anchor: the run spawned at BASE and the agent lane was last
 // written at BASE (the fleet detector requires both spawnEpoch > 0 AND
-// laneMtime > 0 — a never-observed lane / uninitialised spawn is never flagged).
+// lane was recently written — a never-observed lane is never flagged as stalled).
 const BASE = 1_000_000;
+
+/**
+ * Build a fake livenessVerdict probe driven by epoch-second lane-time and clock
+ * functions. Mirrors the evaluator's logic without importing it: lane present
+ * and idle ≥ SOFT (no live descendants) → stalled; idle < SOFT → alive. A zero
+ * laneTimeS (unseen lane) → returns null (not-candidate).
+ */
+function makeVerdictFn(
+  laneTimeS: () => number,
+  clockFn: () => number,
+  softS: number,
+): () => LivenessVerdict | null {
+  return (): LivenessVerdict | null => {
+    const lt = laneTimeS();
+    if (lt === 0) return null;
+    const idleMs = (clockFn() - lt) * 1000;
+    if (idleMs >= softS * 1000) {
+      return {
+        status: "stalled",
+        laneFresh: false,
+        laneAgeMs: idleMs,
+        crossCheckArmed: false,
+        reason: "lane idle",
+      };
+    }
+    return {
+      status: "alive",
+      laneFresh: true,
+      laneAgeMs: idleMs,
+      crossCheckArmed: false,
+      reason: "lane fresh",
+    };
+  };
+}
 
 /** Build reaper options anchored at BASE; `over` overrides per test. */
 function makeOpts(over: Partial<LaneIdleReaperOptions> = {}): LaneIdleReaperOptions {
+  const clock = () => BASE;
   return {
     spawnEpoch: BASE,
     stallThresholdS: SOFT,
     stallKillThresholdS: KILL,
     intervalMs: 30_000,
-    laneMtime: () => BASE,
+    livenessVerdict: makeVerdictFn(() => BASE, clock, SOFT),
     inspectTree: () => [],
-    now: () => BASE,
+    now: clock,
     schedule: () => () => {},
     abort: () => {},
     ...over,
@@ -58,7 +94,7 @@ describe("startLaneIdleReaper — reuses the fleet detector + reaper-signal pred
     const r = startLaneIdleReaper(
       makeOpts({
         now: () => clock,
-        laneMtime: () => BASE,
+        livenessVerdict: makeVerdictFn(() => BASE, () => clock, SOFT),
         inspectTree: () => [{ command: "sleep", cpu: 0 }], // idle child, flat cpu
         schedule: sched.schedule,
         abort: () => {
@@ -83,7 +119,7 @@ describe("startLaneIdleReaper — reuses the fleet detector + reaper-signal pred
     startLaneIdleReaper(
       makeOpts({
         now: () => clock,
-        laneMtime: () => BASE,
+        livenessVerdict: makeVerdictFn(() => BASE, () => clock, SOFT),
         inspectTree: () => [],
         schedule: sched.schedule,
         abort: () => {
@@ -100,11 +136,12 @@ describe("startLaneIdleReaper — reuses the fleet detector + reaper-signal pred
   // ---- AC2: an active vitest/tsc descendant past threshold is NOT killed ----
   it("never reaps a worker with an active vitest descendant, even idle past the kill threshold", () => {
     let aborted = false;
+    const clock = BASE + 99_999;
     const sched = manualScheduler();
     const r = startLaneIdleReaper(
       makeOpts({
-        now: () => BASE + 99_999, // idle far past the kill threshold
-        laneMtime: () => BASE,
+        now: () => clock,
+        livenessVerdict: makeVerdictFn(() => BASE, () => clock, SOFT),
         inspectTree: () => [
           { command: "node", cpu: 0 },
           { command: "vitest", cpu: 0 }, // a test run blocked on I/O at ~0% cpu
@@ -122,11 +159,12 @@ describe("startLaneIdleReaper — reuses the fleet detector + reaper-signal pred
 
   it("never reaps a worker with an active tsc descendant past the threshold", () => {
     let aborted = false;
+    const clock = BASE + 99_999;
     const sched = manualScheduler();
     startLaneIdleReaper(
       makeOpts({
-        now: () => BASE + 99_999,
-        laneMtime: () => BASE,
+        now: () => clock,
+        livenessVerdict: makeVerdictFn(() => BASE, () => clock, SOFT),
         inspectTree: () => [{ command: "tsc", cpu: 0 }],
         schedule: sched.schedule,
         abort: () => {
@@ -140,11 +178,12 @@ describe("startLaneIdleReaper — reuses the fleet detector + reaper-signal pred
 
   it("never reaps a worker showing non-trivial aggregate cpu (busy without a named tool)", () => {
     let aborted = false;
+    const clock = BASE + 99_999;
     const sched = manualScheduler();
     startLaneIdleReaper(
       makeOpts({
-        now: () => BASE + 99_999,
-        laneMtime: () => BASE,
+        now: () => clock,
+        livenessVerdict: makeVerdictFn(() => BASE, () => clock, SOFT),
         inspectTree: () => [{ command: "node", cpu: 73.4 }],
         schedule: sched.schedule,
         abort: () => {
@@ -156,17 +195,18 @@ describe("startLaneIdleReaper — reuses the fleet detector + reaper-signal pred
     expect(aborted).toBe(false);
   });
 
-  // ---- candidacy gating (fleet detector reuse) ----
+  // ---- candidacy gating (spawn epoch guard) ----
   it("does not reap a freshly-spawned worker (worker age below the soft threshold)", () => {
     let aborted = false;
     const sched = manualScheduler();
+    const clock = BASE + 100;
     // worker only 100s old (now-spawnEpoch=100 < soft 600) → not a candidate even
-    // though the lane has been idle since spawn.
+    // though the lane is stale; the spawn guard fires before the verdict is consulted.
     startLaneIdleReaper(
       makeOpts({
         spawnEpoch: BASE,
-        now: () => BASE + 100,
-        laneMtime: () => BASE,
+        now: () => clock,
+        livenessVerdict: makeVerdictFn(() => BASE, () => clock, SOFT),
         inspectTree: () => [],
         schedule: sched.schedule,
         abort: () => {
@@ -178,14 +218,15 @@ describe("startLaneIdleReaper — reuses the fleet detector + reaper-signal pred
     expect(aborted).toBe(false);
   });
 
-  it("never treats an unseen lane (mtime 0) as a stall", () => {
+  it("never treats an unseen lane (verdict null) as a stall", () => {
     let aborted = false;
     const sched = manualScheduler();
+    const clock = BASE + 99_999;
     startLaneIdleReaper(
       makeOpts({
         spawnEpoch: BASE,
-        now: () => BASE + 99_999,
-        laneMtime: () => 0, // lane never observed → computeStalled returns false
+        now: () => clock,
+        livenessVerdict: makeVerdictFn(() => 0, () => clock, SOFT), // 0 → returns null
         inspectTree: () => [],
         schedule: sched.schedule,
         abort: () => {
@@ -206,7 +247,7 @@ describe("startLaneIdleReaper — reuses the fleet detector + reaper-signal pred
       makeOpts({
         spawnEpoch: BASE,
         now: () => clock,
-        laneMtime: () => lane,
+        livenessVerdict: makeVerdictFn(() => lane, () => clock, SOFT),
         inspectTree: () => [],
         schedule: sched.schedule,
         abort: () => {
@@ -234,13 +275,13 @@ describe("startLaneIdleReaper — reuses the fleet detector + reaper-signal pred
       makeOpts({
         spawnEpoch: BASE,
         now: () => clock,
-        laneMtime: () => BASE,
+        livenessVerdict: makeVerdictFn(() => BASE, () => clock, SOFT),
         inspectTree: () => [],
         schedule: sched.schedule,
         onTick: (i) => ticks.push(i),
       }),
     );
-    clock = BASE + 100; // worker age below soft → not-candidate
+    clock = BASE + 100; // worker age below soft → not-candidate (spawn guard)
     sched.tick();
     clock = BASE + 1000; // stalled, idle below kill → no-kill
     sched.tick();
