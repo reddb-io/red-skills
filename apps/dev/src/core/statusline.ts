@@ -108,6 +108,12 @@ export interface AfkInput {
    * non-empty origin. Sorted by origin for a deterministic token order.
    * Rendered as `go=N afk=M` tokens immediately after `wrk=<total>`. */
   sourceCounts?: ReadonlyArray<{ origin: string; count: number }>;
+  /** Age in seconds of the queue/human count cache when it was served TTL-stale
+   * AND the background refresh failed or timed out. Absent when the cache was
+   * fresh or the refresh succeeded. When set, the `rdy=` (or `hmn=`) token
+   * carries a compact age suffix — e.g. `rdy=3 (12m)` — so stale counts are
+   * never silently rendered as current. */
+  cacheAgeS?: number;
 }
 
 /** Repo-global header inputs (themed line 1, always rendered). Independent of
@@ -121,6 +127,11 @@ export interface RepoInput {
   localAdded?: number;
   /** `-N` — LOCAL branch deletions (committed + uncommitted vs origin/main). */
   localRemoved?: number;
+  /** Age in seconds of the PR/issue count cache when served TTL-stale and the
+   * refresh failed or timed out. Absent when the cache was fresh or refresh
+   * succeeded. When set, the `prs=` (or `iss=`) token carries a compact age
+   * suffix so stale counts are not silently shown as current. */
+  cacheAgeS?: number;
 }
 
 /** All the resolved inputs for one statusline render. */
@@ -154,6 +165,20 @@ export function humanizeAlive(ms: number): string {
   const m = Math.floor(s / 60);
   const rs = s % 60;
   if (m < 60) return rs > 0 ? `${m}m${rs}s` : `${m}m`;
+  const h = Math.floor(m / 60);
+  const rm = m % 60;
+  return rm > 0 ? `${h}h${rm}m` : `${h}h`;
+}
+
+/**
+ * Compact age string for a TTL-stale cache entry: renders seconds as `45s`,
+ * whole minutes as `12m`, and hours as `1h5m` / `2h`. Used as the `(Xm)`
+ * suffix on remote-count tokens when the cache was stale and refresh failed.
+ */
+export function formatCacheAge(ageS: number): string {
+  if (ageS < 60) return `${ageS}s`;
+  const m = Math.floor(ageS / 60);
+  if (m < 60) return `${m}m`;
   const h = Math.floor(m / 60);
   const rm = m % 60;
   return rm > 0 ? `${h}h${rm}m` : `${h}h`;
@@ -228,8 +253,16 @@ export function afkTokens(afk: AfkInput | undefined): AfkToken[] {
   if (afk.sourceCounts && afk.sourceCounts.length > 0) {
     for (const { origin, count } of afk.sourceCounts) kpi(`${origin}=`, String(count));
   }
-  if (afk.queue > 0) kpi("rdy=", String(afk.queue));
-  if (afk.human > 0) kpi("hmn=", String(afk.human));
+  // Age marker: appended to the first rendered remote-count token so stale
+  // data is never silently shown as current. rdy= takes priority; when queue
+  // is 0 the marker falls to hmn= (if present). Zero/zero with a stale cache
+  // shows nothing — 0/0 stale vs 0/0 fresh is indistinguishable in meaning.
+  const ageSuffix = afk.cacheAgeS !== undefined ? ` (${formatCacheAge(afk.cacheAgeS)})` : "";
+  if (afk.queue > 0) tokens.push({ label: "rdy=", value: String(afk.queue), suffix: ageSuffix });
+  if (afk.human > 0) {
+    const hmSuffix = ageSuffix && afk.queue === 0 ? ageSuffix : "";
+    tokens.push({ label: "hmn=", value: String(afk.human), suffix: hmSuffix });
+  }
   if (afk.blocked > 0) kpi("blk=", String(afk.blocked));
   const diff: string[] = [];
   if (afk.added > 0) diff.push(`+${afk.added}`);
