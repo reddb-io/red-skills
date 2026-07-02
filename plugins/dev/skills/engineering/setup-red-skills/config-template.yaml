@@ -104,6 +104,28 @@ plugins:
 #                                 # blocks the merge and parks to ready-for-human,
 #                                 # exactly like a feedback failure. Optional;
 #                                 # absent/empty = no-op. (#430 / PRD #429)
+#   test:
+#     quarantine:                 # config-declared flaky-test quarantine lane (issue #1035).
+#                                 # Each entry excludes a known-flaky test file from the
+#                                 # scoped gate run and emits a visible "quarantined" sidecar
+#                                 # record — exclusions are NEVER silent (repo norm). An entry
+#                                 # without an issue ref fails the gate loudly. /doctor warns
+#                                 # when a referenced issue is closed (managed debt, not
+#                                 # permanent forgetting).
+#                                 # Pattern is a repo-relative file path passed to vitest
+#                                 # --exclude (relative to the scope dir at run time).
+#                                 # Named entries e0, e1, e2 … are read in order until the
+#                                 # first gap.
+#       e0:
+#         pattern: apps/dev/tests/supervisor.test.ts
+#         issue: "https://github.com/reddb-io/red-skills/issues/1063"
+#         since: "2026-07-02"
+#         reason: "OOM under AFK fleet=2 concurrent load (exit 137 / SIGKILL)"
+#       e1:
+#         pattern: apps/brain/tests/dashboard.test.ts
+#         issue: "https://github.com/reddb-io/red-skills/issues/1064"
+#         since: "2026-07-02"
+#         reason: "tsx spawn timeout under concurrent AFK load (40 s ceiling)"
 #   hooks:
 #     defaults:
 #       cargo: true               # ship cargo isolation on Rust projects

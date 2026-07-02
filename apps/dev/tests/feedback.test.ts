@@ -298,7 +298,7 @@ describe("pure shaping helpers", () => {
 // minor message drift.
 describe("isInfraFeedbackFailure — INFRA root cause detection", () => {
   function green(): RunFeedbackResult {
-    return { ok: true, checks: [], sidecar: [], baselineDowngraded: [] };
+    return { ok: true, checks: [], sidecar: [], baselineDowngraded: [], quarantined: [] };
   }
   function failedCheck(
     name: string,
@@ -312,6 +312,7 @@ describe("isInfraFeedbackFailure — INFRA root cause detection", () => {
       checks: [check],
       sidecar: [JSON.stringify(record)],
       baselineDowngraded: [],
+      quarantined: [],
     };
   }
 
@@ -389,6 +390,7 @@ describe("isInfraFeedbackFailure — INFRA root cause detection", () => {
       ],
       sidecar: [JSON.stringify(passRecord), JSON.stringify(failRecord)],
       baselineDowngraded: [],
+      quarantined: [],
     };
     expect(isInfraFeedbackFailure(result)).toBe(false);
   });
