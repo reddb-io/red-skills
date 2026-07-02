@@ -50,11 +50,18 @@ if dev_config_lock_primary_branch_enabled "$ROOT/.red/config.yaml" &&
   [[ "$(classify_primary_branch_switch_guard "$COMMAND")" == "block" ]]; then
   cat >&2 <<EOF
 BLOCKED by primary branch guard: dev.lock.primary-branch is true.
-The command '$COMMAND' would switch the agent's primary checkout branch.
+The command '$COMMAND' would move the agent's primary checkout branch or
+destroy work in it (branch switch, 'git reset' in any form, 'git stash', or
+'git rebase --autostash'). Parallel human WIP lives in this primary checkout,
+and these commands have destroyed in-progress work before.
+
+Do branch work in an isolated worktree under .red/tmp/work-*/ instead
+('git worktree add .red/tmp/work-<slug> -b <branch> origin/main'). If the local
+trunk diverged from origin, leave it alone and base on the fresh remote ref
+(ADR 0083) — never reset or stash the primary to reconcile it.
 
 Allowed in the primary checkout: git commit, git worktree add, read-only git,
-and non-branch-changing commands. To work on another branch, create/use a
-worktree under .red/tmp/work-*/ or ask the user to change the primary branch.
+and other non-destructive commands. To change the primary branch, ask the user.
 EOF
   exit 2
 fi
