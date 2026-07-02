@@ -47,11 +47,16 @@ dev_plugin_enabled "$ROOT/.red/config.yaml" || { printf '{}'; exit 0; }
 
 scope_should_enforce "$ROOT" || { printf '{}'; exit 0; }
 
-if dev_config_lock_primary_branch_enabled "$ROOT/.red/config.yaml" &&
-  [[ "$(classify_primary_branch_switch_guard "$COMMAND")" == "block" ]]; then
+# Untouchable primary (ADR 0083 §2): an agent may never move the primary
+# checkout's branch. Unconditional — no longer armed by the
+# `dev.lock.primary-branch` toggle (kept readable for backward compatibility but
+# unable to *enable* switching). Agent-only hook, so human terminals are
+# unaffected (ADR 0006). Mirrors branch-lock-hook.sh.
+if [[ "$(classify_primary_branch_switch_guard "$COMMAND")" == "block" ]]; then
   cat >&2 <<EOF
-BLOCKED by primary branch guard: dev.lock.primary-branch is true.
-The command '$COMMAND' would switch the agent's primary checkout branch.
+BLOCKED by the untouchable-primary rule (ADR 0083): an agent can never switch
+the primary checkout's branch, regardless of configuration or lock state.
+The command '$COMMAND' would move the agent's primary checkout to another branch.
 
 Allowed in the primary checkout: git commit, git worktree add, read-only git,
 and non-branch-changing commands. To work on another branch, create/use a
