@@ -148,7 +148,7 @@ function compactModelName(model: string): string {
   return m ? m[1] : model;
 }
 
-/** Runner label with optional compact model+effort: `claude opus-max`, `codex`. */
+/** Runner label with optional compact model+effort: `claude-opus max`, `codex`. */
 function formatRunnerLabel(
   runner: string | undefined,
   model: string | undefined,
@@ -157,7 +157,7 @@ function formatRunnerLabel(
   if (!runner) return "";
   if (!model) return runner;
   const compact = compactModelName(model);
-  return effort ? `${runner} ${compact}-${effort}` : `${runner} ${compact}`;
+  return effort ? `${runner}-${compact} ${effort}` : `${runner} ${compact}`;
 }
 
 /** Line 2 — the AFK KPIs, transparent background, or null when no live workers. */
