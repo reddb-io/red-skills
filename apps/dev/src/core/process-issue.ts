@@ -45,6 +45,13 @@ import {
   type PackageLayout,
   type RunFeedbackResult,
 } from "./feedback.js";
+import {
+  computeValidationScope,
+  formatValidationScope,
+  scopesForValidationScope,
+  type ValidationScope,
+  type WorkspaceGraph,
+} from "./validation-scope.js";
 import { runBackpressure, type BackpressureExec } from "./backpressure.js";
 import {
   openReviewPr,
@@ -255,6 +262,14 @@ export interface ProcessIssueDeps {
   pnpm: PnpmExec;
   /** Package layout probe for feedback scope resolution. */
   layout: PackageLayout;
+  /**
+   * Workspace dependency graph for dependency-cone scoping (T5, PRD #1013).
+   * When provided, the feedback gate runs the full cone: the changed packages
+   * plus every package that transitively depends on them. When absent (back-compat
+   * for existing callers / tests), the gate falls back to the current
+   * directly-touched-packages behaviour (no cone expansion).
+   */
+  graph?: WorkspaceGraph;
   /**
    * Shell executor for the operator-declared backpressure gate (#430, PRD #429).
    * Runs each `afk.backpressure` command against the worker-branch checkout.
@@ -963,6 +978,7 @@ export async function processIssue(
     startedEpoch,
   };
   let validationSidecar: string[] = [];
+  let lastValidationScope: ValidationScope | undefined = undefined;
   let salvagedUncommittedFiles = 0;
   let salvagedUncommittedOutcome: RunAgentResult["outcome"] | undefined;
   let salvagedRunCommitCount = 0;
@@ -1439,7 +1455,19 @@ export async function processIssue(
     // Macro phase → `validating` (issue #811): the feedback gate is starting.
     deps.markPhase?.("validating");
     const changedFiles = await deps.lookups.changedFiles(workerBranch, base);
-    const feedbackScopes = relevantScopes(deps.layout, changedFiles);
+    // Compute the validation scope: when a workspace graph is injected, expand
+    // to the full dependency cone (touched packages + transitive dependents);
+    // otherwise fall back to the current directly-touched-packages behaviour.
+    // Root-config changes (lockfile, tsconfig, .github/**) always escalate to
+    // whole-workspace regardless of which approach is used.
+    let validationScope: ValidationScope;
+    if (deps.graph) {
+      validationScope = computeValidationScope(changedFiles, deps.layout, deps.graph);
+    } else {
+      const scopes = relevantScopes(deps.layout, changedFiles);
+      validationScope = { type: "cone", packages: scopes, triggerPackages: scopes };
+    }
+    const feedbackScopes = scopesForValidationScope(validationScope);
     // pre_feedback (#832): a pre_* gate around the scope-derived feedback run — a
     // non-zero exit VETOES validation and routes the attempt to the abort-after-
     // claim terminal (the branch/PR is preserved, the issue returns to the queue).
@@ -1457,6 +1485,7 @@ export async function processIssue(
       layout: deps.layout,
       now: deps.nowEpoch,
       baselineWorktree: base,
+      validationScope,
     });
     // on_baseline_probe (#832): the "already failing on main?" probe (ADR 0071)
     // runs ONLY when the gate failed AND a baseline worktree was supplied. Report
@@ -1534,9 +1563,12 @@ export async function processIssue(
       } else {
         notes = "Feedback validation failed after the inner agent emitted DONE. The worker branch was not merged.";
       }
+      const scopeHeader = feedback.validationScope
+        ? `${formatValidationScope(feedback.validationScope)}\n`
+        : "";
       return await terminalFailure(common, outcome, "feedback", {
         notes,
-        validation: feedback.sidecar.join("\n"),
+        validation: `${scopeHeader}${feedback.sidecar.join("\n")}`,
       }, { validationSummary: feedback.sidecar.join("\n") });
     }
 
@@ -1573,6 +1605,7 @@ export async function processIssue(
     }
     // Both gates passed — the close path's sidecar/envelope carries their union.
     validationSidecar = [...feedback.sidecar, ...backpressureSidecar];
+    lastValidationScope = feedback.validationScope;
     break;
   }
 
@@ -1674,7 +1707,7 @@ export async function processIssue(
   // Write the machine-readable validation sidecar ($ITER_DIR/validation.jsonl,
   // SKILL.md) the Memory bridge consumes. Best-effort: never fails the close.
   await writeValidationSidecar(deps, input.attemptDir, validationSidecar);
-  const posted = await emitDone(common, mergeSha, durationS, validationSidecar);
+  const posted = await emitDone(common, mergeSha, durationS, validationSidecar, lastValidationScope);
   // ADR 0017: record the reasoning attempt into Memory AFTER the terminal
   // (done) envelope. Best-effort, gated, no-op when memory is absent.
   await recordAttemptBestEffort(common, "done", {
@@ -1977,14 +2010,18 @@ async function terminalFailure(
 
 /** Emit the done envelope with the merge sha + validation report. The
  * `validationSidecar` is the union of the feedback gate's records and any
- * backpressure-gate records (#430). */
+ * backpressure-gate records (#430). When `validationScope` is provided, a
+ * human-readable scope summary is prepended to the validation section so a
+ * human reading the envelope can see exactly what was tested. */
 async function emitDone(
   c: StageCommon,
   mergeSha: string,
   durationS: number,
   validationSidecar: string[],
+  validationScope?: ValidationScope,
 ): Promise<boolean> {
   const { deps, input } = c;
+  const scopeHeader = validationScope ? `${formatValidationScope(validationScope)}\n` : "";
   const result = await emitEnvelope(deps.envelope, {
     status: "done",
     issue: input.issue,
@@ -1994,7 +2031,7 @@ async function emitDone(
     attempt: input.attempt,
     mergeSha,
     diff: "merged",
-    sections: { validation: validationSidecar.join("\n") },
+    sections: { validation: `${scopeHeader}${validationSidecar.join("\n")}` },
     historyPath: deps.historyPath,
     historyClock: deps.historyClock,
     historyFields: { runner: input.runner, merge_sha: mergeSha },
