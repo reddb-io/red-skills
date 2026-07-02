@@ -33,10 +33,15 @@
 #     Echoes exactly "block" or "allow" and returns 0.
 #
 #   classify_primary_branch_switch_guard <command>
-#     Echoes exactly "block" for commands that would switch/create/checkout a
-#     branch in the primary checkout, and "allow" otherwise. This is the
-#     config-flag guard from ADR 0043: unlike classify_git_command it has no
-#     lock branch and only cares about branch movement, not work-loss commands.
+#     Echoes exactly "block" for commands that would move or destroy work in the
+#     primary checkout, and "allow" otherwise. This is the config-flag guard
+#     from ADR 0043 (unlike classify_git_command it has no lock branch). It
+#     blocks: branch movement (switch/create/checkout to a branch); `git reset`
+#     in ANY form; every `git stash` subcommand; and `git rebase --autostash`
+#     (issue #1024). Parallel human WIP lives in the primary checkout and these
+#     commands have destroyed in-progress work before; do branch work in an
+#     isolated worktree under .red/tmp/ instead. Worktrees are exempt by scope,
+#     so this classifier only ever runs against the primary checkout.
 
 # _git_subcommand_index <toks-name> <git-index>
 # Given the name of the token array and the index of a `git` token, echoes the
@@ -150,6 +155,26 @@ classify_primary_branch_switch_guard() {
     local sub="${toks[s]:-}"
     case "$sub" in
       worktree)
+        echo "allow"; return 0
+        ;;
+      reset)
+        # `git reset` in ANY form (--hard/--soft/--mixed, with or without a
+        # pathspec) can throw away parallel human WIP in the primary checkout
+        # (issue #1024). All forms blocked; use a worktree for branch work.
+        echo "block"; return 0
+        ;;
+      stash)
+        # `git stash` and every subcommand (push/save/pop/apply/list/show/…)
+        # blocked in the primary checkout (issue #1024) — the whole family
+        # touches or hides the primary's working tree.
+        echo "block"; return 0
+        ;;
+      rebase)
+        # `git rebase --autostash` silently stashes/pops the primary's WIP
+        # around the rebase (issue #1024); a plain rebase is not this vector.
+        for ((j = s + 1; j < n; j++)); do
+          [[ "${toks[j]}" == "--autostash" ]] && { echo "block"; return 0; }
+        done
         echo "allow"; return 0
         ;;
       checkout|switch)

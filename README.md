@@ -96,7 +96,7 @@ Common `dev` commands become native slash commands:
 /setup-red-skills
 /triage
 /afk --once
-/ship
+/go "one concrete demand"
 /dashboard
 ```
 
@@ -222,7 +222,7 @@ marketplace registration in a temporary home, and manual skill-link installs.
 ## What Makes It Different
 
 **Issue to PR is the product.** RedSkills treats GitHub Issues as the work
-queue, not a side note. `/triage`, `/to-prd`, `/to-issues`, `/afk`, `/ship`,
+queue, not a side note. `/triage`, `/to-prd`, `/to-issues`, `/afk`, `/go`,
 `/hitl`, and `/requeue` all speak the same issue-state vocabulary.
 
 **Agents work in disposable worktrees.** AFK execution and interactive landing
@@ -361,7 +361,7 @@ Core responsibilities:
 - Bootstrap RedSkills with [`setup-red-skills`](./plugins/dev/skills/engineering/setup-red-skills/SKILL.md).
 - Maintain issue state with [`triage`](./plugins/dev/skills/engineering/triage/SKILL.md), [`to-prd`](./plugins/dev/skills/engineering/to-prd/SKILL.md), and [`to-issues`](./plugins/dev/skills/engineering/to-issues/SKILL.md).
 - Execute delegable work with [`afk`](./plugins/dev/skills/engineering/afk/SKILL.md), or dispatch one concrete demand with [`go`](./plugins/dev/skills/engineering/go/SKILL.md).
-- Land interactive work with [`ship`](./plugins/dev/skills/engineering/ship/SKILL.md).
+- Land a hand-worked branch with [`requeue`](./plugins/dev/skills/engineering/requeue/SKILL.md) (the retired `ship` migrated there — ADR 0081).
 - Resolve human gates with [`hitl`](./plugins/dev/skills/engineering/hitl/SKILL.md) or safe retries with [`requeue`](./plugins/dev/skills/engineering/requeue/SKILL.md).
 
 Dev guard rails:
@@ -380,7 +380,7 @@ Dev guard rails:
   execution. These repo-defined rules are **additional** to the built-in
   `.red/tmp` worktree boundary above. `global` rules apply everywhere, `main`
   rules apply in the primary session scope (not specifically the Git branch
-  named `main`), and `worktree` rules apply in `/afk` and `/ship` worktrees
+  named `main`), and `worktree` rules apply in `/afk` and `/go` worktrees
   under `.red/tmp/`. Deny rules
   support `regex:<pattern>`, `prefix:<literal>`, `suffix:<literal>`,
   `exact:<literal>`, and `glob:<pattern>`. Bare entries with `*`, `?`, or `[`

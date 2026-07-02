@@ -73,7 +73,7 @@ describe("setup-red-skills docs", () => {
     expect(skill).toContain("dev.lock.primary-branch: true");
     expect(skill).toContain("inject-development-workflow --root");
     expect(skill).toContain("both `AGENTS.md` and `CLAUDE.md`");
-    expect(skill).toContain("`/ship` as the landing command");
+    expect(skill).toContain("`/go` for one-off concrete work");
     // ADR 0067: the template now carries an active `plugins:` activation block
     // (dev enabled by default) with the dev lock example folded under it.
     expect(template).toContain("plugins:");
@@ -113,7 +113,7 @@ describe("setup-red-skills docs", () => {
 
     expect(skill).toContain("**Section E1 — Runtime launcher");
     expect(skill).toContain("stable command, not a global fake plugin-root variable");
-    expect(skill).toContain("red-skills-dev ship");
+    expect(skill).toContain("red-skills-dev go");
     expect(skill).toContain("Do not export `CLAUDE_PLUGIN_ROOT` or `CODEX_PLUGIN_ROOT` globally");
     expect(script).toContain("RED_SKILLS_DEV_PLUGIN_ROOT");
     expect(script).toContain(".codex/plugins/cache/red-skills/dev");

@@ -1,16 +1,23 @@
-// base-resolver — resolve the effective base/merge branch for a work item (ADR 0031).
+// base-resolver — resolve the effective base/merge branch for a work item
+// (ADR 0031; Trunk fallback by ADR 0083).
 //
 // AFK bases each worktree on, and merges each finished item back into, a single
-// branch. Three sources can name that branch; this module decides which one wins
-// by a fixed precedence:
+// branch. This module decides which source wins by a fixed precedence
+// (lock > pin > Trunk):
 //
 //   1. the branch-lock value — when the primary checkout is locked to a branch,
 //      the lock is absolute and overrides any pin (the human pinned this
 //      checkout on purpose; the lock comes from the branch-lock skill's
 //      lock_store_read against `.red/tmp/branch-lock.yaml`);
 //   2. else the pinned branch — the issue/PRD `branch:` resolution (pin-reader's
-//      `resolvePin`, which already collapses "no pin" to `main`);
-//   3. else `main` — today's behaviour when nothing is set.
+//      `resolvePin`, which collapses "no pin" to the Trunk);
+//   3. else the Trunk — the repo's configured focal branch
+//      (`plugins.dev.trunk`, default `main`; ADR 0083).
+//
+// The resolver returns a branch NAME. Consumers must read it as its
+// fresh-fetched remote ref (`origin/<branch>` after `fetchBase`), never as the
+// local working-tree branch (ADR 0083 — the local branch may be stale or carry
+// foreign WIP).
 //
 // Pure composition, no side effects of its own: it touches neither git nor the
 // filesystem directly. All real IO (the lock file read, the gh body fetch) is
@@ -37,6 +44,12 @@ export interface ResolveBaseDeps {
    * no config-level lock.
    */
   configLockedBranch?: string;
+  /**
+   * The configured Trunk (`plugins.dev.trunk`, ADR 0083): the branch a work
+   * item bases on and lands to when neither a lock nor a pin names one.
+   * Empty/undefined falls back to `main`, preserving pre-trunk behaviour.
+   */
+  configTrunk?: string;
   /** Fetch the raw body for issue/PRD number `n`, or `undefined` if missing. */
   fetchIssueBody: (n: number) => Promise<string | undefined>;
 }
@@ -45,13 +58,15 @@ export type ResolveBaseInput = ResolvePinInput;
 
 /**
  * Resolve the effective base branch by the fixed precedence
- * runtime-lock > config-lock > pin > main:
+ * runtime-lock > config-lock > pin > Trunk (ADR 0031/0083):
  *   the runtime branch-lock if present, else the static `dev.lock.branch` config
- *   default, else the resolved pin, else `main`.
+ *   default, else the resolved pin, else the configured Trunk
+ *   (`plugins.dev.trunk`, default `main`).
  *
  * The runtime lock is read via the injected `readLockedBranch`; `configLockedBranch`
  * is the static `dev.lock.branch` value; the pin is delegated to pin-reader's
- * `resolvePin`. A whitespace-only value counts as "not set".
+ * `resolvePin` (whose pinless collapse also lands on the Trunk). A
+ * whitespace-only value counts as "not set".
  */
 export async function resolveBase(input: ResolveBaseInput, deps: ResolveBaseDeps): Promise<string> {
   const locked = await deps.readLockedBranch();
@@ -59,8 +74,11 @@ export async function resolveBase(input: ResolveBaseInput, deps: ResolveBaseDeps
 
   if (isSet(deps.configLockedBranch)) return deps.configLockedBranch.trim();
 
-  const pinned = await resolvePin(input, { fetchIssueBody: deps.fetchIssueBody });
+  const pinned = await resolvePin(input, {
+    fetchIssueBody: deps.fetchIssueBody,
+    defaultBranch: deps.configTrunk,
+  });
   if (isSet(pinned)) return pinned;
 
-  return DEFAULT_BRANCH;
+  return isSet(deps.configTrunk) ? deps.configTrunk.trim() : DEFAULT_BRANCH;
 }

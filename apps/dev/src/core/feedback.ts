@@ -1,4 +1,7 @@
 // feedback — the AFK pre-merge validation runner (the merge gate of ADR 0008).
+// ValidationScope threading: when `validationScope` is provided in
+// RunFeedbackInput it is stored verbatim in RunFeedbackResult for the caller
+// (process-issue.ts) to include in the Envelope validation section.
 //
 // Ported from the feedback_* helpers + feedback() in afk.sh. Pure scope
 // resolution and result/sidecar shaping over an injected package layout and an
@@ -26,6 +29,8 @@ import {
   validateQuarantine,
   type QuarantineEntry,
 } from "./quarantine.js";
+
+import { type ValidationScope } from "./validation-scope.js";
 
 /** Result of a single executed command. Mirrors a child-process completion. */
 export interface ExecResult {
@@ -273,6 +278,15 @@ export interface RunFeedbackInput {
    * as visible `skipped` sidecar records so exclusions are never silent.
    */
   quarantine?: readonly QuarantineEntry[];
+  /**
+   * The computed validation scope (from {@link computeValidationScope}).
+   * When provided, it is recorded verbatim in {@link RunFeedbackResult} so
+   * the caller (process-issue.ts) can include it in the Envelope validation
+   * section — a human reading a blocked:validation park immediately sees
+   * what was actually tested. Optional: absent callers behave exactly as
+   * before (no scope is recorded in the result).
+   */
+  validationScope?: ValidationScope;
 }
 
 export interface RunFeedbackResult {
@@ -298,6 +312,13 @@ export interface RunFeedbackResult {
    * active quarantine list separately from the per-check sidecar records.
    */
   quarantined: readonly QuarantineEntry[];
+  /**
+   * The computed validation scope passed to `runFeedback` via
+   * {@link RunFeedbackInput.validationScope}, or `undefined` when the caller
+   * did not supply one. Surfaced here so callers can include it in the
+   * Envelope without carrying it separately.
+   */
+  validationScope?: ValidationScope;
 }
 
 /** A single check to re-run against the baseline, for the baseline probe. */
@@ -365,7 +386,7 @@ async function runChecksForBaseline(
  * are probed — the happy path costs nothing extra.
  */
 export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<RunFeedbackResult> {
-  const { worktree, scopes, layout, now, baselineWorktree } = input;
+  const { worktree, scopes, layout, now, baselineWorktree, validationScope } = input;
   const quarantine = input.quarantine ?? [];
   const checks: FeedbackCheck[] = [];
   const sidecar: string[] = [];
@@ -517,8 +538,8 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
       }
     }
     failed = checks.some((c) => c.status === "failed");
-    return { ok: !failed, checks, sidecar, baselineDowngraded: downgraded, quarantined: quarantine };
+    return { ok: !failed, checks, sidecar, baselineDowngraded: downgraded, quarantined: quarantine, validationScope };
   }
 
-  return { ok: !failed, checks, sidecar, baselineDowngraded: [], quarantined: quarantine };
+  return { ok: !failed, checks, sidecar, baselineDowngraded: [], quarantined: quarantine, validationScope };
 }

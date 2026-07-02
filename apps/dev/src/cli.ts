@@ -13,6 +13,7 @@ import { reapCommand } from "./commands/reap.js";
 import { requeueCommand } from "./commands/requeue.js";
 import { retakeCommand } from "./commands/retake.js";
 import { reviewCommand } from "./commands/review.js";
+import { stopCommand } from "./commands/stop.js";
 import { respondCommand } from "./commands/respond.js";
 import { routeModelTierCommand } from "./commands/route-model-tier.js";
 import { shipCommand } from "./commands/ship.js";
@@ -26,6 +27,7 @@ export type CliCommand =
   | "run"
   | "monitor"
   | "fleet"
+  | "stop"
   | "go"
   | "dashboard"
   | "daily-review"
@@ -65,6 +67,7 @@ const CLI_ROUTER: RouterSchema<CliCommand> = {
     run: {},
     monitor: {},
     fleet: {},
+    stop: {},
     go: {},
     dashboard: {},
     "daily-review": {},
@@ -113,6 +116,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   }
   if (parsed.command === "monitor") return monitorCommand(parsed.args);
   if (parsed.command === "fleet") return fleetCommand(parsed.args);
+  if (parsed.command === "stop") return stopCommand(parsed.args);
   if (parsed.command === "go") return goCommand(parsed.args);
   if (parsed.command === "dashboard") return dashboardCommand(parsed.args);
   if (parsed.command === "daily-review") return activityReviewCommand("daily", parsed.args);

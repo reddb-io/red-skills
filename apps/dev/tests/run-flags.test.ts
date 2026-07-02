@@ -65,6 +65,7 @@ describe("parseRunFlags", () => {
       prePr: false,
       localMerge: false,
       yolo: false,
+      force: false,
     });
   });
 
@@ -148,5 +149,10 @@ describe("parseRunFlags", () => {
 
   it("throws when a value flag is missing its argument", () => {
     expect(() => parseRunFlags(["--prd"])).toThrow();
+  });
+
+  it("parses --force as a boolean, defaulting to false (#1027)", () => {
+    expect(parseRunFlags(["--force"]).force).toBe(true);
+    expect(parseRunFlags([]).force).toBe(false);
   });
 });

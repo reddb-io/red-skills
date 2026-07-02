@@ -17,7 +17,7 @@ disable-model-invocation: true
 | **Driver** | You — interactive, step-by-step | Autonomous fleet, no human in the loop |
 | **Scope** | One PRD / issue set, right now | Drains the full `ready-for-agent` queue |
 | **Worktree** | Dedicated `.red/tmp/work-*` worktree | Isolated worktree per issue, sandcastle |
-| **Finish** | You run `/ship` when satisfied | Agent merges, closes, claims next issue |
+| **Finish** | You run `/requeue` when satisfied | Agent merges, closes, claims next issue |
 
 Use `/implement` when you want to implement a PRD or issues yourself — with test-first discipline and review — but need the agent to guide each step. Use `/afk` when you want the fleet to work unsupervised.
 
@@ -33,11 +33,11 @@ Use `/implement` when you want to implement a PRD or issues yourself — with te
 
 5. **Review with `/review`.** When the full suite is green, invoke `/review` to review the work. Address every finding before committing.
 
-6. **Finish with `/ship`.** Commit the work in the worktree (never on the primary branch), push, and run `/ship` to open or reuse a PR, monitor checks and reviews, and land the branch. Close the linked issues when done.
+6. **Finish with `/requeue`.** Commit the work in the worktree (never on the primary branch), push, and run `/requeue` to adopt the branch into the reconcile lane — it validates through the shared gate and lands. Close the linked issues when done. (For a brand-new one-off demand that doesn't need this interactive loop, dispatch `/go "<demand>"` instead — it handles worktree, gate, and PR end-to-end.)
 
 ### Hard rules
 
-- ❌ Do **not** implement on the primary branch or a sibling checkout — work in `.red/tmp/work-*` and finish via `/ship`.
+- ❌ Do **not** implement on the primary branch or a sibling checkout — work in `.red/tmp/work-*` and finish via `/requeue`.
 - ❌ Do **not** skip `/tdd`; writing code before a failing test is undefined behaviour for this skill.
 - ❌ Do **not** run `/review` while any test is red.
 - ✅ **Do** let `/to-issues` decompose large PRDs before starting — smaller seams mean smaller merge risk.
@@ -67,7 +67,7 @@ All implementation work lives in a dedicated worktree under `.red/tmp/`, never o
 git worktree add .red/tmp/work-<slug> -b feat/<slug>
 ```
 
-`/ship` expects the worktree to be under `.red/tmp/work-*/`. After `/ship` lands the branch, the worktree is pruned automatically.
+`/requeue` expects the worktree to be under `.red/tmp/work-*/`. After the adopted branch lands, the worktree is pruned automatically.
 
 ## PRD / issue model
 

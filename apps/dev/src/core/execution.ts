@@ -12,7 +12,7 @@
 // as sandcastle completion signals, so the existing AGENT-PROMPT contract is
 // unchanged.
 
-import type { AgentStreamEvent, RunOptions, RunResult } from "@reddb-io/red-castle";
+import type { AgentStreamEvent, RunOptions, RunResult, LivenessVerdict } from "@reddb-io/red-castle";
 import { extractAgentOutput } from "@reddb-io/red-castle";
 import { isRunnerExhausted } from "./runner-spawn.js";
 import { startLaneIdleReaper, DEFAULT_STALL_POLL_S } from "./lane-idle-reaper.js";
@@ -379,12 +379,12 @@ export interface RunAgentInput {
    * DEFAULT_STALL_POLL_S. */
   laneIdlePollSeconds?: number;
   /**
-   * Agent-lane (`agent.log.jsonl`) mtime probe in epoch SECONDS, 0 when absent.
-   * The clean liveness signal — never afk.log / the firehose, which the
-   * heartbeat keeps fresh and would mask a real stall (#243). Required to arm
+   * Red-castle liveness evaluator verdict probe (ADR 0083 §3). Returns the
+   * combined lane-recency + process-cross-check verdict from the attempt's
+   * `liveness.lane.jsonl` — the un-poisonable signal (#1022). Required to arm
    * the lane-idle reaper.
    */
-  laneMtimeProbe?: () => number;
+  livenessVerdictProbe?: () => LivenessVerdict | null;
   /**
    * Inner-agent process-tree snapshot for the lane-idle reaper's busy-predicate
    * (reduced by deriveSnapshot). Required to arm the reaper. The real wiring
@@ -1173,7 +1173,7 @@ export async function runAgent(deps: SandcastleDeps, input: RunAgentInput): Prom
     input.laneIdleThresholdSeconds > 0 &&
     input.laneIdleKillThresholdSeconds &&
     input.laneIdleKillThresholdSeconds > 0 &&
-    input.laneMtimeProbe &&
+    input.livenessVerdictProbe &&
     input.inspectTree
   ) {
     if (!controller) controller = makeController();
@@ -1184,10 +1184,9 @@ export async function runAgent(deps: SandcastleDeps, input: RunAgentInput): Prom
       stallThresholdS: input.laneIdleThresholdSeconds,
       stallKillThresholdS: input.laneIdleKillThresholdSeconds,
       intervalMs: pollS * 1000,
-      laneMtime: input.laneMtimeProbe,
+      livenessVerdict: input.livenessVerdictProbe,
       inspectTree: input.inspectTree,
-      // The lane reaper reasons in epoch SECONDS (lane mtime is seconds); the
-      // shared clock `now` is ms, so divide here.
+      // The lane reaper reasons in epoch SECONDS; the shared clock `now` is ms.
       now: () => Math.floor(now() / 1000),
       schedule,
       abort: () =>

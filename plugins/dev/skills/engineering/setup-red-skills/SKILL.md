@@ -10,7 +10,7 @@ description: >-
   `## Agent skills`/`## Development workflow` blocks in AGENTS.md/CLAUDE.md plus
   `.red/agents/`. Run to turn RedSkills on in a repo, to enable/disable a
   plugin, before first use of `to-issues`, `to-prd`, `triage`, `diagnose`,
-  `tdd`, `improve-codebase-architecture`, `zoom-out`, or `/ship`, or if those
+  `tdd`, `improve-codebase-architecture`, `zoom-out`, or `/go`, or if those
   skills appear to be missing context.
 disable-model-invocation: true
 ---
@@ -29,7 +29,7 @@ Scaffold includes:
 - **Token efficiency** — strongly recommend installing [RTK](https://github.com/rtk-ai/rtk) to cut 60–90% of dev-operation tokens via a transparent CLI proxy
 - **Runtime launcher** — optionally install a host-level `red-skills-dev` shim so Claude Code, Codex, and opencode can invoke the same dev runtime without relying on CLI-specific plugin-root env vars
 - **Command guards** — configure the repo-owned `.red/config.yaml` policy that the globally-installed Claude Code, Codex, and opencode hook proxies enforce
-- **Development workflow** — teach agents the `.red/tmp` worktree rules, preserve the primary checkout for the human, and route interactive landing through `/ship`
+- **Development workflow** — teach agents the `.red/tmp` worktree rules, preserve the primary checkout for the human, and route one-off concrete work through `/go` (the retired `/ship` is never suggested — ADR 0081)
 
 This is a prompt-driven skill, not a deterministic script. Explore, present what you found, confirm with the user, then write.
 
@@ -59,7 +59,7 @@ Assume the user does not know what these terms mean. Each section starts with a 
 
 Ask the user which plugins to enable in this repo (multi-select; `dev` is the usual baseline):
 
-- **dev** — the engineering stack: `/afk`, `/triage`, `/ship`, model-tier routing, branch-lock, statusline. Enabling it is what makes the rest of this setup meaningful; default yes.
+- **dev** — the engineering stack: `/afk`, `/triage`, `/go`, model-tier routing, branch-lock, statusline. Enabling it is what makes the rest of this setup meaningful; default yes.
 - **memory** — governed operational memory (recall/store/graph). After enabling, run `/memory:init` to choose the storage mode. Default no.
 - **brain** — the agentic command-center context. Default no.
 
@@ -158,7 +158,7 @@ Three things to verify after install:
 
 **Section E1 — Runtime launcher (strongly recommended).**
 
-> Explainer: `CLAUDE_PLUGIN_ROOT`, `CODEX_PLUGIN_ROOT`, and similar variables are plugin/hook environment variables. They are not guaranteed in the interactive shell where an agent runs `/afk`, `/ship`, `/dashboard`, or `/requeue`. Setting those names globally is brittle because they point at versioned plugin-cache directories and can become stale after an update. The cross-CLI surface should be a stable command, not a global fake plugin-root variable.
+> Explainer: `CLAUDE_PLUGIN_ROOT`, `CODEX_PLUGIN_ROOT`, and similar variables are plugin/hook environment variables. They are not guaranteed in the interactive shell where an agent runs `/afk`, `/go`, `/dashboard`, or `/requeue`. Setting those names globally is brittle because they point at versioned plugin-cache directories and can become stale after an update. The cross-CLI surface should be a stable command, not a global fake plugin-root variable.
 
 Offer to install the host-level runtime shim:
 
@@ -171,7 +171,7 @@ The script writes `${XDG_BIN_HOME:-$HOME/.local/bin}/red-skills-dev`. The shim:
 - prefers the active CLI plugin-root env var when the host exposes one;
 - otherwise finds the latest installed dev plugin under `~/.codex/plugins/cache/red-skills/dev/*` or `~/.claude/plugins/cache/red-skills/dev/*`;
 - falls back to the latest warmed dev bundle under `~/.cache/red-skills/bundles/`;
-- forwards all arguments to the dev runtime, so skills can say `red-skills-dev ship ...`, `red-skills-dev dashboard`, or `RED_AFK_RUNNER=codex red-skills-dev monitor --once`;
+- forwards all arguments to the dev runtime, so skills can say `red-skills-dev go ...`, `red-skills-dev dashboard`, or `RED_AFK_RUNNER=codex red-skills-dev monitor --once`;
 - stores no secrets and does not replace the `.red/config.yaml` opt-in gate.
 
 After installing, verify:
@@ -225,7 +225,7 @@ Offer to configure additional `command_guard` rules now. Default: **no extra act
 
 Explain the scopes:
 
-- `global` — blocks in both the main session and `/afk`/`/ship` worktrees.
+- `global` — blocks in both the main session and `/afk`/`/go` worktrees.
 - `main` — blocks only in the primary interactive session scope. This does **not** mean the Git branch named `main`.
 - `worktree` — blocks only in RedSkills runtime worktrees under `.red/tmp/`, including AFK workers.
 - `deny` — legacy alias for `global`; keep it readable but prefer writing new config as `global`.
@@ -254,14 +254,14 @@ Do not write the example blindly. The right policy is repo-specific.
 
 **Section H — Development workflow.**
 
-> Explainer: RedSkills' interactive dev loop assumes agents work from isolated worktrees, leave the primary checkout's branch alone, push their branch early, and hand landing to `/ship`. With `plugins.dev.enabled: true`, the shell proxy already blocks agent-created worktrees outside `.red/tmp/` and branch movement in the primary checkout. Turning on `plugins.dev.lock.primary-branch: true` in `.red/config.yaml` also activates the branch-lock compatibility flag used by older adapters and base-pinning integrations; the runtime folds it onto the legacy `dev.lock.primary-branch` accessor for back-compat. The shared development-workflow injector writes the same `## Development workflow` rules into both `AGENTS.md` and `CLAUDE.md`, updating an existing block in place on rerun.
+> Explainer: RedSkills' interactive dev loop assumes agents work from isolated worktrees, leave the primary checkout's branch alone, push their branch early, and land via a PR — with one-off concrete work dispatched through `/go` rather than hand-rolled worktrees. With `plugins.dev.enabled: true`, the shell proxy already blocks agent-created worktrees outside `.red/tmp/` and branch movement in the primary checkout. Turning on `plugins.dev.lock.primary-branch: true` in `.red/config.yaml` also activates the branch-lock compatibility flag used by older adapters and base-pinning integrations; the runtime folds it onto the legacy `dev.lock.primary-branch` accessor for back-compat. The shared development-workflow injector writes the same `## Development workflow` rules into both `AGENTS.md` and `CLAUDE.md`, updating an existing block in place on rerun.
 
 Confirm with the user:
 
 - Activate the development workflow? Default: yes.
 - This sets the canonical `plugins.dev.lock.primary-branch: true` flag in `.red/config.yaml`.
 - This writes or updates `## Development workflow` in both `AGENTS.md` and `CLAUDE.md` via the shared injector.
-- Recap that `/ship` is the landing command for interactive work after the branch is pushed.
+- Recap that one-off concrete work is dispatched with `/go "<demand>"` (worktree + gate + PR handled by the engine), and that hand-worked branches land via a normal PR.
 
 **Section I — Hook scripts from repo signals (offer-only).**
 
@@ -368,7 +368,7 @@ If the user accepted Section H, activate the development workflow:
 
 1. Invoke the shared injector rather than hand-editing the rules block. From a source checkout, run `pnpm --filter @reddb-io/dev dev inject-development-workflow --root <repo-root>`. From an installed plugin, run the bundled AFK entrypoint with `inject-development-workflow --root <repo-root>` (for example, `node ../afk/bin/afk.mjs inject-development-workflow --root <repo-root>` from this skill folder). The command writes both `AGENTS.md` and `CLAUDE.md`, creates `.red/config.yaml` if still missing, and sets `plugins.dev.lock.primary-branch: true`.
 2. If the command is unavailable, make the same changes manually: add or update the canonical `plugins:` → `dev:` → `lock:` block in `.red/config.yaml` so `primary-branch` is `true`, then upsert the canonical `## Development workflow` block in both `AGENTS.md` and `CLAUDE.md`. Never append a duplicate block; update the existing section in place. Leave any legacy top-level `dev.lock.*` keys untouched; `/doctor --fix` owns that migration.
-3. In the recap, explicitly point the user at `/ship` as the landing command after an interactive worktree branch has been committed and pushed.
+3. In the recap, explicitly point the user at `/go` for one-off concrete work, and at a normal PR for a hand-worked worktree branch that is already committed and pushed.
 
 If the user accepted Section F, wire the statusline:
 
@@ -426,4 +426,4 @@ Never close, reassign, or edit issue bodies in this step — labels only.
 
 ### 6. Done
 
-Tell the user the setup is complete, which plugins are now enabled here (and that all other directories stay inert until they run this skill there too), and which engineering skills will now read from these files. If they enabled **memory** or **brain**, point them at the next step — `/memory:init` to pick a storage mode, or the brain setup — since enabling only authorizes the plugin to run; its own init configures it. Mention they can edit `.red/agents/*.md` directly later, and that interactive work should land through `/ship`. Re-run this skill to enable or disable a plugin, switch issue trackers, or restart from scratch.
+Tell the user the setup is complete, which plugins are now enabled here (and that all other directories stay inert until they run this skill there too), and which engineering skills will now read from these files. If they enabled **memory** or **brain**, point them at the next step — `/memory:init` to pick a storage mode, or the brain setup — since enabling only authorizes the plugin to run; its own init configures it. Mention they can edit `.red/agents/*.md` directly later, and that one-off concrete work should be dispatched with `/go` (backlog via `/afk`, parked issues via `/requeue`). Re-run this skill to enable or disable a plugin, switch issue trackers, or restart from scratch.
