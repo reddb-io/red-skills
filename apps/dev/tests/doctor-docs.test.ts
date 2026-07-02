@@ -42,6 +42,33 @@ describe("doctor docs contract", () => {
     expect(skill).toContain("Legacy/top-level dev-plugin config");
   });
 
+  it("audits per-plugin runtime distribution read-only, launcher fetch as the fix-home", async () => {
+    const skill = await readDoctorSkill();
+
+    expect(skill).toContain("Per-plugin runtime distribution");
+    expect(skill).toContain("ADR 0084 control-plane contract");
+    // Each named finding class must be documented.
+    expect(skill).toContain("runtime-missing");
+    expect(skill).toContain("inert-marker");
+    expect(skill).toContain("version-drift");
+    expect(skill).toContain("cache-corrupt");
+    // The former silent-no-op class becomes visible findings.
+    expect(skill).toContain("silent-no-op class");
+    // A healthy three-plugin setup produces zero findings; disabled is inert.
+    expect(skill).toContain("healthy three-plugin setup produces zero findings");
+    expect(skill).toContain("inert by design");
+    // Drift is suppressed when the latest release can't be resolved.
+    expect(skill).toContain("Suppressed when the latest release can't be resolved");
+    // Read-only + never touches the network in Pass 1.
+    expect(skill).toContain("never touch the network");
+    // The pure classifier is named.
+    expect(skill).toContain("apps/dev/src/core/runtime-doctor.ts");
+    // Fix-home is the launcher fetch, and the --fix re-fetch is gated.
+    expect(skill).toContain("`→ launcher fetch`");
+    expect(skill).toContain("Per-plugin runtime distribution `❌`/`⚠️` (check 13)");
+    expect(skill).toContain("confirm each");
+  });
+
   it("validates AFK hook/backpressure commands statically and never executes them", async () => {
     const skill = await readDoctorSkill();
 
