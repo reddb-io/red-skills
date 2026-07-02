@@ -49,6 +49,23 @@ describe("statusline style — header line", () => {
     expect(t).toContain("loc=+142 -36");
   });
 
+  it("prs= carries a compact age suffix when repo cacheAgeS is set (stale cache)", () => {
+    const t = stripAnsi(renderHeaderLine(input.project, input.claude, { ...repo, cacheAgeS: 720 }));
+    expect(t).toContain("prs=3 (12m)");
+    expect(t).toContain("iss=24"); // iss= present but no duplicate age mark
+    expect(t.match(/\(12m\)/g)?.length ?? 0).toBe(1); // exactly one annotation
+  });
+
+  it("age suffix moves to iss= when openPrs is 0 and repo cache is stale", () => {
+    const t = stripAnsi(
+      renderHeaderLine(input.project, input.claude, {
+        ...repo, openPrs: 0, cacheAgeS: 720,
+      }),
+    );
+    expect(t).not.toContain("prs=");
+    expect(t).toContain("iss=24 (12m)");
+  });
+
   it("drops the repo blocks when counts are zero / a clean branch", () => {
     const h = renderHeaderLine(input.project, input.claude, {
       openPrs: 0,
@@ -123,6 +140,26 @@ describe("statusline style — AFK line", () => {
   it("is null when there are no live workers", () => {
     expect(renderAfkLine(undefined, undefined)).toBeNull();
     expect(renderAfkLine({ ...afk, workers: 0 }, undefined)).toBeNull();
+  });
+
+  it("fresh cache (no cacheAgeS) renders rdy= with no age annotation", () => {
+    const t = stripAnsi(renderAfkLine(afk, undefined)!);
+    expect(t).toContain("rdy=11");
+    expect(t).not.toContain("(");
+  });
+
+  it("rdy= carries a compact age suffix when cacheAgeS is set (stale cache)", () => {
+    // 720 s = 12 m stale → (12m) appears after the rdy= value
+    const t = stripAnsi(renderAfkLine({ ...afk, cacheAgeS: 720 }, undefined)!);
+    expect(t).toContain("rdy=11 (12m)");
+    expect(t).toContain("hmn=3"); // hmn= is present but carries no second age mark
+    expect(t.match(/\(12m\)/g)?.length ?? 0).toBe(1); // exactly one age annotation
+  });
+
+  it("age suffix moves to hmn= when queue is 0 but human is live", () => {
+    const t = stripAnsi(renderAfkLine({ ...afk, queue: 0, cacheAgeS: 720 }, undefined)!);
+    expect(t).not.toContain("rdy=");
+    expect(t).toContain("hmn=3 (12m)");
   });
 
   it("shows the ·stage suffix only at or below two workers", () => {
