@@ -29,3 +29,20 @@ export {
   type ReleaseChannel,
   type ResolveChannelOptions,
 } from "./channel.js";
+export {
+  backgroundSelfUpdate,
+  compareSemver,
+  inRangeReleaseRef,
+  isInRange,
+  parseSemver,
+  pointerFileName,
+  pointerPath,
+  resolveActiveVersion,
+  selectInRangeUpdate,
+  type ResolveActiveVersionInput,
+  type SelfUpdateInput,
+  type SelfUpdateIO,
+  type SelfUpdateResult,
+  type SelfUpdateStatus,
+  type Semver,
+} from "./self-update.js";

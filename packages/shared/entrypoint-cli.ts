@@ -24,10 +24,10 @@
  * `node:child_process`). No runtime deps. See ADR 0039 / 0038 / 0034 / 0029.
  */
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -40,6 +40,11 @@ import {
 } from "./bundle-fetch.js";
 import { type ReleaseChannel, channelReleaseRef, resolveChannel } from "./channel.js";
 import { findUp, flatConfigValue, isPluginEnabled } from "./plugin-gate.js";
+import {
+  backgroundSelfUpdate,
+  resolveActiveVersion,
+  type SelfUpdateIO,
+} from "./self-update.js";
 
 const DEFAULT_REPO = "reddb-io/red-skills";
 
@@ -80,6 +85,14 @@ const realIO: BundleIO = {
   },
   sha256(bytes) {
     return createHash("sha256").update(bytes).digest("hex");
+  },
+};
+
+/** realIO + an atomic rename for the self-update pointer swap (ADR 0084). */
+const realSelfUpdateIO: SelfUpdateIO = {
+  ...realIO,
+  async rename(from, to) {
+    await rename(from, to);
   },
 };
 
@@ -268,8 +281,18 @@ async function runMode(plan: RunPlan): Promise<never> {
     process.exit(0);
   }
   const cacheDir = cacheRoot(plan.cacheDir);
-  const version = resolvePluginVersion();
+  const installedVersion = resolvePluginVersion();
   const channel = resolveLauncherChannel(process.env, readProjectConfig());
+  // In-range self-update (ADR 0084): serve the version a prior background update
+  // atomically swapped in, if any. This is a LOCAL read only (pointer + cache
+  // existence) — it can never fetch, so the render/hook path stays fetch-free
+  // (the blank-statusline class stays dead). No pointer → the installed version.
+  const version = await resolveActiveVersion(realSelfUpdateIO, {
+    plugin,
+    installedVersion,
+    cacheDir,
+    channel,
+  });
   // Audit line so a fleet's channel is visible in its boot output (ADR 0058).
   process.stderr.write(
     `entrypoint: resolving ${plugin} via ${channel} channel (${channelReleaseRef(channel, version)})\n`,
@@ -361,12 +384,84 @@ async function fetchMode(plan: FetchPlan): Promise<never> {
         `expected cache path ${expected}. Continuing — fetch is best-effort.\n`,
     );
   }
+  // In-range self-update (ADR 0084): after the pinned cache is warm, kick a
+  // DETACHED background check for a newer in-range bundle. Detached + unref'd so
+  // session start never blocks on it, and it runs out-of-band from any render.
+  spawnBackgroundSelfUpdate(plugin, version, plan.repo, plan.cacheDir);
   // Always succeed: a SessionStart hook must not block on a failed fetch.
   process.exit(0);
 }
 
+// ── In-range self-update (ADR 0084) ──────────────────────────────────────────
+
+/** The reserved subcommand the detached background self-update process runs. */
+const SELF_UPDATE_SUBCOMMAND = "__self-update";
+
+/**
+ * Fire-and-forget the background self-update as a detached child, so it survives
+ * this process exiting and never delays the SessionStart hook. Only meaningful
+ * on the `stable` channel (canary self-refreshes via checksum), so it is skipped
+ * elsewhere. Best-effort: a spawn failure is swallowed.
+ */
+function spawnBackgroundSelfUpdate(
+  plugin: string,
+  version: string,
+  repo: string,
+  cacheDir?: string,
+): void {
+  const channel = resolveLauncherChannel(process.env, readProjectConfig());
+  if (channel !== "stable" || !version) return;
+  const self = process.argv[1];
+  if (!self) return;
+  try {
+    const args = [self, SELF_UPDATE_SUBCOMMAND, plugin, version, "--repo", repo];
+    if (cacheDir) args.push("--cache-dir", cacheDir);
+    const child = spawn(process.execPath, args, { detached: true, stdio: "ignore" });
+    child.unref();
+  } catch {
+    /* best-effort: a failed background spawn never affects the foreground */
+  }
+}
+
+/**
+ * The detached background worker: resolve version/channel/gate, run the in-range
+ * self-update, log the outcome, exit 0. Never throws to the parent (there is no
+ * parent — it is detached), and {@link backgroundSelfUpdate} itself never throws.
+ */
+async function selfUpdateMode(argv: readonly string[]): Promise<never> {
+  const plan = parseFetchArgs(argv);
+  const plugin = plan.plugin;
+  const installedVersion = plan.version ?? "";
+  const cacheDir = cacheRoot(plan.cacheDir);
+  if (!plugin || !isPluginEnabled(process.cwd(), gatePluginName(plugin))) {
+    process.exit(0);
+  }
+  const channel = resolveLauncherChannel(process.env, readProjectConfig());
+  const result = await backgroundSelfUpdate(realSelfUpdateIO, {
+    plugin,
+    installedVersion,
+    repo: plan.repo,
+    cacheDir,
+    channel,
+  });
+  if (result.status === "updated") {
+    await logLine(cacheDir, `self-update: ${plugin} swapped to ${result.version} for next boot`);
+  } else if (result.status === "error") {
+    await logLine(cacheDir, `self-update: ${plugin} check failed (${result.error}); cached bundle keeps serving`);
+  }
+  process.exit(0);
+}
+
 async function main(): Promise<void> {
-  const plan = parseEntrypoint(process.argv.slice(2), buildRole());
+  const argv = process.argv.slice(2);
+  // The reserved background self-update worker (ADR 0084) is handled before any
+  // role routing so it works from every build (the run-pinned `afk.mjs` and the
+  // fetch-role `red-fetch.mjs` alike) and never collides with a bundle command.
+  if (argv[0] === SELF_UPDATE_SUBCOMMAND) {
+    await selfUpdateMode(argv.slice(1));
+    return;
+  }
+  const plan = parseEntrypoint(argv, buildRole());
   if (plan.mode === "run") await runMode(plan);
   else await fetchMode(plan);
 }
