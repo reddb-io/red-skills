@@ -85,6 +85,18 @@ export interface AfkInput {
    * is doing, not just that it exists. Absent/short arrays fall back to bare
    * `#N`, preserving the pre-stage render. */
   stages?: ReadonlyArray<string | undefined>;
+  /** Per-issue worker alive time in milliseconds, aligned by index with
+   * {@link issues}. Derived from the worker's top-level `started_at` timestamp.
+   * When present and > 0, rendered as a human-friendly elapsed suffix after the
+   * stage on each `#N` token (`#629·impl·5m`, `#817·setup·1h22m`). */
+  aliveMs?: ReadonlyArray<number>;
+  /** First non-empty model identifier across live workers (e.g. `claude-opus-4-8`).
+   * Compact form rendered alongside `runner` on themed line 2 as `claude opus-max`.
+   * Absent when no live worker has a non-empty model (pre-schema state files). */
+  model?: string;
+  /** First non-empty effort level across live workers (e.g. `max`, `high`).
+   * Paired with `model` on the themed runner label (`claude opus-max`). */
+  effort?: string;
   /** Per-origin worker counts derived from `state.origin` across live workers.
    * Populated by the IO layer (wire.ts collectStatuslineAfk) reading the SINGLE
    * `origin` field on each worker state; absent when no live worker has a
@@ -124,6 +136,22 @@ export function humanizeTokens(tokens: number): string {
   if (tokens >= 1000000) return `${(tokens / 1000000).toFixed(1)}M`;
   if (tokens >= 1000) return `${Math.floor(tokens / 1000)}k`;
   return String(tokens);
+}
+
+/**
+ * Humanizes an elapsed duration in milliseconds to a compact human-friendly
+ * string: `30s`, `5m`, `5m40s`, `1h`, `1h22m`. Seconds are included only
+ * under one hour (they become noise at hour scale). Zero/negative → `0s`.
+ */
+export function humanizeAlive(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const rs = s % 60;
+  if (m < 60) return rs > 0 ? `${m}m${rs}s` : `${m}m`;
+  const h = Math.floor(m / 60);
+  const rm = m % 60;
+  return rm > 0 ? `${h}h${rm}m` : `${h}h`;
 }
 
 /**
@@ -207,7 +235,10 @@ export function afkTokens(afk: AfkInput | undefined): AfkToken[] {
   if (afk.costUsd !== undefined && afk.costUsd > 0) kpi("usd=", afk.costUsd.toFixed(2));
   afk.issues.forEach((issue, i) => {
     const stage = afk.stages?.[i];
-    tokens.push({ label: "#", value: String(issue), suffix: stage ? `·${stage}` : "" });
+    const alive = afk.aliveMs?.[i];
+    let suffix = stage ? `·${stage}` : "";
+    if (alive !== undefined && alive > 0) suffix += `·${humanizeAlive(alive)}`;
+    tokens.push({ label: "#", value: String(issue), suffix });
   });
   return tokens;
 }

@@ -1489,6 +1489,8 @@ export async function runCommand(options: RunOptions): Promise<number> {
           "current.handoff": join(attemptDir, "handoff.md"),
           "current.started_at": startedAt,
           "current.runner": c.runner,
+          "current.model": c.issueTemplate.model ?? "",
+          "current.effort": settings.effort ?? "",
           "current.stage": "setup",
           // Macro-lifecycle phase seed (issue #811): the calm signal the
           // task-mirror title surfaces. `coding` is stamped on the first inner-
