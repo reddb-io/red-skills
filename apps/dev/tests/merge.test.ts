@@ -801,6 +801,37 @@ describe("preMergeRebase (#1006)", () => {
     expect(j.some((c) => c.includes("push"))).toBe(false);
   });
 
+  it("#1095: an opt-in resolver that resolves the conflict → proceeds to push (no abort)", async () => {
+    const { exec, calls } = fakeExec([
+      { match: (a) => a.join(" ") === "git -C /wt rebase origin/main", result: { code: 1 } },
+    ]);
+    let resolverRepo = "";
+    const r = await preMergeRebase(exec, {
+      ...base,
+      resolveMechanical: async (repo) => {
+        resolverRepo = repo;
+        return true;
+      },
+    });
+    expect(r).toEqual({ ok: true });
+    expect(resolverRepo).toBe("/wt");
+    const j = joined(calls);
+    // The resolver handled it → no abort, and the branch is still force-pushed.
+    expect(j.some((c) => c.includes("rebase --abort"))).toBe(false);
+    expect(j).toContain("git -C /wt push origin HEAD:refs/heads/afk/w/9-x --force-with-lease");
+  });
+
+  it("#1095: a resolver that DECLINES → aborts exactly as before → conflict", async () => {
+    const { exec, calls } = fakeExec([
+      { match: (a) => a.join(" ") === "git -C /wt rebase origin/main", result: { code: 1 } },
+    ]);
+    const r = await preMergeRebase(exec, { ...base, resolveMechanical: async () => false });
+    expect(r).toEqual({ ok: false, reason: "conflict" });
+    const j = joined(calls);
+    expect(j).toContain("git -C /wt rebase --abort");
+    expect(j.some((c) => c.includes("push"))).toBe(false);
+  });
+
   it("a force-with-lease reject retries (re-fetch + re-rebase) then succeeds on the 2nd push", async () => {
     let pushes = 0;
     const { exec, calls } = fakeExec([
