@@ -545,6 +545,32 @@ export function readBackpressure(values: ConfigValues): string[] {
   return scalar && scalar.trim() !== "" ? [scalar] : [];
 }
 
+/**
+ * Read the operator-declared post-attempt-format command list
+ * (`afk.post_attempt_format`), in declaration order (#1015). The list form
+ *
+ *   afk:
+ *     post_attempt_format:
+ *       - cargo fmt --all
+ *
+ * materialises as the indexed keys `afk.post_attempt_format.0`, … which this
+ * reads back in order until the first gap. The namespaced
+ * `plugins.dev.afk.post_attempt_format.*` location already folds down to the
+ * bare keys in {@link loadConfig} (ADR 0042). A single-line scalar is accepted
+ * as a one-command list. Absent/empty → `[]` (the step is a no-op).
+ */
+export function readPostAttemptFormat(values: ConfigValues): string[] {
+  const indexed: string[] = [];
+  for (let i = 0; ; i++) {
+    const v = values[`afk.post_attempt_format.${i}`];
+    if (v === undefined) break;
+    if (v.trim() !== "") indexed.push(v);
+  }
+  if (indexed.length > 0) return indexed;
+  const scalar = values["afk.post_attempt_format"];
+  return scalar && scalar.trim() !== "" ? [scalar] : [];
+}
+
 /** Default CI-aware merge wait, in seconds (#812) — 30 minutes, generous enough
  * to outlast a slow required-check suite (e.g. reddb's 25 checks / ~25m fuzzer)
  * without wedging the worker forever. */
