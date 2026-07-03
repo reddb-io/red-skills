@@ -2,7 +2,18 @@
 
 Records every change made to skills inherited from [`mattpocock/skills`](https://github.com/mattpocock/skills), plus new skills created by reddb.io. See the rules in [CLAUDE.md](./CLAUDE.md).
 
-Upstream base: `mattpocock/skills@21f59763be7bf734cd4cf138805bb653d9ffebb7` (see `.upstream`).
+Upstream base: `mattpocock/skills@272f99b22574f50e4266791c86b9302682970e23` (see `.upstream`).
+
+---
+
+## tdd + start (engineering) — upstream drift review 21f5976..272f99b: nothing adopted
+
+- **status**: reviewed, no change
+- **upstream**: `272f99b`
+- **why**: Reviewed the two Matt-derived skills touched in `21f5976..272f99b`. Neither upstream tweak survived the adoption bar.
+- **what changed**:
+  - `tdd`: upstream renamed the cross-reference from `'review' skill` to `'code-review' skill`. Our version (`plugins/dev/skills/engineering/tdd/SKILL.md`) is heavily diverged and ships both a `/review` and a `/code-review` skill — the right pointer is ambiguous without deeper reading. Conservative bias: skipped.
+  - `start` (maps to upstream `grilling`): upstream added "Do not enact the plan until I confirm we have reached a shared understanding." and changed the frontmatter description. Our `/start` skill already enforces both constraints more explicitly (`shared understanding is the only exit condition`; hard rules banning implementation and artefacts). Nothing new to add.
 
 ---
 
