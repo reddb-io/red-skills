@@ -751,3 +751,67 @@ describe("doLanding — landing mode decoupled from the lock (lock × flag matri
     expect(mergeIdx).toBeGreaterThan(checksIdx);
   });
 });
+
+describe("doLanding — untouchable primary in the LOCKED landing (ADR 0083 §2, #1019)", () => {
+  // ADR 0083 §2: the primary checkout is READ-ONLY for agents, with NO exceptions
+  // — including the branch-lock landing. The integrated result reaches the
+  // maintainer only via `origin/<locked-branch>`; the maintainer promotes by
+  // pulling. So NO landing path may run a git WRITE verb against the primary
+  // (`git -C /repo`). The only legitimate `git -C /repo` touches are the
+  // read-only precondition probes (fetch a remote ref, rev-parse, merge-base).
+  const WRITE_VERBS = new Set(["merge", "reset", "rebase", "checkout", "switch", "commit", "cherry-pick"]);
+  /** Every `git -C /repo …` call carrying a mutating verb (`merge --ff-only`
+   * included; the read-only `merge-base` token is deliberately NOT `merge`). */
+  function primaryWrites(h: Harness): string[] {
+    return h.mergeCalls
+      .filter((argv) => {
+        const i = argv.indexOf("/repo");
+        return i >= 1 && argv[i - 1] === "-C" && argv.some((tok) => WRITE_VERBS.has(tok));
+      })
+      .map((argv) => argv.join(" "));
+  }
+
+  it("locked + PR (default flag) → admin-merges remotely, NEVER fast-forwards the primary's local lock branch", async () => {
+    const h = harness({ locked: true, openPr: true });
+    h.input.base = "feature-locked";
+    const r = await doLanding(h.deps, h.input, h.hooks);
+    expect(r).toEqual({ ok: true, locked: true });
+    const j = joined(h.mergeCalls);
+    // The PR is admin-merged remotely — the integration lands on origin, not local.
+    expect(j.some((c) => c.includes("pr merge 42 --admin --merge"))).toBe(true);
+    // The step-4 best-effort local fast-forward of the primary's lock branch is GONE.
+    expect(j.some((c) => c.includes("git -C /repo merge --ff-only"))).toBe(false);
+    expect(j.some((c) => c.includes("git -C /repo fetch origin feature-locked"))).toBe(false);
+    // No landing path wrote to the primary checkout.
+    expect(primaryWrites(h)).toEqual([]);
+  });
+
+  it("locked + direct → integrates/merges/pushes only in the isolated worktree, primary write-free", async () => {
+    const h = harness({ locked: true, openPr: false });
+    h.input.base = "feature-locked";
+    const r = await doLanding(h.deps, h.input, h.hooks);
+    expect(r).toEqual({ ok: true, locked: true, mergeSha: "abc1234" });
+    // The integrated result reaches the maintainer on origin/<lock-branch>.
+    expect(joined(h.mergeCalls)).toContain(`git -C ${WT} push origin HEAD:refs/heads/feature-locked`);
+    expect(primaryWrites(h)).toEqual([]);
+  });
+
+  it("locked + direct conflict self-resolve stays in the worktree, primary write-free", async () => {
+    const h = harness({ locked: true, openPr: false, mergeNoFfCode: 1, conflictResolve: "resolve" });
+    h.input.base = "feature-locked";
+    const r = await doLanding(h.deps, h.input, h.hooks);
+    expect(r).toEqual({ ok: true, locked: true, mergeSha: "abc1234" });
+    // The resolver ran in the worktree, and the resolved lock branch pushed from it.
+    expect(h.resolverCwds).toEqual([WT]);
+    expect(joined(h.mergeCalls)).toContain(`git -C ${WT} push origin HEAD:refs/heads/feature-locked`);
+    expect(primaryWrites(h)).toEqual([]);
+  });
+
+  it("UNLOCKED PR landing is unchanged — still fast-forwards the primary's local main (criterion 3)", async () => {
+    const h = harness({ locked: false, openPr: true });
+    const r = await doLanding(h.deps, h.input, h.hooks);
+    expect(r).toEqual({ ok: true, locked: false });
+    // The unlocked path keeps its best-effort local fast-forward of <target>=main.
+    expect(joined(h.mergeCalls).some((c) => c.includes("git -C /repo merge --ff-only origin/main"))).toBe(true);
+  });
+});

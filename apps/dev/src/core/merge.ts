@@ -492,6 +492,15 @@ export interface LandPrInput {
   /** Worktree dir to force-push the attempt branch from; skipped when absent. */
   worktree?: string;
   /**
+   * Untouchable primary (ADR 0083 §2, #1019). When the landing is LOCKED, the
+   * primary checkout is read-only with NO exceptions — including the branch-lock
+   * landing — so the step-4 best-effort local fast-forward of `<target>` is
+   * SKIPPED: the integration lands on `origin/<target>` (the admin-merge is
+   * remote) and the maintainer promotes by pulling. Absent/false (the UNLOCKED
+   * default) keeps the local fast-forward unchanged (issue #1019 criterion 3).
+   */
+  locked?: boolean;
+  /**
    * Opt-in advisory-review wait (`afk.merge.wait_for_review`, ADR 0048). When
    * present, the PR is held until the named review check concludes before the
    * admin-merge; the merge then proceeds regardless of the verdict. Absent (the
@@ -541,7 +550,7 @@ const PR_BODY_PREFIX = "Automated AFK landing for #";
  * Idempotent: a re-attempt reuses the open PR rather than creating a second.
  */
 export async function landPr(exec: Exec, input: LandPrInput): Promise<LandPrResult> {
-  const { repo, gitRepo, remote, branch, target, n, title, worktree, waitForReview, ciAwait } = input;
+  const { repo, gitRepo, remote, branch, target, n, title, worktree, waitForReview, ciAwait, locked } = input;
 
   // 1. Make the attempt branch's origin state certain before opening the PR.
   if (worktree) {
@@ -588,9 +597,16 @@ export async function landPr(exec: Exec, input: LandPrInput): Promise<LandPrResu
   const merge = await exec(["gh", "-R", repo, "pr", "merge", String(prNumber), "--admin", "--merge"]);
   if (merge.code !== 0) return { ok: false, prNumber, reason: "merge-failed" };
 
-  // 4. Fast-forward local <target> to the merge commit (best-effort).
-  await exec(["git", "-C", gitRepo, "fetch", remote, target, "--quiet"]);
-  await exec(["git", "-C", gitRepo, "merge", "--ff-only", `${remote}/${target}`]);
+  // 4. Fast-forward local <target> to the merge commit (best-effort) — UNLOCKED
+  // ONLY. A LOCKED landing must never write to the primary checkout (ADR 0083 §2,
+  // untouchable primary, no exceptions — including the branch-lock landing): the
+  // integration already lives on `origin/<target>` after the remote admin-merge,
+  // and the maintainer promotes by pulling, so the primary's local `<target>` is
+  // left untouched. The UNLOCKED path keeps its fast-forward (issue #1019 crit. 3).
+  if (!locked) {
+    await exec(["git", "-C", gitRepo, "fetch", remote, target, "--quiet"]);
+    await exec(["git", "-C", gitRepo, "merge", "--ff-only", `${remote}/${target}`]);
+  }
 
   return { ok: true, prNumber };
 }
