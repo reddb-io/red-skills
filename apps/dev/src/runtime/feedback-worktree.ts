@@ -33,6 +33,7 @@ import { accessSync, constants, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Exec as PnpmExec, PackageLayout } from "../core/feedback.js";
 import type { BackpressureExec } from "../core/backpressure.js";
+import type { PostAttemptFormatExec } from "../core/post-attempt-format.js";
 import { execTool, pnpm as runPnpm, type ExecOptions, type ExecOutput } from "./exec.js";
 import * as gitx from "./git.js";
 
@@ -160,6 +161,14 @@ export interface FeedbackWorktree {
    * is the branch token, materialised the same way the pnpm executor does.
    */
   backpressure: BackpressureExec;
+  /**
+   * Shell executor for the post-attempt-format step (#1015): runs an
+   * operator-declared command via `sh -c` at the materialised worker-branch
+   * checkout root, then — if exit 0 left the checkout dirty — stages, commits
+   * (`style: <cmd>`), and pushes `HEAD:<branch>` to origin. `cwd` is the
+   * branch token (materialised the same way as the pnpm/backpressure executors).
+   */
+  postAttemptFormat: PostAttemptFormatExec;
   /** Remove every worktree this manager created in THIS session (best-effort). */
   cleanup(): Promise<void>;
 }
@@ -373,10 +382,59 @@ export function makeFeedbackWorktree(
     return { code: r.code, stdout: r.stdout, stderr: r.stderr };
   };
 
+  // Post-attempt-format commands run in the worker-branch checkout (same
+  // materialise step as backpressure) but add auto-commit semantics: after a
+  // successful (exit-0) command, inspect git status; if the checkout is dirty,
+  // stage all changes, commit with `style: <cmd>`, and push `HEAD:<branch>` to
+  // origin so the feedback gate runs against the formatted branch. The branch
+  // name doubles as the `cwd` token (the same convention as backpressure). A
+  // worktree setup failure, a dirty-check failure, or a push failure all resolve
+  // non-zero (committed:false) — the caller aborts when code !== 0.
+  const postAttemptFormat: PostAttemptFormatExec = async ({ command, cwd, timeoutMs }) => {
+    const dir = await pathFor(cwd);
+    if (dir === null) {
+      return { code: 1, stdout: "", stderr: `feedback worktree setup failed for ${cwd}; format aborted`, committed: false };
+    }
+
+    const r = await io.exec("sh", ["-c", command], { cwd: dir, timeoutMs });
+    if (r.code !== 0) {
+      return { code: r.code, stdout: r.stdout, stderr: r.stderr, committed: false };
+    }
+
+    // Check if the checkout is dirty after the format command.
+    const statusR = await io.exec("git", ["status", "--porcelain"], { cwd: dir });
+    if (statusR.stdout.trim() === "") {
+      return { code: 0, stdout: r.stdout, stderr: r.stderr, committed: false };
+    }
+
+    // Dirty checkout: stage + commit + push so the feedback gate sees the delta.
+    const addR = await io.exec("git", ["add", "-A"], { cwd: dir });
+    if (addR.code !== 0) {
+      return { code: addR.code, stdout: addR.stdout, stderr: addR.stderr, committed: false };
+    }
+    const commitR = await io.exec(
+      "git",
+      ["commit", "-m", `style: ${command}`],
+      { cwd: dir },
+    );
+    if (commitR.code !== 0) {
+      return { code: commitR.code, stdout: commitR.stdout, stderr: commitR.stderr, committed: false };
+    }
+    // Push: the checkout is detached HEAD (`git worktree add --detach`), so the
+    // refspec must be explicit: HEAD:<branch-name>.
+    const pushR = await io.exec("git", ["push", "origin", `HEAD:${cwd}`], { cwd: dir });
+    if (pushR.code !== 0) {
+      return { code: pushR.code, stdout: pushR.stdout, stderr: pushR.stderr, committed: false };
+    }
+
+    return { code: 0, stdout: r.stdout, stderr: r.stderr, committed: true };
+  };
+
   return {
     pnpm,
     layout,
     backpressure,
+    postAttemptFormat,
     async cleanup() {
       for (const dest of created) {
         await io.worktreeRemove(gitCtx, dest);
