@@ -5,13 +5,14 @@
 // never throws out of the closure.
 
 import { constants } from "node:fs";
-import { access, readFile, readdir, rm } from "node:fs/promises";
+import { access, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { closeSync, openSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import type { SupervisorLiveness } from "../core/supervisor.js";
-import type { WatchdogIO } from "../core/watchdog.js";
-import { afkPaths, readFleetState } from "./wire.js";
+import type { DeadSupervisorSignals, WatchdogIO } from "../core/watchdog.js";
+import { afkPaths, readFleetState, resolveRepoSlug } from "./wire.js";
 import { listStaleClaimDirs, removeDir } from "./fs.js";
+import { countReadyForAgent } from "./gh.js";
 import { detectRunner } from "../core/runner-detection.js";
 import { callerProcessTreeNative } from "./caller-process.js";
 import { spawnSupervisor, stampFreshFleetHeartbeat } from "./supervisor-spawn.js";
@@ -56,12 +57,37 @@ export function buildWatchdogIO(
   const pidFile = join(paths.tmpDir, "afk-supervisor.pid");
   const stopFile = join(paths.tmpDir, "afk-supervisor.stop");
   const logFile = join(paths.tmpDir, "afk-supervisor.log");
+  const restartLedgerFile = join(paths.tmpDir, "afk-supervisor.restarts.json");
 
   // Carried from liveness() → relaunch() so a recovered fleet keeps its target
   // and runner. Falls back to a 2-slot, freshly-detected-runner fleet when the
   // wedged supervisor left no usable heartbeat.
   let lastTarget = 2;
   let lastRunner = "";
+
+  // Count worker processes that survived the supervisor's death. Workers are
+  // spawned detached, so they outlive the supervisor; the dead-supervisor net
+  // measures "below target" against this live count, not the stale heartbeat.
+  const liveWorkerCount = async (): Promise<number> => {
+    let workerDirs: string[];
+    try {
+      workerDirs = await readdir(paths.workersRoot);
+    } catch {
+      return 0;
+    }
+    let live = 0;
+    for (const workerDir of workerDirs) {
+      const pidPath = join(paths.workersRoot, workerDir, "worker.pid");
+      try {
+        const raw = (await readFile(pidPath, "utf8")).trim();
+        if (!/^[1-9][0-9]*$/.test(raw)) continue;
+        if (isLivePid(Number(raw))) live += 1;
+      } catch {
+        // best-effort: a missing/bad pid file counts as no live worker.
+      }
+    }
+    return live;
+  };
 
   return {
     now: () => Math.floor(Date.now() / 1000),
@@ -144,6 +170,43 @@ export function buildWatchdogIO(
         stampFreshFleetHeartbeat(paths.fleetStatePath, Math.floor(Date.now() / 1000), runner, lastTarget);
       } catch {
         // best-effort
+      }
+    },
+
+    deadSupervisorSignals: async (): Promise<DeadSupervisorSignals> => {
+      const fleet = await readFleetState(paths.fleetStatePath);
+      const target = fleet && fleet.slotsTotal > 0 ? fleet.slotsTotal : lastTarget;
+      // Prefer a LIVE queue count — a supervisor that died before its last
+      // heartbeat could have new stranded work the stale state never recorded.
+      // Fall back to the last heartbeat's readyForAgent when gh is unreachable.
+      let readyForAgent = fleet?.readyForAgent ?? 0;
+      try {
+        const repo = await resolveRepoSlug(root).catch(() => "");
+        readyForAgent = await countReadyForAgent({ repo, cwd: root });
+      } catch {
+        // best-effort: keep the last-heartbeat fallback.
+      }
+      const liveWorkers = await liveWorkerCount();
+      const stopRequested = await fileExists(stopFile);
+      return { readyForAgent, target, liveWorkers, stopRequested };
+    },
+
+    readRestartLedger: async (): Promise<number[]> => {
+      try {
+        const raw = await readFile(restartLedgerFile, "utf8");
+        const parsed = JSON.parse(raw) as unknown;
+        if (!Array.isArray(parsed)) return [];
+        return parsed.filter((n): n is number => typeof n === "number" && Number.isFinite(n));
+      } catch {
+        return [];
+      }
+    },
+
+    writeRestartLedger: async (epochs: number[]): Promise<void> => {
+      try {
+        await writeFile(restartLedgerFile, JSON.stringify(epochs), "utf8");
+      } catch {
+        // best-effort: a failed ledger write only weakens the crash-loop bound.
       }
     },
 
