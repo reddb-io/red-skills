@@ -53,6 +53,7 @@ import {
   type WorkspaceGraph,
 } from "./validation-scope.js";
 import { runBackpressure, type BackpressureExec } from "./backpressure.js";
+import { runPostAttemptFormat, type PostAttemptFormatExec } from "./post-attempt-format.js";
 import {
   openReviewPr,
   type Exec as MergeExec,
@@ -285,6 +286,21 @@ export interface ProcessIssueDeps {
    * scope-derived feedback gate; it does not replace it.
    */
   backpressureCommands?: readonly string[];
+  /**
+   * Shell executor for the post-attempt-format step (#1015): runs each
+   * `afk.post_attempt_format` command in the worker-branch checkout AFTER the
+   * agent's commits and BEFORE the feedback gate; auto-commits any formatting
+   * delta. Optional → when absent (or `postAttemptFormatCommands` is empty) the
+   * step is a no-op. The CLI binds it to the feedback worktree's auto-format
+   * executor.
+   */
+  postAttemptFormat?: PostAttemptFormatExec;
+  /**
+   * Operator-declared post-attempt-format commands (`afk.post_attempt_format`),
+   * in order. Empty/absent → the step is skipped. Non-zero exit aborts and
+   * routes to abortAfterClaim (branch preserved for manual recovery).
+   */
+  postAttemptFormatCommands?: readonly string[];
   /**
    * The sandcastle execution port (ADR 0033): run the inner agent on a worktree,
    * detect the DONE/BLOCKED sentinel, and commit on the worker branch. The CLI
@@ -1501,6 +1517,27 @@ export async function processIssue(
         `🤖 /afk: worker branch \`${workerBranch}\` absent on host — sandcastle commits did not reach the host; escalating.`,
       );
       return await mergeFailed(common, "worker branch absent — sandcastle commits did not reach the host");
+    }
+
+    // ---- 5a'. post_attempt_format (pre-feedback mutating step, #1015) ----
+    // After the agent's commits and before the feedback gate, run any
+    // operator-declared `afk.post_attempt_format` commands in the worker-branch
+    // checkout. If a command exits 0 and leaves the checkout dirty, the executor
+    // stages + commits (`style: <cmd>`) + pushes the delta so the feedback gate
+    // sees a cleanly-formatted branch. A non-zero exit aborts (branch preserved
+    // for manual recovery via abortAfterClaim — same recovery policy as pre_*
+    // hooks). Absent executor or empty command list → no-op.
+    const postAttemptFormatCommands = deps.postAttemptFormatCommands ?? [];
+    if (deps.postAttemptFormat && postAttemptFormatCommands.length > 0) {
+      const pfmt = await runPostAttemptFormat(deps.postAttemptFormat, {
+        worktree: workerBranch,
+        commands: postAttemptFormatCommands,
+        now: deps.nowEpoch,
+      });
+      for (const line of pfmt.log) deps.appendIterLog(`🤖 /afk: ${line}`);
+      if (!pfmt.ok) {
+        return await abortAfterClaim(deps, input, branch, base, hooksFired, "post_attempt_format");
+      }
     }
 
     // ---- 5b. feedback loops (the merge gate, ADR 0008) ----

@@ -42,7 +42,7 @@ import * as fsx from "../runtime/fs.js";
 import type { GhContext } from "../runtime/gh.js";
 import type { GitContext } from "../runtime/git.js";
 import type { ExecFn } from "../runtime/exec.js";
-import { getConfig, loadConfig, readBackpressure, resolveTier, resolveCiTimeoutSeconds } from "../core/config.js";
+import { getConfig, loadConfig, readBackpressure, readPostAttemptFormat, resolveTier, resolveCiTimeoutSeconds } from "../core/config.js";
 import { resolveNotesLoopConfig } from "../core/notes-loop.js";
 import {
   classifyIssue,
@@ -735,6 +735,10 @@ export function buildProcessDeps(
     // shell commands run against the same worker-branch checkout after feedback.
     backpressure: feedback.backpressure,
     backpressureCommands: readBackpressure(config),
+    // Post-attempt-format step (#1015): operator-declared `afk.post_attempt_format`
+    // commands run BEFORE the feedback gate and auto-commit any formatting delta.
+    postAttemptFormat: feedback.postAttemptFormat,
+    postAttemptFormatCommands: readPostAttemptFormat(config),
     // #908: thread the resolved budget + a LIVE usage probe off this attempt's
     // activity meter (late-bound — `activityMeter` is reassigned per attempt dir,
     // and `peek()` returns a superset of AttemptBudgetUsage). makeRunAgent only
