@@ -138,6 +138,26 @@ export interface SupervisorConfig {
    * a cost guard, not a correctness one. 0 / non-numeric falls back to the default.
    */
   unblockSweepIntervalS: number;
+  /**
+   * RED_AFK_SUPERVISOR_MAX_RESTARTS — crash-loop bound for the dead-supervisor
+   * watchdog (#1097, default 5). When a supervisor is found DEAD (its pid file
+   * points to a no-longer-alive process) with a non-empty `ready-for-agent` queue
+   * and live workers below target, an already-alive surface (the monitor tick)
+   * respawns the fleet and records the restart epoch. Once this many restarts land
+   * inside `supervisorRestartWindowS` the watchdog STOPS respawning and surfaces
+   * the crash loop instead of hiding it behind an endless respawn. 0 / non-numeric
+   * falls back to the default so a typo can never disable the bound (and never
+   * silently turn a bounded safety net into an infinite respawn loop).
+   */
+  supervisorMaxRestarts: number;
+  /**
+   * RED_AFK_SUPERVISOR_RESTART_WINDOW_S — sliding window (seconds, default 300)
+   * for the dead-supervisor restart bound above. Restart epochs older than this
+   * are pruned before the count is compared to `supervisorMaxRestarts`, so a slow
+   * trickle of unrelated respawns never trips the crash-loop guard. 0 / non-numeric
+   * falls back to the default.
+   */
+  supervisorRestartWindowS: number;
 }
 
 export const SUPERVISOR_DEFAULTS = {
@@ -156,6 +176,8 @@ export const SUPERVISOR_DEFAULTS = {
   halfOpenBaseS: SLOT_CIRCUIT_DEFAULTS.halfOpenBaseS,
   halfOpenCapS: SLOT_CIRCUIT_DEFAULTS.halfOpenCapS,
   unblockSweepIntervalS: 60,
+  supervisorMaxRestarts: 5,
+  supervisorRestartWindowS: 300,
 } as const satisfies SupervisorConfig;
 
 /**
@@ -209,6 +231,15 @@ export function resolveSupervisorConfig(
     unblockSweepIntervalS:
       num("RED_AFK_UNBLOCK_SWEEP_INTERVAL_S", SUPERVISOR_DEFAULTS.unblockSweepIntervalS) ||
       SUPERVISOR_DEFAULTS.unblockSweepIntervalS,
+    // 0 would disable the crash-loop bound (endless respawns) — floor back to the
+    // default so a typo can never turn the safety net into an infinite loop.
+    supervisorMaxRestarts:
+      num("RED_AFK_SUPERVISOR_MAX_RESTARTS", SUPERVISOR_DEFAULTS.supervisorMaxRestarts) ||
+      SUPERVISOR_DEFAULTS.supervisorMaxRestarts,
+    // 0 would prune every restart epoch instantly (bound never trips) — floor back.
+    supervisorRestartWindowS:
+      num("RED_AFK_SUPERVISOR_RESTART_WINDOW_S", SUPERVISOR_DEFAULTS.supervisorRestartWindowS) ||
+      SUPERVISOR_DEFAULTS.supervisorRestartWindowS,
   };
 }
 
