@@ -547,6 +547,16 @@ export interface ProcessIssueInput {
    * posted as a comment and the disposable issue closes. Forwarded from the
    * `--run-mode` flag by `run.ts`/`buildProcessInput`. */
   runMode?: string;
+  /**
+   * The candidate-listing label the session selected this issue under — the
+   * `--lane` value (`ready-for-agent` for `/afk`, `lane:go` for `/go`,
+   * `lane:scout` for scout). The pre-claim state-validity recheck re-reads the
+   * issue's labels and requires THIS label to still be present; a lane-blind
+   * hardcode to `ready-for-agent` made every `/go`/scout dispatch a silent
+   * `claim-lost` (#1045), because those lanes carry the isolated lane label,
+   * never `ready-for-agent`. Absent → defaults to `ready-for-agent`, so the
+   * `/afk` path is byte-for-byte unchanged. */
+  laneLabel?: string;
 }
 
 // ---------- result ----------
@@ -820,10 +830,20 @@ export async function processIssue(
   }
   // State-validity recheck: the issue must still want an agent. This is NOT the
   // contention lock (that is the claim below) — it only rejects an issue that was
-  // closed/blocked/re-triaged out of `ready-for-agent` between selection and now.
+  // closed/blocked/re-triaged out of ITS LANE between selection and now.
   // `running` is deliberately NOT consulted here: it is a projection, not a lock.
+  //
+  // Lane-aware (#1045): the recheck validates against the label the session
+  // SELECTED this issue under (`input.laneLabel`, defaulting to `ready-for-agent`
+  // for `/afk`), never a hardcoded `ready-for-agent`. A `lane:go`/`lane:scout`
+  // issue never carries `ready-for-agent` by design, so the old hardcode fired
+  // `claim-lost` on every `/go` dispatch BEFORE the claim was ever posted — the
+  // silent boot death (no attempt dir, no claim comment, launcher prints
+  // `1/1 (100%) exit 0`). Validating against the selecting lane fixes it while
+  // leaving the `/afk` path byte-for-byte unchanged.
+  const laneLabel = input.laneLabel ?? LABEL_READY;
   const labels = await deps.gh.viewLabels(issue);
-  if (!labels.includes(LABEL_READY)) {
+  if (!labels.includes(laneLabel)) {
     await deps.claimLock.release(issue);
     return claimLost(issue, hooksFired);
   }

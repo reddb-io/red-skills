@@ -136,6 +136,10 @@ interface HarnessOptions {
   body?: string;
   /** Execution mode forwarded to ProcessIssueInput (e.g. `"scout"`). */
   runMode?: string;
+  /** The candidate-listing lane label forwarded to ProcessIssueInput (`--lane`).
+   * Undefined models the `/afk` default (`ready-for-agent`); `"lane:go"` models a
+   * `/go` dispatch. Drives the lane-aware claim preflight (#1045). */
+  laneLabel?: string;
   /** Optional ADR 0049 tier resolver injected by the production wiring. */
   resolveTier?: ProcessIssueDeps["resolveTier"];
   /** Optional ADR 0049 issue classifier injected by the production wiring. */
@@ -541,6 +545,7 @@ function harness(opts: HarnessOptions = {}): {
     baseInput: { issueBody: opts.body ?? "## Agent brief\nDo it." },
     prdRef: undefined,
     runMode: opts.runMode,
+    laneLabel: opts.laneLabel,
   };
 
   return { deps, input, trace };
@@ -1519,6 +1524,40 @@ describe("processIssue — claim lost", () => {
     // no claim edit submitted; the claim lock was released.
     expect(trace.labelEdits).toEqual([]);
     expect(trace.released).toEqual([9]);
+  });
+
+  // #1045: a `lane:go` issue never carries `ready-for-agent` — the isolated lane
+  // IS its selection label. The pre-claim recheck must validate against the lane
+  // the session selected under, not a hardcoded `ready-for-agent`. Before the
+  // fix, `laneLabel: "lane:go"` fell into the recheck's hardcoded
+  // `ready-for-agent` test, returned `claim-lost` BEFORE the claim was posted,
+  // and the worker died silently while the launcher reported `1/1 exit 0`.
+  it("#1045: a lane:go issue is NOT silently skipped — it proceeds past the preflight and claims", async () => {
+    const { deps, input, trace } = harness({
+      labels: ["lane:go"],
+      laneLabel: "lane:go",
+      claim: { winner: "self" },
+    });
+    const result = await processIssue(deps, input);
+    // The bug returned "claim-lost" here (silent boot death). Fixed: the lane
+    // matches, so the worker proceeds through the claim to a real attempt.
+    expect(result.outcome).not.toBe("claim-lost");
+    expect(result.outcome).toBe("done");
+    // It actually claimed (posted the GitHub-native claim marker) and ran the agent.
+    expect(trace.comments.some((c) => /AFK claim by worker/.test(c.body))).toBe(true);
+    expect(trace.runAgentCalls.length).toBeGreaterThan(0);
+  });
+
+  it("#1045: the lane-aware recheck still guards — a lane:go issue re-triaged out of its lane is claim-lost", async () => {
+    // The issue was selected under lane:go but no longer carries it (e.g. closed
+    // or re-labelled between selection and claim) → correctly abandoned, releasing
+    // the lock, without spawning an agent.
+    const { deps, input, trace } = harness({ labels: ["running"], laneLabel: "lane:go" });
+    const result = await processIssue(deps, input);
+    expect(result.outcome).toBe("claim-lost");
+    expect(trace.labelEdits).toEqual([]);
+    expect(trace.released).toEqual([9]);
+    expect(trace.runAgentCalls).toEqual([]);
   });
 
   // ADR 0066: with the GitHub-native arbiter wired, `running` is a projection and

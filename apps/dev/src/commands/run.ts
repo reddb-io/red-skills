@@ -1665,6 +1665,12 @@ export async function runCommand(options: RunOptions): Promise<number> {
         remote: c.issueTemplate.remote,
         baseInput: { issueBody: candidate.body },
         runMode: runModeForCandidate(candidate, flags.runMode),
+        // Lane-aware claim preflight (#1045): the pre-claim state-validity recheck
+        // must validate against the label this issue was SELECTED under (the
+        // `--lane` value), not a hardcoded `ready-for-agent`. `flags.lane` is
+        // undefined for `/afk` (→ defaults to `ready-for-agent` in processIssue)
+        // and `lane:go`/`lane:scout` for the isolated `/go`/scout lanes.
+        laneLabel: flags.lane,
       };
     },
     emit: (line: string) => process.stdout.write(`${line}\n`),
