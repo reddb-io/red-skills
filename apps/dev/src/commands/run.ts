@@ -415,6 +415,9 @@ function makeBootReconcileRunner(
         labels: plan.labels,
         branch: plan.branch,
         base,
+        // ADR 0083 landing precondition (#1018): the configured Trunk the primary
+        // checkout tracks, for doLanding's local-trunk-divergence guard.
+        trunk: configTrunk || "main",
         repo: ctx.repo,
         repoDir: ctx.root,
         remote: ctx.remote,
