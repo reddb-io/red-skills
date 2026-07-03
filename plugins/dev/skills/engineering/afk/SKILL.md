@@ -6,7 +6,7 @@ argument-hint: "[--prd N | --issues N,N,N] [--runner claude|codex|opencode] [--a
 
 # /afk
 
-**Read, don't reverse-engineer.** This SKILL.md is the contract; source is build artifact.
+**The default lane for all tracked backlog work.** `/afk` is the modus operandi; `/go` is the ad-hoc-only exception. Read, don't reverse-engineer — this SKILL.md is the contract; source is build artifact.
 
 Drain the agent-ready backlog. Single skill that owns issue selection, worktree isolation, inner-agent execution, GitHub state coordination, merge-back, and runner-fallback.
 
