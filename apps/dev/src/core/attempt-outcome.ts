@@ -35,6 +35,7 @@ import {
   LABEL_STALLED,
   LABEL_INFRA,
   LABEL_BUDGET,
+  LABEL_TRUNK_DIVERGED,
 } from "./triage-labels.js";
 
 /**
@@ -77,6 +78,15 @@ export type AttemptOutcome =
   // is salvaged through the same feedback gate, then parked for a human — NOT
   // auto-recovered (a runaway is not a transient flake to blind-retry).
   | "budget-exceeded"
+  // ADR 0083 landing precondition (#1018): the Landing aborted because the
+  // primary checkout's LOCAL trunk ref has DIVERGED from `origin/<trunk>` (it
+  // carries commits origin does not). This is NOT a merge conflict and NOT lost
+  // work — the attempt branch is intact; the local repository state a human owns
+  // is out of sync. It carries the distinct `blocked:trunk-diverged` label and is
+  // human-only (never auto-recovered): the Landing refuses to reset / stash /
+  // auto-commit / force-push to repair it, so a bounded retry could only re-hit
+  // the same precondition.
+  | "trunk-diverged"
   | "infra";
 
 /**
@@ -131,6 +141,8 @@ export function blockedLabelFor(o: AttemptOutcome): string | null {
       return LABEL_STALLED;
     case "budget-exceeded":
       return LABEL_BUDGET;
+    case "trunk-diverged":
+      return LABEL_TRUNK_DIVERGED;
     case "infra":
       return LABEL_INFRA;
     case "done":
@@ -185,6 +197,10 @@ export function envelopeStatusFor(o: AttemptOutcome): AttemptStatus {
     case "claim-lost":
     case "stalled":
     case "budget-exceeded":
+    // trunk-diverged (#1018) folds into the generic `blocked` bucket — the work
+    // is intact on the attempt branch; the local trunk a human owns is out of
+    // sync, so it emits a `blocked` envelope (never `merge-conflict`).
+    case "trunk-diverged":
     case "infra":
     // review-requested is a handoff, not a failure: the per-issue lifecycle
     // emits no terminal failure envelope for it (it parks the issue + opens the
@@ -243,6 +259,10 @@ export function recoveryReasonFor(o: AttemptOutcome): RecoveryReason | null {
     // on a runaway just re-spends the budget. Escalate to a human with the
     // salvaged partial work intact.
     case "budget-exceeded":
+    // trunk-diverged (#1018) is NON-recoverable by construction: a bounded
+    // auto-retry cannot un-diverge the maintainer's local trunk, and the Landing
+    // refuses to repair it — only a human reconciling the local state clears it.
+    case "trunk-diverged":
     case "infra":
     case "done":
     case "claim-lost":

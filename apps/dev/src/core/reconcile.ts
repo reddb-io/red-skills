@@ -212,6 +212,13 @@ export interface ReconcileInput {
   branch: string;
   /** Resolved base branch (lock > pin > main). */
   base: string;
+  /**
+   * The configured Trunk (`plugins.dev.trunk`, default `main`; ADR 0083) — the
+   * focal branch the primary checkout tracks. doLanding verifies the LOCAL trunk
+   * has not diverged from `origin/<trunk>` before integrating the branch (#1018);
+   * distinct from {@link base}, which may be a lock/pin branch.
+   */
+  trunk: string;
   repo: string;
   repoDir: string;
   remote: string;
@@ -368,6 +375,7 @@ export async function reconcile(deps: ReconcileDeps, input: ReconcileInput): Pro
       remote: input.remote,
       branch,
       base,
+      trunk: input.trunk,
       issue,
       title: input.title,
     },

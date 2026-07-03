@@ -74,6 +74,15 @@ interface Opts {
   rebaseCode?: number;
   /** rc the force-with-lease push returns (1 → reject on every attempt). */
   rebasePushCode?: number;
+  /**
+   * ADR 0083 landing precondition (#1018): drive the local-trunk-vs-origin check.
+   *   - "diverged" → `merge-base --is-ancestor` exits 1 (local trunk carries
+   *     commits origin does not) → the landing aborts with `trunk-diverged`.
+   *   - "absent"   → `rev-parse --verify refs/heads/<trunk>` exits 1 (the primary
+   *     never checked the trunk out) → the precondition proceeds.
+   * Unset → the local trunk reads as an ancestor of origin → proceeds.
+   */
+  trunk?: "diverged" | "absent";
 }
 
 function harness(opts: Opts = {}): Harness {
@@ -89,6 +98,21 @@ function harness(opts: Opts = {}): Harness {
     mergeExec: async (argv): Promise<ExecResult> => {
       mergeCalls.push(argv);
       const j = argv.join(" ");
+      // ADR 0083 landing precondition (#1018), against the primary checkout.
+      // `merge-base --is-ancestor local origin/<trunk>` — exit 1 = diverged.
+      if (j.includes("merge-base --is-ancestor")) {
+        return { code: opts.trunk === "diverged" ? 1 : 0, stdout: "", stderr: "" };
+      }
+      // The primary's LOCAL trunk ref probe — exit 1 = absent (proceed).
+      if (j.includes("rev-parse --verify --quiet --short refs/heads/")) {
+        return opts.trunk === "absent"
+          ? { code: 1, stdout: "", stderr: "" }
+          : { code: 0, stdout: "1oca1sha\n", stderr: "" };
+      }
+      // origin/<trunk> SHA, captured for the divergence envelope.
+      if (j.includes("rev-parse --short origin/")) {
+        return { code: 0, stdout: "0r1g1nsha\n", stderr: "" };
+      }
       // #1006 pre-merge rebase, in the isolated worker-branch worktree (RWT).
       if (j === `git -C ${RWT} rebase origin/main`) {
         return { code: opts.rebaseCode ?? 0, stdout: "", stderr: "" };
@@ -182,6 +206,11 @@ function harness(opts: Opts = {}): Harness {
     remote: "origin",
     branch: "afk/wAAAA/9-fix-the-thing",
     base: "main",
+    // ADR 0083 landing precondition (#1018): the configured Trunk. The default
+    // permissive mergeExec below returns code 0 for the precondition's
+    // fetch/rev-parse/is-ancestor calls, so the local trunk reads as an ancestor
+    // → the precondition proceeds and the existing path assertions are unchanged.
+    trunk: "main",
     issue: 9,
     title: "Fix the thing",
   };
@@ -266,8 +295,81 @@ describe("doLanding — happy paths", () => {
     expect(j.some((c) => c.includes("merge --no-ff --no-verify afk/wAAAA/9-fix-the-thing"))).toBe(true);
     // Push targeted the lock branch (worktree HEAD → refs/heads/<base>), not main.
     expect(j.some((c) => c.includes("push origin HEAD:refs/heads/feature-locked"))).toBe(true);
-    expect(j.some((c) => c.includes("refs/heads/main"))).toBe(false);
+    // The ADR 0083 precondition READS refs/heads/main (the trunk, read-only); the
+    // landing's WRITE ops (merge/push) must never target main.
+    expect(j.some((c) => (c.includes("merge --") || c.includes("push ")) && c.includes("main"))).toBe(false);
     expect(h.firedHooks).toEqual(["pre_merge", "post_merge"]);
+  });
+});
+
+describe("doLanding — ADR 0083 trunk landing precondition (#1018)", () => {
+  it("diverged local trunk → aborts with trunk-diverged BEFORE any push/integrate/land, naming both SHAs", async () => {
+    const h = harness({ locked: false, trunk: "diverged" });
+    const r = await doLanding(h.deps, h.input, h.hooks);
+    expect(r).toEqual({
+      ok: false,
+      reason: "trunk-diverged",
+      locked: false,
+      localTrunkSha: "1oca1sha",
+      originTrunkSha: "0r1g1nsha",
+    });
+    // The abort is loud and EARLY: no attempt-branch push, no hooks, no landing.
+    expect(h.pushedAttempt).toEqual([]);
+    expect(h.firedHooks).toEqual([]);
+    const j = joined(h.mergeCalls);
+    expect(j.some((c) => c.includes("pr merge"))).toBe(false);
+    expect(j.some((c) => c.includes("merge --no-ff"))).toBe(false);
+  });
+
+  it("diverged local trunk on the DIRECT (locked) path also aborts before integrating", async () => {
+    const h = harness({ locked: true, trunk: "diverged" });
+    const r = await doLanding(h.deps, h.input, h.hooks);
+    expect(r).toEqual({
+      ok: false,
+      reason: "trunk-diverged",
+      locked: true,
+      localTrunkSha: "1oca1sha",
+      originTrunkSha: "0r1g1nsha",
+    });
+    const j = joined(h.mergeCalls);
+    // Never provisioned a landing worktree, never integrated origin/<base>.
+    expect(h.removedWorktrees).toEqual([]);
+    expect(j.some((c) => c.includes("merge --ff-only"))).toBe(false);
+    expect(j.some((c) => c.includes("merge --no-ff"))).toBe(false);
+  });
+
+  it("the precondition NEVER resets / stashes / auto-commits / force-pushes to repair the divergence", async () => {
+    const h = harness({ locked: false, trunk: "diverged" });
+    await doLanding(h.deps, h.input, h.hooks);
+    for (const c of h.mergeCalls) {
+      const j = c.join(" ");
+      expect(j.includes("reset")).toBe(false);
+      expect(j.includes("stash")).toBe(false);
+      expect(j.includes("commit")).toBe(false);
+      expect(j.includes("--force")).toBe(false);
+    }
+    // The only primary-checkout touches are the read-only precondition probes.
+    const primaryOps = joined(h.mergeCalls).filter((c) => c.includes("-C /repo"));
+    for (const op of primaryOps) {
+      expect(/fetch|rev-parse|merge-base/.test(op)).toBe(true);
+    }
+  });
+
+  it("absent local trunk → precondition proceeds and lands unchanged", async () => {
+    const h = harness({ locked: false, trunk: "absent" });
+    const r = await doLanding(h.deps, h.input, h.hooks);
+    expect(r).toEqual({ ok: true, locked: false });
+    expect(joined(h.mergeCalls).some((c) => c.includes("pr merge 42 --admin --merge"))).toBe(true);
+  });
+
+  it("ancestor local trunk (default) → precondition proceeds and lands unchanged", async () => {
+    const h = harness({ locked: false });
+    const r = await doLanding(h.deps, h.input, h.hooks);
+    expect(r).toEqual({ ok: true, locked: false });
+    // The precondition fresh-fetched origin/<trunk> then admin-merged.
+    const j = joined(h.mergeCalls);
+    expect(j.some((c) => c === "git -C /repo fetch origin main --quiet")).toBe(true);
+    expect(j.some((c) => c.includes("pr merge 42 --admin --merge"))).toBe(true);
   });
 });
 
@@ -631,7 +733,9 @@ describe("doLanding — landing mode decoupled from the lock (lock × flag matri
     // Integrate + push targeted the lock branch, never main.
     expect(j.some((c) => c.includes("merge --ff-only origin/feature-locked"))).toBe(true);
     expect(j).toContain(`git -C ${WT} push origin HEAD:refs/heads/feature-locked`);
-    expect(j.some((c) => c.includes("refs/heads/main"))).toBe(false);
+    // The ADR 0083 precondition READS refs/heads/main (the trunk, read-only); the
+    // landing's WRITE ops (merge/push) must never target main.
+    expect(j.some((c) => (c.includes("merge --") || c.includes("push ")) && c.includes("main"))).toBe(false);
     expect(prMerged(j)).toBe(false);
   });
 

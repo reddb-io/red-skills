@@ -934,6 +934,11 @@ export async function processIssue(
     return claimLost(issue, hooksFired);
   }
   const base = await resolveBase(input.baseInput, deps.lookups.base);
+  // ADR 0083 landing precondition (#1018): the configured Trunk (`plugins.dev.trunk`,
+  // default `main`) the primary checkout tracks — distinct from the resolved `base`
+  // (which may be a lock/pin branch). Both the ADR 0055 no-agent reconcile and the
+  // DONE-path doLanding verify the LOCAL trunk has not diverged from `origin/<trunk>`.
+  const trunk = (deps.lookups.base.configTrunk ?? "").trim() || "main";
   const startedAt = deps.nowIso();
 
   // ---- 2. attempt dir + state init ----
@@ -1391,7 +1396,7 @@ export async function processIssue(
       // through the identical gate.)
       const reconciled = await reconcile(
         { ...deps, fireHook },
-        reconcileInputFor(input, current, workerBranch, base, labels, activeRunner),
+        reconcileInputFor(input, current, workerBranch, base, trunk, labels, activeRunner),
       );
       // on_reconcile (#832): the no-agent reconcile (ADR 0055) re-validated the
       // parked mechanical branch and landed / parked / skipped it. Surface the
@@ -1709,6 +1714,7 @@ export async function processIssue(
       remote: input.remote,
       branch: workerBranch,
       base,
+      trunk,
       issue,
       title: input.title,
     },
@@ -1726,6 +1732,19 @@ export async function processIssue(
     },
   );
   if (!landing.ok) {
+    // ADR 0083 landing precondition (#1018): the primary checkout's LOCAL trunk
+    // has DIVERGED from origin/<trunk>. The landing aborted BEFORE integrating the
+    // attempt branch and never repaired the divergence — park ready-for-human with
+    // a divergence envelope naming both SHAs so a human reconciles the local state.
+    if (landing.reason === "trunk-diverged") {
+      return await trunkDivergedBlocked(
+        common,
+        trunk,
+        landing.localTrunkSha ?? "",
+        landing.originTrunkSha ?? "",
+        landing.locked,
+      );
+    }
     // CI-aware landing failures (#812): a completed, MERGEABLE PR the admin-merge
     // could not land because the `enforce_admins` base's required checks failed /
     // are still pending. NOT a merge conflict — preserve the OPEN PR and park to
@@ -1983,6 +2002,13 @@ function blockerForFailure(outcome: ProcessOutcome, sections: SectionBodies): Cu
         summary: oneLine(sections.log, "Required status checks were still pending on the completed, mergeable PR."),
         next: "Wait for the required checks to go green, then merge the open PR (no full agent re-run needed).",
       };
+    case "trunk-diverged":
+      return {
+        status: "blocked",
+        kind: "trunk-diverged",
+        summary: oneLine(sections.log, "Local trunk diverged from origin; landing aborted (ADR 0083)."),
+        next: "Reconcile the primary checkout's local trunk with origin (no reset/stash/force-push), then requeue.",
+      };
     default:
       return null;
   }
@@ -1995,6 +2021,7 @@ const ACTIONABLE_BLOCKER_KINDS = new Set([
   "ci",
   "stalled",
   "decision",
+  "trunk-diverged",
 ]);
 
 function shouldPreserveCurrentBlocker(existing: CurrentBlocker | null, next: CurrentBlocker): boolean {
@@ -2226,6 +2253,55 @@ async function prLandingBlocked(
     issue: input.issue,
     branch: c.branch,
     base: c.base,
+    hooksFired: c.hooksFired,
+    envelopePosted: posted,
+    preserved: true,
+    swept: false,
+  };
+}
+
+/**
+ * ADR 0083 landing-precondition park (#1018). The Landing aborted BEFORE
+ * integrating the attempt branch because the primary checkout's LOCAL `<trunk>`
+ * ref has DIVERGED from `origin/<trunk>` — it carries commits origin does not.
+ * This is NOT a merge conflict and NOT lost work: the attempt branch is intact;
+ * the maintainer-owned local repository state is out of sync. The Landing NEVER
+ * repairs it (no reset / stash / auto-commit / force-push), so park the issue
+ * ready-for-human with a divergence blocker envelope naming both SHAs and a
+ * self-explanatory comment. routeRecovery escalates (trunk-diverged carries no
+ * recovery budget → ready-for-human + `blocked:trunk-diverged`); the attempt dir
+ * and worker branch are preserved so a requeue re-lands once a human reconciles.
+ */
+async function trunkDivergedBlocked(
+  c: StageCommon,
+  trunk: string,
+  localSha: string,
+  originSha: string,
+  locked: boolean,
+): Promise<ProcessIssueResult> {
+  const { deps, input } = c;
+  const detail =
+    `Landing aborted (ADR 0083): the primary checkout's local \`${trunk}\` (${localSha || "unknown"}) has diverged ` +
+    `from \`origin/${trunk}\` (${originSha || "unknown"}) — it carries commits origin does not. The landing will NOT ` +
+    `reset, stash, auto-commit, or force-push to repair this; a human must reconcile the local repository state, then ` +
+    `requeue the issue. The attempt branch is intact — no work was lost.`;
+  // routeRecovery escalates (trunk-diverged is non-recoverable): drop running,
+  // ensure + add ready-for-human + blocked:trunk-diverged.
+  await routeRecovery(deps, input.issue, "trunk-diverged", input.attempt);
+  await writeCurrentBlockerBestEffort(deps, input, blockerForFailure("trunk-diverged", { log: detail }));
+  const posted = await emitFailure(c, envelopeStatusFor("trunk-diverged"), "trunk-diverged", { log: detail });
+  await deps.gh.comment(input.issue, `🤖 /afk: ${detail}`);
+  await recordAttemptBestEffort(c, "trunk-diverged", {
+    durationS: deps.nowEpoch() - c.startedEpoch,
+    notes: detail,
+  });
+  await deps.claimLock.release(input.issue);
+  return {
+    outcome: "trunk-diverged",
+    issue: input.issue,
+    branch: c.branch,
+    base: c.base,
+    locked,
     hooksFired: c.hooksFired,
     envelopePosted: posted,
     preserved: true,
@@ -2606,6 +2682,7 @@ function reconcileInputFor(
   current: ProcessIssueInput,
   branch: string,
   base: string,
+  trunk: string,
   claimLabels: string[],
   runner: Runner,
 ): ReconcileInput {
@@ -2620,6 +2697,9 @@ function reconcileInputFor(
     labels: liveLabels,
     branch,
     base,
+    // ADR 0083 landing precondition (#1018): the configured Trunk for doLanding's
+    // local-trunk-divergence guard on the ADR 0055 no-agent reconcile land.
+    trunk,
     repo: input.repo,
     repoDir: input.repoDir,
     remote: input.remote,

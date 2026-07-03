@@ -188,6 +188,7 @@ function harness(opts: HarnessOptions = {}): {
     labels: opts.labels ?? ["running", "type:feature"],
     branch: "afk/wAAAA/9-fix-the-thing",
     base: "main",
+    trunk: "main",
     repo: "o/r",
     repoDir: "/repo",
     remote: "origin",
