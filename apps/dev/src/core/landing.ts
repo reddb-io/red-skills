@@ -125,6 +125,16 @@ export interface LandingInput {
   branch: string;
   /** Resolved base branch (lock > pin > main). */
   base: string;
+  /**
+   * The configured Trunk (`plugins.dev.trunk`, default `main`; ADR 0083) — the
+   * repo's focal branch. The landing precondition ({@link verifyTrunkPrecondition})
+   * verifies the primary checkout's LOCAL `<trunk>` ref has not diverged from its
+   * fresh-fetched `origin/<trunk>` before integrating any attempt branch. This is
+   * distinct from {@link base}: `base` is the resolved landing target (which may be
+   * a lock/pin branch), while the precondition guards the maintainer-owned trunk
+   * the primary checkout tracks.
+   */
+  trunk: string;
   /** Issue number, for the merge/PR message + hook contexts. */
   issue: number;
   /** Issue title, for the merge/PR message + hook contexts. */
@@ -161,10 +171,20 @@ export type LandingResult =
         | "ci-failed"
         | "ci-pending"
         | "pr-conflict"
-        | "pr-merge-failed";
+        | "pr-merge-failed"
+        // ADR 0083 landing precondition (#1018): the primary checkout's LOCAL
+        // `<trunk>` ref has DIVERGED from `origin/<trunk>`. The landing aborted
+        // BEFORE integrating the attempt branch and NEVER repaired the divergence
+        // (no reset / stash / auto-commit / force-push). The caller parks the
+        // issue ready-for-human with a divergence envelope naming the two SHAs.
+        | "trunk-diverged";
       locked: boolean;
       /** PR number left open for the CI-aware handoff (`ci-failed` / `ci-pending`). */
       prNumber?: number;
+      /** ADR 0083 divergence (`trunk-diverged`): the primary's LOCAL `<trunk>` SHA. */
+      localTrunkSha?: string;
+      /** ADR 0083 divergence (`trunk-diverged`): the fresh-fetched `origin/<trunk>` SHA. */
+      originTrunkSha?: string;
     };
 
 /**
@@ -191,12 +211,92 @@ export type LandingResult =
  *   capture the integrated tip → landMerge → one-shot conflict self-resolve →
  *   post_merge.
  */
+/** Result of the ADR 0083 trunk landing precondition. `ok:true` → proceed with
+ * the landing (local trunk absent, an ancestor of origin, or indeterminate);
+ * `ok:false` → the local trunk DIVERGED, carrying both SHAs for the caller's
+ * ready-for-human divergence envelope. */
+type TrunkPreconditionResult = { ok: true } | { ok: false; localSha: string; originSha: string };
+
+/**
+ * ADR 0083 landing precondition (#1018). Verify the primary checkout's LOCAL
+ * `<trunk>` ref has NOT diverged from its fresh-fetched `origin/<trunk>` before
+ * any attempt branch is integrated.
+ *
+ * The trunk is always read as its fresh-fetched remote ref (ADR 0083), so the
+ * check first fetches `origin/<trunk>` (best-effort — an offline fetch must not
+ * fabricate a divergence; the comparison then falls back to the origin ref the
+ * repo already knows). Then:
+ *   - Local `<trunk>` ABSENT (the primary never checked it out) → nothing can
+ *     diverge → `{ ok:true }`.
+ *   - Local trunk is an ANCESTOR of `origin/<trunk>` (behind or equal) → the
+ *     healthy case → `{ ok:true }`.
+ *   - `git merge-base --is-ancestor` returns a definitive `1` (NOT an ancestor —
+ *     the local trunk carries commits origin does not) → DIVERGED →
+ *     `{ ok:false, localSha, originSha }`. Any OTHER non-zero code is a git error
+ *     (e.g. a missing origin ref on a fresh repo), treated as indeterminate →
+ *     `{ ok:true }` so a transient error never blocks a landing.
+ *
+ * READ-ONLY: it runs only `fetch` / `rev-parse` / `merge-base` against the
+ * primary checkout. It NEVER resets, stashes, auto-commits, or force-pushes to
+ * repair a divergence — that repair is a human-only decision (ADR 0083 + the
+ * standing maintainer rules), so none of those verbs exist even as a fallback.
+ */
+async function verifyTrunkPrecondition(
+  exec: MergeExec,
+  input: { repoDir: string; remote: string; trunk: string },
+): Promise<TrunkPreconditionResult> {
+  const { repoDir, remote, trunk } = input;
+
+  // Fresh-fetch the remote trunk so the comparison is against origin's real tip.
+  // Best-effort: a fetch failure (offline) is ignored — we then compare against
+  // whatever `origin/<trunk>` the local repo already knows.
+  await exec(["git", "-C", repoDir, "fetch", remote, trunk, "--quiet"]);
+
+  // Local trunk ABSENT → nothing to diverge; proceed.
+  const local = await exec(["git", "-C", repoDir, "rev-parse", "--verify", "--quiet", "--short", `refs/heads/${trunk}`]);
+  if (local.code !== 0) return { ok: true };
+  const localSha = local.stdout.trim();
+
+  // Local trunk is an ANCESTOR of origin/<trunk> (exit 0) → proceed. Only a
+  // definitive exit 1 (NOT an ancestor) is a divergence; any other code is a git
+  // error → indeterminate → proceed (never block on a transient error).
+  const ancestor = await exec([
+    "git", "-C", repoDir, "merge-base", "--is-ancestor", localSha, `${remote}/${trunk}`,
+  ]);
+  if (ancestor.code !== 1) return { ok: true };
+
+  const origin = await exec(["git", "-C", repoDir, "rev-parse", "--short", `${remote}/${trunk}`]);
+  return { ok: false, localSha, originSha: origin.stdout.trim() };
+}
+
 export async function doLanding(
   deps: LandingDeps,
   input: LandingInput,
   hooks: LandingHookContexts,
 ): Promise<LandingResult> {
   const { locked } = input;
+
+  // 0. ADR 0083 landing precondition (#1018): the primary checkout's LOCAL
+  // `<trunk>` ref must be an ANCESTOR of `origin/<trunk>`. Verified BEFORE any
+  // attempt branch is pushed or integrated so a diverged local trunk fails loud
+  // instead of silently eating the maintainer's work. On divergence the landing
+  // ABORTS and NEVER repairs it (no reset / stash / auto-commit / force-push);
+  // the caller parks the issue ready-for-human with the two SHAs. Local trunk
+  // absent, an ancestor, or an indeterminate git error → proceed unchanged.
+  const trunkCheck = await verifyTrunkPrecondition(deps.mergeExec, {
+    repoDir: input.repoDir,
+    remote: input.remote,
+    trunk: input.trunk,
+  });
+  if (!trunkCheck.ok) {
+    return {
+      ok: false,
+      reason: "trunk-diverged",
+      locked,
+      localTrunkSha: trunkCheck.localSha,
+      originTrunkSha: trunkCheck.originSha,
+    };
+  }
 
   // 1. push the worker branch so landMerge/landPr have a remote ref.
   // NOT best-effort: if the push fails the remote has no commits and any merge
