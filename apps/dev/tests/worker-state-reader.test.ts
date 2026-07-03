@@ -203,4 +203,62 @@ describe("worker-state-reader", () => {
     expect(union.map((r) => r.state.worker_id)).toEqual(["wFLEET"]);
     expect(union.map((r) => r.state.worker_id)).toEqual(single.map((r) => r.state.worker_id));
   });
+
+  // Isolation fallback: worker.pid liveness when afk.state.json.pid === 0
+  it("isolation: live worker.pid + pid:0 state → quiet-but-live, issue derived from path", async () => {
+    // Path must look like {worker}/{N}-a{n}/afk.state.json so issue derivation works.
+    const base = await mkdtemp(join(tmpdir(), "wsr-iso-live-"));
+    const attemptDir = join(base, "wISO", "1085-a1");
+    const path = await writeState(attemptDir, { pid: 0, current: {} });
+    // No liveness lane (empty lane), workerPidContent = live pid, kill returns true.
+    const rec = readWorkerState(path, {
+      nowMs: NOW,
+      workerPidContent: "9876",
+      kill: () => true,
+    });
+    expect(rec).not.toBeNull();
+    // Worker.pid is alive → quiet-but-live (state.pid=0, lane empty, but host pid alive).
+    expect(rec!.live).toBe(true);
+    expect(rec!.active).toBe(false);
+    expect(rec!.liveness).toBe("quiet-but-live");
+    // Issue number derived from the "1085-a1" attempt-dir basename.
+    expect(rec!.state.current.number).toBe(1085);
+    // Evaluator verdict carries the isolation-fallback reason.
+    expect(rec!.livenessVerdict.status).toBe("alive");
+    expect(rec!.livenessVerdict.reason).toContain("worker.pid=9876 is alive");
+  });
+
+  it("isolation: dead worker.pid + pid:0 state → dead", async () => {
+    const base = await mkdtemp(join(tmpdir(), "wsr-iso-dead-"));
+    const attemptDir = join(base, "wISO", "1085-a1");
+    const path = await writeState(attemptDir, { pid: 0, current: {} });
+    // kill returns false → host pid is dead.
+    const rec = readWorkerState(path, {
+      nowMs: NOW,
+      workerPidContent: "9876",
+      kill: () => false,
+    });
+    expect(rec).not.toBeNull();
+    expect(rec!.live).toBe(false);
+    expect(rec!.liveness).toBe("dead");
+  });
+
+  it("regression: normal no-sandbox worker with populated pid + fresh lane renders as active", async () => {
+    const base = await mkdtemp(join(tmpdir(), "wsr-normal-reg-"));
+    const path = await writeState(base, {
+      worker_id: "wNORMAL",
+      pid: 4242,
+      current: { number: 999, stage: "impl", last_event_at: fresh },
+    });
+    // Fresh liveness lane → evaluator "alive", laneFresh=true → "active".
+    const rec = readWorkerState(path, { nowMs: NOW, laneRecencyMs: LANE_FRESH_MS });
+    expect(rec).not.toBeNull();
+    expect(rec!.live).toBe(true);
+    expect(rec!.active).toBe(true);
+    expect(rec!.liveness).toBe("active");
+    // Issue number from state, not derived from path.
+    expect(rec!.state.current.number).toBe(999);
+    // The isolation fallback must NOT have fired (worker.pid check is skipped when state.pid > 0).
+    expect(rec!.livenessVerdict.reason).not.toContain("worker.pid");
+  });
 });
