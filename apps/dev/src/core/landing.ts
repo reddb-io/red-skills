@@ -81,6 +81,16 @@ export interface LandingDeps {
   /** Tear down a worktree returned by {@link makeRebaseWorktree} (best-effort). */
   removeRebaseWorktree?(dir: string): Promise<void>;
   /**
+   * Opt-in mechanical-conflict resolver for the PR path's pre-merge rebase
+   * (issue #1095). When the rebase onto fresh base CONFLICTS, this is invoked
+   * with the rebase worktree dir; it returns true when it auto-resolved EVERY
+   * conflict on the closed mechanical allowlist and `git rebase --continue`d, so
+   * the landing proceeds instead of parking `blocked:merge-conflict`. Returns
+   * false for any non-mechanical conflict → abort as before. Absent (the
+   * default) → every conflict aborts, so existing landings are unchanged.
+   */
+  resolveMechanicalConflict?: (repo: string) => Promise<boolean>;
+  /**
    * Opt-in advisory-review wait for the admin-PR landing
    * (`afk.merge.wait_for_review`, ADR 0048). Present → landPr holds until the
    * named review check concludes before the admin-merge, then merges regardless
@@ -403,6 +413,7 @@ async function preMergeRebaseInWorktree(
       remote: input.remote,
       base: input.base,
       branch: input.branch,
+      resolveMechanical: deps.resolveMechanicalConflict,
     });
     if (rebased.ok) return undefined;
     // Real conflict / exhausted force-with-lease retries → park merge-conflict.
