@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   passExitBarrier,
+  passTerminalBarrier,
   ExitBarrierError,
   type ExitBarrierPorts,
   type PushResult,
@@ -144,5 +145,73 @@ describe("passExitBarrier", () => {
 
     expect(receipt.head).toBe("deadbeef");
     expect(trace.pushCalls).toEqual(["afk/w1/42-x", "afk/w1/42-x"]);
+  });
+});
+
+// passTerminalBarrier is the FAILURE-terminal crossing (#1021): same salvage →
+// push → receipt contract, but it never throws — a rejected push is recorded as
+// `pushed:false` instead of escalated, because the attempt is already terminal.
+describe("passTerminalBarrier", () => {
+  it("dirty worktree → salvages, pushes, and reports pushed:true with the salvage flag", async () => {
+    const { ports, trace } = harness({ salvage: async () => 2, headSha: async () => "beefcafe" });
+
+    const receipt = await passTerminalBarrier(ports, "afk/w1/42-x");
+
+    expect(receipt).toEqual({
+      branch: "afk/w1/42-x",
+      head: "beefcafe",
+      pushedAt: "2026-07-03T12:00:00Z",
+      salvaged: true,
+      salvagedFiles: 2,
+      pushed: true,
+    });
+    // Salvage ran before the push so the pushed ref carries the salvage commit.
+    expect(trace.salvageCalls).toEqual(["afk/w1/42-x"]);
+    expect(trace.pushCalls).toEqual(["afk/w1/42-x"]);
+  });
+
+  it("push fails after retry → returns pushed:false, NEVER throws (attempt already terminal)", async () => {
+    const { ports, trace } = harness({
+      push: async () => ({ ok: false, error: "remote rejected" }),
+    });
+
+    const receipt = await passTerminalBarrier(ports, "afk/w1/42-x");
+
+    expect(receipt.pushed).toBe(false);
+    // No head sha is read when the ref never reached origin.
+    expect(receipt.head).toBe("");
+    expect(trace.pushCalls).toEqual(["afk/w1/42-x", "afk/w1/42-x"]);
+    expect(trace.headCalls).toEqual([]);
+  });
+
+  it("push fails once then succeeds → retried, pushed:true", async () => {
+    let attempts = 0;
+    const { ports, trace } = harness({
+      push: async () => {
+        attempts += 1;
+        return attempts === 1 ? { ok: false, error: "lock" } : { ok: true };
+      },
+    });
+
+    const receipt = await passTerminalBarrier(ports, "afk/w1/42-x");
+
+    expect(receipt.pushed).toBe(true);
+    expect(receipt.head).toBe("deadbeef");
+    expect(trace.pushCalls).toEqual(["afk/w1/42-x", "afk/w1/42-x"]);
+  });
+
+  it("a salvage that throws is swallowed — the push still saves the branch", async () => {
+    const { ports, trace } = harness({
+      salvage: async () => {
+        throw new Error("salvage boom");
+      },
+    });
+
+    const receipt = await passTerminalBarrier(ports, "afk/w1/42-x");
+
+    expect(receipt.salvaged).toBe(false);
+    expect(receipt.salvagedFiles).toBe(0);
+    expect(receipt.pushed).toBe(true);
+    expect(trace.pushCalls).toEqual(["afk/w1/42-x"]);
   });
 });

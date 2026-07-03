@@ -42,6 +42,8 @@ interface Trace {
   recordedAttempts: AttemptRecordPayload[];
   /** Worker branches passed to the commit-leftovers salvage port. */
   salvageCalls: string[];
+  /** Worker branches passed to the ADR 0083 §4 terminal exit barrier (#1021). */
+  terminalBarrierCalls: string[];
   /** Metadata handed to the per-issue classifier before runAgent. */
   classifierCalls: IssueClassificationMetadata[];
   /** Lines appended to the iteration log (deps.appendIterLog). */
@@ -132,6 +134,13 @@ interface HarnessOptions {
    * it return this count (files committed). undefined omits the port (legacy
    * caller — no salvage). */
   salvage?: number;
+  /** When set, register the ADR 0083 §4 `terminalExitBarrier` port (#1021). The
+   * fake records the branch and returns a {@link TerminalReceipt} whose
+   * `salvagedFiles` / `pushed` are driven by these fields (defaults: 0 files,
+   * pushed:true). `fault:true` makes the port reject, proving the terminal still
+   * reports (with a not-pushed receipt) when the barrier itself faults. undefined
+   * omits the port (legacy caller — no barrier crossing). */
+  terminalBarrier?: { salvagedFiles?: number; pushed?: boolean; fault?: boolean };
   /** Issue body threaded into processIssue. */
   body?: string;
   /** Execution mode forwarded to ProcessIssueInput (e.g. `"scout"`). */
@@ -178,6 +187,7 @@ function harness(opts: HarnessOptions = {}): {
     envelopeBodies: [],
     released: [],
     runAgentCalls: [],
+    terminalBarrierCalls: [],
     listByLabelCalls: [],
     ensuredLabels: [],
     sidecarWrites: [],
@@ -498,6 +508,26 @@ function harness(opts: HarnessOptions = {}): {
         : async (branch) => {
             trace.salvageCalls.push(branch);
             return opts.salvage as number;
+          },
+    // ADR 0083 §4 terminal exit barrier port (#1021). Records the branch and
+    // returns a scripted TerminalReceipt; `fault` rejects to prove the terminal
+    // still reports when the barrier itself faults.
+    terminalExitBarrier:
+      opts.terminalBarrier === undefined
+        ? undefined
+        : async (branch) => {
+            trace.terminalBarrierCalls.push(branch);
+            if (opts.terminalBarrier!.fault) throw new Error("terminal barrier boom");
+            const salvagedFiles = opts.terminalBarrier!.salvagedFiles ?? 0;
+            const pushed = opts.terminalBarrier!.pushed ?? true;
+            return {
+              branch,
+              head: pushed ? "beefcafe" : "",
+              pushedAt: "2026-07-03T12:00:00Z",
+              salvaged: salvagedFiles > 0,
+              salvagedFiles,
+              pushed,
+            };
           },
     // PRD cascade rebase port (#1007): injected when siblingBranches is set.
     cascadeRebase:
@@ -2964,5 +2994,100 @@ describe("PRD cascade rebase after DONE landing", () => {
     await processIssue(deps, input);
     // Only issue 20's branch is rebased; issue 99's is not a sibling.
     expect(trace.cascadeRebaseAttempts).toEqual(["afk/wBBBB/20-fix-sibling-a"]);
+  });
+});
+
+// ADR 0083 §4 (#1021): the exit barrier is crossed by EVERY terminal path, not
+// just DONE. One named test per terminal path, resilience-suite style — each
+// asserts the SAME three-part invariant: (1) the barrier ran (branch recorded),
+// (2) the branch was pushed (receipt.pushed), (3) a receipt rides the terminal
+// result (result.exitReceipt). A terminal path that bypassed the barrier would
+// carry no `exitReceipt` — so these tests fail on any bypassing path.
+describe("processIssue — exit barrier on every terminal path (#1021)", () => {
+  const BRANCH = "afk/wAAAA/9-fix-the-thing";
+
+  it("guard abort (budget-exceeded) crosses the barrier — branch pushed, receipt on the result", async () => {
+    const { deps, input, trace } = harness({ outcome: "budget-exceeded", terminalBarrier: { pushed: true } });
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("budget-exceeded");
+    // (1) barrier ran, (2) branch pushed, (3) receipt on the terminal result.
+    expect(trace.terminalBarrierCalls).toEqual([BRANCH]);
+    expect(result.exitReceipt?.pushed).toBe(true);
+    expect(result.exitReceipt?.branch).toBe(BRANCH);
+  });
+
+  it("stall-kill (attempt-guard timeout → stalled) crosses the barrier with a dirty worktree salvaged and pushed", async () => {
+    // changedFiles:[] → the ADR 0055 reconcile skips (no commits), falling to the
+    // stalled terminalFailure. The worker was killed with a dirty worktree, so the
+    // barrier salvage-commits it (2 files) and pushes before the terminal reports.
+    const { deps, input, trace } = harness({
+      outcome: "timeout",
+      changedFiles: [],
+      terminalBarrier: { salvagedFiles: 2, pushed: true },
+    });
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("stalled");
+    // The timeout path crosses the barrier twice — once for reconcile's pre-fetch
+    // push, once for the stalled terminal — both on the worker branch.
+    expect(trace.terminalBarrierCalls.length).toBeGreaterThanOrEqual(1);
+    expect(trace.terminalBarrierCalls.every((b) => b === BRANCH)).toBe(true);
+    // dirty-at-kill: the salvage commit exists and was pushed (receipt truthful).
+    expect(result.exitReceipt?.salvaged).toBe(true);
+    expect(result.exitReceipt?.salvagedFiles).toBe(2);
+    expect(result.exitReceipt?.pushed).toBe(true);
+    // The salvage was announced in the iteration log.
+    expect(trace.iterLogs.some((l) => l.includes("exit barrier salvaged 2 uncommitted file(s)"))).toBe(true);
+  });
+
+  it("crash teardown (pre_worktree hook abort) crosses the barrier — no work stranded", async () => {
+    // A pre-runner hook abort tears the attempt down before the agent runs; the
+    // branch may carry a pre_worktree hook's dirty edits, so it still crosses the
+    // barrier (here nothing reached origin → pushed:false, recorded truthfully).
+    const { deps, input, trace } = harness({ abortHook: "pre_worktree", terminalBarrier: { pushed: false } });
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("hook-aborted");
+    expect(trace.terminalBarrierCalls).toEqual([BRANCH]);
+    // The terminal reports WITH a receipt even when nothing reached origin.
+    expect(result.exitReceipt).toBeDefined();
+    expect(result.exitReceipt?.pushed).toBe(false);
+  });
+
+  it("merge-conflict terminal crosses the barrier — the preserved branch is salvaged and pushed", async () => {
+    // A locked merge that conflicts and cannot be auto-resolved lands on the
+    // merge-conflict terminal (mergeFailed), which now crosses the barrier too.
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      locked: true,
+      mergeNoFfCode: 1,
+      conflictResolve: "fail",
+      terminalBarrier: { pushed: true },
+    });
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("merge-conflict");
+    expect(trace.terminalBarrierCalls).toEqual([BRANCH]);
+    expect(result.exitReceipt?.pushed).toBe(true);
+  });
+
+  it("a barrier that faults still reports the terminal — receipt present, pushed:false (never a second crash)", async () => {
+    // The barrier port itself throwing must NOT convert the terminal into an
+    // uncaught crash: crossTerminalBarrier degrades to a not-pushed receipt so the
+    // terminal is still reported (with a receipt — the required input is present).
+    const { deps, input, trace } = harness({ outcome: "budget-exceeded", terminalBarrier: { fault: true } });
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("budget-exceeded");
+    expect(trace.terminalBarrierCalls).toEqual([BRANCH]);
+    expect(result.exitReceipt).toBeDefined();
+    expect(result.exitReceipt?.pushed).toBe(false);
   });
 });

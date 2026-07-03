@@ -28,6 +28,8 @@ interface Trace {
   listByLabelCalls: string[];
   firedHooks: string[];
   pnpmCalls: number;
+  /** Branches passed to the ADR 0083 §4 terminal exit barrier (#1021). */
+  terminalBarrierCalls: string[];
 }
 
 interface HarnessOptions {
@@ -45,6 +47,10 @@ interface HarnessOptions {
   closedIssues?: number[];
   withSidecarPort?: boolean;
   recordAttempt?: boolean;
+  /** When set, wire the ADR 0083 §4 `terminalExitBarrier` port (#1021): reconcile
+   * uses it (not `pushAttempt`) for the pre-fetch safety push. The fake records
+   * the branch and returns a receipt driven by these fields. */
+  terminalBarrier?: { salvagedFiles?: number; pushed?: boolean };
 }
 
 function harness(opts: HarnessOptions = {}): {
@@ -67,6 +73,7 @@ function harness(opts: HarnessOptions = {}): {
     listByLabelCalls: [],
     firedHooks: [],
     pnpmCalls: 0,
+    terminalBarrierCalls: [],
   };
 
   const deps: ReconcileDeps = {
@@ -179,6 +186,22 @@ function harness(opts: HarnessOptions = {}): {
           trace.recordedOutcomes.push(payload.status);
         }
       : undefined,
+    terminalExitBarrier:
+      opts.terminalBarrier === undefined
+        ? undefined
+        : async (branch) => {
+            trace.terminalBarrierCalls.push(branch);
+            const salvagedFiles = opts.terminalBarrier!.salvagedFiles ?? 0;
+            const pushed = opts.terminalBarrier!.pushed ?? true;
+            return {
+              branch,
+              head: pushed ? "beefcafe" : "",
+              pushedAt: "2026-07-03T12:00:00Z",
+              salvaged: salvagedFiles > 0,
+              salvagedFiles,
+              pushed,
+            };
+          },
   };
 
   const input: ReconcileInput = {
@@ -440,5 +463,39 @@ describe("mechanicalDisqualifier", () => {
       next: "Human decides scope.",
     });
     expect(mechanicalDisqualifier(["blocked:stalled"], body)).toBe("active-blocker");
+  });
+});
+
+// ADR 0083 §4 (#1021): the no-agent reconcile lane is a terminal path too — its
+// branch-preservation write goes through the SAME exit barrier every other
+// terminal path uses, replacing the inline `pushAttempt` pre-fetch safety push.
+describe("reconcile — exit barrier crossing (#1021)", () => {
+  it("crosses the barrier for the pre-fetch safety push and does NOT use the inline pushAttempt", async () => {
+    // A parked (red) reconcile isolates the pre-fetch safety push — no landing push
+    // muddies the trace. With the barrier wired, the safety push runs THROUGH the
+    // barrier (branch recorded, salvage surfaced), and the inline `pushAttempt` is
+    // never called — the barrier is reconcile's only branch-preservation writer.
+    const { deps, input, trace } = harness({ feedbackOk: false, terminalBarrier: { salvagedFiles: 1, pushed: true } });
+
+    const result = await reconcile(deps, input);
+
+    expect(result.outcome).toBe("parked");
+    // (1) barrier ran on the worker branch; (2) receipt confirms the push.
+    expect(trace.terminalBarrierCalls).toEqual(["afk/wAAAA/9-fix-the-thing"]);
+    // (3) no inline pushAttempt ran — no bare `push` reached remoteGit.
+    const barePushes = trace.pushedAttempt.filter((argv) => !argv.includes("--delete"));
+    expect(barePushes).toEqual([]);
+  });
+
+  it("falls back to the inline pushAttempt when no barrier is wired (legacy caller)", async () => {
+    // Back-compat: a caller that has not wired the barrier keeps the original
+    // `pushAttempt` pre-fetch safety push, so older wiring never regresses.
+    const { deps, input, trace } = harness({ feedbackOk: false });
+
+    await reconcile(deps, input);
+
+    expect(trace.terminalBarrierCalls).toEqual([]);
+    const barePushes = trace.pushedAttempt.filter((argv) => !argv.includes("--delete"));
+    expect(barePushes.length).toBeGreaterThanOrEqual(1);
   });
 });

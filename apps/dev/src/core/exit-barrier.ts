@@ -29,6 +29,32 @@ export interface ExitReceipt {
   salvaged: boolean;
   /** Number of files the salvage step committed (0 when the worktree was clean). */
   salvagedFiles: number;
+  /**
+   * Whether the branch ref reached origin. The DONE barrier ({@link passExitBarrier})
+   * OMITS this — a DONE receipt only exists after a successful push, so its absence
+   * reads as "pushed". A FAILURE {@link TerminalReceipt} always sets it explicitly
+   * (true/false), because a failing attempt still terminates even when the push is
+   * rejected. Consumers treat `undefined` as pushed.
+   */
+  pushed?: boolean;
+}
+
+/**
+ * The terminal-path variant of {@link ExitReceipt}. A FAILURE terminal (guard
+ * abort, stall-kill, crash teardown, reconcile) is ALREADY terminating, so its
+ * barrier crossing never throws on a rejected push — it records whether the
+ * branch actually reached origin in {@link pushed} instead of converting the
+ * failure into a second one. `pushed:false` means the branch could not be saved
+ * (absent / rejected); the caller still terminates but the receipt tells the
+ * truth about whether the work is on origin ("work is saved iff its branch ref
+ * is pushed", ADR 0083 §4).
+ */
+export interface TerminalReceipt extends ExitReceipt {
+  /** True iff the branch ref reached origin (create or update); false on a failed
+   * or skipped push. Unlike the optional base field, a terminal receipt ALWAYS
+   * sets this — the whole point of the failure crossing is to report truthfully
+   * whether the work is on origin. */
+  pushed: boolean;
 }
 
 /** The result of one push attempt through the {@link ExitBarrierPorts.push} port. */
@@ -121,5 +147,53 @@ export async function passExitBarrier(ports: ExitBarrierPorts, branch: string): 
     pushedAt: ports.nowIso(),
     salvaged: salvagedFiles > 0,
     salvagedFiles,
+  };
+}
+
+/**
+ * Run the exit barrier for a FAILURE terminal on `branch` — the shared crossing
+ * for every non-DONE terminal path (guard abort, stall-kill, crash teardown,
+ * reconcile). Unlike {@link passExitBarrier} it NEVER throws: a failing attempt
+ * is already terminal, so a rejected push is RECORDED (`pushed:false`) rather
+ * than escalated into a second failure that could strand the terminal handler.
+ *
+ *   1. Salvage-commit uncommitted worktree changes (best-effort; count captured).
+ *   2. Push the branch to origin — on failure, retry EXACTLY ONCE.
+ *   3. Assemble a {@link TerminalReceipt} whose `pushed` flag is the load-bearing
+ *      truth: consumers report the terminal WITH this receipt so "was this work
+ *      saved?" is answerable from the record alone.
+ *
+ * The receipt is the REQUIRED input to terminal-status reporting: a terminal path
+ * obtains its exit through this barrier, then reports its status with the receipt,
+ * so a path that reports a status without a receipt is not representable.
+ */
+export async function passTerminalBarrier(ports: ExitBarrierPorts, branch: string): Promise<TerminalReceipt> {
+  // 1. Salvage-commit any dirty worktree paths (best-effort; never blocks push).
+  let salvagedFiles = 0;
+  try {
+    salvagedFiles = await ports.salvage(branch);
+  } catch {
+    salvagedFiles = 0;
+  }
+
+  // 2. Push the branch — retry once on failure. A still-failing push is NOT fatal
+  //    here (the attempt already failed); it is recorded as `pushed:false` below.
+  const first = await ports.push(branch).catch((err: unknown) => ({ ok: false, error: String(err) }) as PushResult);
+  let pushed = first.ok;
+  if (!pushed) {
+    const retry = await ports.push(branch).catch((err: unknown) => ({ ok: false, error: String(err) }) as PushResult);
+    pushed = retry.ok;
+  }
+
+  // 3. Assemble the terminal receipt. The head sha is only meaningful once the ref
+  //    reached origin; a not-pushed terminal reports an empty head.
+  const head = pushed ? await ports.headSha(branch).catch(() => "") : "";
+  return {
+    branch,
+    head,
+    pushedAt: ports.nowIso(),
+    salvaged: salvagedFiles > 0,
+    salvagedFiles,
+    pushed,
   };
 }

@@ -14,7 +14,7 @@ import { reconcile, type ReconcileDeps, type ReconcileInput } from "../core/reco
 import { resolveBase } from "../core/base-resolver.js";
 import { findOwnedBranch, type ReconcileSweepPlan } from "../core/boot-sweep.js";
 import { processIssue, type ProcessIssueDeps, type ProcessIssueInput } from "../core/process-issue.js";
-import { passExitBarrier } from "../core/exit-barrier.js";
+import { passExitBarrier, passTerminalBarrier } from "../core/exit-barrier.js";
 import {
   toMemoryPayload,
   resolveMemoryCli,
@@ -735,6 +735,22 @@ export function buildProcessDeps(
     // the head sha is read from the pushed local ref.
     exitBarrier: (branch) =>
       passExitBarrier(
+        {
+          salvage: (b) => gitx.salvageUncommitted(gitCtx, b, ctx.remote),
+          push: (b) => gitx.pushBranch(gitCtx, b, ctx.remote),
+          headSha: async (b) => (await gitx.branchHead(gitCtx, b)) ?? "",
+          nowIso: () => new Date().toISOString(),
+        },
+        branch,
+      ),
+    // ADR 0083 §4 exit barrier (every-terminal, #1021): the FAILURE-terminal
+    // crossing bound over the SAME GitContext as the DONE barrier — guard abort,
+    // stall-kill, crash teardown, and (via reconcile) the no-agent lane all pass
+    // through it. Unlike the DONE barrier it never throws; a rejected push is
+    // recorded in the receipt (`pushed:false`) so the failing attempt still
+    // terminates but the branch state is reported truthfully.
+    terminalExitBarrier: (branch) =>
+      passTerminalBarrier(
         {
           salvage: (b) => gitx.salvageUncommitted(gitCtx, b, ctx.remote),
           push: (b) => gitx.pushBranch(gitCtx, b, ctx.remote),

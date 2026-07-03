@@ -64,7 +64,7 @@ import {
 } from "./merge.js";
 import { doLanding } from "./landing.js";
 import { reconcile, type ReconcileInput } from "./reconcile.js";
-import { ExitBarrierError, type ExitReceipt } from "./exit-barrier.js";
+import { ExitBarrierError, type ExitReceipt, type TerminalReceipt } from "./exit-barrier.js";
 import {
   emitEnvelope,
   type EmitEnvelopeDeps,
@@ -504,6 +504,21 @@ export interface ProcessIssueDeps {
    * (run.ts) binds it over the same GitContext; tests inject a fake barrier.
    */
   exitBarrier?(branch: string): Promise<ExitReceipt>;
+  /**
+   * ADR 0083 §4 exit barrier (every-terminal, #1021). The single owner of an
+   * attempt's terminal exit on EVERY FAILURE path — guard abort, stall-kill, crash
+   * teardown, and (via reconcile) the no-agent lane: salvage-commit dirty worktree
+   * paths + push the attempt branch to origin (retry once) and return a
+   * {@link TerminalReceipt}. Unlike {@link exitBarrier} it NEVER throws — a failing
+   * attempt is already terminal, so a rejected push is RECORDED (`pushed:false`)
+   * not escalated. The receipt is the REQUIRED input to `preservedTerminal`, so a
+   * preserved terminal that reports a status without crossing the barrier is not
+   * representable. Optional → when absent `crossTerminalBarrier` returns a
+   * not-pushed receipt so legacy callers still report (branch state unconfirmed).
+   * run.ts binds it over the same GitContext as {@link exitBarrier}; tests inject
+   * a fake barrier.
+   */
+  terminalExitBarrier?(branch: string): Promise<TerminalReceipt>;
   /**
    * Post-merge PRD cascade rebase (issue #1007, `afk.landing.cascade_rebase`).
    * Provides the IO surface for {@link runCascadeRebase}: after a successful DONE
@@ -2180,6 +2195,58 @@ async function writeCurrentBlockerBestEffort(
 }
 
 /**
+ * Cross the ADR 0083 §4 exit barrier for a FAILURE terminal (#1021): salvage-commit
+ * any dirty worktree paths + push the attempt branch to origin, returning the
+ * auditable {@link TerminalReceipt} every preserved terminal reports with. NEVER
+ * throws — a failing attempt is already terminal, so a barrier fault or a rejected
+ * push degrades to a not-pushed receipt (`pushed:false`) rather than escalating
+ * into a second failure. When no barrier port is wired (legacy caller) it returns
+ * the same not-pushed receipt so {@link preservedTerminal} always has its required
+ * receipt input — the branch state is simply reported as unconfirmed.
+ */
+async function crossTerminalBarrier(deps: ProcessIssueDeps, branch: string): Promise<TerminalReceipt> {
+  if (deps.terminalExitBarrier) {
+    try {
+      return await deps.terminalExitBarrier(branch);
+    } catch {
+      // The barrier port itself faulted — fall through to the not-pushed receipt.
+      // The terminal still reports; the branch simply is not confirmed on origin.
+    }
+  }
+  return { branch, head: "", pushedAt: new Date().toISOString(), salvaged: false, salvagedFiles: 0, pushed: false };
+}
+
+/**
+ * Build a PRESERVED terminal {@link ProcessIssueResult}. The exit-barrier receipt
+ * is a MANDATORY first argument (ADR 0083 §4, #1021): a preserved terminal is
+ * reported iff its branch crossed the barrier, and the only way to obtain a
+ * {@link TerminalReceipt} is {@link crossTerminalBarrier} — so a terminal that
+ * reports a preserved status without first crossing the barrier is not
+ * representable. Every preserved-terminal tail funnels its result shape through
+ * here so the `preserved:true` / `swept:false` / `exitReceipt` invariant is owned
+ * in one place.
+ */
+function preservedTerminal(
+  receipt: TerminalReceipt,
+  fields: {
+    outcome: ProcessOutcome;
+    issue: number;
+    branch: string;
+    base: string;
+    hooksFired: HookName[];
+    envelopePosted?: boolean;
+    locked?: boolean;
+  },
+): ProcessIssueResult {
+  return {
+    ...fields,
+    exitReceipt: receipt,
+    preserved: true,
+    swept: false,
+  };
+}
+
+/**
  * The uniform terminal-FAILURE tail shared by no-sentinel, blocked, feedback,
  * and merge-conflict: route the BOUNDED auto-recovery labels (routeRecovery),
  * emit the failure envelope with the status derived from the outcome
@@ -2210,22 +2277,31 @@ async function terminalFailure(
     notes: record.notes,
     validationSummary: record.validationSummary,
   });
+  // ADR 0083 §4 exit barrier (#1021): before reporting the terminal, obtain its
+  // exit through the single barrier — salvage-commit any dirty worktree paths and
+  // push the attempt branch to origin. This is the ONE writer for guard-abort
+  // (stalled / budget) and the other salvageable failure terminals, so no path
+  // strands uncommitted work ("work is saved iff its branch ref is pushed").
+  const receipt = await crossTerminalBarrier(deps, c.branch);
+  if (receipt.salvagedFiles > 0) {
+    deps.appendIterLog(
+      `🤖 /afk: exit barrier salvaged ${receipt.salvagedFiles} uncommitted file(s) onto \`${c.branch}\` and pushed to origin (${outcome} terminal; receipt head ${receipt.head || "?"}).`,
+    );
+  }
   // Release the per-issue claim before returning. Every other terminal path
   // (mergeFailed/exhausted/abortAfterClaim/runnerRecoverable) releases; this
   // shared tail (no-sentinel / blocked / feedback-failed / stalled) did not, so
   // a retry-routed or human-requeued issue stayed un-claimable until the live
   // worker process exited and boot's stale-claim sweep reclaimed the dir (#568).
   await deps.claimLock.release(input.issue);
-  return {
+  return preservedTerminal(receipt, {
     outcome,
     issue: input.issue,
     branch: c.branch,
     base: c.base,
     hooksFired: c.hooksFired,
     envelopePosted: posted,
-    preserved: true,
-    swept: false,
-  };
+  });
 }
 
 /** Emit the done envelope with the merge sha + validation report. The
@@ -2280,8 +2356,11 @@ async function mergeFailed(c: StageCommon, _reason: string, locked = false): Pro
     durationS: deps.nowEpoch() - c.startedEpoch,
     notes: _reason,
   });
+  // ADR 0083 §4 exit barrier (#1021): cross the barrier before reporting the
+  // merge-conflict terminal so the preserved branch is salvaged + on origin.
+  const receipt = await crossTerminalBarrier(deps, c.branch);
   await deps.claimLock.release(input.issue);
-  return {
+  return preservedTerminal(receipt, {
     outcome: "merge-conflict",
     issue: input.issue,
     branch: c.branch,
@@ -2289,9 +2368,7 @@ async function mergeFailed(c: StageCommon, _reason: string, locked = false): Pro
     locked,
     hooksFired: c.hooksFired,
     envelopePosted: posted,
-    preserved: true,
-    swept: false,
-  };
+  });
 }
 
 /**
@@ -2746,16 +2823,20 @@ async function abortAfterClaim(
       `🤖 /afk aborted before runner invocation (${_reason}). Restored \`${LABEL_READY}\`.`,
     );
   }
+  // ADR 0083 §4 exit barrier (#1021): a crash/teardown abort still crosses the
+  // barrier — salvage-commit + push whatever the aborted attempt left on the
+  // branch (e.g. a pre_worktree hook's dirty edits) so no work is stranded. The
+  // branch may not yet exist on origin (nothing committed); the receipt records
+  // that truthfully (`pushed:false`) rather than throwing.
+  const receipt = await crossTerminalBarrier(deps, branch);
   await deps.claimLock.release(input.issue);
-  return {
+  return preservedTerminal(receipt, {
     outcome: "hook-aborted",
     issue: input.issue,
     branch,
     base,
     hooksFired,
-    preserved: true,
-    swept: false,
-  };
+  });
 }
 
 /**
