@@ -16,6 +16,7 @@ import { join, dirname } from "node:path";
 import type { AfkState } from "../types/state.js";
 import { parseState, type PidStartTimeProbe } from "./state.js";
 import { globWorkerStates } from "../runtime/fs.js";
+import { allWorkersRoots } from "./worker-paths.js";
 import {
   evaluateLiveness,
   resolveLivenessCrossCheckArming,
@@ -204,6 +205,35 @@ export async function readWorkerStates(root: string, opts: WorkerStatesReadOpts 
       psSnapshot: opts.psSnapshot,
     });
     if (rec !== null) out.push(rec);
+  }
+  return out;
+}
+
+/**
+ * Read-only UNION discovery across every worker-lane namespace
+ * ({@link WORKER_NAMESPACES}: `workers`, `go-workers`, `scout-workers`) under a
+ * `.red/tmp` dir. Globs each namespace root through {@link readWorkerStates} and
+ * concatenates every record, so a live `/go` or `--scout` worker counts as one
+ * more live worker on the observability surfaces. A missing namespace directory
+ * contributes nothing (its glob returns `[]`), never an error. Lane provenance
+ * is preserved on each record via `state.origin`, so per-source breakdowns still
+ * render each lane distinctly.
+ *
+ * This is the AGGREGATION seam every read-only surface (statusline/monitor/
+ * dashboard) uses. It is deliberately namespace-blind — it does NOT consult
+ * `RED_AFK_WORKERS_NAMESPACE`, unlike the single-lane {@link readWorkerStates}
+ * that the run-time write paths rely on for isolation. A single `nowMs` is
+ * shared across the whole batch so every record's liveness is measured against
+ * the same instant.
+ */
+export async function readAllWorkerStates(
+  tmpDir: string,
+  opts: WorkerStatesReadOpts = {},
+): Promise<WorkerStateRecord[]> {
+  const nowMs = opts.nowMs ?? Date.now();
+  const out: WorkerStateRecord[] = [];
+  for (const root of allWorkersRoots(tmpDir)) {
+    out.push(...(await readWorkerStates(root, { ...opts, nowMs })));
   }
   return out;
 }
