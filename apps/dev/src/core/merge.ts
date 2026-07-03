@@ -676,6 +676,47 @@ export async function openReviewPr(exec: Exec, input: OpenReviewPrInput): Promis
   return { ok: true, prNumber };
 }
 
+/** Inputs for the manual-landing PR handoff, {@link openManualLandingPr}. */
+export interface OpenManualLandingPrInput {
+  /** `owner/repo` slug passed to `gh -R`. */
+  repo: string;
+  /** Attempt branch (PR head, already pushed to the remote). */
+  branch: string;
+  /** Pinned target branch (PR base). */
+  target: string;
+  /** Issue number, for the PR title/body (and the `Closes #N` auto-close link). */
+  n: number;
+  /** Issue title, for the PR title. */
+  title: string;
+}
+
+export interface OpenManualLandingPrResult {
+  ok: boolean;
+  /** PR number that was opened/reused, when one resolved. */
+  prNumber?: number;
+}
+
+/**
+ * Manual-landing handoff (issue #1049). Open (or reuse) the PR for the attempt
+ * branch WITHOUT merging and WITHOUT applying any label — the whole point of the
+ * `landing:manual` mode is that the full agent pipeline runs and opens the PR,
+ * then a HUMAN drives the final merge click. Reuses {@link ensurePr}, so the PR
+ * body carries `Closes #${n}` and GitHub auto-closes the issue when the human
+ * merges. Mirrors {@link openReviewPr} but stops at step 1 (no review label): the
+ * merge is held for a human, not for a fresh-agent review.
+ *
+ * The branch must already be on the remote (the caller pushes it, exactly as the
+ * landing path does). Idempotent: a re-attempt reuses the open PR.
+ */
+export async function openManualLandingPr(
+  exec: Exec,
+  input: OpenManualLandingPrInput,
+): Promise<OpenManualLandingPrResult> {
+  const prNumber = await ensurePr(exec, input);
+  if (prNumber === undefined) return { ok: false };
+  return { ok: true, prNumber };
+}
+
 /** Inputs for the one-shot merge-conflict self-resolver, {@link resolveMergeConflict}. */
 export interface ResolveConflictInput {
   /** Dir passed to `git -C` — the isolated landing worktree where the merge
