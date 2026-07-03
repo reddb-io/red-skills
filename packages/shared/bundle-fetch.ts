@@ -173,7 +173,13 @@ export async function ensureBundle(
   return dest;
 }
 
-async function fetchManifest(
+/**
+ * Download + validate a plugin's checksum manifest from an arbitrary release
+ * `ref` (a version tag `v<x>` or a floating tag). Exported so the in-range
+ * self-update layer (ADR 0084, `self-update.ts`) can read the floating
+ * major-line manifest that names the newest compatible version.
+ */
+export async function fetchManifest(
   io: BundleIO,
   repo: string,
   plugin: string,

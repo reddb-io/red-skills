@@ -237,6 +237,25 @@ describe("config — plugins.dev namespace (ADR 0042)", () => {
   });
 });
 
+describe("config — the Trunk (`plugins.dev.trunk`, ADR 0083)", () => {
+  it("defaults dev.trunk to main when unset", () => {
+    const values = loadConfig("/x/.red/config.yaml", { read: () => undefined });
+    expect(getConfig(values, "dev.trunk")).toBe("main");
+  });
+
+  it("folds plugins.dev.trunk onto the dev.trunk accessor", () => {
+    const text = "plugins:\n  dev:\n    trunk: develop\n";
+    const values = loadConfig("/x/.red/config.yaml", { read: () => text });
+    expect(getConfig(values, "dev.trunk")).toBe("develop");
+  });
+
+  it("accepts a namespaced branch value (e.g. workspace/<user>)", () => {
+    const text = "plugins:\n  dev:\n    trunk: workspace/forattini\n";
+    const values = loadConfig("/x/.red/config.yaml", { read: () => text });
+    expect(getConfig(values, "dev.trunk")).toBe("workspace/forattini");
+  });
+});
+
 describe("config — block sequences (afk.backpressure, #430)", () => {
   it("parses a `- item` sequence into ordered indexed keys", () => {
     const text = "afk:\n  backpressure:\n    - npm run test\n    - npm run lint\n";

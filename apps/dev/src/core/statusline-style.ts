@@ -25,6 +25,7 @@
 // passes the COLUMNS budget.
 
 import {
+  formatCacheAge,
   humanizeAlive,
   humanizeTokens,
   renderStatusline,
@@ -105,12 +106,21 @@ function ctxKv(claude: ClaudeInput | undefined): string | null {
   return kv("ctx", value);
 }
 
-/** `prs=<n> iss=<n>` repo-global counts, each only when > 0. */
+/** `prs=<n> iss=<n>` repo-global counts, each only when > 0. When the cache
+ * was served TTL-stale and refresh failed, the first rendered count carries a
+ * soft age suffix so day-old counts are never silently shown as current. */
 function repoCountsKv(repo: RepoInput | undefined): string[] {
   if (!repo) return [];
   const parts: string[] = [];
-  if (repo.openPrs && repo.openPrs > 0) parts.push(kv("prs", String(repo.openPrs)));
-  if (repo.openIssues && repo.openIssues > 0) parts.push(kv("iss", String(repo.openIssues)));
+  const ageStr = repo.cacheAgeS !== undefined ? ` (${formatCacheAge(repo.cacheAgeS)})` : "";
+  if (repo.openPrs && repo.openPrs > 0) {
+    parts.push(kv("prs", String(repo.openPrs)) + ageStr);
+  }
+  if (repo.openIssues && repo.openIssues > 0) {
+    // put age on iss= only when prs= didn't already carry it
+    const issAge = ageStr && (!repo.openPrs || repo.openPrs === 0) ? ageStr : "";
+    parts.push(kv("iss", String(repo.openIssues)) + issAge);
+  }
   return parts;
 }
 
@@ -176,8 +186,14 @@ export function renderAfkLine(afk: AfkInput | undefined, columns: number | undef
   if (diff) groups.push(kv("loc", afk.locIsPeak ? `~${diff}` : diff));
 
   const pipe: string[] = [];
-  if (afk.queue > 0) pipe.push(kv("rdy", String(afk.queue)));
-  if (afk.human > 0) pipe.push(kv("hmn", String(afk.human)));
+  // Age marker: parallel to the plain-render path in afkTokens(); same placement
+  // rule — rdy= gets the mark first, falls to hmn= when queue is 0.
+  const ageStr = afk.cacheAgeS !== undefined ? ` (${formatCacheAge(afk.cacheAgeS)})` : "";
+  if (afk.queue > 0) pipe.push(kv("rdy", String(afk.queue)) + ageStr);
+  if (afk.human > 0) {
+    const hmAge = ageStr && afk.queue === 0 ? ageStr : "";
+    pipe.push(kv("hmn", String(afk.human)) + hmAge);
+  }
   if (afk.blocked > 0) pipe.push(kv("blk", String(afk.blocked)));
   if (afk.waiting !== undefined && afk.waiting > 0) pipe.push(kv("wai", String(afk.waiting)));
   if (afk.tokens !== undefined && afk.tokens > 0) pipe.push(kv("tok", humanizeTokens(afk.tokens)));

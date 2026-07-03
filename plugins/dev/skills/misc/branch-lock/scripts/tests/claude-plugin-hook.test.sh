@@ -38,12 +38,12 @@ trap 'rm -rf "$tmp"' EXIT
 
 primary="$tmp/red-skills"
 mkdir -p "$primary/.red"
+# No lock file and no `dev.lock.primary-branch` toggle: the untouchable-primary
+# rule (ADR 0083) must block branch movement anyway.
 cat > "$primary/.red/config.yaml" <<'EOF'
 plugins:
   dev:
     enabled: true
-    lock:
-      primary-branch: true
 EOF
 
 payload() {
@@ -62,14 +62,35 @@ err="$tmp/err"
 CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT" CLAUDE_PROJECT_DIR="$primary" bash -lc "$manifest_hook" \
   >"$out" 2>"$err" <<<"$(payload "git switch feature")"
 rc=$?
-expect_eq "primary guard: switch is blocked when flag is on" "2" "$rc"
-expect_contains "primary guard: error names config flag" "dev.lock.primary-branch is true" "$(<"$err")"
+expect_eq "primary guard: switch blocked with no lock and no config" "2" "$rc"
+expect_contains "primary guard: error names ADR 0083" "ADR 0083" "$(<"$err")"
+
+# issue #1024 — git reset (any form) and git stash (all subcommands) blocked,
+# and the refusal explains the reason + the sanctioned worktree alternative.
+CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT" CLAUDE_PROJECT_DIR="$primary" bash -lc "$manifest_hook" \
+  >"$out" 2>"$err" <<<"$(payload "git reset --hard")"
+rc=$?
+expect_eq "primary guard: reset --hard is blocked when flag is on" "2" "$rc"
+expect_contains "primary guard: reset refusal points to worktree" ".red/tmp/work-" "$(<"$err")"
+
+CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT" CLAUDE_PROJECT_DIR="$primary" bash -lc "$manifest_hook" \
+  >"$out" 2>"$err" <<<"$(payload "git stash")"
+rc=$?
+expect_eq "primary guard: stash is blocked when flag is on" "2" "$rc"
+
+CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT" CLAUDE_PROJECT_DIR="$primary" bash -lc "$manifest_hook" \
+  >"$out" 2>"$err" <<<"$(payload "git rebase --autostash main")"
+rc=$?
+expect_eq "primary guard: rebase --autostash is blocked when flag is on" "2" "$rc"
 
 CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT" CLAUDE_PROJECT_DIR="$primary" bash -lc "$manifest_hook" \
   >"$out" 2>"$err" <<<"$(payload "git commit -m wip")"
 rc=$?
 expect_eq "primary guard: commit is allowed" "0" "$rc"
 
+# The legacy toggle stays readable but can no longer *enable* switching: with it
+# explicitly false the guard still blocks, because primary movement is
+# unconditional (ADR 0083 §2).
 cat > "$primary/.red/config.yaml" <<'EOF'
 plugins:
   dev:
@@ -80,7 +101,8 @@ EOF
 CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT" CLAUDE_PROJECT_DIR="$primary" bash -lc "$manifest_hook" \
   >"$out" 2>"$err" <<<"$(payload "git switch feature")"
 rc=$?
-expect_eq "primary guard: flag off allows switch" "0" "$rc"
+expect_eq "primary guard: legacy toggle off still blocks switch" "2" "$rc"
+expect_contains "primary guard: legacy-off error names ADR 0083" "ADR 0083" "$(<"$err")"
 
 missing_root="$tmp/missing-plugin-root"
 mkdir -p "$missing_root"

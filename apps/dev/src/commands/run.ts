@@ -55,6 +55,7 @@ import { attemptLedgerContext, formatAttemptContext, highestAttempt, type Attemp
 import { isValidWorkerId } from "../core/worker-paths.js";
 import { readdirSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
+import { isLivePid } from "../runtime/kill-tree.js";
 import { specialUserRequestBlock, claudeSpawnArgs, codexSpawnArgs } from "../core/runner-spawn.js";
 import { buildWorkerAttemptPath } from "../core/worker-paths.js";
 import { branchLockPath, readLockedBranch, isLocked } from "../runtime/lock.js";
@@ -126,6 +127,9 @@ interface ParsedRunFlags {
    * no PR, no merge; the agent report is posted as a comment and the disposable
    * issue closes. Additional modes may be added by future dispatch tiers. */
   runMode?: string;
+  /** --force: bypass the live-supervisor boot guard (#1027). Operator accepts
+   * the collision risk; a warning is printed but the run proceeds. */
+  force: boolean;
 }
 
 /** Raised when --alternate is combined with --runner (mutually exclusive). */
@@ -134,6 +138,54 @@ export class RunFlagError extends Error {
     super(message);
     this.name = "RunFlagError";
   }
+}
+
+/**
+ * Probe the fleet supervisor pid file. Returns `{ live: true, pid }` when a
+ * running supervisor is detected, `{ live: false }` otherwise (no file, stale
+ * pid, or invalid content). `checkLivePid` is injectable so tests can provide a
+ * fake process probe without spawning real processes (#1027).
+ */
+export async function probeFleetSupervisor(
+  pidFile: string,
+  checkLivePid: (pid: number) => boolean = isLivePid,
+): Promise<{ live: true; pid: number } | { live: false }> {
+  try {
+    const raw = (await readFile(pidFile, "utf8")).trim();
+    if (!/^\d+$/.test(raw)) return { live: false };
+    const pid = Number(raw);
+    if (!checkLivePid(pid)) return { live: false };
+    return { live: true, pid };
+  } catch {
+    return { live: false };
+  }
+}
+
+/**
+ * Apply the boot guard: refuse to start if a fleet supervisor is already live
+ * (unless `--force` was passed). Returns `"refused"` when the caller should
+ * abort, `"forced"` when the guard was bypassed with a warning, or `"clear"`
+ * when no live supervisor was found.
+ */
+export async function checkBootGuard(
+  pidFile: string,
+  force: boolean,
+  stdout: NodeJS.WritableStream,
+  checkLivePid: (pid: number) => boolean = isLivePid,
+): Promise<"refused" | "forced" | "clear"> {
+  const probe = await probeFleetSupervisor(pidFile, checkLivePid);
+  if (!probe.live) return "clear";
+  if (force) {
+    stdout.write(`warn: --force: fleet supervisor pid=${probe.pid} is still running; collision risk accepted.\n`);
+    return "forced";
+  }
+  stdout.write(
+    `afk: a fleet supervisor is already running (pid=${probe.pid}).\n` +
+      `  monitor the running fleet: /dev:afk fleet\n` +
+      `  stop it first:             afk stop\n` +
+      `  override (risk):           afk run --force\n`,
+  );
+  return "refused";
 }
 
 /** Parse a comma-separated issue list into an ordered, finite number list. */
@@ -183,6 +235,7 @@ const RUN_FLAG_SCHEMA = {
   "local-merge": { kind: "boolean" },
   yolo: { kind: "boolean" },
   "run-mode": { kind: "value", coerce: (raw: string): string => raw },
+  force: { kind: "boolean" },
 } satisfies FlagSchema;
 
 /** Parse the `run` flags: --prd N / --issues a,b,c / -n N / --once / --request / --runner. */
@@ -237,6 +290,7 @@ export function parseRunFlags(args: readonly string[]): ParsedRunFlags {
     localMerge: values["local-merge"] === true,
     yolo: values.yolo === true,
     runMode: values["run-mode"] as string | undefined,
+    force: values.force === true,
   };
 }
 
@@ -253,8 +307,9 @@ function makeBootReconcileRunner(
   const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo };
   const gitCtx: GitContext = { cwd: ctx.root };
   const lockPath = branchLockPath(ctx.root);
-  const configLockedBranch =
-    getConfig(loadConfig(paths.configPath, { warn: () => undefined }), "dev.lock.branch") || undefined;
+  const reconcileConfig = loadConfig(paths.configPath, { warn: () => undefined });
+  const configLockedBranch = getConfig(reconcileConfig, "dev.lock.branch") || undefined;
+  const configTrunk = getConfig(reconcileConfig, "dev.trunk") || undefined;
 
   return async (plan: ReconcileSweepPlan) => {
     // Acquire the per-issue claim before validating/landing so a concurrent live
@@ -348,6 +403,7 @@ function makeBootReconcileRunner(
         {
           readLockedBranch: () => readLockedBranch(lockPath),
           configLockedBranch,
+          configTrunk,
           fetchIssueBody: (n) => ghx.issueBody(ghCtx, n),
         },
       );
@@ -753,6 +809,7 @@ export function buildProcessDeps(
       base: {
         readLockedBranch: () => readLockedBranch(lockPath),
         configLockedBranch: getConfig(config, "dev.lock.branch") || undefined,
+        configTrunk: getConfig(config, "dev.trunk") || undefined,
         fetchIssueBody: (n) => ghx.issueBody(ghCtx, n),
       },
       isLocked: () => isLocked(lockPath),
@@ -972,7 +1029,10 @@ export function buildProcessDeps(
         const worktree =
           (await gitx.worktreePathUnder(gitCtx, current.attemptDir).catch(() => undefined)) ??
           join(current.attemptDir, "worktree");
-        const baseRef = info.base ? `origin/${info.base}` : "origin/main";
+        // Fall back to the configured Trunk (ADR 0083), not a literal "main".
+        const baseRef = info.base
+          ? `origin/${info.base}`
+          : `origin/${getConfig(config, "dev.trunk") || "main"}`;
         const { added, removed } = await gitx
           .diffstatShortstat({ cwd: worktree }, baseRef)
           .catch(() => ({ added: 0, removed: 0 }));
@@ -1060,6 +1120,62 @@ export function buildProcessDeps(
     // hop. ALL errors are swallowed (one warn line), so a memory failure can
     // NEVER fail the close.
     recordAttempt: makeRecordAttempt(ctx.root, current, exec),
+    // PRD cascade rebase (issue #1007): after a successful DONE landing, rebase
+    // every open sibling branch (same prd:N, not held by a live worker) onto the
+    // new base HEAD. Best-effort — failures log a warning, never fail the close.
+    // Gated by `afk.landing.cascade_rebase` (default "true", checked in core).
+    cascadeRebase: {
+      async listAFKBranches() {
+        const refs = await gitx.listRemoteBranches(gitCtx, "afk/");
+        return refs.map((r) => r.branch);
+      },
+      isWorkerLive(workerId: string): boolean {
+        try {
+          const pidPath = workerPidFile(paths.tmpDir, workerId);
+          const content = readFileSync(pidPath, "utf8").trim();
+          if (!/^[1-9][0-9]*$/.test(content)) return false;
+          process.kill(Number(content), 0);
+          return true;
+        } catch (err) {
+          return (err as NodeJS.ErrnoException).code === "EPERM";
+        }
+      },
+      async rebaseAndPush(repoDir: string, branch: string, newBase: string) {
+        const slug = branch.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
+        const slot = parseSlot(process.env.RED_AFK_SLOT) ?? 0;
+        const dest = join(paths.tmpDir, "cascade-rebase", `${slug}-${slot}`);
+        try {
+          await gitx.worktreeRemove(gitCtx, dest);
+          const ok = await gitx.worktreeAdd(gitCtx, dest, branch);
+          if (!ok) {
+            return { ok: false, warn: `failed to create worktree for ${branch}` };
+          }
+          const run = exec ?? (await import("../runtime/exec.js")).execTool;
+          const rebaseR = await run("git", ["rebase", `origin/${newBase}`], { cwd: dest });
+          if (rebaseR.code !== 0) {
+            await run("git", ["rebase", "--abort"], { cwd: dest }).catch(() => {});
+            return {
+              ok: false,
+              warn: `rebase of ${branch} onto ${newBase} conflicted: ${rebaseR.stderr.slice(0, 200)}`,
+            };
+          }
+          const pushR = await run(
+            "git",
+            ["push", "origin", `HEAD:refs/heads/${branch}`, "--force-with-lease"],
+            { cwd: dest },
+          );
+          if (pushR.code !== 0) {
+            return {
+              ok: false,
+              warn: `--force-with-lease push rejected for ${branch}: ${pushR.stderr.slice(0, 200)}`,
+            };
+          }
+          return { ok: true };
+        } finally {
+          await gitx.worktreeRemove(gitCtx, dest).catch(() => {});
+        }
+      },
+    },
   };
 }
 
@@ -1296,6 +1412,16 @@ export async function runCommand(options: RunOptions): Promise<number> {
   const ctx = await resolveRepoContext(cwd);
   const settings = resolveRunSettings(cwd, process.env, runner);
   const paths = afkPaths(cwd);
+
+  // Boot guard (#1027): refuse to start if a fleet supervisor is already live.
+  // Supervisor-dispatched paths bypass this: --reconcile-issue workers are
+  // spawned by the running supervisor; RED_AFK_SWEEPS_DONE=1 workers are
+  // fleet-owned and the supervisor already holds the pid.
+  if (flags.reconcileIssue === undefined && process.env.RED_AFK_SWEEPS_DONE !== "1") {
+    const pidFile = join(paths.tmpDir, "afk-supervisor.pid");
+    const guard = await checkBootGuard(pidFile, flags.force, process.stdout);
+    if (guard === "refused") return 1;
+  }
 
   // Worker id — probe the workers root for collisions.
   const existing = new Set((await collectMonitorInputs(cwd)).workers.map((w) => w.state.worker_id));

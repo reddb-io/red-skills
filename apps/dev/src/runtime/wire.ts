@@ -21,6 +21,14 @@ import { parseAttemptTimeout, parseMaxIterations } from "../core/execution.js";
 import { resolveLaneIdleStallConfig, type LaneIdleStallConfig } from "../core/lane-idle-reaper.js";
 import { inspectProcessTreeNative } from "./proc-tree.js";
 import { statSync } from "node:fs";
+import {
+  evaluateLiveness,
+  resolveLivenessCrossCheckArming,
+  createProcessDescendantProbe,
+  parseLivenessRecords,
+  LIVENESS_LANE_FILENAME,
+  type LivenessVerdict,
+} from "@reddb-io/red-castle";
 import type { BranchRef } from "../core/branch-cleanup.js";
 import { isRunner, type Runner } from "../types/runner.js";
 import * as ghx from "./gh.js";
@@ -210,13 +218,16 @@ export function resolveRunSettings(
   // config so the run fails fast before claiming an issue.
   const laneIdle = resolveLaneIdleStallConfig(env);
   // Feedback-gate base rebase (Pattern 2). Only resolves to a base branch when
-  // the opt-in flag is on; the base is the config-locked branch or "main".
+  // the opt-in flag is on; the base is the config-locked branch or the Trunk
+  // (`dev.trunk`, ADR 0083 — defaults to "main").
   // A RED_AFK_FEEDBACK_REBASE env knob lets an E2E/CI run force it without
   // mutating .red/config.yaml, mirroring the other RED_AFK_* overrides.
   const rebaseFlag =
     (env.RED_AFK_FEEDBACK_REBASE ?? "").trim() === "1" ||
     getConfig(cfg, "afk.feedback.rebase_on_base") === "true";
-  const feedbackRebaseBase = rebaseFlag ? getConfig(cfg, "dev.lock.branch") || "main" : undefined;
+  const feedbackRebaseBase = rebaseFlag
+    ? getConfig(cfg, "dev.lock.branch") || getConfig(cfg, "dev.trunk") || "main"
+    : undefined;
   // Per-attempt resource budget (#908) — env > `afk.attempt.*` config; undefined
   // when no ceiling is set (inert).
   const attemptBudget = resolveAttemptBudget(env, (key) => getConfig(cfg, key));
@@ -233,17 +244,40 @@ export function resolveRunSettings(
   };
 }
 
-/** mtime of the solo attempt's agent lane (`agent.log.jsonl`) in whole epoch
- * seconds, 0 when the lane does not exist yet / cannot be stat'd. The clean
- * liveness signal the solo lane-idle reaper keys off — mirrors the fleet
- * `agentLaneMtimeFor` stat, but resolved directly from the attempt dir the solo
- * worker already holds (no slot-pid round-trip). Best-effort: any stat failure
- * degrades to 0 (no lane observed), which computeStalled never flags. */
-export function agentLaneMtimeSeconds(lanePath: string): number {
+/**
+ * Red-castle liveness evaluator verdict for the solo attempt's liveness lane
+ * (`liveness.lane.jsonl`). Reads and parses the lane synchronously, then calls
+ * `evaluateLiveness` with the configured idle threshold and a process cross-check
+ * (no-sandbox only, matching the fleet path). Returns null on any read failure
+ * (lane not yet written degrades gracefully to null → not-candidate this tick).
+ *
+ * Replaces the old `agentLaneMtimeSeconds` firehose-mtime probe (#1022): the
+ * liveness lane is the un-poisonable signal that the substrate's own control
+ * flow refreshes — never afk.log / agent.log.jsonl / the heartbeat (#243).
+ */
+export function agentLivenessVerdictSync(
+  attemptDir: string,
+  laneIdleMs: number,
+): LivenessVerdict | null {
+  const lanePath = join(attemptDir, LIVENESS_LANE_FILENAME);
+  let laneRecencyMs: number | undefined;
   try {
-    return Math.floor(statSync(lanePath).mtimeMs / 1000);
+    const raw = readFileSync(lanePath, "utf-8");
+    const records = parseLivenessRecords(raw);
+    if (records.length > 0) {
+      laneRecencyMs = records.reduce((max, r) => (r.at > max ? r.at : max), records[0]!.at);
+    }
   } catch {
-    return 0;
+    // Lane absent or unreadable → laneRecencyMs stays undefined.
+  }
+  const { crossCheckArmed } = resolveLivenessCrossCheckArming({ sandboxTag: "none" });
+  const hasLiveDescendants = crossCheckArmed
+    ? createProcessDescendantProbe({ agentPid: process.pid })
+    : undefined;
+  try {
+    return evaluateLiveness({ laneRecencyMs, now: Date.now(), laneIdleMs, crossCheckArmed, hasLiveDescendants });
+  } catch {
+    return null;
   }
 }
 
@@ -394,9 +428,10 @@ export function makeRunAgent(
             laneIdleThresholdSeconds: laneIdleCfg.stallThresholdS,
             laneIdleKillThresholdSeconds: laneIdleCfg.stallKillThresholdS,
             laneIdlePollSeconds: laneIdleCfg.stallPollS,
-            // Clean liveness signal: the attempt's agent.log.jsonl mtime in whole
-            // seconds, 0 when absent — NEVER afk.log / the firehose (#243).
-            laneMtimeProbe: () => agentLaneMtimeSeconds(`${laneAttemptDir}/agent.log.jsonl`),
+            // Clean liveness signal: the evaluator over the attempt's
+            // liveness.lane.jsonl — the un-poisonable lane (#1022, ADR 0083 §3).
+            livenessVerdictProbe: () =>
+              agentLivenessVerdictSync(laneAttemptDir, laneIdleCfg.stallThresholdS * 1000),
             // Inner-agent tree is a descendant of this worker process; the native
             // inspector is safe-by-default (a failed ps reports busy, never reaps).
             inspectTree: () => inspectProcessTreeNative(process.pid),
@@ -417,6 +452,13 @@ export interface MonitorInputs {
   workers: CompactWorker[];
   events: Array<Pick<HistoryRecord, "event" | "epoch">>;
   fleet: FleetState | null;
+  /** GitHub queue/human counts read passively from the statusline TTL cache.
+   * Absent when the cache file has never been written (no statusline run yet). */
+  remoteQueue?: number;
+  remoteHuman?: number;
+  /** Age of the statusline cache in seconds. Undefined when no cache file exists.
+   * The monitor render shows a stale marker when this exceeds STATUSLINE_CACHE_TTL_S. */
+  remoteCacheAgeS?: number;
 }
 
 const SLOT_STATUSES = new Set<SlotDetail["status"]>(["open", "half-open", "idle-parked"]);
@@ -484,14 +526,13 @@ export async function readFleetState(path: string): Promise<FleetState | null> {
 export async function collectMonitorInputs(root = process.cwd()): Promise<MonitorInputs> {
   const paths = afkPaths(root);
   // The ONE owner reads + normalizes + liveness-tags every worker state file
-  // (core/worker-state-reader). The dashboard's `[live]` badge uses the
-  // pid-identity + freshness verdict (`active`); the `[quiet]` badge falls back
-  // to the pid-identity verdict (`live`, surfaced here as `pidLive`).
+  // (core/worker-state-reader). The single source of liveness truth for all
+  // surfaces is WorkerStateRecord.livenessVerdict (evaluator verdict, ADR 0083 §3).
   const records = await readWorkerStates(paths.workersRoot);
   const logPaths = records.map(({ path, state }) => state.log || join(dirname(path), "afk.log"));
   const logCounts = await collectLogLineCounts(paths.monitorLogCursorPath, logPaths);
   const workers: CompactWorker[] = [];
-  for (const { path, state, active, live: pidLive, liveness } of records) {
+  for (const { path, state, active, live: pidLive, liveness, livenessVerdict } of records) {
     // Diff volume: committed + uncommitted work for the attempt, measured from
     // the branch's merge-base with origin/main. Prefer the state file's persisted
     // counts; fall back to a live `git diff --shortstat` of the worktree when both
@@ -500,11 +541,23 @@ export async function collectMonitorInputs(root = process.cwd()): Promise<Monito
     // into the fleet header, so it is never suppressed.
     let added = state.current.loc_added;
     let removed = state.current.loc_removed;
-    if (added === 0 && removed === 0 && state.current.worktree) {
+    if (added === 0 && removed === 0) {
+      const attemptDir = dirname(path);
       const baseRef = state.current.base ? `origin/${state.current.base}` : "origin/main";
-      const stat = await gitx.diffstatShortstat({ cwd: state.current.worktree }, baseRef);
-      added = stat.added;
-      removed = stat.removed;
+      // Resolve the real worktree path: the state file carries it after the first
+      // heartbeat tick. Before that (or for sandcastle where the initial seed is the
+      // legacy {attemptDir}/worktree path that never exists), fall back to
+      // worktreePathUnder which probes `git worktree list --porcelain` and resolves
+      // the sandcastle layout ({attemptDir}/.sandcastle/worktrees/{slug}) even before
+      // the heartbeat has had a chance to persist the resolved path.
+      const worktreePath =
+        state.current.worktree ||
+        (await gitx.worktreePathUnder({ cwd: attemptDir }, attemptDir).catch(() => undefined));
+      if (worktreePath) {
+        const stat = await gitx.diffstatShortstat({ cwd: worktreePath }, baseRef);
+        added = stat.added;
+        removed = stat.removed;
+      }
     }
 
     const logPath = state.log || join(dirname(path), "afk.log");
@@ -538,10 +591,10 @@ export async function collectMonitorInputs(root = process.cwd()): Promise<Monito
         },
       },
       liveness,
-      // active = pid identity matches + agent-lane freshness → [live] badge.
-      // pidLive = pid identity matches regardless of freshness → [quiet] badge
-      // when the agent lane is idle (e.g. post_attempt gate/commit) but the
-      // process still lives.
+      livenessVerdict,
+      // active = evaluator says "alive" → [live] badge.
+      // pidLive kept for backward compat with older test stubs (ignored when
+      // livenessVerdict is present).
       live: active,
       pidLive,
       diffAdded: added,
@@ -553,7 +606,18 @@ export async function collectMonitorInputs(root = process.cwd()): Promise<Monito
   const histText = await fsx.readText(paths.historyPath);
   const events = histText === null ? [] : parseHistoryLines(histText).map((r) => ({ event: r.event, epoch: r.epoch }));
   const fleet = await readFleetState(paths.fleetStatePath);
-  return { workers, events, fleet };
+
+  // Remote facts: read the statusline TTL cache passively (no refresh — the monitor
+  // is read-only; the statusline owns the cache lifecycle). Include queue/human counts
+  // and the cache age so the render can show a stale marker when the data is old.
+  const cachePath = join(paths.tmpDir, "statusline-cache.json");
+  const cached = readStatuslineCache(cachePath);
+  const nowS = Math.floor(Date.now() / 1000);
+  const remoteExtra = cached !== null
+    ? { remoteQueue: cached.queue, remoteHuman: cached.human, remoteCacheAgeS: nowS - cached.ts }
+    : {};
+
+  return { workers, events, fleet, ...remoteExtra };
 }
 
 // ---------- statusline inputs ----------
@@ -658,17 +722,14 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
   const aliveMsList: number[] = [];
   const sourceMap = new Map<string, number>();
 
-  for (const { state, live } of records) {
-    // Statusline line 2 counts every pid-live worker (the orchestrator process is
-    // alive), NOT only "fresh" ones (#836). The agent stream legitimately goes
-    // silent for minutes during the feedback gate / long builds — the per-minute
-    // heartbeat even stops at post_attempt — so an `active` (180s freshness) gate
-    // dropped a busy worker and made line 2 VANISH mid-test, reading as "fleet
-    // died." A finished worker sets pid:0 (split teardown) and its dir is reclaimed
-    // by the completion sweep, so it still drops here; only a SIGKILL'd worker with
-    // an OS-recycled pid can briefly ghost (bounded by the boot sweep). The record's
-    // `active` flag stays available for a future per-worker quiet badge.
-    if (!live) continue;
+  for (const { state, livenessVerdict } of records) {
+    // Statusline counts workers the evaluator does not consider stalled. A busy
+    // worker with live agent descendants shows as "alive" even when the liveness
+    // lane is silent (wedged-substrate guard in the evaluator), so a long
+    // build/gate wait no longer makes the AFK block vanish. "unknown" (container
+    // workers) is treated conservatively as live. Only "stalled" (stale lane AND
+    // no live descendants) is excluded.
+    if (livenessVerdict.status === "stalled") continue;
 
     workers += 1;
     blocked += state.blocked;
@@ -735,6 +796,7 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
   let human = cached?.human ?? 0;
 
   const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo };
+  let refreshSucceeded = false;
   const refresh = async (): Promise<void> => {
     const [q, h] = await Promise.all([
       ghx.countReadyForAgent(ghCtx),
@@ -742,9 +804,11 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
     ]);
     queue = q;
     human = h;
+    refreshSucceeded = true;
     writeStatuslineCacheAtomic(cachePath, { queue: q, human: h, ts: nowS });
   };
 
+  let cacheAgeS: number | undefined;
   if (!cached) {
     // Cold cache: refresh with a bounded deadline so a hanging gh CLI cannot
     // block the statusline render indefinitely. queue/human stay 0/0 on timeout
@@ -752,8 +816,11 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
     await withTimeout(refresh(), STATUSLINE_GH_COLD_TIMEOUT_MS, undefined).catch(() => undefined);
   } else if (nowS - cached.ts >= STATUSLINE_CACHE_TTL_S) {
     // Stale: await a bounded refresh so the cache is rewritten before the
-    // process exits. Shows the previous value on timeout (fail-open).
+    // process exits. Shows the previous value on timeout (fail-open). When
+    // refresh fails, mark the age so the renderer can signal staleness.
+    const staleAgeS = nowS - cached.ts;
     await withTimeout(refresh(), STATUSLINE_GH_COLD_TIMEOUT_MS, undefined).catch(() => undefined);
+    if (!refreshSucceeded) cacheAgeS = staleAgeS;
   }
 
   if (workers <= 0) return null;
@@ -777,6 +844,7 @@ export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput |
     model: model || undefined,
     effort: effort || undefined,
     sourceCounts,
+    cacheAgeS,
   };
 }
 
@@ -827,18 +895,24 @@ export async function collectStatuslineRepo(ctx: RepoContext): Promise<RepoInput
   let openIssues = cached?.openIssues ?? 0;
 
   const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo };
+  let repoRefreshSucceeded = false;
   const refresh = async (): Promise<void> => {
     const [p, i] = await Promise.all([ghx.countOpenPrs(ghCtx), ghx.countOpenIssues(ghCtx)]);
     openPrs = p;
     openIssues = i;
+    repoRefreshSucceeded = true;
     writeRepoStatsCacheAtomic(cachePath, { openPrs: p, openIssues: i, ts: nowS });
   };
+  let repoCacheAgeS: number | undefined;
   if (!cached) {
     await withTimeout(refresh(), STATUSLINE_GH_COLD_TIMEOUT_MS, undefined).catch(() => undefined);
   } else if (nowS - cached.ts >= STATUSLINE_CACHE_TTL_S) {
     // Stale: await a bounded refresh so the cache is rewritten before the
-    // process exits. Shows the previous value on timeout (fail-open).
+    // process exits. Shows the previous value on timeout (fail-open). When
+    // refresh fails, mark the age so the renderer can signal staleness.
+    const staleAgeS = nowS - cached.ts;
     await withTimeout(refresh(), STATUSLINE_GH_COLD_TIMEOUT_MS, undefined).catch(() => undefined);
+    if (!repoRefreshSucceeded) repoCacheAgeS = staleAgeS;
   }
 
   // Local branch diff (committed + uncommitted) vs origin/main, bounded so a slow
@@ -850,7 +924,7 @@ export async function collectStatuslineRepo(ctx: RepoContext): Promise<RepoInput
     { added: 0, removed: 0 },
   ).catch(() => ({ added: 0, removed: 0 }));
 
-  return { openPrs, openIssues, localAdded: diff.added, localRemoved: diff.removed };
+  return { openPrs, openIssues, localAdded: diff.added, localRemoved: diff.removed, cacheAgeS: repoCacheAgeS };
 }
 
 // ---------- reap inputs ----------

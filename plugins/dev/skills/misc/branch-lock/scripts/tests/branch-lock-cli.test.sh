@@ -4,11 +4,11 @@
 # Covers the atomic relock-then-switch contract of `set`:
 #   AC1: `set <new>` from a different branch updates the lock AND lands the
 #        working tree on <new> in one step.
-#   AC2: the intended switch is never blocked by the hook — proven by showing
-#        (a) the PreToolUse hook BLOCKS a raw `git switch <new>` while the lock
-#        still points at the old branch, yet (b) `set <new>` succeeds anyway,
-#        because the CLI rewrites the lock target first so the move it performs
-#        is "return to the lock target", which the hook allows.
+#   AC2: the CLI still lands the branch even though the untouchable-primary rule
+#        (ADR 0083) blocks every raw agent `git switch` — proven by showing
+#        (a) the PreToolUse hook BLOCKS a raw `git switch <new>`, yet (b)
+#        `set <new>` succeeds anyway, because the CLI performs the switch itself
+#        (a subprocess, not an agent Bash-tool call the hook can intercept).
 #   AC3: locking to the branch already checked out just rewrites the target
 #        (no switch needed, exit 0).
 #
@@ -45,7 +45,8 @@ expect_contains() {
   fi
 }
 
-# A throwaway repo with two branches, left checked out on `main`.
+# A throwaway repo with two branches, left checked out on `main`. The dev plugin
+# is opted in (ADR 0067 gate) so the PreToolUse hook is armed for run_hook.
 mk_repo() {
   local dir="$1"
   git init -q -b main "$dir"
@@ -53,6 +54,8 @@ mk_repo() {
   git -C "$dir" config user.name t
   git -C "$dir" commit -q --allow-empty -m init
   git -C "$dir" branch feature
+  mkdir -p "$dir/.red"
+  printf 'plugins:\n  dev:\n    enabled: true\n' > "$dir/.red/config.yaml"
 }
 
 current_branch() { git -C "$1" rev-parse --abbrev-ref HEAD; }
@@ -91,10 +94,11 @@ OUT2="$(run_cli "$R2" set feature)"; RC2=$?
 expect_eq "AC2 CLI set <new>: exit 0 despite the old lock" "0" "$RC2"
 expect_eq "AC2 CLI set <new>: lock now on new branch" "feature" "$(locked_branch "$R2")"
 expect_eq "AC2 CLI set <new>: tree landed on new branch" "feature" "$(current_branch "$R2")"
-# And the post-relock state is internally consistent: the hook now allows the
-# very move the CLI just made (return to the lock target).
-expect_eq "AC2 post-relock: hook allows switch to the new target" \
-  "0" "$(run_hook "$R2" "git switch feature")"
+# Untouchable primary (ADR 0083): a raw agent switch to the new target is still
+# refused — the primary is never movable by the agent, even back to the lock
+# target. The CLI succeeds because it switches itself, outside the hook's reach.
+expect_eq "AC2 post-relock: hook still blocks raw switch to the new target" \
+  "2" "$(run_hook "$R2" "git switch feature")"
 
 # ===========================================================================
 # AC3 — locking to the branch already checked out just rewrites the target.

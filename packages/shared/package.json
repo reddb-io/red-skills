@@ -1,6 +1,6 @@
 {
   "name": "@reddb-io/shared",
-  "version": "1.261.1",
+  "version": "1.265.0",
   "private": true,
   "type": "module",
   "description": "Code shared across RedSkills runtime apps (ADR 0034): CLI arg parsing over cli-args-parser, and the dynamic plugin-bundle fetch.",
@@ -11,6 +11,7 @@
     "./bundle-fetch.js": "./bundle-fetch.ts",
     "./channel.js": "./channel.ts",
     "./entrypoint-cli.js": "./entrypoint-cli.ts",
+    "./self-update.js": "./self-update.ts",
     "./log.js": "./log.ts",
     "./plugin-gate.js": "./plugin-gate.ts"
   },

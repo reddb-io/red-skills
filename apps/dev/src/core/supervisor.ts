@@ -15,6 +15,7 @@
 // workers own all claim-lock / state / queue semantics (supervisor.sh header).
 
 import { decideReaperSignal, deriveSnapshot, type ProcessSnapshotEntry } from "./reaper-signal.js";
+import type { LivenessVerdict } from "@reddb-io/red-castle";
 import {
   freshWakeStats,
   recordWake,
@@ -392,23 +393,13 @@ export function recordDeath(
 // ---------- stall candidacy (pure) ----------
 
 /**
- * compute_stalled (supervisor.sh ~551): pure predicate deciding whether a slot
- * meets every passive-stall criterion. The slot is stalled when its worker has
- * been alive at least the threshold AND its agent lane has been silent at least
- * the threshold. A spawn epoch of 0 (uninitialised slot) or a lane mtime of 0
- * (no lane observed yet — normal startup) is never flagged.
- */
-export function computeStalled(
-  spawnEpoch: number,
-  laneMtime: number,
-  now: number,
-  thresholdS: number,
-): boolean {
-  if (!(spawnEpoch > 0)) return false;
-  if (!(now - spawnEpoch >= thresholdS)) return false;
-  if (!(laneMtime > 0)) return false;
-  return now - laneMtime >= thresholdS;
-}
+ * compute_stalled is deleted — stall detection now uses the red-castle
+ * LivenessVerdict from SupervisorFs.workerLivenessVerdict (ADR 0083 §3).
+ * The evaluator combines lane recency with a process cross-check so a worker
+ * that refreshes the firehose but not the liveness lane can no longer defeat
+ * the kill, and a worker with live agent descendants is never falsely reaped.
+ * The spawnEpoch guard (don't flag freshly started workers) is kept inline in
+ * pollStallDetector so the "just spawned" window still applies.
 
 // ---------- injected IO ----------
 
@@ -459,10 +450,14 @@ export interface SupervisorProc {
 
 /** Filesystem side effects. Best-effort, like the bash `|| true` cleanups. */
 export interface SupervisorFs {
-  /** Last-modified epoch (seconds) of the slot's agent lane, or 0 when the lane
-   * does not exist / the worker is between iterations. Mirrors the
-   * `stat -c %Y "$lane"` read in poll_stall_detector. */
-  agentLaneMtime(slot: number): number;
+  /**
+   * Red-castle evaluator verdict for the slot's current attempt (ADR 0083 §3).
+   * The `laneIdleMs` parameter sets the idle threshold so the supervisor can
+   * use its configured stall window rather than the display threshold.
+   * Returns null when no iter dir is found (worker between iterations or died
+   * pre-claim). Replaces the old `agentLaneMtime` firehose-mtime check.
+   */
+  workerLivenessVerdict(slot: number, laneIdleMs: number): LivenessVerdict | null;
   /** Resolve the slot's current iteration dir + the state it carries, or null
    * when the worker is between iterations / died pre-claim. Mirrors
    * find_slot_iter_dir + the jq reads in reap_stalled_slot. */
@@ -1184,15 +1179,24 @@ export async function pollStallDetector(
     const slot = state.slots[i]!;
     if (slot.parked || slot.idleParked) continue;
 
-    const laneMtime = deps.fs.agentLaneMtime(i);
-    const flagged = computeStalled(slot.spawnEpoch, laneMtime, now, config.stallThresholdS);
+    // Skip freshly-spawned slots (startup window: same guard as old computeStalled).
+    if (!(slot.spawnEpoch > 0) || !(now - slot.spawnEpoch >= config.stallThresholdS)) continue;
+
+    // Evaluator verdict: stale lane + no live descendants → stalled. Live
+    // descendants → alive even when the lane is silent (wedged substrate guard).
+    const verdict = deps.fs.workerLivenessVerdict(i, config.stallThresholdS * 1000);
+    const flagged = verdict !== null && verdict.status === "stalled";
 
     if (flagged) {
       if (!slot.stalled) {
         slot.stalled = true;
-        // Anchor the stall window to the last observed lane activity so the
-        // rendered idle duration matches "agent lane idle for N".
-        slot.stallSinceEpoch = laneMtime;
+        // Anchor the stall window to the last observed lane activity. When the
+        // lane record age is known, compute the epoch; otherwise anchor to now.
+        const stallSince =
+          verdict.laneAgeMs !== undefined
+            ? now - Math.round(verdict.laneAgeMs / 1000)
+            : now;
+        slot.stallSinceEpoch = stallSince;
         // Dispatch on_stall_detected on first detection. Best-effort.
         if (deps.dispatchFleetHook) {
           try {
@@ -1201,8 +1205,9 @@ export async function pollStallDetector(
               runner: config.runner,
               slot: i,
               ...(slot.pid !== null ? { pid: slot.pid } : {}),
-              stall_since: laneMtime,
-              idle_seconds: now - laneMtime,
+              stall_since: stallSince,
+              idle_seconds:
+                verdict.laneAgeMs !== undefined ? Math.round(verdict.laneAgeMs / 1000) : 0,
             });
           } catch {
             // best-effort

@@ -71,20 +71,24 @@ A read-only reflection of AFK worker state onto a runner-native background-task 
 _Avoid_: native agent, subagent
 
 **Branch lock**:
-A local opt-in pin (`.red/tmp/branch-lock.yaml`) that blocks the interactive agent from switching away from one branch in the **Primary checkout**, and — when set — overrides the **Pinned branch** as AFK's base/merge target (precedence lock > pin > main) and toggles the landing: locked work merges into the locked branch for human promotion, unlocked work lands via an admin-merged PR (ADR 0030/0031).
+A local opt-in pin (`.red/tmp/branch-lock.yaml`) that blocks the interactive agent from switching away from one branch in the **Primary checkout**, and — when set — overrides the **Pinned branch** as AFK's base/merge target (precedence lock > pin > **Trunk**) and toggles the landing: locked work merges into the locked branch for human promotion, unlocked work lands via an admin-merged PR (ADR 0030/0031).
 _Avoid_: pinned branch
 
 **Pinned branch**:
 The branch an **Issue** or PRD declares that AFK must base work on and merge back into.
 _Avoid_: branch lock
 
+**Trunk**:
+The repo's configured focal branch — the default base every AFK **Worktree** forks from and the default target a **Landing** integrates into, always read as its fresh-fetched remote ref, never as the local working-tree branch. Defaults to `main` but is repo-configurable (e.g. `develop`); a **Pinned branch** or **Branch lock** overrides it (precedence lock > pin > trunk).
+_Avoid_: main (as a hardcoded assumption), default branch, primary branch
+
 **Landing**:
-How a completed **Attempt**'s worker branch is integrated into its base, toggled by the **Branch lock** (ADR 0030/0031): a locked branch is merged locally into the locked branch for human promotion (`landMerge`, with a one-shot self-resolve of merge conflicts), an unlocked branch lands via an admin-merged PR carrying the attempt history (`landPr`). Owns the push → integrate → land → post-merge sequence as one operation.
+How a completed **Attempt**'s worker branch is integrated into its base, toggled by the **Branch lock** (ADR 0030/0031, write target moved to the remote by ADR 0083): a locked branch is integrated on `origin/<locked-branch>` for human promotion by pull (`landMerge`, with a one-shot self-resolve of merge conflicts), an unlocked branch lands via an admin-merged PR carrying the attempt history (`landPr`). Never writes to the **Primary checkout**. Owns the push → integrate → land → post-merge sequence as one operation.
 _Avoid_: merge, merge-back, integrate (these are sub-steps of Landing, not the operation)
 
-**Ship (interactive landing)**:
-The `/ship` finalizer for already-committed work in an exempt `.red/tmp/work-ship-*/` worktree. It pushes the branch early, opens or reuses a PR, monitors checks and reviews with a time cap, and uses a pure merge gate to either approve/merge normally or park the linked Issue and PR in the **HITL queue**. Contrasts with AFK's autonomous admin-merge landing: Ship respects branch protection and requested changes instead of bypassing review gates.
-_Avoid_: AFK landing, admin merge, manual merge
+**Ship (interactive landing) — RETIRED (ADR 0081)**:
+The historical `/ship` finalizer for already-committed work in an exempt `.red/tmp/work-ship-*/` worktree. Retired by ADR 0081: its roles are subsumed by the dispatch tiers — hand-done work routes through **requeue** (the no-agent landing lane, ADR 0055), and the review→test→lint→PR→CI line is the shared internal validation gate reached automatically by `/go` and `/afk`. The term survives only for reading historical envelopes and ADRs; never suggest `/ship` as a live command.
+_Avoid_: suggesting `/ship` for new work (use `/go`, `/afk`, or requeue)
 
 **Primary checkout**:
 The developer's main working clone of the repo, contrasted with an AFK **Worktree**.
@@ -193,7 +197,7 @@ _Avoid_: memory cleaner, silent curator
 - A **Worker** owns many **Attempts**; each **Attempt** resolves exactly one **Issue** and holds one **Worktree**. The **Worker**'s `worker.pid` is the single liveness signal consumers read.
 - A **Branch lock** constrains the **Primary checkout**; AFK **Worktrees** remain exempt.
 - A **Pinned branch** constrains AFK base and merge target; a **Branch lock**, when set, overrides it (precedence lock > pin > main) and additionally toggles how completed work lands (locked → local locked branch; unlocked → admin-merged PR).
-- **Ship (interactive landing)** consumes a prepared ship **Worktree** tail and may move the linked **Issue** into the **HITL queue** when reviews, branch protection, checks, or the time cap block a normal merge.
+- **Ship (interactive landing)** is retired (ADR 0081); hand-done work reaches the shared validation gate via requeue, and dispatch happens through `/go` or `/afk`.
 - The **Codebase understanding surface** may read Memory graph evidence, but it does not own graph storage or ingest.
 - The mutating **Skill curator** belongs to `dev`; telemetry evidence and reports belong to the Memory context.
 

@@ -144,6 +144,44 @@ expect_primary_guard "primary/off/switch allowed"            "git switch other" 
 expect_primary_guard "worktree/on/switch allowed"            "git switch other"              worktree on  allow
 expect_primary_guard "worktree/off/switch allowed"           "git switch other"              worktree off allow
 
+# ---------------------------------------------------------------------------
+# issue #1024: block git reset (any form) and git stash (all subcommands),
+# plus git rebase --autostash, in the primary checkout. Parallel human WIP
+# lives there; these commands have destroyed in-progress work before.
+# ---------------------------------------------------------------------------
+expect_primary_guard "primary/on/reset bare blocked"         "git reset"                          primary  on  block
+expect_primary_guard "primary/on/reset --hard blocked"       "git reset --hard"                   primary  on  block
+expect_primary_guard "primary/on/reset --hard HEAD~1 blocked" "git reset --hard HEAD~1"           primary  on  block
+expect_primary_guard "primary/on/reset --soft blocked"       "git reset --soft HEAD~1"            primary  on  block
+expect_primary_guard "primary/on/reset --mixed blocked"      "git reset --mixed"                  primary  on  block
+expect_primary_guard "primary/on/reset pathspec blocked"     "git reset HEAD file.txt"            primary  on  block
+expect_primary_guard "primary/on/-C reset blocked"           "git -C /repo reset --hard"          primary  on  block
+expect_primary_guard "primary/on/compound reset blocked"     "cd repo && git reset --hard"        primary  on  block
+
+expect_primary_guard "primary/on/stash bare blocked"         "git stash"                          primary  on  block
+expect_primary_guard "primary/on/stash push blocked"         "git stash push"                     primary  on  block
+expect_primary_guard "primary/on/stash push paths blocked"   "git stash push -m x src/"           primary  on  block
+expect_primary_guard "primary/on/stash save blocked"         "git stash save wip"                 primary  on  block
+expect_primary_guard "primary/on/stash pop blocked"          "git stash pop"                      primary  on  block
+expect_primary_guard "primary/on/stash apply blocked"        "git stash apply"                    primary  on  block
+expect_primary_guard "primary/on/stash list blocked"         "git stash list"                     primary  on  block
+expect_primary_guard "primary/on/stash show blocked"         "git stash show"                     primary  on  block
+expect_primary_guard "primary/on/-C stash blocked"           "git -C /repo stash"                 primary  on  block
+
+expect_primary_guard "primary/on/rebase autostash blocked"   "git rebase --autostash"             primary  on  block
+expect_primary_guard "primary/on/rebase autostash arg blocked" "git rebase --autostash origin/main" primary on block
+expect_primary_guard "primary/on/rebase main autostash blocked" "git rebase main --autostash"     primary  on  block
+
+# rebase without --autostash is not the work-loss vector this rule targets
+expect_primary_guard "primary/on/rebase plain allowed"       "git rebase main"                    primary  on  allow
+expect_primary_guard "primary/on/rebase --no-autostash allowed" "git rebase --no-autostash main"  primary  on  allow
+
+# worktrees stay exempt (scope), flag-off stays inert — for reset/stash too
+expect_primary_guard "worktree/on/reset allowed"             "git reset --hard"                   worktree on  allow
+expect_primary_guard "worktree/on/stash allowed"             "git stash"                          worktree on  allow
+expect_primary_guard "primary/off/reset allowed"             "git reset --hard"                   primary  off allow
+expect_primary_guard "primary/off/stash allowed"             "git stash"                          primary  off allow
+
 echo
 echo "summary: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

@@ -1,4 +1,7 @@
 // feedback — the AFK pre-merge validation runner (the merge gate of ADR 0008).
+// ValidationScope threading: when `validationScope` is provided in
+// RunFeedbackInput it is stored verbatim in RunFeedbackResult for the caller
+// (process-issue.ts) to include in the Envelope validation section.
 //
 // Ported from the feedback_* helpers + feedback() in afk.sh. Pure scope
 // resolution and result/sidecar shaping over an injected package layout and an
@@ -12,6 +15,22 @@
 // millisecond clock — so the decision logic, the exact argv, and the
 // `red.afk.validation.v1` sidecar record shape are all unit-testable against
 // fixed inputs with no real pnpm ever run.
+//
+// Quarantine lane (issue #1035): a config-declared list of known-flaky tests
+// is passed as `RunFeedbackInput.quarantine`. The gate validates the list (a
+// missing issue ref produces a loud gate-failure record), emits visible
+// "skipped/quarantined" sidecar records for each exclusion so exclusions are
+// never silent, and appends `-- --exclude <pattern>` to the test exec argv.
+
+import {
+  QuarantineConfigError,
+  quarantineExcludeArgs,
+  scopeQuarantineEntries,
+  validateQuarantine,
+  type QuarantineEntry,
+} from "./quarantine.js";
+
+import { type ValidationScope } from "./validation-scope.js";
 
 /** Result of a single executed command. Mirrors a child-process completion. */
 export interface ExecResult {
@@ -251,6 +270,23 @@ export interface RunFeedbackInput {
    * gate FAILED, so the happy path costs nothing.
    */
   baselineWorktree?: string;
+  /**
+   * Config-declared test quarantine entries (issue #1035). The gate validates
+   * this list before running — a missing issue ref produces a loud gate-failure
+   * record (blocked:validation). Absent/empty → no quarantine, no behavior
+   * change. Matching entries are excluded from the test exec argv and emitted
+   * as visible `skipped` sidecar records so exclusions are never silent.
+   */
+  quarantine?: readonly QuarantineEntry[];
+  /**
+   * The computed validation scope (from {@link computeValidationScope}).
+   * When provided, it is recorded verbatim in {@link RunFeedbackResult} so
+   * the caller (process-issue.ts) can include it in the Envelope validation
+   * section — a human reading a blocked:validation park immediately sees
+   * what was actually tested. Optional: absent callers behave exactly as
+   * before (no scope is recorded in the result).
+   */
+  validationScope?: ValidationScope;
 }
 
 export interface RunFeedbackResult {
@@ -269,6 +305,20 @@ export interface RunFeedbackResult {
    * passed when the worker's branch showed red.
    */
   baselineDowngraded: readonly string[];
+  /**
+   * Quarantine entries that were active for this gate run — the full validated
+   * list from `RunFeedbackInput.quarantine`. Always empty when no quarantine
+   * was configured. Surfaced for envelope builders that want to render the
+   * active quarantine list separately from the per-check sidecar records.
+   */
+  quarantined: readonly QuarantineEntry[];
+  /**
+   * The computed validation scope passed to `runFeedback` via
+   * {@link RunFeedbackInput.validationScope}, or `undefined` when the caller
+   * did not supply one. Surfaced here so callers can include it in the
+   * Envelope without carrying it separately.
+   */
+  validationScope?: ValidationScope;
 }
 
 /** A single check to re-run against the baseline, for the baseline probe. */
@@ -336,7 +386,8 @@ async function runChecksForBaseline(
  * are probed — the happy path costs nothing extra.
  */
 export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<RunFeedbackResult> {
-  const { worktree, scopes, layout, now, baselineWorktree } = input;
+  const { worktree, scopes, layout, now, baselineWorktree, validationScope } = input;
+  const quarantine = input.quarantine ?? [];
   const checks: FeedbackCheck[] = [];
   const sidecar: string[] = [];
   let failed = false;
@@ -345,6 +396,32 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
     checks.push(check);
     sidecar.push(formatValidationLine(check.record));
   };
+
+  // Quarantine validation: a missing issue ref is a loud gate failure (never
+  // a silent skip). Surface it as a failed sidecar record so the envelope shows
+  // the misconfiguration clearly.
+  try {
+    validateQuarantine(quarantine);
+  } catch (err) {
+    if (err instanceof QuarantineConfigError) {
+      const record = buildValidationRecord({
+        name: "quarantine:config-error",
+        status: "failed",
+        summary: err.message,
+      });
+      const check: FeedbackCheck = {
+        name: "quarantine:config-error",
+        script: "test",
+        label: "quarantine",
+        scope: "",
+        status: "failed",
+        record,
+      };
+      push(check);
+      return { ok: false, checks, sidecar, baselineDowngraded: [], quarantined: [] };
+    }
+    throw err;
+  }
 
   for (const script of FEEDBACK_SCRIPTS) {
     if (scopes.length === 0) {
@@ -372,10 +449,31 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
         continue;
       }
 
+      // Quarantine lane: emit a visible skipped record for each entry that
+      // applies to this scope × test run, then pass --exclude args so the
+      // tests actually do not run. Exclusions are never silent.
+      const excludeArgs = script === "test" ? quarantineExcludeArgs(quarantine, scope) : [];
+      if (script === "test" && excludeArgs.length > 0) {
+        for (const entry of scopeQuarantineEntries(quarantine, scope)) {
+          const qName = `quarantined:${entry.pattern}`;
+          const qRecord = buildValidationRecord({
+            name: qName,
+            status: "skipped",
+            summary: `quarantined — ${entry.issue} (since ${entry.since})`,
+          });
+          push({ name: qName, script: "test", label, scope, status: "skipped", record: qRecord });
+        }
+      }
+
       const dir = scopeDir(worktree, scope);
-      const command = `pnpm -C ${dir} ${script}`;
+      const baseArgs = ["pnpm", "-C", dir, script];
+      const args = excludeArgs.length > 0 ? [...baseArgs, "--", ...excludeArgs] : baseArgs;
+      const command =
+        excludeArgs.length > 0
+          ? `pnpm -C ${dir} ${script} -- ${excludeArgs.join(" ")}`
+          : `pnpm -C ${dir} ${script}`;
       const start = now();
-      const result = await exec(["pnpm", "-C", dir, script]);
+      const result = await exec(args);
       const durationMs = now() - start;
       const status: ValidationStatus = result.code === 0 ? "passed" : "failed";
       if (status === "failed") failed = true;
@@ -440,8 +538,8 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
       }
     }
     failed = checks.some((c) => c.status === "failed");
-    return { ok: !failed, checks, sidecar, baselineDowngraded: downgraded };
+    return { ok: !failed, checks, sidecar, baselineDowngraded: downgraded, quarantined: quarantine, validationScope };
   }
 
-  return { ok: !failed, checks, sidecar, baselineDowngraded: [] };
+  return { ok: !failed, checks, sidecar, baselineDowngraded: [], quarantined: quarantine, validationScope };
 }
