@@ -20,7 +20,106 @@
 // unit-testable with zero subprocesses. The real ports (rebase-in-worktree,
 // mechanical-resolve, reland-via-PR) are wired at the call site.
 
-import { classifyFinding, type GateFinding } from "./shared-gate.js";
+import { classifyFinding, type GateFinding, type MechanicalKind } from "./shared-gate.js";
+
+// ---------- conflict-content analyzer ----------
+//
+// Infers a mechanical KIND for a conflicted file so the orchestrator can decide,
+// via the closed allowlist, whether it is safe to auto-resolve. CONSERVATIVE by
+// construction: it recognises only conflicts whose two sides are provably
+// equivalent, and defaults everything else to a non-mechanical `"semantic"` kind
+// (→ park). Broadening the recognised classes (lockfile regen, append-only
+// changelog union, import-ordering) is deliberate follow-up.
+
+const CONFLICT_START = "<<<<<<<";
+const CONFLICT_MID = "=======";
+const CONFLICT_END = ">>>>>>>";
+
+/** One conflicted hunk extracted from a file carrying git conflict markers: the
+ * two competing versions (`ours` above `=======`, `theirs` below). */
+export interface ConflictHunk {
+  ours: string[];
+  theirs: string[];
+}
+
+/**
+ * Parse the conflict hunks out of a file body carrying `<<<<<<<` / `=======` /
+ * `>>>>>>>` markers. Tolerant: an unterminated hunk (no closing `>>>>>>>`) is
+ * dropped rather than throwing. Returns [] when the body has no conflict
+ * markers. PURE.
+ */
+export function parseConflictHunks(body: string): ConflictHunk[] {
+  const lines = body.split("\n");
+  const hunks: ConflictHunk[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    if (!lines[i].startsWith(CONFLICT_START)) {
+      i++;
+      continue;
+    }
+    const ours: string[] = [];
+    const theirs: string[] = [];
+    i++;
+    let sawMid = false;
+    let closed = false;
+    for (; i < lines.length; i++) {
+      if (lines[i].startsWith(CONFLICT_MID)) {
+        sawMid = true;
+        continue;
+      }
+      if (lines[i].startsWith(CONFLICT_END)) {
+        i++;
+        closed = true;
+        break;
+      }
+      (sawMid ? theirs : ours).push(lines[i]);
+    }
+    if (closed) hunks.push({ ours, theirs });
+  }
+  return hunks;
+}
+
+/** True when the two sides are identical after stripping trailing whitespace on
+ * every line AND ignoring trailing blank lines — a whitespace-only conflict that
+ * resolves safely to either side. PURE. */
+function whitespaceEquivalent(ours: readonly string[], theirs: readonly string[]): boolean {
+  const norm = (ls: readonly string[]): string[] => {
+    const trimmed = ls.map((l) => l.replace(/\s+$/, ""));
+    while (trimmed.length > 0 && trimmed[trimmed.length - 1] === "") trimmed.pop();
+    return trimmed;
+  };
+  const a = norm(ours);
+  const b = norm(theirs);
+  if (a.length !== b.length) return false;
+  return a.every((l, idx) => l === b[idx]);
+}
+
+/**
+ * Infer the mechanical KIND of a single conflict hunk, or null when it is not
+ * safely mechanical (→ intent). Recognises WHITESPACE-ONLY conflicts today. PURE.
+ */
+export function classifyConflictHunk(hunk: ConflictHunk): MechanicalKind | null {
+  if (whitespaceEquivalent(hunk.ours, hunk.theirs)) return "trailing-whitespace";
+  return null;
+}
+
+/**
+ * Infer the KIND of a whole conflicted file body. A file is mechanical only when
+ * it carries at least one conflict hunk AND every hunk is mechanical; the shared
+ * kind is returned. Any non-mechanical (or unparseable) hunk yields `"semantic"`
+ * — the conservative, non-allowlisted default. PURE.
+ */
+export function classifyConflictedFileKind(body: string): string {
+  const hunks = parseConflictHunks(body);
+  if (hunks.length === 0) return "semantic";
+  let kind: MechanicalKind | null = null;
+  for (const h of hunks) {
+    const k = classifyConflictHunk(h);
+    if (k === null) return "semantic";
+    kind = k;
+  }
+  return kind ?? "semantic";
+}
 
 // ---------- findings ----------
 
