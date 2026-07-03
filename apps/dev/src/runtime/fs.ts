@@ -328,12 +328,29 @@ export async function listStaleClaimDirs(tmpDir: string): Promise<StaleClaimDir[
   return out;
 }
 
+/** Pre-cutover legacy relic name: `work-<issue-number>` (digits only). The AFK
+ * orchestrator created these; a maintainer hand-work worktree is `work-<slug>`
+ * (CLAUDE.md Development workflow) and must never match. */
+const LEGACY_WORK_DIR_RE = /^work-[1-9][0-9]*$/;
+
 /**
  * Discover pre-cutover flat `<tmpDir>/work-NNN` relic dirs whose orchestrator is
- * dead. Each carries an `afk.pid` file; a missing/dead pid marks the dir for the
- * unconditional drain-wipe (#252). Mirrors the `for d in work-...` loop at the
- * top of prune_orphans (minus the dangling-worktree removal, which the caller
- * handles via git when needed). A missing tmp dir yields `[]`.
+ * dead, for the unconditional drain-wipe (#252). Two AFK-ownership gates, both
+ * required, so the sweep can only ever touch dirs the orchestrator itself made:
+ *
+ *   1. NAME — `work-<issue-number>` (digits). A maintainer worktree under
+ *      `.red/tmp/work-<slug>` (the sanctioned home for hand work, CLAUDE.md
+ *      Development workflow) is slug-named and is skipped. Guards #1052, where a
+ *      fresh `work-afk-first-doctrine` worktree was silently deleted by a boot
+ *      sweep because the old `startsWith("work-")` match plus "missing pid = wipe"
+ *      treated any non-AFK `work-*` dir as a dead relic.
+ *   2. SENTINEL — an `afk.pid` file must EXIST. Its absence means the dir was
+ *      not created by the orchestrator, so it is not AFK-owned and is left alone.
+ *
+ * Only when both hold and the recorded pid is dead is the dir a reclaimable
+ * relic. Mirrors the `for d in work-...` loop at the top of prune_orphans (minus
+ * the dangling-worktree removal, which the caller handles via git when needed).
+ * A missing tmp dir yields `[]`.
  */
 export async function listLegacyWorkDirs(tmpDir: string): Promise<string[]> {
   let entries: string[];
@@ -344,7 +361,7 @@ export async function listLegacyWorkDirs(tmpDir: string): Promise<string[]> {
   }
   const out: string[] = [];
   for (const entry of entries) {
-    if (!entry.startsWith("work-")) continue;
+    if (!LEGACY_WORK_DIR_RE.test(entry)) continue;
     const dir = join(tmpDir, entry);
     try {
       const st = await stat(dir);
@@ -353,6 +370,9 @@ export async function listLegacyWorkDirs(tmpDir: string): Promise<string[]> {
       continue;
     }
     const raw = await readText(join(dir, "afk.pid"));
+    // No sentinel → not an orchestrator-created relic → untouchable. Present but
+    // dead → reclaimable relic.
+    if (raw === null) continue;
     if (!pidAlive(raw)) out.push(dir);
   }
   return out;
