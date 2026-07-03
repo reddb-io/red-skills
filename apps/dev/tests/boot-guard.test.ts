@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { tmpdir } from "node:os";
 import { writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { probeFleetSupervisor, checkBootGuard } from "../src/commands/run.js";
+import { probeFleetSupervisor, checkBootGuard, isNamespacedDispatch } from "../src/commands/run.js";
 
 function tmpPidFile(suffix: string): string {
   return join(tmpdir(), `afk-boot-guard-test-${suffix}.pid`);
@@ -103,5 +103,60 @@ describe("checkBootGuard (#1027)", () => {
     } finally {
       await rm(f, { force: true });
     }
+  });
+
+  it("returns 'clear' without probing when exempt (a /go|/scout dispatch), even with a LIVE supervisor (#1087)", async () => {
+    const f = tmpPidFile("guard-exempt");
+    await writeFile(f, "88888", "utf8");
+    try {
+      const stdout = makeStdout();
+      // checkLivePid always reports live; exempt must skip the check entirely.
+      const result = await checkBootGuard(f, false, stdout as unknown as NodeJS.WritableStream, () => true, true);
+      expect(result).toBe("clear");
+      expect(stdout.output).toBe("");
+    } finally {
+      await rm(f, { force: true });
+    }
+  });
+
+  it("still REFUSES a live supervisor when NOT exempt (bare /afk run regression, #1087)", async () => {
+    const f = tmpPidFile("guard-not-exempt");
+    await writeFile(f, "99998", "utf8");
+    try {
+      const stdout = makeStdout();
+      const result = await checkBootGuard(f, false, stdout as unknown as NodeJS.WritableStream, () => true, false);
+      expect(result).toBe("refused");
+      expect(stdout.output).toContain("fleet supervisor is already running");
+    } finally {
+      await rm(f, { force: true });
+    }
+  });
+});
+
+describe("isNamespacedDispatch (#1087)", () => {
+  it("is true for a /go dispatch (origin=go)", () => {
+    expect(isNamespacedDispatch({ origin: "go" }, {})).toBe(true);
+  });
+
+  it("is true for a --scout dispatch (origin=scout)", () => {
+    expect(isNamespacedDispatch({ origin: "scout" }, {})).toBe(true);
+  });
+
+  it("is true when the lane is lane:go or lane:scout", () => {
+    expect(isNamespacedDispatch({ lane: "lane:go" }, {})).toBe(true);
+    expect(isNamespacedDispatch({ lane: "lane:scout" }, {})).toBe(true);
+  });
+
+  it("is true when RED_AFK_WORKERS_NAMESPACE is go-workers or scout-workers", () => {
+    expect(isNamespacedDispatch({}, { RED_AFK_WORKERS_NAMESPACE: "go-workers" })).toBe(true);
+    expect(isNamespacedDispatch({}, { RED_AFK_WORKERS_NAMESPACE: "scout-workers" })).toBe(true);
+  });
+
+  it("is false for a bare /afk run (origin=afk, workers/ namespace)", () => {
+    expect(isNamespacedDispatch({ origin: "afk", lane: "ready-for-agent" }, { RED_AFK_WORKERS_NAMESPACE: "workers" })).toBe(false);
+  });
+
+  it("is false when no dispatch signal is present", () => {
+    expect(isNamespacedDispatch({}, {})).toBe(false);
   });
 });
