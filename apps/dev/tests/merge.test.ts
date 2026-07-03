@@ -270,6 +270,32 @@ describe("landPr (unlocked path)", () => {
     });
     expect(result.ok).toBe(false);
   });
+
+  it("locked → admin-merges but NEVER fast-forwards the primary checkout (ADR 0083 §2, #1019)", async () => {
+    // Untouchable primary: a LOCKED landing integrates on origin/<target> only; the
+    // best-effort local ff of the primary's <target> is skipped so no write touches
+    // the primary checkout. The maintainer promotes by pulling.
+    const { exec, calls } = fakeExec([
+      { match: (a) => a.join(" ").includes("pr list"), result: { stdout: "42\n" } },
+    ]);
+    const result = await landPr(exec, {
+      repo: "reddb-io/red-skills",
+      gitRepo: "/repo",
+      remote: "origin",
+      branch: "afk/wFFFF/9-x",
+      target: "feature-locked",
+      n: 9,
+      title: "t",
+      locked: true,
+    });
+    expect(result.ok).toBe(true);
+    const c = joined(calls);
+    // The admin-merge still ran (the integration lands remotely on origin).
+    expect(c.some((x) => x.includes("pr merge 42 --admin --merge"))).toBe(true);
+    // No local fast-forward, and no `git -C /repo` write op at all.
+    expect(c.some((x) => x.includes("git -C /repo merge --ff-only"))).toBe(false);
+    expect(c.some((x) => x.includes("git -C /repo fetch"))).toBe(false);
+  });
 });
 
 describe("openReviewPr (review-gate handoff, #749)", () => {
